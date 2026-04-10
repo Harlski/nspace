@@ -43,8 +43,16 @@ Adjust when tuning feel or abuse resistance.
 | `VITE_DEV_AUTH_BYPASS` | client | `1` shows Dev login |
 | `VITE_ADMIN_ENABLED` | client | `true` shows Admin overlay (layout / fog / camera) |
 | `VITE_HUB_URL` | client | Nimiq Hub base URL (optional override) |
+| `VITE_API_BASE_URL` | client | HTTP origin when SPA and API differ (e.g. `https://api.example.com`) |
+| `VITE_WS_BASE_URL` | client | Optional explicit WebSocket origin; otherwise derived from `VITE_API_BASE_URL` or page |
+| `EVENT_LOG_DIR` | server | Directory for append-only JSONL replay logs (`events-*.jsonl`); default `server/data/events` |
+| `PLACE_RADIUS_BLOCKS` | server | Max horizontal distance for block place/edit/move actions (default `5`) |
 
 **Admin HTTP API**: `POST /api/admin/random-layout` is currently **unauthenticated** in [server/src/index.ts](../server/src/index.ts). Do not expose that endpoint publicly without adding a secret or network restriction. The client `.env.development` comment mentioning `ADMIN_SECRET` is misleading unless you add server-side checks.
+
+**Replay HTTP API** (requires `Authorization: Bearer <JWT>`): `GET /api/replay/players`, `GET /api/replay/sessions?address=…`, `GET /api/replay/session/:id/events`. Used by the main menu “Session replay” panel.
+
+**Future — event payload richness**: `remove_obstacle` JSONL rows currently store only `(x,z)`. If we need to infer removed geometry, reconstruct prior world snapshots, or support undo, we should log the obstacle’s full props at delete time (mirror `set_obstacle_props` / `place_block` fields).
 
 ## Local development
 

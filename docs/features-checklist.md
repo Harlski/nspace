@@ -43,6 +43,13 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 - [x] Floor expand mode (`F`) on client
 - [x] `POST /api/admin/random-layout` — random extra-tile growth (no auth in current server; see [server/src/index.ts](../server/src/index.ts))
 
+## Replay / telemetry
+
+- [x] Server JSONL event log per day (`EVENT_LOG_DIR`, `events-*.jsonl`) — session boundaries, moves, builds, chat
+- [x] `GET /api/replay/players`, `/api/replay/sessions`, `/api/replay/session/:id/events` (Bearer JWT)
+- [x] Main menu “Session replay” — pick player, session, action timeline
+- [x] Server-side max distance for block actions (`PLACE_RADIUS_BLOCKS`, default 5 world units on XZ)
+
 ## UI / shell
 
 - [x] Letterboxed 16∶9 HUD, status line, chat log + input
@@ -53,6 +60,7 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 ## NPCs (fake players)
 
 - [x] `FAKE_PLAYER_COUNT` env — server-side wanderers merged into `PlayerState` snapshots
+- [x] Display names chosen from a curated list ([server/src/guestNames.ts](../server/src/guestNames.ts)); duplicates get a numeric suffix
 - [x] Idle up to 2s between choosing new random destinations; cleared when room has no real clients
 
 ## Client-only / polish

@@ -1,5 +1,5 @@
 import cors from "cors";
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import fs from "node:fs";
 import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
@@ -10,6 +10,12 @@ import { createNonce, consumeNonce, signSession, verifySession } from "./auth.js
 import { addClient, adminRandomExtraFloorLayout, startRoomTick } from "./rooms.js";
 import { flushPersistWorldStateSync } from "./worldPersistence.js";
 import { verifySignedMessage } from "./verifyNimiq.js";
+import {
+  flushEventLogSync,
+  getEventsForSession,
+  listRecentPlayerAddresses,
+  listSessionsForPlayer,
+} from "./eventLog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,6 +33,49 @@ app.use(express.json({ limit: "64kb" }));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+function bearerToken(req: Request): string | null {
+  const h = req.headers.authorization;
+  if (!h || typeof h !== "string") return null;
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  return m?.[1]?.trim() || null;
+}
+
+function requireJwt(req: Request, res: Response, next: NextFunction): void {
+  const t = bearerToken(req);
+  if (!t) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  try {
+    verifySession(t, JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).json({ error: "unauthorized" });
+  }
+}
+
+app.get("/api/replay/players", requireJwt, (req, res) => {
+  const maxDays = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
+  res.json({ players: listRecentPlayerAddresses(maxDays, limit) });
+});
+
+app.get("/api/replay/sessions", requireJwt, (req, res) => {
+  const address = String(req.query.address ?? "");
+  if (!address) {
+    res.status(400).json({ error: "missing_address" });
+    return;
+  }
+  const maxDays = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+  res.json({ sessions: listSessionsForPlayer(address, maxDays) });
+});
+
+app.get("/api/replay/session/:sessionId/events", requireJwt, (req, res) => {
+  const maxDays = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+  const events = getEventsForSession(req.params.sessionId, maxDays);
+  res.json({ events });
 });
 
 app.post("/api/admin/random-layout", (req, res) => {
@@ -158,6 +207,7 @@ function logListenUrls(port: number, host: string): void {
 function shutdown(signal: string): void {
   console.log(`\n${signal} — flushing world state…`);
   flushPersistWorldStateSync();
+  flushEventLogSync();
   process.exit(0);
 }
 

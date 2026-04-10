@@ -1,4 +1,5 @@
 import type { Game } from "../game/Game.js";
+import { apiUrl } from "../net/apiBase.js";
 import { ROOM_ID } from "../game/constants.js";
 
 const ENABLED = import.meta.env.VITE_ADMIN_ENABLED === "true";
@@ -175,7 +176,7 @@ export function installAdminOverlay(
     const clearExisting = ($("admin-clear") as HTMLInputElement).checked;
     setStatus("Requesting…");
     try {
-      const r = await fetch("/api/admin/random-layout", {
+      const r = await fetch(apiUrl("/api/admin/random-layout"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

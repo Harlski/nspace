@@ -1,4 +1,5 @@
 import HubApi from "@nimiq/hub-api";
+import { apiUrl } from "../net/apiBase.js";
 
 const HUB_URL = import.meta.env.VITE_HUB_URL || "https://hub.nimiq.com";
 
@@ -31,7 +32,7 @@ export async function signInWithWallet(nonce: string): Promise<{
 }
 
 export async function fetchNonce(): Promise<{ nonce: string; expiresAt: number }> {
-  const r = await fetch("/api/auth/nonce");
+  const r = await fetch(apiUrl("/api/auth/nonce"));
   if (!r.ok) throw new Error("nonce_failed");
   return r.json() as Promise<{ nonce: string; expiresAt: number }>;
 }
@@ -43,7 +44,7 @@ export async function verifyWithServer(body: {
   signerPublicKey: string;
   signature: string;
 }): Promise<{ token: string; address: string }> {
-  const r = await fetch("/api/auth/verify", {
+  const r = await fetch(apiUrl("/api/auth/verify"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

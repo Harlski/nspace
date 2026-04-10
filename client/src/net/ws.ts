@@ -70,7 +70,6 @@ export function connectGameWs(
   onClose: (ev: CloseEvent) => void,
   opts?: ConnectGameWsOptions
 ): WebSocket {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const q = new URLSearchParams({
     token,
     room,
@@ -83,7 +82,27 @@ export function connectGameWs(
     q.set("sx", String(opts.spawnX));
     q.set("sz", String(opts.spawnZ));
   }
-  const url = `${proto}//${location.host}/ws?${q}`;
+  let originBase: string;
+  const wsEnv = import.meta.env.VITE_WS_BASE_URL;
+  if (wsEnv) {
+    originBase = String(wsEnv).replace(/\/$/, "");
+  } else {
+    const api = import.meta.env.VITE_API_BASE_URL;
+    if (api) {
+      try {
+        const u = new URL(api);
+        u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+        originBase = u.origin;
+      } catch {
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        originBase = `${proto}//${location.host}`;
+      }
+    } else {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      originBase = `${proto}//${location.host}`;
+    }
+  }
+  const url = `${originBase}/ws?${q}`;
   const ws = new WebSocket(url);
   ws.addEventListener("message", (ev) => {
     try {

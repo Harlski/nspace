@@ -21,6 +21,12 @@ import {
   registerWorldStateRefs,
   schedulePersistWorldState,
 } from "./worldPersistence.js";
+import {
+  beginSession,
+  endSession,
+  logGameplayEvent,
+} from "./eventLog.js";
+import { pickGuestDisplayName } from "./guestNames.js";
 
 const MOVE_SPEED = 5;
 const TICK_MS = 50;
@@ -35,6 +41,11 @@ const FAKE_PLAYER_COUNT = Math.max(
   Math.min(32, Math.floor(Number(process.env.FAKE_PLAYER_COUNT ?? "0")))
 );
 const FAKE_IDLE_MS_MAX = 2000;
+/** Max distance on XZ (world units) from player to tile for block edit actions; enforced server-side. */
+const PLACE_RADIUS_BLOCKS = Math.max(
+  0,
+  Math.min(64, Number(process.env.PLACE_RADIUS_BLOCKS ?? "5"))
+);
 
 export interface PlayerState {
   address: string;
@@ -80,11 +91,24 @@ interface ClientConn {
   ws: WebSocket;
   address: string;
   displayName: string;
+  sessionId: string;
+  sessionStartedAt: number;
   lastMoveToAt: number;
   lastChatAt: number;
   lastPlaceAt: number;
   player: PlayerState;
   pathQueue: { x: number; z: number; layer: 0 | 1 }[];
+}
+
+function withinBlockActionRange(
+  player: PlayerState,
+  tileX: number,
+  tileZ: number
+): boolean {
+  if (PLACE_RADIUS_BLOCKS <= 0) return true;
+  const dx = player.x - tileX;
+  const dz = player.z - tileZ;
+  return Math.hypot(dx, dz) <= PLACE_RADIUS_BLOCKS + 1e-6;
 }
 
 function clamp(v: number, a: number, b: number): number {
@@ -131,7 +155,10 @@ const roomFakePlayers = new Map<
   >
 >();
 /** Last known spawn position per room + wallet (persists across sessions). */
-const lastSpawnByRoom = new Map<string, Map<string, { x: number; z: number }>>();
+const lastSpawnByRoom = new Map<
+  string,
+  Map<string, { x: number; z: number; y?: number }>
+>();
 /** Placed objects per room: key = tileKey(x,z), value = props. */
 const roomPlaced = new Map<string, Map<string, PlacedProps>>();
 /** Walkable tiles outside the core room (must connect to core or another extra). */
@@ -361,13 +388,29 @@ function walkBounds(roomId: string): {
   return { minX, maxX, minZ, maxZ };
 }
 
-function spawnMap(roomId: string): Map<string, { x: number; z: number }> {
+function spawnMap(roomId: string): Map<string, { x: number; z: number; y?: number }> {
   let m = lastSpawnByRoom.get(roomId);
   if (!m) {
     m = new Map();
     lastSpawnByRoom.set(roomId, m);
   }
   return m;
+}
+
+/** Feet height for avatar on this tile; aligns with pathfinding layer 0 / 1. */
+function reconcileSpawnY(player: PlayerState, roomId: string): void {
+  const placed = placedMap(roomId);
+  const t = snapToTile(player.x, player.z);
+  if (!isWalkableForRoom(roomId, t.x, t.z)) return;
+  const prop = placed.get(tileKey(t.x, t.z));
+  if (prop && !prop.passable && !prop.ramp) {
+    const h = terrainObstacleHeight(prop);
+    if (!Number.isFinite(player.y) || player.y < h - 0.2) {
+      player.y = h;
+    }
+  }
+  const layer = inferStartLayer(player, placed);
+  player.y = waypointY(layer, t.x, t.z, placed);
 }
 
 function roomOf(roomId: string): Map<string, ClientConn> {
@@ -437,6 +480,10 @@ function ensureFakePlayers(roomId: string): void {
     normalizeRoomId(roomId).split("").reduce((s, ch) => s + ch.charCodeAt(0), 0) |
       fakes.size * 997
   );
+  const usedGuestNames = new Set<string>();
+  for (const { player } of fakes.values()) {
+    usedGuestNames.add(player.displayName);
+  }
   let nextIndex = 0;
   while (fakes.size < FAKE_PLAYER_COUNT) {
     const address = fakePlayerAddress(roomId, nextIndex);
@@ -444,9 +491,11 @@ function ensureFakePlayers(roomId: string): void {
     if (fakes.has(address)) continue;
     const spawn = pickRandomWalkableTile(roomId, rng);
     if (!spawn) break;
+    const displayName = pickGuestDisplayName(rng, usedGuestNames);
+    usedGuestNames.add(displayName);
     const player: PlayerState = {
       address,
-      displayName: `Guest ${fakes.size + 1}`,
+      displayName,
       x: spawn.x,
       y: 0,
       z: spawn.z,
@@ -662,6 +711,7 @@ export function addClient(
   };
 
   let placedSpawn = false;
+  let resolvedSpawnTile = false;
   if (
     spawnHint &&
     Number.isFinite(spawnHint.x) &&
@@ -672,6 +722,7 @@ export function addClient(
       player.x = t.x;
       player.z = t.z;
       placedSpawn = true;
+      resolvedSpawnTile = true;
     }
   }
   if (!placedSpawn) {
@@ -681,14 +732,28 @@ export function addClient(
       if (isWalkableForRoom(roomId, t.x, t.z)) {
         player.x = t.x;
         player.z = t.z;
+        if (typeof saved.y === "number" && Number.isFinite(saved.y)) {
+          player.y = saved.y;
+        }
+        resolvedSpawnTile = true;
       }
     }
   }
 
+  if (resolvedSpawnTile) {
+    reconcileSpawnY(player, roomId);
+  }
+
+  const { sessionId, startedAt: sessionStartedAt } = beginSession(
+    address,
+    roomId
+  );
   const conn: ClientConn = {
     ws,
     address,
     displayName,
+    sessionId,
+    sessionStartedAt,
     lastMoveToAt: 0,
     lastChatAt: 0,
     lastPlaceAt: 0,
@@ -770,6 +835,13 @@ export function addClient(
         return;
       }
       conn.pathQueue = full.slice(1);
+      logGameplayEvent(conn.sessionId, address, roomId, "move_to", {
+        fromX: start.x,
+        fromZ: start.z,
+        toX: dest.x,
+        toZ: dest.z,
+        goalLayer,
+      });
       return;
     }
 
@@ -782,6 +854,7 @@ export function addClient(
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
+      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       if (!isWalkableForRoom(roomId, tile.x, tile.z)) return;
       const placed = placedMap(roomId);
       if (placed.has(k)) return;
@@ -812,6 +885,16 @@ export function addClient(
         tiles: obstaclesToList(roomId),
       });
       schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, roomId, "place_block", {
+        x: tile.x,
+        z: tile.z,
+        half,
+        quarter,
+        hex,
+        ramp,
+        rampDir: ramp ? rampDir : 0,
+        colorId,
+      });
       return;
     }
 
@@ -833,6 +916,7 @@ export function addClient(
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
+      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       const placed = placedMap(roomId);
       if (!placed.has(k)) return;
       placed.set(k, {
@@ -850,6 +934,17 @@ export function addClient(
         tiles: obstaclesToList(roomId),
       });
       schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, roomId, "set_obstacle_props", {
+        x: tile.x,
+        z: tile.z,
+        passable,
+        half,
+        quarter,
+        hex,
+        ramp,
+        rampDir: ramp ? rampDir : 0,
+        colorId,
+      });
       return;
     }
 
@@ -862,6 +957,7 @@ export function addClient(
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
+      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       const placed = placedMap(roomId);
       if (!placed.delete(k)) return;
       broadcast(roomId, {
@@ -870,6 +966,13 @@ export function addClient(
         tiles: obstaclesToList(roomId),
       });
       schedulePersistWorldState();
+      /* Replay log: we only record tile coords. For richer replay / inference (e.g. undo,
+         material audits), consider logging the obstacle props that existed immediately before
+         delete (passable, half, quarter, hex, ramp, rampDir, colorId). */
+      logGameplayEvent(conn.sessionId, address, roomId, "remove_obstacle", {
+        x: tile.x,
+        z: tile.z,
+      });
       return;
     }
 
@@ -894,6 +997,12 @@ export function addClient(
       const fk = tileKey(from.x, from.z);
       const tk = tileKey(to.x, to.z);
       if (fk === tk) return;
+      if (
+        !withinBlockActionRange(conn.player, from.x, from.z) ||
+        !withinBlockActionRange(conn.player, to.x, to.z)
+      ) {
+        return;
+      }
       const placed = placedMap(roomId);
       const props = placed.get(fk);
       if (!props) return;
@@ -911,6 +1020,12 @@ export function addClient(
         tiles: obstaclesToList(roomId),
       });
       schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, roomId, "move_obstacle", {
+        fromX: from.x,
+        fromZ: from.z,
+        toX: to.x,
+        toZ: to.z,
+      });
       return;
     }
 
@@ -934,6 +1049,10 @@ export function addClient(
         tiles: extraFloorToList(roomId),
       });
       schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, roomId, "place_extra_floor", {
+        x: tile.x,
+        z: tile.z,
+      });
       return;
     }
 
@@ -962,6 +1081,10 @@ export function addClient(
         tiles: extraFloorToList(roomId),
       });
       schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, roomId, "remove_extra_floor", {
+        x: tile.x,
+        z: tile.z,
+      });
       return;
     }
 
@@ -979,13 +1102,18 @@ export function addClient(
         text,
         at: now,
       });
+      logGameplayEvent(conn.sessionId, address, roomId, "chat", {
+        text,
+      });
     }
   });
 
   ws.on("close", () => {
+    endSession(conn.sessionId, address, roomId, conn.sessionStartedAt);
     spawnMap(roomId).set(address, {
       x: conn.player.x,
       z: conn.player.z,
+      y: conn.player.y,
     });
     schedulePersistWorldState();
     room.delete(address);

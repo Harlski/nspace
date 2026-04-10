@@ -72,6 +72,8 @@ function openMainMenu(): void {
   unmountMainMenu = mountMainMenu({
     app,
     hasValidSession: hasValid,
+    authToken:
+      hasValid && cached && !isTokenExpired(cached.token) ? cached.token : null,
     devBypass: DEV_CLIENT_BYPASS,
     onReconnect: () => {
       const c = loadCachedSession();

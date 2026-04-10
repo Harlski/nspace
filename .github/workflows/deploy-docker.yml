@@ -1,0 +1,33 @@
+# Build the image on the VPS after fast-forwarding git (simplest: no container registry).
+# Prerequisites: see docs/deploy-github-docker.md (SSH keys + server deploy key + secrets).
+
+name: Deploy Docker (backend)
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH — pull, build, restart
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            # Same path as docs/deploy-github-docker.md — change here if your clone lives elsewhere.
+            cd /opt/nspace
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose build --pull
+            docker compose up -d --remove-orphans
+            docker image prune -f

@@ -17,7 +17,8 @@ const STATE_VERSION = 1 as const;
 type PersistedRoom = {
   obstacles: Array<{ tile: string; props: TerrainProps }>;
   extraFloor: string[];
-  spawns: Record<string, { x: number; z: number }>;
+  /** Last disconnect position; `y` is feet height (on block top or floor). */
+  spawns: Record<string, { x: number; z: number; y?: number }>;
 };
 
 type PersistedFile = {
@@ -35,14 +36,14 @@ const SAVE_DEBOUNCE_MS = 400;
 let refs: {
   roomPlaced: Map<string, Map<string, TerrainProps>>;
   roomExtraFloor: Map<string, Set<string>>;
-  lastSpawnByRoom: Map<string, Map<string, { x: number; z: number }>>;
+  lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>;
   normalizeRoomId: (id: string) => string;
 } | null = null;
 
 export function registerWorldStateRefs(
   roomPlaced: Map<string, Map<string, TerrainProps>>,
   roomExtraFloor: Map<string, Set<string>>,
-  lastSpawnByRoom: Map<string, Map<string, { x: number; z: number }>>,
+  lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
   normalizeRoomId: (id: string) => string
 ): void {
   refs = { roomPlaced, roomExtraFloor, lastSpawnByRoom, normalizeRoomId };
@@ -55,7 +56,7 @@ export function registerWorldStateRefs(
 export function loadWorldState(
   roomPlaced: Map<string, Map<string, TerrainProps>>,
   roomExtraFloor: Map<string, Set<string>>,
-  lastSpawnByRoom: Map<string, Map<string, { x: number; z: number }>>,
+  lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
   normalizeRoomId: (id: string) => string
 ): void {
   if (!fs.existsSync(STATE_FILE)) {
@@ -87,7 +88,7 @@ export function loadWorldState(
       const ex = new Set<string>(room.extraFloor ?? []);
       roomExtraFloor.set(roomId, ex);
 
-      const spawns = new Map<string, { x: number; z: number }>();
+      const spawns = new Map<string, { x: number; z: number; y?: number }>();
       if (room.spawns && typeof room.spawns === "object") {
         for (const [addr, p] of Object.entries(room.spawns)) {
           if (
@@ -96,7 +97,9 @@ export function loadWorldState(
             Number.isFinite(p.x) &&
             Number.isFinite(p.z)
           ) {
-            spawns.set(addr, { x: p.x, z: p.z });
+            const y =
+              typeof p.y === "number" && Number.isFinite(p.y) ? p.y : undefined;
+            spawns.set(addr, y !== undefined ? { x: p.x, z: p.z, y } : { x: p.x, z: p.z });
           }
         }
       }
@@ -151,10 +154,14 @@ function persistWorldStateNow(): void {
       }
     }
     const extraFloor = ex ? [...ex].sort() : [];
-    const spawnObj: Record<string, { x: number; z: number }> = {};
+    const spawnObj: Record<string, { x: number; z: number; y?: number }> = {};
     if (spawns) {
       for (const [addr, p] of spawns) {
-        spawnObj[addr] = { x: p.x, z: p.z };
+        if (typeof p.y === "number" && Number.isFinite(p.y)) {
+          spawnObj[addr] = { x: p.x, z: p.z, y: p.y };
+        } else {
+          spawnObj[addr] = { x: p.x, z: p.z };
+        }
       }
     }
     if (

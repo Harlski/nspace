@@ -1,0 +1,115 @@
+/**
+ * Display names for server-driven NPCs (`FAKE_PLAYER_COUNT`).
+ * Public figures / historical names only — not live users.
+ */
+export const GUEST_DISPLAY_NAMES: readonly string[] = [
+  "Marie Curie",
+  "Alan Turing",
+  "Ada Lovelace",
+  "Katherine Johnson",
+  "Nikola Tesla",
+  "Rosalind Franklin",
+  "Charles Darwin",
+  "Grace Hopper",
+  "Stephen Hawking",
+  "Hypatia",
+  "Ibn al-Haytham",
+  "Leonardo da Vinci",
+  "Galileo Galilei",
+  "Isaac Newton",
+  "James Clerk Maxwell",
+  "Michael Faraday",
+  "Rachel Carson",
+  "Jane Goodall",
+  "Barbara McClintock",
+  "Chien-Shiung Wu",
+  "Srinivasa Ramanujan",
+  "Emmy Noether",
+  "Sofia Kovalevskaya",
+  "Mary Anning",
+  "Gregor Mendel",
+  "Louis Pasteur",
+  "Alexander Fleming",
+  "Jonas Salk",
+  "Tu Youyou",
+  "Subrahmanyan Chandrasekhar",
+  "Abdus Salam",
+  "Lise Meitner",
+  "Dorothy Hodgkin",
+  "John von Neumann",
+  "Claude Shannon",
+  "Margaret Hamilton",
+  "Hedy Lamarr",
+  "Tim Berners-Lee",
+  "Dennis Ritchie",
+  "Ken Thompson",
+  "Radia Perlman",
+  "Sophie Germain",
+  "Carl Friedrich Gauss",
+  "Euclid",
+  "Archimedes",
+  "Ibn Rushd",
+  "Al-Khwarizmi",
+  "Ban Zhao",
+  "Zhang Heng",
+  "Aryabhata",
+  "Bhaskara II",
+  "Copernicus",
+  "Kepler",
+  "Flossie Wong-Staal",
+  "Percy Julian",
+  "George Washington Carver",
+  "Neil deGrasse Tyson",
+  "Vera Rubin",
+  "Jocelyn Bell Burnell",
+  "Henrietta Swan Leavitt",
+  "Edwin Hubble",
+  "Carl Sagan",
+  "Richard Feynman",
+  "Erwin Schrödinger",
+  "Max Planck",
+  "Werner Heisenberg",
+  "Satyendra Nath Bose",
+  "CV Raman",
+  "Meghnad Saha",
+  "Omar Khayyam",
+  "Ibn Sina",
+  "Alhazen",
+  "Florence Nightingale",
+  "Edward Jenner",
+  "Elizabeth Blackwell",
+  "Benjamin Banneker",
+  "Lewis Latimer",
+  "Patricia Bath",
+  "Mae Jemison",
+  "Kalpana Chawla",
+  "Valentina Tereshkova",
+  "Sally Ride",
+  "Hildegard of Bingen",
+  "Thomas Bayes",
+  "Andrey Markov",
+  "George Boole",
+  "Augusta Ada King",
+  "Daphne Oram",
+  "Wendy Carlos",
+  "Douglas Engelbart",
+  "Anita Borg",
+  "Frances Allen",
+];
+
+export function pickGuestDisplayName(
+  rng: () => number,
+  alreadyUsed: ReadonlySet<string>
+): string {
+  const n = GUEST_DISPLAY_NAMES.length;
+  if (n === 0) return "Guest";
+
+  for (let attempt = 0; attempt < n * 3; attempt++) {
+    const i = Math.floor(rng() * n);
+    const name = GUEST_DISPLAY_NAMES[i]!;
+    if (!alreadyUsed.has(name)) return name;
+  }
+
+  const base = GUEST_DISPLAY_NAMES[Math.floor(rng() * n)]!;
+  return `${base} ·${Math.floor(rng() * 900 + 100)}`;
+}

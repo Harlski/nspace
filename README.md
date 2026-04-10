@@ -10,6 +10,7 @@ Prototype isometric room: **Nimiq wallet** login, **WebSocket** multiplayer, **T
 | [docs/build.md](docs/build.md) | Stack, authority, world model, message flow |
 | [docs/features-checklist.md](docs/features-checklist.md) | What’s implemented (checkbox inventory) |
 | [docs/process.md](docs/process.md) | Extending synced features, env, tick loop, dev workflow |
+| [docs/deploy-github-docker.md](docs/deploy-github-docker.md) | CI: GitHub Actions SSH + Docker on VPS; SSH / deploy-key setup |
 | [tile.md](tile.md) | Tile art / mesh design spec (grid units, camera, seams) |
 
 ## Requirements
@@ -53,6 +54,8 @@ npm run start -w server
 ```
 
 The server serves `client/dist` when present. Set `PORT` if needed.
+
+**Docker (VPS):** `docker compose build && docker compose up -d` from the repo root; see [docs/deploy-github-docker.md](docs/deploy-github-docker.md) for automated deploys from `main`.
 
 ## Environment
 
