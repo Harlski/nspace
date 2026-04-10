@@ -115,6 +115,16 @@ Go to **Repository → Settings → Secrets and variables → Actions → Secret
 | `DEPLOY_USER` | `ubuntu` or `deploy` | SSH login |
 | `DEPLOY_SSH_KEY` | *(private key PEM)* | Auth from Actions |
 
+**Spelling:** Names must be exactly `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` (all caps, underscores as shown).
+
+**Same repository as the workflow:** Secrets are tied to the repo that runs the workflow. If the run is on a **fork** (`youruser/nspace`), you must add secrets on **that fork**, not only on `upstream/nspace`. Organization secrets must explicitly **allow** this repository.
+
+**Variables vs secrets (host/user):** The workflow accepts **`DEPLOY_HOST` / `DEPLOY_USER` as either repository Secrets *or* repository Variables** (`secrets.* || vars.*`). The **private key must stay a Secret** — never put it in Variables.
+
+**Debug log shows `secrets.DEPLOY_HOST => null`:** Those values were not in scope for the job. Common cases: wrong repo/fork, typo in names, or values stored only under **Settings → Environments → *name*** while the workflow job did not set `environment: *matching name*`. This repo’s workflow uses `environment: Production` — put `DEPLOY_HOST`, `DEPLOY_USER`, and `DEPLOY_SSH_KEY` under **Environments → Production** (secrets + variables as appropriate), **or** under **Actions → Secrets / Variables** at the repository level.
+
+**Never store `DEPLOY_SSH_KEY` under Environment *variables*** (they are visible in the UI and in logs more easily). Use **Environment secrets** or **repository Actions secrets** for the private key only.
+
 If the private key has a passphrase, the `appleboy/ssh-action` step can take `passphrase: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}` (add that secret). Prefer **no passphrase** on this deploy key and restrict by `authorized_keys` + firewall.
 
 **SSH not on port 22?** Add `port: YOUR_PORT` under `with:` in the workflow (see [appleboy/ssh-action](https://github.com/appleboy/ssh-action)).

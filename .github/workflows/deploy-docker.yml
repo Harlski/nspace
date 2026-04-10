@@ -14,26 +14,34 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Use this name so `secrets.*` / `vars.*` resolve from **Settings → Environments → Production**
+    # (not only from repository Actions secrets).
+    environment: Production
+    env:
+      # Repository OR environment secrets/variables (after `environment:` above).
+      DEPLOY_HOST_RESOLVED: ${{ secrets.DEPLOY_HOST || vars.DEPLOY_HOST }}
+      DEPLOY_USER_RESOLVED: ${{ secrets.DEPLOY_USER || vars.DEPLOY_USER }}
     steps:
-      # Repository **Secrets** (Settings → Secrets and variables → Actions → Secrets),
-      # not Variables — this workflow only reads `secrets.*`.
-      # Do not inline DEPLOY_SSH_KEY here (multiline PEM breaks shell); ssh-action errors if it is missing.
-      - name: Require deploy secrets
+      # `DEPLOY_SSH_KEY` must be a **Secret** (private key). Host/user can be Secrets or Variables.
+      - name: Require deploy host and user
         run: |
           missing=
-          [ -z "${{ secrets.DEPLOY_HOST }}" ] && missing="DEPLOY_HOST $missing"
-          [ -z "${{ secrets.DEPLOY_USER }}" ] && missing="DEPLOY_USER $missing"
+          [ -z "$DEPLOY_HOST_RESOLVED" ] && missing="${missing}DEPLOY_HOST "
+          [ -z "$DEPLOY_USER_RESOLVED" ] && missing="${missing}DEPLOY_USER "
           if [ -n "$missing" ]; then
-            echo "::error::These GitHub Actions **repository secrets** are empty or missing: $missing"
-            echo "::error::Add them under Settings → Secrets and variables → Actions → **Secrets** (the Secrets tab, not Variables)."
+            echo "::error::Missing deploy config: $missing"
+            echo "::error::Add DEPLOY_HOST, DEPLOY_USER (and DEPLOY_SSH_KEY) either:"
+            echo "::error::  • Repository: Settings → Secrets and variables → Actions, or"
+            echo "::error::  • Environment: Settings → Environments → Production (same name as environment: in this workflow)."
+            echo "::error::Put the SSH **private key** in **Secrets** only — never in Variables (plaintext)."
             exit 1
           fi
 
       - name: SSH — pull, build, restart
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
+          host: ${{ env.DEPLOY_HOST_RESOLVED }}
+          username: ${{ env.DEPLOY_USER_RESOLVED }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script_stop: true
           script: |
