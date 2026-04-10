@@ -15,6 +15,20 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # Repository **Secrets** (Settings → Secrets and variables → Actions → Secrets),
+      # not Variables — this workflow only reads `secrets.*`.
+      # Do not inline DEPLOY_SSH_KEY here (multiline PEM breaks shell); ssh-action errors if it is missing.
+      - name: Require deploy secrets
+        run: |
+          missing=
+          [ -z "${{ secrets.DEPLOY_HOST }}" ] && missing="DEPLOY_HOST $missing"
+          [ -z "${{ secrets.DEPLOY_USER }}" ] && missing="DEPLOY_USER $missing"
+          if [ -n "$missing" ]; then
+            echo "::error::These GitHub Actions **repository secrets** are empty or missing: $missing"
+            echo "::error::Add them under Settings → Secrets and variables → Actions → **Secrets** (the Secrets tab, not Variables)."
+            exit 1
+          fi
+
       - name: SSH — pull, build, restart
         uses: appleboy/ssh-action@v1.2.0
         with:

@@ -103,7 +103,11 @@ sudo usermod -aG docker "$USER"
 # log out and back in
 ```
 
-3. Add repo secrets for the workflow:
+3. Add repo **secrets** for the workflow (not “Variables”):
+
+GitHub has two tabs: **Secrets** and **Variables**. This workflow reads **`secrets.DEPLOY_*`**. If you only create **Variables**, `secrets.DEPLOY_HOST` stays empty and the SSH step fails with **`Error: missing server host`**.
+
+Go to **Repository → Settings → Secrets and variables → Actions → Secrets** (tab) → **New repository secret**.
 
 | Secret | Example | Purpose |
 |--------|---------|---------|
