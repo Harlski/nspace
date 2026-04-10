@@ -1,0 +1,170 @@
+import cors from "cors";
+import express from "express";
+import fs from "node:fs";
+import { createServer } from "node:http";
+import { networkInterfaces } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { WebSocketServer } from "ws";
+import { createNonce, consumeNonce, signSession, verifySession } from "./auth.js";
+import { addClient, adminRandomExtraFloorLayout, startRoomTick } from "./rooms.js";
+import { flushPersistWorldStateSync } from "./worldPersistence.js";
+import { verifySignedMessage } from "./verifyNimiq.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const PORT = Number(process.env.PORT) || 3001;
+/** Bind address: `0.0.0.0` accepts connections on all interfaces (LAN + localhost). Use `127.0.0.1` for local-only. */
+const HOST = process.env.HOST ?? "0.0.0.0";
+const JWT_SECRET = process.env.JWT_SECRET || "dev-insecure-change-me";
+const NODE_ENV = process.env.NODE_ENV || "development";
+const DEV_AUTH_BYPASS =
+  NODE_ENV === "development" && process.env.DEV_AUTH_BYPASS === "1";
+
+const app = express();
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json({ limit: "64kb" }));
+
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/random-layout", (req, res) => {
+  const body = req.body as Record<string, unknown>;
+  const roomId = String(body.roomId ?? "hub");
+  const targetCount = Number(body.targetCount);
+  const seed = Number(body.seed ?? 0);
+  const clearExisting = Boolean(body.clearExisting);
+  const out = adminRandomExtraFloorLayout(roomId, {
+    targetCount,
+    seed,
+    clearExisting,
+  });
+  if (!out.ok) {
+    res.status(400).json({ error: out.error });
+    return;
+  }
+  res.json({ placed: out.placed, totalExtra: out.totalExtra });
+});
+
+app.get("/api/auth/nonce", (_req, res) => {
+  const { nonce, expiresAt } = createNonce();
+  res.json({ nonce, expiresAt });
+});
+
+app.post("/api/auth/verify", async (req, res) => {
+  const body = req.body as Record<string, unknown>;
+  const nonce = String(body.nonce ?? "");
+  const message = String(body.message ?? "");
+  const signer = String(body.signer ?? "");
+  const signerPublicKey = String(body.signerPublicKey ?? "");
+  const signature = String(body.signature ?? "");
+
+  if (!nonce || !message || !signer || !signerPublicKey || !signature) {
+    res.status(400).json({ error: "missing_fields" });
+    return;
+  }
+
+  if (!consumeNonce(nonce)) {
+    res.status(401).json({ error: "invalid_nonce" });
+    return;
+  }
+
+  const expected = `Login:v1:${nonce}`;
+  if (message !== expected) {
+    res.status(401).json({ error: "message_mismatch" });
+    return;
+  }
+
+  let ok = false;
+  if (DEV_AUTH_BYPASS) {
+    ok = true;
+  } else {
+    try {
+      ok = await verifySignedMessage(message, signerPublicKey, signature, signer);
+    } catch (e) {
+      console.error("verifySignedMessage", e);
+      ok = false;
+    }
+  }
+
+  if (!ok) {
+    res.status(401).json({ error: "invalid_signature" });
+    return;
+  }
+
+  const token = signSession(signer, JWT_SECRET);
+  res.json({ token, address: signer });
+});
+
+const server = createServer(app);
+
+const wss = new WebSocketServer({ server, path: "/ws" });
+
+startRoomTick();
+
+wss.on("connection", (ws, req) => {
+  const url = new URL(req.url || "", "http://localhost");
+  const token = url.searchParams.get("token") || "";
+  let address: string;
+  try {
+    const payload = verifySession(token, JWT_SECRET);
+    address = payload.sub;
+  } catch {
+    ws.close(4001, "unauthorized");
+    return;
+  }
+
+  const roomId = url.searchParams.get("room") || "hub";
+  const sx = url.searchParams.get("sx");
+  const sz = url.searchParams.get("sz");
+  let spawnHint: { x: number; z: number } | undefined;
+  if (sx !== null && sz !== null) {
+    const x = Number(sx);
+    const z = Number(sz);
+    if (Number.isFinite(x) && Number.isFinite(z)) {
+      spawnHint = { x, z };
+    }
+  }
+  addClient(roomId, ws, address, spawnHint);
+});
+
+const clientDist = path.join(__dirname, "../../client/dist");
+if (fs.existsSync(clientDist)) {
+  app.use(express.static(clientDist));
+  app.get("*", (req, res) => {
+    if (req.path.startsWith("/api")) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    res.sendFile(path.join(clientDist, "index.html"));
+  });
+}
+
+function logListenUrls(port: number, host: string): void {
+  console.log(`nspace server listening on ${host}:${port}`);
+  console.log(`  Local:   http://127.0.0.1:${port}/`);
+  if (host === "0.0.0.0" || host === "::") {
+    for (const nets of Object.values(networkInterfaces())) {
+      for (const a of nets ?? []) {
+        if (a.family === "IPv4" && !a.internal) {
+          console.log(`  Network: http://${a.address}:${port}/`);
+        }
+      }
+    }
+  }
+}
+
+function shutdown(signal: string): void {
+  console.log(`\n${signal} — flushing world state…`);
+  flushPersistWorldStateSync();
+  process.exit(0);
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+server.listen(PORT, HOST, () => {
+  logListenUrls(PORT, HOST);
+  if (DEV_AUTH_BYPASS) console.warn("DEV_AUTH_BYPASS enabled — not for production");
+});

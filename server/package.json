@@ -1,0 +1,26 @@
+{
+  "name": "nspace-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "DEV_AUTH_BYPASS=1 JWT_SECRET=dev-insecure-change-me tsx watch src/index.ts",
+    "build": "tsc -b",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@nimiq/core": "^2.2.2",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/node": "^22.13.10",
+    "@types/ws": "^8.18.0",
+    "tsx": "^4.19.3",
+    "typescript": "~5.7.2"
+  }
+}
