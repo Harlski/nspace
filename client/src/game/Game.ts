@@ -482,6 +482,7 @@ export class Game {
     this.selectionOutlineMat = new THREE.LineBasicMaterial({
       color: 0xffffff,
       depthTest: true,
+      linewidth: 3,
     });
     this.selectionOutline = new THREE.LineSegments(
       new THREE.BufferGeometry(),
@@ -1050,6 +1051,7 @@ export class Game {
   }
 
   setSelectedBlockKey(key: string | null): void {
+    if (this.selectedBlockKey === key) return;
     this.selectedBlockKey = key;
     this.refreshSelectionOutline();
   }
@@ -1085,6 +1087,11 @@ export class Game {
       this.selectionOutline.visible = false;
       return;
     }
+    // Add padding to make outline more visible
+    const padding = 0.04;
+    size.x += padding;
+    size.y += padding;
+    size.z += padding;
     const prev = this.selectionOutline.geometry;
     const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
     const edges = new THREE.EdgesGeometry(geo, 50);
@@ -1425,8 +1432,11 @@ export class Game {
           if (blockHit) {
             const [bx, bz] = blockHit.split(",").map(Number);
             this.cancelReposition();
+            const wasAlreadySelected = this.selectedBlockKey === blockHit;
             this.setSelectedBlockKey(blockHit);
-            this.obstacleSelectHandler?.(bx!, bz!);
+            if (!wasAlreadySelected) {
+              this.obstacleSelectHandler?.(bx!, bz!);
+            }
             return;
           }
           const dest = this.pickFloor(e.clientX, e.clientY);
@@ -1447,8 +1457,11 @@ export class Game {
       const blockHit = this.pickBlockKey(e.clientX, e.clientY);
       if (blockHit) {
         const [bx, bz] = blockHit.split(",").map(Number);
+        const wasAlreadySelected = this.selectedBlockKey === blockHit;
         this.setSelectedBlockKey(blockHit);
-        this.obstacleSelectHandler?.(bx!, bz!);
+        if (!wasAlreadySelected) {
+          this.obstacleSelectHandler?.(bx!, bz!);
+        }
         return;
       }
 

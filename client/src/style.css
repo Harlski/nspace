@@ -437,12 +437,13 @@ body {
   line-height: 1.35;
 }
 
+/* Sits in .hud-top-actions before Walk / Build / Floor (see hud.ts) */
 .build-object-panel {
-  position: absolute;
-  top: 48px;
-  left: 10px;
-  right: auto;
-  width: min(260px, 42vw);
+  position: relative;
+  flex: 0 1 auto;
+  align-self: flex-start;
+  width: min(260px, min(42vw, calc(100vw - 200px)));
+  max-width: min(260px, calc(100vw - 200px));
   padding: 12px 14px;
   border-radius: 8px;
   background: rgba(15, 17, 23, 0.94);
@@ -451,12 +452,21 @@ body {
   pointer-events: auto;
   font-size: 13px;
   line-height: 1.4;
+  will-change: contents;
 }
 
 .build-object-panel__title {
   font-weight: 600;
-  margin-bottom: 10px;
+  margin-bottom: 4px;
   color: #e8eaef;
+}
+
+.build-object-panel__hints {
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0.78;
+  margin-bottom: 10px;
+  color: #9ca3af;
 }
 
 .build-object-panel__row {
@@ -474,17 +484,29 @@ body {
   accent-color: #2dd4bf;
 }
 
+.build-object-panel__footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
 .build-object-panel__btn {
-  display: block;
-  width: 100%;
-  margin-top: 6px;
-  padding: 7px 10px;
-  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  margin: 0;
+  padding: 4px 9px;
+  border-radius: 5px;
   border: 1px solid #3d465a;
   background: rgba(45, 53, 72, 0.95);
   color: #e8eaef;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .build-object-panel__btn:hover {
@@ -494,10 +516,6 @@ body {
 .build-object-panel__remove {
   border-color: #7f1d1d;
   color: #fecaca;
-}
-
-.build-object-panel__move {
-  margin-top: 0;
 }
 
 .build-object-panel__colors {
@@ -621,15 +639,13 @@ body {
   }
 
   .build-object-panel {
-    width: min(120px, 32vw);
-    max-width: 120px;
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
     max-height: min(70vh, 480px);
     overflow-y: auto;
     font-size: 11px;
     padding: 10px 10px;
-    left: 8px;
-    right: auto;
-    top: 44px;
   }
 }
 
@@ -766,9 +782,28 @@ body {
 
 .build-object-panel__ramp-dir-controls {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.build-object-panel__ramp-step {
+  padding: 0 8px;
+  height: 26px;
+  border-radius: 5px;
+  border: 1px solid #3d465a;
+  background: rgba(45, 53, 72, 0.95);
+  color: #c8ceda;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.build-object-panel__ramp-step:hover {
+  background: rgba(55, 64, 86, 0.98);
+  color: #e8eaef;
 }
 
 .build-object-panel__ramp-rot {

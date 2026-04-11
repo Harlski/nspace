@@ -473,8 +473,16 @@ export function createHud(
   let panelMoreColorsBtn: HTMLButtonElement | null = null;
   let panelAdvancedToggle: HTMLButtonElement | null = null;
   let panelAdvancedSection: HTMLElement | null = null;
+  let panelKeyHintsEl: HTMLElement | null = null;
   let panelSelectedColorId = 0;
   let panelOnPropsChange: ((p: ObstacleProps) => void) | null = null;
+
+  function updatePanelKeyHints(): void {
+    if (!panelKeyHintsEl || !rampCheckbox) return;
+    const parts: string[] = ["D — Delete"];
+    if (rampCheckbox.checked) parts.push("R — Rotate ramp");
+    panelKeyHintsEl.textContent = parts.join(" · ");
+  }
 
   function wirePanelColorClicks(): void {
     panelColorRoot?.addEventListener("click", onPanelColorClick);
@@ -559,6 +567,7 @@ export function createHud(
       panelMoreColorsBtn = null;
       panelAdvancedToggle = null;
       panelAdvancedSection = null;
+      panelKeyHintsEl = null;
       panelOnPropsChange = null;
     }
   }
@@ -630,6 +639,7 @@ export function createHud(
       objectPanel.className = "build-object-panel";
       objectPanel.innerHTML = `
         <div class="build-object-panel__title">Block (${opts.x}, ${opts.z})</div>
+        <div class="build-object-panel__hints" aria-hidden="true"></div>
         <div class="build-object-panel__colors" aria-label="Block color">
           <div class="build-object-panel__colors-label">Color</div>
           <div class="build-object-panel__swatches-recent"></div>
@@ -663,14 +673,20 @@ export function createHud(
             <div class="build-object-panel__ramp-dir-controls">
               <button type="button" class="build-object-panel__ramp-rot build-object-panel__ramp-ccw" title="Rotate counter-clockwise" aria-label="Rotate ramp counter-clockwise">↺</button>
               <button type="button" class="build-object-panel__ramp-rot build-object-panel__ramp-cw" title="Rotate clockwise" aria-label="Rotate ramp clockwise">↻</button>
+              <button type="button" class="build-object-panel__ramp-step" title="Rotate ramp (R)">Rotate</button>
             </div>
           </div>
         </div>
-        <button type="button" class="build-object-panel__btn build-object-panel__move">Move to tile…</button>
-        <button type="button" class="build-object-panel__btn build-object-panel__remove">Remove</button>
-        <button type="button" class="build-object-panel__btn build-object-panel__close">Close</button>
+        <div class="build-object-panel__footer-actions">
+          <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
+          <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
+          <button type="button" class="build-object-panel__btn build-object-panel__close">Close</button>
+        </div>
       `;
-      ui.appendChild(objectPanel);
+      topActions.insertBefore(objectPanel, modeSegment);
+      panelKeyHintsEl = objectPanel.querySelector(
+        ".build-object-panel__hints"
+      ) as HTMLElement;
       passCheckbox = objectPanel.querySelector(
         ".build-object-panel__cb-pass"
       ) as HTMLInputElement;
@@ -720,6 +736,7 @@ export function createHud(
       hexCheckbox.checked = opts.ramp ? false : opts.hex;
       rampCheckbox.checked = opts.ramp;
       rampDirRow.hidden = !opts.ramp;
+      updatePanelKeyHints();
       for (let i = 0; i < BLOCK_COLOR_COUNT; i++) {
         panelSwatchesAll!.appendChild(makeColorSwatchButton(i));
       }
@@ -761,6 +778,7 @@ export function createHud(
         rampDirRow!.hidden = !on;
         if (on) hexCheckbox!.checked = false;
         emitPanelProps();
+        updatePanelKeyHints();
       });
       const rotatePanelRamp = (delta: -1 | 1): void => {
         if (!rampCheckbox?.checked) return;
@@ -769,6 +787,9 @@ export function createHud(
       };
       panelRampRotCCW!.addEventListener("click", () => rotatePanelRamp(-1));
       panelRampRotCW!.addEventListener("click", () => rotatePanelRamp(1));
+      objectPanel
+        .querySelector(".build-object-panel__ramp-step")
+        ?.addEventListener("click", () => rotatePanelRamp(1));
       objectPanel
         .querySelector(".build-object-panel__move")
         ?.addEventListener("click", () => opts.onMove());
@@ -795,6 +816,7 @@ export function createHud(
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(p.colorId))
       );
       syncPanelSwatchSelection();
+      updatePanelKeyHints();
     },
     rotateRampToward(delta: -1 | 1): boolean {
       if (objectPanel) {
