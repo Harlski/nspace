@@ -13,13 +13,16 @@ The workflow assumes the repository is cloned at **`/opt/nspace`** on the host. 
   - A `.env` file next to `docker-compose.yml` (see [Environment](#environment) below).
   - A persistent data directory: create `data/` so the compose file can mount `./data` → world + event logs.
 
+**Important:** The deploy script `cd`s to `/opt/nspace` and runs `git fetch`. That path must be a **full `git clone`**, not an empty folder. If you only `mkdir` without cloning, you get `fatal: not a git repository`.
+
 ```bash
-sudo mkdir -p /opt/nspace/data
-sudo chown -R "$USER:$USER" /opt/nspace
-cd /opt/nspace
-# clone (after GitHub deploy key is set up — next section)
-git clone git@github.com:YOUR_ORG/nspace.git .
+sudo mkdir -p /opt/nspace
+sudo chown -R deployer:deployer /opt/nspace
+sudo -u deployer bash -c 'cd /opt/nspace && git clone git@github.com:YOUR_ORG/nspace.git .'
+sudo -u deployer mkdir -p /opt/nspace/data
 ```
+
+Replace `YOUR_ORG/nspace` with your repo (same as `github.com/<owner>/<name>`). After the [VPS → GitHub deploy key](#a-vps--github-deploy-key-so-the-server-can-git-pull) is configured, `git clone` must succeed.
 
 ## Two different SSH keys (do not mix them up)
 

@@ -47,7 +47,15 @@ jobs:
           script: |
             set -euo pipefail
             # Same path as docs/deploy-github-docker.md — change here if your clone lives elsewhere.
-            cd /opt/nspace
+            DEPLOY_ROOT=/opt/nspace
+            if [ ! -d "$DEPLOY_ROOT/.git" ]; then
+              echo "ERROR: $DEPLOY_ROOT is not a git repository (no .git)."
+              echo "One-time on the VPS (as deployer, with GitHub deploy key for git@github.com):"
+              echo "  sudo mkdir -p $DEPLOY_ROOT && sudo chown deployer:deployer $DEPLOY_ROOT"
+              echo "  cd $DEPLOY_ROOT && git clone git@github.com:${{ github.repository }}.git ."
+              exit 1
+            fi
+            cd "$DEPLOY_ROOT"
             git fetch origin main
             git reset --hard origin/main
             docker compose build --pull
