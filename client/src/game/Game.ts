@@ -234,6 +234,8 @@ export class Game {
   private readonly hit = new THREE.Vector3();
   private selfAddress = "";
   private selfMesh: THREE.Group | null = null;
+  /** Authoritative position from server; selfMesh lerps toward this each frame. */
+  private selfTargetPos: THREE.Vector3 | null = null;
   private readonly others = new Map<string, THREE.Group>();
   private readonly chatBubbleByAddress = new Map<string, ChatBubbleEntry>();
   private readonly targetPos = new Map<string, THREE.Vector3>();
@@ -1402,6 +1404,7 @@ export class Game {
   setSelf(address: string, displayName?: string): void {
     this.selfAddress = address;
     this.cameraFollowReady = false;
+    this.selfTargetPos = null;
     if (this.selfMesh) {
       this.disposeAvatarGroup(this.selfMesh);
       this.scene.remove(this.selfMesh);
@@ -1426,6 +1429,7 @@ export class Game {
       this.scene.remove(this.selfMesh);
       this.selfMesh = null;
     }
+    this.selfTargetPos = null;
     for (const [, g] of this.others) {
       this.disposeAvatarGroup(g);
       this.scene.remove(g);
@@ -1865,10 +1869,20 @@ export class Game {
       const py = Number.isFinite(p.y) ? p.y : 0;
       if (p.address === this.selfAddress) {
         if (this.selfMesh) {
+          if (!this.selfTargetPos) {
+            this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
+            this.selfMesh.position.set(p.x, py, p.z);
+          } else {
+            this.selfTargetPos.set(p.x, py, p.z);
+          }
           const ox = this.selfMesh.position.x;
+          const oy = this.selfMesh.position.y;
           const oz = this.selfMesh.position.z;
-          this.selfMesh.position.set(p.x, py, p.z);
-          const jumped = Math.hypot(p.x - ox, p.z - oz) > 6;
+          const jumped =
+            Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5;
+          if (jumped) {
+            this.selfMesh.position.set(p.x, py, p.z);
+          }
           if (!this.cameraFollowReady || jumped) {
             this.cameraLookAt.set(p.x, py, p.z);
             this.applyCameraPose();
@@ -1903,6 +1917,19 @@ export class Game {
   }
 
   tick(dt: number): void {
+    if (this.selfMesh && this.selfTargetPos) {
+      const t = this.selfTargetPos;
+      const mx = this.selfMesh.position.x;
+      const my = this.selfMesh.position.y;
+      const mz = this.selfMesh.position.z;
+      const jumped =
+        Math.hypot(t.x - mx, t.z - mz) > 6 || Math.abs(t.y - my) > 1.5;
+      if (jumped) {
+        this.selfMesh.position.copy(t);
+      } else {
+        this.selfMesh.position.lerp(t, 1 - Math.exp(-LERP * dt));
+      }
+    }
     for (const [addr, g] of this.others) {
       const t = this.targetPos.get(addr);
       if (!t) continue;
