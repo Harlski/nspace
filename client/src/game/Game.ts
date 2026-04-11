@@ -19,6 +19,7 @@ const LS_IDENTICON_RX = "nspace_identicon_rx_deg";
 const LS_IDENTICON_RY = "nspace_identicon_ry_deg";
 const LS_IDENTICON_RZ = "nspace_identicon_rz_deg";
 const LS_IDENTICON_SCALE = "nspace_identicon_scale";
+const LS_FLOOR_TILE_QUAD = "nspace_floor_tile_quad";
 const DEFAULT_ZOOM_MIN = 4;
 const DEFAULT_ZOOM_MAX = 13.44;
 import { loadIdenticonTexture } from "./identiconTexture.js";
@@ -48,12 +49,15 @@ import {
 
 const LERP = 12;
 
-/** Pastel terrain: void (non-walkable) reads as water; walkable tiles are grass. */
+/** Default scale on unit floor plane; >1 hides subpixel seams (tunable in admin). */
+const DEFAULT_FLOOR_TILE_QUAD = 1.006;
+
+/** Void (non-walkable) — water/sky tint; walkable tiles use dark gray palette below. */
 const TERRAIN_WATER_COLOR = 0xa8d8ea;
-/** Brighter, more saturated grass (core room vs expanded tiles vs door path). */
-const TERRAIN_GRASS_CORE_COLOR = 0x9ccc65;
-const TERRAIN_GRASS_EXTRA_COLOR = 0x8bc34a;
-const TERRAIN_DOOR_COLOR = 0xc5e1a5;
+/** Core room / expanded floor / door — black–gray tones (not grass). */
+const TERRAIN_TILE_CORE_COLOR = 0x2d3340;
+const TERRAIN_TILE_EXTRA_COLOR = 0x3d5a4a;
+const TERRAIN_TILE_DOOR_COLOR = 0x5c4a32;
 
 /** y=0 ground plane (world). */
 const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -263,6 +267,9 @@ export class Game {
   private readonly extraFloorKeys = new Set<string>();
   /** One plane per walkable tile (core grid + extra); void shows scene background only. */
   private readonly walkableFloorMeshes = new Map<string, THREE.Mesh>();
+  /** Shared 1×1 geometry; `floorTileQuadSize` scales each mesh to hide edge seams. */
+  private readonly walkableFloorPlaneGeom = new THREE.PlaneGeometry(1, 1);
+  private floorTileQuadSize = DEFAULT_FLOOR_TILE_QUAD;
   /** All placed objects (solid and walk-through). */
   private readonly placedObjects = new Map<string, BlockStyleProps>();
   /** Styles applied when placing new blocks in build mode. */
@@ -371,6 +378,10 @@ export class Game {
       z: Game.readIdenticonDeg(LS_IDENTICON_RZ, 0),
     };
     this.identiconScale = Game.readIdenticonScale(LS_IDENTICON_SCALE, 1);
+    this.floorTileQuadSize = Game.readFloorTileQuad(
+      LS_FLOOR_TILE_QUAD,
+      DEFAULT_FLOOR_TILE_QUAD
+    );
 
     const aspect = 16 / 9;
     this.camera = new THREE.OrthographicCamera(
@@ -611,6 +622,18 @@ export class Game {
     return Number.isFinite(n) && n > 0 ? n : fallback;
   }
 
+  private static clampFloorTileQuad(n: number): number {
+    if (!Number.isFinite(n)) return DEFAULT_FLOOR_TILE_QUAD;
+    return Math.min(1.08, Math.max(1.0, n));
+  }
+
+  private static readFloorTileQuad(key: string, fallback: number): number {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) ? Game.clampFloorTileQuad(n) : fallback;
+  }
+
   private static readIdenticonDeg(key: string, fallback: number): number {
     const raw = localStorage.getItem(key);
     if (raw === null) return fallback;
@@ -699,6 +722,28 @@ export class Game {
 
   getZoomBounds(): { min: number; max: number } {
     return { min: this.zoomMin, max: this.zoomMax };
+  }
+
+  /** Uniform XY scale on shared 1×1 floor quads (reduces seam flicker when > 1). Persists in localStorage. */
+  getFloorTileQuadSize(): number {
+    return this.floorTileQuadSize;
+  }
+
+  setFloorTileQuadSize(size: number): void {
+    this.floorTileQuadSize = Game.clampFloorTileQuad(size);
+    try {
+      localStorage.setItem(LS_FLOOR_TILE_QUAD, String(this.floorTileQuadSize));
+    } catch {
+      /* ignore quota */
+    }
+    this.applyFloorTileQuadScale();
+  }
+
+  private applyFloorTileQuadScale(): void {
+    const s = this.floorTileQuadSize;
+    for (const [, mesh] of this.walkableFloorMeshes) {
+      mesh.scale.set(s, s, 1);
+    }
   }
 
   /**
@@ -1489,10 +1534,10 @@ export class Game {
     this.blockMeshes.clear();
     for (const [, mesh] of this.walkableFloorMeshes) {
       this.scene.remove(mesh);
-      mesh.geometry.dispose();
       (mesh.material as THREE.Material).dispose();
     }
     this.walkableFloorMeshes.clear();
+    this.walkableFloorPlaneGeom.dispose();
     this.pathGeom.dispose();
     (this.pathLine.material as THREE.Material).dispose();
     this.trailGeom.dispose();
@@ -1728,17 +1773,22 @@ export class Game {
       let mesh = this.walkableFloorMeshes.get(k);
       if (!mesh) {
         const baseColor = isDoor
-          ? TERRAIN_DOOR_COLOR
+          ? TERRAIN_TILE_DOOR_COLOR
           : isExtra
-            ? TERRAIN_GRASS_EXTRA_COLOR
-            : TERRAIN_GRASS_CORE_COLOR;
+            ? TERRAIN_TILE_EXTRA_COLOR
+            : TERRAIN_TILE_CORE_COLOR;
         mesh = new THREE.Mesh(
-          new THREE.PlaneGeometry(0.98, 0.98),
+          this.walkableFloorPlaneGeom,
           new THREE.MeshStandardMaterial({
             color: baseColor,
-            roughness: isExtra ? 0.92 : 0.94,
-            metalness: 0.02,
+            roughness: isExtra ? 0.88 : 0.9,
+            metalness: isExtra ? 0.06 : 0.05,
           })
+        );
+        mesh.scale.set(
+          this.floorTileQuadSize,
+          this.floorTileQuadSize,
+          1
         );
         mesh.rotation.x = -Math.PI / 2;
         mesh.position.set(wx, 0.01, wz);
@@ -1756,13 +1806,13 @@ export class Game {
         ) {
           mat.color.setHex(
             wantDoor
-              ? TERRAIN_DOOR_COLOR
+              ? TERRAIN_TILE_DOOR_COLOR
               : wantExtra
-                ? TERRAIN_GRASS_EXTRA_COLOR
-                : TERRAIN_GRASS_CORE_COLOR
+                ? TERRAIN_TILE_EXTRA_COLOR
+                : TERRAIN_TILE_CORE_COLOR
           );
-          mat.roughness = wantExtra ? 0.92 : 0.94;
-          mat.metalness = 0.02;
+          mat.roughness = wantExtra ? 0.88 : 0.9;
+          mat.metalness = wantExtra ? 0.06 : 0.05;
           mesh.userData["isExtra"] = wantExtra;
           mesh.userData["isDoor"] = wantDoor;
         }
@@ -1771,11 +1821,11 @@ export class Game {
     for (const [k, mesh] of [...this.walkableFloorMeshes]) {
       if (!seen.has(k)) {
         this.scene.remove(mesh);
-        mesh.geometry.dispose();
         (mesh.material as THREE.Material).dispose();
         this.walkableFloorMeshes.delete(k);
       }
     }
+    this.applyFloorTileQuadScale();
   }
 
   private syncBlockMeshes(): void {

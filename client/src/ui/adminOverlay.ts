@@ -56,6 +56,11 @@ export function installAdminOverlay(
         <span>Clear existing extra floor first</span>
       </label>
       <button type="button" class="admin-overlay-btn" id="admin-random">Random layout</button>
+      <p class="admin-overlay-hint">Floor tile overlap — scale on shared 1×1 quads to hide subpixel blue seams. Persists locally.</p>
+      <label class="admin-overlay-field"><span>Tile quad scale</span>
+        <input type="range" class="admin-overlay-range" id="floor-tile-quad" min="1" max="1.08" step="0.001" value="1.006" />
+        <span class="admin-overlay-range-val" id="floor-tile-quad-val">1.006</span>
+      </label>
     </div>
     <div class="admin-overlay-tab-panel" data-panel="fog" hidden>
       <p class="admin-overlay-hint">Fog uses horizontal distance on the ground from your avatar. Disabled = render like before fog of war.</p>
@@ -144,6 +149,15 @@ export function installAdminOverlay(
   const avatarRyVal = $("avatar-ry-val") as HTMLSpanElement;
   const avatarRzVal = $("avatar-rz-val") as HTMLSpanElement;
 
+  const floorTileQuad = $("floor-tile-quad") as HTMLInputElement;
+  const floorTileQuadVal = $("floor-tile-quad-val") as HTMLSpanElement;
+
+  const syncFloorTileFields = (): void => {
+    const s = game.getFloorTileQuadSize();
+    floorTileQuad.value = String(s);
+    floorTileQuadVal.textContent = s.toFixed(3);
+  };
+
   const syncAvatarFields = (): void => {
     const sc = game.getIdenticonScale();
     avatarScale.value = String(sc);
@@ -182,6 +196,7 @@ export function installAdminOverlay(
       p.hidden = p.dataset.panel !== id;
     });
     if (id === "avatar") syncAvatarFields();
+    if (id === "layout") syncFloorTileFields();
   };
 
   tabButtons.forEach((btn) => {
@@ -200,6 +215,7 @@ export function installAdminOverlay(
     syncZoomFields();
     syncFogFields();
     syncAvatarFields();
+    syncFloorTileFields();
     setTab("layout");
     setStatus(`Frustum: ${game.getZoomFrustumSize().toFixed(1)} · Fog: ${game.getFogOfWarEnabled() ? "on" : "off"}`);
   };
@@ -258,6 +274,15 @@ export function installAdminOverlay(
     syncAvatarFields();
     setStatus("Identicon orientation and scale reset");
   });
+
+  const onFloorTileQuadInput = (): void => {
+    game.setFloorTileQuadSize(Number(floorTileQuad.value));
+    const s = game.getFloorTileQuadSize();
+    floorTileQuad.value = String(s);
+    floorTileQuadVal.textContent = s.toFixed(3);
+    setStatus(`Floor tile quad scale ${s.toFixed(3)} (persists locally)`);
+  };
+  floorTileQuad.addEventListener("input", onFloorTileQuadInput);
 
   $("admin-random").addEventListener("click", async () => {
     const roomId = roomInput.value.trim() || opts.roomId;
