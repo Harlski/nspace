@@ -167,6 +167,7 @@ After GitHub secrets are set, merging or pushing to `main` will run the workflow
 
 ## Troubleshooting
 
+- **`docker: command not found`** (exit 127): Docker is not installed, or the **Compose v2** plugin is missing, or `deployer` was never added to the **`docker`** group (and did not start a new session after `usermod`). On the VPS as `deployer`, run `command -v docker && docker compose version`. Install example for Debian/Ubuntu: `sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2` then `sudo usermod -aG docker deployer` and **log out and back in** (or reboot) so group membership applies to SSH sessions.
 - **Permission denied (publickey)** from Actions: check `DEPLOY_USER`, `DEPLOY_HOST`, and that the matching **public** key is in that user’s `authorized_keys`.
 - **`git fetch` fails on server**: test `ssh -T git@github.com` on the VPS; fix deploy key / `~/.ssh/config`.
-- **Docker permission denied**: user must be in `docker` group or use `sudo` (if you use `sudo`, update the workflow script to prefix `docker` with `sudo`).
+- **Docker permission denied** (`permission denied while trying to connect to the Docker daemon socket`): user must be in `docker` group and use a **new** login session; or prefix `docker` with `sudo` in the workflow (less ideal).

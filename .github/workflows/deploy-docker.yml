@@ -46,6 +46,14 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
+            # Non-interactive SSH often has a minimal PATH; Docker is usually under /usr/bin.
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "ERROR: docker not found (install Docker Engine + Compose v2 plugin on the VPS)."
+              echo "Example (Debian/Ubuntu): sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2"
+              echo "Then: sudo usermod -aG docker deployer  (log out/in), verify: docker compose version"
+              exit 127
+            fi
             # Same path as docs/deploy-github-docker.md — change here if your clone lives elsewhere.
             DEPLOY_ROOT=/opt/nspace
             if [ ! -d "$DEPLOY_ROOT/.git" ]; then

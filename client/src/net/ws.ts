@@ -1,4 +1,5 @@
 import type { PlayerState } from "../types.js";
+import { resolveApiBaseUrl } from "./apiBase.js";
 
 export type ObstacleTile = {
   x: number;
@@ -85,9 +86,23 @@ export function connectGameWs(
   let originBase: string;
   const wsEnv = import.meta.env.VITE_WS_BASE_URL;
   if (wsEnv) {
-    originBase = String(wsEnv).replace(/\/$/, "");
+    let w = String(wsEnv).trim().replace(/\/$/, "");
+    if (!w.includes("://")) {
+      const lower = w.toLowerCase();
+      const useWs =
+        lower.startsWith("localhost") ||
+        lower.startsWith("127.0.0.1") ||
+        lower.startsWith("[::1]");
+      w = `${useWs ? "ws://" : "wss://"}${w}`;
+    }
+    try {
+      originBase = new URL(w).origin;
+    } catch {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      originBase = `${proto}//${location.host}`;
+    }
   } else {
-    const api = import.meta.env.VITE_API_BASE_URL;
+    const api = resolveApiBaseUrl();
     if (api) {
       try {
         const u = new URL(api);

@@ -43,8 +43,8 @@ Adjust when tuning feel or abuse resistance.
 | `VITE_DEV_AUTH_BYPASS` | client | `1` shows Dev login |
 | `VITE_ADMIN_ENABLED` | client | `true` shows Admin overlay (layout / fog / camera) |
 | `VITE_HUB_URL` | client | Nimiq Hub base URL (optional override) |
-| `VITE_API_BASE_URL` | client | HTTP origin when SPA and API differ (e.g. `https://api.example.com`) |
-| `VITE_WS_BASE_URL` | client | Optional explicit WebSocket origin; otherwise derived from `VITE_API_BASE_URL` or page |
+| `VITE_API_BASE_URL` | client | API origin when SPA and API differ. Prefer full URL (`https://api.example.com`). Host-only (`api.example.com`) is normalized to `https://…` so it is not treated as a path on the SPA host. |
+| `VITE_WS_BASE_URL` | client | Optional WebSocket origin (`wss://…` or host-only); otherwise derived from resolved API base or page |
 | `EVENT_LOG_DIR` | server | Directory for append-only JSONL replay logs (`events-*.jsonl`); default `server/data/events` |
 | `PLACE_RADIUS_BLOCKS` | server | Max horizontal distance for block place/edit/move actions (default `5`) |
 
