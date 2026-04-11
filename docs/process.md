@@ -39,7 +39,7 @@ Adjust when tuning feel or abuse resistance.
 | `DEV_AUTH_BYPASS` | server | `1` = skip signature verification (development only) |
 | `NODE_ENV` | server | `development` enables bypass flag pairing in some setups |
 | `PORT` | server | HTTP + WebSocket listen port (default `3001`) |
-| `FAKE_PLAYER_COUNT` | server | `0`–`32` NPC wanderers per room (default **4**; display names prefixed with `[NPC]`; set `0` to disable) |
+| `FAKE_PLAYER_COUNT` | server | `0`–`32` NPC wanderers per room (default **2**; display names prefixed with `[NPC]`; set `0` to disable) |
 | `VITE_DEV_AUTH_BYPASS` | client | `1` shows Dev login |
 | `VITE_ADMIN_ENABLED` | client | `true` shows Admin overlay (layout / fog / camera) |
 | `VITE_HUB_URL` | client | Nimiq Hub base URL (optional override) |

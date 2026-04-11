@@ -62,16 +62,15 @@ function startIdleReturnToMenu(ms: number, onIdle: () => void): () => void {
 function openMainMenu(): void {
   const app = document.getElementById("app");
   if (!app) return;
-  let cached = loadCachedSession();
-  if (cached && isTokenExpired(cached.token)) {
-    clearCachedSession();
-    cached = null;
-  }
-  const hasValid = !!(cached && !isTokenExpired(cached.token));
+  const cached = loadCachedSession();
+  const hasValid = !!(
+    cached && !isTokenExpired(cached.token)
+  );
   unmountMainMenu?.();
   unmountMainMenu = mountMainMenu({
     app,
     hasValidSession: hasValid,
+    cachedAddress: cached?.address ?? null,
     authToken:
       hasValid && cached && !isTokenExpired(cached.token) ? cached.token : null,
     devBypass: DEV_CLIENT_BYPASS,

@@ -1,4 +1,5 @@
 import { fetchNonce, signInWithWallet, verifyWithServer } from "../auth/nimiq.js";
+import { identiconDataUrl } from "../game/identiconTexture.js";
 import { apiUrl } from "../net/apiBase.js";
 
 const TELEGRAM_URL = "https://t.me/nimiqspace";
@@ -97,6 +98,8 @@ async function replayFetchJson<T>(
 export type MainMenuOptions = {
   app: HTMLElement;
   hasValidSession: boolean;
+  /** Saved wallet address (valid or expired session) for identicon + clear. */
+  cachedAddress: string | null;
   /** JWT for `/api/replay/*` (session action log). */
   authToken: string | null;
   devBypass: boolean;
@@ -106,12 +109,13 @@ export type MainMenuOptions = {
 };
 
 /**
- * Full-screen lobby: title, floating hexes, connect / reconnect / logout, social links.
+ * Full-screen lobby: title, floating hexes, identicon continue / Nimiq sign-in, social links.
  */
 export function mountMainMenu(opts: MainMenuOptions): () => void {
   const {
     app,
     hasValidSession,
+    cachedAddress,
     authToken,
     devBypass,
     onReconnect,
@@ -127,22 +131,28 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   root.innerHTML = `
     <div class="main-menu__hex-layer" aria-hidden="true"></div>
     <div class="main-menu__content">
-      <h1 class="main-menu__title">Nimiq Space</h1>
-      <p class="main-menu__subtitle">Walk the floor, build, chat — connect your wallet to enter.</p>
+      <h1 class="main-menu__title">
+        <span class="main-menu__title-nimiq">Nimiq</span>
+        <span class="main-menu__title-space">Space</span>
+      </h1>
+      <div class="main-menu__user" id="main-menu-user" hidden>
+        <div class="main-menu__identicon-wrap">
+          <button type="button" class="main-menu__identicon-btn" id="btn-identicon-continue">
+            <img class="main-menu__identicon" id="main-menu-identicon" width="56" height="56" alt="" />
+          </button>
+          <button type="button" class="main-menu__identicon-clear" id="btn-clear-cached-user" aria-label="Forget saved account">×</button>
+        </div>
+      </div>
       <div class="main-menu__err" id="main-menu-err" hidden></div>
       <div class="main-menu__actions">
-        <button type="button" class="btn btn-primary main-menu__btn-reconnect" id="btn-reconnect">
-          Reconnect
-        </button>
-        <button type="button" class="btn btn-primary" id="btn-connect-wallet">
-          Connect wallet
+        <button type="button" class="btn main-menu__btn-nimiq" id="btn-nimiq-account">
+          Sign in with Nimiq
         </button>
         ${
           devBypass
             ? `<button type="button" class="btn btn-secondary" id="btn-dev-login">Dev login</button>`
             : ""
         }
-        <button type="button" class="btn btn-ghost" id="btn-logout">Log out</button>
       </div>
       ${
         replayUiEnabled
@@ -212,32 +222,86 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     errEl.textContent = s;
   };
 
-  const btnReconnect = root.querySelector("#btn-reconnect") as HTMLButtonElement;
-  btnReconnect.hidden = !hasValidSession;
+  const userRow = root.querySelector("#main-menu-user") as HTMLElement;
+  const identiconWrap = root.querySelector(
+    ".main-menu__identicon-wrap"
+  ) as HTMLElement;
+  const identiconImg = root.querySelector("#main-menu-identicon") as HTMLImageElement;
+  const btnIdenticonContinue = root.querySelector(
+    "#btn-identicon-continue"
+  ) as HTMLButtonElement;
+  const btnClearCached = root.querySelector(
+    "#btn-clear-cached-user"
+  ) as HTMLButtonElement;
+  const btnNimiqAccount = root.querySelector(
+    "#btn-nimiq-account"
+  ) as HTMLButtonElement;
+
+  if (cachedAddress) {
+    userRow.hidden = false;
+    if (hasValidSession) {
+      identiconWrap.classList.add("main-menu__identicon-wrap--signed-in");
+    }
+    btnIdenticonContinue.setAttribute(
+      "aria-label",
+      hasValidSession ? "Continue with saved account" : "Sign in again with Nimiq"
+    );
+    btnNimiqAccount.textContent = "Add another";
+    void identiconDataUrl(cachedAddress)
+      .then((url) => {
+        identiconImg.src = url;
+      })
+      .catch(() => {
+        userRow.hidden = true;
+      });
+  } else {
+    btnNimiqAccount.textContent = "Sign in with Nimiq";
+  }
+
+  const runNimiqWalletSignIn = async (): Promise<void> => {
+    const { nonce } = await fetchNonce();
+    const signed = await signInWithWallet(nonce);
+    const { token, address } = await verifyWithServer(signed);
+    onLoggedIn(token, address);
+  };
 
   const setBusy = (busy: boolean): void => {
-    btnReconnect.disabled = busy;
-    (root.querySelector("#btn-connect-wallet") as HTMLButtonElement).disabled =
-      busy;
+    btnIdenticonContinue.disabled = busy;
+    btnNimiqAccount.disabled = busy;
+    btnClearCached.disabled = busy;
     const devBtn = root.querySelector("#btn-dev-login") as
       | HTMLButtonElement
       | undefined;
     if (devBtn) devBtn.disabled = busy;
   };
 
-  btnReconnect.addEventListener("click", () => {
+  btnClearCached.addEventListener("click", (ev) => {
+    ev.stopPropagation();
     showErr("");
-    onReconnect();
+    onLogout();
   });
 
-  root.querySelector("#btn-connect-wallet")?.addEventListener("click", async () => {
+  btnIdenticonContinue.addEventListener("click", async () => {
+    if (!cachedAddress) return;
+    showErr("");
+    if (hasValidSession) {
+      onReconnect();
+      return;
+    }
+    setBusy(true);
+    try {
+      await runNimiqWalletSignIn();
+    } catch (e) {
+      showErr(e instanceof Error ? e.message : "login_failed");
+      setBusy(false);
+    }
+  });
+
+  btnNimiqAccount.addEventListener("click", async () => {
     showErr("");
     setBusy(true);
     try {
-      const { nonce } = await fetchNonce();
-      const signed = await signInWithWallet(nonce);
-      const { token, address } = await verifyWithServer(signed);
-      onLoggedIn(token, address);
+      await runNimiqWalletSignIn();
     } catch (e) {
       showErr(e instanceof Error ? e.message : "login_failed");
       setBusy(false);
@@ -269,10 +333,6 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       showErr(e instanceof Error ? e.message : "dev_login_failed");
       setBusy(false);
     }
-  });
-
-  root.querySelector("#btn-logout")?.addEventListener("click", () => {
-    onLogout();
   });
 
   if (!replayUiEnabled) {

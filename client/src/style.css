@@ -9,14 +9,9 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #0f1117;
+  background: #000000;
   color: #e8eaef;
-  font-family:
-    system-ui,
-    -apple-system,
-    Segoe UI,
-    Roboto,
-    Ubuntu,
+  font-family: "Mulish", system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu,
     sans-serif;
   -webkit-tap-highlight-color: transparent;
 }
@@ -32,7 +27,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(ellipse at center, #1e2433 0%, #0f1117 70%);
+  background: #000000;
 }
 
 .letterbox {
@@ -776,7 +771,7 @@ body {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #2dd4bf, #0d9488);
+  background: #2dd4bf;
   color: #0f1117;
 }
 
@@ -931,7 +926,7 @@ body {
   margin-top: 4px;
   border-radius: 6px;
   border: none;
-  background: linear-gradient(135deg, #2dd4bf, #0d9488);
+  background: #2dd4bf;
   color: #0f1117;
   font-weight: 600;
   font-size: 13px;
@@ -977,12 +972,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: 24px 16px;
-  background: radial-gradient(
-      ellipse 100% 70% at 50% 0%,
-      #1e2433 0%,
-      #0f1117 50%,
-      #080a0e 100%
-    );
+  background: #000000;
   overflow: hidden;
 }
 
@@ -1006,13 +996,9 @@ body {
 .main-menu__hex {
   width: 100%;
   height: 100%;
-  background: linear-gradient(
-    155deg,
-    rgba(251, 191, 36, 0.42),
-    rgba(234, 88, 12, 0.18)
-  );
+  background: rgba(255, 255, 255, 0.06);
   clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
-  box-shadow: 0 0 24px rgba(251, 146, 60, 0.12);
+  box-shadow: none;
   animation: main-menu-hex-drift var(--dur, 22s) ease-in-out infinite;
   animation-delay: var(--delay, 0s);
 }
@@ -1046,23 +1032,136 @@ body {
 }
 
 .main-menu__title {
-  margin: 0 0 12px;
+  margin: 0 0 20px;
   font-size: clamp(2.25rem, 7vw, 3.25rem);
   font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 1.05;
-  background: linear-gradient(135deg, #fde68a 0%, #f59e0b 35%, #ea580c 90%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  text-shadow: 0 2px 40px rgba(245, 158, 11, 0.25);
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.2em;
 }
 
-.main-menu__subtitle {
-  margin: 0 0 24px;
+.main-menu__title-nimiq {
+  color: #ffffff;
+}
+
+.main-menu__title-space {
+  color: #fc8702;
+}
+
+.main-menu__user {
+  margin: 0 auto 20px;
+  display: flex;
+  justify-content: center;
+}
+
+.main-menu__identicon-wrap {
+  position: relative;
+  width: 56px;
+  height: 56px;
+}
+
+/* Tap saved account: Nimiq Style — primary identicon control */
+.main-menu__identicon-btn {
+  display: block;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: transparent;
+  line-height: 0;
+}
+
+.main-menu__identicon-btn:focus-visible {
+  outline: 2px solid #0ca6fe;
+  outline-offset: 3px;
+}
+
+.main-menu__identicon-wrap--signed-in .main-menu__identicon-btn {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+}
+
+.main-menu__identicon-btn:hover:not(:disabled) .main-menu__identicon {
+  filter: brightness(1.08);
+}
+
+.main-menu__identicon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.main-menu__identicon {
+  display: block;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  object-fit: cover;
+  background: rgba(15, 17, 23, 0.9);
+  pointer-events: none;
+}
+
+.main-menu__identicon-wrap--signed-in .main-menu__identicon {
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+}
+
+/* Nimiq Blue — @nimiq/style theme.css: --nimiq-blue #1F2348 */
+.main-menu__btn-nimiq {
+  min-height: 44px;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
   font-size: 15px;
-  line-height: 1.5;
-  color: #9aa3b8;
+  background: #1f2348;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+}
+
+.main-menu__btn-nimiq:hover:not(:disabled) {
+  background: #151833;
+}
+
+.main-menu__btn-nimiq:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.main-menu__identicon-clear {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(248, 113, 113, 0.85);
+  background: rgba(127, 29, 29, 0.95);
+  color: #fecaca;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.main-menu__identicon-clear:hover:not(:disabled) {
+  background: rgba(153, 27, 27, 0.98);
+}
+
+.main-menu__identicon-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .main-menu__err {
@@ -1082,15 +1181,6 @@ body {
 .main-menu .btn-secondary,
 .main-menu .btn-ghost {
   margin-top: 0;
-}
-
-.main-menu__btn-reconnect {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  color: #0f1117;
-}
-
-.main-menu__btn-reconnect:hover:not(:disabled) {
-  filter: brightness(1.06);
 }
 
 .main-menu__social {

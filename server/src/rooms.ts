@@ -34,18 +34,23 @@ import {
 import { walletDisplayName } from "./walletDisplayName.js";
 
 const MOVE_SPEED = 5;
+/** NPCs move 20% slower than human path-follow speed. */
+const NPC_MOVE_SPEED = MOVE_SPEED * 0.8;
 const TICK_MS = 50;
 const CHAT_MAX = 256;
 const RATE_MOVE_TO_MS = 120;
 const RATE_CHAT_MS = 800;
 const RATE_PLACE_MS = 200;
 const ARRIVE_EPS = 0.04;
-/** Wandering NPCs per room (default `4`; set `FAKE_PLAYER_COUNT=0` to disable). */
+/** Wandering NPCs per room (default `2`, half of the previous default; set `FAKE_PLAYER_COUNT=0` to disable). */
 const FAKE_PLAYER_COUNT = Math.max(
   0,
-  Math.min(32, Math.floor(Number(process.env.FAKE_PLAYER_COUNT ?? "4")))
+  Math.min(32, Math.floor(Number(process.env.FAKE_PLAYER_COUNT ?? "2")))
 );
-const FAKE_IDLE_MS_MAX = 2000;
+/** Idle after finishing a path (or before retrying) before picking a new destination. */
+const FAKE_IDLE_MS = 10_000;
+/** Max tile waypoints per NPC path (short paths only). */
+const FAKE_PATH_MAX_STEPS = 5;
 /** Max distance on XZ (world units) from player to tile for block edit actions; enforced server-side. */
 const PLACE_RADIUS_BLOCKS = Math.max(
   0,
@@ -513,7 +518,7 @@ function ensureFakePlayers(roomId: string): void {
     fakes.set(address, {
       player,
       pathQueue: [],
-      idleUntil: Date.now() + Math.floor(rng() * FAKE_IDLE_MS_MAX),
+      idleUntil: Date.now() + Math.floor(rng() * FAKE_IDLE_MS),
     });
     broadcast(roomId, { type: "playerJoined", player: { ...player } });
   }
@@ -556,13 +561,13 @@ function advanceAlongPathBot(
       changedThis = true;
       continue;
     }
-    const step = MOVE_SPEED * dt;
+    const step = NPC_MOVE_SPEED * dt;
     const t = Math.min(1, step / dist);
     const wb = walkBounds(roomId);
     const nx = clamp(p.x + dx * t, wb.minX, wb.maxX);
     const nz = clamp(p.z + dz * t, wb.minZ, wb.maxZ);
-    p.vx = (dx / dist) * MOVE_SPEED;
-    p.vz = (dz / dist) * MOVE_SPEED;
+    p.vx = (dx / dist) * NPC_MOVE_SPEED;
+    p.vz = (dz / dist) * NPC_MOVE_SPEED;
     p.x = nx;
     p.z = nz;
     p.y = 0;
@@ -662,7 +667,7 @@ export function startRoomTick(): void {
           const p = bot.player;
           if (bot.pathQueue.length === 0 && p.vx === 0 && p.vz === 0) {
             if (bot.idleUntil === 0) {
-              bot.idleUntil = now + Math.floor(rng() * FAKE_IDLE_MS_MAX);
+              bot.idleUntil = now + FAKE_IDLE_MS;
             } else if (now >= bot.idleUntil) {
               const dest = pickRandomWalkableTile(roomId, rng);
               if (dest) {
@@ -677,13 +682,13 @@ export function startRoomTick(): void {
                   roomId
                 );
                 if (full && full.length > 1) {
-                  bot.pathQueue = full.slice(1);
+                  bot.pathQueue = full.slice(1, 1 + FAKE_PATH_MAX_STEPS);
                   bot.idleUntil = 0;
                 } else {
-                  bot.idleUntil = now + 200 + Math.floor(rng() * 400);
+                  bot.idleUntil = now + FAKE_IDLE_MS;
                 }
               } else {
-                bot.idleUntil = now + 500;
+                bot.idleUntil = now + FAKE_IDLE_MS;
               }
             }
           }
