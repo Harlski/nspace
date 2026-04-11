@@ -129,6 +129,8 @@ type OutMsg =
         spawnX: number;
         spawnZ: number;
       }[];
+      /** Max horizontal distance (world units) from player to tile center for place/move actions; 0 = unlimited. */
+      placeRadiusBlocks: number;
       obstacles: ObstacleTile[];
       extraFloorTiles: ExtraFloorTile[];
     }
@@ -782,6 +784,7 @@ export function addClient(
       roomId,
       roomBounds: rb,
       doors,
+      placeRadiusBlocks: PLACE_RADIUS_BLOCKS,
       obstacles: obstaclesToList(roomId),
       extraFloorTiles: extraFloorToList(roomId),
     } satisfies OutMsg)

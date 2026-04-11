@@ -11,17 +11,17 @@ export const HUB_ROOM_ID = "hub";
 export const CHAMBER_ROOM_ID = "chamber";
 
 const HUB_BOUNDS: RoomBounds = {
-  minX: -24,
-  maxX: 25,
-  minZ: -24,
-  maxZ: 25,
-};
-
-const CHAMBER_BOUNDS: RoomBounds = {
   minX: -12,
   maxX: 12,
   minZ: -12,
   maxZ: 12,
+};
+
+const CHAMBER_BOUNDS: RoomBounds = {
+  minX: -6,
+  maxX: 6,
+  minZ: -6,
+  maxZ: 6,
 };
 
 export type DoorDef = {
@@ -34,20 +34,20 @@ export type DoorDef = {
 
 const HUB_DOORS: DoorDef[] = [
   {
-    x: 25,
+    x: 12,
     z: 0,
     targetRoomId: CHAMBER_ROOM_ID,
-    spawnX: -11,
+    spawnX: -5,
     spawnZ: 0,
   },
 ];
 
 const CHAMBER_DOORS: DoorDef[] = [
   {
-    x: -12,
+    x: -6,
     z: 0,
     targetRoomId: HUB_ROOM_ID,
-    spawnX: 24,
+    spawnX: 11,
     spawnZ: 0,
   },
 ];

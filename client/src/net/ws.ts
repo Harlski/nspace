@@ -48,6 +48,8 @@ export type ServerMessage =
       roomId: string;
       roomBounds: RoomBounds;
       doors: RoomDoor[];
+      /** Max horizontal distance from player to tile for place/move; 0 = unlimited. */
+      placeRadiusBlocks: number;
       obstacles: ObstacleTile[];
       extraFloorTiles: ExtraFloorTile[];
     }

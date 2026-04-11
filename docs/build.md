@@ -17,7 +17,7 @@ Concise description of how nspace is put together today.
 ## World model
 
 - **Grid**: Integer tile coordinates on the **XZ** plane; **Y** is up. One tile = 1 world unit. Global bounds are defined in [server/src/grid.ts](../server/src/grid.ts) and mirrored on the client ([client/src/game/constants.ts](../client/src/game/constants.ts)) (`TILE_COORD_MIN` / `TILE_COORD_MAX`).
-- **Rooms**: Each WebSocket session selects a `room` id (normalized: `lobby` → `hub`). **Base floor** is a per-room axis-aligned rectangle of walkable tiles ([server/src/roomLayouts.ts](../server/src/roomLayouts.ts)). Example: hub base is 50×50 tiles (`-24…25` on X and Z); chamber is 25×25.
+- **Rooms**: Each WebSocket session selects a `room` id (normalized: `lobby` → `hub`). **Base floor** is a per-room axis-aligned rectangle of walkable tiles ([server/src/roomLayouts.ts](../server/src/roomLayouts.ts)). Example: hub base is 25×25 tiles (`-12…12` on X and Z); chamber is 13×13 (`-6…6`).
 - **Doors**: Specific walkable tiles that trigger a **room transfer** with a server-approved spawn position when stepped on (same layouts on client and server).
 - **Extra floor**: Additional walkable tiles outside the base rectangle, stored per room and merged into pathfinding ([server/src/rooms.ts](../server/src/rooms.ts)).
 

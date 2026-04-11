@@ -303,6 +303,11 @@ export class Game {
   private readonly fogOfWar: FogOfWarPass;
   /** Extra highlight on solid block tops when hovering in walk mode. */
   private readonly blockTopHighlight: THREE.Mesh;
+  /** Server max place distance (world units); 0 = unlimited (no ring overlay). */
+  private placeRadiusBlocks = 5;
+  private readonly placementHintGeom: THREE.PlaneGeometry;
+  private readonly placementHintMat: THREE.MeshBasicMaterial;
+  private readonly placementHintMeshes = new Map<string, THREE.Mesh>();
 
   constructor(canvasHost: HTMLElement) {
     this.canvasHost = canvasHost;
@@ -377,6 +382,14 @@ export class Game {
     this.blockTopHighlight.visible = false;
     this.scene.add(this.blockTopHighlight);
 
+    this.placementHintGeom = new THREE.PlaneGeometry(0.92, 0.92);
+    this.placementHintMat = new THREE.MeshBasicMaterial({
+      color: 0xf59e0b,
+      transparent: true,
+      opacity: 0.14,
+      depthWrite: false,
+    });
+
     this.pathGeom.setAttribute(
       "position",
       new THREE.BufferAttribute(new Float32Array(6), 3)
@@ -427,9 +440,7 @@ export class Game {
     const fogOuter = Game.readFogNumber(LS_FOG_OUTER, FOG_OUTER_RADIUS);
     const fogR = Game.normalizeFogRadii(fogInner, fogOuter);
     this.fogOfWar = new FogOfWarPass(fogR.inner, fogR.outer);
-    if (localStorage.getItem(LS_FOG_ENABLED) === "0") {
-      this.fogOfWar.setEnabled(false);
-    }
+    this.fogOfWar.setEnabled(localStorage.getItem(LS_FOG_ENABLED) === "1");
 
     const onResize = (): void => this.resize();
     this.ro = new ResizeObserver(onResize);
@@ -511,10 +522,20 @@ export class Game {
       spawnX: number;
       spawnZ: number;
     }[];
+    placeRadiusBlocks?: number;
   }): void {
     this.roomId = msg.roomId;
     this.roomBounds = msg.roomBounds;
     this.doors = msg.doors.map((d) => ({ ...d }));
+    if (
+      msg.placeRadiusBlocks !== undefined &&
+      Number.isFinite(msg.placeRadiusBlocks)
+    ) {
+      this.placeRadiusBlocks = Math.max(
+        0,
+        Math.min(64, msg.placeRadiusBlocks)
+      );
+    }
     this.rebuildDoorKeys();
     this.pathGoal = null;
     this.selfLastTileKey = null;
@@ -525,6 +546,7 @@ export class Game {
     this.beginPathFadeOut();
     this.syncWalkableFloorMeshes();
     this.refreshPathLine();
+    this.syncPlacementRangeHints();
   }
 
   setRoomChangeHandler(
@@ -830,6 +852,7 @@ export class Game {
     }
     this.syncHighlightColor();
     this.refreshSelectionOutline();
+    this.syncPlacementRangeHints();
   }
 
   getBuildMode(): boolean {
@@ -843,6 +866,7 @@ export class Game {
       this.repositionFrom = null;
     }
     this.syncHighlightColor();
+    this.syncPlacementRangeHints();
   }
 
   getFloorExpandMode(): boolean {
@@ -857,6 +881,7 @@ export class Game {
     }
     this.syncWalkableFloorMeshes();
     this.refreshPathLine();
+    this.syncPlacementRangeHints();
   }
 
   /** Wire format matches server obstacle tiles. */
@@ -900,6 +925,41 @@ export class Game {
     this.syncBlockMeshes();
     this.refreshPathLine();
     this.refreshSelectionOutline();
+    this.syncPlacementRangeHints();
+  }
+
+  /** Floor tiles where a new block can be placed (within server place radius, empty, walkable). */
+  private syncPlacementRangeHints(): void {
+    for (const [, m] of this.placementHintMeshes) {
+      this.scene.remove(m);
+    }
+    this.placementHintMeshes.clear();
+    if (!this.buildMode || !this.selfMesh || this.placeRadiusBlocks <= 0) {
+      return;
+    }
+    const R = this.placeRadiusBlocks;
+    const px = this.selfMesh.position.x;
+    const pz = this.selfMesh.position.z;
+    const here = snapFloorTile(px, pz);
+    const minX = Math.floor(px - R) - 1;
+    const maxX = Math.ceil(px + R) + 1;
+    const minZ = Math.floor(pz - R) - 1;
+    const maxZ = Math.ceil(pz + R) + 1;
+    for (let tx = minX; tx <= maxX; tx++) {
+      for (let tz = minZ; tz <= maxZ; tz++) {
+        if (Math.hypot(px - tx, pz - tz) > R + 1e-6) continue;
+        if (!this.tileWalkable({ x: tx, y: tz })) continue;
+        const k = tileKey(tx, tz);
+        if (this.placedObjects.has(k)) continue;
+        if (tx === here.x && tz === here.y) continue;
+        const mesh = new THREE.Mesh(this.placementHintGeom, this.placementHintMat);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(tx, 0.018, tz);
+        mesh.renderOrder = 1;
+        this.scene.add(mesh);
+        this.placementHintMeshes.set(k, mesh);
+      }
+    }
   }
 
   private syncHighlightColor(): void {
@@ -1163,6 +1223,12 @@ export class Game {
     this.tileHighlightMat.dispose();
     this.blockTopHighlight.geometry.dispose();
     (this.blockTopHighlight.material as THREE.Material).dispose();
+    for (const [, m] of this.placementHintMeshes) {
+      this.scene.remove(m);
+    }
+    this.placementHintMeshes.clear();
+    this.placementHintGeom.dispose();
+    this.placementHintMat.dispose();
     this.fogOfWar.dispose();
     this.renderer.dispose();
   }
@@ -1586,6 +1652,7 @@ export class Game {
         this.targetPos.delete(addr);
       }
     }
+    this.syncPlacementRangeHints();
   }
 
   tick(dt: number): void {

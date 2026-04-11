@@ -1,0 +1,12 @@
+# Production reverse proxy for nspace (Docker on 127.0.0.1:3001).
+#
+# 1. DNS: A record api.nimiq.space -> this VPS public IP (propagate before first start).
+# 2. On the server: sudo cp this file to /etc/caddy/Caddyfile (edit hostname if needed).
+# 3. sudo caddy validate --config /etc/caddy/Caddyfile
+# 4. sudo systemctl reload caddy
+#
+# HTTP + HTTPS + Let's Encrypt are automatic. WebSockets (/ws) work with default reverse_proxy.
+
+api.nimiq.space {
+	reverse_proxy 127.0.0.1:3001
+}

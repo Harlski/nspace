@@ -152,7 +152,51 @@ NODE_ENV=production
 # WORLD_STATE_DIR=/app/server/data
 ```
 
-Do **not** commit `.env`. The compose file binds `127.0.0.1:3001:3001`; put **Nginx/Caddy** in front for TLS and proxy `/`, `/api`, `/ws`.
+Do **not** commit `.env`. The compose file binds `127.0.0.1:3001:3001`; put **Caddy or Nginx** in front for TLS and proxy `/`, `/api`, and **`/ws`** (WebSockets).
+
+### Reverse proxy (Caddy)
+
+**Prerequisites:** DNS **A** record for `api.nimiq.space` (or your API hostname) → VPS public IP; firewall allows **80** and **443** (this repo’s UFW example already does). Docker stack is up and `curl -sS http://127.0.0.1:3001/api/health` returns `200`.
+
+1. **Install Caddy** (Debian/Ubuntu — see [Caddy install](https://caddyserver.com/docs/install#debian-ubuntu-raspbian) if your OS differs):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt-get update
+sudo apt-get install -y caddy
+```
+
+2. **Configure** — example file in the repo: [`deploy/caddy/Caddyfile.example`](../deploy/caddy/Caddyfile.example). Minimal site block:
+
+```caddyfile
+api.nimiq.space {
+	reverse_proxy 127.0.0.1:3001
+}
+```
+
+Replace `api.nimiq.space` with your API hostname if different. Copy to the system Caddyfile:
+
+```bash
+sudo nano /etc/caddy/Caddyfile
+# paste the block above (or copy from deploy/caddy/Caddyfile.example), save
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl enable --now caddy
+sudo systemctl status caddy
+```
+
+3. **Verify** from your laptop (not only on the server):
+
+```bash
+curl -sS -w "\nhttp_code=%{http_code}\n" https://api.nimiq.space/api/health
+dig +short api.nimiq.space A   # should show the VPS public IP
+```
+
+First request may take a few seconds while **Let’s Encrypt** issues the certificate. If issuance fails, check DNS propagation, that **ports 80/443** reach this host, and `journalctl -u caddy -e`.
+
+**Why Caddy:** Automatic HTTPS, no separate Certbot step, and `reverse_proxy` forwards **WebSocket** upgrades for `wss://api.nimiq.space/ws` by default.
 
 ## First deploy (manual)
 

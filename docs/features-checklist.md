@@ -47,7 +47,7 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 
 - [x] Server JSONL event log per day (`EVENT_LOG_DIR`, `events-*.jsonl`) — session boundaries, moves, builds, chat
 - [x] `GET /api/replay/players`, `/api/replay/sessions`, `/api/replay/session/:id/events` (Bearer JWT)
-- [x] Main menu “Session replay” — pick player, session, action timeline
+- [x] Main menu “Session replay” — pick player, session, action timeline (**localhost only**; hidden on public origins)
 - [x] Server-side max distance for block actions (`PLACE_RADIUS_BLOCKS`, default 5 world units on XZ)
 
 ## UI / shell

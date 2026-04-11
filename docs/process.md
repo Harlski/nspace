@@ -50,7 +50,7 @@ Adjust when tuning feel or abuse resistance.
 
 **Admin HTTP API**: `POST /api/admin/random-layout` is currently **unauthenticated** in [server/src/index.ts](../server/src/index.ts). Do not expose that endpoint publicly without adding a secret or network restriction. The client `.env.development` comment mentioning `ADMIN_SECRET` is misleading unless you add server-side checks.
 
-**Replay HTTP API** (requires `Authorization: Bearer <JWT>`): `GET /api/replay/players`, `GET /api/replay/sessions?address=…`, `GET /api/replay/session/:id/events`. Used by the main menu “Session replay” panel.
+**Replay HTTP API** (requires `Authorization: Bearer <JWT>`): `GET /api/replay/players`, `GET /api/replay/sessions?address=…`, `GET /api/replay/session/:id/events`. The main menu “Session replay” panel is shown **only when the page is opened on localhost** (`127.0.0.1`, `::1`, etc.); production builds on public hosts do not expose that UI (APIs remain callable with a valid JWT for tooling).
 
 **Future — event payload richness**: `remove_obstacle` JSONL rows currently store only `(x,z)`. If we need to infer removed geometry, reconstruct prior world snapshots, or support undo, we should log the obstacle’s full props at delete time (mirror `set_obstacle_props` / `place_block` fields).
 

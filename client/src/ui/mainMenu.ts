@@ -4,6 +4,18 @@ import { apiUrl } from "../net/apiBase.js";
 const TELEGRAM_URL = "https://t.me/nimiqspace";
 const X_URL = "https://x.com/nimiqspace";
 
+/** Session replay UI only on loopback — not on public deployments (e.g. Vercel). */
+function isReplayMenuHost(): boolean {
+  if (typeof location === "undefined") return false;
+  const h = location.hostname;
+  return (
+    h === "localhost" ||
+    h === "127.0.0.1" ||
+    h === "[::1]" ||
+    h === "::1"
+  );
+}
+
 type ReplaySessionRow = {
   sessionId: string;
   address: string;
@@ -108,6 +120,8 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   } = opts;
   app.innerHTML = "";
 
+  const replayUiEnabled = isReplayMenuHost();
+
   const root = document.createElement("div");
   root.className = "main-menu";
   root.innerHTML = `
@@ -130,6 +144,9 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         }
         <button type="button" class="btn btn-ghost" id="btn-logout">Log out</button>
       </div>
+      ${
+        replayUiEnabled
+          ? `
       <div class="main-menu__replay">
         <button type="button" class="btn btn-ghost main-menu__replay-toggle" id="btn-replay-toggle" aria-expanded="false">
           Session replay
@@ -156,6 +173,9 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
           <div class="main-menu__replay-err" id="replay-err" hidden></div>
         </div>
       </div>
+      `
+          : ""
+      }
       <div class="main-menu__social">
         <a class="main-menu__social-link" href="${TELEGRAM_URL}" target="_blank" rel="noopener noreferrer">Telegram</a>
         <span class="main-menu__social-sep" aria-hidden="true">·</span>
@@ -254,6 +274,12 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   root.querySelector("#btn-logout")?.addEventListener("click", () => {
     onLogout();
   });
+
+  if (!replayUiEnabled) {
+    return () => {
+      app.innerHTML = "";
+    };
+  }
 
   const replayToggle = root.querySelector("#btn-replay-toggle") as HTMLButtonElement;
   const replayPanel = root.querySelector("#replay-panel") as HTMLElement;

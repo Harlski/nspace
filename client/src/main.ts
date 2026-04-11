@@ -249,6 +249,9 @@ function enterGame(token: string, address: string): void {
         roomId: msg.roomId,
         roomBounds: msg.roomBounds,
         doors: msg.doors,
+        placeRadiusBlocks: Number.isFinite(msg.placeRadiusBlocks)
+          ? msg.placeRadiusBlocks
+          : 5,
       });
       game.setSelf(msg.self.address, msg.self.displayName);
       game.setObstacles(msg.obstacles);

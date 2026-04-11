@@ -11,7 +11,7 @@ export class FogOfWarPass {
   private readonly renderTarget: THREE.WebGLRenderTarget;
   private readonly fsQuad: FullScreenQuad;
   private readonly material: THREE.ShaderMaterial;
-  private enabled = true;
+  private enabled = false;
 
   constructor(innerRadius: number, outerRadius: number) {
     const w = 4;
