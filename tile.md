@@ -11,7 +11,7 @@ Guidelines for designing floor tiles (2D textures or 3D meshes) so they align wi
 ## Camera (what the player sees)
 
 - **Projection:** Orthographic — no perspective distortion; parallel world lines stay parallel on screen.
-- **Framing:** Vertical extent is controlled by an orthographic **half-height** in world units (default scale comes from `VIEW_FRUSTUM_SIZE`; players can zoom). Viewport aspect follows the game’s **16∶9** letterboxed layout.
+- **Framing:** Vertical extent is controlled by an orthographic **half-height** in world units (default from `VIEW_FRUSTUM_SIZE`, typically **6**, clamped by min/max zoom; players can zoom). Viewport aspect follows the game’s **16∶9** letterboxed layout.
 - **View direction:** The camera sits offset by **(18, 18, 18)** from the look-at point on the ground and aims at that target — a **symmetric view from above +X and +Z**.
 - **Screen shape of a tile:** A **world-axis-aligned square** on the floor projects to a **rhombus** on screen (equal foreshortening along world X and Z), similar to a **dimetric / pseudo-isometric** floor.
 

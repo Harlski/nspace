@@ -15,7 +15,7 @@ const LS_FOG_ENABLED = "nspace_fog_enabled";
 const LS_FOG_INNER = "nspace_fog_inner";
 const LS_FOG_OUTER = "nspace_fog_outer";
 const DEFAULT_ZOOM_MIN = 6;
-const DEFAULT_ZOOM_MAX = 200;
+const DEFAULT_ZOOM_MAX = 13.44;
 import { loadIdenticonTexture } from "./identiconTexture.js";
 import {
   type FloorTile,

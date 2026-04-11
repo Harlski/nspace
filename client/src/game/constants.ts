@@ -13,7 +13,7 @@ export const TILE_COORD_MIN = -250;
 export const TILE_COORD_MAX = 249;
 
 /** Orthographic camera vertical extent (world units); smaller = more zoomed in. Default before user prefs. */
-export const VIEW_FRUSTUM_SIZE = 18;
+export const VIEW_FRUSTUM_SIZE = 6;
 
 /** Fog of war: full visibility within this horizontal radius (XZ) from the local player. */
 export const FOG_INNER_RADIUS = 10;
