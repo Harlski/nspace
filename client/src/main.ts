@@ -24,6 +24,7 @@ import {
 import { installAdminOverlay } from "./ui/adminOverlay.js";
 import { createHud } from "./ui/hud.js";
 import { installInputShell } from "./ui/inputShell.js";
+import { formatWalletAddressConnectAs } from "./formatWalletAddress.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
 
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
@@ -68,11 +69,14 @@ function openMainMenu(): void {
   const hasValid = !!(
     cached && !isTokenExpired(cached.token)
   );
+  const cachedAddrTrim = cached?.address?.trim() ?? "";
+  const cachedAddress =
+    cachedAddrTrim.length > 0 ? cachedAddrTrim : null;
   unmountMainMenu?.();
   unmountMainMenu = mountMainMenu({
     app,
     hasValidSession: hasValid,
-    cachedAddress: cached?.address ?? null,
+    cachedAddress,
     authToken:
       hasValid && cached && !isTokenExpired(cached.token) ? cached.token : null,
     devBypass: DEV_CLIENT_BYPASS,
@@ -106,6 +110,7 @@ function enterGame(token: string, address: string): void {
   const showDebugHud =
     import.meta.env.DEV ||
     new URLSearchParams(location.search).has("debug");
+  const shortAddr = formatWalletAddressConnectAs(address);
   const hud = createHud(hudRoot, { showDebug: showDebugHud });
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
@@ -198,8 +203,8 @@ function enterGame(token: string, address: string): void {
     hud.setBuildBlockBarState({ visible: false, ...barStyle });
     hud.setStatus(
       touchUi
-        ? `Connected — Walk / Build / Floor (right)`
-        : `Connected as ${address.slice(0, 8)}… — B: blocks · F: expand walkable floor`
+        ? `Connect as ${shortAddr} — Walk / Build / Floor (right)`
+        : `Connect as ${shortAddr} — B: blocks · F: expand walkable floor`
     );
     hud.setPlayModeState(playModeFromGame());
   }

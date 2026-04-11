@@ -1,4 +1,5 @@
 import { fetchNonce, signInWithWallet, verifyWithServer } from "../auth/nimiq.js";
+import { formatWalletAddressShort } from "../formatWalletAddress.js";
 import { identiconDataUrl } from "../game/identiconTexture.js";
 import { apiUrl } from "../net/apiBase.js";
 
@@ -7,13 +8,6 @@ const X_URL = "https://x.com/nimiqspace";
 
 /** Public asset — Vite serves `client/public` at `/`. */
 const NIM_LOGO_SRC = "/branding/nimiq-nim-logo.svg";
-
-/** First 4 + last 4 characters (Nimiq-style short display). */
-function formatWalletAddressShort(address: string): string {
-  const t = address.trim();
-  if (t.length <= 8) return t;
-  return `${t.slice(0, 4)}…${t.slice(-4)}`;
-}
 
 /** Session replay UI only on loopback — not on public deployments (e.g. Vercel). */
 function isReplayMenuHost(): boolean {
@@ -145,6 +139,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         <span class="main-menu__title-nimiq">Nimiq</span>
         <span class="main-menu__title-space">Space</span>
       </h1>
+      <p class="main-menu__welcome" id="main-menu-welcome" hidden>Welcome back!</p>
       <div class="main-menu__user" id="main-menu-user" hidden>
         <div class="main-menu__identicon-wrap">
           <button type="button" class="main-menu__identicon-btn" id="btn-identicon-continue">
@@ -236,6 +231,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     errEl.textContent = s;
   };
 
+  const welcomeEl = root.querySelector("#main-menu-welcome") as HTMLElement;
   const userRow = root.querySelector("#main-menu-user") as HTMLElement;
   const identiconWrap = root.querySelector(
     ".main-menu__identicon-wrap"
@@ -253,6 +249,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   ) as HTMLButtonElement;
 
   if (cachedAddress) {
+    welcomeEl.hidden = false;
     userRow.hidden = false;
     addressEl.textContent = formatWalletAddressShort(cachedAddress);
     addressEl.hidden = false;
@@ -264,15 +261,22 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       hasValidSession ? "Continue with saved account" : "Sign in again with Nimiq"
     );
     btnNimiqAccount.textContent = "Login with Nimiq";
+    identiconImg.removeAttribute("src");
+    identiconImg.hidden = true;
     void identiconDataUrl(cachedAddress)
       .then((url) => {
         identiconImg.src = url;
+        identiconImg.hidden = false;
       })
       .catch(() => {
         userRow.hidden = true;
         addressEl.hidden = true;
+        welcomeEl.hidden = true;
       });
   } else {
+    welcomeEl.hidden = true;
+    userRow.hidden = true;
+    identiconWrap.classList.remove("main-menu__identicon-wrap--signed-in");
     btnNimiqAccount.textContent = "Sign in with Nimiq";
     addressEl.textContent = "";
     addressEl.hidden = true;

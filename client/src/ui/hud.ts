@@ -97,6 +97,28 @@ export function createHud(
   ui.className = "hud";
   letter.appendChild(ui);
 
+  const topStrip = document.createElement("div");
+  topStrip.className = "hud-top-strip";
+
+  const brand = document.createElement("div");
+  brand.className = "hud-brand";
+  brand.setAttribute("aria-hidden", "true");
+  const nimiqSpan = document.createElement("span");
+  nimiqSpan.className = "main-menu__title-nimiq";
+  nimiqSpan.textContent = "NIMIQ";
+  const spaceSpan = document.createElement("span");
+  spaceSpan.className = "main-menu__title-space";
+  spaceSpan.textContent = "SPACE";
+  brand.appendChild(nimiqSpan);
+  brand.appendChild(spaceSpan);
+
+  const status = document.createElement("div");
+  status.className = "hud-status";
+  status.textContent = "";
+
+  topStrip.appendChild(brand);
+  topStrip.appendChild(status);
+
   const leftStack = document.createElement("div");
   leftStack.className = "hud-left-stack";
 
@@ -105,12 +127,8 @@ export function createHud(
   debugPanel.setAttribute("aria-hidden", "true");
   debugPanel.hidden = !showDebug;
 
-  const status = document.createElement("div");
-  status.className = "hud-status";
-  status.textContent = "";
-
   leftStack.appendChild(debugPanel);
-  leftStack.appendChild(status);
+  ui.appendChild(topStrip);
   ui.appendChild(leftStack);
 
   const topBar = document.createElement("div");

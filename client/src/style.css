@@ -63,15 +63,53 @@ body {
   z-index: 1;
 }
 
+/* Brand + instruction: one line across the top (ellipsis if needed). */
+.hud-top-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 8px min(120px, 28vw) 8px 10px;
+  box-sizing: border-box;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.hud-brand {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: 0.2em;
+  font-size: clamp(14px, 2.1vw, 20px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  flex-shrink: 0;
+}
+
+.hud-top-strip .hud-status {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.35;
+}
+
 .hud-left-stack {
   position: absolute;
-  top: 10px;
+  top: 48px;
   left: 10px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-  max-width: min(360px, calc(100% - 140px));
+  max-width: min(420px, calc(100% - 140px));
   z-index: 2;
   pointer-events: none;
 }
@@ -81,14 +119,13 @@ body {
     max-width: min(46vw, 200px);
   }
 
-  .hud-status {
+  .hud-top-strip {
+    padding-right: min(100px, 26vw);
+  }
+
+  .hud-top-strip .hud-status {
     font-size: 10px;
-    line-height: 1.3;
-    max-height: 22vh;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 5;
-    -webkit-box-orient: vertical;
+    line-height: 1.35;
   }
 }
 
@@ -1103,6 +1140,21 @@ body {
 
 .main-menu__title-space {
   color: #fc8702;
+}
+
+.main-menu__welcome {
+  margin: -8px 0 16px;
+  font-size: clamp(15px, 3.8vw, 20px);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(226, 232, 240, 0.92);
+  line-height: 1.3;
+}
+
+/* Author `display: flex` beats `[hidden]`’s UA default (see .build-block-bar__swatches-all[hidden]). */
+.main-menu__user[hidden],
+.main-menu__welcome[hidden] {
+  display: none !important;
 }
 
 .main-menu__user {
