@@ -64,7 +64,7 @@ The server serves `client/dist` when present. Set `PORT` if needed.
 | `JWT_SECRET` | server | Signing session tokens for WebSocket auth |
 | `DEV_AUTH_BYPASS` | server | `1` only in development: skips Nimiq signature verification |
 | `PORT` | server | HTTP listen port (default `3001`) |
-| `FAKE_PLAYER_COUNT` | server | Optional `0`–`32` wandering NPCs per room when players are connected (`0` = off) |
+| `FAKE_PLAYER_COUNT` | server | `0`–`32` wandering NPCs per room (default **`4`**; names like `[NPC] Marie Curie`; set `0` to disable) |
 | `VITE_HUB_URL` | client | Nimiq Hub URL (default `https://hub.nimiq.com`) |
 | `VITE_DEV_AUTH_BYPASS` | client | `1` shows the dev login button |
 | `VITE_ADMIN_ENABLED` | client | `true` shows in-game Admin overlay (layout / fog / camera tools) |

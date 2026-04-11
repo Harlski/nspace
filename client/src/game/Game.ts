@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { PlayerState } from "../types.js";
+import { walletDisplayName } from "../walletDisplayName.js";
 import {
   FOG_INNER_RADIUS,
   FOG_OUTER_RADIUS,
@@ -14,7 +15,7 @@ const LS_ZOOM_FRUSTUM = "nspace_zoom_frustum";
 const LS_FOG_ENABLED = "nspace_fog_enabled";
 const LS_FOG_INNER = "nspace_fog_inner";
 const LS_FOG_OUTER = "nspace_fog_outer";
-const DEFAULT_ZOOM_MIN = 6;
+const DEFAULT_ZOOM_MIN = 4;
 const DEFAULT_ZOOM_MAX = 13.44;
 import { loadIdenticonTexture } from "./identiconTexture.js";
 import {
@@ -308,6 +309,13 @@ export class Game {
   private readonly placementHintGeom: THREE.PlaneGeometry;
   private readonly placementHintMat: THREE.MeshBasicMaterial;
   private readonly placementHintMeshes = new Map<string, THREE.Mesh>();
+  /** Active touch pointers on the canvas (for two-finger pinch zoom). */
+  private readonly touchPointers = new Map<
+    number,
+    { x: number; y: number }
+  >();
+  /** Previous inter-touch distance (px) while pinching; 0 = not established yet. */
+  private pinchLastDistancePx = 0;
 
   constructor(canvasHost: HTMLElement) {
     this.canvasHost = canvasHost;
@@ -447,9 +455,14 @@ export class Game {
     this.ro.observe(this.canvasHost);
     onResize();
 
-    this.renderer.domElement.addEventListener("pointermove", this.onPointerMove);
-    this.renderer.domElement.addEventListener("pointerdown", this.onPointerDown);
-    this.renderer.domElement.addEventListener("wheel", this.onWheel, {
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener("pointermove", this.onPointerMove, {
+      passive: false,
+    });
+    canvas.addEventListener("pointerdown", this.onPointerDown);
+    canvas.addEventListener("pointerup", this.onPointerUp);
+    canvas.addEventListener("pointercancel", this.onPointerUp);
+    canvas.addEventListener("wheel", this.onWheel, {
       passive: false,
     });
 
@@ -685,6 +698,23 @@ export class Game {
     const next = this.frustumSize / scale;
     this.setZoomFrustumSize(next);
   };
+
+  private readonly onPointerUp = (e: PointerEvent): void => {
+    if (e.pointerType !== "touch") return;
+    this.touchPointers.delete(e.pointerId);
+    if (this.touchPointers.size < 2) {
+      this.pinchLastDistancePx = 0;
+    }
+  };
+
+  /** Screen distance between first two active touches (px). */
+  private pinchScreenDistancePx(): number | null {
+    const it = this.touchPointers.values();
+    const a = it.next().value;
+    const b = it.next().value;
+    if (!a || !b) return null;
+    return Math.hypot(b.x - a.x, b.y - a.y);
+  }
 
   setTileClickHandler(
     handler: ((x: number, z: number, layer?: 0 | 1) => void) | null
@@ -992,11 +1022,21 @@ export class Game {
   }
 
   private updateNdc(clientX: number, clientY: number): boolean {
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return false;
     const rect = this.renderer.domElement.getBoundingClientRect();
     if (rect.width < 1e-6 || rect.height < 1e-6) return false;
     this.ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     return true;
+  }
+
+  /** Tile hover uses pointer move; touch-first devices get bogus post-touch “mouse” moves — skip hover. */
+  private static canShowPointerHoverTiles(): boolean {
+    if (typeof window === "undefined") return true;
+    return (
+      window.matchMedia("(hover: hover)").matches &&
+      window.matchMedia("(pointer: fine)").matches
+    );
   }
 
   /**
@@ -1039,7 +1079,28 @@ export class Game {
   }
 
   private onPointerMove = (e: PointerEvent): void => {
-    if (e.pointerType === "touch") return;
+    if (e.pointerType === "touch") {
+      this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (this.touchPointers.size >= 2) {
+      const d = this.pinchScreenDistancePx();
+      if (d !== null && d > 1e-3) {
+        if (this.pinchLastDistancePx > 0) {
+          const next =
+            this.frustumSize * (this.pinchLastDistancePx / d);
+          this.setZoomFrustumSize(next);
+        }
+        this.pinchLastDistancePx = d;
+      }
+      e.preventDefault();
+      return;
+    }
+
+    if (!Game.canShowPointerHoverTiles()) {
+      this.tileHighlight.visible = false;
+      this.blockTopHighlight.visible = false;
+      return;
+    }
     if (this.floorExpandMode) {
       const t = this.pickFloor(e.clientX, e.clientY);
       if (!t) {
@@ -1079,9 +1140,22 @@ export class Game {
 
   private onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0) return;
+    if (e.pointerType === "touch") {
+      this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.touchPointers.size >= 2) {
+        this.pinchLastDistancePx = 0;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
     if (!this.selfMesh) return;
     e.preventDefault();
     e.stopPropagation();
+    if (e.pointerType === "touch") {
+      this.tileHighlight.visible = false;
+      this.blockTopHighlight.visible = false;
+    }
 
     if (this.floorExpandMode) {
       const dest = this.pickFloor(e.clientX, e.clientY);
@@ -1174,9 +1248,7 @@ export class Game {
       this.scene.remove(this.selfMesh);
       this.selfMesh = null;
     }
-    const label =
-      displayName ||
-      (address.length > 10 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address);
+    const label = displayName || walletDisplayName(address);
     const g = this.makeAvatar(address, label);
     this.selfMesh = g;
     this.scene.add(g);
@@ -1184,9 +1256,12 @@ export class Game {
 
   dispose(): void {
     this.ro.disconnect();
-    this.renderer.domElement.removeEventListener("pointermove", this.onPointerMove);
-    this.renderer.domElement.removeEventListener("pointerdown", this.onPointerDown);
-    this.renderer.domElement.removeEventListener("wheel", this.onWheel);
+    const canvas = this.renderer.domElement;
+    canvas.removeEventListener("pointermove", this.onPointerMove);
+    canvas.removeEventListener("pointerdown", this.onPointerDown);
+    canvas.removeEventListener("pointerup", this.onPointerUp);
+    canvas.removeEventListener("pointercancel", this.onPointerUp);
+    canvas.removeEventListener("wheel", this.onWheel);
     if (this.selfMesh) {
       this.disposeAvatarGroup(this.selfMesh);
       this.scene.remove(this.selfMesh);
@@ -1330,8 +1405,18 @@ export class Game {
     const arr = new Float32Array(path.length * 3);
     for (let i = 0; i < path.length; i++) {
       const t = path[i]!;
+      const y = waypointWorldY(t.layer, t.x, t.z, placed) + PATH_Y;
+      if (
+        !Number.isFinite(t.x) ||
+        !Number.isFinite(t.z) ||
+        !Number.isFinite(y)
+      ) {
+        this.lastTerrainPath = null;
+        this.beginPathFadeOut();
+        return;
+      }
       arr[i * 3] = t.x;
-      arr[i * 3 + 1] = waypointWorldY(t.layer, t.x, t.z, placed) + PATH_Y;
+      arr[i * 3 + 1] = y;
       arr[i * 3 + 2] = t.z;
     }
     this.pathGeom.setAttribute(
@@ -1830,9 +1915,7 @@ export class Game {
         /* Invalid / non-wallet ids (e.g. server NPCs) keep the placeholder material. */
       });
 
-    const label =
-      displayName ||
-      (address.length > 10 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address);
+    const label = displayName || walletDisplayName(address);
     const { sprite: nameSprite, texture: nameTex } =
       createNameLabelSprite(label);
     g.userData.nameSprite = nameSprite;

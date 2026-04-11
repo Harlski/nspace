@@ -26,7 +26,12 @@ import {
   endSession,
   logGameplayEvent,
 } from "./eventLog.js";
-import { pickGuestDisplayName } from "./guestNames.js";
+import {
+  formatNpcDisplayName,
+  npcDisplayNameBase,
+  pickGuestDisplayName,
+} from "./guestNames.js";
+import { walletDisplayName } from "./walletDisplayName.js";
 
 const MOVE_SPEED = 5;
 const TICK_MS = 50;
@@ -35,10 +40,10 @@ const RATE_MOVE_TO_MS = 120;
 const RATE_CHAT_MS = 800;
 const RATE_PLACE_MS = 200;
 const ARRIVE_EPS = 0.04;
-/** Wandering NPCs per room (set `FAKE_PLAYER_COUNT=4` etc.). 0 = disabled. */
+/** Wandering NPCs per room (default `4`; set `FAKE_PLAYER_COUNT=0` to disable). */
 const FAKE_PLAYER_COUNT = Math.max(
   0,
-  Math.min(32, Math.floor(Number(process.env.FAKE_PLAYER_COUNT ?? "0")))
+  Math.min(32, Math.floor(Number(process.env.FAKE_PLAYER_COUNT ?? "4")))
 );
 const FAKE_IDLE_MS_MAX = 2000;
 /** Max distance on XZ (world units) from player to tile for block edit actions; enforced server-side. */
@@ -484,7 +489,7 @@ function ensureFakePlayers(roomId: string): void {
   );
   const usedGuestNames = new Set<string>();
   for (const { player } of fakes.values()) {
-    usedGuestNames.add(player.displayName);
+    usedGuestNames.add(npcDisplayNameBase(player.displayName));
   }
   let nextIndex = 0;
   while (fakes.size < FAKE_PLAYER_COUNT) {
@@ -493,8 +498,9 @@ function ensureFakePlayers(roomId: string): void {
     if (fakes.has(address)) continue;
     const spawn = pickRandomWalkableTile(roomId, rng);
     if (!spawn) break;
-    const displayName = pickGuestDisplayName(rng, usedGuestNames);
-    usedGuestNames.add(displayName);
+    const baseName = pickGuestDisplayName(rng, usedGuestNames);
+    usedGuestNames.add(baseName);
+    const displayName = formatNpcDisplayName(baseName);
     const player: PlayerState = {
       address,
       displayName,
@@ -699,8 +705,7 @@ export function addClient(
   const roomId = normalizeRoomId(roomIdRaw);
   ensureFakePlayers(roomId);
   const room = roomOf(roomId);
-  const displayName =
-    address.length > 10 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
+  const displayName = walletDisplayName(address);
 
   const player: PlayerState = {
     address,

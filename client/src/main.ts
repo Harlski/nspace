@@ -157,34 +157,74 @@ function enterGame(token: string, address: string): void {
     );
   };
 
+  function playModeFromGame(): "walk" | "build" | "floor" {
+    if (game.getFloorExpandMode()) return "floor";
+    if (game.getBuildMode()) return "build";
+    return "walk";
+  }
+
   function syncBuildHud(): void {
     const barStyle = game.getPlacementBlockStyle();
+    const touchUi =
+      typeof window !== "undefined" &&
+      window.matchMedia("(pointer: coarse)").matches;
     if (game.isRepositioning()) {
       hud.setStatus(
         "Choose an empty tile for the new position (Esc to cancel)"
       );
       hud.setBuildBlockBarState({ visible: false, ...barStyle });
+      hud.setPlayModeState(playModeFromGame());
       return;
     }
     if (game.getFloorExpandMode()) {
       hud.setStatus(
-        "Expand floor — click outside the core room, next to walkable space (F to exit). Shift+click removes an extra tile."
+        touchUi
+          ? "Floor — tap next to walkable space outside the core (pick Walk when done)"
+          : "Expand floor — click outside the core room, next to walkable space (F to exit). Shift+click removes an extra tile."
       );
       hud.setBuildBlockBarState({ visible: false, ...barStyle });
+      hud.setPlayModeState(playModeFromGame());
       return;
     }
     if (game.getBuildMode()) {
       hud.setStatus(
-        "Build mode — click a block to edit, empty floor to place (B to exit)"
+        touchUi
+          ? "Build — tap a block to edit, empty tile to place (Walk to exit)"
+          : "Build mode — click a block to edit, empty floor to place (B to exit)"
       );
       hud.setBuildBlockBarState({ visible: true, ...barStyle });
+      hud.setPlayModeState(playModeFromGame());
       return;
     }
     hud.setBuildBlockBarState({ visible: false, ...barStyle });
     hud.setStatus(
-      `Connected as ${address.slice(0, 8)}… — B: blocks · F: expand walkable floor`
+      touchUi
+        ? `Connected — Walk / Build / Floor (right)`
+        : `Connected as ${address.slice(0, 8)}… — B: blocks · F: expand walkable floor`
     );
+    hud.setPlayModeState(playModeFromGame());
   }
+
+  hud.onPlayModeSelect((mode) => {
+    if (document.activeElement === hud.getChatInput()) return;
+    if (mode === "walk") {
+      game.setFloorExpandMode(false);
+      game.setBuildMode(false);
+      editingTile = null;
+      hud.hideObjectEditPanel();
+      game.clearSelectedBlock();
+    } else if (mode === "build") {
+      game.setFloorExpandMode(false);
+      game.setBuildMode(true);
+    } else {
+      game.setBuildMode(false);
+      game.setFloorExpandMode(true);
+      editingTile = null;
+      hud.hideObjectEditPanel();
+      game.clearSelectedBlock();
+    }
+    syncBuildHud();
+  });
 
   hud.onBuildPlacementStyle((patch) => {
     game.setPlacementBlockStyle(patch);
