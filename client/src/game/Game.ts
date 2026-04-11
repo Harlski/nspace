@@ -48,6 +48,13 @@ import {
 
 const LERP = 12;
 
+/** Pastel terrain: void (non-walkable) reads as water; walkable tiles are grass. */
+const TERRAIN_WATER_COLOR = 0xa8d8ea;
+/** Brighter, more saturated grass (core room vs expanded tiles vs door path). */
+const TERRAIN_GRASS_CORE_COLOR = 0x9ccc65;
+const TERRAIN_GRASS_EXTRA_COLOR = 0x8bc34a;
+const TERRAIN_DOOR_COLOR = 0xc5e1a5;
+
 /** y=0 ground plane (world). */
 const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
@@ -342,7 +349,7 @@ export class Game {
   constructor(canvasHost: HTMLElement) {
     this.canvasHost = canvasHost;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x1a1d26);
+    this.scene.background = new THREE.Color(TERRAIN_WATER_COLOR);
 
     this.zoomMin = Game.readZoomBound(LS_ZOOM_MIN, DEFAULT_ZOOM_MIN);
     this.zoomMax = Game.readZoomBound(LS_ZOOM_MAX, DEFAULT_ZOOM_MAX);
@@ -384,9 +391,9 @@ export class Game {
     this.canvasHost.appendChild(this.renderer.domElement);
     this.renderer.domElement.style.cursor = "pointer";
 
-    const amb = new THREE.AmbientLight(0xffffff, 0.55);
+    const amb = new THREE.AmbientLight(0xffffff, 0.62);
     this.scene.add(amb);
-    const dir = new THREE.DirectionalLight(0xfff4e6, 0.85);
+    const dir = new THREE.DirectionalLight(0xfff8f0, 0.72);
     dir.position.set(8, 20, 10);
     this.scene.add(dir);
 
@@ -1720,13 +1727,17 @@ export class Game {
       const isDoor = this.doorTileKeys.has(k);
       let mesh = this.walkableFloorMeshes.get(k);
       if (!mesh) {
-        const baseColor = isDoor ? 0x5c4a32 : isExtra ? 0x3d5a4a : 0x2d3340;
+        const baseColor = isDoor
+          ? TERRAIN_DOOR_COLOR
+          : isExtra
+            ? TERRAIN_GRASS_EXTRA_COLOR
+            : TERRAIN_GRASS_CORE_COLOR;
         mesh = new THREE.Mesh(
           new THREE.PlaneGeometry(0.98, 0.98),
           new THREE.MeshStandardMaterial({
             color: baseColor,
-            roughness: isExtra ? 0.88 : 0.9,
-            metalness: isExtra ? 0.06 : 0.05,
+            roughness: isExtra ? 0.92 : 0.94,
+            metalness: 0.02,
           })
         );
         mesh.rotation.x = -Math.PI / 2;
@@ -1744,10 +1755,14 @@ export class Game {
           mesh.userData["isDoor"] !== wantDoor
         ) {
           mat.color.setHex(
-            wantDoor ? 0x5c4a32 : wantExtra ? 0x3d5a4a : 0x2d3340
+            wantDoor
+              ? TERRAIN_DOOR_COLOR
+              : wantExtra
+                ? TERRAIN_GRASS_EXTRA_COLOR
+                : TERRAIN_GRASS_CORE_COLOR
           );
-          mat.roughness = wantExtra ? 0.88 : 0.9;
-          mat.metalness = wantExtra ? 0.06 : 0.05;
+          mat.roughness = wantExtra ? 0.92 : 0.94;
+          mat.metalness = 0.02;
           mesh.userData["isExtra"] = wantExtra;
           mesh.userData["isDoor"] = wantDoor;
         }
