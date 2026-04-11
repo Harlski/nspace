@@ -50,7 +50,7 @@ import {
 const LERP = 12;
 
 /** Default scale on unit floor plane; >1 hides subpixel seams (tunable in admin). */
-const DEFAULT_FLOOR_TILE_QUAD = 1.006;
+const DEFAULT_FLOOR_TILE_QUAD = 1.08;
 
 /** Void (non-walkable) — water/sky tint; walkable tiles use dark gray palette below. */
 const TERRAIN_WATER_COLOR = 0xa8d8ea;

@@ -119,6 +119,24 @@ export function createHud(
   topStrip.appendChild(brand);
   topStrip.appendChild(status);
 
+  const topToolbar = document.createElement("div");
+  topToolbar.className = "hud-top-toolbar";
+  const lobbyBtn = document.createElement("button");
+  lobbyBtn.type = "button";
+  lobbyBtn.className = "hud-lobby hud-icon-btn";
+  lobbyBtn.textContent = "×";
+  lobbyBtn.setAttribute("aria-label", "Lobby");
+  lobbyBtn.title = "Lobby — back to main menu (stay logged in)";
+  const fsBtn = document.createElement("button");
+  fsBtn.type = "button";
+  fsBtn.className = "hud-fs hud-icon-btn";
+  fsBtn.textContent = "[ ]";
+  fsBtn.setAttribute("aria-label", "Fullscreen");
+  fsBtn.title = "Fullscreen";
+  topToolbar.appendChild(fsBtn);
+  topToolbar.appendChild(lobbyBtn);
+  topStrip.appendChild(topToolbar);
+
   const leftStack = document.createElement("div");
   leftStack.className = "hud-left-stack";
 
@@ -140,22 +158,6 @@ export function createHud(
   returnHubBtn.hidden = true;
   const topActions = document.createElement("div");
   topActions.className = "hud-top-actions";
-  const topToolbar = document.createElement("div");
-  topToolbar.className = "hud-top-toolbar";
-  const lobbyBtn = document.createElement("button");
-  lobbyBtn.type = "button";
-  lobbyBtn.className = "hud-lobby hud-icon-btn";
-  lobbyBtn.textContent = "×";
-  lobbyBtn.setAttribute("aria-label", "Lobby");
-  lobbyBtn.title = "Lobby — back to main menu (stay logged in)";
-  const fsBtn = document.createElement("button");
-  fsBtn.type = "button";
-  fsBtn.className = "hud-fs hud-icon-btn";
-  fsBtn.textContent = "[ ]";
-  fsBtn.setAttribute("aria-label", "Fullscreen");
-  fsBtn.title = "Fullscreen";
-  topToolbar.appendChild(fsBtn);
-  topToolbar.appendChild(lobbyBtn);
 
   const modeSegment = document.createElement("div");
   modeSegment.className = "hud-mode-segment";
@@ -186,7 +188,6 @@ export function createHud(
   topActions.appendChild(modeSegment);
   topBar.appendChild(returnHubBtn);
   topBar.appendChild(topActions);
-  ui.appendChild(topToolbar);
   ui.appendChild(topBar);
 
   const chatLog = document.createElement("div");
@@ -203,6 +204,45 @@ export function createHud(
   chatInput.maxLength = 256;
   chatRow.appendChild(chatInput);
   ui.appendChild(chatRow);
+
+  const lobbyConfirm = document.createElement("div");
+  lobbyConfirm.className = "hud-lobby-confirm";
+  lobbyConfirm.hidden = true;
+  lobbyConfirm.setAttribute("aria-hidden", "true");
+  const lobbyConfirmBackdrop = document.createElement("div");
+  lobbyConfirmBackdrop.className = "hud-lobby-confirm__backdrop";
+  const lobbyConfirmDialog = document.createElement("div");
+  lobbyConfirmDialog.className = "hud-lobby-confirm__dialog";
+  lobbyConfirmDialog.setAttribute("role", "dialog");
+  lobbyConfirmDialog.setAttribute("aria-modal", "true");
+  lobbyConfirmDialog.setAttribute(
+    "aria-labelledby",
+    "hud-lobby-confirm-label"
+  );
+  const lobbyConfirmMsg = document.createElement("p");
+  lobbyConfirmMsg.className = "hud-lobby-confirm__msg";
+  lobbyConfirmMsg.id = "hud-lobby-confirm-label";
+  lobbyConfirmMsg.textContent =
+    "Are you sure you want to return to lobby?";
+  const lobbyConfirmActions = document.createElement("div");
+  lobbyConfirmActions.className = "hud-lobby-confirm__actions";
+  const lobbyConfirmCancel = document.createElement("button");
+  lobbyConfirmCancel.type = "button";
+  lobbyConfirmCancel.className =
+    "hud-lobby-confirm__btn hud-lobby-confirm__btn--cancel";
+  lobbyConfirmCancel.textContent = "Cancel";
+  const lobbyConfirmOk = document.createElement("button");
+  lobbyConfirmOk.type = "button";
+  lobbyConfirmOk.className =
+    "hud-lobby-confirm__btn hud-lobby-confirm__btn--confirm";
+  lobbyConfirmOk.textContent = "Go to lobby";
+  lobbyConfirmActions.appendChild(lobbyConfirmCancel);
+  lobbyConfirmActions.appendChild(lobbyConfirmOk);
+  lobbyConfirmDialog.appendChild(lobbyConfirmMsg);
+  lobbyConfirmDialog.appendChild(lobbyConfirmActions);
+  lobbyConfirm.appendChild(lobbyConfirmBackdrop);
+  lobbyConfirm.appendChild(lobbyConfirmDialog);
+  letter.appendChild(lobbyConfirm);
 
   const buildBlockBar = document.createElement("div");
   buildBlockBar.className = "build-block-bar";
@@ -367,9 +407,45 @@ export function createHud(
   let returnHubHandler = (): void => {};
   let lobbyHandler = (): void => {};
   let playModeHandler: (mode: "walk" | "build" | "floor") => void = (): void => {};
+  let lobbyConfirmEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
+
+  const hideLobbyConfirm = (): void => {
+    if (lobbyConfirm.hidden) return;
+    lobbyConfirm.hidden = true;
+    lobbyConfirm.setAttribute("aria-hidden", "true");
+    if (lobbyConfirmEscapeHandler) {
+      window.removeEventListener("keydown", lobbyConfirmEscapeHandler);
+      lobbyConfirmEscapeHandler = null;
+    }
+  };
+
+  const openLobbyConfirm = (): void => {
+    lobbyConfirm.hidden = false;
+    lobbyConfirm.setAttribute("aria-hidden", "false");
+    lobbyConfirmEscapeHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        hideLobbyConfirm();
+      }
+    };
+    window.addEventListener("keydown", lobbyConfirmEscapeHandler);
+    lobbyConfirmCancel.focus();
+  };
+
+  lobbyConfirmBackdrop.addEventListener("click", () => {
+    hideLobbyConfirm();
+  });
+  lobbyConfirmCancel.addEventListener("click", () => {
+    hideLobbyConfirm();
+  });
+  lobbyConfirmOk.addEventListener("click", () => {
+    hideLobbyConfirm();
+    lobbyHandler();
+  });
+
   fsBtn.addEventListener("click", () => fsHandler());
   returnHubBtn.addEventListener("click", () => returnHubHandler());
-  lobbyBtn.addEventListener("click", () => lobbyHandler());
+  lobbyBtn.addEventListener("click", () => openLobbyConfirm());
   walkModeBtn.addEventListener("click", () => playModeHandler("walk"));
   buildModeBtn.addEventListener("click", () => playModeHandler("build"));
   floorModeBtn.addEventListener("click", () => playModeHandler("floor"));
@@ -760,6 +836,7 @@ export function createHud(
     },
     destroy() {
       hideObjectEditPanel();
+      hideLobbyConfirm();
       ro.disconnect();
     },
   };

@@ -58,8 +58,8 @@ export function installAdminOverlay(
       <button type="button" class="admin-overlay-btn" id="admin-random">Random layout</button>
       <p class="admin-overlay-hint">Floor tile overlap — scale on shared 1×1 quads to hide subpixel blue seams. Persists locally.</p>
       <label class="admin-overlay-field"><span>Tile quad scale</span>
-        <input type="range" class="admin-overlay-range" id="floor-tile-quad" min="1" max="1.08" step="0.001" value="1.006" />
-        <span class="admin-overlay-range-val" id="floor-tile-quad-val">1.006</span>
+        <input type="range" class="admin-overlay-range" id="floor-tile-quad" min="1" max="1.08" step="0.001" value="1.08" />
+        <span class="admin-overlay-range-val" id="floor-tile-quad-val">1.080</span>
       </label>
     </div>
     <div class="admin-overlay-tab-panel" data-panel="fog" hidden>

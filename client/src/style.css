@@ -56,6 +56,83 @@ body {
   -webkit-user-select: none;
 }
 
+/* Return-to-lobby confirmation (centered on letterbox) */
+.hud-lobby-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+/* Author `display: flex` beats `[hidden]`’s UA default. */
+.hud-lobby-confirm[hidden] {
+  display: none !important;
+}
+
+.hud-lobby-confirm__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.hud-lobby-confirm__dialog {
+  position: relative;
+  z-index: 1;
+  width: min(380px, calc(100% - 32px));
+  padding: 20px 22px;
+  border-radius: 10px;
+  background: rgba(15, 17, 23, 0.97);
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+.hud-lobby-confirm__msg {
+  margin: 0 0 18px;
+  font-size: 15px;
+  line-height: 1.45;
+  color: #e8eaef;
+  font-weight: 600;
+}
+
+.hud-lobby-confirm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.hud-lobby-confirm__btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #3d465a;
+  font-family: inherit;
+}
+
+.hud-lobby-confirm__btn--cancel {
+  background: rgba(30, 36, 51, 0.95);
+  color: #e8eaef;
+}
+
+.hud-lobby-confirm__btn--cancel:hover {
+  background: rgba(45, 53, 72, 0.98);
+}
+
+.hud-lobby-confirm__btn--confirm {
+  background: rgba(14, 116, 144, 0.42);
+  border-color: #38bdf8;
+  color: #e0f2fe;
+}
+
+.hud-lobby-confirm__btn--confirm:hover {
+  background: rgba(14, 116, 144, 0.58);
+}
+
 .hud {
   position: absolute;
   inset: 0;
@@ -74,7 +151,7 @@ body {
   flex-wrap: nowrap;
   align-items: center;
   gap: 0.65rem;
-  padding: 8px min(120px, 28vw) 8px 10px;
+  padding: 8px 10px;
   box-sizing: border-box;
   z-index: 2;
   pointer-events: none;
@@ -112,6 +189,13 @@ body {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
 }
 
+.hud-top-strip .hud-top-toolbar {
+  flex-shrink: 0;
+  margin-left: auto;
+  align-self: center;
+  pointer-events: auto;
+}
+
 .hud-left-stack {
   position: absolute;
   top: 48px;
@@ -128,10 +212,6 @@ body {
 @media (pointer: coarse) {
   .hud-left-stack {
     max-width: min(46vw, 200px);
-  }
-
-  .hud-top-strip {
-    padding-right: min(100px, 26vw);
   }
 
   .hud-top-strip .hud-status {
@@ -177,19 +257,14 @@ body {
   align-items: flex-start;
 }
 
-/* Fullscreen + Lobby — viewport top-right, separate from Walk/Build/Floor */
+/* Fullscreen + Lobby — inside .hud-top-strip (top black bar), right-aligned */
 .hud-top-toolbar {
-  position: fixed;
-  top: 10px;
-  right: 10px;
-  z-index: 12;
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
   gap: 6px;
   align-items: center;
   justify-content: flex-end;
-  pointer-events: auto;
 }
 
 .hud-icon-btn {
@@ -287,11 +362,6 @@ body {
     align-items: stretch;
     gap: 6px;
     width: 100%;
-  }
-
-  .hud-top-toolbar {
-    top: 8px;
-    right: 8px;
   }
 
   .hud-return-hub {
