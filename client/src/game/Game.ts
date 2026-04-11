@@ -63,10 +63,12 @@ const PATH_FADE_DURATION_SEC = 0.22;
 const AVATAR_SPHERE_RADIUS = 0.4;
 
 const NAME_LABEL_FONT =
-  '600 22px system-ui, "Segoe UI", sans-serif';
+  '600 20px system-ui, "Segoe UI", sans-serif';
 const CHAT_BUBBLE_FONT =
   '500 17px system-ui, "Segoe UI", sans-serif';
 const NAME_LABEL_MAX_PX = 280;
+/** On-screen height (px) for the name pill; scales with ortho zoom so text stays readable. */
+const NAME_LABEL_SCREEN_HEIGHT_PX = 24;
 const CHAT_MAX_PX = 260;
 const CHAT_LINE_HEIGHT_PX = 22;
 const CHAT_VISIBLE_MS = 5000;
@@ -82,11 +84,7 @@ type ChatBubbleEntry = {
   startedAt: number;
 };
 
-function createNameLabelSprite(
-  displayName: string,
-  sphereScale = 1,
-  gapWorld = 0.02
-): {
+function createNameLabelSprite(displayName: string): {
   sprite: THREE.Sprite;
   texture: THREE.CanvasTexture;
 } {
@@ -103,7 +101,7 @@ function createNameLabelSprite(
     tw = ctx.measureText(text).width;
   }
   const w = Math.ceil(Math.max(36, tw + padX * 2));
-  const h = 34;
+  const h = 32;
   canvas.width = w;
   canvas.height = h;
   ctx.font = NAME_LABEL_FONT;
@@ -125,11 +123,11 @@ function createNameLabelSprite(
     })
   );
   sprite.renderOrder = 999;
-  const worldW = Math.min(2.2, w * 0.0065);
-  const worldH = worldW * (h / w);
-  sprite.scale.set(worldW, worldH, 1);
-  /* Identicon sits y=0 … sphereTop; name below bottom edge with gap. */
-  sprite.position.y = -gapWorld - worldH / 2;
+  sprite.userData.nameLabelTexW = w;
+  sprite.userData.nameLabelTexH = h;
+  /* World scale set in Game.syncNameLabelScaleAndPosition from screen px + frustum. */
+  sprite.scale.set(1, 1, 1);
+  sprite.position.y = 0;
   return { sprite, texture: tex };
 }
 
@@ -720,6 +718,8 @@ export class Game {
     );
     localStorage.setItem(LS_ZOOM_FRUSTUM, String(this.frustumSize));
     this.applyOrthographicFrustum();
+    this.refreshAllNameLabelScales();
+    this.refreshChatBubbleVerticalPositions();
   }
 
   setZoomFrustumSize(size: number): void {
@@ -731,6 +731,8 @@ export class Game {
     );
     localStorage.setItem(LS_ZOOM_FRUSTUM, String(this.frustumSize));
     this.applyOrthographicFrustum();
+    this.refreshAllNameLabelScales();
+    this.refreshChatBubbleVerticalPositions();
   }
 
   /** Euler angles (degrees) for the identicon sphere mesh (XYZ order). */
@@ -799,6 +801,38 @@ export class Game {
     const h = this.canvasHost.clientHeight;
     if (h < 1) return px * 0.001;
     return (px / h) * this.frustumSize;
+  }
+
+  /** Horizontal world distance matching `px` at current canvas width & ortho frustum. */
+  private pixelToWorldX(px: number): number {
+    const w = this.canvasHost.clientWidth;
+    const h = this.canvasHost.clientHeight;
+    if (w < 1) return px * 0.001;
+    return (px / w) * this.frustumSize * (w / h);
+  }
+
+  /** Keeps name tags near constant on-screen size at any orthographic zoom. */
+  private syncNameLabelScaleAndPosition(g: THREE.Group): void {
+    const nameSprite = g.userData.nameSprite as THREE.Sprite | undefined;
+    if (!nameSprite) return;
+    const tw = nameSprite.userData.nameLabelTexW as number | undefined;
+    const th = nameSprite.userData.nameLabelTexH as number | undefined;
+    if (!tw || !th) return;
+    let worldH = this.pixelToWorldY(NAME_LABEL_SCREEN_HEIGHT_PX);
+    let worldW = worldH * (tw / th);
+    const maxW = this.pixelToWorldX(NAME_LABEL_MAX_PX);
+    if (worldW > maxW) {
+      const s = maxW / worldW;
+      worldW *= s;
+      worldH *= s;
+    }
+    nameSprite.scale.set(worldW, worldH, 1);
+    this.updateAvatarNameLabelHeight(g);
+  }
+
+  private refreshAllNameLabelScales(): void {
+    if (this.selfMesh) this.syncNameLabelScaleAndPosition(this.selfMesh);
+    for (const [, g] of this.others) this.syncNameLabelScaleAndPosition(g);
   }
 
   private updateAvatarNameLabelHeight(g: THREE.Group): void {
@@ -1857,8 +1891,7 @@ export class Game {
     this.renderer.setPixelRatio(dpr);
     this.applyOrthographicFrustum();
     this.fogOfWar.setSize(w, h, dpr);
-    if (this.selfMesh) this.updateAvatarNameLabelHeight(this.selfMesh);
-    for (const [, g] of this.others) this.updateAvatarNameLabelHeight(g);
+    this.refreshAllNameLabelScales();
     this.refreshChatBubbleVerticalPositions();
   }
 
@@ -2112,12 +2145,12 @@ export class Game {
       });
 
     const label = displayName || walletDisplayName(address);
-    const gapWorld = this.pixelToWorldY(NAME_GAP_BELOW_IDENTICON_PX);
     const { sprite: nameSprite, texture: nameTex } =
-      createNameLabelSprite(label, this.identiconScale, gapWorld);
+      createNameLabelSprite(label);
     g.userData.nameSprite = nameSprite;
     g.userData.nameTexture = nameTex;
     g.add(nameSprite);
+    this.syncNameLabelScaleAndPosition(g);
     return g;
   }
 }

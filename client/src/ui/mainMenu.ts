@@ -136,8 +136,8 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     <div class="main-menu__nim-layer" aria-hidden="true"></div>
     <div class="main-menu__content">
       <h1 class="main-menu__title">
-        <span class="main-menu__title-nimiq">Nimiq</span>
-        <span class="main-menu__title-space">Space</span>
+        <span class="main-menu__title-nimiq">NIMIQ</span>
+        <span class="main-menu__title-space">SPACE</span>
       </h1>
       <p class="main-menu__welcome" id="main-menu-welcome" hidden>Welcome back!</p>
       <div class="main-menu__user" id="main-menu-user" hidden>
