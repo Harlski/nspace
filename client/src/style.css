@@ -11,6 +11,8 @@ body {
   overflow: hidden;
   background: #000000;
   color: #e8eaef;
+  /* After @nimiq/style: keep 16px root; Mulish for UI text; Nimiq Style uses Muli on html. */
+  font-size: 16px;
   font-family: "Mulish", system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu,
     sans-serif;
   -webkit-tap-highlight-color: transparent;
@@ -920,6 +922,17 @@ body {
   font-size: 13px;
 }
 
+.admin-overlay-range {
+  width: 100%;
+  accent-color: #2dd4bf;
+}
+
+.admin-overlay-range-val {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #c4cbd8;
+}
+
 .admin-overlay-btn {
   width: 100%;
   padding: 8px;
@@ -972,54 +985,94 @@ body {
   align-items: center;
   justify-content: center;
   padding: 24px 16px;
-  background: #000000;
+  background-color: #050505;
   overflow: hidden;
 }
 
-.main-menu__hex-layer {
+/* Checkerboard: stronger toward edges; ~10% visibility over center (buttons). */
+.main-menu::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.038) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.038) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.038) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.038) 75%);
+  background-size: 32px 32px;
+  background-position:
+    0 0,
+    0 16px,
+    16px -16px,
+    -16px 0;
+  /* Center: no checker (0%); wider soft core; full pattern at edges. */
+  -webkit-mask-image: radial-gradient(
+    ellipse 96% 92% at 50% 48%,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0) 46%,
+    rgba(255, 255, 255, 0.22) 62%,
+    rgba(255, 255, 255, 0.65) 82%,
+    rgba(255, 255, 255, 1) 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 96% 92% at 50% 48%,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0) 46%,
+    rgba(255, 255, 255, 0.22) 62%,
+    rgba(255, 255, 255, 0.65) 82%,
+    rgba(255, 255, 255, 1) 100%
+  );
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.main-menu__nim-layer {
   position: absolute;
   inset: 0;
   pointer-events: none;
   overflow: hidden;
 }
 
-.main-menu__hex-wrap {
+.main-menu__nim-wrap {
   position: absolute;
   width: clamp(36px, 9vw, 88px);
-  height: calc(clamp(36px, 9vw, 88px) * 0.866);
+  height: calc(clamp(36px, 9vw, 88px) * 0.875);
   margin-left: calc(clamp(36px, 9vw, 88px) * -0.5);
-  margin-top: calc(clamp(36px, 9vw, 88px) * -0.433);
+  margin-top: calc(clamp(36px, 9vw, 88px) * -0.4375);
   transform: rotate(var(--rot, 0deg));
   pointer-events: none;
 }
 
-.main-menu__hex {
+.main-menu__nim-logo {
+  display: block;
   width: 100%;
   height: 100%;
-  background: rgba(255, 255, 255, 0.06);
-  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
-  box-shadow: none;
-  animation: main-menu-hex-drift var(--dur, 22s) ease-in-out infinite;
+  object-fit: contain;
+  animation: main-menu-nim-drift var(--dur, 22s) ease-in-out infinite;
   animation-delay: var(--delay, 0s);
 }
 
-@keyframes main-menu-hex-drift {
+@keyframes main-menu-nim-drift {
   0%,
   100% {
     transform: translate(0, 0) scale(1);
-    opacity: 0.38;
+    opacity: 0.35;
   }
   25% {
     transform: translate(5vw, -6vh) scale(1.06);
-    opacity: 0.62;
+    opacity: 0.55;
   }
   50% {
     transform: translate(-6vw, 4vh) scale(0.94);
-    opacity: 0.45;
+    opacity: 0.4;
   }
   75% {
     transform: translate(4vw, 5vh) scale(1.04);
-    opacity: 0.55;
+    opacity: 0.48;
   }
 }
 
@@ -1033,7 +1086,7 @@ body {
 
 .main-menu__title {
   margin: 0 0 20px;
-  font-size: clamp(2.25rem, 7vw, 3.25rem);
+  font-size: clamp(28px, 7vw, 48px);
   font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 1.05;
@@ -1054,8 +1107,25 @@ body {
 
 .main-menu__user {
   margin: 0 auto 20px;
+  padding: 16px 0 20px;
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
+}
+
+.main-menu__address {
+  margin: 10px 0 0;
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: 1.35;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  color: rgba(226, 232, 240, 0.88);
+  letter-spacing: 0.04em;
+  max-width: min(100%, 22rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .main-menu__identicon-wrap {
@@ -1115,25 +1185,41 @@ body {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
 }
 
-/* Nimiq Blue — @nimiq/style theme.css: --nimiq-blue #1F2348 */
-.main-menu__btn-nimiq {
-  min-height: 44px;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 15px;
-  background: #1f2348;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+/* Nimiq Style buttons — https://nimiq.github.io/nimiq-style/demo.html (root 16px; Mulish for labels) */
+.main-menu .nq-button.main-menu__nq-btn,
+.main-menu .nq-button-s.main-menu__nq-btn {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  font-family: "Mulish", system-ui, sans-serif;
 }
 
-.main-menu__btn-nimiq:hover:not(:disabled) {
-  background: #151833;
+.main-menu .nq-button.main-menu__nq-btn {
+  height: auto;
+  min-height: 48px;
+  line-height: 1.2;
+  font-size: 14px;
+  padding: 12px 20px;
+  letter-spacing: 0.094em;
+  text-transform: uppercase;
+  font-weight: 700;
+  display: block;
+  text-align: center;
 }
 
-.main-menu__btn-nimiq:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+.main-menu .nq-button-s.main-menu__nq-btn {
+  display: block;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.35;
+  height: auto;
+  min-height: 38px;
+  padding: 8px 14px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .main-menu__identicon-clear {
@@ -1178,10 +1264,6 @@ body {
   align-items: stretch;
 }
 
-.main-menu .btn-secondary,
-.main-menu .btn-ghost {
-  margin-top: 0;
-}
 
 .main-menu__social {
   margin-top: 28px;
@@ -1272,7 +1354,7 @@ body {
   margin-top: 10px;
 }
 
-.main-menu__replay-actions .btn {
+.main-menu__replay-actions .main-menu__nq-btn {
   flex: 1 1 auto;
 }
 

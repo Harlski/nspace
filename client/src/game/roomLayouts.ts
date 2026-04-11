@@ -10,6 +10,13 @@ export type RoomBounds = {
 export const HUB_ROOM_ID = "hub";
 export const CHAMBER_ROOM_ID = "chamber";
 
+/**
+ * Hub center 4×4 tiles (inclusive) — no blocks (must match server `roomLayouts`).
+ */
+export function isHubSpawnSafeZone(x: number, z: number): boolean {
+  return x >= -2 && x <= 1 && z >= -2 && z <= 1;
+}
+
 const HUB_BOUNDS: RoomBounds = {
   minX: -12,
   maxX: 12,

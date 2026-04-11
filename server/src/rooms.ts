@@ -13,6 +13,8 @@ import {
 import {
   getDoorsForRoom,
   getRoomBaseBounds,
+  HUB_ROOM_ID,
+  isHubSpawnSafeZone,
   normalizeRoomId,
   type RoomBounds,
 } from "./roomLayouts.js";
@@ -1021,6 +1023,12 @@ export function addClient(
       if (!props) return;
       if (placed.has(tk)) return;
       if (!isWalkableForRoom(roomId, to.x, to.z)) return;
+      if (
+        normalizeRoomId(roomId) === HUB_ROOM_ID &&
+        isHubSpawnSafeZone(to.x, to.z)
+      ) {
+        return;
+      }
       for (const c of room.values()) {
         const st = snapToTile(c.player.x, c.player.z);
         if (st.x === to.x && st.z === to.z) return;

@@ -1,3 +1,4 @@
+import "@nimiq/style/nimiq-style.min.css";
 import "./style.css";
 import {
   clearCachedSession,
@@ -26,11 +27,12 @@ import { installInputShell } from "./ui/inputShell.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
 
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
-const IDLE_MS = 5 * 60 * 1000;
+/** Inactivity: return to hub center (not lobby). */
+const IDLE_RETURN_HUB_MS = 15 * 60 * 1000;
 
 let unmountMainMenu: (() => void) | null = null;
 
-function startIdleReturnToMenu(ms: number, onIdle: () => void): () => void {
+function startIdleReturnToHub(ms: number, onIdle: () => void): () => void {
   let t: ReturnType<typeof setTimeout> | null = null;
   const arm = (): void => {
     if (t) clearTimeout(t);
@@ -147,8 +149,6 @@ function enterGame(token: string, address: string): void {
     cleanupResources();
     openMainMenu();
   }
-
-  idleCleanup = startIdleReturnToMenu(IDLE_MS, disposeToMenu);
 
   const syncHubButton = (): void => {
     hud.setReturnToHubVisible(
@@ -378,6 +378,14 @@ function enterGame(token: string, address: string): void {
     );
     wireWsHandlers(ws);
   };
+
+  idleCleanup = startIdleReturnToHub(IDLE_RETURN_HUB_MS, () => {
+    if (disposed) return;
+    connectToRoom(HUB_ROOM_ID, { x: 0, z: 0 });
+    hud.setStatus(
+      "Returned to hub after 15 minutes inactive — explore again anytime"
+    );
+  });
 
   game.setRoomChangeHandler((targetRoomId, spawnX, spawnZ) => {
     connectToRoom(targetRoomId, { x: spawnX, z: spawnZ });

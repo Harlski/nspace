@@ -11,6 +11,14 @@ export const HUB_ROOM_ID = "hub";
 /** Smaller instance space reachable from the hub. */
 export const CHAMBER_ROOM_ID = "chamber";
 
+/**
+ * Hub center 4×4 tiles (inclusive indices) — no blocks may be placed here.
+ * Centered on spawn (0,0): x,z ∈ [-2, 1].
+ */
+export function isHubSpawnSafeZone(x: number, z: number): boolean {
+  return x >= -2 && x <= 1 && z >= -2 && z <= 1;
+}
+
 const HUB_BOUNDS: RoomBounds = {
   minX: -12,
   maxX: 12,

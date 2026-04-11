@@ -5,6 +5,16 @@ import { apiUrl } from "../net/apiBase.js";
 const TELEGRAM_URL = "https://t.me/nimiqspace";
 const X_URL = "https://x.com/nimiqspace";
 
+/** Public asset — Vite serves `client/public` at `/`. */
+const NIM_LOGO_SRC = "/branding/nimiq-nim-logo.svg";
+
+/** First 4 + last 4 characters (Nimiq-style short display). */
+function formatWalletAddressShort(address: string): string {
+  const t = address.trim();
+  if (t.length <= 8) return t;
+  return `${t.slice(0, 4)}…${t.slice(-4)}`;
+}
+
 /** Session replay UI only on loopback — not on public deployments (e.g. Vercel). */
 function isReplayMenuHost(): boolean {
   if (typeof location === "undefined") return false;
@@ -129,7 +139,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   const root = document.createElement("div");
   root.className = "main-menu";
   root.innerHTML = `
-    <div class="main-menu__hex-layer" aria-hidden="true"></div>
+    <div class="main-menu__nim-layer" aria-hidden="true"></div>
     <div class="main-menu__content">
       <h1 class="main-menu__title">
         <span class="main-menu__title-nimiq">Nimiq</span>
@@ -142,15 +152,16 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
           </button>
           <button type="button" class="main-menu__identicon-clear" id="btn-clear-cached-user" aria-label="Forget saved account">×</button>
         </div>
+        <p class="main-menu__address" id="main-menu-address" hidden></p>
       </div>
       <div class="main-menu__err" id="main-menu-err" hidden></div>
       <div class="main-menu__actions">
-        <button type="button" class="btn main-menu__btn-nimiq" id="btn-nimiq-account">
+        <button type="button" class="nq-button main-menu__nq-btn" id="btn-nimiq-account">
           Sign in with Nimiq
         </button>
         ${
           devBypass
-            ? `<button type="button" class="btn btn-secondary" id="btn-dev-login">Dev login</button>`
+            ? `<button type="button" class="nq-button light-blue main-menu__nq-btn" id="btn-dev-login">Dev login</button>`
             : ""
         }
       </div>
@@ -158,7 +169,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         replayUiEnabled
           ? `
       <div class="main-menu__replay">
-        <button type="button" class="btn btn-ghost main-menu__replay-toggle" id="btn-replay-toggle" aria-expanded="false">
+        <button type="button" class="nq-button-s light-blue main-menu__nq-btn main-menu__replay-toggle" id="btn-replay-toggle" aria-expanded="false">
           Session replay
         </button>
         <div class="main-menu__replay-panel" id="replay-panel" hidden>
@@ -172,8 +183,8 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
             </div>
           </label>
           <div class="main-menu__replay-actions">
-            <button type="button" class="btn btn-secondary" id="btn-replay-refresh-players">Refresh list</button>
-            <button type="button" class="btn btn-secondary" id="btn-replay-load-sessions">Load sessions</button>
+            <button type="button" class="nq-button-s light-blue main-menu__nq-btn" id="btn-replay-refresh-players">Refresh list</button>
+            <button type="button" class="nq-button-s light-blue main-menu__nq-btn" id="btn-replay-load-sessions">Load sessions</button>
           </div>
           <div class="main-menu__replay-sessions" id="replay-sessions" role="list"></div>
           <div class="main-menu__replay-events-wrap" id="replay-events-wrap" hidden>
@@ -195,20 +206,23 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   `;
   app.appendChild(root);
 
-  const hexLayer = root.querySelector(".main-menu__hex-layer") as HTMLElement;
-  const nHex = 16;
-  for (let i = 0; i < nHex; i++) {
+  const nimLayer = root.querySelector(".main-menu__nim-layer") as HTMLElement;
+  const nNim = 16;
+  for (let i = 0; i < nNim; i++) {
     const wrap = document.createElement("div");
-    wrap.className = "main-menu__hex-wrap";
+    wrap.className = "main-menu__nim-wrap";
     wrap.style.left = `${8 + Math.random() * 84}%`;
     wrap.style.top = `${8 + Math.random() * 84}%`;
     wrap.style.setProperty("--rot", `${Math.random() * 360}deg`);
-    const inner = document.createElement("div");
-    inner.className = "main-menu__hex";
-    inner.style.setProperty("--dur", `${18 + Math.random() * 22}s`);
-    inner.style.setProperty("--delay", `${-Math.random() * 25}s`);
-    wrap.appendChild(inner);
-    hexLayer.appendChild(wrap);
+    const img = document.createElement("img");
+    img.className = "main-menu__nim-logo";
+    img.src = NIM_LOGO_SRC;
+    img.alt = "";
+    img.draggable = false;
+    img.style.setProperty("--dur", `${18 + Math.random() * 22}s`);
+    img.style.setProperty("--delay", `${-Math.random() * 25}s`);
+    wrap.appendChild(img);
+    nimLayer.appendChild(wrap);
   }
 
   const errEl = root.querySelector("#main-menu-err") as HTMLElement;
@@ -226,6 +240,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   const identiconWrap = root.querySelector(
     ".main-menu__identicon-wrap"
   ) as HTMLElement;
+  const addressEl = root.querySelector("#main-menu-address") as HTMLElement;
   const identiconImg = root.querySelector("#main-menu-identicon") as HTMLImageElement;
   const btnIdenticonContinue = root.querySelector(
     "#btn-identicon-continue"
@@ -239,6 +254,8 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
 
   if (cachedAddress) {
     userRow.hidden = false;
+    addressEl.textContent = formatWalletAddressShort(cachedAddress);
+    addressEl.hidden = false;
     if (hasValidSession) {
       identiconWrap.classList.add("main-menu__identicon-wrap--signed-in");
     }
@@ -246,16 +263,19 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       "aria-label",
       hasValidSession ? "Continue with saved account" : "Sign in again with Nimiq"
     );
-    btnNimiqAccount.textContent = "Add another";
+    btnNimiqAccount.textContent = "Login with Nimiq";
     void identiconDataUrl(cachedAddress)
       .then((url) => {
         identiconImg.src = url;
       })
       .catch(() => {
         userRow.hidden = true;
+        addressEl.hidden = true;
       });
   } else {
     btnNimiqAccount.textContent = "Sign in with Nimiq";
+    addressEl.textContent = "";
+    addressEl.hidden = true;
   }
 
   const runNimiqWalletSignIn = async (): Promise<void> => {

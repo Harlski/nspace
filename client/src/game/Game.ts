@@ -15,6 +15,10 @@ const LS_ZOOM_FRUSTUM = "nspace_zoom_frustum";
 const LS_FOG_ENABLED = "nspace_fog_enabled";
 const LS_FOG_INNER = "nspace_fog_inner";
 const LS_FOG_OUTER = "nspace_fog_outer";
+const LS_IDENTICON_RX = "nspace_identicon_rx_deg";
+const LS_IDENTICON_RY = "nspace_identicon_ry_deg";
+const LS_IDENTICON_RZ = "nspace_identicon_rz_deg";
+const LS_IDENTICON_SCALE = "nspace_identicon_scale";
 const DEFAULT_ZOOM_MIN = 4;
 const DEFAULT_ZOOM_MAX = 13.44;
 import { loadIdenticonTexture } from "./identiconTexture.js";
@@ -30,8 +34,11 @@ import {
 } from "./grid.js";
 import {
   type RoomBounds,
+  HUB_ROOM_ID,
   getDoorsForRoom,
   getRoomBaseBounds,
+  isHubSpawnSafeZone,
+  normalizeRoomId,
 } from "./roomLayouts.js";
 import {
   BLOCK_COLOR_COUNT,
@@ -49,7 +56,10 @@ const PATH_LINE_OPACITY_FULL = 0.95;
 /** Time for the path line to fade out when cleared or goal reached. */
 const PATH_FADE_DURATION_SEC = 0.22;
 
-/** Identicon sphere; center height = radius so the bottom rests on the floor (y=0). */
+/**
+ * Identicon billboard (2D sprite); half-height in world units — bottom at y=0, center at this value.
+ * Diameter = 2 × this (matches former sphere footprint).
+ */
 const AVATAR_SPHERE_RADIUS = 0.4;
 
 const NAME_LABEL_FONT =
@@ -62,6 +72,8 @@ const CHAT_LINE_HEIGHT_PX = 22;
 const CHAT_VISIBLE_MS = 5000;
 const CHAT_FADE_MS = 600;
 const CHAT_GAP_ABOVE_NAME = 0.06;
+/** Gap between identicon bottom (y=0) and name label (screen px → world in Game). */
+const NAME_GAP_BELOW_IDENTICON_PX = 2;
 
 type ChatBubbleEntry = {
   sprite: THREE.Sprite;
@@ -70,7 +82,11 @@ type ChatBubbleEntry = {
   startedAt: number;
 };
 
-function createNameLabelSprite(displayName: string): {
+function createNameLabelSprite(
+  displayName: string,
+  sphereScale = 1,
+  gapWorld = 0.02
+): {
   sprite: THREE.Sprite;
   texture: THREE.CanvasTexture;
 } {
@@ -112,8 +128,8 @@ function createNameLabelSprite(displayName: string): {
   const worldW = Math.min(2.2, w * 0.0065);
   const worldH = worldW * (h / w);
   sprite.scale.set(worldW, worldH, 1);
-  const sphereTop = AVATAR_SPHERE_RADIUS * 2;
-  sprite.position.y = sphereTop + 0.05 + worldH / 2;
+  /* Identicon sits y=0 … sphereTop; name below bottom edge with gap. */
+  sprite.position.y = -gapWorld - worldH / 2;
   return { sprite, texture: tex };
 }
 
@@ -317,6 +333,12 @@ export class Game {
   /** Previous inter-touch distance (px) while pinching; 0 = not established yet. */
   private pinchLastDistancePx = 0;
 
+  /** Identicon sphere Euler (degrees); applied to all player avatars. */
+  private identiconRotDeg = { x: 0, y: 0, z: 0 };
+  /** Uniform scale of the identicon sphere mesh (texture “zoom” via size). */
+  private identiconScale = 1;
+  private readonly identiconEulerScratch = new THREE.Euler();
+
   constructor(canvasHost: HTMLElement) {
     this.canvasHost = canvasHost;
     this.scene = new THREE.Scene();
@@ -335,6 +357,13 @@ export class Game {
       this.zoomMax,
       VIEW_FRUSTUM_SIZE
     );
+
+    this.identiconRotDeg = {
+      x: Game.readIdenticonDeg(LS_IDENTICON_RX, 0),
+      y: Game.readIdenticonDeg(LS_IDENTICON_RY, 0),
+      z: Game.readIdenticonDeg(LS_IDENTICON_RZ, 0),
+    };
+    this.identiconScale = Game.readIdenticonScale(LS_IDENTICON_SCALE, 1);
 
     const aspect = 16 / 9;
     this.camera = new THREE.OrthographicCamera(
@@ -575,6 +604,28 @@ export class Game {
     return Number.isFinite(n) && n > 0 ? n : fallback;
   }
 
+  private static readIdenticonDeg(key: string, fallback: number): number {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) ? Game.clampIdenticonDeg(n) : fallback;
+  }
+
+  private static clampIdenticonDeg(n: number): number {
+    return Math.max(-360, Math.min(360, n));
+  }
+
+  private static readIdenticonScale(key: string, fallback: number): number {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) ? Game.clampIdenticonScale(n) : fallback;
+  }
+
+  private static clampIdenticonScale(n: number): number {
+    return Math.max(0.25, Math.min(3, n));
+  }
+
   private static clampZoom(
     v: number,
     min: number,
@@ -678,6 +729,104 @@ export class Game {
     );
     localStorage.setItem(LS_ZOOM_FRUSTUM, String(this.frustumSize));
     this.applyOrthographicFrustum();
+  }
+
+  /** Euler angles (degrees) for the identicon sphere mesh (XYZ order). */
+  getIdenticonRotationDegrees(): { x: number; y: number; z: number } {
+    return { ...this.identiconRotDeg };
+  }
+
+  /**
+   * Rotates the textured sphere for every avatar; persisted for tuning orientation.
+   */
+  setIdenticonRotationDegrees(x: number, y: number, z: number): void {
+    this.identiconRotDeg = {
+      x: Game.clampIdenticonDeg(x),
+      y: Game.clampIdenticonDeg(y),
+      z: Game.clampIdenticonDeg(z),
+    };
+    localStorage.setItem(LS_IDENTICON_RX, String(this.identiconRotDeg.x));
+    localStorage.setItem(LS_IDENTICON_RY, String(this.identiconRotDeg.y));
+    localStorage.setItem(LS_IDENTICON_RZ, String(this.identiconRotDeg.z));
+    this.applyIdenticonTransformToAllAvatars();
+  }
+
+  getIdenticonScale(): number {
+    return this.identiconScale;
+  }
+
+  /** Uniform scale of the textured sphere (0.25–3). Persists to localStorage. */
+  setIdenticonScale(scale: number): void {
+    this.identiconScale = Game.clampIdenticonScale(scale);
+    localStorage.setItem(LS_IDENTICON_SCALE, String(this.identiconScale));
+    this.applyIdenticonTransformToAllAvatars();
+    this.refreshChatBubbleVerticalPositions();
+  }
+
+  private getIdenticonEuler(): THREE.Euler {
+    const d = THREE.MathUtils.degToRad;
+    this.identiconEulerScratch.set(
+      d(this.identiconRotDeg.x),
+      d(this.identiconRotDeg.y),
+      d(this.identiconRotDeg.z),
+      "XYZ"
+    );
+    return this.identiconEulerScratch;
+  }
+
+  private applyIdenticonTransformToAllAvatars(): void {
+    const e = this.getIdenticonEuler();
+    const s = this.identiconScale;
+    const d = AVATAR_SPHERE_RADIUS * 2 * s;
+    const apply = (g: THREE.Group | null): void => {
+      if (!g) return;
+      const identicon = g.userData.identiconMesh as THREE.Sprite | undefined;
+      if (identicon) {
+        identicon.rotation.copy(e);
+        identicon.scale.set(d, d, 1);
+        identicon.position.y = AVATAR_SPHERE_RADIUS * s;
+      }
+      this.updateAvatarNameLabelHeight(g);
+    };
+    apply(this.selfMesh);
+    for (const [, g] of this.others) apply(g);
+  }
+
+  /** Vertical world distance matching `px` at current canvas height & ortho frustum. */
+  private pixelToWorldY(px: number): number {
+    const h = this.canvasHost.clientHeight;
+    if (h < 1) return px * 0.001;
+    return (px / h) * this.frustumSize;
+  }
+
+  private updateAvatarNameLabelHeight(g: THREE.Group): void {
+    const nameSprite = g.userData.nameSprite as THREE.Sprite | undefined;
+    if (!nameSprite) return;
+    const worldH = nameSprite.scale.y;
+    const gapWorld = this.pixelToWorldY(NAME_GAP_BELOW_IDENTICON_PX);
+    nameSprite.position.y = -gapWorld - worldH / 2;
+  }
+
+  private refreshChatBubbleVerticalPositions(): void {
+    for (const [addr, entry] of this.chatBubbleByAddress) {
+      const g =
+        addr === this.selfAddress
+          ? this.selfMesh
+          : this.others.get(addr) ?? null;
+      if (!g) continue;
+      const nameSprite = g.userData.nameSprite as THREE.Sprite | undefined;
+      const sprite = entry.sprite;
+      if (nameSprite) {
+        const nh = nameSprite.scale.y;
+        const ny = nameSprite.position.y;
+        const nameTop = ny + nh / 2;
+        const ch = sprite.scale.y;
+        sprite.position.y = nameTop + CHAT_GAP_ABOVE_NAME + ch / 2;
+      } else {
+        sprite.position.y =
+          AVATAR_SPHERE_RADIUS * 2 * this.identiconScale + 0.45;
+      }
+    }
   }
 
   private applyOrthographicFrustum(): void {
@@ -981,6 +1130,7 @@ export class Game {
         if (!this.tileWalkable({ x: tx, y: tz })) continue;
         const k = tileKey(tx, tz);
         if (this.placedObjects.has(k)) continue;
+        if (this.hubNoBuildTile(tx, tz)) continue;
         if (tx === here.x && tz === here.y) continue;
         const mesh = new THREE.Mesh(this.placementHintGeom, this.placementHintMat);
         mesh.rotation.x = -Math.PI / 2;
@@ -1010,6 +1160,13 @@ export class Game {
 
   private tileWalkable(ft: FloorTile): boolean {
     return isWalkableTile(ft.x, ft.y, this.extraFloorKeys, this.roomId);
+  }
+
+  /** Hub center safe zone: no new blocks or reposition targets. */
+  private hubNoBuildTile(x: number, z: number): boolean {
+    return (
+      normalizeRoomId(this.roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(x, z)
+    );
   }
 
   private pickWalkableTile(
@@ -1189,6 +1346,7 @@ export class Game {
           if (!this.tileWalkable(dest)) return;
           const destK = tileKey(dest.x, dest.y);
           if (this.placedObjects.has(destK)) return;
+          if (this.hubNoBuildTile(dest.x, dest.y)) return;
           const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
           if (here.x === dest.x && here.y === dest.y) return;
           const from = this.repositionFrom;
@@ -1212,6 +1370,7 @@ export class Game {
       if (!this.placeBlockHandler) return;
       const k = tileKey(dest.x, dest.y);
       if (this.placedObjects.has(k)) return;
+      if (this.hubNoBuildTile(dest.x, dest.y)) return;
       const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
       if (here.x === dest.x && here.y === dest.y) return;
       this.placeBlockHandler(dest.x, dest.y);
@@ -1694,6 +1853,9 @@ export class Game {
     this.renderer.setPixelRatio(dpr);
     this.applyOrthographicFrustum();
     this.fogOfWar.setSize(w, h, dpr);
+    if (this.selfMesh) this.updateAvatarNameLabelHeight(this.selfMesh);
+    for (const [, g] of this.others) this.updateAvatarNameLabelHeight(g);
+    this.refreshChatBubbleVerticalPositions();
   }
 
   syncState(players: PlayerState[]): void {
@@ -1832,7 +1994,8 @@ export class Game {
       const ch = sprite.scale.y;
       sprite.position.y = nameTop + CHAT_GAP_ABOVE_NAME + ch / 2;
     } else {
-      sprite.position.y = AVATAR_SPHERE_RADIUS * 2 + 0.45;
+      sprite.position.y =
+        AVATAR_SPHERE_RADIUS * 2 * this.identiconScale + 0.45;
     }
     g.add(sprite);
     this.chatBubbleByAddress.set(addr, {
@@ -1891,14 +2054,20 @@ export class Game {
     const g = new THREE.Group();
     g.userData.address = address;
     g.userData.displayName = displayName ?? "";
-    const geom = new THREE.SphereGeometry(AVATAR_SPHERE_RADIUS, 24, 20);
-    const mat = new THREE.MeshStandardMaterial({
+    const s = this.identiconScale;
+    const d = AVATAR_SPHERE_RADIUS * 2 * s;
+    const mat = new THREE.SpriteMaterial({
       color: 0x8899aa,
-      roughness: 0.45,
-      metalness: 0.1,
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
     });
-    const body = new THREE.Mesh(geom, mat);
-    body.position.y = AVATAR_SPHERE_RADIUS;
+    const body = new THREE.Sprite(mat);
+    body.renderOrder = 2;
+    body.scale.set(d, d, 1);
+    body.position.y = AVATAR_SPHERE_RADIUS * s;
+    body.rotation.copy(this.getIdenticonEuler());
+    g.userData.identiconMesh = body;
     g.add(body);
 
     void loadIdenticonTexture(address)
@@ -1916,8 +2085,9 @@ export class Game {
       });
 
     const label = displayName || walletDisplayName(address);
+    const gapWorld = this.pixelToWorldY(NAME_GAP_BELOW_IDENTICON_PX);
     const { sprite: nameSprite, texture: nameTex } =
-      createNameLabelSprite(label);
+      createNameLabelSprite(label, this.identiconScale, gapWorld);
     g.userData.nameSprite = nameSprite;
     g.userData.nameTexture = nameTex;
     g.add(nameSprite);

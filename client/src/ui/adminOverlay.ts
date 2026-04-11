@@ -4,7 +4,7 @@ import { ROOM_ID } from "../game/constants.js";
 
 const ENABLED = import.meta.env.VITE_ADMIN_ENABLED === "true";
 
-type TabId = "layout" | "fog" | "camera";
+type TabId = "layout" | "fog" | "camera" | "avatar";
 
 export function installAdminOverlay(
   hudRoot: HTMLElement,
@@ -39,6 +39,7 @@ export function installAdminOverlay(
       <button type="button" class="admin-overlay-tab admin-overlay-tab--active" data-tab="layout" role="tab" aria-selected="true">Layout</button>
       <button type="button" class="admin-overlay-tab" data-tab="fog" role="tab" aria-selected="false">Fog</button>
       <button type="button" class="admin-overlay-tab" data-tab="camera" role="tab" aria-selected="false">Camera</button>
+      <button type="button" class="admin-overlay-tab" data-tab="avatar" role="tab" aria-selected="false">Avatar</button>
     </div>
     <div class="admin-overlay-tab-panel" data-panel="layout">
       <p class="admin-overlay-hint">Random extra floor tiles (500×500 world). No auth required.</p>
@@ -79,6 +80,26 @@ export function installAdminOverlay(
       </label>
       <button type="button" class="admin-overlay-btn admin-overlay-btn-secondary" id="admin-zoom-apply">Apply zoom limits</button>
     </div>
+    <div class="admin-overlay-tab-panel" data-panel="avatar" hidden>
+      <p class="admin-overlay-hint">Rotate and scale the identicon sphere (degrees XYZ, uniform scale). Values persist in this browser.</p>
+      <label class="admin-overlay-field"><span>Sphere scale</span>
+        <input type="range" class="admin-overlay-range" id="avatar-scale" min="0.25" max="3" step="0.05" value="1" />
+        <span class="admin-overlay-range-val" id="avatar-scale-val">1.00×</span>
+      </label>
+      <label class="admin-overlay-field"><span>Rotate X</span>
+        <input type="range" class="admin-overlay-range" id="avatar-rx" min="-360" max="360" step="1" value="0" />
+        <span class="admin-overlay-range-val" id="avatar-rx-val">0°</span>
+      </label>
+      <label class="admin-overlay-field"><span>Rotate Y</span>
+        <input type="range" class="admin-overlay-range" id="avatar-ry" min="-360" max="360" step="1" value="0" />
+        <span class="admin-overlay-range-val" id="avatar-ry-val">0°</span>
+      </label>
+      <label class="admin-overlay-field"><span>Rotate Z</span>
+        <input type="range" class="admin-overlay-range" id="avatar-rz" min="-360" max="360" step="1" value="0" />
+        <span class="admin-overlay-range-val" id="avatar-rz-val">0°</span>
+      </label>
+      <button type="button" class="admin-overlay-btn admin-overlay-btn-secondary" id="avatar-reset">Reset orientation &amp; scale</button>
+    </div>
     <div class="admin-overlay-status" id="admin-status"></div>
   `;
 
@@ -101,24 +122,6 @@ export function installAdminOverlay(
   const tabButtons = panel.querySelectorAll<HTMLButtonElement>(".admin-overlay-tab");
   const tabPanels = panel.querySelectorAll<HTMLElement>(".admin-overlay-tab-panel");
 
-  const setTab = (id: TabId): void => {
-    tabButtons.forEach((btn) => {
-      const active = btn.dataset.tab === id;
-      btn.classList.toggle("admin-overlay-tab--active", active);
-      btn.setAttribute("aria-selected", active ? "true" : "false");
-    });
-    tabPanels.forEach((p) => {
-      p.hidden = p.dataset.panel !== id;
-    });
-  };
-
-  tabButtons.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.tab as TabId | undefined;
-      if (id) setTab(id);
-    });
-  });
-
   const syncZoomFields = (): void => {
     const b = game.getZoomBounds();
     zmin.value = String(b.min);
@@ -132,6 +135,62 @@ export function installAdminOverlay(
     fogOuter.value = String(r.outer);
   };
 
+  const avatarScale = $("avatar-scale") as HTMLInputElement;
+  const avatarScaleVal = $("avatar-scale-val") as HTMLSpanElement;
+  const avatarRx = $("avatar-rx") as HTMLInputElement;
+  const avatarRy = $("avatar-ry") as HTMLInputElement;
+  const avatarRz = $("avatar-rz") as HTMLInputElement;
+  const avatarRxVal = $("avatar-rx-val") as HTMLSpanElement;
+  const avatarRyVal = $("avatar-ry-val") as HTMLSpanElement;
+  const avatarRzVal = $("avatar-rz-val") as HTMLSpanElement;
+
+  const syncAvatarFields = (): void => {
+    const sc = game.getIdenticonScale();
+    avatarScale.value = String(sc);
+    avatarScaleVal.textContent = `${sc.toFixed(2)}×`;
+    const r = game.getIdenticonRotationDegrees();
+    avatarRx.value = String(Math.round(r.x));
+    avatarRy.value = String(Math.round(r.y));
+    avatarRz.value = String(Math.round(r.z));
+    avatarRxVal.textContent = `${avatarRx.value}°`;
+    avatarRyVal.textContent = `${avatarRy.value}°`;
+    avatarRzVal.textContent = `${avatarRz.value}°`;
+  };
+
+  const applyAvatarFromSliders = (): void => {
+    game.setIdenticonRotationDegrees(
+      Number(avatarRx.value),
+      Number(avatarRy.value),
+      Number(avatarRz.value)
+    );
+    const r = game.getIdenticonRotationDegrees();
+    avatarRx.value = String(Math.round(r.x));
+    avatarRy.value = String(Math.round(r.y));
+    avatarRz.value = String(Math.round(r.z));
+    avatarRxVal.textContent = `${avatarRx.value}°`;
+    avatarRyVal.textContent = `${avatarRy.value}°`;
+    avatarRzVal.textContent = `${avatarRz.value}°`;
+  };
+
+  const setTab = (id: TabId): void => {
+    tabButtons.forEach((btn) => {
+      const active = btn.dataset.tab === id;
+      btn.classList.toggle("admin-overlay-tab--active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    tabPanels.forEach((p) => {
+      p.hidden = p.dataset.panel !== id;
+    });
+    if (id === "avatar") syncAvatarFields();
+  };
+
+  tabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.tab as TabId | undefined;
+      if (id) setTab(id);
+    });
+  });
+
   const setStatus = (s: string, err = false): void => {
     statusEl.textContent = s;
     statusEl.classList.toggle("admin-overlay-status--err", err);
@@ -140,6 +199,7 @@ export function installAdminOverlay(
   const openPanel = (): void => {
     syncZoomFields();
     syncFogFields();
+    syncAvatarFields();
     setTab("layout");
     setStatus(`Frustum: ${game.getZoomFrustumSize().toFixed(1)} · Fog: ${game.getFogOfWarEnabled() ? "on" : "off"}`);
   };
@@ -167,6 +227,36 @@ export function installAdminOverlay(
     setStatus(
       `Fog ${game.getFogOfWarEnabled() ? "on" : "off"} · inner ${r.inner.toFixed(1)} · outer ${r.outer.toFixed(1)}`
     );
+  });
+
+  const onAvatarInput = (): void => {
+    applyAvatarFromSliders();
+    const r = game.getIdenticonRotationDegrees();
+    const sc = game.getIdenticonScale();
+    setStatus(
+      `Identicon scale ${sc.toFixed(2)}× · rotation X ${r.x.toFixed(0)}° · Y ${r.y.toFixed(0)}° · Z ${r.z.toFixed(0)}°`
+    );
+  };
+  avatarRx.addEventListener("input", onAvatarInput);
+  avatarRy.addEventListener("input", onAvatarInput);
+  avatarRz.addEventListener("input", onAvatarInput);
+
+  const onAvatarScaleInput = (): void => {
+    game.setIdenticonScale(Number(avatarScale.value));
+    avatarScaleVal.textContent = `${game.getIdenticonScale().toFixed(2)}×`;
+    const r = game.getIdenticonRotationDegrees();
+    const sc = game.getIdenticonScale();
+    setStatus(
+      `Identicon scale ${sc.toFixed(2)}× · rotation X ${r.x.toFixed(0)}° · Y ${r.y.toFixed(0)}° · Z ${r.z.toFixed(0)}°`
+    );
+  };
+  avatarScale.addEventListener("input", onAvatarScaleInput);
+
+  $("avatar-reset").addEventListener("click", () => {
+    game.setIdenticonRotationDegrees(0, 0, 0);
+    game.setIdenticonScale(1);
+    syncAvatarFields();
+    setStatus("Identicon orientation and scale reset");
   });
 
   $("admin-random").addEventListener("click", async () => {
