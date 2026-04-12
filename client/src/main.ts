@@ -31,7 +31,17 @@ const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
 /** Inactivity: return to hub center (not lobby). */
 const IDLE_RETURN_HUB_MS = 15 * 60 * 1000;
 
+/** Admin wallet addresses (must match server config) */
+const ADMIN_ADDRESSES = new Set([
+  "NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y",
+]);
+
+function isAdmin(address: string): boolean {
+  return ADMIN_ADDRESSES.has(address);
+}
+
 let unmountMainMenu: (() => void) | null = null;
+let selfAddress = "";
 
 function startIdleReturnToHub(ms: number, onIdle: () => void): () => void {
   let t: ReturnType<typeof setTimeout> | null = null;
@@ -241,6 +251,8 @@ function enterGame(token: string, address: string): void {
       editingTile = null;
       hud.hideObjectEditPanel();
       game.clearSelectedBlock();
+      // Deactivate signpost mode when leaving build
+      hud.deactivateSignpostMode();
     } else if (mode === "build") {
       game.setFloorExpandMode(false);
       game.setBuildMode(true);
@@ -250,6 +262,8 @@ function enterGame(token: string, address: string): void {
       editingTile = null;
       hud.hideObjectEditPanel();
       game.clearSelectedBlock();
+      // Deactivate signpost mode when leaving build
+      hud.deactivateSignpostMode();
     }
     syncBuildHud();
   });
@@ -261,9 +275,19 @@ function enterGame(token: string, address: string): void {
 
   const wireWsHandlers = (socket: WebSocket): void => {
     game.setTileClickHandler((x, z, layer = 0) => {
+      // Check if in signpost mode (only in build mode)
+      if (game.getBuildMode() && hud.isSignpostModeActive()) {
+        hud.promptSignpostMessage(x, z);
+        return;
+      }
       sendMoveTo(socket, x, z, layer);
     });
     game.setPlaceBlockHandler((x, z) => {
+      // Don't place blocks if in signpost mode
+      if (hud.isSignpostModeActive()) {
+        hud.promptSignpostMessage(x, z);
+        return;
+      }
       sendPlaceBlock(socket, x, z, game.getPlacementBlockStyle());
     });
     game.setMoveBlockHandler((fromX, fromZ, toX, toZ) => {
@@ -275,10 +299,21 @@ function enterGame(token: string, address: string): void {
     game.setRemoveExtraFloorHandler((x, z) => {
       sendRemoveExtraFloor(socket, x, z);
     });
+    hud.onSignpostPlace((x, z, message) => {
+      socket.send(JSON.stringify({
+        type: "placeSignboard",
+        x,
+        z,
+        message,
+      }));
+    });
     game.setObstacleSelectHandler((x, z) => {
       const m = game.getPlacedAt(x, z);
       if (!m) return;
       editingTile = { x, z };
+      
+      console.log(`[Main] Setting up object panel for (${x}, ${z}), selfAddress="${selfAddress}", isAdmin=${isAdmin(selfAddress)}`);
+      
       hud.showObjectEditPanel({
         x,
         z,
@@ -289,6 +324,8 @@ function enterGame(token: string, address: string): void {
         ramp: m.ramp,
         rampDir: m.rampDir,
         colorId: m.colorId,
+        locked: m.locked || false,
+        isAdmin: isAdmin(selfAddress),
         onPropsChange: (p) => {
           sendSetObstacleProps(socket, x, z, p);
         },
@@ -322,8 +359,10 @@ function enterGame(token: string, address: string): void {
           : 5,
       });
       game.setSelf(msg.self.address, msg.self.displayName);
+      selfAddress = msg.self.address;
       game.setObstacles(msg.obstacles);
       game.setExtraFloorTiles(msg.extraFloorTiles);
+      game.setSignboards(msg.signboards);
       if (msg.canvasClaims) {
         game.setCanvasClaims(msg.canvasClaims);
       }
@@ -361,9 +400,11 @@ function enterGame(token: string, address: string): void {
       game.showChatBubble(msg.fromAddress, msg.text, msg.from);
     }
     if (msg.type === "obstacles") {
+      console.log(`[Main] Received obstacles update, editingTile=${editingTile ? `(${editingTile.x}, ${editingTile.z})` : 'null'}`);
       game.setObstacles(msg.tiles);
       if (editingTile) {
         const m = game.getPlacedAt(editingTile.x, editingTile.z);
+        console.log(`[Main] After setObstacles, getPlacedAt returned:`, m);
         if (!m) {
           editingTile = null;
           hud.hideObjectEditPanel();
@@ -380,6 +421,13 @@ function enterGame(token: string, address: string): void {
     if (msg.type === "canvasClaim") {
       console.log(`[canvas] Received canvasClaim message:`, msg);
       game.applyCanvasClaim(msg.x, msg.z, msg.address);
+      // Update leaderboard in real-time when tiles are claimed
+      updateCanvasLeaderboard();
+    }
+    if (msg.type === "signboards") {
+      game.setSignboards(msg.signboards);
+      // Clear signboard tooltip if it's showing a deleted signboard
+      hud.setSignboardTooltip(null);
     }
   };
 
@@ -426,6 +474,10 @@ function enterGame(token: string, address: string): void {
 
   game.setRoomChangeHandler((targetRoomId, spawnX, spawnZ) => {
     connectToRoom(targetRoomId, { x: spawnX, z: spawnZ });
+  });
+
+  game.setSignboardHoverHandler((signboard) => {
+    hud.setSignboardTooltip(signboard);
   });
 
   hud.onReturnToHub(() => {

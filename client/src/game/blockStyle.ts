@@ -42,4 +42,6 @@ export type BlockStyleProps = {
   ramp: boolean;
   rampDir: number;
   colorId: number;
+  /** Whether this object is locked (admin-only editing). */
+  locked?: boolean;
 };

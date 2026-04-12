@@ -56,6 +56,8 @@ export function createHud(
     ramp: boolean;
     rampDir: number;
     colorId: number;
+    locked?: boolean;
+    isAdmin?: boolean;
     onPropsChange: (p: ObstacleProps) => void;
     onRemove: () => void;
     onMove: () => void;
@@ -74,6 +76,18 @@ export function createHud(
     }) => void
   ) => void;
   setBuildBlockBarState: (state: BuildBlockBarState) => void;
+  isSignpostModeActive: () => boolean;
+  deactivateSignpostMode: () => void;
+  promptSignpostMessage: (x: number, z: number) => void;
+  onSignpostPlace: (fn: (x: number, z: number, message: string) => void) => void;
+  setSignboardTooltip: (signboard: {
+    id: string;
+    x: number;
+    z: number;
+    message: string;
+    createdBy: string;
+    createdAt: number;
+  } | null) => void;
   setDebugText: (text: string) => void;
   setCanvasLeaderboardVisible: (visible: boolean) => void;
   updateCanvasLeaderboard: (leaders: Array<{ address: string; count: number }>) => void;
@@ -155,10 +169,49 @@ export function createHud(
     <div class="canvas-leaderboard__list"></div>
   `;
 
+  const signboardTooltip = document.createElement("div");
+  signboardTooltip.className = "signboard-tooltip";
+  signboardTooltip.hidden = true;
+  signboardTooltip.innerHTML = `
+    <div class="signboard-tooltip__header">
+      <span class="signboard-tooltip__icon">📋</span>
+      <span class="signboard-tooltip__title">Signboard</span>
+    </div>
+    <div class="signboard-tooltip__message"></div>
+    <div class="signboard-tooltip__footer">
+      <span class="signboard-tooltip__author"></span>
+    </div>
+  `;
+
+  // Signpost message input overlay
+  const signpostOverlay = document.createElement("div");
+  signpostOverlay.className = "signpost-overlay";
+  signpostOverlay.hidden = true;
+  const signpostDialog = document.createElement("div");
+  signpostDialog.className = "signpost-overlay__dialog";
+  signpostDialog.innerHTML = `
+    <div class="signpost-overlay__header">
+      <span class="signpost-overlay__icon">📍</span>
+      <span class="signpost-overlay__title">Create Signpost</span>
+    </div>
+    <div class="signpost-overlay__body">
+      <label class="signpost-overlay__label">Message (max 500 characters):</label>
+      <textarea class="signpost-overlay__textarea" maxlength="500" placeholder="Enter your message..." rows="5"></textarea>
+      <div class="signpost-overlay__char-count">0 / 500</div>
+    </div>
+    <div class="signpost-overlay__actions">
+      <button type="button" class="signpost-overlay__btn signpost-overlay__btn--cancel">Cancel</button>
+      <button type="button" class="signpost-overlay__btn signpost-overlay__btn--create">Create</button>
+    </div>
+  `;
+  signpostOverlay.appendChild(signpostDialog);
+
   leftStack.appendChild(debugPanel);
   leftStack.appendChild(canvasLeaderboard);
+  leftStack.appendChild(signboardTooltip);
   ui.appendChild(topStrip);
   ui.appendChild(leftStack);
+  letter.appendChild(signpostOverlay);
 
   const topBar = document.createElement("div");
   topBar.className = "hud-top";
@@ -291,6 +344,25 @@ export function createHud(
         </div>
       </div>
     </div>
+    <div class="build-block-bar__tools">
+      <div class="build-block-bar__title" style="margin-top: 1rem;">Tools</div>
+      <div class="build-block-bar__tool-selector">
+        <button type="button" class="build-block-bar__tool-btn build-block-bar__tool-btn--active" data-tool="block">
+          <div class="build-block-bar__tool-icon">🧱</div>
+          <div class="build-block-bar__tool-label">Block</div>
+        </button>
+        <button type="button" class="build-block-bar__tool-btn" data-tool="signpost">
+          <div class="build-block-bar__tool-icon">📍</div>
+          <div class="build-block-bar__tool-label">Signpost</div>
+        </button>
+      </div>
+      <div class="build-block-bar__preview">
+        <div class="build-block-bar__preview-label">Preview:</div>
+        <div class="build-block-bar__preview-box">
+          <canvas class="build-block-bar__preview-canvas" width="120" height="120"></canvas>
+        </div>
+      </div>
+    </div>
   `;
   ui.appendChild(buildBlockBar);
 
@@ -331,6 +403,286 @@ export function createHud(
   const barAdvancedSection = buildBlockBar.querySelector(
     ".build-block-bar__advanced"
   ) as HTMLElement;
+  const barToolButtons = Array.from(buildBlockBar.querySelectorAll(".build-block-bar__tool-btn")) as HTMLButtonElement[];
+  const barPreviewCanvas = buildBlockBar.querySelector(".build-block-bar__preview-canvas") as HTMLCanvasElement;
+
+  const signpostTextarea = signpostOverlay.querySelector(".signpost-overlay__textarea") as HTMLTextAreaElement;
+  const signpostCharCount = signpostOverlay.querySelector(".signpost-overlay__char-count") as HTMLElement;
+  const signpostCancelBtn = signpostOverlay.querySelector(".signpost-overlay__btn--cancel") as HTMLButtonElement;
+  const signpostCreateBtn = signpostOverlay.querySelector(".signpost-overlay__btn--create") as HTMLButtonElement;
+  
+  let signpostPendingTile: { x: number; z: number } | null = null;
+  let signpostPlaceHandler: ((x: number, z: number, message: string) => void) | null = null;
+
+  // Signpost mode (non-admin, for everyone)
+  let signpostModeActive = false;
+
+  // Signpost textarea character counter
+  if (signpostTextarea && signpostCharCount) {
+    signpostTextarea.addEventListener("input", () => {
+      const len = signpostTextarea.value.length;
+      signpostCharCount.textContent = `${len} / 500`;
+    });
+  }
+
+  if (signpostCancelBtn) {
+    signpostCancelBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      signpostOverlay.hidden = true;
+      if (signpostTextarea) signpostTextarea.value = "";
+      if (signpostCharCount) signpostCharCount.textContent = "0 / 500";
+      signpostPendingTile = null;
+    });
+  }
+
+  if (signpostCreateBtn) {
+    signpostCreateBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!signpostTextarea || !signpostPendingTile) return;
+      const message = signpostTextarea.value.trim();
+      if (!message) return;
+      
+      signpostPlaceHandler?.(signpostPendingTile.x, signpostPendingTile.z, message);
+      signpostOverlay.hidden = true;
+      signpostTextarea.value = "";
+      if (signpostCharCount) signpostCharCount.textContent = "0 / 500";
+      signpostPendingTile = null;
+    });
+  }
+
+  if (signpostTextarea) {
+    signpostTextarea.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.ctrlKey) {
+        e.preventDefault();
+        signpostCreateBtn?.click();
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        signpostCancelBtn?.click();
+      }
+      e.stopPropagation();
+    });
+  }
+
+  // Tool selector (block vs signpost)
+  barToolButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tool = btn.dataset.tool as string | undefined;
+      if (tool === "signpost") {
+        signpostModeActive = true;
+        barToolButtons.forEach((b) => b.classList.remove("build-block-bar__tool-btn--active"));
+        btn.classList.add("build-block-bar__tool-btn--active");
+      } else {
+        signpostModeActive = false;
+        barToolButtons.forEach((b) => b.classList.remove("build-block-bar__tool-btn--active"));
+        btn.classList.add("build-block-bar__tool-btn--active");
+      }
+    });
+  });
+
+  // 3D Block preview rendering - shows a 1x1 tile with block on top (isometric view)
+  function updateBlockPreview(state: {
+    colorId: number;
+    half: boolean;
+    quarter: boolean;
+    hex: boolean;
+    ramp: boolean;
+  }): void {
+    const ctx = barPreviewCanvas.getContext("2d");
+    if (!ctx) return;
+
+    const w = barPreviewCanvas.width;
+    const h = barPreviewCanvas.height;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, w, h);
+
+    // Color palette matching game blocks
+    const colors = [
+      "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", 
+      "#3b82f6", "#ef4444", "#6366f1", "#14b8a6",
+      "#f3f4f6", "#1f2937"
+    ];
+    const baseColor = colors[state.colorId] || colors[0];
+    
+    if (!baseColor) return;
+
+    // Parse hex color
+    const r = parseInt(baseColor.slice(1, 3), 16);
+    const g = parseInt(baseColor.slice(3, 5), 16);
+    const b = parseInt(baseColor.slice(5, 7), 16);
+
+    // Create shaded colors for 3D effect
+    const topColor = `rgb(${Math.min(255, r + 40)}, ${Math.min(255, g + 40)}, ${Math.min(255, b + 40)})`;
+    const sideColor = `rgb(${Math.max(0, r - 20)}, ${Math.max(0, g - 20)}, ${Math.max(0, b - 20)})`;
+    const frontColor = baseColor;
+
+    // Isometric tile dimensions
+    const tileW = 50;  // Tile width in isometric view
+    const tileH = 25;  // Tile height in isometric view
+    const centerX = w / 2;
+    const centerY = h / 2 + 15;
+    
+    // Draw floor tile (1x1 grid square)
+    const floorColor = "#3a4456";
+    const floorLight = "#4a5566";
+    const floorDark = "#2a3446";
+    
+    // Floor tile top (diamond shape in isometric)
+    ctx.beginPath();
+    ctx.moveTo(centerX, centerY - tileH);  // Top
+    ctx.lineTo(centerX + tileW, centerY);  // Right
+    ctx.lineTo(centerX, centerY + tileH);  // Bottom
+    ctx.lineTo(centerX - tileW, centerY);  // Left
+    ctx.closePath();
+    
+    ctx.fillStyle = floorColor;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.1)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    // Grid lines on floor for reference
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.beginPath();
+    ctx.moveTo(centerX, centerY - tileH);
+    ctx.lineTo(centerX, centerY + tileH);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(centerX - tileW, centerY);
+    ctx.lineTo(centerX + tileW, centerY);
+    ctx.stroke();
+
+    // Calculate block dimensions
+    const blockW = 40;  // Block width
+    const blockD = 40;  // Block depth
+    let blockH = 45;    // Block height
+    if (state.quarter) blockH = 12;
+    else if (state.half) blockH = 23;
+
+    // Block sits on top of the floor
+    const blockBaseY = centerY - tileH - 2;
+
+    if (state.hex) {
+      // Hexagonal block - show from isometric angle
+      const hexSize = 18;
+      const hexCenterY = blockBaseY - blockH / 2;
+      
+      // Draw hexagon top
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const angle = (Math.PI / 3) * i - Math.PI / 2;
+        const x = centerX + Math.cos(angle) * hexSize;
+        const y = hexCenterY - 10 + Math.sin(angle) * (hexSize * 0.5);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = topColor;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.3)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      
+      // Draw visible sides
+      ctx.beginPath();
+      ctx.moveTo(centerX + hexSize * 0.87, hexCenterY - 10 + hexSize * 0.25);
+      ctx.lineTo(centerX + hexSize * 0.87, blockBaseY);
+      ctx.lineTo(centerX, blockBaseY);
+      ctx.lineTo(centerX, hexCenterY - 10 + hexSize * 0.5);
+      ctx.closePath();
+      ctx.fillStyle = sideColor;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.2)";
+      ctx.stroke();
+      
+    } else if (state.ramp) {
+      // Ramp - isometric view showing slope
+      const rampW = blockW * 0.4;
+      const rampD = blockD * 0.4;
+      
+      // Right face (sloped)
+      ctx.beginPath();
+      ctx.moveTo(centerX, blockBaseY - blockH);
+      ctx.lineTo(centerX + rampW, blockBaseY - blockH + rampD * 0.5);
+      ctx.lineTo(centerX + rampW, blockBaseY + rampD * 0.5);
+      ctx.lineTo(centerX, blockBaseY);
+      ctx.closePath();
+      ctx.fillStyle = sideColor;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.2)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      
+      // Front sloped surface
+      ctx.beginPath();
+      ctx.moveTo(centerX, blockBaseY);
+      ctx.lineTo(centerX - rampW, blockBaseY - rampD * 0.5);
+      ctx.lineTo(centerX - rampW, blockBaseY - blockH - rampD * 0.5);
+      ctx.lineTo(centerX, blockBaseY - blockH);
+      ctx.closePath();
+      ctx.fillStyle = frontColor;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.2)";
+      ctx.stroke();
+      
+      // Top sloped face
+      ctx.beginPath();
+      ctx.moveTo(centerX, blockBaseY - blockH);
+      ctx.lineTo(centerX + rampW, blockBaseY - blockH + rampD * 0.5);
+      ctx.lineTo(centerX, blockBaseY + rampD * 0.5);
+      ctx.lineTo(centerX - rampW, blockBaseY - rampD * 0.5);
+      ctx.closePath();
+      ctx.fillStyle = topColor;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.2)";
+      ctx.stroke();
+      
+    } else {
+      // Regular cubic block - isometric view
+      const isoW = blockW * 0.4;
+      const isoD = blockD * 0.4;
+      
+      // Left face
+      ctx.beginPath();
+      ctx.moveTo(centerX, blockBaseY - blockH);
+      ctx.lineTo(centerX - isoW, blockBaseY - blockH - isoD * 0.5);
+      ctx.lineTo(centerX - isoW, blockBaseY - isoD * 0.5);
+      ctx.lineTo(centerX, blockBaseY);
+      ctx.closePath();
+      ctx.fillStyle = frontColor;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.2)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Right face
+      ctx.beginPath();
+      ctx.moveTo(centerX, blockBaseY - blockH);
+      ctx.lineTo(centerX + isoW, blockBaseY - blockH + isoD * 0.5);
+      ctx.lineTo(centerX + isoW, blockBaseY + isoD * 0.5);
+      ctx.lineTo(centerX, blockBaseY);
+      ctx.closePath();
+      ctx.fillStyle = sideColor;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.2)";
+      ctx.stroke();
+
+      // Top face
+      ctx.beginPath();
+      ctx.moveTo(centerX, blockBaseY - blockH);
+      ctx.lineTo(centerX - isoW, blockBaseY - blockH - isoD * 0.5);
+      ctx.lineTo(centerX, blockBaseY - blockH - isoD);
+      ctx.lineTo(centerX + isoW, blockBaseY - blockH - isoD * 0.5);
+      ctx.closePath();
+      ctx.fillStyle = topColor;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.2)";
+      ctx.stroke();
+    }
+  }
 
   for (let i = 0; i < BLOCK_COLOR_COUNT; i++) {
     barSwatchesAll.appendChild(makeColorSwatchButton(i));
@@ -474,6 +826,8 @@ export function createHud(
   let quarterCheckbox: HTMLInputElement | null = null;
   let hexCheckbox: HTMLInputElement | null = null;
   let rampCheckbox: HTMLInputElement | null = null;
+  let lockCheckbox: HTMLInputElement | null = null;
+  let lockRow: HTMLElement | null = null;
   let rampDirRow: HTMLElement | null = null;
   let panelRampRotCCW: HTMLButtonElement | null = null;
   let panelRampRotCW: HTMLButtonElement | null = null;
@@ -535,6 +889,10 @@ export function createHud(
     const quarter = quarterCheckbox.checked;
     const ramp = rampCheckbox.checked;
     const rampDir = Math.max(0, Math.min(3, Math.floor(panelRampDir)));
+    const locked = lockCheckbox?.checked || false;
+    
+    console.log(`[HUD emitPanelProps] Emitting props with locked=${locked}`);
+    
     panelOnPropsChange({
       passable: passCheckbox.checked,
       quarter,
@@ -543,6 +901,7 @@ export function createHud(
       ramp,
       rampDir: ramp ? rampDir : 0,
       colorId: panelSelectedColorId,
+      locked,
     });
   }
 
@@ -569,6 +928,8 @@ export function createHud(
       quarterCheckbox = null;
       hexCheckbox = null;
       rampCheckbox = null;
+      lockCheckbox = null;
+      lockRow = null;
       rampDirRow = null;
       panelRampRotCCW = null;
       panelRampRotCW = null;
@@ -648,8 +1009,9 @@ export function createHud(
       );
       objectPanel = document.createElement("div");
       objectPanel.className = "build-object-panel";
+      const lockIcon = opts.locked ? '<span class="nq-icon nq-lock-locked" style="font-size: 0.9em; margin-left: 4px;" title="This object is locked"></span>' : '';
       objectPanel.innerHTML = `
-        <div class="build-object-panel__title">Block (${opts.x}, ${opts.z})</div>
+        <div class="build-object-panel__title">Block (${opts.x}, ${opts.z})${lockIcon}</div>
         <div class="build-object-panel__hints" aria-hidden="true"></div>
         <div class="build-object-panel__colors" aria-label="Block color">
           <div class="build-object-panel__colors-label">Color</div>
@@ -687,6 +1049,10 @@ export function createHud(
               <button type="button" class="build-object-panel__ramp-step" title="Rotate ramp (R)">Rotate</button>
             </div>
           </div>
+          <label class="build-object-panel__row build-object-panel__lock-row" hidden>
+            <input type="checkbox" class="build-object-panel__cb build-object-panel__cb-lock" />
+            <span>🔒 Lock</span>
+          </label>
         </div>
         <div class="build-object-panel__footer-actions">
           <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
@@ -713,6 +1079,12 @@ export function createHud(
       rampCheckbox = objectPanel.querySelector(
         ".build-object-panel__cb-ramp"
       ) as HTMLInputElement;
+      lockCheckbox = objectPanel.querySelector(
+        ".build-object-panel__cb-lock"
+      ) as HTMLInputElement | null;
+      lockRow = objectPanel.querySelector(
+        ".build-object-panel__lock-row"
+      ) as HTMLElement | null;
       rampDirRow = objectPanel.querySelector(
         ".build-object-panel__ramp-dir-row"
       ) as HTMLElement;
@@ -747,6 +1119,16 @@ export function createHud(
       hexCheckbox.checked = opts.ramp ? false : opts.hex;
       rampCheckbox.checked = opts.ramp;
       rampDirRow.hidden = !opts.ramp;
+      
+      // Set up lock checkbox (admin only)
+      if (lockCheckbox && lockRow) {
+        lockCheckbox.checked = opts.locked || false;
+        console.log(`[HUD] Setting lockRow visibility: isAdmin=${opts.isAdmin}, hidden=${!opts.isAdmin}`);
+        lockRow.hidden = !opts.isAdmin; // Show only for admins
+      } else {
+        console.log(`[HUD] lockCheckbox or lockRow is null:`, { lockCheckbox: !!lockCheckbox, lockRow: !!lockRow });
+      }
+      
       updatePanelKeyHints();
       for (let i = 0; i < BLOCK_COLOR_COUNT; i++) {
         panelSwatchesAll!.appendChild(makeColorSwatchButton(i));
@@ -784,6 +1166,9 @@ export function createHud(
         emitPanelProps();
       });
       hexCheckbox.addEventListener("change", () => emitPanelProps());
+      if (lockCheckbox) {
+        lockCheckbox.addEventListener("change", () => emitPanelProps());
+      }
       rampCheckbox.addEventListener("change", () => {
         const on = rampCheckbox!.checked;
         rampDirRow!.hidden = !on;
@@ -815,11 +1200,17 @@ export function createHud(
       hideObjectEditPanel();
     },
     setObjectPanelProps(p: ObstacleProps) {
+      console.log(`[HUD setObjectPanelProps] Received props with locked=${p.locked}`);
       if (passCheckbox) passCheckbox.checked = p.passable;
       if (quarterCheckbox) quarterCheckbox.checked = p.quarter;
       if (halfCheckbox) halfCheckbox.checked = p.quarter ? false : p.half;
       if (hexCheckbox) hexCheckbox.checked = p.ramp ? false : p.hex;
       if (rampCheckbox) rampCheckbox.checked = p.ramp;
+      if (lockCheckbox) {
+        const newLocked = p.locked || false;
+        console.log(`[HUD setObjectPanelProps] Setting lockCheckbox.checked to ${newLocked}`);
+        lockCheckbox.checked = newLocked;
+      }
       panelRampDir = Math.max(0, Math.min(3, Math.floor(p.rampDir)));
       if (rampDirRow) rampDirRow.hidden = !p.ramp;
       panelSelectedColorId = Math.max(
@@ -862,6 +1253,32 @@ export function createHud(
       refreshBarSwatches(
         Math.max(0, Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(state.colorId)))
       );
+      updateBlockPreview(state);
+    },
+    isSignpostModeActive(): boolean {
+      return signpostModeActive;
+    },
+    deactivateSignpostMode() {
+      signpostModeActive = false;
+      // Reset to block tool
+      barToolButtons.forEach((btn) => {
+        if (btn.dataset.tool === "block") {
+          btn.classList.add("build-block-bar__tool-btn--active");
+        } else {
+          btn.classList.remove("build-block-bar__tool-btn--active");
+        }
+      });
+    },
+    promptSignpostMessage(x: number, z: number): void {
+      signpostPendingTile = { x, z };
+      signpostOverlay.hidden = false;
+      signpostTextarea.value = "";
+      signpostCharCount.textContent = "0 / 500";
+      // Focus the textarea after a brief delay to ensure the overlay is visible
+      setTimeout(() => signpostTextarea.focus(), 100);
+    },
+    onSignpostPlace(fn: (x: number, z: number, message: string) => void) {
+      signpostPlaceHandler = fn;
     },
     setDebugText(text: string) {
       if (!showDebug) return;
@@ -874,58 +1291,109 @@ export function createHud(
       const list = canvasLeaderboard.querySelector(".canvas-leaderboard__list");
       if (!list) return;
       
-      // Clear and create entries synchronously first
-      list.innerHTML = "";
-      const entries: Array<{ entry: HTMLDivElement; img: HTMLImageElement; address: string }> = [];
-      
-      for (let i = 0; i < leaders.length; i++) {
-        const leader = leaders[i]!;
-        const entry = document.createElement("div");
-        entry.className = "canvas-leaderboard__entry";
-        
-        const rank = document.createElement("span");
-        rank.className = "canvas-leaderboard__rank";
-        rank.textContent = `${i + 1}.`;
-        
-        const identiconImg = document.createElement("img");
-        identiconImg.className = "canvas-leaderboard__identicon";
-        
-        const addr = document.createElement("span");
-        addr.className = "canvas-leaderboard__address";
-        // Format: NQ07...ABCD (first 4 + last 4)
-        const formatted = leader.address.length >= 8 
-          ? `${leader.address.slice(0, 4)}…${leader.address.slice(-4)}`
-          : leader.address;
-        addr.textContent = formatted;
-        addr.title = leader.address;
-        
-        const count = document.createElement("span");
-        count.className = "canvas-leaderboard__count";
-        count.textContent = `${leader.count}`;
-        
-        entry.appendChild(rank);
-        entry.appendChild(identiconImg);
-        entry.appendChild(addr);
-        entry.appendChild(count);
-        list.appendChild(entry);
-        
-        entries.push({ entry, img: identiconImg, address: leader.address });
-      }
-      
-      // Load identicons after DOM is set up
-      const loadIdenticons = async () => {
-        for (const { img, address } of entries) {
-          try {
-            const { identiconDataUrl } = await import("../game/identiconTexture.js");
-            const dataUrl = await identiconDataUrl(address);
-            img.src = dataUrl;
-          } catch (err) {
-            console.error(`[canvas] Failed to load identicon for leaderboard entry:`, err);
+      // Get existing entries by address for reuse
+      const existingEntries = new Map<string, HTMLDivElement>();
+      for (const child of Array.from(list.children)) {
+        const entry = child as HTMLDivElement;
+        const addr = entry.querySelector(".canvas-leaderboard__address");
+        if (addr) {
+          const fullAddress = addr.getAttribute("title") || "";
+          if (fullAddress) {
+            existingEntries.set(fullAddress, entry);
           }
         }
-      };
+      }
       
-      void loadIdenticons();
+      // Clear list but keep a reference to existing entries
+      list.innerHTML = "";
+      
+      // Create or reuse entries
+      for (let i = 0; i < leaders.length; i++) {
+        const leader = leaders[i]!;
+        let entry = existingEntries.get(leader.address);
+        let isNew = false;
+        
+        if (entry) {
+          // Reuse existing entry - just update rank and count
+          const rank = entry.querySelector(".canvas-leaderboard__rank");
+          const count = entry.querySelector(".canvas-leaderboard__count");
+          if (rank) rank.textContent = `${i + 1}.`;
+          if (count) count.textContent = `${leader.count}`;
+        } else {
+          // Create new entry
+          isNew = true;
+          entry = document.createElement("div");
+          entry.className = "canvas-leaderboard__entry";
+          
+          const rank = document.createElement("span");
+          rank.className = "canvas-leaderboard__rank";
+          rank.textContent = `${i + 1}.`;
+          
+          const identiconImg = document.createElement("img");
+          identiconImg.className = "canvas-leaderboard__identicon";
+          
+          const addr = document.createElement("span");
+          addr.className = "canvas-leaderboard__address";
+          // Format: NQ07...ABCD (first 4 + last 4)
+          const formatted = leader.address.length >= 8 
+            ? `${leader.address.slice(0, 4)}…${leader.address.slice(-4)}`
+            : leader.address;
+          addr.textContent = formatted;
+          addr.title = leader.address;
+          
+          const count = document.createElement("span");
+          count.className = "canvas-leaderboard__count";
+          count.textContent = `${leader.count}`;
+          
+          entry.appendChild(rank);
+          entry.appendChild(identiconImg);
+          entry.appendChild(addr);
+          entry.appendChild(count);
+          
+          // Load identicon for new entry
+          const loadIdenticon = async () => {
+            try {
+              const { identiconDataUrl } = await import("../game/identiconTexture.js");
+              const dataUrl = await identiconDataUrl(leader.address);
+              identiconImg.src = dataUrl;
+            } catch (err) {
+              console.error(`[canvas] Failed to load identicon for leaderboard entry:`, err);
+            }
+          };
+          void loadIdenticon();
+        }
+        
+        list.appendChild(entry);
+      }
+    },
+    setSignboardTooltip(
+      signboard: {
+        id: string;
+        x: number;
+        z: number;
+        message: string;
+        createdBy: string;
+        createdAt: number;
+      } | null
+    ) {
+      if (!signboard) {
+        signboardTooltip.hidden = true;
+        return;
+      }
+      const messageEl = signboardTooltip.querySelector(".signboard-tooltip__message");
+      const authorEl = signboardTooltip.querySelector(".signboard-tooltip__author");
+      if (messageEl) {
+        messageEl.textContent = signboard.message;
+      }
+      if (authorEl) {
+        const addr = signboard.createdBy;
+        const formatted = addr.length >= 8 
+          ? `${addr.slice(0, 4)}…${addr.slice(-4)}`
+          : addr;
+        authorEl.textContent = `— ${formatted}`;
+        (authorEl as HTMLElement).title = addr;
+      }
+      signboardTooltip.hidden = false;
     },
     destroy() {
       hideObjectEditPanel();

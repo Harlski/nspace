@@ -181,6 +181,7 @@ export type TerrainProps = {
   ramp: boolean;
   rampDir: number;
   colorId: number;
+  locked?: boolean;
 };
 
 export function terrainObstacleHeight(p: TerrainProps): number {

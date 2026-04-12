@@ -11,6 +11,8 @@ export type ObstacleTile = {
   ramp: boolean;
   rampDir: number;
   colorId: number;
+  signboardId?: string;
+  locked?: boolean;
 };
 
 export type ObstacleProps = {
@@ -21,6 +23,7 @@ export type ObstacleProps = {
   ramp: boolean;
   rampDir: number;
   colorId: number;
+  locked?: boolean;
 };
 
 export type ExtraFloorTile = { x: number; z: number };
@@ -53,6 +56,14 @@ export type ServerMessage =
       obstacles: ObstacleTile[];
       extraFloorTiles: ExtraFloorTile[];
       canvasClaims?: Array<{ x: number; z: number; address: string }>;
+      signboards: Array<{
+        id: string;
+        x: number;
+        z: number;
+        message: string;
+        createdBy: string;
+        createdAt: number;
+      }>;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
@@ -60,6 +71,18 @@ export type ServerMessage =
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
   | { type: "canvasClaim"; x: number; z: number; address: string }
+  | {
+      type: "signboards";
+      roomId: string;
+      signboards: Array<{
+        id: string;
+        x: number;
+        z: number;
+        message: string;
+        createdBy: string;
+        createdAt: number;
+      }>;
+    }
   | { type: "chat"; from: string; fromAddress: string; text: string; at: number }
   | { type: "error"; code: string };
 
@@ -191,6 +214,10 @@ export function sendSetObstacleProps(
   const ramp = props.ramp;
   const rampDir = Math.max(0, Math.min(3, Math.floor(props.rampDir)));
   const hex = ramp ? false : props.hex;
+  const locked = props.locked || false;
+  
+  console.log(`[WS sendSetObstacleProps] Sending locked=${locked} for (${x}, ${z})`);
+  
   ws.send(
     JSON.stringify({
       type: "setObstacleProps",
@@ -203,6 +230,7 @@ export function sendSetObstacleProps(
       ramp,
       rampDir: ramp ? rampDir : 0,
       colorId: props.colorId,
+      locked,
     })
   );
 }

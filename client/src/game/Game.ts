@@ -357,6 +357,28 @@ export class Game {
   private readonly canvasIdenticonMeshes = new Map<string, THREE.Mesh>();
   /** Time elapsed for door tile pulse animation */
   private doorPulseTime = 0;
+  /** Signboards (admin-placed message signs) */
+  private readonly signboards = new Map<
+    string,
+    {
+      id: string;
+      x: number;
+      z: number;
+      message: string;
+      createdBy: string;
+      createdAt: number;
+    }
+  >();
+  private signboardHoverHandler:
+    | ((signboard: {
+        id: string;
+        x: number;
+        z: number;
+        message: string;
+        createdBy: string;
+        createdAt: number;
+      } | null) => void)
+    | null = null;
 
   /** Identicon sphere Euler (degrees); applied to all player avatars. */
   private identiconRotDeg = { x: 0, y: 0, z: 0 };
@@ -1211,6 +1233,40 @@ export class Game {
     this.syncCanvasIdenticonForTile(x, z, address);
   }
 
+  /** Set signboards for the current room */
+  setSignboards(
+    signboards: readonly {
+      id: string;
+      x: number;
+      z: number;
+      message: string;
+      createdBy: string;
+      createdAt: number;
+    }[]
+  ): void {
+    this.signboards.clear();
+    for (const s of signboards) {
+      const k = tileKey(s.x, s.z);
+      this.signboards.set(k, { ...s });
+      console.log(`[signboard] Loaded: (${s.x}, ${s.z}) - "${s.message.substring(0, 30)}..."`);
+    }
+  }
+
+  setSignboardHoverHandler(
+    handler:
+      | ((signboard: {
+          id: string;
+          x: number;
+          z: number;
+          message: string;
+          createdBy: string;
+          createdAt: number;
+        } | null) => void)
+      | null
+  ): void {
+    this.signboardHoverHandler = handler;
+  }
+
   private async syncCanvasIdenticonForTile(x: number, z: number, address: string): Promise<void> {
     const k = tileKey(x, z);
     
@@ -1286,6 +1342,7 @@ export class Game {
       ramp?: boolean;
       rampDir?: number;
       colorId?: number;
+      locked?: boolean;
     }[]
   ): void {
     this.placedObjects.clear();
@@ -1301,6 +1358,8 @@ export class Game {
         0,
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(t.colorId ?? 0))
       );
+      const locked = Boolean(t.locked);
+      console.log(`[Game setObstacles] Storing (${t.x}, ${t.z}) with locked=${locked}`);
       this.placedObjects.set(k, {
         passable: t.passable,
         half,
@@ -1309,6 +1368,7 @@ export class Game {
         ramp,
         rampDir,
         colorId,
+        locked,
       });
       if (!t.passable && !ramp) this.blockingTileKeys.add(k);
     }
@@ -1467,16 +1527,19 @@ export class Game {
     if (!Game.canShowPointerHoverTiles()) {
       this.tileHighlight.visible = false;
       this.blockTopHighlight.visible = false;
+      this.signboardHoverHandler?.(null);
       return;
     }
     if (this.floorExpandMode) {
       const t = this.pickFloor(e.clientX, e.clientY);
       if (!t) {
         this.tileHighlight.visible = false;
+        this.signboardHoverHandler?.(null);
         return;
       }
       this.tileHighlight.position.set(t.x, 0.03, t.y);
       this.tileHighlight.visible = true;
+      this.signboardHoverHandler?.(null);
       return;
     }
     if (this.buildMode) {
@@ -1492,6 +1555,14 @@ export class Game {
           this.tileHighlight.visible = true;
           this.blockTopHighlight.position.set(bx!, h + 0.03, bz!);
           this.blockTopHighlight.visible = true;
+          
+          // Check if this block is a signboard
+          const signboard = this.signboards.get(blockHit);
+          if (signboard) {
+            this.signboardHoverHandler?.(signboard);
+          } else {
+            this.signboardHoverHandler?.(null);
+          }
           return;
         }
       }
@@ -1500,8 +1571,19 @@ export class Game {
     const p = this.pickWalkableTile(e.clientX, e.clientY);
     if (!p) {
       this.tileHighlight.visible = false;
+      this.signboardHoverHandler?.(null);
       return;
     }
+    
+    // Check if hovering over a signboard floor tile
+    const k = tileKey(p.x, p.y);
+    const signboard = this.signboards.get(k);
+    if (signboard) {
+      this.signboardHoverHandler?.(signboard);
+    } else {
+      this.signboardHoverHandler?.(null);
+    }
+    
     this.tileHighlight.position.set(p.x, 0.02, p.y);
     this.tileHighlight.visible = true;
   };

@@ -18,6 +18,7 @@ import {
 } from "./eventLog.js";
 import { flushCanvasClaimsSync } from "./canvasCanvas.js";
 import { getTopPlayers } from "./canvasCanvas.js";
+import { flushSignboardsSync } from "./signboards.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -221,6 +222,7 @@ function shutdown(signal: string): void {
   flushPersistWorldStateSync();
   flushEventLogSync();
   flushCanvasClaimsSync();
+  flushSignboardsSync();
   process.exit(0);
 }
 

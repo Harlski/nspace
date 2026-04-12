@@ -40,6 +40,16 @@ import {
   loadCanvasClaims,
 } from "./canvasCanvas.js";
 import { CANVAS_ROOM_ID } from "./roomLayouts.js";
+import {
+  createSignboard,
+  deleteSignboard,
+  getSignboardAt,
+  getSignboardsForRoom,
+  loadSignboards,
+  updateSignboard,
+  updateSignboardPosition,
+} from "./signboards.js";
+import { isAdmin } from "./config.js";
 
 const MOVE_SPEED = 5;
 /** NPCs move 20% slower than human path-follow speed. */
@@ -91,6 +101,10 @@ export type ObstacleTile = {
   rampDir: number;
   /** Index into client color palette (0..9). */
   colorId: number;
+  /** Optional signboard ID if there's a signboard at this location. */
+  signboardId?: string;
+  /** Whether this obstacle is locked (admin-only editing). */
+  locked?: boolean;
 };
 
 const BLOCK_COLOR_MAX = 9;
@@ -152,6 +166,14 @@ type OutMsg =
       obstacles: ObstacleTile[];
       extraFloorTiles: ExtraFloorTile[];
       canvasClaims?: Array<{ x: number; z: number; address: string }>;
+      signboards: Array<{
+        id: string;
+        x: number;
+        z: number;
+        message: string;
+        createdBy: string;
+        createdAt: number;
+      }>;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
@@ -159,6 +181,18 @@ type OutMsg =
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
   | { type: "canvasClaim"; x: number; z: number; address: string }
+  | {
+      type: "signboards";
+      roomId: string;
+      signboards: Array<{
+        id: string;
+        x: number;
+        z: number;
+        message: string;
+        createdBy: string;
+        createdAt: number;
+      }>;
+    }
   | { type: "chat"; from: string; fromAddress: string; text: string; at: number }
   | { type: "error"; code: string };
 
@@ -244,6 +278,9 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
   const m = roomPlaced.get(roomId);
   if (!m) return [];
   const out: ObstacleTile[] = [];
+  const signboards = getSignboardsForRoom(roomId);
+  const signboardMap = new Map(signboards.map((s) => [tileKey(s.x, s.z), s.id]));
+  
   for (const [k, v] of m) {
     const [x, z] = k.split(",").map(Number);
     out.push({
@@ -256,6 +293,8 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       ramp: v.ramp ?? false,
       rampDir: Math.max(0, Math.min(3, Math.floor(v.rampDir ?? 0))),
       colorId: clampColorId(v.colorId ?? 0),
+      signboardId: signboardMap.get(k),
+      locked: v.locked ?? false,
     });
   }
   return out;
@@ -657,6 +696,7 @@ function snapshotPlayers(roomId: string): PlayerState[] {
 
 export function startRoomTick(): void {
   loadCanvasClaims();
+  loadSignboards();
   setInterval(() => {
     const now = Date.now();
     for (const [roomId, room] of rooms) {
@@ -677,6 +717,12 @@ export function startRoomTick(): void {
         // Canvas room: claim tiles as player moves
         if (isCanvas && result.arrivedTiles && result.arrivedTiles.length > 0) {
           for (const tile of result.arrivedTiles) {
+            // Don't allow claiming the portal tile at (0, 15)
+            if (tile.x === 0 && tile.z === 15) {
+              console.log(`[canvas] Player ${c.address.slice(0, 8)}... stepped on portal tile (${tile.x}, ${tile.z}) - not claimable`);
+              continue;
+            }
+            
             console.log(`[canvas] Player ${c.address.slice(0, 8)}... claimed tile (${tile.x}, ${tile.z})`);
             claimTile(tile.x, tile.z, c.address);
             broadcast(roomId, {
@@ -825,6 +871,15 @@ export function addClient(
 
   const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
 
+  const signboards = getSignboardsForRoom(roomId).map((s) => ({
+    id: s.id,
+    x: s.x,
+    z: s.z,
+    message: s.message,
+    createdBy: s.createdBy,
+    createdAt: s.createdAt,
+  }));
+
   ws.send(
     JSON.stringify({
       type: "welcome",
@@ -837,6 +892,7 @@ export function addClient(
       obstacles: obstaclesToList(roomId),
       extraFloorTiles: extraFloorToList(roomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
+      signboards,
     } satisfies OutMsg)
   );
 
@@ -931,6 +987,7 @@ export function addClient(
         ramp,
         rampDir: ramp ? rampDir : 0,
         colorId,
+        locked: false,
       });
       broadcast(roomId, {
         type: "obstacles",
@@ -966,12 +1023,29 @@ export function addClient(
       let hex = Boolean(msg.hex);
       if (ramp) hex = false;
       const colorId = clampColorId(Number(msg.colorId ?? 0));
+      const locked = Boolean(msg.locked);
+      
+      console.log(`[Server setObstacleProps] Received locked=${locked} for (${tx}, ${tz}) from ${address}`);
+      
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       const placed = placedMap(roomId);
-      if (!placed.has(k)) return;
+      const existing = placed.get(k);
+      if (!existing) return;
+      
+      // Check if object is locked and user is not admin
+      if (existing.locked && !isAdmin(address)) {
+        ws.send(JSON.stringify({ type: "error", code: "object_locked" }));
+        return;
+      }
+      
+      // Only admins can change lock status
+      const finalLocked = isAdmin(address) ? locked : (existing.locked || false);
+      
+      console.log(`[Server setObstacleProps] Storing locked=${finalLocked} (isAdmin=${isAdmin(address)})`);
+      
       placed.set(k, {
         passable,
         half,
@@ -980,6 +1054,7 @@ export function addClient(
         ramp,
         rampDir: ramp ? rampDir : 0,
         colorId,
+        locked: finalLocked,
       });
       broadcast(roomId, {
         type: "obstacles",
@@ -1012,12 +1087,46 @@ export function addClient(
       const k = tileKey(tile.x, tile.z);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       const placed = placedMap(roomId);
-      if (!placed.delete(k)) return;
+      const props = placed.get(k);
+      if (!props) return;
+      
+      // Check if object is locked and user is not admin
+      if (props.locked && !isAdmin(address)) {
+        ws.send(JSON.stringify({ type: "error", code: "object_locked" }));
+        return;
+      }
+      
+      // Check if there's a signboard at this location and remove it
+      const signboard = getSignboardAt(roomId, tile.x, tile.z);
+      let signboardDeleted = false;
+      if (signboard) {
+        deleteSignboard(signboard.id);
+        signboardDeleted = true;
+      }
+      
+      placed.delete(k);
       broadcast(roomId, {
         type: "obstacles",
         roomId,
         tiles: obstaclesToList(roomId),
       });
+      
+      // If we deleted a signboard, broadcast the updated list
+      if (signboardDeleted) {
+        broadcast(roomId, {
+          type: "signboards",
+          roomId,
+          signboards: getSignboardsForRoom(roomId).map((s) => ({
+            id: s.id,
+            x: s.x,
+            z: s.z,
+            message: s.message,
+            createdBy: s.createdBy,
+            createdAt: s.createdAt,
+          })),
+        });
+      }
+      
       schedulePersistWorldState();
       /* Replay log: we only record tile coords. For richer replay / inference (e.g. undo,
          material audits), consider logging the obstacle props that existed immediately before
@@ -1059,6 +1168,13 @@ export function addClient(
       const placed = placedMap(roomId);
       const props = placed.get(fk);
       if (!props) return;
+      
+      // Check if object is locked and user is not admin
+      if (props.locked && !isAdmin(address)) {
+        ws.send(JSON.stringify({ type: "error", code: "object_locked" }));
+        return;
+      }
+      
       if (placed.has(tk)) return;
       if (!isWalkableForRoom(roomId, to.x, to.z)) return;
       if (
@@ -1073,6 +1189,27 @@ export function addClient(
       }
       placed.delete(fk);
       placed.set(tk, { ...props });
+      
+      // If there's a signboard at the old location, move it to the new location
+      const signboard = getSignboardAt(roomId, from.x, from.z);
+      if (signboard) {
+        // Update signboard position
+        updateSignboardPosition(signboard.id, to.x, to.z);
+        // Broadcast updated signboards
+        broadcast(roomId, {
+          type: "signboards",
+          roomId,
+          signboards: getSignboardsForRoom(roomId).map((s) => ({
+            id: s.id,
+            x: s.x,
+            z: s.z,
+            message: s.message,
+            createdBy: s.createdBy,
+            createdAt: s.createdAt,
+          })),
+        });
+      }
+      
       broadcast(roomId, {
         type: "obstacles",
         roomId,
@@ -1164,6 +1301,160 @@ export function addClient(
       logGameplayEvent(conn.sessionId, address, roomId, "chat", {
         text,
       });
+      return;
+    }
+
+    if (msg.type === "placeSignboard") {
+      // Anyone can place a signboard/signpost
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      const message = String(msg.message ?? "").trim();
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      if (!message || message.length > 500) {
+        ws.send(JSON.stringify({ type: "error", code: "invalid_message" }));
+        return;
+      }
+      const tile = snapToTile(tx, tz);
+      const k = tileKey(tile.x, tile.z);
+      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      if (!isWalkableForRoom(roomId, tile.x, tile.z)) return;
+      const placed = placedMap(roomId);
+      if (placed.has(k)) return;
+      
+      // Check if signboard already exists at this location
+      const existing = getSignboardAt(roomId, tile.x, tile.z);
+      if (existing) {
+        ws.send(JSON.stringify({ type: "error", code: "signboard_exists" }));
+        return;
+      }
+      
+      // Create the signboard
+      const signboard = createSignboard(roomId, tile.x, tile.z, message, address);
+      
+      // Place a passable half-height block as the signboard visual
+      placed.set(k, {
+        passable: true,
+        half: true,
+        quarter: false,
+        hex: false,
+        ramp: false,
+        rampDir: 0,
+        colorId: 8, // Use a specific color for signboards (light gray/white)
+      });
+      
+      broadcast(roomId, {
+        type: "obstacles",
+        roomId,
+        tiles: obstaclesToList(roomId),
+      });
+      broadcast(roomId, {
+        type: "signboards",
+        roomId,
+        signboards: getSignboardsForRoom(roomId).map((s) => ({
+          id: s.id,
+          x: s.x,
+          z: s.z,
+          message: s.message,
+          createdBy: s.createdBy,
+          createdAt: s.createdAt,
+        })),
+      });
+      schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, roomId, "place_signboard", {
+        x: tile.x,
+        z: tile.z,
+        signboardId: signboard.id,
+      });
+      return;
+    }
+
+    if (msg.type === "updateSignboard") {
+      // Admin-only: update a signboard's message
+      if (!isAdmin(address)) {
+        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        return;
+      }
+      const signboardId = String(msg.signboardId ?? "");
+      const message = String(msg.message ?? "").trim();
+      if (!signboardId || !message || message.length > 500) {
+        ws.send(JSON.stringify({ type: "error", code: "invalid_message" }));
+        return;
+      }
+      if (!updateSignboard(signboardId, message)) {
+        ws.send(JSON.stringify({ type: "error", code: "signboard_not_found" }));
+        return;
+      }
+      broadcast(roomId, {
+        type: "signboards",
+        roomId,
+        signboards: getSignboardsForRoom(roomId).map((s) => ({
+          id: s.id,
+          x: s.x,
+          z: s.z,
+          message: s.message,
+          createdBy: s.createdBy,
+          createdAt: s.createdAt,
+        })),
+      });
+      logGameplayEvent(conn.sessionId, address, roomId, "update_signboard", {
+        signboardId,
+      });
+      return;
+    }
+
+    if (msg.type === "removeSignboard") {
+      // Admin-only: remove a signboard
+      if (!isAdmin(address)) {
+        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const signboardId = String(msg.signboardId ?? "");
+      if (!signboardId) return;
+      
+      // Find the signboard to get its position
+      const signboards = getSignboardsForRoom(roomId);
+      const signboard = signboards.find((s) => s.id === signboardId);
+      if (!signboard) {
+        ws.send(JSON.stringify({ type: "error", code: "signboard_not_found" }));
+        return;
+      }
+      
+      // Remove the signboard data
+      if (!deleteSignboard(signboardId)) return;
+      
+      // Remove the obstacle block
+      const k = tileKey(signboard.x, signboard.z);
+      const placed = placedMap(roomId);
+      placed.delete(k);
+      
+      broadcast(roomId, {
+        type: "obstacles",
+        roomId,
+        tiles: obstaclesToList(roomId),
+      });
+      broadcast(roomId, {
+        type: "signboards",
+        roomId,
+        signboards: getSignboardsForRoom(roomId).map((s) => ({
+          id: s.id,
+          x: s.x,
+          z: s.z,
+          message: s.message,
+          createdBy: s.createdBy,
+          createdAt: s.createdAt,
+        })),
+      });
+      schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, roomId, "remove_signboard", {
+        signboardId,
+      });
+      return;
     }
   });
 

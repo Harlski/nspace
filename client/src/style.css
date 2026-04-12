@@ -300,6 +300,273 @@ body {
   font-size: 12px;
 }
 
+/* Signboard button */
+.build-block-bar__signboard-btn {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  border-radius: 4px;
+  color: #10b981;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.build-block-bar__signboard-btn:hover {
+  background: rgba(16, 185, 129, 0.25);
+  border-color: rgba(16, 185, 129, 0.6);
+}
+
+.build-block-bar__signboard-btn--active {
+  background: rgba(16, 185, 129, 0.3);
+  border-color: #10b981;
+  color: #6ee7b7;
+}
+
+/* Signboard tooltip */
+.signboard-tooltip {
+  background: rgba(0, 0, 0, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 0.75rem;
+  margin-top: 1rem;
+  max-width: 300px;
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.signboard-tooltip__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.signboard-tooltip__icon {
+  font-size: 1.2em;
+}
+
+.signboard-tooltip__title {
+  font-size: 0.95rem;
+}
+
+.signboard-tooltip__message {
+  color: #e8e8e8;
+  line-height: 1.4;
+  margin-bottom: 0.5rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.signboard-tooltip__footer {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: right;
+  font-style: italic;
+}
+
+.signboard-tooltip__author {
+  cursor: help;
+}
+
+/* Signpost overlay */
+.signpost-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  pointer-events: auto;
+}
+
+.signpost-overlay[hidden] {
+  display: none;
+}
+
+.signpost-overlay__dialog {
+  background: rgba(15, 17, 23, 0.95);
+  border: 1px solid rgba(61, 70, 90, 0.85);
+  border-radius: 8px;
+  padding: 1.5rem;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.signpost-overlay__header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.signpost-overlay__icon {
+  font-size: 1.5em;
+}
+
+.signpost-overlay__body {
+  margin-bottom: 1rem;
+}
+
+.signpost-overlay__label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.signpost-overlay__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(61, 70, 90, 0.85);
+  border-radius: 4px;
+  color: #e8e8e8;
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.signpost-overlay__textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.signpost-overlay__char-count {
+  text-align: right;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 0.25rem;
+}
+
+.signpost-overlay__actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+.signpost-overlay__btn {
+  padding: 0.6rem 1.25rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: none;
+}
+
+.signpost-overlay__btn--cancel {
+  background: rgba(71, 85, 105, 0.3);
+  color: #cbd5e1;
+  border: 1px solid rgba(71, 85, 105, 0.5);
+}
+
+.signpost-overlay__btn--cancel:hover {
+  background: rgba(71, 85, 105, 0.5);
+}
+
+.signpost-overlay__btn--create {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.signpost-overlay__btn--create:hover {
+  background: #2563eb;
+}
+
+/* Tool selector in build bar */
+.build-block-bar__tool-selector {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.build-block-bar__tool-btn {
+  flex: 1;
+  padding: 0.6rem;
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(61, 70, 90, 0.6);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.build-block-bar__tool-btn:hover {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(100, 116, 139, 0.8);
+}
+
+.build-block-bar__tool-btn--active {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: #3b82f6;
+}
+
+.build-block-bar__tool-icon {
+  font-size: 1.5rem;
+}
+
+.build-block-bar__tool-label {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 600;
+}
+
+.build-block-bar__tool-btn--active .build-block-bar__tool-label {
+  color: #93c5fd;
+}
+
+/* Block preview */
+.build-block-bar__preview {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+}
+
+.build-block-bar__preview-label {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 0.5rem;
+}
+
+.build-block-bar__preview-box {
+  width: 100%;
+  height: 60px;
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.5), rgba(15, 23, 42, 0.8));
+  border: 1px solid rgba(61, 70, 90, 0.6);
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+.build-block-bar__preview-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 
 .hud-top {
   position: absolute;

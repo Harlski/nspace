@@ -80,7 +80,12 @@ export function loadWorldState(
           o.props &&
           typeof o.props === "object"
         ) {
-          placed.set(o.tile, o.props as TerrainProps);
+          // Normalize props to ensure all required fields have defaults
+          const props = o.props as TerrainProps;
+          placed.set(o.tile, {
+            ...props,
+            locked: props.locked ?? false, // Default to false for old objects
+          });
         }
       }
       roomPlaced.set(roomId, placed);
