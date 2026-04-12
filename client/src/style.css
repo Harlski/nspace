@@ -1638,6 +1638,16 @@ body {
   color: #fc8702;
 }
 
+.main-menu__version {
+  margin: 16px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: rgba(226, 232, 240, 0.4);
+  text-transform: uppercase;
+  line-height: 1;
+}
+
 .main-menu__welcome {
   margin: -8px 0 16px;
   font-size: clamp(15px, 3.8vw, 20px);

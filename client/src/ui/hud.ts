@@ -181,7 +181,7 @@ export function createHud(
   canvasLeaderboard.className = "canvas-leaderboard";
   canvasLeaderboard.hidden = true;
   canvasLeaderboard.innerHTML = `
-    <div class="canvas-leaderboard__title">Canvas Leaders</div>
+    <div class="canvas-leaderboard__title">The Maze - Leaders</div>
     <div class="canvas-leaderboard__timer" hidden></div>
     <div class="canvas-leaderboard__list"></div>
   `;

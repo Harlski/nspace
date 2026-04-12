@@ -366,6 +366,7 @@ function enterGame(token: string, address: string): void {
 
   const handleServerMessage = async (msg: ServerMessage): Promise<void> => {
     if (msg.type === "welcome") {
+      console.log(`[Main] Received welcome message for room: ${msg.roomId}, obstacles: ${msg.obstacles.length}, extraFloor: ${msg.extraFloorTiles.length}`);
       hud.setLoadingVisible(true);
       
       game.applyRoomFromWelcome({
@@ -389,7 +390,9 @@ function enterGame(token: string, address: string): void {
         game.clearSelectedBlock();
       }
 
+      console.log(`[Main] Calling setObstacles with ${msg.obstacles.length} obstacles`);
       game.setObstacles(msg.obstacles);
+      console.log(`[Main] Calling setExtraFloorTiles with ${msg.extraFloorTiles.length} extra floor tiles`);
       game.setExtraFloorTiles(msg.extraFloorTiles);
       game.setSignboards(msg.signboards);
       
@@ -407,6 +410,7 @@ function enterGame(token: string, address: string): void {
       const realPlayerCount = lastPlayers.filter(p => !p.displayName.startsWith("[NPC] ")).length;
       hud.setPlayerCount(realPlayerCount);
       
+      console.log(`[Main] Welcome processing complete for room ${msg.roomId}`);
       // Hide loading overlay after everything is loaded
       hud.setLoadingVisible(false);
       return;
@@ -445,7 +449,7 @@ function enterGame(token: string, address: string): void {
       game.showChatBubble(msg.fromAddress, msg.text, msg.from);
     }
     if (msg.type === "obstacles") {
-      console.log(`[Main] Received obstacles update, editingTile=${editingTile ? `(${editingTile.x}, ${editingTile.z})` : 'null'}`);
+      console.log(`[Main] Received obstacles message for room ${msg.roomId}, ${msg.tiles.length} tiles, editingTile=${editingTile ? `(${editingTile.x}, ${editingTile.z})` : 'null'}`);
       game.setObstacles(msg.tiles);
       if (editingTile) {
         const m = game.getPlacedAt(editingTile.x, editingTile.z);

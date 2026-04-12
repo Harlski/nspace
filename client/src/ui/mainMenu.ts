@@ -3,6 +3,7 @@ import { formatWalletAddressShort } from "../formatWalletAddress.js";
 import { identiconDataUrl } from "../game/identiconTexture.js";
 import { apiUrl } from "../net/apiBase.js";
 
+const VERSION = "v0.1.0-alpha";
 const TELEGRAM_URL = "https://t.me/nimiqspace";
 const X_URL = "https://x.com/nimiqspace";
 
@@ -197,6 +198,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         <span class="main-menu__social-sep" aria-hidden="true">·</span>
         <a class="main-menu__social-link" href="${X_URL}" target="_blank" rel="noopener noreferrer">X (Twitter)</a>
       </div>
+      <p class="main-menu__version">${VERSION}</p>
     </div>
   `;
   app.appendChild(root);

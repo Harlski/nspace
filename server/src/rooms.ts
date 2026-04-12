@@ -232,28 +232,39 @@ registerWorldStateRefs(
 );
 
 // Initialize canvas room with maze layout
-function initializeCanvasMaze(): void {
+function generateCanvasMaze(): void {
   const canvasId = normalizeRoomId(CANVAS_ROOM_ID);
   const bounds = getRoomBaseBounds(canvasId);
-  const doors = getDoorsForRoom(canvasId);
   
-  // Find the door (exit portal) coordinates
-  const exitDoor = doors.find((d) => d.targetRoomId === HUB_ROOM_ID);
-  if (!exitDoor) {
-    console.warn("[canvas] No exit door found, skipping maze generation");
-    return;
-  }
-
-  // Spawn is typically one tile before the exit door
+  // Spawn point where players enter
   const spawnX = 0;
   const spawnZ = 14;
-  const exitX = exitDoor.x;
-  const exitZ = exitDoor.z;
+  
+  // Pick a random exit portal location far from spawn
+  // Generate random coordinates in the maze bounds, ensuring distance from spawn
+  const minDistance = 15; // Minimum distance from spawn to ensure challenge
+  let exitX: number;
+  let exitZ: number;
+  let attempts = 0;
+  
+  do {
+    exitX = Math.floor(bounds.minX + Math.random() * (bounds.maxX - bounds.minX + 1));
+    exitZ = Math.floor(bounds.minZ + Math.random() * (bounds.maxZ - bounds.minZ + 1));
+    const distance = Math.sqrt((exitX - spawnX) ** 2 + (exitZ - spawnZ) ** 2);
+    if (distance >= minDistance) break;
+    attempts++;
+  } while (attempts < 100); // Failsafe to prevent infinite loop
+  
+  // Fallback to far corner if we couldn't find a good spot
+  if (attempts >= 100) {
+    exitX = -14;
+    exitZ = -14;
+  }
 
-  console.log(`[canvas] Generating maze from spawn (${spawnX}, ${spawnZ}) to exit (${exitX}, ${exitZ})`);
+  console.log(`[canvas] Generating maze from spawn (${spawnX}, ${spawnZ}) to exit portal (${exitX}, ${exitZ})`);
 
-  // Generate maze with a fixed seed for consistency (change seed to regenerate)
-  const seed = 12345;
+  // Generate maze with a random seed for variety each round
+  const seed = Math.floor(Math.random() * 1000000);
   const walls = generateMaze(
     bounds.minX,
     bounds.maxX,
@@ -273,42 +284,62 @@ function initializeCanvasMaze(): void {
     roomPlaced.set(canvasId, placed);
   }
 
-  // Place maze walls (only if not already placed by world state)
-  for (const wallKey of walls) {
-    if (!placed.has(wallKey)) {
-      placed.set(wallKey, {
-        passable: false,
-        half: false,
-        quarter: false,
-        hex: false,
-        ramp: false,
-        rampDir: 0,
-        colorId: 5, // Purple color for maze walls
-        locked: true, // Lock maze walls so they can't be edited
-      });
+  // Clear existing maze walls and portal (keep only non-maze blocks)
+  const keysToRemove: string[] = [];
+  for (const [key, props] of placed) {
+    // Remove locked blocks (maze walls and portal from previous round)
+    if (props.locked) {
+      keysToRemove.push(key);
     }
   }
+  for (const key of keysToRemove) {
+    placed.delete(key);
+  }
 
-  // Place a visible portal/teleport at the exit
-  const exitKey = tileKey(exitX, exitZ);
-  if (!placed.has(exitKey)) {
-    placed.set(exitKey, {
-      passable: true, // Players can walk through it
+  // Place new maze walls
+  for (const wallKey of walls) {
+    placed.set(wallKey, {
+      passable: false,
       half: false,
-      quarter: true, // Make it a quarter-height platform
-      hex: true, // Hexagonal shape for visual distinction
+      quarter: false,
+      hex: false,
       ramp: false,
       rampDir: 0,
-      colorId: 4, // Blue color for exit portal
-      locked: true, // Lock so players can't edit it
+      colorId: 5, // Purple color for maze walls
+      locked: true, // Lock maze walls so they can't be edited
     });
   }
 
-  console.log(`[canvas] Maze initialized with ${walls.size} wall blocks and exit portal at (${exitX}, ${exitZ})`);
+  // Always place a visible portal/teleport at the exit
+  const exitKey = tileKey(exitX, exitZ);
+  placed.set(exitKey, {
+    passable: true, // Players can walk through it
+    half: false,
+    quarter: true, // Make it a quarter-height platform
+    hex: true, // Hexagonal shape for visual distinction
+    ramp: false,
+    rampDir: 0,
+    colorId: 4, // Blue color for exit portal
+    locked: true, // Lock so players can't edit it
+  });
+  
+  // Broadcast the new maze to all players in canvas room
+  const obstaclesList = Array.from(placed.entries()).map(([k, v]) => {
+    const [x, z] = k.split(",").map(Number);
+    return { x: x!, z: z!, ...v };
+  });
+  
+  broadcast(CANVAS_ROOM_ID, {
+    type: "obstacles",
+    roomId: canvasId,
+    tiles: obstaclesList,
+  });
+
+  console.log(`[canvas] New maze generated with ${walls.size} wall blocks and exit portal at (${exitX}, ${exitZ}), seed: ${seed}`);
 }
 
-// Initialize canvas maze on server startup
-initializeCanvasMaze();
+// Initialize maze on server startup
+generateCanvasMaze();
 
 function placedMap(roomId: string): Map<string, PlacedProps> {
   let m = roomPlaced.get(roomId);
@@ -563,6 +594,16 @@ function roomOf(roomId: string): Map<string, ClientConn> {
     rooms.set(roomId, r);
   }
   return r;
+}
+
+/** Find which room a player is currently in */
+function findPlayerRoom(address: string): string | null {
+  for (const [roomId, room] of rooms) {
+    if (room.has(address)) {
+      return roomId;
+    }
+  }
+  return null;
 }
 
 function broadcast(roomId: string, msg: OutMsg, except?: string): void {
@@ -825,7 +866,7 @@ function startCanvasCooldown(): void {
     type: "chat",
     from: "System",
     fromAddress: "",
-    text: `Canvas maze on cooldown for ${CANVAS_COOLDOWN_MS / 1000} seconds...`,
+    text: `The Maze on cooldown for ${CANVAS_COOLDOWN_MS / 1000} seconds...`,
     at: Date.now(),
   });
 }
@@ -848,14 +889,17 @@ function checkCanvasCooldown(): void {
   const now = Date.now();
   if (now >= canvasCooldownEndTime) {
     canvasCooldownActive = false;
-    console.log(`[canvas] Cooldown ended, canvas is now open`);
+    console.log(`[canvas] Cooldown ended, generating new maze`);
+    
+    // Generate a new maze for the next round
+    generateCanvasMaze();
     
     // Announce canvas is ready
     broadcast(HUB_ROOM_ID, {
       type: "chat",
       from: "System",
       fromAddress: "",
-      text: `Canvas maze is now open! 🎮`,
+      text: `The Maze is now open! 🎮`,
       at: Date.now(),
     });
   }
@@ -889,7 +933,7 @@ function endCanvasRound(): void {
         type: "chat",
         from: winner.displayName,
         fromAddress: winner.address,
-        text: `won the canvas maze challenge! 🏆`,
+        text: `won The Maze challenge! 🏆`,
         at: Date.now(),
       });
     }
@@ -1059,8 +1103,17 @@ export function startRoomTick(): void {
           }
           
           for (const tile of result.arrivedTiles) {
-            // Check if player reached the exit portal
-            if (tile.x === 0 && tile.z === 15) {
+            // Check if player reached the exit portal (blue hexagonal quarter block)
+            const tileKey_str = tileKey(tile.x, tile.z);
+            const tileProps = placed.get(tileKey_str);
+            const isExitPortal = tileProps && 
+                                 tileProps.passable && 
+                                 tileProps.quarter && 
+                                 tileProps.hex && 
+                                 tileProps.colorId === 4 && 
+                                 tileProps.locked;
+            
+            if (isExitPortal) {
               console.log(`[canvas] Player ${c.address.slice(0, 8)}... reached exit portal (${tile.x}, ${tile.z})`);
               
               // Check if player hasn't already finished
@@ -1082,7 +1135,7 @@ export function startRoomTick(): void {
                   type: "chat",
                   from: "System",
                   fromAddress: "",
-                  text: `${displayName} finished the maze in ${position}${suffix} place!`,
+                  text: `${displayName} finished The Maze in ${position}${suffix} place!`,
                   at: Date.now(),
                 });
                 
@@ -1091,7 +1144,7 @@ export function startRoomTick(): void {
                   type: "chat",
                   from: displayName,
                   fromAddress: c.address,
-                  text: `completed the canvas maze in ${position}${suffix} place! 🏁`,
+                  text: `completed The Maze in ${position}${suffix} place! 🏁`,
                   at: Date.now(),
                 });
                 
@@ -1189,27 +1242,6 @@ export function addClient(
   spawnHint?: { x: number; z: number }
 ): void {
   const roomId = normalizeRoomId(roomIdRaw);
-  
-  // Block entry to canvas room during cooldown
-  if (roomId === CANVAS_ROOM_ID && canvasCooldownActive) {
-    const remainingSeconds = Math.ceil((canvasCooldownEndTime - Date.now()) / 1000);
-    ws.send(JSON.stringify({
-      type: "error",
-      code: "CANVAS_COOLDOWN",
-    } satisfies OutMsg));
-    
-    // Send chat message explaining cooldown
-    ws.send(JSON.stringify({
-      type: "chat",
-      from: "System",
-      fromAddress: "",
-      text: `Canvas maze is on cooldown. Please wait ${remainingSeconds} seconds before entering.`,
-      at: Date.now(),
-    } satisfies OutMsg));
-    
-    console.log(`[canvas] Blocked ${address.slice(0, 8)}... from entering during cooldown (${remainingSeconds}s remaining)`);
-    return;
-  }
   
   ensureFakePlayers(roomId);
   const room = roomOf(roomId);
@@ -1333,6 +1365,30 @@ export function addClient(
     address
   );
 
+  // Check if player tried to enter canvas during cooldown - teleport them back
+  if (roomId === CANVAS_ROOM_ID && canvasCooldownActive) {
+    const remainingSeconds = Math.ceil((canvasCooldownEndTime - Date.now()) / 1000);
+    
+    // Send chat message explaining cooldown
+    ws.send(JSON.stringify({
+      type: "chat",
+      from: "System",
+      fromAddress: "",
+      text: `The Maze is on cooldown. Please wait ${remainingSeconds} seconds before entering.`,
+      at: Date.now(),
+    } satisfies OutMsg));
+    
+    console.log(`[canvas] Teleporting ${address.slice(0, 8)}... back to hub - maze on cooldown (${remainingSeconds}s remaining)`);
+    
+    // Teleport them back to hub after a short delay to let the welcome message process
+    setTimeout(() => {
+      const currentConn = room.get(address);
+      if (currentConn) {
+        teleportPlayer(currentConn, HUB_ROOM_ID, 0, 0);
+      }
+    }, 100);
+  }
+
   ws.on("message", (raw) => {
     let data: unknown;
     try {
@@ -1342,6 +1398,13 @@ export function addClient(
     }
     if (!data || typeof data !== "object") return;
     const msg = data as Record<string, unknown>;
+
+    // Dynamically look up which room the player is currently in
+    const currentRoomId = findPlayerRoom(address);
+    if (!currentRoomId) {
+      console.log(`[rooms] Player ${address} not in any room, ignoring message`);
+      return;
+    }
 
     if (msg.type === "moveTo") {
       const now = Date.now();
@@ -1353,8 +1416,8 @@ export function addClient(
       const dest = snapToTile(tx, tz);
       const p = conn.player;
       const start = snapToTile(p.x, p.z);
-      const placed = placedMap(roomId);
-      const extra = extraFloorSet(roomId);
+      const placed = placedMap(currentRoomId);
+      const extra = extraFloorSet(currentRoomId);
       const startLayer = inferStartLayer(p, placed);
       const gl = msg.layer;
       const goalLayer: 0 | 1 =
@@ -1368,14 +1431,14 @@ export function addClient(
         goalLayer,
         placed,
         extra,
-        roomId
+        currentRoomId
       );
       if (!full || full.length === 0) {
         conn.pathQueue = [];
         return;
       }
       conn.pathQueue = full.slice(1);
-      logGameplayEvent(conn.sessionId, address, roomId, "move_to", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "move_to", {
         fromX: start.x,
         fromZ: start.z,
         toX: dest.x,
@@ -1387,7 +1450,7 @@ export function addClient(
 
     if (msg.type === "placeBlock") {
       // Canvas room is view-only, no building allowed
-      if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) {
+      if (normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID) {
         return;
       }
       
@@ -1400,8 +1463,8 @@ export function addClient(
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
-      if (!isWalkableForRoom(roomId, tile.x, tile.z)) return;
-      const placed = placedMap(roomId);
+      if (!isWalkableForRoom(currentRoomId, tile.x, tile.z)) return;
+      const placed = placedMap(currentRoomId);
       if (placed.has(k)) return;
       for (const c of room.values()) {
         const st = snapToTile(c.player.x, c.player.z);
@@ -1425,13 +1488,13 @@ export function addClient(
         colorId,
         locked: false,
       });
-      broadcast(roomId, {
+      broadcast(currentRoomId, {
         type: "obstacles",
-        roomId,
-        tiles: obstaclesToList(roomId),
+        roomId: currentRoomId,
+        tiles: obstaclesToList(currentRoomId),
       });
       schedulePersistWorldState();
-      logGameplayEvent(conn.sessionId, address, roomId, "place_block", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "place_block", {
         x: tile.x,
         z: tile.z,
         half,
@@ -1446,7 +1509,7 @@ export function addClient(
 
     if (msg.type === "setObstacleProps") {
       // Canvas room is view-only, no editing allowed
-      if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) {
+      if (normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID) {
         return;
       }
       
@@ -1472,7 +1535,7 @@ export function addClient(
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
-      const placed = placedMap(roomId);
+      const placed = placedMap(currentRoomId);
       const existing = placed.get(k);
       if (!existing) return;
       
@@ -1497,13 +1560,13 @@ export function addClient(
         colorId,
         locked: finalLocked,
       });
-      broadcast(roomId, {
+      broadcast(currentRoomId, {
         type: "obstacles",
-        roomId,
-        tiles: obstaclesToList(roomId),
+        roomId: currentRoomId,
+        tiles: obstaclesToList(currentRoomId),
       });
       schedulePersistWorldState();
-      logGameplayEvent(conn.sessionId, address, roomId, "set_obstacle_props", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "set_obstacle_props", {
         x: tile.x,
         z: tile.z,
         passable,
@@ -1519,7 +1582,7 @@ export function addClient(
 
     if (msg.type === "removeObstacle") {
       // Canvas room is view-only, no deleting allowed
-      if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) {
+      if (normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID) {
         return;
       }
       
@@ -1532,7 +1595,7 @@ export function addClient(
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
-      const placed = placedMap(roomId);
+      const placed = placedMap(currentRoomId);
       const props = placed.get(k);
       if (!props) return;
       
@@ -1543,7 +1606,7 @@ export function addClient(
       }
       
       // Check if there's a signboard at this location and remove it
-      const signboard = getSignboardAt(roomId, tile.x, tile.z);
+      const signboard = getSignboardAt(currentRoomId, tile.x, tile.z);
       let signboardDeleted = false;
       if (signboard) {
         deleteSignboard(signboard.id);
@@ -1551,18 +1614,18 @@ export function addClient(
       }
       
       placed.delete(k);
-      broadcast(roomId, {
+      broadcast(currentRoomId, {
         type: "obstacles",
-        roomId,
-        tiles: obstaclesToList(roomId),
+        roomId: currentRoomId,
+        tiles: obstaclesToList(currentRoomId),
       });
       
       // If we deleted a signboard, broadcast the updated list
       if (signboardDeleted) {
-        broadcast(roomId, {
+        broadcast(currentRoomId, {
           type: "signboards",
-          roomId,
-          signboards: getSignboardsForRoom(roomId).map((s) => ({
+          roomId: currentRoomId,
+          signboards: getSignboardsForRoom(currentRoomId).map((s) => ({
             id: s.id,
             x: s.x,
             z: s.z,
@@ -1577,7 +1640,7 @@ export function addClient(
       /* Replay log: we only record tile coords. For richer replay / inference (e.g. undo,
          material audits), consider logging the obstacle props that existed immediately before
          delete (passable, half, quarter, hex, ramp, rampDir, colorId). */
-      logGameplayEvent(conn.sessionId, address, roomId, "remove_obstacle", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_obstacle", {
         x: tile.x,
         z: tile.z,
       });
@@ -1586,7 +1649,7 @@ export function addClient(
 
     if (msg.type === "moveObstacle") {
       // Canvas room is view-only, no moving allowed
-      if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) {
+      if (normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID) {
         return;
       }
       
@@ -1616,7 +1679,7 @@ export function addClient(
       ) {
         return;
       }
-      const placed = placedMap(roomId);
+      const placed = placedMap(currentRoomId);
       const props = placed.get(fk);
       if (!props) return;
       
@@ -1627,9 +1690,9 @@ export function addClient(
       }
       
       if (placed.has(tk)) return;
-      if (!isWalkableForRoom(roomId, to.x, to.z)) return;
+      if (!isWalkableForRoom(currentRoomId, to.x, to.z)) return;
       if (
-        normalizeRoomId(roomId) === HUB_ROOM_ID &&
+        normalizeRoomId(currentRoomId) === HUB_ROOM_ID &&
         isHubSpawnSafeZone(to.x, to.z)
       ) {
         return;
@@ -1642,15 +1705,15 @@ export function addClient(
       placed.set(tk, { ...props });
       
       // If there's a signboard at the old location, move it to the new location
-      const signboard = getSignboardAt(roomId, from.x, from.z);
+      const signboard = getSignboardAt(currentRoomId, from.x, from.z);
       if (signboard) {
         // Update signboard position
         updateSignboardPosition(signboard.id, to.x, to.z);
         // Broadcast updated signboards
-        broadcast(roomId, {
+        broadcast(currentRoomId, {
           type: "signboards",
-          roomId,
-          signboards: getSignboardsForRoom(roomId).map((s) => ({
+          roomId: currentRoomId,
+          signboards: getSignboardsForRoom(currentRoomId).map((s) => ({
             id: s.id,
             x: s.x,
             z: s.z,
@@ -1661,13 +1724,13 @@ export function addClient(
         });
       }
       
-      broadcast(roomId, {
+      broadcast(currentRoomId, {
         type: "obstacles",
-        roomId,
-        tiles: obstaclesToList(roomId),
+        roomId: currentRoomId,
+        tiles: obstaclesToList(currentRoomId),
       });
       schedulePersistWorldState();
-      logGameplayEvent(conn.sessionId, address, roomId, "move_obstacle", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "move_obstacle", {
         fromX: from.x,
         fromZ: from.z,
         toX: to.x,
@@ -1678,7 +1741,7 @@ export function addClient(
 
     if (msg.type === "placeExtraFloor") {
       // Canvas room is view-only, no floor expansion allowed
-      if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) {
+      if (normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID) {
         return;
       }
       
@@ -1689,19 +1752,19 @@ export function addClient(
       const tz = Number(msg.z);
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      if (!canPlaceExtraFloor(roomId, tile.x, tile.z)) return;
+      if (!canPlaceExtraFloor(currentRoomId, tile.x, tile.z)) return;
       for (const c of room.values()) {
         const st = snapToTile(c.player.x, c.player.z);
         if (st.x === tile.x && st.z === tile.z) return;
       }
-      extraFloorSet(roomId).add(tileKey(tile.x, tile.z));
-      broadcast(roomId, {
+      extraFloorSet(currentRoomId).add(tileKey(tile.x, tile.z));
+      broadcast(currentRoomId, {
         type: "extraFloor",
-        roomId,
-        tiles: extraFloorToList(roomId),
+        roomId: currentRoomId,
+        tiles: extraFloorToList(currentRoomId),
       });
       schedulePersistWorldState();
-      logGameplayEvent(conn.sessionId, address, roomId, "place_extra_floor", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "place_extra_floor", {
         x: tile.x,
         z: tile.z,
       });
@@ -1717,23 +1780,23 @@ export function addClient(
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
-      const ex = extraFloorSet(roomId);
+      const ex = extraFloorSet(currentRoomId);
       if (!ex.has(k)) return;
-      if (isBaseTile(tile.x, tile.z, roomId)) return;
-      const placed = placedMap(roomId);
+      if (isBaseTile(tile.x, tile.z, currentRoomId)) return;
+      const placed = placedMap(currentRoomId);
       if (placed.has(k)) return;
       for (const c of room.values()) {
         const st = snapToTile(c.player.x, c.player.z);
         if (st.x === tile.x && st.z === tile.z) return;
       }
       ex.delete(k);
-      broadcast(roomId, {
+      broadcast(currentRoomId, {
         type: "extraFloor",
-        roomId,
-        tiles: extraFloorToList(roomId),
+        roomId: currentRoomId,
+        tiles: extraFloorToList(currentRoomId),
       });
       schedulePersistWorldState();
-      logGameplayEvent(conn.sessionId, address, roomId, "remove_extra_floor", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_extra_floor", {
         x: tile.x,
         z: tile.z,
       });
@@ -1747,14 +1810,14 @@ export function addClient(
       let text = String(msg.text ?? "").slice(0, CHAT_MAX);
       text = text.replace(/[\u0000-\u001F\u007F]/g, "").trim();
       if (!text) return;
-      broadcast(roomId, {
+      broadcast(currentRoomId, {
         type: "chat",
         from: displayName,
         fromAddress: address,
         text,
         at: now,
       });
-      logGameplayEvent(conn.sessionId, address, roomId, "chat", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "chat", {
         text,
       });
       return;
@@ -1776,19 +1839,19 @@ export function addClient(
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
-      if (!isWalkableForRoom(roomId, tile.x, tile.z)) return;
-      const placed = placedMap(roomId);
+      if (!isWalkableForRoom(currentRoomId, tile.x, tile.z)) return;
+      const placed = placedMap(currentRoomId);
       if (placed.has(k)) return;
       
       // Check if signboard already exists at this location
-      const existing = getSignboardAt(roomId, tile.x, tile.z);
+      const existing = getSignboardAt(currentRoomId, tile.x, tile.z);
       if (existing) {
         ws.send(JSON.stringify({ type: "error", code: "signboard_exists" }));
         return;
       }
       
       // Create the signboard
-      const signboard = createSignboard(roomId, tile.x, tile.z, message, address);
+      const signboard = createSignboard(currentRoomId, tile.x, tile.z, message, address);
       
       // Place a passable half-height block as the signboard visual
       placed.set(k, {
@@ -1801,15 +1864,15 @@ export function addClient(
         colorId: 8, // Use a specific color for signboards (light gray/white)
       });
       
-      broadcast(roomId, {
+      broadcast(currentRoomId, {
         type: "obstacles",
-        roomId,
-        tiles: obstaclesToList(roomId),
+        roomId: currentRoomId,
+        tiles: obstaclesToList(currentRoomId),
       });
-      broadcast(roomId, {
+      broadcast(currentRoomId, {
         type: "signboards",
-        roomId,
-        signboards: getSignboardsForRoom(roomId).map((s) => ({
+        roomId: currentRoomId,
+        signboards: getSignboardsForRoom(currentRoomId).map((s) => ({
           id: s.id,
           x: s.x,
           z: s.z,
@@ -1819,7 +1882,7 @@ export function addClient(
         })),
       });
       schedulePersistWorldState();
-      logGameplayEvent(conn.sessionId, address, roomId, "place_signboard", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "place_signboard", {
         x: tile.x,
         z: tile.z,
         signboardId: signboard.id,
@@ -1843,10 +1906,10 @@ export function addClient(
         ws.send(JSON.stringify({ type: "error", code: "signboard_not_found" }));
         return;
       }
-      broadcast(roomId, {
+      broadcast(currentRoomId, {
         type: "signboards",
-        roomId,
-        signboards: getSignboardsForRoom(roomId).map((s) => ({
+        roomId: currentRoomId,
+        signboards: getSignboardsForRoom(currentRoomId).map((s) => ({
           id: s.id,
           x: s.x,
           z: s.z,
@@ -1855,7 +1918,7 @@ export function addClient(
           createdAt: s.createdAt,
         })),
       });
-      logGameplayEvent(conn.sessionId, address, roomId, "update_signboard", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "update_signboard", {
         signboardId,
       });
       return;
@@ -1874,7 +1937,7 @@ export function addClient(
       if (!signboardId) return;
       
       // Find the signboard to get its position
-      const signboards = getSignboardsForRoom(roomId);
+      const signboards = getSignboardsForRoom(currentRoomId);
       const signboard = signboards.find((s) => s.id === signboardId);
       if (!signboard) {
         ws.send(JSON.stringify({ type: "error", code: "signboard_not_found" }));
@@ -1886,18 +1949,18 @@ export function addClient(
       
       // Remove the obstacle block
       const k = tileKey(signboard.x, signboard.z);
-      const placed = placedMap(roomId);
+      const placed = placedMap(currentRoomId);
       placed.delete(k);
       
-      broadcast(roomId, {
+      broadcast(currentRoomId, {
         type: "obstacles",
-        roomId,
-        tiles: obstaclesToList(roomId),
+        roomId: currentRoomId,
+        tiles: obstaclesToList(currentRoomId),
       });
-      broadcast(roomId, {
+      broadcast(currentRoomId, {
         type: "signboards",
-        roomId,
-        signboards: getSignboardsForRoom(roomId).map((s) => ({
+        roomId: currentRoomId,
+        signboards: getSignboardsForRoom(currentRoomId).map((s) => ({
           id: s.id,
           x: s.x,
           z: s.z,
@@ -1907,7 +1970,7 @@ export function addClient(
         })),
       });
       schedulePersistWorldState();
-      logGameplayEvent(conn.sessionId, address, roomId, "remove_signboard", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_signboard", {
         signboardId,
       });
       return;
@@ -1915,15 +1978,20 @@ export function addClient(
   });
 
   ws.on("close", () => {
-    endSession(conn.sessionId, address, roomId, conn.sessionStartedAt);
-    spawnMap(roomId).set(address, {
-      x: conn.player.x,
-      z: conn.player.z,
-      y: conn.player.y,
-    });
-    schedulePersistWorldState();
-    room.delete(address);
-    broadcast(roomId, { type: "playerLeft", address });
-    if (room.size === 0) clearFakePlayers(roomId);
+    // Find which room the player is currently in
+    const playerCurrentRoom = findPlayerRoom(address);
+    if (playerCurrentRoom) {
+      endSession(conn.sessionId, address, playerCurrentRoom, conn.sessionStartedAt);
+      spawnMap(playerCurrentRoom).set(address, {
+        x: conn.player.x,
+        z: conn.player.z,
+        y: conn.player.y,
+      });
+      schedulePersistWorldState();
+      const room = roomOf(playerCurrentRoom);
+      room.delete(address);
+      broadcast(playerCurrentRoom, { type: "playerLeft", address });
+      if (room.size === 0) clearFakePlayers(playerCurrentRoom);
+    }
   });
 }

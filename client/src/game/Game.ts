@@ -365,7 +365,7 @@ export class Game {
   private readonly cameraLookAheadSmoothing = 8;
   /** Previous position for velocity calculation. */
   private selfPrevPos = new THREE.Vector3(0, 0, 0);
-
+  
   /** Orthographic vertical half-extent (world units); smaller = zoomed in. */
   private frustumSize: number;
   private zoomMin: number;
@@ -666,6 +666,29 @@ export class Game {
         Math.min(64, msg.placeRadiusBlocks)
       );
     }
+    
+    // Clear all obstacles and floor tiles from previous room
+    console.log(`[Game] Clearing obstacles from previous room (${prevRoomId}), had ${this.placedObjects.size} objects and ${this.blockingTileKeys.size} blocking tiles`);
+    this.placedObjects.clear();
+    this.blockingTileKeys.clear();
+    this.extraFloorKeys.clear();
+    
+    // Clear block meshes from scene
+    console.log(`[Game] Clearing ${this.blockMeshes.size} block meshes from scene`);
+    for (const [, mesh] of this.blockMeshes) {
+      this.scene.remove(mesh);
+      mesh.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          if (obj.material instanceof THREE.Material) {
+            obj.material.dispose();
+          }
+        }
+      });
+    }
+    this.blockMeshes.clear();
+    console.log(`[Game] Room cleared. Entering room: ${this.roomId}`);
+    
     this.rebuildDoorKeys();
     this.pathGoal = null;
     this.selfLastTileKey = null;
@@ -1247,10 +1270,12 @@ export class Game {
 
   /** Extra walkable tiles outside the core grid (server-synced). */
   setExtraFloorTiles(tiles: readonly { x: number; z: number }[]): void {
+    console.log(`[Game setExtraFloorTiles] Receiving ${tiles.length} extra floor tiles for room ${this.roomId}`);
     this.extraFloorKeys.clear();
     for (const t of tiles) {
       this.extraFloorKeys.add(tileKey(t.x, t.z));
     }
+    console.log(`[Game setExtraFloorTiles] Stored ${this.extraFloorKeys.size} extra floor tiles`);
     this.syncWalkableFloorMeshes();
     this.refreshPathLine();
     this.syncPlacementRangeHints();
@@ -1429,6 +1454,7 @@ export class Game {
       locked?: boolean;
     }[]
   ): void {
+    console.log(`[Game setObstacles] Receiving ${tiles.length} obstacles for room ${this.roomId}`);
     this.placedObjects.clear();
     this.blockingTileKeys.clear();
     for (const t of tiles) {
@@ -1443,7 +1469,6 @@ export class Game {
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(t.colorId ?? 0))
       );
       const locked = Boolean(t.locked);
-      console.log(`[Game setObstacles] Storing (${t.x}, ${t.z}) with locked=${locked}`);
       this.placedObjects.set(k, {
         passable: t.passable,
         half,
@@ -1456,7 +1481,9 @@ export class Game {
       });
       if (!t.passable && !ramp) this.blockingTileKeys.add(k);
     }
+    console.log(`[Game setObstacles] Stored ${this.placedObjects.size} obstacles, ${this.blockingTileKeys.size} blocking tiles`);
     this.syncBlockMeshes();
+    console.log(`[Game setObstacles] After syncBlockMeshes, have ${this.blockMeshes.size} block meshes in scene`);
     this.refreshPathLine();
     this.refreshSelectionOutline();
     this.syncPlacementRangeHints();
@@ -1777,6 +1804,7 @@ export class Game {
     if (!this.tileClickHandler) return;
     const k = tileKey(dest.x, dest.y);
     if (this.blockingTileKeys.has(k)) return;
+    console.log(`[Game click] Setting path goal to (${dest.x}, ${dest.y}) in room ${this.roomId}, obstacles: ${this.placedObjects.size}, blocking: ${this.blockingTileKeys.size}`);
     this.pathGoal = { ft: dest, layer: 0 };
     this.refreshPathLine();
     this.tileClickHandler(dest.x, dest.y, 0);
@@ -2015,6 +2043,7 @@ export class Game {
       this.selfMesh.position.y,
       this.placedObjects
     );
+    console.log(`[Game refreshPathLine] Pathfinding in room ${this.roomId} from (${here.x}, ${here.y}) to (${this.pathGoal.ft.x}, ${this.pathGoal.ft.y}), obstacles: ${this.placedObjects.size}, blocking: ${this.blockingTileKeys.size}`);
     const remaining = pathfindTerrain(
       here.x,
       here.y,
@@ -2066,6 +2095,8 @@ export class Game {
     for (const k of this.extraFloorKeys) {
       seen.add(k);
     }
+    
+    console.log(`[Game syncWalkableFloorMeshes] Room ${this.roomId}: bounds [${b.minX},${b.maxX}] x [${b.minZ},${b.maxZ}], total walkable tiles: ${seen.size}, extra: ${this.extraFloorKeys.size}`);
 
     for (const k of seen) {
       const [x, z] = k.split(",").map(Number);
@@ -2133,6 +2164,7 @@ export class Game {
         this.walkableFloorMeshes.delete(k);
       }
     }
+    console.log(`[Game syncWalkableFloorMeshes] After sync: ${this.walkableFloorMeshes.size} floor meshes in scene`);
     this.applyFloorTileQuadScale();
   }
 
@@ -2545,12 +2577,18 @@ export class Game {
 
   private animateDoorTiles(): void {
     const pulse = Math.sin(this.doorPulseTime * 2) * 0.5 + 0.5;
-    const intensity = TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * (0.6 + pulse * 0.4);
+    const doorIntensity = TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * (0.6 + pulse * 0.4);
     
-    for (const [, mesh] of this.walkableFloorMeshes) {
-      if (mesh.userData["isDoor"]) {
-        const mat = mesh.material as THREE.MeshStandardMaterial;
-        mat.emissiveIntensity = intensity;
+    for (const [k, mesh] of this.walkableFloorMeshes) {
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      const isDoor = mesh.userData["isDoor"];
+      
+      if (isDoor) {
+        mat.emissiveIntensity = doorIntensity;
+      } else {
+        // Clear any emissive effects on non-door tiles
+        mat.emissive.setHex(0x000000);
+        mat.emissiveIntensity = 0;
       }
     }
   }
