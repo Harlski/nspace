@@ -36,7 +36,7 @@ import {
 import { walletDisplayName } from "./walletDisplayName.js";
 import {
   claimTile,
-  getAllClaims,
+  getClaimsInBounds,
   loadCanvasClaims,
 } from "./canvasCanvas.js";
 import { CANVAS_ROOM_ID } from "./roomLayouts.js";
@@ -836,7 +836,7 @@ export function addClient(
       placeRadiusBlocks: PLACE_RADIUS_BLOCKS,
       obstacles: obstaclesToList(roomId),
       extraFloorTiles: extraFloorToList(roomId),
-      canvasClaims: isCanvas ? getAllClaims() : undefined,
+      canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
     } satisfies OutMsg)
   );
 

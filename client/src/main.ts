@@ -380,11 +380,6 @@ function enterGame(token: string, address: string): void {
     if (msg.type === "canvasClaim") {
       console.log(`[canvas] Received canvasClaim message:`, msg);
       game.applyCanvasClaim(msg.x, msg.z, msg.address);
-      // Refresh leaderboard when someone makes a claim
-      if (normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID) {
-        console.log(`[canvas] Triggering leaderboard update`);
-        void updateCanvasLeaderboard();
-      }
     }
   };
 

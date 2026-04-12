@@ -873,26 +873,59 @@ export function createHud(
     updateCanvasLeaderboard(leaders: Array<{ address: string; count: number }>) {
       const list = canvasLeaderboard.querySelector(".canvas-leaderboard__list");
       if (!list) return;
+      
+      // Clear and create entries synchronously first
       list.innerHTML = "";
+      const entries: Array<{ entry: HTMLDivElement; img: HTMLImageElement; address: string }> = [];
+      
       for (let i = 0; i < leaders.length; i++) {
         const leader = leaders[i]!;
         const entry = document.createElement("div");
         entry.className = "canvas-leaderboard__entry";
+        
         const rank = document.createElement("span");
         rank.className = "canvas-leaderboard__rank";
         rank.textContent = `${i + 1}.`;
+        
+        const identiconImg = document.createElement("img");
+        identiconImg.className = "canvas-leaderboard__identicon";
+        
         const addr = document.createElement("span");
         addr.className = "canvas-leaderboard__address";
-        addr.textContent = `${leader.address.slice(0, 8)}…`;
+        // Format: NQ07...ABCD (first 4 + last 4)
+        const formatted = leader.address.length >= 8 
+          ? `${leader.address.slice(0, 4)}…${leader.address.slice(-4)}`
+          : leader.address;
+        addr.textContent = formatted;
         addr.title = leader.address;
+        
         const count = document.createElement("span");
         count.className = "canvas-leaderboard__count";
         count.textContent = `${leader.count}`;
+        
         entry.appendChild(rank);
+        entry.appendChild(identiconImg);
         entry.appendChild(addr);
         entry.appendChild(count);
         list.appendChild(entry);
+        
+        entries.push({ entry, img: identiconImg, address: leader.address });
       }
+      
+      // Load identicons after DOM is set up
+      const loadIdenticons = async () => {
+        for (const { img, address } of entries) {
+          try {
+            const { identiconDataUrl } = await import("../game/identiconTexture.js");
+            const dataUrl = await identiconDataUrl(address);
+            img.src = dataUrl;
+          } catch (err) {
+            console.error(`[canvas] Failed to load identicon for leaderboard entry:`, err);
+          }
+        }
+      };
+      
+      void loadIdenticons();
     },
     destroy() {
       hideObjectEditPanel();

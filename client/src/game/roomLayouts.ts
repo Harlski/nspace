@@ -33,10 +33,10 @@ const CHAMBER_BOUNDS: RoomBounds = {
 };
 
 const CANVAS_BOUNDS: RoomBounds = {
-  minX: -20,
-  maxX: 20,
-  minZ: -20,
-  maxZ: 20,
+  minX: -15,
+  maxX: 15,
+  minZ: -15,
+  maxZ: 15,
 };
 
 export type DoorDef = {
@@ -60,7 +60,7 @@ const HUB_DOORS: DoorDef[] = [
     z: -12,
     targetRoomId: CANVAS_ROOM_ID,
     spawnX: 0,
-    spawnZ: 19,
+    spawnZ: 14,
   },
 ];
 
@@ -77,7 +77,7 @@ const CHAMBER_DOORS: DoorDef[] = [
 const CANVAS_DOORS: DoorDef[] = [
   {
     x: 0,
-    z: 20,
+    z: 15,
     targetRoomId: HUB_ROOM_ID,
     spawnX: -1,
     spawnZ: -11,

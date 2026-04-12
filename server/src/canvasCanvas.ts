@@ -76,6 +76,24 @@ export function getAllClaims(): Array<{ x: number; z: number; address: string }>
   });
 }
 
+/** Get all claims within room bounds */
+export function getClaimsInBounds(
+  minX: number,
+  maxX: number,
+  minZ: number,
+  maxZ: number
+): Array<{ x: number; z: number; address: string }> {
+  return Object.entries(claims)
+    .filter(([key]) => {
+      const [x, z] = key.split(",").map(Number);
+      return x! >= minX && x! <= maxX && z! >= minZ && z! <= maxZ;
+    })
+    .map(([key, address]) => {
+      const [x, z] = key.split(",").map(Number);
+      return { x: x!, z: z!, address };
+    });
+}
+
 /** Count tiles claimed per player, return top N sorted descending */
 export function getTopPlayers(limit: number): Array<{ address: string; count: number }> {
   const counts = new Map<string, number>();

@@ -36,6 +36,7 @@ import {
 import {
   type RoomBounds,
   HUB_ROOM_ID,
+  CANVAS_ROOM_ID,
   getDoorsForRoom,
   getRoomBaseBounds,
   isHubSpawnSafeZone,
@@ -57,7 +58,10 @@ const TERRAIN_WATER_COLOR = 0xa8d8ea;
 /** Core room / expanded floor / door — black–gray tones (not grass). */
 const TERRAIN_TILE_CORE_COLOR = 0x2d3340;
 const TERRAIN_TILE_EXTRA_COLOR = 0x3d5a4a;
-const TERRAIN_TILE_DOOR_COLOR = 0x5c4a32;
+/** Door tiles glow with cyan/teal portal effect */
+const TERRAIN_TILE_DOOR_COLOR = 0x06b6d4;
+const TERRAIN_TILE_DOOR_EMISSIVE = 0x0891b2;
+const TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY = 0.7;
 
 /** y=0 ground plane (world). */
 const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -351,6 +355,8 @@ export class Game {
   private readonly canvasClaims = new Map<string, string>();
   /** Canvas room identicon meshes */
   private readonly canvasIdenticonMeshes = new Map<string, THREE.Mesh>();
+  /** Time elapsed for door tile pulse animation */
+  private doorPulseTime = 0;
 
   /** Identicon sphere Euler (degrees); applied to all player avatars. */
   private identiconRotDeg = { x: 0, y: 0, z: 0 };
@@ -590,6 +596,7 @@ export class Game {
     }[];
     placeRadiusBlocks?: number;
   }): void {
+    const prevRoomId = this.roomId;
     this.roomId = msg.roomId;
     this.roomBounds = msg.roomBounds;
     this.doors = msg.doors.map((d) => ({ ...d }));
@@ -613,6 +620,12 @@ export class Game {
     this.syncWalkableFloorMeshes();
     this.refreshPathLine();
     this.syncPlacementRangeHints();
+    
+    // Clear canvas identicons when leaving canvas room
+    if (normalizeRoomId(prevRoomId) === CANVAS_ROOM_ID && normalizeRoomId(this.roomId) !== CANVAS_ROOM_ID) {
+      console.log('[canvas] Leaving canvas room, clearing identicons');
+      this.clearCanvasIdenticons();
+    }
   }
 
   setRoomChangeHandler(
@@ -1166,10 +1179,27 @@ export class Game {
   /** Initialize canvas claims from welcome message */
   setCanvasClaims(claims: readonly { x: number; z: number; address: string }[]): void {
     this.canvasClaims.clear();
+    const bounds = this.roomBounds;
+    console.log(`[canvas] Loading ${claims.length} initial claims, room bounds: [${bounds.minX},${bounds.maxX}] × [${bounds.minZ},${bounds.maxZ}]`);
+    
+    let filtered = 0;
     for (const claim of claims) {
+      // Only render claims within current room bounds
+      if (claim.x < bounds.minX || claim.x > bounds.maxX || 
+          claim.z < bounds.minZ || claim.z > bounds.maxZ) {
+        filtered++;
+        continue;
+      }
+      
       const k = tileKey(claim.x, claim.z);
       this.canvasClaims.set(k, claim.address);
+      console.log(`[canvas] Initial claim: (${claim.x}, ${claim.z}) by ${claim.address.slice(0, 8)}...`);
     }
+    
+    if (filtered > 0) {
+      console.log(`[canvas] Filtered ${filtered} out-of-bounds claims`);
+    }
+    
     this.syncCanvasIdenticonMeshes();
   }
 
@@ -1222,14 +1252,7 @@ export class Game {
 
   private syncCanvasIdenticonMeshes(): void {
     // Clear existing meshes
-    for (const [, mesh] of this.canvasIdenticonMeshes) {
-      this.scene.remove(mesh);
-      mesh.geometry.dispose();
-      if (mesh.material instanceof THREE.Material) {
-        mesh.material.dispose();
-      }
-    }
-    this.canvasIdenticonMeshes.clear();
+    this.clearCanvasIdenticons();
 
     // Create meshes for all claims
     for (const [k, address] of this.canvasClaims) {
@@ -1238,6 +1261,17 @@ export class Game {
         void this.syncCanvasIdenticonForTile(x, z, address);
       }
     }
+  }
+
+  private clearCanvasIdenticons(): void {
+    for (const [, mesh] of this.canvasIdenticonMeshes) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      if (mesh.material instanceof THREE.Material) {
+        mesh.material.dispose();
+      }
+    }
+    this.canvasIdenticonMeshes.clear();
   }
 
   /** Wire format matches server obstacle tiles. */
@@ -1880,13 +1914,16 @@ export class Game {
           : isExtra
             ? TERRAIN_TILE_EXTRA_COLOR
             : TERRAIN_TILE_CORE_COLOR;
+        const material = new THREE.MeshStandardMaterial({
+          color: baseColor,
+          roughness: isDoor ? 0.3 : (isExtra ? 0.88 : 0.9),
+          metalness: isDoor ? 0.5 : (isExtra ? 0.06 : 0.05),
+          emissive: isDoor ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000,
+          emissiveIntensity: isDoor ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY : 0,
+        });
         mesh = new THREE.Mesh(
           this.walkableFloorPlaneGeom,
-          new THREE.MeshStandardMaterial({
-            color: baseColor,
-            roughness: isExtra ? 0.88 : 0.9,
-            metalness: isExtra ? 0.06 : 0.05,
-          })
+          material
         );
         mesh.scale.set(
           this.floorTileQuadSize,
@@ -1914,8 +1951,10 @@ export class Game {
                 ? TERRAIN_TILE_EXTRA_COLOR
                 : TERRAIN_TILE_CORE_COLOR
           );
-          mat.roughness = wantExtra ? 0.88 : 0.9;
-          mat.metalness = wantExtra ? 0.06 : 0.05;
+          mat.roughness = wantDoor ? 0.3 : (wantExtra ? 0.88 : 0.9);
+          mat.metalness = wantDoor ? 0.5 : (wantExtra ? 0.06 : 0.05);
+          mat.emissive.setHex(wantDoor ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000);
+          mat.emissiveIntensity = wantDoor ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY : 0;
           mesh.userData["isExtra"] = wantExtra;
           mesh.userData["isDoor"] = wantDoor;
         }
@@ -2118,6 +2157,9 @@ export class Game {
   }
 
   tick(dt: number): void {
+    this.doorPulseTime += dt;
+    this.animateDoorTiles();
+    
     if (this.selfMesh && this.selfTargetPos) {
       const t = this.selfTargetPos;
       const mx = this.selfMesh.position.x;
@@ -2320,5 +2362,17 @@ export class Game {
     g.add(nameSprite);
     this.syncNameLabelScaleAndPosition(g);
     return g;
+  }
+
+  private animateDoorTiles(): void {
+    const pulse = Math.sin(this.doorPulseTime * 2) * 0.5 + 0.5;
+    const intensity = TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * (0.6 + pulse * 0.4);
+    
+    for (const [, mesh] of this.walkableFloorMeshes) {
+      if (mesh.userData["isDoor"]) {
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        mat.emissiveIntensity = intensity;
+      }
+    }
   }
 }
