@@ -25,7 +25,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
 /** Bind address: `0.0.0.0` accepts connections on all interfaces (LAN + localhost). Use `127.0.0.1` for local-only. */
 const HOST = process.env.HOST ?? "0.0.0.0";
-const JWT_SECRET = process.env.JWT_SECRET || "dev-insecure-change-me";
+let JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET === "dev-insecure-change-me") {
+  if (process.env.NODE_ENV === "production") {
+    console.error(
+      "[FATAL] JWT_SECRET environment variable must be set to a secure value in production.\n" +
+      "Generate one with: openssl rand -base64 32"
+    );
+    process.exit(1);
+  } else if (!JWT_SECRET) {
+    console.error(
+      "[FATAL] JWT_SECRET environment variable is required.\n" +
+      "For development, use: JWT_SECRET=dev-insecure-change-me npm run dev -w server"
+    );
+    process.exit(1);
+  }
+}
+// TypeScript now knows JWT_SECRET is a string (not undefined) after the checks above
+const jwtSecret: string = JWT_SECRET;
 const NODE_ENV = process.env.NODE_ENV || "development";
 const DEV_AUTH_BYPASS =
   NODE_ENV === "development" && process.env.DEV_AUTH_BYPASS === "1";
@@ -52,7 +69,7 @@ function requireJwt(req: Request, res: Response, next: NextFunction): void {
     return;
   }
   try {
-    verifySession(t, JWT_SECRET);
+    verifySession(t, jwtSecret);
     next();
   } catch {
     res.status(401).json({ error: "unauthorized" });
@@ -155,7 +172,7 @@ app.post("/api/auth/verify", async (req, res) => {
     return;
   }
 
-  const token = signSession(signer, JWT_SECRET);
+  const token = signSession(signer, jwtSecret);
   res.json({ token, address: signer });
 });
 
@@ -170,7 +187,7 @@ wss.on("connection", (ws, req) => {
   const token = url.searchParams.get("token") || "";
   let address: string;
   try {
-    const payload = verifySession(token, JWT_SECRET);
+    const payload = verifySession(token, jwtSecret);
     address = payload.sub;
   } catch {
     ws.close(4001, "unauthorized");

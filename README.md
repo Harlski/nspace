@@ -2,7 +2,7 @@
 
 A multiplayer isometric social space built with **Nimiq wallet** authentication, **WebSocket** multiplayer, and **Three.js** 3D rendering. Walk around, build structures, place signposts, and claim tiles in the collaborative canvas room.
 
-![nspace Preview](https://via.placeholder.com/800x400?text=nspace+Preview)
+🌐 **Live Demo**: [https://nimiq.space](https://nimiq.space)
 
 ## ✨ Features
 
@@ -92,7 +92,7 @@ Vite dev server binds to all interfaces. To test on your phone or another device
 
 ```bash
 # Set a secure JWT secret
-export JWT_SECRET=<long-random-string>
+export JWT_SECRET=$(openssl rand -base64 32)
 
 # DO NOT set DEV_AUTH_BYPASS in production
 
@@ -107,12 +107,27 @@ The server will serve the built client from `client/dist` and listen on port 300
 
 ### Docker Deployment
 
+**Quick Start:**
+
 ```bash
+# 1. Create .env file with secure JWT secret
+echo "JWT_SECRET=$(openssl rand -base64 32)" > .env
+
+# Or copy and edit the example
+cp .env.example .env
+# Edit .env and set a secure JWT_SECRET
+
+# 2. Build and run
 docker compose build
 docker compose up -d
+
+# 3. Check logs
+docker compose logs -f
 ```
 
-See [docs/deploy-github-docker.md](docs/deploy-github-docker.md) for automated CI/CD deployment with GitHub Actions.
+**Important:** The server requires `JWT_SECRET` to be set and will refuse to start without it in production mode.
+
+See [docs/docker-deployment.md](docs/docker-deployment.md) for detailed Docker deployment guide, including automated CI/CD deployment with GitHub Actions.
 
 ## 🔧 Configuration
 

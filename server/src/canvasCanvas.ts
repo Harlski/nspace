@@ -106,6 +106,14 @@ export function getTopPlayers(limit: number): Array<{ address: string; count: nu
     .slice(0, limit);
 }
 
+/** Clear all claims (reset the canvas) */
+export function clearAllClaims(): void {
+  claims = {};
+  dirty = true;
+  saveCanvasClaims();
+  console.log("[canvas] All claims cleared");
+}
+
 // Auto-save every 10 seconds if dirty
 setInterval(() => {
   if (dirty) saveCanvasClaims();

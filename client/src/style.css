@@ -258,6 +258,18 @@ body {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
+.canvas-leaderboard__timer {
+  font-weight: 600;
+  font-size: 16px;
+  color: #fbbf24;
+  text-align: center;
+  margin-bottom: 8px;
+  padding: 6px;
+  background: rgba(251, 191, 36, 0.1);
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
 .canvas-leaderboard__list {
   display: flex;
   flex-direction: column;
@@ -597,6 +609,37 @@ body {
   align-items: center;
   justify-content: flex-end;
 }
+
+.hud-player-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  pointer-events: auto;
+  cursor: default;
+  transition: background 0.2s ease;
+}
+
+.hud-player-count:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.hud-player-count .nq-icon {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.hud-player-count__number {
+  min-width: 20px;
+  text-align: center;
+}
+
 
 .hud-icon-btn {
   width: 30px;
@@ -967,6 +1010,7 @@ body {
     width: min(52vw, 240px);
     max-height: 90px;
     font-size: 11px;
+    padding: 6px 8px;
   }
 
   .build-object-panel {
@@ -1187,6 +1231,11 @@ body {
   line-height: 1.35;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
   pointer-events: none;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  border-radius: 8px;
+  padding: 8px 10px;
+  box-sizing: border-box;
 }
 
 .chat-line {

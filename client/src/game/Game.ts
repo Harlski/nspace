@@ -84,11 +84,13 @@ const CHAT_BUBBLE_FONT =
 const NAME_LABEL_MAX_PX = 280;
 /** On-screen height (px) for the name pill; scales with ortho zoom so text stays readable. */
 const NAME_LABEL_SCREEN_HEIGHT_PX = 24;
+/** Target screen height for chat bubbles (similar to name labels for consistent readability). */
+const CHAT_BUBBLE_MIN_HEIGHT_PX = 30;
 const CHAT_MAX_PX = 260;
+const CHAT_MAX_WIDTH_SCREEN_PX = 450; // Maximum screen width when zoomed in (more generous)
 const CHAT_LINE_HEIGHT_PX = 22;
 const CHAT_VISIBLE_MS = 5000;
 const CHAT_FADE_MS = 600;
-const CHAT_GAP_ABOVE_NAME = 0.06;
 /** Gap between identicon bottom (y=0) and name label (screen px → world in Game). */
 const NAME_GAP_BELOW_IDENTICON_PX = 2;
 
@@ -97,6 +99,8 @@ type ChatBubbleEntry = {
   material: THREE.SpriteMaterial;
   texture: THREE.CanvasTexture;
   startedAt: number;
+  texWidth: number;
+  texHeight: number;
 };
 
 function createNameLabelSprite(displayName: string): {
@@ -174,10 +178,12 @@ function wrapChatLines(
 function createChatBubbleSprite(text: string): {
   sprite: THREE.Sprite;
   texture: THREE.CanvasTexture;
+  width: number;
+  height: number;
 } {
-  const padX = 10;
-  const padY = 8;
-  const radius = 10;
+  const padX = 14;
+  const padY = 10;
+  const radius = 12;
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
   ctx.font = CHAT_BUBBLE_FONT;
@@ -191,14 +197,39 @@ function createChatBubbleSprite(text: string): {
   canvas.height = h;
   ctx.font = CHAT_BUBBLE_FONT;
   ctx.textBaseline = "top";
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  
+  // Draw shadow
+  ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
+  ctx.beginPath();
+  ctx.roundRect(2, 2, w, h, radius);
+  ctx.fill();
+  
+  // Draw main bubble background with gradient
+  const gradient = ctx.createLinearGradient(0, 0, 0, h);
+  gradient.addColorStop(0, "rgba(255, 255, 255, 0.98)");
+  gradient.addColorStop(1, "rgba(248, 250, 252, 0.98)");
+  ctx.fillStyle = gradient;
   ctx.beginPath();
   ctx.roundRect(0, 0, w, h, radius);
   ctx.fill();
-  ctx.fillStyle = "#f1f5f9";
+  
+  // Draw border
+  ctx.strokeStyle = "rgba(203, 213, 225, 0.8)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, w, h, radius);
+  ctx.stroke();
+  
+  // Draw text with subtle shadow
+  ctx.shadowColor = "rgba(0, 0, 0, 0.1)";
+  ctx.shadowBlur = 2;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 1;
+  ctx.fillStyle = "#1e293b";
   lines.forEach((ln, i) => {
     ctx.fillText(ln, padX, padY + i * lineH);
   });
+  
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(
@@ -209,10 +240,9 @@ function createChatBubbleSprite(text: string): {
     })
   );
   sprite.renderOrder = 1000;
-  const worldW = Math.min(2.4, w * 0.0065);
-  const worldH = worldW * (h / w);
-  sprite.scale.set(worldW, worldH, 1);
-  return { sprite, texture: tex };
+  // Initial scale will be set by syncChatBubbleScaleAndPosition
+  sprite.scale.set(1, 1, 1);
+  return { sprite, texture: tex, width: w, height: h };
 }
 
 /** Placeholder isometric block (cube) — one tile footprint, sits on floor. */
@@ -326,10 +356,15 @@ export class Game {
   /** World XZ point the camera orbits (isometric offset applied on top). */
   private readonly cameraLookAt = new THREE.Vector3(0, 0, 0);
   private readonly cameraOffset = new THREE.Vector3(18, 18, 18);
-  /** Player can move this far from the look target (world units per axis) before the view pans. */
-  private readonly cameraFollowDeadZone = 3.2;
+  /** Base dead zone size (fraction of default frustum); scales with zoom for consistent screen-space behavior. */
+  private readonly cameraFollowDeadZoneBase = 3.2;
   private readonly cameraFollowSmoothing = 12;
   private cameraFollowReady = false;
+  /** Look-ahead offset based on movement direction (world units). */
+  private readonly cameraLookAhead = new THREE.Vector3(0, 0, 0);
+  private readonly cameraLookAheadSmoothing = 8;
+  /** Previous position for velocity calculation. */
+  private selfPrevPos = new THREE.Vector3(0, 0, 0);
 
   /** Orthographic vertical half-extent (world units); smaller = zoomed in. */
   private frustumSize: number;
@@ -943,19 +978,42 @@ export class Game {
           ? this.selfMesh
           : this.others.get(addr) ?? null;
       if (!g) continue;
-      const nameSprite = g.userData.nameSprite as THREE.Sprite | undefined;
-      const sprite = entry.sprite;
-      if (nameSprite) {
-        const nh = nameSprite.scale.y;
-        const ny = nameSprite.position.y;
-        const nameTop = ny + nh / 2;
-        const ch = sprite.scale.y;
-        sprite.position.y = nameTop + CHAT_GAP_ABOVE_NAME + ch / 2;
-      } else {
-        sprite.position.y =
-          AVATAR_SPHERE_RADIUS * 2 * this.identiconScale + 0.45;
-      }
+      
+      // Update scale and position based on current zoom
+      this.syncChatBubbleScaleAndPosition(entry);
     }
+  }
+
+  /** Keeps chat bubbles near constant on-screen size at any orthographic zoom (like name labels). */
+  private syncChatBubbleScaleAndPosition(entry: ChatBubbleEntry): void {
+    const tw = entry.texWidth;
+    const th = entry.texHeight;
+    
+    // Calculate world scale to maintain consistent screen height (scales with zoom like name tags)
+    // Target screen height should scale with zoom but maintain minimum readability
+    const baseScreenHeight = th * 0.5; // Base size: 50% of texture height as screen pixels
+    const targetScreenHeight = Math.max(CHAT_BUBBLE_MIN_HEIGHT_PX, baseScreenHeight);
+    
+    // Calculate height first - this is our priority for readability
+    let worldH = this.pixelToWorldY(targetScreenHeight);
+    
+    // Calculate width based on aspect ratio
+    let worldW = worldH * (tw / th);
+    
+    // Use a much more generous maximum width constraint
+    const maxW = this.pixelToWorldX(CHAT_MAX_WIDTH_SCREEN_PX);
+    if (worldW > maxW) {
+      // Only clamp width, preserve height for readability
+      worldW = maxW;
+    }
+    
+    entry.sprite.scale.set(worldW, worldH, 1);
+    
+    // Position chat bubble above the avatar
+    const avatarTop = AVATAR_SPHERE_RADIUS * 2 * this.identiconScale;
+    const ch = worldH;
+    const gapAboveAvatar = 0.12;
+    entry.sprite.position.y = avatarTop + gapAboveAvatar + ch / 2;
   }
 
   private applyOrthographicFrustum(): void {
@@ -1232,6 +1290,13 @@ export class Game {
     const k = tileKey(x, z);
     this.canvasClaims.set(k, address);
     this.syncCanvasIdenticonForTile(x, z, address);
+  }
+
+  /** Clear all canvas claims (reset the canvas floor) */
+  clearAllCanvasClaims(): void {
+    console.log(`[canvas] Clearing all ${this.canvasClaims.size} claims`);
+    this.canvasClaims.clear();
+    this.clearCanvasIdenticons();
   }
 
   /** Set signboards for the current room */
@@ -2296,11 +2361,15 @@ export class Game {
 
   private applyCameraPose(): void {
     this.camera.position.set(
-      this.cameraLookAt.x + this.cameraOffset.x,
-      this.cameraLookAt.y + this.cameraOffset.y,
-      this.cameraLookAt.z + this.cameraOffset.z
+      this.cameraLookAt.x + this.cameraOffset.x + this.cameraLookAhead.x,
+      this.cameraLookAt.y + this.cameraOffset.y + this.cameraLookAhead.y,
+      this.cameraLookAt.z + this.cameraOffset.z + this.cameraLookAhead.z
     );
-    this.camera.lookAt(this.cameraLookAt);
+    this.camera.lookAt(
+      this.cameraLookAt.x + this.cameraLookAhead.x,
+      this.cameraLookAt.y + this.cameraLookAhead.y,
+      this.cameraLookAt.z + this.cameraLookAhead.z
+    );
   }
 
   /** Pans only when the local player nears the edge of the dead zone (soft follow). */
@@ -2309,20 +2378,32 @@ export class Game {
     const px = this.selfMesh.position.x;
     const py = this.selfMesh.position.y;
     const pz = this.selfMesh.position.z;
-    const m = this.cameraFollowDeadZone;
-    let tx = this.cameraLookAt.x;
-    let ty = this.cameraLookAt.y;
-    let tz = this.cameraLookAt.z;
-    if (px > tx + m) tx = px - m;
-    else if (px < tx - m) tx = px + m;
-    if (pz > tz + m) tz = pz - m;
-    else if (pz < tz - m) tz = pz + m;
-    if (py > ty + m) ty = py - m;
-    else if (py < ty - m) ty = py + m;
+    
+    // Calculate velocity for look-ahead
+    const vx = px - this.selfPrevPos.x;
+    const vz = pz - this.selfPrevPos.z;
+    this.selfPrevPos.set(px, py, pz);
+    
+    // Calculate look-ahead offset based on velocity and zoom
+    // More offset when zoomed in (smaller frustum), scaled by velocity
+    const speed = Math.sqrt(vx * vx + vz * vz);
+    const lookAheadStrength = Math.min(1.0, speed * 20); // Cap at full strength
+    const zoomFactor = Math.max(0, 1 - this.frustumSize / VIEW_FRUSTUM_SIZE); // 0 when zoomed out, 1 when fully zoomed in
+    const maxLookAhead = 2.5 * zoomFactor; // Max 2.5 world units when fully zoomed in
+    
+    const targetLookX = vx * lookAheadStrength * maxLookAhead * 50;
+    const targetLookZ = vz * lookAheadStrength * maxLookAhead * 50;
+    
+    // Smooth look-ahead transitions
+    const lookAlpha = 1 - Math.exp(-this.cameraLookAheadSmoothing * dt);
+    this.cameraLookAhead.x += (targetLookX - this.cameraLookAhead.x) * lookAlpha;
+    this.cameraLookAhead.z += (targetLookZ - this.cameraLookAhead.z) * lookAlpha;
+    
+    // Always center camera on player (no dead zone)
     const alpha = 1 - Math.exp(-this.cameraFollowSmoothing * dt);
-    this.cameraLookAt.x += (tx - this.cameraLookAt.x) * alpha;
-    this.cameraLookAt.y += (ty - this.cameraLookAt.y) * alpha;
-    this.cameraLookAt.z += (tz - this.cameraLookAt.z) * alpha;
+    this.cameraLookAt.x += (px - this.cameraLookAt.x) * alpha;
+    this.cameraLookAt.y += (py - this.cameraLookAt.y) * alpha;
+    this.cameraLookAt.z += (pz - this.cameraLookAt.z) * alpha;
     this.applyCameraPose();
   }
 
@@ -2355,26 +2436,23 @@ export class Game {
     if (!g) return;
     const addr = (g.userData.address as string) || fromAddress;
     this.removeChatBubbleEntry(addr);
-    const { sprite, texture } = createChatBubbleSprite(text);
+    const { sprite, texture, width, height } = createChatBubbleSprite(text);
     const mat = sprite.material as THREE.SpriteMaterial;
-    const nameSprite = g.userData.nameSprite as THREE.Sprite | undefined;
-    if (nameSprite) {
-      const nh = nameSprite.scale.y;
-      const ny = nameSprite.position.y;
-      const nameTop = ny + nh / 2;
-      const ch = sprite.scale.y;
-      sprite.position.y = nameTop + CHAT_GAP_ABOVE_NAME + ch / 2;
-    } else {
-      sprite.position.y =
-        AVATAR_SPHERE_RADIUS * 2 * this.identiconScale + 0.45;
-    }
-    g.add(sprite);
-    this.chatBubbleByAddress.set(addr, {
+    
+    const entry: ChatBubbleEntry = {
       sprite,
       material: mat,
       texture,
       startedAt: performance.now(),
-    });
+      texWidth: width,
+      texHeight: height,
+    };
+    
+    // Set initial scale and position
+    this.syncChatBubbleScaleAndPosition(entry);
+    
+    g.add(sprite);
+    this.chatBubbleByAddress.set(addr, entry);
   }
 
   private removeChatBubbleEntry(addr: string): void {

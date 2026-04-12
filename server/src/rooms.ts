@@ -18,6 +18,7 @@ import {
   normalizeRoomId,
   type RoomBounds,
 } from "./roomLayouts.js";
+import { generateMaze } from "./mazeGenerator.js";
 import {
   loadWorldState,
   registerWorldStateRefs,
@@ -38,6 +39,7 @@ import {
   claimTile,
   getClaimsInBounds,
   loadCanvasClaims,
+  clearAllClaims,
 } from "./canvasCanvas.js";
 import { CANVAS_ROOM_ID } from "./roomLayouts.js";
 import {
@@ -181,6 +183,7 @@ type OutMsg =
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
   | { type: "canvasClaim"; x: number; z: number; address: string }
+  | { type: "canvasTimer"; timeRemaining: number }
   | {
       type: "signboards";
       roomId: string;
@@ -227,6 +230,85 @@ registerWorldStateRefs(
   lastSpawnByRoom,
   normalizeRoomId
 );
+
+// Initialize canvas room with maze layout
+function initializeCanvasMaze(): void {
+  const canvasId = normalizeRoomId(CANVAS_ROOM_ID);
+  const bounds = getRoomBaseBounds(canvasId);
+  const doors = getDoorsForRoom(canvasId);
+  
+  // Find the door (exit portal) coordinates
+  const exitDoor = doors.find((d) => d.targetRoomId === HUB_ROOM_ID);
+  if (!exitDoor) {
+    console.warn("[canvas] No exit door found, skipping maze generation");
+    return;
+  }
+
+  // Spawn is typically one tile before the exit door
+  const spawnX = 0;
+  const spawnZ = 14;
+  const exitX = exitDoor.x;
+  const exitZ = exitDoor.z;
+
+  console.log(`[canvas] Generating maze from spawn (${spawnX}, ${spawnZ}) to exit (${exitX}, ${exitZ})`);
+
+  // Generate maze with a fixed seed for consistency (change seed to regenerate)
+  const seed = 12345;
+  const walls = generateMaze(
+    bounds.minX,
+    bounds.maxX,
+    bounds.minZ,
+    bounds.maxZ,
+    spawnX,
+    spawnZ,
+    exitX,
+    exitZ,
+    seed
+  );
+
+  // Get or create placed map for canvas room
+  let placed = roomPlaced.get(canvasId);
+  if (!placed) {
+    placed = new Map();
+    roomPlaced.set(canvasId, placed);
+  }
+
+  // Place maze walls (only if not already placed by world state)
+  for (const wallKey of walls) {
+    if (!placed.has(wallKey)) {
+      placed.set(wallKey, {
+        passable: false,
+        half: false,
+        quarter: false,
+        hex: false,
+        ramp: false,
+        rampDir: 0,
+        colorId: 5, // Purple color for maze walls
+        locked: true, // Lock maze walls so they can't be edited
+      });
+    }
+  }
+
+  // Place a visible portal/teleport at the exit
+  const exitKey = tileKey(exitX, exitZ);
+  if (!placed.has(exitKey)) {
+    placed.set(exitKey, {
+      passable: true, // Players can walk through it
+      half: false,
+      quarter: true, // Make it a quarter-height platform
+      hex: true, // Hexagonal shape for visual distinction
+      ramp: false,
+      rampDir: 0,
+      colorId: 4, // Blue color for exit portal
+      locked: true, // Lock so players can't edit it
+    });
+  }
+
+  console.log(`[canvas] Maze initialized with ${walls.size} wall blocks and exit portal at (${exitX}, ${exitZ})`);
+}
+
+// Initialize canvas maze on server startup
+initializeCanvasMaze();
 
 function placedMap(roomId: string): Map<string, PlacedProps> {
   let m = roomPlaced.get(roomId);
@@ -694,11 +776,266 @@ function snapshotPlayers(roomId: string): PlayerState[] {
   return humans;
 }
 
+/** Canvas room timer (in milliseconds) - 1 minute */
+const CANVAS_TIMER_DURATION_MS = 1 * 60 * 1000;
+/** Cooldown period between rounds (in milliseconds) - 10 seconds */
+const CANVAS_COOLDOWN_MS = 10 * 1000;
+/** Canvas room timer state */
+let canvasTimerEndTime = 0;
+let canvasTimerActive = false;
+/** Canvas room cooldown state */
+let canvasCooldownEndTime = 0;
+let canvasCooldownActive = false;
+/** Track steps taken by each player in canvas room */
+const canvasPlayerSteps = new Map<string, number>();
+/** Track players who have finished the maze, in order */
+const canvasFinishers: Array<{ address: string; displayName: string; timestamp: number }> = [];
+
+function startCanvasTimer(): void {
+  canvasTimerEndTime = Date.now() + CANVAS_TIMER_DURATION_MS;
+  canvasTimerActive = true;
+  canvasCooldownActive = false; // Clear any cooldown when round starts
+  canvasPlayerSteps.clear();
+  canvasFinishers.length = 0; // Clear finishers for new round
+  console.log(`[canvas] Timer started, ends at ${new Date(canvasTimerEndTime).toISOString()}`);
+  
+  // Announce round start to all players in canvas room
+  broadcast(CANVAS_ROOM_ID, {
+    type: "chat",
+    from: "System",
+    fromAddress: "",
+    text: `🏁 Maze round started! 1 minute on the clock - find the blue portal!`,
+    at: Date.now(),
+  });
+  
+  // Broadcast timer start to all players in canvas room
+  broadcast(CANVAS_ROOM_ID, {
+    type: "canvasTimer",
+    timeRemaining: CANVAS_TIMER_DURATION_MS,
+  });
+}
+
+function startCanvasCooldown(): void {
+  canvasCooldownEndTime = Date.now() + CANVAS_COOLDOWN_MS;
+  canvasCooldownActive = true;
+  console.log(`[canvas] Cooldown started, ends at ${new Date(canvasCooldownEndTime).toISOString()}`);
+  
+  // Broadcast cooldown to hub/lobby
+  broadcast(HUB_ROOM_ID, {
+    type: "chat",
+    from: "System",
+    fromAddress: "",
+    text: `Canvas maze on cooldown for ${CANVAS_COOLDOWN_MS / 1000} seconds...`,
+    at: Date.now(),
+  });
+}
+
+function checkCanvasTimer(): void {
+  if (!canvasTimerActive) return;
+  
+  const now = Date.now();
+  const timeRemaining = canvasTimerEndTime - now;
+  
+  if (timeRemaining <= 0) {
+    // Timer expired - end the round
+    endCanvasRound();
+  }
+}
+
+function checkCanvasCooldown(): void {
+  if (!canvasCooldownActive) return;
+  
+  const now = Date.now();
+  if (now >= canvasCooldownEndTime) {
+    canvasCooldownActive = false;
+    console.log(`[canvas] Cooldown ended, canvas is now open`);
+    
+    // Announce canvas is ready
+    broadcast(HUB_ROOM_ID, {
+      type: "chat",
+      from: "System",
+      fromAddress: "",
+      text: `Canvas maze is now open! 🎮`,
+      at: Date.now(),
+    });
+  }
+}
+
+function endCanvasRound(): void {
+  canvasTimerActive = false;
+  console.log(`[canvas] Round ended`);
+  
+  // Get canvas room
+  const canvasRoom = rooms.get(CANVAS_ROOM_ID);
+  if (!canvasRoom) return;
+  
+  // If there are finishers, announce the winner (first to finish)
+  if (canvasFinishers.length > 0) {
+    const winner = canvasFinishers[0];
+    if (winner) {
+      const message = `Time's up! ${winner.displayName} won by finishing first! Returning to hub...`;
+      
+      // Broadcast to canvas room
+      broadcast(CANVAS_ROOM_ID, {
+        type: "chat",
+        from: "System",
+        fromAddress: "",
+        text: message,
+        at: Date.now(),
+      });
+      
+      // Announce overall winner in hub
+      broadcast(HUB_ROOM_ID, {
+        type: "chat",
+        from: winner.displayName,
+        fromAddress: winner.address,
+        text: `won the canvas maze challenge! 🏆`,
+        at: Date.now(),
+      });
+    }
+  } else {
+    // No one finished, announce player with most steps
+    let topPlayer = "";
+    let maxSteps = 0;
+    for (const [address, steps] of canvasPlayerSteps) {
+      if (steps > maxSteps) {
+        maxSteps = steps;
+        topPlayer = address;
+      }
+    }
+    
+    if (topPlayer) {
+      const playerName = canvasRoom.get(topPlayer)?.player.displayName || walletDisplayName(topPlayer);
+      const message = `Time's up! ${playerName} explored the most with ${maxSteps} steps! Returning to hub...`;
+      
+      broadcast(CANVAS_ROOM_ID, {
+        type: "chat",
+        from: "System",
+        fromAddress: "",
+        text: message,
+        at: Date.now(),
+      });
+    } else {
+      broadcast(CANVAS_ROOM_ID, {
+        type: "chat",
+        from: "System",
+        fromAddress: "",
+        text: "Time's up! Returning to hub...",
+        at: Date.now(),
+      });
+    }
+  }
+  
+  // Clear the canvas floor
+  clearAllClaims();
+  
+  // Broadcast the cleared canvas to all players in canvas room
+  broadcast(CANVAS_ROOM_ID, {
+    type: "canvasClaim",
+    x: -1,
+    z: -1,
+    address: "",
+  });
+  
+  // Teleport all remaining players to hub after short delay
+  setTimeout(() => {
+    const playersToTeleport = Array.from(canvasRoom.values());
+    for (const conn of playersToTeleport) {
+      teleportPlayer(conn, HUB_ROOM_ID, 0, 0);
+    }
+    
+    // Reset for next round
+    canvasPlayerSteps.clear();
+    canvasFinishers.length = 0;
+    
+    // Start cooldown period
+    startCanvasCooldown();
+  }, 2000);
+}
+
+function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: number): void {
+  const address = conn.player.address;
+  
+  // Find and remove from current room
+  for (const [roomId, room] of rooms) {
+    if (room.has(address)) {
+      room.delete(address);
+      broadcast(roomId, { type: "playerLeft", address }, address);
+      break;
+    }
+  }
+  
+  // Update player position
+  conn.player.x = x;
+  conn.player.z = z;
+  conn.player.y = 0;
+  conn.pathQueue = [];
+  
+  // Add to new room
+  let targetRoom = rooms.get(targetRoomId);
+  if (!targetRoom) {
+    targetRoom = new Map();
+    rooms.set(targetRoomId, targetRoom);
+  }
+  targetRoom.set(address, conn);
+  
+  // Send welcome message for new room
+  const targetRoomConns = roomOf(targetRoomId);
+  const others = [...targetRoomConns.values()]
+    .filter((c) => c.address !== address)
+    .map((c) => ({ ...c.player }));
+  const rb = getRoomBaseBounds(targetRoomId);
+  const doors = getDoorsForRoom(targetRoomId).map((d) => ({
+    x: d.x,
+    z: d.z,
+    targetRoomId: normalizeRoomId(d.targetRoomId),
+    spawnX: d.spawnX,
+    spawnZ: d.spawnZ,
+  }));
+  
+  const signboards = getSignboardsForRoom(targetRoomId).map((s) => ({
+    id: s.id,
+    x: s.x,
+    z: s.z,
+    message: s.message,
+    createdBy: s.createdBy,
+    createdAt: s.createdAt,
+  }));
+  
+  const isCanvas = normalizeRoomId(targetRoomId) === CANVAS_ROOM_ID;
+  
+  conn.ws.send(
+    JSON.stringify({
+      type: "welcome",
+      self: conn.player,
+      others,
+      roomId: targetRoomId,
+      roomBounds: rb,
+      doors,
+      placeRadiusBlocks: PLACE_RADIUS_BLOCKS,
+      obstacles: obstaclesToList(targetRoomId),
+      extraFloorTiles: extraFloorToList(targetRoomId),
+      canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
+      signboards,
+    } satisfies OutMsg)
+  );
+  
+  // Notify others in new room
+  broadcast(targetRoomId, { type: "playerJoined", player: { ...conn.player } }, address);
+}
+
 export function startRoomTick(): void {
   loadCanvasClaims();
   loadSignboards();
   setInterval(() => {
     const now = Date.now();
+    
+    // Check canvas timer
+    checkCanvasTimer();
+    
+    // Check canvas cooldown
+    checkCanvasCooldown();
+    
     for (const [roomId, room] of rooms) {
       const dt = TICK_MS / 1000;
       let changed = false;
@@ -716,14 +1053,66 @@ export function startRoomTick(): void {
         
         // Canvas room: claim tiles as player moves
         if (isCanvas && result.arrivedTiles && result.arrivedTiles.length > 0) {
+          // Start timer on first player movement if not already started
+          if (!canvasTimerActive && room.size > 0) {
+            startCanvasTimer();
+          }
+          
           for (const tile of result.arrivedTiles) {
-            // Don't allow claiming the portal tile at (0, 15)
+            // Check if player reached the exit portal
             if (tile.x === 0 && tile.z === 15) {
-              console.log(`[canvas] Player ${c.address.slice(0, 8)}... stepped on portal tile (${tile.x}, ${tile.z}) - not claimable`);
+              console.log(`[canvas] Player ${c.address.slice(0, 8)}... reached exit portal (${tile.x}, ${tile.z})`);
+              
+              // Check if player hasn't already finished
+              const alreadyFinished = canvasFinishers.some(f => f.address === c.address);
+              if (!alreadyFinished) {
+                const position = canvasFinishers.length + 1;
+                const displayName = c.displayName || walletDisplayName(c.address);
+                canvasFinishers.push({
+                  address: c.address,
+                  displayName,
+                  timestamp: Date.now()
+                });
+                
+                // Get position suffix (1st, 2nd, 3rd, etc.)
+                const suffix = position === 1 ? "st" : position === 2 ? "nd" : position === 3 ? "rd" : "th";
+                
+                // Announce in canvas room
+                broadcast(CANVAS_ROOM_ID, {
+                  type: "chat",
+                  from: "System",
+                  fromAddress: "",
+                  text: `${displayName} finished the maze in ${position}${suffix} place!`,
+                  at: Date.now(),
+                });
+                
+                // Announce in hub/lobby with identicon
+                broadcast(HUB_ROOM_ID, {
+                  type: "chat",
+                  from: displayName,
+                  fromAddress: c.address,
+                  text: `completed the canvas maze in ${position}${suffix} place! 🏁`,
+                  at: Date.now(),
+                });
+                
+                console.log(`[canvas] Player ${displayName} finished in position ${position}`);
+                
+                // Teleport player back to hub after short delay
+                setTimeout(() => {
+                  const conn = room.get(c.address);
+                  if (conn) {
+                    teleportPlayer(conn, HUB_ROOM_ID, 0, 0);
+                  }
+                }, 1500);
+              }
               continue;
             }
             
-            console.log(`[canvas] Player ${c.address.slice(0, 8)}... claimed tile (${tile.x}, ${tile.z})`);
+            // Track steps for tiles that aren't the exit portal
+            const currentSteps = canvasPlayerSteps.get(c.address) || 0;
+            canvasPlayerSteps.set(c.address, currentSteps + 1);
+            
+            console.log(`[canvas] Player ${c.address.slice(0, 8)}... claimed tile (${tile.x}, ${tile.z}), total steps: ${currentSteps + 1}`);
             claimTile(tile.x, tile.z, c.address);
             broadcast(roomId, {
               type: "canvasClaim",
@@ -780,6 +1169,15 @@ export function startRoomTick(): void {
       if (changed && room.size > 0) {
         broadcast(roomId, { type: "state", players: snapshotPlayers(roomId) });
       }
+      
+      // Send canvas timer updates every second
+      if (isCanvas && canvasTimerActive && now % 1000 < TICK_MS) {
+        const timeRemaining = Math.max(0, canvasTimerEndTime - now);
+        broadcast(roomId, {
+          type: "canvasTimer",
+          timeRemaining,
+        });
+      }
     }
   }, TICK_MS);
 }
@@ -791,6 +1189,28 @@ export function addClient(
   spawnHint?: { x: number; z: number }
 ): void {
   const roomId = normalizeRoomId(roomIdRaw);
+  
+  // Block entry to canvas room during cooldown
+  if (roomId === CANVAS_ROOM_ID && canvasCooldownActive) {
+    const remainingSeconds = Math.ceil((canvasCooldownEndTime - Date.now()) / 1000);
+    ws.send(JSON.stringify({
+      type: "error",
+      code: "CANVAS_COOLDOWN",
+    } satisfies OutMsg));
+    
+    // Send chat message explaining cooldown
+    ws.send(JSON.stringify({
+      type: "chat",
+      from: "System",
+      fromAddress: "",
+      text: `Canvas maze is on cooldown. Please wait ${remainingSeconds} seconds before entering.`,
+      at: Date.now(),
+    } satisfies OutMsg));
+    
+    console.log(`[canvas] Blocked ${address.slice(0, 8)}... from entering during cooldown (${remainingSeconds}s remaining)`);
+    return;
+  }
+  
   ensureFakePlayers(roomId);
   const room = roomOf(roomId);
   const displayName = walletDisplayName(address);
@@ -870,6 +1290,17 @@ export function addClient(
   }));
 
   const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
+  
+  // Send current canvas timer if joining canvas room
+  if (isCanvas && canvasTimerActive) {
+    const timeRemaining = Math.max(0, canvasTimerEndTime - Date.now());
+    setTimeout(() => {
+      ws.send(JSON.stringify({
+        type: "canvasTimer",
+        timeRemaining,
+      }));
+    }, 100);
+  }
 
   const signboards = getSignboardsForRoom(roomId).map((s) => ({
     id: s.id,
@@ -955,6 +1386,11 @@ export function addClient(
     }
 
     if (msg.type === "placeBlock") {
+      // Canvas room is view-only, no building allowed
+      if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) {
+        return;
+      }
+      
       const now = Date.now();
       if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
       conn.lastPlaceAt = now;
@@ -1009,6 +1445,11 @@ export function addClient(
     }
 
     if (msg.type === "setObstacleProps") {
+      // Canvas room is view-only, no editing allowed
+      if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) {
+        return;
+      }
+      
       const now = Date.now();
       if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
       conn.lastPlaceAt = now;
@@ -1077,6 +1518,11 @@ export function addClient(
     }
 
     if (msg.type === "removeObstacle") {
+      // Canvas room is view-only, no deleting allowed
+      if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) {
+        return;
+      }
+      
       const now = Date.now();
       if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
       conn.lastPlaceAt = now;
@@ -1139,6 +1585,11 @@ export function addClient(
     }
 
     if (msg.type === "moveObstacle") {
+      // Canvas room is view-only, no moving allowed
+      if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) {
+        return;
+      }
+      
       const now = Date.now();
       if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
       conn.lastPlaceAt = now;
@@ -1226,6 +1677,11 @@ export function addClient(
     }
 
     if (msg.type === "placeExtraFloor") {
+      // Canvas room is view-only, no floor expansion allowed
+      if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) {
+        return;
+      }
+      
       const now = Date.now();
       if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
       conn.lastPlaceAt = now;

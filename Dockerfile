@@ -29,5 +29,10 @@ COPY --from=build /app/client/dist ./client/dist
 
 WORKDIR /app/server
 ENV NODE_ENV=production
+
+# JWT_SECRET must be provided at runtime via environment variable
+# The server will refuse to start without it for security
+# See docker-compose.yml or pass via: docker run -e JWT_SECRET=<your-secret>
+
 EXPOSE 3001
 CMD ["node", "dist/index.js"]

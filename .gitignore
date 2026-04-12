@@ -9,3 +9,6 @@ dist
 
 # Server-persisted room state (obstacles, extra floor, spawns)
 server/data/
+
+# Docker volume data
+data/

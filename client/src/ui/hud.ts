@@ -91,6 +91,9 @@ export function createHud(
   setDebugText: (text: string) => void;
   setCanvasLeaderboardVisible: (visible: boolean) => void;
   updateCanvasLeaderboard: (leaders: Array<{ address: string; count: number }>) => void;
+  setCanvasTimer: (timeRemaining: number) => void;
+  setPlayerCount: (count: number) => void;
+  setLoadingVisible: (visible: boolean) => void;
   destroy: () => void;
 } {
   root.innerHTML = "";
@@ -149,7 +152,20 @@ export function createHud(
   fsBtn.textContent = "[ ]";
   fsBtn.setAttribute("aria-label", "Fullscreen");
   fsBtn.title = "Fullscreen";
+  
+  // Player count indicator
+  const playerCount = document.createElement("div");
+  playerCount.className = "hud-player-count";
+  playerCount.title = "Players online";
+  playerCount.innerHTML = `
+    <svg class="nq-icon">
+      <use xlink:href="/nimiq-style.icons.svg#nq-view"/>
+    </svg>
+    <span class="hud-player-count__number">0</span>
+  `;
+  
   topToolbar.appendChild(fsBtn);
+  topToolbar.appendChild(playerCount);
   topToolbar.appendChild(lobbyBtn);
   topStrip.appendChild(topToolbar);
 
@@ -166,6 +182,7 @@ export function createHud(
   canvasLeaderboard.hidden = true;
   canvasLeaderboard.innerHTML = `
     <div class="canvas-leaderboard__title">Canvas Leaders</div>
+    <div class="canvas-leaderboard__timer" hidden></div>
     <div class="canvas-leaderboard__list"></div>
   `;
 
@@ -1380,6 +1397,29 @@ export function createHud(
     },
     setLoadingVisible(visible: boolean) {
       loadingOverlay.hidden = !visible;
+    },
+    setPlayerCount(count: number) {
+      const countEl = playerCount.querySelector(".hud-player-count__number");
+      if (countEl) {
+        countEl.textContent = String(count);
+      }
+    },
+    setCanvasTimer(timeRemaining: number) {
+      const timerEl = canvasLeaderboard.querySelector(".canvas-leaderboard__timer") as HTMLElement | null;
+      if (!timerEl) return;
+      
+      if (timeRemaining <= 0) {
+        timerEl.hidden = true;
+        return;
+      }
+      
+      const seconds = Math.ceil(timeRemaining / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      const timeStr = `${minutes}:${secs.toString().padStart(2, '0')}`;
+      
+      timerEl.textContent = `⏱ ${timeStr}`;
+      timerEl.hidden = false;
     },
     setSignboardTooltip(
       signboard: {

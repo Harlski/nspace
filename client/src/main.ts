@@ -206,6 +206,15 @@ function enterGame(token: string, address: string): void {
     const touchUi =
       typeof window !== "undefined" &&
       window.matchMedia("(pointer: coarse)").matches;
+    const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
+    
+    // In canvas room, hide build UI and force walk mode
+    if (isCanvas) {
+      hud.setBuildBlockBarState({ visible: false, ...barStyle });
+      hud.setPlayModeState("walk");
+      return;
+    }
+    
     if (game.isRepositioning()) {
       hud.setStatus(
         "Choose an empty tile for the new position (Esc to cancel)"
@@ -245,6 +254,13 @@ function enterGame(token: string, address: string): void {
 
   hud.onPlayModeSelect((mode) => {
     if (document.activeElement === hud.getChatInput()) return;
+    
+    // Canvas room is view-only - disable build and floor modes
+    const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
+    if (isCanvas && (mode === "build" || mode === "floor")) {
+      return;
+    }
+    
     if (mode === "walk") {
       game.setFloorExpandMode(false);
       game.setBuildMode(false);
@@ -362,6 +378,17 @@ function enterGame(token: string, address: string): void {
       });
       game.setSelf(msg.self.address, msg.self.displayName);
       selfAddress = msg.self.address;
+
+      // If entering canvas room, disable build/floor modes
+      const isCanvas = normalizeRoomId(msg.roomId) === CANVAS_ROOM_ID;
+      if (isCanvas) {
+        game.setBuildMode(false);
+        game.setFloorExpandMode(false);
+        editingTile = null;
+        hud.hideObjectEditPanel();
+        game.clearSelectedBlock();
+      }
+
       game.setObstacles(msg.obstacles);
       game.setExtraFloorTiles(msg.extraFloorTiles);
       game.setSignboards(msg.signboards);
@@ -375,6 +402,10 @@ function enterGame(token: string, address: string): void {
       game.syncState(lastPlayers);
       syncHubButton();
       await updateCanvasLeaderboard();
+      
+      // Update player count (excluding NPCs)
+      const realPlayerCount = lastPlayers.filter(p => !p.displayName.startsWith("[NPC] ")).length;
+      hud.setPlayerCount(realPlayerCount);
       
       // Hide loading overlay after everything is loaded
       hud.setLoadingVisible(false);
@@ -391,16 +422,22 @@ function enterGame(token: string, address: string): void {
         },
       ];
       game.syncState(lastPlayers);
+      const realPlayerCount = lastPlayers.filter(p => !p.displayName.startsWith("[NPC] ")).length;
+      hud.setPlayerCount(realPlayerCount);
       return;
     }
     if (msg.type === "playerLeft") {
       lastPlayers = lastPlayers.filter((p) => p.address !== msg.address);
       game.syncState(lastPlayers);
+      const realPlayerCount = lastPlayers.filter(p => !p.displayName.startsWith("[NPC] ")).length;
+      hud.setPlayerCount(realPlayerCount);
       return;
     }
     if (msg.type === "state") {
       lastPlayers = msg.players;
       game.syncState(msg.players);
+      const realPlayerCount = lastPlayers.filter(p => !p.displayName.startsWith("[NPC] ")).length;
+      hud.setPlayerCount(realPlayerCount);
       return;
     }
     if (msg.type === "chat") {
@@ -428,9 +465,25 @@ function enterGame(token: string, address: string): void {
     }
     if (msg.type === "canvasClaim") {
       console.log(`[canvas] Received canvasClaim message:`, msg);
-      game.applyCanvasClaim(msg.x, msg.z, msg.address);
+      // Special case: x=-1, z=-1, address="" means clear all claims
+      if (msg.x === -1 && msg.z === -1 && msg.address === "") {
+        game.clearAllCanvasClaims();
+      } else {
+        game.applyCanvasClaim(msg.x, msg.z, msg.address);
+      }
       // Update leaderboard in real-time when tiles are claimed
       updateCanvasLeaderboard();
+    }
+    if (msg.type === "canvasTimer") {
+      hud.setCanvasTimer(msg.timeRemaining);
+    }
+    if (msg.type === "error") {
+      // Handle canvas cooldown error
+      if (msg.code === "CANVAS_COOLDOWN") {
+        console.log("[canvas] Entry blocked - room on cooldown");
+        // Don't need to do anything special - server already sent chat message
+        // and the connection will be closed, triggering a reconnect to hub
+      }
     }
     if (msg.type === "signboards") {
       game.setSignboards(msg.signboards);
@@ -544,12 +597,22 @@ function enterGame(token: string, address: string): void {
       }
       if (e.key === "f" || e.key === "F") {
         if (document.activeElement === chatInput) return;
+        
+        // Canvas room is view-only - disable floor expand mode
+        const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
+        if (isCanvas) return;
+        
         game.setFloorExpandMode(!game.getFloorExpandMode());
         syncBuildHud();
         return;
       }
       if (e.key === "b" || e.key === "B") {
         if (document.activeElement === chatInput) return;
+        
+        // Canvas room is view-only - disable build mode
+        const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
+        if (isCanvas) return;
+        
         const next = !game.getBuildMode();
         game.setBuildMode(next);
         if (!next) {

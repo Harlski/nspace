@@ -71,6 +71,7 @@ export type ServerMessage =
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
   | { type: "canvasClaim"; x: number; z: number; address: string }
+  | { type: "canvasTimer"; timeRemaining: number }
   | {
       type: "signboards";
       roomId: string;
