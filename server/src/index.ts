@@ -16,6 +16,8 @@ import {
   listRecentPlayerAddresses,
   listSessionsForPlayer,
 } from "./eventLog.js";
+import { flushCanvasClaimsSync } from "./canvasCanvas.js";
+import { getTopPlayers } from "./canvasCanvas.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -55,6 +57,16 @@ function requireJwt(req: Request, res: Response, next: NextFunction): void {
     res.status(401).json({ error: "unauthorized" });
   }
 }
+
+app.get("/api/canvas/leaderboard", (_req, res) => {
+  try {
+    const top = getTopPlayers(3);
+    res.json({ leaderboard: top });
+  } catch (err) {
+    console.error("[canvas/leaderboard]", err);
+    res.status(500).json({ error: "internal" });
+  }
+});
 
 app.get("/api/replay/players", requireJwt, (req, res) => {
   const maxDays = Math.min(30, Math.max(1, Number(req.query.days) || 7));
@@ -208,6 +220,7 @@ function shutdown(signal: string): void {
   console.log(`\n${signal} — flushing world state…`);
   flushPersistWorldStateSync();
   flushEventLogSync();
+  flushCanvasClaimsSync();
   process.exit(0);
 }
 

@@ -8,7 +8,7 @@ import {
 } from "./auth/session.js";
 import { ROOM_ID } from "./game/constants.js";
 import { Game } from "./game/Game.js";
-import { HUB_ROOM_ID, normalizeRoomId } from "./game/roomLayouts.js";
+import { HUB_ROOM_ID, CANVAS_ROOM_ID, normalizeRoomId } from "./game/roomLayouts.js";
 import {
   connectGameWs,
   sendChat,
@@ -161,6 +161,30 @@ function enterGame(token: string, address: string): void {
     );
   };
 
+  async function updateCanvasLeaderboard(): Promise<void> {
+    const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
+    console.log(`[canvas] updateCanvasLeaderboard called, isCanvas: ${isCanvas}`);
+    hud.setCanvasLeaderboardVisible(isCanvas);
+    if (!isCanvas) return;
+    
+    try {
+      const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+      const base = resolveApiBaseUrl() || "";
+      const url = `${base}/api/canvas/leaderboard`;
+      console.log(`[canvas] Fetching leaderboard from: ${url}`);
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.error(`[canvas] Leaderboard fetch failed: ${res.status} ${res.statusText}`);
+        return;
+      }
+      const data = await res.json() as { leaderboard: Array<{ address: string; count: number }> };
+      console.log(`[canvas] Leaderboard data:`, data.leaderboard);
+      hud.updateCanvasLeaderboard(data.leaderboard);
+    } catch (err) {
+      console.error("[canvas] Failed to fetch leaderboard:", err);
+    }
+  }
+
   function playModeFromGame(): "walk" | "build" | "floor" {
     if (game.getFloorExpandMode()) return "floor";
     if (game.getBuildMode()) return "build";
@@ -300,9 +324,13 @@ function enterGame(token: string, address: string): void {
       game.setSelf(msg.self.address, msg.self.displayName);
       game.setObstacles(msg.obstacles);
       game.setExtraFloorTiles(msg.extraFloorTiles);
+      if (msg.canvasClaims) {
+        game.setCanvasClaims(msg.canvasClaims);
+      }
       lastPlayers = [msg.self, ...msg.others];
       game.syncState(lastPlayers);
       syncHubButton();
+      updateCanvasLeaderboard();
       return;
     }
     if (msg.type === "playerJoined") {
@@ -348,6 +376,15 @@ function enterGame(token: string, address: string): void {
     if (msg.type === "extraFloor") {
       game.setExtraFloorTiles(msg.tiles);
       syncBuildHud();
+    }
+    if (msg.type === "canvasClaim") {
+      console.log(`[canvas] Received canvasClaim message:`, msg);
+      game.applyCanvasClaim(msg.x, msg.z, msg.address);
+      // Refresh leaderboard when someone makes a claim
+      if (normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID) {
+        console.log(`[canvas] Triggering leaderboard update`);
+        void updateCanvasLeaderboard();
+      }
     }
   };
 

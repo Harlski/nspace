@@ -34,6 +34,12 @@ import {
   pickGuestDisplayName,
 } from "./guestNames.js";
 import { walletDisplayName } from "./walletDisplayName.js";
+import {
+  claimTile,
+  getAllClaims,
+  loadCanvasClaims,
+} from "./canvasCanvas.js";
+import { CANVAS_ROOM_ID } from "./roomLayouts.js";
 
 const MOVE_SPEED = 5;
 /** NPCs move 20% slower than human path-follow speed. */
@@ -145,12 +151,14 @@ type OutMsg =
       placeRadiusBlocks: number;
       obstacles: ObstacleTile[];
       extraFloorTiles: ExtraFloorTile[];
+      canvasClaims?: Array<{ x: number; z: number; address: string }>;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
   | { type: "state"; players: PlayerState[] }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
+  | { type: "canvasClaim"; x: number; z: number; address: string }
   | { type: "chat"; from: string; fromAddress: string; text: string; at: number }
   | { type: "error"; code: string };
 
@@ -585,8 +593,9 @@ function advanceAlongPathHuman(
   pathQueue: { x: number; z: number; layer: 0 | 1 }[],
   dt: number,
   placed: ReadonlyMap<string, PlacedProps>
-): boolean {
+): { changed: boolean; arrivedTiles: Array<{ x: number; z: number }> } {
   let changedThis = false;
+  const arrivedTiles: Array<{ x: number; z: number }> = [];
   while (true) {
     if (pathQueue.length === 0) {
       p.vx = 0;
@@ -600,6 +609,7 @@ function advanceAlongPathHuman(
     const dz = goal.z - p.z;
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (dist < ARRIVE_EPS) {
+      const prevTile = snapToTile(p.x, p.z);
       p.x = goal.x;
       p.z = goal.z;
       p.y = gy;
@@ -607,11 +617,16 @@ function advanceAlongPathHuman(
       p.vz = 0;
       pathQueue.shift();
       changedThis = true;
+      const newTile = snapToTile(p.x, p.z);
+      if (prevTile.x !== newTile.x || prevTile.z !== newTile.z) {
+        arrivedTiles.push({ x: newTile.x, z: newTile.z });
+      }
       continue;
     }
     const step = MOVE_SPEED * dt;
     const t = Math.min(1, step / dist);
     const wb = walkBounds(roomId);
+    const prevTile = snapToTile(p.x, p.z);
     const nx = clamp(p.x + dx * t, wb.minX, wb.maxX);
     const ny = p.y + dy * t;
     const nz = clamp(p.z + dz * t, wb.minZ, wb.maxZ);
@@ -621,9 +636,13 @@ function advanceAlongPathHuman(
     p.y = ny;
     p.z = nz;
     changedThis = true;
+    const newTile = snapToTile(p.x, p.z);
+    if (prevTile.x !== newTile.x || prevTile.z !== newTile.z) {
+      arrivedTiles.push({ x: newTile.x, z: newTile.z });
+    }
     break;
   }
-  return changedThis;
+  return { changed: changedThis, arrivedTiles };
 }
 
 function snapshotPlayers(roomId: string): PlayerState[] {
@@ -637,21 +656,37 @@ function snapshotPlayers(roomId: string): PlayerState[] {
 }
 
 export function startRoomTick(): void {
+  loadCanvasClaims();
   setInterval(() => {
     const now = Date.now();
     for (const [roomId, room] of rooms) {
       const dt = TICK_MS / 1000;
       let changed = false;
       const placed = placedMap(roomId);
+      const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
       for (const c of room.values()) {
-        const changedThis = advanceAlongPathHuman(
+        const result = advanceAlongPathHuman(
           roomId,
           c.player,
           c.pathQueue,
           dt,
           placed
         );
-        if (changedThis) changed = true;
+        if (result.changed) changed = true;
+        
+        // Canvas room: claim tiles as player moves
+        if (isCanvas && result.arrivedTiles && result.arrivedTiles.length > 0) {
+          for (const tile of result.arrivedTiles) {
+            console.log(`[canvas] Player ${c.address.slice(0, 8)}... claimed tile (${tile.x}, ${tile.z})`);
+            claimTile(tile.x, tile.z, c.address);
+            broadcast(roomId, {
+              type: "canvasClaim",
+              x: tile.x,
+              z: tile.z,
+              address: c.address,
+            });
+          }
+        }
       }
       const fakes = roomFakePlayers.get(roomId);
       if (fakes?.size) {
@@ -788,6 +823,8 @@ export function addClient(
     spawnZ: d.spawnZ,
   }));
 
+  const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
+
   ws.send(
     JSON.stringify({
       type: "welcome",
@@ -799,6 +836,7 @@ export function addClient(
       placeRadiusBlocks: PLACE_RADIUS_BLOCKS,
       obstacles: obstaclesToList(roomId),
       extraFloorTiles: extraFloorToList(roomId),
+      canvasClaims: isCanvas ? getAllClaims() : undefined,
     } satisfies OutMsg)
   );
 

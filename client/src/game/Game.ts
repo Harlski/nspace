@@ -346,6 +346,11 @@ export class Game {
   >();
   /** Previous inter-touch distance (px) while pinching; 0 = not established yet. */
   private pinchLastDistancePx = 0;
+  
+  /** Canvas room tile claims: map of "x,z" => address */
+  private readonly canvasClaims = new Map<string, string>();
+  /** Canvas room identicon meshes */
+  private readonly canvasIdenticonMeshes = new Map<string, THREE.Mesh>();
 
   /** Identicon sphere Euler (degrees); applied to all player avatars. */
   private identiconRotDeg = { x: 0, y: 0, z: 0 };
@@ -1158,6 +1163,83 @@ export class Game {
     this.syncPlacementRangeHints();
   }
 
+  /** Initialize canvas claims from welcome message */
+  setCanvasClaims(claims: readonly { x: number; z: number; address: string }[]): void {
+    this.canvasClaims.clear();
+    for (const claim of claims) {
+      const k = tileKey(claim.x, claim.z);
+      this.canvasClaims.set(k, claim.address);
+    }
+    this.syncCanvasIdenticonMeshes();
+  }
+
+  /** Handle a single canvas claim update */
+  applyCanvasClaim(x: number, z: number, address: string): void {
+    console.log(`[canvas] Claim received: (${x}, ${z}) by ${address.slice(0, 8)}...`);
+    const k = tileKey(x, z);
+    this.canvasClaims.set(k, address);
+    this.syncCanvasIdenticonForTile(x, z, address);
+  }
+
+  private async syncCanvasIdenticonForTile(x: number, z: number, address: string): Promise<void> {
+    const k = tileKey(x, z);
+    
+    console.log(`[canvas] Rendering identicon for (${x}, ${z})`);
+    
+    // Remove old mesh if it exists
+    const oldMesh = this.canvasIdenticonMeshes.get(k);
+    if (oldMesh) {
+      this.scene.remove(oldMesh);
+      oldMesh.geometry.dispose();
+      if (oldMesh.material instanceof THREE.Material) {
+        oldMesh.material.dispose();
+      }
+      this.canvasIdenticonMeshes.delete(k);
+    }
+
+    // Load and create new identicon mesh
+    try {
+      const { loadIdenticonTexture } = await import("./identiconTexture.js");
+      const texture = await loadIdenticonTexture(address);
+      
+      const size = 0.9;
+      const geo = new THREE.PlaneGeometry(size, size);
+      const mat = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(x, 0.02, z);
+      this.scene.add(mesh);
+      this.canvasIdenticonMeshes.set(k, mesh);
+      console.log(`[canvas] Identicon rendered successfully for (${x}, ${z})`);
+    } catch (err) {
+      console.error(`[canvas] Failed to load identicon for ${address}:`, err);
+    }
+  }
+
+  private syncCanvasIdenticonMeshes(): void {
+    // Clear existing meshes
+    for (const [, mesh] of this.canvasIdenticonMeshes) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      if (mesh.material instanceof THREE.Material) {
+        mesh.material.dispose();
+      }
+    }
+    this.canvasIdenticonMeshes.clear();
+
+    // Create meshes for all claims
+    for (const [k, address] of this.canvasClaims) {
+      const [x, z] = k.split(",").map(Number);
+      if (x !== undefined && z !== undefined) {
+        void this.syncCanvasIdenticonForTile(x, z, address);
+      }
+    }
+  }
+
   /** Wire format matches server obstacle tiles. */
   setObstacles(
     tiles: readonly {
@@ -1535,6 +1617,14 @@ export class Game {
     }
     this.others.clear();
     this.targetPos.clear();
+    for (const [, mesh] of this.canvasIdenticonMeshes) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      if (mesh.material instanceof THREE.Material) {
+        mesh.material.dispose();
+      }
+    }
+    this.canvasIdenticonMeshes.clear();
     for (const [, mesh] of this.blockMeshes) {
       this.scene.remove(mesh);
       mesh.traverse((child: THREE.Object3D) => {

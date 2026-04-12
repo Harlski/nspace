@@ -52,12 +52,14 @@ export type ServerMessage =
       placeRadiusBlocks: number;
       obstacles: ObstacleTile[];
       extraFloorTiles: ExtraFloorTile[];
+      canvasClaims?: Array<{ x: number; z: number; address: string }>;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
   | { type: "state"; players: PlayerState[] }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
+  | { type: "canvasClaim"; x: number; z: number; address: string }
   | { type: "chat"; from: string; fromAddress: string; text: string; at: number }
   | { type: "error"; code: string };
 

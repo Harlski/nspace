@@ -75,6 +75,8 @@ export function createHud(
   ) => void;
   setBuildBlockBarState: (state: BuildBlockBarState) => void;
   setDebugText: (text: string) => void;
+  setCanvasLeaderboardVisible: (visible: boolean) => void;
+  updateCanvasLeaderboard: (leaders: Array<{ address: string; count: number }>) => void;
   destroy: () => void;
 } {
   root.innerHTML = "";
@@ -145,7 +147,16 @@ export function createHud(
   debugPanel.setAttribute("aria-hidden", "true");
   debugPanel.hidden = !showDebug;
 
+  const canvasLeaderboard = document.createElement("div");
+  canvasLeaderboard.className = "canvas-leaderboard";
+  canvasLeaderboard.hidden = true;
+  canvasLeaderboard.innerHTML = `
+    <div class="canvas-leaderboard__title">Canvas Leaders</div>
+    <div class="canvas-leaderboard__list"></div>
+  `;
+
   leftStack.appendChild(debugPanel);
+  leftStack.appendChild(canvasLeaderboard);
   ui.appendChild(topStrip);
   ui.appendChild(leftStack);
 
@@ -855,6 +866,33 @@ export function createHud(
     setDebugText(text: string) {
       if (!showDebug) return;
       debugPanel.textContent = text;
+    },
+    setCanvasLeaderboardVisible(visible: boolean) {
+      canvasLeaderboard.hidden = !visible;
+    },
+    updateCanvasLeaderboard(leaders: Array<{ address: string; count: number }>) {
+      const list = canvasLeaderboard.querySelector(".canvas-leaderboard__list");
+      if (!list) return;
+      list.innerHTML = "";
+      for (let i = 0; i < leaders.length; i++) {
+        const leader = leaders[i]!;
+        const entry = document.createElement("div");
+        entry.className = "canvas-leaderboard__entry";
+        const rank = document.createElement("span");
+        rank.className = "canvas-leaderboard__rank";
+        rank.textContent = `${i + 1}.`;
+        const addr = document.createElement("span");
+        addr.className = "canvas-leaderboard__address";
+        addr.textContent = `${leader.address.slice(0, 8)}…`;
+        addr.title = leader.address;
+        const count = document.createElement("span");
+        count.className = "canvas-leaderboard__count";
+        count.textContent = `${leader.count}`;
+        entry.appendChild(rank);
+        entry.appendChild(addr);
+        entry.appendChild(count);
+        list.appendChild(entry);
+      }
     },
     destroy() {
       hideObjectEditPanel();

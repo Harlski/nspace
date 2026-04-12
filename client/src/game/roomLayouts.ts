@@ -9,6 +9,7 @@ export type RoomBounds = {
 
 export const HUB_ROOM_ID = "hub";
 export const CHAMBER_ROOM_ID = "chamber";
+export const CANVAS_ROOM_ID = "canvas";
 
 /**
  * Hub center 4×4 tiles (inclusive) — no blocks (must match server `roomLayouts`).
@@ -31,6 +32,13 @@ const CHAMBER_BOUNDS: RoomBounds = {
   maxZ: 6,
 };
 
+const CANVAS_BOUNDS: RoomBounds = {
+  minX: -20,
+  maxX: 20,
+  minZ: -20,
+  maxZ: 20,
+};
+
 export type DoorDef = {
   x: number;
   z: number;
@@ -47,6 +55,13 @@ const HUB_DOORS: DoorDef[] = [
     spawnX: -5,
     spawnZ: 0,
   },
+  {
+    x: -1,
+    z: -12,
+    targetRoomId: CANVAS_ROOM_ID,
+    spawnX: 0,
+    spawnZ: 19,
+  },
 ];
 
 const CHAMBER_DOORS: DoorDef[] = [
@@ -56,6 +71,16 @@ const CHAMBER_DOORS: DoorDef[] = [
     targetRoomId: HUB_ROOM_ID,
     spawnX: 11,
     spawnZ: 0,
+  },
+];
+
+const CANVAS_DOORS: DoorDef[] = [
+  {
+    x: 0,
+    z: 20,
+    targetRoomId: HUB_ROOM_ID,
+    spawnX: -1,
+    spawnZ: -11,
   },
 ];
 
@@ -71,6 +96,8 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
       return HUB_BOUNDS;
     case CHAMBER_ROOM_ID:
       return CHAMBER_BOUNDS;
+    case CANVAS_ROOM_ID:
+      return CANVAS_BOUNDS;
     default:
       return HUB_BOUNDS;
   }
@@ -80,5 +107,6 @@ export function getDoorsForRoom(roomId: string): DoorDef[] {
   const id = normalizeRoomId(roomId);
   if (id === HUB_ROOM_ID) return HUB_DOORS;
   if (id === CHAMBER_ROOM_ID) return CHAMBER_DOORS;
+  if (id === CANVAS_ROOM_ID) return CANVAS_DOORS;
   return [];
 }
