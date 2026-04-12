@@ -1199,7 +1199,7 @@ export class Game {
   }
 
   /** Initialize canvas claims from welcome message */
-  setCanvasClaims(claims: readonly { x: number; z: number; address: string }[]): void {
+  async setCanvasClaims(claims: readonly { x: number; z: number; address: string }[]): Promise<void> {
     this.canvasClaims.clear();
     const bounds = this.roomBounds;
     console.log(`[canvas] Loading ${claims.length} initial claims, room bounds: [${bounds.minX},${bounds.maxX}] × [${bounds.minZ},${bounds.maxZ}]`);
@@ -1222,7 +1222,8 @@ export class Game {
       console.log(`[canvas] Filtered ${filtered} out-of-bounds claims`);
     }
     
-    this.syncCanvasIdenticonMeshes();
+    // Wait for all identicons to load
+    await this.syncCanvasIdenticonMeshesAsync();
   }
 
   /** Handle a single canvas claim update */
@@ -1317,6 +1318,24 @@ export class Game {
         void this.syncCanvasIdenticonForTile(x, z, address);
       }
     }
+  }
+
+  /** Async version that waits for all identicons to load */
+  private async syncCanvasIdenticonMeshesAsync(): Promise<void> {
+    // Clear existing meshes
+    this.clearCanvasIdenticons();
+
+    // Create meshes for all claims and wait for them
+    const promises: Promise<void>[] = [];
+    for (const [k, address] of this.canvasClaims) {
+      const [x, z] = k.split(",").map(Number);
+      if (x !== undefined && z !== undefined) {
+        promises.push(this.syncCanvasIdenticonForTile(x, z, address));
+      }
+    }
+    
+    await Promise.all(promises);
+    console.log(`[canvas] All ${promises.length} identicons loaded`);
   }
 
   private clearCanvasIdenticons(): void {

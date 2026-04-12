@@ -213,6 +213,18 @@ export function createHud(
   ui.appendChild(leftStack);
   letter.appendChild(signpostOverlay);
 
+  // Loading overlay for room transitions
+  const loadingOverlay = document.createElement("div");
+  loadingOverlay.className = "loading-overlay";
+  loadingOverlay.hidden = true;
+  loadingOverlay.innerHTML = `
+    <div class="loading-overlay__content">
+      <div class="loading-overlay__spinner"></div>
+      <div class="loading-overlay__text">Loading room...</div>
+    </div>
+  `;
+  letter.appendChild(loadingOverlay);
+
   const topBar = document.createElement("div");
   topBar.className = "hud-top";
   const returnHubBtn = document.createElement("button");
@@ -1365,6 +1377,9 @@ export function createHud(
         
         list.appendChild(entry);
       }
+    },
+    setLoadingVisible(visible: boolean) {
+      loadingOverlay.hidden = !visible;
     },
     setSignboardTooltip(
       signboard: {

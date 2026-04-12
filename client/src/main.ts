@@ -348,8 +348,10 @@ function enterGame(token: string, address: string): void {
     });
   };
 
-  const handleServerMessage = (msg: ServerMessage): void => {
+  const handleServerMessage = async (msg: ServerMessage): Promise<void> => {
     if (msg.type === "welcome") {
+      hud.setLoadingVisible(true);
+      
       game.applyRoomFromWelcome({
         roomId: msg.roomId,
         roomBounds: msg.roomBounds,
@@ -363,13 +365,19 @@ function enterGame(token: string, address: string): void {
       game.setObstacles(msg.obstacles);
       game.setExtraFloorTiles(msg.extraFloorTiles);
       game.setSignboards(msg.signboards);
+      
+      // Load canvas claims if present and wait for them to finish
       if (msg.canvasClaims) {
-        game.setCanvasClaims(msg.canvasClaims);
+        await game.setCanvasClaims(msg.canvasClaims);
       }
+      
       lastPlayers = [msg.self, ...msg.others];
       game.syncState(lastPlayers);
       syncHubButton();
-      updateCanvasLeaderboard();
+      await updateCanvasLeaderboard();
+      
+      // Hide loading overlay after everything is loaded
+      hud.setLoadingVisible(false);
       return;
     }
     if (msg.type === "playerJoined") {
@@ -448,7 +456,7 @@ function enterGame(token: string, address: string): void {
       room,
       (msg) => {
         if (myGen !== connectGen) return;
-        handleServerMessage(msg);
+        void handleServerMessage(msg);
       },
       (ev) => {
         if (myGen !== connectGen) return;
