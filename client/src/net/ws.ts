@@ -84,8 +84,32 @@ export type ServerMessage =
         createdAt: number;
       }>;
     }
-  | { type: "chat"; from: string; fromAddress: string; text: string; at: number }
-  | { type: "error"; code: string };
+  | {
+      type: "chat";
+      from: string;
+      fromAddress: string;
+      text: string;
+      at: number;
+      bubbleOnly?: boolean;
+    }
+  | { type: "error"; code: string }
+  | {
+      type: "blockClaimOffered";
+      claimId: string;
+      x: number;
+      z: number;
+      holdMs: number;
+      completeBy: number;
+    }
+  | {
+      type: "blockClaimResult";
+      ok: boolean;
+      reason?: string;
+      recoverable?: boolean;
+      x?: number;
+      z?: number;
+      amountNim?: string;
+    };
 
 export type ConnectGameWsOptions = {
   spawnX?: number;
@@ -180,6 +204,7 @@ export function sendPlaceBlock(
     ramp?: boolean;
     rampDir?: number;
     colorId?: number;
+    claimable?: boolean;
   }
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
@@ -188,6 +213,7 @@ export function sendPlaceBlock(
   const ramp = Boolean(style?.ramp);
   const rampDir = Math.max(0, Math.min(3, Math.floor(style?.rampDir ?? 0)));
   const hex = ramp ? false : Boolean(style?.hex);
+  const claimable = Boolean(style?.claimable);
   ws.send(
     JSON.stringify({
       type: "placeBlock",
@@ -199,6 +225,7 @@ export function sendPlaceBlock(
       ramp,
       rampDir: ramp ? rampDir : 0,
       colorId: style?.colorId ?? 0,
+      claimable,
     })
   );
 }
@@ -239,6 +266,25 @@ export function sendSetObstacleProps(
 export function sendRemoveObstacle(ws: WebSocket, x: number, z: number): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "removeObstacle", x, z }));
+}
+
+export function sendBeginBlockClaim(
+  ws: WebSocket,
+  x: number,
+  z: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "beginBlockClaim", x, z }));
+}
+
+export function sendBlockClaimTick(ws: WebSocket, claimId: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "blockClaimTick", claimId }));
+}
+
+export function sendCompleteBlockClaim(ws: WebSocket, claimId: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "completeBlockClaim", claimId }));
 }
 
 export function sendPlaceExtraFloor(ws: WebSocket, x: number, z: number): void {

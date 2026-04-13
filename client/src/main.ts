@@ -8,10 +8,14 @@ import {
 } from "./auth/session.js";
 import { ROOM_ID } from "./game/constants.js";
 import { Game } from "./game/Game.js";
+import { isOrthogonallyAdjacentToFloorTile } from "./game/grid.js";
 import { HUB_ROOM_ID, CANVAS_ROOM_ID, normalizeRoomId } from "./game/roomLayouts.js";
 import {
   connectGameWs,
   sendChat,
+  sendBeginBlockClaim,
+  sendBlockClaimTick,
+  sendCompleteBlockClaim,
   sendMoveObstacle,
   sendMoveTo,
   sendPlaceBlock,
@@ -132,6 +136,18 @@ function enterGame(token: string, address: string): void {
   let editingTile: { x: number; z: number } | null = null;
   let ws: WebSocket | null = null;
   let connectGen = 0;
+  let cancelActiveNimClaim: (() => void) | null = null;
+  /** Active claimable-block UI session (aligned with server begin → complete flow). */
+  let nimClaimUiRef: {
+    blockX: number;
+    blockZ: number;
+    claimId: string | null;
+    holdMs: number;
+    rewardHoldSince: number | null;
+    completeSent: boolean;
+  } | null = null;
+  /** Extra delay before complete so server tick accumulation reaches holdMs. */
+  const NIM_CLAIM_COMPLETE_SLACK_MS = 550;
 
   let disposed = false;
   let rafId = 0;
@@ -142,6 +158,10 @@ function enterGame(token: string, address: string): void {
   function cleanupResources(): void {
     idleCleanup?.();
     idleCleanup = null;
+    cancelActiveNimClaim?.();
+    cancelActiveNimClaim = null;
+    nimClaimUiRef = null;
+    hud.setNimClaimProgress(null);
     cancelAnimationFrame(rafId);
     ac.abort();
     if (
@@ -192,6 +212,32 @@ function enterGame(token: string, address: string): void {
       hud.updateCanvasLeaderboard(data.leaderboard);
     } catch (err) {
       console.error("[canvas] Failed to fetch leaderboard:", err);
+    }
+  }
+
+  async function updateNimWalletStatus(): Promise<void> {
+    try {
+      const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+      const base = resolveApiBaseUrl() || "";
+      const url = `${base}/api/nim/payout-balance`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        hud.setNimWalletStatus("unavailable");
+        return;
+      }
+      const data = (await res.json()) as {
+        configured: boolean;
+        hasNim: boolean;
+        balanceNim: string;
+      };
+      if (!data.configured || !data.hasNim) {
+        hud.setNimWalletStatus("No more NIM to earn :(");
+        return;
+      }
+      hud.setNimWalletStatus(data.balanceNim);
+    } catch (err) {
+      console.error("[nim-wallet] Failed to fetch payout wallet balance:", err);
+      hud.setNimWalletStatus("unavailable");
     }
   }
 
@@ -290,6 +336,11 @@ function enterGame(token: string, address: string): void {
   });
 
   const wireWsHandlers = (socket: WebSocket): void => {
+    cancelActiveNimClaim?.();
+    cancelActiveNimClaim = null;
+    nimClaimUiRef = null;
+    hud.setNimClaimProgress(null);
+
     game.setTileClickHandler((x, z, layer = 0) => {
       // Check if in signpost mode (only in build mode)
       if (game.getBuildMode() && hud.isSignpostModeActive()) {
@@ -332,6 +383,109 @@ function enterGame(token: string, address: string): void {
       }
       sendPlaceBlock(socket, x, z, game.getPlacementBlockStyle());
     });
+    
+    game.setClaimBlockHandler((x, z) => {
+      cancelActiveNimClaim?.();
+      cancelActiveNimClaim = null;
+
+      nimClaimUiRef = {
+        blockX: x,
+        blockZ: z,
+        claimId: null,
+        holdMs: 3000,
+        rewardHoldSince: null,
+        completeSent: false,
+      };
+
+      let beginSent = false;
+      let lastTickSent = 0;
+      let raf = 0;
+      let cancelled = false;
+
+      const finish = (): void => {
+        if (cancelled) return;
+        cancelled = true;
+        if (raf) cancelAnimationFrame(raf);
+        raf = 0;
+        hud.setNimClaimProgress(null);
+        nimClaimUiRef = null;
+        if (cancelActiveNimClaim === cancelThisClaim) {
+          cancelActiveNimClaim = null;
+        }
+      };
+
+      const cancelThisClaim = (): void => {
+        finish();
+      };
+      cancelActiveNimClaim = cancelThisClaim;
+
+      hud.setNimClaimProgress({ progress: 0, adjacent: false });
+
+      const tick = (): void => {
+        if (cancelled) return;
+        const ref = nimClaimUiRef;
+        if (!ref || ref.blockX !== x || ref.blockZ !== z) {
+          return;
+        }
+
+        const pos = game.getSelfPosition();
+        const now = performance.now();
+        const adjacent = !!(
+          pos &&
+          isOrthogonallyAdjacentToFloorTile(pos.x, pos.z, x, z)
+        );
+
+        if (adjacent) {
+          if (!beginSent) {
+            sendBeginBlockClaim(socket, x, z);
+            beginSent = true;
+          }
+          const cid = ref.claimId;
+          if (
+            cid &&
+            socket.readyState === WebSocket.OPEN &&
+            now - lastTickSent >= 220
+          ) {
+            sendBlockClaimTick(socket, cid);
+            lastTickSent = now;
+          }
+        }
+
+        if (ref.claimId) {
+          if (adjacent) {
+            if (ref.rewardHoldSince === null) {
+              ref.rewardHoldSince = now;
+            }
+          } else {
+            ref.rewardHoldSince = null;
+          }
+        }
+
+        const holdMs = ref.holdMs;
+        let progress = 0;
+        if (ref.claimId && ref.rewardHoldSince !== null) {
+          progress = Math.min(1, (now - ref.rewardHoldSince) / holdMs);
+        }
+
+        hud.setNimClaimProgress({ progress, adjacent });
+
+        const readyToComplete =
+          ref.claimId &&
+          ref.rewardHoldSince !== null &&
+          !ref.completeSent &&
+          now - ref.rewardHoldSince >= holdMs + NIM_CLAIM_COMPLETE_SLACK_MS;
+
+        if (readyToComplete && ref.claimId) {
+          ref.completeSent = true;
+          sendCompleteBlockClaim(socket, ref.claimId);
+        }
+
+        raf = requestAnimationFrame(tick);
+      };
+
+      raf = requestAnimationFrame(tick);
+    });
+    
     game.setMoveBlockHandler((fromX, fromZ, toX, toZ) => {
       sendMoveObstacle(socket, fromX, fromZ, toX, toZ);
     });
@@ -478,6 +632,50 @@ function enterGame(token: string, address: string): void {
       if (!msg.bubbleOnly) {
         hud.appendChat(msg.from, msg.text);
       }
+      return;
+    }
+    if (msg.type === "blockClaimOffered") {
+      if (
+        nimClaimUiRef &&
+        nimClaimUiRef.blockX === msg.x &&
+        nimClaimUiRef.blockZ === msg.z
+      ) {
+        nimClaimUiRef.claimId = msg.claimId;
+        nimClaimUiRef.holdMs = Math.max(500, msg.holdMs);
+        nimClaimUiRef.rewardHoldSince = null;
+        nimClaimUiRef.completeSent = false;
+      }
+      return;
+    }
+    if (msg.type === "blockClaimResult") {
+      if (msg.ok) {
+        const bx = Number(msg.x);
+        const bz = Number(msg.z);
+        const reward = msg.amountNim && /^\d+\.\d{4}$/.test(msg.amountNim)
+          ? msg.amountNim
+          : "1.0000";
+        cancelActiveNimClaim?.();
+        if (Number.isFinite(bx) && Number.isFinite(bz)) {
+          game.showFloatingText(bx, bz, `+${reward} NIM`);
+        }
+        return;
+      }
+      if (msg.recoverable) {
+        if (msg.reason) {
+          hud.appendChat("System", msg.reason);
+        }
+        if (nimClaimUiRef) {
+          nimClaimUiRef.completeSent = false;
+        }
+        return;
+      }
+      cancelActiveNimClaim?.();
+      nimClaimUiRef = null;
+      hud.setNimClaimProgress(null);
+      if (msg.reason) {
+        hud.appendChat("System", msg.reason);
+      }
+      return;
     }
     if (msg.type === "obstacles") {
       console.log(`[Main] Received obstacles message for room ${msg.roomId}, ${msg.tiles.length} tiles, editingTile=${editingTile ? `(${editingTile.x}, ${editingTile.z})` : 'null'}`);
@@ -585,6 +783,10 @@ function enterGame(token: string, address: string): void {
   });
 
   connectToRoom(ROOM_ID);
+  void updateNimWalletStatus();
+  const nimWalletPoll = setInterval(() => {
+    void updateNimWalletStatus();
+  }, 30000);
 
   syncBuildHud();
 
@@ -762,6 +964,9 @@ function enterGame(token: string, address: string): void {
     },
     { once: true }
   );
+  signal.addEventListener("abort", () => {
+    clearInterval(nimWalletPoll);
+  });
 }
 
 function main(): void {

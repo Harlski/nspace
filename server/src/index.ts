@@ -19,6 +19,12 @@ import {
 import { flushCanvasClaimsSync } from "./canvasCanvas.js";
 import { getTopPlayers } from "./canvasCanvas.js";
 import { flushSignboardsSync } from "./signboards.js";
+import {
+  flushNimPayoutQueueSync,
+  getNimPayoutWalletBalanceLuna,
+  isNimPayoutSenderConfigured,
+  startNimPayoutProcessor,
+} from "./nimPayout/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -82,6 +88,25 @@ app.get("/api/canvas/leaderboard", (_req, res) => {
     res.json({ leaderboard: top });
   } catch (err) {
     console.error("[canvas/leaderboard]", err);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.get("/api/nim/payout-balance", async (_req, res) => {
+  if (!isNimPayoutSenderConfigured()) {
+    res.json({ configured: false, hasNim: false, balanceNim: "0.0000" });
+    return;
+  }
+  try {
+    const luna = await getNimPayoutWalletBalanceLuna();
+    const balanceNim = (Number(luna) / 100_000).toFixed(4);
+    res.json({
+      configured: true,
+      hasNim: luna > 0n,
+      balanceNim,
+    });
+  } catch (err) {
+    console.error("[nim/payout-balance]", err);
     res.status(500).json({ error: "internal" });
   }
 });
@@ -181,6 +206,7 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
 
 startRoomTick();
+startNimPayoutProcessor();
 
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url || "", "http://localhost");
@@ -240,6 +266,7 @@ function shutdown(signal: string): void {
   flushEventLogSync();
   flushCanvasClaimsSync();
   flushSignboardsSync();
+  flushNimPayoutQueueSync();
   process.exit(0);
 }
 

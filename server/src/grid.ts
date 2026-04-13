@@ -51,6 +51,17 @@ export function snapToTile(x: number, z: number): { x: number; z: number } {
   };
 }
 
+/** Cardinal adjacency on integer tiles (Manhattan distance 1); excludes diagonals. */
+export function isOrthogonallyAdjacentToTile(
+  playerX: number,
+  playerZ: number,
+  tileX: number,
+  tileZ: number
+): boolean {
+  const t = snapToTile(playerX, playerZ);
+  return Math.abs(t.x - tileX) + Math.abs(t.z - tileZ) === 1;
+}
+
 /**
  * Orthogonal path along tile centers (horizontal first, then vertical).
  * World floor uses X and Z; each step is one adjacent tile edge (Manhattan).
@@ -182,6 +193,12 @@ export type TerrainProps = {
   rampDir: number;
   colorId: number;
   locked?: boolean;
+  // Experimental: Claimable/minable blocks
+  claimable?: boolean;
+  active?: boolean;
+  cooldownMs?: number; // Cooldown period in milliseconds
+  lastClaimedAt?: number; // Timestamp of last claim
+  claimedBy?: string; // Address of player who last claimed
 };
 
 export function terrainObstacleHeight(p: TerrainProps): number {

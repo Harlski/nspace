@@ -281,6 +281,13 @@ export class Game {
   private selfTargetPos: THREE.Vector3 | null = null;
   private readonly others = new Map<string, THREE.Group>();
   private readonly chatBubbleByAddress = new Map<string, ChatBubbleEntry>();
+  private readonly floatingTexts = new Map<string, {
+    sprite: THREE.Sprite;
+    material: THREE.SpriteMaterial;
+    texture: THREE.CanvasTexture;
+    startedAt: number;
+    startY: number;
+  }>();
   private readonly targetPos = new Map<string, THREE.Vector3>();
   private ro: ResizeObserver;
   private tileHighlight: THREE.Mesh;
@@ -289,6 +296,7 @@ export class Game {
     | ((x: number, z: number, layer?: 0 | 1) => void)
     | null = null;
   private placeBlockHandler: ((x: number, z: number) => void) | null = null;
+  private claimBlockHandler: ((x: number, z: number) => void) | null = null;
   private moveBlockHandler:
     | ((fromX: number, fromZ: number, toX: number, toZ: number) => void)
     | null = null;
@@ -299,6 +307,13 @@ export class Game {
   /** Place walkable tiles outside the core room (toggle with F). */
   private floorExpandMode = false;
   private readonly extraFloorKeys = new Set<string>();
+  /** Mining/claiming state for experimental claimable blocks */
+  private miningState: {
+    blockX: number;
+    blockZ: number;
+    startTime: number;
+    duration: number; // milliseconds
+  } | null = null;
   /** One plane per walkable tile (core grid + extra); void shows scene background only. */
   private readonly walkableFloorMeshes = new Map<string, THREE.Mesh>();
   /** Shared 1×1 geometry; `floorTileQuadSize` scales each mesh to hide edge seams. */
@@ -313,6 +328,7 @@ export class Game {
   private placementRamp = false;
   private placementRampDir = 0;
   private placementColorId = 0;
+  private placementClaimable = false;
   /** Subset of tile keys that block pathfinding (not passable). */
   private readonly blockingTileKeys = new Set<string>();
   private readonly blockMeshes = new Map<string, THREE.Group>();
@@ -1098,6 +1114,10 @@ export class Game {
     this.placeBlockHandler = handler;
   }
 
+  setClaimBlockHandler(handler: ((x: number, z: number) => void) | null): void {
+    this.claimBlockHandler = handler;
+  }
+
   setMoveBlockHandler(
     handler:
       | ((fromX: number, fromZ: number, toX: number, toZ: number) => void)
@@ -1135,6 +1155,7 @@ export class Game {
     ramp: boolean;
     rampDir: number;
     colorId: number;
+    claimable: boolean;
   } {
     return {
       half: this.placementHalf,
@@ -1143,6 +1164,7 @@ export class Game {
       ramp: this.placementRamp,
       rampDir: this.placementRampDir,
       colorId: this.placementColorId,
+      claimable: this.placementClaimable,
     };
   }
 
@@ -1153,6 +1175,7 @@ export class Game {
     ramp?: boolean;
     rampDir?: number;
     colorId?: number;
+    claimable?: boolean;
   }): void {
     if (p.quarter === true) {
       this.placementQuarter = true;
@@ -1181,6 +1204,9 @@ export class Game {
         0,
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(p.colorId))
       );
+    }
+    if (p.claimable !== undefined) {
+      this.placementClaimable = p.claimable;
     }
   }
 
@@ -1496,6 +1522,11 @@ export class Game {
       rampDir?: number;
       colorId?: number;
       locked?: boolean;
+      claimable?: boolean;
+      active?: boolean;
+      cooldownMs?: number;
+      lastClaimedAt?: number;
+      claimedBy?: string;
     }[]
   ): void {
     console.log(`[Game setObstacles] Receiving ${tiles.length} obstacles for room ${this.roomId}`);
@@ -1522,6 +1553,11 @@ export class Game {
         rampDir,
         colorId,
         locked,
+        claimable: t.claimable,
+        active: t.active,
+        cooldownMs: t.cooldownMs,
+        lastClaimedAt: t.lastClaimedAt,
+        claimedBy: t.claimedBy,
       });
       if (!t.passable && !ramp) this.blockingTileKeys.add(k);
     }
@@ -1891,13 +1927,25 @@ export class Game {
     const blockForWalk = this.pickBlockKey(e.clientX, e.clientY);
     if (blockForWalk) {
       const bm = this.placedObjects.get(blockForWalk);
-      if (bm && !bm.passable && !bm.ramp) {
-        const [bx, bz] = blockForWalk.split(",").map(Number);
-        if (!this.tileClickHandler) return;
-        this.pathGoal = { ft: { x: bx!, y: bz! }, layer: 1 };
-        this.refreshPathLine();
-        this.tileClickHandler(bx!, bz!, 1);
-        return;
+      if (bm) {
+        // Check if this is an active claimable block
+        if (bm.claimable && bm.active && !bm.passable) {
+          const [bx, bz] = blockForWalk.split(",").map(Number);
+          console.log(`[Game] Attempting to claim block at (${bx}, ${bz})`);
+          if (this.claimBlockHandler) {
+            this.claimBlockHandler(bx!, bz!);
+          }
+          return;
+        }
+        // Normal block walking logic
+        if (!bm.passable && !bm.ramp) {
+          const [bx, bz] = blockForWalk.split(",").map(Number);
+          if (!this.tileClickHandler) return;
+          this.pathGoal = { ft: { x: bx!, y: bz! }, layer: 1 };
+          this.refreshPathLine();
+          this.tileClickHandler(bx!, bz!, 1);
+          return;
+        }
       }
     }
     const dest = this.pickWalkableTile(e.clientX, e.clientY);
@@ -2288,7 +2336,9 @@ export class Game {
         prev.hex === meta.hex &&
         prev.ramp === meta.ramp &&
         prev.rampDir === meta.rampDir &&
-        prev.colorId === meta.colorId;
+        prev.colorId === meta.colorId &&
+        prev.claimable === meta.claimable &&
+        prev.active === meta.active;
       if (unchanged) {
         continue;
       }
@@ -2353,7 +2403,21 @@ export class Game {
   private makeBlockMesh(meta: BlockStyleProps): THREE.Group {
     const h = this.obstacleHeight(meta);
     const g = new THREE.Group();
-    const base = blockColorHex(meta.colorId);
+    
+    // Special handling for claimable blocks: override color based on active state
+    let base: number;
+    if (meta.claimable) {
+      if (meta.active) {
+        // Active claimable block: gold color
+        base = 0xffc107; // Nimiq gold
+      } else {
+        // Inactive claimable block: dark color
+        base = 0x1a1a1a; // Very dark gray
+      }
+    } else {
+      base = blockColorHex(meta.colorId);
+    }
+    
     const mat = new THREE.MeshStandardMaterial({
       color: base,
       roughness: 0.65,
@@ -2361,6 +2425,8 @@ export class Game {
       transparent: meta.passable,
       opacity: meta.passable ? 0.45 : 1,
       depthWrite: !meta.passable,
+      emissive: meta.claimable && meta.active ? 0xffc107 : 0x000000,
+      emissiveIntensity: meta.claimable && meta.active ? 0.3 : 0,
     });
     if (meta.ramp) {
       const geom = this.makeRampGeometry(h, meta.rampDir);
@@ -2490,6 +2556,7 @@ export class Game {
     this.fogOfWar.setPlayerPosition(px, pz);
     this.fogOfWar.render(this.renderer, this.scene, this.camera);
     this.updateChatBubbles();
+    this.updateFloatingTexts();
   }
 
   private applyCameraPose(): void {
@@ -2608,6 +2675,98 @@ export class Game {
       if (elapsed > CHAT_VISIBLE_MS) {
         const t = (elapsed - CHAT_VISIBLE_MS) / CHAT_FADE_MS;
         entry.material.opacity = Math.max(0, 1 - t);
+      } else {
+        entry.material.opacity = 1;
+      }
+    }
+  }
+
+  /** Shows a floating text popup at a world position (e.g., "+1 NIM") */
+  showFloatingText(x: number, z: number, text: string, color = "#ffc107"): void {
+    const key = `${x},${z},${Date.now()}`;
+    
+    // Create canvas for text
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+    ctx.font = "bold 32px 'Muli', sans-serif";
+    const metrics = ctx.measureText(text);
+    const w = Math.ceil(metrics.width + 40);
+    const h = 60;
+    canvas.width = w;
+    canvas.height = h;
+    
+    // Draw text with shadow
+    ctx.font = "bold 32px 'Muli', sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    
+    // Shadow
+    ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+    ctx.fillText(text, w / 2 + 2, h / 2 + 2);
+    
+    // Main text
+    ctx.fillStyle = color;
+    ctx.fillText(text, w / 2, h / 2);
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
+    });
+    
+    const sprite = new THREE.Sprite(material);
+    sprite.renderOrder = 100;
+    
+    // Position above the block
+    const blockHeight = 1.0; // Approximate block height
+    const startY = blockHeight + 0.5;
+    sprite.position.set(x, startY, z);
+    
+    // Scale based on screen space
+    const scale = 1.5;
+    sprite.scale.set(scale, scale * (h / w), 1);
+    
+    this.scene.add(sprite);
+    
+    this.floatingTexts.set(key, {
+      sprite,
+      material,
+      texture,
+      startedAt: performance.now(),
+      startY,
+    });
+  }
+
+  private updateFloatingTexts(): void {
+    const now = performance.now();
+    const duration = 2000; // 2 seconds
+    const riseDistance = 2.0; // Rise 2 units upward
+    
+    for (const [key, entry] of this.floatingTexts) {
+      const elapsed = now - entry.startedAt;
+      if (elapsed >= duration) {
+        entry.sprite.removeFromParent();
+        entry.texture.dispose();
+        entry.material.dispose();
+        this.floatingTexts.delete(key);
+        continue;
+      }
+      
+      const progress = elapsed / duration;
+      // Ease out cubic
+      const easeOut = 1 - Math.pow(1 - progress, 3);
+      
+      // Move upward
+      entry.sprite.position.y = entry.startY + riseDistance * easeOut;
+      
+      // Fade out in the last 30% of duration
+      if (progress > 0.7) {
+        const fadeProgress = (progress - 0.7) / 0.3;
+        entry.material.opacity = 1 - fadeProgress;
       } else {
         entry.material.opacity = 1;
       }

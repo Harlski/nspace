@@ -50,6 +50,17 @@ export function snapFloorTile(wx: number, wz: number): FloorTile {
   return { x, y };
 }
 
+/** Cardinal adjacency: player's snapped floor tile shares an edge with the block tile (not diagonal). */
+export function isOrthogonallyAdjacentToFloorTile(
+  wx: number,
+  wz: number,
+  blockX: number,
+  blockZ: number
+): boolean {
+  const t = snapFloorTile(wx, wz);
+  return Math.abs(t.x - blockX) + Math.abs(t.y - blockZ) === 1;
+}
+
 /**
  * Orthogonal path along tile centers (horizontal first, then vertical).
  * Same rules as the server when there are no obstacles.

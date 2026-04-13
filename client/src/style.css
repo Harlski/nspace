@@ -676,6 +676,60 @@ body {
   text-align: center;
 }
 
+.hud-nim-balance {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fde68a;
+  background: rgba(120, 53, 15, 0.32);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  white-space: nowrap;
+  cursor: help;
+}
+
+.hud-nim-balance .nq-icon {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+
+.hud-nim-balance__value {
+  color: #fde68a;
+}
+
+.hud-nim-balance__tooltip {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 3;
+  min-width: 210px;
+  max-width: 280px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  background: rgba(15, 17, 23, 0.96);
+  color: #e8eaef;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+  opacity: 0;
+  transform: translateY(-2px);
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.hud-nim-balance:hover .hud-nim-balance__tooltip,
+.hud-nim-balance:focus-within .hud-nim-balance__tooltip,
+.hud-nim-balance--show-tip .hud-nim-balance__tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 
 .hud-icon-btn {
   width: 30px;
@@ -1138,6 +1192,40 @@ body {
   padding-top: 2px;
 }
 
+.build-block-bar__experimental-toggle {
+  display: block;
+  width: 100%;
+  margin: 2px 0 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 193, 7, 0.4);
+  background: rgba(40, 35, 25, 0.9);
+  color: #ffc107;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.build-block-bar__experimental-toggle:hover {
+  background: rgba(50, 45, 30, 0.98);
+  border-color: rgba(255, 193, 7, 0.6);
+}
+
+.build-block-bar__experimental {
+  padding-top: 2px;
+}
+
+.build-block-bar__experimental-info {
+  font-size: 10px;
+  color: rgba(255, 193, 7, 0.7);
+  padding: 4px 8px;
+  margin: 4px 0;
+  background: rgba(255, 193, 7, 0.1);
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
 .build-block-bar__ramp-dir-row {
   flex-wrap: wrap;
   align-items: flex-start;
@@ -1297,6 +1385,62 @@ body {
   margin-bottom: 4px;
   word-break: break-word;
   pointer-events: none;
+}
+
+/* NIM claimable block: progress while orthogonally adjacent */
+.nim-claim-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 52px;
+  transform: translateX(-50%);
+  width: min(360px, 88vw);
+  padding: 8px 10px 10px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  background: rgba(15, 17, 23, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.nim-claim-bar__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.75);
+  margin-bottom: 6px;
+}
+
+.nim-claim-bar__track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(45, 53, 72, 0.95);
+  overflow: hidden;
+  border: 1px solid rgba(80, 90, 112, 0.85);
+}
+
+.nim-claim-bar__fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #64748b, #94a3b8);
+  transition: width 0.05s linear;
+}
+
+.nim-claim-bar--adjacent .nim-claim-bar__fill {
+  background: linear-gradient(90deg, #0d9488, #2dd4bf);
+  box-shadow: 0 0 12px rgba(45, 212, 191, 0.35);
+}
+
+.nim-claim-bar__hint {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(248, 250, 252, 0.82);
 }
 
 .chat-row {

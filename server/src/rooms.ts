@@ -1,7 +1,9 @@
+import { randomBytes, randomInt } from "node:crypto";
 import type { WebSocket } from "ws";
 import {
   inTileBounds,
   isBaseTile,
+  isOrthogonallyAdjacentToTile,
   isWalkableTile,
   pathfindTiles,
   pathfindTerrain,
@@ -24,6 +26,7 @@ import {
   registerWorldStateRefs,
   schedulePersistWorldState,
 } from "./worldPersistence.js";
+import { enqueueNimPayout } from "./nimPayout/index.js";
 import {
   beginSession,
   endSession,
@@ -77,6 +80,20 @@ const PLACE_RADIUS_BLOCKS = Math.max(
   Math.min(64, Number(process.env.PLACE_RADIUS_BLOCKS ?? "5"))
 );
 
+/** Server-authoritative NIM / claimable-block flow (see beginBlockClaim / blockClaimTick / completeBlockClaim). */
+const BLOCK_CLAIM_HOLD_MS = 3000;
+const BLOCK_CLAIM_SESSION_MS = 45_000;
+const RATE_BEGIN_BLOCK_CLAIM_MS = 600;
+const RATE_BLOCK_CLAIM_TICK_MS = 170;
+const RATE_COMPLETE_BLOCK_CLAIM_MS = 450;
+const CLAIM_ACCUM_GAP_BREAK_MS = 950;
+const CLAIM_ACCUM_DT_CAP_MS = 480;
+const CLAIM_REWARD_MIN_LUNA = 1000; // 0.0100 NIM
+const CLAIM_REWARD_MAX_LUNA = 3000; // 0.0300 NIM
+const MINEABLE_BLOCK_PLACER_ALLOWLIST = new Set([
+  "NQ974M1T4TGDVC7FLHLQY2DY425N5CVHM02Y",
+]);
+
 /** NPC chat messages - randomly displayed as bubbles only */
 const NPC_MESSAGES = [
   "Thanks for playing Nimiq Space!",
@@ -126,6 +143,12 @@ export type ObstacleTile = {
   signboardId?: string;
   /** Whether this obstacle is locked (admin-only editing). */
   locked?: boolean;
+  // Experimental: Claimable/minable blocks
+  claimable?: boolean;
+  active?: boolean;
+  cooldownMs?: number;
+  lastClaimedAt?: number;
+  claimedBy?: string;
 };
 
 const BLOCK_COLOR_MAX = 9;
@@ -151,6 +174,11 @@ interface ClientConn {
   lastPlaceAt: number;
   player: PlayerState;
   pathQueue: { x: number; z: number; layer: 0 | 1 }[];
+  /** Single active claim session id for this connection (enforces one claim at a time). */
+  pendingBlockClaimId: string | null;
+  lastBlockClaimBeginAt: number;
+  lastBlockClaimTickAt: number;
+  lastBlockClaimCompleteAttemptAt: number;
 }
 
 function withinBlockActionRange(
@@ -166,6 +194,14 @@ function withinBlockActionRange(
 
 function clamp(v: number, a: number, b: number): number {
   return Math.max(a, Math.min(b, v));
+}
+
+function compactAddress(addr: string): string {
+  return String(addr).replace(/\s+/g, "").toUpperCase();
+}
+
+function canPlaceMineableBlocks(address: string): boolean {
+  return MINEABLE_BLOCK_PLACER_ALLOWLIST.has(compactAddress(address));
 }
 
 type OutMsg =
@@ -223,7 +259,25 @@ type OutMsg =
       at: number;
       bubbleOnly?: boolean; // If true, only show as bubble, not in chat log
     }
-  | { type: "error"; code: string };
+  | { type: "error"; code: string }
+  | {
+      type: "blockClaimOffered";
+      claimId: string;
+      x: number;
+      z: number;
+      holdMs: number;
+      completeBy: number;
+    }
+  | {
+      type: "blockClaimResult";
+      ok: boolean;
+      reason?: string;
+      /** If true, keep the local claim UI; only the message is informational. */
+      recoverable?: boolean;
+      x?: number;
+      z?: number;
+      amountNim?: string;
+    };
 
 const rooms = new Map<string, Map<string, ClientConn>>();
 /** Server-driven avatars (not WebSocket clients); merged into player snapshots / ticks. */
@@ -378,6 +432,127 @@ function placedMap(roomId: string): Map<string, PlacedProps> {
   return m;
 }
 
+interface BlockClaimSession {
+  address: string;
+  roomId: string;
+  tileX: number;
+  tileZ: number;
+  startedAt: number;
+  completeBy: number;
+  accumAdjacentMs: number;
+  /** Last wall-clock sample for contiguous adjacent-time accumulation (0 = none). */
+  lastSampleAt: number;
+}
+
+const blockClaimSessions = new Map<string, BlockClaimSession>();
+const blockClaimReservation = new Map<
+  string,
+  { claimId: string; address: string; until: number }
+>();
+const spentBlockClaimIds = new Map<string, number>();
+
+function blockClaimResKey(roomId: string, tx: number, tz: number): string {
+  return `${roomId}|${tileKey(tx, tz)}`;
+}
+
+function newBlockClaimId(): string {
+  return randomBytes(21).toString("base64url");
+}
+
+function trimSpentBlockClaimIds(now: number): void {
+  const maxAge = 86400_000;
+  for (const [id, t] of spentBlockClaimIds) {
+    if (now - t > maxAge) spentBlockClaimIds.delete(id);
+  }
+  while (spentBlockClaimIds.size > 8000) {
+    const first = spentBlockClaimIds.keys().next().value;
+    if (first === undefined) break;
+    spentBlockClaimIds.delete(first);
+  }
+}
+
+function clearConnPendingBlockClaim(
+  roomId: string,
+  address: string,
+  claimId: string
+): void {
+  const room = rooms.get(roomId);
+  const c = room?.get(address);
+  if (c?.pendingBlockClaimId === claimId) {
+    c.pendingBlockClaimId = null;
+  }
+}
+
+function releaseBlockClaimSession(claimId: string): void {
+  const s = blockClaimSessions.get(claimId);
+  if (!s) return;
+  blockClaimSessions.delete(claimId);
+  const rk = blockClaimResKey(s.roomId, s.tileX, s.tileZ);
+  const r = blockClaimReservation.get(rk);
+  if (r?.claimId === claimId) {
+    blockClaimReservation.delete(rk);
+  }
+  clearConnPendingBlockClaim(s.roomId, s.address, claimId);
+}
+
+function noteSpentBlockClaimId(claimId: string, now: number): void {
+  spentBlockClaimIds.set(claimId, now);
+  trimSpentBlockClaimIds(now);
+}
+
+function randomClaimRewardLuna(): bigint {
+  const luna = randomInt(CLAIM_REWARD_MIN_LUNA, CLAIM_REWARD_MAX_LUNA + 1);
+  return BigInt(luna);
+}
+
+function finalizeClaimableBlockReward(
+  roomId: string,
+  tileKeyStr: string,
+  props: PlacedProps,
+  address: string,
+  now: number,
+  sessionId: string,
+  claimId: string
+): bigint {
+  const rewardLuna = randomClaimRewardLuna();
+  props.active = false;
+  props.lastClaimedAt = now;
+  props.claimedBy = address;
+  broadcast(roomId, {
+    type: "obstacles",
+    roomId,
+    tiles: obstaclesToList(roomId),
+  });
+  const cooldown = props.cooldownMs || 60000;
+  setTimeout(() => {
+    const placed = placedMap(roomId);
+    const cur = placed.get(tileKeyStr);
+    if (cur && cur.claimable) {
+      cur.active = true;
+      broadcast(roomId, {
+        type: "obstacles",
+        roomId,
+        tiles: obstaclesToList(roomId),
+      });
+    }
+  }, cooldown);
+  const [tx, tz] = tileKeyStr.split(",").map(Number);
+  logGameplayEvent(sessionId, address, roomId, "claim_block", {
+    x: tx,
+    z: tz,
+    claimId,
+  });
+
+  enqueueNimPayout({
+    claimId,
+    recipientAddress: address,
+    amountLuna: rewardLuna,
+    roomId,
+    tileKey: tileKeyStr,
+  });
+  return rewardLuna;
+}
+
 /** Tile keys that block floor movement (solid blocks; ramps are walkable). */
 function blockingKeys(roomId: string): Set<string> {
   const m = roomPlaced.get(roomId);
@@ -436,6 +611,12 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       colorId: clampColorId(v.colorId ?? 0),
       signboardId: signboardMap.get(k),
       locked: v.locked ?? false,
+      // Experimental: claimable blocks
+      claimable: v.claimable,
+      active: v.active,
+      cooldownMs: v.cooldownMs,
+      lastClaimedAt: v.lastClaimedAt,
+      claimedBy: v.claimedBy,
     });
   }
   return out;
@@ -1035,7 +1216,11 @@ function endCanvasRound(): void {
 
 function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: number): void {
   const address = conn.player.address;
-  
+
+  if (conn.pendingBlockClaimId) {
+    releaseBlockClaimSession(conn.pendingBlockClaimId);
+  }
+
   // Find and remove from current room
   for (const [roomId, room] of rooms) {
     if (room.has(address)) {
@@ -1371,6 +1556,10 @@ export function addClient(
     lastPlaceAt: 0,
     player,
     pathQueue: [],
+    pendingBlockClaimId: null,
+    lastBlockClaimBeginAt: 0,
+    lastBlockClaimTickAt: 0,
+    lastBlockClaimCompleteAttemptAt: 0,
   };
 
   room.set(address, conn);
@@ -1430,7 +1619,7 @@ export function addClient(
     address
   );
 
-  // Check if player tried to enter canvas during cooldown - teleport them back
+  // Check if player tried to enter canvas during cooldown - move them back
   if (roomId === CANVAS_ROOM_ID && canvasCooldownActive) {
     const remainingSeconds = Math.ceil((canvasCooldownEndTime - Date.now()) / 1000);
     
@@ -1443,13 +1632,13 @@ export function addClient(
       at: Date.now(),
     } satisfies OutMsg));
     
-    console.log(`[canvas] Teleporting ${address.slice(0, 8)}... back to hub - maze on cooldown (${remainingSeconds}s remaining)`);
+    console.log(`[canvas] Moving ${address.slice(0, 8)}... back one block - maze on cooldown (${remainingSeconds}s remaining)`);
     
-    // Teleport them back to hub after a short delay to let the welcome message process
+    // Move them back one block (to just before the portal entrance at -1, -12)
     setTimeout(() => {
       const currentConn = room.get(address);
       if (currentConn) {
-        teleportPlayer(currentConn, HUB_ROOM_ID, 0, 0);
+        teleportPlayer(currentConn, HUB_ROOM_ID, -1, -10);
       }
     }, 100);
   }
@@ -1543,6 +1732,21 @@ export function addClient(
       let hex = Boolean(msg.hex);
       if (ramp) hex = false;
       const colorId = clampColorId(Number(msg.colorId ?? 0));
+      const requestedClaimable = Boolean(msg.claimable);
+      const claimable =
+        requestedClaimable && canPlaceMineableBlocks(address);
+      if (requestedClaimable && !claimable) {
+        ws.send(
+          JSON.stringify({
+            type: "chat",
+            from: "System",
+            fromAddress: "SYSTEM",
+            text: "Only the authorized reward wallet can place mineable blocks.",
+            at: now,
+          } satisfies OutMsg)
+        );
+      }
+      
       placed.set(k, {
         passable: false,
         half,
@@ -1552,6 +1756,12 @@ export function addClient(
         rampDir: ramp ? rampDir : 0,
         colorId,
         locked: false,
+        // Experimental: claimable blocks
+        claimable: claimable || undefined,
+        active: claimable ? true : undefined, // Start active
+        cooldownMs: claimable ? 60000 : undefined, // 60 second cooldown
+        lastClaimedAt: undefined,
+        claimedBy: undefined,
       });
       broadcast(currentRoomId, {
         type: "obstacles",
@@ -1888,6 +2098,336 @@ export function addClient(
       return;
     }
 
+    if (msg.type === "claimBlock") {
+      ws.send(
+        JSON.stringify({
+          type: "blockClaimResult",
+          ok: false,
+          reason: "Claim protocol updated. Please refresh the page.",
+        } satisfies OutMsg)
+      );
+      return;
+    }
+
+    if (msg.type === "beginBlockClaim") {
+      const now = Date.now();
+      trimSpentBlockClaimIds(now);
+      if (now - conn.lastBlockClaimBeginAt < RATE_BEGIN_BLOCK_CLAIM_MS) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            recoverable: true,
+            reason: "Wait a moment before starting another claim.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "Invalid block coordinates.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      const tile = snapToTile(tx, tz);
+      const k = tileKey(tile.x, tile.z);
+
+      if (
+        !isOrthogonallyAdjacentToTile(
+          conn.player.x,
+          conn.player.z,
+          tile.x,
+          tile.z
+        )
+      ) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason:
+              "Stand on a tile directly beside the block (edge, not diagonal) to start a claim.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      const placed = placedMap(currentRoomId);
+      const props = placed.get(k);
+      if (!props || !props.claimable) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "This block cannot be claimed.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+      if (!props.active) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "This block is on cooldown.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      const rk = blockClaimResKey(currentRoomId, tile.x, tile.z);
+      const res = blockClaimReservation.get(rk);
+      if (res && res.until > now && res.address !== address) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "Another player is already claiming this block.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      if (conn.pendingBlockClaimId) {
+        releaseBlockClaimSession(conn.pendingBlockClaimId);
+      }
+
+      conn.lastBlockClaimBeginAt = now;
+
+      const claimId = newBlockClaimId();
+      const completeBy = now + BLOCK_CLAIM_SESSION_MS;
+      blockClaimSessions.set(claimId, {
+        address,
+        roomId: currentRoomId,
+        tileX: tile.x,
+        tileZ: tile.z,
+        startedAt: now,
+        completeBy,
+        accumAdjacentMs: 0,
+        lastSampleAt: 0,
+      });
+      blockClaimReservation.set(rk, {
+        claimId,
+        address,
+        until: completeBy,
+      });
+      conn.pendingBlockClaimId = claimId;
+
+      ws.send(
+        JSON.stringify({
+          type: "blockClaimOffered",
+          claimId,
+          x: tile.x,
+          z: tile.z,
+          holdMs: BLOCK_CLAIM_HOLD_MS,
+          completeBy,
+        } satisfies OutMsg)
+      );
+      return;
+    }
+
+    if (msg.type === "blockClaimTick") {
+      const now = Date.now();
+      if (now - conn.lastBlockClaimTickAt < RATE_BLOCK_CLAIM_TICK_MS) {
+        return;
+      }
+      conn.lastBlockClaimTickAt = now;
+
+      const claimId = String(msg.claimId ?? "");
+      if (!claimId) return;
+
+      const s = blockClaimSessions.get(claimId);
+      if (
+        !s ||
+        s.address !== address ||
+        s.roomId !== currentRoomId ||
+        now > s.completeBy
+      ) {
+        return;
+      }
+
+      const adjacent = isOrthogonallyAdjacentToTile(
+        conn.player.x,
+        conn.player.z,
+        s.tileX,
+        s.tileZ
+      );
+      if (!adjacent) {
+        s.accumAdjacentMs = 0;
+        s.lastSampleAt = now;
+        return;
+      }
+
+      if (s.lastSampleAt === 0) {
+        s.lastSampleAt = now;
+        return;
+      }
+
+      const dt = now - s.lastSampleAt;
+      if (dt > CLAIM_ACCUM_GAP_BREAK_MS) {
+        s.accumAdjacentMs = 0;
+      } else {
+        s.accumAdjacentMs += Math.min(dt, CLAIM_ACCUM_DT_CAP_MS);
+      }
+      s.lastSampleAt = now;
+      return;
+    }
+
+    if (msg.type === "completeBlockClaim") {
+      const now = Date.now();
+      if (now - conn.lastBlockClaimCompleteAttemptAt < RATE_COMPLETE_BLOCK_CLAIM_MS) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            recoverable: true,
+            reason: "Wait a moment before completing the claim.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      const claimId = String(msg.claimId ?? "");
+      if (!claimId) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "Missing claim id.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      conn.lastBlockClaimCompleteAttemptAt = now;
+
+      if (spentBlockClaimIds.has(claimId)) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "This claim was already used.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      const s = blockClaimSessions.get(claimId);
+      if (!s || s.address !== address || s.roomId !== currentRoomId) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "Unknown or expired claim.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      if (now > s.completeBy) {
+        releaseBlockClaimSession(claimId);
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "Claim session expired. Try again.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      if (s.accumAdjacentMs < BLOCK_CLAIM_HOLD_MS) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            recoverable: true,
+            reason: "Keep standing beside the block until the bar is full.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      if (
+        !isOrthogonallyAdjacentToTile(
+          conn.player.x,
+          conn.player.z,
+          s.tileX,
+          s.tileZ
+        )
+      ) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            recoverable: true,
+            reason:
+              "You must still be directly beside the block when completing the claim.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      const k = tileKey(s.tileX, s.tileZ);
+      const placed = placedMap(currentRoomId);
+      const props = placed.get(k);
+      if (!props || !props.claimable || !props.active) {
+        releaseBlockClaimSession(claimId);
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "This block is no longer available.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      const rk = blockClaimResKey(currentRoomId, s.tileX, s.tileZ);
+      const res = blockClaimReservation.get(rk);
+      if (!res || res.claimId !== claimId || res.address !== address) {
+        releaseBlockClaimSession(claimId);
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "Claim reservation no longer matches this block.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      noteSpentBlockClaimId(claimId, now);
+      releaseBlockClaimSession(claimId);
+
+      const rewardLuna = finalizeClaimableBlockReward(
+        currentRoomId,
+        k,
+        props,
+        address,
+        now,
+        conn.sessionId,
+        claimId
+      );
+      ws.send(
+        JSON.stringify({
+          type: "blockClaimResult",
+          ok: true,
+          x: s.tileX,
+          z: s.tileZ,
+          amountNim: (Number(rewardLuna) / 100_000).toFixed(4),
+        } satisfies OutMsg)
+      );
+      return;
+    }
+
     if (msg.type === "placeSignboard") {
       // Anyone can place a signboard/signpost
       const now = Date.now();
@@ -2055,6 +2595,9 @@ export function addClient(
   });
 
   ws.on("close", () => {
+    if (conn.pendingBlockClaimId) {
+      releaseBlockClaimSession(conn.pendingBlockClaimId);
+    }
     // Find which room the player is currently in
     const playerCurrentRoom = findPlayerRoom(address);
     if (playerCurrentRoom) {

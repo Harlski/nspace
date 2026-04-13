@@ -28,6 +28,8 @@ export type BuildBlockBarState = {
   ramp: boolean;
   rampDir: number;
   colorId: number;
+  // Experimental features
+  claimable?: boolean;
 };
 
 export function createHud(
@@ -93,7 +95,12 @@ export function createHud(
   updateCanvasLeaderboard: (leaders: Array<{ address: string; count: number }>) => void;
   setCanvasTimer: (timeRemaining: number) => void;
   setPlayerCount: (count: number) => void;
+  setNimWalletStatus: (status: string) => void;
   setLoadingVisible: (visible: boolean) => void;
+  /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
+  setNimClaimProgress: (
+    state: null | { progress: number; adjacent: boolean }
+  ) => void;
   destroy: () => void;
 } {
   root.innerHTML = "";
@@ -163,9 +170,39 @@ export function createHud(
     </svg>
     <span class="hud-player-count__number">0</span>
   `;
+  const nimBalance = document.createElement("div");
+  nimBalance.className = "hud-nim-balance";
+  nimBalance.setAttribute("role", "button");
+  nimBalance.setAttribute("tabindex", "0");
+  nimBalance.setAttribute("aria-label", "Nimiq reward balance info");
+  nimBalance.innerHTML = `
+    <svg class="nq-icon">
+      <use xlink:href="/nimiq-style.icons.svg#nq-hexagon"/>
+    </svg>
+    <span class="hud-nim-balance__value">…</span>
+    <span class="hud-nim-balance__tooltip" role="tooltip">
+      This NIM can be earned by playing Nimiq Space
+    </span>
+  `;
+  const nimBalanceValue = nimBalance.querySelector(
+    ".hud-nim-balance__value"
+  ) as HTMLElement | null;
+  const toggleNimHint = (show: boolean): void => {
+    nimBalance.classList.toggle("hud-nim-balance--show-tip", show);
+  };
+  nimBalance.addEventListener("mouseenter", () => toggleNimHint(true));
+  nimBalance.addEventListener("mouseleave", () => toggleNimHint(false));
+  nimBalance.addEventListener("focus", () => toggleNimHint(true));
+  nimBalance.addEventListener("blur", () => toggleNimHint(false));
+  nimBalance.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleNimHint(!nimBalance.classList.contains("hud-nim-balance--show-tip"));
+  });
+  document.addEventListener("click", () => toggleNimHint(false));
   
   topToolbar.appendChild(fsBtn);
   topToolbar.appendChild(playerCount);
+  topToolbar.appendChild(nimBalance);
   topToolbar.appendChild(lobbyBtn);
   topStrip.appendChild(topToolbar);
 
@@ -297,6 +334,25 @@ export function createHud(
   chatLog.className = "chat-log";
   ui.appendChild(chatLog);
 
+  const nimClaimBar = document.createElement("div");
+  nimClaimBar.className = "nim-claim-bar";
+  nimClaimBar.hidden = true;
+  nimClaimBar.setAttribute("aria-live", "polite");
+  nimClaimBar.innerHTML = `
+    <div class="nim-claim-bar__label">NIM reward</div>
+    <div class="nim-claim-bar__track">
+      <div class="nim-claim-bar__fill"></div>
+    </div>
+    <div class="nim-claim-bar__hint"></div>
+  `;
+  const nimClaimFill = nimClaimBar.querySelector(
+    ".nim-claim-bar__fill"
+  ) as HTMLElement | null;
+  const nimClaimHint = nimClaimBar.querySelector(
+    ".nim-claim-bar__hint"
+  ) as HTMLElement | null;
+  ui.appendChild(nimClaimBar);
+
   const chatRow = document.createElement("div");
   chatRow.className = "chat-row";
   const chatInput = document.createElement("input");
@@ -383,6 +439,16 @@ export function createHud(
         </div>
       </div>
     </div>
+    <button type="button" class="build-block-bar__experimental-toggle" aria-expanded="false">⚡ Experimental</button>
+    <div class="build-block-bar__experimental" hidden>
+      <label class="build-block-bar__row">
+        <input type="checkbox" class="build-block-bar__claimable" />
+        <span>Claimable Block (Mining)</span>
+      </label>
+      <div class="build-block-bar__experimental-info">
+        When active (gold), players can mine/claim for rewards
+      </div>
+    </div>
     <div class="build-block-bar__tools">
       <div class="build-block-bar__title" style="margin-top: 1rem;">Tools</div>
       <div class="build-block-bar__tool-selector">
@@ -442,6 +508,15 @@ export function createHud(
   const barAdvancedSection = buildBlockBar.querySelector(
     ".build-block-bar__advanced"
   ) as HTMLElement;
+  const barExperimentalToggle = buildBlockBar.querySelector(
+    ".build-block-bar__experimental-toggle"
+  ) as HTMLButtonElement;
+  const barExperimentalSection = buildBlockBar.querySelector(
+    ".build-block-bar__experimental"
+  ) as HTMLElement;
+  const barClaimableCb = buildBlockBar.querySelector(
+    ".build-block-bar__claimable"
+  ) as HTMLInputElement;
   const barToolButtons = Array.from(buildBlockBar.querySelectorAll(".build-block-bar__tool-btn")) as HTMLButtonElement[];
   const barPreviewCanvas = buildBlockBar.querySelector(".build-block-bar__preview-canvas") as HTMLCanvasElement;
 
@@ -792,6 +867,16 @@ export function createHud(
     const open = barAdvancedSection.hidden;
     barAdvancedSection.hidden = !open;
     barAdvancedToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+
+  barExperimentalToggle.addEventListener("click", () => {
+    const open = barExperimentalSection.hidden;
+    barExperimentalSection.hidden = !open;
+    barExperimentalToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+
+  barClaimableCb.addEventListener("change", () => {
+    placementStyleHandler({ claimable: barClaimableCb.checked });
   });
 
   buildBlockBar.addEventListener("click", (ev) => {
@@ -1289,6 +1374,7 @@ export function createHud(
       barRampCb.checked = state.ramp;
       barRampDir = Math.max(0, Math.min(3, Math.floor(state.rampDir)));
       barRampDirRow.hidden = !state.ramp;
+      barClaimableCb.checked = state.claimable ?? false;
       refreshBarSwatches(
         Math.max(0, Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(state.colorId)))
       );
@@ -1414,6 +1500,31 @@ export function createHud(
         countEl.textContent = String(count);
       }
     },
+    setNimWalletStatus(status: string) {
+      if (nimBalanceValue) {
+        nimBalanceValue.textContent = status;
+      }
+    },
+    setNimClaimProgress(
+      state: null | { progress: number; adjacent: boolean }
+    ) {
+      if (!state) {
+        nimClaimBar.hidden = true;
+        nimClaimBar.classList.remove("nim-claim-bar--adjacent");
+        return;
+      }
+      nimClaimBar.hidden = false;
+      const p = Math.max(0, Math.min(1, state.progress));
+      if (nimClaimFill) {
+        nimClaimFill.style.width = `${(p * 100).toFixed(2)}%`;
+      }
+      if (nimClaimHint) {
+        nimClaimHint.textContent = state.adjacent
+          ? "Hold position beside the block…"
+          : "Move to a tile directly beside the block (edge, not corner).";
+      }
+      nimClaimBar.classList.toggle("nim-claim-bar--adjacent", state.adjacent);
+    },
     setCanvasTimer(timeRemaining: number) {
       const timerEl = canvasLeaderboard.querySelector(".canvas-leaderboard__timer") as HTMLElement | null;
       if (!timerEl) return;
@@ -1463,6 +1574,7 @@ export function createHud(
     destroy() {
       hideObjectEditPanel();
       hideLobbyConfirm();
+      nimClaimBar.hidden = true;
       ro.disconnect();
     },
   };

@@ -44,4 +44,10 @@ export type BlockStyleProps = {
   colorId: number;
   /** Whether this object is locked (admin-only editing). */
   locked?: boolean;
+  // Experimental: Claimable/minable blocks
+  claimable?: boolean;
+  active?: boolean;
+  cooldownMs?: number;
+  lastClaimedAt?: number;
+  claimedBy?: string;
 };
