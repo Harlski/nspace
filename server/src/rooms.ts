@@ -70,6 +70,7 @@ const FAKE_PLAYER_COUNT = Math.max(
   0,
   Math.min(32, Math.floor(Number(process.env.FAKE_PLAYER_COUNT ?? "2")))
 );
+
 /** Idle after finishing a path (or before retrying) before picking a new destination. */
 const FAKE_IDLE_MS = 10_000;
 /** Max tile waypoints per NPC path (short paths only). */
