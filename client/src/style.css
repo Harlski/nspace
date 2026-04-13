@@ -1344,17 +1344,48 @@ body {
   box-shadow: 0 0 0 2px #2dd4bf;
 }
 
-.chat-log {
+.chat-panel {
   position: absolute;
   left: 10px;
   bottom: 48px;
   width: min(360px, 42vw);
+  pointer-events: auto;
+}
+
+.chat-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.chat-tabs__btn {
+  border: 1px solid #3d465a;
+  background: rgba(15, 17, 23, 0.88);
+  color: #c8ceda;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.chat-tabs__btn--active {
+  border-color: #38bdf8;
+  color: #e0f2fe;
+  background: rgba(14, 116, 144, 0.35);
+}
+
+.chat-tabs__btn--has-unread:not(.chat-tabs__btn--active) {
+  border-color: #f59e0b;
+  color: #fde68a;
+}
+
+.chat-log {
   max-height: 180px;
   overflow-y: auto;
   font-size: 12px;
   line-height: 1.35;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-  pointer-events: auto;
   background: rgba(0, 0, 0, 0.65);
   backdrop-filter: blur(8px);
   border-radius: 8px;

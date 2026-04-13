@@ -669,10 +669,19 @@ function enterGame(token: string, address: string): void {
         }
         return;
       }
+      const bx = Number(msg.x);
+      const bz = Number(msg.z);
+      if (
+        msg.reason === "Nothing here :(" &&
+        Number.isFinite(bx) &&
+        Number.isFinite(bz)
+      ) {
+        game.showFloatingText(bx, bz, "Nothing here :(");
+      }
       cancelActiveNimClaim?.();
       nimClaimUiRef = null;
       hud.setNimClaimProgress(null);
-      if (msg.reason) {
+      if (msg.reason && msg.reason !== "Nothing here :(") {
         hud.appendChat("System", msg.reason);
       }
       return;

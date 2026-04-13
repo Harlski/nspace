@@ -26,7 +26,11 @@ import {
   registerWorldStateRefs,
   schedulePersistWorldState,
 } from "./worldPersistence.js";
-import { enqueueNimPayout } from "./nimPayout/index.js";
+import {
+  enqueueNimPayout,
+  getNimPayoutWalletBalanceLuna,
+  isNimPayoutSenderConfigured,
+} from "./nimPayout/index.js";
 import {
   beginSession,
   endSession,
@@ -1657,7 +1661,7 @@ export function addClient(
     }, 100);
   }
 
-  ws.on("message", (raw) => {
+  ws.on("message", async (raw) => {
     let data: unknown;
     try {
       data = JSON.parse(String(raw));
@@ -2411,6 +2415,29 @@ export function addClient(
             type: "blockClaimResult",
             ok: false,
             reason: "Claim reservation no longer matches this block.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+
+      let payoutHasFunds = false;
+      if (isNimPayoutSenderConfigured()) {
+        try {
+          const payoutBalanceLuna = await getNimPayoutWalletBalanceLuna();
+          payoutHasFunds = payoutBalanceLuna >= CLAIM_REWARD_MIN_LUNA;
+        } catch (err) {
+          console.error("[claimBlock] Failed to check payout wallet balance:", err);
+        }
+      }
+      if (!payoutHasFunds) {
+        releaseBlockClaimSession(claimId);
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "Nothing here :(",
+            x: s.tileX,
+            z: s.tileZ,
           } satisfies OutMsg)
         );
         return;

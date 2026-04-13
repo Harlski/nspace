@@ -330,9 +330,44 @@ export function createHud(
   topBar.appendChild(topActions);
   ui.appendChild(topBar);
 
-  const chatLog = document.createElement("div");
-  chatLog.className = "chat-log";
-  ui.appendChild(chatLog);
+  const chatPanel = document.createElement("div");
+  chatPanel.className = "chat-panel";
+  const chatTabs = document.createElement("div");
+  chatTabs.className = "chat-tabs";
+  const worldTabBtn = document.createElement("button");
+  worldTabBtn.type = "button";
+  worldTabBtn.className = "chat-tabs__btn chat-tabs__btn--active";
+  worldTabBtn.textContent = "World";
+  const systemTabBtn = document.createElement("button");
+  systemTabBtn.type = "button";
+  systemTabBtn.className = "chat-tabs__btn";
+  systemTabBtn.textContent = "System";
+  chatTabs.appendChild(worldTabBtn);
+  chatTabs.appendChild(systemTabBtn);
+  const worldChatLog = document.createElement("div");
+  worldChatLog.className = "chat-log chat-log--world";
+  const systemChatLog = document.createElement("div");
+  systemChatLog.className = "chat-log chat-log--system";
+  systemChatLog.hidden = true;
+  chatPanel.appendChild(chatTabs);
+  chatPanel.appendChild(worldChatLog);
+  chatPanel.appendChild(systemChatLog);
+  ui.appendChild(chatPanel);
+
+  let activeChatTab: "world" | "system" = "world";
+  const setChatTab = (tab: "world" | "system"): void => {
+    activeChatTab = tab;
+    const isWorld = tab === "world";
+    worldTabBtn.classList.toggle("chat-tabs__btn--active", isWorld);
+    systemTabBtn.classList.toggle("chat-tabs__btn--active", !isWorld);
+    if (!isWorld) {
+      systemTabBtn.classList.remove("chat-tabs__btn--has-unread");
+    }
+    worldChatLog.hidden = !isWorld;
+    systemChatLog.hidden = isWorld;
+  };
+  worldTabBtn.addEventListener("click", () => setChatTab("world"));
+  systemTabBtn.addEventListener("click", () => setChatTab("system"));
 
   const nimClaimBar = document.createElement("div");
   nimClaimBar.className = "nim-claim-bar";
@@ -1080,16 +1115,33 @@ export function createHud(
     });
   }
 
+  const lastSystemChatAtByText = new Map<string, number>();
+
   return {
     setStatus(s: string) {
       status.textContent = s;
     },
     appendChat(from: string, text: string) {
+      const isSystem = from.trim().toLowerCase() === "system";
+      if (isSystem) {
+        const now = Date.now();
+        const key = text.trim();
+        const lastAt = lastSystemChatAtByText.get(key) ?? 0;
+        // Suppress rapid duplicate system messages (e.g. claim retry spam).
+        if (now - lastAt < 2500) {
+          return;
+        }
+        lastSystemChatAtByText.set(key, now);
+      }
       const line = document.createElement("div");
       line.className = "chat-line";
       line.textContent = `${from}: ${text}`;
-      chatLog.appendChild(line);
-      chatLog.scrollTop = chatLog.scrollHeight;
+      const targetLog = isSystem ? systemChatLog : worldChatLog;
+      targetLog.appendChild(line);
+      targetLog.scrollTop = targetLog.scrollHeight;
+      if (isSystem && activeChatTab !== "system") {
+        systemTabBtn.classList.add("chat-tabs__btn--has-unread");
+      }
     },
     getChatInput: () => chatInput,
     onFullscreenToggle(fn: () => void) {
