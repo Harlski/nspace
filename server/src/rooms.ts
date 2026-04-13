@@ -919,7 +919,24 @@ function checkCanvasCooldown(): void {
   const now = Date.now();
   if (now >= canvasCooldownEndTime) {
     canvasCooldownActive = false;
-    console.log(`[canvas] Cooldown ended, generating new maze`);
+    console.log(`[canvas] Cooldown ended, clearing old claims and generating new maze`);
+    
+    // Clear all canvas claims before opening the maze for the new round
+    clearAllClaims();
+    
+    // Broadcast the cleared canvas to all players
+    broadcast(CANVAS_ROOM_ID, {
+      type: "canvasClaim",
+      x: -1,
+      z: -1,
+      address: "",
+    });
+    broadcast(HUB_ROOM_ID, {
+      type: "canvasClaim",
+      x: -1,
+      z: -1,
+      address: "",
+    });
     
     // Generate a new maze for the next round
     generateCanvasMaze();
@@ -999,17 +1016,6 @@ function endCanvasRound(): void {
       });
     }
   }
-  
-  // Clear the canvas floor
-  clearAllClaims();
-  
-  // Broadcast the cleared canvas to all players in canvas room
-  broadcast(CANVAS_ROOM_ID, {
-    type: "canvasClaim",
-    x: -1,
-    z: -1,
-    address: "",
-  });
   
   // Teleport all remaining players to hub after short delay
   setTimeout(() => {

@@ -1330,15 +1330,20 @@ export class Game {
     if (address === "") {
       console.log(`[canvas] Unclaim received: (${x}, ${z})`);
       this.canvasClaims.delete(k);
-      // Remove the identicon mesh
+      // Remove the identicon mesh and properly dispose of all resources
       const oldMesh = this.canvasIdenticonMeshes.get(k);
       if (oldMesh) {
         this.scene.remove(oldMesh);
         oldMesh.geometry.dispose();
         if (oldMesh.material instanceof THREE.Material) {
+          // Dispose texture if it exists
+          if (oldMesh.material.map) {
+            oldMesh.material.map.dispose();
+          }
           oldMesh.material.dispose();
         }
         this.canvasIdenticonMeshes.delete(k);
+        console.log(`[canvas] Disposed mesh and texture for (${x}, ${z})`);
       }
       return;
     }
@@ -1394,12 +1399,16 @@ export class Game {
     
     console.log(`[canvas] Rendering identicon for (${x}, ${z})`);
     
-    // Remove old mesh if it exists
+    // Remove old mesh if it exists and dispose all resources
     const oldMesh = this.canvasIdenticonMeshes.get(k);
     if (oldMesh) {
       this.scene.remove(oldMesh);
       oldMesh.geometry.dispose();
       if (oldMesh.material instanceof THREE.Material) {
+        // Dispose texture if it exists
+        if (oldMesh.material.map) {
+          oldMesh.material.map.dispose();
+        }
         oldMesh.material.dispose();
       }
       this.canvasIdenticonMeshes.delete(k);
@@ -1464,6 +1473,10 @@ export class Game {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
       if (mesh.material instanceof THREE.Material) {
+        // Dispose texture if it exists
+        if (mesh.material.map) {
+          mesh.material.map.dispose();
+        }
         mesh.material.dispose();
       }
     }
