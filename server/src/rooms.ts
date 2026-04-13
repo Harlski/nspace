@@ -44,7 +44,7 @@ import {
   loadCanvasClaims,
   clearAllClaims,
 } from "./canvasCanvas.js";
-import { CANVAS_ROOM_ID } from "./roomLayouts.js";
+import { CANVAS_ROOM_ID, CHAMBER_ROOM_ID } from "./roomLayouts.js";
 import {
   createSignboard,
   deleteSignboard,
@@ -202,6 +202,19 @@ function compactAddress(addr: string): string {
 
 function canPlaceMineableBlocks(address: string): boolean {
   return MINEABLE_BLOCK_PLACER_ALLOWLIST.has(compactAddress(address));
+}
+
+/**
+ * Per-room edit permissions:
+ * - Canvas: no edits for anyone (view-only).
+ * - Chamber: admins only.
+ * - Others: standard behavior.
+ */
+function canEditRoomContent(roomId: string, address: string): boolean {
+  const id = normalizeRoomId(roomId);
+  if (id === CANVAS_ROOM_ID) return false;
+  if (id === CHAMBER_ROOM_ID) return isAdmin(address);
+  return true;
 }
 
 type OutMsg =
@@ -1703,8 +1716,7 @@ export function addClient(
     }
 
     if (msg.type === "placeBlock") {
-      // Canvas room is view-only, no building allowed
-      if (normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID) {
+      if (!canEditRoomContent(currentRoomId, address)) {
         return;
       }
       
@@ -1783,8 +1795,7 @@ export function addClient(
     }
 
     if (msg.type === "setObstacleProps") {
-      // Canvas room is view-only, no editing allowed
-      if (normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID) {
+      if (!canEditRoomContent(currentRoomId, address)) {
         return;
       }
       
@@ -1856,8 +1867,7 @@ export function addClient(
     }
 
     if (msg.type === "removeObstacle") {
-      // Canvas room is view-only, no deleting allowed
-      if (normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID) {
+      if (!canEditRoomContent(currentRoomId, address)) {
         return;
       }
       
@@ -1923,8 +1933,7 @@ export function addClient(
     }
 
     if (msg.type === "moveObstacle") {
-      // Canvas room is view-only, no moving allowed
-      if (normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID) {
+      if (!canEditRoomContent(currentRoomId, address)) {
         return;
       }
       
@@ -2015,8 +2024,7 @@ export function addClient(
     }
 
     if (msg.type === "placeExtraFloor") {
-      // Canvas room is view-only, no floor expansion allowed
-      if (normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID) {
+      if (!canEditRoomContent(currentRoomId, address)) {
         return;
       }
       
@@ -2047,6 +2055,9 @@ export function addClient(
     }
 
     if (msg.type === "removeExtraFloor") {
+      if (!canEditRoomContent(currentRoomId, address)) {
+        return;
+      }
       const now = Date.now();
       if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
       conn.lastPlaceAt = now;
@@ -2429,6 +2440,9 @@ export function addClient(
     }
 
     if (msg.type === "placeSignboard") {
+      if (!canEditRoomContent(currentRoomId, address)) {
+        return;
+      }
       // Anyone can place a signboard/signpost
       const now = Date.now();
       if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
@@ -2508,6 +2522,10 @@ export function addClient(
     }
 
     if (msg.type === "updateSignboard") {
+      if (!canEditRoomContent(currentRoomId, address)) {
+        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        return;
+      }
       // Admin-only: update a signboard's message
       if (!isAdmin(address)) {
         ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
@@ -2542,6 +2560,10 @@ export function addClient(
     }
 
     if (msg.type === "removeSignboard") {
+      if (!canEditRoomContent(currentRoomId, address)) {
+        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        return;
+      }
       // Admin-only: remove a signboard
       if (!isAdmin(address)) {
         ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
