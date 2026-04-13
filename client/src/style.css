@@ -16,6 +16,10 @@ body {
   font-family: "Mulish", system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu,
     sans-serif;
   -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
 }
 
 #app {
@@ -451,6 +455,10 @@ body {
   font-size: 0.95rem;
   line-height: 1.5;
   resize: vertical;
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
 }
 
 .signpost-overlay__textarea:focus {
@@ -1230,7 +1238,7 @@ body {
   font-size: 12px;
   line-height: 1.35;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-  pointer-events: none;
+  pointer-events: auto;
   background: rgba(0, 0, 0, 0.65);
   backdrop-filter: blur(8px);
   border-radius: 8px;
@@ -1238,9 +1246,29 @@ body {
   box-sizing: border-box;
 }
 
+/* Style the scrollbar for better visibility */
+.chat-log::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat-log::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.chat-log::-webkit-scrollbar-thumb {
+  background: rgba(226, 232, 240, 0.4);
+  border-radius: 4px;
+}
+
+.chat-log::-webkit-scrollbar-thumb:hover {
+  background: rgba(226, 232, 240, 0.6);
+}
+
 .chat-line {
   margin-bottom: 4px;
   word-break: break-word;
+  pointer-events: none;
 }
 
 .chat-row {
@@ -1259,6 +1287,10 @@ body {
   background: rgba(15, 17, 23, 0.92);
   color: #e8eaef;
   font-size: 13px;
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
 }
 
 .screen {

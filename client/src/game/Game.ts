@@ -1324,8 +1324,26 @@ export class Game {
 
   /** Handle a single canvas claim update */
   applyCanvasClaim(x: number, z: number, address: string): void {
-    console.log(`[canvas] Claim received: (${x}, ${z}) by ${address.slice(0, 8)}...`);
     const k = tileKey(x, z);
+    
+    // Empty address means unclaim the tile
+    if (address === "") {
+      console.log(`[canvas] Unclaim received: (${x}, ${z})`);
+      this.canvasClaims.delete(k);
+      // Remove the identicon mesh
+      const oldMesh = this.canvasIdenticonMeshes.get(k);
+      if (oldMesh) {
+        this.scene.remove(oldMesh);
+        oldMesh.geometry.dispose();
+        if (oldMesh.material instanceof THREE.Material) {
+          oldMesh.material.dispose();
+        }
+        this.canvasIdenticonMeshes.delete(k);
+      }
+      return;
+    }
+    
+    console.log(`[canvas] Claim received: (${x}, ${z}) by ${address.slice(0, 8)}...`);
     this.canvasClaims.set(k, address);
     this.syncCanvasIdenticonForTile(x, z, address);
   }

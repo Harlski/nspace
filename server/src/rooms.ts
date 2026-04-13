@@ -1166,13 +1166,26 @@ export function startRoomTick(): void {
             canvasPlayerSteps.set(c.address, currentSteps + 1);
             
             console.log(`[canvas] Player ${c.address.slice(0, 8)}... claimed tile (${tile.x}, ${tile.z}), total steps: ${currentSteps + 1}`);
-            claimTile(tile.x, tile.z, c.address);
+            const result = claimTile(tile.x, tile.z, c.address);
+            
+            // Broadcast the new claim
             broadcast(roomId, {
               type: "canvasClaim",
               x: tile.x,
               z: tile.z,
               address: c.address,
             });
+            
+            // If an old tile was removed due to 10-tile limit, broadcast its removal
+            if (result.removedTile) {
+              console.log(`[canvas] Broadcasting removal of oldest tile (${result.removedTile.x}, ${result.removedTile.z})`);
+              broadcast(roomId, {
+                type: "canvasClaim",
+                x: result.removedTile.x,
+                z: result.removedTile.z,
+                address: "", // Empty address means unclaim
+              });
+            }
           }
         }
       }

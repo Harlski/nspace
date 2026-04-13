@@ -13,7 +13,13 @@ const CANVAS_FILE = path.join(DATA_DIR, "canvas-claims.json");
 /** Map of "x,z" => wallet address */
 type CanvasClaimsMap = Record<string, string>;
 
+/** Track claim order per player for FIFO removal */
+type PlayerClaimHistory = Map<string, Array<{ x: number; z: number }>>;
+
+const MAX_CLAIMS_PER_PLAYER = 10;
+
 let claims: CanvasClaimsMap = {};
+let playerClaimOrder: PlayerClaimHistory = new Map();
 let dirty = false;
 
 function ensureDataDir(): void {
@@ -56,10 +62,56 @@ export function flushCanvasClaimsSync(): void {
 }
 
 /** Claim a tile for a player (or overwrite if already claimed) */
-export function claimTile(x: number, z: number, address: string): void {
+export function claimTile(x: number, z: number, address: string): { removedTile: { x: number; z: number } | null } {
   const key = `${x},${z}`;
+  const previousOwner = claims[key];
+  
+  // If this tile was claimed by someone else, remove it from their history
+  if (previousOwner && previousOwner !== address) {
+    const prevHistory = playerClaimOrder.get(previousOwner);
+    if (prevHistory) {
+      const index = prevHistory.findIndex(t => t.x === x && t.z === z);
+      if (index !== -1) {
+        prevHistory.splice(index, 1);
+      }
+    }
+  }
+  
+  // Get or create claim history for this player
+  let history = playerClaimOrder.get(address);
+  if (!history) {
+    history = [];
+    playerClaimOrder.set(address, history);
+  }
+  
+  // Check if this tile is already in this player's history (reclaiming same tile)
+  const existingIndex = history.findIndex(t => t.x === x && t.z === z);
+  if (existingIndex !== -1) {
+    // Already owned by this player, don't add again
+    claims[key] = address;
+    dirty = true;
+    return { removedTile: null };
+  }
+  
+  // Add new tile to history
+  history.push({ x, z });
   claims[key] = address;
+  
+  let removedTile: { x: number; z: number } | null = null;
+  
+  // If player has more than MAX_CLAIMS_PER_PLAYER tiles, remove the oldest
+  if (history.length > MAX_CLAIMS_PER_PLAYER) {
+    const oldest = history.shift(); // Remove first (oldest) element
+    if (oldest) {
+      const oldKey = `${oldest.x},${oldest.z}`;
+      delete claims[oldKey];
+      removedTile = oldest;
+      console.log(`[canvas] Player ${address.slice(0, 8)}... exceeded limit, removing oldest tile (${oldest.x}, ${oldest.z})`);
+    }
+  }
+  
   dirty = true;
+  return { removedTile };
 }
 
 /** Get the address that owns a tile, or null if unclaimed */
@@ -109,6 +161,7 @@ export function getTopPlayers(limit: number): Array<{ address: string; count: nu
 /** Clear all claims (reset the canvas) */
 export function clearAllClaims(): void {
   claims = {};
+  playerClaimOrder.clear();
   dirty = true;
   saveCanvasClaims();
   console.log("[canvas] All claims cleared");
