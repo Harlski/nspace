@@ -1455,7 +1455,6 @@ export function startRoomTick(): void {
               bubbleOnly: true,
             });
             bot.nextChatTime = now + getRandomNpcChatDelay(rng);
-            console.log(`[npc] ${p.displayName} says: "${message}" (next in ${((bot.nextChatTime - now) / 1000).toFixed(1)}s)`);
           }
           
           if (bot.pathQueue.length === 0 && p.vx === 0 && p.vz === 0) {
@@ -1581,6 +1580,9 @@ export function addClient(
   };
 
   room.set(address, conn);
+  console.log(
+    `[rooms] connect ${address.slice(0, 12)}… room=${roomId} name="${displayName}"`
+  );
 
   const others = snapshotPlayers(roomId).filter((p) => p.address !== address);
 
@@ -1820,8 +1822,6 @@ export function addClient(
       const colorId = clampColorId(Number(msg.colorId ?? 0));
       const locked = Boolean(msg.locked);
       
-      console.log(`[Server setObstacleProps] Received locked=${locked} for (${tx}, ${tz}) from ${address}`);
-      
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
@@ -1838,8 +1838,6 @@ export function addClient(
       
       // Only admins can change lock status
       const finalLocked = isAdmin(address) ? locked : (existing.locked || false);
-      
-      console.log(`[Server setObstacleProps] Storing locked=${finalLocked} (isAdmin=${isAdmin(address)})`);
       
       placed.set(k, {
         passable,
@@ -2660,6 +2658,9 @@ export function addClient(
       schedulePersistWorldState();
       const room = roomOf(playerCurrentRoom);
       room.delete(address);
+      console.log(
+        `[rooms] disconnect ${address.slice(0, 12)}… room=${playerCurrentRoom}`
+      );
       broadcast(playerCurrentRoom, { type: "playerLeft", address });
       if (room.size === 0) clearFakePlayers(playerCurrentRoom);
     }
