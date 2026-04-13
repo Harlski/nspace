@@ -293,6 +293,19 @@ function enterGame(token: string, address: string): void {
     game.setTileClickHandler((x, z, layer = 0) => {
       // Check if in signpost mode (only in build mode)
       if (game.getBuildMode() && hud.isSignpostModeActive()) {
+        // Validate placement is within build radius
+        const selfPos = game.getSelfPosition();
+        if (selfPos) {
+          const dx = selfPos.x - x;
+          const dz = selfPos.z - z;
+          const distance = Math.hypot(dx, dz);
+          const placeRadius = game.getPlaceRadiusBlocks();
+          if (distance > placeRadius + 1e-6) {
+            console.log(`[main] Signpost click outside build radius (${distance.toFixed(2)} > ${placeRadius}), moving instead`);
+            sendMoveTo(socket, x, z, layer);
+            return;
+          }
+        }
         hud.promptSignpostMessage(x, z);
         return;
       }
@@ -301,6 +314,19 @@ function enterGame(token: string, address: string): void {
     game.setPlaceBlockHandler((x, z) => {
       // Don't place blocks if in signpost mode
       if (hud.isSignpostModeActive()) {
+        // Validate placement is within build radius
+        const selfPos = game.getSelfPosition();
+        if (selfPos) {
+          const dx = selfPos.x - x;
+          const dz = selfPos.z - z;
+          const distance = Math.hypot(dx, dz);
+          const placeRadius = game.getPlaceRadiusBlocks();
+          if (distance > placeRadius + 1e-6) {
+            console.log(`[main] Signpost click outside build radius (${distance.toFixed(2)} > ${placeRadius}), moving instead`);
+            sendMoveTo(socket, x, z, 0);
+            return;
+          }
+        }
         hud.promptSignpostMessage(x, z);
         return;
       }
@@ -595,6 +621,11 @@ function enterGame(token: string, address: string): void {
         if (editingTile) {
           editingTile = null;
           hud.hideObjectEditPanel();
+        }
+        // Return to walk mode if in any build mode
+        if (game.getBuildMode()) {
+          game.setBuildMode(false);
+          syncBuildHud();
         }
         game.clearSelectedBlock();
         return;

@@ -597,6 +597,19 @@ export class Game {
     return this.roomId;
   }
 
+  getSelfPosition(): { x: number; y: number; z: number } | null {
+    if (!this.selfMesh) return null;
+    return {
+      x: this.selfMesh.position.x,
+      y: this.selfMesh.position.y,
+      z: this.selfMesh.position.z,
+    };
+  }
+
+  getPlaceRadiusBlocks(): number {
+    return this.placeRadiusBlocks;
+  }
+
   /** Snapshot for debug HUD (room layout, counts, local pose). */
   getDebugStats(): {
     roomId: string;
@@ -1777,11 +1790,28 @@ export class Game {
       const dest = this.pickFloor(e.clientX, e.clientY);
       if (!dest) return;
       if (!this.tileWalkable(dest)) return;
+      
+      // Check if click is within build radius - if not, trigger movement instead
+      const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+      const dx = here.x - dest.x;
+      const dz = here.y - dest.y;
+      const distance = Math.hypot(dx, dz);
+      if (distance > this.placeRadiusBlocks + 1e-6) {
+        // Outside build radius - trigger walking instead of placing
+        console.log(`[Game] Click outside build radius (${distance.toFixed(2)} > ${this.placeRadiusBlocks}), moving instead`);
+        const k = tileKey(dest.x, dest.y);
+        if (this.blockingTileKeys.has(k)) return;
+        if (!this.tileClickHandler) return;
+        this.pathGoal = { ft: dest, layer: 0 };
+        this.refreshPathLine();
+        this.tileClickHandler(dest.x, dest.y, 0);
+        return;
+      }
+      
       if (!this.placeBlockHandler) return;
       const k = tileKey(dest.x, dest.y);
       if (this.placedObjects.has(k)) return;
       if (this.hubNoBuildTile(dest.x, dest.y)) return;
-      const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
       if (here.x === dest.x && here.y === dest.y) return;
       this.placeBlockHandler(dest.x, dest.y);
       return;

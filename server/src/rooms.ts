@@ -1838,7 +1838,19 @@ export function addClient(
       }
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
-      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      
+      // Check if within build range
+      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) {
+        ws.send(JSON.stringify({ 
+          type: "chat",
+          from: "System",
+          fromAddress: "",
+          text: "Too far! You can only place signboards within your build range.",
+          at: Date.now()
+        }));
+        return;
+      }
+      
       if (!isWalkableForRoom(currentRoomId, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
       if (placed.has(k)) return;
