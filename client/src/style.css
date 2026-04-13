@@ -11,9 +11,10 @@ body {
   overflow: hidden;
   background: #000000;
   color: #e8eaef;
-  /* After @nimiq/style: keep 16px root; Mulish for UI text; Nimiq Style uses Muli on html. */
-  font-size: 16px;
-  font-family: "Mulish", system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu,
+  /* Increased font size to 18px for better readability, bold weight, using Muli font */
+  font-size: 18px;
+  font-weight: 600;
+  font-family: "Muli", "Mulish", system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu,
     sans-serif;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
@@ -361,6 +362,33 @@ body {
   margin-bottom: 0.5rem;
   font-weight: 600;
   color: #fff;
+}
+
+.signboard-tooltip__close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.signboard-tooltip__close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.signboard-tooltip__close:active {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .signboard-tooltip__icon {

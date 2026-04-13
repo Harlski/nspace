@@ -193,6 +193,7 @@ export function createHud(
     <div class="signboard-tooltip__header">
       <span class="signboard-tooltip__icon">📋</span>
       <span class="signboard-tooltip__title">Signboard</span>
+      <button type="button" class="signboard-tooltip__close" aria-label="Close">✕</button>
     </div>
     <div class="signboard-tooltip__message"></div>
     <div class="signboard-tooltip__footer">
@@ -226,6 +227,15 @@ export function createHud(
   leftStack.appendChild(debugPanel);
   leftStack.appendChild(canvasLeaderboard);
   leftStack.appendChild(signboardTooltip);
+  
+  // Close button for signboard tooltip
+  const signboardCloseBtn = signboardTooltip.querySelector(".signboard-tooltip__close");
+  if (signboardCloseBtn) {
+    signboardCloseBtn.addEventListener("click", () => {
+      signboardTooltip.hidden = true;
+    });
+  }
+  
   ui.appendChild(topStrip);
   ui.appendChild(leftStack);
   letter.appendChild(signpostOverlay);

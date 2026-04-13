@@ -471,8 +471,13 @@ function enterGame(token: string, address: string): void {
       return;
     }
     if (msg.type === "chat") {
-      hud.appendChat(msg.from, msg.text);
+      // Show chat bubble for all messages
       game.showChatBubble(msg.fromAddress, msg.text, msg.from);
+      
+      // Only add to chat log if not bubble-only (NPCs use bubbleOnly)
+      if (!msg.bubbleOnly) {
+        hud.appendChat(msg.from, msg.text);
+      }
     }
     if (msg.type === "obstacles") {
       console.log(`[Main] Received obstacles message for room ${msg.roomId}, ${msg.tiles.length} tiles, editingTile=${editingTile ? `(${editingTile.x}, ${editingTile.z})` : 'null'}`);

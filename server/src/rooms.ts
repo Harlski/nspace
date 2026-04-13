@@ -77,6 +77,25 @@ const PLACE_RADIUS_BLOCKS = Math.max(
   Math.min(64, Number(process.env.PLACE_RADIUS_BLOCKS ?? "5"))
 );
 
+/** NPC chat messages - randomly displayed as bubbles only */
+const NPC_MESSAGES = [
+  "Thanks for playing Nimiq Space!",
+  "Find us on Telegram and let us know what you think!",
+  "Check out twitch.tv/nimiqlive - to earn NIM!",
+];
+
+/** Min/max time (ms) between NPC chat messages */
+const NPC_CHAT_MIN_INTERVAL = 30_000; // 30 seconds
+const NPC_CHAT_MAX_INTERVAL = 90_000; // 90 seconds
+
+function getRandomNpcMessage(rng: () => number): string {
+  return NPC_MESSAGES[Math.floor(rng() * NPC_MESSAGES.length)]!;
+}
+
+function getRandomNpcChatDelay(rng: () => number): number {
+  return NPC_CHAT_MIN_INTERVAL + rng() * (NPC_CHAT_MAX_INTERVAL - NPC_CHAT_MIN_INTERVAL);
+}
+
 export interface PlayerState {
   address: string;
   displayName: string;
@@ -196,7 +215,14 @@ type OutMsg =
         createdAt: number;
       }>;
     }
-  | { type: "chat"; from: string; fromAddress: string; text: string; at: number }
+  | {
+      type: "chat";
+      from: string;
+      fromAddress: string;
+      text: string;
+      at: number;
+      bubbleOnly?: boolean; // If true, only show as bubble, not in chat log
+    }
   | { type: "error"; code: string };
 
 const rooms = new Map<string, Map<string, ClientConn>>();
@@ -210,6 +236,8 @@ const roomFakePlayers = new Map<
       pathQueue: { x: number; z: number }[];
       /** When path is empty, wait until this time (ms) before choosing a new destination. */
       idleUntil: number;
+      /** Next time (ms) to say a random message. */
+      nextChatTime: number;
     }
   >
 >();
@@ -621,6 +649,7 @@ function fakePlayersMap(roomId: string): Map<
     player: PlayerState;
     pathQueue: { x: number; z: number }[];
     idleUntil: number;
+    nextChatTime: number;
   }
 > {
   let m = roomFakePlayers.get(roomId);
@@ -691,6 +720,7 @@ function ensureFakePlayers(roomId: string): void {
       player,
       pathQueue: [],
       idleUntil: Date.now() + Math.floor(rng() * FAKE_IDLE_MS),
+      nextChatTime: Date.now() + getRandomNpcChatDelay(rng),
     });
     broadcast(roomId, { type: "playerJoined", player: { ...player } });
   }
@@ -1203,6 +1233,22 @@ export function startRoomTick(): void {
           );
           if (changedMove) changed = true;
           const p = bot.player;
+          
+          // Check if it's time for the NPC to say something
+          if (now >= bot.nextChatTime && room.size > 0) {
+            const message = getRandomNpcMessage(rng);
+            broadcast(roomId, {
+              type: "chat",
+              from: p.displayName,
+              fromAddress: p.address,
+              text: message,
+              at: now,
+              bubbleOnly: true,
+            });
+            bot.nextChatTime = now + getRandomNpcChatDelay(rng);
+            console.log(`[npc] ${p.displayName} says: "${message}" (next in ${((bot.nextChatTime - now) / 1000).toFixed(1)}s)`);
+          }
+          
           if (bot.pathQueue.length === 0 && p.vx === 0 && p.vz === 0) {
             if (bot.idleUntil === 0) {
               bot.idleUntil = now + FAKE_IDLE_MS;

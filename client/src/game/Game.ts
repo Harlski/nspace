@@ -1749,6 +1749,46 @@ export class Game {
       this.blockTopHighlight.visible = false;
     }
 
+    // Check for signboard interaction first (especially important for mobile)
+    if (!this.buildMode && !this.floorExpandMode) {
+      let signboardClicked = false;
+      
+      // Check if clicking on a signboard block
+      const blockHit = this.pickBlockKey(e.clientX, e.clientY);
+      if (blockHit) {
+        const signboard = this.signboards.get(blockHit);
+        if (signboard) {
+          // Show signboard message
+          this.signboardHoverHandler?.(signboard);
+          signboardClicked = true;
+        }
+      }
+      
+      // Check if clicking on a signboard floor tile
+      if (!signboardClicked) {
+        const floorTile = this.pickFloor(e.clientX, e.clientY);
+        if (floorTile) {
+          const k = tileKey(floorTile.x, floorTile.y);
+          const signboard = this.signboards.get(k);
+          if (signboard) {
+            // Show signboard message
+            this.signboardHoverHandler?.(signboard);
+            signboardClicked = true;
+          }
+        }
+      }
+      
+      // If a signboard was clicked, don't proceed with movement
+      if (signboardClicked) {
+        return;
+      }
+      
+      // If tapping elsewhere and not on a signboard, dismiss any open tooltip
+      if (e.pointerType === "touch") {
+        this.signboardHoverHandler?.(null);
+      }
+    }
+
     if (this.floorExpandMode) {
       const dest = this.pickFloor(e.clientX, e.clientY);
       if (!dest) return;
