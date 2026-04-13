@@ -1,5 +1,12 @@
 # nspace
 
+> ## Alpha Notice
+> This project is currently in **alpha** and is **100% vibe-coded with guidance**.  
+> Expect rough edges: some implementations may be sub-optimal, and there may be security vulnerabilities, bugs/glitches, incomplete guides, or gaps in the codebase.
+>
+> nspace is open sourced so anyone can help improve Nimiq Space.  
+> You only need a **Nimiq wallet** to log in, and the project is designed to avoid collecting user PII.
+
 A multiplayer isometric social space built with **Nimiq wallet** authentication, **WebSocket** multiplayer, and **Three.js** 3D rendering. Walk around, build structures, place signposts, and claim tiles in the collaborative canvas room.
 
 🌐 **Live Demo**: [https://nimiq.space](https://nimiq.space)
