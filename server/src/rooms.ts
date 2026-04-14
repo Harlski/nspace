@@ -250,10 +250,17 @@ type OutMsg =
         createdBy: string;
         createdAt: number;
       }>;
+      /** Real players online across all rooms (NPCs excluded). */
+      onlinePlayerCount: number;
+      /** Client may show build mode only when true; server still enforces. */
+      allowPlaceBlocks: boolean;
+      /** Client may show floor-expand mode only when true; server still enforces. */
+      allowExtraFloor: boolean;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
   | { type: "state"; players: PlayerState[] }
+  | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
   | { type: "canvasClaim"; x: number; z: number; address: string }
@@ -609,6 +616,67 @@ function waypointY(
   return terrainObstacleHeight(p);
 }
 
+function findRecoveryTerrainPath(
+  roomId: string,
+  player: PlayerState,
+  dest: { x: number; z: number },
+  goalLayer: 0 | 1,
+  placed: ReadonlyMap<string, PlacedProps>,
+  extra: ReadonlySet<string>
+):
+  | {
+      full: { x: number; z: number; layer: 0 | 1 }[];
+      start: { x: number; z: number; layer: 0 | 1 };
+    }
+  | null {
+  const center = snapToTile(player.x, player.z);
+  const seen = new Set<string>();
+  const candidates: Array<{ x: number; z: number }> = [];
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const x = center.x + dx;
+      const z = center.z + dz;
+      if (!inTileBounds(x, z)) continue;
+      const k = tileKey(x, z);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      candidates.push({ x, z });
+    }
+  }
+  candidates.sort((a, b) => {
+    const da = (a.x - player.x) ** 2 + (a.z - player.z) ** 2;
+    const db = (b.x - player.x) ** 2 + (b.z - player.z) ** 2;
+    return da - db;
+  });
+  for (const c of candidates) {
+    const prop = placed.get(tileKey(c.x, c.z));
+    const starts: (0 | 1)[] = [];
+    if (isWalkableForRoom(roomId, c.x, c.z) && (!prop || prop.passable || prop.ramp)) {
+      starts.push(0);
+    }
+    if (prop && !prop.passable && !prop.ramp) {
+      starts.push(1);
+    }
+    for (const startLayer of starts) {
+      const full = pathfindTerrain(
+        c.x,
+        c.z,
+        startLayer,
+        dest.x,
+        dest.z,
+        goalLayer,
+        placed,
+        extra,
+        roomId
+      );
+      if (full && full.length > 0) {
+        return { full, start: { x: c.x, z: c.z, layer: startLayer } };
+      }
+    }
+  }
+  return null;
+}
+
 function obstaclesToList(roomId: string): ObstacleTile[] {
   const m = roomPlaced.get(roomId);
   if (!m) return [];
@@ -841,6 +909,29 @@ function broadcast(roomId: string, msg: OutMsg, except?: string): void {
     if (except && addr === except) continue;
     if (c.ws.readyState === 1) c.ws.send(payload);
   }
+}
+
+function broadcastAll(msg: OutMsg): void {
+  const payload = JSON.stringify(msg);
+  for (const room of rooms.values()) {
+    for (const c of room.values()) {
+      if (c.ws.readyState === 1) c.ws.send(payload);
+    }
+  }
+}
+
+function countOnlineRealPlayers(): number {
+  let total = 0;
+  for (const room of rooms.values()) {
+    for (const c of room.values()) {
+      if (!c.displayName.startsWith("[NPC] ")) total += 1;
+    }
+  }
+  return total;
+}
+
+function broadcastOnlineCount(): void {
+  broadcastAll({ type: "onlineCount", count: countOnlineRealPlayers() });
 }
 
 function fakePlayersMap(roomId: string): Map<
@@ -1287,7 +1378,8 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   }));
   
   const isCanvas = normalizeRoomId(targetRoomId) === CANVAS_ROOM_ID;
-  
+  const allowEdit = canEditRoomContent(targetRoomId, address);
+
   conn.ws.send(
     JSON.stringify({
       type: "welcome",
@@ -1301,6 +1393,9 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       extraFloorTiles: extraFloorToList(targetRoomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
+      onlinePlayerCount: countOnlineRealPlayers(),
+      allowPlaceBlocks: allowEdit,
+      allowExtraFloor: allowEdit,
     } satisfies OutMsg)
   );
   
@@ -1597,7 +1692,8 @@ export function addClient(
   }));
 
   const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
-  
+  const allowEdit = canEditRoomContent(roomId, address);
+
   // Send current canvas timer if joining canvas room
   if (isCanvas && canvasTimerActive) {
     const timeRemaining = Math.max(0, canvasTimerEndTime - Date.now());
@@ -1631,6 +1727,9 @@ export function addClient(
       extraFloorTiles: extraFloorToList(roomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
+      onlinePlayerCount: countOnlineRealPlayers(),
+      allowPlaceBlocks: allowEdit,
+      allowExtraFloor: allowEdit,
     } satisfies OutMsg)
   );
 
@@ -1639,6 +1738,7 @@ export function addClient(
     { type: "playerJoined", player: { ...player } },
     address
   );
+  broadcastOnlineCount();
 
   // Check if player tried to enter canvas during cooldown - move them back
   if (roomId === CANVAS_ROOM_ID && canvasCooldownActive) {
@@ -1709,10 +1809,26 @@ export function addClient(
         currentRoomId
       );
       if (!full || full.length === 0) {
-        conn.pathQueue = [];
-        return;
+        const recovered = findRecoveryTerrainPath(
+          currentRoomId,
+          p,
+          dest,
+          goalLayer,
+          placed,
+          extra
+        );
+        if (!recovered) {
+          conn.pathQueue = [];
+          return;
+        }
+        // Snap to a nearby valid terrain node when seam rounding picked a bad start.
+        p.x = recovered.start.x;
+        p.z = recovered.start.z;
+        p.y = waypointY(recovered.start.layer, recovered.start.x, recovered.start.z, placed);
+        conn.pathQueue = recovered.full.slice(1);
+      } else {
+        conn.pathQueue = full.slice(1);
       }
-      conn.pathQueue = full.slice(1);
       logGameplayEvent(conn.sessionId, address, currentRoomId, "move_to", {
         fromX: start.x,
         fromZ: start.z,
@@ -2663,6 +2779,7 @@ export function addClient(
         `[rooms] disconnect ${address.slice(0, 12)}… room=${playerCurrentRoom}`
       );
       broadcast(playerCurrentRoom, { type: "playerLeft", address });
+      broadcastOnlineCount();
       if (room.size === 0) clearFakePlayers(playerCurrentRoom);
     }
   });

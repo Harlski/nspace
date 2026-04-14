@@ -64,10 +64,16 @@ export type ServerMessage =
         createdBy: string;
         createdAt: number;
       }>;
+      /** Real players online across all rooms (NPCs excluded). */
+      onlinePlayerCount?: number;
+      /** Omitted on older servers; client defaults to true. */
+      allowPlaceBlocks?: boolean;
+      allowExtraFloor?: boolean;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
   | { type: "state"; players: PlayerState[] }
+  | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
   | { type: "canvasClaim"; x: number; z: number; address: string }

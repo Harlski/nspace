@@ -2,8 +2,11 @@ import "@nimiq/style/nimiq-style.min.css";
 import "./style.css";
 import {
   clearCachedSession,
+  getTokenExpiryMs,
   isTokenExpired,
+  listCachedSessions,
   loadCachedSession,
+  removeCachedSession,
   saveCachedSession,
 } from "./auth/session.js";
 import { ROOM_ID } from "./game/constants.js";
@@ -77,34 +80,41 @@ function startIdleReturnToHub(ms: number, onIdle: () => void): () => void {
 }
 
 function openMainMenu(): void {
+  const orientation = (screen as Screen & {
+    orientation?: { unlock?: () => void };
+  }).orientation;
+  orientation?.unlock?.();
   const app = document.getElementById("app");
   if (!app) return;
+  const cachedEntries = listCachedSessions();
   const cached = loadCachedSession();
-  const hasValid = !!(
-    cached && !isTokenExpired(cached.token)
-  );
-  const cachedAddrTrim = cached?.address?.trim() ?? "";
-  const cachedAddress =
-    cachedAddrTrim.length > 0 ? cachedAddrTrim : null;
+  const hasValid = !!(cached && !isTokenExpired(cached.token));
   unmountMainMenu?.();
   unmountMainMenu = mountMainMenu({
     app,
-    hasValidSession: hasValid,
-    cachedAddress,
+    cachedSessions: cachedEntries.map((entry) => ({
+      address: entry.address,
+      token: entry.token,
+      updatedAt: entry.updatedAt,
+      expiresAtMs: getTokenExpiryMs(entry.token),
+      isExpired: isTokenExpired(entry.token),
+    })),
     authToken:
       hasValid && cached && !isTokenExpired(cached.token) ? cached.token : null,
     devBypass: DEV_CLIENT_BYPASS,
-    onReconnect: () => {
-      const c = loadCachedSession();
+    onReconnect: (address) => {
+      const c = listCachedSessions().find((e) => e.address === address);
       if (!c || isTokenExpired(c.token)) return;
+      saveCachedSession(c.token, c.address);
       enterGame(c.token, c.address);
     },
     onLoggedIn: (token, address) => {
       saveCachedSession(token, address);
       enterGame(token, address);
     },
-    onLogout: () => {
-      clearCachedSession();
+    onLogout: (address) => {
+      if (address) removeCachedSession(address);
+      else clearCachedSession();
       openMainMenu();
     },
   });
@@ -132,7 +142,74 @@ function enterGame(token: string, address: string): void {
 
   const uninstallShell = installInputShell(hudRoot);
 
+  const isCoarsePointer =
+    typeof window !== "undefined" &&
+    window.matchMedia("(pointer: coarse)").matches;
+  const screenOrientation = (screen as Screen & {
+    orientation?: {
+      lock?: (type: string) => Promise<void>;
+      addEventListener?: (type: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions) => void;
+    };
+  }).orientation;
+  let orientationRetryTimer: ReturnType<typeof setInterval> | null = null;
+
+  const lockLandscape = (): void => {
+    if (!isCoarsePointer || !screenOrientation?.lock) return;
+    void screenOrientation.lock("landscape").catch(() => {});
+  };
+
+  const ensureGameLandscape = (): void => {
+    if (!isCoarsePointer || disposed) return;
+    const fullscreenEl = document.fullscreenElement;
+    const isGameFullscreen =
+      !!fullscreenEl &&
+      (fullscreenEl === hudRoot ||
+        fullscreenEl === app ||
+        app.contains(fullscreenEl));
+    if (!isGameFullscreen) {
+      void hudRoot.requestFullscreen().then(lockLandscape).catch(() => {
+        // Some browsers block fullscreen without a gesture; still try lock.
+        lockLandscape();
+      });
+      return;
+    }
+    lockLandscape();
+  };
+
+  const startLandscapeRetries = (): void => {
+    if (!isCoarsePointer) return;
+    if (orientationRetryTimer) clearInterval(orientationRetryTimer);
+    let attempts = 0;
+    orientationRetryTimer = setInterval(() => {
+      attempts += 1;
+      ensureGameLandscape();
+      if (attempts >= 10) {
+        if (orientationRetryTimer) clearInterval(orientationRetryTimer);
+        orientationRetryTimer = null;
+      }
+    }, 700);
+  };
+
+  requestAnimationFrame(() => {
+    ensureGameLandscape();
+    startLandscapeRetries();
+  });
+
   let lastPlayers: import("./types.js").PlayerState[] = [];
+  let totalOnlinePlayers = 0;
+  function roomRealPlayerCount(players: import("./types.js").PlayerState[]): number {
+    return players.filter((p) => !p.displayName.startsWith("[NPC] ")).length;
+  }
+
+  function syncPlayerCountHud(): void {
+    const roomCount = roomRealPlayerCount(lastPlayers);
+    const total = Math.max(totalOnlinePlayers, roomCount);
+    hud.setPlayerCount(total, roomCount);
+  }
+
+  /** From server welcome; aligned with canEditRoomContent. */
+  let roomAllowPlaceBlocks = true;
+  let roomAllowExtraFloor = true;
   let editingTile: { x: number; z: number } | null = null;
   let ws: WebSocket | null = null;
   let connectGen = 0;
@@ -155,7 +232,44 @@ function enterGame(token: string, address: string): void {
   const ac = new AbortController();
   const { signal } = ac;
 
+  document.addEventListener(
+    "fullscreenchange",
+    () => {
+      ensureGameLandscape();
+      startLandscapeRetries();
+    },
+    { signal }
+  );
+  document.addEventListener(
+    "visibilitychange",
+    () => {
+      if (document.hidden) return;
+      ensureGameLandscape();
+      startLandscapeRetries();
+    },
+    { signal }
+  );
+  window.addEventListener(
+    "focus",
+    () => {
+      ensureGameLandscape();
+      startLandscapeRetries();
+    },
+    { signal }
+  );
+  screenOrientation?.addEventListener?.(
+    "change",
+    () => {
+      ensureGameLandscape();
+    },
+    { signal }
+  );
+
   function cleanupResources(): void {
+    if (orientationRetryTimer) {
+      clearInterval(orientationRetryTimer);
+      orientationRetryTimer = null;
+    }
     idleCleanup?.();
     idleCleanup = null;
     cancelActiveNimClaim?.();
@@ -263,15 +377,35 @@ function enterGame(token: string, address: string): void {
       typeof window !== "undefined" &&
       window.matchMedia("(pointer: coarse)").matches;
     const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
-    
-    // In canvas room, hide build UI and force walk mode
-    if (isCanvas) {
+    const canBuild = roomAllowPlaceBlocks && !isCanvas;
+    const canFloor = roomAllowExtraFloor && !isCanvas;
+
+    if (!canBuild && game.getBuildMode()) {
+      game.setBuildMode(false);
+      editingTile = null;
+      hud.hideObjectEditPanel();
+      game.clearSelectedBlock();
+      hud.deactivateSignpostMode();
+    }
+    if (!canFloor && game.getFloorExpandMode()) {
+      game.setFloorExpandMode(false);
+      editingTile = null;
+      hud.hideObjectEditPanel();
+      game.clearSelectedBlock();
+    }
+
+    if (!canBuild && !canFloor) {
       hud.setBuildBlockBarState({
         visible: false,
         ...barStyle,
         placementAdmin: isAdmin(selfAddress),
       });
       hud.setPlayModeState("walk");
+      hud.setStatus(
+        touchUi
+          ? `Connect as ${shortAddr} — mode icons bottom-right`
+          : `Connect as ${shortAddr} — this room is view-only for building`
+      );
       return;
     }
     
@@ -287,7 +421,7 @@ function enterGame(token: string, address: string): void {
       hud.setPlayModeState(playModeFromGame());
       return;
     }
-    if (game.getFloorExpandMode()) {
+    if (game.getFloorExpandMode() && canFloor) {
       hud.setStatus(
         touchUi
           ? "Floor — tap next to walkable space outside the core (pick Walk when done)"
@@ -301,7 +435,7 @@ function enterGame(token: string, address: string): void {
       hud.setPlayModeState(playModeFromGame());
       return;
     }
-    if (game.getBuildMode()) {
+    if (game.getBuildMode() && canBuild) {
       hud.setStatus(
         touchUi
           ? "Build — tap a block to edit, empty tile to place (Walk to exit)"
@@ -320,22 +454,27 @@ function enterGame(token: string, address: string): void {
       ...barStyle,
       placementAdmin: isAdmin(selfAddress),
     });
+    const modeHints: string[] = [];
+    if (canBuild) modeHints.push("B: blocks");
+    if (canFloor) modeHints.push("F: expand walkable floor");
+    const desktopHint =
+      modeHints.length > 0
+        ? modeHints.join(" · ")
+        : "This room is view-only for building";
     hud.setStatus(
       touchUi
         ? `Connect as ${shortAddr} — mode icons bottom-right`
-        : `Connect as ${shortAddr} — B: blocks · F: expand walkable floor`
+        : `Connect as ${shortAddr} — ${desktopHint}`
     );
     hud.setPlayModeState(playModeFromGame());
   }
 
   hud.onPlayModeSelect((mode) => {
     if (document.activeElement === hud.getChatInput()) return;
-    
-    // Canvas room is view-only - disable build and floor modes
+
     const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
-    if (isCanvas && (mode === "build" || mode === "floor")) {
-      return;
-    }
+    if (mode === "build" && (!roomAllowPlaceBlocks || isCanvas)) return;
+    if (mode === "floor" && (!roomAllowExtraFloor || isCanvas)) return;
     
     if (mode === "walk") {
       game.setFloorExpandMode(false);
@@ -596,11 +735,22 @@ function enterGame(token: string, address: string): void {
       game.setSelf(msg.self.address, msg.self.displayName);
       selfAddress = msg.self.address;
 
-      // If entering canvas room, disable build/floor modes
       const isCanvas = normalizeRoomId(msg.roomId) === CANVAS_ROOM_ID;
-      if (isCanvas) {
+      roomAllowPlaceBlocks = msg.allowPlaceBlocks !== false;
+      roomAllowExtraFloor = msg.allowExtraFloor !== false;
+      hud.setRoomEditCaps({
+        allowPlaceBlocks: roomAllowPlaceBlocks,
+        allowExtraFloor: roomAllowExtraFloor,
+      });
+
+      if (isCanvas || !roomAllowPlaceBlocks) {
         game.setBuildMode(false);
+        hud.deactivateSignpostMode();
+      }
+      if (isCanvas || !roomAllowExtraFloor) {
         game.setFloorExpandMode(false);
+      }
+      if (isCanvas || !roomAllowPlaceBlocks) {
         editingTile = null;
         hud.hideObjectEditPanel();
         game.clearSelectedBlock();
@@ -621,10 +771,16 @@ function enterGame(token: string, address: string): void {
       game.syncState(lastPlayers);
       syncHubButton();
       await updateCanvasLeaderboard();
-      
-      // Update player count (excluding NPCs)
-      const realPlayerCount = lastPlayers.filter(p => !p.displayName.startsWith("[NPC] ")).length;
-      hud.setPlayerCount(realPlayerCount);
+      const welcomeOnlineCount =
+        typeof msg.onlinePlayerCount === "number" &&
+        Number.isFinite(msg.onlinePlayerCount)
+          ? msg.onlinePlayerCount
+          : null;
+      totalOnlinePlayers =
+        welcomeOnlineCount !== null
+          ? Math.max(0, Math.floor(welcomeOnlineCount))
+          : roomRealPlayerCount(lastPlayers);
+      syncPlayerCountHud();
       
       console.log(`[Main] Welcome processing complete for room ${msg.roomId}`);
       // Hide loading overlay after everything is loaded
@@ -643,22 +799,24 @@ function enterGame(token: string, address: string): void {
         },
       ];
       game.syncState(lastPlayers);
-      const realPlayerCount = lastPlayers.filter(p => !p.displayName.startsWith("[NPC] ")).length;
-      hud.setPlayerCount(realPlayerCount);
+      syncPlayerCountHud();
       return;
     }
     if (msg.type === "playerLeft") {
       lastPlayers = lastPlayers.filter((p) => p.address !== msg.address);
       game.syncState(lastPlayers);
-      const realPlayerCount = lastPlayers.filter(p => !p.displayName.startsWith("[NPC] ")).length;
-      hud.setPlayerCount(realPlayerCount);
+      syncPlayerCountHud();
       return;
     }
     if (msg.type === "state") {
       lastPlayers = msg.players;
       game.syncState(msg.players);
-      const realPlayerCount = lastPlayers.filter(p => !p.displayName.startsWith("[NPC] ")).length;
-      hud.setPlayerCount(realPlayerCount);
+      syncPlayerCountHud();
+      return;
+    }
+    if (msg.type === "onlineCount") {
+      totalOnlinePlayers = Math.max(0, Math.floor(msg.count));
+      syncPlayerCountHud();
       return;
     }
     if (msg.type === "chat") {
@@ -893,10 +1051,9 @@ function enterGame(token: string, address: string): void {
       }
       if (e.key === "f" || e.key === "F") {
         if (document.activeElement === chatInput) return;
-        
-        // Canvas room is view-only - disable floor expand mode
+
         const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
-        if (isCanvas) return;
+        if (isCanvas || !roomAllowExtraFloor) return;
         
         game.setFloorExpandMode(!game.getFloorExpandMode());
         syncBuildHud();
@@ -904,10 +1061,9 @@ function enterGame(token: string, address: string): void {
       }
       if (e.key === "b" || e.key === "B") {
         if (document.activeElement === chatInput) return;
-        
-        // Canvas room is view-only - disable build mode
+
         const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
-        if (isCanvas) return;
+        if (isCanvas || !roomAllowPlaceBlocks) return;
         
         const next = !game.getBuildMode();
         game.setBuildMode(next);

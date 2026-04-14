@@ -377,14 +377,22 @@ body {
 
 /* Signboard tooltip */
 .signboard-tooltip {
-  background: rgba(0, 0, 0, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-  padding: 0.75rem;
-  margin-top: 1rem;
-  max-width: 300px;
+  position: relative;
+  flex: 0 1 auto;
+  align-self: flex-end;
+  width: min(280px, min(42vw, calc(100vw - 200px)));
+  max-width: min(280px, calc(100vw - 200px));
+  background: rgba(15, 17, 23, 0.94);
+  border: 1px solid #3d465a;
+  border-radius: 8px;
+  padding: 8px 10px;
   backdrop-filter: blur(8px);
   pointer-events: auto;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  line-height: 1.35;
+  margin-top: 0;
+  z-index: 6;
 }
 
 .signboard-tooltip__header {
@@ -440,10 +448,22 @@ body {
 }
 
 .signboard-tooltip__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
   font-size: 0.85rem;
   color: rgba(255, 255, 255, 0.6);
-  text-align: right;
   font-style: italic;
+}
+
+.signboard-tooltip__identicon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  flex-shrink: 0;
 }
 
 .signboard-tooltip__author {
@@ -866,6 +886,17 @@ body {
   border-color: #34d399;
   color: #a7f3d0;
   background: rgba(6, 78, 59, 0.38);
+}
+
+.hud-mode-segment__btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.hud-mode-segment__btn:disabled:hover {
+  background: rgba(15, 17, 23, 0.88);
+  color: #c8ceda;
 }
 
 /* Touch: no right rail — hub / panels top-right; mode row absolute bottom-right of letterbox (not viewport) */
@@ -1913,6 +1944,32 @@ body {
   pointer-events: none;
 }
 
+@media (pointer: fine) {
+  .chat-panel__hover-zone {
+    width: 100%;
+    pointer-events: auto;
+  }
+
+  .chat-panel .chat-log {
+    transition:
+      max-height 0.35s ease,
+      opacity 0.28s ease,
+      padding 0.2s ease,
+      margin 0.2s ease,
+      border-width 0.2s ease;
+  }
+
+  .chat-panel--log-collapsed .chat-log {
+    max-height: 0 !important;
+    opacity: 0;
+    margin: 0;
+    padding: 0;
+    border-width: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+}
+
 .chat-tabs {
   display: flex;
   gap: 6px;
@@ -2321,7 +2378,16 @@ body {
   align-items: center;
   justify-content: center;
   padding: 24px 16px;
-  background-color: #050505;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(252, 135, 2, 0.5) 0%,
+      rgba(252, 135, 2, 0.22) 14%,
+      #050505 38%,
+      #050505 62%,
+      rgba(252, 135, 2, 0.22) 86%,
+      rgba(252, 135, 2, 0.5) 100%
+    );
   overflow: hidden;
 }
 
@@ -2461,38 +2527,117 @@ body {
 }
 
 /* Author `display: flex` beats `[hidden]`’s UA default (see .build-block-bar__swatches-all[hidden]). */
-.main-menu__user[hidden],
+.main-menu__cached[hidden],
 .main-menu__welcome[hidden] {
   display: none !important;
 }
 
-.main-menu__user {
+.main-menu__cached {
   margin: 0 auto 20px;
-  padding: 16px 0 20px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  padding: 8px 0 12px;
+  width: min(520px, 100%);
 }
 
-.main-menu__address {
-  margin: 10px 0 0;
-  padding: 0 8px;
-  font-size: 13px;
+.main-menu__cached-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.main-menu__cached-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(61, 70, 90, 0.7);
+  background: rgba(15, 17, 23, 0.74);
+}
+
+.main-menu__cached-identicon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(15, 17, 23, 0.9);
+  object-fit: cover;
+}
+
+.main-menu__cached-details {
+  min-width: 0;
+  text-align: left;
+}
+
+.main-menu__cached-address {
+  font-size: 12px;
   line-height: 1.35;
   font-family: "Fira Mono", ui-monospace, monospace;
   color: rgba(226, 232, 240, 0.88);
-  letter-spacing: 0.04em;
-  max-width: min(100%, 22rem);
+  letter-spacing: 0.03em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.main-menu__identicon-wrap {
-  position: relative;
-  width: 56px;
-  height: 56px;
+.main-menu__cached-expiry {
+  margin-top: 2px;
+  font-size: 11px;
+  color: rgba(203, 213, 225, 0.68);
+}
+
+.main-menu__cached-expiry--expired {
+  color: #fca5a5;
+}
+
+.main-menu__cached-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.main-menu__cached-btn {
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background: rgba(14, 116, 144, 0.2);
+  color: #bae6fd;
+  border-radius: 6px;
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.main-menu__cached-btn:hover:not(:disabled) {
+  background: rgba(14, 116, 144, 0.34);
+  border-color: rgba(56, 189, 248, 0.65);
+}
+
+.main-menu__cached-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.main-menu__cached-forget {
+  border: 1px solid rgba(248, 113, 113, 0.7);
+  background: rgba(127, 29, 29, 0.5);
+  color: #fecaca;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.main-menu__cached-forget:hover:not(:disabled) {
+  background: rgba(153, 27, 27, 0.74);
+}
+
+.main-menu__cached-forget:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Tap saved account: Nimiq Style — primary identicon control */

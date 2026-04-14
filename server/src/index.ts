@@ -19,6 +19,7 @@ import {
 import { flushCanvasClaimsSync } from "./canvasCanvas.js";
 import { getTopPlayers } from "./canvasCanvas.js";
 import { flushSignboardsSync } from "./signboards.js";
+import { installSwarmErrorForwarder } from "./swarmLogForwarder.js";
 import {
   flushNimPayoutQueueSync,
   getNimPayoutWalletBalanceLuna,
@@ -27,6 +28,10 @@ import {
 } from "./nimPayout/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const SWARM_ERROR_LOG_PATH =
+  process.env.SWARM_ERROR_LOG_PATH ??
+  path.join(__dirname, "../data/swarm-errors.log");
+installSwarmErrorForwarder(SWARM_ERROR_LOG_PATH);
 
 const PORT = Number(process.env.PORT) || 3001;
 /** Bind address: `0.0.0.0` accepts connections on all interfaces (LAN + localhost). Use `127.0.0.1` for local-only. */

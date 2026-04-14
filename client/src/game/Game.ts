@@ -1718,7 +1718,11 @@ export class Game {
     if (!Game.canShowPointerHoverTiles()) {
       this.tileHighlight.visible = false;
       this.blockTopHighlight.visible = false;
-      this.signboardHoverHandler?.(null);
+      // Touch devices do not use hover targeting; keep any tapped signboard tooltip
+      // stable instead of clearing it on every post-tap pointermove jitter.
+      if (e.pointerType !== "touch") {
+        this.signboardHoverHandler?.(null);
+      }
       return;
     }
     if (this.floorExpandMode) {

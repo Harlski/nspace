@@ -86,6 +86,11 @@ export function createHud(
   /** Walk = move; Build = place blocks; Floor = expand walkable tiles. */
   onPlayModeSelect: (fn: (mode: "walk" | "build" | "floor") => void) => void;
   setPlayModeState: (mode: "walk" | "build" | "floor") => void;
+  /** Per-room edit caps from server welcome; disables Build / Floor when false. */
+  setRoomEditCaps: (caps: {
+    allowPlaceBlocks: boolean;
+    allowExtraFloor: boolean;
+  }) => void;
   /** Rotate ramp “toward” (placement bar or object panel when ramp is on). */
   rotateRampToward: (delta: -1 | 1) => boolean;
   showObjectEditPanel: (opts: {
@@ -135,7 +140,7 @@ export function createHud(
   setCanvasLeaderboardVisible: (visible: boolean) => void;
   updateCanvasLeaderboard: (leaders: Array<{ address: string; count: number }>) => void;
   setCanvasTimer: (timeRemaining: number) => void;
-  setPlayerCount: (count: number) => void;
+  setPlayerCount: (count: number, roomCount?: number) => void;
   setNimWalletStatus: (status: string) => void;
   setLoadingVisible: (visible: boolean) => void;
   /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
@@ -237,7 +242,7 @@ export function createHud(
       <use xlink:href="/nimiq-style.icons.svg#nq-view"/>
     </svg>
     <span class="hud-player-count__number">0</span>
-    <span class="hud-player-count__tooltip" role="tooltip">Active players in this room right now (count includes you).</span>
+    <span class="hud-player-count__tooltip" role="tooltip">Online now: 0 total · 0 in this room.</span>
   `;
   const nimBalance = document.createElement("div");
   nimBalance.className = "hud-nim-balance";
@@ -328,6 +333,7 @@ export function createHud(
     </div>
     <div class="signboard-tooltip__message"></div>
     <div class="signboard-tooltip__footer">
+      <img class="signboard-tooltip__identicon" alt="" width="18" height="18" hidden />
       <span class="signboard-tooltip__author"></span>
     </div>
   `;
@@ -357,7 +363,6 @@ export function createHud(
 
   leftStack.appendChild(debugPanel);
   leftStack.appendChild(canvasLeaderboard);
-  leftStack.appendChild(signboardTooltip);
   
   // Close button for signboard tooltip
   const signboardCloseBtn = signboardTooltip.querySelector(".signboard-tooltip__close");
@@ -422,13 +427,30 @@ export function createHud(
   modeSegment.appendChild(buildModeBtn);
   modeSegment.appendChild(floorModeBtn);
 
+  let roomAllowPlaceBlocks = true;
+  let roomAllowExtraFloor = true;
+  function applyRoomEditCaps(): void {
+    buildModeBtn.disabled = !roomAllowPlaceBlocks;
+    floorModeBtn.disabled = !roomAllowExtraFloor;
+    buildModeBtn.title = roomAllowPlaceBlocks
+      ? "Build — place and edit blocks (B)"
+      : "Building is disabled in this room";
+    floorModeBtn.title = roomAllowExtraFloor
+      ? "Floor — expand walkable floor (F)"
+      : "Floor editing is disabled in this room";
+  }
+
   topActions.appendChild(modeSegment);
+  // Keep signboard reading in the same top-right action stack as object edit.
+  topActions.appendChild(signboardTooltip);
   topBar.appendChild(returnHubBtn);
   topBar.appendChild(topActions);
   ui.appendChild(topBar);
 
   const chatPanel = document.createElement("div");
   chatPanel.className = "chat-panel";
+  const chatHoverZone = document.createElement("div");
+  chatHoverZone.className = "chat-panel__hover-zone";
   const chatTabs = document.createElement("div");
   chatTabs.className = "chat-tabs";
   const worldTabBtn = document.createElement("button");
@@ -446,9 +468,75 @@ export function createHud(
   const systemChatLog = document.createElement("div");
   systemChatLog.className = "chat-log chat-log--system";
   systemChatLog.hidden = true;
-  chatPanel.appendChild(chatTabs);
-  chatPanel.appendChild(worldChatLog);
-  chatPanel.appendChild(systemChatLog);
+  chatHoverZone.appendChild(chatTabs);
+  chatHoverZone.appendChild(worldChatLog);
+  chatHoverZone.appendChild(systemChatLog);
+  chatPanel.appendChild(chatHoverZone);
+
+  const CHAT_LOG_IDLE_MS = 45_000;
+  const CHAT_LOG_LEAVE_HIDE_MS = 1800;
+  let chatLogIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  let chatLogLeaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastChatLineAt = Date.now();
+  let pointerInChatHoverZone = false;
+  const finePointerMql =
+    typeof window !== "undefined"
+      ? window.matchMedia("(pointer: fine)")
+      : null;
+
+  function clearChatLogCollapseTimers(): void {
+    if (chatLogIdleTimer) {
+      clearTimeout(chatLogIdleTimer);
+      chatLogIdleTimer = null;
+    }
+    if (chatLogLeaveTimer) {
+      clearTimeout(chatLogLeaveTimer);
+      chatLogLeaveTimer = null;
+    }
+  }
+
+  function updateChatLogCollapsed(): void {
+    if (!finePointerMql?.matches) return;
+    if (document.activeElement === chatInput || pointerInChatHoverZone) {
+      chatPanel.classList.remove("chat-panel--log-collapsed");
+      return;
+    }
+    if (Date.now() - lastChatLineAt >= CHAT_LOG_IDLE_MS) {
+      chatPanel.classList.add("chat-panel--log-collapsed");
+    }
+  }
+
+  function armChatLogIdleCollapse(): void {
+    if (!finePointerMql?.matches) return;
+    if (chatLogIdleTimer) clearTimeout(chatLogIdleTimer);
+    chatLogIdleTimer = setTimeout(() => {
+      chatLogIdleTimer = null;
+      updateChatLogCollapsed();
+    }, CHAT_LOG_IDLE_MS);
+  }
+
+  function onChatPointerEnter(): void {
+    if (!finePointerMql?.matches) return;
+    pointerInChatHoverZone = true;
+    if (chatLogLeaveTimer) {
+      clearTimeout(chatLogLeaveTimer);
+      chatLogLeaveTimer = null;
+    }
+    chatPanel.classList.remove("chat-panel--log-collapsed");
+  }
+
+  function onChatPointerLeave(): void {
+    if (!finePointerMql?.matches) return;
+    pointerInChatHoverZone = false;
+    if (chatLogLeaveTimer) clearTimeout(chatLogLeaveTimer);
+    chatLogLeaveTimer = setTimeout(() => {
+      chatLogLeaveTimer = null;
+      updateChatLogCollapsed();
+    }, CHAT_LOG_LEAVE_HIDE_MS);
+  }
+
+  chatHoverZone.addEventListener("pointerenter", onChatPointerEnter);
+  chatHoverZone.addEventListener("pointerleave", onChatPointerLeave);
 
   let activeChatTab: "world" | "system" = "world";
   const setChatTab = (tab: "world" | "system"): void => {
@@ -497,6 +585,20 @@ export function createHud(
   chatInput.autocomplete = "off";
   chatInput.maxLength = 256;
   chatRow.appendChild(chatInput);
+
+  chatInput.addEventListener("focus", () => {
+    if (!finePointerMql?.matches) return;
+    chatPanel.classList.remove("chat-panel--log-collapsed");
+    clearChatLogCollapseTimers();
+  });
+  chatInput.addEventListener("blur", () => {
+    if (!finePointerMql?.matches) return;
+    armChatLogIdleCollapse();
+    queueMicrotask(() => updateChatLogCollapsed());
+  });
+  if (finePointerMql?.matches) {
+    armChatLogIdleCollapse();
+  }
 
   const lobbyConfirm = document.createElement("div");
   lobbyConfirm.className = "hud-lobby-confirm";
@@ -1461,6 +1563,10 @@ export function createHud(
       if (isSystem && activeChatTab !== "system") {
         systemTabBtn.classList.add("chat-tabs__btn--has-unread");
       }
+      lastChatLineAt = Date.now();
+      chatPanel.classList.remove("chat-panel--log-collapsed");
+      clearChatLogCollapseTimers();
+      armChatLogIdleCollapse();
     },
     getChatInput: () => chatInput,
     onFullscreenToggle(fn: () => void) {
@@ -1477,6 +1583,14 @@ export function createHud(
     },
     onPlayModeSelect(fn: (mode: "walk" | "build" | "floor") => void) {
       playModeHandler = fn;
+    },
+    setRoomEditCaps(caps: {
+      allowPlaceBlocks: boolean;
+      allowExtraFloor: boolean;
+    }) {
+      roomAllowPlaceBlocks = caps.allowPlaceBlocks;
+      roomAllowExtraFloor = caps.allowExtraFloor;
+      applyRoomEditCaps();
     },
     setPlayModeState(mode: "walk" | "build" | "floor") {
       walkModeBtn.classList.toggle(
@@ -1980,10 +2094,19 @@ export function createHud(
     setLoadingVisible(visible: boolean) {
       loadingOverlay.hidden = !visible;
     },
-    setPlayerCount(count: number) {
+    setPlayerCount(count: number, roomCount?: number) {
       const countEl = playerCount.querySelector(".hud-player-count__number");
+      const tipEl = playerCount.querySelector(
+        ".hud-player-count__tooltip"
+      ) as HTMLElement | null;
       if (countEl) {
         countEl.textContent = String(count);
+      }
+      if (tipEl) {
+        const room = Number.isFinite(roomCount as number)
+          ? Math.max(0, Math.floor(roomCount as number))
+          : count;
+        tipEl.textContent = `Online now: ${count} total · ${room} in this room.`;
       }
     },
     setNimWalletStatus(status: string) {
@@ -2049,6 +2172,9 @@ export function createHud(
         return;
       }
       const messageEl = signboardTooltip.querySelector(".signboard-tooltip__message");
+      const identiconEl = signboardTooltip.querySelector(
+        ".signboard-tooltip__identicon"
+      ) as HTMLImageElement | null;
       const authorEl = signboardTooltip.querySelector(".signboard-tooltip__author");
       if (messageEl) {
         messageEl.textContent = signboard.message;
@@ -2061,9 +2187,31 @@ export function createHud(
         authorEl.textContent = `— ${formatted}`;
         (authorEl as HTMLElement).title = addr;
       }
+      if (identiconEl) {
+        const addr = signboard.createdBy;
+        identiconEl.hidden = false;
+        identiconEl.removeAttribute("src");
+        identiconEl.dataset.address = addr;
+        void (async () => {
+          try {
+            const { identiconDataUrl } = await import("../game/identiconTexture.js");
+            const dataUrl = await identiconDataUrl(addr);
+            // Drop stale async result if tooltip changed to another signboard.
+            if (identiconEl.dataset.address !== addr) return;
+            identiconEl.src = dataUrl;
+          } catch {
+            if (identiconEl.dataset.address === addr) {
+              identiconEl.hidden = true;
+            }
+          }
+        })();
+      }
       signboardTooltip.hidden = false;
     },
     destroy() {
+      clearChatLogCollapseTimers();
+      chatHoverZone.removeEventListener("pointerenter", onChatPointerEnter);
+      chatHoverZone.removeEventListener("pointerleave", onChatPointerLeave);
       document.removeEventListener("fullscreenchange", onFullscreenChange);
       document.removeEventListener("click", closeHudTooltips);
       document.removeEventListener("pointerdown", closeHudAdvancedPopoversOnOutside);
