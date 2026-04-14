@@ -714,6 +714,39 @@ body {
   text-align: center;
 }
 
+.hud-player-join-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background: rgba(14, 116, 144, 0.22);
+  color: #e0f2fe;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  pointer-events: none;
+}
+
+.hud-player-join-toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hud-player-join-toast__identicon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(15, 17, 23, 0.85);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
 .hud-player-count__tooltip {
   position: absolute;
   right: 0;

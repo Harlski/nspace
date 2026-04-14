@@ -141,6 +141,7 @@ export function createHud(
   updateCanvasLeaderboard: (leaders: Array<{ address: string; count: number }>) => void;
   setCanvasTimer: (timeRemaining: number) => void;
   setPlayerCount: (count: number, roomCount?: number) => void;
+  showPlayerJoinedToast: (address: string) => void;
   setNimWalletStatus: (status: string) => void;
   setLoadingVisible: (visible: boolean) => void;
   /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
@@ -261,6 +262,20 @@ export function createHud(
   const nimBalanceValue = nimBalance.querySelector(
     ".hud-nim-balance__value"
   ) as HTMLElement | null;
+  const playerJoinToast = document.createElement("div");
+  playerJoinToast.className = "hud-player-join-toast";
+  playerJoinToast.hidden = true;
+  playerJoinToast.innerHTML = `
+    <img class="hud-player-join-toast__identicon" alt="" width="18" height="18" hidden />
+    <span class="hud-player-join-toast__text"></span>
+  `;
+  const playerJoinToastText = playerJoinToast.querySelector(
+    ".hud-player-join-toast__text"
+  ) as HTMLElement | null;
+  const playerJoinToastIdenticon = playerJoinToast.querySelector(
+    ".hud-player-join-toast__identicon"
+  ) as HTMLImageElement | null;
+  let playerJoinToastTimer: ReturnType<typeof setTimeout> | null = null;
   const toggleNimHint = (show: boolean): void => {
     nimBalance.classList.toggle("hud-nim-balance--show-tip", show);
   };
@@ -299,6 +314,7 @@ export function createHud(
   });
   document.addEventListener("click", closeHudTooltips);
   
+  topToolbar.appendChild(playerJoinToast);
   topToolbar.appendChild(fsBtn);
   topToolbar.appendChild(playerCount);
   topToolbar.appendChild(nimBalance);
@@ -2109,6 +2125,41 @@ export function createHud(
         tipEl.textContent = `Online now: ${count} total · ${room} in this room.`;
       }
     },
+    showPlayerJoinedToast(address: string) {
+      const normalized = address.replace(/\s+/g, "");
+      const compact =
+        normalized.length > 8
+          ? `${normalized.slice(0, 4)}${normalized.slice(-4)}`
+          : normalized;
+      if (playerJoinToastText) {
+        playerJoinToastText.textContent = `${compact} has entered the space`;
+      }
+      if (playerJoinToastIdenticon) {
+        playerJoinToastIdenticon.hidden = false;
+        playerJoinToastIdenticon.removeAttribute("src");
+        playerJoinToastIdenticon.dataset.address = address;
+        void (async () => {
+          try {
+            const { identiconDataUrl } = await import("../game/identiconTexture.js");
+            const url = await identiconDataUrl(address);
+            if (playerJoinToastIdenticon.dataset.address !== address) return;
+            playerJoinToastIdenticon.src = url;
+          } catch {
+            if (playerJoinToastIdenticon.dataset.address === address) {
+              playerJoinToastIdenticon.hidden = true;
+            }
+          }
+        })();
+      }
+      playerJoinToast.hidden = false;
+      playerJoinToast.classList.add("hud-player-join-toast--visible");
+      if (playerJoinToastTimer) clearTimeout(playerJoinToastTimer);
+      playerJoinToastTimer = setTimeout(() => {
+        playerJoinToast.classList.remove("hud-player-join-toast--visible");
+        playerJoinToast.hidden = true;
+        playerJoinToastTimer = null;
+      }, 2600);
+    },
     setNimWalletStatus(status: string) {
       if (nimBalanceValue) {
         nimBalanceValue.textContent = status;
@@ -2209,6 +2260,10 @@ export function createHud(
       signboardTooltip.hidden = false;
     },
     destroy() {
+      if (playerJoinToastTimer) {
+        clearTimeout(playerJoinToastTimer);
+        playerJoinToastTimer = null;
+      }
       clearChatLogCollapseTimers();
       chatHoverZone.removeEventListener("pointerenter", onChatPointerEnter);
       chatHoverZone.removeEventListener("pointerleave", onChatPointerLeave);

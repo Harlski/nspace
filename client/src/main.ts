@@ -798,6 +798,12 @@ function enterGame(token: string, address: string): void {
           vz: 0,
         },
       ];
+      if (
+        msg.player.address !== selfAddress &&
+        !msg.player.displayName.startsWith("[NPC] ")
+      ) {
+        hud.showPlayerJoinedToast(msg.player.address);
+      }
       game.syncState(lastPlayers);
       syncPlayerCountHud();
       return;
