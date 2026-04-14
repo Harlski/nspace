@@ -180,9 +180,19 @@ function enterGame(token: string, address: string): void {
 
   function disposeToMenu(): void {
     if (disposed) return;
+    const appEl = document.getElementById("app");
+    const restoreFullscreen =
+      !!appEl &&
+      !!document.fullscreenElement &&
+      appEl.contains(document.fullscreenElement);
     disposed = true;
     cleanupResources();
     openMainMenu();
+    if (restoreFullscreen && appEl) {
+      requestAnimationFrame(() => {
+        void appEl.requestFullscreen().catch(() => {});
+      });
+    }
   }
 
   const syncHubButton = (): void => {
@@ -256,7 +266,11 @@ function enterGame(token: string, address: string): void {
     
     // In canvas room, hide build UI and force walk mode
     if (isCanvas) {
-      hud.setBuildBlockBarState({ visible: false, ...barStyle });
+      hud.setBuildBlockBarState({
+        visible: false,
+        ...barStyle,
+        placementAdmin: isAdmin(selfAddress),
+      });
       hud.setPlayModeState("walk");
       return;
     }
@@ -265,7 +279,11 @@ function enterGame(token: string, address: string): void {
       hud.setStatus(
         "Choose an empty tile for the new position (Esc to cancel)"
       );
-      hud.setBuildBlockBarState({ visible: false, ...barStyle });
+      hud.setBuildBlockBarState({
+        visible: false,
+        ...barStyle,
+        placementAdmin: isAdmin(selfAddress),
+      });
       hud.setPlayModeState(playModeFromGame());
       return;
     }
@@ -275,7 +293,11 @@ function enterGame(token: string, address: string): void {
           ? "Floor — tap next to walkable space outside the core (pick Walk when done)"
           : "Expand floor — click outside the core room, next to walkable space (F to exit). Shift+click removes an extra tile."
       );
-      hud.setBuildBlockBarState({ visible: false, ...barStyle });
+      hud.setBuildBlockBarState({
+        visible: false,
+        ...barStyle,
+        placementAdmin: isAdmin(selfAddress),
+      });
       hud.setPlayModeState(playModeFromGame());
       return;
     }
@@ -285,14 +307,22 @@ function enterGame(token: string, address: string): void {
           ? "Build — tap a block to edit, empty tile to place (Walk to exit)"
           : "Build mode — click a block to edit, empty floor to place (B to exit)"
       );
-      hud.setBuildBlockBarState({ visible: true, ...barStyle });
+      hud.setBuildBlockBarState({
+        visible: true,
+        ...barStyle,
+        placementAdmin: isAdmin(selfAddress),
+      });
       hud.setPlayModeState(playModeFromGame());
       return;
     }
-    hud.setBuildBlockBarState({ visible: false, ...barStyle });
+    hud.setBuildBlockBarState({
+      visible: false,
+      ...barStyle,
+      placementAdmin: isAdmin(selfAddress),
+    });
     hud.setStatus(
       touchUi
-        ? `Connect as ${shortAddr} — Walk / Build / Floor (right)`
+        ? `Connect as ${shortAddr} — mode icons bottom-right`
         : `Connect as ${shortAddr} — B: blocks · F: expand walkable floor`
     );
     hud.setPlayModeState(playModeFromGame());
@@ -529,6 +559,8 @@ function enterGame(token: string, address: string): void {
           sendRemoveObstacle(socket, x, z);
           editingTile = null;
           hud.hideObjectEditPanel();
+          game.clearSelectedBlock();
+          syncBuildHud();
         },
         onMove: () => {
           game.beginReposition(x, z);
@@ -539,13 +571,17 @@ function enterGame(token: string, address: string): void {
         onClose: () => {
           editingTile = null;
           hud.hideObjectEditPanel();
+          game.clearSelectedBlock();
+          syncBuildHud();
         },
       });
+      syncBuildHud();
     });
   };
 
   const handleServerMessage = async (msg: ServerMessage): Promise<void> => {
     if (msg.type === "welcome") {
+      hud.setReconnectOffer(false);
       console.log(`[Main] Received welcome message for room: ${msg.roomId}, obstacles: ${msg.obstacles.length}, extraFloor: ${msg.extraFloorTiles.length}`);
       hud.setLoadingVisible(true);
       
@@ -593,6 +629,7 @@ function enterGame(token: string, address: string): void {
       console.log(`[Main] Welcome processing complete for room ${msg.roomId}`);
       // Hide loading overlay after everything is loaded
       hud.setLoadingVisible(false);
+      syncBuildHud();
       return;
     }
     if (msg.type === "playerJoined") {
@@ -760,7 +797,8 @@ function enterGame(token: string, address: string): void {
           location.reload();
           return;
         }
-        hud.setStatus("Disconnected — refresh to reconnect");
+        hud.setReconnectOffer(true);
+        hud.setStatus("Disconnected — tap Reconnect or reload");
       },
       spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : undefined
     );
@@ -789,6 +827,13 @@ function enterGame(token: string, address: string): void {
 
   hud.onReturnToLobby(() => {
     disposeToMenu();
+  });
+
+  hud.onReconnect(() => {
+    if (disposed) return;
+    hud.setReconnectOffer(false);
+    hud.setStatus("Connecting…");
+    connectToRoom(normalizeRoomId(game.getRoomId()));
   });
 
   connectToRoom(ROOM_ID);

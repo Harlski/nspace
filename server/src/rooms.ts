@@ -55,6 +55,7 @@ import {
   getSignboardAt,
   getSignboardsForRoom,
   loadSignboards,
+  SIGNBOARD_MESSAGE_MAX_LEN,
   updateSignboard,
   updateSignboardPosition,
 } from "./signboards.js";
@@ -2477,7 +2478,7 @@ export function addClient(
       const tz = Number(msg.z);
       const message = String(msg.message ?? "").trim();
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
-      if (!message || message.length > 500) {
+      if (!message || message.length > SIGNBOARD_MESSAGE_MAX_LEN) {
         ws.send(JSON.stringify({ type: "error", code: "invalid_message" }));
         return;
       }
@@ -2559,7 +2560,7 @@ export function addClient(
       }
       const signboardId = String(msg.signboardId ?? "");
       const message = String(msg.message ?? "").trim();
-      if (!signboardId || !message || message.length > 500) {
+      if (!signboardId || !message || message.length > SIGNBOARD_MESSAGE_MAX_LEN) {
         ws.send(JSON.stringify({ type: "error", code: "invalid_message" }));
         return;
       }

@@ -10,6 +10,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
 const SIGNBOARDS_FILE = path.join(DATA_DIR, "signboards.json");
 
+/** Max UTF-16 code units for signboard message text (client UI matches). */
+export const SIGNBOARD_MESSAGE_MAX_LEN = 64;
+
 export type Signboard = {
   id: string; // unique ID (UUID or timestamp-based)
   roomId: string;

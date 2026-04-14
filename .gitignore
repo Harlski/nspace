@@ -6,7 +6,7 @@ dist
 .env.production
 *.log
 .DS_Store
-
+TODO.md
 # Server-persisted room state (obstacles, extra floor, spawns)
 server/data/
 

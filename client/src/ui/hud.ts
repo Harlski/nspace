@@ -1,6 +1,8 @@
 import {
   BLOCK_COLOR_COUNT,
   BLOCK_COLOR_PALETTE,
+  hslToRgb,
+  nearestPaletteColorIdFromRgb,
 } from "../game/blockStyle.js";
 import type { ObstacleProps } from "../net/ws.js";
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../game/constants.js";
@@ -9,6 +11,42 @@ import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 function cssHex(n: number): string {
   return `#${n.toString(16).padStart(6, "0")}`;
 }
+
+function estimateHueDegFromRgb(r255: number, g255: number, b255: number): number {
+  const r = r255 / 255;
+  const g = g255 / 255;
+  const b = b255 / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  if (max === min) return 0;
+  const d = max - min;
+  let h = 0;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = (b - r) / d + 2 / 6;
+  else h = (r - g) / d + 4 / 6;
+  return (h * 360 + 360) % 360;
+}
+
+function estimateHueFromPaletteId(id: number): number {
+  const c = BLOCK_COLOR_PALETTE[
+    Math.max(0, Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(id)))
+  ]!;
+  const r = (c >> 16) & 0xff;
+  const g = (c >> 8) & 0xff;
+  const b = c & 0xff;
+  return estimateHueDegFromRgb(r, g, b);
+}
+
+function obstacleShapeLabel(ramp: boolean, hex: boolean): string {
+  if (ramp) return "Ramp";
+  if (hex) return "Hexagon";
+  return "Cube";
+}
+
+/** Inline SVGs for Walk / Build / Floor mode (circle buttons, labels via aria). */
+const HUD_MODE_ICON_WALK = `<svg class="hud-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="9" cy="17" rx="3.2" ry="5" fill="currentColor"/><ellipse cx="15.5" cy="15" rx="2.6" ry="4.2" fill="currentColor"/></svg>`;
+const HUD_MODE_ICON_BUILD = `<svg class="hud-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="6" width="14" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="1.8" d="M5 10h14M5 14h8m3 0h6"/></svg>`;
+const HUD_MODE_ICON_FLOOR = `<svg class="hud-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="8" height="8" rx="0.5" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 4v3M12 17v3M4 12h3M17 12h3"/></svg>`;
 
 function makeColorSwatchButton(id: number): HTMLButtonElement {
   const b = document.createElement("button");
@@ -30,6 +68,8 @@ export type BuildBlockBarState = {
   colorId: number;
   // Experimental features
   claimable?: boolean;
+  /** When false, mining / claimable UI is hidden (must match server admin list). */
+  placementAdmin?: boolean;
 };
 
 export function createHud(
@@ -75,6 +115,7 @@ export function createHud(
       ramp?: boolean;
       rampDir?: number;
       colorId?: number;
+      claimable?: boolean;
     }) => void
   ) => void;
   setBuildBlockBarState: (state: BuildBlockBarState) => void;
@@ -101,6 +142,9 @@ export function createHud(
   setNimClaimProgress: (
     state: null | { progress: number; adjacent: boolean }
   ) => void;
+  /** Show or hide the in-game Reconnect control (e.g. after WebSocket loss). */
+  setReconnectOffer: (visible: boolean) => void;
+  onReconnect: (fn: () => void) => void;
   destroy: () => void;
 } {
   root.innerHTML = "";
@@ -138,12 +182,23 @@ export function createHud(
   brand.appendChild(nimiqSpan);
   brand.appendChild(spaceSpan);
 
+  const statusRow = document.createElement("div");
+  statusRow.className = "hud-status-row";
   const status = document.createElement("div");
   status.className = "hud-status";
   status.textContent = "";
+  const reconnectBtn = document.createElement("button");
+  reconnectBtn.type = "button";
+  reconnectBtn.className = "hud-reconnect-btn";
+  reconnectBtn.textContent = "Reconnect";
+  reconnectBtn.hidden = true;
+  reconnectBtn.setAttribute("aria-label", "Reconnect to server");
+  reconnectBtn.title = "Try connecting again without leaving the game";
+  statusRow.appendChild(status);
+  statusRow.appendChild(reconnectBtn);
 
   topStrip.appendChild(brand);
-  topStrip.appendChild(status);
+  topStrip.appendChild(statusRow);
 
   const topToolbar = document.createElement("div");
   topToolbar.className = "hud-top-toolbar";
@@ -156,19 +211,33 @@ export function createHud(
   const fsBtn = document.createElement("button");
   fsBtn.type = "button";
   fsBtn.className = "hud-fs hud-icon-btn";
-  fsBtn.textContent = "[ ]";
-  fsBtn.setAttribute("aria-label", "Fullscreen");
-  fsBtn.title = "Fullscreen";
-  
+  const FS_ENTER_SVG = `<svg class="hud-fs__icon" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>`;
+  const FS_EXIT_SVG = `<svg class="hud-fs__icon" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>`;
+  const setFsBtnVisual = (): void => {
+    const on = !!document.fullscreenElement;
+    fsBtn.innerHTML = on ? FS_EXIT_SVG : FS_ENTER_SVG;
+    fsBtn.classList.toggle("hud-fs--nudge", !on);
+    fsBtn.setAttribute("aria-label", on ? "Exit fullscreen" : "Enter fullscreen");
+    fsBtn.title = on ? "Exit fullscreen" : "Enter fullscreen";
+  };
+  setFsBtnVisual();
+  const onFullscreenChange = (): void => {
+    setFsBtnVisual();
+  };
+  document.addEventListener("fullscreenchange", onFullscreenChange);
+
   // Player count indicator
   const playerCount = document.createElement("div");
   playerCount.className = "hud-player-count";
-  playerCount.title = "Players online";
+  playerCount.setAttribute("role", "button");
+  playerCount.setAttribute("tabindex", "0");
+  playerCount.setAttribute("aria-label", "Active players");
   playerCount.innerHTML = `
     <svg class="nq-icon">
       <use xlink:href="/nimiq-style.icons.svg#nq-view"/>
     </svg>
     <span class="hud-player-count__number">0</span>
+    <span class="hud-player-count__tooltip" role="tooltip">Active players in this room right now (count includes you).</span>
   `;
   const nimBalance = document.createElement("div");
   nimBalance.className = "hud-nim-balance";
@@ -190,6 +259,13 @@ export function createHud(
   const toggleNimHint = (show: boolean): void => {
     nimBalance.classList.toggle("hud-nim-balance--show-tip", show);
   };
+  const togglePlayerTip = (show: boolean): void => {
+    playerCount.classList.toggle("hud-player-count--show-tip", show);
+  };
+  const closeHudTooltips = (): void => {
+    toggleNimHint(false);
+    togglePlayerTip(false);
+  };
   nimBalance.addEventListener("mouseenter", () => toggleNimHint(true));
   nimBalance.addEventListener("mouseleave", () => toggleNimHint(false));
   nimBalance.addEventListener("focus", () => toggleNimHint(true));
@@ -198,7 +274,25 @@ export function createHud(
     e.stopPropagation();
     toggleNimHint(!nimBalance.classList.contains("hud-nim-balance--show-tip"));
   });
-  document.addEventListener("click", () => toggleNimHint(false));
+  playerCount.addEventListener("mouseenter", () => togglePlayerTip(true));
+  playerCount.addEventListener("mouseleave", () => togglePlayerTip(false));
+  playerCount.addEventListener("focus", () => togglePlayerTip(true));
+  playerCount.addEventListener("blur", () => togglePlayerTip(false));
+  playerCount.addEventListener("click", (e) => {
+    e.stopPropagation();
+    togglePlayerTip(
+      !playerCount.classList.contains("hud-player-count--show-tip")
+    );
+  });
+  playerCount.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      togglePlayerTip(
+        !playerCount.classList.contains("hud-player-count--show-tip")
+      );
+    }
+  });
+  document.addEventListener("click", closeHudTooltips);
   
   topToolbar.appendChild(fsBtn);
   topToolbar.appendChild(playerCount);
@@ -244,19 +338,19 @@ export function createHud(
   signpostOverlay.hidden = true;
   const signpostDialog = document.createElement("div");
   signpostDialog.className = "signpost-overlay__dialog";
+  const SIGNPOST_MESSAGE_MAX = 64;
   signpostDialog.innerHTML = `
     <div class="signpost-overlay__header">
-      <span class="signpost-overlay__icon">📍</span>
       <span class="signpost-overlay__title">Create Signpost</span>
+      <div class="signpost-overlay__header-actions">
+        <button type="button" class="signpost-overlay__btn signpost-overlay__btn--cancel">Cancel</button>
+        <button type="button" class="signpost-overlay__btn signpost-overlay__btn--create">Create</button>
+      </div>
     </div>
     <div class="signpost-overlay__body">
-      <label class="signpost-overlay__label">Message (max 500 characters):</label>
-      <textarea class="signpost-overlay__textarea" maxlength="500" placeholder="Enter your message..." rows="5"></textarea>
-      <div class="signpost-overlay__char-count">0 / 500</div>
-    </div>
-    <div class="signpost-overlay__actions">
-      <button type="button" class="signpost-overlay__btn signpost-overlay__btn--cancel">Cancel</button>
-      <button type="button" class="signpost-overlay__btn signpost-overlay__btn--create">Create</button>
+      <label class="signpost-overlay__label">Message (max ${SIGNPOST_MESSAGE_MAX} characters):</label>
+      <textarea class="signpost-overlay__textarea" maxlength="${SIGNPOST_MESSAGE_MAX}" placeholder="Enter your message..." rows="4"></textarea>
+      <div class="signpost-overlay__char-count">0 / ${SIGNPOST_MESSAGE_MAX}</div>
     </div>
   `;
   signpostOverlay.appendChild(signpostDialog);
@@ -307,20 +401,23 @@ export function createHud(
   walkModeBtn.type = "button";
   walkModeBtn.className = "hud-mode-segment__btn";
   walkModeBtn.dataset.mode = "walk";
-  walkModeBtn.textContent = "Walk";
-  walkModeBtn.title = "Move around (default)";
+  walkModeBtn.innerHTML = HUD_MODE_ICON_WALK;
+  walkModeBtn.setAttribute("aria-label", "Walk — move around");
+  walkModeBtn.title = "Walk — move around (default)";
   const buildModeBtn = document.createElement("button");
   buildModeBtn.type = "button";
   buildModeBtn.className = "hud-mode-segment__btn";
   buildModeBtn.dataset.mode = "build";
-  buildModeBtn.textContent = "Build";
-  buildModeBtn.title = "Place and edit blocks (B)";
+  buildModeBtn.innerHTML = HUD_MODE_ICON_BUILD;
+  buildModeBtn.setAttribute("aria-label", "Build — place and edit blocks");
+  buildModeBtn.title = "Build — place and edit blocks (B)";
   const floorModeBtn = document.createElement("button");
   floorModeBtn.type = "button";
   floorModeBtn.className = "hud-mode-segment__btn";
   floorModeBtn.dataset.mode = "floor";
-  floorModeBtn.textContent = "Floor";
-  floorModeBtn.title = "Expand walkable floor (F)";
+  floorModeBtn.innerHTML = HUD_MODE_ICON_FLOOR;
+  floorModeBtn.setAttribute("aria-label", "Floor — expand walkable tiles");
+  floorModeBtn.title = "Floor — expand walkable floor (F)";
   modeSegment.appendChild(walkModeBtn);
   modeSegment.appendChild(buildModeBtn);
   modeSegment.appendChild(floorModeBtn);
@@ -352,7 +449,6 @@ export function createHud(
   chatPanel.appendChild(chatTabs);
   chatPanel.appendChild(worldChatLog);
   chatPanel.appendChild(systemChatLog);
-  ui.appendChild(chatPanel);
 
   let activeChatTab: "world" | "system" = "world";
   const setChatTab = (tab: "world" | "system"): void => {
@@ -393,11 +489,14 @@ export function createHud(
   const chatInput = document.createElement("input");
   chatInput.type = "text";
   chatInput.className = "chat-input";
-  chatInput.placeholder = "Message… (Enter to send)";
+  chatInput.placeholder =
+    typeof window !== "undefined" &&
+    window.matchMedia("(pointer: coarse)").matches
+      ? "Message…"
+      : "Message… (Enter to send)";
   chatInput.autocomplete = "off";
   chatInput.maxLength = 256;
   chatRow.appendChild(chatInput);
-  ui.appendChild(chatRow);
 
   const lobbyConfirm = document.createElement("div");
   lobbyConfirm.className = "hud-lobby-confirm";
@@ -442,118 +541,152 @@ export function createHud(
   buildBlockBar.className = "build-block-bar";
   buildBlockBar.hidden = true;
   buildBlockBar.innerHTML = `
-    <div class="build-block-bar__title">Blocks</div>
-    <div class="build-block-bar__colors" aria-label="Block color">
-      <div class="build-block-bar__swatches-recent"></div>
-      <button type="button" class="build-block-bar__more-colors">More colors</button>
-      <div class="build-block-bar__swatches-all" hidden></div>
+    <div class="build-block-bar__surface">
+      <div class="build-block-bar__surface-header">
+        <div class="build-block-bar__title">Blocks</div>
+        <button type="button" class="build-block-bar__advanced-toggle" aria-expanded="false" aria-controls="build-block-bar-advanced">Advanced</button>
+      </div>
+      <div class="build-block-bar__main-row">
+        <div class="build-block-bar__quick" aria-label="Block shape and color">
+          <div class="build-block-bar__shape-row" role="group" aria-label="Block shape">
+            <button type="button" class="build-block-bar__shape-btn build-block-bar__shape-btn--active" data-shape="cube" aria-pressed="true" aria-label="Cube" title="Cube">C</button>
+            <button type="button" class="build-block-bar__shape-btn" data-shape="hex" aria-pressed="false" aria-label="Hexagon" title="Hexagon">H</button>
+            <button type="button" class="build-block-bar__shape-btn" data-shape="ramp" aria-pressed="false" aria-label="Ramp" title="Ramp">R</button>
+          </div>
+          <div class="build-block-bar__hue-ring-wrap" title="Color — drag on ring (snaps to nearest preset)">
+            <div class="build-block-bar__hue-ring" role="slider" tabindex="0" aria-label="Block color" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0"></div>
+            <div class="build-block-bar__hue-core" aria-hidden="true"></div>
+          </div>
+        </div>
+      </div>
+      <input type="checkbox" class="build-block-bar__hex" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
+      <input type="checkbox" class="build-block-bar__ramp" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
+      <div class="build-block-bar__tool-row" role="group" aria-label="Placement tool">
+        <button type="button" class="build-block-bar__tool-btn build-block-bar__tool-btn--active" data-tool="block">Block</button>
+        <button type="button" class="build-block-bar__tool-btn" data-tool="signpost">Signpost</button>
+      </div>
     </div>
-    <button type="button" class="build-block-bar__advanced-toggle" aria-expanded="false">Advanced</button>
-    <div class="build-block-bar__advanced" hidden>
-      <label class="build-block-bar__row">
-        <input type="checkbox" class="build-block-bar__half" />
-        <span>Half height</span>
-      </label>
-      <label class="build-block-bar__row">
-        <input type="checkbox" class="build-block-bar__quarter" />
-        <span>Quarter height</span>
-      </label>
-      <label class="build-block-bar__row">
-        <input type="checkbox" class="build-block-bar__hex" />
-        <span>Hexagon</span>
-      </label>
-      <label class="build-block-bar__row">
-        <input type="checkbox" class="build-block-bar__ramp" />
-        <span>Ramp</span>
-      </label>
-      <div class="build-block-bar__row build-block-bar__ramp-dir-row" hidden>
+  `;
+
+  const barAdvancedPopover = document.createElement("div");
+  barAdvancedPopover.id = "build-block-bar-advanced";
+  barAdvancedPopover.className = "build-block-bar-advanced";
+  barAdvancedPopover.setAttribute("role", "dialog");
+  barAdvancedPopover.setAttribute("aria-label", "More block options");
+  barAdvancedPopover.hidden = true;
+  barAdvancedPopover.innerHTML = `
+    <div class="build-block-bar-advanced__inner">
+      <div class="build-block-bar__popover-heading">Height</div>
+      <div class="build-block-bar__height-segment" role="radiogroup" aria-label="Block height">
+        <button type="button" class="build-block-bar__height-btn build-block-bar__height-btn--active" data-height="full" role="radio" aria-checked="true">Full</button>
+        <button type="button" class="build-block-bar__height-btn" data-height="half" role="radio" aria-checked="false">Half</button>
+        <button type="button" class="build-block-bar__height-btn" data-height="quarter" role="radio" aria-checked="false" title="Quarter height">¼</button>
+      </div>
+      <div class="build-block-bar__ramp-dir-row build-block-bar__ramp-dir-row--popover" hidden>
         <span class="build-block-bar__ramp-dir-label">Ramp rotation</span>
         <div class="build-block-bar__ramp-dir-controls">
           <button type="button" class="build-block-bar__ramp-rot build-block-bar__ramp-ccw" title="Rotate counter-clockwise" aria-label="Rotate ramp counter-clockwise">↺</button>
           <button type="button" class="build-block-bar__ramp-rot build-block-bar__ramp-cw" title="Rotate clockwise" aria-label="Rotate ramp clockwise">↻</button>
         </div>
       </div>
-    </div>
-    <button type="button" class="build-block-bar__experimental-toggle" aria-expanded="false">⚡ Experimental</button>
-    <div class="build-block-bar__experimental" hidden>
-      <label class="build-block-bar__row">
-        <input type="checkbox" class="build-block-bar__claimable" />
-        <span>Claimable Block (Mining)</span>
-      </label>
-      <div class="build-block-bar__experimental-info">
-        When active (gold), players can mine/claim for rewards
+      <div class="build-block-bar__palette-label">Palette</div>
+      <div class="build-block-bar__colors" aria-label="Preset colors">
+        <div class="build-block-bar__swatches-recent"></div>
+        <button type="button" class="build-block-bar__more-colors">More colors</button>
+        <div class="build-block-bar__swatches-all" hidden></div>
       </div>
-    </div>
-    <div class="build-block-bar__tools">
-      <div class="build-block-bar__title" style="margin-top: 1rem;">Tools</div>
-      <div class="build-block-bar__tool-selector">
-        <button type="button" class="build-block-bar__tool-btn build-block-bar__tool-btn--active" data-tool="block">
-          <div class="build-block-bar__tool-icon">🧱</div>
-          <div class="build-block-bar__tool-label">Block</div>
-        </button>
-        <button type="button" class="build-block-bar__tool-btn" data-tool="signpost">
-          <div class="build-block-bar__tool-icon">📍</div>
-          <div class="build-block-bar__tool-label">Signpost</div>
-        </button>
-      </div>
-      <div class="build-block-bar__preview">
-        <div class="build-block-bar__preview-label">Preview:</div>
-        <div class="build-block-bar__preview-box">
-          <canvas class="build-block-bar__preview-canvas" width="120" height="120"></canvas>
-        </div>
+      <div class="build-block-bar__experimental-only" hidden>
+        <div class="build-block-bar__popover-divider" aria-hidden="true"></div>
+        <div class="build-block-bar__popover-heading">Experimental</div>
+        <button type="button" class="build-block-bar__claim-toggle" aria-pressed="false">Claimable (mining)</button>
+        <p class="build-block-bar__experimental-hint">When on, players can mine this block for rewards.</p>
       </div>
     </div>
   `;
-  ui.appendChild(buildBlockBar);
 
-  const barHalfCb = buildBlockBar.querySelector(
-    ".build-block-bar__half"
-  ) as HTMLInputElement;
-  const barQuarterCb = buildBlockBar.querySelector(
-    ".build-block-bar__quarter"
-  ) as HTMLInputElement;
+  const bottomLeftStack = document.createElement("div");
+  bottomLeftStack.className = "hud-bottom-left";
+  /* column-reverse: bottom = chat input, then chat log + tabs (build bar is bottom-right) */
+  bottomLeftStack.appendChild(chatRow);
+  bottomLeftStack.appendChild(chatPanel);
+  ui.appendChild(bottomLeftStack);
+  ui.appendChild(buildBlockBar);
+  ui.appendChild(barAdvancedPopover);
+
+  const objectPanelAdvancedPopover = document.createElement("div");
+  objectPanelAdvancedPopover.id = "build-object-panel-advanced";
+  objectPanelAdvancedPopover.className = "build-object-panel-advanced";
+  objectPanelAdvancedPopover.setAttribute("role", "dialog");
+  objectPanelAdvancedPopover.setAttribute("aria-label", "More block options");
+  objectPanelAdvancedPopover.hidden = true;
+  ui.appendChild(objectPanelAdvancedPopover);
+
+  const barHeightBtns = Array.from(
+    barAdvancedPopover.querySelectorAll(".build-block-bar__height-btn")
+  ) as HTMLButtonElement[];
+  const barClaimToggle = barAdvancedPopover.querySelector(
+    ".build-block-bar__claim-toggle"
+  ) as HTMLButtonElement;
+  const barExperimentalOnly = barAdvancedPopover.querySelector(
+    ".build-block-bar__experimental-only"
+  ) as HTMLElement;
   const barHexCb = buildBlockBar.querySelector(
     ".build-block-bar__hex"
   ) as HTMLInputElement;
   const barRampCb = buildBlockBar.querySelector(
     ".build-block-bar__ramp"
   ) as HTMLInputElement;
-  const barRampDirRow = buildBlockBar.querySelector(
+  const barRampDirRow = barAdvancedPopover.querySelector(
     ".build-block-bar__ramp-dir-row"
   ) as HTMLElement;
-  const barRampRotCCW = buildBlockBar.querySelector(
+  const barRampRotCCW = barAdvancedPopover.querySelector(
     ".build-block-bar__ramp-ccw"
   ) as HTMLButtonElement;
-  const barRampRotCW = buildBlockBar.querySelector(
+  const barRampRotCW = barAdvancedPopover.querySelector(
     ".build-block-bar__ramp-cw"
   ) as HTMLButtonElement;
   let barRampDir = 0;
-  const barSwatchesRecent = buildBlockBar.querySelector(
+  const barSwatchesRecent = barAdvancedPopover.querySelector(
     ".build-block-bar__swatches-recent"
   ) as HTMLDivElement;
-  const barSwatchesAll = buildBlockBar.querySelector(
+  const barSwatchesAll = barAdvancedPopover.querySelector(
     ".build-block-bar__swatches-all"
   ) as HTMLDivElement;
-  const barMoreColorsBtn = buildBlockBar.querySelector(
+  const barMoreColorsBtn = barAdvancedPopover.querySelector(
     ".build-block-bar__more-colors"
   ) as HTMLButtonElement;
   const barAdvancedToggle = buildBlockBar.querySelector(
     ".build-block-bar__advanced-toggle"
   ) as HTMLButtonElement;
-  const barAdvancedSection = buildBlockBar.querySelector(
-    ".build-block-bar__advanced"
-  ) as HTMLElement;
-  const barExperimentalToggle = buildBlockBar.querySelector(
-    ".build-block-bar__experimental-toggle"
-  ) as HTMLButtonElement;
-  const barExperimentalSection = buildBlockBar.querySelector(
-    ".build-block-bar__experimental"
-  ) as HTMLElement;
-  const barClaimableCb = buildBlockBar.querySelector(
-    ".build-block-bar__claimable"
-  ) as HTMLInputElement;
   const barToolButtons = Array.from(buildBlockBar.querySelectorAll(".build-block-bar__tool-btn")) as HTMLButtonElement[];
-  const barPreviewCanvas = buildBlockBar.querySelector(".build-block-bar__preview-canvas") as HTMLCanvasElement;
+  const barShapeBtns = Array.from(
+    buildBlockBar.querySelectorAll(".build-block-bar__shape-btn")
+  ) as HTMLButtonElement[];
+  const barHueRingWrap = buildBlockBar.querySelector(
+    ".build-block-bar__hue-ring-wrap"
+  ) as HTMLElement;
+  const barHueRing = buildBlockBar.querySelector(
+    ".build-block-bar__hue-ring"
+  ) as HTMLElement;
+  const barHueCore = buildBlockBar.querySelector(
+    ".build-block-bar__hue-core"
+  ) as HTMLElement;
+  const barTitleEl = buildBlockBar.querySelector(
+    ".build-block-bar__title"
+  ) as HTMLElement;
+
+  let lastHueDeg = 0;
+
+  function refreshBuildBarTitle(): void {
+    if (!barTitleEl) return;
+    if (signpostModeActive) {
+      barTitleEl.textContent = "Place Signpost";
+      return;
+    }
+    if (barRampCb.checked) barTitleEl.textContent = "Ramp";
+    else if (barHexCb.checked) barTitleEl.textContent = "Hexagon";
+    else barTitleEl.textContent = "Cube";
+  }
 
   const signpostTextarea = signpostOverlay.querySelector(".signpost-overlay__textarea") as HTMLTextAreaElement;
   const signpostCharCount = signpostOverlay.querySelector(".signpost-overlay__char-count") as HTMLElement;
@@ -570,7 +703,7 @@ export function createHud(
   if (signpostTextarea && signpostCharCount) {
     signpostTextarea.addEventListener("input", () => {
       const len = signpostTextarea.value.length;
-      signpostCharCount.textContent = `${len} / 500`;
+      signpostCharCount.textContent = `${len} / ${SIGNPOST_MESSAGE_MAX}`;
     });
   }
 
@@ -580,7 +713,7 @@ export function createHud(
       e.stopPropagation();
       signpostOverlay.hidden = true;
       if (signpostTextarea) signpostTextarea.value = "";
-      if (signpostCharCount) signpostCharCount.textContent = "0 / 500";
+      if (signpostCharCount) signpostCharCount.textContent = `0 / ${SIGNPOST_MESSAGE_MAX}`;
       signpostPendingTile = null;
     });
   }
@@ -596,7 +729,7 @@ export function createHud(
       signpostPlaceHandler?.(signpostPendingTile.x, signpostPendingTile.z, message);
       signpostOverlay.hidden = true;
       signpostTextarea.value = "";
-      if (signpostCharCount) signpostCharCount.textContent = "0 / 500";
+      if (signpostCharCount) signpostCharCount.textContent = `0 / ${SIGNPOST_MESSAGE_MAX}`;
       signpostPendingTile = null;
     });
   }
@@ -628,210 +761,9 @@ export function createHud(
         barToolButtons.forEach((b) => b.classList.remove("build-block-bar__tool-btn--active"));
         btn.classList.add("build-block-bar__tool-btn--active");
       }
+      refreshBuildBarTitle();
     });
   });
-
-  // 3D Block preview rendering - shows a 1x1 tile with block on top (isometric view)
-  function updateBlockPreview(state: {
-    colorId: number;
-    half: boolean;
-    quarter: boolean;
-    hex: boolean;
-    ramp: boolean;
-  }): void {
-    const ctx = barPreviewCanvas.getContext("2d");
-    if (!ctx) return;
-
-    const w = barPreviewCanvas.width;
-    const h = barPreviewCanvas.height;
-
-    // Clear canvas
-    ctx.clearRect(0, 0, w, h);
-
-    // Color palette matching game blocks
-    const colors = [
-      "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", 
-      "#3b82f6", "#ef4444", "#6366f1", "#14b8a6",
-      "#f3f4f6", "#1f2937"
-    ];
-    const baseColor = colors[state.colorId] || colors[0];
-    
-    if (!baseColor) return;
-
-    // Parse hex color
-    const r = parseInt(baseColor.slice(1, 3), 16);
-    const g = parseInt(baseColor.slice(3, 5), 16);
-    const b = parseInt(baseColor.slice(5, 7), 16);
-
-    // Create shaded colors for 3D effect
-    const topColor = `rgb(${Math.min(255, r + 40)}, ${Math.min(255, g + 40)}, ${Math.min(255, b + 40)})`;
-    const sideColor = `rgb(${Math.max(0, r - 20)}, ${Math.max(0, g - 20)}, ${Math.max(0, b - 20)})`;
-    const frontColor = baseColor;
-
-    // Isometric tile dimensions
-    const tileW = 50;  // Tile width in isometric view
-    const tileH = 25;  // Tile height in isometric view
-    const centerX = w / 2;
-    const centerY = h / 2 + 15;
-    
-    // Draw floor tile (1x1 grid square)
-    const floorColor = "#3a4456";
-    const floorLight = "#4a5566";
-    const floorDark = "#2a3446";
-    
-    // Floor tile top (diamond shape in isometric)
-    ctx.beginPath();
-    ctx.moveTo(centerX, centerY - tileH);  // Top
-    ctx.lineTo(centerX + tileW, centerY);  // Right
-    ctx.lineTo(centerX, centerY + tileH);  // Bottom
-    ctx.lineTo(centerX - tileW, centerY);  // Left
-    ctx.closePath();
-    
-    ctx.fillStyle = floorColor;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.1)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    
-    // Grid lines on floor for reference
-    ctx.strokeStyle = "rgba(255,255,255,0.05)";
-    ctx.beginPath();
-    ctx.moveTo(centerX, centerY - tileH);
-    ctx.lineTo(centerX, centerY + tileH);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(centerX - tileW, centerY);
-    ctx.lineTo(centerX + tileW, centerY);
-    ctx.stroke();
-
-    // Calculate block dimensions
-    const blockW = 40;  // Block width
-    const blockD = 40;  // Block depth
-    let blockH = 45;    // Block height
-    if (state.quarter) blockH = 12;
-    else if (state.half) blockH = 23;
-
-    // Block sits on top of the floor
-    const blockBaseY = centerY - tileH - 2;
-
-    if (state.hex) {
-      // Hexagonal block - show from isometric angle
-      const hexSize = 18;
-      const hexCenterY = blockBaseY - blockH / 2;
-      
-      // Draw hexagon top
-      ctx.beginPath();
-      for (let i = 0; i < 6; i++) {
-        const angle = (Math.PI / 3) * i - Math.PI / 2;
-        const x = centerX + Math.cos(angle) * hexSize;
-        const y = hexCenterY - 10 + Math.sin(angle) * (hexSize * 0.5);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.closePath();
-      ctx.fillStyle = topColor;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.3)";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      
-      // Draw visible sides
-      ctx.beginPath();
-      ctx.moveTo(centerX + hexSize * 0.87, hexCenterY - 10 + hexSize * 0.25);
-      ctx.lineTo(centerX + hexSize * 0.87, blockBaseY);
-      ctx.lineTo(centerX, blockBaseY);
-      ctx.lineTo(centerX, hexCenterY - 10 + hexSize * 0.5);
-      ctx.closePath();
-      ctx.fillStyle = sideColor;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.2)";
-      ctx.stroke();
-      
-    } else if (state.ramp) {
-      // Ramp - isometric view showing slope
-      const rampW = blockW * 0.4;
-      const rampD = blockD * 0.4;
-      
-      // Right face (sloped)
-      ctx.beginPath();
-      ctx.moveTo(centerX, blockBaseY - blockH);
-      ctx.lineTo(centerX + rampW, blockBaseY - blockH + rampD * 0.5);
-      ctx.lineTo(centerX + rampW, blockBaseY + rampD * 0.5);
-      ctx.lineTo(centerX, blockBaseY);
-      ctx.closePath();
-      ctx.fillStyle = sideColor;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.2)";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      
-      // Front sloped surface
-      ctx.beginPath();
-      ctx.moveTo(centerX, blockBaseY);
-      ctx.lineTo(centerX - rampW, blockBaseY - rampD * 0.5);
-      ctx.lineTo(centerX - rampW, blockBaseY - blockH - rampD * 0.5);
-      ctx.lineTo(centerX, blockBaseY - blockH);
-      ctx.closePath();
-      ctx.fillStyle = frontColor;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.2)";
-      ctx.stroke();
-      
-      // Top sloped face
-      ctx.beginPath();
-      ctx.moveTo(centerX, blockBaseY - blockH);
-      ctx.lineTo(centerX + rampW, blockBaseY - blockH + rampD * 0.5);
-      ctx.lineTo(centerX, blockBaseY + rampD * 0.5);
-      ctx.lineTo(centerX - rampW, blockBaseY - rampD * 0.5);
-      ctx.closePath();
-      ctx.fillStyle = topColor;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.2)";
-      ctx.stroke();
-      
-    } else {
-      // Regular cubic block - isometric view
-      const isoW = blockW * 0.4;
-      const isoD = blockD * 0.4;
-      
-      // Left face
-      ctx.beginPath();
-      ctx.moveTo(centerX, blockBaseY - blockH);
-      ctx.lineTo(centerX - isoW, blockBaseY - blockH - isoD * 0.5);
-      ctx.lineTo(centerX - isoW, blockBaseY - isoD * 0.5);
-      ctx.lineTo(centerX, blockBaseY);
-      ctx.closePath();
-      ctx.fillStyle = frontColor;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.2)";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // Right face
-      ctx.beginPath();
-      ctx.moveTo(centerX, blockBaseY - blockH);
-      ctx.lineTo(centerX + isoW, blockBaseY - blockH + isoD * 0.5);
-      ctx.lineTo(centerX + isoW, blockBaseY + isoD * 0.5);
-      ctx.lineTo(centerX, blockBaseY);
-      ctx.closePath();
-      ctx.fillStyle = sideColor;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.2)";
-      ctx.stroke();
-
-      // Top face
-      ctx.beginPath();
-      ctx.moveTo(centerX, blockBaseY - blockH);
-      ctx.lineTo(centerX - isoW, blockBaseY - blockH - isoD * 0.5);
-      ctx.lineTo(centerX, blockBaseY - blockH - isoD);
-      ctx.lineTo(centerX + isoW, blockBaseY - blockH - isoD * 0.5);
-      ctx.closePath();
-      ctx.fillStyle = topColor;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.2)";
-      ctx.stroke();
-    }
-  }
 
   for (let i = 0; i < BLOCK_COLOR_COUNT; i++) {
     barSwatchesAll.appendChild(makeColorSwatchButton(i));
@@ -851,26 +783,77 @@ export function createHud(
     ramp?: boolean;
     rampDir?: number;
     colorId?: number;
+    claimable?: boolean;
   }) => void = (): void => {};
 
-  barHalfCb.addEventListener("change", () => {
-    if (barHalfCb.checked) {
-      barQuarterCb.checked = false;
-      placementStyleHandler({ half: true, quarter: false });
-    } else {
-      placementStyleHandler({ half: false });
+  function syncBarHeightButtons(quarter: boolean, half: boolean): void {
+    barHeightBtns.forEach((b) => {
+      const h = b.dataset.height;
+      const on =
+        (h === "quarter" && quarter) ||
+        (h === "half" && !quarter && half) ||
+        (h === "full" && !quarter && !half);
+      b.classList.toggle("build-block-bar__height-btn--active", !!on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  }
+
+  function layoutBarAdvancedPopover(): void {
+    if (barAdvancedPopover.hidden || buildBlockBar.hidden) return;
+    const br = buildBlockBar.getBoundingClientRect();
+    const margin = 8;
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    const w = Math.min(260, Math.max(180, br.width));
+    barAdvancedPopover.style.width = `${w}px`;
+    barAdvancedPopover.style.maxWidth = `${Math.max(120, vw - 16)}px`;
+    const right = Math.max(0, vw - br.right);
+    barAdvancedPopover.style.right = `${right}px`;
+    barAdvancedPopover.style.left = "auto";
+    const pr = barAdvancedPopover.getBoundingClientRect();
+    let top = br.top - pr.height - margin;
+    const minTop = 52;
+    if (top < minTop) top = minTop;
+    if (top + pr.height > vh - margin) {
+      top = Math.max(minTop, vh - margin - pr.height);
     }
-  });
-  barQuarterCb.addEventListener("change", () => {
-    if (barQuarterCb.checked) {
-      barHalfCb.checked = false;
-      placementStyleHandler({ quarter: true, half: false });
-    } else {
-      placementStyleHandler({ quarter: false });
+    barAdvancedPopover.style.top = `${top}px`;
+    barAdvancedPopover.style.bottom = "auto";
+  }
+
+  function setBarPopoverOpen(open: boolean): void {
+    barAdvancedPopover.hidden = !open;
+    barAdvancedToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    barAdvancedToggle.classList.toggle(
+      "build-block-bar__advanced-toggle--open",
+      open
+    );
+    if (open) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => layoutBarAdvancedPopover());
+      });
     }
+  }
+
+  barHeightBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const h = btn.dataset.height;
+      if (h === "full") {
+        placementStyleHandler({ quarter: false, half: false });
+        syncBarHeightButtons(false, false);
+      } else if (h === "half") {
+        placementStyleHandler({ quarter: false, half: true });
+        syncBarHeightButtons(false, true);
+      } else if (h === "quarter") {
+        placementStyleHandler({ quarter: true, half: false });
+        syncBarHeightButtons(true, false);
+      }
+    });
   });
+
   barHexCb.addEventListener("change", () => {
     placementStyleHandler({ hex: barHexCb.checked });
+    syncBarShapeButtons();
   });
 
   function rotateBarRamp(delta: -1 | 1): void {
@@ -887,7 +870,125 @@ export function createHud(
     barRampDirRow.hidden = !on;
     placementStyleHandler({ ramp: on, hex: on ? false : barHexCb.checked });
     if (on) barHexCb.checked = false;
+    syncBarShapeButtons();
   });
+
+  function syncBarShapeButtons(): void {
+    const ramp = barRampCb.checked;
+    const hex = barHexCb.checked && !ramp;
+    const cube = !hex && !ramp;
+    barShapeBtns.forEach((b) => {
+      const shape = b.dataset.shape;
+      const on =
+        (shape === "cube" && cube) ||
+        (shape === "hex" && hex) ||
+        (shape === "ramp" && ramp);
+      b.classList.toggle("build-block-bar__shape-btn--active", !!on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    refreshBuildBarTitle();
+  }
+
+  function applyHueDegrees(hueDeg: number): void {
+    const h = ((hueDeg % 360) + 360) % 360;
+    lastHueDeg = Math.round(h);
+    barHueRing.setAttribute("aria-valuenow", String(lastHueDeg));
+    const { r, g, b } = hslToRgb(h / 360, 0.92, 0.48);
+    const id = nearestPaletteColorIdFromRgb(r, g, b);
+    rebuildBarRecentSwatches(pushRecentColorId(id));
+    placementStyleHandler({ colorId: id });
+    refreshBarSwatches(id);
+  }
+
+  function ringHueFromClient(
+    ringEl: HTMLElement,
+    clientX: number,
+    clientY: number
+  ): number | null {
+    const ringRect = ringEl.getBoundingClientRect();
+    const cx = ringRect.left + ringRect.width / 2;
+    const cy = ringRect.top + ringRect.height / 2;
+    const dx = clientX - cx;
+    const dy = clientY - cy;
+    const dist = Math.hypot(dx, dy);
+    const outer = ringRect.width * 0.5;
+    const inner = ringRect.width * 0.22;
+    if (dist < inner || dist === 0) return null;
+    if (dist > outer) {
+      const ang = Math.atan2(dy, dx);
+      let deg = (ang * 180) / Math.PI;
+      return (deg + 90 + 360) % 360;
+    }
+    const ang = Math.atan2(dy, dx);
+    let deg = (ang * 180) / Math.PI;
+    return (deg + 90 + 360) % 360;
+  }
+
+  function onHuePointer(ev: PointerEvent): void {
+    const hue = ringHueFromClient(barHueRing, ev.clientX, ev.clientY);
+    if (hue === null) return;
+    applyHueDegrees(hue);
+  }
+
+  barHueRingWrap.addEventListener("pointerdown", (e) => {
+    barHueRingWrap.setPointerCapture(e.pointerId);
+    onHuePointer(e);
+  });
+  barHueRingWrap.addEventListener("pointermove", (e) => {
+    if (!barHueRingWrap.hasPointerCapture(e.pointerId)) return;
+    onHuePointer(e);
+  });
+  barHueRingWrap.addEventListener("pointerup", (e) => {
+    if (barHueRingWrap.hasPointerCapture(e.pointerId)) {
+      try {
+        barHueRingWrap.releasePointerCapture(e.pointerId);
+      } catch {
+        /* already released */
+      }
+    }
+  });
+  barHueRingWrap.addEventListener("pointercancel", (ev) => {
+    try {
+      barHueRingWrap.releasePointerCapture(ev.pointerId);
+    } catch {
+      /* */
+    }
+  });
+
+  barHueRing.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+      e.preventDefault();
+      applyHueDegrees(lastHueDeg - 12);
+    } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+      e.preventDefault();
+      applyHueDegrees(lastHueDeg + 12);
+    }
+  });
+
+  barShapeBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const shape = btn.dataset.shape;
+      if (shape === "cube") {
+        barHexCb.checked = false;
+        barRampCb.checked = false;
+        barRampDirRow.hidden = true;
+        placementStyleHandler({ hex: false, ramp: false });
+      } else if (shape === "hex") {
+        barHexCb.checked = true;
+        barRampCb.checked = false;
+        barRampDirRow.hidden = true;
+        placementStyleHandler({ hex: true, ramp: false });
+      } else if (shape === "ramp") {
+        barRampCb.checked = true;
+        barHexCb.checked = false;
+        barRampDirRow.hidden = false;
+        placementStyleHandler({ ramp: true, hex: false });
+      }
+      syncBarShapeButtons();
+    });
+  });
+
+  syncBarShapeButtons();
 
   let barColorsExpanded = false;
   barMoreColorsBtn.addEventListener("click", () => {
@@ -896,36 +997,48 @@ export function createHud(
     barMoreColorsBtn.textContent = barColorsExpanded
       ? "Hide colors"
       : "More colors";
+    if (!barAdvancedPopover.hidden) {
+      requestAnimationFrame(() => layoutBarAdvancedPopover());
+    }
   });
 
-  barAdvancedToggle.addEventListener("click", () => {
-    const open = barAdvancedSection.hidden;
-    barAdvancedSection.hidden = !open;
-    barAdvancedToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  barAdvancedToggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setBarPopoverOpen(barAdvancedPopover.hidden);
   });
 
-  barExperimentalToggle.addEventListener("click", () => {
-    const open = barExperimentalSection.hidden;
-    barExperimentalSection.hidden = !open;
-    barExperimentalToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  barAdvancedToggle.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !barAdvancedPopover.hidden) {
+      e.preventDefault();
+      setBarPopoverOpen(false);
+    }
   });
 
-  barClaimableCb.addEventListener("change", () => {
-    placementStyleHandler({ claimable: barClaimableCb.checked });
+  barClaimToggle.addEventListener("click", () => {
+    const next = barClaimToggle.getAttribute("aria-pressed") !== "true";
+    barClaimToggle.setAttribute("aria-pressed", next ? "true" : "false");
+    barClaimToggle.classList.toggle("build-block-bar__claim-toggle--active", next);
+    placementStyleHandler({ claimable: next });
   });
 
-  buildBlockBar.addEventListener("click", (ev) => {
+  function onBarColorSwatchClick(ev: Event): void {
     const t = ev.target as HTMLElement;
     const btn = t.closest(".block-color-swatch") as HTMLButtonElement | null;
-    if (!btn || !buildBlockBar.contains(btn)) return;
+    if (!btn) return;
+    if (!buildBlockBar.contains(btn) && !barAdvancedPopover.contains(btn)) {
+      return;
+    }
     const id = Number(btn.dataset.colorId);
     if (!Number.isFinite(id)) return;
     rebuildBarRecentSwatches(pushRecentColorId(id));
     placementStyleHandler({ colorId: id });
     refreshBarSwatches(id);
-  });
+  }
+  buildBlockBar.addEventListener("click", onBarColorSwatchClick);
+  barAdvancedPopover.addEventListener("click", onBarColorSwatchClick);
 
   let fsHandler = (): void => {};
+  let reconnectHandler = (): void => {};
   let returnHubHandler = (): void => {};
   let lobbyHandler = (): void => {};
   let playModeHandler: (mode: "walk" | "build" | "floor") => void = (): void => {};
@@ -966,6 +1079,7 @@ export function createHud(
   });
 
   fsBtn.addEventListener("click", () => fsHandler());
+  reconnectBtn.addEventListener("click", () => reconnectHandler());
   returnHubBtn.addEventListener("click", () => returnHubHandler());
   lobbyBtn.addEventListener("click", () => openLobbyConfirm());
   walkModeBtn.addEventListener("click", () => playModeHandler("walk"));
@@ -974,19 +1088,23 @@ export function createHud(
 
   const ro = new ResizeObserver(() => {
     layoutLetterbox(frame, letter);
+    layoutBarAdvancedPopover();
+    layoutObjectPanelAdvancedPopover();
   });
   ro.observe(frame);
 
   layoutLetterbox(frame, letter);
 
   let objectPanel: HTMLDivElement | null = null;
-  let passCheckbox: HTMLInputElement | null = null;
-  let halfCheckbox: HTMLInputElement | null = null;
-  let quarterCheckbox: HTMLInputElement | null = null;
-  let hexCheckbox: HTMLInputElement | null = null;
-  let rampCheckbox: HTMLInputElement | null = null;
-  let lockCheckbox: HTMLInputElement | null = null;
-  let lockRow: HTMLElement | null = null;
+  let panelPassBtns: HTMLButtonElement[] = [];
+  let panelLockBtns: HTMLButtonElement[] = [];
+  let lockOptionBlock: HTMLElement | null = null;
+  /** When lock UI is hidden (non-admin), server lock state for emit. */
+  let panelLockedState = false;
+  let panelHexCb: HTMLInputElement | null = null;
+  let panelRampCb: HTMLInputElement | null = null;
+  let panelHeightBtns: HTMLButtonElement[] = [];
+  let panelShapeBtns: HTMLButtonElement[] = [];
   let rampDirRow: HTMLElement | null = null;
   let panelRampRotCCW: HTMLButtonElement | null = null;
   let panelRampRotCW: HTMLButtonElement | null = null;
@@ -996,16 +1114,156 @@ export function createHud(
   let panelSwatchesAll: HTMLDivElement | null = null;
   let panelMoreColorsBtn: HTMLButtonElement | null = null;
   let panelAdvancedToggle: HTMLButtonElement | null = null;
-  let panelAdvancedSection: HTMLElement | null = null;
-  let panelKeyHintsEl: HTMLElement | null = null;
   let panelSelectedColorId = 0;
   let panelOnPropsChange: ((p: ObstacleProps) => void) | null = null;
+  let panelLastHueDeg = 0;
+  let panelHueRingWrap: HTMLElement | null = null;
+  let panelHueRing: HTMLElement | null = null;
+  let panelHueCore: HTMLElement | null = null;
+  let panelTitleTextEl: HTMLElement | null = null;
+  let panelEditX = 0;
+  let panelEditZ = 0;
 
-  function updatePanelKeyHints(): void {
-    if (!panelKeyHintsEl || !rampCheckbox) return;
-    const parts: string[] = ["D — Delete"];
-    if (rampCheckbox.checked) parts.push("R — Rotate ramp");
-    panelKeyHintsEl.textContent = parts.join(" · ");
+  function layoutObjectPanelAdvancedPopover(): void {
+    if (objectPanelAdvancedPopover.hidden) return;
+    if (!objectPanel || !panelAdvancedToggle) return;
+    const margin = 8;
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    const panelBr = objectPanel.getBoundingClientRect();
+    const w = Math.min(260, Math.max(200, Math.min(panelBr.width + 40, 280)));
+    objectPanelAdvancedPopover.style.width = `${w}px`;
+    objectPanelAdvancedPopover.style.maxWidth = `${Math.max(120, vw - 16)}px`;
+    const right = Math.max(0, vw - panelBr.right);
+    objectPanelAdvancedPopover.style.right = `${right}px`;
+    objectPanelAdvancedPopover.style.left = "auto";
+    const minTop = 52;
+    /* Prefer below the object card; measure after width so height is stable */
+    objectPanelAdvancedPopover.style.top = `${panelBr.bottom + margin}px`;
+    objectPanelAdvancedPopover.style.bottom = "auto";
+    let top = panelBr.bottom + margin;
+    let pr = objectPanelAdvancedPopover.getBoundingClientRect();
+    if (pr.bottom > vh - margin) {
+      top = panelBr.top - pr.height - margin;
+      objectPanelAdvancedPopover.style.top = `${top}px`;
+      pr = objectPanelAdvancedPopover.getBoundingClientRect();
+    }
+    if (top < minTop) {
+      top = minTop;
+      objectPanelAdvancedPopover.style.top = `${top}px`;
+      pr = objectPanelAdvancedPopover.getBoundingClientRect();
+    }
+    if (pr.bottom > vh - margin) {
+      top = Math.max(minTop, vh - margin - pr.height);
+      objectPanelAdvancedPopover.style.top = `${top}px`;
+    }
+  }
+
+  function setPanelAdvancedOpen(open: boolean): void {
+    objectPanelAdvancedPopover.hidden = !open;
+    if (panelAdvancedToggle) {
+      panelAdvancedToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      panelAdvancedToggle.classList.toggle(
+        "build-object-panel__advanced-toggle--open",
+        open
+      );
+    }
+    if (open) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => layoutObjectPanelAdvancedPopover());
+      });
+    }
+  }
+
+  const closeHudAdvancedPopoversOnOutside = (ev: PointerEvent): void => {
+    const t = ev.target as Node;
+    if (!barAdvancedPopover.hidden) {
+      if (buildBlockBar.contains(t) || barAdvancedPopover.contains(t)) return;
+      setBarPopoverOpen(false);
+    }
+    if (!objectPanelAdvancedPopover.hidden) {
+      if (
+        (objectPanel && objectPanel.contains(t)) ||
+        objectPanelAdvancedPopover.contains(t)
+      ) {
+        return;
+      }
+      setPanelAdvancedOpen(false);
+    }
+  };
+  document.addEventListener("pointerdown", closeHudAdvancedPopoversOnOutside);
+
+  function refreshObjectPanelTitle(): void {
+    if (!panelTitleTextEl || !panelRampCb || !panelHexCb) return;
+    const ramp = panelRampCb.checked;
+    const hex = ramp ? false : panelHexCb.checked;
+    panelTitleTextEl.textContent = `${obstacleShapeLabel(ramp, hex)} (${panelEditX}, ${panelEditZ})`;
+  }
+
+  function syncPanelHeightButtons(quarter: boolean, half: boolean): void {
+    panelHeightBtns.forEach((b) => {
+      const h = b.dataset.height;
+      const on =
+        (h === "quarter" && quarter) ||
+        (h === "half" && !quarter && half) ||
+        (h === "full" && !quarter && !half);
+      b.classList.toggle("build-block-bar__height-btn--active", !!on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  }
+
+  function syncPanelShapeButtons(): void {
+    if (!panelShapeBtns.length || !panelRampCb || !panelHexCb) return;
+    const ramp = panelRampCb.checked;
+    const hex = panelHexCb.checked && !ramp;
+    const cube = !hex && !ramp;
+    panelShapeBtns.forEach((b) => {
+      const shape = b.dataset.shape;
+      const on =
+        (shape === "cube" && cube) ||
+        (shape === "hex" && hex) ||
+        (shape === "ramp" && ramp);
+      b.classList.toggle("build-block-bar__shape-btn--active", !!on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    refreshObjectPanelTitle();
+  }
+
+  function syncPanelPassButtons(passable: boolean): void {
+    panelPassBtns.forEach((b) => {
+      const on =
+        (b.dataset.collision === "pass" && passable) ||
+        (b.dataset.collision === "solid" && !passable);
+      b.classList.toggle("build-block-bar__height-btn--active", !!on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  }
+
+  function syncPanelLockButtons(locked: boolean): void {
+    panelLockBtns.forEach((b) => {
+      const on =
+        (b.dataset.lock === "true" && locked) ||
+        (b.dataset.lock === "false" && !locked);
+      b.classList.toggle("build-block-bar__height-btn--active", !!on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  }
+
+  function getPanelPassable(): boolean {
+    return panelPassBtns.some(
+      (b) =>
+        b.dataset.collision === "pass" &&
+        b.classList.contains("build-block-bar__height-btn--active")
+    );
+  }
+
+  function getPanelLocked(): boolean {
+    if (lockOptionBlock?.hidden) return panelLockedState;
+    return panelLockBtns.some(
+      (b) =>
+        b.dataset.lock === "true" &&
+        b.classList.contains("build-block-bar__height-btn--active")
+    );
   }
 
   function wirePanelColorClicks(): void {
@@ -1019,7 +1277,13 @@ export function createHud(
   function onPanelColorClick(ev: MouseEvent): void {
     const t = ev.target as HTMLElement;
     const btn = t.closest(".block-color-swatch") as HTMLButtonElement | null;
-    if (!btn || !objectPanel?.contains(btn)) return;
+    if (
+      !btn ||
+      (!objectPanel?.contains(btn) &&
+        !objectPanelAdvancedPopover.contains(btn))
+    ) {
+      return;
+    }
     const id = Number(btn.dataset.colorId);
     if (!Number.isFinite(id)) return;
     panelSelectedColorId = id;
@@ -1031,37 +1295,81 @@ export function createHud(
       }
     }
     syncPanelSwatchSelection();
+    syncPanelHueVisualFromColorId(panelSelectedColorId);
     emitPanelProps();
   }
 
   function emitPanelProps(): void {
     if (
       !panelOnPropsChange ||
-      !passCheckbox ||
-      !halfCheckbox ||
-      !quarterCheckbox ||
-      !hexCheckbox ||
-      !rampCheckbox
+      panelPassBtns.length === 0 ||
+      !panelHexCb ||
+      !panelRampCb ||
+      panelHeightBtns.length === 0
     ) {
       return;
     }
-    const quarter = quarterCheckbox.checked;
-    const ramp = rampCheckbox.checked;
+    const quarter = panelHeightBtns.some(
+      (b) =>
+        b.dataset.height === "quarter" &&
+        b.classList.contains("build-block-bar__height-btn--active")
+    );
+    const halfMode = panelHeightBtns.some(
+      (b) =>
+        b.dataset.height === "half" &&
+        b.classList.contains("build-block-bar__height-btn--active")
+    );
+    const half = quarter ? false : halfMode;
+    const ramp = panelRampCb.checked;
     const rampDir = Math.max(0, Math.min(3, Math.floor(panelRampDir)));
-    const locked = lockCheckbox?.checked || false;
-    
-    console.log(`[HUD emitPanelProps] Emitting props with locked=${locked}`);
-    
+    const locked = getPanelLocked();
+
     panelOnPropsChange({
-      passable: passCheckbox.checked,
+      passable: getPanelPassable(),
       quarter,
-      half: quarter ? false : halfCheckbox.checked,
-      hex: ramp ? false : hexCheckbox.checked,
+      half,
+      hex: ramp ? false : panelHexCb.checked,
       ramp,
       rampDir: ramp ? rampDir : 0,
       colorId: panelSelectedColorId,
       locked,
     });
+    refreshObjectPanelTitle();
+  }
+
+  function applyPanelHueDegrees(hueDeg: number): void {
+    if (!panelHueRing || !panelHueCore) return;
+    const h = ((hueDeg % 360) + 360) % 360;
+    panelLastHueDeg = Math.round(h);
+    panelHueRing.setAttribute("aria-valuenow", String(panelLastHueDeg));
+    const { r, g, b } = hslToRgb(h / 360, 0.92, 0.48);
+    const id = nearestPaletteColorIdFromRgb(r, g, b);
+    panelSelectedColorId = id;
+    if (panelSwatchesRecent) {
+      const ids = pushRecentColorId(id);
+      panelSwatchesRecent.replaceChildren();
+      for (const rid of ids) {
+        panelSwatchesRecent.appendChild(makeColorSwatchButton(rid));
+      }
+    }
+    syncPanelSwatchSelection();
+    const sid = Math.max(
+      0,
+      Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(id))
+    );
+    panelHueCore.style.background = cssHex(BLOCK_COLOR_PALETTE[sid]!);
+    emitPanelProps();
+  }
+
+  function syncPanelHueVisualFromColorId(colorId: number): void {
+    if (!panelHueRing || !panelHueCore) return;
+    const sid = Math.max(
+      0,
+      Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(colorId))
+    );
+    panelLastHueDeg = Math.round(estimateHueFromPaletteId(sid));
+    panelHueRing.setAttribute("aria-valuenow", String(panelLastHueDeg));
+    panelHueCore.style.background = cssHex(BLOCK_COLOR_PALETTE[sid]!);
   }
 
   function syncPanelSwatchSelection(): void {
@@ -1079,16 +1387,19 @@ export function createHud(
 
   function hideObjectEditPanel(): void {
     unwirePanelColorClicks();
+    setPanelAdvancedOpen(false);
+    objectPanelAdvancedPopover.replaceChildren();
+    objectPanelAdvancedPopover.hidden = true;
     if (objectPanel) {
       objectPanel.remove();
       objectPanel = null;
-      passCheckbox = null;
-      halfCheckbox = null;
-      quarterCheckbox = null;
-      hexCheckbox = null;
-      rampCheckbox = null;
-      lockCheckbox = null;
-      lockRow = null;
+      panelPassBtns = [];
+      panelLockBtns = [];
+      lockOptionBlock = null;
+      panelHexCb = null;
+      panelRampCb = null;
+      panelHeightBtns = [];
+      panelShapeBtns = [];
       rampDirRow = null;
       panelRampRotCCW = null;
       panelRampRotCW = null;
@@ -1097,14 +1408,17 @@ export function createHud(
       panelSwatchesAll = null;
       panelMoreColorsBtn = null;
       panelAdvancedToggle = null;
-      panelAdvancedSection = null;
-      panelKeyHintsEl = null;
+      panelHueRingWrap = null;
+      panelHueRing = null;
+      panelHueCore = null;
+      panelTitleTextEl = null;
       panelOnPropsChange = null;
+      panelLockedState = false;
     }
   }
 
   function refreshBarSwatches(selectedId: number): void {
-    const buttons = buildBlockBar.querySelectorAll(".block-color-swatch");
+    const buttons = barAdvancedPopover.querySelectorAll(".block-color-swatch");
     buttons.forEach((node) => {
       const el = node as HTMLButtonElement;
       const id = Number(el.dataset.colorId);
@@ -1113,6 +1427,11 @@ export function createHud(
         id === selectedId
       );
     });
+    const sid = Math.max(
+      0,
+      Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(selectedId))
+    );
+    barHueCore.style.background = cssHex(BLOCK_COLOR_PALETTE[sid]!);
   }
 
   const lastSystemChatAtByText = new Map<string, number>();
@@ -1185,127 +1504,154 @@ export function createHud(
       );
       objectPanel = document.createElement("div");
       objectPanel.className = "build-object-panel";
-      const lockIcon = opts.locked ? '<span class="nq-icon nq-lock-locked" style="font-size: 0.9em; margin-left: 4px;" title="This object is locked"></span>' : '';
+      panelEditX = opts.x;
+      panelEditZ = opts.z;
+      const lockIcon = opts.locked
+        ? '<span class="nq-icon nq-lock-locked build-object-panel__lock-icon" title="This object is locked"></span>'
+        : "";
       objectPanel.innerHTML = `
-        <div class="build-object-panel__title">Block (${opts.x}, ${opts.z})${lockIcon}</div>
-        <div class="build-object-panel__hints" aria-hidden="true"></div>
-        <div class="build-object-panel__colors" aria-label="Block color">
-          <div class="build-object-panel__colors-label">Color</div>
-          <div class="build-object-panel__swatches-recent"></div>
-          <button type="button" class="build-object-panel__more-colors">More colors</button>
-          <div class="build-object-panel__swatches-all" hidden></div>
-        </div>
-        <button type="button" class="build-object-panel__advanced-toggle" aria-expanded="false">Advanced</button>
-        <div class="build-object-panel__advanced" hidden>
-          <label class="build-object-panel__row">
-            <input type="checkbox" class="build-object-panel__cb build-object-panel__cb-pass" />
-            <span>Walk through (no collision)</span>
-          </label>
-          <label class="build-object-panel__row">
-            <input type="checkbox" class="build-object-panel__cb build-object-panel__cb-half" />
-            <span>Half height</span>
-          </label>
-          <label class="build-object-panel__row">
-            <input type="checkbox" class="build-object-panel__cb build-object-panel__cb-quarter" />
-            <span>Quarter height</span>
-          </label>
-          <label class="build-object-panel__row">
-            <input type="checkbox" class="build-object-panel__cb build-object-panel__cb-hex" />
-            <span>Hexagon</span>
-          </label>
-          <label class="build-object-panel__row">
-            <input type="checkbox" class="build-object-panel__cb build-object-panel__cb-ramp" />
-            <span>Ramp</span>
-          </label>
-          <div class="build-object-panel__row build-object-panel__ramp-dir-row">
-            <span class="build-object-panel__ramp-dir-label">Ramp rotation</span>
-            <div class="build-object-panel__ramp-dir-controls">
-              <button type="button" class="build-object-panel__ramp-rot build-object-panel__ramp-ccw" title="Rotate counter-clockwise" aria-label="Rotate ramp counter-clockwise">↺</button>
-              <button type="button" class="build-object-panel__ramp-rot build-object-panel__ramp-cw" title="Rotate clockwise" aria-label="Rotate ramp clockwise">↻</button>
-              <button type="button" class="build-object-panel__ramp-step" title="Rotate ramp (R)">Rotate</button>
+        <div class="build-object-panel__surface">
+          <div class="build-object-panel__surface-header">
+            <div class="build-object-panel__title">
+              <span class="build-object-panel__title-text"></span>${lockIcon}
+            </div>
+            <div class="build-object-panel__header-actions">
+              <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
+              <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
+              <button type="button" class="build-object-panel__dismiss" aria-label="Close block editor">✕</button>
             </div>
           </div>
-          <label class="build-object-panel__row build-object-panel__lock-row" hidden>
-            <input type="checkbox" class="build-object-panel__cb build-object-panel__cb-lock" />
-            <span>🔒 Lock</span>
-          </label>
-        </div>
-        <div class="build-object-panel__footer-actions">
-          <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
-          <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
-          <button type="button" class="build-object-panel__btn build-object-panel__close">Close</button>
+          <div class="build-object-panel__main-row">
+            <div class="build-object-panel__quick" aria-label="Block shape and color">
+              <div class="build-block-bar__shape-row" role="group" aria-label="Block shape">
+                <button type="button" class="build-block-bar__shape-btn build-block-bar__shape-btn--active" data-shape="cube" aria-pressed="true" aria-label="Cube" title="Cube">C</button>
+                <button type="button" class="build-block-bar__shape-btn" data-shape="hex" aria-pressed="false" aria-label="Hexagon" title="Hexagon">H</button>
+                <button type="button" class="build-block-bar__shape-btn" data-shape="ramp" aria-pressed="false" aria-label="Ramp" title="Ramp">R</button>
+              </div>
+              <div class="build-object-panel__hue-ring-wrap" title="Color — drag on ring (snaps to nearest preset)">
+                <div class="build-object-panel__hue-ring" role="slider" tabindex="0" aria-label="Block color" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0"></div>
+                <div class="build-object-panel__hue-core" aria-hidden="true"></div>
+              </div>
+            </div>
+          </div>
+          <input type="checkbox" class="build-object-panel__hex" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
+          <input type="checkbox" class="build-object-panel__ramp" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
+          <button type="button" class="build-object-panel__advanced-toggle" aria-expanded="false" aria-controls="build-object-panel-advanced">Advanced</button>
         </div>
       `;
-      topActions.insertBefore(objectPanel, modeSegment);
-      panelKeyHintsEl = objectPanel.querySelector(
-        ".build-object-panel__hints"
+      objectPanelAdvancedPopover.innerHTML = `
+        <div class="build-object-panel-advanced__inner">
+          <div class="build-block-bar__popover-heading">Collision</div>
+          <div class="build-block-bar__height-segment" role="radiogroup" aria-label="Collision">
+            <button type="button" class="build-block-bar__height-btn build-block-bar__height-btn--active" data-collision="solid" role="radio" aria-checked="true">Solid</button>
+            <button type="button" class="build-block-bar__height-btn" data-collision="pass" role="radio" aria-checked="false">No collision</button>
+          </div>
+          <div class="build-object-panel-adv__lock-block" hidden>
+            <div class="build-block-bar__popover-heading">Lock</div>
+            <div class="build-block-bar__height-segment" role="radiogroup" aria-label="Lock block">
+              <button type="button" class="build-block-bar__height-btn build-block-bar__height-btn--active" data-lock="false" role="radio" aria-checked="true">Unlocked</button>
+              <button type="button" class="build-block-bar__height-btn" data-lock="true" role="radio" aria-checked="false">Locked</button>
+            </div>
+          </div>
+          <div class="build-block-bar__popover-heading">Height</div>
+          <div class="build-block-bar__height-segment" role="radiogroup" aria-label="Block height">
+            <button type="button" class="build-block-bar__height-btn build-block-bar__height-btn--active" data-height="full" role="radio" aria-checked="true">Full</button>
+            <button type="button" class="build-block-bar__height-btn" data-height="half" role="radio" aria-checked="false">Half</button>
+            <button type="button" class="build-block-bar__height-btn" data-height="quarter" role="radio" aria-checked="false" title="Quarter height">¼</button>
+          </div>
+          <div class="build-block-bar__ramp-dir-row build-block-bar__ramp-dir-row--popover" hidden>
+            <span class="build-block-bar__ramp-dir-label">Ramp rotation</span>
+            <div class="build-block-bar__ramp-dir-controls">
+              <button type="button" class="build-block-bar__ramp-rot build-block-bar__ramp-ccw" title="Rotate counter-clockwise" aria-label="Rotate ramp counter-clockwise">↺</button>
+              <button type="button" class="build-block-bar__ramp-rot build-block-bar__ramp-cw" title="Rotate clockwise" aria-label="Rotate ramp clockwise">↻</button>
+            </div>
+          </div>
+          <div class="build-block-bar__palette-label">Palette</div>
+          <div class="build-block-bar__colors" aria-label="Preset colors">
+            <div class="build-object-panel-adv__swatches-recent"></div>
+            <button type="button" class="build-block-bar__more-colors">More colors</button>
+            <div class="build-object-panel-adv__swatches-all" hidden></div>
+          </div>
+        </div>
+      `;
+      topActions.appendChild(objectPanel);
+      panelTitleTextEl = objectPanel.querySelector(
+        ".build-object-panel__title-text"
       ) as HTMLElement;
-      passCheckbox = objectPanel.querySelector(
-        ".build-object-panel__cb-pass"
-      ) as HTMLInputElement;
-      halfCheckbox = objectPanel.querySelector(
-        ".build-object-panel__cb-half"
-      ) as HTMLInputElement;
-      quarterCheckbox = objectPanel.querySelector(
-        ".build-object-panel__cb-quarter"
-      ) as HTMLInputElement;
-      hexCheckbox = objectPanel.querySelector(
-        ".build-object-panel__cb-hex"
-      ) as HTMLInputElement;
-      rampCheckbox = objectPanel.querySelector(
-        ".build-object-panel__cb-ramp"
-      ) as HTMLInputElement;
-      lockCheckbox = objectPanel.querySelector(
-        ".build-object-panel__cb-lock"
-      ) as HTMLInputElement | null;
-      lockRow = objectPanel.querySelector(
-        ".build-object-panel__lock-row"
+      panelPassBtns = Array.from(
+        objectPanelAdvancedPopover.querySelectorAll(
+          ".build-block-bar__height-btn[data-collision]"
+        )
+      ) as HTMLButtonElement[];
+      panelLockBtns = Array.from(
+        objectPanelAdvancedPopover.querySelectorAll(
+          ".build-block-bar__height-btn[data-lock]"
+        )
+      ) as HTMLButtonElement[];
+      lockOptionBlock = objectPanelAdvancedPopover.querySelector(
+        ".build-object-panel-adv__lock-block"
       ) as HTMLElement | null;
-      rampDirRow = objectPanel.querySelector(
-        ".build-object-panel__ramp-dir-row"
+      rampDirRow = objectPanelAdvancedPopover.querySelector(
+        ".build-block-bar__ramp-dir-row"
       ) as HTMLElement;
-      panelRampRotCCW = objectPanel.querySelector(
-        ".build-object-panel__ramp-ccw"
+      panelRampRotCCW = objectPanelAdvancedPopover.querySelector(
+        ".build-block-bar__ramp-ccw"
       ) as HTMLButtonElement;
-      panelRampRotCW = objectPanel.querySelector(
-        ".build-object-panel__ramp-cw"
+      panelRampRotCW = objectPanelAdvancedPopover.querySelector(
+        ".build-block-bar__ramp-cw"
       ) as HTMLButtonElement;
       panelRampDir = Math.max(0, Math.min(3, Math.floor(opts.rampDir)));
-      panelColorRoot = objectPanel.querySelector(
-        ".build-object-panel__colors"
+      panelHeightBtns = Array.from(
+        objectPanelAdvancedPopover.querySelectorAll(
+          ".build-block-bar__height-btn[data-height]"
+        )
+      ) as HTMLButtonElement[];
+      panelShapeBtns = Array.from(
+        objectPanel.querySelectorAll(".build-block-bar__shape-btn")
+      ) as HTMLButtonElement[];
+      panelHexCb = objectPanel.querySelector(
+        ".build-object-panel__hex"
+      ) as HTMLInputElement;
+      panelRampCb = objectPanel.querySelector(
+        ".build-object-panel__ramp"
+      ) as HTMLInputElement;
+      panelColorRoot = objectPanelAdvancedPopover.querySelector(
+        ".build-block-bar__colors"
       ) as HTMLElement;
-      panelSwatchesRecent = objectPanel.querySelector(
-        ".build-object-panel__swatches-recent"
+      panelSwatchesRecent = objectPanelAdvancedPopover.querySelector(
+        ".build-object-panel-adv__swatches-recent"
       ) as HTMLDivElement;
-      panelSwatchesAll = objectPanel.querySelector(
-        ".build-object-panel__swatches-all"
+      panelSwatchesAll = objectPanelAdvancedPopover.querySelector(
+        ".build-object-panel-adv__swatches-all"
       ) as HTMLDivElement;
-      panelMoreColorsBtn = objectPanel.querySelector(
-        ".build-object-panel__more-colors"
+      panelMoreColorsBtn = objectPanelAdvancedPopover.querySelector(
+        ".build-block-bar__more-colors"
       ) as HTMLButtonElement;
       panelAdvancedToggle = objectPanel.querySelector(
         ".build-object-panel__advanced-toggle"
       ) as HTMLButtonElement;
-      panelAdvancedSection = objectPanel.querySelector(
-        ".build-object-panel__advanced"
+      panelHueRingWrap = objectPanel.querySelector(
+        ".build-object-panel__hue-ring-wrap"
       ) as HTMLElement;
-      passCheckbox.checked = opts.passable;
-      quarterCheckbox.checked = opts.quarter;
-      halfCheckbox.checked = opts.quarter ? false : opts.half;
-      hexCheckbox.checked = opts.ramp ? false : opts.hex;
-      rampCheckbox.checked = opts.ramp;
-      rampDirRow.hidden = !opts.ramp;
-      
-      // Set up lock checkbox (admin only)
-      if (lockCheckbox && lockRow) {
-        lockCheckbox.checked = opts.locked || false;
-        console.log(`[HUD] Setting lockRow visibility: isAdmin=${opts.isAdmin}, hidden=${!opts.isAdmin}`);
-        lockRow.hidden = !opts.isAdmin; // Show only for admins
-      } else {
-        console.log(`[HUD] lockCheckbox or lockRow is null:`, { lockCheckbox: !!lockCheckbox, lockRow: !!lockRow });
+      panelHueRing = objectPanel.querySelector(
+        ".build-object-panel__hue-ring"
+      ) as HTMLElement;
+      panelHueCore = objectPanel.querySelector(
+        ".build-object-panel__hue-core"
+      ) as HTMLElement;
+      syncPanelPassButtons(opts.passable);
+      panelLockedState = opts.locked || false;
+      syncPanelLockButtons(panelLockedState);
+      if (lockOptionBlock) {
+        lockOptionBlock.hidden = !opts.isAdmin;
       }
-      
-      updatePanelKeyHints();
+      syncPanelHeightButtons(opts.quarter, opts.quarter ? false : opts.half);
+      panelHexCb.checked = opts.ramp ? false : opts.hex;
+      panelRampCb.checked = opts.ramp;
+      rampDirRow.hidden = !opts.ramp;
+      syncPanelShapeButtons();
+
+      refreshObjectPanelTitle();
       for (let i = 0; i < BLOCK_COLOR_COUNT; i++) {
         panelSwatchesAll!.appendChild(makeColorSwatchButton(i));
       }
@@ -1321,85 +1667,161 @@ export function createHud(
         panelMoreColorsBtn!.textContent = panelColorsExpanded
           ? "Hide colors"
           : "More colors";
+        if (!objectPanelAdvancedPopover.hidden) {
+          requestAnimationFrame(() => layoutObjectPanelAdvancedPopover());
+        }
       });
-      panelAdvancedToggle!.addEventListener("click", () => {
-        const open = panelAdvancedSection!.hidden;
-        panelAdvancedSection!.hidden = !open;
-        panelAdvancedToggle!.setAttribute(
-          "aria-expanded",
-          open ? "true" : "false"
-        );
+      panelAdvancedToggle!.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setPanelAdvancedOpen(objectPanelAdvancedPopover.hidden);
+      });
+      panelAdvancedToggle!.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !objectPanelAdvancedPopover.hidden) {
+          e.preventDefault();
+          setPanelAdvancedOpen(false);
+        }
       });
       syncPanelSwatchSelection();
+      syncPanelHueVisualFromColorId(panelSelectedColorId);
       wirePanelColorClicks();
-      passCheckbox.addEventListener("change", () => emitPanelProps());
-      halfCheckbox.addEventListener("change", () => {
-        if (halfCheckbox!.checked) quarterCheckbox!.checked = false;
-        emitPanelProps();
-      });
-      quarterCheckbox.addEventListener("change", () => {
-        if (quarterCheckbox!.checked) halfCheckbox!.checked = false;
-        emitPanelProps();
-      });
-      hexCheckbox.addEventListener("change", () => emitPanelProps());
-      if (lockCheckbox) {
-        lockCheckbox.addEventListener("change", () => emitPanelProps());
+
+      function onPanelHuePointer(ev: PointerEvent): void {
+        if (!panelHueRing) return;
+        const hue = ringHueFromClient(panelHueRing, ev.clientX, ev.clientY);
+        if (hue === null) return;
+        applyPanelHueDegrees(hue);
       }
-      rampCheckbox.addEventListener("change", () => {
-        const on = rampCheckbox!.checked;
-        rampDirRow!.hidden = !on;
-        if (on) hexCheckbox!.checked = false;
-        emitPanelProps();
-        updatePanelKeyHints();
+      panelHueRingWrap!.addEventListener("pointerdown", (e) => {
+        panelHueRingWrap!.setPointerCapture(e.pointerId);
+        onPanelHuePointer(e);
+      });
+      panelHueRingWrap!.addEventListener("pointermove", (e) => {
+        if (!panelHueRingWrap!.hasPointerCapture(e.pointerId)) return;
+        onPanelHuePointer(e);
+      });
+      panelHueRingWrap!.addEventListener("pointerup", (e) => {
+        if (panelHueRingWrap!.hasPointerCapture(e.pointerId)) {
+          try {
+            panelHueRingWrap!.releasePointerCapture(e.pointerId);
+          } catch {
+            /* already released */
+          }
+        }
+      });
+      panelHueRingWrap!.addEventListener("pointercancel", (ev) => {
+        try {
+          panelHueRingWrap!.releasePointerCapture(ev.pointerId);
+        } catch {
+          /* */
+        }
+      });
+      panelHueRing!.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+          e.preventDefault();
+          applyPanelHueDegrees(panelLastHueDeg - 12);
+        } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+          e.preventDefault();
+          applyPanelHueDegrees(panelLastHueDeg + 12);
+        }
+      });
+
+      panelPassBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          syncPanelPassButtons(btn.dataset.collision === "pass");
+          emitPanelProps();
+        });
+      });
+      panelLockBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const locked = btn.dataset.lock === "true";
+          panelLockedState = locked;
+          syncPanelLockButtons(locked);
+          emitPanelProps();
+        });
+      });
+      panelHeightBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const h = btn.dataset.height;
+          if (h === "full") {
+            syncPanelHeightButtons(false, false);
+            emitPanelProps();
+          } else if (h === "half") {
+            syncPanelHeightButtons(false, true);
+            emitPanelProps();
+          } else if (h === "quarter") {
+            syncPanelHeightButtons(true, false);
+            emitPanelProps();
+          }
+        });
+      });
+      panelShapeBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const shape = btn.dataset.shape;
+          if (shape === "cube") {
+            panelHexCb.checked = false;
+            panelRampCb.checked = false;
+            rampDirRow!.hidden = true;
+            emitPanelProps();
+          } else if (shape === "hex") {
+            panelHexCb.checked = true;
+            panelRampCb.checked = false;
+            rampDirRow!.hidden = true;
+            emitPanelProps();
+          } else if (shape === "ramp") {
+            panelRampCb.checked = true;
+            panelHexCb.checked = false;
+            rampDirRow!.hidden = false;
+            emitPanelProps();
+          }
+          syncPanelShapeButtons();
+        });
       });
       const rotatePanelRamp = (delta: -1 | 1): void => {
-        if (!rampCheckbox?.checked) return;
+        if (!panelRampCb?.checked) return;
         panelRampDir = (panelRampDir + delta + 4) % 4;
         emitPanelProps();
       };
       panelRampRotCCW!.addEventListener("click", () => rotatePanelRamp(-1));
       panelRampRotCW!.addEventListener("click", () => rotatePanelRamp(1));
       objectPanel
-        .querySelector(".build-object-panel__ramp-step")
-        ?.addEventListener("click", () => rotatePanelRamp(1));
-      objectPanel
         .querySelector(".build-object-panel__move")
         ?.addEventListener("click", () => opts.onMove());
       objectPanel
         .querySelector(".build-object-panel__remove")
         ?.addEventListener("click", () => opts.onRemove());
+      const dismissPanel = (): void => {
+        setPanelAdvancedOpen(false);
+        opts.onClose();
+      };
       objectPanel
-        .querySelector(".build-object-panel__close")
-        ?.addEventListener("click", () => opts.onClose());
+        .querySelector(".build-object-panel__dismiss")
+        ?.addEventListener("click", () => dismissPanel());
     },
     hideObjectEditPanel() {
       hideObjectEditPanel();
     },
     setObjectPanelProps(p: ObstacleProps) {
-      console.log(`[HUD setObjectPanelProps] Received props with locked=${p.locked}`);
-      if (passCheckbox) passCheckbox.checked = p.passable;
-      if (quarterCheckbox) quarterCheckbox.checked = p.quarter;
-      if (halfCheckbox) halfCheckbox.checked = p.quarter ? false : p.half;
-      if (hexCheckbox) hexCheckbox.checked = p.ramp ? false : p.hex;
-      if (rampCheckbox) rampCheckbox.checked = p.ramp;
-      if (lockCheckbox) {
-        const newLocked = p.locked || false;
-        console.log(`[HUD setObjectPanelProps] Setting lockCheckbox.checked to ${newLocked}`);
-        lockCheckbox.checked = newLocked;
-      }
+      syncPanelPassButtons(p.passable);
+      panelLockedState = p.locked || false;
+      syncPanelLockButtons(panelLockedState);
+      syncPanelHeightButtons(p.quarter, p.quarter ? false : p.half);
+      if (panelHexCb) panelHexCb.checked = p.ramp ? false : p.hex;
+      if (panelRampCb) panelRampCb.checked = p.ramp;
       panelRampDir = Math.max(0, Math.min(3, Math.floor(p.rampDir)));
       if (rampDirRow) rampDirRow.hidden = !p.ramp;
+      syncPanelShapeButtons();
       panelSelectedColorId = Math.max(
         0,
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(p.colorId))
       );
       syncPanelSwatchSelection();
-      updatePanelKeyHints();
+      syncPanelHueVisualFromColorId(panelSelectedColorId);
+      refreshObjectPanelTitle();
     },
     rotateRampToward(delta: -1 | 1): boolean {
       if (objectPanel) {
         if (
-          rampCheckbox?.checked &&
+          panelRampCb?.checked &&
           rampDirRow &&
           !rampDirRow.hidden
         ) {
@@ -1419,18 +1841,29 @@ export function createHud(
       placementStyleHandler = fn;
     },
     setBuildBlockBarState(state) {
-      buildBlockBar.hidden = !state.visible;
-      barQuarterCb.checked = state.quarter;
-      barHalfCb.checked = state.quarter ? false : state.half;
+      const hideBarForObjectPanel =
+        objectPanel !== null &&
+        typeof window !== "undefined" &&
+        window.matchMedia("(pointer: coarse)").matches;
+      buildBlockBar.hidden = !state.visible || hideBarForObjectPanel;
+      if (buildBlockBar.hidden) setBarPopoverOpen(false);
+      if (state.placementAdmin !== undefined) {
+        barExperimentalOnly.hidden = !state.placementAdmin;
+      }
+      syncBarHeightButtons(state.quarter, state.quarter ? false : state.half);
       barHexCb.checked = state.ramp ? false : state.hex;
       barRampCb.checked = state.ramp;
       barRampDir = Math.max(0, Math.min(3, Math.floor(state.rampDir)));
       barRampDirRow.hidden = !state.ramp;
-      barClaimableCb.checked = state.claimable ?? false;
+      const claim = state.claimable ?? false;
+      barClaimToggle.setAttribute("aria-pressed", claim ? "true" : "false");
+      barClaimToggle.classList.toggle("build-block-bar__claim-toggle--active", claim);
       refreshBarSwatches(
         Math.max(0, Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(state.colorId)))
       );
-      updateBlockPreview(state);
+      lastHueDeg = Math.round(estimateHueFromPaletteId(state.colorId));
+      barHueRing.setAttribute("aria-valuenow", String(lastHueDeg));
+      syncBarShapeButtons();
     },
     isSignpostModeActive(): boolean {
       return signpostModeActive;
@@ -1445,12 +1878,13 @@ export function createHud(
           btn.classList.remove("build-block-bar__tool-btn--active");
         }
       });
+      refreshBuildBarTitle();
     },
     promptSignpostMessage(x: number, z: number): void {
       signpostPendingTile = { x, z };
       signpostOverlay.hidden = false;
       signpostTextarea.value = "";
-      signpostCharCount.textContent = "0 / 500";
+      signpostCharCount.textContent = `0 / ${SIGNPOST_MESSAGE_MAX}`;
       // Focus the textarea after a brief delay to ensure the overlay is visible
       setTimeout(() => signpostTextarea.focus(), 100);
     },
@@ -1557,6 +1991,12 @@ export function createHud(
         nimBalanceValue.textContent = status;
       }
     },
+    setReconnectOffer(visible: boolean) {
+      reconnectBtn.hidden = !visible;
+    },
+    onReconnect(fn: () => void) {
+      reconnectHandler = fn;
+    },
     setNimClaimProgress(
       state: null | { progress: number; adjacent: boolean }
     ) {
@@ -1624,6 +2064,9 @@ export function createHud(
       signboardTooltip.hidden = false;
     },
     destroy() {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+      document.removeEventListener("click", closeHudTooltips);
+      document.removeEventListener("pointerdown", closeHudAdvancedPopoversOnOutside);
       hideObjectEditPanel();
       hideLobbyConfirm();
       nimClaimBar.hidden = true;

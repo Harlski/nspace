@@ -132,7 +132,7 @@ Test your changes by:
 **Client:**
 - `client/src/game/Game.ts` - Main game engine, Three.js rendering
 - `client/src/ui/hud.ts` - HUD, menus, overlays
-- `client/src/main.ts` - App initialization, WebSocket handling
+- `client/src/main.ts` - App initialization, WebSocket handlingtracked
 - `client/src/net/ws.ts` - WebSocket client, message types
 
 **Server:**
