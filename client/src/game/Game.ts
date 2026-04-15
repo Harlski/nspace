@@ -346,8 +346,6 @@ export class Game {
     spawnZ: number;
   }[] = getDoorsForRoom(ROOM_ID).map((d) => ({ ...d }));
   private readonly doorTileKeys = new Set<string>();
-  /** Previous tile key for the local avatar; used to detect stepping onto a door. */
-  private selfLastTileKey: string | null = null;
   private roomChangeHandler:
     | ((
         targetRoomId: string,
@@ -622,6 +620,23 @@ export class Game {
     };
   }
 
+  getSelfScreenPosition(
+    yOffset = 1.05
+  ): { x: number; y: number } | null {
+    if (!this.selfMesh) return null;
+    const world = new THREE.Vector3(
+      this.selfMesh.position.x,
+      this.selfMesh.position.y + yOffset,
+      this.selfMesh.position.z
+    );
+    const projected = world.project(this.camera);
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const sx = ((projected.x + 1) * 0.5) * rect.width;
+    const sy = ((1 - projected.y) * 0.5) * rect.height;
+    if (!Number.isFinite(sx) || !Number.isFinite(sy)) return null;
+    return { x: sx, y: sy };
+  }
+
   getPlaceRadiusBlocks(): number {
     return this.placeRadiusBlocks;
   }
@@ -720,7 +735,6 @@ export class Game {
     
     this.rebuildDoorKeys();
     this.pathGoal = null;
-    this.selfLastTileKey = null;
     this.lastTerrainPath = null;
     this.selectedBlockKey = null;
     this.selectionOutline.visible = false;
@@ -2218,22 +2232,29 @@ export class Game {
     this.setPathPolylineTerrain(remaining);
   }
 
-  /** When the player moves onto a door tile (after path completes), switch rooms. */
-  private checkDoorTransition(): void {
-    if (!this.selfMesh || !this.roomChangeHandler) return;
-    if (this.pathGoal !== null) return;
+  /** Door tile currently under the local player, if any. */
+  getStandingDoor(): {
+    x: number;
+    z: number;
+    targetRoomId: string;
+    spawnX: number;
+    spawnZ: number;
+  } | null {
+    if (!this.selfMesh) return null;
     const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
-    const k = tileKey(here.x, here.y);
-    const prev = this.selfLastTileKey;
-    if (prev !== null && prev !== k) {
-      for (const d of this.doors) {
-        if (d.x === here.x && d.z === here.y) {
-          this.roomChangeHandler(d.targetRoomId, d.spawnX, d.spawnZ);
-          break;
-        }
-      }
+    for (const d of this.doors) {
+      if (d.x === here.x && d.z === here.y) return d;
     }
-    this.selfLastTileKey = k;
+    return null;
+  }
+
+  triggerStandingDoorTransition(): boolean {
+    if (!this.roomChangeHandler) return false;
+    if (this.pathGoal !== null) return false;
+    const d = this.getStandingDoor();
+    if (!d) return false;
+    this.roomChangeHandler(d.targetRoomId, d.spawnX, d.spawnZ);
+    return true;
   }
 
   /** Visual floor only where avatars can walk (core + extra); gaps show scene background only. */
@@ -2549,7 +2570,6 @@ export class Game {
     }
     this.updateCameraFollow(dt);
     this.refreshPathLine();
-    this.checkDoorTransition();
     this.updatePathFade(dt);
     const px = this.selfMesh
       ? this.selfMesh.position.x

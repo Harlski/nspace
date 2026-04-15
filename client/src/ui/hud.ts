@@ -81,7 +81,10 @@ export function createHud(
   getChatInput: () => HTMLInputElement;
   onFullscreenToggle: (fn: () => void) => void;
   setReturnToHubVisible: (visible: boolean) => void;
+  setPortalEnterVisible: (visible: boolean) => void;
+  setPortalEnterScreenPosition: (x: number, y: number) => void;
   onReturnToHub: (fn: () => void) => void;
+  onPortalEnter: (fn: () => void) => void;
   onReturnToLobby: (fn: () => void) => void;
   /** Walk = move; Build = place blocks; Floor = expand walkable tiles. */
   onPlayModeSelect: (fn: (mode: "walk" | "build" | "floor") => void) => void;
@@ -142,6 +145,7 @@ export function createHud(
   setCanvasTimer: (timeRemaining: number) => void;
   setPlayerCount: (count: number, roomCount?: number) => void;
   showPlayerJoinedToast: (address: string) => void;
+  onFeedback: (fn: () => void) => void;
   setNimWalletStatus: (status: string) => void;
   setLoadingVisible: (visible: boolean) => void;
   /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
@@ -262,6 +266,12 @@ export function createHud(
   const nimBalanceValue = nimBalance.querySelector(
     ".hud-nim-balance__value"
   ) as HTMLElement | null;
+  const feedbackBtn = document.createElement("button");
+  feedbackBtn.type = "button";
+  feedbackBtn.className = "hud-feedback-btn nq-pill";
+  feedbackBtn.textContent = "Feedback";
+  feedbackBtn.setAttribute("aria-label", "Send feedback");
+  feedbackBtn.title = "Send feedback";
   const playerJoinToast = document.createElement("div");
   playerJoinToast.className = "hud-player-join-toast";
   playerJoinToast.hidden = true;
@@ -318,6 +328,7 @@ export function createHud(
   topToolbar.appendChild(fsBtn);
   topToolbar.appendChild(playerCount);
   topToolbar.appendChild(nimBalance);
+  topToolbar.appendChild(feedbackBtn);
   topToolbar.appendChild(lobbyBtn);
   topStrip.appendChild(topToolbar);
 
@@ -411,6 +422,11 @@ export function createHud(
   returnHubBtn.className = "hud-return-hub";
   returnHubBtn.textContent = "Return to hub";
   returnHubBtn.hidden = true;
+  const portalEnterBtn = document.createElement("button");
+  portalEnterBtn.type = "button";
+  portalEnterBtn.className = "hud-portal-enter nq-pill";
+  portalEnterBtn.textContent = "Enter";
+  portalEnterBtn.hidden = true;
   const topActions = document.createElement("div");
   topActions.className = "hud-top-actions";
 
@@ -462,6 +478,7 @@ export function createHud(
   topBar.appendChild(returnHubBtn);
   topBar.appendChild(topActions);
   ui.appendChild(topBar);
+  letter.appendChild(portalEnterBtn);
 
   const chatPanel = document.createElement("div");
   chatPanel.className = "chat-panel";
@@ -1158,6 +1175,8 @@ export function createHud(
   let fsHandler = (): void => {};
   let reconnectHandler = (): void => {};
   let returnHubHandler = (): void => {};
+  let portalEnterHandler = (): void => {};
+  let feedbackHandler = (): void => {};
   let lobbyHandler = (): void => {};
   let playModeHandler: (mode: "walk" | "build" | "floor") => void = (): void => {};
   let lobbyConfirmEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -1198,7 +1217,9 @@ export function createHud(
 
   fsBtn.addEventListener("click", () => fsHandler());
   reconnectBtn.addEventListener("click", () => reconnectHandler());
+  feedbackBtn.addEventListener("click", () => feedbackHandler());
   returnHubBtn.addEventListener("click", () => returnHubHandler());
+  portalEnterBtn.addEventListener("click", () => portalEnterHandler());
   lobbyBtn.addEventListener("click", () => openLobbyConfirm());
   walkModeBtn.addEventListener("click", () => playModeHandler("walk"));
   buildModeBtn.addEventListener("click", () => playModeHandler("build"));
@@ -1591,8 +1612,18 @@ export function createHud(
     setReturnToHubVisible(visible: boolean) {
       returnHubBtn.hidden = !visible;
     },
+    setPortalEnterVisible(visible: boolean) {
+      portalEnterBtn.hidden = !visible;
+    },
+    setPortalEnterScreenPosition(x: number, y: number) {
+      portalEnterBtn.style.left = `${x}px`;
+      portalEnterBtn.style.top = `${y}px`;
+    },
     onReturnToHub(fn: () => void) {
       returnHubHandler = fn;
+    },
+    onPortalEnter(fn: () => void) {
+      portalEnterHandler = fn;
     },
     onReturnToLobby(fn: () => void) {
       lobbyHandler = fn;
@@ -2159,6 +2190,9 @@ export function createHud(
         playerJoinToast.hidden = true;
         playerJoinToastTimer = null;
       }, 2600);
+    },
+    onFeedback(fn: () => void) {
+      feedbackHandler = fn;
     },
     setNimWalletStatus(status: string) {
       if (nimBalanceValue) {

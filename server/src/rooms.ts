@@ -648,13 +648,25 @@ function findRecoveryTerrainPath(
     const db = (b.x - player.x) ** 2 + (b.z - player.z) ** 2;
     return da - db;
   });
+  // Recovery should only start on top of solids when the player is already
+  // effectively at block-top height. This prevents floor-level "wall climb"
+  // snaps caused by seam rounding near solid tiles.
+  let canStartOnTop = false;
+  for (const c of candidates) {
+    const prop = placed.get(tileKey(c.x, c.z));
+    if (!prop || prop.passable || prop.ramp) continue;
+    if (player.y >= terrainObstacleHeight(prop) - 0.2) {
+      canStartOnTop = true;
+      break;
+    }
+  }
   for (const c of candidates) {
     const prop = placed.get(tileKey(c.x, c.z));
     const starts: (0 | 1)[] = [];
     if (isWalkableForRoom(roomId, c.x, c.z) && (!prop || prop.passable || prop.ramp)) {
       starts.push(0);
     }
-    if (prop && !prop.passable && !prop.ramp) {
+    if (canStartOnTop && prop && !prop.passable && !prop.ramp) {
       starts.push(1);
     }
     for (const startLayer of starts) {
@@ -1153,6 +1165,57 @@ const canvasPlayerSteps = new Map<string, number>();
 /** Track players who have finished the maze, in order */
 const canvasFinishers: Array<{ address: string; displayName: string; timestamp: number }> = [];
 
+function isExitPortalTile(tileProps: PlacedProps | undefined): boolean {
+  return Boolean(
+    tileProps &&
+      tileProps.passable &&
+      tileProps.quarter &&
+      tileProps.hex &&
+      tileProps.colorId === 4 &&
+      tileProps.locked
+  );
+}
+
+function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>): void {
+  const alreadyFinished = canvasFinishers.some((f) => f.address === conn.address);
+  if (alreadyFinished) return;
+  const position = canvasFinishers.length + 1;
+  const displayName = conn.displayName || walletDisplayName(conn.address);
+  canvasFinishers.push({
+    address: conn.address,
+    displayName,
+    timestamp: Date.now(),
+  });
+
+  const suffix =
+    position === 1 ? "st" : position === 2 ? "nd" : position === 3 ? "rd" : "th";
+
+  broadcast(CANVAS_ROOM_ID, {
+    type: "chat",
+    from: "System",
+    fromAddress: "",
+    text: `${displayName} finished The Maze in ${position}${suffix} place!`,
+    at: Date.now(),
+  });
+
+  broadcast(HUB_ROOM_ID, {
+    type: "chat",
+    from: displayName,
+    fromAddress: conn.address,
+    text: `completed The Maze in ${position}${suffix} place! 🏁`,
+    at: Date.now(),
+  });
+
+  console.log(`[canvas] Player ${displayName} finished in position ${position}`);
+
+  setTimeout(() => {
+    const current = room.get(conn.address);
+    if (current) {
+      teleportPlayer(current, HUB_ROOM_ID, 0, 0);
+    }
+  }, 1500);
+}
+
 function startCanvasTimer(): void {
   canvasTimerEndTime = Date.now() + CANVAS_TIMER_DURATION_MS;
   canvasTimerActive = true;
@@ -1441,58 +1504,10 @@ export function startRoomTick(): void {
             // Check if player reached the exit portal (blue hexagonal quarter block)
             const tileKey_str = tileKey(tile.x, tile.z);
             const tileProps = placed.get(tileKey_str);
-            const isExitPortal = tileProps && 
-                                 tileProps.passable && 
-                                 tileProps.quarter && 
-                                 tileProps.hex && 
-                                 tileProps.colorId === 4 && 
-                                 tileProps.locked;
+            const isExitPortal = isExitPortalTile(tileProps);
             
             if (isExitPortal) {
-              console.log(`[canvas] Player ${c.address.slice(0, 8)}... reached exit portal (${tile.x}, ${tile.z})`);
-              
-              // Check if player hasn't already finished
-              const alreadyFinished = canvasFinishers.some(f => f.address === c.address);
-              if (!alreadyFinished) {
-                const position = canvasFinishers.length + 1;
-                const displayName = c.displayName || walletDisplayName(c.address);
-                canvasFinishers.push({
-                  address: c.address,
-                  displayName,
-                  timestamp: Date.now()
-                });
-                
-                // Get position suffix (1st, 2nd, 3rd, etc.)
-                const suffix = position === 1 ? "st" : position === 2 ? "nd" : position === 3 ? "rd" : "th";
-                
-                // Announce in canvas room
-                broadcast(CANVAS_ROOM_ID, {
-                  type: "chat",
-                  from: "System",
-                  fromAddress: "",
-                  text: `${displayName} finished The Maze in ${position}${suffix} place!`,
-                  at: Date.now(),
-                });
-                
-                // Announce in hub/lobby with identicon
-                broadcast(HUB_ROOM_ID, {
-                  type: "chat",
-                  from: displayName,
-                  fromAddress: c.address,
-                  text: `completed The Maze in ${position}${suffix} place! 🏁`,
-                  at: Date.now(),
-                });
-                
-                console.log(`[canvas] Player ${displayName} finished in position ${position}`);
-                
-                // Teleport player back to hub after short delay
-                setTimeout(() => {
-                  const conn = room.get(c.address);
-                  if (conn) {
-                    teleportPlayer(conn, HUB_ROOM_ID, 0, 0);
-                  }
-                }, 1500);
-              }
+              // Portal tile is no longer auto-entered; client now shows an explicit button.
               continue;
             }
             
@@ -1836,6 +1851,18 @@ export function addClient(
         toZ: dest.z,
         goalLayer,
       });
+      return;
+    }
+
+    if (msg.type === "enterPortal") {
+      if (normalizeRoomId(currentRoomId) !== CANVAS_ROOM_ID) return;
+      const here = snapToTile(conn.player.x, conn.player.z);
+      const tileProps = placedMap(currentRoomId).get(tileKey(here.x, here.z));
+      if (!isExitPortalTile(tileProps)) return;
+      console.log(
+        `[canvas] Player ${address.slice(0, 8)}... entered portal from (${here.x}, ${here.z})`
+      );
+      handleCanvasPortalEntry(conn, room);
       return;
     }
 

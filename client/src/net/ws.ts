@@ -199,6 +199,11 @@ export function sendMoveTo(
   ws.send(JSON.stringify({ type: "moveTo", x, z, layer }));
 }
 
+export function sendEnterPortal(ws: WebSocket): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "enterPortal" }));
+}
+
 export function sendPlaceBlock(
   ws: WebSocket,
   x: number,

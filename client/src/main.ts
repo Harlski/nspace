@@ -11,7 +11,7 @@ import {
 } from "./auth/session.js";
 import { ROOM_ID } from "./game/constants.js";
 import { Game } from "./game/Game.js";
-import { isOrthogonallyAdjacentToFloorTile } from "./game/grid.js";
+import { isOrthogonallyAdjacentToFloorTile, snapFloorTile } from "./game/grid.js";
 import { HUB_ROOM_ID, CANVAS_ROOM_ID, normalizeRoomId } from "./game/roomLayouts.js";
 import {
   connectGameWs,
@@ -19,6 +19,7 @@ import {
   sendBeginBlockClaim,
   sendBlockClaimTick,
   sendCompleteBlockClaim,
+  sendEnterPortal,
   sendMoveObstacle,
   sendMoveTo,
   sendPlaceBlock,
@@ -212,6 +213,11 @@ function enterGame(token: string, address: string): void {
   let roomAllowExtraFloor = true;
   let editingTile: { x: number; z: number } | null = null;
   let ws: WebSocket | null = null;
+  let portalEnterVisible = false;
+  let portalAction:
+    | { kind: "door" }
+    | { kind: "canvas-exit" }
+    | null = null;
   let connectGen = 0;
   let cancelActiveNimClaim: (() => void) | null = null;
   /** Active claimable-block UI session (aligned with server begin → complete flow). */
@@ -718,6 +724,64 @@ function enterGame(token: string, address: string): void {
     });
   };
 
+  function isExitPortalTile(meta: {
+    passable: boolean;
+    quarter: boolean;
+    hex: boolean;
+    colorId: number;
+    locked?: boolean;
+  } | null): boolean {
+    return Boolean(
+      meta &&
+        meta.passable &&
+        meta.quarter &&
+        meta.hex &&
+        meta.colorId === 4 &&
+        meta.locked
+    );
+  }
+
+  function syncPortalEnterButton(): void {
+    const anchor = game.getSelfScreenPosition(1.15);
+    if (anchor) {
+      hud.setPortalEnterScreenPosition(anchor.x, anchor.y);
+    }
+    const standingDoor = game.getStandingDoor();
+    if (standingDoor) {
+      portalAction = { kind: "door" };
+      if (!portalEnterVisible) {
+        portalEnterVisible = true;
+        hud.setPortalEnterVisible(true);
+      }
+      return;
+    }
+    const inCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
+    if (!inCanvas) {
+      portalAction = null;
+      if (portalEnterVisible) {
+        portalEnterVisible = false;
+        hud.setPortalEnterVisible(false);
+      }
+      return;
+    }
+    const pos = game.getSelfPosition();
+    if (!pos) {
+      portalAction = null;
+      if (portalEnterVisible) {
+        portalEnterVisible = false;
+        hud.setPortalEnterVisible(false);
+      }
+      return;
+    }
+    const tile = snapFloorTile(pos.x, pos.z);
+    const show = isExitPortalTile(game.getPlacedAt(tile.x, tile.y));
+    portalAction = show ? { kind: "canvas-exit" } : null;
+    if (show !== portalEnterVisible) {
+      portalEnterVisible = show;
+      hud.setPortalEnterVisible(show);
+    }
+  }
+
   const handleServerMessage = async (msg: ServerMessage): Promise<void> => {
     if (msg.type === "welcome") {
       hud.setReconnectOffer(false);
@@ -736,6 +800,9 @@ function enterGame(token: string, address: string): void {
       selfAddress = msg.self.address;
 
       const isCanvas = normalizeRoomId(msg.roomId) === CANVAS_ROOM_ID;
+      portalEnterVisible = false;
+      portalAction = null;
+      hud.setPortalEnterVisible(false);
       roomAllowPlaceBlocks = msg.allowPlaceBlocks !== false;
       roomAllowExtraFloor = msg.allowExtraFloor !== false;
       hud.setRoomEditCaps({
@@ -988,6 +1055,55 @@ function enterGame(token: string, address: string): void {
   hud.onReturnToHub(() => {
     connectToRoom(HUB_ROOM_ID);
   });
+  hud.onFeedback(() => {
+    const message = window.prompt("Share feedback");
+    if (message == null) return;
+    const text = message.trim();
+    if (!text) return;
+    if (text.length > 700) {
+      hud.appendChat("System", "Feedback is too long (max 700 characters).");
+      return;
+    }
+    void (async () => {
+      try {
+        const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+        const base = resolveApiBaseUrl() || "";
+        const res = await fetch(`${base}/api/feedback`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ message: text }),
+        });
+        if (res.ok) {
+          hud.appendChat("System", "Feedback sent. Thank you!");
+          return;
+        }
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          retryAfterMs?: number;
+        };
+        if (res.status === 429 && typeof body.retryAfterMs === "number") {
+          const s = Math.max(1, Math.ceil(body.retryAfterMs / 1000));
+          hud.appendChat("System", `Feedback rate limit: please wait ${s}s.`);
+          return;
+        }
+        hud.appendChat("System", "Could not send feedback right now.");
+      } catch {
+        hud.appendChat("System", "Could not send feedback right now.");
+      }
+    })();
+  });
+  hud.onPortalEnter(() => {
+    if (portalAction?.kind === "door") {
+      void game.triggerStandingDoorTransition();
+      return;
+    }
+    if (portalAction?.kind === "canvas-exit" && ws) {
+      sendEnterPortal(ws);
+    }
+  });
 
   hud.onReturnToLobby(() => {
     disposeToMenu();
@@ -1132,6 +1248,7 @@ function enterGame(token: string, address: string): void {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     game.tick(dt);
+    syncPortalEnterButton();
     if (showDebugHud) {
       const inst = dt > 1e-6 ? 1 / dt : 0;
       fpsSmoothed = fpsSmoothed * 0.9 + inst * 0.1;

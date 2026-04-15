@@ -62,6 +62,12 @@ const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "64kb" }));
 
+const TELEGRAM_BOT_TOKEN = String(process.env.TELEGRAM_BOT_TOKEN ?? "").trim();
+const TELEGRAM_CHAT_ID = String(process.env.TELEGRAM_CHAT_ID ?? "").trim();
+const FEEDBACK_MAX_CHARS = 700;
+const FEEDBACK_COOLDOWN_MS = 20_000;
+const feedbackLastByAddress = new Map<string, number>();
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -84,6 +90,37 @@ function requireJwt(req: Request, res: Response, next: NextFunction): void {
     next();
   } catch {
     res.status(401).json({ error: "unauthorized" });
+  }
+}
+
+function jwtAddressFromReq(req: Request): string | null {
+  const t = bearerToken(req);
+  if (!t) return null;
+  try {
+    return verifySession(t, jwtSecret).sub;
+  } catch {
+    return null;
+  }
+}
+
+async function sendTelegramFeedback(text: string): Promise<boolean> {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return false;
+  try {
+    const resp = await fetch(
+      `https://api.telegram.org/bot${encodeURIComponent(TELEGRAM_BOT_TOKEN)}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_CHAT_ID,
+          text,
+          disable_web_page_preview: true,
+        }),
+      }
+    );
+    return resp.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -154,6 +191,40 @@ app.post("/api/admin/random-layout", (req, res) => {
     return;
   }
   res.json({ placed: out.placed, totalExtra: out.totalExtra });
+});
+
+app.post("/api/feedback", requireJwt, async (req, res) => {
+  const address = jwtAddressFromReq(req);
+  if (!address) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const raw = (req.body as Record<string, unknown> | null)?.message;
+  const message = typeof raw === "string" ? raw.trim() : "";
+  if (!message) {
+    res.status(400).json({ error: "missing_message" });
+    return;
+  }
+  if (message.length > FEEDBACK_MAX_CHARS) {
+    res.status(400).json({ error: "message_too_long" });
+    return;
+  }
+  const now = Date.now();
+  const lastAt = feedbackLastByAddress.get(address) ?? 0;
+  const retryAfterMs = FEEDBACK_COOLDOWN_MS - (now - lastAt);
+  if (retryAfterMs > 0) {
+    res.status(429).json({ error: "rate_limited", retryAfterMs });
+    return;
+  }
+  feedbackLastByAddress.set(address, now);
+  const ok = await sendTelegramFeedback(
+    `NSpace feedback\nWallet: ${address}\n\n${message}`
+  );
+  if (!ok) {
+    res.status(503).json({ error: "telegram_unavailable" });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 app.get("/api/auth/nonce", (_req, res) => {

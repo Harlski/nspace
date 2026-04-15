@@ -1050,6 +1050,20 @@ body {
   color: #fde68a;
 }
 
+.hud-feedback-btn {
+  border: 1px solid rgba(59, 130, 246, 0.65);
+  background: rgba(30, 64, 175, 0.35);
+  color: #ffffff;
+  font-size: 12px;
+  padding: 5px 10px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.hud-feedback-btn:hover {
+  background: rgba(30, 64, 175, 0.5);
+}
+
 .hud-return-hub {
   padding: 6px 12px;
   border-radius: 6px;
@@ -1058,6 +1072,34 @@ body {
   color: #e8eaef;
   cursor: pointer;
   font-size: 13px;
+}
+
+.hud-portal-enter {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -115%);
+  z-index: 7;
+  pointer-events: auto;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(59, 130, 246, 0.7);
+  background: rgba(14, 116, 144, 0.34);
+  color: #e0f2fe;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hud-portal-enter:hover {
+  background: rgba(14, 116, 144, 0.5);
+}
+
+.hud-portal-enter.nq-pill {
+  background: #1f6fff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #ffffff;
+  font-weight: 700;
 }
 
 .hud-status {
