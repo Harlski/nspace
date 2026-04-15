@@ -20,7 +20,7 @@ const LS_IDENTICON_RY = "nspace_identicon_ry_deg";
 const LS_IDENTICON_RZ = "nspace_identicon_rz_deg";
 const LS_IDENTICON_SCALE = "nspace_identicon_scale";
 const LS_FLOOR_TILE_QUAD = "nspace_floor_tile_quad";
-const DEFAULT_ZOOM_MIN = 4;
+const DEFAULT_ZOOM_MIN = 6.5;
 const DEFAULT_ZOOM_MAX = 13.44;
 import { loadIdenticonTexture } from "./identiconTexture.js";
 import {

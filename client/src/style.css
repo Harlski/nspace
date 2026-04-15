@@ -2179,7 +2179,7 @@ body {
 .nim-claim-bar {
   position: absolute;
   left: 50%;
-  bottom: 52px;
+  top: calc(56px + env(safe-area-inset-top, 0px));
   transform: translateX(-50%);
   width: min(360px, 88vw);
   padding: 8px 10px 10px;
