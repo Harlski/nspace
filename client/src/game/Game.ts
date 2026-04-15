@@ -67,6 +67,88 @@ const TERRAIN_TILE_DOOR_MARKER_SIZE = 1;
 const TERRAIN_TILE_DOOR_MARKER_HEIGHT = 2.72;
 const TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM = 0.9;
 const TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP = 0;
+type VoxelTextSpec = {
+  id: string;
+  text: string;
+  roomId: string;
+  x: number;
+  y: number;
+  z: number;
+  yawDeg: number;
+  unit: number;
+  letterSpacing: number;
+  color: number;
+  emissive: number;
+  emissiveIntensity: number;
+};
+
+const DEFAULT_VOXEL_TEXT_SPECS: readonly VoxelTextSpec[] = [
+  {
+    id: "space-sign",
+    text: "SPACE",
+    roomId: HUB_ROOM_ID,
+    x: 0,
+    y: 0.55,
+    z: -10.5,
+    yawDeg: 0,
+    unit: 0.1875,
+    letterSpacing: 1,
+    color: 0xe2f3ff,
+    emissive: 0x3b82f6,
+    emissiveIntensity: 0.08,
+  },
+];
+const VOXEL_TEXT_MOVE_STEP = 0.5;
+const VOXEL_TEXT_ROTATE_STEP_RAD = Math.PI / 12;
+const VOXEL_TEXT_MIN_UNIT = 0.05;
+const VOXEL_GLYPH_UNKNOWN: readonly string[] = [
+  "11111",
+  "00001",
+  "00010",
+  "00100",
+  "00100",
+  "00000",
+  "00100",
+];
+const VOXEL_FONT_5X7: Record<string, readonly string[]> = {
+  " ": ["00000", "00000", "00000", "00000", "00000", "00000", "00000"],
+  A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
+  B: ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+  C: ["01110", "10001", "10000", "10000", "10000", "10001", "01110"],
+  D: ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
+  E: ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
+  F: ["11111", "10000", "10000", "11110", "10000", "10000", "10000"],
+  G: ["01110", "10001", "10000", "10111", "10001", "10001", "01110"],
+  H: ["10001", "10001", "10001", "11111", "10001", "10001", "10001"],
+  I: ["01110", "00100", "00100", "00100", "00100", "00100", "01110"],
+  J: ["00001", "00001", "00001", "00001", "10001", "10001", "01110"],
+  K: ["10001", "10010", "10100", "11000", "10100", "10010", "10001"],
+  L: ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
+  M: ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
+  N: ["10001", "10001", "11001", "10101", "10011", "10001", "10001"],
+  O: ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
+  P: ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
+  Q: ["01110", "10001", "10001", "10001", "10101", "10010", "01101"],
+  R: ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
+  S: ["01111", "10000", "10000", "01110", "00001", "00001", "11110"],
+  T: ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
+  U: ["10001", "10001", "10001", "10001", "10001", "10001", "01110"],
+  V: ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
+  W: ["10001", "10001", "10001", "10101", "10101", "11011", "10001"],
+  X: ["10001", "10001", "01010", "00100", "01010", "10001", "10001"],
+  Y: ["10001", "10001", "01010", "00100", "00100", "00100", "00100"],
+  Z: ["11111", "00001", "00010", "00100", "01000", "10000", "11111"],
+  "0": ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
+  "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+  "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+  "3": ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
+  "4": ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
+  "5": ["11111", "10000", "10000", "11110", "00001", "00001", "11110"],
+  "6": ["01110", "10000", "10000", "11110", "10001", "10001", "01110"],
+  "7": ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
+  "8": ["01110", "10001", "10001", "01110", "10001", "10001", "01110"],
+  "9": ["01110", "10001", "10001", "01111", "00001", "00001", "01110"],
+};
 
 /** y=0 ground plane (world). */
 const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -323,6 +405,11 @@ export class Game {
   private readonly walkableFloorMeshes = new Map<string, THREE.Mesh>();
   /** White marker blocks on door tiles (teleport squares). */
   private readonly doorMarkerMeshes = new Map<string, THREE.Mesh>();
+  /** Decorative voxel text meshes keyed by object id. */
+  private readonly voxelTextMeshes = new Map<string, THREE.InstancedMesh>();
+  private readonly voxelTextSpecs = new Map<string, VoxelTextSpec>();
+  private activeVoxelTextId: string | null = null;
+  private readonly voxelGlyphCache = new Map<string, readonly string[]>();
   /** Shared 1×1 geometry; `floorTileQuadSize` scales each mesh to hide edge seams. */
   private readonly walkableFloorPlaneGeom = new THREE.PlaneGeometry(1, 1);
   private floorTileQuadSize = DEFAULT_FLOOR_TILE_QUAD;
@@ -603,8 +690,14 @@ export class Game {
       passive: false,
     });
 
+    for (const spec of DEFAULT_VOXEL_TEXT_SPECS) {
+      this.voxelTextSpecs.set(spec.id, { ...spec });
+      if (!this.activeVoxelTextId) this.activeVoxelTextId = spec.id;
+    }
+
     this.rebuildDoorKeys();
     this.syncWalkableFloorMeshes();
+    this.syncVoxelWordSign();
   }
 
   private rebuildDoorKeys(): void {
@@ -745,6 +838,7 @@ export class Game {
     this.hideTrailImmediate();
     this.beginPathFadeOut();
     this.syncWalkableFloorMeshes();
+    this.syncVoxelWordSign();
     this.refreshPathLine();
     this.syncPlacementRangeHints();
     
@@ -2025,6 +2119,7 @@ export class Game {
       (marker.material as THREE.Material).dispose();
     }
     this.doorMarkerMeshes.clear();
+    this.clearVoxelWordSign();
     this.walkableFloorPlaneGeom.dispose();
     this.pathGeom.dispose();
     (this.pathLine.material as THREE.Material).dispose();
@@ -2392,6 +2487,188 @@ export class Game {
       }
     }
     this.applyFloorTileQuadScale();
+  }
+
+  private clearVoxelWordSign(): void {
+    for (const [, mesh] of this.voxelTextMeshes) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    this.voxelTextMeshes.clear();
+  }
+
+  private glyphRows5x7(ch: string): readonly string[] {
+    const c = ch.toUpperCase();
+    const cached = this.voxelGlyphCache.get(c);
+    if (cached) return cached;
+    const rows = VOXEL_FONT_5X7[c] ?? VOXEL_GLYPH_UNKNOWN;
+    this.voxelGlyphCache.set(c, rows);
+    return rows;
+  }
+
+  private syncVoxelWordSign(): void {
+    this.clearVoxelWordSign();
+    const currentRoom = normalizeRoomId(this.roomId);
+    for (const [id, spec] of this.voxelTextSpecs) {
+      if (normalizeRoomId(spec.roomId) !== currentRoom) continue;
+      const chars = spec.text.toUpperCase().split("");
+      const glyphW = 5;
+      const glyphH = 7;
+      const unit = spec.unit;
+      const spacing = spec.letterSpacing;
+      const totalCols = chars.length * glyphW + Math.max(0, chars.length - 1) * spacing;
+      const totalWorldW = totalCols * unit;
+      const startX = spec.x - totalWorldW / 2 + unit / 2;
+      const startZ = spec.z;
+
+      let count = 0;
+      for (const ch of chars) {
+        const g = this.glyphRows5x7(ch);
+        for (let r = 0; r < glyphH; r++) {
+          const row = g[r] ?? "";
+          for (let c = 0; c < glyphW; c++) {
+            if (row[c] === "1") count += 1;
+          }
+        }
+      }
+      if (count === 0) continue;
+
+      const geo = new THREE.BoxGeometry(unit, unit, unit);
+      const mat = new THREE.MeshStandardMaterial({
+        color: spec.color,
+        roughness: 0.35,
+        metalness: 0.05,
+        emissive: spec.emissive,
+        emissiveIntensity: spec.emissiveIntensity,
+      });
+      const mesh = new THREE.InstancedMesh(geo, mat, count);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        THREE.MathUtils.degToRad(spec.yawDeg)
+      );
+      const scale = new THREE.Vector3(1, 1, 1);
+      const centerX = startX + totalWorldW / 2 - unit / 2;
+      const center = new THREE.Vector3(centerX, 0, startZ);
+      const pos = new THREE.Vector3();
+      const rotated = new THREE.Vector3();
+      let i = 0;
+      for (let ci = 0; ci < chars.length; ci++) {
+        const g = this.glyphRows5x7(chars[ci] ?? " ");
+        const xColOffset = ci * (glyphW + spacing);
+        for (let r = 0; r < glyphH; r++) {
+          const row = g[r] ?? "";
+          for (let c = 0; c < glyphW; c++) {
+            if (row[c] !== "1") continue;
+            const wx = startX + (xColOffset + c) * unit;
+            const wy = spec.y + (glyphH - 1 - r) * unit;
+            rotated.set(wx, 0, startZ).sub(center).applyQuaternion(q).add(center);
+            pos.set(rotated.x, wy, rotated.z);
+            m.compose(pos, q, scale);
+            mesh.setMatrixAt(i, m);
+            i += 1;
+          }
+        }
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      this.scene.add(mesh);
+      this.voxelTextMeshes.set(id, mesh);
+    }
+  }
+
+  getVoxelTextIds(roomId?: string): string[] {
+    const rid = roomId ? normalizeRoomId(roomId) : null;
+    const out: string[] = [];
+    for (const [id, spec] of this.voxelTextSpecs) {
+      if (!rid || normalizeRoomId(spec.roomId) === rid) out.push(id);
+    }
+    out.sort();
+    return out;
+  }
+
+  getVoxelTextSpec(id: string): VoxelTextSpec | null {
+    const s = this.voxelTextSpecs.get(id);
+    return s ? { ...s } : null;
+  }
+
+  upsertVoxelText(spec: VoxelTextSpec): void {
+    const clean: VoxelTextSpec = {
+      ...spec,
+      id: spec.id.trim(),
+      text: spec.text.trim().toUpperCase(),
+      roomId: normalizeRoomId(spec.roomId),
+      letterSpacing: Math.max(0, spec.letterSpacing),
+      unit: Math.max(VOXEL_TEXT_MIN_UNIT, spec.unit),
+    };
+    if (!clean.id) return;
+    this.voxelTextSpecs.set(clean.id, clean);
+    if (!this.activeVoxelTextId) this.activeVoxelTextId = clean.id;
+    this.syncVoxelWordSign();
+  }
+
+  updateVoxelText(id: string, patch: Partial<VoxelTextSpec>): void {
+    const cur = this.voxelTextSpecs.get(id);
+    if (!cur) return;
+    const next: VoxelTextSpec = {
+      ...cur,
+      ...patch,
+      id,
+      text: (patch.text ?? cur.text).trim().toUpperCase(),
+      roomId: normalizeRoomId(patch.roomId ?? cur.roomId),
+      letterSpacing: Math.max(0, patch.letterSpacing ?? cur.letterSpacing),
+      unit: Math.max(VOXEL_TEXT_MIN_UNIT, patch.unit ?? cur.unit),
+    };
+    this.voxelTextSpecs.set(id, next);
+    this.syncVoxelWordSign();
+  }
+
+  removeVoxelText(id: string): void {
+    if (!this.voxelTextSpecs.delete(id)) return;
+    if (this.activeVoxelTextId === id) {
+      const ids = this.getVoxelTextIds();
+      this.activeVoxelTextId = ids[0] ?? null;
+    }
+    this.syncVoxelWordSign();
+  }
+
+  setActiveVoxelText(id: string | null): void {
+    if (!id) {
+      this.activeVoxelTextId = null;
+      return;
+    }
+    if (this.voxelTextSpecs.has(id)) this.activeVoxelTextId = id;
+  }
+
+  getActiveVoxelTextId(): string | null {
+    return this.activeVoxelTextId;
+  }
+
+  moveVoxelWord(dx: number, dz: number): void {
+    const id = this.activeVoxelTextId;
+    if (!id) return;
+    const cur = this.voxelTextSpecs.get(id);
+    if (!cur) return;
+    this.updateVoxelText(id, { x: cur.x + dx, z: cur.z + dz });
+  }
+
+  rotateVoxelWord(deltaYawRad: number): void {
+    const id = this.activeVoxelTextId;
+    if (!id) return;
+    const cur = this.voxelTextSpecs.get(id);
+    if (!cur) return;
+    this.updateVoxelText(id, {
+      yawDeg: cur.yawDeg + THREE.MathUtils.radToDeg(deltaYawRad),
+    });
+  }
+
+  voxelWordMoveStep(): number {
+    return VOXEL_TEXT_MOVE_STEP;
+  }
+
+  voxelWordRotateStepRad(): number {
+    return VOXEL_TEXT_ROTATE_STEP_RAD;
   }
 
   private syncBlockMeshes(): void {

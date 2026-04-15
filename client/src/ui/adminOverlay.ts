@@ -2,22 +2,23 @@ import type { Game } from "../game/Game.js";
 import { apiUrl } from "../net/apiBase.js";
 import { ROOM_ID } from "../game/constants.js";
 
-const ENABLED = import.meta.env.VITE_ADMIN_ENABLED === "true";
+const DEV_ENABLED = import.meta.env.VITE_ADMIN_ENABLED === "true";
 
-type TabId = "layout" | "fog" | "camera" | "avatar";
+type TabId = "layout" | "fog" | "camera" | "avatar" | "voxel";
 
 export function installAdminOverlay(
   hudRoot: HTMLElement,
   game: Game,
-  opts: { roomId: string }
-): { destroy: () => void } {
-  if (!ENABLED) {
-    return { destroy: () => {} };
+  opts: { roomId: string; enabled?: boolean }
+): { destroy: () => void; isVoxelEditorOpen: () => boolean } {
+  const enabled = Boolean(opts.enabled) || DEV_ENABLED;
+  if (!enabled) {
+    return { destroy: () => {}, isVoxelEditorOpen: () => false };
   }
 
   const frame = hudRoot.querySelector(".game-frame");
   if (!frame) {
-    return { destroy: () => {} };
+    return { destroy: () => {}, isVoxelEditorOpen: () => false };
   }
 
   const wrap = document.createElement("div");
@@ -40,6 +41,7 @@ export function installAdminOverlay(
       <button type="button" class="admin-overlay-tab" data-tab="fog" role="tab" aria-selected="false">Fog</button>
       <button type="button" class="admin-overlay-tab" data-tab="camera" role="tab" aria-selected="false">Camera</button>
       <button type="button" class="admin-overlay-tab" data-tab="avatar" role="tab" aria-selected="false">Avatar</button>
+      <button type="button" class="admin-overlay-tab" data-tab="voxel" role="tab" aria-selected="false">Voxel Text</button>
     </div>
     <div class="admin-overlay-tab-panel" data-panel="layout">
       <p class="admin-overlay-hint">Random extra floor tiles (500×500 world). No auth required.</p>
@@ -105,6 +107,51 @@ export function installAdminOverlay(
       </label>
       <button type="button" class="admin-overlay-btn admin-overlay-btn-secondary" id="avatar-reset">Reset orientation &amp; scale</button>
     </div>
+    <div class="admin-overlay-tab-panel" data-panel="voxel" hidden>
+      <p class="admin-overlay-hint">Create and edit voxel text signs in-world.</p>
+      <label class="admin-overlay-field"><span>Object</span>
+        <select class="admin-overlay-input" id="voxel-id"></select>
+      </label>
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <button type="button" class="admin-overlay-btn admin-overlay-btn-secondary" id="voxel-refresh">Refresh</button>
+        <button type="button" class="admin-overlay-btn admin-overlay-btn-secondary" id="voxel-new">New</button>
+        <button type="button" class="admin-overlay-btn admin-overlay-btn-secondary" id="voxel-delete">Delete</button>
+      </div>
+      <label class="admin-overlay-field"><span>Text</span>
+        <input type="text" class="admin-overlay-input" id="voxel-text" />
+      </label>
+      <label class="admin-overlay-field"><span>Room ID</span>
+        <input type="text" class="admin-overlay-input" id="voxel-room" />
+      </label>
+      <label class="admin-overlay-field"><span>X</span>
+        <input type="number" class="admin-overlay-input" id="voxel-x" step="0.1" />
+      </label>
+      <label class="admin-overlay-field"><span>Y</span>
+        <input type="number" class="admin-overlay-input" id="voxel-y" step="0.1" />
+      </label>
+      <label class="admin-overlay-field"><span>Z</span>
+        <input type="number" class="admin-overlay-input" id="voxel-z" step="0.1" />
+      </label>
+      <label class="admin-overlay-field"><span>Yaw (deg)</span>
+        <input type="number" class="admin-overlay-input" id="voxel-yaw" step="1" />
+      </label>
+      <label class="admin-overlay-field"><span>Unit size</span>
+        <input type="number" class="admin-overlay-input" id="voxel-unit" min="0.05" step="0.0125" />
+      </label>
+      <label class="admin-overlay-field"><span>Letter spacing</span>
+        <input type="number" class="admin-overlay-input" id="voxel-spacing" min="0" step="0.1" />
+      </label>
+      <label class="admin-overlay-field"><span>Color (#RRGGBB)</span>
+        <input type="text" class="admin-overlay-input" id="voxel-color" value="#e2f3ff" />
+      </label>
+      <label class="admin-overlay-field"><span>Emissive (#RRGGBB)</span>
+        <input type="text" class="admin-overlay-input" id="voxel-emissive" value="#3b82f6" />
+      </label>
+      <label class="admin-overlay-field"><span>Emissive intensity</span>
+        <input type="number" class="admin-overlay-input" id="voxel-emissive-intensity" min="0" step="0.01" />
+      </label>
+      <button type="button" class="admin-overlay-btn" id="voxel-apply">Apply voxel text</button>
+    </div>
     <div class="admin-overlay-status" id="admin-status"></div>
   `;
 
@@ -151,11 +198,72 @@ export function installAdminOverlay(
 
   const floorTileQuad = $("floor-tile-quad") as HTMLInputElement;
   const floorTileQuadVal = $("floor-tile-quad-val") as HTMLSpanElement;
+  const voxelId = $("voxel-id") as HTMLSelectElement;
+  const voxelText = $("voxel-text") as HTMLInputElement;
+  const voxelRoom = $("voxel-room") as HTMLInputElement;
+  const voxelX = $("voxel-x") as HTMLInputElement;
+  const voxelY = $("voxel-y") as HTMLInputElement;
+  const voxelZ = $("voxel-z") as HTMLInputElement;
+  const voxelYaw = $("voxel-yaw") as HTMLInputElement;
+  const voxelUnit = $("voxel-unit") as HTMLInputElement;
+  const voxelSpacing = $("voxel-spacing") as HTMLInputElement;
+  const voxelColor = $("voxel-color") as HTMLInputElement;
+  const voxelEmissive = $("voxel-emissive") as HTMLInputElement;
+  const voxelEmissiveIntensity = $("voxel-emissive-intensity") as HTMLInputElement;
 
   const syncFloorTileFields = (): void => {
     const s = game.getFloorTileQuadSize();
     floorTileQuad.value = String(s);
     floorTileQuadVal.textContent = s.toFixed(3);
+  };
+
+  const parseHexColor = (raw: string, fallback: number): number => {
+    const v = raw.trim().replace(/^#/, "");
+    if (!/^[0-9a-fA-F]{6}$/.test(v)) return fallback;
+    return Number.parseInt(v, 16);
+  };
+
+  const formatHexColor = (n: number): string =>
+    `#${Math.max(0, Math.min(0xffffff, Math.floor(n))).toString(16).padStart(6, "0")}`;
+  const numOr = (raw: string, fallback: number): number => {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
+  const syncVoxelSelect = (): void => {
+    const ids = game.getVoxelTextIds();
+    const selected = game.getActiveVoxelTextId();
+    voxelId.innerHTML = "";
+    for (const id of ids) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = id;
+      voxelId.appendChild(opt);
+    }
+    const next = selected && ids.includes(selected) ? selected : ids[0] ?? "";
+    if (next) {
+      voxelId.value = next;
+      game.setActiveVoxelText(next);
+    }
+  };
+
+  const syncVoxelFields = (): void => {
+    syncVoxelSelect();
+    const id = voxelId.value;
+    if (!id) return;
+    const spec = game.getVoxelTextSpec(id);
+    if (!spec) return;
+    voxelText.value = spec.text;
+    voxelRoom.value = spec.roomId;
+    voxelX.value = String(spec.x);
+    voxelY.value = String(spec.y);
+    voxelZ.value = String(spec.z);
+    voxelYaw.value = String(spec.yawDeg);
+    voxelUnit.value = String(spec.unit);
+    voxelSpacing.value = String(spec.letterSpacing);
+    voxelColor.value = formatHexColor(spec.color);
+    voxelEmissive.value = formatHexColor(spec.emissive);
+    voxelEmissiveIntensity.value = String(spec.emissiveIntensity);
   };
 
   const syncAvatarFields = (): void => {
@@ -197,6 +305,7 @@ export function installAdminOverlay(
     });
     if (id === "avatar") syncAvatarFields();
     if (id === "layout") syncFloorTileFields();
+    if (id === "voxel") syncVoxelFields();
   };
 
   tabButtons.forEach((btn) => {
@@ -216,6 +325,7 @@ export function installAdminOverlay(
     syncFogFields();
     syncAvatarFields();
     syncFloorTileFields();
+    syncVoxelFields();
     setTab("layout");
     setStatus(`Frustum: ${game.getZoomFrustumSize().toFixed(1)} · Fog: ${game.getFogOfWarEnabled() ? "on" : "off"}`);
   };
@@ -316,6 +426,77 @@ export function installAdminOverlay(
     }
   });
 
+  voxelId.addEventListener("change", () => {
+    game.setActiveVoxelText(voxelId.value || null);
+    syncVoxelFields();
+  });
+
+  $("voxel-refresh").addEventListener("click", () => {
+    syncVoxelFields();
+    setStatus("Voxel text list refreshed");
+  });
+
+  $("voxel-new").addEventListener("click", () => {
+    const ts = Date.now().toString(36);
+    const id = `text-${ts.slice(-4)}`;
+    game.upsertVoxelText({
+      id,
+      text: "NEW",
+      roomId: ROOM_ID,
+      x: 0,
+      y: 0.55,
+      z: 0,
+      yawDeg: 0,
+      unit: 0.1875,
+      letterSpacing: 1,
+      color: 0xe2f3ff,
+      emissive: 0x3b82f6,
+      emissiveIntensity: 0.08,
+    });
+    game.setActiveVoxelText(id);
+    syncVoxelFields();
+    setStatus(`Created voxel text "${id}"`);
+  });
+
+  $("voxel-delete").addEventListener("click", () => {
+    const id = voxelId.value.trim();
+    if (!id) return;
+    game.removeVoxelText(id);
+    syncVoxelFields();
+    setStatus(`Deleted voxel text "${id}"`);
+  });
+
+  $("voxel-apply").addEventListener("click", () => {
+    const id = voxelId.value.trim();
+    if (!id) {
+      setStatus("Select or create a voxel text object first", true);
+      return;
+    }
+    const prev = game.getVoxelTextSpec(id);
+    if (!prev) {
+      setStatus(`Voxel text "${id}" not found`, true);
+      return;
+    }
+    game.updateVoxelText(id, {
+      text: voxelText.value.trim().toUpperCase() || prev.text,
+      roomId: voxelRoom.value.trim() || prev.roomId,
+      x: numOr(voxelX.value, prev.x),
+      y: numOr(voxelY.value, prev.y),
+      z: numOr(voxelZ.value, prev.z),
+      yawDeg: numOr(voxelYaw.value, prev.yawDeg),
+      unit: numOr(voxelUnit.value, prev.unit),
+      letterSpacing: numOr(voxelSpacing.value, prev.letterSpacing),
+      color: parseHexColor(voxelColor.value, prev.color),
+      emissive: parseHexColor(voxelEmissive.value, prev.emissive),
+      emissiveIntensity: numOr(
+        voxelEmissiveIntensity.value,
+        prev.emissiveIntensity
+      ),
+    });
+    syncVoxelFields();
+    setStatus(`Updated voxel text "${id}"`);
+  });
+
   const onKey = (e: KeyboardEvent): void => {
     if (e.key !== "`" || e.repeat) return;
     const t = document.activeElement;
@@ -326,6 +507,13 @@ export function installAdminOverlay(
   window.addEventListener("keydown", onKey);
 
   return {
+    isVoxelEditorOpen() {
+      if (panel.hidden) return false;
+      const active = panel.querySelector<HTMLButtonElement>(
+        ".admin-overlay-tab--active"
+      );
+      return active?.dataset.tab === "voxel";
+    },
     destroy() {
       window.removeEventListener("keydown", onKey);
       wrap.remove();

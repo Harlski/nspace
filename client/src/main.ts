@@ -139,7 +139,10 @@ function enterGame(token: string, address: string): void {
   const hud = createHud(hudRoot, { showDebug: showDebugHud });
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
-  const adminOverlay = installAdminOverlay(hudRoot, game, { roomId: ROOM_ID });
+  const adminOverlay = installAdminOverlay(hudRoot, game, {
+    roomId: ROOM_ID,
+    enabled: isAdmin(address),
+  });
 
   const uninstallShell = installInputShell(hudRoot);
 
@@ -1129,6 +1132,48 @@ function enterGame(token: string, address: string): void {
   window.addEventListener(
     "keydown",
     (e) => {
+      if (e.altKey) {
+        if (!adminOverlay.isVoxelEditorOpen()) return;
+        const k = e.key;
+        const step = game.voxelWordMoveStep();
+        const active = game.getActiveVoxelTextId() ?? "none";
+        if (k === "ArrowUp") {
+          e.preventDefault();
+          game.moveVoxelWord(0, -step);
+          hud.setStatus(`Voxel text "${active}" moved up`);
+          return;
+        }
+        if (k === "ArrowDown") {
+          e.preventDefault();
+          game.moveVoxelWord(0, step);
+          hud.setStatus(`Voxel text "${active}" moved down`);
+          return;
+        }
+        if (k === "ArrowLeft") {
+          e.preventDefault();
+          game.moveVoxelWord(-step, 0);
+          hud.setStatus(`Voxel text "${active}" moved left`);
+          return;
+        }
+        if (k === "ArrowRight") {
+          e.preventDefault();
+          game.moveVoxelWord(step, 0);
+          hud.setStatus(`Voxel text "${active}" moved right`);
+          return;
+        }
+        if (k === "q" || k === "Q") {
+          e.preventDefault();
+          game.rotateVoxelWord(-game.voxelWordRotateStepRad());
+          hud.setStatus(`Voxel text "${active}" rotated CCW`);
+          return;
+        }
+        if (k === "e" || k === "E") {
+          e.preventDefault();
+          game.rotateVoxelWord(game.voxelWordRotateStepRad());
+          hud.setStatus(`Voxel text "${active}" rotated CW`);
+          return;
+        }
+      }
       if (e.key === "Enter" && document.activeElement !== chatInput) {
         e.preventDefault();
         chatInput.focus();
