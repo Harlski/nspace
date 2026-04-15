@@ -29,6 +29,7 @@ export type NimPayoutJob = {
   txHash?: string;
   roomId: string;
   tileKey: string;
+  txMessage?: string;
 };
 
 type SerializedJob = Omit<NimPayoutJob, "amountLuna"> & { amountLuna: string };
@@ -115,6 +116,7 @@ export function enqueueNimPayout(opts: {
   amountLuna?: bigint;
   roomId: string;
   tileKey: string;
+  txMessage?: string;
 }): void {
   const amountLuna = opts.amountLuna ?? LUNA_PER_NIM;
   if (
@@ -140,6 +142,7 @@ export function enqueueNimPayout(opts: {
     status: "pending",
     roomId: opts.roomId,
     tileKey: opts.tileKey,
+    txMessage: opts.txMessage?.trim() || undefined,
   };
   jobs.push(job);
   saveQueue();
@@ -167,7 +170,8 @@ async function processOne(job: NimPayoutJob): Promise<void> {
   try {
     const { txHash, details } = await sendNimPayoutTransaction(
       job.recipientAddress,
-      job.amountLuna
+      job.amountLuna,
+      job.txMessage
     );
     job.txHash = txHash;
     job.lastError = undefined;

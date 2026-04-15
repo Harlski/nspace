@@ -18,9 +18,9 @@ import {
   listSessionsForPlayer,
 } from "./eventLog.js";
 import { flushCanvasClaimsSync } from "./canvasCanvas.js";
-import { getTopPlayers } from "./canvasCanvas.js";
 import { flushSignboardsSync } from "./signboards.js";
 import { flushVoxelTextsSync } from "./voxelTexts.js";
+import { getTopMazeRecords } from "./mazeRecords.js";
 import { installSwarmErrorForwarder } from "./swarmLogForwarder.js";
 import {
   flushNimPayoutQueueSync,
@@ -179,7 +179,7 @@ async function sendTelegramFeedback(text: string): Promise<boolean> {
 
 app.get("/api/canvas/leaderboard", (_req, res) => {
   try {
-    const top = getTopPlayers(3);
+    const top = getTopMazeRecords(10);
     res.json({ leaderboard: top });
   } catch (err) {
     console.error("[canvas/leaderboard]", err);

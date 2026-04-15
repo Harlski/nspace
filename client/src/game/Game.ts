@@ -467,6 +467,8 @@ export class Game {
   private frustumSize: number;
   private zoomMin: number;
   private zoomMax: number;
+  private zoomLocked = false;
+  private zoomLockedFrustum: number | null = null;
   private readonly fogOfWar: FogOfWarPass;
   /** Extra highlight on solid block tops when hovering in walk mode. */
   private readonly blockTopHighlight: THREE.Mesh;
@@ -947,6 +949,24 @@ export class Game {
     return { min: this.zoomMin, max: this.zoomMax };
   }
 
+  setZoomLocked(locked: boolean, forcedFrustum?: number): void {
+    this.zoomLocked = locked;
+    if (!locked) {
+      this.zoomLockedFrustum = null;
+      return;
+    }
+    const target = Number.isFinite(forcedFrustum)
+      ? Number(forcedFrustum)
+      : this.zoomMin;
+    this.zoomLockedFrustum = Game.clampZoom(
+      target,
+      this.zoomMin,
+      this.zoomMax,
+      VIEW_FRUSTUM_SIZE
+    );
+    this.setZoomFrustumSize(this.zoomLockedFrustum, false);
+  }
+
   /** Uniform XY scale on shared 1×1 floor quads (reduces seam flicker when > 1). Persists in localStorage. */
   getFloorTileQuadSize(): number {
     return this.floorTileQuadSize;
@@ -991,20 +1011,35 @@ export class Game {
       this.zoomMax,
       VIEW_FRUSTUM_SIZE
     );
+    if (this.zoomLocked && this.zoomLockedFrustum !== null) {
+      this.frustumSize = Game.clampZoom(
+        this.zoomLockedFrustum,
+        this.zoomMin,
+        this.zoomMax,
+        VIEW_FRUSTUM_SIZE
+      );
+    }
     localStorage.setItem(LS_ZOOM_FRUSTUM, String(this.frustumSize));
     this.applyOrthographicFrustum();
     this.refreshAllNameLabelScales();
     this.refreshChatBubbleVerticalPositions();
   }
 
-  setZoomFrustumSize(size: number): void {
+  setZoomFrustumSize(size: number, persist = true): void {
+    if (this.zoomLocked && persist) return;
+    const target =
+      this.zoomLocked && this.zoomLockedFrustum !== null
+        ? this.zoomLockedFrustum
+        : size;
     this.frustumSize = Game.clampZoom(
-      size,
+      target,
       this.zoomMin,
       this.zoomMax,
       VIEW_FRUSTUM_SIZE
     );
-    localStorage.setItem(LS_ZOOM_FRUSTUM, String(this.frustumSize));
+    if (persist) {
+      localStorage.setItem(LS_ZOOM_FRUSTUM, String(this.frustumSize));
+    }
     this.applyOrthographicFrustum();
     this.refreshAllNameLabelScales();
     this.refreshChatBubbleVerticalPositions();
@@ -1177,6 +1212,7 @@ export class Game {
 
   private readonly onWheel = (e: WheelEvent): void => {
     e.preventDefault();
+    if (this.zoomLocked) return;
     const scale = Math.exp(-e.deltaY * 0.0015);
     const next = this.frustumSize / scale;
     this.setZoomFrustumSize(next);
@@ -1781,6 +1817,11 @@ export class Game {
       this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
     if (this.touchPointers.size >= 2) {
+      if (this.zoomLocked) {
+        this.pinchLastDistancePx = 0;
+        e.preventDefault();
+        return;
+      }
       const d = this.pinchScreenDistancePx();
       if (d !== null && d > 1e-3) {
         if (this.pinchLastDistancePx > 0) {

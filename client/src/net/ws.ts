@@ -96,6 +96,7 @@ export type ServerMessage =
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
   | { type: "canvasClaim"; x: number; z: number; address: string }
   | { type: "canvasTimer"; timeRemaining: number }
+  | { type: "canvasCountdown"; text: string; msRemaining: number }
   | {
       type: "signboards";
       roomId: string;

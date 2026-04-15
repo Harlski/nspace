@@ -141,8 +141,9 @@ export function createHud(
   } | null) => void;
   setDebugText: (text: string) => void;
   setCanvasLeaderboardVisible: (visible: boolean) => void;
-  updateCanvasLeaderboard: (leaders: Array<{ address: string; count: number }>) => void;
+  updateCanvasLeaderboard: (leaders: Array<{ address: string; bestMs: number }>) => void;
   setCanvasTimer: (timeRemaining: number) => void;
+  setCanvasCountdown: (text: string | null, msRemaining?: number) => void;
   setPlayerCount: (count: number, roomCount?: number) => void;
   showPlayerJoinedToast: (address: string) => void;
   /** Submit feedback text; return ok + optional user-facing error message. */
@@ -344,6 +345,7 @@ export function createHud(
   canvasLeaderboard.innerHTML = `
     <div class="canvas-leaderboard__title">The Maze - Leaders</div>
     <div class="canvas-leaderboard__timer" hidden></div>
+    <div class="canvas-leaderboard__subtitle">Fastest completions</div>
     <div class="canvas-leaderboard__list"></div>
   `;
 
@@ -634,6 +636,11 @@ export function createHud(
     ".nim-claim-bar__hint"
   ) as HTMLElement | null;
   ui.appendChild(nimClaimBar);
+  const canvasCountdown = document.createElement("div");
+  canvasCountdown.className = "canvas-countdown";
+  canvasCountdown.hidden = true;
+  canvasCountdown.setAttribute("aria-live", "assertive");
+  ui.appendChild(canvasCountdown);
 
   const chatRow = document.createElement("div");
   chatRow.className = "chat-row";
@@ -2230,7 +2237,7 @@ export function createHud(
     setCanvasLeaderboardVisible(visible: boolean) {
       canvasLeaderboard.hidden = !visible;
     },
-    updateCanvasLeaderboard(leaders: Array<{ address: string; count: number }>) {
+    updateCanvasLeaderboard(leaders: Array<{ address: string; bestMs: number }>) {
       const list = canvasLeaderboard.querySelector(".canvas-leaderboard__list");
       if (!list) return;
       
@@ -2257,11 +2264,11 @@ export function createHud(
         let isNew = false;
         
         if (entry) {
-          // Reuse existing entry - just update rank and count
+          // Reuse existing entry - update rank/time
           const rank = entry.querySelector(".canvas-leaderboard__rank");
           const count = entry.querySelector(".canvas-leaderboard__count");
           if (rank) rank.textContent = `${i + 1}.`;
-          if (count) count.textContent = `${leader.count}`;
+          if (count) count.textContent = `${(leader.bestMs / 1000).toFixed(2)}s`;
         } else {
           // Create new entry
           isNew = true;
@@ -2286,8 +2293,8 @@ export function createHud(
           
           const count = document.createElement("span");
           count.className = "canvas-leaderboard__count";
-          count.textContent = `${leader.count}`;
-          
+          count.textContent = `${(leader.bestMs / 1000).toFixed(2)}s`;
+
           entry.appendChild(rank);
           entry.appendChild(identiconImg);
           entry.appendChild(addr);
@@ -2415,6 +2422,21 @@ export function createHud(
       timerEl.textContent = `⏱ ${timeStr}`;
       timerEl.hidden = false;
     },
+    setCanvasCountdown(text: string | null, msRemaining?: number) {
+      if (!text) {
+        canvasCountdown.hidden = true;
+        return;
+      }
+      canvasCountdown.textContent = text;
+      canvasCountdown.hidden = false;
+      if (text === "GO!" || (typeof msRemaining === "number" && msRemaining <= 0)) {
+        window.setTimeout(() => {
+          if (canvasCountdown.textContent === "GO!") {
+            canvasCountdown.hidden = true;
+          }
+        }, 850);
+      }
+    },
     setSignboardTooltip(
       signboard: {
         id: string;
@@ -2481,6 +2503,7 @@ export function createHud(
       hideObjectEditPanel();
       hideLobbyConfirm();
       nimClaimBar.hidden = true;
+      canvasCountdown.hidden = true;
       ro.disconnect();
     },
   };

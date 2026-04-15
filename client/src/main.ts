@@ -40,6 +40,7 @@ import { mountMainMenu } from "./ui/mainMenu.js";
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
 /** Inactivity: return to hub center (not lobby). */
 const IDLE_RETURN_HUB_MS = 15 * 60 * 1000;
+const LS_ZOOM_NON_MAZE_FRUSTUM = "nspace_zoom_non_maze_frustum";
 
 /** Admin wallet addresses (must match server config) */
 const ADMIN_ADDRESSES = new Set([
@@ -232,6 +233,16 @@ function enterGame(token: string, address: string): void {
     | { kind: "canvas-exit" }
     | null = null;
   let connectGen = 0;
+  let mazeZoomLocked = false;
+  let nonMazeFrustum: number | null = (() => {
+    try {
+      const raw = localStorage.getItem(LS_ZOOM_NON_MAZE_FRUSTUM);
+      const n = raw === null ? NaN : Number(raw);
+      return Number.isFinite(n) ? n : null;
+    } catch {
+      return null;
+    }
+  })();
   let cancelActiveNimClaim: (() => void) | null = null;
   /** Active claimable-block UI session (aligned with server begin → complete flow). */
   let nimClaimUiRef: {
@@ -348,7 +359,9 @@ function enterGame(token: string, address: string): void {
         console.error(`[canvas] Leaderboard fetch failed: ${res.status} ${res.statusText}`);
         return;
       }
-      const data = await res.json() as { leaderboard: Array<{ address: string; count: number }> };
+      const data = await res.json() as {
+        leaderboard: Array<{ address: string; bestMs: number }>;
+      };
       hud.updateCanvasLeaderboard(data.leaderboard);
     } catch (err) {
       console.error("[canvas] Failed to fetch leaderboard:", err);
@@ -411,6 +424,9 @@ function enterGame(token: string, address: string): void {
     }
 
     if (!canBuild && !canFloor) {
+      const readOnlyHint = isCanvas
+        ? "Find the exit the quickest to win NIM"
+        : "this room is view-only for building";
       hud.setBuildBlockBarState({
         visible: false,
         ...barStyle,
@@ -420,7 +436,7 @@ function enterGame(token: string, address: string): void {
       hud.setStatus(
         touchUi
           ? `Connect as ${shortAddr} — mode icons bottom-right`
-          : `Connect as ${shortAddr} — this room is view-only for building`
+          : `Connect as ${shortAddr} — ${readOnlyHint}`
       );
       return;
     }
@@ -476,7 +492,9 @@ function enterGame(token: string, address: string): void {
     const desktopHint =
       modeHints.length > 0
         ? modeHints.join(" · ")
-        : "This room is view-only for building";
+        : isCanvas
+          ? "Find the exit the quickest to win NIM"
+          : "This room is view-only for building";
     hud.setStatus(
       touchUi
         ? `Connect as ${shortAddr} — mode icons bottom-right`
@@ -806,6 +824,39 @@ function enterGame(token: string, address: string): void {
       selfAddress = msg.self.address;
 
       const isCanvas = normalizeRoomId(msg.roomId) === CANVAS_ROOM_ID;
+      if (!isCanvas) {
+        hud.setCanvasCountdown(null);
+      }
+      const zoomMin = game.getZoomBounds().min;
+      if (isCanvas) {
+        if (!mazeZoomLocked) {
+          nonMazeFrustum = game.getZoomFrustumSize();
+          try {
+            localStorage.setItem(
+              LS_ZOOM_NON_MAZE_FRUSTUM,
+              String(nonMazeFrustum)
+            );
+          } catch {
+            /* ignore quota */
+          }
+        }
+        game.setZoomLocked(true, zoomMin);
+        mazeZoomLocked = true;
+      } else {
+        game.setZoomLocked(false);
+        const restore = nonMazeFrustum ?? game.getZoomFrustumSize();
+        game.setZoomFrustumSize(restore);
+        nonMazeFrustum = game.getZoomFrustumSize();
+        try {
+          localStorage.setItem(
+            LS_ZOOM_NON_MAZE_FRUSTUM,
+            String(nonMazeFrustum)
+          );
+        } catch {
+          /* ignore quota */
+        }
+        mazeZoomLocked = false;
+      }
       portalEnterVisible = false;
       portalAction = null;
       hud.setPortalEnterVisible(false);
@@ -987,6 +1038,10 @@ function enterGame(token: string, address: string): void {
     }
     if (msg.type === "canvasTimer") {
       hud.setCanvasTimer(msg.timeRemaining);
+    }
+    if (msg.type === "canvasCountdown") {
+      hud.setCanvasCountdown(msg.text, msg.msRemaining);
+      return;
     }
     if (msg.type === "error") {
       // Handle canvas cooldown error

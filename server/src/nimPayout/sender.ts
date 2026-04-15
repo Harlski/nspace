@@ -50,7 +50,8 @@ export async function getNimPayoutWalletBalanceLuna(): Promise<bigint> {
  */
 export async function sendNimPayoutTransaction(
   recipientUserFriendlyAddress: string,
-  amountLuna: bigint
+  amountLuna: bigint,
+  txMessageOverride?: string
 ): Promise<{ txHash: string; details: PlainTransactionDetails }> {
   const Nimiq = await import("@nimiq/core");
   const {
@@ -71,8 +72,9 @@ export async function sendNimPayoutTransaction(
   const height = head.height;
   const networkId = await client.getNetworkId();
   const txMessage =
+    txMessageOverride?.trim() ||
     process.env.NIM_PAYOUT_TX_MESSAGE?.trim() ||
-    "You mined NIM on Nimiq Space!";
+    "You mined NIM on Nimiq.Space!";
   const txData = new TextEncoder().encode(txMessage);
 
   const tx = TransactionBuilder.newBasicWithData(

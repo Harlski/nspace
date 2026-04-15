@@ -30,6 +30,7 @@ import {
   enqueueNimPayout,
   getNimPayoutWalletBalanceLuna,
   isNimPayoutSenderConfigured,
+  LUNA_PER_NIM,
 } from "./nimPayout/index.js";
 import {
   beginSession,
@@ -66,6 +67,7 @@ import {
   upsertVoxelText,
   type VoxelTextSpec,
 } from "./voxelTexts.js";
+import { loadMazeRecords, recordMazeCompletion } from "./mazeRecords.js";
 import { isAdmin } from "./config.js";
 
 const MOVE_SPEED = 5;
@@ -312,7 +314,8 @@ type OutMsg =
       x?: number;
       z?: number;
       amountNim?: string;
-    };
+    }
+  | { type: "canvasCountdown"; text: string; msRemaining: number };
 
 const rooms = new Map<string, Map<string, ClientConn>>();
 /** Server-driven avatars (not WebSocket clients); merged into player snapshots / ticks. */
@@ -1161,6 +1164,7 @@ function snapshotPlayers(roomId: string): PlayerState[] {
 
 /** Canvas room timer (in milliseconds) - 1 minute */
 const CANVAS_TIMER_DURATION_MS = 1 * 60 * 1000;
+const CANVAS_COUNTDOWN_MS = 15_000;
 /** Cooldown period between rounds (in milliseconds) - 10 seconds */
 const CANVAS_COOLDOWN_MS = 10 * 1000;
 /** Canvas room timer state */
@@ -1169,6 +1173,9 @@ let canvasTimerActive = false;
 /** Canvas room cooldown state */
 let canvasCooldownEndTime = 0;
 let canvasCooldownActive = false;
+let canvasCountdownEndTime = 0;
+let canvasCountdownActive = false;
+let canvasCountdownLastSecond = -1;
 /** Track steps taken by each player in canvas room */
 const canvasPlayerSteps = new Map<string, number>();
 /** Track players who have finished the maze, in order */
@@ -1195,6 +1202,21 @@ function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>
     displayName,
     timestamp: Date.now(),
   });
+  const roundStartedAt = canvasTimerEndTime - CANVAS_TIMER_DURATION_MS;
+  if (canvasTimerActive && Number.isFinite(roundStartedAt) && roundStartedAt > 0) {
+    const elapsedMs = Math.max(1, Date.now() - roundStartedAt);
+    const rec = recordMazeCompletion(conn.address, elapsedMs);
+    if (rec.improved) {
+      const sec = (rec.record.bestMs / 1000).toFixed(2);
+      wsSafeSend(conn.ws, {
+        type: "chat",
+        from: "System",
+        fromAddress: "",
+        text: `New personal best in The Maze: ${sec}s`,
+        at: Date.now(),
+      });
+    }
+  }
 
   const suffix =
     position === 1 ? "st" : position === 2 ? "nd" : position === 3 ? "rd" : "th";
@@ -1207,13 +1229,24 @@ function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>
     at: Date.now(),
   });
 
-  broadcast(HUB_ROOM_ID, {
-    type: "chat",
-    from: displayName,
-    fromAddress: conn.address,
-    text: `completed The Maze in ${position}${suffix} place! 🏁`,
-    at: Date.now(),
-  });
+  if (position === 1) {
+    const mazeRewardClaimId = `maze-first-${canvasTimerEndTime}-${conn.address}`;
+    enqueueNimPayout({
+      claimId: mazeRewardClaimId,
+      recipientAddress: conn.address,
+      amountLuna: LUNA_PER_NIM,
+      roomId: CANVAS_ROOM_ID,
+      tileKey: "maze-first-place",
+      txMessage: "You won The Maze on Nimiq.Space!",
+    });
+    wsSafeSend(conn.ws, {
+      type: "chat",
+      from: "System",
+      fromAddress: "",
+      text: 'You earned 1.0000 NIM - "Reward for 1st place in The Maze Nimiq.Space"',
+      at: Date.now(),
+    });
+  }
 
   console.log(`[canvas] Player ${displayName} finished in position ${position}`);
 
@@ -1221,13 +1254,28 @@ function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>
     const current = room.get(conn.address);
     if (current) {
       teleportPlayer(current, HUB_ROOM_ID, 0, 0);
+      if (position === 1) {
+        broadcast(HUB_ROOM_ID, {
+          type: "chat",
+          from: displayName,
+          fromAddress: conn.address,
+          text: "Just won 1.0000 NIM from The Maze!",
+          at: Date.now(),
+        });
+      }
     }
   }, 1500);
+}
+
+function wsSafeSend(ws: WebSocket, msg: OutMsg): void {
+  if (ws.readyState !== 1) return;
+  ws.send(JSON.stringify(msg));
 }
 
 function startCanvasTimer(): void {
   canvasTimerEndTime = Date.now() + CANVAS_TIMER_DURATION_MS;
   canvasTimerActive = true;
+  canvasCountdownActive = false;
   canvasCooldownActive = false; // Clear any cooldown when round starts
   canvasPlayerSteps.clear();
   canvasFinishers.length = 0; // Clear finishers for new round
@@ -1246,6 +1294,18 @@ function startCanvasTimer(): void {
   broadcast(CANVAS_ROOM_ID, {
     type: "canvasTimer",
     timeRemaining: CANVAS_TIMER_DURATION_MS,
+  });
+}
+
+function startCanvasCountdown(): void {
+  if (canvasTimerActive || canvasCooldownActive || canvasCountdownActive) return;
+  canvasCountdownEndTime = Date.now() + CANVAS_COUNTDOWN_MS;
+  canvasCountdownActive = true;
+  canvasCountdownLastSecond = Math.ceil(CANVAS_COUNTDOWN_MS / 1000);
+  broadcast(CANVAS_ROOM_ID, {
+    type: "canvasCountdown",
+    text: String(canvasCountdownLastSecond),
+    msRemaining: CANVAS_COUNTDOWN_MS,
   });
 }
 
@@ -1274,6 +1334,32 @@ function checkCanvasTimer(): void {
     // Timer expired - end the round
     endCanvasRound();
   }
+}
+
+function checkCanvasCountdown(): void {
+  if (!canvasCountdownActive) return;
+  const now = Date.now();
+  const msRemaining = Math.max(0, canvasCountdownEndTime - now);
+  if (msRemaining <= 0) {
+    canvasCountdownActive = false;
+    canvasCountdownLastSecond = -1;
+    broadcast(CANVAS_ROOM_ID, {
+      type: "canvasCountdown",
+      text: "GO!",
+      msRemaining: 0,
+    });
+    startCanvasTimer();
+    return;
+  }
+  const sec = Math.ceil(msRemaining / 1000);
+  if (sec === canvasCountdownLastSecond) return;
+  canvasCountdownLastSecond = sec;
+  const text = String(sec);
+  broadcast(CANVAS_ROOM_ID, {
+    type: "canvasCountdown",
+    text,
+    msRemaining,
+  });
 }
 
 function checkCanvasCooldown(): void {
@@ -1312,6 +1398,10 @@ function checkCanvasCooldown(): void {
       text: `The Maze is now open! 🎮`,
       at: Date.now(),
     });
+    const canvasRoom = rooms.get(CANVAS_ROOM_ID);
+    if (canvasRoom && canvasRoom.size > 0) {
+      startCanvasCountdown();
+    }
   }
 }
 
@@ -1480,6 +1570,7 @@ export function startRoomTick(): void {
   loadCanvasClaims();
   loadSignboards();
   loadVoxelTexts();
+  loadMazeRecords();
   setInterval(() => {
     const now = Date.now();
     
@@ -1488,6 +1579,7 @@ export function startRoomTick(): void {
     
     // Check canvas cooldown
     checkCanvasCooldown();
+    checkCanvasCountdown();
     
     for (const [roomId, room] of rooms) {
       const dt = TICK_MS / 1000;
@@ -1506,11 +1598,6 @@ export function startRoomTick(): void {
         
         // Canvas room: claim tiles as player moves
         if (isCanvas && result.arrivedTiles && result.arrivedTiles.length > 0) {
-          // Start timer on first player movement if not already started
-          if (!canvasTimerActive && room.size > 0) {
-            startCanvasTimer();
-          }
-          
           for (const tile of result.arrivedTiles) {
             // Check if player reached the exit portal (blue hexagonal quarter block)
             const tileKey_str = tileKey(tile.x, tile.z);
@@ -1730,6 +1817,20 @@ export function addClient(
       }));
     }, 100);
   }
+  if (isCanvas && canvasCountdownActive) {
+    const msRemaining = Math.max(0, canvasCountdownEndTime - Date.now());
+    const text =
+      msRemaining <= 0 ? "GO!" : String(Math.max(1, Math.ceil(msRemaining / 1000)));
+    setTimeout(() => {
+      ws.send(
+        JSON.stringify({
+          type: "canvasCountdown",
+          text,
+          msRemaining,
+        } satisfies OutMsg)
+      );
+    }, 100);
+  }
 
   const signboards = getSignboardsForRoom(roomId).map((s) => ({
     id: s.id,
@@ -1789,6 +1890,12 @@ export function addClient(
         teleportPlayer(currentConn, HUB_ROOM_ID, -1, -10);
       }
     }, 100);
+  } else if (
+    roomId === CANVAS_ROOM_ID &&
+    !canvasTimerActive &&
+    !canvasCountdownActive
+  ) {
+    startCanvasCountdown();
   }
 
   ws.on("message", async (raw) => {
@@ -1809,6 +1916,15 @@ export function addClient(
     }
 
     if (msg.type === "moveTo") {
+      if (
+        normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID &&
+        (!canvasTimerActive || canvasCountdownActive)
+      ) {
+        if (!canvasCountdownActive && !canvasCooldownActive) {
+          startCanvasCountdown();
+        }
+        return;
+      }
       const now = Date.now();
       if (now - conn.lastMoveToAt < RATE_MOVE_TO_MS) return;
       conn.lastMoveToAt = now;
