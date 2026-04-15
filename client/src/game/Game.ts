@@ -2354,14 +2354,13 @@ export class Game {
               void main() {
                 float t = clamp(vGradient, 0.0, 1.0);
                 float alpha = mix(uAlphaBottom, uAlphaTop, t);
+                if (alpha <= 0.01) discard;
                 vec3 color = mix(uColor, vec3(1.0), (1.0 - t) * 0.2);
                 gl_FragColor = vec4(color, alpha);
               }
             `,
           });
           const doorMarker = new THREE.Mesh(markerGeom, markerMat);
-          // Draw after avatar sprites so characters remain visible through the fade.
-          doorMarker.renderOrder = 3;
           doorMarker.position.set(
             wx,
             0.01 + TERRAIN_TILE_DOOR_MARKER_HEIGHT / 2,
@@ -2881,7 +2880,7 @@ export class Game {
       depthWrite: false,
     });
     const body = new THREE.Sprite(mat);
-    body.renderOrder = 2;
+    body.renderOrder = 0;
     body.scale.set(d, d, 1);
     body.position.y = AVATAR_SPHERE_RADIUS * s;
     body.rotation.copy(this.getIdenticonEuler());
