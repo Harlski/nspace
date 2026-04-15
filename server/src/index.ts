@@ -177,6 +177,27 @@ async function sendTelegramFeedback(text: string): Promise<boolean> {
   }
 }
 
+async function sendTelegramConnectNotice(address: string, roomId: string): Promise<void> {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const text = `NSpace connect\nWallet: ${address}\nRoom: ${roomId}\nAt: ${new Date().toISOString()}`;
+  try {
+    const chatIdPayload =
+      /^-?\d+$/.test(TELEGRAM_CHAT_ID) ? Number(TELEGRAM_CHAT_ID) : TELEGRAM_CHAT_ID;
+    await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatIdPayload,
+        text,
+        disable_web_page_preview: true,
+      }),
+    });
+  } catch (err) {
+    console.error("[connect] Telegram notify failed:", err);
+  }
+}
+
 app.get("/api/canvas/leaderboard", (_req, res) => {
   try {
     const top = getTopMazeRecords(10);
@@ -370,6 +391,7 @@ wss.on("connection", (ws, req) => {
     }
   }
   addClient(roomId, ws, address, spawnHint);
+  void sendTelegramConnectNotice(address, roomId);
 });
 
 const clientDist = path.join(__dirname, "../../client/dist");
