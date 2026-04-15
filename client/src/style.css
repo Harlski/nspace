@@ -484,8 +484,10 @@ body {
   pointer-events: auto;
 }
 
+/* !important: later rules (e.g. .signpost-overlay.feedback-overlay { display: block }) must not
+   resurrect a dismissed overlay when [hidden] is set. */
 .signpost-overlay[hidden] {
-  display: none;
+  display: none !important;
 }
 
 .signpost-overlay__dialog {
@@ -1013,6 +1015,12 @@ body {
     align-self: center;
   }
 
+  .hud-mode-feedback.nq-pill {
+    height: 44px;
+    font-size: 13px;
+    padding: 0 16px;
+  }
+
   .hud-mode-icon {
     width: 24px;
     height: 24px;
@@ -1050,18 +1058,216 @@ body {
   color: #fde68a;
 }
 
-.hud-feedback-btn {
-  border: 1px solid rgba(59, 130, 246, 0.65);
-  background: rgba(30, 64, 175, 0.35);
-  color: #ffffff;
+/* Feedback — Nimiq pill in mode row (next to Walk) */
+.hud-mode-feedback.nq-pill {
+  box-sizing: border-box;
+  height: 40px;
+  padding: 0 14px;
   font-size: 12px;
-  padding: 5px 10px;
-  line-height: 1.2;
+  font-weight: 700;
+  border-radius: 999px;
+  flex-shrink: 0;
   cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: #1f6fff;
+  color: #ffffff;
 }
 
-.hud-feedback-btn:hover {
-  background: rgba(30, 64, 175, 0.5);
+.hud-mode-feedback.nq-pill:hover {
+  filter: brightness(1.06);
+}
+
+/* Feedback — backdrop layer (reliable hit target) + dialog above. Letterbox-scoped. */
+.signpost-overlay.feedback-overlay {
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: transparent;
+  padding: 0;
+  pointer-events: auto;
+}
+
+.feedback-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.feedback-overlay__dialog {
+  box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  min-width: 0;
+  width: clamp(240px, 36%, min(480px, calc(100% - 24px)));
+  max-width: calc(100% - 24px);
+  max-height: min(42vh, 420px);
+  margin: max(12px, env(safe-area-inset-top, 0px)) auto 0;
+  padding: 14px 14px 12px;
+  padding-left: max(14px, env(safe-area-inset-left, 0px));
+  padding-right: max(14px, env(safe-area-inset-right, 0px));
+  background: rgba(15, 17, 23, 0.98);
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+
+.feedback-overlay__header {
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+.feedback-overlay__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #e8eaef;
+  line-height: 1.3;
+}
+
+.feedback-overlay__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.feedback-overlay__label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.feedback-overlay__textarea {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-height: 5.5em;
+  max-height: 200px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(61, 70, 90, 0.85);
+  background: rgba(0, 0, 0, 0.4);
+  color: #e8e8e8;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+  resize: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.feedback-overlay__textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.feedback-overlay__meta {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.feedback-overlay__char-count {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  flex-shrink: 0;
+  line-height: 1.35;
+}
+
+.feedback-overlay__error {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fca5a5;
+  line-height: 1.35;
+}
+
+.feedback-overlay__footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(61, 70, 90, 0.55);
+}
+
+.feedback-overlay__btn {
+  flex: 0 0 auto;
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  margin: 0;
+  pointer-events: auto;
+  padding: 7px 16px;
+  min-height: 36px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1.2;
+  border-radius: 999px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  text-transform: none;
+}
+
+.feedback-overlay__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.feedback-overlay__btn--cancel {
+  background: rgba(51, 65, 85, 0.45);
+  border-color: rgba(100, 116, 139, 0.65);
+  color: #e8eaef;
+}
+
+.feedback-overlay__btn--cancel:hover:not(:disabled) {
+  background: rgba(71, 85, 105, 0.55);
+}
+
+.feedback-overlay__btn--send {
+  background: #1f6fff;
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
+}
+
+.feedback-overlay__btn--send:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+@media (pointer: coarse) {
+  .feedback-overlay__btn {
+    min-height: 40px;
+    padding: 8px 18px;
+  }
 }
 
 .hud-return-hub {

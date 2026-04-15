@@ -10,6 +10,7 @@
   "dependencies": {
     "@nimiq/core": "^2.2.2",
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "ws": "^8.18.0"

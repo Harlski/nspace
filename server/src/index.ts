@@ -6,6 +6,7 @@ import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
+import dotenv from "dotenv";
 import { createNonce, consumeNonce, signSession, verifySession } from "./auth.js";
 import { addClient, adminRandomExtraFloorLayout, startRoomTick } from "./rooms.js";
 import { flushPersistWorldStateSync } from "./worldPersistence.js";
@@ -28,6 +29,7 @@ import {
 } from "./nimPayout/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, "../.env") });
 const SWARM_ERROR_LOG_PATH =
   process.env.SWARM_ERROR_LOG_PATH ??
   path.join(__dirname, "../data/swarm-errors.log");
@@ -68,6 +70,12 @@ const FEEDBACK_MAX_CHARS = 700;
 const FEEDBACK_COOLDOWN_MS = 20_000;
 const feedbackLastByAddress = new Map<string, number>();
 
+function maskSecret(v: string, head = 4, tail = 3): string {
+  if (!v) return "(empty)";
+  if (v.length <= head + tail) return "*".repeat(v.length);
+  return `${v.slice(0, head)}...${v.slice(-tail)}`;
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -104,22 +112,49 @@ function jwtAddressFromReq(req: Request): string | null {
 }
 
 async function sendTelegramFeedback(text: string): Promise<boolean> {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return false;
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+    console.warn(
+      "[feedback] Telegram env missing:",
+      JSON.stringify({
+        hasToken: Boolean(TELEGRAM_BOT_TOKEN),
+        hasChatId: Boolean(TELEGRAM_CHAT_ID),
+      })
+    );
+    return false;
+  }
+  // Token must stay literal (colon between id and secret); encoding breaks Telegram paths.
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+  console.log(
+    "[feedback] Telegram request:",
+    JSON.stringify({
+      urlHost: "api.telegram.org",
+      chatIdMasked: maskSecret(TELEGRAM_CHAT_ID),
+      textLength: text.length,
+    })
+  );
   try {
-    const resp = await fetch(
-      `https://api.telegram.org/bot${encodeURIComponent(TELEGRAM_BOT_TOKEN)}/sendMessage`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          chat_id: TELEGRAM_CHAT_ID,
-          text,
-          disable_web_page_preview: true,
-        }),
-      }
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text,
+        disable_web_page_preview: true,
+      }),
+    });
+    const bodyText = await resp.text();
+    console.log(
+      "[feedback] Telegram response:",
+      JSON.stringify({
+        ok: resp.ok,
+        status: resp.status,
+        statusText: resp.statusText,
+        body: bodyText.slice(0, 400),
+      })
     );
     return resp.ok;
-  } catch {
+  } catch (err) {
+    console.error("[feedback] Telegram fetch error:", err);
     return false;
   }
 }
@@ -201,6 +236,13 @@ app.post("/api/feedback", requireJwt, async (req, res) => {
   }
   const raw = (req.body as Record<string, unknown> | null)?.message;
   const message = typeof raw === "string" ? raw.trim() : "";
+  console.log(
+    "[feedback] Received request:",
+    JSON.stringify({
+      address,
+      messageLength: message.length,
+    })
+  );
   if (!message) {
     res.status(400).json({ error: "missing_message" });
     return;
@@ -221,9 +263,11 @@ app.post("/api/feedback", requireJwt, async (req, res) => {
     `NSpace feedback\nWallet: ${address}\n\n${message}`
   );
   if (!ok) {
+    console.warn("[feedback] sendTelegramFeedback returned false");
     res.status(503).json({ error: "telegram_unavailable" });
     return;
   }
+  console.log("[feedback] sent successfully", JSON.stringify({ address }));
   res.json({ ok: true });
 });
 
@@ -351,5 +395,14 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 server.listen(PORT, HOST, () => {
   logListenUrls(PORT, HOST);
+  console.log(
+    "[feedback] Telegram config:",
+    JSON.stringify({
+      hasToken: Boolean(TELEGRAM_BOT_TOKEN),
+      hasChatId: Boolean(TELEGRAM_CHAT_ID),
+      tokenMasked: maskSecret(TELEGRAM_BOT_TOKEN),
+      chatIdMasked: maskSecret(TELEGRAM_CHAT_ID),
+    })
+  );
   if (DEV_AUTH_BYPASS) console.warn("DEV_AUTH_BYPASS enabled — not for production");
 });

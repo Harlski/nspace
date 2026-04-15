@@ -145,7 +145,12 @@ export function createHud(
   setCanvasTimer: (timeRemaining: number) => void;
   setPlayerCount: (count: number, roomCount?: number) => void;
   showPlayerJoinedToast: (address: string) => void;
-  onFeedback: (fn: () => void) => void;
+  /** Submit feedback text; return ok + optional user-facing error message. */
+  onFeedbackSubmit: (
+    fn: (
+      message: string
+    ) => Promise<{ ok: boolean; error?: string }>
+  ) => void;
   setNimWalletStatus: (status: string) => void;
   setLoadingVisible: (visible: boolean) => void;
   /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
@@ -266,12 +271,6 @@ export function createHud(
   const nimBalanceValue = nimBalance.querySelector(
     ".hud-nim-balance__value"
   ) as HTMLElement | null;
-  const feedbackBtn = document.createElement("button");
-  feedbackBtn.type = "button";
-  feedbackBtn.className = "hud-feedback-btn nq-pill";
-  feedbackBtn.textContent = "Feedback";
-  feedbackBtn.setAttribute("aria-label", "Send feedback");
-  feedbackBtn.title = "Send feedback";
   const playerJoinToast = document.createElement("div");
   playerJoinToast.className = "hud-player-join-toast";
   playerJoinToast.hidden = true;
@@ -328,7 +327,6 @@ export function createHud(
   topToolbar.appendChild(fsBtn);
   topToolbar.appendChild(playerCount);
   topToolbar.appendChild(nimBalance);
-  topToolbar.appendChild(feedbackBtn);
   topToolbar.appendChild(lobbyBtn);
   topStrip.appendChild(topToolbar);
 
@@ -388,6 +386,32 @@ export function createHud(
   `;
   signpostOverlay.appendChild(signpostDialog);
 
+  const FEEDBACK_MESSAGE_MAX = 700;
+  const feedbackOverlay = document.createElement("div");
+  feedbackOverlay.className = "signpost-overlay feedback-overlay";
+  feedbackOverlay.hidden = true;
+  feedbackOverlay.setAttribute("aria-hidden", "true");
+  feedbackOverlay.innerHTML = `
+    <div class="feedback-overlay__backdrop" aria-hidden="true"></div>
+    <div class="feedback-overlay__dialog" role="dialog" aria-modal="true" aria-labelledby="hud-feedback-title">
+      <div class="feedback-overlay__header">
+        <h2 id="hud-feedback-title" class="feedback-overlay__title">Send feedback</h2>
+      </div>
+      <div class="feedback-overlay__body">
+        <label class="feedback-overlay__label" for="hud-feedback-textarea">Your message</label>
+        <textarea id="hud-feedback-textarea" class="feedback-overlay__textarea" maxlength="${FEEDBACK_MESSAGE_MAX}" placeholder="Tell us what you think…" rows="5"></textarea>
+        <div class="feedback-overlay__meta">
+          <p class="feedback-overlay__error" hidden></p>
+          <span class="feedback-overlay__char-count">0 / ${FEEDBACK_MESSAGE_MAX}</span>
+        </div>
+      </div>
+      <div class="feedback-overlay__footer">
+        <button type="button" class="feedback-overlay__btn feedback-overlay__btn--cancel">Cancel</button>
+        <button type="button" class="feedback-overlay__btn feedback-overlay__btn--send">Send</button>
+      </div>
+    </div>
+  `;
+
   leftStack.appendChild(debugPanel);
   leftStack.appendChild(canvasLeaderboard);
   
@@ -402,6 +426,7 @@ export function createHud(
   ui.appendChild(topStrip);
   ui.appendChild(leftStack);
   letter.appendChild(signpostOverlay);
+  letter.appendChild(feedbackOverlay);
 
   // Loading overlay for room transitions
   const loadingOverlay = document.createElement("div");
@@ -455,6 +480,13 @@ export function createHud(
   floorModeBtn.innerHTML = HUD_MODE_ICON_FLOOR;
   floorModeBtn.setAttribute("aria-label", "Floor — expand walkable tiles");
   floorModeBtn.title = "Floor — expand walkable floor (F)";
+  const feedbackBtn = document.createElement("button");
+  feedbackBtn.type = "button";
+  feedbackBtn.className = "nq-pill light-blue hud-mode-feedback";
+  feedbackBtn.textContent = "Feedback";
+  feedbackBtn.setAttribute("aria-label", "Send feedback");
+  feedbackBtn.title = "Send feedback";
+  modeSegment.appendChild(feedbackBtn);
   modeSegment.appendChild(walkModeBtn);
   modeSegment.appendChild(buildModeBtn);
   modeSegment.appendChild(floorModeBtn);
@@ -883,6 +915,148 @@ export function createHud(
     });
   }
 
+  const feedbackBackdropEl = feedbackOverlay.querySelector(
+    ".feedback-overlay__backdrop"
+  ) as HTMLElement | null;
+  const feedbackTextarea = feedbackOverlay.querySelector(
+    "#hud-feedback-textarea"
+  ) as HTMLTextAreaElement | null;
+  const feedbackCharCount = feedbackOverlay.querySelector(
+    ".feedback-overlay__char-count"
+  ) as HTMLElement | null;
+  const feedbackCancelBtn = feedbackOverlay.querySelector(
+    ".feedback-overlay__btn--cancel"
+  ) as HTMLButtonElement | null;
+  const feedbackSendBtn = feedbackOverlay.querySelector(
+    ".feedback-overlay__btn--send"
+  ) as HTMLButtonElement | null;
+  const feedbackErrorEl = feedbackOverlay.querySelector(
+    ".feedback-overlay__error"
+  ) as HTMLElement | null;
+
+  let feedbackSubmitHandler: (
+    message: string
+  ) => Promise<{ ok: boolean; error?: string }> = async () => ({
+    ok: false,
+    error: "Feedback is not available.",
+  });
+
+  let feedbackEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
+  let feedbackSending = false;
+
+  function setFeedbackError(msg: string | null): void {
+    if (!feedbackErrorEl) return;
+    if (msg) {
+      feedbackErrorEl.textContent = msg;
+      feedbackErrorEl.hidden = false;
+    } else {
+      feedbackErrorEl.textContent = "";
+      feedbackErrorEl.hidden = true;
+    }
+  }
+
+  function hideFeedbackOverlay(): void {
+    feedbackOverlay.hidden = true;
+    feedbackOverlay.setAttribute("aria-hidden", "true");
+    if (feedbackTextarea) feedbackTextarea.value = "";
+    if (feedbackCharCount) {
+      feedbackCharCount.textContent = `0 / ${FEEDBACK_MESSAGE_MAX}`;
+    }
+    setFeedbackError(null);
+    if (feedbackEscapeHandler) {
+      window.removeEventListener("keydown", feedbackEscapeHandler);
+      feedbackEscapeHandler = null;
+    }
+    feedbackSending = false;
+    if (feedbackSendBtn) feedbackSendBtn.disabled = false;
+    if (feedbackCancelBtn) feedbackCancelBtn.disabled = false;
+  }
+
+  function showFeedbackOverlay(): void {
+    if (!feedbackOverlay.hidden) return;
+    setFeedbackError(null);
+    feedbackOverlay.hidden = false;
+    feedbackOverlay.setAttribute("aria-hidden", "false");
+    feedbackEscapeHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        hideFeedbackOverlay();
+      }
+    };
+    window.addEventListener("keydown", feedbackEscapeHandler);
+    feedbackTextarea?.focus();
+  }
+
+  const dismissFeedbackFromBackdrop = (e: Event): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    hideFeedbackOverlay();
+  };
+  if (feedbackBackdropEl) {
+    feedbackBackdropEl.addEventListener("click", dismissFeedbackFromBackdrop);
+  }
+
+  if (feedbackTextarea && feedbackCharCount) {
+    feedbackTextarea.addEventListener("input", () => {
+      const len = feedbackTextarea.value.length;
+      feedbackCharCount.textContent = `${len} / ${FEEDBACK_MESSAGE_MAX}`;
+      setFeedbackError(null);
+    });
+  }
+
+  if (feedbackCancelBtn) {
+    feedbackCancelBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideFeedbackOverlay();
+    });
+  }
+
+  if (feedbackSendBtn && feedbackTextarea) {
+    feedbackSendBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void (async () => {
+        if (feedbackSending) return;
+        const text = feedbackTextarea.value.trim();
+        if (!text) {
+          setFeedbackError("Please enter a message.");
+          return;
+        }
+        feedbackSending = true;
+        feedbackSendBtn.disabled = true;
+        setFeedbackError(null);
+        try {
+          const result = await feedbackSubmitHandler(text);
+          if (result.ok) {
+            hideFeedbackOverlay();
+          } else {
+            setFeedbackError(result.error ?? "Could not send feedback.");
+          }
+        } catch {
+          setFeedbackError("Could not send feedback.");
+        } finally {
+          feedbackSending = false;
+          feedbackSendBtn.disabled = false;
+        }
+      })();
+    });
+  }
+
+  if (feedbackTextarea) {
+    feedbackTextarea.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.ctrlKey) {
+        e.preventDefault();
+        feedbackSendBtn?.click();
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        hideFeedbackOverlay();
+      }
+      e.stopPropagation();
+    });
+  }
+
   // Tool selector (block vs signpost)
   barToolButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1176,7 +1350,6 @@ export function createHud(
   let reconnectHandler = (): void => {};
   let returnHubHandler = (): void => {};
   let portalEnterHandler = (): void => {};
-  let feedbackHandler = (): void => {};
   let lobbyHandler = (): void => {};
   let playModeHandler: (mode: "walk" | "build" | "floor") => void = (): void => {};
   let lobbyConfirmEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -1217,7 +1390,7 @@ export function createHud(
 
   fsBtn.addEventListener("click", () => fsHandler());
   reconnectBtn.addEventListener("click", () => reconnectHandler());
-  feedbackBtn.addEventListener("click", () => feedbackHandler());
+  feedbackBtn.addEventListener("click", () => showFeedbackOverlay());
   returnHubBtn.addEventListener("click", () => returnHubHandler());
   portalEnterBtn.addEventListener("click", () => portalEnterHandler());
   lobbyBtn.addEventListener("click", () => openLobbyConfirm());
@@ -2191,8 +2364,10 @@ export function createHud(
         playerJoinToastTimer = null;
       }, 2600);
     },
-    onFeedback(fn: () => void) {
-      feedbackHandler = fn;
+    onFeedbackSubmit(
+      fn: (message: string) => Promise<{ ok: boolean; error?: string }>
+    ) {
+      feedbackSubmitHandler = fn;
     },
     setNimWalletStatus(status: string) {
       if (nimBalanceValue) {
@@ -2294,6 +2469,7 @@ export function createHud(
       signboardTooltip.hidden = false;
     },
     destroy() {
+      hideFeedbackOverlay();
       if (playerJoinToastTimer) {
         clearTimeout(playerJoinToastTimer);
         playerJoinToastTimer = null;

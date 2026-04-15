@@ -1,6 +1,5 @@
 # Production stack: build context is repo root (same as Dockerfile).
-# IMPORTANT: Create a .env file with JWT_SECRET before running docker compose up
-# Example: echo "JWT_SECRET=$(openssl rand -base64 32)" > .env
+# Runtime env comes from server/.env (JWT, Telegram, payout settings, etc.)
 
 services:
   nspace:
@@ -11,12 +10,12 @@ services:
       # Bind locally if nginx/Caddy terminates TLS on the host
       - "127.0.0.1:3001:3001"
     env_file:
-      - .env  # Must contain JWT_SECRET and other configuration
+      - ./server/.env
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: "3001"
-      # JWT_SECRET is read from .env file (required)
+      # JWT_SECRET is read from server/.env (required)
       # DEV_AUTH_BYPASS should NOT be set in production
     volumes:
       # world-state.json and events-*.jsonl live under server/data in the app

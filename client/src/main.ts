@@ -1055,45 +1055,46 @@ function enterGame(token: string, address: string): void {
   hud.onReturnToHub(() => {
     connectToRoom(HUB_ROOM_ID);
   });
-  hud.onFeedback(() => {
-    const message = window.prompt("Share feedback");
-    if (message == null) return;
+  hud.onFeedbackSubmit(async (message) => {
     const text = message.trim();
-    if (!text) return;
+    if (!text) {
+      return { ok: false, error: "Please enter a message." };
+    }
     if (text.length > 700) {
       hud.appendChat("System", "Feedback is too long (max 700 characters).");
-      return;
+      return { ok: false, error: "Message is too long (max 700 characters)." };
     }
-    void (async () => {
-      try {
-        const { resolveApiBaseUrl } = await import("./net/apiBase.js");
-        const base = resolveApiBaseUrl() || "";
-        const res = await fetch(`${base}/api/feedback`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ message: text }),
-        });
-        if (res.ok) {
-          hud.appendChat("System", "Feedback sent. Thank you!");
-          return;
-        }
-        const body = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          retryAfterMs?: number;
-        };
-        if (res.status === 429 && typeof body.retryAfterMs === "number") {
-          const s = Math.max(1, Math.ceil(body.retryAfterMs / 1000));
-          hud.appendChat("System", `Feedback rate limit: please wait ${s}s.`);
-          return;
-        }
-        hud.appendChat("System", "Could not send feedback right now.");
-      } catch {
-        hud.appendChat("System", "Could not send feedback right now.");
+    try {
+      const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+      const base = resolveApiBaseUrl() || "";
+      const res = await fetch(`${base}/api/feedback`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ message: text }),
+      });
+      if (res.ok) {
+        hud.appendChat("System", "Feedback sent. Thank you!");
+        return { ok: true };
       }
-    })();
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        retryAfterMs?: number;
+      };
+      if (res.status === 429 && typeof body.retryAfterMs === "number") {
+        const s = Math.max(1, Math.ceil(body.retryAfterMs / 1000));
+        const err = `Please wait ${s}s before sending again.`;
+        hud.appendChat("System", `Feedback rate limit: please wait ${s}s.`);
+        return { ok: false, error: err };
+      }
+      hud.appendChat("System", "Could not send feedback right now.");
+      return { ok: false, error: "Could not send feedback right now." };
+    } catch {
+      hud.appendChat("System", "Could not send feedback right now.");
+      return { ok: false, error: "Could not send feedback right now." };
+    }
   });
   hud.onPortalEnter(() => {
     if (portalAction?.kind === "door") {
