@@ -62,6 +62,11 @@ const TERRAIN_TILE_EXTRA_COLOR = 0x3d5a4a;
 const TERRAIN_TILE_DOOR_COLOR = 0x06b6d4;
 const TERRAIN_TILE_DOOR_EMISSIVE = 0x0891b2;
 const TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY = 0.7;
+const TERRAIN_TILE_DOOR_MARKER_COLOR = 0xf8fafc;
+const TERRAIN_TILE_DOOR_MARKER_SIZE = 1;
+const TERRAIN_TILE_DOOR_MARKER_HEIGHT = 2.72;
+const TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM = 0.9;
+const TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP = 0;
 
 /** y=0 ground plane (world). */
 const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -316,6 +321,8 @@ export class Game {
   } | null = null;
   /** One plane per walkable tile (core grid + extra); void shows scene background only. */
   private readonly walkableFloorMeshes = new Map<string, THREE.Mesh>();
+  /** White marker blocks on door tiles (teleport squares). */
+  private readonly doorMarkerMeshes = new Map<string, THREE.Mesh>();
   /** Shared 1×1 geometry; `floorTileQuadSize` scales each mesh to hide edge seams. */
   private readonly walkableFloorPlaneGeom = new THREE.PlaneGeometry(1, 1);
   private floorTileQuadSize = DEFAULT_FLOOR_TILE_QUAD;
@@ -712,13 +719,11 @@ export class Game {
     }
     
     // Clear all obstacles and floor tiles from previous room
-    console.log(`[Game] Clearing obstacles from previous room (${prevRoomId}), had ${this.placedObjects.size} objects and ${this.blockingTileKeys.size} blocking tiles`);
     this.placedObjects.clear();
     this.blockingTileKeys.clear();
     this.extraFloorKeys.clear();
     
     // Clear block meshes from scene
-    console.log(`[Game] Clearing ${this.blockMeshes.size} block meshes from scene`);
     for (const [, mesh] of this.blockMeshes) {
       this.scene.remove(mesh);
       mesh.traverse((obj) => {
@@ -731,7 +736,6 @@ export class Game {
       });
     }
     this.blockMeshes.clear();
-    console.log(`[Game] Room cleared. Entering room: ${this.roomId}`);
     
     this.rebuildDoorKeys();
     this.pathGoal = null;
@@ -746,7 +750,6 @@ export class Game {
     
     // Clear canvas identicons when leaving canvas room
     if (normalizeRoomId(prevRoomId) === CANVAS_ROOM_ID && normalizeRoomId(this.roomId) !== CANVAS_ROOM_ID) {
-      console.log('[canvas] Leaving canvas room, clearing identicons');
       this.clearCanvasIdenticons();
     }
   }
@@ -1323,12 +1326,10 @@ export class Game {
 
   /** Extra walkable tiles outside the core grid (server-synced). */
   setExtraFloorTiles(tiles: readonly { x: number; z: number }[]): void {
-    console.log(`[Game setExtraFloorTiles] Receiving ${tiles.length} extra floor tiles for room ${this.roomId}`);
     this.extraFloorKeys.clear();
     for (const t of tiles) {
       this.extraFloorKeys.add(tileKey(t.x, t.z));
     }
-    console.log(`[Game setExtraFloorTiles] Stored ${this.extraFloorKeys.size} extra floor tiles`);
     this.syncWalkableFloorMeshes();
     this.refreshPathLine();
     this.syncPlacementRangeHints();
@@ -1338,7 +1339,6 @@ export class Game {
   async setCanvasClaims(claims: readonly { x: number; z: number; address: string }[]): Promise<void> {
     this.canvasClaims.clear();
     const bounds = this.roomBounds;
-    console.log(`[canvas] Loading ${claims.length} initial claims, room bounds: [${bounds.minX},${bounds.maxX}] × [${bounds.minZ},${bounds.maxZ}]`);
     
     let filtered = 0;
     for (const claim of claims) {
@@ -1351,11 +1351,9 @@ export class Game {
       
       const k = tileKey(claim.x, claim.z);
       this.canvasClaims.set(k, claim.address);
-      console.log(`[canvas] Initial claim: (${claim.x}, ${claim.z}) by ${claim.address.slice(0, 8)}...`);
     }
     
     if (filtered > 0) {
-      console.log(`[canvas] Filtered ${filtered} out-of-bounds claims`);
     }
     
     // Wait for all identicons to load
@@ -1368,7 +1366,6 @@ export class Game {
     
     // Empty address means unclaim the tile
     if (address === "") {
-      console.log(`[canvas] Unclaim received: (${x}, ${z})`);
       this.canvasClaims.delete(k);
       // Remove the identicon mesh and properly dispose of all resources
       const oldMesh = this.canvasIdenticonMeshes.get(k);
@@ -1383,19 +1380,16 @@ export class Game {
           oldMesh.material.dispose();
         }
         this.canvasIdenticonMeshes.delete(k);
-        console.log(`[canvas] Disposed mesh and texture for (${x}, ${z})`);
       }
       return;
     }
     
-    console.log(`[canvas] Claim received: (${x}, ${z}) by ${address.slice(0, 8)}...`);
     this.canvasClaims.set(k, address);
     this.syncCanvasIdenticonForTile(x, z, address);
   }
 
   /** Clear all canvas claims (reset the canvas floor) */
   clearAllCanvasClaims(): void {
-    console.log(`[canvas] Clearing all ${this.canvasClaims.size} claims`);
     this.canvasClaims.clear();
     this.clearCanvasIdenticons();
   }
@@ -1415,7 +1409,6 @@ export class Game {
     for (const s of signboards) {
       const k = tileKey(s.x, s.z);
       this.signboards.set(k, { ...s });
-      console.log(`[signboard] Loaded: (${s.x}, ${s.z}) - "${s.message.substring(0, 30)}..."`);
     }
   }
 
@@ -1437,7 +1430,6 @@ export class Game {
   private async syncCanvasIdenticonForTile(x: number, z: number, address: string): Promise<void> {
     const k = tileKey(x, z);
     
-    console.log(`[canvas] Rendering identicon for (${x}, ${z})`);
     
     // Remove old mesh if it exists and dispose all resources
     const oldMesh = this.canvasIdenticonMeshes.get(k);
@@ -1471,7 +1463,6 @@ export class Game {
       mesh.position.set(x, 0.02, z);
       this.scene.add(mesh);
       this.canvasIdenticonMeshes.set(k, mesh);
-      console.log(`[canvas] Identicon rendered successfully for (${x}, ${z})`);
     } catch (err) {
       console.error(`[canvas] Failed to load identicon for ${address}:`, err);
     }
@@ -1505,7 +1496,6 @@ export class Game {
     }
     
     await Promise.all(promises);
-    console.log(`[canvas] All ${promises.length} identicons loaded`);
   }
 
   private clearCanvasIdenticons(): void {
@@ -1543,7 +1533,6 @@ export class Game {
       claimedBy?: string;
     }[]
   ): void {
-    console.log(`[Game setObstacles] Receiving ${tiles.length} obstacles for room ${this.roomId}`);
     this.placedObjects.clear();
     this.blockingTileKeys.clear();
     for (const t of tiles) {
@@ -1575,9 +1564,7 @@ export class Game {
       });
       if (!t.passable && !ramp) this.blockingTileKeys.add(k);
     }
-    console.log(`[Game setObstacles] Stored ${this.placedObjects.size} obstacles, ${this.blockingTileKeys.size} blocking tiles`);
     this.syncBlockMeshes();
-    console.log(`[Game setObstacles] After syncBlockMeshes, have ${this.blockMeshes.size} block meshes in scene`);
     this.refreshPathLine();
     this.refreshSelectionOutline();
     this.syncPlacementRangeHints();
@@ -1923,7 +1910,6 @@ export class Game {
       const distance = Math.hypot(dx, dz);
       if (distance > this.placeRadiusBlocks + 1e-6) {
         // Outside build radius - trigger walking instead of placing
-        console.log(`[Game] Click outside build radius (${distance.toFixed(2)} > ${this.placeRadiusBlocks}), moving instead`);
         const k = tileKey(dest.x, dest.y);
         if (this.blockingTileKeys.has(k)) return;
         if (!this.tileClickHandler) return;
@@ -1949,7 +1935,6 @@ export class Game {
         // Check if this is an active claimable block
         if (bm.claimable && bm.active && !bm.passable) {
           const [bx, bz] = blockForWalk.split(",").map(Number);
-          console.log(`[Game] Attempting to claim block at (${bx}, ${bz})`);
           if (this.claimBlockHandler) {
             this.claimBlockHandler(bx!, bz!);
           }
@@ -1971,7 +1956,6 @@ export class Game {
     if (!this.tileClickHandler) return;
     const k = tileKey(dest.x, dest.y);
     if (this.blockingTileKeys.has(k)) return;
-    console.log(`[Game click] Setting path goal to (${dest.x}, ${dest.y}) in room ${this.roomId}, obstacles: ${this.placedObjects.size}, blocking: ${this.blockingTileKeys.size}`);
     this.pathGoal = { ft: dest, layer: 0 };
     this.refreshPathLine();
     this.tileClickHandler(dest.x, dest.y, 0);
@@ -2035,6 +2019,12 @@ export class Game {
       (mesh.material as THREE.Material).dispose();
     }
     this.walkableFloorMeshes.clear();
+    for (const [, marker] of this.doorMarkerMeshes) {
+      this.scene.remove(marker);
+      marker.geometry.dispose();
+      (marker.material as THREE.Material).dispose();
+    }
+    this.doorMarkerMeshes.clear();
     this.walkableFloorPlaneGeom.dispose();
     this.pathGeom.dispose();
     (this.pathLine.material as THREE.Material).dispose();
@@ -2210,7 +2200,6 @@ export class Game {
       this.selfMesh.position.y,
       this.placedObjects
     );
-    console.log(`[Game refreshPathLine] Pathfinding in room ${this.roomId} from (${here.x}, ${here.y}) to (${this.pathGoal.ft.x}, ${this.pathGoal.ft.y}), obstacles: ${this.placedObjects.size}, blocking: ${this.blockingTileKeys.size}`);
     const remaining = pathfindTerrain(
       here.x,
       here.y,
@@ -2270,7 +2259,6 @@ export class Game {
       seen.add(k);
     }
     
-    console.log(`[Game syncWalkableFloorMeshes] Room ${this.roomId}: bounds [${b.minX},${b.maxX}] x [${b.minZ},${b.maxZ}], total walkable tiles: ${seen.size}, extra: ${this.extraFloorKeys.size}`);
 
     for (const k of seen) {
       const [x, z] = k.split(",").map(Number);
@@ -2330,6 +2318,64 @@ export class Game {
           mesh.userData["isDoor"] = wantDoor;
         }
       }
+
+      const marker = this.doorMarkerMeshes.get(k);
+      if (isDoor) {
+        if (!marker) {
+          const markerGeom = new THREE.BoxGeometry(
+            TERRAIN_TILE_DOOR_MARKER_SIZE,
+            TERRAIN_TILE_DOOR_MARKER_HEIGHT,
+            TERRAIN_TILE_DOOR_MARKER_SIZE
+          );
+          const markerMat = new THREE.ShaderMaterial({
+            transparent: true,
+            depthWrite: false,
+            uniforms: {
+              uColor: {
+                value: new THREE.Color(TERRAIN_TILE_DOOR_MARKER_COLOR),
+              },
+              uHeight: { value: TERRAIN_TILE_DOOR_MARKER_HEIGHT },
+              uAlphaBottom: { value: TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM },
+              uAlphaTop: { value: TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP },
+            },
+            vertexShader: `
+              varying float vGradient;
+              uniform float uHeight;
+              void main() {
+                vGradient = (position.y / uHeight) + 0.5;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+              }
+            `,
+            fragmentShader: `
+              uniform vec3 uColor;
+              uniform float uAlphaBottom;
+              uniform float uAlphaTop;
+              varying float vGradient;
+              void main() {
+                float t = clamp(vGradient, 0.0, 1.0);
+                float alpha = mix(uAlphaBottom, uAlphaTop, t);
+                vec3 color = mix(uColor, vec3(1.0), (1.0 - t) * 0.2);
+                gl_FragColor = vec4(color, alpha);
+              }
+            `,
+          });
+          const doorMarker = new THREE.Mesh(markerGeom, markerMat);
+          // Draw after avatar sprites so characters remain visible through the fade.
+          doorMarker.renderOrder = 3;
+          doorMarker.position.set(
+            wx,
+            0.01 + TERRAIN_TILE_DOOR_MARKER_HEIGHT / 2,
+            wz
+          );
+          this.scene.add(doorMarker);
+          this.doorMarkerMeshes.set(k, doorMarker);
+        }
+      } else if (marker) {
+        this.scene.remove(marker);
+        marker.geometry.dispose();
+        (marker.material as THREE.Material).dispose();
+        this.doorMarkerMeshes.delete(k);
+      }
     }
     for (const [k, mesh] of [...this.walkableFloorMeshes]) {
       if (!seen.has(k)) {
@@ -2338,7 +2384,14 @@ export class Game {
         this.walkableFloorMeshes.delete(k);
       }
     }
-    console.log(`[Game syncWalkableFloorMeshes] After sync: ${this.walkableFloorMeshes.size} floor meshes in scene`);
+    for (const [k, marker] of [...this.doorMarkerMeshes]) {
+      if (!seen.has(k)) {
+        this.scene.remove(marker);
+        marker.geometry.dispose();
+        (marker.material as THREE.Material).dispose();
+        this.doorMarkerMeshes.delete(k);
+      }
+    }
     this.applyFloorTileQuadScale();
   }
 

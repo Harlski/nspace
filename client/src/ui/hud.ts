@@ -204,7 +204,7 @@ export function createHud(
   status.textContent = "";
   const reconnectBtn = document.createElement("button");
   reconnectBtn.type = "button";
-  reconnectBtn.className = "hud-reconnect-btn";
+  reconnectBtn.className = "hud-reconnect-btn nq-button-pill light-blue";
   reconnectBtn.textContent = "Reconnect";
   reconnectBtn.hidden = true;
   reconnectBtn.setAttribute("aria-label", "Reconnect to server");
@@ -324,9 +324,9 @@ export function createHud(
   document.addEventListener("click", closeHudTooltips);
   
   topToolbar.appendChild(playerJoinToast);
-  topToolbar.appendChild(fsBtn);
   topToolbar.appendChild(playerCount);
   topToolbar.appendChild(nimBalance);
+  topToolbar.appendChild(fsBtn);
   topToolbar.appendChild(lobbyBtn);
   topStrip.appendChild(topToolbar);
 
@@ -393,21 +393,19 @@ export function createHud(
   feedbackOverlay.setAttribute("aria-hidden", "true");
   feedbackOverlay.innerHTML = `
     <div class="feedback-overlay__backdrop" aria-hidden="true"></div>
-    <div class="feedback-overlay__dialog" role="dialog" aria-modal="true" aria-labelledby="hud-feedback-title">
-      <div class="feedback-overlay__header">
-        <h2 id="hud-feedback-title" class="feedback-overlay__title">Send feedback</h2>
-      </div>
-      <div class="feedback-overlay__body">
-        <label class="feedback-overlay__label" for="hud-feedback-textarea">Your message</label>
-        <textarea id="hud-feedback-textarea" class="feedback-overlay__textarea" maxlength="${FEEDBACK_MESSAGE_MAX}" placeholder="Tell us what you think…" rows="5"></textarea>
-        <div class="feedback-overlay__meta">
-          <p class="feedback-overlay__error" hidden></p>
-          <span class="feedback-overlay__char-count">0 / ${FEEDBACK_MESSAGE_MAX}</span>
+    <div class="signpost-overlay__dialog" role="dialog" aria-modal="true" aria-labelledby="hud-feedback-title">
+      <div class="signpost-overlay__header">
+        <span id="hud-feedback-title" class="signpost-overlay__title">Send feedback</span>
+        <div class="signpost-overlay__header-actions">
+          <button type="button" class="signpost-overlay__btn signpost-overlay__btn--cancel">Cancel</button>
+          <button type="button" class="signpost-overlay__btn signpost-overlay__btn--create">Send</button>
         </div>
       </div>
-      <div class="feedback-overlay__footer">
-        <button type="button" class="feedback-overlay__btn feedback-overlay__btn--cancel">Cancel</button>
-        <button type="button" class="feedback-overlay__btn feedback-overlay__btn--send">Send</button>
+      <div class="signpost-overlay__body">
+        <label class="signpost-overlay__label" for="hud-feedback-textarea">Your message (max ${FEEDBACK_MESSAGE_MAX} characters)</label>
+        <textarea id="hud-feedback-textarea" class="signpost-overlay__textarea" maxlength="${FEEDBACK_MESSAGE_MAX}" placeholder="Tell us what you think…" rows="6"></textarea>
+        <p class="feedback-overlay__error" hidden></p>
+        <div class="signpost-overlay__char-count">0 / ${FEEDBACK_MESSAGE_MAX}</div>
       </div>
     </div>
   `;
@@ -449,7 +447,7 @@ export function createHud(
   returnHubBtn.hidden = true;
   const portalEnterBtn = document.createElement("button");
   portalEnterBtn.type = "button";
-  portalEnterBtn.className = "hud-portal-enter nq-pill";
+  portalEnterBtn.className = "hud-portal-enter nq-button-pill light-blue";
   portalEnterBtn.textContent = "Enter";
   portalEnterBtn.hidden = true;
   const topActions = document.createElement("div");
@@ -482,7 +480,7 @@ export function createHud(
   floorModeBtn.title = "Floor — expand walkable floor (F)";
   const feedbackBtn = document.createElement("button");
   feedbackBtn.type = "button";
-  feedbackBtn.className = "nq-pill light-blue hud-mode-feedback";
+  feedbackBtn.className = "nq-button-pill light-blue hud-mode-feedback";
   feedbackBtn.textContent = "Feedback";
   feedbackBtn.setAttribute("aria-label", "Send feedback");
   feedbackBtn.title = "Send feedback";
@@ -922,13 +920,13 @@ export function createHud(
     "#hud-feedback-textarea"
   ) as HTMLTextAreaElement | null;
   const feedbackCharCount = feedbackOverlay.querySelector(
-    ".feedback-overlay__char-count"
+    ".signpost-overlay__char-count"
   ) as HTMLElement | null;
   const feedbackCancelBtn = feedbackOverlay.querySelector(
-    ".feedback-overlay__btn--cancel"
+    ".signpost-overlay__btn--cancel"
   ) as HTMLButtonElement | null;
   const feedbackSendBtn = feedbackOverlay.querySelector(
-    ".feedback-overlay__btn--send"
+    ".signpost-overlay__btn--create"
   ) as HTMLButtonElement | null;
   const feedbackErrorEl = feedbackOverlay.querySelector(
     ".feedback-overlay__error"

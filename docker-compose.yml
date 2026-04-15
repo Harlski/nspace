@@ -1,5 +1,10 @@
 # Production stack: build context is repo root (same as Dockerfile).
-# Runtime env comes from server/.env (JWT, Telegram, payout settings, etc.)
+#
+# Container env comes ONLY from `env_file` entries below — not from your shell.
+# `source .env` / `set -a` in bash does NOT pass variables into Docker; Compose reads
+# these files from disk relative to this compose file.
+#
+# Merge order: later files override earlier ones on duplicate keys.
 
 services:
   nspace:
@@ -10,12 +15,15 @@ services:
       # Bind locally if nginx/Caddy terminates TLS on the host
       - "127.0.0.1:3001:3001"
     env_file:
-      - ./server/.env
+      - path: ./.env
+        required: false
+      - path: ./server/.env
+        required: false
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: "3001"
-      # JWT_SECRET is read from server/.env (required)
+      # JWT_SECRET should be set in ./.env and/or ./server/.env (not dev-insecure-change-me in prod)
       # DEV_AUTH_BYPASS should NOT be set in production
     volumes:
       # world-state.json and events-*.jsonl live under server/data in the app

@@ -323,7 +323,6 @@ function enterGame(token: string, address: string): void {
 
   async function updateCanvasLeaderboard(): Promise<void> {
     const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
-    console.log(`[canvas] updateCanvasLeaderboard called, isCanvas: ${isCanvas}`);
     hud.setCanvasLeaderboardVisible(isCanvas);
     if (!isCanvas) return;
     
@@ -331,14 +330,12 @@ function enterGame(token: string, address: string): void {
       const { resolveApiBaseUrl } = await import("./net/apiBase.js");
       const base = resolveApiBaseUrl() || "";
       const url = `${base}/api/canvas/leaderboard`;
-      console.log(`[canvas] Fetching leaderboard from: ${url}`);
       const res = await fetch(url);
       if (!res.ok) {
         console.error(`[canvas] Leaderboard fetch failed: ${res.status} ${res.statusText}`);
         return;
       }
       const data = await res.json() as { leaderboard: Array<{ address: string; count: number }> };
-      console.log(`[canvas] Leaderboard data:`, data.leaderboard);
       hud.updateCanvasLeaderboard(data.leaderboard);
     } catch (err) {
       console.error("[canvas] Failed to fetch leaderboard:", err);
@@ -527,7 +524,6 @@ function enterGame(token: string, address: string): void {
           const distance = Math.hypot(dx, dz);
           const placeRadius = game.getPlaceRadiusBlocks();
           if (distance > placeRadius + 1e-6) {
-            console.log(`[main] Signpost click outside build radius (${distance.toFixed(2)} > ${placeRadius}), moving instead`);
             sendMoveTo(socket, x, z, layer);
             return;
           }
@@ -548,7 +544,6 @@ function enterGame(token: string, address: string): void {
           const distance = Math.hypot(dx, dz);
           const placeRadius = game.getPlaceRadiusBlocks();
           if (distance > placeRadius + 1e-6) {
-            console.log(`[main] Signpost click outside build radius (${distance.toFixed(2)} > ${placeRadius}), moving instead`);
             sendMoveTo(socket, x, z, 0);
             return;
           }
@@ -683,7 +678,6 @@ function enterGame(token: string, address: string): void {
       if (!m) return;
       editingTile = { x, z };
       
-      console.log(`[Main] Setting up object panel for (${x}, ${z}), selfAddress="${selfAddress}", isAdmin=${isAdmin(selfAddress)}`);
       
       hud.showObjectEditPanel({
         x,
@@ -785,7 +779,6 @@ function enterGame(token: string, address: string): void {
   const handleServerMessage = async (msg: ServerMessage): Promise<void> => {
     if (msg.type === "welcome") {
       hud.setReconnectOffer(false);
-      console.log(`[Main] Received welcome message for room: ${msg.roomId}, obstacles: ${msg.obstacles.length}, extraFloor: ${msg.extraFloorTiles.length}`);
       hud.setLoadingVisible(true);
       
       game.applyRoomFromWelcome({
@@ -823,9 +816,7 @@ function enterGame(token: string, address: string): void {
         game.clearSelectedBlock();
       }
 
-      console.log(`[Main] Calling setObstacles with ${msg.obstacles.length} obstacles`);
       game.setObstacles(msg.obstacles);
-      console.log(`[Main] Calling setExtraFloorTiles with ${msg.extraFloorTiles.length} extra floor tiles`);
       game.setExtraFloorTiles(msg.extraFloorTiles);
       game.setSignboards(msg.signboards);
       
@@ -849,7 +840,6 @@ function enterGame(token: string, address: string): void {
           : roomRealPlayerCount(lastPlayers);
       syncPlayerCountHud();
       
-      console.log(`[Main] Welcome processing complete for room ${msg.roomId}`);
       // Hide loading overlay after everything is loaded
       hud.setLoadingVisible(false);
       syncBuildHud();
@@ -955,11 +945,9 @@ function enterGame(token: string, address: string): void {
       return;
     }
     if (msg.type === "obstacles") {
-      console.log(`[Main] Received obstacles message for room ${msg.roomId}, ${msg.tiles.length} tiles, editingTile=${editingTile ? `(${editingTile.x}, ${editingTile.z})` : 'null'}`);
       game.setObstacles(msg.tiles);
       if (editingTile) {
         const m = game.getPlacedAt(editingTile.x, editingTile.z);
-        console.log(`[Main] After setObstacles, getPlacedAt returned:`, m);
         if (!m) {
           editingTile = null;
           hud.hideObjectEditPanel();
@@ -974,7 +962,6 @@ function enterGame(token: string, address: string): void {
       syncBuildHud();
     }
     if (msg.type === "canvasClaim") {
-      console.log(`[canvas] Received canvasClaim message:`, msg);
       // Special case: x=-1, z=-1, address="" means clear all claims
       if (msg.x === -1 && msg.z === -1 && msg.address === "") {
         game.clearAllCanvasClaims();
@@ -990,7 +977,6 @@ function enterGame(token: string, address: string): void {
     if (msg.type === "error") {
       // Handle canvas cooldown error
       if (msg.code === "CANVAS_COOLDOWN") {
-        console.log("[canvas] Entry blocked - room on cooldown");
         // Don't need to do anything special - server already sent chat message
         // and the connection will be closed, triggering a reconnect to hub
       }

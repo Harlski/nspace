@@ -42,8 +42,11 @@ let JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET || JWT_SECRET === "dev-insecure-change-me") {
   if (process.env.NODE_ENV === "production") {
     console.error(
-      "[FATAL] JWT_SECRET environment variable must be set to a secure value in production.\n" +
-      "Generate one with: openssl rand -base64 32"
+      "[FATAL] JWT_SECRET must be a strong random secret in production (not empty, not dev-insecure-change-me).\n" +
+        "If you copied server/.env.example, replace JWT_SECRET=dev-insecure-change-me with a new value, e.g.:\n" +
+        "  openssl rand -base64 32\n" +
+        "Docker Compose loads server/.env via env_file — fix that file on the host, then recreate the container.\n" +
+        "Check logs: docker logs --tail 80 <container_name>"
     );
     process.exit(1);
   } else if (!JWT_SECRET) {
@@ -64,8 +67,20 @@ const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "64kb" }));
 
-const TELEGRAM_BOT_TOKEN = String(process.env.TELEGRAM_BOT_TOKEN ?? "").trim();
-const TELEGRAM_CHAT_ID = String(process.env.TELEGRAM_CHAT_ID ?? "").trim();
+/** Trim and strip a single pair of surrounding quotes (common .env typo). */
+function telegramEnvTrim(key: string): string {
+  let v = String(process.env[key] ?? "").trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  return v;
+}
+
+const TELEGRAM_BOT_TOKEN = telegramEnvTrim("TELEGRAM_BOT_TOKEN");
+const TELEGRAM_CHAT_ID = telegramEnvTrim("TELEGRAM_CHAT_ID");
 const FEEDBACK_MAX_CHARS = 700;
 const FEEDBACK_COOLDOWN_MS = 20_000;
 const feedbackLastByAddress = new Map<string, number>();
@@ -133,11 +148,13 @@ async function sendTelegramFeedback(text: string): Promise<boolean> {
     })
   );
   try {
+    const chatIdPayload =
+      /^-?\d+$/.test(TELEGRAM_CHAT_ID) ? Number(TELEGRAM_CHAT_ID) : TELEGRAM_CHAT_ID;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
+        chat_id: chatIdPayload,
         text,
         disable_web_page_preview: true,
       }),
