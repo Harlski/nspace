@@ -402,8 +402,8 @@ export function createHud(
         </div>
       </div>
       <div class="signpost-overlay__body">
-        <label class="signpost-overlay__label" for="hud-feedback-textarea">Your message (max ${FEEDBACK_MESSAGE_MAX} characters)</label>
-        <textarea id="hud-feedback-textarea" class="signpost-overlay__textarea" maxlength="${FEEDBACK_MESSAGE_MAX}" placeholder="Tell us what you think…" rows="6"></textarea>
+        <label class="signpost-overlay__label" for="hud-feedback-textarea">We appreciate your feedback. Please share issue details and what you'd like improved (max ${FEEDBACK_MESSAGE_MAX} characters)</label>
+        <textarea id="hud-feedback-textarea" class="signpost-overlay__textarea" maxlength="${FEEDBACK_MESSAGE_MAX}" placeholder="Thanks for your feedback — what happened, where, and what should be improved?" rows="6"></textarea>
         <p class="feedback-overlay__error" hidden></p>
         <div class="signpost-overlay__char-count">0 / ${FEEDBACK_MESSAGE_MAX}</div>
       </div>

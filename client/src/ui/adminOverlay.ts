@@ -1,6 +1,5 @@
-import type { Game } from "../game/Game.js";
+import type { Game, VoxelTextSpec } from "../game/Game.js";
 import { apiUrl } from "../net/apiBase.js";
-import { ROOM_ID } from "../game/constants.js";
 
 const DEV_ENABLED = import.meta.env.VITE_ADMIN_ENABLED === "true";
 
@@ -9,7 +8,12 @@ type TabId = "layout" | "fog" | "camera" | "avatar" | "voxel";
 export function installAdminOverlay(
   hudRoot: HTMLElement,
   game: Game,
-  opts: { roomId: string; enabled?: boolean }
+  opts: {
+    roomId: string;
+    enabled?: boolean;
+    onSetVoxelText?: (spec: VoxelTextSpec) => void;
+    onRemoveVoxelText?: (roomId: string, id: string) => void;
+  }
 ): { destroy: () => void; isVoxelEditorOpen: () => boolean } {
   const enabled = Boolean(opts.enabled) || DEV_ENABLED;
   if (!enabled) {
@@ -150,6 +154,7 @@ export function installAdminOverlay(
       <label class="admin-overlay-field"><span>Emissive intensity</span>
         <input type="number" class="admin-overlay-input" id="voxel-emissive-intensity" min="0" step="0.01" />
       </label>
+      <button type="button" class="admin-overlay-btn admin-overlay-btn-secondary" id="voxel-toggle-z-tween">Toggle Z Tween</button>
       <button type="button" class="admin-overlay-btn" id="voxel-apply">Apply voxel text</button>
     </div>
     <div class="admin-overlay-status" id="admin-status"></div>
@@ -210,6 +215,7 @@ export function installAdminOverlay(
   const voxelColor = $("voxel-color") as HTMLInputElement;
   const voxelEmissive = $("voxel-emissive") as HTMLInputElement;
   const voxelEmissiveIntensity = $("voxel-emissive-intensity") as HTMLInputElement;
+  const voxelToggleZTween = $("voxel-toggle-z-tween") as HTMLButtonElement;
 
   const syncFloorTileFields = (): void => {
     const s = game.getFloorTileQuadSize();
@@ -231,7 +237,8 @@ export function installAdminOverlay(
   };
 
   const syncVoxelSelect = (): void => {
-    const ids = game.getVoxelTextIds();
+    const currentRoomId = game.getRoomId();
+    const ids = game.getVoxelTextIds(currentRoomId);
     const selected = game.getActiveVoxelTextId();
     voxelId.innerHTML = "";
     for (const id of ids) {
@@ -248,11 +255,18 @@ export function installAdminOverlay(
   };
 
   const syncVoxelFields = (): void => {
+    voxelRoom.value = game.getRoomId();
     syncVoxelSelect();
     const id = voxelId.value;
-    if (!id) return;
+    if (!id) {
+      voxelToggleZTween.textContent = "Toggle Z Tween";
+      return;
+    }
     const spec = game.getVoxelTextSpec(id);
-    if (!spec) return;
+    if (!spec) {
+      voxelToggleZTween.textContent = "Toggle Z Tween";
+      return;
+    }
     voxelText.value = spec.text;
     voxelRoom.value = spec.roomId;
     voxelX.value = String(spec.x);
@@ -264,6 +278,9 @@ export function installAdminOverlay(
     voxelColor.value = formatHexColor(spec.color);
     voxelEmissive.value = formatHexColor(spec.emissive);
     voxelEmissiveIntensity.value = String(spec.emissiveIntensity);
+    voxelToggleZTween.textContent = spec.zTween
+      ? "Disable Z Tween"
+      : "Enable Z Tween";
   };
 
   const syncAvatarFields = (): void => {
@@ -433,16 +450,17 @@ export function installAdminOverlay(
 
   $("voxel-refresh").addEventListener("click", () => {
     syncVoxelFields();
-    setStatus("Voxel text list refreshed");
+    setStatus(`Voxel text list refreshed for room "${game.getRoomId()}"`);
   });
 
   $("voxel-new").addEventListener("click", () => {
     const ts = Date.now().toString(36);
     const id = `text-${ts.slice(-4)}`;
-    game.upsertVoxelText({
+    const currentRoomId = game.getRoomId();
+    const next: VoxelTextSpec = {
       id,
       text: "NEW",
-      roomId: ROOM_ID,
+      roomId: currentRoomId,
       x: 0,
       y: 0.55,
       z: 0,
@@ -452,7 +470,12 @@ export function installAdminOverlay(
       color: 0xe2f3ff,
       emissive: 0x3b82f6,
       emissiveIntensity: 0.08,
-    });
+      zTween: false,
+      zTweenAmp: 0.18,
+      zTweenSpeed: 1.4,
+    };
+    game.upsertVoxelText(next);
+    opts.onSetVoxelText?.(next);
     game.setActiveVoxelText(id);
     syncVoxelFields();
     setStatus(`Created voxel text "${id}"`);
@@ -461,7 +484,10 @@ export function installAdminOverlay(
   $("voxel-delete").addEventListener("click", () => {
     const id = voxelId.value.trim();
     if (!id) return;
+    const prev = game.getVoxelTextSpec(id);
+    if (!prev) return;
     game.removeVoxelText(id);
+    opts.onRemoveVoxelText?.(prev.roomId, id);
     syncVoxelFields();
     setStatus(`Deleted voxel text "${id}"`);
   });
@@ -477,7 +503,8 @@ export function installAdminOverlay(
       setStatus(`Voxel text "${id}" not found`, true);
       return;
     }
-    game.updateVoxelText(id, {
+    const next: VoxelTextSpec = {
+      ...prev,
       text: voxelText.value.trim().toUpperCase() || prev.text,
       roomId: voxelRoom.value.trim() || prev.roomId,
       x: numOr(voxelX.value, prev.x),
@@ -492,9 +519,39 @@ export function installAdminOverlay(
         voxelEmissiveIntensity.value,
         prev.emissiveIntensity
       ),
-    });
+      zTween: prev.zTween,
+      zTweenAmp: prev.zTweenAmp,
+      zTweenSpeed: prev.zTweenSpeed,
+    };
+    game.updateVoxelText(id, next);
+    opts.onSetVoxelText?.(next);
     syncVoxelFields();
     setStatus(`Updated voxel text "${id}"`);
+  });
+
+  voxelToggleZTween.addEventListener("click", () => {
+    const id = voxelId.value.trim();
+    if (!id) {
+      setStatus("Select or create a voxel text object first", true);
+      return;
+    }
+    const prev = game.getVoxelTextSpec(id);
+    if (!prev) {
+      setStatus(`Voxel text "${id}" not found`, true);
+      return;
+    }
+    const next: VoxelTextSpec = {
+      ...prev,
+      zTween: !prev.zTween,
+      zTweenAmp: prev.zTweenAmp > 0 ? prev.zTweenAmp : 0.18,
+      zTweenSpeed: prev.zTweenSpeed > 0 ? prev.zTweenSpeed : 1.4,
+    };
+    game.updateVoxelText(id, next);
+    opts.onSetVoxelText?.(next);
+    syncVoxelFields();
+    setStatus(
+      `Voxel text "${id}" Z tween ${next.zTween ? "enabled" : "disabled"}`
+    );
   });
 
   const onKey = (e: KeyboardEvent): void => {

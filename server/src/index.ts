@@ -20,6 +20,7 @@ import {
 import { flushCanvasClaimsSync } from "./canvasCanvas.js";
 import { getTopPlayers } from "./canvasCanvas.js";
 import { flushSignboardsSync } from "./signboards.js";
+import { flushVoxelTextsSync } from "./voxelTexts.js";
 import { installSwarmErrorForwarder } from "./swarmLogForwarder.js";
 import {
   flushNimPayoutQueueSync,
@@ -403,6 +404,7 @@ function shutdown(signal: string): void {
   flushEventLogSync();
   flushCanvasClaimsSync();
   flushSignboardsSync();
+  flushVoxelTextsSync();
   flushNimPayoutQueueSync();
   process.exit(0);
 }

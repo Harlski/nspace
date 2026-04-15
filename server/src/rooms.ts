@@ -59,6 +59,13 @@ import {
   updateSignboard,
   updateSignboardPosition,
 } from "./signboards.js";
+import {
+  getVoxelTextsForRoom,
+  loadVoxelTexts,
+  removeVoxelText,
+  upsertVoxelText,
+  type VoxelTextSpec,
+} from "./voxelTexts.js";
 import { isAdmin } from "./config.js";
 
 const MOVE_SPEED = 5;
@@ -250,6 +257,7 @@ type OutMsg =
         createdBy: string;
         createdAt: number;
       }>;
+      voxelTexts: VoxelTextSpec[];
       /** Real players online across all rooms (NPCs excluded). */
       onlinePlayerCount: number;
       /** Client may show build mode only when true; server still enforces. */
@@ -277,6 +285,7 @@ type OutMsg =
         createdAt: number;
       }>;
     }
+  | { type: "voxelTexts"; roomId: string; texts: VoxelTextSpec[] }
   | {
       type: "chat";
       from: string;
@@ -1456,6 +1465,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       extraFloorTiles: extraFloorToList(targetRoomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
+      voxelTexts: getVoxelTextsForRoom(targetRoomId),
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
       allowExtraFloor: allowEdit,
@@ -1469,6 +1479,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
 export function startRoomTick(): void {
   loadCanvasClaims();
   loadSignboards();
+  loadVoxelTexts();
   setInterval(() => {
     const now = Date.now();
     
@@ -1742,6 +1753,7 @@ export function addClient(
       extraFloorTiles: extraFloorToList(roomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
+      voxelTexts: getVoxelTextsForRoom(roomId),
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
       allowExtraFloor: allowEdit,
@@ -2725,6 +2737,59 @@ export function addClient(
       });
       logGameplayEvent(conn.sessionId, address, currentRoomId, "update_signboard", {
         signboardId,
+      });
+      return;
+    }
+
+    if (msg.type === "setVoxelText") {
+      if (!canEditRoomContent(currentRoomId, address) || !isAdmin(address)) {
+        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        return;
+      }
+      const next: VoxelTextSpec = {
+        id: String(msg.id ?? "").trim(),
+        text: String(msg.text ?? "").trim(),
+        roomId: String(msg.roomId ?? currentRoomId).trim().toLowerCase(),
+        x: Number(msg.x),
+        y: Number(msg.y),
+        z: Number(msg.z),
+        yawDeg: Number(msg.yawDeg),
+        unit: Number(msg.unit),
+        letterSpacing: Number(msg.letterSpacing),
+        color: Number(msg.color),
+        emissive: Number(msg.emissive),
+        emissiveIntensity: Number(msg.emissiveIntensity),
+        zTween: Boolean(msg.zTween),
+        zTweenAmp: Number(msg.zTweenAmp),
+        zTweenSpeed: Number(msg.zTweenSpeed),
+      };
+      const saved = upsertVoxelText(next);
+      if (!saved) {
+        ws.send(JSON.stringify({ type: "error", code: "invalid_voxel_text" }));
+        return;
+      }
+      broadcast(saved.roomId, {
+        type: "voxelTexts",
+        roomId: saved.roomId,
+        texts: getVoxelTextsForRoom(saved.roomId),
+      });
+      return;
+    }
+
+    if (msg.type === "removeVoxelText") {
+      if (!canEditRoomContent(currentRoomId, address) || !isAdmin(address)) {
+        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        return;
+      }
+      const rid = String(msg.roomId ?? currentRoomId).trim().toLowerCase();
+      const id = String(msg.id ?? "").trim();
+      if (!id) return;
+      const removed = removeVoxelText(rid, id);
+      if (!removed) return;
+      broadcast(rid, {
+        type: "voxelTexts",
+        roomId: rid,
+        texts: getVoxelTextsForRoom(rid),
       });
       return;
     }

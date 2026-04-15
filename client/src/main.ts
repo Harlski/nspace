@@ -26,6 +26,8 @@ import {
   sendPlaceExtraFloor,
   sendRemoveExtraFloor,
   sendRemoveObstacle,
+  sendRemoveVoxelText,
+  sendSetVoxelText,
   sendSetObstacleProps,
   type ServerMessage,
 } from "./net/ws.js";
@@ -142,6 +144,14 @@ function enterGame(token: string, address: string): void {
   const adminOverlay = installAdminOverlay(hudRoot, game, {
     roomId: ROOM_ID,
     enabled: isAdmin(address),
+    onSetVoxelText: (spec) => {
+      if (!ws) return;
+      sendSetVoxelText(ws, spec);
+    },
+    onRemoveVoxelText: (roomId, id) => {
+      if (!ws) return;
+      sendRemoveVoxelText(ws, roomId, id);
+    },
   });
 
   const uninstallShell = installInputShell(hudRoot);
@@ -822,6 +832,7 @@ function enterGame(token: string, address: string): void {
       game.setObstacles(msg.obstacles);
       game.setExtraFloorTiles(msg.extraFloorTiles);
       game.setSignboards(msg.signboards);
+      game.setVoxelTextsForRoom(msg.roomId, msg.voxelTexts ?? []);
       
       // Load canvas claims if present and wait for them to finish
       if (msg.canvasClaims) {
@@ -989,6 +1000,10 @@ function enterGame(token: string, address: string): void {
       // Clear signboard tooltip if it's showing a deleted signboard
       hud.setSignboardTooltip(null);
     }
+    if (msg.type === "voxelTexts") {
+      game.setVoxelTextsForRoom(msg.roomId, msg.texts);
+      return;
+    }
   };
 
   const connectToRoom = (
@@ -1134,42 +1149,69 @@ function enterGame(token: string, address: string): void {
     (e) => {
       if (e.altKey) {
         if (!adminOverlay.isVoxelEditorOpen()) return;
+        const syncActiveVoxelText = (): void => {
+          const activeId = game.getActiveVoxelTextId();
+          if (!activeId || !ws) return;
+          const spec = game.getVoxelTextSpec(activeId);
+          if (!spec) return;
+          sendSetVoxelText(ws, spec);
+        };
         const k = e.key;
         const step = game.voxelWordMoveStep();
         const active = game.getActiveVoxelTextId() ?? "none";
+        if (e.shiftKey && (k === "ArrowUp" || k === "ArrowDown")) {
+          e.preventDefault();
+          const id = game.getActiveVoxelTextId();
+          if (!id) return;
+          const cur = game.getVoxelTextSpec(id);
+          if (!cur) return;
+          const nextY = cur.y + (k === "ArrowUp" ? step : -step);
+          game.updateVoxelText(id, { y: nextY });
+          syncActiveVoxelText();
+          hud.setStatus(
+            `Voxel text "${active}" moved ${k === "ArrowUp" ? "+Z" : "-Z"}`
+          );
+          return;
+        }
         if (k === "ArrowUp") {
           e.preventDefault();
           game.moveVoxelWord(0, -step);
+          syncActiveVoxelText();
           hud.setStatus(`Voxel text "${active}" moved up`);
           return;
         }
         if (k === "ArrowDown") {
           e.preventDefault();
           game.moveVoxelWord(0, step);
+          syncActiveVoxelText();
           hud.setStatus(`Voxel text "${active}" moved down`);
           return;
         }
         if (k === "ArrowLeft") {
           e.preventDefault();
           game.moveVoxelWord(-step, 0);
+          syncActiveVoxelText();
           hud.setStatus(`Voxel text "${active}" moved left`);
           return;
         }
         if (k === "ArrowRight") {
           e.preventDefault();
           game.moveVoxelWord(step, 0);
+          syncActiveVoxelText();
           hud.setStatus(`Voxel text "${active}" moved right`);
           return;
         }
         if (k === "q" || k === "Q") {
           e.preventDefault();
           game.rotateVoxelWord(-game.voxelWordRotateStepRad());
+          syncActiveVoxelText();
           hud.setStatus(`Voxel text "${active}" rotated CCW`);
           return;
         }
         if (k === "e" || k === "E") {
           e.preventDefault();
           game.rotateVoxelWord(game.voxelWordRotateStepRad());
+          syncActiveVoxelText();
           hud.setStatus(`Voxel text "${active}" rotated CW`);
           return;
         }

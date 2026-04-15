@@ -67,7 +67,7 @@ const TERRAIN_TILE_DOOR_MARKER_SIZE = 1;
 const TERRAIN_TILE_DOOR_MARKER_HEIGHT = 2.72;
 const TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM = 0.9;
 const TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP = 0;
-type VoxelTextSpec = {
+export type VoxelTextSpec = {
   id: string;
   text: string;
   roomId: string;
@@ -80,27 +80,16 @@ type VoxelTextSpec = {
   color: number;
   emissive: number;
   emissiveIntensity: number;
+  zTween: boolean;
+  zTweenAmp: number;
+  zTweenSpeed: number;
 };
 
-const DEFAULT_VOXEL_TEXT_SPECS: readonly VoxelTextSpec[] = [
-  {
-    id: "space-sign",
-    text: "SPACE",
-    roomId: HUB_ROOM_ID,
-    x: 0,
-    y: 0.55,
-    z: -10.5,
-    yawDeg: 0,
-    unit: 0.1875,
-    letterSpacing: 1,
-    color: 0xe2f3ff,
-    emissive: 0x3b82f6,
-    emissiveIntensity: 0.08,
-  },
-];
 const VOXEL_TEXT_MOVE_STEP = 0.5;
 const VOXEL_TEXT_ROTATE_STEP_RAD = Math.PI / 12;
 const VOXEL_TEXT_MIN_UNIT = 0.05;
+const VOXEL_TEXT_DEFAULT_Z_TWEEN_AMP = 0.18;
+const VOXEL_TEXT_DEFAULT_Z_TWEEN_SPEED = 1.4;
 const VOXEL_GLYPH_UNKNOWN: readonly string[] = [
   "11111",
   "00001",
@@ -689,11 +678,6 @@ export class Game {
     canvas.addEventListener("wheel", this.onWheel, {
       passive: false,
     });
-
-    for (const spec of DEFAULT_VOXEL_TEXT_SPECS) {
-      this.voxelTextSpecs.set(spec.id, { ...spec });
-      if (!this.activeVoxelTextId) this.activeVoxelTextId = spec.id;
-    }
 
     this.rebuildDoorKeys();
     this.syncWalkableFloorMeshes();
@@ -2578,6 +2562,31 @@ export class Game {
     }
   }
 
+  private voxelTweenPhase(id: string): number {
+    let h = 0;
+    for (let i = 0; i < id.length; i += 1) {
+      h = (h * 31 + id.charCodeAt(i)) | 0;
+    }
+    const p = (Math.abs(h) % 6283) / 1000;
+    return p;
+  }
+
+  private updateVoxelTextTween(): void {
+    const t = this.doorPulseTime;
+    for (const [id, spec] of this.voxelTextSpecs) {
+      const mesh = this.voxelTextMeshes.get(id);
+      if (!mesh) continue;
+      if (!spec.zTween) {
+        mesh.position.z = 0;
+        continue;
+      }
+      const amp = Math.max(0, spec.zTweenAmp);
+      const speed = Math.max(0, spec.zTweenSpeed);
+      const phase = this.voxelTweenPhase(id);
+      mesh.position.z = Math.sin(t * speed + phase) * amp;
+    }
+  }
+
   getVoxelTextIds(roomId?: string): string[] {
     const rid = roomId ? normalizeRoomId(roomId) : null;
     const out: string[] = [];
@@ -2593,6 +2602,37 @@ export class Game {
     return s ? { ...s } : null;
   }
 
+  setVoxelTextsForRoom(roomId: string, specs: readonly VoxelTextSpec[]): void {
+    const rid = normalizeRoomId(roomId);
+    for (const [key, existing] of this.voxelTextSpecs) {
+      if (normalizeRoomId(existing.roomId) === rid) this.voxelTextSpecs.delete(key);
+    }
+    for (const spec of specs) {
+      const clean: VoxelTextSpec = {
+        ...spec,
+        id: spec.id.trim(),
+        text: spec.text.trim().toUpperCase(),
+        roomId: normalizeRoomId(spec.roomId),
+        letterSpacing: Math.max(0, spec.letterSpacing),
+        unit: Math.max(VOXEL_TEXT_MIN_UNIT, spec.unit),
+        zTween: Boolean(spec.zTween),
+        zTweenAmp: Math.max(0, spec.zTweenAmp ?? VOXEL_TEXT_DEFAULT_Z_TWEEN_AMP),
+        zTweenSpeed: Math.max(0, spec.zTweenSpeed ?? VOXEL_TEXT_DEFAULT_Z_TWEEN_SPEED),
+      };
+      if (!clean.id || normalizeRoomId(clean.roomId) !== rid) continue;
+      this.voxelTextSpecs.set(clean.id, clean);
+    }
+    if (this.activeVoxelTextId && !this.voxelTextSpecs.has(this.activeVoxelTextId)) {
+      const ids = this.getVoxelTextIds();
+      this.activeVoxelTextId = ids[0] ?? null;
+    }
+    if (!this.activeVoxelTextId) {
+      const ids = this.getVoxelTextIds();
+      this.activeVoxelTextId = ids[0] ?? null;
+    }
+    this.syncVoxelWordSign();
+  }
+
   upsertVoxelText(spec: VoxelTextSpec): void {
     const clean: VoxelTextSpec = {
       ...spec,
@@ -2601,6 +2641,9 @@ export class Game {
       roomId: normalizeRoomId(spec.roomId),
       letterSpacing: Math.max(0, spec.letterSpacing),
       unit: Math.max(VOXEL_TEXT_MIN_UNIT, spec.unit),
+      zTween: Boolean(spec.zTween),
+      zTweenAmp: Math.max(0, spec.zTweenAmp ?? VOXEL_TEXT_DEFAULT_Z_TWEEN_AMP),
+      zTweenSpeed: Math.max(0, spec.zTweenSpeed ?? VOXEL_TEXT_DEFAULT_Z_TWEEN_SPEED),
     };
     if (!clean.id) return;
     this.voxelTextSpecs.set(clean.id, clean);
@@ -2619,6 +2662,15 @@ export class Game {
       roomId: normalizeRoomId(patch.roomId ?? cur.roomId),
       letterSpacing: Math.max(0, patch.letterSpacing ?? cur.letterSpacing),
       unit: Math.max(VOXEL_TEXT_MIN_UNIT, patch.unit ?? cur.unit),
+      zTween: Boolean(patch.zTween ?? cur.zTween),
+      zTweenAmp: Math.max(
+        0,
+        patch.zTweenAmp ?? cur.zTweenAmp ?? VOXEL_TEXT_DEFAULT_Z_TWEEN_AMP
+      ),
+      zTweenSpeed: Math.max(
+        0,
+        patch.zTweenSpeed ?? cur.zTweenSpeed ?? VOXEL_TEXT_DEFAULT_Z_TWEEN_SPEED
+      ),
     };
     this.voxelTextSpecs.set(id, next);
     this.syncVoxelWordSign();
@@ -2878,6 +2930,7 @@ export class Game {
   tick(dt: number): void {
     this.doorPulseTime += dt;
     this.animateDoorTiles();
+    this.updateVoxelTextTween();
     
     if (this.selfMesh && this.selfTargetPos) {
       const t = this.selfTargetPos;

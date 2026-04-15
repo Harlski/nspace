@@ -27,6 +27,23 @@ export type ObstacleProps = {
 };
 
 export type ExtraFloorTile = { x: number; z: number };
+export type VoxelTextSpec = {
+  id: string;
+  text: string;
+  roomId: string;
+  x: number;
+  y: number;
+  z: number;
+  yawDeg: number;
+  unit: number;
+  letterSpacing: number;
+  color: number;
+  emissive: number;
+  emissiveIntensity: number;
+  zTween: boolean;
+  zTweenAmp: number;
+  zTweenSpeed: number;
+};
 
 export type RoomBounds = {
   minX: number;
@@ -64,6 +81,7 @@ export type ServerMessage =
         createdBy: string;
         createdAt: number;
       }>;
+      voxelTexts?: VoxelTextSpec[];
       /** Real players online across all rooms (NPCs excluded). */
       onlinePlayerCount?: number;
       /** Omitted on older servers; client defaults to true. */
@@ -90,6 +108,7 @@ export type ServerMessage =
         createdAt: number;
       }>;
     }
+  | { type: "voxelTexts"; roomId: string; texts: VoxelTextSpec[] }
   | {
       type: "chat";
       from: string;
@@ -330,4 +349,14 @@ export function sendMoveObstacle(
 export function sendChat(ws: WebSocket, text: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "chat", text }));
+}
+
+export function sendSetVoxelText(ws: WebSocket, spec: VoxelTextSpec): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "setVoxelText", ...spec }));
+}
+
+export function sendRemoveVoxelText(ws: WebSocket, roomId: string, id: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "removeVoxelText", roomId, id }));
 }
