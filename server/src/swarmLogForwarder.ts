@@ -3,6 +3,12 @@ import path from "node:path";
 import util from "node:util";
 
 type ConsoleMethod = (...args: unknown[]) => void;
+const BLOCKCHAIN_NOISE_RE =
+  /(swarm|consensus_proxy|behaviour\s+\||send queue full|slow peer|requesting transaction proof|topic:\s*"?block-header"?)/i;
+
+function isBlockchainNoise(line: string): boolean {
+  return BLOCKCHAIN_NOISE_RE.test(line);
+}
 
 function stringifyArgs(args: unknown[]): string {
   return args
@@ -33,10 +39,14 @@ function installStreamMirror(logFilePath: string): void {
     const parts = (stdoutBuf + text).split(/\r?\n/);
     stdoutBuf = parts.pop() ?? "";
     for (const line of parts) {
-      if (!/swarm/i.test(line)) continue;
+      if (!isBlockchainNoise(line)) continue;
       safeAppend(logFilePath, `[${new Date().toISOString()}] [STDOUT] ${line}\n`);
     }
-    return (ORIG_STDOUT_WRITE as (...writeArgs: unknown[]) => boolean)(chunk, ...args);
+    if (isBlockchainNoise(text)) return true;
+    return (ORIG_STDOUT_WRITE as (...writeArgs: unknown[]) => boolean)(
+      chunk,
+      ...args
+    );
   }) as typeof process.stdout.write;
 
   process.stderr.write = ((chunk: unknown, ...args: unknown[]) => {
@@ -44,10 +54,14 @@ function installStreamMirror(logFilePath: string): void {
     const parts = (stderrBuf + text).split(/\r?\n/);
     stderrBuf = parts.pop() ?? "";
     for (const line of parts) {
-      if (!/swarm/i.test(line)) continue;
+      if (!isBlockchainNoise(line)) continue;
       safeAppend(logFilePath, `[${new Date().toISOString()}] [STDERR] ${line}\n`);
     }
-    return (ORIG_STDERR_WRITE as (...writeArgs: unknown[]) => boolean)(chunk, ...args);
+    if (isBlockchainNoise(text)) return true;
+    return (ORIG_STDERR_WRITE as (...writeArgs: unknown[]) => boolean)(
+      chunk,
+      ...args
+    );
   }) as typeof process.stderr.write;
 }
 
@@ -60,17 +74,25 @@ export function installSwarmErrorForwarder(logFilePath: string): void {
 
   const forwardIfSwarm = (level: "ERROR" | "WARN", args: unknown[]): void => {
     const line = stringifyArgs(args);
-    if (!/swarm/i.test(line)) return;
+    if (!isBlockchainNoise(line)) return;
     const out = `[${new Date().toISOString()}] [${level}] ${line}\n`;
     safeAppend(logFilePath, out);
   };
 
   console.error = (...args: unknown[]) => {
-    forwardIfSwarm("ERROR", args);
+    const line = stringifyArgs(args);
+    if (isBlockchainNoise(line)) {
+      forwardIfSwarm("ERROR", args);
+      return;
+    }
     baseError(...args);
   };
   console.warn = (...args: unknown[]) => {
-    forwardIfSwarm("WARN", args);
+    const line = stringifyArgs(args);
+    if (isBlockchainNoise(line)) {
+      forwardIfSwarm("WARN", args);
+      return;
+    }
     baseWarn(...args);
   };
 
