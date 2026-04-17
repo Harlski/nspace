@@ -1179,10 +1179,16 @@ function enterGame(token: string, address: string): void {
       const tpHint = hud.isTeleporterModeActive()
         ? " Teleporter: click an empty floor tile to place."
         : "";
+      const sel = game.getSelectedBlockTile();
+      const selectedHint = sel
+        ? touchUi
+          ? " Selected block: D delete, R rotate ramp, Ctrl+tap selected block to stack higher."
+          : " Selected block: D delete, R rotate ramp, Ctrl+click selected block to stack higher."
+        : "";
       hud.setStatus(
         touchUi
-          ? `Build — tap a block to edit, empty tile to place (Walk to exit)${tpHint}`
-          : `Build mode — click a block to edit, empty floor to place (B to exit)${tpHint}`
+          ? `Build — tap a block to edit, empty tile to place (Walk to exit)${tpHint}${selectedHint}`
+          : `Build mode — click a block to edit, empty floor to place (B to exit)${tpHint}${selectedHint}`
       );
       hud.setBuildBlockBarState({
         visible: true,

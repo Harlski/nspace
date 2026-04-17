@@ -2282,6 +2282,7 @@ export class Game {
           selected.x === bx &&
           selected.z === bz &&
           selected.y === by &&
+          e.ctrlKey &&
           canStackHere
         ) {
           this.placeBlockHandler(bx!, bz!);
