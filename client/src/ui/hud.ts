@@ -7,10 +7,6 @@ import {
 import type { ObstacleProps } from "../net/ws.js";
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../game/constants.js";
 import { HUB_ROOM_ID, normalizeRoomId } from "../game/roomLayouts.js";
-import {
-  isObjectPanelDebugEnabled,
-  logObjectPanel,
-} from "../debug/objectPanelDebug.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 
 function cssHex(n: number): string {
@@ -1931,8 +1927,6 @@ export function createHud(
     },
     showObjectEditPanel(opts) {
       hideObjectEditPanel();
-      logObjectPanel("show begin", "teleporterEdit" in opts ? "teleporter" : "block");
-      try {
       if ("teleporterEdit" in opts) {
         const te = opts.teleporterEdit;
         panelOnPropsChange = null;
@@ -2060,7 +2054,6 @@ export function createHud(
             }
             te.onConfigure(roomId, Math.floor(dx), Math.floor(dz));
           });
-        logObjectPanel("show done (teleporter)");
         return;
       }
       panelOnPropsChange = opts.onPropsChange;
@@ -2362,16 +2355,6 @@ export function createHud(
       objectPanel
         .querySelector(".build-object-panel__dismiss")
         ?.addEventListener("click", () => dismissPanel());
-      logObjectPanel("show done (block)");
-      } catch (err) {
-        console.error("[objectPanel] showObjectEditPanel failed:", err);
-        logObjectPanel("error", err);
-        if (isObjectPanelDebugEnabled()) {
-          window.alert(
-            `[objectPanel] ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
-      }
     },
     hideObjectEditPanel() {
       hideObjectEditPanel();

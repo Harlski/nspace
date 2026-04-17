@@ -12,7 +12,6 @@ import {
 import { ROOM_ID } from "./game/constants.js";
 import { Game } from "./game/Game.js";
 import { isOrthogonallyAdjacentToFloorTile, snapFloorTile } from "./game/grid.js";
-import { logObjectPanel } from "./debug/objectPanelDebug.js";
 import {
   HUB_ROOM_ID,
   CHAMBER_ROOM_ID,
@@ -1432,17 +1431,8 @@ function enterGame(token: string, address: string): void {
       }));
     });
     game.setObstacleSelectHandler((x, z) => {
-      logObjectPanel("obstacleSelect", {
-        x,
-        z,
-        buildMode: game.getBuildMode(),
-        roomId: game.getRoomId(),
-      });
       const m = game.getPlacedAt(x, z);
-      if (!m) {
-        logObjectPanel("no obstacle metadata at tile — panel skipped");
-        return;
-      }
+      if (!m) return;
       editingTile = { x, z };
 
       const tp = m.teleporter;
