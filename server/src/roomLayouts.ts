@@ -1,4 +1,17 @@
 /** Per-room rectangular base floor (integer tile indices, inclusive). */
+import {
+  getBuiltinRoomDisplayName,
+  getBuiltinRoomIsPublic,
+} from "./builtinRoomNames.js";
+import {
+  createDynamicRoom,
+  getDynamicRoomBounds,
+  hasDynamicRoom,
+  listDeletedDynamicRooms,
+  listDynamicRooms,
+  loadRoomRegistry,
+} from "./roomRegistry.js";
+import { walletDisplayName } from "./walletDisplayName.js";
 
 export type RoomBounds = {
   minX: number;
@@ -88,6 +101,13 @@ const CANVAS_DOORS: DoorDef[] = [
   },
 ];
 
+const BUILTIN_ROOM_IDS = new Set([
+  HUB_ROOM_ID,
+  CHAMBER_ROOM_ID,
+  CANVAS_ROOM_ID,
+]);
+loadRoomRegistry(BUILTIN_ROOM_IDS);
+
 /** Legacy default websocket room id maps to hub. */
 export function normalizeRoomId(roomId: string): string {
   if (roomId === "lobby") return HUB_ROOM_ID;
@@ -104,7 +124,7 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
     case CANVAS_ROOM_ID:
       return CANVAS_BOUNDS;
     default:
-      return HUB_BOUNDS;
+      return getDynamicRoomBounds(id) ?? HUB_BOUNDS;
   }
 }
 
@@ -115,4 +135,122 @@ export function getDoorsForRoom(roomId: string): DoorDef[] {
   if (id === CHAMBER_ROOM_ID) return CHAMBER_DOORS;
   if (id === CANVAS_ROOM_ID) return CANVAS_DOORS;
   return [];
+}
+
+export function hasRoom(roomId: string): boolean {
+  const id = normalizeRoomId(roomId);
+  if (BUILTIN_ROOM_IDS.has(id)) return true;
+  return hasDynamicRoom(id);
+}
+
+/** True for wallet-created rooms (registry), not Hub/Chamber/Canvas. */
+export function isPlayerCreatedRoom(roomId: string): boolean {
+  return hasDynamicRoom(normalizeRoomId(roomId));
+}
+
+export function isBuiltinRoomId(roomId: string): boolean {
+  const id = normalizeRoomId(roomId);
+  return BUILTIN_ROOM_IDS.has(id);
+}
+
+export type RoomDefinition = {
+  id: string;
+  bounds: RoomBounds;
+  ownerAddress: string | null;
+  displayName: string;
+  isPublic: boolean;
+  isBuiltin: boolean;
+  /** Soft-deleted rooms (admin restore list only). */
+  isDeleted?: boolean;
+};
+
+export function listDeletedRoomDefinitions(): RoomDefinition[] {
+  return listDeletedDynamicRooms().map((r) => ({
+    id: r.id,
+    bounds: r.bounds,
+    ownerAddress: r.ownerAddress,
+    displayName: r.displayName,
+    isPublic: r.isPublic,
+    isBuiltin: false as const,
+    isDeleted: true as const,
+  }));
+}
+
+export function listRoomDefinitions(): RoomDefinition[] {
+  return [
+    {
+      id: HUB_ROOM_ID,
+      bounds: HUB_BOUNDS,
+      ownerAddress: null,
+      displayName: getBuiltinRoomDisplayName(HUB_ROOM_ID, "Hub"),
+      isPublic: getBuiltinRoomIsPublic(HUB_ROOM_ID),
+      isBuiltin: true,
+    },
+    {
+      id: CHAMBER_ROOM_ID,
+      bounds: CHAMBER_BOUNDS,
+      ownerAddress: null,
+      displayName: getBuiltinRoomDisplayName(CHAMBER_ROOM_ID, "Chamber"),
+      isPublic: getBuiltinRoomIsPublic(CHAMBER_ROOM_ID),
+      isBuiltin: true,
+    },
+    {
+      id: CANVAS_ROOM_ID,
+      bounds: CANVAS_BOUNDS,
+      ownerAddress: null,
+      displayName: getBuiltinRoomDisplayName(CANVAS_ROOM_ID, "Canvas"),
+      isPublic: getBuiltinRoomIsPublic(CANVAS_ROOM_ID),
+      isBuiltin: true,
+    },
+    ...listDynamicRooms().map((r) => ({
+      id: r.id,
+      bounds: r.bounds,
+      ownerAddress: r.ownerAddress,
+      displayName: r.displayName,
+      isPublic: r.isPublic,
+      isBuiltin: false as const,
+    })),
+  ];
+}
+
+/** Default display name for a new player room, e.g. `NQ12ABCD's room`. */
+export function defaultRoomDisplayName(ownerAddress: string): string {
+  return `${walletDisplayName(ownerAddress)}'s room`;
+}
+
+export function createRoomWithSize(
+  widthTiles: number,
+  heightTiles: number,
+  ownerAddress: string,
+  maxOwnedRoomsPerPlayer: number,
+  displayName: string,
+  isPublic: boolean
+): { ok: true; id: string; bounds: RoomBounds } | { ok: false; reason: string } {
+  const width = Math.floor(widthTiles);
+  const height = Math.floor(heightTiles);
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    return { ok: false, reason: "Width/height must be numbers." };
+  }
+  if (width < 5 || height < 5 || width > 30 || height > 30) {
+    return { ok: false, reason: "Width/height must be between 5 and 30 tiles." };
+  }
+  const halfW = Math.floor(width / 2);
+  const halfH = Math.floor(height / 2);
+  const bounds: RoomBounds = {
+    minX: -halfW,
+    maxX: -halfW + width - 1,
+    minZ: -halfH,
+    maxZ: -halfH + height - 1,
+  };
+  const created = createDynamicRoom(
+    bounds,
+    BUILTIN_ROOM_IDS,
+    ownerAddress,
+    maxOwnedRoomsPerPlayer,
+    displayName,
+    isPublic
+  );
+  if (!created.ok) return created;
+  const id = created.id;
+  return { ok: true, id, bounds };
 }

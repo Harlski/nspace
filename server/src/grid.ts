@@ -193,6 +193,12 @@ export type TerrainProps = {
   rampDir: number;
   colorId: number;
   locked?: boolean;
+  /**
+   * One-way teleporter: `pending` until destination is set; then warps to target tile.
+   */
+  teleporter?:
+    | { pending: true }
+    | { targetRoomId: string; targetX: number; targetZ: number };
   // Experimental: Claimable/minable blocks
   claimable?: boolean;
   active?: boolean;
@@ -211,7 +217,7 @@ function isSolidTerrain(p: TerrainProps | undefined): p is TerrainProps {
   return p != null && !p.passable && !p.ramp;
 }
 
-function floorWalkableTerrain(
+export function floorWalkableTerrain(
   x: number,
   z: number,
   placed: ReadonlyMap<string, TerrainProps>,
@@ -223,6 +229,19 @@ function floorWalkableTerrain(
   if (!p) return true;
   if (p.passable || p.ramp) return true;
   return false;
+}
+
+/** Empty walkable floor tile suitable for placing a passable teleporter obstacle. */
+export function canPlaceTeleporterFoot(
+  roomId: string,
+  x: number,
+  z: number,
+  placed: ReadonlyMap<string, TerrainProps>,
+  extraWalkable: ReadonlySet<string>
+): boolean {
+  if (!floorWalkableTerrain(x, z, placed, extraWalkable, roomId)) return false;
+  if (placed.has(tileKey(x, z))) return false;
+  return true;
 }
 
 const RAMP_NEIGHBOR: readonly [number, number][] = [
@@ -413,4 +432,28 @@ export function pathfindTerrain(
     }
   }
   return null;
+}
+
+/** Legacy paired teleporters stored `pairId`; strip on load. */
+export function normalizeTeleporterPropsForLoad(p: TerrainProps): TerrainProps {
+  const tp = p.teleporter;
+  if (!tp) return p;
+  if ("pending" in tp && tp.pending) return p;
+  if ("pairId" in tp) {
+    const t = tp as {
+      pairId: string;
+      targetRoomId: string;
+      targetX: number;
+      targetZ: number;
+    };
+    return {
+      ...p,
+      teleporter: {
+        targetRoomId: t.targetRoomId,
+        targetX: t.targetX,
+        targetZ: t.targetZ,
+      },
+    };
+  }
+  return p;
 }

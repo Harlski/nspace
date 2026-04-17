@@ -1,0 +1,15 @@
+{
+  "roomId": "hub",
+  "roomCount": 2,
+  "obstacleCount": 3,
+  "extraFloorCount": 3,
+  "spawnCount": 2,
+  "signboardCount": 1,
+  "voxelTextCount": 1,
+  "fileBytes": 1527,
+  "welcomePayloadBytes": 899,
+  "obstacleBroadcastBytes": 412,
+  "obstacleDeltaBroadcastBytes": 184,
+  "extraFloorBroadcastBytes": 94,
+  "extraFloorDeltaBroadcastBytes": 77
+}

@@ -1,0 +1,22 @@
+{
+  "signboards": [
+    {
+      "id": "hub-sign-1",
+      "roomId": "hub",
+      "x": 0,
+      "z": 1,
+      "message": "Welcome to hub",
+      "createdBy": "NQZZ9999999999999999999999999999999999999999",
+      "createdAt": 1710000000000
+    },
+    {
+      "id": "chamber-sign-1",
+      "roomId": "chamber",
+      "x": 0,
+      "z": 0,
+      "message": "Chamber only",
+      "createdBy": "NQYY8888888888888888888888888888888888888888",
+      "createdAt": 1710000000500
+    }
+  ]
+}

@@ -100,6 +100,9 @@ export type BlockStyleProps = {
   colorId: number;
   /** Whether this object is locked (admin-only editing). */
   locked?: boolean;
+  teleporter?:
+    | { pending: true }
+    | { targetRoomId: string; targetX: number; targetZ: number };
   // Experimental: Claimable/minable blocks
   claimable?: boolean;
   active?: boolean;

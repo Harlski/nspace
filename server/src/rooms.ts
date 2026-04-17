@@ -1,6 +1,7 @@
 import { randomBytes, randomInt } from "node:crypto";
 import type { WebSocket } from "ws";
 import {
+  canPlaceTeleporterFoot,
   inTileBounds,
   isBaseTile,
   isOrthogonallyAdjacentToTile,
@@ -13,13 +14,27 @@ import {
   type TerrainProps,
 } from "./grid.js";
 import {
+  createRoomWithSize,
+  defaultRoomDisplayName,
   getDoorsForRoom,
   getRoomBaseBounds,
   HUB_ROOM_ID,
+  hasRoom,
   isHubSpawnSafeZone,
+  isBuiltinRoomId,
+  isPlayerCreatedRoom,
+  listDeletedRoomDefinitions,
+  listRoomDefinitions,
   normalizeRoomId,
   type RoomBounds,
 } from "./roomLayouts.js";
+import { patchBuiltinRoomSettings } from "./builtinRoomNames.js";
+import {
+  getDynamicRoomOwnerAddress,
+  restoreDynamicRoom,
+  softDeleteDynamicRoom,
+  updateDynamicRoomMetadata,
+} from "./roomRegistry.js";
 import { generateMaze } from "./mazeGenerator.js";
 import {
   loadWorldState,
@@ -95,6 +110,18 @@ const PLACE_RADIUS_BLOCKS = Math.max(
   Math.min(64, Number(process.env.PLACE_RADIUS_BLOCKS ?? "5"))
 );
 
+/**
+ * Max custom rooms a single wallet may create (default 3).
+ * Override with `MAX_OWNED_ROOMS_PER_PLAYER` (e.g. higher tiers for subscribers later).
+ */
+const MAX_OWNED_ROOMS_PER_PLAYER = ((): number => {
+  const raw = process.env.MAX_OWNED_ROOMS_PER_PLAYER;
+  if (raw === undefined || raw === "") return 3;
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n)) return 3;
+  return Math.max(1, Math.min(256, n));
+})();
+
 /** Server-authoritative NIM / claimable-block flow (see beginBlockClaim / blockClaimTick / completeBlockClaim). */
 const BLOCK_CLAIM_HOLD_MS = 3000;
 const BLOCK_CLAIM_SESSION_MS = 45_000;
@@ -164,6 +191,9 @@ export type ObstacleTile = {
   cooldownMs?: number;
   lastClaimedAt?: number;
   claimedBy?: string;
+  teleporter?:
+    | { pending: true }
+    | { targetRoomId: string; targetX: number; targetZ: number };
 };
 
 const BLOCK_COLOR_MAX = 9;
@@ -223,12 +253,19 @@ function canPlaceMineableBlocks(address: string): boolean {
  * Per-room edit permissions:
  * - Canvas: no edits for anyone (view-only).
  * - Chamber: admins only.
- * - Others: standard behavior.
+ * - Wallet-created rooms: owner or admin only; rooms with no owner on record: admin only.
+ * - Hub and other built-ins: anyone may edit (subject to hub safe zone, etc.).
  */
 function canEditRoomContent(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
   if (id === CANVAS_ROOM_ID) return false;
   if (id === CHAMBER_ROOM_ID) return isAdmin(address);
+  if (isPlayerCreatedRoom(id)) {
+    if (isAdmin(address)) return true;
+    const owner = getDynamicRoomOwnerAddress(id);
+    if (!owner) return false;
+    return compactAddress(address) === owner;
+  }
   return true;
 }
 
@@ -272,7 +309,21 @@ type OutMsg =
   | { type: "state"; players: PlayerState[] }
   | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
+  | {
+      type: "obstaclesDelta";
+      roomId: string;
+      add: ObstacleTile[];
+      /** Tile keys ("x,z") that should be removed from the room. */
+      remove: string[];
+    }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
+  | {
+      type: "extraFloorDelta";
+      roomId: string;
+      add: ExtraFloorTile[];
+      /** Tile keys ("x,z") that should be removed from the room. */
+      remove: string[];
+    }
   | { type: "canvasClaim"; x: number; z: number; address: string }
   | { type: "canvasTimer"; timeRemaining: number }
   | {
@@ -314,6 +365,36 @@ type OutMsg =
       x?: number;
       z?: number;
       amountNim?: string;
+    }
+  | {
+      type: "joinRoomFailed";
+      roomId: string;
+      reason: "not_found";
+    }
+  | {
+      type: "roomCatalog";
+      rooms: Array<{
+        id: string;
+        displayName: string;
+        /** Wallet of the creator; null for built-in rooms. */
+        ownerAddress: string | null;
+        playerCount: number;
+        isPublic: boolean;
+        /** Hub / Chamber / Canvas vs player-created. */
+        isBuiltin: boolean;
+        /** Server-side hint for showing edit UI (owner or admin). */
+        canEdit: boolean;
+        isDeleted?: boolean;
+        canDelete?: boolean;
+        canRestore?: boolean;
+      }>;
+    }
+  | {
+      type: "roomActionResult";
+      action: "deleteRoom" | "restoreRoom";
+      ok: boolean;
+      roomId?: string;
+      reason?: string;
     }
   | { type: "canvasCountdown"; text: string; msRemaining: number };
 
@@ -564,22 +645,30 @@ function finalizeClaimableBlockReward(
   props.active = false;
   props.lastClaimedAt = now;
   props.claimedBy = address;
-  broadcast(roomId, {
-    type: "obstacles",
-    roomId,
-    tiles: obstaclesToList(roomId),
-  });
+  const tile = obstacleTileFromPlaced(roomId, tileKeyStr);
+  if (tile) {
+    broadcast(roomId, {
+      type: "obstaclesDelta",
+      roomId,
+      add: [tile],
+      remove: [],
+    });
+  }
   const cooldown = props.cooldownMs || 60000;
   setTimeout(() => {
     const placed = placedMap(roomId);
     const cur = placed.get(tileKeyStr);
     if (cur && cur.claimable) {
       cur.active = true;
-      broadcast(roomId, {
-        type: "obstacles",
-        roomId,
-        tiles: obstaclesToList(roomId),
-      });
+      const tile = obstacleTileFromPlaced(roomId, tileKeyStr);
+      if (tile) {
+        broadcast(roomId, {
+          type: "obstaclesDelta",
+          roomId,
+          add: [tile],
+          remove: [],
+        });
+      }
     }
   }, cooldown);
   const [tx, tz] = tileKeyStr.split(",").map(Number);
@@ -709,6 +798,35 @@ function findRecoveryTerrainPath(
   return null;
 }
 
+function obstacleTileFromPlaced(roomId: string, tileKeyStr: string): ObstacleTile | null {
+  const placed = roomPlaced.get(roomId);
+  if (!placed) return null;
+  const v = placed.get(tileKeyStr);
+  if (!v) return null;
+  const [x, z] = tileKeyStr.split(",").map(Number);
+  const signboard = getSignboardAt(roomId, x, z);
+  return {
+    x: x!,
+    z: z!,
+    passable: v.passable,
+    half: v.half ?? false,
+    quarter: v.quarter ?? false,
+    hex: v.hex ?? false,
+    ramp: v.ramp ?? false,
+    rampDir: Math.max(0, Math.min(3, Math.floor(v.rampDir ?? 0))),
+    colorId: clampColorId(v.colorId ?? 0),
+    signboardId: signboard?.id,
+    locked: v.locked ?? false,
+    // Experimental: claimable blocks
+    claimable: v.claimable,
+    active: v.active,
+    cooldownMs: v.cooldownMs,
+    lastClaimedAt: v.lastClaimedAt,
+    claimedBy: v.claimedBy,
+    teleporter: v.teleporter,
+  };
+}
+
 function obstaclesToList(roomId: string): ObstacleTile[] {
   const m = roomPlaced.get(roomId);
   if (!m) return [];
@@ -736,6 +854,7 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       cooldownMs: v.cooldownMs,
       lastClaimedAt: v.lastClaimedAt,
       claimedBy: v.claimedBy,
+      teleporter: v.teleporter,
     });
   }
   return out;
@@ -857,6 +976,7 @@ function isWalkableForRoom(roomId: string, x: number, z: number): boolean {
 
 /** New extra tile must be outside the core grid and orthogonally adjacent to some walkable tile. */
 function canPlaceExtraFloor(roomId: string, x: number, z: number): boolean {
+  if (isPlayerCreatedRoom(roomId)) return false;
   const ex = extraFloorSet(roomId);
   if (ex.has(tileKey(x, z))) return false;
   if (isBaseTile(x, z, roomId)) return false;
@@ -950,6 +1070,114 @@ function broadcastAll(msg: OutMsg): void {
       if (c.ws.readyState === 1) c.ws.send(payload);
     }
   }
+}
+
+function countRealPlayersInRoom(roomId: string): number {
+  const r = rooms.get(roomId);
+  if (!r) return 0;
+  let n = 0;
+  for (const c of r.values()) {
+    if (!c.displayName.startsWith("[NPC] ")) n += 1;
+  }
+  return n;
+}
+
+/** 6-char codes are case-insensitive; other ids use normal normalization. */
+function normalizeJoinRoomId(raw: string): string {
+  const t = String(raw).trim().replace(/\s+/g, "");
+  if (/^[A-Za-z0-9]{6}$/.test(t)) return t.toLowerCase();
+  return normalizeRoomId(raw);
+}
+
+function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCatalog" }> {
+  const viewer = compactAddress(forAddress);
+  const admin = isAdmin(forAddress);
+  const defs = listRoomDefinitions();
+  const catalogRooms: Array<{
+    id: string;
+    displayName: string;
+    ownerAddress: string | null;
+    playerCount: number;
+    isPublic: boolean;
+    isBuiltin: boolean;
+    canEdit: boolean;
+    isDeleted?: boolean;
+    canDelete?: boolean;
+    canRestore?: boolean;
+  }> = [];
+  for (const d of defs) {
+    if (d.isBuiltin) {
+      if (!d.isPublic && !admin) {
+        continue;
+      }
+      catalogRooms.push({
+        id: d.id,
+        displayName: d.displayName,
+        ownerAddress: null,
+        playerCount: countRealPlayersInRoom(d.id),
+        isPublic: d.isPublic,
+        isBuiltin: true,
+        canEdit: admin,
+        isDeleted: false,
+        canDelete: false,
+        canRestore: false,
+      });
+      continue;
+    }
+    if (!d.isPublic) {
+      const ownerC = d.ownerAddress ? compactAddress(d.ownerAddress) : "";
+      if (!admin && viewer !== ownerC) continue;
+    }
+    const canEdit =
+      admin ||
+      (!!d.ownerAddress && compactAddress(d.ownerAddress) === viewer);
+    const canDelete =
+      admin ||
+      (!!d.ownerAddress && compactAddress(d.ownerAddress) === viewer);
+    catalogRooms.push({
+      id: d.id,
+      displayName: d.displayName,
+      ownerAddress: d.ownerAddress,
+      playerCount: countRealPlayersInRoom(d.id),
+      isPublic: d.isPublic,
+      isBuiltin: false,
+      canEdit,
+      isDeleted: false,
+      canDelete,
+      canRestore: false,
+    });
+  }
+  if (admin) {
+    for (const d of listDeletedRoomDefinitions()) {
+      catalogRooms.push({
+        id: d.id,
+        displayName: d.displayName,
+        ownerAddress: d.ownerAddress,
+        playerCount: countRealPlayersInRoom(d.id),
+        isPublic: d.isPublic,
+        isBuiltin: false,
+        canEdit: false,
+        isDeleted: true,
+        canDelete: false,
+        canRestore: true,
+      });
+    }
+  }
+  return { type: "roomCatalog", rooms: catalogRooms };
+}
+
+function broadcastRoomCatalogToAll(): void {
+  for (const room of rooms.values()) {
+    for (const c of room.values()) {
+      if (c.ws.readyState === 1) {
+        c.ws.send(JSON.stringify(roomCatalogMessage(c.address) satisfies OutMsg));
+      }
+    }
+  }
+}
+
+function sendRoomCatalog(ws: WebSocket, address: string): void {
+  ws.send(JSON.stringify(roomCatalogMessage(address) satisfies OutMsg));
 }
 
 function countOnlineRealPlayers(): number {
@@ -1192,8 +1420,152 @@ function isExitPortalTile(tileProps: PlacedProps | undefined): boolean {
       tileProps.quarter &&
       tileProps.hex &&
       tileProps.colorId === 4 &&
-      tileProps.locked
+      tileProps.locked &&
+      !tileProps.teleporter
   );
+}
+
+const TELEPORTER_VISUAL: PlacedProps = {
+  passable: true,
+  quarter: true,
+  hex: true,
+  half: false,
+  ramp: false,
+  rampDir: 0,
+  colorId: 4,
+  locked: true,
+};
+
+function placePendingTeleporterAt(
+  conn: ClientConn,
+  roomId: string,
+  x: number,
+  z: number
+): boolean {
+  const address = conn.address;
+  if (!canEditRoomContent(roomId, address)) return false;
+  if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) return false;
+  if (!hasRoom(roomId)) return false;
+
+  const placed = placedMap(roomId);
+  const extra = extraFloorSet(roomId);
+  const k = tileKey(x, z);
+  if (placed.has(k)) return false;
+  if (!canPlaceTeleporterFoot(roomId, x, z, placed, extra)) return false;
+  if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(x, z)) return false;
+  if (getSignboardAt(roomId, x, z)) return false;
+  for (const [rid, r] of rooms) {
+    for (const c of r.values()) {
+      const st = snapToTile(c.player.x, c.player.z);
+      if (normalizeRoomId(rid) === normalizeRoomId(roomId) && st.x === x && st.z === z) {
+        return false;
+      }
+    }
+  }
+
+  placed.set(k, {
+    ...TELEPORTER_VISUAL,
+    teleporter: { pending: true },
+  });
+  const nRoom = normalizeRoomId(roomId);
+  const d = obstacleTileFromPlaced(nRoom, k);
+  if (d) {
+    broadcast(nRoom, {
+      type: "obstaclesDelta",
+      roomId: nRoom,
+      add: [d],
+      remove: [],
+    });
+  }
+  schedulePersistWorldState();
+  logGameplayEvent(conn.sessionId, address, nRoom, "place_pending_teleporter", { x, z });
+  return true;
+}
+
+/** One-way teleporter: only the source tile is placed; destination is where the player warps. */
+function configureTeleporterDestination(
+  conn: ClientConn,
+  srcRoomId: string,
+  srcX: number,
+  srcZ: number,
+  destRoomId: string,
+  destX: number,
+  destZ: number
+): boolean {
+  const address = conn.address;
+  if (!canEditRoomContent(srcRoomId, address)) return false;
+  if (!canEditRoomContent(destRoomId, address)) return false;
+  if (normalizeRoomId(srcRoomId) === CANVAS_ROOM_ID || normalizeRoomId(destRoomId) === CANVAS_ROOM_ID) {
+    return false;
+  }
+  if (!hasRoom(destRoomId)) return false;
+
+  const srcPlaced = placedMap(srcRoomId);
+  const destPlaced = placedMap(destRoomId);
+  const destExtra = extraFloorSet(destRoomId);
+
+  const srcK = tileKey(srcX, srcZ);
+  const srcProps = srcPlaced.get(srcK);
+  if (!srcProps?.teleporter) return false;
+
+  const nDest = normalizeRoomId(destRoomId);
+  const nSrc = normalizeRoomId(srcRoomId);
+  let warpX = destX;
+  let warpZ = destZ;
+  if (nDest === HUB_ROOM_ID) {
+    warpX = 0;
+    warpZ = 0;
+  }
+
+  /* Hub destination is always (0,0); skip empty-floor check used for other rooms. */
+  if (nDest !== HUB_ROOM_ID) {
+    if (!canPlaceTeleporterFoot(destRoomId, warpX, warpZ, destPlaced, destExtra)) return false;
+  }
+
+  if (normalizeRoomId(srcRoomId) === HUB_ROOM_ID && isHubSpawnSafeZone(srcX, srcZ)) return false;
+
+  if (nSrc === nDest && srcX === warpX && srcZ === warpZ) {
+    return false;
+  }
+
+  if (getSignboardAt(destRoomId, warpX, warpZ)) return false;
+
+  for (const [rid, r] of rooms) {
+    for (const c of r.values()) {
+      if (c.address === address) continue;
+      const st = snapToTile(c.player.x, c.player.z);
+      if (normalizeRoomId(rid) === normalizeRoomId(srcRoomId) && st.x === srcX && st.z === srcZ) {
+        return false;
+      }
+      if (normalizeRoomId(rid) === normalizeRoomId(destRoomId) && st.x === warpX && st.z === warpZ) {
+        return false;
+      }
+    }
+  }
+
+  srcPlaced.set(srcK, {
+    ...TELEPORTER_VISUAL,
+    teleporter: { targetRoomId: nDest, targetX: warpX, targetZ: warpZ },
+  });
+
+  const d1 = obstacleTileFromPlaced(nSrc, srcK);
+  if (d1) {
+    broadcast(nSrc, {
+      type: "obstaclesDelta",
+      roomId: nSrc,
+      add: [d1],
+      remove: [],
+    });
+  }
+  schedulePersistWorldState();
+  logGameplayEvent(conn.sessionId, address, nSrc, "configure_teleporter", {
+    srcX,
+    srcZ,
+    destRoomId: nDest,
+    destX: warpX,
+    destZ: warpZ,
+  });
+  return true;
 }
 
 function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>): void {
@@ -1488,6 +1860,16 @@ function endCanvasRound(): void {
   }, 2000);
 }
 
+function teleportAllInRoomToHub(roomIdRaw: string): void {
+  const roomId = normalizeRoomId(roomIdRaw);
+  const room = rooms.get(roomId);
+  if (!room || room.size === 0) return;
+  const occupants = [...room.values()];
+  for (const conn of occupants) {
+    teleportPlayer(conn, HUB_ROOM_ID, 0, 0);
+  }
+}
+
 function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: number): void {
   const address = conn.player.address;
 
@@ -1495,22 +1877,43 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     releaseBlockClaimSession(conn.pendingBlockClaimId);
   }
 
-  // Find and remove from current room
+  let currentRoomId: string | null = null;
   for (const [roomId, room] of rooms) {
     if (room.has(address)) {
-      room.delete(address);
-      broadcast(roomId, { type: "playerLeft", address }, address);
+      currentRoomId = roomId;
       break;
     }
   }
-  
-  // Update player position
+
+  const nTarget = normalizeRoomId(targetRoomId);
+  if (
+    currentRoomId !== null &&
+    normalizeRoomId(currentRoomId) === nTarget
+  ) {
+    conn.player.x = x;
+    conn.player.z = z;
+    conn.player.y = 0;
+    conn.pathQueue = [];
+    broadcast(currentRoomId, {
+      type: "state",
+      players: snapshotPlayers(currentRoomId),
+    });
+    return;
+  }
+
+  if (currentRoomId !== null) {
+    const room = rooms.get(currentRoomId);
+    if (room) {
+      room.delete(address);
+      broadcast(currentRoomId, { type: "playerLeft", address }, address);
+    }
+  }
+
   conn.player.x = x;
   conn.player.z = z;
   conn.player.y = 0;
   conn.pathQueue = [];
-  
-  // Add to new room
+
   let targetRoom = rooms.get(targetRoomId);
   if (!targetRoom) {
     targetRoom = new Map();
@@ -1543,6 +1946,8 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   
   const isCanvas = normalizeRoomId(targetRoomId) === CANVAS_ROOM_ID;
   const allowEdit = canEditRoomContent(targetRoomId, address);
+  const allowFloorExpand =
+    allowEdit && !isPlayerCreatedRoom(targetRoomId);
 
   conn.ws.send(
     JSON.stringify({
@@ -1560,10 +1965,11 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       voxelTexts: getVoxelTextsForRoom(targetRoomId),
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
-      allowExtraFloor: allowEdit,
+      allowExtraFloor: allowFloorExpand,
     } satisfies OutMsg)
   );
-  
+  sendRoomCatalog(conn.ws, address);
+
   // Notify others in new room
   broadcast(targetRoomId, { type: "playerJoined", player: { ...conn.player } }, address);
 }
@@ -1836,6 +2242,8 @@ export function addClient(
 
   const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
   const allowEdit = canEditRoomContent(roomId, address);
+  const allowFloorExpand =
+    allowEdit && !isPlayerCreatedRoom(roomId);
 
   // Always send a canvas timer snapshot on join:
   // - active round: real remaining time
@@ -1893,9 +2301,10 @@ export function addClient(
       voxelTexts: getVoxelTextsForRoom(roomId),
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
-      allowExtraFloor: allowEdit,
+      allowExtraFloor: allowFloorExpand,
     } satisfies OutMsg)
   );
+  sendRoomCatalog(ws, address);
 
   broadcast(
     roomId,
@@ -1939,6 +2348,204 @@ export function addClient(
     const currentRoomId = findPlayerRoom(address);
     if (!currentRoomId) {
       console.log(`[rooms] Player ${address} not in any room, ignoring message`);
+      return;
+    }
+    if (msg.type === "listRooms") {
+      sendRoomCatalog(ws, address);
+      return;
+    }
+
+    if (msg.type === "createRoom") {
+      const widthTiles = Number(msg.widthTiles);
+      const heightTiles = Number(msg.heightTiles);
+      const rawName =
+        msg.displayName !== undefined ? String(msg.displayName) : "";
+      const displayName =
+        rawName.trim().length > 0
+          ? rawName.trim()
+          : defaultRoomDisplayName(address);
+      const isPublic = msg.isPublic === false ? false : true;
+      const created = createRoomWithSize(
+        widthTiles,
+        heightTiles,
+        address,
+        MAX_OWNED_ROOMS_PER_PLAYER,
+        displayName,
+        isPublic
+      );
+      if (!created.ok) {
+        ws.send(
+          JSON.stringify({
+            type: "chat",
+            from: "System",
+            fromAddress: "SYSTEM",
+            text: created.reason,
+            at: Date.now(),
+          } satisfies OutMsg)
+        );
+        return;
+      }
+      broadcastRoomCatalogToAll();
+      const spawnX = Math.floor((created.bounds.minX + created.bounds.maxX) / 2);
+      const spawnZ = Math.floor((created.bounds.minZ + created.bounds.maxZ) / 2);
+      teleportPlayer(conn, created.id, spawnX, spawnZ);
+      return;
+    }
+
+    if (msg.type === "updateRoom") {
+      const roomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
+      if (isBuiltinRoomId(roomId)) {
+        if (!isAdmin(address)) {
+          ws.send(
+            JSON.stringify({
+              type: "chat",
+              from: "System",
+              fromAddress: "SYSTEM",
+              text: "Only admins can edit official rooms.",
+              at: Date.now(),
+            } satisfies OutMsg)
+          );
+          return;
+        }
+        const patch: { displayName?: string; isPublic?: boolean } = {};
+        if (msg.displayName !== undefined) {
+          patch.displayName = String(msg.displayName);
+        }
+        if (msg.isPublic !== undefined) {
+          patch.isPublic = Boolean(msg.isPublic);
+        }
+        if (patch.displayName === undefined && patch.isPublic === undefined) {
+          ws.send(
+            JSON.stringify({
+              type: "chat",
+              from: "System",
+              fromAddress: "SYSTEM",
+              text: "Send a display name and/or public/private setting.",
+              at: Date.now(),
+            } satisfies OutMsg)
+          );
+          return;
+        }
+        const updated = patchBuiltinRoomSettings(roomId, patch);
+        if (!updated.ok) {
+          ws.send(
+            JSON.stringify({
+              type: "chat",
+              from: "System",
+              fromAddress: "SYSTEM",
+              text: updated.reason,
+              at: Date.now(),
+            } satisfies OutMsg)
+          );
+          return;
+        }
+        broadcastRoomCatalogToAll();
+        return;
+      }
+      const patch: { displayName?: string; isPublic?: boolean } = {};
+      if (msg.displayName !== undefined) {
+        patch.displayName = String(msg.displayName);
+      }
+      if (msg.isPublic !== undefined) {
+        patch.isPublic = Boolean(msg.isPublic);
+      }
+      const updated = updateDynamicRoomMetadata(
+        roomId,
+        patch,
+        compactAddress(address),
+        isAdmin(address)
+      );
+      if (!updated.ok) {
+        ws.send(
+          JSON.stringify({
+            type: "chat",
+            from: "System",
+            fromAddress: "SYSTEM",
+            text: updated.reason,
+            at: Date.now(),
+          } satisfies OutMsg)
+        );
+        return;
+      }
+      broadcastRoomCatalogToAll();
+      return;
+    }
+
+    if (msg.type === "deleteRoom") {
+      const roomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
+      const result = softDeleteDynamicRoom(
+        roomId,
+        compactAddress(address),
+        isAdmin(address)
+      );
+      if (!result.ok) {
+        ws.send(
+          JSON.stringify({
+            type: "roomActionResult",
+            action: "deleteRoom",
+            ok: false,
+            roomId,
+            reason: result.reason,
+          } satisfies OutMsg)
+        );
+        return;
+      }
+      teleportAllInRoomToHub(roomId);
+      ws.send(
+        JSON.stringify({
+          type: "roomActionResult",
+          action: "deleteRoom",
+          ok: true,
+          roomId,
+        } satisfies OutMsg)
+      );
+      broadcastRoomCatalogToAll();
+      return;
+    }
+
+    if (msg.type === "restoreRoom") {
+      const roomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
+      const result = restoreDynamicRoom(roomId, isAdmin(address));
+      if (!result.ok) {
+        ws.send(
+          JSON.stringify({
+            type: "roomActionResult",
+            action: "restoreRoom",
+            ok: false,
+            roomId,
+            reason: result.reason,
+          } satisfies OutMsg)
+        );
+        return;
+      }
+      ws.send(
+        JSON.stringify({
+          type: "roomActionResult",
+          action: "restoreRoom",
+          ok: true,
+          roomId,
+        } satisfies OutMsg)
+      );
+      broadcastRoomCatalogToAll();
+      return;
+    }
+
+    if (msg.type === "joinRoom") {
+      const targetRoomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
+      if (!hasRoom(targetRoomId)) {
+        ws.send(
+          JSON.stringify({
+            type: "joinRoomFailed",
+            roomId: targetRoomId,
+            reason: "not_found",
+          } satisfies OutMsg)
+        );
+        return;
+      }
+      const b = getRoomBaseBounds(targetRoomId);
+      const spawnX = Math.floor((b.minX + b.maxX) / 2);
+      const spawnZ = Math.floor((b.minZ + b.maxZ) / 2);
+      teleportPlayer(conn, targetRoomId, spawnX, spawnZ);
       return;
     }
 
@@ -2014,9 +2621,28 @@ export function addClient(
     }
 
     if (msg.type === "enterPortal") {
-      if (normalizeRoomId(currentRoomId) !== CANVAS_ROOM_ID) return;
       const here = snapToTile(conn.player.x, conn.player.z);
       const tileProps = placedMap(currentRoomId).get(tileKey(here.x, here.z));
+      if (tileProps?.teleporter) {
+        const t = tileProps.teleporter;
+        if ("pending" in t && t.pending) {
+          ws.send(
+            JSON.stringify({
+              type: "chat",
+              from: "System",
+              fromAddress: "",
+              text: "This teleporter has no destination yet. Select it in build mode to set where it goes.",
+              at: Date.now(),
+            } satisfies OutMsg)
+          );
+          return;
+        }
+        if ("targetRoomId" in t) {
+          teleportPlayer(conn, normalizeRoomId(t.targetRoomId), t.targetX, t.targetZ);
+        }
+        return;
+      }
+      if (normalizeRoomId(currentRoomId) !== CANVAS_ROOM_ID) return;
       if (!isExitPortalTile(tileProps)) return;
       console.log(
         `[canvas] Player ${address.slice(0, 8)}... entered portal from (${here.x}, ${here.z})`
@@ -2085,11 +2711,15 @@ export function addClient(
         lastClaimedAt: undefined,
         claimedBy: undefined,
       });
-      broadcast(currentRoomId, {
-        type: "obstacles",
-        roomId: currentRoomId,
-        tiles: obstaclesToList(currentRoomId),
-      });
+      const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
+      if (deltaTile) {
+        broadcast(currentRoomId, {
+          type: "obstaclesDelta",
+          roomId: currentRoomId,
+          add: [deltaTile],
+          remove: [],
+        });
+      }
       schedulePersistWorldState();
       logGameplayEvent(conn.sessionId, address, currentRoomId, "place_block", {
         x: tile.x,
@@ -2101,6 +2731,85 @@ export function addClient(
         rampDir: ramp ? rampDir : 0,
         colorId,
       });
+      return;
+    }
+
+    if (msg.type === "placePendingTeleporter") {
+      if (!canEditRoomContent(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const tile = snapToTile(tx, tz);
+      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      const ok = placePendingTeleporterAt(conn, currentRoomId, tile.x, tile.z);
+      if (!ok) {
+        ws.send(
+          JSON.stringify({
+            type: "chat",
+            from: "System",
+            fromAddress: "",
+            text: "Could not place teleporter. Use an empty walkable floor tile within build range (not canvas).",
+            at: now,
+          } satisfies OutMsg)
+        );
+      }
+      return;
+    }
+
+    if (msg.type === "configureTeleporter") {
+      if (!canEditRoomContent(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      const destRoomId = normalizeRoomId(String(msg.destRoomId ?? ""));
+      let destX = Number(msg.destX);
+      let destZ = Number(msg.destZ);
+      if (destRoomId === HUB_ROOM_ID) {
+        destX = 0;
+        destZ = 0;
+      } else if (!Number.isFinite(destX) || !Number.isFinite(destZ)) {
+        return;
+      }
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) {
+        return;
+      }
+      const tile = snapToTile(tx, tz);
+      const dt = snapToTile(destX, destZ);
+      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      const placed = placedMap(currentRoomId);
+      const k = tileKey(tile.x, tile.z);
+      const props = placed.get(k);
+      if (!props?.teleporter) return;
+
+      const ok = configureTeleporterDestination(
+        conn,
+        currentRoomId,
+        tile.x,
+        tile.z,
+        destRoomId,
+        dt.x,
+        dt.z
+      );
+      if (!ok) {
+        ws.send(
+          JSON.stringify({
+            type: "chat",
+            from: "System",
+            fromAddress: "",
+            text: "Could not set teleporter destination. Check room id, empty walkable tile at X/Z, and that you can edit that room.",
+            at: now,
+          } satisfies OutMsg)
+        );
+      }
       return;
     }
 
@@ -2151,12 +2860,22 @@ export function addClient(
         rampDir: ramp ? rampDir : 0,
         colorId,
         locked: finalLocked,
+        ...(existing.teleporter ? { teleporter: existing.teleporter } : {}),
+        ...(existing.claimable !== undefined ? { claimable: existing.claimable } : {}),
+        ...(existing.active !== undefined ? { active: existing.active } : {}),
+        ...(existing.cooldownMs !== undefined ? { cooldownMs: existing.cooldownMs } : {}),
+        ...(existing.lastClaimedAt !== undefined ? { lastClaimedAt: existing.lastClaimedAt } : {}),
+        ...(existing.claimedBy !== undefined ? { claimedBy: existing.claimedBy } : {}),
       });
-      broadcast(currentRoomId, {
-        type: "obstacles",
-        roomId: currentRoomId,
-        tiles: obstaclesToList(currentRoomId),
-      });
+      const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
+      if (deltaTile) {
+        broadcast(currentRoomId, {
+          type: "obstaclesDelta",
+          roomId: currentRoomId,
+          add: [deltaTile],
+          remove: [],
+        });
+      }
       schedulePersistWorldState();
       logGameplayEvent(conn.sessionId, address, currentRoomId, "set_obstacle_props", {
         x: tile.x,
@@ -2190,12 +2909,48 @@ export function addClient(
       const props = placed.get(k);
       if (!props) return;
       
-      // Check if object is locked and user is not admin
-      if (props.locked && !isAdmin(address)) {
+      // Locked objects are admin-only to remove, except teleporters (room editors may delete them).
+      if (props.locked && !isAdmin(address) && !props.teleporter) {
         ws.send(JSON.stringify({ type: "error", code: "object_locked" }));
         return;
       }
-      
+
+      if (props.teleporter) {
+        const signboard = getSignboardAt(currentRoomId, tile.x, tile.z);
+        let signboardDeleted = false;
+        if (signboard) {
+          deleteSignboard(signboard.id);
+          signboardDeleted = true;
+        }
+        placed.delete(k);
+        broadcast(currentRoomId, {
+          type: "obstaclesDelta",
+          roomId: currentRoomId,
+          add: [],
+          remove: [k],
+        });
+        schedulePersistWorldState();
+        if (signboardDeleted) {
+          broadcast(currentRoomId, {
+            type: "signboards",
+            roomId: currentRoomId,
+            signboards: getSignboardsForRoom(currentRoomId).map((s) => ({
+              id: s.id,
+              x: s.x,
+              z: s.z,
+              message: s.message,
+              createdBy: s.createdBy,
+              createdAt: s.createdAt,
+            })),
+          });
+        }
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_teleporter", {
+          x: tile.x,
+          z: tile.z,
+        });
+        return;
+      }
+
       // Check if there's a signboard at this location and remove it
       const signboard = getSignboardAt(currentRoomId, tile.x, tile.z);
       let signboardDeleted = false;
@@ -2206,9 +2961,10 @@ export function addClient(
       
       placed.delete(k);
       broadcast(currentRoomId, {
-        type: "obstacles",
+        type: "obstaclesDelta",
         roomId: currentRoomId,
-        tiles: obstaclesToList(currentRoomId),
+        add: [],
+        remove: [k],
       });
       
       // If we deleted a signboard, broadcast the updated list
@@ -2273,12 +3029,12 @@ export function addClient(
       const props = placed.get(fk);
       if (!props) return;
       
-      // Check if object is locked and user is not admin
-      if (props.locked && !isAdmin(address)) {
+      // Locked objects are admin-only to move, except teleporters (room editors may reposition).
+      if (props.locked && !isAdmin(address) && !props.teleporter) {
         ws.send(JSON.stringify({ type: "error", code: "object_locked" }));
         return;
       }
-      
+
       if (placed.has(tk)) return;
       if (!isWalkableForRoom(currentRoomId, to.x, to.z)) return;
       if (
@@ -2314,10 +3070,12 @@ export function addClient(
         });
       }
       
+      const deltaTile = obstacleTileFromPlaced(currentRoomId, tk);
       broadcast(currentRoomId, {
-        type: "obstacles",
+        type: "obstaclesDelta",
         roomId: currentRoomId,
-        tiles: obstaclesToList(currentRoomId),
+        add: deltaTile ? [deltaTile] : [],
+        remove: [fk],
       });
       schedulePersistWorldState();
       logGameplayEvent(conn.sessionId, address, currentRoomId, "move_obstacle", {
@@ -2348,9 +3106,10 @@ export function addClient(
       }
       extraFloorSet(currentRoomId).add(tileKey(tile.x, tile.z));
       broadcast(currentRoomId, {
-        type: "extraFloor",
+        type: "extraFloorDelta",
         roomId: currentRoomId,
-        tiles: extraFloorToList(currentRoomId),
+        add: [{ x: tile.x, z: tile.z }],
+        remove: [],
       });
       schedulePersistWorldState();
       logGameplayEvent(conn.sessionId, address, currentRoomId, "place_extra_floor", {
@@ -2383,9 +3142,10 @@ export function addClient(
       }
       ex.delete(k);
       broadcast(currentRoomId, {
-        type: "extraFloor",
+        type: "extraFloorDelta",
         roomId: currentRoomId,
-        tiles: extraFloorToList(currentRoomId),
+        add: [],
+        remove: [k],
       });
       schedulePersistWorldState();
       logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_extra_floor", {
@@ -2823,11 +3583,12 @@ export function addClient(
         rampDir: 0,
         colorId: 8, // Use a specific color for signboards (light gray/white)
       });
-      
+      const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
       broadcast(currentRoomId, {
-        type: "obstacles",
+        type: "obstaclesDelta",
         roomId: currentRoomId,
-        tiles: obstaclesToList(currentRoomId),
+        add: deltaTile ? [deltaTile] : [],
+        remove: [],
       });
       broadcast(currentRoomId, {
         type: "signboards",
@@ -2972,11 +3733,11 @@ export function addClient(
       const k = tileKey(signboard.x, signboard.z);
       const placed = placedMap(currentRoomId);
       placed.delete(k);
-      
       broadcast(currentRoomId, {
-        type: "obstacles",
+        type: "obstaclesDelta",
         roomId: currentRoomId,
-        tiles: obstaclesToList(currentRoomId),
+        add: [],
+        remove: [k],
       });
       broadcast(currentRoomId, {
         type: "signboards",

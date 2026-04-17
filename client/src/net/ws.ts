@@ -13,6 +13,9 @@ export type ObstacleTile = {
   colorId: number;
   signboardId?: string;
   locked?: boolean;
+  teleporter?:
+    | { pending: true }
+    | { targetRoomId: string; targetX: number; targetZ: number };
 };
 
 export type ObstacleProps = {
@@ -60,6 +63,23 @@ export type RoomDoor = {
   spawnZ: number;
 };
 
+export type RoomCatalogEntry = {
+  id: string;
+  displayName: string;
+  /** Player-created rooms only; official rooms use `null`. */
+  ownerAddress: string | null;
+  playerCount: number;
+  isPublic: boolean;
+  /** Hub, Chamber, Canvas. */
+  isBuiltin: boolean;
+  /** Server allows editing name / visibility (room owner or admin). */
+  canEdit: boolean;
+  /** Soft-deleted; admin can restore. */
+  isDeleted?: boolean;
+  canDelete?: boolean;
+  canRestore?: boolean;
+};
+
 export type ServerMessage =
   | {
       type: "welcome";
@@ -93,7 +113,21 @@ export type ServerMessage =
   | { type: "state"; players: PlayerState[] }
   | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
+  | {
+      type: "obstaclesDelta";
+      roomId: string;
+      add: ObstacleTile[];
+      /** Tile keys ("x,z") that should be removed from the room. */
+      remove: string[];
+    }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
+  | {
+      type: "extraFloorDelta";
+      roomId: string;
+      add: ExtraFloorTile[];
+      /** Tile keys ("x,z") that should be removed from the room. */
+      remove: string[];
+    }
   | { type: "canvasClaim"; x: number; z: number; address: string }
   | { type: "canvasTimer"; timeRemaining: number }
   | { type: "canvasCountdown"; text: string; msRemaining: number }
@@ -119,6 +153,15 @@ export type ServerMessage =
       bubbleOnly?: boolean;
     }
   | { type: "error"; code: string }
+  | { type: "joinRoomFailed"; roomId: string; reason: "not_found" }
+  | {
+      type: "roomActionResult";
+      action: "deleteRoom" | "restoreRoom";
+      ok: boolean;
+      roomId?: string;
+      reason?: string;
+    }
+  | { type: "roomCatalog"; rooms: RoomCatalogEntry[] }
   | {
       type: "blockClaimOffered";
       claimId: string;
@@ -222,6 +265,91 @@ export function sendMoveTo(
 export function sendEnterPortal(ws: WebSocket): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "enterPortal" }));
+}
+
+export function sendPlacePendingTeleporter(
+  ws: WebSocket,
+  x: number,
+  z: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "placePendingTeleporter", x, z }));
+}
+
+export function sendConfigureTeleporter(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  destRoomId: string,
+  destX: number,
+  destZ: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "configureTeleporter",
+      x,
+      z,
+      destRoomId,
+      destX,
+      destZ,
+    })
+  );
+}
+
+export function sendListRooms(ws: WebSocket): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "listRooms" }));
+}
+
+export function sendJoinRoom(ws: WebSocket, roomId: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "joinRoom", roomId }));
+}
+
+export function sendCreateRoom(
+  ws: WebSocket,
+  widthTiles: number,
+  heightTiles: number,
+  options?: { displayName?: string; isPublic?: boolean }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "createRoom",
+      widthTiles,
+      heightTiles,
+      ...(options?.displayName !== undefined
+        ? { displayName: options.displayName }
+        : {}),
+      ...(options?.isPublic !== undefined ? { isPublic: options.isPublic } : {}),
+    })
+  );
+}
+
+export function sendUpdateRoom(
+  ws: WebSocket,
+  roomId: string,
+  patch: { displayName?: string; isPublic?: boolean }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "updateRoom",
+      roomId,
+      ...patch,
+    })
+  );
+}
+
+export function sendDeleteRoom(ws: WebSocket, roomId: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "deleteRoom", roomId }));
+}
+
+export function sendRestoreRoom(ws: WebSocket, roomId: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "restoreRoom", roomId }));
 }
 
 export function sendPlaceBlock(

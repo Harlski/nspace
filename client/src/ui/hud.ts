@@ -6,6 +6,11 @@ import {
 } from "../game/blockStyle.js";
 import type { ObstacleProps } from "../net/ws.js";
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../game/constants.js";
+import { HUB_ROOM_ID, normalizeRoomId } from "../game/roomLayouts.js";
+import {
+  isObjectPanelDebugEnabled,
+  logObjectPanel,
+} from "../debug/objectPanelDebug.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 
 function cssHex(n: number): string {
@@ -85,7 +90,14 @@ export function createHud(
   setPortalEnterScreenPosition: (x: number, y: number) => void;
   onReturnToHub: (fn: () => void) => void;
   onPortalEnter: (fn: () => void) => void;
+  isTeleporterModeActive: () => boolean;
+  onBuildToolSelect: (
+    fn: (tool: "block" | "signpost" | "teleporter") => void
+  ) => void;
+  deactivateTeleporterMode: () => void;
   onReturnToLobby: (fn: () => void) => void;
+  /** Open the large Rooms browser (list / join / create). */
+  onRoomsOpen: (fn: () => void) => void;
   /** Walk = move; Build = place blocks; Floor = expand walkable tiles. */
   onPlayModeSelect: (fn: (mode: "walk" | "build" | "floor") => void) => void;
   setPlayModeState: (mode: "walk" | "build" | "floor") => void;
@@ -96,24 +108,53 @@ export function createHud(
   }) => void;
   /** Rotate ramp “toward” (placement bar or object panel when ramp is on). */
   rotateRampToward: (delta: -1 | 1) => boolean;
-  showObjectEditPanel: (opts: {
-    x: number;
-    z: number;
-    passable: boolean;
-    half: boolean;
-    quarter: boolean;
-    hex: boolean;
-    ramp: boolean;
-    rampDir: number;
-    colorId: number;
-    locked?: boolean;
-    isAdmin?: boolean;
-    onPropsChange: (p: ObstacleProps) => void;
-    onRemove: () => void;
-    onMove: () => void;
-    onClose: () => void;
-  }) => void;
+  showObjectEditPanel: (
+    opts:
+      | {
+          x: number;
+          z: number;
+          passable: boolean;
+          half: boolean;
+          quarter: boolean;
+          hex: boolean;
+          ramp: boolean;
+          rampDir: number;
+          colorId: number;
+          locked?: boolean;
+          isAdmin?: boolean;
+          onPropsChange: (p: ObstacleProps) => void;
+          onRemove: () => void;
+          onMove: () => void;
+          onClose: () => void;
+        }
+      | {
+          x: number;
+          z: number;
+          teleporterEdit: {
+            pending: boolean;
+            destRoomId: string;
+            destX: number;
+            destZ: number;
+            roomOptions: Array<{ id: string; displayName: string }>;
+            onPickTileInCurrentRoom: () => void;
+            onPickCancel: () => void;
+            onConfigure: (
+              destRoomId: string,
+              destX: number,
+              destZ: number
+            ) => void;
+          };
+          onRemove: () => void;
+          onMove: () => void;
+          onClose: () => void;
+        }
+  ) => void;
   hideObjectEditPanel: () => void;
+  setTeleporterEditFields: (p: {
+    destRoomId: string;
+    destX: number;
+    destZ: number;
+  }) => void;
   setObjectPanelProps: (p: ObstacleProps) => void;
   onBuildPlacementStyle: (
     fn: (patch: {
@@ -286,6 +327,13 @@ export function createHud(
     ".hud-player-join-toast__identicon"
   ) as HTMLImageElement | null;
   let playerJoinToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const roomsBtn = document.createElement("button");
+  roomsBtn.type = "button";
+  roomsBtn.className = "hud-rooms";
+  roomsBtn.textContent = "⌂ Rooms";
+  roomsBtn.setAttribute("aria-label", "Rooms");
+  roomsBtn.title = "Rooms — browse, join, or create";
   const toggleNimHint = (show: boolean): void => {
     nimBalance.classList.toggle("hud-nim-balance--show-tip", show);
   };
@@ -325,6 +373,7 @@ export function createHud(
   document.addEventListener("click", closeHudTooltips);
   
   topToolbar.appendChild(playerJoinToast);
+  topToolbar.appendChild(roomsBtn);
   topToolbar.appendChild(playerCount);
   topToolbar.appendChild(nimBalance);
   topToolbar.appendChild(fsBtn);
@@ -494,12 +543,14 @@ export function createHud(
   let roomAllowPlaceBlocks = true;
   let roomAllowExtraFloor = true;
   function applyRoomEditCaps(): void {
-    buildModeBtn.disabled = !roomAllowPlaceBlocks;
-    floorModeBtn.disabled = !roomAllowExtraFloor;
-    buildModeBtn.title = roomAllowPlaceBlocks
+    const showBuild = roomAllowPlaceBlocks;
+    const showFloor = roomAllowExtraFloor;
+    buildModeBtn.hidden = !showBuild;
+    floorModeBtn.hidden = !showFloor;
+    buildModeBtn.title = showBuild
       ? "Build — place and edit blocks (B)"
       : "Building is disabled in this room";
-    floorModeBtn.title = roomAllowExtraFloor
+    floorModeBtn.title = showFloor
       ? "Floor — expand walkable floor (F)"
       : "Floor editing is disabled in this room";
   }
@@ -736,6 +787,10 @@ export function createHud(
       <div class="build-block-bar__tool-row" role="group" aria-label="Placement tool">
         <button type="button" class="build-block-bar__tool-btn build-block-bar__tool-btn--active" data-tool="block">Block</button>
         <button type="button" class="build-block-bar__tool-btn" data-tool="signpost">Signpost</button>
+        <button type="button" class="build-block-bar__tool-btn" data-tool="teleporter">Teleporter</button>
+      </div>
+      <div class="build-block-bar__teleporter" id="build-block-bar-teleporter" hidden>
+        <p class="build-block-bar__teleporter-hint">Click an empty walkable floor tile to place. Select the teleporter to set its destination (room and X/Z).</p>
       </div>
     </div>
   `;
@@ -784,6 +839,14 @@ export function createHud(
   ui.appendChild(bottomLeftStack);
   ui.appendChild(buildBlockBar);
   ui.appendChild(barAdvancedPopover);
+
+  const teleporterSection = buildBlockBar.querySelector(
+    "#build-block-bar-teleporter"
+  ) as HTMLElement | null;
+
+  let buildToolChangeHandler:
+    | ((tool: "block" | "signpost" | "teleporter") => void)
+    | null = null;
 
   const objectPanelAdvancedPopover = document.createElement("div");
   objectPanelAdvancedPopover.id = "build-object-panel-advanced";
@@ -851,6 +914,10 @@ export function createHud(
 
   function refreshBuildBarTitle(): void {
     if (!barTitleEl) return;
+    if (teleporterModeActive) {
+      barTitleEl.textContent = "Teleporter";
+      return;
+    }
     if (signpostModeActive) {
       barTitleEl.textContent = "Place Signpost";
       return;
@@ -870,6 +937,28 @@ export function createHud(
 
   // Signpost mode (non-admin, for everyone)
   let signpostModeActive = false;
+  /** Teleporter tool: place pending tiles; configure destination via object panel. */
+  let teleporterModeActive = false;
+
+  function activateBuildToolButton(btn: HTMLButtonElement): void {
+    const raw = btn.dataset.tool;
+    const tool: "block" | "signpost" | "teleporter" =
+      raw === "signpost"
+        ? "signpost"
+        : raw === "teleporter"
+          ? "teleporter"
+          : "block";
+    signpostModeActive = tool === "signpost";
+    teleporterModeActive = tool === "teleporter";
+    if (teleporterSection) {
+      teleporterSection.hidden = !teleporterModeActive;
+    }
+    barToolButtons.forEach((b) => {
+      b.classList.toggle("build-block-bar__tool-btn--active", b === btn);
+    });
+    refreshBuildBarTitle();
+    buildToolChangeHandler?.(tool);
+  }
 
   // Signpost textarea character counter
   if (signpostTextarea && signpostCharCount) {
@@ -1062,20 +1151,10 @@ export function createHud(
     });
   }
 
-  // Tool selector (block vs signpost)
+  // Tool selector (block / signpost / teleporter)
   barToolButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
-      const tool = btn.dataset.tool as string | undefined;
-      if (tool === "signpost") {
-        signpostModeActive = true;
-        barToolButtons.forEach((b) => b.classList.remove("build-block-bar__tool-btn--active"));
-        btn.classList.add("build-block-bar__tool-btn--active");
-      } else {
-        signpostModeActive = false;
-        barToolButtons.forEach((b) => b.classList.remove("build-block-bar__tool-btn--active"));
-        btn.classList.add("build-block-bar__tool-btn--active");
-      }
-      refreshBuildBarTitle();
+      activateBuildToolButton(btn);
     });
   });
 
@@ -1356,6 +1435,7 @@ export function createHud(
   let returnHubHandler = (): void => {};
   let portalEnterHandler = (): void => {};
   let lobbyHandler = (): void => {};
+  let roomsOpenHandler = (): void => {};
   let playModeHandler: (mode: "walk" | "build" | "floor") => void = (): void => {};
   let lobbyConfirmEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
 
@@ -1394,6 +1474,7 @@ export function createHud(
   });
 
   fsBtn.addEventListener("click", () => fsHandler());
+  roomsBtn.addEventListener("click", () => roomsOpenHandler());
   reconnectBtn.addEventListener("click", () => reconnectHandler());
   feedbackBtn.addEventListener("click", () => showFeedbackOverlay());
   returnHubBtn.addEventListener("click", () => returnHubHandler());
@@ -1440,6 +1521,11 @@ export function createHud(
   let panelTitleTextEl: HTMLElement | null = null;
   let panelEditX = 0;
   let panelEditZ = 0;
+  let teleporterPanelCleanup: (() => void) | null = null;
+  let panelTeleporterRoomSel: HTMLSelectElement | null = null;
+  let panelTeleporterX: HTMLInputElement | null = null;
+  let panelTeleporterZ: HTMLInputElement | null = null;
+  let applyTeleporterHubUi: (() => void) | null = null;
 
   function layoutObjectPanelAdvancedPopover(): void {
     if (objectPanelAdvancedPopover.hidden) return;
@@ -1707,6 +1793,12 @@ export function createHud(
     setPanelAdvancedOpen(false);
     objectPanelAdvancedPopover.replaceChildren();
     objectPanelAdvancedPopover.hidden = true;
+    teleporterPanelCleanup?.();
+    teleporterPanelCleanup = null;
+    panelTeleporterRoomSel = null;
+    panelTeleporterX = null;
+    panelTeleporterZ = null;
+    applyTeleporterHubUi = null;
     if (objectPanel) {
       objectPanel.remove();
       objectPanel = null;
@@ -1806,6 +1898,9 @@ export function createHud(
     onReturnToLobby(fn: () => void) {
       lobbyHandler = fn;
     },
+    onRoomsOpen(fn: () => void) {
+      roomsOpenHandler = fn;
+    },
     onPlayModeSelect(fn: (mode: "walk" | "build" | "floor") => void) {
       playModeHandler = fn;
     },
@@ -1836,6 +1931,138 @@ export function createHud(
     },
     showObjectEditPanel(opts) {
       hideObjectEditPanel();
+      logObjectPanel("show begin", "teleporterEdit" in opts ? "teleporter" : "block");
+      try {
+      if ("teleporterEdit" in opts) {
+        const te = opts.teleporterEdit;
+        panelOnPropsChange = null;
+        panelEditX = opts.x;
+        panelEditZ = opts.z;
+        objectPanel = document.createElement("div");
+        objectPanel.className =
+          "build-object-panel build-object-panel--teleporter";
+        objectPanel.innerHTML = `
+        <div class="build-object-panel__surface">
+          <div class="build-object-panel__surface-header">
+            <div class="build-object-panel__title">
+              <span class="build-object-panel__title-text">Teleporter</span>
+            </div>
+            <div class="build-object-panel__header-actions">
+              <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
+              <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
+              <button type="button" class="build-object-panel__dismiss" aria-label="Close block editor">✕</button>
+            </div>
+          </div>
+          <div class="build-object-panel__teleporter-fields">
+            <p class="build-block-bar__teleporter-hint build-object-panel__teleporter-lead">${
+              te.pending
+                ? "No destination yet — pick a room and save."
+                : "One-way teleport — change destination below."
+            }</p>
+            <label class="build-block-bar__teleporter-label" for="build-object-panel-tp-room">Room</label>
+            <select id="build-object-panel-tp-room" class="build-block-bar__teleporter-input build-block-bar__teleporter-input--select" autocomplete="off"></select>
+            <p class="build-block-bar__teleporter-hint build-object-panel__tp-hub-hint" id="build-object-panel-tp-hub-hint" hidden>
+              Hub: spawn is fixed at the center (0, 0).
+            </p>
+            <div id="build-object-panel-tp-dest-coords-wrap">
+            <div class="build-block-bar__teleporter-row">
+              <label class="build-block-bar__teleporter-field">X <input type="number" class="build-block-bar__teleporter-input build-block-bar__teleporter-input--num" id="build-object-panel-tp-x" step="1" inputmode="numeric" /></label>
+              <label class="build-block-bar__teleporter-field">Z <input type="number" class="build-block-bar__teleporter-input build-block-bar__teleporter-input--num" id="build-object-panel-tp-z" step="1" inputmode="numeric" /></label>
+            </div>
+            <button type="button" class="build-block-bar__teleporter-btn" id="build-object-panel-tp-pick">Use tile I click…</button>
+            </div>
+            <button type="button" class="build-block-bar__teleporter-btn build-block-bar__teleporter-btn--primary build-object-panel__teleporter-save" id="build-object-panel-tp-save">Save destination</button>
+          </div>
+        </div>`;
+        const roomSel = objectPanel.querySelector(
+          "#build-object-panel-tp-room"
+        ) as HTMLSelectElement;
+        for (const o of te.roomOptions) {
+          const opt = document.createElement("option");
+          opt.value = o.id;
+          opt.textContent = `${o.displayName} (${normalizeRoomId(o.id)})`;
+          roomSel.appendChild(opt);
+        }
+        const nCur = normalizeRoomId(te.destRoomId);
+        let matchedRoom = false;
+        for (let i = 0; i < roomSel.options.length; i++) {
+          if (normalizeRoomId(roomSel.options[i]!.value) === nCur) {
+            roomSel.selectedIndex = i;
+            matchedRoom = true;
+            break;
+          }
+        }
+        if (!matchedRoom && te.destRoomId) {
+          const opt = document.createElement("option");
+          const raw = normalizeRoomId(te.destRoomId);
+          opt.value = raw;
+          opt.textContent = `↪ ${raw}`;
+          roomSel.appendChild(opt);
+          roomSel.value = raw;
+        }
+        const xIn = objectPanel.querySelector(
+          "#build-object-panel-tp-x"
+        ) as HTMLInputElement;
+        const zIn = objectPanel.querySelector(
+          "#build-object-panel-tp-z"
+        ) as HTMLInputElement;
+        xIn.value = String(te.destX);
+        zIn.value = String(te.destZ);
+        panelTeleporterRoomSel = roomSel;
+        panelTeleporterX = xIn;
+        panelTeleporterZ = zIn;
+        applyTeleporterHubUi = () => {
+          const sel = panelTeleporterRoomSel;
+          const wrap = objectPanel.querySelector(
+            "#build-object-panel-tp-dest-coords-wrap"
+          ) as HTMLElement | null;
+          const hubHint = objectPanel.querySelector(
+            "#build-object-panel-tp-hub-hint"
+          ) as HTMLElement | null;
+          if (!sel || !wrap || !hubHint) return;
+          const isHub = normalizeRoomId(sel.value) === HUB_ROOM_ID;
+          wrap.hidden = isHub;
+          hubHint.hidden = !isHub;
+        };
+        roomSel.addEventListener("change", () => applyTeleporterHubUi?.());
+        teleporterPanelCleanup = () => {
+          te.onPickCancel();
+        };
+        topActions.appendChild(objectPanel);
+        applyTeleporterHubUi();
+        objectPanel
+          .querySelector(".build-object-panel__move")
+          ?.addEventListener("click", () => opts.onMove());
+        objectPanel
+          .querySelector(".build-object-panel__remove")
+          ?.addEventListener("click", () => opts.onRemove());
+        objectPanel
+          .querySelector(".build-object-panel__dismiss")
+          ?.addEventListener("click", () => opts.onClose());
+        objectPanel
+          .querySelector("#build-object-panel-tp-pick")
+          ?.addEventListener("click", () => {
+            te.onPickTileInCurrentRoom();
+          });
+        objectPanel
+          .querySelector("#build-object-panel-tp-save")
+          ?.addEventListener("click", () => {
+            const roomId = normalizeRoomId(roomSel.value.trim());
+            if (!roomId) return;
+            if (roomId === HUB_ROOM_ID) {
+              te.onConfigure(roomId, 0, 0);
+              return;
+            }
+            const dx = Number(xIn.value);
+            const dz = Number(zIn.value);
+            if (!Number.isFinite(dx) || !Number.isFinite(dz)) {
+              return;
+            }
+            te.onConfigure(roomId, Math.floor(dx), Math.floor(dz));
+          });
+        logObjectPanel("show done (teleporter)");
+        return;
+      }
       panelOnPropsChange = opts.onPropsChange;
       panelSelectedColorId = Math.max(
         0,
@@ -2135,9 +2362,49 @@ export function createHud(
       objectPanel
         .querySelector(".build-object-panel__dismiss")
         ?.addEventListener("click", () => dismissPanel());
+      logObjectPanel("show done (block)");
+      } catch (err) {
+        console.error("[objectPanel] showObjectEditPanel failed:", err);
+        logObjectPanel("error", err);
+        if (isObjectPanelDebugEnabled()) {
+          window.alert(
+            `[objectPanel] ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
     },
     hideObjectEditPanel() {
       hideObjectEditPanel();
+    },
+    setTeleporterEditFields(p: {
+      destRoomId: string;
+      destX: number;
+      destZ: number;
+    }) {
+      if (!panelTeleporterRoomSel || !panelTeleporterX || !panelTeleporterZ) {
+        return;
+      }
+      const n = normalizeRoomId(p.destRoomId);
+      const sel = panelTeleporterRoomSel;
+      let matched = false;
+      for (let i = 0; i < sel.options.length; i++) {
+        if (normalizeRoomId(sel.options[i]!.value) === n) {
+          sel.selectedIndex = i;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        const opt = document.createElement("option");
+        const v = normalizeRoomId(p.destRoomId);
+        opt.value = v;
+        opt.textContent = `↪ ${v}`;
+        sel.appendChild(opt);
+        sel.value = v;
+      }
+      panelTeleporterX.value = String(p.destX);
+      panelTeleporterZ.value = String(p.destZ);
+      applyTeleporterHubUi?.();
     },
     setObjectPanelProps(p: ObstacleProps) {
       syncPanelPassButtons(p.passable);
@@ -2207,17 +2474,21 @@ export function createHud(
     isSignpostModeActive(): boolean {
       return signpostModeActive;
     },
+    isTeleporterModeActive(): boolean {
+      return teleporterModeActive;
+    },
+    onBuildToolSelect(
+      fn: (tool: "block" | "signpost" | "teleporter") => void
+    ) {
+      buildToolChangeHandler = fn;
+    },
+    deactivateTeleporterMode() {
+      const blockBtn = barToolButtons.find((b) => b.dataset.tool === "block");
+      if (blockBtn) activateBuildToolButton(blockBtn);
+    },
     deactivateSignpostMode() {
-      signpostModeActive = false;
-      // Reset to block tool
-      barToolButtons.forEach((btn) => {
-        if (btn.dataset.tool === "block") {
-          btn.classList.add("build-block-bar__tool-btn--active");
-        } else {
-          btn.classList.remove("build-block-bar__tool-btn--active");
-        }
-      });
-      refreshBuildBarTitle();
+      const blockBtn = barToolButtons.find((b) => b.dataset.tool === "block");
+      if (blockBtn) activateBuildToolButton(blockBtn);
     },
     promptSignpostMessage(x: number, z: number): void {
       signpostPendingTile = { x, z };

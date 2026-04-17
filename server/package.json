@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "DEV_AUTH_BYPASS=1 JWT_SECRET=dev-insecure-change-me tsx watch src/index.ts",
     "build": "tsc -b",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "tsx --test test/**/*.test.ts",
+    "bench:world-state": "tsx scripts/benchmark-world-state.ts"
   },
   "dependencies": {
     "@nimiq/core": "^2.2.2",

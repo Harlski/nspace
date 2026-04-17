@@ -1,3 +1,529 @@
+/* Rooms browser — full overlay from HUD "Rooms" button */
+.rooms-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+}
+
+.rooms-modal[hidden] {
+  display: none !important;
+}
+
+.rooms-modal__dialog {
+  position: relative;
+  width: min(560px, 100%);
+  max-height: min(82vh, 640px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(10, 14, 24, 0.96);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.rooms-modal__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8eaef;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rooms-modal__close:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.rooms-modal__header {
+  flex-shrink: 0;
+  padding: 18px 52px 12px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.rooms-modal__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #f1f5ff;
+}
+
+.rooms-modal__subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.65);
+}
+
+.rooms-modal__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 18px 18px;
+}
+
+.rooms-modal__section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.55);
+  margin: 0 0 8px;
+}
+
+.rooms-modal__current-room {
+  margin-bottom: 1rem;
+}
+
+.rooms-modal__tabs {
+  display: flex;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.rooms-modal__tab {
+  flex: 1;
+  padding: 8px 10px;
+  border: none;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(226, 232, 240, 0.65);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rooms-modal__tab--active {
+  background: rgba(59, 130, 246, 0.22);
+  color: #f8fafc;
+}
+
+.rooms-modal__list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rooms-modal__list--rows {
+  display: grid;
+  /* Shared tracks across every row (subgrid on each li) so owner / players / actions line up. */
+  grid-template-columns: minmax(0, 1fr) 11rem 2.5rem max-content;
+  column-gap: 8px;
+  row-gap: 4px;
+  align-items: stretch;
+}
+
+.rooms-modal__list--rows > .rooms-modal__empty {
+  grid-column: 1 / -1;
+}
+
+.rooms-modal__row {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.rooms-modal__row--line {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  column-gap: 0;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.rooms-modal__cell--name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rooms-modal__cell-name-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f8fafc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rooms-modal__cell--owner {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rooms-modal__cell--owner-official {
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.45);
+}
+
+.rooms-modal__owner-ident {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.rooms-modal__owner-ident--sm {
+  width: 24px;
+  height: 24px;
+}
+
+.rooms-modal__owner-label {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: rgba(226, 232, 240, 0.85);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rooms-modal__cell--players {
+  justify-self: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(226, 232, 240, 0.65);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.rooms-modal__cell--actions {
+  justify-self: end;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 4px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.rooms-modal__join {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(147, 197, 253, 0.4);
+  background: rgba(59, 130, 246, 0.25);
+  color: #e0f2fe;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rooms-modal__join--inline {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.rooms-modal__join:hover {
+  background: rgba(59, 130, 246, 0.38);
+}
+
+.rooms-modal__empty {
+  padding: 14px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.5);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.rooms-modal__create {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.rooms-modal__create-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.rooms-modal__input {
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e9f1ff;
+  font-size: 13px;
+  padding: 0 10px;
+  min-width: 0;
+}
+
+.rooms-modal__input--w {
+  width: 72px;
+  flex: 0 0 auto;
+}
+
+.rooms-modal__btn {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+  color: #e9f1ff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rooms-modal__btn--primary {
+  background: rgba(59, 130, 246, 0.28);
+  border-color: rgba(147, 197, 253, 0.45);
+}
+
+.rooms-modal__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: rgba(248, 113, 113, 0.95);
+}
+
+.rooms-modal__join-code-block {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.rooms-modal__join-code-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.rooms-modal__join-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.rooms-modal__join-status--loading {
+  color: rgba(147, 197, 253, 0.95);
+}
+
+.rooms-modal__join-status--error {
+  color: rgba(248, 113, 113, 0.95);
+}
+
+.rooms-modal__input--code {
+  flex: 1;
+  min-width: 0;
+  max-width: 160px;
+  font-family: ui-monospace, monospace;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+}
+
+.rooms-modal__create-launch {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.rooms-modal__back {
+  margin-bottom: 12px;
+  border: none;
+  background: transparent;
+  color: rgba(147, 197, 253, 0.95);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.rooms-modal__back:hover {
+  text-decoration: underline;
+}
+
+.rooms-modal__fineprint {
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.6);
+  margin: 0 0 12px;
+  line-height: 1.4;
+}
+
+.rooms-modal__edit-head {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-bottom: 12px;
+  min-width: 0;
+}
+
+.rooms-modal__edit-head .rooms-modal__back {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+.rooms-modal__edit-head .rooms-modal__section-title {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.rooms-modal__edit-head .rooms-modal__fineprint {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rooms-modal__edit-head .rooms-modal__fineprint strong {
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.04em;
+}
+
+.rooms-modal__label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(226, 232, 240, 0.55);
+  margin-bottom: 4px;
+}
+
+.rooms-modal__input--full {
+  width: 100%;
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+
+.rooms-modal__create-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.rooms-modal__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.85);
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+
+.rooms-modal__create-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.rooms-modal__edit-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.rooms-modal__edit-actions .rooms-modal__btn--primary {
+  margin-left: auto;
+}
+
+.rooms-modal__edit-actions .rooms-modal__btn--danger {
+  margin-top: 0;
+  width: auto;
+}
+
+.rooms-modal__edit-delete {
+  margin-top: 8px;
+}
+
+.rooms-modal__edit-delete .rooms-modal__fineprint {
+  margin-bottom: 8px;
+}
+
+.rooms-modal__edit-delete .rooms-modal__fineprint b {
+  color: #f1f5ff;
+  font-weight: 700;
+}
+
+.rooms-modal__delete-word {
+  color: #f87171;
+  font-weight: 700;
+}
+
+.rooms-modal__input--delete-confirm {
+  font-family: ui-monospace, monospace;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+.rooms-modal__badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.rooms-modal__badge--private {
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fde68a;
+}
+
+.rooms-modal__badge--deleted {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #fecaca;
+}
+
+.rooms-modal__btn--danger {
+  margin-top: 10px;
+  width: 100%;
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(127, 29, 29, 0.35);
+  color: #fecaca;
+}
+
+.rooms-modal__btn--restore {
+  border-color: rgba(52, 211, 153, 0.45);
+  color: #a7f3d0;
+}
+
+.rooms-modal__btn--compact {
+  height: 30px;
+  font-size: 11px;
+  padding: 0 10px;
+}
 *,
 *::before,
 *::after {
@@ -626,10 +1152,11 @@ body {
   background: #2563eb;
 }
 
-/* Block / Signpost — text-only, one row */
+/* Block / Signpost / Teleporter — text-only */
 .build-block-bar__tool-row {
   display: flex;
   flex-direction: row;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 4px;
 }
@@ -665,6 +1192,8 @@ body {
   position: absolute;
   top: 48px;
   right: 10px;
+  /* Above .build-block-bar (z-index 5) and .hud-bottom-left (4) so object edit panel isn’t hidden */
+  z-index: 6;
   pointer-events: auto;
   display: flex;
   flex-direction: column;
@@ -1036,6 +1565,7 @@ body {
 }
 
 .hud-fs,
+.hud-rooms,
 .hud-lobby {
   border-radius: 6px;
   border: 1px solid #3d465a;
@@ -1045,17 +1575,27 @@ body {
 }
 
 .hud-fs:not(.hud-icon-btn),
+.hud-rooms:not(.hud-icon-btn),
 .hud-lobby:not(.hud-icon-btn) {
   padding: 6px 12px;
   font-size: 13px;
 }
 
+.hud-rooms:not(.hud-icon-btn) {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .hud-fs.hud-icon-btn,
+.hud-rooms.hud-icon-btn,
 .hud-lobby.hud-icon-btn {
   padding: 0;
 }
 
 .hud-fs:hover,
+.hud-rooms:hover,
 .hud-lobby:hover,
 .hud-return-hub:hover {
   background: rgba(30, 36, 51, 0.95);
@@ -1081,6 +1621,12 @@ body {
 
 .hud-mode-feedback.nq-button-pill:hover {
   filter: brightness(1.06);
+}
+
+/* Nimiq pill ::before/::after use negative insets for a larger touch target; keep clicks on the visible pill only. */
+.hud-mode-feedback.nq-button-pill::before,
+.hud-mode-feedback.nq-button-pill::after {
+  pointer-events: none;
 }
 
 /* Feedback — same sheet chrome as Create Signpost (.signpost-overlay__dialog + header/body/btn). */
@@ -1168,6 +1714,131 @@ body {
   display: none !important;
 }
 
+.build-block-bar__teleporter {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.build-block-bar__teleporter[hidden] {
+  display: none !important;
+}
+
+.build-block-bar__teleporter-hint {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: rgba(226, 232, 240, 0.72);
+  line-height: 1.35;
+}
+
+.build-block-bar__teleporter-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(226, 232, 240, 0.55);
+  margin-bottom: 4px;
+}
+
+.build-block-bar__teleporter-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 30px;
+  margin-bottom: 6px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e9f1ff;
+  font-size: 12px;
+}
+
+.build-block-bar__teleporter-input--num {
+  width: 100%;
+  margin-bottom: 0;
+  margin-top: 4px;
+}
+
+.build-block-bar__teleporter-input--select {
+  cursor: pointer;
+  /* Native dropdown list often uses system light theme; hint dark + style option rows where supported. */
+  color-scheme: dark;
+  background-color: rgba(15, 17, 23, 0.96);
+  color: #e9f1ff;
+}
+
+.build-block-bar__teleporter-input--select option {
+  background-color: #151923;
+  color: #e9f1ff;
+}
+
+.build-object-panel--teleporter #build-object-panel-tp-pick {
+  margin-top: 8px;
+}
+
+.build-object-panel--teleporter #build-object-panel-tp-save {
+  margin-top: 6px;
+}
+
+.build-object-panel__tp-hub-hint {
+  margin: 4px 0 6px;
+}
+
+#build-object-panel-tp-dest-coords-wrap[hidden] {
+  display: none !important;
+}
+
+.build-block-bar__teleporter-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.build-block-bar__teleporter-field {
+  flex: 1;
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(226, 232, 240, 0.55);
+}
+
+.build-block-bar__teleporter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.build-block-bar__teleporter-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e9f1ff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.build-block-bar__teleporter-btn--primary {
+  background: rgba(59, 130, 246, 0.35);
+  border-color: rgba(147, 197, 253, 0.45);
+}
+
+.build-block-bar__teleporter-await {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: rgba(147, 197, 253, 0.95);
+}
+
+.build-block-bar__teleporter-await[hidden] {
+  display: none !important;
+}
+
 .hud-status {
   position: relative;
   font-size: 12px;
@@ -1191,8 +1862,8 @@ body {
   pointer-events: auto;
   font-size: 12px;
   line-height: 1.35;
-  will-change: contents;
   isolation: isolate;
+  color-scheme: dark;
 }
 
 .build-object-panel__surface {

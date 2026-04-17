@@ -25,6 +25,7 @@ const DEFAULT_ZOOM_MAX = 13.44;
 import { loadIdenticonTexture } from "./identiconTexture.js";
 import {
   type FloorTile,
+  floorWalkableTerrain,
   inferStartLayerClient,
   isBaseTile,
   isWalkableTile,
@@ -372,6 +373,9 @@ export class Game {
     | ((x: number, z: number, layer?: 0 | 1) => void)
     | null = null;
   private placeBlockHandler: ((x: number, z: number) => void) | null = null;
+  /** When set, next empty floor click in build mode sets teleporter destination X/Z. */
+  private teleporterDestPickHandler: ((x: number, z: number) => void) | null =
+    null;
   private claimBlockHandler: ((x: number, z: number) => void) | null = null;
   private moveBlockHandler:
     | ((fromX: number, fromZ: number, toX: number, toZ: number) => void)
@@ -394,6 +398,10 @@ export class Game {
   private readonly walkableFloorMeshes = new Map<string, THREE.Mesh>();
   /** White marker blocks on door tiles (teleport squares). */
   private readonly doorMarkerMeshes = new Map<string, THREE.Mesh>();
+  /** Same pillar effect on player-placed teleporters once a destination is set. */
+  private readonly teleporterMarkerMeshes = new Map<string, THREE.Mesh>();
+  /** Sorted `tileKey` list for active teleporter tiles; `null` = not yet synced. */
+  private teleporterPortalFloorSig: string | null = null;
   /** Decorative voxel text meshes keyed by object id. */
   private readonly voxelTextMeshes = new Map<string, THREE.InstancedMesh>();
   private readonly voxelTextSpecs = new Map<string, VoxelTextSpec>();
@@ -443,6 +451,9 @@ export class Game {
   private selectedBlockKey: string | null = null;
   private readonly selectionOutline: THREE.LineSegments;
   private readonly selectionOutlineMat: THREE.LineBasicMaterial;
+  /** Floor tile highlight for teleporter warp destination (same room only). */
+  private readonly teleporterLinkHighlight: THREE.Mesh;
+  private readonly teleporterLinkHighlightMat: THREE.MeshBasicMaterial;
   private readonly pathGeom = new THREE.BufferGeometry();
   private readonly pathLine: THREE.Line;
   /** Fades out segments that were just walked (prefix trimmed from main path). */
@@ -659,6 +670,21 @@ export class Game {
     this.selectionOutline.frustumCulled = false;
     this.scene.add(this.selectionOutline);
 
+    this.teleporterLinkHighlightMat = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+    });
+    this.teleporterLinkHighlight = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.92, 0.92),
+      this.teleporterLinkHighlightMat
+    );
+    this.teleporterLinkHighlight.rotation.x = -Math.PI / 2;
+    this.teleporterLinkHighlight.position.set(0, 0.024, 0);
+    this.teleporterLinkHighlight.visible = false;
+    this.scene.add(this.teleporterLinkHighlight);
+
     const fogInner = Game.readFogNumber(LS_FOG_INNER, FOG_INNER_RADIUS);
     const fogOuter = Game.readFogNumber(LS_FOG_OUTER, FOG_OUTER_RADIUS);
     const fogR = Game.normalizeFogRadii(fogInner, fogOuter);
@@ -815,12 +841,14 @@ export class Game {
       });
     }
     this.blockMeshes.clear();
-    
+    this.clearTeleporterMarkers();
+
     this.rebuildDoorKeys();
     this.pathGoal = null;
     this.lastTerrainPath = null;
     this.selectedBlockKey = null;
     this.selectionOutline.visible = false;
+    this.teleporterLinkHighlight.visible = false;
     this.hideTrailImmediate();
     this.beginPathFadeOut();
     this.syncWalkableFloorMeshes();
@@ -1245,6 +1273,16 @@ export class Game {
     this.placeBlockHandler = handler;
   }
 
+  setTeleporterDestPickHandler(
+    handler: ((x: number, z: number) => void) | null
+  ): void {
+    this.teleporterDestPickHandler = handler;
+  }
+
+  isTeleporterDestPickActive(): boolean {
+    return this.teleporterDestPickHandler !== null;
+  }
+
   setClaimBlockHandler(handler: ((x: number, z: number) => void) | null): void {
     this.claimBlockHandler = handler;
   }
@@ -1277,6 +1315,26 @@ export class Game {
 
   getPlacedAt(x: number, z: number): BlockStyleProps | null {
     return this.placedObjects.get(tileKey(x, z)) ?? null;
+  }
+
+  /** Feet tile has a configured one-way teleporter; use Enter to warp. */
+  getStandingTeleporter(): {
+    targetRoomId: string;
+    targetX: number;
+    targetZ: number;
+  } | null {
+    if (!this.selfMesh) return null;
+    const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    const m = this.placedObjects.get(tileKey(here.x, here.y));
+    const tp = m?.teleporter;
+    if (!tp || ("pending" in tp && tp.pending) || !("targetRoomId" in tp)) {
+      return null;
+    }
+    return {
+      targetRoomId: tp.targetRoomId,
+      targetX: tp.targetX,
+      targetZ: tp.targetZ,
+    };
   }
 
   getPlacementBlockStyle(): {
@@ -1362,11 +1420,13 @@ export class Game {
   private refreshSelectionOutline(): void {
     if (!this.selectedBlockKey || !this.buildMode) {
       this.selectionOutline.visible = false;
+      this.refreshTeleporterLinkHighlight();
       return;
     }
     const g = this.blockMeshes.get(this.selectedBlockKey);
     if (!g) {
       this.selectionOutline.visible = false;
+      this.refreshTeleporterLinkHighlight();
       return;
     }
     const box = new THREE.Box3().setFromObject(g);
@@ -1376,6 +1436,7 @@ export class Game {
     box.getCenter(center);
     if (size.x < 1e-6 || size.y < 1e-6 || size.z < 1e-6) {
       this.selectionOutline.visible = false;
+      this.refreshTeleporterLinkHighlight();
       return;
     }
     // Add padding to make outline more visible
@@ -1392,6 +1453,31 @@ export class Game {
     this.selectionOutline.position.copy(center);
     this.selectionOutline.rotation.set(0, 0, 0);
     this.selectionOutline.visible = true;
+    this.refreshTeleporterLinkHighlight();
+  }
+
+  /** When a teleporter is selected in build mode, tint the floor tile it warps to (this room only). */
+  private refreshTeleporterLinkHighlight(): void {
+    if (!this.buildMode || !this.selectedBlockKey) {
+      this.teleporterLinkHighlight.visible = false;
+      return;
+    }
+    const meta = this.placedObjects.get(this.selectedBlockKey);
+    const tp = meta?.teleporter;
+    if (!tp || ("pending" in tp && tp.pending) || !("targetRoomId" in tp)) {
+      this.teleporterLinkHighlight.visible = false;
+      return;
+    }
+    if (normalizeRoomId(tp.targetRoomId) !== normalizeRoomId(this.roomId)) {
+      this.teleporterLinkHighlight.visible = false;
+      return;
+    }
+    this.teleporterLinkHighlight.position.set(
+      tp.targetX,
+      0.024,
+      tp.targetZ
+    );
+    this.teleporterLinkHighlight.visible = true;
   }
 
   beginReposition(x: number, z: number): void {
@@ -1442,6 +1528,22 @@ export class Game {
   setExtraFloorTiles(tiles: readonly { x: number; z: number }[]): void {
     this.extraFloorKeys.clear();
     for (const t of tiles) {
+      this.extraFloorKeys.add(tileKey(t.x, t.z));
+    }
+    this.syncWalkableFloorMeshes();
+    this.refreshPathLine();
+    this.syncPlacementRangeHints();
+  }
+
+  /** Incremental extra-floor update (server-synced). */
+  applyExtraFloorDelta(
+    add: readonly { x: number; z: number }[],
+    remove: readonly string[]
+  ): void {
+    for (const k of remove) {
+      this.extraFloorKeys.delete(k);
+    }
+    for (const t of add) {
       this.extraFloorKeys.add(tileKey(t.x, t.z));
     }
     this.syncWalkableFloorMeshes();
@@ -1645,6 +1747,9 @@ export class Game {
       cooldownMs?: number;
       lastClaimedAt?: number;
       claimedBy?: string;
+      teleporter?:
+        | { pending: true }
+        | { targetRoomId: string; targetX: number; targetZ: number };
     }[]
   ): void {
     this.placedObjects.clear();
@@ -1675,12 +1780,95 @@ export class Game {
         cooldownMs: t.cooldownMs,
         lastClaimedAt: t.lastClaimedAt,
         claimedBy: t.claimedBy,
+        teleporter: t.teleporter,
       });
       if (!t.passable && !ramp) this.blockingTileKeys.add(k);
     }
     this.syncBlockMeshes();
     this.refreshPathLine();
     this.refreshSelectionOutline();
+    this.syncPlacementRangeHints();
+  }
+
+  /**
+   * Incremental obstacles update (server-synced).
+   * Removes by key first, then applies `add` as replacements.
+   */
+  applyObstaclesDelta(
+    add: readonly {
+      x: number;
+      z: number;
+      passable: boolean;
+      half?: boolean;
+      quarter?: boolean;
+      hex?: boolean;
+      ramp?: boolean;
+      rampDir?: number;
+      colorId?: number;
+      locked?: boolean;
+      claimable?: boolean;
+      active?: boolean;
+      cooldownMs?: number;
+      lastClaimedAt?: number;
+      claimedBy?: string;
+      teleporter?:
+        | { pending: true }
+        | { targetRoomId: string; targetX: number; targetZ: number };
+    }[],
+    remove: readonly string[]
+  ): void {
+    // Remove tiles first so that replacements don't leave stale blocking keys.
+    for (const k of remove) {
+      const existing = this.placedObjects.get(k);
+      if (!existing) continue;
+      if (!existing.passable && !existing.ramp) {
+        this.blockingTileKeys.delete(k);
+      }
+      this.placedObjects.delete(k);
+    }
+
+    for (const t of add) {
+      const k = tileKey(t.x, t.z);
+
+      // Clear prior blocking key (if any) before writing the new meta.
+      const prev = this.placedObjects.get(k);
+      if (prev && !prev.passable && !prev.ramp) {
+        this.blockingTileKeys.delete(k);
+      }
+
+      const quarter = Boolean(t.quarter);
+      const half = quarter ? false : Boolean(t.half);
+      const ramp = Boolean(t.ramp);
+      const rampDir = Math.max(0, Math.min(3, Math.floor(t.rampDir ?? 0)));
+      const hex = ramp ? false : Boolean(t.hex);
+      const colorId = Math.max(
+        0,
+        Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(t.colorId ?? 0))
+      );
+      const locked = Boolean(t.locked);
+
+      this.placedObjects.set(k, {
+        passable: t.passable,
+        half,
+        quarter,
+        hex,
+        ramp,
+        rampDir,
+        colorId,
+        locked,
+        claimable: t.claimable,
+        active: t.active,
+        cooldownMs: t.cooldownMs,
+        lastClaimedAt: t.lastClaimedAt,
+        claimedBy: t.claimedBy,
+        teleporter: t.teleporter,
+      });
+
+      if (!t.passable && !ramp) this.blockingTileKeys.add(k);
+    }
+
+    this.syncBlockMeshes();
+    this.refreshPathLine();
     this.syncPlacementRangeHints();
   }
 
@@ -1704,8 +1892,19 @@ export class Game {
     for (let tx = minX; tx <= maxX; tx++) {
       for (let tz = minZ; tz <= maxZ; tz++) {
         if (Math.hypot(px - tx, pz - tz) > R + 1e-6) continue;
-        if (!this.tileWalkable({ x: tx, y: tz })) continue;
         const k = tileKey(tx, tz);
+        if (this.doorTileKeys.has(k)) continue;
+        if (
+          !floorWalkableTerrain(
+            tx,
+            tz,
+            this.placedObjects,
+            this.extraFloorKeys,
+            this.roomId
+          )
+        ) {
+          continue;
+        }
         if (this.placedObjects.has(k)) continue;
         if (this.hubNoBuildTile(tx, tz)) continue;
         if (tx === here.x && tz === here.y) continue;
@@ -1977,6 +2176,18 @@ export class Game {
     }
 
     if (this.buildMode) {
+      if (this.teleporterDestPickHandler) {
+        const dest = this.pickFloor(e.clientX, e.clientY);
+        if (!dest) return;
+        if (!this.tileWalkable(dest)) return;
+        const destK = tileKey(dest.x, dest.y);
+        if (this.placedObjects.has(destK)) return;
+        if (this.hubNoBuildTile(dest.x, dest.y)) return;
+        const fn = this.teleporterDestPickHandler;
+        this.teleporterDestPickHandler = null;
+        fn(dest.x, dest.y);
+        return;
+      }
       if (this.repositionFrom) {
         if (!this.moveBlockHandler) {
           this.cancelReposition();
@@ -1985,11 +2196,8 @@ export class Game {
           if (blockHit) {
             const [bx, bz] = blockHit.split(",").map(Number);
             this.cancelReposition();
-            const wasAlreadySelected = this.selectedBlockKey === blockHit;
             this.setSelectedBlockKey(blockHit);
-            if (!wasAlreadySelected) {
-              this.obstacleSelectHandler?.(bx!, bz!);
-            }
+            this.obstacleSelectHandler?.(bx!, bz!);
             return;
           }
           const dest = this.pickFloor(e.clientX, e.clientY);
@@ -2010,11 +2218,8 @@ export class Game {
       const blockHit = this.pickBlockKey(e.clientX, e.clientY);
       if (blockHit) {
         const [bx, bz] = blockHit.split(",").map(Number);
-        const wasAlreadySelected = this.selectedBlockKey === blockHit;
         this.setSelectedBlockKey(blockHit);
-        if (!wasAlreadySelected) {
-          this.obstacleSelectHandler?.(bx!, bz!);
-        }
+        this.obstacleSelectHandler?.(bx!, bz!);
         return;
       }
 
@@ -2144,6 +2349,7 @@ export class Game {
       (marker.material as THREE.Material).dispose();
     }
     this.doorMarkerMeshes.clear();
+    this.clearTeleporterMarkers();
     this.clearVoxelWordSign();
     this.walkableFloorPlaneGeom.dispose();
     this.pathGeom.dispose();
@@ -2152,6 +2358,8 @@ export class Game {
     (this.trailLine.material as THREE.Material).dispose();
     this.selectionOutline.geometry.dispose();
     this.selectionOutlineMat.dispose();
+    this.teleporterLinkHighlight.geometry.dispose();
+    this.teleporterLinkHighlightMat.dispose();
     this.tileHighlightMat.dispose();
     this.blockTopHighlight.geometry.dispose();
     (this.blockTopHighlight.material as THREE.Material).dispose();
@@ -2366,6 +2574,102 @@ export class Game {
     return true;
   }
 
+  /** Shared vertical pillar (white gradient) used for door portals and active teleporter tiles. */
+  private createPortalPillarMesh(wx: number, wz: number): THREE.Mesh {
+    const markerGeom = new THREE.BoxGeometry(
+      TERRAIN_TILE_DOOR_MARKER_SIZE,
+      TERRAIN_TILE_DOOR_MARKER_HEIGHT,
+      TERRAIN_TILE_DOOR_MARKER_SIZE
+    );
+    const markerMat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      uniforms: {
+        uColor: {
+          value: new THREE.Color(TERRAIN_TILE_DOOR_MARKER_COLOR),
+        },
+        uHeight: { value: TERRAIN_TILE_DOOR_MARKER_HEIGHT },
+        uAlphaBottom: { value: TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM },
+        uAlphaTop: { value: TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP },
+      },
+      vertexShader: `
+        varying float vGradient;
+        uniform float uHeight;
+        void main() {
+          vGradient = (position.y / uHeight) + 0.5;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uAlphaBottom;
+        uniform float uAlphaTop;
+        varying float vGradient;
+        void main() {
+          float t = clamp(vGradient, 0.0, 1.0);
+          float alpha = mix(uAlphaBottom, uAlphaTop, t);
+          if (alpha <= 0.01) discard;
+          vec3 color = mix(uColor, vec3(1.0), (1.0 - t) * 0.2);
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+    });
+    const doorMarker = new THREE.Mesh(markerGeom, markerMat);
+    doorMarker.position.set(
+      wx,
+      0.01 + TERRAIN_TILE_DOOR_MARKER_HEIGHT / 2,
+      wz
+    );
+    return doorMarker;
+  }
+
+  private clearTeleporterMarkers(): void {
+    for (const [, marker] of this.teleporterMarkerMeshes) {
+      this.scene.remove(marker);
+      marker.geometry.dispose();
+      (marker.material as THREE.Material).dispose();
+    }
+    this.teleporterMarkerMeshes.clear();
+    this.teleporterPortalFloorSig = null;
+  }
+
+  /** Configured one-way teleporter (not pending). */
+  private isActiveTeleporterPortal(
+    tp: BlockStyleProps["teleporter"] | undefined
+  ): boolean {
+    return Boolean(tp && "targetRoomId" in tp);
+  }
+
+  private syncTeleporterMarkers(): void {
+    const want = new Set<string>();
+    for (const [k, meta] of this.placedObjects) {
+      if (!this.isActiveTeleporterPortal(meta.teleporter)) continue;
+      want.add(k);
+    }
+    for (const k of want) {
+      if (this.teleporterMarkerMeshes.has(k)) continue;
+      const parts = k.split(",").map(Number);
+      const wx = parts[0]!;
+      const wz = parts[1]!;
+      const m = this.createPortalPillarMesh(wx, wz);
+      this.scene.add(m);
+      this.teleporterMarkerMeshes.set(k, m);
+    }
+    for (const [k, marker] of [...this.teleporterMarkerMeshes]) {
+      if (!want.has(k)) {
+        this.scene.remove(marker);
+        marker.geometry.dispose();
+        (marker.material as THREE.Material).dispose();
+        this.teleporterMarkerMeshes.delete(k);
+      }
+    }
+    const sig = [...want].sort().join("|");
+    if (sig !== this.teleporterPortalFloorSig) {
+      this.teleporterPortalFloorSig = sig;
+      this.syncWalkableFloorMeshes();
+    }
+  }
+
   /** Visual floor only where avatars can walk (core + extra); gaps show scene background only. */
   private syncWalkableFloorMeshes(): void {
     const b = this.roomBounds;
@@ -2378,7 +2682,13 @@ export class Game {
     for (const k of this.extraFloorKeys) {
       seen.add(k);
     }
-    
+
+    const activeTeleporterKeys = new Set<string>();
+    for (const [key, meta] of this.placedObjects) {
+      if (this.isActiveTeleporterPortal(meta.teleporter)) {
+        activeTeleporterKeys.add(key);
+      }
+    }
 
     for (const k of seen) {
       const [x, z] = k.split(",").map(Number);
@@ -2386,19 +2696,22 @@ export class Game {
       const wz = z!;
       const isExtra = !isBaseTile(wx, wz, this.roomId);
       const isDoor = this.doorTileKeys.has(k);
+      const isPortalGlow = isDoor || activeTeleporterKeys.has(k);
       let mesh = this.walkableFloorMeshes.get(k);
       if (!mesh) {
-        const baseColor = isDoor
+        const baseColor = isPortalGlow
           ? TERRAIN_TILE_DOOR_COLOR
           : isExtra
             ? TERRAIN_TILE_EXTRA_COLOR
             : TERRAIN_TILE_CORE_COLOR;
         const material = new THREE.MeshStandardMaterial({
           color: baseColor,
-          roughness: isDoor ? 0.3 : (isExtra ? 0.88 : 0.9),
-          metalness: isDoor ? 0.5 : (isExtra ? 0.06 : 0.05),
-          emissive: isDoor ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000,
-          emissiveIntensity: isDoor ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY : 0,
+          roughness: isPortalGlow ? 0.3 : (isExtra ? 0.88 : 0.9),
+          metalness: isPortalGlow ? 0.5 : (isExtra ? 0.06 : 0.05),
+          emissive: isPortalGlow ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000,
+          emissiveIntensity: isPortalGlow
+            ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY
+            : 0,
         });
         mesh = new THREE.Mesh(
           this.walkableFloorPlaneGeom,
@@ -2413,79 +2726,44 @@ export class Game {
         mesh.position.set(wx, 0.01, wz);
         mesh.userData["isExtra"] = isExtra;
         mesh.userData["isDoor"] = isDoor;
+        mesh.userData["isPortalGlow"] = isPortalGlow;
         this.scene.add(mesh);
         this.walkableFloorMeshes.set(k, mesh);
       } else {
         const wantExtra = isExtra;
         const wantDoor = isDoor;
+        const wantPortalGlow = isPortalGlow;
         const mat = mesh.material as THREE.MeshStandardMaterial;
         if (
           mesh.userData["isExtra"] !== wantExtra ||
-          mesh.userData["isDoor"] !== wantDoor
+          mesh.userData["isDoor"] !== wantDoor ||
+          mesh.userData["isPortalGlow"] !== wantPortalGlow
         ) {
           mat.color.setHex(
-            wantDoor
+            wantPortalGlow
               ? TERRAIN_TILE_DOOR_COLOR
               : wantExtra
                 ? TERRAIN_TILE_EXTRA_COLOR
                 : TERRAIN_TILE_CORE_COLOR
           );
-          mat.roughness = wantDoor ? 0.3 : (wantExtra ? 0.88 : 0.9);
-          mat.metalness = wantDoor ? 0.5 : (wantExtra ? 0.06 : 0.05);
-          mat.emissive.setHex(wantDoor ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000);
-          mat.emissiveIntensity = wantDoor ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY : 0;
+          mat.roughness = wantPortalGlow ? 0.3 : (wantExtra ? 0.88 : 0.9);
+          mat.metalness = wantPortalGlow ? 0.5 : (wantExtra ? 0.06 : 0.05);
+          mat.emissive.setHex(
+            wantPortalGlow ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000
+          );
+          mat.emissiveIntensity = wantPortalGlow
+            ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY
+            : 0;
           mesh.userData["isExtra"] = wantExtra;
           mesh.userData["isDoor"] = wantDoor;
+          mesh.userData["isPortalGlow"] = wantPortalGlow;
         }
       }
 
       const marker = this.doorMarkerMeshes.get(k);
       if (isDoor) {
         if (!marker) {
-          const markerGeom = new THREE.BoxGeometry(
-            TERRAIN_TILE_DOOR_MARKER_SIZE,
-            TERRAIN_TILE_DOOR_MARKER_HEIGHT,
-            TERRAIN_TILE_DOOR_MARKER_SIZE
-          );
-          const markerMat = new THREE.ShaderMaterial({
-            transparent: true,
-            depthWrite: false,
-            uniforms: {
-              uColor: {
-                value: new THREE.Color(TERRAIN_TILE_DOOR_MARKER_COLOR),
-              },
-              uHeight: { value: TERRAIN_TILE_DOOR_MARKER_HEIGHT },
-              uAlphaBottom: { value: TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM },
-              uAlphaTop: { value: TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP },
-            },
-            vertexShader: `
-              varying float vGradient;
-              uniform float uHeight;
-              void main() {
-                vGradient = (position.y / uHeight) + 0.5;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-              }
-            `,
-            fragmentShader: `
-              uniform vec3 uColor;
-              uniform float uAlphaBottom;
-              uniform float uAlphaTop;
-              varying float vGradient;
-              void main() {
-                float t = clamp(vGradient, 0.0, 1.0);
-                float alpha = mix(uAlphaBottom, uAlphaTop, t);
-                if (alpha <= 0.01) discard;
-                vec3 color = mix(uColor, vec3(1.0), (1.0 - t) * 0.2);
-                gl_FragColor = vec4(color, alpha);
-              }
-            `,
-          });
-          const doorMarker = new THREE.Mesh(markerGeom, markerMat);
-          doorMarker.position.set(
-            wx,
-            0.01 + TERRAIN_TILE_DOOR_MARKER_HEIGHT / 2,
-            wz
-          );
+          const doorMarker = this.createPortalPillarMesh(wx, wz);
           this.scene.add(doorMarker);
           this.doorMarkerMeshes.set(k, doorMarker);
         }
@@ -2785,7 +3063,8 @@ export class Game {
         prev.rampDir === meta.rampDir &&
         prev.colorId === meta.colorId &&
         prev.claimable === meta.claimable &&
-        prev.active === meta.active;
+        prev.active === meta.active &&
+        JSON.stringify(prev.teleporter) === JSON.stringify(meta.teleporter);
       if (unchanged) {
         continue;
       }
@@ -2819,6 +3098,7 @@ export class Game {
       }
     }
     this.refreshSelectionOutline();
+    this.syncTeleporterMarkers();
   }
 
   private obstacleHeight(meta: BlockStyleProps): number {
@@ -3285,15 +3565,14 @@ export class Game {
   private animateDoorTiles(): void {
     const pulse = Math.sin(this.doorPulseTime * 2) * 0.5 + 0.5;
     const doorIntensity = TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * (0.6 + pulse * 0.4);
-    
-    for (const [k, mesh] of this.walkableFloorMeshes) {
+
+    for (const [, mesh] of this.walkableFloorMeshes) {
       const mat = mesh.material as THREE.MeshStandardMaterial;
-      const isDoor = mesh.userData["isDoor"];
-      
-      if (isDoor) {
+      const isPortalGlow = mesh.userData["isPortalGlow"];
+
+      if (isPortalGlow) {
         mat.emissiveIntensity = doorIntensity;
       } else {
-        // Clear any emissive effects on non-door tiles
         mat.emissive.setHex(0x000000);
         mat.emissiveIntensity = 0;
       }

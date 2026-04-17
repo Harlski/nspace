@@ -189,6 +189,9 @@ export type TerrainProps = {
   ramp: boolean;
   rampDir: number;
   colorId: number;
+  teleporter?:
+    | { pending: true }
+    | { targetRoomId: string; targetX: number; targetZ: number };
 };
 
 export function terrainObstacleHeight(p: TerrainProps): number {
@@ -201,7 +204,8 @@ function isSolidTerrain(p: TerrainProps | undefined): p is TerrainProps {
   return p != null && !p.passable && !p.ramp;
 }
 
-function floorWalkableTerrain(
+/** Layer-0 floor where avatars can stand (empty tile or passable/ramp obstacle). Used for pathfinding and build hints. */
+export function floorWalkableTerrain(
   x: number,
   z: number,
   placed: ReadonlyMap<string, TerrainProps>,

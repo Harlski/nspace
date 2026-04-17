@@ -1,0 +1,38 @@
+{
+  "voxelTexts": [
+    {
+      "id": "hub-title",
+      "text": "SPACE",
+      "roomId": "hub",
+      "x": 0,
+      "y": 0.55,
+      "z": -10.5,
+      "yawDeg": 0,
+      "unit": 0.1875,
+      "letterSpacing": 1,
+      "color": 14873599,
+      "emissive": 3895806,
+      "emissiveIntensity": 0.08,
+      "zTween": false,
+      "zTweenAmp": 0.18,
+      "zTweenSpeed": 1.4
+    },
+    {
+      "id": "chamber-title",
+      "text": "CHAMBER",
+      "roomId": "chamber",
+      "x": 0,
+      "y": 0.6,
+      "z": 0,
+      "yawDeg": 180,
+      "unit": 0.16,
+      "letterSpacing": 1,
+      "color": 16777215,
+      "emissive": 12040119,
+      "emissiveIntensity": 0.12,
+      "zTween": true,
+      "zTweenAmp": 0.2,
+      "zTweenSpeed": 1.3
+    }
+  ]
+}
