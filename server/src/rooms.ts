@@ -1,6 +1,7 @@
 import { randomBytes, randomInt } from "node:crypto";
 import type { WebSocket } from "ws";
 import {
+  blockKey,
   canPlaceTeleporterFoot,
   inTileBounds,
   isBaseTile,
@@ -169,6 +170,8 @@ export interface PlayerState {
 export type ObstacleTile = {
   x: number;
   z: number;
+  /** Vertical stack level (0..2). */
+  y: number;
   passable: boolean;
   /** Shorter Y extent when `quarter` is false. */
   half: boolean;
@@ -419,7 +422,7 @@ const lastSpawnByRoom = new Map<
   string,
   Map<string, { x: number; z: number; y?: number }>
 >();
-/** Placed objects per room: key = tileKey(x,z), value = props. */
+/** Placed objects per room: key = blockKey(x,z,y), value = props. */
 const roomPlaced = new Map<string, Map<string, PlacedProps>>();
 /** Walkable tiles outside the core room (must connect to core or another extra). */
 const roomExtraFloor = new Map<string, Set<string>>();
@@ -535,7 +538,7 @@ function generateCanvasMaze(): void {
   // Broadcast the new maze to all players in canvas room
   const obstaclesList = Array.from(placed.entries()).map(([k, v]) => {
     const [x, z] = k.split(",").map(Number);
-    return { x: x!, z: z!, ...v };
+    return { x: x!, z: z!, y: 0, ...v };
   });
   
   broadcast(CANVAS_ROOM_ID, {
@@ -557,6 +560,67 @@ function placedMap(roomId: string): Map<string, PlacedProps> {
     roomPlaced.set(roomId, m);
   }
   return m;
+}
+
+const STACK_MAX_LEVEL = 2;
+
+function stackEntriesAt(
+  placed: ReadonlyMap<string, PlacedProps>,
+  x: number,
+  z: number
+): Array<{ y: number; key: string; props: PlacedProps }> {
+  const out: Array<{ y: number; key: string; props: PlacedProps }> = [];
+  for (const [k, props] of placed) {
+    const [bx, bz, byRaw] = k.split(",").map(Number);
+    const by = Number.isFinite(byRaw) ? Math.floor(byRaw) : 0;
+    if (bx === x && bz === z && by >= 0 && by <= STACK_MAX_LEVEL) {
+      out.push({ y: by, key: k, props });
+    }
+  }
+  out.sort((a, b) => a.y - b.y);
+  return out;
+}
+
+function getPlacedAtLevel(
+  placed: ReadonlyMap<string, PlacedProps>,
+  x: number,
+  z: number,
+  y: number
+): { key: string; props: PlacedProps } | null {
+  const key = blockKey(x, z, y);
+  const props = placed.get(key);
+  if (!props) return null;
+  return { key, props };
+}
+
+function getTopPlacedAtTile(
+  placed: ReadonlyMap<string, PlacedProps>,
+  x: number,
+  z: number
+): { y: number; key: string; props: PlacedProps } | null {
+  const entries = stackEntriesAt(placed, x, z);
+  if (!entries.length) return null;
+  return entries[entries.length - 1]!;
+}
+
+function getFloorLevelPlacedAtTile(
+  placed: ReadonlyMap<string, PlacedProps>,
+  x: number,
+  z: number
+): PlacedProps | undefined {
+  return placed.get(blockKey(x, z, 0)) ?? placed.get(tileKey(x, z));
+}
+
+function nextOpenStackLevel(
+  placed: ReadonlyMap<string, PlacedProps>,
+  x: number,
+  z: number
+): number | null {
+  const used = new Set(stackEntriesAt(placed, x, z).map((e) => e.y));
+  for (let y = 0; y <= STACK_MAX_LEVEL; y++) {
+    if (!used.has(y)) return y;
+  }
+  return null;
 }
 
 interface BlockClaimSession {
@@ -694,7 +758,9 @@ function blockingKeys(roomId: string): Set<string> {
   const s = new Set<string>();
   if (!m) return s;
   for (const [k, v] of m) {
-    if (!v.passable && !v.ramp) s.add(k);
+    const parts = k.split(",").map(Number);
+    const y = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
+    if (y === 0 && !v.passable && !v.ramp) s.add(tileKey(parts[0]!, parts[1]!));
   }
   return s;
 }
@@ -704,8 +770,7 @@ function inferStartLayer(
   placed: ReadonlyMap<string, PlacedProps>
 ): 0 | 1 {
   const t = snapToTile(p.x, p.z);
-  const k = tileKey(t.x, t.z);
-  const prop = placed.get(k);
+  const prop = getFloorLevelPlacedAtTile(placed, t.x, t.z);
   if (!prop) return 0;
   if (prop.passable || prop.ramp) return 0;
   const h = terrainObstacleHeight(prop);
@@ -720,7 +785,7 @@ function waypointY(
   placed: ReadonlyMap<string, PlacedProps>
 ): number {
   if (layer === 0) return 0;
-  const p = placed.get(tileKey(gx, gz));
+  const p = getFloorLevelPlacedAtTile(placed, gx, gz);
   if (!p || p.passable || p.ramp) return 0;
   return terrainObstacleHeight(p);
 }
@@ -762,7 +827,7 @@ function findRecoveryTerrainPath(
   // snaps caused by seam rounding near solid tiles.
   let canStartOnTop = false;
   for (const c of candidates) {
-    const prop = placed.get(tileKey(c.x, c.z));
+    const prop = placed.get(blockKey(c.x, c.z, 0));
     if (!prop || prop.passable || prop.ramp) continue;
     if (player.y >= terrainObstacleHeight(prop) - 0.2) {
       canStartOnTop = true;
@@ -770,7 +835,7 @@ function findRecoveryTerrainPath(
     }
   }
   for (const c of candidates) {
-    const prop = placed.get(tileKey(c.x, c.z));
+    const prop = placed.get(blockKey(c.x, c.z, 0));
     const starts: (0 | 1)[] = [];
     if (isWalkableForRoom(roomId, c.x, c.z) && (!prop || prop.passable || prop.ramp)) {
       starts.push(0);
@@ -803,11 +868,13 @@ function obstacleTileFromPlaced(roomId: string, tileKeyStr: string): ObstacleTil
   if (!placed) return null;
   const v = placed.get(tileKeyStr);
   if (!v) return null;
-  const [x, z] = tileKeyStr.split(",").map(Number);
+  const [x, z, yRaw] = tileKeyStr.split(",").map(Number);
+  const y = Number.isFinite(yRaw) ? Math.max(0, Math.min(2, Math.floor(yRaw))) : 0;
   const signboard = getSignboardAt(roomId, x, z);
   return {
     x: x!,
     z: z!,
+    y,
     passable: v.passable,
     half: v.half ?? false,
     quarter: v.quarter ?? false,
@@ -835,10 +902,12 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
   const signboardMap = new Map(signboards.map((s) => [tileKey(s.x, s.z), s.id]));
   
   for (const [k, v] of m) {
-    const [x, z] = k.split(",").map(Number);
+    const [x, z, yRaw] = k.split(",").map(Number);
+    const y = Number.isFinite(yRaw) ? Math.max(0, Math.min(2, Math.floor(yRaw))) : 0;
     out.push({
       x: x!,
       z: z!,
+      y,
       passable: v.passable,
       half: v.half ?? false,
       quarter: v.quarter ?? false,
@@ -1024,7 +1093,7 @@ function reconcileSpawnY(player: PlayerState, roomId: string): void {
   const placed = placedMap(roomId);
   const t = snapToTile(player.x, player.z);
   if (!isWalkableForRoom(roomId, t.x, t.z)) return;
-  const prop = placed.get(tileKey(t.x, t.z));
+  const prop = getFloorLevelPlacedAtTile(placed, t.x, t.z);
   if (prop && !prop.passable && !prop.ramp) {
     const h = terrainObstacleHeight(prop);
     if (!Number.isFinite(player.y) || player.y < h - 0.2) {
@@ -1449,15 +1518,17 @@ function placePendingTeleporterAt(
 
   const placed = placedMap(roomId);
   const extra = extraFloorSet(roomId);
-  const k = tileKey(x, z);
-  if (placed.has(k)) return false;
-  if (!canPlaceTeleporterFoot(roomId, x, z, placed, extra)) return false;
+  const yLevel = nextOpenStackLevel(placed, x, z);
+  if (yLevel === null) return false;
+  const k = blockKey(x, z, yLevel);
+  if (yLevel === 0 && !canPlaceTeleporterFoot(roomId, x, z, placed, extra)) return false;
+  if (yLevel > 0 && !getPlacedAtLevel(placed, x, z, yLevel - 1)) return false;
   if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(x, z)) return false;
-  if (getSignboardAt(roomId, x, z)) return false;
+  if (yLevel === 0 && getSignboardAt(roomId, x, z)) return false;
   for (const [rid, r] of rooms) {
     for (const c of r.values()) {
       const st = snapToTile(c.player.x, c.player.z);
-      if (normalizeRoomId(rid) === normalizeRoomId(roomId) && st.x === x && st.z === z) {
+      if (yLevel === 0 && normalizeRoomId(rid) === normalizeRoomId(roomId) && st.x === x && st.z === z) {
         return false;
       }
     }
@@ -1478,7 +1549,7 @@ function placePendingTeleporterAt(
     });
   }
   schedulePersistWorldState();
-  logGameplayEvent(conn.sessionId, address, nRoom, "place_pending_teleporter", { x, z });
+  logGameplayEvent(conn.sessionId, address, nRoom, "place_pending_teleporter", { x, z, y: yLevel });
   return true;
 }
 
@@ -1488,6 +1559,7 @@ function configureTeleporterDestination(
   srcRoomId: string,
   srcX: number,
   srcZ: number,
+  srcY: number,
   destRoomId: string,
   destX: number,
   destZ: number
@@ -1504,7 +1576,7 @@ function configureTeleporterDestination(
   const destPlaced = placedMap(destRoomId);
   const destExtra = extraFloorSet(destRoomId);
 
-  const srcK = tileKey(srcX, srcZ);
+  const srcK = blockKey(srcX, srcZ, srcY);
   const srcProps = srcPlaced.get(srcK);
   if (!srcProps?.teleporter) return false;
 
@@ -1561,6 +1633,7 @@ function configureTeleporterDestination(
   logGameplayEvent(conn.sessionId, address, nSrc, "configure_teleporter", {
     srcX,
     srcZ,
+    srcY,
     destRoomId: nDest,
     destX: warpX,
     destZ: warpZ,
@@ -2622,7 +2695,7 @@ export function addClient(
 
     if (msg.type === "enterPortal") {
       const here = snapToTile(conn.player.x, conn.player.z);
-      const tileProps = placedMap(currentRoomId).get(tileKey(here.x, here.z));
+      const tileProps = getTopPlacedAtTile(placedMap(currentRoomId), here.x, here.z)?.props;
       if (tileProps?.teleporter) {
         const t = tileProps.teleporter;
         if ("pending" in t && t.pending) {
@@ -2663,11 +2736,12 @@ export function addClient(
       const tz = Number(msg.z);
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      const k = tileKey(tile.x, tile.z);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       if (!isWalkableForRoom(currentRoomId, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
-      if (placed.has(k)) return;
+      const yLevel = nextOpenStackLevel(placed, tile.x, tile.z);
+      if (yLevel === null) return;
+      const k = blockKey(tile.x, tile.z, yLevel);
       for (const c of room.values()) {
         const st = snapToTile(c.player.x, c.player.z);
         if (st.x === tile.x && st.z === tile.z) return;
@@ -2724,6 +2798,7 @@ export function addClient(
       logGameplayEvent(conn.sessionId, address, currentRoomId, "place_block", {
         x: tile.x,
         z: tile.z,
+        y: yLevel,
         half,
         quarter,
         hex,
@@ -2770,6 +2845,7 @@ export function addClient(
       conn.lastPlaceAt = now;
       const tx = Number(msg.x);
       const tz = Number(msg.z);
+      const ty = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
       const destRoomId = normalizeRoomId(String(msg.destRoomId ?? ""));
       let destX = Number(msg.destX);
       let destZ = Number(msg.destZ);
@@ -2786,7 +2862,7 @@ export function addClient(
       const dt = snapToTile(destX, destZ);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
-      const k = tileKey(tile.x, tile.z);
+      const k = blockKey(tile.x, tile.z, ty);
       const props = placed.get(k);
       if (!props?.teleporter) return;
 
@@ -2795,6 +2871,7 @@ export function addClient(
         currentRoomId,
         tile.x,
         tile.z,
+        ty,
         destRoomId,
         dt.x,
         dt.z
@@ -2823,6 +2900,7 @@ export function addClient(
       conn.lastPlaceAt = now;
       const tx = Number(msg.x);
       const tz = Number(msg.z);
+      const ty = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
       const passable = Boolean(msg.passable);
       const quarter = Boolean(msg.quarter);
       let half = Boolean(msg.half);
@@ -2836,7 +2914,7 @@ export function addClient(
       
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      const k = tileKey(tile.x, tile.z);
+      const k = blockKey(tile.x, tile.z, ty);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
       const existing = placed.get(k);
@@ -2880,6 +2958,7 @@ export function addClient(
       logGameplayEvent(conn.sessionId, address, currentRoomId, "set_obstacle_props", {
         x: tile.x,
         z: tile.z,
+        y: ty,
         passable,
         half,
         quarter,
@@ -2901,9 +2980,10 @@ export function addClient(
       conn.lastPlaceAt = now;
       const tx = Number(msg.x);
       const tz = Number(msg.z);
+      const ty = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      const k = tileKey(tile.x, tile.z);
+      const k = blockKey(tile.x, tile.z, ty);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
       const props = placed.get(k);
@@ -2916,7 +2996,7 @@ export function addClient(
       }
 
       if (props.teleporter) {
-        const signboard = getSignboardAt(currentRoomId, tile.x, tile.z);
+        const signboard = ty === 0 ? getSignboardAt(currentRoomId, tile.x, tile.z) : null;
         let signboardDeleted = false;
         if (signboard) {
           deleteSignboard(signboard.id);
@@ -2947,12 +3027,13 @@ export function addClient(
         logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_teleporter", {
           x: tile.x,
           z: tile.z,
+          y: ty,
         });
         return;
       }
 
       // Check if there's a signboard at this location and remove it
-      const signboard = getSignboardAt(currentRoomId, tile.x, tile.z);
+      const signboard = ty === 0 ? getSignboardAt(currentRoomId, tile.x, tile.z) : null;
       let signboardDeleted = false;
       if (signboard) {
         deleteSignboard(signboard.id);
@@ -2990,6 +3071,7 @@ export function addClient(
       logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_obstacle", {
         x: tile.x,
         z: tile.z,
+        y: ty,
       });
       return;
     }
@@ -3004,8 +3086,10 @@ export function addClient(
       conn.lastPlaceAt = now;
       const fx = Number(msg.fromX);
       const fz = Number(msg.fromZ);
+      const fy = Math.max(0, Math.min(2, Math.floor(Number(msg.fromY ?? 0))));
       const tx = Number(msg.toX);
       const tz = Number(msg.toZ);
+      const ty = Math.max(0, Math.min(2, Math.floor(Number(msg.toY ?? 0))));
       if (
         !Number.isFinite(fx) ||
         !Number.isFinite(fz) ||
@@ -3016,8 +3100,8 @@ export function addClient(
       }
       const from = snapToTile(fx, fz);
       const to = snapToTile(tx, tz);
-      const fk = tileKey(from.x, from.z);
-      const tk = tileKey(to.x, to.z);
+      const fk = blockKey(from.x, from.z, fy);
+      const tk = blockKey(to.x, to.z, ty);
       if (fk === tk) return;
       if (
         !withinBlockActionRange(conn.player, from.x, from.z) ||
@@ -3036,6 +3120,10 @@ export function addClient(
       }
 
       if (placed.has(tk)) return;
+      if (ty !== 0) {
+        const below = getPlacedAtLevel(placed, to.x, to.z, ty - 1);
+        if (!below) return;
+      }
       if (!isWalkableForRoom(currentRoomId, to.x, to.z)) return;
       if (
         normalizeRoomId(currentRoomId) === HUB_ROOM_ID &&
@@ -3051,7 +3139,7 @@ export function addClient(
       placed.set(tk, { ...props });
       
       // If there's a signboard at the old location, move it to the new location
-      const signboard = getSignboardAt(currentRoomId, from.x, from.z);
+      const signboard = fy === 0 ? getSignboardAt(currentRoomId, from.x, from.z) : null;
       if (signboard) {
         // Update signboard position
         updateSignboardPosition(signboard.id, to.x, to.z);
@@ -3081,8 +3169,10 @@ export function addClient(
       logGameplayEvent(conn.sessionId, address, currentRoomId, "move_obstacle", {
         fromX: from.x,
         fromZ: from.z,
+        fromY: fy,
         toX: to.x,
         toZ: to.z,
+        toY: ty,
       });
       return;
     }

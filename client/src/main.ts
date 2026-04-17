@@ -38,7 +38,7 @@ import {
   sendConfigureTeleporter,
   sendPlaceExtraFloor,
   sendRemoveExtraFloor,
-  sendRemoveObstacle,
+  sendRemoveObstacleAt,
   sendRemoveVoxelText,
   sendSetVoxelText,
   sendSetObstacleProps,
@@ -918,7 +918,7 @@ function enterGame(token: string, address: string): void {
   /** From server welcome; aligned with canEditRoomContent. */
   let roomAllowPlaceBlocks = true;
   let roomAllowExtraFloor = true;
-  let editingTile: { x: number; z: number } | null = null;
+  let editingTile: { x: number; z: number; y: number } | null = null;
   let portalEnterVisible = false;
   let portalAction:
     | { kind: "door" }
@@ -1414,7 +1414,10 @@ function enterGame(token: string, address: string): void {
     });
     
     game.setMoveBlockHandler((fromX, fromZ, toX, toZ) => {
-      sendMoveObstacle(socket, fromX, fromZ, toX, toZ);
+      const fromY = editingTile?.x === fromX && editingTile?.z === fromZ ? editingTile.y : 0;
+      const toY = game.getNextOpenStackLevelAt(toX, toZ);
+      if (toY === null) return;
+      sendMoveObstacle(socket, fromX, fromZ, fromY, toX, toZ, toY);
     });
     game.setPlaceExtraFloorHandler((x, z) => {
       sendPlaceExtraFloor(socket, x, z);
@@ -1430,10 +1433,10 @@ function enterGame(token: string, address: string): void {
         message,
       }));
     });
-    game.setObstacleSelectHandler((x, z) => {
-      const m = game.getPlacedAt(x, z);
+    game.setObstacleSelectHandler((x, z, y) => {
+      const m = game.getPlacedAt(x, z, y);
       if (!m) return;
-      editingTile = { x, z };
+      editingTile = { x, z, y };
 
       const tp = m.teleporter;
       if (tp) {
@@ -1474,6 +1477,7 @@ function enterGame(token: string, address: string): void {
                 socket,
                 x,
                 z,
+                y,
                 normalizeRoomId(roomId),
                 dx,
                 dz
@@ -1482,7 +1486,7 @@ function enterGame(token: string, address: string): void {
           },
           onRemove: () => {
             game.setTeleporterDestPickHandler(null);
-            sendRemoveObstacle(socket, x, z);
+            sendRemoveObstacleAt(socket, x, z, y);
             editingTile = null;
             hud.hideObjectEditPanel();
             game.clearSelectedBlock();
@@ -1520,10 +1524,10 @@ function enterGame(token: string, address: string): void {
         locked: m.locked || false,
         isAdmin: isAdmin(selfAddress),
         onPropsChange: (p) => {
-          sendSetObstacleProps(socket, x, z, p);
+          sendSetObstacleProps(socket, x, z, y, p);
         },
         onRemove: () => {
-          sendRemoveObstacle(socket, x, z);
+          sendRemoveObstacleAt(socket, x, z, y);
           editingTile = null;
           hud.hideObjectEditPanel();
           game.clearSelectedBlock();
@@ -1915,7 +1919,7 @@ function enterGame(token: string, address: string): void {
     if (msg.type === "obstacles") {
       game.setObstacles(msg.tiles);
       if (editingTile) {
-        const m = game.getPlacedAt(editingTile.x, editingTile.z);
+          const m = game.getPlacedAt(editingTile.x, editingTile.z, editingTile.y);
         if (!m) {
           editingTile = null;
           hud.hideObjectEditPanel();
@@ -1929,7 +1933,7 @@ function enterGame(token: string, address: string): void {
     if (msg.type === "obstaclesDelta") {
       game.applyObstaclesDelta(msg.add, msg.remove);
       if (editingTile) {
-        const m = game.getPlacedAt(editingTile.x, editingTile.z);
+        const m = game.getPlacedAt(editingTile.x, editingTile.z, editingTile.y);
         if (!m) {
           editingTile = null;
           hud.hideObjectEditPanel();
@@ -2293,7 +2297,7 @@ function enterGame(token: string, address: string): void {
           const sel = game.getSelectedBlockTile();
           const t = sel ?? editingTile;
           if (t && ws) {
-            sendRemoveObstacle(ws, t.x, t.z);
+            sendRemoveObstacleAt(ws, t.x, t.z, t.y);
             editingTile = null;
             hud.hideObjectEditPanel();
             game.clearSelectedBlock();

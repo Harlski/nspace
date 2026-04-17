@@ -70,6 +70,11 @@ export function tileKey(x: number, z: number): string {
   return `${x},${z}`;
 }
 
+/** Unique key for a placed obstacle instance at tile + vertical level (0..2). */
+export function blockKey(x: number, z: number, y: number): string {
+  return `${x},${z},${y}`;
+}
+
 export function manhattanPathTiles(
   sx: number,
   sz: number,
@@ -217,6 +222,34 @@ function isSolidTerrain(p: TerrainProps | undefined): p is TerrainProps {
   return p != null && !p.passable && !p.ramp;
 }
 
+function floorLevelTerrain(
+  placed: ReadonlyMap<string, TerrainProps>,
+  x: number,
+  z: number
+): TerrainProps | undefined {
+  return placed.get(tileKey(x, z)) ?? placed.get(blockKey(x, z, 0));
+}
+
+function hasStackBlockAtLevel(
+  placed: ReadonlyMap<string, TerrainProps>,
+  x: number,
+  z: number,
+  y: number
+): boolean {
+  return placed.has(blockKey(x, z, y));
+}
+
+/** Level-1 path node is top of level-0 solid only when not occupied by a stacked block. */
+function level1SurfaceOpen(
+  placed: ReadonlyMap<string, TerrainProps>,
+  x: number,
+  z: number
+): boolean {
+  const base = floorLevelTerrain(placed, x, z);
+  if (!isSolidTerrain(base)) return false;
+  return !hasStackBlockAtLevel(placed, x, z, 1);
+}
+
 export function floorWalkableTerrain(
   x: number,
   z: number,
@@ -225,7 +258,7 @@ export function floorWalkableTerrain(
   roomId: string
 ): boolean {
   if (!isWalkableTile(x, z, extraWalkable, roomId)) return false;
-  const p = placed.get(tileKey(x, z));
+  const p = placed.get(tileKey(x, z)) ?? placed.get(blockKey(x, z, 0));
   if (!p) return true;
   if (p.passable || p.ramp) return true;
   return false;
@@ -240,7 +273,10 @@ export function canPlaceTeleporterFoot(
   extraWalkable: ReadonlySet<string>
 ): boolean {
   if (!floorWalkableTerrain(x, z, placed, extraWalkable, roomId)) return false;
-  if (placed.has(tileKey(x, z))) return false;
+  const prefix = `${x},${z},`;
+  for (const key of placed.keys()) {
+    if (key.startsWith(prefix)) return false;
+  }
   return true;
 }
 
@@ -296,7 +332,7 @@ function isValidTerrainGoal(
   if (goalLayer === 0) {
     return floorWalkableTerrain(tx, tz, placed, extraWalkable, roomId);
   }
-  return isSolidTerrain(placed.get(tileKey(tx, tz)));
+  return level1SurfaceOpen(placed, tx, tz);
 }
 
 /**
@@ -319,12 +355,10 @@ export function pathfindTerrain(
   if (!isValidTerrainGoal(tx, tz, goalLayer, placed, extraWalkable, roomId)) {
     return null;
   }
-  const sk = tileKey(sx, sz);
-
   if (startLayer === 0) {
     if (!floorWalkableTerrain(sx, sz, placed, extraWalkable, roomId)) return null;
   } else {
-    if (!isSolidTerrain(placed.get(sk))) return null;
+    if (!level1SurfaceOpen(placed, sx, sz)) return null;
   }
 
   const startKey = terrainNodeKey(sx, sz, startLayer);
@@ -363,7 +397,7 @@ export function pathfindTerrain(
         const n0 = terrainNodeKey(nx, nz, 0);
         if (cameFrom.has(n0)) continue;
         if (!floorWalkableTerrain(nx, nz, placed, extraWalkable, roomId)) continue;
-        const pTarget = placed.get(tileKey(nx, nz));
+        const pTarget = floorLevelTerrain(placed, nx, nz);
         if (
           pTarget?.ramp &&
           !canEnterRampFrom(cur.x, cur.z, nx, nz, pTarget)
@@ -384,13 +418,13 @@ export function pathfindTerrain(
         queue.push({ x: nx, z: nz, layer: 0 });
       }
 
-      const pr = placed.get(tileKey(cur.x, cur.z));
+      const pr = floorLevelTerrain(placed, cur.x, cur.z);
       if (pr?.ramp) {
         const dir = RAMP_NEIGHBOR[pr.rampDir & 3]!;
         const nx = cur.x + dir[0]!;
         const nz = cur.z + dir[1]!;
-        const np = placed.get(tileKey(nx, nz));
-        if (isSolidTerrain(np)) {
+        const np = floorLevelTerrain(placed, nx, nz);
+        if (isSolidTerrain(np) && level1SurfaceOpen(placed, nx, nz)) {
           const topKey = terrainNodeKey(nx, nz, 1);
           if (!cameFrom.has(topKey)) {
             cameFrom.set(topKey, ck);
@@ -399,16 +433,15 @@ export function pathfindTerrain(
         }
       }
     } else {
-      const pHere = placed.get(tileKey(cur.x, cur.z));
+      const pHere = floorLevelTerrain(placed, cur.x, cur.z);
       if (!isSolidTerrain(pHere)) continue;
       const h0 = terrainObstacleHeight(pHere);
 
       for (const [dx, dz] of RAMP_NEIGHBOR) {
         const nx = cur.x + dx;
         const nz = cur.z + dz;
-        const nk = tileKey(nx, nz);
         if (!isWalkableTile(nx, nz, extraWalkable, roomId)) continue;
-        const pN = placed.get(nk);
+        const pN = floorLevelTerrain(placed, nx, nz);
         if (
           floorWalkableTerrain(nx, nz, placed, extraWalkable, roomId) &&
           rampFacesSolid(pN, nx, nz, cur.x, cur.z)
@@ -419,7 +452,7 @@ export function pathfindTerrain(
             queue.push({ x: nx, z: nz, layer: 0 });
           }
         }
-        if (isSolidTerrain(pN)) {
+        if (isSolidTerrain(pN) && level1SurfaceOpen(placed, nx, nz)) {
           if (terrainObstacleHeight(pN) === h0) {
             const tk = terrainNodeKey(nx, nz, 1);
             if (!cameFrom.has(tk)) {

@@ -4,6 +4,8 @@ import { resolveApiBaseUrl } from "./apiBase.js";
 export type ObstacleTile = {
   x: number;
   z: number;
+  /** Vertical stack level (0..2). */
+  y: number;
   passable: boolean;
   half: boolean;
   quarter: boolean;
@@ -27,6 +29,12 @@ export type ObstacleProps = {
   rampDir: number;
   colorId: number;
   locked?: boolean;
+};
+
+export type ObstacleRef = {
+  x: number;
+  z: number;
+  y: number;
 };
 
 export type ExtraFloorTile = { x: number; z: number };
@@ -117,7 +125,7 @@ export type ServerMessage =
       type: "obstaclesDelta";
       roomId: string;
       add: ObstacleTile[];
-      /** Tile keys ("x,z") that should be removed from the room. */
+      /** Block keys ("x,z,y") that should be removed from the room. */
       remove: string[];
     }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
@@ -280,6 +288,7 @@ export function sendConfigureTeleporter(
   ws: WebSocket,
   x: number,
   z: number,
+  y: number,
   destRoomId: string,
   destX: number,
   destZ: number
@@ -290,6 +299,7 @@ export function sendConfigureTeleporter(
       type: "configureTeleporter",
       x,
       z,
+      y,
       destRoomId,
       destX,
       destZ,
@@ -393,6 +403,7 @@ export function sendSetObstacleProps(
   ws: WebSocket,
   x: number,
   z: number,
+  y: number,
   props: ObstacleProps
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
@@ -403,13 +414,12 @@ export function sendSetObstacleProps(
   const hex = ramp ? false : props.hex;
   const locked = props.locked || false;
   
-  console.log(`[WS sendSetObstacleProps] Sending locked=${locked} for (${x}, ${z})`);
-  
   ws.send(
     JSON.stringify({
       type: "setObstacleProps",
       x,
       z,
+      y,
       passable: props.passable,
       half,
       quarter,
@@ -424,7 +434,17 @@ export function sendSetObstacleProps(
 
 export function sendRemoveObstacle(ws: WebSocket, x: number, z: number): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: "removeObstacle", x, z }));
+  ws.send(JSON.stringify({ type: "removeObstacle", x, z, y: 0 }));
+}
+
+export function sendRemoveObstacleAt(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  y: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "removeObstacle", x, z, y }));
 }
 
 export function sendBeginBlockClaim(
@@ -460,8 +480,10 @@ export function sendMoveObstacle(
   ws: WebSocket,
   fromX: number,
   fromZ: number,
+  fromY: number,
   toX: number,
-  toZ: number
+  toZ: number,
+  toY: number
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(
@@ -469,8 +491,10 @@ export function sendMoveObstacle(
       type: "moveObstacle",
       fromX,
       fromZ,
+      fromY,
       toX,
       toZ,
+      toY,
     })
   );
 }

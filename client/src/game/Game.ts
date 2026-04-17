@@ -24,6 +24,7 @@ const DEFAULT_ZOOM_MIN = 6.5;
 const DEFAULT_ZOOM_MAX = 13.44;
 import { loadIdenticonTexture } from "./identiconTexture.js";
 import {
+  blockKey,
   type FloorTile,
   floorWalkableTerrain,
   inferStartLayerClient,
@@ -380,7 +381,8 @@ export class Game {
   private moveBlockHandler:
     | ((fromX: number, fromZ: number, toX: number, toZ: number) => void)
     | null = null;
-  private obstacleSelectHandler: ((x: number, z: number) => void) | null = null;
+  private obstacleSelectHandler: ((x: number, z: number, y: number) => void) | null =
+    null;
   private placeExtraFloorHandler: ((x: number, z: number) => void) | null = null;
   private removeExtraFloorHandler: ((x: number, z: number) => void) | null = null;
   private buildMode = false;
@@ -410,7 +412,7 @@ export class Game {
   /** Shared 1×1 geometry; `floorTileQuadSize` scales each mesh to hide edge seams. */
   private readonly walkableFloorPlaneGeom = new THREE.PlaneGeometry(1, 1);
   private floorTileQuadSize = DEFAULT_FLOOR_TILE_QUAD;
-  /** All placed objects (solid and walk-through). */
+  /** All placed objects (solid and walk-through), keyed by blockKey(x,z,y). */
   private readonly placedObjects = new Map<string, BlockStyleProps>();
   /** Styles applied when placing new blocks in build mode. */
   private placementHalf = false;
@@ -447,7 +449,7 @@ export class Game {
   private pathFadingOut = false;
   private lastTerrainPath: { x: number; z: number; layer: 0 | 1 }[] | null =
     null;
-  /** Selected obstacle tile key in build mode (`tileKey`); white outline. */
+  /** Selected obstacle key in build mode (`blockKey(x,z,y)`); white outline. */
   private selectedBlockKey: string | null = null;
   private readonly selectionOutline: THREE.LineSegments;
   private readonly selectionOutlineMat: THREE.LineBasicMaterial;
@@ -1296,7 +1298,7 @@ export class Game {
   }
 
   setObstacleSelectHandler(
-    handler: ((x: number, z: number) => void) | null
+    handler: ((x: number, z: number, y: number) => void) | null
   ): void {
     this.obstacleSelectHandler = handler;
   }
@@ -1313,8 +1315,8 @@ export class Game {
     this.removeExtraFloorHandler = handler;
   }
 
-  getPlacedAt(x: number, z: number): BlockStyleProps | null {
-    return this.placedObjects.get(tileKey(x, z)) ?? null;
+  getPlacedAt(x: number, z: number, y = 0): BlockStyleProps | null {
+    return this.placedObjects.get(blockKey(x, z, y)) ?? null;
   }
 
   /** Feet tile has a configured one-way teleporter; use Enter to warp. */
@@ -1325,7 +1327,7 @@ export class Game {
   } | null {
     if (!this.selfMesh) return null;
     const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
-    const m = this.placedObjects.get(tileKey(here.x, here.y));
+    const m = this.topBlockAtTile(here.x, here.y)?.meta ?? null;
     const tp = m?.teleporter;
     if (!tp || ("pending" in tp && tp.pending) || !("targetRoomId" in tp)) {
       return null;
@@ -1410,11 +1412,12 @@ export class Game {
     this.refreshSelectionOutline();
   }
 
-  getSelectedBlockTile(): { x: number; z: number } | null {
+  getSelectedBlockTile(): { x: number; z: number; y: number } | null {
     if (!this.selectedBlockKey) return null;
-    const [x, z] = this.selectedBlockKey.split(",").map(Number);
+    const [x, z, yRaw] = this.selectedBlockKey.split(",").map(Number);
+    const y = Number.isFinite(yRaw) ? Math.max(0, Math.min(2, Math.floor(yRaw ?? 0))) : 0;
     if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
-    return { x: x!, z: z! };
+    return { x: x!, z: z!, y };
   }
 
   private refreshSelectionOutline(): void {
@@ -1734,6 +1737,7 @@ export class Game {
     tiles: readonly {
       x: number;
       z: number;
+      y?: number;
       passable: boolean;
       half?: boolean;
       quarter?: boolean;
@@ -1755,7 +1759,8 @@ export class Game {
     this.placedObjects.clear();
     this.blockingTileKeys.clear();
     for (const t of tiles) {
-      const k = tileKey(t.x, t.z);
+      const y = Math.max(0, Math.min(2, Math.floor(t.y ?? 0)));
+      const k = blockKey(t.x, t.z, y);
       const quarter = Boolean(t.quarter);
       const half = quarter ? false : Boolean(t.half);
       const ramp = Boolean(t.ramp);
@@ -1782,7 +1787,7 @@ export class Game {
         claimedBy: t.claimedBy,
         teleporter: t.teleporter,
       });
-      if (!t.passable && !ramp) this.blockingTileKeys.add(k);
+      if (y === 0 && !t.passable && !ramp) this.blockingTileKeys.add(tileKey(t.x, t.z));
     }
     this.syncBlockMeshes();
     this.refreshPathLine();
@@ -1798,6 +1803,7 @@ export class Game {
     add: readonly {
       x: number;
       z: number;
+      y?: number;
       passable: boolean;
       half?: boolean;
       quarter?: boolean;
@@ -1822,18 +1828,23 @@ export class Game {
       const existing = this.placedObjects.get(k);
       if (!existing) continue;
       if (!existing.passable && !existing.ramp) {
-        this.blockingTileKeys.delete(k);
+        const [rx, rz, ryRaw] = k.split(",").map(Number);
+        const ry = Number.isFinite(ryRaw) ? Math.floor(ryRaw ?? 0) : 0;
+        if (ry === 0) this.blockingTileKeys.delete(tileKey(rx!, rz!));
       }
       this.placedObjects.delete(k);
     }
 
     for (const t of add) {
-      const k = tileKey(t.x, t.z);
+      const y = Math.max(0, Math.min(2, Math.floor(t.y ?? 0)));
+      const k = blockKey(t.x, t.z, y);
 
       // Clear prior blocking key (if any) before writing the new meta.
       const prev = this.placedObjects.get(k);
       if (prev && !prev.passable && !prev.ramp) {
-        this.blockingTileKeys.delete(k);
+        const [px, pz, pyRaw] = k.split(",").map(Number);
+        const py = Number.isFinite(pyRaw) ? Math.floor(pyRaw ?? 0) : 0;
+        if (py === 0) this.blockingTileKeys.delete(tileKey(px!, pz!));
       }
 
       const quarter = Boolean(t.quarter);
@@ -1864,7 +1875,7 @@ export class Game {
         teleporter: t.teleporter,
       });
 
-      if (!t.passable && !ramp) this.blockingTileKeys.add(k);
+      if (y === 0 && !t.passable && !ramp) this.blockingTileKeys.add(tileKey(t.x, t.z));
     }
 
     this.syncBlockMeshes();
@@ -1905,7 +1916,7 @@ export class Game {
         ) {
           continue;
         }
-        if (this.placedObjects.has(k)) continue;
+        if (this.nextOpenLevelAt(tx, tz) === null) continue;
         if (this.hubNoBuildTile(tx, tz)) continue;
         if (tx === here.x && tz === here.y) continue;
         const mesh = new THREE.Mesh(this.placementHintGeom, this.placementHintMat);
@@ -1943,6 +1954,50 @@ export class Game {
     return (
       normalizeRoomId(this.roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(x, z)
     );
+  }
+
+  private hasAnyBlockAtTile(x: number, z: number): boolean {
+    const prefix = `${x},${z},`;
+    for (const k of this.placedObjects.keys()) {
+      if (k.startsWith(prefix)) return true;
+    }
+    return false;
+  }
+
+  private nextOpenLevelAt(x: number, z: number): number | null {
+    const used = new Set<number>();
+    const prefix = `${x},${z},`;
+    for (const k of this.placedObjects.keys()) {
+      if (!k.startsWith(prefix)) continue;
+      const parts = k.split(",").map(Number);
+      const y = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
+      used.add(y);
+    }
+    for (let y = 0; y <= 2; y++) {
+      if (!used.has(y)) return y;
+    }
+    return null;
+  }
+
+  getNextOpenStackLevelAt(x: number, z: number): number | null {
+    return this.nextOpenLevelAt(x, z);
+  }
+
+  private topBlockAtTile(x: number, z: number): { y: number; meta: BlockStyleProps } | null {
+    const prefix = `${x},${z},`;
+    let bestY = -1;
+    let bestMeta: BlockStyleProps | null = null;
+    for (const [k, meta] of this.placedObjects) {
+      if (!k.startsWith(prefix)) continue;
+      const parts = k.split(",").map(Number);
+      const y = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
+      if (y > bestY) {
+        bestY = y;
+        bestMeta = meta;
+      }
+    }
+    if (bestY < 0 || !bestMeta) return null;
+    return { y: bestY, meta: bestMeta };
   }
 
   private pickWalkableTile(
@@ -2063,11 +2118,12 @@ export class Game {
       if (blockHit) {
         const meta = this.placedObjects.get(blockHit);
         if (meta && !meta.passable && !meta.ramp) {
-          const [bx, bz] = blockHit.split(",").map(Number);
+          const [bx, bz, byRaw] = blockHit.split(",").map(Number);
+          const by = Number.isFinite(byRaw) ? Math.floor(byRaw ?? 0) : 0;
           const h = this.obstacleHeight(meta);
           this.tileHighlight.position.set(bx!, 0.02, bz!);
           this.tileHighlight.visible = true;
-          this.blockTopHighlight.position.set(bx!, h + 0.03, bz!);
+          this.blockTopHighlight.position.set(bx!, by * BLOCK_SIZE + h + 0.03, bz!);
           this.blockTopHighlight.visible = true;
           
           // Check if this block is a signboard
@@ -2180,8 +2236,7 @@ export class Game {
         const dest = this.pickFloor(e.clientX, e.clientY);
         if (!dest) return;
         if (!this.tileWalkable(dest)) return;
-        const destK = tileKey(dest.x, dest.y);
-        if (this.placedObjects.has(destK)) return;
+        if (this.hasAnyBlockAtTile(dest.x, dest.y)) return;
         if (this.hubNoBuildTile(dest.x, dest.y)) return;
         const fn = this.teleporterDestPickHandler;
         this.teleporterDestPickHandler = null;
@@ -2194,17 +2249,17 @@ export class Game {
         } else {
           const blockHit = this.pickBlockKey(e.clientX, e.clientY);
           if (blockHit) {
-            const [bx, bz] = blockHit.split(",").map(Number);
+            const [bx, bz, byRaw] = blockHit.split(",").map(Number);
+            const by = Number.isFinite(byRaw) ? Math.floor(byRaw ?? 0) : 0;
             this.cancelReposition();
             this.setSelectedBlockKey(blockHit);
-            this.obstacleSelectHandler?.(bx!, bz!);
+            this.obstacleSelectHandler?.(bx!, bz!, by);
             return;
           }
           const dest = this.pickFloor(e.clientX, e.clientY);
           if (!dest) return;
           if (!this.tileWalkable(dest)) return;
-          const destK = tileKey(dest.x, dest.y);
-          if (this.placedObjects.has(destK)) return;
+          if (this.hasAnyBlockAtTile(dest.x, dest.y)) return;
           if (this.hubNoBuildTile(dest.x, dest.y)) return;
           const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
           if (here.x === dest.x && here.y === dest.y) return;
@@ -2217,9 +2272,23 @@ export class Game {
 
       const blockHit = this.pickBlockKey(e.clientX, e.clientY);
       if (blockHit) {
-        const [bx, bz] = blockHit.split(",").map(Number);
+        const [bx, bz, byRaw] = blockHit.split(",").map(Number);
+        const by = Number.isFinite(byRaw) ? Math.floor(byRaw ?? 0) : 0;
+        const selected = this.getSelectedBlockTile();
+        const canStackHere = this.nextOpenLevelAt(bx!, bz!) !== null;
+        if (
+          this.placeBlockHandler &&
+          selected &&
+          selected.x === bx &&
+          selected.z === bz &&
+          selected.y === by &&
+          canStackHere
+        ) {
+          this.placeBlockHandler(bx!, bz!);
+          return;
+        }
         this.setSelectedBlockKey(blockHit);
-        this.obstacleSelectHandler?.(bx!, bz!);
+        this.obstacleSelectHandler?.(bx!, bz!, by);
         return;
       }
 
@@ -2244,8 +2313,7 @@ export class Game {
       }
       
       if (!this.placeBlockHandler) return;
-      const k = tileKey(dest.x, dest.y);
-      if (this.placedObjects.has(k)) return;
+      if (this.nextOpenLevelAt(dest.x, dest.y) === null) return;
       if (this.hubNoBuildTile(dest.x, dest.y)) return;
       if (here.x === dest.x && here.y === dest.y) return;
       this.placeBlockHandler(dest.x, dest.y);
@@ -2686,7 +2754,8 @@ export class Game {
     const activeTeleporterKeys = new Set<string>();
     for (const [key, meta] of this.placedObjects) {
       if (this.isActiveTeleporterPortal(meta.teleporter)) {
-        activeTeleporterKeys.add(key);
+        const parts = key.split(",").map(Number);
+        activeTeleporterKeys.add(tileKey(parts[0]!, parts[1]!));
       }
     }
 
@@ -3049,6 +3118,7 @@ export class Game {
       const parts = k.split(",").map(Number);
       const wx = parts[0]!;
       const wz = parts[1]!;
+      const wyLevel = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
       const h = this.obstacleHeight(meta);
       let g = this.blockMeshes.get(k);
       const prev = g?.userData["blockMeta"] as BlockStyleProps | undefined;
@@ -3081,7 +3151,7 @@ export class Game {
       g = this.makeBlockMesh(meta);
       g.userData.tileKey = k;
       g.userData.blockMeta = { ...meta };
-      g.position.set(wx, h / 2, wz);
+      g.position.set(wx, wyLevel * BLOCK_SIZE + h / 2, wz);
       this.scene.add(g);
       this.blockMeshes.set(k, g);
     }
