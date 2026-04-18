@@ -330,6 +330,80 @@ const BLOCK_SIZE = 0.82;
  * If `newPath` equals `oldPath.slice(k)` for some k, returns k (tiles dropped from the start).
  * Otherwise null (new click or path jumped).
  */
+const FLOATING_REWARD_TEXT_OUTLINE_PX = 10;
+const FLOATING_REWARD_LOGO_OUTLINE_PX = 3;
+const FLOATING_REWARD_TEXT_SHADOW_BLUR = 10;
+const FLOATING_REWARD_TEXT_SHADOW_OFFSET_X = 4;
+const FLOATING_REWARD_TEXT_SHADOW_OFFSET_Y = 5;
+/** Extra canvas padding so shadow + outline are not clipped. */
+const FLOATING_REWARD_TEXT_SHADOW_PAD =
+  FLOATING_REWARD_TEXT_SHADOW_BLUR +
+  Math.max(
+    Math.abs(FLOATING_REWARD_TEXT_SHADOW_OFFSET_X),
+    Math.abs(FLOATING_REWARD_TEXT_SHADOW_OFFSET_Y)
+  );
+
+function fillTextWithWhiteOutline(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  fillColor: string
+): void {
+  ctx.save();
+  ctx.shadowColor = "rgba(255, 255, 255, 0.48)";
+  ctx.shadowBlur = FLOATING_REWARD_TEXT_SHADOW_BLUR;
+  ctx.shadowOffsetX = FLOATING_REWARD_TEXT_SHADOW_OFFSET_X;
+  ctx.shadowOffsetY = FLOATING_REWARD_TEXT_SHADOW_OFFSET_Y;
+  ctx.fillStyle = fillColor;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+
+  ctx.save();
+  ctx.shadowColor = "transparent";
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
+  ctx.lineJoin = "round";
+  ctx.miterLimit = 2;
+  ctx.lineWidth = FLOATING_REWARD_TEXT_OUTLINE_PX;
+  ctx.strokeStyle = "#000";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = fillColor;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+/** White silhouette ring behind the colored logo (canvas has no stroke for drawImage). */
+function drawImageWithWhiteOutline(
+  ctx: CanvasRenderingContext2D,
+  img: CanvasImageSource,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  outlinePx: number
+): void {
+  const corners: [number, number][] = [
+    [-outlinePx, 0],
+    [outlinePx, 0],
+    [0, -outlinePx],
+    [0, outlinePx],
+    [-outlinePx, -outlinePx],
+    [outlinePx, -outlinePx],
+    [-outlinePx, outlinePx],
+    [outlinePx, outlinePx],
+  ];
+  ctx.save();
+  ctx.filter = "brightness(0) invert(1)";
+  for (const [ox, oy] of corners) {
+    ctx.drawImage(img, x + ox, y + oy, w, h);
+  }
+  ctx.filter = "none";
+  ctx.drawImage(img, x, y, w, h);
+  ctx.restore();
+}
+
 function findPrefixTerrainRemoved(
   oldPath: { x: number; z: number; layer: 0 | 1 }[],
   newPath: { x: number; z: number; layer: 0 | 1 }[]
@@ -1316,7 +1390,11 @@ export class Game {
   }
 
   getPlacedAt(x: number, z: number, y = 0): BlockStyleProps | null {
-    return this.placedObjects.get(blockKey(x, z, y)) ?? null;
+    return (
+      this.placedObjects.get(blockKey(x, z, y)) ??
+      (y === 0 ? this.placedObjects.get(tileKey(x, z)) : undefined) ??
+      null
+    );
   }
 
   /** Feet tile has a configured one-way teleporter; use Enter to warp. */
@@ -3479,64 +3557,156 @@ export class Game {
     }
   }
 
-  /** Shows a floating text popup at a world position (e.g., "+1 NIM") */
-  showFloatingText(x: number, z: number, text: string, color = "#ffc107"): void {
+  /**
+   * Shows a floating text popup at a world position (e.g., "+1 NIM" or "+0.48" + NIM logo).
+   * `nimLogo` uses `/branding/nimiq-nim-logo.svg` (same asset as the main menu).
+   */
+  showFloatingText(
+    x: number,
+    z: number,
+    text: string,
+    color = "#ffc107",
+    opts?: { nimLogo?: boolean }
+  ): void {
     const key = `${x},${z},${Date.now()}`;
-    
-    // Create canvas for text
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d")!;
-    ctx.font = "bold 32px 'Muli', sans-serif";
-    const metrics = ctx.measureText(text);
-    const w = Math.ceil(metrics.width + 40);
-    const h = 60;
-    canvas.width = w;
-    canvas.height = h;
-    
-    // Draw text with shadow
-    ctx.font = "bold 32px 'Muli', sans-serif";
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
-    
-    // Shadow
-    ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-    ctx.fillText(text, w / 2 + 2, h / 2 + 2);
-    
-    // Main text
-    ctx.fillStyle = color;
-    ctx.fillText(text, w / 2, h / 2);
-    
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.needsUpdate = true;
-    
-    const material = new THREE.SpriteMaterial({
-      map: texture,
-      transparent: true,
-      depthTest: true,
-      depthWrite: false,
-    });
-    
-    const sprite = new THREE.Sprite(material);
-    sprite.renderOrder = 100;
-    
-    // Position above the block
-    const blockHeight = 1.0; // Approximate block height
-    const startY = blockHeight + 0.5;
-    sprite.position.set(x, startY, z);
-    
-    // Scale based on screen space
-    const scale = 1.5;
-    sprite.scale.set(scale, scale * (h / w), 1);
-    
-    this.scene.add(sprite);
-    
-    this.floatingTexts.set(key, {
-      sprite,
-      material,
-      texture,
-      startedAt: performance.now(),
-      startY,
-    });
+    const nimLogo = Boolean(opts?.nimLogo);
+    const label =
+      nimLogo ? text.replace(/\s*NIM\s*$/i, "").trim() : text;
+
+    const addSpriteFromCanvas = (canvas: HTMLCanvasElement): void => {
+      const w = canvas.width;
+      const h = canvas.height;
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.needsUpdate = true;
+
+      const material = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthTest: true,
+        depthWrite: false,
+      });
+
+      const sprite = new THREE.Sprite(material);
+      sprite.renderOrder = 100;
+
+      const blockHeight = 1.0;
+      const startY = blockHeight + 0.5;
+      sprite.position.set(x, startY, z);
+
+      const scale = 1.5;
+      sprite.scale.set(scale, scale * (h / w), 1);
+
+      this.scene.add(sprite);
+
+      this.floatingTexts.set(key, {
+        sprite,
+        material,
+        texture,
+        startedAt: performance.now(),
+        startY,
+      });
+    };
+
+    const drawPlain = (): void => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d")!;
+      ctx.font = "bold 32px 'Muli', sans-serif";
+      const metrics = ctx.measureText(label);
+      const padX =
+        40 +
+        FLOATING_REWARD_TEXT_OUTLINE_PX * 2 +
+        FLOATING_REWARD_TEXT_SHADOW_PAD * 2;
+      const w = Math.ceil(metrics.width + padX);
+      const h = 72;
+      canvas.width = w;
+      canvas.height = h;
+      ctx.font = "bold 32px 'Muli', sans-serif";
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "center";
+      fillTextWithWhiteOutline(ctx, label, w / 2, h / 2, color);
+      addSpriteFromCanvas(canvas);
+    };
+
+    if (!nimLogo) {
+      drawPlain();
+      return;
+    }
+
+    const logo = new Image();
+    logo.crossOrigin = "anonymous";
+    logo.decoding = "async";
+    logo.src = "/branding/nimiq-nim-logo.svg";
+
+    const drawWithLogo = (): void => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d")!;
+      const font = "bold 32px 'Muli', sans-serif";
+      ctx.font = font;
+      const tw = ctx.measureText(label).width;
+      const logoH = 36;
+      const gap = 10;
+      let logoW = 0;
+      if (logo.naturalWidth > 0 && logo.naturalHeight > 0) {
+        logoW = (logo.naturalWidth / logo.naturalHeight) * logoH;
+      }
+      const padX =
+        36 +
+        FLOATING_REWARD_TEXT_OUTLINE_PX * 2 +
+        FLOATING_REWARD_TEXT_SHADOW_PAD * 2;
+      const innerW = tw + (logoW > 0 ? gap + logoW : 0);
+      const w = Math.ceil(innerW + padX);
+      const h = 72;
+      canvas.width = w;
+      canvas.height = h;
+
+      ctx.font = font;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "left";
+      const cx = (w - innerW) / 2;
+      const midY = h / 2;
+
+      fillTextWithWhiteOutline(ctx, label, cx, midY, color);
+
+      if (logoW > 0) {
+        const lx = cx + tw + gap;
+        const ly = midY - logoH / 2;
+        try {
+          drawImageWithWhiteOutline(
+            ctx,
+            logo,
+            lx,
+            ly,
+            logoW,
+            logoH,
+            FLOATING_REWARD_LOGO_OUTLINE_PX
+          );
+        } catch {
+          /* ignore draw errors */
+        }
+      }
+
+      addSpriteFromCanvas(canvas);
+    };
+
+    if (logo.complete && logo.naturalWidth > 0) {
+      drawWithLogo();
+      return;
+    }
+
+    logo.addEventListener(
+      "load",
+      () => {
+        drawWithLogo();
+      },
+      { once: true }
+    );
+    logo.addEventListener(
+      "error",
+      () => {
+        drawPlain();
+      },
+      { once: true }
+    );
   }
 
   private updateFloatingTexts(): void {

@@ -208,13 +208,40 @@ app.get("/api/canvas/leaderboard", (_req, res) => {
   }
 });
 
+const NIM_BALANCE_API_TIMEOUT_MS = Math.max(
+  3000,
+  Number(process.env.NIM_BALANCE_API_TIMEOUT_MS ?? 28_000)
+);
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
+
 app.get("/api/nim/payout-balance", async (_req, res) => {
   if (!isNimPayoutSenderConfigured()) {
     res.json({ configured: false, hasNim: false, balanceNim: "0.0000" });
     return;
   }
   try {
-    const luna = await getNimPayoutWalletBalanceLuna();
+    const luna = await withTimeout(
+      getNimPayoutWalletBalanceLuna(),
+      NIM_BALANCE_API_TIMEOUT_MS,
+      "getNimPayoutWalletBalanceLuna"
+    );
     const balanceNim = (Number(luna) / 100_000).toFixed(4);
     res.json({
       configured: true,
@@ -223,7 +250,12 @@ app.get("/api/nim/payout-balance", async (_req, res) => {
     });
   } catch (err) {
     console.error("[nim/payout-balance]", err);
-    res.status(500).json({ error: "internal" });
+    res.status(503).json({
+      error: "nim_unavailable",
+      configured: true,
+      hasNim: false,
+      balanceNim: "0.0000",
+    });
   }
 });
 

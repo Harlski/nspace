@@ -8,6 +8,32 @@ export const LUNA_PER_NIM = 100_000n;
 
 let clientPromise: Promise<Client> | null = null;
 
+/**
+ * Serialize all Nimiq client usage. Concurrent consensus/account work on one Client has
+ * caused connection instability and process crashes in dev.
+ */
+let nimiqMutexChain: Promise<void> = Promise.resolve();
+
+function withNimiqMutex<T>(fn: () => Promise<T>): Promise<T> {
+  const next = nimiqMutexChain.then(() => fn());
+  nimiqMutexChain = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
+}
+
+const BALANCE_CACHE_MS = Math.max(
+  0,
+  Number(process.env.NIM_BALANCE_CACHE_MS ?? 20_000)
+);
+
+let balanceCache: { luna: bigint; at: number } | null = null;
+
+export function invalidateNimBalanceCache(): void {
+  balanceCache = null;
+}
+
 export function isNimPayoutSenderConfigured(): boolean {
   const k = process.env.NIM_PAYOUT_PRIVATE_KEY?.trim();
   return !!k && k.length >= 64;
@@ -36,12 +62,24 @@ async function getKeyPair(): Promise<import("@nimiq/core").KeyPair> {
 }
 
 export async function getNimPayoutWalletBalanceLuna(): Promise<bigint> {
-  const client = await getClient();
-  await client.waitForConsensusEstablished();
-  const keyPair = await getKeyPair();
-  const senderAddr = keyPair.toAddress();
-  const account = await client.getAccount(senderAddr);
-  return BigInt(account.balance);
+  const now = Date.now();
+  if (balanceCache && now - balanceCache.at < BALANCE_CACHE_MS) {
+    return balanceCache.luna;
+  }
+  return withNimiqMutex(async () => {
+    const t = Date.now();
+    if (balanceCache && t - balanceCache.at < BALANCE_CACHE_MS) {
+      return balanceCache.luna;
+    }
+    const client = await getClient();
+    await client.waitForConsensusEstablished();
+    const keyPair = await getKeyPair();
+    const senderAddr = keyPair.toAddress();
+    const account = await client.getAccount(senderAddr);
+    const luna = BigInt(account.balance);
+    balanceCache = { luna, at: Date.now() };
+    return luna;
+  });
 }
 
 /**
@@ -53,56 +91,59 @@ export async function sendNimPayoutTransaction(
   amountLuna: bigint,
   txMessageOverride?: string
 ): Promise<{ txHash: string; details: PlainTransactionDetails }> {
-  const Nimiq = await import("@nimiq/core");
-  const {
-    TransactionBuilder,
-    Address,
-  } = Nimiq;
+  return withNimiqMutex(async () => {
+    const Nimiq = await import("@nimiq/core");
+    const {
+      TransactionBuilder,
+      Address,
+    } = Nimiq;
 
-  const client = await getClient();
-  await client.waitForConsensusEstablished();
+    const client = await getClient();
+    await client.waitForConsensusEstablished();
 
-  const keyPair = await getKeyPair();
-  const senderAddr = keyPair.toAddress();
-  const recipient = Address.fromUserFriendlyAddress(
-    recipientUserFriendlyAddress
-  );
+    const keyPair = await getKeyPair();
+    const senderAddr = keyPair.toAddress();
+    const recipient = Address.fromUserFriendlyAddress(
+      recipientUserFriendlyAddress
+    );
 
-  const head = await client.getHeadBlock();
-  const height = head.height;
-  const networkId = await client.getNetworkId();
-  const txMessage =
-    txMessageOverride?.trim() ||
-    process.env.NIM_PAYOUT_TX_MESSAGE?.trim() ||
-    "You mined NIM on Nimiq.Space!";
-  const txData = new TextEncoder().encode(txMessage);
+    const head = await client.getHeadBlock();
+    const height = head.height;
+    const networkId = await client.getNetworkId();
+    const txMessage =
+      txMessageOverride?.trim() ||
+      process.env.NIM_PAYOUT_TX_MESSAGE?.trim() ||
+      "You mined NIM on Nimiq.Space!";
+    const txData = new TextEncoder().encode(txMessage);
 
-  const tx = TransactionBuilder.newBasicWithData(
-    senderAddr,
-    recipient,
-    txData,
-    amountLuna,
-    null,
-    height,
-    networkId
-  );
-  tx.sign(keyPair, undefined);
+    const tx = TransactionBuilder.newBasicWithData(
+      senderAddr,
+      recipient,
+      txData,
+      amountLuna,
+      null,
+      height,
+      networkId
+    );
+    tx.sign(keyPair, undefined);
 
-  const details = await client.sendTransaction(tx);
-  const hash = details.transactionHash;
+    const details = await client.sendTransaction(tx);
+    const hash = details.transactionHash;
 
-  const deadline = Date.now() + Number(process.env.NIM_TX_CONFIRM_TIMEOUT_MS ?? 120_000);
-  let last = details;
-  while (Date.now() < deadline) {
-    if (last.state === "confirmed" || last.state === "included") {
-      return { txHash: hash, details: last };
+    const deadline = Date.now() + Number(process.env.NIM_TX_CONFIRM_TIMEOUT_MS ?? 120_000);
+    let last = details;
+    while (Date.now() < deadline) {
+      if (last.state === "confirmed" || last.state === "included") {
+        invalidateNimBalanceCache();
+        return { txHash: hash, details: last };
+      }
+      if (last.state === "invalidated" || last.state === "expired") {
+        throw new Error(`Transaction ${last.state}`);
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+      last = await client.getTransaction(hash);
     }
-    if (last.state === "invalidated" || last.state === "expired") {
-      throw new Error(`Transaction ${last.state}`);
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-    last = await client.getTransaction(hash);
-  }
 
-  throw new Error("Timed out waiting for transaction to be included");
+    throw new Error("Timed out waiting for transaction to be included");
+  });
 }

@@ -21,7 +21,10 @@ export type NimPayoutJob = {
   recipientAddress: string;
   /** Serialized as string in JSON; use BigInt(amountLuna) when loading. */
   amountLuna: bigint;
+  /** Wall-clock ms when the job was enqueued (`Date.now()`). */
   createdAt: number;
+  /** Wall-clock ms when the tx was broadcast and accepted as included/confirmed (set on success only). */
+  sentAt?: number;
   attempts: number;
   nextRetryAt: number;
   status: NimPayoutJobStatus;
@@ -38,6 +41,12 @@ const jobs: NimPayoutJob[] = [];
 let processorTimer: ReturnType<typeof setTimeout> | null = null;
 let processing = false;
 const PROCESS_INTERVAL_MS = Number(process.env.NIM_PAYOUT_PROCESS_INTERVAL_MS ?? 8000);
+/** How many payout attempts to run back-to-back each wake-up (still one at a time, for hot-wallet nonce safety). */
+const RAW_BURST = Number(process.env.NIM_PAYOUT_BURST_PER_TICK ?? 8);
+const BURST_PER_TICK = Math.min(
+  100,
+  Math.max(1, Number.isFinite(RAW_BURST) ? Math.floor(RAW_BURST) : 8)
+);
 const MAX_BACKOFF_MS = Number(process.env.NIM_PAYOUT_MAX_BACKOFF_MS ?? 3_600_000);
 const DEAD_LETTER_AFTER_ATTEMPTS = Number(
   process.env.NIM_PAYOUT_DEAD_LETTER_ATTEMPTS ?? 80
@@ -147,7 +156,7 @@ export function enqueueNimPayout(opts: {
   jobs.push(job);
   saveQueue();
   console.log(
-    `[nim-payout] Enqueued job ${job.id} claim=${opts.claimId.slice(0, 10)}… → ${job.recipientAddress.slice(0, 12)}…`
+    `[nim-payout] Enqueued job ${job.id} enqueuedAt=${job.createdAt} claim=${opts.claimId.slice(0, 10)}… → ${job.recipientAddress.slice(0, 12)}…`
   );
 }
 
@@ -173,10 +182,13 @@ async function processOne(job: NimPayoutJob): Promise<void> {
       job.amountLuna,
       job.txMessage
     );
+    const sentAt = Date.now();
+    job.sentAt = sentAt;
     job.txHash = txHash;
     job.lastError = undefined;
+    const queueToSendMs = sentAt - job.createdAt;
     console.log(
-      `[nim-payout] Sent ${txHash} state=${details.state} claim=${job.claimId.slice(0, 10)}…`
+      `[nim-payout] Sent ${txHash} state=${details.state} enqueuedAt=${job.createdAt} sentAt=${sentAt} queueToSendMs=${queueToSendMs} claim=${job.claimId.slice(0, 10)}…`
     );
     logGameplayEvent(
       "nim-payout-worker",
@@ -189,6 +201,9 @@ async function processOne(job: NimPayoutJob): Promise<void> {
         state: details.state,
         tileKey: job.tileKey,
         jobId: job.id,
+        enqueuedAt: job.createdAt,
+        sentAt,
+        queueToSendMs,
       }
     );
     jobs.splice(jobs.indexOf(job), 1);
@@ -225,6 +240,7 @@ async function processOne(job: NimPayoutJob): Promise<void> {
           DEAD_LETTER_FILE,
           `${JSON.stringify({
             ts: Date.now(),
+            enqueuedAt: job.createdAt,
             claimId: job.claimId,
             recipient: job.recipientAddress,
             error: msg,
@@ -245,18 +261,24 @@ async function processOne(job: NimPayoutJob): Promise<void> {
   }
 }
 
-async function tick(): Promise<void> {
-  if (processing) return;
-  const next = jobs.find(
+function findNextReadyJob(): NimPayoutJob | undefined {
+  const now = Date.now();
+  return jobs.find(
     (j) =>
       (j.status === "pending" || j.status === "processing") &&
-      j.nextRetryAt <= Date.now()
+      j.nextRetryAt <= now
   );
-  if (!next) return;
+}
 
+async function tick(): Promise<void> {
+  if (processing) return;
   processing = true;
   try {
-    await processOne(next);
+    for (let i = 0; i < BURST_PER_TICK; i++) {
+      const next = findNextReadyJob();
+      if (!next) break;
+      await processOne(next);
+    }
   } finally {
     processing = false;
   }

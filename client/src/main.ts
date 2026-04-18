@@ -955,6 +955,13 @@ function enterGame(token: string, address: string): void {
   const ac = new AbortController();
   const { signal } = ac;
 
+  /** When the game API is down, backing off avoids spamming the Vite proxy (ECONNREFUSED every 30s). */
+  let nimWalletPollTimer: ReturnType<typeof setTimeout> | null = null;
+  let nimWalletPollFailStreak = 0;
+  const NIM_WALLET_POLL_OK_MS = 30_000;
+  const NIM_WALLET_POLL_FAIL_BASE_MS = 45_000;
+  const NIM_WALLET_POLL_FAIL_MAX_MS = 300_000;
+
   document.addEventListener(
     "fullscreenchange",
     () => {
@@ -989,6 +996,10 @@ function enterGame(token: string, address: string): void {
   );
 
   function cleanupResources(): void {
+    if (nimWalletPollTimer !== null) {
+      clearTimeout(nimWalletPollTimer);
+      nimWalletPollTimer = null;
+    }
     if (orientationRetryTimer) {
       clearInterval(orientationRetryTimer);
       orientationRetryTimer = null;
@@ -1062,7 +1073,8 @@ function enterGame(token: string, address: string): void {
     }
   }
 
-  async function updateNimWalletStatus(): Promise<void> {
+  /** @returns true if the HTTP API responded successfully (HUD updated). */
+  async function updateNimWalletStatus(): Promise<boolean> {
     try {
       const { resolveApiBaseUrl } = await import("./net/apiBase.js");
       const base = resolveApiBaseUrl() || "";
@@ -1070,7 +1082,7 @@ function enterGame(token: string, address: string): void {
       const res = await fetch(url);
       if (!res.ok) {
         hud.setNimWalletStatus("unavailable");
-        return;
+        return false;
       }
       const data = (await res.json()) as {
         configured: boolean;
@@ -1079,13 +1091,42 @@ function enterGame(token: string, address: string): void {
       };
       if (!data.configured || !data.hasNim) {
         hud.setNimWalletStatus("No more NIM to earn :(");
-        return;
+        return true;
       }
       hud.setNimWalletStatus(data.balanceNim);
-    } catch (err) {
-      console.error("[nim-wallet] Failed to fetch payout wallet balance:", err);
+      return true;
+    } catch {
       hud.setNimWalletStatus("unavailable");
+      return false;
     }
+  }
+
+  function scheduleNextNimWalletPoll(delayMs: number): void {
+    if (nimWalletPollTimer !== null) {
+      clearTimeout(nimWalletPollTimer);
+      nimWalletPollTimer = null;
+    }
+    if (disposed) return;
+    nimWalletPollTimer = setTimeout(() => {
+      nimWalletPollTimer = null;
+      void (async () => {
+        if (disposed) return;
+        const ok = await updateNimWalletStatus();
+        if (disposed) return;
+        if (ok) {
+          nimWalletPollFailStreak = 0;
+          scheduleNextNimWalletPoll(NIM_WALLET_POLL_OK_MS);
+        } else {
+          nimWalletPollFailStreak = Math.min(nimWalletPollFailStreak + 1, 8);
+          const exp = Math.max(0, nimWalletPollFailStreak - 1);
+          const backoff = Math.min(
+            NIM_WALLET_POLL_FAIL_BASE_MS * 2 ** exp,
+            NIM_WALLET_POLL_FAIL_MAX_MS
+          );
+          scheduleNextNimWalletPoll(backoff);
+        }
+      })();
+    }, delayMs);
   }
 
   function playModeFromGame(): "walk" | "build" | "floor" {
@@ -1892,7 +1933,9 @@ function enterGame(token: string, address: string): void {
           : "1.0000";
         cancelActiveNimClaim?.();
         if (Number.isFinite(bx) && Number.isFinite(bz)) {
-          game.showFloatingText(bx, bz, `+${reward} NIM`);
+          game.showFloatingText(bx, bz, `+${reward} NIM`, "#ffc107", {
+            nimLogo: true,
+          });
         }
         return;
       }
@@ -2112,10 +2155,7 @@ function enterGame(token: string, address: string): void {
   });
 
   connectToRoom(ROOM_ID);
-  void updateNimWalletStatus();
-  const nimWalletPoll = setInterval(() => {
-    void updateNimWalletStatus();
-  }, 30000);
+  scheduleNextNimWalletPoll(0);
 
   syncBuildHud();
 
@@ -2386,7 +2426,10 @@ function enterGame(token: string, address: string): void {
     { once: true }
   );
   signal.addEventListener("abort", () => {
-    clearInterval(nimWalletPoll);
+    if (nimWalletPollTimer !== null) {
+      clearTimeout(nimWalletPollTimer);
+      nimWalletPollTimer = null;
+    }
   });
 }
 

@@ -581,16 +581,35 @@ function stackEntriesAt(
   return out;
 }
 
+/**
+ * Resolve a block at (x,z,y). Floor level (y=0) may be stored as legacy `tileKey(x,z)` or `blockKey(x,z,0)`.
+ */
 function getPlacedAtLevel(
   placed: ReadonlyMap<string, PlacedProps>,
   x: number,
   z: number,
   y: number
 ): { key: string; props: PlacedProps } | null {
+  if (y === 0) {
+    const k = getFloorLevelPlacedKey(placed, x, z);
+    if (!k) return null;
+    const props = placed.get(k);
+    if (!props) return null;
+    return { key: k, props };
+  }
   const key = blockKey(x, z, y);
   const props = placed.get(key);
   if (!props) return null;
   return { key, props };
+}
+
+function isOccupiedAtLevel(
+  placed: ReadonlyMap<string, PlacedProps>,
+  x: number,
+  z: number,
+  y: number
+): boolean {
+  return getPlacedAtLevel(placed, x, z, y) !== null;
 }
 
 function getTopPlacedAtTile(
@@ -609,6 +628,19 @@ function getFloorLevelPlacedAtTile(
   z: number
 ): PlacedProps | undefined {
   return placed.get(blockKey(x, z, 0)) ?? placed.get(tileKey(x, z));
+}
+
+/** Actual `roomPlaced` map key for floor-level block (stacking uses `blockKey(x,z,0)`; legacy uses `tileKey(x,z)`). */
+function getFloorLevelPlacedKey(
+  placed: ReadonlyMap<string, PlacedProps>,
+  x: number,
+  z: number
+): string | undefined {
+  const bk = blockKey(x, z, 0);
+  if (placed.has(bk)) return bk;
+  const tk = tileKey(x, z);
+  if (placed.has(tk)) return tk;
+  return undefined;
 }
 
 function nextOpenStackLevel(
@@ -1576,9 +1608,12 @@ function configureTeleporterDestination(
   const destPlaced = placedMap(destRoomId);
   const destExtra = extraFloorSet(destRoomId);
 
-  const srcK = blockKey(srcX, srcZ, srcY);
-  const srcProps = srcPlaced.get(srcK);
-  if (!srcProps?.teleporter) return false;
+  const srcResolved = getPlacedAtLevel(srcPlaced, srcX, srcZ, srcY);
+  if (!srcResolved?.props.teleporter) return false;
+  const canonicalSrc = blockKey(srcX, srcZ, srcY);
+  if (srcResolved.key !== canonicalSrc) {
+    srcPlaced.delete(srcResolved.key);
+  }
 
   const nDest = normalizeRoomId(destRoomId);
   const nSrc = normalizeRoomId(srcRoomId);
@@ -1615,12 +1650,12 @@ function configureTeleporterDestination(
     }
   }
 
-  srcPlaced.set(srcK, {
+  srcPlaced.set(canonicalSrc, {
     ...TELEPORTER_VISUAL,
     teleporter: { targetRoomId: nDest, targetX: warpX, targetZ: warpZ },
   });
 
-  const d1 = obstacleTileFromPlaced(nSrc, srcK);
+  const d1 = obstacleTileFromPlaced(nSrc, canonicalSrc);
   if (d1) {
     broadcast(nSrc, {
       type: "obstaclesDelta",
@@ -2862,9 +2897,8 @@ export function addClient(
       const dt = snapToTile(destX, destZ);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
-      const k = blockKey(tile.x, tile.z, ty);
-      const props = placed.get(k);
-      if (!props?.teleporter) return;
+      const srcEntry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
+      if (!srcEntry?.props.teleporter) return;
 
       const ok = configureTeleporterDestination(
         conn,
@@ -2914,11 +2948,15 @@ export function addClient(
       
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      const k = blockKey(tile.x, tile.z, ty);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
-      const existing = placed.get(k);
-      if (!existing) return;
+      const entry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
+      if (!entry) return;
+      const { key: storageKey, props: existing } = entry;
+      const canonicalKey = blockKey(tile.x, tile.z, ty);
+      if (storageKey !== canonicalKey) {
+        placed.delete(storageKey);
+      }
       
       // Check if object is locked and user is not admin
       if (existing.locked && !isAdmin(address)) {
@@ -2929,7 +2967,7 @@ export function addClient(
       // Only admins can change lock status
       const finalLocked = isAdmin(address) ? locked : (existing.locked || false);
       
-      placed.set(k, {
+      placed.set(canonicalKey, {
         passable,
         half,
         quarter,
@@ -2945,13 +2983,13 @@ export function addClient(
         ...(existing.lastClaimedAt !== undefined ? { lastClaimedAt: existing.lastClaimedAt } : {}),
         ...(existing.claimedBy !== undefined ? { claimedBy: existing.claimedBy } : {}),
       });
-      const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
+      const deltaTile = obstacleTileFromPlaced(currentRoomId, canonicalKey);
       if (deltaTile) {
         broadcast(currentRoomId, {
           type: "obstaclesDelta",
           roomId: currentRoomId,
           add: [deltaTile],
-          remove: [],
+          remove: storageKey !== canonicalKey ? [storageKey] : [],
         });
       }
       schedulePersistWorldState();
@@ -2983,11 +3021,13 @@ export function addClient(
       const ty = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      const k = blockKey(tile.x, tile.z, ty);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
-      const props = placed.get(k);
-      if (!props) return;
+      const entry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
+      if (!entry) return;
+      const k = entry.key;
+      const props = entry.props;
+      const clientKey = blockKey(tile.x, tile.z, ty);
       
       // Locked objects are admin-only to remove, except teleporters (room editors may delete them).
       if (props.locked && !isAdmin(address) && !props.teleporter) {
@@ -3007,7 +3047,7 @@ export function addClient(
           type: "obstaclesDelta",
           roomId: currentRoomId,
           add: [],
-          remove: [k],
+          remove: k !== clientKey ? [k, clientKey] : [clientKey],
         });
         schedulePersistWorldState();
         if (signboardDeleted) {
@@ -3045,7 +3085,7 @@ export function addClient(
         type: "obstaclesDelta",
         roomId: currentRoomId,
         add: [],
-        remove: [k],
+        remove: k !== clientKey ? [k, clientKey] : [clientKey],
       });
       
       // If we deleted a signboard, broadcast the updated list
@@ -3100,9 +3140,9 @@ export function addClient(
       }
       const from = snapToTile(fx, fz);
       const to = snapToTile(tx, tz);
-      const fk = blockKey(from.x, from.z, fy);
-      const tk = blockKey(to.x, to.z, ty);
-      if (fk === tk) return;
+      const destKey = blockKey(to.x, to.z, ty);
+      const fromClientKey = blockKey(from.x, from.z, fy);
+      if (fromClientKey === destKey) return;
       if (
         !withinBlockActionRange(conn.player, from.x, from.z) ||
         !withinBlockActionRange(conn.player, to.x, to.z)
@@ -3110,8 +3150,10 @@ export function addClient(
         return;
       }
       const placed = placedMap(currentRoomId);
-      const props = placed.get(fk);
-      if (!props) return;
+      const fromEntry = getPlacedAtLevel(placed, from.x, from.z, fy);
+      if (!fromEntry) return;
+      const fk = fromEntry.key;
+      const props = fromEntry.props;
       
       // Locked objects are admin-only to move, except teleporters (room editors may reposition).
       if (props.locked && !isAdmin(address) && !props.teleporter) {
@@ -3119,7 +3161,7 @@ export function addClient(
         return;
       }
 
-      if (placed.has(tk)) return;
+      if (isOccupiedAtLevel(placed, to.x, to.z, ty)) return;
       if (ty !== 0) {
         const below = getPlacedAtLevel(placed, to.x, to.z, ty - 1);
         if (!below) return;
@@ -3136,7 +3178,7 @@ export function addClient(
         if (st.x === to.x && st.z === to.z) return;
       }
       placed.delete(fk);
-      placed.set(tk, { ...props });
+      placed.set(destKey, { ...props });
       
       // If there's a signboard at the old location, move it to the new location
       const signboard = fy === 0 ? getSignboardAt(currentRoomId, from.x, from.z) : null;
@@ -3158,12 +3200,12 @@ export function addClient(
         });
       }
       
-      const deltaTile = obstacleTileFromPlaced(currentRoomId, tk);
+      const deltaTile = obstacleTileFromPlaced(currentRoomId, destKey);
       broadcast(currentRoomId, {
         type: "obstaclesDelta",
         roomId: currentRoomId,
         add: deltaTile ? [deltaTile] : [],
-        remove: [fk],
+        remove: fk !== fromClientKey ? [fk, fromClientKey] : [fromClientKey],
       });
       schedulePersistWorldState();
       logGameplayEvent(conn.sessionId, address, currentRoomId, "move_obstacle", {
@@ -3305,7 +3347,6 @@ export function addClient(
       }
 
       const tile = snapToTile(tx, tz);
-      const k = tileKey(tile.x, tile.z);
 
       if (
         !isOrthogonallyAdjacentToTile(
@@ -3327,6 +3368,17 @@ export function addClient(
       }
 
       const placed = placedMap(currentRoomId);
+      const k = getFloorLevelPlacedKey(placed, tile.x, tile.z);
+      if (!k) {
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "This block cannot be claimed.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
       const props = placed.get(k);
       if (!props || !props.claimable) {
         ws.send(
@@ -3542,8 +3594,19 @@ export function addClient(
         return;
       }
 
-      const k = tileKey(s.tileX, s.tileZ);
       const placed = placedMap(currentRoomId);
+      const k = getFloorLevelPlacedKey(placed, s.tileX, s.tileZ);
+      if (!k) {
+        releaseBlockClaimSession(claimId);
+        ws.send(
+          JSON.stringify({
+            type: "blockClaimResult",
+            ok: false,
+            reason: "This block is no longer available.",
+          } satisfies OutMsg)
+        );
+        return;
+      }
       const props = placed.get(k);
       if (!props || !props.claimable || !props.active) {
         releaseBlockClaimSession(claimId);
