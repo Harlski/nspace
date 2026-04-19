@@ -153,6 +153,7 @@ function enterGame(token: string, address: string): void {
     new URLSearchParams(location.search).has("debug");
   const shortAddr = formatWalletAddressConnectAs(address);
   const hud = createHud(hudRoot, { showDebug: showDebugHud });
+  hud.setBrandLinksPlayerAddress(address);
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
 
@@ -221,11 +222,10 @@ function enterGame(token: string, address: string): void {
       <button type="button" class="rooms-modal__close" aria-label="Close">×</button>
       <div class="rooms-modal__header">
         <h2 class="rooms-modal__title" id="rooms-modal-title">Rooms</h2>
-        <p class="rooms-modal__subtitle">Join with a 6-character code, browse public rooms, or create your own.</p>
       </div>
       <div class="rooms-modal__body">
-        <div id="rooms-view-list">
-          <div class="rooms-modal__join-code-block">
+        <div id="rooms-view-list" class="rooms-modal__list-view">
+          <div class="rooms-modal__join-code-block" hidden>
             <p class="rooms-modal__section-title">Join with code</p>
             <div class="rooms-modal__join-code-row">
               <input class="rooms-modal__input rooms-modal__input--code" id="rooms-join-code" type="text" inputmode="text" maxlength="32" autocomplete="off" placeholder="AB12CD" aria-label="Room code" />
@@ -234,19 +234,16 @@ function enterGame(token: string, address: string): void {
             </div>
             <p class="rooms-modal__hint" id="rooms-join-hint" hidden></p>
           </div>
-          <div id="rooms-current-room-section" class="rooms-modal__current-room" hidden>
-            <p class="rooms-modal__section-title">Current room</p>
-            <ul class="rooms-modal__list rooms-modal__list--rows" id="rooms-modal-current-room"></ul>
-          </div>
           <div class="rooms-modal__tabs" role="tablist" aria-label="Room categories">
-            <button type="button" class="rooms-modal__tab rooms-modal__tab--active" id="rooms-tab-official" role="tab" aria-selected="true">Official</button>
+            <button type="button" class="rooms-modal__tab rooms-modal__tab--active" id="rooms-tab-official" role="tab" aria-selected="true">Official rooms</button>
             <button type="button" class="rooms-modal__tab" id="rooms-tab-user" role="tab" aria-selected="false">User rooms</button>
             <button type="button" class="rooms-modal__tab" id="rooms-tab-admin" role="tab" aria-selected="false" hidden>Hidden</button>
             <button type="button" class="rooms-modal__tab" id="rooms-tab-deleted" role="tab" aria-selected="false" hidden>Deleted</button>
           </div>
           <p class="rooms-modal__section-title" id="rooms-list-heading">Official rooms</p>
-          <ul class="rooms-modal__list rooms-modal__list--rows" id="rooms-modal-list"></ul>
+          <ul class="rooms-modal__list rooms-modal__list--rows rooms-modal__list--catalog" id="rooms-modal-list"></ul>
           <button type="button" class="rooms-modal__btn rooms-modal__btn--primary rooms-modal__create-launch" id="rooms-open-create">Create a room</button>
+          <p id="rooms-modal-current-line" class="rooms-modal__current-line" aria-live="polite"></p>
         </div>
         <div id="rooms-view-create" hidden>
           <button type="button" class="rooms-modal__back" id="rooms-create-back">← Back</button>
@@ -306,12 +303,9 @@ function enterGame(token: string, address: string): void {
   `;
   hudRoot.appendChild(roomsModal);
   const roomsModalList = roomsModal.querySelector("#rooms-modal-list") as HTMLUListElement;
-  const roomsCurrentRoomSection = roomsModal.querySelector(
-    "#rooms-current-room-section"
-  ) as HTMLElement;
-  const roomsModalCurrentRoom = roomsModal.querySelector(
-    "#rooms-modal-current-room"
-  ) as HTMLUListElement;
+  const roomsModalCurrentLine = roomsModal.querySelector(
+    "#rooms-modal-current-line"
+  ) as HTMLParagraphElement;
   const roomsListHeading = roomsModal.querySelector("#rooms-list-heading") as HTMLElement;
   const roomsTabOfficialBtn = roomsModal.querySelector("#rooms-tab-official") as HTMLButtonElement;
   const roomsTabUserBtn = roomsModal.querySelector("#rooms-tab-user") as HTMLButtonElement;
@@ -641,45 +635,17 @@ function enterGame(token: string, address: string): void {
 
   function renderRoomsModalList(): void {
     roomsModalList.innerHTML = "";
-    roomsModalCurrentRoom.innerHTML = "";
     const currentId = normalizeRoomId(game.getRoomId());
     const currentRoomMeta = knownRooms.find(
       (r) => normalizeRoomId(r.id) === currentId
     );
-
-    if (currentRoomMeta) {
-      roomsCurrentRoomSection.hidden = false;
-      appendRoomCatalogRow(roomsModalCurrentRoom, currentRoomMeta, {
-        showJoinButton: false,
-      });
-    } else if (currentId) {
-      roomsCurrentRoomSection.hidden = false;
-      const li = document.createElement("li");
-      li.className = "rooms-modal__row rooms-modal__row--line";
-      const nameCell = document.createElement("div");
-      nameCell.className = "rooms-modal__cell rooms-modal__cell--name";
-      const nameEl = document.createElement("span");
-      nameEl.className = "rooms-modal__cell-name-text";
-      nameEl.textContent = formatRoomJoinCode(currentId);
-      nameCell.appendChild(nameEl);
-      const ownerCell = document.createElement("div");
-      ownerCell.className = "rooms-modal__cell rooms-modal__cell--owner";
-      const dash = document.createElement("span");
-      dash.className = "rooms-modal__cell--owner-official";
-      dash.textContent = "—";
-      ownerCell.appendChild(dash);
-      const playersCell = document.createElement("div");
-      playersCell.className = "rooms-modal__cell rooms-modal__cell--players";
-      playersCell.textContent = "—";
-      const actions = document.createElement("div");
-      actions.className = "rooms-modal__cell rooms-modal__cell--actions";
-      li.appendChild(nameCell);
-      li.appendChild(ownerCell);
-      li.appendChild(playersCell);
-      li.appendChild(actions);
-      roomsModalCurrentRoom.appendChild(li);
+    if (currentId) {
+      const displayName = currentRoomMeta?.displayName?.trim().length
+        ? currentRoomMeta.displayName.trim()
+        : formatRoomJoinCode(currentId);
+      roomsModalCurrentLine.textContent = `Currently in ${displayName}`;
     } else {
-      roomsCurrentRoomSection.hidden = true;
+      roomsModalCurrentLine.textContent = "";
     }
 
     const filtered = knownRooms.filter((r) => {
@@ -700,12 +666,34 @@ function enterGame(token: string, address: string): void {
       }
       return false;
     });
+    const officialBuiltinOrder = ["hub", "canvas", "chamber"];
+    if (roomsCatalogTab === "official") {
+      filtered.sort((a, b) => {
+        const na = normalizeRoomId(a.id);
+        const nb = normalizeRoomId(b.id);
+        const ia = officialBuiltinOrder.indexOf(na);
+        const ib = officialBuiltinOrder.indexOf(nb);
+        if (ia !== -1 || ib !== -1) {
+          if (ia === -1) return 1;
+          if (ib === -1) return -1;
+          if (ia !== ib) return ia - ib;
+        }
+        return a.displayName.localeCompare(b.displayName);
+      });
+    } else if (roomsCatalogTab === "user") {
+      filtered.sort((a, b) => {
+        const ao = viewerOwnsRoom(a) ? 0 : 1;
+        const bo = viewerOwnsRoom(b) ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+        return a.displayName.localeCompare(b.displayName);
+      });
+    }
     if (filtered.length === 0) {
       const empty = document.createElement("li");
       empty.className = "rooms-modal__empty";
       empty.textContent =
         roomsCatalogTab === "user"
-          ? "No user rooms in this list. Create one or join with a code."
+          ? "No user rooms in this list yet. Create one from the button below."
           : roomsCatalogTab === "admin"
             ? "No other players' private rooms."
             : roomsCatalogTab === "deleted"
@@ -2173,6 +2161,33 @@ function enterGame(token: string, address: string): void {
       e.preventDefault();
     }
   });
+
+  /** Mobile: dismissing the keyboard often leaves the input focused; taps then reopen it. */
+  if (isCoarsePointer) {
+    chatInput.setAttribute("inputmode", "none");
+    const onChatInputModeFocus = (): void => {
+      chatInput.removeAttribute("inputmode");
+    };
+    const onChatInputModeBlur = (): void => {
+      chatInput.setAttribute("inputmode", "none");
+    };
+    chatInput.addEventListener("focus", onChatInputModeFocus, { signal: ac.signal });
+    chatInput.addEventListener("blur", onChatInputModeBlur, { signal: ac.signal });
+
+    const onWindowPointerDownBlurChat = (e: PointerEvent): void => {
+      if (e.button !== 0 || disposed) return;
+      if (document.activeElement !== chatInput) return;
+      const t = e.target;
+      if (!(t instanceof Node)) return;
+      const chatShell = chatInput.closest(".hud-bottom-left");
+      if (chatShell?.contains(t)) return;
+      chatInput.blur();
+    };
+    window.addEventListener("pointerdown", onWindowPointerDownBlurChat, {
+      capture: true,
+      signal: ac.signal,
+    });
+  }
 
   window.addEventListener(
     "keydown",

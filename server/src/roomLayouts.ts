@@ -91,13 +91,16 @@ const CHAMBER_DOORS: DoorDef[] = [
   },
 ];
 
+/** Hub tile where players land when leaving the maze (also used when maze entry is denied). */
+export const HUB_MAZE_EXIT_SPAWN = { x: -1, z: -11 } as const;
+
 const CANVAS_DOORS: DoorDef[] = [
   {
     x: 0,
     z: 15,
     targetRoomId: HUB_ROOM_ID,
-    spawnX: -1,
-    spawnZ: -11,
+    spawnX: HUB_MAZE_EXIT_SPAWN.x,
+    spawnZ: HUB_MAZE_EXIT_SPAWN.z,
   },
 ];
 

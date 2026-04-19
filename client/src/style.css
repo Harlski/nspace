@@ -70,8 +70,36 @@
 .rooms-modal__body {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 12px 18px 18px;
+  display: flex;
+  flex-direction: column;
+}
+
+.rooms-modal__list-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#rooms-view-create,
+#rooms-view-edit {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rooms-modal__current-line {
+  flex-shrink: 0;
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.78);
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .rooms-modal__section-title {
@@ -81,10 +109,6 @@
   text-transform: uppercase;
   color: rgba(226, 232, 240, 0.55);
   margin: 0 0 8px;
-}
-
-.rooms-modal__current-room {
-  margin-bottom: 1rem;
 }
 
 .rooms-modal__tabs {
@@ -97,13 +121,16 @@
 
 .rooms-modal__tab {
   flex: 1;
-  padding: 8px 10px;
+  padding: 8px 8px;
   border: none;
   background: rgba(255, 255, 255, 0.05);
   color: rgba(226, 232, 240, 0.65);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  line-height: 1.25;
   cursor: pointer;
+  white-space: normal;
+  hyphens: auto;
 }
 
 .rooms-modal__tab--active {
@@ -118,6 +145,13 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.rooms-modal__list.rooms-modal__list--catalog {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-bottom: 8px;
 }
 
 .rooms-modal__list--rows {
@@ -706,6 +740,305 @@ body {
   flex-shrink: 0;
   /* Extra separation from bright canvas */
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+  pointer-events: auto;
+}
+
+button.hud-brand {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  text-align: inherit;
+}
+
+button.hud-brand:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.65);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* In-game “Nimiq Space” — links + wallet (centered over letterbox) */
+.brand-links-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  padding-top: max(24px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.brand-links-overlay[hidden] {
+  display: none !important;
+}
+
+.brand-links-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.brand-links-overlay__dialog {
+  position: relative;
+  z-index: 1;
+  width: min(360px, 100%);
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  padding: 28px 18px 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  background: rgba(15, 17, 23, 0.97);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.brand-links-overlay__header {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 40px 0;
+  margin: 0 0 18px;
+  min-height: 38px;
+  box-sizing: border-box;
+}
+
+.brand-links-overlay__brand-title.main-menu__title {
+  margin: 0;
+  padding: 0;
+  font-size: clamp(14px, 2.1vw, 20px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  justify-content: center;
+  text-align: center;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+
+.brand-links-overlay__close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8eaef;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.brand-links-overlay__close:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.brand-links-overlay__body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.brand-links-overlay__body--qr-open .brand-links-overlay__social,
+.brand-links-overlay__body--qr-open .brand-links-overlay__wallet-stack {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.brand-links-overlay__social {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 20px 28px;
+  min-width: 0;
+}
+
+.brand-links-overlay__social-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  max-width: 140px;
+  color: #a5afc0;
+  text-decoration: none;
+  pointer-events: auto;
+  transition: color 0.15s ease;
+  text-align: center;
+}
+
+.brand-links-overlay__social-tile:hover {
+  color: #f59e0b;
+}
+
+.brand-links-overlay__social-icon {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: block;
+  object-fit: contain;
+}
+
+.brand-links-overlay__social-label {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.brand-links-overlay__wallet-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.brand-links-overlay__wallet-identicon {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: 50%;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.brand-links-overlay__wallet-identicon:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.65);
+  outline-offset: 3px;
+}
+
+.brand-links-overlay__address-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+}
+
+.brand-links-overlay__address-copy {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px 2px;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(226, 232, 240, 0.92);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  word-break: break-all;
+  text-align: center;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(148, 163, 184, 0.45);
+  text-underline-offset: 3px;
+  transition: color 0.12s ease, text-decoration-color 0.12s ease;
+}
+
+.brand-links-overlay__address-copy:hover {
+  color: #f8fafc;
+  text-decoration-color: rgba(245, 158, 11, 0.55);
+}
+
+.brand-links-overlay__address-copy:focus {
+  outline: none;
+}
+
+.brand-links-overlay__address-copy:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.55);
+  outline-offset: 2px;
+}
+
+.brand-links-overlay__copy-feedback {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #4ade80;
+  text-align: center;
+  min-height: 1.3em;
+}
+
+/* Only the QR module is visible; no dim sheet — body stays tappable to return */
+.brand-links-overlay__qr-view {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 12px;
+  cursor: pointer;
+  background: transparent;
+  outline: none;
+}
+
+.brand-links-overlay__qr-view[hidden] {
+  display: none !important;
+}
+
+.brand-links-overlay__qr-view:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.55);
+  outline-offset: -2px;
+}
+
+.brand-links-overlay__qr-canvas-host {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  pointer-events: none;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.brand-links-overlay__wallet {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: auto;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 10px 14px;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* Nimiq pill ::before/::after extend hit area; match feedback button — clicks only on visible pill. */
+.brand-links-overlay__wallet.nq-button-pill::before,
+.brand-links-overlay__wallet.nq-button-pill::after {
+  pointer-events: none;
 }
 
 .hud-top-strip .hud-status-row {
@@ -1192,8 +1525,6 @@ body {
   position: absolute;
   top: 48px;
   right: 10px;
-  /* Above .build-block-bar (z-index 5) and .hud-bottom-left (4) so object edit panel isn’t hidden */
-  z-index: 6;
   pointer-events: auto;
   display: flex;
   flex-direction: column;
@@ -1714,24 +2045,54 @@ body {
   display: none !important;
 }
 
-.build-block-bar__teleporter {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+.teleporter-fab {
+  position: fixed;
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+  right: auto;
+  z-index: 45;
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.build-block-bar__teleporter[hidden] {
+.teleporter-fab[hidden] {
   display: none !important;
 }
 
-.build-block-bar__teleporter-hint {
-  margin: 0 0 8px;
-  font-size: 11px;
-  color: rgba(226, 232, 240, 0.72);
-  line-height: 1.35;
+.teleporter-panel {
+  position: fixed;
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  bottom: calc(172px + env(safe-area-inset-bottom, 0px));
+  right: auto;
+  z-index: 46;
+  width: min(320px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(12, 16, 26, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+  line-height: 1.4;
+  color: #e9f1ff;
 }
 
-.build-block-bar__teleporter-label {
+.teleporter-panel[hidden] {
+  display: none !important;
+}
+
+.teleporter-panel__title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.teleporter-panel__hint {
+  margin: 0 0 10px;
+  color: rgba(226, 232, 240, 0.75);
+  font-size: 11px;
+}
+
+.teleporter-panel__label {
   display: block;
   font-size: 10px;
   font-weight: 600;
@@ -1741,102 +2102,61 @@ body {
   margin-bottom: 4px;
 }
 
-.build-block-bar__teleporter-input {
+.teleporter-panel__input {
   width: 100%;
   box-sizing: border-box;
-  height: 30px;
-  margin-bottom: 6px;
+  height: 32px;
+  margin-bottom: 8px;
   padding: 0 8px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.08);
   color: #e9f1ff;
-  font-size: 12px;
+  font-size: 13px;
 }
 
-.build-block-bar__teleporter-input--num {
-  width: 100%;
-  margin-bottom: 0;
-  margin-top: 4px;
-}
-
-.build-block-bar__teleporter-input--select {
-  cursor: pointer;
-  /* Native dropdown list often uses system light theme; hint dark + style option rows where supported. */
-  color-scheme: dark;
-  background-color: rgba(15, 17, 23, 0.96);
-  color: #e9f1ff;
-}
-
-.build-block-bar__teleporter-input--select option {
-  background-color: #151923;
-  color: #e9f1ff;
-}
-
-.build-object-panel--teleporter #build-object-panel-tp-pick {
-  margin-top: 8px;
-}
-
-.build-object-panel--teleporter #build-object-panel-tp-save {
-  margin-top: 6px;
-}
-
-.build-object-panel__tp-hub-hint {
-  margin: 4px 0 6px;
-}
-
-#build-object-panel-tp-dest-coords-wrap[hidden] {
-  display: none !important;
-}
-
-.build-block-bar__teleporter-row {
+.teleporter-panel__row {
   display: flex;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
-.build-block-bar__teleporter-field {
+.teleporter-panel__field {
   flex: 1;
   font-size: 10px;
   font-weight: 600;
   color: rgba(226, 232, 240, 0.55);
 }
 
-.build-block-bar__teleporter-actions {
+.teleporter-panel__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 2px;
+  gap: 8px;
+  margin-top: 4px;
 }
 
-.build-block-bar__teleporter-btn {
+.teleporter-panel__btn {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 30px;
-  padding: 4px 8px;
+  height: 32px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(255, 255, 255, 0.08);
   color: #e9f1ff;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  font-family: inherit;
 }
 
-.build-block-bar__teleporter-btn--primary {
+.teleporter-panel__btn--primary {
   background: rgba(59, 130, 246, 0.35);
   border-color: rgba(147, 197, 253, 0.45);
 }
 
-.build-block-bar__teleporter-await {
-  margin: 6px 0 0;
+.teleporter-panel__await {
+  margin: 8px 0 0;
   font-size: 11px;
   color: rgba(147, 197, 253, 0.95);
-}
-
-.build-block-bar__teleporter-await[hidden] {
-  display: none !important;
 }
 
 .hud-status {
@@ -1862,8 +2182,8 @@ body {
   pointer-events: auto;
   font-size: 12px;
   line-height: 1.35;
+  will-change: contents;
   isolation: isolate;
-  color-scheme: dark;
 }
 
 .build-object-panel__surface {
@@ -3598,25 +3918,47 @@ body {
 
 
 .main-menu__social {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 20px 28px;
+  min-width: 0;
   margin-top: 28px;
-  font-size: 14px;
-  color: #7b8496;
 }
 
-.main-menu__social-link {
+.main-menu__social-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  max-width: 140px;
   color: #a5afc0;
   text-decoration: none;
   pointer-events: auto;
   transition: color 0.15s ease;
+  text-align: center;
 }
 
-.main-menu__social-link:hover {
+.main-menu__social-tile:hover {
   color: #f59e0b;
 }
 
-.main-menu__social-sep {
-  margin: 0 8px;
-  opacity: 0.6;
+.main-menu__social-icon {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: block;
+  object-fit: contain;
+}
+
+.main-menu__social-label {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
 }
 
 .main-menu__replay {

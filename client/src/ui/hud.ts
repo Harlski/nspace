@@ -7,6 +7,10 @@ import {
 import type { ObstacleProps } from "../net/ws.js";
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../game/constants.js";
 import { HUB_ROOM_ID, normalizeRoomId } from "../game/roomLayouts.js";
+import telegramIconUrl from "../assets/social/telegram.svg?url";
+import xIconUrl from "../assets/social/x.svg?url";
+import { formatWalletAddressGap4 } from "../formatWalletAddress.js";
+import { NIMIQ_WALLET_URL, TELEGRAM_URL, X_URL } from "../socialLinks.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 
 function cssHex(n: number): string {
@@ -190,6 +194,8 @@ export function createHud(
     ) => Promise<{ ok: boolean; error?: string }>
   ) => void;
   setNimWalletStatus: (status: string) => void;
+  /** Wallet identicon in the brand links modal; call when entering the game. */
+  setBrandLinksPlayerAddress: (address: string) => void;
   setLoadingVisible: (visible: boolean) => void;
   /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
   setNimClaimProgress: (
@@ -223,9 +229,10 @@ export function createHud(
   const topStrip = document.createElement("div");
   topStrip.className = "hud-top-strip";
 
-  const brand = document.createElement("div");
+  const brand = document.createElement("button");
+  brand.type = "button";
   brand.className = "hud-brand";
-  brand.setAttribute("aria-hidden", "true");
+  brand.setAttribute("aria-label", "Nimiq Space — community links and wallet");
   const nimiqSpan = document.createElement("span");
   nimiqSpan.className = "main-menu__title-nimiq";
   nimiqSpan.textContent = "NIMIQ";
@@ -457,6 +464,55 @@ export function createHud(
     </div>
   `;
 
+  const brandLinksOverlay = document.createElement("div");
+  brandLinksOverlay.className = "brand-links-overlay";
+  brandLinksOverlay.hidden = true;
+  brandLinksOverlay.setAttribute("aria-hidden", "true");
+  brandLinksOverlay.innerHTML = `
+    <div class="brand-links-overlay__backdrop" aria-hidden="true"></div>
+    <div class="brand-links-overlay__dialog" role="dialog" aria-modal="true" aria-labelledby="brand-links-title">
+      <div class="brand-links-overlay__header">
+        <button type="button" class="brand-links-overlay__close" aria-label="Close">×</button>
+        <h2 class="main-menu__title brand-links-overlay__brand-title" id="brand-links-title">
+          <span class="main-menu__title-nimiq">NIMIQ</span>
+          <span class="main-menu__title-space">SPACE</span>
+        </h2>
+      </div>
+      <div class="brand-links-overlay__body">
+        <div class="brand-links-overlay__social">
+          <a class="brand-links-overlay__social-tile" href="${TELEGRAM_URL}" target="_blank" rel="noopener noreferrer">
+            <img class="brand-links-overlay__social-icon" src="${telegramIconUrl}" alt="" width="36" height="36" aria-hidden="true" />
+            <span class="brand-links-overlay__social-label">Telegram</span>
+          </a>
+          <a class="brand-links-overlay__social-tile" href="${X_URL}" target="_blank" rel="noopener noreferrer">
+            <img class="brand-links-overlay__social-icon" src="${xIconUrl}" alt="" width="36" height="36" aria-hidden="true" />
+            <span class="brand-links-overlay__social-label">X (Twitter)</span>
+          </a>
+        </div>
+        <div class="brand-links-overlay__wallet-stack">
+          <img class="brand-links-overlay__wallet-identicon" alt="" hidden />
+          <div class="brand-links-overlay__address-row">
+            <button type="button" class="brand-links-overlay__address-copy" hidden aria-label="Copy wallet address to clipboard"></button>
+            <span class="brand-links-overlay__copy-feedback" hidden aria-live="polite"></span>
+          </div>
+          <a class="brand-links-overlay__wallet nq-button-pill light-blue" href="${NIMIQ_WALLET_URL}" target="_blank" rel="noopener noreferrer">
+            <span>Open Wallet</span>
+          </a>
+        </div>
+        <div
+          class="brand-links-overlay__qr-view"
+          hidden
+          aria-hidden="true"
+          tabindex="0"
+          role="button"
+          aria-label="Return to links and wallet"
+        >
+          <div class="brand-links-overlay__qr-canvas-host"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
   leftStack.appendChild(debugPanel);
   leftStack.appendChild(canvasLeaderboard);
   
@@ -472,6 +528,7 @@ export function createHud(
   ui.appendChild(leftStack);
   letter.appendChild(signpostOverlay);
   letter.appendChild(feedbackOverlay);
+  letter.appendChild(brandLinksOverlay);
 
   // Loading overlay for room transitions
   const loadingOverlay = document.createElement("div");
@@ -1144,6 +1201,257 @@ export function createHud(
         hideFeedbackOverlay();
       }
       e.stopPropagation();
+    });
+  }
+
+  let brandLinksPlayerAddress = "";
+  const brandLinksBackdrop = brandLinksOverlay.querySelector(
+    ".brand-links-overlay__backdrop"
+  ) as HTMLElement | null;
+  const brandLinksCloseBtn = brandLinksOverlay.querySelector(
+    ".brand-links-overlay__close"
+  ) as HTMLButtonElement | null;
+  const brandLinksBody = brandLinksOverlay.querySelector(
+    ".brand-links-overlay__body"
+  ) as HTMLElement | null;
+  const brandLinksWalletImg = brandLinksOverlay.querySelector(
+    ".brand-links-overlay__wallet-identicon"
+  ) as HTMLImageElement | null;
+  const brandLinksAddressCopyBtn = brandLinksOverlay.querySelector(
+    ".brand-links-overlay__address-copy"
+  ) as HTMLButtonElement | null;
+  const brandLinksCopyFeedback = brandLinksOverlay.querySelector(
+    ".brand-links-overlay__copy-feedback"
+  ) as HTMLSpanElement | null;
+  const brandLinksQrView = brandLinksOverlay.querySelector(
+    ".brand-links-overlay__qr-view"
+  ) as HTMLElement | null;
+  const brandLinksQrCanvasHost = brandLinksOverlay.querySelector(
+    ".brand-links-overlay__qr-canvas-host"
+  ) as HTMLElement | null;
+
+  let brandLinksEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
+  let brandLinksCopyFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function closeBrandQrFullscreen(): void {
+    if (!brandLinksQrView) return;
+    const wasQrOpen = !brandLinksQrView.hidden;
+    brandLinksQrView.hidden = true;
+    brandLinksQrView.setAttribute("aria-hidden", "true");
+    brandLinksBody?.classList.remove("brand-links-overlay__body--qr-open");
+    if (brandLinksQrCanvasHost) {
+      brandLinksQrCanvasHost.replaceChildren();
+    }
+    if (wasQrOpen) {
+      if (brandLinksWalletImg && !brandLinksWalletImg.hidden) {
+        brandLinksWalletImg.focus({ preventScroll: true });
+      } else if (brandLinksCloseBtn) {
+        brandLinksCloseBtn.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  function syncBrandLinksWalletAddressDisplay(): void {
+    if (!brandLinksAddressCopyBtn) return;
+    if (brandLinksCopyFeedbackTimer) {
+      clearTimeout(brandLinksCopyFeedbackTimer);
+      brandLinksCopyFeedbackTimer = null;
+    }
+    if (brandLinksCopyFeedback) {
+      brandLinksCopyFeedback.hidden = true;
+      brandLinksCopyFeedback.textContent = "";
+    }
+    const raw = brandLinksPlayerAddress.trim();
+    if (!raw) {
+      brandLinksAddressCopyBtn.hidden = true;
+      brandLinksAddressCopyBtn.textContent = "";
+      brandLinksAddressCopyBtn.removeAttribute("title");
+      return;
+    }
+    const normalized = raw.replace(/\s+/g, "").trim();
+    brandLinksAddressCopyBtn.hidden = false;
+    brandLinksAddressCopyBtn.textContent = formatWalletAddressGap4(raw);
+    brandLinksAddressCopyBtn.title = normalized;
+  }
+
+  function hideBrandLinksOverlay(): void {
+    closeBrandQrFullscreen();
+    if (brandLinksCopyFeedbackTimer) {
+      clearTimeout(brandLinksCopyFeedbackTimer);
+      brandLinksCopyFeedbackTimer = null;
+    }
+    if (brandLinksCopyFeedback) {
+      brandLinksCopyFeedback.hidden = true;
+      brandLinksCopyFeedback.textContent = "";
+    }
+    brandLinksOverlay.hidden = true;
+    brandLinksOverlay.setAttribute("aria-hidden", "true");
+    if (brandLinksEscapeHandler) {
+      window.removeEventListener("keydown", brandLinksEscapeHandler);
+      brandLinksEscapeHandler = null;
+    }
+  }
+
+  function syncBrandLinksWalletIdenticon(): void {
+    syncBrandLinksWalletAddressDisplay();
+    if (!brandLinksWalletImg) return;
+    const addr = brandLinksPlayerAddress.trim();
+    if (!addr) {
+      brandLinksWalletImg.hidden = true;
+      brandLinksWalletImg.removeAttribute("src");
+      brandLinksWalletImg.removeAttribute("tabindex");
+      brandLinksWalletImg.removeAttribute("role");
+      brandLinksWalletImg.removeAttribute("aria-label");
+      return;
+    }
+    brandLinksWalletImg.hidden = false;
+    brandLinksWalletImg.tabIndex = 0;
+    brandLinksWalletImg.setAttribute("role", "button");
+    brandLinksWalletImg.setAttribute("aria-label", "Show payment QR in modal");
+    brandLinksWalletImg.removeAttribute("src");
+    brandLinksWalletImg.dataset.address = addr;
+    void (async (): Promise<void> => {
+      try {
+        const { identiconDataUrl } = await import("../game/identiconTexture.js");
+        const url = await identiconDataUrl(addr);
+        if (brandLinksWalletImg.dataset.address !== addr) return;
+        brandLinksWalletImg.src = url;
+      } catch {
+        if (brandLinksWalletImg.dataset.address === addr) {
+          brandLinksWalletImg.hidden = true;
+        }
+      }
+    })();
+  }
+
+  async function openBrandQrFullscreen(): Promise<void> {
+    const normalized = brandLinksPlayerAddress.replace(/\s+/g, "").trim().toUpperCase();
+    if (!normalized || !brandLinksQrCanvasHost || !brandLinksQrView) return;
+    const qrUrl = `${NIMIQ_WALLET_URL}/nimiq:${normalized}`;
+    brandLinksBody?.classList.add("brand-links-overlay__body--qr-open");
+    brandLinksQrView.hidden = false;
+    brandLinksQrView.setAttribute("aria-hidden", "false");
+    brandLinksQrCanvasHost.replaceChildren();
+    const bodyEl = brandLinksQrView.closest(
+      ".brand-links-overlay__body"
+    ) as HTMLElement | null;
+    const inset = 28;
+    const bw = bodyEl?.clientWidth ?? 300;
+    const bh = bodyEl?.clientHeight ?? 300;
+    const size = Math.max(120, Math.min(260, Math.floor(Math.min(bw, bh) - inset)));
+    try {
+      const { default: QrCreator } = await import("qr-creator");
+      QrCreator.render(
+        {
+          text: qrUrl,
+          radius: 0.45,
+          ecLevel: "M",
+          fill: "#e8eaef",
+          background: "rgba(5, 7, 12, 0.98)",
+          size,
+        },
+        brandLinksQrCanvasHost
+      );
+      brandLinksQrView.focus({ preventScroll: true });
+    } catch {
+      closeBrandQrFullscreen();
+    }
+  }
+
+  if (brandLinksAddressCopyBtn) {
+    brandLinksAddressCopyBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const full = brandLinksPlayerAddress.replace(/\s+/g, "").trim();
+      if (!full) return;
+      void (async (): Promise<void> => {
+        try {
+          await navigator.clipboard.writeText(full);
+          if (brandLinksCopyFeedback) {
+            brandLinksCopyFeedback.textContent = "✓ Copied to clipboard";
+            brandLinksCopyFeedback.hidden = false;
+          }
+          if (brandLinksCopyFeedbackTimer) clearTimeout(brandLinksCopyFeedbackTimer);
+          brandLinksCopyFeedbackTimer = setTimeout(() => {
+            if (brandLinksCopyFeedback) {
+              brandLinksCopyFeedback.hidden = true;
+              brandLinksCopyFeedback.textContent = "";
+            }
+            brandLinksCopyFeedbackTimer = null;
+          }, 2200);
+        } catch {
+          /* ignore */
+        }
+      })();
+    });
+  }
+
+  if (brandLinksWalletImg) {
+    brandLinksWalletImg.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void openBrandQrFullscreen();
+    });
+    brandLinksWalletImg.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();
+        void openBrandQrFullscreen();
+      }
+    });
+  }
+
+  if (brandLinksQrView) {
+    brandLinksQrView.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeBrandQrFullscreen();
+    });
+    brandLinksQrView.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeBrandQrFullscreen();
+      }
+    });
+  }
+
+  function showBrandLinksOverlay(): void {
+    if (!brandLinksOverlay.hidden) return;
+    closeBrandQrFullscreen();
+    syncBrandLinksWalletIdenticon();
+    brandLinksOverlay.hidden = false;
+    brandLinksOverlay.setAttribute("aria-hidden", "false");
+    brandLinksEscapeHandler = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      if (brandLinksQrView && !brandLinksQrView.hidden) {
+        closeBrandQrFullscreen();
+        return;
+      }
+      hideBrandLinksOverlay();
+    };
+    window.addEventListener("keydown", brandLinksEscapeHandler);
+  }
+
+  brand.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showBrandLinksOverlay();
+  });
+
+  if (brandLinksBackdrop) {
+    brandLinksBackdrop.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideBrandLinksOverlay();
+    });
+  }
+  if (brandLinksCloseBtn) {
+    brandLinksCloseBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideBrandLinksOverlay();
     });
   }
 
@@ -2633,6 +2941,13 @@ export function createHud(
         nimBalanceValue.textContent = status;
       }
     },
+    setBrandLinksPlayerAddress(address: string) {
+      brandLinksPlayerAddress = address.replace(/\s+/g, "").trim();
+      syncBrandLinksWalletAddressDisplay();
+      if (!brandLinksOverlay.hidden) {
+        syncBrandLinksWalletIdenticon();
+      }
+    },
     setReconnectOffer(visible: boolean) {
       reconnectBtn.hidden = !visible;
     },
@@ -2743,6 +3058,7 @@ export function createHud(
       signboardTooltip.hidden = false;
     },
     destroy() {
+      hideBrandLinksOverlay();
       hideFeedbackOverlay();
       if (playerJoinToastTimer) {
         clearTimeout(playerJoinToastTimer);

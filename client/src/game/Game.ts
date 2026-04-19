@@ -331,7 +331,17 @@ const BLOCK_SIZE = 0.82;
  * Otherwise null (new click or path jumped).
  */
 const FLOATING_REWARD_TEXT_OUTLINE_PX = 10;
+/** Thicker stroke when mining reward uses 2× font (`nimLogo`). */
+const FLOATING_REWARD_MINING_TEXT_OUTLINE_PX = 18;
 const FLOATING_REWARD_LOGO_OUTLINE_PX = 3;
+const FLOATING_REWARD_MINING_LOGO_OUTLINE_PX = 6;
+const FLOATING_REWARD_DEFAULT_DURATION_MS = 2000;
+/** Mining reward floater stays 1s longer than generic floaters (TODO). */
+const FLOATING_REWARD_MINING_DURATION_MS = 3000;
+const FLOATING_REWARD_MINING_FONT = "bold 64px 'Muli', sans-serif";
+const FLOATING_REWARD_MINING_LOGO_H = 72;
+const FLOATING_REWARD_MINING_GAP = 14;
+const FLOATING_REWARD_MINING_CANVAS_H = 120;
 const FLOATING_REWARD_TEXT_SHADOW_BLUR = 10;
 const FLOATING_REWARD_TEXT_SHADOW_OFFSET_X = 4;
 const FLOATING_REWARD_TEXT_SHADOW_OFFSET_Y = 5;
@@ -348,7 +358,8 @@ function fillTextWithWhiteOutline(
   text: string,
   x: number,
   y: number,
-  fillColor: string
+  fillColor: string,
+  outlinePx: number = FLOATING_REWARD_TEXT_OUTLINE_PX
 ): void {
   ctx.save();
   ctx.shadowColor = "rgba(255, 255, 255, 0.48)";
@@ -366,7 +377,7 @@ function fillTextWithWhiteOutline(
   ctx.shadowOffsetY = 0;
   ctx.lineJoin = "round";
   ctx.miterLimit = 2;
-  ctx.lineWidth = FLOATING_REWARD_TEXT_OUTLINE_PX;
+  ctx.lineWidth = outlinePx;
   ctx.strokeStyle = "#000";
   ctx.strokeText(text, x, y);
   ctx.fillStyle = fillColor;
@@ -439,6 +450,8 @@ export class Game {
     texture: THREE.CanvasTexture;
     startedAt: number;
     startY: number;
+    /** Total visible lifetime in ms (mining rewards use longer). */
+    durationMs: number;
   }>();
   private readonly targetPos = new Map<string, THREE.Vector3>();
   private ro: ResizeObserver;
@@ -3573,7 +3586,10 @@ export class Game {
     const label =
       nimLogo ? text.replace(/\s*NIM\s*$/i, "").trim() : text;
 
-    const addSpriteFromCanvas = (canvas: HTMLCanvasElement): void => {
+    const addSpriteFromCanvas = (
+      canvas: HTMLCanvasElement,
+      durationMs: number
+    ): void => {
       const w = canvas.width;
       const h = canvas.height;
       const texture = new THREE.CanvasTexture(canvas);
@@ -3604,6 +3620,7 @@ export class Game {
         texture,
         startedAt: performance.now(),
         startY,
+        durationMs,
       });
     };
 
@@ -3624,7 +3641,7 @@ export class Game {
       ctx.textBaseline = "middle";
       ctx.textAlign = "center";
       fillTextWithWhiteOutline(ctx, label, w / 2, h / 2, color);
-      addSpriteFromCanvas(canvas);
+      addSpriteFromCanvas(canvas, FLOATING_REWARD_DEFAULT_DURATION_MS);
     };
 
     if (!nimLogo) {
@@ -3640,22 +3657,22 @@ export class Game {
     const drawWithLogo = (): void => {
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d")!;
-      const font = "bold 32px 'Muli', sans-serif";
+      const font = FLOATING_REWARD_MINING_FONT;
       ctx.font = font;
       const tw = ctx.measureText(label).width;
-      const logoH = 36;
-      const gap = 10;
+      const logoH = FLOATING_REWARD_MINING_LOGO_H;
+      const gap = FLOATING_REWARD_MINING_GAP;
       let logoW = 0;
       if (logo.naturalWidth > 0 && logo.naturalHeight > 0) {
         logoW = (logo.naturalWidth / logo.naturalHeight) * logoH;
       }
       const padX =
         36 +
-        FLOATING_REWARD_TEXT_OUTLINE_PX * 2 +
+        FLOATING_REWARD_MINING_TEXT_OUTLINE_PX * 2 +
         FLOATING_REWARD_TEXT_SHADOW_PAD * 2;
       const innerW = tw + (logoW > 0 ? gap + logoW : 0);
       const w = Math.ceil(innerW + padX);
-      const h = 72;
+      const h = FLOATING_REWARD_MINING_CANVAS_H;
       canvas.width = w;
       canvas.height = h;
 
@@ -3665,7 +3682,14 @@ export class Game {
       const cx = (w - innerW) / 2;
       const midY = h / 2;
 
-      fillTextWithWhiteOutline(ctx, label, cx, midY, color);
+      fillTextWithWhiteOutline(
+        ctx,
+        label,
+        cx,
+        midY,
+        color,
+        FLOATING_REWARD_MINING_TEXT_OUTLINE_PX
+      );
 
       if (logoW > 0) {
         const lx = cx + tw + gap;
@@ -3678,14 +3702,14 @@ export class Game {
             ly,
             logoW,
             logoH,
-            FLOATING_REWARD_LOGO_OUTLINE_PX
+            FLOATING_REWARD_MINING_LOGO_OUTLINE_PX
           );
         } catch {
           /* ignore draw errors */
         }
       }
 
-      addSpriteFromCanvas(canvas);
+      addSpriteFromCanvas(canvas, FLOATING_REWARD_MINING_DURATION_MS);
     };
 
     if (logo.complete && logo.naturalWidth > 0) {
@@ -3711,10 +3735,10 @@ export class Game {
 
   private updateFloatingTexts(): void {
     const now = performance.now();
-    const duration = 2000; // 2 seconds
     const riseDistance = 2.0; // Rise 2 units upward
     
     for (const [key, entry] of this.floatingTexts) {
+      const duration = entry.durationMs;
       const elapsed = now - entry.startedAt;
       if (elapsed >= duration) {
         entry.sprite.removeFromParent();

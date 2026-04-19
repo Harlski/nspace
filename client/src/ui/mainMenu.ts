@@ -1,11 +1,12 @@
+import telegramIconUrl from "../assets/social/telegram.svg?url";
+import xIconUrl from "../assets/social/x.svg?url";
 import { fetchNonce, signInWithWallet, verifyWithServer } from "../auth/nimiq.js";
 import { formatWalletAddressShort } from "../formatWalletAddress.js";
 import { identiconDataUrl } from "../game/identiconTexture.js";
 import { apiUrl } from "../net/apiBase.js";
+import { TELEGRAM_URL, X_URL } from "../socialLinks.js";
 
 const VERSION = "v0.2.0-alpha";
-const TELEGRAM_URL = "https://t.me/nimiqspace";
-const X_URL = "https://x.com/nimiqspace";
 
 /** Public asset — Vite serves `client/public` at `/`. */
 const NIM_LOGO_SRC = "/branding/nimiq-nim-logo.svg";
@@ -133,7 +134,7 @@ export type MainMenuOptions = {
 };
 
 /**
- * Full-screen lobby: title, floating hexes, identicon continue / Nimiq sign-in, social links.
+ * Full-screen lobby: title, floating hexes, identicon continue / Nimiq sign-in, social tiles (Telegram / X).
  */
 export function mountMainMenu(opts: MainMenuOptions): () => void {
   const {
@@ -206,9 +207,14 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
           : ""
       }
       <div class="main-menu__social">
-        <a class="main-menu__social-link" href="${TELEGRAM_URL}" target="_blank" rel="noopener noreferrer">Telegram</a>
-        <span class="main-menu__social-sep" aria-hidden="true">·</span>
-        <a class="main-menu__social-link" href="${X_URL}" target="_blank" rel="noopener noreferrer">X (Twitter)</a>
+        <a class="main-menu__social-tile" href="${TELEGRAM_URL}" target="_blank" rel="noopener noreferrer">
+          <img class="main-menu__social-icon" src="${telegramIconUrl}" alt="" width="36" height="36" aria-hidden="true" />
+          <span class="main-menu__social-label">Telegram</span>
+        </a>
+        <a class="main-menu__social-tile" href="${X_URL}" target="_blank" rel="noopener noreferrer">
+          <img class="main-menu__social-icon" src="${xIconUrl}" alt="" width="36" height="36" aria-hidden="true" />
+          <span class="main-menu__social-label">X (Twitter)</span>
+        </a>
       </div>
       <p class="main-menu__version">${VERSION}</p>
     </div>

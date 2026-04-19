@@ -65,7 +65,11 @@ import {
   loadCanvasClaims,
   clearAllClaims,
 } from "./canvasCanvas.js";
-import { CANVAS_ROOM_ID, CHAMBER_ROOM_ID } from "./roomLayouts.js";
+import {
+  CANVAS_ROOM_ID,
+  CHAMBER_ROOM_ID,
+  HUB_MAZE_EXIT_SPAWN,
+} from "./roomLayouts.js";
 import {
   createSignboard,
   deleteSignboard,
@@ -1514,6 +1518,38 @@ const canvasPlayerSteps = new Map<string, number>();
 /** Track players who have finished the maze, in order */
 const canvasFinishers: Array<{ address: string; displayName: string; timestamp: number }> = [];
 
+function mazePortalBlockedSeconds(): number | null {
+  if (canvasCooldownActive) {
+    return Math.max(1, Math.ceil((canvasCooldownEndTime - Date.now()) / 1000));
+  }
+  if (canvasTimerActive) {
+    return Math.max(1, Math.ceil((canvasTimerEndTime - Date.now()) / 1000));
+  }
+  /** Evacuating canvas → hub after round end; block entry until cooldown applies. */
+  if (canvasRoundEnding) {
+    if (canvasCooldownActive) {
+      return Math.max(1, Math.ceil((canvasCooldownEndTime - Date.now()) / 1000));
+    }
+    return 1;
+  }
+  return null;
+}
+
+function sendMazePortalBlockedBubble(conn: ClientConn): void {
+  const sec = mazePortalBlockedSeconds();
+  if (sec === null) return;
+  conn.ws.send(
+    JSON.stringify({
+      type: "chat",
+      from: "Maze",
+      fromAddress: conn.address,
+      text: `Portal to maze opens in ${sec} seconds`,
+      at: Date.now(),
+      bubbleOnly: true,
+    } satisfies OutMsg)
+  );
+}
+
 function isExitPortalTile(tileProps: PlacedProps | undefined): boolean {
   return Boolean(
     tileProps &&
@@ -1889,10 +1925,15 @@ function endCanvasRound(): void {
   canvasTimerActive = false;
   canvasRoundEnding = true;
   console.log(`[canvas] Round ended`);
-  
-  // Get canvas room
+
   const canvasRoom = rooms.get(CANVAS_ROOM_ID);
-  if (!canvasRoom) return;
+  if (!canvasRoom) {
+    canvasRoundEnding = false;
+    return;
+  }
+
+  /** Start cooldown immediately so hub players cannot enter during the evacuation delay. */
+  startCanvasCooldown();
   
   // If there are finishers, announce the winner (first to finish)
   if (canvasFinishers.length > 0) {
@@ -1961,9 +2002,7 @@ function endCanvasRound(): void {
     // Reset for next round
     canvasPlayerSteps.clear();
     canvasFinishers.length = 0;
-    
-    // Start cooldown period
-    startCanvasCooldown();
+
     canvasRoundEnding = false;
   }, 2000);
 }
@@ -1981,10 +2020,6 @@ function teleportAllInRoomToHub(roomIdRaw: string): void {
 function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: number): void {
   const address = conn.player.address;
 
-  if (conn.pendingBlockClaimId) {
-    releaseBlockClaimSession(conn.pendingBlockClaimId);
-  }
-
   let currentRoomId: string | null = null;
   for (const [roomId, room] of rooms) {
     if (room.has(address)) {
@@ -1994,6 +2029,19 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   }
 
   const nTarget = normalizeRoomId(targetRoomId);
+  const enteringCanvas =
+    nTarget === CANVAS_ROOM_ID &&
+    (currentRoomId === null ||
+      normalizeRoomId(currentRoomId) !== CANVAS_ROOM_ID);
+  if (enteringCanvas && mazePortalBlockedSeconds() !== null) {
+    sendMazePortalBlockedBubble(conn);
+    return;
+  }
+
+  if (conn.pendingBlockClaimId) {
+    releaseBlockClaimSession(conn.pendingBlockClaimId);
+  }
+
   if (
     currentRoomId !== null &&
     normalizeRoomId(currentRoomId) === nTarget
@@ -2235,24 +2283,17 @@ export function addClient(
 ): void {
   const requestedRoomId = normalizeRoomId(roomIdRaw);
   let roomId = requestedRoomId;
-  let canvasGateMessage: string | null = null;
+  let canvasGateRedirect = false;
   if (requestedRoomId === CANVAS_ROOM_ID) {
-    if (canvasCooldownActive) {
-      const remainingSeconds = Math.max(
-        1,
-        Math.ceil((canvasCooldownEndTime - Date.now()) / 1000)
-      );
-      canvasGateMessage = `The Maze is on cooldown. Please wait ${remainingSeconds} seconds before entering.`;
-      roomId = HUB_ROOM_ID;
-    } else if (canvasTimerActive) {
-      const remainingSeconds = Math.max(
-        1,
-        Math.ceil((canvasTimerEndTime - Date.now()) / 1000)
-      );
-      canvasGateMessage = `The Maze round is in progress. Gate opens in ${remainingSeconds} seconds`;
+    if (canvasCooldownActive || canvasTimerActive || canvasRoundEnding) {
+      canvasGateRedirect = true;
       roomId = HUB_ROOM_ID;
     }
   }
+
+  const spawnHintForPlacement = canvasGateRedirect
+    ? { x: HUB_MAZE_EXIT_SPAWN.x, z: HUB_MAZE_EXIT_SPAWN.z }
+    : spawnHint;
   
   ensureFakePlayers(roomId);
   const room = roomOf(roomId);
@@ -2280,11 +2321,11 @@ export function addClient(
       resolvedSpawnTile = true;
     }
   } else if (
-    spawnHint &&
-    Number.isFinite(spawnHint.x) &&
-    Number.isFinite(spawnHint.z)
+    spawnHintForPlacement &&
+    Number.isFinite(spawnHintForPlacement.x) &&
+    Number.isFinite(spawnHintForPlacement.z)
   ) {
-    const t = snapToTile(spawnHint.x, spawnHint.z);
+    const t = snapToTile(spawnHintForPlacement.x, spawnHintForPlacement.z);
     if (isWalkableForRoom(roomId, t.x, t.z)) {
       player.x = t.x;
       player.z = t.z;
@@ -2430,16 +2471,8 @@ export function addClient(
   ) {
     startCanvasCountdown();
   }
-  if (canvasGateMessage) {
-    ws.send(
-      JSON.stringify({
-        type: "chat",
-        from: "Maze",
-        fromAddress: "",
-        text: canvasGateMessage,
-        at: Date.now(),
-      } satisfies OutMsg)
-    );
+  if (canvasGateRedirect) {
+    sendMazePortalBlockedBubble(conn);
   }
 
   ws.on("message", async (raw) => {
