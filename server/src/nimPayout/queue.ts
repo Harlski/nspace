@@ -8,6 +8,7 @@ import {
   sendNimPayoutTransaction,
   LUNA_PER_NIM,
 } from "./sender.js";
+import { nimiqIdenticonDataUrl } from "../nimiqIdenticonServer.js";
 
 export type NimPayoutJobStatus =
   | "pending"
@@ -307,4 +308,51 @@ export function startNimPayoutProcessor(): void {
     console.log(`[nim-payout] Restored ${n} pending payout job(s)`);
   }
   scheduleLoop();
+}
+
+/** Public API row: Nimiq `@nimiq/identicons` (SVG base64 data URL). */
+export type PublicPendingPayoutRow = {
+  /** ISO 8601 UTC when the payout was enqueued. */
+  time: string;
+  /** `data:image/svg+xml;base64,...` from `Identicons.toDataUrl` (see NIMIQDESIGN.md). */
+  identicon: string;
+  walletId: string;
+  amountNim: string;
+};
+
+export type PublicPendingPayoutSnapshot = {
+  allSent: boolean;
+  /** Non-null when `rows` is empty — friendly status for humans. */
+  message: string | null;
+  rows: PublicPendingPayoutRow[];
+};
+
+function formatLunaAsNim4(luna: bigint): string {
+  return (Number(luna) / 100_000).toFixed(4);
+}
+
+/**
+ * Snapshot for public dashboards: pending + processing jobs only (no internal errors / retry metadata).
+ */
+export async function getPublicPendingPayoutSnapshot(): Promise<PublicPendingPayoutSnapshot> {
+  const pending = jobs.filter(
+    (j) => j.status === "pending" || j.status === "processing"
+  );
+  pending.sort((a, b) => a.createdAt - b.createdAt);
+  if (pending.length === 0) {
+    return {
+      allSent: true,
+      message: "All transactions sent :)",
+      rows: [],
+    };
+  }
+  const rows: PublicPendingPayoutRow[] = await Promise.all(
+    pending.map(async (j) => ({
+      time: new Date(j.createdAt).toISOString(),
+      identicon: await nimiqIdenticonDataUrl(j.recipientAddress),
+      walletId: j.recipientAddress,
+      amountNim: formatLunaAsNim4(j.amountLuna),
+    }))
+  );
+  return { allSent: false, message: null, rows };
 }

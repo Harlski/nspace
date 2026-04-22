@@ -15,6 +15,11 @@ export default defineConfig({
         proxyTimeout: 120_000,
       },
       "/ws": { target: "ws://127.0.0.1:3001", ws: true },
+      /** Public HTML from Express (`server/src/index.ts`); without this, SPA serves `index.html`. */
+      "/pending-payouts": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+      },
     },
   },
   preview: {

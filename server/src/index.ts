@@ -25,9 +25,11 @@ import { installSwarmErrorForwarder } from "./swarmLogForwarder.js";
 import {
   flushNimPayoutQueueSync,
   getNimPayoutWalletBalanceLuna,
+  getPublicPendingPayoutSnapshot,
   isNimPayoutSenderConfigured,
   startNimPayoutProcessor,
 } from "./nimPayout/index.js";
+import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "../.env") });
@@ -257,6 +259,21 @@ app.get("/api/nim/payout-balance", async (_req, res) => {
       balanceNim: "0.0000",
     });
   }
+});
+
+/** Public queue snapshot for dashboards (pending + processing jobs only). */
+app.get("/api/nim/pending-payouts", async (_req, res) => {
+  try {
+    res.json(await getPublicPendingPayoutSnapshot());
+  } catch (err) {
+    console.error("[nim/pending-payouts]", err);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+/** Human-readable table; data from `/api/nim/pending-payouts`. */
+app.get("/pending-payouts", (_req, res) => {
+  res.type("html").send(pendingPayoutsPublicPageHtml());
 });
 
 app.get("/api/replay/players", requireJwt, (req, res) => {

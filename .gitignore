@@ -9,6 +9,8 @@ dist
 TODO.md
 # Server-persisted room state (obstacles, extra floor, spawns)
 server/data/
-
+FUTURE.md
+NIMIQDESIGN.md
+PLOTS.md
 # Docker volume data
 data/
