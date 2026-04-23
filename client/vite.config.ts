@@ -1,11 +1,11 @@
 import { EventEmitter } from "node:events";
-import type { ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { createLogger, defineConfig } from "vite";
 
-/** How often we repeat the “backend not ready” hint (many WS retries can spam). */
+/** How often we repeat the “backend not ready” hint (Vite may re-evaluate config; use global). */
 const BACKEND_DOWN_LOG_THROTTLE_MS = 10_000;
-let lastBackendDownLogAt = 0;
+const BACKEND_DOWN_HINT_TS_KEY = "__nspaceViteBackendDownHintTs";
 
 function isBenignBackendTransportError(err: NodeJS.ErrnoException): boolean {
   const code = err.code;
@@ -25,21 +25,37 @@ function isBenignBackendTransportError(err: NodeJS.ErrnoException): boolean {
  * or destroy the client socket so the browser / fetch can fail fast and retry.
  */
 function installDevApiProxyErrorHandler(proxy: EventEmitter): void {
-  proxy.on("error", (err: NodeJS.ErrnoException, _req: unknown, resOrSocket: unknown) => {
+  proxy.on("error", (err: NodeJS.ErrnoException, req: unknown, resOrSocket: unknown) => {
     if (!isBenignBackendTransportError(err)) return;
 
     const maybeRes = resOrSocket as Partial<ServerResponse> | undefined;
     if (maybeRes?.writeHead && typeof maybeRes.end === "function") {
       const res = maybeRes as ServerResponse;
       if (!res.headersSent) {
-        res.writeHead(503, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(
-          JSON.stringify({
-            error: "backend_unavailable",
-            message:
-              "Dev API not reachable on port 3001 (server still starting or stopped).",
-          })
-        );
+        const path = String((req as IncomingMessage | undefined)?.url ?? "")
+          .split("?")[0]!
+          .replace(/\/$/, "");
+        /** Avoid Chrome “503 (Service Unavailable)” noise for the frequent wallet poll. */
+        if (path === "/api/nim/payout-balance") {
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(
+            JSON.stringify({
+              configured: true,
+              hasNim: false,
+              balanceNim: "0.0000",
+              _devProxyBackendDown: true,
+            })
+          );
+        } else {
+          res.writeHead(503, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(
+            JSON.stringify({
+              error: "backend_unavailable",
+              message:
+                "Dev API not reachable on port 3001 (server still starting or stopped).",
+            })
+          );
+        }
       }
       return;
     }
@@ -67,10 +83,12 @@ function createDevProxyFriendlyLogger(): ReturnType<typeof createLogger> {
 
   const hint = () => {
     const t = Date.now();
-    if (t - lastBackendDownLogAt < BACKEND_DOWN_LOG_THROTTLE_MS) return;
-    lastBackendDownLogAt = t;
+    const g = globalThis as unknown as Record<string, number>;
+    const last = g[BACKEND_DOWN_HINT_TS_KEY] ?? 0;
+    if (t - last < BACKEND_DOWN_LOG_THROTTLE_MS) return;
+    g[BACKEND_DOWN_HINT_TS_KEY] = t;
     logger.info(
-      "\x1b[2m[vite]\x1b[0m Dev proxy: API on :3001 not ready yet (normal right after `npm run dev`). HTTP calls get 503; WS will retry when the server listens."
+      "\x1b[2m[vite]\x1b[0m Dev proxy: API on :3001 not ready yet (normal right after `npm run dev`). Wallet poll gets a placeholder JSON; WS retries until the server listens."
     );
   };
 

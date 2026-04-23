@@ -1084,7 +1084,12 @@ function enterGame(token: string, address: string): void {
         configured: boolean;
         hasNim: boolean;
         balanceNim: string;
+        _devProxyBackendDown?: boolean;
       };
+      if (data._devProxyBackendDown) {
+        hud.setNimWalletStatus("unavailable");
+        return false;
+      }
       if (!data.configured || !data.hasNim) {
         hud.setNimWalletStatus("No more NIM to earn :(");
         return true;

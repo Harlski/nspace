@@ -138,9 +138,11 @@ const CLAIM_ACCUM_GAP_BREAK_MS = 950;
 const CLAIM_ACCUM_DT_CAP_MS = 480;
 
 /**
- * When completing a claim, if payout balance cache is at most this old (ms), trust it and
- * skip `await getNimPayoutWalletBalanceLuna()` so the Nimiq mutex cannot block the WebSocket
- * response behind payout confirmation. Set `0` to always fetch live balance.
+ * When > 0, `completeBlockClaim` uses any in-memory payout balance cache (`peek…`) for the
+ * funds gate if it shows enough for the minimum reward — **without** an age check — so the
+ * claim path does not await Nimiq behind in-flight payouts. Payout jobs still send on-chain
+ * asynchronously; a stale-high cache is rare for a dedicated hot wallet. Set `0` to always
+ * `await getNimPayoutWalletBalanceLuna()` on each complete (blocks on the Nimiq mutex).
  */
 const NIM_CLAIM_BALANCE_PEEK_MAX_MS = Math.max(
   0,
@@ -3685,11 +3687,7 @@ export function addClient(
       if (isNimPayoutSenderConfigured()) {
         try {
           const peek = peekNimPayoutBalanceCacheLuna();
-          const cacheFresh =
-            NIM_CLAIM_BALANCE_PEEK_MAX_MS > 0 &&
-            peek !== null &&
-            now - peek.cachedAtMs <= NIM_CLAIM_BALANCE_PEEK_MAX_MS;
-          if (cacheFresh && peek) {
+          if (NIM_CLAIM_BALANCE_PEEK_MAX_MS > 0 && peek !== null) {
             payoutHasFunds = peek.luna >= CLAIM_REWARD_MIN_LUNA;
           } else {
             const payoutBalanceLuna = await getNimPayoutWalletBalanceLuna();

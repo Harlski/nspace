@@ -5,6 +5,7 @@ import { logGameplayEvent } from "../eventLog.js";
 import { NIM_PAYOUT_DATA_DIR, NIM_PAYOUT_QUEUE_FILE } from "./paths.js";
 import {
   isNimPayoutSenderConfigured,
+  getNimPayoutWalletBalanceLuna,
   sendNimPayoutTransaction,
   LUNA_PER_NIM,
 } from "./sender.js";
@@ -51,6 +52,12 @@ const BURST_PER_TICK = Math.min(
 const MAX_BACKOFF_MS = Number(process.env.NIM_PAYOUT_MAX_BACKOFF_MS ?? 3_600_000);
 const DEAD_LETTER_AFTER_ATTEMPTS = Number(
   process.env.NIM_PAYOUT_DEAD_LETTER_ATTEMPTS ?? 80
+);
+
+/** Background refresh so `peekNimPayoutBalanceCacheLuna` is usually non-null (claim gate avoids mutex). */
+const NIM_BALANCE_BACKGROUND_REFRESH_MS = Math.max(
+  10_000,
+  Number(process.env.NIM_BALANCE_BACKGROUND_REFRESH_MS ?? 45_000)
 );
 
 const DEAD_LETTER_FILE = path.join(NIM_PAYOUT_DATA_DIR, "nim-payout-dead-letter.jsonl");
@@ -178,10 +185,16 @@ async function processOne(job: NimPayoutJob): Promise<void> {
   saveQueue();
 
   try {
+    if (process.env.NIM_PAYOUT_TX_TRACE === "1") {
+      console.log(
+        `[nim-payout-tx] worker_before_send job=${job.id.slice(0, 8)} claim=${job.claimId.slice(0, 10)}… sinceEnqueueMs=${Date.now() - job.createdAt} amountLuna=${job.amountLuna.toString()}`
+      );
+    }
     const { txHash, details } = await sendNimPayoutTransaction(
       job.recipientAddress,
       job.amountLuna,
-      job.txMessage
+      job.txMessage,
+      { jobId: job.id, claimId: job.claimId }
     );
     const sentAt = Date.now();
     job.sentAt = sentAt;
@@ -308,6 +321,16 @@ export function startNimPayoutProcessor(): void {
     console.log(`[nim-payout] Restored ${n} pending payout job(s)`);
   }
   scheduleLoop();
+
+  if (isNimPayoutSenderConfigured()) {
+    const tick = (): void => {
+      void getNimPayoutWalletBalanceLuna().catch(() => {
+        /* ignore — next interval or claim path will retry */
+      });
+    };
+    setTimeout(tick, 3000);
+    setInterval(tick, NIM_BALANCE_BACKGROUND_REFRESH_MS);
+  }
 }
 
 /** Public API row: Nimiq `@nimiq/identicons` (SVG base64 data URL). */
