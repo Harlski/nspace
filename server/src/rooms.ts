@@ -211,6 +211,7 @@ export type ObstacleTile = {
   active?: boolean;
   cooldownMs?: number;
   lastClaimedAt?: number;
+  claimReactivateAtMs?: number;
   claimedBy?: string;
   teleporter?:
     | { pending: true }
@@ -750,6 +751,52 @@ function randomClaimRewardLuna(): bigint {
   return BigInt(luna);
 }
 
+function claimableCooldownMs(props: PlacedProps): number {
+  const c = props.cooldownMs;
+  return typeof c === "number" && c > 0 ? c : 60000;
+}
+
+/**
+ * Re-enable claimable blocks after cooldown using persisted timestamps (in-memory
+ * `setTimeout` is lost on restart; stale tile keys after moves also break timers).
+ */
+function tickClaimableBlockReactivations(now: number): void {
+  let any = false;
+  for (const [roomId, placed] of roomPlaced) {
+    for (const [tileKeyStr, props] of placed) {
+      if (!props.claimable || props.active !== false) continue;
+      let due: number;
+      if (
+        typeof props.claimReactivateAtMs === "number" &&
+        Number.isFinite(props.claimReactivateAtMs)
+      ) {
+        due = props.claimReactivateAtMs;
+      } else if (
+        typeof props.lastClaimedAt === "number" &&
+        Number.isFinite(props.lastClaimedAt)
+      ) {
+        due = props.lastClaimedAt + claimableCooldownMs(props);
+      } else {
+        continue;
+      }
+      if (now < due) continue;
+      props.active = true;
+      delete props.claimReactivateAtMs;
+      const tile = obstacleTileFromPlaced(roomId, tileKeyStr);
+      if (tile) {
+        broadcast(roomId, {
+          type: "obstaclesDelta",
+          roomId,
+          add: [tile],
+          remove: [],
+        });
+        any = true;
+      }
+    }
+  }
+  if (any) schedulePersistWorldState();
+}
+
 function finalizeClaimableBlockReward(
   roomId: string,
   tileKeyStr: string,
@@ -760,8 +807,10 @@ function finalizeClaimableBlockReward(
   claimId: string
 ): bigint {
   const rewardLuna = randomClaimRewardLuna();
+  const cooldown = claimableCooldownMs(props);
   props.active = false;
   props.lastClaimedAt = now;
+  props.claimReactivateAtMs = now + cooldown;
   props.claimedBy = address;
   const tile = obstacleTileFromPlaced(roomId, tileKeyStr);
   if (tile) {
@@ -772,23 +821,6 @@ function finalizeClaimableBlockReward(
       remove: [],
     });
   }
-  const cooldown = props.cooldownMs || 60000;
-  setTimeout(() => {
-    const placed = placedMap(roomId);
-    const cur = placed.get(tileKeyStr);
-    if (cur && cur.claimable) {
-      cur.active = true;
-      const tile = obstacleTileFromPlaced(roomId, tileKeyStr);
-      if (tile) {
-        broadcast(roomId, {
-          type: "obstaclesDelta",
-          roomId,
-          add: [tile],
-          remove: [],
-        });
-      }
-    }
-  }, cooldown);
   const parts = tileKeyStr.split(",").map(Number);
   const tx = parts[0]!;
   const tz = parts[1]!;
@@ -950,6 +982,7 @@ function obstacleTileFromPlaced(roomId: string, tileKeyStr: string): ObstacleTil
     active: v.active,
     cooldownMs: v.cooldownMs,
     lastClaimedAt: v.lastClaimedAt,
+    claimReactivateAtMs: v.claimReactivateAtMs,
     claimedBy: v.claimedBy,
     teleporter: v.teleporter,
   };
@@ -983,6 +1016,7 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       active: v.active,
       cooldownMs: v.cooldownMs,
       lastClaimedAt: v.lastClaimedAt,
+      claimReactivateAtMs: v.claimReactivateAtMs,
       claimedBy: v.claimedBy,
       teleporter: v.teleporter,
     });
@@ -2160,8 +2194,11 @@ export function startRoomTick(): void {
   loadSignboards();
   loadVoxelTexts();
   loadMazeRecords();
+  tickClaimableBlockReactivations(Date.now());
   setInterval(() => {
     const now = Date.now();
+
+    tickClaimableBlockReactivations(now);
     
     // Check canvas timer
     checkCanvasTimer();
@@ -3039,6 +3076,9 @@ export function addClient(
         ...(existing.active !== undefined ? { active: existing.active } : {}),
         ...(existing.cooldownMs !== undefined ? { cooldownMs: existing.cooldownMs } : {}),
         ...(existing.lastClaimedAt !== undefined ? { lastClaimedAt: existing.lastClaimedAt } : {}),
+        ...(existing.claimReactivateAtMs !== undefined
+          ? { claimReactivateAtMs: existing.claimReactivateAtMs }
+          : {}),
         ...(existing.claimedBy !== undefined ? { claimedBy: existing.claimedBy } : {}),
       });
       const deltaTile = obstacleTileFromPlaced(currentRoomId, canonicalKey);
@@ -3750,6 +3790,7 @@ export function addClient(
           amountNim: (Number(rewardLuna) / 100_000).toFixed(4),
         } satisfies OutMsg)
       );
+      schedulePersistWorldState();
       return;
     }
 

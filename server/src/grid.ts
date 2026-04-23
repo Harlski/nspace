@@ -209,6 +209,8 @@ export type TerrainProps = {
   active?: boolean;
   cooldownMs?: number; // Cooldown period in milliseconds
   lastClaimedAt?: number; // Timestamp of last claim
+  /** When `active` becomes true again (persisted; survives process restarts). */
+  claimReactivateAtMs?: number;
   claimedBy?: string; // Address of player who last claimed
 };
 
