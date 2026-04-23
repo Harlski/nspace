@@ -12,8 +12,10 @@
     "start": "npm run start -w server",
     "postinstall": "patch-package"
   },
-  "devDependencies": {
-    "concurrently": "^9.1.2",
+  "dependencies": {
     "patch-package": "^8.0.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
   }
 }
