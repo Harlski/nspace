@@ -49,6 +49,7 @@ import { createHud } from "./ui/hud.js";
 import { installInputShell } from "./ui/inputShell.js";
 import { formatWalletAddressConnectAs } from "./formatWalletAddress.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
+import { nimiqIconUseMarkup } from "./ui/nimiqIcons.js";
 
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
 /** Inactivity: return to hub center (not lobby). */
@@ -227,7 +228,7 @@ function enterGame(token: string, address: string): void {
   roomsModal.setAttribute("role", "presentation");
   roomsModal.innerHTML = `
     <div class="rooms-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="rooms-modal-title">
-      <button type="button" class="rooms-modal__close" aria-label="Close">×</button>
+      <button type="button" class="rooms-modal__close" aria-label="Close">${nimiqIconUseMarkup("nq-close", { width: 20, height: 20, class: "rooms-modal__close-icon" })}</button>
       <div class="rooms-modal__header">
         <h2 class="rooms-modal__title" id="rooms-modal-title">Rooms</h2>
       </div>
@@ -937,6 +938,8 @@ function enterGame(token: string, address: string): void {
   let nimClaimUiRef: {
     blockX: number;
     blockZ: number;
+    /** Stack level in `blockKey` (0..2). */
+    blockY: number;
     claimId: string | null;
     holdMs: number;
     rewardHoldSince: number | null;
@@ -1314,6 +1317,14 @@ function enterGame(token: string, address: string): void {
     nimClaimUiRef = null;
     hud.setNimClaimProgress(null);
 
+    game.setSelfQuickEmojiOpener(() => {
+      const a = game.getSelfScreenPosition(1.32);
+      if (!a) return;
+      hud.showSelfEmojiMenu(a.x, a.y, (emoji) => {
+        if (socket.readyState === WebSocket.OPEN) sendChat(socket, emoji);
+      });
+    });
+
     game.setTileClickHandler((x, z, layer = 0) => {
       // Check if in signpost mode (only in build mode)
       if (game.getBuildMode() && hud.isSignpostModeActive()) {
@@ -1359,13 +1370,14 @@ function enterGame(token: string, address: string): void {
       sendPlaceBlock(socket, x, z, game.getPlacementBlockStyle());
     });
     
-    game.setClaimBlockHandler((x, z) => {
+    game.setClaimBlockHandler((x, z, y) => {
       cancelActiveNimClaim?.();
       cancelActiveNimClaim = null;
 
       nimClaimUiRef = {
         blockX: x,
         blockZ: z,
+        blockY: y,
         claimId: null,
         holdMs: 3000,
         rewardHoldSince: null,
@@ -1399,7 +1411,7 @@ function enterGame(token: string, address: string): void {
       const tick = (): void => {
         if (cancelled) return;
         const ref = nimClaimUiRef;
-        if (!ref || ref.blockX !== x || ref.blockZ !== z) {
+        if (!ref || ref.blockX !== x || ref.blockZ !== z || ref.blockY !== y) {
           return;
         }
 
@@ -1412,7 +1424,7 @@ function enterGame(token: string, address: string): void {
 
         if (adjacent) {
           if (!beginSent) {
-            sendBeginBlockClaim(socket, x, z);
+            sendBeginBlockClaim(socket, x, z, y);
             beginSent = true;
           }
           const cid = ref.claimId;
@@ -1915,10 +1927,12 @@ function enterGame(token: string, address: string): void {
       return;
     }
     if (msg.type === "blockClaimOffered") {
+      const offeredY = msg.y ?? 0;
       if (
         nimClaimUiRef &&
         nimClaimUiRef.blockX === msg.x &&
-        nimClaimUiRef.blockZ === msg.z
+        nimClaimUiRef.blockZ === msg.z &&
+        nimClaimUiRef.blockY === offeredY
       ) {
         nimClaimUiRef.claimId = msg.claimId;
         nimClaimUiRef.holdMs = Math.max(500, msg.holdMs);
@@ -2413,6 +2427,10 @@ function enterGame(token: string, address: string): void {
     last = now;
     game.tick(dt);
     syncPortalEnterButton();
+    if (hud.isSelfEmojiMenuOpen()) {
+      const ea = game.getSelfScreenPosition(1.32);
+      if (ea) hud.setSelfEmojiMenuAnchor(ea.x, ea.y);
+    }
     if (showDebugHud) {
       const inst = dt > 1e-6 ? 1 / dt : 0;
       fpsSmoothed = fpsSmoothed * 0.9 + inst * 0.1;

@@ -11,6 +11,7 @@ import telegramIconUrl from "../assets/social/telegram.svg?url";
 import xIconUrl from "../assets/social/x.svg?url";
 import { formatWalletAddressGap4 } from "../formatWalletAddress.js";
 import { NIMIQ_WALLET_URL, TELEGRAM_URL, X_URL } from "../socialLinks.js";
+import { nimiqIconUseMarkup } from "./nimiqIcons.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 
 function cssHex(n: number): string {
@@ -88,6 +89,15 @@ export function createHud(
   setReturnToHubVisible: (visible: boolean) => void;
   setPortalEnterVisible: (visible: boolean) => void;
   setPortalEnterScreenPosition: (x: number, y: number) => void;
+  /** Quick emoji strip above the player (right-click / long-press self in game). */
+  showSelfEmojiMenu: (
+    anchorX: number,
+    anchorY: number,
+    onPick: (emoji: string) => void
+  ) => void;
+  hideSelfEmojiMenu: () => void;
+  setSelfEmojiMenuAnchor: (x: number, y: number) => void;
+  isSelfEmojiMenuOpen: () => boolean;
   onReturnToHub: (fn: () => void) => void;
   onPortalEnter: (fn: () => void) => void;
   isTeleporterModeActive: () => boolean;
@@ -267,7 +277,11 @@ export function createHud(
   const lobbyBtn = document.createElement("button");
   lobbyBtn.type = "button";
   lobbyBtn.className = "hud-lobby hud-icon-btn";
-  lobbyBtn.textContent = "×";
+  lobbyBtn.innerHTML = nimiqIconUseMarkup("nq-cross", {
+    width: 14,
+    height: 14,
+    class: "hud-toolbar-nq-icon",
+  });
   lobbyBtn.setAttribute("aria-label", "Lobby");
   lobbyBtn.title = "Lobby — back to main menu (stay logged in)";
   const fsBtn = document.createElement("button");
@@ -296,7 +310,7 @@ export function createHud(
   playerCount.setAttribute("aria-label", "Active players");
   playerCount.innerHTML = `
     <svg class="nq-icon">
-      <use xlink:href="/nimiq-style.icons.svg#nq-view"/>
+      <use href="/nimiq-style.icons.svg#nq-view"/>
     </svg>
     <span class="hud-player-count__number">0</span>
     <span class="hud-player-count__tooltip" role="tooltip">Online now: 0 total · 0 in this room.</span>
@@ -308,7 +322,7 @@ export function createHud(
   nimBalance.setAttribute("aria-label", "Nimiq reward balance info");
   nimBalance.innerHTML = `
     <svg class="nq-icon">
-      <use xlink:href="/nimiq-style.icons.svg#nq-hexagon"/>
+      <use href="/nimiq-style.icons.svg#nq-hexagon"/>
     </svg>
     <span class="hud-nim-balance__value">…</span>
     <span class="hud-nim-balance__tooltip" role="tooltip">
@@ -336,7 +350,7 @@ export function createHud(
   const roomsBtn = document.createElement("button");
   roomsBtn.type = "button";
   roomsBtn.className = "hud-rooms";
-  roomsBtn.textContent = "⌂ Rooms";
+  roomsBtn.innerHTML = `<span class="hud-rooms__inner"><span class="hud-rooms__text">Rooms</span>${nimiqIconUseMarkup("nq-caret-right-small", { width: 10, height: 10, class: "hud-rooms__caret" })}</span>`;
   roomsBtn.setAttribute("aria-label", "Rooms");
   roomsBtn.title = "Rooms — browse, join, or create";
   const toggleNimHint = (show: boolean): void => {
@@ -408,9 +422,9 @@ export function createHud(
   signboardTooltip.hidden = true;
   signboardTooltip.innerHTML = `
     <div class="signboard-tooltip__header">
-      <span class="signboard-tooltip__icon">📋</span>
+      <span class="signboard-tooltip__icon" aria-hidden="true">${nimiqIconUseMarkup("nq-copy", { width: 14, height: 14, class: "signboard-tooltip__nq-icon" })}</span>
       <span class="signboard-tooltip__title">Signboard</span>
-      <button type="button" class="signboard-tooltip__close" aria-label="Close">✕</button>
+      <button type="button" class="signboard-tooltip__close" aria-label="Close">${nimiqIconUseMarkup("nq-cross", { width: 12, height: 12, class: "signboard-tooltip__close-icon" })}</button>
     </div>
     <div class="signboard-tooltip__message"></div>
     <div class="signboard-tooltip__footer">
@@ -474,7 +488,7 @@ export function createHud(
     <div class="brand-links-overlay__backdrop" aria-hidden="true"></div>
     <div class="brand-links-overlay__dialog" role="dialog" aria-modal="true" aria-labelledby="brand-links-title">
       <div class="brand-links-overlay__header">
-        <button type="button" class="brand-links-overlay__close" aria-label="Close">×</button>
+        <button type="button" class="brand-links-overlay__close" aria-label="Close">${nimiqIconUseMarkup("nq-close", { width: 20, height: 20, class: "brand-links-overlay__close-icon" })}</button>
         <h2 class="main-menu__title brand-links-overlay__brand-title" id="brand-links-title">
           <span class="main-menu__title-nimiq">NIMIQ</span>
           <span class="main-menu__title-space">SPACE</span>
@@ -620,6 +634,54 @@ export function createHud(
   topBar.appendChild(topActions);
   ui.appendChild(topBar);
   letter.appendChild(portalEnterBtn);
+
+  const SELF_QUICK_EMOJIS = ["👍", "❤️", "😂", "🎉", "😮"] as const;
+  const selfEmojiMenu = document.createElement("div");
+  selfEmojiMenu.className = "self-emoji-menu";
+  selfEmojiMenu.hidden = true;
+  selfEmojiMenu.setAttribute("role", "menu");
+  selfEmojiMenu.setAttribute("aria-label", "Quick emoji to chat");
+  let selfEmojiPickHandler: ((emoji: string) => void) | null = null;
+  let selfEmojiOutsideBound = false;
+  const onSelfEmojiOutsidePointerDown = (e: PointerEvent): void => {
+    if (selfEmojiMenu.hidden) return;
+    if (selfEmojiMenu.contains(e.target as Node)) return;
+    closeSelfEmojiMenu();
+  };
+  const onSelfEmojiEscape = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") closeSelfEmojiMenu();
+  };
+  function bindSelfEmojiOutside(): void {
+    if (selfEmojiOutsideBound) return;
+    selfEmojiOutsideBound = true;
+    window.addEventListener("pointerdown", onSelfEmojiOutsidePointerDown);
+    window.addEventListener("keydown", onSelfEmojiEscape);
+  }
+  function unbindSelfEmojiOutside(): void {
+    if (!selfEmojiOutsideBound) return;
+    selfEmojiOutsideBound = false;
+    window.removeEventListener("pointerdown", onSelfEmojiOutsidePointerDown);
+    window.removeEventListener("keydown", onSelfEmojiEscape);
+  }
+  function closeSelfEmojiMenu(): void {
+    selfEmojiMenu.hidden = true;
+    selfEmojiPickHandler = null;
+    unbindSelfEmojiOutside();
+  }
+  for (const em of SELF_QUICK_EMOJIS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "self-emoji-menu__btn";
+    btn.textContent = em;
+    btn.setAttribute("role", "menuitem");
+    btn.setAttribute("aria-label", `Send ${em} to chat`);
+    btn.addEventListener("click", () => {
+      selfEmojiPickHandler?.(em);
+      closeSelfEmojiMenu();
+    });
+    selfEmojiMenu.appendChild(btn);
+  }
+  letter.appendChild(selfEmojiMenu);
 
   const chatPanel = document.createElement("div");
   chatPanel.className = "chat-panel";
@@ -2198,6 +2260,24 @@ export function createHud(
       portalEnterBtn.style.left = `${x}px`;
       portalEnterBtn.style.top = `${y}px`;
     },
+    showSelfEmojiMenu(anchorX: number, anchorY: number, onPick: (emoji: string) => void) {
+      selfEmojiPickHandler = onPick;
+      selfEmojiMenu.style.left = `${anchorX}px`;
+      selfEmojiMenu.style.top = `${anchorY}px`;
+      selfEmojiMenu.hidden = false;
+      requestAnimationFrame(() => bindSelfEmojiOutside());
+    },
+    hideSelfEmojiMenu() {
+      closeSelfEmojiMenu();
+    },
+    setSelfEmojiMenuAnchor(x: number, y: number) {
+      if (selfEmojiMenu.hidden) return;
+      selfEmojiMenu.style.left = `${x}px`;
+      selfEmojiMenu.style.top = `${y}px`;
+    },
+    isSelfEmojiMenuOpen() {
+      return !selfEmojiMenu.hidden;
+    },
     onReturnToHub(fn: () => void) {
       returnHubHandler = fn;
     },
@@ -2257,7 +2337,7 @@ export function createHud(
             <div class="build-object-panel__header-actions">
               <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
               <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
-              <button type="button" class="build-object-panel__dismiss" aria-label="Close block editor">✕</button>
+              <button type="button" class="build-object-panel__dismiss" aria-label="Close block editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
             </div>
           </div>
           <div class="build-object-panel__teleporter-fields">
@@ -2390,7 +2470,7 @@ export function createHud(
             <div class="build-object-panel__header-actions">
               <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
               <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
-              <button type="button" class="build-object-panel__dismiss" aria-label="Close block editor">✕</button>
+              <button type="button" class="build-object-panel__dismiss" aria-label="Close block editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
             </div>
           </div>
           <div class="build-object-panel__main-row">
@@ -3066,6 +3146,7 @@ export function createHud(
       signboardTooltip.hidden = false;
     },
     destroy() {
+      closeSelfEmojiMenu();
       hideBrandLinksOverlay();
       hideFeedbackOverlay();
       if (playerJoinToastTimer) {

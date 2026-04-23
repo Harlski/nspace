@@ -167,6 +167,11 @@ const CHAT_BUBBLE_MIN_HEIGHT_PX = 30;
 const CHAT_MAX_PX = 260;
 const CHAT_MAX_WIDTH_SCREEN_PX = 450; // Maximum screen width when zoomed in (more generous)
 const CHAT_LINE_HEIGHT_PX = 22;
+/** Emoji-only bubbles scale this much larger on screen than normal chat (HUD log unchanged). */
+const CHAT_BUBBLE_EMOJI_SCREEN_SCALE = 2;
+/** Canvas supersampling: sharper sprites when scaled. */
+const CHAT_BUBBLE_RASTER_NORMAL = 2;
+const CHAT_BUBBLE_RASTER_EMOJI = 2;
 const CHAT_VISIBLE_MS = 5000;
 const CHAT_FADE_MS = 600;
 /** Gap between identicon bottom (y=0) and name label (screen px → world in Game). */
@@ -179,7 +184,17 @@ type ChatBubbleEntry = {
   startedAt: number;
   texWidth: number;
   texHeight: number;
+  /** Larger on-screen bubble for emoji-only messages (quick reactions). */
+  emojiOnly: boolean;
 };
+
+/** Same rule as HUD: only emoji / VS16 / ZWJ / spaces, no letters or digits. */
+function isEmojiOnlyBubbleText(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 32) return false;
+  if (/[\p{L}\p{N}]/u.test(t)) return false;
+  return /^[\s\p{Extended_Pictographic}\uFE0F\u200D]+$/u.test(t);
+}
 
 function createNameLabelSprite(displayName: string): {
   sprite: THREE.Sprite;
@@ -253,36 +268,49 @@ function wrapChatLines(
   return lines.slice(0, 5);
 }
 
-function createChatBubbleSprite(text: string): {
+function createChatBubbleSprite(
+  text: string,
+  opts?: { emojiOnly?: boolean }
+): {
   sprite: THREE.Sprite;
   texture: THREE.CanvasTexture;
   width: number;
   height: number;
 } {
-  const padX = 14;
-  const padY = 10;
-  const radius = 12;
+  const emojiOnly = opts?.emojiOnly ?? false;
+  const raster = emojiOnly
+    ? CHAT_BUBBLE_RASTER_EMOJI
+    : CHAT_BUBBLE_RASTER_NORMAL;
+  const padX = 5;
+  const padY = 4;
+  const radius = 10;
   const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d")!;
+  const ctx = canvas.getContext("2d", { alpha: true })!;
   ctx.font = CHAT_BUBBLE_FONT;
   const lines = wrapChatLines(ctx, text.trim() || " ", CHAT_MAX_PX);
-  const lineWidths = lines.map((ln) => ctx.measureText(ln).width);
-  const innerW = Math.min(CHAT_MAX_PX, Math.max(40, ...lineWidths));
+  const lineWidths = lines.map((ln) => Math.ceil(ctx.measureText(ln).width));
+  const maxLineW = Math.max(1, ...lineWidths);
+  const innerW = Math.min(CHAT_MAX_PX, maxLineW);
   const w = Math.ceil(innerW + padX * 2);
   const lineH = CHAT_LINE_HEIGHT_PX;
   const h = Math.ceil(padY * 2 + lines.length * lineH);
-  canvas.width = w;
-  canvas.height = h;
+
+  canvas.width = Math.max(1, Math.floor(w * raster));
+  canvas.height = Math.max(1, Math.floor(h * raster));
+  ctx.setTransform(raster, 0, 0, raster, 0, 0);
   ctx.font = CHAT_BUBBLE_FONT;
-  ctx.textBaseline = "top";
-  
-  // Draw shadow
+  ctx.textBaseline = "middle";
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  const hair = Math.max(1, 2 / raster);
+
+  // Drop shadow (bubble)
   ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
   ctx.beginPath();
   ctx.roundRect(2, 2, w, h, radius);
   ctx.fill();
-  
-  // Draw main bubble background with gradient
+
   const gradient = ctx.createLinearGradient(0, 0, 0, h);
   gradient.addColorStop(0, "rgba(255, 255, 255, 0.98)");
   gradient.addColorStop(1, "rgba(248, 250, 252, 0.98)");
@@ -290,26 +318,31 @@ function createChatBubbleSprite(text: string): {
   ctx.beginPath();
   ctx.roundRect(0, 0, w, h, radius);
   ctx.fill();
-  
-  // Draw border
+
   ctx.strokeStyle = "rgba(203, 213, 225, 0.8)";
-  ctx.lineWidth = 2;
+  ctx.lineWidth = hair;
   ctx.beginPath();
   ctx.roundRect(0, 0, w, h, radius);
   ctx.stroke();
-  
-  // Draw text with subtle shadow
-  ctx.shadowColor = "rgba(0, 0, 0, 0.1)";
-  ctx.shadowBlur = 2;
+
+  ctx.textAlign = "center";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.12)";
+  ctx.shadowBlur = 2 / raster;
   ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 1;
+  ctx.shadowOffsetY = 1 / raster;
   ctx.fillStyle = "#1e293b";
   lines.forEach((ln, i) => {
-    ctx.fillText(ln, padX, padY + i * lineH);
+    const cy = padY + i * lineH + lineH / 2;
+    ctx.fillText(ln, w / 2, cy);
   });
-  
+
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({
       map: tex,
@@ -318,7 +351,6 @@ function createChatBubbleSprite(text: string): {
     })
   );
   sprite.renderOrder = 1000;
-  // Initial scale will be set by syncChatBubbleScaleAndPosition
   sprite.scale.set(1, 1, 1);
   return { sprite, texture: tex, width: w, height: h };
 }
@@ -464,7 +496,8 @@ export class Game {
   /** When set, next empty floor click in build mode sets teleporter destination X/Z. */
   private teleporterDestPickHandler: ((x: number, z: number) => void) | null =
     null;
-  private claimBlockHandler: ((x: number, z: number) => void) | null = null;
+  private claimBlockHandler: ((x: number, z: number, y: number) => void) | null =
+    null;
   private moveBlockHandler:
     | ((fromX: number, fromZ: number, toX: number, toZ: number) => void)
     | null = null;
@@ -516,6 +549,11 @@ export class Game {
   private repositionFrom: FloorTile | null = null;
   /** Destination tile + layer; remaining route is recomputed each frame from current position. */
   private pathGoal: { ft: FloorTile; layer: 0 | 1 } | null = null;
+  /**
+   * Optional route shown while primary button is held before `pointerup` (deferred walk).
+   * Does not send movement to the server; cleared when the real `pathGoal` is set.
+   */
+  private pathPreviewGoal: { ft: FloorTile; layer: 0 | 1 } | null = null;
   private roomId = ROOM_ID;
   private roomBounds: RoomBounds = getRoomBaseBounds(ROOM_ID);
   private doors: {
@@ -584,6 +622,29 @@ export class Game {
   >();
   /** Previous inter-touch distance (px) while pinching; 0 = not established yet. */
   private pinchLastDistancePx = 0;
+  /**
+   * Primary pointer: path / `tileClickHandler` runs on pointerup (finger lift or mouse
+   * release) at release coordinates, not on first contact.
+   */
+  private pendingPrimaryWalk: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+  } | null = null;
+  /** Cancel deferred walk if the pointer moves farther than this before release (px). */
+  private static readonly PENDING_WALK_CANCEL_DRAG_PX = 32;
+
+  /** Right-click self (desktop) or long-press on self (touch) opens quick emoji in HUD. */
+  private selfQuickEmojiOpener: (() => void) | null = null;
+  /** Touch: hold on own avatar; release before timer runs walks from release point. */
+  private selfEmojiTouchSession: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  private static readonly SELF_EMOJI_LONGPRESS_MS = 480;
+  private static readonly SELF_EMOJI_LONGPRESS_MOVE_PX = 14;
   
   /** Canvas room tile claims: map of "x,z" => address */
   private readonly canvasClaims = new Map<string, string>();
@@ -795,6 +856,10 @@ export class Game {
     canvas.addEventListener("wheel", this.onWheel, {
       passive: false,
     });
+    canvas.addEventListener("contextmenu", this.onCanvasContextMenu, {
+      passive: false,
+      capture: true,
+    });
 
     this.rebuildDoorKeys();
     this.syncWalkableFloorMeshes();
@@ -934,6 +999,7 @@ export class Game {
 
     this.rebuildDoorKeys();
     this.pathGoal = null;
+    this.pathPreviewGoal = null;
     this.lastTerrainPath = null;
     this.selectedBlockKey = null;
     this.selectionOutline.visible = false;
@@ -1289,9 +1355,13 @@ export class Game {
     const th = entry.texHeight;
     
     // Calculate world scale to maintain consistent screen height (scales with zoom like name tags)
-    // Target screen height should scale with zoom but maintain minimum readability
-    const baseScreenHeight = th * 0.5; // Base size: 50% of texture height as screen pixels
-    const targetScreenHeight = Math.max(CHAT_BUBBLE_MIN_HEIGHT_PX, baseScreenHeight);
+    const basePlain = Math.max(
+      CHAT_BUBBLE_MIN_HEIGHT_PX,
+      th * 0.5
+    );
+    const targetScreenHeight = entry.emojiOnly
+      ? basePlain * CHAT_BUBBLE_EMOJI_SCREEN_SCALE
+      : basePlain;
     
     // Calculate height first - this is our priority for readability
     let worldH = this.pixelToWorldY(targetScreenHeight);
@@ -1327,6 +1397,14 @@ export class Game {
     this.camera.updateProjectionMatrix();
   }
 
+  private readonly onCanvasContextMenu = (e: MouseEvent): void => {
+    if (!this.selfQuickEmojiOpener || !this.selfMesh) return;
+    if (!this.pickHitsSelfAvatar(e.clientX, e.clientY)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.selfQuickEmojiOpener();
+  };
+
   private readonly onWheel = (e: WheelEvent): void => {
     e.preventDefault();
     if (this.zoomLocked) return;
@@ -1336,6 +1414,34 @@ export class Game {
   };
 
   private readonly onPointerUp = (e: PointerEvent): void => {
+    const isCancel = e.type === "pointercancel";
+    if (
+      this.selfEmojiTouchSession &&
+      this.selfEmojiTouchSession.pointerId === e.pointerId
+    ) {
+      clearTimeout(this.selfEmojiTouchSession.timer);
+      this.selfEmojiTouchSession = null;
+      if (!isCancel) {
+        this.tryExecuteWalkNavigationAt(e.clientX, e.clientY);
+      }
+    }
+    if (this.pendingPrimaryWalk && this.pendingPrimaryWalk.pointerId === e.pointerId) {
+      if (isCancel) {
+        this.clearPendingPrimaryWalk();
+      } else if (e.button === 0) {
+        const p = this.pendingPrimaryWalk;
+        const slop =
+          Math.hypot(e.clientX - p.startX, e.clientY - p.startY) <=
+          Game.PENDING_WALK_CANCEL_DRAG_PX;
+        this.clearPendingPrimaryWalk(slop);
+        if (slop) {
+          this.tryExecuteWalkNavigationAt(e.clientX, e.clientY);
+        } else {
+          this.refreshPathLine();
+        }
+      }
+    }
+
     if (e.pointerType !== "touch") return;
     this.touchPointers.delete(e.pointerId);
     if (this.touchPointers.size < 2) {
@@ -1372,7 +1478,9 @@ export class Game {
     return this.teleporterDestPickHandler !== null;
   }
 
-  setClaimBlockHandler(handler: ((x: number, z: number) => void) | null): void {
+  setClaimBlockHandler(
+    handler: ((x: number, z: number, y: number) => void) | null
+  ): void {
     this.claimBlockHandler = handler;
   }
 
@@ -1388,6 +1496,18 @@ export class Game {
     handler: ((x: number, z: number, y: number) => void) | null
   ): void {
     this.obstacleSelectHandler = handler;
+  }
+
+  /** `null` clears any in-progress long-press; non-null replaces the opener. */
+  setSelfQuickEmojiOpener(handler: (() => void) | null): void {
+    this.selfQuickEmojiOpener = handler;
+    if (!handler) this.clearSelfEmojiTouchSession();
+  }
+
+  private clearSelfEmojiTouchSession(): void {
+    if (!this.selfEmojiTouchSession) return;
+    clearTimeout(this.selfEmojiTouchSession.timer);
+    this.selfEmojiTouchSession = null;
   }
 
   setPlaceExtraFloorHandler(
@@ -2100,6 +2220,100 @@ export class Game {
     return this.tileWalkable(t) ? t : null;
   }
 
+  /**
+   * @param skipRefresh Pass true when the caller will immediately call `tryExecuteWalkNavigationAt`
+   * (avoids one frame with no path line between preview clear and committed goal).
+   */
+  private clearPendingPrimaryWalk(skipRefresh = false): void {
+    const p = this.pendingPrimaryWalk;
+    if (!p) return;
+    this.pendingPrimaryWalk = null;
+    this.pathPreviewGoal = null;
+    try {
+      const el = this.renderer.domElement;
+      if (el.hasPointerCapture?.(p.pointerId)) {
+        el.releasePointerCapture(p.pointerId);
+      }
+    } catch {
+      /* ignore */
+    }
+    if (!skipRefresh) {
+      this.refreshPathLine();
+    }
+  }
+
+  /**
+   * Resolve a deferred-walk destination from a screen point (same rules as executing a walk).
+   * Claimable blocks return null (mining is pointerdown-only).
+   */
+  private resolveWalkNavigationGoalAt(
+    clientX: number,
+    clientY: number
+  ): { ft: FloorTile; layer: 0 | 1 } | null {
+    if (!this.selfMesh) return null;
+    if (this.floorExpandMode) return null;
+
+    if (this.buildMode) {
+      const dest = this.pickFloor(clientX, clientY);
+      if (!dest || !this.tileWalkable(dest)) return null;
+      const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+      const dx = here.x - dest.x;
+      const dz = here.y - dest.y;
+      const distance = Math.hypot(dx, dz);
+      if (distance <= this.placeRadiusBlocks + 1e-6) return null;
+      const k = tileKey(dest.x, dest.y);
+      if (this.blockingTileKeys.has(k)) return null;
+      return { ft: dest, layer: 0 };
+    }
+
+    const blockForWalk = this.pickBlockKey(clientX, clientY);
+    if (blockForWalk) {
+      const bm = this.placedObjects.get(blockForWalk);
+      if (bm) {
+        if (bm.claimable && bm.active && !bm.passable) {
+          return null;
+        }
+        if (!bm.passable && !bm.ramp) {
+          const [bx, bz] = blockForWalk.split(",").map(Number);
+          return { ft: { x: bx!, y: bz! }, layer: 1 };
+        }
+      }
+    }
+    const dest = this.pickWalkableTile(clientX, clientY);
+    if (!dest) return null;
+    const k = tileKey(dest.x, dest.y);
+    if (this.blockingTileKeys.has(k)) return null;
+    return { ft: dest, layer: 0 };
+  }
+
+  /** Show the route the player would take if they release at the current pick (pointerdown). */
+  private previewWalkNavigationAt(clientX: number, clientY: number): void {
+    if (!this.selfMesh) return;
+    this.pathPreviewGoal = this.resolveWalkNavigationGoalAt(clientX, clientY);
+    this.refreshPathLine();
+  }
+
+  /**
+   * Run walk / path request from a screen point (typically pointerup client coords).
+   * Claimable-block mining is handled separately on pointerdown.
+   */
+  private tryExecuteWalkNavigationAt(clientX: number, clientY: number): void {
+    if (!this.selfMesh || !this.tileClickHandler) return;
+    this.pathPreviewGoal = null;
+    const goal = this.resolveWalkNavigationGoalAt(clientX, clientY);
+    if (!goal) {
+      this.refreshPathLine();
+      return;
+    }
+    this.pathGoal = goal;
+    this.refreshPathLine();
+    if (goal.layer === 1) {
+      this.tileClickHandler(goal.ft.x, goal.ft.y, 1);
+    } else {
+      this.tileClickHandler(goal.ft.x, goal.ft.y, 0);
+    }
+  }
+
   private updateNdc(clientX: number, clientY: number): boolean {
     if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return false;
     const rect = this.renderer.domElement.getBoundingClientRect();
@@ -2139,6 +2353,15 @@ export class Game {
   }
 
   /** Returns `tileKey` if the ray hits a placed block mesh, else null. */
+  private pickHitsSelfAvatar(clientX: number, clientY: number): boolean {
+    if (!this.selfMesh) return false;
+    if (!this.updateNdc(clientX, clientY)) return false;
+    this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    return this.raycaster.intersectObject(this.selfMesh, true).length > 0;
+  }
+
   private pickBlockKey(clientX: number, clientY: number): string | null {
     if (!this.updateNdc(clientX, clientY)) return null;
     this.camera.updateMatrixWorld();
@@ -2160,6 +2383,28 @@ export class Game {
   private onPointerMove = (e: PointerEvent): void => {
     if (e.pointerType === "touch") {
       this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (this.pendingPrimaryWalk && e.pointerId === this.pendingPrimaryWalk.pointerId) {
+      const p = this.pendingPrimaryWalk;
+      if (
+        Math.hypot(e.clientX - p.startX, e.clientY - p.startY) >
+        Game.PENDING_WALK_CANCEL_DRAG_PX
+      ) {
+        this.clearPendingPrimaryWalk();
+      }
+    }
+    if (
+      this.selfEmojiTouchSession &&
+      e.pointerId === this.selfEmojiTouchSession.pointerId
+    ) {
+      const s = this.selfEmojiTouchSession;
+      if (
+        Math.hypot(e.clientX - s.startX, e.clientY - s.startY) >
+        Game.SELF_EMOJI_LONGPRESS_MOVE_PX
+      ) {
+        clearTimeout(s.timer);
+        this.selfEmojiTouchSession = null;
+      }
     }
     if (this.touchPointers.size >= 2) {
       if (this.zoomLocked) {
@@ -2254,6 +2499,8 @@ export class Game {
     if (e.pointerType === "touch") {
       this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this.touchPointers.size >= 2) {
+        this.clearPendingPrimaryWalk();
+        this.clearSelfEmojiTouchSession();
         this.pinchLastDistancePx = 0;
         e.preventDefault();
         e.stopPropagation();
@@ -2261,6 +2508,36 @@ export class Game {
       }
     }
     if (!this.selfMesh) return;
+
+    if (
+      e.pointerType === "touch" &&
+      this.selfQuickEmojiOpener &&
+      !this.teleporterDestPickHandler &&
+      !this.repositionFrom &&
+      this.pickHitsSelfAvatar(e.clientX, e.clientY)
+    ) {
+      const pointerId = e.pointerId;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const timer = setTimeout(() => {
+        if (
+          !this.selfEmojiTouchSession ||
+          this.selfEmojiTouchSession.pointerId !== pointerId
+        ) {
+          return;
+        }
+        clearTimeout(this.selfEmojiTouchSession.timer);
+        this.selfEmojiTouchSession = null;
+        this.selfQuickEmojiOpener?.();
+      }, Game.SELF_EMOJI_LONGPRESS_MS);
+      this.selfEmojiTouchSession = { pointerId, startX, startY, timer };
+      e.preventDefault();
+      e.stopPropagation();
+      this.tileHighlight.visible = false;
+      this.blockTopHighlight.visible = false;
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
     if (e.pointerType === "touch") {
@@ -2394,13 +2671,21 @@ export class Game {
       const dz = here.y - dest.y;
       const distance = Math.hypot(dx, dz);
       if (distance > this.placeRadiusBlocks + 1e-6) {
-        // Outside build radius - trigger walking instead of placing
+        // Outside build radius - trigger walking instead of placing (on pointerup)
         const k = tileKey(dest.x, dest.y);
         if (this.blockingTileKeys.has(k)) return;
         if (!this.tileClickHandler) return;
-        this.pathGoal = { ft: dest, layer: 0 };
-        this.refreshPathLine();
-        this.tileClickHandler(dest.x, dest.y, 0);
+        this.pendingPrimaryWalk = {
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+        };
+        try {
+          this.renderer.domElement.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        this.previewWalkNavigationAt(e.clientX, e.clientY);
         return;
       }
       
@@ -2418,19 +2703,32 @@ export class Game {
       if (bm) {
         // Check if this is an active claimable block
         if (bm.claimable && bm.active && !bm.passable) {
-          const [bx, bz] = blockForWalk.split(",").map(Number);
+          const parts = blockForWalk.split(",").map(Number);
+          const bx = parts[0]!;
+          const bz = parts[1]!;
+          const by =
+            parts.length >= 3 && Number.isFinite(parts[2])
+              ? Math.max(0, Math.min(2, Math.floor(parts[2]!)))
+              : 0;
           if (this.claimBlockHandler) {
-            this.claimBlockHandler(bx!, bz!);
+            this.claimBlockHandler(bx, bz, by);
           }
           return;
         }
-        // Normal block walking logic
+        // Normal block walking logic (on pointerup)
         if (!bm.passable && !bm.ramp) {
-          const [bx, bz] = blockForWalk.split(",").map(Number);
           if (!this.tileClickHandler) return;
-          this.pathGoal = { ft: { x: bx!, y: bz! }, layer: 1 };
-          this.refreshPathLine();
-          this.tileClickHandler(bx!, bz!, 1);
+          this.pendingPrimaryWalk = {
+            pointerId: e.pointerId,
+            startX: e.clientX,
+            startY: e.clientY,
+          };
+          try {
+            this.renderer.domElement.setPointerCapture(e.pointerId);
+          } catch {
+            /* ignore */
+          }
+          this.previewWalkNavigationAt(e.clientX, e.clientY);
           return;
         }
       }
@@ -2440,12 +2738,21 @@ export class Game {
     if (!this.tileClickHandler) return;
     const k = tileKey(dest.x, dest.y);
     if (this.blockingTileKeys.has(k)) return;
-    this.pathGoal = { ft: dest, layer: 0 };
-    this.refreshPathLine();
-    this.tileClickHandler(dest.x, dest.y, 0);
+    this.pendingPrimaryWalk = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+    };
+    try {
+      this.renderer.domElement.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    this.previewWalkNavigationAt(e.clientX, e.clientY);
   };
 
   setSelf(address: string, displayName?: string): void {
+    this.clearSelfEmojiTouchSession();
     this.selfAddress = address;
     this.cameraFollowReady = false;
     this.selfTargetPos = null;
@@ -2461,6 +2768,7 @@ export class Game {
   }
 
   dispose(): void {
+    this.clearPendingPrimaryWalk();
     this.ro.disconnect();
     const canvas = this.renderer.domElement;
     canvas.removeEventListener("pointermove", this.onPointerMove);
@@ -2468,6 +2776,9 @@ export class Game {
     canvas.removeEventListener("pointerup", this.onPointerUp);
     canvas.removeEventListener("pointercancel", this.onPointerUp);
     canvas.removeEventListener("wheel", this.onWheel);
+    canvas.removeEventListener("contextmenu", this.onCanvasContextMenu, true);
+    this.clearSelfEmojiTouchSession();
+    this.selfQuickEmojiOpener = null;
     if (this.selfMesh) {
       this.disposeAvatarGroup(this.selfMesh);
       this.scene.remove(this.selfMesh);
@@ -2660,22 +2971,27 @@ export class Game {
 
   /** Updates the line to only the remaining route (BFS around obstacles, same as server). */
   private refreshPathLine(): void {
-    if (!this.pathGoal || !this.selfMesh) {
+    const goal = this.pathPreviewGoal ?? this.pathGoal;
+    if (!goal || !this.selfMesh) {
       this.lastTerrainPath = null;
       this.hideTrailImmediate();
       this.beginPathFadeOut();
       return;
     }
     const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
-    if (here.x === this.pathGoal.ft.x && here.y === this.pathGoal.ft.y) {
+    if (here.x === goal.ft.x && here.y === goal.ft.y) {
       const curLayer = inferStartLayerClient(
         this.selfMesh.position.x,
         this.selfMesh.position.z,
         this.selfMesh.position.y,
         this.placedObjects
       );
-      if (curLayer === this.pathGoal.layer) {
-        this.pathGoal = null;
+      if (curLayer === goal.layer) {
+        if (this.pathPreviewGoal) {
+          this.pathPreviewGoal = null;
+        } else {
+          this.pathGoal = null;
+        }
         this.lastTerrainPath = null;
         this.hideTrailImmediate();
         this.beginPathFadeOut();
@@ -2692,15 +3008,19 @@ export class Game {
       here.x,
       here.y,
       startLayer,
-      this.pathGoal.ft.x,
-      this.pathGoal.ft.y,
-      this.pathGoal.layer,
+      goal.ft.x,
+      goal.ft.y,
+      goal.layer,
       this.placedObjects,
       this.extraFloorKeys,
       this.roomId
     );
     if (!remaining || remaining.length < 2) {
-      this.pathGoal = null;
+      if (this.pathPreviewGoal) {
+        this.pathPreviewGoal = null;
+      } else {
+        this.pathGoal = null;
+      }
       this.lastTerrainPath = null;
       this.hideTrailImmediate();
       this.beginPathFadeOut();
@@ -3525,7 +3845,10 @@ export class Game {
     if (!g) return;
     const addr = (g.userData.address as string) || fromAddress;
     this.removeChatBubbleEntry(addr);
-    const { sprite, texture, width, height } = createChatBubbleSprite(text);
+    const emojiOnly = isEmojiOnlyBubbleText(text);
+    const { sprite, texture, width, height } = createChatBubbleSprite(text, {
+      emojiOnly,
+    });
     const mat = sprite.material as THREE.SpriteMaterial;
     
     const entry: ChatBubbleEntry = {
@@ -3535,6 +3858,7 @@ export class Game {
       startedAt: performance.now(),
       texWidth: width,
       texHeight: height,
+      emojiOnly,
     };
     
     // Set initial scale and position

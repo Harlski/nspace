@@ -39,8 +39,10 @@
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.08);
   color: #e8eaef;
-  font-size: 22px;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   cursor: pointer;
 }
 
@@ -837,8 +839,10 @@ button.hud-brand:focus-visible {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.08);
   color: #e8eaef;
-  font-size: 22px;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   cursor: pointer;
 }
 
@@ -1274,8 +1278,6 @@ button.hud-brand:focus-visible {
   background: transparent;
   border: none;
   color: rgba(255, 255, 255, 0.6);
-  font-size: 1.2rem;
-  line-height: 1;
   padding: 0;
   width: 24px;
   height: 24px;
@@ -1297,7 +1299,15 @@ button.hud-brand:focus-visible {
 }
 
 .signboard-tooltip__icon {
-  font-size: 1.2em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.signboard-tooltip__icon .nq-icon {
+  display: block;
 }
 
 .signboard-tooltip__title {
@@ -1919,6 +1929,25 @@ button.hud-brand:focus-visible {
   white-space: nowrap;
 }
 
+.hud-rooms__inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud-rooms__caret {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.hud-rooms__caret .nq-icon {
+  display: block;
+}
+
+.hud-toolbar-nq-icon {
+  display: block;
+}
+
 .hud-fs.hud-icon-btn,
 .hud-rooms.hud-icon-btn,
 .hud-lobby.hud-icon-btn {
@@ -2043,6 +2072,53 @@ button.hud-brand:focus-visible {
 /* Keep portal CTA hidden until standing on an enterable tile/door. */
 .hud-portal-enter[hidden] {
   display: none !important;
+}
+
+/* Quick emoji — right-click self (desktop) or long-press own avatar (touch) */
+.self-emoji-menu {
+  position: absolute;
+  z-index: 8;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(61, 70, 90, 0.95);
+  background: rgba(15, 17, 23, 0.94);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  transform: translate(-50%, calc(-100% - 10px));
+  pointer-events: auto;
+}
+
+.self-emoji-menu[hidden] {
+  display: none !important;
+}
+
+.self-emoji-menu__btn {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+
+.self-emoji-menu__btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  transform: scale(1.06);
+}
+
+.self-emoji-menu__btn:active {
+  transform: scale(0.96);
 }
 
 .teleporter-fab {
@@ -2322,11 +2398,12 @@ button.hud-brand:focus-visible {
   border-radius: 6px;
   background: rgba(30, 36, 51, 0.95);
   color: #e8eaef;
-  font-size: 15px;
-  line-height: 1;
-  font-weight: 600;
   cursor: pointer;
   font-family: inherit;
+}
+
+.build-object-panel__dismiss .nq-icon {
+  display: block;
 }
 
 .build-object-panel__dismiss:hover {

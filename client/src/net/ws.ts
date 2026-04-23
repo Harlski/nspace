@@ -175,6 +175,8 @@ export type ServerMessage =
       claimId: string;
       x: number;
       z: number;
+      /** Stack level in `blockKey` (0..2). */
+      y?: number;
       holdMs: number;
       completeBy: number;
     }
@@ -450,10 +452,17 @@ export function sendRemoveObstacleAt(
 export function sendBeginBlockClaim(
   ws: WebSocket,
   x: number,
-  z: number
+  z: number,
+  y = 0
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: "beginBlockClaim", x, z }));
+  const payload: { type: string; x: number; z: number; y?: number } = {
+    type: "beginBlockClaim",
+    x,
+    z,
+  };
+  if (y !== 0) payload.y = y;
+  ws.send(JSON.stringify(payload));
 }
 
 export function sendBlockClaimTick(ws: WebSocket, claimId: string): void {

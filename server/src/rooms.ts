@@ -374,6 +374,8 @@ type OutMsg =
       claimId: string;
       x: number;
       z: number;
+      /** Stack index in `blockKey` (0..2). Omitted or 0 for legacy floor blocks. */
+      y?: number;
       holdMs: number;
       completeBy: number;
     }
@@ -678,6 +680,8 @@ interface BlockClaimSession {
   roomId: string;
   tileX: number;
   tileZ: number;
+  /** Stack level in `blockKey(x,z,y)` (0..2), not world Y. */
+  tileY: number;
   startedAt: number;
   completeBy: number;
   accumAdjacentMs: number;
@@ -692,8 +696,8 @@ const blockClaimReservation = new Map<
 >();
 const spentBlockClaimIds = new Map<string, number>();
 
-function blockClaimResKey(roomId: string, tx: number, tz: number): string {
-  return `${roomId}|${tileKey(tx, tz)}`;
+function blockClaimResKey(roomId: string, tx: number, tz: number, ty: number): string {
+  return `${roomId}|${blockKey(tx, tz, ty)}`;
 }
 
 function newBlockClaimId(): string {
@@ -728,7 +732,7 @@ function releaseBlockClaimSession(claimId: string): void {
   const s = blockClaimSessions.get(claimId);
   if (!s) return;
   blockClaimSessions.delete(claimId);
-  const rk = blockClaimResKey(s.roomId, s.tileX, s.tileZ);
+  const rk = blockClaimResKey(s.roomId, s.tileX, s.tileZ, s.tileY);
   const r = blockClaimReservation.get(rk);
   if (r?.claimId === claimId) {
     blockClaimReservation.delete(rk);
@@ -785,10 +789,17 @@ function finalizeClaimableBlockReward(
       }
     }
   }, cooldown);
-  const [tx, tz] = tileKeyStr.split(",").map(Number);
+  const parts = tileKeyStr.split(",").map(Number);
+  const tx = parts[0]!;
+  const tz = parts[1]!;
+  const ty =
+    parts.length >= 3 && Number.isFinite(parts[2])
+      ? Math.max(0, Math.min(STACK_MAX_LEVEL, Math.floor(parts[2]!)))
+      : 0;
   logGameplayEvent(sessionId, address, roomId, "claim_block", {
     x: tx,
     z: tz,
+    y: ty,
     claimId,
   });
 
@@ -3415,8 +3426,12 @@ export function addClient(
       }
 
       const placed = placedMap(currentRoomId);
-      const k = getFloorLevelPlacedKey(placed, tile.x, tile.z);
-      if (!k) {
+      const tyRaw = Number((msg as { y?: unknown }).y);
+      const tileY = Number.isFinite(tyRaw)
+        ? Math.max(0, Math.min(STACK_MAX_LEVEL, Math.floor(tyRaw)))
+        : 0;
+      const atLevel = getPlacedAtLevel(placed, tile.x, tile.z, tileY);
+      if (!atLevel) {
         ws.send(
           JSON.stringify({
             type: "blockClaimResult",
@@ -3426,8 +3441,8 @@ export function addClient(
         );
         return;
       }
-      const props = placed.get(k);
-      if (!props || !props.claimable) {
+      const { props } = atLevel;
+      if (!props.claimable) {
         ws.send(
           JSON.stringify({
             type: "blockClaimResult",
@@ -3448,7 +3463,7 @@ export function addClient(
         return;
       }
 
-      const rk = blockClaimResKey(currentRoomId, tile.x, tile.z);
+      const rk = blockClaimResKey(currentRoomId, tile.x, tile.z, tileY);
       const res = blockClaimReservation.get(rk);
       if (res && res.until > now && res.address !== address) {
         ws.send(
@@ -3474,6 +3489,7 @@ export function addClient(
         roomId: currentRoomId,
         tileX: tile.x,
         tileZ: tile.z,
+        tileY,
         startedAt: now,
         completeBy,
         accumAdjacentMs: 0,
@@ -3492,6 +3508,7 @@ export function addClient(
           claimId,
           x: tile.x,
           z: tile.z,
+          ...(tileY !== 0 ? { y: tileY } : {}),
           holdMs: BLOCK_CLAIM_HOLD_MS,
           completeBy,
         } satisfies OutMsg)
@@ -3644,8 +3661,8 @@ export function addClient(
       }
 
       const placed = placedMap(currentRoomId);
-      const k = getFloorLevelPlacedKey(placed, s.tileX, s.tileZ);
-      if (!k) {
+      const atComplete = getPlacedAtLevel(placed, s.tileX, s.tileZ, s.tileY);
+      if (!atComplete) {
         releaseBlockClaimSession(claimId);
         ws.send(
           JSON.stringify({
@@ -3656,8 +3673,9 @@ export function addClient(
         );
         return;
       }
-      const props = placed.get(k);
-      if (!props || !props.claimable || !props.active) {
+      const k = atComplete.key;
+      const props = atComplete.props;
+      if (!props.claimable || !props.active) {
         releaseBlockClaimSession(claimId);
         ws.send(
           JSON.stringify({
@@ -3669,7 +3687,7 @@ export function addClient(
         return;
       }
 
-      const rk = blockClaimResKey(currentRoomId, s.tileX, s.tileZ);
+      const rk = blockClaimResKey(currentRoomId, s.tileX, s.tileZ, s.tileY);
       const res = blockClaimReservation.get(rk);
       if (!res || res.claimId !== claimId || res.address !== address) {
         releaseBlockClaimSession(claimId);
