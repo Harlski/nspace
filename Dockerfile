@@ -5,6 +5,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY client/package.json client/
 COPY server/package.json server/
+# postinstall runs patch-package; needs these before npm ci
+COPY scripts/postinstall.cjs scripts/
+COPY patches/ patches/
 
 RUN npm ci
 
