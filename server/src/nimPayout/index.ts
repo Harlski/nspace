@@ -11,4 +11,5 @@ export {
   getNimPayoutWalletBalanceLuna,
   invalidateNimBalanceCache,
   isNimPayoutSenderConfigured,
+  peekNimPayoutBalanceCacheLuna,
 } from "./sender.js";

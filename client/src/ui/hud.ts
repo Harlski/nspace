@@ -197,6 +197,8 @@ export function createHud(
   /** Wallet identicon in the brand links modal; call when entering the game. */
   setBrandLinksPlayerAddress: (address: string) => void;
   setLoadingVisible: (visible: boolean) => void;
+  /** Shown under the spinner while the loading overlay is visible. */
+  setLoadingLabel: (text: string) => void;
   /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
   setNimClaimProgress: (
     state: null | { progress: number; adjacent: boolean }
@@ -540,6 +542,9 @@ export function createHud(
       <div class="loading-overlay__text">Loading room...</div>
     </div>
   `;
+  const loadingOverlayText = loadingOverlay.querySelector(
+    ".loading-overlay__text"
+  ) as HTMLDivElement | null;
   letter.appendChild(loadingOverlay);
 
   const topBar = document.createElement("div");
@@ -2880,6 +2885,9 @@ export function createHud(
     },
     setLoadingVisible(visible: boolean) {
       loadingOverlay.hidden = !visible;
+    },
+    setLoadingLabel(text: string) {
+      if (loadingOverlayText) loadingOverlayText.textContent = text;
     },
     setPlayerCount(count: number, roomCount?: number) {
       const countEl = playerCount.querySelector(".hud-player-count__number");

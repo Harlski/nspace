@@ -96,6 +96,14 @@ function startIdleReturnToHub(ms: number, onIdle: () => void): () => void {
   };
 }
 
+function loadingLabelForTargetRoom(room: string): string {
+  const id = normalizeRoomId(room);
+  if (id === HUB_ROOM_ID) return "Loading hub...";
+  if (id === CANVAS_ROOM_ID) return "Loading maze...";
+  if (id === CHAMBER_ROOM_ID) return "Loading chamber...";
+  return "Loading room...";
+}
+
 function openMainMenu(): void {
   const orientation = (screen as Screen & {
     orientation?: { unlock?: () => void };
@@ -1405,6 +1413,7 @@ function enterGame(token: string, address: string): void {
           const cid = ref.claimId;
           if (
             cid &&
+            !ref.completeSent &&
             socket.readyState === WebSocket.OPEN &&
             now - lastTickSent >= 220
           ) {
@@ -1437,7 +1446,7 @@ function enterGame(token: string, address: string): void {
           !ref.completeSent &&
           now - ref.rewardHoldSince >= holdMs + NIM_CLAIM_COMPLETE_SLACK_MS;
 
-        if (readyToComplete && ref.claimId) {
+        if (readyToComplete && ref.claimId && ref.rewardHoldSince !== null) {
           ref.completeSent = true;
           sendCompleteBlockClaim(socket, ref.claimId);
         }
@@ -1687,6 +1696,7 @@ function enterGame(token: string, address: string): void {
 
       try {
       hud.setReconnectOffer(false);
+      hud.setLoadingLabel(loadingLabelForTargetRoom(msg.roomId));
       hud.setLoadingVisible(true);
       
       game.applyRoomFromWelcome({
@@ -2030,32 +2040,38 @@ function enterGame(token: string, address: string): void {
   ): void => {
     connectGen += 1;
     const myGen = connectGen;
-    if (
-      ws &&
-      (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)
-    ) {
-      ws.close();
-    }
-    ws = connectGameWs(
-      token,
-      room,
-      (msg) => {
-        if (myGen !== connectGen) return;
-        void handleServerMessage(msg);
-      },
-      (ev) => {
-        if (myGen !== connectGen) return;
-        if (ev.code === 4001) {
-          clearCachedSession();
-          location.reload();
-          return;
-        }
-        hud.setReconnectOffer(true);
-        hud.setStatus("Disconnected — tap Reconnect or reload");
-      },
-      spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : undefined
-    );
-    wireWsHandlers(ws);
+    hud.setLoadingLabel(loadingLabelForTargetRoom(room));
+    hud.setLoadingVisible(true);
+    requestAnimationFrame(() => {
+      if (myGen !== connectGen) return;
+      if (
+        ws &&
+        (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)
+      ) {
+        ws.close();
+      }
+      ws = connectGameWs(
+        token,
+        room,
+        (msg) => {
+          if (myGen !== connectGen) return;
+          void handleServerMessage(msg);
+        },
+        (ev) => {
+          if (myGen !== connectGen) return;
+          if (ev.code === 4001) {
+            clearCachedSession();
+            location.reload();
+            return;
+          }
+          hud.setLoadingVisible(false);
+          hud.setReconnectOffer(true);
+          hud.setStatus("Disconnected — tap Reconnect or reload");
+        },
+        spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : undefined
+      );
+      wireWsHandlers(ws);
+    });
   };
 
   idleCleanup = startIdleReturnToHub(IDLE_RETURN_HUB_MS, () => {

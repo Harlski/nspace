@@ -46,6 +46,7 @@ import {
   enqueueNimPayout,
   getNimPayoutWalletBalanceLuna,
   isNimPayoutSenderConfigured,
+  peekNimPayoutBalanceCacheLuna,
   LUNA_PER_NIM,
 } from "./nimPayout/index.js";
 import {
@@ -135,6 +136,17 @@ const RATE_BLOCK_CLAIM_TICK_MS = 170;
 const RATE_COMPLETE_BLOCK_CLAIM_MS = 450;
 const CLAIM_ACCUM_GAP_BREAK_MS = 950;
 const CLAIM_ACCUM_DT_CAP_MS = 480;
+
+/**
+ * When completing a claim, if payout balance cache is at most this old (ms), trust it and
+ * skip `await getNimPayoutWalletBalanceLuna()` so the Nimiq mutex cannot block the WebSocket
+ * response behind payout confirmation. Set `0` to always fetch live balance.
+ */
+const NIM_CLAIM_BALANCE_PEEK_MAX_MS = Math.max(
+  0,
+  Number(process.env.NIM_CLAIM_BALANCE_PEEK_MAX_MS ?? 30_000)
+);
+
 const CLAIM_REWARD_MIN_LUNA = 2000; // 0.0200 NIM
 const CLAIM_REWARD_MAX_LUNA = 200000; // 2.0000 NIM
 const MINEABLE_BLOCK_PLACER_ALLOWLIST = new Set([
@@ -3526,14 +3538,17 @@ export function addClient(
       if (dt > CLAIM_ACCUM_GAP_BREAK_MS) {
         s.accumAdjacentMs = 0;
       } else {
-        s.accumAdjacentMs += Math.min(dt, CLAIM_ACCUM_DT_CAP_MS);
+        const add = Math.min(dt, CLAIM_ACCUM_DT_CAP_MS);
+        s.accumAdjacentMs += add;
       }
       s.lastSampleAt = now;
       return;
     }
 
     if (msg.type === "completeBlockClaim") {
+      const claimId = String(msg.claimId ?? "");
       const now = Date.now();
+
       if (now - conn.lastBlockClaimCompleteAttemptAt < RATE_COMPLETE_BLOCK_CLAIM_MS) {
         ws.send(
           JSON.stringify({
@@ -3546,7 +3561,6 @@ export function addClient(
         return;
       }
 
-      const claimId = String(msg.claimId ?? "");
       if (!claimId) {
         ws.send(
           JSON.stringify({
@@ -3670,8 +3684,17 @@ export function addClient(
       let payoutHasFunds = false;
       if (isNimPayoutSenderConfigured()) {
         try {
-          const payoutBalanceLuna = await getNimPayoutWalletBalanceLuna();
-          payoutHasFunds = payoutBalanceLuna >= CLAIM_REWARD_MIN_LUNA;
+          const peek = peekNimPayoutBalanceCacheLuna();
+          const cacheFresh =
+            NIM_CLAIM_BALANCE_PEEK_MAX_MS > 0 &&
+            peek !== null &&
+            now - peek.cachedAtMs <= NIM_CLAIM_BALANCE_PEEK_MAX_MS;
+          if (cacheFresh && peek) {
+            payoutHasFunds = peek.luna >= CLAIM_REWARD_MIN_LUNA;
+          } else {
+            const payoutBalanceLuna = await getNimPayoutWalletBalanceLuna();
+            payoutHasFunds = payoutBalanceLuna >= CLAIM_REWARD_MIN_LUNA;
+          }
         } catch (err) {
           console.error("[claimBlock] Failed to check payout wallet balance:", err);
         }

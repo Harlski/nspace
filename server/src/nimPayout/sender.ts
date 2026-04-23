@@ -34,6 +34,15 @@ export function invalidateNimBalanceCache(): void {
   balanceCache = null;
 }
 
+/** Non-async read of last cached payout-wallet balance (for fast paths). */
+export function peekNimPayoutBalanceCacheLuna(): {
+  luna: bigint;
+  cachedAtMs: number;
+} | null {
+  if (!balanceCache) return null;
+  return { luna: balanceCache.luna, cachedAtMs: balanceCache.at };
+}
+
 export function isNimPayoutSenderConfigured(): boolean {
   const k = process.env.NIM_PAYOUT_PRIVATE_KEY?.trim();
   return !!k && k.length >= 64;
@@ -85,13 +94,17 @@ export async function getNimPayoutWalletBalanceLuna(): Promise<bigint> {
 /**
  * Connects to Nimiq (light client), waits for consensus, builds and signs a basic transfer,
  * broadcasts it, then polls until included or confirmed (or timeout).
+ *
+ * The confirmation poll sleeps between attempts **without** holding `withNimiqMutex`, so
+ * short operations (e.g. `getNimPayoutWalletBalanceLuna` during block claims) are not
+ * blocked for the full tx confirmation duration.
  */
 export async function sendNimPayoutTransaction(
   recipientUserFriendlyAddress: string,
   amountLuna: bigint,
   txMessageOverride?: string
 ): Promise<{ txHash: string; details: PlainTransactionDetails }> {
-  return withNimiqMutex(async () => {
+  const { hash, initialDetails } = await withNimiqMutex(async () => {
     const Nimiq = await import("@nimiq/core");
     const {
       TransactionBuilder,
@@ -128,22 +141,26 @@ export async function sendNimPayoutTransaction(
     tx.sign(keyPair, undefined);
 
     const details = await client.sendTransaction(tx);
-    const hash = details.transactionHash;
-
-    const deadline = Date.now() + Number(process.env.NIM_TX_CONFIRM_TIMEOUT_MS ?? 120_000);
-    let last = details;
-    while (Date.now() < deadline) {
-      if (last.state === "confirmed" || last.state === "included") {
-        invalidateNimBalanceCache();
-        return { txHash: hash, details: last };
-      }
-      if (last.state === "invalidated" || last.state === "expired") {
-        throw new Error(`Transaction ${last.state}`);
-      }
-      await new Promise((r) => setTimeout(r, 2000));
-      last = await client.getTransaction(hash);
-    }
-
-    throw new Error("Timed out waiting for transaction to be included");
+    return { hash: details.transactionHash, initialDetails: details };
   });
+
+  const deadline =
+    Date.now() + Number(process.env.NIM_TX_CONFIRM_TIMEOUT_MS ?? 120_000);
+  let last = initialDetails;
+  while (Date.now() < deadline) {
+    if (last.state === "confirmed" || last.state === "included") {
+      invalidateNimBalanceCache();
+      return { txHash: hash, details: last };
+    }
+    if (last.state === "invalidated" || last.state === "expired") {
+      throw new Error(`Transaction ${last.state}`);
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+    last = await withNimiqMutex(async () => {
+      const client = await getClient();
+      return client.getTransaction(hash);
+    });
+  }
+
+  throw new Error("Timed out waiting for transaction to be included");
 }
