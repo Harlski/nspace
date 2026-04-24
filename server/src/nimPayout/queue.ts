@@ -345,6 +345,8 @@ export type PublicPendingPayoutRow = {
 
 export type PublicPendingPayoutSnapshot = {
   allSent: boolean;
+  /** Count of jobs still `pending` or `processing` (same as `rows.length` when not `allSent`). */
+  pendingTotal: number;
   /** Non-null when `rows` is empty — friendly status for humans. */
   message: string | null;
   rows: PublicPendingPayoutRow[];
@@ -365,6 +367,7 @@ export async function getPublicPendingPayoutSnapshot(): Promise<PublicPendingPay
   if (pending.length === 0) {
     return {
       allSent: true,
+      pendingTotal: 0,
       message: "All transactions sent :)",
       rows: [],
     };
@@ -377,5 +380,10 @@ export async function getPublicPendingPayoutSnapshot(): Promise<PublicPendingPay
       amountNim: formatLunaAsNim4(j.amountLuna),
     }))
   );
-  return { allSent: false, message: null, rows };
+  return {
+    allSent: false,
+    pendingTotal: pending.length,
+    message: null,
+    rows,
+  };
 }

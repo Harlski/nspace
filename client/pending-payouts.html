@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NIM payouts — pending</title>
+    <style>
+      :root {
+        font-family: system-ui, sans-serif;
+        background: #0f1419;
+        color: #e6edf3;
+      }
+      body {
+        max-width: 960px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      h1 {
+        font-size: 1.25rem;
+        font-weight: 600;
+      }
+      .status {
+        margin: 1rem 0;
+        padding: 1rem;
+        border-radius: 8px;
+        background: #1a2332;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.6rem 0.5rem;
+        border-bottom: 1px solid #263041;
+        vertical-align: middle;
+      }
+      th {
+        color: #8b9cb3;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .mono {
+        font-family: ui-monospace, monospace;
+        font-size: 0.8rem;
+        word-break: break-all;
+      }
+      .amt {
+        font-variant-numeric: tabular-nums;
+      }
+      img.ident {
+        width: 40px;
+        height: 40px;
+        border-radius: 6px;
+        display: block;
+      }
+      .err {
+        color: #f85149;
+      }
+      footer {
+        margin-top: 2rem;
+        font-size: 0.8rem;
+        color: #8b9cb3;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Pending NIM payouts</h1>
+    <p class="mono" id="status">Loading…</p>
+    <p class="mono" id="countLine" style="margin-top: 0.35rem; color: #8b9cb3"></p>
+    <div id="banner" class="status" style="display: none"></div>
+    <div id="wrap"></div>
+    <footer>
+      Identicons use <code>@nimiq/identicons</code> (same as in-game / Nimiq wallet style). Amounts are
+      queued send amounts (NIM, 4 decimals). When this page is not served by the game API host, set
+      <code>VITE_API_BASE_URL</code> at build time to that API’s origin.
+    </footer>
+    <script type="module" src="/src/pendingPayoutsStandalone.ts"></script>
+  </body>
+</html>

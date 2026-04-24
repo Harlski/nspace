@@ -1,7 +1,11 @@
 import { EventEmitter } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createLogger, defineConfig } from "vite";
+
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 /** How often we repeat the “backend not ready” hint (Vite may re-evaluate config; use global). */
 const BACKEND_DOWN_LOG_THROTTLE_MS = 10_000;
@@ -117,6 +121,14 @@ function attachDevProxyHandlers(proxy: EventEmitter): void {
 
 export default defineConfig({
   customLogger: createDevProxyFriendlyLogger(),
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "index.html"),
+        pendingPayouts: resolve(__dirname, "pending-payouts.html"),
+      },
+    },
+  },
   server: {
     /** Listen on all interfaces so other devices on the LAN can open the dev app (same Wi‑Fi). */
     host: true,

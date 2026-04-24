@@ -1,6 +1,9 @@
 /**
- * Self-contained HTML for `GET /pending-payouts` (public).
+ * Self-contained HTML for `GET /pending-payouts` (public, same host as the game API).
  * Fetches JSON from `/api/nim/pending-payouts` on the same origin.
+ *
+ * When the SPA is hosted separately (e.g. Vercel), use the Vite page `pending-payouts.html`
+ * (`VITE_API_BASE_URL` → game API) instead; see `client/src/pendingPayoutsStandalone.ts`.
  */
 export function pendingPayoutsPublicPageHtml(): string {
   return `<!DOCTYPE html>
@@ -27,6 +30,7 @@ export function pendingPayoutsPublicPageHtml(): string {
 <body>
   <h1>Pending NIM payouts</h1>
   <p class="mono" id="status">Loading…</p>
+  <p class="mono" id="countLine" style="margin-top:0.35rem;color:#8b9cb3"></p>
   <div id="banner" class="status" style="display:none"></div>
   <div id="wrap"></div>
   <footer>Identicons use <code>@nimiq/identicons</code> (same as in-game / Nimiq wallet style). Amounts are queued send amounts (NIM, 4 decimals).</footer>
@@ -40,6 +44,7 @@ export function pendingPayoutsPublicPageHtml(): string {
     }
     async function load() {
       const statusEl = document.getElementById("status");
+      const countLine = document.getElementById("countLine");
       const bannerEl = document.getElementById("banner");
       const wrap = document.getElementById("wrap");
       try {
@@ -47,6 +52,12 @@ export function pendingPayoutsPublicPageHtml(): string {
         if (!r.ok) throw new Error("HTTP " + r.status);
         const data = await r.json();
         statusEl.textContent = "Last updated: " + new Date().toISOString();
+        const total =
+          typeof data.pendingTotal === "number"
+            ? data.pendingTotal
+            : (data.rows && data.rows.length) || 0;
+        countLine.textContent =
+          total === 1 ? "1 pending transaction" : total + " pending transactions";
         if (data.allSent) {
           bannerEl.style.display = "block";
           bannerEl.textContent = data.message || "All transactions sent :)";
@@ -56,7 +67,8 @@ export function pendingPayoutsPublicPageHtml(): string {
         bannerEl.style.display = "none";
         const rows = data.rows || [];
         if (!rows.length) {
-          wrap.innerHTML = '<p class="err">Unexpected empty response.</p>';
+          wrap.innerHTML =
+            '<p class="err">Unexpected empty response (pendingTotal=' + esc(String(total)) + ").</p>";
           return;
         }
         let html = '<table><thead><tr><th>Time (UTC)</th><th>Identicon</th><th>Wallet</th><th>Amount (NIM)</th></tr></thead><tbody>';

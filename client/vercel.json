@@ -1,0 +1,3 @@
+{
+  "rewrites": [{ "source": "/pending-payouts", "destination": "/pending-payouts.html" }]
+}
