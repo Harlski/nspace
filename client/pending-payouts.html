@@ -60,11 +60,6 @@
       .err {
         color: #f85149;
       }
-      footer {
-        margin-top: 2rem;
-        font-size: 0.8rem;
-        color: #8b9cb3;
-      }
     </style>
   </head>
   <body>
@@ -73,11 +68,6 @@
     <p class="mono" id="countLine" style="margin-top: 0.35rem; color: #8b9cb3"></p>
     <div id="banner" class="status" style="display: none"></div>
     <div id="wrap"></div>
-    <footer>
-      Identicons use <code>@nimiq/identicons</code> (same as in-game / Nimiq wallet style). Amounts are
-      queued send amounts (NIM, 4 decimals). When this page is not served by the game API host, set
-      <code>VITE_API_BASE_URL</code> at build time to that API’s origin.
-    </footer>
     <script type="module" src="/src/pendingPayoutsStandalone.ts"></script>
   </body>
 </html>

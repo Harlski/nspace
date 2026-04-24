@@ -9,6 +9,7 @@ Project reference for architecture, shipped features, and how we extend the game
 | [live-service-implementation.md](live-service-implementation.md) | Split hosting (Vercel + Docker backend), launch policy, logging and replay plan |
 | [deploy-github-docker.md](deploy-github-docker.md) | GitHub Actions → VPS Docker deploy; SSH and deploy-key setup |
 | [process.md](process.md) | Sync patterns, tick loop, env vars, rate limits, local dev workflow |
+| [ui-styling.md](ui-styling.md) | HUD / overlay conventions: immersion, single-row chrome, tokens, z-index bands |
 | [tile.md](../tile.md) | **Tile design spec** for floor art / meshes (ortho camera, grid units, seams) |
 
 These files are maintained manually; cite source paths in code when details drift.

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { PlayerState } from "../types.js";
+import { remotePlayerIsNpc } from "../remotePlayerNpc.js";
 import { walletDisplayName } from "../walletDisplayName.js";
 import {
   FOG_INNER_RADIUS,
@@ -645,7 +646,28 @@ export class Game {
   } | null = null;
   private static readonly SELF_EMOJI_LONGPRESS_MS = 480;
   private static readonly SELF_EMOJI_LONGPRESS_MOVE_PX = 14;
-  
+
+  /** Right-click / long-press other human (non-NPC) avatar — HUD context menu. */
+  private otherPlayerContextOpener:
+    | ((p: {
+        targets: Array<{ address: string; displayName: string }>;
+        clientX: number;
+        clientY: number;
+        /** True when your avatar is in front on this ray; HUD shows Emote first if supported. */
+        emoteRowFirst?: boolean;
+      }) => void)
+    | null = null;
+  private otherProfileTouchSession: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+    timer: ReturnType<typeof setTimeout>;
+    targets: Array<{ address: string; displayName: string }>;
+    emoteRowFirst: boolean;
+  } | null = null;
+  private static readonly OTHER_PROFILE_LONGPRESS_MS = 480;
+  private static readonly OTHER_PROFILE_LONGPRESS_MOVE_PX = 14;
+
   /** Canvas room tile claims: map of "x,z" => address */
   private readonly canvasClaims = new Map<string, string>();
   /** Canvas room identicon meshes */
@@ -1398,11 +1420,45 @@ export class Game {
   }
 
   private readonly onCanvasContextMenu = (e: MouseEvent): void => {
-    if (!this.selfQuickEmojiOpener || !this.selfMesh) return;
-    if (!this.pickHitsSelfAvatar(e.clientX, e.clientY)) return;
+    const g = this.pickClosestAvatarGroupAt(e.clientX, e.clientY);
+    if (!g) return;
+    const address = String(g.userData.address ?? "");
+    const displayName = String(g.userData.displayName ?? "");
+    if (g === this.selfMesh) {
+      const others = this.pickAllOtherHumanAvatarsAt(e.clientX, e.clientY);
+      if (others.length > 0 && this.otherPlayerContextOpener) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.otherPlayerContextOpener({
+          targets: others,
+          clientX: e.clientX,
+          clientY: e.clientY,
+          emoteRowFirst: !!this.selfQuickEmojiOpener,
+        });
+        return;
+      }
+      if (!this.selfQuickEmojiOpener) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.selfQuickEmojiOpener();
+      return;
+    }
+    if (remotePlayerIsNpc(address, displayName)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (!this.otherPlayerContextOpener) return;
+    const targets = this.pickAllOtherHumanAvatarsAt(e.clientX, e.clientY);
+    if (targets.length === 0) return;
     e.preventDefault();
     e.stopPropagation();
-    this.selfQuickEmojiOpener();
+    this.otherPlayerContextOpener({
+      targets,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      emoteRowFirst: false,
+    });
   };
 
   private readonly onWheel = (e: WheelEvent): void => {
@@ -1421,6 +1477,16 @@ export class Game {
     ) {
       clearTimeout(this.selfEmojiTouchSession.timer);
       this.selfEmojiTouchSession = null;
+      if (!isCancel) {
+        this.tryExecuteWalkNavigationAt(e.clientX, e.clientY);
+      }
+    }
+    if (
+      this.otherProfileTouchSession &&
+      this.otherProfileTouchSession.pointerId === e.pointerId
+    ) {
+      clearTimeout(this.otherProfileTouchSession.timer);
+      this.otherProfileTouchSession = null;
       if (!isCancel) {
         this.tryExecuteWalkNavigationAt(e.clientX, e.clientY);
       }
@@ -1504,10 +1570,31 @@ export class Game {
     if (!handler) this.clearSelfEmojiTouchSession();
   }
 
+  /** `null` clears any in-progress long-press on another player’s avatar. */
+  setOtherPlayerContextOpener(
+    handler:
+      | ((p: {
+          targets: Array<{ address: string; displayName: string }>;
+          clientX: number;
+          clientY: number;
+          emoteRowFirst?: boolean;
+        }) => void)
+      | null
+  ): void {
+    this.otherPlayerContextOpener = handler;
+    if (!handler) this.clearOtherProfileTouchSession();
+  }
+
   private clearSelfEmojiTouchSession(): void {
     if (!this.selfEmojiTouchSession) return;
     clearTimeout(this.selfEmojiTouchSession.timer);
     this.selfEmojiTouchSession = null;
+  }
+
+  private clearOtherProfileTouchSession(): void {
+    if (!this.otherProfileTouchSession) return;
+    clearTimeout(this.otherProfileTouchSession.timer);
+    this.otherProfileTouchSession = null;
   }
 
   setPlaceExtraFloorHandler(
@@ -2353,13 +2440,80 @@ export class Game {
   }
 
   /** Returns `tileKey` if the ray hits a placed block mesh, else null. */
-  private pickHitsSelfAvatar(clientX: number, clientY: number): boolean {
-    if (!this.selfMesh) return false;
-    if (!this.updateNdc(clientX, clientY)) return false;
+  private resolveAvatarGroupFromHit(obj: THREE.Object3D): THREE.Group | null {
+    let o: THREE.Object3D | null = obj;
+    while (o) {
+      if (o instanceof THREE.Group) {
+        const addr = o.userData["address"] as string | undefined;
+        if (typeof addr === "string" && addr.length > 0) {
+          return o;
+        }
+      }
+      o = o.parent;
+    }
+    return null;
+  }
+
+  /**
+   * Closest avatar along the pick ray (self or remote), or null.
+   * NPC avatars are skipped so a human (or self) behind an NPC on the same ray still wins
+   * for context menu / long-press.
+   */
+  private pickClosestAvatarGroupAt(
+    clientX: number,
+    clientY: number
+  ): THREE.Group | null {
+    if (!this.updateNdc(clientX, clientY)) return null;
     this.camera.updateMatrixWorld();
     this.camera.updateProjectionMatrix();
     this.raycaster.setFromCamera(this.ndc, this.camera);
-    return this.raycaster.intersectObject(this.selfMesh, true).length > 0;
+    const roots: THREE.Object3D[] = [];
+    if (this.selfMesh) roots.push(this.selfMesh);
+    for (const g of this.others.values()) roots.push(g);
+    if (roots.length === 0) return null;
+    const hits = this.raycaster.intersectObjects(roots, true);
+    for (const h of hits) {
+      const g = this.resolveAvatarGroupFromHit(h.object);
+      if (!g) continue;
+      if (g === this.selfMesh) return g;
+      const address = String(g.userData.address ?? "");
+      const displayName = String(g.userData.displayName ?? "");
+      if (remotePlayerIsNpc(address, displayName)) continue;
+      return g;
+    }
+    return null;
+  }
+
+  /**
+   * All distinct other human avatars hit by the pick ray (closest first), for stacked players.
+   */
+  private pickAllOtherHumanAvatarsAt(
+    clientX: number,
+    clientY: number
+  ): Array<{ address: string; displayName: string }> {
+    if (!this.updateNdc(clientX, clientY)) return [];
+    this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    const roots: THREE.Object3D[] = [];
+    for (const g of this.others.values()) roots.push(g);
+    if (roots.length === 0) return [];
+    const hits = this.raycaster.intersectObjects(roots, true);
+    const seen = new Set<string>();
+    const out: Array<{ address: string; displayName: string }> = [];
+    const norm = (a: string) => a.replace(/\s+/g, "").toUpperCase();
+    for (const h of hits) {
+      const group = this.resolveAvatarGroupFromHit(h.object);
+      if (!group || group === this.selfMesh) continue;
+      const address = String(group.userData.address ?? "");
+      const displayName = String(group.userData.displayName ?? "");
+      if (remotePlayerIsNpc(address, displayName)) continue;
+      const key = norm(address);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ address, displayName });
+    }
+    return out;
   }
 
   private pickBlockKey(clientX: number, clientY: number): string | null {
@@ -2404,6 +2558,19 @@ export class Game {
       ) {
         clearTimeout(s.timer);
         this.selfEmojiTouchSession = null;
+      }
+    }
+    if (
+      this.otherProfileTouchSession &&
+      e.pointerId === this.otherProfileTouchSession.pointerId
+    ) {
+      const s = this.otherProfileTouchSession;
+      if (
+        Math.hypot(e.clientX - s.startX, e.clientY - s.startY) >
+        Game.OTHER_PROFILE_LONGPRESS_MOVE_PX
+      ) {
+        clearTimeout(s.timer);
+        this.otherProfileTouchSession = null;
       }
     }
     if (this.touchPointers.size >= 2) {
@@ -2501,6 +2668,7 @@ export class Game {
       if (this.touchPointers.size >= 2) {
         this.clearPendingPrimaryWalk();
         this.clearSelfEmojiTouchSession();
+        this.clearOtherProfileTouchSession();
         this.pinchLastDistancePx = 0;
         e.preventDefault();
         e.stopPropagation();
@@ -2511,31 +2679,120 @@ export class Game {
 
     if (
       e.pointerType === "touch" &&
-      this.selfQuickEmojiOpener &&
       !this.teleporterDestPickHandler &&
-      !this.repositionFrom &&
-      this.pickHitsSelfAvatar(e.clientX, e.clientY)
+      !this.repositionFrom
     ) {
-      const pointerId = e.pointerId;
-      const startX = e.clientX;
-      const startY = e.clientY;
-      const timer = setTimeout(() => {
-        if (
-          !this.selfEmojiTouchSession ||
-          this.selfEmojiTouchSession.pointerId !== pointerId
-        ) {
+      const avatar = this.pickClosestAvatarGroupAt(e.clientX, e.clientY);
+      if (avatar === this.selfMesh) {
+        this.clearOtherProfileTouchSession();
+        const others = this.pickAllOtherHumanAvatarsAt(e.clientX, e.clientY);
+        if (others.length > 0 && this.otherPlayerContextOpener) {
+          const pointerId = e.pointerId;
+          const startX = e.clientX;
+          const startY = e.clientY;
+          const emoteRowFirst = !!this.selfQuickEmojiOpener;
+          const timer = setTimeout(() => {
+            if (
+              !this.otherProfileTouchSession ||
+              this.otherProfileTouchSession.pointerId !== pointerId
+            ) {
+              return;
+            }
+            clearTimeout(this.otherProfileTouchSession.timer);
+            this.otherProfileTouchSession = null;
+            this.otherPlayerContextOpener?.({
+              targets: others,
+              clientX: startX,
+              clientY: startY,
+              emoteRowFirst,
+            });
+          }, Game.OTHER_PROFILE_LONGPRESS_MS);
+          this.otherProfileTouchSession = {
+            pointerId,
+            startX,
+            startY,
+            timer,
+            targets: others,
+            emoteRowFirst,
+          };
+          e.preventDefault();
+          e.stopPropagation();
+          this.tileHighlight.visible = false;
+          this.blockTopHighlight.visible = false;
           return;
         }
-        clearTimeout(this.selfEmojiTouchSession.timer);
-        this.selfEmojiTouchSession = null;
-        this.selfQuickEmojiOpener?.();
-      }, Game.SELF_EMOJI_LONGPRESS_MS);
-      this.selfEmojiTouchSession = { pointerId, startX, startY, timer };
-      e.preventDefault();
-      e.stopPropagation();
-      this.tileHighlight.visible = false;
-      this.blockTopHighlight.visible = false;
-      return;
+        if (this.selfQuickEmojiOpener) {
+          const pointerId = e.pointerId;
+          const startX = e.clientX;
+          const startY = e.clientY;
+          const timer = setTimeout(() => {
+            if (
+              !this.selfEmojiTouchSession ||
+              this.selfEmojiTouchSession.pointerId !== pointerId
+            ) {
+              return;
+            }
+            clearTimeout(this.selfEmojiTouchSession.timer);
+            this.selfEmojiTouchSession = null;
+            this.selfQuickEmojiOpener?.();
+          }, Game.SELF_EMOJI_LONGPRESS_MS);
+          this.selfEmojiTouchSession = { pointerId, startX, startY, timer };
+          e.preventDefault();
+          e.stopPropagation();
+          this.tileHighlight.visible = false;
+          this.blockTopHighlight.visible = false;
+          return;
+        }
+      }
+      if (
+        avatar &&
+        avatar !== this.selfMesh &&
+        this.otherPlayerContextOpener
+      ) {
+        const address = String(avatar.userData.address ?? "");
+        const displayName = String(avatar.userData.displayName ?? "");
+        if (!remotePlayerIsNpc(address, displayName)) {
+          const targets = this.pickAllOtherHumanAvatarsAt(
+            e.clientX,
+            e.clientY
+          );
+          if (targets.length > 0) {
+            this.clearSelfEmojiTouchSession();
+            const pointerId = e.pointerId;
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const timer = setTimeout(() => {
+              if (
+                !this.otherProfileTouchSession ||
+                this.otherProfileTouchSession.pointerId !== pointerId
+              ) {
+                return;
+              }
+              clearTimeout(this.otherProfileTouchSession.timer);
+              this.otherProfileTouchSession = null;
+              this.otherPlayerContextOpener?.({
+                targets,
+                clientX: startX,
+                clientY: startY,
+                emoteRowFirst: false,
+              });
+            }, Game.OTHER_PROFILE_LONGPRESS_MS);
+            this.otherProfileTouchSession = {
+              pointerId,
+              startX,
+              startY,
+              timer,
+              targets,
+              emoteRowFirst: false,
+            };
+            e.preventDefault();
+            e.stopPropagation();
+            this.tileHighlight.visible = false;
+            this.blockTopHighlight.visible = false;
+            return;
+          }
+        }
+      }
     }
 
     e.preventDefault();
@@ -2753,6 +3010,7 @@ export class Game {
 
   setSelf(address: string, displayName?: string): void {
     this.clearSelfEmojiTouchSession();
+    this.clearOtherProfileTouchSession();
     this.selfAddress = address;
     this.cameraFollowReady = false;
     this.selfTargetPos = null;
@@ -2778,7 +3036,9 @@ export class Game {
     canvas.removeEventListener("wheel", this.onWheel);
     canvas.removeEventListener("contextmenu", this.onCanvasContextMenu, true);
     this.clearSelfEmojiTouchSession();
+    this.clearOtherProfileTouchSession();
     this.selfQuickEmojiOpener = null;
+    this.otherPlayerContextOpener = null;
     if (this.selfMesh) {
       this.disposeAvatarGroup(this.selfMesh);
       this.scene.remove(this.selfMesh);

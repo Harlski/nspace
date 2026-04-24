@@ -707,12 +707,30 @@ body {
   z-index: 1;
 }
 
-/* Brand + instruction: one line across the top (ellipsis if needed). */
-.hud-top-strip {
+/* Top chrome: brand row + optional hint strip (see `hud--has-status-sub`). */
+.hud-top-wrap {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  pointer-events: none;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.hud {
+  /* Offset for `.hud-left-stack` / `.hud-top` / claim bar below the chrome block */
+  --hud-below-top-wrap: calc(52px + env(safe-area-inset-top, 0px));
+}
+
+.hud.hud--has-status-sub {
+  --hud-below-top-wrap: calc(78px + env(safe-area-inset-top, 0px));
+}
+
+.hud-top-strip {
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
@@ -720,7 +738,8 @@ body {
   gap: 0.65rem;
   padding: 8px 10px;
   box-sizing: border-box;
-  z-index: 2;
+  min-width: 0;
+  max-width: 100%;
   pointer-events: none;
   /* Readable on bright sky/water: dark frosted bar */
   background: rgba(15, 17, 23, 0.82);
@@ -728,6 +747,30 @@ body {
   -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 2px 16px rgba(0, 0, 0, 0.22);
+}
+
+.hud-status-sub {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 5px 10px 6px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  font-weight: 500;
+  color: rgba(226, 232, 240, 0.92);
+  background: rgba(12, 14, 20, 0.9);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+  white-space: normal;
+  word-break: break-word;
+  min-height: calc(1.35em + 2px);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+.hud-status-sub--empty {
+  min-height: 0;
+  padding: 0;
+  border-bottom-width: 0;
+  overflow: hidden;
 }
 
 .hud-brand {
@@ -1045,25 +1088,46 @@ button.hud-brand:focus-visible {
   pointer-events: none;
 }
 
-.hud-top-strip .hud-status-row {
-  flex: 1 1 0;
+/* Fills space between player bar and toolbar; Reconnect aligns to the right edge of this region */
+.hud-top-strip__mid {
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: row;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   pointer-events: auto;
 }
 
-.hud-top-strip .hud-status-row .hud-status {
-  flex: 1 1 0;
-  min-width: 0;
+/* Wallet identicon + short address — locked immediately right of “Nimiq Space” */
+.hud-player-bar {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  margin-left: 0.15rem;
+  pointer-events: none;
+}
+
+.hud-player-bar__identicon {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  object-fit: cover;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.hud-player-bar__addr {
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.35;
-  opacity: 1;
-  color: rgba(248, 250, 252, 0.95);
+  color: rgba(248, 250, 252, 0.96);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
 }
 
@@ -1088,14 +1152,13 @@ button.hud-brand:focus-visible {
 
 .hud-top-strip .hud-top-toolbar {
   flex-shrink: 0;
-  margin-left: auto;
   align-self: center;
   pointer-events: auto;
 }
 
 .hud-left-stack {
   position: absolute;
-  top: 48px;
+  top: var(--hud-below-top-wrap);
   left: 10px;
   display: flex;
   flex-direction: column;
@@ -1111,9 +1174,55 @@ button.hud-brand:focus-visible {
     max-width: min(46vw, 200px);
   }
 
-  .hud-top-strip .hud-status-row .hud-status {
-    font-size: 10px;
+  .hud-status-sub:not(.hud-status-sub--empty) {
+    font-size: 10.5px;
     line-height: 1.35;
+  }
+
+  .hud-player-bar__addr {
+    font-size: 11.5px;
+  }
+}
+
+/* Narrow touch: keep ONE row — shrink mid, let toolbar take remaining width and scroll horizontally */
+@media (pointer: coarse) and (max-width: 960px) {
+  .hud-top-strip {
+    flex-wrap: nowrap;
+    padding-left: max(6px, env(safe-area-inset-left, 0px));
+    padding-right: max(6px, env(safe-area-inset-right, 0px));
+  }
+
+  .hud-top-strip__mid {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .hud-brand {
+    font-size: clamp(11px, 3.5vw, 16px);
+  }
+
+  .hud-top-strip .hud-top-toolbar {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 100%;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 4px;
+  }
+
+  .hud-top-strip .hud-top-toolbar::-webkit-scrollbar {
+    display: none;
+    height: 0;
+  }
+
+  .hud-player-bar__addr {
+    max-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
@@ -1533,7 +1642,7 @@ button.hud-brand:focus-visible {
 
 .hud-top {
   position: absolute;
-  top: 48px;
+  top: var(--hud-below-top-wrap);
   right: 10px;
   pointer-events: auto;
   display: flex;
@@ -1821,7 +1930,7 @@ button.hud-brand:focus-visible {
 
   /* Span letterbox below top strip so children can position against game area; pass clicks through except controls */
   .hud-top {
-    top: 48px;
+    top: var(--hud-below-top-wrap);
     left: 0;
     right: 0;
     bottom: 0;
@@ -2095,6 +2204,254 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
+/* Other player — context menu (fixed viewport coords from Game) */
+.other-player-ctx {
+  position: fixed;
+  z-index: 10002;
+  min-width: 160px;
+  padding: 4px 0;
+  border-radius: 8px;
+  border: 1px solid rgba(61, 70, 90, 0.95);
+  background: rgba(15, 17, 23, 0.97);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.other-player-ctx[hidden] {
+  display: none !important;
+}
+
+.other-player-ctx__item {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  color: #e8eaef;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.other-player-ctx__item:hover {
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.other-player-ctx__item.other-player-ctx__item--row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.other-player-ctx__ident {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.other-player-ctx__view-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.other-player-ctx__multi {
+  max-height: min(40vh, 220px);
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.other-player-ctx__multi[hidden] {
+  display: none !important;
+}
+
+.other-player-ctx__single[hidden] {
+  display: none !important;
+}
+
+.other-player-ctx__pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: #e8eaef;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.other-player-ctx__pick:hover {
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.other-player-ctx__pick--emote {
+  font-weight: 700;
+}
+
+.other-player-ctx__pick-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.other-player-profile {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 16px;
+  padding-top: max(20px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.other-player-profile[hidden] {
+  display: none !important;
+}
+
+.other-player-profile__backdrop {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  cursor: pointer;
+}
+
+.other-player-profile__dialog {
+  position: relative;
+  z-index: 1;
+  width: min(340px, 100%);
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
+  padding: 22px 18px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  background: rgba(15, 17, 23, 0.97);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.other-player-profile__close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8eaef;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.other-player-profile__close:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.other-player-profile__identicon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.other-player-profile__title {
+  margin: 0;
+  padding: 0 28px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #f8fafc;
+  text-align: center;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+.other-player-profile__address {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid rgba(100, 116, 139, 0.45);
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.45);
+  color: rgba(226, 232, 240, 0.95);
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(148, 163, 184, 0.4);
+  text-underline-offset: 3px;
+}
+
+.other-player-profile__address:hover {
+  color: #fff;
+}
+
+.other-player-profile__send-nim {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 10px 16px;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.other-player-profile__send-nim.nq-button-pill::before,
+.other-player-profile__send-nim.nq-button-pill::after {
+  pointer-events: none;
+}
+
+.other-player-profile__copy-hint {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4ade80;
+  min-height: 1.2em;
+}
+
 .self-emoji-menu__btn {
   width: 38px;
   height: 38px;
@@ -2233,14 +2590,6 @@ button.hud-brand:focus-visible {
   margin: 8px 0 0;
   font-size: 11px;
   color: rgba(147, 197, 253, 0.95);
-}
-
-.hud-status {
-  position: relative;
-  font-size: 12px;
-  opacity: 0.85;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-  line-height: 1.35;
 }
 
 /* Sits in .hud-top-actions below Walk / Build / Floor — top-right stack */
@@ -3256,7 +3605,7 @@ button.hud-brand:focus-visible {
 .nim-claim-bar {
   position: absolute;
   left: 50%;
-  top: calc(56px + env(safe-area-inset-top, 0px));
+  top: calc(var(--hud-below-top-wrap) + 4px);
   transform: translateX(-50%);
   width: min(360px, 88vw);
   padding: 8px 10px 10px;

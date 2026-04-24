@@ -9,8 +9,17 @@ import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../game/constants.js";
 import { HUB_ROOM_ID, normalizeRoomId } from "../game/roomLayouts.js";
 import telegramIconUrl from "../assets/social/telegram.svg?url";
 import xIconUrl from "../assets/social/x.svg?url";
-import { formatWalletAddressGap4 } from "../formatWalletAddress.js";
-import { NIMIQ_WALLET_URL, TELEGRAM_URL, X_URL } from "../socialLinks.js";
+import {
+  formatWalletAddressConnectAs,
+  formatWalletAddressGap4,
+} from "../formatWalletAddress.js";
+import { walletDisplayName } from "../walletDisplayName.js";
+import {
+  NIMIQ_WALLET_URL,
+  TELEGRAM_URL,
+  X_URL,
+  nimiqWalletRecipientDeepLink,
+} from "../socialLinks.js";
 import { nimiqIconUseMarkup } from "./nimiqIcons.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 
@@ -98,6 +107,19 @@ export function createHud(
   hideSelfEmojiMenu: () => void;
   setSelfEmojiMenuAnchor: (x: number, y: number) => void;
   isSelfEmojiMenuOpen: () => boolean;
+  /** Context menu on another human player (right-click / long-press avatar). */
+  showOtherPlayerContextMenu: (
+    clientX: number,
+    clientY: number,
+    targets: Array<{ address: string; displayName: string }>,
+    opts?: {
+      emoteRowFirst?: boolean;
+      onEmote?: () => void;
+    }
+  ) => void;
+  hideOtherPlayerContextMenu: () => void;
+  /** Close other-player context menu and profile overlay (e.g. before local move). */
+  dismissOtherPlayerOverlays: () => void;
   onReturnToHub: (fn: () => void) => void;
   onPortalEnter: (fn: () => void) => void;
   isTeleporterModeActive: () => boolean;
@@ -238,6 +260,9 @@ export function createHud(
   ui.className = "hud";
   letter.appendChild(ui);
 
+  const topWrap = document.createElement("div");
+  topWrap.className = "hud-top-wrap";
+
   const topStrip = document.createElement("div");
   topStrip.className = "hud-top-strip";
 
@@ -254,11 +279,23 @@ export function createHud(
   brand.appendChild(nimiqSpan);
   brand.appendChild(spaceSpan);
 
-  const statusRow = document.createElement("div");
-  statusRow.className = "hud-status-row";
-  const status = document.createElement("div");
-  status.className = "hud-status";
-  status.textContent = "";
+  const playerBar = document.createElement("div");
+  playerBar.className = "hud-player-bar";
+  playerBar.setAttribute("aria-label", "Your wallet");
+  const playerBarIdenticon = document.createElement("img");
+  playerBarIdenticon.className = "hud-player-bar__identicon";
+  playerBarIdenticon.alt = "";
+  playerBarIdenticon.width = 22;
+  playerBarIdenticon.height = 22;
+  playerBarIdenticon.decoding = "async";
+  playerBarIdenticon.hidden = true;
+  const playerBarAddr = document.createElement("span");
+  playerBarAddr.className = "hud-player-bar__addr";
+  playerBar.appendChild(playerBarIdenticon);
+  playerBar.appendChild(playerBarAddr);
+
+  const topStripMid = document.createElement("div");
+  topStripMid.className = "hud-top-strip__mid";
   const reconnectBtn = document.createElement("button");
   reconnectBtn.type = "button";
   reconnectBtn.className = "hud-reconnect-btn nq-button-pill light-blue";
@@ -266,11 +303,17 @@ export function createHud(
   reconnectBtn.hidden = true;
   reconnectBtn.setAttribute("aria-label", "Reconnect to server");
   reconnectBtn.title = "Try connecting again without leaving the game";
-  statusRow.appendChild(status);
-  statusRow.appendChild(reconnectBtn);
+  topStripMid.appendChild(reconnectBtn);
+
+  const statusSub = document.createElement("div");
+  statusSub.className = "hud-status-sub hud-status-sub--empty";
+  statusSub.setAttribute("role", "status");
+  statusSub.setAttribute("aria-live", "polite");
+  statusSub.textContent = "";
 
   topStrip.appendChild(brand);
-  topStrip.appendChild(statusRow);
+  topStrip.appendChild(playerBar);
+  topStrip.appendChild(topStripMid);
 
   const topToolbar = document.createElement("div");
   topToolbar.className = "hud-top-toolbar";
@@ -540,7 +583,9 @@ export function createHud(
     });
   }
   
-  ui.appendChild(topStrip);
+  topWrap.appendChild(topStrip);
+  topWrap.appendChild(statusSub);
+  ui.appendChild(topWrap);
   ui.appendChild(leftStack);
   letter.appendChild(signpostOverlay);
   letter.appendChild(feedbackOverlay);
@@ -682,6 +727,297 @@ export function createHud(
     selfEmojiMenu.appendChild(btn);
   }
   letter.appendChild(selfEmojiMenu);
+
+  const otherPlayerCtx = document.createElement("div");
+  otherPlayerCtx.className = "other-player-ctx";
+  otherPlayerCtx.hidden = true;
+  otherPlayerCtx.setAttribute("role", "menu");
+  otherPlayerCtx.setAttribute("aria-label", "Player actions");
+  const otherPlayerCtxMulti = document.createElement("div");
+  otherPlayerCtxMulti.className = "other-player-ctx__multi";
+  otherPlayerCtxMulti.hidden = true;
+  otherPlayerCtxMulti.setAttribute("role", "group");
+  otherPlayerCtxMulti.setAttribute("aria-label", "Players here");
+  const otherPlayerCtxSingle = document.createElement("div");
+  otherPlayerCtxSingle.className = "other-player-ctx__single";
+  const otherPlayerCtxViewBtn = document.createElement("button");
+  otherPlayerCtxViewBtn.type = "button";
+  otherPlayerCtxViewBtn.className =
+    "other-player-ctx__item other-player-ctx__item--row";
+  otherPlayerCtxViewBtn.setAttribute("role", "menuitem");
+  const otherPlayerCtxIdent = document.createElement("img");
+  otherPlayerCtxIdent.className = "other-player-ctx__ident";
+  otherPlayerCtxIdent.alt = "";
+  otherPlayerCtxIdent.width = 22;
+  otherPlayerCtxIdent.height = 22;
+  const otherPlayerCtxViewLabel = document.createElement("span");
+  otherPlayerCtxViewLabel.className = "other-player-ctx__view-label";
+  otherPlayerCtxViewLabel.textContent = "View profile";
+  otherPlayerCtxViewBtn.append(otherPlayerCtxIdent, otherPlayerCtxViewLabel);
+  otherPlayerCtxSingle.appendChild(otherPlayerCtxViewBtn);
+  otherPlayerCtx.append(otherPlayerCtxMulti, otherPlayerCtxSingle);
+
+  const otherPlayerProfile = document.createElement("div");
+  otherPlayerProfile.className = "other-player-profile";
+  otherPlayerProfile.hidden = true;
+  otherPlayerProfile.setAttribute("aria-hidden", "true");
+  const oppBackdrop = document.createElement("button");
+  oppBackdrop.type = "button";
+  oppBackdrop.className = "other-player-profile__backdrop";
+  oppBackdrop.setAttribute("aria-label", "Dismiss profile");
+  const oppDialog = document.createElement("div");
+  oppDialog.className = "other-player-profile__dialog";
+  oppDialog.setAttribute("role", "dialog");
+  oppDialog.setAttribute("aria-modal", "true");
+  oppDialog.setAttribute("aria-labelledby", "other-player-profile-title");
+  const oppClose = document.createElement("button");
+  oppClose.type = "button";
+  oppClose.className = "other-player-profile__close";
+  oppClose.setAttribute("aria-label", "Close");
+  oppClose.textContent = "×";
+  const oppIdent = document.createElement("img");
+  oppIdent.className = "other-player-profile__identicon";
+  oppIdent.alt = "";
+  oppIdent.width = 56;
+  oppIdent.height = 56;
+  oppIdent.hidden = true;
+  const oppTitle = document.createElement("h2");
+  oppTitle.className = "other-player-profile__title";
+  oppTitle.id = "other-player-profile-title";
+  const oppAddrBtn = document.createElement("button");
+  oppAddrBtn.type = "button";
+  oppAddrBtn.className = "other-player-profile__address";
+  const oppSendNim = document.createElement("a");
+  oppSendNim.className =
+    "other-player-profile__send-nim nq-button-pill light-blue";
+  oppSendNim.target = "_blank";
+  oppSendNim.rel = "noopener noreferrer";
+  oppSendNim.textContent = "Send NIM";
+  const oppCopyHint = document.createElement("p");
+  oppCopyHint.className = "other-player-profile__copy-hint";
+  oppCopyHint.hidden = true;
+  oppDialog.appendChild(oppClose);
+  oppDialog.appendChild(oppIdent);
+  oppDialog.appendChild(oppTitle);
+  oppDialog.appendChild(oppAddrBtn);
+  oppDialog.appendChild(oppSendNim);
+  oppDialog.appendChild(oppCopyHint);
+  otherPlayerProfile.appendChild(oppBackdrop);
+  otherPlayerProfile.appendChild(oppDialog);
+  letter.appendChild(otherPlayerCtx);
+  letter.appendChild(otherPlayerProfile);
+
+  let otherCtxOutsideBound = false;
+  let otherProfileCopyHintTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function closeOtherPlayerProfile(): void {
+    detachProfileEscape();
+    if (otherProfileCopyHintTimer) {
+      clearTimeout(otherProfileCopyHintTimer);
+      otherProfileCopyHintTimer = null;
+    }
+    oppCopyHint.hidden = true;
+    oppCopyHint.textContent = "";
+    otherPlayerProfile.hidden = true;
+    otherPlayerProfile.setAttribute("aria-hidden", "true");
+    oppIdent.hidden = true;
+    oppIdent.removeAttribute("src");
+    delete oppIdent.dataset.address;
+  }
+
+  function closeOtherPlayerContextMenu(): void {
+    otherPlayerCtx.hidden = true;
+    otherPlayerCtxMulti.replaceChildren();
+    otherPlayerCtxMulti.hidden = true;
+    otherPlayerCtxSingle.hidden = false;
+    otherPlayerCtxIdent.hidden = true;
+    otherPlayerCtxIdent.removeAttribute("src");
+    delete otherPlayerCtxIdent.dataset.address;
+    if (!otherCtxOutsideBound) return;
+    otherCtxOutsideBound = false;
+    window.removeEventListener("pointerdown", onOtherCtxOutsidePointerDown);
+    window.removeEventListener("keydown", onOtherCtxEscape);
+  }
+
+  function closeOtherPlayerUiOverlays(): void {
+    closeOtherPlayerProfile();
+    closeOtherPlayerContextMenu();
+  }
+
+  async function loadCtxIdenticon(
+    img: HTMLImageElement,
+    compact: string
+  ): Promise<void> {
+    img.hidden = false;
+    img.removeAttribute("src");
+    img.dataset.address = compact;
+    try {
+      const { identiconDataUrl } = await import("../game/identiconTexture.js");
+      const url = await identiconDataUrl(compact);
+      if (img.dataset.address !== compact) return;
+      img.src = url;
+    } catch {
+      if (img.dataset.address === compact) {
+        img.hidden = true;
+      }
+    }
+  }
+
+  function setSingleCtxTarget(address: string, displayName: string): void {
+    const compact = address.replace(/\s+/g, "").trim();
+    otherPlayerCtxViewBtn.dataset.address = compact;
+    otherPlayerCtxViewBtn.dataset.displayName = displayName;
+    void loadCtxIdenticon(otherPlayerCtxIdent, compact);
+  }
+
+  function openOtherPlayerMultiPicker(
+    targets: Array<{ address: string; displayName: string }>,
+    emote?: { onEmote: () => void }
+  ): void {
+    otherPlayerCtxMulti.replaceChildren();
+    if (emote) {
+      otherPlayerCtxMulti.setAttribute(
+        "aria-label",
+        "Emote and nearby players"
+      );
+      const emoteBtn = document.createElement("button");
+      emoteBtn.type = "button";
+      emoteBtn.className =
+        "other-player-ctx__pick other-player-ctx__pick--emote";
+      emoteBtn.setAttribute("role", "menuitem");
+      emoteBtn.textContent = "Emote";
+      emoteBtn.addEventListener("click", () => {
+        closeOtherPlayerContextMenu();
+        emote.onEmote();
+      });
+      otherPlayerCtxMulti.appendChild(emoteBtn);
+    } else {
+      otherPlayerCtxMulti.setAttribute("aria-label", "Players here");
+    }
+    for (const t of targets) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "other-player-ctx__pick";
+      row.setAttribute("role", "menuitem");
+      const compact = t.address.replace(/\s+/g, "").trim();
+      const label = t.displayName.trim() || walletDisplayName(compact);
+      const img = document.createElement("img");
+      img.className = "other-player-ctx__ident";
+      img.alt = "";
+      img.width = 22;
+      img.height = 22;
+      const sp = document.createElement("span");
+      sp.className = "other-player-ctx__pick-label";
+      sp.textContent = label;
+      row.append(img, sp);
+      void loadCtxIdenticon(img, compact);
+      row.addEventListener("click", () => {
+        otherPlayerCtxMulti.hidden = true;
+        otherPlayerCtxSingle.hidden = false;
+        setSingleCtxTarget(t.address, t.displayName);
+      });
+      otherPlayerCtxMulti.appendChild(row);
+    }
+    otherPlayerCtxMulti.hidden = false;
+    otherPlayerCtxSingle.hidden = true;
+  }
+
+  function onOtherCtxOutsidePointerDown(e: PointerEvent): void {
+    if (otherPlayerCtx.hidden) return;
+    if (otherPlayerCtx.contains(e.target as Node)) return;
+    closeOtherPlayerContextMenu();
+  }
+
+  function onOtherCtxEscape(e: KeyboardEvent): void {
+    if (e.key !== "Escape") return;
+    closeOtherPlayerContextMenu();
+  }
+
+  let profileEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
+  function detachProfileEscape(): void {
+    if (!profileEscapeHandler) return;
+    window.removeEventListener("keydown", profileEscapeHandler);
+    profileEscapeHandler = null;
+  }
+  function attachProfileEscape(): void {
+    if (profileEscapeHandler) return;
+    profileEscapeHandler = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape") return;
+      closeOtherPlayerProfile();
+    };
+    window.addEventListener("keydown", profileEscapeHandler);
+  }
+
+  function bindOtherCtxOutside(): void {
+    if (otherCtxOutsideBound) return;
+    otherCtxOutsideBound = true;
+    window.addEventListener("pointerdown", onOtherCtxOutsidePointerDown);
+    window.addEventListener("keydown", onOtherCtxEscape);
+  }
+
+  function showOtherPlayerProfileView(address: string, displayName: string): void {
+    const compact = address.replace(/\s+/g, "").trim();
+    const label = displayName.trim() || walletDisplayName(compact);
+    oppTitle.textContent = label;
+    oppAddrBtn.textContent = formatWalletAddressGap4(compact);
+    oppAddrBtn.title = compact;
+    oppAddrBtn.dataset.fullAddress = compact;
+    oppSendNim.href = nimiqWalletRecipientDeepLink(compact);
+    oppIdent.hidden = false;
+    oppIdent.removeAttribute("src");
+    oppIdent.dataset.address = compact;
+    void (async (): Promise<void> => {
+      try {
+        const { identiconDataUrl } = await import("../game/identiconTexture.js");
+        const url = await identiconDataUrl(compact);
+        if (oppIdent.dataset.address !== compact) return;
+        oppIdent.src = url;
+      } catch {
+        if (oppIdent.dataset.address === compact) {
+          oppIdent.hidden = true;
+        }
+      }
+    })();
+    otherPlayerProfile.hidden = false;
+    otherPlayerProfile.setAttribute("aria-hidden", "false");
+    attachProfileEscape();
+    oppClose.focus({ preventScroll: true });
+  }
+
+  oppClose.addEventListener("click", () => {
+    closeOtherPlayerProfile();
+  });
+  oppBackdrop.addEventListener("click", () => {
+    closeOtherPlayerProfile();
+  });
+  oppAddrBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const full = oppAddrBtn.dataset.fullAddress?.trim() ?? "";
+    if (!full) return;
+    void (async (): Promise<void> => {
+      try {
+        await navigator.clipboard.writeText(full);
+        oppCopyHint.textContent = "Copied to clipboard";
+        oppCopyHint.hidden = false;
+        if (otherProfileCopyHintTimer) clearTimeout(otherProfileCopyHintTimer);
+        otherProfileCopyHintTimer = setTimeout(() => {
+          oppCopyHint.hidden = true;
+          otherProfileCopyHintTimer = null;
+        }, 2000);
+      } catch {
+        oppCopyHint.textContent = "Could not copy";
+        oppCopyHint.hidden = false;
+      }
+    })();
+  });
+
+  otherPlayerCtxViewBtn.addEventListener("click", () => {
+    const addr = otherPlayerCtxViewBtn.dataset.address ?? "";
+    const disp = otherPlayerCtxViewBtn.dataset.displayName ?? "";
+    closeOtherPlayerContextMenu();
+    if (addr) showOtherPlayerProfileView(addr, disp);
+  });
 
   const chatPanel = document.createElement("div");
   chatPanel.className = "chat-panel";
@@ -1272,6 +1608,35 @@ export function createHud(
   }
 
   let brandLinksPlayerAddress = "";
+
+  function syncTopBarPlayerIdentity(): void {
+    const raw = brandLinksPlayerAddress.trim();
+    if (!raw) {
+      playerBarAddr.textContent = "";
+      playerBarIdenticon.hidden = true;
+      playerBarIdenticon.removeAttribute("src");
+      delete playerBarIdenticon.dataset.address;
+      return;
+    }
+    const compact = raw.replace(/\s+/g, "").trim();
+    playerBarAddr.textContent = formatWalletAddressConnectAs(compact);
+    playerBarIdenticon.hidden = false;
+    playerBarIdenticon.removeAttribute("src");
+    playerBarIdenticon.dataset.address = compact;
+    void (async (): Promise<void> => {
+      try {
+        const { identiconDataUrl } = await import("../game/identiconTexture.js");
+        const url = await identiconDataUrl(compact);
+        if (playerBarIdenticon.dataset.address !== compact) return;
+        playerBarIdenticon.src = url;
+      } catch {
+        if (playerBarIdenticon.dataset.address === compact) {
+          playerBarIdenticon.hidden = true;
+        }
+      }
+    })();
+  }
+
   const brandLinksBackdrop = brandLinksOverlay.querySelector(
     ".brand-links-overlay__backdrop"
   ) as HTMLElement | null;
@@ -1394,7 +1759,7 @@ export function createHud(
   async function openBrandQrFullscreen(): Promise<void> {
     const normalized = brandLinksPlayerAddress.replace(/\s+/g, "").trim().toUpperCase();
     if (!normalized || !brandLinksQrCanvasHost || !brandLinksQrView) return;
-    const qrUrl = `${NIMIQ_WALLET_URL}/nimiq:${normalized}`;
+    const qrUrl = nimiqWalletRecipientDeepLink(brandLinksPlayerAddress);
     brandLinksBody?.classList.add("brand-links-overlay__body--qr-open");
     brandLinksQrView.hidden = false;
     brandLinksQrView.setAttribute("aria-hidden", "false");
@@ -2218,7 +2583,10 @@ export function createHud(
 
   return {
     setStatus(s: string) {
-      status.textContent = s;
+      const t = s.trim();
+      statusSub.textContent = t;
+      statusSub.classList.toggle("hud-status-sub--empty", !t);
+      ui.classList.toggle("hud--has-status-sub", !!t);
     },
     appendChat(from: string, text: string) {
       const isSystem = from.trim().toLowerCase() === "system";
@@ -2261,6 +2629,7 @@ export function createHud(
       portalEnterBtn.style.top = `${y}px`;
     },
     showSelfEmojiMenu(anchorX: number, anchorY: number, onPick: (emoji: string) => void) {
+      closeOtherPlayerUiOverlays();
       selfEmojiPickHandler = onPick;
       selfEmojiMenu.style.left = `${anchorX}px`;
       selfEmojiMenu.style.top = `${anchorY}px`;
@@ -2277,6 +2646,51 @@ export function createHud(
     },
     isSelfEmojiMenuOpen() {
       return !selfEmojiMenu.hidden;
+    },
+    showOtherPlayerContextMenu(
+      clientX: number,
+      clientY: number,
+      targets: Array<{ address: string; displayName: string }>,
+      opts?: { emoteRowFirst?: boolean; onEmote?: () => void }
+    ) {
+      closeSelfEmojiMenu();
+      closeOtherPlayerProfile();
+      if (targets.length === 0) return;
+      otherPlayerCtx.hidden = false;
+      otherPlayerCtx.style.position = "fixed";
+      const emoteBlock =
+        opts?.emoteRowFirst && typeof opts.onEmote === "function"
+          ? { onEmote: opts.onEmote }
+          : undefined;
+      if (emoteBlock) {
+        openOtherPlayerMultiPicker(targets, emoteBlock);
+      } else if (targets.length === 1) {
+        otherPlayerCtxMulti.replaceChildren();
+        otherPlayerCtxMulti.hidden = true;
+        otherPlayerCtxSingle.hidden = false;
+        const t = targets[0]!;
+        setSingleCtxTarget(t.address, t.displayName);
+      } else {
+        openOtherPlayerMultiPicker(targets);
+      }
+      requestAnimationFrame(() => {
+        const w = otherPlayerCtx.offsetWidth || 160;
+        const h = otherPlayerCtx.offsetHeight || 44;
+        const pad = 8;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const x = Math.min(Math.max(pad, clientX), vw - w - pad);
+        const y = Math.min(Math.max(pad, clientY), vh - h - pad);
+        otherPlayerCtx.style.left = `${x}px`;
+        otherPlayerCtx.style.top = `${y}px`;
+        bindOtherCtxOutside();
+      });
+    },
+    hideOtherPlayerContextMenu() {
+      closeOtherPlayerContextMenu();
+    },
+    dismissOtherPlayerOverlays() {
+      closeOtherPlayerUiOverlays();
     },
     onReturnToHub(fn: () => void) {
       returnHubHandler = fn;
@@ -3032,6 +3446,7 @@ export function createHud(
     setBrandLinksPlayerAddress(address: string) {
       brandLinksPlayerAddress = address.replace(/\s+/g, "").trim();
       syncBrandLinksWalletAddressDisplay();
+      syncTopBarPlayerIdentity();
       if (!brandLinksOverlay.hidden) {
         syncBrandLinksWalletIdenticon();
       }
@@ -3147,6 +3562,8 @@ export function createHud(
     },
     destroy() {
       closeSelfEmojiMenu();
+      closeOtherPlayerProfile();
+      closeOtherPlayerContextMenu();
       hideBrandLinksOverlay();
       hideFeedbackOverlay();
       if (playerJoinToastTimer) {

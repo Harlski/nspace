@@ -160,7 +160,6 @@ function enterGame(token: string, address: string): void {
   const showDebugHud =
     import.meta.env.DEV ||
     new URLSearchParams(location.search).has("debug");
-  const shortAddr = formatWalletAddressConnectAs(address);
   const hud = createHud(hudRoot, { showDebug: showDebugHud });
   hud.setBrandLinksPlayerAddress(address);
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
@@ -1173,9 +1172,7 @@ function enterGame(token: string, address: string): void {
       });
       hud.setPlayModeState("walk");
       hud.setStatus(
-        touchUi
-          ? `Connect as ${shortAddr} — mode icons bottom-right`
-          : `Connect as ${shortAddr} — ${readOnlyHint}`
+        touchUi ? "Mode icons bottom-right" : readOnlyHint
       );
       return;
     }
@@ -1257,11 +1254,7 @@ function enterGame(token: string, address: string): void {
         : isCanvas
           ? "Find the exit the quickest to win NIM"
           : "This room is view-only for building";
-    hud.setStatus(
-      touchUi
-        ? `Connect as ${shortAddr} — mode icons bottom-right`
-        : `Connect as ${shortAddr} — ${desktopHint}`
-    );
+    hud.setStatus(touchUi ? "Mode icons bottom-right" : desktopHint);
     hud.setPlayModeState(playModeFromGame());
   }
 
@@ -1324,8 +1317,29 @@ function enterGame(token: string, address: string): void {
         if (socket.readyState === WebSocket.OPEN) sendChat(socket, emoji);
       });
     });
+    game.setOtherPlayerContextOpener((pick) => {
+      hud.showOtherPlayerContextMenu(
+        pick.clientX,
+        pick.clientY,
+        pick.targets,
+        pick.emoteRowFirst
+          ? {
+              emoteRowFirst: true,
+              onEmote: () => {
+                const a = game.getSelfScreenPosition(1.32);
+                if (!a) return;
+                hud.showSelfEmojiMenu(a.x, a.y, (emoji) => {
+                  if (socket.readyState === WebSocket.OPEN)
+                    sendChat(socket, emoji);
+                });
+              },
+            }
+          : undefined
+      );
+    });
 
     game.setTileClickHandler((x, z, layer = 0) => {
+      hud.dismissOtherPlayerOverlays();
       // Check if in signpost mode (only in build mode)
       if (game.getBuildMode() && hud.isSignpostModeActive()) {
         // Validate placement is within build radius

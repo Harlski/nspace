@@ -24,7 +24,6 @@ export function pendingPayoutsPublicPageHtml(): string {
     .amt { font-variant-numeric: tabular-nums; }
     img.ident { width: 40px; height: 40px; border-radius: 6px; display: block; }
     .err { color: #f85149; }
-    footer { margin-top: 2rem; font-size: 0.8rem; color: #8b9cb3; }
   </style>
 </head>
 <body>
@@ -33,7 +32,6 @@ export function pendingPayoutsPublicPageHtml(): string {
   <p class="mono" id="countLine" style="margin-top:0.35rem;color:#8b9cb3"></p>
   <div id="banner" class="status" style="display:none"></div>
   <div id="wrap"></div>
-  <footer>Identicons use <code>@nimiq/identicons</code> (same as in-game / Nimiq wallet style). Amounts are queued send amounts (NIM, 4 decimals).</footer>
   <script>
     function esc(s) {
       return String(s)
