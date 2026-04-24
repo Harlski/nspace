@@ -253,27 +253,6 @@ function enterGame(token: string, address: string): void {
           <button type="button" class="rooms-modal__btn rooms-modal__btn--primary rooms-modal__create-launch" id="rooms-open-create">Create a room</button>
           <p id="rooms-modal-current-line" class="rooms-modal__current-line" aria-live="polite"></p>
         </div>
-        <div id="rooms-view-create" hidden>
-          <button type="button" class="rooms-modal__back" id="rooms-create-back">← Back</button>
-          <p class="rooms-modal__section-title">Create a room</p>
-          <p class="rooms-modal__fineprint">New rooms get a random 6-character code (e.g. AB12CD). Max size 30×30 tiles.</p>
-          <label class="rooms-modal__label" for="rooms-create-name">Name</label>
-          <input class="rooms-modal__input rooms-modal__input--full" id="rooms-create-name" type="text" maxlength="48" autocomplete="off" />
-          <div class="rooms-modal__create-grid">
-            <label class="rooms-modal__label" for="rooms-create-w">Width</label>
-            <label class="rooms-modal__label" for="rooms-create-h">Height</label>
-            <input class="rooms-modal__input rooms-modal__input--w" id="rooms-create-w" type="number" min="5" max="30" value="16" />
-            <input class="rooms-modal__input rooms-modal__input--w" id="rooms-create-h" type="number" min="5" max="30" value="16" />
-          </div>
-          <label class="rooms-modal__check">
-            <input type="checkbox" id="rooms-create-public" checked />
-            <span>Show in public room list</span>
-          </label>
-          <div class="rooms-modal__create-actions">
-            <button type="button" class="rooms-modal__btn rooms-modal__btn--primary" id="rooms-create-submit">Create &amp; enter</button>
-          </div>
-          <p class="rooms-modal__hint" id="rooms-create-hint" hidden></p>
-        </div>
         <div id="rooms-view-edit" hidden>
           <div class="rooms-modal__edit-head">
             <button type="button" class="rooms-modal__back" id="rooms-edit-back">← Back</button>
@@ -310,6 +289,41 @@ function enterGame(token: string, address: string): void {
     </div>
   `;
   hudRoot.appendChild(roomsModal);
+
+  const roomsCreateModal = document.createElement("div");
+  roomsCreateModal.className = "rooms-modal rooms-create-modal";
+  roomsCreateModal.hidden = true;
+  roomsCreateModal.setAttribute("role", "presentation");
+  roomsCreateModal.innerHTML = `
+    <div class="rooms-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="rooms-create-modal-title">
+      <button type="button" class="rooms-modal__close" id="rooms-create-modal-close" aria-label="Close">${nimiqIconUseMarkup("nq-close", { width: 20, height: 20, class: "rooms-modal__close-icon" })}</button>
+      <div class="rooms-modal__header">
+        <h2 class="rooms-modal__title" id="rooms-create-modal-title">Create a room</h2>
+      </div>
+      <div class="rooms-modal__body rooms-create-modal__body">
+        <button type="button" class="rooms-modal__back" id="rooms-create-modal-back">← Back</button>
+        <p class="rooms-modal__fineprint">New rooms get a random 6-character code (e.g. AB12CD). Max size 30×30 tiles.</p>
+        <label class="rooms-modal__label" for="rooms-create-name">Name</label>
+        <input class="rooms-modal__input rooms-modal__input--full" id="rooms-create-name" type="text" maxlength="48" autocomplete="off" />
+        <div class="rooms-modal__create-grid">
+          <label class="rooms-modal__label" for="rooms-create-w">Width</label>
+          <label class="rooms-modal__label" for="rooms-create-h">Height</label>
+          <input class="rooms-modal__input rooms-modal__input--w" id="rooms-create-w" type="number" min="5" max="30" value="16" />
+          <input class="rooms-modal__input rooms-modal__input--w" id="rooms-create-h" type="number" min="5" max="30" value="16" />
+        </div>
+        <label class="rooms-modal__check">
+          <input type="checkbox" id="rooms-create-public" checked />
+          <span>Show in public room list</span>
+        </label>
+        <div class="rooms-modal__create-actions">
+          <button type="button" class="rooms-modal__btn rooms-modal__btn--primary" id="rooms-create-submit">Create &amp; enter</button>
+        </div>
+        <p class="rooms-modal__hint" id="rooms-create-hint" hidden></p>
+      </div>
+    </div>
+  `;
+  hudRoot.appendChild(roomsCreateModal);
+
   const roomsModalList = roomsModal.querySelector("#rooms-modal-list") as HTMLUListElement;
   const roomsModalCurrentLine = roomsModal.querySelector(
     "#rooms-modal-current-line"
@@ -323,20 +337,36 @@ function enterGame(token: string, address: string): void {
     ".rooms-modal__close"
   ) as HTMLButtonElement;
   const roomsViewList = roomsModal.querySelector("#rooms-view-list") as HTMLElement;
-  const roomsViewCreate = roomsModal.querySelector("#rooms-view-create") as HTMLElement;
   const roomsViewEdit = roomsModal.querySelector("#rooms-view-edit") as HTMLElement;
   const roomsJoinCodeInput = roomsModal.querySelector("#rooms-join-code") as HTMLInputElement;
   const roomsJoinSubmitBtn = roomsModal.querySelector("#rooms-join-submit") as HTMLButtonElement;
   const roomsJoinHint = roomsModal.querySelector("#rooms-join-hint") as HTMLParagraphElement;
   const roomsJoinStatus = roomsModal.querySelector("#rooms-join-status") as HTMLSpanElement;
   const roomsOpenCreateBtn = roomsModal.querySelector("#rooms-open-create") as HTMLButtonElement;
-  const roomsCreateBackBtn = roomsModal.querySelector("#rooms-create-back") as HTMLButtonElement;
-  const roomsCreateNameInput = roomsModal.querySelector("#rooms-create-name") as HTMLInputElement;
-  const roomsCreateWInput = roomsModal.querySelector("#rooms-create-w") as HTMLInputElement;
-  const roomsCreateHInput = roomsModal.querySelector("#rooms-create-h") as HTMLInputElement;
-  const roomsCreatePublicInput = roomsModal.querySelector("#rooms-create-public") as HTMLInputElement;
-  const roomsCreateSubmitBtn = roomsModal.querySelector("#rooms-create-submit") as HTMLButtonElement;
-  const roomsCreateHint = roomsModal.querySelector("#rooms-create-hint") as HTMLParagraphElement;
+  const roomsCreateModalClose = roomsCreateModal.querySelector(
+    "#rooms-create-modal-close"
+  ) as HTMLButtonElement;
+  const roomsCreateModalBack = roomsCreateModal.querySelector(
+    "#rooms-create-modal-back"
+  ) as HTMLButtonElement;
+  const roomsCreateNameInput = roomsCreateModal.querySelector(
+    "#rooms-create-name"
+  ) as HTMLInputElement;
+  const roomsCreateWInput = roomsCreateModal.querySelector(
+    "#rooms-create-w"
+  ) as HTMLInputElement;
+  const roomsCreateHInput = roomsCreateModal.querySelector(
+    "#rooms-create-h"
+  ) as HTMLInputElement;
+  const roomsCreatePublicInput = roomsCreateModal.querySelector(
+    "#rooms-create-public"
+  ) as HTMLInputElement;
+  const roomsCreateSubmitBtn = roomsCreateModal.querySelector(
+    "#rooms-create-submit"
+  ) as HTMLButtonElement;
+  const roomsCreateHint = roomsCreateModal.querySelector(
+    "#rooms-create-hint"
+  ) as HTMLParagraphElement;
   const roomsEditBackBtn = roomsModal.querySelector("#rooms-edit-back") as HTMLButtonElement;
   const roomsEditCodeEl = roomsModal.querySelector("#rooms-edit-code") as HTMLElement;
   const roomsEditNameInput = roomsModal.querySelector("#rooms-edit-name") as HTMLInputElement;
@@ -353,10 +383,12 @@ function enterGame(token: string, address: string): void {
   const roomsEditDeleteErr = roomsModal.querySelector("#rooms-edit-delete-err") as HTMLParagraphElement;
 
   let roomsEscHandler: ((e: KeyboardEvent) => void) | null = null;
-  let roomsViewState: "list" | "create" | "edit" = "list";
+  let roomsViewState: "list" | "edit" = "list";
   let roomsEditingRoomId: string | null = null;
   /** Set when joining via the code field; cleared on result or modal/ws reset. */
   let pendingModalJoinRoomId: string | null = null;
+  /** After Create & enter is sent; cleared on welcome, failure chat, or closing the create modal. */
+  let pendingCreateRoomAwaiting = false;
 
   function clearRoomsJoinProgress(): void {
     pendingModalJoinRoomId = null;
@@ -369,19 +401,10 @@ function enterGame(token: string, address: string): void {
     );
   }
 
-  function showRoomsView(next: "list" | "create" | "edit"): void {
+  function showRoomsView(next: "list" | "edit"): void {
     roomsViewState = next;
     roomsViewList.hidden = next !== "list";
-    roomsViewCreate.hidden = next !== "create";
     roomsViewEdit.hidden = next !== "edit";
-    if (next === "create") {
-      roomsCreateNameInput.value = `${formatWalletAddressConnectAs(address)}'s room`;
-      roomsCreateWInput.value = "16";
-      roomsCreateHInput.value = "16";
-      roomsCreatePublicInput.checked = true;
-      roomsCreateHint.hidden = true;
-      roomsCreateHint.textContent = "";
-    }
     if (next === "edit") {
       roomsEditHint.hidden = true;
       roomsEditHint.textContent = "";
@@ -408,7 +431,27 @@ function enterGame(token: string, address: string): void {
       .replace(/"/g, "&quot;");
   }
 
+  function closeRoomsCreateModal(): void {
+    pendingCreateRoomAwaiting = false;
+    roomsCreateSubmitBtn.disabled = false;
+    if (!roomsCreateModal.hidden) {
+      roomsCreateModal.hidden = true;
+    }
+  }
+
+  function openRoomsCreateModal(): void {
+    roomsCreateNameInput.value = `${formatWalletAddressConnectAs(address)}'s room`;
+    roomsCreateWInput.value = "16";
+    roomsCreateHInput.value = "16";
+    roomsCreatePublicInput.checked = true;
+    roomsCreateHint.hidden = true;
+    roomsCreateHint.textContent = "";
+    roomsCreateSubmitBtn.disabled = false;
+    roomsCreateModal.hidden = false;
+  }
+
   function closeRoomsModal(opts?: { keepJoinPending?: boolean }): void {
+    closeRoomsCreateModal();
     if (roomsModal.hidden) return;
     roomsModal.hidden = true;
     showRoomsView("list");
@@ -468,6 +511,7 @@ function enterGame(token: string, address: string): void {
   });
 
   function openRoomsModal(): void {
+    closeRoomsCreateModal();
     roomsJoinHint.hidden = true;
     roomsJoinHint.textContent = "";
     clearRoomsJoinProgress();
@@ -481,7 +525,11 @@ function enterGame(token: string, address: string): void {
     roomsEscHandler = (e: KeyboardEvent): void => {
       if (e.key !== "Escape") return;
       e.preventDefault();
-      if (roomsViewState === "create" || roomsViewState === "edit") {
+      if (!roomsCreateModal.hidden) {
+        closeRoomsCreateModal();
+        return;
+      }
+      if (roomsViewState === "edit") {
         showRoomsView("list");
         roomsEditingRoomId = null;
         return;
@@ -576,9 +624,13 @@ function enterGame(token: string, address: string): void {
     sendJoinRoom(ws, roomIdToJoin);
   });
 
-  roomsOpenCreateBtn.addEventListener("click", () => showRoomsView("create"));
+  roomsOpenCreateBtn.addEventListener("click", () => openRoomsCreateModal());
 
-  roomsCreateBackBtn.addEventListener("click", () => showRoomsView("list"));
+  roomsCreateModalClose.addEventListener("click", () => closeRoomsCreateModal());
+  roomsCreateModalBack.addEventListener("click", () => closeRoomsCreateModal());
+  roomsCreateModal.addEventListener("click", (e) => {
+    if (e.target === roomsCreateModal) closeRoomsCreateModal();
+  });
 
   roomsCreateSubmitBtn.addEventListener("click", () => {
     roomsCreateHint.hidden = true;
@@ -597,6 +649,10 @@ function enterGame(token: string, address: string): void {
       return;
     }
     const nameRaw = roomsCreateNameInput.value.trim();
+    pendingCreateRoomAwaiting = true;
+    roomsCreateSubmitBtn.disabled = true;
+    roomsCreateHint.textContent = "Creating room…";
+    roomsCreateHint.hidden = false;
     sendCreateRoom(ws, w, h, {
       ...(nameRaw.length > 0 ? { displayName: nameRaw } : {}),
       isPublic: roomsCreatePublicInput.checked,
@@ -1021,6 +1077,7 @@ function enterGame(token: string, address: string): void {
     adminOverlay.destroy();
     game.dispose();
     uninstallShell();
+    roomsCreateModal.remove();
     roomsModal.remove();
     hud.destroy();
   }
@@ -1303,6 +1360,7 @@ function enterGame(token: string, address: string): void {
   const wireWsHandlers = (socket: WebSocket): void => {
     game.setTeleporterDestPickHandler(null);
     clearRoomsJoinProgress();
+    closeRoomsCreateModal();
     resetEditDeleteUi();
     hud.deactivateTeleporterMode();
     cancelActiveNimClaim?.();
@@ -1710,6 +1768,10 @@ function enterGame(token: string, address: string): void {
       return;
     }
     if (msg.type === "welcome") {
+      if (pendingCreateRoomAwaiting) {
+        closeRoomsModal();
+      }
+
       const joinedViaModalJoin =
         pendingModalJoinRoomId !== null &&
         normalizeRoomId(msg.roomId).toLowerCase() ===
@@ -1931,6 +1993,15 @@ function enterGame(token: string, address: string): void {
       return;
     }
     if (msg.type === "chat") {
+      if (
+        pendingCreateRoomAwaiting &&
+        String(msg.fromAddress).toUpperCase() === "SYSTEM"
+      ) {
+        pendingCreateRoomAwaiting = false;
+        roomsCreateSubmitBtn.disabled = false;
+        roomsCreateHint.textContent = msg.text;
+        roomsCreateHint.hidden = false;
+      }
       // Show chat bubble for all messages
       game.showChatBubble(msg.fromAddress, msg.text, msg.from);
       

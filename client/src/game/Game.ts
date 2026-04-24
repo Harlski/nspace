@@ -55,6 +55,133 @@ const LERP = 12;
 
 /** Default scale on unit floor plane; >1 hides subpixel seams (tunable in admin). */
 const DEFAULT_FLOOR_TILE_QUAD = 1.08;
+/** Walkable floor tile thickness in world Y; top stays near y≈0, volume extends downward. */
+const WALKABLE_FLOOR_TILE_THICKNESS = 0.16;
+/** Blend factor toward white for vertical tile faces (0–1). */
+const WALKABLE_FLOOR_SIDE_LIGHTEN = 0.48;
+/** Blend factor toward black for underside (-Y) face. */
+const WALKABLE_FLOOR_BOTTOM_DARKEN = 0.22;
+
+function lightenTerrainHex(hex: number, blend: number): number {
+  const t = Math.max(0, Math.min(1, blend));
+  const r = (hex >> 16) & 0xff;
+  const g = (hex >> 8) & 0xff;
+  const b = hex & 0xff;
+  const lr = Math.min(255, Math.round(r + (255 - r) * t));
+  const lg = Math.min(255, Math.round(g + (255 - g) * t));
+  const lb = Math.min(255, Math.round(b + (255 - b) * t));
+  return (lr << 16) | (lg << 8) | lb;
+}
+
+function darkenTerrainHex(hex: number, blend: number): number {
+  const t = Math.max(0, Math.min(1, blend));
+  const f = 1 - t * 0.55;
+  const r = (hex >> 16) & 0xff;
+  const g = (hex >> 8) & 0xff;
+  const b = hex & 0xff;
+  return (
+    (Math.round(r * f) << 16) |
+    (Math.round(g * f) << 8) |
+    Math.round(b * f)
+  );
+}
+
+function createWalkableFloorTileMaterials(
+  isPortalGlow: boolean,
+  isExtra: boolean
+): THREE.MeshStandardMaterial[] {
+  const topHex = isPortalGlow
+    ? TERRAIN_TILE_DOOR_COLOR
+    : isExtra
+      ? TERRAIN_TILE_EXTRA_COLOR
+      : TERRAIN_TILE_CORE_COLOR;
+  const sideHex = lightenTerrainHex(topHex, WALKABLE_FLOOR_SIDE_LIGHTEN);
+  const bottomHex = darkenTerrainHex(topHex, WALKABLE_FLOOR_BOTTOM_DARKEN);
+  const roughTop = isPortalGlow ? 0.3 : isExtra ? 0.88 : 0.9;
+  const metalTop = isPortalGlow ? 0.5 : isExtra ? 0.06 : 0.05;
+  const roughSide = isPortalGlow ? 0.38 : 0.9;
+  const metalSide = isPortalGlow ? 0.42 : 0.06;
+  const mk = (
+    color: number,
+    opts: {
+      roughness: number;
+      metalness: number;
+      emissiveScale: number;
+    }
+  ) =>
+    new THREE.MeshStandardMaterial({
+      color,
+      roughness: opts.roughness,
+      metalness: opts.metalness,
+      emissive: isPortalGlow ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000,
+      emissiveIntensity: isPortalGlow
+        ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * opts.emissiveScale
+        : 0,
+    });
+  // BoxGeometry groups: +x, -x, +y (top), -y (bottom), +z, -z
+  return [
+    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
+    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
+    mk(topHex, { roughness: roughTop, metalness: metalTop, emissiveScale: 1 }),
+    mk(bottomHex, { roughness: 0.95, metalness: 0.04, emissiveScale: 0 }),
+    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
+    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
+  ];
+}
+
+function applyWalkableFloorTileMaterials(
+  mesh: THREE.Mesh,
+  isPortalGlow: boolean,
+  isExtra: boolean
+): void {
+  const topHex = isPortalGlow
+    ? TERRAIN_TILE_DOOR_COLOR
+    : isExtra
+      ? TERRAIN_TILE_EXTRA_COLOR
+      : TERRAIN_TILE_CORE_COLOR;
+  const sideHex = lightenTerrainHex(topHex, WALKABLE_FLOOR_SIDE_LIGHTEN);
+  const bottomHex = darkenTerrainHex(topHex, WALKABLE_FLOOR_BOTTOM_DARKEN);
+  const roughTop = isPortalGlow ? 0.3 : isExtra ? 0.88 : 0.9;
+  const metalTop = isPortalGlow ? 0.5 : isExtra ? 0.06 : 0.05;
+  const roughSide = isPortalGlow ? 0.38 : 0.9;
+  const metalSide = isPortalGlow ? 0.42 : 0.06;
+  const mats = mesh.material as THREE.MeshStandardMaterial[];
+  const set = (
+    i: number,
+    hex: number,
+    rough: number,
+    metal: number,
+    emissiveScale: number
+  ): void => {
+    const m = mats[i]!;
+    m.color.setHex(hex);
+    m.roughness = rough;
+    m.metalness = metal;
+    if (isPortalGlow) {
+      m.emissive.setHex(TERRAIN_TILE_DOOR_EMISSIVE);
+      m.emissiveIntensity =
+        TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * emissiveScale;
+    } else {
+      m.emissive.setHex(0x000000);
+      m.emissiveIntensity = 0;
+    }
+  };
+  set(0, sideHex, roughSide, metalSide, 0.42);
+  set(1, sideHex, roughSide, metalSide, 0.42);
+  set(2, topHex, roughTop, metalTop, 1);
+  set(3, bottomHex, 0.95, 0.04, 0);
+  set(4, sideHex, roughSide, metalSide, 0.42);
+  set(5, sideHex, roughSide, metalSide, 0.42);
+}
+
+function disposeWalkableFloorMeshMaterials(mesh: THREE.Mesh): void {
+  const m = mesh.material;
+  if (Array.isArray(m)) {
+    for (const mat of m) mat.dispose();
+  } else {
+    (m as THREE.Material).dispose();
+  }
+}
 
 /** Void (non-walkable) — water/sky tint; walkable tiles use dark gray palette below. */
 const TERRAIN_WATER_COLOR = 0xa8d8ea;
@@ -517,7 +644,7 @@ export class Game {
     startTime: number;
     duration: number; // milliseconds
   } | null = null;
-  /** One plane per walkable tile (core grid + extra); void shows scene background only. */
+  /** One slab mesh per walkable tile (core grid + extra); void shows scene background only. */
   private readonly walkableFloorMeshes = new Map<string, THREE.Mesh>();
   /** White marker blocks on door tiles (teleport squares). */
   private readonly doorMarkerMeshes = new Map<string, THREE.Mesh>();
@@ -530,8 +657,15 @@ export class Game {
   private readonly voxelTextSpecs = new Map<string, VoxelTextSpec>();
   private activeVoxelTextId: string | null = null;
   private readonly voxelGlyphCache = new Map<string, readonly string[]>();
-  /** Shared 1×1 geometry; `floorTileQuadSize` scales each mesh to hide edge seams. */
-  private readonly walkableFloorPlaneGeom = new THREE.PlaneGeometry(1, 1);
+  /**
+   * Shared unit footprint in XZ with fixed thickness in Y; `floorTileQuadSize` scales XZ only.
+   * Top face sits near y=0 after positioning; thickness extends downward.
+   */
+  private readonly walkableFloorTileGeom = new THREE.BoxGeometry(
+    1,
+    WALKABLE_FLOOR_TILE_THICKNESS,
+    1
+  );
   private floorTileQuadSize = DEFAULT_FLOOR_TILE_QUAD;
   /** All placed objects (solid and walk-through), keyed by blockKey(x,z,y). */
   private readonly placedObjects = new Map<string, BlockStyleProps>();
@@ -591,7 +725,32 @@ export class Game {
 
   /** World XZ point the camera orbits (isometric offset applied on top). */
   private readonly cameraLookAt = new THREE.Vector3(0, 0, 0);
-  private readonly cameraOffset = new THREE.Vector3(18, 18, 18);
+  private readonly cameraOffsetBase = new THREE.Vector3(18, 18, 18);
+  private readonly worldUp = new THREE.Vector3(0, 1, 0);
+  private readonly cameraOrbitOffsetScratch = new THREE.Vector3();
+  /** Yaw (rad): world +Y rotation of the isometric offset (desktop right-drag; fixed circle). */
+  private cameraOrbitYawRad = 0;
+  /** Desktop right-drag orbit; suppresses avatar context menu after a real drag. */
+  private rightOrbitDrag: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+  } | null = null;
+  private suppressAvatarContextMenuFromRightOrbit = false;
+  /** After orbit drag release: ease yaw to nearest 90° corner. */
+  private cameraOrbitEase: {
+    fromYaw: number;
+    deltaYaw: number;
+    startedAtMs: number;
+    durationMs: number;
+  } | null = null;
+  private static readonly CAMERA_ORBIT_RAD_PER_PX = 0.0035;
+  /** Yaw snap step (rad): four isometric corners around the player (default / diagonal / opposite / diagonal). */
+  private static readonly CAMERA_ORBIT_SNAP_STEP_RAD = Math.PI / 2;
+  private static readonly CAMERA_ORBIT_EASE_MS = 240;
+  private static readonly RIGHT_ORBIT_SUPPRESS_CONTEXTMENU_PX = 8;
   /** Base dead zone size (fraction of default frustum); scales with zoom for consistent screen-space behavior. */
   private readonly cameraFollowDeadZoneBase = 3.2;
   private readonly cameraFollowSmoothing = 12;
@@ -623,6 +782,19 @@ export class Game {
   >();
   /** Previous inter-touch distance (px) while pinching; 0 = not established yet. */
   private pinchLastDistancePx = 0;
+  /**
+   * Two-finger session: pinch zoom vs rotate camera (twist), disambiguated from movement.
+   * `null` until one gesture clearly dominates.
+   */
+  private touchTwoFingerMode: "pinch" | "rotate" | null = null;
+  private touchTwistPrevAngleRad = 0;
+  private touchTwistPrevAngleValid = false;
+  private static readonly TOUCH_TWIST_MIN_SEP_PX = 24;
+  private static readonly TOUCH_TWIST_COMMIT_RAD = 0.014;
+  private static readonly TOUCH_PINCH_COMMIT_REL = 0.014;
+  private static readonly TOUCH_TWIST_VS_PINCH_RATIO = 2.2;
+  /** Maps finger-line angle delta (rad) to camera yaw; 1 ≈ 1:1 with twist angle. */
+  private static readonly TOUCH_TWIST_YAW_SCALE = 1;
   /**
    * Primary pointer: path / `tileClickHandler` runs on pointerup (finger lift or mouse
    * release) at release coordinates, not on first contact.
@@ -1190,7 +1362,7 @@ export class Game {
   private applyFloorTileQuadScale(): void {
     const s = this.floorTileQuadSize;
     for (const [, mesh] of this.walkableFloorMeshes) {
-      mesh.scale.set(s, s, 1);
+      mesh.scale.set(s, 1, s);
     }
   }
 
@@ -1420,6 +1592,12 @@ export class Game {
   }
 
   private readonly onCanvasContextMenu = (e: MouseEvent): void => {
+    if (this.suppressAvatarContextMenuFromRightOrbit) {
+      this.suppressAvatarContextMenuFromRightOrbit = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const g = this.pickClosestAvatarGroupAt(e.clientX, e.clientY);
     if (!g) return;
     const address = String(g.userData.address ?? "");
@@ -1433,7 +1611,9 @@ export class Game {
           targets: others,
           clientX: e.clientX,
           clientY: e.clientY,
-          emoteRowFirst: !!this.selfQuickEmojiOpener,
+          emoteRowFirst:
+            !!this.selfQuickEmojiOpener &&
+            this.rayPickHitsSelfAvatar(e.clientX, e.clientY),
         });
         return;
       }
@@ -1457,7 +1637,9 @@ export class Game {
       targets,
       clientX: e.clientX,
       clientY: e.clientY,
-      emoteRowFirst: false,
+      emoteRowFirst:
+        !!this.selfQuickEmojiOpener &&
+        this.rayPickHitsSelfAvatar(e.clientX, e.clientY),
     });
   };
 
@@ -1471,6 +1653,26 @@ export class Game {
 
   private readonly onPointerUp = (e: PointerEvent): void => {
     const isCancel = e.type === "pointercancel";
+    if (
+      this.rightOrbitDrag &&
+      this.rightOrbitDrag.pointerId === e.pointerId
+    ) {
+      const d = this.rightOrbitDrag;
+      const dragDist = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
+      if (dragDist > Game.RIGHT_ORBIT_SUPPRESS_CONTEXTMENU_PX) {
+        this.suppressAvatarContextMenuFromRightOrbit = true;
+      }
+      try {
+        if (this.renderer.domElement.hasPointerCapture?.(e.pointerId)) {
+          this.renderer.domElement.releasePointerCapture(e.pointerId);
+        }
+      } catch {
+        /* ignore */
+      }
+      this.rightOrbitDrag = null;
+      this.renderer.domElement.style.cursor = "pointer";
+      this.beginCameraOrbitEaseToNearestCorner();
+    }
     if (
       this.selfEmojiTouchSession &&
       this.selfEmojiTouchSession.pointerId === e.pointerId
@@ -1509,19 +1711,53 @@ export class Game {
     }
 
     if (e.pointerType !== "touch") return;
+    const hadTwoTouches = this.touchPointers.size >= 2;
+    const endingRotateOrbit =
+      hadTwoTouches && this.touchTwoFingerMode === "rotate";
     this.touchPointers.delete(e.pointerId);
     if (this.touchPointers.size < 2) {
       this.pinchLastDistancePx = 0;
+      this.touchTwoFingerMode = null;
+      this.touchTwistPrevAngleValid = false;
+      if (endingRotateOrbit) {
+        this.beginCameraOrbitEaseToNearestCorner();
+      }
     }
   };
 
-  /** Screen distance between first two active touches (px). */
-  private pinchScreenDistancePx(): number | null {
-    const it = this.touchPointers.values();
-    const a = it.next().value;
-    const b = it.next().value;
+  /** Signed shortest angle delta from `prevRad` to `currRad` (radians). */
+  private static touchAngleDeltaRad(prevRad: number, currRad: number): number {
+    let d = currRad - prevRad;
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    return d;
+  }
+
+  private sortedTouchPair(): [
+    { x: number; y: number },
+    { x: number; y: number },
+  ] | null {
+    if (this.touchPointers.size < 2) return null;
+    const arr = [...this.touchPointers.entries()].sort((u, v) => u[0] - v[0]);
+    const a = arr[0]?.[1];
+    const b = arr[1]?.[1];
     if (!a || !b) return null;
-    return Math.hypot(b.x - a.x, b.y - a.y);
+    return [a, b];
+  }
+
+  /** Inter-touch distance and line angle (stable pointer order) for pinch vs twist. */
+  private twoTouchScreenGeometry(): {
+    dist: number;
+    angleRad: number;
+  } | null {
+    const pair = this.sortedTouchPair();
+    if (!pair) return null;
+    const [p0, p1] = pair;
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1e-6) return null;
+    return { dist, angleRad: Math.atan2(dy, dx) };
   }
 
   setTileClickHandler(
@@ -2419,6 +2655,16 @@ export class Game {
     );
   }
 
+  /** Mouse-style desktop: right-drag camera orbit (not touch / pen-primary tablets). */
+  private static canUseRightDragCameraOrbit(e: PointerEvent): boolean {
+    if (e.pointerType === "touch") return false;
+    if (typeof window === "undefined") return false;
+    return (
+      window.matchMedia("(hover: hover)").matches &&
+      window.matchMedia("(pointer: fine)").matches
+    );
+  }
+
   /**
    * Infinite line vs y=0 plane. `Ray.intersectPlane` rejects t&lt;0, which breaks orthographic
    * picking when the intersection lies behind the ray origin — use full line intersection.
@@ -2484,6 +2730,21 @@ export class Game {
     return null;
   }
 
+  /** True if the pick ray intersects the local avatar at any depth (e.g. self behind another player). */
+  private rayPickHitsSelfAvatar(clientX: number, clientY: number): boolean {
+    if (!this.selfMesh) return false;
+    if (!this.updateNdc(clientX, clientY)) return false;
+    this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    const hits = this.raycaster.intersectObjects([this.selfMesh], true);
+    for (const h of hits) {
+      const grp = this.resolveAvatarGroupFromHit(h.object);
+      if (grp === this.selfMesh) return true;
+    }
+    return false;
+  }
+
   /**
    * All distinct other human avatars hit by the pick ray (closest first), for stacked players.
    */
@@ -2535,6 +2796,20 @@ export class Game {
   }
 
   private onPointerMove = (e: PointerEvent): void => {
+    if (
+      this.rightOrbitDrag &&
+      e.pointerId === this.rightOrbitDrag.pointerId &&
+      (e.buttons & 2) !== 0
+    ) {
+      const d = this.rightOrbitDrag;
+      const dx = e.clientX - d.lastX;
+      d.lastX = e.clientX;
+      d.lastY = e.clientY;
+      this.cameraOrbitYawRad += dx * Game.CAMERA_ORBIT_RAD_PER_PX;
+      this.applyCameraPose();
+      e.preventDefault();
+      return;
+    }
     if (e.pointerType === "touch") {
       this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
@@ -2576,18 +2851,60 @@ export class Game {
     if (this.touchPointers.size >= 2) {
       if (this.zoomLocked) {
         this.pinchLastDistancePx = 0;
+        this.touchTwoFingerMode = null;
+        this.touchTwistPrevAngleValid = false;
         e.preventDefault();
         return;
       }
-      const d = this.pinchScreenDistancePx();
-      if (d !== null && d > 1e-3) {
-        if (this.pinchLastDistancePx > 0) {
-          const next =
-            this.frustumSize * (this.pinchLastDistancePx / d);
+      const geom = this.twoTouchScreenGeometry();
+      if (!geom || geom.dist < Game.TOUCH_TWIST_MIN_SEP_PX) {
+        this.pinchLastDistancePx = 0;
+        this.touchTwoFingerMode = null;
+        this.touchTwistPrevAngleValid = false;
+        e.preventDefault();
+        return;
+      }
+      const d = geom.dist;
+      const angle = geom.angleRad;
+      const dPrev = this.pinchLastDistancePx;
+      const anglePrev = this.touchTwistPrevAngleRad;
+      const angleValid = this.touchTwistPrevAngleValid;
+
+      if (dPrev > 1e-3 && angleValid) {
+        const angleDelta = Game.touchAngleDeltaRad(anglePrev, angle);
+        const dRel = Math.abs(d - dPrev) / Math.max(d, dPrev, 48);
+        const aAbs = Math.abs(angleDelta);
+
+        if (this.touchTwoFingerMode === null) {
+          if (
+            aAbs > Game.TOUCH_TWIST_COMMIT_RAD &&
+            aAbs > dRel * Game.TOUCH_TWIST_VS_PINCH_RATIO
+          ) {
+            this.touchTwoFingerMode = "rotate";
+            this.cameraOrbitEase = null;
+          } else if (
+            dRel > Game.TOUCH_PINCH_COMMIT_REL &&
+            dRel > aAbs / Game.TOUCH_TWIST_VS_PINCH_RATIO
+          ) {
+            this.touchTwoFingerMode = "pinch";
+            this.cameraOrbitEase = null;
+          }
+        }
+
+        if (this.touchTwoFingerMode === "rotate") {
+          this.cameraOrbitYawRad +=
+            angleDelta * Game.TOUCH_TWIST_YAW_SCALE;
+          this.applyCameraPose();
+        } else if (this.touchTwoFingerMode === "pinch") {
+          const next = this.frustumSize * (dPrev / d);
           this.setZoomFrustumSize(next);
         }
-        this.pinchLastDistancePx = d;
       }
+
+      this.pinchLastDistancePx = d;
+      this.touchTwistPrevAngleRad = angle;
+      this.touchTwistPrevAngleValid = true;
+
       e.preventDefault();
       return;
     }
@@ -2662,6 +2979,26 @@ export class Game {
   };
 
   private onPointerDown = (e: PointerEvent): void => {
+    if (e.button === 2 && Game.canUseRightDragCameraOrbit(e)) {
+      this.suppressAvatarContextMenuFromRightOrbit = false;
+      this.cameraOrbitEase = null;
+      this.rightOrbitDrag = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        lastX: e.clientX,
+        lastY: e.clientY,
+      };
+      try {
+        this.renderer.domElement.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      this.renderer.domElement.style.cursor = "grabbing";
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (e.button !== 0) return;
     if (e.pointerType === "touch") {
       this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -2670,6 +3007,9 @@ export class Game {
         this.clearSelfEmojiTouchSession();
         this.clearOtherProfileTouchSession();
         this.pinchLastDistancePx = 0;
+        this.touchTwoFingerMode = null;
+        this.touchTwistPrevAngleValid = false;
+        this.cameraOrbitEase = null;
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -2690,7 +3030,9 @@ export class Game {
           const pointerId = e.pointerId;
           const startX = e.clientX;
           const startY = e.clientY;
-          const emoteRowFirst = !!this.selfQuickEmojiOpener;
+          const emoteRowFirst =
+            !!this.selfQuickEmojiOpener &&
+            this.rayPickHitsSelfAvatar(startX, startY);
           const timer = setTimeout(() => {
             if (
               !this.otherProfileTouchSession ||
@@ -2761,6 +3103,9 @@ export class Game {
             const pointerId = e.pointerId;
             const startX = e.clientX;
             const startY = e.clientY;
+            const emoteRowFirst =
+              !!this.selfQuickEmojiOpener &&
+              this.rayPickHitsSelfAvatar(startX, startY);
             const timer = setTimeout(() => {
               if (
                 !this.otherProfileTouchSession ||
@@ -2774,7 +3119,7 @@ export class Game {
                 targets,
                 clientX: startX,
                 clientY: startY,
-                emoteRowFirst: false,
+                emoteRowFirst,
               });
             }, Game.OTHER_PROFILE_LONGPRESS_MS);
             this.otherProfileTouchSession = {
@@ -2783,7 +3128,7 @@ export class Game {
               startY,
               timer,
               targets,
-              emoteRowFirst: false,
+              emoteRowFirst,
             };
             e.preventDefault();
             e.stopPropagation();
@@ -3027,6 +3372,22 @@ export class Game {
 
   dispose(): void {
     this.clearPendingPrimaryWalk();
+    if (this.rightOrbitDrag) {
+      const id = this.rightOrbitDrag.pointerId;
+      try {
+        if (this.renderer.domElement.hasPointerCapture?.(id)) {
+          this.renderer.domElement.releasePointerCapture(id);
+        }
+      } catch {
+        /* ignore */
+      }
+      this.rightOrbitDrag = null;
+      this.renderer.domElement.style.cursor = "pointer";
+    }
+    this.cameraOrbitEase = null;
+    this.touchTwoFingerMode = null;
+    this.touchTwistPrevAngleValid = false;
+    this.suppressAvatarContextMenuFromRightOrbit = false;
     this.ro.disconnect();
     const canvas = this.renderer.domElement;
     canvas.removeEventListener("pointermove", this.onPointerMove);
@@ -3071,7 +3432,7 @@ export class Game {
     this.blockMeshes.clear();
     for (const [, mesh] of this.walkableFloorMeshes) {
       this.scene.remove(mesh);
-      (mesh.material as THREE.Material).dispose();
+      disposeWalkableFloorMeshMaterials(mesh);
     }
     this.walkableFloorMeshes.clear();
     for (const [, marker] of this.doorMarkerMeshes) {
@@ -3082,7 +3443,7 @@ export class Game {
     this.doorMarkerMeshes.clear();
     this.clearTeleporterMarkers();
     this.clearVoxelWordSign();
-    this.walkableFloorPlaneGeom.dispose();
+    this.walkableFloorTileGeom.dispose();
     this.pathGeom.dispose();
     (this.pathLine.material as THREE.Material).dispose();
     this.trailGeom.dispose();
@@ -3440,31 +3801,17 @@ export class Game {
       const isPortalGlow = isDoor || activeTeleporterKeys.has(k);
       let mesh = this.walkableFloorMeshes.get(k);
       if (!mesh) {
-        const baseColor = isPortalGlow
-          ? TERRAIN_TILE_DOOR_COLOR
-          : isExtra
-            ? TERRAIN_TILE_EXTRA_COLOR
-            : TERRAIN_TILE_CORE_COLOR;
-        const material = new THREE.MeshStandardMaterial({
-          color: baseColor,
-          roughness: isPortalGlow ? 0.3 : (isExtra ? 0.88 : 0.9),
-          metalness: isPortalGlow ? 0.5 : (isExtra ? 0.06 : 0.05),
-          emissive: isPortalGlow ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000,
-          emissiveIntensity: isPortalGlow
-            ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY
-            : 0,
-        });
         mesh = new THREE.Mesh(
-          this.walkableFloorPlaneGeom,
-          material
+          this.walkableFloorTileGeom,
+          createWalkableFloorTileMaterials(isPortalGlow, isExtra)
         );
-        mesh.scale.set(
-          this.floorTileQuadSize,
-          this.floorTileQuadSize,
-          1
+        mesh.scale.set(this.floorTileQuadSize, 1, this.floorTileQuadSize);
+        const topY = 0.01;
+        mesh.position.set(
+          wx,
+          topY - WALKABLE_FLOOR_TILE_THICKNESS / 2,
+          wz
         );
-        mesh.rotation.x = -Math.PI / 2;
-        mesh.position.set(wx, 0.01, wz);
         mesh.userData["isExtra"] = isExtra;
         mesh.userData["isDoor"] = isDoor;
         mesh.userData["isPortalGlow"] = isPortalGlow;
@@ -3474,27 +3821,12 @@ export class Game {
         const wantExtra = isExtra;
         const wantDoor = isDoor;
         const wantPortalGlow = isPortalGlow;
-        const mat = mesh.material as THREE.MeshStandardMaterial;
         if (
           mesh.userData["isExtra"] !== wantExtra ||
           mesh.userData["isDoor"] !== wantDoor ||
           mesh.userData["isPortalGlow"] !== wantPortalGlow
         ) {
-          mat.color.setHex(
-            wantPortalGlow
-              ? TERRAIN_TILE_DOOR_COLOR
-              : wantExtra
-                ? TERRAIN_TILE_EXTRA_COLOR
-                : TERRAIN_TILE_CORE_COLOR
-          );
-          mat.roughness = wantPortalGlow ? 0.3 : (wantExtra ? 0.88 : 0.9);
-          mat.metalness = wantPortalGlow ? 0.5 : (wantExtra ? 0.06 : 0.05);
-          mat.emissive.setHex(
-            wantPortalGlow ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000
-          );
-          mat.emissiveIntensity = wantPortalGlow
-            ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY
-            : 0;
+          applyWalkableFloorTileMaterials(mesh, wantPortalGlow, wantExtra);
           mesh.userData["isExtra"] = wantExtra;
           mesh.userData["isDoor"] = wantDoor;
           mesh.userData["isPortalGlow"] = wantPortalGlow;
@@ -3518,7 +3850,7 @@ export class Game {
     for (const [k, mesh] of [...this.walkableFloorMeshes]) {
       if (!seen.has(k)) {
         this.scene.remove(mesh);
-        (mesh.material as THREE.Material).dispose();
+        disposeWalkableFloorMeshMaterials(mesh);
         this.walkableFloorMeshes.delete(k);
       }
     }
@@ -4013,6 +4345,7 @@ export class Game {
       if (!t) continue;
       g.position.lerp(t, 1 - Math.exp(-LERP * dt));
     }
+    this.updateCameraOrbitEase();
     this.updateCameraFollow(dt);
     this.refreshPathLine();
     this.updatePathFade(dt);
@@ -4028,11 +4361,68 @@ export class Game {
     this.updateFloatingTexts();
   }
 
+  /** Canonical corner yaw in [0, 2π) nearest to `yawRad` (any real angle). */
+  private static nearestCornerYawCanonical(yawRad: number): number {
+    const twoPi = Math.PI * 2;
+    const step = Game.CAMERA_ORBIT_SNAP_STEP_RAD;
+    const yn = ((yawRad % twoPi) + twoPi) % twoPi;
+    let k = Math.round(yn / step);
+    k = ((k % 4) + 4) % 4;
+    return k * step;
+  }
+
+  /** Same corner as canonical, unfolded by full turns so it is closest to `fromYaw`. */
+  private static resolvedNearestCornerYaw(fromYaw: number): number {
+    const twoPi = Math.PI * 2;
+    const c = Game.nearestCornerYawCanonical(fromYaw);
+    return c + Math.round((fromYaw - c) / twoPi) * twoPi;
+  }
+
+  /**
+   * After right-drag orbit release: ease yaw along the shortest arc to the nearest 90°
+   * corner (ease-out cubic).
+   */
+  private beginCameraOrbitEaseToNearestCorner(): void {
+    const fromYaw = this.cameraOrbitYawRad;
+    const toYaw = Game.resolvedNearestCornerYaw(fromYaw);
+    const deltaYaw = toYaw - fromYaw;
+    if (Math.abs(deltaYaw) < 1e-5) {
+      this.cameraOrbitYawRad = toYaw;
+      this.cameraOrbitEase = null;
+      this.applyCameraPose();
+      return;
+    }
+    this.cameraOrbitEase = {
+      fromYaw,
+      deltaYaw,
+      startedAtMs: performance.now(),
+      durationMs: Game.CAMERA_ORBIT_EASE_MS,
+    };
+  }
+
+  private updateCameraOrbitEase(): void {
+    const e = this.cameraOrbitEase;
+    if (!e) return;
+    const t = Math.min(
+      1,
+      (performance.now() - e.startedAtMs) / e.durationMs
+    );
+    const u = 1 - Math.pow(1 - t, 3);
+    this.cameraOrbitYawRad = e.fromYaw + e.deltaYaw * u;
+    if (t >= 1) {
+      this.cameraOrbitYawRad = e.fromYaw + e.deltaYaw;
+      this.cameraOrbitEase = null;
+    }
+  }
+
   private applyCameraPose(): void {
+    const v = this.cameraOrbitOffsetScratch
+      .copy(this.cameraOffsetBase)
+      .applyAxisAngle(this.worldUp, this.cameraOrbitYawRad);
     this.camera.position.set(
-      this.cameraLookAt.x + this.cameraOffset.x + this.cameraLookAhead.x,
-      this.cameraLookAt.y + this.cameraOffset.y + this.cameraLookAhead.y,
-      this.cameraLookAt.z + this.cameraOffset.z + this.cameraLookAhead.z
+      this.cameraLookAt.x + v.x + this.cameraLookAhead.x,
+      this.cameraLookAt.y + v.y + this.cameraLookAhead.y,
+      this.cameraLookAt.z + v.z + this.cameraLookAhead.z
     );
     this.camera.lookAt(
       this.cameraLookAt.x + this.cameraLookAhead.x,
@@ -4416,14 +4806,21 @@ export class Game {
     const doorIntensity = TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * (0.6 + pulse * 0.4);
 
     for (const [, mesh] of this.walkableFloorMeshes) {
-      const mat = mesh.material as THREE.MeshStandardMaterial;
+      const mats = mesh.material as
+        | THREE.MeshStandardMaterial
+        | THREE.MeshStandardMaterial[];
+      const list = Array.isArray(mats) ? mats : [mats];
       const isPortalGlow = mesh.userData["isPortalGlow"];
-
-      if (isPortalGlow) {
-        mat.emissiveIntensity = doorIntensity;
-      } else {
-        mat.emissive.setHex(0x000000);
-        mat.emissiveIntensity = 0;
+      for (let i = 0; i < list.length; i++) {
+        const mat = list[i]!;
+        if (isPortalGlow) {
+          const scale = i === 2 ? 1 : i === 3 ? 0 : 0.45;
+          mat.emissive.setHex(TERRAIN_TILE_DOOR_EMISSIVE);
+          mat.emissiveIntensity = doorIntensity * scale;
+        } else {
+          mat.emissive.setHex(0x000000);
+          mat.emissiveIntensity = 0;
+        }
       }
     }
   }

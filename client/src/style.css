@@ -11,6 +11,11 @@
   backdrop-filter: blur(6px);
 }
 
+/* Create-room form opens above the main Rooms modal */
+.rooms-modal.rooms-create-modal {
+  z-index: 130;
+}
+
 .rooms-modal[hidden] {
   display: none !important;
 }
@@ -86,8 +91,13 @@
   overflow: hidden;
 }
 
-#rooms-view-create,
 #rooms-view-edit {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rooms-create-modal__body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
