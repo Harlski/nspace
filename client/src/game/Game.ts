@@ -1055,6 +1055,13 @@ export class Game {
       capture: true,
     });
 
+    // Touch pinch/twist: always release pointer ids at window level so lifts outside
+    // the canvas (or missed canvas events) cannot leave stale entries in touchPointers.
+    window.addEventListener("pointerup", this.onWindowTouchPointerEnd, true);
+    window.addEventListener("pointercancel", this.onWindowTouchPointerEnd, true);
+    document.addEventListener("visibilitychange", this.onDocumentVisibilityChange);
+    window.addEventListener("pagehide", this.onWindowPageHide);
+
     this.rebuildDoorKeys();
     this.syncWalkableFloorMeshes();
     this.syncVoxelWordSign();
@@ -1711,10 +1718,34 @@ export class Game {
     }
 
     if (e.pointerType !== "touch") return;
+    this.releaseTouchPointerId(e.pointerId);
+  };
+
+  private readonly onWindowTouchPointerEnd = (e: PointerEvent): void => {
+    if (e.pointerType !== "touch") return;
+    this.releaseTouchPointerId(e.pointerId);
+  };
+
+  private readonly onDocumentVisibilityChange = (): void => {
+    if (document.visibilityState === "hidden") {
+      this.flushTouchPointerGestureState();
+    }
+  };
+
+  private readonly onWindowPageHide = (): void => {
+    this.flushTouchPointerGestureState();
+  };
+
+  /**
+   * Drop one tracked touch from pinch/twist state. Idempotent if `pointerId` is unknown.
+   * When the last of a two-finger rotate session lifts, runs the same corner ease as desktop.
+   */
+  private releaseTouchPointerId(pointerId: number): void {
+    if (!this.touchPointers.has(pointerId)) return;
     const hadTwoTouches = this.touchPointers.size >= 2;
     const endingRotateOrbit =
       hadTwoTouches && this.touchTwoFingerMode === "rotate";
-    this.touchPointers.delete(e.pointerId);
+    this.touchPointers.delete(pointerId);
     if (this.touchPointers.size < 2) {
       this.pinchLastDistancePx = 0;
       this.touchTwoFingerMode = null;
@@ -1723,7 +1754,20 @@ export class Game {
         this.beginCameraOrbitEaseToNearestCorner();
       }
     }
-  };
+  }
+
+  /** Clear all tracked touches (tab background, bfcache, recovery from stuck state). */
+  private flushTouchPointerGestureState(): void {
+    const endingRotateOrbit =
+      this.touchPointers.size >= 2 && this.touchTwoFingerMode === "rotate";
+    this.touchPointers.clear();
+    this.pinchLastDistancePx = 0;
+    this.touchTwoFingerMode = null;
+    this.touchTwistPrevAngleValid = false;
+    if (endingRotateOrbit) {
+      this.beginCameraOrbitEaseToNearestCorner();
+    }
+  }
 
   /** Signed shortest angle delta from `prevRad` to `currRad` (radians). */
   private static touchAngleDeltaRad(prevRad: number, currRad: number): number {
@@ -3396,6 +3440,21 @@ export class Game {
     canvas.removeEventListener("pointercancel", this.onPointerUp);
     canvas.removeEventListener("wheel", this.onWheel);
     canvas.removeEventListener("contextmenu", this.onCanvasContextMenu, true);
+    window.removeEventListener("pointerup", this.onWindowTouchPointerEnd, true);
+    window.removeEventListener(
+      "pointercancel",
+      this.onWindowTouchPointerEnd,
+      true
+    );
+    document.removeEventListener(
+      "visibilitychange",
+      this.onDocumentVisibilityChange
+    );
+    window.removeEventListener("pagehide", this.onWindowPageHide);
+    this.touchPointers.clear();
+    this.pinchLastDistancePx = 0;
+    this.touchTwoFingerMode = null;
+    this.touchTwistPrevAngleValid = false;
     this.clearSelfEmojiTouchSession();
     this.clearOtherProfileTouchSession();
     this.selfQuickEmojiOpener = null;
