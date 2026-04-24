@@ -1,8 +1,28 @@
+diff --git a/node_modules/@nimiq/core/nodejs/worker.js b/node_modules/@nimiq/core/nodejs/worker.js
+index 9c601be..8ac6b4a 100644
+--- a/node_modules/@nimiq/core/nodejs/worker.js
++++ b/node_modules/@nimiq/core/nodejs/worker.js
+@@ -6,6 +6,15 @@ const Comlink = require('comlink');
+ const nodeEndpoint = require('comlink/dist/umd/node-adapter.js');
+ const { Client } = require('./worker-wasm/index.js');
+ 
++if (typeof globalThis.addEventListener !== 'function' && parentPort) {
++    globalThis.addEventListener = parentPort.addEventListener.bind(parentPort);
++    globalThis.removeEventListener = parentPort.removeEventListener.bind(parentPort);
++    globalThis.dispatchEvent = parentPort.dispatchEvent.bind(parentPort);
++}
++if (typeof globalThis.self === 'undefined') {
++    globalThis.self = globalThis;
++}
++
+ // WebSocket was added to Node in v22. Polyfill it for older versions.
+ if (!global.WebSocket) {
+     console.debug("Polyfilling WebSocket");
 diff --git a/node_modules/@nimiq/core/nodejs/worker.mjs b/node_modules/@nimiq/core/nodejs/worker.mjs
-index 18fb7cc..5c20aa3 100644
+index 18fb7cc..11a492e 100644
 --- a/node_modules/@nimiq/core/nodejs/worker.mjs
 +++ b/node_modules/@nimiq/core/nodejs/worker.mjs
-@@ -1,6 +1,9 @@
+@@ -1,12 +1,26 @@
  // The worker has its own scope and no direct access to functions/objects of the
  // global scope. We import the generated JS file to make `wasm_bindgen`
  // available which we need to initialize our WASM code.
@@ -12,3 +32,20 @@ index 18fb7cc..5c20aa3 100644
  import { parentPort } from 'node:worker_threads';
  import Comlink from 'comlink';
  import nodeEndpoint from 'comlink/dist/esm/node-adapter.mjs';
+ import websocket from 'websocket';
+ import { Client } from './worker-wasm/index.js';
+ 
++// wasm_bindgen expects WorkerGlobalScope to be an EventTarget. Node worker `globalThis` has no
++// `addEventListener`; `parentPort` (MessagePort) does — delegate so Client.create() can attach.
++if (typeof globalThis.addEventListener !== 'function' && parentPort) {
++    globalThis.addEventListener = parentPort.addEventListener.bind(parentPort);
++    globalThis.removeEventListener = parentPort.removeEventListener.bind(parentPort);
++    globalThis.dispatchEvent = parentPort.dispatchEvent.bind(parentPort);
++}
++if (typeof globalThis.self === 'undefined') {
++    globalThis.self = globalThis;
++}
++
+ // WebSocket was added to Node in v22. Polyfill it for older versions.
+ if (!global.WebSocket) {
+     console.debug("Polyfilling WebSocket");

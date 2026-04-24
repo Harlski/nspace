@@ -6,9 +6,22 @@ import { createRequire } from "node:module";
 import * as IdenticonsModule from "@nimiq/identicons/dist/identicons.bundle.min.js";
 
 const require = createRequire(import.meta.url);
-// dom-parser v1.x exports `parseFromString(html)` (no `new DomParser()` constructor).
-const domParserParseFromString = require("dom-parser")
-  .parseFromString as (html: string) => unknown;
+const domParserMod = require("dom-parser") as Record<string, unknown>;
+
+/** Supports dom-parser@1.x (`{ parseFromString }`) and 0.x (`module.exports = DomParser`). */
+function domParserParseFromString(html: string): unknown {
+  const named = domParserMod.parseFromString;
+  if (typeof named === "function") {
+    return (named as (h: string) => unknown)(html);
+  }
+  const Ctor = domParserMod as unknown;
+  if (typeof Ctor === "function") {
+    return new (Ctor as new () => { parseFromString: (h: string) => unknown })().parseFromString(
+      html
+    );
+  }
+  throw new Error("[nimiq-identicon] dom-parser: unrecognized export shape");
+}
 
 if (typeof globalThis.DOMParser === "undefined") {
   (globalThis as unknown as { DOMParser: typeof DOMParser }).DOMParser =
