@@ -1,7 +1,5 @@
 {
   "rewrites": [
-    { "source": "/pending-payouts", "destination": "/pending-payouts.html" },
-    { "source": "/analytics", "destination": "/analytics.html" },
-    { "source": "/admin", "destination": "/admin.html" }
+    { "source": "/pending-payouts", "destination": "/pending-payouts.html" }
   ]
 }
