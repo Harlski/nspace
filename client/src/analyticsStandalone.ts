@@ -118,27 +118,19 @@ function attachCopyHandlers(root: Element | null): void {
   });
 }
 
-function bindToggle(
-  barBtn: HTMLElement | null,
-  chartBtn: HTMLElement | null,
-  onMode: (mode: "bar" | "chart") => void
-): void {
-  if (!barBtn || !chartBtn) return;
-  barBtn.addEventListener("click", () => {
-    barBtn.classList.add("is-active");
-    chartBtn.classList.remove("is-active");
-    onMode("bar");
-  });
-  chartBtn.addEventListener("click", () => {
-    chartBtn.classList.add("is-active");
-    barBtn.classList.remove("is-active");
-    onMode("chart");
-  });
+function toB64(u8: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]!);
+  return btoa(s);
 }
 
 async function load(): Promise<void> {
   await renderAnalyticsTopbar("analytics");
+  const AUTH_KEY = "nspace_analytics_auth_token";
+  const AUTH_ADDR_KEY = "nspace_analytics_auth_addr";
   const statusEl = document.getElementById("status");
+  const authGateEl = document.getElementById("authGate");
+  const analyticsGridEl = document.getElementById("analyticsGrid");
   const loginsEl = document.getElementById("logins");
   const payoutsEl = document.getElementById("payouts");
   const payoutHoursEl = document.getElementById("payoutHours");
@@ -149,6 +141,8 @@ async function load(): Promise<void> {
   const payoutHoverEl = document.getElementById("payoutHover");
   if (
     !statusEl ||
+    !authGateEl ||
+    !analyticsGridEl ||
     !loginsEl ||
     !payoutsEl ||
     !payoutHoursEl ||
@@ -161,8 +155,81 @@ async function load(): Promise<void> {
     return;
   }
 
+  const setAuthedVisible = (visible: boolean): void => {
+    (analyticsGridEl as HTMLElement).style.display = visible ? "grid" : "none";
+  };
+  const showAuthGate = (msg: string, withButton: boolean): void => {
+    (authGateEl as HTMLElement).style.display = "block";
+    setAuthedVisible(false);
+    authGateEl.innerHTML =
+      `<div>${esc(msg)}</div>` +
+      (withButton
+        ? "<div style='margin-top:0.55rem'><button id='btnAnalyticsLogin'>Click to login</button></div>"
+        : "");
+    if (withButton) {
+      const btn = document.getElementById("btnAnalyticsLogin");
+      if (btn) {
+        btn.addEventListener("click", () => {
+          void runAnalyticsLogin();
+        });
+      }
+    }
+  };
+  const runAnalyticsLogin = async (): Promise<void> => {
+    try {
+      authGateEl.innerHTML = "<div>Waiting for wallet signature...</div>";
+      const nonceResp = await fetch(apiUrl("/api/auth/nonce"));
+      if (!nonceResp.ok) throw new Error("nonce_failed");
+      const nonceJson = (await nonceResp.json()) as { nonce?: string };
+      const nonce = String(nonceJson.nonce || "");
+      const HubMod = await import("@nimiq/hub-api");
+      const HubApi = HubMod.default;
+      const hub = new HubApi("https://hub.nimiq.com");
+      const message = `Login:v1:${nonce}`;
+      const signed = await hub.signMessage({
+        appName: "nspace analytics",
+        message,
+      });
+      const verifyResp = await fetch(apiUrl("/api/auth/verify"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          nonce,
+          message,
+          signer: signed.signer,
+          signerPublicKey: toB64(signed.signerPublicKey),
+          signature: toB64(signed.signature),
+        }),
+      });
+      if (!verifyResp.ok) {
+        const errBody = (await verifyResp.json().catch(() => ({}))) as { error?: string };
+        throw new Error(String(errBody.error || "verify_failed"));
+      }
+      const verified = (await verifyResp.json()) as { token?: string; address?: string };
+      const token = String(verified.token || "");
+      const address = String(verified.address || signed.signer || "");
+      if (!token) throw new Error("missing_token");
+      sessionStorage.setItem(AUTH_KEY, token);
+      if (address) sessionStorage.setItem(AUTH_ADDR_KEY, address);
+      window.location.reload();
+    } catch (e) {
+      showAuthGate(`Login failed: ${String(e instanceof Error ? e.message : e)}`, true);
+    }
+  };
+
   const params = new URLSearchParams(window.location.search);
-  const token = params.get("token") || "";
+  const tokenFromQuery = String(params.get("token") || "").trim();
+  if (tokenFromQuery) {
+    sessionStorage.setItem(AUTH_KEY, tokenFromQuery);
+    window.history.replaceState({}, "", "/analytics");
+  }
+  const token = sessionStorage.getItem(AUTH_KEY) || "";
+  if (!token) {
+    showAuthGate("Login required to view analytics.", true);
+    statusEl.textContent = "Please sign in with the authorized wallet.";
+    return;
+  }
+
   const days = Number(params.get("days") || "7");
   const sessions = Number(params.get("sessions") || "300");
   const payouts = Number(params.get("payouts") || "300");
@@ -171,13 +238,26 @@ async function load(): Promise<void> {
   );
 
   const resp = await fetch(url, {
-    headers: token ? { "x-analytics-token": token } : {},
+    headers: { authorization: `Bearer ${token}` },
     cache: "no-store",
   });
   if (!resp.ok) {
-    statusEl.innerHTML = `<span class="err">Request failed (${resp.status}). Add ?token=... to this URL.</span>`;
+    if (resp.status === 403) {
+      showAuthGate("Access denied for this wallet.", false);
+      statusEl.innerHTML = "";
+      return;
+    }
+    if (resp.status === 401) {
+      sessionStorage.removeItem(AUTH_KEY);
+      showAuthGate("Session expired. Click to login again.", true);
+      statusEl.innerHTML = "<span class='err'>Session expired.</span>";
+      return;
+    }
+    statusEl.innerHTML = `<span class="err">Request failed (${resp.status}).</span>`;
     return;
   }
+  (authGateEl as HTMLElement).style.display = "none";
+  setAuthedVisible(true);
   const data = (await resp.json()) as AnalyticsPayload;
   statusEl.textContent = `Generated ${fmtUtc(data.generatedAt)} · last ${data.maxDays} days`;
 
@@ -284,18 +364,8 @@ async function load(): Promise<void> {
     });
   }
 
-  renderLogin("bar");
-  renderPayoutHours("bar");
-  bindToggle(
-    document.getElementById("loginModeBar"),
-    document.getElementById("loginModeChart"),
-    renderLogin
-  );
-  bindToggle(
-    document.getElementById("payoutModeBar"),
-    document.getElementById("payoutModeChart"),
-    renderPayoutHours
-  );
+  renderLogin("chart");
+  renderPayoutHours("chart");
 
   visitorsEl.innerHTML =
     `<div style="margin-bottom:0.45rem">${data.uniqueVisitors} unique visitors in range</div>` +

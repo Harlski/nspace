@@ -31,6 +31,21 @@
         color: #8b9cb3;
         margin: 0 0 1rem 0;
       }
+      .auth-gate {
+        margin: 0.6rem 0 1rem 0;
+        padding: 0.8rem;
+        border-radius: 8px;
+        border: 1px solid #2a394f;
+        background: #131b27;
+      }
+      .auth-gate button {
+        background: #2b5ea7;
+        color: #eef6ff;
+        border: 1px solid #4d83d0;
+        border-radius: 6px;
+        padding: 0.42rem 0.72rem;
+        cursor: pointer;
+      }
       .grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -97,23 +112,6 @@
       }
       .err {
         color: #f87171;
-      }
-      .controls {
-        display: flex;
-        gap: 0.4rem;
-        margin-bottom: 0.5rem;
-      }
-      button.toggle {
-        background: #202a3a;
-        color: #cfd8e3;
-        border: 1px solid #324258;
-        border-radius: 6px;
-        padding: 0.25rem 0.5rem;
-        cursor: pointer;
-      }
-      button.toggle.is-active {
-        background: #2b5ea7;
-        border-color: #4d83d0;
       }
       .chart-cols {
         display: grid;
@@ -200,25 +198,18 @@
       </div>
     </div>
     <p class="hint">
-      Login/logout timing, payout activity, and daily event totals from server event logs.
+      Login required to view analytics.
     </p>
     <p id="status" class="status mono">Loading...</p>
-    <div class="grid">
+    <div id="authGate" class="auth-gate mono" style="display:none"></div>
+    <div id="analyticsGrid" class="grid" style="display:none">
       <section class="panel">
         <h2>Login / Logout by UTC hour</h2>
-        <div class="controls">
-          <button id="loginModeBar" class="toggle is-active">Horizontal bars</button>
-          <button id="loginModeChart" class="toggle">Chart</button>
-        </div>
         <div id="logins"></div>
         <div id="loginHover" class="hover-card mono">Hover a bar to see unique-user breakdown.</div>
       </section>
       <section class="panel">
         <h2>NIM paid out by UTC hour</h2>
-        <div class="controls">
-          <button id="payoutModeBar" class="toggle is-active">Horizontal bars</button>
-          <button id="payoutModeChart" class="toggle">Chart</button>
-        </div>
         <div id="payoutHours"></div>
         <div id="payoutHover" class="hover-card mono">Hover a bar to see users and amounts.</div>
       </section>
