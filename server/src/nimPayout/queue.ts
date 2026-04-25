@@ -1,8 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { logGameplayEvent } from "../eventLog.js";
-import { NIM_PAYOUT_DATA_DIR, NIM_PAYOUT_QUEUE_FILE } from "./paths.js";
+import {
+  logGameplayEvent,
+  listRecentNimPayoutSentFromEventLog,
+} from "../eventLog.js";
+import {
+  NIM_PAYOUT_DATA_DIR,
+  NIM_PAYOUT_QUEUE_FILE,
+  NIM_PAYOUT_SENT_HISTORY_FILE,
+} from "./paths.js";
 import {
   isNimPayoutSenderConfigured,
   getNimPayoutWalletBalanceLuna,
@@ -61,6 +68,101 @@ const NIM_BALANCE_BACKGROUND_REFRESH_MS = Math.max(
 );
 
 const DEAD_LETTER_FILE = path.join(NIM_PAYOUT_DATA_DIR, "nim-payout-dead-letter.jsonl");
+
+const HISTORY_ROWS_CAP = Math.min(
+  2000,
+  Math.max(1, Number(process.env.NIM_PAYOUT_PUBLIC_HISTORY_LIMIT ?? 20))
+);
+const HISTORY_EVENT_DAYS = Math.min(
+  90,
+  Math.max(7, Number(process.env.NIM_PAYOUT_PUBLIC_HISTORY_EVENT_DAYS ?? 30))
+);
+
+type SentHistoryDiskLine = {
+  sentAt: number;
+  enqueuedAt: number;
+  recipient: string;
+  amountLuna: string;
+  txHash: string;
+  claimId: string;
+};
+
+type SentHistoryMerged = {
+  sentAt: number;
+  recipient: string;
+  txHash: string;
+  amountLuna?: string;
+};
+
+function readSentHistoryFromDisk(maxLines: number): SentHistoryDiskLine[] {
+  try {
+    if (!fs.existsSync(NIM_PAYOUT_SENT_HISTORY_FILE)) return [];
+    const raw = fs.readFileSync(NIM_PAYOUT_SENT_HISTORY_FILE, "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim());
+    const tail = lines.slice(Math.max(0, lines.length - maxLines));
+    const out: SentHistoryDiskLine[] = [];
+    for (const line of tail) {
+      try {
+        const o = JSON.parse(line) as SentHistoryDiskLine;
+        if (
+          typeof o.txHash === "string" &&
+          o.txHash &&
+          typeof o.sentAt === "number" &&
+          typeof o.recipient === "string" &&
+          typeof o.amountLuna === "string" &&
+          /^\d+$/.test(o.amountLuna)
+        ) {
+          out.push(o);
+        }
+      } catch {
+        /* skip bad line */
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function appendSentHistoryLine(job: NimPayoutJob, txHash: string, sentAt: number): void {
+  try {
+    ensureDataDir();
+    const line: SentHistoryDiskLine = {
+      sentAt,
+      enqueuedAt: job.createdAt,
+      recipient: job.recipientAddress,
+      amountLuna: job.amountLuna.toString(),
+      txHash,
+      claimId: job.claimId,
+    };
+    fs.appendFileSync(NIM_PAYOUT_SENT_HISTORY_FILE, `${JSON.stringify(line)}\n`, "utf8");
+  } catch (e) {
+    console.error("[nim-payout] Failed to append sent-history file:", e);
+  }
+}
+
+/** Newest sends first, capped at `limit`. Disk lines override same-tx event rows. */
+function mergeSentHistoryRecords(limit: number): SentHistoryMerged[] {
+  const fromDisk = readSentHistoryFromDisk(Math.min(limit * 4, 8000));
+  const byTx = new Map<string, SentHistoryMerged>();
+  for (const e of listRecentNimPayoutSentFromEventLog(HISTORY_EVENT_DAYS, limit * 3)) {
+    byTx.set(e.txHash, {
+      sentAt: e.sentAt,
+      recipient: e.recipient,
+      txHash: e.txHash,
+      amountLuna: e.amountLuna,
+    });
+  }
+  for (const d of fromDisk) {
+    byTx.set(d.txHash, {
+      sentAt: d.sentAt,
+      recipient: d.recipient,
+      txHash: d.txHash,
+      amountLuna: d.amountLuna,
+    });
+  }
+  return [...byTx.values()].sort((a, b) => b.sentAt - a.sentAt).slice(0, limit);
+}
 
 function ensureDataDir(): void {
   fs.mkdirSync(path.dirname(NIM_PAYOUT_QUEUE_FILE), { recursive: true });
@@ -218,8 +320,10 @@ async function processOne(job: NimPayoutJob): Promise<void> {
         enqueuedAt: job.createdAt,
         sentAt,
         queueToSendMs,
+        amountLuna: job.amountLuna.toString(),
       }
     );
+    appendSentHistoryLine(job, txHash, sentAt);
     jobs.splice(jobs.indexOf(job), 1);
     saveQueue();
   } catch (err) {
@@ -343,6 +447,16 @@ export type PublicPendingPayoutRow = {
   amountNim: string;
 };
 
+/** Successful send shown in public history (newest first in `historyRows`). */
+export type PublicPayoutHistoryRow = {
+  /** ISO 8601 UTC when the transaction was broadcast / confirmed (same as gameplay `sentAt`). */
+  time: string;
+  identicon: string;
+  walletId: string;
+  amountNim: string;
+  txHash: string;
+};
+
 export type PublicPendingPayoutSnapshot = {
   allSent: boolean;
   /** Count of jobs still `pending` or `processing` (same as `rows.length` when not `allSent`). */
@@ -350,6 +464,8 @@ export type PublicPendingPayoutSnapshot = {
   /** Non-null when `rows` is empty — friendly status for humans. */
   message: string | null;
   rows: PublicPendingPayoutRow[];
+  /** Successful sends (disk log + gameplay events); capped by env (default 20). */
+  historyRows: PublicPayoutHistoryRow[];
 };
 
 function formatLunaAsNim4(luna: bigint): string {
@@ -357,9 +473,24 @@ function formatLunaAsNim4(luna: bigint): string {
 }
 
 /**
- * Snapshot for public dashboards: pending + processing jobs only (no internal errors / retry metadata).
+ * Snapshot for public dashboards: pending + processing jobs, plus recent
+ * successful sends (no internal errors / retry metadata on pending rows).
  */
 export async function getPublicPendingPayoutSnapshot(): Promise<PublicPendingPayoutSnapshot> {
+  const historySource = mergeSentHistoryRecords(HISTORY_ROWS_CAP);
+  const historyRows: PublicPayoutHistoryRow[] = await Promise.all(
+    historySource.map(async (r) => ({
+      time: new Date(r.sentAt).toISOString(),
+      identicon: await nimiqIdenticonDataUrl(r.recipient),
+      walletId: r.recipient,
+      amountNim:
+        r.amountLuna && /^\d+$/.test(r.amountLuna)
+          ? formatLunaAsNim4(BigInt(r.amountLuna))
+          : "—",
+      txHash: r.txHash,
+    }))
+  );
+
   const pending = jobs.filter(
     (j) => j.status === "pending" || j.status === "processing"
   );
@@ -368,8 +499,9 @@ export async function getPublicPendingPayoutSnapshot(): Promise<PublicPendingPay
     return {
       allSent: true,
       pendingTotal: 0,
-      message: "All transactions sent :)",
+      message: "All pending transactions have been sent.",
       rows: [],
+      historyRows,
     };
   }
   const rows: PublicPendingPayoutRow[] = await Promise.all(
@@ -385,5 +517,6 @@ export async function getPublicPendingPayoutSnapshot(): Promise<PublicPendingPay
     pendingTotal: pending.length,
     message: null,
     rows,
+    historyRows,
   };
 }

@@ -750,13 +750,33 @@ body {
   box-sizing: border-box;
   min-width: 0;
   max-width: 100%;
-  pointer-events: none;
+  /* Eat taps on the whole bar (gaps, padding, wallet row) — do not click through to the game */
+  pointer-events: auto;
   /* Readable on bright sky/water: dark frosted bar */
   background: rgba(15, 17, 23, 0.82);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 2px 16px rgba(0, 0, 0, 0.22);
+}
+
+/* Top HUD labels: no accidental highlight/copy (stat tooltips stay selectable). */
+.hud-brand,
+button.hud-brand,
+.hud-player-bar,
+.hud-status-sub:not(.hud-status-sub--empty),
+.hud-player-count,
+.hud-nim-balance,
+.hud-rooms {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.hud-player-count__tooltip,
+.hud-nim-balance__tooltip {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .hud-status-sub {
@@ -769,7 +789,6 @@ body {
   color: rgba(226, 232, 240, 0.92);
   background: rgba(12, 14, 20, 0.9);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  pointer-events: none;
   white-space: normal;
   word-break: break-word;
   min-height: calc(1.35em + 2px);
@@ -781,6 +800,7 @@ body {
   padding: 0;
   border-bottom-width: 0;
   overflow: hidden;
+  pointer-events: none;
 }
 
 .hud-brand {
@@ -829,6 +849,9 @@ button.hud-brand:focus-visible {
   padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
   box-sizing: border-box;
   pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .brand-links-overlay[hidden] {
@@ -1727,6 +1750,9 @@ button.hud-brand:focus-visible {
   transform: translateY(-2px);
   transition: opacity 0.16s ease, transform 0.16s ease;
   pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .hud-player-join-toast--visible {
@@ -1771,6 +1797,14 @@ button.hud-brand:focus-visible {
 .hud-player-count--show-tip .hud-player-count__tooltip {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* Viewport docking: JS sets left/top; wins over base abs + z-index from preceding rules */
+.hud-player-count--show-tip .hud-player-count__tooltip.hud-stat-tooltip--viewport {
+  position: fixed;
+  right: auto;
+  transform: none;
+  z-index: 10050;
 }
 
 .hud-nim-balance {
@@ -1827,6 +1861,12 @@ button.hud-brand:focus-visible {
   transform: translateY(0);
 }
 
+.hud-nim-balance--show-tip .hud-nim-balance__tooltip.hud-stat-tooltip--viewport {
+  position: fixed;
+  right: auto;
+  transform: none;
+  z-index: 10050;
+}
 
 .hud-icon-btn {
   width: 30px;
@@ -2096,6 +2136,9 @@ button.hud-brand:focus-visible {
   border-radius: 999px;
   flex-shrink: 0;
   cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .hud-mode-feedback.nq-button-pill:hover {
@@ -3543,6 +3586,9 @@ button.hud-brand:focus-visible {
   gap: 6px;
   margin-bottom: 6px;
   pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .chat-tabs__btn {
@@ -3556,6 +3602,9 @@ button.hud-brand:focus-visible {
   cursor: pointer;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .chat-tabs__btn--active {
@@ -3584,6 +3633,9 @@ button.hud-brand:focus-visible {
   border: 1px solid rgba(255, 255, 255, 0.06);
   /* Log is display-only; taps go to the canvas (scroll wheel still targets focused doc) */
   pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* Style the scrollbar for better visibility */
@@ -3787,6 +3839,16 @@ button.hud-brand:focus-visible {
   right: 12px;
   z-index: 12;
   pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.admin-overlay-wrap .admin-overlay-input,
+.admin-overlay-wrap .admin-overlay-range,
+.admin-overlay-wrap select.admin-overlay-input {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .admin-overlay-toggle {

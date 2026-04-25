@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NIM payouts — pending</title>
+    <title>NIM payouts — pending &amp; recent</title>
     <style>
       :root {
         font-family: system-ui, sans-serif;
@@ -24,6 +24,13 @@
         padding: 1rem;
         border-radius: 8px;
         background: #1a2332;
+      }
+      .status.status--queue-clear {
+        text-align: center;
+        font-size: 1.05rem;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        color: #c9d1d9;
       }
       table {
         width: 100%;
@@ -56,6 +63,26 @@
         height: 40px;
         border-radius: 6px;
         display: block;
+        flex-shrink: 0;
+      }
+      .wallet-cell-inner {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .wallet-cell {
+        min-width: 6rem;
+      }
+      .wallet-cell-inner span[title] {
+        cursor: help;
+      }
+      a.expl {
+        color: #79b8ff;
+        text-decoration: none;
+      }
+      a.expl:hover {
+        text-decoration: underline;
       }
       .err {
         color: #f85149;
@@ -63,7 +90,7 @@
     </style>
   </head>
   <body>
-    <h1>Pending NIM payouts</h1>
+    <h1>NIM payouts</h1>
     <p class="mono" id="status">Loading…</p>
     <p class="mono" id="countLine" style="margin-top: 0.35rem; color: #8b9cb3"></p>
     <div id="banner" class="status" style="display: none"></div>

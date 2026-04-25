@@ -375,6 +375,60 @@ export function createHud(
   const nimBalanceValue = nimBalance.querySelector(
     ".hud-nim-balance__value"
   ) as HTMLElement | null;
+  const playerCountTip = playerCount.querySelector(
+    ".hud-player-count__tooltip"
+  ) as HTMLElement;
+  const nimBalanceTip = nimBalance.querySelector(
+    ".hud-nim-balance__tooltip"
+  ) as HTMLElement;
+
+  /** Toolbar uses horizontal scroll + overflow-y hidden; abs tooltips are clipped — dock to viewport here. */
+  const HUD_STAT_TIP_VIEWPORT_MQ = window.matchMedia(
+    "(pointer: coarse) and (max-width: 960px)"
+  );
+
+  function syncHudStatTooltipViewport(
+    anchor: HTMLElement,
+    tip: HTMLElement,
+    visible: boolean
+  ): void {
+    if (!visible) {
+      tip.classList.remove("hud-stat-tooltip--viewport");
+      tip.style.removeProperty("left");
+      tip.style.removeProperty("top");
+      tip.style.removeProperty("max-width");
+      return;
+    }
+    if (!HUD_STAT_TIP_VIEWPORT_MQ.matches) {
+      tip.classList.remove("hud-stat-tooltip--viewport");
+      tip.style.removeProperty("left");
+      tip.style.removeProperty("top");
+      tip.style.removeProperty("max-width");
+      return;
+    }
+    tip.classList.add("hud-stat-tooltip--viewport");
+    requestAnimationFrame(() => {
+      const ar = anchor.getBoundingClientRect();
+      const margin = 8;
+      const maxW = Math.min(280, window.innerWidth - 2 * margin);
+      tip.style.maxWidth = `${maxW}px`;
+      const w = tip.getBoundingClientRect().width;
+      let left = ar.right - w;
+      left = Math.max(margin, Math.min(left, window.innerWidth - margin - w));
+      tip.style.left = `${Math.round(left)}px`;
+      tip.style.top = `${Math.round(ar.bottom + margin)}px`;
+    });
+  }
+
+  function repositionOpenHudStatTips(): void {
+    if (playerCount.classList.contains("hud-player-count--show-tip")) {
+      syncHudStatTooltipViewport(playerCount, playerCountTip, true);
+    }
+    if (nimBalance.classList.contains("hud-nim-balance--show-tip")) {
+      syncHudStatTooltipViewport(nimBalance, nimBalanceTip, true);
+    }
+  }
+
   const playerJoinToast = document.createElement("div");
   playerJoinToast.className = "hud-player-join-toast";
   playerJoinToast.hidden = true;
@@ -396,43 +450,50 @@ export function createHud(
   roomsBtn.innerHTML = `<span class="hud-rooms__inner"><span class="hud-rooms__text">Rooms</span>${nimiqIconUseMarkup("nq-caret-right-small", { width: 10, height: 10, class: "hud-rooms__caret" })}</span>`;
   roomsBtn.setAttribute("aria-label", "Rooms");
   roomsBtn.title = "Rooms — browse, join, or create";
-  const toggleNimHint = (show: boolean): void => {
+  const setNimTipVisible = (show: boolean): void => {
     nimBalance.classList.toggle("hud-nim-balance--show-tip", show);
+    syncHudStatTooltipViewport(nimBalance, nimBalanceTip, show);
   };
-  const togglePlayerTip = (show: boolean): void => {
+  const setPlayerTipVisible = (show: boolean): void => {
     playerCount.classList.toggle("hud-player-count--show-tip", show);
+    syncHudStatTooltipViewport(playerCount, playerCountTip, show);
   };
   const closeHudTooltips = (): void => {
-    toggleNimHint(false);
-    togglePlayerTip(false);
+    setNimTipVisible(false);
+    setPlayerTipVisible(false);
   };
-  nimBalance.addEventListener("mouseenter", () => toggleNimHint(true));
-  nimBalance.addEventListener("mouseleave", () => toggleNimHint(false));
-  nimBalance.addEventListener("focus", () => toggleNimHint(true));
-  nimBalance.addEventListener("blur", () => toggleNimHint(false));
+  nimBalance.addEventListener("mouseenter", () => setNimTipVisible(true));
+  nimBalance.addEventListener("mouseleave", () => setNimTipVisible(false));
+  nimBalance.addEventListener("focus", () => setNimTipVisible(true));
+  nimBalance.addEventListener("blur", () => setNimTipVisible(false));
   nimBalance.addEventListener("click", (e) => {
     e.stopPropagation();
-    toggleNimHint(!nimBalance.classList.contains("hud-nim-balance--show-tip"));
+    setNimTipVisible(!nimBalance.classList.contains("hud-nim-balance--show-tip"));
   });
-  playerCount.addEventListener("mouseenter", () => togglePlayerTip(true));
-  playerCount.addEventListener("mouseleave", () => togglePlayerTip(false));
-  playerCount.addEventListener("focus", () => togglePlayerTip(true));
-  playerCount.addEventListener("blur", () => togglePlayerTip(false));
+  playerCount.addEventListener("mouseenter", () => setPlayerTipVisible(true));
+  playerCount.addEventListener("mouseleave", () => setPlayerTipVisible(false));
+  playerCount.addEventListener("focus", () => setPlayerTipVisible(true));
+  playerCount.addEventListener("blur", () => setPlayerTipVisible(false));
   playerCount.addEventListener("click", (e) => {
     e.stopPropagation();
-    togglePlayerTip(
+    setPlayerTipVisible(
       !playerCount.classList.contains("hud-player-count--show-tip")
     );
   });
   playerCount.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      togglePlayerTip(
+      setPlayerTipVisible(
         !playerCount.classList.contains("hud-player-count--show-tip")
       );
     }
   });
   document.addEventListener("click", closeHudTooltips);
+  topToolbar.addEventListener("scroll", repositionOpenHudStatTips, {
+    passive: true,
+  });
+  window.addEventListener("resize", repositionOpenHudStatTips);
+  HUD_STAT_TIP_VIEWPORT_MQ.addEventListener("change", repositionOpenHudStatTips);
   
   topToolbar.appendChild(playerJoinToast);
   topToolbar.appendChild(roomsBtn);
@@ -3397,6 +3458,7 @@ export function createHud(
           : count;
         tipEl.textContent = `Online now: ${count} total · ${room} in this room.`;
       }
+      repositionOpenHudStatTips();
     },
     showPlayerJoinedToast(address: string) {
       const normalized = address.replace(/\s+/g, "");

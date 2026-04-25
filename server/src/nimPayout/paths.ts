@@ -16,3 +16,9 @@ export const NIM_PAYOUT_QUEUE_FILE = path.join(
   NIM_PAYOUT_DATA_DIR,
   "nim-payout-pending.json"
 );
+
+/** Append-only log of successful sends (public history + survives queue removal). */
+export const NIM_PAYOUT_SENT_HISTORY_FILE = path.join(
+  NIM_PAYOUT_DATA_DIR,
+  "nim-payout-sent.jsonl"
+);

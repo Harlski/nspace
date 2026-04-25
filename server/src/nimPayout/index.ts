@@ -4,6 +4,7 @@ export {
   flushNimPayoutQueueSync,
   getPublicPendingPayoutSnapshot,
   type PublicPendingPayoutRow,
+  type PublicPayoutHistoryRow,
   type PublicPendingPayoutSnapshot,
 } from "./queue.js";
 export { LUNA_PER_NIM } from "./sender.js";

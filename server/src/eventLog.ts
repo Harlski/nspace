@@ -194,6 +194,53 @@ export function getEventsForSession(sessionId: string, maxDays: number): EventRe
   return out;
 }
 
+/** One successful on-chain payout as recorded in gameplay event logs. */
+export type NimPayoutSentEventRow = {
+  sentAt: number;
+  enqueuedAt: number;
+  recipient: string;
+  txHash: string;
+  claimId: string;
+  /** Present on events logged after `amountLuna` was added to the payload. */
+  amountLuna?: string;
+};
+
+/**
+ * Recent `nim_payout_sent` events for public payout history (backfill before
+ * `nim-payout-sent.jsonl` existed). Deduped by `txHash`; newest wins.
+ */
+export function listRecentNimPayoutSentFromEventLog(
+  maxDays: number,
+  limit: number
+): NimPayoutSentEventRow[] {
+  const files = listEventFiles(maxDays);
+  const byTx = new Map<string, NimPayoutSentEventRow>();
+  for (const fp of files) {
+    for (const rec of parseLines(fp)) {
+      if (rec.kind !== "nim_payout_sent") continue;
+      const p = rec.payload || {};
+      const txHash = typeof p.txHash === "string" ? p.txHash : "";
+      if (!txHash) continue;
+      const sentAt = typeof p.sentAt === "number" ? p.sentAt : rec.ts;
+      const enqueuedAt = typeof p.enqueuedAt === "number" ? p.enqueuedAt : sentAt;
+      const amountLuna =
+        typeof p.amountLuna === "string" && /^\d+$/.test(p.amountLuna)
+          ? p.amountLuna
+          : undefined;
+      byTx.set(txHash, {
+        sentAt,
+        enqueuedAt,
+        recipient: rec.address,
+        txHash,
+        claimId: typeof p.claimId === "string" ? p.claimId : "",
+        amountLuna,
+      });
+    }
+  }
+  const merged = [...byTx.values()].sort((a, b) => b.sentAt - a.sentAt);
+  return merged.slice(0, Math.max(0, limit));
+}
+
 /** No-op for sync-per-line writer; hook for future buffering. */
 export function flushEventLogSync(): void {
   /* sync append — nothing to flush */
