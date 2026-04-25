@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin</title>
+    <style>
+      :root { font-family: system-ui, sans-serif; background: #0f1419; color: #e6edf3; }
+      body { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+      .title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.8rem; margin-bottom: 1.1rem; }
+      .title-left { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+      .brand-title { margin: 0; font-size: clamp(24px, 5.5vw, 40px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.05; display: inline-flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-start; gap: 0.2em; text-transform: uppercase; }
+      .brand-title__nimiq { color: #ffffff; }
+      .brand-title__space { color: #fc8702; }
+      .analytics-topbar { display: flex; justify-content: flex-end; flex: 0 0 auto; align-items: center; }
+      .auth-user { position: relative; z-index: 5; }
+      .auth-user-btn { display: inline-flex; align-items: center; gap: 0.45rem; background: #161d2a; color: #d9e3f1; border: 1px solid #2f3d53; border-radius: 999px; padding: 0.22rem 0.48rem; cursor: pointer; }
+      .auth-user-btn .ident { width: 22px; height: 22px; border-radius: 4px; }
+      .auth-user-menu { position: absolute; right: 0; top: calc(100% + 4px); min-width: 150px; background: #121926; border: 1px solid #2d3c52; border-radius: 8px; padding: 0.35rem; display: none; z-index: 20; }
+      .auth-user-menu button { width: 100%; text-align: left; background: transparent; color: #d6e0ef; border: 0; border-radius: 6px; padding: 0.4rem 0.45rem; cursor: pointer; }
+      .auth-user-menu button:hover { background: #1f2a3a; }
+      h1 { margin: 0 0 0.6rem 0; font-size: clamp(24px, 5vw, 34px); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.84rem; }
+      .panel { margin-top: 0.75rem; padding: 0.85rem; border-radius: 8px; border: 1px solid #2a394f; background: #131b27; }
+      .row { display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center; margin-top: 0.6rem; }
+      input { flex: 1 1 420px; min-width: 220px; background: #0f1622; color: #dbe6f4; border: 1px solid #2c3b52; border-radius: 6px; padding: 0.45rem 0.55rem; }
+      button { background: #2b5ea7; color: #eef6ff; border: 1px solid #4d83d0; border-radius: 6px; padding: 0.4rem 0.7rem; cursor: pointer; }
+      .list { margin-top: 0.7rem; display: grid; gap: 0.35rem; }
+      .item { background: #0f1622; border: 1px solid #263348; border-radius: 6px; padding: 0.38rem 0.45rem; }
+      .item-top { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+      .wallet-main { display: inline-flex; align-items: center; gap: 0.45rem; cursor: pointer; background: transparent; border: 0; color: #d6e0ef; padding: 0; }
+      .wallet-main .ident { width: 18px; height: 18px; border-radius: 4px; }
+      .wallet-copy-inline { display: inline-flex; align-items: center; gap: 0.3rem; }
+      .wallet-copy { background: transparent; border: 0; color: #9fb0c7; cursor: pointer; padding: 0; font-size: 0.95rem; line-height: 1; }
+      .wallet-copy:hover { color: #e6edf3; }
+      .status { margin-top: 0.55rem; color: #9fb0c7; }
+      .err { color: #f87171; }
+    </style>
+  </head>
+  <body>
+    <div class="title-row">
+      <div class="title-left">
+        <h1 class="brand-title"><span class="brand-title__nimiq">NIMIQ</span> <span class="brand-title__space">SPACE</span></h1>
+      </div>
+      <div class="analytics-topbar">
+        <div id="authUser" class="auth-user" style="display:none"></div>
+      </div>
+    </div>
+    <h1>Admin</h1>
+    <div id="panel" class="panel mono">Loading...</div>
+    <script type="module" src="/src/adminStandalone.ts"></script>
+  </body>
+</html>

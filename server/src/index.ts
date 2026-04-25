@@ -12,6 +12,7 @@ import { addClient, adminRandomExtraFloorLayout, startRoomTick } from "./rooms.j
 import { flushPersistWorldStateSync } from "./worldPersistence.js";
 import { verifySignedMessage } from "./verifyNimiq.js";
 import {
+  getEventLogAnalyticsSnapshot,
   flushEventLogSync,
   getEventsForSession,
   listRecentPlayerAddresses,
@@ -30,6 +31,9 @@ import {
   startNimPayoutProcessor,
 } from "./nimPayout/index.js";
 import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
+import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
+import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
+import { nimiqIdenticonDataUrl } from "./nimiqIdenticonServer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "../.env") });
@@ -87,6 +91,37 @@ const TELEGRAM_CHAT_ID = telegramEnvTrim("TELEGRAM_CHAT_ID");
 const FEEDBACK_MAX_CHARS = 700;
 const FEEDBACK_COOLDOWN_MS = 20_000;
 const feedbackLastByAddress = new Map<string, number>();
+const DEFAULT_ANALYTICS_AUTHORIZED_WALLET =
+  "NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y";
+
+function parseAuthorizedWallets(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of String(raw || "").split(/[,\n;]+/)) {
+    const cleaned = String(part || "").trim().replace(/^['"]|['"]$/g, "");
+    const normalized = normalizeWalletId(cleaned);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+const analyticsAuthorizedWalletsRaw = String(
+  process.env.ANALYTICS_AUTHORIZED_WALLETS ??
+    process.env.ANALYTICS_AUTHORIZED_WALLET ??
+    DEFAULT_ANALYTICS_AUTHORIZED_WALLET
+).trim();
+const analyticsAuthorizedWallets = new Set(
+  parseAuthorizedWallets(analyticsAuthorizedWalletsRaw)
+);
+const analyticsManagerWalletsRaw = String(
+  process.env.ANALYTICS_MANAGER_WALLETS ??
+    analyticsAuthorizedWalletsRaw
+).trim();
+const analyticsManagerWallets = new Set(
+  parseAuthorizedWallets(analyticsManagerWalletsRaw)
+);
 
 function maskSecret(v: string, head = 4, tail = 3): string {
   if (!v) return "(empty)";
@@ -96,6 +131,21 @@ function maskSecret(v: string, head = 4, tail = 3): string {
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get("/api/identicon/:wallet", async (req, res) => {
+  const wallet = String(req.params.wallet || "").trim();
+  if (!wallet) {
+    res.status(400).json({ error: "missing_wallet" });
+    return;
+  }
+  try {
+    const identicon = await nimiqIdenticonDataUrl(wallet);
+    res.json({ wallet, identicon });
+  } catch (err) {
+    console.error("[identicon]", err);
+    res.status(500).json({ error: "internal" });
+  }
 });
 
 function bearerToken(req: Request): string | null {
@@ -127,6 +177,53 @@ function jwtAddressFromReq(req: Request): string | null {
   } catch {
     return null;
   }
+}
+
+function normalizeWalletId(v: string): string {
+  return String(v || "").replace(/\s+/g, "").toUpperCase();
+}
+
+function requireAnalyticsWallet(req: Request, res: Response, next: NextFunction): void {
+  const t = bearerToken(req);
+  if (!t) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  try {
+    const payload = verifySession(t, jwtSecret);
+    const signer = normalizeWalletId(payload.sub);
+    if (analyticsAuthorizedWallets.size === 0 || !analyticsAuthorizedWallets.has(signer)) {
+      res.status(403).json({ error: "not_authorized_for_activity" });
+      return;
+    }
+    next();
+  } catch {
+    res.status(401).json({ error: "unauthorized" });
+  }
+}
+
+function requireAnalyticsWalletAdmin(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  const t = bearerToken(req);
+  if (!t) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  try {
+    const payload = verifySession(t, jwtSecret);
+    const signer = normalizeWalletId(payload.sub);
+    if (analyticsManagerWallets.size === 0 || !analyticsManagerWallets.has(signer)) {
+      res.status(403).json({ error: "not_authorized_for_activity" });
+      return;
+    }
+  } catch {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  next();
 }
 
 async function sendTelegramFeedback(text: string): Promise<boolean> {
@@ -274,6 +371,75 @@ app.get("/api/nim/pending-payouts", async (_req, res) => {
 /** Human-readable table; data from `/api/nim/pending-payouts`. */
 app.get("/pending-payouts", (_req, res) => {
   res.type("html").send(pendingPayoutsPublicPageHtml());
+});
+
+/**
+ * Dashboard-ready analytics from event logs.
+ * Limits: days 1-30, sessions 1-1000, payouts 1-1000.
+ */
+app.get("/api/analytics/overview", requireAnalyticsWallet, async (req, res) => {
+  const maxDays = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+  const sessionLimit = Math.min(1000, Math.max(1, Number(req.query.sessions) || 300));
+  const payoutLimit = Math.min(1000, Math.max(1, Number(req.query.payouts) || 300));
+  try {
+    const analytics = await getEventLogAnalyticsSnapshot(
+      maxDays,
+      sessionLimit,
+      payoutLimit
+    );
+    res.json(analytics);
+  } catch (err) {
+    console.error("[analytics/overview]", err);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.get("/api/analytics/authorized-wallets", requireAnalyticsWalletAdmin, (_req, res) => {
+  res.json({
+    wallets: Array.from(analyticsAuthorizedWallets.values()),
+    managerWallets: Array.from(analyticsManagerWallets.values()),
+  });
+});
+
+app.post("/api/analytics/authorized-wallets", requireAnalyticsWalletAdmin, (req, res) => {
+  const wallet = normalizeWalletId(String((req.body as Record<string, unknown>)?.wallet ?? ""));
+  if (!wallet) {
+    res.status(400).json({ error: "missing_wallet" });
+    return;
+  }
+  analyticsAuthorizedWallets.add(wallet);
+  res.json({ ok: true, wallets: Array.from(analyticsAuthorizedWallets.values()) });
+});
+
+app.delete(
+  "/api/analytics/authorized-wallets",
+  requireAnalyticsWalletAdmin,
+  (req, res) => {
+    const wallet = normalizeWalletId(
+      String((req.body as Record<string, unknown>)?.wallet ?? "")
+    );
+    if (!wallet) {
+      res.status(400).json({ error: "missing_wallet" });
+      return;
+    }
+    const removed = analyticsAuthorizedWallets.delete(wallet);
+    res.json({ ok: true, removed, wallets: Array.from(analyticsAuthorizedWallets.values()) });
+  }
+);
+
+/** Visual analytics page (supply `?token=...`). */
+app.get("/analytics", (_req, res) => {
+  res.type("html").send(analyticsPublicPageHtml());
+});
+
+/** Visual admin page for analytics wallet permissions. */
+app.get("/admin", (_req, res) => {
+  res.type("html").send(analyticsAdminPageHtml());
+});
+
+/** Backward-compat redirect. */
+app.get("/analytics/admin", (_req, res) => {
+  res.redirect(302, "/admin");
 });
 
 app.get("/api/replay/players", requireJwt, (req, res) => {

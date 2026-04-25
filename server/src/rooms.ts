@@ -833,6 +833,7 @@ function finalizeClaimableBlockReward(
     z: tz,
     y: ty,
     claimId,
+    amountLuna: rewardLuna.toString(),
   });
 
   enqueueNimPayout({

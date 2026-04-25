@@ -126,6 +126,8 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         pendingPayouts: resolve(__dirname, "pending-payouts.html"),
+        analytics: resolve(__dirname, "analytics.html"),
+        admin: resolve(__dirname, "admin.html"),
       },
     },
   },
@@ -150,6 +152,16 @@ export default defineConfig({
       },
       /** Public HTML from Express (`server/src/index.ts`); without this, SPA serves `index.html`. */
       "/pending-payouts": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+        configure: attachDevProxyHandlers,
+      },
+      "/analytics": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+        configure: attachDevProxyHandlers,
+      },
+      "/admin": {
         target: "http://127.0.0.1:3001",
         changeOrigin: true,
         configure: attachDevProxyHandlers,

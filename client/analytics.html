@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Game analytics</title>
+    <style>
+      :root {
+        font-family: system-ui, sans-serif;
+        background: #0f1419;
+        color: #e6edf3;
+      }
+      body {
+        max-width: 1120px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      .title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.8rem; margin-bottom: 1.1rem; }
+      .title-left { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+      .brand-title { margin: 0; font-size: clamp(24px, 5.5vw, 40px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.05; display: inline-flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-start; gap: 0.2em; text-transform: uppercase; }
+      .brand-title__nimiq { color: #ffffff; }
+      .brand-title__space { color: #fc8702; }
+      .analytics-topbar { display: flex; justify-content: flex-end; flex: 0 0 auto; align-items: center; }
+      .auth-user { position: relative; z-index: 5; }
+      .auth-user-btn { display: inline-flex; align-items: center; gap: 0.45rem; background: #161d2a; color: #d9e3f1; border: 1px solid #2f3d53; border-radius: 999px; padding: 0.22rem 0.48rem; cursor: pointer; }
+      .auth-user-btn .ident { width: 22px; height: 22px; border-radius: 4px; }
+      .auth-user-menu { position: absolute; right: 0; top: calc(100% + 4px); min-width: 150px; background: #121926; border: 1px solid #2d3c52; border-radius: 8px; padding: 0.35rem; display: none; z-index: 20; }
+      .auth-user-menu button { width: 100%; text-align: left; background: transparent; color: #d6e0ef; border: 0; border-radius: 6px; padding: 0.4rem 0.45rem; cursor: pointer; }
+      .auth-user-menu button:hover { background: #1f2a3a; }
+      .hint {
+        color: #8b9cb3;
+        margin: 0 0 1rem 0;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 1rem;
+      }
+      .panel {
+        background: #161d2a;
+        border: 1px solid #283244;
+        border-radius: 10px;
+        padding: 0.8rem;
+      }
+      .panel h2 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1rem;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.82rem;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 2.2rem 1fr auto;
+        gap: 0.6rem;
+        align-items: center;
+        margin: 0.2rem 0;
+      }
+      .barWrap {
+        height: 0.8rem;
+        background: #202a3a;
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .bar {
+        height: 100%;
+        background: linear-gradient(90deg, #5aa0ff, #7dd3fc);
+      }
+      .bar.bar--logout {
+        background: linear-gradient(90deg, #a855f7, #f472b6);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.2rem;
+        font-size: 0.86rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.42rem 0.3rem;
+        border-bottom: 1px solid #263041;
+      }
+      th {
+        color: #8b9cb3;
+        font-size: 0.73rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .right {
+        text-align: right;
+      }
+      .status {
+        margin: 0.6rem 0 1rem 0;
+        color: #9fb0c7;
+      }
+      .err {
+        color: #f87171;
+      }
+      .controls {
+        display: flex;
+        gap: 0.4rem;
+        margin-bottom: 0.5rem;
+      }
+      button.toggle {
+        background: #202a3a;
+        color: #cfd8e3;
+        border: 1px solid #324258;
+        border-radius: 6px;
+        padding: 0.25rem 0.5rem;
+        cursor: pointer;
+      }
+      button.toggle.is-active {
+        background: #2b5ea7;
+        border-color: #4d83d0;
+      }
+      .chart-cols {
+        display: grid;
+        grid-template-columns: repeat(24, minmax(10px, 1fr));
+        gap: 0.25rem;
+        align-items: end;
+        height: 160px;
+        margin-bottom: 0.4rem;
+      }
+      .col {
+        height: 100%;
+        background: #202a3a;
+        border-radius: 4px 4px 0 0;
+        position: relative;
+        cursor: pointer;
+      }
+      .col .in {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(180deg, #5aa0ff, #7dd3fc);
+        border-radius: 4px 4px 0 0;
+      }
+      .col .out {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(180deg, #a855f7, #f472b6);
+        opacity: 0.92;
+        border-radius: 4px 4px 0 0;
+      }
+      .ticks {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 0.3rem;
+        color: #8092aa;
+        font-size: 0.72rem;
+      }
+      .hover-card {
+        margin-top: 0.55rem;
+        border: 1px solid #2a394f;
+        border-radius: 8px;
+        background: #131b27;
+        padding: 0.5rem;
+        min-height: 78px;
+      }
+      .user-row {
+        display: grid;
+        grid-template-columns: 24px 1fr auto;
+        gap: 0.45rem;
+        align-items: center;
+        margin-bottom: 0.28rem;
+      }
+      .ident {
+        width: 24px;
+        height: 24px;
+        border-radius: 4px;
+      }
+      .users-list {
+        max-height: 280px;
+        overflow: auto;
+      }
+      .wallet-chip {
+        display: inline-flex;
+        align-items: center;
+        cursor: pointer;
+      }
+      .wallet-chip .ident {
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="title-row">
+      <div class="title-left">
+        <h1 class="brand-title"><span class="brand-title__nimiq">NIMIQ</span> <span class="brand-title__space">SPACE</span></h1>
+      </div>
+      <div class="analytics-topbar">
+        <div id="authUser" class="auth-user" style="display:none"></div>
+      </div>
+    </div>
+    <p class="hint">
+      Login/logout timing, payout activity, and daily event totals from server event logs.
+    </p>
+    <p id="status" class="status mono">Loading...</p>
+    <div class="grid">
+      <section class="panel">
+        <h2>Login / Logout by UTC hour</h2>
+        <div class="controls">
+          <button id="loginModeBar" class="toggle is-active">Horizontal bars</button>
+          <button id="loginModeChart" class="toggle">Chart</button>
+        </div>
+        <div id="logins"></div>
+        <div id="loginHover" class="hover-card mono">Hover a bar to see unique-user breakdown.</div>
+      </section>
+      <section class="panel">
+        <h2>NIM paid out by UTC hour</h2>
+        <div class="controls">
+          <button id="payoutModeBar" class="toggle is-active">Horizontal bars</button>
+          <button id="payoutModeChart" class="toggle">Chart</button>
+        </div>
+        <div id="payoutHours"></div>
+        <div id="payoutHover" class="hover-card mono">Hover a bar to see users and amounts.</div>
+      </section>
+      <section class="panel">
+        <h2>Unique visitors</h2>
+        <div id="visitors" class="mono users-list"></div>
+      </section>
+      <section class="panel">
+        <h2>Recent NIM payouts sent</h2>
+        <div id="payouts" class="mono"></div>
+      </section>
+      <section class="panel">
+        <h2>Daily totals</h2>
+        <div id="daily" class="mono"></div>
+      </section>
+      <section class="panel">
+        <h2>Recent sessions</h2>
+        <div id="sessions" class="mono"></div>
+      </section>
+    </div>
+    <script type="module" src="/src/analyticsStandalone.ts"></script>
+  </body>
+</html>
