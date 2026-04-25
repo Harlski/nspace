@@ -1860,8 +1860,10 @@ function enterGame(token: string, address: string): void {
         game.clearSelectedBlock();
       }
 
-      game.setObstacles(msg.obstacles);
+      // Extra floor before obstacles so walkable quads sit earlier in the scene graph
+      // than blocks on those tiles (avoids depth-tie flicker until blocks are rebuilt).
       game.setExtraFloorTiles(msg.extraFloorTiles);
+      game.setObstacles(msg.obstacles);
       game.setSignboards(msg.signboards);
       game.setVoxelTextsForRoom(msg.roomId, msg.voxelTexts ?? []);
       

@@ -67,6 +67,11 @@ export function installAdminOverlay(
         <input type="range" class="admin-overlay-range" id="floor-tile-quad" min="1" max="1.08" step="0.001" value="1.08" />
         <span class="admin-overlay-range-val" id="floor-tile-quad-val">1.080</span>
       </label>
+      <p class="admin-overlay-hint">Block mesh scale — only rendering (footprint / stacking unchanged). Try nudging if blocks sit on extra floor and you see edge flicker.</p>
+      <label class="admin-overlay-field"><span>Block visual scale</span>
+        <input type="range" class="admin-overlay-range" id="block-visual-scale" min="0.86" max="1.06" step="0.001" value="1" />
+        <span class="admin-overlay-range-val" id="block-visual-scale-val">1.000</span>
+      </label>
     </div>
     <div class="admin-overlay-tab-panel" data-panel="fog" hidden>
       <p class="admin-overlay-hint">Fog uses horizontal distance on the ground from your avatar. Disabled = render like before fog of war.</p>
@@ -203,6 +208,8 @@ export function installAdminOverlay(
 
   const floorTileQuad = $("floor-tile-quad") as HTMLInputElement;
   const floorTileQuadVal = $("floor-tile-quad-val") as HTMLSpanElement;
+  const blockVisualScale = $("block-visual-scale") as HTMLInputElement;
+  const blockVisualScaleVal = $("block-visual-scale-val") as HTMLSpanElement;
   const voxelId = $("voxel-id") as HTMLSelectElement;
   const voxelText = $("voxel-text") as HTMLInputElement;
   const voxelRoom = $("voxel-room") as HTMLInputElement;
@@ -221,6 +228,12 @@ export function installAdminOverlay(
     const s = game.getFloorTileQuadSize();
     floorTileQuad.value = String(s);
     floorTileQuadVal.textContent = s.toFixed(3);
+  };
+
+  const syncBlockVisualFields = (): void => {
+    const s = game.getBlockVisualScale();
+    blockVisualScale.value = String(s);
+    blockVisualScaleVal.textContent = s.toFixed(3);
   };
 
   const parseHexColor = (raw: string, fallback: number): number => {
@@ -321,7 +334,10 @@ export function installAdminOverlay(
       p.hidden = p.dataset.panel !== id;
     });
     if (id === "avatar") syncAvatarFields();
-    if (id === "layout") syncFloorTileFields();
+    if (id === "layout") {
+      syncFloorTileFields();
+      syncBlockVisualFields();
+    }
     if (id === "voxel") syncVoxelFields();
   };
 
@@ -342,6 +358,7 @@ export function installAdminOverlay(
     syncFogFields();
     syncAvatarFields();
     syncFloorTileFields();
+    syncBlockVisualFields();
     syncVoxelFields();
     setTab("layout");
     setStatus(`Frustum: ${game.getZoomFrustumSize().toFixed(1)} · Fog: ${game.getFogOfWarEnabled() ? "on" : "off"}`);
@@ -410,6 +427,15 @@ export function installAdminOverlay(
     setStatus(`Floor tile quad scale ${s.toFixed(3)} (persists locally)`);
   };
   floorTileQuad.addEventListener("input", onFloorTileQuadInput);
+
+  const onBlockVisualScaleInput = (): void => {
+    game.setBlockVisualScale(Number(blockVisualScale.value));
+    const s = game.getBlockVisualScale();
+    blockVisualScale.value = String(s);
+    blockVisualScaleVal.textContent = s.toFixed(3);
+    setStatus(`Block visual scale ${s.toFixed(3)} (persists locally)`);
+  };
+  blockVisualScale.addEventListener("input", onBlockVisualScaleInput);
 
   $("admin-random").addEventListener("click", async () => {
     const roomId = roomInput.value.trim() || opts.roomId;

@@ -21,6 +21,7 @@ const LS_IDENTICON_RY = "nspace_identicon_ry_deg";
 const LS_IDENTICON_RZ = "nspace_identicon_rz_deg";
 const LS_IDENTICON_SCALE = "nspace_identicon_scale";
 const LS_FLOOR_TILE_QUAD = "nspace_floor_tile_quad";
+const LS_BLOCK_VISUAL_SCALE = "nspace_block_visual_scale";
 const DEFAULT_ZOOM_MIN = 6.5;
 const DEFAULT_ZOOM_MAX = 13.44;
 import { loadIdenticonTexture } from "./identiconTexture.js";
@@ -55,6 +56,8 @@ const LERP = 12;
 
 /** Default scale on unit floor plane; >1 hides subpixel seams (tunable in admin). */
 const DEFAULT_FLOOR_TILE_QUAD = 1.08;
+/** 1 = match server footprint; scale geometry only (grid Y unchanged) to debug floor seam flicker. */
+const DEFAULT_BLOCK_VISUAL_SCALE = 1;
 /** Walkable floor tile thickness in world Y; top stays near y≈0, volume extends downward. */
 const WALKABLE_FLOOR_TILE_THICKNESS = 0.16;
 /** Blend factor toward white for vertical tile faces (0–1). */
@@ -667,6 +670,8 @@ export class Game {
     1
   );
   private floorTileQuadSize = DEFAULT_FLOOR_TILE_QUAD;
+  /** Uniform scale on block/ramp/hex geometry only; bottoms stay on layer planes. */
+  private blockVisualScale = DEFAULT_BLOCK_VISUAL_SCALE;
   /** All placed objects (solid and walk-through), keyed by blockKey(x,z,y). */
   private readonly placedObjects = new Map<string, BlockStyleProps>();
   /** Styles applied when placing new blocks in build mode. */
@@ -904,6 +909,10 @@ export class Game {
       LS_FLOOR_TILE_QUAD,
       DEFAULT_FLOOR_TILE_QUAD
     );
+    this.blockVisualScale = Game.readBlockVisualScale(
+      LS_BLOCK_VISUAL_SCALE,
+      DEFAULT_BLOCK_VISUAL_SCALE
+    );
 
     const aspect = 16 / 9;
     this.camera = new THREE.OrthographicCamera(
@@ -952,7 +961,10 @@ export class Game {
       depthWrite: false,
     });
     this.blockTopHighlight = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.82, 0.82),
+      new THREE.PlaneGeometry(
+        BLOCK_SIZE * this.blockVisualScale,
+        BLOCK_SIZE * this.blockVisualScale
+      ),
       topHiMat
     );
     this.blockTopHighlight.rotation.x = -Math.PI / 2;
@@ -1243,6 +1255,18 @@ export class Game {
     return Number.isFinite(n) ? Game.clampFloorTileQuad(n) : fallback;
   }
 
+  private static clampBlockVisualScale(n: number): number {
+    if (!Number.isFinite(n)) return DEFAULT_BLOCK_VISUAL_SCALE;
+    return Math.min(1.06, Math.max(0.86, n));
+  }
+
+  private static readBlockVisualScale(key: string, fallback: number): number {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const v = Number(raw);
+    return Number.isFinite(v) ? Game.clampBlockVisualScale(v) : fallback;
+  }
+
   private static readIdenticonDeg(key: string, fallback: number): number {
     const raw = localStorage.getItem(key);
     if (raw === null) return fallback;
@@ -1364,6 +1388,29 @@ export class Game {
       /* ignore quota */
     }
     this.applyFloorTileQuadScale();
+  }
+
+  /** Uniform mesh scale for cubes/ramps/hex blocks; layer stacking unchanged. Persists locally. */
+  getBlockVisualScale(): number {
+    return this.blockVisualScale;
+  }
+
+  setBlockVisualScale(scale: number): void {
+    this.blockVisualScale = Game.clampBlockVisualScale(scale);
+    try {
+      localStorage.setItem(LS_BLOCK_VISUAL_SCALE, String(this.blockVisualScale));
+    } catch {
+      /* ignore quota */
+    }
+    this.refreshBlockTopHighlightFootprint();
+    this.syncBlockMeshes();
+  }
+
+  private refreshBlockTopHighlightFootprint(): void {
+    const w = BLOCK_SIZE * this.blockVisualScale;
+    const prev = this.blockTopHighlight.geometry;
+    this.blockTopHighlight.geometry = new THREE.PlaneGeometry(w, w);
+    prev.dispose();
   }
 
   private applyFloorTileQuadScale(): void {
@@ -2987,7 +3034,11 @@ export class Game {
           const h = this.obstacleHeight(meta);
           this.tileHighlight.position.set(bx!, 0.02, bz!);
           this.tileHighlight.visible = true;
-          this.blockTopHighlight.position.set(bx!, by * BLOCK_SIZE + h + 0.03, bz!);
+          this.blockTopHighlight.position.set(
+            bx!,
+            by * BLOCK_SIZE + h * this.blockVisualScale + 0.03,
+            bz!
+          );
           this.blockTopHighlight.visible = true;
           
           // Check if this block is a signboard
@@ -3922,6 +3973,16 @@ export class Game {
       }
     }
     this.applyFloorTileQuadScale();
+    /** Obstacles often sync before extra-floor quads on welcome; re-append so depth ties favor blocks over coplanar floor tops. */
+    this.bringPlacedBlockGroupsToSceneTail();
+  }
+
+  /** Re-add block groups after floor sync so they render after new/updated floor meshes (same renderOrder, equal-depth ties). */
+  private bringPlacedBlockGroupsToSceneTail(): void {
+    for (const g of this.blockMeshes.values()) {
+      this.scene.remove(g);
+      this.scene.add(g);
+    }
   }
 
   private clearVoxelWordSign(): void {
@@ -4183,11 +4244,14 @@ export class Game {
       const wz = parts[1]!;
       const wyLevel = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
       const h = this.obstacleHeight(meta);
+      const vis = this.blockVisualScale;
       let g = this.blockMeshes.get(k);
       const prev = g?.userData["blockMeta"] as BlockStyleProps | undefined;
+      const prevVis = g?.userData["blockRenderScale"] as number | undefined;
       const unchanged =
         g &&
         prev &&
+        prevVis === vis &&
         prev.passable === meta.passable &&
         prev.half === meta.half &&
         prev.quarter === meta.quarter &&
@@ -4214,7 +4278,8 @@ export class Game {
       g = this.makeBlockMesh(meta);
       g.userData.tileKey = k;
       g.userData.blockMeta = { ...meta };
-      g.position.set(wx, wyLevel * BLOCK_SIZE + h / 2, wz);
+      g.userData.blockRenderScale = vis;
+      g.position.set(wx, wyLevel * BLOCK_SIZE + (h * vis) / 2, wz);
       this.scene.add(g);
       this.blockMeshes.set(k, g);
     }
@@ -4241,8 +4306,13 @@ export class Game {
   }
 
   /** Wedge with low edge at −X and high edge at +X, then rotated by `rampDir` (0–3). */
-  private makeRampGeometry(h: number, rampDir: number): THREE.BufferGeometry {
-    const b = BLOCK_SIZE * 0.5;
+  private makeRampGeometry(
+    hLogical: number,
+    rampDir: number,
+    vis: number
+  ): THREE.BufferGeometry {
+    const h = hLogical * vis;
+    const b = BLOCK_SIZE * 0.5 * vis;
     const pos = new Float32Array([
       -b, 0, -b, -b, 0, b, b, 0, b, b, 0, -b, b, h, b, b, h, -b,
     ]);
@@ -4262,6 +4332,8 @@ export class Game {
 
   private makeBlockMesh(meta: BlockStyleProps): THREE.Group {
     const h = this.obstacleHeight(meta);
+    const vis = this.blockVisualScale;
+    const hVis = h * vis;
     const g = new THREE.Group();
     
     // Special handling for claimable blocks: override color based on active state
@@ -4289,24 +4361,28 @@ export class Game {
       emissiveIntensity: meta.claimable && meta.active ? 0.3 : 0,
     });
     if (meta.ramp) {
-      const geom = this.makeRampGeometry(h, meta.rampDir);
+      const geom = this.makeRampGeometry(h, meta.rampDir, vis);
       const mesh = new THREE.Mesh(geom, mat);
-      mesh.position.y = -h / 2;
+      mesh.position.y = -hVis / 2;
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       g.add(mesh);
       return g;
     }
     if (meta.hex) {
-      const r = BLOCK_SIZE * 0.5 * 0.94;
-      const geom = new THREE.CylinderGeometry(r, r, h, 6);
+      const r = BLOCK_SIZE * 0.5 * 0.94 * vis;
+      const geom = new THREE.CylinderGeometry(r, r, hVis, 6);
       const mesh = new THREE.Mesh(geom, mat);
       mesh.rotation.y = Math.PI / 6;
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       g.add(mesh);
     } else {
-      const geom = new THREE.BoxGeometry(BLOCK_SIZE, h, BLOCK_SIZE);
+      const geom = new THREE.BoxGeometry(
+        BLOCK_SIZE * vis,
+        hVis,
+        BLOCK_SIZE * vis
+      );
       const mesh = new THREE.Mesh(geom, mat);
       mesh.castShadow = false;
       mesh.receiveShadow = false;
