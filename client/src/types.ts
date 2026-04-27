@@ -9,4 +9,6 @@ export interface PlayerState {
   vz: number;
   /** Ephemeral: other tab / backgrounded or wallet-send flow (`nimSendIntent` on server). */
   nimSendAway?: boolean;
+  /** Ephemeral: composing a chat message (typing indicator for others). */
+  chatTyping?: boolean;
 }

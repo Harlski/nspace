@@ -185,6 +185,8 @@ export interface PlayerState {
   vz: number;
   /** Ephemeral: client tab hidden/background or NIM send / wallet flow. */
   nimSendAway?: boolean;
+  /** Ephemeral: composing a chat message. */
+  chatTyping?: boolean;
 }
 
 export type ObstacleTile = {
@@ -250,6 +252,8 @@ interface ClientConn {
   lastBlockClaimCompleteAttemptAt: number;
   /** Client away from game tab or in NIM send / wallet flow (broadcast as nimSendAway). */
   nimSendIntent: boolean;
+  /** Composing chat (broadcast as `chatTyping`). */
+  chatTyping: boolean;
 }
 
 function withinBlockActionRange(
@@ -1558,9 +1562,11 @@ function advanceAlongPathHuman(
 }
 
 function playerToOutState(conn: ClientConn): PlayerState {
-  return conn.nimSendIntent
+  const base = conn.nimSendIntent
     ? { ...conn.player, nimSendAway: true }
     : { ...conn.player };
+  if (!conn.chatTyping) return base;
+  return { ...base, chatTyping: true };
 }
 
 function snapshotPlayers(roomId: string): PlayerState[] {
@@ -2445,6 +2451,7 @@ export function addClient(
     lastBlockClaimTickAt: 0,
     lastBlockClaimCompleteAttemptAt: 0,
     nimSendIntent: false,
+    chatTyping: false,
   };
 
   room.set(address, conn);
@@ -2573,6 +2580,17 @@ export function addClient(
 
     if (msg.type === "nimSendIntent") {
       conn.nimSendIntent = Boolean(msg.active);
+      broadcast(currentRoomId, {
+        type: "state",
+        players: snapshotPlayers(currentRoomId),
+      });
+      return;
+    }
+
+    if (msg.type === "chatTyping") {
+      const next = Boolean((msg as { active?: boolean }).active);
+      if (conn.chatTyping === next) return;
+      conn.chatTyping = next;
       broadcast(currentRoomId, {
         type: "state",
         players: snapshotPlayers(currentRoomId),
@@ -3414,6 +3432,8 @@ export function addClient(
       let text = String(msg.text ?? "").slice(0, CHAT_MAX);
       text = text.replace(/[\u0000-\u001F\u007F]/g, "").trim();
       if (!text) return;
+      const hadTyping = conn.chatTyping;
+      conn.chatTyping = false;
       broadcast(currentRoomId, {
         type: "chat",
         from: displayName,
@@ -3421,6 +3441,12 @@ export function addClient(
         text,
         at: now,
       });
+      if (hadTyping) {
+        broadcast(currentRoomId, {
+          type: "state",
+          players: snapshotPlayers(currentRoomId),
+        });
+      }
       logGameplayEvent(conn.sessionId, address, currentRoomId, "chat", {
         text,
       });

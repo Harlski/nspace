@@ -21,6 +21,7 @@ import {
 import {
   connectGameWs,
   sendChat,
+  sendChatTyping,
   sendNimSendIntent,
   sendBeginBlockClaim,
   sendCreateRoom,
@@ -1066,6 +1067,40 @@ function enterGame(token: string, address: string): void {
   const ac = new AbortController();
   const { signal } = ac;
 
+  let chatTypingSent = false;
+  let chatTypingIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearChatTypingIdle = (): void => {
+    if (chatTypingIdleTimer !== null) {
+      clearTimeout(chatTypingIdleTimer);
+      chatTypingIdleTimer = null;
+    }
+  };
+  const notifyChatNotTyping = (): void => {
+    clearChatTypingIdle();
+    if (ws && ws.readyState === WebSocket.OPEN && chatTypingSent) {
+      sendChatTyping(ws, false);
+    }
+    chatTypingSent = false;
+  };
+  let chatInput: HTMLInputElement | null = null;
+  const onChatComposing = (): void => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!chatInput) return;
+    if (chatInput.value.trim().length < 1) {
+      notifyChatNotTyping();
+      return;
+    }
+    if (!chatTypingSent) {
+      sendChatTyping(ws, true);
+      chatTypingSent = true;
+    }
+    clearChatTypingIdle();
+    chatTypingIdleTimer = setTimeout(() => {
+      chatTypingIdleTimer = null;
+      notifyChatNotTyping();
+    }, 2500);
+  };
+
   /** When the game API is down, backing off avoids spamming the Vite proxy (ECONNREFUSED every 30s). */
   let nimWalletPollTimer: ReturnType<typeof setTimeout> | null = null;
   let nimWalletPollFailStreak = 0;
@@ -1111,6 +1146,7 @@ function enterGame(token: string, address: string): void {
   );
 
   function cleanupResources(): void {
+    notifyChatNotTyping();
     if (nimWalletPollTimer !== null) {
       clearTimeout(nimWalletPollTimer);
       nimWalletPollTimer = null;
@@ -2331,19 +2367,24 @@ function enterGame(token: string, address: string): void {
 
   syncBuildHud();
 
-  const chatInput = hud.getChatInput();
+  chatInput = hud.getChatInput();
   chatInput.addEventListener("keydown", (e) => {
     e.stopPropagation();
   });
 
   chatInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
-      const t = chatInput.value.trim();
-      chatInput.value = "";
+      notifyChatNotTyping();
+      const t = chatInput!.value.trim();
+      chatInput!.value = "";
       if (t) ws && sendChat(ws, t);
-      chatInput.blur();
+      chatInput!.blur();
       e.preventDefault();
     }
+  });
+  chatInput.addEventListener("input", onChatComposing, { signal: ac.signal });
+  chatInput.addEventListener("blur", () => notifyChatNotTyping(), {
+    signal: ac.signal,
   });
 
   /** Mobile: dismissing the keyboard often leaves the input focused; taps then reopen it. */

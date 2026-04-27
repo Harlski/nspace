@@ -513,6 +513,11 @@ export function sendNimSendIntent(ws: WebSocket, active: boolean): void {
   ws.send(JSON.stringify({ type: "nimSendIntent", active }));
 }
 
+export function sendChatTyping(ws: WebSocket, active: boolean): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "chatTyping", active }));
+}
+
 export function sendChat(ws: WebSocket, text: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "chat", text }));

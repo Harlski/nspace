@@ -311,6 +311,11 @@ const CHAT_VISIBLE_MS = 5000;
 const CHAT_FADE_MS = 600;
 /** Gap between identicon bottom (y=0) and name label (screen px → world in Game). */
 const NAME_GAP_BELOW_IDENTICON_PX = 2;
+/** "Typing…" indicator above the name tag (world scales with zoom). */
+const TYPING_DOTS_SCREEN_HEIGHT_PX = 12;
+const TYPING_DOTS_RASTER = 2;
+const TYPING_DOTS_W = 44;
+const TYPING_DOTS_H = 16;
 
 type ChatBubbleEntry = {
   sprite: THREE.Sprite;
@@ -323,12 +328,72 @@ type ChatBubbleEntry = {
   emojiOnly: boolean;
 };
 
+type TypingIndicatorEntry = {
+  sprite: THREE.Sprite;
+  material: THREE.SpriteMaterial;
+  texture: THREE.CanvasTexture;
+  canvas: HTMLCanvasElement;
+  /** Logical width/height in px (unscaled canvas coordinates). */
+  texWidth: number;
+  texHeight: number;
+  lastAnimStep: number;
+};
+
 /** Same rule as HUD: only emoji / VS16 / ZWJ / spaces, no letters or digits. */
 function isEmojiOnlyBubbleText(text: string): boolean {
   const t = text.trim();
   if (!t || t.length > 32) return false;
   if (/[\p{L}\p{N}]/u.test(t)) return false;
   return /^[\s\p{Extended_Pictographic}\uFE0F\u200D]+$/u.test(t);
+}
+
+function makeTypingIndicatorEntry(): TypingIndicatorEntry {
+  const canvas = document.createElement("canvas");
+  canvas.width = TYPING_DOTS_W * TYPING_DOTS_RASTER;
+  canvas.height = TYPING_DOTS_H * TYPING_DOTS_RASTER;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.SpriteMaterial({
+    map: tex,
+    transparent: true,
+    depthTest: false,
+  });
+  const sprite = new THREE.Sprite(mat);
+  sprite.renderOrder = 1001;
+  return {
+    sprite,
+    material: mat,
+    texture: tex,
+    canvas,
+    texWidth: TYPING_DOTS_W,
+    texHeight: TYPING_DOTS_H,
+    lastAnimStep: -1,
+  };
+}
+
+function drawTypingDotsToCanvas(
+  entry: TypingIndicatorEntry,
+  step: number
+): void {
+  const { canvas, texture, texHeight: h } = entry;
+  const ctx = canvas.getContext("2d")!;
+  const r = TYPING_DOTS_RASTER;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(r, 0, 0, r, 0, 0);
+  const lit = 1 + (step % 3);
+  const dotR = 2.2;
+  const y = h * 0.5;
+  for (let i = 0; i < 3; i++) {
+    const on = i < lit;
+    ctx.fillStyle = on
+      ? "rgba(226, 232, 240, 0.98)"
+      : "rgba(148, 163, 184, 0.4)";
+    ctx.beginPath();
+    ctx.arc(10 + i * 12, y, dotR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  texture.needsUpdate = true;
 }
 
 function createNameLabelSprite(
@@ -643,6 +708,7 @@ export class Game {
   private selfTargetPos: THREE.Vector3 | null = null;
   private readonly others = new Map<string, THREE.Group>();
   private readonly chatBubbleByAddress = new Map<string, ChatBubbleEntry>();
+  private readonly typingIndicatorByAddress = new Map<string, TypingIndicatorEntry>();
   private readonly floatingTexts = new Map<string, {
     sprite: THREE.Sprite;
     material: THREE.SpriteMaterial;
@@ -1490,6 +1556,7 @@ export class Game {
     this.applyOrthographicFrustum();
     this.refreshAllNameLabelScales();
     this.refreshChatBubbleVerticalPositions();
+    this.refreshAllTypingIndicatorLayouts();
   }
 
   setZoomFrustumSize(size: number, persist = true): void {
@@ -1510,6 +1577,7 @@ export class Game {
     this.applyOrthographicFrustum();
     this.refreshAllNameLabelScales();
     this.refreshChatBubbleVerticalPositions();
+    this.refreshAllTypingIndicatorLayouts();
   }
 
   /** Euler angles (degrees) for the identicon sphere mesh (XYZ order). */
@@ -1542,6 +1610,7 @@ export class Game {
     localStorage.setItem(LS_IDENTICON_SCALE, String(this.identiconScale));
     this.applyIdenticonTransformToAllAvatars();
     this.refreshChatBubbleVerticalPositions();
+    this.refreshAllTypingIndicatorLayouts();
   }
 
   private getIdenticonEuler(): THREE.Euler {
@@ -3608,6 +3677,9 @@ export class Game {
     this.placementHintGeom.dispose();
     this.placementHintMat.dispose();
     this.fogOfWar.dispose();
+    for (const addr of [...this.typingIndicatorByAddress.keys()]) {
+      this.removeTypingIndicator(addr);
+    }
     this.renderer.dispose();
   }
 
@@ -4437,6 +4509,7 @@ export class Game {
     this.fogOfWar.setSize(w, h, dpr);
     this.refreshAllNameLabelScales();
     this.refreshChatBubbleVerticalPositions();
+    this.refreshAllTypingIndicatorLayouts();
   }
 
   syncState(players: PlayerState[]): void {
@@ -4466,6 +4539,7 @@ export class Game {
             this.cameraFollowReady = true;
           }
           this.syncAvatarNameLabelFromState(this.selfMesh, p);
+          this.syncTypingIndicatorForGroup(this.selfMesh, p);
         }
         continue;
       }
@@ -4480,6 +4554,7 @@ export class Game {
       const t = this.targetPos.get(p.address);
       if (t) t.set(p.x, py, p.z);
       this.syncAvatarNameLabelFromState(g, p);
+      this.syncTypingIndicatorForGroup(g, p);
     }
     for (const addr of this.others.keys()) {
       if (!seen.has(addr)) {
@@ -4531,6 +4606,7 @@ export class Game {
     this.fogOfWar.setPlayerPosition(px, pz);
     this.fogOfWar.render(this.renderer, this.scene, this.camera);
     this.updateChatBubbles();
+    this.updateTypingIndicatorAnimation();
     this.updateFloatingTexts();
   }
 
@@ -4912,6 +4988,88 @@ export class Game {
     }
   }
 
+  private removeTypingIndicator(addr: string): void {
+    const e = this.typingIndicatorByAddress.get(addr);
+    if (!e) return;
+    e.sprite.removeFromParent();
+    e.texture.dispose();
+    e.material.dispose();
+    this.typingIndicatorByAddress.delete(addr);
+  }
+
+  private layoutTypingSprite(g: THREE.Group, entry: TypingIndicatorEntry): void {
+    const addr = String(g.userData.address ?? "");
+    const tw = entry.texWidth;
+    const th = entry.texHeight;
+    const worldH = this.pixelToWorldY(TYPING_DOTS_SCREEN_HEIGHT_PX);
+    const worldW = worldH * (tw / th);
+    entry.sprite.scale.set(worldW, worldH, 1);
+
+    /**
+     * Name tags sit *below* the group origin (under the identicon). Typing must use the
+     * same vertical band as chat bubbles: above the avatar billboard (see `syncChatBubbleScaleAndPosition`).
+     */
+    const chatEntry = addr ? this.chatBubbleByAddress.get(addr) : undefined;
+    if (chatEntry) {
+      this.syncChatBubbleScaleAndPosition(chatEntry);
+      const c = chatEntry.sprite;
+      const topY = c.position.y + c.scale.y * 0.5;
+      const gap = this.pixelToWorldY(2);
+      entry.sprite.position.y = topY + gap + worldH * 0.5;
+    } else {
+      const avatarTop = AVATAR_SPHERE_RADIUS * 2 * this.identiconScale;
+      const gapAbove = this.pixelToWorldY(4);
+      entry.sprite.position.y = avatarTop + gapAbove + worldH * 0.5;
+    }
+    entry.sprite.position.x = 0;
+  }
+
+  private syncTypingIndicatorForGroup(g: THREE.Group, p: PlayerState): void {
+    const addr = p.address;
+    if (!p.chatTyping) {
+      this.removeTypingIndicator(addr);
+      return;
+    }
+    let entry = this.typingIndicatorByAddress.get(addr);
+    if (!entry) {
+      entry = makeTypingIndicatorEntry();
+      drawTypingDotsToCanvas(entry, 0);
+      g.add(entry.sprite);
+      this.typingIndicatorByAddress.set(addr, entry);
+    }
+    this.layoutTypingSprite(g, entry);
+  }
+
+  private refreshAllTypingIndicatorLayouts(): void {
+    for (const [addr, entry] of this.typingIndicatorByAddress) {
+      const g =
+        addr === this.selfAddress
+          ? this.selfMesh
+          : this.others.get(addr) ?? null;
+      if (!g) continue;
+      this.layoutTypingSprite(g, entry);
+    }
+  }
+
+  private updateTypingIndicatorAnimation(): void {
+    const step = Math.floor(performance.now() / 380) % 3;
+    for (const [addr, entry] of this.typingIndicatorByAddress) {
+      const g =
+        addr === this.selfAddress
+          ? this.selfMesh
+          : this.others.get(addr) ?? null;
+      if (!g) {
+        this.removeTypingIndicator(addr);
+        continue;
+      }
+      if (entry.lastAnimStep !== step) {
+        entry.lastAnimStep = step;
+        drawTypingDotsToCanvas(entry, step);
+      }
+      this.layoutTypingSprite(g, entry);
+    }
+  }
+
   private replaceAvatarNameLabel(
     g: THREE.Group,
     displayName: string,
@@ -4981,6 +5139,7 @@ export class Game {
   private disposeAvatarGroup(g: THREE.Group): void {
     const addr = g.userData.address as string | undefined;
     if (addr) this.removeChatBubbleEntry(addr);
+    if (addr) this.removeTypingIndicator(addr);
     g.traverse((child: THREE.Object3D) => {
       if (child instanceof THREE.Mesh) {
         const mat = child.material as THREE.MeshStandardMaterial;
