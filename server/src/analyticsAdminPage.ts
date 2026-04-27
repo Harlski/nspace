@@ -55,11 +55,24 @@ export function analyticsAdminPageHtml(): string {
     .admin-pv-anon { color: #6b7d95; }
     .admin-pv-anon-hint { color: #5a6578; font-size: 0.74rem; margin-left: 0.35rem; }
     .admin-pv-walletcell { display: flex; flex-direction: column; align-items: flex-start; gap: 0.28rem; max-width: 28rem; }
+    .admin-pv-walletcell--compact { flex-direction: row; align-items: center; gap: 0.5rem; max-width: 22rem; }
     .admin-pv-walletline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.45rem 0.6rem; }
+    .admin-pv-walletline--inline { flex-wrap: nowrap; align-items: center; gap: 0.45rem; }
+    .admin-pv-walletline--inline .ident { width: 22px; height: 22px; border-radius: 4px; display: block; flex-shrink: 0; }
     .admin-pv-identline { line-height: 0; }
     .admin-pv-identline .ident { width: 24px; height: 24px; border-radius: 4px; display: block; }
     .admin-pv-copy { cursor: pointer; color: #8b9cb3; font-size: 0.78rem; text-decoration: underline; text-underline-offset: 2px; user-select: none; }
     .admin-pv-copy:hover { color: #dce4ee; }
+    .admin-payout-section { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #283244; }
+    .admin-payout-head { margin-bottom: 0.35rem; color: #c8d4e4; font-size: 0.92rem; }
+    .admin-payout-note { font-size: 0.76rem; color: #6b7d95; font-weight: 400; margin-left: 0.35rem; }
+    .admin-payout-tablewrap { margin-top: 0.35rem; max-height: min(55vh, 520px); overflow: auto; border: 1px solid #263348; border-radius: 6px; }
+    .admin-payout-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+    .admin-payout-table th, .admin-payout-table td { text-align: left; padding: 0.32rem 0.45rem; border-bottom: 1px solid #263348; vertical-align: middle; }
+    .admin-payout-table th { color: #8b9cb3; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; position: sticky; top: 0; background: #131b27; z-index: 1; }
+    .admin-payout-table tr:last-child td { border-bottom: 0; }
+    .admin-payout-table .ident { width: 22px; height: 22px; border-radius: 4px; vertical-align: middle; }
+    .admin-payout-sub { margin-top: 0.75rem; color: #9fb0c7; font-size: 0.8rem; }
   </style>
 </head>
 <body class="ms-site">
@@ -115,6 +128,24 @@ export function analyticsAdminPageHtml(): string {
     function walletGrouped(walletId) {
       var compact = String(walletId || "").replace(/\\s+/g, "").toUpperCase();
       return compact.replace(/(.{4})(?=.)/g, "$1 ");
+    }
+    function walletConnectAs(walletId) {
+      var c = String(walletId || "").replace(/\\s+/g, "").toUpperCase();
+      if (c.length <= 8) return c;
+      return c.slice(0, 4) + c.slice(-4);
+    }
+    function adminPvAnonHint(anonReason) {
+      var a = String(anonReason || "legacy");
+      if (a === "no_token") {
+        return "No session token (request had no valid Authorization bearer).";
+      }
+      if (a === "invalid_session") {
+        return "Invalid or expired session token.";
+      }
+      if (a === "not_on_allowlist") {
+        return "Wallet not on analytics allowlist.";
+      }
+      return "Anonymous visit (legacy beacon — reason not recorded).";
     }
     function parseJwtSub(token) {
       try {
@@ -485,6 +516,7 @@ export function analyticsAdminPageHtml(): string {
       var identByWallet = {};
       var pageViewsByDay = [];
       var pageViewsRecent = [];
+      var payoutAdmin = null;
       function chartAxisTicksAdmin(maxVal, formatTick) {
         var maxN = Math.max(1, Number(maxVal) || 1);
         var mid = maxN / 2;
@@ -566,6 +598,110 @@ export function analyticsAdminPageHtml(): string {
         var d = new Date(Number(ms) || 0);
         return esc(d.toISOString().replace("T", " ").slice(0, 19) + " UTC");
       }
+      function adminPayoutQueueSection(p) {
+        if (!p || p.mode !== "admin") {
+          return (
+            "<section class='admin-payout-section'>" +
+            "<div class='admin-payout-head'><strong>Pending payout queue</strong></div>" +
+            "<p class='status' style='margin-top:0'>Could not load queue (try refresh).</p>" +
+            "</section>"
+          );
+        }
+        var rows = Array.isArray(p.rows) ? p.rows : [];
+        var hist = Array.isArray(p.historyRows) ? p.historyRows : [];
+        var pendingN = Number(p.pendingTotal != null ? p.pendingTotal : rows.length) || 0;
+        var allSent = Boolean(p.allSent);
+        var msg = p.message != null ? String(p.message) : "";
+        if (allSent && rows.length === 0) {
+          return (
+            "<section class='admin-payout-section'>" +
+            "<div class='admin-payout-head'><strong>Pending payout queue</strong></div>" +
+            "<p class='status' style='margin-top:0'>" +
+            esc(msg || "No pending jobs.") +
+            "</p>" +
+            "</section>"
+          );
+        }
+        var thead =
+          "<thead><tr><th></th><th>Enqueued (UTC)</th><th>Wallet</th><th>NIM</th></tr></thead>";
+        var body = rows
+          .map(function (r) {
+            var t = r.time != null ? String(r.time).replace("T", " ").slice(0, 19) : "—";
+            var w = r.walletId != null ? String(r.walletId) : "";
+            var ident = r.identicon ? String(r.identicon) : "";
+            var img = ident
+              ? "<img class='ident' src='" + esc(ident) + "' alt='' width='22' height='22'/>"
+              : "";
+            return (
+              "<tr><td>" +
+              img +
+              "</td><td class='mono'>" +
+              esc(t) +
+              "</td><td class='mono'>" +
+              esc(walletGrouped(w)) +
+              "</td><td class='mono'>" +
+              esc(String(r.amountNim != null ? r.amountNim : "—")) +
+              "</td></tr>"
+            );
+          })
+          .join("");
+        var histThead =
+          "<thead><tr><th></th><th>Sent (UTC)</th><th>Wallet</th><th>NIM</th><th>Tx</th></tr></thead>";
+        var histBody = hist
+          .map(function (r) {
+            var t = r.time != null ? String(r.time).replace("T", " ").slice(0, 19) : "—";
+            var w = r.walletId != null ? String(r.walletId) : "";
+            var ident = r.identicon ? String(r.identicon) : "";
+            var img = ident
+              ? "<img class='ident' src='" + esc(ident) + "' alt='' width='22' height='22'/>"
+              : "";
+            var tx = r.txHash != null ? String(r.txHash) : "";
+            var txCell = tx
+              ? "<a class='ms-link-expl mono' href='https://nimiq.watch/#" +
+                esc(tx) +
+                "' target='_blank' rel='noopener noreferrer'>" +
+                esc(tx.slice(0, 10)) +
+                "…</a>"
+              : "—";
+            return (
+              "<tr><td>" +
+              img +
+              "</td><td class='mono'>" +
+              esc(t) +
+              "</td><td class='mono'>" +
+              esc(walletGrouped(w)) +
+              "</td><td class='mono'>" +
+              esc(String(r.amountNim != null ? r.amountNim : "—")) +
+              "</td><td>" +
+              txCell +
+              "</td></tr>"
+            );
+          })
+          .join("");
+        return (
+          "<section class='admin-payout-section'>" +
+          "<div class='admin-payout-head'><strong>Pending payout queue</strong>" +
+          "<span class='admin-payout-note'>full queue · " +
+          esc(String(pendingN)) +
+          " job" +
+          (pendingN === 1 ? "" : "s") +
+          "</span></div>" +
+          "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
+          thead +
+          "<tbody>" +
+          (body || "<tr><td colspan='4' class='status'>No rows.</td></tr>") +
+          "</tbody></table></div>" +
+          (hist.length
+            ? "<div class='admin-payout-sub'><strong>Recent completed</strong> (newest first, capped by server)</div>" +
+              "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
+              histThead +
+              "<tbody>" +
+              histBody +
+              "</tbody></table></div>"
+            : "") +
+          "</section>"
+        );
+      }
       function adminRecentViewsTable(rows) {
         if (!rows || !rows.length) {
           return (
@@ -581,22 +717,21 @@ export function analyticsAdminPageHtml(): string {
           .map(function (r) {
             var w = r.wallet != null && String(r.wallet) !== "" ? String(r.wallet) : "";
             var ident = r.identicon ? String(r.identicon) : "";
-            var identBlock =
-              ident !== ""
-                ? "<div class='admin-pv-identline'><img class='ident' src='" +
-                  esc(ident) +
-                  "' alt='' width='24' height='24'/></div>"
-                : "";
             var wCell = w
-              ? "<div class='admin-pv-walletcell'>" +
-                "<div class='admin-pv-walletline'><span class='mono'>" +
-                esc(walletGrouped(w)) +
+              ? "<div class='admin-pv-walletcell admin-pv-walletcell--compact'>" +
+                "<div class='admin-pv-walletline admin-pv-walletline--inline'>" +
+                (ident !== ""
+                  ? "<img class='ident' src='" + esc(ident) + "' alt='' width='22' height='22'/>"
+                  : "") +
+                "<span class='mono'>" +
+                esc(walletConnectAs(w)) +
                 "</span><span class='admin-pv-copy' role='button' tabindex='0' data-copy='" +
                 esc(w) +
-                "' title='Copy wallet address' aria-label='Copy wallet address'>Copy</span></div>" +
-                identBlock +
-                "</div>"
-              : "<span class='admin-pv-anon'>—</span><span class='admin-pv-anon-hint'>not signed in, expired session, or wallet not on analytics allowlist</span>";
+                "' title='Copy full wallet address' aria-label='Copy full wallet address'>Copy</span>" +
+                "</div></div>"
+              : "<span class='admin-pv-anon' aria-hidden='true'>—</span><span class='admin-pv-anon-hint'>" +
+                esc(adminPvAnonHint(r.anonReason)) +
+                "</span>";
             return "<tr><td class='mono'>" + fmtPageViewUtc(r.t) + "</td><td>" + wCell + "</td></tr>";
           })
           .join("");
@@ -627,6 +762,7 @@ export function analyticsAdminPageHtml(): string {
       }
       function render(msg, isErr) {
         panel.innerHTML =
+          adminPayoutQueueSection(payoutAdmin) +
           adminAnalyticsViewsChart(pageViewsByDay) +
           adminRecentViewsTable(pageViewsRecent) +
           "<div><strong>Authorized analytics wallets</strong></div>" +
@@ -740,6 +876,19 @@ export function analyticsAdminPageHtml(): string {
                 pageViewsRecent = Array.isArray(pvj.recent) ? pvj.recent.slice() : [];
               }
             } catch (e) {}
+          })(),
+          (async function () {
+            try {
+              var pr = await fetch("/api/nim/pending-payouts", {
+                headers: { authorization: "Bearer " + token },
+                cache: "no-store",
+              });
+              if (pr.ok) {
+                payoutAdmin = await pr.json();
+              }
+            } catch (e) {
+              payoutAdmin = null;
+            }
           })(),
         ]);
         if (signed) await renderAuthUser(signed, authStatus.analyticsAuthorized);

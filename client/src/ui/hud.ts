@@ -95,6 +95,8 @@ export function createHud(
     onNimRecipientDeepLinkOpen?: (url: string) => void;
     /** Popup blocked or `window.open` returned null. */
     onNimRecipientDeepLinkPopupBlocked?: () => void;
+    /** Bearer JWT for the signed-in player (e.g. saving public profile message). */
+    getGameAuthToken?: () => string | null;
   }
 ): {
   setStatus: (s: string) => void;
@@ -126,6 +128,8 @@ export function createHud(
   hideOtherPlayerContextMenu: () => void;
   /** Close other-player context menu and profile overlay (e.g. before local move). */
   dismissOtherPlayerOverlays: () => void;
+  /** Open the in-game profile card for the signed-in wallet (top bar identicon / address). */
+  openOwnPlayerProfile: () => void;
   onReturnToHub: (fn: () => void) => void;
   onPortalEnter: (fn: () => void) => void;
   isTeleporterModeActive: () => boolean;
@@ -826,7 +830,10 @@ export function createHud(
   const otherPlayerCtxViewLabel = document.createElement("span");
   otherPlayerCtxViewLabel.className = "other-player-ctx__view-label";
   otherPlayerCtxViewLabel.textContent = "View profile";
-  otherPlayerCtxViewBtn.append(otherPlayerCtxIdent, otherPlayerCtxViewLabel);
+  const otherPlayerCtxViewCol = document.createElement("div");
+  otherPlayerCtxViewCol.className = "other-player-ctx__view-col";
+  otherPlayerCtxViewCol.appendChild(otherPlayerCtxViewLabel);
+  otherPlayerCtxViewBtn.append(otherPlayerCtxIdent, otherPlayerCtxViewCol);
   otherPlayerCtxSingle.appendChild(otherPlayerCtxViewBtn);
   otherPlayerCtx.append(otherPlayerCtxMulti, otherPlayerCtxSingle);
 
@@ -848,48 +855,250 @@ export function createHud(
   oppClose.className = "other-player-profile__close";
   oppClose.setAttribute("aria-label", "Close");
   oppClose.textContent = "×";
+  const oppCard = document.createElement("div");
+  oppCard.className = "other-player-profile__card";
+  const oppCardMain = document.createElement("div");
+  oppCardMain.className = "other-player-profile__card-main";
   const oppIdent = document.createElement("img");
   oppIdent.className = "other-player-profile__identicon";
   oppIdent.alt = "";
-  oppIdent.width = 56;
-  oppIdent.height = 56;
+  oppIdent.width = 64;
+  oppIdent.height = 64;
   oppIdent.hidden = true;
-  const oppTitle = document.createElement("h2");
-  oppTitle.className = "other-player-profile__title";
-  oppTitle.id = "other-player-profile-title";
+  const oppCardBody = document.createElement("div");
+  oppCardBody.className = "other-player-profile__card-body";
   const oppAddrBtn = document.createElement("button");
   oppAddrBtn.type = "button";
   oppAddrBtn.className = "other-player-profile__address";
+  oppAddrBtn.id = "other-player-profile-title";
+  oppAddrBtn.setAttribute("aria-label", "Wallet address — click to copy");
+  const oppProfileMessage = document.createElement("div");
+  oppProfileMessage.className = "other-player-profile__message-wrap";
+  const oppProfileNote = document.createElement("p");
+  oppProfileNote.className = "other-player-profile__message-note";
+  oppProfileNote.hidden = true;
   const oppSendNim = document.createElement("button");
   oppSendNim.type = "button";
-  oppSendNim.className =
-    "other-player-profile__send-nim nq-button-pill light-blue";
+  oppSendNim.className = "other-player-profile__send-nim";
   oppSendNim.textContent = "Send NIM";
-  const oppCopyHint = document.createElement("p");
-  oppCopyHint.className = "other-player-profile__copy-hint";
-  oppCopyHint.hidden = true;
+  const oppCardFooter = document.createElement("div");
+  oppCardFooter.className = "other-player-profile__card-footer";
+  oppCardFooter.appendChild(oppSendNim);
+  oppCardBody.append(oppAddrBtn, oppProfileMessage, oppProfileNote);
+  oppCardMain.append(oppIdent, oppCardBody);
+  oppCard.append(oppCardMain, oppCardFooter);
   oppDialog.appendChild(oppClose);
-  oppDialog.appendChild(oppIdent);
-  oppDialog.appendChild(oppTitle);
-  oppDialog.appendChild(oppAddrBtn);
-  oppDialog.appendChild(oppSendNim);
-  oppDialog.appendChild(oppCopyHint);
+  oppDialog.appendChild(oppCard);
   otherPlayerProfile.appendChild(oppBackdrop);
   otherPlayerProfile.appendChild(oppDialog);
   letter.appendChild(otherPlayerCtx);
   letter.appendChild(otherPlayerProfile);
 
   let otherCtxOutsideBound = false;
-  let otherProfileCopyHintTimer: ReturnType<typeof setTimeout> | null = null;
+  let profileOpenCompact = "";
+  let profileMessageEditor: HTMLElement | null = null;
+  let profileDescEditBlurHandler: (() => void) | null = null;
+  let profileMessageKindOpen: "self" | "other" | null = null;
+  let profileMessageLastSaved = "";
+  /** Same length as two-line sample: THISISONETHISITHISISONETHISITHISISONETHISITHISISONETHISITHISISO */
+  const PROFILE_DESC_MAX_CHARS =
+    "THISISONETHISITHISISONETHISITHISISONETHISITHISISONETHISITHISISO".length;
+
+  function normalizeProfileDescForSave(raw: string): string {
+    let t = raw.replace(/\r\n|\r|\n/g, " ").replace(/\s+/g, " ").trim();
+    if (t.length > PROFILE_DESC_MAX_CHARS) t = t.slice(0, PROFILE_DESC_MAX_CHARS);
+    return t;
+  }
+
+  function placeCaretAtEnd(el: HTMLElement): void {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    if (!sel) return;
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function syncDescEditLength(el: HTMLElement): void {
+    const raw = el.textContent ?? "";
+    const flat = raw.replace(/\r?\n/g, " ");
+    if (flat.length > PROFILE_DESC_MAX_CHARS) {
+      el.textContent = flat.slice(0, PROFILE_DESC_MAX_CHARS);
+      placeCaretAtEnd(el);
+    } else if (raw !== flat) {
+      el.textContent = flat;
+      placeCaretAtEnd(el);
+    }
+  }
+
+  function clearProfileMessageNote(): void {
+    oppProfileNote.hidden = true;
+    oppProfileNote.textContent = "";
+  }
+
+  function cancelSelfProfileMessageEdit(): void {
+    const el = profileMessageEditor;
+    if (!el) return;
+    if (profileDescEditBlurHandler) {
+      el.removeEventListener("blur", profileDescEditBlurHandler);
+      profileDescEditBlurHandler = null;
+    }
+    profileMessageEditor = null;
+    if (profileMessageKindOpen === "self") {
+      renderProfileMessageDisplay("self", profileMessageLastSaved);
+    }
+  }
+
+  function renderProfileMessageDisplay(
+    kind: "self" | "other",
+    message: string
+  ): void {
+    oppProfileMessage.replaceChildren();
+    const trimmed = message.trim();
+    if (kind === "other") {
+      const box = document.createElement("div");
+      box.className = "other-player-profile__message-text";
+      if (trimmed) {
+        box.textContent = message;
+      } else {
+        const ph = document.createElement("span");
+        ph.className = "other-player-profile__message-placeholder";
+        ph.textContent = "No description yet.";
+        box.appendChild(ph);
+      }
+      oppProfileMessage.appendChild(box);
+      return;
+    }
+    const box = document.createElement("div");
+    box.className =
+      "other-player-profile__message-text other-player-profile__message-text--editable";
+    box.tabIndex = 0;
+    box.contentEditable = "false";
+    box.setAttribute("role", "button");
+    box.setAttribute(
+      "aria-label",
+      "Your profile description — click to edit"
+    );
+    if (trimmed) {
+      box.textContent = message;
+    } else {
+      const ph = document.createElement("span");
+      ph.className = "other-player-profile__message-placeholder";
+      ph.textContent = "No description yet.";
+      box.appendChild(ph);
+    }
+    const beginDescEdit = (): void => {
+      if (profileMessageKindOpen !== "self" || profileMessageEditor) return;
+      clearProfileMessageNote();
+      profileMessageEditor = box;
+      box.contentEditable = "true";
+      box.classList.add("other-player-profile__message-text--editing");
+      box.setAttribute("role", "textbox");
+      box.setAttribute("aria-multiline", "true");
+      const seed = profileMessageLastSaved.replace(/\r?\n/g, " ");
+      box.textContent = seed.slice(0, PROFILE_DESC_MAX_CHARS);
+      box.focus();
+      placeCaretAtEnd(box);
+      profileDescEditBlurHandler = () => {
+        void commitSelfProfileMessageEdit();
+      };
+      box.addEventListener("blur", profileDescEditBlurHandler);
+      box.addEventListener("input", () => syncDescEditLength(box));
+    };
+    box.addEventListener("click", () => {
+      if (box.contentEditable !== "true") beginDescEdit();
+    });
+    box.addEventListener("keydown", (e) => {
+      if (box.contentEditable !== "true") {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          beginDescEdit();
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        cancelSelfProfileMessageEdit();
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+      }
+    });
+    oppProfileMessage.appendChild(box);
+  }
+
+  async function commitSelfProfileMessageEdit(): Promise<void> {
+    const el = profileMessageEditor;
+    if (!el || profileMessageKindOpen !== "self" || el.contentEditable !== "true")
+      return;
+    if (profileDescEditBlurHandler) {
+      el.removeEventListener("blur", profileDescEditBlurHandler);
+      profileDescEditBlurHandler = null;
+    }
+    const nextRaw = el.textContent ?? "";
+    const next = normalizeProfileDescForSave(nextRaw);
+    const prev = normalizeProfileDescForSave(profileMessageLastSaved);
+    profileMessageEditor = null;
+    el.contentEditable = "false";
+    el.classList.remove("other-player-profile__message-text--editing");
+    if (next === prev) {
+      renderProfileMessageDisplay("self", profileMessageLastSaved);
+      return;
+    }
+    const tok = opts?.getGameAuthToken?.() ?? null;
+    if (!tok) {
+      oppProfileNote.textContent = "Session missing — rejoin from the lobby.";
+      oppProfileNote.hidden = false;
+      renderProfileMessageDisplay("self", profileMessageLastSaved);
+      return;
+    }
+    try {
+      const r = await fetch("/api/player-profile/message", {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${tok}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ message: next }),
+      });
+      const j = (await r.json().catch(() => ({}))) as {
+        message?: string;
+        error?: string;
+      };
+      if (!r.ok) {
+        oppProfileNote.textContent =
+          j.error === "unauthorized"
+            ? "Session expired — rejoin from the lobby."
+            : "Could not save.";
+        oppProfileNote.hidden = false;
+        renderProfileMessageDisplay("self", profileMessageLastSaved);
+        return;
+      }
+      profileMessageLastSaved = String(j.message ?? "");
+      clearProfileMessageNote();
+      renderProfileMessageDisplay("self", profileMessageLastSaved);
+    } catch {
+      oppProfileNote.textContent = "Network error.";
+      oppProfileNote.hidden = false;
+      renderProfileMessageDisplay("self", profileMessageLastSaved);
+    }
+  }
 
   function closeOtherPlayerProfile(): void {
     detachProfileEscape();
-    if (otherProfileCopyHintTimer) {
-      clearTimeout(otherProfileCopyHintTimer);
-      otherProfileCopyHintTimer = null;
+    profileOpenCompact = "";
+    profileMessageKindOpen = null;
+    if (profileMessageEditor && profileDescEditBlurHandler) {
+      profileMessageEditor.removeEventListener("blur", profileDescEditBlurHandler);
     }
-    oppCopyHint.hidden = true;
-    oppCopyHint.textContent = "";
+    profileDescEditBlurHandler = null;
+    profileMessageEditor = null;
+    oppProfileMessage.replaceChildren();
+    clearProfileMessageNote();
+    oppSendNim.textContent = "Send NIM";
     otherPlayerProfile.hidden = true;
     otherPlayerProfile.setAttribute("aria-hidden", "true");
     oppIdent.hidden = true;
@@ -1015,6 +1224,11 @@ export function createHud(
     if (profileEscapeHandler) return;
     profileEscapeHandler = (e: KeyboardEvent): void => {
       if (e.key !== "Escape") return;
+      if (profileMessageEditor) {
+        e.preventDefault();
+        cancelSelfProfileMessageEdit();
+        return;
+      }
       closeOtherPlayerProfile();
     };
     window.addEventListener("keydown", profileEscapeHandler);
@@ -1027,14 +1241,43 @@ export function createHud(
     window.addEventListener("keydown", onOtherCtxEscape);
   }
 
-  function showOtherPlayerProfileView(address: string, displayName: string): void {
-    const compact = address.replace(/\s+/g, "").trim();
-    const label = displayName.trim() || walletDisplayName(compact);
-    oppTitle.textContent = label;
-    oppAddrBtn.textContent = formatWalletAddressGap4(compact);
+  function walletKeyForProfile(a: string): string {
+    return a.replace(/\s+/g, "").trim().toUpperCase();
+  }
+
+  async function showPlayerProfileView(
+    address: string,
+    _displayName: string,
+    kind: "self" | "other"
+  ): Promise<void> {
+    const compact = walletKeyForProfile(address);
+    if (!compact) return;
+    profileOpenCompact = compact;
+    profileMessageKindOpen = kind;
+    profileMessageLastSaved = "";
+    clearProfileMessageNote();
+    if (profileMessageEditor && profileDescEditBlurHandler) {
+      profileMessageEditor.removeEventListener("blur", profileDescEditBlurHandler);
+    }
+    profileDescEditBlurHandler = null;
+    profileMessageEditor = null;
+    oppProfileMessage.replaceChildren();
+    const loading = document.createElement("div");
+    loading.className =
+      "other-player-profile__message-text other-player-profile__message-text--loading";
+    loading.textContent = "Loading…";
+    oppProfileMessage.appendChild(loading);
+
+    oppAddrBtn.textContent = formatWalletAddressConnectAs(compact);
     oppAddrBtn.title = compact;
     oppAddrBtn.dataset.fullAddress = compact;
-    oppSendNim.dataset.walletUrl = nimiqWalletRecipientDeepLink(compact);
+    if (kind === "self") {
+      oppSendNim.textContent = "Open Wallet";
+      oppSendNim.dataset.walletUrl = NIMIQ_WALLET_URL;
+    } else {
+      oppSendNim.textContent = "Send NIM";
+      oppSendNim.dataset.walletUrl = nimiqWalletRecipientDeepLink(compact);
+    }
     oppIdent.hidden = false;
     oppIdent.removeAttribute("src");
     oppIdent.dataset.address = compact;
@@ -1054,6 +1297,31 @@ export function createHud(
     otherPlayerProfile.setAttribute("aria-hidden", "false");
     attachProfileEscape();
     oppClose.focus({ preventScroll: true });
+
+    const openFor = compact;
+    try {
+      const r = await fetch(
+        `/api/player-profile/${encodeURIComponent(openFor)}`
+      );
+      const j = (await r.json().catch(() => ({}))) as { message?: string };
+      if (profileOpenCompact !== openFor) return;
+      const msg = typeof j.message === "string" ? j.message : "";
+      profileMessageLastSaved = msg;
+      renderProfileMessageDisplay(kind, msg);
+    } catch {
+      if (profileOpenCompact !== openFor) return;
+      profileMessageLastSaved = "";
+      if (kind === "self") {
+        renderProfileMessageDisplay("self", "");
+      } else {
+        oppProfileMessage.replaceChildren();
+        const err = document.createElement("div");
+        err.className =
+          "other-player-profile__message-text other-player-profile__message-text--loading";
+        err.textContent = "Could not load profile.";
+        oppProfileMessage.appendChild(err);
+      }
+    }
   }
 
   oppClose.addEventListener("click", () => {
@@ -1076,28 +1344,16 @@ export function createHud(
     ev.stopPropagation();
     const full = oppAddrBtn.dataset.fullAddress?.trim() ?? "";
     if (!full) return;
-    void (async (): Promise<void> => {
-      try {
-        await navigator.clipboard.writeText(full);
-        oppCopyHint.textContent = "Copied to clipboard";
-        oppCopyHint.hidden = false;
-        if (otherProfileCopyHintTimer) clearTimeout(otherProfileCopyHintTimer);
-        otherProfileCopyHintTimer = setTimeout(() => {
-          oppCopyHint.hidden = true;
-          otherProfileCopyHintTimer = null;
-        }, 2000);
-      } catch {
-        oppCopyHint.textContent = "Could not copy";
-        oppCopyHint.hidden = false;
-      }
-    })();
+    void navigator.clipboard.writeText(full).catch(() => {
+      /* idiomatic silent copy; no toast */
+    });
   });
 
   otherPlayerCtxViewBtn.addEventListener("click", () => {
     const addr = otherPlayerCtxViewBtn.dataset.address ?? "";
     const disp = otherPlayerCtxViewBtn.dataset.displayName ?? "";
     closeOtherPlayerContextMenu();
-    if (addr) showOtherPlayerProfileView(addr, disp);
+    if (addr) void showPlayerProfileView(addr, disp, "other");
   });
 
   const chatPanel = document.createElement("div");
@@ -1690,6 +1946,22 @@ export function createHud(
 
   let brandLinksPlayerAddress = "";
 
+  function openOwnPlayerProfileFromBar(): void {
+    const compact = brandLinksPlayerAddress.trim();
+    if (!compact) return;
+    closeOtherPlayerUiOverlays();
+    const label = walletDisplayName(compact);
+    void showPlayerProfileView(compact, label, "self");
+  }
+
+  playerBar.addEventListener("click", openOwnPlayerProfileFromBar);
+  playerBar.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openOwnPlayerProfileFromBar();
+    }
+  });
+
   function syncTopBarPlayerIdentity(): void {
     const raw = brandLinksPlayerAddress.trim();
     if (!raw) {
@@ -1697,6 +1969,10 @@ export function createHud(
       playerBarIdenticon.hidden = true;
       playerBarIdenticon.removeAttribute("src");
       delete playerBarIdenticon.dataset.address;
+      playerBar.classList.remove("hud-player-bar--interactive");
+      playerBar.removeAttribute("tabindex");
+      playerBar.removeAttribute("role");
+      playerBar.style.cursor = "";
       return;
     }
     const compact = raw.replace(/\s+/g, "").trim();
@@ -1704,6 +1980,14 @@ export function createHud(
     playerBarIdenticon.hidden = false;
     playerBarIdenticon.removeAttribute("src");
     playerBarIdenticon.dataset.address = compact;
+    playerBar.classList.add("hud-player-bar--interactive");
+    playerBar.tabIndex = 0;
+    playerBar.setAttribute("role", "button");
+    playerBar.setAttribute(
+      "aria-label",
+      "Your wallet — open your player profile"
+    );
+    playerBar.style.cursor = "pointer";
     void (async (): Promise<void> => {
       try {
         const { identiconDataUrl } = await import("../game/identiconTexture.js");
@@ -2772,6 +3056,9 @@ export function createHud(
     },
     dismissOtherPlayerOverlays() {
       closeOtherPlayerUiOverlays();
+    },
+    openOwnPlayerProfile() {
+      openOwnPlayerProfileFromBar();
     },
     onReturnToHub(fn: () => void) {
       returnHubHandler = fn;

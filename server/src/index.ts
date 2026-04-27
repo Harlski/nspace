@@ -28,6 +28,7 @@ import {
   flushNimPayoutQueueSync,
   getNimPayoutWalletBalanceLuna,
   getPendingPayoutSnapshotForWallet,
+  getPublicPendingPayoutSnapshot,
   getPublicPendingPayoutSummary,
   isNimPayoutSenderConfigured,
   startNimPayoutProcessor,
@@ -36,10 +37,15 @@ import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
 import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
 import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
 import {
+  type AnalyticsPageViewAnonReason,
   getAnalyticsPageViewsByDay,
   getRecentAnalyticsPageViews,
   recordAnalyticsPageViewEvent,
 } from "./analyticsPageViews.js";
+import {
+  getPlayerProfileMessage,
+  setPlayerProfileMessage,
+} from "./playerProfileStore.js";
 import { nimiqIdenticonDataUrl } from "./nimiqIdenticonServer.js";
 
 function analyticsDayStartUtcMs(dayStr: string): number | null {
@@ -192,6 +198,22 @@ app.get("/api/identicon/:wallet", async (req, res) => {
   }
 });
 
+/** Public read: short message shown on in-game player profile (normalized `NQ…` in path). */
+app.get("/api/player-profile/:address", (req, res) => {
+  try {
+    const decoded = decodeURIComponent(String(req.params.address ?? "").trim());
+    const addr = normalizeWalletId(decoded);
+    if (!addr || addr.length < 4) {
+      res.status(400).json({ error: "invalid_address" });
+      return;
+    }
+    res.json({ message: getPlayerProfileMessage(addr) });
+  } catch (err) {
+    console.error("[player-profile/get]", err);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
 function bearerToken(req: Request): string | null {
   const h = req.headers.authorization;
   if (!h || typeof h !== "string") return null;
@@ -221,6 +243,17 @@ function jwtAddressFromReq(req: Request): string | null {
   } catch {
     return null;
   }
+}
+
+/** In-game profile description — max length matches client two-line sample string. */
+const PROFILE_MESSAGE_MAX_LEN =
+  "THISISONETHISITHISISONETHISITHISISONETHISITHISISONETHISITHISISO".length;
+
+function sanitizeProfileMessageBody(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  let t = raw.replace(/\r\n|\r|\n/g, " ").replace(/\s+/g, " ").trim();
+  if (t.length > PROFILE_MESSAGE_MAX_LEN) t = t.slice(0, PROFILE_MESSAGE_MAX_LEN);
+  return t;
 }
 
 function normalizeWalletId(v: string): string {
@@ -427,7 +460,8 @@ app.get("/api/nim/payout-balance", async (_req, res) => {
 /**
  * Pending payout data.
  * Without `Authorization: Bearer <jwt>`: aggregate summary only (no per-wallet rows).
- * With valid session from `POST /api/auth/verify`: up to 20 pending + 20 completed rows for that wallet.
+ * With valid session: analytics manager wallets get the full global queue + history
+ * (`mode: "admin"`); other wallets get up to 20 pending + 20 completed rows for `sub`.
  */
 app.get("/api/nim/pending-payouts", async (req, res) => {
   try {
@@ -439,12 +473,17 @@ app.get("/api/nim/pending-payouts", async (req, res) => {
       }
       try {
         const payload = verifySession(t, jwtSecret);
-        const addr = String(payload.sub || "").trim();
+        const addr = normalizeWalletId(String(payload.sub || "").trim());
         if (!addr) {
           res.status(401).json({ error: "unauthorized" });
           return;
         }
-        res.json(await getPendingPayoutSnapshotForWallet(addr));
+        if (analyticsManagerWallets.has(addr)) {
+          const snap = await getPublicPendingPayoutSnapshot();
+          res.json({ mode: "admin" as const, ...snap });
+        } else {
+          res.json(await getPendingPayoutSnapshotForWallet(addr));
+        }
       } catch {
         res.status(401).json({ error: "unauthorized" });
       }
@@ -530,7 +569,8 @@ app.delete(
 
 /**
  * Daily counts + recent `/analytics` SPA beacons (`POST /api/analytics/page-view`), UTC days / newest first.
- * Manager wallets only. `recent` = max rows (1–500, default 120). Recent rows include `identicon` when `wallet` is set.
+ * Manager wallets only. `recent` = max rows (1–500, default 120). Recent rows include `identicon` when `wallet` is set;
+ * anonymous rows include `anonReason` (`no_token` | `invalid_session` | `not_on_allowlist` | `legacy`).
  */
 app.get("/api/analytics/page-views", requireAnalyticsWalletAdmin, async (req, res) => {
   const days = Math.min(90, Math.max(1, Number(req.query.days) || 14));
@@ -560,6 +600,7 @@ app.get("/api/analytics/page-views", requireAnalyticsWalletAdmin, async (req, re
       t: row.t,
       wallet: row.wallet,
       identicon: row.wallet ? (iconCache.get(row.wallet) ?? "") : "",
+      anonReason: row.wallet ? null : row.anonReason,
     }));
     res.json({ byDay, recent });
   } catch (err) {
@@ -571,23 +612,30 @@ app.get("/api/analytics/page-views", requireAnalyticsWalletAdmin, async (req, re
 /** Beacon from `/analytics` client: records time; wallet when Bearer is analytics-authorized. */
 app.post("/api/analytics/page-view", (req, res) => {
   let wallet: string | null = null;
+  let anonymousReason: AnalyticsPageViewAnonReason | null = null;
   const t = bearerToken(req);
-  if (t) {
+  const tokenStr = t && String(t).trim() ? String(t).trim() : "";
+  if (!tokenStr) {
+    anonymousReason = "no_token";
+  } else {
     try {
-      const payload = verifySession(t, jwtSecret);
+      const payload = verifySession(tokenStr, jwtSecret);
       const signer = normalizeWalletId(String(payload.sub || ""));
-      if (
-        signer &&
+      if (!signer) {
+        anonymousReason = "invalid_session";
+      } else if (
         analyticsAuthorizedWallets.size > 0 &&
         analyticsAuthorizedWallets.has(signer)
       ) {
         wallet = signer;
+      } else {
+        anonymousReason = "not_on_allowlist";
       }
     } catch {
-      /* invalid or expired token */
+      anonymousReason = "invalid_session";
     }
   }
-  recordAnalyticsPageViewEvent(wallet);
+  recordAnalyticsPageViewEvent(wallet, wallet ? null : anonymousReason);
   res.json({ ok: true });
 });
 
@@ -687,6 +735,26 @@ app.post("/api/feedback", requireJwt, async (req, res) => {
   }
   console.log("[feedback] sent successfully", JSON.stringify({ address }));
   res.json({ ok: true });
+});
+
+/** Body: `{ "message": "…" }` — only the JWT wallet (`sub`) may update; max length enforced server-side. */
+app.put("/api/player-profile/message", requireJwt, (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const message = sanitizeProfileMessageBody(
+    (req.body as Record<string, unknown> | null)?.message
+  );
+  try {
+    const out = setPlayerProfileMessage(signer, message);
+    res.json({ ok: true, message: out.message, updatedAt: out.updatedAt });
+  } catch (err) {
+    console.error("[player-profile/message]", err);
+    res.status(500).json({ error: "internal" });
+  }
 });
 
 app.get("/api/auth/nonce", (_req, res) => {

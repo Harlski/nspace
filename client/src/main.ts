@@ -216,6 +216,7 @@ function enterGame(token: string, address: string): void {
 
   const hud = createHud(hudRoot, {
     showDebug: showDebugHud,
+    getGameAuthToken: () => token,
     onNimRecipientDeepLinkOpen: () => {
       walletSendNimFlowOpen = true;
       syncAwayPresenceToServer();

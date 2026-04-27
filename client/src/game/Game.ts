@@ -25,7 +25,6 @@ const LS_BLOCK_VISUAL_SCALE = "nspace_block_visual_scale";
 const DEFAULT_ZOOM_MIN = 6.5;
 const DEFAULT_ZOOM_MAX = 13.44;
 import { loadIdenticonTexture } from "./identiconTexture.js";
-import { loadDuotoneGlobeHtmlImage } from "./nimiqAwayGlobeTexture.js";
 import {
   blockKey,
   type FloorTile,
@@ -289,12 +288,17 @@ const AVATAR_SPHERE_RADIUS = 0.4;
 
 const NAME_LABEL_FONT =
   '600 20px system-ui, "Segoe UI", sans-serif';
+/** Same metrics as {@link NAME_LABEL_FONT}; used when tab is hidden / NIM send flow (italic only, no icon). */
+const NAME_LABEL_FONT_AWAY =
+  'italic 600 20px system-ui, "Segoe UI", sans-serif';
+const NAME_LABEL_TEXT_ACTIVE = "#e8edf2";
+/** Slightly transparent name when inactive (away tab / NIM send flow). */
+const NAME_LABEL_TEXT_AWAY = "rgba(232, 237, 242, 0.72)";
+const NAME_LABEL_PILL_ACTIVE = "rgba(0,0,0,0.48)";
+const NAME_LABEL_PILL_AWAY = "rgba(0,0,0,0.36)";
 const CHAT_BUBBLE_FONT =
   '500 17px system-ui, "Segoe UI", sans-serif';
 const NAME_LABEL_MAX_PX = 280;
-/** Space for duotone globe + gap before name when tab-away. */
-const NAME_LABEL_AWAY_ICON_PX = 18;
-const NAME_LABEL_AWAY_GAP_PX = 5;
 /** On-screen height (px) for the name pill; scales with ortho zoom so text stays readable. */
 const NAME_LABEL_SCREEN_HEIGHT_PX = 24;
 /** Target screen height for chat bubbles (similar to name labels for consistent readability). */
@@ -398,65 +402,39 @@ function drawTypingDotsToCanvas(
 
 function createNameLabelSprite(
   displayName: string,
-  opts?: { away?: boolean; globeImg?: HTMLImageElement | null }
+  opts?: { away?: boolean }
 ): {
   sprite: THREE.Sprite;
   texture: THREE.CanvasTexture;
 } {
   const away = Boolean(opts?.away);
-  const globeImg = opts?.globeImg ?? null;
   const padX = 10;
   const radius = 9;
   const h = 32;
-  const iconSlot = away ? NAME_LABEL_AWAY_ICON_PX + NAME_LABEL_AWAY_GAP_PX : 0;
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
-  ctx.font = NAME_LABEL_FONT;
+  const labelFont = away ? NAME_LABEL_FONT_AWAY : NAME_LABEL_FONT;
+  ctx.font = labelFont;
   let text =
     displayName.length > 36 ? `${displayName.slice(0, 34)}…` : displayName;
   let tw = ctx.measureText(text).width;
-  const maxTextW = NAME_LABEL_MAX_PX - padX * 2 - iconSlot;
+  const maxTextW = NAME_LABEL_MAX_PX - padX * 2;
   while (tw > maxTextW && text.length > 3) {
     text = `${text.slice(0, -2)}…`;
     tw = ctx.measureText(text).width;
   }
-  const w = Math.ceil(Math.max(36, padX + iconSlot + tw + padX));
+  const w = Math.ceil(Math.max(36, padX + tw + padX));
   canvas.width = w;
   canvas.height = h;
-  ctx.font = NAME_LABEL_FONT;
+  ctx.font = labelFont;
   ctx.textBaseline = "middle";
-  ctx.fillStyle = "rgba(0,0,0,0.48)";
+  ctx.fillStyle = away ? NAME_LABEL_PILL_AWAY : NAME_LABEL_PILL_ACTIVE;
   ctx.beginPath();
   ctx.roundRect(0, 0, w, h, radius);
   ctx.fill();
-  if (away) {
-    const iy = (h - NAME_LABEL_AWAY_ICON_PX) / 2;
-    const ix = padX;
-    if (globeImg) {
-      ctx.drawImage(
-        globeImg,
-        ix,
-        iy,
-        NAME_LABEL_AWAY_ICON_PX,
-        NAME_LABEL_AWAY_ICON_PX
-      );
-    } else {
-      ctx.strokeStyle = "rgba(148, 163, 184, 0.95)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(
-        ix + NAME_LABEL_AWAY_ICON_PX / 2,
-        h / 2,
-        NAME_LABEL_AWAY_ICON_PX / 2 - 1,
-        0,
-        Math.PI * 2
-      );
-      ctx.stroke();
-    }
-  }
   ctx.textAlign = "left";
-  ctx.fillStyle = "#e8edf2";
-  ctx.fillText(text, padX + iconSlot, h / 2 + 0.5);
+  ctx.fillStyle = away ? NAME_LABEL_TEXT_AWAY : NAME_LABEL_TEXT_ACTIVE;
+  ctx.fillText(text, padX, h / 2 + 0.5);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(
@@ -5073,8 +5051,7 @@ export class Game {
   private replaceAvatarNameLabel(
     g: THREE.Group,
     displayName: string,
-    away: boolean,
-    globeImg: HTMLImageElement | null
+    away: boolean
   ): void {
     const oldSprite = g.userData.nameSprite as THREE.Sprite | undefined;
     const oldTex = g.userData.nameTexture as THREE.CanvasTexture | undefined;
@@ -5089,7 +5066,7 @@ export class Game {
     }
     const { sprite: nameSprite, texture: nameTex } = createNameLabelSprite(
       displayName,
-      { away, globeImg }
+      { away }
     );
     g.userData.nameSprite = nameSprite;
     g.userData.nameTexture = nameTex;
@@ -5102,38 +5079,13 @@ export class Game {
       (p.displayName && String(p.displayName).trim()) ||
       walletDisplayName(p.address);
     const state = `${away ? 1 : 0}\0${name}`;
-    const globeDone = Boolean(g.userData.nameLabelGlobeRendered);
-    if (g.userData.nameLabelSyncState === state && (!away || globeDone)) {
+    if (g.userData.nameLabelSyncState === state) {
       return;
     }
-    const isNewState = g.userData.nameLabelSyncState !== state;
     g.userData.nameLabelSyncState = state;
     g.userData.displayName = name;
-    if (!away) {
-      g.userData.nameLabelGlobeRendered = false;
-      this.replaceAvatarNameLabel(g, name, false, null);
-      this.syncNameLabelScaleAndPosition(g);
-      return;
-    }
-    if (isNewState) {
-      g.userData.nameLabelGlobeRendered = false;
-      this.replaceAvatarNameLabel(g, name, true, null);
-      this.syncNameLabelScaleAndPosition(g);
-      void loadDuotoneGlobeHtmlImage()
-        .then((img) => {
-          if (g.userData.nameLabelSyncState !== state) return;
-          g.userData.nameLabelGlobeRendered = true;
-          this.replaceAvatarNameLabel(g, name, true, img);
-          this.syncNameLabelScaleAndPosition(g);
-        })
-        .catch(() => {
-          g.userData.nameLabelGlobeRendered = true;
-        });
-      return;
-    }
-    if (!globeDone) {
-      return;
-    }
+    this.replaceAvatarNameLabel(g, name, away);
+    this.syncNameLabelScaleAndPosition(g);
   }
 
   private disposeAvatarGroup(g: THREE.Group): void {
@@ -5192,7 +5144,7 @@ export class Game {
     const label = displayName || walletDisplayName(address);
     const { sprite: nameSprite, texture: nameTex } = createNameLabelSprite(
       label,
-      { away: false, globeImg: null }
+      { away: false }
     );
     g.userData.nameSprite = nameSprite;
     g.userData.nameTexture = nameTex;

@@ -18,3 +18,14 @@ export function formatWalletAddressConnectAs(address: string): string {
   if (t.length <= 8) return t;
   return `${t.slice(0, 4)}${t.slice(-4)}`;
 }
+
+/** Full address in groups of four (uppercase, spaces), for readable ID-style display. */
+export function formatWalletAddressSpaced(address: string): string {
+  const c = address.replace(/\s+/g, "").trim().toUpperCase();
+  if (!c) return "";
+  const parts: string[] = [];
+  for (let i = 0; i < c.length; i += 4) {
+    parts.push(c.slice(i, i + 4));
+  }
+  return parts.join(" ");
+}

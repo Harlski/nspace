@@ -1164,6 +1164,24 @@ button.hud-brand:focus-visible {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
 }
 
+.hud-player-bar.hud-player-bar--interactive {
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 2px 4px;
+  margin-left: calc(0.15rem - 4px);
+  transition: background 0.12s ease;
+}
+
+.hud-player-bar.hud-player-bar--interactive:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.hud-player-bar.hud-player-bar--interactive:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.55);
+  outline-offset: 2px;
+}
+
 .hud-reconnect-btn {
   flex-shrink: 0;
   min-height: 0;
@@ -2345,6 +2363,15 @@ button.hud-brand:focus-visible {
   min-width: 0;
 }
 
+.other-player-ctx__view-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
 .other-player-ctx__multi {
   max-height: min(40vh, 220px);
   overflow-y: auto;
@@ -2427,20 +2454,59 @@ button.hud-brand:focus-visible {
 .other-player-profile__dialog {
   position: relative;
   z-index: 1;
-  width: min(340px, 100%);
+  width: min(380px, 100%);
   max-width: calc(100vw - 24px);
   box-sizing: border-box;
-  padding: 22px 18px 18px;
-  border-radius: 12px;
+  padding: 14px 44px 16px 16px;
+  border-radius: 14px;
   border: 1px solid rgba(61, 70, 90, 0.9);
-  background: rgba(15, 17, 23, 0.97);
+  background: linear-gradient(
+    165deg,
+    rgba(28, 32, 42, 0.98) 0%,
+    rgba(15, 17, 23, 0.99) 55%
+  );
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 12px;
+  align-items: stretch;
+  gap: 0;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.other-player-profile__card {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.other-player-profile__card-main {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.other-player-profile__card-footer {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 8px;
+}
+
+.other-player-profile__card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
 }
 
 .other-player-profile__close {
@@ -2467,74 +2533,147 @@ button.hud-brand:focus-visible {
 }
 
 .other-player-profile__identicon {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  object-fit: cover;
+  width: 64px;
+  height: 64px;
+  border-radius: 0;
+  object-fit: contain;
   flex-shrink: 0;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
-}
-
-.other-player-profile__title {
-  margin: 0;
-  padding: 0 28px;
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: #f8fafc;
-  text-align: center;
-  line-height: 1.25;
-  word-break: break-word;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  display: block;
 }
 
 .other-player-profile__address {
   margin: 0;
-  padding: 6px 10px;
-  border: 1px solid rgba(100, 116, 139, 0.45);
-  border-radius: 8px;
-  background: rgba(30, 41, 59, 0.45);
-  color: rgba(226, 232, 240, 0.95);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #f1f5f9;
   font-family: ui-monospace, monospace;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  text-align: left;
+  white-space: nowrap;
   cursor: pointer;
   text-decoration: underline;
-  text-decoration-color: rgba(148, 163, 184, 0.4);
+  text-decoration-color: transparent;
   text-underline-offset: 3px;
+  transition: color 0.12s ease, text-decoration-color 0.12s ease;
 }
 
 .other-player-profile__address:hover {
   color: #fff;
+  text-decoration-color: rgba(148, 163, 184, 0.55);
 }
 
 .other-player-profile__send-nim {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  align-self: stretch;
   box-sizing: border-box;
-  width: 100%;
+  width: auto;
   margin: 0;
-  padding: 10px 16px;
-  border: none;
+  padding: 6px 12px;
+  border: 1px solid rgba(100, 116, 139, 0.55);
+  border-radius: 7px;
+  background: rgba(30, 41, 59, 0.55);
+  color: rgba(226, 232, 240, 0.96);
   cursor: pointer;
   font: inherit;
-  text-decoration: none;
-  font-size: 14px;
-  font-weight: 700;
-  text-align: center;
-}
-
-.other-player-profile__send-nim.nq-button-pill::before,
-.other-player-profile__send-nim.nq-button-pill::after {
-  pointer-events: none;
-}
-
-.other-player-profile__copy-hint {
-  margin: 0;
   font-size: 12px;
   font-weight: 600;
-  color: #4ade80;
-  min-height: 1.2em;
+  text-align: center;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.other-player-profile__send-nim:hover {
+  background: rgba(51, 65, 85, 0.75);
+  border-color: rgba(148, 163, 184, 0.45);
+  color: #fff;
+}
+
+.other-player-profile__message-wrap {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.other-player-profile__message-text {
+  margin: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(226, 232, 240, 0.95);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: left;
+  user-select: text;
+  -webkit-user-select: text;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.other-player-profile__message-text--loading {
+  color: rgba(148, 163, 184, 0.95);
+  font-style: italic;
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.other-player-profile__message-text--editable {
+  cursor: pointer;
+  outline: none;
+  border-radius: 4px;
+  transition: background 0.12s ease;
+}
+
+.other-player-profile__message-text--editable:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.other-player-profile__message-text--editable:focus-visible {
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+}
+
+.other-player-profile__message-text--editing {
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: calc(1.5em * 2);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  cursor: text;
+  background: transparent;
+  box-shadow: none;
+}
+
+.other-player-profile__message-text--editing:focus {
+  outline: none;
+}
+
+.other-player-profile__message-placeholder {
+  color: rgba(148, 163, 184, 0.9);
+  font-style: italic;
+}
+
+.other-player-profile__message-note {
+  margin: 0;
+  width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f87171;
+  text-align: left;
+  line-height: 1.35;
 }
 
 .self-emoji-menu__btn {

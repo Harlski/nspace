@@ -13,22 +13,45 @@ function ensureDataDir(): void {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
+/** Stored as `r` on anonymous lines when `w` is omitted (see `POST /api/analytics/page-view`). */
+export type AnalyticsPageViewAnonReason =
+  | "no_token"
+  | "invalid_session"
+  | "not_on_allowlist";
+
 export type AnalyticsPageViewEvent = {
   t: number;
   /** Normalized compact wallet when the viewer had a valid analytics-authorized session. */
   wallet: string | null;
+  /**
+   * When `wallet` is null: why the beacon was stored without a wallet.
+   * `legacy` = older JSONL lines with no `r` field.
+   */
+  anonReason: AnalyticsPageViewAnonReason | "legacy" | null;
 };
+
+const ANON_REASON_SET = new Set<string>([
+  "no_token",
+  "invalid_session",
+  "not_on_allowlist",
+]);
 
 /**
  * One line per analytics SPA load: `POST /api/analytics/page-view` from the browser.
  * `wallet` is set only when Bearer JWT is valid and the wallet is analytics-authorized.
  */
-export function recordAnalyticsPageViewEvent(wallet: string | null): void {
+export function recordAnalyticsPageViewEvent(
+  wallet: string | null,
+  anonymousReason: AnalyticsPageViewAnonReason | null
+): void {
   try {
     ensureDataDir();
     const line =
       wallet === null || wallet === ""
-        ? JSON.stringify({ t: Date.now() })
+        ? JSON.stringify({
+            t: Date.now(),
+            ...(anonymousReason ? { r: anonymousReason } : {}),
+          })
         : JSON.stringify({ t: Date.now(), w: wallet });
     fs.appendFileSync(VIEWS_FILE, `${line}\n`, "utf8");
   } catch (err) {
@@ -105,7 +128,13 @@ export function getRecentAnalyticsPageViews(limit: number): AnalyticsPageViewEve
         typeof wRaw === "string" && wRaw.replace(/\s+/g, "").length > 0
           ? String(wRaw).replace(/\s+/g, "").toUpperCase()
           : null;
-      rows.push({ t, wallet });
+      const rRaw = o.r;
+      const anonReason: AnalyticsPageViewEvent["anonReason"] = wallet
+        ? null
+        : typeof rRaw === "string" && ANON_REASON_SET.has(rRaw)
+          ? (rRaw as AnalyticsPageViewAnonReason)
+          : "legacy";
+      rows.push({ t, wallet, anonReason });
     } catch {
       continue;
     }
