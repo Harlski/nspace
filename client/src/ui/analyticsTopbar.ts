@@ -1,4 +1,18 @@
+import {
+  isTokenExpired,
+  listCachedSessions,
+  MAIN_SITE_MAX_CACHED_ACCOUNTS,
+} from "../auth/session.js";
 import { apiUrl } from "../net/apiBase.js";
+import {
+  activateMainSiteCachedAccount,
+  clearMainSiteAuthSession,
+  MAIN_SITE_AUTH_ADDR_KEY,
+  normalizeMainSiteWalletKey,
+  readMainSiteAuthToken,
+  writeMainSiteAuthToken,
+} from "./mainSiteAuthKeys.js";
+import { nimiqIconUseMarkup } from "./nimiqIcons.js";
 
 function esc(s: unknown): string {
   return String(s)
@@ -37,88 +51,314 @@ async function fetchIdenticon(wallet: string): Promise<string> {
   }
 }
 
-async function canManageWallets(token: string): Promise<boolean> {
-  if (!token) return false;
+type AnalyticsAuthStatus = {
+  authenticated: boolean;
+  analyticsAuthorized: boolean;
+  analyticsManager: boolean;
+};
+
+function applyMainSiteNavAuth(status: AnalyticsAuthStatus): void {
+  document.querySelectorAll<HTMLAnchorElement>("[data-auth-nav]").forEach((link) => {
+    const nav = link.getAttribute("data-auth-nav");
+    const visible =
+      (nav === "analytics" && status.analyticsAuthorized) ||
+      (nav === "admin" && status.analyticsManager);
+    link.hidden = !visible;
+  });
+}
+
+/** Re-fetch `/api/analytics/auth-status` and update Analytics / Admin nav links. */
+export async function refreshMainSiteNavFromSession(): Promise<void> {
+  const token = readMainSiteAuthToken();
+  if (!token || isTokenExpired(token)) {
+    applyMainSiteNavAuth({ authenticated: false, analyticsAuthorized: false, analyticsManager: false });
+    return;
+  }
+  const s = await fetchAnalyticsAuthStatus(token);
+  applyMainSiteNavAuth(s);
+}
+
+async function fetchAnalyticsAuthStatus(token: string): Promise<AnalyticsAuthStatus> {
+  if (!token) {
+    return { authenticated: false, analyticsAuthorized: false, analyticsManager: false };
+  }
+  if (isTokenExpired(token)) {
+    return { authenticated: false, analyticsAuthorized: false, analyticsManager: false };
+  }
   try {
-    const r = await fetch(apiUrl("/api/analytics/authorized-wallets"), {
+    const r = await fetch(apiUrl("/api/analytics/auth-status"), {
       headers: { authorization: `Bearer ${token}` },
       cache: "no-store",
     });
-    return r.ok;
+    if (!r.ok) throw new Error("auth_status_failed");
+    const j = (await r.json()) as Partial<AnalyticsAuthStatus>;
+    return {
+      authenticated: Boolean(j.authenticated),
+      analyticsAuthorized: Boolean(j.analyticsAuthorized),
+      analyticsManager: Boolean(j.analyticsManager),
+    };
   } catch {
-    return false;
+    return { authenticated: false, analyticsAuthorized: false, analyticsManager: false };
   }
+}
+
+function hubAppNameForPage(page: MainSitePage): string {
+  if (page === "pending-payouts") return "Nimiq Space payouts";
+  return "nspace analytics";
+}
+
+export type MainSitePage = "analytics" | "admin" | "pending-payouts";
+
+function toB64(u8: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]!);
+  return btoa(s);
+}
+
+/** Default wallet login used by main-site pages when no custom handler is passed. */
+export async function mainSiteWalletLogin(page: MainSitePage): Promise<void> {
+  const nonceResp = await fetch(apiUrl("/api/auth/nonce"));
+  if (!nonceResp.ok) throw new Error("nonce_failed");
+  const nonceJson = (await nonceResp.json()) as { nonce?: string };
+  const nonce = String(nonceJson.nonce || "");
+  const HubMod = await import("@nimiq/hub-api");
+  const HubApi = HubMod.default;
+  const hub = new HubApi("https://hub.nimiq.com");
+  const message = `Login:v1:${nonce}`;
+  const signed = await hub.signMessage({
+    appName: hubAppNameForPage(page),
+    message,
+  });
+  const verifyResp = await fetch(apiUrl("/api/auth/verify"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      nonce,
+      message,
+      signer: signed.signer,
+      signerPublicKey: toB64(signed.signerPublicKey),
+      signature: toB64(signed.signature),
+    }),
+  });
+  if (!verifyResp.ok) {
+    const errBody = (await verifyResp.json().catch(() => ({}))) as { error?: string };
+    throw new Error(String(errBody.error || "verify_failed"));
+  }
+  const verified = (await verifyResp.json()) as { token?: string; address?: string };
+  const token = String(verified.token || "");
+  const address = String(verified.address || signed.signer || "");
+  if (!token) throw new Error("missing_token");
+  writeMainSiteAuthToken(token, address);
+  window.location.reload();
 }
 
 let authMenuDocBound = false;
 
-export async function renderAnalyticsTopbar(currentPage: "analytics" | "admin"): Promise<void> {
+export type RenderMainSiteTopbarOpts = {
+  /** When set (e.g. analytics auth gate), invoked instead of {@link mainSiteWalletLogin}. */
+  onLoginClick?: () => void | Promise<void>;
+};
+
+/**
+ * Fills `#authUser`: Sign In (top right) when logged out, wallet menu when logged in.
+ * Uses a shared JWT across analytics, admin, and payout queue pages.
+ */
+export async function renderMainSiteTopbar(
+  currentPage: MainSitePage,
+  opts?: RenderMainSiteTopbarOpts
+): Promise<void> {
   const authUserEl = document.getElementById("authUser");
   if (!authUserEl) return;
 
-  const token = sessionStorage.getItem("nspace_analytics_auth_token") || "";
-  let signed = sessionStorage.getItem("nspace_analytics_auth_addr") || parseJwtSub(token);
-  if (signed) sessionStorage.setItem("nspace_analytics_auth_addr", signed);
-  if (!signed) {
-    authUserEl.style.display = "none";
+  const token = readMainSiteAuthToken();
+  let signed = sessionStorage.getItem(MAIN_SITE_AUTH_ADDR_KEY) || parseJwtSub(token);
+  if (signed) sessionStorage.setItem(MAIN_SITE_AUTH_ADDR_KEY, signed);
+
+  const runLogin = async (): Promise<void> => {
+    if (opts?.onLoginClick) {
+      await opts.onLoginClick();
+      return;
+    }
+    await mainSiteWalletLogin(currentPage);
+  };
+
+  if (!signed || !token) {
+    applyMainSiteNavAuth({ authenticated: false, analyticsAuthorized: false, analyticsManager: false });
+    authUserEl.style.display = "block";
+    authUserEl.innerHTML =
+      "<span id='authTopLogin' class='auth-user-signin' role='button' tabindex='0'>Sign In</span>";
+    const loginEl = document.getElementById("authTopLogin");
+    if (loginEl) {
+      const go = (): void => {
+        void runLogin().catch(() => {});
+      };
+      loginEl.addEventListener("click", go);
+      loginEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          go();
+        }
+      });
+    }
     return;
   }
 
-  const [ident, canManage] = await Promise.all([fetchIdenticon(signed), canManageWallets(token)]);
+  const sessionExpired = isTokenExpired(token);
+  const [ident, authStatus] = await Promise.all([
+    fetchIdenticon(signed),
+    sessionExpired
+      ? Promise.resolve({
+          authenticated: false,
+          analyticsAuthorized: false,
+          analyticsManager: false,
+        })
+      : fetchAnalyticsAuthStatus(token),
+  ]);
+  applyMainSiteNavAuth(authStatus);
   authUserEl.style.display = "block";
+  const navRows: string[] = [];
+  if (sessionExpired) {
+    navRows.push("<button type='button' id='authRefreshSession'>Sign in again</button>");
+  }
+  navRows.push(
+    "<div class='auth-user-menu-section'>" +
+      "<button type='button' id='authChangeAccountToggle' class='auth-user-menu-row'>Change account</button>" +
+      "<div id='authAccountPicker' class='auth-user-submenu' style='display:none' role='group' aria-label='Choose wallet'></div>" +
+      "</div>"
+  );
+  navRows.push("<button type='button' id='authUserLogout' class='auth-user-menu-row'>Logout</button>");
+
+  const alertSvg = sessionExpired
+    ? nimiqIconUseMarkup("nq-alert-circle", { width: 14, height: 14, class: "auth-user-session-alert" })
+    : "";
+  const identBlock =
+    ident || sessionExpired
+      ? `<span class="auth-user-ident-wrap${ident ? "" : " auth-user-ident-wrap--solo"}">${
+          ident ? `<img class="ident" src="${esc(ident)}" alt="wallet"/>` : ""
+        }${alertSvg}</span>`
+      : "";
+  const btnTitle = sessionExpired
+    ? `Session expired — sign in again (${esc(signed)})`
+    : `Signed in as ${esc(signed)}`;
+
   authUserEl.innerHTML =
-    "<button id='authUserBtn' class='auth-user-btn' title='Signed in as " +
-    esc(signed) +
+    "<button type='button' id='authUserBtn' class='auth-user-btn' title='" +
+    btnTitle +
     "'>" +
-    (ident ? "<img class='ident' src='" + esc(ident) + "' alt='wallet'/>" : "") +
+    identBlock +
     "<span class='mono'>" +
     esc(walletShort(signed)) +
     "</span>" +
     "</button>" +
     "<div id='authUserMenu' class='auth-user-menu'>" +
-    (currentPage === "admin"
-      ? "<button id='authUserAnalytics'>Analytics</button>"
-      : canManage
-        ? "<button id='authUserAdmin'>Admin</button>"
-        : "") +
-    "<button id='authUserLogout'>Logout</button>" +
+    navRows.join("") +
     "</div>";
 
   const btn = document.getElementById("authUserBtn");
   const menu = document.getElementById("authUserMenu");
-  const admin = document.getElementById("authUserAdmin");
-  const analytics = document.getElementById("authUserAnalytics");
+  const refreshSess = document.getElementById("authRefreshSession");
   const logout = document.getElementById("authUserLogout");
+  const changeToggle = document.getElementById("authChangeAccountToggle");
+  const accountPicker = document.getElementById("authAccountPicker");
+
+  async function populateAccountPicker(): Promise<void> {
+    if (!accountPicker) return;
+    const entries = listCachedSessions();
+    const activeN = normalizeMainSiteWalletKey(signed);
+    const idents = await Promise.all(entries.map((e) => fetchIdenticon(e.address)));
+    const rowsHtml = entries
+      .map((e, i) => {
+        const isActive = normalizeMainSiteWalletKey(e.address) === activeN;
+        const exp = isTokenExpired(e.token);
+        const ident = idents[i];
+        const img = ident
+          ? `<img class="auth-user-account-ident" src="${esc(ident)}" alt="" width="22" height="22"/>`
+          : `<span class="auth-user-account-ident auth-user-account-ident--ph" aria-hidden="true"></span>`;
+        const dis = exp ? " disabled" : "";
+        const rowCls =
+          "auth-user-account-row" +
+          (exp ? " auth-user-account-row--expired" : "") +
+          (isActive ? " auth-user-account-row--active" : "");
+        const check = isActive ? `<span class="auth-user-account-check" aria-label="Active">✓</span>` : "";
+        return `<button type="button" class="${rowCls}" data-switch-account="${esc(e.address)}"${dis}>${img}<span class="mono">${esc(walletShort(e.address))}</span>${check}</button>`;
+      })
+      .join("");
+    const atCap = entries.length >= MAIN_SITE_MAX_CACHED_ACCOUNTS;
+    const addHtml = atCap
+      ? `<p class="auth-user-account-cap mono">Maximum ${MAIN_SITE_MAX_CACHED_ACCOUNTS} accounts saved.</p>`
+      : `<button type="button" class="auth-user-account-row auth-user-account-row--add" id="authAddAccount">Add account</button>`;
+    accountPicker.innerHTML = rowsHtml + addHtml;
+    accountPicker.querySelectorAll<HTMLButtonElement>("[data-switch-account]").forEach((row) => {
+      row.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const addr = row.getAttribute("data-switch-account") || "";
+        if (!addr || normalizeMainSiteWalletKey(addr) === activeN) {
+          accountPicker.style.display = "none";
+          return;
+        }
+        const ent = listCachedSessions().find(
+          (x) => normalizeMainSiteWalletKey(x.address) === normalizeMainSiteWalletKey(addr)
+        );
+        if (!ent || isTokenExpired(ent.token)) return;
+        if (activateMainSiteCachedAccount(addr)) window.location.reload();
+      });
+    });
+    const addBtn = document.getElementById("authAddAccount");
+    if (addBtn) {
+      addBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        accountPicker.style.display = "none";
+        if (menu) (menu as HTMLElement).style.display = "none";
+        void mainSiteWalletLogin(currentPage).catch(() => {});
+      });
+    }
+  }
+
+  if (refreshSess) {
+    refreshSess.addEventListener("click", () => {
+      if (menu) (menu as HTMLElement).style.display = "none";
+      void runLogin().catch(() => {});
+    });
+  }
+  if (changeToggle && accountPicker) {
+    changeToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const opening = accountPicker.style.display !== "block";
+      accountPicker.style.display = opening ? "block" : "none";
+      if (opening) void populateAccountPicker();
+    });
+    void populateAccountPicker();
+  }
   if (btn && menu) {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      menu.style.display = menu.style.display === "block" ? "none" : "block";
+      const open = menu.style.display !== "block";
+      menu.style.display = open ? "block" : "none";
+      if (!open && accountPicker) accountPicker.style.display = "none";
     });
     if (!authMenuDocBound) {
-      document.addEventListener("click", () => {
+      document.addEventListener("click", (ev) => {
+        if ((ev.target as HTMLElement).closest("#authUser")) return;
         const m = document.getElementById("authUserMenu");
         if (m) (m as HTMLElement).style.display = "none";
+        const sub = document.getElementById("authAccountPicker");
+        if (sub) (sub as HTMLElement).style.display = "none";
       });
       authMenuDocBound = true;
     }
   }
-  if (admin) {
-    admin.addEventListener("click", () => {
-      if (menu) (menu as HTMLElement).style.display = "none";
-      window.location.href = "/admin";
-    });
-  }
-  if (analytics) {
-    analytics.addEventListener("click", () => {
-      if (menu) (menu as HTMLElement).style.display = "none";
-      window.location.href = "/analytics";
-    });
-  }
   if (logout) {
     logout.addEventListener("click", () => {
-      sessionStorage.removeItem("nspace_analytics_auth_token");
-      sessionStorage.removeItem("nspace_analytics_auth_addr");
-      window.location.href = "/analytics";
+      clearMainSiteAuthSession();
+      window.location.reload();
     });
   }
+}
+
+/** @deprecated Use {@link renderMainSiteTopbar} */
+export async function renderAnalyticsTopbar(
+  currentPage: "analytics" | "admin",
+  opts?: RenderMainSiteTopbarOpts
+): Promise<void> {
+  return renderMainSiteTopbar(currentPage, opts);
 }

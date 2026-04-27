@@ -1,5 +1,11 @@
+import "./mainSiteClient.css";
+import { isTokenExpired } from "./auth/session.js";
 import { apiUrl } from "./net/apiBase.js";
-import { renderAnalyticsTopbar } from "./ui/analyticsTopbar.js";
+import { renderMainSiteTopbar } from "./ui/analyticsTopbar.js";
+import {
+  MAIN_SITE_AUTH_ADDR_KEY,
+  readMainSiteAuthToken,
+} from "./ui/mainSiteAuthKeys.js";
 
 function esc(s: unknown): string {
   return String(s)
@@ -32,18 +38,45 @@ async function fetchIdenticon(wallet: string): Promise<string> {
   }
 }
 
+function parseJwtSub(token: string): string {
+  try {
+    const p = String(token || "").split(".")[1] || "";
+    if (!p) return "";
+    const json = atob(p.replace(/-/g, "+").replace(/_/g, "/"));
+    const obj = JSON.parse(json) as { sub?: string };
+    return String(obj.sub || "");
+  } catch {
+    return "";
+  }
+}
+
 async function load(): Promise<void> {
-  await renderAnalyticsTopbar("admin");
+  await renderMainSiteTopbar("admin");
   const panel = document.getElementById("panel");
+  const docTitle = document.getElementById("adminDocTitle") as HTMLElement | null;
   if (!panel) return;
 
-  const token = sessionStorage.getItem("nspace_analytics_auth_token") || "";
-  const signed = sessionStorage.getItem("nspace_analytics_auth_addr") || "";
+  const token = readMainSiteAuthToken();
+  let signed = sessionStorage.getItem(MAIN_SITE_AUTH_ADDR_KEY) || "";
+  if (!signed && token) signed = parseJwtSub(token);
+  if (signed) sessionStorage.setItem(MAIN_SITE_AUTH_ADDR_KEY, signed);
   if (!token) {
+    if (docTitle) docTitle.hidden = true;
     panel.innerHTML =
-      "<span class='err'>Login required. Open <a href='/analytics'>/analytics</a> and sign in first.</span>";
+      "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
+      "<div class='ms-auth-gate-msg'>You must be signed in.</div>" +
+      "</div>";
     return;
   }
+  if (isTokenExpired(token)) {
+    if (docTitle) docTitle.hidden = false;
+    panel.innerHTML =
+      "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
+      "<div class='ms-auth-gate-msg'>Your session has expired. Use <strong>Sign in again</strong> above.</div>" +
+      "</div>";
+    return;
+  }
+  if (docTitle) docTitle.hidden = false;
 
   let wallets: string[] = [];
   let expandedWallet = "";
@@ -55,7 +88,7 @@ async function load(): Promise<void> {
       cache: "no-store",
     });
     if (r.status === 401) throw new Error("Session expired. Please login again.");
-    if (r.status === 403) throw new Error("This wallet does not have admin permissions.");
+    if (r.status === 403) throw new Error("NS_WALLET_ACCESS_DENIED");
     if (!r.ok) throw new Error(`Request failed (${r.status}).`);
     const j = (await r.json()) as { wallets?: string[] };
     wallets = Array.isArray(j.wallets) ? j.wallets.slice() : [];
@@ -169,9 +202,31 @@ async function load(): Promise<void> {
     await fetchWallets();
     render("", false);
   } catch (err) {
-    panel.innerHTML = `<span class='err'>${esc(
-      err instanceof Error ? err.message : String(err)
-    )}</span>`;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("Session expired")) {
+      await renderMainSiteTopbar("admin");
+      panel.innerHTML =
+        "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
+        "<div class='ms-auth-gate-msg'>Your session has expired. Use <strong>Sign in again</strong> above.</div>" +
+        "</div>";
+      return;
+    }
+    await renderMainSiteTopbar("admin");
+    const raw = err instanceof Error ? err.message : String(err);
+    if (raw === "NS_WALLET_ACCESS_DENIED") {
+      if (docTitle) docTitle.hidden = true;
+      panel.innerHTML =
+        "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
+        "<div class='ms-auth-gate-msg'>" +
+        esc("Access denied for this wallet.") +
+        "</div></div>";
+      return;
+    }
+    panel.innerHTML =
+      "<div class='ms-auth-gate'>" +
+      "<div class='ms-auth-gate-msg err'>" +
+      esc(raw) +
+      "</div></div>";
   }
 }
 

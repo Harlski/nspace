@@ -12,6 +12,7 @@
     "@nimiq/hub-api": "^1.13.0",
     "@nimiq/identicons": "^1.6.2",
     "@nimiq/style": "^0.8.5",
+    "nimiq-icons": "^1.0.0-beta.162",
     "qr-creator": "^1.0.0",
     "three": "^0.174.0"
   },

@@ -69,6 +69,18 @@ const NIM_BALANCE_BACKGROUND_REFRESH_MS = Math.max(
 
 const DEAD_LETTER_FILE = path.join(NIM_PAYOUT_DATA_DIR, "nim-payout-dead-letter.jsonl");
 
+/** Per-recipient append-only log (last N lines read on wallet pending-payouts API). */
+const RECIPIENT_SENT_DIR = path.join(NIM_PAYOUT_DATA_DIR, "nim-payout-recipient-sent");
+
+/** When merging wallet history, scan up to this many **global** tail lines for older sends (pre per-wallet file). */
+const WALLET_GLOBAL_SENT_TAIL_LINES = Math.min(
+  2_000_000,
+  Math.max(
+    2000,
+    Number(process.env.NIM_PAYOUT_WALLET_GLOBAL_SENT_TAIL_LINES ?? 250_000)
+  )
+);
+
 const HISTORY_ROWS_CAP = Math.min(
   2000,
   Math.max(1, Number(process.env.NIM_PAYOUT_PUBLIC_HISTORY_LIMIT ?? 20))
@@ -124,6 +136,112 @@ function readSentHistoryFromDisk(maxLines: number): SentHistoryDiskLine[] {
   }
 }
 
+function recipientSentHistoryPath(normalizedRecipient: string): string {
+  const id = normalizeNimWalletId(normalizedRecipient);
+  return path.join(RECIPIENT_SENT_DIR, `${id}.jsonl`);
+}
+
+function appendRecipientSentHistoryLine(
+  normalizedRecipient: string,
+  line: SentHistoryDiskLine
+): void {
+  try {
+    ensureDataDir();
+    fs.mkdirSync(RECIPIENT_SENT_DIR, { recursive: true });
+    const fp = recipientSentHistoryPath(normalizedRecipient);
+    fs.appendFileSync(fp, `${JSON.stringify(line)}\n`, "utf8");
+  } catch (e) {
+    console.error("[nim-payout] Failed to append recipient sent-history:", e);
+  }
+}
+
+function readRecipientSentHistoryLines(
+  normalizedRecipient: string,
+  maxLines: number
+): SentHistoryDiskLine[] {
+  try {
+    const fp = recipientSentHistoryPath(normalizedRecipient);
+    if (!fs.existsSync(fp)) return [];
+    const raw = fs.readFileSync(fp, "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim());
+    const tail = lines.slice(Math.max(0, lines.length - maxLines));
+    const out: SentHistoryDiskLine[] = [];
+    for (const line of tail) {
+      try {
+        const o = JSON.parse(line) as SentHistoryDiskLine;
+        if (
+          typeof o.txHash === "string" &&
+          o.txHash &&
+          typeof o.sentAt === "number" &&
+          typeof o.recipient === "string" &&
+          typeof o.amountLuna === "string" &&
+          /^\d+$/.test(o.amountLuna)
+        ) {
+          out.push(o);
+        }
+      } catch {
+        /* skip */
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Successful sends to one wallet: per-recipient log (survives restarts), tail of global
+ * `nim-payout-sent.jsonl`, and gameplay event-log backfill — deduped by `txHash`.
+ */
+function collectWalletSentHistory(
+  normalizedTarget: string,
+  maxRecords: number
+): SentHistoryMerged[] {
+  const byTx = new Map<string, SentHistoryMerged>();
+  const push = (r: SentHistoryMerged): void => {
+    const prev = byTx.get(r.txHash);
+    if (!prev || r.sentAt >= prev.sentAt) {
+      byTx.set(r.txHash, r);
+    }
+  };
+  for (const d of readRecipientSentHistoryLines(
+    normalizedTarget,
+    Math.max(maxRecords * 4, 500)
+  )) {
+    if (normalizeNimWalletId(d.recipient) !== normalizedTarget) continue;
+    push({
+      sentAt: d.sentAt,
+      recipient: d.recipient,
+      txHash: d.txHash,
+      amountLuna: d.amountLuna,
+    });
+  }
+  for (const d of readSentHistoryFromDisk(WALLET_GLOBAL_SENT_TAIL_LINES)) {
+    if (normalizeNimWalletId(d.recipient) !== normalizedTarget) continue;
+    push({
+      sentAt: d.sentAt,
+      recipient: d.recipient,
+      txHash: d.txHash,
+      amountLuna: d.amountLuna,
+    });
+  }
+  for (const e of listRecentNimPayoutSentFromEventLog(
+    HISTORY_EVENT_DAYS,
+    Math.max(maxRecords * 2, 200)
+  )) {
+    if (normalizeNimWalletId(e.recipient) !== normalizedTarget) continue;
+    push({
+      sentAt: e.sentAt,
+      recipient: e.recipient,
+      txHash: e.txHash,
+      amountLuna: e.amountLuna,
+    });
+  }
+  return [...byTx.values()]
+    .sort((a, b) => b.sentAt - a.sentAt)
+    .slice(0, Math.max(1, maxRecords));
+}
+
 function appendSentHistoryLine(job: NimPayoutJob, txHash: string, sentAt: number): void {
   try {
     ensureDataDir();
@@ -136,6 +254,10 @@ function appendSentHistoryLine(job: NimPayoutJob, txHash: string, sentAt: number
       claimId: job.claimId,
     };
     fs.appendFileSync(NIM_PAYOUT_SENT_HISTORY_FILE, `${JSON.stringify(line)}\n`, "utf8");
+    appendRecipientSentHistoryLine(
+      normalizeNimWalletId(job.recipientAddress),
+      line
+    );
   } catch (e) {
     console.error("[nim-payout] Failed to append sent-history file:", e);
   }
@@ -468,6 +590,32 @@ export type PublicPendingPayoutSnapshot = {
   historyRows: PublicPayoutHistoryRow[];
 };
 
+/** Anonymous API: queue size + sends completed today (UTC calendar day). */
+export type PublicPendingPayoutSummary = {
+  mode: "summary";
+  pendingTotal: number;
+  processedToday: number;
+  allSent: boolean;
+  message: string | null;
+};
+
+/** Authenticated API: same row shapes as {@link PublicPendingPayoutSnapshot}, scoped to one wallet. */
+export type WalletPendingPayoutDetail = PublicPendingPayoutSnapshot & {
+  mode: "wallet";
+  processedToday: number;
+};
+
+const WALLET_PENDING_ROWS_CAP = 20;
+const WALLET_HISTORY_ROWS_CAP = 20;
+
+function normalizeNimWalletId(w: string): string {
+  return String(w || "").replace(/\s+/g, "").toUpperCase();
+}
+
+function utcDayStartMs(d: Date): number {
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
 function formatLunaAsNim4(luna: bigint): string {
   return (Number(luna) / 100_000).toFixed(4);
 }
@@ -475,6 +623,50 @@ function formatLunaAsNim4(luna: bigint): string {
 /**
  * Snapshot for public dashboards: pending + processing jobs, plus recent
  * successful sends (no internal errors / retry metadata on pending rows).
+ */
+function countSendsOnUtcDay(
+  records: SentHistoryMerged[],
+  dayStartMs: number
+): number {
+  const dayEnd = dayStartMs + 86400000;
+  return records.reduce((n, r) => {
+    return r.sentAt >= dayStartMs && r.sentAt < dayEnd ? n + 1 : n;
+  }, 0);
+}
+
+/**
+ * Public aggregate only (no per-wallet rows). Used when the request has no valid session.
+ */
+export async function getPublicPendingPayoutSummary(): Promise<PublicPendingPayoutSummary> {
+  const now = new Date();
+  const day0 = utcDayStartMs(now);
+  const historyForCount = mergeSentHistoryRecords(4000);
+  const processedToday = countSendsOnUtcDay(historyForCount, day0);
+
+  const pending = jobs.filter(
+    (j) => j.status === "pending" || j.status === "processing"
+  );
+  if (pending.length === 0) {
+    return {
+      mode: "summary",
+      pendingTotal: 0,
+      processedToday,
+      allSent: true,
+      message: "All pending transactions have been sent.",
+    };
+  }
+  return {
+    mode: "summary",
+    pendingTotal: pending.length,
+    processedToday,
+    allSent: false,
+    message: null,
+  };
+}
+
+/**
+ * Full global queue + recent history (legacy / operator dashboards).
+ * Prefer {@link getPublicPendingPayoutSummary} for unauthenticated clients.
  */
 export async function getPublicPendingPayoutSnapshot(): Promise<PublicPendingPayoutSnapshot> {
   const historySource = mergeSentHistoryRecords(HISTORY_ROWS_CAP);
@@ -518,5 +710,58 @@ export async function getPublicPendingPayoutSnapshot(): Promise<PublicPendingPay
     message: null,
     rows,
     historyRows,
+  };
+}
+
+/**
+ * Pending + recent completed rows for a single recipient (JWT `sub`), capped for UI.
+ */
+export async function getPendingPayoutSnapshotForWallet(
+  walletRaw: string
+): Promise<WalletPendingPayoutDetail> {
+  const target = normalizeNimWalletId(walletRaw);
+  const now = new Date();
+  const day0 = utcDayStartMs(now);
+  const historyMerged = collectWalletSentHistory(target, 20_000);
+  const processedToday = countSendsOnUtcDay(historyMerged, day0);
+  const historySlice = historyMerged.slice(0, WALLET_HISTORY_ROWS_CAP);
+  const historyRows: PublicPayoutHistoryRow[] = await Promise.all(
+    historySlice.map(async (r) => ({
+      time: new Date(r.sentAt).toISOString(),
+      identicon: await nimiqIdenticonDataUrl(r.recipient),
+      walletId: r.recipient,
+      amountNim:
+        r.amountLuna && /^\d+$/.test(r.amountLuna)
+          ? formatLunaAsNim4(BigInt(r.amountLuna))
+          : "—",
+      txHash: r.txHash,
+    }))
+  );
+
+  const pending = jobs
+    .filter(
+      (j) =>
+        (j.status === "pending" || j.status === "processing") &&
+        normalizeNimWalletId(j.recipientAddress) === target
+    )
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(0, WALLET_PENDING_ROWS_CAP);
+  const rows: PublicPendingPayoutRow[] = await Promise.all(
+    pending.map(async (j) => ({
+      time: new Date(j.createdAt).toISOString(),
+      identicon: await nimiqIdenticonDataUrl(j.recipientAddress),
+      walletId: j.recipientAddress,
+      amountNim: formatLunaAsNim4(j.amountLuna),
+    }))
+  );
+  const allSent = pending.length === 0;
+  return {
+    mode: "wallet",
+    allSent,
+    pendingTotal: pending.length,
+    message: null,
+    rows,
+    historyRows,
+    processedToday,
   };
 }

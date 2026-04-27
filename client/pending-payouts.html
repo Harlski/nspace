@@ -3,97 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NIM payouts — pending &amp; recent</title>
-    <style>
-      :root {
-        font-family: system-ui, sans-serif;
-        background: #0f1419;
-        color: #e6edf3;
-      }
-      body {
-        max-width: 960px;
-        margin: 2rem auto;
-        padding: 0 1rem;
-      }
-      h1 {
-        font-size: 1.25rem;
-        font-weight: 600;
-      }
-      .status {
-        margin: 1rem 0;
-        padding: 1rem;
-        border-radius: 8px;
-        background: #1a2332;
-      }
-      .status.status--queue-clear {
-        text-align: center;
-        font-size: 1.05rem;
-        font-weight: 500;
-        letter-spacing: 0.02em;
-        color: #c9d1d9;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 1rem;
-      }
-      th,
-      td {
-        text-align: left;
-        padding: 0.6rem 0.5rem;
-        border-bottom: 1px solid #263041;
-        vertical-align: middle;
-      }
-      th {
-        color: #8b9cb3;
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-      }
-      .mono {
-        font-family: ui-monospace, monospace;
-        font-size: 0.8rem;
-        word-break: break-all;
-      }
-      .amt {
-        font-variant-numeric: tabular-nums;
-      }
-      img.ident {
-        width: 40px;
-        height: 40px;
-        border-radius: 6px;
-        display: block;
-        flex-shrink: 0;
-      }
-      .wallet-cell-inner {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        flex-wrap: wrap;
-      }
-      .wallet-cell {
-        min-width: 6rem;
-      }
-      .wallet-cell-inner span[title] {
-        cursor: help;
-      }
-      a.expl {
-        color: #79b8ff;
-        text-decoration: none;
-      }
-      a.expl:hover {
-        text-decoration: underline;
-      }
-      .err {
-        color: #f85149;
-      }
-    </style>
+    <title>Payout queue — Nimiq Space</title>
   </head>
-  <body>
-    <h1>NIM payouts</h1>
-    <p class="mono" id="status">Loading…</p>
-    <p class="mono" id="countLine" style="margin-top: 0.35rem; color: #8b9cb3"></p>
-    <div id="banner" class="status" style="display: none"></div>
+  <body class="ms-site">
+    <header class="ms-site-header">
+      <div class="title-row">
+        <div class="title-left">
+          <a class="brand-title-link" href="/" title="Nimiq Space (play)">
+            <span class="brand-title"><span class="brand-title__nimiq">NIMIQ</span> <span class="brand-title__space">SPACE</span></span>
+          </a>
+          <nav class="main-site-nav" aria-label="Main site">
+            <a class="main-site-nav__link" href="/pending-payouts" aria-current="page">Payouts</a>
+            <a class="main-site-nav__link" href="/analytics" data-auth-nav="analytics" hidden>Analytics</a>
+            <a class="main-site-nav__link" href="/admin" data-auth-nav="admin" hidden>Admin</a>
+          </nav>
+        </div>
+        <div class="analytics-topbar">
+          <div class="main-site-social" aria-label="Social links">
+            <a class="main-site-social__link" href="https://x.com/nimiqspace" target="_blank" rel="noopener noreferrer" aria-label="Nimiq Space on X">
+              <svg class="main-site-social__icon" viewBox="0 0 1200 1227" aria-hidden="true" focusable="false"><path d="M714.15 519.295 1160.89 0h-105.86L667.142 450.883 357.328 0H0l468.485 681.802L0 1226.37h105.866l409.627-476.155 327.179 476.155H1200L714.15 519.295Zm-145.016 168.51-47.468-67.894L144.011 79.694h162.604l304.797 436.03 47.468 67.894 396.2 566.682H892.476L569.134 687.805Z"/></svg>
+            </a>
+            <a class="main-site-social__link" href="https://t.me/nimiqspace" target="_blank" rel="noopener noreferrer" aria-label="Nimiq Space on Telegram">
+              <svg class="main-site-social__icon" viewBox="0 0 240.1 240.1" aria-hidden="true" focusable="false"><path d="M54.3 118.8c35-15.2 58.3-25.3 70-30.2 33.3-13.9 40.3-16.3 44.8-16.4 1 0 3.2.2 4.7 1.4 1.2 1 1.5 2.3 1.7 3.3s.4 3.1.2 4.7c-1.8 19-9.6 65.1-13.6 86.3-1.7 9-5 12-8.2 12.3-7 .6-12.3-4.6-19-9-10.6-6.9-16.5-11.2-26.8-18-11.9-7.8-4.2-12.1 2.6-19.1 1.8-1.8 32.5-29.8 33.1-32.3.1-.3.1-1.5-.6-2.1-.7-.6-1.7-.4-2.5-.2-1.1.2-17.9 11.4-50.6 33.5-4.8 3.3-9.1 4.9-13 4.8-4.3-.1-12.5-2.4-18.7-4.4-7.5-2.4-13.5-3.7-13-7.9.3-2.2 3.3-4.4 8.9-6.7Z"/></svg>
+            </a>
+          </div>
+          <div id="authUser" class="auth-user" style="display:none"></div>
+        </div>
+      </div>
+    </header>
+    <h1 class="ms-doc-title">
+      Payout queue <i class="ms-doc-title__updated ms-mono" id="payoutTitleUpdated" aria-live="polite"></i>
+    </h1>
+    <p class="ms-status ms-mono ms-payout-queue-status" id="status"></p>
     <div id="wrap"></div>
     <script type="module" src="/src/pendingPayoutsStandalone.ts"></script>
   </body>

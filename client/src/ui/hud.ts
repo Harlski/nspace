@@ -89,7 +89,13 @@ export type BuildBlockBarState = {
 
 export function createHud(
   root: HTMLElement,
-  opts?: { showDebug?: boolean }
+  opts?: {
+    showDebug?: boolean;
+    /** Fires synchronously before opening the wallet URL in a new tab (e.g. notify server). */
+    onNimRecipientDeepLinkOpen?: (url: string) => void;
+    /** Popup blocked or `window.open` returned null. */
+    onNimRecipientDeepLinkPopupBlocked?: () => void;
+  }
 ): {
   setStatus: (s: string) => void;
   appendChat: (from: string, text: string) => void;
@@ -369,7 +375,12 @@ export function createHud(
     </svg>
     <span class="hud-nim-balance__value">…</span>
     <span class="hud-nim-balance__tooltip" role="tooltip">
-      This NIM can be earned by playing Nimiq Space
+      <span class="hud-nim-balance__tip-inline">
+        This NIM can be earned by
+        <a class="hud-nim-balance__payouts-link" href="/pending-payouts" target="_blank" rel="noopener noreferrer">
+          playing Nimiq Space<span class="hud-nim-balance__tip-arrow" aria-hidden="true"> →</span>
+        </a>
+      </span>
     </span>
   `;
   const nimBalanceValue = nimBalance.querySelector(
@@ -381,6 +392,7 @@ export function createHud(
   const nimBalanceTip = nimBalance.querySelector(
     ".hud-nim-balance__tooltip"
   ) as HTMLElement;
+  nimBalanceTip.addEventListener("click", (e) => e.stopPropagation());
 
   /** Toolbar uses horizontal scroll + overflow-y hidden; abs tooltips are clipped — dock to viewport here. */
   const HUD_STAT_TIP_VIEWPORT_MQ = window.matchMedia(
@@ -848,11 +860,10 @@ export function createHud(
   const oppAddrBtn = document.createElement("button");
   oppAddrBtn.type = "button";
   oppAddrBtn.className = "other-player-profile__address";
-  const oppSendNim = document.createElement("a");
+  const oppSendNim = document.createElement("button");
+  oppSendNim.type = "button";
   oppSendNim.className =
     "other-player-profile__send-nim nq-button-pill light-blue";
-  oppSendNim.target = "_blank";
-  oppSendNim.rel = "noopener noreferrer";
   oppSendNim.textContent = "Send NIM";
   const oppCopyHint = document.createElement("p");
   oppCopyHint.className = "other-player-profile__copy-hint";
@@ -1023,7 +1034,7 @@ export function createHud(
     oppAddrBtn.textContent = formatWalletAddressGap4(compact);
     oppAddrBtn.title = compact;
     oppAddrBtn.dataset.fullAddress = compact;
-    oppSendNim.href = nimiqWalletRecipientDeepLink(compact);
+    oppSendNim.dataset.walletUrl = nimiqWalletRecipientDeepLink(compact);
     oppIdent.hidden = false;
     oppIdent.removeAttribute("src");
     oppIdent.dataset.address = compact;
@@ -1050,6 +1061,15 @@ export function createHud(
   });
   oppBackdrop.addEventListener("click", () => {
     closeOtherPlayerProfile();
+  });
+  oppSendNim.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const url = oppSendNim.dataset.walletUrl?.trim() ?? "";
+    if (!url) return;
+    opts?.onNimRecipientDeepLinkOpen?.(url);
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) opts?.onNimRecipientDeepLinkPopupBlocked?.();
   });
   oppAddrBtn.addEventListener("click", (ev) => {
     ev.preventDefault();

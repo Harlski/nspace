@@ -21,6 +21,7 @@ import {
 import {
   connectGameWs,
   sendChat,
+  sendNimSendIntent,
   sendBeginBlockClaim,
   sendCreateRoom,
   sendBlockClaimTick,
@@ -69,15 +70,51 @@ let unmountMainMenu: (() => void) | null = null;
 let selfAddress = "";
 
 function startIdleReturnToHub(ms: number, onIdle: () => void): () => void {
+  let deadline = Date.now() + ms;
   let t: ReturnType<typeof setTimeout> | null = null;
-  const arm = (): void => {
+  let hiddenAt: number | null = null;
+
+  const clearTimer = (): void => {
     if (t) clearTimeout(t);
+    t = null;
+  };
+
+  const schedule = (): void => {
+    clearTimer();
+    if (document.hidden) return;
+    const remain = Math.max(0, deadline - Date.now());
     t = setTimeout(() => {
       t = null;
+      if (document.hidden) return;
       onIdle();
-    }, ms);
+    }, remain);
   };
+
+  const arm = (): void => {
+    deadline = Date.now() + ms;
+    schedule();
+  };
+
+  const onVisibility = (): void => {
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      clearTimer();
+    } else {
+      if (hiddenAt !== null) {
+        deadline += Date.now() - hiddenAt;
+        hiddenAt = null;
+      } else {
+        deadline = Date.now() + ms;
+      }
+      schedule();
+    }
+  };
+
   arm();
+  document.addEventListener("visibilitychange", onVisibility, {
+    capture: true,
+    passive: true,
+  });
   const opts: AddEventListenerOptions = { capture: true, passive: true };
   const ev = [
     "pointerdown",
@@ -90,7 +127,8 @@ function startIdleReturnToHub(ms: number, onIdle: () => void): () => void {
     document.addEventListener(e, arm, opts);
   }
   return () => {
-    if (t) clearTimeout(t);
+    clearTimer();
+    document.removeEventListener("visibilitychange", onVisibility, opts);
     for (const e of ev) {
       document.removeEventListener(e, arm, opts);
     }
@@ -160,12 +198,31 @@ function enterGame(token: string, address: string): void {
   const showDebugHud =
     import.meta.env.DEV ||
     new URLSearchParams(location.search).has("debug");
-  const hud = createHud(hudRoot, { showDebug: showDebugHud });
+
+  let ws: WebSocket | null = null;
+  /** True after “Send NIM” opened the wallet link until the game tab is focused again. */
+  let walletSendNimFlowOpen = false;
+
+  function syncAwayPresenceToServer(): void {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const away = document.hidden || walletSendNimFlowOpen;
+    sendNimSendIntent(ws, away);
+  }
+
+  const hud = createHud(hudRoot, {
+    showDebug: showDebugHud,
+    onNimRecipientDeepLinkOpen: () => {
+      walletSendNimFlowOpen = true;
+      syncAwayPresenceToServer();
+    },
+    onNimRecipientDeepLinkPopupBlocked: () => {
+      walletSendNimFlowOpen = false;
+      syncAwayPresenceToServer();
+    },
+  });
   hud.setBrandLinksPlayerAddress(address);
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
-
-  let ws: WebSocket | null = null;
   type KnownRoomRow = {
     id: string;
     displayName: string;
@@ -1027,6 +1084,10 @@ function enterGame(token: string, address: string): void {
   document.addEventListener(
     "visibilitychange",
     () => {
+      if (!document.hidden) {
+        walletSendNimFlowOpen = false;
+      }
+      syncAwayPresenceToServer();
       if (document.hidden) return;
       ensureGameLandscape();
       startLandscapeRetries();
@@ -1892,6 +1953,7 @@ function enterGame(token: string, address: string): void {
       syncBuildHud();
       if (ws && ws.readyState === WebSocket.OPEN) {
         sendListRooms(ws);
+        syncAwayPresenceToServer();
       }
       } finally {
         if (joinedViaModalJoin) {

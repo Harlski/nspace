@@ -183,6 +183,8 @@ export interface PlayerState {
   z: number;
   vx: number;
   vz: number;
+  /** Ephemeral: client tab hidden/background or NIM send / wallet flow. */
+  nimSendAway?: boolean;
 }
 
 export type ObstacleTile = {
@@ -246,6 +248,8 @@ interface ClientConn {
   lastBlockClaimBeginAt: number;
   lastBlockClaimTickAt: number;
   lastBlockClaimCompleteAttemptAt: number;
+  /** Client away from game tab or in NIM send / wallet flow (broadcast as nimSendAway). */
+  nimSendIntent: boolean;
 }
 
 function withinBlockActionRange(
@@ -1553,8 +1557,14 @@ function advanceAlongPathHuman(
   return { changed: changedThis, arrivedTiles };
 }
 
+function playerToOutState(conn: ClientConn): PlayerState {
+  return conn.nimSendIntent
+    ? { ...conn.player, nimSendAway: true }
+    : { ...conn.player };
+}
+
 function snapshotPlayers(roomId: string): PlayerState[] {
-  const humans = [...roomOf(roomId).values()].map((c) => ({ ...c.player }));
+  const humans = [...roomOf(roomId).values()].map(playerToOutState);
   const fakes = roomFakePlayers.get(roomId);
   if (!fakes?.size) return humans;
   for (const { player } of fakes.values()) {
@@ -2141,7 +2151,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   const targetRoomConns = roomOf(targetRoomId);
   const others = [...targetRoomConns.values()]
     .filter((c) => c.address !== address)
-    .map((c) => ({ ...c.player }));
+    .map(playerToOutState);
   const rb = getRoomBaseBounds(targetRoomId);
   const doors = getDoorsForRoom(targetRoomId).map((d) => ({
     x: d.x,
@@ -2168,7 +2178,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   conn.ws.send(
     JSON.stringify({
       type: "welcome",
-      self: conn.player,
+      self: playerToOutState(conn),
       others,
       roomId: targetRoomId,
       roomBounds: rb,
@@ -2187,7 +2197,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   sendRoomCatalog(conn.ws, address);
 
   // Notify others in new room
-  broadcast(targetRoomId, { type: "playerJoined", player: { ...conn.player } }, address);
+  broadcast(targetRoomId, { type: "playerJoined", player: playerToOutState(conn) }, address);
 }
 
 export function startRoomTick(): void {
@@ -2434,6 +2444,7 @@ export function addClient(
     lastBlockClaimBeginAt: 0,
     lastBlockClaimTickAt: 0,
     lastBlockClaimCompleteAttemptAt: 0,
+    nimSendIntent: false,
   };
 
   room.set(address, conn);
@@ -2442,6 +2453,7 @@ export function addClient(
   );
 
   const others = snapshotPlayers(roomId).filter((p) => p.address !== address);
+  const selfOut = playerToOutState(conn);
 
   const rb = getRoomBaseBounds(roomId);
   const doors = getDoorsForRoom(roomId).map((d) => ({
@@ -2500,7 +2512,7 @@ export function addClient(
   ws.send(
     JSON.stringify({
       type: "welcome",
-      self: player,
+      self: selfOut,
       others,
       roomId,
       roomBounds: rb,
@@ -2520,7 +2532,7 @@ export function addClient(
 
   broadcast(
     roomId,
-    { type: "playerJoined", player: { ...player } },
+    { type: "playerJoined", player: playerToOutState(conn) },
     address
   );
   broadcastOnlineCount();
@@ -2556,6 +2568,15 @@ export function addClient(
     }
     if (msg.type === "listRooms") {
       sendRoomCatalog(ws, address);
+      return;
+    }
+
+    if (msg.type === "nimSendIntent") {
+      conn.nimSendIntent = Boolean(msg.active);
+      broadcast(currentRoomId, {
+        type: "state",
+        players: snapshotPlayers(currentRoomId),
+      });
       return;
     }
 

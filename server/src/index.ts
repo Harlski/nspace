@@ -17,6 +17,7 @@ import {
   getEventsForSession,
   listRecentPlayerAddresses,
   listSessionsForPlayer,
+  type AnalyticsTimeWindow,
 } from "./eventLog.js";
 import { flushCanvasClaimsSync } from "./canvasCanvas.js";
 import { flushSignboardsSync } from "./signboards.js";
@@ -26,7 +27,8 @@ import { installSwarmErrorForwarder } from "./swarmLogForwarder.js";
 import {
   flushNimPayoutQueueSync,
   getNimPayoutWalletBalanceLuna,
-  getPublicPendingPayoutSnapshot,
+  getPendingPayoutSnapshotForWallet,
+  getPublicPendingPayoutSummary,
   isNimPayoutSenderConfigured,
   startNimPayoutProcessor,
 } from "./nimPayout/index.js";
@@ -34,6 +36,43 @@ import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
 import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
 import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
 import { nimiqIdenticonDataUrl } from "./nimiqIdenticonServer.js";
+
+function analyticsDayStartUtcMs(dayStr: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayStr.trim());
+  if (!m) return null;
+  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+/** `ym` is `YYYY-MM` (UTC calendar month). */
+function utcMonthBoundsMs(ym: string): { fromTs: number; toTs: number } | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(ym.trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  if (!Number.isFinite(y) || mo < 1 || mo > 12) return null;
+  const fromTs = Date.UTC(y, mo - 1, 1);
+  const toTs = Date.UTC(y, mo, 0, 23, 59, 59, 999);
+  return { fromTs, toTs };
+}
+
+function parseAnalyticsTimeWindowFromQuery(q: { [key: string]: unknown }):
+  | { ok: true; range?: AnalyticsTimeWindow }
+  | { ok: false; error: string } {
+  const monthStr = String(q.month ?? "").trim();
+  const dayStr = String(q.day ?? "").trim();
+  if (monthStr) {
+    const b = utcMonthBoundsMs(monthStr);
+    if (!b) return { ok: false, error: "bad_month" };
+    return { ok: true, range: { fromTs: b.fromTs, toTs: b.toTs } };
+  }
+  if (dayStr) {
+    const start = analyticsDayStartUtcMs(dayStr);
+    if (start == null) return { ok: false, error: "bad_day" };
+    const toTs = start + 86_400_000 - 1;
+    return { ok: true, range: { fromTs: start, toTs } };
+  }
+  return { ok: true, range: undefined };
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "../.env") });
@@ -181,6 +220,28 @@ function jwtAddressFromReq(req: Request): string | null {
 
 function normalizeWalletId(v: string): string {
   return String(v || "").replace(/\s+/g, "").toUpperCase();
+}
+
+function analyticsAuthStatus(req: Request): {
+  authenticated: boolean;
+  analyticsAuthorized: boolean;
+  analyticsManager: boolean;
+} {
+  const t = bearerToken(req);
+  if (!t) {
+    return { authenticated: false, analyticsAuthorized: false, analyticsManager: false };
+  }
+  try {
+    const payload = verifySession(t, jwtSecret);
+    const signer = normalizeWalletId(payload.sub);
+    return {
+      authenticated: true,
+      analyticsAuthorized: analyticsAuthorizedWallets.has(signer),
+      analyticsManager: analyticsManagerWallets.has(signer),
+    };
+  } catch {
+    return { authenticated: false, analyticsAuthorized: false, analyticsManager: false };
+  }
 }
 
 function requireAnalyticsWallet(req: Request, res: Response, next: NextFunction): void {
@@ -358,10 +419,33 @@ app.get("/api/nim/payout-balance", async (_req, res) => {
   }
 });
 
-/** Public queue snapshot for dashboards (pending + processing jobs only). */
-app.get("/api/nim/pending-payouts", async (_req, res) => {
+/**
+ * Pending payout data.
+ * Without `Authorization: Bearer <jwt>`: aggregate summary only (no per-wallet rows).
+ * With valid session from `POST /api/auth/verify`: up to 20 pending + 20 completed rows for that wallet.
+ */
+app.get("/api/nim/pending-payouts", async (req, res) => {
   try {
-    res.json(await getPublicPendingPayoutSnapshot());
+    const t = bearerToken(req);
+    if (req.headers.authorization) {
+      if (!t) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+      try {
+        const payload = verifySession(t, jwtSecret);
+        const addr = String(payload.sub || "").trim();
+        if (!addr) {
+          res.status(401).json({ error: "unauthorized" });
+          return;
+        }
+        res.json(await getPendingPayoutSnapshotForWallet(addr));
+      } catch {
+        res.status(401).json({ error: "unauthorized" });
+      }
+      return;
+    }
+    res.json(await getPublicPendingPayoutSummary());
   } catch (err) {
     console.error("[nim/pending-payouts]", err);
     res.status(500).json({ error: "internal" });
@@ -375,23 +459,35 @@ app.get("/pending-payouts", (_req, res) => {
 
 /**
  * Dashboard-ready analytics from event logs.
- * Limits: days 1-30, sessions 1-1000, payouts 1-1000.
+ * Query: days (1–30), sessions (1–1000), payouts (1–1000).
+ * Optional whole-period UTC filters: `day=YYYY-MM-DD`, `month=YYYY-MM` (mutually exclusive; month wins if both).
+ * Extra query keys (e.g. `view`) are ignored.
  */
 app.get("/api/analytics/overview", requireAnalyticsWallet, async (req, res) => {
   const maxDays = Math.min(30, Math.max(1, Number(req.query.days) || 7));
   const sessionLimit = Math.min(1000, Math.max(1, Number(req.query.sessions) || 300));
   const payoutLimit = Math.min(1000, Math.max(1, Number(req.query.payouts) || 300));
+  const tw = parseAnalyticsTimeWindowFromQuery(req.query);
+  if (!tw.ok) {
+    res.status(400).json({ error: tw.error });
+    return;
+  }
   try {
     const analytics = await getEventLogAnalyticsSnapshot(
       maxDays,
       sessionLimit,
-      payoutLimit
+      payoutLimit,
+      tw.range
     );
     res.json(analytics);
   } catch (err) {
     console.error("[analytics/overview]", err);
     res.status(500).json({ error: "internal" });
   }
+});
+
+app.get("/api/analytics/auth-status", (req: Request, res: Response) => {
+  res.json(analyticsAuthStatus(req));
 });
 
 app.get("/api/analytics/authorized-wallets", requireAnalyticsWalletAdmin, (_req, res) => {

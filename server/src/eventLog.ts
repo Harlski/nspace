@@ -47,6 +47,26 @@ export type LoginHourBucket = {
   hourUtc: number;
   starts: number;
   ends: number;
+  /**
+   * Wallets whose **first** `session_start` in the processed log window occurs in this UTC hour
+   * (lifetime-first within the report’s retention slice, not “returning users only this hour”).
+   */
+  firstStarts: number;
+  uniquePlayers: number;
+  startUsers: AnalyticsUserCountRow[];
+  endUsers: AnalyticsUserCountRow[];
+  firstStartUsers: AnalyticsUserCountRow[];
+};
+
+/** Same shape as hourly login buckets, keyed by UTC calendar day `YYYY-MM-DD`. */
+export type LoginDayBucket = {
+  dayUtc: string;
+  starts: number;
+  ends: number;
+  /**
+   * Same semantics as {@link LoginHourBucket.firstStarts}: first-ever `session_start` in the report,
+   * bucketed by the UTC date of that first event.
+   */
   firstStarts: number;
   uniquePlayers: number;
   startUsers: AnalyticsUserCountRow[];
@@ -116,18 +136,54 @@ export type PayoutHourBucket = {
   }[];
 };
 
+export type PayoutDayBucket = {
+  dayUtc: string;
+  payouts: number;
+  totalLuna: string;
+  totalNim: string;
+  users: {
+    walletId: string;
+    identicon: string;
+    payouts: number;
+    totalLuna: string;
+    totalNim: string;
+  }[];
+};
+
+/** Optional UTC window on event timestamps (inclusive). */
+export type AnalyticsTimeWindow = {
+  fromTs?: number;
+  toTs?: number;
+};
+
 export type EventLogAnalyticsSnapshot = {
   generatedAt: number;
   maxDays: number;
+  /** Calendar files scanned (>= maxDays when a time filter needs older files). */
+  fileDaysScanned: number;
+  /** When the UTC filter spans more than one calendar day, chart APIs use daily buckets. */
+  chartGranularity: "hour" | "day";
   rowLimits: {
     sessions: number;
     payouts: number;
   };
+  /** Present when `fromTs` / `toTs` filter was applied. */
+  timeRange?: {
+    fromTs: number | null;
+    toTs: number | null;
+  };
+  /**
+   * Distinct wallets whose **first-ever** `session_start` in the processed logs falls inside the
+   * current analytics window (bounded by log retention; not pre-history before logs existed).
+   */
   firstTimeLogins: number;
   uniqueVisitors: number;
   visitors: AnalyticsUniqueVisitorRow[];
   loginByHourUtc: LoginHourBucket[];
   payoutByHourUtc: PayoutHourBucket[];
+  /** Populated when `chartGranularity` is `day` (e.g. month view). */
+  loginByDayUtc?: LoginDayBucket[];
+  payoutByDayUtc?: PayoutDayBucket[];
   sessions: SessionTimelineRow[];
   nimPayouts: NimTimelineRow[];
   daily: DailyAnalyticsRow[];
@@ -226,6 +282,22 @@ function parseLines(filePath: string): EventRecord[] {
   return out;
 }
 
+function computeAnalyticsFileDays(
+  maxDays: number,
+  fromTs?: number,
+  toTs?: number
+): number {
+  const cap = 30;
+  const d = Math.min(cap, Math.max(1, maxDays));
+  if (fromTs == null && toTs == null) return d;
+  const now = Date.now();
+  const end = toTs != null ? Math.min(toTs, now) : now;
+  const start = fromTs != null ? Math.min(fromTs, end) : end - d * 86_400_000;
+  const oldest = Math.min(start, end);
+  const spanDays = Math.ceil((now - oldest) / 86_400_000) + 1;
+  return Math.min(cap, Math.max(1, Math.max(d, spanDays)));
+}
+
 async function forEachRecentEvent(
   maxDays: number,
   visitor: (rec: EventRecord) => void
@@ -269,6 +341,21 @@ function utcDayKey(ts: number): string {
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/** Every UTC calendar day from `fromMs` through `toMs` (inclusive), as `YYYY-MM-DD`. */
+function enumerateInclusiveUtcDays(fromMs: number, toMs: number): string[] {
+  const keys: string[] = [];
+  const d0 = new Date(fromMs);
+  let t = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate());
+  const endKey = utcDayKey(toMs);
+  for (let guard = 0; guard < 400; guard += 1) {
+    const k = utcDayKey(t);
+    keys.push(k);
+    if (k >= endKey) break;
+    t += 86_400_000;
+  }
+  return keys;
 }
 
 /** Unique addresses seen in session_start within recent files. */
@@ -395,8 +482,42 @@ export function listRecentNimPayoutSentFromEventLog(
 export async function getEventLogAnalyticsSnapshot(
   maxDays: number,
   sessionLimit: number,
-  payoutLimit: number
+  payoutLimit: number,
+  timeWindow?: AnalyticsTimeWindow
 ): Promise<EventLogAnalyticsSnapshot> {
+  const fromTs = timeWindow?.fromTs;
+  const toTs = timeWindow?.toTs;
+  const scanDays = computeAnalyticsFileDays(maxDays, fromTs, toTs);
+  function inTimeWindow(ts: number): boolean {
+    if (fromTs != null && ts < fromTs) return false;
+    if (toTs != null && ts > toTs) return false;
+    return true;
+  }
+  const useDayCharts =
+    fromTs != null && toTs != null && utcDayKey(fromTs) !== utcDayKey(toTs);
+
+  type PayoutAcc = {
+    payouts: number;
+    totalLuna: bigint;
+    users: Map<string, { payouts: number; totalLuna: bigint }>;
+  };
+  const startsByDay = new Map<string, number>();
+  const endsByDay = new Map<string, number>();
+  const firstStartsByDay = new Map<string, number>();
+  const uniqueByDay = new Map<string, Set<string>>();
+  const startByDayUser = new Map<string, Map<string, number>>();
+  const endByDayUser = new Map<string, Map<string, number>>();
+  const firstByDayUser = new Map<string, Map<string, number>>();
+  const payoutByDay = new Map<string, PayoutAcc>();
+  function payoutAccForDay(dk: string): PayoutAcc {
+    let v = payoutByDay.get(dk);
+    if (!v) {
+      v = { payouts: 0, totalLuna: 0n, users: new Map() };
+      payoutByDay.set(dk, v);
+    }
+    return v;
+  }
+
   const startsByHour = Array.from({ length: 24 }, () => 0);
   const endsByHour = Array.from({ length: 24 }, () => 0);
   const firstStartsByHour = Array.from({ length: 24 }, () => 0);
@@ -472,19 +593,41 @@ export async function getEventLogAnalyticsSnapshot(
     return created;
   }
 
-  await forEachRecentEvent(maxDays, (rec) => {
+  await forEachRecentEvent(scanDays, (rec) => {
+    if (!inTimeWindow(rec.ts)) return;
     const day = utcDayKey(rec.ts);
     const ds = dayState(day);
     if (rec.address) ds.active.add(rec.address);
     if (rec.kind === ANALYTICS_EVENT_KINDS.sessionStart) {
       const h = new Date(rec.ts).getUTCHours();
-      startsByHour[h] += 1;
-      uniqueByHour[h].add(rec.address);
-      startByHourUser[h].set(rec.address, (startByHourUser[h].get(rec.address) ?? 0) + 1);
+      if (useDayCharts) {
+        startsByDay.set(day, (startsByDay.get(day) ?? 0) + 1);
+        let uset = uniqueByDay.get(day);
+        if (!uset) {
+          uset = new Set();
+          uniqueByDay.set(day, uset);
+        }
+        uset.add(rec.address);
+        const sm = startByDayUser.get(day) ?? new Map<string, number>();
+        sm.set(rec.address, (sm.get(rec.address) ?? 0) + 1);
+        startByDayUser.set(day, sm);
+        if (!firstSeenSessionStart.has(rec.address)) {
+          firstStartsByDay.set(day, (firstStartsByDay.get(day) ?? 0) + 1);
+          const fm = firstByDayUser.get(day) ?? new Map<string, number>();
+          fm.set(rec.address, (fm.get(rec.address) ?? 0) + 1);
+          firstByDayUser.set(day, fm);
+        }
+      } else {
+        startsByHour[h] += 1;
+        uniqueByHour[h].add(rec.address);
+        startByHourUser[h].set(rec.address, (startByHourUser[h].get(rec.address) ?? 0) + 1);
+        if (!firstSeenSessionStart.has(rec.address)) {
+          firstStartsByHour[h] += 1;
+          firstByHourUser[h].set(rec.address, (firstByHourUser[h].get(rec.address) ?? 0) + 1);
+        }
+      }
       if (!firstSeenSessionStart.has(rec.address)) {
         firstSeenSessionStart.add(rec.address);
-        firstStartsByHour[h] += 1;
-        firstByHourUser[h].set(rec.address, (firstByHourUser[h].get(rec.address) ?? 0) + 1);
       }
       ds.sessionStarts += 1;
       visitorState(rec.address).sessionStarts += 1;
@@ -498,8 +641,15 @@ export async function getEventLogAnalyticsSnapshot(
     }
     if (rec.kind === ANALYTICS_EVENT_KINDS.sessionEnd) {
       const h = new Date(rec.ts).getUTCHours();
-      endsByHour[h] += 1;
-      endByHourUser[h].set(rec.address, (endByHourUser[h].get(rec.address) ?? 0) + 1);
+      if (useDayCharts) {
+        endsByDay.set(day, (endsByDay.get(day) ?? 0) + 1);
+        const em = endByDayUser.get(day) ?? new Map<string, number>();
+        em.set(rec.address, (em.get(rec.address) ?? 0) + 1);
+        endByDayUser.set(day, em);
+      } else {
+        endsByHour[h] += 1;
+        endByHourUser[h].set(rec.address, (endByHourUser[h].get(rec.address) ?? 0) + 1);
+      }
       ds.sessionEnds += 1;
       visitorState(rec.address).sessionEnds += 1;
       const current = bySession.get(rec.sessionId);
@@ -541,7 +691,8 @@ export async function getEventLogAnalyticsSnapshot(
           ? payload.amountLuna
           : null;
       const payoutHour = new Date(sentAt).getUTCHours();
-      const pb = payoutByHour[payoutHour];
+      const payoutDayKey = utcDayKey(sentAt);
+      const pb = useDayCharts ? payoutAccForDay(payoutDayKey) : payoutByHour[payoutHour];
       pb.payouts += 1;
       payouts.push({
         sentAt,
@@ -646,6 +797,49 @@ export async function getEventLogAnalyticsSnapshot(
     });
   }
 
+  let loginByDayUtc: LoginDayBucket[] | undefined;
+  let payoutByDayUtc: PayoutDayBucket[] | undefined;
+  if (useDayCharts && fromTs != null && toTs != null) {
+    const dayOrder = enumerateInclusiveUtcDays(fromTs, toTs);
+    loginByDayUtc = [];
+    for (const dk of dayOrder) {
+      loginByDayUtc.push({
+        dayUtc: dk,
+        starts: startsByDay.get(dk) ?? 0,
+        ends: endsByDay.get(dk) ?? 0,
+        firstStarts: firstStartsByDay.get(dk) ?? 0,
+        uniquePlayers: uniqueByDay.get(dk)?.size ?? 0,
+        startUsers: await mapUserCounts(startByDayUser.get(dk) ?? new Map()),
+        endUsers: await mapUserCounts(endByDayUser.get(dk) ?? new Map()),
+        firstStartUsers: await mapUserCounts(firstByDayUser.get(dk) ?? new Map()),
+      });
+    }
+    payoutByDayUtc = [];
+    for (const dk of dayOrder) {
+      const acc =
+        payoutByDay.get(dk) ??
+        ({ payouts: 0, totalLuna: 0n, users: new Map() } as PayoutAcc);
+      const dayUsers = [...acc.users.entries()]
+        .sort((a, b) => Number(b[1].totalLuna - a[1].totalLuna))
+        .slice(0, 20);
+      payoutByDayUtc.push({
+        dayUtc: dk,
+        payouts: acc.payouts,
+        totalLuna: acc.totalLuna.toString(),
+        totalNim: formatLunaToNim(acc.totalLuna.toString()) ?? "0.00000",
+        users: await Promise.all(
+          dayUsers.map(async ([walletId, v]) => ({
+            walletId,
+            identicon: await identiconFor(walletId),
+            payouts: v.payouts,
+            totalLuna: v.totalLuna.toString(),
+            totalNim: formatLunaToNim(v.totalLuna.toString()) ?? "0.00000",
+          }))
+        ),
+      });
+    }
+  }
+
   const visitorRows = [...visitors.entries()]
     .sort((a, b) => Number(b[1].totalPayoutLuna - a[1].totalPayoutLuna))
     .slice(0, 250);
@@ -675,18 +869,26 @@ export async function getEventLogAnalyticsSnapshot(
       chats: row.chats,
     }));
 
+  const hasWindow = fromTs != null || toTs != null;
   return {
     generatedAt: Date.now(),
     maxDays,
+    fileDaysScanned: scanDays,
+    chartGranularity: useDayCharts ? "day" : "hour",
     rowLimits: {
       sessions: Math.max(1, sessionLimit),
       payouts: Math.max(1, payoutLimit),
     },
+    timeRange: hasWindow
+      ? { fromTs: fromTs ?? null, toTs: toTs ?? null }
+      : undefined,
     firstTimeLogins: firstSeenSessionStart.size,
     uniqueVisitors: visitors.size,
     visitors: visitorOut,
     loginByHourUtc,
     payoutByHourUtc,
+    loginByDayUtc,
+    payoutByDayUtc,
     sessions,
     nimPayouts,
     daily: dailyRows,

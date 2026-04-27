@@ -1,10 +1,21 @@
+import "./mainSiteClient.css";
+import { isTokenExpired } from "./auth/session.js";
 import { apiUrl } from "./net/apiBase.js";
-import { renderAnalyticsTopbar } from "./ui/analyticsTopbar.js";
+import { refreshMainSiteNavFromSession, renderMainSiteTopbar } from "./ui/analyticsTopbar.js";
+import { readMainSiteAuthToken, writeMainSiteAuthToken } from "./ui/mainSiteAuthKeys.js";
+import {
+  animateSigningDots,
+  isSigningUserCancelledError,
+  walletSigningMarkup,
+} from "./ui/walletSigningUi.js";
 
 type LoginHourBucket = {
   hourUtc: number;
   starts: number;
   ends: number;
+  uniquePlayers?: number;
+  /** First-ever `session_start` in this report, bucketed by UTC hour of that first event. */
+  firstStarts?: number;
   startUsers: { walletId: string; identicon: string; count: number }[];
   endUsers: { walletId: string; identicon: string; count: number }[];
 };
@@ -28,6 +39,8 @@ type DailyRow = {
   sessionStarts: number;
   claimBlocks: number;
   payoutsSent: number;
+  placeBlocks: number;
+  chats: number;
 };
 
 type VisitorRow = {
@@ -61,6 +74,18 @@ type AnalyticsPayload = {
   nimPayouts: PayoutRow[];
   daily: DailyRow[];
 };
+
+function parseJwtSub(token: string): string {
+  try {
+    const p = String(token || "").split(".")[1] || "";
+    if (!p) return "";
+    const json = atob(p.replace(/-/g, "+").replace(/_/g, "/"));
+    const obj = JSON.parse(json) as { sub?: string };
+    return String(obj.sub || "");
+  } catch {
+    return "";
+  }
+}
 
 function esc(s: unknown): string {
   return String(s)
@@ -125,9 +150,6 @@ function toB64(u8: Uint8Array): string {
 }
 
 async function load(): Promise<void> {
-  await renderAnalyticsTopbar("analytics");
-  const AUTH_KEY = "nspace_analytics_auth_token";
-  const AUTH_ADDR_KEY = "nspace_analytics_auth_addr";
   const statusEl = document.getElementById("status");
   const authGateEl = document.getElementById("authGate");
   const analyticsGridEl = document.getElementById("analyticsGrid");
@@ -158,26 +180,21 @@ async function load(): Promise<void> {
   const setAuthedVisible = (visible: boolean): void => {
     (analyticsGridEl as HTMLElement).style.display = visible ? "grid" : "none";
   };
-  const showAuthGate = (msg: string, withButton: boolean): void => {
+  const showAuthGateMessage = (msg: string, layout: "default" | "standalone" = "default"): void => {
     (authGateEl as HTMLElement).style.display = "block";
     setAuthedVisible(false);
-    authGateEl.innerHTML =
-      `<div>${esc(msg)}</div>` +
-      (withButton
-        ? "<div style='margin-top:0.55rem'><button id='btnAnalyticsLogin'>Click to login</button></div>"
-        : "");
-    if (withButton) {
-      const btn = document.getElementById("btnAnalyticsLogin");
-      if (btn) {
-        btn.addEventListener("click", () => {
-          void runAnalyticsLogin();
-        });
-      }
-    }
+    const standalone = layout === "standalone";
+    const extra = standalone ? " ms-auth-gate--standalone" : "";
+    (authGateEl as HTMLElement).className = standalone ? "ms-panel ms-mono" : "auth-gate mono";
+    authGateEl.innerHTML = `<div class="ms-auth-gate${extra}"><div class="ms-auth-gate-msg">${esc(msg)}</div></div>`;
   };
   const runAnalyticsLogin = async (): Promise<void> => {
+    let stopDots = (): void => {};
     try {
-      authGateEl.innerHTML = "<div>Waiting for wallet signature...</div>";
+      (authGateEl as HTMLElement).style.display = "block";
+      (authGateEl as HTMLElement).className = "auth-gate mono";
+      authGateEl.innerHTML = walletSigningMarkup();
+      stopDots = animateSigningDots(authGateEl);
       const nonceResp = await fetch(apiUrl("/api/auth/nonce"));
       if (!nonceResp.ok) throw new Error("nonce_failed");
       const nonceJson = (await nonceResp.json()) as { nonce?: string };
@@ -209,33 +226,53 @@ async function load(): Promise<void> {
       const token = String(verified.token || "");
       const address = String(verified.address || signed.signer || "");
       if (!token) throw new Error("missing_token");
-      sessionStorage.setItem(AUTH_KEY, token);
-      if (address) sessionStorage.setItem(AUTH_ADDR_KEY, address);
+      writeMainSiteAuthToken(token, address);
+      stopDots();
       window.location.reload();
     } catch (e) {
-      showAuthGate(`Login failed: ${String(e instanceof Error ? e.message : e)}`, true);
+      stopDots();
+      if (isSigningUserCancelledError(e)) {
+        showAuthGateMessage("You must be signed in.", "standalone");
+      } else {
+        showAuthGateMessage("Sign-in could not be completed.");
+      }
     }
   };
 
   const params = new URLSearchParams(window.location.search);
   const tokenFromQuery = String(params.get("token") || "").trim();
   if (tokenFromQuery) {
-    sessionStorage.setItem(AUTH_KEY, tokenFromQuery);
+    const qAddr = parseJwtSub(tokenFromQuery);
+    writeMainSiteAuthToken(tokenFromQuery, qAddr);
     window.history.replaceState({}, "", "/analytics");
   }
-  const token = sessionStorage.getItem(AUTH_KEY) || "";
+  const token = readMainSiteAuthToken();
   if (!token) {
-    showAuthGate("Login required to view analytics.", true);
-    statusEl.textContent = "Please sign in with the authorized wallet.";
+    setAuthedVisible(false);
+    (statusEl as HTMLElement).style.display = "none";
+    statusEl.textContent = "";
+    showAuthGateMessage("You must be signed in.", "standalone");
+    await renderMainSiteTopbar("analytics", { onLoginClick: () => void runAnalyticsLogin() });
+    return;
+  }
+  if (isTokenExpired(token)) {
+    setAuthedVisible(false);
+    statusEl.innerHTML = "<span class='err'>Session expired.</span>";
+    (statusEl as HTMLElement).style.display = "";
+    showAuthGateMessage("Your session has expired.", "standalone");
+    await renderMainSiteTopbar("analytics", { onLoginClick: () => void runAnalyticsLogin() });
+    await refreshMainSiteNavFromSession();
     return;
   }
 
-  const days = Number(params.get("days") || "7");
-  const sessions = Number(params.get("sessions") || "300");
-  const payouts = Number(params.get("payouts") || "300");
-  const url = apiUrl(
-    `/api/analytics/overview?days=${encodeURIComponent(String(days))}&sessions=${encodeURIComponent(String(sessions))}&payouts=${encodeURIComponent(String(payouts))}`
-  );
+  (statusEl as HTMLElement).style.display = "";
+  await renderMainSiteTopbar("analytics");
+
+  const q = new URLSearchParams(window.location.search);
+  if (!q.get("days")) q.set("days", "7");
+  if (!q.get("sessions")) q.set("sessions", "300");
+  if (!q.get("payouts")) q.set("payouts", "300");
+  const url = apiUrl(`/api/analytics/overview?${q.toString()}`);
 
   const resp = await fetch(url, {
     headers: { authorization: `Bearer ${token}` },
@@ -243,20 +280,23 @@ async function load(): Promise<void> {
   });
   if (!resp.ok) {
     if (resp.status === 403) {
-      showAuthGate("Access denied for this wallet.", false);
-      statusEl.innerHTML = "";
+      showAuthGateMessage("Access denied for this wallet.", "standalone");
+      statusEl.textContent = "";
+      await refreshMainSiteNavFromSession();
       return;
     }
     if (resp.status === 401) {
-      sessionStorage.removeItem(AUTH_KEY);
-      showAuthGate("Session expired. Click to login again.", true);
+      showAuthGateMessage("Your session has expired.");
       statusEl.innerHTML = "<span class='err'>Session expired.</span>";
+      await renderMainSiteTopbar("analytics", { onLoginClick: () => void runAnalyticsLogin() });
+      await refreshMainSiteNavFromSession();
       return;
     }
     statusEl.innerHTML = `<span class="err">Request failed (${resp.status}).</span>`;
     return;
   }
   (authGateEl as HTMLElement).style.display = "none";
+  (authGateEl as HTMLElement).className = "auth-gate mono";
   setAuthedVisible(true);
   const data = (await resp.json()) as AnalyticsPayload;
   statusEl.textContent = `Generated ${fmtUtc(data.generatedAt)} · last ${data.maxDays} days`;
@@ -318,7 +358,9 @@ async function load(): Promise<void> {
               `<div class="user-row">${walletChip(u.identicon, u.walletId)}<span>${esc(walletShort(u.walletId))}</span><span>${u.count} out</span></div>`
           )
           .join("");
-        loginHoverEl.innerHTML = `<div><strong>${String(hour).padStart(2, "0")}:00 UTC</strong> · ${row.starts} in / ${row.ends} out · ${row.uniquePlayers} unique</div><div style="margin-top:0.35rem">${starts || "<div>No logins</div>"}${ends || "<div>No logouts</div>"}</div>`;
+        const fs = Number(row.firstStarts || 0);
+        const uniq = Number(row.uniquePlayers || 0);
+        loginHoverEl.innerHTML = `<div><strong>${String(hour).padStart(2, "0")}:00 UTC</strong> · ${row.starts} in / ${row.ends} out · ${uniq} unique · ${fs} first-ever sign-in${fs === 1 ? "" : "s"} (this report)</div><div style="margin-top:0.35rem">${starts || "<div>No logins</div>"}${ends || "<div>No logouts</div>"}</div>`;
         attachCopyHandlers(loginHoverEl);
       });
     });
@@ -390,12 +432,12 @@ async function load(): Promise<void> {
     "</tbody></table>";
 
   dailyEl.innerHTML =
-    "<table><thead><tr><th>Day</th><th class='right'>Players</th><th class='right'>Logins</th><th class='right'>Claims</th><th class='right'>Payouts</th></tr></thead><tbody>" +
+    "<table><thead><tr><th>Day</th><th class='right'>Players</th><th class='right'>Payouts</th><th class='right'>Place blocks</th><th class='right'>Chats</th></tr></thead><tbody>" +
     data.daily
       .slice(0, 30)
       .map(
         (d) =>
-          `<tr><td>${esc(d.dayUtc)}</td><td class='right'>${d.activePlayers}</td><td class='right'>${d.sessionStarts}</td><td class='right'>${d.claimBlocks}</td><td class='right'>${d.payoutsSent}</td></tr>`
+          `<tr><td>${esc(d.dayUtc)}</td><td class='right'>${d.activePlayers}</td><td class='right'>${d.payoutsSent}</td><td class='right'>${Number(d.placeBlocks) || 0}</td><td class='right'>${Number(d.chats) || 0}</td></tr>`
       )
       .join("") +
     "</tbody></table>";

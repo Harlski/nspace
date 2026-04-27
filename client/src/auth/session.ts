@@ -1,6 +1,9 @@
 const STORAGE_KEY = "nspace_auth_v1";
 const STORAGE_ACCOUNTS_KEY = "nspace_auth_accounts_v1";
-const MAX_CACHED_ACCOUNTS = 6;
+
+/** Max wallets remembered for main-site account switching (LRU trim on save). */
+export const MAIN_SITE_MAX_CACHED_ACCOUNTS = 5;
+const MAX_CACHED_ACCOUNTS = MAIN_SITE_MAX_CACHED_ACCOUNTS;
 
 export interface CachedSession {
   token: string;

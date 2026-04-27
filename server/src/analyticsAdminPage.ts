@@ -1,4 +1,10 @@
-import { analyticsTopbarCss, analyticsTopbarHtml } from "./analyticsTopbar.js";
+import {
+  analyticsFontLinkTags,
+  analyticsPageRootCss,
+  analyticsTopbarCss,
+  analyticsTopbarHtml,
+} from "./analyticsTopbar.js";
+import { mainSiteShellCss } from "./mainSiteShell.js";
 
 export function analyticsAdminPageHtml(): string {
   return `<!DOCTYPE html>
@@ -6,17 +12,16 @@ export function analyticsAdminPageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Admin</title>
+  <title>Admin — Nimiq Space</title>
+  ${analyticsFontLinkTags()}
   <style>
-    :root { font-family: system-ui, sans-serif; background: #0f1419; color: #e6edf3; }
-    body { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    ${analyticsPageRootCss()}
+    ${mainSiteShellCss()}
     ${analyticsTopbarCss()}
-    h1 { margin: 0 0 0.6rem 0; font-size: clamp(24px, 5vw, 34px); }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.84rem; }
-    .panel { margin-top: 0.75rem; padding: 0.85rem; border-radius: 8px; border: 1px solid #2a394f; background: #131b27; }
     .row { display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center; margin-top: 0.6rem; }
     input { flex: 1 1 420px; min-width: 220px; background: #0f1622; color: #dbe6f4; border: 1px solid #2c3b52; border-radius: 6px; padding: 0.45rem 0.55rem; }
-    button { background: #2b5ea7; color: #eef6ff; border: 1px solid #4d83d0; border-radius: 6px; padding: 0.4rem 0.7rem; cursor: pointer; }
+    #panel button { background: var(--ms-accent); color: #eef6ff; border: 1px solid var(--ms-accent-hover-border); border-radius: 6px; padding: 0.4rem 0.7rem; cursor: pointer; }
     .list { margin-top: 0.7rem; display: grid; gap: 0.35rem; }
     .item { background: #0f1622; border: 1px solid #263348; border-radius: 6px; padding: 0.38rem 0.45rem; }
     .item-top { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
@@ -29,11 +34,42 @@ export function analyticsAdminPageHtml(): string {
     .err { color: #f87171; }
   </style>
 </head>
-<body>
-  ${analyticsTopbarHtml()}
-  <h1>Admin</h1>
-  <div id="panel" class="panel mono">Loading...</div>
+<body class="ms-site">
+  ${analyticsTopbarHtml("admin")}
+  <h1 id="adminDocTitle" class="ms-doc-title">Admin</h1>
+  <div id="panel" class="ms-panel ms-mono">Loading...</div>
   <script>
+    var AUTH_KEYS = ["nspace_analytics_auth_token", "nspace_pending_payouts_token"];
+    var AUTH_ADDR_KEY = "nspace_analytics_auth_addr";
+    function readAuthToken() {
+      if (typeof window.__nsHydrateMainSiteAuth === "function") {
+        window.__nsHydrateMainSiteAuth();
+      }
+      for (var i = 0; i < AUTH_KEYS.length; i++) {
+        var t = sessionStorage.getItem(AUTH_KEYS[i]);
+        if (t) return t;
+      }
+      return "";
+    }
+    function writeAuthToken(token) {
+      for (var j = 0; j < AUTH_KEYS.length; j++) {
+        sessionStorage.setItem(AUTH_KEYS[j], token);
+      }
+      var addr = sessionStorage.getItem(AUTH_ADDR_KEY) || "";
+      if (typeof window.__nsSaveMainSiteAuth === "function") {
+        window.__nsSaveMainSiteAuth(token, addr);
+      }
+    }
+    function clearAuthSession() {
+      if (typeof window.__nsClearMainSiteAuth === "function") {
+        window.__nsClearMainSiteAuth();
+      } else {
+        for (var k = 0; k < AUTH_KEYS.length; k++) {
+          sessionStorage.removeItem(AUTH_KEYS[k]);
+        }
+        sessionStorage.removeItem(AUTH_ADDR_KEY);
+      }
+    }
     function esc(s) {
       return String(s)
         .replace(/&/g, "&amp;")
@@ -74,72 +110,348 @@ export function analyticsAdminPageHtml(): string {
       }
     }
     var authMenuDocBound = false;
-    async function renderAuthUser(address, canManageWallets) {
+    function toB64(u8) {
+      var s = "";
+      for (var i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+      return btoa(s);
+    }
+    var adminSigningDotsTimer = null;
+    function walletSigningMarkup() {
+      return (
+        "<div class='ms-wallet-signing ms-wallet-signing--column' role='status' aria-live='polite'>" +
+        "<span class='ms-spinner' aria-hidden='true'></span>" +
+        "<p class='ms-signing-in-line'>" +
+        "<span class='ms-signing-static'>Signing in</span>" +
+        "<span class='ms-signing-dots-live' aria-hidden='true'>.</span>" +
+        "</p>" +
+        "<span class='ms-sr-only'>Signing in</span>" +
+        "</div>"
+      );
+    }
+    function stopAdminSigningDots() {
+      if (adminSigningDotsTimer) {
+        clearInterval(adminSigningDotsTimer);
+        adminSigningDotsTimer = null;
+      }
+    }
+    function startAdminSigningDotsIn(root) {
+      stopAdminSigningDots();
+      var el = root.querySelector(".ms-signing-dots-live");
+      if (!el) return;
+      var states = [".", "..", "...", "."];
+      var i = 0;
+      el.textContent = states[0];
+      adminSigningDotsTimer = setInterval(function () {
+        i = (i + 1) % states.length;
+        el.textContent = states[i];
+      }, 400);
+    }
+    function isSigningUserCancelledError(e) {
+      var m = String((e && e.message) || e || "").toLowerCase();
+      return (
+        m.indexOf("connection was closed") !== -1 ||
+        m.indexOf("user closed") !== -1 ||
+        m.indexOf("user denied") !== -1 ||
+        m.indexOf("rejected") !== -1 ||
+        m.indexOf("aborted") !== -1 ||
+        m.indexOf("cancelled") !== -1 ||
+        m.indexOf("canceled") !== -1
+      );
+    }
+    async function runWalletLogin() {
+      var panel = document.getElementById("panel");
+      stopAdminSigningDots();
+      if (panel) {
+        panel.innerHTML = walletSigningMarkup();
+        startAdminSigningDotsIn(panel);
+      }
+      try {
+        var nonceResp = await fetch("/api/auth/nonce");
+        if (!nonceResp.ok) throw new Error("nonce_failed");
+        var nonceJson = await nonceResp.json();
+        var nonce = String(nonceJson.nonce || "");
+        var HubMod = await import("https://esm.sh/@nimiq/hub-api");
+        var HubApi = HubMod.default;
+        var hub = new HubApi("https://hub.nimiq.com");
+        var message = "Login:v1:" + nonce;
+        var signed = await hub.signMessage({
+          appName: "nspace analytics",
+          message: message,
+        });
+        var verifyResp = await fetch("/api/auth/verify", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            nonce: nonce,
+            message: message,
+            signer: signed.signer,
+            signerPublicKey: toB64(signed.signerPublicKey),
+            signature: toB64(signed.signature),
+          }),
+        });
+        if (!verifyResp.ok) {
+          var errBody = await verifyResp.json().catch(function () { return {}; });
+          throw new Error(String(errBody.error || "verify_failed"));
+        }
+        var verified = await verifyResp.json();
+        var token = String(verified.token || "");
+        var address = String(verified.address || signed.signer || "");
+        if (!token) throw new Error("missing_token");
+        if (address) sessionStorage.setItem(AUTH_ADDR_KEY, address);
+        writeAuthToken(token);
+        stopAdminSigningDots();
+        window.location.reload();
+      } catch (e) {
+        stopAdminSigningDots();
+        if (panel) {
+          if (isSigningUserCancelledError(e)) {
+            panel.innerHTML =
+              "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
+              "<div class='ms-auth-gate-msg'>You must be signed in.</div>" +
+              "</div>";
+          } else {
+            panel.innerHTML =
+              "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
+              "<div class='ms-auth-gate-msg'>Sign-in could not be completed.</div>" +
+              "</div>" +
+              "<p class='ms-summary' style='text-align:center;margin:0.65rem 0 0'>" +
+              "<a class='ms-link-expl' href='/analytics'>Open Analytics</a></p>";
+          }
+        }
+      }
+    }
+    async function renderSignInTop() {
+      var authUserEl = document.getElementById("authUser");
+      if (!authUserEl) return;
+      authUserEl.style.display = "block";
+      authUserEl.innerHTML =
+        "<span id='authTopLogin' class='auth-user-signin' role='button' tabindex='0'>Sign In</span>";
+      var loginEl = document.getElementById("authTopLogin");
+      if (loginEl) {
+        loginEl.addEventListener("click", function () {
+          void runWalletLogin();
+        });
+        loginEl.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            void runWalletLogin();
+          }
+        });
+      }
+    }
+    async function fetchAnalyticsAuthStatus(token) {
+      try {
+        var r = await fetch("/api/analytics/auth-status", {
+          headers: { authorization: "Bearer " + token },
+          cache: "no-store",
+        });
+        if (!r.ok) throw new Error("auth_status_failed");
+        var j = await r.json();
+        return {
+          analyticsAuthorized: Boolean(j.analyticsAuthorized),
+          analyticsManager: Boolean(j.analyticsManager),
+        };
+      } catch {
+        return { analyticsAuthorized: false, analyticsManager: false };
+      }
+    }
+    function walletNormAdmin(a) {
+      return String(a || "").replace(/\s+/g, "").toUpperCase();
+    }
+    var MAX_MAIN_SITE_ACCOUNTS = 5;
+    async function populateAdminAuthPicker(activeAddr) {
+      var picker = document.getElementById("authAccountPicker");
+      if (!picker || typeof window.__nsListMainSiteCachedAccounts !== "function") return;
+      var rows = window.__nsListMainSiteCachedAccounts() || [];
+      var activeN = walletNormAdmin(activeAddr);
+      var html = "";
+      for (var ai = 0; ai < rows.length; ai++) {
+        var row = rows[ai];
+        var ident = await fetchIdenticon(row.address);
+        var isAct = walletNormAdmin(row.address) === activeN;
+        var exp = row.expired;
+        var img = ident
+          ? "<img class='auth-user-account-ident' src='" + esc(ident) + "' alt='' width='22' height='22'/>"
+          : "<span class='auth-user-account-ident auth-user-account-ident--ph' aria-hidden='true'></span>";
+        var dis = exp ? " disabled" : "";
+        var rowCls =
+          "auth-user-account-row" +
+          (exp ? " auth-user-account-row--expired" : "") +
+          (isAct ? " auth-user-account-row--active" : "");
+        var check = isAct ? "<span class='auth-user-account-check' aria-label='Active'>✓</span>" : "";
+        html +=
+          "<button type='button' class='" +
+          rowCls +
+          "' data-switch-account='" +
+          esc(row.address) +
+          "'" +
+          dis +
+          ">" +
+          img +
+          "<span class='mono'>" +
+          esc(walletShort(row.address)) +
+          "</span>" +
+          check +
+          "</button>";
+      }
+      if (rows.length >= MAX_MAIN_SITE_ACCOUNTS) {
+        html +=
+          "<p class='auth-user-account-cap mono'>Maximum " +
+          MAX_MAIN_SITE_ACCOUNTS +
+          " accounts saved.</p>";
+      } else {
+        html +=
+          "<button type='button' class='auth-user-account-row auth-user-account-row--add' id='authAddAccount'>Add account</button>";
+      }
+      picker.innerHTML = html;
+      picker.querySelectorAll("[data-switch-account]").forEach(function (b) {
+        b.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          var addr = String(b.getAttribute("data-switch-account") || "");
+          if (!addr || walletNormAdmin(addr) === activeN) {
+            picker.style.display = "none";
+            return;
+          }
+          if (typeof window.__nsActivateMainSiteCachedAccount === "function") {
+            window.__nsActivateMainSiteCachedAccount(addr);
+          }
+        });
+      });
+      var addBtn = document.getElementById("authAddAccount");
+      if (addBtn) {
+        addBtn.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          picker.style.display = "none";
+          var m = document.getElementById("authUserMenu");
+          if (m) m.style.display = "none";
+          void runWalletLogin();
+        });
+      }
+    }
+    function bindAdminAuthAccountSwitcher(activeAddr) {
+      var toggle = document.getElementById("authChangeAccountToggle");
+      var picker = document.getElementById("authAccountPicker");
+      if (!toggle || !picker) return;
+      toggle.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var opening = picker.style.display !== "block";
+        picker.style.display = opening ? "block" : "none";
+        if (opening) void populateAdminAuthPicker(activeAddr);
+      });
+      void populateAdminAuthPicker(activeAddr);
+    }
+    async function renderAuthUser(address, canViewAnalytics) {
       var authUserEl = document.getElementById("authUser");
       if (!authUserEl || !address) return;
       authUserEl.style.display = "block";
       var ident = await fetchIdenticon(address);
+      var tok = readAuthToken();
+      var sessionExpired =
+        !!tok && typeof window.__nsMainSiteJwtExpired === "function" && window.__nsMainSiteJwtExpired(tok);
+      var alertSvg =
+        "<svg class='nq-icon auth-user-session-alert' width='14' height='14' aria-hidden='true' focusable='false'><use href='/nimiq-style.icons.svg#nq-alert-circle'/></svg>";
+      var identWrap = "";
+      if (ident || sessionExpired) {
+        identWrap =
+          "<span class='auth-user-ident-wrap" +
+          (ident ? "" : " auth-user-ident-wrap--solo") +
+          "'>" +
+          (ident ? "<img class='ident' src='" + esc(ident) + "' alt='wallet'/>" : "") +
+          (sessionExpired ? alertSvg : "") +
+          "</span>";
+      }
+      var btnTitle = sessionExpired
+        ? "Session expired — sign in again (" + esc(address) + ")"
+        : "Signed in as " + esc(address);
+      var acctSection =
+        "<div class='auth-user-menu-section'><button type='button' id='authChangeAccountToggle' class='auth-user-menu-row'>Change account</button><div id='authAccountPicker' class='auth-user-submenu' style='display:none' role='group' aria-label='Choose wallet'></div></div>";
+      var menuInner =
+        (sessionExpired
+          ? "<button type='button' id='authRefreshSession' class='auth-user-menu-row'>Sign in again</button>"
+          : "") +
+        acctSection +
+        "<button type='button' id='authUserLogout' class='auth-user-menu-row'>Logout</button>";
       authUserEl.innerHTML =
-        "<button id='authUserBtn' class='auth-user-btn' title='Signed in as " + esc(address) + "'>" +
-        (ident ? "<img class='ident' src='" + esc(ident) + "' alt='wallet'/>" : "") +
-        "<span class='mono'>" + esc(walletShort(address)) + "</span>" +
+        "<button type='button' id='authUserBtn' class='auth-user-btn' title='" +
+        btnTitle +
+        "'>" +
+        identWrap +
+        "<span class='mono'>" +
+        esc(walletShort(address)) +
+        "</span>" +
         "</button>" +
         "<div id='authUserMenu' class='auth-user-menu'>" +
-        (canManageWallets ? "<button id='authUserAdmin'>Admin</button>" : "") +
-        "<button id='authUserAnalytics'>Analytics</button>" +
-        "<button id='authUserLogout'>Logout</button>" +
+        menuInner +
         "</div>";
       var btn = document.getElementById("authUserBtn");
       var menu = document.getElementById("authUserMenu");
-      var admin = document.getElementById("authUserAdmin");
-      var analytics = document.getElementById("authUserAnalytics");
+      var refreshSess = document.getElementById("authRefreshSession");
       var logout = document.getElementById("authUserLogout");
+      if (refreshSess) {
+        refreshSess.addEventListener("click", function () {
+          if (menu) menu.style.display = "none";
+          void runWalletLogin();
+        });
+      }
       if (btn && menu) {
         btn.addEventListener("click", function (e) {
           e.stopPropagation();
-          menu.style.display = menu.style.display === "block" ? "none" : "block";
+          var open = menu.style.display !== "block";
+          menu.style.display = open ? "block" : "none";
+          var sub = document.getElementById("authAccountPicker");
+          if (!open && sub) sub.style.display = "none";
         });
         if (!authMenuDocBound) {
-          document.addEventListener("click", function () {
+          document.addEventListener("click", function (ev) {
+            if (ev.target && ev.target.closest && ev.target.closest("#authUser")) return;
             var m = document.getElementById("authUserMenu");
             if (m) m.style.display = "none";
+            var sub2 = document.getElementById("authAccountPicker");
+            if (sub2) sub2.style.display = "none";
           });
           authMenuDocBound = true;
         }
       }
-      if (admin) {
-        admin.addEventListener("click", function () {
-          if (menu) menu.style.display = "none";
-          window.location.href = "/admin";
-        });
-      }
-      if (analytics) {
-        analytics.addEventListener("click", function () {
-          if (menu) menu.style.display = "none";
-          window.location.href = "/analytics";
-        });
-      }
+      bindAdminAuthAccountSwitcher(address);
       if (logout) {
         logout.addEventListener("click", function () {
-          sessionStorage.removeItem("nspace_analytics_auth_token");
-          sessionStorage.removeItem("nspace_analytics_auth_addr");
-          window.location.href = "/analytics";
+          clearAuthSession();
+          window.location.reload();
         });
       }
     }
     async function load() {
       var panel = document.getElementById("panel");
+      var docTitle = document.getElementById("adminDocTitle");
       if (!panel) return;
-      var token = sessionStorage.getItem("nspace_analytics_auth_token") || "";
-      var signed = sessionStorage.getItem("nspace_analytics_auth_addr") || "";
+      var token = readAuthToken();
+      var signed = sessionStorage.getItem(AUTH_ADDR_KEY) || "";
       if (!signed) signed = parseJwtSub(token);
-      if (signed) sessionStorage.setItem("nspace_analytics_auth_addr", signed);
+      if (signed) sessionStorage.setItem(AUTH_ADDR_KEY, signed);
       if (!token) {
-        var authUserEl = document.getElementById("authUser");
-        if (authUserEl) authUserEl.style.display = "none";
-        panel.innerHTML = "<span class='err'>Login required. Open <a href='/analytics'>/analytics</a> and sign in first.</span>";
+        if (docTitle) docTitle.hidden = true;
+        await renderSignInTop();
+        panel.innerHTML =
+          "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
+          "<div class='ms-auth-gate-msg'>You must be signed in.</div>" +
+          "</div>";
         return;
       }
+      var jwtExpired =
+        typeof window.__nsMainSiteJwtExpired === "function" && window.__nsMainSiteJwtExpired(token);
+      if (jwtExpired) {
+        if (docTitle) docTitle.hidden = false;
+        await renderAuthUser(signed, false);
+        panel.innerHTML =
+          "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
+          "<div class='ms-auth-gate-msg'>Your session has expired. Use <strong>Sign in again</strong> above.</div>" +
+          "</div>";
+        if (typeof window.__nsRefreshMainSiteNavFromSession === "function") {
+          window.__nsRefreshMainSiteNavFromSession();
+        }
+        return;
+      }
+      if (docTitle) docTitle.hidden = false;
       var wallets = [];
       var expandedWallet = "";
       var identByWallet = {};
@@ -148,7 +460,7 @@ export function analyticsAdminPageHtml(): string {
           headers: { authorization: "Bearer " + token },
         });
         if (r.status === 401) throw new Error("Session expired. Please login again.");
-        if (r.status === 403) throw new Error("This wallet does not have admin permissions.");
+        if (r.status === 403) throw new Error("NS_WALLET_ACCESS_DENIED");
         if (!r.ok) throw new Error("Request failed (" + r.status + ").");
         var j = await r.json();
         wallets = Array.isArray(j.wallets) ? j.wallets.slice() : [];
@@ -246,13 +558,42 @@ export function analyticsAdminPageHtml(): string {
           });
         });
       }
+      var authStatus = await fetchAnalyticsAuthStatus(token);
       try {
         await fetchWallets();
-        if (signed) await renderAuthUser(signed, true);
+        if (signed) await renderAuthUser(signed, authStatus.analyticsAuthorized);
         render("", false);
       } catch (err) {
-        if (signed) await renderAuthUser(signed, false);
-        panel.innerHTML = "<span class='err'>" + esc(err && err.message ? err.message : String(err)) + "</span>";
+        var errMsg = String((err && err.message) || err);
+        if (errMsg.indexOf("Session expired") !== -1) {
+          if (signed) await renderAuthUser(signed, false);
+          if (typeof window.__nsRefreshMainSiteNavFromSession === "function") {
+            window.__nsRefreshMainSiteNavFromSession();
+          }
+          panel.innerHTML =
+            "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
+            "<div class='ms-auth-gate-msg'>Your session has expired. Use <strong>Sign in again</strong> above.</div>" +
+            "</div>";
+          return;
+        }
+        if (signed) await renderAuthUser(signed, authStatus.analyticsAuthorized);
+        if (typeof window.__nsRefreshMainSiteNavFromSession === "function") {
+          window.__nsRefreshMainSiteNavFromSession();
+        }
+        if (errMsg === "NS_WALLET_ACCESS_DENIED") {
+          if (docTitle) docTitle.hidden = true;
+          panel.innerHTML =
+            "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
+            "<div class='ms-auth-gate-msg'>" +
+            esc("Access denied for this wallet.") +
+            "</div></div>";
+          return;
+        }
+        panel.innerHTML =
+          "<div class='ms-auth-gate'>" +
+          "<div class='ms-auth-gate-msg err'>" +
+          esc(errMsg) +
+          "</div></div>";
       }
     }
     load();

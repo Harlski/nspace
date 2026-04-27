@@ -7,4 +7,6 @@ export interface PlayerState {
   z: number;
   vx: number;
   vz: number;
+  /** Ephemeral: other tab / backgrounded or wallet-send flow (`nimSendIntent` on server). */
+  nimSendAway?: boolean;
 }

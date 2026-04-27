@@ -1,4 +1,12 @@
 import { apiUrl } from "./net/apiBase.js";
+import { refreshMainSiteNavFromSession, renderMainSiteTopbar } from "./ui/analyticsTopbar.js";
+import { readMainSiteAuthToken, writeMainSiteAuthToken } from "./ui/mainSiteAuthKeys.js";
+import {
+  animateSigningDots,
+  isSigningUserCancelledError,
+  walletSigningMarkup,
+} from "./ui/walletSigningUi.js";
+import "./mainSiteClient.css";
 
 type PendingRow = {
   time?: string;
@@ -9,12 +17,22 @@ type PendingRow = {
 
 type HistoryRow = PendingRow & { txHash?: string };
 
-type PendingPayload = {
-  allSent?: boolean;
-  pendingTotal?: number;
-  message?: string | null;
+type SummaryPayload = {
+  mode: "summary";
+  pendingTotal: number;
+  processedToday: number;
+  allSent: boolean;
+  message: string | null;
+};
+
+type WalletPayload = {
+  mode: "wallet";
+  allSent: boolean;
+  pendingTotal: number;
+  message: string | null;
   rows?: PendingRow[];
   historyRows?: HistoryRow[];
+  processedToday: number;
 };
 
 function esc(s: string): string {
@@ -25,7 +43,6 @@ function esc(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/** `YYYY-MM-DD HH:mm` in UTC (matches table headers). */
 function fmtUtcShort(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -46,10 +63,29 @@ function nimTxHexForUrl(txHash: string): string {
 function explorerCell(txHash: string): string {
   const hex = nimTxHexForUrl(txHash);
   if (!hex) return esc(String(txHash || "—"));
-  return `<a class="expl" rel="noopener noreferrer" target="_blank" href="https://nimiq.watch/#${hex}">Watch</a> · <a class="expl" rel="noopener noreferrer" target="_blank" href="https://www.nimiqhub.com/tx/${hex}">Hub</a>`;
+  return `<a class="ms-link-expl" rel="noopener noreferrer" target="_blank" href="https://nimiq.watch/#${hex}">Watch</a> · <a class="ms-link-expl" rel="noopener noreferrer" target="_blank" href="https://www.nimiqhub.com/tx/${hex}">Hub</a>`;
 }
 
-/** First 4 + last 4 of user-friendly address (spaces stripped), e.g. `NQ910RY0`. */
+function fmtTransactionCounts(pending: number, today: number): string {
+  const p = Number(pending) || 0;
+  const t = Number(today) || 0;
+  return (
+    `<strong>${p}</strong> pending transaction${p === 1 ? "" : "s"}. ` +
+    `<strong>${t}</strong> transaction${t === 1 ? "" : "s"} today.`
+  );
+}
+
+function payoutIntroHtml(countsHtml: string, notePlain: string | null): string {
+  const noteBlock = notePlain
+    ? `<p class="payout-queue-intro__note ms-mono">${esc(notePlain)}</p>`
+    : "";
+  return `<div class="payout-queue-intro"><p class="payout-queue-intro__counts ms-mono">${countsHtml}</p>${noteBlock}</div>`;
+}
+
+function wrapPayoutSheet(introHtml: string, tablesHtml: string): string {
+  return `<div class="payout-queue-sheet">${introHtml}${tablesHtml}</div>`;
+}
+
 function walletIdShort(walletId: string): string {
   const c = String(walletId || "")
     .replace(/\s+/g, "")
@@ -61,16 +97,16 @@ function walletIdShort(walletId: string): string {
 function walletCell(identicon: string | undefined, walletId: string | undefined): string {
   const full = String(walletId || "");
   const img = identicon
-    ? `<img class="ident" src="${esc(identicon)}" alt="" width="40" height="40"/>`
+    ? `<img class="ident" src="${esc(identicon)}" alt="" width="32" height="32"/>`
     : "";
   const short = esc(walletIdShort(full));
   const titleAttr = full ? ` title="${esc(full)}"` : "";
-  return `<td class="mono wallet-cell"><span class="wallet-cell-inner">${img}<span${titleAttr}>${short}</span></span></td>`;
+  return `<td class="mono wallet-cell"><span class="wallet-cell-inner ms-mono">${img}<span${titleAttr}>${short}</span></span></td>`;
 }
 
 function tablePending(rows: PendingRow[]): string {
   let html =
-    '<h2 style="font-size:1rem;margin:1.25rem 0 0.5rem;color:#8b9cb3">Pending</h2>' +
+    "<h2 class='ms-section-title'>Pending</h2>" +
     "<table><thead><tr><th>Time (UTC)</th><th>Wallet</th><th>Amount (NIM)</th></tr></thead><tbody>";
   for (const row of rows) {
     const t = esc(fmtUtcShort(row.time || ""));
@@ -82,7 +118,7 @@ function tablePending(rows: PendingRow[]): string {
 
 function tableHistory(rows: HistoryRow[]): string {
   let html =
-    '<h2 style="font-size:1rem;margin:1.25rem 0 0.5rem;color:#8b9cb3">Completed Transactions</h2>' +
+    "<h2 class='ms-section-title'>Recent sent (last 20)</h2>" +
     "<table><thead><tr><th>Sent (UTC)</th><th>Wallet</th><th>Amount (NIM)</th><th>Explorer</th></tr></thead><tbody>";
   for (const row of rows) {
     const t = esc(fmtUtcShort(row.time || ""));
@@ -92,52 +128,135 @@ function tableHistory(rows: HistoryRow[]): string {
   return `${html}</tbody></table>`;
 }
 
-async function load(): Promise<void> {
-  const statusEl = document.getElementById("status");
-  const countLine = document.getElementById("countLine");
-  const bannerEl = document.getElementById("banner");
-  const wrap = document.getElementById("wrap");
-  if (!statusEl || !countLine || !bannerEl || !wrap) return;
+function toB64(u8: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]!);
+  return btoa(s);
+}
 
+const mustSignInBodyHtml =
+  '<div class="ms-auth-gate ms-auth-gate--standalone"><div class="ms-auth-gate-msg">You must be signed in.</div></div>';
+
+async function runLogin(): Promise<void> {
+  const statusEl = document.getElementById("status");
+  const wrap = document.getElementById("wrap");
+  let stopDots = (): void => {};
+  if (statusEl) statusEl.textContent = "";
+  if (wrap) {
+    wrap.innerHTML = wrapPayoutSheet("", walletSigningMarkup());
+    stopDots = animateSigningDots(wrap);
+  }
   try {
-    const r = await fetch(apiUrl("/api/nim/pending-payouts"), { cache: "no-store" });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = (await r.json()) as PendingPayload;
-    statusEl.textContent = `Last updated (UTC): ${fmtUtcShort(new Date().toISOString())}`;
-    const total =
-      typeof data.pendingTotal === "number"
-        ? data.pendingTotal
-        : (data.rows && data.rows.length) || 0;
-    const hist = (data.historyRows && data.historyRows.length) || 0;
-    let countText =
-      total === 1 ? "1 pending transaction" : `${total} pending transactions`;
-    if (hist) countText += ` · ${hist} in Completed Transactions`;
-    countLine.textContent = countText;
-    if (data.allSent) {
-      bannerEl.style.display = "block";
-      bannerEl.className = "status status--queue-clear";
-      bannerEl.textContent =
-        data.message || "All pending transactions have been sent.";
-    } else {
-      bannerEl.style.display = "none";
-      bannerEl.className = "status";
+    const nonceResp = await fetch(apiUrl("/api/auth/nonce"));
+    if (!nonceResp.ok) throw new Error("nonce_failed");
+    const nonceJson = (await nonceResp.json()) as { nonce?: string };
+    const nonce = String(nonceJson.nonce || "");
+    // @ts-expect-error CDN bundle — no local types
+    const HubMod = await import("https://esm.sh/@nimiq/hub-api");
+    const HubApi = HubMod.default;
+    const hub = new HubApi("https://hub.nimiq.com");
+    const message = `Login:v1:${nonce}`;
+    const signed = await hub.signMessage({ appName: "Nimiq Space payouts", message });
+    const verifyResp = await fetch(apiUrl("/api/auth/verify"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        nonce,
+        message,
+        signer: signed.signer,
+        signerPublicKey: toB64(signed.signerPublicKey),
+        signature: toB64(signed.signature),
+      }),
+    });
+    if (!verifyResp.ok) {
+      const errBody = (await verifyResp.json().catch(() => ({}))) as { error?: string };
+      throw new Error(String(errBody.error || "verify_failed"));
     }
-    const rows = data.rows || [];
-    const historyRows = data.historyRows || [];
-    let body = "";
-    if (rows.length) body += tablePending(rows);
-    if (historyRows.length) body += tableHistory(historyRows);
-    if (!body) {
-      if (data.allSent) wrap.innerHTML = "";
-      else
-        wrap.innerHTML = `<p class="err">Unexpected empty response (pendingTotal=${esc(String(total))}).</p>`;
-    } else {
-      wrap.innerHTML = body;
-    }
+    const verified = (await verifyResp.json()) as { token?: string; address?: string };
+    const token = String(verified.token || "");
+    const address = String(verified.address || signed.signer || "");
+    if (!token) throw new Error("missing_token");
+    writeMainSiteAuthToken(token, address);
+    stopDots();
+    location.reload();
   } catch (e) {
-    statusEl.innerHTML = `<span class="err">Failed to load: ${esc(String(e && (e as Error).message ? (e as Error).message : e))}</span>`;
+    stopDots();
+    if (isSigningUserCancelledError(e)) {
+      if (wrap) wrap.innerHTML = wrapPayoutSheet("", mustSignInBodyHtml);
+      if (statusEl) statusEl.textContent = "";
+    } else {
+      if (wrap) wrap.innerHTML = "";
+      if (statusEl) {
+        statusEl.innerHTML = `<span class="ms-err">${esc(String(e && (e as Error).message ? (e as Error).message : e))}</span>`;
+      }
+    }
   }
 }
 
-void load();
-setInterval(() => void load(), 15_000);
+async function load(): Promise<void> {
+  const statusEl = document.getElementById("status");
+  const titleUpdatedEl = document.getElementById("payoutTitleUpdated");
+  const wrap = document.getElementById("wrap");
+  if (!statusEl || !wrap) return;
+
+  const token = readMainSiteAuthToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.authorization = `Bearer ${token}`;
+
+  try {
+    const r = await fetch(apiUrl("/api/nim/pending-payouts"), { cache: "no-store", headers });
+    if (r.status === 401) {
+      await renderMainSiteTopbar("pending-payouts", { onLoginClick: () => void runLogin() });
+      await refreshMainSiteNavFromSession();
+      statusEl.textContent = "Session expired — sign in again from the menu.";
+      return;
+    }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = (await r.json()) as SummaryPayload | WalletPayload;
+
+    if (titleUpdatedEl) {
+      titleUpdatedEl.textContent = `${fmtUtcShort(new Date().toISOString())} UTC`;
+    }
+    statusEl.textContent = "";
+
+    if (data.mode === "summary") {
+      const s = data as SummaryPayload;
+      const pend = Number(s.pendingTotal) || 0;
+      const done = Number(s.processedToday) || 0;
+      const counts = fmtTransactionCounts(pend, done);
+      let note: string | null = null;
+      if (s.allSent) note = s.message || "No pending transactions.";
+      else if (pend === 0) note = "No pending transactions.";
+      wrap.innerHTML = wrapPayoutSheet(payoutIntroHtml(counts, note), "");
+      return;
+    }
+
+    const w = data as WalletPayload;
+    const p2 = Number(w.pendingTotal) || 0;
+    const d2 = Number(w.processedToday) || 0;
+    const countsW = fmtTransactionCounts(p2, d2);
+    const rows = w.rows || [];
+    const historyRows = w.historyRows || [];
+    let body = "";
+    if (rows.length) body += tablePending(rows);
+    if (historyRows.length) body += tableHistory(historyRows);
+    let noteW: string | null = null;
+    if (!body) {
+      noteW =
+        w.allSent && !historyRows.length
+          ? "Nothing queued · no recent sends in log."
+          : "No pending or recent sends for this wallet.";
+    }
+    wrap.innerHTML = wrapPayoutSheet(payoutIntroHtml(countsW, noteW), body);
+  } catch (e) {
+    statusEl.innerHTML = `<span class="ms-err">Failed: ${esc(String(e && (e as Error).message ? (e as Error).message : e))}</span>`;
+  }
+}
+
+void (async () => {
+  await renderMainSiteTopbar("pending-payouts", {
+    onLoginClick: () => void runLogin(),
+  });
+  await load();
+  setInterval(() => void load(), 15_000);
+})();

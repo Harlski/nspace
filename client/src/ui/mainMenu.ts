@@ -6,7 +6,7 @@ import { identiconDataUrl } from "../game/identiconTexture.js";
 import { apiUrl } from "../net/apiBase.js";
 import { TELEGRAM_URL, X_URL } from "../socialLinks.js";
 
-const VERSION = "v0.2.0-alpha";
+const VERSION = "v0.3.0";
 
 /** Public asset — Vite serves `client/public` at `/`. */
 const NIM_LOGO_SRC = "/branding/nimiq-nim-logo.svg";

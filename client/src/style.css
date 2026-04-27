@@ -1854,11 +1854,38 @@ button.hud-brand:focus-visible {
   transition: opacity 0.14s ease, transform 0.14s ease;
 }
 
+.hud-nim-balance__tip-inline {
+  display: block;
+  line-height: 1.4;
+}
+
+.hud-nim-balance__payouts-link {
+  display: inline;
+  font-size: inherit;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: none;
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+.hud-nim-balance__payouts-link:hover {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.hud-nim-balance__tip-arrow {
+  opacity: 0.9;
+  letter-spacing: 0.02em;
+}
+
 .hud-nim-balance:hover .hud-nim-balance__tooltip,
 .hud-nim-balance:focus-within .hud-nim-balance__tooltip,
 .hud-nim-balance--show-tip .hud-nim-balance__tooltip {
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
 }
 
 .hud-nim-balance--show-tip .hud-nim-balance__tooltip.hud-stat-tooltip--viewport {
@@ -1866,6 +1893,7 @@ button.hud-brand:focus-visible {
   right: auto;
   transform: none;
   z-index: 10050;
+  pointer-events: auto;
 }
 
 .hud-icon-btn {
@@ -2484,8 +2512,12 @@ button.hud-brand:focus-visible {
   justify-content: center;
   align-self: stretch;
   box-sizing: border-box;
+  width: 100%;
   margin: 0;
   padding: 10px 16px;
+  border: none;
+  cursor: pointer;
+  font: inherit;
   text-decoration: none;
   font-size: 14px;
   font-weight: 700;
