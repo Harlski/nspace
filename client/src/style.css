@@ -4310,66 +4310,154 @@ button.hud-brand:focus-visible {
 }
 
 .main-menu__cached-item {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.55rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0.5rem 0.6rem;
   border-radius: 12px;
   border: 1px solid var(--menu-border-soft);
   background: rgba(15, 22, 34, 0.72);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  transition: border-color 0.15s ease;
+}
+
+.main-menu__cached-item[data-expanded="true"] {
+  border-color: rgba(77, 131, 208, 0.45);
+}
+
+.main-menu__cached-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.main-menu__cached-expand {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.2rem 0.35rem;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.main-menu__cached-expand:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.main-menu__cached-expand:focus-visible {
+  outline: 2px solid var(--menu-link);
+  outline-offset: 2px;
 }
 
 .main-menu__cached-identicon {
   width: 36px;
   height: 36px;
+  flex-shrink: 0;
   border-radius: 50%;
   border: 1px solid rgba(77, 131, 208, 0.35);
   background: var(--menu-surface-raised);
   object-fit: cover;
+  pointer-events: none;
 }
 
-.main-menu__cached-details {
+.main-menu__cached-name {
   min-width: 0;
-  text-align: left;
-}
-
-.main-menu__cached-address {
-  font-size: 0.72rem;
-  line-height: 1.35;
+  font-size: 0.78rem;
+  line-height: 1.3;
   font-family: "Fira Mono", ui-monospace, monospace;
+  font-weight: 600;
   color: var(--menu-text);
   letter-spacing: 0.04em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  pointer-events: none;
+}
+
+.main-menu__cached-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid rgba(40, 50, 68, 0.85);
+}
+
+.main-menu__cached-drawer[hidden] {
+  display: none !important;
 }
 
 .main-menu__cached-expiry {
-  margin-top: 0.12rem;
-  font-size: 0.65rem;
+  margin: 0;
+  font-size: 0.68rem;
+  line-height: 1.35;
   color: var(--menu-muted-bright);
+  text-align: center;
 }
 
 .main-menu__cached-expiry--expired {
   color: #fca5a5;
 }
 
-.main-menu__cached-actions {
+.main-menu__cached-drawer-actions {
   display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.main-menu__cached-payouts {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0.35rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid rgba(77, 131, 208, 0.45);
+  background: rgba(43, 94, 167, 0.15);
+  color: var(--menu-link);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-decoration: none;
+  font-family: inherit;
+}
+
+.main-menu__cached-payouts:hover {
+  color: #bfdbfe;
+  border-color: var(--menu-accent-border);
+  background: rgba(43, 94, 167, 0.28);
+}
+
+.main-menu__cached-payouts:focus-visible {
+  outline: 2px solid var(--menu-link);
+  outline-offset: 2px;
 }
 
 .main-menu__cached-btn {
+  flex: 0 0 auto;
   border: 1px solid rgba(77, 131, 208, 0.45);
   background: rgba(43, 94, 167, 0.22);
   color: #bfdbfe;
   border-radius: 8px;
-  min-height: 32px;
-  padding: 0.35rem 0.55rem;
-  font-size: 0.65rem;
+  min-height: 36px;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -4759,18 +4847,17 @@ button.hud-brand:focus-visible {
 }
 
 @media (max-width: 380px) {
-  .main-menu__cached-item {
-    grid-template-columns: 1fr;
-    justify-items: stretch;
-    text-align: center;
+  .main-menu__cached-row {
+    flex-wrap: wrap;
   }
 
-  .main-menu__cached-details {
-    text-align: center;
+  .main-menu__cached-expand {
+    flex: 1 1 100%;
   }
 
-  .main-menu__cached-actions {
-    justify-content: center;
+  .main-menu__cached-btn {
+    flex: 1 1 100%;
+    width: 100%;
   }
 }
 

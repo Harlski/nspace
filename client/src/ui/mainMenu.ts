@@ -1,7 +1,7 @@
 import telegramIconUrl from "../assets/social/telegram.svg?url";
 import xIconUrl from "../assets/social/x.svg?url";
 import { fetchNonce, signInWithWallet, verifyWithServer } from "../auth/nimiq.js";
-import { formatWalletAddressShort } from "../formatWalletAddress.js";
+import { formatWalletAddressGap4 } from "../formatWalletAddress.js";
 import { identiconDataUrl } from "../game/identiconTexture.js";
 import { apiUrl } from "../net/apiBase.js";
 import { TELEGRAM_URL, X_URL } from "../socialLinks.js";
@@ -285,13 +285,27 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       const item = document.createElement("div");
       item.className = "main-menu__cached-item";
       item.dataset.address = entry.address;
+      item.dataset.expanded = "false";
+
+      const row = document.createElement("div");
+      row.className = "main-menu__cached-row";
+
+      const expandBtn = document.createElement("button");
+      expandBtn.type = "button";
+      expandBtn.className = "main-menu__cached-expand";
+      expandBtn.setAttribute("aria-expanded", "false");
+      expandBtn.setAttribute(
+        "aria-label",
+        `Wallet ${formatWalletAddressGap4(entry.address)} — show session options`
+      );
+      expandBtn.title = entry.address;
 
       const icon = document.createElement("img");
       icon.className = "main-menu__cached-identicon";
       icon.alt = "";
-      icon.width = 34;
-      icon.height = 34;
-      item.appendChild(icon);
+      icon.width = 36;
+      icon.height = 36;
+      expandBtn.appendChild(icon);
       void identiconDataUrl(entry.address)
         .then((url) => {
           icon.src = url;
@@ -300,27 +314,73 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
           icon.hidden = true;
         });
 
-      const details = document.createElement("div");
-      details.className = "main-menu__cached-details";
-      const addr = document.createElement("div");
-      addr.className = "main-menu__cached-address";
-      addr.textContent = formatWalletAddressShort(entry.address);
-      addr.title = entry.address;
+      const nameEl = document.createElement("span");
+      nameEl.className = "main-menu__cached-name";
+      nameEl.textContent = formatWalletAddressGap4(entry.address);
+      expandBtn.appendChild(nameEl);
+
+      const drawer = document.createElement("div");
+      drawer.className = "main-menu__cached-drawer";
+      drawer.hidden = true;
+
       const exp = document.createElement("div");
       exp.className = "main-menu__cached-expiry";
       exp.textContent = formatRelativeExpiry(entry.expiresAtMs);
       exp.classList.toggle("main-menu__cached-expiry--expired", entry.isExpired);
-      details.appendChild(addr);
-      details.appendChild(exp);
-      item.appendChild(details);
+      drawer.appendChild(exp);
 
-      const actions = document.createElement("div");
-      actions.className = "main-menu__cached-actions";
+      const drawerActions = document.createElement("div");
+      drawerActions.className = "main-menu__cached-drawer-actions";
+
+      const payoutsLink = document.createElement("a");
+      payoutsLink.className = "main-menu__cached-payouts";
+      payoutsLink.href = "/pending-payouts";
+      payoutsLink.target = "_blank";
+      payoutsLink.rel = "noopener noreferrer";
+      payoutsLink.textContent = "Payouts";
+
+      const forgetBtn = document.createElement("button");
+      forgetBtn.type = "button";
+      forgetBtn.className = "main-menu__cached-forget";
+      forgetBtn.textContent = "Forget";
+      forgetBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        showErr("");
+        onLogout(entry.address);
+      });
+      registerAccountButton(forgetBtn);
+
+      drawerActions.appendChild(payoutsLink);
+      drawerActions.appendChild(forgetBtn);
+      drawer.appendChild(drawerActions);
+
+      expandBtn.addEventListener("click", () => {
+        const opening = item.dataset.expanded !== "true";
+        for (const el of cachedList.querySelectorAll(".main-menu__cached-item")) {
+          if (el === item) continue;
+          el.dataset.expanded = "false";
+          const d = el.querySelector(".main-menu__cached-drawer") as HTMLElement | null;
+          const eb = el.querySelector(".main-menu__cached-expand") as HTMLButtonElement | null;
+          if (d) d.hidden = true;
+          if (eb) eb.setAttribute("aria-expanded", "false");
+        }
+        if (opening) {
+          item.dataset.expanded = "true";
+          drawer.hidden = false;
+          expandBtn.setAttribute("aria-expanded", "true");
+        } else {
+          item.dataset.expanded = "false";
+          drawer.hidden = true;
+          expandBtn.setAttribute("aria-expanded", "false");
+        }
+      });
+
       const useBtn = document.createElement("button");
       useBtn.type = "button";
       useBtn.className = "main-menu__cached-btn";
       useBtn.textContent = entry.isExpired ? "Re-login" : "Enter";
-      useBtn.addEventListener("click", async () => {
+      useBtn.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
         showErr("");
         if (!entry.isExpired) {
           onReconnect(entry.address);
@@ -335,18 +395,12 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         }
       });
       registerAccountButton(useBtn);
-      const forgetBtn = document.createElement("button");
-      forgetBtn.type = "button";
-      forgetBtn.className = "main-menu__cached-forget";
-      forgetBtn.textContent = "Forget";
-      forgetBtn.addEventListener("click", () => {
-        showErr("");
-        onLogout(entry.address);
-      });
-      registerAccountButton(forgetBtn);
-      actions.appendChild(useBtn);
-      actions.appendChild(forgetBtn);
-      item.appendChild(actions);
+
+      row.appendChild(expandBtn);
+      row.appendChild(useBtn);
+      item.appendChild(row);
+      item.appendChild(drawer);
+
       cachedList.appendChild(item);
     }
   };
