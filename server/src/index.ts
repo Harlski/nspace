@@ -35,6 +35,11 @@ import {
 import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
 import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
 import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
+import {
+  getAnalyticsPageViewsByDay,
+  getRecentAnalyticsPageViews,
+  recordAnalyticsPageViewEvent,
+} from "./analyticsPageViews.js";
 import { nimiqIdenticonDataUrl } from "./nimiqIdenticonServer.js";
 
 function analyticsDayStartUtcMs(dayStr: string): number | null {
@@ -522,6 +527,69 @@ app.delete(
     res.json({ ok: true, removed, wallets: Array.from(analyticsAuthorizedWallets.values()) });
   }
 );
+
+/**
+ * Daily counts + recent `/analytics` SPA beacons (`POST /api/analytics/page-view`), UTC days / newest first.
+ * Manager wallets only. `recent` = max rows (1–500, default 120). Recent rows include `identicon` when `wallet` is set.
+ */
+app.get("/api/analytics/page-views", requireAnalyticsWalletAdmin, async (req, res) => {
+  const days = Math.min(90, Math.max(1, Number(req.query.days) || 14));
+  const recentRaw = req.query.recent;
+  const recentParsed = Number(recentRaw);
+  const recentLimit =
+    recentRaw === undefined || recentRaw === "" || Number.isNaN(recentParsed)
+      ? 120
+      : Math.min(500, Math.max(0, Math.floor(recentParsed)));
+  try {
+    const byDay = getAnalyticsPageViewsByDay(days);
+    if (recentLimit <= 0) {
+      res.json({ byDay });
+      return;
+    }
+    const rawRecent = getRecentAnalyticsPageViews(recentLimit);
+    const iconCache = new Map<string, string>();
+    for (const row of rawRecent) {
+      if (!row.wallet || iconCache.has(row.wallet)) continue;
+      try {
+        iconCache.set(row.wallet, await nimiqIdenticonDataUrl(row.wallet));
+      } catch {
+        iconCache.set(row.wallet, "");
+      }
+    }
+    const recent = rawRecent.map((row) => ({
+      t: row.t,
+      wallet: row.wallet,
+      identicon: row.wallet ? (iconCache.get(row.wallet) ?? "") : "",
+    }));
+    res.json({ byDay, recent });
+  } catch (err) {
+    console.error("[analytics/page-views]", err);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+/** Beacon from `/analytics` client: records time; wallet when Bearer is analytics-authorized. */
+app.post("/api/analytics/page-view", (req, res) => {
+  let wallet: string | null = null;
+  const t = bearerToken(req);
+  if (t) {
+    try {
+      const payload = verifySession(t, jwtSecret);
+      const signer = normalizeWalletId(String(payload.sub || ""));
+      if (
+        signer &&
+        analyticsAuthorizedWallets.size > 0 &&
+        analyticsAuthorizedWallets.has(signer)
+      ) {
+        wallet = signer;
+      }
+    } catch {
+      /* invalid or expired token */
+    }
+  }
+  recordAnalyticsPageViewEvent(wallet);
+  res.json({ ok: true });
+});
 
 /** Visual analytics page (supply `?token=...`). */
 app.get("/analytics", (_req, res) => {

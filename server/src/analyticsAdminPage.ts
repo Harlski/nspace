@@ -32,6 +32,34 @@ export function analyticsAdminPageHtml(): string {
     .wallet-copy:hover { color: #e6edf3; }
     .status { margin-top: 0.55rem; color: #9fb0c7; }
     .err { color: #f87171; }
+    .admin-pv-section { margin-bottom: 1.1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #283244; }
+    .admin-pv-head { margin-bottom: 0.45rem; color: #c8d4e4; font-size: 0.92rem; }
+    .admin-pv-note { color: #6b7d95; font-weight: 400; font-size: 0.78rem; }
+    .chart-block { display: flex; align-items: flex-start; gap: 0.3rem; margin-bottom: 0.35rem; }
+    .chart-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .chart-axis { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; flex-shrink: 0; width: auto; min-width: 2.6rem; max-width: 4.2rem; height: 160px; padding: 0.05rem 0.15rem 0.15rem 0; box-sizing: border-box; font-size: 0.64rem; line-height: 1.1; color: #6b7d95; font-variant-numeric: tabular-nums; }
+    .chart-axis span { display: block; text-align: right; }
+    .chart-cols { display: grid; gap: 0.25rem; align-items: end; height: 160px; margin-bottom: 0.4rem; }
+    .chart-cols .col { height: 100%; background: #202a3a; border-radius: 4px 4px 0 0; position: relative; }
+    .chart-cols .col .in { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(180deg, #5aa0ff, #7dd3fc); border-radius: 4px 4px 0 0; min-height: 2px; }
+    .ticks.ticks--days { display: grid; gap: 0.08rem; align-items: end; min-height: 2.85rem; padding-top: 0.2rem; font-size: 0.62rem; color: #8092aa; }
+    .ticks.ticks--days .tick-day { display: flex; justify-content: center; align-items: flex-end; min-width: 0; writing-mode: vertical-lr; text-orientation: upright; font-variant-numeric: tabular-nums; color: #8092aa; }
+    .admin-pv-recent { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #283244; }
+    .admin-pv-recent > strong { display: block; margin-bottom: 0.35rem; color: #c8d4e4; font-size: 0.92rem; }
+    .admin-pv-recent-hint { font-size: 0.76rem; color: #6b7d95; font-weight: 400; margin-left: 0.35rem; }
+    .admin-pv-tablewrap { margin-top: 0.25rem; max-height: 300px; overflow: auto; border: 1px solid #263348; border-radius: 6px; }
+    .admin-pv-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .admin-pv-table th, .admin-pv-table td { text-align: left; padding: 0.32rem 0.45rem; border-bottom: 1px solid #263348; vertical-align: middle; }
+    .admin-pv-table th { color: #8b9cb3; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; position: sticky; top: 0; background: #131b27; z-index: 1; }
+    .admin-pv-table tr:last-child td { border-bottom: 0; }
+    .admin-pv-anon { color: #6b7d95; }
+    .admin-pv-anon-hint { color: #5a6578; font-size: 0.74rem; margin-left: 0.35rem; }
+    .admin-pv-walletcell { display: flex; flex-direction: column; align-items: flex-start; gap: 0.28rem; max-width: 28rem; }
+    .admin-pv-walletline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.45rem 0.6rem; }
+    .admin-pv-identline { line-height: 0; }
+    .admin-pv-identline .ident { width: 24px; height: 24px; border-radius: 4px; display: block; }
+    .admin-pv-copy { cursor: pointer; color: #8b9cb3; font-size: 0.78rem; text-decoration: underline; text-underline-offset: 2px; user-select: none; }
+    .admin-pv-copy:hover { color: #dce4ee; }
   </style>
 </head>
 <body class="ms-site">
@@ -455,6 +483,133 @@ export function analyticsAdminPageHtml(): string {
       var wallets = [];
       var expandedWallet = "";
       var identByWallet = {};
+      var pageViewsByDay = [];
+      var pageViewsRecent = [];
+      function chartAxisTicksAdmin(maxVal, formatTick) {
+        var maxN = Math.max(1, Number(maxVal) || 1);
+        var mid = maxN / 2;
+        return (
+          "<div class='chart-axis mono' aria-hidden='true'>" +
+          "<span>" +
+          esc(formatTick(maxN)) +
+          "</span><span>" +
+          esc(formatTick(mid)) +
+          "</span><span>0</span></div>"
+        );
+      }
+      function adminDayTicks(rows) {
+        var n = Math.max(1, (rows && rows.length) || 1);
+        var style = "grid-template-columns:repeat(" + n + ",minmax(0,1fr))";
+        var inner = (rows || [])
+          .map(function (r) {
+            var d = r.dayUtc ? String(r.dayUtc).slice(8) : "";
+            return (
+              "<span class='tick-day' title='" +
+              esc(String(r.dayUtc || "") + " UTC") +
+              "'>" +
+              esc(d) +
+              "</span>"
+            );
+          })
+          .join("");
+        return "<div class='ticks ticks--days mono' style='" + style + "'>" + inner + "</div>";
+      }
+      function adminAnalyticsViewsChart(rows) {
+        var list = rows && rows.length ? rows : [];
+        if (!list.length) {
+          return (
+            "<section class='admin-pv-section'>" +
+            "<div class='admin-pv-head'><strong>/analytics</strong> visits <span class='admin-pv-note'>(client beacons, UTC days)</span></div>" +
+            "<p class='status' style='margin-top:0'>No chart data (request failed or empty window).</p>" +
+            "</section>"
+          );
+        }
+        var maxV = 1;
+        list.forEach(function (r) {
+          maxV = Math.max(maxV, Number(r.views || 0));
+        });
+        var n = Math.max(1, list.length);
+        var gridStyle = "grid-template-columns:repeat(" + n + ",minmax(4px,1fr))";
+        var bars = list
+          .map(function (r) {
+            var v = Number(r.views || 0);
+            var pct = Math.max(3, Math.round((v / maxV) * 100));
+            return (
+              "<div class='col' title='" +
+              esc(r.dayUtc + " UTC — " + v + " view" + (v === 1 ? "" : "s")) +
+              "'><div class='in' style='height:" +
+              pct +
+              "%'></div></div>"
+            );
+          })
+          .join("");
+        return (
+          "<section class='admin-pv-section'>" +
+          "<div class='admin-pv-head'><strong>/analytics</strong> visits <span class='admin-pv-note'>(UTC days, last " +
+          list.length +
+          ")</span></div>" +
+          "<div class='chart-block'>" +
+          chartAxisTicksAdmin(maxV, function (x) {
+            return String(Math.round(Number(x)));
+          }) +
+          "<div class='chart-main'>" +
+          "<div class='chart-cols' style='" +
+          gridStyle +
+          "'>" +
+          bars +
+          "</div>" +
+          adminDayTicks(list) +
+          "</div></div></section>"
+        );
+      }
+      function fmtPageViewUtc(ms) {
+        var d = new Date(Number(ms) || 0);
+        return esc(d.toISOString().replace("T", " ").slice(0, 19) + " UTC");
+      }
+      function adminRecentViewsTable(rows) {
+        if (!rows || !rows.length) {
+          return (
+            "<div class='admin-pv-recent'>" +
+            "<strong>Recent visits</strong><span class='admin-pv-recent-hint'>newest first</span>" +
+            "<p class='status' style='margin-top:0.35rem'>No rows in this window.</p>" +
+            "</div>"
+          );
+        }
+        var thead =
+          "<thead><tr><th>Time</th><th>Wallet</th></tr></thead>";
+        var body = rows
+          .map(function (r) {
+            var w = r.wallet != null && String(r.wallet) !== "" ? String(r.wallet) : "";
+            var ident = r.identicon ? String(r.identicon) : "";
+            var identBlock =
+              ident !== ""
+                ? "<div class='admin-pv-identline'><img class='ident' src='" +
+                  esc(ident) +
+                  "' alt='' width='24' height='24'/></div>"
+                : "";
+            var wCell = w
+              ? "<div class='admin-pv-walletcell'>" +
+                "<div class='admin-pv-walletline'><span class='mono'>" +
+                esc(walletGrouped(w)) +
+                "</span><span class='admin-pv-copy' role='button' tabindex='0' data-copy='" +
+                esc(w) +
+                "' title='Copy wallet address' aria-label='Copy wallet address'>Copy</span></div>" +
+                identBlock +
+                "</div>"
+              : "<span class='admin-pv-anon'>—</span><span class='admin-pv-anon-hint'>not signed in, expired session, or wallet not on analytics allowlist</span>";
+            return "<tr><td class='mono'>" + fmtPageViewUtc(r.t) + "</td><td>" + wCell + "</td></tr>";
+          })
+          .join("");
+        return (
+          "<div class='admin-pv-recent'>" +
+          "<strong>Recent visits</strong><span class='admin-pv-recent-hint'>newest first · times UTC</span>" +
+          "<div class='admin-pv-tablewrap'><table class='admin-pv-table'>" +
+          thead +
+          "<tbody>" +
+          body +
+          "</tbody></table></div></div>"
+        );
+      }
       async function fetchWallets() {
         var r = await fetch("/api/analytics/authorized-wallets", {
           headers: { authorization: "Bearer " + token },
@@ -472,6 +627,8 @@ export function analyticsAdminPageHtml(): string {
       }
       function render(msg, isErr) {
         panel.innerHTML =
+          adminAnalyticsViewsChart(pageViewsByDay) +
+          adminRecentViewsTable(pageViewsRecent) +
           "<div><strong>Authorized analytics wallets</strong></div>" +
           "<div class='status'>Signed in: <span class='mono'>" + esc(signed || "unknown") + "</span></div>" +
           "<div class='row'>" +
@@ -550,17 +707,41 @@ export function analyticsAdminPageHtml(): string {
             render(msg, isErr);
           });
         });
-        panel.querySelectorAll("[data-copy]").forEach(function (btn) {
-          btn.addEventListener("click", function () {
-            var wallet = String(btn.getAttribute("data-copy") || "");
+        panel.querySelectorAll("[data-copy]").forEach(function (el) {
+          function copyWallet() {
+            var wallet = String(el.getAttribute("data-copy") || "");
             if (!wallet) return;
             navigator.clipboard.writeText(wallet).catch(function () {});
+          }
+          el.addEventListener("click", function () {
+            copyWallet();
+          });
+          el.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              copyWallet();
+            }
           });
         });
       }
       var authStatus = await fetchAnalyticsAuthStatus(token);
       try {
-        await fetchWallets();
+        await Promise.all([
+          fetchWallets(),
+          (async function () {
+            try {
+              var pv = await fetch("/api/analytics/page-views?days=14&recent=150", {
+                headers: { authorization: "Bearer " + token },
+                cache: "no-store",
+              });
+              if (pv.ok) {
+                var pvj = await pv.json();
+                pageViewsByDay = Array.isArray(pvj.byDay) ? pvj.byDay.slice() : [];
+                pageViewsRecent = Array.isArray(pvj.recent) ? pvj.recent.slice() : [];
+              }
+            } catch (e) {}
+          })(),
+        ]);
         if (signed) await renderAuthUser(signed, authStatus.analyticsAuthorized);
         render("", false);
       } catch (err) {

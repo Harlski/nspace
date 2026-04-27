@@ -390,6 +390,15 @@ export function analyticsPublicPageHtml(): string {
           sessionStorage.removeItem(AUTH_ADDR_KEY);
         }
       }
+      function beaconAnalyticsPageView() {
+        var tok = readSiteToken();
+        var hdr = {};
+        if (tok) hdr.authorization = "Bearer " + tok;
+        fetch("/api/analytics/page-view", { method: "POST", headers: hdr, keepalive: true }).catch(
+          function () {}
+        );
+      }
+      beaconAnalyticsPageView();
       var authGateEl = document.getElementById("authGate");
       var gridEl = document.getElementById("analyticsGrid");
       var authUserEl = document.getElementById("authUser");

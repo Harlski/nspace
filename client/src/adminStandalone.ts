@@ -52,9 +52,10 @@ function parseJwtSub(token: string): string {
 
 async function load(): Promise<void> {
   await renderMainSiteTopbar("admin");
-  const panel = document.getElementById("panel");
+  const panelEl = document.getElementById("panel");
   const docTitle = document.getElementById("adminDocTitle") as HTMLElement | null;
-  if (!panel) return;
+  if (!panelEl) return;
+  const panel = panelEl;
 
   const token = readMainSiteAuthToken();
   let signed = sessionStorage.getItem(MAIN_SITE_AUTH_ADDR_KEY) || "";
@@ -81,6 +82,113 @@ async function load(): Promise<void> {
   let wallets: string[] = [];
   let expandedWallet = "";
   let identByWallet: Record<string, string> = {};
+  type PageViewDay = { dayUtc: string; views: number };
+  type PageViewRecent = { t: number; wallet: string | null; identicon?: string };
+  let pageViewsByDay: PageViewDay[] = [];
+  let pageViewsRecent: PageViewRecent[] = [];
+
+  function chartAxisTicksAdmin(maxVal: number, formatTick: (x: number) => string): string {
+    const maxN = Math.max(1, Number(maxVal) || 1);
+    const mid = maxN / 2;
+    return (
+      "<div class='chart-axis mono' aria-hidden='true'>" +
+      `<span>${esc(formatTick(maxN))}</span><span>${esc(formatTick(mid))}</span><span>0</span></div>`
+    );
+  }
+
+  function adminDayTicks(rows: PageViewDay[]): string {
+    const n = Math.max(1, rows?.length || 1);
+    const style = `grid-template-columns:repeat(${n},minmax(0,1fr))`;
+    const inner = (rows || [])
+      .map((r) => {
+        const d = r.dayUtc ? String(r.dayUtc).slice(8) : "";
+        return `<span class='tick-day' title='${esc(String(r.dayUtc || "") + " UTC")}'>${esc(d)}</span>`;
+      })
+      .join("");
+    return `<div class='ticks ticks--days mono' style='${style}'>${inner}</div>`;
+  }
+
+  function adminAnalyticsViewsChart(rows: PageViewDay[]): string {
+    const list = rows?.length ? rows : [];
+    if (!list.length) {
+      return (
+        "<section class='admin-pv-section'>" +
+        "<div class='admin-pv-head'><strong>/analytics</strong> visits <span class='admin-pv-note'>(client beacons, UTC days)</span></div>" +
+        "<p class='status' style='margin-top:0'>No chart data (request failed or empty window).</p>" +
+        "</section>"
+      );
+    }
+    let maxV = 1;
+    list.forEach((r) => {
+      maxV = Math.max(maxV, Number(r.views || 0));
+    });
+    const n = Math.max(1, list.length);
+    const gridStyle = `grid-template-columns:repeat(${n},minmax(4px,1fr))`;
+    const bars = list
+      .map((r) => {
+        const v = Number(r.views || 0);
+        const pct = Math.max(3, Math.round((v / maxV) * 100));
+        return (
+          `<div class='col' title='${esc(r.dayUtc + " UTC — " + v + " view" + (v === 1 ? "" : "s"))}'>` +
+          `<div class='in' style='height:${pct}%'></div></div>`
+        );
+      })
+      .join("");
+    return (
+      "<section class='admin-pv-section'>" +
+      "<div class='admin-pv-head'><strong>/analytics</strong> visits <span class='admin-pv-note'>(UTC days, last " +
+      list.length +
+      ")</span></div>" +
+      "<div class='chart-block'>" +
+      chartAxisTicksAdmin(maxV, (x) => String(Math.round(Number(x)))) +
+      "<div class='chart-main'>" +
+      `<div class='chart-cols' style='${gridStyle}'>` +
+      bars +
+      "</div>" +
+      adminDayTicks(list) +
+      "</div></div></section>"
+    );
+  }
+
+  function fmtPageViewUtc(ms: number): string {
+    const d = new Date(Number(ms) || 0);
+    return esc(d.toISOString().replace("T", " ").slice(0, 19) + " UTC");
+  }
+
+  function adminRecentViewsTable(rows: PageViewRecent[]): string {
+    if (!rows?.length) {
+      return (
+        "<div class='admin-pv-recent'>" +
+        "<strong>Recent visits</strong><span class='admin-pv-recent-hint'>newest first</span>" +
+        "<p class='status' style='margin-top:0.35rem'>No rows in this window.</p>" +
+        "</div>"
+      );
+    }
+    const thead = "<thead><tr><th>Time</th><th>Wallet</th></tr></thead>";
+    const body = rows
+      .map((r) => {
+        const w = r.wallet != null && String(r.wallet) !== "" ? String(r.wallet) : "";
+        const ident = r.identicon ? String(r.identicon) : "";
+        const identBlock =
+          ident !== ""
+            ? `<div class='admin-pv-identline'><img class='ident' src='${esc(ident)}' alt='' width='24' height='24'/></div>`
+            : "";
+        const wCell = w
+          ? `<div class='admin-pv-walletcell'><div class='admin-pv-walletline'><span class='mono'>${esc(walletGrouped(w))}</span><span class='admin-pv-copy' role='button' tabindex='0' data-copy='${esc(w)}' title='Copy wallet address' aria-label='Copy wallet address'>Copy</span></div>${identBlock}</div>`
+          : "<span class='admin-pv-anon'>—</span><span class='admin-pv-anon-hint'>not signed in, expired session, or wallet not on analytics allowlist</span>";
+        return `<tr><td class='mono'>${fmtPageViewUtc(r.t)}</td><td>${wCell}</td></tr>`;
+      })
+      .join("");
+    return (
+      "<div class='admin-pv-recent'>" +
+      "<strong>Recent visits</strong><span class='admin-pv-recent-hint'>newest first · times UTC</span>" +
+      "<div class='admin-pv-tablewrap'><table class='admin-pv-table'>" +
+      thead +
+      "<tbody>" +
+      body +
+      "</tbody></table></div></div>"
+    );
+  }
 
   async function fetchWallets(): Promise<void> {
     const r = await fetch(apiUrl("/api/analytics/authorized-wallets"), {
@@ -103,6 +211,8 @@ async function load(): Promise<void> {
 
   function render(msg: string, isErr: boolean): void {
     panel.innerHTML =
+      adminAnalyticsViewsChart(pageViewsByDay) +
+      adminRecentViewsTable(pageViewsRecent) +
       "<div><strong>Authorized analytics wallets</strong></div>" +
       "<div class='status'>Signed in: <span class='mono'>" +
       esc(signed || "unknown") +
@@ -189,17 +299,43 @@ async function load(): Promise<void> {
         render(msg, isErr);
       });
     });
-    panel.querySelectorAll<HTMLElement>("[data-copy]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const wallet = String(btn.dataset.copy || "");
+    panel.querySelectorAll<HTMLElement>("[data-copy]").forEach((el) => {
+      const copyWallet = (): void => {
+        const wallet = String(el.dataset.copy || "");
         if (!wallet) return;
         navigator.clipboard.writeText(wallet).catch(() => {});
+      };
+      el.addEventListener("click", () => {
+        copyWallet();
+      });
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          copyWallet();
+        }
       });
     });
   }
 
   try {
-    await fetchWallets();
+    await Promise.all([
+      fetchWallets(),
+      (async () => {
+        try {
+          const pv = await fetch(apiUrl("/api/analytics/page-views?days=14&recent=150"), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: "no-store",
+          });
+          if (pv.ok) {
+            const pvj = (await pv.json()) as { byDay?: PageViewDay[]; recent?: PageViewRecent[] };
+            pageViewsByDay = Array.isArray(pvj.byDay) ? pvj.byDay.slice() : [];
+            pageViewsRecent = Array.isArray(pvj.recent) ? pvj.recent.slice() : [];
+          }
+        } catch {
+          /* keep pageViewsByDay */
+        }
+      })(),
+    ]);
     render("", false);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

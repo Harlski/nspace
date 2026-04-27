@@ -27,6 +27,34 @@
       .wallet-copy:hover { color: #e6edf3; }
       .status { margin-top: 0.55rem; color: #9fb0c7; }
       .err { color: #f87171; }
+      .admin-pv-section { margin-bottom: 1.1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #283244; }
+      .admin-pv-head { margin-bottom: 0.45rem; color: #c8d4e4; font-size: 0.92rem; }
+      .admin-pv-note { color: #6b7d95; font-weight: 400; font-size: 0.78rem; }
+      .chart-block { display: flex; align-items: flex-start; gap: 0.3rem; margin-bottom: 0.35rem; }
+      .chart-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+      .chart-axis { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; flex-shrink: 0; width: auto; min-width: 2.6rem; max-width: 4.2rem; height: 160px; padding: 0.05rem 0.15rem 0.15rem 0; box-sizing: border-box; font-size: 0.64rem; line-height: 1.1; color: #6b7d95; font-variant-numeric: tabular-nums; }
+      .chart-axis span { display: block; text-align: right; }
+      .chart-cols { display: grid; gap: 0.25rem; align-items: end; height: 160px; margin-bottom: 0.4rem; }
+      .chart-cols .col { height: 100%; background: #202a3a; border-radius: 4px 4px 0 0; position: relative; }
+      .chart-cols .col .in { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(180deg, #5aa0ff, #7dd3fc); border-radius: 4px 4px 0 0; min-height: 2px; }
+      .ticks.ticks--days { display: grid; gap: 0.08rem; align-items: end; min-height: 2.85rem; padding-top: 0.2rem; font-size: 0.62rem; color: #8092aa; }
+      .ticks.ticks--days .tick-day { display: flex; justify-content: center; align-items: flex-end; min-width: 0; writing-mode: vertical-lr; text-orientation: upright; font-variant-numeric: tabular-nums; color: #8092aa; }
+      .admin-pv-recent { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #283244; }
+      .admin-pv-recent > strong { display: block; margin-bottom: 0.35rem; color: #c8d4e4; font-size: 0.92rem; }
+      .admin-pv-recent-hint { font-size: 0.76rem; color: #6b7d95; font-weight: 400; margin-left: 0.35rem; }
+      .admin-pv-tablewrap { margin-top: 0.25rem; max-height: 300px; overflow: auto; border: 1px solid #263348; border-radius: 6px; }
+      .admin-pv-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+      .admin-pv-table th, .admin-pv-table td { text-align: left; padding: 0.32rem 0.45rem; border-bottom: 1px solid #263348; vertical-align: middle; }
+      .admin-pv-table th { color: #8b9cb3; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; position: sticky; top: 0; background: #131b27; z-index: 1; }
+      .admin-pv-table tr:last-child td { border-bottom: 0; }
+      .admin-pv-anon { color: #6b7d95; }
+      .admin-pv-anon-hint { color: #5a6578; font-size: 0.74rem; margin-left: 0.35rem; }
+      .admin-pv-walletcell { display: flex; flex-direction: column; align-items: flex-start; gap: 0.28rem; max-width: 28rem; }
+      .admin-pv-walletline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.45rem 0.6rem; }
+      .admin-pv-identline { line-height: 0; }
+      .admin-pv-identline .ident { width: 24px; height: 24px; border-radius: 4px; display: block; }
+      .admin-pv-copy { cursor: pointer; color: #8b9cb3; font-size: 0.78rem; text-decoration: underline; text-underline-offset: 2px; user-select: none; }
+      .admin-pv-copy:hover { color: #dce4ee; }
     </style>
   </head>
   <body class="ms-site">

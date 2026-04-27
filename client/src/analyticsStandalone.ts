@@ -177,6 +177,17 @@ async function load(): Promise<void> {
     return;
   }
 
+  {
+    const token = readMainSiteAuthToken();
+    const headers: Record<string, string> = {};
+    if (token) headers.authorization = `Bearer ${token}`;
+    void fetch(apiUrl("/api/analytics/page-view"), {
+      method: "POST",
+      headers,
+      keepalive: true,
+    }).catch(() => {});
+  }
+
   const setAuthedVisible = (visible: boolean): void => {
     (analyticsGridEl as HTMLElement).style.display = visible ? "grid" : "none";
   };
