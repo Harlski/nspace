@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createLogger, defineConfig, type Plugin } from "vite";
+import { createLogger, defineConfig } from "vite";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
@@ -119,32 +119,8 @@ function attachDevProxyHandlers(proxy: EventEmitter): void {
   installDevApiProxyErrorHandler(proxy);
 }
 
-/**
- * Match `client/vercel.json`: `/analytics` → `analytics.html`, etc.
- * Without this, `npm run dev` proxies those paths to Express and you get a *different*
- * implementation (`server/src/analyticsPublicPage.ts`) than production (static MPA).
- */
-function mainSiteHtmlRouteRewrites(): Plugin {
-  return {
-    name: "nspace-main-site-html-routes",
-    configureServer(server) {
-      server.middlewares.use((req, _res, next) => {
-        const raw = req.url ?? "";
-        const q = raw.indexOf("?");
-        const path = (q >= 0 ? raw.slice(0, q) : raw).replace(/\/+$/, "") || "/";
-        const qs = q >= 0 ? raw.slice(q) : "";
-        if (path === "/analytics") req.url = `/analytics.html${qs}`;
-        else if (path === "/admin") req.url = `/admin.html${qs}`;
-        else if (path === "/pending-payouts") req.url = `/pending-payouts.html${qs}`;
-        next();
-      });
-    },
-  };
-}
-
 export default defineConfig({
   customLogger: createDevProxyFriendlyLogger(),
-  plugins: [mainSiteHtmlRouteRewrites()],
   build: {
     rollupOptions: {
       input: {
@@ -172,6 +148,22 @@ export default defineConfig({
       "/ws": {
         target: "ws://127.0.0.1:3001",
         ws: true,
+        configure: attachDevProxyHandlers,
+      },
+      /** Public HTML from Express (`server/src/index.ts`); without this, SPA serves `index.html`. */
+      "/pending-payouts": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+        configure: attachDevProxyHandlers,
+      },
+      "/analytics": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+        configure: attachDevProxyHandlers,
+      },
+      "/admin": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
         configure: attachDevProxyHandlers,
       },
     },

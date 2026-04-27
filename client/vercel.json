@@ -1,7 +1,20 @@
 {
   "rewrites": [
-    { "source": "/pending-payouts", "destination": "/pending-payouts.html" },
-    { "source": "/analytics", "destination": "/analytics.html" },
-    { "source": "/admin", "destination": "/admin.html" }
+    {
+      "source": "/api/:path*",
+      "destination": "https://api.nimiq.space/api/:path*"
+    },
+    {
+      "source": "/analytics",
+      "destination": "https://api.nimiq.space/analytics"
+    },
+    {
+      "source": "/admin",
+      "destination": "https://api.nimiq.space/admin"
+    },
+    {
+      "source": "/pending-payouts",
+      "destination": "https://api.nimiq.space/pending-payouts"
+    }
   ]
 }

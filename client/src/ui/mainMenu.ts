@@ -154,26 +154,32 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   root.className = "main-menu";
   root.innerHTML = `
     <div class="main-menu__nim-layer" aria-hidden="true"></div>
+    <div class="main-menu__backdrop" aria-hidden="true"></div>
     <div class="main-menu__content">
-      <h1 class="main-menu__title">
-        <span class="main-menu__title-nimiq">NIMIQ</span>
-        <span class="main-menu__title-space">SPACE</span>
-      </h1>
-      <p class="main-menu__welcome" id="main-menu-welcome" hidden>Welcome back!</p>
-      <div class="main-menu__cached" id="main-menu-cached" hidden>
-        <div class="main-menu__cached-list" id="main-menu-cached-list"></div>
-      </div>
-      <div class="main-menu__err" id="main-menu-err" hidden></div>
-      <div class="main-menu__actions">
-        <button type="button" class="nq-button main-menu__nq-btn" id="btn-nimiq-account">
-          Sign in with Nimiq
-        </button>
-        ${
-          devBypass
-            ? `<button type="button" class="nq-button light-blue main-menu__nq-btn" id="btn-dev-login">Dev login</button>`
-            : ""
-        }
-      </div>
+      <div class="main-menu__card" role="presentation">
+        <div class="main-menu__card-rim" aria-hidden="true"></div>
+        <div class="main-menu__card-inner">
+          <header class="main-menu__header">
+            <h1 class="main-menu__title">
+              <span class="main-menu__title-nimiq">NIMIQ</span>
+              <span class="main-menu__title-space">SPACE</span>
+            </h1>
+            <p class="main-menu__welcome" id="main-menu-welcome" hidden>Welcome back!</p>
+          </header>
+          <div class="main-menu__cached" id="main-menu-cached" hidden>
+            <div class="main-menu__cached-list" id="main-menu-cached-list"></div>
+          </div>
+          <div class="main-menu__err" id="main-menu-err" hidden></div>
+          <div class="main-menu__actions">
+            <button type="button" class="nq-button main-menu__nq-btn" id="btn-nimiq-account">
+              Sign in with Nimiq
+            </button>
+            ${
+              devBypass
+                ? `<button type="button" class="nq-button light-blue main-menu__nq-btn" id="btn-dev-login">Dev login</button>`
+                : ""
+            }
+          </div>
       ${
         replayUiEnabled
           ? `
@@ -206,17 +212,21 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       `
           : ""
       }
-      <div class="main-menu__social">
-        <a class="main-menu__social-tile" href="${TELEGRAM_URL}" target="_blank" rel="noopener noreferrer">
-          <img class="main-menu__social-icon" src="${telegramIconUrl}" alt="" width="36" height="36" aria-hidden="true" />
-          <span class="main-menu__social-label">Telegram</span>
-        </a>
-        <a class="main-menu__social-tile" href="${X_URL}" target="_blank" rel="noopener noreferrer">
-          <img class="main-menu__social-icon" src="${xIconUrl}" alt="" width="36" height="36" aria-hidden="true" />
-          <span class="main-menu__social-label">X (Twitter)</span>
-        </a>
+          <footer class="main-menu__footer">
+            <div class="main-menu__social">
+              <a class="main-menu__social-tile" href="${TELEGRAM_URL}" target="_blank" rel="noopener noreferrer">
+                <img class="main-menu__social-icon" src="${telegramIconUrl}" alt="" width="22" height="22" aria-hidden="true" />
+                <span class="main-menu__social-label">Telegram</span>
+              </a>
+              <a class="main-menu__social-tile" href="${X_URL}" target="_blank" rel="noopener noreferrer">
+                <img class="main-menu__social-icon" src="${xIconUrl}" alt="" width="22" height="22" aria-hidden="true" />
+                <span class="main-menu__social-label">X</span>
+              </a>
+            </div>
+            <p class="main-menu__version">${VERSION}</p>
+          </footer>
+        </div>
       </div>
-      <p class="main-menu__version">${VERSION}</p>
     </div>
   `;
   app.appendChild(root);

@@ -67,6 +67,9 @@ function isAdmin(address: string): boolean {
   return ADMIN_ADDRESSES.has(address);
 }
 
+/** Lobby reconnect list: cap rows (`saveCachedSession` keeps newest first). */
+const MAIN_MENU_MAX_CACHED_ACCOUNTS = 4;
+
 let unmountMainMenu: (() => void) | null = null;
 let selfAddress = "";
 
@@ -152,12 +155,13 @@ function openMainMenu(): void {
   const app = document.getElementById("app");
   if (!app) return;
   const cachedEntries = listCachedSessions();
+  const menuCachedEntries = cachedEntries.slice(0, MAIN_MENU_MAX_CACHED_ACCOUNTS);
   const cached = loadCachedSession();
   const hasValid = !!(cached && !isTokenExpired(cached.token));
   unmountMainMenu?.();
   unmountMainMenu = mountMainMenu({
     app,
-    cachedSessions: cachedEntries.map((entry) => ({
+    cachedSessions: menuCachedEntries.map((entry) => ({
       address: entry.address,
       token: entry.token,
       updatedAt: entry.updatedAt,
