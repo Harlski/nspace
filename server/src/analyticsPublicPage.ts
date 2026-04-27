@@ -1148,7 +1148,7 @@ export function analyticsPublicPageHtml(): string {
       setAuthedVisible(true);
       var data = await resp.json();
       var statusParts =
-        "Generated " + fmtUtc(data.generatedAt) + " · log window " + data.maxDays + "d";
+        "Generated " + fmtUtc(data.generatedAt) + " · last " + data.maxDays + " days";
       if (data.fileDaysScanned && data.fileDaysScanned !== data.maxDays) {
         statusParts += " (files " + data.fileDaysScanned + "d)";
       }
