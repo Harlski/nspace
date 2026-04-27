@@ -120,7 +120,7 @@ export function getRecentAnalyticsPageViews(limit: number): AnalyticsPageViewEve
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const o = JSON.parse(trimmed) as { t?: unknown; w?: unknown };
+      const o = JSON.parse(trimmed) as { t?: unknown; w?: unknown; r?: unknown };
       const t = typeof o.t === "number" && Number.isFinite(o.t) ? o.t : 0;
       if (!t) continue;
       const wRaw = o.w;
