@@ -2528,6 +2528,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           return;
         }
         e.preventDefault();
+        if (hud.isChatMinimized()) {
+          hud.setChatMinimized(false);
+        }
         chatInput.focus();
         return;
       }

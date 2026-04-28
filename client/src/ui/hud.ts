@@ -24,6 +24,8 @@ import { nimiqIconUseMarkup } from "./nimiqIcons.js";
 import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 
+const LS_HUD_CHAT_MINIMIZED = "nspace_hud_chat_minimized";
+
 function cssHex(n: number): string {
   return `#${n.toString(16).padStart(6, "0")}`;
 }
@@ -110,6 +112,9 @@ export function createHud(
   setStatus: (s: string) => void;
   appendChat: (from: string, text: string) => void;
   getChatInput: () => HTMLInputElement;
+  /** Player hid the chat via minimize; persisted in localStorage until cleared. */
+  isChatMinimized: () => boolean;
+  setChatMinimized: (minimized: boolean) => void;
   onFullscreenToggle: (fn: () => void) => void;
   setReturnToHubVisible: (visible: boolean) => void;
   setPortalEnterVisible: (visible: boolean) => void;
@@ -1468,6 +1473,13 @@ export function createHud(
   chatHoverZone.appendChild(systemChatLog);
   chatPanel.appendChild(chatHoverZone);
 
+  let chatMinimized = false;
+  try {
+    chatMinimized = localStorage.getItem(LS_HUD_CHAT_MINIMIZED) === "1";
+  } catch {
+    /* ignore */
+  }
+
   const CHAT_LOG_IDLE_MS = 45_000;
   const CHAT_LOG_LEAVE_HIDE_MS = 1800;
   let chatLogIdleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1492,6 +1504,7 @@ export function createHud(
 
   function updateChatLogCollapsed(): void {
     if (!finePointerMql?.matches) return;
+    if (chatMinimized) return;
     if (document.activeElement === chatInput || pointerInChatHoverZone) {
       chatPanel.classList.remove("chat-panel--log-collapsed");
       return;
@@ -1585,6 +1598,62 @@ export function createHud(
   chatInput.autocomplete = "off";
   chatInput.maxLength = 256;
   chatRow.appendChild(chatInput);
+
+  const chatMinimizeBtn = document.createElement("button");
+  chatMinimizeBtn.type = "button";
+  chatMinimizeBtn.className = "chat-row__minimize";
+  chatMinimizeBtn.title = "Hide chat";
+  chatMinimizeBtn.setAttribute("aria-label", "Hide chat");
+  chatMinimizeBtn.textContent = "−";
+  chatRow.appendChild(chatMinimizeBtn);
+
+  const chatRestoreBtn = document.createElement("button");
+  chatRestoreBtn.type = "button";
+  chatRestoreBtn.className = "chat-row__restore";
+  chatRestoreBtn.title = "Show chat";
+  chatRestoreBtn.setAttribute("aria-label", "Show chat");
+  chatRestoreBtn.textContent = "Chat";
+  chatRestoreBtn.hidden = true;
+  chatRow.appendChild(chatRestoreBtn);
+
+  function applyChatMinimizedUi(min: boolean): void {
+    chatMinimized = min;
+    chatPanel.hidden = min;
+    chatInput.hidden = min;
+    chatMinimizeBtn.hidden = min;
+    chatRestoreBtn.hidden = !min;
+    if (min && document.activeElement === chatInput) {
+      chatInput.blur();
+    }
+  }
+
+  function setChatMinimizedState(min: boolean, persist: boolean): void {
+    applyChatMinimizedUi(min);
+    if (!persist) return;
+    try {
+      if (min) {
+        localStorage.setItem(LS_HUD_CHAT_MINIMIZED, "1");
+      } else {
+        localStorage.removeItem(LS_HUD_CHAT_MINIMIZED);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  applyChatMinimizedUi(chatMinimized);
+
+  chatMinimizeBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    setChatMinimizedState(true, true);
+  });
+  chatRestoreBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    setChatMinimizedState(false, true);
+    chatInput.focus();
+  });
 
   chatInput.addEventListener("focus", () => {
     if (!finePointerMql?.matches) return;
@@ -3066,6 +3135,10 @@ export function createHud(
       armChatLogIdleCollapse();
     },
     getChatInput: () => chatInput,
+    isChatMinimized: () => chatMinimized,
+    setChatMinimized(minimized: boolean) {
+      setChatMinimizedState(minimized, true);
+    },
     onFullscreenToggle(fn: () => void) {
       fsHandler = fn;
     },

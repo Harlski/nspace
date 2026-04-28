@@ -3566,8 +3566,9 @@ button.hud-brand:focus-visible {
   }
 
   .chat-row {
-    width: min(14vw, 72px);
-    max-width: calc(28vw - 48px);
+    /* Input + minimize control; slightly wider than log so the row stays usable */
+    width: min(calc(14vw + 36px), 108px);
+    max-width: calc(28vw - 12px);
   }
 
   .chat-log {
@@ -3576,7 +3577,19 @@ button.hud-brand:focus-visible {
     max-height: 90px;
     font-size: 11px;
     padding: 6px 8px;
-    pointer-events: none;
+    pointer-events: auto;
+  }
+
+  .chat-row__minimize {
+    min-width: 28px;
+    padding: 0 4px;
+    font-size: 14px;
+  }
+
+  .chat-row__restore {
+    min-width: 44px;
+    padding: 0 6px;
+    font-size: 11px;
   }
 
   .build-object-panel {
@@ -3880,6 +3893,7 @@ button.hud-brand:focus-visible {
 .chat-log {
   max-height: 180px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   font-size: 12px;
   line-height: 1.35;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
@@ -3890,8 +3904,8 @@ button.hud-brand:focus-visible {
   padding: 8px 10px;
   box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  /* Log is display-only; taps go to the canvas (scroll wheel still targets focused doc) */
-  pointer-events: none;
+  /* Allow wheel / scrollbar / touch scroll inside the log; taps on the log stay on the log */
+  pointer-events: auto;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -3993,14 +4007,19 @@ button.hud-brand:focus-visible {
 }
 
 .chat-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
   width: 100%;
   max-width: min(400px, 50vw);
-  /* Only the input is interactive so clicks beside it reach the game */
+  /* Only the input and chat controls are interactive so clicks beside the row reach the game */
   pointer-events: none;
 }
 
 .chat-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+  width: auto;
   padding: 8px 10px;
   border-radius: 6px;
   border: 1px solid #3d465a;
@@ -4012,6 +4031,43 @@ button.hud-brand:focus-visible {
   -moz-user-select: text;
   -ms-user-select: text;
   pointer-events: auto;
+}
+
+.chat-row__minimize,
+.chat-row__restore {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  min-width: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid #3d465a;
+  background: rgba(10, 12, 18, 0.98);
+  color: #c8ceda;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.chat-row__restore {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chat-row__minimize:hover,
+.chat-row__restore:hover {
+  background: rgba(30, 36, 51, 0.98);
+  border-color: #4d5670;
+  color: #e8eaef;
+}
+
+/* Minimized: only the restore control is visible — stretch for an easier tap target */
+.chat-row:has(.chat-input[hidden]) .chat-row__restore {
+  flex: 1;
 }
 
 .screen {
