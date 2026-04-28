@@ -47,6 +47,7 @@ type CachedSessionMenuEntry = {
   updatedAt: number;
   expiresAtMs: number | null;
   isExpired: boolean;
+  nimiqPay?: boolean;
 };
 
 const REPLAY_KIND_LABEL: Record<string, string> = {
@@ -129,7 +130,7 @@ export type MainMenuOptions = {
   authToken: string | null;
   devBypass: boolean;
   onReconnect: (address: string) => void;
-  onLoggedIn: (token: string, address: string) => void;
+  onLoggedIn: (token: string, address: string, nimiqPay?: boolean) => void;
   onLogout: (address?: string) => void;
 };
 
@@ -170,15 +171,30 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
             <div class="main-menu__cached-list" id="main-menu-cached-list"></div>
           </div>
           <div class="main-menu__err" id="main-menu-err" hidden></div>
-          <div class="main-menu__actions">
-            <button type="button" class="nq-button main-menu__nq-btn" id="btn-nimiq-account">
-              Sign in with Nimiq
-            </button>
-            ${
-              devBypass
-                ? `<button type="button" class="nq-button light-blue main-menu__nq-btn" id="btn-dev-login">Dev login</button>`
-                : ""
-            }
+          <div class="main-menu__actions" id="main-menu-actions">
+            <div class="main-menu__actions-swap">
+            <div class="main-menu__actions-default" id="main-menu-actions-default">
+              <button type="button" class="nq-button main-menu__nq-btn main-menu__nq-btn--pill" id="btn-nimiq-account">
+                Sign In
+              </button>
+              ${
+                devBypass
+                  ? `<button type="button" class="nq-button light-blue main-menu__nq-btn main-menu__nq-btn--pill" id="btn-dev-login">Dev login</button>`
+                  : ""
+              }
+            </div>
+            <div class="main-menu__actions-account main-menu__actions-pane--hidden" id="main-menu-actions-account">
+              <p class="main-menu__actions-account__addr" id="main-menu-actions-account-addr"></p>
+              <p class="main-menu__actions-account__expiry" id="main-menu-actions-account-expiry"></p>
+              <div class="main-menu__actions-account__row">
+                <button type="button" class="main-menu__actions-account__pill main-menu__actions-account__pill--forget" id="main-menu-actions-forget">Forget</button>
+                <div class="main-menu__actions-account__cluster">
+                  <a class="main-menu__actions-account__pill main-menu__actions-account__pill--payouts" id="main-menu-actions-payouts" href="/pending-payouts" target="_blank" rel="noopener noreferrer">Payouts</a>
+                  <button type="button" class="main-menu__actions-account__pill main-menu__actions-account__pill--enter" id="main-menu-actions-enter">Enter</button>
+                </div>
+              </div>
+            </div>
+            </div>
           </div>
       ${
         replayUiEnabled
@@ -271,11 +287,84 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   welcomeEl.hidden = cachedSessions.length === 0;
   cachedWrap.hidden = cachedSessions.length === 0;
   btnNimiqAccount.textContent =
-    cachedSessions.length > 0 ? "Login with another Nimiq account" : "Sign in with Nimiq";
+    cachedSessions.length > 0 ? "Add account" : "Sign In";
 
   const perAccountButtons = new Set<HTMLButtonElement>();
   const registerAccountButton = (el: Element | null): void => {
     if (el instanceof HTMLButtonElement) perAccountButtons.add(el);
+  };
+
+  const actionsDefaultEl = root.querySelector("#main-menu-actions-default") as HTMLElement;
+  const actionsAccountEl = root.querySelector("#main-menu-actions-account") as HTMLElement;
+  const actionsAccountAddrEl = root.querySelector(
+    "#main-menu-actions-account-addr"
+  ) as HTMLElement;
+  const actionsAccountExpiryEl = root.querySelector(
+    "#main-menu-actions-account-expiry"
+  ) as HTMLElement;
+  const actionsEnterBtn = root.querySelector("#main-menu-actions-enter") as HTMLButtonElement;
+  const actionsForgetBtn = root.querySelector("#main-menu-actions-forget") as HTMLButtonElement;
+
+  let selectedCachedSession: CachedSessionMenuEntry | null = null;
+
+  const clearCachedAccountSelection = (): void => {
+    selectedCachedSession = null;
+    syncCachedSelectionUi();
+  };
+
+  const syncCachedSelectionUi = (): void => {
+    if (!root.isConnected) return;
+    for (const el of cachedList.querySelectorAll(".main-menu__cached-item")) {
+      const item = el as HTMLElement;
+      const addr = item.dataset.address ?? "";
+      const open =
+        selectedCachedSession !== null && addr === selectedCachedSession.address;
+      const btn = item.querySelector(".main-menu__cached-avatar") as HTMLButtonElement | null;
+      btn?.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    const hasCache = cachedSessions.length > 0;
+    /* No stacked panes needed — account markup must not reserve row height. */
+    actionsAccountEl.hidden = !hasCache;
+    if (!hasCache) {
+      actionsDefaultEl.classList.remove("main-menu__actions-pane--hidden");
+      actionsAccountEl.classList.add("main-menu__actions-pane--hidden");
+      actionsDefaultEl.setAttribute("aria-hidden", "false");
+      actionsAccountEl.setAttribute("aria-hidden", "true");
+      return;
+    }
+
+    const showAccountPanel = selectedCachedSession !== null;
+    actionsDefaultEl.classList.toggle(
+      "main-menu__actions-pane--hidden",
+      showAccountPanel
+    );
+    actionsAccountEl.classList.toggle(
+      "main-menu__actions-pane--hidden",
+      !showAccountPanel
+    );
+    actionsDefaultEl.setAttribute(
+      "aria-hidden",
+      showAccountPanel ? "true" : "false"
+    );
+    actionsAccountEl.setAttribute(
+      "aria-hidden",
+      showAccountPanel ? "false" : "true"
+    );
+    if (showAccountPanel && selectedCachedSession) {
+      actionsAccountAddrEl.textContent = formatWalletAddressGap4(
+        selectedCachedSession.address
+      );
+      actionsAccountExpiryEl.textContent = formatRelativeExpiry(
+        selectedCachedSession.expiresAtMs
+      );
+      actionsAccountExpiryEl.classList.toggle(
+        "main-menu__actions-account__expiry--expired",
+        selectedCachedSession.isExpired
+      );
+      actionsEnterBtn.textContent = selectedCachedSession.isExpired
+        ? "Re-login"
+        : "Enter";
+    }
   };
 
   const renderCachedAccounts = (): void => {
@@ -285,27 +374,25 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       const item = document.createElement("div");
       item.className = "main-menu__cached-item";
       item.dataset.address = entry.address;
-      item.dataset.expanded = "false";
 
-      const row = document.createElement("div");
-      row.className = "main-menu__cached-row";
-
-      const expandBtn = document.createElement("button");
-      expandBtn.type = "button";
-      expandBtn.className = "main-menu__cached-expand";
-      expandBtn.setAttribute("aria-expanded", "false");
-      expandBtn.setAttribute(
+      const avatarBtn = document.createElement("button");
+      avatarBtn.type = "button";
+      avatarBtn.className = "main-menu__cached-avatar";
+      avatarBtn.setAttribute("aria-expanded", "false");
+      avatarBtn.setAttribute("aria-haspopup", "dialog");
+      avatarBtn.setAttribute("aria-controls", "main-menu-actions-account");
+      avatarBtn.setAttribute(
         "aria-label",
-        `Wallet ${formatWalletAddressGap4(entry.address)} — show session options`
+        `Account ${formatWalletAddressGap4(entry.address)} — show account actions`
       );
-      expandBtn.title = entry.address;
+      avatarBtn.title = entry.address;
 
       const icon = document.createElement("img");
       icon.className = "main-menu__cached-identicon";
       icon.alt = "";
-      icon.width = 36;
-      icon.height = 36;
-      expandBtn.appendChild(icon);
+      icon.width = 48;
+      icon.height = 48;
+      avatarBtn.appendChild(icon);
       void identiconDataUrl(entry.address)
         .then((url) => {
           icon.src = url;
@@ -314,103 +401,66 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
           icon.hidden = true;
         });
 
-      const nameEl = document.createElement("span");
-      nameEl.className = "main-menu__cached-name";
-      nameEl.textContent = formatWalletAddressGap4(entry.address);
-      expandBtn.appendChild(nameEl);
-
-      const drawer = document.createElement("div");
-      drawer.className = "main-menu__cached-drawer";
-      drawer.hidden = true;
-
-      const exp = document.createElement("div");
-      exp.className = "main-menu__cached-expiry";
-      exp.textContent = formatRelativeExpiry(entry.expiresAtMs);
-      exp.classList.toggle("main-menu__cached-expiry--expired", entry.isExpired);
-      drawer.appendChild(exp);
-
-      const drawerActions = document.createElement("div");
-      drawerActions.className = "main-menu__cached-drawer-actions";
-
-      const payoutsLink = document.createElement("a");
-      payoutsLink.className = "main-menu__cached-payouts";
-      payoutsLink.href = "/pending-payouts";
-      payoutsLink.target = "_blank";
-      payoutsLink.rel = "noopener noreferrer";
-      payoutsLink.textContent = "Payouts";
-
-      const forgetBtn = document.createElement("button");
-      forgetBtn.type = "button";
-      forgetBtn.className = "main-menu__cached-forget";
-      forgetBtn.textContent = "Forget";
-      forgetBtn.addEventListener("click", (ev) => {
+      avatarBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        showErr("");
-        onLogout(entry.address);
-      });
-      registerAccountButton(forgetBtn);
-
-      drawerActions.appendChild(payoutsLink);
-      drawerActions.appendChild(forgetBtn);
-      drawer.appendChild(drawerActions);
-
-      expandBtn.addEventListener("click", () => {
-        const opening = item.dataset.expanded !== "true";
-        for (const el of cachedList.querySelectorAll(".main-menu__cached-item")) {
-          if (el === item) continue;
-          el.dataset.expanded = "false";
-          const d = el.querySelector(".main-menu__cached-drawer") as HTMLElement | null;
-          const eb = el.querySelector(".main-menu__cached-expand") as HTMLButtonElement | null;
-          if (d) d.hidden = true;
-          if (eb) eb.setAttribute("aria-expanded", "false");
-        }
-        if (opening) {
-          item.dataset.expanded = "true";
-          drawer.hidden = false;
-          expandBtn.setAttribute("aria-expanded", "true");
-        } else {
-          item.dataset.expanded = "false";
-          drawer.hidden = true;
-          expandBtn.setAttribute("aria-expanded", "false");
-        }
-      });
-
-      const useBtn = document.createElement("button");
-      useBtn.type = "button";
-      useBtn.className = "main-menu__cached-btn";
-      useBtn.textContent = entry.isExpired ? "Re-login" : "Enter";
-      useBtn.addEventListener("click", async (ev) => {
-        ev.stopPropagation();
-        showErr("");
-        if (!entry.isExpired) {
-          onReconnect(entry.address);
+        if (selectedCachedSession?.address === entry.address) {
+          clearCachedAccountSelection();
           return;
         }
-        setBusy(true);
-        try {
-          await runNimiqWalletSignIn();
-        } catch (e) {
-          showErr(e instanceof Error ? e.message : "login_failed");
-          setBusy(false);
-        }
+        selectedCachedSession = entry;
+        syncCachedSelectionUi();
       });
-      registerAccountButton(useBtn);
 
-      row.appendChild(expandBtn);
-      row.appendChild(useBtn);
-      item.appendChild(row);
-      item.appendChild(drawer);
-
+      item.appendChild(avatarBtn);
       cachedList.appendChild(item);
     }
   };
   renderCachedAccounts();
+  syncCachedSelectionUi();
+
+  registerAccountButton(actionsForgetBtn);
+  registerAccountButton(actionsEnterBtn);
+
+  actionsForgetBtn.addEventListener("click", () => {
+    if (!selectedCachedSession) return;
+    showErr("");
+    const addr = selectedCachedSession.address;
+    onLogout(addr);
+    clearCachedAccountSelection();
+  });
+
+  actionsEnterBtn.addEventListener("click", async () => {
+    if (!selectedCachedSession) return;
+    showErr("");
+    if (!selectedCachedSession.isExpired) {
+      onReconnect(selectedCachedSession.address);
+      return;
+    }
+    setBusy(true);
+    try {
+      await runNimiqWalletSignIn();
+    } catch (e) {
+      showErr(e instanceof Error ? e.message : "login_failed");
+      setBusy(false);
+    }
+  });
+
+  const disposeCachedMenuListeners: Array<() => void> = [];
+  if (cachedSessions.length > 0) {
+    const onDocKeyDown = (ev: KeyboardEvent): void => {
+      if (ev.key === "Escape") clearCachedAccountSelection();
+    };
+    document.addEventListener("keydown", onDocKeyDown, true);
+    disposeCachedMenuListeners.push(() =>
+      document.removeEventListener("keydown", onDocKeyDown, true)
+    );
+  }
 
   const runNimiqWalletSignIn = async (): Promise<void> => {
     const { nonce } = await fetchNonce();
     const signed = await signInWithWallet(nonce);
-    const { token, address } = await verifyWithServer(signed);
-    onLoggedIn(token, address);
+    const { token, address, nimiqPay } = await verifyWithServer(signed);
+    onLoggedIn(token, address, nimiqPay);
   };
 
   const setBusy = (busy: boolean): void => {
@@ -422,6 +472,8 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       | HTMLButtonElement
       | undefined;
     if (devBtn) devBtn.disabled = busy;
+    actionsForgetBtn.disabled = busy;
+    actionsEnterBtn.disabled = busy;
   };
 
   btnNimiqAccount.addEventListener("click", async () => {
@@ -448,14 +500,14 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]!);
         return btoa(s);
       };
-      const { token, address } = await verifyWithServer({
+      const { token, address, nimiqPay } = await verifyWithServer({
         nonce,
         message,
         signer: "NQ07 DEV0000000000000000000000000000000000",
         signerPublicKey: b64(z32),
         signature: b64(z64),
       });
-      onLoggedIn(token, address);
+      onLoggedIn(token, address, nimiqPay);
     } catch (e) {
       showErr(e instanceof Error ? e.message : "dev_login_failed");
       setBusy(false);
@@ -464,6 +516,8 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
 
   if (!replayUiEnabled) {
     return () => {
+      clearCachedAccountSelection();
+      for (const d of disposeCachedMenuListeners) d();
       app.innerHTML = "";
     };
   }
@@ -612,6 +666,8 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   });
 
   return () => {
+    clearCachedAccountSelection();
+    for (const d of disposeCachedMenuListeners) d();
     app.innerHTML = "";
   };
 }

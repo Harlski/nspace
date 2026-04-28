@@ -183,6 +183,8 @@ export interface PlayerState {
   z: number;
   vx: number;
   vz: number;
+  /** From session JWT when this client connected via Nimiq Pay mini-app (broadcast to room for profile UI). */
+  nimiqPay?: boolean;
   /** Ephemeral: client tab hidden/background or NIM send / wallet flow. */
   nimSendAway?: boolean;
   /** Ephemeral: composing a chat message. */
@@ -2358,7 +2360,8 @@ export function addClient(
   roomIdRaw: string,
   ws: WebSocket,
   address: string,
-  spawnHint?: { x: number; z: number }
+  spawnHint?: { x: number; z: number },
+  sessionFlags?: { nimiqPay?: boolean }
 ): void {
   const requestedRoomId = normalizeRoomId(roomIdRaw);
   let roomId = requestedRoomId;
@@ -2386,6 +2389,7 @@ export function addClient(
     z: 0,
     vx: 0,
     vz: 0,
+    ...(sessionFlags?.nimiqPay ? { nimiqPay: true } : {}),
   };
 
   let placedSpawn = false;

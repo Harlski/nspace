@@ -17,7 +17,11 @@ if (identiconsGlobal.IdenticonsAssets === undefined) {
   identiconsGlobal.IdenticonsAssets = IdenticonsAssets;
 }
 
-/** PNG data URL for use in `<img src>` (e.g. lobby). */
+/**
+ * SVG data URL for `<img src>` (e.g. lobby).
+ * `@nimiq/identicons` composes the face from embedded sprite paths into one SVG document;
+ * `toDataUrl()` returns `data:image/svg+xml;base64,...` — plate / background shapes are normal SVG fills, not separate HTML.
+ */
 export function identiconDataUrl(address: string): Promise<string> {
   return Identicons.toDataUrl(toNimiqUserFriendlyForIdenticon(address));
 }

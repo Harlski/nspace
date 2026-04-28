@@ -1,5 +1,14 @@
 /// <reference types="vite/client" />
 
+/** Seeded by Nimiq Pay before mini-app scripts run ([docs](https://nimiq.dev/mini-apps/)). */
+interface NimiqPayHostContext {
+  readonly language?: string;
+}
+
+interface Window {
+  nimiqPay?: NimiqPayHostContext;
+}
+
 interface ImportMetaEnv {
   readonly VITE_HUB_URL?: string;
   readonly VITE_DEV_AUTH_BYPASS?: string;

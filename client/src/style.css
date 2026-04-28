@@ -599,6 +599,34 @@ body {
   height: 100%;
 }
 
+/**
+ * Emulated fullscreen inside hosts that block the Fullscreen API (e.g. Nimiq Pay WebView).
+ * Fills the visible viewport (`visualViewport` when available) with `#app` while active.
+ */
+html.nspace-pseudo-fs {
+  overflow: hidden;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html.nspace-pseudo-fs body {
+  margin: 0;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+html.nspace-pseudo-fs #app {
+  position: fixed;
+  left: 0;
+  right: 0;
+  width: 100%;
+  top: var(--nspace-vv-top, 0px);
+  height: var(--nspace-vvh, 100dvh);
+  min-height: var(--nspace-vvh, 100dvh);
+  z-index: 5;
+}
+
 .game-frame {
   position: relative;
   width: 100%;
@@ -1812,13 +1840,18 @@ button.hud-brand:focus-visible {
 
 .hud-player-count:hover .hud-player-count__tooltip,
 .hud-player-count:focus-within .hud-player-count__tooltip,
-.hud-player-count--show-tip .hud-player-count__tooltip {
+.hud-player-count--show-tip .hud-player-count__tooltip,
+.other-player-profile__nimiq-pay-inline:hover .hud-player-count__tooltip,
+.other-player-profile__nimiq-pay-inline:focus-within .hud-player-count__tooltip,
+.other-player-profile__nimiq-pay-inline.hud-player-count--show-tip .hud-player-count__tooltip {
   opacity: 1;
   transform: translateY(0);
 }
 
 /* Viewport docking: JS sets left/top; wins over base abs + z-index from preceding rules */
-.hud-player-count--show-tip .hud-player-count__tooltip.hud-stat-tooltip--viewport {
+.hud-player-count--show-tip .hud-player-count__tooltip.hud-stat-tooltip--viewport,
+.other-player-profile__nimiq-pay-inline.hud-player-count--show-tip
+  .hud-player-count__tooltip.hud-stat-tooltip--viewport {
   position: fixed;
   right: auto;
   transform: none;
@@ -2457,6 +2490,7 @@ button.hud-brand:focus-visible {
   width: min(380px, 100%);
   max-width: calc(100vw - 24px);
   box-sizing: border-box;
+  overflow: visible;
   padding: 14px 44px 16px 16px;
   border-radius: 14px;
   border: 1px solid rgba(61, 70, 90, 0.9);
@@ -2479,6 +2513,7 @@ button.hud-brand:focus-visible {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  overflow: visible;
 }
 
 .other-player-profile__card-main {
@@ -2542,6 +2577,59 @@ button.hud-brand:focus-visible {
   box-shadow: none;
   background: transparent;
   display: block;
+}
+
+.other-player-profile__addr-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.28rem;
+  min-width: 0;
+  width: 100%;
+}
+
+/* Nimiq Pay mini-app: white FM mark, no chip — inline after the address (NQ…{icon}) */
+.other-player-profile__nimiq-pay-inline {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  line-height: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Author `display` wins over the `hidden` attribute’s UA style — must re-hide when JS sets `hidden`. */
+.other-player-profile__nimiq-pay-inline[hidden] {
+  display: none !important;
+}
+
+.other-player-profile__nimiq-pay-inline:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.55);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.other-player-profile__nimiq-pay-inline .other-player-profile__nimiq-pay-icon {
+  display: block;
+}
+
+.other-player-profile__nimiq-pay-inline .nq-icon {
+  width: 16px;
+  height: 15px;
+  fill: currentColor;
+}
+
+.other-player-profile__addr-row .other-player-profile__address {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .other-player-profile__address {
@@ -4216,7 +4304,8 @@ button.hud-brand:focus-visible {
   padding: clamp(1rem, 4vw, 2rem) clamp(0.75rem, 3vw, 1.25rem);
   background: var(--menu-bg);
   color: var(--menu-text);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   font-family: "Mulish", "Muli", system-ui, sans-serif;
 }
 
@@ -4306,6 +4395,7 @@ button.hud-brand:focus-visible {
   position: relative;
   text-align: center;
   border-radius: 20px;
+  /* Clips top accent bar to rounded corners; account menus attach to `document.body` while open. */
   overflow: hidden;
   border: 1px solid var(--menu-border-soft);
   background:
@@ -4333,7 +4423,7 @@ button.hud-brand:focus-visible {
     inset 0 -20px 40px rgba(0, 0, 0, 0.18);
 }
 
-/* Top bar: cool left (NIMIQ) → warm right (SPACE); clipped by card radius */
+/* Top bar: cool left (NIMIQ) → warm right (SPACE); corners match card */
 .main-menu__card::before {
   content: "";
   position: absolute;
@@ -4342,6 +4432,7 @@ button.hud-brand:focus-visible {
   top: 0;
   height: 3px;
   z-index: 1;
+  border-radius: 20px 20px 0 0;
   background: linear-gradient(
     90deg,
     rgba(43, 94, 167, 0.95) 0%,
@@ -4444,198 +4535,246 @@ button.hud-brand:focus-visible {
 
 .main-menu__cached-list {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  justify-content: center;
   gap: 0.5rem;
+  max-width: 100%;
+  padding: 0.15rem 0.25rem 0.35rem;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
 
 .main-menu__cached-item {
+  position: relative;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  padding: 0.5rem 0.6rem;
-  border-radius: 12px;
-  border: 1px solid var(--menu-border-soft);
-  background: rgba(15, 22, 34, 0.72);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  transition: border-color 0.15s ease;
-}
-
-.main-menu__cached-item[data-expanded="true"] {
-  border-color: rgba(77, 131, 208, 0.45);
-}
-
-.main-menu__cached-row {
-  display: flex;
-  flex-direction: row;
   align-items: center;
-  gap: 0.45rem;
-  min-width: 0;
 }
 
-.main-menu__cached-expand {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
+/* Wallet row: Nimiq `@nimiq/identicons` via `toDataUrl()` — one SVG data URL in `<img>` (see identiconTexture.ts). */
+.main-menu__cached-avatar {
+  display: block;
   margin: 0;
-  padding: 0.2rem 0.35rem;
+  padding: 0;
   border: none;
-  border-radius: 10px;
   background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
   cursor: pointer;
+  font: inherit;
+  line-height: 0;
   -webkit-tap-highlight-color: transparent;
 }
 
-.main-menu__cached-expand:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.main-menu__cached-expand:focus-visible {
+.main-menu__cached-avatar:focus-visible {
   outline: 2px solid var(--menu-link);
   outline-offset: 2px;
 }
 
 .main-menu__cached-identicon {
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  border: 1px solid rgba(77, 131, 208, 0.35);
-  background: var(--menu-surface-raised);
-  object-fit: cover;
+  display: block;
   pointer-events: none;
 }
 
-.main-menu__cached-name {
-  min-width: 0;
-  font-size: 0.78rem;
-  line-height: 1.3;
-  font-family: "Fira Mono", ui-monospace, monospace;
-  font-weight: 600;
-  color: var(--menu-text);
-  letter-spacing: 0.04em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/*
+ * Selection ring: `filter: drop-shadow()` follows the rasterized alpha of the SVG
+ * (including the background plate), so the stroke hugs the identicon silhouette.
+ */
+.main-menu__cached-avatar[aria-expanded="true"] .main-menu__cached-identicon {
+  filter:
+    drop-shadow(0 0 0.5px #ffffff) drop-shadow(0 0 0.5px #ffffff) drop-shadow(0 0 1px #ffffff)
+    drop-shadow(0 0 1.5px rgba(255, 255, 255, 0.9));
+}
+
+/*
+ * Stack both panes in one grid cell. Only the visible pane stays in-flow so the
+ * actions block height matches what you see; the inactive pane is absolutely
+ * positioned in the same cell (`visibility` + `opacity`) so it does not leave
+ * a blank band when the account panel is taller than Sign In / Dev login.
+ */
+.main-menu__actions-swap {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  justify-items: center;
+  align-items: start;
+}
+
+.main-menu__actions-swap > .main-menu__actions-default,
+.main-menu__actions-swap > .main-menu__actions-account {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  max-width: 22rem;
+  transition: opacity 0.22s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-menu__actions-swap > .main-menu__actions-default,
+  .main-menu__actions-swap > .main-menu__actions-account {
+    transition: none;
+  }
+}
+
+.main-menu__actions-swap > .main-menu__actions-pane--hidden {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  visibility: hidden;
+  opacity: 0;
   pointer-events: none;
+  z-index: 0;
 }
 
-.main-menu__cached-drawer {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  margin-top: 0.55rem;
-  padding-top: 0.55rem;
-  border-top: 1px solid rgba(40, 50, 68, 0.85);
+.main-menu__actions-swap > :not(.main-menu__actions-pane--hidden) {
+  position: relative;
+  z-index: 1;
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
 }
 
-.main-menu__cached-drawer[hidden] {
-  display: none !important;
-}
-
-.main-menu__cached-expiry {
-  margin: 0;
-  font-size: 0.68rem;
-  line-height: 1.35;
-  color: var(--menu-muted-bright);
-  text-align: center;
-}
-
-.main-menu__cached-expiry--expired {
-  color: #fca5a5;
-}
-
-.main-menu__cached-drawer-actions {
+.main-menu__actions-default {
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 0.45rem;
+  gap: 0.4rem 0.5rem;
 }
 
-.main-menu__cached-payouts {
+.main-menu__actions-account {
+  margin: 0 auto;
+  text-align: center;
+}
+
+.main-menu__actions-account__addr {
+  margin: 0 0 0.3rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-weight: 600;
+  color: var(--menu-text);
+  letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main-menu__actions-account__expiry {
+  margin: 0 0 0.55rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid rgba(40, 50, 68, 0.9);
+  font-size: 0.7rem;
+  line-height: 1.4;
+  color: var(--menu-muted-bright);
+}
+
+.main-menu__actions-account__expiry--expired {
+  color: #fca5a5;
+}
+
+.main-menu__actions-account__row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 0.5rem 0.65rem;
+}
+
+.main-menu__actions-account__cluster {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  margin-left: auto;
+}
+
+/* Same footprint as `.main-menu__nq-btn--pill` — solid pills, Forget left / Payouts+Enter right. */
+.main-menu__actions-account__pill {
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 32px;
-  padding: 0.35rem 0.65rem;
-  border-radius: 8px;
-  border: 1px solid rgba(77, 131, 208, 0.45);
-  background: rgba(43, 94, 167, 0.15);
-  color: var(--menu-link);
-  font-size: 0.68rem;
+  min-height: 2.25rem;
+  padding: 0.28rem 0.9rem;
+  font-family: "Mulish", "Muli", system-ui, sans-serif;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  text-decoration: none;
-  font-family: inherit;
-}
-
-.main-menu__cached-payouts:hover {
-  color: #bfdbfe;
-  border-color: var(--menu-accent-border);
-  background: rgba(43, 94, 167, 0.28);
-}
-
-.main-menu__cached-payouts:focus-visible {
-  outline: 2px solid var(--menu-link);
-  outline-offset: 2px;
-}
-
-.main-menu__cached-btn {
-  flex: 0 0 auto;
-  border: 1px solid rgba(77, 131, 208, 0.45);
-  background: rgba(43, 94, 167, 0.22);
-  color: #bfdbfe;
-  border-radius: 8px;
-  min-height: 36px;
-  padding: 0.4rem 0.65rem;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  line-height: 1;
+  border-radius: 999px;
+  border: 1px solid transparent;
   cursor: pointer;
-  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  text-decoration: none;
+  line-height: 1.2;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    filter 0.15s ease;
 }
 
-.main-menu__cached-btn:hover:not(:disabled) {
-  background: rgba(43, 94, 167, 0.35);
-  border-color: var(--menu-accent-border);
+.main-menu__actions-account__pill--forget {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(127, 29, 29, 0.38);
+  color: #fecaca;
 }
 
-.main-menu__cached-btn:disabled {
+.main-menu__actions-account__pill--forget:hover:not(:disabled) {
+  background: rgba(153, 27, 27, 0.52);
+  border-color: rgba(248, 113, 113, 0.78);
+  color: #fff;
+}
+
+.main-menu__actions-account__pill--forget:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
 
-.main-menu__cached-forget {
-  border: 1px solid rgba(248, 113, 113, 0.45);
-  background: rgba(185, 28, 28, 0.2);
-  color: #fecaca;
-  border-radius: 8px;
-  padding: 0.35rem 0.45rem;
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  line-height: 1;
-  cursor: pointer;
-  font-family: inherit;
+.main-menu__actions-account__pill--payouts {
+  border-color: rgba(77, 131, 208, 0.55);
+  background: rgba(43, 94, 167, 0.28);
+  color: #bfdbfe;
 }
 
-.main-menu__cached-forget:hover:not(:disabled) {
-  background: rgba(185, 28, 28, 0.38);
-  border-color: rgba(248, 113, 113, 0.65);
+.main-menu__actions-account__pill--payouts:hover {
+  background: rgba(43, 94, 167, 0.45);
+  border-color: var(--menu-accent-border);
+  color: #fff;
 }
 
-.main-menu__cached-forget:disabled {
+.main-menu__actions-account__pill--payouts:focus-visible {
+  outline: 2px solid var(--menu-link);
+  outline-offset: 2px;
+}
+
+.main-menu__actions-account__pill--enter {
+  border-color: rgba(77, 131, 208, 0.5);
+  background:
+    linear-gradient(180deg, rgba(55, 92, 148, 0.95) 0%, rgba(32, 48, 82, 0.98) 100%),
+    rgba(22, 30, 48, 0.96);
+  color: #e8eef8;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.main-menu__actions-account__pill--enter:hover:not(:disabled) {
+  border-color: var(--menu-accent-border);
+  filter: brightness(1.07);
+}
+
+.main-menu__actions-account__pill--enter:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -4728,6 +4867,29 @@ button.hud-brand:focus-visible {
   letter-spacing: normal;
 }
 
+/* Primary / dev login — match social pill size (not full Nimiq demo height). */
+.main-menu__actions .nq-button.main-menu__nq-btn.main-menu__nq-btn--pill {
+  width: auto;
+  max-width: min(100%, 14rem);
+  flex: 0 1 auto;
+  align-self: center;
+  min-height: 2.25rem;
+  height: auto;
+  padding: 0.28rem 0.85rem;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 700;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: normal;
+  text-align: center;
+  hyphens: auto;
+}
+
 .main-menu__identicon-clear {
   position: absolute;
   top: -6px;
@@ -4772,9 +4934,11 @@ button.hud-brand:focus-visible {
 .main-menu__actions {
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
-  align-items: stretch;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
   margin-top: 1rem;
+  width: 100%;
 }
 
 .main-menu__social {
@@ -4985,18 +5149,130 @@ button.hud-brand:focus-visible {
   line-height: 1.4;
 }
 
-@media (max-width: 380px) {
-  .main-menu__cached-row {
+/**
+ * Phone landscape & other short-wide viewports: avoid clipping, use horizontal space,
+ * respect safe areas (notch / home indicator).
+ */
+/* Breakpoints in px: root rem is large (18px), so rem-based max-height would not match phones. */
+@media (orientation: landscape) and (max-height: 540px),
+  (max-height: 520px) and (min-width: 480px) {
+  .main-menu {
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    align-items: flex-start;
+    justify-content: center;
+    padding:
+      max(0.35rem, env(safe-area-inset-top, 0px))
+      max(0.65rem, env(safe-area-inset-right, 0px))
+      max(0.5rem, env(safe-area-inset-bottom, 0px))
+      max(0.65rem, env(safe-area-inset-left, 0px));
+  }
+
+  .main-menu__content {
+    width: min(640px, calc(100vw - 1.25rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+    max-width: 100%;
+  }
+
+  .main-menu__card-inner {
+    padding: 0.75rem 1rem 0.85rem;
+    padding-top: 0.85rem;
+  }
+
+  .main-menu__header {
+    margin-bottom: 0.15rem;
+  }
+
+  .main-menu__title {
+    font-size: clamp(1.2rem, 3.2vw + 0.85rem, 2.05rem);
+  }
+
+  .main-menu__welcome {
+    margin-top: 0.25rem;
+    letter-spacing: 0.2em;
+  }
+
+  .main-menu__cached {
+    margin-top: 0.45rem;
+    padding-top: 0.35rem;
+  }
+
+  .main-menu__actions {
+    margin-top: 0.5rem;
+    gap: 0.35rem 0.45rem;
+  }
+
+  .main-menu .nq-button-s.main-menu__nq-btn {
+    min-height: 34px;
+  }
+
+  .main-menu__footer {
+    margin-top: 0.6rem;
+    padding-top: 0.5rem;
+    gap: 0.45rem;
+  }
+
+  .main-menu__replay {
+    margin-top: 0.55rem;
+  }
+
+  .main-menu__replay-sessions {
+    max-height: min(28dvh, 120px);
+  }
+
+  .main-menu__replay-events {
+    max-height: min(30dvh, 130px);
+  }
+
+  /* Title + CTAs in one row when no saved-account list (typical first visit). */
+  .main-menu__card-inner:has(#main-menu-cached[hidden]) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    column-gap: 1rem;
+    row-gap: 0.45rem;
+    align-items: center;
+    text-align: left;
+  }
+
+  .main-menu__card-inner:has(#main-menu-cached[hidden]) .main-menu__header {
+    grid-column: 1;
+    grid-row: 1;
+    margin-bottom: 0;
+    align-self: center;
+  }
+
+  .main-menu__card-inner:has(#main-menu-cached[hidden]) .main-menu__title {
+    justify-content: flex-start;
+  }
+
+  .main-menu__card-inner:has(#main-menu-cached[hidden]) .main-menu__actions {
+    grid-column: 2;
+    grid-row: 1;
+    margin-top: 0;
+    align-self: center;
+  }
+
+  .main-menu__card-inner:has(#main-menu-cached[hidden]) .main-menu__err {
+    grid-column: 1 / -1;
+  }
+
+  .main-menu__card-inner:has(#main-menu-cached[hidden]) .main-menu__replay {
+    grid-column: 1 / -1;
+  }
+
+  .main-menu__card-inner:has(#main-menu-cached[hidden]) .main-menu__footer {
+    grid-column: 1 / -1;
+    flex-direction: row;
     flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem 1rem;
   }
 
-  .main-menu__cached-expand {
-    flex: 1 1 100%;
-  }
-
-  .main-menu__cached-btn {
-    flex: 1 1 100%;
-    width: 100%;
+  .main-menu__card-inner:has(#main-menu-cached[hidden]) .main-menu__version {
+    margin: 0;
+    margin-left: auto;
+    text-align: right;
   }
 }
 

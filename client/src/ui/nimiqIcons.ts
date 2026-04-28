@@ -1,6 +1,9 @@
 /**
  * Nimiq Design sprite (`@nimiq/style`). Shipped as `client/public/nimiq-style.icons.svg`;
  * copy from `node_modules/@nimiq/style/nimiq-style.icons.svg` when upgrading `@nimiq/style`.
+ *
+ * Extra symbols (e.g. `nq-logos-fm-mono`, Iconify `i-nimiq:logos-fm-mono`) are merged from
+ * the `nimiq-icons` icon set when needed.
  */
 export const NIMIQ_ICON_SPRITE = "/nimiq-style.icons.svg";
 

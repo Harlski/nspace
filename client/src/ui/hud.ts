@@ -21,6 +21,7 @@ import {
   nimiqWalletRecipientDeepLink,
 } from "../socialLinks.js";
 import { nimiqIconUseMarkup } from "./nimiqIcons.js";
+import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 
 function cssHex(n: number): string {
@@ -97,6 +98,13 @@ export function createHud(
     onNimRecipientDeepLinkPopupBlocked?: () => void;
     /** Bearer JWT for the signed-in player (e.g. saving public profile message). */
     getGameAuthToken?: () => string | null;
+    /** True when this game session was authenticated via Nimiq Pay (server verify), not `window.nimiqPay`. */
+    didSessionUseNimiqPay?: () => boolean;
+    /**
+     * Latest room `PlayerState` for this wallet (compact, spaces stripped, uppercased).
+     * Used to show the Nimiq Pay badge on *other* players’ profiles.
+     */
+    playerUsesNimiqPayInRoom?: (compactWalletKey: string) => boolean;
   }
 ): {
   setStatus: (s: string) => void;
@@ -343,7 +351,7 @@ export function createHud(
   const FS_ENTER_SVG = `<svg class="hud-fs__icon" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>`;
   const FS_EXIT_SVG = `<svg class="hud-fs__icon" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>`;
   const setFsBtnVisual = (): void => {
-    const on = !!document.fullscreenElement;
+    const on = isVisualFullscreenActive();
     fsBtn.innerHTML = on ? FS_EXIT_SVG : FS_ENTER_SVG;
     fsBtn.classList.toggle("hud-fs--nudge", !on);
     fsBtn.setAttribute("aria-label", on ? "Exit fullscreen" : "Enter fullscreen");
@@ -354,6 +362,7 @@ export function createHud(
     setFsBtnVisual();
   };
   document.addEventListener("fullscreenchange", onFullscreenChange);
+  document.addEventListener("nspace-pseudo-fullscreen-change", onFullscreenChange);
 
   // Player count indicator
   const playerCount = document.createElement("div");
@@ -406,8 +415,10 @@ export function createHud(
   function syncHudStatTooltipViewport(
     anchor: HTMLElement,
     tip: HTMLElement,
-    visible: boolean
+    visible: boolean,
+    opts?: { dockViewport?: boolean }
   ): void {
+    const dockViewport = opts?.dockViewport !== false;
     if (!visible) {
       tip.classList.remove("hud-stat-tooltip--viewport");
       tip.style.removeProperty("left");
@@ -415,7 +426,7 @@ export function createHud(
       tip.style.removeProperty("max-width");
       return;
     }
-    if (!HUD_STAT_TIP_VIEWPORT_MQ.matches) {
+    if (!dockViewport || !HUD_STAT_TIP_VIEWPORT_MQ.matches) {
       tip.classList.remove("hud-stat-tooltip--viewport");
       tip.style.removeProperty("left");
       tip.style.removeProperty("top");
@@ -436,12 +447,34 @@ export function createHud(
     });
   }
 
+  /** In-game profile Nimiq Pay badge — wired after `other-player-profile` DOM is built. */
+  let profileNimiqPayTipAnchor: HTMLElement | null = null;
+  let profileNimiqPayTipEl: HTMLElement | null = null;
+
+  function setProfileNimiqPayTipVisible(show: boolean): void {
+    if (!profileNimiqPayTipAnchor || !profileNimiqPayTipEl) return;
+    profileNimiqPayTipAnchor.classList.toggle("hud-player-count--show-tip", show);
+    /* Profile lives under nested `position: fixed` / letterbox — viewport `left`/`top` px are wrong on mobile; keep abs like desktop. */
+    syncHudStatTooltipViewport(profileNimiqPayTipAnchor, profileNimiqPayTipEl, show, {
+      dockViewport: false,
+    });
+  }
+
   function repositionOpenHudStatTips(): void {
     if (playerCount.classList.contains("hud-player-count--show-tip")) {
       syncHudStatTooltipViewport(playerCount, playerCountTip, true);
     }
     if (nimBalance.classList.contains("hud-nim-balance--show-tip")) {
       syncHudStatTooltipViewport(nimBalance, nimBalanceTip, true);
+    }
+    if (
+      profileNimiqPayTipAnchor &&
+      profileNimiqPayTipEl &&
+      profileNimiqPayTipAnchor.classList.contains("hud-player-count--show-tip")
+    ) {
+      syncHudStatTooltipViewport(profileNimiqPayTipAnchor, profileNimiqPayTipEl, true, {
+        dockViewport: false,
+      });
     }
   }
 
@@ -477,6 +510,7 @@ export function createHud(
   const closeHudTooltips = (): void => {
     setNimTipVisible(false);
     setPlayerTipVisible(false);
+    setProfileNimiqPayTipVisible(false);
   };
   nimBalance.addEventListener("mouseenter", () => setNimTipVisible(true));
   nimBalance.addEventListener("mouseleave", () => setNimTipVisible(false));
@@ -865,13 +899,57 @@ export function createHud(
   oppIdent.width = 64;
   oppIdent.height = 64;
   oppIdent.hidden = true;
+  const oppNimiqPayHost = document.createElement("div");
+  oppNimiqPayHost.className = "other-player-profile__nimiq-pay-inline";
+  oppNimiqPayHost.hidden = true;
+  oppNimiqPayHost.setAttribute("role", "button");
+  oppNimiqPayHost.setAttribute("tabindex", "0");
+  oppNimiqPayHost.setAttribute(
+    "aria-label",
+    "Nimiq Pay — tap for details about this session"
+  );
+  oppNimiqPayHost.innerHTML = `${nimiqIconUseMarkup("nq-logos-fm-mono", {
+    width: 16,
+    height: 15,
+    class: "other-player-profile__nimiq-pay-icon",
+  })}<span class="hud-player-count__tooltip" role="tooltip">This user is playing from the Nimiq Pay application.</span>`;
+  const oppNimiqPayTip = oppNimiqPayHost.querySelector(
+    ".hud-player-count__tooltip"
+  ) as HTMLElement;
+  profileNimiqPayTipAnchor = oppNimiqPayHost;
+  profileNimiqPayTipEl = oppNimiqPayTip;
+  oppNimiqPayHost.addEventListener("mouseenter", () =>
+    setProfileNimiqPayTipVisible(true)
+  );
+  oppNimiqPayHost.addEventListener("mouseleave", () =>
+    setProfileNimiqPayTipVisible(false)
+  );
+  oppNimiqPayHost.addEventListener("focus", () => setProfileNimiqPayTipVisible(true));
+  oppNimiqPayHost.addEventListener("blur", () => setProfileNimiqPayTipVisible(false));
+  oppNimiqPayHost.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setProfileNimiqPayTipVisible(
+      !oppNimiqPayHost.classList.contains("hud-player-count--show-tip")
+    );
+  });
+  oppNimiqPayHost.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setProfileNimiqPayTipVisible(
+        !oppNimiqPayHost.classList.contains("hud-player-count--show-tip")
+      );
+    }
+  });
   const oppCardBody = document.createElement("div");
   oppCardBody.className = "other-player-profile__card-body";
+  const oppAddrRow = document.createElement("div");
+  oppAddrRow.className = "other-player-profile__addr-row";
   const oppAddrBtn = document.createElement("button");
   oppAddrBtn.type = "button";
   oppAddrBtn.className = "other-player-profile__address";
   oppAddrBtn.id = "other-player-profile-title";
   oppAddrBtn.setAttribute("aria-label", "Wallet address — click to copy");
+  oppAddrRow.append(oppAddrBtn, oppNimiqPayHost);
   const oppProfileMessage = document.createElement("div");
   oppProfileMessage.className = "other-player-profile__message-wrap";
   const oppProfileNote = document.createElement("p");
@@ -884,7 +962,7 @@ export function createHud(
   const oppCardFooter = document.createElement("div");
   oppCardFooter.className = "other-player-profile__card-footer";
   oppCardFooter.appendChild(oppSendNim);
-  oppCardBody.append(oppAddrBtn, oppProfileMessage, oppProfileNote);
+  oppCardBody.append(oppAddrRow, oppProfileMessage, oppProfileNote);
   oppCardMain.append(oppIdent, oppCardBody);
   oppCard.append(oppCardMain, oppCardFooter);
   oppDialog.appendChild(oppClose);
@@ -1088,6 +1166,7 @@ export function createHud(
   }
 
   function closeOtherPlayerProfile(): void {
+    setProfileNimiqPayTipVisible(false);
     detachProfileEscape();
     profileOpenCompact = "";
     profileMessageKindOpen = null;
@@ -1104,6 +1183,7 @@ export function createHud(
     oppIdent.hidden = true;
     oppIdent.removeAttribute("src");
     delete oppIdent.dataset.address;
+    oppNimiqPayHost.hidden = true;
   }
 
   function closeOtherPlayerContextMenu(): void {
@@ -1256,6 +1336,12 @@ export function createHud(
     profileMessageKindOpen = kind;
     profileMessageLastSaved = "";
     clearProfileMessageNote();
+    setProfileNimiqPayTipVisible(false);
+    const showNimiqPayBadge =
+      kind === "self"
+        ? opts?.didSessionUseNimiqPay?.() === true
+        : opts?.playerUsesNimiqPayInRoom?.(compact) === true;
+    oppNimiqPayHost.hidden = !showNimiqPayBadge;
     if (profileMessageEditor && profileDescEditBlurHandler) {
       profileMessageEditor.removeEventListener("blur", profileDescEditBlurHandler);
     }
@@ -3943,6 +4029,7 @@ export function createHud(
       chatHoverZone.removeEventListener("pointerenter", onChatPointerEnter);
       chatHoverZone.removeEventListener("pointerleave", onChatPointerLeave);
       document.removeEventListener("fullscreenchange", onFullscreenChange);
+      document.removeEventListener("nspace-pseudo-fullscreen-change", onFullscreenChange);
       document.removeEventListener("click", closeHudTooltips);
       document.removeEventListener("pointerdown", closeHudAdvancedPopoversOnOutside);
       hideObjectEditPanel();
