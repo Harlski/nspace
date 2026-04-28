@@ -10,7 +10,7 @@ import dotenv from "dotenv";
 import { createNonce, consumeNonce, signSession, verifySession } from "./auth.js";
 import { addClient, adminRandomExtraFloorLayout, startRoomTick } from "./rooms.js";
 import { flushPersistWorldStateSync } from "./worldPersistence.js";
-import { verifySignedMessage } from "./verifyNimiq.js";
+import { verifySignedMessageDeriveAddress } from "./verifyNimiq.js";
 import {
   getEventLogAnalyticsSnapshot,
   flushEventLogSync,
@@ -42,6 +42,10 @@ import {
   getRecentAnalyticsPageViews,
   recordAnalyticsPageViewEvent,
 } from "./analyticsPageViews.js";
+import {
+  loadAnalyticsAllowlistFromDisk,
+  saveAnalyticsAllowlistToDisk,
+} from "./analyticsAllowlistStore.js";
 import {
   getPlayerProfileMessage,
   setPlayerProfileMessage,
@@ -162,16 +166,26 @@ const analyticsAuthorizedWalletsRaw = String(
     process.env.ANALYTICS_AUTHORIZED_WALLET ??
     DEFAULT_ANALYTICS_AUTHORIZED_WALLET
 ).trim();
-const analyticsAuthorizedWallets = new Set(
-  parseAuthorizedWallets(analyticsAuthorizedWalletsRaw)
-);
 const analyticsManagerWalletsRaw = String(
   process.env.ANALYTICS_MANAGER_WALLETS ??
     analyticsAuthorizedWalletsRaw
 ).trim();
-const analyticsManagerWallets = new Set(
+const envAnalyticsAuthorizedWallets = new Set(
+  parseAuthorizedWallets(analyticsAuthorizedWalletsRaw)
+);
+const envAnalyticsManagerWallets = new Set(
   parseAuthorizedWallets(analyticsManagerWalletsRaw)
 );
+const persistedAnalyticsAllowlist = loadAnalyticsAllowlistFromDisk();
+const analyticsAuthorizedWallets =
+  persistedAnalyticsAllowlist?.wallets ?? envAnalyticsAuthorizedWallets;
+const analyticsManagerWallets =
+  persistedAnalyticsAllowlist?.managerWallets ?? envAnalyticsManagerWallets;
+if (persistedAnalyticsAllowlist) {
+  console.info(
+    `[analytics] loaded persisted allowlist (${analyticsAuthorizedWallets.size} authorized, ${analyticsManagerWallets.size} managers)`
+  );
+}
 
 function maskSecret(v: string, head = 4, tail = 3): string {
   if (!v) return "(empty)";
@@ -548,6 +562,14 @@ app.post("/api/analytics/authorized-wallets", requireAnalyticsWalletAdmin, (req,
     return;
   }
   analyticsAuthorizedWallets.add(wallet);
+  try {
+    saveAnalyticsAllowlistToDisk(analyticsAuthorizedWallets, analyticsManagerWallets);
+  } catch (err) {
+    analyticsAuthorizedWallets.delete(wallet);
+    console.error("[analytics/authorized-wallets] persist failed", err);
+    res.status(500).json({ error: "persist_failed" });
+    return;
+  }
   res.json({ ok: true, wallets: Array.from(analyticsAuthorizedWallets.values()) });
 });
 
@@ -563,6 +585,16 @@ app.delete(
       return;
     }
     const removed = analyticsAuthorizedWallets.delete(wallet);
+    if (removed) {
+      try {
+        saveAnalyticsAllowlistToDisk(analyticsAuthorizedWallets, analyticsManagerWallets);
+      } catch (err) {
+        analyticsAuthorizedWallets.add(wallet);
+        console.error("[analytics/authorized-wallets] persist failed", err);
+        res.status(500).json({ error: "persist_failed" });
+        return;
+      }
+    }
     res.json({ ok: true, removed, wallets: Array.from(analyticsAuthorizedWallets.values()) });
   }
 );
@@ -770,7 +802,7 @@ app.post("/api/auth/verify", async (req, res) => {
   const signerPublicKey = String(body.signerPublicKey ?? "");
   const signature = String(body.signature ?? "");
 
-  if (!nonce || !message || !signer || !signerPublicKey || !signature) {
+  if (!nonce || !message || !signerPublicKey || !signature) {
     res.status(400).json({ error: "missing_fields" });
     return;
   }
@@ -786,25 +818,63 @@ app.post("/api/auth/verify", async (req, res) => {
     return;
   }
 
-  let ok = false;
+  let sessionAddress: string | null = null;
+
   if (DEV_AUTH_BYPASS) {
-    ok = true;
+    /** Dev wallet button sends `signer`; Nimiq Pay mini-app login sends empty `signer` + real key material. */
+    if (normalizeWalletId(signer)) {
+      sessionAddress = signer;
+    } else if (signerPublicKey && signature) {
+      try {
+        const derived = await verifySignedMessageDeriveAddress(message, signerPublicKey, signature);
+        if (!derived) {
+          res.status(401).json({ error: "invalid_signature" });
+          return;
+        }
+        sessionAddress = derived;
+      } catch (e) {
+        console.error("verifySignedMessageDeriveAddress (dev bypass)", e);
+        res.status(401).json({ error: "invalid_signature" });
+        return;
+      }
+    } else {
+      res.status(400).json({ error: "missing_fields" });
+      return;
+    }
   } else {
     try {
-      ok = await verifySignedMessage(message, signerPublicKey, signature, signer);
+      const derived = await verifySignedMessageDeriveAddress(message, signerPublicKey, signature);
+      if (!derived) {
+        res.status(401).json({ error: "invalid_signature" });
+        return;
+      }
+      const claimed = normalizeWalletId(signer);
+      if (claimed && claimed !== normalizeWalletId(derived)) {
+        res.status(401).json({ error: "signer_mismatch" });
+        return;
+      }
+      sessionAddress = derived;
     } catch (e) {
-      console.error("verifySignedMessage", e);
-      ok = false;
+      console.error("verifySignedMessageDeriveAddress", e);
+      res.status(401).json({ error: "invalid_signature" });
+      return;
     }
   }
 
-  if (!ok) {
-    res.status(401).json({ error: "invalid_signature" });
+  if (!sessionAddress) {
+    res.status(500).json({ error: "internal" });
     return;
   }
-
-  const token = signSession(signer, jwtSecret);
-  res.json({ token, address: signer });
+  /**
+   * Mini-app sets `nimiqPayClient: true` plus `signer: ""` (see `client/src/auth/nimiq.ts`).
+   * Require both so a random `nimiqPayClient` flag alone cannot label a Hub login.
+   */
+  const claimsPayClient = body.nimiqPayClient === true;
+  const signerKeyPresent = Object.prototype.hasOwnProperty.call(body, "signer");
+  const signerEmpty = signerKeyPresent && normalizeWalletId(signer) === "";
+  const nimiqPay = claimsPayClient && signerEmpty;
+  const token = signSession(sessionAddress, jwtSecret, { nimiqPay });
+  res.json({ token, address: sessionAddress, nimiqPay });
 });
 
 const server = createServer(app);
@@ -818,9 +888,11 @@ wss.on("connection", (ws, req) => {
   const url = new URL(req.url || "", "http://localhost");
   const token = url.searchParams.get("token") || "";
   let address: string;
+  let sessionNimiqPay = false;
   try {
     const payload = verifySession(token, jwtSecret);
     address = payload.sub;
+    sessionNimiqPay = payload.nimiqPay === true;
   } catch {
     ws.close(4001, "unauthorized");
     return;
@@ -837,7 +909,9 @@ wss.on("connection", (ws, req) => {
       spawnHint = { x, z };
     }
   }
-  addClient(roomId, ws, address, spawnHint);
+  addClient(roomId, ws, address, spawnHint, {
+    nimiqPay: sessionNimiqPay,
+  });
   void sendTelegramConnectNotice(address, roomId);
 });
 

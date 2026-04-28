@@ -8,6 +8,8 @@ const MAX_CACHED_ACCOUNTS = MAIN_SITE_MAX_CACHED_ACCOUNTS;
 export interface CachedSession {
   token: string;
   address: string;
+  /** From server verify response when the wallet authenticated via Nimiq Pay mini-app (not inferred from JWT). */
+  nimiqPay?: boolean;
 }
 
 export interface CachedSessionEntry extends CachedSession {
@@ -56,9 +58,12 @@ function sanitizeEntry(data: unknown): CachedSessionEntry | null {
       : Date.now();
   const address = (data as CachedSession).address.trim();
   if (!address) return null;
+  const npRaw = (data as { nimiqPay?: unknown }).nimiqPay;
+  const nimiqPay = npRaw === true;
   return {
     token: (data as CachedSession).token,
     address,
+    ...(nimiqPay ? { nimiqPay: true } : {}),
     updatedAt,
   };
 }
@@ -117,7 +122,9 @@ function loadLegacyCachedSession(): CachedSession | null {
     ) {
       return null;
     }
-    return { token: (data as CachedSession).token, address: (data as CachedSession).address };
+    const token = (data as CachedSession).token;
+    const address = (data as CachedSession).address;
+    return { token, address };
   } catch {
     return null;
   }
@@ -133,22 +140,37 @@ export function loadCachedSession(): CachedSession | null {
   if (entries.length === 0) return null;
   const valid = entries.find((e) => !isTokenExpired(e.token));
   const pick = valid ?? entries[0] ?? null;
-  return pick ? { token: pick.token, address: pick.address } : null;
+  if (!pick) return null;
+  const nimiqPay = pick.nimiqPay === true;
+  return { token: pick.token, address: pick.address, ...(nimiqPay ? { nimiqPay: true } : {}) };
 }
 
-export function saveCachedSession(token: string, address: string): void {
+export function saveCachedSession(
+  token: string,
+  address: string,
+  nimiqPay?: boolean
+): void {
   const trimmed = address.trim();
   if (!trimmed) return;
+  const resolvedNimiqPay = typeof nimiqPay === "boolean" ? nimiqPay : false;
   const next: CachedSessionEntry = {
     token,
     address: trimmed,
+    ...(resolvedNimiqPay ? { nimiqPay: true } : {}),
     updatedAt: Date.now(),
   };
   const entries = listCachedSessions().filter((e) => e.address !== trimmed);
   entries.unshift(next);
   writeAccountEntries(entries);
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ token, address: trimmed }));
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(
+        resolvedNimiqPay
+          ? { token, address: trimmed, nimiqPay: true }
+          : { token, address: trimmed }
+      )
+    );
   } catch {
     /* ignore quota */
   }

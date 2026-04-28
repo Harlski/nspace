@@ -7,6 +7,8 @@ export interface PlayerState {
   z: number;
   vx: number;
   vz: number;
+  /** From server room snapshot when that client connected via Nimiq Pay mini-app. */
+  nimiqPay?: boolean;
   /** Ephemeral: other tab / backgrounded or wallet-send flow (`nimSendIntent` on server). */
   nimSendAway?: boolean;
   /** Ephemeral: composing a chat message (typing indicator for others). */

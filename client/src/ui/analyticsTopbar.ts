@@ -4,6 +4,7 @@ import {
   MAIN_SITE_MAX_CACHED_ACCOUNTS,
 } from "../auth/session.js";
 import { apiUrl } from "../net/apiBase.js";
+import { fetchNonce, signLoginChallenge, verifyWithServer } from "../auth/nimiq.js";
 import {
   activateMainSiteCachedAccount,
   clearMainSiteAuthSession,
@@ -109,44 +110,11 @@ function hubAppNameForPage(page: MainSitePage): string {
 
 export type MainSitePage = "analytics" | "admin" | "pending-payouts";
 
-function toB64(u8: Uint8Array): string {
-  let s = "";
-  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]!);
-  return btoa(s);
-}
-
 /** Default wallet login used by main-site pages when no custom handler is passed. */
 export async function mainSiteWalletLogin(page: MainSitePage): Promise<void> {
-  const nonceResp = await fetch(apiUrl("/api/auth/nonce"));
-  if (!nonceResp.ok) throw new Error("nonce_failed");
-  const nonceJson = (await nonceResp.json()) as { nonce?: string };
-  const nonce = String(nonceJson.nonce || "");
-  const HubMod = await import("@nimiq/hub-api");
-  const HubApi = HubMod.default;
-  const hub = new HubApi("https://hub.nimiq.com");
-  const message = `Login:v1:${nonce}`;
-  const signed = await hub.signMessage({
-    appName: hubAppNameForPage(page),
-    message,
-  });
-  const verifyResp = await fetch(apiUrl("/api/auth/verify"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      nonce,
-      message,
-      signer: signed.signer,
-      signerPublicKey: toB64(signed.signerPublicKey),
-      signature: toB64(signed.signature),
-    }),
-  });
-  if (!verifyResp.ok) {
-    const errBody = (await verifyResp.json().catch(() => ({}))) as { error?: string };
-    throw new Error(String(errBody.error || "verify_failed"));
-  }
-  const verified = (await verifyResp.json()) as { token?: string; address?: string };
-  const token = String(verified.token || "");
-  const address = String(verified.address || signed.signer || "");
+  const { nonce } = await fetchNonce();
+  const signed = await signLoginChallenge(nonce, hubAppNameForPage(page));
+  const { token, address } = await verifyWithServer(signed);
   if (!token) throw new Error("missing_token");
   writeMainSiteAuthToken(token, address);
   window.location.reload();

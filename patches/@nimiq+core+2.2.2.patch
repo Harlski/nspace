@@ -1,8 +1,39 @@
+diff --git a/node_modules/@nimiq/core/nodejs/crypto.mjs b/node_modules/@nimiq/core/nodejs/crypto.mjs
+index 314f7fb..13af5a2 100644
+--- a/node_modules/@nimiq/core/nodejs/crypto.mjs
++++ b/node_modules/@nimiq/core/nodejs/crypto.mjs
+@@ -1,11 +1,16 @@
+ // The worker has its own scope and no direct access to functions/objects of the
+ // global scope. We import the generated JS file to make `wasm_bindgen`
+ // available which we need to initialize our WASM code.
++import { performance as nodePerformance } from 'node:perf_hooks';
+ import { parentPort } from 'node:worker_threads';
+ import Comlink from 'comlink';
+ import nodeEndpoint from 'comlink/dist/esm/node-adapter.mjs';
+ import { CryptoUtils } from './crypto-wasm/index.js';
+ 
++if (typeof globalThis.performance === 'undefined' || typeof globalThis.performance.now !== 'function') {
++    globalThis.performance = nodePerformance;
++}
++
+ (async function init() {
+     console.log('Initializing crypto WASM worker');
+ 
 diff --git a/node_modules/@nimiq/core/nodejs/worker.js b/node_modules/@nimiq/core/nodejs/worker.js
-index 9c601be..8ac6b4a 100644
+index 9c601be..7f6e426 100644
 --- a/node_modules/@nimiq/core/nodejs/worker.js
 +++ b/node_modules/@nimiq/core/nodejs/worker.js
-@@ -6,6 +6,15 @@ const Comlink = require('comlink');
+@@ -1,11 +1,25 @@
+ // The worker has its own scope and no direct access to functions/objects of the
+ // global scope. We import the generated JS file to make `wasm_bindgen`
+ // available which we need to initialize our WASM code.
++const { performance: nodePerformance } = require('node:perf_hooks');
++if (typeof globalThis.performance === 'undefined' || typeof globalThis.performance.now !== 'function') {
++    globalThis.performance = nodePerformance;
++}
++require('fake-indexeddb/auto');
+ const { parentPort } = require('node:worker_threads');
+ const Comlink = require('comlink');
  const nodeEndpoint = require('comlink/dist/umd/node-adapter.js');
  const { Client } = require('./worker-wasm/index.js');
  
@@ -18,14 +49,24 @@ index 9c601be..8ac6b4a 100644
  // WebSocket was added to Node in v22. Polyfill it for older versions.
  if (!global.WebSocket) {
      console.debug("Polyfilling WebSocket");
+@@ -42,7 +56,7 @@ async function init(config) {
+ 
+     const client = await Client.create(config);
+     Comlink.expose(client, nodeEndpoint(parentPort));
+-};
++}
+ 
+ parentPort.addListener('message', async (data) => {
+     if (data === 'NIMIQ_CHECKREADY') {
 diff --git a/node_modules/@nimiq/core/nodejs/worker.mjs b/node_modules/@nimiq/core/nodejs/worker.mjs
-index 18fb7cc..11a492e 100644
+index 18fb7cc..993fc82 100644
 --- a/node_modules/@nimiq/core/nodejs/worker.mjs
 +++ b/node_modules/@nimiq/core/nodejs/worker.mjs
-@@ -1,12 +1,26 @@
+@@ -1,12 +1,30 @@
  // The worker has its own scope and no direct access to functions/objects of the
  // global scope. We import the generated JS file to make `wasm_bindgen`
  // available which we need to initialize our WASM code.
++import { performance as nodePerformance } from 'node:perf_hooks';
 +// Nimiq WASM expects IndexedDB (BLS key cache). Node worker threads have none;
 +// fake-indexeddb must load before `./worker-wasm` is evaluated.
 +import 'fake-indexeddb/auto';
@@ -35,6 +76,9 @@ index 18fb7cc..11a492e 100644
  import websocket from 'websocket';
  import { Client } from './worker-wasm/index.js';
  
++if (typeof globalThis.performance === 'undefined' || typeof globalThis.performance.now !== 'function') {
++    globalThis.performance = nodePerformance;
++}
 +// wasm_bindgen expects WorkerGlobalScope to be an EventTarget. Node worker `globalThis` has no
 +// `addEventListener`; `parentPort` (MessagePort) does — delegate so Client.create() can attach.
 +if (typeof globalThis.addEventListener !== 'function' && parentPort) {
@@ -49,3 +93,12 @@ index 18fb7cc..11a492e 100644
  // WebSocket was added to Node in v22. Polyfill it for older versions.
  if (!global.WebSocket) {
      console.debug("Polyfilling WebSocket");
+@@ -42,7 +60,7 @@ async function init(config) {
+ 
+     const client = await Client.create(config);
+     Comlink.expose(client, nodeEndpoint(parentPort));
+-};
++}
+ 
+ parentPort.addListener('message', async (data) => {
+     if (data === 'NIMIQ_CHECKREADY') {

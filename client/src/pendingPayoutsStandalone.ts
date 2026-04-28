@@ -1,3 +1,4 @@
+import { fetchNonce, signLoginChallenge, verifyWithServer } from "./auth/nimiq.js";
 import { apiUrl } from "./net/apiBase.js";
 import { refreshMainSiteNavFromSession, renderMainSiteTopbar } from "./ui/analyticsTopbar.js";
 import { readMainSiteAuthToken, writeMainSiteAuthToken } from "./ui/mainSiteAuthKeys.js";
@@ -128,12 +129,6 @@ function tableHistory(rows: HistoryRow[]): string {
   return `${html}</tbody></table>`;
 }
 
-function toB64(u8: Uint8Array): string {
-  let s = "";
-  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]!);
-  return btoa(s);
-}
-
 const mustSignInBodyHtml =
   '<div class="ms-auth-gate ms-auth-gate--standalone"><div class="ms-auth-gate-msg">You must be signed in.</div></div>';
 
@@ -147,34 +142,9 @@ async function runLogin(): Promise<void> {
     stopDots = animateSigningDots(wrap);
   }
   try {
-    const nonceResp = await fetch(apiUrl("/api/auth/nonce"));
-    if (!nonceResp.ok) throw new Error("nonce_failed");
-    const nonceJson = (await nonceResp.json()) as { nonce?: string };
-    const nonce = String(nonceJson.nonce || "");
-    // @ts-expect-error CDN bundle — no local types
-    const HubMod = await import("https://esm.sh/@nimiq/hub-api");
-    const HubApi = HubMod.default;
-    const hub = new HubApi("https://hub.nimiq.com");
-    const message = `Login:v1:${nonce}`;
-    const signed = await hub.signMessage({ appName: "Nimiq Space payouts", message });
-    const verifyResp = await fetch(apiUrl("/api/auth/verify"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        nonce,
-        message,
-        signer: signed.signer,
-        signerPublicKey: toB64(signed.signerPublicKey),
-        signature: toB64(signed.signature),
-      }),
-    });
-    if (!verifyResp.ok) {
-      const errBody = (await verifyResp.json().catch(() => ({}))) as { error?: string };
-      throw new Error(String(errBody.error || "verify_failed"));
-    }
-    const verified = (await verifyResp.json()) as { token?: string; address?: string };
-    const token = String(verified.token || "");
-    const address = String(verified.address || signed.signer || "");
+    const { nonce } = await fetchNonce();
+    const signed = await signLoginChallenge(nonce, "Nimiq Space payouts");
+    const { token, address } = await verifyWithServer(signed);
     if (!token) throw new Error("missing_token");
     writeMainSiteAuthToken(token, address);
     stopDots();

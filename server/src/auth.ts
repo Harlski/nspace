@@ -31,12 +31,20 @@ export function consumeNonce(nonce: string): boolean {
 
 export interface SessionPayload {
   sub: string;
+  /** Present when the session was issued after Nimiq Pay mini-app login (empty `signer` on verify). */
+  nimiqPay?: boolean;
   iat: number;
   exp: number;
 }
 
-export function signSession(address: string, jwtSecret: string): string {
-  return jwt.sign({ sub: address }, jwtSecret, { expiresIn: JWT_TTL_SEC });
+export function signSession(
+  address: string,
+  jwtSecret: string,
+  opts?: { nimiqPay?: boolean }
+): string {
+  const payload: { sub: string; nimiqPay?: boolean } = { sub: address };
+  if (opts?.nimiqPay) payload.nimiqPay = true;
+  return jwt.sign(payload, jwtSecret, { expiresIn: JWT_TTL_SEC });
 }
 
 export function verifySession(token: string, jwtSecret: string): SessionPayload {

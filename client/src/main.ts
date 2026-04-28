@@ -48,6 +48,12 @@ import {
 } from "./net/ws.js";
 import { installAdminOverlay } from "./ui/adminOverlay.js";
 import { createHud } from "./ui/hud.js";
+import {
+  isPseudoFullscreenActive,
+  requestMiniAppImmersiveLayout,
+  setPseudoFullscreen,
+  tryRequestFullscreen,
+} from "./ui/pseudoFullscreen.js";
 import { installInputShell } from "./ui/inputShell.js";
 import { formatWalletAddressConnectAs } from "./formatWalletAddress.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
@@ -167,6 +173,7 @@ function openMainMenu(): void {
       updatedAt: entry.updatedAt,
       expiresAtMs: getTokenExpiryMs(entry.token),
       isExpired: isTokenExpired(entry.token),
+      nimiqPay: entry.nimiqPay === true || undefined,
     })),
     authToken:
       hasValid && cached && !isTokenExpired(cached.token) ? cached.token : null,
@@ -174,12 +181,13 @@ function openMainMenu(): void {
     onReconnect: (address) => {
       const c = listCachedSessions().find((e) => e.address === address);
       if (!c || isTokenExpired(c.token)) return;
-      saveCachedSession(c.token, c.address);
-      enterGame(c.token, c.address);
+      const np = c.nimiqPay === true;
+      saveCachedSession(c.token, c.address, np);
+      enterGame(c.token, c.address, np);
     },
-    onLoggedIn: (token, address) => {
-      saveCachedSession(token, address);
-      enterGame(token, address);
+    onLoggedIn: (token, address, nimiqPay) => {
+      saveCachedSession(token, address, nimiqPay);
+      enterGame(token, address, nimiqPay);
     },
     onLogout: (address) => {
       if (address) removeCachedSession(address);
@@ -189,7 +197,7 @@ function openMainMenu(): void {
   });
 }
 
-function enterGame(token: string, address: string): void {
+function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   const app = document.getElementById("app");
   if (!app) return;
   unmountMainMenu?.();
@@ -214,9 +222,19 @@ function enterGame(token: string, address: string): void {
     sendNimSendIntent(ws, away);
   }
 
+  const sessionNimiqPay = nimiqPay === true;
   const hud = createHud(hudRoot, {
     showDebug: showDebugHud,
     getGameAuthToken: () => token,
+    didSessionUseNimiqPay: () => sessionNimiqPay,
+    playerUsesNimiqPayInRoom: (compactWalletKey) => {
+      const k = compactWalletKey.replace(/\s+/g, "").trim().toUpperCase();
+      const p = lastPlayers.find(
+        (x) =>
+          x.address.replace(/\s+/g, "").trim().toUpperCase() === k
+      );
+      return p?.nimiqPay === true;
+    },
     onNimRecipientDeepLinkOpen: () => {
       walletSendNimFlowOpen = true;
       syncAwayPresenceToServer();
@@ -985,14 +1003,17 @@ function enterGame(token: string, address: string): void {
     if (!isCoarsePointer || disposed) return;
     const fullscreenEl = document.fullscreenElement;
     const isGameFullscreen =
-      !!fullscreenEl &&
-      (fullscreenEl === hudRoot ||
-        fullscreenEl === app ||
-        app.contains(fullscreenEl));
+      isPseudoFullscreenActive() ||
+      (!!fullscreenEl &&
+        (fullscreenEl === hudRoot ||
+          fullscreenEl === app ||
+          fullscreenEl === document.documentElement ||
+          fullscreenEl === document.body ||
+          app.contains(fullscreenEl)));
     if (!isGameFullscreen) {
-      void hudRoot.requestFullscreen().then(lockLandscape).catch(() => {
-        // Some browsers block fullscreen without a gesture; still try lock.
-        lockLandscape();
+      void tryRequestFullscreen(hudRoot).then((entered) => {
+        if (entered) lockLandscape();
+        else lockLandscape();
       });
       return;
     }
@@ -1151,6 +1172,7 @@ function enterGame(token: string, address: string): void {
   );
 
   function cleanupResources(): void {
+    setPseudoFullscreen(false);
     notifyChatNotTyping();
     if (nimWalletPollTimer !== null) {
       clearTimeout(nimWalletPollTimer);
@@ -1187,16 +1209,19 @@ function enterGame(token: string, address: string): void {
   function disposeToMenu(): void {
     if (disposed) return;
     const appEl = document.getElementById("app");
+    const fsEl = document.fullscreenElement;
     const restoreFullscreen =
       !!appEl &&
-      !!document.fullscreenElement &&
-      appEl.contains(document.fullscreenElement);
+      !!fsEl &&
+      (appEl.contains(fsEl) ||
+        fsEl === document.documentElement ||
+        fsEl === document.body);
     disposed = true;
     cleanupResources();
     openMainMenu();
     if (restoreFullscreen && appEl) {
       requestAnimationFrame(() => {
-        void appEl.requestFullscreen().catch(() => {});
+        void tryRequestFullscreen(appEl).catch(() => {});
       });
     }
   }
@@ -2609,9 +2634,24 @@ function enterGame(token: string, address: string): void {
   );
 
   hud.onFullscreenToggle(() => {
-    const host = hudRoot;
-    if (!document.fullscreenElement) void host.requestFullscreen();
-    else void document.exitFullscreen();
+    void (async () => {
+      const host = hudRoot;
+      if (document.fullscreenElement) {
+        await document.exitFullscreen().catch(() => {});
+        return;
+      }
+      if (isPseudoFullscreenActive()) {
+        setPseudoFullscreen(false);
+        return;
+      }
+      if (typeof window !== "undefined" && window.nimiqPay != null) {
+        requestMiniAppImmersiveLayout();
+      }
+      const entered = await tryRequestFullscreen(host);
+      if (!entered) {
+        setPseudoFullscreen(true);
+      }
+    })();
   });
 
   let last = performance.now();
