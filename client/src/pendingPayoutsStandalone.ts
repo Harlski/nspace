@@ -119,7 +119,7 @@ function tablePending(rows: PendingRow[]): string {
 
 function tableHistory(rows: HistoryRow[]): string {
   let html =
-    "<h2 class='ms-section-title'>Recent sent (last 10)</h2>" +
+    "<h2 class='ms-section-title'>Recent sent (last 5)</h2>" +
     "<table><thead><tr><th>Sent (UTC)</th><th>Wallet</th><th>Amount (NIM)</th><th>Explorer</th></tr></thead><tbody>";
   for (const row of rows) {
     const t = esc(fmtUtcShort(row.time || ""));

@@ -3,10 +3,12 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   logGameplayEvent,
+  listRecentManualBulkAggregatesFromEventLog,
   listRecentNimPayoutSentFromEventLog,
 } from "../eventLog.js";
 import {
   NIM_PAYOUT_DATA_DIR,
+  NIM_PAYOUT_MANUAL_BULK_LOG_FILE,
   NIM_PAYOUT_QUEUE_FILE,
   NIM_PAYOUT_SENT_HISTORY_FILE,
 } from "./paths.js";
@@ -14,6 +16,7 @@ import {
   isNimPayoutSenderConfigured,
   getNimPayoutWalletBalanceLuna,
   sendNimPayoutTransaction,
+  invalidateNimBalanceCache,
   LUNA_PER_NIM,
 } from "./sender.js";
 import { nimiqIdenticonDataUrl } from "../nimiqIdenticonServer.js";
@@ -83,7 +86,13 @@ const WALLET_GLOBAL_SENT_TAIL_LINES = Math.min(
 
 /** Max rows returned in `/api/nim/pending-payouts` JSON (admin snapshot + per-wallet detail). */
 const PENDING_PAYOUT_API_PENDING_ROW_CAP = 10;
-const PENDING_PAYOUT_API_HISTORY_ROW_CAP = 10;
+const PENDING_PAYOUT_API_HISTORY_ROW_CAP = 5;
+const MANUAL_BULK_LOG_TAIL_LINES = 800;
+const MANUAL_BULK_HISTORY_API_CAP = 25;
+
+/** On-chain memo for manager-initiated combined payouts. */
+export const MANUAL_BULK_PAYOUT_TX_MESSAGE =
+  "Nimiq Space manual payout. Thanks for playing :)";
 const HISTORY_EVENT_DAYS = Math.min(
   90,
   Math.max(7, Number(process.env.NIM_PAYOUT_PUBLIC_HISTORY_EVENT_DAYS ?? 30))
@@ -578,6 +587,36 @@ export type PublicPayoutHistoryRow = {
   txHash: string;
 };
 
+/** Aggregated pending amounts per recipient (admin panel only). */
+export type PendingByRecipientSummaryRow = {
+  walletId: string;
+  jobCount: number;
+  amountLuna: string;
+  amountNim: string;
+};
+
+/** Manager combined payouts — from `nim-payout-manual-bulk.jsonl` (admin panel only). */
+export type ManualBulkPayoutHistoryRow = {
+  time: string;
+  walletId: string;
+  amountNim: string;
+  jobsCleared: number;
+  state: string;
+  txHash: string;
+  /** On-chain transaction message (same for all manual bulk sends). */
+  txMessage: string;
+};
+
+type ManualBulkLogDisk = {
+  sentAt: number;
+  recipient: string;
+  txHash: string;
+  totalLuna: string;
+  jobsCleared: number;
+  state: string;
+  txMessage?: string;
+};
+
 export type PublicPendingPayoutSnapshot = {
   allSent: boolean;
   /** Count of jobs still `pending` or `processing` (full queue; may exceed `rows.length`). */
@@ -587,6 +626,10 @@ export type PublicPendingPayoutSnapshot = {
   rows: PublicPendingPayoutRow[];
   /** Successful sends (disk log + gameplay events); capped for API responses. */
   historyRows: PublicPayoutHistoryRow[];
+  /** Present on `?adminPanel=1` manager responses: pending+processing totals per wallet. */
+  pendingByRecipient?: PendingByRecipientSummaryRow[];
+  /** Present on `?adminPanel=1`: recent manual "payout in full" operations. */
+  manualBulkHistory?: ManualBulkPayoutHistoryRow[];
 };
 
 /** Anonymous API: queue size + sends completed today (UTC calendar day). */
@@ -660,6 +703,124 @@ export async function getPublicPendingPayoutSummary(): Promise<PublicPendingPayo
   };
 }
 
+/** Sums **pending** jobs only (same subset as {@link manualBulkPayoutPendingForRecipient}). */
+function buildPendingByRecipientSummary(): PendingByRecipientSummaryRow[] {
+  const map = new Map<string, { sum: bigint; count: number; userFriendly: string }>();
+  for (const j of jobs) {
+    if (j.status !== "pending") continue;
+    const k = normalizeNimWalletId(j.recipientAddress);
+    if (!k) continue;
+    const prev = map.get(k);
+    if (prev) {
+      prev.sum += j.amountLuna;
+      prev.count += 1;
+    } else {
+      map.set(k, {
+        sum: j.amountLuna,
+        count: 1,
+        userFriendly: j.recipientAddress.trim(),
+      });
+    }
+  }
+  const rows: PendingByRecipientSummaryRow[] = [...map.values()].map((v) => ({
+    walletId: v.userFriendly,
+    jobCount: v.count,
+    amountLuna: v.sum.toString(),
+    amountNim: formatLunaAsNim4(v.sum),
+  }));
+  rows.sort((a, b) => {
+    const d = BigInt(b.amountLuna) - BigInt(a.amountLuna);
+    return d > 0n ? 1 : d < 0n ? -1 : 0;
+  });
+  return rows;
+}
+
+function appendManualBulkPayoutLogEntry(entry: ManualBulkLogDisk): void {
+  try {
+    ensureDataDir();
+    fs.appendFileSync(
+      NIM_PAYOUT_MANUAL_BULK_LOG_FILE,
+      `${JSON.stringify(entry)}\n`,
+      "utf8"
+    );
+  } catch (e) {
+    console.error("[nim-payout] Failed to append manual-bulk log:", e);
+  }
+}
+
+function readManualBulkRowsFromJsonl(maxRows: number): ManualBulkPayoutHistoryRow[] {
+  const cap = Math.min(100, Math.max(1, maxRows));
+  try {
+    if (!fs.existsSync(NIM_PAYOUT_MANUAL_BULK_LOG_FILE)) return [];
+    const raw = fs.readFileSync(NIM_PAYOUT_MANUAL_BULK_LOG_FILE, "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim());
+    const tail = lines.slice(Math.max(0, lines.length - MANUAL_BULK_LOG_TAIL_LINES));
+    const parsed: ManualBulkLogDisk[] = [];
+    for (const line of tail) {
+      try {
+        const o = JSON.parse(line) as ManualBulkLogDisk;
+        if (
+          typeof o.sentAt === "number" &&
+          typeof o.recipient === "string" &&
+          o.recipient &&
+          typeof o.txHash === "string" &&
+          o.txHash &&
+          typeof o.totalLuna === "string" &&
+          /^\d+$/.test(o.totalLuna) &&
+          typeof o.jobsCleared === "number" &&
+          o.jobsCleared >= 1 &&
+          typeof o.state === "string"
+        ) {
+          parsed.push(o);
+        }
+      } catch {
+        /* skip */
+      }
+    }
+    parsed.sort((a, b) => b.sentAt - a.sentAt);
+    return parsed.slice(0, cap).map((o) => ({
+      time: new Date(o.sentAt).toISOString(),
+      walletId: o.recipient.trim(),
+      amountNim: formatLunaAsNim4(BigInt(o.totalLuna)),
+      jobsCleared: o.jobsCleared,
+      state: o.state,
+      txHash: o.txHash,
+      txMessage: String(o.txMessage || MANUAL_BULK_PAYOUT_TX_MESSAGE),
+    }));
+  } catch (e) {
+    console.error("[nim-payout] Failed to read manual-bulk log:", e);
+    return [];
+  }
+}
+
+/** JSONL (authoritative) merged with gameplay events (`payload.manualBulk`). */
+function buildManualBulkHistoryForAdmin(limit: number): ManualBulkPayoutHistoryRow[] {
+  const cap = Math.min(100, Math.max(1, limit));
+  const fromEvents = listRecentManualBulkAggregatesFromEventLog(
+    HISTORY_EVENT_DAYS,
+    cap * 2
+  ).map((e) => ({
+    time: new Date(e.sentAt).toISOString(),
+    walletId: e.walletId,
+    amountNim: formatLunaAsNim4(BigInt(e.totalLuna)),
+    jobsCleared: e.jobsCleared,
+    state: e.state,
+    txHash: e.txHash,
+    txMessage: MANUAL_BULK_PAYOUT_TX_MESSAGE,
+  }));
+  const fromLog = readManualBulkRowsFromJsonl(cap * 2);
+  const byKey = new Map<string, ManualBulkPayoutHistoryRow>();
+  for (const row of fromEvents) {
+    byKey.set(row.txHash.toLowerCase(), row);
+  }
+  for (const row of fromLog) {
+    byKey.set(row.txHash.toLowerCase(), row);
+  }
+  return [...byKey.values()]
+    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+    .slice(0, cap);
+}
+
 function historyRowsFromMergedNoIdenticons(
   source: SentHistoryMerged[]
 ): PublicPayoutHistoryRow[] {
@@ -682,6 +843,7 @@ function historyRowsFromMergedNoIdenticons(
 export function getPublicPendingPayoutAdminPanelSnapshot(): PublicPendingPayoutSnapshot {
   const historySource = mergeSentHistoryRecords(PENDING_PAYOUT_API_HISTORY_ROW_CAP);
   const historyRows = historyRowsFromMergedNoIdenticons(historySource);
+  const manualBulkHistory = buildManualBulkHistoryForAdmin(MANUAL_BULK_HISTORY_API_CAP);
 
   const pending = jobs.filter(
     (j) => j.status === "pending" || j.status === "processing"
@@ -693,6 +855,8 @@ export function getPublicPendingPayoutAdminPanelSnapshot(): PublicPendingPayoutS
       message: "All pending transactions have been sent.",
       rows: [],
       historyRows,
+      pendingByRecipient: [],
+      manualBulkHistory,
     };
   }
   return {
@@ -701,6 +865,8 @@ export function getPublicPendingPayoutAdminPanelSnapshot(): PublicPendingPayoutS
     message: null,
     rows: [],
     historyRows,
+    pendingByRecipient: buildPendingByRecipientSummary(),
+    manualBulkHistory,
   };
 }
 
@@ -805,4 +971,102 @@ export async function getPendingPayoutSnapshotForWallet(
     historyRows,
     processedToday,
   };
+}
+
+/**
+ * Combine all **pending** (not `processing`) queue jobs for one recipient into one chain transfer,
+ * append per-claim sent history lines (same tx hash), then remove those jobs.
+ * Fails if the worker has already moved any matching job to `processing`.
+ */
+export async function manualBulkPayoutPendingForRecipient(
+  walletRaw: string
+): Promise<{ txHash: string; jobsCleared: number; totalLuna: string }> {
+  if (!isNimPayoutSenderConfigured()) {
+    throw new Error("nim_payout_not_configured");
+  }
+  const target = normalizeNimWalletId(walletRaw);
+  if (!target) throw new Error("invalid_recipient");
+
+  const pendingFor = jobs.filter(
+    (j) =>
+      j.status === "pending" && normalizeNimWalletId(j.recipientAddress) === target
+  );
+  if (pendingFor.length === 0) {
+    throw new Error("no_pending_jobs");
+  }
+
+  for (const j of pendingFor) {
+    const live = jobs.find((x) => x.id === j.id);
+    if (!live || live.status !== "pending") {
+      throw new Error("wallet_payout_race_retry");
+    }
+  }
+
+  let totalLuna = 0n;
+  for (const j of pendingFor) totalLuna += j.amountLuna;
+
+  const idSet = new Set(pendingFor.map((j) => j.id));
+  for (let i = jobs.length - 1; i >= 0; i--) {
+    if (idSet.has(jobs[i].id)) jobs.splice(i, 1);
+  }
+  saveQueue();
+
+  const recipientAddr = pendingFor[0].recipientAddress.trim();
+
+  try {
+    const { txHash, details } = await sendNimPayoutTransaction(
+      recipientAddr,
+      totalLuna,
+      MANUAL_BULK_PAYOUT_TX_MESSAGE,
+      {
+        jobId: "manual-bulk",
+        claimId: pendingFor[0].claimId.slice(0, 12),
+      }
+    );
+    const sentAt = Date.now();
+    for (const job of pendingFor) {
+      logGameplayEvent(
+        "nim-payout-manual-bulk",
+        job.recipientAddress,
+        job.roomId,
+        "nim_payout_sent",
+        {
+          claimId: job.claimId,
+          txHash,
+          state: details.state,
+          tileKey: job.tileKey,
+          jobId: job.id,
+          enqueuedAt: job.createdAt,
+          sentAt,
+          amountLuna: job.amountLuna.toString(),
+          manualBulk: true,
+          bulkTotalLuna: totalLuna.toString(),
+        }
+      );
+      appendSentHistoryLine(job, txHash, sentAt);
+    }
+    appendManualBulkPayoutLogEntry({
+      sentAt,
+      recipient: recipientAddr,
+      txHash,
+      totalLuna: totalLuna.toString(),
+      jobsCleared: pendingFor.length,
+      state: String(details.state),
+      txMessage: MANUAL_BULK_PAYOUT_TX_MESSAGE,
+    });
+    return {
+      txHash,
+      jobsCleared: pendingFor.length,
+      totalLuna: totalLuna.toString(),
+    };
+  } catch (err) {
+    for (const job of pendingFor) {
+      job.status = "pending";
+      job.nextRetryAt = Date.now();
+      jobs.push(job);
+    }
+    saveQueue();
+    invalidateNimBalanceCache();
+    throw err;
+  }
 }

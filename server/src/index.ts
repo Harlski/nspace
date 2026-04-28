@@ -31,6 +31,7 @@ import {
   getPublicPendingPayoutAdminPanelSnapshot,
   getPublicPendingPayoutSnapshot,
   getPublicPendingPayoutSummary,
+  manualBulkPayoutPendingForRecipient,
   isNimPayoutSenderConfigured,
   startNimPayoutProcessor,
 } from "./nimPayout/index.js";
@@ -476,8 +477,8 @@ app.get("/api/nim/payout-balance", async (_req, res) => {
  * Pending payout data.
  * Without `Authorization: Bearer <jwt>`: aggregate summary only (no per-wallet rows).
  * With valid session: analytics manager wallets get the global queue + history
- * (`mode: "admin"`, capped at 10 pending + 10 completed rows). Use `?adminPanel=1` with
- * a manager JWT for a fast embed (total pending + recent history text only, no identicons).
+ * (`mode: "admin"`, capped at 10 pending + 5 completed rows). Use `?adminPanel=1` with
+ * a manager JWT for a fast embed (totals, per-recipient pending summary, recent history text only, no identicons).
  * Other wallets get only jobs for `sub`, capped the same way.
  */
 app.get("/api/nim/pending-payouts", async (req, res) => {
@@ -518,6 +519,39 @@ app.get("/api/nim/pending-payouts", async (req, res) => {
     res.status(500).json({ error: "internal" });
   }
 });
+
+app.post(
+  "/api/nim/manual-bulk-payout",
+  requireAnalyticsWalletAdmin,
+  async (req, res) => {
+    try {
+      const body = req.body as { recipient?: string };
+      const recipient = String(body?.recipient || "").trim();
+      if (!recipient) {
+        res.status(400).json({ error: "missing_recipient" });
+        return;
+      }
+      const out = await manualBulkPayoutPendingForRecipient(recipient);
+      res.json(out);
+    } catch (err) {
+      const code = err instanceof Error ? err.message : "internal";
+      if (code === "no_pending_jobs") {
+        res.status(400).json({ error: code });
+        return;
+      }
+      if (code === "wallet_payout_race_retry") {
+        res.status(409).json({ error: code });
+        return;
+      }
+      if (code === "invalid_recipient" || code === "nim_payout_not_configured") {
+        res.status(400).json({ error: code });
+        return;
+      }
+      console.error("[nim/manual-bulk-payout]", err);
+      res.status(503).json({ error: "payout_failed", detail: code });
+    }
+  }
+);
 
 /** Human-readable table; data from `/api/nim/pending-payouts`. */
 app.get("/pending-payouts", (_req, res) => {

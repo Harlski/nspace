@@ -73,6 +73,114 @@ export function analyticsAdminPageHtml(): string {
     .admin-payout-table tr:last-child td { border-bottom: 0; }
     .admin-payout-table .ident { width: 22px; height: 22px; border-radius: 4px; vertical-align: middle; }
     .admin-payout-sub { margin-top: 0.75rem; color: #9fb0c7; font-size: 0.8rem; }
+    .admin-payout-btn { font-size: 0.72rem; padding: 0.28rem 0.5rem; white-space: nowrap; }
+    .admin-payout-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .admin-payout-confirm-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 2000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background: rgba(0, 0, 0, 0.55);
+      box-sizing: border-box;
+    }
+    .admin-payout-confirm-dialog {
+      width: 100%;
+      max-width: 22rem;
+      background: #131b27;
+      border: 1px solid #2d3c52;
+      border-radius: 12px;
+      padding: 1.15rem 1.25rem 1.2rem;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
+    }
+    .admin-payout-confirm-dialog h3 {
+      margin: 0 0 0.85rem;
+      font-size: 1rem;
+      font-weight: 700;
+      color: #e6edf3;
+    }
+    .admin-payout-confirm-peer {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .admin-payout-confirm-peer .ident {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      flex-shrink: 0;
+      object-fit: cover;
+      background: #1f2a3a;
+      border: 1px solid #2d3c52;
+    }
+    .admin-payout-confirm-peer .ident--ph {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      color: #6b7d95;
+    }
+    .admin-payout-confirm-addr {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #dbe6f4;
+      letter-spacing: 0.02em;
+    }
+    .admin-payout-confirm-amt {
+      margin-top: 0.35rem;
+      font-size: 0.88rem;
+      color: #9fb0c7;
+    }
+    .admin-payout-confirm-amt strong {
+      color: #f0f4f8;
+      font-size: 1.05rem;
+    }
+    .admin-payout-confirm-jobs {
+      margin-top: 0.2rem;
+      font-size: 0.76rem;
+      color: #6b7d95;
+    }
+    .admin-payout-confirm-actions {
+      display: flex;
+      gap: 0.45rem;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    .admin-payout-confirm-actions button {
+      cursor: pointer;
+      border-radius: 8px;
+      padding: 0.42rem 0.75rem;
+      font: inherit;
+      font-size: 0.82rem;
+    }
+    .admin-payout-confirm-cancel {
+      background: transparent;
+      border: 1px solid #3d4f66;
+      color: #c8d4e4;
+    }
+    .admin-payout-confirm-cancel:hover {
+      border-color: #5a6d88;
+      color: #eef6ff;
+    }
+    .admin-payout-confirm-send {
+      background: var(--ms-accent);
+      border: 1px solid var(--ms-accent-hover-border);
+      color: #eef6ff;
+    }
+    .admin-payout-confirm-send:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .admin-payout-memo {
+      max-width: 15rem;
+      font-size: 0.72rem;
+      color: #9fb0c7;
+      word-break: break-word;
+      vertical-align: top;
+    }
   </style>
 </head>
 <body class="ms-site">
@@ -517,6 +625,94 @@ export function analyticsAdminPageHtml(): string {
       var pageViewsByDay = [];
       var pageViewsRecent = [];
       var payoutAdmin = null;
+      async function refreshPayoutAdmin() {
+        try {
+          var pr = await fetch("/api/nim/pending-payouts?adminPanel=1", {
+            headers: { authorization: "Bearer " + token },
+            cache: "no-store",
+          });
+          if (pr.ok) {
+            payoutAdmin = await pr.json();
+          } else {
+            payoutAdmin = null;
+          }
+        } catch (e) {
+          payoutAdmin = null;
+        }
+      }
+      function adminPayoutModalOnEsc(e) {
+        if (e.key !== "Escape") return;
+        if (!document.getElementById("adminManualPayoutModal")) return;
+        closeAdminManualPayoutModal();
+      }
+      function closeAdminManualPayoutModal() {
+        var m = document.getElementById("adminManualPayoutModal");
+        if (m) {
+          document.removeEventListener("keydown", adminPayoutModalOnEsc);
+          m.remove();
+        }
+      }
+      function openAdminManualPayoutModal(wallet, amountNim, jobCount, onSend) {
+        closeAdminManualPayoutModal();
+        var addrShort = walletConnectAs(wallet);
+        var backdrop = document.createElement("div");
+        backdrop.id = "adminManualPayoutModal";
+        backdrop.className = "admin-payout-confirm-backdrop";
+        backdrop.setAttribute("role", "dialog");
+        backdrop.setAttribute("aria-modal", "true");
+        backdrop.setAttribute("aria-labelledby", "adminManualPayoutTitle");
+        backdrop.innerHTML =
+          "<div class='admin-payout-confirm-dialog'>" +
+          "<h3 id='adminManualPayoutTitle'>Confirm payout</h3>" +
+          "<div class='admin-payout-confirm-peer'>" +
+          "<img id='adminManualPayoutIdent' class='ident' alt='' width='48' height='48' hidden/>" +
+          "<div id='adminManualPayoutIdentPh' class='ident ident--ph' aria-hidden='true'>···</div>" +
+          "<div>" +
+          "<div class='admin-payout-confirm-addr mono' title='" +
+          esc(wallet) +
+          "'>" +
+          esc(addrShort) +
+          "</div>" +
+          "<div class='admin-payout-confirm-amt'><strong>" +
+          esc(amountNim) +
+          "</strong> NIM total</div>" +
+          "<div class='admin-payout-confirm-jobs'>" +
+          esc(String(jobCount)) +
+          " pending job" +
+          (Number(jobCount) === 1 ? "" : "s") +
+          " will be removed from the queue.</div>" +
+          "</div></div>" +
+          "<div class='admin-payout-confirm-actions'>" +
+          "<button type='button' class='admin-payout-confirm-cancel' data-payout-cancel>Cancel</button>" +
+          "<button type='button' class='admin-payout-confirm-send' data-payout-send>Send payout</button>" +
+          "</div></div>";
+        document.body.appendChild(backdrop);
+        document.addEventListener("keydown", adminPayoutModalOnEsc);
+        var img = backdrop.querySelector("#adminManualPayoutIdent");
+        var ph = backdrop.querySelector("#adminManualPayoutIdentPh");
+        void (async function () {
+          var url = await fetchIdenticon(wallet);
+          if (url && img) {
+            img.src = url;
+            img.removeAttribute("hidden");
+            if (ph) ph.style.display = "none";
+          }
+        })();
+        backdrop.addEventListener("click", function (ev) {
+          if (ev.target === backdrop) closeAdminManualPayoutModal();
+        });
+        backdrop.querySelector("[data-payout-cancel]").addEventListener("click", function () {
+          closeAdminManualPayoutModal();
+        });
+        backdrop.querySelector("[data-payout-send]").addEventListener("click", function () {
+          var sendBtn = backdrop.querySelector("[data-payout-send]");
+          var cancelBtn = backdrop.querySelector("[data-payout-cancel]");
+          if (sendBtn) sendBtn.disabled = true;
+          if (cancelBtn) cancelBtn.disabled = true;
+          closeAdminManualPayoutModal();
+          void onSend();
+        });
+      }
       function chartAxisTicksAdmin(maxVal, formatTick) {
         var maxN = Math.max(1, Number(maxVal) || 1);
         var mid = maxN / 2;
@@ -602,75 +798,170 @@ export function analyticsAdminPageHtml(): string {
         if (!p || p.mode !== "admin") {
           return (
             "<section class='admin-payout-section'>" +
-            "<div class='admin-payout-head'><strong>Pending payout queue</strong></div>" +
+            "<div class='admin-payout-head'><strong>Quick payout</strong></div>" +
             "<p class='status' style='margin-top:0'>Could not load queue (try refresh).</p>" +
             "</section>"
           );
         }
         var rows = Array.isArray(p.rows) ? p.rows : [];
         var hist = Array.isArray(p.historyRows) ? p.historyRows : [];
+        var byRec = Array.isArray(p.pendingByRecipient) ? p.pendingByRecipient : [];
         var pendingN = Number(p.pendingTotal != null ? p.pendingTotal : rows.length) || 0;
         var allSent = Boolean(p.allSent);
         var msg = p.message != null ? String(p.message) : "";
-        if (allSent && rows.length === 0) {
-          return (
-            "<section class='admin-payout-section'>" +
-            "<div class='admin-payout-head'><strong>Pending payout queue</strong></div>" +
-            "<p class='status' style='margin-top:0'>" +
-            esc(msg || "No pending jobs.") +
-            "</p>" +
-            "</section>"
-          );
-        }
         var histThead =
           "<thead><tr><th></th><th>Sent (UTC)</th><th>Wallet</th><th>NIM</th><th>Tx</th></tr></thead>";
-        var histBody = hist
-          .map(function (r) {
-            var t = r.time != null ? String(r.time).replace("T", " ").slice(0, 19) : "—";
-            var w = r.walletId != null ? String(r.walletId) : "";
-            var ident = r.identicon ? String(r.identicon) : "";
-            var img = ident
-              ? "<img class='ident' src='" + esc(ident) + "' alt='' width='22' height='22'/>"
-              : "";
-            var tx = r.txHash != null ? String(r.txHash) : "";
-            var txCell = tx
-              ? "<a class='ms-link-expl mono' href='https://nimiq.watch/#" +
-                esc(tx) +
-                "' target='_blank' rel='noopener noreferrer'>" +
-                esc(tx.slice(0, 10)) +
-                "…</a>"
-              : "—";
-            return (
-              "<tr><td>" +
-              img +
-              "</td><td class='mono'>" +
-              esc(t) +
-              "</td><td class='mono'>" +
-              esc(walletGrouped(w)) +
-              "</td><td class='mono'>" +
-              esc(String(r.amountNim != null ? r.amountNim : "—")) +
-              "</td><td>" +
-              txCell +
-              "</td></tr>"
-            );
-          })
-          .join("");
-        return (
-          "<section class='admin-payout-section'>" +
-          "<div class='admin-payout-head'><strong>Pending payout queue</strong></div>" +
+        function histTableBody() {
+          return hist
+            .map(function (r) {
+              var t = r.time != null ? String(r.time).replace("T", " ").slice(0, 19) : "—";
+              var w = r.walletId != null ? String(r.walletId) : "";
+              var ident = r.identicon ? String(r.identicon) : "";
+              var img = ident
+                ? "<img class='ident' src='" + esc(ident) + "' alt='' width='22' height='22'/>"
+                : "";
+              var tx = r.txHash != null ? String(r.txHash) : "";
+              var txCell = tx
+                ? "<a class='ms-link-expl mono' href='https://nimiq.watch/#" +
+                  esc(tx) +
+                  "' target='_blank' rel='noopener noreferrer'>" +
+                  esc(tx.slice(0, 10)) +
+                  "…</a>"
+                : "—";
+              return (
+                "<tr><td>" +
+                img +
+                "</td><td class='mono'>" +
+                esc(t) +
+                "</td><td class='mono'>" +
+                esc(walletGrouped(w)) +
+                "</td><td class='mono'>" +
+                esc(String(r.amountNim != null ? r.amountNim : "—")) +
+                "</td><td>" +
+                txCell +
+                "</td></tr>"
+              );
+            })
+            .join("");
+        }
+        var summaryBlock = "";
+        if (byRec.length) {
+          var sumThead =
+            "<thead><tr><th>Wallet</th><th>Jobs</th><th>Total NIM</th><th></th></tr></thead>";
+          var sumBody = byRec
+            .map(function (row) {
+              var w = row.walletId != null ? String(row.walletId) : "";
+              var jc = row.jobCount != null ? String(row.jobCount) : "0";
+              var nim = row.amountNim != null ? String(row.amountNim) : "—";
+              return (
+                "<tr><td class='mono'>" +
+                esc(walletGrouped(w)) +
+                "</td><td class='mono'>" +
+                esc(jc) +
+                "</td><td class='mono'>" +
+                esc(nim) +
+                "</td><td>" +
+                "<button type='button' class='admin-payout-btn' data-manual-payout='" +
+                esc(w) +
+                "' data-manual-payout-nim='" +
+                esc(nim) +
+                "' data-manual-payout-jobs='" +
+                esc(jc) +
+                "'>Payout in full</button>" +
+                "</td></tr>"
+              );
+            })
+            .join("");
+          summaryBlock =
+            "<div class='admin-payout-sub'><strong>Amount pending by recipient</strong> <span class='admin-payout-note'>(queued pending only)</span></div>" +
+            "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
+            sumThead +
+            "<tbody>" +
+            sumBody +
+            "</tbody></table></div>" +
+            "<p class='status' style='margin-top:0.35rem;font-size:0.74rem'>Payout in full sends one combined transaction and removes those pending jobs. In-flight sends are not included.</p>";
+        }
+        var histBlock = hist.length
+          ? "<div class='admin-payout-sub'><strong>Recent completed</strong> (last 5 · newest first)</div>" +
+            "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
+            histThead +
+            "<tbody>" +
+            histTableBody() +
+            "</tbody></table></div>"
+          : "";
+        var mb = Array.isArray(p.manualBulkHistory) ? p.manualBulkHistory : [];
+        var mbThead =
+          "<thead><tr><th>Sent (UTC)</th><th>Wallet</th><th>Total NIM</th><th>Jobs</th><th>State</th><th>Tx</th><th>On-chain message</th></tr></thead>";
+        var mbBody = mb.length
+          ? mb
+              .map(function (row) {
+                var t = row.time != null ? String(row.time).replace("T", " ").slice(0, 19) : "—";
+                var w = row.walletId != null ? String(row.walletId) : "";
+                var nim = row.amountNim != null ? String(row.amountNim) : "—";
+                var jc = row.jobsCleared != null ? String(row.jobsCleared) : "0";
+                var st = row.state != null ? String(row.state) : "—";
+                var tx = row.txHash != null ? String(row.txHash).trim() : "";
+                var txLower = tx.toLowerCase();
+                var txCell =
+                  tx && /^[0-9a-f]{64}$/.test(txLower)
+                    ? "<a class='ms-link-expl mono' href='https://nimiq.watch/#" +
+                      esc(txLower) +
+                      "' target='_blank' rel='noopener noreferrer'>Watch</a> · <a class='ms-link-expl mono' href='https://www.nimiqhub.com/tx/" +
+                      esc(txLower) +
+                      "' target='_blank' rel='noopener noreferrer'>Hub</a>"
+                    : "—";
+                var memoFull = row.txMessage != null ? String(row.txMessage) : "";
+                var memoDisp = memoFull.length > 56 ? memoFull.slice(0, 54) + "…" : memoFull;
+                return (
+                  "<tr><td class='mono'>" +
+                  esc(t) +
+                  "</td><td class='mono'>" +
+                  esc(walletGrouped(w)) +
+                  "</td><td class='mono'>" +
+                  esc(nim) +
+                  "</td><td class='mono'>" +
+                  esc(jc) +
+                  "</td><td class='mono'>" +
+                  esc(st) +
+                  "</td><td>" +
+                  txCell +
+                  "</td><td class='admin-payout-memo'><span title='" +
+                  esc(memoFull) +
+                  "'>" +
+                  esc(memoDisp) +
+                  "</span></td></tr>"
+                );
+              })
+              .join("")
+          : "";
+        var mbTable =
+          mb.length > 0
+            ? "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
+              mbThead +
+              "<tbody>" +
+              mbBody +
+              "</tbody></table></div>"
+            : "<p class='status' style='margin-top:0.35rem;font-size:0.76rem;color:#8b9cb3'>No manual bulk payouts found (server JSONL + gameplay events with <span class='mono'>manualBulk</span>). Automatic worker sends only appear under <strong>Recent completed</strong>. Use <strong>Payout in full</strong> to record combined sends here.</p>";
+        var mbBlock =
+          "<div class='admin-payout-sub'><strong>Manual payout log</strong> <span class='admin-payout-note'>(combined sends · newest first)</span></div>" +
+          mbTable;
+        var pendingLine =
           "<p class='status' style='margin-top:0'>" +
           "<strong>" +
           esc(String(pendingN)) +
-          "</strong> pending" +
-          "</p>" +
-          (hist.length
-            ? "<div class='admin-payout-sub'><strong>Recent completed</strong> (newest first, capped by server)</div>" +
-              "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
-              histThead +
-              "<tbody>" +
-              histBody +
-              "</tbody></table></div>"
-            : "") +
+          "</strong> job" +
+          (pendingN === 1 ? "" : "s") +
+          " pending" +
+          (allSent ? " · " + esc(msg || "Queue empty.") : "") +
+          "</p>";
+        return (
+          "<section id='admin-quick-payout' class='admin-payout-section'>" +
+          "<div class='admin-payout-head'><strong>Quick payout</strong>" +
+          "<span class='admin-payout-note'>combines queued pending jobs per wallet</span></div>" +
+          pendingLine +
+          summaryBlock +
+          histBlock +
+          mbBlock +
           "</section>"
         );
       }
@@ -831,6 +1122,54 @@ export function analyticsAdminPageHtml(): string {
             }
           });
         });
+        panel.querySelectorAll("[data-manual-payout]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var w = String(btn.getAttribute("data-manual-payout") || "");
+            if (!w) return;
+            var nim = String(btn.getAttribute("data-manual-payout-nim") || "—");
+            var jc = String(btn.getAttribute("data-manual-payout-jobs") || "0");
+            openAdminManualPayoutModal(w, nim, jc, async function () {
+              btn.disabled = true;
+              try {
+                var r = await fetch("/api/nim/manual-bulk-payout", {
+                  method: "POST",
+                  headers: {
+                    authorization: "Bearer " + token,
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({ recipient: w }),
+                });
+                var j = await r.json().catch(function () {
+                  return {};
+                });
+                if (!r.ok) {
+                  var errCode = String(j.error || "payout_failed");
+                  if (errCode === "wallet_payout_race_retry") {
+                    errCode = "Queue changed — wait a moment and try again.";
+                  }
+                  throw new Error(errCode);
+                }
+                await refreshPayoutAdmin();
+                var hx = j.txHash ? String(j.txHash) : "";
+                var n = Number(j.jobsCleared || 0);
+                render(
+                  "Payout sent" +
+                    (hx ? ": " + hx.slice(0, 16) + "…" : "") +
+                    " (" +
+                    String(n) +
+                    " job" +
+                    (n === 1 ? "" : "s") +
+                    ").",
+                  false
+                );
+              } catch (e) {
+                render(String((e && e.message) || e), true);
+              } finally {
+                btn.disabled = false;
+              }
+            });
+          });
+        });
       }
       var authStatus = await fetchAnalyticsAuthStatus(token);
       try {
@@ -849,19 +1188,7 @@ export function analyticsAdminPageHtml(): string {
               }
             } catch (e) {}
           })(),
-          (async function () {
-            try {
-              var pr = await fetch("/api/nim/pending-payouts?adminPanel=1", {
-                headers: { authorization: "Bearer " + token },
-                cache: "no-store",
-              });
-              if (pr.ok) {
-                payoutAdmin = await pr.json();
-              }
-            } catch (e) {
-              payoutAdmin = null;
-            }
-          })(),
+          refreshPayoutAdmin(),
         ]);
         if (signed) await renderAuthUser(signed, authStatus.analyticsAuthorized);
         render("", false);

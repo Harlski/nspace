@@ -22,3 +22,9 @@ export const NIM_PAYOUT_SENT_HISTORY_FILE = path.join(
   NIM_PAYOUT_DATA_DIR,
   "nim-payout-sent.jsonl"
 );
+
+/** One JSON line per manager "payout in full" (combined tx + job count). */
+export const NIM_PAYOUT_MANUAL_BULK_LOG_FILE = path.join(
+  NIM_PAYOUT_DATA_DIR,
+  "nim-payout-manual-bulk.jsonl"
+);

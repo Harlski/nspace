@@ -163,7 +163,7 @@ export function pendingPayoutsPublicPageHtml(): string {
     }
     function tableHistory(rows) {
       var html =
-        "<h2 class='ms-section-title'>Recent sent (last 10)</h2>" +
+        "<h2 class='ms-section-title'>Recent sent (last 5)</h2>" +
         "<table><thead><tr><th>Sent (UTC)</th><th>Wallet</th><th class='amt'>NIM</th><th>Tx</th></tr></thead><tbody>";
       for (var j = 0; j < rows.length; j++) {
         var row = rows[j];

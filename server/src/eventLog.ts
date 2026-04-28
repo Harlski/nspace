@@ -479,6 +479,92 @@ export function listRecentNimPayoutSentFromEventLog(
   return merged.slice(0, Math.max(0, limit));
 }
 
+/** One combined manual payout (aggregated from multiple `nim_payout_sent` rows sharing `txHash`). */
+export type ManualBulkEventHistoryAgg = {
+  sentAt: number;
+  walletId: string;
+  txHash: string;
+  totalLuna: string;
+  jobsCleared: number;
+  state: string;
+};
+
+/**
+ * Manager "payout in full" leaves one `nim_payout_sent` per cleared job (`payload.manualBulk`),
+ * same `txHash`. Used to populate admin manual payout history when JSONL is empty or older.
+ */
+export function listRecentManualBulkAggregatesFromEventLog(
+  maxDays: number,
+  limit: number
+): ManualBulkEventHistoryAgg[] {
+  const files = listEventFiles(maxDays);
+  type Agg = {
+    sentAt: number;
+    walletId: string;
+    totalLuna: string;
+    state: string;
+    jobs: number;
+    sumLuna: bigint;
+    txHash: string;
+  };
+  const byTx = new Map<string, Agg>();
+  for (const fp of files) {
+    for (const rec of parseLines(fp)) {
+      if (rec.kind !== "nim_payout_sent") continue;
+      const p = rec.payload || {};
+      if (p.manualBulk !== true) continue;
+      const txHashRaw = typeof p.txHash === "string" ? p.txHash.trim() : "";
+      if (!txHashRaw) continue;
+      const txKey = txHashRaw.toLowerCase();
+      const sentAt = typeof p.sentAt === "number" ? p.sentAt : rec.ts;
+      const state = typeof p.state === "string" ? p.state : "";
+      const walletId = String(rec.address || "").trim();
+      const bulkStr =
+        typeof p.bulkTotalLuna === "string" && /^\d+$/.test(p.bulkTotalLuna)
+          ? p.bulkTotalLuna
+          : "";
+      const amtStr =
+        typeof p.amountLuna === "string" && /^\d+$/.test(p.amountLuna)
+          ? p.amountLuna
+          : "0";
+
+      const prev = byTx.get(txKey);
+      if (prev) {
+        prev.jobs += 1;
+        if (sentAt > prev.sentAt) prev.sentAt = sentAt;
+        if (state && !prev.state) prev.state = state;
+        prev.sumLuna += BigInt(amtStr);
+      } else {
+        byTx.set(txKey, {
+          sentAt,
+          walletId,
+          totalLuna: bulkStr,
+          state,
+          jobs: 1,
+          sumLuna: BigInt(amtStr),
+          txHash: txHashRaw,
+        });
+      }
+    }
+  }
+  const out: ManualBulkEventHistoryAgg[] = [];
+  for (const v of byTx.values()) {
+    const totalLuna =
+      v.totalLuna && /^\d+$/.test(v.totalLuna) ? v.totalLuna : v.sumLuna.toString();
+    if (!/^\d+$/.test(totalLuna) || v.jobs < 1) continue;
+    out.push({
+      sentAt: v.sentAt,
+      walletId: v.walletId,
+      txHash: v.txHash,
+      totalLuna,
+      jobsCleared: v.jobs,
+      state: v.state || "—",
+    });
+  }
+  out.sort((a, b) => b.sentAt - a.sentAt);
+  return out.slice(0, Math.max(0, limit));
+}
+
 export async function getEventLogAnalyticsSnapshot(
   maxDays: number,
   sessionLimit: number,

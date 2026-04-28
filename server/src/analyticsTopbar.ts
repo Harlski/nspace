@@ -196,6 +196,11 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
           ${navLink("pending-payouts", currentPage, "/pending-payouts", "Payouts")}
           ${navLink("analytics", currentPage, "/analytics", "Analytics", true)}
           ${navLink("admin", currentPage, "/admin", "Admin", true)}
+          ${
+            currentPage === "admin"
+              ? `<a class="main-site-nav__link" href="#admin-quick-payout">Quick payout</a>`
+              : ""
+          }
         </nav>
       </div>
       <div class="analytics-topbar">
