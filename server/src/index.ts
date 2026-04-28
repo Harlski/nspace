@@ -28,6 +28,7 @@ import {
   flushNimPayoutQueueSync,
   getNimPayoutWalletBalanceLuna,
   getPendingPayoutSnapshotForWallet,
+  getPublicPendingPayoutAdminPanelSnapshot,
   getPublicPendingPayoutSnapshot,
   getPublicPendingPayoutSummary,
   isNimPayoutSenderConfigured,
@@ -474,8 +475,10 @@ app.get("/api/nim/payout-balance", async (_req, res) => {
 /**
  * Pending payout data.
  * Without `Authorization: Bearer <jwt>`: aggregate summary only (no per-wallet rows).
- * With valid session: analytics manager wallets get the full global queue + history
- * (`mode: "admin"`); other wallets get up to 20 pending + 20 completed rows for `sub`.
+ * With valid session: analytics manager wallets get the global queue + history
+ * (`mode: "admin"`, capped at 10 pending + 10 completed rows). Use `?adminPanel=1` with
+ * a manager JWT for a fast embed (total pending + recent history text only, no identicons).
+ * Other wallets get only jobs for `sub`, capped the same way.
  */
 app.get("/api/nim/pending-payouts", async (req, res) => {
   try {
@@ -493,7 +496,13 @@ app.get("/api/nim/pending-payouts", async (req, res) => {
           return;
         }
         if (analyticsManagerWallets.has(addr)) {
-          const snap = await getPublicPendingPayoutSnapshot();
+          const rawPanel = req.query["adminPanel"];
+          const adminPanelLite =
+            typeof rawPanel === "string" &&
+            (rawPanel === "1" || rawPanel.toLowerCase() === "true");
+          const snap = adminPanelLite
+            ? getPublicPendingPayoutAdminPanelSnapshot()
+            : await getPublicPendingPayoutSnapshot();
           res.json({ mode: "admin" as const, ...snap });
         } else {
           res.json(await getPendingPayoutSnapshotForWallet(addr));

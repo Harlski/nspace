@@ -2,6 +2,7 @@ export {
   enqueueNimPayout,
   startNimPayoutProcessor,
   flushNimPayoutQueueSync,
+  getPublicPendingPayoutAdminPanelSnapshot,
   getPublicPendingPayoutSnapshot,
   getPublicPendingPayoutSummary,
   getPendingPayoutSnapshotForWallet,

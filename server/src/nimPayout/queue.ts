@@ -81,10 +81,9 @@ const WALLET_GLOBAL_SENT_TAIL_LINES = Math.min(
   )
 );
 
-const HISTORY_ROWS_CAP = Math.min(
-  2000,
-  Math.max(1, Number(process.env.NIM_PAYOUT_PUBLIC_HISTORY_LIMIT ?? 20))
-);
+/** Max rows returned in `/api/nim/pending-payouts` JSON (admin snapshot + per-wallet detail). */
+const PENDING_PAYOUT_API_PENDING_ROW_CAP = 10;
+const PENDING_PAYOUT_API_HISTORY_ROW_CAP = 10;
 const HISTORY_EVENT_DAYS = Math.min(
   90,
   Math.max(7, Number(process.env.NIM_PAYOUT_PUBLIC_HISTORY_EVENT_DAYS ?? 30))
@@ -581,12 +580,12 @@ export type PublicPayoutHistoryRow = {
 
 export type PublicPendingPayoutSnapshot = {
   allSent: boolean;
-  /** Count of jobs still `pending` or `processing` (same as `rows.length` when not `allSent`). */
+  /** Count of jobs still `pending` or `processing` (full queue; may exceed `rows.length`). */
   pendingTotal: number;
   /** Non-null when `rows` is empty — friendly status for humans. */
   message: string | null;
   rows: PublicPendingPayoutRow[];
-  /** Successful sends (disk log + gameplay events); capped by env (default 20). */
+  /** Successful sends (disk log + gameplay events); capped for API responses. */
   historyRows: PublicPayoutHistoryRow[];
 };
 
@@ -604,9 +603,6 @@ export type WalletPendingPayoutDetail = PublicPendingPayoutSnapshot & {
   mode: "wallet";
   processedToday: number;
 };
-
-const WALLET_PENDING_ROWS_CAP = 20;
-const WALLET_HISTORY_ROWS_CAP = 20;
 
 function normalizeNimWalletId(w: string): string {
   return String(w || "").replace(/\s+/g, "").toUpperCase();
@@ -664,12 +660,56 @@ export async function getPublicPendingPayoutSummary(): Promise<PublicPendingPayo
   };
 }
 
+function historyRowsFromMergedNoIdenticons(
+  source: SentHistoryMerged[]
+): PublicPayoutHistoryRow[] {
+  return source.map((r) => ({
+    time: new Date(r.sentAt).toISOString(),
+    identicon: "",
+    walletId: r.recipient,
+    amountNim:
+      r.amountLuna && /^\d+$/.test(r.amountLuna)
+        ? formatLunaAsNim4(BigInt(r.amountLuna))
+        : "—",
+    txHash: r.txHash,
+  }));
+}
+
+/**
+ * Fast path for `/admin`: total pending count + recent history text only (no identicons, no pending rows).
+ * Avoids `@nimiq/identicons` DOM work on every dashboard refresh.
+ */
+export function getPublicPendingPayoutAdminPanelSnapshot(): PublicPendingPayoutSnapshot {
+  const historySource = mergeSentHistoryRecords(PENDING_PAYOUT_API_HISTORY_ROW_CAP);
+  const historyRows = historyRowsFromMergedNoIdenticons(historySource);
+
+  const pending = jobs.filter(
+    (j) => j.status === "pending" || j.status === "processing"
+  );
+  if (pending.length === 0) {
+    return {
+      allSent: true,
+      pendingTotal: 0,
+      message: "All pending transactions have been sent.",
+      rows: [],
+      historyRows,
+    };
+  }
+  return {
+    allSent: false,
+    pendingTotal: pending.length,
+    message: null,
+    rows: [],
+    historyRows,
+  };
+}
+
 /**
  * Full global queue + recent history (legacy / operator dashboards).
  * Prefer {@link getPublicPendingPayoutSummary} for unauthenticated clients.
  */
 export async function getPublicPendingPayoutSnapshot(): Promise<PublicPendingPayoutSnapshot> {
-  const historySource = mergeSentHistoryRecords(HISTORY_ROWS_CAP);
+  const historySource = mergeSentHistoryRecords(PENDING_PAYOUT_API_HISTORY_ROW_CAP);
   const historyRows: PublicPayoutHistoryRow[] = await Promise.all(
     historySource.map(async (r) => ({
       time: new Date(r.sentAt).toISOString(),
@@ -696,8 +736,9 @@ export async function getPublicPendingPayoutSnapshot(): Promise<PublicPendingPay
       historyRows,
     };
   }
+  const pendingSlice = pending.slice(0, PENDING_PAYOUT_API_PENDING_ROW_CAP);
   const rows: PublicPendingPayoutRow[] = await Promise.all(
-    pending.map(async (j) => ({
+    pendingSlice.map(async (j) => ({
       time: new Date(j.createdAt).toISOString(),
       identicon: await nimiqIdenticonDataUrl(j.recipientAddress),
       walletId: j.recipientAddress,
@@ -724,7 +765,7 @@ export async function getPendingPayoutSnapshotForWallet(
   const day0 = utcDayStartMs(now);
   const historyMerged = collectWalletSentHistory(target, 20_000);
   const processedToday = countSendsOnUtcDay(historyMerged, day0);
-  const historySlice = historyMerged.slice(0, WALLET_HISTORY_ROWS_CAP);
+  const historySlice = historyMerged.slice(0, PENDING_PAYOUT_API_HISTORY_ROW_CAP);
   const historyRows: PublicPayoutHistoryRow[] = await Promise.all(
     historySlice.map(async (r) => ({
       time: new Date(r.sentAt).toISOString(),
@@ -738,14 +779,14 @@ export async function getPendingPayoutSnapshotForWallet(
     }))
   );
 
-  const pending = jobs
+  const pendingAll = jobs
     .filter(
       (j) =>
         (j.status === "pending" || j.status === "processing") &&
         normalizeNimWalletId(j.recipientAddress) === target
     )
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .slice(0, WALLET_PENDING_ROWS_CAP);
+    .sort((a, b) => a.createdAt - b.createdAt);
+  const pending = pendingAll.slice(0, PENDING_PAYOUT_API_PENDING_ROW_CAP);
   const rows: PublicPendingPayoutRow[] = await Promise.all(
     pending.map(async (j) => ({
       time: new Date(j.createdAt).toISOString(),
@@ -754,11 +795,11 @@ export async function getPendingPayoutSnapshotForWallet(
       amountNim: formatLunaAsNim4(j.amountLuna),
     }))
   );
-  const allSent = pending.length === 0;
+  const allSent = pendingAll.length === 0;
   return {
     mode: "wallet",
     allSent,
-    pendingTotal: pending.length,
+    pendingTotal: pendingAll.length,
     message: null,
     rows,
     historyRows,

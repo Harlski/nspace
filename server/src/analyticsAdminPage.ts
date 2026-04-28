@@ -622,12 +622,6 @@ export function analyticsAdminPageHtml(): string {
             "</section>"
           );
         }
-        var uniqueSet = new Set();
-        for (var ui = 0; ui < rows.length; ui++) {
-          var uid = String(rows[ui].walletId || "").replace(/\s+/g, "").toUpperCase();
-          if (uid) uniqueSet.add(uid);
-        }
-        var uniquePending = uniqueSet.size;
         var histThead =
           "<thead><tr><th></th><th>Sent (UTC)</th><th>Wallet</th><th>NIM</th><th>Tx</th></tr></thead>";
         var histBody = hist
@@ -667,13 +661,7 @@ export function analyticsAdminPageHtml(): string {
           "<p class='status' style='margin-top:0'>" +
           "<strong>" +
           esc(String(pendingN)) +
-          "</strong> total" +
-          " · " +
-          "<strong>" +
-          esc(String(uniquePending)) +
-          "</strong> unique user" +
-          (uniquePending === 1 ? "" : "s") +
-          " pending" +
+          "</strong> pending" +
           "</p>" +
           (hist.length
             ? "<div class='admin-payout-sub'><strong>Recent completed</strong> (newest first, capped by server)</div>" +
@@ -863,7 +851,7 @@ export function analyticsAdminPageHtml(): string {
           })(),
           (async function () {
             try {
-              var pr = await fetch("/api/nim/pending-payouts", {
+              var pr = await fetch("/api/nim/pending-payouts?adminPanel=1", {
                 headers: { authorization: "Bearer " + token },
                 cache: "no-store",
               });
