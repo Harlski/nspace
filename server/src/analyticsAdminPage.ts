@@ -622,29 +622,12 @@ export function analyticsAdminPageHtml(): string {
             "</section>"
           );
         }
-        var thead =
-          "<thead><tr><th></th><th>Enqueued (UTC)</th><th>Wallet</th><th>NIM</th></tr></thead>";
-        var body = rows
-          .map(function (r) {
-            var t = r.time != null ? String(r.time).replace("T", " ").slice(0, 19) : "—";
-            var w = r.walletId != null ? String(r.walletId) : "";
-            var ident = r.identicon ? String(r.identicon) : "";
-            var img = ident
-              ? "<img class='ident' src='" + esc(ident) + "' alt='' width='22' height='22'/>"
-              : "";
-            return (
-              "<tr><td>" +
-              img +
-              "</td><td class='mono'>" +
-              esc(t) +
-              "</td><td class='mono'>" +
-              esc(walletGrouped(w)) +
-              "</td><td class='mono'>" +
-              esc(String(r.amountNim != null ? r.amountNim : "—")) +
-              "</td></tr>"
-            );
-          })
-          .join("");
+        var uniqueSet = new Set();
+        for (var ui = 0; ui < rows.length; ui++) {
+          var uid = String(rows[ui].walletId || "").replace(/\s+/g, "").toUpperCase();
+          if (uid) uniqueSet.add(uid);
+        }
+        var uniquePending = uniqueSet.size;
         var histThead =
           "<thead><tr><th></th><th>Sent (UTC)</th><th>Wallet</th><th>NIM</th><th>Tx</th></tr></thead>";
         var histBody = hist
@@ -680,17 +663,18 @@ export function analyticsAdminPageHtml(): string {
           .join("");
         return (
           "<section class='admin-payout-section'>" +
-          "<div class='admin-payout-head'><strong>Pending payout queue</strong>" +
-          "<span class='admin-payout-note'>full queue · " +
+          "<div class='admin-payout-head'><strong>Pending payout queue</strong></div>" +
+          "<p class='status' style='margin-top:0'>" +
+          "<strong>" +
           esc(String(pendingN)) +
-          " job" +
-          (pendingN === 1 ? "" : "s") +
-          "</span></div>" +
-          "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
-          thead +
-          "<tbody>" +
-          (body || "<tr><td colspan='4' class='status'>No rows.</td></tr>") +
-          "</tbody></table></div>" +
+          "</strong> total" +
+          " · " +
+          "<strong>" +
+          esc(String(uniquePending)) +
+          "</strong> unique user" +
+          (uniquePending === 1 ? "" : "s") +
+          " pending" +
+          "</p>" +
           (hist.length
             ? "<div class='admin-payout-sub'><strong>Recent completed</strong> (newest first, capped by server)</div>" +
               "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
