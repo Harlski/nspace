@@ -90,11 +90,152 @@ import {
 } from "./voxelTexts.js";
 import { loadMazeRecords, recordMazeCompletion } from "./mazeRecords.js";
 import { isAdmin } from "./config.js";
+import {
+  recordGameWsInbound,
+  recordGameWsOutbound,
+  utf8ByteLengthOfWsData,
+} from "./gameWsMetrics.js";
 
 const MOVE_SPEED = 5;
 /** NPCs move 20% slower than human path-follow speed. */
 const NPC_MOVE_SPEED = MOVE_SPEED * 0.8;
 const TICK_MS = 50;
+/**
+ * Min interval between tick-driven full-room `state` broadcasts (JSON over WS).
+ * Simulation still runs every {@link TICK_MS}; this only limits how often clients
+ * receive position snapshots. Override with `STATE_BROADCAST_MIN_MS` (e.g. 200).
+ */
+const STATE_BROADCAST_MIN_MS = Math.max(
+  TICK_MS,
+  Math.floor(Number(process.env.STATE_BROADCAST_MIN_MS ?? "120"))
+);
+
+/** Set `STATE_BROADCAST_DELTA=0` to always send full `state` on ticks (debug / compat). */
+const USE_STATE_TICK_DELTA = process.env.STATE_BROADCAST_DELTA !== "0";
+
+const lastTickStateBroadcastAt = new Map<string, number>();
+const pendingTickStateBroadcast = new Set<string>();
+/** Last tick `state` / `stateDelta` payload per room (for delta tick sends). */
+const lastTickBroadcastPlayers = new Map<string, PlayerState[]>();
+
+function clonePlayerState(p: PlayerState): PlayerState {
+  return { ...p };
+}
+
+/** Ignore sub-epsilon float noise when diffing tick snapshots (avoids pointless `stateDelta`). */
+const TICK_STATE_EQ_POS_EPS = 1e-5;
+const TICK_STATE_EQ_VEL_EPS = 1e-8;
+
+function nearTickCoord(a: number, b: number, eps: number): boolean {
+  return Math.abs(a - b) <= eps;
+}
+
+function tickPlayerStatesEqual(a: PlayerState, b: PlayerState): boolean {
+  return (
+    a.displayName === b.displayName &&
+    nearTickCoord(a.x, b.x, TICK_STATE_EQ_POS_EPS) &&
+    nearTickCoord(a.y, b.y, TICK_STATE_EQ_POS_EPS) &&
+    nearTickCoord(a.z, b.z, TICK_STATE_EQ_POS_EPS) &&
+    nearTickCoord(a.vx, b.vx, TICK_STATE_EQ_VEL_EPS) &&
+    nearTickCoord(a.vz, b.vz, TICK_STATE_EQ_VEL_EPS) &&
+    (a.nimiqPay ?? false) === (b.nimiqPay ?? false) &&
+    (a.nimSendAway ?? false) === (b.nimSendAway ?? false) &&
+    (a.chatTyping ?? false) === (b.chatTyping ?? false)
+  );
+}
+
+function pruneTickBaselinePlayer(roomId: string, address: string): void {
+  const cur = lastTickBroadcastPlayers.get(roomId);
+  if (!cur) return;
+  const next = cur.filter((p) => p.address !== address);
+  if (next.length === 0) lastTickBroadcastPlayers.delete(roomId);
+  else lastTickBroadcastPlayers.set(roomId, next);
+}
+
+/** Keep tick delta baseline aligned with joins so the next tick rarely needs a full `state`. */
+function mergeTickBaselinePlayer(roomId: string, player: PlayerState): void {
+  const cur = lastTickBroadcastPlayers.get(roomId);
+  if (!cur) return;
+  if (cur.some((p) => p.address === player.address)) return;
+  cur.push(clonePlayerState(player));
+}
+
+function replaceTickBroadcastBaseline(roomId: string): void {
+  lastTickBroadcastPlayers.set(
+    roomId,
+    snapshotPlayers(roomId).map(clonePlayerState)
+  );
+}
+
+/** Full room snapshot + refresh tick delta baseline (use for non-tick `state` sends). */
+function broadcastRoomStateFull(roomId: string): void {
+  broadcast(roomId, {
+    type: "state",
+    players: snapshotPlayers(roomId),
+  });
+  replaceTickBroadcastBaseline(roomId);
+}
+
+function broadcastTickStateIfAllowed(
+  roomId: string,
+  room: Map<string, ClientConn>,
+  now: number,
+  dirty: boolean
+): void {
+  if (room.size === 0) {
+    pendingTickStateBroadcast.delete(roomId);
+    lastTickStateBroadcastAt.delete(roomId);
+    lastTickBroadcastPlayers.delete(roomId);
+    return;
+  }
+  const want = dirty || pendingTickStateBroadcast.has(roomId);
+  if (!want) return;
+  const last = lastTickStateBroadcastAt.get(roomId) ?? 0;
+  if (now - last < STATE_BROADCAST_MIN_MS) {
+    if (dirty) pendingTickStateBroadcast.add(roomId);
+    return;
+  }
+
+  const full = snapshotPlayers(roomId);
+  const prev = lastTickBroadcastPlayers.get(roomId);
+  let sendFull =
+    !USE_STATE_TICK_DELTA || !prev || prev.length !== full.length;
+
+  if (!sendFull && prev) {
+    const prevSet = new Set(prev.map((p) => p.address));
+    for (const p of full) {
+      if (!prevSet.has(p.address)) {
+        sendFull = true;
+        break;
+      }
+    }
+  }
+
+  const changed: PlayerState[] = [];
+  if (!sendFull && prev) {
+    const prevByAddr = new Map(prev.map((p) => [p.address, p]));
+    for (const p of full) {
+      const o = prevByAddr.get(p.address);
+      if (!o || !tickPlayerStatesEqual(o, p)) changed.push(clonePlayerState(p));
+    }
+    if (changed.length === 0) {
+      lastTickStateBroadcastAt.set(roomId, now);
+      pendingTickStateBroadcast.delete(roomId);
+      return;
+    }
+    if (changed.length === full.length) sendFull = true;
+  }
+
+  if (sendFull || !USE_STATE_TICK_DELTA) {
+    broadcast(roomId, { type: "state", players: full });
+  } else {
+    broadcast(roomId, { type: "stateDelta", players: changed });
+  }
+  replaceTickBroadcastBaseline(roomId);
+  lastTickStateBroadcastAt.set(roomId, now);
+  pendingTickStateBroadcast.delete(roomId);
+}
+
 const CHAT_MAX = 256;
 const RATE_MOVE_TO_MS = 120;
 const RATE_CHAT_MS = 800;
@@ -339,6 +480,8 @@ type OutMsg =
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
   | { type: "state"; players: PlayerState[] }
+  /** Tick path only: subset of players that changed since last tick snapshot. */
+  | { type: "stateDelta"; players: PlayerState[] }
   | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | {
@@ -1232,14 +1375,44 @@ function findPlayerRoom(address: string): string | null {
 function broadcast(roomId: string, msg: OutMsg, except?: string): void {
   const r = roomOf(roomId);
   const payload = JSON.stringify(msg);
+  let recipients = 0;
+  for (const [addr, c] of r) {
+    if (except && addr === except) continue;
+    if (c.ws.readyState === 1) recipients += 1;
+  }
+  if (recipients > 0) {
+    recordGameWsOutbound(
+      msg.type,
+      Buffer.byteLength(payload, "utf8"),
+      recipients
+    );
+  }
   for (const [addr, c] of r) {
     if (except && addr === except) continue;
     if (c.ws.readyState === 1) c.ws.send(payload);
+  }
+  if (msg.type === "playerLeft") {
+    pruneTickBaselinePlayer(roomId, msg.address);
+  } else if (msg.type === "playerJoined") {
+    mergeTickBaselinePlayer(roomId, msg.player);
   }
 }
 
 function broadcastAll(msg: OutMsg): void {
   const payload = JSON.stringify(msg);
+  let recipients = 0;
+  for (const room of rooms.values()) {
+    for (const c of room.values()) {
+      if (c.ws.readyState === 1) recipients += 1;
+    }
+  }
+  if (recipients > 0) {
+    recordGameWsOutbound(
+      msg.type,
+      Buffer.byteLength(payload, "utf8"),
+      recipients
+    );
+  }
   for (const room of rooms.values()) {
     for (const c of room.values()) {
       if (c.ws.readyState === 1) c.ws.send(payload);
@@ -1345,14 +1518,14 @@ function broadcastRoomCatalogToAll(): void {
   for (const room of rooms.values()) {
     for (const c of room.values()) {
       if (c.ws.readyState === 1) {
-        c.ws.send(JSON.stringify(roomCatalogMessage(c.address) satisfies OutMsg));
+        wsSafeSend(c.ws, roomCatalogMessage(c.address));
       }
     }
   }
 }
 
 function sendRoomCatalog(ws: WebSocket, address: string): void {
-  ws.send(JSON.stringify(roomCatalogMessage(address) satisfies OutMsg));
+  wsSafeSend(ws, roomCatalogMessage(address));
 }
 
 function countOnlineRealPlayers(): number {
@@ -1616,16 +1789,14 @@ function mazePortalBlockedSeconds(): number | null {
 function sendMazePortalBlockedBubble(conn: ClientConn): void {
   const sec = mazePortalBlockedSeconds();
   if (sec === null) return;
-  conn.ws.send(
-    JSON.stringify({
-      type: "chat",
-      from: "Maze",
-      fromAddress: conn.address,
-      text: `Portal to maze opens in ${sec} seconds`,
-      at: Date.now(),
-      bubbleOnly: true,
-    } satisfies OutMsg)
-  );
+  wsSafeSend(conn.ws, {
+    type: "chat",
+    from: "Maze",
+    fromAddress: conn.address,
+    text: `Portal to maze opens in ${sec} seconds`,
+    at: Date.now(),
+    bubbleOnly: true,
+  });
 }
 
 function isExitPortalTile(tileProps: PlacedProps | undefined): boolean {
@@ -1867,7 +2038,9 @@ function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>
 
 function wsSafeSend(ws: WebSocket, msg: OutMsg): void {
   if (ws.readyState !== 1) return;
-  ws.send(JSON.stringify(msg));
+  const payload = JSON.stringify(msg);
+  recordGameWsOutbound(msg.type, Buffer.byteLength(payload, "utf8"), 1);
+  ws.send(payload);
 }
 
 function startCanvasTimer(): void {
@@ -2128,10 +2301,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     conn.player.z = z;
     conn.player.y = 0;
     conn.pathQueue = [];
-    broadcast(currentRoomId, {
-      type: "state",
-      players: snapshotPlayers(currentRoomId),
-    });
+    broadcastRoomStateFull(currentRoomId);
     return;
   }
 
@@ -2183,8 +2353,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   const allowFloorExpand =
     allowEdit && !isPlayerCreatedRoom(targetRoomId);
 
-  conn.ws.send(
-    JSON.stringify({
+  wsSafeSend(conn.ws, {
       type: "welcome",
       self: playerToOutState(conn),
       others,
@@ -2200,8 +2369,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
       allowExtraFloor: allowFloorExpand,
-    } satisfies OutMsg)
-  );
+    } satisfies OutMsg);
   sendRoomCatalog(conn.ws, address);
 
   // Notify others in new room
@@ -2340,10 +2508,8 @@ export function startRoomTick(): void {
           }
         }
       }
-      if (changed && room.size > 0) {
-        broadcast(roomId, { type: "state", players: snapshotPlayers(roomId) });
-      }
-      
+      broadcastTickStateIfAllowed(roomId, room, now, changed);
+
       // Send canvas timer updates every second
       if (isCanvas && canvasTimerActive && now % 1000 < TICK_MS) {
         const timeRemaining = Math.max(0, canvasTimerEndTime - now);
@@ -2488,12 +2654,10 @@ export function addClient(
       ? Math.max(0, canvasTimerEndTime - Date.now())
       : CANVAS_TIMER_DURATION_MS;
     setTimeout(() => {
-      ws.send(
-        JSON.stringify({
+      wsSafeSend(ws, {
           type: "canvasTimer",
           timeRemaining,
-        } satisfies OutMsg)
-      );
+        } satisfies OutMsg);
     }, 100);
   }
   if (isCanvas && canvasCountdownActive) {
@@ -2501,13 +2665,11 @@ export function addClient(
     const text =
       msRemaining <= 0 ? "GO!" : String(Math.max(1, Math.ceil(msRemaining / 1000)));
     setTimeout(() => {
-      ws.send(
-        JSON.stringify({
+      wsSafeSend(ws, {
           type: "canvasCountdown",
           text,
           msRemaining,
-        } satisfies OutMsg)
-      );
+        } satisfies OutMsg);
     }, 100);
   }
 
@@ -2520,8 +2682,7 @@ export function addClient(
     createdAt: s.createdAt,
   }));
 
-  ws.send(
-    JSON.stringify({
+  wsSafeSend(ws, {
       type: "welcome",
       self: selfOut,
       others,
@@ -2537,8 +2698,7 @@ export function addClient(
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
       allowExtraFloor: allowFloorExpand,
-    } satisfies OutMsg)
-  );
+    } satisfies OutMsg);
   sendRoomCatalog(ws, address);
 
   broadcast(
@@ -2562,14 +2722,21 @@ export function addClient(
   }
 
   ws.on("message", async (raw) => {
+    const rawInBytes = utf8ByteLengthOfWsData(raw);
     let data: unknown;
     try {
       data = JSON.parse(String(raw));
     } catch {
+      recordGameWsInbound("json_parse_error", rawInBytes);
       return;
     }
-    if (!data || typeof data !== "object") return;
+    if (!data || typeof data !== "object") {
+      recordGameWsInbound("invalid_shape", rawInBytes);
+      return;
+    }
     const msg = data as Record<string, unknown>;
+    const inType = typeof msg.type === "string" ? msg.type : "unknown";
+    recordGameWsInbound(inType, rawInBytes);
 
     // Dynamically look up which room the player is currently in
     const currentRoomId = findPlayerRoom(address);
@@ -2584,10 +2751,7 @@ export function addClient(
 
     if (msg.type === "nimSendIntent") {
       conn.nimSendIntent = Boolean(msg.active);
-      broadcast(currentRoomId, {
-        type: "state",
-        players: snapshotPlayers(currentRoomId),
-      });
+      broadcastRoomStateFull(currentRoomId);
       return;
     }
 
@@ -2595,10 +2759,7 @@ export function addClient(
       const next = Boolean((msg as { active?: boolean }).active);
       if (conn.chatTyping === next) return;
       conn.chatTyping = next;
-      broadcast(currentRoomId, {
-        type: "state",
-        players: snapshotPlayers(currentRoomId),
-      });
+      broadcastRoomStateFull(currentRoomId);
       return;
     }
 
@@ -2621,15 +2782,13 @@ export function addClient(
         isPublic
       );
       if (!created.ok) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "chat",
             from: "System",
             fromAddress: "SYSTEM",
             text: created.reason,
             at: Date.now(),
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
       broadcastRoomCatalogToAll();
@@ -2643,15 +2802,13 @@ export function addClient(
       const roomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
       if (isBuiltinRoomId(roomId)) {
         if (!isAdmin(address)) {
-          ws.send(
-            JSON.stringify({
+          wsSafeSend(ws, {
               type: "chat",
               from: "System",
               fromAddress: "SYSTEM",
               text: "Only admins can edit official rooms.",
               at: Date.now(),
-            } satisfies OutMsg)
-          );
+            } satisfies OutMsg);
           return;
         }
         const patch: { displayName?: string; isPublic?: boolean } = {};
@@ -2662,28 +2819,24 @@ export function addClient(
           patch.isPublic = Boolean(msg.isPublic);
         }
         if (patch.displayName === undefined && patch.isPublic === undefined) {
-          ws.send(
-            JSON.stringify({
+          wsSafeSend(ws, {
               type: "chat",
               from: "System",
               fromAddress: "SYSTEM",
               text: "Send a display name and/or public/private setting.",
               at: Date.now(),
-            } satisfies OutMsg)
-          );
+            } satisfies OutMsg);
           return;
         }
         const updated = patchBuiltinRoomSettings(roomId, patch);
         if (!updated.ok) {
-          ws.send(
-            JSON.stringify({
+          wsSafeSend(ws, {
               type: "chat",
               from: "System",
               fromAddress: "SYSTEM",
               text: updated.reason,
               at: Date.now(),
-            } satisfies OutMsg)
-          );
+            } satisfies OutMsg);
           return;
         }
         broadcastRoomCatalogToAll();
@@ -2703,15 +2856,13 @@ export function addClient(
         isAdmin(address)
       );
       if (!updated.ok) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "chat",
             from: "System",
             fromAddress: "SYSTEM",
             text: updated.reason,
             at: Date.now(),
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
       broadcastRoomCatalogToAll();
@@ -2726,26 +2877,22 @@ export function addClient(
         isAdmin(address)
       );
       if (!result.ok) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "roomActionResult",
             action: "deleteRoom",
             ok: false,
             roomId,
             reason: result.reason,
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
       teleportAllInRoomToHub(roomId);
-      ws.send(
-        JSON.stringify({
+      wsSafeSend(ws, {
           type: "roomActionResult",
           action: "deleteRoom",
           ok: true,
           roomId,
-        } satisfies OutMsg)
-      );
+        } satisfies OutMsg);
       broadcastRoomCatalogToAll();
       return;
     }
@@ -2754,25 +2901,21 @@ export function addClient(
       const roomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
       const result = restoreDynamicRoom(roomId, isAdmin(address));
       if (!result.ok) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "roomActionResult",
             action: "restoreRoom",
             ok: false,
             roomId,
             reason: result.reason,
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
-      ws.send(
-        JSON.stringify({
+      wsSafeSend(ws, {
           type: "roomActionResult",
           action: "restoreRoom",
           ok: true,
           roomId,
-        } satisfies OutMsg)
-      );
+        } satisfies OutMsg);
       broadcastRoomCatalogToAll();
       return;
     }
@@ -2780,13 +2923,11 @@ export function addClient(
     if (msg.type === "joinRoom") {
       const targetRoomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
       if (!hasRoom(targetRoomId)) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "joinRoomFailed",
             roomId: targetRoomId,
             reason: "not_found",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
       const b = getRoomBaseBounds(targetRoomId);
@@ -2873,15 +3014,13 @@ export function addClient(
       if (tileProps?.teleporter) {
         const t = tileProps.teleporter;
         if ("pending" in t && t.pending) {
-          ws.send(
-            JSON.stringify({
+          wsSafeSend(ws, {
               type: "chat",
               from: "System",
               fromAddress: "",
               text: "This teleporter has no destination yet. Select it in build mode to set where it goes.",
               at: Date.now(),
-            } satisfies OutMsg)
-          );
+            } satisfies OutMsg);
           return;
         }
         if ("targetRoomId" in t) {
@@ -2932,15 +3071,13 @@ export function addClient(
       const claimable =
         requestedClaimable && canPlaceMineableBlocks(address);
       if (requestedClaimable && !claimable) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "chat",
             from: "System",
             fromAddress: "SYSTEM",
             text: "Only the authorized reward wallet can place mineable blocks.",
             at: now,
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
       }
       
       placed.set(k, {
@@ -2997,15 +3134,13 @@ export function addClient(
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
       const ok = placePendingTeleporterAt(conn, currentRoomId, tile.x, tile.z);
       if (!ok) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "chat",
             from: "System",
             fromAddress: "",
             text: "Could not place teleporter. Use an empty walkable floor tile within build range (not canvas).",
             at: now,
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
       }
       return;
     }
@@ -3050,15 +3185,13 @@ export function addClient(
         dt.z
       );
       if (!ok) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "chat",
             from: "System",
             fromAddress: "",
             text: "Could not set teleporter destination. Check room id, empty walkable tile at X/Z, and that you can edit that room.",
             at: now,
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
       }
       return;
     }
@@ -3099,7 +3232,7 @@ export function addClient(
       
       // Check if object is locked and user is not admin
       if (existing.locked && !isAdmin(address)) {
-        ws.send(JSON.stringify({ type: "error", code: "object_locked" }));
+        wsSafeSend(ws, { type: "error", code: "object_locked" });
         return;
       }
       
@@ -3173,7 +3306,7 @@ export function addClient(
       
       // Locked objects are admin-only to remove, except teleporters (room editors may delete them).
       if (props.locked && !isAdmin(address) && !props.teleporter) {
-        ws.send(JSON.stringify({ type: "error", code: "object_locked" }));
+        wsSafeSend(ws, { type: "error", code: "object_locked" });
         return;
       }
 
@@ -3299,7 +3432,7 @@ export function addClient(
       
       // Locked objects are admin-only to move, except teleporters (room editors may reposition).
       if (props.locked && !isAdmin(address) && !props.teleporter) {
-        ws.send(JSON.stringify({ type: "error", code: "object_locked" }));
+        wsSafeSend(ws, { type: "error", code: "object_locked" });
         return;
       }
 
@@ -3446,10 +3579,7 @@ export function addClient(
         at: now,
       });
       if (hadTyping) {
-        broadcast(currentRoomId, {
-          type: "state",
-          players: snapshotPlayers(currentRoomId),
-        });
+        broadcastRoomStateFull(currentRoomId);
       }
       logGameplayEvent(conn.sessionId, address, currentRoomId, "chat", {
         text,
@@ -3458,13 +3588,11 @@ export function addClient(
     }
 
     if (msg.type === "claimBlock") {
-      ws.send(
-        JSON.stringify({
+      wsSafeSend(ws, {
           type: "blockClaimResult",
           ok: false,
           reason: "Claim protocol updated. Please refresh the page.",
-        } satisfies OutMsg)
-      );
+        } satisfies OutMsg);
       return;
     }
 
@@ -3472,27 +3600,23 @@ export function addClient(
       const now = Date.now();
       trimSpentBlockClaimIds(now);
       if (now - conn.lastBlockClaimBeginAt < RATE_BEGIN_BLOCK_CLAIM_MS) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             recoverable: true,
             reason: "Wait a moment before starting another claim.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
       const tx = Number(msg.x);
       const tz = Number(msg.z);
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "Invalid block coordinates.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
@@ -3506,14 +3630,12 @@ export function addClient(
           tile.z
         )
       ) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason:
               "Stand on a tile directly beside the block (edge, not diagonal) to start a claim.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
@@ -3524,47 +3646,39 @@ export function addClient(
         : 0;
       const atLevel = getPlacedAtLevel(placed, tile.x, tile.z, tileY);
       if (!atLevel) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "This block cannot be claimed.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
       const { props } = atLevel;
       if (!props.claimable) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "This block cannot be claimed.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
       if (!props.active) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "This block is on cooldown.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
       const rk = blockClaimResKey(currentRoomId, tile.x, tile.z, tileY);
       const res = blockClaimReservation.get(rk);
       if (res && res.until > now && res.address !== address) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "Another player is already claiming this block.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
@@ -3594,8 +3708,7 @@ export function addClient(
       });
       conn.pendingBlockClaimId = claimId;
 
-      ws.send(
-        JSON.stringify({
+      wsSafeSend(ws, {
           type: "blockClaimOffered",
           claimId,
           x: tile.x,
@@ -3603,8 +3716,7 @@ export function addClient(
           ...(tileY !== 0 ? { y: tileY } : {}),
           holdMs: BLOCK_CLAIM_HOLD_MS,
           completeBy,
-        } satisfies OutMsg)
-      );
+        } satisfies OutMsg);
       return;
     }
 
@@ -3661,74 +3773,62 @@ export function addClient(
       const now = Date.now();
 
       if (now - conn.lastBlockClaimCompleteAttemptAt < RATE_COMPLETE_BLOCK_CLAIM_MS) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             recoverable: true,
             reason: "Wait a moment before completing the claim.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
       if (!claimId) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "Missing claim id.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
       conn.lastBlockClaimCompleteAttemptAt = now;
 
       if (spentBlockClaimIds.has(claimId)) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "This claim was already used.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
       const s = blockClaimSessions.get(claimId);
       if (!s || s.address !== address || s.roomId !== currentRoomId) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "Unknown or expired claim.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
       if (now > s.completeBy) {
         releaseBlockClaimSession(claimId);
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "Claim session expired. Try again.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
       if (s.accumAdjacentMs < BLOCK_CLAIM_HOLD_MS) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             recoverable: true,
             reason: "Keep standing beside the block until the bar is full.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
@@ -3740,15 +3840,13 @@ export function addClient(
           s.tileZ
         )
       ) {
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             recoverable: true,
             reason:
               "You must still be directly beside the block when completing the claim.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
@@ -3756,26 +3854,22 @@ export function addClient(
       const atComplete = getPlacedAtLevel(placed, s.tileX, s.tileZ, s.tileY);
       if (!atComplete) {
         releaseBlockClaimSession(claimId);
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "This block is no longer available.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
       const k = atComplete.key;
       const props = atComplete.props;
       if (!props.claimable || !props.active) {
         releaseBlockClaimSession(claimId);
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "This block is no longer available.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
@@ -3783,13 +3877,11 @@ export function addClient(
       const res = blockClaimReservation.get(rk);
       if (!res || res.claimId !== claimId || res.address !== address) {
         releaseBlockClaimSession(claimId);
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "Claim reservation no longer matches this block.",
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
@@ -3809,15 +3901,13 @@ export function addClient(
       }
       if (!payoutHasFunds) {
         releaseBlockClaimSession(claimId);
-        ws.send(
-          JSON.stringify({
+        wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
             reason: "Nothing here :(",
             x: s.tileX,
             z: s.tileZ,
-          } satisfies OutMsg)
-        );
+          } satisfies OutMsg);
         return;
       }
 
@@ -3833,15 +3923,13 @@ export function addClient(
         conn.sessionId,
         claimId
       );
-      ws.send(
-        JSON.stringify({
+      wsSafeSend(ws, {
           type: "blockClaimResult",
           ok: true,
           x: s.tileX,
           z: s.tileZ,
           amountNim: (Number(rewardLuna) / 100_000).toFixed(4),
-        } satisfies OutMsg)
-      );
+        } satisfies OutMsg);
       schedulePersistWorldState();
       return;
     }
@@ -3859,7 +3947,7 @@ export function addClient(
       const message = String(msg.message ?? "").trim();
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       if (!message || message.length > SIGNBOARD_MESSAGE_MAX_LEN) {
-        ws.send(JSON.stringify({ type: "error", code: "invalid_message" }));
+        wsSafeSend(ws, { type: "error", code: "invalid_message" });
         return;
       }
       const tile = snapToTile(tx, tz);
@@ -3867,13 +3955,13 @@ export function addClient(
       
       // Check if within build range
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) {
-        ws.send(JSON.stringify({ 
+        wsSafeSend(ws, {
           type: "chat",
           from: "System",
           fromAddress: "",
           text: "Too far! You can only place signboards within your build range.",
-          at: Date.now()
-        }));
+          at: Date.now(),
+        });
         return;
       }
       
@@ -3884,7 +3972,7 @@ export function addClient(
       // Check if signboard already exists at this location
       const existing = getSignboardAt(currentRoomId, tile.x, tile.z);
       if (existing) {
-        ws.send(JSON.stringify({ type: "error", code: "signboard_exists" }));
+        wsSafeSend(ws, { type: "error", code: "signboard_exists" });
         return;
       }
       
@@ -3931,22 +4019,22 @@ export function addClient(
 
     if (msg.type === "updateSignboard") {
       if (!canEditRoomContent(currentRoomId, address)) {
-        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        wsSafeSend(ws, { type: "error", code: "admin_required" });
         return;
       }
       // Admin-only: update a signboard's message
       if (!isAdmin(address)) {
-        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        wsSafeSend(ws, { type: "error", code: "admin_required" });
         return;
       }
       const signboardId = String(msg.signboardId ?? "");
       const message = String(msg.message ?? "").trim();
       if (!signboardId || !message || message.length > SIGNBOARD_MESSAGE_MAX_LEN) {
-        ws.send(JSON.stringify({ type: "error", code: "invalid_message" }));
+        wsSafeSend(ws, { type: "error", code: "invalid_message" });
         return;
       }
       if (!updateSignboard(signboardId, message)) {
-        ws.send(JSON.stringify({ type: "error", code: "signboard_not_found" }));
+        wsSafeSend(ws, { type: "error", code: "signboard_not_found" });
         return;
       }
       broadcast(currentRoomId, {
@@ -3969,7 +4057,7 @@ export function addClient(
 
     if (msg.type === "setVoxelText") {
       if (!canEditRoomContent(currentRoomId, address) || !isAdmin(address)) {
-        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        wsSafeSend(ws, { type: "error", code: "admin_required" });
         return;
       }
       const next: VoxelTextSpec = {
@@ -3991,7 +4079,7 @@ export function addClient(
       };
       const saved = upsertVoxelText(next);
       if (!saved) {
-        ws.send(JSON.stringify({ type: "error", code: "invalid_voxel_text" }));
+        wsSafeSend(ws, { type: "error", code: "invalid_voxel_text" });
         return;
       }
       broadcast(saved.roomId, {
@@ -4004,7 +4092,7 @@ export function addClient(
 
     if (msg.type === "removeVoxelText") {
       if (!canEditRoomContent(currentRoomId, address) || !isAdmin(address)) {
-        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        wsSafeSend(ws, { type: "error", code: "admin_required" });
         return;
       }
       const rid = String(msg.roomId ?? currentRoomId).trim().toLowerCase();
@@ -4022,12 +4110,12 @@ export function addClient(
 
     if (msg.type === "removeSignboard") {
       if (!canEditRoomContent(currentRoomId, address)) {
-        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        wsSafeSend(ws, { type: "error", code: "admin_required" });
         return;
       }
       // Admin-only: remove a signboard
       if (!isAdmin(address)) {
-        ws.send(JSON.stringify({ type: "error", code: "admin_required" }));
+        wsSafeSend(ws, { type: "error", code: "admin_required" });
         return;
       }
       const now = Date.now();
@@ -4040,7 +4128,7 @@ export function addClient(
       const signboards = getSignboardsForRoom(currentRoomId);
       const signboard = signboards.find((s) => s.id === signboardId);
       if (!signboard) {
-        ws.send(JSON.stringify({ type: "error", code: "signboard_not_found" }));
+        wsSafeSend(ws, { type: "error", code: "signboard_not_found" });
         return;
       }
       

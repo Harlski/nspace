@@ -571,7 +571,7 @@ export function startNimPayoutProcessor(): void {
 export type PublicPendingPayoutRow = {
   /** ISO 8601 UTC when the payout was enqueued. */
   time: string;
-  /** `data:image/svg+xml;base64,...` from `Identicons.toDataUrl` (see NIMIQDESIGN.md). */
+  /** `data:image/svg+xml;base64,...` from `Identicons.toDataUrl` (see docs/NIMIQDESIGN.md). */
   identicon: string;
   walletId: string;
   amountNim: string;

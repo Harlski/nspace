@@ -2117,6 +2117,30 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       syncPlayerCountHud();
       return;
     }
+    if (msg.type === "stateDelta") {
+      const byAddr = new Map(lastPlayers.map((p) => [p.address, p]));
+      for (const p of msg.players) {
+        const prev = byAddr.get(p.address);
+        const py = Number.isFinite(p.y) ? p.y : 0;
+        byAddr.set(p.address, {
+          ...(prev ?? {
+            address: p.address,
+            displayName: p.displayName,
+            x: p.x,
+            y: py,
+            z: p.z,
+            vx: 0,
+            vz: 0,
+          }),
+          ...p,
+          y: py,
+        });
+      }
+      lastPlayers = [...byAddr.values()];
+      game.syncState(lastPlayers);
+      syncPlayerCountHud();
+      return;
+    }
     if (msg.type === "onlineCount") {
       totalOnlinePlayers = Math.max(0, Math.floor(msg.count));
       syncPlayerCountHud();

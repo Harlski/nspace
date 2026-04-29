@@ -8,7 +8,12 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import dotenv from "dotenv";
 import { createNonce, consumeNonce, signSession, verifySession } from "./auth.js";
-import { addClient, adminRandomExtraFloorLayout, startRoomTick } from "./rooms.js";
+import {
+  addClient,
+  adminRandomExtraFloorLayout,
+  startRoomTick,
+} from "./rooms.js";
+import { startGameWsMetricsFlushTimer } from "./gameWsMetrics.js";
 import { flushPersistWorldStateSync } from "./worldPersistence.js";
 import { verifySignedMessageDeriveAddress } from "./verifyNimiq.js";
 import {
@@ -925,6 +930,7 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
 
 startRoomTick();
+startGameWsMetricsFlushTimer();
 startNimPayoutProcessor();
 
 wss.on("connection", (ws, req) => {

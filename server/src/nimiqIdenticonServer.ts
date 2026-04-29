@@ -1,6 +1,6 @@
 /**
  * Nimiq identicons on Node (pending payouts API, etc.).
- * Uses the same `@nimiq/identicons` bundle as the client; see NIMIQDESIGN.md.
+ * Uses the same `@nimiq/identicons` bundle as the client; see docs/NIMIQDESIGN.md.
  */
 import { createRequire } from "node:module";
 import * as IdenticonsModule from "@nimiq/identicons/dist/identicons.bundle.min.js";
