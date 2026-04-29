@@ -261,6 +261,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   };
   let knownRooms: KnownRoomRow[] = [];
   let roomsCatalogTab: "official" | "user" | "admin" | "deleted" = "official";
+  /** Client-side page index for the User rooms catalog (4 rooms per page). */
+  let roomsUserCatalogPage = 0;
+  const USER_ROOMS_PAGE_SIZE = 4;
 
   function compactWallet(a: string): string {
     return a.replace(/\s+/g, "").toUpperCase();
@@ -307,32 +310,41 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   roomsModal.hidden = true;
   roomsModal.setAttribute("role", "presentation");
   roomsModal.innerHTML = `
-    <div class="rooms-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="rooms-modal-title">
-      <button type="button" class="rooms-modal__close" aria-label="Close">${nimiqIconUseMarkup("nq-close", { width: 20, height: 20, class: "rooms-modal__close-icon" })}</button>
-      <div class="rooms-modal__header">
-        <h2 class="rooms-modal__title" id="rooms-modal-title">Rooms</h2>
-      </div>
+    <div class="rooms-modal__dialog" role="dialog" aria-modal="true" aria-label="Browse and join rooms">
       <div class="rooms-modal__body">
         <div id="rooms-view-list" class="rooms-modal__list-view">
-          <div class="rooms-modal__join-code-block" hidden>
-            <p class="rooms-modal__section-title">Join with code</p>
-            <div class="rooms-modal__join-code-row">
-              <input class="rooms-modal__input rooms-modal__input--code" id="rooms-join-code" type="text" inputmode="text" maxlength="32" autocomplete="off" placeholder="AB12CD" aria-label="Room code" />
-              <button type="button" class="rooms-modal__btn rooms-modal__btn--primary" id="rooms-join-submit">Join</button>
-              <span class="rooms-modal__join-status" id="rooms-join-status" hidden aria-live="polite"></span>
+          <div class="rooms-modal__catalog-tabs">
+            <div class="rooms-modal__tabs" role="tablist" aria-label="Room categories">
+              <button type="button" class="rooms-modal__tab rooms-modal__tab--active" id="rooms-tab-official" role="tab" aria-selected="true">Official rooms</button>
+              <button type="button" class="rooms-modal__tab" id="rooms-tab-user" role="tab" aria-selected="false">User rooms</button>
+              <button type="button" class="rooms-modal__tab" id="rooms-tab-admin" role="tab" aria-selected="false" hidden>Hidden</button>
+              <button type="button" class="rooms-modal__tab" id="rooms-tab-deleted" role="tab" aria-selected="false" hidden>Deleted</button>
             </div>
-            <p class="rooms-modal__hint" id="rooms-join-hint" hidden></p>
           </div>
-          <div class="rooms-modal__tabs" role="tablist" aria-label="Room categories">
-            <button type="button" class="rooms-modal__tab rooms-modal__tab--active" id="rooms-tab-official" role="tab" aria-selected="true">Official rooms</button>
-            <button type="button" class="rooms-modal__tab" id="rooms-tab-user" role="tab" aria-selected="false">User rooms</button>
-            <button type="button" class="rooms-modal__tab" id="rooms-tab-admin" role="tab" aria-selected="false" hidden>Hidden</button>
-            <button type="button" class="rooms-modal__tab" id="rooms-tab-deleted" role="tab" aria-selected="false" hidden>Deleted</button>
+          <div class="rooms-modal__list-view-scroll">
+            <div class="rooms-modal__join-code-block" hidden>
+              <p class="rooms-modal__section-title">Join with code</p>
+              <div class="rooms-modal__join-code-row">
+                <input class="rooms-modal__input rooms-modal__input--code" id="rooms-join-code" type="text" inputmode="text" maxlength="32" autocomplete="off" placeholder="AB12CD" aria-label="Room code" />
+                <button type="button" class="rooms-modal__btn rooms-modal__btn--primary" id="rooms-join-submit">Join</button>
+                <span class="rooms-modal__join-status" id="rooms-join-status" hidden aria-live="polite"></span>
+              </div>
+              <p class="rooms-modal__hint" id="rooms-join-hint" hidden></p>
+            </div>
+            <p class="rooms-modal__section-title" id="rooms-list-heading">Official rooms</p>
+            <ul class="rooms-modal__list rooms-modal__list--rows rooms-modal__list--catalog" id="rooms-modal-list"></ul>
           </div>
-          <p class="rooms-modal__section-title" id="rooms-list-heading">Official rooms</p>
-          <ul class="rooms-modal__list rooms-modal__list--rows rooms-modal__list--catalog" id="rooms-modal-list"></ul>
-          <button type="button" class="rooms-modal__btn rooms-modal__btn--primary rooms-modal__create-launch" id="rooms-open-create">Create a room</button>
-          <p id="rooms-modal-current-line" class="rooms-modal__current-line" aria-live="polite"></p>
+          <div class="rooms-modal__list-footer">
+            <div class="rooms-modal__list-footer-start">
+              <button type="button" class="rooms-modal__btn rooms-modal__btn--primary rooms-modal__create-launch" id="rooms-open-create">Create a room</button>
+            </div>
+            <p id="rooms-modal-current-line" class="rooms-modal__current-line" aria-live="polite"></p>
+            <div id="rooms-user-pagination" class="rooms-modal__user-pagination" hidden>
+              <button type="button" class="rooms-modal__btn rooms-modal__btn--compact" id="rooms-user-page-prev">Previous</button>
+              <span class="rooms-modal__user-page-label" id="rooms-user-page-label" aria-live="polite"></span>
+              <button type="button" class="rooms-modal__btn rooms-modal__btn--compact" id="rooms-user-page-next">Next</button>
+            </div>
+          </div>
         </div>
         <div id="rooms-view-edit" hidden>
           <div class="rooms-modal__edit-head">
@@ -414,10 +426,19 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   const roomsTabUserBtn = roomsModal.querySelector("#rooms-tab-user") as HTMLButtonElement;
   const roomsTabAdminBtn = roomsModal.querySelector("#rooms-tab-admin") as HTMLButtonElement;
   const roomsTabDeletedBtn = roomsModal.querySelector("#rooms-tab-deleted") as HTMLButtonElement;
-  const roomsModalClose = roomsModal.querySelector(
-    ".rooms-modal__close"
-  ) as HTMLButtonElement;
   const roomsViewList = roomsModal.querySelector("#rooms-view-list") as HTMLElement;
+  const roomsUserPagination = roomsModal.querySelector(
+    "#rooms-user-pagination"
+  ) as HTMLDivElement;
+  const roomsUserPagePrev = roomsModal.querySelector(
+    "#rooms-user-page-prev"
+  ) as HTMLButtonElement;
+  const roomsUserPageNext = roomsModal.querySelector(
+    "#rooms-user-page-next"
+  ) as HTMLButtonElement;
+  const roomsUserPageLabel = roomsModal.querySelector(
+    "#rooms-user-page-label"
+  ) as HTMLSpanElement;
   const roomsViewEdit = roomsModal.querySelector("#rooms-view-edit") as HTMLElement;
   const roomsJoinCodeInput = roomsModal.querySelector("#rooms-join-code") as HTMLInputElement;
   const roomsJoinSubmitBtn = roomsModal.querySelector("#rooms-join-submit") as HTMLButtonElement;
@@ -575,6 +596,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
 
   function setRoomsCatalogTab(tab: "official" | "user" | "admin" | "deleted"): void {
+    if (tab === "user" && roomsCatalogTab !== "user") {
+      roomsUserCatalogPage = 0;
+    }
     applyRoomsTabUi(tab);
     renderRoomsModalList();
   }
@@ -651,9 +675,19 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     showRoomsView("edit");
   }
 
-  roomsModalClose.addEventListener("click", () => closeRoomsModal());
   roomsModal.addEventListener("click", (e) => {
     if (e.target === roomsModal) closeRoomsModal();
+  });
+
+  roomsUserPagePrev.addEventListener("click", () => {
+    if (roomsUserCatalogPage > 0) {
+      roomsUserCatalogPage -= 1;
+      renderRoomsModalList();
+    }
+  });
+  roomsUserPageNext.addEventListener("click", () => {
+    roomsUserCatalogPage += 1;
+    renderRoomsModalList();
   });
 
   roomsJoinCodeInput.addEventListener("input", () => {
@@ -833,6 +867,30 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         return a.displayName.localeCompare(b.displayName);
       });
     }
+
+    if (roomsCatalogTab === "user" && filtered.length > 0) {
+      const totalPages = Math.ceil(filtered.length / USER_ROOMS_PAGE_SIZE);
+      if (roomsUserCatalogPage >= totalPages) roomsUserCatalogPage = totalPages - 1;
+      if (roomsUserCatalogPage < 0) roomsUserCatalogPage = 0;
+    }
+
+    roomsUserPagination.hidden = true;
+    if (roomsCatalogTab === "user" && filtered.length > USER_ROOMS_PAGE_SIZE) {
+      const totalPages = Math.ceil(filtered.length / USER_ROOMS_PAGE_SIZE);
+      roomsUserPagination.hidden = false;
+      roomsUserPageLabel.textContent = `${roomsUserCatalogPage + 1} / ${totalPages}`;
+      roomsUserPagePrev.disabled = roomsUserCatalogPage <= 0;
+      roomsUserPageNext.disabled = roomsUserCatalogPage >= totalPages - 1;
+    }
+
+    const roomsToShow =
+      roomsCatalogTab === "user"
+        ? filtered.slice(
+            roomsUserCatalogPage * USER_ROOMS_PAGE_SIZE,
+            roomsUserCatalogPage * USER_ROOMS_PAGE_SIZE + USER_ROOMS_PAGE_SIZE
+          )
+        : filtered;
+
     if (filtered.length === 0) {
       const empty = document.createElement("li");
       empty.className = "rooms-modal__empty";
@@ -847,7 +905,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       roomsModalList.appendChild(empty);
       return;
     }
-    for (const room of filtered) {
+    for (const room of roomsToShow) {
       appendRoomCatalogRow(roomsModalList, room, {
         showJoinButton: true,
       });
