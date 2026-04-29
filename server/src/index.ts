@@ -38,6 +38,7 @@ import {
   getPublicPendingPayoutSummary,
   manualBulkPayoutPendingForRecipient,
   isNimPayoutSenderConfigured,
+  peekNimPayoutBalanceCacheLuna,
   startNimPayoutProcessor,
 } from "./nimPayout/index.js";
 import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
@@ -432,6 +433,12 @@ const NIM_BALANCE_API_TIMEOUT_MS = Math.max(
   Number(process.env.NIM_BALANCE_API_TIMEOUT_MS ?? 28_000)
 );
 
+/** When live balance read times out, still return 200 if cache is at most this old (ms). */
+const NIM_BALANCE_API_STALE_MAX_MS = Math.max(
+  0,
+  Number(process.env.NIM_BALANCE_API_STALE_MAX_MS ?? 300_000)
+);
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => {
@@ -469,6 +476,20 @@ app.get("/api/nim/payout-balance", async (_req, res) => {
     });
   } catch (err) {
     console.error("[nim/payout-balance]", err);
+    if (NIM_BALANCE_API_STALE_MAX_MS > 0) {
+      const peek = peekNimPayoutBalanceCacheLuna();
+      const age = peek ? Date.now() - peek.cachedAtMs : Infinity;
+      if (peek && age <= NIM_BALANCE_API_STALE_MAX_MS) {
+        const balanceNim = (Number(peek.luna) / 100_000).toFixed(4);
+        res.json({
+          configured: true,
+          hasNim: peek.luna > 0n,
+          balanceNim,
+          stale: true as const,
+        });
+        return;
+      }
+    }
     res.status(503).json({
       error: "nim_unavailable",
       configured: true,

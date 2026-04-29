@@ -58,6 +58,13 @@ const BALANCE_CACHE_MS = Math.max(
 
 let balanceCache: { luna: bigint; at: number } | null = null;
 
+/**
+ * One shared promise for all concurrent cache-miss balance reads so they do not enqueue
+ * separate mutex turns each doing consensus + getAccount (which starved the HTTP API
+ * under payout load).
+ */
+let balanceFetchCoalesced: Promise<bigint> | null = null;
+
 export function invalidateNimBalanceCache(): void {
   balanceCache = null;
 }
@@ -115,12 +122,9 @@ async function getKeyPair(): Promise<import("@nimiq/core").KeyPair> {
   return Nimiq.KeyPair.derive(Nimiq.PrivateKey.fromHex(hex));
 }
 
-export async function getNimPayoutWalletBalanceLuna(): Promise<bigint> {
-  const now = Date.now();
-  if (balanceCache && now - balanceCache.at < BALANCE_CACHE_MS) {
-    return balanceCache.luna;
-  }
-  return withNimiqMutex(async () => {
+function fetchBalanceLunaThroughMutex(): Promise<bigint> {
+  if (balanceFetchCoalesced) return balanceFetchCoalesced;
+  const p = withNimiqMutex(async () => {
     const t = Date.now();
     if (balanceCache && t - balanceCache.at < BALANCE_CACHE_MS) {
       return balanceCache.luna;
@@ -133,7 +137,19 @@ export async function getNimPayoutWalletBalanceLuna(): Promise<bigint> {
     const luna = BigInt(account.balance);
     balanceCache = { luna, at: Date.now() };
     return luna;
+  }).finally(() => {
+    if (balanceFetchCoalesced === p) balanceFetchCoalesced = null;
   });
+  balanceFetchCoalesced = p;
+  return p;
+}
+
+export async function getNimPayoutWalletBalanceLuna(): Promise<bigint> {
+  const now = Date.now();
+  if (balanceCache && now - balanceCache.at < BALANCE_CACHE_MS) {
+    return balanceCache.luna;
+  }
+  return fetchBalanceLunaThroughMutex();
 }
 
 /**
