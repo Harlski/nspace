@@ -58,6 +58,7 @@ import { installInputShell } from "./ui/inputShell.js";
 import { formatWalletAddressConnectAs } from "./formatWalletAddress.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
 import { nimiqIconUseMarkup } from "./ui/nimiqIcons.js";
+import { mountNimiqPaySiteAdvisory } from "./ui/nimiqPayAdvisory.js";
 
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
 /** Inactivity: return to hub center (not lobby). */
@@ -223,6 +224,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
 
   const sessionNimiqPay = nimiqPay === true;
+  let disposeNimiqPayAdvisory: (() => void) | null = null;
   const hud = createHud(hudRoot, {
     showDebug: showDebugHud,
     getGameAuthToken: () => token,
@@ -245,6 +247,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     },
   });
   hud.setBrandLinksPlayerAddress(address);
+  if (sessionNimiqPay) {
+    disposeNimiqPayAdvisory = mountNimiqPaySiteAdvisory(hudRoot);
+  }
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
   type KnownRoomRow = {
@@ -1256,6 +1261,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       ws.close();
     }
     ws = null;
+    disposeNimiqPayAdvisory?.();
+    disposeNimiqPayAdvisory = null;
     adminOverlay.destroy();
     game.dispose();
     uninstallShell();

@@ -5387,6 +5387,186 @@ button.hud-brand:focus-visible {
   }
 }
 
+/* Nimiq Pay mini-app: suggest full browser experience (above loading + HUD modals) */
+.nimiq-pay-advisory {
+  position: fixed;
+  inset: 0;
+  z-index: 10060;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  padding-top: max(24px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.nimiq-pay-advisory__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.nimiq-pay-advisory__dialog {
+  position: relative;
+  z-index: 1;
+  width: min(400px, 100%);
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  padding: 22px 20px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  background: rgba(15, 17, 23, 0.98);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+  overflow: visible;
+}
+
+.nimiq-pay-advisory__title {
+  margin: 0 0 12px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #f1f5ff;
+  text-align: center;
+}
+
+.nimiq-pay-advisory__body {
+  margin: 0 0 18px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: rgba(226, 232, 240, 0.88);
+  text-align: center;
+  transition: margin-bottom 0.2s ease;
+}
+
+.nimiq-pay-advisory__body--tip-visible {
+  margin-bottom: 56px;
+}
+
+.nimiq-pay-advisory__link-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: baseline;
+}
+
+.nimiq-pay-advisory__link {
+  color: #7dd3fc;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+  cursor: pointer;
+}
+
+.nimiq-pay-advisory__link:hover {
+  color: #bae6fd;
+}
+
+.nimiq-pay-advisory__link:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.65);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.nimiq-pay-advisory__copy-tip {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  z-index: 2;
+  margin-top: 8px;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  min-width: min(260px, calc(100vw - 48px));
+  max-width: min(300px, calc(100vw - 48px));
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(30, 41, 59, 0.98);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #f1f5ff;
+  text-align: center;
+  text-wrap: balance;
+  pointer-events: none;
+}
+
+.nimiq-pay-advisory__copy-tip[hidden] {
+  display: none !important;
+}
+
+.nimiq-pay-advisory__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px 12px;
+}
+
+.nimiq-pay-advisory__social {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: rgba(226, 232, 240, 0.92);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nimiq-pay-advisory__social:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f1f5ff;
+}
+
+.nimiq-pay-advisory__social:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.65);
+  outline-offset: 2px;
+}
+
+.nimiq-pay-advisory__social-icon {
+  display: block;
+  flex-shrink: 0;
+}
+
+.nimiq-pay-advisory__continue {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(147, 197, 253, 0.45);
+  background: rgba(59, 130, 246, 0.28);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #e9f1ff;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nimiq-pay-advisory__continue:hover {
+  background: rgba(59, 130, 246, 0.38);
+  border-color: rgba(186, 230, 253, 0.55);
+}
+
+.nimiq-pay-advisory__continue:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.65);
+  outline-offset: 2px;
+}
+
 /* -------------------- Loading overlay -------------------- */
 .loading-overlay {
   position: fixed;
