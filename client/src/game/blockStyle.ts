@@ -94,6 +94,15 @@ export type BlockStyleProps = {
   quarter: boolean;
   /** Hexagonal prism (flat-top), same footprint as a tile. */
   hex: boolean;
+  /** Square pyramid (apex up), one tile footprint. Mutually exclusive with hex / sphere / ramp. */
+  pyramid: boolean;
+  /**
+   * Pyramid only: multiplier on default inscribed base radius (`1` = flush with hex-style footprint).
+   * Ignored when `pyramid` is false.
+   */
+  pyramidBaseScale?: number;
+  /** Sphere column inscribed in the tile footprint. Mutually exclusive with hex / pyramid / ramp. */
+  sphere: boolean;
   /** Walkable ramp; use `rampDir` 0–3 = +X,+Z,−X,−Z toward solid block climbed. */
   ramp: boolean;
   rampDir: number;
@@ -110,3 +119,31 @@ export type BlockStyleProps = {
   lastClaimedAt?: number;
   claimedBy?: string;
 };
+
+export const PYRAMID_BASE_SCALE_MIN = 1;
+export const PYRAMID_BASE_SCALE_MAX = 1.65;
+
+export function clampPyramidBaseScale(v: number): number {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return 1;
+  return Math.max(
+    PYRAMID_BASE_SCALE_MIN,
+    Math.min(PYRAMID_BASE_SCALE_MAX, x)
+  );
+}
+
+/** Canonicalize prism shape flags (ramp wins, then sphere, pyramid, then hex). */
+export function normalizeBlockPrismParts(input: {
+  hex?: boolean;
+  pyramid?: boolean;
+  sphere?: boolean;
+  ramp?: boolean;
+}): { hex: boolean; pyramid: boolean; sphere: boolean; ramp: boolean } {
+  const ramp = Boolean(input.ramp);
+  if (ramp) return { hex: false, pyramid: false, sphere: false, ramp: true };
+  const sphere = Boolean(input.sphere);
+  if (sphere) return { hex: false, pyramid: false, sphere: true, ramp: false };
+  const pyramid = Boolean(input.pyramid);
+  if (pyramid) return { hex: false, pyramid: true, sphere: false, ramp: false };
+  return { hex: Boolean(input.hex), pyramid: false, sphere: false, ramp: false };
+}

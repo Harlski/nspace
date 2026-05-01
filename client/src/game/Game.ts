@@ -53,6 +53,8 @@ import {
   BLOCK_COLOR_COUNT,
   type BlockStyleProps,
   blockColorHex,
+  clampPyramidBaseScale,
+  normalizeBlockPrismParts,
 } from "./blockStyle.js";
 
 const LERP = 12;
@@ -781,9 +783,12 @@ export class Game {
   private placementHalf = false;
   private placementQuarter = false;
   private placementHex = false;
+  private placementPyramid = false;
+  private placementSphere = false;
   private placementRamp = false;
   private placementRampDir = 0;
   private placementColorId = 0;
+  private placementPyramidBaseScale = 1;
   private placementClaimable = false;
   /** Live props for the object-edit tile inspector 3D preview (null = panel closed). */
   private inspectorSelectionObstacle: ObstacleProps | null = null;
@@ -2121,6 +2126,9 @@ export class Game {
     half: boolean;
     quarter: boolean;
     hex: boolean;
+    pyramid: boolean;
+    pyramidBaseScale: number;
+    sphere: boolean;
     ramp: boolean;
     rampDir: number;
     colorId: number;
@@ -2130,6 +2138,11 @@ export class Game {
       half: this.placementHalf,
       quarter: this.placementQuarter,
       hex: this.placementHex,
+      pyramid: this.placementPyramid,
+      pyramidBaseScale: this.placementPyramid
+        ? this.placementPyramidBaseScale
+        : 1,
+      sphere: this.placementSphere,
       ramp: this.placementRamp,
       rampDir: this.placementRampDir,
       colorId: this.placementColorId,
@@ -2141,6 +2154,9 @@ export class Game {
     half?: boolean;
     quarter?: boolean;
     hex?: boolean;
+    pyramid?: boolean;
+    pyramidBaseScale?: number;
+    sphere?: boolean;
     ramp?: boolean;
     rampDir?: number;
     colorId?: number;
@@ -2159,9 +2175,10 @@ export class Game {
       this.placementHalf = false;
     }
     if (p.hex !== undefined) this.placementHex = p.hex;
+    if (p.pyramid !== undefined) this.placementPyramid = p.pyramid;
+    if (p.sphere !== undefined) this.placementSphere = p.sphere;
     if (p.ramp === true) {
       this.placementRamp = true;
-      this.placementHex = false;
     } else if (p.ramp === false) {
       this.placementRamp = false;
     }
@@ -2176,6 +2193,26 @@ export class Game {
     }
     if (p.claimable !== undefined) {
       this.placementClaimable = p.claimable;
+    }
+    if (p.pyramidBaseScale !== undefined) {
+      this.placementPyramidBaseScale = clampPyramidBaseScale(p.pyramidBaseScale);
+    }
+    const prism = normalizeBlockPrismParts({
+      hex: this.placementHex,
+      pyramid: this.placementPyramid,
+      sphere: this.placementSphere,
+      ramp: this.placementRamp,
+    });
+    this.placementHex = prism.hex;
+    this.placementPyramid = prism.pyramid;
+    this.placementSphere = prism.sphere;
+    this.placementRamp = prism.ramp;
+    if (!this.placementPyramid) {
+      this.placementPyramidBaseScale = 1;
+    } else {
+      this.placementPyramidBaseScale = clampPyramidBaseScale(
+        this.placementPyramidBaseScale
+      );
     }
     const anchor = this.placementPreviewAnchor;
     if (anchor) {
@@ -2215,21 +2252,36 @@ export class Game {
       this.refreshTeleporterLinkHighlight();
       return;
     }
-    const box = new THREE.Box3().setFromObject(g);
-    const size = new THREE.Vector3();
-    const center = new THREE.Vector3();
-    box.getSize(size);
-    box.getCenter(center);
+    const meta = this.placedObjects.get(this.selectedBlockKey);
+    const vis = this.blockVisualScale;
+    const padding = 0.04;
+    let size: THREE.Vector3;
+    const center = new THREE.Vector3().copy(g.position);
+    /** Pyramid base can scale past the tile; keep the selection box one tile so it stays predictable. */
+    if (meta?.pyramid) {
+      const h = this.obstacleHeight(meta);
+      const foot = BLOCK_SIZE * vis;
+      const sy = h * vis + padding;
+      size = new THREE.Vector3(foot + padding, sy, foot + padding);
+    } else {
+      const box = new THREE.Box3().setFromObject(g);
+      size = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+      if (size.x < 1e-6 || size.y < 1e-6 || size.z < 1e-6) {
+        this.selectionOutline.visible = false;
+        this.refreshTeleporterLinkHighlight();
+        return;
+      }
+      size.x += padding;
+      size.y += padding;
+      size.z += padding;
+    }
     if (size.x < 1e-6 || size.y < 1e-6 || size.z < 1e-6) {
       this.selectionOutline.visible = false;
       this.refreshTeleporterLinkHighlight();
       return;
     }
-    // Add padding to make outline more visible
-    const padding = 0.04;
-    size.x += padding;
-    size.y += padding;
-    size.z += padding;
     const prev = this.selectionOutline.geometry;
     const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
     const edges = new THREE.EdgesGeometry(geo, 50);
@@ -2592,6 +2644,9 @@ export class Game {
       half?: boolean;
       quarter?: boolean;
       hex?: boolean;
+      pyramid?: boolean;
+      pyramidBaseScale?: number;
+      sphere?: boolean;
       ramp?: boolean;
       rampDir?: number;
       colorId?: number;
@@ -2615,7 +2670,15 @@ export class Game {
       const half = quarter ? false : Boolean(t.half);
       const ramp = Boolean(t.ramp);
       const rampDir = Math.max(0, Math.min(3, Math.floor(t.rampDir ?? 0)));
-      const hex = ramp ? false : Boolean(t.hex);
+      const prism = normalizeBlockPrismParts({
+        hex: Boolean(t.hex),
+        pyramid: Boolean(t.pyramid),
+        sphere: Boolean(t.sphere),
+        ramp,
+      });
+      const pyramidBaseScale = prism.pyramid
+        ? clampPyramidBaseScale(Number(t.pyramidBaseScale ?? 1))
+        : 1;
       const colorId = Math.max(
         0,
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(t.colorId ?? 0))
@@ -2625,9 +2688,12 @@ export class Game {
         passable: t.passable,
         half,
         quarter,
-        hex,
-        ramp,
-        rampDir,
+        hex: prism.hex,
+        pyramid: prism.pyramid,
+        pyramidBaseScale,
+        sphere: prism.sphere,
+        ramp: prism.ramp,
+        rampDir: prism.ramp ? rampDir : 0,
         colorId,
         locked,
         claimable: t.claimable,
@@ -2637,7 +2703,9 @@ export class Game {
         claimedBy: t.claimedBy,
         teleporter: t.teleporter,
       });
-      if (y === 0 && !t.passable && !ramp) this.blockingTileKeys.add(tileKey(t.x, t.z));
+      if (y === 0 && !t.passable && !prism.ramp) {
+        this.blockingTileKeys.add(tileKey(t.x, t.z));
+      }
     }
     this.syncBlockMeshes();
     this.refreshPathLine();
@@ -2658,6 +2726,9 @@ export class Game {
       half?: boolean;
       quarter?: boolean;
       hex?: boolean;
+      pyramid?: boolean;
+      pyramidBaseScale?: number;
+      sphere?: boolean;
       ramp?: boolean;
       rampDir?: number;
       colorId?: number;
@@ -2701,7 +2772,15 @@ export class Game {
       const half = quarter ? false : Boolean(t.half);
       const ramp = Boolean(t.ramp);
       const rampDir = Math.max(0, Math.min(3, Math.floor(t.rampDir ?? 0)));
-      const hex = ramp ? false : Boolean(t.hex);
+      const prism = normalizeBlockPrismParts({
+        hex: Boolean(t.hex),
+        pyramid: Boolean(t.pyramid),
+        sphere: Boolean(t.sphere),
+        ramp,
+      });
+      const pyramidBaseScale = prism.pyramid
+        ? clampPyramidBaseScale(Number(t.pyramidBaseScale ?? 1))
+        : 1;
       const colorId = Math.max(
         0,
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(t.colorId ?? 0))
@@ -2712,9 +2791,12 @@ export class Game {
         passable: t.passable,
         half,
         quarter,
-        hex,
-        ramp,
-        rampDir,
+        hex: prism.hex,
+        pyramid: prism.pyramid,
+        pyramidBaseScale,
+        sphere: prism.sphere,
+        ramp: prism.ramp,
+        rampDir: prism.ramp ? rampDir : 0,
         colorId,
         locked,
         claimable: t.claimable,
@@ -2725,7 +2807,9 @@ export class Game {
         teleporter: t.teleporter,
       });
 
-      if (y === 0 && !t.passable && !ramp) this.blockingTileKeys.add(tileKey(t.x, t.z));
+      if (y === 0 && !t.passable && !prism.ramp) {
+        this.blockingTileKeys.add(tileKey(t.x, t.z));
+      }
     }
 
     this.syncBlockMeshes();
@@ -2846,6 +2930,11 @@ export class Game {
       half: this.placementHalf,
       quarter: this.placementQuarter,
       hex: this.placementHex,
+      pyramid: this.placementPyramid,
+      pyramidBaseScale: this.placementPyramid
+        ? this.placementPyramidBaseScale
+        : 1,
+      sphere: this.placementSphere,
       ramp: this.placementRamp,
       rampDir: this.placementRampDir,
       colorId: this.placementColorId,
@@ -2855,7 +2944,7 @@ export class Game {
   }
 
   private placementPreviewStyleSignature(meta: BlockStyleProps): string {
-    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.ramp}|${meta.rampDir}|${meta.colorId}|${Boolean(meta.claimable)}|${this.blockVisualScale}`;
+    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.pyramid}|${meta.pyramidBaseScale ?? 1}|${meta.sphere}|${meta.ramp}|${meta.rampDir}|${meta.colorId}|${Boolean(meta.claimable)}|${this.blockVisualScale}`;
   }
 
   /**
@@ -4681,6 +4770,9 @@ export class Game {
         prev.half === meta.half &&
         prev.quarter === meta.quarter &&
         prev.hex === meta.hex &&
+        prev.pyramid === meta.pyramid &&
+        (prev.pyramidBaseScale ?? 1) === (meta.pyramidBaseScale ?? 1) &&
+        prev.sphere === meta.sphere &&
         prev.ramp === meta.ramp &&
         prev.rampDir === meta.rampDir &&
         prev.colorId === meta.colorId &&
@@ -4798,7 +4890,23 @@ export class Game {
       g.add(mesh);
       return g;
     }
-    if (meta.hex) {
+    if (meta.sphere) {
+      const r = BLOCK_SIZE * 0.5 * 0.94 * vis;
+      const geom = new THREE.SphereGeometry(r, 20, 16);
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      g.add(mesh);
+    } else if (meta.pyramid) {
+      const scale = meta.pyramidBaseScale ?? 1;
+      const rBase = BLOCK_SIZE * 0.5 * 0.94 * vis * scale;
+      const geom = new THREE.ConeGeometry(rBase, hVis, 4, 1);
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.rotation.y = Math.PI / 4;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      g.add(mesh);
+    } else if (meta.hex) {
       const r = BLOCK_SIZE * 0.5 * 0.94 * vis;
       const geom = new THREE.CylinderGeometry(r, r, hVis, 6);
       const mesh = new THREE.Mesh(geom, mat);
@@ -5514,7 +5622,7 @@ export class Game {
   }
 
   private inspectorTilePreviewSignature(meta: BlockStyleProps): string {
-    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.ramp}|${meta.rampDir}|${meta.colorId}|${Boolean(meta.claimable)}|${this.blockVisualScale}|${this.floorTileQuadSize}`;
+    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.pyramid}|${meta.pyramidBaseScale ?? 1}|${meta.sphere}|${meta.ramp}|${meta.rampDir}|${meta.colorId}|${Boolean(meta.claimable)}|${this.blockVisualScale}|${this.floorTileQuadSize}`;
   }
 
   private applyInspectorPreviewFrustum(
@@ -5548,6 +5656,9 @@ export class Game {
               half: this.inspectorSelectionObstacle.half,
               quarter: this.inspectorSelectionObstacle.quarter,
               hex: this.inspectorSelectionObstacle.hex,
+              pyramid: this.inspectorSelectionObstacle.pyramid,
+              pyramidBaseScale: this.inspectorSelectionObstacle.pyramidBaseScale,
+              sphere: this.inspectorSelectionObstacle.sphere,
               ramp: this.inspectorSelectionObstacle.ramp,
               rampDir: this.inspectorSelectionObstacle.rampDir,
               colorId: this.inspectorSelectionObstacle.colorId,

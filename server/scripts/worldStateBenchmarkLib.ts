@@ -74,6 +74,9 @@ function toObstacleTiles(entries: ReadonlyMap<string, TerrainProps>): Array<{
   half: boolean;
   quarter: boolean;
   hex: boolean;
+  pyramid: boolean;
+  pyramidBaseScale: number;
+  sphere: boolean;
   ramp: boolean;
   rampDir: number;
   colorId: number;
@@ -86,6 +89,9 @@ function toObstacleTiles(entries: ReadonlyMap<string, TerrainProps>): Array<{
     half: boolean;
     quarter: boolean;
     hex: boolean;
+    pyramid: boolean;
+    pyramidBaseScale: number;
+    sphere: boolean;
     ramp: boolean;
     rampDir: number;
     colorId: number;
@@ -100,6 +106,11 @@ function toObstacleTiles(entries: ReadonlyMap<string, TerrainProps>): Array<{
       half: Boolean(props.half),
       quarter: Boolean(props.quarter),
       hex: Boolean(props.hex),
+      pyramid: Boolean(props.pyramid),
+      pyramidBaseScale: Number.isFinite(props.pyramidBaseScale)
+        ? Math.max(1, Math.min(1.65, Number(props.pyramidBaseScale)))
+        : 1,
+      sphere: Boolean(props.sphere),
       ramp: Boolean(props.ramp),
       rampDir: Number.isFinite(props.rampDir) ? Math.floor(props.rampDir) : 0,
       colorId: Number.isFinite(props.colorId) ? Math.floor(props.colorId) : 0,

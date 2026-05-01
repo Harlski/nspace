@@ -7,6 +7,8 @@ import {
   isBaseTile,
   isOrthogonallyAdjacentToTile,
   isWalkableTile,
+  clampPyramidBaseScale,
+  normalizeBlockPrismParts,
   pathfindTiles,
   pathfindTerrain,
   snapToTile,
@@ -30,7 +32,10 @@ import {
   normalizeRoomId,
   type RoomBounds,
 } from "./roomLayouts.js";
-import { patchBuiltinRoomSettings } from "./builtinRoomNames.js";
+import {
+  getBuiltinRoomBackgroundState,
+  patchBuiltinRoomSettings,
+} from "./builtinRoomNames.js";
 import {
   allowActorRoomBackgroundHueEdit,
   getDynamicRoomBackgroundState,
@@ -350,6 +355,12 @@ export type ObstacleTile = {
   quarter: boolean;
   /** Hexagonal prism footprint. */
   hex: boolean;
+  /** Square pyramid (apex up); mutually exclusive with hex / sphere / ramp. */
+  pyramid: boolean;
+  /** When `pyramid`: base radius multiplier (1 = default). */
+  pyramidBaseScale: number;
+  /** Sphere column inscribed in tile; mutually exclusive with hex / pyramid / ramp. */
+  sphere: boolean;
   /** Sloped ramp (walkable floor); `rampDir` 0–3 = +X,+Z,−X,−Z toward climbed block. */
   ramp: boolean;
   rampDir: number;
@@ -729,6 +740,9 @@ function generateCanvasMaze(): void {
       half: false,
       quarter: false,
       hex: false,
+      pyramid: false,
+      pyramidBaseScale: 1,
+      sphere: false,
       ramp: false,
       rampDir: 0,
       colorId: 5, // Purple color for maze walls
@@ -743,6 +757,9 @@ function generateCanvasMaze(): void {
     half: false,
     quarter: true, // Make it a quarter-height platform
     hex: true, // Hexagonal shape for visual distinction
+    pyramid: false,
+    pyramidBaseScale: 1,
+    sphere: false,
     ramp: false,
     rampDir: 0,
     colorId: 4, // Blue color for exit portal
@@ -752,7 +769,13 @@ function generateCanvasMaze(): void {
   // Broadcast the new maze to all players in canvas room
   const obstaclesList = Array.from(placed.entries()).map(([k, v]) => {
     const [x, z] = k.split(",").map(Number);
-    return { x: x!, z: z!, y: 0, ...v };
+    return {
+      x: x!,
+      z: z!,
+      y: 0,
+      ...v,
+      pyramidBaseScale: clampPyramidBaseScale(v.pyramidBaseScale ?? 1),
+    };
   });
   
   broadcast(CANVAS_ROOM_ID, {
@@ -1167,6 +1190,9 @@ function obstacleTileFromPlaced(roomId: string, tileKeyStr: string): ObstacleTil
     half: v.half ?? false,
     quarter: v.quarter ?? false,
     hex: v.hex ?? false,
+    pyramid: v.pyramid ?? false,
+    pyramidBaseScale: clampPyramidBaseScale(v.pyramidBaseScale ?? 1),
+    sphere: v.sphere ?? false,
     ramp: v.ramp ?? false,
     rampDir: Math.max(0, Math.min(3, Math.floor(v.rampDir ?? 0))),
     colorId: clampColorId(v.colorId ?? 0),
@@ -1201,6 +1227,9 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       half: v.half ?? false,
       quarter: v.quarter ?? false,
       hex: v.hex ?? false,
+      pyramid: v.pyramid ?? false,
+      pyramidBaseScale: clampPyramidBaseScale(v.pyramidBaseScale ?? 1),
+      sphere: v.sphere ?? false,
       ramp: v.ramp ?? false,
       rampDir: Math.max(0, Math.min(3, Math.floor(v.rampDir ?? 0))),
       colorId: clampColorId(v.colorId ?? 0),
@@ -1538,6 +1567,7 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
       if (!d.isPublic && !admin) {
         continue;
       }
+      const builtinBg = getBuiltinRoomBackgroundState(d.id);
       catalogRooms.push({
         id: d.id,
         displayName: d.displayName,
@@ -1550,8 +1580,8 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
         isDeleted: false,
         canDelete: false,
         canRestore: false,
-        backgroundHueDeg: null,
-        backgroundNeutral: null,
+        backgroundHueDeg: builtinBg.hueDeg,
+        backgroundNeutral: builtinBg.neutral,
       });
       continue;
     }
@@ -1908,6 +1938,9 @@ const TELEPORTER_VISUAL: PlacedProps = {
   passable: true,
   quarter: true,
   hex: true,
+  pyramid: false,
+  pyramidBaseScale: 1,
+  sphere: false,
   half: false,
   ramp: false,
   rampDir: 0,
@@ -2468,7 +2501,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   const nWelcomeRoom = normalizeRoomId(targetRoomId);
   const welcomeBgState = isPlayerCreatedRoom(nWelcomeRoom)
     ? getDynamicRoomBackgroundState(nWelcomeRoom)
-    : null;
+    : getBuiltinRoomBackgroundState(nWelcomeRoom);
   const allowRoomBackgroundHueEdit = isPlayerCreatedRoom(nWelcomeRoom)
     ? allowActorRoomBackgroundHueEdit(
         nWelcomeRoom,
@@ -2495,12 +2528,8 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       allowPlaceBlocks: allowEdit,
       allowExtraFloor: allowFloorExpand,
       allowRoomBackgroundHueEdit,
-      ...(welcomeBgState
-        ? {
-            roomBackgroundHueDeg: welcomeBgState.hueDeg,
-            roomBackgroundNeutral: welcomeBgState.neutral,
-          }
-        : {}),
+      roomBackgroundHueDeg: welcomeBgState.hueDeg,
+      roomBackgroundNeutral: welcomeBgState.neutral,
     } satisfies OutMsg);
   sendRoomCatalog(conn.ws, address);
 
@@ -2780,7 +2809,7 @@ export function addClient(
   const nJoinRoom = normalizeRoomId(roomId);
   const joinWelcomeBgState = isPlayerCreatedRoom(nJoinRoom)
     ? getDynamicRoomBackgroundState(nJoinRoom)
-    : null;
+    : getBuiltinRoomBackgroundState(nJoinRoom);
   const joinAllowRoomBackgroundHueEdit = isPlayerCreatedRoom(nJoinRoom)
     ? allowActorRoomBackgroundHueEdit(
         nJoinRoom,
@@ -2843,12 +2872,8 @@ export function addClient(
       allowPlaceBlocks: allowEdit,
       allowExtraFloor: allowFloorExpand,
       allowRoomBackgroundHueEdit: joinAllowRoomBackgroundHueEdit,
-      ...(joinWelcomeBgState
-        ? {
-            roomBackgroundHueDeg: joinWelcomeBgState.hueDeg,
-            roomBackgroundNeutral: joinWelcomeBgState.neutral,
-          }
-        : {}),
+      roomBackgroundHueDeg: joinWelcomeBgState.hueDeg,
+      roomBackgroundNeutral: joinWelcomeBgState.neutral,
     } satisfies OutMsg);
   sendRoomCatalog(ws, address);
 
@@ -3015,19 +3040,61 @@ export function addClient(
             } satisfies OutMsg);
           return;
         }
-        const patch: { displayName?: string; isPublic?: boolean } = {};
+        const patch: {
+          displayName?: string;
+          isPublic?: boolean;
+          backgroundHueDeg?: number | null;
+          backgroundNeutral?: RoomBackgroundNeutral | null;
+        } = {};
         if (msg.displayName !== undefined) {
           patch.displayName = String(msg.displayName);
         }
         if (msg.isPublic !== undefined) {
           patch.isPublic = Boolean(msg.isPublic);
         }
-        if (patch.displayName === undefined && patch.isPublic === undefined) {
+        if (msg.backgroundHueDeg !== undefined) {
+          const norm = normalizeBackgroundHuePatch(
+            (msg as { backgroundHueDeg?: unknown }).backgroundHueDeg
+          );
+          if (!norm.ok) {
+            wsSafeSend(ws, {
+                type: "chat",
+                from: "System",
+                fromAddress: "SYSTEM",
+                text: norm.reason,
+                at: Date.now(),
+              } satisfies OutMsg);
+            return;
+          }
+          patch.backgroundHueDeg = norm.hue;
+        }
+        if (msg.backgroundNeutral !== undefined) {
+          const nn = normalizeBackgroundNeutralPatch(
+            (msg as { backgroundNeutral?: unknown }).backgroundNeutral
+          );
+          if (!nn.ok) {
+            wsSafeSend(ws, {
+                type: "chat",
+                from: "System",
+                fromAddress: "SYSTEM",
+                text: nn.reason,
+                at: Date.now(),
+              } satisfies OutMsg);
+            return;
+          }
+          patch.backgroundNeutral = nn.neutral;
+        }
+        if (
+          patch.displayName === undefined &&
+          patch.isPublic === undefined &&
+          patch.backgroundHueDeg === undefined &&
+          patch.backgroundNeutral === undefined
+        ) {
           wsSafeSend(ws, {
               type: "chat",
               from: "System",
               fromAddress: "SYSTEM",
-              text: "Send a display name and/or public/private setting.",
+              text: "Send a display name, public/private setting, and/or background options.",
               at: Date.now(),
             } satisfies OutMsg);
           return;
@@ -3044,6 +3111,19 @@ export function addClient(
           return;
         }
         broadcastRoomCatalogToAll();
+        if (
+          patch.backgroundHueDeg !== undefined ||
+          patch.backgroundNeutral !== undefined
+        ) {
+          const nR = normalizeRoomId(roomId);
+          const st = getBuiltinRoomBackgroundState(nR);
+          broadcast(nR, {
+            type: "roomBackgroundHue",
+            roomId: nR,
+            hueDeg: st.hueDeg,
+            neutral: st.neutral,
+          });
+        }
         return;
       }
       const patch: {
@@ -3334,8 +3414,15 @@ export function addClient(
       if (quarter) half = false;
       const ramp = Boolean(msg.ramp);
       const rampDir = Math.max(0, Math.min(3, Math.floor(Number(msg.rampDir ?? 0))));
-      let hex = Boolean(msg.hex);
-      if (ramp) hex = false;
+      const prism = normalizeBlockPrismParts({
+        hex: Boolean(msg.hex),
+        pyramid: Boolean(msg.pyramid),
+        sphere: Boolean(msg.sphere),
+        ramp,
+      });
+      const pyramidBaseScale = prism.pyramid
+        ? clampPyramidBaseScale(Number(msg.pyramidBaseScale ?? 1))
+        : 1;
       const colorId = clampColorId(Number(msg.colorId ?? 0));
       const requestedClaimable = Boolean(msg.claimable);
       const claimable =
@@ -3354,9 +3441,12 @@ export function addClient(
         passable: false,
         half,
         quarter,
-        hex,
-        ramp,
-        rampDir: ramp ? rampDir : 0,
+        hex: prism.hex,
+        pyramid: prism.pyramid,
+        pyramidBaseScale,
+        sphere: prism.sphere,
+        ramp: prism.ramp,
+        rampDir: prism.ramp ? rampDir : 0,
         colorId,
         locked: false,
         // Experimental: claimable blocks
@@ -3382,9 +3472,11 @@ export function addClient(
         y: yLevel,
         half,
         quarter,
-        hex,
-        ramp,
-        rampDir: ramp ? rampDir : 0,
+        hex: prism.hex,
+        pyramid: prism.pyramid,
+        sphere: prism.sphere,
+        ramp: prism.ramp,
+        rampDir: prism.ramp ? rampDir : 0,
         colorId,
       });
       return;
@@ -3483,8 +3575,12 @@ export function addClient(
       if (quarter) half = false;
       const ramp = Boolean(msg.ramp);
       const rampDir = Math.max(0, Math.min(3, Math.floor(Number(msg.rampDir ?? 0))));
-      let hex = Boolean(msg.hex);
-      if (ramp) hex = false;
+      const prism = normalizeBlockPrismParts({
+        hex: Boolean(msg.hex),
+        pyramid: Boolean(msg.pyramid),
+        sphere: Boolean(msg.sphere),
+        ramp,
+      });
       const colorId = clampColorId(Number(msg.colorId ?? 0));
       const locked = Boolean(msg.locked);
       
@@ -3495,6 +3591,11 @@ export function addClient(
       const entry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
       if (!entry) return;
       const { key: storageKey, props: existing } = entry;
+      const pyramidBaseScale = prism.pyramid
+        ? clampPyramidBaseScale(
+            Number(msg.pyramidBaseScale ?? existing.pyramidBaseScale ?? 1)
+          )
+        : 1;
       const canonicalKey = blockKey(tile.x, tile.z, ty);
       if (storageKey !== canonicalKey) {
         placed.delete(storageKey);
@@ -3513,9 +3614,12 @@ export function addClient(
         passable,
         half,
         quarter,
-        hex,
-        ramp,
-        rampDir: ramp ? rampDir : 0,
+        hex: prism.hex,
+        pyramid: prism.pyramid,
+        pyramidBaseScale,
+        sphere: prism.sphere,
+        ramp: prism.ramp,
+        rampDir: prism.ramp ? rampDir : 0,
         colorId,
         locked: finalLocked,
         ...(existing.teleporter ? { teleporter: existing.teleporter } : {}),
@@ -3545,9 +3649,11 @@ export function addClient(
         passable,
         half,
         quarter,
-        hex,
-        ramp,
-        rampDir: ramp ? rampDir : 0,
+        hex: prism.hex,
+        pyramid: prism.pyramid,
+        sphere: prism.sphere,
+        ramp: prism.ramp,
+        rampDir: prism.ramp ? rampDir : 0,
         colorId,
       });
       return;
@@ -4310,6 +4416,9 @@ export function addClient(
         half: true,
         quarter: false,
         hex: false,
+        pyramid: false,
+        pyramidBaseScale: 1,
+        sphere: false,
         ramp: false,
         rampDir: 0,
         colorId: 8, // Use a specific color for signboards (light gray/white)

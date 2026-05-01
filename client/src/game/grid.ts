@@ -212,6 +212,10 @@ export type TerrainProps = {
   half: boolean;
   quarter: boolean;
   hex: boolean;
+  pyramid: boolean;
+  /** Pyramid only; default 1 when omitted. */
+  pyramidBaseScale?: number;
+  sphere: boolean;
   ramp: boolean;
   rampDir: number;
   colorId: number;

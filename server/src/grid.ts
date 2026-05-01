@@ -204,6 +204,8 @@ export type TerrainProps = {
   half: boolean;
   quarter: boolean;
   hex: boolean;
+  pyramid: boolean;
+  sphere: boolean;
   ramp: boolean;
   rampDir: number;
   colorId: number;
@@ -222,7 +224,52 @@ export type TerrainProps = {
   /** When `active` becomes true again (persisted; survives process restarts). */
   claimReactivateAtMs?: number;
   claimedBy?: string; // Address of player who last claimed
+  /**
+   * Pyramid only: multiplier on default inscribed base radius (`1` = default footprint).
+   */
+  pyramidBaseScale?: number;
 };
+
+const PYRAMID_BASE_SCALE_MIN = 1;
+const PYRAMID_BASE_SCALE_MAX = 1.65;
+
+export function clampPyramidBaseScale(v: number): number {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return 1;
+  return Math.max(
+    PYRAMID_BASE_SCALE_MIN,
+    Math.min(PYRAMID_BASE_SCALE_MAX, x)
+  );
+}
+
+/** Canonicalize prism shape flags (ramp wins, then sphere, pyramid, then hex). */
+export function normalizeBlockPrismParts(input: {
+  hex?: boolean;
+  pyramid?: boolean;
+  sphere?: boolean;
+  ramp?: boolean;
+}): { hex: boolean; pyramid: boolean; sphere: boolean; ramp: boolean } {
+  const ramp = Boolean(input.ramp);
+  if (ramp) return { hex: false, pyramid: false, sphere: false, ramp: true };
+  const sphere = Boolean(input.sphere);
+  if (sphere) return { hex: false, pyramid: false, sphere: true, ramp: false };
+  const pyramid = Boolean(input.pyramid);
+  if (pyramid) return { hex: false, pyramid: true, sphere: false, ramp: false };
+  return { hex: Boolean(input.hex), pyramid: false, sphere: false, ramp: false };
+}
+
+/** Ensure persisted / partial JSON has valid mutually exclusive prism flags. */
+export function coerceTerrainPrismFields(p: TerrainProps): TerrainProps {
+  const n = normalizeBlockPrismParts(p);
+  const merged = { ...p, ...n };
+  if (!merged.pyramid) {
+    return { ...merged, pyramidBaseScale: 1 };
+  }
+  return {
+    ...merged,
+    pyramidBaseScale: clampPyramidBaseScale(merged.pyramidBaseScale ?? 1),
+  };
+}
 
 export function terrainObstacleHeight(p: TerrainProps): number {
   if (p.quarter) return BLOCK_SIZE * 0.25;
@@ -501,9 +548,17 @@ export function pathfindTerrain(
 
 /** Legacy paired teleporters stored `pairId`; strip on load. */
 export function normalizeTeleporterPropsForLoad(p: TerrainProps): TerrainProps {
-  const tp = p.teleporter;
-  if (!tp) return p;
-  if ("pending" in tp && tp.pending) return p;
+  const base: TerrainProps = {
+    ...p,
+    pyramid: p.pyramid ?? false,
+    sphere: p.sphere ?? false,
+    hex: p.hex ?? false,
+    ramp: p.ramp ?? false,
+    pyramidBaseScale: p.pyramidBaseScale,
+  };
+  const tp = base.teleporter;
+  if (!tp) return coerceTerrainPrismFields(base);
+  if ("pending" in tp && tp.pending) return coerceTerrainPrismFields(base);
   if ("pairId" in tp) {
     const t = tp as {
       pairId: string;
@@ -511,14 +566,14 @@ export function normalizeTeleporterPropsForLoad(p: TerrainProps): TerrainProps {
       targetX: number;
       targetZ: number;
     };
-    return {
-      ...p,
+    return coerceTerrainPrismFields({
+      ...base,
       teleporter: {
         targetRoomId: t.targetRoomId,
         targetX: t.targetX,
         targetZ: t.targetZ,
       },
-    };
+    });
   }
-  return p;
+  return coerceTerrainPrismFields(base);
 }

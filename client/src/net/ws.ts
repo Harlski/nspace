@@ -1,4 +1,5 @@
 import type { PlayerState } from "../types.js";
+import { clampPyramidBaseScale } from "../game/blockStyle.js";
 import { resolveApiBaseUrl } from "./apiBase.js";
 
 export type ObstacleTile = {
@@ -10,6 +11,9 @@ export type ObstacleTile = {
   half: boolean;
   quarter: boolean;
   hex: boolean;
+  pyramid: boolean;
+  pyramidBaseScale: number;
+  sphere: boolean;
   ramp: boolean;
   rampDir: number;
   colorId: number;
@@ -25,6 +29,9 @@ export type ObstacleProps = {
   half: boolean;
   quarter: boolean;
   hex: boolean;
+  pyramid: boolean;
+  pyramidBaseScale: number;
+  sphere: boolean;
   ramp: boolean;
   rampDir: number;
   colorId: number;
@@ -425,6 +432,9 @@ export function sendPlaceBlock(
     half?: boolean;
     quarter?: boolean;
     hex?: boolean;
+    pyramid?: boolean;
+    pyramidBaseScale?: number;
+    sphere?: boolean;
     ramp?: boolean;
     rampDir?: number;
     colorId?: number;
@@ -437,7 +447,12 @@ export function sendPlaceBlock(
   const ramp = Boolean(style?.ramp);
   const rampDir = Math.max(0, Math.min(3, Math.floor(style?.rampDir ?? 0)));
   const hex = ramp ? false : Boolean(style?.hex);
+  const pyramid = ramp ? false : Boolean(style?.pyramid);
+  const sphere = ramp ? false : Boolean(style?.sphere);
   const claimable = Boolean(style?.claimable);
+  const pyramidBaseScale = pyramid
+    ? clampPyramidBaseScale(Number(style?.pyramidBaseScale ?? 1))
+    : 1;
   ws.send(
     JSON.stringify({
       type: "placeBlock",
@@ -446,6 +461,9 @@ export function sendPlaceBlock(
       half,
       quarter,
       hex,
+      pyramid,
+      pyramidBaseScale,
+      sphere,
       ramp,
       rampDir: ramp ? rampDir : 0,
       colorId: style?.colorId ?? 0,
@@ -467,7 +485,12 @@ export function sendSetObstacleProps(
   const ramp = props.ramp;
   const rampDir = Math.max(0, Math.min(3, Math.floor(props.rampDir)));
   const hex = ramp ? false : props.hex;
+  const pyramid = ramp ? false : props.pyramid;
+  const sphere = ramp ? false : props.sphere;
   const locked = props.locked || false;
+  const pyramidBaseScale = pyramid
+    ? clampPyramidBaseScale(Number(props.pyramidBaseScale ?? 1))
+    : 1;
   
   ws.send(
     JSON.stringify({
@@ -479,6 +502,9 @@ export function sendSetObstacleProps(
       half,
       quarter,
       hex,
+      pyramid,
+      pyramidBaseScale,
+      sphere,
       ramp,
       rampDir: ramp ? rampDir : 0,
       colorId: props.colorId,

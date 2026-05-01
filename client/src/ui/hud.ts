@@ -1,8 +1,10 @@
 import {
   BLOCK_COLOR_COUNT,
   BLOCK_COLOR_PALETTE,
+  clampPyramidBaseScale,
   hslToRgb,
   nearestPaletteColorIdFromRgb,
+  normalizeBlockPrismParts,
 } from "../game/blockStyle.js";
 import type { Game } from "../game/Game.js";
 import type { ObstacleProps, RoomBackgroundNeutral } from "../net/ws.js";
@@ -42,6 +44,14 @@ const SHAPE_PICKER_OPTIONS_HTML = `
         <svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M16 5l9.5 5.5v11L16 27l-9.5-5.5v-11L16 5z"/></svg>
         <span class="tile-inspector__shape-label">Hex</span>
       </button>
+      <button type="button" class="tile-inspector__shape-btn" data-shape="pyramid" aria-pressed="false" aria-label="Pyramid">
+        <svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M16 6L6 26h20L16 6zm0 0v8m-6 10h12"/></svg>
+        <span class="tile-inspector__shape-label">Pyramid</span>
+      </button>
+      <button type="button" class="tile-inspector__shape-btn" data-shape="sphere" aria-pressed="false" aria-label="Sphere">
+        <svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true"><ellipse fill="none" stroke="currentColor" stroke-width="1.6" cx="16" cy="16" rx="9" ry="9"/><path fill="none" stroke="currentColor" stroke-width="1.2" d="M7 16h18M16 7c-5 3-5 15 0 18M16 7c5 3 5 15 0 18"/></svg>
+        <span class="tile-inspector__shape-label">Sphere</span>
+      </button>
       <button type="button" class="tile-inspector__shape-btn" data-shape="ramp" aria-pressed="false" aria-label="Ramp">
         <svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6 24h20l-8-16H6v16z"/></svg>
         <span class="tile-inspector__shape-label">Ramp</span>
@@ -49,9 +59,14 @@ const SHAPE_PICKER_OPTIONS_HTML = `
     </div>
   </div>`;
 
-const SHAPE_TRIG_SVG: Record<"cube" | "hex" | "ramp", string> = {
+const SHAPE_TRIG_SVG: Record<
+  "cube" | "hex" | "pyramid" | "sphere" | "ramp",
+  string
+> = {
   cube: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6 12l10-5 10 5v10l-10 5-10-5V12zm0 0l10 5 10-5m-10 5v10"/></svg>`,
   hex: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M16 5l9.5 5.5v11L16 27l-9.5-5.5v-11L16 5z"/></svg>`,
+  pyramid: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M16 5L7 25h18L16 5z"/></svg>`,
+  sphere: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><ellipse fill="none" stroke="currentColor" stroke-width="1.5" cx="16" cy="16" rx="8" ry="8"/><path fill="none" stroke="currentColor" stroke-width="1.1" d="M8 16h16M16 8a12 12 0 000 16"/></svg>`,
   ramp: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6 24h20l-8-16H6v16z"/></svg>`,
 };
 
@@ -102,6 +117,10 @@ export type BuildBlockBarState = {
   half: boolean;
   quarter: boolean;
   hex: boolean;
+  pyramid: boolean;
+  /** Pyramid only; base radius multiplier (1–1.65). */
+  pyramidBaseScale: number;
+  sphere: boolean;
   ramp: boolean;
   rampDir: number;
   colorId: number;
@@ -212,6 +231,9 @@ export function createHud(
           half: boolean;
           quarter: boolean;
           hex: boolean;
+          pyramid: boolean;
+          pyramidBaseScale: number;
+          sphere: boolean;
           ramp: boolean;
           rampDir: number;
           colorId: number;
@@ -258,6 +280,9 @@ export function createHud(
       half?: boolean;
       quarter?: boolean;
       hex?: boolean;
+      pyramid?: boolean;
+      pyramidBaseScale?: number;
+      sphere?: boolean;
       ramp?: boolean;
       rampDir?: number;
       colorId?: number;
@@ -984,6 +1009,14 @@ export function createHud(
 
   modeSidebarCollapseTab.addEventListener("click", () => {
     applyModeSidebarCollapsed(true);
+    if (buildToggleBtn.getAttribute("aria-pressed") === "true") {
+      if (document.activeElement === chatInput) {
+        chatInput.blur();
+      }
+      queueMicrotask(() => {
+        playModeHandler("walk");
+      });
+    }
   });
   modeSidebarReopenBtn.addEventListener("click", () => {
     applyModeSidebarCollapsed(false);
@@ -2020,12 +2053,21 @@ export function createHud(
             <span class="tile-inspector__param-value" id="tile-inspector-height-val">1.0 m</span>
           </label>
         </div>
+        <div class="tile-inspector__section tile-inspector__section--block-only" id="tile-inspector-pyramid-base-section" hidden>
+          <label class="tile-inspector__param" for="tile-inspector-pyramid-base">
+            <span class="tile-inspector__param-label">Pyramid base</span>
+            <input type="range" id="tile-inspector-pyramid-base" class="tile-inspector__slider" min="100" max="165" step="5" value="100" aria-valuetext="100%" />
+            <span class="tile-inspector__param-value" id="tile-inspector-pyramid-base-val">100%</span>
+          </label>
+        </div>
         <div class="tile-inspector__section tile-inspector__section--block-only">
           <button type="button" class="build-block-bar__advanced-toggle tile-inspector__advanced-link" aria-expanded="false" aria-controls="build-block-bar-advanced">Advanced…</button>
         </div>
         <button type="button" class="tile-inspector__reset-btn" id="tile-inspector-reset">Reset to defaults</button>
       </div>
       <input type="checkbox" class="build-block-bar__hex" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
+      <input type="checkbox" class="build-block-bar__pyramid" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
+      <input type="checkbox" class="build-block-bar__sphere" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
       <input type="checkbox" class="build-block-bar__ramp" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
       <div class="build-block-bar__teleporter" id="build-block-bar-teleporter" hidden>
         <p class="build-block-bar__teleporter-hint">Click an empty walkable floor tile to place. Select the teleporter to set its destination (room and X/Z).</p>
@@ -2153,6 +2195,7 @@ export function createHud(
       objectPanel !== null &&
       objectPanel.querySelector("#tile-inspector-selection") !== null;
     const blockToolRail =
+      hudPlayMode === "build" &&
       !buildBlockBar.hidden &&
       !signpostModeActive &&
       !teleporterModeActive;
@@ -2199,6 +2242,12 @@ export function createHud(
   ) as HTMLElement;
   const barHexCb = buildBlockBar.querySelector(
     ".build-block-bar__hex"
+  ) as HTMLInputElement;
+  const barPyramidCb = buildBlockBar.querySelector(
+    ".build-block-bar__pyramid"
+  ) as HTMLInputElement;
+  const barSphereCb = buildBlockBar.querySelector(
+    ".build-block-bar__sphere"
   ) as HTMLInputElement;
   const barRampCb = buildBlockBar.querySelector(
     ".build-block-bar__ramp"
@@ -2252,9 +2301,45 @@ export function createHud(
   const tileInspectorResetBtn = buildBlockBar.querySelector(
     "#tile-inspector-reset"
   ) as HTMLButtonElement;
+  const tileInspectorPyramidBaseSection = buildBlockBar.querySelector(
+    "#tile-inspector-pyramid-base-section"
+  ) as HTMLElement | null;
+  const tileInspectorPyramidBaseInput = buildBlockBar.querySelector(
+    "#tile-inspector-pyramid-base"
+  ) as HTMLInputElement | null;
+  const tileInspectorPyramidBaseVal = buildBlockBar.querySelector(
+    "#tile-inspector-pyramid-base-val"
+  ) as HTMLElement | null;
+
+  function pyramidBasePercentFromScale(scale: number): number {
+    return Math.round(clampPyramidBaseScale(scale) * 100);
+  }
+
+  function syncBarPyramidBaseSliderFromScale(scale: number): void {
+    if (!tileInspectorPyramidBaseInput || !tileInspectorPyramidBaseVal) return;
+    const pct = pyramidBasePercentFromScale(scale);
+    const stepped = Math.round((pct - 100) / 5) * 5 + 100;
+    const v = Math.min(165, Math.max(100, stepped));
+    tileInspectorPyramidBaseInput.value = String(v);
+    tileInspectorPyramidBaseVal.textContent = `${v}%`;
+    tileInspectorPyramidBaseInput.setAttribute("aria-valuetext", `${v}%`);
+  }
+
+  function syncPlacementPyramidBaseSectionVisibility(): void {
+    if (!tileInspectorPyramidBaseSection) return;
+    const show =
+      !signpostModeActive &&
+      !teleporterModeActive &&
+      barPyramidCb.checked &&
+      !barRampCb.checked;
+    tileInspectorPyramidBaseSection.hidden = !show;
+  }
+
   let inspectorPreviewGameRef: Game | null = null;
 
   const barTitleEl = tileInspectorHeadHint;
+  /** Matches the mode passed to `setPlayModeState`; keeps placement shape+hue hidden in floor (room) edit. */
+  let hudPlayMode: "walk" | "build" | "floor" = "walk";
 
   function syncModeSidebarBodyInteractive(): void {
     modeSidebarBody.classList.toggle(
@@ -2265,10 +2350,14 @@ export function createHud(
 
   function syncHueDockVisibility(): void {
     /* Placement row = next block to paint; selection row = selected tile. Only one at a time. */
+    const editRoomTab =
+      hudPlayMode === "floor" ||
+      (buildToggleBtn.getAttribute("aria-pressed") === "true" &&
+        buildEditKindSelect.value === "room");
     if (panelShapeColorRow !== null) {
       barShapeColorRow.hidden = true;
     } else {
-      barShapeColorRow.hidden = buildBlockBar.hidden;
+      barShapeColorRow.hidden = buildBlockBar.hidden || editRoomTab;
     }
     const panelHueDocked =
       panelShapeColorRow !== null && !panelShapeColorRow.hidden;
@@ -2859,6 +2948,9 @@ export function createHud(
     half?: boolean;
     quarter?: boolean;
     hex?: boolean;
+    pyramid?: boolean;
+    pyramidBaseScale?: number;
+    sphere?: boolean;
     ramp?: boolean;
     rampDir?: number;
     colorId?: number;
@@ -3027,8 +3119,40 @@ export function createHud(
     syncTileInspectorHeightLabel();
   });
 
+  tileInspectorPyramidBaseInput?.addEventListener("input", () => {
+    if (!tileInspectorPyramidBaseInput || !tileInspectorPyramidBaseVal) return;
+    const raw = Math.min(
+      165,
+      Math.max(100, Math.floor(Number(tileInspectorPyramidBaseInput.value)))
+    );
+    tileInspectorPyramidBaseInput.value = String(raw);
+    tileInspectorPyramidBaseVal.textContent = `${raw}%`;
+    tileInspectorPyramidBaseInput.setAttribute("aria-valuetext", `${raw}%`);
+    placementStyleHandler({ pyramidBaseScale: raw / 100 });
+  });
+
   barHexCb.addEventListener("change", () => {
-    placementStyleHandler({ hex: barHexCb.checked });
+    placementStyleHandler({
+      hex: barHexCb.checked,
+      pyramid: barHexCb.checked ? false : barPyramidCb.checked,
+      sphere: barHexCb.checked ? false : barSphereCb.checked,
+    });
+    syncBarShapeButtons();
+  });
+  barPyramidCb.addEventListener("change", () => {
+    placementStyleHandler({
+      pyramid: barPyramidCb.checked,
+      hex: barPyramidCb.checked ? false : barHexCb.checked,
+      sphere: barPyramidCb.checked ? false : barSphereCb.checked,
+    });
+    syncBarShapeButtons();
+  });
+  barSphereCb.addEventListener("change", () => {
+    placementStyleHandler({
+      sphere: barSphereCb.checked,
+      hex: barSphereCb.checked ? false : barHexCb.checked,
+      pyramid: barSphereCb.checked ? false : barPyramidCb.checked,
+    });
     syncBarShapeButtons();
   });
 
@@ -3044,16 +3168,43 @@ export function createHud(
   barRampCb.addEventListener("change", () => {
     const on = barRampCb.checked;
     barRampDirRow.hidden = !on;
-    placementStyleHandler({ ramp: on, hex: on ? false : barHexCb.checked });
-    if (on) barHexCb.checked = false;
+    placementStyleHandler({
+      ramp: on,
+      hex: on ? false : barHexCb.checked,
+      pyramid: on ? false : barPyramidCb.checked,
+      sphere: on ? false : barSphereCb.checked,
+    });
+    if (on) {
+      barHexCb.checked = false;
+      barPyramidCb.checked = false;
+      barSphereCb.checked = false;
+    }
     syncBarShapeButtons();
   });
 
   function syncBarShapeTriggerVisual(): void {
     const ramp = barRampCb.checked;
-    const hex = barHexCb.checked && !ramp;
-    const shape: "cube" | "hex" | "ramp" = ramp ? "ramp" : hex ? "hex" : "cube";
-    const label = ramp ? "Ramp" : hex ? "Hex" : "Cube";
+    const pyramid = !ramp && barPyramidCb.checked;
+    const sphere = !ramp && barSphereCb.checked;
+    const hex = barHexCb.checked && !ramp && !pyramid && !sphere;
+    const shape: "cube" | "hex" | "pyramid" | "sphere" | "ramp" = ramp
+      ? "ramp"
+      : sphere
+        ? "sphere"
+        : pyramid
+          ? "pyramid"
+          : hex
+            ? "hex"
+            : "cube";
+    const label = ramp
+      ? "Ramp"
+      : sphere
+        ? "Sphere"
+        : pyramid
+          ? "Pyramid"
+          : hex
+            ? "Hex"
+            : "Cube";
     const lab = barShapeTrigger.querySelector(".hud-mode-sidebar__shape-trigger-label");
     if (lab) lab.textContent = label;
     const icon = barShapeTrigger.querySelector(".hud-mode-sidebar__shape-trigger-icon");
@@ -3063,9 +3214,27 @@ export function createHud(
   function syncPanelShapeTriggerVisual(): void {
     if (!panelShapeTriggerEl || !panelRampCb || !panelHexCb) return;
     const ramp = panelRampCb.checked;
-    const hex = !ramp && panelHexCb.checked;
-    const shape: "cube" | "hex" | "ramp" = ramp ? "ramp" : hex ? "hex" : "cube";
-    const label = ramp ? "Ramp" : hex ? "Hex" : "Cube";
+    const pyramid = !ramp && (panelPyramidCb?.checked ?? false);
+    const sphere = !ramp && (panelSphereCb?.checked ?? false);
+    const hex = !ramp && panelHexCb.checked && !pyramid && !sphere;
+    const shape: "cube" | "hex" | "pyramid" | "sphere" | "ramp" = ramp
+      ? "ramp"
+      : sphere
+        ? "sphere"
+        : pyramid
+          ? "pyramid"
+          : hex
+            ? "hex"
+            : "cube";
+    const label = ramp
+      ? "Ramp"
+      : sphere
+        ? "Sphere"
+        : pyramid
+          ? "Pyramid"
+          : hex
+            ? "Hex"
+            : "Cube";
     const lab = panelShapeTriggerEl.querySelector(".hud-mode-sidebar__shape-trigger-label");
     if (lab) lab.textContent = label;
     const icon = panelShapeTriggerEl.querySelector(".hud-mode-sidebar__shape-trigger-icon");
@@ -3074,13 +3243,17 @@ export function createHud(
 
   function syncBarShapeButtons(): void {
     const ramp = barRampCb.checked;
-    const hex = barHexCb.checked && !ramp;
-    const cube = !hex && !ramp;
+    const pyramid = !ramp && barPyramidCb.checked;
+    const sphere = !ramp && barSphereCb.checked;
+    const hex = barHexCb.checked && !ramp && !pyramid && !sphere;
+    const cube = !hex && !ramp && !pyramid && !sphere;
     barShapeBtns.forEach((b) => {
       const shape = b.dataset.shape;
       const on =
         (shape === "cube" && cube) ||
         (shape === "hex" && hex) ||
+        (shape === "pyramid" && pyramid) ||
+        (shape === "sphere" && sphere) ||
         (shape === "ramp" && ramp);
       b.classList.toggle("tile-inspector__shape-btn--active", !!on);
       b.setAttribute("aria-pressed", on ? "true" : "false");
@@ -3097,6 +3270,7 @@ export function createHud(
         signpostModeActive || teleporterModeActive;
     }
     syncBarShapeTriggerVisual();
+    syncPlacementPyramidBaseSectionVisibility();
     syncBlockPreviewDockSlots();
   }
 
@@ -3104,7 +3278,7 @@ export function createHud(
     const h = ((hueDeg % 360) + 360) % 360;
     lastHueDeg = Math.round(h);
     barHueRing.setAttribute("aria-valuenow", String(lastHueDeg));
-    const { r, g, b } = hslToRgb(h / 360, 0.92, 0.48);
+    const { r, g, b } = hslToRgb(h / 360, 1, 0.52);
     const id = nearestPaletteColorIdFromRgb(r, g, b);
     rebuildBarRecentSwatches(pushRecentColorId(id));
     placementStyleHandler({ colorId: id });
@@ -3181,19 +3355,64 @@ export function createHud(
       const shape = btn.dataset.shape;
       if (shape === "cube") {
         barHexCb.checked = false;
+        barPyramidCb.checked = false;
+        barSphereCb.checked = false;
         barRampCb.checked = false;
         barRampDirRow.hidden = true;
-        placementStyleHandler({ hex: false, ramp: false });
+        placementStyleHandler({
+          hex: false,
+          pyramid: false,
+          sphere: false,
+          ramp: false,
+        });
       } else if (shape === "hex") {
         barHexCb.checked = true;
+        barPyramidCb.checked = false;
+        barSphereCb.checked = false;
         barRampCb.checked = false;
         barRampDirRow.hidden = true;
-        placementStyleHandler({ hex: true, ramp: false });
+        placementStyleHandler({
+          hex: true,
+          pyramid: false,
+          sphere: false,
+          ramp: false,
+        });
+      } else if (shape === "pyramid") {
+        barPyramidCb.checked = true;
+        barHexCb.checked = false;
+        barSphereCb.checked = false;
+        barRampCb.checked = false;
+        barRampDirRow.hidden = true;
+        placementStyleHandler({
+          pyramid: true,
+          hex: false,
+          sphere: false,
+          ramp: false,
+        });
+      } else if (shape === "sphere") {
+        barSphereCb.checked = true;
+        barHexCb.checked = false;
+        barPyramidCb.checked = false;
+        barRampCb.checked = false;
+        barRampDirRow.hidden = true;
+        placementStyleHandler({
+          sphere: true,
+          hex: false,
+          pyramid: false,
+          ramp: false,
+        });
       } else if (shape === "ramp") {
         barRampCb.checked = true;
         barHexCb.checked = false;
+        barPyramidCb.checked = false;
+        barSphereCb.checked = false;
         barRampDirRow.hidden = false;
-        placementStyleHandler({ ramp: true, hex: false });
+        placementStyleHandler({
+          ramp: true,
+          hex: false,
+          pyramid: false,
+          sphere: false,
+        });
       }
       syncBarShapeButtons();
       setBarShapePopoverOpen(false);
@@ -3243,6 +3462,8 @@ export function createHud(
 
   tileInspectorResetBtn.addEventListener("click", () => {
     barHexCb.checked = false;
+    barPyramidCb.checked = false;
+    barSphereCb.checked = false;
     barRampCb.checked = false;
     barRampDir = 0;
     barRampDirRow.hidden = true;
@@ -3250,11 +3471,15 @@ export function createHud(
       quarter: false,
       half: false,
       hex: false,
+      pyramid: false,
+      sphere: false,
       ramp: false,
       rampDir: 0,
       colorId: 0,
+      pyramidBaseScale: 1,
     });
     syncBarHeightButtons(false, false);
+    syncBarPyramidBaseSliderFromScale(1);
     syncBarShapeButtons();
     applyHueDegrees(estimateHueFromPaletteId(0));
   });
@@ -3356,6 +3581,8 @@ export function createHud(
     playModeHandler(
       buildEditKindSelect.value === "room" ? "floor" : "build"
     );
+    syncHueDockVisibility();
+    syncBlockPreviewDockSlots();
   });
 
   /** Pixel height of `.hud-top-wrap` (strip + status); drives `--hud-below-top-wrap` so the mode rail meets the chrome. */
@@ -3393,6 +3620,8 @@ export function createHud(
   /** When lock UI is hidden (non-admin), server lock state for emit. */
   let panelLockedState = false;
   let panelHexCb: HTMLInputElement | null = null;
+  let panelPyramidCb: HTMLInputElement | null = null;
+  let panelSphereCb: HTMLInputElement | null = null;
   let panelRampCb: HTMLInputElement | null = null;
   let panelHeightBtns: HTMLButtonElement[] = [];
   let panelShapeBtns: HTMLButtonElement[] = [];
@@ -3410,6 +3639,11 @@ export function createHud(
   let panelTileInspectorHeightInput: HTMLInputElement | null = null;
   let panelTileInspectorHeightVal: HTMLElement | null = null;
   let panelTileInspectorResetBtn: HTMLButtonElement | null = null;
+  let panelPyramidBaseRow: HTMLElement | null = null;
+  let panelPyramidBaseInput: HTMLInputElement | null = null;
+  let panelPyramidBaseVal: HTMLElement | null = null;
+  /** Debounced commit so `change` + `pointerup` + `blur` do not race or duplicate spam. */
+  let panelPyramidBaseCommitTimer: ReturnType<typeof setTimeout> | null = null;
   let teleporterPanelCleanup: (() => void) | null = null;
   let panelTeleporterRoomSel: HTMLSelectElement | null = null;
   let panelTeleporterX: HTMLInputElement | null = null;
@@ -3544,6 +3778,23 @@ export function createHud(
   };
   document.addEventListener("pointerdown", closeHudAdvancedPopoversOnOutside);
 
+  function syncPanelPyramidBaseSliderFromScale(scale: number): void {
+    if (!panelPyramidBaseInput || !panelPyramidBaseVal) return;
+    const pct = pyramidBasePercentFromScale(scale);
+    const stepped = Math.round((pct - 100) / 5) * 5 + 100;
+    const v = Math.min(165, Math.max(100, stepped));
+    panelPyramidBaseInput.value = String(v);
+    panelPyramidBaseVal.textContent = `${v}%`;
+    panelPyramidBaseInput.setAttribute("aria-valuetext", `${v}%`);
+  }
+
+  function syncPanelPyramidBaseRowVisibility(): void {
+    if (!panelPyramidBaseRow || !panelRampCb || !panelPyramidCb) return;
+    panelPyramidBaseRow.hidden = !(
+      panelPyramidCb.checked && !panelRampCb.checked
+    );
+  }
+
   function syncPanelTileHeightLabel(): void {
     if (!panelTileInspectorHeightInput || !panelTileInspectorHeightVal) return;
     const v = Math.min(
@@ -3582,21 +3833,34 @@ export function createHud(
   }
 
   function syncPanelShapeButtons(): void {
-    if (!panelShapeBtns.length || !panelRampCb || !panelHexCb) return;
+    if (
+      !panelShapeBtns.length ||
+      !panelRampCb ||
+      !panelHexCb ||
+      !panelPyramidCb ||
+      !panelSphereCb
+    ) {
+      return;
+    }
     const ramp = panelRampCb.checked;
-    const hex = panelHexCb.checked && !ramp;
-    const cube = !hex && !ramp;
+    const pyramid = !ramp && panelPyramidCb.checked;
+    const sphere = !ramp && panelSphereCb.checked;
+    const hex = panelHexCb.checked && !ramp && !pyramid && !sphere;
+    const cube = !hex && !ramp && !pyramid && !sphere;
     panelShapeBtns.forEach((b) => {
       const shape = b.dataset.shape;
       const on =
         (shape === "cube" && cube) ||
         (shape === "hex" && hex) ||
+        (shape === "pyramid" && pyramid) ||
+        (shape === "sphere" && sphere) ||
         (shape === "ramp" && ramp);
       b.classList.toggle("tile-inspector__shape-btn--active", !!on);
       b.setAttribute("aria-pressed", on ? "true" : "false");
     });
     refreshPanelWireframe();
     syncPanelShapeTriggerVisual();
+    syncPanelPyramidBaseRowVisibility();
   }
 
   function panelCollisionToggleIconMarkup(passable: boolean): string {
@@ -3673,7 +3937,13 @@ export function createHud(
   }
 
   function buildLivePanelObstacleProps(): ObstacleProps | null {
-    if (!panelCollisionToggle || !panelHexCb || !panelRampCb) {
+    if (
+      !panelCollisionToggle ||
+      !panelHexCb ||
+      !panelPyramidCb ||
+      !panelSphereCb ||
+      !panelRampCb
+    ) {
       return null;
     }
     let quarter = false;
@@ -3702,13 +3972,27 @@ export function createHud(
     }
     const ramp = panelRampCb.checked;
     const rampDir = Math.max(0, Math.min(3, Math.floor(panelRampDir)));
+    const prism = normalizeBlockPrismParts({
+      hex: panelHexCb.checked,
+      pyramid: panelPyramidCb.checked,
+      sphere: panelSphereCb.checked,
+      ramp,
+    });
+    const pyramidBaseScale = prism.pyramid
+      ? clampPyramidBaseScale(
+          Number(panelPyramidBaseInput?.value ?? 100) / 100
+        )
+      : 1;
     return {
       passable: getPanelPassable(),
       quarter,
       half,
-      hex: ramp ? false : panelHexCb.checked,
-      ramp,
-      rampDir: ramp ? rampDir : 0,
+      hex: prism.hex,
+      pyramid: prism.pyramid,
+      pyramidBaseScale,
+      sphere: prism.sphere,
+      ramp: prism.ramp,
+      rampDir: prism.ramp ? rampDir : 0,
       colorId: panelSelectedColorId,
       locked: getPanelLocked(),
     };
@@ -3722,6 +4006,29 @@ export function createHud(
     inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(next);
   }
 
+  function previewInspectorSelectionFromPanel(): void {
+    const next = buildLivePanelObstacleProps();
+    if (next) inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(next);
+  }
+
+  function panelPyramidBaseSliderUiBusy(): boolean {
+    if (!panelPyramidBaseInput) return false;
+    return (
+      document.activeElement === panelPyramidBaseInput ||
+      panelPyramidBaseInput.matches(":active")
+    );
+  }
+
+  function schedulePanelPyramidBaseCommit(): void {
+    if (panelPyramidBaseCommitTimer !== null) {
+      clearTimeout(panelPyramidBaseCommitTimer);
+    }
+    panelPyramidBaseCommitTimer = setTimeout(() => {
+      panelPyramidBaseCommitTimer = null;
+      emitPanelProps();
+    }, 50);
+  }
+
   panelShapePopover.addEventListener("click", (e) => {
     const btn = (e.target as HTMLElement).closest(
       ".tile-inspector__shape-btn"
@@ -3730,24 +4037,46 @@ export function createHud(
     if (
       !objectPanel?.querySelector("#tile-inspector-selection") ||
       !panelRampCb ||
-      !panelHexCb
+      !panelHexCb ||
+      !panelPyramidCb ||
+      !panelSphereCb
     ) {
       return;
     }
     const shape = btn.dataset.shape;
     if (shape === "cube") {
       panelHexCb.checked = false;
+      panelPyramidCb.checked = false;
+      panelSphereCb.checked = false;
       panelRampCb.checked = false;
       if (rampDirRow) rampDirRow.hidden = true;
       emitPanelProps();
     } else if (shape === "hex") {
       panelHexCb.checked = true;
+      panelPyramidCb.checked = false;
+      panelSphereCb.checked = false;
+      panelRampCb.checked = false;
+      if (rampDirRow) rampDirRow.hidden = true;
+      emitPanelProps();
+    } else if (shape === "pyramid") {
+      panelPyramidCb.checked = true;
+      panelHexCb.checked = false;
+      panelSphereCb.checked = false;
+      panelRampCb.checked = false;
+      if (rampDirRow) rampDirRow.hidden = true;
+      emitPanelProps();
+    } else if (shape === "sphere") {
+      panelSphereCb.checked = true;
+      panelHexCb.checked = false;
+      panelPyramidCb.checked = false;
       panelRampCb.checked = false;
       if (rampDirRow) rampDirRow.hidden = true;
       emitPanelProps();
     } else if (shape === "ramp") {
       panelRampCb.checked = true;
       panelHexCb.checked = false;
+      panelPyramidCb.checked = false;
+      panelSphereCb.checked = false;
       if (rampDirRow) rampDirRow.hidden = false;
       emitPanelProps();
     }
@@ -3760,7 +4089,7 @@ export function createHud(
     const h = ((hueDeg % 360) + 360) % 360;
     panelLastHueDeg = Math.round(h);
     panelHueRing.setAttribute("aria-valuenow", String(panelLastHueDeg));
-    const { r, g, b } = hslToRgb(h / 360, 0.92, 0.48);
+    const { r, g, b } = hslToRgb(h / 360, 1, 0.52);
     const id = nearestPaletteColorIdFromRgb(r, g, b);
     panelSelectedColorId = id;
     pushRecentColorId(id);
@@ -3786,6 +4115,13 @@ export function createHud(
   function hideObjectEditPanel(): void {
     inspectorPreviewGameRef?.bindInspectorTilePreviewCanvas("selection", null);
     inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(null);
+    if (panelPyramidBaseCommitTimer !== null) {
+      clearTimeout(panelPyramidBaseCommitTimer);
+      panelPyramidBaseCommitTimer = null;
+      if (panelOnPropsChange && panelPyramidBaseInput) {
+        emitPanelProps();
+      }
+    }
     setPanelAdvancedOpen(false);
     setPanelShapePopoverOpen(false);
     objectPanelAdvancedPopover.replaceChildren();
@@ -3818,12 +4154,17 @@ export function createHud(
     panelTileInspectorHeightInput = null;
     panelTileInspectorHeightVal = null;
     panelTileInspectorResetBtn = null;
+    panelPyramidBaseRow = null;
+    panelPyramidBaseInput = null;
+    panelPyramidBaseVal = null;
     syncHueDockVisibility();
     syncModeSidebarBodyInteractive();
     panelCollisionToggle = null;
     panelLockToggle = null;
     lockOptionBlock = null;
     panelHexCb = null;
+    panelPyramidCb = null;
+    panelSphereCb = null;
     panelRampCb = null;
     panelHeightBtns = [];
     panelShapeBtns = [];
@@ -4045,6 +4386,8 @@ export function createHud(
       roomAllowPlaceBlocks = caps.allowPlaceBlocks;
       roomAllowExtraFloor = caps.allowExtraFloor;
       applyRoomEditCaps();
+      syncHueDockVisibility();
+      syncBlockPreviewDockSlots();
     },
     setRoomBackgroundHuePanelVisible(visible: boolean) {
       roomBgHuePanel.hidden = !visible;
@@ -4093,6 +4436,7 @@ export function createHud(
       roomBgNeutralPickHandler = fn;
     },
     setPlayModeState(mode: "walk" | "build" | "floor") {
+      hudPlayMode = mode;
       const editOn = mode === "build" || mode === "floor";
       buildToggleBtn.classList.toggle(
         "hud-mode-sidebar__tab--active-build",
@@ -4109,6 +4453,7 @@ export function createHud(
       buildEditKindWrap.hidden = !showKindPicker;
       buildEditKindLabel.hidden = buildEditKindWrap.hidden;
       modeSidebarBody.setAttribute("aria-labelledby", "hud-mode-tab-build");
+      syncHueDockVisibility();
     },
     showObjectEditPanel(opts) {
       hideObjectEditPanel();
@@ -4275,6 +4620,8 @@ export function createHud(
             <button type="button" class="tile-inspector__reset-btn" id="panel-tile-inspector-reset">Reset to defaults</button>
           </div>
           <input type="checkbox" class="build-object-panel__hex" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
+          <input type="checkbox" class="build-object-panel__pyramid" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
+          <input type="checkbox" class="build-object-panel__sphere" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
           <input type="checkbox" class="build-object-panel__ramp" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
         </div>
       `;
@@ -4307,6 +4654,13 @@ export function createHud(
               </label>
             </div>
             <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close block editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
+          </div>
+          <div class="build-object-panel-context__pyramid-base-row" id="panel-tile-inspector-pyramid-base-row" hidden>
+            <label class="tile-inspector__param build-object-panel-context__height-param" for="panel-tile-inspector-pyramid-base">
+              <span class="tile-inspector__param-label">Pyramid base</span>
+              <input type="range" id="panel-tile-inspector-pyramid-base" class="tile-inspector__slider" min="100" max="165" step="5" value="100" aria-valuetext="100%" />
+              <span class="tile-inspector__param-value" id="panel-tile-inspector-pyramid-base-val">100%</span>
+            </label>
           </div>
           <div class="build-object-panel-context__advanced">
             <button type="button" class="build-object-panel__advanced-toggle build-block-bar__advanced-toggle tile-inspector__advanced-link" aria-expanded="false" aria-controls="build-object-panel-advanced">Advanced…</button>
@@ -4388,6 +4742,12 @@ export function createHud(
       panelHexCb = objectPanel.querySelector(
         ".build-object-panel__hex"
       ) as HTMLInputElement;
+      panelPyramidCb = objectPanel.querySelector(
+        ".build-object-panel__pyramid"
+      ) as HTMLInputElement;
+      panelSphereCb = objectPanel.querySelector(
+        ".build-object-panel__sphere"
+      ) as HTMLInputElement;
       panelRampCb = objectPanel.querySelector(
         ".build-object-panel__ramp"
       ) as HTMLInputElement;
@@ -4410,6 +4770,15 @@ export function createHud(
       panelTileInspectorResetBtn = objectPanel.querySelector(
         "#panel-tile-inspector-reset"
       ) as HTMLButtonElement;
+      panelPyramidBaseRow = objectPanelContextPopover.querySelector(
+        "#panel-tile-inspector-pyramid-base-row"
+      ) as HTMLElement | null;
+      panelPyramidBaseInput = objectPanelContextPopover.querySelector(
+        "#panel-tile-inspector-pyramid-base"
+      ) as HTMLInputElement | null;
+      panelPyramidBaseVal = objectPanelContextPopover.querySelector(
+        "#panel-tile-inspector-pyramid-base-val"
+      ) as HTMLElement | null;
       syncPanelCollisionToggle(opts.passable);
       panelLockedState = opts.locked || false;
       syncPanelLockToggle(panelLockedState);
@@ -4418,8 +4787,11 @@ export function createHud(
       }
       syncPanelHeightButtons(opts.quarter, opts.quarter ? false : opts.half);
       panelHexCb.checked = opts.ramp ? false : opts.hex;
+      panelPyramidCb.checked = opts.ramp ? false : opts.pyramid;
+      panelSphereCb.checked = opts.ramp ? false : opts.sphere;
       panelRampCb.checked = opts.ramp;
       rampDirRow.hidden = !opts.ramp;
+      syncPanelPyramidBaseSliderFromScale(opts.pyramidBaseScale ?? 1);
       syncPanelShapeButtons();
 
       panelAdvancedToggle!.addEventListener("click", (e) => {
@@ -4492,9 +4864,33 @@ export function createHud(
         emitPanelProps();
         syncPanelTileHeightLabel();
       });
+      panelPyramidBaseInput?.addEventListener("input", () => {
+        if (!panelPyramidBaseInput || !panelPyramidBaseVal) return;
+        const raw = Math.min(
+          165,
+          Math.max(100, Math.floor(Number(panelPyramidBaseInput.value)))
+        );
+        panelPyramidBaseInput.value = String(raw);
+        panelPyramidBaseVal.textContent = `${raw}%`;
+        panelPyramidBaseInput.setAttribute("aria-valuetext", `${raw}%`);
+        previewInspectorSelectionFromPanel();
+      });
+      panelPyramidBaseInput?.addEventListener("change", () => {
+        schedulePanelPyramidBaseCommit();
+      });
+      panelPyramidBaseInput?.addEventListener("pointerup", () => {
+        schedulePanelPyramidBaseCommit();
+      });
+      panelPyramidBaseInput?.addEventListener("blur", () => {
+        schedulePanelPyramidBaseCommit();
+      });
       panelTileInspectorResetBtn!.addEventListener("click", () => {
-        if (!panelHexCb || !panelRampCb) return;
+        if (!panelHexCb || !panelRampCb || !panelPyramidCb || !panelSphereCb) {
+          return;
+        }
         panelHexCb.checked = false;
+        panelPyramidCb.checked = false;
+        panelSphereCb.checked = false;
         panelRampCb.checked = false;
         panelRampDir = 0;
         if (rampDirRow) rampDirRow.hidden = true;
@@ -4503,6 +4899,7 @@ export function createHud(
         syncPanelShapeButtons();
         syncPanelCollisionToggle(false);
         syncPanelHueVisualFromColorId(0);
+        syncPanelPyramidBaseSliderFromScale(1);
         emitPanelProps();
       });
       panelShapePopoverAbort = new AbortController();
@@ -4591,7 +4988,16 @@ export function createHud(
       syncPanelLockToggle(panelLockedState);
       syncPanelHeightButtons(p.quarter, p.quarter ? false : p.half);
       if (panelHexCb) panelHexCb.checked = p.ramp ? false : p.hex;
+      if (panelPyramidCb) {
+        panelPyramidCb.checked = p.ramp ? false : p.pyramid;
+      }
+      if (panelSphereCb) {
+        panelSphereCb.checked = p.ramp ? false : p.sphere;
+      }
       if (panelRampCb) panelRampCb.checked = p.ramp;
+      if (!panelPyramidBaseSliderUiBusy()) {
+        syncPanelPyramidBaseSliderFromScale(p.pyramidBaseScale ?? 1);
+      }
       panelRampDir = Math.max(0, Math.min(3, Math.floor(p.rampDir)));
       if (rampDirRow) rampDirRow.hidden = !p.ramp;
       syncPanelShapeButtons();
@@ -4643,6 +5049,9 @@ export function createHud(
       }
       syncBarHeightButtons(state.quarter, state.quarter ? false : state.half);
       barHexCb.checked = state.ramp ? false : state.hex;
+      barPyramidCb.checked = state.ramp ? false : state.pyramid;
+      barSphereCb.checked = state.ramp ? false : state.sphere;
+      syncBarPyramidBaseSliderFromScale(state.pyramidBaseScale ?? 1);
       barRampCb.checked = state.ramp;
       barRampDir = Math.max(0, Math.min(3, Math.floor(state.rampDir)));
       barRampDirRow.hidden = !state.ramp;

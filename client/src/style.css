@@ -541,59 +541,6 @@
   cursor: pointer;
 }
 
-.rooms-modal__bg-hue-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 14px;
-  margin-bottom: 12px;
-}
-
-.rooms-modal__bg-hue-label {
-  min-width: 74px;
-  margin-bottom: 0;
-}
-
-.rooms-modal__bg-hue-row .build-block-bar__hue-ring-wrap {
-  flex-shrink: 0;
-}
-
-.rooms-modal__bg-neutrals {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-.rooms-modal__bg-neutral {
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  padding: 0;
-  cursor: pointer;
-  flex-shrink: 0;
-  box-sizing: border-box;
-}
-
-.rooms-modal__bg-neutral--black {
-  background: #070a0f;
-}
-
-.rooms-modal__bg-neutral--white {
-  background: #d4dce8;
-}
-
-.rooms-modal__bg-neutral--gray {
-  background: #2a313c;
-}
-
-.rooms-modal__bg-neutral--active {
-  outline: 2px solid rgba(120, 190, 255, 0.95);
-  outline-offset: 2px;
-}
-
 .rooms-modal__create-actions {
   display: flex;
   gap: 8px;
@@ -2360,6 +2307,10 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
+.hud-mode-sidebar__shape-color-row--placement[hidden] {
+  display: none !important;
+}
+
 .hud-mode-sidebar__shape-trigger {
   flex-shrink: 0;
   display: inline-flex;
@@ -3526,17 +3477,19 @@ button.hud-brand:focus-visible {
   border-radius: 50%;
   background: conic-gradient(
     from 0deg,
-    hsl(0, 92%, 48%),
-    hsl(36, 92%, 48%),
-    hsl(72, 88%, 46%),
-    hsl(108, 80%, 40%),
-    hsl(144, 82%, 40%),
-    hsl(180, 88%, 42%),
-    hsl(216, 90%, 48%),
-    hsl(252, 92%, 50%),
-    hsl(288, 92%, 50%),
-    hsl(324, 92%, 48%),
-    hsl(360, 92%, 48%)
+    hsl(0, 100%, 52%),
+    hsl(30, 100%, 52%),
+    hsl(60, 100%, 52%),
+    hsl(90, 100%, 52%),
+    hsl(120, 100%, 52%),
+    hsl(150, 100%, 52%),
+    hsl(180, 100%, 52%),
+    hsl(210, 100%, 52%),
+    hsl(240, 100%, 52%),
+    hsl(270, 100%, 52%),
+    hsl(300, 100%, 52%),
+    hsl(330, 100%, 52%),
+    hsl(360, 100%, 52%)
   );
   -webkit-mask: radial-gradient(
     farthest-side,
@@ -4599,17 +4552,19 @@ button.hud-brand:focus-visible {
   border-radius: 50%;
   background: conic-gradient(
     from 0deg,
-    hsl(0, 92%, 48%),
-    hsl(36, 92%, 48%),
-    hsl(72, 88%, 46%),
-    hsl(108, 80%, 40%),
-    hsl(144, 82%, 40%),
-    hsl(180, 88%, 42%),
-    hsl(216, 90%, 48%),
-    hsl(252, 92%, 50%),
-    hsl(288, 92%, 50%),
-    hsl(324, 92%, 48%),
-    hsl(360, 92%, 48%)
+    hsl(0, 100%, 52%),
+    hsl(30, 100%, 52%),
+    hsl(60, 100%, 52%),
+    hsl(90, 100%, 52%),
+    hsl(120, 100%, 52%),
+    hsl(150, 100%, 52%),
+    hsl(180, 100%, 52%),
+    hsl(210, 100%, 52%),
+    hsl(240, 100%, 52%),
+    hsl(270, 100%, 52%),
+    hsl(300, 100%, 52%),
+    hsl(330, 100%, 52%),
+    hsl(360, 100%, 52%)
   );
   -webkit-mask: radial-gradient(
     farthest-side,

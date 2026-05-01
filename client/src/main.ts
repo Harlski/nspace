@@ -49,7 +49,6 @@ import {
   type ServerMessage,
 } from "./net/ws.js";
 import { installAdminOverlay } from "./ui/adminOverlay.js";
-import { ringHueFromClient } from "./ui/ringHuePick.js";
 import { createHud } from "./ui/hud.js";
 import {
   isPseudoFullscreenActive,
@@ -372,38 +371,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
               <span>Show in public room list</span>
             </label>
           </div>
-          <div id="rooms-edit-bg-row" class="rooms-modal__bg-hue-row" hidden>
-            <span class="rooms-modal__fineprint rooms-modal__bg-hue-label">Background</span>
-            <div
-              class="build-block-bar__hue-ring-wrap"
-              title="Room tint — drag on the ring (same as block color picker)"
-              id="rooms-edit-bg-hue-wrap"
-            >
-              <div
-                class="build-block-bar__hue-ring"
-                role="slider"
-                tabindex="0"
-                aria-label="Room background hue"
-                aria-valuemin="0"
-                aria-valuemax="359"
-                aria-valuenow="198"
-                id="rooms-edit-bg-hue-ring"
-              ></div>
-              <div
-                class="build-block-bar__hue-core"
-                aria-hidden="true"
-                id="rooms-edit-bg-hue-core"
-              ></div>
-            </div>
-            <div class="rooms-modal__bg-neutrals" id="rooms-edit-bg-neutrals" role="group" aria-label="Solid background">
-              <button type="button" class="rooms-modal__bg-neutral rooms-modal__bg-neutral--black" data-neutral="black" aria-label="Black background" title="Black"></button>
-              <button type="button" class="rooms-modal__bg-neutral rooms-modal__bg-neutral--white" data-neutral="white" aria-label="White background" title="White"></button>
-              <button type="button" class="rooms-modal__bg-neutral rooms-modal__bg-neutral--gray" data-neutral="gray" aria-label="Gray background" title="Gray"></button>
-            </div>
-            <button type="button" class="rooms-modal__btn rooms-modal__btn--compact" id="rooms-edit-bg-reset">
-              Default
-            </button>
-          </div>
           <div id="rooms-edit-delete-block" class="rooms-modal__edit-delete" hidden>
             <p class="rooms-modal__fineprint" id="rooms-edit-delete-msg"></p>
             <input
@@ -539,132 +506,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     "#rooms-edit-delete-confirm"
   ) as HTMLInputElement;
   const roomsEditDeleteErr = roomsModal.querySelector("#rooms-edit-delete-err") as HTMLParagraphElement;
-  const roomsEditBgRow = roomsModal.querySelector("#rooms-edit-bg-row") as HTMLElement;
-  const roomsEditBgHueWrap = roomsModal.querySelector(
-    "#rooms-edit-bg-hue-wrap"
-  ) as HTMLElement;
-  const roomsEditBgHueRing = roomsModal.querySelector(
-    "#rooms-edit-bg-hue-ring"
-  ) as HTMLElement;
-  const roomsEditBgHueCore = roomsModal.querySelector(
-    "#rooms-edit-bg-hue-core"
-  ) as HTMLElement;
-  const roomsEditBgResetBtn = roomsModal.querySelector(
-    "#rooms-edit-bg-reset"
-  ) as HTMLButtonElement;
-  const roomsEditBgNeutralRow = roomsModal.querySelector(
-    "#rooms-edit-bg-neutrals"
-  ) as HTMLElement;
-
-  /** Ring preview when room uses default (null) background hue. */
-  const ROOM_EDIT_BG_DEFAULT_RING_DEG = 198;
-  let roomsEditBgPendingHue: number | null = null;
-  let roomsEditBgPendingNeutral: RoomBackgroundNeutral | null = null;
-  let roomsEditBgHueWired = false;
-
-  function syncRoomsEditBgNeutralChipUi(): void {
-    for (const b of roomsEditBgNeutralRow.querySelectorAll<HTMLButtonElement>(
-      "[data-neutral]"
-    )) {
-      const raw = b.dataset.neutral;
-      const on =
-        (raw === "black" || raw === "white" || raw === "gray") &&
-        roomsEditBgPendingNeutral === raw;
-      b.classList.toggle("rooms-modal__bg-neutral--active", on);
-      b.setAttribute("aria-pressed", on ? "true" : "false");
-    }
-  }
-
-  function syncRoomsEditBgHueVisual(): void {
-    const ringDeg =
-      roomsEditBgPendingHue !== null &&
-      Number.isFinite(roomsEditBgPendingHue)
-        ? Math.round(((roomsEditBgPendingHue % 360) + 360) % 360)
-        : ROOM_EDIT_BG_DEFAULT_RING_DEG;
-    roomsEditBgHueRing.setAttribute("aria-valuenow", String(ringDeg));
-    const coreBg =
-      roomsEditBgPendingNeutral === "black"
-        ? "#070a0f"
-        : roomsEditBgPendingNeutral === "white"
-          ? "#d4dce8"
-          : roomsEditBgPendingNeutral === "gray"
-            ? "#2a313c"
-            : `hsl(${ringDeg} 42% 11%)`;
-    roomsEditBgHueCore.style.background = coreBg;
-    syncRoomsEditBgNeutralChipUi();
-  }
-
-  function wireRoomsEditBgHueControls(): void {
-    if (roomsEditBgHueWired) return;
-    roomsEditBgHueWired = true;
-    function applyPointerHue(ev: PointerEvent): void {
-      const hue = ringHueFromClient(roomsEditBgHueRing, ev.clientX, ev.clientY);
-      if (hue === null) return;
-      roomsEditBgPendingNeutral = null;
-      roomsEditBgPendingHue = Math.round(hue);
-      syncRoomsEditBgHueVisual();
-    }
-    roomsEditBgHueWrap.addEventListener("pointerdown", (e) => {
-      roomsEditBgHueWrap.setPointerCapture(e.pointerId);
-      applyPointerHue(e);
-    });
-    roomsEditBgHueWrap.addEventListener("pointermove", (e) => {
-      if (!roomsEditBgHueWrap.hasPointerCapture(e.pointerId)) return;
-      applyPointerHue(e);
-    });
-    roomsEditBgHueWrap.addEventListener("pointerup", (e) => {
-      if (roomsEditBgHueWrap.hasPointerCapture(e.pointerId)) {
-        try {
-          roomsEditBgHueWrap.releasePointerCapture(e.pointerId);
-        } catch {
-          /* */
-        }
-      }
-    });
-    roomsEditBgHueWrap.addEventListener("pointercancel", (ev) => {
-      try {
-        roomsEditBgHueWrap.releasePointerCapture(ev.pointerId);
-      } catch {
-        /* */
-      }
-    });
-    roomsEditBgHueRing.addEventListener("keydown", (e) => {
-      if (roomsEditBgPendingHue === null) {
-        roomsEditBgPendingHue = ROOM_EDIT_BG_DEFAULT_RING_DEG;
-      }
-      if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
-        e.preventDefault();
-        roomsEditBgPendingNeutral = null;
-        roomsEditBgPendingHue = Math.round(
-          (((roomsEditBgPendingHue - 12) % 360) + 360) % 360
-        );
-        syncRoomsEditBgHueVisual();
-      } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
-        e.preventDefault();
-        roomsEditBgPendingNeutral = null;
-        roomsEditBgPendingHue = Math.round(
-          (((roomsEditBgPendingHue + 12) % 360) + 360) % 360
-        );
-        syncRoomsEditBgHueVisual();
-      }
-    });
-    roomsEditBgResetBtn.addEventListener("click", () => {
-      roomsEditBgPendingHue = null;
-      roomsEditBgPendingNeutral = null;
-      syncRoomsEditBgHueVisual();
-    });
-    for (const b of roomsEditBgNeutralRow.querySelectorAll<HTMLButtonElement>(
-      "[data-neutral]"
-    )) {
-      b.addEventListener("click", () => {
-        const raw = b.dataset.neutral;
-        if (raw !== "black" && raw !== "white" && raw !== "gray") return;
-        roomsEditBgPendingNeutral = raw;
-        roomsEditBgPendingHue = null;
-        syncRoomsEditBgHueVisual();
-      });
-    }
-  }
 
   let roomsEscHandler: ((e: KeyboardEvent) => void) | null = null;
   let roomsViewState: "list" | "edit" = "list";
@@ -800,7 +641,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   });
 
   function openRoomsModal(): void {
-    wireRoomsEditBgHueControls();
     closeRoomsCreateModal();
     roomsJoinHint.hidden = true;
     roomsJoinHint.textContent = "";
@@ -841,18 +681,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     roomsEditNameInput.value = room.displayName;
     roomsEditPublicRow.hidden = false;
     roomsEditPublicInput.checked = room.isPublic;
-    roomsEditBgRow.hidden = isBuiltin;
-    if (!isBuiltin) {
-      const bh = room.backgroundHueDeg;
-      roomsEditBgPendingHue =
-        typeof bh === "number" && Number.isFinite(bh)
-          ? Math.round(((bh % 360) + 360) % 360)
-          : null;
-      const bn = room.backgroundNeutral;
-      roomsEditBgPendingNeutral =
-        bn === "black" || bn === "white" || bn === "gray" ? bn : null;
-      syncRoomsEditBgHueVisual();
-    }
     const canDelete = Boolean(room.canDelete && !room.isBuiltin);
     roomsEditDeleteBtn.hidden = !canDelete;
     if (canDelete) {
@@ -1008,18 +836,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     if (editing?.isBuiltin) {
       sendUpdateRoom(ws, roomsEditingRoomId, basePatch);
     } else {
-      sendUpdateRoom(ws, roomsEditingRoomId, {
-        ...basePatch,
-        ...(roomsEditBgPendingNeutral
-          ? {
-              backgroundHueDeg: null,
-              backgroundNeutral: roomsEditBgPendingNeutral,
-            }
-          : {
-              backgroundHueDeg: roomsEditBgPendingHue,
-              backgroundNeutral: null,
-            }),
-      });
+      sendUpdateRoom(ws, roomsEditingRoomId, basePatch);
     }
     showRoomsView("list");
     roomsEditingRoomId = null;
@@ -1616,8 +1433,20 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   ): boolean {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     if (welcomeAllowRoomBackgroundHueEdit) return true;
-    if (!row || row.isBuiltin || row.isDeleted) return false;
-    if (isAdmin(address)) return true;
+    const actor = selfAddress.trim() !== "" ? selfAddress : address;
+    const rid = normalizeRoomId(game.getRoomId());
+    if (
+      rid === HUB_ROOM_ID ||
+      rid === CHAMBER_ROOM_ID ||
+      rid === CANVAS_ROOM_ID
+    ) {
+      return isAdmin(actor);
+    }
+    if (!row) {
+      return isAdmin(actor);
+    }
+    if (row.isDeleted || row.isBuiltin) return false;
+    if (isAdmin(actor)) return true;
     if (row.isOfficial) return false;
     return viewerOwnsRoom(row);
   }
@@ -1668,13 +1497,16 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const isBuiltInPlaySpace =
       rid === HUB_ROOM_ID || rid === CHAMBER_ROOM_ID || rid === CANVAS_ROOM_ID;
     const dynamicRoom = !isBuiltInPlaySpace;
+    const actor = selfAddress.trim() !== "" ? selfAddress : address;
+    const isAdminViewer = isAdmin(actor);
     const allowHue = canEditCurrentRoomBackgroundHue(row);
     const show =
-      game.getFloorExpandMode() &&
-      roomAllowExtraFloor &&
-      !isCanvas &&
-      dynamicRoom &&
-      allowHue;
+      allowHue &&
+      ((isCanvas && isAdminViewer) ||
+        (game.getFloorExpandMode() &&
+          roomAllowExtraFloor &&
+          !isCanvas &&
+          (dynamicRoom || rid === HUB_ROOM_ID || rid === CHAMBER_ROOM_ID)));
     hud.setRoomBackgroundHuePanelVisible(show);
     if (!show) return;
     let ringHue: number | null = null;
@@ -2219,6 +2051,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         half: m.half,
         quarter: m.quarter,
         hex: m.hex,
+        pyramid: m.pyramid,
+        pyramidBaseScale: m.pyramidBaseScale ?? 1,
+        sphere: m.sphere,
         ramp: m.ramp,
         rampDir: m.rampDir,
         colorId: m.colorId,
