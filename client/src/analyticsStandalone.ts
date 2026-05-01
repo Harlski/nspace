@@ -250,7 +250,7 @@ async function load(): Promise<void> {
   const q = new URLSearchParams(window.location.search);
   if (!q.get("days")) q.set("days", "7");
   if (!q.get("sessions")) q.set("sessions", "300");
-  if (!q.get("payouts")) q.set("payouts", "300");
+  if (!q.get("payouts")) q.set("payouts", "1000");
   const url = apiUrl(`/api/analytics/overview?${q.toString()}`);
 
   const resp = await fetch(url, {

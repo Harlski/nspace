@@ -24,6 +24,7 @@ import {
   sendChatTyping,
   sendNimSendIntent,
   sendBeginBlockClaim,
+  sendCreateOfficialRoom,
   sendCreateRoom,
   sendBlockClaimTick,
   sendCompleteBlockClaim,
@@ -44,9 +45,11 @@ import {
   sendRemoveVoxelText,
   sendSetVoxelText,
   sendSetObstacleProps,
+  type RoomBackgroundNeutral,
   type ServerMessage,
 } from "./net/ws.js";
 import { installAdminOverlay } from "./ui/adminOverlay.js";
+import { ringHueFromClient } from "./ui/ringHuePick.js";
 import { createHud } from "./ui/hud.js";
 import {
   isPseudoFullscreenActive,
@@ -252,6 +255,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
+  hud.bindTileInspectorPreviewGame(game);
   type KnownRoomRow = {
     id: string;
     displayName: string;
@@ -259,10 +263,13 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     playerCount: number;
     isPublic: boolean;
     isBuiltin: boolean;
+    isOfficial: boolean;
     canEdit: boolean;
     isDeleted: boolean;
     canDelete: boolean;
     canRestore: boolean;
+    backgroundHueDeg: number | null;
+    backgroundNeutral: RoomBackgroundNeutral | null;
   };
   let knownRooms: KnownRoomRow[] = [];
   let roomsCatalogTab: "official" | "user" | "admin" | "deleted" = "official";
@@ -365,6 +372,38 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
               <span>Show in public room list</span>
             </label>
           </div>
+          <div id="rooms-edit-bg-row" class="rooms-modal__bg-hue-row" hidden>
+            <span class="rooms-modal__fineprint rooms-modal__bg-hue-label">Background</span>
+            <div
+              class="build-block-bar__hue-ring-wrap"
+              title="Room tint — drag on the ring (same as block color picker)"
+              id="rooms-edit-bg-hue-wrap"
+            >
+              <div
+                class="build-block-bar__hue-ring"
+                role="slider"
+                tabindex="0"
+                aria-label="Room background hue"
+                aria-valuemin="0"
+                aria-valuemax="359"
+                aria-valuenow="198"
+                id="rooms-edit-bg-hue-ring"
+              ></div>
+              <div
+                class="build-block-bar__hue-core"
+                aria-hidden="true"
+                id="rooms-edit-bg-hue-core"
+              ></div>
+            </div>
+            <div class="rooms-modal__bg-neutrals" id="rooms-edit-bg-neutrals" role="group" aria-label="Solid background">
+              <button type="button" class="rooms-modal__bg-neutral rooms-modal__bg-neutral--black" data-neutral="black" aria-label="Black background" title="Black"></button>
+              <button type="button" class="rooms-modal__bg-neutral rooms-modal__bg-neutral--white" data-neutral="white" aria-label="White background" title="White"></button>
+              <button type="button" class="rooms-modal__bg-neutral rooms-modal__bg-neutral--gray" data-neutral="gray" aria-label="Gray background" title="Gray"></button>
+            </div>
+            <button type="button" class="rooms-modal__btn rooms-modal__btn--compact" id="rooms-edit-bg-reset">
+              Default
+            </button>
+          </div>
           <div id="rooms-edit-delete-block" class="rooms-modal__edit-delete" hidden>
             <p class="rooms-modal__fineprint" id="rooms-edit-delete-msg"></p>
             <input
@@ -413,6 +452,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           <input type="checkbox" id="rooms-create-public" checked />
           <span>Show in public room list</span>
         </label>
+        <div id="rooms-create-official-row" class="rooms-modal__create-official-row" hidden>
+          <label class="rooms-modal__check">
+            <input type="checkbox" id="rooms-create-official" />
+            <span>Create as official room (listed under Official rooms; does not use your personal room limit)</span>
+          </label>
+        </div>
         <div class="rooms-modal__create-actions">
           <button type="button" class="rooms-modal__btn rooms-modal__btn--primary" id="rooms-create-submit">Create &amp; enter</button>
         </div>
@@ -468,6 +513,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   const roomsCreatePublicInput = roomsCreateModal.querySelector(
     "#rooms-create-public"
   ) as HTMLInputElement;
+  const roomsCreateOfficialRow = roomsCreateModal.querySelector(
+    "#rooms-create-official-row"
+  ) as HTMLDivElement;
+  const roomsCreateOfficialInput = roomsCreateModal.querySelector(
+    "#rooms-create-official"
+  ) as HTMLInputElement;
   const roomsCreateSubmitBtn = roomsCreateModal.querySelector(
     "#rooms-create-submit"
   ) as HTMLButtonElement;
@@ -488,6 +539,132 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     "#rooms-edit-delete-confirm"
   ) as HTMLInputElement;
   const roomsEditDeleteErr = roomsModal.querySelector("#rooms-edit-delete-err") as HTMLParagraphElement;
+  const roomsEditBgRow = roomsModal.querySelector("#rooms-edit-bg-row") as HTMLElement;
+  const roomsEditBgHueWrap = roomsModal.querySelector(
+    "#rooms-edit-bg-hue-wrap"
+  ) as HTMLElement;
+  const roomsEditBgHueRing = roomsModal.querySelector(
+    "#rooms-edit-bg-hue-ring"
+  ) as HTMLElement;
+  const roomsEditBgHueCore = roomsModal.querySelector(
+    "#rooms-edit-bg-hue-core"
+  ) as HTMLElement;
+  const roomsEditBgResetBtn = roomsModal.querySelector(
+    "#rooms-edit-bg-reset"
+  ) as HTMLButtonElement;
+  const roomsEditBgNeutralRow = roomsModal.querySelector(
+    "#rooms-edit-bg-neutrals"
+  ) as HTMLElement;
+
+  /** Ring preview when room uses default (null) background hue. */
+  const ROOM_EDIT_BG_DEFAULT_RING_DEG = 198;
+  let roomsEditBgPendingHue: number | null = null;
+  let roomsEditBgPendingNeutral: RoomBackgroundNeutral | null = null;
+  let roomsEditBgHueWired = false;
+
+  function syncRoomsEditBgNeutralChipUi(): void {
+    for (const b of roomsEditBgNeutralRow.querySelectorAll<HTMLButtonElement>(
+      "[data-neutral]"
+    )) {
+      const raw = b.dataset.neutral;
+      const on =
+        (raw === "black" || raw === "white" || raw === "gray") &&
+        roomsEditBgPendingNeutral === raw;
+      b.classList.toggle("rooms-modal__bg-neutral--active", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  }
+
+  function syncRoomsEditBgHueVisual(): void {
+    const ringDeg =
+      roomsEditBgPendingHue !== null &&
+      Number.isFinite(roomsEditBgPendingHue)
+        ? Math.round(((roomsEditBgPendingHue % 360) + 360) % 360)
+        : ROOM_EDIT_BG_DEFAULT_RING_DEG;
+    roomsEditBgHueRing.setAttribute("aria-valuenow", String(ringDeg));
+    const coreBg =
+      roomsEditBgPendingNeutral === "black"
+        ? "#070a0f"
+        : roomsEditBgPendingNeutral === "white"
+          ? "#d4dce8"
+          : roomsEditBgPendingNeutral === "gray"
+            ? "#2a313c"
+            : `hsl(${ringDeg} 42% 11%)`;
+    roomsEditBgHueCore.style.background = coreBg;
+    syncRoomsEditBgNeutralChipUi();
+  }
+
+  function wireRoomsEditBgHueControls(): void {
+    if (roomsEditBgHueWired) return;
+    roomsEditBgHueWired = true;
+    function applyPointerHue(ev: PointerEvent): void {
+      const hue = ringHueFromClient(roomsEditBgHueRing, ev.clientX, ev.clientY);
+      if (hue === null) return;
+      roomsEditBgPendingNeutral = null;
+      roomsEditBgPendingHue = Math.round(hue);
+      syncRoomsEditBgHueVisual();
+    }
+    roomsEditBgHueWrap.addEventListener("pointerdown", (e) => {
+      roomsEditBgHueWrap.setPointerCapture(e.pointerId);
+      applyPointerHue(e);
+    });
+    roomsEditBgHueWrap.addEventListener("pointermove", (e) => {
+      if (!roomsEditBgHueWrap.hasPointerCapture(e.pointerId)) return;
+      applyPointerHue(e);
+    });
+    roomsEditBgHueWrap.addEventListener("pointerup", (e) => {
+      if (roomsEditBgHueWrap.hasPointerCapture(e.pointerId)) {
+        try {
+          roomsEditBgHueWrap.releasePointerCapture(e.pointerId);
+        } catch {
+          /* */
+        }
+      }
+    });
+    roomsEditBgHueWrap.addEventListener("pointercancel", (ev) => {
+      try {
+        roomsEditBgHueWrap.releasePointerCapture(ev.pointerId);
+      } catch {
+        /* */
+      }
+    });
+    roomsEditBgHueRing.addEventListener("keydown", (e) => {
+      if (roomsEditBgPendingHue === null) {
+        roomsEditBgPendingHue = ROOM_EDIT_BG_DEFAULT_RING_DEG;
+      }
+      if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+        e.preventDefault();
+        roomsEditBgPendingNeutral = null;
+        roomsEditBgPendingHue = Math.round(
+          (((roomsEditBgPendingHue - 12) % 360) + 360) % 360
+        );
+        syncRoomsEditBgHueVisual();
+      } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+        e.preventDefault();
+        roomsEditBgPendingNeutral = null;
+        roomsEditBgPendingHue = Math.round(
+          (((roomsEditBgPendingHue + 12) % 360) + 360) % 360
+        );
+        syncRoomsEditBgHueVisual();
+      }
+    });
+    roomsEditBgResetBtn.addEventListener("click", () => {
+      roomsEditBgPendingHue = null;
+      roomsEditBgPendingNeutral = null;
+      syncRoomsEditBgHueVisual();
+    });
+    for (const b of roomsEditBgNeutralRow.querySelectorAll<HTMLButtonElement>(
+      "[data-neutral]"
+    )) {
+      b.addEventListener("click", () => {
+        const raw = b.dataset.neutral;
+        if (raw !== "black" && raw !== "white" && raw !== "gray") return;
+        roomsEditBgPendingNeutral = raw;
+        roomsEditBgPendingHue = null;
+        syncRoomsEditBgHueVisual();
+      });
+    }
+  }
 
   let roomsEscHandler: ((e: KeyboardEvent) => void) | null = null;
   let roomsViewState: "list" | "edit" = "list";
@@ -551,6 +728,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     roomsCreateWInput.value = "16";
     roomsCreateHInput.value = "16";
     roomsCreatePublicInput.checked = true;
+    roomsCreateOfficialInput.checked = false;
+    roomsCreateOfficialRow.hidden = !isAdmin(address);
     roomsCreateHint.hidden = true;
     roomsCreateHint.textContent = "";
     roomsCreateSubmitBtn.disabled = false;
@@ -621,6 +800,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   });
 
   function openRoomsModal(): void {
+    wireRoomsEditBgHueControls();
     closeRoomsCreateModal();
     roomsJoinHint.hidden = true;
     roomsJoinHint.textContent = "";
@@ -650,7 +830,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
 
   function openEditRoom(roomId: string): void {
-    const room = knownRooms.find((x) => x.id === roomId);
+    const n = normalizeRoomId(roomId);
+    const room = knownRooms.find((x) => normalizeRoomId(x.id) === n);
     if (!room || !room.canEdit) return;
     roomsEditingRoomId = roomId;
     const isBuiltin = room.isBuiltin;
@@ -660,6 +841,18 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     roomsEditNameInput.value = room.displayName;
     roomsEditPublicRow.hidden = false;
     roomsEditPublicInput.checked = room.isPublic;
+    roomsEditBgRow.hidden = isBuiltin;
+    if (!isBuiltin) {
+      const bh = room.backgroundHueDeg;
+      roomsEditBgPendingHue =
+        typeof bh === "number" && Number.isFinite(bh)
+          ? Math.round(((bh % 360) + 360) % 360)
+          : null;
+      const bn = room.backgroundNeutral;
+      roomsEditBgPendingNeutral =
+        bn === "black" || bn === "white" || bn === "gray" ? bn : null;
+      syncRoomsEditBgHueVisual();
+    }
     const canDelete = Boolean(room.canDelete && !room.isBuiltin);
     roomsEditDeleteBtn.hidden = !canDelete;
     if (canDelete) {
@@ -769,14 +962,27 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       return;
     }
     const nameRaw = roomsCreateNameInput.value.trim();
+    const asOfficial = isAdmin(address) && roomsCreateOfficialInput.checked;
+    if (asOfficial && !nameRaw) {
+      roomsCreateHint.textContent = "Official rooms need a display name.";
+      roomsCreateHint.hidden = false;
+      return;
+    }
     pendingCreateRoomAwaiting = true;
     roomsCreateSubmitBtn.disabled = true;
     roomsCreateHint.textContent = "Creating room…";
     roomsCreateHint.hidden = false;
-    sendCreateRoom(ws, w, h, {
-      ...(nameRaw.length > 0 ? { displayName: nameRaw } : {}),
-      isPublic: roomsCreatePublicInput.checked,
-    });
+    if (asOfficial) {
+      sendCreateOfficialRoom(ws, w, h, {
+        displayName: nameRaw,
+        isPublic: roomsCreatePublicInput.checked,
+      });
+    } else {
+      sendCreateRoom(ws, w, h, {
+        ...(nameRaw.length > 0 ? { displayName: nameRaw } : {}),
+        isPublic: roomsCreatePublicInput.checked,
+      });
+    }
   });
 
   roomsEditBackBtn.addEventListener("click", () => {
@@ -795,15 +1001,24 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       return;
     }
     const editing = knownRooms.find((x) => x.id === roomsEditingRoomId);
+    const basePatch = {
+      displayName: name,
+      isPublic: roomsEditPublicInput.checked,
+    };
     if (editing?.isBuiltin) {
-      sendUpdateRoom(ws, roomsEditingRoomId, {
-        displayName: name,
-        isPublic: roomsEditPublicInput.checked,
-      });
+      sendUpdateRoom(ws, roomsEditingRoomId, basePatch);
     } else {
       sendUpdateRoom(ws, roomsEditingRoomId, {
-        displayName: name,
-        isPublic: roomsEditPublicInput.checked,
+        ...basePatch,
+        ...(roomsEditBgPendingNeutral
+          ? {
+              backgroundHueDeg: null,
+              backgroundNeutral: roomsEditBgPendingNeutral,
+            }
+          : {
+              backgroundHueDeg: roomsEditBgPendingHue,
+              backgroundNeutral: null,
+            }),
       });
     }
     showRoomsView("list");
@@ -838,9 +1053,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         return isAdmin(address) && r.isDeleted;
       }
       if (r.isDeleted) return false;
-      if (roomsCatalogTab === "official") return r.isBuiltin;
+      if (roomsCatalogTab === "official") return r.isBuiltin || r.isOfficial;
       if (roomsCatalogTab === "user") {
-        if (r.isBuiltin) return false;
+        if (r.isBuiltin || r.isOfficial) return false;
         return r.isPublic || viewerOwnsRoom(r);
       }
       if (roomsCatalogTab === "admin") {
@@ -1117,6 +1332,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   /** From server welcome; aligned with canEditRoomContent. */
   let roomAllowPlaceBlocks = true;
   let roomAllowExtraFloor = true;
+  /** From server welcome; who may change dynamic room background hue. */
+  let welcomeAllowRoomBackgroundHueEdit = false;
+  /** Last welcome `roomBackgroundHueDeg` (undefined = built-in / omitted). */
+  let latestWelcomeBackgroundHueDeg: number | null | undefined = undefined;
+  /** Last welcome `roomBackgroundNeutral` (undefined = built-in / omitted). */
+  let latestWelcomeBackgroundNeutral:
+    | RoomBackgroundNeutral
+    | null
+    | undefined = undefined;
   let editingTile: { x: number; z: number; y: number } | null = null;
   let portalEnterVisible = false;
   let portalAction:
@@ -1387,7 +1611,137 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     return "walk";
   }
 
+  function canEditCurrentRoomBackgroundHue(
+    row: KnownRoomRow | undefined
+  ): boolean {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    if (welcomeAllowRoomBackgroundHueEdit) return true;
+    if (!row || row.isBuiltin || row.isDeleted) return false;
+    if (isAdmin(address)) return true;
+    if (row.isOfficial) return false;
+    return viewerOwnsRoom(row);
+  }
+
+  const ROOM_BG_HUE_THROTTLE_MS = 100;
+  let roomHueThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+  let roomHueThrottlePending: number | null = null;
+
+  function clearRoomHueThrottleTimer(): void {
+    if (roomHueThrottleTimer !== null) {
+      clearTimeout(roomHueThrottleTimer);
+      roomHueThrottleTimer = null;
+    }
+  }
+
+  function flushRoomHueThrottleSend(): void {
+    clearRoomHueThrottleTimer();
+    if (roomHueThrottlePending === null) return;
+    const deg = roomHueThrottlePending;
+    roomHueThrottlePending = null;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    sendUpdateRoom(ws, normalizeRoomId(game.getRoomId()), {
+      backgroundHueDeg: deg,
+    });
+  }
+
+  function scheduleRoomHueSend(deg: number): void {
+    roomHueThrottlePending = deg;
+    if (roomHueThrottleTimer !== null) return;
+    roomHueThrottleTimer = setTimeout(() => {
+      roomHueThrottleTimer = null;
+      if (roomHueThrottlePending === null) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        roomHueThrottlePending = null;
+        return;
+      }
+      sendUpdateRoom(ws, normalizeRoomId(game.getRoomId()), {
+        backgroundHueDeg: roomHueThrottlePending,
+      });
+      roomHueThrottlePending = null;
+    }, ROOM_BG_HUE_THROTTLE_MS);
+  }
+
+  function syncRoomBackgroundHuePanel(): void {
+    const rid = normalizeRoomId(game.getRoomId());
+    const row = knownRooms.find((r) => normalizeRoomId(r.id) === rid);
+    const isCanvas = rid === CANVAS_ROOM_ID;
+    const isBuiltInPlaySpace =
+      rid === HUB_ROOM_ID || rid === CHAMBER_ROOM_ID || rid === CANVAS_ROOM_ID;
+    const dynamicRoom = !isBuiltInPlaySpace;
+    const allowHue = canEditCurrentRoomBackgroundHue(row);
+    const show =
+      game.getFloorExpandMode() &&
+      roomAllowExtraFloor &&
+      !isCanvas &&
+      dynamicRoom &&
+      allowHue;
+    hud.setRoomBackgroundHuePanelVisible(show);
+    if (!show) return;
+    let ringHue: number | null = null;
+    let panelNeutral: RoomBackgroundNeutral | null = null;
+    if (row) {
+      panelNeutral = row.backgroundNeutral;
+      if (
+        typeof row.backgroundHueDeg === "number" &&
+        Number.isFinite(row.backgroundHueDeg)
+      ) {
+        ringHue = row.backgroundHueDeg;
+      }
+    } else {
+      if (latestWelcomeBackgroundNeutral !== undefined) {
+        panelNeutral = latestWelcomeBackgroundNeutral;
+      }
+      if (latestWelcomeBackgroundHueDeg !== undefined) {
+        ringHue =
+          latestWelcomeBackgroundHueDeg === null
+            ? null
+            : latestWelcomeBackgroundHueDeg;
+      }
+    }
+    hud.syncRoomBackgroundHueRing(ringHue, panelNeutral);
+  }
+
+  hud.onRoomBackgroundHueAdjust({
+    onHueDeg(deg: number) {
+      game.setRoomSceneBackgroundHueDeg(deg);
+      const r = knownRooms.find(
+        (x) => normalizeRoomId(x.id) === normalizeRoomId(game.getRoomId())
+      );
+      if (!canEditCurrentRoomBackgroundHue(r)) return;
+      if (r) {
+        r.backgroundHueDeg = Math.round(((deg % 360) + 360) % 360);
+        r.backgroundNeutral = null;
+      }
+      scheduleRoomHueSend(deg);
+    },
+    onPointerUp() {
+      const r = knownRooms.find(
+        (x) => normalizeRoomId(x.id) === normalizeRoomId(game.getRoomId())
+      );
+      if (!canEditCurrentRoomBackgroundHue(r)) return;
+      flushRoomHueThrottleSend();
+    },
+  });
+
+  hud.onRoomBackgroundNeutralPick((neutral) => {
+    game.setRoomSceneBackground({ hueDeg: null, neutral });
+    const r = knownRooms.find(
+      (x) => normalizeRoomId(x.id) === normalizeRoomId(game.getRoomId())
+    );
+    if (!canEditCurrentRoomBackgroundHue(r)) return;
+    if (r) {
+      r.backgroundHueDeg = null;
+      r.backgroundNeutral = neutral;
+    }
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    sendUpdateRoom(ws, normalizeRoomId(game.getRoomId()), {
+      backgroundNeutral: neutral,
+    });
+    syncRoomBackgroundHuePanel();
+  });
+
   function syncBuildHud(): void {
+    try {
     const barStyle = game.getPlacementBlockStyle();
     const touchUi =
       typeof window !== "undefined" &&
@@ -1420,9 +1774,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         placementAdmin: isAdmin(selfAddress),
       });
       hud.setPlayModeState("walk");
-      hud.setStatus(
-        touchUi ? "Mode icons bottom-right" : readOnlyHint
-      );
+      hud.setStatus(readOnlyHint);
       return;
     }
     
@@ -1455,8 +1807,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     if (game.getFloorExpandMode() && canFloor) {
       hud.setStatus(
         touchUi
-          ? "Floor — tap next to walkable space outside the core (pick Walk when done)"
-          : "Expand floor — click outside the core room, next to walkable space (F to exit). Shift+click removes an extra tile."
+          ? "Floor — tap tiles next to walkable space (F or Build off when done)"
+          : "Expand floor — click next to walkable space to add a tile; click an extra tile again to remove it (F to exit)."
       );
       hud.setBuildBlockBarState({
         visible: false,
@@ -1478,8 +1830,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         : "";
       hud.setStatus(
         touchUi
-          ? `Build — tap a block to edit, empty tile to place (Walk to exit)${tpHint}${selectedHint}`
-          : `Build mode — click a block to edit, empty floor to place (B to exit)${tpHint}${selectedHint}`
+          ? `Build — tap a block to edit, empty tile to place (Build off to exit)${tpHint}${selectedHint}`
+          : `Build mode — click a block to edit, empty floor to place (B or Build off to exit)${tpHint}${selectedHint}`
       );
       hud.setBuildBlockBarState({
         visible: true,
@@ -1503,8 +1855,17 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         : isCanvas
           ? "Find the exit the quickest to win NIM"
           : "This room is view-only for building";
-    hud.setStatus(touchUi ? "Mode icons bottom-right" : desktopHint);
+    const touchIdleHint =
+      canBuild && canFloor
+        ? "Build toggle bottom-right (F: floor if allowed)"
+        : canBuild
+          ? "Build toggle bottom-right"
+          : desktopHint;
+    hud.setStatus(touchUi ? touchIdleHint : desktopHint);
     hud.setPlayModeState(playModeFromGame());
+    } finally {
+      syncRoomBackgroundHuePanel();
+    }
   }
 
   hud.onBuildToolSelect(() => {
@@ -1563,9 +1924,16 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     game.setSelfQuickEmojiOpener(() => {
       const a = game.getSelfScreenPosition(1.32);
       if (!a) return;
-      hud.showSelfEmojiMenu(a.x, a.y, (emoji) => {
-        if (socket.readyState === WebSocket.OPEN) sendChat(socket, emoji);
-      });
+      const pos = game.getSelfPosition();
+      const openedFloor = pos ? snapFloorTile(pos.x, pos.z) : null;
+      hud.showSelfEmojiMenu(
+        a.x,
+        a.y,
+        (emoji) => {
+          if (socket.readyState === WebSocket.OPEN) sendChat(socket, emoji);
+        },
+        openedFloor
+      );
     });
     game.setOtherPlayerContextOpener((pick) => {
       hud.showOtherPlayerContextMenu(
@@ -1578,10 +1946,17 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
               onEmote: () => {
                 const a = game.getSelfScreenPosition(1.32);
                 if (!a) return;
-                hud.showSelfEmojiMenu(a.x, a.y, (emoji) => {
-                  if (socket.readyState === WebSocket.OPEN)
-                    sendChat(socket, emoji);
-                });
+                const pos = game.getSelfPosition();
+                const openedFloor = pos ? snapFloorTile(pos.x, pos.z) : null;
+                hud.showSelfEmojiMenu(
+                  a.x,
+                  a.y,
+                  (emoji) => {
+                    if (socket.readyState === WebSocket.OPEN)
+                      sendChat(socket, emoji);
+                  },
+                  openedFloor
+                );
               },
             }
           : undefined
@@ -1782,6 +2157,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
             destRoomId,
             destX,
             destZ,
+            currentRoomId: normalizeRoomId(game.getRoomId()),
             roomOptions: teleporterRoomOptions(),
             onPickTileInCurrentRoom: () => {
               game.setTeleporterDestPickHandler((px, pz) => {
@@ -1959,6 +2335,29 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }
       return;
     }
+    if (msg.type === "roomBackgroundHue") {
+      const nr = normalizeRoomId(msg.roomId);
+      if (nr === normalizeRoomId(game.getRoomId())) {
+        game.setRoomSceneBackground({
+          hueDeg: msg.hueDeg,
+          neutral: msg.neutral,
+        });
+      }
+      const row = knownRooms.find((r) => normalizeRoomId(r.id) === nr);
+      if (row) {
+        row.backgroundHueDeg =
+          msg.hueDeg != null && Number.isFinite(msg.hueDeg)
+            ? Math.round(((msg.hueDeg % 360) + 360) % 360)
+            : null;
+        if (msg.neutral !== undefined) {
+          const n = msg.neutral;
+          row.backgroundNeutral =
+            n === "black" || n === "white" || n === "gray" ? n : null;
+        }
+      }
+      syncRoomBackgroundHuePanel();
+      return;
+    }
     if (msg.type === "welcome") {
       if (pendingCreateRoomAwaiting) {
         closeRoomsModal();
@@ -1991,6 +2390,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         placeRadiusBlocks: Number.isFinite(msg.placeRadiusBlocks)
           ? msg.placeRadiusBlocks
           : 5,
+      });
+      game.setRoomSceneBackground({
+        hueDeg: msg.roomBackgroundHueDeg,
+        neutral: msg.roomBackgroundNeutral,
       });
       game.setSelf(msg.self.address, msg.self.displayName);
       selfAddress = msg.self.address;
@@ -2034,6 +2437,35 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       hud.setPortalEnterVisible(false);
       roomAllowPlaceBlocks = msg.allowPlaceBlocks !== false;
       roomAllowExtraFloor = msg.allowExtraFloor !== false;
+      welcomeAllowRoomBackgroundHueEdit =
+        msg.allowRoomBackgroundHueEdit === true;
+      if (msg.roomBackgroundHueDeg === undefined) {
+        latestWelcomeBackgroundHueDeg = undefined;
+      } else if (msg.roomBackgroundHueDeg === null) {
+        latestWelcomeBackgroundHueDeg = null;
+      } else if (
+        typeof msg.roomBackgroundHueDeg === "number" &&
+        Number.isFinite(msg.roomBackgroundHueDeg)
+      ) {
+        latestWelcomeBackgroundHueDeg = Math.round(
+          ((msg.roomBackgroundHueDeg % 360) + 360) % 360
+        );
+      } else {
+        latestWelcomeBackgroundHueDeg = undefined;
+      }
+      if (msg.roomBackgroundNeutral === undefined) {
+        latestWelcomeBackgroundNeutral = undefined;
+      } else if (msg.roomBackgroundNeutral === null) {
+        latestWelcomeBackgroundNeutral = null;
+      } else if (
+        msg.roomBackgroundNeutral === "black" ||
+        msg.roomBackgroundNeutral === "white" ||
+        msg.roomBackgroundNeutral === "gray"
+      ) {
+        latestWelcomeBackgroundNeutral = msg.roomBackgroundNeutral;
+      } else {
+        latestWelcomeBackgroundNeutral = undefined;
+      }
       hud.setRoomEditCaps({
         allowPlaceBlocks: roomAllowPlaceBlocks,
         allowExtraFloor: roomAllowExtraFloor,
@@ -2055,6 +2487,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       // Extra floor before obstacles so walkable quads sit earlier in the scene graph
       // than blocks on those tiles (avoids depth-tie flicker until blocks are rebuilt).
       game.setExtraFloorTiles(msg.extraFloorTiles);
+      game.setRemovedBaseFloorTiles(msg.removedBaseFloorTiles ?? []);
       game.setObstacles(msg.obstacles);
       game.setSignboards(msg.signboards);
       game.setVoxelTextsForRoom(msg.roomId, msg.voxelTexts ?? []);
@@ -2138,13 +2571,26 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
                 : 0,
             isPublic: r.isPublic !== false,
             isBuiltin,
+            isOfficial: r.isOfficial === true,
             canEdit: r.canEdit === true,
             isDeleted: r.isDeleted === true,
             canDelete: r.canDelete === true,
             canRestore: r.canRestore === true,
+            backgroundHueDeg:
+              typeof r.backgroundHueDeg === "number" &&
+              Number.isFinite(r.backgroundHueDeg)
+                ? Math.round(((r.backgroundHueDeg % 360) + 360) % 360)
+                : null,
+            backgroundNeutral:
+              r.backgroundNeutral === "black" ||
+              r.backgroundNeutral === "white" ||
+              r.backgroundNeutral === "gray"
+                ? r.backgroundNeutral
+                : null,
           };
         })
         .sort((a, b) => a.displayName.localeCompare(b.displayName));
+      syncRoomBackgroundHuePanel();
       if (!roomsModal.hidden) {
         renderRoomsModalList();
       }
@@ -2320,6 +2766,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
     if (msg.type === "extraFloorDelta") {
       game.applyExtraFloorDelta(msg.add, msg.remove);
+      syncBuildHud();
+    }
+    if (msg.type === "removedBaseFloorDelta") {
+      if (normalizeRoomId(msg.roomId) === normalizeRoomId(game.getRoomId())) {
+        game.applyRemovedBaseFloorDelta(msg.add, msg.remove);
+      }
       syncBuildHud();
     }
     if (msg.type === "canvasClaim") {
@@ -2756,7 +3208,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     syncPortalEnterButton();
     if (hud.isSelfEmojiMenuOpen()) {
       const ea = game.getSelfScreenPosition(1.32);
-      if (ea) hud.setSelfEmojiMenuAnchor(ea.x, ea.y);
+      const pos = game.getSelfPosition();
+      const floor = pos ? snapFloorTile(pos.x, pos.z) : null;
+      hud.setSelfEmojiMenuAnchor(ea ? ea.x : null, ea ? ea.y : null, floor);
     }
     if (showDebugHud) {
       const inst = dt > 1e-6 ? 1 / dt : 0;

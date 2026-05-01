@@ -239,8 +239,9 @@ export function analyticsPublicPageHtml(): string {
       var style = "grid-template-columns:repeat(" + n + ",minmax(0,1fr))";
       var inner = (rows || [])
         .map(function (r) {
-          var d = r.dayUtc ? String(r.dayUtc).slice(8) : "";
-          return "<span class='tick-day' title='" + esc(r.dayUtc || "") + " UTC'>" + esc(d) + "</span>";
+          var ymd = r.dayUtc ? String(r.dayUtc) : "";
+          var label = ymd.length >= 10 ? ymd.slice(5) : "";
+          return "<span class='tick-day' title='" + esc(ymd || "") + " UTC'>" + esc(label) + "</span>";
         })
         .join("");
       return "<div class='ticks ticks--days mono' style='" + style + "'>" + inner + "</div>";
@@ -752,7 +753,7 @@ export function analyticsPublicPageHtml(): string {
 
       if (!params.get("days")) params.set("days", "7");
       if (!params.get("sessions")) params.set("sessions", "300");
-      if (!params.get("payouts")) params.set("payouts", "300");
+      if (!params.get("payouts")) params.set("payouts", "1000");
       var days = Number(params.get("days"));
       var sessions = Number(params.get("sessions"));
       var payouts = Number(params.get("payouts"));
@@ -1223,7 +1224,11 @@ export function analyticsPublicPageHtml(): string {
         el.innerHTML =
           "<span>Focused user:</span>" +
           walletChip(ident, focusedWallet) +
-          "<span class='mono'>" + esc(focusedWallet) + "</span>" +
+          "<span class='mono' title='" +
+          esc(focusedWallet) +
+          "'>" +
+          esc(walletShort(focusedWallet)) +
+          "</span>" +
           "<button id='focusUserBack' title='Back to all users'>&larr; Back</button>";
         attachCopyHandlers(el);
         var back = document.getElementById("focusUserBack");
@@ -1495,11 +1500,9 @@ export function analyticsPublicPageHtml(): string {
         });
       }
 
-      function renderPayoutHours() {
-        var payoutHoursEl = document.getElementById("payoutHours");
-        var payoutHoverEl = document.getElementById("payoutHover");
-        if (!payoutHoursEl || !payoutHoverEl) return;
-        var payoutRows = payoutChartRows.map(function (row, slot) {
+      /** Payout chart rows (hour or day slots), optionally scoped to focused wallet — shared by payout bars + recent stacked chart. */
+      function payoutRowsDisplayed() {
+        return payoutChartRows.map(function (row, slot) {
           if (!focusedWallet) {
             if (chartDayMode) {
               return {
@@ -1524,6 +1527,13 @@ export function analyticsPublicPageHtml(): string {
             users: u ? [u] : [],
           };
         });
+      }
+
+      function renderPayoutHours() {
+        var payoutHoursEl = document.getElementById("payoutHours");
+        var payoutHoverEl = document.getElementById("payoutHover");
+        if (!payoutHoursEl || !payoutHoverEl) return;
+        var payoutRows = payoutRowsDisplayed();
         var localMaxPayout = 1;
         payoutRows.forEach(function (r) {
           localMaxPayout = Math.max(localMaxPayout, Number(String(r.totalNim || "0").replace(/,/g, "")));
@@ -1606,42 +1616,55 @@ export function analyticsPublicPageHtml(): string {
         attachCopyHandlers(payoutHoursEl);
       }
 
-      var recentPayoutByHour = Array.from({ length: chartSlotCount }, function () {
-        return { count: 0, totalNim: 0, rows: [], users: {} };
-      });
-      (data.nimPayouts || [])
-        .filter(function (p) {
-          return walletMatch(p.recipient);
-        })
-        .forEach(function (p) {
-          var slot;
-          if (chartDayMode) {
-            var dk = utcDayKeyFromTs(p.sentAt);
-            slot = -1;
-            for (var di = 0; di < loginChartRows.length; di++) {
-              if (loginChartRows[di].dayUtc === dk) {
-                slot = di;
-                break;
-              }
-            }
-          } else {
-            slot = Number(new Date(p.sentAt).getUTCHours());
-          }
-          if (!(slot >= 0 && slot < recentPayoutByHour.length)) return;
-          var n = Number(p.amountNim || 0);
-          var b = recentPayoutByHour[slot];
-          b.count += 1;
-          if (Number.isFinite(n)) b.totalNim += n;
-          b.rows.push(p);
-          var u = p.recipient || "";
-          b.users[u] = b.users[u] || { count: 0, nim: 0 };
-          b.users[u].count += 1;
-          if (Number.isFinite(n)) b.users[u].nim += n;
-        });
+      var recentPayoutByHour = [];
       var maxRecentPayoutNim = 1;
-      recentPayoutByHour.forEach(function (b) {
-        maxRecentPayoutNim = Math.max(maxRecentPayoutNim, b.totalNim);
-      });
+      function rebuildRecentPayoutBuckets() {
+        recentPayoutByHour = Array.from({ length: chartSlotCount }, function () {
+          return { count: 0, totalNim: 0, rows: [], users: {} };
+        });
+        payoutRowsDisplayed().forEach(function (row, slot) {
+          var b = recentPayoutByHour[slot];
+          b.count = Number(row.payouts || 0);
+          b.totalNim = Number(String(row.totalNim || "0").replace(/,/g, ""));
+          (row.users || []).forEach(function (u) {
+            var w = u.walletId || "";
+            var nu = Number(String(u.totalNim || "0").replace(/,/g, ""));
+            b.users[w] = b.users[w] || { count: 0, nim: 0 };
+            b.users[w].count += Number(u.payouts || 0);
+            if (Number.isFinite(nu)) b.users[w].nim += nu;
+          });
+        });
+        (data.nimPayouts || [])
+          .filter(function (p) {
+            return walletMatch(p.recipient);
+          })
+          .forEach(function (p) {
+            var slot;
+            if (chartDayMode) {
+              var dk = utcDayKeyFromTs(p.sentAt);
+              slot = -1;
+              for (var di = 0; di < loginChartRows.length; di++) {
+                if (loginChartRows[di].dayUtc === dk) {
+                  slot = di;
+                  break;
+                }
+              }
+            } else {
+              slot = Number(new Date(p.sentAt).getUTCHours());
+            }
+            if (!(slot >= 0 && slot < recentPayoutByHour.length)) return;
+            recentPayoutByHour[slot].rows.push(p);
+          });
+        recentPayoutByHour.forEach(function (bb) {
+          bb.rows.sort(function (a, c) {
+            return c.sentAt - a.sentAt;
+          });
+        });
+        maxRecentPayoutNim = 1;
+        recentPayoutByHour.forEach(function (b) {
+          maxRecentPayoutNim = Math.max(maxRecentPayoutNim, b.totalNim);
+        });
+      }
 
       function renderRecentPayoutPinned() {
         var el = document.getElementById("payoutsRecentPinned");
@@ -1683,6 +1706,12 @@ export function analyticsPublicPageHtml(): string {
             html += "<tr><td>" + esc(fmtMdHm(p.sentAt)) + "</td><td>" + walletChip(identByWallet[p.recipient] || "", p.recipient) + "</td><td class='right'>" + esc(p.amountNim || "—") + "</td></tr>";
           });
         html += "</tbody></table>";
+        if (b.rows.length < b.count) {
+          html +=
+            "<div class='hintline'>This table lists payouts from the newest " +
+            payouts +
+            " rows in this report; bar totals include every payout in the window.</div>";
+        }
         el.innerHTML = html;
         attachCopyHandlers(el);
       }
@@ -2180,6 +2209,7 @@ export function analyticsPublicPageHtml(): string {
 
       function renderAll() {
         refreshVisitorsByHour();
+        rebuildRecentPayoutBuckets();
         renderFocusUserBanner();
         renderLogin();
         renderPayoutHours();

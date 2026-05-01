@@ -71,21 +71,30 @@ export type RoomDoor = {
   spawnZ: number;
 };
 
+/** Dynamic room solid background (overrides hue when set on server). */
+export type RoomBackgroundNeutral = "black" | "white" | "gray";
+
 export type RoomCatalogEntry = {
   id: string;
   displayName: string;
-  /** Player-created rooms only; official rooms use `null`. */
+  /** Player-created rooms only; built-in official rooms use `null`. */
   ownerAddress: string | null;
   playerCount: number;
   isPublic: boolean;
   /** Hub, Chamber, Canvas. */
   isBuiltin: boolean;
+  /** Admin-created official room (random code); shown under Official rooms. */
+  isOfficial?: boolean;
   /** Server allows editing name / visibility (room owner or admin). */
   canEdit: boolean;
   /** Soft-deleted; admin can restore. */
   isDeleted?: boolean;
   canDelete?: boolean;
   canRestore?: boolean;
+  /** Dynamic rooms: custom scene background hue; null = default water tone. */
+  backgroundHueDeg?: number | null;
+  /** Dynamic rooms: solid neutral sky; null/omitted = use hue or default water. */
+  backgroundNeutral?: RoomBackgroundNeutral | null;
 };
 
 export type ServerMessage =
@@ -100,6 +109,7 @@ export type ServerMessage =
       placeRadiusBlocks: number;
       obstacles: ObstacleTile[];
       extraFloorTiles: ExtraFloorTile[];
+      removedBaseFloorTiles?: ExtraFloorTile[];
       canvasClaims?: Array<{ x: number; z: number; address: string }>;
       signboards: Array<{
         id: string;
@@ -115,6 +125,18 @@ export type ServerMessage =
       /** Omitted on older servers; client defaults to true. */
       allowPlaceBlocks?: boolean;
       allowExtraFloor?: boolean;
+      /** Dynamic rooms: this player may send `updateRoom` background hue patches. */
+      allowRoomBackgroundHueEdit?: boolean;
+      /** Dynamic rooms: custom sky hue (0–359); null when neutral or default water. */
+      roomBackgroundHueDeg?: number | null;
+      /** Dynamic rooms: solid black / white / gray; overrides hue when non-null. */
+      roomBackgroundNeutral?: RoomBackgroundNeutral | null;
+    }
+  | {
+      type: "roomBackgroundHue";
+      roomId: string;
+      hueDeg: number | null;
+      neutral?: RoomBackgroundNeutral | null;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
@@ -135,6 +157,12 @@ export type ServerMessage =
       roomId: string;
       add: ExtraFloorTile[];
       /** Tile keys ("x,z") that should be removed from the room. */
+      remove: string[];
+    }
+  | {
+      type: "removedBaseFloorDelta";
+      roomId: string;
+      add: string[];
       remove: string[];
     }
   | { type: "canvasClaim"; x: number; z: number; address: string }
@@ -340,10 +368,34 @@ export function sendCreateRoom(
   );
 }
 
+/** Admin only: official dynamic room (no owner cap); server rejects if not admin. */
+export function sendCreateOfficialRoom(
+  ws: WebSocket,
+  widthTiles: number,
+  heightTiles: number,
+  options: { displayName: string; isPublic?: boolean }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "createOfficialRoom",
+      widthTiles,
+      heightTiles,
+      displayName: options.displayName,
+      ...(options.isPublic !== undefined ? { isPublic: options.isPublic } : {}),
+    })
+  );
+}
+
 export function sendUpdateRoom(
   ws: WebSocket,
   roomId: string,
-  patch: { displayName?: string; isPublic?: boolean }
+  patch: {
+    displayName?: string;
+    isPublic?: boolean;
+    backgroundHueDeg?: number | null;
+    backgroundNeutral?: RoomBackgroundNeutral | null;
+  }
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(

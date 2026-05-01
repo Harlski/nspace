@@ -52,6 +52,8 @@ type SerializedJob = Omit<NimPayoutJob, "amountLuna"> & { amountLuna: string };
 const jobs: NimPayoutJob[] = [];
 let processorTimer: ReturnType<typeof setTimeout> | null = null;
 let processing = false;
+/** After each payout attempt, prefer a different recipient so one wallet cannot monopolize the queue. */
+let lastServedPayoutRecipientId: string | null = null;
 const PROCESS_INTERVAL_MS = Number(process.env.NIM_PAYOUT_PROCESS_INTERVAL_MS ?? 8000);
 /** How many payout attempts to run back-to-back each wake-up (still one at a time, for hot-wallet nonce safety). */
 const RAW_BURST = Number(process.env.NIM_PAYOUT_BURST_PER_TICK ?? 8);
@@ -404,6 +406,8 @@ async function processOne(job: NimPayoutJob): Promise<void> {
   const now = Date.now();
   if (job.nextRetryAt > now) return;
 
+  const recipientIdForRotation = normalizeNimWalletId(job.recipientAddress);
+  try {
   if (!isNimPayoutSenderConfigured()) {
     job.lastError = "NIM_PAYOUT_PRIVATE_KEY not configured";
     job.nextRetryAt = now + backoffMs(job.attempts);
@@ -507,15 +511,38 @@ async function processOne(job: NimPayoutJob): Promise<void> {
     }
     saveQueue();
   }
+  } finally {
+    if (recipientIdForRotation) {
+      lastServedPayoutRecipientId = recipientIdForRotation;
+    }
+  }
+}
+
+function pickOldestReadyJob(candidates: NimPayoutJob[]): NimPayoutJob | undefined {
+  if (candidates.length === 0) return undefined;
+  let best = candidates[0];
+  for (let i = 1; i < candidates.length; i++) {
+    const j = candidates[i];
+    if (j.createdAt < best.createdAt) best = j;
+    else if (j.createdAt === best.createdAt && j.id < best.id) best = j;
+  }
+  return best;
 }
 
 function findNextReadyJob(): NimPayoutJob | undefined {
   const now = Date.now();
-  return jobs.find(
+  const ready = jobs.filter(
     (j) =>
       (j.status === "pending" || j.status === "processing") &&
       j.nextRetryAt <= now
   );
+  if (ready.length === 0) return undefined;
+
+  const otherRecipient = ready.filter(
+    (j) => normalizeNimWalletId(j.recipientAddress) !== lastServedPayoutRecipientId
+  );
+  const pool = otherRecipient.length > 0 ? otherRecipient : ready;
+  return pickOldestReadyJob(pool);
 }
 
 async function tick(): Promise<void> {

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { PlayerState } from "../types.js";
+import type { ObstacleProps, RoomBackgroundNeutral } from "../net/ws.js";
 import { remotePlayerIsNpc } from "../remotePlayerNpc.js";
 import { walletDisplayName } from "../walletDisplayName.js";
 import {
@@ -43,8 +44,10 @@ import {
   CANVAS_ROOM_ID,
   getDoorsForRoom,
   getRoomBaseBounds,
+  isBuiltinRoomId,
   isHubSpawnSafeZone,
   normalizeRoomId,
+  registerClientRoomBounds,
 } from "./roomLayouts.js";
 import {
   BLOCK_COLOR_COUNT,
@@ -220,6 +223,24 @@ export type VoxelTextSpec = {
 
 const VOXEL_TEXT_MOVE_STEP = 0.5;
 const VOXEL_TEXT_ROTATE_STEP_RAD = Math.PI / 12;
+
+type InspectorTilePreviewPort = {
+  canvas: HTMLCanvasElement;
+  renderer: THREE.WebGLRenderer;
+  scene: THREE.Scene;
+  camera: THREE.OrthographicCamera;
+  /** Floor + block parent (origin at tile center). */
+  content: THREE.Group;
+  blockSlot: THREE.Group;
+  floor: THREE.Mesh;
+  resizeObserver: ResizeObserver;
+  lastSig: string;
+};
+
+/** Ortho half-extent (vertical, world units); larger = smaller subject in frame. */
+const INSPECTOR_PREVIEW_HALF_V = 1.02;
+/** Slightly shrink the tile + block together vs full-size preview. */
+const INSPECTOR_PREVIEW_SCENE_SCALE = 0.72;
 const VOXEL_TEXT_MIN_UNIT = 0.05;
 const VOXEL_TEXT_DEFAULT_Z_TWEEN_AMP = 0.18;
 const VOXEL_TEXT_DEFAULT_Z_TWEEN_SPEED = 1.4;
@@ -720,6 +741,8 @@ export class Game {
   /** Place walkable tiles outside the core room (toggle with F). */
   private floorExpandMode = false;
   private readonly extraFloorKeys = new Set<string>();
+  /** Base tiles carved out in custom rooms (server-synced). */
+  private readonly removedBaseFloorKeys = new Set<string>();
   /** Mining/claiming state for experimental claimable blocks */
   private miningState: {
     blockX: number;
@@ -762,6 +785,11 @@ export class Game {
   private placementRampDir = 0;
   private placementColorId = 0;
   private placementClaimable = false;
+  /** Live props for the object-edit tile inspector 3D preview (null = panel closed). */
+  private inspectorSelectionObstacle: ObstacleProps | null = null;
+  /** Off-main-scene 1×1 tile + block mesh for build bar / object panel. */
+  private inspectorPlacementPort: InspectorTilePreviewPort | null = null;
+  private inspectorSelectionPort: InspectorTilePreviewPort | null = null;
   /** Subset of tile keys that block pathfinding (not passable). */
   private readonly blockingTileKeys = new Set<string>();
   private readonly blockMeshes = new Map<string, THREE.Group>();
@@ -891,6 +919,20 @@ export class Game {
   } | null = null;
   /** Cancel deferred walk if the pointer moves farther than this before release (px). */
   private static readonly PENDING_WALK_CANCEL_DRAG_PX = 32;
+  /**
+   * Touch build: show placement ghost on pointerdown; commit on pointerup only if the
+   * finger is still over the same floor tile as the initial touch.
+   */
+  private pendingBuildPlace: {
+    pointerId: number;
+    startTileX: number;
+    startTileZ: number;
+  } | null = null;
+  /** Translucent mesh for the block that would be placed in build mode. */
+  private placementPreviewGroup: THREE.Group | null = null;
+  private placementPreviewStyleSig = "";
+  private placementPreviewAnchor: { x: number; z: number; y: number } | null =
+    null;
 
   /** Right-click self (desktop) or long-press on self (touch) opens quick emoji in HUD. */
   private selfQuickEmojiOpener: (() => void) | null = null;
@@ -1259,6 +1301,7 @@ export class Game {
     const prevRoomId = this.roomId;
     this.roomId = msg.roomId;
     this.roomBounds = msg.roomBounds;
+    registerClientRoomBounds(msg.roomId, msg.roomBounds);
     this.doors = msg.doors.map((d) => ({ ...d }));
     if (
       msg.placeRadiusBlocks !== undefined &&
@@ -1274,7 +1317,8 @@ export class Game {
     this.placedObjects.clear();
     this.blockingTileKeys.clear();
     this.extraFloorKeys.clear();
-    
+    this.removedBaseFloorKeys.clear();
+
     // Clear block meshes from scene
     for (const [, mesh] of this.blockMeshes) {
       this.scene.remove(mesh);
@@ -1847,6 +1891,31 @@ export class Game {
       }
     }
 
+    if (this.pendingBuildPlace && this.pendingBuildPlace.pointerId === e.pointerId) {
+      const pb = this.pendingBuildPlace;
+      this.pendingBuildPlace = null;
+      try {
+        if (this.renderer.domElement.hasPointerCapture?.(e.pointerId)) {
+          this.renderer.domElement.releasePointerCapture(e.pointerId);
+        }
+      } catch {
+        /* ignore */
+      }
+      this.clearPlacementPreview();
+      if (!isCancel && e.button === 0) {
+        const t = this.tryFloorBlockPlacementTile(e.clientX, e.clientY);
+        const placeFn = this.placeBlockHandler;
+        if (
+          placeFn &&
+          t &&
+          t.x === pb.startTileX &&
+          t.z === pb.startTileZ
+        ) {
+          placeFn(t.x, t.z);
+        }
+      }
+    }
+
     if (e.pointerType !== "touch") return;
     this.releaseTouchPointerId(e.pointerId);
   };
@@ -1888,6 +1957,7 @@ export class Game {
 
   /** Clear all tracked touches (tab background, bfcache, recovery from stuck state). */
   private flushTouchPointerGestureState(): void {
+    this.clearPendingBuildPlace();
     const endingRotateOrbit =
       this.touchPointers.size >= 2 && this.touchTwoFingerMode === "rotate";
     this.touchPointers.clear();
@@ -2107,6 +2177,11 @@ export class Game {
     if (p.claimable !== undefined) {
       this.placementClaimable = p.claimable;
     }
+    const anchor = this.placementPreviewAnchor;
+    if (anchor) {
+      this.syncPlacementPreviewAt(anchor.x, anchor.z, anchor.y);
+    }
+    this.renderInspectorTilePreview("placement");
   }
 
   setSelectedBlockKey(key: string | null): void {
@@ -2192,12 +2267,14 @@ export class Game {
   }
 
   beginReposition(x: number, z: number): void {
+    this.clearPlacementPreview();
     this.repositionFrom = { x, y: z };
     this.syncHighlightColor();
   }
 
   cancelReposition(): void {
     this.repositionFrom = null;
+    this.clearPlacementPreview();
     this.syncHighlightColor();
   }
 
@@ -2209,6 +2286,8 @@ export class Game {
     this.buildMode = on;
     if (on) this.floorExpandMode = false;
     if (!on) {
+      this.clearPendingBuildPlace();
+      this.clearPlacementPreview();
       this.repositionFrom = null;
       this.clearSelectedBlock();
     }
@@ -2225,6 +2304,8 @@ export class Game {
     this.floorExpandMode = on;
     if (on) {
       this.buildMode = false;
+      this.clearPendingBuildPlace();
+      this.clearPlacementPreview();
       this.repositionFrom = null;
     }
     this.syncHighlightColor();
@@ -2233,6 +2314,45 @@ export class Game {
 
   getFloorExpandMode(): boolean {
     return this.floorExpandMode;
+  }
+
+  /**
+   * Dynamic-room sky: neutral solid, hue tint, or default water when neither applies.
+   */
+  setRoomSceneBackground(opts: {
+    hueDeg?: number | null;
+    neutral?: RoomBackgroundNeutral | null;
+  }): void {
+    const n = opts.neutral;
+    if (n === "black") {
+      this.scene.background = new THREE.Color(0x070a0f);
+      return;
+    }
+    if (n === "white") {
+      this.scene.background = new THREE.Color(0xd4dce8);
+      return;
+    }
+    if (n === "gray") {
+      this.scene.background = new THREE.Color(0x2a313c);
+      return;
+    }
+    const hueDeg = opts.hueDeg;
+    if (hueDeg == null || !Number.isFinite(Number(hueDeg))) {
+      this.scene.background = new THREE.Color(TERRAIN_WATER_COLOR);
+      return;
+    }
+    const h = (((Number(hueDeg) % 360) + 360) % 360) / 360;
+    const c = new THREE.Color();
+    c.setHSL(h, 0.42, 0.11);
+    this.scene.background = c;
+  }
+
+  /**
+   * Dynamic-room sky tint from hue (degrees), or default water tone when null/undefined.
+   * Clears neutral tint (use {@link setRoomSceneBackground} to set neutrals).
+   */
+  setRoomSceneBackgroundHueDeg(hueDeg: number | null | undefined): void {
+    this.setRoomSceneBackground({ hueDeg, neutral: null });
   }
 
   /** Extra walkable tiles outside the core grid (server-synced). */
@@ -2256,6 +2376,28 @@ export class Game {
     }
     for (const t of add) {
       this.extraFloorKeys.add(tileKey(t.x, t.z));
+    }
+    this.syncWalkableFloorMeshes();
+    this.refreshPathLine();
+    this.syncPlacementRangeHints();
+  }
+
+  setRemovedBaseFloorTiles(tiles: readonly { x: number; z: number }[]): void {
+    this.removedBaseFloorKeys.clear();
+    for (const t of tiles) {
+      this.removedBaseFloorKeys.add(tileKey(t.x, t.z));
+    }
+    this.syncWalkableFloorMeshes();
+    this.refreshPathLine();
+    this.syncPlacementRangeHints();
+  }
+
+  applyRemovedBaseFloorDelta(add: readonly string[], remove: readonly string[]): void {
+    for (const k of remove) {
+      this.removedBaseFloorKeys.delete(k);
+    }
+    for (const k of add) {
+      this.removedBaseFloorKeys.add(k);
     }
     this.syncWalkableFloorMeshes();
     this.refreshPathLine();
@@ -2619,7 +2761,8 @@ export class Game {
             tz,
             this.placedObjects,
             this.extraFloorKeys,
-            this.roomId
+            this.roomId,
+            this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined
           )
         ) {
           continue;
@@ -2654,7 +2797,13 @@ export class Game {
   }
 
   private tileWalkable(ft: FloorTile): boolean {
-    return isWalkableTile(ft.x, ft.y, this.extraFloorKeys, this.roomId);
+    return isWalkableTile(
+      ft.x,
+      ft.y,
+      this.extraFloorKeys,
+      this.roomId,
+      this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined
+    );
   }
 
   /** Hub center safe zone: no new blocks or reposition targets. */
@@ -2689,6 +2838,104 @@ export class Game {
 
   getNextOpenStackLevelAt(x: number, z: number): number | null {
     return this.nextOpenLevelAt(x, z);
+  }
+
+  private placementPreviewMetaForNewBlock(): BlockStyleProps {
+    return {
+      passable: false,
+      half: this.placementHalf,
+      quarter: this.placementQuarter,
+      hex: this.placementHex,
+      ramp: this.placementRamp,
+      rampDir: this.placementRampDir,
+      colorId: this.placementColorId,
+      claimable: this.placementClaimable || undefined,
+      active: this.placementClaimable ? true : undefined,
+    };
+  }
+
+  private placementPreviewStyleSignature(meta: BlockStyleProps): string {
+    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.ramp}|${meta.rampDir}|${meta.colorId}|${Boolean(meta.claimable)}|${this.blockVisualScale}`;
+  }
+
+  /**
+   * Empty floor tile where `placeBlockHandler` would accept a new block (same checks as
+   * pointerdown), excluding clicks on existing block meshes.
+   */
+  private tryFloorBlockPlacementTile(
+    clientX: number,
+    clientY: number
+  ): { x: number; z: number } | null {
+    if (!this.selfMesh || !this.placeBlockHandler) return null;
+    if (this.teleporterDestPickHandler) return null;
+    if (this.repositionFrom) return null;
+    if (this.pickBlockKey(clientX, clientY)) return null;
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest || !this.tileWalkable(dest)) return null;
+    const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    const dx = here.x - dest.x;
+    const dz = here.y - dest.y;
+    if (Math.hypot(dx, dz) > this.placeRadiusBlocks + 1e-6) return null;
+    if (this.nextOpenLevelAt(dest.x, dest.y) === null) return null;
+    if (this.hubNoBuildTile(dest.x, dest.y)) return null;
+    if (here.x === dest.x && here.y === dest.y) return null;
+    return { x: dest.x, z: dest.y };
+  }
+
+  private clearPendingBuildPlace(): void {
+    if (!this.pendingBuildPlace) return;
+    const id = this.pendingBuildPlace.pointerId;
+    this.pendingBuildPlace = null;
+    try {
+      const el = this.renderer.domElement;
+      if (el.hasPointerCapture?.(id)) {
+        el.releasePointerCapture(id);
+      }
+    } catch {
+      /* ignore */
+    }
+    this.clearPlacementPreview();
+  }
+
+  private clearPlacementPreview(): void {
+    this.placementPreviewAnchor = null;
+    this.placementPreviewStyleSig = "";
+    if (this.placementPreviewGroup) {
+      this.scene.remove(this.placementPreviewGroup);
+      this.placementPreviewGroup.traverse((child: THREE.Object3D) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          (child.material as THREE.Material).dispose();
+        }
+      });
+      this.placementPreviewGroup = null;
+    }
+  }
+
+  private syncPlacementPreviewAt(wx: number, wz: number, wyLevel: number): void {
+    const meta = this.placementPreviewMetaForNewBlock();
+    const sig = this.placementPreviewStyleSignature(meta);
+    const h = this.obstacleHeight(meta);
+    const vis = this.blockVisualScale;
+    const yWorld = wyLevel * BLOCK_SIZE + (h * vis) / 2;
+    if (!this.placementPreviewGroup || this.placementPreviewStyleSig !== sig) {
+      if (this.placementPreviewGroup) {
+        this.scene.remove(this.placementPreviewGroup);
+        this.placementPreviewGroup.traverse((child: THREE.Object3D) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            (child.material as THREE.Material).dispose();
+          }
+        });
+        this.placementPreviewGroup = null;
+      }
+      this.placementPreviewStyleSig = sig;
+      this.placementPreviewGroup = this.makeBlockMesh(meta, { ghost: true });
+      this.scene.add(this.placementPreviewGroup);
+    }
+    this.placementPreviewAnchor = { x: wx, z: wz, y: wyLevel };
+    this.placementPreviewGroup!.position.set(wx, yWorld, wz);
+    this.placementPreviewGroup!.visible = true;
   }
 
   private topBlockAtTile(x: number, z: number): { y: number; meta: BlockStyleProps } | null {
@@ -3022,6 +3269,22 @@ export class Game {
         this.otherProfileTouchSession = null;
       }
     }
+    if (
+      this.pendingBuildPlace &&
+      e.pointerId === this.pendingBuildPlace.pointerId
+    ) {
+      const t = this.tryFloorBlockPlacementTile(e.clientX, e.clientY);
+      if (t) {
+        const yLevel = this.nextOpenLevelAt(t.x, t.z);
+        if (yLevel !== null) {
+          this.syncPlacementPreviewAt(t.x, t.z, yLevel);
+        } else {
+          this.clearPlacementPreview();
+        }
+      } else {
+        this.clearPlacementPreview();
+      }
+    }
     if (this.touchPointers.size >= 2) {
       if (this.zoomLocked) {
         this.pinchLastDistancePx = 0;
@@ -3107,9 +3370,9 @@ export class Game {
     }
     if (this.buildMode) {
       this.blockTopHighlight.visible = false;
-    } else {
       const blockHit = this.pickBlockKey(e.clientX, e.clientY);
       if (blockHit) {
+        this.clearPlacementPreview();
         const meta = this.placedObjects.get(blockHit);
         if (meta && !meta.passable && !meta.ramp) {
           const [bx, bz, byRaw] = blockHit.split(",").map(Number);
@@ -3123,8 +3386,7 @@ export class Game {
             bz!
           );
           this.blockTopHighlight.visible = true;
-          
-          // Check if this block is a signboard
+
           const signboard = this.signboards.get(blockHit);
           if (signboard) {
             this.signboardHoverHandler?.(signboard);
@@ -3134,8 +3396,51 @@ export class Game {
           return;
         }
       }
-      this.blockTopHighlight.visible = false;
+      const placeTile = this.tryFloorBlockPlacementTile(e.clientX, e.clientY);
+      if (placeTile) {
+        const yLevel = this.nextOpenLevelAt(placeTile.x, placeTile.z);
+        if (yLevel !== null) {
+          this.syncPlacementPreviewAt(placeTile.x, placeTile.z, yLevel);
+          this.tileHighlight.position.set(placeTile.x, 0.02, placeTile.z);
+          this.tileHighlight.visible = true;
+        } else {
+          this.clearPlacementPreview();
+          this.tileHighlight.visible = false;
+        }
+      } else {
+        this.clearPlacementPreview();
+        this.tileHighlight.visible = false;
+      }
+      this.signboardHoverHandler?.(null);
+      return;
     }
+
+    const blockHit = this.pickBlockKey(e.clientX, e.clientY);
+    if (blockHit) {
+      const meta = this.placedObjects.get(blockHit);
+      if (meta && !meta.passable && !meta.ramp) {
+        const [bx, bz, byRaw] = blockHit.split(",").map(Number);
+        const by = Number.isFinite(byRaw) ? Math.floor(byRaw ?? 0) : 0;
+        const h = this.obstacleHeight(meta);
+        this.tileHighlight.position.set(bx!, 0.02, bz!);
+        this.tileHighlight.visible = true;
+        this.blockTopHighlight.position.set(
+          bx!,
+          by * BLOCK_SIZE + h * this.blockVisualScale + 0.03,
+          bz!
+        );
+        this.blockTopHighlight.visible = true;
+
+        const signboard = this.signboards.get(blockHit);
+        if (signboard) {
+          this.signboardHoverHandler?.(signboard);
+        } else {
+          this.signboardHoverHandler?.(null);
+        }
+        return;
+      }
+    }
+    this.blockTopHighlight.visible = false;
     const p = this.pickWalkableTile(e.clientX, e.clientY);
     if (!p) {
       this.tileHighlight.visible = false;
@@ -3182,6 +3487,7 @@ export class Game {
       this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this.touchPointers.size >= 2) {
         this.clearPendingPrimaryWalk();
+        this.clearPendingBuildPlace();
         this.clearSelfEmojiTouchSession();
         this.clearOtherProfileTouchSession();
         this.pinchLastDistancePx = 0;
@@ -3369,11 +3675,21 @@ export class Game {
       const dest = this.pickFloor(e.clientX, e.clientY);
       if (!dest) return;
       const k = tileKey(dest.x, dest.y);
-      if (e.shiftKey) {
-        if (isBaseTile(dest.x, dest.y, this.roomId)) return;
-        if (!this.extraFloorKeys.has(k)) return;
+      if (this.extraFloorKeys.has(k) && !isBaseTile(dest.x, dest.y, this.roomId)) {
+        if (this.hasAnyBlockAtTile(dest.x, dest.y)) return;
         this.removeExtraFloorHandler?.(dest.x, dest.y);
         return;
+      }
+      if (!isBuiltinRoomId(this.roomId)) {
+        if (this.removedBaseFloorKeys.has(k)) {
+          this.placeExtraFloorHandler?.(dest.x, dest.y);
+          return;
+        }
+        if (isBaseTile(dest.x, dest.y, this.roomId)) {
+          if (this.hasAnyBlockAtTile(dest.x, dest.y)) return;
+          this.removeExtraFloorHandler?.(dest.x, dest.y);
+          return;
+        }
       }
       this.placeExtraFloorHandler?.(dest.x, dest.y);
       return;
@@ -3433,6 +3749,7 @@ export class Game {
           e.ctrlKey &&
           canStackHere
         ) {
+          this.clearPlacementPreview();
           this.placeBlockHandler(bx!, bz!);
           return;
         }
@@ -3469,11 +3786,28 @@ export class Game {
         return;
       }
       
-      if (!this.placeBlockHandler) return;
-      if (this.nextOpenLevelAt(dest.x, dest.y) === null) return;
-      if (this.hubNoBuildTile(dest.x, dest.y)) return;
-      if (here.x === dest.x && here.y === dest.y) return;
-      this.placeBlockHandler(dest.x, dest.y);
+      const placeT = this.tryFloorBlockPlacementTile(e.clientX, e.clientY);
+      if (!placeT) return;
+      const yOpen = this.nextOpenLevelAt(placeT.x, placeT.z);
+      if (yOpen === null) return;
+      if (e.pointerType === "touch") {
+        this.clearPendingBuildPlace();
+        this.pendingBuildPlace = {
+          pointerId: e.pointerId,
+          startTileX: placeT.x,
+          startTileZ: placeT.z,
+        };
+        try {
+          this.renderer.domElement.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        this.syncPlacementPreviewAt(placeT.x, placeT.z, yOpen);
+        return;
+      }
+      this.clearPlacementPreview();
+      const placeFn = this.placeBlockHandler;
+      if (placeFn) placeFn(placeT.x, placeT.z);
       return;
     }
 
@@ -3549,6 +3883,8 @@ export class Game {
   }
 
   dispose(): void {
+    this.clearPendingBuildPlace();
+    this.clearPlacementPreview();
     this.clearPendingPrimaryWalk();
     if (this.rightOrbitDrag) {
       const id = this.rightOrbitDrag.pointerId;
@@ -3830,7 +4166,8 @@ export class Game {
       goal.layer,
       this.placedObjects,
       this.extraFloorKeys,
-      this.roomId
+      this.roomId,
+      this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined
     );
     if (!remaining || remaining.length < 2) {
       if (this.pathPreviewGoal) {
@@ -3973,7 +4310,9 @@ export class Game {
     const seen = new Set<string>();
     for (let x = b.minX; x <= b.maxX; x++) {
       for (let z = b.minZ; z <= b.maxZ; z++) {
-        seen.add(tileKey(x, z));
+        const bk = tileKey(x, z);
+        if (this.removedBaseFloorKeys.has(bk)) continue;
+        seen.add(bk);
       }
     }
     for (const k of this.extraFloorKeys) {
@@ -4416,7 +4755,11 @@ export class Game {
     return geom;
   }
 
-  private makeBlockMesh(meta: BlockStyleProps): THREE.Group {
+  private makeBlockMesh(
+    meta: BlockStyleProps,
+    opts?: { ghost?: boolean }
+  ): THREE.Group {
+    const ghost = Boolean(opts?.ghost);
     const h = this.obstacleHeight(meta);
     const vis = this.blockVisualScale;
     const hVis = h * vis;
@@ -4440,11 +4783,11 @@ export class Game {
       color: base,
       roughness: 0.65,
       metalness: 0.15,
-      transparent: meta.passable,
-      opacity: meta.passable ? 0.45 : 1,
-      depthWrite: !meta.passable,
+      transparent: ghost || meta.passable,
+      opacity: ghost ? 0.42 : meta.passable ? 0.45 : 1,
+      depthWrite: ghost ? false : !meta.passable,
       emissive: meta.claimable && meta.active ? 0xffc107 : 0x000000,
-      emissiveIntensity: meta.claimable && meta.active ? 0.3 : 0,
+      emissiveIntensity: meta.claimable && meta.active ? 0.28 : 0,
     });
     if (meta.ramp) {
       const geom = this.makeRampGeometry(h, meta.rampDir, vis);
@@ -5151,6 +5494,206 @@ export class Game {
     g.add(nameSprite);
     this.syncNameLabelScaleAndPosition(g);
     return g;
+  }
+
+  private disposeInspectorTilePreviewPort(port: InspectorTilePreviewPort): void {
+    port.resizeObserver.disconnect();
+    port.renderer.dispose();
+    port.scene.traverse((child: THREE.Object3D) => {
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        const m = child.material;
+        if (Array.isArray(m)) {
+          for (const mm of m) mm.dispose();
+        } else {
+          (m as THREE.Material).dispose();
+        }
+      }
+    });
+    port.scene.clear();
+  }
+
+  private inspectorTilePreviewSignature(meta: BlockStyleProps): string {
+    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.ramp}|${meta.rampDir}|${meta.colorId}|${Boolean(meta.claimable)}|${this.blockVisualScale}|${this.floorTileQuadSize}`;
+  }
+
+  private applyInspectorPreviewFrustum(
+    camera: THREE.OrthographicCamera,
+    rw: number,
+    rh: number
+  ): void {
+    const asp = Math.max(0.2, rw / Math.max(1, rh));
+    const halfV = INSPECTOR_PREVIEW_HALF_V;
+    const halfH = halfV * asp;
+    camera.left = -halfH;
+    camera.right = halfH;
+    camera.top = halfV;
+    camera.bottom = -halfV;
+    camera.updateProjectionMatrix();
+  }
+
+  private renderInspectorTilePreview(slot: "placement" | "selection"): void {
+    const port =
+      slot === "placement"
+        ? this.inspectorPlacementPort
+        : this.inspectorSelectionPort;
+    if (!port) return;
+    const meta =
+      slot === "placement"
+        ? this.placementPreviewMetaForNewBlock()
+        : this.inspectorSelectionObstacle === null
+          ? null
+          : ({
+              passable: this.inspectorSelectionObstacle.passable,
+              half: this.inspectorSelectionObstacle.half,
+              quarter: this.inspectorSelectionObstacle.quarter,
+              hex: this.inspectorSelectionObstacle.hex,
+              ramp: this.inspectorSelectionObstacle.ramp,
+              rampDir: this.inspectorSelectionObstacle.rampDir,
+              colorId: this.inspectorSelectionObstacle.colorId,
+            } as BlockStyleProps);
+    if (!meta) {
+      while (port.blockSlot.children.length > 0) {
+        const c = port.blockSlot.children[0]!;
+        port.blockSlot.remove(c);
+        c.traverse((child: THREE.Object3D) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            const m = child.material;
+            if (Array.isArray(m)) {
+              for (const mm of m) mm.dispose();
+            } else {
+              (m as THREE.Material).dispose();
+            }
+          }
+        });
+      }
+      port.lastSig = "";
+      const w0 = port.canvas.clientWidth || 1;
+      const h0 = port.canvas.clientHeight || 1;
+      port.renderer.setSize(w0, h0, false);
+      port.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.applyInspectorPreviewFrustum(port.camera, w0, h0);
+      port.renderer.render(port.scene, port.camera);
+      return;
+    }
+    const sig = this.inspectorTilePreviewSignature(meta);
+    const h = this.obstacleHeight(meta);
+    const vis = this.blockVisualScale;
+    const yWorld = (h * vis) / 2;
+    port.blockSlot.position.set(0, yWorld, 0);
+    if (port.lastSig !== sig) {
+      port.lastSig = sig;
+      while (port.blockSlot.children.length > 0) {
+        const c = port.blockSlot.children[0]!;
+        port.blockSlot.remove(c);
+        c.traverse((child: THREE.Object3D) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            const m = child.material;
+            if (Array.isArray(m)) {
+              for (const mm of m) mm.dispose();
+            } else {
+              (m as THREE.Material).dispose();
+            }
+          }
+        });
+      }
+      port.blockSlot.add(this.makeBlockMesh(meta, { ghost: false }));
+    }
+    const r = port.canvas.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return;
+    const rw = Math.max(1, Math.floor(r.width));
+    const rh = Math.max(1, Math.floor(r.height));
+    port.renderer.setSize(rw, rh, false);
+    port.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.applyInspectorPreviewFrustum(port.camera, rw, rh);
+    port.renderer.render(port.scene, port.camera);
+  }
+
+  /**
+   * Renders a 1×1 floor tile + block in an isolated WebGL canvas (build rail / object panel).
+   * Pass `null` to release GPU resources for that slot.
+   */
+  bindInspectorTilePreviewCanvas(
+    slot: "placement" | "selection",
+    canvas: HTMLCanvasElement | null
+  ): void {
+    const prev =
+      slot === "placement"
+        ? this.inspectorPlacementPort
+        : this.inspectorSelectionPort;
+    if (prev) {
+      this.disposeInspectorTilePreviewPort(prev);
+      if (slot === "placement") this.inspectorPlacementPort = null;
+      else this.inspectorSelectionPort = null;
+    }
+    if (!canvas) return;
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      alpha: true,
+      antialias: true,
+      powerPreference: "low-power",
+    });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0c0e14);
+    const cw = Math.max(1, canvas.clientWidth);
+    const ch = Math.max(1, canvas.clientHeight);
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 72);
+    this.applyInspectorPreviewFrustum(camera, cw, ch);
+    const camDir = new THREE.Vector3(18, 21, 18).normalize().multiplyScalar(6.4);
+    camera.position.copy(camDir);
+    camera.lookAt(0, 0.1, 0);
+    camera.up.copy(this.worldUp);
+
+    const amb = new THREE.AmbientLight(0xffffff, 0.58);
+    scene.add(amb);
+    const dir = new THREE.DirectionalLight(0xfff5ee, 0.82);
+    dir.position.set(5, 11, 7);
+    scene.add(dir);
+
+    const content = new THREE.Group();
+    content.scale.setScalar(INSPECTOR_PREVIEW_SCENE_SCALE);
+    scene.add(content);
+
+    const topY = 0.01;
+    const floorGeom = new THREE.BoxGeometry(1, WALKABLE_FLOOR_TILE_THICKNESS, 1);
+    const floor = new THREE.Mesh(
+      floorGeom,
+      createWalkableFloorTileMaterials(false, false)
+    );
+    floor.scale.set(this.floorTileQuadSize, 1, this.floorTileQuadSize);
+    floor.position.set(0, topY - WALKABLE_FLOOR_TILE_THICKNESS / 2, 0);
+    content.add(floor);
+
+    const blockSlot = new THREE.Group();
+    content.add(blockSlot);
+
+    const port: InspectorTilePreviewPort = {
+      canvas,
+      renderer,
+      scene,
+      camera,
+      content,
+      blockSlot,
+      floor,
+      resizeObserver: new ResizeObserver(() => {
+        this.renderInspectorTilePreview(slot);
+      }),
+      lastSig: "",
+    };
+    port.resizeObserver.observe(canvas);
+    if (slot === "placement") this.inspectorPlacementPort = port;
+    else this.inspectorSelectionPort = port;
+    this.renderInspectorTilePreview(slot);
+  }
+
+  /** Updates the object-panel 3D preview; pass `null` when the panel closes. */
+  syncInspectorSelectionTilePreview(props: ObstacleProps | null): void {
+    this.inspectorSelectionObstacle = props;
+    this.renderInspectorTilePreview("selection");
   }
 
   private animateDoorTiles(): void {

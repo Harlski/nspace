@@ -5,11 +5,13 @@ import {
 } from "./builtinRoomNames.js";
 import {
   createDynamicRoom,
+  createOfficialDynamicRoom,
   getDynamicRoomBounds,
   hasDynamicRoom,
   listDeletedDynamicRooms,
   listDynamicRooms,
   loadRoomRegistry,
+  type RoomBackgroundNeutral,
 } from "./roomRegistry.js";
 import { walletDisplayName } from "./walletDisplayName.js";
 
@@ -163,8 +165,14 @@ export type RoomDefinition = {
   displayName: string;
   isPublic: boolean;
   isBuiltin: boolean;
+  /** Admin-created official room (dynamic id); not Hub/Chamber/Canvas. */
+  isOfficial?: boolean;
   /** Soft-deleted rooms (admin restore list only). */
   isDeleted?: boolean;
+  /** Dynamic rooms only: custom scene background hue, or null for default. */
+  backgroundHueDeg?: number | null;
+  /** Dynamic rooms only: solid neutral sky; overrides hue when non-null. */
+  backgroundNeutral?: RoomBackgroundNeutral | null;
 };
 
 export function listDeletedRoomDefinitions(): RoomDefinition[] {
@@ -175,7 +183,10 @@ export function listDeletedRoomDefinitions(): RoomDefinition[] {
     displayName: r.displayName,
     isPublic: r.isPublic,
     isBuiltin: false as const,
+    isOfficial: r.isOfficial,
     isDeleted: true as const,
+    backgroundHueDeg: r.backgroundHueDeg,
+    backgroundNeutral: r.backgroundNeutral,
   }));
 }
 
@@ -212,6 +223,9 @@ export function listRoomDefinitions(): RoomDefinition[] {
       displayName: r.displayName,
       isPublic: r.isPublic,
       isBuiltin: false as const,
+      isOfficial: r.isOfficial,
+      backgroundHueDeg: r.backgroundHueDeg,
+      backgroundNeutral: r.backgroundNeutral,
     })),
   ];
 }
@@ -256,4 +270,37 @@ export function createRoomWithSize(
   if (!created.ok) return created;
   const id = created.id;
   return { ok: true, id, bounds };
+}
+
+/** Admin-only: same geometry rules as {@link createRoomWithSize}; no per-player cap; marked official. */
+export function createOfficialRoomWithSize(
+  widthTiles: number,
+  heightTiles: number,
+  displayName: string,
+  isPublic: boolean
+): { ok: true; id: string; bounds: RoomBounds } | { ok: false; reason: string } {
+  const width = Math.floor(widthTiles);
+  const height = Math.floor(heightTiles);
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    return { ok: false, reason: "Width/height must be numbers." };
+  }
+  if (width < 5 || width > 30 || height < 5 || height > 30) {
+    return { ok: false, reason: "Width/height must be between 5 and 30 tiles." };
+  }
+  const halfW = Math.floor(width / 2);
+  const halfH = Math.floor(height / 2);
+  const bounds: RoomBounds = {
+    minX: -halfW,
+    maxX: -halfW + width - 1,
+    minZ: -halfH,
+    maxZ: -halfH + height - 1,
+  };
+  const created = createOfficialDynamicRoom(
+    bounds,
+    BUILTIN_ROOM_IDS,
+    displayName,
+    isPublic
+  );
+  if (!created.ok) return created;
+  return { ok: true, id: created.id, bounds };
 }

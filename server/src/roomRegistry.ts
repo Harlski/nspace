@@ -9,6 +9,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
 const ROOM_REGISTRY_FILE = path.join(DATA_DIR, "rooms.json");
 
+export type RoomBackgroundNeutral = "black" | "white" | "gray";
+
 export type PersistedRoomDef = {
   id: string;
   bounds: RoomBounds;
@@ -18,6 +20,12 @@ export type PersistedRoomDef = {
   isPublic?: boolean;
   /** v4+: soft-delete timestamp (ms); absent or null = active. */
   deletedAt?: number | null;
+  /** v5+: admin-created room listed with built-in “official” rooms; does not count toward player room cap. */
+  isOfficial?: boolean;
+  /** Optional custom sky hue (degrees 0–359) for dynamic rooms; omitted = default water tone. */
+  backgroundHueDeg?: number | null;
+  /** Solid neutral sky when set; takes precedence over hue. */
+  backgroundNeutral?: RoomBackgroundNeutral | null;
 };
 
 type PersistedRoomsFileV1 = {
@@ -40,11 +48,17 @@ type PersistedRoomsFileV4 = {
   rooms: PersistedRoomDef[];
 };
 
+type PersistedRoomsFileV5 = {
+  version: 5;
+  rooms: PersistedRoomDef[];
+};
+
 type PersistedRoomsFile =
   | PersistedRoomsFileV1
   | PersistedRoomsFileV2
   | PersistedRoomsFileV3
-  | PersistedRoomsFileV4;
+  | PersistedRoomsFileV4
+  | PersistedRoomsFileV5;
 
 type DynamicRoomEntry = {
   bounds: RoomBounds;
@@ -55,6 +69,12 @@ type DynamicRoomEntry = {
   isPublic: boolean;
   /** When set, room is soft-deleted (hidden from play; restorable by admin). */
   deletedAt: number | null;
+  /** Admin-created; listed as official; omitted from per-player owned-room counts. */
+  isOfficial: boolean;
+  /** Custom scene background hue (0–359), or null when using neutral or default. */
+  backgroundHueDeg: number | null;
+  /** Solid neutral background; when non-null, overrides hue for rendering. */
+  backgroundNeutral: RoomBackgroundNeutral | null;
 };
 
 const dynamicRooms = new Map<string, DynamicRoomEntry>();
@@ -91,6 +111,47 @@ function validateDisplayName(raw: string): string | null {
   return t;
 }
 
+function normalizePersistedBackgroundHueDeg(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(((n % 360) + 360) % 360);
+}
+
+export function normalizeBackgroundHuePatch(
+  v: unknown
+): { ok: true; hue: number | null } | { ok: false; reason: string } {
+  if (v === null) return { ok: true, hue: null };
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) {
+    return { ok: false, reason: "Background hue must be a number or null." };
+  }
+  return { ok: true, hue: Math.round(((n % 360) + 360) % 360) };
+}
+
+function normalizePersistedBackgroundNeutral(
+  v: unknown
+): RoomBackgroundNeutral | null {
+  if (v === null || v === undefined) return null;
+  if (v === "black" || v === "white" || v === "gray") return v;
+  return null;
+}
+
+export function normalizeBackgroundNeutralPatch(
+  v: unknown
+):
+  | { ok: true; neutral: RoomBackgroundNeutral | null }
+  | { ok: false; reason: string } {
+  if (v === null) return { ok: true, neutral: null };
+  if (v === "black" || v === "white" || v === "gray") {
+    return { ok: true, neutral: v };
+  }
+  return {
+    ok: false,
+    reason: "Background neutral must be black, white, gray, or null.",
+  };
+}
+
 function generateUniqueRoomId(defaultRoomIds: ReadonlySet<string>): string {
   for (let attempt = 0; attempt < 400; attempt++) {
     let code = "";
@@ -105,15 +166,22 @@ function generateUniqueRoomId(defaultRoomIds: ReadonlySet<string>): string {
 
 function persistRoomsFile(): void {
   ensureDataDir();
-  const payload: PersistedRoomsFileV4 = {
-    version: 4,
+  const payload: PersistedRoomsFileV5 = {
+    version: 5,
     rooms: [...dynamicRooms.entries()].map(([id, entry]) => ({
       id,
       bounds: entry.bounds,
       displayName: entry.displayName,
       isPublic: entry.isPublic,
+      isOfficial: entry.isOfficial,
       ...(entry.ownerAddress ? { ownerAddress: entry.ownerAddress } : {}),
       ...(entry.deletedAt != null ? { deletedAt: entry.deletedAt } : {}),
+      ...(entry.backgroundHueDeg != null
+        ? { backgroundHueDeg: entry.backgroundHueDeg }
+        : {}),
+      ...(entry.backgroundNeutral != null
+        ? { backgroundNeutral: entry.backgroundNeutral }
+        : {}),
     })),
   };
   const tmp = `${ROOM_REGISTRY_FILE}.tmp`;
@@ -132,7 +200,8 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
       raw.version !== 1 &&
       raw.version !== 2 &&
       raw.version !== 3 &&
-      raw.version !== 4
+      raw.version !== 4 &&
+      raw.version !== 5
     ) {
       return;
     }
@@ -162,16 +231,26 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
         displayName = `Room ${id.toUpperCase()}`;
       }
       const isPublic =
-        raw.version === 3 || raw.version === 4 ? r.isPublic !== false : true;
+        raw.version === 3 || raw.version === 4 || raw.version === 5
+          ? r.isPublic !== false
+          : true;
 
       let deletedAt: number | null = null;
       if (
-        raw.version === 4 &&
+        (raw.version === 4 || raw.version === 5) &&
         typeof r.deletedAt === "number" &&
         Number.isFinite(r.deletedAt)
       ) {
         deletedAt = r.deletedAt;
       }
+
+      const isOfficial = r.isOfficial === true;
+      const backgroundHueDeg = normalizePersistedBackgroundHueDeg(
+        r.backgroundHueDeg
+      );
+      const backgroundNeutral = normalizePersistedBackgroundNeutral(
+        (r as { backgroundNeutral?: unknown }).backgroundNeutral
+      );
 
       dynamicRooms.set(id, {
         bounds: {
@@ -184,6 +263,9 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
         displayName,
         isPublic,
         deletedAt,
+        isOfficial,
+        backgroundHueDeg,
+        backgroundNeutral,
       });
     }
   } catch (err) {
@@ -197,6 +279,9 @@ export function listDynamicRooms(): Array<{
   ownerAddress: string | null;
   displayName: string;
   isPublic: boolean;
+  isOfficial: boolean;
+  backgroundHueDeg: number | null;
+  backgroundNeutral: RoomBackgroundNeutral | null;
 }> {
   return [...dynamicRooms.entries()]
     .filter(([, entry]) => !entry.deletedAt)
@@ -206,6 +291,9 @@ export function listDynamicRooms(): Array<{
       ownerAddress: entry.ownerAddress,
       displayName: entry.displayName,
       isPublic: entry.isPublic,
+      isOfficial: entry.isOfficial,
+      backgroundHueDeg: entry.backgroundHueDeg,
+      backgroundNeutral: entry.backgroundNeutral,
     }));
 }
 
@@ -216,7 +304,10 @@ export function listDeletedDynamicRooms(): Array<{
   ownerAddress: string | null;
   displayName: string;
   isPublic: boolean;
+  isOfficial: boolean;
   deletedAt: number;
+  backgroundHueDeg: number | null;
+  backgroundNeutral: RoomBackgroundNeutral | null;
 }> {
   const out: Array<{
     id: string;
@@ -224,7 +315,10 @@ export function listDeletedDynamicRooms(): Array<{
     ownerAddress: string | null;
     displayName: string;
     isPublic: boolean;
+    isOfficial: boolean;
     deletedAt: number;
+    backgroundHueDeg: number | null;
+    backgroundNeutral: RoomBackgroundNeutral | null;
   }> = [];
   for (const [id, entry] of dynamicRooms.entries()) {
     if (!entry.deletedAt) continue;
@@ -234,7 +328,10 @@ export function listDeletedDynamicRooms(): Array<{
       ownerAddress: entry.ownerAddress,
       displayName: entry.displayName,
       isPublic: entry.isPublic,
+      isOfficial: entry.isOfficial,
       deletedAt: entry.deletedAt,
+      backgroundHueDeg: entry.backgroundHueDeg,
+      backgroundNeutral: entry.backgroundNeutral,
     });
   }
   return out;
@@ -245,6 +342,7 @@ export function countRoomsOwnedBy(ownerAddress: string): number {
   let n = 0;
   for (const entry of dynamicRooms.values()) {
     if (entry.deletedAt) continue;
+    if (entry.isOfficial) continue;
     if (entry.ownerAddress && compactAddress(entry.ownerAddress) === want) {
       n += 1;
     }
@@ -322,18 +420,107 @@ export function createDynamicRoom(
     displayName,
     isPublic,
     deletedAt: null,
+    isOfficial: false,
+    backgroundHueDeg: null,
+    backgroundNeutral: null,
   });
   persistRoomsFile();
   return { ok: true, id };
 }
 
+/**
+ * Admin-only: new room with no player owner, listed as official, not counted toward anyone’s cap.
+ */
+export function createOfficialDynamicRoom(
+  bounds: RoomBounds,
+  defaultRoomIds: ReadonlySet<string>,
+  displayNameRaw: string,
+  isPublic: boolean
+): { ok: true; id: string } | { ok: false; reason: string } {
+  const displayName = validateDisplayName(displayNameRaw);
+  if (!displayName) {
+    return { ok: false, reason: "Room name must be 1–48 characters." };
+  }
+  if (!isValidBounds(bounds)) {
+    return { ok: false, reason: "Invalid room bounds." };
+  }
+  const id = generateUniqueRoomId(defaultRoomIds);
+  if (!id) {
+    return { ok: false, reason: "Could not allocate a room code; try again." };
+  }
+  dynamicRooms.set(id, {
+    bounds: {
+      minX: Math.floor(bounds.minX),
+      maxX: Math.floor(bounds.maxX),
+      minZ: Math.floor(bounds.minZ),
+      maxZ: Math.floor(bounds.maxZ),
+    },
+    ownerAddress: null,
+    displayName,
+    isPublic,
+    deletedAt: null,
+    isOfficial: true,
+    backgroundHueDeg: null,
+    backgroundNeutral: null,
+  });
+  persistRoomsFile();
+  return { ok: true, id };
+}
+
+export function getDynamicRoomBackgroundHueDeg(roomId: string): number | null {
+  const id = normalizeRoomIdRaw(roomId);
+  const entry = dynamicRooms.get(id);
+  if (!entry || entry.deletedAt) return null;
+  return entry.backgroundHueDeg;
+}
+
+export function getDynamicRoomBackgroundState(roomId: string): {
+  hueDeg: number | null;
+  neutral: RoomBackgroundNeutral | null;
+} {
+  const id = normalizeRoomIdRaw(roomId);
+  const entry = dynamicRooms.get(id);
+  if (!entry || entry.deletedAt) {
+    return { hueDeg: null, neutral: null };
+  }
+  return {
+    hueDeg: entry.backgroundHueDeg,
+    neutral: entry.backgroundNeutral,
+  };
+}
+
+/** Who may PATCH `backgroundHueDeg` (official rooms: admins only; else owner or admin). */
+export function allowActorRoomBackgroundHueEdit(
+  roomId: string,
+  actorCompact: string,
+  isAdminUser: boolean
+): boolean {
+  const id = normalizeRoomIdRaw(roomId);
+  const entry = dynamicRooms.get(id);
+  if (!entry || entry.deletedAt) return false;
+  if (isAdminUser) return true;
+  if (entry.isOfficial) return false;
+  if (!entry.ownerAddress) return false;
+  return compactAddress(entry.ownerAddress) === actorCompact;
+}
+
 export function updateDynamicRoomMetadata(
   roomId: string,
-  patch: { displayName?: string; isPublic?: boolean },
+  patch: {
+    displayName?: string;
+    isPublic?: boolean;
+    backgroundHueDeg?: number | null;
+    backgroundNeutral?: RoomBackgroundNeutral | null;
+  },
   actorCompact: string,
   isAdminUser: boolean
 ): { ok: true } | { ok: false; reason: string } {
-  if (patch.displayName === undefined && patch.isPublic === undefined) {
+  if (
+    patch.displayName === undefined &&
+    patch.isPublic === undefined &&
+    patch.backgroundHueDeg === undefined &&
+    patch.backgroundNeutral === undefined
+  ) {
     return { ok: false, reason: "Nothing to update." };
   }
   const id = normalizeRoomIdRaw(roomId);
@@ -344,12 +531,26 @@ export function updateDynamicRoomMetadata(
   if (entry.deletedAt) {
     return { ok: false, reason: "Room is deleted." };
   }
-  if (!entry.ownerAddress) {
-    return { ok: false, reason: "Cannot edit this room." };
+  if (
+    (patch.backgroundHueDeg !== undefined ||
+      patch.backgroundNeutral !== undefined) &&
+    entry.isOfficial &&
+    !isAdminUser
+  ) {
+    return {
+      ok: false,
+      reason: "Only admins can change the background of official rooms.",
+    };
   }
-  const ownerC = compactAddress(entry.ownerAddress);
-  if (!isAdminUser && ownerC !== actorCompact) {
-    return { ok: false, reason: "Not authorized to edit this room." };
+  if (!entry.ownerAddress) {
+    if (!isAdminUser || !entry.isOfficial) {
+      return { ok: false, reason: "Cannot edit this room." };
+    }
+  } else {
+    const ownerC = compactAddress(entry.ownerAddress);
+    if (!isAdminUser && ownerC !== actorCompact) {
+      return { ok: false, reason: "Not authorized to edit this room." };
+    }
   }
   if (patch.displayName !== undefined) {
     const v = validateDisplayName(patch.displayName);
@@ -360,6 +561,20 @@ export function updateDynamicRoomMetadata(
   }
   if (patch.isPublic !== undefined) {
     entry.isPublic = patch.isPublic;
+  }
+  if (patch.backgroundHueDeg !== undefined) {
+    entry.backgroundHueDeg = patch.backgroundHueDeg;
+    if (patch.backgroundHueDeg !== null) {
+      entry.backgroundNeutral = null;
+    } else {
+      entry.backgroundNeutral = null;
+    }
+  }
+  if (patch.backgroundNeutral !== undefined) {
+    entry.backgroundNeutral = patch.backgroundNeutral;
+    if (patch.backgroundNeutral != null) {
+      entry.backgroundHueDeg = null;
+    }
   }
   dynamicRooms.set(id, entry);
   persistRoomsFile();

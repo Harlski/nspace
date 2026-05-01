@@ -152,12 +152,14 @@ export async function collectWorldStateMetrics(
     loadWorldState: (
       roomPlaced: Map<string, Map<string, TerrainProps>>,
       roomExtraFloor: Map<string, Set<string>>,
+      roomBaseFloorRemoved: Map<string, Set<string>>,
       lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
       normalize: (roomId: string) => string
     ) => void;
     registerWorldStateRefs: (
       roomPlaced: Map<string, Map<string, TerrainProps>>,
       roomExtraFloor: Map<string, Set<string>>,
+      roomBaseFloorRemoved: Map<string, Set<string>>,
       lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
       normalize: (roomId: string) => string
     ) => void;
@@ -166,13 +168,26 @@ export async function collectWorldStateMetrics(
 
   const roomPlaced = new Map<string, Map<string, TerrainProps>>();
   const roomExtraFloor = new Map<string, Set<string>>();
+  const roomBaseFloorRemoved = new Map<string, Set<string>>();
   const lastSpawnByRoom = new Map<string, Map<string, { x: number; z: number; y?: number }>>();
 
   const loadStart = performance.now();
-  loadWorldState(roomPlaced, roomExtraFloor, lastSpawnByRoom, normalizeRoomId);
+  loadWorldState(
+    roomPlaced,
+    roomExtraFloor,
+    roomBaseFloorRemoved,
+    lastSpawnByRoom,
+    normalizeRoomId
+  );
   const loadMs = performance.now() - loadStart;
 
-  registerWorldStateRefs(roomPlaced, roomExtraFloor, lastSpawnByRoom, normalizeRoomId);
+  registerWorldStateRefs(
+    roomPlaced,
+    roomExtraFloor,
+    roomBaseFloorRemoved,
+    lastSpawnByRoom,
+    normalizeRoomId
+  );
   const persistStart = performance.now();
   flushPersistWorldStateSync();
   const persistMs = performance.now() - persistStart;

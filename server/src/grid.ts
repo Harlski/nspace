@@ -35,13 +35,19 @@ export function isWalkableTile(
   x: number,
   z: number,
   extraWalkable: ReadonlySet<string>,
-  roomId: string
+  roomId: string,
+  /** Base tiles carved out in custom rooms (tileKey); omit when none. */
+  baseRemoved?: ReadonlySet<string> | null
 ): boolean {
   if (!inTileBounds(x, z)) {
     return false;
   }
-  if (isBaseTile(x, z, roomId)) return true;
-  return extraWalkable.has(tileKey(x, z));
+  const k = tileKey(x, z);
+  if (isBaseTile(x, z, roomId)) {
+    if (baseRemoved?.has(k)) return false;
+    return true;
+  }
+  return extraWalkable.has(k);
 }
 
 export function snapToTile(x: number, z: number): { x: number; z: number } {
@@ -113,9 +119,10 @@ function isPassableTile(
   z: number,
   blocked: ReadonlySet<string>,
   extraWalkable: ReadonlySet<string>,
-  roomId: string
+  roomId: string,
+  baseRemoved?: ReadonlySet<string> | null
 ): boolean {
-  if (!isWalkableTile(x, z, extraWalkable, roomId)) return false;
+  if (!isWalkableTile(x, z, extraWalkable, roomId, baseRemoved)) return false;
   if (blocked.has(tileKey(x, z))) return false;
   return true;
 }
@@ -135,13 +142,14 @@ export function pathfindTiles(
   tz: number,
   blocked: ReadonlySet<string>,
   extraWalkable: ReadonlySet<string>,
-  roomId: string
+  roomId: string,
+  baseRemoved?: ReadonlySet<string> | null
 ): { x: number; z: number }[] | null {
   const sk = tileKey(sx, sz);
   const gk = tileKey(tx, tz);
   if (
-    !isWalkableTile(sx, sz, extraWalkable, roomId) ||
-    !isWalkableTile(tx, tz, extraWalkable, roomId)
+    !isWalkableTile(sx, sz, extraWalkable, roomId, baseRemoved) ||
+    !isWalkableTile(tx, tz, extraWalkable, roomId, baseRemoved)
   ) {
     return null;
   }
@@ -171,13 +179,15 @@ export function pathfindTiles(
     for (const [dx, dz] of DIRS8) {
       const nx = cur.x + dx;
       const nz = cur.z + dz;
-      if (!isWalkableTile(nx, nz, extraWalkable, roomId)) continue;
+      if (!isWalkableTile(nx, nz, extraWalkable, roomId, baseRemoved)) continue;
       const nk = tileKey(nx, nz);
       if (cameFrom.has(nk)) continue;
       if (blocked.has(nk)) continue;
       if (dx !== 0 && dz !== 0) {
-        if (!isPassableTile(cur.x + dx, cur.z, blocked, extraWalkable, roomId)) continue;
-        if (!isPassableTile(cur.x, cur.z + dz, blocked, extraWalkable, roomId)) continue;
+        if (!isPassableTile(cur.x + dx, cur.z, blocked, extraWalkable, roomId, baseRemoved))
+          continue;
+        if (!isPassableTile(cur.x, cur.z + dz, blocked, extraWalkable, roomId, baseRemoved))
+          continue;
       }
       cameFrom.set(nk, ck);
       queue.push({ x: nx, z: nz });
@@ -257,9 +267,10 @@ export function floorWalkableTerrain(
   z: number,
   placed: ReadonlyMap<string, TerrainProps>,
   extraWalkable: ReadonlySet<string>,
-  roomId: string
+  roomId: string,
+  baseRemoved?: ReadonlySet<string> | null
 ): boolean {
-  if (!isWalkableTile(x, z, extraWalkable, roomId)) return false;
+  if (!isWalkableTile(x, z, extraWalkable, roomId, baseRemoved)) return false;
   const p = placed.get(tileKey(x, z)) ?? placed.get(blockKey(x, z, 0));
   if (!p) return true;
   if (p.passable || p.ramp) return true;
@@ -272,9 +283,10 @@ export function canPlaceTeleporterFoot(
   x: number,
   z: number,
   placed: ReadonlyMap<string, TerrainProps>,
-  extraWalkable: ReadonlySet<string>
+  extraWalkable: ReadonlySet<string>,
+  baseRemoved?: ReadonlySet<string> | null
 ): boolean {
-  if (!floorWalkableTerrain(x, z, placed, extraWalkable, roomId)) return false;
+  if (!floorWalkableTerrain(x, z, placed, extraWalkable, roomId, baseRemoved)) return false;
   const prefix = `${x},${z},`;
   for (const key of placed.keys()) {
     if (key.startsWith(prefix)) return false;
@@ -329,10 +341,11 @@ function isValidTerrainGoal(
   goalLayer: 0 | 1,
   placed: ReadonlyMap<string, TerrainProps>,
   extraWalkable: ReadonlySet<string>,
-  roomId: string
+  roomId: string,
+  baseRemoved?: ReadonlySet<string> | null
 ): boolean {
   if (goalLayer === 0) {
-    return floorWalkableTerrain(tx, tz, placed, extraWalkable, roomId);
+    return floorWalkableTerrain(tx, tz, placed, extraWalkable, roomId, baseRemoved);
   }
   return level1SurfaceOpen(placed, tx, tz);
 }
@@ -352,13 +365,15 @@ export function pathfindTerrain(
   goalLayer: 0 | 1,
   placed: ReadonlyMap<string, TerrainProps>,
   extraWalkable: ReadonlySet<string>,
-  roomId: string
+  roomId: string,
+  baseRemoved?: ReadonlySet<string> | null
 ): { x: number; z: number; layer: 0 | 1 }[] | null {
-  if (!isValidTerrainGoal(tx, tz, goalLayer, placed, extraWalkable, roomId)) {
+  if (!isValidTerrainGoal(tx, tz, goalLayer, placed, extraWalkable, roomId, baseRemoved)) {
     return null;
   }
   if (startLayer === 0) {
-    if (!floorWalkableTerrain(sx, sz, placed, extraWalkable, roomId)) return null;
+    if (!floorWalkableTerrain(sx, sz, placed, extraWalkable, roomId, baseRemoved))
+      return null;
   } else {
     if (!level1SurfaceOpen(placed, sx, sz)) return null;
   }
@@ -395,10 +410,11 @@ export function pathfindTerrain(
       for (const [dx, dz] of DIRS8) {
         const nx = cur.x + dx;
         const nz = cur.z + dz;
-        if (!isWalkableTile(nx, nz, extraWalkable, roomId)) continue;
+        if (!isWalkableTile(nx, nz, extraWalkable, roomId, baseRemoved)) continue;
         const n0 = terrainNodeKey(nx, nz, 0);
         if (cameFrom.has(n0)) continue;
-        if (!floorWalkableTerrain(nx, nz, placed, extraWalkable, roomId)) continue;
+        if (!floorWalkableTerrain(nx, nz, placed, extraWalkable, roomId, baseRemoved))
+          continue;
         const pTarget = floorLevelTerrain(placed, nx, nz);
         if (
           pTarget?.ramp &&
@@ -408,11 +424,25 @@ export function pathfindTerrain(
         }
         if (dx !== 0 && dz !== 0) {
           if (
-            !floorWalkableTerrain(cur.x + dx, cur.z, placed, extraWalkable, roomId)
+            !floorWalkableTerrain(
+              cur.x + dx,
+              cur.z,
+              placed,
+              extraWalkable,
+              roomId,
+              baseRemoved
+            )
           )
             continue;
           if (
-            !floorWalkableTerrain(cur.x, cur.z + dz, placed, extraWalkable, roomId)
+            !floorWalkableTerrain(
+              cur.x,
+              cur.z + dz,
+              placed,
+              extraWalkable,
+              roomId,
+              baseRemoved
+            )
           )
             continue;
         }
@@ -442,10 +472,10 @@ export function pathfindTerrain(
       for (const [dx, dz] of RAMP_NEIGHBOR) {
         const nx = cur.x + dx;
         const nz = cur.z + dz;
-        if (!isWalkableTile(nx, nz, extraWalkable, roomId)) continue;
+        if (!isWalkableTile(nx, nz, extraWalkable, roomId, baseRemoved)) continue;
         const pN = floorLevelTerrain(placed, nx, nz);
         if (
-          floorWalkableTerrain(nx, nz, placed, extraWalkable, roomId) &&
+          floorWalkableTerrain(nx, nz, placed, extraWalkable, roomId, baseRemoved) &&
           rampFacesSolid(pN, nx, nz, cur.x, cur.z)
         ) {
           const fk = terrainNodeKey(nx, nz, 0);

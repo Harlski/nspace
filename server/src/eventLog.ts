@@ -573,14 +573,37 @@ export async function getEventLogAnalyticsSnapshot(
 ): Promise<EventLogAnalyticsSnapshot> {
   const fromTs = timeWindow?.fromTs;
   const toTs = timeWindow?.toTs;
-  const scanDays = computeAnalyticsFileDays(maxDays, fromTs, toTs);
+  const nowMs = Date.now();
+  /** Rolling N-day view (no `day` / `month` query): align charts with UI calendar span, UTC. */
+  let filterFromMs: number | null | undefined = fromTs;
+  let filterToMs: number | null | undefined = toTs;
+  if (fromTs == null && toTs == null && maxDays > 1) {
+    filterToMs = nowMs;
+    const e = new Date(nowMs);
+    const todayStartMs = Date.UTC(e.getUTCFullYear(), e.getUTCMonth(), e.getUTCDate());
+    filterFromMs = todayStartMs - (maxDays - 1) * 86_400_000;
+  }
+  const scanDays = computeAnalyticsFileDays(
+    maxDays,
+    filterFromMs ?? undefined,
+    filterToMs ?? undefined
+  );
   function inTimeWindow(ts: number): boolean {
-    if (fromTs != null && ts < fromTs) return false;
-    if (toTs != null && ts > toTs) return false;
+    if (filterFromMs != null && ts < filterFromMs) return false;
+    if (filterToMs != null && ts > filterToMs) return false;
     return true;
   }
+  function analyticsWindowTs(rec: EventRecord): number {
+    if (rec.kind === ANALYTICS_EVENT_KINDS.nimPayoutSent) {
+      const p = rec.payload ?? {};
+      if (typeof p.sentAt === "number" && Number.isFinite(p.sentAt)) return p.sentAt;
+    }
+    return rec.ts;
+  }
   const useDayCharts =
-    fromTs != null && toTs != null && utcDayKey(fromTs) !== utcDayKey(toTs);
+    filterFromMs != null &&
+    filterToMs != null &&
+    utcDayKey(filterFromMs) !== utcDayKey(filterToMs);
 
   type PayoutAcc = {
     payouts: number;
@@ -680,7 +703,7 @@ export async function getEventLogAnalyticsSnapshot(
   }
 
   await forEachRecentEvent(scanDays, (rec) => {
-    if (!inTimeWindow(rec.ts)) return;
+    if (!inTimeWindow(analyticsWindowTs(rec))) return;
     const day = utcDayKey(rec.ts);
     const ds = dayState(day);
     if (rec.address) ds.active.add(rec.address);
@@ -885,8 +908,8 @@ export async function getEventLogAnalyticsSnapshot(
 
   let loginByDayUtc: LoginDayBucket[] | undefined;
   let payoutByDayUtc: PayoutDayBucket[] | undefined;
-  if (useDayCharts && fromTs != null && toTs != null) {
-    const dayOrder = enumerateInclusiveUtcDays(fromTs, toTs);
+  if (useDayCharts && filterFromMs != null && filterToMs != null) {
+    const dayOrder = enumerateInclusiveUtcDays(filterFromMs, filterToMs);
     loginByDayUtc = [];
     for (const dk of dayOrder) {
       loginByDayUtc.push({
@@ -955,7 +978,7 @@ export async function getEventLogAnalyticsSnapshot(
       chats: row.chats,
     }));
 
-  const hasWindow = fromTs != null || toTs != null;
+  const hasWindow = filterFromMs != null || filterToMs != null;
   return {
     generatedAt: Date.now(),
     maxDays,
@@ -966,7 +989,7 @@ export async function getEventLogAnalyticsSnapshot(
       payouts: Math.max(1, payoutLimit),
     },
     timeRange: hasWindow
-      ? { fromTs: fromTs ?? null, toTs: toTs ?? null }
+      ? { fromTs: filterFromMs ?? null, toTs: filterToMs ?? null }
       : undefined,
     firstTimeLogins: firstSeenSessionStart.size,
     uniqueVisitors: visitors.size,

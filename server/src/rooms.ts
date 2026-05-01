@@ -15,6 +15,7 @@ import {
   type TerrainProps,
 } from "./grid.js";
 import {
+  createOfficialRoomWithSize,
   createRoomWithSize,
   defaultRoomDisplayName,
   getDoorsForRoom,
@@ -31,10 +32,15 @@ import {
 } from "./roomLayouts.js";
 import { patchBuiltinRoomSettings } from "./builtinRoomNames.js";
 import {
+  allowActorRoomBackgroundHueEdit,
+  getDynamicRoomBackgroundState,
   getDynamicRoomOwnerAddress,
+  normalizeBackgroundHuePatch,
+  normalizeBackgroundNeutralPatch,
   restoreDynamicRoom,
   softDeleteDynamicRoom,
   updateDynamicRoomMetadata,
+  type RoomBackgroundNeutral,
 } from "./roomRegistry.js";
 import { generateMaze } from "./mazeGenerator.js";
 import {
@@ -460,6 +466,8 @@ type OutMsg =
       placeRadiusBlocks: number;
       obstacles: ObstacleTile[];
       extraFloorTiles: ExtraFloorTile[];
+      /** Base tiles removed in custom rooms (same shape as extra floor coords). */
+      removedBaseFloorTiles?: ExtraFloorTile[];
       canvasClaims?: Array<{ x: number; z: number; address: string }>;
       signboards: Array<{
         id: string;
@@ -476,6 +484,18 @@ type OutMsg =
       allowPlaceBlocks: boolean;
       /** Client may show floor-expand mode only when true; server still enforces. */
       allowExtraFloor: boolean;
+      /** Dynamic rooms: this player may PATCH `backgroundHueDeg` (sidebar hue ring). */
+      allowRoomBackgroundHueEdit?: boolean;
+      /** Dynamic rooms: custom sky hue (0–359); null when using neutral or default. */
+      roomBackgroundHueDeg?: number | null;
+      /** Dynamic rooms: solid black / white / gray sky; overrides hue when non-null. */
+      roomBackgroundNeutral?: RoomBackgroundNeutral | null;
+    }
+  | {
+      type: "roomBackgroundHue";
+      roomId: string;
+      hueDeg: number | null;
+      neutral?: RoomBackgroundNeutral | null;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
@@ -497,6 +517,14 @@ type OutMsg =
       roomId: string;
       add: ExtraFloorTile[];
       /** Tile keys ("x,z") that should be removed from the room. */
+      remove: string[];
+    }
+  | {
+      type: "removedBaseFloorDelta";
+      roomId: string;
+      /** Tile keys added to the "removed base" set (floor hole). */
+      add: string[];
+      /** Tile keys removed from the set (restore base floor). */
       remove: string[];
     }
   | { type: "canvasClaim"; x: number; z: number; address: string }
@@ -559,11 +587,14 @@ type OutMsg =
         isPublic: boolean;
         /** Hub / Chamber / Canvas vs player-created. */
         isBuiltin: boolean;
+        /** Admin-created official (dynamic id); listed with built-ins when public. */
+        isOfficial?: boolean;
         /** Server-side hint for showing edit UI (owner or admin). */
         canEdit: boolean;
         isDeleted?: boolean;
         canDelete?: boolean;
         canRestore?: boolean;
+        backgroundHueDeg?: number | null;
       }>;
     }
   | {
@@ -600,11 +631,20 @@ const lastSpawnByRoom = new Map<
 const roomPlaced = new Map<string, Map<string, PlacedProps>>();
 /** Walkable tiles outside the core room (must connect to core or another extra). */
 const roomExtraFloor = new Map<string, Set<string>>();
+/** Base-room tiles carved away in custom (dynamic) rooms only; tileKey "x,z". */
+const roomBaseFloorRemoved = new Map<string, Set<string>>();
 
-loadWorldState(roomPlaced, roomExtraFloor, lastSpawnByRoom, normalizeRoomId);
+loadWorldState(
+  roomPlaced,
+  roomExtraFloor,
+  roomBaseFloorRemoved,
+  lastSpawnByRoom,
+  normalizeRoomId
+);
 registerWorldStateRefs(
   roomPlaced,
   roomExtraFloor,
+  roomBaseFloorRemoved,
   lastSpawnByRoom,
   normalizeRoomId
 );
@@ -1100,7 +1140,8 @@ function findRecoveryTerrainPath(
         goalLayer,
         placed,
         extra,
-        roomId
+        roomId,
+        baseRemovedReadonly(roomId)
       );
       if (full && full.length > 0) {
         return { full, start: { x: c.x, z: c.z, layer: startLayer } };
@@ -1189,6 +1230,35 @@ function extraFloorSet(roomId: string): Set<string> {
 
 function extraFloorToList(roomId: string): ExtraFloorTile[] {
   const s = roomExtraFloor.get(roomId);
+  if (!s) return [];
+  const out: ExtraFloorTile[] = [];
+  for (const k of s) {
+    const [x, z] = k.split(",").map(Number);
+    out.push({ x: x!, z: z! });
+  }
+  return out;
+}
+
+function baseFloorRemovedEnsure(roomId: string): Set<string> {
+  let s = roomBaseFloorRemoved.get(roomId);
+  if (!s) {
+    s = new Set();
+    roomBaseFloorRemoved.set(roomId, s);
+  }
+  return s;
+}
+
+function baseRemovedReadonly(
+  roomId: string
+): ReadonlySet<string> | undefined {
+  if (!isPlayerCreatedRoom(roomId)) return undefined;
+  const s = roomBaseFloorRemoved.get(roomId);
+  if (!s || s.size === 0) return undefined;
+  return s;
+}
+
+function removedBaseFloorToList(roomId: string): ExtraFloorTile[] {
+  const s = roomBaseFloorRemoved.get(roomId);
   if (!s) return [];
   const out: ExtraFloorTile[] = [];
   for (const k of s) {
@@ -1289,17 +1359,24 @@ export function adminRandomExtraFloorLayout(
 }
 
 function isWalkableForRoom(roomId: string, x: number, z: number): boolean {
-  return isWalkableTile(x, z, extraFloorSet(roomId), roomId);
+  return isWalkableTile(
+    x,
+    z,
+    extraFloorSet(roomId),
+    roomId,
+    baseRemovedReadonly(roomId)
+  );
 }
 
 /** New extra tile must be outside the core grid and orthogonally adjacent to some walkable tile. */
 function canPlaceExtraFloor(roomId: string, x: number, z: number): boolean {
   if (isPlayerCreatedRoom(roomId)) return false;
   const ex = extraFloorSet(roomId);
+  const br = baseRemovedReadonly(roomId);
   if (ex.has(tileKey(x, z))) return false;
   if (isBaseTile(x, z, roomId)) return false;
   for (const [dx, dz] of ADJ_DIRS) {
-    if (isWalkableTile(x + dx, z + dz, ex, roomId)) return true;
+    if (isWalkableTile(x + dx, z + dz, ex, roomId, br)) return true;
   }
   return false;
 }
@@ -1448,10 +1525,13 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
     playerCount: number;
     isPublic: boolean;
     isBuiltin: boolean;
+    isOfficial: boolean;
     canEdit: boolean;
     isDeleted?: boolean;
     canDelete?: boolean;
     canRestore?: boolean;
+    backgroundHueDeg?: number | null;
+    backgroundNeutral?: RoomBackgroundNeutral | null;
   }> = [];
   for (const d of defs) {
     if (d.isBuiltin) {
@@ -1465,10 +1545,13 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
         playerCount: countRealPlayersInRoom(d.id),
         isPublic: d.isPublic,
         isBuiltin: true,
+        isOfficial: false,
         canEdit: admin,
         isDeleted: false,
         canDelete: false,
         canRestore: false,
+        backgroundHueDeg: null,
+        backgroundNeutral: null,
       });
       continue;
     }
@@ -1489,10 +1572,15 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
       playerCount: countRealPlayersInRoom(d.id),
       isPublic: d.isPublic,
       isBuiltin: false,
+      isOfficial: Boolean(d.isOfficial),
       canEdit,
       isDeleted: false,
       canDelete,
       canRestore: false,
+      backgroundHueDeg:
+        d.backgroundHueDeg === undefined ? null : d.backgroundHueDeg,
+      backgroundNeutral:
+        d.backgroundNeutral === undefined ? null : d.backgroundNeutral,
     });
   }
   if (admin) {
@@ -1504,10 +1592,15 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
         playerCount: countRealPlayersInRoom(d.id),
         isPublic: d.isPublic,
         isBuiltin: false,
+        isOfficial: Boolean(d.isOfficial),
         canEdit: false,
         isDeleted: true,
         canDelete: false,
         canRestore: true,
+        backgroundHueDeg:
+          d.backgroundHueDeg === undefined ? null : d.backgroundHueDeg,
+        backgroundNeutral:
+          d.backgroundNeutral === undefined ? null : d.backgroundNeutral,
       });
     }
   }
@@ -1838,7 +1931,18 @@ function placePendingTeleporterAt(
   const yLevel = nextOpenStackLevel(placed, x, z);
   if (yLevel === null) return false;
   const k = blockKey(x, z, yLevel);
-  if (yLevel === 0 && !canPlaceTeleporterFoot(roomId, x, z, placed, extra)) return false;
+  if (
+    yLevel === 0 &&
+    !canPlaceTeleporterFoot(
+      roomId,
+      x,
+      z,
+      placed,
+      extra,
+      baseRemovedReadonly(roomId)
+    )
+  )
+    return false;
   if (yLevel > 0 && !getPlacedAtLevel(placed, x, z, yLevel - 1)) return false;
   if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(x, z)) return false;
   if (yLevel === 0 && getSignboardAt(roomId, x, z)) return false;
@@ -1911,7 +2015,17 @@ function configureTeleporterDestination(
 
   /* Hub destination is always (0,0); skip empty-floor check used for other rooms. */
   if (nDest !== HUB_ROOM_ID) {
-    if (!canPlaceTeleporterFoot(destRoomId, warpX, warpZ, destPlaced, destExtra)) return false;
+    if (
+      !canPlaceTeleporterFoot(
+        destRoomId,
+        warpX,
+        warpZ,
+        destPlaced,
+        destExtra,
+        baseRemovedReadonly(destRoomId)
+      )
+    )
+      return false;
   }
 
   if (normalizeRoomId(srcRoomId) === HUB_ROOM_ID && isHubSpawnSafeZone(srcX, srcZ)) return false;
@@ -2350,8 +2464,18 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   
   const isCanvas = normalizeRoomId(targetRoomId) === CANVAS_ROOM_ID;
   const allowEdit = canEditRoomContent(targetRoomId, address);
-  const allowFloorExpand =
-    allowEdit && !isPlayerCreatedRoom(targetRoomId);
+  const allowFloorExpand = allowEdit && !isCanvas;
+  const nWelcomeRoom = normalizeRoomId(targetRoomId);
+  const welcomeBgState = isPlayerCreatedRoom(nWelcomeRoom)
+    ? getDynamicRoomBackgroundState(nWelcomeRoom)
+    : null;
+  const allowRoomBackgroundHueEdit = isPlayerCreatedRoom(nWelcomeRoom)
+    ? allowActorRoomBackgroundHueEdit(
+        nWelcomeRoom,
+        compactAddress(conn.address),
+        isAdmin(conn.address)
+      )
+    : false;
 
   wsSafeSend(conn.ws, {
       type: "welcome",
@@ -2363,12 +2487,20 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       placeRadiusBlocks: PLACE_RADIUS_BLOCKS,
       obstacles: obstaclesToList(targetRoomId),
       extraFloorTiles: extraFloorToList(targetRoomId),
+      removedBaseFloorTiles: removedBaseFloorToList(targetRoomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
       voxelTexts: getVoxelTextsForRoom(targetRoomId),
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
       allowExtraFloor: allowFloorExpand,
+      allowRoomBackgroundHueEdit,
+      ...(welcomeBgState
+        ? {
+            roomBackgroundHueDeg: welcomeBgState.hueDeg,
+            roomBackgroundNeutral: welcomeBgState.neutral,
+          }
+        : {}),
     } satisfies OutMsg);
   sendRoomCatalog(conn.ws, address);
 
@@ -2493,7 +2625,8 @@ export function startRoomTick(): void {
                   dest.z,
                   blocked,
                   extra,
-                  roomId
+                  roomId,
+                  baseRemovedReadonly(roomId)
                 );
                 if (full && full.length > 1) {
                   bot.pathQueue = full.slice(1, 1 + FAKE_PATH_MAX_STEPS);
@@ -2643,8 +2776,18 @@ export function addClient(
 
   const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
   const allowEdit = canEditRoomContent(roomId, address);
-  const allowFloorExpand =
-    allowEdit && !isPlayerCreatedRoom(roomId);
+  const allowFloorExpand = allowEdit && !isCanvas;
+  const nJoinRoom = normalizeRoomId(roomId);
+  const joinWelcomeBgState = isPlayerCreatedRoom(nJoinRoom)
+    ? getDynamicRoomBackgroundState(nJoinRoom)
+    : null;
+  const joinAllowRoomBackgroundHueEdit = isPlayerCreatedRoom(nJoinRoom)
+    ? allowActorRoomBackgroundHueEdit(
+        nJoinRoom,
+        compactAddress(address),
+        isAdmin(address)
+      )
+    : false;
 
   // Always send a canvas timer snapshot on join:
   // - active round: real remaining time
@@ -2692,12 +2835,20 @@ export function addClient(
       placeRadiusBlocks: PLACE_RADIUS_BLOCKS,
       obstacles: obstaclesToList(roomId),
       extraFloorTiles: extraFloorToList(roomId),
+      removedBaseFloorTiles: removedBaseFloorToList(roomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
       voxelTexts: getVoxelTextsForRoom(roomId),
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
       allowExtraFloor: allowFloorExpand,
+      allowRoomBackgroundHueEdit: joinAllowRoomBackgroundHueEdit,
+      ...(joinWelcomeBgState
+        ? {
+            roomBackgroundHueDeg: joinWelcomeBgState.hueDeg,
+            roomBackgroundNeutral: joinWelcomeBgState.neutral,
+          }
+        : {}),
     } satisfies OutMsg);
   sendRoomCatalog(ws, address);
 
@@ -2798,6 +2949,59 @@ export function addClient(
       return;
     }
 
+    if (msg.type === "createOfficialRoom") {
+      if (!isAdmin(address)) {
+        wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "SYSTEM",
+            text: "Only admins can create official rooms.",
+            at: Date.now(),
+          } satisfies OutMsg);
+        return;
+      }
+      const widthTiles = Number(
+        (msg as { widthTiles?: unknown }).widthTiles
+      );
+      const heightTiles = Number(
+        (msg as { heightTiles?: unknown }).heightTiles
+      );
+      const rawName = String((msg as { displayName?: unknown }).displayName ?? "").trim();
+      if (!rawName) {
+        wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "SYSTEM",
+            text: "Official rooms require a display name.",
+            at: Date.now(),
+          } satisfies OutMsg);
+        return;
+      }
+      const isPublic =
+        (msg as { isPublic?: unknown }).isPublic === false ? false : true;
+      const created = createOfficialRoomWithSize(
+        widthTiles,
+        heightTiles,
+        rawName,
+        isPublic
+      );
+      if (!created.ok) {
+        wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "SYSTEM",
+            text: created.reason,
+            at: Date.now(),
+          } satisfies OutMsg);
+        return;
+      }
+      broadcastRoomCatalogToAll();
+      const spawnX = Math.floor((created.bounds.minX + created.bounds.maxX) / 2);
+      const spawnZ = Math.floor((created.bounds.minZ + created.bounds.maxZ) / 2);
+      teleportPlayer(conn, created.id, spawnX, spawnZ);
+      return;
+    }
+
     if (msg.type === "updateRoom") {
       const roomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
       if (isBuiltinRoomId(roomId)) {
@@ -2842,12 +3046,64 @@ export function addClient(
         broadcastRoomCatalogToAll();
         return;
       }
-      const patch: { displayName?: string; isPublic?: boolean } = {};
+      const patch: {
+        displayName?: string;
+        isPublic?: boolean;
+        backgroundHueDeg?: number | null;
+        backgroundNeutral?: RoomBackgroundNeutral | null;
+      } = {};
       if (msg.displayName !== undefined) {
         patch.displayName = String(msg.displayName);
       }
       if (msg.isPublic !== undefined) {
         patch.isPublic = Boolean(msg.isPublic);
+      }
+      if (msg.backgroundHueDeg !== undefined) {
+        const norm = normalizeBackgroundHuePatch(
+          (msg as { backgroundHueDeg?: unknown }).backgroundHueDeg
+        );
+        if (!norm.ok) {
+          wsSafeSend(ws, {
+              type: "chat",
+              from: "System",
+              fromAddress: "SYSTEM",
+              text: norm.reason,
+              at: Date.now(),
+            } satisfies OutMsg);
+          return;
+        }
+        patch.backgroundHueDeg = norm.hue;
+      }
+      if (msg.backgroundNeutral !== undefined) {
+        const nn = normalizeBackgroundNeutralPatch(
+          (msg as { backgroundNeutral?: unknown }).backgroundNeutral
+        );
+        if (!nn.ok) {
+          wsSafeSend(ws, {
+              type: "chat",
+              from: "System",
+              fromAddress: "SYSTEM",
+              text: nn.reason,
+              at: Date.now(),
+            } satisfies OutMsg);
+          return;
+        }
+        patch.backgroundNeutral = nn.neutral;
+      }
+      if (
+        patch.displayName === undefined &&
+        patch.isPublic === undefined &&
+        patch.backgroundHueDeg === undefined &&
+        patch.backgroundNeutral === undefined
+      ) {
+        wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "SYSTEM",
+            text: "Send a display name, public/private setting, and/or background options.",
+            at: Date.now(),
+          } satisfies OutMsg);
+        return;
       }
       const updated = updateDynamicRoomMetadata(
         roomId,
@@ -2866,6 +3122,19 @@ export function addClient(
         return;
       }
       broadcastRoomCatalogToAll();
+      if (
+        patch.backgroundHueDeg !== undefined ||
+        patch.backgroundNeutral !== undefined
+      ) {
+        const nR = normalizeRoomId(roomId);
+        const st = getDynamicRoomBackgroundState(nR);
+        broadcast(nR, {
+          type: "roomBackgroundHue",
+          roomId: nR,
+          hueDeg: st.hueDeg,
+          neutral: st.neutral,
+        });
+      }
       return;
     }
 
@@ -2975,7 +3244,8 @@ export function addClient(
         goalLayer,
         placed,
         extra,
-        currentRoomId
+        currentRoomId,
+        baseRemovedReadonly(currentRoomId)
       );
       if (!full || full.length === 0) {
         const recovered = findRecoveryTerrainPath(
@@ -3506,6 +3776,33 @@ export function addClient(
       const tz = Number(msg.z);
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
+      const k = tileKey(tile.x, tile.z);
+      if (isPlayerCreatedRoom(currentRoomId)) {
+        const rm = baseFloorRemovedEnsure(currentRoomId);
+        if (!rm.has(k)) return;
+        const placedRm = placedMap(currentRoomId);
+        if (placedRm.has(k)) return;
+        for (const c of room.values()) {
+          const st = snapToTile(c.player.x, c.player.z);
+          if (st.x === tile.x && st.z === tile.z) return;
+        }
+        rm.delete(k);
+        if (rm.size === 0) {
+          roomBaseFloorRemoved.delete(currentRoomId);
+        }
+        broadcast(currentRoomId, {
+          type: "removedBaseFloorDelta",
+          roomId: currentRoomId,
+          add: [],
+          remove: [k],
+        });
+        schedulePersistWorldState();
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "restore_base_floor", {
+          x: tile.x,
+          z: tile.z,
+        });
+        return;
+      }
       if (!canPlaceExtraFloor(currentRoomId, tile.x, tile.z)) return;
       for (const c of room.values()) {
         const st = snapToTile(c.player.x, c.player.z);
@@ -3539,26 +3836,54 @@ export function addClient(
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
       const ex = extraFloorSet(currentRoomId);
-      if (!ex.has(k)) return;
-      if (isBaseTile(tile.x, tile.z, currentRoomId)) return;
-      const placed = placedMap(currentRoomId);
-      if (placed.has(k)) return;
-      for (const c of room.values()) {
-        const st = snapToTile(c.player.x, c.player.z);
-        if (st.x === tile.x && st.z === tile.z) return;
+      if (ex.has(k)) {
+        if (isBaseTile(tile.x, tile.z, currentRoomId)) return;
+        const placed = placedMap(currentRoomId);
+        if (placed.has(k)) return;
+        for (const c of room.values()) {
+          const st = snapToTile(c.player.x, c.player.z);
+          if (st.x === tile.x && st.z === tile.z) return;
+        }
+        ex.delete(k);
+        broadcast(currentRoomId, {
+          type: "extraFloorDelta",
+          roomId: currentRoomId,
+          add: [],
+          remove: [k],
+        });
+        schedulePersistWorldState();
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_extra_floor", {
+          x: tile.x,
+          z: tile.z,
+        });
+        return;
       }
-      ex.delete(k);
-      broadcast(currentRoomId, {
-        type: "extraFloorDelta",
-        roomId: currentRoomId,
-        add: [],
-        remove: [k],
-      });
-      schedulePersistWorldState();
-      logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_extra_floor", {
-        x: tile.x,
-        z: tile.z,
-      });
+      if (
+        isPlayerCreatedRoom(currentRoomId) &&
+        isBaseTile(tile.x, tile.z, currentRoomId)
+      ) {
+        const rm = baseFloorRemovedEnsure(currentRoomId);
+        if (rm.has(k)) return;
+        const placedB = placedMap(currentRoomId);
+        if (placedB.has(k)) return;
+        for (const c of room.values()) {
+          const st = snapToTile(c.player.x, c.player.z);
+          if (st.x === tile.x && st.z === tile.z) return;
+        }
+        rm.add(k);
+        broadcast(currentRoomId, {
+          type: "removedBaseFloorDelta",
+          roomId: currentRoomId,
+          add: [k],
+          remove: [],
+        });
+        schedulePersistWorldState();
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_base_floor", {
+          x: tile.x,
+          z: tile.z,
+        });
+        return;
+      }
       return;
     }
 

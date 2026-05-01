@@ -22,6 +22,8 @@ const STATE_VERSION = 1 as const;
 type PersistedRoom = {
   obstacles: Array<{ tile: string; props: TerrainProps }>;
   extraFloor: string[];
+  /** Carved-out base tiles in custom rooms (tileKey "x,z"). */
+  removedBaseFloor?: string[];
   /** Last disconnect position; `y` is feet height (on block top or floor). */
   spawns: Record<string, { x: number; z: number; y?: number }>;
 };
@@ -36,6 +38,7 @@ type PersistedRoomGeometry = {
   roomId: string;
   obstacles: Array<{ tile: string; props: TerrainProps }>;
   extraFloor: string[];
+  removedBaseFloor?: string[];
 };
 
 type PersistedRoomSpawns = {
@@ -80,6 +83,7 @@ function writeJsonAtomically(filePath: string, payload: unknown): void {
 function loadLegacyWorldState(
   roomPlaced: Map<string, Map<string, TerrainProps>>,
   roomExtraFloor: Map<string, Set<string>>,
+  roomBaseFloorRemoved: Map<string, Set<string>>,
   lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
   normalizeRoomId: (id: string) => string
 ): void {
@@ -112,6 +116,9 @@ function loadLegacyWorldState(
 
       const ex = new Set<string>(room.extraFloor ?? []);
       roomExtraFloor.set(roomId, ex);
+
+      const rb = new Set<string>(room.removedBaseFloor ?? []);
+      roomBaseFloorRemoved.set(roomId, rb);
 
       const spawns = new Map<string, { x: number; z: number; y?: number }>();
       if (room.spawns && typeof room.spawns === "object") {
@@ -149,6 +156,7 @@ function hasSplitState(): boolean {
 function loadSplitWorldState(
   roomPlaced: Map<string, Map<string, TerrainProps>>,
   roomExtraFloor: Map<string, Set<string>>,
+  roomBaseFloorRemoved: Map<string, Set<string>>,
   lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
   normalizeRoomId: (id: string) => string
 ): void {
@@ -177,6 +185,10 @@ function loadSplitWorldState(
         }
         roomPlaced.set(roomId, placed);
         roomExtraFloor.set(roomId, new Set<string>(raw.extraFloor ?? []));
+        roomBaseFloorRemoved.set(
+          roomId,
+          new Set<string>(raw.removedBaseFloor ?? [])
+        );
       } catch (e) {
         console.error(`[world] failed to load room file ${filePath}`, e);
       }
@@ -219,6 +231,7 @@ const SAVE_DEBOUNCE_MS = 400;
 let refs: {
   roomPlaced: Map<string, Map<string, TerrainProps>>;
   roomExtraFloor: Map<string, Set<string>>;
+  roomBaseFloorRemoved: Map<string, Set<string>>;
   lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>;
   normalizeRoomId: (id: string) => string;
 } | null = null;
@@ -226,10 +239,11 @@ let refs: {
 export function registerWorldStateRefs(
   roomPlaced: Map<string, Map<string, TerrainProps>>,
   roomExtraFloor: Map<string, Set<string>>,
+  roomBaseFloorRemoved: Map<string, Set<string>>,
   lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
   normalizeRoomId: (id: string) => string
 ): void {
-  refs = { roomPlaced, roomExtraFloor, lastSpawnByRoom, normalizeRoomId };
+  refs = { roomPlaced, roomExtraFloor, roomBaseFloorRemoved, lastSpawnByRoom, normalizeRoomId };
 }
 
 /**
@@ -239,6 +253,7 @@ export function registerWorldStateRefs(
 export function loadWorldState(
   roomPlaced: Map<string, Map<string, TerrainProps>>,
   roomExtraFloor: Map<string, Set<string>>,
+  roomBaseFloorRemoved: Map<string, Set<string>>,
   lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
   normalizeRoomId: (id: string) => string
 ): void {
@@ -246,13 +261,20 @@ export function loadWorldState(
     loadSplitWorldState(
       roomPlaced,
       roomExtraFloor,
+      roomBaseFloorRemoved,
       lastSpawnByRoom,
       normalizeRoomId
     );
     console.log(`[world] loaded split state from ${ROOMS_DIR} + ${SPAWNS_DIR}`);
     return;
   }
-  loadLegacyWorldState(roomPlaced, roomExtraFloor, lastSpawnByRoom, normalizeRoomId);
+  loadLegacyWorldState(
+    roomPlaced,
+    roomExtraFloor,
+    roomBaseFloorRemoved,
+    lastSpawnByRoom,
+    normalizeRoomId
+  );
 }
 
 export function schedulePersistWorldState(): void {
@@ -278,11 +300,12 @@ export function flushPersistWorldStateSync(): void {
 
 function persistWorldStateNow(): void {
   if (!refs) return;
-  const { roomPlaced, roomExtraFloor, lastSpawnByRoom, normalizeRoomId } =
+  const { roomPlaced, roomExtraFloor, roomBaseFloorRemoved, lastSpawnByRoom, normalizeRoomId } =
     refs;
   const roomIds = new Set<string>();
   for (const k of roomPlaced.keys()) roomIds.add(k);
   for (const k of roomExtraFloor.keys()) roomIds.add(k);
+  for (const k of roomBaseFloorRemoved.keys()) roomIds.add(k);
   for (const k of lastSpawnByRoom.keys()) roomIds.add(k);
 
   ensureSplitDirs();
@@ -292,6 +315,7 @@ function persistWorldStateNow(): void {
   for (const roomId of roomIds) {
     const placed = roomPlaced.get(roomId);
     const ex = roomExtraFloor.get(roomId);
+    const rb = roomBaseFloorRemoved.get(roomId);
     const spawns = lastSpawnByRoom.get(roomId);
     const obstacles: PersistedRoom["obstacles"] = [];
     if (placed) {
@@ -300,6 +324,7 @@ function persistWorldStateNow(): void {
       }
     }
     const extraFloor = ex ? [...ex].sort() : [];
+    const removedBaseFloor = rb && rb.size > 0 ? [...rb].sort() : [];
     const spawnObj: Record<string, { x: number; z: number; y?: number }> = {};
     if (spawns) {
       for (const [addr, p] of spawns) {
@@ -313,6 +338,7 @@ function persistWorldStateNow(): void {
     if (
       obstacles.length === 0 &&
       extraFloor.length === 0 &&
+      removedBaseFloor.length === 0 &&
       Object.keys(spawnObj).length === 0
     ) {
       const normalized = normalizeRoomId(roomId);
@@ -324,13 +350,14 @@ function persistWorldStateNow(): void {
     }
 
     const normalizedRoomId = normalizeRoomId(roomId);
-    if (obstacles.length > 0 || extraFloor.length > 0) {
+    if (obstacles.length > 0 || extraFloor.length > 0 || removedBaseFloor.length > 0) {
       geometryRoomIds.add(normalizedRoomId);
       const payload: PersistedRoomGeometry = {
         version: STATE_VERSION,
         roomId: normalizedRoomId,
         obstacles,
         extraFloor,
+        ...(removedBaseFloor.length > 0 ? { removedBaseFloor } : {}),
       };
       writeJsonAtomically(roomFilePath(normalizedRoomId), payload);
     } else {

@@ -4,8 +4,10 @@ import {
   hslToRgb,
   nearestPaletteColorIdFromRgb,
 } from "../game/blockStyle.js";
-import type { ObstacleProps } from "../net/ws.js";
+import type { Game } from "../game/Game.js";
+import type { ObstacleProps, RoomBackgroundNeutral } from "../net/ws.js";
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../game/constants.js";
+import type { FloorTile } from "../game/grid.js";
 import { HUB_ROOM_ID, normalizeRoomId } from "../game/roomLayouts.js";
 import telegramIconUrl from "../assets/social/telegram.svg?url";
 import xIconUrl from "../assets/social/x.svg?url";
@@ -23,8 +25,35 @@ import {
 import { nimiqIconUseMarkup } from "./nimiqIcons.js";
 import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
+import { ringHueFromClient } from "./ringHuePick.js";
 
 const LS_HUD_CHAT_MINIMIZED = "nspace_hud_chat_minimized";
+
+/** Shape picker list (placement + object-edit popovers). Add new shapes here. */
+const SHAPE_PICKER_OPTIONS_HTML = `
+  <div class="build-block-bar-shape-popover__inner">
+    <div class="build-block-bar__popover-heading">Shape</div>
+    <div class="build-block-bar-shape-popover__options" role="group" aria-label="Block shape">
+      <button type="button" class="tile-inspector__shape-btn tile-inspector__shape-btn--active" data-shape="cube" aria-pressed="true" aria-label="Cube">
+        <svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6 12l10-5 10 5v10l-10 5-10-5V12zm0 0l10 5 10-5m-10 5v10"/></svg>
+        <span class="tile-inspector__shape-label">Cube</span>
+      </button>
+      <button type="button" class="tile-inspector__shape-btn" data-shape="hex" aria-pressed="false" aria-label="Hexagon">
+        <svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M16 5l9.5 5.5v11L16 27l-9.5-5.5v-11L16 5z"/></svg>
+        <span class="tile-inspector__shape-label">Hex</span>
+      </button>
+      <button type="button" class="tile-inspector__shape-btn" data-shape="ramp" aria-pressed="false" aria-label="Ramp">
+        <svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6 24h20l-8-16H6v16z"/></svg>
+        <span class="tile-inspector__shape-label">Ramp</span>
+      </button>
+    </div>
+  </div>`;
+
+const SHAPE_TRIG_SVG: Record<"cube" | "hex" | "ramp", string> = {
+  cube: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6 12l10-5 10 5v10l-10 5-10-5V12zm0 0l10 5 10-5m-10 5v10"/></svg>`,
+  hex: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M16 5l9.5 5.5v11L16 27l-9.5-5.5v-11L16 5z"/></svg>`,
+  ramp: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6 24h20l-8-16H6v16z"/></svg>`,
+};
 
 function cssHex(n: number): string {
   return `#${n.toString(16).padStart(6, "0")}`;
@@ -55,16 +84,8 @@ function estimateHueFromPaletteId(id: number): number {
   return estimateHueDegFromRgb(r, g, b);
 }
 
-function obstacleShapeLabel(ramp: boolean, hex: boolean): string {
-  if (ramp) return "Ramp";
-  if (hex) return "Hexagon";
-  return "Cube";
-}
-
-/** Inline SVGs for Walk / Build / Floor mode (circle buttons, labels via aria). */
-const HUD_MODE_ICON_WALK = `<svg class="hud-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="9" cy="17" rx="3.2" ry="5" fill="currentColor"/><ellipse cx="15.5" cy="15" rx="2.6" ry="4.2" fill="currentColor"/></svg>`;
+/** Inline SVG for Build mode toggle (label via text). */
 const HUD_MODE_ICON_BUILD = `<svg class="hud-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="6" width="14" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="1.8" d="M5 10h14M5 14h8m3 0h6"/></svg>`;
-const HUD_MODE_ICON_FLOOR = `<svg class="hud-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="8" height="8" rx="0.5" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 4v3M12 17v3M4 12h3M17 12h3"/></svg>`;
 
 function makeColorSwatchButton(id: number): HTMLButtonElement {
   const b = document.createElement("button");
@@ -123,10 +144,17 @@ export function createHud(
   showSelfEmojiMenu: (
     anchorX: number,
     anchorY: number,
-    onPick: (emoji: string) => void
+    onPick: (emoji: string) => void,
+    /** Snapped floor tile when opened; menu closes after the player walks to another tile. */
+    openedAtFloor?: FloorTile | null
   ) => void;
   hideSelfEmojiMenu: () => void;
-  setSelfEmojiMenuAnchor: (x: number, y: number) => void;
+  setSelfEmojiMenuAnchor: (
+    x: number | null,
+    y: number | null,
+    /** Current snapped floor tile (same frame as screen coords); closes menu if tile changed. */
+    currentFloor?: FloorTile | null
+  ) => void;
   isSelfEmojiMenuOpen: () => boolean;
   /** Context menu on another human player (right-click / long-press avatar). */
   showOtherPlayerContextMenu: (
@@ -153,7 +181,7 @@ export function createHud(
   onReturnToLobby: (fn: () => void) => void;
   /** Open the large Rooms browser (list / join / create). */
   onRoomsOpen: (fn: () => void) => void;
-  /** Walk = move; Build = place blocks; Floor = expand walkable tiles. */
+  /** Build toggle: walk off / on; on + Objects vs Room (dropdown) maps to build vs floor. */
   onPlayModeSelect: (fn: (mode: "walk" | "build" | "floor") => void) => void;
   setPlayModeState: (mode: "walk" | "build" | "floor") => void;
   /** Per-room edit caps from server welcome; disables Build / Floor when false. */
@@ -161,6 +189,18 @@ export function createHud(
     allowPlaceBlocks: boolean;
     allowExtraFloor: boolean;
   }) => void;
+  setRoomBackgroundHuePanelVisible: (visible: boolean) => void;
+  syncRoomBackgroundHueRing: (
+    hueDeg: number | null,
+    neutral: RoomBackgroundNeutral | null
+  ) => void;
+  onRoomBackgroundHueAdjust: (handlers: {
+    onHueDeg: (deg: number) => void;
+    onPointerUp: () => void;
+  }) => void;
+  onRoomBackgroundNeutralPick: (
+    fn: (neutral: RoomBackgroundNeutral) => void
+  ) => void;
   /** Rotate ramp “toward” (placement bar or object panel when ramp is on). */
   rotateRampToward: (delta: -1 | 1) => boolean;
   showObjectEditPanel: (
@@ -190,6 +230,8 @@ export function createHud(
             destRoomId: string;
             destX: number;
             destZ: number;
+            /** Room the player is standing in; pick-by-click only applies when destination room matches. */
+            currentRoomId: string;
             roomOptions: Array<{ id: string; displayName: string }>;
             onPickTileInCurrentRoom: () => void;
             onPickCancel: () => void;
@@ -261,6 +303,8 @@ export function createHud(
   /** Show or hide the in-game Reconnect control (e.g. after WebSocket loss). */
   setReconnectOffer: (visible: boolean) => void;
   onReconnect: (fn: () => void) => void;
+  /** Wire WebGL 1×1 tile previews; call after `new Game()` with the same instance (or `null` on teardown). */
+  bindTileInspectorPreviewGame: (game: Game | null) => void;
   destroy: () => void;
 } {
   root.innerHTML = "";
@@ -504,6 +548,7 @@ export function createHud(
   roomsBtn.innerHTML = `<span class="hud-rooms__inner"><span class="hud-rooms__text">Rooms</span>${nimiqIconUseMarkup("nq-caret-right-small", { width: 10, height: 10, class: "hud-rooms__caret" })}</span>`;
   roomsBtn.setAttribute("aria-label", "Rooms");
   roomsBtn.title = "Rooms — browse, join, or create";
+
   const setNimTipVisible = (show: boolean): void => {
     nimBalance.classList.toggle("hud-nim-balance--show-tip", show);
     syncHudStatTooltipViewport(nimBalance, nimBalanceTip, show);
@@ -737,63 +782,245 @@ export function createHud(
   const topActions = document.createElement("div");
   topActions.className = "hud-top-actions";
 
-  const modeSegment = document.createElement("div");
-  modeSegment.className = "hud-mode-segment";
-  modeSegment.setAttribute("role", "group");
-  modeSegment.setAttribute("aria-label", "Play mode");
-  const walkModeBtn = document.createElement("button");
-  walkModeBtn.type = "button";
-  walkModeBtn.className = "hud-mode-segment__btn";
-  walkModeBtn.dataset.mode = "walk";
-  walkModeBtn.innerHTML = HUD_MODE_ICON_WALK;
-  walkModeBtn.setAttribute("aria-label", "Walk — move around");
-  walkModeBtn.title = "Walk — move around (default)";
-  const buildModeBtn = document.createElement("button");
-  buildModeBtn.type = "button";
-  buildModeBtn.className = "hud-mode-segment__btn";
-  buildModeBtn.dataset.mode = "build";
-  buildModeBtn.innerHTML = HUD_MODE_ICON_BUILD;
-  buildModeBtn.setAttribute("aria-label", "Build — place and edit blocks");
-  buildModeBtn.title = "Build — place and edit blocks (B)";
-  const floorModeBtn = document.createElement("button");
-  floorModeBtn.type = "button";
-  floorModeBtn.className = "hud-mode-segment__btn";
-  floorModeBtn.dataset.mode = "floor";
-  floorModeBtn.innerHTML = HUD_MODE_ICON_FLOOR;
-  floorModeBtn.setAttribute("aria-label", "Floor — expand walkable tiles");
-  floorModeBtn.title = "Floor — expand walkable floor (F)";
+  const modeSidebar = document.createElement("aside");
+  modeSidebar.className = "hud-mode-sidebar";
+  modeSidebar.setAttribute("aria-label", "Play mode");
+
+  const modeTablist = document.createElement("div");
+  modeTablist.className = "hud-mode-sidebar__tabs";
+  modeTablist.setAttribute("aria-label", "Build mode");
+
+  const buildEditKindLabel = document.createElement("div");
+  buildEditKindLabel.className = "hud-mode-sidebar__edit-label";
+  buildEditKindLabel.textContent = "Edit";
+  buildEditKindLabel.hidden = true;
+
+  const buildEditKindWrap = document.createElement("div");
+  buildEditKindWrap.className = "hud-mode-sidebar__edit-kind-wrap";
+  buildEditKindWrap.hidden = true;
+  const buildEditKindSelect = document.createElement("select");
+  buildEditKindSelect.className = "hud-mode-sidebar__edit-kind-select";
+  buildEditKindSelect.id = "hud-build-edit-kind";
+  buildEditKindSelect.setAttribute("aria-label", "What to edit");
+  const buildEditOptObjects = document.createElement("option");
+  buildEditOptObjects.value = "objects";
+  buildEditOptObjects.textContent = "Objects";
+  const buildEditOptRoom = document.createElement("option");
+  buildEditOptRoom.value = "room";
+  buildEditOptRoom.textContent = "Room";
+  buildEditKindSelect.appendChild(buildEditOptObjects);
+  buildEditKindSelect.appendChild(buildEditOptRoom);
+  buildEditKindWrap.appendChild(buildEditKindSelect);
+
+  const buildToggleBtn = document.createElement("button");
+  buildToggleBtn.type = "button";
+  buildToggleBtn.className = "hud-mode-sidebar__tab hud-mode-sidebar__build-toggle";
+  buildToggleBtn.id = "hud-mode-tab-build";
+  buildToggleBtn.setAttribute("role", "button");
+  buildToggleBtn.setAttribute("aria-pressed", "false");
+  buildToggleBtn.innerHTML = `${HUD_MODE_ICON_BUILD}<span class="hud-mode-sidebar__tab-label">Build</span>`;
+  buildToggleBtn.setAttribute(
+    "aria-label",
+    "Build — on to edit objects or room; off to move"
+  );
+  buildToggleBtn.title = "Build — on to edit; off to move (B)";
+
+  const modeSidebarBody = document.createElement("div");
+  modeSidebarBody.className = "hud-mode-sidebar__body";
+  modeSidebarBody.id = "hud-mode-sidebar-panel";
+  modeSidebarBody.setAttribute("role", "tabpanel");
+  modeSidebarBody.setAttribute("aria-labelledby", "hud-mode-tab-build");
+  modeSidebarBody.setAttribute("aria-label", "Mode tools");
+
+  const modeSidebarBuildMount = document.createElement("div");
+  modeSidebarBuildMount.className = "hud-mode-sidebar__build-mount";
+  const hueDock = document.createElement("div");
+  hueDock.className = "hud-mode-sidebar__hue-dock";
+
+  const ROOM_BG_HUE_DEFAULT_RING = 198;
+  const roomBgHuePanel = document.createElement("div");
+  roomBgHuePanel.className = "hud-mode-sidebar__room-bg";
+  roomBgHuePanel.hidden = true;
+  const roomBgHueWrap = document.createElement("div");
+  roomBgHueWrap.className =
+    "build-block-bar__hue-ring-wrap hud-mode-sidebar__room-bg-hue-wrap";
+  const roomBgHueRing = document.createElement("div");
+  roomBgHueRing.className = "build-block-bar__hue-ring";
+  roomBgHueRing.setAttribute("role", "slider");
+  roomBgHueRing.setAttribute("tabindex", "0");
+  roomBgHueRing.setAttribute("aria-valuemin", "0");
+  roomBgHueRing.setAttribute("aria-valuemax", "359");
+  roomBgHueRing.setAttribute("aria-valuenow", String(ROOM_BG_HUE_DEFAULT_RING));
+  roomBgHueRing.setAttribute("aria-label", "Background hue");
+  const roomBgHueCore = document.createElement("div");
+  roomBgHueCore.className = "build-block-bar__hue-core";
+  roomBgHueCore.setAttribute("aria-hidden", "true");
+  roomBgHueWrap.appendChild(roomBgHueRing);
+  roomBgHueWrap.appendChild(roomBgHueCore);
+  roomBgHuePanel.appendChild(roomBgHueWrap);
+
+  const roomBgNeutralRow = document.createElement("div");
+  roomBgNeutralRow.className = "hud-mode-sidebar__room-bg-neutrals";
+  roomBgNeutralRow.setAttribute("role", "group");
+  roomBgNeutralRow.setAttribute("aria-label", "Solid background");
+  const roomBgNeutralBtns: Partial<
+    Record<RoomBackgroundNeutral, HTMLButtonElement>
+  > = {};
+  const neutralDefs: Array<{ id: RoomBackgroundNeutral; label: string }> = [
+    { id: "black", label: "Black" },
+    { id: "white", label: "White" },
+    { id: "gray", label: "Gray" },
+  ];
+  let roomBgNeutralPickHandler: ((n: RoomBackgroundNeutral) => void) | null =
+    null;
+  for (const { id, label } of neutralDefs) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `hud-mode-sidebar__room-bg-neutral hud-mode-sidebar__room-bg-neutral--${id}`;
+    b.setAttribute("aria-label", `${label} background`);
+    b.title = label;
+    b.dataset.neutral = id;
+    b.addEventListener("click", () => {
+      if (roomBgHuePanel.hidden) return;
+      roomBgNeutralPickHandler?.(id);
+    });
+    roomBgNeutralBtns[id] = b;
+    roomBgNeutralRow.appendChild(b);
+  }
+  roomBgHuePanel.appendChild(roomBgNeutralRow);
+
+  hueDock.appendChild(roomBgHuePanel);
+  modeSidebarBody.appendChild(modeSidebarBuildMount);
+  modeSidebarBody.appendChild(hueDock);
+
+  let roomBgHueDragging = false;
+  let roomBgHueInputHandler: ((deg: number) => void) | null = null;
+  let roomBgHueUpHandler: (() => void) | null = null;
+
+  function syncRoomBgHueCoreVisual(deg: number): void {
+    const ringDeg = Math.round(((deg % 360) + 360) % 360);
+    roomBgHueRing.setAttribute("aria-valuenow", String(ringDeg));
+    roomBgHueCore.style.background = `hsl(${ringDeg} 42% 11%)`;
+    for (const nd of neutralDefs) {
+      const btn = roomBgNeutralBtns[nd.id];
+      if (btn) {
+        btn.classList.remove("hud-mode-sidebar__room-bg-neutral--active");
+        btn.setAttribute("aria-pressed", "false");
+      }
+    }
+  }
+
+  function applyRoomBgPointerHue(ev: PointerEvent): void {
+    const hue = ringHueFromClient(roomBgHueRing, ev.clientX, ev.clientY);
+    if (hue === null) return;
+    const deg = Math.round(hue);
+    syncRoomBgHueCoreVisual(deg);
+    roomBgHueInputHandler?.(deg);
+  }
+
+  roomBgHueWrap.addEventListener("pointerdown", (e) => {
+    if (roomBgHuePanel.hidden) return;
+    roomBgHueDragging = true;
+    roomBgHueWrap.setPointerCapture(e.pointerId);
+    applyRoomBgPointerHue(e);
+  });
+  roomBgHueWrap.addEventListener("pointermove", (e) => {
+    if (!roomBgHueWrap.hasPointerCapture(e.pointerId)) return;
+    applyRoomBgPointerHue(e);
+  });
+  const releaseRoomBgCapture = (e: PointerEvent): void => {
+    if (!roomBgHueWrap.hasPointerCapture(e.pointerId)) return;
+    try {
+      roomBgHueWrap.releasePointerCapture(e.pointerId);
+    } catch {
+      /* */
+    }
+    roomBgHueDragging = false;
+    roomBgHueUpHandler?.();
+  };
+  roomBgHueWrap.addEventListener("pointerup", releaseRoomBgCapture);
+  roomBgHueWrap.addEventListener("pointercancel", releaseRoomBgCapture);
+
+  const modeSidebarHeader = document.createElement("div");
+  modeSidebarHeader.className = "hud-mode-sidebar__header";
+
+  const modeSidebarCollapseTab = document.createElement("button");
+  modeSidebarCollapseTab.type = "button";
+  modeSidebarCollapseTab.className =
+    "hud-mode-sidebar-edge-tab hud-mode-sidebar-collapse-tab";
+  modeSidebarCollapseTab.setAttribute("aria-label", "Hide play tools");
+  modeSidebarCollapseTab.title = "Hide play tools panel";
+  modeSidebarCollapseTab.innerHTML = nimiqIconUseMarkup("nq-caret-right-small", {
+    width: 14,
+    height: 14,
+    class: "hud-mode-sidebar-collapse-tab__icon",
+  });
+
   const feedbackBtn = document.createElement("button");
   feedbackBtn.type = "button";
   feedbackBtn.className = "nq-button-pill light-blue hud-mode-feedback";
   feedbackBtn.textContent = "Feedback";
   feedbackBtn.setAttribute("aria-label", "Send feedback");
   feedbackBtn.title = "Send feedback";
-  modeSegment.appendChild(feedbackBtn);
-  modeSegment.appendChild(walkModeBtn);
-  modeSegment.appendChild(buildModeBtn);
-  modeSegment.appendChild(floorModeBtn);
+  modeSidebarHeader.appendChild(feedbackBtn);
+
+  const modeSidebarReopenBtn = document.createElement("button");
+  modeSidebarReopenBtn.type = "button";
+  modeSidebarReopenBtn.className =
+    "hud-mode-sidebar-edge-tab hud-mode-sidebar-reopen";
+  modeSidebarReopenBtn.hidden = true;
+  modeSidebarReopenBtn.setAttribute("aria-label", "Show play tools");
+  modeSidebarReopenBtn.title = "Build tools";
+  modeSidebarReopenBtn.innerHTML = nimiqIconUseMarkup("nq-caret-right-small", {
+    width: 14,
+    height: 14,
+    class: "hud-mode-sidebar-reopen__icon",
+  });
+
+  function applyModeSidebarCollapsed(collapsed: boolean): void {
+    ui.classList.toggle("hud--mode-sidebar-collapsed", collapsed);
+    modeSidebarReopenBtn.hidden = !collapsed;
+  }
+
+  modeSidebarCollapseTab.addEventListener("click", () => {
+    applyModeSidebarCollapsed(true);
+  });
+  modeSidebarReopenBtn.addEventListener("click", () => {
+    applyModeSidebarCollapsed(false);
+  });
+
+  modeTablist.appendChild(buildEditKindLabel);
+  modeTablist.appendChild(buildEditKindWrap);
+  modeTablist.appendChild(buildToggleBtn);
+  modeSidebar.appendChild(modeSidebarCollapseTab);
+  modeSidebar.appendChild(modeSidebarHeader);
+  modeSidebar.appendChild(modeSidebarBody);
+  modeSidebar.appendChild(modeTablist);
 
   let roomAllowPlaceBlocks = true;
   let roomAllowExtraFloor = true;
   function applyRoomEditCaps(): void {
-    const showBuild = roomAllowPlaceBlocks;
-    const showFloor = roomAllowExtraFloor;
-    buildModeBtn.hidden = !showBuild;
-    floorModeBtn.hidden = !showFloor;
-    buildModeBtn.title = showBuild
-      ? "Build — place and edit blocks (B)"
-      : "Building is disabled in this room";
-    floorModeBtn.title = showFloor
-      ? "Floor — expand walkable floor (F)"
-      : "Floor editing is disabled in this room";
+    const showRail = roomAllowPlaceBlocks || roomAllowExtraFloor;
+    modeTablist.hidden = !showRail;
+    buildEditOptObjects.disabled = !roomAllowPlaceBlocks;
+    buildEditOptRoom.disabled = !roomAllowExtraFloor;
+    if (roomAllowPlaceBlocks && !roomAllowExtraFloor) {
+      buildEditKindSelect.value = "objects";
+    } else if (!roomAllowPlaceBlocks && roomAllowExtraFloor) {
+      buildEditKindSelect.value = "room";
+    }
+    buildToggleBtn.title = showRail
+      ? "Build — on to edit objects or room; off to move (B)"
+      : "Editing is disabled in this room";
   }
 
-  topActions.appendChild(modeSegment);
   // Keep signboard reading in the same top-right action stack as object edit.
   topActions.appendChild(signboardTooltip);
   topBar.appendChild(returnHubBtn);
   topBar.appendChild(topActions);
   ui.appendChild(topBar);
+  ui.appendChild(modeSidebar);
+  ui.appendChild(modeSidebarReopenBtn);
   letter.appendChild(portalEnterBtn);
 
   const SELF_QUICK_EMOJIS = ["👍", "❤️", "😂", "🎉", "😮"] as const;
@@ -803,7 +1030,13 @@ export function createHud(
   selfEmojiMenu.setAttribute("role", "menu");
   selfEmojiMenu.setAttribute("aria-label", "Quick emoji to chat");
   let selfEmojiPickHandler: ((emoji: string) => void) | null = null;
+  let selfEmojiOpenedFloor: FloorTile | null = null;
+  let selfEmojiAutoCloseTimer: ReturnType<typeof setTimeout> | null = null;
+  let selfEmojiFadeFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  const SELF_EMOJI_AUTO_CLOSE_MS = 5000;
+  const SELF_EMOJI_FADE_FALLBACK_MS = 700;
   let selfEmojiOutsideBound = false;
+  const selfEmojiOutsideCapture = true;
   const onSelfEmojiOutsidePointerDown = (e: PointerEvent): void => {
     if (selfEmojiMenu.hidden) return;
     if (selfEmojiMenu.contains(e.target as Node)) return;
@@ -812,21 +1045,77 @@ export function createHud(
   const onSelfEmojiEscape = (e: KeyboardEvent): void => {
     if (e.key === "Escape") closeSelfEmojiMenu();
   };
+  const onSelfEmojiFadeTransitionEnd = (ev: TransitionEvent): void => {
+    if (ev.propertyName !== "opacity") return;
+    if (!selfEmojiMenu.classList.contains("self-emoji-menu--auto-hiding")) return;
+    if (selfEmojiFadeFallbackTimer !== null) {
+      clearTimeout(selfEmojiFadeFallbackTimer);
+      selfEmojiFadeFallbackTimer = null;
+    }
+    selfEmojiMenu.removeEventListener("transitionend", onSelfEmojiFadeTransitionEnd);
+    selfEmojiMenu.classList.remove("self-emoji-menu--auto-hiding");
+    selfEmojiMenu.hidden = true;
+    selfEmojiPickHandler = null;
+    selfEmojiOpenedFloor = null;
+    unbindSelfEmojiOutside();
+  };
+  function clearSelfEmojiAutoCloseTimer(): void {
+    if (selfEmojiAutoCloseTimer !== null) {
+      clearTimeout(selfEmojiAutoCloseTimer);
+      selfEmojiAutoCloseTimer = null;
+    }
+  }
+  function clearSelfEmojiFadeFallbackTimer(): void {
+    if (selfEmojiFadeFallbackTimer !== null) {
+      clearTimeout(selfEmojiFadeFallbackTimer);
+      selfEmojiFadeFallbackTimer = null;
+    }
+  }
+  function armSelfEmojiAutoCloseFade(): void {
+    clearSelfEmojiAutoCloseTimer();
+    selfEmojiAutoCloseTimer = window.setTimeout(() => {
+      selfEmojiAutoCloseTimer = null;
+      if (selfEmojiMenu.hidden) return;
+      selfEmojiMenu.addEventListener("transitionend", onSelfEmojiFadeTransitionEnd);
+      clearSelfEmojiFadeFallbackTimer();
+      selfEmojiFadeFallbackTimer = window.setTimeout(() => {
+        selfEmojiFadeFallbackTimer = null;
+        if (selfEmojiMenu.hidden) return;
+        if (!selfEmojiMenu.classList.contains("self-emoji-menu--auto-hiding")) return;
+        selfEmojiMenu.removeEventListener("transitionend", onSelfEmojiFadeTransitionEnd);
+        selfEmojiMenu.classList.remove("self-emoji-menu--auto-hiding");
+        selfEmojiMenu.hidden = true;
+        selfEmojiPickHandler = null;
+        selfEmojiOpenedFloor = null;
+        unbindSelfEmojiOutside();
+      }, SELF_EMOJI_FADE_FALLBACK_MS);
+      selfEmojiMenu.classList.add("self-emoji-menu--auto-hiding");
+    }, SELF_EMOJI_AUTO_CLOSE_MS);
+  }
   function bindSelfEmojiOutside(): void {
     if (selfEmojiOutsideBound) return;
     selfEmojiOutsideBound = true;
-    window.addEventListener("pointerdown", onSelfEmojiOutsidePointerDown);
+    window.addEventListener("pointerdown", onSelfEmojiOutsidePointerDown, {
+      capture: selfEmojiOutsideCapture,
+    });
     window.addEventListener("keydown", onSelfEmojiEscape);
   }
   function unbindSelfEmojiOutside(): void {
     if (!selfEmojiOutsideBound) return;
     selfEmojiOutsideBound = false;
-    window.removeEventListener("pointerdown", onSelfEmojiOutsidePointerDown);
+    window.removeEventListener("pointerdown", onSelfEmojiOutsidePointerDown, {
+      capture: selfEmojiOutsideCapture,
+    });
     window.removeEventListener("keydown", onSelfEmojiEscape);
   }
   function closeSelfEmojiMenu(): void {
+    clearSelfEmojiAutoCloseTimer();
+    clearSelfEmojiFadeFallbackTimer();
+    selfEmojiMenu.removeEventListener("transitionend", onSelfEmojiFadeTransitionEnd);
+    selfEmojiMenu.classList.remove("self-emoji-menu--auto-hiding");
     selfEmojiMenu.hidden = true;
     selfEmojiPickHandler = null;
+    selfEmojiOpenedFloor = null;
     unbindSelfEmojiOutside();
   }
   for (const em of SELF_QUICK_EMOJIS) {
@@ -1713,30 +2002,31 @@ export function createHud(
   buildBlockBar.hidden = true;
   buildBlockBar.innerHTML = `
     <div class="build-block-bar__surface">
-      <div class="build-block-bar__surface-header">
-        <div class="build-block-bar__title">Blocks</div>
-        <button type="button" class="build-block-bar__advanced-toggle" aria-expanded="false" aria-controls="build-block-bar-advanced">Advanced</button>
-      </div>
-      <div class="build-block-bar__main-row">
-        <div class="build-block-bar__quick" aria-label="Block shape and color">
-          <div class="build-block-bar__shape-row" role="group" aria-label="Block shape">
-            <button type="button" class="build-block-bar__shape-btn build-block-bar__shape-btn--active" data-shape="cube" aria-pressed="true" aria-label="Cube" title="Cube">C</button>
-            <button type="button" class="build-block-bar__shape-btn" data-shape="hex" aria-pressed="false" aria-label="Hexagon" title="Hexagon">H</button>
-            <button type="button" class="build-block-bar__shape-btn" data-shape="ramp" aria-pressed="false" aria-label="Ramp" title="Ramp">R</button>
-          </div>
-          <div class="build-block-bar__hue-ring-wrap" title="Color — drag on ring (snaps to nearest preset)">
-            <div class="build-block-bar__hue-ring" role="slider" tabindex="0" aria-label="Block color" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0"></div>
-            <div class="build-block-bar__hue-core" aria-hidden="true"></div>
-          </div>
+      <div class="tile-inspector" id="tile-inspector-placement">
+        <p class="tile-inspector__head-hint" id="tile-inspector-head-hint" hidden></p>
+        <div class="tile-inspector__tool-row tile-inspector__toolbar">
+          <label class="tile-inspector__tool-label" for="tile-inspector-tool">Tool</label>
+          <select id="tile-inspector-tool" class="tile-inspector__tool-select" aria-label="Placement tool">
+            <option value="block" selected>Block</option>
+            <option value="signpost">Signpost</option>
+            <option value="teleporter">Teleporter</option>
+          </select>
         </div>
+        <div class="tile-inspector__section tile-inspector__section--block-only">
+          <div class="tile-inspector__section-head">Parameters</div>
+          <label class="tile-inspector__param" for="tile-inspector-height">
+            <span class="tile-inspector__param-label">Height</span>
+            <input type="range" id="tile-inspector-height" class="tile-inspector__slider" min="0" max="2" step="1" value="2" aria-valuetext="Full" />
+            <span class="tile-inspector__param-value" id="tile-inspector-height-val">1.0 m</span>
+          </label>
+        </div>
+        <div class="tile-inspector__section tile-inspector__section--block-only">
+          <button type="button" class="build-block-bar__advanced-toggle tile-inspector__advanced-link" aria-expanded="false" aria-controls="build-block-bar-advanced">Advanced…</button>
+        </div>
+        <button type="button" class="tile-inspector__reset-btn" id="tile-inspector-reset">Reset to defaults</button>
       </div>
       <input type="checkbox" class="build-block-bar__hex" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
       <input type="checkbox" class="build-block-bar__ramp" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
-      <div class="build-block-bar__tool-row" role="group" aria-label="Placement tool">
-        <button type="button" class="build-block-bar__tool-btn build-block-bar__tool-btn--active" data-tool="block">Block</button>
-        <button type="button" class="build-block-bar__tool-btn" data-tool="signpost">Signpost</button>
-        <button type="button" class="build-block-bar__tool-btn" data-tool="teleporter">Teleporter</button>
-      </div>
       <div class="build-block-bar__teleporter" id="build-block-bar-teleporter" hidden>
         <p class="build-block-bar__teleporter-hint">Click an empty walkable floor tile to place. Select the teleporter to set its destination (room and X/Z).</p>
       </div>
@@ -1751,12 +2041,6 @@ export function createHud(
   barAdvancedPopover.hidden = true;
   barAdvancedPopover.innerHTML = `
     <div class="build-block-bar-advanced__inner">
-      <div class="build-block-bar__popover-heading">Height</div>
-      <div class="build-block-bar__height-segment" role="radiogroup" aria-label="Block height">
-        <button type="button" class="build-block-bar__height-btn build-block-bar__height-btn--active" data-height="full" role="radio" aria-checked="true">Full</button>
-        <button type="button" class="build-block-bar__height-btn" data-height="half" role="radio" aria-checked="false">Half</button>
-        <button type="button" class="build-block-bar__height-btn" data-height="quarter" role="radio" aria-checked="false" title="Quarter height">¼</button>
-      </div>
       <div class="build-block-bar__ramp-dir-row build-block-bar__ramp-dir-row--popover" hidden>
         <span class="build-block-bar__ramp-dir-label">Ramp rotation</span>
         <div class="build-block-bar__ramp-dir-controls">
@@ -1781,12 +2065,104 @@ export function createHud(
 
   const bottomLeftStack = document.createElement("div");
   bottomLeftStack.className = "hud-bottom-left";
-  /* column-reverse: bottom = chat input, then chat log + tabs (build bar is bottom-right) */
+  /* column-reverse: bottom = chat input, then chat log + tabs */
   bottomLeftStack.appendChild(chatRow);
   bottomLeftStack.appendChild(chatPanel);
   ui.appendChild(bottomLeftStack);
-  ui.appendChild(buildBlockBar);
   ui.appendChild(barAdvancedPopover);
+
+  const barShapePopover = document.createElement("div");
+  barShapePopover.id = "build-block-bar-shape-popover";
+  barShapePopover.className = "build-block-bar-shape-popover";
+  barShapePopover.hidden = true;
+  barShapePopover.setAttribute("role", "dialog");
+  barShapePopover.setAttribute("aria-label", "Block shape");
+  barShapePopover.innerHTML = SHAPE_PICKER_OPTIONS_HTML;
+  ui.appendChild(barShapePopover);
+
+  const panelShapePopover = document.createElement("div");
+  panelShapePopover.id = "build-object-panel-shape-popover";
+  panelShapePopover.className =
+    "build-block-bar-shape-popover build-block-bar-shape-popover--dock-trigger";
+  panelShapePopover.hidden = true;
+  panelShapePopover.setAttribute("role", "dialog");
+  panelShapePopover.setAttribute("aria-label", "Block shape");
+  panelShapePopover.innerHTML = SHAPE_PICKER_OPTIONS_HTML;
+  ui.appendChild(panelShapePopover);
+
+  const barShapeColorRow = document.createElement("div");
+  barShapeColorRow.className =
+    "hud-mode-sidebar__shape-color-row hud-mode-sidebar__shape-color-row--placement";
+  barShapeColorRow.hidden = true;
+  const barShapeTrigger = document.createElement("button");
+  barShapeTrigger.type = "button";
+  barShapeTrigger.className = "hud-mode-sidebar__shape-trigger";
+  barShapeTrigger.title = "Block shape";
+  barShapeTrigger.setAttribute("aria-haspopup", "dialog");
+  barShapeTrigger.setAttribute("aria-expanded", "false");
+  barShapeTrigger.setAttribute("aria-controls", "build-block-bar-shape-popover");
+  barShapeTrigger.innerHTML = `<span class="hud-mode-sidebar__shape-trigger-icon" aria-hidden="true">${SHAPE_TRIG_SVG.cube}</span><span class="hud-mode-sidebar__shape-trigger-label">Cube</span>`;
+
+  const barHueRingWrap = document.createElement("div");
+  barHueRingWrap.className =
+    "build-block-bar__hue-ring-wrap hud-mode-sidebar__room-bg-hue-wrap";
+  barHueRingWrap.title = "Color — drag on ring (snaps to nearest preset)";
+  barHueRingWrap.innerHTML = `
+            <div class="build-block-bar__hue-ring" role="slider" tabindex="0" aria-label="Block color" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0"></div>
+            <div class="build-block-bar__hue-core" aria-hidden="true"></div>
+          `;
+  barShapeColorRow.appendChild(barShapeTrigger);
+  barShapeColorRow.appendChild(barHueRingWrap);
+  hueDock.appendChild(barShapeColorRow);
+
+  const hueDockBlockPreview = document.createElement("div");
+  hueDockBlockPreview.className = "hud-mode-sidebar__block-preview-dock";
+  hueDockBlockPreview.innerHTML = `
+    <div class="tile-inspector__section-head tile-inspector__section-head--dock">Preview</div>
+    <div id="tile-inspector-preview-placement-slot" class="hud-mode-sidebar__block-preview-slot">
+      <div class="tile-inspector__preview-box tile-inspector__preview-box--tile tile-inspector__preview-box--dock">
+        <canvas id="tile-inspector-preview-canvas" class="tile-inspector__preview-canvas" width="120" height="120" aria-hidden="true"></canvas>
+      </div>
+    </div>
+    <div id="tile-inspector-preview-selection-slot" class="hud-mode-sidebar__block-preview-slot" hidden>
+      <div class="tile-inspector__preview-box tile-inspector__preview-box--tile tile-inspector__preview-box--dock">
+        <canvas id="panel-tile-inspector-preview-canvas" class="tile-inspector__preview-canvas" width="120" height="120" aria-hidden="true"></canvas>
+      </div>
+    </div>
+  `;
+  hueDock.appendChild(hueDockBlockPreview);
+
+  /** Declared before build-bar init runs `syncBlockPreviewDockSlots` (avoids TDZ on `objectPanel`). */
+  let objectPanel: HTMLDivElement | null = null;
+  /** Block color ring docked in `.hud-mode-sidebar__hue-dock` while editing a placed tile. */
+  let panelDockHueWrap: HTMLElement | null = null;
+  /** Row: shape trigger + hue ring while editing a placed block. */
+  let panelShapeColorRow: HTMLElement | null = null;
+  let panelShapeTriggerEl: HTMLButtonElement | null = null;
+  let panelShapePopoverAbort: AbortController | null = null;
+
+  function syncBlockPreviewDockSlots(): void {
+    const pSlot = hueDockBlockPreview.querySelector(
+      "#tile-inspector-preview-placement-slot"
+    ) as HTMLElement | null;
+    const sSlot = hueDockBlockPreview.querySelector(
+      "#tile-inspector-preview-selection-slot"
+    ) as HTMLElement | null;
+    if (!pSlot || !sSlot) return;
+    const selectionOn =
+      objectPanel !== null &&
+      objectPanel.querySelector("#tile-inspector-selection") !== null;
+    const blockToolRail =
+      !buildBlockBar.hidden &&
+      !signpostModeActive &&
+      !teleporterModeActive;
+    pSlot.hidden = !blockToolRail || selectionOn;
+    sSlot.hidden = !selectionOn;
+    hueDockBlockPreview.hidden = pSlot.hidden && sSlot.hidden;
+  }
+
+  modeSidebarBuildMount.appendChild(buildBlockBar);
+  buildBlockBar.classList.add("build-block-bar--rail");
 
   const teleporterSection = buildBlockBar.querySelector(
     "#build-block-bar-teleporter"
@@ -1804,9 +2180,17 @@ export function createHud(
   objectPanelAdvancedPopover.hidden = true;
   ui.appendChild(objectPanelAdvancedPopover);
 
-  const barHeightBtns = Array.from(
-    barAdvancedPopover.querySelectorAll(".build-block-bar__height-btn")
-  ) as HTMLButtonElement[];
+  const objectPanelContextPopover = document.createElement("div");
+  objectPanelContextPopover.id = "build-object-panel-context";
+  objectPanelContextPopover.className = "build-object-panel-context";
+  objectPanelContextPopover.hidden = true;
+  objectPanelContextPopover.setAttribute("role", "dialog");
+  objectPanelContextPopover.setAttribute(
+    "aria-label",
+    "Selected object"
+  );
+  ui.appendChild(objectPanelContextPopover);
+
   const barClaimToggle = barAdvancedPopover.querySelector(
     ".build-block-bar__claim-toggle"
   ) as HTMLButtonElement;
@@ -1841,38 +2225,75 @@ export function createHud(
   const barAdvancedToggle = buildBlockBar.querySelector(
     ".build-block-bar__advanced-toggle"
   ) as HTMLButtonElement;
-  const barToolButtons = Array.from(buildBlockBar.querySelectorAll(".build-block-bar__tool-btn")) as HTMLButtonElement[];
+  const tileInspectorToolSelect = buildBlockBar.querySelector(
+    "#tile-inspector-tool"
+  ) as HTMLSelectElement;
   const barShapeBtns = Array.from(
-    buildBlockBar.querySelectorAll(".build-block-bar__shape-btn")
+    barShapePopover.querySelectorAll(".tile-inspector__shape-btn")
   ) as HTMLButtonElement[];
-  const barHueRingWrap = buildBlockBar.querySelector(
-    ".build-block-bar__hue-ring-wrap"
-  ) as HTMLElement;
-  const barHueRing = buildBlockBar.querySelector(
+  const barHueRing = barHueRingWrap.querySelector(
     ".build-block-bar__hue-ring"
   ) as HTMLElement;
-  const barHueCore = buildBlockBar.querySelector(
+  const barHueCore = barHueRingWrap.querySelector(
     ".build-block-bar__hue-core"
   ) as HTMLElement;
-  const barTitleEl = buildBlockBar.querySelector(
-    ".build-block-bar__title"
+  const tileInspectorRoot = buildBlockBar.querySelector(
+    ".tile-inspector"
   ) as HTMLElement;
+  const tileInspectorHeadHint = buildBlockBar.querySelector(
+    "#tile-inspector-head-hint"
+  ) as HTMLElement;
+  const tileInspectorHeightInput = buildBlockBar.querySelector(
+    "#tile-inspector-height"
+  ) as HTMLInputElement;
+  const tileInspectorHeightVal = buildBlockBar.querySelector(
+    "#tile-inspector-height-val"
+  ) as HTMLElement;
+  const tileInspectorResetBtn = buildBlockBar.querySelector(
+    "#tile-inspector-reset"
+  ) as HTMLButtonElement;
+  let inspectorPreviewGameRef: Game | null = null;
+
+  const barTitleEl = tileInspectorHeadHint;
+
+  function syncModeSidebarBodyInteractive(): void {
+    modeSidebarBody.classList.toggle(
+      "hud-mode-sidebar__body--interactive",
+      !roomBgHuePanel.hidden || !buildBlockBar.hidden || objectPanel !== null
+    );
+  }
+
+  function syncHueDockVisibility(): void {
+    /* Placement row = next block to paint; selection row = selected tile. Only one at a time. */
+    if (panelShapeColorRow !== null) {
+      barShapeColorRow.hidden = true;
+    } else {
+      barShapeColorRow.hidden = buildBlockBar.hidden;
+    }
+    const panelHueDocked =
+      panelShapeColorRow !== null && !panelShapeColorRow.hidden;
+    hueDock.hidden =
+      roomBgHuePanel.hidden && barShapeColorRow.hidden && !panelHueDocked;
+    syncBlockPreviewDockSlots();
+  }
 
   let lastHueDeg = 0;
 
   function refreshBuildBarTitle(): void {
-    if (!barTitleEl) return;
+    if (!tileInspectorHeadHint) return;
     if (teleporterModeActive) {
-      barTitleEl.textContent = "Teleporter";
+      tileInspectorHeadHint.textContent =
+        "Teleporter — choose an empty floor tile to place.";
+      tileInspectorHeadHint.hidden = false;
       return;
     }
     if (signpostModeActive) {
-      barTitleEl.textContent = "Place Signpost";
+      tileInspectorHeadHint.textContent =
+        "Signpost — tap a tile to add your message.";
+      tileInspectorHeadHint.hidden = false;
       return;
     }
-    if (barRampCb.checked) barTitleEl.textContent = "Ramp";
-    else if (barHexCb.checked) barTitleEl.textContent = "Hexagon";
-    else barTitleEl.textContent = "Cube";
+    tileInspectorHeadHint.hidden = true;
   }
 
   const signpostTextarea = signpostOverlay.querySelector(".signpost-overlay__textarea") as HTMLTextAreaElement;
@@ -1888,24 +2309,29 @@ export function createHud(
   /** Teleporter tool: place pending tiles; configure destination via object panel. */
   let teleporterModeActive = false;
 
-  function activateBuildToolButton(btn: HTMLButtonElement): void {
-    const raw = btn.dataset.tool;
-    const tool: "block" | "signpost" | "teleporter" =
-      raw === "signpost"
-        ? "signpost"
-        : raw === "teleporter"
-          ? "teleporter"
-          : "block";
+  function activateBuildTool(tool: "block" | "signpost" | "teleporter"): void {
+    setBarShapePopoverOpen(false);
     signpostModeActive = tool === "signpost";
     teleporterModeActive = tool === "teleporter";
     if (teleporterSection) {
       teleporterSection.hidden = !teleporterModeActive;
     }
-    barToolButtons.forEach((b) => {
-      b.classList.toggle("build-block-bar__tool-btn--active", b === btn);
-    });
+    if (tileInspectorToolSelect && tileInspectorToolSelect.value !== tool) {
+      tileInspectorToolSelect.value = tool;
+    }
     refreshBuildBarTitle();
+    if (tileInspectorRoot) {
+      tileInspectorRoot.classList.toggle(
+        "tile-inspector--minimal",
+        signpostModeActive || teleporterModeActive
+      );
+    }
+    if (tileInspectorResetBtn) {
+      tileInspectorResetBtn.hidden =
+        signpostModeActive || teleporterModeActive;
+    }
     buildToolChangeHandler?.(tool);
+    syncBlockPreviewDockSlots();
   }
 
   // Signpost textarea character counter
@@ -2407,11 +2833,15 @@ export function createHud(
     });
   }
 
-  // Tool selector (block / signpost / teleporter)
-  barToolButtons.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      activateBuildToolButton(btn);
-    });
+  tileInspectorToolSelect.addEventListener("change", () => {
+    const raw = tileInspectorToolSelect.value;
+    const tool: "block" | "signpost" | "teleporter" =
+      raw === "signpost"
+        ? "signpost"
+        : raw === "teleporter"
+          ? "teleporter"
+          : "block";
+    activateBuildTool(tool);
   });
 
   for (let i = 0; i < BLOCK_COLOR_COUNT; i++) {
@@ -2435,29 +2865,35 @@ export function createHud(
     claimable?: boolean;
   }) => void = (): void => {};
 
+  function syncTileInspectorHeightLabel(): void {
+    if (!tileInspectorHeightInput || !tileInspectorHeightVal) return;
+    const v = Math.min(2, Math.max(0, Math.floor(Number(tileInspectorHeightInput.value))));
+    /* Slider left = low slab, right = full height. */
+    const labelsM = ["0.25 m", "0.5 m", "1.0 m"] as const;
+    const labelsShort = ["¼", "Half", "Full"] as const;
+    tileInspectorHeightVal.textContent = labelsM[v] ?? "1.0 m";
+    tileInspectorHeightInput.setAttribute("aria-valuetext", labelsShort[v] ?? "Full");
+  }
+
   function syncBarHeightButtons(quarter: boolean, half: boolean): void {
-    barHeightBtns.forEach((b) => {
-      const h = b.dataset.height;
-      const on =
-        (h === "quarter" && quarter) ||
-        (h === "half" && !quarter && half) ||
-        (h === "full" && !quarter && !half);
-      b.classList.toggle("build-block-bar__height-btn--active", !!on);
-      b.setAttribute("aria-checked", on ? "true" : "false");
-    });
+    if (!tileInspectorHeightInput) return;
+    const v = quarter ? 0 : half ? 1 : 2;
+    tileInspectorHeightInput.value = String(v);
+    syncTileInspectorHeightLabel();
   }
 
   function layoutBarAdvancedPopover(): void {
     if (barAdvancedPopover.hidden || buildBlockBar.hidden) return;
-    const br = buildBlockBar.getBoundingClientRect();
     const margin = 8;
     const vw = document.documentElement.clientWidth;
     const vh = document.documentElement.clientHeight;
+    const sb = modeSidebar.getBoundingClientRect();
+    const rightPx = Math.max(margin, vw - sb.left + margin);
+    const br = buildBlockBar.getBoundingClientRect();
     const w = Math.min(260, Math.max(180, br.width));
     barAdvancedPopover.style.width = `${w}px`;
     barAdvancedPopover.style.maxWidth = `${Math.max(120, vw - 16)}px`;
-    const right = Math.max(0, vw - br.right);
-    barAdvancedPopover.style.right = `${right}px`;
+    barAdvancedPopover.style.right = `${rightPx}px`;
     barAdvancedPopover.style.left = "auto";
     const pr = barAdvancedPopover.getBoundingClientRect();
     let top = br.top - pr.height - margin;
@@ -2470,6 +2906,97 @@ export function createHud(
     barAdvancedPopover.style.bottom = "auto";
   }
 
+  function layoutBarShapePopover(): void {
+    if (barShapePopover.hidden) return;
+    const margin = 8;
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    const minTop = 52;
+    const sb = modeSidebar.getBoundingClientRect();
+    const rightPx = Math.max(margin, vw - sb.left + margin);
+    barShapePopover.style.width = `${Math.min(200, Math.max(160, 180))}px`;
+    barShapePopover.style.maxWidth = `${Math.max(120, vw - 16)}px`;
+    barShapePopover.style.right = `${rightPx}px`;
+    barShapePopover.style.left = "auto";
+    barShapePopover.style.bottom = "auto";
+    const tr = barShapeTrigger.getBoundingClientRect();
+    let top = tr.bottom + margin;
+    barShapePopover.style.top = `${top}px`;
+    let pr = barShapePopover.getBoundingClientRect();
+    if (pr.bottom > vh - margin) {
+      top = tr.top - pr.height - margin;
+      barShapePopover.style.top = `${top}px`;
+      pr = barShapePopover.getBoundingClientRect();
+    }
+    if (top < minTop) {
+      top = minTop;
+      barShapePopover.style.top = `${top}px`;
+      pr = barShapePopover.getBoundingClientRect();
+    }
+    if (pr.bottom > vh - margin) {
+      top = Math.max(minTop, vh - margin - pr.height);
+      barShapePopover.style.top = `${top}px`;
+    }
+  }
+
+  function layoutPanelShapePopover(): void {
+    if (panelShapePopover.hidden || !panelShapeTriggerEl) return;
+    const margin = 8;
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    const minTop = 52;
+    const sb = modeSidebar.getBoundingClientRect();
+    const rightPx = Math.max(margin, vw - sb.left + margin);
+    /* Match hue-dock shape trigger width (~44px) + chrome */
+    const tw = panelShapeTriggerEl.getBoundingClientRect().width || 44;
+    const compactW = Math.round(Math.min(56, Math.max(48, tw + 8)));
+    panelShapePopover.style.width = `${compactW}px`;
+    panelShapePopover.style.maxWidth = `${Math.min(compactW, vw - 16)}px`;
+    panelShapePopover.style.right = `${rightPx}px`;
+    panelShapePopover.style.left = "auto";
+    panelShapePopover.style.bottom = "auto";
+    const tr = panelShapeTriggerEl.getBoundingClientRect();
+    let top = tr.bottom + margin;
+    panelShapePopover.style.top = `${top}px`;
+    let pr = panelShapePopover.getBoundingClientRect();
+    if (pr.bottom > vh - margin) {
+      top = tr.top - pr.height - margin;
+      panelShapePopover.style.top = `${top}px`;
+      pr = panelShapePopover.getBoundingClientRect();
+    }
+    if (top < minTop) {
+      top = minTop;
+      panelShapePopover.style.top = `${top}px`;
+      pr = panelShapePopover.getBoundingClientRect();
+    }
+    if (pr.bottom > vh - margin) {
+      top = Math.max(minTop, vh - margin - pr.height);
+      panelShapePopover.style.top = `${top}px`;
+    }
+  }
+
+  function setBarShapePopoverOpen(open: boolean): void {
+    barShapePopover.hidden = !open;
+    barShapeTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      if (!barAdvancedPopover.hidden) setBarPopoverOpen(false);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => layoutBarShapePopover());
+      });
+    }
+  }
+
+  function setPanelShapePopoverOpen(open: boolean): void {
+    panelShapePopover.hidden = !open;
+    panelShapeTriggerEl?.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      if (!objectPanelAdvancedPopover.hidden) setPanelAdvancedOpen(false);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => layoutPanelShapePopover());
+      });
+    }
+  }
+
   function setBarPopoverOpen(open: boolean): void {
     barAdvancedPopover.hidden = !open;
     barAdvancedToggle.setAttribute("aria-expanded", open ? "true" : "false");
@@ -2478,26 +3005,26 @@ export function createHud(
       open
     );
     if (open) {
+      setBarShapePopoverOpen(false);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => layoutBarAdvancedPopover());
       });
     }
   }
 
-  barHeightBtns.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const h = btn.dataset.height;
-      if (h === "full") {
-        placementStyleHandler({ quarter: false, half: false });
-        syncBarHeightButtons(false, false);
-      } else if (h === "half") {
-        placementStyleHandler({ quarter: false, half: true });
-        syncBarHeightButtons(false, true);
-      } else if (h === "quarter") {
-        placementStyleHandler({ quarter: true, half: false });
-        syncBarHeightButtons(true, false);
-      }
-    });
+  tileInspectorHeightInput.addEventListener("input", () => {
+    const v = Math.min(2, Math.max(0, Math.floor(Number(tileInspectorHeightInput.value))));
+    if (v <= 0) {
+      placementStyleHandler({ quarter: true, half: false });
+      syncBarHeightButtons(true, false);
+    } else if (v === 1) {
+      placementStyleHandler({ quarter: false, half: true });
+      syncBarHeightButtons(false, true);
+    } else {
+      placementStyleHandler({ quarter: false, half: false });
+      syncBarHeightButtons(false, false);
+    }
+    syncTileInspectorHeightLabel();
   });
 
   barHexCb.addEventListener("change", () => {
@@ -2522,6 +3049,29 @@ export function createHud(
     syncBarShapeButtons();
   });
 
+  function syncBarShapeTriggerVisual(): void {
+    const ramp = barRampCb.checked;
+    const hex = barHexCb.checked && !ramp;
+    const shape: "cube" | "hex" | "ramp" = ramp ? "ramp" : hex ? "hex" : "cube";
+    const label = ramp ? "Ramp" : hex ? "Hex" : "Cube";
+    const lab = barShapeTrigger.querySelector(".hud-mode-sidebar__shape-trigger-label");
+    if (lab) lab.textContent = label;
+    const icon = barShapeTrigger.querySelector(".hud-mode-sidebar__shape-trigger-icon");
+    if (icon) icon.innerHTML = SHAPE_TRIG_SVG[shape];
+  }
+
+  function syncPanelShapeTriggerVisual(): void {
+    if (!panelShapeTriggerEl || !panelRampCb || !panelHexCb) return;
+    const ramp = panelRampCb.checked;
+    const hex = !ramp && panelHexCb.checked;
+    const shape: "cube" | "hex" | "ramp" = ramp ? "ramp" : hex ? "hex" : "cube";
+    const label = ramp ? "Ramp" : hex ? "Hex" : "Cube";
+    const lab = panelShapeTriggerEl.querySelector(".hud-mode-sidebar__shape-trigger-label");
+    if (lab) lab.textContent = label;
+    const icon = panelShapeTriggerEl.querySelector(".hud-mode-sidebar__shape-trigger-icon");
+    if (icon) icon.innerHTML = SHAPE_TRIG_SVG[shape];
+  }
+
   function syncBarShapeButtons(): void {
     const ramp = barRampCb.checked;
     const hex = barHexCb.checked && !ramp;
@@ -2532,10 +3082,22 @@ export function createHud(
         (shape === "cube" && cube) ||
         (shape === "hex" && hex) ||
         (shape === "ramp" && ramp);
-      b.classList.toggle("build-block-bar__shape-btn--active", !!on);
+      b.classList.toggle("tile-inspector__shape-btn--active", !!on);
       b.setAttribute("aria-pressed", on ? "true" : "false");
     });
     refreshBuildBarTitle();
+    if (tileInspectorRoot) {
+      tileInspectorRoot.classList.toggle(
+        "tile-inspector--minimal",
+        signpostModeActive || teleporterModeActive
+      );
+    }
+    if (tileInspectorResetBtn) {
+      tileInspectorResetBtn.hidden =
+        signpostModeActive || teleporterModeActive;
+    }
+    syncBarShapeTriggerVisual();
+    syncBlockPreviewDockSlots();
   }
 
   function applyHueDegrees(hueDeg: number): void {
@@ -2634,10 +3196,23 @@ export function createHud(
         placementStyleHandler({ ramp: true, hex: false });
       }
       syncBarShapeButtons();
+      setBarShapePopoverOpen(false);
     });
   });
 
+  barShapeTrigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setBarShapePopoverOpen(barShapePopover.hidden);
+  });
+  barShapeTrigger.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !barShapePopover.hidden) {
+      e.preventDefault();
+      setBarShapePopoverOpen(false);
+    }
+  });
+
   syncBarShapeButtons();
+  syncBlockPreviewDockSlots();
 
   let barColorsExpanded = false;
   barMoreColorsBtn.addEventListener("click", () => {
@@ -2648,6 +3223,9 @@ export function createHud(
       : "More colors";
     if (!barAdvancedPopover.hidden) {
       requestAnimationFrame(() => layoutBarAdvancedPopover());
+    }
+    if (!barShapePopover.hidden) {
+      requestAnimationFrame(() => layoutBarShapePopover());
     }
   });
 
@@ -2661,6 +3239,24 @@ export function createHud(
       e.preventDefault();
       setBarPopoverOpen(false);
     }
+  });
+
+  tileInspectorResetBtn.addEventListener("click", () => {
+    barHexCb.checked = false;
+    barRampCb.checked = false;
+    barRampDir = 0;
+    barRampDirRow.hidden = true;
+    placementStyleHandler({
+      quarter: false,
+      half: false,
+      hex: false,
+      ramp: false,
+      rampDir: 0,
+      colorId: 0,
+    });
+    syncBarHeightButtons(false, false);
+    syncBarShapeButtons();
+    applyHueDegrees(estimateHueFromPaletteId(0));
   });
 
   barClaimToggle.addEventListener("click", () => {
@@ -2736,22 +3332,63 @@ export function createHud(
   returnHubBtn.addEventListener("click", () => returnHubHandler());
   portalEnterBtn.addEventListener("click", () => portalEnterHandler());
   lobbyBtn.addEventListener("click", () => openLobbyConfirm());
-  walkModeBtn.addEventListener("click", () => playModeHandler("walk"));
-  buildModeBtn.addEventListener("click", () => playModeHandler("build"));
-  floorModeBtn.addEventListener("click", () => playModeHandler("floor"));
+  buildToggleBtn.addEventListener("click", () => {
+    const editOn = buildToggleBtn.getAttribute("aria-pressed") === "true";
+    if (editOn) {
+      playModeHandler("walk");
+      return;
+    }
+    const both = roomAllowPlaceBlocks && roomAllowExtraFloor;
+    if (both) {
+      playModeHandler(
+        buildEditKindSelect.value === "room" ? "floor" : "build"
+      );
+    } else if (roomAllowPlaceBlocks) {
+      playModeHandler("build");
+    } else {
+      playModeHandler("floor");
+    }
+  });
+
+  buildEditKindSelect.addEventListener("change", () => {
+    if (buildToggleBtn.getAttribute("aria-pressed") !== "true") return;
+    if (!roomAllowPlaceBlocks || !roomAllowExtraFloor) return;
+    playModeHandler(
+      buildEditKindSelect.value === "room" ? "floor" : "build"
+    );
+  });
+
+  /** Pixel height of `.hud-top-wrap` (strip + status); drives `--hud-below-top-wrap` so the mode rail meets the chrome. */
+  function syncHudBelowTopWrap(): void {
+    const h = topWrap.offsetHeight;
+    if (h > 0) {
+      ui.style.setProperty("--hud-below-top-wrap", `${h}px`);
+    }
+  }
 
   const ro = new ResizeObserver(() => {
     layoutLetterbox(frame, letter);
+    syncHudBelowTopWrap();
     layoutBarAdvancedPopover();
-    layoutObjectPanelAdvancedPopover();
+    layoutBarShapePopover();
+    layoutPanelShapePopover();
+    layoutObjectPanelSatellites();
   });
   ro.observe(frame);
+  ro.observe(topWrap);
+  ro.observe(modeSidebar);
 
   layoutLetterbox(frame, letter);
+  syncHudBelowTopWrap();
+  requestAnimationFrame(() => {
+    syncHudBelowTopWrap();
+    requestAnimationFrame(() => {
+      syncHudBelowTopWrap();
+    });
+  });
 
-  let objectPanel: HTMLDivElement | null = null;
-  let panelPassBtns: HTMLButtonElement[] = [];
-  let panelLockBtns: HTMLButtonElement[] = [];
+  let panelCollisionToggle: HTMLButtonElement | null = null;
+  let panelLockToggle: HTMLButtonElement | null = null;
   let lockOptionBlock: HTMLElement | null = null;
   /** When lock UI is hidden (non-admin), server lock state for emit. */
   let panelLockedState = false;
@@ -2763,10 +3400,6 @@ export function createHud(
   let panelRampRotCCW: HTMLButtonElement | null = null;
   let panelRampRotCW: HTMLButtonElement | null = null;
   let panelRampDir = 0;
-  let panelColorRoot: HTMLElement | null = null;
-  let panelSwatchesRecent: HTMLDivElement | null = null;
-  let panelSwatchesAll: HTMLDivElement | null = null;
-  let panelMoreColorsBtn: HTMLButtonElement | null = null;
   let panelAdvancedToggle: HTMLButtonElement | null = null;
   let panelSelectedColorId = 0;
   let panelOnPropsChange: ((p: ObstacleProps) => void) | null = null;
@@ -2774,48 +3407,71 @@ export function createHud(
   let panelHueRingWrap: HTMLElement | null = null;
   let panelHueRing: HTMLElement | null = null;
   let panelHueCore: HTMLElement | null = null;
-  let panelTitleTextEl: HTMLElement | null = null;
-  let panelEditX = 0;
-  let panelEditZ = 0;
+  let panelTileInspectorHeightInput: HTMLInputElement | null = null;
+  let panelTileInspectorHeightVal: HTMLElement | null = null;
+  let panelTileInspectorResetBtn: HTMLButtonElement | null = null;
   let teleporterPanelCleanup: (() => void) | null = null;
   let panelTeleporterRoomSel: HTMLSelectElement | null = null;
   let panelTeleporterX: HTMLInputElement | null = null;
   let panelTeleporterZ: HTMLInputElement | null = null;
   let applyTeleporterHubUi: (() => void) | null = null;
 
-  function layoutObjectPanelAdvancedPopover(): void {
-    if (objectPanelAdvancedPopover.hidden) return;
-    if (!objectPanel || !panelAdvancedToggle) return;
+  /** Context card + object Advanced popover — fixed just left of the mode sidebar rail. */
+  function layoutObjectPanelSatellites(): void {
+    if (!objectPanel) return;
     const margin = 8;
     const vw = document.documentElement.clientWidth;
     const vh = document.documentElement.clientHeight;
-    const panelBr = objectPanel.getBoundingClientRect();
-    const w = Math.min(260, Math.max(200, Math.min(panelBr.width + 40, 280)));
-    objectPanelAdvancedPopover.style.width = `${w}px`;
-    objectPanelAdvancedPopover.style.maxWidth = `${Math.max(120, vw - 16)}px`;
-    const right = Math.max(0, vw - panelBr.right);
-    objectPanelAdvancedPopover.style.right = `${right}px`;
-    objectPanelAdvancedPopover.style.left = "auto";
     const minTop = 52;
-    /* Prefer below the object card; measure after width so height is stable */
-    objectPanelAdvancedPopover.style.top = `${panelBr.bottom + margin}px`;
-    objectPanelAdvancedPopover.style.bottom = "auto";
-    let top = panelBr.bottom + margin;
-    let pr = objectPanelAdvancedPopover.getBoundingClientRect();
-    if (pr.bottom > vh - margin) {
-      top = panelBr.top - pr.height - margin;
-      objectPanelAdvancedPopover.style.top = `${top}px`;
-      pr = objectPanelAdvancedPopover.getBoundingClientRect();
+    const sb = modeSidebar.getBoundingClientRect();
+    const rightPx = Math.max(margin, vw - sb.left + margin);
+
+    if (!objectPanelContextPopover.hidden) {
+      objectPanelContextPopover.style.right = `${rightPx}px`;
+      objectPanelContextPopover.style.left = "auto";
+      objectPanelContextPopover.style.top = "auto";
+      const letterBr = letter.getBoundingClientRect();
+      /* Align bottom edge with letterbox (game area); min gap from viewport when flush. */
+      const bottomPx = Math.max(6, vh - letterBr.bottom);
+      objectPanelContextPopover.style.bottom = `${bottomPx}px`;
     }
-    if (top < minTop) {
-      top = minTop;
-      objectPanelAdvancedPopover.style.top = `${top}px`;
-      pr = objectPanelAdvancedPopover.getBoundingClientRect();
+
+    if (!objectPanelAdvancedPopover.hidden && panelAdvancedToggle) {
+      const panelBr = objectPanel.getBoundingClientRect();
+      const w = Math.min(260, Math.max(200, Math.min(panelBr.width + 40, 280)));
+      objectPanelAdvancedPopover.style.width = `${w}px`;
+      objectPanelAdvancedPopover.style.maxWidth = `${Math.max(120, vw - 16)}px`;
+      objectPanelAdvancedPopover.style.right = `${rightPx}px`;
+      objectPanelAdvancedPopover.style.left = "auto";
+      const advBr = panelAdvancedToggle.getBoundingClientRect();
+      /* Prefer opening above the Advanced control (bottom of popover just under toggle top). */
+      const gap = margin;
+      const bottomFromViewportBottom = vh - advBr.top + gap;
+      objectPanelAdvancedPopover.style.bottom = `${bottomFromViewportBottom}px`;
+      objectPanelAdvancedPopover.style.top = "auto";
+      let pr = objectPanelAdvancedPopover.getBoundingClientRect();
+      if (pr.top < minTop) {
+        objectPanelAdvancedPopover.style.bottom = "auto";
+        let top = advBr.bottom + gap;
+        if (!objectPanelContextPopover.hidden) {
+          const cbr = objectPanelContextPopover.getBoundingClientRect();
+          if (top < cbr.bottom + gap) top = cbr.bottom + gap;
+        }
+        if (top < minTop) top = minTop;
+        objectPanelAdvancedPopover.style.top = `${top}px`;
+        pr = objectPanelAdvancedPopover.getBoundingClientRect();
+        if (pr.bottom > vh - margin) {
+          top = Math.max(minTop, vh - margin - pr.height);
+          objectPanelAdvancedPopover.style.top = `${top}px`;
+        }
+      }
     }
-    if (pr.bottom > vh - margin) {
-      top = Math.max(minTop, vh - margin - pr.height);
-      objectPanelAdvancedPopover.style.top = `${top}px`;
-    }
+  }
+
+  function layoutObjectPanelAdvancedPopover(): void {
+    if (objectPanelAdvancedPopover.hidden) return;
+    if (!objectPanel || !panelAdvancedToggle) return;
+    layoutObjectPanelSatellites();
   }
 
   function setPanelAdvancedOpen(open: boolean): void {
@@ -2828,6 +3484,7 @@ export function createHud(
       );
     }
     if (open) {
+      setPanelShapePopoverOpen(false);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => layoutObjectPanelAdvancedPopover());
       });
@@ -2837,12 +3494,47 @@ export function createHud(
   const closeHudAdvancedPopoversOnOutside = (ev: PointerEvent): void => {
     const t = ev.target as Node;
     if (!barAdvancedPopover.hidden) {
-      if (buildBlockBar.contains(t) || barAdvancedPopover.contains(t)) return;
+      if (
+        buildBlockBar.contains(t) ||
+        barAdvancedPopover.contains(t) ||
+        hueDock.contains(t) ||
+        modeSidebarBuildMount.contains(t)
+      ) {
+        return;
+      }
       setBarPopoverOpen(false);
+    }
+    if (!barShapePopover.hidden) {
+      if (
+        barShapeColorRow.contains(t) ||
+        barShapePopover.contains(t) ||
+        buildBlockBar.contains(t) ||
+        barAdvancedPopover.contains(t) ||
+        hueDock.contains(t) ||
+        modeSidebarBuildMount.contains(t)
+      ) {
+        return;
+      }
+      setBarShapePopoverOpen(false);
+    }
+    if (!panelShapePopover.hidden) {
+      if (
+        (panelShapeColorRow && panelShapeColorRow.contains(t)) ||
+        panelShapePopover.contains(t) ||
+        (objectPanel && objectPanel.contains(t)) ||
+        objectPanelContextPopover.contains(t) ||
+        objectPanelAdvancedPopover.contains(t) ||
+        hueDock.contains(t) ||
+        modeSidebarBuildMount.contains(t)
+      ) {
+        return;
+      }
+      setPanelShapePopoverOpen(false);
     }
     if (!objectPanelAdvancedPopover.hidden) {
       if (
         (objectPanel && objectPanel.contains(t)) ||
+        objectPanelContextPopover.contains(t) ||
         objectPanelAdvancedPopover.contains(t)
       ) {
         return;
@@ -2852,15 +3544,23 @@ export function createHud(
   };
   document.addEventListener("pointerdown", closeHudAdvancedPopoversOnOutside);
 
-  function refreshObjectPanelTitle(): void {
-    if (!panelTitleTextEl || !panelRampCb || !panelHexCb) return;
-    const ramp = panelRampCb.checked;
-    const hex = ramp ? false : panelHexCb.checked;
-    panelTitleTextEl.textContent = `${obstacleShapeLabel(ramp, hex)} (${panelEditX}, ${panelEditZ})`;
+  function syncPanelTileHeightLabel(): void {
+    if (!panelTileInspectorHeightInput || !panelTileInspectorHeightVal) return;
+    const v = Math.min(
+      2,
+      Math.max(0, Math.floor(Number(panelTileInspectorHeightInput.value)))
+    );
+    const labelsM = ["0.25 m", "0.5 m", "1.0 m"] as const;
+    const labelsShort = ["¼", "Half", "Full"] as const;
+    panelTileInspectorHeightVal.textContent = labelsM[v] ?? "1.0 m";
+    panelTileInspectorHeightInput.setAttribute(
+      "aria-valuetext",
+      labelsShort[v] ?? "Full"
+    );
   }
 
   function syncPanelHeightButtons(quarter: boolean, half: boolean): void {
-    panelHeightBtns.forEach((b) => {
+    for (const b of panelHeightBtns) {
       const h = b.dataset.height;
       const on =
         (h === "quarter" && quarter) ||
@@ -2868,7 +3568,17 @@ export function createHud(
         (h === "full" && !quarter && !half);
       b.classList.toggle("build-block-bar__height-btn--active", !!on);
       b.setAttribute("aria-checked", on ? "true" : "false");
-    });
+    }
+    if (panelTileInspectorHeightInput) {
+      const v = quarter ? 0 : half ? 1 : 2;
+      panelTileInspectorHeightInput.value = String(v);
+      syncPanelTileHeightLabel();
+    }
+  }
+
+  function refreshPanelWireframe(): void {
+    const next = buildLivePanelObstacleProps();
+    if (next) inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(next);
   }
 
   function syncPanelShapeButtons(): void {
@@ -2882,108 +3592,117 @@ export function createHud(
         (shape === "cube" && cube) ||
         (shape === "hex" && hex) ||
         (shape === "ramp" && ramp);
-      b.classList.toggle("build-block-bar__shape-btn--active", !!on);
+      b.classList.toggle("tile-inspector__shape-btn--active", !!on);
       b.setAttribute("aria-pressed", on ? "true" : "false");
     });
-    refreshObjectPanelTitle();
+    refreshPanelWireframe();
+    syncPanelShapeTriggerVisual();
   }
 
-  function syncPanelPassButtons(passable: boolean): void {
-    panelPassBtns.forEach((b) => {
-      const on =
-        (b.dataset.collision === "pass" && passable) ||
-        (b.dataset.collision === "solid" && !passable);
-      b.classList.toggle("build-block-bar__height-btn--active", !!on);
-      b.setAttribute("aria-checked", on ? "true" : "false");
-    });
+  function panelCollisionToggleIconMarkup(passable: boolean): string {
+    return passable
+      ? nimiqIconUseMarkup("nq-view-off", {
+          width: 18,
+          height: 18,
+          class: "build-object-panel-adv__icon-toggle-svg",
+        })
+      : nimiqIconUseMarkup("nq-hexagon", {
+          width: 18,
+          height: 18,
+          class: "build-object-panel-adv__icon-toggle-svg",
+        });
   }
 
-  function syncPanelLockButtons(locked: boolean): void {
-    panelLockBtns.forEach((b) => {
-      const on =
-        (b.dataset.lock === "true" && locked) ||
-        (b.dataset.lock === "false" && !locked);
-      b.classList.toggle("build-block-bar__height-btn--active", !!on);
-      b.setAttribute("aria-checked", on ? "true" : "false");
-    });
+  function panelLockToggleIconMarkup(locked: boolean): string {
+    return locked
+      ? nimiqIconUseMarkup("nq-lock-locked", {
+          width: 18,
+          height: 18,
+          class: "build-object-panel-adv__icon-toggle-svg",
+        })
+      : nimiqIconUseMarkup("nq-lock-unlocked", {
+          width: 18,
+          height: 18,
+          class: "build-object-panel-adv__icon-toggle-svg",
+        });
+  }
+
+  function syncPanelCollisionToggle(passable: boolean): void {
+    if (!panelCollisionToggle) return;
+    panelCollisionToggle.setAttribute("aria-pressed", passable ? "true" : "false");
+    panelCollisionToggle.classList.toggle(
+      "build-object-panel-adv__icon-toggle--passable",
+      passable
+    );
+    panelCollisionToggle.innerHTML = panelCollisionToggleIconMarkup(passable);
+    panelCollisionToggle.title = passable
+      ? "Walk-through — click for solid (collision)"
+      : "Solid — click for walk-through (no collision)";
+    panelCollisionToggle.setAttribute(
+      "aria-label",
+      passable
+        ? "No collision, walk-through. Activate for solid collision."
+        : "Solid collision. Activate for walk-through."
+    );
+  }
+
+  function syncPanelLockToggle(locked: boolean): void {
+    if (!panelLockToggle) return;
+    panelLockToggle.setAttribute("aria-pressed", locked ? "true" : "false");
+    panelLockToggle.classList.toggle(
+      "build-object-panel-adv__icon-toggle--locked",
+      locked
+    );
+    panelLockToggle.innerHTML = panelLockToggleIconMarkup(locked);
+    panelLockToggle.title = locked
+      ? "Locked — click to unlock"
+      : "Unlocked — click to lock";
+    panelLockToggle.setAttribute(
+      "aria-label",
+      locked ? "Locked for players. Activate to unlock." : "Unlocked. Activate to lock."
+    );
   }
 
   function getPanelPassable(): boolean {
-    return panelPassBtns.some(
-      (b) =>
-        b.dataset.collision === "pass" &&
-        b.classList.contains("build-block-bar__height-btn--active")
-    );
+    return panelCollisionToggle?.getAttribute("aria-pressed") === "true";
   }
 
   function getPanelLocked(): boolean {
-    if (lockOptionBlock?.hidden) return panelLockedState;
-    return panelLockBtns.some(
-      (b) =>
-        b.dataset.lock === "true" &&
-        b.classList.contains("build-block-bar__height-btn--active")
-    );
+    if (!panelLockToggle || lockOptionBlock?.hidden) return panelLockedState;
+    return panelLockToggle.getAttribute("aria-pressed") === "true";
   }
 
-  function wirePanelColorClicks(): void {
-    panelColorRoot?.addEventListener("click", onPanelColorClick);
-  }
-
-  function unwirePanelColorClicks(): void {
-    panelColorRoot?.removeEventListener("click", onPanelColorClick);
-  }
-
-  function onPanelColorClick(ev: MouseEvent): void {
-    const t = ev.target as HTMLElement;
-    const btn = t.closest(".block-color-swatch") as HTMLButtonElement | null;
-    if (
-      !btn ||
-      (!objectPanel?.contains(btn) &&
-        !objectPanelAdvancedPopover.contains(btn))
-    ) {
-      return;
+  function buildLivePanelObstacleProps(): ObstacleProps | null {
+    if (!panelCollisionToggle || !panelHexCb || !panelRampCb) {
+      return null;
     }
-    const id = Number(btn.dataset.colorId);
-    if (!Number.isFinite(id)) return;
-    panelSelectedColorId = id;
-    const ids = pushRecentColorId(id);
-    if (panelSwatchesRecent) {
-      panelSwatchesRecent.replaceChildren();
-      for (const rid of ids) {
-        panelSwatchesRecent.appendChild(makeColorSwatchButton(rid));
-      }
+    let quarter = false;
+    let half = false;
+    if (panelTileInspectorHeightInput) {
+      const v = Math.min(
+        2,
+        Math.max(0, Math.floor(Number(panelTileInspectorHeightInput.value)))
+      );
+      quarter = v <= 0;
+      half = v === 1;
+    } else if (panelHeightBtns.length > 0) {
+      quarter = panelHeightBtns.some(
+        (b) =>
+          b.dataset.height === "quarter" &&
+          b.classList.contains("build-block-bar__height-btn--active")
+      );
+      const halfMode = panelHeightBtns.some(
+        (b) =>
+          b.dataset.height === "half" &&
+          b.classList.contains("build-block-bar__height-btn--active")
+      );
+      half = quarter ? false : halfMode;
+    } else {
+      return null;
     }
-    syncPanelSwatchSelection();
-    syncPanelHueVisualFromColorId(panelSelectedColorId);
-    emitPanelProps();
-  }
-
-  function emitPanelProps(): void {
-    if (
-      !panelOnPropsChange ||
-      panelPassBtns.length === 0 ||
-      !panelHexCb ||
-      !panelRampCb ||
-      panelHeightBtns.length === 0
-    ) {
-      return;
-    }
-    const quarter = panelHeightBtns.some(
-      (b) =>
-        b.dataset.height === "quarter" &&
-        b.classList.contains("build-block-bar__height-btn--active")
-    );
-    const halfMode = panelHeightBtns.some(
-      (b) =>
-        b.dataset.height === "half" &&
-        b.classList.contains("build-block-bar__height-btn--active")
-    );
-    const half = quarter ? false : halfMode;
     const ramp = panelRampCb.checked;
     const rampDir = Math.max(0, Math.min(3, Math.floor(panelRampDir)));
-    const locked = getPanelLocked();
-
-    panelOnPropsChange({
+    return {
       passable: getPanelPassable(),
       quarter,
       half,
@@ -2991,10 +3710,50 @@ export function createHud(
       ramp,
       rampDir: ramp ? rampDir : 0,
       colorId: panelSelectedColorId,
-      locked,
-    });
-    refreshObjectPanelTitle();
+      locked: getPanelLocked(),
+    };
   }
+
+  function emitPanelProps(): void {
+    if (!panelOnPropsChange) return;
+    const next = buildLivePanelObstacleProps();
+    if (!next) return;
+    panelOnPropsChange(next);
+    inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(next);
+  }
+
+  panelShapePopover.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest(
+      ".tile-inspector__shape-btn"
+    ) as HTMLButtonElement | null;
+    if (!btn || !panelShapePopover.contains(btn)) return;
+    if (
+      !objectPanel?.querySelector("#tile-inspector-selection") ||
+      !panelRampCb ||
+      !panelHexCb
+    ) {
+      return;
+    }
+    const shape = btn.dataset.shape;
+    if (shape === "cube") {
+      panelHexCb.checked = false;
+      panelRampCb.checked = false;
+      if (rampDirRow) rampDirRow.hidden = true;
+      emitPanelProps();
+    } else if (shape === "hex") {
+      panelHexCb.checked = true;
+      panelRampCb.checked = false;
+      if (rampDirRow) rampDirRow.hidden = true;
+      emitPanelProps();
+    } else if (shape === "ramp") {
+      panelRampCb.checked = true;
+      panelHexCb.checked = false;
+      if (rampDirRow) rampDirRow.hidden = false;
+      emitPanelProps();
+    }
+    syncPanelShapeButtons();
+    setPanelShapePopoverOpen(false);
+  });
 
   function applyPanelHueDegrees(hueDeg: number): void {
     if (!panelHueRing || !panelHueCore) return;
@@ -3004,14 +3763,7 @@ export function createHud(
     const { r, g, b } = hslToRgb(h / 360, 0.92, 0.48);
     const id = nearestPaletteColorIdFromRgb(r, g, b);
     panelSelectedColorId = id;
-    if (panelSwatchesRecent) {
-      const ids = pushRecentColorId(id);
-      panelSwatchesRecent.replaceChildren();
-      for (const rid of ids) {
-        panelSwatchesRecent.appendChild(makeColorSwatchButton(rid));
-      }
-    }
-    syncPanelSwatchSelection();
+    pushRecentColorId(id);
     const sid = Math.max(
       0,
       Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(id))
@@ -3031,24 +3783,18 @@ export function createHud(
     panelHueCore.style.background = cssHex(BLOCK_COLOR_PALETTE[sid]!);
   }
 
-  function syncPanelSwatchSelection(): void {
-    if (!panelColorRoot) return;
-    const buttons = panelColorRoot.querySelectorAll(".block-color-swatch");
-    buttons.forEach((node) => {
-      const el = node as HTMLButtonElement;
-      const id = Number(el.dataset.colorId);
-      el.classList.toggle(
-        "block-color-swatch--selected",
-        id === panelSelectedColorId
-      );
-    });
-  }
-
   function hideObjectEditPanel(): void {
-    unwirePanelColorClicks();
+    inspectorPreviewGameRef?.bindInspectorTilePreviewCanvas("selection", null);
+    inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(null);
     setPanelAdvancedOpen(false);
+    setPanelShapePopoverOpen(false);
     objectPanelAdvancedPopover.replaceChildren();
     objectPanelAdvancedPopover.hidden = true;
+    objectPanelContextPopover.hidden = true;
+    objectPanelContextPopover.replaceChildren();
+    objectPanelContextPopover.classList.remove(
+      "build-object-panel-context--teleporter"
+    );
     teleporterPanelCleanup?.();
     teleporterPanelCleanup = null;
     panelTeleporterRoomSel = null;
@@ -3058,28 +3804,39 @@ export function createHud(
     if (objectPanel) {
       objectPanel.remove();
       objectPanel = null;
-      panelPassBtns = [];
-      panelLockBtns = [];
-      lockOptionBlock = null;
-      panelHexCb = null;
-      panelRampCb = null;
-      panelHeightBtns = [];
-      panelShapeBtns = [];
-      rampDirRow = null;
-      panelRampRotCCW = null;
-      panelRampRotCW = null;
-      panelColorRoot = null;
-      panelSwatchesRecent = null;
-      panelSwatchesAll = null;
-      panelMoreColorsBtn = null;
-      panelAdvancedToggle = null;
-      panelHueRingWrap = null;
-      panelHueRing = null;
-      panelHueCore = null;
-      panelTitleTextEl = null;
-      panelOnPropsChange = null;
-      panelLockedState = false;
     }
+    if (panelShapePopoverAbort) {
+      panelShapePopoverAbort.abort();
+      panelShapePopoverAbort = null;
+    }
+    panelShapeTriggerEl = null;
+    if (panelShapeColorRow) {
+      panelShapeColorRow.remove();
+      panelShapeColorRow = null;
+    }
+    panelDockHueWrap = null;
+    panelTileInspectorHeightInput = null;
+    panelTileInspectorHeightVal = null;
+    panelTileInspectorResetBtn = null;
+    syncHueDockVisibility();
+    syncModeSidebarBodyInteractive();
+    panelCollisionToggle = null;
+    panelLockToggle = null;
+    lockOptionBlock = null;
+    panelHexCb = null;
+    panelRampCb = null;
+    panelHeightBtns = [];
+    panelShapeBtns = [];
+    rampDirRow = null;
+    panelRampRotCCW = null;
+    panelRampRotCW = null;
+    panelAdvancedToggle = null;
+    panelHueRingWrap = null;
+    panelHueRing = null;
+    panelHueCore = null;
+    panelOnPropsChange = null;
+    panelLockedState = false;
+    syncBlockPreviewDockSlots();
   }
 
   function refreshBarSwatches(selectedId: number): void {
@@ -3099,6 +3856,24 @@ export function createHud(
     barHueCore.style.background = cssHex(BLOCK_COLOR_PALETTE[sid]!);
   }
 
+  function bindTileInspectorPreviewGame(game: Game | null): void {
+    const prev = inspectorPreviewGameRef;
+    inspectorPreviewGameRef = game;
+    if (prev && prev !== game) {
+      prev.bindInspectorTilePreviewCanvas("placement", null);
+      prev.bindInspectorTilePreviewCanvas("selection", null);
+    }
+    if (game) {
+      const placementCanvas = hueDockBlockPreview.querySelector(
+        "#tile-inspector-preview-canvas"
+      ) as HTMLCanvasElement | null;
+      game.bindInspectorTilePreviewCanvas("placement", placementCanvas);
+    } else if (prev) {
+      prev.bindInspectorTilePreviewCanvas("placement", null);
+      prev.bindInspectorTilePreviewCanvas("selection", null);
+    }
+  }
+
   const lastSystemChatAtByText = new Map<string, number>();
 
   return {
@@ -3107,6 +3882,7 @@ export function createHud(
       statusSub.textContent = t;
       statusSub.classList.toggle("hud-status-sub--empty", !t);
       ui.classList.toggle("hud--has-status-sub", !!t);
+      syncHudBelowTopWrap();
     },
     appendChat(from: string, text: string) {
       const isSystem = from.trim().toLowerCase() === "system";
@@ -3152,21 +3928,49 @@ export function createHud(
       portalEnterBtn.style.left = `${x}px`;
       portalEnterBtn.style.top = `${y}px`;
     },
-    showSelfEmojiMenu(anchorX: number, anchorY: number, onPick: (emoji: string) => void) {
+    showSelfEmojiMenu(
+      anchorX: number,
+      anchorY: number,
+      onPick: (emoji: string) => void,
+      openedAtFloor: FloorTile | null = null
+    ) {
       closeOtherPlayerUiOverlays();
+      closeSelfEmojiMenu();
+      selfEmojiOpenedFloor = openedAtFloor;
       selfEmojiPickHandler = onPick;
       selfEmojiMenu.style.left = `${anchorX}px`;
       selfEmojiMenu.style.top = `${anchorY}px`;
       selfEmojiMenu.hidden = false;
+      armSelfEmojiAutoCloseFade();
       requestAnimationFrame(() => bindSelfEmojiOutside());
     },
     hideSelfEmojiMenu() {
       closeSelfEmojiMenu();
     },
-    setSelfEmojiMenuAnchor(x: number, y: number) {
+    setSelfEmojiMenuAnchor(
+      x: number | null,
+      y: number | null,
+      currentFloor?: FloorTile | null
+    ) {
       if (selfEmojiMenu.hidden) return;
-      selfEmojiMenu.style.left = `${x}px`;
-      selfEmojiMenu.style.top = `${y}px`;
+      if (
+        currentFloor &&
+        selfEmojiOpenedFloor &&
+        (currentFloor.x !== selfEmojiOpenedFloor.x ||
+          currentFloor.y !== selfEmojiOpenedFloor.y)
+      ) {
+        closeSelfEmojiMenu();
+        return;
+      }
+      if (
+        x != null &&
+        y != null &&
+        Number.isFinite(x) &&
+        Number.isFinite(y)
+      ) {
+        selfEmojiMenu.style.left = `${x}px`;
+        selfEmojiMenu.style.top = `${y}px`;
+      }
     },
     isSelfEmojiMenuOpen() {
       return !selfEmojiMenu.hidden;
@@ -3242,67 +4046,119 @@ export function createHud(
       roomAllowExtraFloor = caps.allowExtraFloor;
       applyRoomEditCaps();
     },
+    setRoomBackgroundHuePanelVisible(visible: boolean) {
+      roomBgHuePanel.hidden = !visible;
+      syncModeSidebarBodyInteractive();
+      syncHueDockVisibility();
+    },
+    syncRoomBackgroundHueRing(
+      hueDeg: number | null,
+      neutral: RoomBackgroundNeutral | null
+    ) {
+      if (roomBgHueDragging) return;
+      const ringDeg =
+        hueDeg !== null && Number.isFinite(hueDeg)
+          ? Math.round(((hueDeg % 360) + 360) % 360)
+          : ROOM_BG_HUE_DEFAULT_RING;
+      roomBgHueRing.setAttribute("aria-valuenow", String(ringDeg));
+      const coreBg =
+        neutral === "black"
+          ? "#070a0f"
+          : neutral === "white"
+            ? "#d4dce8"
+            : neutral === "gray"
+              ? "#2a313c"
+              : `hsl(${ringDeg} 42% 11%)`;
+      roomBgHueCore.style.background = coreBg;
+      for (const id of neutralDefs) {
+        const btn = roomBgNeutralBtns[id.id];
+        if (btn) {
+          const on = neutral === id.id;
+          btn.classList.toggle(
+            "hud-mode-sidebar__room-bg-neutral--active",
+            on
+          );
+          btn.setAttribute("aria-pressed", on ? "true" : "false");
+        }
+      }
+    },
+    onRoomBackgroundHueAdjust(handlers: {
+      onHueDeg: (deg: number) => void;
+      onPointerUp: () => void;
+    }) {
+      roomBgHueInputHandler = handlers.onHueDeg;
+      roomBgHueUpHandler = handlers.onPointerUp;
+    },
+    onRoomBackgroundNeutralPick(fn: (neutral: RoomBackgroundNeutral) => void) {
+      roomBgNeutralPickHandler = fn;
+    },
     setPlayModeState(mode: "walk" | "build" | "floor") {
-      walkModeBtn.classList.toggle(
-        "hud-mode-segment__btn--active-walk",
-        mode === "walk"
+      const editOn = mode === "build" || mode === "floor";
+      buildToggleBtn.classList.toggle(
+        "hud-mode-sidebar__tab--active-build",
+        editOn
       );
-      buildModeBtn.classList.toggle(
-        "hud-mode-segment__btn--active-build",
-        mode === "build"
-      );
-      floorModeBtn.classList.toggle(
-        "hud-mode-segment__btn--active-floor",
-        mode === "floor"
-      );
-      walkModeBtn.setAttribute("aria-pressed", mode === "walk" ? "true" : "false");
-      buildModeBtn.setAttribute("aria-pressed", mode === "build" ? "true" : "false");
-      floorModeBtn.setAttribute("aria-pressed", mode === "floor" ? "true" : "false");
+      buildToggleBtn.setAttribute("aria-pressed", editOn ? "true" : "false");
+      if (mode === "floor") {
+        buildEditKindSelect.value = "room";
+      } else if (mode === "build") {
+        buildEditKindSelect.value = "objects";
+      }
+      const showKindPicker =
+        editOn && roomAllowPlaceBlocks && roomAllowExtraFloor;
+      buildEditKindWrap.hidden = !showKindPicker;
+      buildEditKindLabel.hidden = buildEditKindWrap.hidden;
+      modeSidebarBody.setAttribute("aria-labelledby", "hud-mode-tab-build");
     },
     showObjectEditPanel(opts) {
       hideObjectEditPanel();
       if ("teleporterEdit" in opts) {
         const te = opts.teleporterEdit;
         panelOnPropsChange = null;
-        panelEditX = opts.x;
-        panelEditZ = opts.z;
         objectPanel = document.createElement("div");
         objectPanel.className =
           "build-object-panel build-object-panel--teleporter";
-        objectPanel.innerHTML = `
-        <div class="build-object-panel__surface">
-          <div class="build-object-panel__surface-header">
-            <div class="build-object-panel__title">
-              <span class="build-object-panel__title-text">Teleporter</span>
+        objectPanel.hidden = true;
+        objectPanel.innerHTML = `<div class="build-object-panel__surface" aria-hidden="true"></div>`;
+        modeSidebarBuildMount.appendChild(objectPanel);
+
+        objectPanelContextPopover.classList.add(
+          "build-object-panel-context--teleporter"
+        );
+        objectPanelContextPopover.innerHTML = `
+          <div class="build-object-panel-context__inner">
+            <div class="build-object-panel-context__tp-head">
+              <div class="build-object-panel-context__tp-head-main">
+                <span class="build-object-panel-context__tp-title">Teleporter</span>
+                <span class="build-object-panel-context__tp-coords">(${opts.x}, ${opts.z})</span>
+              </div>
+              <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close teleporter editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
             </div>
-            <div class="build-object-panel__header-actions">
-              <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
-              <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
-              <button type="button" class="build-object-panel__dismiss" aria-label="Close block editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
-            </div>
-          </div>
-          <div class="build-object-panel__teleporter-fields">
-            <p class="build-block-bar__teleporter-hint build-object-panel__teleporter-lead">${
+            <p class="build-object-panel-context__tp-lead">${
               te.pending
                 ? "No destination yet — pick a room and save."
                 : "One-way teleport — change destination below."
             }</p>
-            <label class="build-block-bar__teleporter-label" for="build-object-panel-tp-room">Room</label>
-            <select id="build-object-panel-tp-room" class="build-block-bar__teleporter-input build-block-bar__teleporter-input--select" autocomplete="off"></select>
-            <p class="build-block-bar__teleporter-hint build-object-panel__tp-hub-hint" id="build-object-panel-tp-hub-hint" hidden>
-              Hub: spawn is fixed at the center (0, 0).
-            </p>
-            <div id="build-object-panel-tp-dest-coords-wrap">
-            <div class="build-block-bar__teleporter-row">
-              <label class="build-block-bar__teleporter-field">X <input type="number" class="build-block-bar__teleporter-input build-block-bar__teleporter-input--num" id="build-object-panel-tp-x" step="1" inputmode="numeric" /></label>
-              <label class="build-block-bar__teleporter-field">Z <input type="number" class="build-block-bar__teleporter-input build-block-bar__teleporter-input--num" id="build-object-panel-tp-z" step="1" inputmode="numeric" /></label>
+            <div class="build-object-panel-context__tp-field">
+              <label class="build-object-panel-context__tp-label" for="build-object-panel-tp-room">Room</label>
+              <select id="build-object-panel-tp-room" class="build-object-panel-context__tp-select" autocomplete="off"></select>
             </div>
-            <button type="button" class="build-block-bar__teleporter-btn" id="build-object-panel-tp-pick">Use tile I click…</button>
+            <p class="build-object-panel-context__tp-hint" id="build-object-panel-tp-hub-hint" hidden>Hub: spawn is fixed at the center (0, 0).</p>
+            <div class="build-object-panel-context__tp-coords-wrap" id="build-object-panel-tp-dest-coords-wrap">
+              <div class="build-object-panel-context__tp-xz">
+                <label class="build-object-panel-context__tp-num-label">X <input type="number" id="build-object-panel-tp-x" class="build-object-panel-context__tp-num" step="1" inputmode="numeric" /></label>
+                <label class="build-object-panel-context__tp-num-label">Z <input type="number" id="build-object-panel-tp-z" class="build-object-panel-context__tp-num" step="1" inputmode="numeric" /></label>
+              </div>
+              <button type="button" class="build-object-panel__btn build-object-panel-context__tp-pick" id="build-object-panel-tp-pick">Use tile I click…</button>
             </div>
-            <button type="button" class="build-block-bar__teleporter-btn build-block-bar__teleporter-btn--primary build-object-panel__teleporter-save" id="build-object-panel-tp-save">Save destination</button>
-          </div>
-        </div>`;
-        const roomSel = objectPanel.querySelector(
+            <button type="button" class="build-object-panel__btn build-object-panel-context__tp-save" id="build-object-panel-tp-save">Save destination</button>
+            <div class="build-object-panel-context__actions">
+              <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
+              <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
+            </div>
+          </div>`;
+        const tpRoot = objectPanelContextPopover;
+        const roomSel = tpRoot.querySelector(
           "#build-object-panel-tp-room"
         ) as HTMLSelectElement;
         for (const o of te.roomOptions) {
@@ -3328,10 +4184,10 @@ export function createHud(
           roomSel.appendChild(opt);
           roomSel.value = raw;
         }
-        const xIn = objectPanel.querySelector(
+        const xIn = tpRoot.querySelector(
           "#build-object-panel-tp-x"
         ) as HTMLInputElement;
-        const zIn = objectPanel.querySelector(
+        const zIn = tpRoot.querySelector(
           "#build-object-panel-tp-z"
         ) as HTMLInputElement;
         xIn.value = String(te.destX);
@@ -3341,38 +4197,46 @@ export function createHud(
         panelTeleporterZ = zIn;
         applyTeleporterHubUi = () => {
           const sel = panelTeleporterRoomSel;
-          const wrap = objectPanel.querySelector(
+          const wrap = tpRoot.querySelector(
             "#build-object-panel-tp-dest-coords-wrap"
           ) as HTMLElement | null;
-          const hubHint = objectPanel.querySelector(
+          const hubHint = tpRoot.querySelector(
             "#build-object-panel-tp-hub-hint"
           ) as HTMLElement | null;
+          const pickBtn = tpRoot.querySelector(
+            "#build-object-panel-tp-pick"
+          ) as HTMLButtonElement | null;
           if (!sel || !wrap || !hubHint) return;
           const isHub = normalizeRoomId(sel.value) === HUB_ROOM_ID;
           wrap.hidden = isHub;
           hubHint.hidden = !isHub;
+          if (pickBtn) {
+            const destRoom = normalizeRoomId(sel.value);
+            const here = normalizeRoomId(te.currentRoomId);
+            pickBtn.hidden = isHub || destRoom !== here;
+          }
         };
         roomSel.addEventListener("change", () => applyTeleporterHubUi?.());
         teleporterPanelCleanup = () => {
           te.onPickCancel();
         };
-        topActions.appendChild(objectPanel);
         applyTeleporterHubUi();
-        objectPanel
+        objectPanelContextPopover.hidden = false;
+        objectPanelContextPopover
           .querySelector(".build-object-panel__move")
           ?.addEventListener("click", () => opts.onMove());
-        objectPanel
+        objectPanelContextPopover
           .querySelector(".build-object-panel__remove")
           ?.addEventListener("click", () => opts.onRemove());
-        objectPanel
-          .querySelector(".build-object-panel__dismiss")
+        objectPanelContextPopover
+          .querySelector(".build-object-panel-context__dismiss")
           ?.addEventListener("click", () => opts.onClose());
-        objectPanel
+        tpRoot
           .querySelector("#build-object-panel-tp-pick")
           ?.addEventListener("click", () => {
             te.onPickTileInCurrentRoom();
           });
-        objectPanel
+        tpRoot
           .querySelector("#build-object-panel-tp-save")
           ?.addEventListener("click", () => {
             const roomId = normalizeRoomId(roomSel.value.trim());
@@ -3388,6 +4252,10 @@ export function createHud(
             }
             te.onConfigure(roomId, Math.floor(dx), Math.floor(dz));
           });
+        requestAnimationFrame(() => {
+          layoutObjectPanelSatellites();
+          requestAnimationFrame(() => layoutObjectPanelSatellites());
+        });
         return;
       }
       panelOnPropsChange = opts.onPropsChange;
@@ -3396,61 +4264,27 @@ export function createHud(
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(opts.colorId))
       );
       objectPanel = document.createElement("div");
-      objectPanel.className = "build-object-panel";
-      panelEditX = opts.x;
-      panelEditZ = opts.z;
+      objectPanel.className =
+        "tile-inspector build-object-panel build-object-panel--rail";
       const lockIcon = opts.locked
         ? '<span class="nq-icon nq-lock-locked build-object-panel__lock-icon" title="This object is locked"></span>'
         : "";
       objectPanel.innerHTML = `
         <div class="build-object-panel__surface">
-          <div class="build-object-panel__surface-header">
-            <div class="build-object-panel__title">
-              <span class="build-object-panel__title-text"></span>${lockIcon}
-            </div>
-            <div class="build-object-panel__header-actions">
-              <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
-              <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
-              <button type="button" class="build-object-panel__dismiss" aria-label="Close block editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
-            </div>
-          </div>
-          <div class="build-object-panel__main-row">
-            <div class="build-object-panel__quick" aria-label="Block shape and color">
-              <div class="build-block-bar__shape-row" role="group" aria-label="Block shape">
-                <button type="button" class="build-block-bar__shape-btn build-block-bar__shape-btn--active" data-shape="cube" aria-pressed="true" aria-label="Cube" title="Cube">C</button>
-                <button type="button" class="build-block-bar__shape-btn" data-shape="hex" aria-pressed="false" aria-label="Hexagon" title="Hexagon">H</button>
-                <button type="button" class="build-block-bar__shape-btn" data-shape="ramp" aria-pressed="false" aria-label="Ramp" title="Ramp">R</button>
-              </div>
-              <div class="build-object-panel__hue-ring-wrap" title="Color — drag on ring (snaps to nearest preset)">
-                <div class="build-object-panel__hue-ring" role="slider" tabindex="0" aria-label="Block color" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0"></div>
-                <div class="build-object-panel__hue-core" aria-hidden="true"></div>
-              </div>
-            </div>
+          <div class="tile-inspector" id="tile-inspector-selection">
+            <button type="button" class="tile-inspector__reset-btn" id="panel-tile-inspector-reset">Reset to defaults</button>
           </div>
           <input type="checkbox" class="build-object-panel__hex" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
           <input type="checkbox" class="build-object-panel__ramp" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
-          <button type="button" class="build-object-panel__advanced-toggle" aria-expanded="false" aria-controls="build-object-panel-advanced">Advanced</button>
         </div>
       `;
       objectPanelAdvancedPopover.innerHTML = `
         <div class="build-object-panel-advanced__inner">
-          <div class="build-block-bar__popover-heading">Collision</div>
-          <div class="build-block-bar__height-segment" role="radiogroup" aria-label="Collision">
-            <button type="button" class="build-block-bar__height-btn build-block-bar__height-btn--active" data-collision="solid" role="radio" aria-checked="true">Solid</button>
-            <button type="button" class="build-block-bar__height-btn" data-collision="pass" role="radio" aria-checked="false">No collision</button>
-          </div>
-          <div class="build-object-panel-adv__lock-block" hidden>
-            <div class="build-block-bar__popover-heading">Lock</div>
-            <div class="build-block-bar__height-segment" role="radiogroup" aria-label="Lock block">
-              <button type="button" class="build-block-bar__height-btn build-block-bar__height-btn--active" data-lock="false" role="radio" aria-checked="true">Unlocked</button>
-              <button type="button" class="build-block-bar__height-btn" data-lock="true" role="radio" aria-checked="false">Locked</button>
+          <div class="build-object-panel-adv__icon-toggles" role="toolbar" aria-label="Block options">
+            <button type="button" id="panel-adv-collision-toggle" class="build-object-panel-adv__icon-toggle"></button>
+            <div class="build-object-panel-adv__lock-wrap" hidden>
+              <button type="button" id="panel-adv-lock-toggle" class="build-object-panel-adv__icon-toggle"></button>
             </div>
-          </div>
-          <div class="build-block-bar__popover-heading">Height</div>
-          <div class="build-block-bar__height-segment" role="radiogroup" aria-label="Block height">
-            <button type="button" class="build-block-bar__height-btn build-block-bar__height-btn--active" data-height="full" role="radio" aria-checked="true">Full</button>
-            <button type="button" class="build-block-bar__height-btn" data-height="half" role="radio" aria-checked="false">Half</button>
-            <button type="button" class="build-block-bar__height-btn" data-height="quarter" role="radio" aria-checked="false" title="Quarter height">¼</button>
           </div>
           <div class="build-block-bar__ramp-dir-row build-block-bar__ramp-dir-row--popover" hidden>
             <span class="build-block-bar__ramp-dir-label">Ramp rotation</span>
@@ -3459,30 +4293,83 @@ export function createHud(
               <button type="button" class="build-block-bar__ramp-rot build-block-bar__ramp-cw" title="Rotate clockwise" aria-label="Rotate ramp clockwise">↻</button>
             </div>
           </div>
-          <div class="build-block-bar__palette-label">Palette</div>
-          <div class="build-block-bar__colors" aria-label="Preset colors">
-            <div class="build-object-panel-adv__swatches-recent"></div>
-            <button type="button" class="build-block-bar__more-colors">More colors</button>
-            <div class="build-object-panel-adv__swatches-all" hidden></div>
-          </div>
         </div>
       `;
-      topActions.appendChild(objectPanel);
-      panelTitleTextEl = objectPanel.querySelector(
-        ".build-object-panel__title-text"
-      ) as HTMLElement;
-      panelPassBtns = Array.from(
-        objectPanelAdvancedPopover.querySelectorAll(
-          ".build-block-bar__height-btn[data-collision]"
-        )
-      ) as HTMLButtonElement[];
-      panelLockBtns = Array.from(
-        objectPanelAdvancedPopover.querySelectorAll(
-          ".build-block-bar__height-btn[data-lock]"
-        )
-      ) as HTMLButtonElement[];
+      objectPanelContextPopover.innerHTML = `
+        <div class="build-object-panel-context__inner">
+          <div class="build-object-panel-context__height-row">
+            <div class="build-object-panel-context__height-main">
+              ${lockIcon}
+              <label class="tile-inspector__param build-object-panel-context__height-param" for="panel-tile-inspector-height">
+                <span class="tile-inspector__param-label">Height</span>
+                <input type="range" id="panel-tile-inspector-height" class="tile-inspector__slider" min="0" max="2" step="1" value="2" aria-valuetext="Full" />
+                <span class="tile-inspector__param-value" id="panel-tile-inspector-height-val">1.0 m</span>
+              </label>
+            </div>
+            <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close block editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
+          </div>
+          <div class="build-object-panel-context__advanced">
+            <button type="button" class="build-object-panel__advanced-toggle build-block-bar__advanced-toggle tile-inspector__advanced-link" aria-expanded="false" aria-controls="build-object-panel-advanced">Advanced…</button>
+          </div>
+          <div class="build-object-panel-context__actions">
+            <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
+            <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
+          </div>
+        </div>`;
+      objectPanelContextPopover.hidden = false;
+      modeSidebarBuildMount.appendChild(objectPanel);
+      if (panelShapePopoverAbort) {
+        panelShapePopoverAbort.abort();
+        panelShapePopoverAbort = null;
+      }
+      if (panelShapeColorRow) {
+        panelShapeColorRow.remove();
+        panelShapeColorRow = null;
+      }
+      panelDockHueWrap = null;
+      panelShapeTriggerEl = null;
+      panelShapeColorRow = document.createElement("div");
+      panelShapeColorRow.className =
+        "hud-mode-sidebar__shape-color-row hud-mode-sidebar__shape-color-row--selection";
+      const pShapeTrigger = document.createElement("button");
+      pShapeTrigger.type = "button";
+      pShapeTrigger.className = "hud-mode-sidebar__shape-trigger";
+      pShapeTrigger.title = "Block shape";
+      pShapeTrigger.setAttribute("aria-haspopup", "dialog");
+      pShapeTrigger.setAttribute("aria-expanded", "false");
+      pShapeTrigger.setAttribute(
+        "aria-controls",
+        "build-object-panel-shape-popover"
+      );
+      pShapeTrigger.innerHTML = `<span class="hud-mode-sidebar__shape-trigger-icon" aria-hidden="true">${SHAPE_TRIG_SVG.cube}</span><span class="hud-mode-sidebar__shape-trigger-label">Cube</span>`;
+      panelShapeTriggerEl = pShapeTrigger;
+      panelDockHueWrap = document.createElement("div");
+      panelDockHueWrap.className =
+        "build-block-bar__hue-ring-wrap hud-mode-sidebar__room-bg-hue-wrap";
+      panelDockHueWrap.title =
+        "Color — drag on ring (snaps to nearest preset)";
+      panelDockHueWrap.innerHTML = `
+            <div class="build-block-bar__hue-ring" role="slider" tabindex="0" aria-label="Block color" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0"></div>
+            <div class="build-block-bar__hue-core" aria-hidden="true"></div>
+          `;
+      panelShapeColorRow.appendChild(pShapeTrigger);
+      panelShapeColorRow.appendChild(panelDockHueWrap);
+      hueDock.insertBefore(panelShapeColorRow, hueDockBlockPreview);
+      inspectorPreviewGameRef?.bindInspectorTilePreviewCanvas(
+        "selection",
+        hueDockBlockPreview.querySelector(
+          "#panel-tile-inspector-preview-canvas"
+        ) as HTMLCanvasElement | null
+      );
+      syncHueDockVisibility();
+      panelCollisionToggle = objectPanelAdvancedPopover.querySelector(
+        "#panel-adv-collision-toggle"
+      ) as HTMLButtonElement;
+      panelLockToggle = objectPanelAdvancedPopover.querySelector(
+        "#panel-adv-lock-toggle"
+      ) as HTMLButtonElement;
       lockOptionBlock = objectPanelAdvancedPopover.querySelector(
-        ".build-object-panel-adv__lock-block"
+        ".build-object-panel-adv__lock-wrap"
       ) as HTMLElement | null;
       rampDirRow = objectPanelAdvancedPopover.querySelector(
         ".build-block-bar__ramp-dir-row"
@@ -3494,13 +4381,9 @@ export function createHud(
         ".build-block-bar__ramp-cw"
       ) as HTMLButtonElement;
       panelRampDir = Math.max(0, Math.min(3, Math.floor(opts.rampDir)));
-      panelHeightBtns = Array.from(
-        objectPanelAdvancedPopover.querySelectorAll(
-          ".build-block-bar__height-btn[data-height]"
-        )
-      ) as HTMLButtonElement[];
+      panelHeightBtns = [];
       panelShapeBtns = Array.from(
-        objectPanel.querySelectorAll(".build-block-bar__shape-btn")
+        panelShapePopover.querySelectorAll(".tile-inspector__shape-btn")
       ) as HTMLButtonElement[];
       panelHexCb = objectPanel.querySelector(
         ".build-object-panel__hex"
@@ -3508,33 +4391,28 @@ export function createHud(
       panelRampCb = objectPanel.querySelector(
         ".build-object-panel__ramp"
       ) as HTMLInputElement;
-      panelColorRoot = objectPanelAdvancedPopover.querySelector(
-        ".build-block-bar__colors"
-      ) as HTMLElement;
-      panelSwatchesRecent = objectPanelAdvancedPopover.querySelector(
-        ".build-object-panel-adv__swatches-recent"
-      ) as HTMLDivElement;
-      panelSwatchesAll = objectPanelAdvancedPopover.querySelector(
-        ".build-object-panel-adv__swatches-all"
-      ) as HTMLDivElement;
-      panelMoreColorsBtn = objectPanelAdvancedPopover.querySelector(
-        ".build-block-bar__more-colors"
-      ) as HTMLButtonElement;
-      panelAdvancedToggle = objectPanel.querySelector(
+      panelAdvancedToggle = objectPanelContextPopover.querySelector(
         ".build-object-panel__advanced-toggle"
       ) as HTMLButtonElement;
-      panelHueRingWrap = objectPanel.querySelector(
-        ".build-object-panel__hue-ring-wrap"
+      panelHueRingWrap = panelDockHueWrap;
+      panelHueRing = panelDockHueWrap.querySelector(
+        ".build-block-bar__hue-ring"
       ) as HTMLElement;
-      panelHueRing = objectPanel.querySelector(
-        ".build-object-panel__hue-ring"
+      panelHueCore = panelDockHueWrap.querySelector(
+        ".build-block-bar__hue-core"
       ) as HTMLElement;
-      panelHueCore = objectPanel.querySelector(
-        ".build-object-panel__hue-core"
+      panelTileInspectorHeightInput = objectPanelContextPopover.querySelector(
+        "#panel-tile-inspector-height"
+      ) as HTMLInputElement;
+      panelTileInspectorHeightVal = objectPanelContextPopover.querySelector(
+        "#panel-tile-inspector-height-val"
       ) as HTMLElement;
-      syncPanelPassButtons(opts.passable);
+      panelTileInspectorResetBtn = objectPanel.querySelector(
+        "#panel-tile-inspector-reset"
+      ) as HTMLButtonElement;
+      syncPanelCollisionToggle(opts.passable);
       panelLockedState = opts.locked || false;
-      syncPanelLockButtons(panelLockedState);
+      syncPanelLockToggle(panelLockedState);
       if (lockOptionBlock) {
         lockOptionBlock.hidden = !opts.isAdmin;
       }
@@ -3544,26 +4422,6 @@ export function createHud(
       rampDirRow.hidden = !opts.ramp;
       syncPanelShapeButtons();
 
-      refreshObjectPanelTitle();
-      for (let i = 0; i < BLOCK_COLOR_COUNT; i++) {
-        panelSwatchesAll!.appendChild(makeColorSwatchButton(i));
-      }
-      const recentIds = loadRecentColorIds();
-      panelSwatchesRecent!.replaceChildren();
-      for (const rid of recentIds) {
-        panelSwatchesRecent!.appendChild(makeColorSwatchButton(rid));
-      }
-      let panelColorsExpanded = false;
-      panelMoreColorsBtn!.addEventListener("click", () => {
-        panelColorsExpanded = !panelColorsExpanded;
-        panelSwatchesAll!.hidden = !panelColorsExpanded;
-        panelMoreColorsBtn!.textContent = panelColorsExpanded
-          ? "Hide colors"
-          : "More colors";
-        if (!objectPanelAdvancedPopover.hidden) {
-          requestAnimationFrame(() => layoutObjectPanelAdvancedPopover());
-        }
-      });
       panelAdvancedToggle!.addEventListener("click", (e) => {
         e.stopPropagation();
         setPanelAdvancedOpen(objectPanelAdvancedPopover.hidden);
@@ -3574,9 +4432,11 @@ export function createHud(
           setPanelAdvancedOpen(false);
         }
       });
-      syncPanelSwatchSelection();
       syncPanelHueVisualFromColorId(panelSelectedColorId);
-      wirePanelColorClicks();
+      {
+        const live = buildLivePanelObstacleProps();
+        if (live) inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(live);
+      }
 
       function onPanelHuePointer(ev: PointerEvent): void {
         if (!panelHueRing) return;
@@ -3618,57 +4478,53 @@ export function createHud(
         }
       });
 
-      panelPassBtns.forEach((btn) => {
-        btn.addEventListener("click", () => {
-          syncPanelPassButtons(btn.dataset.collision === "pass");
-          emitPanelProps();
-        });
+      panelCollisionToggle!.addEventListener("click", () => {
+        syncPanelCollisionToggle(!getPanelPassable());
+        emitPanelProps();
       });
-      panelLockBtns.forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const locked = btn.dataset.lock === "true";
-          panelLockedState = locked;
-          syncPanelLockButtons(locked);
-          emitPanelProps();
-        });
+      panelLockToggle!.addEventListener("click", () => {
+        const next = !getPanelLocked();
+        panelLockedState = next;
+        syncPanelLockToggle(next);
+        emitPanelProps();
       });
-      panelHeightBtns.forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const h = btn.dataset.height;
-          if (h === "full") {
-            syncPanelHeightButtons(false, false);
-            emitPanelProps();
-          } else if (h === "half") {
-            syncPanelHeightButtons(false, true);
-            emitPanelProps();
-          } else if (h === "quarter") {
-            syncPanelHeightButtons(true, false);
-            emitPanelProps();
+      panelTileInspectorHeightInput!.addEventListener("input", () => {
+        emitPanelProps();
+        syncPanelTileHeightLabel();
+      });
+      panelTileInspectorResetBtn!.addEventListener("click", () => {
+        if (!panelHexCb || !panelRampCb) return;
+        panelHexCb.checked = false;
+        panelRampCb.checked = false;
+        panelRampDir = 0;
+        if (rampDirRow) rampDirRow.hidden = true;
+        panelSelectedColorId = 0;
+        syncPanelHeightButtons(false, false);
+        syncPanelShapeButtons();
+        syncPanelCollisionToggle(false);
+        syncPanelHueVisualFromColorId(0);
+        emitPanelProps();
+      });
+      panelShapePopoverAbort = new AbortController();
+      const pShapeSig = panelShapePopoverAbort.signal;
+      panelShapeTriggerEl.addEventListener(
+        "click",
+        (e) => {
+          e.stopPropagation();
+          setPanelShapePopoverOpen(panelShapePopover.hidden);
+        },
+        { signal: pShapeSig }
+      );
+      panelShapeTriggerEl.addEventListener(
+        "keydown",
+        (e) => {
+          if (e.key === "Escape" && !panelShapePopover.hidden) {
+            e.preventDefault();
+            setPanelShapePopoverOpen(false);
           }
-        });
-      });
-      panelShapeBtns.forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const shape = btn.dataset.shape;
-          if (shape === "cube") {
-            panelHexCb.checked = false;
-            panelRampCb.checked = false;
-            rampDirRow!.hidden = true;
-            emitPanelProps();
-          } else if (shape === "hex") {
-            panelHexCb.checked = true;
-            panelRampCb.checked = false;
-            rampDirRow!.hidden = true;
-            emitPanelProps();
-          } else if (shape === "ramp") {
-            panelRampCb.checked = true;
-            panelHexCb.checked = false;
-            rampDirRow!.hidden = false;
-            emitPanelProps();
-          }
-          syncPanelShapeButtons();
-        });
-      });
+        },
+        { signal: pShapeSig }
+      );
       const rotatePanelRamp = (delta: -1 | 1): void => {
         if (!panelRampCb?.checked) return;
         panelRampDir = (panelRampDir + delta + 4) % 4;
@@ -3676,19 +4532,25 @@ export function createHud(
       };
       panelRampRotCCW!.addEventListener("click", () => rotatePanelRamp(-1));
       panelRampRotCW!.addEventListener("click", () => rotatePanelRamp(1));
-      objectPanel
+      objectPanelContextPopover
         .querySelector(".build-object-panel__move")
         ?.addEventListener("click", () => opts.onMove());
-      objectPanel
+      objectPanelContextPopover
         .querySelector(".build-object-panel__remove")
         ?.addEventListener("click", () => opts.onRemove());
       const dismissPanel = (): void => {
         setPanelAdvancedOpen(false);
+        setPanelShapePopoverOpen(false);
         opts.onClose();
       };
-      objectPanel
-        .querySelector(".build-object-panel__dismiss")
+      objectPanelContextPopover
+        .querySelector(".build-object-panel-context__dismiss")
         ?.addEventListener("click", () => dismissPanel());
+      syncBlockPreviewDockSlots();
+      requestAnimationFrame(() => {
+        layoutObjectPanelSatellites();
+        requestAnimationFrame(() => layoutObjectPanelSatellites());
+      });
     },
     hideObjectEditPanel() {
       hideObjectEditPanel();
@@ -3724,9 +4586,9 @@ export function createHud(
       applyTeleporterHubUi?.();
     },
     setObjectPanelProps(p: ObstacleProps) {
-      syncPanelPassButtons(p.passable);
+      syncPanelCollisionToggle(p.passable);
       panelLockedState = p.locked || false;
-      syncPanelLockButtons(panelLockedState);
+      syncPanelLockToggle(panelLockedState);
       syncPanelHeightButtons(p.quarter, p.quarter ? false : p.half);
       if (panelHexCb) panelHexCb.checked = p.ramp ? false : p.hex;
       if (panelRampCb) panelRampCb.checked = p.ramp;
@@ -3737,9 +4599,8 @@ export function createHud(
         0,
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(p.colorId))
       );
-      syncPanelSwatchSelection();
       syncPanelHueVisualFromColorId(panelSelectedColorId);
-      refreshObjectPanelTitle();
+      inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(p);
     },
     rotateRampToward(delta: -1 | 1): boolean {
       if (objectPanel) {
@@ -3768,8 +4629,15 @@ export function createHud(
         objectPanel !== null &&
         typeof window !== "undefined" &&
         window.matchMedia("(pointer: coarse)").matches;
-      buildBlockBar.hidden = !state.visible || hideBarForObjectPanel;
-      if (buildBlockBar.hidden) setBarPopoverOpen(false);
+      const hideForObjectEdit = objectPanel !== null;
+      buildBlockBar.hidden =
+        !state.visible || hideBarForObjectPanel || hideForObjectEdit;
+      if (buildBlockBar.hidden) {
+        setBarPopoverOpen(false);
+        setBarShapePopoverOpen(false);
+      }
+      syncModeSidebarBodyInteractive();
+      syncHueDockVisibility();
       if (state.placementAdmin !== undefined) {
         barExperimentalOnly.hidden = !state.placementAdmin;
       }
@@ -3800,12 +4668,10 @@ export function createHud(
       buildToolChangeHandler = fn;
     },
     deactivateTeleporterMode() {
-      const blockBtn = barToolButtons.find((b) => b.dataset.tool === "block");
-      if (blockBtn) activateBuildToolButton(blockBtn);
+      activateBuildTool("block");
     },
     deactivateSignpostMode() {
-      const blockBtn = barToolButtons.find((b) => b.dataset.tool === "block");
-      if (blockBtn) activateBuildToolButton(blockBtn);
+      activateBuildTool("block");
     },
     promptSignpostMessage(x: number, z: number): void {
       signpostPendingTile = { x, z };
@@ -4088,7 +4954,9 @@ export function createHud(
       }
       signboardTooltip.hidden = false;
     },
+    bindTileInspectorPreviewGame,
     destroy() {
+      bindTileInspectorPreviewGame(null);
       closeSelfEmojiMenu();
       closeOtherPlayerProfile();
       closeOtherPlayerContextMenu();
@@ -4105,6 +4973,8 @@ export function createHud(
       document.removeEventListener("nspace-pseudo-fullscreen-change", onFullscreenChange);
       document.removeEventListener("click", closeHudTooltips);
       document.removeEventListener("pointerdown", closeHudAdvancedPopoversOnOutside);
+      setBarShapePopoverOpen(false);
+      setPanelShapePopoverOpen(false);
       hideObjectEditPanel();
       hideLobbyConfirm();
       nimClaimBar.hidden = true;

@@ -89,6 +89,18 @@ export function normalizeRoomId(roomId: string): string {
   return roomId;
 }
 
+const clientRoomBoundsById = new Map<string, RoomBounds>();
+
+/** Set from server `welcome.roomBounds` for non-built-in rooms (custom codes). */
+export function registerClientRoomBounds(roomId: string, bounds: RoomBounds): void {
+  clientRoomBoundsById.set(normalizeRoomId(roomId), { ...bounds });
+}
+
+export function isBuiltinRoomId(roomId: string): boolean {
+  const id = normalizeRoomId(roomId);
+  return id === HUB_ROOM_ID || id === CHAMBER_ROOM_ID || id === CANVAS_ROOM_ID;
+}
+
 export function getRoomBaseBounds(roomId: string): RoomBounds {
   const id = normalizeRoomId(roomId);
   switch (id) {
@@ -98,8 +110,10 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
       return CHAMBER_BOUNDS;
     case CANVAS_ROOM_ID:
       return CANVAS_BOUNDS;
-    default:
-      return HUB_BOUNDS;
+    default: {
+      const b = clientRoomBoundsById.get(id);
+      return b ? { ...b } : HUB_BOUNDS;
+    }
   }
 }
 
