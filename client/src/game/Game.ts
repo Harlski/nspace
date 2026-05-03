@@ -1,6 +1,10 @@
 import * as THREE from "three";
 import type { PlayerState } from "../types.js";
-import type { ObstacleProps, RoomBackgroundNeutral } from "../net/ws.js";
+import type {
+  BillboardState,
+  ObstacleProps,
+  RoomBackgroundNeutral,
+} from "../net/ws.js";
 import { remotePlayerIsNpc } from "../remotePlayerNpc.js";
 import { walletDisplayName } from "../walletDisplayName.js";
 import {
@@ -26,6 +30,17 @@ const LS_BLOCK_VISUAL_SCALE = "nspace_block_visual_scale";
 const DEFAULT_ZOOM_MIN = 6.5;
 const DEFAULT_ZOOM_MAX = 13.44;
 import { loadIdenticonTexture } from "./identiconTexture.js";
+import {
+  createBillboardRoot,
+  disposeBillboardRoot,
+  makeFallbackBillboardTexture,
+  updateBillboardRootPose,
+} from "./billboardVisual.js";
+import { billboardFootprintTilesXZ } from "./billboardFootprintMath.js";
+import { BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED } from "./billboardPlacementFlags.js";
+import { pickBillboardVisitOnFootprintTile } from "./billboardVisitProximity.js";
+import { billboardSlideshowPhaseIndex } from "./billboardSlideshowPhase.js";
+import { BILLBOARD_ADVERTS_CATALOG } from "./billboardAdvertsCatalog.js";
 import {
   blockKey,
   type FloorTile,
@@ -933,6 +948,9 @@ export class Game {
     startTileX: number;
     startTileZ: number;
   } | null = null;
+  /** Last pointer (px) over billboard place/reposition hover; used to refresh preview after R. */
+  private lastBillboardPointerClientX = 0;
+  private lastBillboardPointerClientY = 0;
   /** Translucent mesh for the block that would be placed in build mode. */
   private placementPreviewGroup: THREE.Group | null = null;
   private placementPreviewStyleSig = "";
@@ -1000,6 +1018,41 @@ export class Game {
         createdAt: number;
       } | null) => void)
     | null = null;
+
+  private billboardSyncGen = 0;
+  private readonly billboardRoots = new Map<string, THREE.Group>();
+  private readonly billboardSpecs = new Map<string, BillboardState>();
+  /**
+   * Floor (y=0) tile keys `x,z` under a billboard footprint — server stores passable
+   * half-height markers for walkability; we skip drawing them so only the plane shows.
+   */
+  private readonly billboardFootprintFloorKeys = new Set<string>();
+  /** When set, selection outline follows the billboard plane (not floor block AABB). */
+  private selectedBillboardId: string | null = null;
+  /** Browser `setInterval` id (numeric). */
+  private readonly billboardTimers = new Map<string, number>();
+  /** Billboard tool: show footprint + ghost before modal. */
+  private billboardPlacementPreview = false;
+  private billboardPlacementDraft: {
+    orientation: "horizontal" | "vertical";
+    yawSteps: number;
+    advertIds: string[];
+    intervalSec: number;
+  } = {
+    orientation: "horizontal",
+    yawSteps: 0,
+    advertIds: [BILLBOARD_ADVERTS_CATALOG[0]?.id ?? "nimiq_bb"],
+    intervalSec: 8,
+  };
+  private repositionBillboardId: string | null = null;
+  private repositionDraftYaw = 0;
+  private readonly billboardFootprintPreviewGeom: THREE.PlaneGeometry;
+  private readonly billboardFootprintPreviewValidMat: THREE.MeshBasicMaterial;
+  private readonly billboardFootprintPreviewInvalidMat: THREE.MeshBasicMaterial;
+  private readonly billboardFootprintPreviewMeshes: THREE.Mesh[] = [];
+  private billboardInteractGhost: THREE.Group | null = null;
+  private billboardInteractGhostSig = "";
+  private readonly billboardPreviewPlaceholderTex: THREE.CanvasTexture;
 
   /** Identicon sphere Euler (degrees); applied to all player avatars. */
   private identiconRotDeg = { x: 0, y: 0, z: 0 };
@@ -1105,6 +1158,21 @@ export class Game {
       opacity: 0.14,
       depthWrite: false,
     });
+
+    this.billboardFootprintPreviewGeom = new THREE.PlaneGeometry(0.92, 0.92);
+    this.billboardFootprintPreviewValidMat = new THREE.MeshBasicMaterial({
+      color: 0x22c55e,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+    });
+    this.billboardFootprintPreviewInvalidMat = new THREE.MeshBasicMaterial({
+      color: 0xef4444,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
+    });
+    this.billboardPreviewPlaceholderTex = makeFallbackBillboardTexture();
 
     this.pathGeom.setAttribute(
       "position",
@@ -1215,6 +1283,26 @@ export class Game {
 
   getRoomId(): string {
     return this.roomId;
+  }
+
+  /**
+   * When standing on a billboard footprint tile with a visit URL, returns
+   * metadata for the HUD “Visit …” pill (same placement as portal Enter).
+   */
+  getStandingBillboardVisitOffer(): {
+    visitName: string;
+    visitUrl: string;
+  } | null {
+    if (!this.selfMesh) return null;
+    const t = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    const hit = pickBillboardVisitOnFootprintTile(
+      t.x,
+      t.y,
+      this.billboardSpecs.values(),
+      Date.now()
+    );
+    if (!hit?.visitUrl) return null;
+    return { visitName: hit.visitName, visitUrl: hit.visitUrl };
   }
 
   getSelfPosition(): { x: number; y: number; z: number } | null {
@@ -1908,7 +1996,7 @@ export class Game {
       }
       this.clearPlacementPreview();
       if (!isCancel && e.button === 0) {
-        const t = this.tryFloorBlockPlacementTile(e.clientX, e.clientY);
+        const t = this.tryBuildPlacementFloorTile(e.clientX, e.clientY);
         const placeFn = this.placeBlockHandler;
         if (
           placeFn &&
@@ -2222,6 +2310,7 @@ export class Game {
   }
 
   setSelectedBlockKey(key: string | null): void {
+    this.selectedBillboardId = null;
     if (this.selectedBlockKey === key) return;
     this.selectedBlockKey = key;
     this.refreshSelectionOutline();
@@ -2229,10 +2318,25 @@ export class Game {
 
   clearSelectedBlock(): void {
     this.selectedBlockKey = null;
+    this.selectedBillboardId = null;
     this.refreshSelectionOutline();
   }
 
+  getSelectedBillboardId(): string | null {
+    return this.selectedBillboardId;
+  }
+
+  getBillboardState(id: string): BillboardState | null {
+    return this.billboardSpecs.get(id) ?? null;
+  }
+
   getSelectedBlockTile(): { x: number; z: number; y: number } | null {
+    if (this.selectedBillboardId) {
+      const spec = this.billboardSpecs.get(this.selectedBillboardId);
+      if (spec) {
+        return { x: spec.anchorX, z: spec.anchorZ, y: 0 };
+      }
+    }
     if (!this.selectedBlockKey) return null;
     const [x, z, yRaw] = this.selectedBlockKey.split(",").map(Number);
     const y = Number.isFinite(yRaw) ? Math.max(0, Math.min(2, Math.floor(yRaw ?? 0))) : 0;
@@ -2240,8 +2344,412 @@ export class Game {
     return { x: x!, z: z!, y };
   }
 
+  private selectBillboard(id: string): void {
+    this.selectedBlockKey = null;
+    this.selectedBillboardId = id;
+    this.refreshSelectionOutline();
+  }
+
+  private billboardIdForFloorTile(x: number, z: number, y: number): string | null {
+    if (y !== 0) return null;
+    for (const b of this.billboardSpecs.values()) {
+      const tiles = billboardFootprintTilesXZ(
+        b.anchorX,
+        b.anchorZ,
+        b.orientation,
+        b.yawSteps
+      );
+      if (tiles.some((t) => t.x === x && t.z === z)) return b.id;
+    }
+    return null;
+  }
+
+  private clearBillboardFootprintPreviewTiles(): void {
+    for (const m of this.billboardFootprintPreviewMeshes) {
+      m.visible = false;
+    }
+  }
+
+  private syncBillboardFootprintHighlightTiles(
+    tiles: readonly { x: number; z: number }[],
+    valid: boolean
+  ): void {
+    const mat = valid
+      ? this.billboardFootprintPreviewValidMat
+      : this.billboardFootprintPreviewInvalidMat;
+    while (this.billboardFootprintPreviewMeshes.length < tiles.length) {
+      const m = new THREE.Mesh(this.billboardFootprintPreviewGeom, mat);
+      m.rotation.x = -Math.PI / 2;
+      m.renderOrder = 3;
+      this.scene.add(m);
+      this.billboardFootprintPreviewMeshes.push(m);
+    }
+    for (let i = 0; i < tiles.length; i++) {
+      const m = this.billboardFootprintPreviewMeshes[i]!;
+      const t = tiles[i]!;
+      m.material = mat;
+      m.position.set(t.x, 0.024, t.z);
+      m.visible = true;
+    }
+    for (let i = tiles.length; i < this.billboardFootprintPreviewMeshes.length; i++) {
+      this.billboardFootprintPreviewMeshes[i]!.visible = false;
+    }
+  }
+
+  private removeBillboardInteractGhost(): void {
+    if (!this.billboardInteractGhost) return;
+    const root = this.billboardInteractGhost;
+    this.scene.remove(root);
+    const mesh = root.userData["billboardMesh"] as THREE.Mesh | undefined;
+    if (mesh) {
+      mesh.geometry.dispose();
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.map = null;
+      mat.dispose();
+    }
+    this.billboardInteractGhost = null;
+    this.billboardInteractGhostSig = "";
+  }
+
+  private clearRepositionBillboardVisualState(): void {
+    if (this.repositionBillboardId) {
+      this.applyBillboardRepositionVisualDim(false, this.repositionBillboardId);
+    }
+    this.repositionBillboardId = null;
+    this.clearBillboardFootprintPreviewTiles();
+    this.removeBillboardInteractGhost();
+  }
+
+  private applyBillboardRepositionVisualDim(on: boolean, id: string): void {
+    const root = this.billboardRoots.get(id);
+    if (!root) return;
+    const mesh = root.userData["billboardMesh"] as THREE.Mesh | undefined;
+    const mat = mesh?.material as THREE.MeshBasicMaterial | undefined;
+    if (!mat) return;
+    mat.transparent = true;
+    mat.opacity = on ? 0.34 : 1;
+    mat.depthWrite = false;
+  }
+
+  private isBillboardFootprintFreeForPlace(
+    anchorX: number,
+    anchorZ: number,
+    orientation: "horizontal" | "vertical",
+    yawSteps: number
+  ): boolean {
+    const tiles = billboardFootprintTilesXZ(
+      anchorX,
+      anchorZ,
+      orientation,
+      yawSteps
+    );
+    if (!this.selfMesh) return false;
+    const px = this.selfMesh.position.x;
+    const pz = this.selfMesh.position.z;
+    const R = this.placeRadiusBlocks;
+    const here = snapFloorTile(px, pz);
+    for (const { x, z } of tiles) {
+      if (Math.hypot(px - x, pz - z) > R + 1e-6) return false;
+      if (
+        !isWalkableTile(
+          x,
+          z,
+          this.extraFloorKeys,
+          this.roomId,
+          this.removedBaseFloorKeys.size > 0
+            ? this.removedBaseFloorKeys
+            : undefined
+        )
+      ) {
+        return false;
+      }
+      if (
+        !floorWalkableTerrain(
+          x,
+          z,
+          this.placedObjects,
+          this.extraFloorKeys,
+          this.roomId,
+          this.removedBaseFloorKeys.size > 0
+            ? this.removedBaseFloorKeys
+            : undefined
+        )
+      ) {
+        return false;
+      }
+      if (this.hubNoBuildTile(x, z)) return false;
+      if (here.x === x && here.y === z) return false;
+      if (this.nextOpenLevelAt(x, z) !== 0) return false;
+      if (this.hasAnyBlockAtTile(x, z)) return false;
+      if (this.signboards.has(tileKey(x, z))) return false;
+      if (this.billboardIdForFloorTile(x, z, 0)) return false;
+    }
+    return true;
+  }
+
+  private isBillboardFootprintValidForMove(
+    anchorX: number,
+    anchorZ: number,
+    orientation: "horizontal" | "vertical",
+    yawSteps: number,
+    movingId: string
+  ): boolean {
+    const spec = this.billboardSpecs.get(movingId);
+    if (!spec) return false;
+    const oldKeys = new Set(
+      billboardFootprintTilesXZ(
+        spec.anchorX,
+        spec.anchorZ,
+        spec.orientation,
+        spec.yawSteps
+      ).map((t) => `${t.x},${t.z}`)
+    );
+    const newTiles = billboardFootprintTilesXZ(
+      anchorX,
+      anchorZ,
+      orientation,
+      yawSteps
+    );
+    if (!this.selfMesh) return false;
+    const px = this.selfMesh.position.x;
+    const pz = this.selfMesh.position.z;
+    const R = this.placeRadiusBlocks;
+    const here = snapFloorTile(px, pz);
+    for (const { x, z } of newTiles) {
+      if (Math.hypot(px - x, pz - z) > R + 1e-6) return false;
+      const ft: FloorTile = { x, y: z };
+      if (!this.tileWalkable(ft)) return false;
+      if (this.hubNoBuildTile(x, z)) return false;
+      if (here.x === x && here.y === z) return false;
+      const inOld = oldKeys.has(`${x},${z}`);
+      if (!inOld) {
+        if (this.nextOpenLevelAt(x, z) !== 0) return false;
+        if (this.hasAnyBlockAtTile(x, z)) return false;
+      }
+      if (this.signboards.has(tileKey(x, z))) return false;
+      const other = this.billboardIdForFloorTile(x, z, 0);
+      if (other && other !== movingId) return false;
+    }
+    return true;
+  }
+
+  private resolveBillboardInteractTexture(): THREE.Texture {
+    if (this.repositionBillboardId) {
+      const root = this.billboardRoots.get(this.repositionBillboardId);
+      const mesh = root?.userData["billboardMesh"] as THREE.Mesh | undefined;
+      const map = (mesh?.material as THREE.MeshBasicMaterial | undefined)?.map;
+      if (map) return map;
+    }
+    return this.billboardPreviewPlaceholderTex;
+  }
+
+  private syncBillboardInteractGhost(
+    anchorX: number,
+    anchorZ: number,
+    orientation: "horizontal" | "vertical",
+    yawSteps: number
+  ): void {
+    const tex = this.resolveBillboardInteractTexture();
+    const sig = `${anchorX}|${anchorZ}|${orientation}|${yawSteps}|${tex.uuid}`;
+    const spec = {
+      anchorX,
+      anchorZ,
+      orientation,
+      yawSteps,
+    };
+    if (
+      this.billboardInteractGhost &&
+      this.billboardInteractGhostSig === sig
+    ) {
+      updateBillboardRootPose(this.billboardInteractGhost, spec, BLOCK_SIZE);
+      return;
+    }
+    this.removeBillboardInteractGhost();
+    const root = createBillboardRoot(spec, BLOCK_SIZE, tex);
+    const mat = root.userData["billboardMat"] as THREE.MeshBasicMaterial;
+    mat.opacity = 0.4;
+    mat.depthWrite = false;
+    mat.needsUpdate = true;
+    this.scene.add(root);
+    this.billboardInteractGhost = root;
+    this.billboardInteractGhostSig = sig;
+  }
+
+  private syncBillboardRepositionPreviews(
+    clientX: number,
+    clientY: number
+  ): void {
+    const bid = this.repositionBillboardId;
+    const spec = bid ? this.billboardSpecs.get(bid) : undefined;
+    const from = this.repositionFrom;
+    if (!bid || !spec || !from) {
+      this.clearBillboardFootprintPreviewTiles();
+      this.removeBillboardInteractGhost();
+      return;
+    }
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest) {
+      this.clearBillboardFootprintPreviewTiles();
+      this.removeBillboardInteractGhost();
+      return;
+    }
+    const nAx = spec.anchorX + (dest.x - from.x);
+    const nAz = spec.anchorZ + (dest.y - from.y);
+    const previewTiles = billboardFootprintTilesXZ(
+      nAx,
+      nAz,
+      spec.orientation,
+      this.repositionDraftYaw
+    );
+    const ok = this.isBillboardFootprintValidForMove(
+      nAx,
+      nAz,
+      spec.orientation,
+      this.repositionDraftYaw,
+      bid
+    );
+    this.syncBillboardFootprintHighlightTiles(previewTiles, ok);
+    this.syncBillboardInteractGhost(
+      nAx,
+      nAz,
+      spec.orientation,
+      this.repositionDraftYaw
+    );
+    this.tileHighlight.position.set(dest.x, 0.02, dest.y);
+    this.tileHighlight.visible = true;
+    this.clearPlacementPreview();
+  }
+
+  private syncBillboardPlacementPreviews(
+    clientX: number,
+    clientY: number
+  ): void {
+    if (!this.selfMesh || !this.placeBlockHandler) {
+      this.clearBillboardFootprintPreviewTiles();
+      this.removeBillboardInteractGhost();
+      return;
+    }
+    if (this.teleporterDestPickHandler || this.repositionFrom) {
+      this.clearBillboardFootprintPreviewTiles();
+      this.removeBillboardInteractGhost();
+      return;
+    }
+    if (this.pickBlockKey(clientX, clientY)) {
+      this.clearBillboardFootprintPreviewTiles();
+      this.removeBillboardInteractGhost();
+      return;
+    }
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest) {
+      this.clearBillboardFootprintPreviewTiles();
+      this.removeBillboardInteractGhost();
+      return;
+    }
+    const orient = this.billboardPlacementDraft.orientation;
+    const yaw = 0;
+    const anchorX = dest.x;
+    const anchorZ = dest.y;
+    const placeTiles = billboardFootprintTilesXZ(anchorX, anchorZ, orient, yaw);
+    const ok = this.isBillboardFootprintFreeForPlace(
+      anchorX,
+      anchorZ,
+      orient,
+      yaw
+    );
+    this.syncBillboardFootprintHighlightTiles(placeTiles, ok);
+    this.syncBillboardInteractGhost(anchorX, anchorZ, orient, yaw);
+    this.tileHighlight.position.set(anchorX, 0.02, anchorZ);
+    this.tileHighlight.visible = true;
+    this.clearPlacementPreview();
+  }
+
+  private pickBillboardId(clientX: number, clientY: number): string | null {
+    if (!this.updateNdc(clientX, clientY)) return null;
+    this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    const roots = [...this.billboardRoots.values()];
+    if (roots.length === 0) return null;
+    const hits = this.raycaster.intersectObjects(roots, true);
+    for (const h of hits) {
+      let o: THREE.Object3D | null = h.object;
+      while (o) {
+        const id = o.userData["billboardId"] as string | undefined;
+        if (id) return id;
+        o = o.parent;
+      }
+    }
+    return null;
+  }
+
+  private billboardSelectionOutlineGeometry(mesh: THREE.Mesh): THREE.BufferGeometry | null {
+    mesh.updateMatrixWorld(true);
+    const posAttr = mesh.geometry.getAttribute("position") as
+      | THREE.BufferAttribute
+      | undefined;
+    if (!posAttr || posAttr.count < 3) return null;
+    const scratch = new THREE.Vector3();
+    const corners: THREE.Vector3[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < posAttr.count; i++) {
+      scratch.fromBufferAttribute(posAttr, i);
+      scratch.applyMatrix4(mesh.matrixWorld);
+      const key = `${scratch.x.toFixed(4)},${scratch.y.toFixed(4)},${scratch.z.toFixed(4)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      corners.push(scratch.clone());
+      if (corners.length >= 4) break;
+    }
+    if (corners.length < 3) return null;
+    while (corners.length > 4) corners.pop();
+    const n = corners.length;
+    const positions = new Float32Array(n * 2 * 3);
+    let o = 0;
+    for (let i = 0; i < n; i++) {
+      const a = corners[i]!;
+      const b = corners[(i + 1) % n]!;
+      positions[o++] = a.x;
+      positions[o++] = a.y;
+      positions[o++] = a.z;
+      positions[o++] = b.x;
+      positions[o++] = b.y;
+      positions[o++] = b.z;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    return geo;
+  }
+
   private refreshSelectionOutline(): void {
-    if (!this.selectedBlockKey || !this.buildMode) {
+    if (!this.buildMode) {
+      this.selectionOutline.visible = false;
+      this.refreshTeleporterLinkHighlight();
+      return;
+    }
+    if (this.selectedBillboardId) {
+      const root = this.billboardRoots.get(this.selectedBillboardId);
+      const mesh = root?.userData["billboardMesh"] as THREE.Mesh | undefined;
+      if (!mesh) {
+        this.selectionOutline.visible = false;
+        this.refreshTeleporterLinkHighlight();
+        return;
+      }
+      const geo = this.billboardSelectionOutlineGeometry(mesh);
+      if (!geo) {
+        this.selectionOutline.visible = false;
+        this.refreshTeleporterLinkHighlight();
+        return;
+      }
+      const prev = this.selectionOutline.geometry;
+      this.selectionOutline.geometry = geo;
+      prev.dispose();
+      this.selectionOutline.position.set(0, 0, 0);
+      this.selectionOutline.rotation.set(0, 0, 0);
+      this.selectionOutline.visible = true;
+      this.refreshTeleporterLinkHighlight();
+      return;
+    }
+    if (!this.selectedBlockKey) {
       this.selectionOutline.visible = false;
       this.refreshTeleporterLinkHighlight();
       return;
@@ -2320,11 +2828,20 @@ export class Game {
 
   beginReposition(x: number, z: number): void {
     this.clearPlacementPreview();
+    this.clearRepositionBillboardVisualState();
     this.repositionFrom = { x, y: z };
+    const bb = this.billboardIdForFloorTile(x, z, 0);
+    this.repositionBillboardId = bb;
+    if (bb) {
+      const spec = this.billboardSpecs.get(bb);
+      this.repositionDraftYaw = spec?.yawSteps ?? 0;
+      queueMicrotask(() => this.applyBillboardRepositionVisualDim(true, bb));
+    }
     this.syncHighlightColor();
   }
 
   cancelReposition(): void {
+    this.clearRepositionBillboardVisualState();
     this.repositionFrom = null;
     this.clearPlacementPreview();
     this.syncHighlightColor();
@@ -2334,13 +2851,128 @@ export class Game {
     return this.repositionFrom !== null;
   }
 
+  setBillboardPlacementPreviewActive(active: boolean): void {
+    this.billboardPlacementPreview = active;
+    if (!active) {
+      this.clearBillboardFootprintPreviewTiles();
+      this.removeBillboardInteractGhost();
+    }
+  }
+
+  getBillboardPlacementDraft(): {
+    orientation: "horizontal" | "vertical";
+    yawSteps: number;
+    advertIds: string[];
+    intervalSec: number;
+    advertId: string;
+  } {
+    const advertIds = [...this.billboardPlacementDraft.advertIds];
+    return {
+      orientation: this.billboardPlacementDraft.orientation,
+      yawSteps: this.billboardPlacementDraft.yawSteps,
+      advertIds,
+      intervalSec: this.billboardPlacementDraft.intervalSec,
+      advertId:
+        advertIds[0] ?? BILLBOARD_ADVERTS_CATALOG[0]?.id ?? "nimiq_bb",
+    };
+  }
+
+  setBillboardPlacementDraft(patch: {
+    orientation?: "horizontal" | "vertical";
+    yawSteps?: number;
+    advertIds?: string[];
+    intervalSec?: number;
+    advertId?: string;
+  }): void {
+    if (patch.orientation !== undefined) {
+      let o = patch.orientation;
+      if (BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED && o === "vertical") {
+        o = "horizontal";
+      }
+      this.billboardPlacementDraft.orientation = o;
+    }
+    if (patch.yawSteps !== undefined) {
+      this.billboardPlacementDraft.yawSteps = Math.max(
+        0,
+        Math.min(3, Math.floor(patch.yawSteps))
+      );
+    }
+    if (patch.advertIds !== undefined) {
+      const cleaned = patch.advertIds
+        .map((x) => String(x ?? "").trim())
+        .filter((id) => BILLBOARD_ADVERTS_CATALOG.some((a) => a.id === id))
+        .slice(0, 8);
+      if (cleaned.length > 0) {
+        this.billboardPlacementDraft.advertIds = cleaned;
+      }
+    }
+    if (patch.advertId !== undefined && patch.advertIds === undefined) {
+      const k = String(patch.advertId ?? "").trim();
+      const ok = BILLBOARD_ADVERTS_CATALOG.some((a) => a.id === k);
+      this.billboardPlacementDraft.advertIds = [
+        ok ? k : (BILLBOARD_ADVERTS_CATALOG[0]?.id ?? "nimiq_bb"),
+      ];
+    }
+    if (patch.intervalSec !== undefined) {
+      const s = Math.floor(Number(patch.intervalSec));
+      if (Number.isFinite(s)) {
+        this.billboardPlacementDraft.intervalSec = Math.max(
+          1,
+          Math.min(300, s)
+        );
+      }
+    }
+  }
+
+  /** R key (+1 per press) while repositioning a billboard (placement yaw is fixed). */
+  cycleBillboardInteractionYaw(delta: 1 | -1): boolean {
+    if (!this.buildMode) return false;
+    if (this.repositionBillboardId) {
+      this.repositionDraftYaw = (this.repositionDraftYaw + delta + 4) % 4;
+      this.syncBillboardRepositionPreviews(
+        this.lastBillboardPointerClientX,
+        this.lastBillboardPointerClientY
+      );
+      return true;
+    }
+    return false;
+  }
+
+  getRepositioningBillboardId(): string | null {
+    return this.repositionBillboardId;
+  }
+
+  getBillboardRepositionYaw(): number {
+    return this.repositionDraftYaw;
+  }
+
+  /**
+   * Build mode: M toggles reposition from current selection; second M cancels
+   * without sending a move (same as cancel).
+   */
+  tryToggleRepositionWithKeyboard(): boolean {
+    if (!this.buildMode) return false;
+    if (this.teleporterDestPickHandler) return false;
+    if (this.isRepositioning()) {
+      this.cancelReposition();
+      return true;
+    }
+    if (!this.moveBlockHandler) return false;
+    const t = this.getSelectedBlockTile();
+    if (!t) return false;
+    this.beginReposition(t.x, t.z);
+    return true;
+  }
+
   setBuildMode(on: boolean): void {
     this.buildMode = on;
     if (on) this.floorExpandMode = false;
     if (!on) {
       this.clearPendingBuildPlace();
       this.clearPlacementPreview();
+      this.clearRepositionBillboardVisualState();
       this.repositionFrom = null;
+      this.setBillboardPlacementPreviewActive(false);
       this.clearSelectedBlock();
     }
     this.syncHighlightColor();
@@ -2358,7 +2990,9 @@ export class Game {
       this.buildMode = false;
       this.clearPendingBuildPlace();
       this.clearPlacementPreview();
+      this.clearRepositionBillboardVisualState();
       this.repositionFrom = null;
+      this.setBillboardPlacementPreviewActive(false);
     }
     this.syncHighlightColor();
     this.syncPlacementRangeHints();
@@ -2546,6 +3180,198 @@ export class Game {
       | null
   ): void {
     this.signboardHoverHandler = handler;
+  }
+
+  private rebuildBillboardFootprintFloorKeys(): void {
+    this.billboardFootprintFloorKeys.clear();
+    for (const b of this.billboardSpecs.values()) {
+      for (const t of billboardFootprintTilesXZ(
+        b.anchorX,
+        b.anchorZ,
+        b.orientation,
+        b.yawSteps
+      )) {
+        this.billboardFootprintFloorKeys.add(`${t.x},${t.z}`);
+      }
+    }
+  }
+
+  setBillboards(billboards: readonly BillboardState[]): void {
+    this.billboardSyncGen++;
+    const gen = this.billboardSyncGen;
+    const prevSelectedBb = this.selectedBillboardId;
+    for (const t of this.billboardTimers.values()) {
+      clearInterval(t);
+    }
+    this.billboardTimers.clear();
+    for (const root of this.billboardRoots.values()) {
+      this.scene.remove(root);
+      disposeBillboardRoot(root);
+    }
+    this.billboardRoots.clear();
+    this.billboardSpecs.clear();
+    for (const raw of billboards) {
+      const rawIds = raw.advertIds;
+      let advertIds: string[] | undefined;
+      if (Array.isArray(rawIds) && rawIds.length > 0) {
+        advertIds = rawIds
+          .map((x) => String(x ?? "").trim())
+          .filter(Boolean)
+          .slice(0, 8);
+      }
+      if (!advertIds?.length && raw.advertId) {
+        advertIds = [String(raw.advertId).trim()].filter(Boolean);
+      }
+      const se = Number(raw.slideshowEpochMs);
+      const b: BillboardState = {
+        ...raw,
+        advertId: String(raw.advertId ?? "").trim(),
+        advertIds: advertIds?.length ? advertIds : undefined,
+        slideshowEpochMs: Number.isFinite(se) ? se : undefined,
+        visitName: String(raw.visitName ?? "").trim(),
+        visitUrl: String(raw.visitUrl ?? "").trim(),
+      };
+      this.billboardSpecs.set(b.id, b);
+      void this.mountOneBillboard(b, gen);
+    }
+    this.rebuildBillboardFootprintFloorKeys();
+    this.syncBlockMeshes();
+    if (
+      prevSelectedBb &&
+      !billboards.some((b) => b.id === prevSelectedBb)
+    ) {
+      this.selectedBillboardId = null;
+    }
+    this.refreshSelectionOutline();
+    if (this.repositionBillboardId) {
+      const id = this.repositionBillboardId;
+      requestAnimationFrame(() => this.applyBillboardRepositionVisualDim(true, id));
+    }
+  }
+
+  private resolveBillboardTextureUrl(url: string): string {
+    if (url.startsWith("/") && !url.startsWith("//")) {
+      return `${window.location.origin}${url}`;
+    }
+    return url;
+  }
+
+  private loadBillboardTexture(url: string): Promise<THREE.Texture> {
+    return new Promise((resolve, reject) => {
+      const loader = new THREE.TextureLoader();
+      loader.load(
+        this.resolveBillboardTextureUrl(url),
+        (tex: THREE.Texture) => {
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.needsUpdate = true;
+          resolve(tex);
+        },
+        undefined,
+        () => reject(new Error("billboard_tex_load"))
+      );
+    });
+  }
+
+  private async mountOneBillboard(
+    b: BillboardState,
+    gen: number
+  ): Promise<void> {
+    const slides = b.slides?.length ? [...b.slides] : [];
+    if (!slides.length) return;
+
+    const placeholderTex = makeFallbackBillboardTexture();
+    if (gen !== this.billboardSyncGen) {
+      placeholderTex.dispose();
+      return;
+    }
+
+    const root = createBillboardRoot(
+      {
+        anchorX: b.anchorX,
+        anchorZ: b.anchorZ,
+        orientation: b.orientation,
+        yawSteps: b.yawSteps,
+      },
+      BLOCK_SIZE,
+      placeholderTex
+    );
+    root.userData["billboardId"] = b.id;
+    const planeMesh = root.userData["billboardMesh"] as THREE.Mesh | undefined;
+    if (planeMesh) {
+      planeMesh.userData["billboardId"] = b.id;
+    }
+    this.scene.add(root);
+    root.updateMatrixWorld(true);
+    this.billboardRoots.set(b.id, root);
+
+    try {
+      const ph0 = billboardSlideshowPhaseIndex(b, Date.now());
+      const tex = await this.loadBillboardTexture(slides[ph0]!);
+      if (gen !== this.billboardSyncGen) {
+        tex.dispose();
+        return;
+      }
+      const mat = root.userData["billboardMat"] as
+        | THREE.MeshBasicMaterial
+        | undefined;
+      if (
+        !mat ||
+        root.userData["billboardId"] !== b.id ||
+        this.billboardRoots.get(b.id) !== root
+      ) {
+        tex.dispose();
+        return;
+      }
+      const old = mat.map;
+      mat.map = tex;
+      mat.needsUpdate = true;
+      if (old && old !== tex) old.dispose();
+    } catch {
+      /* keep black placeholder */
+    }
+
+    if (gen !== this.billboardSyncGen || this.billboardRoots.get(b.id) !== root) {
+      return;
+    }
+
+    if (slides.length >= 2 && b.intervalMs >= 1000) {
+      let lastPhase = billboardSlideshowPhaseIndex(b, Date.now());
+      const pollMs = Math.min(250, Math.max(80, Math.floor(b.intervalMs / 8)));
+      const timer = window.setInterval(() => {
+        void (async () => {
+          if (gen !== this.billboardSyncGen) return;
+          const ph = billboardSlideshowPhaseIndex(b, Date.now());
+          if (ph === lastPhase) return;
+          lastPhase = ph;
+          const nextUrl = slides[ph]!;
+          try {
+            const nextTex = await this.loadBillboardTexture(nextUrl);
+            if (gen !== this.billboardSyncGen) {
+              nextTex.dispose();
+              return;
+            }
+            const mat = root.userData["billboardMat"] as
+              | THREE.MeshBasicMaterial
+              | undefined;
+            if (!mat || root.userData["billboardId"] !== b.id) {
+              nextTex.dispose();
+              return;
+            }
+            if (billboardSlideshowPhaseIndex(b, Date.now()) !== ph) {
+              nextTex.dispose();
+              return;
+            }
+            const old = mat.map;
+            mat.map = nextTex;
+            mat.needsUpdate = true;
+            old?.dispose();
+          } catch {
+            /* keep current slide */
+          }
+        })();
+      }, pollMs);
+      this.billboardTimers.set(b.id, timer);
+    }
   }
 
   private async syncCanvasIdenticonForTile(x: number, z: number, address: string): Promise<void> {
@@ -2958,6 +3784,7 @@ export class Game {
     if (!this.selfMesh || !this.placeBlockHandler) return null;
     if (this.teleporterDestPickHandler) return null;
     if (this.repositionFrom) return null;
+    if (this.billboardPlacementPreview) return null;
     if (this.pickBlockKey(clientX, clientY)) return null;
     const dest = this.pickFloor(clientX, clientY);
     if (!dest || !this.tileWalkable(dest)) return null;
@@ -2969,6 +3796,44 @@ export class Game {
     if (this.hubNoBuildTile(dest.x, dest.y)) return null;
     if (here.x === dest.x && here.y === dest.y) return null;
     return { x: dest.x, z: dest.y };
+  }
+
+  /**
+   * Anchor tile for billboard placement (same radius / walk / hub checks as block place,
+   * plus full footprint validity). Used when billboard tool preview is active.
+   */
+  private tryBillboardAnchorPlacementTile(
+    clientX: number,
+    clientY: number
+  ): { x: number; z: number } | null {
+    if (!this.selfMesh || !this.placeBlockHandler) return null;
+    if (!this.billboardPlacementPreview) return null;
+    if (this.teleporterDestPickHandler || this.repositionFrom) return null;
+    if (this.pickBlockKey(clientX, clientY)) return null;
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest || !this.tileWalkable(dest)) return null;
+    const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    const dx = here.x - dest.x;
+    const dz = here.y - dest.y;
+    if (Math.hypot(dx, dz) > this.placeRadiusBlocks + 1e-6) return null;
+    if (this.hubNoBuildTile(dest.x, dest.y)) return null;
+    if (here.x === dest.x && here.y === dest.y) return null;
+    const orient = this.billboardPlacementDraft.orientation;
+    const yaw = 0;
+    if (!this.isBillboardFootprintFreeForPlace(dest.x, dest.y, orient, yaw)) {
+      return null;
+    }
+    return { x: dest.x, z: dest.y };
+  }
+
+  private tryBuildPlacementFloorTile(
+    clientX: number,
+    clientY: number
+  ): { x: number; z: number } | null {
+    if (this.billboardPlacementPreview) {
+      return this.tryBillboardAnchorPlacementTile(clientX, clientY);
+    }
+    return this.tryFloorBlockPlacementTile(clientX, clientY);
   }
 
   private clearPendingBuildPlace(): void {
@@ -3362,15 +4227,15 @@ export class Game {
       this.pendingBuildPlace &&
       e.pointerId === this.pendingBuildPlace.pointerId
     ) {
-      const t = this.tryFloorBlockPlacementTile(e.clientX, e.clientY);
-      if (t) {
+      const t = this.tryBuildPlacementFloorTile(e.clientX, e.clientY);
+      if (t && !this.billboardPlacementPreview) {
         const yLevel = this.nextOpenLevelAt(t.x, t.z);
         if (yLevel !== null) {
           this.syncPlacementPreviewAt(t.x, t.z, yLevel);
         } else {
           this.clearPlacementPreview();
         }
-      } else {
+      } else if (!t) {
         this.clearPlacementPreview();
       }
     }
@@ -3484,6 +4349,20 @@ export class Game {
           }
           return;
         }
+      }
+      if (this.repositionFrom && this.repositionBillboardId) {
+        this.lastBillboardPointerClientX = e.clientX;
+        this.lastBillboardPointerClientY = e.clientY;
+        this.syncBillboardRepositionPreviews(e.clientX, e.clientY);
+        this.signboardHoverHandler?.(null);
+        return;
+      }
+      if (this.billboardPlacementPreview) {
+        this.lastBillboardPointerClientX = e.clientX;
+        this.lastBillboardPointerClientY = e.clientY;
+        this.syncBillboardPlacementPreviews(e.clientX, e.clientY);
+        this.signboardHoverHandler?.(null);
+        return;
       }
       const placeTile = this.tryFloorBlockPlacementTile(e.clientX, e.clientY);
       if (placeTile) {
@@ -3800,25 +4679,82 @@ export class Game {
         if (!this.moveBlockHandler) {
           this.cancelReposition();
         } else {
+          const billboardHit = this.pickBillboardId(e.clientX, e.clientY);
+          if (billboardHit) {
+            const spec = this.billboardSpecs.get(billboardHit);
+            if (spec) {
+              this.cancelReposition();
+              this.selectBillboard(billboardHit);
+              this.obstacleSelectHandler?.(spec.anchorX, spec.anchorZ, 0);
+              return;
+            }
+          }
           const blockHit = this.pickBlockKey(e.clientX, e.clientY);
           if (blockHit) {
             const [bx, bz, byRaw] = blockHit.split(",").map(Number);
             const by = Number.isFinite(byRaw) ? Math.floor(byRaw ?? 0) : 0;
+            const bbFloor = this.billboardIdForFloorTile(bx!, bz!, by);
             this.cancelReposition();
-            this.setSelectedBlockKey(blockHit);
-            this.obstacleSelectHandler?.(bx!, bz!, by);
+            if (bbFloor) {
+              this.selectBillboard(bbFloor);
+              this.obstacleSelectHandler?.(bx!, bz!, by);
+            } else {
+              this.setSelectedBlockKey(blockHit);
+              this.obstacleSelectHandler?.(bx!, bz!, by);
+            }
             return;
           }
           const dest = this.pickFloor(e.clientX, e.clientY);
           if (!dest) return;
           if (!this.tileWalkable(dest)) return;
-          if (this.hasAnyBlockAtTile(dest.x, dest.y)) return;
           if (this.hubNoBuildTile(dest.x, dest.y)) return;
           const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
           if (here.x === dest.x && here.y === dest.y) return;
           const from = this.repositionFrom;
+          const bbId = this.repositionBillboardId;
+          if (bbId) {
+            const spec = this.billboardSpecs.get(bbId);
+            if (!spec) return;
+            const nAx = spec.anchorX + (dest.x - from.x);
+            const nAz = spec.anchorZ + (dest.y - from.y);
+            if (
+              !this.isBillboardFootprintValidForMove(
+                nAx,
+                nAz,
+                spec.orientation,
+                this.repositionDraftYaw,
+                bbId
+              )
+            ) {
+              return;
+            }
+            const sameCell = dest.x === from.x && dest.y === from.y;
+            if (!sameCell) {
+              const destTiles = billboardFootprintTilesXZ(
+                nAx,
+                nAz,
+                spec.orientation,
+                this.repositionDraftYaw
+              );
+              for (const t of destTiles) {
+                if (here.x === t.x && here.y === t.z) return;
+              }
+            }
+          } else if (this.hasAnyBlockAtTile(dest.x, dest.y)) {
+            return;
+          }
           this.moveBlockHandler(from.x, from.y, dest.x, dest.y);
           this.cancelReposition();
+          return;
+        }
+      }
+
+      const billboardHit = this.pickBillboardId(e.clientX, e.clientY);
+      if (billboardHit) {
+        const spec = this.billboardSpecs.get(billboardHit);
+        if (spec) {
+          this.selectBillboard(billboardHit);
+          this.obstacleSelectHandler?.(spec.anchorX, spec.anchorZ, 0);
           return;
         }
       }
@@ -3827,9 +4763,16 @@ export class Game {
       if (blockHit) {
         const [bx, bz, byRaw] = blockHit.split(",").map(Number);
         const by = Number.isFinite(byRaw) ? Math.floor(byRaw ?? 0) : 0;
+        const bbFloor = this.billboardIdForFloorTile(bx!, bz!, by);
+        if (bbFloor) {
+          this.selectBillboard(bbFloor);
+          this.obstacleSelectHandler?.(bx!, bz!, by);
+          return;
+        }
         const selected = this.getSelectedBlockTile();
         const canStackHere = this.nextOpenLevelAt(bx!, bz!) !== null;
         if (
+          !this.selectedBillboardId &&
           this.placeBlockHandler &&
           selected &&
           selected.x === bx &&
@@ -3875,7 +4818,7 @@ export class Game {
         return;
       }
       
-      const placeT = this.tryFloorBlockPlacementTile(e.clientX, e.clientY);
+      const placeT = this.tryBuildPlacementFloorTile(e.clientX, e.clientY);
       if (!placeT) return;
       const yOpen = this.nextOpenLevelAt(placeT.x, placeT.z);
       if (yOpen === null) return;
@@ -3891,7 +4834,9 @@ export class Game {
         } catch {
           /* ignore */
         }
-        this.syncPlacementPreviewAt(placeT.x, placeT.z, yOpen);
+        if (!this.billboardPlacementPreview) {
+          this.syncPlacementPreviewAt(placeT.x, placeT.z, yOpen);
+        }
         return;
       }
       this.clearPlacementPreview();
@@ -4079,6 +5024,15 @@ export class Game {
     this.placementHintMeshes.clear();
     this.placementHintGeom.dispose();
     this.placementHintMat.dispose();
+    for (const m of this.billboardFootprintPreviewMeshes) {
+      this.scene.remove(m);
+    }
+    this.billboardFootprintPreviewMeshes.length = 0;
+    this.billboardFootprintPreviewGeom.dispose();
+    this.billboardFootprintPreviewValidMat.dispose();
+    this.billboardFootprintPreviewInvalidMat.dispose();
+    this.removeBillboardInteractGhost();
+    this.billboardPreviewPlaceholderTex.dispose();
     this.fogOfWar.dispose();
     for (const addr of [...this.typingIndicatorByAddress.keys()]) {
       this.removeTypingIndicator(addr);
@@ -4757,9 +5711,25 @@ export class Game {
       const wx = parts[0]!;
       const wz = parts[1]!;
       const wyLevel = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
+      let g = this.blockMeshes.get(k);
+      if (
+        wyLevel === 0 &&
+        this.billboardFootprintFloorKeys.has(`${wx},${wz}`)
+      ) {
+        if (g) {
+          this.scene.remove(g);
+          g.traverse((child: THREE.Object3D) => {
+            if (child instanceof THREE.Mesh) {
+              child.geometry.dispose();
+              (child.material as THREE.Material).dispose();
+            }
+          });
+          this.blockMeshes.delete(k);
+        }
+        continue;
+      }
       const h = this.obstacleHeight(meta);
       const vis = this.blockVisualScale;
-      let g = this.blockMeshes.get(k);
       const prev = g?.userData["blockMeta"] as BlockStyleProps | undefined;
       const prevVis = g?.userData["blockRenderScale"] as number | undefined;
       const unchanged =
@@ -5568,10 +6538,16 @@ export class Game {
       color: 0x8899aa,
       transparent: true,
       depthTest: true,
+      /**
+       * Keep depthWrite off: Sprite depth is not reliable vs tilted meshes and can erase
+       * billboards near the avatar. Billboards use depthWrite + lower renderOrder so they
+       * draw first; the identicon then depth-tests correctly against the plane.
+       */
       depthWrite: false,
     });
     const body = new THREE.Sprite(mat);
-    body.renderOrder = 0;
+    /** After billboards (see billboardVisual mesh renderOrder) so plane depth is in the buffer. */
+    body.renderOrder = 2;
     body.scale.set(d, d, 1);
     body.position.y = AVATAR_SPHERE_RADIUS * s;
     body.rotation.copy(this.getIdenticonEuler());

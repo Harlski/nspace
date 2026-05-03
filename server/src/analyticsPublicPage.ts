@@ -149,7 +149,7 @@ export function analyticsPublicPageHtml(): string {
     <section class="panel">
       <h2>Unique visitors</h2>
       <div id="visitorsChart"></div>
-      <div id="visitorsHover" class="hover-card mono">Hover a bar: each color is a user; bar height is total login/logout events that hour.</div>
+      <div id="visitorsHover" class="hover-card mono">Hover a bar: each color is a distinct wallet; bar height is unique players with any login or logout that hour (not multiple logins per user).</div>
       <div id="visitorsPinned" class="mono users-list" style="margin-top:0.6rem"></div>
     </section>
     <section class="panel">
@@ -165,9 +165,9 @@ export function analyticsPublicPageHtml(): string {
       <p class="hintline">Oldest day left · each line scaled to its own max.</p>
     </section>
     <section class="panel">
-      <h2>Recent sessions</h2>
+      <h2>Active play time</h2>
       <div id="sessionsHourChart"></div>
-      <div id="sessionsHourHover" class="hover-card mono">Hover a bar to inspect total session duration for that hour.</div>
+      <div id="sessionsHourHover" class="hover-card mono">Hover a bar: total estimated active play time for sessions that started in that hour (gaps between actions capped at 5m; excludes long AFK).</div>
       <div id="sessionsHourPinned" class="mono" style="margin-top:0.6rem"></div>
     </section>
   </div>
@@ -1195,6 +1195,9 @@ export function analyticsPublicPageHtml(): string {
       var expandedUserByHour = {};
       var identByWallet = {};
       (data.visitors || []).forEach(function (v) { identByWallet[v.walletId] = v.identicon; });
+      (data.playTimeByRoom || []).forEach(function (r) {
+        if (r.address && r.identicon) identByWallet[r.address] = r.identicon;
+      });
       payoutChartRows.forEach(function (h) {
         (h.users || []).forEach(function (u) {
           if (!identByWallet[u.walletId]) identByWallet[u.walletId] = u.identicon;
@@ -1880,7 +1883,10 @@ export function analyticsPublicPageHtml(): string {
             slot = Number(new Date(s.startedAt).getUTCHours());
           }
           if (!(slot >= 0 && slot < sessionByHour.length)) return;
-          var d = Number(s.durationMs || 0);
+          var d =
+            s.activeDurationMs != null && Number.isFinite(Number(s.activeDurationMs))
+              ? Number(s.activeDurationMs)
+              : Number(s.durationMs || 0);
           var b = sessionByHour[slot];
           b.totalMs += d;
           b.rows.push(s);
@@ -1894,16 +1900,94 @@ export function analyticsPublicPageHtml(): string {
         maxSessionMs = Math.max(maxSessionMs, b.totalMs);
       });
 
+      function aggregateRowsToRooms(rows) {
+        var sub = {};
+        (rows || []).forEach(function (s) {
+          var w = s.address || "";
+          var room = s.roomId || "";
+          if (!w) return;
+          var wall = Number(s.durationMs || 0);
+          var active =
+            s.activeDurationMs != null && Number.isFinite(Number(s.activeDurationMs))
+              ? Number(s.activeDurationMs)
+              : wall;
+          var k = w + "\t" + room;
+          if (!sub[k]) {
+            sub[k] = {
+              address: w,
+              roomId: room,
+              activeDurationMs: 0,
+              wallDurationMs: 0,
+              sessionCount: 0,
+              identicon: identByWallet[w] || "",
+            };
+          }
+          sub[k].activeDurationMs += active;
+          sub[k].wallDurationMs += wall;
+          sub[k].sessionCount += 1;
+        });
+        return Object.keys(sub)
+          .map(function (k) {
+            return sub[k];
+          })
+          .sort(function (a, c) {
+            return c.activeDurationMs - a.activeDurationMs;
+          });
+      }
+
       function renderSessionPinned() {
         var el = document.getElementById("sessionsHourPinned");
         if (!el) return;
         if (selectedSessionHour === null) {
-          el.innerHTML =
-            "<div class='hintline'>Click a " + (chartDayMode ? "day" : "hour") + " to pin session duration details.</div>";
+          var globalRows = Array.isArray(data.playTimeByRoom) ? data.playTimeByRoom : [];
+          if (!globalRows.length) {
+            globalRows = aggregateRowsToRooms(data.sessions || []);
+          }
+          var gHint =
+            "<div class='hintline'>Totals for this date range: active play per wallet and room (sessions summed; AFK gaps capped at 5m between actions). Click a " +
+            (chartDayMode ? "day" : "hour") +
+            " on the chart for the slice that started then.</div>";
+          if (!globalRows.length) {
+            el.innerHTML = gHint + "<p class='status' style='margin-top:0.35rem'>No ended sessions in this window.</p>";
+            attachCopyHandlers(el);
+            return;
+          }
+          var gSum = globalRows.reduce(function (a, r) {
+            return a + Number(r.activeDurationMs || 0);
+          }, 0);
+          var htmlG =
+            gHint +
+            "<div style='margin-bottom:0.4rem'><strong>All rooms in range</strong> · " +
+            fmtMs(gSum) +
+            " active · " +
+            globalRows.length +
+            " wallet/room" +
+            (globalRows.length === 1 ? "" : "s") +
+            "</div>";
+          htmlG +=
+            "<table><thead><tr><th>User</th><th>Room</th><th class='right'>Sessions</th><th class='right'>Active</th><th class='right'>Wall</th></tr></thead><tbody>";
+          globalRows.forEach(function (r) {
+            htmlG +=
+              "<tr><td>" +
+              walletChip(r.identicon || identByWallet[r.address] || "", r.address) +
+              "</td><td>" +
+              esc(r.roomId) +
+              "</td><td class='right'>" +
+              esc(String(r.sessionCount != null ? r.sessionCount : "—")) +
+              "</td><td class='right'>" +
+              esc(fmtMs(r.activeDurationMs)) +
+              "</td><td class='right'>" +
+              esc(fmtMs(r.wallDurationMs)) +
+              "</td></tr>";
+          });
+          htmlG += "</tbody></table>";
+          el.innerHTML = htmlG;
+          attachCopyHandlers(el);
           return;
         }
         var b = sessionByHour[selectedSessionHour];
         if (!b) return;
+        var roomRows = aggregateRowsToRooms(b.rows);
         var users = Object.keys(b.users)
           .map(function (w) {
             return {
@@ -1913,26 +1997,55 @@ export function analyticsPublicPageHtml(): string {
               identicon: identByWallet[w] || "",
             };
           })
-          .sort(function (a, c) { return c.totalMs - a.totalMs; });
+          .sort(function (a, c) {
+            return c.totalMs - a.totalMs;
+          });
         var sessHead =
           "<strong>" +
           (chartDayMode
             ? esc((loginChartRows[selectedSessionHour] || {}).dayUtc || "") + " UTC"
             : String(selectedSessionHour).padStart(2, "0") + ":00 UTC") +
           "</strong>";
-        var html = "<div style='margin-bottom:0.4rem'>" + sessHead + " · " + fmtMs(b.totalMs) + " total · " + b.rows.length + " sessions</div>";
-        html += "<table><thead><tr><th>User</th><th class='right'>Sessions</th><th class='right'>Duration</th></tr></thead><tbody>";
+        var html =
+          "<div style='margin-bottom:0.4rem'>" +
+          sessHead +
+          " · " +
+          fmtMs(b.totalMs) +
+          " active · " +
+          b.rows.length +
+          " session" +
+          (b.rows.length === 1 ? "" : "s") +
+          " started</div>";
+        html += "<table><thead><tr><th>User</th><th class='right'>Sessions</th><th class='right'>Active</th></tr></thead><tbody>";
         users.forEach(function (u) {
-          html += "<tr><td>" + walletChip(u.identicon, u.walletId) + "</td><td class='right'>" + u.sessions + "</td><td class='right'>" + fmtMs(u.totalMs) + "</td></tr>";
+          html +=
+            "<tr><td>" +
+            walletChip(u.identicon, u.walletId) +
+            "</td><td class='right'>" +
+            u.sessions +
+            "</td><td class='right'>" +
+            fmtMs(u.totalMs) +
+            "</td></tr>";
         });
         html += "</tbody></table>";
-        html += "<table><thead><tr><th>Start</th><th>User</th><th>Room</th><th class='right'>Duration</th></tr></thead><tbody>";
-        b.rows
-          .slice()
-          .sort(function (a, c) { return c.startedAt - a.startedAt; })
-          .forEach(function (s) {
-            html += "<tr><td>" + esc(fmtMdHm(s.startedAt)) + "</td><td>" + walletChip(identByWallet[s.address] || "", s.address) + "</td><td>" + esc(s.roomId) + "</td><td class='right'>" + esc(fmtMs(s.durationMs)) + "</td></tr>";
-          });
+        html +=
+          "<div style='margin-top:0.55rem;margin-bottom:0.25rem' class='hintline'>By room (same wallet in multiple rooms appears once per room)</div>";
+        html +=
+          "<table><thead><tr><th>User</th><th>Room</th><th class='right'>Sessions</th><th class='right'>Active</th><th class='right'>Wall</th></tr></thead><tbody>";
+        roomRows.forEach(function (r) {
+          html +=
+            "<tr><td>" +
+            walletChip(r.identicon || identByWallet[r.address] || "", r.address) +
+            "</td><td>" +
+            esc(r.roomId) +
+            "</td><td class='right'>" +
+            r.sessionCount +
+            "</td><td class='right'>" +
+            fmtMs(r.activeDurationMs) +
+            "</td><td class='right'>" +
+            fmtMs(r.wallDurationMs) +
+            "</td></tr>";
+        });
         html += "</tbody></table>";
         el.innerHTML = html;
         attachCopyHandlers(el);
@@ -1983,7 +2096,7 @@ export function analyticsPublicPageHtml(): string {
               ? "<strong>" + esc((loginChartRows[hour] || {}).dayUtc || "") + " UTC</strong>"
               : "<strong>" + String(hour).padStart(2, "0") + ":00 UTC</strong>";
             hoverEl.innerHTML =
-              "<div>" + hStr + " · " + fmtMs(b.totalMs) + " total duration · " + b.rows.length + " sessions</div>";
+              "<div>" + hStr + " · " + fmtMs(b.totalMs) + " active play · " + b.rows.length + " sessions started</div>";
           }
           el.addEventListener("mouseenter", show);
           el.addEventListener("click", function () {
@@ -2057,12 +2170,7 @@ export function analyticsPublicPageHtml(): string {
         if (!chartEl || !hoverEl) return;
         var maxVisitorStack = 1;
         visitorsByHour.forEach(function (b) {
-          var t = 0;
-          Object.keys(b.users).forEach(function (w) {
-            var u = b.users[w];
-            t += Number(u.inCount || 0) + Number(u.outCount || 0);
-          });
-          maxVisitorStack = Math.max(maxVisitorStack, t);
+          maxVisitorStack = Math.max(maxVisitorStack, b.unique);
         });
         var maxSegs = 10;
         var vg = "grid-template-columns:repeat(" + chartSlotCount + ",minmax(4px,1fr))";
@@ -2078,42 +2186,51 @@ export function analyticsPublicPageHtml(): string {
           "'>" +
           visitorsByHour
             .map(function (b, hour) {
-              var hourTotal = 0;
-              Object.keys(b.users).forEach(function (w) {
-                var u = b.users[w];
-                hourTotal += Number(u.inCount || 0) + Number(u.outCount || 0);
-              });
+              var hourTotal = b.unique;
               var outerPct = hourTotal === 0 ? 3 : Math.max(3, Math.round((hourTotal / maxVisitorStack) * 100));
               var usersArr = Object.keys(b.users)
                 .map(function (walletId) {
                   var u = b.users[walletId];
-                  var t = Number(u.inCount || 0) + Number(u.outCount || 0);
-                  return { walletId: walletId, identicon: u.identicon, inCount: u.inCount, outCount: u.outCount, t: t };
+                  var ev = Number(u.inCount || 0) + Number(u.outCount || 0);
+                  return {
+                    walletId: walletId,
+                    identicon: u.identicon,
+                    inCount: u.inCount,
+                    outCount: u.outCount,
+                    stackW: ev > 0 ? 1 : 0,
+                    ev: ev,
+                  };
                 })
                 .filter(function (x) {
-                  return x.t > 0;
+                  return x.stackW > 0;
                 })
                 .sort(function (a, c) {
-                  return c.t - a.t;
+                  return c.ev - a.ev;
                 });
               var segs = [];
-              var otherT = 0;
+              var otherW = 0;
               usersArr.forEach(function (u, idx) {
                 if (idx < maxSegs) segs.push(u);
-                else otherT += u.t;
+                else otherW += 1;
               });
-              if (otherT > 0) {
-                segs.push({ walletId: "", identicon: "", inCount: 0, outCount: 0, t: otherT, isOther: true });
+              if (otherW > 0) {
+                segs.push({ walletId: "", identicon: "", inCount: 0, outCount: 0, stackW: otherW, ev: 0, isOther: true });
               }
               var inner = "";
               if (hourTotal === 0) {
                 inner = "<div class='stack-seg' style='height:100%;background:#283244' title='No activity'></div>";
               } else {
                 segs.forEach(function (u, i) {
-                  var pct = Math.max(0.35, (u.t / hourTotal) * 100);
+                  var pct = Math.max(0.35, (u.stackW / hourTotal) * 100);
                   var label = u.isOther
-                    ? String(usersArr.length - maxSegs) + " others"
-                    : walletShort(u.walletId) + " · " + u.inCount + " in / " + u.outCount + " out";
+                    ? String(usersArr.length - maxSegs) + " other wallets"
+                    : walletShort(u.walletId) +
+                      " · " +
+                      u.inCount +
+                      " in / " +
+                      u.outCount +
+                      " out" +
+                      (u.ev > 1 ? " (" + u.ev + " events)" : "");
                   var c = u.isOther ? "#5c6575" : USER_STACK_COLORS[i % USER_STACK_COLORS.length];
                   inner +=
                     "<div class='stack-seg' style='height:3%;background:" +

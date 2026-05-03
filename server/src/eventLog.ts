@@ -43,6 +43,20 @@ export const ANALYTICS_EVENT_KINDS = {
   chat: "chat",
 } as const;
 
+/**
+ * When inferring active play time from gameplay events, wall time between events is credited only
+ * up to this cap so long AFK stretches do not inflate totals.
+ */
+const ANALYTICS_ACTIVE_PLAY_IDLE_CAP_MS = 5 * 60 * 1000;
+
+function kindContributesToActivePlay(kind: string): boolean {
+  if (kind === ANALYTICS_EVENT_KINDS.sessionStart) return false;
+  if (kind === ANALYTICS_EVENT_KINDS.sessionEnd) return false;
+  if (kind === ANALYTICS_EVENT_KINDS.nimPayoutSent) return false;
+  if (kind === ANALYTICS_EVENT_KINDS.nimPayoutDeadLetter) return false;
+  return Boolean(kind);
+}
+
 export type LoginHourBucket = {
   hourUtc: number;
   starts: number;
@@ -81,6 +95,17 @@ export type SessionTimelineRow = {
   startedAt: number;
   endedAt: number | null;
   durationMs: number | null;
+  /** Capped-gap estimate from gameplay events; null when the session has not ended in logs. */
+  activeDurationMs: number | null;
+};
+
+export type PlayTimeByRoomRow = {
+  address: string;
+  roomId: string;
+  identicon: string;
+  activeDurationMs: number;
+  wallDurationMs: number;
+  sessionCount: number;
 };
 
 export type NimTimelineRow = {
@@ -185,6 +210,8 @@ export type EventLogAnalyticsSnapshot = {
   loginByDayUtc?: LoginDayBucket[];
   payoutByDayUtc?: PayoutDayBucket[];
   sessions: SessionTimelineRow[];
+  /** Per wallet + room: summed active play time (capped gaps) across ended sessions in the window. */
+  playTimeByRoom: PlayTimeByRoomRow[];
   nimPayouts: NimTimelineRow[];
   daily: DailyAnalyticsRow[];
 };
@@ -633,7 +660,14 @@ export async function getEventLogAnalyticsSnapshot(
   const uniqueByHour = Array.from({ length: 24 }, () => new Set<string>());
   const bySession = new Map<
     string,
-    { address: string; roomId: string; startedAt: number; endedAt: number | null }
+    {
+      address: string;
+      roomId: string;
+      startedAt: number;
+      endedAt: number | null;
+      lastActivityTs: number;
+      activeMs: number;
+    }
   >();
   const payouts: NimTimelineRow[] = [];
   const startByHourUser = Array.from({ length: 24 }, () => new Map<string, number>());
@@ -707,6 +741,16 @@ export async function getEventLogAnalyticsSnapshot(
     const day = utcDayKey(rec.ts);
     const ds = dayState(day);
     if (rec.address) ds.active.add(rec.address);
+    if (rec.sessionId) {
+      const live = bySession.get(rec.sessionId);
+      if (live && live.endedAt === null && kindContributesToActivePlay(rec.kind)) {
+        const gap = rec.ts - live.lastActivityTs;
+        if (gap >= 0) {
+          live.activeMs += Math.min(gap, ANALYTICS_ACTIVE_PLAY_IDLE_CAP_MS);
+        }
+        live.lastActivityTs = rec.ts;
+      }
+    }
     if (rec.kind === ANALYTICS_EVENT_KINDS.sessionStart) {
       const h = new Date(rec.ts).getUTCHours();
       if (useDayCharts) {
@@ -745,6 +789,8 @@ export async function getEventLogAnalyticsSnapshot(
         roomId: rec.roomId,
         startedAt: rec.ts,
         endedAt: null,
+        lastActivityTs: rec.ts,
+        activeMs: 0,
       });
       return;
     }
@@ -763,13 +809,21 @@ export async function getEventLogAnalyticsSnapshot(
       visitorState(rec.address).sessionEnds += 1;
       const current = bySession.get(rec.sessionId);
       if (current) {
+        const gapEnd = rec.ts - current.lastActivityTs;
+        if (gapEnd >= 0) {
+          current.activeMs += Math.min(gapEnd, ANALYTICS_ACTIVE_PLAY_IDLE_CAP_MS);
+        }
         current.endedAt = rec.ts;
       } else {
+        const startedAt = rec.ts - (rec.durationMs ?? 0);
+        const wall = Math.max(0, rec.durationMs ?? 0);
         bySession.set(rec.sessionId, {
           address: rec.address,
           roomId: rec.roomId,
-          startedAt: rec.ts - (rec.durationMs ?? 0),
+          startedAt,
           endedAt: rec.ts,
+          lastActivityTs: startedAt,
+          activeMs: Math.min(wall, ANALYTICS_ACTIVE_PLAY_IDLE_CAP_MS),
         });
       }
       return;
@@ -854,16 +908,58 @@ export async function getEventLogAnalyticsSnapshot(
   }
 
   const sessions = [...bySession.entries()]
-    .map(([sessionId, v]) => ({
-      sessionId,
-      address: v.address,
-      roomId: v.roomId,
-      startedAt: v.startedAt,
-      endedAt: v.endedAt,
-      durationMs: v.endedAt ? Math.max(0, v.endedAt - v.startedAt) : null,
-    }))
+    .map(([sessionId, v]) => {
+      const wallMs = v.endedAt ? Math.max(0, v.endedAt - v.startedAt) : null;
+      const activeRaw = v.endedAt ? v.activeMs : null;
+      const activeCapped =
+        wallMs != null && activeRaw != null ? Math.min(activeRaw, wallMs) : activeRaw;
+      return {
+        sessionId,
+        address: v.address,
+        roomId: v.roomId,
+        startedAt: v.startedAt,
+        endedAt: v.endedAt,
+        durationMs: wallMs,
+        activeDurationMs: activeCapped,
+      };
+    })
     .sort((a, b) => b.startedAt - a.startedAt)
     .slice(0, Math.max(1, sessionLimit));
+
+  const roomAgg = new Map<
+    string,
+    { address: string; roomId: string; activeMs: number; wallMs: number; sessionCount: number }
+  >();
+  for (const v of bySession.values()) {
+    if (!v.endedAt) continue;
+    const wallMs = Math.max(0, v.endedAt - v.startedAt);
+    const activeMs = Math.min(v.activeMs, wallMs);
+    const key = `${v.address}\t${v.roomId}`;
+    const cur = roomAgg.get(key) ?? {
+      address: v.address,
+      roomId: v.roomId,
+      activeMs: 0,
+      wallMs: 0,
+      sessionCount: 0,
+    };
+    cur.activeMs += activeMs;
+    cur.wallMs += wallMs;
+    cur.sessionCount += 1;
+    roomAgg.set(key, cur);
+  }
+  const playTimeByRoom: PlayTimeByRoomRow[] = await Promise.all(
+    [...roomAgg.values()]
+      .sort((a, b) => b.activeMs - a.activeMs)
+      .slice(0, Math.max(1, sessionLimit))
+      .map(async (r) => ({
+        address: r.address,
+        roomId: r.roomId,
+        identicon: await identiconFor(r.address),
+        activeDurationMs: r.activeMs,
+        wallDurationMs: r.wallMs,
+        sessionCount: r.sessionCount,
+      }))
+  );
 
   const nimPayouts = payouts
     .sort((a, b) => b.sentAt - a.sentAt)
@@ -999,6 +1095,7 @@ export async function getEventLogAnalyticsSnapshot(
     loginByDayUtc,
     payoutByDayUtc,
     sessions,
+    playTimeByRoom,
     nimPayouts,
     daily: dailyRows,
   };

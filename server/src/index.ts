@@ -26,6 +26,7 @@ import {
 } from "./eventLog.js";
 import { flushCanvasClaimsSync } from "./canvasCanvas.js";
 import { flushSignboardsSync } from "./signboards.js";
+import { flushBillboardsSync } from "./billboards.js";
 import { flushVoxelTextsSync } from "./voxelTexts.js";
 import { getTopMazeRecords } from "./mazeRecords.js";
 import { installSwarmErrorForwarder } from "./swarmLogForwarder.js";
@@ -1017,6 +1018,7 @@ function shutdown(signal: string): void {
   flushEventLogSync();
   flushCanvasClaimsSync();
   flushSignboardsSync();
+  flushBillboardsSync();
   flushVoxelTextsSync();
   flushNimPayoutQueueSync();
   process.exit(0);

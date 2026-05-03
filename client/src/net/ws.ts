@@ -45,6 +45,25 @@ export type ObstacleRef = {
 };
 
 export type ExtraFloorTile = { x: number; z: number };
+export type BillboardState = {
+  id: string;
+  anchorX: number;
+  anchorZ: number;
+  orientation: "horizontal" | "vertical";
+  yawSteps: number;
+  slides: string[];
+  intervalMs: number;
+  advertId: string;
+  /** Catalog ids for rotation (parallel to `slides` when from server). */
+  advertIds?: string[];
+  /** Millisecond epoch for slideshow phase (defaults to `createdAt`). */
+  slideshowEpochMs?: number;
+  visitName: string;
+  visitUrl: string;
+  createdBy: string;
+  createdAt: number;
+};
+
 export type VoxelTextSpec = {
   id: string;
   text: string;
@@ -126,6 +145,7 @@ export type ServerMessage =
         createdBy: string;
         createdAt: number;
       }>;
+      billboards?: BillboardState[];
       voxelTexts?: VoxelTextSpec[];
       /** Real players online across all rooms (NPCs excluded). */
       onlinePlayerCount?: number;
@@ -186,6 +206,11 @@ export type ServerMessage =
         createdBy: string;
         createdAt: number;
       }>;
+    }
+  | {
+      type: "billboards";
+      roomId: string;
+      billboards: BillboardState[];
     }
   | { type: "voxelTexts"; roomId: string; texts: VoxelTextSpec[] }
   | {
@@ -472,6 +497,57 @@ export function sendPlaceBlock(
   );
 }
 
+export function sendPlaceBillboard(
+  ws: WebSocket,
+  payload: {
+    x: number;
+    z: number;
+    orientation: "horizontal" | "vertical";
+    advertId: string;
+    advertIds: string[];
+    intervalMs: number;
+  }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "placeBillboard",
+      x: payload.x,
+      z: payload.z,
+      orientation: payload.orientation,
+      advertId: payload.advertId,
+      advertIds: payload.advertIds,
+      intervalMs: payload.intervalMs,
+    })
+  );
+}
+
+export function sendUpdateBillboard(
+  ws: WebSocket,
+  payload: {
+    billboardId: string;
+    orientation: "horizontal" | "vertical";
+    advertId: string;
+    advertIds: string[];
+    intervalMs: number;
+    yawSteps?: number;
+  }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const body: Record<string, unknown> = {
+    type: "updateBillboard",
+    billboardId: payload.billboardId,
+    orientation: payload.orientation,
+    advertId: payload.advertId,
+    advertIds: payload.advertIds,
+    intervalMs: payload.intervalMs,
+  };
+  if (payload.yawSteps !== undefined) {
+    body.yawSteps = payload.yawSteps;
+  }
+  ws.send(JSON.stringify(body));
+}
+
 export function sendSetObstacleProps(
   ws: WebSocket,
   x: number,
@@ -571,20 +647,21 @@ export function sendMoveObstacle(
   fromY: number,
   toX: number,
   toZ: number,
-  toY: number
+  toY: number,
+  yawSteps?: number
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(
-    JSON.stringify({
-      type: "moveObstacle",
-      fromX,
-      fromZ,
-      fromY,
-      toX,
-      toZ,
-      toY,
-    })
-  );
+  const payload: Record<string, unknown> = {
+    type: "moveObstacle",
+    fromX,
+    fromZ,
+    fromY,
+    toX,
+    toZ,
+    toY,
+  };
+  if (yawSteps !== undefined) payload.yawSteps = yawSteps;
+  ws.send(JSON.stringify(payload));
 }
 
 export function sendNimSendIntent(ws: WebSocket, active: boolean): void {

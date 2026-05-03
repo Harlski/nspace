@@ -26,6 +26,16 @@ type SessionRow = {
   address: string;
   roomId: string;
   durationMs: number | null;
+  activeDurationMs?: number | null;
+};
+
+type PlayTimeByRoomRow = {
+  address: string;
+  roomId: string;
+  identicon: string;
+  activeDurationMs: number;
+  wallDurationMs: number;
+  sessionCount: number;
 };
 
 type PayoutRow = {
@@ -72,6 +82,7 @@ type AnalyticsPayload = {
   loginByHourUtc: LoginHourBucket[];
   payoutByHourUtc: PayoutHourRow[];
   sessions: SessionRow[];
+  playTimeByRoom?: PlayTimeByRoomRow[];
   nimPayouts: PayoutRow[];
   daily: DailyRow[];
 };
@@ -421,16 +432,37 @@ async function load(): Promise<void> {
       .join("") +
     "</tbody></table>";
 
-  sessionsEl.innerHTML =
-    "<table><thead><tr><th>Start</th><th>User</th><th>Room</th><th class='right'>Duration</th></tr></thead><tbody>" +
-    data.sessions
-      .slice(0, 60)
-      .map(
-        (s) =>
-          `<tr><td>${esc(fmtUtc(s.startedAt))}</td><td>${esc(String(s.address).slice(0, 14))}…</td><td>${esc(s.roomId)}</td><td class='right'>${esc(fmtMs(s.durationMs))}</td></tr>`
-      )
-      .join("") +
-    "</tbody></table>";
+  const roomRows =
+    Array.isArray(data.playTimeByRoom) && data.playTimeByRoom.length > 0
+      ? data.playTimeByRoom
+      : [];
+  if (roomRows.length) {
+    sessionsEl.innerHTML =
+      "<table><thead><tr><th>User</th><th>Room</th><th class='right'>Sessions</th><th class='right'>Active</th><th class='right'>Wall</th></tr></thead><tbody>" +
+      roomRows
+        .slice(0, 80)
+        .map(
+          (r) =>
+            `<tr><td>${walletChip(r.identicon, r.address)}<span class="mono">${esc(walletShort(r.address))}</span></td><td>${esc(r.roomId)}</td><td class='right'>${r.sessionCount}</td><td class='right'>${esc(fmtMs(r.activeDurationMs))}</td><td class='right'>${esc(fmtMs(r.wallDurationMs))}</td></tr>`
+        )
+        .join("") +
+      "</tbody></table>";
+  } else {
+    sessionsEl.innerHTML =
+      "<table><thead><tr><th>Start</th><th>User</th><th>Room</th><th class='right'>Active</th></tr></thead><tbody>" +
+      data.sessions
+        .slice(0, 60)
+        .map((s) => {
+          const active =
+            s.activeDurationMs != null && Number.isFinite(Number(s.activeDurationMs))
+              ? Number(s.activeDurationMs)
+              : s.durationMs;
+          return `<tr><td>${esc(fmtUtc(s.startedAt))}</td><td>${esc(String(s.address).slice(0, 14))}…</td><td>${esc(s.roomId)}</td><td class='right'>${esc(fmtMs(active))}</td></tr>`;
+        })
+        .join("") +
+      "</tbody></table>";
+  }
+  attachCopyHandlers(sessionsEl);
 }
 
 void load().catch((err: unknown) => {

@@ -37,6 +37,8 @@ import {
   sendMoveObstacle,
   sendMoveTo,
   sendPlaceBlock,
+  sendPlaceBillboard,
+  sendUpdateBillboard,
   sendPlacePendingTeleporter,
   sendConfigureTeleporter,
   sendPlaceExtraFloor,
@@ -74,6 +76,20 @@ const ADMIN_ADDRESSES = new Set([
 
 function isAdmin(address: string): boolean {
   return ADMIN_ADDRESSES.has(address);
+}
+
+function compactWallet(addr: string): string {
+  return String(addr).replace(/\s+/g, "").toUpperCase();
+}
+
+function canModifyBillboardAsViewer(
+  createdBy: string,
+  viewerAddress: string
+): boolean {
+  if (isAdmin(viewerAddress)) return true;
+  const owner = String(createdBy ?? "").trim();
+  if (!owner) return false;
+  return compactWallet(owner) === compactWallet(viewerAddress);
 }
 
 /** Lobby reconnect list: cap rows (`saveCachedSession` keeps newest first). */
@@ -1164,6 +1180,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     | { kind: "door" }
     | { kind: "canvas-exit" }
     | { kind: "teleporter" }
+    | { kind: "billboard"; visitUrl: string; visitName: string }
     | null = null;
   let connectGen = 0;
   let mazeZoomLocked = false;
@@ -1651,6 +1668,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       return;
     }
     if (game.getBuildMode() && canBuild) {
+      game.setBillboardPlacementPreviewActive(hud.isBillboardModeActive());
       const tpHint = hud.isTeleporterModeActive()
         ? " Teleporter: click an empty floor tile to place."
         : "";
@@ -1700,7 +1718,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
   }
 
-  hud.onBuildToolSelect(() => {
+  hud.onBuildToolSelect((tool) => {
+    game.setBillboardPlacementPreviewActive(tool === "billboard");
+    if (tool === "billboard") {
+      const d = game.getBillboardPlacementDraft();
+      hud.applyBillboardModalDraft(d);
+    }
     syncBuildHud();
   });
 
@@ -1814,6 +1837,21 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         hud.promptSignpostMessage(x, z);
         return;
       }
+      if (game.getBuildMode() && hud.isBillboardModeActive()) {
+        const selfPos = game.getSelfPosition();
+        if (selfPos) {
+          const dx = selfPos.x - x;
+          const dz = selfPos.z - z;
+          const distance = Math.hypot(dx, dz);
+          const placeRadius = game.getPlaceRadiusBlocks();
+          if (distance > placeRadius + 1e-6) {
+            sendMoveTo(socket, x, z, layer);
+            return;
+          }
+        }
+        hud.promptBillboardPlace(x, z, game.getBillboardPlacementDraft());
+        return;
+      }
       sendMoveTo(socket, x, z, layer);
     });
     game.setPlaceBlockHandler((x, z) => {
@@ -1836,6 +1874,21 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           }
         }
         hud.promptSignpostMessage(x, z);
+        return;
+      }
+      if (hud.isBillboardModeActive()) {
+        const selfPos = game.getSelfPosition();
+        if (selfPos) {
+          const dx = selfPos.x - x;
+          const dz = selfPos.z - z;
+          const distance = Math.hypot(dx, dz);
+          const placeRadius = game.getPlaceRadiusBlocks();
+          if (distance > placeRadius + 1e-6) {
+            sendMoveTo(socket, x, z, 0);
+            return;
+          }
+        }
+        hud.promptBillboardPlace(x, z, game.getBillboardPlacementDraft());
         return;
       }
       sendPlaceBlock(socket, x, z, game.getPlacementBlockStyle());
@@ -1946,7 +1999,23 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     });
     
     game.setMoveBlockHandler((fromX, fromZ, toX, toZ) => {
-      const fromY = editingTile?.x === fromX && editingTile?.z === fromZ ? editingTile.y : 0;
+      if (game.getRepositioningBillboardId()) {
+        const toY = game.getNextOpenStackLevelAt(toX, toZ);
+        if (toY === null || toY !== 0) return;
+        sendMoveObstacle(
+          socket,
+          fromX,
+          fromZ,
+          0,
+          toX,
+          toZ,
+          0,
+          game.getBillboardRepositionYaw()
+        );
+        return;
+      }
+      const fromY =
+        editingTile?.x === fromX && editingTile?.z === fromZ ? editingTile.y : 0;
       const toY = game.getNextOpenStackLevelAt(toX, toZ);
       if (toY === null) return;
       sendMoveObstacle(socket, fromX, fromZ, fromY, toX, toZ, toY);
@@ -1965,7 +2034,89 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         message,
       }));
     });
+    hud.onBillboardPlace((x, z, opts) => {
+      game.setBillboardPlacementDraft({
+        orientation: opts.orientation,
+        yawSteps: 0,
+        advertIds: opts.advertIds,
+        intervalSec: opts.intervalSec,
+      });
+      sendPlaceBillboard(socket, {
+        x,
+        z,
+        orientation: opts.orientation,
+        advertId: opts.advertId,
+        advertIds: opts.advertIds,
+        intervalMs: opts.intervalSec * 1000,
+      });
+    });
+    hud.onBillboardDraftChange((d) => {
+      game.setBillboardPlacementDraft(d);
+    });
+    hud.onBillboardUpdate((id, opts) => {
+      sendUpdateBillboard(socket, {
+        billboardId: id,
+        orientation: opts.orientation,
+        advertId: opts.advertId,
+        advertIds: opts.advertIds,
+        intervalMs: opts.intervalSec * 1000,
+      });
+    });
     game.setObstacleSelectHandler((x, z, y) => {
+      const selectedBb = game.getSelectedBillboardId();
+      if (selectedBb) {
+        const spec = game.getBillboardState(selectedBb);
+        if (!spec) return;
+        editingTile = { x: spec.anchorX, z: spec.anchorZ, y: 0 };
+        const canModify = canModifyBillboardAsViewer(
+          spec.createdBy,
+          selfAddress
+        );
+        hud.showObjectEditPanel({
+          x: spec.anchorX,
+          z: spec.anchorZ,
+          billboardSelection: {
+            id: selectedBb,
+            canModify,
+            onEdit: () => {
+              const s = game.getBillboardState(selectedBb);
+              if (!s) return;
+              hud.hideObjectEditPanel();
+              hud.promptBillboardEdit(selectedBb, {
+                orientation: s.orientation,
+                advertId: s.advertId,
+                advertIds: s.advertIds,
+                intervalMs: s.intervalMs,
+              });
+              editingTile = null;
+              syncBuildHud();
+            },
+            onMove: () => {
+              hud.hideObjectEditPanel();
+              editingTile = null;
+              game.clearSelectedBlock();
+              game.beginReposition(spec.anchorX, spec.anchorZ);
+              syncBuildHud();
+            },
+            onRemove: () => {
+              sendRemoveObstacleAt(socket, spec.anchorX, spec.anchorZ, 0);
+              editingTile = null;
+              hud.hideObjectEditPanel();
+              game.clearSelectedBlock();
+              syncBuildHud();
+            },
+            onClose: () => {
+              editingTile = null;
+              hud.hideObjectEditPanel();
+              game.clearSelectedBlock();
+              syncBuildHud();
+            },
+          },
+        });
+        syncBuildHud();
+        return;
+      }
+
       const m = game.getPlacedAt(x, z, y);
       if (!m) return;
       editingTile = { x, z, y };
@@ -2105,6 +2256,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     );
   }
 
+  function formatBillboardPortalLabel(visitName: string): string {
+    const n = visitName.trim() || "link";
+    const full = `Visit ${n}`;
+    if (full.length <= 40) return full;
+    const short = n.length > 27 ? `${n.slice(0, 27)}…` : n;
+    return `Visit ${short}`;
+  }
+
   function syncPortalEnterButton(): void {
     const anchor = game.getSelfScreenPosition(1.15);
     if (anchor) {
@@ -2113,6 +2272,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const standingDoor = game.getStandingDoor();
     if (standingDoor) {
       portalAction = { kind: "door" };
+      hud.setPortalEnterLabel("Enter");
       if (!portalEnterVisible) {
         portalEnterVisible = true;
         hud.setPortalEnterVisible(true);
@@ -2121,6 +2281,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
     if (game.getStandingTeleporter()) {
       portalAction = { kind: "teleporter" };
+      hud.setPortalEnterLabel("Enter");
       if (!portalEnterVisible) {
         portalEnterVisible = true;
         hud.setPortalEnterVisible(true);
@@ -2129,7 +2290,22 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
     const inCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
     if (!inCanvas) {
+      const visit = game.getStandingBillboardVisitOffer();
+      if (visit) {
+        portalAction = {
+          kind: "billboard",
+          visitUrl: visit.visitUrl,
+          visitName: visit.visitName,
+        };
+        hud.setPortalEnterLabel(formatBillboardPortalLabel(visit.visitName));
+        if (!portalEnterVisible) {
+          portalEnterVisible = true;
+          hud.setPortalEnterVisible(true);
+        }
+        return;
+      }
       portalAction = null;
+      hud.setPortalEnterLabel("Enter");
       if (portalEnterVisible) {
         portalEnterVisible = false;
         hud.setPortalEnterVisible(false);
@@ -2139,6 +2315,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const pos = game.getSelfPosition();
     if (!pos) {
       portalAction = null;
+      hud.setPortalEnterLabel("Enter");
       if (portalEnterVisible) {
         portalEnterVisible = false;
         hud.setPortalEnterVisible(false);
@@ -2148,6 +2325,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const tile = snapFloorTile(pos.x, pos.z);
     const show = isExitPortalTile(game.getPlacedAt(tile.x, tile.y));
     portalAction = show ? { kind: "canvas-exit" } : null;
+    hud.setPortalEnterLabel("Enter");
     if (show !== portalEnterVisible) {
       portalEnterVisible = show;
       hud.setPortalEnterVisible(show);
@@ -2270,6 +2448,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       portalEnterVisible = false;
       portalAction = null;
       hud.setPortalEnterVisible(false);
+      hud.setPortalEnterLabel("Enter");
       roomAllowPlaceBlocks = msg.allowPlaceBlocks !== false;
       roomAllowExtraFloor = msg.allowExtraFloor !== false;
       welcomeAllowRoomBackgroundHueEdit =
@@ -2325,6 +2504,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       game.setRemovedBaseFloorTiles(msg.removedBaseFloorTiles ?? []);
       game.setObstacles(msg.obstacles);
       game.setSignboards(msg.signboards);
+      game.setBillboards(msg.billboards ?? []);
       game.setVoxelTextsForRoom(msg.roomId, msg.voxelTexts ?? []);
       
       // Load canvas claims if present and wait for them to finish
@@ -2632,11 +2812,44 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         // Don't need to do anything special - server already sent chat message
         // and the connection will be closed, triggering a reconnect to hub
       }
+      if (msg.code === "billboard_forbidden") {
+        hud.appendChat(
+          "System",
+          "Only whoever placed this billboard (or an admin) can edit, move, or remove it."
+        );
+      }
+      if (msg.code === "billboard_admin_only") {
+        hud.appendChat(
+          "System",
+          "Only admins can place billboards right now."
+        );
+      }
+      if (msg.code === "billboard_vertical_disabled") {
+        hud.appendChat(
+          "System",
+          "2×1 (vertical) billboards are temporarily unavailable."
+        );
+      }
+      if (msg.code === "invalid_billboard_advert") {
+        hud.appendChat("System", "That billboard advert is not available.");
+      }
+      if (
+        msg.code === "invalid_billboard_visit_url" ||
+        msg.code === "invalid_billboard_url"
+      ) {
+        hud.appendChat(
+          "System",
+          "That billboard link is not allowed (HTTPS links only)."
+        );
+      }
     }
     if (msg.type === "signboards") {
       game.setSignboards(msg.signboards);
       // Clear signboard tooltip if it's showing a deleted signboard
       hud.setSignboardTooltip(null);
+    }
+    if (msg.type === "billboards") {
+      game.setBillboards(msg.billboards);
     }
     if (msg.type === "voxelTexts") {
       game.setVoxelTextsForRoom(msg.roomId, msg.texts);
@@ -2749,6 +2962,17 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       void game.triggerStandingDoorTransition();
       return;
     }
+    if (portalAction?.kind === "billboard") {
+      const { visitUrl, visitName } = portalAction;
+      hud.showBillboardExternalVisitConfirm({
+        url: visitUrl,
+        displayName: visitName,
+        onConfirm: () => {
+          window.open(visitUrl, "_blank", "noopener,noreferrer");
+        },
+      });
+      return;
+    }
     if (
       (portalAction?.kind === "canvas-exit" || portalAction?.kind === "teleporter") &&
       ws
@@ -2823,6 +3047,21 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   window.addEventListener(
     "keydown",
     (e) => {
+      const ae = document.activeElement;
+      const tag = ae?.tagName ?? "";
+      const inFormField =
+        tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      if (
+        game.getBuildMode() &&
+        !inFormField &&
+        !e.altKey &&
+        (e.key === "m" || e.key === "M")
+      ) {
+        if (game.tryToggleRepositionWithKeyboard()) {
+          e.preventDefault();
+          return;
+        }
+      }
       if (e.altKey) {
         if (!adminOverlay.isVoxelEditorOpen()) return;
         const syncActiveVoxelText = (): void => {
@@ -3002,6 +3241,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           return;
         }
         if (k === "r" || k === "R") {
+          if (game.cycleBillboardInteractionYaw(1)) {
+            e.preventDefault();
+            return;
+          }
           if (hud.rotateRampToward(1)) {
             e.preventDefault();
             return;

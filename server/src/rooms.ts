@@ -93,6 +93,27 @@ import {
   updateSignboardPosition,
 } from "./signboards.js";
 import {
+  billboardToWire,
+  createBillboard,
+  deleteBillboard,
+  footprintTileCoords,
+  getBillboardAtTile,
+  getBillboardById,
+  getBillboardsForRoom,
+  hasBillboardFootprintConflict,
+  isAllowedBillboardImageUrl,
+  patchBillboardRecord,
+  loadBillboards,
+  setBillboardContent,
+  type Billboard,
+  type BillboardOrientation,
+} from "./billboards.js";
+import {
+  getBillboardAdvertById,
+  parseBillboardAdvertIdsFromMessage,
+  validateAdvertRotationVisitHttps,
+} from "./billboardAdvertsCatalog.js";
+import {
   getVoxelTextsForRoom,
   loadVoxelTexts,
   removeVoxelText,
@@ -107,6 +128,27 @@ import {
   utf8ByteLengthOfWsData,
 } from "./gameWsMetrics.js";
 
+function buildBillboardSlidesFromAdvertIds(
+  ids: readonly string[]
+): string[] | null {
+  const slides: string[] = [];
+  for (const id of ids) {
+    const ad = getBillboardAdvertById(id);
+    if (!ad) return null;
+    let hit = "";
+    for (const u of ad.slides) {
+      const t = String(u).trim();
+      if (isAllowedBillboardImageUrl(t)) {
+        hit = t;
+        break;
+      }
+    }
+    if (!hit) return null;
+    slides.push(hit);
+  }
+  return slides;
+}
+
 const MOVE_SPEED = 5;
 /** NPCs move 20% slower than human path-follow speed. */
 const NPC_MOVE_SPEED = MOVE_SPEED * 0.8;
@@ -120,6 +162,12 @@ const STATE_BROADCAST_MIN_MS = Math.max(
   TICK_MS,
   Math.floor(Number(process.env.STATE_BROADCAST_MIN_MS ?? "120"))
 );
+
+/**
+ * Temporary: refuse new vertical billboards and horizontal→vertical updates.
+ * Match `BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED` in `client/src/game/billboardPlacementFlags.ts`.
+ */
+const BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED = true;
 
 /** Set `STATE_BROADCAST_DELTA=0` to always send full `state` on ticks (debug / compat). */
 const USE_STATE_TICK_DELTA = process.env.STATE_BROADCAST_DELTA !== "0";
@@ -435,6 +483,14 @@ function compactAddress(addr: string): string {
   return String(addr).replace(/\s+/g, "").toUpperCase();
 }
 
+/** Placer or admin may change/remove/move/rotate/update a billboard. */
+function canModifyOwnBillboard(bb: Billboard, address: string): boolean {
+  if (isAdmin(address)) return true;
+  const owner = String(bb.createdBy ?? "").trim();
+  if (!owner) return false;
+  return compactAddress(owner) === compactAddress(address);
+}
+
 function canPlaceMineableBlocks(address: string): boolean {
   return MINEABLE_BLOCK_PLACER_ALLOWLIST.has(compactAddress(address));
 }
@@ -485,6 +541,22 @@ type OutMsg =
         x: number;
         z: number;
         message: string;
+        createdBy: string;
+        createdAt: number;
+      }>;
+      billboards: Array<{
+        id: string;
+        anchorX: number;
+        anchorZ: number;
+        orientation: "horizontal" | "vertical";
+        yawSteps: number;
+        slides: string[];
+        intervalMs: number;
+        advertId: string;
+        advertIds: string[];
+        slideshowEpochMs: number;
+        visitName: string;
+        visitUrl: string;
         createdBy: string;
         createdAt: number;
       }>;
@@ -548,6 +620,26 @@ type OutMsg =
         x: number;
         z: number;
         message: string;
+        createdBy: string;
+        createdAt: number;
+      }>;
+    }
+  | {
+      type: "billboards";
+      roomId: string;
+      billboards: Array<{
+        id: string;
+        anchorX: number;
+        anchorZ: number;
+        orientation: "horizontal" | "vertical";
+        yawSteps: number;
+        slides: string[];
+        intervalMs: number;
+        advertId: string;
+        advertIds: string[];
+        slideshowEpochMs: number;
+        visitName: string;
+        visitUrl: string;
         createdBy: string;
         createdAt: number;
       }>;
@@ -2494,6 +2586,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     createdBy: s.createdBy,
     createdAt: s.createdAt,
   }));
+  const billboardsWire = getBillboardsForRoom(targetRoomId).map(billboardToWire);
   
   const isCanvas = normalizeRoomId(targetRoomId) === CANVAS_ROOM_ID;
   const allowEdit = canEditRoomContent(targetRoomId, address);
@@ -2523,6 +2616,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       removedBaseFloorTiles: removedBaseFloorToList(targetRoomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
+      billboards: billboardsWire,
       voxelTexts: getVoxelTextsForRoom(targetRoomId),
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
@@ -2540,6 +2634,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
 export function startRoomTick(): void {
   loadCanvasClaims();
   loadSignboards();
+  loadBillboards();
   loadVoxelTexts();
   loadMazeRecords();
   tickClaimableBlockReactivations(Date.now());
@@ -2853,6 +2948,7 @@ export function addClient(
     createdBy: s.createdBy,
     createdAt: s.createdAt,
   }));
+  const joinBillboardsWire = getBillboardsForRoom(roomId).map(billboardToWire);
 
   wsSafeSend(ws, {
       type: "welcome",
@@ -2867,6 +2963,7 @@ export function addClient(
       removedBaseFloorTiles: removedBaseFloorToList(roomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
+      billboards: joinBillboardsWire,
       voxelTexts: getVoxelTextsForRoom(roomId),
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
@@ -3686,6 +3783,45 @@ export function addClient(
         return;
       }
 
+      if (ty === 0) {
+        const billboard = getBillboardAtTile(currentRoomId, tile.x, tile.z);
+        if (billboard) {
+          if (!canModifyOwnBillboard(billboard, address)) {
+            wsSafeSend(ws, { type: "error", code: "billboard_forbidden" });
+            return;
+          }
+          const footprints = footprintTileCoords(billboard);
+          const removeKeys: string[] = [];
+          for (const { x: fx, z: fz } of footprints) {
+            const fk = getFloorLevelPlacedKey(placed, fx, fz);
+            if (fk) {
+              placed.delete(fk);
+              removeKeys.push(fk);
+              const bc = blockKey(fx, fz, 0);
+              if (bc !== fk) removeKeys.push(bc);
+            }
+          }
+          deleteBillboard(billboard.id);
+          const uniq = [...new Set(removeKeys)];
+          broadcast(currentRoomId, {
+            type: "obstaclesDelta",
+            roomId: currentRoomId,
+            add: [],
+            remove: uniq,
+          });
+          broadcast(currentRoomId, {
+            type: "billboards",
+            roomId: currentRoomId,
+            billboards: getBillboardsForRoom(currentRoomId).map(billboardToWire),
+          });
+          schedulePersistWorldState();
+          logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_billboard", {
+            billboardId: billboard.id,
+          });
+          return;
+        }
+      }
+
       if (props.teleporter) {
         const signboard = ty === 0 ? getSignboardAt(currentRoomId, tile.x, tile.z) : null;
         let signboardDeleted = false;
@@ -3771,7 +3907,7 @@ export function addClient(
       if (!canEditRoomContent(currentRoomId, address)) {
         return;
       }
-      
+
       const now = Date.now();
       if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
       conn.lastPlaceAt = now;
@@ -3793,19 +3929,304 @@ export function addClient(
       const to = snapToTile(tx, tz);
       const destKey = blockKey(to.x, to.z, ty);
       const fromClientKey = blockKey(from.x, from.z, fy);
-      if (fromClientKey === destKey) return;
+      const placed = placedMap(currentRoomId);
+      const bbAtFrom =
+        fy === 0 ? getBillboardAtTile(currentRoomId, from.x, from.z) : null;
+
+      if (fromClientKey === destKey) {
+        if (
+          bbAtFrom &&
+          fy === 0 &&
+          ty === 0 &&
+          msg.yawSteps !== undefined &&
+          msg.yawSteps !== null
+        ) {
+          if (!canModifyOwnBillboard(bbAtFrom, address)) {
+            wsSafeSend(ws, { type: "error", code: "billboard_forbidden" });
+            return;
+          }
+          if (!withinBlockActionRange(conn.player, from.x, from.z)) return;
+          const newYaw = Math.max(
+            0,
+            Math.min(3, Math.floor(Number(msg.yawSteps)))
+          );
+          if (newYaw === bbAtFrom.yawSteps) return;
+
+          const oldTiles = footprintTileCoords(bbAtFrom);
+          const yawProbe: Billboard = { ...bbAtFrom, yawSteps: newYaw };
+          const newTiles = footprintTileCoords(yawProbe);
+          const oldK = new Set(oldTiles.map((t) => `${t.x},${t.z}`));
+          const newK = new Set(newTiles.map((t) => `${t.x},${t.z}`));
+          const sameFootprint =
+            oldK.size === newK.size && [...oldK].every((k) => newK.has(k));
+
+          if (sameFootprint) {
+            patchBillboardRecord(bbAtFrom.id, { yawSteps: newYaw });
+            broadcast(currentRoomId, {
+              type: "billboards",
+              roomId: currentRoomId,
+              billboards: getBillboardsForRoom(currentRoomId).map(billboardToWire),
+            });
+            schedulePersistWorldState();
+            logGameplayEvent(conn.sessionId, address, currentRoomId, "rotate_billboard", {
+              billboardId: bbAtFrom.id,
+              yawSteps: newYaw,
+            });
+            return;
+          }
+
+          if (
+            normalizeRoomId(currentRoomId) === HUB_ROOM_ID &&
+            newTiles.some((t) => isHubSpawnSafeZone(t.x, t.z))
+          ) {
+            return;
+          }
+          for (const { x: px, z: pz } of newTiles) {
+            if (!withinBlockActionRange(conn.player, px, pz)) {
+              wsSafeSend(ws, {
+                type: "chat",
+                from: "System",
+                fromAddress: "",
+                text: "Too far! Rotate billboards within your build range.",
+                at: Date.now(),
+              });
+              return;
+            }
+            if (!isWalkableForRoom(currentRoomId, px, pz)) return;
+            const occ = getPlacedAtLevel(placed, px, pz, 0);
+            if (occ && !oldK.has(`${px},${pz}`)) return;
+            if (getSignboardAt(currentRoomId, px, pz)) return;
+            const otherBb = getBillboardAtTile(
+              currentRoomId,
+              px,
+              pz,
+              bbAtFrom.id
+            );
+            if (otherBb) return;
+          }
+          if (
+            hasBillboardFootprintConflict(
+              currentRoomId,
+              bbAtFrom.anchorX,
+              bbAtFrom.anchorZ,
+              bbAtFrom.orientation,
+              bbAtFrom.id,
+              newYaw
+            )
+          ) {
+            return;
+          }
+          for (const c of room.values()) {
+            const st = snapToTile(c.player.x, c.player.z);
+            for (const { x: px, z: pz } of newTiles) {
+              if (st.x === px && st.z === pz) return;
+            }
+          }
+
+          const removeKeys: string[] = [];
+          for (const { x: ox, z: oz } of oldTiles) {
+            const fk0 = getFloorLevelPlacedKey(placed, ox, oz);
+            if (fk0) {
+              placed.delete(fk0);
+              removeKeys.push(fk0);
+              const bc = blockKey(ox, oz, 0);
+              if (bc !== fk0) removeKeys.push(bc);
+            }
+          }
+          patchBillboardRecord(bbAtFrom.id, { yawSteps: newYaw });
+          const addTiles: ObstacleTile[] = [];
+          for (const { x: fx, z: fz } of newTiles) {
+            const k = blockKey(fx, fz, 0);
+            placed.set(k, {
+              passable: true,
+              half: true,
+              quarter: false,
+              hex: false,
+              pyramid: false,
+              pyramidBaseScale: 1,
+              sphere: false,
+              ramp: false,
+              rampDir: 0,
+              colorId: 5,
+            });
+            const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
+            if (deltaTile) addTiles.push(deltaTile);
+          }
+          broadcast(currentRoomId, {
+            type: "billboards",
+            roomId: currentRoomId,
+            billboards: getBillboardsForRoom(currentRoomId).map(billboardToWire),
+          });
+          broadcast(currentRoomId, {
+            type: "obstaclesDelta",
+            roomId: currentRoomId,
+            add: addTiles,
+            remove: [...new Set(removeKeys)],
+          });
+          schedulePersistWorldState();
+          logGameplayEvent(conn.sessionId, address, currentRoomId, "rotate_billboard", {
+            billboardId: bbAtFrom.id,
+            yawSteps: newYaw,
+          });
+          return;
+        }
+        return;
+      }
       if (
         !withinBlockActionRange(conn.player, from.x, from.z) ||
         !withinBlockActionRange(conn.player, to.x, to.z)
       ) {
         return;
       }
-      const placed = placedMap(currentRoomId);
       const fromEntry = getPlacedAtLevel(placed, from.x, from.z, fy);
       if (!fromEntry) return;
       const fk = fromEntry.key;
       const props = fromEntry.props;
-      
+
+      if (bbAtFrom && fy === 0) {
+        if (!canModifyOwnBillboard(bbAtFrom, address)) {
+          wsSafeSend(ws, { type: "error", code: "billboard_forbidden" });
+          return;
+        }
+        if (ty !== 0) return;
+        const yawNext =
+          msg.yawSteps !== undefined && msg.yawSteps !== null
+            ? Math.max(0, Math.min(3, Math.floor(Number(msg.yawSteps))))
+            : bbAtFrom.yawSteps;
+        const dx = to.x - from.x;
+        const dz = to.z - from.z;
+        const newAx = bbAtFrom.anchorX + dx;
+        const newAz = bbAtFrom.anchorZ + dz;
+        if (
+          newAx === bbAtFrom.anchorX &&
+          newAz === bbAtFrom.anchorZ &&
+          yawNext === bbAtFrom.yawSteps
+        ) {
+          return;
+        }
+
+        const orient = bbAtFrom.orientation;
+        const movedProbe: Billboard = {
+          ...bbAtFrom,
+          anchorX: newAx,
+          anchorZ: newAz,
+          yawSteps: yawNext,
+        };
+        const newFootTiles = footprintTileCoords(movedProbe);
+
+        if (
+          normalizeRoomId(currentRoomId) === HUB_ROOM_ID &&
+          newFootTiles.some((t) => isHubSpawnSafeZone(t.x, t.z))
+        ) {
+          return;
+        }
+
+        const oldFootKeys = new Set(
+          footprintTileCoords(bbAtFrom).map((t) => `${t.x},${t.z}`)
+        );
+
+        for (const { x: px, z: pz } of newFootTiles) {
+          if (!withinBlockActionRange(conn.player, px, pz)) {
+            wsSafeSend(ws, {
+              type: "chat",
+              from: "System",
+              fromAddress: "",
+              text: "Too far! Move billboards within your build range.",
+              at: Date.now(),
+            });
+            return;
+          }
+          if (!isWalkableForRoom(currentRoomId, px, pz)) return;
+          const occ = getPlacedAtLevel(placed, px, pz, 0);
+          if (occ && !oldFootKeys.has(`${px},${pz}`)) return;
+          if (getSignboardAt(currentRoomId, px, pz)) return;
+          const otherBb = getBillboardAtTile(
+            currentRoomId,
+            px,
+            pz,
+            bbAtFrom.id
+          );
+          if (otherBb) return;
+        }
+
+        if (
+          hasBillboardFootprintConflict(
+            currentRoomId,
+            newAx,
+            newAz,
+            orient,
+            bbAtFrom.id,
+            yawNext
+          )
+        ) {
+          return;
+        }
+
+        for (const c of room.values()) {
+          const st = snapToTile(c.player.x, c.player.z);
+          for (const { x: px, z: pz } of newFootTiles) {
+            if (st.x === px && st.z === pz) return;
+          }
+        }
+
+        const removeKeys: string[] = [];
+        for (const { x: ox, z: oz } of footprintTileCoords(bbAtFrom)) {
+          const fk0 = getFloorLevelPlacedKey(placed, ox, oz);
+          if (fk0) {
+            placed.delete(fk0);
+            removeKeys.push(fk0);
+            const bc = blockKey(ox, oz, 0);
+            if (bc !== fk0) removeKeys.push(bc);
+          }
+        }
+
+        patchBillboardRecord(bbAtFrom.id, {
+          anchorX: newAx,
+          anchorZ: newAz,
+          yawSteps: yawNext,
+        });
+
+        const addTiles: ObstacleTile[] = [];
+        for (const { x: fx, z: fz } of newFootTiles) {
+          const k = blockKey(fx, fz, 0);
+          placed.set(k, {
+            passable: true,
+            half: true,
+            quarter: false,
+            hex: false,
+            pyramid: false,
+            pyramidBaseScale: 1,
+            sphere: false,
+            ramp: false,
+            rampDir: 0,
+            colorId: 5,
+          });
+          const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
+          if (deltaTile) addTiles.push(deltaTile);
+        }
+
+        const uniqRemove = [...new Set(removeKeys)];
+        broadcast(currentRoomId, {
+          type: "billboards",
+          roomId: currentRoomId,
+          billboards: getBillboardsForRoom(currentRoomId).map(billboardToWire),
+        });
+        broadcast(currentRoomId, {
+          type: "obstaclesDelta",
+          roomId: currentRoomId,
+          add: addTiles,
+          remove: uniqRemove,
+        });
+        schedulePersistWorldState();
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "move_billboard", {
+          billboardId: bbAtFrom.id,
+          anchorX: newAx,
+          anchorZ: newAz,
+          yawSteps: yawNext,
+        });
+        return;
+      }
+
       // Locked objects are admin-only to move, except teleporters (room editors may reposition).
       if (props.locked && !isAdmin(address) && !props.teleporter) {
         wsSafeSend(ws, { type: "error", code: "object_locked" });
@@ -3830,7 +4251,7 @@ export function addClient(
       }
       placed.delete(fk);
       placed.set(destKey, { ...props });
-      
+
       // If there's a signboard at the old location, move it to the new location
       const signboard = fy === 0 ? getSignboardAt(currentRoomId, from.x, from.z) : null;
       if (signboard) {
@@ -3850,7 +4271,7 @@ export function addClient(
           })),
         });
       }
-      
+
       const deltaTile = obstacleTileFromPlaced(currentRoomId, destKey);
       broadcast(currentRoomId, {
         type: "obstaclesDelta",
@@ -4447,6 +4868,419 @@ export function addClient(
         x: tile.x,
         z: tile.z,
         signboardId: signboard.id,
+      });
+      return;
+    }
+
+    if (msg.type === "placeBillboard") {
+      if (!canEditRoomContent(currentRoomId, address)) {
+        return;
+      }
+      if (!isAdmin(address)) {
+        wsSafeSend(ws, { type: "error", code: "billboard_admin_only" });
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const tile = snapToTile(tx, tz);
+      const orientRaw = String(msg.orientation ?? "horizontal").toLowerCase();
+      const orientation: BillboardOrientation =
+        orientRaw === "vertical" ? "vertical" : "horizontal";
+      if (
+        BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED &&
+        orientation === "vertical"
+      ) {
+        wsSafeSend(ws, { type: "error", code: "billboard_vertical_disabled" });
+        return;
+      }
+      /** Placement UI no longer sends yaw; keep 0 for a predictable default footprint axis. */
+      const yawSteps = 0;
+      const rawMsg = msg as Record<string, unknown>;
+      const advertIds = parseBillboardAdvertIdsFromMessage(rawMsg);
+      if (!advertIds) {
+        wsSafeSend(ws, { type: "error", code: "invalid_billboard_advert" });
+        return;
+      }
+      if (!validateAdvertRotationVisitHttps(advertIds)) {
+        wsSafeSend(ws, { type: "error", code: "invalid_billboard_visit_url" });
+        return;
+      }
+      const slides = buildBillboardSlidesFromAdvertIds(advertIds);
+      if (!slides || slides.length === 0) {
+        wsSafeSend(ws, { type: "error", code: "invalid_billboard_url" });
+        return;
+      }
+      let intervalMs = Math.floor(Number(rawMsg.intervalMs));
+      if (!Number.isFinite(intervalMs)) intervalMs = 8000;
+      intervalMs = Math.max(1000, Math.min(300_000, intervalMs));
+      const first = getBillboardAdvertById(advertIds[0]!);
+      const visitName = String(first?.name ?? "").trim() || "Advertiser";
+      const visitUrl = String(first?.visitUrl ?? "").trim();
+
+      const footprintProbe: Billboard = {
+        id: "_place_probe",
+        roomId: currentRoomId,
+        anchorX: tile.x,
+        anchorZ: tile.z,
+        orientation,
+        yawSteps,
+        slides: ["/"],
+        intervalMs: 8000,
+        visitName: "",
+        visitUrl: "",
+        createdBy: "",
+        createdAt: 0,
+        updatedAt: 0,
+      };
+      const footTiles = footprintTileCoords(footprintProbe);
+      if (
+        normalizeRoomId(currentRoomId) === HUB_ROOM_ID &&
+        footTiles.some((t) => isHubSpawnSafeZone(t.x, t.z))
+      ) {
+        return;
+      }
+      const placed = placedMap(currentRoomId);
+      for (const { x: fx, z: fz } of footTiles) {
+        if (!withinBlockActionRange(conn.player, fx, fz)) {
+          wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "",
+            text: "Too far! Place billboards within your build range.",
+            at: Date.now(),
+          });
+          return;
+        }
+        if (!isWalkableForRoom(currentRoomId, fx, fz)) return;
+        if (getPlacedAtLevel(placed, fx, fz, 0)) return;
+        if (getSignboardAt(currentRoomId, fx, fz)) return;
+        if (getBillboardAtTile(currentRoomId, fx, fz)) return;
+      }
+      if (
+        hasBillboardFootprintConflict(
+          currentRoomId,
+          tile.x,
+          tile.z,
+          orientation,
+          undefined,
+          yawSteps
+        )
+      ) {
+        wsSafeSend(ws, { type: "error", code: "billboard_footprint_blocked" });
+        return;
+      }
+      for (const c of room.values()) {
+        const st = snapToTile(c.player.x, c.player.z);
+        for (const { x: fx, z: fz } of footTiles) {
+          if (st.x === fx && st.z === fz) return;
+        }
+      }
+
+      const billboard = createBillboard(
+        currentRoomId,
+        tile.x,
+        tile.z,
+        orientation,
+        yawSteps,
+        slides,
+        intervalMs,
+        address,
+        {
+          advertId: advertIds[0],
+          advertIds,
+          visitName,
+          visitUrl,
+          slideshowEpochMs: now,
+        }
+      );
+      const addTiles: ObstacleTile[] = [];
+      for (const { x: fx, z: fz } of footTiles) {
+        const k = blockKey(fx, fz, 0);
+        placed.set(k, {
+          passable: true,
+          half: true,
+          quarter: false,
+          hex: false,
+          pyramid: false,
+          pyramidBaseScale: 1,
+          sphere: false,
+          ramp: false,
+          rampDir: 0,
+          colorId: 5,
+        });
+        const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
+        if (deltaTile) addTiles.push(deltaTile);
+      }
+      broadcast(currentRoomId, {
+        type: "billboards",
+        roomId: currentRoomId,
+        billboards: getBillboardsForRoom(currentRoomId).map(billboardToWire),
+      });
+      broadcast(currentRoomId, {
+        type: "obstaclesDelta",
+        roomId: currentRoomId,
+        add: addTiles,
+        remove: [],
+      });
+      schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "place_billboard", {
+        anchorX: tile.x,
+        anchorZ: tile.z,
+        orientation,
+        billboardId: billboard.id,
+      });
+      return;
+    }
+
+    if (msg.type === "updateBillboard") {
+      if (!canEditRoomContent(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const billboardId = String(msg.billboardId ?? "").trim();
+      if (!billboardId) return;
+      const bb = getBillboardById(billboardId);
+      if (!bb || normalizeRoomId(bb.roomId) !== normalizeRoomId(currentRoomId)) {
+        return;
+      }
+      if (!canModifyOwnBillboard(bb, address)) {
+        wsSafeSend(ws, { type: "error", code: "billboard_forbidden" });
+        return;
+      }
+      const orientRaw = String(msg.orientation ?? bb.orientation).toLowerCase();
+      const orientation: BillboardOrientation =
+        orientRaw === "vertical" ? "vertical" : "horizontal";
+      if (
+        BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED &&
+        orientation === "vertical" &&
+        bb.orientation !== "vertical"
+      ) {
+        wsSafeSend(ws, { type: "error", code: "billboard_vertical_disabled" });
+        return;
+      }
+      const yawSteps = Math.max(
+        0,
+        Math.min(3, Math.floor(Number(msg.yawSteps ?? bb.yawSteps)))
+      );
+      const rawMsg = msg as Record<string, unknown>;
+      const advertIds = parseBillboardAdvertIdsFromMessage(rawMsg);
+      if (!advertIds) {
+        wsSafeSend(ws, { type: "error", code: "invalid_billboard_advert" });
+        return;
+      }
+      if (!validateAdvertRotationVisitHttps(advertIds)) {
+        wsSafeSend(ws, { type: "error", code: "invalid_billboard_visit_url" });
+        return;
+      }
+      const slides = buildBillboardSlidesFromAdvertIds(advertIds);
+      if (!slides || slides.length === 0) {
+        wsSafeSend(ws, { type: "error", code: "invalid_billboard_url" });
+        return;
+      }
+      let intervalMs = Math.floor(Number(rawMsg.intervalMs));
+      if (!Number.isFinite(intervalMs)) intervalMs = bb.intervalMs;
+      intervalMs = Math.max(1000, Math.min(300_000, intervalMs));
+      const first = getBillboardAdvertById(advertIds[0]!);
+      const visitName = String(first?.name ?? "").trim() || "Advertiser";
+      const visitUrl = String(first?.visitUrl ?? "").trim();
+
+      const prevRing =
+        bb.advertIds?.length
+          ? bb.advertIds.join("\0")
+          : bb.advertId
+            ? bb.advertId
+            : "";
+      const nextRing = advertIds.join("\0");
+      const slideshowTicks =
+        nextRing !== prevRing ||
+        intervalMs !== bb.intervalMs ||
+        slides.join("\0") !== bb.slides.join("\0");
+      const slideshowEpochMs = slideshowTicks
+        ? now
+        : (bb.slideshowEpochMs ?? bb.createdAt);
+
+      const nextProbe: Billboard = {
+        ...bb,
+        orientation,
+        yawSteps,
+        slides: ["/"],
+        intervalMs: 8000,
+      };
+      const oldTiles = footprintTileCoords(bb);
+      const newTiles = footprintTileCoords(nextProbe);
+      const oldK = new Set(oldTiles.map((t) => `${t.x},${t.z}`));
+      const newK = new Set(newTiles.map((t) => `${t.x},${t.z}`));
+      const sameFootprint =
+        oldK.size === newK.size && [...oldK].every((k) => newK.has(k));
+
+      const placed = placedMap(currentRoomId);
+
+      const footprintOkForPlayers = (tiles: { x: number; z: number }[]): boolean => {
+        for (const c of room.values()) {
+          const st = snapToTile(c.player.x, c.player.z);
+          for (const { x: px, z: pz } of tiles) {
+            if (st.x === px && st.z === pz) return false;
+          }
+        }
+        return true;
+      };
+
+      if (sameFootprint) {
+        for (const { x: px, z: pz } of newTiles) {
+          if (!withinBlockActionRange(conn.player, px, pz)) {
+            wsSafeSend(ws, {
+              type: "chat",
+              from: "System",
+              fromAddress: "",
+              text: "Too far! Edit billboards within your build range.",
+              at: Date.now(),
+            });
+            return;
+          }
+        }
+        if (
+          hasBillboardFootprintConflict(
+            currentRoomId,
+            bb.anchorX,
+            bb.anchorZ,
+            orientation,
+            bb.id,
+            yawSteps
+          )
+        ) {
+          wsSafeSend(ws, { type: "error", code: "billboard_footprint_blocked" });
+          return;
+        }
+        if (!footprintOkForPlayers(newTiles)) return;
+        setBillboardContent(billboardId, {
+          orientation,
+          yawSteps,
+          slides,
+          intervalMs,
+          advertId: advertIds[0],
+          advertIds,
+          slideshowEpochMs,
+          visitName,
+          visitUrl,
+        });
+        broadcast(currentRoomId, {
+          type: "billboards",
+          roomId: currentRoomId,
+          billboards: getBillboardsForRoom(currentRoomId).map(billboardToWire),
+        });
+        schedulePersistWorldState();
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "update_billboard", {
+          billboardId,
+          orientation,
+          yawSteps,
+        });
+        return;
+      }
+
+      if (
+        normalizeRoomId(currentRoomId) === HUB_ROOM_ID &&
+        newTiles.some((t) => isHubSpawnSafeZone(t.x, t.z))
+      ) {
+        return;
+      }
+      for (const { x: px, z: pz } of newTiles) {
+        if (!withinBlockActionRange(conn.player, px, pz)) {
+          wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "",
+            text: "Too far! Edit billboards within your build range.",
+            at: Date.now(),
+          });
+          return;
+        }
+        if (!isWalkableForRoom(currentRoomId, px, pz)) return;
+        if (getSignboardAt(currentRoomId, px, pz)) return;
+        const occ = getPlacedAtLevel(placed, px, pz, 0);
+        if (occ && !oldK.has(`${px},${pz}`)) return;
+        const otherBb = getBillboardAtTile(currentRoomId, px, pz, bb.id);
+        if (otherBb) return;
+      }
+      if (
+        hasBillboardFootprintConflict(
+          currentRoomId,
+          bb.anchorX,
+          bb.anchorZ,
+          orientation,
+          bb.id,
+          yawSteps
+        )
+      ) {
+        wsSafeSend(ws, { type: "error", code: "billboard_footprint_blocked" });
+        return;
+      }
+      if (!footprintOkForPlayers(newTiles)) return;
+
+      const removeKeys: string[] = [];
+      for (const { x: ox, z: oz } of oldTiles) {
+        if (newK.has(`${ox},${oz}`)) continue;
+        const fk0 = getFloorLevelPlacedKey(placed, ox, oz);
+        if (fk0) {
+          placed.delete(fk0);
+          removeKeys.push(fk0);
+          const bc = blockKey(ox, oz, 0);
+          if (bc !== fk0) removeKeys.push(bc);
+        }
+      }
+      const addTiles: ObstacleTile[] = [];
+      for (const { x: fx, z: fz } of newTiles) {
+        if (oldK.has(`${fx},${fz}`)) continue;
+        const k = blockKey(fx, fz, 0);
+        placed.set(k, {
+          passable: true,
+          half: true,
+          quarter: false,
+          hex: false,
+          pyramid: false,
+          pyramidBaseScale: 1,
+          sphere: false,
+          ramp: false,
+          rampDir: 0,
+          colorId: 5,
+        });
+        const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
+        if (deltaTile) addTiles.push(deltaTile);
+      }
+      setBillboardContent(billboardId, {
+        orientation,
+        yawSteps,
+        slides,
+        intervalMs,
+        advertId: advertIds[0],
+        advertIds,
+        slideshowEpochMs,
+        visitName,
+        visitUrl,
+      });
+      const uniqRemove = [...new Set(removeKeys)];
+      broadcast(currentRoomId, {
+        type: "billboards",
+        roomId: currentRoomId,
+        billboards: getBillboardsForRoom(currentRoomId).map(billboardToWire),
+      });
+      broadcast(currentRoomId, {
+        type: "obstaclesDelta",
+        roomId: currentRoomId,
+        add: addTiles,
+        remove: uniqRemove,
+      });
+      schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "update_billboard", {
+        billboardId,
+        orientation,
+        yawSteps,
+        footprintChanged: true,
       });
       return;
     }

@@ -7,7 +7,16 @@ import {
   normalizeBlockPrismParts,
 } from "../game/blockStyle.js";
 import type { Game } from "../game/Game.js";
-import type { ObstacleProps, RoomBackgroundNeutral } from "../net/ws.js";
+import {
+  BILLBOARD_ADVERTS_CATALOG,
+  BILLBOARD_MAX_ADVERT_SLOTS,
+} from "../game/billboardAdvertsCatalog.js";
+import { BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED } from "../game/billboardPlacementFlags.js";
+import type {
+  BillboardState,
+  ObstacleProps,
+  RoomBackgroundNeutral,
+} from "../net/ws.js";
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../game/constants.js";
 import type { FloorTile } from "../game/grid.js";
 import { HUB_ROOM_ID, normalizeRoomId } from "../game/roomLayouts.js";
@@ -159,6 +168,8 @@ export function createHud(
   setReturnToHubVisible: (visible: boolean) => void;
   setPortalEnterVisible: (visible: boolean) => void;
   setPortalEnterScreenPosition: (x: number, y: number) => void;
+  /** Same pill as portal Enter; use for “Visit …” on billboard tiles. */
+  setPortalEnterLabel: (text: string) => void;
   /** Quick emoji strip above the player (right-click / long-press self in game). */
   showSelfEmojiMenu: (
     anchorX: number,
@@ -194,7 +205,7 @@ export function createHud(
   onPortalEnter: (fn: () => void) => void;
   isTeleporterModeActive: () => boolean;
   onBuildToolSelect: (
-    fn: (tool: "block" | "signpost" | "teleporter") => void
+    fn: (tool: "block" | "signpost" | "teleporter" | "billboard") => void
   ) => void;
   deactivateTeleporterMode: () => void;
   onReturnToLobby: (fn: () => void) => void;
@@ -267,6 +278,19 @@ export function createHud(
           onMove: () => void;
           onClose: () => void;
         }
+      | {
+          x: number;
+          z: number;
+          billboardSelection: {
+            id: string;
+            /** False for viewers who are not the placer and not admin (server enforces too). */
+            canModify: boolean;
+            onEdit: () => void;
+            onMove: () => void;
+            onRemove: () => void;
+            onClose: () => void;
+          };
+        }
   ) => void;
   hideObjectEditPanel: () => void;
   setTeleporterEditFields: (p: {
@@ -291,9 +315,74 @@ export function createHud(
   ) => void;
   setBuildBlockBarState: (state: BuildBlockBarState) => void;
   isSignpostModeActive: () => boolean;
+  isBillboardModeActive: () => boolean;
   deactivateSignpostMode: () => void;
   promptSignpostMessage: (x: number, z: number) => void;
   onSignpostPlace: (fn: (x: number, z: number, message: string) => void) => void;
+  promptBillboardPlace: (
+    x: number,
+    z: number,
+    draft?: {
+      orientation: "horizontal" | "vertical";
+      yawSteps: number;
+      advertId: string;
+      advertIds: string[];
+      intervalSec: number;
+    }
+  ) => void;
+  applyBillboardModalDraft: (draft: {
+    orientation: "horizontal" | "vertical";
+    yawSteps: number;
+    advertId: string;
+    advertIds: string[];
+    intervalSec: number;
+  }) => void;
+  onBillboardDraftChange: (
+    fn: ((
+      d: {
+        orientation: "horizontal" | "vertical";
+        yawSteps: number;
+        advertId: string;
+        advertIds: string[];
+        intervalSec: number;
+      }
+    ) => void) | null
+  ) => void;
+  onBillboardPlace: (
+    fn: (
+      x: number,
+      z: number,
+      opts: {
+        orientation: "horizontal" | "vertical";
+        advertId: string;
+        advertIds: string[];
+        intervalSec: number;
+      }
+    ) => void
+  ) => void;
+  promptBillboardEdit: (
+    id: string,
+    spec: Pick<
+      BillboardState,
+      "orientation" | "advertId" | "advertIds" | "intervalMs"
+    >
+  ) => void;
+  onBillboardUpdate: (
+    fn: (
+      id: string,
+      opts: {
+        orientation: "horizontal" | "vertical";
+        advertId: string;
+        advertIds: string[];
+        intervalSec: number;
+      }
+    ) => void
+  ) => void;
+  showBillboardExternalVisitConfirm: (p: {
+    url: string;
+    displayName: string;
+    onConfirm: () => void;
+  }) => void;
   setSignboardTooltip: (signboard: {
     id: string;
     x: number;
@@ -685,6 +774,93 @@ export function createHud(
   `;
   signpostOverlay.appendChild(signpostDialog);
 
+  const billboardOverlay = document.createElement("div");
+  billboardOverlay.className = "billboard-modal";
+  billboardOverlay.hidden = true;
+  const billboardDialog = document.createElement("div");
+  billboardDialog.className = "billboard-modal__dialog";
+  billboardDialog.setAttribute("role", "dialog");
+  billboardDialog.setAttribute("aria-modal", "true");
+  billboardDialog.setAttribute("aria-labelledby", "billboard-modal-title");
+  billboardDialog.innerHTML = `
+    <div class="billboard-modal__header">
+      <h2 id="billboard-modal-title" class="billboard-modal__title">Place billboard</h2>
+      <div class="billboard-modal__header-actions">
+        <button type="button" class="billboard-modal__btn billboard-modal__btn--ghost billboard-modal__btn--cancel">Cancel</button>
+        <button type="button" class="billboard-modal__btn billboard-modal__btn--primary billboard-modal__btn--place">Place</button>
+      </div>
+    </div>
+    <div class="billboard-modal__body">
+      <div class="billboard-modal__field">
+        <span class="billboard-modal__label" id="billboard-size-label">Size</span>
+        <div class="billboard-modal__size-row" role="group" aria-labelledby="billboard-size-label">
+          <button type="button" id="billboard-size-4x1" class="billboard-modal__size-btn billboard-modal__size-btn--active" aria-pressed="true">4×1</button>
+          <button type="button" id="billboard-size-2x1" class="billboard-modal__size-btn" aria-pressed="false">2×1</button>
+        </div>
+        <p id="billboard-size-hint" class="billboard-modal__hint">4×1 is horizontal along the grid; 2×1 is vertical (tall).</p>
+      </div>
+      <div class="billboard-modal__field">
+        <span class="billboard-modal__label" id="billboard-rotation-label">Rotation</span>
+        <ul id="billboard-rotation-list" class="billboard-modal__slides-list" aria-labelledby="billboard-rotation-label"></ul>
+        <div class="billboard-modal__add-slide-row">
+          <select id="billboard-rotation-add" class="billboard-modal__select" aria-label="Advert to add to rotation"></select>
+          <button type="button" id="billboard-rotation-add-btn" class="billboard-modal__btn billboard-modal__btn--ghost">Add</button>
+        </div>
+        <p id="billboard-rotation-hint" class="billboard-modal__hint"></p>
+      </div>
+      <div class="billboard-modal__field">
+        <label class="billboard-modal__label" for="billboard-rotation-interval">Seconds per slide</label>
+        <input type="number" id="billboard-rotation-interval" class="billboard-modal__input billboard-modal__input--number" min="1" max="300" step="1" value="8" />
+      </div>
+      <div class="billboard-modal__preview" aria-hidden="true">
+        <img id="billboard-preview-img" class="billboard-modal__preview-img" alt="" decoding="async" />
+      </div>
+    </div>
+  `;
+  billboardOverlay.appendChild(billboardDialog);
+
+  const billboardRotationAddSelect = billboardDialog.querySelector(
+    "#billboard-rotation-add"
+  ) as HTMLSelectElement | null;
+  if (billboardRotationAddSelect) {
+    for (const a of BILLBOARD_ADVERTS_CATALOG) {
+      const opt = document.createElement("option");
+      opt.value = a.id;
+      opt.textContent = a.name;
+      billboardRotationAddSelect.appendChild(opt);
+    }
+  }
+  const billboardRotationListEl = billboardDialog.querySelector(
+    "#billboard-rotation-list"
+  ) as HTMLUListElement | null;
+  const billboardRotationHintEl = billboardDialog.querySelector(
+    "#billboard-rotation-hint"
+  ) as HTMLElement | null;
+  const billboardRotationIntervalInput = billboardDialog.querySelector(
+    "#billboard-rotation-interval"
+  ) as HTMLInputElement | null;
+  const billboardRotationAddBtn = billboardDialog.querySelector(
+    "#billboard-rotation-add-btn"
+  ) as HTMLButtonElement | null;
+
+  const externalVisitConfirmOverlay = document.createElement("div");
+  externalVisitConfirmOverlay.className = "external-visit-confirm";
+  externalVisitConfirmOverlay.hidden = true;
+  externalVisitConfirmOverlay.setAttribute("aria-hidden", "true");
+  externalVisitConfirmOverlay.innerHTML = `
+    <div class="external-visit-confirm__backdrop" aria-hidden="true"></div>
+    <div class="external-visit-confirm__dialog" role="dialog" aria-modal="true" aria-labelledby="external-visit-title">
+      <h2 id="external-visit-title" class="external-visit-confirm__title">Open external website?</h2>
+      <p class="external-visit-confirm__lead">You are about to leave Nimiq Space and open a link in a new tab.</p>
+      <p class="external-visit-confirm__url" id="external-visit-url"></p>
+      <p class="external-visit-confirm__disclaimer"><em>Nimiq Space does not control the content or safety of external sites.</em></p>
+      <div class="external-visit-confirm__actions">
+        <button type="button" class="external-visit-confirm__btn external-visit-confirm__btn--cancel">Cancel</button>
+        <button type="button" class="external-visit-confirm__btn external-visit-confirm__btn--confirm">Continue</button>
+      </div>
+    </div>
+  `;
+
   const FEEDBACK_MESSAGE_MAX = 700;
   const feedbackOverlay = document.createElement("div");
   feedbackOverlay.className = "signpost-overlay feedback-overlay";
@@ -774,6 +950,8 @@ export function createHud(
   ui.appendChild(topWrap);
   ui.appendChild(leftStack);
   letter.appendChild(signpostOverlay);
+  letter.appendChild(billboardOverlay);
+  letter.appendChild(externalVisitConfirmOverlay);
   letter.appendChild(feedbackOverlay);
   letter.appendChild(brandLinksOverlay);
 
@@ -2042,6 +2220,7 @@ export function createHud(
           <select id="tile-inspector-tool" class="tile-inspector__tool-select" aria-label="Placement tool">
             <option value="block" selected>Block</option>
             <option value="signpost">Signpost</option>
+            <option value="billboard">Billboard</option>
             <option value="teleporter">Teleporter</option>
           </select>
         </div>
@@ -2198,6 +2377,7 @@ export function createHud(
       hudPlayMode === "build" &&
       !buildBlockBar.hidden &&
       !signpostModeActive &&
+      !billboardModeActive &&
       !teleporterModeActive;
     pSlot.hidden = !blockToolRail || selectionOn;
     sSlot.hidden = !selectionOn;
@@ -2212,7 +2392,7 @@ export function createHud(
   ) as HTMLElement | null;
 
   let buildToolChangeHandler:
-    | ((tool: "block" | "signpost" | "teleporter") => void)
+    | ((tool: "block" | "signpost" | "teleporter" | "billboard") => void)
     | null = null;
 
   const objectPanelAdvancedPopover = document.createElement("div");
@@ -2301,6 +2481,10 @@ export function createHud(
   const tileInspectorResetBtn = buildBlockBar.querySelector(
     "#tile-inspector-reset"
   ) as HTMLButtonElement;
+  let signpostModeActive = false;
+  /** Teleporter tool: place pending tiles; configure destination via object panel. */
+  let teleporterModeActive = false;
+  let billboardModeActive = false;
   const tileInspectorPyramidBaseSection = buildBlockBar.querySelector(
     "#tile-inspector-pyramid-base-section"
   ) as HTMLElement | null;
@@ -2329,6 +2513,7 @@ export function createHud(
     if (!tileInspectorPyramidBaseSection) return;
     const show =
       !signpostModeActive &&
+      !billboardModeActive &&
       !teleporterModeActive &&
       barPyramidCb.checked &&
       !barRampCb.checked;
@@ -2382,6 +2567,12 @@ export function createHud(
       tileInspectorHeadHint.hidden = false;
       return;
     }
+    if (billboardModeActive) {
+      tileInspectorHeadHint.textContent =
+        "Billboard — hover for footprint + preview; M move selection (M again cancel). Tap anchor to place.";
+      tileInspectorHeadHint.hidden = false;
+      return;
+    }
     tileInspectorHeadHint.hidden = true;
   }
 
@@ -2393,15 +2584,11 @@ export function createHud(
   let signpostPendingTile: { x: number; z: number } | null = null;
   let signpostPlaceHandler: ((x: number, z: number, message: string) => void) | null = null;
 
-  // Signpost mode (non-admin, for everyone)
-  let signpostModeActive = false;
-  /** Teleporter tool: place pending tiles; configure destination via object panel. */
-  let teleporterModeActive = false;
-
-  function activateBuildTool(tool: "block" | "signpost" | "teleporter"): void {
+  function activateBuildTool(tool: "block" | "signpost" | "teleporter" | "billboard"): void {
     setBarShapePopoverOpen(false);
     signpostModeActive = tool === "signpost";
     teleporterModeActive = tool === "teleporter";
+    billboardModeActive = tool === "billboard";
     if (teleporterSection) {
       teleporterSection.hidden = !teleporterModeActive;
     }
@@ -2412,12 +2599,12 @@ export function createHud(
     if (tileInspectorRoot) {
       tileInspectorRoot.classList.toggle(
         "tile-inspector--minimal",
-        signpostModeActive || teleporterModeActive
+        signpostModeActive || teleporterModeActive || billboardModeActive
       );
     }
     if (tileInspectorResetBtn) {
       tileInspectorResetBtn.hidden =
-        signpostModeActive || teleporterModeActive;
+        signpostModeActive || teleporterModeActive || billboardModeActive;
     }
     buildToolChangeHandler?.(tool);
     syncBlockPreviewDockSlots();
@@ -2471,6 +2658,366 @@ export function createHud(
       e.stopPropagation();
     });
   }
+
+  const billboardSize4x1Btn = billboardDialog.querySelector(
+    "#billboard-size-4x1"
+  ) as HTMLButtonElement | null;
+  const billboardSize2x1Btn = billboardDialog.querySelector(
+    "#billboard-size-2x1"
+  ) as HTMLButtonElement | null;
+  const billboardSizeHintEl = billboardDialog.querySelector(
+    "#billboard-size-hint"
+  ) as HTMLElement | null;
+  const billboardPreviewImg = billboardOverlay.querySelector(
+    "#billboard-preview-img"
+  ) as HTMLImageElement | null;
+  const billboardCancelBtn = billboardOverlay.querySelector(
+    ".billboard-modal__btn--cancel"
+  ) as HTMLButtonElement | null;
+  const billboardCreateBtn = billboardOverlay.querySelector(
+    ".billboard-modal__btn--place"
+  ) as HTMLButtonElement | null;
+
+  let billboardPendingTile: { x: number; z: number } | null = null;
+  let billboardPlaceHandler:
+    | ((
+        x: number,
+        z: number,
+        opts: {
+          orientation: "horizontal" | "vertical";
+          advertId: string;
+          advertIds: string[];
+          intervalSec: number;
+        }
+      ) => void)
+    | null = null;
+
+  let billboardEditTargetId: string | null = null;
+
+  let billboardUpdateHandler:
+    | ((
+        id: string,
+        opts: {
+          orientation: "horizontal" | "vertical";
+          advertId: string;
+          advertIds: string[];
+          intervalSec: number;
+        }
+      ) => void)
+    | null = null;
+
+  const billboardModalTitleEl = billboardOverlay.querySelector(
+    "#billboard-modal-title"
+  ) as HTMLElement | null;
+
+  let billboardDraftChangeHandler:
+    | ((
+        d: {
+          orientation: "horizontal" | "vertical";
+          yawSteps: number;
+          advertId: string;
+          advertIds: string[];
+          intervalSec: number;
+        }
+      ) => void)
+    | null = null;
+
+  let billboardRotationAdvertIds: string[] = [];
+
+  function defaultBillboardAdvertId(): string {
+    return BILLBOARD_ADVERTS_CATALOG[0]?.id ?? "";
+  }
+
+  function getBillboardRotationIntervalSec(): number {
+    const raw = Math.floor(Number(billboardRotationIntervalInput?.value ?? "8"));
+    if (!Number.isFinite(raw)) return 8;
+    return Math.max(1, Math.min(300, raw));
+  }
+
+  function syncBillboardRotationHint(): void {
+    if (!billboardRotationHintEl) return;
+    const n = billboardRotationAdvertIds.length;
+    const sec = getBillboardRotationIntervalSec();
+    billboardRotationHintEl.textContent =
+      n > 1
+        ? `${n} adverts · ${sec}s per slide · “Visit” follows the active slide`
+        : `Add more adverts to rotate (max ${BILLBOARD_MAX_ADVERT_SLOTS}). Seconds per slide applies when there are 2+.`;
+  }
+
+  function syncBillboardPreviewFromRotation(): void {
+    if (!billboardPreviewImg) return;
+    const id = billboardRotationAdvertIds[0] ?? defaultBillboardAdvertId();
+    const a = BILLBOARD_ADVERTS_CATALOG.find((x) => x.id === id);
+    billboardPreviewImg.src = a?.slides[0] ?? "";
+  }
+
+  function renderBillboardRotationList(): void {
+    const ul = billboardRotationListEl;
+    if (!ul) return;
+    ul.innerHTML = "";
+    for (let i = 0; i < billboardRotationAdvertIds.length; i++) {
+      const id = billboardRotationAdvertIds[i]!;
+      const name =
+        BILLBOARD_ADVERTS_CATALOG.find((a) => a.id === id)?.name ?? id;
+      const li = document.createElement("li");
+      li.className = "billboard-modal__slide-item";
+      const lab = document.createElement("span");
+      lab.className = "billboard-modal__slide-label";
+      lab.textContent = `${i + 1}. ${name}`;
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "billboard-modal__slide-remove";
+      rm.textContent = "Remove";
+      rm.disabled = billboardRotationAdvertIds.length <= 1;
+      rm.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (billboardRotationAdvertIds.length <= 1) return;
+        billboardRotationAdvertIds.splice(i, 1);
+        renderBillboardRotationList();
+        syncBillboardRotationHint();
+        syncBillboardPreviewFromRotation();
+        emitBillboardDraftFromForm();
+      });
+      li.appendChild(lab);
+      li.appendChild(rm);
+      ul.appendChild(li);
+    }
+    syncBillboardRotationHint();
+  }
+
+  function resetBillboardRotationFromDraft(draft?: {
+    orientation?: "horizontal" | "vertical";
+    advertIds?: string[];
+    advertId?: string;
+    intervalSec?: number;
+    intervalMs?: number;
+  }): void {
+    let ids: string[] = [];
+    if (draft?.advertIds?.length) {
+      ids = draft.advertIds
+        .map((x) => String(x ?? "").trim())
+        .filter((id) => BILLBOARD_ADVERTS_CATALOG.some((a) => a.id === id))
+        .slice(0, BILLBOARD_MAX_ADVERT_SLOTS);
+    } else {
+      const one = String(draft?.advertId ?? "").trim();
+      const ok = one && BILLBOARD_ADVERTS_CATALOG.some((a) => a.id === one);
+      ids = [ok ? one : defaultBillboardAdvertId()];
+    }
+    if (ids.length === 0) ids = [defaultBillboardAdvertId()];
+    billboardRotationAdvertIds = ids;
+    let sec = 8;
+    if (draft?.intervalSec !== undefined) {
+      const s = Math.floor(Number(draft.intervalSec));
+      if (Number.isFinite(s)) sec = Math.max(1, Math.min(300, s));
+    } else if (draft?.intervalMs !== undefined) {
+      const s = Math.round(Number(draft.intervalMs) / 1000);
+      if (Number.isFinite(s)) sec = Math.max(1, Math.min(300, s));
+    }
+    if (billboardRotationIntervalInput) {
+      billboardRotationIntervalInput.value = String(sec);
+    }
+    renderBillboardRotationList();
+    syncBillboardPreviewFromRotation();
+  }
+
+  function setBillboardSizeUi(orientation: "horizontal" | "vertical"): void {
+    const horiz = orientation !== "vertical";
+    billboardSize4x1Btn?.classList.toggle(
+      "billboard-modal__size-btn--active",
+      horiz
+    );
+    billboardSize2x1Btn?.classList.toggle(
+      "billboard-modal__size-btn--active",
+      !horiz
+    );
+    billboardSize4x1Btn?.setAttribute("aria-pressed", horiz ? "true" : "false");
+    billboardSize2x1Btn?.setAttribute("aria-pressed", horiz ? "false" : "true");
+  }
+
+  function emitBillboardDraftFromForm(): void {
+    const orientation: "horizontal" | "vertical" =
+      billboardSize2x1Btn?.classList.contains(
+        "billboard-modal__size-btn--active"
+      )
+        ? "vertical"
+        : "horizontal";
+    const fallback = defaultBillboardAdvertId();
+    const advertIds =
+      billboardRotationAdvertIds.length > 0
+        ? [...billboardRotationAdvertIds]
+        : [fallback];
+    const advertId = advertIds[0] ?? fallback;
+    const intervalSec = getBillboardRotationIntervalSec();
+    billboardDraftChangeHandler?.({
+      orientation,
+      yawSteps: 0,
+      advertId,
+      advertIds,
+      intervalSec,
+    });
+  }
+
+  billboardSize4x1Btn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setBillboardSizeUi("horizontal");
+    emitBillboardDraftFromForm();
+  });
+  billboardSize2x1Btn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setBillboardSizeUi("vertical");
+    emitBillboardDraftFromForm();
+  });
+  billboardRotationAddBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const raw = String(billboardRotationAddSelect?.value ?? "").trim();
+    const id = BILLBOARD_ADVERTS_CATALOG.some((a) => a.id === raw)
+      ? raw
+      : defaultBillboardAdvertId();
+    if (billboardRotationAdvertIds.length >= BILLBOARD_MAX_ADVERT_SLOTS) {
+      return;
+    }
+    billboardRotationAdvertIds.push(id);
+    renderBillboardRotationList();
+    syncBillboardPreviewFromRotation();
+    emitBillboardDraftFromForm();
+  });
+  billboardRotationIntervalInput?.addEventListener("input", () => {
+    syncBillboardRotationHint();
+    emitBillboardDraftFromForm();
+  });
+
+  if (billboardCancelBtn) {
+    billboardCancelBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      billboardOverlay.hidden = true;
+      billboardPendingTile = null;
+      billboardEditTargetId = null;
+      if (billboardModalTitleEl) {
+        billboardModalTitleEl.textContent = "Place billboard";
+      }
+      if (billboardCreateBtn) billboardCreateBtn.textContent = "Place";
+    });
+  }
+
+  if (billboardCreateBtn) {
+    billboardCreateBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const orientation: "horizontal" | "vertical" =
+        billboardSize2x1Btn?.classList.contains(
+          "billboard-modal__size-btn--active"
+        )
+          ? "vertical"
+          : "horizontal";
+      const fallback = defaultBillboardAdvertId();
+      const advertIds =
+        billboardRotationAdvertIds.length > 0
+          ? [...billboardRotationAdvertIds]
+          : [fallback];
+      const advertId = advertIds[0] ?? fallback;
+      if (!advertId) return;
+      const intervalSec = getBillboardRotationIntervalSec();
+      const opts = { orientation, advertId, advertIds, intervalSec };
+      if (billboardEditTargetId) {
+        billboardUpdateHandler?.(billboardEditTargetId, opts);
+      } else {
+        if (!billboardPendingTile) return;
+        billboardPlaceHandler?.(
+          billboardPendingTile.x,
+          billboardPendingTile.z,
+          opts
+        );
+      }
+      billboardOverlay.hidden = true;
+      billboardPendingTile = null;
+      billboardEditTargetId = null;
+      if (billboardModalTitleEl) {
+        billboardModalTitleEl.textContent = "Place billboard";
+      }
+      if (billboardCreateBtn) billboardCreateBtn.textContent = "Place";
+    });
+  }
+
+  if (BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED) {
+    if (billboardSize2x1Btn) {
+      billboardSize2x1Btn.disabled = true;
+      billboardSize2x1Btn.title = "2×1 billboards are temporarily unavailable.";
+    }
+    if (billboardSizeHintEl) {
+      billboardSizeHintEl.innerHTML =
+        "<i>2x1 temporarily unavailable</i>";
+    }
+  }
+
+  resetBillboardRotationFromDraft({});
+
+  const extVisitBackdrop = externalVisitConfirmOverlay.querySelector(
+    ".external-visit-confirm__backdrop"
+  ) as HTMLElement | null;
+  const extVisitUrlEl = externalVisitConfirmOverlay.querySelector(
+    "#external-visit-url"
+  ) as HTMLElement | null;
+  const extVisitCancel = externalVisitConfirmOverlay.querySelector(
+    ".external-visit-confirm__btn--cancel"
+  ) as HTMLButtonElement | null;
+  const extVisitConfirm = externalVisitConfirmOverlay.querySelector(
+    ".external-visit-confirm__btn--confirm"
+  ) as HTMLButtonElement | null;
+
+  let extVisitPending: { onConfirm: () => void } | null = null;
+  let extVisitEsc: ((e: KeyboardEvent) => void) | null = null;
+
+  function hideExternalVisitConfirm(): void {
+    extVisitPending = null;
+    externalVisitConfirmOverlay.hidden = true;
+    externalVisitConfirmOverlay.setAttribute("aria-hidden", "true");
+    if (extVisitEsc) {
+      window.removeEventListener("keydown", extVisitEsc);
+      extVisitEsc = null;
+    }
+  }
+
+  function presentExternalVisitConfirm(p: {
+    url: string;
+    displayName: string;
+    onConfirm: () => void;
+  }): void {
+    extVisitPending = { onConfirm: p.onConfirm };
+    if (extVisitUrlEl) extVisitUrlEl.textContent = p.url;
+    externalVisitConfirmOverlay.hidden = false;
+    externalVisitConfirmOverlay.setAttribute("aria-hidden", "false");
+    extVisitEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        hideExternalVisitConfirm();
+      }
+    };
+    window.addEventListener("keydown", extVisitEsc);
+    extVisitConfirm?.focus();
+  }
+
+  extVisitBackdrop?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    hideExternalVisitConfirm();
+  });
+  extVisitCancel?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    hideExternalVisitConfirm();
+  });
+  extVisitConfirm?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const pending = extVisitPending;
+    hideExternalVisitConfirm();
+    pending?.onConfirm();
+  });
 
   const feedbackBackdropEl = feedbackOverlay.querySelector(
     ".feedback-overlay__backdrop"
@@ -2924,12 +3471,14 @@ export function createHud(
 
   tileInspectorToolSelect.addEventListener("change", () => {
     const raw = tileInspectorToolSelect.value;
-    const tool: "block" | "signpost" | "teleporter" =
+    const tool: "block" | "signpost" | "teleporter" | "billboard" =
       raw === "signpost"
         ? "signpost"
         : raw === "teleporter"
           ? "teleporter"
-          : "block";
+          : raw === "billboard"
+            ? "billboard"
+            : "block";
     activateBuildTool(tool);
   });
 
@@ -3262,12 +3811,12 @@ export function createHud(
     if (tileInspectorRoot) {
       tileInspectorRoot.classList.toggle(
         "tile-inspector--minimal",
-        signpostModeActive || teleporterModeActive
+        signpostModeActive || teleporterModeActive || billboardModeActive
       );
     }
     if (tileInspectorResetBtn) {
       tileInspectorResetBtn.hidden =
-        signpostModeActive || teleporterModeActive;
+        signpostModeActive || teleporterModeActive || billboardModeActive;
     }
     syncBarShapeTriggerVisual();
     syncPlacementPyramidBaseSectionVisibility();
@@ -4129,7 +4678,9 @@ export function createHud(
     objectPanelContextPopover.hidden = true;
     objectPanelContextPopover.replaceChildren();
     objectPanelContextPopover.classList.remove(
-      "build-object-panel-context--teleporter"
+      "build-object-panel-context--teleporter",
+      "build-object-panel-context--billboard",
+      "build-object-panel-context--billboard-readonly"
     );
     teleporterPanelCleanup?.();
     teleporterPanelCleanup = null;
@@ -4268,6 +4819,9 @@ export function createHud(
     setPortalEnterScreenPosition(x: number, y: number) {
       portalEnterBtn.style.left = `${x}px`;
       portalEnterBtn.style.top = `${y}px`;
+    },
+    setPortalEnterLabel(text: string) {
+      portalEnterBtn.textContent = text;
     },
     showSelfEmojiMenu(
       anchorX: number,
@@ -4467,6 +5021,9 @@ export function createHud(
         objectPanel.innerHTML = `<div class="build-object-panel__surface" aria-hidden="true"></div>`;
         modeSidebarBuildMount.appendChild(objectPanel);
 
+        objectPanelContextPopover.classList.remove(
+          "build-object-panel-context--billboard"
+        );
         objectPanelContextPopover.classList.add(
           "build-object-panel-context--teleporter"
         );
@@ -4603,6 +5160,79 @@ export function createHud(
         });
         return;
       }
+      if ("billboardSelection" in opts) {
+        const bs = opts.billboardSelection;
+        panelOnPropsChange = null;
+        objectPanel = document.createElement("div");
+        objectPanel.className =
+          "build-object-panel build-object-panel--teleporter";
+        objectPanel.hidden = true;
+        objectPanel.innerHTML = `<div class="build-object-panel__surface" aria-hidden="true"></div>`;
+        modeSidebarBuildMount.appendChild(objectPanel);
+
+        objectPanelContextPopover.classList.remove(
+          "build-object-panel-context--teleporter"
+        );
+        objectPanelContextPopover.classList.add(
+          "build-object-panel-context--billboard"
+        );
+        objectPanelContextPopover.classList.toggle(
+          "build-object-panel-context--billboard-readonly",
+          !bs.canModify
+        );
+        const dismissMarkup = `${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}`;
+        objectPanelContextPopover.innerHTML = bs.canModify
+          ? `
+          <div class="build-object-panel-context__inner">
+            <div class="build-object-panel-context__height-row">
+              <div class="build-object-panel-context__height-main">
+                <span class="build-object-panel-context__title-text">Billboard</span>
+                <span class="build-object-panel-context__tp-coords">(${opts.x}, ${opts.z})</span>
+              </div>
+              <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close billboard menu">${dismissMarkup}</button>
+            </div>
+            <div class="build-object-panel-context__advanced build-object-panel-context__advanced--row">
+              <button type="button" class="build-object-panel__btn build-object-panel__btn--secondary build-object-panel-context__edit-billboard">Edit</button>
+              <button type="button" class="build-object-panel__advanced-toggle build-block-bar__advanced-toggle tile-inspector__advanced-link" hidden disabled aria-hidden="true">Advanced…</button>
+            </div>
+            <div class="build-object-panel-context__actions">
+              <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
+              <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
+            </div>
+          </div>`
+          : `
+          <div class="build-object-panel-context__inner">
+            <div class="build-object-panel-context__height-row">
+              <div class="build-object-panel-context__height-main">
+                <span class="build-object-panel-context__title-text">Billboard (${opts.x}, ${opts.z})</span>
+              </div>
+              <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close">${dismissMarkup}</button>
+            </div>
+          </div>`;
+        objectPanelContextPopover.hidden = false;
+        if (bs.canModify) {
+          objectPanelContextPopover
+            .querySelector(".build-object-panel-context__edit-billboard")
+            ?.addEventListener("click", () => bs.onEdit());
+          objectPanelContextPopover
+            .querySelector(".build-object-panel__move")
+            ?.addEventListener("click", () => bs.onMove());
+          objectPanelContextPopover
+            .querySelector(".build-object-panel__remove")
+            ?.addEventListener("click", () => bs.onRemove());
+        }
+        objectPanelContextPopover
+          .querySelector(".build-object-panel-context__dismiss")
+          ?.addEventListener("click", () => bs.onClose());
+        requestAnimationFrame(() => {
+          layoutObjectPanelSatellites();
+          requestAnimationFrame(() => layoutObjectPanelSatellites());
+        });
+        return;
+      }
+      objectPanelContextPopover.classList.remove(
+        "build-object-panel-context--billboard"
+      );
       panelOnPropsChange = opts.onPropsChange;
       panelSelectedColorId = Math.max(
         0,
@@ -4662,7 +5292,8 @@ export function createHud(
               <span class="tile-inspector__param-value" id="panel-tile-inspector-pyramid-base-val">100%</span>
             </label>
           </div>
-          <div class="build-object-panel-context__advanced">
+          <div class="build-object-panel-context__advanced build-object-panel-context__advanced--row">
+            <button type="button" class="build-object-panel__btn build-object-panel__btn--secondary build-object-panel-context__edit-billboard" hidden>Edit</button>
             <button type="button" class="build-object-panel__advanced-toggle build-block-bar__advanced-toggle tile-inspector__advanced-link" aria-expanded="false" aria-controls="build-object-panel-advanced">Advanced…</button>
           </div>
           <div class="build-object-panel-context__actions">
@@ -5046,6 +5677,17 @@ export function createHud(
       syncHueDockVisibility();
       if (state.placementAdmin !== undefined) {
         barExperimentalOnly.hidden = !state.placementAdmin;
+        const bbOpt = tileInspectorToolSelect?.querySelector(
+          "option[value=\"billboard\"]"
+        ) as HTMLOptionElement | null;
+        if (bbOpt) {
+          const admin = state.placementAdmin === true;
+          bbOpt.hidden = !admin;
+          bbOpt.disabled = !admin;
+          if (!admin && billboardModeActive) {
+            activateBuildTool("block");
+          }
+        }
       }
       syncBarHeightButtons(state.quarter, state.quarter ? false : state.half);
       barHexCb.checked = state.ramp ? false : state.hex;
@@ -5068,11 +5710,14 @@ export function createHud(
     isSignpostModeActive(): boolean {
       return signpostModeActive;
     },
+    isBillboardModeActive(): boolean {
+      return billboardModeActive;
+    },
     isTeleporterModeActive(): boolean {
       return teleporterModeActive;
     },
     onBuildToolSelect(
-      fn: (tool: "block" | "signpost" | "teleporter") => void
+      fn: (tool: "block" | "signpost" | "teleporter" | "billboard") => void
     ) {
       buildToolChangeHandler = fn;
     },
@@ -5092,6 +5737,108 @@ export function createHud(
     },
     onSignpostPlace(fn: (x: number, z: number, message: string) => void) {
       signpostPlaceHandler = fn;
+    },
+    promptBillboardPlace(
+      x: number,
+      z: number,
+      draft?: {
+        orientation: "horizontal" | "vertical";
+        yawSteps: number;
+        advertId: string;
+        advertIds: string[];
+        intervalSec: number;
+      }
+    ): void {
+      billboardEditTargetId = null;
+      billboardPendingTile = { x, z };
+      if (billboardModalTitleEl) {
+        billboardModalTitleEl.textContent = "Place billboard";
+      }
+      if (billboardCreateBtn) billboardCreateBtn.textContent = "Place";
+      const orient = draft?.orientation ?? "horizontal";
+      setBillboardSizeUi(orient);
+      resetBillboardRotationFromDraft(draft);
+      emitBillboardDraftFromForm();
+      billboardOverlay.hidden = false;
+    },
+    promptBillboardEdit(
+      id: string,
+      spec: Pick<
+        BillboardState,
+        "orientation" | "advertId" | "advertIds" | "intervalMs"
+      >
+    ): void {
+      billboardEditTargetId = id;
+      billboardPendingTile = null;
+      if (billboardModalTitleEl) {
+        billboardModalTitleEl.textContent = "Edit billboard";
+      }
+      if (billboardCreateBtn) billboardCreateBtn.textContent = "Save";
+      setBillboardSizeUi(spec.orientation);
+      resetBillboardRotationFromDraft({
+        advertIds: spec.advertIds,
+        advertId: spec.advertId,
+        intervalMs: spec.intervalMs,
+      });
+      emitBillboardDraftFromForm();
+      billboardOverlay.hidden = false;
+    },
+    applyBillboardModalDraft(draft: {
+      orientation: "horizontal" | "vertical";
+      yawSteps: number;
+      advertId: string;
+      advertIds: string[];
+      intervalSec: number;
+    }): void {
+      setBillboardSizeUi(draft.orientation);
+      resetBillboardRotationFromDraft(draft);
+    },
+    onBillboardDraftChange(
+      fn: ((
+        d: {
+          orientation: "horizontal" | "vertical";
+          yawSteps: number;
+          advertId: string;
+          advertIds: string[];
+          intervalSec: number;
+        }
+      ) => void) | null
+    ): void {
+      billboardDraftChangeHandler = fn;
+    },
+    onBillboardPlace(
+      fn: (
+        x: number,
+        z: number,
+        opts: {
+          orientation: "horizontal" | "vertical";
+          advertId: string;
+          advertIds: string[];
+          intervalSec: number;
+        }
+      ) => void
+    ) {
+      billboardPlaceHandler = fn;
+    },
+    onBillboardUpdate(
+      fn: (
+        id: string,
+        opts: {
+          orientation: "horizontal" | "vertical";
+          advertId: string;
+          advertIds: string[];
+          intervalSec: number;
+        }
+      ) => void
+    ) {
+      billboardUpdateHandler = fn;
+    },
+    showBillboardExternalVisitConfirm(p: {
+      url: string;
+      displayName: string;
+      onConfirm: () => void;
+    }): void {
+      presentExternalVisitConfirm(p);
     },
     setDebugText(text: string) {
       if (!showDebug) return;
