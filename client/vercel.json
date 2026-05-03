@@ -13,8 +13,12 @@
       "destination": "https://api.nimiq.space/admin"
     },
     {
+      "source": "/payouts",
+      "destination": "https://api.nimiq.space/payouts"
+    },
+    {
       "source": "/pending-payouts",
-      "destination": "https://api.nimiq.space/pending-payouts"
+      "destination": "https://api.nimiq.space/payouts"
     }
   ]
 }

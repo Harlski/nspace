@@ -104,11 +104,11 @@ async function fetchAnalyticsAuthStatus(token: string): Promise<AnalyticsAuthSta
 }
 
 function hubAppNameForPage(page: MainSitePage): string {
-  if (page === "pending-payouts") return "Nimiq Space payouts";
+  if (page === "payouts") return "Nimiq Space payouts";
   return "nspace analytics";
 }
 
-export type MainSitePage = "analytics" | "admin" | "pending-payouts";
+export type MainSitePage = "analytics" | "admin" | "payouts";
 
 /** Default wallet login used by main-site pages when no custom handler is passed. */
 export async function mainSiteWalletLogin(page: MainSitePage): Promise<void> {

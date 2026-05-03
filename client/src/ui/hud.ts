@@ -553,7 +553,7 @@ export function createHud(
     <span class="hud-nim-balance__tooltip" role="tooltip">
       <span class="hud-nim-balance__tip-inline">
         This NIM can be earned by
-        <a class="hud-nim-balance__payouts-link" href="/pending-payouts" target="_blank" rel="noopener noreferrer">
+        <a class="hud-nim-balance__payouts-link" href="/payouts" target="_blank" rel="noopener noreferrer">
           playing Nimiq Space<span class="hud-nim-balance__tip-arrow" aria-hidden="true"> →</span>
         </a>
       </span>

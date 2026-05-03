@@ -508,7 +508,7 @@ app.get("/api/nim/payout-balance", async (_req, res) => {
  * a manager JWT for a fast embed (totals, per-recipient pending summary, recent history text only, no identicons).
  * Other wallets get only jobs for `sub`, capped the same way.
  */
-app.get("/api/nim/pending-payouts", async (req, res) => {
+app.get("/api/nim/payouts", async (req, res) => {
   try {
     const t = bearerToken(req);
     if (req.headers.authorization) {
@@ -542,9 +542,16 @@ app.get("/api/nim/pending-payouts", async (req, res) => {
     }
     res.json(await getPublicPendingPayoutSummary());
   } catch (err) {
-    console.error("[nim/pending-payouts]", err);
+    console.error("[nim/payouts]", err);
     res.status(500).json({ error: "internal" });
   }
+});
+
+/** @deprecated Use `GET /api/nim/payouts`. */
+app.get("/api/nim/pending-payouts", (req, res) => {
+  const i = req.originalUrl.indexOf("?");
+  const q = i >= 0 ? req.originalUrl.slice(i) : "";
+  res.redirect(301, `/api/nim/payouts${q}`);
 });
 
 app.post(
@@ -580,9 +587,14 @@ app.post(
   }
 );
 
-/** Human-readable table; data from `/api/nim/pending-payouts`. */
-app.get("/pending-payouts", (_req, res) => {
+/** Human-readable table; data from `GET /api/nim/payouts`. */
+app.get("/payouts", (_req, res) => {
   res.type("html").send(pendingPayoutsPublicPageHtml());
+});
+
+/** @deprecated Use `GET /payouts`. */
+app.get("/pending-payouts", (_req, res) => {
+  res.redirect(301, "/payouts");
 });
 
 /**

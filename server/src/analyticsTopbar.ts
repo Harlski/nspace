@@ -170,7 +170,7 @@ export function analyticsTopbarCss(): string {
   `;
 }
 
-export type MainSiteHeaderPage = "analytics" | "admin" | "pending-payouts";
+export type MainSiteHeaderPage = "analytics" | "admin" | "payouts";
 
 function navLink(
   page: MainSiteHeaderPage,
@@ -193,7 +193,7 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
           <span class="brand-title"><span class="brand-title__nimiq">NIMIQ</span> <span class="brand-title__space">SPACE</span></span>
         </a>
         <nav class="main-site-nav" aria-label="Main site">
-          ${navLink("pending-payouts", currentPage, "/pending-payouts", "Payouts")}
+          ${navLink("payouts", currentPage, "/payouts", "Payouts")}
           ${navLink("analytics", currentPage, "/analytics", "Analytics", true)}
           ${navLink("admin", currentPage, "/admin", "Admin", true)}
           ${

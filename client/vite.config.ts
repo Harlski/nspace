@@ -125,7 +125,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),
-        pendingPayouts: resolve(__dirname, "pending-payouts.html"),
+        payouts: resolve(__dirname, "payouts.html"),
         analytics: resolve(__dirname, "analytics.html"),
         admin: resolve(__dirname, "admin.html"),
       },
@@ -151,6 +151,12 @@ export default defineConfig({
         configure: attachDevProxyHandlers,
       },
       /** Public HTML from Express (`server/src/index.ts`); without this, SPA serves `index.html`. */
+      "/payouts": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+        configure: attachDevProxyHandlers,
+      },
+      /** Legacy path; server responds with 301 → `/payouts`. */
       "/pending-payouts": {
         target: "http://127.0.0.1:3001",
         changeOrigin: true,

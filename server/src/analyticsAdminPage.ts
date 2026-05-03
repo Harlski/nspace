@@ -4,7 +4,7 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
-import { mainSiteShellCss } from "./mainSiteShell.js";
+import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 
 export function analyticsAdminPageHtml(): string {
   return `<!DOCTYPE html>
@@ -13,6 +13,7 @@ export function analyticsAdminPageHtml(): string {
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Admin — Nimiq Space</title>
+  ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
     ${analyticsPageRootCss()}
@@ -627,7 +628,7 @@ export function analyticsAdminPageHtml(): string {
       var payoutAdmin = null;
       async function refreshPayoutAdmin() {
         try {
-          var pr = await fetch("/api/nim/pending-payouts?adminPanel=1", {
+          var pr = await fetch("/api/nim/payouts?adminPanel=1", {
             headers: { authorization: "Bearer " + token },
             cache: "no-store",
           });

@@ -174,9 +174,9 @@ async function load(): Promise<void> {
   if (token) headers.authorization = `Bearer ${token}`;
 
   try {
-    const r = await fetch(apiUrl("/api/nim/pending-payouts"), { cache: "no-store", headers });
+    const r = await fetch(apiUrl("/api/nim/payouts"), { cache: "no-store", headers });
     if (r.status === 401) {
-      await renderMainSiteTopbar("pending-payouts", { onLoginClick: () => void runLogin() });
+      await renderMainSiteTopbar("payouts", { onLoginClick: () => void runLogin() });
       await refreshMainSiteNavFromSession();
       statusEl.textContent = "Session expired — sign in again from the menu.";
       return;
@@ -224,7 +224,7 @@ async function load(): Promise<void> {
 }
 
 void (async () => {
-  await renderMainSiteTopbar("pending-payouts", {
+  await renderMainSiteTopbar("payouts", {
     onLoginClick: () => void runLogin(),
   });
   await load();

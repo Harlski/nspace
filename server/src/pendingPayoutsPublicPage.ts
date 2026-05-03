@@ -4,11 +4,11 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
-import { mainSiteShellCss } from "./mainSiteShell.js";
+import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 
 /**
- * `GET /pending-payouts` — queue overview (main-site shell).
- * Data from `GET /api/nim/pending-payouts` (summary without auth; wallet-scoped with JWT).
+ * `GET /payouts` — queue overview (main-site shell).
+ * Data from `GET /api/nim/payouts` (summary without auth; wallet-scoped with JWT).
  */
 export function pendingPayoutsPublicPageHtml(): string {
   return `<!DOCTYPE html>
@@ -17,6 +17,7 @@ export function pendingPayoutsPublicPageHtml(): string {
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Payout queue — Nimiq Space</title>
+  ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
     ${analyticsPageRootCss()}
@@ -25,7 +26,7 @@ export function pendingPayoutsPublicPageHtml(): string {
   </style>
 </head>
 <body class="ms-site">
-  ${analyticsTopbarHtml("pending-payouts")}
+  ${analyticsTopbarHtml("payouts")}
   <h1 class="ms-doc-title">Payout queue <i class="ms-doc-title__updated ms-mono" id="payoutTitleUpdated" aria-live="polite"></i></h1>
   <p class="ms-status ms-mono ms-payout-queue-status" id="statusLine"></p>
   <div id="wrap"></div>
@@ -503,7 +504,7 @@ export function pendingPayoutsPublicPageHtml(): string {
       var headers = {};
       if (token) headers["authorization"] = "Bearer " + token;
       try {
-        var r = await fetch("/api/nim/pending-payouts", { cache: "no-store", headers: headers });
+        var r = await fetch("/api/nim/payouts", { cache: "no-store", headers: headers });
         if (r.status === 401) {
           clearAuthSession();
           location.reload();

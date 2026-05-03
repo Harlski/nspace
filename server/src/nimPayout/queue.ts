@@ -74,7 +74,7 @@ const NIM_BALANCE_BACKGROUND_REFRESH_MS = Math.max(
 
 const DEAD_LETTER_FILE = path.join(NIM_PAYOUT_DATA_DIR, "nim-payout-dead-letter.jsonl");
 
-/** Per-recipient append-only log (last N lines read on wallet pending-payouts API). */
+/** Per-recipient append-only log (last N lines read on wallet-scoped `GET /api/nim/payouts`). */
 const RECIPIENT_SENT_DIR = path.join(NIM_PAYOUT_DATA_DIR, "nim-payout-recipient-sent");
 
 /** When merging wallet history, scan up to this many **global** tail lines for older sends (pre per-wallet file). */
@@ -86,7 +86,7 @@ const WALLET_GLOBAL_SENT_TAIL_LINES = Math.min(
   )
 );
 
-/** Max rows returned in `/api/nim/pending-payouts` JSON (admin snapshot + per-wallet detail). */
+/** Max rows returned in `GET /api/nim/payouts` JSON (admin snapshot + per-wallet detail). */
 const PENDING_PAYOUT_API_PENDING_ROW_CAP = 10;
 const PENDING_PAYOUT_API_HISTORY_ROW_CAP = 5;
 const MANUAL_BULK_LOG_TAIL_LINES = 800;

@@ -189,7 +189,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
               <div class="main-menu__actions-account__row">
                 <button type="button" class="main-menu__actions-account__pill main-menu__actions-account__pill--forget" id="main-menu-actions-forget">Forget</button>
                 <div class="main-menu__actions-account__cluster">
-                  <a class="main-menu__actions-account__pill main-menu__actions-account__pill--payouts" id="main-menu-actions-payouts" href="/pending-payouts" target="_blank" rel="noopener noreferrer">Payouts</a>
+                  <a class="main-menu__actions-account__pill main-menu__actions-account__pill--payouts" id="main-menu-actions-payouts" href="/payouts" target="_blank" rel="noopener noreferrer">Payouts</a>
                   <button type="button" class="main-menu__actions-account__pill main-menu__actions-account__pill--enter" id="main-menu-actions-enter">Enter</button>
                 </div>
               </div>

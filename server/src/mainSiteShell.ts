@@ -1,10 +1,16 @@
 /**
  * Shared layout and tokens for **main-site** HTML pages served from the game API host
- * (`/analytics`, `/admin`, `/pending-payouts`, …). Not used by the **main-game** SPA
+ * (`/analytics`, `/admin`, `/payouts`, …). Not used by the **main-game** SPA
  * (https://nimiq.space).
  *
  * Pair with `analyticsTopbar.ts` (brand row + `#authUser` slot) and `docs/main-site-design.md`.
  */
+
+/** Root-relative favicon (`client/public/favicon.ico` → `dist/`). */
+export function mainSiteFaviconLinkTag(): string {
+  return `<link rel="icon" href="/favicon.ico" sizes="any"/>`;
+}
+
 export function mainSiteShellCss(): string {
   return `
     :root {

@@ -4,7 +4,7 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
-import { mainSiteShellCss } from "./mainSiteShell.js";
+import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 
 export function analyticsPublicPageHtml(): string {
   return `<!DOCTYPE html>
@@ -12,7 +12,8 @@ export function analyticsPublicPageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Game analytics</title>
+  <title>Analytics</title>
+  ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
     ${analyticsPageRootCss()}
