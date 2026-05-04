@@ -11,6 +11,7 @@ import {
 } from "./auth/session.js";
 import { ROOM_ID } from "./game/constants.js";
 import { Game } from "./game/Game.js";
+import { createPerfTelemetry, type PerfTelemetry } from "./perfTelemetry.js";
 import { isOrthogonallyAdjacentToFloorTile, snapFloorTile } from "./game/grid.js";
 import {
   HUB_ROOM_ID,
@@ -230,8 +231,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   const showDebugHud =
     import.meta.env.DEV ||
     new URLSearchParams(location.search).has("debug");
+  const showPerfHud = new URLSearchParams(location.search).has("perf");
 
   let ws: WebSocket | null = null;
+  let perfTelemetry: PerfTelemetry | null = null;
   /** True after “Send NIM” opened the wallet link until the game tab is focused again. */
   let walletSendNimFlowOpen = false;
 
@@ -245,6 +248,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   let disposeNimiqPayAdvisory: (() => void) | null = null;
   const hud = createHud(hudRoot, {
     showDebug: showDebugHud,
+    showPerf: showPerfHud,
     getGameAuthToken: () => token,
     didSessionUseNimiqPay: () => sessionNimiqPay,
     playerUsesNimiqPayInRoom: (compactWalletKey) => {
@@ -270,6 +274,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
+  if (showPerfHud) {
+    perfTelemetry = createPerfTelemetry();
+    game.setPerfTickSplitEnabled(true);
+  }
   hud.bindTileInspectorPreviewGame(game);
   type KnownRoomRow = {
     id: string;
@@ -1295,6 +1303,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   function cleanupResources(): void {
     setPseudoFullscreen(false);
     notifyChatNotTyping();
+    if (perfTelemetry) {
+      perfTelemetry.dispose();
+      perfTelemetry = null;
+    }
+    game.setPerfTickSplitEnabled(false);
     if (nimWalletPollTimer !== null) {
       clearTimeout(nimWalletPollTimer);
       nimWalletPollTimer = null;
@@ -2891,7 +2904,16 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           hud.setReconnectOffer(true);
           hud.setStatus("Disconnected — tap Reconnect or reload");
         },
-        spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : undefined
+        {
+          ...(spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : {}),
+          ...(perfTelemetry
+            ? {
+                onInboundWire: (info: { bytesUtf8: number; type: string }) => {
+                  perfTelemetry!.recordWsInbound(info.bytesUtf8, info.type);
+                },
+              }
+            : {}),
+        }
       );
       wireWsHandlers(ws);
     });
@@ -3280,9 +3302,16 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   let fpsSmoothed = 60;
   function loop(now: number): void {
     if (disposed) return;
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const gapMs = now - last;
+    const dt = Math.min(0.05, gapMs / 1000);
     last = now;
-    game.tick(dt);
+    const tickWallMs = game.tick(dt);
+    if (perfTelemetry) {
+      perfTelemetry.recordFrame(gapMs, tickWallMs);
+      hud.setPerfText(
+        perfTelemetry.formatHudLines(game.getPerfTickSplit())
+      );
+    }
     syncPortalEnterButton();
     if (hud.isSelfEmojiMenuOpen()) {
       const ea = game.getSelfScreenPosition(1.32);

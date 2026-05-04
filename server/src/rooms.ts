@@ -156,11 +156,12 @@ const TICK_MS = 50;
 /**
  * Min interval between tick-driven full-room `state` broadcasts (JSON over WS).
  * Simulation still runs every {@link TICK_MS}; this only limits how often clients
- * receive position snapshots. Override with `STATE_BROADCAST_MIN_MS` (e.g. 200).
+ * receive position snapshots. Default matches the tick so movement stays smooth;
+ * raise with `STATE_BROADCAST_MIN_MS` (e.g. 120–200) to reduce bandwidth on huge rooms.
  */
 const STATE_BROADCAST_MIN_MS = Math.max(
   TICK_MS,
-  Math.floor(Number(process.env.STATE_BROADCAST_MIN_MS ?? "120"))
+  Math.floor(Number(process.env.STATE_BROADCAST_MIN_MS ?? String(TICK_MS)))
 );
 
 /**

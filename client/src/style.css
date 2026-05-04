@@ -1388,6 +1388,10 @@ button.hud-brand:focus-visible {
   word-break: break-word;
 }
 
+.hud-left-stack .hud-perf {
+  margin-top: 6px;
+}
+
 .canvas-leaderboard {
   padding: 10px 12px;
   width: 100%;

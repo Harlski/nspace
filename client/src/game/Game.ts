@@ -14,6 +14,7 @@ import {
   VIEW_FRUSTUM_SIZE,
 } from "./constants.js";
 import { FogOfWarPass } from "./fogOfWar.js";
+import type { PerfTickSplit } from "../perfTelemetry.js";
 
 const LS_ZOOM_MIN = "nspace_zoom_min";
 const LS_ZOOM_MAX = "nspace_zoom_max";
@@ -73,6 +74,8 @@ import {
 } from "./blockStyle.js";
 
 const LERP = 12;
+/** Extrapolate from last snapshot using server vx/vz, capped to avoid runaway if a packet is late. */
+const PLAYER_RENDER_EXTRAPOLATE_MAX_SEC = 0.12;
 
 /** Default scale on unit floor plane; >1 hides subpixel seams (tunable in admin). */
 const DEFAULT_FLOOR_TILE_QUAD = 1.08;
@@ -720,8 +723,20 @@ export class Game {
   private readonly hit = new THREE.Vector3();
   private selfAddress = "";
   private selfMesh: THREE.Group | null = null;
-  /** Authoritative position from server; selfMesh lerps toward this each frame. */
+  /** Authoritative position from server; selfMesh lerps toward this (+ velocity extrapolation) each frame. */
   private selfTargetPos: THREE.Vector3 | null = null;
+  /** `performance.now()` when self snapshot was last applied (for extrapolation). */
+  private selfSyncPerfMs = 0;
+  private selfVelX = 0;
+  private selfVelZ = 0;
+  private readonly remoteMoveHint = new Map<
+    string,
+    { vx: number; vz: number; syncPerfMs: number }
+  >();
+  private readonly playerRenderTargetScratch = new THREE.Vector3();
+  /** When true (e.g. `?perf=1`), `tick` records pre/render/tail ms and WebGL counts. */
+  private perfTickSplitEnabled = false;
+  private perfLastSplit: PerfTickSplit | null = null;
   private readonly others = new Map<string, THREE.Group>();
   private readonly chatBubbleByAddress = new Map<string, ChatBubbleEntry>();
   private readonly typingIndicatorByAddress = new Map<string, TypingIndicatorEntry>();
@@ -1377,6 +1392,17 @@ export class Game {
       buildMode: this.buildMode,
       floorExpandMode: this.floorExpandMode,
     };
+  }
+
+  /** Enable extra `performance.now()` splits inside `tick` for `?perf=1` HUD. */
+  setPerfTickSplitEnabled(enabled: boolean): void {
+    this.perfTickSplitEnabled = enabled;
+    if (!enabled) this.perfLastSplit = null;
+  }
+
+  /** Latest frame split from `tick`; null when split disabled or before first tick. */
+  getPerfTickSplit(): PerfTickSplit | null {
+    return this.perfLastSplit;
   }
 
   applyRoomFromWelcome(msg: {
@@ -4905,6 +4931,9 @@ export class Game {
     this.selfAddress = address;
     this.cameraFollowReady = false;
     this.selfTargetPos = null;
+    this.selfSyncPerfMs = 0;
+    this.selfVelX = 0;
+    this.selfVelZ = 0;
     if (this.selfMesh) {
       this.disposeAvatarGroup(this.selfMesh);
       this.scene.remove(this.selfMesh);
@@ -4969,12 +4998,18 @@ export class Game {
       this.selfMesh = null;
     }
     this.selfTargetPos = null;
+    this.selfSyncPerfMs = 0;
+    this.selfVelX = 0;
+    this.selfVelZ = 0;
+    this.perfTickSplitEnabled = false;
+    this.perfLastSplit = null;
     for (const [, g] of this.others) {
       this.disposeAvatarGroup(g);
       this.scene.remove(g);
     }
     this.others.clear();
     this.targetPos.clear();
+    this.remoteMoveHint.clear();
     for (const [, mesh] of this.canvasIdenticonMeshes) {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
@@ -5918,6 +5953,9 @@ export class Game {
       const py = Number.isFinite(p.y) ? p.y : 0;
       if (p.address === this.selfAddress) {
         if (this.selfMesh) {
+          this.selfSyncPerfMs = performance.now();
+          this.selfVelX = Number.isFinite(p.vx) ? p.vx : 0;
+          this.selfVelZ = Number.isFinite(p.vz) ? p.vz : 0;
           if (!this.selfTargetPos) {
             this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
             this.selfMesh.position.set(p.x, py, p.z);
@@ -5952,6 +5990,11 @@ export class Game {
       }
       const t = this.targetPos.get(p.address);
       if (t) t.set(p.x, py, p.z);
+      this.remoteMoveHint.set(p.address, {
+        vx: Number.isFinite(p.vx) ? p.vx : 0,
+        vz: Number.isFinite(p.vz) ? p.vz : 0,
+        syncPerfMs: performance.now(),
+      });
       this.syncAvatarNameLabelFromState(g, p);
       this.syncTypingIndicatorForGroup(g, p);
     }
@@ -5964,16 +6007,18 @@ export class Game {
         }
         this.others.delete(addr);
         this.targetPos.delete(addr);
+        this.remoteMoveHint.delete(addr);
       }
     }
     this.syncPlacementRangeHints();
   }
 
-  tick(dt: number): void {
+  tick(dt: number): number | undefined {
+    const perf0 = this.perfTickSplitEnabled ? performance.now() : 0;
     this.doorPulseTime += dt;
     this.animateDoorTiles();
     this.updateVoxelTextTween();
-    
+
     if (this.selfMesh && this.selfTargetPos) {
       const t = this.selfTargetPos;
       const mx = this.selfMesh.position.x;
@@ -5984,13 +6029,42 @@ export class Game {
       if (jumped) {
         this.selfMesh.position.copy(t);
       } else {
-        this.selfMesh.position.lerp(t, 1 - Math.exp(-LERP * dt));
+        const hintSec = Math.min(
+          PLAYER_RENDER_EXTRAPOLATE_MAX_SEC,
+          (performance.now() - this.selfSyncPerfMs) * 0.001
+        );
+        this.playerRenderTargetScratch.set(
+          t.x + this.selfVelX * hintSec,
+          t.y,
+          t.z + this.selfVelZ * hintSec
+        );
+        this.selfMesh.position.lerp(
+          this.playerRenderTargetScratch,
+          1 - Math.exp(-LERP * dt)
+        );
       }
     }
     for (const [addr, g] of this.others) {
       const t = this.targetPos.get(addr);
       if (!t) continue;
-      g.position.lerp(t, 1 - Math.exp(-LERP * dt));
+      const hint = this.remoteMoveHint.get(addr);
+      if (hint) {
+        const hintSec = Math.min(
+          PLAYER_RENDER_EXTRAPOLATE_MAX_SEC,
+          (performance.now() - hint.syncPerfMs) * 0.001
+        );
+        this.playerRenderTargetScratch.set(
+          t.x + hint.vx * hintSec,
+          t.y,
+          t.z + hint.vz * hintSec
+        );
+        g.position.lerp(
+          this.playerRenderTargetScratch,
+          1 - Math.exp(-LERP * dt)
+        );
+      } else {
+        g.position.lerp(t, 1 - Math.exp(-LERP * dt));
+      }
     }
     this.updateCameraOrbitEase();
     this.updateCameraFollow(dt);
@@ -6003,10 +6077,25 @@ export class Game {
       ? this.selfMesh.position.z
       : this.cameraLookAt.z;
     this.fogOfWar.setPlayerPosition(px, pz);
+    const perf1 = this.perfTickSplitEnabled ? performance.now() : 0;
     this.fogOfWar.render(this.renderer, this.scene, this.camera);
+    const perf2 = this.perfTickSplitEnabled ? performance.now() : 0;
     this.updateChatBubbles();
     this.updateTypingIndicatorAnimation();
     this.updateFloatingTexts();
+    if (this.perfTickSplitEnabled) {
+      const perf3 = performance.now();
+      const info = this.renderer.info.render;
+      this.perfLastSplit = {
+        preRenderMs: perf1 - perf0,
+        renderMs: perf2 - perf1,
+        tailMs: perf3 - perf2,
+        triangles: info.triangles,
+        drawCalls: info.calls,
+      };
+      return perf3 - perf0;
+    }
+    return undefined;
   }
 
   /** Canonical corner yaw in [0, 2π) nearest to `yawRad` (any real angle). */

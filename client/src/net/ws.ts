@@ -254,7 +254,16 @@ export type ServerMessage =
 export type ConnectGameWsOptions = {
   spawnX?: number;
   spawnZ?: number;
+  /** Dev / perf (`?perf=1`): UTF-8 byte length of raw inbound text + parsed `type` after JSON.parse. */
+  onInboundWire?: (info: { bytesUtf8: number; type: string }) => void;
 };
+
+const utf8Encoder =
+  typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
+
+function inboundUtf8ByteLength(raw: string): number {
+  return utf8Encoder ? utf8Encoder.encode(raw).length : raw.length;
+}
 
 export function connectGameWs(
   token: string,
@@ -310,10 +319,19 @@ export function connectGameWs(
     }
   }
   const url = `${originBase}/ws?${q}`;
+  const onInboundWire = opts?.onInboundWire;
   const ws = new WebSocket(url);
   ws.addEventListener("message", (ev) => {
     try {
-      const data = JSON.parse(String(ev.data)) as ServerMessage;
+      const raw = String(ev.data);
+      const data = JSON.parse(raw) as ServerMessage;
+      if (onInboundWire) {
+        const typ =
+          typeof (data as { type?: unknown }).type === "string"
+            ? (data as { type: string }).type
+            : "?";
+        onInboundWire({ bytesUtf8: inboundUtf8ByteLength(raw), type: typ });
+      }
       onMessage(data);
     } catch {
       /* ignore */

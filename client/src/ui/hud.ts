@@ -143,6 +143,8 @@ export function createHud(
   root: HTMLElement,
   opts?: {
     showDebug?: boolean;
+    /** `?perf=1` — second monospace panel for frame / WS / long-task telemetry. */
+    showPerf?: boolean;
     /** Fires synchronously before opening the wallet URL in a new tab (e.g. notify server). */
     onNimRecipientDeepLinkOpen?: (url: string) => void;
     /** Popup blocked or `window.open` returned null. */
@@ -392,6 +394,7 @@ export function createHud(
     createdAt: number;
   } | null) => void;
   setDebugText: (text: string) => void;
+  setPerfText: (text: string) => void;
   setCanvasLeaderboardVisible: (visible: boolean) => void;
   updateCanvasLeaderboard: (leaders: Array<{ address: string; bestMs: number }>) => void;
   setCanvasTimer: (timeRemaining: number) => void;
@@ -424,6 +427,7 @@ export function createHud(
   root.innerHTML = "";
 
   const showDebug = opts?.showDebug ?? false;
+  const showPerf = opts?.showPerf ?? false;
 
   const frame = document.createElement("div");
   frame.className = "game-frame";
@@ -725,6 +729,11 @@ export function createHud(
   debugPanel.setAttribute("aria-hidden", "true");
   debugPanel.hidden = !showDebug;
 
+  const perfPanel = document.createElement("pre");
+  perfPanel.className = "hud-debug hud-perf";
+  perfPanel.setAttribute("aria-hidden", "true");
+  perfPanel.hidden = !showPerf;
+
   const canvasLeaderboard = document.createElement("div");
   canvasLeaderboard.className = "canvas-leaderboard";
   canvasLeaderboard.hidden = true;
@@ -935,6 +944,7 @@ export function createHud(
   `;
 
   leftStack.appendChild(debugPanel);
+  leftStack.appendChild(perfPanel);
   leftStack.appendChild(canvasLeaderboard);
   
   // Close button for signboard tooltip
@@ -5843,6 +5853,10 @@ export function createHud(
     setDebugText(text: string) {
       if (!showDebug) return;
       debugPanel.textContent = text;
+    },
+    setPerfText(text: string) {
+      if (!showPerf) return;
+      perfPanel.textContent = text;
     },
     setCanvasLeaderboardVisible(visible: boolean) {
       canvasLeaderboard.hidden = !visible;
