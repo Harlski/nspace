@@ -809,14 +809,6 @@ export class Game {
     z: number;
     layer: 0 | 1;
   }> | null = null;
-  /**
-   * After the client drains `optimisticWalkQueue`, `syncState` may still carry one or more
-   * server snapshots from *before* the final tile — updating `selfTargetPos` to those would
-   * make `tick` lerp the mesh backward (bounce). While this is > `performance.now()`, we
-   * skip applying server XZ until the snapshot agrees with the mesh or current target (same
-   * tolerance as `WALK_ARRIVE_EPS`), or until the guard times out.
-   */
-  private optimisticArrivalGuardUntilMs = 0;
   private pathGoal: { ft: FloorTile; layer: 0 | 1 } | null = null;
   /**
    * Optional route shown while primary button is held before `pointerup` (deferred walk).
@@ -1443,7 +1435,6 @@ export class Game {
     this.pathGoal = null;
     this.pathPreviewGoal = null;
     this.optimisticWalkQueue = null;
-    this.optimisticArrivalGuardUntilMs = 0;
     this.lastTerrainPath = null;
     this.selectedBlockKey = null;
     this.selectionOutline.visible = false;
@@ -4011,7 +4002,6 @@ export class Game {
    */
   private tryExecuteWalkNavigationAt(clientX: number, clientY: number): void {
     if (!this.selfMesh || !this.tileClickHandler) return;
-    this.optimisticArrivalGuardUntilMs = 0;
     this.pathPreviewGoal = null;
     const goal = this.resolveWalkNavigationGoalAt(clientX, clientY);
     if (!goal) {
@@ -4934,7 +4924,6 @@ export class Game {
     this.selfVelX = 0;
     this.selfVelZ = 0;
     this.optimisticWalkQueue = null;
-    this.optimisticArrivalGuardUntilMs = 0;
     if (this.selfMesh) {
       this.disposeAvatarGroup(this.selfMesh);
       this.scene.remove(this.selfMesh);
@@ -5005,7 +4994,6 @@ export class Game {
     this.perfTickSplitEnabled = false;
     this.perfLastSplit = null;
     this.optimisticWalkQueue = null;
-    this.optimisticArrivalGuardUntilMs = 0;
     for (const [, g] of this.others) {
       this.disposeAvatarGroup(g);
       this.scene.remove(g);
@@ -5266,13 +5254,7 @@ export class Game {
       break;
     }
     mesh.position.set(x, y, z);
-    if (q.length === 0) {
-      this.optimisticWalkQueue = null;
-      if (this.selfTargetPos) {
-        this.selfTargetPos.set(x, y, z);
-      }
-      this.optimisticArrivalGuardUntilMs = performance.now() + 400;
-    }
+    if (q.length === 0) this.optimisticWalkQueue = null;
   }
 
   /** Updates the line to only the remaining route (BFS around obstacles, same as server). */
@@ -6079,46 +6061,26 @@ export class Game {
           this.selfSyncPerfMs = performance.now();
           this.selfVelX = Number.isFinite(p.vx) ? p.vx : 0;
           this.selfVelZ = Number.isFinite(p.vz) ? p.vz : 0;
+          if (!this.selfTargetPos) {
+            this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
+            this.selfMesh.position.set(p.x, py, p.z);
+          } else {
+            this.selfTargetPos.set(p.x, py, p.z);
+          }
           const ox = this.selfMesh.position.x;
           const oy = this.selfMesh.position.y;
           const oz = this.selfMesh.position.z;
           const jumped =
             Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5;
-          if (!this.selfTargetPos) {
-            this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
-            this.selfMesh.position.set(p.x, py, p.z);
-          } else if (!jumped) {
-            const dServerMesh = Math.hypot(p.x - ox, p.z - oz);
-            const tx = this.selfTargetPos.x;
-            const tz = this.selfTargetPos.z;
-            const dTargetMesh = Math.hypot(tx - ox, tz - oz);
-            const guard = performance.now() < this.optimisticArrivalGuardUntilMs;
-            const syncEps = WALK_ARRIVE_EPS;
-            const serverMatchesMesh = dServerMesh < syncEps;
-            const serverMatchesTarget =
-              Math.hypot(p.x - tx, p.z - tz) < syncEps;
-            const skipStaleServerWhileGuard =
-              guard && !serverMatchesMesh && !serverMatchesTarget;
-            if (!skipStaleServerWhileGuard) {
-              this.selfTargetPos.set(p.x, py, p.z);
-            }
-            if (serverMatchesMesh) {
-              this.optimisticArrivalGuardUntilMs = 0;
-            }
-          } else {
-            this.selfTargetPos.set(p.x, py, p.z);
-          }
           if (jumped) {
             this.selfMesh.position.set(p.x, py, p.z);
             this.optimisticWalkQueue = null;
-            this.optimisticArrivalGuardUntilMs = 0;
           } else if (
             this.optimisticWalkQueue &&
             this.optimisticWalkQueue.length > 0 &&
             Math.hypot(p.x - ox, p.z - oz) > 2.5
           ) {
             this.optimisticWalkQueue = null;
-            this.optimisticArrivalGuardUntilMs = 0;
           }
           if (!this.cameraFollowReady || jumped) {
             this.cameraLookAt.set(p.x, py, p.z);
@@ -6184,12 +6146,7 @@ export class Game {
         if (jumped) {
           this.selfMesh.position.copy(t);
         } else {
-          const dXZ = Math.hypot(t.x - mx, t.z - mz);
-          if (dXZ < WALK_ARRIVE_EPS * 1.5) {
-            this.selfMesh.position.set(t.x, t.y, t.z);
-          } else {
-            this.selfMesh.position.lerp(t, 1 - Math.exp(-LERP * dt));
-          }
+          this.selfMesh.position.lerp(t, 1 - Math.exp(-LERP * dt));
         }
       }
     }
