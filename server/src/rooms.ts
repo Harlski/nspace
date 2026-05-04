@@ -707,7 +707,9 @@ type OutMsg =
       roomId?: string;
       reason?: string;
     }
-  | { type: "canvasCountdown"; text: string; msRemaining: number };
+  | { type: "canvasCountdown"; text: string; msRemaining: number }
+  /** Echo for RTT / latency HUD (see `clientPing` inbound). */
+  | { type: "clientPong"; id: number };
 
 const rooms = new Map<string, Map<string, ClientConn>>();
 /** Server-driven avatars (not WebSocket clients); merged into player snapshots / ticks. */
@@ -3010,6 +3012,14 @@ export function addClient(
     const msg = data as Record<string, unknown>;
     const inType = typeof msg.type === "string" ? msg.type : "unknown";
     recordGameWsInbound(inType, rawInBytes);
+
+    if (msg.type === "clientPing") {
+      const id = Number((msg as { id?: unknown }).id);
+      if (Number.isFinite(id)) {
+        wsSafeSend(ws, { type: "clientPong", id } satisfies OutMsg);
+      }
+      return;
+    }
 
     // Dynamically look up which room the player is currently in
     const currentRoomId = findPlayerRoom(address);

@@ -156,6 +156,8 @@ export function createHud(
      * Used to show the Nimiq Pay badge on *other* players’ profiles.
      */
     playerUsesNimiqPayInRoom?: (compactWalletKey: string) => boolean;
+    /** Secret FPS / latency HUD toggled from the brand modal (five taps on the title). */
+    onPerfHudEnabledChange?: (enabled: boolean) => void;
   }
 ): {
   setStatus: (s: string) => void;
@@ -419,6 +421,10 @@ export function createHud(
   onReconnect: (fn: () => void) => void;
   /** Wire WebGL 1×1 tile previews; call after `new Game()` with the same instance (or `null` on teardown). */
   bindTileInspectorPreviewGame: (game: Game | null) => void;
+  /** FPS + server RTT overlay (easter egg: five taps on “NIMIQ SPACE” in the brand modal). */
+  isPerfHudEnabled: () => boolean;
+  feedPerfHudFrame: (now: number) => void;
+  setPerfHudLatencyMs: (ms: number | null) => void;
   destroy: () => void;
 } {
   root.innerHTML = "";
@@ -725,6 +731,35 @@ export function createHud(
   debugPanel.setAttribute("aria-hidden", "true");
   debugPanel.hidden = !showDebug;
 
+  const perfHud = document.createElement("div");
+  perfHud.className = "hud-perf-hud";
+  perfHud.hidden = true;
+  perfHud.setAttribute("aria-hidden", "true");
+  perfHud.innerHTML = `<span class="hud-perf-hud__fps">—</span><span class="hud-perf-hud__sep"> · </span><span class="hud-perf-hud__ms">—</span>`;
+  const perfHudFpsEl = perfHud.querySelector(
+    ".hud-perf-hud__fps"
+  ) as HTMLSpanElement | null;
+  const perfHudMsEl = perfHud.querySelector(
+    ".hud-perf-hud__ms"
+  ) as HTMLSpanElement | null;
+  let perfHudEnabled = false;
+  let perfHudLastNow = 0;
+  let perfHudFpsSmoothed = 60;
+  let brandLinksTitleSecretClicks = 0;
+
+  function setPerfHudEnabled(on: boolean): void {
+    if (perfHudEnabled === on) return;
+    perfHudEnabled = on;
+    perfHud.hidden = !on;
+    perfHud.setAttribute("aria-hidden", on ? "false" : "true");
+    if (!on) {
+      perfHudLastNow = 0;
+      if (perfHudFpsEl) perfHudFpsEl.textContent = "—";
+      if (perfHudMsEl) perfHudMsEl.textContent = "—";
+    }
+    opts?.onPerfHudEnabledChange?.(on);
+  }
+
   const canvasLeaderboard = document.createElement("div");
   canvasLeaderboard.className = "canvas-leaderboard";
   canvasLeaderboard.hidden = true;
@@ -949,6 +984,7 @@ export function createHud(
   topWrap.appendChild(statusSub);
   ui.appendChild(topWrap);
   ui.appendChild(leftStack);
+  ui.appendChild(perfHud);
   letter.appendChild(signpostOverlay);
   letter.appendChild(billboardOverlay);
   letter.appendChild(externalVisitConfirmOverlay);
@@ -3243,6 +3279,18 @@ export function createHud(
   const brandLinksQrCanvasHost = brandLinksOverlay.querySelector(
     ".brand-links-overlay__qr-canvas-host"
   ) as HTMLElement | null;
+  const brandLinksTitleEl = brandLinksOverlay.querySelector(
+    "#brand-links-title"
+  ) as HTMLElement | null;
+
+  const onBrandLinksTitleSecretClick = (e: MouseEvent): void => {
+    e.stopPropagation();
+    brandLinksTitleSecretClicks += 1;
+    if (brandLinksTitleSecretClicks >= 5) {
+      brandLinksTitleSecretClicks = 0;
+      setPerfHudEnabled(!perfHudEnabled);
+    }
+  };
 
   let brandLinksEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
   let brandLinksCopyFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3290,6 +3338,7 @@ export function createHud(
 
   function hideBrandLinksOverlay(): void {
     closeBrandQrFullscreen();
+    brandLinksTitleSecretClicks = 0;
     if (brandLinksCopyFeedbackTimer) {
       clearTimeout(brandLinksCopyFeedbackTimer);
       brandLinksCopyFeedbackTimer = null;
@@ -3467,6 +3516,9 @@ export function createHud(
       e.stopPropagation();
       hideBrandLinksOverlay();
     });
+  }
+  if (brandLinksTitleEl) {
+    brandLinksTitleEl.addEventListener("click", onBrandLinksTitleSecretClick);
   }
 
   tileInspectorToolSelect.addEventListener("change", () => {
@@ -6110,8 +6162,32 @@ export function createHud(
       }
       signboardTooltip.hidden = false;
     },
+    isPerfHudEnabled() {
+      return perfHudEnabled;
+    },
+    feedPerfHudFrame(now: number) {
+      if (!perfHudEnabled || !perfHudFpsEl) return;
+      if (perfHudLastNow > 0) {
+        const dt = (now - perfHudLastNow) / 1000;
+        if (dt > 1e-6) {
+          const inst = 1 / dt;
+          perfHudFpsSmoothed = perfHudFpsSmoothed * 0.9 + inst * 0.1;
+        }
+      }
+      perfHudLastNow = now;
+      perfHudFpsEl.textContent = `${Math.round(perfHudFpsSmoothed)} fps`;
+    },
+    setPerfHudLatencyMs(ms: number | null) {
+      if (!perfHudMsEl) return;
+      perfHudMsEl.textContent =
+        ms === null || !Number.isFinite(ms) ? "—" : `${Math.round(ms)} ms`;
+    },
     bindTileInspectorPreviewGame,
     destroy() {
+      if (brandLinksTitleEl) {
+        brandLinksTitleEl.removeEventListener("click", onBrandLinksTitleSecretClick);
+      }
+      setPerfHudEnabled(false);
       bindTileInspectorPreviewGame(null);
       closeSelfEmojiMenu();
       closeOtherPlayerProfile();

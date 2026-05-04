@@ -1371,6 +1371,24 @@ button.hud-brand:focus-visible {
   }
 }
 
+/* Easter-egg FPS + WebSocket RTT (five taps on modal title “NIMIQ SPACE”). */
+.hud-perf-hud {
+  position: absolute;
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  z-index: 6;
+  padding: 4px 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: rgba(226, 232, 240, 0.88);
+  background: rgba(15, 17, 23, 0.72);
+  border: 1px solid rgba(61, 70, 90, 0.75);
+  border-radius: 5px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 .hud-debug {
   margin: 0;
   padding: 8px 10px;

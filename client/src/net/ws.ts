@@ -249,7 +249,8 @@ export type ServerMessage =
       x?: number;
       z?: number;
       amountNim?: string;
-    };
+    }
+  | { type: "clientPong"; id: number };
 
 export type ConnectGameWsOptions = {
   spawnX?: number;
@@ -672,6 +673,12 @@ export function sendNimSendIntent(ws: WebSocket, active: boolean): void {
 export function sendChatTyping(ws: WebSocket, active: boolean): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "chatTyping", active }));
+}
+
+/** Lightweight RTT probe; server replies with `{ type: "clientPong", id }`. */
+export function sendClientPing(ws: WebSocket, id: number): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "clientPing", id }));
 }
 
 export function sendChat(ws: WebSocket, text: string): void {

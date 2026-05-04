@@ -22,6 +22,7 @@ import {
   connectGameWs,
   sendChat,
   sendChatTyping,
+  sendClientPing,
   sendNimSendIntent,
   sendBeginBlockClaim,
   sendCreateOfficialRoom,
@@ -232,6 +233,40 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     new URLSearchParams(location.search).has("debug");
 
   let ws: WebSocket | null = null;
+  const perfPingSentAt = new Map<number, number>();
+  let perfPingSeq = 0;
+  let perfPingInterval: ReturnType<typeof setInterval> | null = null;
+
+  function syncPerfPingInterval(enabled: boolean): void {
+    if (enabled) {
+      if (perfPingInterval !== null) return;
+      const s0 = ws;
+      if (s0 && s0.readyState === WebSocket.OPEN) {
+        const id0 = ++perfPingSeq;
+        perfPingSentAt.set(id0, performance.now());
+        sendClientPing(s0, id0);
+      }
+      perfPingInterval = setInterval(() => {
+        const s = ws;
+        if (!s || s.readyState !== WebSocket.OPEN) return;
+        const id = ++perfPingSeq;
+        perfPingSentAt.set(id, performance.now());
+        sendClientPing(s, id);
+        while (perfPingSentAt.size > 8) {
+          const k = perfPingSentAt.keys().next().value;
+          if (k === undefined) break;
+          perfPingSentAt.delete(k);
+        }
+      }, 2000);
+    } else {
+      if (perfPingInterval !== null) {
+        clearInterval(perfPingInterval);
+        perfPingInterval = null;
+      }
+      perfPingSentAt.clear();
+    }
+  }
+
   /** True after “Send NIM” opened the wallet link until the game tab is focused again. */
   let walletSendNimFlowOpen = false;
 
@@ -262,6 +297,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     onNimRecipientDeepLinkPopupBlocked: () => {
       walletSendNimFlowOpen = false;
       syncAwayPresenceToServer();
+    },
+    onPerfHudEnabledChange: (enabled) => {
+      syncPerfPingInterval(enabled);
     },
   });
   hud.setBrandLinksPlayerAddress(address);
@@ -1766,6 +1804,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   });
 
   const wireWsHandlers = (socket: WebSocket): void => {
+    perfPingSentAt.clear();
+    hud.setPerfHudLatencyMs(null);
     game.setTeleporterDestPickHandler(null);
     clearRoomsJoinProgress();
     closeRoomsCreateModal();
@@ -2333,6 +2373,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
 
   const handleServerMessage = async (msg: ServerMessage): Promise<void> => {
+    if (msg.type === "clientPong") {
+      const t0 = perfPingSentAt.get(msg.id);
+      if (t0 !== undefined) {
+        perfPingSentAt.delete(msg.id);
+        hud.setPerfHudLatencyMs(performance.now() - t0);
+      }
+      return;
+    }
     if (msg.type === "joinRoomFailed") {
       if (
         pendingModalJoinRoomId &&
@@ -2890,6 +2938,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           hud.setLoadingVisible(false);
           hud.setReconnectOffer(true);
           hud.setStatus("Disconnected — tap Reconnect or reload");
+          perfPingSentAt.clear();
+          hud.setPerfHudLatencyMs(null);
         },
         spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : undefined
       );
@@ -3283,6 +3333,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     game.tick(dt);
+    if (hud.isPerfHudEnabled()) {
+      hud.feedPerfHudFrame(now);
+    }
     syncPortalEnterButton();
     if (hud.isSelfEmojiMenuOpen()) {
       const ea = game.getSelfScreenPosition(1.32);
