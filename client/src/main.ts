@@ -11,7 +11,6 @@ import {
 } from "./auth/session.js";
 import { ROOM_ID } from "./game/constants.js";
 import { Game } from "./game/Game.js";
-import { createPerfTelemetry, type PerfTelemetry } from "./perfTelemetry.js";
 import { isOrthogonallyAdjacentToFloorTile, snapFloorTile } from "./game/grid.js";
 import {
   HUB_ROOM_ID,
@@ -231,10 +230,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   const showDebugHud =
     import.meta.env.DEV ||
     new URLSearchParams(location.search).has("debug");
-  const showPerfHud = new URLSearchParams(location.search).has("perf");
 
   let ws: WebSocket | null = null;
-  let perfTelemetry: PerfTelemetry | null = null;
   /** True after “Send NIM” opened the wallet link until the game tab is focused again. */
   let walletSendNimFlowOpen = false;
 
@@ -248,7 +245,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   let disposeNimiqPayAdvisory: (() => void) | null = null;
   const hud = createHud(hudRoot, {
     showDebug: showDebugHud,
-    showPerf: showPerfHud,
     getGameAuthToken: () => token,
     didSessionUseNimiqPay: () => sessionNimiqPay,
     playerUsesNimiqPayInRoom: (compactWalletKey) => {
@@ -274,10 +270,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
-  if (showPerfHud) {
-    perfTelemetry = createPerfTelemetry();
-    game.setPerfTickSplitEnabled(true);
-  }
   hud.bindTileInspectorPreviewGame(game);
   type KnownRoomRow = {
     id: string;
@@ -1303,11 +1295,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   function cleanupResources(): void {
     setPseudoFullscreen(false);
     notifyChatNotTyping();
-    if (perfTelemetry) {
-      perfTelemetry.dispose();
-      perfTelemetry = null;
-    }
-    game.setPerfTickSplitEnabled(false);
     if (nimWalletPollTimer !== null) {
       clearTimeout(nimWalletPollTimer);
       nimWalletPollTimer = null;
@@ -2904,16 +2891,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           hud.setReconnectOffer(true);
           hud.setStatus("Disconnected — tap Reconnect or reload");
         },
-        {
-          ...(spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : {}),
-          ...(perfTelemetry
-            ? {
-                onInboundWire: (info: { bytesUtf8: number; type: string }) => {
-                  perfTelemetry!.recordWsInbound(info.bytesUtf8, info.type);
-                },
-              }
-            : {}),
-        }
+        spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : undefined
       );
       wireWsHandlers(ws);
     });
@@ -3302,11 +3280,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   let fpsSmoothed = 60;
   function loop(now: number): void {
     if (disposed) return;
-    const gapMs = now - last;
-    const dt = Math.min(0.05, gapMs / 1000);
+    const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    const workStart = performance.now();
-    const tickWallMs = game.tick(dt);
+    game.tick(dt);
     syncPortalEnterButton();
     if (hud.isSelfEmojiMenuOpen()) {
       const ea = game.getSelfScreenPosition(1.32);
@@ -3348,30 +3324,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           `ws: ${wsLabel}   fps: ${fpsSmoothed.toFixed(0)}`,
         ].join("\n")
       );
-    }
-    if (perfTelemetry) {
-      const handlerMs = performance.now() - workStart;
-      perfTelemetry.recordFrame(
-        gapMs,
-        tickWallMs,
-        handlerMs,
-        game.getPerfTickSplit()
-      );
-      const overlayT0 = performance.now();
-      hud.setPerfText(
-        perfTelemetry.formatHudLines(game.getPerfTickSplit())
-      );
-      const charts = hud.getPerfChartCanvases();
-      if (charts) {
-        perfTelemetry.renderFpsChart(charts.fps);
-        perfTelemetry.renderPerfSparklines({
-          gapMs: charts.gapMs,
-          tickMs: charts.tickMs,
-          renderMs: charts.renderMs,
-          sceneMs: charts.sceneMs,
-        });
-      }
-      perfTelemetry.recordOverlay(performance.now() - overlayT0);
     }
     rafId = requestAnimationFrame(loop);
   }

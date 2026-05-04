@@ -8,11 +8,6 @@ export const ROOM_ID = "hub";
 /** World units: one tile = 1 unit. */
 export const TILE_SIZE = 1;
 
-/** Human walk speed (world units per second). Must match server `MOVE_SPEED` in `rooms.ts`. */
-export const WALK_MOVE_SPEED = 5;
-/** Snap radius when approaching a path waypoint. Must match server `ARRIVE_EPS`. */
-export const WALK_ARRIVE_EPS = 0.04;
-
 /** Inclusive tile coordinate bounds: 500×500 grid. Must match server. */
 export const TILE_COORD_MIN = -250;
 export const TILE_COORD_MAX = 249;

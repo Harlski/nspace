@@ -1388,42 +1388,6 @@ button.hud-brand:focus-visible {
   word-break: break-word;
 }
 
-.hud-left-stack .hud-perf-stack {
-  margin-top: 6px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.hud-perf-chart {
-  display: block;
-  width: 100%;
-  height: 72px;
-  margin-top: 4px;
-  border-radius: 6px;
-  background: rgba(10, 12, 18, 0.92);
-  border: 1px solid rgba(61, 70, 90, 0.75);
-  box-sizing: border-box;
-}
-
-.hud-perf-chart-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  margin-top: 4px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.hud-perf-spark {
-  display: block;
-  width: 100%;
-  height: 48px;
-  border-radius: 6px;
-  background: rgba(10, 12, 18, 0.92);
-  border: 1px solid rgba(61, 70, 90, 0.7);
-  box-sizing: border-box;
-}
-
 .canvas-leaderboard {
   padding: 10px 12px;
   width: 100%;
@@ -5538,12 +5502,6 @@ button.hud-brand:focus-visible {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
   pointer-events: none;
   z-index: 2;
-  opacity: 1;
-  transition: opacity 0.4s ease;
-}
-
-.nim-claim-bar--idle-faded {
-  opacity: 0;
 }
 
 .nim-claim-bar__label {

@@ -1,14 +1,6 @@
 import * as THREE from "three";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 
-/** Filled when `FogOfWarPass.render` is called with `timingsOut` (perf mode). */
-export type FogOfWarRenderTimings = {
-  /** `renderer.render(scene, camera)` to RT or backbuffer. */
-  sceneMs: number;
-  /** Full-screen fog composite (0 when fog pass is disabled). */
-  compositeMs: number;
-};
-
 /**
  * Fog of war: darkens pixels where the camera ray through the pixel hits the
  * ground plane (y=0) farther than `outerRadius` from the local player in XZ.
@@ -134,20 +126,12 @@ export class FogOfWarPass {
   render(
     renderer: THREE.WebGLRenderer,
     scene: THREE.Scene,
-    camera: THREE.OrthographicCamera,
-    timingsOut?: FogOfWarRenderTimings
+    camera: THREE.OrthographicCamera
   ): void {
     camera.updateMatrixWorld();
     if (!this.enabled) {
       renderer.setRenderTarget(null);
-      if (timingsOut) {
-        const t0 = performance.now();
-        renderer.render(scene, camera);
-        timingsOut.sceneMs = performance.now() - t0;
-        timingsOut.compositeMs = 0;
-      } else {
-        renderer.render(scene, camera);
-      }
+      renderer.render(scene, camera);
       return;
     }
 
@@ -158,24 +142,12 @@ export class FogOfWarPass {
     u.cameraMatrixWorld.value.copy(camera.matrixWorld);
 
     renderer.setRenderTarget(this.renderTarget);
-    if (timingsOut) {
-      const t0 = performance.now();
-      renderer.render(scene, camera);
-      timingsOut.sceneMs = performance.now() - t0;
-    } else {
-      renderer.render(scene, camera);
-    }
+    renderer.render(scene, camera);
 
     u.tDiffuse.value = this.renderTarget.texture;
 
     renderer.setRenderTarget(null);
-    if (timingsOut) {
-      const t1 = performance.now();
-      this.fsQuad.render(renderer);
-      timingsOut.compositeMs = performance.now() - t1;
-    } else {
-      this.fsQuad.render(renderer);
-    }
+    this.fsQuad.render(renderer);
   }
 
   dispose(): void {
