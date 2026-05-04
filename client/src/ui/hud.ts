@@ -34,6 +34,7 @@ import {
   nimiqWalletRecipientDeepLink,
 } from "../socialLinks.js";
 import { nimiqIconUseMarkup } from "./nimiqIcons.js";
+import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 import { ringHueFromClient } from "./ringHuePick.js";
@@ -409,7 +410,10 @@ export function createHud(
   setNimWalletStatus: (status: string) => void;
   /** Wallet identicon in the brand links modal; call when entering the game. */
   setBrandLinksPlayerAddress: (address: string) => void;
-  setLoadingVisible: (visible: boolean) => void;
+  setLoadingVisible: (
+    visible: boolean,
+    opts?: { skipMinWait?: boolean }
+  ) => void;
   /** Shown under the spinner while the loading overlay is visible. */
   setLoadingLabel: (text: string) => void;
   /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
@@ -997,7 +1001,7 @@ export function createHud(
   loadingOverlay.hidden = true;
   loadingOverlay.innerHTML = `
     <div class="loading-overlay__content">
-      <div class="loading-overlay__spinner"></div>
+      ${nimiqHexLoaderSvg("loading-overlay__spinner")}
       <div class="loading-overlay__text">Loading room...</div>
     </div>
   `;
@@ -1005,6 +1009,29 @@ export function createHud(
     ".loading-overlay__text"
   ) as HTMLDivElement | null;
   letter.appendChild(loadingOverlay);
+
+  const LOADING_MIN_MS = 2000;
+  const LOADING_FADE_FALLBACK_MS = 550;
+  let loadingShownAt: number | null = null;
+  let loadingHideWaitTimer: ReturnType<typeof setTimeout> | null = null;
+  let loadingFadeUnsub: (() => void) | null = null;
+
+  function clearLoadingOverlayTimers(): void {
+    if (loadingHideWaitTimer !== null) {
+      clearTimeout(loadingHideWaitTimer);
+      loadingHideWaitTimer = null;
+    }
+    if (loadingFadeUnsub) {
+      loadingFadeUnsub();
+      loadingFadeUnsub = null;
+    }
+  }
+
+  function finishLoadingOverlayDismiss(): void {
+    loadingOverlay.classList.remove("loading-overlay--fade-out");
+    loadingOverlay.hidden = true;
+    loadingShownAt = null;
+  }
 
   const topBar = document.createElement("div");
   topBar.className = "hud-top";
@@ -5978,8 +6005,73 @@ export function createHud(
         list.appendChild(entry);
       }
     },
-    setLoadingVisible(visible: boolean) {
-      loadingOverlay.hidden = !visible;
+    setLoadingVisible(visible: boolean, opts?: { skipMinWait?: boolean }) {
+      if (visible) {
+        clearLoadingOverlayTimers();
+        loadingOverlay.classList.remove("loading-overlay--fade-out");
+        loadingOverlay.hidden = false;
+        if (loadingShownAt === null) {
+          loadingShownAt = performance.now();
+        }
+        return;
+      }
+
+      const skipMin = opts?.skipMinWait === true;
+      if (
+        loadingOverlay.hidden &&
+        !loadingOverlay.classList.contains("loading-overlay--fade-out")
+      ) {
+        return;
+      }
+
+      clearLoadingOverlayTimers();
+
+      const runFadeOut = (): void => {
+        let done = false;
+        const complete = (): void => {
+          if (done) return;
+          done = true;
+          if (loadingFadeUnsub) {
+            loadingFadeUnsub();
+            loadingFadeUnsub = null;
+          }
+          finishLoadingOverlayDismiss();
+        };
+        const onTransitionEnd = (ev: TransitionEvent): void => {
+          if (ev.target !== loadingOverlay || ev.propertyName !== "opacity") {
+            return;
+          }
+          complete();
+        };
+        const fallbackTimer = window.setTimeout(complete, LOADING_FADE_FALLBACK_MS);
+        loadingOverlay.addEventListener("transitionend", onTransitionEnd);
+        loadingFadeUnsub = () => {
+          window.clearTimeout(fallbackTimer);
+          loadingOverlay.removeEventListener(
+            "transitionend",
+            onTransitionEnd
+          );
+        };
+        requestAnimationFrame(() => {
+          loadingOverlay.classList.add("loading-overlay--fade-out");
+        });
+      };
+
+      if (skipMin || loadingShownAt === null) {
+        runFadeOut();
+        return;
+      }
+
+      const elapsed = performance.now() - loadingShownAt;
+      const remaining = Math.max(0, LOADING_MIN_MS - elapsed);
+      if (remaining <= 0) {
+        runFadeOut();
+        return;
+      }
+      loadingHideWaitTimer = setTimeout(() => {
+        loadingHideWaitTimer = null;
+        runFadeOut();
+      }, remaining);
     },
     setLoadingLabel(text: string) {
       if (loadingOverlayText) loadingOverlayText.textContent = text;
@@ -6184,6 +6276,8 @@ export function createHud(
     },
     bindTileInspectorPreviewGame,
     destroy() {
+      clearLoadingOverlayTimers();
+      finishLoadingOverlayDismiss();
       if (brandLinksTitleEl) {
         brandLinksTitleEl.removeEventListener("click", onBrandLinksTitleSecretClick);
       }

@@ -2935,7 +2935,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
             location.reload();
             return;
           }
-          hud.setLoadingVisible(false);
+          hud.setLoadingVisible(false, { skipMinWait: true });
           hud.setReconnectOffer(true);
           hud.setStatus("Disconnected — tap Reconnect or reload");
           perfPingSentAt.clear();

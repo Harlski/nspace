@@ -7086,9 +7086,15 @@ button.hud-brand:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.8);
+  background: #000;
   z-index: 2000;
-  backdrop-filter: blur(8px);
+  opacity: 1;
+  transition: opacity 0.45s ease;
+}
+
+.loading-overlay.loading-overlay--fade-out {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .loading-overlay[hidden] {
@@ -7103,17 +7109,68 @@ button.hud-brand:focus-visible {
 }
 
 .loading-overlay__spinner {
-  width: 48px;
+  display: block;
+  width: 54px;
   height: 48px;
-  border: 4px solid rgba(255, 255, 255, 0.2);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
+  color: #fff;
+  flex-shrink: 0;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
+.loading-overlay__spinner .big-hex {
+  stroke-dashoffset: -40.5;
+  animation: loading-big-hex 4s cubic-bezier(0.76, 0.29, 0.29, 0.76) infinite;
+}
+
+.loading-overlay__spinner .small-hex {
+  stroke-dashoffset: 13;
+  animation: loading-small-hex 4s cubic-bezier(0.76, 0.29, 0.29, 0.76) infinite;
+}
+
+@keyframes loading-big-hex {
+  0% {
+    stroke-dashoffset: -40.5;
+  }
+  17% {
+    stroke-dashoffset: -15.08;
+  }
+  33% {
+    stroke-dashoffset: 10.33;
+  }
+  50% {
+    stroke-dashoffset: 35.75;
+  }
+  67% {
+    stroke-dashoffset: 61.17;
+  }
+  83% {
+    stroke-dashoffset: 86.58;
+  }
+  100% {
+    stroke-dashoffset: 112;
+  }
+}
+
+@keyframes loading-small-hex {
+  0% {
+    stroke-dashoffset: 13;
+  }
+  17% {
+    stroke-dashoffset: 38.42;
+  }
+  33% {
+    stroke-dashoffset: 63.84;
+  }
+  50% {
+    stroke-dashoffset: 89.25;
+  }
+  67% {
+    stroke-dashoffset: 114.66;
+  }
+  83% {
+    stroke-dashoffset: 140.08;
+  }
+  100% {
+    stroke-dashoffset: 165.5;
   }
 }
 

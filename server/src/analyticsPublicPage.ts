@@ -5,8 +5,10 @@ import {
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
+import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
 
 export function analyticsPublicPageHtml(): string {
+  const msSigningHexSpinner = JSON.stringify(nimiqHexLoaderSvg("ms-spinner"));
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -173,6 +175,7 @@ export function analyticsPublicPageHtml(): string {
     </section>
   </div>
   <script>
+    var MS_SIGNING_HEX_SPINNER = ${msSigningHexSpinner};
     function esc(s) {
       return String(s)
         .replace(/&/g, "&amp;")
@@ -326,7 +329,7 @@ export function analyticsPublicPageHtml(): string {
     function walletSigningMarkup() {
       return (
         "<div class='ms-wallet-signing ms-wallet-signing--column' role='status' aria-live='polite'>" +
-        "<span class='ms-spinner' aria-hidden='true'></span>" +
+        MS_SIGNING_HEX_SPINNER +
         "<p class='ms-signing-in-line'>" +
         "<span class='ms-signing-static'>Signing in</span>" +
         "<span class='ms-signing-dots-live' aria-hidden='true'>.</span>" +

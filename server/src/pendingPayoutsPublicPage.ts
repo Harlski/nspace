@@ -5,12 +5,14 @@ import {
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
+import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
 
 /**
  * `GET /payouts` — queue overview (main-site shell).
  * Data from `GET /api/nim/payouts` (summary without auth; wallet-scoped with JWT).
  */
 export function pendingPayoutsPublicPageHtml(): string {
+  const msSigningHexSpinner = JSON.stringify(nimiqHexLoaderSvg("ms-spinner"));
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -31,6 +33,7 @@ export function pendingPayoutsPublicPageHtml(): string {
   <p class="ms-status ms-mono ms-payout-queue-status" id="statusLine"></p>
   <div id="wrap"></div>
   <script>
+    var MS_SIGNING_HEX_SPINNER = ${msSigningHexSpinner};
     var AUTH_KEYS = ["nspace_analytics_auth_token", "nspace_pending_payouts_token"];
     var AUTH_ADDR_KEY = "nspace_analytics_auth_addr";
     function readAuthToken() {
@@ -192,7 +195,7 @@ export function pendingPayoutsPublicPageHtml(): string {
     function walletSigningMarkup() {
       return (
         "<div class='ms-wallet-signing ms-wallet-signing--column' role='status' aria-live='polite'>" +
-        "<span class='ms-spinner' aria-hidden='true'></span>" +
+        MS_SIGNING_HEX_SPINNER +
         "<p class='ms-signing-in-line'>" +
         "<span class='ms-signing-static'>Signing in</span>" +
         "<span class='ms-signing-dots-live' aria-hidden='true'>.</span>" +

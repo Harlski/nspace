@@ -5,8 +5,10 @@ import {
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
+import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
 
 export function analyticsAdminPageHtml(): string {
+  const msSigningHexSpinner = JSON.stringify(nimiqHexLoaderSvg("ms-spinner"));
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -189,6 +191,7 @@ export function analyticsAdminPageHtml(): string {
   <h1 id="adminDocTitle" class="ms-doc-title">Admin</h1>
   <div id="panel" class="ms-panel ms-mono">Loading...</div>
   <script>
+    var MS_SIGNING_HEX_SPINNER = ${msSigningHexSpinner};
     var AUTH_KEYS = ["nspace_analytics_auth_token", "nspace_pending_payouts_token"];
     var AUTH_ADDR_KEY = "nspace_analytics_auth_addr";
     function readAuthToken() {
@@ -287,7 +290,7 @@ export function analyticsAdminPageHtml(): string {
     function walletSigningMarkup() {
       return (
         "<div class='ms-wallet-signing ms-wallet-signing--column' role='status' aria-live='polite'>" +
-        "<span class='ms-spinner' aria-hidden='true'></span>" +
+        MS_SIGNING_HEX_SPINNER +
         "<p class='ms-signing-in-line'>" +
         "<span class='ms-signing-static'>Signing in</span>" +
         "<span class='ms-signing-dots-live' aria-hidden='true'>.</span>" +

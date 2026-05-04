@@ -1,3 +1,5 @@
+import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
+
 /** Main-site wallet Hub signing wait UI (spinner + “Signing in” with cycling dots). */
 
 const SIGNING_DOT_STATES = [".", "..", "...", "."] as const;
@@ -5,7 +7,7 @@ const SIGNING_DOT_STATES = [".", "..", "...", "."] as const;
 export function walletSigningMarkup(): string {
   return (
     '<div class="ms-wallet-signing ms-wallet-signing--column" role="status" aria-live="polite">' +
-    '<span class="ms-spinner" aria-hidden="true"></span>' +
+    nimiqHexLoaderSvg("ms-spinner") +
     '<p class="ms-signing-in-line">' +
     '<span class="ms-signing-static">Signing in</span>' +
     '<span class="ms-signing-dots-live" aria-hidden="true">.</span>' +

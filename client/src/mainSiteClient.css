@@ -568,12 +568,21 @@ body.ms-site.ms-site--wide {
 }
 
 .ms-spinner {
-  width: 1.8rem;
+  display: block;
   height: 1.8rem;
-  border: 3px solid rgba(159, 176, 199, 0.22);
-  border-top-color: var(--ms-link);
-  border-radius: 999px;
-  animation: ms-spin 0.8s linear infinite;
+  width: calc(1.8rem * 54 / 48);
+  flex-shrink: 0;
+  color: var(--ms-link);
+}
+
+.ms-spinner .big-hex {
+  stroke-dashoffset: -40.5;
+  animation: loading-big-hex 4s cubic-bezier(0.76, 0.29, 0.29, 0.76) infinite;
+}
+
+.ms-spinner .small-hex {
+  stroke-dashoffset: 13;
+  animation: loading-small-hex 4s cubic-bezier(0.76, 0.29, 0.29, 0.76) infinite;
 }
 
 .ms-sr-only {
@@ -588,9 +597,51 @@ body.ms-site.ms-site--wide {
   border: 0;
 }
 
-@keyframes ms-spin {
-  to {
-    transform: rotate(360deg);
+@keyframes loading-big-hex {
+  0% {
+    stroke-dashoffset: -40.5;
+  }
+  17% {
+    stroke-dashoffset: -15.08;
+  }
+  33% {
+    stroke-dashoffset: 10.33;
+  }
+  50% {
+    stroke-dashoffset: 35.75;
+  }
+  67% {
+    stroke-dashoffset: 61.17;
+  }
+  83% {
+    stroke-dashoffset: 86.58;
+  }
+  100% {
+    stroke-dashoffset: 112;
+  }
+}
+
+@keyframes loading-small-hex {
+  0% {
+    stroke-dashoffset: 13;
+  }
+  17% {
+    stroke-dashoffset: 38.42;
+  }
+  33% {
+    stroke-dashoffset: 63.84;
+  }
+  50% {
+    stroke-dashoffset: 89.25;
+  }
+  67% {
+    stroke-dashoffset: 114.66;
+  }
+  83% {
+    stroke-dashoffset: 140.08;
+  }
+  100% {
+    stroke-dashoffset: 165.5;
   }
 }
 
