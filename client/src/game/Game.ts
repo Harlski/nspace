@@ -12,8 +12,10 @@ import {
   FOG_OUTER_RADIUS,
   ROOM_ID,
   VIEW_FRUSTUM_SIZE,
+  WALK_ARRIVE_EPS,
+  WALK_MOVE_SPEED,
 } from "./constants.js";
-import { FogOfWarPass } from "./fogOfWar.js";
+import { FogOfWarPass, type FogOfWarRenderTimings } from "./fogOfWar.js";
 import type { PerfTickSplit } from "../perfTelemetry.js";
 
 const LS_ZOOM_MIN = "nspace_zoom_min";
@@ -112,101 +114,15 @@ function darkenTerrainHex(hex: number, blend: number): number {
   );
 }
 
-function createWalkableFloorTileMaterials(
-  isPortalGlow: boolean,
-  isExtra: boolean
-): THREE.MeshStandardMaterial[] {
-  const topHex = isPortalGlow
-    ? TERRAIN_TILE_DOOR_COLOR
-    : isExtra
-      ? TERRAIN_TILE_EXTRA_COLOR
-      : TERRAIN_TILE_CORE_COLOR;
-  const sideHex = lightenTerrainHex(topHex, WALKABLE_FLOOR_SIDE_LIGHTEN);
-  const bottomHex = darkenTerrainHex(topHex, WALKABLE_FLOOR_BOTTOM_DARKEN);
-  const roughTop = isPortalGlow ? 0.3 : isExtra ? 0.88 : 0.9;
-  const metalTop = isPortalGlow ? 0.5 : isExtra ? 0.06 : 0.05;
-  const roughSide = isPortalGlow ? 0.38 : 0.9;
-  const metalSide = isPortalGlow ? 0.42 : 0.06;
-  const mk = (
-    color: number,
-    opts: {
-      roughness: number;
-      metalness: number;
-      emissiveScale: number;
-    }
-  ) =>
-    new THREE.MeshStandardMaterial({
-      color,
-      roughness: opts.roughness,
-      metalness: opts.metalness,
-      emissive: isPortalGlow ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000,
-      emissiveIntensity: isPortalGlow
-        ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * opts.emissiveScale
-        : 0,
-    });
-  // BoxGeometry groups: +x, -x, +y (top), -y (bottom), +z, -z
-  return [
-    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
-    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
-    mk(topHex, { roughness: roughTop, metalness: metalTop, emissiveScale: 1 }),
-    mk(bottomHex, { roughness: 0.95, metalness: 0.04, emissiveScale: 0 }),
-    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
-    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
-  ];
-}
-
-function applyWalkableFloorTileMaterials(
-  mesh: THREE.Mesh,
-  isPortalGlow: boolean,
-  isExtra: boolean
-): void {
-  const topHex = isPortalGlow
-    ? TERRAIN_TILE_DOOR_COLOR
-    : isExtra
-      ? TERRAIN_TILE_EXTRA_COLOR
-      : TERRAIN_TILE_CORE_COLOR;
-  const sideHex = lightenTerrainHex(topHex, WALKABLE_FLOOR_SIDE_LIGHTEN);
-  const bottomHex = darkenTerrainHex(topHex, WALKABLE_FLOOR_BOTTOM_DARKEN);
-  const roughTop = isPortalGlow ? 0.3 : isExtra ? 0.88 : 0.9;
-  const metalTop = isPortalGlow ? 0.5 : isExtra ? 0.06 : 0.05;
-  const roughSide = isPortalGlow ? 0.38 : 0.9;
-  const metalSide = isPortalGlow ? 0.42 : 0.06;
-  const mats = mesh.material as THREE.MeshStandardMaterial[];
-  const set = (
-    i: number,
-    hex: number,
-    rough: number,
-    metal: number,
-    emissiveScale: number
-  ): void => {
-    const m = mats[i]!;
-    m.color.setHex(hex);
-    m.roughness = rough;
-    m.metalness = metal;
-    if (isPortalGlow) {
-      m.emissive.setHex(TERRAIN_TILE_DOOR_EMISSIVE);
-      m.emissiveIntensity =
-        TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * emissiveScale;
-    } else {
-      m.emissive.setHex(0x000000);
-      m.emissiveIntensity = 0;
-    }
-  };
-  set(0, sideHex, roughSide, metalSide, 0.42);
-  set(1, sideHex, roughSide, metalSide, 0.42);
-  set(2, topHex, roughTop, metalTop, 1);
-  set(3, bottomHex, 0.95, 0.04, 0);
-  set(4, sideHex, roughSide, metalSide, 0.42);
-  set(5, sideHex, roughSide, metalSide, 0.42);
-}
-
 function disposeWalkableFloorMeshMaterials(mesh: THREE.Mesh): void {
+  if (mesh.userData["floorUsesSharedResources"]) return;
   const m = mesh.material;
   if (Array.isArray(m)) {
     for (const mat of m) mat.dispose();
-  } else {
+  } else if (m) {
     (m as THREE.Material).dispose();
   }
+  mesh.geometry?.dispose();
 }
 
 /** Void (non-walkable) — water/sky tint; walkable tiles use dark gray palette below. */
@@ -223,6 +139,49 @@ const TERRAIN_TILE_DOOR_MARKER_SIZE = 1;
 const TERRAIN_TILE_DOOR_MARKER_HEIGHT = 2.72;
 const TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM = 0.9;
 const TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP = 0;
+
+/**
+ * Unit floor slab with per-face vertex colors (non-indexed box). One draw per mesh
+ * instead of six (multi-material BoxGeometry).
+ */
+function createWalkableFloorTileColoredGeometry(
+  isPortalGlow: boolean,
+  isExtra: boolean
+): THREE.BufferGeometry {
+  const box = new THREE.BoxGeometry(1, WALKABLE_FLOOR_TILE_THICKNESS, 1);
+  const geom = box.toNonIndexed();
+  box.dispose();
+
+  const topHex = isPortalGlow
+    ? TERRAIN_TILE_DOOR_COLOR
+    : isExtra
+      ? TERRAIN_TILE_EXTRA_COLOR
+      : TERRAIN_TILE_CORE_COLOR;
+  const sideHex = lightenTerrainHex(topHex, WALKABLE_FLOOR_SIDE_LIGHTEN);
+  const bottomHex = darkenTerrainHex(topHex, WALKABLE_FLOOR_BOTTOM_DARKEN);
+
+  const side = new THREE.Color(sideHex);
+  const top = new THREE.Color(topHex);
+  const bottom = new THREE.Color(bottomHex);
+  /** Matches `BoxGeometry` buildPlane order: +x, -x, +y, -y, +z, -z. */
+  const faceColors = [side, side, top, bottom, side, side];
+
+  const nV = geom.attributes.position.count;
+  const vertsPerFace = nV / 6;
+  const colors = new Float32Array(nV * 3);
+  for (let f = 0; f < 6; f++) {
+    const c = faceColors[f]!;
+    for (let i = 0; i < vertsPerFace; i++) {
+      const o = (f * vertsPerFace + i) * 3;
+      colors[o] = c.r;
+      colors[o + 1] = c.g;
+      colors[o + 2] = c.b;
+    }
+  }
+  geom.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  return geom;
+}
+
 export type VoxelTextSpec = {
   id: string;
   text: string;
@@ -713,6 +672,16 @@ function findPrefixTerrainRemoved(
   return k;
 }
 
+/** Shared floor GPU resources: one geometry + one material per floor *category* (not per tile). */
+type WalkableFloorSharedBundle = {
+  geomCore: THREE.BufferGeometry;
+  geomExtra: THREE.BufferGeometry;
+  geomPortal: THREE.BufferGeometry;
+  matCore: THREE.MeshLambertMaterial;
+  matExtra: THREE.MeshLambertMaterial;
+  matPortal: THREE.MeshLambertMaterial;
+};
+
 export class Game {
   readonly scene: THREE.Scene;
   readonly camera: THREE.OrthographicCamera;
@@ -737,6 +706,10 @@ export class Game {
   /** When true (e.g. `?perf=1`), `tick` records pre/render/tail ms and WebGL counts. */
   private perfTickSplitEnabled = false;
   private perfLastSplit: PerfTickSplit | null = null;
+  private readonly perfFogRenderTimings: FogOfWarRenderTimings = {
+    sceneMs: 0,
+    compositeMs: 0,
+  };
   private readonly others = new Map<string, THREE.Group>();
   private readonly chatBubbleByAddress = new Map<string, ChatBubbleEntry>();
   private readonly typingIndicatorByAddress = new Map<string, TypingIndicatorEntry>();
@@ -796,14 +769,10 @@ export class Game {
   private activeVoxelTextId: string | null = null;
   private readonly voxelGlyphCache = new Map<string, readonly string[]>();
   /**
-   * Shared unit footprint in XZ with fixed thickness in Y; `floorTileQuadSize` scales XZ only.
-   * Top face sits near y=0 after positioning; thickness extends downward.
+   * Lazily built shared floor geometry + materials (core / extra / portal). Many floor
+   * meshes reference these so each tile is one draw instead of six multi-material draws.
    */
-  private readonly walkableFloorTileGeom = new THREE.BoxGeometry(
-    1,
-    WALKABLE_FLOOR_TILE_THICKNESS,
-    1
-  );
+  private walkableFloorShared: WalkableFloorSharedBundle | null = null;
   private floorTileQuadSize = DEFAULT_FLOOR_TILE_QUAD;
   /** Uniform scale on block/ramp/hex geometry only; bottoms stay on layer planes. */
   private blockVisualScale = DEFAULT_BLOCK_VISUAL_SCALE;
@@ -831,6 +800,15 @@ export class Game {
   /** After "Move", next click on an empty tile relocates the object. */
   private repositionFrom: FloorTile | null = null;
   /** Destination tile + layer; remaining route is recomputed each frame from current position. */
+  /**
+   * Client-only path steps (tile centers + layer) after a click, mirroring server `pathQueue`.
+   * Drives the local avatar until empty or server state disagrees enough to reconcile.
+   */
+  private optimisticWalkQueue: Array<{
+    x: number;
+    z: number;
+    layer: 0 | 1;
+  }> | null = null;
   private pathGoal: { ft: FloorTile; layer: 0 | 1 } | null = null;
   /**
    * Optional route shown while primary button is held before `pointerup` (deferred walk).
@@ -1456,6 +1434,7 @@ export class Game {
     this.rebuildDoorKeys();
     this.pathGoal = null;
     this.pathPreviewGoal = null;
+    this.optimisticWalkQueue = null;
     this.lastTerrainPath = null;
     this.selectedBlockKey = null;
     this.selectionOutline.visible = false;
@@ -4026,11 +4005,21 @@ export class Game {
     this.pathPreviewGoal = null;
     const goal = this.resolveWalkNavigationGoalAt(clientX, clientY);
     if (!goal) {
+      this.optimisticWalkQueue = null;
       this.refreshPathLine();
       return;
     }
     this.pathGoal = goal;
     this.refreshPathLine();
+    if (this.lastTerrainPath && this.lastTerrainPath.length >= 2) {
+      this.optimisticWalkQueue = this.lastTerrainPath.slice(1).map((w) => ({
+        x: w.x,
+        z: w.z,
+        layer: w.layer,
+      }));
+    } else {
+      this.optimisticWalkQueue = null;
+    }
     if (goal.layer === 1) {
       this.tileClickHandler(goal.ft.x, goal.ft.y, 1);
     } else {
@@ -4934,6 +4923,7 @@ export class Game {
     this.selfSyncPerfMs = 0;
     this.selfVelX = 0;
     this.selfVelZ = 0;
+    this.optimisticWalkQueue = null;
     if (this.selfMesh) {
       this.disposeAvatarGroup(this.selfMesh);
       this.scene.remove(this.selfMesh);
@@ -5003,6 +4993,7 @@ export class Game {
     this.selfVelZ = 0;
     this.perfTickSplitEnabled = false;
     this.perfLastSplit = null;
+    this.optimisticWalkQueue = null;
     for (const [, g] of this.others) {
       this.disposeAvatarGroup(g);
       this.scene.remove(g);
@@ -5033,6 +5024,16 @@ export class Game {
       disposeWalkableFloorMeshMaterials(mesh);
     }
     this.walkableFloorMeshes.clear();
+    if (this.walkableFloorShared) {
+      const sh = this.walkableFloorShared;
+      sh.geomCore.dispose();
+      sh.geomExtra.dispose();
+      sh.geomPortal.dispose();
+      sh.matCore.dispose();
+      sh.matExtra.dispose();
+      sh.matPortal.dispose();
+      this.walkableFloorShared = null;
+    }
     for (const [, marker] of this.doorMarkerMeshes) {
       this.scene.remove(marker);
       marker.geometry.dispose();
@@ -5041,7 +5042,6 @@ export class Game {
     this.doorMarkerMeshes.clear();
     this.clearTeleporterMarkers();
     this.clearVoxelWordSign();
-    this.walkableFloorTileGeom.dispose();
     this.pathGeom.dispose();
     (this.pathLine.material as THREE.Material).dispose();
     this.trailGeom.dispose();
@@ -5200,11 +5200,69 @@ export class Game {
     }));
   }
 
+  /** Walkable XZ bounds: core room plus extra floor tiles (matches server `walkBounds`). */
+  private getWalkBoundsForMove(): {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  } {
+    let { minX, maxX, minZ, maxZ } = this.roomBounds;
+    for (const k of this.extraFloorKeys) {
+      const parts = k.split(",").map(Number);
+      const x = parts[0];
+      const z = parts[1];
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+      minX = Math.min(minX, x!);
+      maxX = Math.max(maxX, x!);
+      minZ = Math.min(minZ, z!);
+      maxZ = Math.max(maxZ, z!);
+    }
+    return { minX, maxX, minZ, maxZ };
+  }
+
+  /** One frame of path-following using the same speed / arrival epsilon as the server. */
+  private advanceOptimisticWalk(dt: number): void {
+    const mesh = this.selfMesh;
+    const q = this.optimisticWalkQueue;
+    if (!mesh || !q || q.length === 0) return;
+    const placed = this.placedObjects;
+    const wb = this.getWalkBoundsForMove();
+    let x = mesh.position.x;
+    let y = mesh.position.y;
+    let z = mesh.position.z;
+    while (true) {
+      if (q.length === 0) break;
+      const goal = q[0]!;
+      const gy = waypointWorldY(goal.layer, goal.x, goal.z, placed);
+      const dx = goal.x - x;
+      const dy = gy - y;
+      const dz = goal.z - z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (dist < WALK_ARRIVE_EPS) {
+        x = goal.x;
+        z = goal.z;
+        y = gy;
+        q.shift();
+        continue;
+      }
+      const step = WALK_MOVE_SPEED * dt;
+      const t = Math.min(1, step / dist);
+      x = Math.min(wb.maxX, Math.max(wb.minX, x + dx * t));
+      y = y + dy * t;
+      z = Math.min(wb.maxZ, Math.max(wb.minZ, z + dz * t));
+      break;
+    }
+    mesh.position.set(x, y, z);
+    if (q.length === 0) this.optimisticWalkQueue = null;
+  }
+
   /** Updates the line to only the remaining route (BFS around obstacles, same as server). */
   private refreshPathLine(): void {
     const goal = this.pathPreviewGoal ?? this.pathGoal;
     if (!goal || !this.selfMesh) {
       this.lastTerrainPath = null;
+      this.optimisticWalkQueue = null;
       this.hideTrailImmediate();
       this.beginPathFadeOut();
       return;
@@ -5224,6 +5282,7 @@ export class Game {
           this.pathGoal = null;
         }
         this.lastTerrainPath = null;
+        this.optimisticWalkQueue = null;
         this.hideTrailImmediate();
         this.beginPathFadeOut();
         return;
@@ -5254,6 +5313,7 @@ export class Game {
         this.pathGoal = null;
       }
       this.lastTerrainPath = null;
+      this.optimisticWalkQueue = null;
       this.hideTrailImmediate();
       this.beginPathFadeOut();
       return;
@@ -5382,6 +5442,43 @@ export class Game {
     }
   }
 
+  private getOrCreateWalkableFloorShared(): WalkableFloorSharedBundle {
+    if (this.walkableFloorShared) return this.walkableFloorShared;
+    const geomCore = createWalkableFloorTileColoredGeometry(false, false);
+    const geomExtra = createWalkableFloorTileColoredGeometry(false, true);
+    const geomPortal = createWalkableFloorTileColoredGeometry(true, false);
+    const mkMat = (portal: boolean) =>
+      new THREE.MeshLambertMaterial({
+        vertexColors: true,
+        emissive: portal ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000,
+        emissiveIntensity: portal
+          ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * 0.8
+          : 0,
+      });
+    this.walkableFloorShared = {
+      geomCore,
+      geomExtra,
+      geomPortal,
+      matCore: mkMat(false),
+      matExtra: mkMat(false),
+      matPortal: mkMat(true),
+    };
+    return this.walkableFloorShared;
+  }
+
+  private pickWalkableFloorMeshParts(
+    isPortalGlow: boolean,
+    isExtra: boolean
+  ): {
+    geometry: THREE.BufferGeometry;
+    material: THREE.MeshLambertMaterial;
+  } {
+    const s = this.getOrCreateWalkableFloorShared();
+    if (isPortalGlow) return { geometry: s.geomPortal, material: s.matPortal };
+    if (isExtra) return { geometry: s.geomExtra, material: s.matExtra };
+    return { geometry: s.geomCore, material: s.matCore };
+  }
+
   /** Visual floor only where avatars can walk (core + extra); gaps show scene background only. */
   private syncWalkableFloorMeshes(): void {
     const b = this.roomBounds;
@@ -5414,10 +5511,12 @@ export class Game {
       const isPortalGlow = isDoor || activeTeleporterKeys.has(k);
       let mesh = this.walkableFloorMeshes.get(k);
       if (!mesh) {
-        mesh = new THREE.Mesh(
-          this.walkableFloorTileGeom,
-          createWalkableFloorTileMaterials(isPortalGlow, isExtra)
+        const { geometry, material } = this.pickWalkableFloorMeshParts(
+          isPortalGlow,
+          isExtra
         );
+        mesh = new THREE.Mesh(geometry, material);
+        mesh.userData["floorUsesSharedResources"] = true;
         mesh.scale.set(this.floorTileQuadSize, 1, this.floorTileQuadSize);
         const topY = 0.01;
         mesh.position.set(
@@ -5439,7 +5538,13 @@ export class Game {
           mesh.userData["isDoor"] !== wantDoor ||
           mesh.userData["isPortalGlow"] !== wantPortalGlow
         ) {
-          applyWalkableFloorTileMaterials(mesh, wantPortalGlow, wantExtra);
+          const { geometry, material } = this.pickWalkableFloorMeshParts(
+            wantPortalGlow,
+            wantExtra
+          );
+          mesh.geometry = geometry;
+          mesh.material = material;
+          mesh.userData["floorUsesSharedResources"] = true;
           mesh.userData["isExtra"] = wantExtra;
           mesh.userData["isDoor"] = wantDoor;
           mesh.userData["isPortalGlow"] = wantPortalGlow;
@@ -5969,6 +6074,13 @@ export class Game {
             Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5;
           if (jumped) {
             this.selfMesh.position.set(p.x, py, p.z);
+            this.optimisticWalkQueue = null;
+          } else if (
+            this.optimisticWalkQueue &&
+            this.optimisticWalkQueue.length > 0 &&
+            Math.hypot(p.x - ox, p.z - oz) > 2.5
+          ) {
+            this.optimisticWalkQueue = null;
           }
           if (!this.cameraFollowReady || jumped) {
             this.cameraLookAt.set(p.x, py, p.z);
@@ -6014,34 +6126,28 @@ export class Game {
   }
 
   tick(dt: number): number | undefined {
-    const perf0 = this.perfTickSplitEnabled ? performance.now() : 0;
+    const perfOn = this.perfTickSplitEnabled;
+    const perf0 = perfOn ? performance.now() : 0;
     this.doorPulseTime += dt;
     this.animateDoorTiles();
     this.updateVoxelTextTween();
+    const perfDv = perfOn ? performance.now() : 0;
 
     if (this.selfMesh && this.selfTargetPos) {
       const t = this.selfTargetPos;
       const mx = this.selfMesh.position.x;
       const my = this.selfMesh.position.y;
       const mz = this.selfMesh.position.z;
-      const jumped =
-        Math.hypot(t.x - mx, t.z - mz) > 6 || Math.abs(t.y - my) > 1.5;
-      if (jumped) {
-        this.selfMesh.position.copy(t);
+      if (this.optimisticWalkQueue && this.optimisticWalkQueue.length > 0) {
+        this.advanceOptimisticWalk(dt);
       } else {
-        const hintSec = Math.min(
-          PLAYER_RENDER_EXTRAPOLATE_MAX_SEC,
-          (performance.now() - this.selfSyncPerfMs) * 0.001
-        );
-        this.playerRenderTargetScratch.set(
-          t.x + this.selfVelX * hintSec,
-          t.y,
-          t.z + this.selfVelZ * hintSec
-        );
-        this.selfMesh.position.lerp(
-          this.playerRenderTargetScratch,
-          1 - Math.exp(-LERP * dt)
-        );
+        const jumped =
+          Math.hypot(t.x - mx, t.z - mz) > 6 || Math.abs(t.y - my) > 1.5;
+        if (jumped) {
+          this.selfMesh.position.copy(t);
+        } else {
+          this.selfMesh.position.lerp(t, 1 - Math.exp(-LERP * dt));
+        }
       }
     }
     for (const [addr, g] of this.others) {
@@ -6066,6 +6172,7 @@ export class Game {
         g.position.lerp(t, 1 - Math.exp(-LERP * dt));
       }
     }
+    const perfAv = perfOn ? performance.now() : 0;
     this.updateCameraOrbitEase();
     this.updateCameraFollow(dt);
     this.refreshPathLine();
@@ -6077,18 +6184,28 @@ export class Game {
       ? this.selfMesh.position.z
       : this.cameraLookAt.z;
     this.fogOfWar.setPlayerPosition(px, pz);
-    const perf1 = this.perfTickSplitEnabled ? performance.now() : 0;
-    this.fogOfWar.render(this.renderer, this.scene, this.camera);
-    const perf2 = this.perfTickSplitEnabled ? performance.now() : 0;
+    const perf1 = perfOn ? performance.now() : 0;
+    this.fogOfWar.render(
+      this.renderer,
+      this.scene,
+      this.camera,
+      perfOn ? this.perfFogRenderTimings : undefined
+    );
+    const perf2 = perfOn ? performance.now() : 0;
     this.updateChatBubbles();
     this.updateTypingIndicatorAnimation();
     this.updateFloatingTexts();
-    if (this.perfTickSplitEnabled) {
+    if (perfOn) {
       const perf3 = performance.now();
       const info = this.renderer.info.render;
       this.perfLastSplit = {
         preRenderMs: perf1 - perf0,
+        preDoorsVoxelMs: perfDv - perf0,
+        preAvatarsMs: perfAv - perfDv,
+        preCamPathMs: perf1 - perfAv,
         renderMs: perf2 - perf1,
+        renderSceneMs: this.perfFogRenderTimings.sceneMs,
+        renderCompositeMs: this.perfFogRenderTimings.compositeMs,
         tailMs: perf3 - perf2,
         triangles: info.triangles,
         drawCalls: info.calls,
@@ -6835,11 +6952,9 @@ export class Game {
     scene.add(content);
 
     const topY = 0.01;
-    const floorGeom = new THREE.BoxGeometry(1, WALKABLE_FLOOR_TILE_THICKNESS, 1);
-    const floor = new THREE.Mesh(
-      floorGeom,
-      createWalkableFloorTileMaterials(false, false)
-    );
+    const floorGeom = createWalkableFloorTileColoredGeometry(false, false);
+    const floorMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const floor = new THREE.Mesh(floorGeom, floorMat);
     floor.scale.set(this.floorTileQuadSize, 1, this.floorTileQuadSize);
     floor.position.set(0, topY - WALKABLE_FLOOR_TILE_THICKNESS / 2, 0);
     content.add(floor);
@@ -6873,26 +6988,10 @@ export class Game {
   }
 
   private animateDoorTiles(): void {
+    const s = this.walkableFloorShared;
+    if (!s) return;
     const pulse = Math.sin(this.doorPulseTime * 2) * 0.5 + 0.5;
     const doorIntensity = TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * (0.6 + pulse * 0.4);
-
-    for (const [, mesh] of this.walkableFloorMeshes) {
-      const mats = mesh.material as
-        | THREE.MeshStandardMaterial
-        | THREE.MeshStandardMaterial[];
-      const list = Array.isArray(mats) ? mats : [mats];
-      const isPortalGlow = mesh.userData["isPortalGlow"];
-      for (let i = 0; i < list.length; i++) {
-        const mat = list[i]!;
-        if (isPortalGlow) {
-          const scale = i === 2 ? 1 : i === 3 ? 0 : 0.45;
-          mat.emissive.setHex(TERRAIN_TILE_DOOR_EMISSIVE);
-          mat.emissiveIntensity = doorIntensity * scale;
-        } else {
-          mat.emissive.setHex(0x000000);
-          mat.emissiveIntensity = 0;
-        }
-      }
-    }
+    s.matPortal.emissiveIntensity = doorIntensity;
   }
 }

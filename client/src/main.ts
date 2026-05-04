@@ -3305,13 +3305,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const gapMs = now - last;
     const dt = Math.min(0.05, gapMs / 1000);
     last = now;
+    const workStart = performance.now();
     const tickWallMs = game.tick(dt);
-    if (perfTelemetry) {
-      perfTelemetry.recordFrame(gapMs, tickWallMs);
-      hud.setPerfText(
-        perfTelemetry.formatHudLines(game.getPerfTickSplit())
-      );
-    }
     syncPortalEnterButton();
     if (hud.isSelfEmojiMenuOpen()) {
       const ea = game.getSelfScreenPosition(1.32);
@@ -3353,6 +3348,30 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           `ws: ${wsLabel}   fps: ${fpsSmoothed.toFixed(0)}`,
         ].join("\n")
       );
+    }
+    if (perfTelemetry) {
+      const handlerMs = performance.now() - workStart;
+      perfTelemetry.recordFrame(
+        gapMs,
+        tickWallMs,
+        handlerMs,
+        game.getPerfTickSplit()
+      );
+      const overlayT0 = performance.now();
+      hud.setPerfText(
+        perfTelemetry.formatHudLines(game.getPerfTickSplit())
+      );
+      const charts = hud.getPerfChartCanvases();
+      if (charts) {
+        perfTelemetry.renderFpsChart(charts.fps);
+        perfTelemetry.renderPerfSparklines({
+          gapMs: charts.gapMs,
+          tickMs: charts.tickMs,
+          renderMs: charts.renderMs,
+          sceneMs: charts.sceneMs,
+        });
+      }
+      perfTelemetry.recordOverlay(performance.now() - overlayT0);
     }
     rafId = requestAnimationFrame(loop);
   }

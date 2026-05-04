@@ -35,6 +35,7 @@ import {
 } from "../socialLinks.js";
 import { nimiqIconUseMarkup } from "./nimiqIcons.js";
 import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
+import type { PerfSparklineCharts } from "../perfTelemetry.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 import { ringHueFromClient } from "./ringHuePick.js";
 
@@ -395,6 +396,10 @@ export function createHud(
   } | null) => void;
   setDebugText: (text: string) => void;
   setPerfText: (text: string) => void;
+  /** FPS chart + 2×2 ms sparklines for `?perf=1`; null when perf HUD off. */
+  getPerfChartCanvases: () =>
+    | ({ fps: HTMLCanvasElement } & PerfSparklineCharts)
+    | null;
   setCanvasLeaderboardVisible: (visible: boolean) => void;
   updateCanvasLeaderboard: (leaders: Array<{ address: string; bestMs: number }>) => void;
   setCanvasTimer: (timeRemaining: number) => void;
@@ -732,7 +737,44 @@ export function createHud(
   const perfPanel = document.createElement("pre");
   perfPanel.className = "hud-debug hud-perf";
   perfPanel.setAttribute("aria-hidden", "true");
-  perfPanel.hidden = !showPerf;
+
+  const perfStack = document.createElement("div");
+  perfStack.className = "hud-perf-stack";
+  perfStack.hidden = !showPerf;
+  perfStack.setAttribute("aria-hidden", "true");
+
+  const perfFpsChart = document.createElement("canvas");
+  perfFpsChart.className = "hud-perf-chart";
+  perfFpsChart.setAttribute("aria-hidden", "true");
+
+  const perfSparkRow = document.createElement("div");
+  perfSparkRow.className = "hud-perf-chart-row";
+  perfSparkRow.setAttribute("aria-hidden", "true");
+
+  const mkSpark = (hint: string) => {
+    const c = document.createElement("canvas");
+    c.className = "hud-perf-spark";
+    c.setAttribute("aria-hidden", "true");
+    c.title = hint;
+    return c;
+  };
+  const perfGapChart = mkSpark("rAF frame gap (ms) — spikes = missed frames");
+  const perfTickChart = mkSpark("Game.tick() wall time — pre + render + tail");
+  const perfRenderChart = mkSpark(
+    "fogOfWar.render() wall — scene pass + fog composite"
+  );
+  const perfSceneChart = mkSpark(
+    "Scene draw only — renderer.render(scene) inside fog pass"
+  );
+
+  perfSparkRow.appendChild(perfGapChart);
+  perfSparkRow.appendChild(perfTickChart);
+  perfSparkRow.appendChild(perfRenderChart);
+  perfSparkRow.appendChild(perfSceneChart);
+
+  perfStack.appendChild(perfPanel);
+  perfStack.appendChild(perfFpsChart);
+  perfStack.appendChild(perfSparkRow);
 
   const canvasLeaderboard = document.createElement("div");
   canvasLeaderboard.className = "canvas-leaderboard";
@@ -944,7 +986,7 @@ export function createHud(
   `;
 
   leftStack.appendChild(debugPanel);
-  leftStack.appendChild(perfPanel);
+  leftStack.appendChild(perfStack);
   leftStack.appendChild(canvasLeaderboard);
   
   // Close button for signboard tooltip
@@ -2088,6 +2130,16 @@ export function createHud(
   const nimClaimHint = nimClaimBar.querySelector(
     ".nim-claim-bar__hint"
   ) as HTMLElement | null;
+  /** Skip redundant DOM writes during mining (main loop calls at rAF rate). */
+  let nimClaimHudLastPercent = -1;
+  let nimClaimHudLastAdjacent: boolean | null = null;
+  let nimClaimBarIdleFadeTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearNimClaimBarIdleFadeTimer = (): void => {
+    if (nimClaimBarIdleFadeTimer !== null) {
+      clearTimeout(nimClaimBarIdleFadeTimer);
+      nimClaimBarIdleFadeTimer = null;
+    }
+  };
   ui.appendChild(nimClaimBar);
   const canvasCountdown = document.createElement("div");
   canvasCountdown.className = "canvas-countdown";
@@ -5858,6 +5910,16 @@ export function createHud(
       if (!showPerf) return;
       perfPanel.textContent = text;
     },
+    getPerfChartCanvases() {
+      if (!showPerf) return null;
+      return {
+        fps: perfFpsChart,
+        gapMs: perfGapChart,
+        tickMs: perfTickChart,
+        renderMs: perfRenderChart,
+        sceneMs: perfSceneChart,
+      };
+    },
     setCanvasLeaderboardVisible(visible: boolean) {
       canvasLeaderboard.hidden = !visible;
     },
@@ -6025,21 +6087,57 @@ export function createHud(
       state: null | { progress: number; adjacent: boolean }
     ) {
       if (!state) {
+        clearNimClaimBarIdleFadeTimer();
+        nimClaimHudLastPercent = -1;
+        nimClaimHudLastAdjacent = null;
         nimClaimBar.hidden = true;
-        nimClaimBar.classList.remove("nim-claim-bar--adjacent");
+        nimClaimBar.classList.remove(
+          "nim-claim-bar--adjacent",
+          "nim-claim-bar--idle-faded"
+        );
+        nimClaimBar.removeAttribute("aria-hidden");
         return;
       }
-      nimClaimBar.hidden = false;
       const p = Math.max(0, Math.min(1, state.progress));
+      const pct = Math.min(100, Math.floor(p * 100 + 1e-9));
+      const adj = state.adjacent;
+      const activelyClaiming = adj || p > 0;
+      if (activelyClaiming) {
+        clearNimClaimBarIdleFadeTimer();
+        if (nimClaimBar.classList.contains("nim-claim-bar--idle-faded")) {
+          nimClaimBar.classList.remove("nim-claim-bar--idle-faded");
+          nimClaimBar.removeAttribute("aria-hidden");
+          nimClaimHudLastPercent = -1;
+        }
+      } else if (
+        !nimClaimBarIdleFadeTimer &&
+        !nimClaimBar.classList.contains("nim-claim-bar--idle-faded")
+      ) {
+        nimClaimBarIdleFadeTimer = setTimeout(() => {
+          nimClaimBarIdleFadeTimer = null;
+          nimClaimBar.classList.add("nim-claim-bar--idle-faded");
+          nimClaimBar.setAttribute("aria-hidden", "true");
+        }, 3000);
+      }
+      if (
+        !nimClaimBar.hidden &&
+        pct === nimClaimHudLastPercent &&
+        adj === nimClaimHudLastAdjacent
+      ) {
+        return;
+      }
+      nimClaimHudLastPercent = pct;
+      nimClaimHudLastAdjacent = adj;
+      nimClaimBar.hidden = false;
       if (nimClaimFill) {
         nimClaimFill.style.width = `${(p * 100).toFixed(2)}%`;
       }
       if (nimClaimHint) {
-        nimClaimHint.textContent = state.adjacent
+        nimClaimHint.textContent = adj
           ? "Hold position beside the block…"
           : "Move to a tile directly beside the block (edge, not corner).";
       }
-      nimClaimBar.classList.toggle("nim-claim-bar--adjacent", state.adjacent);
+      nimClaimBar.classList.toggle("nim-claim-bar--adjacent", adj);
     },
     setCanvasTimer(timeRemaining: number) {
       const timerEl = canvasLeaderboard.querySelector(".canvas-leaderboard__timer") as HTMLElement | null;
@@ -6147,7 +6245,13 @@ export function createHud(
       setPanelShapePopoverOpen(false);
       hideObjectEditPanel();
       hideLobbyConfirm();
+      clearNimClaimBarIdleFadeTimer();
+      nimClaimHudLastPercent = -1;
+      nimClaimHudLastAdjacent = null;
       nimClaimBar.hidden = true;
+      nimClaimBar.classList.remove("nim-claim-bar--idle-faded");
+      nimClaimBar.removeAttribute("aria-hidden");
+      perfStack.hidden = true;
       canvasCountdown.hidden = true;
       ro.disconnect();
     },
