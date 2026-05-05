@@ -7,6 +7,8 @@ export interface PlayerState {
   z: number;
   vx: number;
   vz: number;
+  /** Prior display names (newest first), from server profile store. */
+  recentAliases?: string[];
   /** From server room snapshot when that client connected via Nimiq Pay mini-app. */
   nimiqPay?: boolean;
   /** Ephemeral: other tab / backgrounded or wallet-send flow (`nimSendIntent` on server). */

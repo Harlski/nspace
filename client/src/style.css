@@ -2377,10 +2377,22 @@ button.hud-brand:focus-visible {
   flex-shrink: 0;
 }
 
+/* Detached from `.hud-top-toolbar` flex row so multi-line copy hints never stretch the top bar */
 .hud-translate-clipboard-hint {
+  position: fixed;
+  left: 50%;
+  top: calc(env(safe-area-inset-top, 0px) + var(--hud-below-top-wrap, 52px) + 4px);
+  transform: translateX(-50%) translateY(-2px);
+  z-index: 10003;
+  margin: 0;
   white-space: normal;
   max-width: min(280px, 85vw);
   text-align: center;
+}
+
+.hud-translate-clipboard-hint.hud-player-join-toast--visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 .hud-player-count__tooltip {
@@ -2410,7 +2422,11 @@ button.hud-brand:focus-visible {
 .hud-player-count--show-tip .hud-player-count__tooltip,
 .other-player-profile__nimiq-pay-inline:hover .hud-player-count__tooltip,
 .other-player-profile__nimiq-pay-inline:focus-within .hud-player-count__tooltip,
-.other-player-profile__nimiq-pay-inline.hud-player-count--show-tip .hud-player-count__tooltip {
+.other-player-profile__nimiq-pay-inline.hud-player-count--show-tip .hud-player-count__tooltip,
+.other-player-profile__alias-icon-wrap:hover .hud-player-count__tooltip,
+.other-player-profile__alias-icon-wrap:focus-within .hud-player-count__tooltip,
+.other-player-profile__alias-icon-wrap.hud-player-count--show-tip
+  .hud-player-count__tooltip {
   opacity: 1;
   transform: translateY(0);
 }
@@ -2418,6 +2434,8 @@ button.hud-brand:focus-visible {
 /* Viewport docking: JS sets left/top; wins over base abs + z-index from preceding rules */
 .hud-player-count--show-tip .hud-player-count__tooltip.hud-stat-tooltip--viewport,
 .other-player-profile__nimiq-pay-inline.hud-player-count--show-tip
+  .hud-player-count__tooltip.hud-stat-tooltip--viewport,
+.other-player-profile__alias-icon-wrap.hud-player-count--show-tip
   .hud-player-count__tooltip.hud-stat-tooltip--viewport {
   position: fixed;
   right: auto;
@@ -3549,14 +3567,167 @@ button.hud-brand:focus-visible {
   display: block;
 }
 
+.other-player-profile__name-primary-wrap {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 0.3rem;
+}
+
+.other-player-profile__display-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #f8fafc;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.other-player-profile__display-name--editable {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(148, 163, 184, 0.4);
+  text-underline-offset: 3px;
+}
+
+.other-player-profile__display-name--editable:hover {
+  color: #fff;
+  text-decoration-color: rgba(186, 199, 216, 0.65);
+}
+
+.other-player-profile__display-name--editable:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.55);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.other-player-profile__wallet-short {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-style: italic;
+  font-weight: 500;
+  color: rgba(226, 232, 240, 0.42);
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.other-player-profile__wallet-short[hidden] {
+  display: none !important;
+}
+
+.other-player-profile__alias-icon-wrap.other-player-profile__nimiq-pay-inline[hidden] {
+  display: none !important;
+}
+
+.other-player-profile__addr-row > .other-player-profile__alias-icon-wrap {
+  margin-inline-end: 10px;
+}
+
+.other-player-profile__alias-nq-icon.nq-icon,
+.other-player-profile__alias-nq-icon .nq-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  color: rgba(226, 232, 240, 0.82);
+}
+
+.other-player-profile__alias-tooltip {
+  white-space: pre-line;
+  text-align: left;
+}
+
+.other-player-profile__username-input {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 240px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(100, 116, 139, 0.55);
+  background: rgba(15, 23, 42, 0.85);
+  color: #f1f5f9;
+  font: inherit;
+  font-size: 13px;
+}
+
+.other-player-profile__username-input--inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  width: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.other-player-profile__username-input--inline[hidden] {
+  display: none !important;
+}
+
+.other-player-profile__admin-mod {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.other-player-profile__admin-mod[hidden] {
+  display: none !important;
+}
+
+.other-player-profile__admin-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(100, 116, 139, 0.6);
+  background: rgba(30, 41, 59, 0.65);
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
 .other-player-profile__addr-row {
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 0.28rem;
+  gap: 0.35rem;
   min-width: 0;
   width: 100%;
+}
+
+.other-player-profile__copy-address {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(226, 232, 240, 0.72);
+  cursor: pointer;
+  line-height: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.other-player-profile__copy-address:hover {
+  color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.other-player-profile__copy-address:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.55);
+  outline-offset: 2px;
+}
+
+.other-player-profile__copy-address-icon.nq-icon,
+.other-player-profile__copy-address-icon .nq-icon {
+  display: block;
+  fill: currentColor;
 }
 
 /* Nimiq Pay mini-app: white FM mark, no chip — inline after the address (NQ…{icon}) */
@@ -3595,36 +3766,6 @@ button.hud-brand:focus-visible {
   width: 16px;
   height: 15px;
   fill: currentColor;
-}
-
-.other-player-profile__addr-row .other-player-profile__address {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.other-player-profile__address {
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: #f1f5f9;
-  font-family: ui-monospace, monospace;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.4;
-  letter-spacing: 0.04em;
-  text-align: left;
-  white-space: nowrap;
-  cursor: pointer;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  text-underline-offset: 3px;
-  transition: color 0.12s ease, text-decoration-color 0.12s ease;
-}
-
-.other-player-profile__address:hover {
-  color: #fff;
-  text-decoration-color: rgba(148, 163, 184, 0.55);
 }
 
 .other-player-profile__send-nim {
@@ -4697,6 +4838,155 @@ button.hud-brand:focus-visible {
 
 .build-object-panel-context.build-object-panel-context--teleporter {
   width: min(248px, calc(100vw - 24px));
+}
+
+.build-object-panel-context__inner--teleporter {
+  position: relative;
+  min-height: 120px;
+}
+
+.build-object-panel-context__tp-stack {
+  position: relative;
+  z-index: 1;
+}
+
+.build-object-panel-context__tp-room-trigger {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(61, 70, 90, 0.95);
+  background: rgba(24, 28, 40, 0.98);
+  color: #e8eaef;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.build-object-panel-context__tp-room-trigger:hover {
+  border-color: rgba(100, 116, 148, 0.85);
+  background: rgba(30, 36, 52, 0.99);
+}
+
+.build-object-panel-context__tp-room-trigger-cap {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.build-object-panel-context__tp-room-trigger-name {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-object-panel-context__tp-room-trigger-meta {
+  font-size: 10px;
+  line-height: 1.35;
+  color: rgba(148, 163, 184, 0.92);
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-object-panel-context__tp-room-picker {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: 8px 8px 6px;
+  border-radius: inherit;
+  background: rgba(14, 17, 26, 0.99);
+  border: 1px solid rgba(61, 70, 90, 0.85);
+}
+
+.build-object-panel-context__tp-room-picker[hidden] {
+  display: none !important;
+}
+
+.build-object-panel-context__tp-room-picker-head {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex: 0 0 auto;
+}
+
+.build-object-panel-context__tp-room-picker-back {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(61, 70, 90, 0.95);
+  background: rgba(24, 28, 40, 0.98);
+  color: #e8eaef;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.build-object-panel-context__tp-room-picker-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e8eaef;
+}
+
+.build-object-panel-context__tp-room-picker-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.build-object-panel-context__tp-room-picker-row {
+  margin: 0 0 4px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.build-object-panel-context__tp-room-picker-row:hover {
+  background: rgba(36, 44, 64, 0.95);
+  border-color: rgba(80, 96, 128, 0.45);
+}
+
+.build-object-panel-context__tp-room-picker-row[aria-selected="true"] {
+  background: rgba(51, 65, 95, 0.55);
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
+.build-object-panel-context__tp-room-picker-row-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e8eaef;
+  line-height: 1.25;
+}
+
+.build-object-panel-context__tp-room-picker-row-meta {
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: rgba(148, 163, 184, 0.92);
 }
 
 .build-object-panel-context__tp-head {

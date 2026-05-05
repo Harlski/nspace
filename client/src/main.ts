@@ -9,7 +9,7 @@ import {
   removeCachedSession,
   saveCachedSession,
 } from "./auth/session.js";
-import { ROOM_ID } from "./game/constants.js";
+import { CHAMBER_DEFAULT_SPAWN, ROOM_ID } from "./game/constants.js";
 import { Game } from "./game/Game.js";
 import { isOrthogonallyAdjacentToFloorTile, snapFloorTile } from "./game/grid.js";
 import {
@@ -281,6 +281,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   const hud = createHud(hudRoot, {
     showDebug: showDebugHud,
     getGameAuthToken: () => token,
+    isGameAdmin: () => isAdmin(address),
     didSessionUseNimiqPay: () => sessionNimiqPay,
     playerUsesNimiqPayInRoom: (compactWalletKey) => {
       const k = compactWalletKey.replace(/\s+/g, "").trim().toUpperCase();
@@ -324,6 +325,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     backgroundHueDeg: number | null;
     backgroundNeutral: RoomBackgroundNeutral | null;
   };
+  type TeleporterDestinationRoomRow = {
+    id: string;
+    displayName: string;
+    isPublic: boolean;
+    playerCount: number;
+    isOfficial: boolean;
+    isBuiltin: boolean;
+  };
   let knownRooms: KnownRoomRow[] = [];
   let roomsCatalogTab: "official" | "user" | "admin" | "deleted" = "official";
   /** Client-side page index for the User rooms catalog (4 rooms per page). */
@@ -339,28 +348,50 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     return compactWallet(r.ownerAddress) === compactWallet(address);
   }
 
-  /** Hub + player-owned rooms for teleporter destination dropdown. */
-  function teleporterRoomOptions(): Array<{ id: string; displayName: string }> {
+  /** Hub + owned rooms for players; full catalog (incl. private) for admins — teleporter room picker. */
+  function teleporterDestinationRoomOptions(): TeleporterDestinationRoomRow[] {
     const nHub = normalizeRoomId(HUB_ROOM_ID);
+    const rowFromKnown = (r: KnownRoomRow): TeleporterDestinationRoomRow => ({
+      id: normalizeRoomId(r.id),
+      displayName: r.displayName.trim() || r.id,
+      isPublic: r.isPublic,
+      playerCount: r.playerCount,
+      isOfficial: r.isOfficial,
+      isBuiltin: r.isBuiltin,
+    });
+    if (isAdmin(address)) {
+      const out: TeleporterDestinationRoomRow[] = [];
+      for (const r of knownRooms) {
+        if (r.isDeleted) continue;
+        out.push(rowFromKnown(r));
+      }
+      out.sort((a, b) => {
+        if (a.id === nHub) return -1;
+        if (b.id === nHub) return 1;
+        return a.displayName.localeCompare(b.displayName);
+      });
+      return out;
+    }
     const hubRow = knownRooms.find((r) => normalizeRoomId(r.id) === nHub);
-    const out: Array<{ id: string; displayName: string }> = [
+    const out: TeleporterDestinationRoomRow[] = [
       {
         id: normalizeRoomId(hubRow?.id ?? HUB_ROOM_ID),
         displayName: hubRow?.displayName?.trim() || "Hub",
+        isPublic: hubRow?.isPublic ?? true,
+        playerCount: hubRow?.playerCount ?? 0,
+        isOfficial: hubRow?.isOfficial ?? false,
+        isBuiltin: hubRow?.isBuiltin ?? true,
       },
     ];
     for (const r of knownRooms) {
       if (r.isDeleted) continue;
       if (normalizeRoomId(r.id) === nHub) continue;
       if (!viewerOwnsRoom(r)) continue;
-      out.push({
-        id: normalizeRoomId(r.id),
-        displayName: r.displayName.trim() || r.id,
-      });
+      out.push(rowFromKnown(r));
     }
     out.sort((a, b) => {
-      if (normalizeRoomId(a.id) === nHub) return -1;
-      if (normalizeRoomId(b.id) === nHub) return 1;
+      if (a.id === nHub) return -1;
+      if (b.id === nHub) return 1;
       return a.displayName.localeCompare(b.displayName);
     });
     return out;
@@ -2223,7 +2254,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
             destX,
             destZ,
             currentRoomId: normalizeRoomId(game.getRoomId()),
-            roomOptions: teleporterRoomOptions(),
+            roomOptions: teleporterDestinationRoomOptions(),
             onPickTileInCurrentRoom: () => {
               game.setTeleporterDestPickHandler((px, pz) => {
                 hud.setTeleporterEditFields({
@@ -2940,6 +2971,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           "That billboard link is not allowed (HTTPS links only)."
         );
       }
+      if (msg.code === "channel_muted") {
+        hud.appendChat("System", "Muted.");
+      }
     }
     if (msg.type === "signboards") {
       game.setSignboards(msg.signboards);
@@ -2999,9 +3033,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
 
   idleCleanup = startIdleReturnToHub(IDLE_RETURN_HUB_MS, () => {
     if (disposed) return;
-    connectToRoom(HUB_ROOM_ID, { x: 0, z: 0 });
+    connectToRoom(CHAMBER_ROOM_ID, {
+      x: CHAMBER_DEFAULT_SPAWN.x,
+      z: CHAMBER_DEFAULT_SPAWN.z,
+    });
     hud.setStatus(
-      "Returned to hub after 15 minutes inactive — explore again anytime"
+      "Returned to the chamber after 15 minutes inactive — explore again anytime"
     );
   });
 
@@ -3089,10 +3126,16 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     if (disposed) return;
     hud.setReconnectOffer(false);
     hud.setStatus("Connecting…");
-    connectToRoom(normalizeRoomId(game.getRoomId()));
+    connectToRoom(CHAMBER_ROOM_ID, {
+      x: CHAMBER_DEFAULT_SPAWN.x,
+      z: CHAMBER_DEFAULT_SPAWN.z,
+    });
   });
 
-  connectToRoom(ROOM_ID);
+  connectToRoom(ROOM_ID, {
+    x: CHAMBER_DEFAULT_SPAWN.x,
+    z: CHAMBER_DEFAULT_SPAWN.z,
+  });
   scheduleNextNimWalletPoll(0);
 
   syncBuildHud();

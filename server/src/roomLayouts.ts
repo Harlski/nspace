@@ -50,6 +50,9 @@ const CHAMBER_BOUNDS: RoomBounds = {
   maxZ: 6,
 };
 
+/** Default spawn for the chamber (hub east door arrival). All sessions start here. */
+export const CHAMBER_DEFAULT_SPAWN = { x: -5, z: 0 } as const;
+
 const CANVAS_BOUNDS: RoomBounds = {
   minX: -15,
   maxX: 15,
@@ -71,8 +74,8 @@ const HUB_DOORS: DoorDef[] = [
     x: 12,
     z: 0,
     targetRoomId: CHAMBER_ROOM_ID,
-    spawnX: -5,
-    spawnZ: 0,
+    spawnX: CHAMBER_DEFAULT_SPAWN.x,
+    spawnZ: CHAMBER_DEFAULT_SPAWN.z,
   },
   {
     x: -1,

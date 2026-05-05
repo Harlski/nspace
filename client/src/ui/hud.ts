@@ -162,6 +162,8 @@ export function createHud(
     onNimRecipientDeepLinkPopupBlocked?: () => void;
     /** Bearer JWT for the signed-in player (e.g. saving public profile message). */
     getGameAuthToken?: () => string | null;
+    /** Same wallet list as server `ADMIN_ADDRESSES`; in-game profile moderation. */
+    isGameAdmin?: () => boolean;
     /** True when this game session was authenticated via Nimiq Pay (server verify), not `window.nimiqPay`. */
     didSessionUseNimiqPay?: () => boolean;
     /**
@@ -287,7 +289,14 @@ export function createHud(
             destZ: number;
             /** Room the player is standing in; pick-by-click only applies when destination room matches. */
             currentRoomId: string;
-            roomOptions: Array<{ id: string; displayName: string }>;
+            roomOptions: Array<{
+              id: string;
+              displayName: string;
+              isPublic: boolean;
+              playerCount: number;
+              isOfficial: boolean;
+              isBuiltin: boolean;
+            }>;
             onPickTileInCurrentRoom: () => void;
             onPickCancel: () => void;
             onConfigure: (
@@ -683,6 +692,16 @@ export function createHud(
   /** In-game profile Nimiq Pay badge — wired after `other-player-profile` DOM is built. */
   let profileNimiqPayTipAnchor: HTMLElement | null = null;
   let profileNimiqPayTipEl: HTMLElement | null = null;
+  let profileAliasTipAnchor: HTMLElement | null = null;
+  let profileAliasTipEl: HTMLElement | null = null;
+
+  function setProfileAliasTipVisible(show: boolean): void {
+    if (!profileAliasTipAnchor || !profileAliasTipEl) return;
+    profileAliasTipAnchor.classList.toggle("hud-player-count--show-tip", show);
+    syncHudStatTooltipViewport(profileAliasTipAnchor, profileAliasTipEl, show, {
+      dockViewport: false,
+    });
+  }
 
   function setProfileNimiqPayTipVisible(show: boolean): void {
     if (!profileNimiqPayTipAnchor || !profileNimiqPayTipEl) return;
@@ -706,6 +725,15 @@ export function createHud(
       profileNimiqPayTipAnchor.classList.contains("hud-player-count--show-tip")
     ) {
       syncHudStatTooltipViewport(profileNimiqPayTipAnchor, profileNimiqPayTipEl, true, {
+        dockViewport: false,
+      });
+    }
+    if (
+      profileAliasTipAnchor &&
+      profileAliasTipEl &&
+      profileAliasTipAnchor.classList.contains("hud-player-count--show-tip")
+    ) {
+      syncHudStatTooltipViewport(profileAliasTipAnchor, profileAliasTipEl, true, {
         dockViewport: false,
       });
     }
@@ -745,6 +773,7 @@ export function createHud(
     setNimTipVisible(false);
     setPlayerTipVisible(false);
     setProfileNimiqPayTipVisible(false);
+    setProfileAliasTipVisible(false);
   };
   nimBalance.addEventListener("mouseenter", () => setNimTipVisible(true));
   nimBalance.addEventListener("mouseleave", () => setNimTipVisible(false));
@@ -814,7 +843,6 @@ export function createHud(
     return coarse || mobileUa;
   }
 
-  topToolbar.appendChild(translateClipboardHintToast);
   topToolbar.appendChild(roomsBtn);
   topToolbar.appendChild(playerCount);
   topToolbar.appendChild(nimBalance);
@@ -1153,6 +1181,7 @@ export function createHud(
   topWrap.appendChild(topStrip);
   topWrap.appendChild(statusSub);
   ui.appendChild(topWrap);
+  ui.appendChild(translateClipboardHintToast);
   ui.appendChild(leftStack);
   ui.appendChild(perfHud);
   letter.appendChild(signpostOverlay);
@@ -1676,14 +1705,128 @@ export function createHud(
   });
   const oppCardBody = document.createElement("div");
   oppCardBody.className = "other-player-profile__card-body";
+  const oppNamePrimaryWrap = document.createElement("div");
+  oppNamePrimaryWrap.className = "other-player-profile__name-primary-wrap";
+  const oppDisplayNameEl = document.createElement("span");
+  oppDisplayNameEl.className = "other-player-profile__display-name";
+  const oppUsernameInput = document.createElement("input");
+  oppUsernameInput.type = "text";
+  oppUsernameInput.className =
+    "other-player-profile__username-input other-player-profile__username-input--inline";
+  oppUsernameInput.maxLength = 20;
+  oppUsernameInput.autocomplete = "off";
+  oppUsernameInput.setAttribute("aria-label", "Username");
+  oppUsernameInput.hidden = true;
+  oppNamePrimaryWrap.append(oppDisplayNameEl, oppUsernameInput);
+  const oppWalletShortEl = document.createElement("span");
+  oppWalletShortEl.className = "other-player-profile__wallet-short";
+  oppWalletShortEl.hidden = true;
+  const oppAliasHost = document.createElement("div");
+  oppAliasHost.className =
+    "other-player-profile__alias-icon-wrap other-player-profile__nimiq-pay-inline";
+  oppAliasHost.setAttribute("role", "button");
+  oppAliasHost.setAttribute("tabindex", "0");
+  oppAliasHost.setAttribute("aria-label", "Previously known as");
+  oppAliasHost.hidden = true;
+  oppAliasHost.innerHTML = `${nimiqIconUseMarkup("nq-contacts", {
+    width: 16,
+    height: 16,
+    class: "other-player-profile__alias-nq-icon",
+  })}<span class="hud-player-count__tooltip other-player-profile__alias-tooltip" role="tooltip"></span>`;
+  const oppAliasTip = oppAliasHost.querySelector(
+    ".hud-player-count__tooltip"
+  ) as HTMLElement;
+  profileAliasTipAnchor = oppAliasHost;
+  profileAliasTipEl = oppAliasTip;
+  oppAliasHost.addEventListener("mouseenter", () => setProfileAliasTipVisible(true));
+  oppAliasHost.addEventListener("mouseleave", () => setProfileAliasTipVisible(false));
+  oppAliasHost.addEventListener("focus", () => setProfileAliasTipVisible(true));
+  oppAliasHost.addEventListener("blur", () => setProfileAliasTipVisible(false));
+  oppAliasHost.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setProfileAliasTipVisible(
+      !oppAliasHost.classList.contains("hud-player-count--show-tip")
+    );
+  });
+  oppAliasHost.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setProfileAliasTipVisible(
+        !oppAliasHost.classList.contains("hud-player-count--show-tip")
+      );
+    }
+  });
+  oppDisplayNameEl.id = "other-player-profile-title";
   const oppAddrRow = document.createElement("div");
   oppAddrRow.className = "other-player-profile__addr-row";
-  const oppAddrBtn = document.createElement("button");
-  oppAddrBtn.type = "button";
-  oppAddrBtn.className = "other-player-profile__address";
-  oppAddrBtn.id = "other-player-profile-title";
-  oppAddrBtn.setAttribute("aria-label", "Wallet address — click to copy");
-  oppAddrRow.append(oppAddrBtn, oppNimiqPayHost);
+  const oppCopyAddressBtn = document.createElement("button");
+  oppCopyAddressBtn.type = "button";
+  oppCopyAddressBtn.className = "other-player-profile__copy-address";
+  oppCopyAddressBtn.setAttribute("aria-label", "Copy address");
+  oppCopyAddressBtn.innerHTML = nimiqIconUseMarkup("nq-copy", {
+    width: 14,
+    height: 14,
+    class: "other-player-profile__copy-address-icon",
+  });
+  oppAddrRow.append(
+    oppNamePrimaryWrap,
+    oppWalletShortEl,
+    oppAliasHost,
+    oppCopyAddressBtn,
+    oppNimiqPayHost
+  );
+  const oppAdminRow = document.createElement("div");
+  oppAdminRow.className = "other-player-profile__admin-mod";
+  oppAdminRow.hidden = true;
+  const mkAdminBtn = (label: string): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "other-player-profile__admin-btn";
+    b.textContent = label;
+    return b;
+  };
+  const oppAdClear = mkAdminBtn("Clear");
+  const oppAdBan = mkAdminBtn("Ban name");
+  const oppAdAllow = mkAdminBtn("Allow name");
+  const oppAdMute = mkAdminBtn("Mute");
+  const oppAdUnmute = mkAdminBtn("Unmute");
+  oppAdminRow.append(oppAdClear, oppAdBan, oppAdAllow, oppAdMute, oppAdUnmute);
+  async function adminModerationPost(
+    action: string,
+    extra?: Record<string, unknown>
+  ): Promise<void> {
+    const tok = opts?.getGameAuthToken?.() ?? null;
+    const target = profileOpenCompact;
+    if (!tok || !target) return;
+    await fetch("/api/admin/moderation", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${tok}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ action, target, ...extra }),
+    });
+    void showPlayerProfileView(
+      target,
+      oppDisplayNameEl.textContent || walletDisplayName(target),
+      "other"
+    );
+  }
+  oppAdClear.addEventListener("click", () => {
+    void adminModerationPost("clear_username");
+  });
+  oppAdBan.addEventListener("click", () => {
+    void adminModerationPost("username_ban", { banned: true });
+  });
+  oppAdAllow.addEventListener("click", () => {
+    void adminModerationPost("username_ban", { banned: false });
+  });
+  oppAdMute.addEventListener("click", () => {
+    void adminModerationPost("channel_mute", { muted: true });
+  });
+  oppAdUnmute.addEventListener("click", () => {
+    void adminModerationPost("channel_mute", { muted: false });
+  });
   const oppProfileMessage = document.createElement("div");
   oppProfileMessage.className = "other-player-profile__message-wrap";
   const oppProfileNote = document.createElement("p");
@@ -1696,7 +1839,7 @@ export function createHud(
   const oppCardFooter = document.createElement("div");
   oppCardFooter.className = "other-player-profile__card-footer";
   oppCardFooter.appendChild(oppSendNim);
-  oppCardBody.append(oppAddrRow, oppProfileMessage, oppProfileNote);
+  oppCardBody.append(oppAddrRow, oppAdminRow, oppProfileMessage, oppProfileNote);
   oppCardMain.append(oppIdent, oppCardBody);
   oppCard.append(oppCardMain, oppCardFooter);
   oppDialog.appendChild(oppClose);
@@ -1847,6 +1990,60 @@ export function createHud(
   let profileDescEditBlurHandler: (() => void) | null = null;
   let profileMessageKindOpen: "self" | "other" | null = null;
   let profileMessageLastSaved = "";
+  let profileUsernameEditing = false;
+  let profileUsernameSavedCustom = "";
+
+  function endUsernameEditVisual(): void {
+    profileUsernameEditing = false;
+    oppUsernameInput.hidden = true;
+    oppDisplayNameEl.hidden = false;
+  }
+
+  function beginUsernameEdit(): void {
+    if (profileMessageKindOpen !== "self") return;
+    if (oppUsernameInput.readOnly) return;
+    if (profileUsernameEditing) return;
+    profileUsernameEditing = true;
+    oppDisplayNameEl.hidden = true;
+    oppUsernameInput.hidden = false;
+    oppUsernameInput.value = profileUsernameSavedCustom;
+    requestAnimationFrame(() => {
+      oppUsernameInput.focus();
+      oppUsernameInput.select();
+    });
+  }
+
+  function updateProfileNameHitInteractivity(kind: "self" | "other"): void {
+    if (kind !== "self") {
+      oppDisplayNameEl.classList.remove("other-player-profile__display-name--editable");
+      oppDisplayNameEl.removeAttribute("role");
+      oppDisplayNameEl.removeAttribute("tabindex");
+      return;
+    }
+    const locked = oppUsernameInput.readOnly;
+    if (locked) {
+      oppDisplayNameEl.classList.remove("other-player-profile__display-name--editable");
+      oppDisplayNameEl.removeAttribute("role");
+      oppDisplayNameEl.removeAttribute("tabindex");
+    } else {
+      oppDisplayNameEl.classList.add("other-player-profile__display-name--editable");
+      oppDisplayNameEl.setAttribute("role", "button");
+      oppDisplayNameEl.tabIndex = 0;
+    }
+  }
+
+  async function maybeCommitUsernameBlur(): Promise<void> {
+    if (!profileUsernameEditing) return;
+    const v = oppUsernameInput.value.trim();
+    if (v === profileUsernameSavedCustom) {
+      endUsernameEditVisual();
+      return;
+    }
+    const ok = await commitSelfUsername();
+    if (ok) endUsernameEditVisual();
+    else requestAnimationFrame(() => oppUsernameInput.focus());
+  }
+
   /** Same length as two-line sample: THISISONETHISITHISISONETHISITHISISONETHISITHISISONETHISITHISISO */
   const PROFILE_DESC_MAX_CHARS =
     "THISISONETHISITHISISONETHISITHISISONETHISITHISISONETHISITHISISO".length;
@@ -2034,8 +2231,94 @@ export function createHud(
     }
   }
 
+  async function commitSelfUsername(): Promise<boolean> {
+    if (profileMessageKindOpen !== "self") return false;
+    clearProfileMessageNote();
+    const tok = opts?.getGameAuthToken?.() ?? null;
+    if (!tok) {
+      oppProfileNote.textContent = "Session missing.";
+      oppProfileNote.hidden = false;
+      return false;
+    }
+    const raw = oppUsernameInput.value.trim();
+    try {
+      const r = await fetch("/api/player-profile/username", {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${tok}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ username: raw }),
+      });
+      const j = (await r.json().catch(() => ({}))) as {
+        error?: string;
+        usernameLockedUntil?: number;
+        effectiveDisplayName?: string;
+        customUsername?: string;
+      };
+      if (!r.ok) {
+        const map: Record<string, string> = {
+          username_cooldown: "Wait 24h.",
+          username_taken: "Taken.",
+          invalid_username: "Invalid.",
+          username_set_banned: "Blocked.",
+        };
+        oppProfileNote.textContent = map[j.error ?? ""] ?? "Error.";
+        oppProfileNote.hidden = false;
+        return false;
+      }
+      if (typeof j.usernameLockedUntil === "number") {
+        oppUsernameInput.dataset.lockedUntil = String(j.usernameLockedUntil);
+      }
+      profileUsernameSavedCustom = String(j.customUsername ?? "").trim();
+      if (typeof j.effectiveDisplayName === "string") {
+        oppDisplayNameEl.textContent = j.effectiveDisplayName.trim();
+      }
+      const compact = profileOpenCompact;
+      if (compact) {
+        oppWalletShortEl.textContent = walletDisplayName(compact);
+        oppWalletShortEl.hidden = !profileUsernameSavedCustom;
+      }
+      const until = Number(oppUsernameInput.dataset.lockedUntil);
+      oppUsernameInput.readOnly =
+        Number.isFinite(until) && until > Date.now();
+      updateProfileNameHitInteractivity("self");
+      return true;
+    } catch {
+      oppProfileNote.textContent = "Network.";
+      oppProfileNote.hidden = false;
+      return false;
+    }
+  }
+
+  oppDisplayNameEl.addEventListener("click", () => {
+    if (profileMessageKindOpen !== "self") return;
+    if (oppUsernameInput.readOnly) return;
+    beginUsernameEdit();
+  });
+  oppDisplayNameEl.addEventListener("keydown", (e) => {
+    if (profileMessageKindOpen !== "self" || oppUsernameInput.readOnly) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      beginUsernameEdit();
+    }
+  });
+  oppUsernameInput.addEventListener("blur", () => {
+    void maybeCommitUsernameBlur();
+  });
+  oppUsernameInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    if (!profileUsernameEditing) return;
+    e.preventDefault();
+    void (async () => {
+      const ok = await commitSelfUsername();
+      if (ok) endUsernameEditVisual();
+    })();
+  });
+
   function closeOtherPlayerProfile(): void {
     setProfileNimiqPayTipVisible(false);
+    setProfileAliasTipVisible(false);
     detachProfileEscape();
     profileOpenCompact = "";
     profileMessageKindOpen = null;
@@ -2047,12 +2330,24 @@ export function createHud(
     oppProfileMessage.replaceChildren();
     clearProfileMessageNote();
     oppSendNim.textContent = "Send NIM";
+    endUsernameEditVisual();
+    oppDisplayNameEl.textContent = "";
+    oppAliasTip.textContent = "";
+    oppAliasHost.hidden = true;
+    oppWalletShortEl.textContent = "";
+    oppWalletShortEl.hidden = true;
+    profileUsernameSavedCustom = "";
+    oppUsernameInput.value = "";
+    oppUsernameInput.readOnly = false;
+    oppAdminRow.hidden = true;
     otherPlayerProfile.hidden = true;
     otherPlayerProfile.setAttribute("aria-hidden", "true");
     oppIdent.hidden = true;
     oppIdent.removeAttribute("src");
     delete oppIdent.dataset.address;
     oppNimiqPayHost.hidden = true;
+    delete oppCopyAddressBtn.dataset.fullAddress;
+    oppCopyAddressBtn.removeAttribute("title");
   }
 
   function closeOtherPlayerContextMenu(): void {
@@ -2179,6 +2474,12 @@ export function createHud(
         cancelSelfProfileMessageEdit();
         return;
       }
+      if (profileUsernameEditing) {
+        e.preventDefault();
+        oppUsernameInput.value = profileUsernameSavedCustom;
+        endUsernameEditVisual();
+        return;
+      }
       closeOtherPlayerProfile();
     };
     window.addEventListener("keydown", profileEscapeHandler);
@@ -2207,6 +2508,12 @@ export function createHud(
     profileMessageLastSaved = "";
     clearProfileMessageNote();
     setProfileNimiqPayTipVisible(false);
+    setProfileAliasTipVisible(false);
+    endUsernameEditVisual();
+    oppDisplayNameEl.textContent =
+      _displayName.trim() || walletDisplayName(compact);
+    oppWalletShortEl.hidden = true;
+    profileUsernameSavedCustom = "";
     const showNimiqPayBadge =
       kind === "self"
         ? opts?.didSessionUseNimiqPay?.() === true
@@ -2224,9 +2531,8 @@ export function createHud(
     loading.textContent = "Loading…";
     oppProfileMessage.appendChild(loading);
 
-    oppAddrBtn.textContent = formatWalletAddressConnectAs(compact);
-    oppAddrBtn.title = compact;
-    oppAddrBtn.dataset.fullAddress = compact;
+    oppCopyAddressBtn.title = compact;
+    oppCopyAddressBtn.dataset.fullAddress = compact;
     if (kind === "self") {
       oppSendNim.textContent = "Open Wallet";
       oppSendNim.dataset.walletUrl = NIMIQ_WALLET_URL;
@@ -2255,12 +2561,66 @@ export function createHud(
     oppClose.focus({ preventScroll: true });
 
     const openFor = compact;
+    const tok = opts?.getGameAuthToken?.() ?? null;
+    const headers: Record<string, string> = {};
+    if (tok) headers.authorization = `Bearer ${tok}`;
     try {
       const r = await fetch(
-        `/api/player-profile/${encodeURIComponent(openFor)}`
+        `/api/player-profile/${encodeURIComponent(openFor)}`,
+        { headers }
       );
-      const j = (await r.json().catch(() => ({}))) as { message?: string };
+      const j = (await r.json().catch(() => ({}))) as {
+        message?: string;
+        effectiveDisplayName?: string;
+        recentAliases?: string[];
+        customUsername?: string | null;
+        usernameLockedUntil?: number | null;
+        usernameSetBanned?: boolean;
+        subjectUsernameBanned?: boolean;
+        subjectChannelMuted?: boolean;
+      };
       if (profileOpenCompact !== openFor) return;
+      if (typeof j.effectiveDisplayName === "string" && j.effectiveDisplayName.trim()) {
+        oppDisplayNameEl.textContent = j.effectiveDisplayName.trim();
+      }
+      const aliases = Array.isArray(j.recentAliases)
+        ? j.recentAliases.map((x) => String(x).trim()).filter(Boolean)
+        : [];
+      oppAliasTip.textContent =
+        aliases.length > 0 ? `Previously known as\n${aliases.join("\n")}` : "";
+      oppAliasHost.hidden = aliases.length === 0;
+      const admin = opts?.isGameAdmin?.() === true && kind === "other";
+      oppAdminRow.hidden = !admin;
+      if (admin) {
+        const banned = j.subjectUsernameBanned === true;
+        const muted = j.subjectChannelMuted === true;
+        oppAdBan.hidden = banned;
+        oppAdAllow.hidden = !banned;
+        oppAdMute.hidden = muted;
+        oppAdUnmute.hidden = !muted;
+      }
+      profileUsernameSavedCustom = j.customUsername?.trim() ?? "";
+      const hasCustom = Boolean(profileUsernameSavedCustom);
+      if (compact) {
+        oppWalletShortEl.textContent = walletDisplayName(compact);
+        oppWalletShortEl.hidden = !hasCustom;
+      }
+      if (kind === "self") {
+        oppUsernameInput.value = profileUsernameSavedCustom;
+        const bannedSelf = j.usernameSetBanned === true;
+        const until = j.usernameLockedUntil ?? 0;
+        oppUsernameInput.readOnly =
+          bannedSelf || (typeof until === "number" && until > Date.now());
+        if (typeof until === "number" && until > 0) {
+          oppUsernameInput.dataset.lockedUntil = String(until);
+        } else {
+          delete oppUsernameInput.dataset.lockedUntil;
+        }
+        updateProfileNameHitInteractivity("self");
+      } else {
+        oppUsernameInput.value = "";
+        updateProfileNameHitInteractivity("other");
+      }
       const msg = typeof j.message === "string" ? j.message : "";
       profileMessageLastSaved = msg;
       renderProfileMessageDisplay(kind, msg);
@@ -2295,10 +2655,10 @@ export function createHud(
     const opened = window.open(url, "_blank", "noopener,noreferrer");
     if (!opened) opts?.onNimRecipientDeepLinkPopupBlocked?.();
   });
-  oppAddrBtn.addEventListener("click", (ev) => {
+  oppCopyAddressBtn.addEventListener("click", (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
-    const full = oppAddrBtn.dataset.fullAddress?.trim() ?? "";
+    const full = oppCopyAddressBtn.dataset.fullAddress?.trim() ?? "";
     if (!full) return;
     void navigator.clipboard.writeText(full).catch(() => {
       /* idiomatic silent copy; no toast */
@@ -4776,10 +5136,28 @@ export function createHud(
   /** Debounced commit so `change` + `pointerup` + `blur` do not race or duplicate spam. */
   let panelPyramidBaseCommitTimer: ReturnType<typeof setTimeout> | null = null;
   let teleporterPanelCleanup: (() => void) | null = null;
-  let panelTeleporterRoomSel: HTMLSelectElement | null = null;
+  type TeleporterRoomPickerRow = {
+    id: string;
+    displayName: string;
+    isPublic: boolean;
+    playerCount: number;
+    isOfficial: boolean;
+    isBuiltin: boolean;
+  };
+  let panelTeleporterRoomRows: TeleporterRoomPickerRow[] | null = null;
+  let panelTeleporterSelectedRoomId: string | null = null;
+  let panelTeleporterRoomNameEl: HTMLElement | null = null;
+  let panelTeleporterRoomPicker: HTMLElement | null = null;
+  let panelTeleporterRoomPickerDocDown: ((ev: MouseEvent) => void) | null =
+    null;
+  let panelTeleporterRoomPickerKeydown: ((ev: KeyboardEvent) => void) | null =
+    null;
   let panelTeleporterX: HTMLInputElement | null = null;
   let panelTeleporterZ: HTMLInputElement | null = null;
   let applyTeleporterHubUi: (() => void) | null = null;
+  let teleporterPanelSyncRoomTrigger: (() => void) | null = null;
+  let teleporterPanelEnsureRowForId: ((id: string) => void) | null = null;
+  let teleporterPanelRenderPickerList: (() => void) | null = null;
 
   /** Context card + object Advanced popover — fixed just left of the mode sidebar rail. */
   function layoutObjectPanelSatellites(): void {
@@ -5266,10 +5644,18 @@ export function createHud(
     );
     teleporterPanelCleanup?.();
     teleporterPanelCleanup = null;
-    panelTeleporterRoomSel = null;
+    panelTeleporterRoomRows = null;
+    panelTeleporterSelectedRoomId = null;
+    panelTeleporterRoomNameEl = null;
+    panelTeleporterRoomPicker = null;
+    panelTeleporterRoomPickerDocDown = null;
+    panelTeleporterRoomPickerKeydown = null;
     panelTeleporterX = null;
     panelTeleporterZ = null;
     applyTeleporterHubUi = null;
+    teleporterPanelSyncRoomTrigger = null;
+    teleporterPanelEnsureRowForId = null;
+    teleporterPanelRenderPickerList = null;
     if (objectPanel) {
       objectPanel.remove();
       objectPanel = null;
@@ -5635,64 +6021,212 @@ export function createHud(
           "build-object-panel-context--teleporter"
         );
         objectPanelContextPopover.innerHTML = `
-          <div class="build-object-panel-context__inner">
-            <div class="build-object-panel-context__tp-head">
-              <div class="build-object-panel-context__tp-head-main">
-                <span class="build-object-panel-context__tp-title">Teleporter</span>
-                <span class="build-object-panel-context__tp-coords">(${opts.x}, ${opts.z})</span>
+          <div class="build-object-panel-context__inner build-object-panel-context__inner--teleporter">
+            <div class="build-object-panel-context__tp-stack">
+              <div class="build-object-panel-context__tp-head">
+                <div class="build-object-panel-context__tp-head-main">
+                  <span class="build-object-panel-context__tp-title">Teleporter</span>
+                  <span class="build-object-panel-context__tp-coords">(${opts.x}, ${opts.z})</span>
+                </div>
+                <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close teleporter editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
               </div>
-              <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close teleporter editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
-            </div>
-            <p class="build-object-panel-context__tp-lead">${
-              te.pending
-                ? "No destination yet — pick a room and save."
-                : "One-way teleport — change destination below."
-            }</p>
-            <div class="build-object-panel-context__tp-field">
-              <label class="build-object-panel-context__tp-label" for="build-object-panel-tp-room">Room</label>
-              <select id="build-object-panel-tp-room" class="build-object-panel-context__tp-select" autocomplete="off"></select>
-            </div>
-            <p class="build-object-panel-context__tp-hint" id="build-object-panel-tp-hub-hint" hidden>Hub: spawn is fixed at the center (0, 0).</p>
-            <div class="build-object-panel-context__tp-coords-wrap" id="build-object-panel-tp-dest-coords-wrap">
-              <div class="build-object-panel-context__tp-xz">
-                <label class="build-object-panel-context__tp-num-label">X <input type="number" id="build-object-panel-tp-x" class="build-object-panel-context__tp-num" step="1" inputmode="numeric" /></label>
-                <label class="build-object-panel-context__tp-num-label">Z <input type="number" id="build-object-panel-tp-z" class="build-object-panel-context__tp-num" step="1" inputmode="numeric" /></label>
+              <p class="build-object-panel-context__tp-lead">${
+                te.pending
+                  ? "No destination yet — pick a room and save."
+                  : "One-way teleport — change destination below."
+              }</p>
+              <div class="build-object-panel-context__tp-field build-object-panel-context__tp-field--room">
+                <button type="button" id="build-object-panel-tp-room-open" class="build-object-panel-context__tp-room-trigger" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="build-object-panel-context__tp-room-trigger-cap">Room</span>
+                  <span class="build-object-panel-context__tp-room-trigger-name" id="build-object-panel-tp-room-name"></span>
+                  <span class="build-object-panel-context__tp-room-trigger-meta" id="build-object-panel-tp-room-meta"></span>
+                </button>
               </div>
-              <button type="button" class="build-object-panel__btn build-object-panel-context__tp-pick" id="build-object-panel-tp-pick">Use tile I click…</button>
+              <p class="build-object-panel-context__tp-hint" id="build-object-panel-tp-hub-hint" hidden>Hub: spawn is fixed at the center (0, 0).</p>
+              <div class="build-object-panel-context__tp-coords-wrap" id="build-object-panel-tp-dest-coords-wrap">
+                <div class="build-object-panel-context__tp-xz">
+                  <label class="build-object-panel-context__tp-num-label">X <input type="number" id="build-object-panel-tp-x" class="build-object-panel-context__tp-num" step="1" inputmode="numeric" /></label>
+                  <label class="build-object-panel-context__tp-num-label">Z <input type="number" id="build-object-panel-tp-z" class="build-object-panel-context__tp-num" step="1" inputmode="numeric" /></label>
+                </div>
+                <button type="button" class="build-object-panel__btn build-object-panel-context__tp-pick" id="build-object-panel-tp-pick">Use tile I click…</button>
+              </div>
+              <button type="button" class="build-object-panel__btn build-object-panel-context__tp-save" id="build-object-panel-tp-save">Save destination</button>
+              <div class="build-object-panel-context__actions">
+                <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
+                <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
+              </div>
             </div>
-            <button type="button" class="build-object-panel__btn build-object-panel-context__tp-save" id="build-object-panel-tp-save">Save destination</button>
-            <div class="build-object-panel-context__actions">
-              <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
-              <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
+            <div id="build-object-panel-tp-room-picker" class="build-object-panel-context__tp-room-picker" hidden>
+              <div class="build-object-panel-context__tp-room-picker-head">
+                <button type="button" class="build-object-panel-context__tp-room-picker-back" id="build-object-panel-tp-room-picker-back">← Back</button>
+                <span class="build-object-panel-context__tp-room-picker-title">Choose room</span>
+              </div>
+              <ul class="build-object-panel-context__tp-room-picker-list" id="build-object-panel-tp-room-picker-list" role="listbox" aria-label="Rooms"></ul>
             </div>
           </div>`;
         const tpRoot = objectPanelContextPopover;
-        const roomSel = tpRoot.querySelector(
-          "#build-object-panel-tp-room"
-        ) as HTMLSelectElement;
-        for (const o of te.roomOptions) {
-          const opt = document.createElement("option");
-          opt.value = o.id;
-          opt.textContent = `${o.displayName} (${normalizeRoomId(o.id)})`;
-          roomSel.appendChild(opt);
-        }
-        const nCur = normalizeRoomId(te.destRoomId);
-        let matchedRoom = false;
-        for (let i = 0; i < roomSel.options.length; i++) {
-          if (normalizeRoomId(roomSel.options[i]!.value) === nCur) {
-            roomSel.selectedIndex = i;
-            matchedRoom = true;
-            break;
+        const tpFormatRoomCode = (id: string): string =>
+          normalizeRoomId(id).toUpperCase();
+        const tpSubtitleForRow = (row: TeleporterRoomPickerRow): string => {
+          const code = tpFormatRoomCode(row.id);
+          const bits: string[] = [];
+          if (row.isBuiltin) bits.push("Built-in");
+          else if (row.isOfficial) bits.push("Official");
+          bits.push(row.isPublic ? "Public" : "Private");
+          bits.push(`${row.playerCount} online`);
+          return `${code} · ${bits.join(" · ")}`;
+        };
+        const roomOpenBtn = tpRoot.querySelector(
+          "#build-object-panel-tp-room-open"
+        ) as HTMLButtonElement;
+        const roomNameEl = tpRoot.querySelector(
+          "#build-object-panel-tp-room-name"
+        ) as HTMLElement;
+        const roomMetaEl = tpRoot.querySelector(
+          "#build-object-panel-tp-room-meta"
+        ) as HTMLElement;
+        const roomPicker = tpRoot.querySelector(
+          "#build-object-panel-tp-room-picker"
+        ) as HTMLElement;
+        const roomPickerList = tpRoot.querySelector(
+          "#build-object-panel-tp-room-picker-list"
+        ) as HTMLUListElement;
+        const detachTeleporterRoomPickerListeners = (): void => {
+          if (panelTeleporterRoomPickerDocDown) {
+            document.removeEventListener(
+              "mousedown",
+              panelTeleporterRoomPickerDocDown,
+              true
+            );
+            panelTeleporterRoomPickerDocDown = null;
           }
+          if (panelTeleporterRoomPickerKeydown) {
+            document.removeEventListener(
+              "keydown",
+              panelTeleporterRoomPickerKeydown,
+              true
+            );
+            panelTeleporterRoomPickerKeydown = null;
+          }
+        };
+        const closeTeleporterRoomPicker = (): void => {
+          detachTeleporterRoomPickerListeners();
+          if (roomPicker) roomPicker.hidden = true;
+          if (roomOpenBtn) roomOpenBtn.setAttribute("aria-expanded", "false");
+        };
+        const syncTeleporterRoomTrigger = (): void => {
+          if (!roomNameEl || !roomMetaEl) return;
+          const id = panelTeleporterSelectedRoomId ?? "";
+          if (!id) {
+            roomNameEl.textContent = "—";
+            roomMetaEl.textContent = "Tap to choose";
+            return;
+          }
+          const row = panelTeleporterRoomRows?.find(
+            (r) => normalizeRoomId(r.id) === id
+          );
+          if (row) {
+            roomNameEl.textContent = row.displayName;
+            roomMetaEl.textContent = tpSubtitleForRow(row);
+          } else {
+            roomNameEl.textContent = `↪ ${tpFormatRoomCode(id)}`;
+            roomMetaEl.textContent =
+              "Open list to pick a catalog room, or save with current X/Z.";
+          }
+        };
+        const ensureTeleporterRowForId = (destId: string): void => {
+          if (!panelTeleporterRoomRows) return;
+          const n = normalizeRoomId(destId);
+          if (!n) return;
+          if (
+            panelTeleporterRoomRows.some((r) => normalizeRoomId(r.id) === n)
+          ) {
+            return;
+          }
+          panelTeleporterRoomRows.push({
+            id: n,
+            displayName: n,
+            isPublic: true,
+            playerCount: 0,
+            isOfficial: false,
+            isBuiltin: false,
+          });
+        };
+        const renderTeleporterRoomPickerList = (): void => {
+          if (!roomPickerList) return;
+          const selId = panelTeleporterSelectedRoomId
+            ? normalizeRoomId(panelTeleporterSelectedRoomId)
+            : "";
+          roomPickerList.replaceChildren();
+          const rows = panelTeleporterRoomRows ?? [];
+          for (const row of rows) {
+            const rid = normalizeRoomId(row.id);
+            const li = document.createElement("li");
+            li.className = "build-object-panel-context__tp-room-picker-row";
+            li.setAttribute("role", "option");
+            li.setAttribute(
+              "aria-selected",
+              rid === selId ? "true" : "false"
+            );
+            const main = document.createElement("div");
+            main.className =
+              "build-object-panel-context__tp-room-picker-row-name";
+            main.textContent = row.displayName;
+            const sub = document.createElement("div");
+            sub.className =
+              "build-object-panel-context__tp-room-picker-row-meta";
+            sub.textContent = tpSubtitleForRow(row);
+            li.appendChild(main);
+            li.appendChild(sub);
+            li.addEventListener("click", () => {
+              panelTeleporterSelectedRoomId = rid;
+              syncTeleporterRoomTrigger();
+              applyTeleporterHubUi?.();
+              closeTeleporterRoomPicker();
+            });
+            roomPickerList.appendChild(li);
+          }
+        };
+        teleporterPanelSyncRoomTrigger = syncTeleporterRoomTrigger;
+        teleporterPanelEnsureRowForId = ensureTeleporterRowForId;
+        teleporterPanelRenderPickerList = renderTeleporterRoomPickerList;
+        const openTeleporterRoomPicker = (): void => {
+          closeTeleporterRoomPicker();
+          renderTeleporterRoomPickerList();
+          roomPicker.hidden = false;
+          roomOpenBtn.setAttribute("aria-expanded", "true");
+          panelTeleporterRoomPickerDocDown = (ev: MouseEvent) => {
+            const t = ev.target as Node | null;
+            if (!t) return;
+            if (roomOpenBtn.contains(t)) return;
+            if (roomPicker.contains(t)) return;
+            closeTeleporterRoomPicker();
+          };
+          document.addEventListener(
+            "mousedown",
+            panelTeleporterRoomPickerDocDown,
+            true
+          );
+          panelTeleporterRoomPickerKeydown = (ev: KeyboardEvent) => {
+            if (ev.key === "Escape") {
+              ev.preventDefault();
+              closeTeleporterRoomPicker();
+            }
+          };
+          document.addEventListener(
+            "keydown",
+            panelTeleporterRoomPickerKeydown,
+            true
+          );
+        };
+        panelTeleporterRoomRows = te.roomOptions.map((o) => ({ ...o }));
+        panelTeleporterSelectedRoomId = normalizeRoomId(te.destRoomId);
+        if (panelTeleporterSelectedRoomId) {
+          ensureTeleporterRowForId(panelTeleporterSelectedRoomId);
         }
-        if (!matchedRoom && te.destRoomId) {
-          const opt = document.createElement("option");
-          const raw = normalizeRoomId(te.destRoomId);
-          opt.value = raw;
-          opt.textContent = `↪ ${raw}`;
-          roomSel.appendChild(opt);
-          roomSel.value = raw;
-        }
+        panelTeleporterRoomNameEl = roomNameEl;
+        panelTeleporterRoomPicker = roomPicker;
+        syncTeleporterRoomTrigger();
         const xIn = tpRoot.querySelector(
           "#build-object-panel-tp-x"
         ) as HTMLInputElement;
@@ -5701,11 +6235,9 @@ export function createHud(
         ) as HTMLInputElement;
         xIn.value = String(te.destX);
         zIn.value = String(te.destZ);
-        panelTeleporterRoomSel = roomSel;
         panelTeleporterX = xIn;
         panelTeleporterZ = zIn;
         applyTeleporterHubUi = () => {
-          const sel = panelTeleporterRoomSel;
           const wrap = tpRoot.querySelector(
             "#build-object-panel-tp-dest-coords-wrap"
           ) as HTMLElement | null;
@@ -5715,18 +6247,27 @@ export function createHud(
           const pickBtn = tpRoot.querySelector(
             "#build-object-panel-tp-pick"
           ) as HTMLButtonElement | null;
-          if (!sel || !wrap || !hubHint) return;
-          const isHub = normalizeRoomId(sel.value) === HUB_ROOM_ID;
+          if (!wrap || !hubHint) return;
+          const destRoom = panelTeleporterSelectedRoomId
+            ? normalizeRoomId(panelTeleporterSelectedRoomId)
+            : "";
+          const isHub = destRoom === HUB_ROOM_ID;
           wrap.hidden = isHub;
           hubHint.hidden = !isHub;
           if (pickBtn) {
-            const destRoom = normalizeRoomId(sel.value);
             const here = normalizeRoomId(te.currentRoomId);
             pickBtn.hidden = isHub || destRoom !== here;
           }
         };
-        roomSel.addEventListener("change", () => applyTeleporterHubUi?.());
+        roomOpenBtn.addEventListener("click", () => {
+          if (roomPicker.hidden) openTeleporterRoomPicker();
+          else closeTeleporterRoomPicker();
+        });
+        tpRoot
+          .querySelector("#build-object-panel-tp-room-picker-back")
+          ?.addEventListener("click", () => closeTeleporterRoomPicker());
         teleporterPanelCleanup = () => {
+          closeTeleporterRoomPicker();
           te.onPickCancel();
         };
         applyTeleporterHubUi();
@@ -5748,7 +6289,9 @@ export function createHud(
         tpRoot
           .querySelector("#build-object-panel-tp-save")
           ?.addEventListener("click", () => {
-            const roomId = normalizeRoomId(roomSel.value.trim());
+            const roomId = panelTeleporterSelectedRoomId
+              ? normalizeRoomId(panelTeleporterSelectedRoomId)
+              : "";
             if (!roomId) return;
             if (roomId === HUB_ROOM_ID) {
               te.onConfigure(roomId, 0, 0);
@@ -6195,26 +6738,22 @@ export function createHud(
       destX: number;
       destZ: number;
     }) {
-      if (!panelTeleporterRoomSel || !panelTeleporterX || !panelTeleporterZ) {
+      if (
+        !panelTeleporterRoomNameEl ||
+        !panelTeleporterX ||
+        !panelTeleporterZ
+      ) {
         return;
       }
       const n = normalizeRoomId(p.destRoomId);
-      const sel = panelTeleporterRoomSel;
-      let matched = false;
-      for (let i = 0; i < sel.options.length; i++) {
-        if (normalizeRoomId(sel.options[i]!.value) === n) {
-          sel.selectedIndex = i;
-          matched = true;
-          break;
-        }
-      }
-      if (!matched) {
-        const opt = document.createElement("option");
-        const v = normalizeRoomId(p.destRoomId);
-        opt.value = v;
-        opt.textContent = `↪ ${v}`;
-        sel.appendChild(opt);
-        sel.value = v;
+      panelTeleporterSelectedRoomId = n;
+      teleporterPanelEnsureRowForId?.(n);
+      teleporterPanelSyncRoomTrigger?.();
+      if (
+        panelTeleporterRoomPicker &&
+        !panelTeleporterRoomPicker.hidden
+      ) {
+        teleporterPanelRenderPickerList?.();
       }
       panelTeleporterX.value = String(p.destX);
       panelTeleporterZ.value = String(p.destZ);

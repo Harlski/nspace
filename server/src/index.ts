@@ -12,6 +12,7 @@ import {
   addClient,
   adminRandomExtraFloorLayout,
   startRoomTick,
+  syncPlayerProfileDisplayNameForWallet,
 } from "./rooms.js";
 import { startGameWsMetricsFlushTimer } from "./gameWsMetrics.js";
 import { flushPersistWorldStateSync } from "./worldPersistence.js";
@@ -30,6 +31,7 @@ import { flushBillboardsSync } from "./billboards.js";
 import { flushVoxelTextsSync } from "./voxelTexts.js";
 import { getTopMazeRecords } from "./mazeRecords.js";
 import { installSwarmErrorForwarder } from "./swarmLogForwarder.js";
+import { CHAMBER_ROOM_ID } from "./roomLayouts.js";
 import {
   flushNimPayoutQueueSync,
   getNimPayoutWalletBalanceLuna,
@@ -59,9 +61,18 @@ import {
   saveAnalyticsAllowlistToDisk,
 } from "./analyticsAllowlistStore.js";
 import {
-  getPlayerProfileMessage,
+  adminClearPlayerUsername,
+  getPlayerProfilePublicJson,
   setPlayerProfileMessage,
+  trySetPlayerUsername,
 } from "./playerProfileStore.js";
+import {
+  isChannelMuted,
+  isUsernameSetBanned,
+  listModerationSnapshot,
+  setChannelMuted,
+  setUsernameSetBanned,
+} from "./moderationStore.js";
 import { nimiqIdenticonDataUrl } from "./nimiqIdenticonServer.js";
 
 function analyticsDayStartUtcMs(dayStr: string): number | null {
@@ -224,7 +235,7 @@ app.get("/api/identicon/:wallet", async (req, res) => {
   }
 });
 
-/** Public read: short message shown on in-game player profile (normalized `NQ…` in path). */
+/** Public read: profile message, display name, aliases (normalized `NQ…` in path). */
 app.get("/api/player-profile/:address", (req, res) => {
   try {
     const decoded = decodeURIComponent(String(req.params.address ?? "").trim());
@@ -233,7 +244,23 @@ app.get("/api/player-profile/:address", (req, res) => {
       res.status(400).json({ error: "invalid_address" });
       return;
     }
-    res.json({ message: getPlayerProfileMessage(addr) });
+    const pub = getPlayerProfilePublicJson(addr) as Record<string, unknown>;
+    const t = bearerToken(req);
+    if (t) {
+      try {
+        const sub = normalizeWalletId(verifySession(t, jwtSecret).sub);
+        if (sub === addr) {
+          pub.usernameSetBanned = isUsernameSetBanned(addr);
+          pub.channelMuted = isChannelMuted(addr);
+        } else if (isAdmin(sub)) {
+          pub.subjectUsernameBanned = isUsernameSetBanned(addr);
+          pub.subjectChannelMuted = isChannelMuted(addr);
+        }
+      } catch {
+        /* ignore invalid bearer on public read */
+      }
+    }
+    res.json(pub);
   } catch (err) {
     console.error("[player-profile/get]", err);
     res.status(500).json({ error: "internal" });
@@ -914,6 +941,80 @@ app.put("/api/player-profile/message", requireJwt, (req, res) => {
   }
 });
 
+app.put("/api/player-profile/username", requireJwt, (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const raw = (req.body as Record<string, unknown> | null)?.username;
+  if (typeof raw !== "string") {
+    res.status(400).json({ error: "missing_username" });
+    return;
+  }
+  const result = trySetPlayerUsername(signer, raw);
+  if (!result.ok) {
+    const e = result.error;
+    const status =
+      e === "username_cooldown"
+        ? 429
+        : e === "username_taken"
+          ? 409
+          : 400;
+    res.status(status).json({ error: e });
+    return;
+  }
+  syncPlayerProfileDisplayNameForWallet(signer);
+  res.json({
+    ok: true,
+    customUsername: result.customUsername,
+    effectiveDisplayName: result.effectiveDisplayName,
+    usernameLockedUntil: result.usernameLockedUntil,
+  });
+});
+
+app.post("/api/admin/moderation", requireSystemAdminWallet, (req, res) => {
+  const actor = normalizeWalletId(jwtAddressFromReq(req) ?? "");
+  const body = req.body as Record<string, unknown> | null;
+  const action = String(body?.action ?? "");
+  const target = normalizeWalletId(String(body?.target ?? ""));
+  if (!target || target.length < 4) {
+    res.status(400).json({ error: "invalid_target" });
+    return;
+  }
+  try {
+    if (action === "clear_username") {
+      adminClearPlayerUsername(target);
+      syncPlayerProfileDisplayNameForWallet(target);
+      res.json({ ok: true });
+      return;
+    }
+    if (action === "username_ban") {
+      setUsernameSetBanned(target, body?.banned === true, actor);
+      res.json({ ok: true });
+      return;
+    }
+    if (action === "channel_mute") {
+      setChannelMuted(target, body?.muted === true, actor);
+      res.json({ ok: true });
+      return;
+    }
+    res.status(400).json({ error: "unknown_action" });
+  } catch (err) {
+    console.error("[admin/moderation]", err);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.get("/api/admin/bans", requireSystemAdminWallet, (_req, res) => {
+  res.json(listModerationSnapshot());
+});
+
+app.get("/admin/bans", requireSystemAdminWallet, (_req, res) => {
+  res.json(listModerationSnapshot());
+});
+
 app.get("/api/auth/nonce", (_req, res) => {
   const { nonce, expiresAt } = createNonce();
   res.json({ nonce, expiresAt });
@@ -1025,7 +1126,7 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
-  const roomId = url.searchParams.get("room") || "hub";
+  const roomId = url.searchParams.get("room") || CHAMBER_ROOM_ID;
   const sx = url.searchParams.get("sx");
   const sz = url.searchParams.get("sz");
   let spawnHint: { x: number; z: number } | undefined;

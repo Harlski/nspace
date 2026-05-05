@@ -2,8 +2,12 @@
 export const DESIGN_WIDTH = 1280;
 export const DESIGN_HEIGHT = 720;
 
-/** Default WebSocket room; server normalizes `lobby` to hub as well. */
-export const ROOM_ID = "hub";
+import { CHAMBER_DEFAULT_SPAWN, CHAMBER_ROOM_ID } from "./roomLayouts.js";
+
+/** Default WebSocket room for new sessions and reconnects (spawn uses `CHAMBER_DEFAULT_SPAWN`). */
+export const ROOM_ID = CHAMBER_ROOM_ID;
+
+export { CHAMBER_DEFAULT_SPAWN };
 
 /** World units: one tile = 1 unit. */
 export const TILE_SIZE = 1;

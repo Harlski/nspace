@@ -72,6 +72,11 @@ import {
 } from "./guestNames.js";
 import { walletDisplayName } from "./walletDisplayName.js";
 import {
+  getEffectivePlayerDisplayName,
+  getRecentAliases,
+} from "./playerProfileStore.js";
+import { isChannelMuted } from "./moderationStore.js";
+import {
   claimTile,
   getClaimsInBounds,
   loadCanvasClaims,
@@ -79,6 +84,7 @@ import {
 } from "./canvasCanvas.js";
 import {
   CANVAS_ROOM_ID,
+  CHAMBER_DEFAULT_SPAWN,
   CHAMBER_ROOM_ID,
   HUB_MAZE_EXIT_SPAWN,
 } from "./roomLayouts.js";
@@ -387,6 +393,8 @@ export interface PlayerState {
   z: number;
   vx: number;
   vz: number;
+  /** Prior display names (newest first), for profile tooltip. */
+  recentAliases?: string[];
   /** From session JWT when this client connected via Nimiq Pay mini-app (broadcast to room for profile UI). */
   nimiqPay?: boolean;
   /** Ephemeral: client tab hidden/background or NIM send / wallet flow. */
@@ -2820,11 +2828,14 @@ export function addClient(
   
   ensureFakePlayers(roomId);
   const room = roomOf(roomId);
-  const displayName = walletDisplayName(address);
+  const compactSelf = compactAddress(address);
+  const displayName = getEffectivePlayerDisplayName(compactSelf);
+  const recentAliases = getRecentAliases(compactSelf);
 
   const player: PlayerState = {
     address,
     displayName,
+    recentAliases,
     x: 0,
     y: 0,
     z: 0,
@@ -2836,8 +2847,17 @@ export function addClient(
   let placedSpawn = false;
   let resolvedSpawnTile = false;
   const isCanvasRoom = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
+  const isChamberRoom = normalizeRoomId(roomId) === CHAMBER_ROOM_ID;
   if (isCanvasRoom) {
     const t = snapToTile(CANVAS_SPAWN_X, CANVAS_SPAWN_Z);
+    if (isWalkableForRoom(roomId, t.x, t.z)) {
+      player.x = t.x;
+      player.z = t.z;
+      placedSpawn = true;
+      resolvedSpawnTile = true;
+    }
+  } else if (isChamberRoom) {
+    const t = snapToTile(CHAMBER_DEFAULT_SPAWN.x, CHAMBER_DEFAULT_SPAWN.z);
     if (isWalkableForRoom(roomId, t.x, t.z)) {
       player.x = t.x;
       player.z = t.z;
@@ -4444,6 +4464,10 @@ export function addClient(
       const now = Date.now();
       if (now - conn.lastChatAt < RATE_CHAT_MS) return;
       conn.lastChatAt = now;
+      if (isChannelMuted(compactAddress(address))) {
+        wsSafeSend(ws, { type: "error", code: "channel_muted" } satisfies OutMsg);
+        return;
+      }
       let text = String(msg.text ?? "").slice(0, CHAT_MAX);
       text = text.replace(/[\u0000-\u001F\u007F]/g, "").trim();
       if (!text) return;
@@ -4451,7 +4475,7 @@ export function addClient(
       conn.chatTyping = false;
       broadcast(currentRoomId, {
         type: "chat",
-        from: displayName,
+        from: conn.displayName,
         fromAddress: address,
         text,
         at: now,
@@ -5548,12 +5572,14 @@ export function addClient(
     const playerCurrentRoom = findPlayerRoom(address);
     if (playerCurrentRoom) {
       endSession(conn.sessionId, address, playerCurrentRoom, conn.sessionStartedAt);
-      spawnMap(playerCurrentRoom).set(address, {
-        x: conn.player.x,
-        z: conn.player.z,
-        y: conn.player.y,
-      });
-      schedulePersistWorldState();
+      if (normalizeRoomId(playerCurrentRoom) !== CHAMBER_ROOM_ID) {
+        spawnMap(playerCurrentRoom).set(address, {
+          x: conn.player.x,
+          z: conn.player.z,
+          y: conn.player.y,
+        });
+        schedulePersistWorldState();
+      }
       const room = roomOf(playerCurrentRoom);
       room.delete(address);
       console.log(
@@ -5564,4 +5590,22 @@ export function addClient(
       if (room.size === 0) clearFakePlayers(playerCurrentRoom);
     }
   });
+}
+
+/** Apply profile store display name + alias list to any live connection for this wallet. */
+export function syncPlayerProfileDisplayNameForWallet(walletRaw: string): void {
+  const key = compactAddress(walletRaw);
+  if (!key) return;
+  const name = getEffectivePlayerDisplayName(key);
+  const aliases = getRecentAliases(key);
+  for (const [roomId, room] of rooms) {
+    for (const [addr, conn] of room) {
+      if (compactAddress(addr) !== key) continue;
+      conn.displayName = name;
+      conn.player.displayName = name;
+      conn.player.recentAliases = aliases;
+      broadcastRoomStateFull(roomId);
+      return;
+    }
+  }
 }
