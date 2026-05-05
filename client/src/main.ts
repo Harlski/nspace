@@ -70,13 +70,19 @@ const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
 const IDLE_RETURN_HUB_MS = 15 * 60 * 1000;
 const LS_ZOOM_NON_MAZE_FRUSTUM = "nspace_zoom_non_maze_frustum";
 
-/** Admin wallet addresses (must match server config) */
+/** Admin wallet addresses (must match server `config.ADMIN_ADDRESSES`). */
 const ADMIN_ADDRESSES = new Set([
   "NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y",
 ]);
 
+const ADMIN_COMPACT_KEYS = new Set(
+  [...ADMIN_ADDRESSES].map((a) => a.replace(/\s+/g, "").toUpperCase())
+);
+
+/** Match server `isAdmin`: JWT `sub` may be grouped or compact. */
 function isAdmin(address: string): boolean {
-  return ADMIN_ADDRESSES.has(address);
+  const c = String(address || "").replace(/\s+/g, "").toUpperCase();
+  return ADMIN_COMPACT_KEYS.has(c);
 }
 
 function compactWallet(addr: string): string {
