@@ -1,0 +1,36 @@
+{
+  "framework": null,
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build -w client",
+  "outputDirectory": "client/dist",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://api.nimiq.space/api/:path*"
+    },
+    {
+      "source": "/analytics",
+      "destination": "https://api.nimiq.space/analytics"
+    },
+    {
+      "source": "/admin",
+      "destination": "https://api.nimiq.space/admin"
+    },
+    {
+      "source": "/admin/system",
+      "destination": "https://api.nimiq.space/admin/system"
+    },
+    {
+      "source": "/payouts",
+      "destination": "https://api.nimiq.space/payouts"
+    },
+    {
+      "source": "/pending-payouts",
+      "destination": "https://api.nimiq.space/payouts"
+    },
+    {
+      "source": "/nim-chart-api/:path*",
+      "destination": "https://api.nimiq.space/nim-chart-api/:path*"
+    }
+  ]
+}
