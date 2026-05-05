@@ -27,8 +27,8 @@ function nimChartApiBaseUrl(): string {
     import.meta.env.VITE_NIM_CHART_API_URL ?? ""
   ).trim();
   if (raw) return raw.replace(/\/$/, "");
-  if (import.meta.env.DEV) return "/nim-chart-api";
-  return "";
+  /** Same-origin path: Vite dev proxy and prod SPA rewrites (e.g. nimiq.space → chart API). */
+  return "/nim-chart-api";
 }
 
 /** Wait for Muli/Mulish so canvas draws match UI (no-op if Font Loading API missing). */

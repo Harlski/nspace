@@ -3009,7 +3009,7 @@ export function createHud(
       ctx.font = "22px system-ui,Segoe UI,sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(
-        "Preview unavailable — set VITE_NIM_CHART_API_URL (rebuild) and proxy /nim-chart-api.",
+        "Preview unavailable — chart API unreachable or OHLC fetch failed.",
         cv.width / 2,
         cv.height / 2
       );
