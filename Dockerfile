@@ -14,6 +14,10 @@ RUN npm ci
 COPY client/ client/
 COPY server/ server/
 
+# Vite embeds VITE_* at build time. Set in repo root .env for `docker compose build` substitution.
+ARG VITE_NIM_CHART_API_URL=
+ENV VITE_NIM_CHART_API_URL=${VITE_NIM_CHART_API_URL}
+
 RUN npm run build && npm prune --omit=dev
 
 FROM node:22-bookworm-slim AS run

@@ -22,7 +22,10 @@ services:
     # Optional: COINGECKO_API_KEY for Pro; COINGECKO_DEMO_API_KEY for demo tier.
 
   nspace:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_NIM_CHART_API_URL: ${VITE_NIM_CHART_API_URL:-}
     image: nspace:latest
     restart: unless-stopped
     ports:

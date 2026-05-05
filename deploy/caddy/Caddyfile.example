@@ -8,5 +8,9 @@
 # HTTP + HTTPS + Let's Encrypt are automatic. WebSockets (/ws) work with default reverse_proxy.
 
 api.nimiq.space {
+	# nim-chart-service (Docker 127.0.0.1:3080); strip prefix so upstream sees /v1/nim/ohlc, /health
+	handle_path /nim-chart-api/* {
+		reverse_proxy 127.0.0.1:3080
+	}
 	reverse_proxy 127.0.0.1:3001
 }

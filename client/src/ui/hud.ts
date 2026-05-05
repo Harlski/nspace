@@ -3009,7 +3009,7 @@ export function createHud(
       ctx.font = "22px system-ui,Segoe UI,sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(
-        "Preview unavailable — start nim-chart-service (:3080) or set VITE_NIM_CHART_API_URL.",
+        "Preview unavailable — set VITE_NIM_CHART_API_URL (rebuild) and proxy /nim-chart-api.",
         cv.width / 2,
         cv.height / 2
       );

@@ -23,6 +23,10 @@
     {
       "source": "/pending-payouts",
       "destination": "https://api.nimiq.space/payouts"
+    },
+    {
+      "source": "/nim-chart-api/:path*",
+      "destination": "https://api.nimiq.space/nim-chart-api/:path*"
     }
   ]
 }
