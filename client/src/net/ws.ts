@@ -60,6 +60,13 @@ export type BillboardState = {
   slideshowEpochMs?: number;
   visitName: string;
   visitUrl: string;
+  /** Live NIM OHLC chart; client loads data from nim-chart-service. */
+  liveChart?: {
+    range: "24h" | "7d";
+    fallbackAdvertId: string;
+    rangeCycle?: boolean;
+    cycleIntervalSec?: number;
+  };
   createdBy: string;
   createdAt: number;
 };
@@ -507,20 +514,28 @@ export function sendPlaceBillboard(
     advertId: string;
     advertIds: string[];
     intervalMs: number;
+    liveChart?: {
+    range: "24h" | "7d";
+    fallbackAdvertId: string;
+    rangeCycle?: boolean;
+    cycleIntervalSec?: number;
+  };
   }
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(
-    JSON.stringify({
-      type: "placeBillboard",
-      x: payload.x,
-      z: payload.z,
-      orientation: payload.orientation,
-      advertId: payload.advertId,
-      advertIds: payload.advertIds,
-      intervalMs: payload.intervalMs,
-    })
-  );
+  const body: Record<string, unknown> = {
+    type: "placeBillboard",
+    x: payload.x,
+    z: payload.z,
+    orientation: payload.orientation,
+    advertId: payload.advertId,
+    advertIds: payload.advertIds,
+    intervalMs: payload.intervalMs,
+  };
+  if (payload.liveChart) {
+    body.liveChart = payload.liveChart;
+  }
+  ws.send(JSON.stringify(body));
 }
 
 export function sendUpdateBillboard(
@@ -532,6 +547,12 @@ export function sendUpdateBillboard(
     advertIds: string[];
     intervalMs: number;
     yawSteps?: number;
+    liveChart?: {
+    range: "24h" | "7d";
+    fallbackAdvertId: string;
+    rangeCycle?: boolean;
+    cycleIntervalSec?: number;
+  };
   }
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
@@ -545,6 +566,9 @@ export function sendUpdateBillboard(
   };
   if (payload.yawSteps !== undefined) {
     body.yawSteps = payload.yawSteps;
+  }
+  if (payload.liveChart) {
+    body.liveChart = payload.liveChart;
   }
   ws.send(JSON.stringify(body));
 }

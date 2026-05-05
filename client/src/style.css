@@ -1835,6 +1835,64 @@ button.hud-brand:focus-visible {
   gap: 12px;
 }
 
+.billboard-modal__tabs {
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  align-self: flex-start;
+}
+
+.billboard-modal__tab {
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: none;
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(226, 232, 240, 0.65);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.billboard-modal__tab--active {
+  background: rgba(59, 130, 246, 0.28);
+  color: #e8eaef;
+}
+
+.billboard-modal__source-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* `[hidden]` must win: our flex rule otherwise keeps both tab panels in layout. */
+.billboard-modal__source-panel[hidden] {
+  display: none !important;
+}
+
+.billboard-modal__chart-preview-wrap {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0b0f14;
+  max-width: 100%;
+}
+
+.billboard-modal__chart-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  vertical-align: top;
+}
+
 .billboard-modal__grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1864,6 +1922,23 @@ button.hud-brand:focus-visible {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: rgba(226, 232, 240, 0.55);
+}
+
+.billboard-modal__label--inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 600;
+  font-size: 13px;
+  color: #e2e8f0;
+}
+
+.billboard-modal__checkbox {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
 }
 
 .billboard-modal__select,

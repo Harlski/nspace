@@ -172,6 +172,12 @@ export default defineConfig({
         changeOrigin: true,
         configure: attachDevProxyHandlers,
       },
+      /** Standalone nim-chart-service (Docker :3080 or `node nim-chart-service/server.mjs`). */
+      "/nim-chart-api": {
+        target: "http://127.0.0.1:3080",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/nim-chart-api/, "") || "/",
+      },
     },
   },
   preview: {

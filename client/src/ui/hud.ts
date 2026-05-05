@@ -12,6 +12,18 @@ import {
   BILLBOARD_MAX_ADVERT_SLOTS,
 } from "../game/billboardAdvertsCatalog.js";
 import { BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED } from "../game/billboardPlacementFlags.js";
+import {
+  DEFAULT_BILLBOARD_CHART_FALLBACK_ADVERT_ID,
+} from "../game/billboardAdvertsCatalog.js";
+import {
+  drawNimBillboardCandles,
+  ensureNimChartFontsLoaded,
+  fetchNimBillboardOhlc,
+  nimChartTitleForRange,
+  NIM_BILLBOARD_CHART_H,
+  NIM_BILLBOARD_CHART_W,
+  type NimBillboardChartRange,
+} from "../game/billboardNimChart.js";
 import type {
   BillboardState,
   ObstacleProps,
@@ -331,6 +343,11 @@ export function createHud(
       advertId: string;
       advertIds: string[];
       intervalSec: number;
+      liveChartRange?: NimBillboardChartRange;
+      liveChartFallbackAdvertId?: string;
+      liveChartRangeCycle?: boolean;
+      liveChartCycleIntervalSec?: number;
+      billboardSourceTab?: "images" | "other";
     }
   ) => void;
   applyBillboardModalDraft: (draft: {
@@ -339,6 +356,11 @@ export function createHud(
     advertId: string;
     advertIds: string[];
     intervalSec: number;
+    liveChartRange?: NimBillboardChartRange;
+    liveChartFallbackAdvertId?: string;
+    liveChartRangeCycle?: boolean;
+    liveChartCycleIntervalSec?: number;
+    billboardSourceTab?: "images" | "other";
   }) => void;
   onBillboardDraftChange: (
     fn: ((
@@ -348,6 +370,11 @@ export function createHud(
         advertId: string;
         advertIds: string[];
         intervalSec: number;
+        liveChartRange: NimBillboardChartRange;
+        liveChartFallbackAdvertId: string;
+        liveChartRangeCycle: boolean;
+        liveChartCycleIntervalSec: number;
+        billboardSourceTab: "images" | "other";
       }
     ) => void) | null
   ) => void;
@@ -355,30 +382,56 @@ export function createHud(
     fn: (
       x: number,
       z: number,
-      opts: {
-        orientation: "horizontal" | "vertical";
-        advertId: string;
-        advertIds: string[];
-        intervalSec: number;
-      }
+      opts:
+        | {
+            orientation: "horizontal" | "vertical";
+            advertId: string;
+            advertIds: string[];
+            intervalSec: number;
+          }
+        | {
+            orientation: "horizontal" | "vertical";
+            advertId: string;
+            advertIds: string[];
+            intervalSec: number;
+            liveChart: {
+              range: NimBillboardChartRange;
+              fallbackAdvertId: string;
+              rangeCycle?: boolean;
+              cycleIntervalSec?: number;
+            };
+          }
     ) => void
   ) => void;
   promptBillboardEdit: (
     id: string,
     spec: Pick<
       BillboardState,
-      "orientation" | "advertId" | "advertIds" | "intervalMs"
+      "orientation" | "advertId" | "advertIds" | "intervalMs" | "liveChart"
     >
   ) => void;
   onBillboardUpdate: (
     fn: (
       id: string,
-      opts: {
-        orientation: "horizontal" | "vertical";
-        advertId: string;
-        advertIds: string[];
-        intervalSec: number;
-      }
+      opts:
+        | {
+            orientation: "horizontal" | "vertical";
+            advertId: string;
+            advertIds: string[];
+            intervalSec: number;
+          }
+        | {
+            orientation: "horizontal" | "vertical";
+            advertId: string;
+            advertIds: string[];
+            intervalSec: number;
+            liveChart: {
+              range: NimBillboardChartRange;
+              fallbackAdvertId: string;
+              rangeCycle?: boolean;
+              cycleIntervalSec?: number;
+            };
+          }
     ) => void
   ) => void;
   showBillboardExternalVisitConfirm: (p: {
@@ -838,21 +891,56 @@ export function createHud(
         </div>
         <p id="billboard-size-hint" class="billboard-modal__hint">4×1 is horizontal along the grid; 2×1 is vertical (tall).</p>
       </div>
-      <div class="billboard-modal__field">
-        <span class="billboard-modal__label" id="billboard-rotation-label">Rotation</span>
-        <ul id="billboard-rotation-list" class="billboard-modal__slides-list" aria-labelledby="billboard-rotation-label"></ul>
-        <div class="billboard-modal__add-slide-row">
-          <select id="billboard-rotation-add" class="billboard-modal__select" aria-label="Advert to add to rotation"></select>
-          <button type="button" id="billboard-rotation-add-btn" class="billboard-modal__btn billboard-modal__btn--ghost">Add</button>
+      <div class="billboard-modal__tabs" role="tablist" aria-label="Billboard content">
+        <button type="button" id="billboard-tab-images" class="billboard-modal__tab billboard-modal__tab--active" role="tab" aria-selected="true">Images</button>
+        <button type="button" id="billboard-tab-other" class="billboard-modal__tab" role="tab" aria-selected="false">Other</button>
+      </div>
+      <div id="billboard-panel-images" class="billboard-modal__source-panel">
+        <div class="billboard-modal__field">
+          <span class="billboard-modal__label" id="billboard-rotation-label">Rotation</span>
+          <ul id="billboard-rotation-list" class="billboard-modal__slides-list" aria-labelledby="billboard-rotation-label"></ul>
+          <div class="billboard-modal__add-slide-row">
+            <select id="billboard-rotation-add" class="billboard-modal__select" aria-label="Advert to add to rotation"></select>
+            <button type="button" id="billboard-rotation-add-btn" class="billboard-modal__btn billboard-modal__btn--ghost">Add</button>
+          </div>
+          <p id="billboard-rotation-hint" class="billboard-modal__hint"></p>
         </div>
-        <p id="billboard-rotation-hint" class="billboard-modal__hint"></p>
+        <div class="billboard-modal__field">
+          <label class="billboard-modal__label" for="billboard-rotation-interval">Seconds per slide</label>
+          <input type="number" id="billboard-rotation-interval" class="billboard-modal__input billboard-modal__input--number" min="1" max="300" step="1" value="8" />
+        </div>
+        <div class="billboard-modal__preview" aria-hidden="true">
+          <img id="billboard-preview-img" class="billboard-modal__preview-img" alt="" decoding="async" />
+        </div>
       </div>
-      <div class="billboard-modal__field">
-        <label class="billboard-modal__label" for="billboard-rotation-interval">Seconds per slide</label>
-        <input type="number" id="billboard-rotation-interval" class="billboard-modal__input billboard-modal__input--number" min="1" max="300" step="1" value="8" />
-      </div>
-      <div class="billboard-modal__preview" aria-hidden="true">
-        <img id="billboard-preview-img" class="billboard-modal__preview-img" alt="" decoding="async" />
+      <div id="billboard-panel-other" class="billboard-modal__source-panel" hidden>
+        <div class="billboard-modal__field">
+          <label class="billboard-modal__label" for="billboard-chart-range">NIM price chart</label>
+          <select id="billboard-chart-range" class="billboard-modal__select" aria-label="Chart time range">
+            <option value="24h">24 hours (candles)</option>
+            <option value="7d">7 days (candles)</option>
+          </select>
+          <p class="billboard-modal__hint">USD OHLC from CoinGecko (nim-chart-service). “Visit” opens CoinGecko while you stand on the board.</p>
+        </div>
+        <div class="billboard-modal__field">
+          <label class="billboard-modal__label billboard-modal__label--inline">
+            <input type="checkbox" id="billboard-chart-range-cycle" class="billboard-modal__checkbox" />
+            Cycle views: 24h → 7d
+          </label>
+          <p class="billboard-modal__hint">When on, the board rotates these ranges. The range menu is used when cycling is off.</p>
+        </div>
+        <div id="billboard-chart-cycle-interval-wrap" class="billboard-modal__field" hidden>
+          <label class="billboard-modal__label" for="billboard-chart-cycle-interval">Seconds per view</label>
+          <input type="number" id="billboard-chart-cycle-interval" class="billboard-modal__input billboard-modal__input--number" min="5" max="300" step="1" value="20" />
+        </div>
+        <div class="billboard-modal__field">
+          <label class="billboard-modal__label" for="billboard-chart-fallback">If chart unavailable, show</label>
+          <select id="billboard-chart-fallback" class="billboard-modal__select" aria-label="Fallback image when chart cannot load"></select>
+          <p class="billboard-modal__hint">Uses a preset billboard image until the chart loads again.</p>
+        </div>
+        <div class="billboard-modal__chart-preview-wrap" aria-hidden="true">
+          <canvas id="billboard-chart-preview" class="billboard-modal__chart-preview" width="${NIM_BILLBOARD_CHART_W}" height="${NIM_BILLBOARD_CHART_H}"></canvas>
+        </div>
       </div>
     </div>
   `;
@@ -881,6 +969,42 @@ export function createHud(
   const billboardRotationAddBtn = billboardDialog.querySelector(
     "#billboard-rotation-add-btn"
   ) as HTMLButtonElement | null;
+  const billboardTabImagesBtn = billboardDialog.querySelector(
+    "#billboard-tab-images"
+  ) as HTMLButtonElement | null;
+  const billboardTabOtherBtn = billboardDialog.querySelector(
+    "#billboard-tab-other"
+  ) as HTMLButtonElement | null;
+  const billboardPanelImagesEl = billboardDialog.querySelector(
+    "#billboard-panel-images"
+  ) as HTMLElement | null;
+  const billboardPanelOtherEl = billboardDialog.querySelector(
+    "#billboard-panel-other"
+  ) as HTMLElement | null;
+  const billboardChartRangeSelect = billboardDialog.querySelector(
+    "#billboard-chart-range"
+  ) as HTMLSelectElement | null;
+  const billboardChartFallbackSelect = billboardDialog.querySelector(
+    "#billboard-chart-fallback"
+  ) as HTMLSelectElement | null;
+  const billboardChartRangeCycleInput = billboardDialog.querySelector(
+    "#billboard-chart-range-cycle"
+  ) as HTMLInputElement | null;
+  const billboardChartCycleIntervalInput = billboardDialog.querySelector(
+    "#billboard-chart-cycle-interval"
+  ) as HTMLInputElement | null;
+  const billboardChartCycleIntervalWrap = billboardDialog.querySelector(
+    "#billboard-chart-cycle-interval-wrap"
+  ) as HTMLElement | null;
+  if (billboardChartFallbackSelect) {
+    for (const a of BILLBOARD_ADVERTS_CATALOG) {
+      const opt = document.createElement("option");
+      opt.value = a.id;
+      opt.textContent = a.name;
+      billboardChartFallbackSelect.appendChild(opt);
+    }
+    billboardChartFallbackSelect.value = DEFAULT_BILLBOARD_CHART_FALLBACK_ADVERT_ID;
+  }
 
   const externalVisitConfirmOverlay = document.createElement("div");
   externalVisitConfirmOverlay.className = "external-visit-confirm";
@@ -2746,12 +2870,25 @@ export function createHud(
     | ((
         x: number,
         z: number,
-        opts: {
-          orientation: "horizontal" | "vertical";
-          advertId: string;
-          advertIds: string[];
-          intervalSec: number;
-        }
+        opts:
+          | {
+              orientation: "horizontal" | "vertical";
+              advertId: string;
+              advertIds: string[];
+              intervalSec: number;
+            }
+          | {
+              orientation: "horizontal" | "vertical";
+              advertId: string;
+              advertIds: string[];
+              intervalSec: number;
+              liveChart: {
+                range: NimBillboardChartRange;
+                fallbackAdvertId: string;
+                rangeCycle?: boolean;
+                cycleIntervalSec?: number;
+              };
+            }
       ) => void)
     | null = null;
 
@@ -2760,12 +2897,25 @@ export function createHud(
   let billboardUpdateHandler:
     | ((
         id: string,
-        opts: {
-          orientation: "horizontal" | "vertical";
-          advertId: string;
-          advertIds: string[];
-          intervalSec: number;
-        }
+        opts:
+          | {
+              orientation: "horizontal" | "vertical";
+              advertId: string;
+              advertIds: string[];
+              intervalSec: number;
+            }
+          | {
+              orientation: "horizontal" | "vertical";
+              advertId: string;
+              advertIds: string[];
+              intervalSec: number;
+              liveChart: {
+                range: NimBillboardChartRange;
+                fallbackAdvertId: string;
+                rangeCycle?: boolean;
+                cycleIntervalSec?: number;
+              };
+            }
       ) => void)
     | null = null;
 
@@ -2781,11 +2931,92 @@ export function createHud(
           advertId: string;
           advertIds: string[];
           intervalSec: number;
+          liveChartRange: NimBillboardChartRange;
+          liveChartFallbackAdvertId: string;
+          liveChartRangeCycle: boolean;
+          liveChartCycleIntervalSec: number;
+          billboardSourceTab: "images" | "other";
         }
       ) => void)
     | null = null;
 
   let billboardRotationAdvertIds: string[] = [];
+  let billboardSourceTab: "images" | "other" = "images";
+
+  function chartRangeFromSelect(): NimBillboardChartRange {
+    const v = String(billboardChartRangeSelect?.value ?? "24h").trim();
+    if (v === "7d") return "7d";
+    return "24h";
+  }
+
+  function chartFallbackFromSelect(): string {
+    const v = String(billboardChartFallbackSelect?.value ?? "").trim();
+    return BILLBOARD_ADVERTS_CATALOG.some((a) => a.id === v)
+      ? v
+      : DEFAULT_BILLBOARD_CHART_FALLBACK_ADVERT_ID;
+  }
+
+  function chartCycleIntervalFromInput(): number {
+    const n = Math.floor(Number(billboardChartCycleIntervalInput?.value ?? 20));
+    if (!Number.isFinite(n)) return 20;
+    return Math.max(5, Math.min(300, n));
+  }
+
+  function syncBillboardChartCycleUi(): void {
+    const on = Boolean(billboardChartRangeCycleInput?.checked);
+    if (billboardChartCycleIntervalWrap) {
+      billboardChartCycleIntervalWrap.hidden = !on;
+    }
+    if (billboardChartRangeSelect) {
+      billboardChartRangeSelect.disabled = on;
+    }
+  }
+
+  function syncBillboardSourceTabUi(): void {
+    const img = billboardSourceTab === "images";
+    billboardTabImagesBtn?.classList.toggle("billboard-modal__tab--active", img);
+    billboardTabOtherBtn?.classList.toggle("billboard-modal__tab--active", !img);
+    billboardTabImagesBtn?.setAttribute("aria-selected", img ? "true" : "false");
+    billboardTabOtherBtn?.setAttribute("aria-selected", img ? "false" : "true");
+    if (billboardPanelImagesEl) billboardPanelImagesEl.hidden = !img;
+    if (billboardPanelOtherEl) billboardPanelOtherEl.hidden = img;
+  }
+
+  let chartPreviewBusy = false;
+  async function refreshBillboardChartPreview(): Promise<void> {
+    const cv = billboardDialog.querySelector(
+      "#billboard-chart-preview"
+    ) as HTMLCanvasElement | null;
+    if (!cv) return;
+    cv.width = NIM_BILLBOARD_CHART_W;
+    cv.height = NIM_BILLBOARD_CHART_H;
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    const range = billboardChartRangeCycleInput?.checked
+      ? ("24h" as NimBillboardChartRange)
+      : chartRangeFromSelect();
+    const title = nimChartTitleForRange(range);
+    if (chartPreviewBusy) return;
+    chartPreviewBusy = true;
+    try {
+      const data = await fetchNimBillboardOhlc(range);
+      await ensureNimChartFontsLoaded();
+      drawNimBillboardCandles(ctx, data.candles, cv.width, cv.height, title);
+    } catch {
+      ctx.fillStyle = "#0b0f14";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "22px system-ui,Segoe UI,sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(
+        "Preview unavailable — start nim-chart-service (:3080) or set VITE_NIM_CHART_API_URL.",
+        cv.width / 2,
+        cv.height / 2
+      );
+    } finally {
+      chartPreviewBusy = false;
+    }
+  }
 
   function defaultBillboardAdvertId(): string {
     return BILLBOARD_ADVERTS_CATALOG[0]?.id ?? "";
@@ -2912,12 +3143,21 @@ export function createHud(
         : [fallback];
     const advertId = advertIds[0] ?? fallback;
     const intervalSec = getBillboardRotationIntervalSec();
+    const liveChartRange = chartRangeFromSelect();
+    const liveChartFallbackAdvertId = chartFallbackFromSelect();
+    const liveChartRangeCycle = Boolean(billboardChartRangeCycleInput?.checked);
+    const liveChartCycleIntervalSec = chartCycleIntervalFromInput();
     billboardDraftChangeHandler?.({
       orientation,
       yawSteps: 0,
       advertId,
       advertIds,
       intervalSec,
+      liveChartRange,
+      liveChartFallbackAdvertId,
+      liveChartRangeCycle,
+      liveChartCycleIntervalSec,
+      billboardSourceTab: billboardSourceTab,
     });
   }
 
@@ -2953,6 +3193,37 @@ export function createHud(
     emitBillboardDraftFromForm();
   });
 
+  billboardTabImagesBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    billboardSourceTab = "images";
+    syncBillboardSourceTabUi();
+    emitBillboardDraftFromForm();
+  });
+  billboardTabOtherBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    billboardSourceTab = "other";
+    syncBillboardSourceTabUi();
+    emitBillboardDraftFromForm();
+    void refreshBillboardChartPreview();
+  });
+  billboardChartRangeSelect?.addEventListener("change", () => {
+    emitBillboardDraftFromForm();
+    if (billboardSourceTab === "other") void refreshBillboardChartPreview();
+  });
+  billboardChartFallbackSelect?.addEventListener("change", () => {
+    emitBillboardDraftFromForm();
+  });
+  billboardChartRangeCycleInput?.addEventListener("change", () => {
+    syncBillboardChartCycleUi();
+    emitBillboardDraftFromForm();
+    if (billboardSourceTab === "other") void refreshBillboardChartPreview();
+  });
+  billboardChartCycleIntervalInput?.addEventListener("input", () => {
+    emitBillboardDraftFromForm();
+  });
+
   if (billboardCancelBtn) {
     billboardCancelBtn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -2960,6 +3231,15 @@ export function createHud(
       billboardOverlay.hidden = true;
       billboardPendingTile = null;
       billboardEditTargetId = null;
+      billboardSourceTab = "images";
+      syncBillboardSourceTabUi();
+      if (billboardChartRangeCycleInput) {
+        billboardChartRangeCycleInput.checked = false;
+      }
+      if (billboardChartCycleIntervalInput) {
+        billboardChartCycleIntervalInput.value = "20";
+      }
+      syncBillboardChartCycleUi();
       if (billboardModalTitleEl) {
         billboardModalTitleEl.textContent = "Place billboard";
       }
@@ -2985,7 +3265,25 @@ export function createHud(
       const advertId = advertIds[0] ?? fallback;
       if (!advertId) return;
       const intervalSec = getBillboardRotationIntervalSec();
-      const opts = { orientation, advertId, advertIds, intervalSec };
+      const opts =
+        billboardSourceTab === "other"
+          ? {
+              orientation,
+              advertId: fallback,
+              advertIds: [fallback],
+              intervalSec: 8,
+              liveChart: {
+                range: chartRangeFromSelect(),
+                fallbackAdvertId: chartFallbackFromSelect(),
+                ...(billboardChartRangeCycleInput?.checked
+                  ? {
+                      rangeCycle: true as const,
+                      cycleIntervalSec: chartCycleIntervalFromInput(),
+                    }
+                  : {}),
+              } as const,
+            }
+          : { orientation, advertId, advertIds, intervalSec };
       if (billboardEditTargetId) {
         billboardUpdateHandler?.(billboardEditTargetId, opts);
       } else {
@@ -2999,6 +3297,8 @@ export function createHud(
       billboardOverlay.hidden = true;
       billboardPendingTile = null;
       billboardEditTargetId = null;
+      billboardSourceTab = "images";
+      syncBillboardSourceTabUi();
       if (billboardModalTitleEl) {
         billboardModalTitleEl.textContent = "Place billboard";
       }
@@ -5826,6 +6126,11 @@ export function createHud(
         advertId: string;
         advertIds: string[];
         intervalSec: number;
+        liveChartRange?: NimBillboardChartRange;
+        liveChartFallbackAdvertId?: string;
+        liveChartRangeCycle?: boolean;
+        liveChartCycleIntervalSec?: number;
+        billboardSourceTab?: "images" | "other";
       }
     ): void {
       billboardEditTargetId = null;
@@ -5837,6 +6142,37 @@ export function createHud(
       const orient = draft?.orientation ?? "horizontal";
       setBillboardSizeUi(orient);
       resetBillboardRotationFromDraft(draft);
+      const lr =
+        draft?.liveChartRange === "24h" || draft?.liveChartRange === "7d"
+          ? draft.liveChartRange
+          : "24h";
+      if (billboardChartRangeSelect) billboardChartRangeSelect.value = lr;
+      const fb =
+        draft?.liveChartFallbackAdvertId &&
+        BILLBOARD_ADVERTS_CATALOG.some(
+          (a) => a.id === draft.liveChartFallbackAdvertId
+        )
+          ? draft.liveChartFallbackAdvertId
+          : DEFAULT_BILLBOARD_CHART_FALLBACK_ADVERT_ID;
+      if (billboardChartFallbackSelect) billboardChartFallbackSelect.value = fb;
+      if (billboardChartRangeCycleInput) {
+        billboardChartRangeCycleInput.checked = Boolean(
+          draft?.liveChartRangeCycle
+        );
+      }
+      if (billboardChartCycleIntervalInput) {
+        const cs = draft?.liveChartCycleIntervalSec;
+        billboardChartCycleIntervalInput.value = String(
+          cs !== undefined && Number.isFinite(cs)
+            ? Math.max(5, Math.min(300, Math.floor(cs)))
+            : 20
+        );
+      }
+      syncBillboardChartCycleUi();
+      billboardSourceTab =
+        draft?.billboardSourceTab === "other" ? "other" : "images";
+      syncBillboardSourceTabUi();
+      if (billboardSourceTab === "other") void refreshBillboardChartPreview();
       emitBillboardDraftFromForm();
       billboardOverlay.hidden = false;
     },
@@ -5844,7 +6180,7 @@ export function createHud(
       id: string,
       spec: Pick<
         BillboardState,
-        "orientation" | "advertId" | "advertIds" | "intervalMs"
+        "orientation" | "advertId" | "advertIds" | "intervalMs" | "liveChart"
       >
     ): void {
       billboardEditTargetId = id;
@@ -5854,11 +6190,44 @@ export function createHud(
       }
       if (billboardCreateBtn) billboardCreateBtn.textContent = "Save";
       setBillboardSizeUi(spec.orientation);
-      resetBillboardRotationFromDraft({
-        advertIds: spec.advertIds,
-        advertId: spec.advertId,
-        intervalMs: spec.intervalMs,
-      });
+      if (
+        spec.liveChart?.range === "24h" ||
+        spec.liveChart?.range === "7d"
+      ) {
+        billboardSourceTab = "other";
+        if (billboardChartRangeSelect)
+          billboardChartRangeSelect.value = spec.liveChart.range;
+        if (billboardChartFallbackSelect) {
+          const f = spec.liveChart?.fallbackAdvertId;
+          billboardChartFallbackSelect.value =
+            f && BILLBOARD_ADVERTS_CATALOG.some((a) => a.id === f)
+              ? f
+              : DEFAULT_BILLBOARD_CHART_FALLBACK_ADVERT_ID;
+        }
+        if (billboardChartRangeCycleInput) {
+          billboardChartRangeCycleInput.checked =
+            spec.liveChart.rangeCycle === true;
+        }
+        if (billboardChartCycleIntervalInput) {
+          const cs = spec.liveChart.cycleIntervalSec;
+          billboardChartCycleIntervalInput.value = String(
+            cs !== undefined && Number.isFinite(cs)
+              ? Math.max(5, Math.min(300, Math.floor(cs)))
+              : 20
+          );
+        }
+        syncBillboardChartCycleUi();
+        syncBillboardSourceTabUi();
+        void refreshBillboardChartPreview();
+      } else {
+        billboardSourceTab = "images";
+        syncBillboardSourceTabUi();
+        resetBillboardRotationFromDraft({
+          advertIds: spec.advertIds,
+          advertId: spec.advertId,
+          intervalMs: spec.intervalMs,
+        });
+      }
       emitBillboardDraftFromForm();
       billboardOverlay.hidden = false;
     },
@@ -5868,9 +6237,45 @@ export function createHud(
       advertId: string;
       advertIds: string[];
       intervalSec: number;
+      liveChartRange?: NimBillboardChartRange;
+      liveChartFallbackAdvertId?: string;
+      liveChartRangeCycle?: boolean;
+      liveChartCycleIntervalSec?: number;
+      billboardSourceTab?: "images" | "other";
     }): void {
       setBillboardSizeUi(draft.orientation);
       resetBillboardRotationFromDraft(draft);
+      const lr =
+        draft.liveChartRange === "24h" || draft.liveChartRange === "7d"
+          ? draft.liveChartRange
+          : "24h";
+      if (billboardChartRangeSelect) billboardChartRangeSelect.value = lr;
+      const fb =
+        draft.liveChartFallbackAdvertId &&
+        BILLBOARD_ADVERTS_CATALOG.some(
+          (a) => a.id === draft.liveChartFallbackAdvertId
+        )
+          ? draft.liveChartFallbackAdvertId
+          : DEFAULT_BILLBOARD_CHART_FALLBACK_ADVERT_ID;
+      if (billboardChartFallbackSelect) billboardChartFallbackSelect.value = fb;
+      if (billboardChartRangeCycleInput) {
+        billboardChartRangeCycleInput.checked = Boolean(
+          draft.liveChartRangeCycle
+        );
+      }
+      if (billboardChartCycleIntervalInput) {
+        const cs = draft.liveChartCycleIntervalSec;
+        billboardChartCycleIntervalInput.value = String(
+          cs !== undefined && Number.isFinite(cs)
+            ? Math.max(5, Math.min(300, Math.floor(cs)))
+            : 20
+        );
+      }
+      syncBillboardChartCycleUi();
+      billboardSourceTab =
+        draft.billboardSourceTab === "other" ? "other" : "images";
+      syncBillboardSourceTabUi();
+      if (billboardSourceTab === "other") void refreshBillboardChartPreview();
     },
     onBillboardDraftChange(
       fn: ((
@@ -5880,6 +6285,11 @@ export function createHud(
           advertId: string;
           advertIds: string[];
           intervalSec: number;
+          liveChartRange: NimBillboardChartRange;
+          liveChartFallbackAdvertId: string;
+          liveChartRangeCycle: boolean;
+          liveChartCycleIntervalSec: number;
+          billboardSourceTab: "images" | "other";
         }
       ) => void) | null
     ): void {
@@ -5889,12 +6299,25 @@ export function createHud(
       fn: (
         x: number,
         z: number,
-        opts: {
-          orientation: "horizontal" | "vertical";
-          advertId: string;
-          advertIds: string[];
-          intervalSec: number;
-        }
+        opts:
+          | {
+              orientation: "horizontal" | "vertical";
+              advertId: string;
+              advertIds: string[];
+              intervalSec: number;
+            }
+          | {
+              orientation: "horizontal" | "vertical";
+              advertId: string;
+              advertIds: string[];
+              intervalSec: number;
+              liveChart: {
+                range: NimBillboardChartRange;
+                fallbackAdvertId: string;
+                rangeCycle?: boolean;
+                cycleIntervalSec?: number;
+              };
+            }
       ) => void
     ) {
       billboardPlaceHandler = fn;
@@ -5902,12 +6325,25 @@ export function createHud(
     onBillboardUpdate(
       fn: (
         id: string,
-        opts: {
-          orientation: "horizontal" | "vertical";
-          advertId: string;
-          advertIds: string[];
-          intervalSec: number;
-        }
+        opts:
+          | {
+              orientation: "horizontal" | "vertical";
+              advertId: string;
+              advertIds: string[];
+              intervalSec: number;
+            }
+          | {
+              orientation: "horizontal" | "vertical";
+              advertId: string;
+              advertIds: string[];
+              intervalSec: number;
+              liveChart: {
+                range: NimBillboardChartRange;
+                fallbackAdvertId: string;
+                rangeCycle?: boolean;
+                cycleIntervalSec?: number;
+              };
+            }
       ) => void
     ) {
       billboardUpdateHandler = fn;

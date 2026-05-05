@@ -7,6 +7,20 @@
 # Merge order: later files override earlier ones on duplicate keys.
 
 services:
+  nim-chart:
+    build:
+      context: ./nim-chart-service
+      dockerfile: Dockerfile
+    image: nspace-nim-chart:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3080:3080"
+    environment:
+      PORT: "3080"
+      CACHE_TTL_MS: "45000"
+      COINGECKO_COIN_ID: "nimiq-2"
+    # Optional: COINGECKO_API_KEY for Pro; COINGECKO_DEMO_API_KEY for demo tier.
+
   nspace:
     build: .
     image: nspace:latest

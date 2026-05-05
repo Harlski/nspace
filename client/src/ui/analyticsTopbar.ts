@@ -56,6 +56,7 @@ type AnalyticsAuthStatus = {
   authenticated: boolean;
   analyticsAuthorized: boolean;
   analyticsManager: boolean;
+  systemAdmin: boolean;
 };
 
 function applyMainSiteNavAuth(status: AnalyticsAuthStatus): void {
@@ -63,7 +64,8 @@ function applyMainSiteNavAuth(status: AnalyticsAuthStatus): void {
     const nav = link.getAttribute("data-auth-nav");
     const visible =
       (nav === "analytics" && status.analyticsAuthorized) ||
-      (nav === "admin" && status.analyticsManager);
+      (nav === "admin" && status.analyticsManager) ||
+      (nav === "system" && status.systemAdmin);
     link.hidden = !visible;
   });
 }
@@ -72,7 +74,12 @@ function applyMainSiteNavAuth(status: AnalyticsAuthStatus): void {
 export async function refreshMainSiteNavFromSession(): Promise<void> {
   const token = readMainSiteAuthToken();
   if (!token || isTokenExpired(token)) {
-    applyMainSiteNavAuth({ authenticated: false, analyticsAuthorized: false, analyticsManager: false });
+    applyMainSiteNavAuth({
+      authenticated: false,
+      analyticsAuthorized: false,
+      analyticsManager: false,
+      systemAdmin: false,
+    });
     return;
   }
   const s = await fetchAnalyticsAuthStatus(token);
@@ -81,10 +88,20 @@ export async function refreshMainSiteNavFromSession(): Promise<void> {
 
 async function fetchAnalyticsAuthStatus(token: string): Promise<AnalyticsAuthStatus> {
   if (!token) {
-    return { authenticated: false, analyticsAuthorized: false, analyticsManager: false };
+    return {
+      authenticated: false,
+      analyticsAuthorized: false,
+      analyticsManager: false,
+      systemAdmin: false,
+    };
   }
   if (isTokenExpired(token)) {
-    return { authenticated: false, analyticsAuthorized: false, analyticsManager: false };
+    return {
+      authenticated: false,
+      analyticsAuthorized: false,
+      analyticsManager: false,
+      systemAdmin: false,
+    };
   }
   try {
     const r = await fetch(apiUrl("/api/analytics/auth-status"), {
@@ -97,18 +114,25 @@ async function fetchAnalyticsAuthStatus(token: string): Promise<AnalyticsAuthSta
       authenticated: Boolean(j.authenticated),
       analyticsAuthorized: Boolean(j.analyticsAuthorized),
       analyticsManager: Boolean(j.analyticsManager),
+      systemAdmin: Boolean(j.systemAdmin),
     };
   } catch {
-    return { authenticated: false, analyticsAuthorized: false, analyticsManager: false };
+    return {
+      authenticated: false,
+      analyticsAuthorized: false,
+      analyticsManager: false,
+      systemAdmin: false,
+    };
   }
 }
 
 function hubAppNameForPage(page: MainSitePage): string {
   if (page === "payouts") return "Nimiq Space payouts";
+  if (page === "system") return "nspace system";
   return "nspace analytics";
 }
 
-export type MainSitePage = "analytics" | "admin" | "payouts";
+export type MainSitePage = "analytics" | "admin" | "payouts" | "system";
 
 /** Default wallet login used by main-site pages when no custom handler is passed. */
 export async function mainSiteWalletLogin(page: MainSitePage): Promise<void> {
@@ -151,7 +175,12 @@ export async function renderMainSiteTopbar(
   };
 
   if (!signed || !token) {
-    applyMainSiteNavAuth({ authenticated: false, analyticsAuthorized: false, analyticsManager: false });
+    applyMainSiteNavAuth({
+      authenticated: false,
+      analyticsAuthorized: false,
+      analyticsManager: false,
+      systemAdmin: false,
+    });
     authUserEl.style.display = "block";
     authUserEl.innerHTML =
       "<span id='authTopLogin' class='auth-user-signin' role='button' tabindex='0'>Sign In</span>";
@@ -179,6 +208,7 @@ export async function renderMainSiteTopbar(
           authenticated: false,
           analyticsAuthorized: false,
           analyticsManager: false,
+          systemAdmin: false,
         })
       : fetchAnalyticsAuthStatus(token),
   ]);

@@ -2075,32 +2075,73 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }));
     });
     hud.onBillboardPlace((x, z, opts) => {
-      game.setBillboardPlacementDraft({
-        orientation: opts.orientation,
-        yawSteps: 0,
-        advertIds: opts.advertIds,
-        intervalSec: opts.intervalSec,
-      });
-      sendPlaceBillboard(socket, {
-        x,
-        z,
-        orientation: opts.orientation,
-        advertId: opts.advertId,
-        advertIds: opts.advertIds,
-        intervalMs: opts.intervalSec * 1000,
-      });
+      if ("liveChart" in opts && opts.liveChart) {
+        game.setBillboardPlacementDraft({
+          orientation: opts.orientation,
+          yawSteps: 0,
+          advertIds: opts.advertIds,
+          intervalSec: opts.intervalSec,
+          liveChartRange: opts.liveChart.range,
+          liveChartFallbackAdvertId: opts.liveChart.fallbackAdvertId,
+          liveChartRangeCycle: opts.liveChart.rangeCycle === true,
+          liveChartCycleIntervalSec: opts.liveChart.cycleIntervalSec ?? 20,
+          /** Next modal open defaults to Images; range stays for the chart dropdown. */
+          billboardSourceTab: "images",
+        });
+        sendPlaceBillboard(socket, {
+          x,
+          z,
+          orientation: opts.orientation,
+          advertId: opts.advertId,
+          advertIds: opts.advertIds,
+          intervalMs: opts.intervalSec * 1000,
+          liveChart: opts.liveChart,
+        });
+      } else {
+        const d = game.getBillboardPlacementDraft();
+        game.setBillboardPlacementDraft({
+          orientation: opts.orientation,
+          yawSteps: 0,
+          advertIds: opts.advertIds,
+          intervalSec: opts.intervalSec,
+          liveChartRange: d.liveChartRange,
+          liveChartFallbackAdvertId: d.liveChartFallbackAdvertId,
+          liveChartRangeCycle: d.liveChartRangeCycle,
+          liveChartCycleIntervalSec: d.liveChartCycleIntervalSec,
+          billboardSourceTab: "images",
+        });
+        sendPlaceBillboard(socket, {
+          x,
+          z,
+          orientation: opts.orientation,
+          advertId: opts.advertId,
+          advertIds: opts.advertIds,
+          intervalMs: opts.intervalSec * 1000,
+        });
+      }
     });
     hud.onBillboardDraftChange((d) => {
       game.setBillboardPlacementDraft(d);
     });
     hud.onBillboardUpdate((id, opts) => {
-      sendUpdateBillboard(socket, {
-        billboardId: id,
-        orientation: opts.orientation,
-        advertId: opts.advertId,
-        advertIds: opts.advertIds,
-        intervalMs: opts.intervalSec * 1000,
-      });
+      if ("liveChart" in opts && opts.liveChart) {
+        sendUpdateBillboard(socket, {
+          billboardId: id,
+          orientation: opts.orientation,
+          advertId: opts.advertId,
+          advertIds: opts.advertIds,
+          intervalMs: opts.intervalSec * 1000,
+          liveChart: opts.liveChart,
+        });
+      } else {
+        sendUpdateBillboard(socket, {
+          billboardId: id,
+          orientation: opts.orientation,
+          advertId: opts.advertId,
+          advertIds: opts.advertIds,
+          intervalMs: opts.intervalSec * 1000,
+        });
+      }
     });
     game.setObstacleSelectHandler((x, z, y) => {
       const selectedBb = game.getSelectedBillboardId();
@@ -2127,6 +2168,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
                 advertId: s.advertId,
                 advertIds: s.advertIds,
                 intervalMs: s.intervalMs,
+                liveChart: s.liveChart,
               });
               editingTile = null;
               syncBuildHud();

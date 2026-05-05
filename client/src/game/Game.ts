@@ -40,7 +40,24 @@ import { billboardFootprintTilesXZ } from "./billboardFootprintMath.js";
 import { BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED } from "./billboardPlacementFlags.js";
 import { pickBillboardVisitOnFootprintTile } from "./billboardVisitProximity.js";
 import { billboardSlideshowPhaseIndex } from "./billboardSlideshowPhase.js";
-import { BILLBOARD_ADVERTS_CATALOG } from "./billboardAdvertsCatalog.js";
+import {
+  BILLBOARD_ADVERTS_CATALOG,
+  DEFAULT_BILLBOARD_CHART_FALLBACK_ADVERT_ID,
+  getBillboardAdvertById,
+  getFirstSlideUrlForAdvertId,
+} from "./billboardAdvertsCatalog.js";
+import {
+  drawNimBillboardCandles,
+  drawNimChartRefreshCountdown,
+  ensureNimChartFontsLoaded,
+  fetchNimBillboardOhlc,
+  nimChartTitleForRange,
+  NIM_BILLBOARD_CHART_FONT,
+  NIM_BILLBOARD_CHART_H,
+  NIM_BILLBOARD_CHART_W,
+  type NimBillboardChartRange,
+  type NimOhlcCandle,
+} from "./billboardNimChart.js";
 import {
   blockKey,
   type FloorTile,
@@ -1055,11 +1072,26 @@ export class Game {
     yawSteps: number;
     advertIds: string[];
     intervalSec: number;
+    /** Last chart range chosen in the modal (independent of which tab is active). */
+    liveChartRange: NimBillboardChartRange;
+    /** Catalog slide shown when OHLC cannot be loaded (Other tab). */
+    liveChartFallbackAdvertId: string;
+    /** Cycle 24h ↔ 7d on the live chart (Other tab). */
+    liveChartRangeCycle: boolean;
+    /** Seconds per range when `liveChartRangeCycle`. */
+    liveChartCycleIntervalSec: number;
+    /** Last Images vs Other tab (restored when reopening the modal). */
+    billboardSourceTab: "images" | "other";
   } = {
     orientation: "horizontal",
     yawSteps: 0,
     advertIds: [BILLBOARD_ADVERTS_CATALOG[0]?.id ?? "nimiq_bb"],
     intervalSec: 8,
+    liveChartRange: "24h",
+    liveChartFallbackAdvertId: DEFAULT_BILLBOARD_CHART_FALLBACK_ADVERT_ID,
+    liveChartRangeCycle: false,
+    liveChartCycleIntervalSec: 20,
+    billboardSourceTab: "images",
   };
   private repositionBillboardId: string | null = null;
   private repositionDraftYaw = 0;
@@ -2882,6 +2914,11 @@ export class Game {
     advertIds: string[];
     intervalSec: number;
     advertId: string;
+    liveChartRange: NimBillboardChartRange;
+    liveChartFallbackAdvertId: string;
+    liveChartRangeCycle: boolean;
+    liveChartCycleIntervalSec: number;
+    billboardSourceTab: "images" | "other";
   } {
     const advertIds = [...this.billboardPlacementDraft.advertIds];
     return {
@@ -2891,6 +2928,13 @@ export class Game {
       intervalSec: this.billboardPlacementDraft.intervalSec,
       advertId:
         advertIds[0] ?? BILLBOARD_ADVERTS_CATALOG[0]?.id ?? "nimiq_bb",
+      liveChartRange: this.billboardPlacementDraft.liveChartRange,
+      liveChartFallbackAdvertId:
+        this.billboardPlacementDraft.liveChartFallbackAdvertId,
+      liveChartRangeCycle: this.billboardPlacementDraft.liveChartRangeCycle,
+      liveChartCycleIntervalSec:
+        this.billboardPlacementDraft.liveChartCycleIntervalSec,
+      billboardSourceTab: this.billboardPlacementDraft.billboardSourceTab,
     };
   }
 
@@ -2900,6 +2944,11 @@ export class Game {
     advertIds?: string[];
     intervalSec?: number;
     advertId?: string;
+    liveChartRange?: NimBillboardChartRange;
+    liveChartFallbackAdvertId?: string;
+    liveChartRangeCycle?: boolean;
+    liveChartCycleIntervalSec?: number;
+    billboardSourceTab?: "images" | "other";
   }): void {
     if (patch.orientation !== undefined) {
       let o = patch.orientation;
@@ -2935,6 +2984,33 @@ export class Game {
       if (Number.isFinite(s)) {
         this.billboardPlacementDraft.intervalSec = Math.max(
           1,
+          Math.min(300, s)
+        );
+      }
+    }
+    if (patch.liveChartRange !== undefined) {
+      const r = patch.liveChartRange;
+      this.billboardPlacementDraft.liveChartRange =
+        r === "7d" || r === "24h" ? r : "24h";
+    }
+    if (patch.billboardSourceTab !== undefined) {
+      this.billboardPlacementDraft.billboardSourceTab = patch.billboardSourceTab;
+    }
+    if (patch.liveChartFallbackAdvertId !== undefined) {
+      const k = String(patch.liveChartFallbackAdvertId ?? "").trim();
+      this.billboardPlacementDraft.liveChartFallbackAdvertId =
+        getBillboardAdvertById(k)?.id ?? DEFAULT_BILLBOARD_CHART_FALLBACK_ADVERT_ID;
+    }
+    if (patch.liveChartRangeCycle !== undefined) {
+      this.billboardPlacementDraft.liveChartRangeCycle = Boolean(
+        patch.liveChartRangeCycle
+      );
+    }
+    if (patch.liveChartCycleIntervalSec !== undefined) {
+      const s = Math.floor(Number(patch.liveChartCycleIntervalSec));
+      if (Number.isFinite(s)) {
+        this.billboardPlacementDraft.liveChartCycleIntervalSec = Math.max(
+          5,
           Math.min(300, s)
         );
       }
@@ -3240,6 +3316,43 @@ export class Game {
         advertIds = [String(raw.advertId).trim()].filter(Boolean);
       }
       const se = Number(raw.slideshowEpochMs);
+      const lcRaw = raw.liveChart as
+        | {
+            range?: string;
+            fallbackAdvertId?: string;
+            rangeCycle?: boolean;
+            cycleIntervalSec?: number;
+          }
+        | undefined;
+      let liveChart: BillboardState["liveChart"];
+      if (
+        lcRaw &&
+        typeof lcRaw === "object" &&
+        (lcRaw.range === "24h" ||
+          lcRaw.range === "7d" ||
+          lcRaw.range === "60m" ||
+          lcRaw.range === "1h")
+      ) {
+        const fb = String(lcRaw.fallbackAdvertId ?? "").trim();
+        const rng = lcRaw.range;
+        const rangeCycle = lcRaw.rangeCycle === true;
+        const cycleIntervalSec = rangeCycle
+          ? Math.max(
+              5,
+              Math.min(
+                300,
+                Math.floor(Number(lcRaw.cycleIntervalSec)) || 20
+              )
+            )
+          : undefined;
+        liveChart = {
+          range: rng === "7d" ? "7d" : "24h",
+          fallbackAdvertId: getBillboardAdvertById(fb)
+            ? fb
+            : DEFAULT_BILLBOARD_CHART_FALLBACK_ADVERT_ID,
+          ...(rangeCycle ? { rangeCycle: true, cycleIntervalSec } : {}),
+        };
+      }
       const b: BillboardState = {
         ...raw,
         advertId: String(raw.advertId ?? "").trim(),
@@ -3247,6 +3360,7 @@ export class Game {
         slideshowEpochMs: Number.isFinite(se) ? se : undefined,
         visitName: String(raw.visitName ?? "").trim(),
         visitUrl: String(raw.visitUrl ?? "").trim(),
+        liveChart,
       };
       this.billboardSpecs.set(b.id, b);
       void this.mountOneBillboard(b, gen);
@@ -3289,6 +3403,244 @@ export class Game {
     });
   }
 
+  private mountBillboardLiveChart(
+    root: THREE.Group,
+    b: BillboardState,
+    gen: number
+  ): void {
+    const POLL_MS = 60_000;
+    const CHART_CYCLE_ORDER: readonly NimBillboardChartRange[] = [
+      "24h",
+      "7d",
+    ];
+    let cyclePhase = 0;
+    const lc = b.liveChart!;
+    const rangeCycleOn = lc.rangeCycle === true;
+    const cycleIntervalMs = rangeCycleOn
+      ? Math.max(
+          5_000,
+          Math.min(300_000, Math.floor((lc.cycleIntervalSec ?? 20) * 1000))
+        )
+      : 0;
+    const currentRange = (): NimBillboardChartRange =>
+      rangeCycleOn
+        ? CHART_CYCLE_ORDER[cyclePhase % CHART_CYCLE_ORDER.length]!
+        : (lc.range as NimBillboardChartRange);
+    const chartTitle = (): string => nimChartTitleForRange(currentRange());
+    const fallbackAdvertId = lc.fallbackAdvertId;
+    const canvas = document.createElement("canvas");
+    canvas.width = NIM_BILLBOARD_CHART_W;
+    canvas.height = NIM_BILLBOARD_CHART_H;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+
+    const mat = root.userData["billboardMat"] as
+      | THREE.MeshBasicMaterial
+      | undefined;
+    if (!mat || gen !== this.billboardSyncGen) {
+      tex.dispose();
+      return;
+    }
+    const oldMap = mat.map;
+    mat.map = tex;
+    mat.needsUpdate = true;
+    if (oldMap && oldMap !== tex) oldMap.dispose();
+
+    let lastCandles: NimOhlcCandle[] | null = null;
+    let showUnavailableOnCanvas = false;
+    let nextPollAt = Date.now() + POLL_MS;
+
+    const redrawChartCanvas = (): void => {
+      if (gen !== this.billboardSyncGen) return;
+      if (this.billboardRoots.get(b.id) !== root) return;
+      const matNow = root.userData["billboardMat"] as
+        | THREE.MeshBasicMaterial
+        | undefined;
+      if (!matNow || matNow.map !== tex) return;
+      const remainingSec = Math.max(
+        0,
+        Math.ceil((nextPollAt - Date.now()) / 1000)
+      );
+      void ensureNimChartFontsLoaded().then(() => {
+        if (gen !== this.billboardSyncGen) return;
+        if (this.billboardRoots.get(b.id) !== root) return;
+        const m2 = root.userData["billboardMat"] as
+          | THREE.MeshBasicMaterial
+          | undefined;
+        if (!m2 || m2.map !== tex) return;
+        if (lastCandles) {
+          drawNimBillboardCandles(
+            ctx,
+            lastCandles,
+            canvas.width,
+            canvas.height,
+            chartTitle()
+          );
+        } else if (showUnavailableOnCanvas) {
+          ctx.fillStyle = "#0b0f14";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "#787878";
+          ctx.font = `500 20px ${NIM_BILLBOARD_CHART_FONT}`;
+          ctx.textAlign = "center";
+          ctx.fillText(
+            "Chart unavailable",
+            canvas.width / 2,
+            canvas.height / 2
+          );
+        } else {
+          ctx.fillStyle = "#0b0f14";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "#64748b";
+          ctx.font = `500 22px ${NIM_BILLBOARD_CHART_FONT}`;
+          ctx.textAlign = "center";
+          ctx.fillText(
+            "Loading chart…",
+            canvas.width / 2,
+            canvas.height / 2
+          );
+        }
+        drawNimChartRefreshCountdown(
+          ctx,
+          canvas.width,
+          canvas.height,
+          remainingSec
+        );
+        tex.needsUpdate = true;
+        m2.needsUpdate = true;
+      });
+    };
+
+    const paint = async (): Promise<void> => {
+      if (gen !== this.billboardSyncGen) return;
+      if (this.billboardRoots.get(b.id) !== root) return;
+      const matNow = root.userData["billboardMat"] as
+        | THREE.MeshBasicMaterial
+        | undefined;
+      if (!matNow) return;
+
+      try {
+        const data = await fetchNimBillboardOhlc(currentRange());
+        if (gen !== this.billboardSyncGen) return;
+        if (this.billboardRoots.get(b.id) !== root) return;
+        await ensureNimChartFontsLoaded();
+        if (gen !== this.billboardSyncGen) return;
+        lastCandles = data.candles;
+        showUnavailableOnCanvas = false;
+        drawNimBillboardCandles(
+          ctx,
+          data.candles,
+          canvas.width,
+          canvas.height,
+          chartTitle()
+        );
+        const remainingSec = Math.max(
+          0,
+          Math.ceil((nextPollAt - Date.now()) / 1000)
+        );
+        drawNimChartRefreshCountdown(
+          ctx,
+          canvas.width,
+          canvas.height,
+          remainingSec
+        );
+        tex.needsUpdate = true;
+        if (matNow.map !== tex) {
+          const prev = matNow.map;
+          matNow.map = tex;
+          matNow.needsUpdate = true;
+          if (prev && prev !== tex) prev.dispose();
+        } else {
+          matNow.needsUpdate = true;
+        }
+      } catch {
+        if (gen !== this.billboardSyncGen) return;
+        if (this.billboardRoots.get(b.id) !== root) return;
+        lastCandles = null;
+        const url = getFirstSlideUrlForAdvertId(fallbackAdvertId);
+        if (!url) {
+          showUnavailableOnCanvas = true;
+          redrawChartCanvas();
+          tex.needsUpdate = true;
+          if (matNow.map !== tex) {
+            const prev = matNow.map;
+            matNow.map = tex;
+            matNow.needsUpdate = true;
+            if (prev && prev !== tex) prev.dispose();
+          }
+          return;
+        }
+        try {
+          const imgTex = await this.loadBillboardTexture(url);
+          if (gen !== this.billboardSyncGen) {
+            imgTex.dispose();
+            return;
+          }
+          if (this.billboardRoots.get(b.id) !== root) {
+            imgTex.dispose();
+            return;
+          }
+          showUnavailableOnCanvas = false;
+          const prev = matNow.map;
+          matNow.map = imgTex;
+          matNow.needsUpdate = true;
+          if (prev && prev !== imgTex) prev.dispose();
+        } catch {
+          showUnavailableOnCanvas = true;
+          ctx.fillStyle = "#0b0f14";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "#787878";
+          ctx.font = `500 20px ${NIM_BILLBOARD_CHART_FONT}`;
+          ctx.textAlign = "center";
+          ctx.fillText(
+            "Chart unavailable",
+            canvas.width / 2,
+            canvas.height / 2
+          );
+          const remainingSec = Math.max(
+            0,
+            Math.ceil((nextPollAt - Date.now()) / 1000)
+          );
+          drawNimChartRefreshCountdown(
+            ctx,
+            canvas.width,
+            canvas.height,
+            remainingSec
+          );
+          tex.needsUpdate = true;
+          const prev = matNow.map;
+          matNow.map = tex;
+          matNow.needsUpdate = true;
+          if (prev && prev !== tex) prev.dispose();
+        }
+      }
+    };
+
+    void paint();
+    redrawChartCanvas();
+    const pollKey = `chartPoll:${b.id}`;
+    const tickKey = `chartTick:${b.id}`;
+    const pollTimer = window.setInterval(() => {
+      nextPollAt = Date.now() + POLL_MS;
+      void paint();
+    }, POLL_MS);
+    this.billboardTimers.set(pollKey, pollTimer);
+    const tickTimer = window.setInterval(() => redrawChartCanvas(), 1000);
+    this.billboardTimers.set(tickKey, tickTimer);
+    if (rangeCycleOn) {
+      const cycleKey = `chartCycle:${b.id}`;
+      const cycleTimer = window.setInterval(() => {
+        cyclePhase = (cyclePhase + 1) % CHART_CYCLE_ORDER.length;
+        lastCandles = null;
+        void paint();
+      }, cycleIntervalMs);
+      this.billboardTimers.set(cycleKey, cycleTimer);
+    }
+  }
+
   private async mountOneBillboard(
     b: BillboardState,
     gen: number
@@ -3320,6 +3672,13 @@ export class Game {
     this.scene.add(root);
     root.updateMatrixWorld(true);
     this.billboardRoots.set(b.id, root);
+
+    if (
+      b.liveChart?.range === "24h" || b.liveChart?.range === "7d"
+    ) {
+      this.mountBillboardLiveChart(root, b, gen);
+      return;
+    }
 
     try {
       const ph0 = billboardSlideshowPhaseIndex(b, Date.now());

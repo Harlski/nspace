@@ -45,6 +45,9 @@ import {
 import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
 import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
 import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
+import { adminSystemPageHtml } from "./adminSystemPage.js";
+import { getAdminSystemSnapshot, startAdminSystemMonitor } from "./adminSystemMonitor.js";
+import { isAdmin } from "./config.js";
 import {
   type AnalyticsPageViewAnonReason,
   getAnalyticsPageViewsByDay,
@@ -287,10 +290,16 @@ function analyticsAuthStatus(req: Request): {
   authenticated: boolean;
   analyticsAuthorized: boolean;
   analyticsManager: boolean;
+  systemAdmin: boolean;
 } {
   const t = bearerToken(req);
   if (!t) {
-    return { authenticated: false, analyticsAuthorized: false, analyticsManager: false };
+    return {
+      authenticated: false,
+      analyticsAuthorized: false,
+      analyticsManager: false,
+      systemAdmin: false,
+    };
   }
   try {
     const payload = verifySession(t, jwtSecret);
@@ -299,9 +308,15 @@ function analyticsAuthStatus(req: Request): {
       authenticated: true,
       analyticsAuthorized: analyticsAuthorizedWallets.has(signer),
       analyticsManager: analyticsManagerWallets.has(signer),
+      systemAdmin: isAdmin(payload.sub),
     };
   } catch {
-    return { authenticated: false, analyticsAuthorized: false, analyticsManager: false };
+    return {
+      authenticated: false,
+      analyticsAuthorized: false,
+      analyticsManager: false,
+      systemAdmin: false,
+    };
   }
 }
 
@@ -346,6 +361,25 @@ function requireAnalyticsWalletAdmin(
     return;
   }
   next();
+}
+
+/** Game / ops admin (`ADMIN_ADDRESSES` in `config.ts`), not analytics managers. */
+function requireSystemAdminWallet(req: Request, res: Response, next: NextFunction): void {
+  const t = bearerToken(req);
+  if (!t) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  try {
+    const payload = verifySession(t, jwtSecret);
+    if (!isAdmin(payload.sub)) {
+      res.status(403).json({ error: "forbidden" });
+      return;
+    }
+    next();
+  } catch {
+    res.status(401).json({ error: "unauthorized" });
+  }
 }
 
 async function sendTelegramFeedback(text: string): Promise<boolean> {
@@ -763,6 +797,15 @@ app.get("/admin", (_req, res) => {
   res.type("html").send(analyticsAdminPageHtml());
 });
 
+/** Server diagnostics (event loop, memory, in-process log ring); JWT must be `ADMIN_ADDRESSES`. */
+app.get("/admin/system", (_req, res) => {
+  res.type("html").send(adminSystemPageHtml());
+});
+
+app.get("/api/admin/system/snapshot", requireSystemAdminWallet, (_req, res) => {
+  res.json(getAdminSystemSnapshot());
+});
+
 /** Backward-compat redirect. */
 app.get("/analytics/admin", (_req, res) => {
   res.redirect(302, "/admin");
@@ -964,6 +1007,7 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
 
 startRoomTick();
+startAdminSystemMonitor();
 startGameWsMetricsFlushTimer();
 startNimPayoutProcessor();
 

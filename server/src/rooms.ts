@@ -93,6 +93,10 @@ import {
   updateSignboardPosition,
 } from "./signboards.js";
 import {
+  BILLBOARD_LIVE_CHART_PLACEHOLDER_SLIDE,
+  parseBillboardLiveChartFromMessage,
+} from "./billboardLiveChart.js";
+import {
   billboardToWire,
   createBillboard,
   deleteBillboard,
@@ -557,6 +561,12 @@ type OutMsg =
         slideshowEpochMs: number;
         visitName: string;
         visitUrl: string;
+        liveChart?: {
+          range: "24h" | "7d";
+          fallbackAdvertId: string;
+          rangeCycle?: boolean;
+          cycleIntervalSec?: number;
+        };
         createdBy: string;
         createdAt: number;
       }>;
@@ -640,6 +650,12 @@ type OutMsg =
         slideshowEpochMs: number;
         visitName: string;
         visitUrl: string;
+        liveChart?: {
+          range: "24h" | "7d";
+          fallbackAdvertId: string;
+          rangeCycle?: boolean;
+          cycleIntervalSec?: number;
+        };
         createdBy: string;
         createdAt: number;
       }>;
@@ -4910,26 +4926,42 @@ export function addClient(
       /** Placement UI no longer sends yaw; keep 0 for a predictable default footprint axis. */
       const yawSteps = 0;
       const rawMsg = msg as Record<string, unknown>;
-      const advertIds = parseBillboardAdvertIdsFromMessage(rawMsg);
-      if (!advertIds) {
-        wsSafeSend(ws, { type: "error", code: "invalid_billboard_advert" });
-        return;
+      const liveChart = parseBillboardLiveChartFromMessage(rawMsg);
+      let advertIds: string[] = [];
+      let slides: string[] = [];
+      let intervalMs: number;
+      let visitName: string;
+      let visitUrl: string;
+
+      if (liveChart) {
+        slides = [BILLBOARD_LIVE_CHART_PLACEHOLDER_SLIDE];
+        intervalMs = 60_000;
+        visitName = "NIM (CoinGecko)";
+        visitUrl = "https://www.coingecko.com/en/coins/nimiq-2";
+      } else {
+        const parsed = parseBillboardAdvertIdsFromMessage(rawMsg);
+        if (!parsed) {
+          wsSafeSend(ws, { type: "error", code: "invalid_billboard_advert" });
+          return;
+        }
+        advertIds = parsed;
+        if (!validateAdvertRotationVisitHttps(advertIds)) {
+          wsSafeSend(ws, { type: "error", code: "invalid_billboard_visit_url" });
+          return;
+        }
+        const built = buildBillboardSlidesFromAdvertIds(advertIds);
+        if (!built || built.length === 0) {
+          wsSafeSend(ws, { type: "error", code: "invalid_billboard_url" });
+          return;
+        }
+        slides = built;
+        let intervalFrom = Math.floor(Number(rawMsg.intervalMs));
+        if (!Number.isFinite(intervalFrom)) intervalFrom = 8000;
+        intervalMs = Math.max(1000, Math.min(300_000, intervalFrom));
+        const first = getBillboardAdvertById(advertIds[0]!);
+        visitName = String(first?.name ?? "").trim() || "Advertiser";
+        visitUrl = String(first?.visitUrl ?? "").trim();
       }
-      if (!validateAdvertRotationVisitHttps(advertIds)) {
-        wsSafeSend(ws, { type: "error", code: "invalid_billboard_visit_url" });
-        return;
-      }
-      const slides = buildBillboardSlidesFromAdvertIds(advertIds);
-      if (!slides || slides.length === 0) {
-        wsSafeSend(ws, { type: "error", code: "invalid_billboard_url" });
-        return;
-      }
-      let intervalMs = Math.floor(Number(rawMsg.intervalMs));
-      if (!Number.isFinite(intervalMs)) intervalMs = 8000;
-      intervalMs = Math.max(1000, Math.min(300_000, intervalMs));
-      const first = getBillboardAdvertById(advertIds[0]!);
-      const visitName = String(first?.name ?? "").trim() || "Advertiser";
-      const visitUrl = String(first?.visitUrl ?? "").trim();
 
       const footprintProbe: Billboard = {
         id: "_place_probe",
@@ -4999,13 +5031,20 @@ export function addClient(
         slides,
         intervalMs,
         address,
-        {
-          advertId: advertIds[0],
-          advertIds,
-          visitName,
-          visitUrl,
-          slideshowEpochMs: now,
-        }
+        liveChart
+          ? {
+              visitName,
+              visitUrl,
+              slideshowEpochMs: now,
+              liveChart,
+            }
+          : {
+              advertId: advertIds[0],
+              advertIds,
+              visitName,
+              visitUrl,
+              slideshowEpochMs: now,
+            }
       );
       const addTiles: ObstacleTile[] = [];
       for (const { x: fx, z: fz } of footTiles) {
@@ -5079,37 +5118,67 @@ export function addClient(
         Math.min(3, Math.floor(Number(msg.yawSteps ?? bb.yawSteps)))
       );
       const rawMsg = msg as Record<string, unknown>;
-      const advertIds = parseBillboardAdvertIdsFromMessage(rawMsg);
-      if (!advertIds) {
-        wsSafeSend(ws, { type: "error", code: "invalid_billboard_advert" });
-        return;
-      }
-      if (!validateAdvertRotationVisitHttps(advertIds)) {
-        wsSafeSend(ws, { type: "error", code: "invalid_billboard_visit_url" });
-        return;
-      }
-      const slides = buildBillboardSlidesFromAdvertIds(advertIds);
-      if (!slides || slides.length === 0) {
-        wsSafeSend(ws, { type: "error", code: "invalid_billboard_url" });
-        return;
-      }
-      let intervalMs = Math.floor(Number(rawMsg.intervalMs));
-      if (!Number.isFinite(intervalMs)) intervalMs = bb.intervalMs;
-      intervalMs = Math.max(1000, Math.min(300_000, intervalMs));
-      const first = getBillboardAdvertById(advertIds[0]!);
-      const visitName = String(first?.name ?? "").trim() || "Advertiser";
-      const visitUrl = String(first?.visitUrl ?? "").trim();
+      const liveChart = parseBillboardLiveChartFromMessage(rawMsg);
+      let advertIds: string[] = [];
+      let slides: string[] = [];
+      let intervalMs: number;
+      let visitName: string;
+      let visitUrl: string;
 
-      const prevRing =
-        bb.advertIds?.length
+      if (liveChart) {
+        slides = [BILLBOARD_LIVE_CHART_PLACEHOLDER_SLIDE];
+        intervalMs = 60_000;
+        visitName = "NIM (CoinGecko)";
+        visitUrl = "https://www.coingecko.com/en/coins/nimiq-2";
+      } else {
+        const parsed = parseBillboardAdvertIdsFromMessage(rawMsg);
+        if (!parsed) {
+          wsSafeSend(ws, { type: "error", code: "invalid_billboard_advert" });
+          return;
+        }
+        advertIds = parsed;
+        if (!validateAdvertRotationVisitHttps(advertIds)) {
+          wsSafeSend(ws, { type: "error", code: "invalid_billboard_visit_url" });
+          return;
+        }
+        const built = buildBillboardSlidesFromAdvertIds(advertIds);
+        if (!built || built.length === 0) {
+          wsSafeSend(ws, { type: "error", code: "invalid_billboard_url" });
+          return;
+        }
+        slides = built;
+        let intervalFrom = Math.floor(Number(rawMsg.intervalMs));
+        if (!Number.isFinite(intervalFrom)) intervalFrom = bb.intervalMs;
+        intervalMs = Math.max(1000, Math.min(300_000, intervalFrom));
+        const first = getBillboardAdvertById(advertIds[0]!);
+        visitName = String(first?.name ?? "").trim() || "Advertiser";
+        visitUrl = String(first?.visitUrl ?? "").trim();
+      }
+
+      const liveChartRing = (
+        lc: {
+          range: string;
+          rangeCycle?: boolean;
+          cycleIntervalSec?: number;
+        }
+      ): string =>
+        lc.rangeCycle
+          ? `live:cycle:${lc.cycleIntervalSec ?? 20}`
+          : `live:${lc.range}`;
+      const prevRing = bb.liveChart
+        ? liveChartRing(bb.liveChart)
+        : bb.advertIds?.length
           ? bb.advertIds.join("\0")
           : bb.advertId
             ? bb.advertId
             : "";
-      const nextRing = advertIds.join("\0");
+      const nextRing = liveChart
+        ? liveChartRing(liveChart)
+        : advertIds.join("\0");
       const slideshowTicks =
         nextRing !== prevRing ||
         intervalMs !== bb.intervalMs ||
+        Boolean(bb.liveChart) !== Boolean(liveChart) ||
         slides.join("\0") !== bb.slides.join("\0");
       const slideshowEpochMs = slideshowTicks
         ? now
@@ -5168,17 +5237,31 @@ export function addClient(
           return;
         }
         if (!footprintOkForPlayers(newTiles)) return;
-        setBillboardContent(billboardId, {
-          orientation,
-          yawSteps,
-          slides,
-          intervalMs,
-          advertId: advertIds[0],
-          advertIds,
-          slideshowEpochMs,
-          visitName,
-          visitUrl,
-        });
+        setBillboardContent(
+          billboardId,
+          liveChart
+            ? {
+                orientation,
+                yawSteps,
+                slides,
+                intervalMs,
+                slideshowEpochMs,
+                visitName,
+                visitUrl,
+                liveChart,
+              }
+            : {
+                orientation,
+                yawSteps,
+                slides,
+                intervalMs,
+                advertId: advertIds[0],
+                advertIds,
+                slideshowEpochMs,
+                visitName,
+                visitUrl,
+              }
+        );
         broadcast(currentRoomId, {
           type: "billboards",
           roomId: currentRoomId,
@@ -5262,17 +5345,31 @@ export function addClient(
         const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
         if (deltaTile) addTiles.push(deltaTile);
       }
-      setBillboardContent(billboardId, {
-        orientation,
-        yawSteps,
-        slides,
-        intervalMs,
-        advertId: advertIds[0],
-        advertIds,
-        slideshowEpochMs,
-        visitName,
-        visitUrl,
-      });
+      setBillboardContent(
+        billboardId,
+        liveChart
+          ? {
+              orientation,
+              yawSteps,
+              slides,
+              intervalMs,
+              slideshowEpochMs,
+              visitName,
+              visitUrl,
+              liveChart,
+            }
+          : {
+              orientation,
+              yawSteps,
+              slides,
+              intervalMs,
+              advertId: advertIds[0],
+              advertIds,
+              slideshowEpochMs,
+              visitName,
+              visitUrl,
+            }
+      );
       const uniqRemove = [...new Set(removeKeys)];
       broadcast(currentRoomId, {
         type: "billboards",

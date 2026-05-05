@@ -47,9 +47,19 @@ export const BILLBOARD_ADVERTS_CATALOG: readonly BillboardAdvertCatalogEntry[] =
     },
   ];
 
+/** Default catalog image when a live chart billboard cannot load OHLC. */
+export const DEFAULT_BILLBOARD_CHART_FALLBACK_ADVERT_ID =
+  BILLBOARD_ADVERTS_CATALOG[0]?.id ?? "nimiq_bb";
+
 export function getBillboardAdvertById(
   id: string
 ): BillboardAdvertCatalogEntry | undefined {
   const k = String(id ?? "").trim();
   return BILLBOARD_ADVERTS_CATALOG.find((a) => a.id === k);
+}
+
+export function getFirstSlideUrlForAdvertId(id: string): string | null {
+  const a = getBillboardAdvertById(id);
+  const u = a?.slides?.[0];
+  return typeof u === "string" && u.trim() ? u.trim() : null;
 }

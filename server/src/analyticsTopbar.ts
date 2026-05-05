@@ -170,7 +170,7 @@ export function analyticsTopbarCss(): string {
   `;
 }
 
-export type MainSiteHeaderPage = "analytics" | "admin" | "payouts";
+export type MainSiteHeaderPage = "analytics" | "admin" | "payouts" | "system";
 
 function navLink(
   page: MainSiteHeaderPage,
@@ -196,6 +196,7 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
           ${navLink("payouts", currentPage, "/payouts", "Payouts")}
           ${navLink("analytics", currentPage, "/analytics", "Analytics", true)}
           ${navLink("admin", currentPage, "/admin", "Admin", true)}
+          ${navLink("system", currentPage, "/admin/system", "System", true)}
           ${
             currentPage === "admin"
               ? `<a class="main-site-nav__link" href="#admin-quick-payout">Quick payout</a>`
@@ -235,18 +236,19 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
           var nav = link.getAttribute("data-auth-nav");
           link.hidden = !(
             (nav === "analytics" && status.analyticsAuthorized) ||
-            (nav === "admin" && status.analyticsManager)
+            (nav === "admin" && status.analyticsManager) ||
+            (nav === "system" && status.systemAdmin)
           );
         });
       }
       function refreshNavFromSession() {
         var token = readToken();
         if (!token) {
-          applyNav({ analyticsAuthorized: false, analyticsManager: false });
+          applyNav({ analyticsAuthorized: false, analyticsManager: false, systemAdmin: false });
           return;
         }
         if (typeof window.__nsMainSiteJwtExpired === "function" && window.__nsMainSiteJwtExpired(token)) {
-          applyNav({ analyticsAuthorized: false, analyticsManager: false });
+          applyNav({ analyticsAuthorized: false, analyticsManager: false, systemAdmin: false });
           return;
         }
         fetch("/api/analytics/auth-status", {
@@ -260,10 +262,11 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
             applyNav({
               analyticsAuthorized: Boolean(status.analyticsAuthorized),
               analyticsManager: Boolean(status.analyticsManager),
+              systemAdmin: Boolean(status.systemAdmin),
             });
           })
           .catch(function () {
-            applyNav({ analyticsAuthorized: false, analyticsManager: false });
+            applyNav({ analyticsAuthorized: false, analyticsManager: false, systemAdmin: false });
           });
       }
       window.__nsApplyMainSiteNav = applyNav;

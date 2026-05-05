@@ -4,6 +4,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  BILLBOARD_LIVE_CHART_PLACEHOLDER_SLIDE,
+  type BillboardLiveChart,
+  normalizeLiveChartWire,
+} from "./billboardLiveChart.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -34,6 +39,8 @@ export type Billboard = {
   visitName: string;
   /** External HTTPS URL opened after user confirmation. */
   visitUrl: string;
+  /** Live NIM candlestick chart (client fetches OHLC from nim-chart-service). */
+  liveChart?: BillboardLiveChart;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -179,6 +186,14 @@ function normalizeLoaded(raw: unknown): Billboard | null {
     const imageUrl = String(o.imageUrl ?? "").trim();
     if (isAllowedBillboardImageUrl(imageUrl)) slides = [imageUrl];
   }
+  let liveChart: BillboardLiveChart | undefined;
+  const lcRaw = o.liveChart;
+  if (lcRaw) {
+    liveChart = normalizeLiveChartWire(lcRaw) ?? undefined;
+  }
+  if (liveChart) {
+    slides = [BILLBOARD_LIVE_CHART_PLACEHOLDER_SLIDE];
+  }
   if (!id || !roomId || !Number.isFinite(anchorX) || !Number.isFinite(anchorZ)) {
     return null;
   }
@@ -224,6 +239,7 @@ function normalizeLoaded(raw: unknown): Billboard | null {
     slideshowEpochMs,
     visitName,
     visitUrl,
+    liveChart,
     createdBy,
     createdAt,
     updatedAt,
@@ -265,6 +281,7 @@ export function createBillboard(
     visitName: string;
     visitUrl: string;
     slideshowEpochMs: number;
+    liveChart?: BillboardLiveChart;
   }
 ): Billboard {
   const now = Date.now();
@@ -278,11 +295,16 @@ export function createBillboard(
     yawSteps,
     slides,
     intervalMs,
-    advertId: visitMeta.advertId,
-    advertIds: visitMeta.advertIds?.length ? [...visitMeta.advertIds] : undefined,
+    advertId: visitMeta.liveChart ? undefined : visitMeta.advertId,
+    advertIds: visitMeta.liveChart
+      ? undefined
+      : visitMeta.advertIds?.length
+        ? [...visitMeta.advertIds]
+        : undefined,
     slideshowEpochMs: visitMeta.slideshowEpochMs,
     visitName: visitMeta.visitName,
     visitUrl: visitMeta.visitUrl,
+    liveChart: visitMeta.liveChart,
     createdBy,
     createdAt: now,
     updatedAt: now,
@@ -302,14 +324,17 @@ export function billboardToWire(b: Billboard) {
     slides: b.slides,
     intervalMs: b.intervalMs,
     advertId: b.advertId ?? "",
-    advertIds: b.advertIds?.length
-      ? b.advertIds
-      : b.advertId
-        ? [b.advertId]
-        : [],
+    advertIds: b.liveChart
+      ? []
+      : b.advertIds?.length
+        ? b.advertIds
+        : b.advertId
+          ? [b.advertId]
+          : [],
     slideshowEpochMs: b.slideshowEpochMs ?? b.createdAt,
     visitName: b.visitName ?? "",
     visitUrl: b.visitUrl ?? "",
+    liveChart: b.liveChart,
     createdBy: b.createdBy,
     createdAt: b.createdAt,
   };
@@ -340,6 +365,7 @@ export function setBillboardContent(
     slideshowEpochMs?: number;
     visitName: string;
     visitUrl: string;
+    liveChart?: BillboardLiveChart;
   }
 ): boolean {
   const b = billboards.find((x) => x.id === id);
@@ -348,9 +374,16 @@ export function setBillboardContent(
   b.yawSteps = next.yawSteps;
   b.slides = next.slides;
   b.intervalMs = next.intervalMs;
-  b.advertId = next.advertId;
-  if (next.advertIds !== undefined) {
-    b.advertIds = next.advertIds.length ? [...next.advertIds] : undefined;
+  if (next.liveChart) {
+    b.liveChart = { ...next.liveChart };
+    b.advertId = undefined;
+    b.advertIds = undefined;
+  } else {
+    b.liveChart = undefined;
+    b.advertId = next.advertId;
+    if (next.advertIds !== undefined) {
+      b.advertIds = next.advertIds.length ? [...next.advertIds] : undefined;
+    }
   }
   if (next.slideshowEpochMs !== undefined) {
     b.slideshowEpochMs = next.slideshowEpochMs;

@@ -5,6 +5,8 @@
  * If unset or `0`, logging is off. Applies to the game socket handled in `rooms.ts`.
  */
 
+import { appendAdminSystemLog } from "./adminSystemMonitor.js";
+
 const intervalMs = Math.max(
   0,
   Math.floor(Number(process.env.WS_METRICS_INTERVAL_MS ?? "0"))
@@ -97,6 +99,23 @@ function flushLog(): void {
       `[ws-metrics] in (type → bytes, msgs): ${inRows
         .map((r) => `${r.type} ${formatBytes(r.bytes)} ${r.msgs}`)
         .join(" | ")}`
+    );
+  }
+
+  appendAdminSystemLog(
+    "info",
+    `[ws-metrics] window=${intervalMs}ms outbound_wire=${formatBytes(outTotal)} inbound_raw=${formatBytes(inTotal)}`
+  );
+  if (outRows.length) {
+    appendAdminSystemLog(
+      "info",
+      `[ws-metrics] out: ${outRows.map((r) => `${r.type} ${formatBytes(r.bytes)} ${r.sends}`).join(" | ")}`
+    );
+  }
+  if (inRows.length) {
+    appendAdminSystemLog(
+      "info",
+      `[ws-metrics] in: ${inRows.map((r) => `${r.type} ${formatBytes(r.bytes)} ${r.msgs}`).join(" | ")}`
     );
   }
 }
