@@ -3079,7 +3079,7 @@ button.hud-brand:focus-visible {
     pointer-events: none;
   }
 
-  .hud-top > .hud-return-hub,
+  .hud-top > .hud-return-home,
   .hud-top > .hud-top-actions {
     pointer-events: auto;
     margin-right: calc(8px + env(safe-area-inset-right, 0px));
@@ -3093,7 +3093,7 @@ button.hud-brand:focus-visible {
     width: auto;
   }
 
-  .hud-return-hub {
+  .hud-return-home {
     width: auto;
     font-size: 11px;
     padding: 7px 10px;
@@ -3176,7 +3176,7 @@ button.hud-brand:focus-visible {
 .hud-fs:hover,
 .hud-rooms:hover,
 .hud-lobby:hover,
-.hud-return-hub:hover {
+.hud-return-home:hover {
   background: rgba(30, 36, 51, 0.95);
 }
 
@@ -3258,7 +3258,7 @@ button.hud-brand:focus-visible {
   cursor: not-allowed;
 }
 
-.hud-return-hub {
+.hud-return-home {
   padding: 6px 12px;
   border-radius: 6px;
   border: 1px solid #4a6b8c;
@@ -3665,6 +3665,29 @@ button.hud-brand:focus-visible {
 
 .other-player-profile__username-input--inline[hidden] {
   display: none !important;
+}
+
+.other-player-profile__admin-set-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.other-player-profile__admin-name-input {
+  flex: 1 1 100px;
+  min-width: 0;
+  max-width: 160px;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(100, 116, 139, 0.55);
+  background: rgba(15, 23, 42, 0.85);
+  color: #f1f5f9;
+  font: inherit;
+  font-size: 12px;
 }
 
 .other-player-profile__admin-mod {
@@ -4889,6 +4912,7 @@ button.hud-brand:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  unicode-bidi: plaintext;
 }
 
 .build-object-panel-context__tp-room-trigger-meta {
@@ -4899,6 +4923,7 @@ button.hud-brand:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  unicode-bidi: plaintext;
 }
 
 .build-object-panel-context__tp-room-picker {
@@ -4957,12 +4982,30 @@ button.hud-brand:focus-visible {
   -webkit-overflow-scrolling: touch;
 }
 
-.build-object-panel-context__tp-room-picker-row {
+.build-object-panel-context__tp-room-picker-item {
   margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.build-object-panel-context__tp-room-picker-row {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
   padding: 7px 8px;
   border-radius: 6px;
   border: 1px solid transparent;
   cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  min-height: 40px;
+  touch-action: manipulation;
+  unicode-bidi: plaintext;
+  direction: ltr;
+  -webkit-tap-highlight-color: rgba(148, 163, 184, 0.15);
 }
 
 .build-object-panel-context__tp-room-picker-row:hover {
@@ -4980,6 +5023,7 @@ button.hud-brand:focus-visible {
   font-weight: 600;
   color: #e8eaef;
   line-height: 1.25;
+  unicode-bidi: plaintext;
 }
 
 .build-object-panel-context__tp-room-picker-row-meta {
@@ -4987,6 +5031,7 @@ button.hud-brand:focus-visible {
   font-size: 10px;
   line-height: 1.3;
   color: rgba(148, 163, 184, 0.92);
+  unicode-bidi: plaintext;
 }
 
 .build-object-panel-context__tp-head {

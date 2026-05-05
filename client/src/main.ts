@@ -66,7 +66,7 @@ import { nimiqIconUseMarkup } from "./ui/nimiqIcons.js";
 import { mountNimiqPaySiteAdvisory } from "./ui/nimiqPayAdvisory.js";
 
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
-/** Inactivity: return to hub center (not lobby). */
+/** Inactivity: return to chamber home spawn (not lobby). */
 const IDLE_RETURN_HUB_MS = 15 * 60 * 1000;
 const LS_ZOOM_NON_MAZE_FRUSTUM = "nspace_zoom_non_maze_frustum";
 
@@ -349,6 +349,35 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     return a.replace(/\s+/g, "").toUpperCase();
   }
 
+  /** Stable sort for room labels; avoids `localeCompare` edge cases with emoji / rare Unicode. */
+  function safeRoomNameCompare(a: string, b: string): number {
+    const as = typeof a === "string" ? a : "";
+    const bs = typeof b === "string" ? b : "";
+    let cmp = 0;
+    try {
+      cmp = as.localeCompare(bs, "en", { sensitivity: "accent", numeric: true });
+    } catch {
+      if (as < bs) return -1;
+      if (as > bs) return 1;
+      return 0;
+    }
+    if (cmp !== 0) return cmp;
+    return 0;
+  }
+
+  function normalizeRoomCatalogDisplayName(
+    raw: string | undefined,
+    idFallback: string
+  ): string {
+    const t = typeof raw === "string" ? raw.trim() : "";
+    const base = t.length > 0 ? t : idFallback;
+    try {
+      return base.normalize("NFC");
+    } catch {
+      return base;
+    }
+  }
+
   function viewerOwnsRoom(r: KnownRoomRow): boolean {
     if (!r.ownerAddress) return false;
     return compactWallet(r.ownerAddress) === compactWallet(address);
@@ -359,7 +388,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const nHub = normalizeRoomId(HUB_ROOM_ID);
     const rowFromKnown = (r: KnownRoomRow): TeleporterDestinationRoomRow => ({
       id: normalizeRoomId(r.id),
-      displayName: r.displayName.trim() || r.id,
+      displayName: normalizeRoomCatalogDisplayName(r.displayName, r.id),
       isPublic: r.isPublic,
       playerCount: r.playerCount,
       isOfficial: r.isOfficial,
@@ -374,7 +403,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       out.sort((a, b) => {
         if (a.id === nHub) return -1;
         if (b.id === nHub) return 1;
-        return a.displayName.localeCompare(b.displayName);
+        const c = safeRoomNameCompare(a.displayName, b.displayName);
+        if (c !== 0) return c;
+        return a.id.localeCompare(b.id);
       });
       return out;
     }
@@ -382,7 +413,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const out: TeleporterDestinationRoomRow[] = [
       {
         id: normalizeRoomId(hubRow?.id ?? HUB_ROOM_ID),
-        displayName: hubRow?.displayName?.trim() || "Hub",
+        displayName: normalizeRoomCatalogDisplayName(
+          hubRow?.displayName,
+          "Hub"
+        ),
         isPublic: hubRow?.isPublic ?? true,
         playerCount: hubRow?.playerCount ?? 0,
         isOfficial: hubRow?.isOfficial ?? false,
@@ -398,7 +432,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     out.sort((a, b) => {
       if (a.id === nHub) return -1;
       if (b.id === nHub) return 1;
-      return a.displayName.localeCompare(b.displayName);
+      const c = safeRoomNameCompare(a.displayName, b.displayName);
+      if (c !== 0) return c;
+      return a.id.localeCompare(b.id);
     });
     return out;
   }
@@ -985,14 +1021,18 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           if (ib === -1) return -1;
           if (ia !== ib) return ia - ib;
         }
-        return a.displayName.localeCompare(b.displayName);
+        const c = safeRoomNameCompare(a.displayName, b.displayName);
+        if (c !== 0) return c;
+        return a.id.localeCompare(b.id);
       });
     } else if (roomsCatalogTab === "user") {
       filtered.sort((a, b) => {
         const ao = viewerOwnsRoom(a) ? 0 : 1;
         const bo = viewerOwnsRoom(b) ? 0 : 1;
         if (ao !== bo) return ao - bo;
-        return a.displayName.localeCompare(b.displayName);
+        const c = safeRoomNameCompare(a.displayName, b.displayName);
+        if (c !== 0) return c;
+        return a.id.localeCompare(b.id);
       });
     }
 
@@ -1424,9 +1464,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
   }
 
-  const syncHubButton = (): void => {
-    hud.setReturnToHubVisible(
-      normalizeRoomId(game.getRoomId()) !== HUB_ROOM_ID
+  const syncReturnHomeButton = (): void => {
+    hud.setReturnHomeVisible(
+      normalizeRoomId(game.getRoomId()) !== CHAMBER_ROOM_ID
     );
   };
 
@@ -2641,7 +2681,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       
       lastPlayers = [msg.self, ...msg.others];
       game.syncState(lastPlayers);
-      syncHubButton();
+      syncReturnHomeButton();
       await updateCanvasLeaderboard();
       const welcomeOnlineCount =
         typeof msg.onlinePlayerCount === "number" &&
@@ -2699,10 +2739,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
                 id === CANVAS_ROOM_ID;
           return {
             id,
-            displayName:
-              typeof r.displayName === "string" && r.displayName.trim()
-                ? r.displayName.trim()
-                : String(r.id),
+            displayName: normalizeRoomCatalogDisplayName(
+              typeof r.displayName === "string" ? r.displayName : undefined,
+              String(r.id)
+            ),
             ownerAddress:
               r.ownerAddress === null || r.ownerAddress === undefined
                 ? null
@@ -2731,7 +2771,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
                 : null,
           };
         })
-        .sort((a, b) => a.displayName.localeCompare(b.displayName));
+        .sort((a, b) => {
+          const c = safeRoomNameCompare(a.displayName, b.displayName);
+          if (c !== 0) return c;
+          return a.id.localeCompare(b.id);
+        });
       syncRoomBackgroundHuePanel();
       if (!roomsModal.hidden) {
         renderRoomsModalList();
@@ -3056,8 +3100,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     hud.setSignboardTooltip(signboard);
   });
 
-  hud.onReturnToHub(() => {
-    connectToRoom(HUB_ROOM_ID);
+  hud.onReturnHome(() => {
+    connectToRoom(CHAMBER_ROOM_ID, {
+      x: CHAMBER_DEFAULT_SPAWN.x,
+      z: CHAMBER_DEFAULT_SPAWN.z,
+    });
   });
   hud.onFeedbackSubmit(async (message) => {
     const text = message.trim();

@@ -48,6 +48,11 @@ import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
 import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
 import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
 import { adminSystemPageHtml } from "./adminSystemPage.js";
+import { adminSettingsPageHtml } from "./adminSettingsPage.js";
+import {
+  getAdminRuntimeSettings,
+  patchAdminRuntimeSettings,
+} from "./adminRuntimeSettingsStore.js";
 import { getAdminSystemSnapshot, startAdminSystemMonitor } from "./adminSystemMonitor.js";
 import { isAdmin } from "./config.js";
 import {
@@ -62,6 +67,7 @@ import {
 } from "./analyticsAllowlistStore.js";
 import {
   adminClearPlayerUsername,
+  adminSetUsernameOnTarget,
   getPlayerProfilePublicJson,
   setPlayerProfileMessage,
   trySetPlayerUsername,
@@ -245,6 +251,8 @@ app.get("/api/player-profile/:address", (req, res) => {
       return;
     }
     const pub = getPlayerProfilePublicJson(addr) as Record<string, unknown>;
+    pub.usernameSelfServiceEnabled =
+      getAdminRuntimeSettings().playerUsernameSelfServiceEnabled;
     const t = bearerToken(req);
     if (t) {
       try {
@@ -829,8 +837,29 @@ app.get("/admin/system", (_req, res) => {
   res.type("html").send(adminSystemPageHtml());
 });
 
+app.get("/admin/settings", (_req, res) => {
+  res.type("html").send(adminSettingsPageHtml());
+});
+
 app.get("/api/admin/system/snapshot", requireSystemAdminWallet, (_req, res) => {
   res.json(getAdminSystemSnapshot());
+});
+
+app.get("/api/admin/settings", requireSystemAdminWallet, (_req, res) => {
+  res.json(getAdminRuntimeSettings());
+});
+
+app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
+  const body = req.body as Record<string, unknown> | null;
+  const patch: { playerUsernameSelfServiceEnabled?: boolean } = {};
+  if (
+    body &&
+    Object.prototype.hasOwnProperty.call(body, "playerUsernameSelfServiceEnabled")
+  ) {
+    patch.playerUsernameSelfServiceEnabled =
+      body.playerUsernameSelfServiceEnabled === true;
+  }
+  res.json(patchAdminRuntimeSettings(patch));
 });
 
 /** Backward-compat redirect. */
@@ -948,12 +977,19 @@ app.put("/api/player-profile/username", requireJwt, (req, res) => {
     res.status(401).json({ error: "unauthorized" });
     return;
   }
+  const selfService = getAdminRuntimeSettings().playerUsernameSelfServiceEnabled;
+  if (!isAdmin(signer) && !selfService) {
+    res.status(403).json({ error: "username_self_service_disabled" });
+    return;
+  }
   const raw = (req.body as Record<string, unknown> | null)?.username;
   if (typeof raw !== "string") {
     res.status(400).json({ error: "missing_username" });
     return;
   }
-  const result = trySetPlayerUsername(signer, raw);
+  const result = trySetPlayerUsername(signer, raw, {
+    skipCooldown: isAdmin(signer),
+  });
   if (!result.ok) {
     const e = result.error;
     const status =
@@ -998,6 +1034,29 @@ app.post("/api/admin/moderation", requireSystemAdminWallet, (req, res) => {
     if (action === "channel_mute") {
       setChannelMuted(target, body?.muted === true, actor);
       res.json({ ok: true });
+      return;
+    }
+    if (action === "set_username") {
+      const uname = String(body?.username ?? "");
+      const result = adminSetUsernameOnTarget(target, uname);
+      if (!result.ok) {
+        const e = result.error;
+        const status =
+          e === "username_cooldown"
+            ? 429
+            : e === "username_taken"
+              ? 409
+              : 400;
+        res.status(status).json({ error: e });
+        return;
+      }
+      syncPlayerProfileDisplayNameForWallet(target);
+      res.json({
+        ok: true,
+        customUsername: result.customUsername,
+        effectiveDisplayName: result.effectiveDisplayName,
+        usernameLockedUntil: result.usernameLockedUntil,
+      });
       return;
     }
     res.status(400).json({ error: "unknown_action" });

@@ -11,8 +11,8 @@ const STORE_FILE = process.env.PLAYER_PROFILE_STORE_FILE
   : path.join(__dirname, "..", "data", "player-profiles.json");
 
 export const USERNAME_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-const USERNAME_MIN = 2;
-const USERNAME_MAX = 20;
+const USERNAME_MIN_LEN = 1;
+const USERNAME_MAX_LEN = 12;
 
 type Row = {
   message: string;
@@ -134,9 +134,9 @@ function pushAlias(aliases: string[], name: string): string[] {
 }
 
 function isValidUsernameCandidate(s: string): boolean {
-  if (s.length < USERNAME_MIN || s.length > USERNAME_MAX) return false;
+  if (s.length < USERNAME_MIN_LEN || s.length > USERNAME_MAX_LEN) return false;
   if (/^\[NPC\]/i.test(s)) return false;
-  return /^[a-zA-Z0-9 _-]+$/.test(s);
+  return /^[a-zA-Z0-9]+$/.test(s);
 }
 
 function usernameTakenByOther(
@@ -175,11 +175,12 @@ export type SetUsernameResult =
     }
   | { ok: false; error: string };
 
-export function trySetPlayerUsername(
-  normalizedSigner: string,
-  rawUsername: string
+function applyUsernameChange(
+  normalizedKey: string,
+  rawUsername: string,
+  options: { skipCooldown: boolean }
 ): SetUsernameResult {
-  const key = normalizedSigner.trim().toUpperCase();
+  const key = normalizedKey.trim().toUpperCase();
   if (!key) return { ok: false, error: "invalid_address" };
   if (isUsernameSetBanned(key)) return { ok: false, error: "username_set_banned" };
   const next = String(rawUsername ?? "").trim();
@@ -204,7 +205,7 @@ export function trySetPlayerUsername(
     };
   }
 
-  if (prevCustom) {
+  if (prevCustom && !options.skipCooldown) {
     if (now < changedAt + USERNAME_COOLDOWN_MS) {
       return { ok: false, error: "username_cooldown" };
     }
@@ -229,6 +230,28 @@ export function trySetPlayerUsername(
     effectiveDisplayName: next,
     usernameLockedUntil: now + USERNAME_COOLDOWN_MS,
   };
+}
+
+export function trySetPlayerUsername(
+  normalizedSigner: string,
+  rawUsername: string,
+  opts?: { skipCooldown?: boolean }
+): SetUsernameResult {
+  const key = normalizedSigner.trim().toUpperCase();
+  if (!key) return { ok: false, error: "invalid_address" };
+  return applyUsernameChange(key, rawUsername, {
+    skipCooldown: Boolean(opts?.skipCooldown),
+  });
+}
+
+/** Admin assigns a username to any wallet (cooldown skipped). */
+export function adminSetUsernameOnTarget(
+  normalizedTarget: string,
+  rawUsername: string
+): SetUsernameResult {
+  const key = normalizedTarget.trim().toUpperCase();
+  if (!key) return { ok: false, error: "invalid_address" };
+  return applyUsernameChange(key, rawUsername, { skipCooldown: true });
 }
 
 /** Admin: clear custom username and reset cooldown metadata. */

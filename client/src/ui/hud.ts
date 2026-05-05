@@ -189,7 +189,7 @@ export function createHud(
   isChatMinimized: () => boolean;
   setChatMinimized: (minimized: boolean) => void;
   onFullscreenToggle: (fn: () => void) => void;
-  setReturnToHubVisible: (visible: boolean) => void;
+  setReturnHomeVisible: (visible: boolean) => void;
   setPortalEnterVisible: (visible: boolean) => void;
   setPortalEnterScreenPosition: (x: number, y: number) => void;
   /** Same pill as portal Enter; use for “Visit …” on billboard tiles. */
@@ -225,7 +225,7 @@ export function createHud(
   dismissOtherPlayerOverlays: () => void;
   /** Open the in-game profile card for the signed-in wallet (top bar identicon / address). */
   openOwnPlayerProfile: () => void;
-  onReturnToHub: (fn: () => void) => void;
+  onReturnHome: (fn: () => void) => void;
   onPortalEnter: (fn: () => void) => void;
   isTeleporterModeActive: () => boolean;
   onBuildToolSelect: (
@@ -1230,11 +1230,11 @@ export function createHud(
 
   const topBar = document.createElement("div");
   topBar.className = "hud-top";
-  const returnHubBtn = document.createElement("button");
-  returnHubBtn.type = "button";
-  returnHubBtn.className = "hud-return-hub";
-  returnHubBtn.textContent = "Return to hub";
-  returnHubBtn.hidden = true;
+  const returnHomeBtn = document.createElement("button");
+  returnHomeBtn.type = "button";
+  returnHomeBtn.className = "hud-return-home";
+  returnHomeBtn.textContent = "Return Home";
+  returnHomeBtn.hidden = true;
   const portalEnterBtn = document.createElement("button");
   portalEnterBtn.type = "button";
   portalEnterBtn.className = "hud-portal-enter nq-button-pill light-blue";
@@ -1485,7 +1485,7 @@ export function createHud(
 
   // Keep signboard reading in the same top-right action stack as object edit.
   topActions.appendChild(signboardTooltip);
-  topBar.appendChild(returnHubBtn);
+  topBar.appendChild(returnHomeBtn);
   topBar.appendChild(topActions);
   ui.appendChild(topBar);
   ui.appendChild(modeSidebar);
@@ -1713,10 +1713,14 @@ export function createHud(
   oppUsernameInput.type = "text";
   oppUsernameInput.className =
     "other-player-profile__username-input other-player-profile__username-input--inline";
-  oppUsernameInput.maxLength = 20;
+  oppUsernameInput.maxLength = 12;
   oppUsernameInput.autocomplete = "off";
   oppUsernameInput.setAttribute("aria-label", "Username");
   oppUsernameInput.hidden = true;
+  oppUsernameInput.addEventListener("input", () => {
+    const t = oppUsernameInput.value.replace(/[^a-zA-Z0-9]/g, "");
+    if (t !== oppUsernameInput.value) oppUsernameInput.value = t;
+  });
   oppNamePrimaryWrap.append(oppDisplayNameEl, oppUsernameInput);
   const oppWalletShortEl = document.createElement("span");
   oppWalletShortEl.className = "other-player-profile__wallet-short";
@@ -1790,7 +1794,28 @@ export function createHud(
   const oppAdAllow = mkAdminBtn("Allow name");
   const oppAdMute = mkAdminBtn("Mute");
   const oppAdUnmute = mkAdminBtn("Unmute");
-  oppAdminRow.append(oppAdClear, oppAdBan, oppAdAllow, oppAdMute, oppAdUnmute);
+  const oppAdminSetWrap = document.createElement("div");
+  oppAdminSetWrap.className = "other-player-profile__admin-set-name";
+  const oppAdminNameInput = document.createElement("input");
+  oppAdminNameInput.type = "text";
+  oppAdminNameInput.className = "other-player-profile__admin-name-input";
+  oppAdminNameInput.maxLength = 12;
+  oppAdminNameInput.autocomplete = "off";
+  oppAdminNameInput.setAttribute("aria-label", "Set username");
+  oppAdminNameInput.addEventListener("input", () => {
+    const t = oppAdminNameInput.value.replace(/[^a-zA-Z0-9]/g, "");
+    if (t !== oppAdminNameInput.value) oppAdminNameInput.value = t;
+  });
+  const oppAdSetName = mkAdminBtn("Set name");
+  oppAdminSetWrap.append(oppAdminNameInput, oppAdSetName);
+  oppAdminRow.append(
+    oppAdminSetWrap,
+    oppAdClear,
+    oppAdBan,
+    oppAdAllow,
+    oppAdMute,
+    oppAdUnmute
+  );
   async function adminModerationPost(
     action: string,
     extra?: Record<string, unknown>
@@ -1798,7 +1823,7 @@ export function createHud(
     const tok = opts?.getGameAuthToken?.() ?? null;
     const target = profileOpenCompact;
     if (!tok || !target) return;
-    await fetch("/api/admin/moderation", {
+    const r = await fetch("/api/admin/moderation", {
       method: "POST",
       headers: {
         authorization: `Bearer ${tok}`,
@@ -1806,6 +1831,17 @@ export function createHud(
       },
       body: JSON.stringify({ action, target, ...extra }),
     });
+    if (!r.ok && action === "set_username") {
+      const errBody = (await r.json().catch(() => ({}))) as { error?: string };
+      const map: Record<string, string> = {
+        username_taken: "Taken.",
+        invalid_username: "Invalid.",
+        username_set_banned: "Banned.",
+      };
+      oppProfileNote.textContent = map[errBody.error ?? ""] ?? "Error.";
+      oppProfileNote.hidden = false;
+      return;
+    }
     void showPlayerProfileView(
       target,
       oppDisplayNameEl.textContent || walletDisplayName(target),
@@ -1826,6 +1862,11 @@ export function createHud(
   });
   oppAdUnmute.addEventListener("click", () => {
     void adminModerationPost("channel_mute", { muted: false });
+  });
+  oppAdSetName.addEventListener("click", () => {
+    void adminModerationPost("set_username", {
+      username: oppAdminNameInput.value.trim(),
+    });
   });
   const oppProfileMessage = document.createElement("div");
   oppProfileMessage.className = "other-player-profile__message-wrap";
@@ -2262,6 +2303,7 @@ export function createHud(
           username_taken: "Taken.",
           invalid_username: "Invalid.",
           username_set_banned: "Blocked.",
+          username_self_service_disabled: "Admins only.",
         };
         oppProfileNote.textContent = map[j.error ?? ""] ?? "Error.";
         oppProfileNote.hidden = false;
@@ -2340,6 +2382,7 @@ export function createHud(
     oppUsernameInput.value = "";
     oppUsernameInput.readOnly = false;
     oppAdminRow.hidden = true;
+    oppAdminNameInput.value = "";
     otherPlayerProfile.hidden = true;
     otherPlayerProfile.setAttribute("aria-hidden", "true");
     oppIdent.hidden = true;
@@ -2578,6 +2621,7 @@ export function createHud(
         usernameSetBanned?: boolean;
         subjectUsernameBanned?: boolean;
         subjectChannelMuted?: boolean;
+        usernameSelfServiceEnabled?: boolean;
       };
       if (profileOpenCompact !== openFor) return;
       if (typeof j.effectiveDisplayName === "string" && j.effectiveDisplayName.trim()) {
@@ -2609,8 +2653,13 @@ export function createHud(
         oppUsernameInput.value = profileUsernameSavedCustom;
         const bannedSelf = j.usernameSetBanned === true;
         const until = j.usernameLockedUntil ?? 0;
+        const allowByPolicy =
+          j.usernameSelfServiceEnabled === true ||
+          opts?.isGameAdmin?.() === true;
         oppUsernameInput.readOnly =
-          bannedSelf || (typeof until === "number" && until > Date.now());
+          !allowByPolicy ||
+          bannedSelf ||
+          (typeof until === "number" && until > Date.now());
         if (typeof until === "number" && until > 0) {
           oppUsernameInput.dataset.lockedUntil = String(until);
         } else {
@@ -5000,7 +5049,7 @@ export function createHud(
 
   let fsHandler = (): void => {};
   let reconnectHandler = (): void => {};
-  let returnHubHandler = (): void => {};
+  let returnHomeHandler = (): void => {};
   let portalEnterHandler = (): void => {};
   let lobbyHandler = (): void => {};
   let roomsOpenHandler = (): void => {};
@@ -5045,7 +5094,7 @@ export function createHud(
   roomsBtn.addEventListener("click", () => roomsOpenHandler());
   reconnectBtn.addEventListener("click", () => reconnectHandler());
   feedbackBtn.addEventListener("click", () => showFeedbackOverlay());
-  returnHubBtn.addEventListener("click", () => returnHubHandler());
+  returnHomeBtn.addEventListener("click", () => returnHomeHandler());
   portalEnterBtn.addEventListener("click", () => portalEnterHandler());
   lobbyBtn.addEventListener("click", () => openLobbyConfirm());
   buildToggleBtn.addEventListener("click", () => {
@@ -5802,8 +5851,8 @@ export function createHud(
     onFullscreenToggle(fn: () => void) {
       fsHandler = fn;
     },
-    setReturnToHubVisible(visible: boolean) {
-      returnHubBtn.hidden = !visible;
+    setReturnHomeVisible(visible: boolean) {
+      returnHomeBtn.hidden = !visible;
     },
     setPortalEnterVisible(visible: boolean) {
       portalEnterBtn.hidden = !visible;
@@ -5911,8 +5960,8 @@ export function createHud(
     openOwnPlayerProfile() {
       openOwnPlayerProfileFromBar();
     },
-    onReturnToHub(fn: () => void) {
-      returnHubHandler = fn;
+    onReturnHome(fn: () => void) {
+      returnHomeHandler = fn;
     },
     onPortalEnter(fn: () => void) {
       portalEnterHandler = fn;
@@ -6162,9 +6211,13 @@ export function createHud(
           for (const row of rows) {
             const rid = normalizeRoomId(row.id);
             const li = document.createElement("li");
-            li.className = "build-object-panel-context__tp-room-picker-row";
-            li.setAttribute("role", "option");
-            li.setAttribute(
+            li.className = "build-object-panel-context__tp-room-picker-item";
+            li.setAttribute("role", "presentation");
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "build-object-panel-context__tp-room-picker-row";
+            btn.setAttribute("role", "option");
+            btn.setAttribute(
               "aria-selected",
               rid === selId ? "true" : "false"
             );
@@ -6176,14 +6229,15 @@ export function createHud(
             sub.className =
               "build-object-panel-context__tp-room-picker-row-meta";
             sub.textContent = tpSubtitleForRow(row);
-            li.appendChild(main);
-            li.appendChild(sub);
-            li.addEventListener("click", () => {
+            btn.appendChild(main);
+            btn.appendChild(sub);
+            btn.addEventListener("click", () => {
               panelTeleporterSelectedRoomId = rid;
               syncTeleporterRoomTrigger();
               applyTeleporterHubUi?.();
               closeTeleporterRoomPicker();
             });
+            li.appendChild(btn);
             roomPickerList.appendChild(li);
           }
         };

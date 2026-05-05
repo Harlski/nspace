@@ -170,7 +170,7 @@ export function analyticsTopbarCss(): string {
   `;
 }
 
-export type MainSiteHeaderPage = "analytics" | "admin" | "payouts" | "system";
+export type MainSiteHeaderPage = "analytics" | "admin" | "payouts" | "system" | "settings";
 
 function navLink(
   page: MainSiteHeaderPage,
@@ -197,6 +197,7 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
           ${navLink("analytics", currentPage, "/analytics", "Analytics", true)}
           ${navLink("admin", currentPage, "/admin", "Admin", true)}
           ${navLink("system", currentPage, "/admin/system", "System", true)}
+          ${navLink("settings", currentPage, "/admin/settings", "Settings", true)}
           ${
             currentPage === "admin"
               ? `<a class="main-site-nav__link" href="#admin-quick-payout">Quick payout</a>`
@@ -237,7 +238,8 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
           link.hidden = !(
             (nav === "analytics" && status.analyticsAuthorized) ||
             (nav === "admin" && status.analyticsManager) ||
-            (nav === "system" && status.systemAdmin)
+            (nav === "system" && status.systemAdmin) ||
+            (nav === "settings" && status.systemAdmin)
           );
         });
       }

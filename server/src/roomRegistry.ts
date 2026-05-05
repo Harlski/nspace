@@ -108,7 +108,11 @@ function validateDisplayName(raw: string): string | null {
   const t = raw.trim();
   if (t.length < 1 || t.length > 48) return null;
   if (/[\x00-\x1f]/.test(t)) return null;
-  return t;
+  try {
+    return t.normalize("NFC");
+  } catch {
+    return t;
+  }
 }
 
 function normalizePersistedBackgroundHueDeg(v: unknown): number | null {
