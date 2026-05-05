@@ -2423,6 +2423,38 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     return `Visit ${short}`;
   }
 
+  function displayNameForTeleporterTarget(
+    roomId: string,
+    obstacleSnapshotName?: string
+  ): string {
+    const n = normalizeRoomId(roomId);
+    const row = knownRooms.find((r) => normalizeRoomId(r.id) === n);
+    const fromCatalog = row?.displayName?.trim();
+    if (fromCatalog) return fromCatalog;
+    const fromObstacle = obstacleSnapshotName?.trim();
+    if (fromObstacle) return fromObstacle;
+    if (n === HUB_ROOM_ID) return "Hub";
+    if (n === CANVAS_ROOM_ID) return "Canvas";
+    if (n === CHAMBER_ROOM_ID) return "Chamber";
+    return formatRoomJoinCode(n);
+  }
+
+  function formatTeleporterPortalLabel(
+    targetRoomId: string,
+    obstacleSnapshotName?: string
+  ): string {
+    const name = displayNameForTeleporterTarget(
+      targetRoomId,
+      obstacleSnapshotName
+    );
+    const full = `Enter ${name}`;
+    if (full.length <= 44) return full;
+    const maxName = 28;
+    const short =
+      name.length > maxName ? `${name.slice(0, maxName - 1)}…` : name;
+    return `Enter ${short}`;
+  }
+
   function syncPortalEnterButton(): void {
     const anchor = game.getSelfScreenPosition(1.15);
     if (anchor) {
@@ -2438,9 +2470,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }
       return;
     }
-    if (game.getStandingTeleporter()) {
+    const standingTp = game.getStandingTeleporter();
+    if (standingTp) {
       portalAction = { kind: "teleporter" };
-      hud.setPortalEnterLabel("Enter");
+      hud.setPortalEnterLabel(
+        formatTeleporterPortalLabel(
+          standingTp.targetRoomId,
+          standingTp.targetRoomDisplayName
+        )
+      );
       if (!portalEnterVisible) {
         portalEnterVisible = true;
         hud.setPortalEnterVisible(true);

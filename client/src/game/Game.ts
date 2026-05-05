@@ -2244,6 +2244,7 @@ export class Game {
     targetRoomId: string;
     targetX: number;
     targetZ: number;
+    targetRoomDisplayName?: string;
   } | null {
     if (!this.selfMesh) return null;
     const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
@@ -2252,10 +2253,18 @@ export class Game {
     if (!tp || ("pending" in tp && tp.pending) || !("targetRoomId" in tp)) {
       return null;
     }
+    const tpd = tp as {
+      targetRoomId: string;
+      targetX: number;
+      targetZ: number;
+      targetRoomDisplayName?: string;
+    };
+    const snap = tpd.targetRoomDisplayName?.trim();
     return {
-      targetRoomId: tp.targetRoomId,
-      targetX: tp.targetX,
-      targetZ: tp.targetZ,
+      targetRoomId: tpd.targetRoomId,
+      targetX: tpd.targetX,
+      targetZ: tpd.targetZ,
+      ...(snap ? { targetRoomDisplayName: snap } : {}),
     };
   }
 
@@ -3860,7 +3869,12 @@ export class Game {
       claimedBy?: string;
       teleporter?:
         | { pending: true }
-        | { targetRoomId: string; targetX: number; targetZ: number };
+        | {
+            targetRoomId: string;
+            targetX: number;
+            targetZ: number;
+            targetRoomDisplayName?: string;
+          };
     }[]
   ): void {
     this.placedObjects.clear();
@@ -3942,7 +3956,12 @@ export class Game {
       claimedBy?: string;
       teleporter?:
         | { pending: true }
-        | { targetRoomId: string; targetX: number; targetZ: number };
+        | {
+            targetRoomId: string;
+            targetX: number;
+            targetZ: number;
+            targetRoomDisplayName?: string;
+          };
     }[],
     remove: readonly string[]
   ): void {

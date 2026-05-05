@@ -221,7 +221,12 @@ export type TerrainProps = {
   colorId: number;
   teleporter?:
     | { pending: true }
-    | { targetRoomId: string; targetX: number; targetZ: number };
+    | {
+        targetRoomId: string;
+        targetX: number;
+        targetZ: number;
+        targetRoomDisplayName?: string;
+      };
 };
 
 export function terrainObstacleHeight(p: TerrainProps): number {

@@ -439,7 +439,13 @@ export type ObstacleTile = {
   claimedBy?: string;
   teleporter?:
     | { pending: true }
-    | { targetRoomId: string; targetX: number; targetZ: number };
+    | {
+        targetRoomId: string;
+        targetX: number;
+        targetZ: number;
+        /** Snapshot of destination room name when configured (private rooms may be absent from catalog). */
+        targetRoomDisplayName?: string;
+      };
 };
 
 const BLOCK_COLOR_MAX = 9;
@@ -2125,6 +2131,13 @@ function placePendingTeleporterAt(
   return true;
 }
 
+function roomCatalogDisplayNameForTeleporter(roomId: string): string {
+  const id = normalizeRoomId(roomId);
+  const def = listRoomDefinitions().find((d) => normalizeRoomId(d.id) === id);
+  const n = def?.displayName?.trim();
+  return n && n.length > 0 ? n : id;
+}
+
 /** One-way teleporter: only the source tile is placed; destination is where the player warps. */
 function configureTeleporterDestination(
   conn: ClientConn,
@@ -2202,7 +2215,12 @@ function configureTeleporterDestination(
 
   srcPlaced.set(canonicalSrc, {
     ...TELEPORTER_VISUAL,
-    teleporter: { targetRoomId: nDest, targetX: warpX, targetZ: warpZ },
+    teleporter: {
+      targetRoomId: nDest,
+      targetX: warpX,
+      targetZ: warpZ,
+      targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(nDest),
+    },
   });
 
   const d1 = obstacleTileFromPlaced(nSrc, canonicalSrc);

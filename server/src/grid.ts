@@ -215,7 +215,13 @@ export type TerrainProps = {
    */
   teleporter?:
     | { pending: true }
-    | { targetRoomId: string; targetX: number; targetZ: number };
+    | {
+        targetRoomId: string;
+        targetX: number;
+        targetZ: number;
+        /** Denormalized label for clients that do not have the room in their catalog (e.g. private). */
+        targetRoomDisplayName?: string;
+      };
   // Experimental: Claimable/minable blocks
   claimable?: boolean;
   active?: boolean;

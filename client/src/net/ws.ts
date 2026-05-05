@@ -21,7 +21,12 @@ export type ObstacleTile = {
   locked?: boolean;
   teleporter?:
     | { pending: true }
-    | { targetRoomId: string; targetX: number; targetZ: number };
+    | {
+        targetRoomId: string;
+        targetX: number;
+        targetZ: number;
+        targetRoomDisplayName?: string;
+      };
 };
 
 export type ObstacleProps = {

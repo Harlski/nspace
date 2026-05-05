@@ -111,7 +111,12 @@ export type BlockStyleProps = {
   locked?: boolean;
   teleporter?:
     | { pending: true }
-    | { targetRoomId: string; targetX: number; targetZ: number };
+    | {
+        targetRoomId: string;
+        targetX: number;
+        targetZ: number;
+        targetRoomDisplayName?: string;
+      };
   // Experimental: Claimable/minable blocks
   claimable?: boolean;
   active?: boolean;
