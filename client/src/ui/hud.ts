@@ -174,7 +174,14 @@ export function createHud(
   }
 ): {
   setStatus: (s: string) => void;
-  appendChat: (from: string, text: string) => void;
+  appendChat: (
+    from: string,
+    text: string,
+    opts?: {
+      fromAddress?: string | null;
+      profileIsSelf?: boolean;
+    }
+  ) => void;
   getChatInput: () => HTMLInputElement;
   /** Player hid the chat via minimize; persisted in localStorage until cleared. */
   isChatMinimized: () => boolean;
@@ -773,6 +780,41 @@ export function createHud(
   HUD_STAT_TIP_VIEWPORT_MQ.addEventListener("change", repositionOpenHudStatTips);
   
   topToolbar.appendChild(playerJoinToast);
+
+  const translateClipboardHintToast = document.createElement("div");
+  translateClipboardHintToast.className =
+    "hud-player-join-toast hud-translate-clipboard-hint";
+  translateClipboardHintToast.hidden = true;
+  translateClipboardHintToast.setAttribute("role", "status");
+  translateClipboardHintToast.setAttribute("aria-live", "polite");
+  translateClipboardHintToast.textContent =
+    "Message copied — paste in Google Translate if it opens empty.";
+  let translateClipboardHintTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function showTranslateClipboardHintToast(): void {
+    translateClipboardHintToast.hidden = false;
+    translateClipboardHintToast.classList.add("hud-player-join-toast--visible");
+    if (translateClipboardHintTimer) clearTimeout(translateClipboardHintTimer);
+    translateClipboardHintTimer = setTimeout(() => {
+      translateClipboardHintToast.classList.remove(
+        "hud-player-join-toast--visible"
+      );
+      translateClipboardHintToast.hidden = true;
+      translateClipboardHintTimer = null;
+    }, 4000);
+  }
+
+  function prefersTranslateClipboardAssist(): boolean {
+    const coarse =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: coarse)").matches;
+    const mobileUa = /Android|iPhone|iPad|iPod|Mobile/i.test(
+      navigator.userAgent
+    );
+    return coarse || mobileUa;
+  }
+
+  topToolbar.appendChild(translateClipboardHintToast);
   topToolbar.appendChild(roomsBtn);
   topToolbar.appendChild(playerCount);
   topToolbar.appendChild(nimBalance);
@@ -1662,7 +1704,142 @@ export function createHud(
   otherPlayerProfile.appendChild(oppBackdrop);
   otherPlayerProfile.appendChild(oppDialog);
   letter.appendChild(otherPlayerCtx);
+  const chatLineCtx = document.createElement("div");
+  chatLineCtx.className = "other-player-ctx";
+  chatLineCtx.hidden = true;
+  chatLineCtx.setAttribute("role", "menu");
+  chatLineCtx.setAttribute("aria-label", "Chat message actions");
+  const chatLineCtxViewProfileBtn = document.createElement("button");
+  chatLineCtxViewProfileBtn.type = "button";
+  chatLineCtxViewProfileBtn.className = "other-player-ctx__item";
+  chatLineCtxViewProfileBtn.setAttribute("role", "menuitem");
+  chatLineCtxViewProfileBtn.textContent = "View profile";
+  const chatLineCtxTranslateBtn = document.createElement("button");
+  chatLineCtxTranslateBtn.type = "button";
+  chatLineCtxTranslateBtn.className = "other-player-ctx__item";
+  chatLineCtxTranslateBtn.setAttribute("role", "menuitem");
+  chatLineCtxTranslateBtn.textContent = "Translate";
+  chatLineCtx.append(chatLineCtxViewProfileBtn, chatLineCtxTranslateBtn);
+  letter.appendChild(chatLineCtx);
   letter.appendChild(otherPlayerProfile);
+
+  let chatLineCtxOutsideBound = false;
+  let chatLineCtxEsc: ((e: KeyboardEvent) => void) | null = null;
+  type ChatLineCtxPayload = {
+    fromAddress: string;
+    displayName: string;
+    profileIsSelf: boolean;
+    translateText: string;
+  };
+  let chatLineCtxPayload: ChatLineCtxPayload | null = null;
+
+  function closeChatLineContextMenu(): void {
+    chatLineCtx.hidden = true;
+    chatLineCtxPayload = null;
+    if (chatLineCtxEsc) {
+      window.removeEventListener("keydown", chatLineCtxEsc);
+      chatLineCtxEsc = null;
+    }
+    if (!chatLineCtxOutsideBound) return;
+    chatLineCtxOutsideBound = false;
+    window.removeEventListener("pointerdown", onChatLineCtxOutsidePointerDown);
+  }
+
+  function onChatLineCtxOutsidePointerDown(e: PointerEvent): void {
+    if (chatLineCtx.hidden) return;
+    if (chatLineCtx.contains(e.target as Node)) return;
+    closeChatLineContextMenu();
+  }
+
+  function onChatLineCtxEscape(e: KeyboardEvent): void {
+    if (e.key !== "Escape") return;
+    closeChatLineContextMenu();
+  }
+
+  function bindChatLineCtxOutside(): void {
+    if (chatLineCtxOutsideBound) return;
+    chatLineCtxOutsideBound = true;
+    window.addEventListener("pointerdown", onChatLineCtxOutsidePointerDown);
+  }
+
+  function googleTranslateUrlForText(message: string): string {
+    const raw = message.trim();
+    const q = encodeURIComponent(raw);
+    const tlRaw = (navigator.language || "en").split("-")[0]?.trim() || "en";
+    const tl = /^[a-zA-Z]{2,3}$/.test(tlRaw) ? tlRaw : "en";
+    const mobile =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: coarse)").matches;
+    const mobileUa = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const base =
+      mobile || mobileUa
+        ? "https://translate.google.com/m"
+        : "https://translate.google.com/";
+    return `${base}?sl=auto&tl=${tl}&q=${q}`;
+  }
+
+  function openChatLineContextMenu(
+    clientX: number,
+    clientY: number,
+    payload: ChatLineCtxPayload
+  ): void {
+    closeChatLineContextMenu();
+    closeOtherPlayerContextMenu();
+    closeSelfEmojiMenu();
+    chatLineCtxPayload = payload;
+    const hasProfile = !!payload.fromAddress;
+    chatLineCtxViewProfileBtn.hidden = !hasProfile;
+    chatLineCtx.hidden = false;
+    chatLineCtx.style.position = "fixed";
+    chatLineCtxEsc = onChatLineCtxEscape;
+    window.addEventListener("keydown", chatLineCtxEsc);
+    requestAnimationFrame(() => {
+      const w = chatLineCtx.offsetWidth || 160;
+      const h = chatLineCtx.offsetHeight || 44;
+      const pad = 8;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const x = Math.min(Math.max(pad, clientX), vw - w - pad);
+      const y = Math.min(Math.max(pad, clientY), vh - h - pad);
+      chatLineCtx.style.left = `${x}px`;
+      chatLineCtx.style.top = `${y}px`;
+      bindChatLineCtxOutside();
+      chatLineCtxTranslateBtn.focus();
+    });
+  }
+
+  chatLineCtxViewProfileBtn.addEventListener("click", () => {
+    const p = chatLineCtxPayload;
+    closeChatLineContextMenu();
+    if (!p?.fromAddress) return;
+    if (p.profileIsSelf) {
+      openOwnPlayerProfileFromBar();
+    } else {
+      void showPlayerProfileView(p.fromAddress, p.displayName, "other");
+    }
+  });
+
+  chatLineCtxTranslateBtn.addEventListener("click", () => {
+    const p = chatLineCtxPayload;
+    closeChatLineContextMenu();
+    if (!p?.translateText.trim()) return;
+    const text = p.translateText.trim();
+    const url = googleTranslateUrlForText(text);
+    presentExternalVisitConfirm({
+      url,
+      displayName: "Google Translate",
+      onConfirm: () => {
+        const assist = prefersTranslateClipboardAssist();
+        if (assist && navigator.clipboard?.writeText) {
+          void navigator.clipboard.writeText(text).then(
+            () => showTranslateClipboardHintToast(),
+            () => {}
+          );
+        }
+        window.open(url, "_blank", "noopener,noreferrer");
+      },
+    });
+  });
 
   let otherCtxOutsideBound = false;
   let profileOpenCompact = "";
@@ -1895,6 +2072,7 @@ export function createHud(
   function closeOtherPlayerUiOverlays(): void {
     closeOtherPlayerProfile();
     closeOtherPlayerContextMenu();
+    closeChatLineContextMenu();
   }
 
   async function loadCtxIdenticon(
@@ -2232,6 +2410,31 @@ export function createHud(
 
   chatHoverZone.addEventListener("pointerenter", onChatPointerEnter);
   chatHoverZone.addEventListener("pointerleave", onChatPointerLeave);
+
+  function onChatHoverZoneContextMenu(e: MouseEvent): void {
+    const rawTarget = e.target;
+    if (!(rawTarget instanceof Node)) return;
+    const el =
+      rawTarget instanceof Element ? rawTarget : rawTarget.parentElement;
+    if (!el) return;
+    const line = el.closest(".chat-line");
+    if (!(line instanceof HTMLElement)) return;
+    if (!worldChatLog.contains(line) && !systemChatLog.contains(line)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const translateText = line.dataset.chatTranslateText ?? "";
+    const fromAddress = (line.dataset.chatFromAddress ?? "").trim();
+    const displayName = (line.dataset.chatDisplayName ?? "").trim();
+    const profileIsSelf = line.dataset.chatProfileSelf === "1";
+    openChatLineContextMenu(e.clientX, e.clientY, {
+      fromAddress,
+      displayName,
+      profileIsSelf,
+      translateText,
+    });
+  }
+
+  chatHoverZone.addEventListener("contextmenu", onChatHoverZoneContextMenu);
 
   let activeChatTab: "world" | "system" = "world";
   const setChatTab = (tab: "world" | "system"): void => {
@@ -5155,7 +5358,14 @@ export function createHud(
       ui.classList.toggle("hud--has-status-sub", !!t);
       syncHudBelowTopWrap();
     },
-    appendChat(from: string, text: string) {
+    appendChat(
+      from: string,
+      text: string,
+      opts?: {
+        fromAddress?: string | null;
+        profileIsSelf?: boolean;
+      }
+    ) {
       const isSystem = from.trim().toLowerCase() === "system";
       if (isSystem) {
         const now = Date.now();
@@ -5169,7 +5379,24 @@ export function createHud(
       }
       const line = document.createElement("div");
       line.className = "chat-line";
-      line.textContent = `${from}: ${text}`;
+      const prefix = document.createElement("span");
+      prefix.className = "chat-line__prefix";
+      prefix.textContent = `${from}: `;
+      const body = document.createElement("span");
+      body.className = "chat-line__body";
+      body.textContent = text;
+      line.append(prefix, body);
+      line.dataset.chatTranslateText = text;
+      line.dataset.chatDisplayName = from;
+      const addr = opts?.fromAddress
+        ? String(opts.fromAddress).replace(/\s+/g, "").trim()
+        : "";
+      if (addr) {
+        line.dataset.chatFromAddress = addr;
+      }
+      if (opts?.profileIsSelf) {
+        line.dataset.chatProfileSelf = "1";
+      }
       const targetLog = isSystem ? systemChatLog : worldChatLog;
       targetLog.appendChild(line);
       targetLog.scrollTop = targetLog.scrollHeight;
@@ -5256,6 +5483,7 @@ export function createHud(
       opts?: { emoteRowFirst?: boolean; onEmote?: () => void }
     ) {
       closeSelfEmojiMenu();
+      closeChatLineContextMenu();
       closeOtherPlayerProfile();
       if (targets.length === 0) return;
       otherPlayerCtx.hidden = false;
@@ -6722,11 +6950,17 @@ export function createHud(
       closeSelfEmojiMenu();
       closeOtherPlayerProfile();
       closeOtherPlayerContextMenu();
+      closeChatLineContextMenu();
+      chatHoverZone.removeEventListener("contextmenu", onChatHoverZoneContextMenu);
       hideBrandLinksOverlay();
       hideFeedbackOverlay();
       if (playerJoinToastTimer) {
         clearTimeout(playerJoinToastTimer);
         playerJoinToastTimer = null;
+      }
+      if (translateClipboardHintTimer) {
+        clearTimeout(translateClipboardHintTimer);
+        translateClipboardHintTimer = null;
       }
       clearChatLogCollapseTimers();
       chatHoverZone.removeEventListener("pointerenter", onChatPointerEnter);

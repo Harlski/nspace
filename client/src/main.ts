@@ -2777,7 +2777,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       
       // Only add to chat log if not bubble-only (NPCs use bubbleOnly)
       if (!msg.bubbleOnly) {
-        hud.appendChat(msg.from, msg.text);
+        const selfKey = address.replace(/\s+/g, "").trim().toUpperCase();
+        const fromKey = String(msg.fromAddress ?? "")
+          .replace(/\s+/g, "")
+          .trim()
+          .toUpperCase();
+        hud.appendChat(msg.from, msg.text, {
+          fromAddress: msg.fromAddress || undefined,
+          profileIsSelf: !!fromKey && fromKey === selfKey,
+        });
       }
       return;
     }

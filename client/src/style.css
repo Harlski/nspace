@@ -2377,6 +2377,12 @@ button.hud-brand:focus-visible {
   flex-shrink: 0;
 }
 
+.hud-translate-clipboard-hint {
+  white-space: normal;
+  max-width: min(280px, 85vw);
+  text-align: center;
+}
+
 .hud-player-count__tooltip {
   position: absolute;
   right: 0;
@@ -5575,7 +5581,8 @@ button.hud-brand:focus-visible {
 .chat-line {
   margin-bottom: 4px;
   word-break: break-word;
-  pointer-events: none;
+  /* Enable context menu on message lines (parent .chat-panel is mostly pointer-events: none) */
+  pointer-events: auto;
 }
 
 /* NIM claimable block: progress while orthogonally adjacent */
