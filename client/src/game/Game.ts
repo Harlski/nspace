@@ -101,6 +101,12 @@ const SELF_EXTRAP_MAX_AGE_SEC = 0.35;
 const LERP_SELF = 20;
 /** Do not extrapolate past the walk goal along server velocity (world units, ~last tile). */
 const SELF_EXTRAP_GOAL_ALONG_BUFFER = 0.12;
+/**
+ * Max horizontal offset (world units) from the last server snapshot when extrapolating.
+ * Without a cap, vx·Δt could approach a full tile between state ticks and path preview
+ * (`inferStartLayerClient` + `pathfindTerrain`) would draw rooftop-height routes over air.
+ */
+const SELF_EXTRAP_MAX_OFFSET_XZ = 0.22;
 
 /** Default scale on unit floor plane; >1 hides subpixel seams (tunable in admin). */
 const DEFAULT_FLOOR_TILE_QUAD = 1.08;
@@ -6393,15 +6399,8 @@ export class Game {
         if (h < 1e-10) {
           this.selfMesh.position.set(t.x, t.y, t.z);
         } else {
-          const msq = SERVER_PLAYER_MOVE_SPEED * SERVER_PLAYER_MOVE_SPEED;
-          const rem = Math.max(0, msq - h);
-          let vyExt = 0;
-          if (rem > 1e-6 && h > 1e-8) {
-            vyExt = Math.sign(t.y - my) * Math.sqrt(rem);
-          }
           let ex = this.selfServerVx * ageSec;
           let ez = this.selfServerVz * ageSec;
-          let ey = vyExt * ageSec;
 
           const pg = this.pathGoal;
           if (pg) {
@@ -6414,18 +6413,26 @@ export class Game {
               const forward = speedH * ageSec;
               const buf = SELF_EXTRAP_GOAL_ALONG_BUFFER;
               if (along <= buf) {
-                ex = ez = ey = 0;
+                ex = ez = 0;
               } else if (forward > along - buf) {
                 const denom = speedH * ageSec;
                 const frac = denom > 1e-8 ? Math.max(0, along - buf) / denom : 0;
                 ex *= frac;
                 ez *= frac;
-                ey *= frac;
               }
             }
           }
 
-          this.selfExtrapGoal.set(t.x + ex, t.y + ey, t.z + ez);
+          const hex = Math.hypot(ex, ez);
+          const cap = SELF_EXTRAP_MAX_OFFSET_XZ;
+          if (hex > cap && hex > 1e-8) {
+            ex *= cap / hex;
+            ez *= cap / hex;
+          }
+
+          // Never extrapolate Y from horizontal velocity "speed top-up"; server y is
+          // authoritative. Old vyExt path lifted the mesh over gaps while xz ran ahead.
+          this.selfExtrapGoal.set(t.x + ex, t.y, t.z + ez);
           this.selfMesh.position.lerp(
             this.selfExtrapGoal,
             1 - Math.exp(-LERP_SELF * dt)

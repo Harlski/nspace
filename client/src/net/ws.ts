@@ -336,6 +336,17 @@ export function connectGameWs(
   return ws;
 }
 
+function movementDebugEnabled(): boolean {
+  try {
+    return (
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem("NSPACE_DEBUG_MOVEMENT") === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function sendMoveTo(
   ws: WebSocket,
   x: number,
@@ -343,6 +354,14 @@ export function sendMoveTo(
   layer: 0 | 1 = 0
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
+  if (movementDebugEnabled()) {
+    console.log("[movement] client sendMoveTo", {
+      x,
+      z,
+      layer,
+      t: Date.now(),
+    });
+  }
   ws.send(JSON.stringify({ type: "moveTo", x, z, layer }));
 }
 

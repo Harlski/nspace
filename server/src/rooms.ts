@@ -4,6 +4,7 @@ import {
   blockKey,
   canPlaceTeleporterFoot,
   inTileBounds,
+  inferTerrainStartLayer,
   isBaseTile,
   isOrthogonallyAdjacentToTile,
   isWalkableTile,
@@ -11,6 +12,7 @@ import {
   normalizeBlockPrismParts,
   pathfindTiles,
   pathfindTerrain,
+  level1SurfaceOpen,
   snapToTile,
   terrainObstacleHeight,
   tileKey,
@@ -307,6 +309,10 @@ function broadcastTickStateIfAllowed(
 
 const CHAT_MAX = 256;
 const RATE_MOVE_TO_MS = 120;
+/** Set `NSPACE_DEBUG_MOVEMENT=1` on the server for `[movement]` path and tile-crossing logs. */
+const DEBUG_MOVEMENT =
+  process.env.NSPACE_DEBUG_MOVEMENT === "1" ||
+  String(process.env.NSPACE_DEBUG_MOVEMENT ?? "").toLowerCase() === "true";
 const RATE_CHAT_MS = 800;
 const RATE_PLACE_MS = 200;
 const ARRIVE_EPS = 0.04;
@@ -1203,13 +1209,7 @@ function inferStartLayer(
   p: PlayerState,
   placed: ReadonlyMap<string, PlacedProps>
 ): 0 | 1 {
-  const t = snapToTile(p.x, p.z);
-  const prop = getFloorLevelPlacedAtTile(placed, t.x, t.z);
-  if (!prop) return 0;
-  if (prop.passable || prop.ramp) return 0;
-  const h = terrainObstacleHeight(prop);
-  if (p.y >= h - 0.2) return 1;
-  return 0;
+  return inferTerrainStartLayer(p.x, p.z, p.y, placed);
 }
 
 function waypointY(
@@ -1224,13 +1224,29 @@ function waypointY(
   return terrainObstacleHeight(p);
 }
 
+/** When a path is cleared mid-walk, snap XZ to tile centers and Y to terrain so vx=0 never leaves the avatar between tiles. */
+function snapPlayerToTerrainGrid(
+  p: PlayerState,
+  placed: ReadonlyMap<string, PlacedProps>
+): void {
+  const t = snapToTile(p.x, p.z);
+  p.x = t.x;
+  p.z = t.z;
+  const layer = inferStartLayer(p, placed);
+  p.y = waypointY(layer, t.x, t.z, placed);
+  p.vx = 0;
+  p.vz = 0;
+}
+
 function findRecoveryTerrainPath(
   roomId: string,
   player: PlayerState,
   dest: { x: number; z: number },
   goalLayer: 0 | 1,
   placed: ReadonlyMap<string, PlacedProps>,
-  extra: ReadonlySet<string>
+  extra: ReadonlySet<string>,
+  /** Layer already used in the failed primary `pathfindTerrain` from `snapToTile(player)`. */
+  primaryStartLayer: 0 | 1
 ):
   | {
       full: { x: number; z: number; layer: 0 | 1 }[];
@@ -1238,61 +1254,48 @@ function findRecoveryTerrainPath(
     }
   | null {
   const center = snapToTile(player.x, player.z);
-  const seen = new Set<string>();
-  const candidates: Array<{ x: number; z: number }> = [];
-  for (let dz = -1; dz <= 1; dz++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      const x = center.x + dx;
-      const z = center.z + dz;
-      if (!inTileBounds(x, z)) continue;
-      const k = tileKey(x, z);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      candidates.push({ x, z });
-    }
+  if (!inTileBounds(center.x, center.z)) return null;
+
+  const prop = placed.get(blockKey(center.x, center.z, 0));
+  const alternateLayers: (0 | 1)[] = [];
+  if (
+    isWalkableForRoom(roomId, center.x, center.z) &&
+    (!prop || prop.passable || prop.ramp)
+  ) {
+    alternateLayers.push(0);
   }
-  candidates.sort((a, b) => {
-    const da = (a.x - player.x) ** 2 + (a.z - player.z) ** 2;
-    const db = (b.x - player.x) ** 2 + (b.z - player.z) ** 2;
-    return da - db;
-  });
-  // Recovery should only start on top of solids when the player is already
-  // effectively at block-top height. This prevents floor-level "wall climb"
-  // snaps caused by seam rounding near solid tiles.
-  let canStartOnTop = false;
-  for (const c of candidates) {
-    const prop = placed.get(blockKey(c.x, c.z, 0));
-    if (!prop || prop.passable || prop.ramp) continue;
-    if (player.y >= terrainObstacleHeight(prop) - 0.2) {
-      canStartOnTop = true;
-      break;
-    }
+  if (
+    prop &&
+    !prop.passable &&
+    !prop.ramp &&
+    level1SurfaceOpen(placed, center.x, center.z) &&
+    player.y >= terrainObstacleHeight(prop) - 0.2
+  ) {
+    alternateLayers.push(1);
   }
-  for (const c of candidates) {
-    const prop = placed.get(blockKey(c.x, c.z, 0));
-    const starts: (0 | 1)[] = [];
-    if (isWalkableForRoom(roomId, c.x, c.z) && (!prop || prop.passable || prop.ramp)) {
-      starts.push(0);
-    }
-    if (canStartOnTop && prop && !prop.passable && !prop.ramp) {
-      starts.push(1);
-    }
-    for (const startLayer of starts) {
-      const full = pathfindTerrain(
-        c.x,
-        c.z,
-        startLayer,
-        dest.x,
-        dest.z,
-        goalLayer,
-        placed,
-        extra,
-        roomId,
-        baseRemovedReadonly(roomId)
-      );
-      if (full && full.length > 0) {
-        return { full, start: { x: c.x, z: c.z, layer: startLayer } };
-      }
+  const uniq: (0 | 1)[] = [];
+  for (const L of alternateLayers) {
+    if (!uniq.includes(L)) uniq.push(L);
+  }
+  for (const startLayer of uniq) {
+    if (startLayer === primaryStartLayer) continue;
+    const full = pathfindTerrain(
+      center.x,
+      center.z,
+      startLayer,
+      dest.x,
+      dest.z,
+      goalLayer,
+      placed,
+      extra,
+      roomId,
+      baseRemovedReadonly(roomId)
+    );
+    if (full && full.length > 0) {
+      return {
+        full,
+        start: { x: center.x, z: center.z, layer: startLayer },
+      };
     }
   }
   return null;
@@ -1923,6 +1926,15 @@ function advanceAlongPathBot(
     break;
   }
   return changedThis;
+}
+
+function formatTerrainPathWaypoint(w: { x: number; z: number; layer: 0 | 1 }): string {
+  return `${w.x},${w.z} L${w.layer}`;
+}
+
+function logMovementDebug(phase: string, data: Record<string, unknown>): void {
+  if (!DEBUG_MOVEMENT) return;
+  console.log(`[movement] ${phase}`, data);
 }
 
 function advanceAlongPathHuman(
@@ -2708,6 +2720,28 @@ export function startRoomTick(): void {
           placed
         );
         if (result.changed) changed = true;
+        if (DEBUG_MOVEMENT && result.arrivedTiles.length > 0) {
+          const next = c.pathQueue[0];
+          logMovementDebug("tick:tileCrossing", {
+            address: c.address.slice(0, 14),
+            roomId,
+            enteredTiles: result.arrivedTiles,
+            pos: {
+              x: c.player.x,
+              y: c.player.y,
+              z: c.player.z,
+            },
+            nextGoal: next
+              ? {
+                  x: next.x,
+                  z: next.z,
+                  layer: next.layer,
+                  y: waypointY(next.layer, next.x, next.z, placed),
+                }
+              : null,
+            queueLen: c.pathQueue.length,
+          });
+        }
         
         // Canvas room: claim tiles as player moves
         if (isCanvas && result.arrivedTiles && result.arrivedTiles.length > 0) {
@@ -3489,24 +3523,61 @@ export function addClient(
         baseRemovedReadonly(currentRoomId)
       );
       if (!full || full.length === 0) {
+        const prevWorld = { x: p.x, y: p.y, z: p.z };
         const recovered = findRecoveryTerrainPath(
           currentRoomId,
           p,
           dest,
           goalLayer,
           placed,
-          extra
+          extra,
+          startLayer
         );
         if (!recovered) {
+          logMovementDebug("moveTo:noPath", {
+            address: address.slice(0, 14),
+            roomId: currentRoomId,
+            world: prevWorld,
+            snapStart: start,
+            startLayer,
+            dest,
+            goalLayer,
+          });
+          snapPlayerToTerrainGrid(p, placed);
           conn.pathQueue = [];
+          pendingTickStateBroadcast.add(currentRoomId);
           return;
         }
+        logMovementDebug("moveTo:recoveryPath", {
+          address: address.slice(0, 14),
+          roomId: currentRoomId,
+          worldBefore: prevWorld,
+          snapStart: start,
+          startLayer,
+          recoveryStart: recovered.start,
+          recoveryStartLayer: recovered.start.layer,
+          dest,
+          goalLayer,
+          fullPath: recovered.full.map(formatTerrainPathWaypoint),
+          queueRemaining: recovered.full.length - 1,
+        });
         // Snap to a nearby valid terrain node when seam rounding picked a bad start.
         p.x = recovered.start.x;
         p.z = recovered.start.z;
         p.y = waypointY(recovered.start.layer, recovered.start.x, recovered.start.z, placed);
         conn.pathQueue = recovered.full.slice(1);
       } else {
+        logMovementDebug("moveTo:path", {
+          address: address.slice(0, 14),
+          roomId: currentRoomId,
+          world: { x: p.x, y: p.y, z: p.z },
+          snapStart: start,
+          startLayer,
+          dest,
+          goalLayer,
+          fullPath: full.map(formatTerrainPathWaypoint),
+          queueRemaining: full.length - 1,
+        });
         conn.pathQueue = full.slice(1);
       }
       logGameplayEvent(conn.sessionId, address, currentRoomId, "move_to", {

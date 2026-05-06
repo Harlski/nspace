@@ -107,6 +107,14 @@ const DIRS8: readonly [number, number][] = [
   [-1, -1],
 ];
 
+/** Cardinal-only for terrain floor (layer 0); matches server `pathfindTerrain`. */
+const DIRS4: readonly [number, number][] = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
+
 function isPassableTile(
   x: number,
   y: number,
@@ -257,7 +265,7 @@ function hasStackBlockAtLevel(
 }
 
 /** Level-1 path node is top of level-0 solid only when not occupied by a stacked block. */
-function level1SurfaceOpen(
+export function level1SurfaceOpen(
   placed: ReadonlyMap<string, TerrainProps>,
   x: number,
   z: number
@@ -265,6 +273,63 @@ function level1SurfaceOpen(
   const base = floorLevelTerrain(placed, x, z);
   if (!isSolidTerrain(base)) return false;
   return !hasStackBlockAtLevel(placed, x, z, 1);
+}
+
+const TILE_COLUMN_HALF = 0.5;
+const STAND_ON_TOP_BELOW = 0.22;
+const STAND_ON_TOP_ABOVE = 0.5;
+
+function inWorldTileBounds(x: number, z: number): boolean {
+  return (
+    x >= TILE_COORD_MIN &&
+    x <= TILE_COORD_MAX &&
+    z >= TILE_COORD_MIN &&
+    z <= TILE_COORD_MAX
+  );
+}
+
+/**
+ * Same logic as server `inferTerrainStartLayer` (see server `grid.ts`).
+ */
+export function inferTerrainStartLayer(
+  wx: number,
+  wz: number,
+  wy: number,
+  placed: ReadonlyMap<string, TerrainProps>
+): 0 | 1 {
+  const t = snapFloorTile(wx, wz);
+  const propHere = floorLevelTerrain(placed, t.x, t.y);
+  if (propHere?.ramp) return 0;
+  if (propHere && !propHere.passable && !propHere.ramp) {
+    const h = terrainObstacleHeight(propHere);
+    if (wy >= h - STAND_ON_TOP_BELOW) return 1;
+    return 0;
+  }
+  if (wy < 0.06) return 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const sx = t.x + dx;
+      const sz = t.y + dy;
+      if (!inWorldTileBounds(sx, sz)) continue;
+      if (
+        Math.max(Math.abs(wx - sx), Math.abs(wz - sz)) >
+        TILE_COLUMN_HALF + 1e-3
+      ) {
+        continue;
+      }
+      const prop = floorLevelTerrain(placed, sx, sz);
+      if (!prop || prop.passable || prop.ramp) continue;
+      if (!level1SurfaceOpen(placed, sx, sz)) continue;
+      const h = terrainObstacleHeight(prop);
+      if (
+        wy >= h - STAND_ON_TOP_BELOW &&
+        wy <= h + STAND_ON_TOP_ABOVE
+      ) {
+        return 1;
+      }
+    }
+  }
+  return 0;
 }
 
 /** Layer-0 floor where avatars can stand (empty tile or passable/ramp obstacle). Used for pathfinding and build hints. */
@@ -340,13 +405,7 @@ export function inferStartLayerClient(
   wy: number,
   placed: ReadonlyMap<string, TerrainProps>
 ): 0 | 1 {
-  const t = snapFloorTile(wx, wz);
-  const prop = floorLevelTerrain(placed, t.x, t.y);
-  if (!prop) return 0;
-  if (prop.passable || prop.ramp) return 0;
-  const h = terrainObstacleHeight(prop);
-  if (wy >= h - 0.2) return 1;
-  return 0;
+  return inferTerrainStartLayer(wx, wz, wy, placed);
 }
 
 export function waypointWorldY(
@@ -363,7 +422,7 @@ export function waypointWorldY(
 
 /**
  * Same rules as server `pathfindTerrain` (including ramp entry from low side only);
- * second coordinate is world Z (`FloorTile.y`).
+ * second coordinate is world Z (`FloorTile.y`). Floor layer uses cardinal steps only.
  */
 export function pathfindTerrain(
   sx: number,
@@ -417,7 +476,7 @@ export function pathfindTerrain(
     }
 
     if (cur.layer === 0) {
-      for (const [dx, dz] of DIRS8) {
+      for (const [dx, dz] of DIRS4) {
         const nx = cur.x + dx;
         const nz = cur.z + dz;
         if (!isWalkableTile(nx, nz, extraWalkable, roomId, baseRemoved)) continue;
@@ -431,30 +490,6 @@ export function pathfindTerrain(
           !canEnterRampFrom(cur.x, cur.z, nx, nz, pTarget)
         ) {
           continue;
-        }
-        if (dx !== 0 && dz !== 0) {
-          if (
-            !floorWalkableTerrain(
-              cur.x + dx,
-              cur.z,
-              placed,
-              extraWalkable,
-              roomId,
-              baseRemoved
-            )
-          )
-            continue;
-          if (
-            !floorWalkableTerrain(
-              cur.x,
-              cur.z + dz,
-              placed,
-              extraWalkable,
-              roomId,
-              baseRemoved
-            )
-          )
-            continue;
         }
         cameFrom.set(n0, ck);
         queue.push({ x: nx, z: nz, layer: 0 });
