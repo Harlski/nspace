@@ -6,7 +6,7 @@ This document describes how **Nimiq Space** is structured for production-style h
 
 - **SPA (e.g. Vercel):** Build the `client` workspace. Repo-root [`vercel.json`](../vercel.json) runs `npm run build -w client` with `outputDirectory: client/dist` and rewrites `/api/*`, `/nim-chart-api/*`, and selected routes to the production API host (`https://api.nimiq.space/...` in this repo’s config). If Vercel **Root Directory** is `client`, use [`client/vercel.json`](../client/vercel.json) instead and avoid conflicting dashboard overrides.
 - **Backend:** Node `server` behind TLS (Caddy/Nginx). [`docker-compose.yml`](../docker-compose.yml) builds the app image from the repo root, publishes `nspace` on `127.0.0.1:3001`, and runs optional **`nim-chart`** on `127.0.0.1:3080` for price chart data (see [deploy-github-docker.md](deploy-github-docker.md)).
-- **Data:** Compose mounts host `./data` → `/app/server/data` for `world-state.json`, `signboards.json`, `canvas-claims.json`, and JSONL under `events/` (see [docker-deployment.md](docker-deployment.md)). Override paths with `WORLD_STATE_DIR` / `EVENT_LOG_DIR` when not using defaults.
+- **Data:** Compose mounts host `./data` → `/app/server/data` for `world-state.json`, `signboards.json`, `canvas-claims.json`, JSONL under `events/`, and the Nim payout queue (`nim-payout-pending.json` under the same tree unless overridden with `NIM_PAYOUT_DATA_DIR`; see [docker-deployment.md](docker-deployment.md)). Override paths with `WORLD_STATE_DIR` / `EVENT_LOG_DIR` when not using defaults.
 
 ## Client ↔ API when origins differ
 

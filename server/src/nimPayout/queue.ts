@@ -338,11 +338,10 @@ export function flushNimPayoutQueueSync(): void {
     const pending = jobs.filter(
       (j) => j.status === "pending" || j.status === "processing"
     );
-    fs.writeFileSync(
-      NIM_PAYOUT_QUEUE_FILE,
-      JSON.stringify(pending.map(serializeJob), null, 0),
-      "utf8"
-    );
+    const payload = JSON.stringify(pending.map(serializeJob), null, 0);
+    const tmp = `${NIM_PAYOUT_QUEUE_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, payload, "utf8");
+    fs.renameSync(tmp, NIM_PAYOUT_QUEUE_FILE);
   } catch (e) {
     console.error("[nim-payout] Failed to flush queue:", e);
   }
@@ -531,10 +530,9 @@ function pickOldestReadyJob(candidates: NimPayoutJob[]): NimPayoutJob | undefine
 
 function findNextReadyJob(): NimPayoutJob | undefined {
   const now = Date.now();
+  /** Only `pending`: `processing` is in-flight inside {@link processOne} or a manager bulk send. */
   const ready = jobs.filter(
-    (j) =>
-      (j.status === "pending" || j.status === "processing") &&
-      j.nextRetryAt <= now
+    (j) => j.status === "pending" && j.nextRetryAt <= now
   );
   if (ready.length === 0) return undefined;
 
@@ -730,11 +728,11 @@ export async function getPublicPendingPayoutSummary(): Promise<PublicPendingPayo
   };
 }
 
-/** Sums **pending** jobs only (same subset as {@link manualBulkPayoutPendingForRecipient}). */
+/** Sums **pending** + **processing** jobs (bulk send marks rows `processing` until the tx completes). */
 function buildPendingByRecipientSummary(): PendingByRecipientSummaryRow[] {
   const map = new Map<string, { sum: bigint; count: number; userFriendly: string }>();
   for (const j of jobs) {
-    if (j.status !== "pending") continue;
+    if (j.status !== "pending" && j.status !== "processing") continue;
     const k = normalizeNimWalletId(j.recipientAddress);
     if (!k) continue;
     const prev = map.get(k);
@@ -1033,8 +1031,9 @@ export async function manualBulkPayoutPendingForRecipient(
   for (const j of pendingFor) totalLuna += j.amountLuna;
 
   const idSet = new Set(pendingFor.map((j) => j.id));
-  for (let i = jobs.length - 1; i >= 0; i--) {
-    if (idSet.has(jobs[i].id)) jobs.splice(i, 1);
+  for (const j of pendingFor) {
+    const live = jobs.find((x) => x.id === j.id);
+    if (live) live.status = "processing";
   }
   saveQueue();
 
@@ -1050,6 +1049,10 @@ export async function manualBulkPayoutPendingForRecipient(
         claimId: pendingFor[0].claimId.slice(0, 12),
       }
     );
+    for (let i = jobs.length - 1; i >= 0; i--) {
+      if (idSet.has(jobs[i].id)) jobs.splice(i, 1);
+    }
+    saveQueue();
     const sentAt = Date.now();
     for (const job of pendingFor) {
       logGameplayEvent(
@@ -1088,9 +1091,11 @@ export async function manualBulkPayoutPendingForRecipient(
     };
   } catch (err) {
     for (const job of pendingFor) {
-      job.status = "pending";
-      job.nextRetryAt = Date.now();
-      jobs.push(job);
+      const live = jobs.find((x) => x.id === job.id);
+      if (live) {
+        live.status = "pending";
+        live.nextRetryAt = Date.now();
+      }
     }
     saveQueue();
     invalidateNimBalanceCache();
