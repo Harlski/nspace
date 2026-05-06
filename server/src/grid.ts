@@ -446,6 +446,31 @@ function canEnterRampFrom(
   return curX === rampX - rdx && curZ === rampZ - rdz;
 }
 
+/**
+ * From a ramp cell (layer 0), only step to the **low-side** floor neighbor, or onto an
+ * adjacent ramp (same entry rules as {@link canEnterRampFrom}). Sideways / high-side
+ * floor steps were graph-legal but collide with the solid the ramp faces — e.g. reversing
+ * mid-descent could route into the block behind the slope and soft-lock movement.
+ */
+function canLeaveRampToFloorNeighbor(
+  rampX: number,
+  rampZ: number,
+  ramp: TerrainProps,
+  nx: number,
+  nz: number,
+  pNeighbor: TerrainProps | undefined
+): boolean {
+  if (!ramp.ramp) return true;
+  const [rdx, rdz] = RAMP_NEIGHBOR[ramp.rampDir & 3]!;
+  const lowX = rampX - rdx;
+  const lowZ = rampZ - rdz;
+  if (nx === lowX && nz === lowZ) return true;
+  if (pNeighbor?.ramp) {
+    return canEnterRampFrom(rampX, rampZ, nx, nz, pNeighbor);
+  }
+  return false;
+}
+
 function isValidTerrainGoal(
   tx: number,
   tz: number,
@@ -522,6 +547,7 @@ export function pathfindTerrain(
     }
 
     if (cur.layer === 0) {
+      const pCurFloor = floorLevelTerrain(placed, cur.x, cur.z);
       for (const [dx, dz] of DIRS4) {
         const nx = cur.x + dx;
         const nz = cur.z + dz;
@@ -532,6 +558,19 @@ export function pathfindTerrain(
           continue;
         const pTarget = floorLevelTerrain(placed, nx, nz);
         if (
+          pCurFloor?.ramp &&
+          !canLeaveRampToFloorNeighbor(
+            cur.x,
+            cur.z,
+            pCurFloor,
+            nx,
+            nz,
+            pTarget
+          )
+        ) {
+          continue;
+        }
+        if (
           pTarget?.ramp &&
           !canEnterRampFrom(cur.x, cur.z, nx, nz, pTarget)
         ) {
@@ -541,7 +580,7 @@ export function pathfindTerrain(
         queue.push({ x: nx, z: nz, layer: 0 });
       }
 
-      const pr = floorLevelTerrain(placed, cur.x, cur.z);
+      const pr = pCurFloor;
       if (pr?.ramp) {
         const dir = RAMP_NEIGHBOR[pr.rampDir & 3]!;
         const nx = cur.x + dir[0]!;

@@ -3,6 +3,7 @@ import type { WebSocket } from "ws";
 import {
   blockKey,
   canPlaceTeleporterFoot,
+  floorWalkableTerrain,
   inTileBounds,
   inferTerrainStartLayer,
   isBaseTile,
@@ -316,6 +317,8 @@ const DEBUG_MOVEMENT =
 const RATE_CHAT_MS = 800;
 const RATE_PLACE_MS = 200;
 const ARRIVE_EPS = 0.04;
+/** If idle (no path) and farther than this from the nearest legal stance, snap to that stance (unstick). */
+const STANCE_SNAP_DRIFT_EPS = 0.48;
 /** Wandering NPCs per room (default `2`, half of the previous default; set `FAKE_PLAYER_COUNT=0` to disable). */
 const FAKE_PLAYER_COUNT = Math.max(
   0,
@@ -1224,16 +1227,86 @@ function waypointY(
   return terrainObstacleHeight(p);
 }
 
-/** When a path is cleared mid-walk, snap XZ to tile centers and Y to terrain so vx=0 never leaves the avatar between tiles. */
-function snapPlayerToTerrainGrid(
+/**
+ * Nearest legal floor or block-top stance in a 3×3 around `snapToTile(px,pz)` (for rounding
+ * off ramp/solid edges and post-cancel snaps).
+ */
+function resolveNearestTerrainNode(
+  roomId: string,
+  px: number,
+  py: number,
+  pz: number,
+  placed: ReadonlyMap<string, PlacedProps>
+): { x: number; z: number; layer: 0 | 1 } | null {
+  const extra = extraFloorSet(roomId);
+  const br = baseRemovedReadonly(roomId);
+  const center = snapToTile(px, pz);
+  let bestD = Number.POSITIVE_INFINITY;
+  let best: { x: number; z: number; layer: 0 | 1 } | null = null;
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const x = center.x + dx;
+      const z = center.z + dz;
+      if (!inTileBounds(x, z)) continue;
+      if (floorWalkableTerrain(x, z, placed, extra, roomId, br)) {
+        const wy = waypointY(0, x, z, placed);
+        const d =
+          (px - x) ** 2 + (pz - z) ** 2 + (py - wy) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = { x, z, layer: 0 };
+        }
+      }
+      if (level1SurfaceOpen(placed, x, z)) {
+        const wy = waypointY(1, x, z, placed);
+        const d =
+          (px - x) ** 2 + (pz - z) ** 2 + (py - wy) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = { x, z, layer: 1 };
+        }
+      }
+    }
+  }
+  return best;
+}
+
+/** Pathfind / moveTo start tile: snapped stance if valid, else nearest legal node (never a solid floor cell). */
+function resolvePathfindStartNode(
+  roomId: string,
   p: PlayerState,
   placed: ReadonlyMap<string, PlacedProps>
-): void {
+): { x: number; z: number; layer: 0 | 1 } | null {
+  const extra = extraFloorSet(roomId);
+  const br = baseRemovedReadonly(roomId);
   const t = snapToTile(p.x, p.z);
-  p.x = t.x;
-  p.z = t.z;
   const layer = inferStartLayer(p, placed);
-  p.y = waypointY(layer, t.x, t.z, placed);
+  const ok =
+    (layer === 0 &&
+      floorWalkableTerrain(t.x, t.z, placed, extra, roomId, br)) ||
+    (layer === 1 && level1SurfaceOpen(placed, t.x, t.z));
+  if (ok) return { x: t.x, z: t.z, layer };
+  return resolveNearestTerrainNode(roomId, p.x, p.y, p.z, placed);
+}
+
+/** When a path is cleared mid-walk, snap to the nearest legal terrain stance (never into a solid from bad rounding). */
+function snapPlayerToTerrainGrid(
+  p: PlayerState,
+  placed: ReadonlyMap<string, PlacedProps>,
+  roomId: string
+): void {
+  const solved = resolveNearestTerrainNode(roomId, p.x, p.y, p.z, placed);
+  if (solved) {
+    p.x = solved.x;
+    p.z = solved.z;
+    p.y = waypointY(solved.layer, solved.x, solved.z, placed);
+  } else {
+    const t = snapToTile(p.x, p.z);
+    p.x = t.x;
+    p.z = t.z;
+    const layer = inferStartLayer(p, placed);
+    p.y = waypointY(layer, t.x, t.z, placed);
+  }
   p.vx = 0;
   p.vz = 0;
 }
@@ -2742,7 +2815,33 @@ export function startRoomTick(): void {
             queueLen: c.pathQueue.length,
           });
         }
-        
+        if (c.pathQueue.length === 0) {
+          const drift = resolveNearestTerrainNode(
+            roomId,
+            c.player.x,
+            c.player.y,
+            c.player.z,
+            placed
+          );
+          if (drift) {
+            const wy = waypointY(
+              drift.layer,
+              drift.x,
+              drift.z,
+              placed
+            );
+            const d = Math.hypot(
+              c.player.x - drift.x,
+              c.player.y - wy,
+              c.player.z - drift.z
+            );
+            if (d > STANCE_SNAP_DRIFT_EPS) {
+              snapPlayerToTerrainGrid(c.player, placed, roomId);
+              changed = true;
+            }
+          }
+        }
+
         // Canvas room: claim tiles as player moves
         if (isCanvas && result.arrivedTiles && result.arrivedTiles.length > 0) {
           for (const tile of result.arrivedTiles) {
@@ -3503,17 +3602,22 @@ export function addClient(
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const dest = snapToTile(tx, tz);
       const p = conn.player;
-      const start = snapToTile(p.x, p.z);
       const placed = placedMap(currentRoomId);
       const extra = extraFloorSet(currentRoomId);
-      const startLayer = inferStartLayer(p, placed);
+      const startNode = resolvePathfindStartNode(currentRoomId, p, placed);
+      if (!startNode) {
+        snapPlayerToTerrainGrid(p, placed, currentRoomId);
+        conn.pathQueue = [];
+        pendingTickStateBroadcast.add(currentRoomId);
+        return;
+      }
       const gl = msg.layer;
       const goalLayer: 0 | 1 =
         gl === 1 || gl === "1" ? 1 : 0;
       const full = pathfindTerrain(
-        start.x,
-        start.z,
-        startLayer,
+        startNode.x,
+        startNode.z,
+        startNode.layer,
         dest.x,
         dest.z,
         goalLayer,
@@ -3531,19 +3635,19 @@ export function addClient(
           goalLayer,
           placed,
           extra,
-          startLayer
+          startNode.layer
         );
         if (!recovered) {
           logMovementDebug("moveTo:noPath", {
             address: address.slice(0, 14),
             roomId: currentRoomId,
             world: prevWorld,
-            snapStart: start,
-            startLayer,
+            snapStart: { x: startNode.x, z: startNode.z },
+            startLayer: startNode.layer,
             dest,
             goalLayer,
           });
-          snapPlayerToTerrainGrid(p, placed);
+          snapPlayerToTerrainGrid(p, placed, currentRoomId);
           conn.pathQueue = [];
           pendingTickStateBroadcast.add(currentRoomId);
           return;
@@ -3552,8 +3656,8 @@ export function addClient(
           address: address.slice(0, 14),
           roomId: currentRoomId,
           worldBefore: prevWorld,
-          snapStart: start,
-          startLayer,
+          snapStart: { x: startNode.x, z: startNode.z },
+          startLayer: startNode.layer,
           recoveryStart: recovered.start,
           recoveryStartLayer: recovered.start.layer,
           dest,
@@ -3571,8 +3675,8 @@ export function addClient(
           address: address.slice(0, 14),
           roomId: currentRoomId,
           world: { x: p.x, y: p.y, z: p.z },
-          snapStart: start,
-          startLayer,
+          snapStart: { x: startNode.x, z: startNode.z },
+          startLayer: startNode.layer,
           dest,
           goalLayer,
           fullPath: full.map(formatTerrainPathWaypoint),
@@ -3581,8 +3685,8 @@ export function addClient(
         conn.pathQueue = full.slice(1);
       }
       logGameplayEvent(conn.sessionId, address, currentRoomId, "move_to", {
-        fromX: start.x,
-        fromZ: start.z,
+        fromX: startNode.x,
+        fromZ: startNode.z,
         toX: dest.x,
         toZ: dest.z,
         goalLayer,

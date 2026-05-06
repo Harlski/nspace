@@ -6,8 +6,13 @@ dist
 .env.production
 *.log
 .DS_Store
-# All documentation and local notes (entire tree)
-docs/
+# Local-only doc snapshots (see docs workflow); tracked docs live under docs/*.md
+docs/backup/
+docs/brainstorm/
+docs/toremove/
+# Local-only notes (incident log, scratch); only docs/toremove/README.md is tracked — see that file
+docs/toremove/*
+!docs/toremove/README.md
 # Server-persisted room state (obstacles, extra floor, spawns)
 server/data/
 # Docker volume data
