@@ -1709,6 +1709,16 @@ export function createHud(
   oppNamePrimaryWrap.className = "other-player-profile__name-primary-wrap";
   const oppDisplayNameEl = document.createElement("span");
   oppDisplayNameEl.className = "other-player-profile__display-name";
+  const oppMuteBadge = document.createElement("span");
+  oppMuteBadge.className = "other-player-profile__mute-badge";
+  oppMuteBadge.hidden = true;
+  oppMuteBadge.setAttribute("aria-label", "Muted in chat");
+  oppMuteBadge.title = "Muted in chat";
+  oppMuteBadge.innerHTML = nimiqIconUseMarkup("nq-pacifier", {
+    width: 14,
+    height: 14,
+    class: "other-player-profile__mute-badge-icon",
+  });
   const oppUsernameInput = document.createElement("input");
   oppUsernameInput.type = "text";
   oppUsernameInput.className =
@@ -1721,7 +1731,24 @@ export function createHud(
     const t = oppUsernameInput.value.replace(/[^a-zA-Z0-9]/g, "");
     if (t !== oppUsernameInput.value) oppUsernameInput.value = t;
   });
-  oppNamePrimaryWrap.append(oppDisplayNameEl, oppUsernameInput);
+  const oppAdminNameInput = document.createElement("input");
+  oppAdminNameInput.type = "text";
+  oppAdminNameInput.className =
+    "other-player-profile__username-input other-player-profile__username-input--inline other-player-profile__admin-name-input--inline";
+  oppAdminNameInput.maxLength = 12;
+  oppAdminNameInput.autocomplete = "off";
+  oppAdminNameInput.hidden = true;
+  oppAdminNameInput.setAttribute("aria-label", "Set username (admin)");
+  oppAdminNameInput.addEventListener("input", () => {
+    const t = oppAdminNameInput.value.replace(/[^a-zA-Z0-9]/g, "");
+    if (t !== oppAdminNameInput.value) oppAdminNameInput.value = t;
+  });
+  oppNamePrimaryWrap.append(
+    oppDisplayNameEl,
+    oppMuteBadge,
+    oppUsernameInput,
+    oppAdminNameInput
+  );
   const oppWalletShortEl = document.createElement("span");
   oppWalletShortEl.className = "other-player-profile__wallet-short";
   oppWalletShortEl.hidden = true;
@@ -1789,33 +1816,40 @@ export function createHud(
     b.textContent = label;
     return b;
   };
-  const oppAdClear = mkAdminBtn("Clear");
+  const oppAdClear = mkAdminBtn("Clear name");
   const oppAdBan = mkAdminBtn("Ban name");
   const oppAdAllow = mkAdminBtn("Allow name");
   const oppAdMute = mkAdminBtn("Mute");
   const oppAdUnmute = mkAdminBtn("Unmute");
-  const oppAdminSetWrap = document.createElement("div");
-  oppAdminSetWrap.className = "other-player-profile__admin-set-name";
-  const oppAdminNameInput = document.createElement("input");
-  oppAdminNameInput.type = "text";
-  oppAdminNameInput.className = "other-player-profile__admin-name-input";
-  oppAdminNameInput.maxLength = 12;
-  oppAdminNameInput.autocomplete = "off";
-  oppAdminNameInput.setAttribute("aria-label", "Set username");
-  oppAdminNameInput.addEventListener("input", () => {
-    const t = oppAdminNameInput.value.replace(/[^a-zA-Z0-9]/g, "");
-    if (t !== oppAdminNameInput.value) oppAdminNameInput.value = t;
+  for (const b of [oppAdClear, oppAdBan, oppAdAllow, oppAdMute, oppAdUnmute]) {
+    b.classList.add("other-player-profile__admin-menu-item");
+  }
+  const oppAdminMenuWrap = document.createElement("div");
+  oppAdminMenuWrap.className = "other-player-profile__admin-menu-wrap";
+  const oppAdminMenuBtn = document.createElement("button");
+  oppAdminMenuBtn.type = "button";
+  oppAdminMenuBtn.className = "other-player-profile__admin-menu-btn";
+  oppAdminMenuBtn.setAttribute("aria-label", "Moderation actions");
+  oppAdminMenuBtn.setAttribute("aria-haspopup", "true");
+  oppAdminMenuBtn.setAttribute("aria-expanded", "false");
+  oppAdminMenuBtn.innerHTML = nimiqIconUseMarkup("nq-vertical-ellipsis", {
+    width: 18,
+    height: 18,
+    class: "other-player-profile__admin-menu-btn-icon",
   });
-  const oppAdSetName = mkAdminBtn("Set name");
-  oppAdminSetWrap.append(oppAdminNameInput, oppAdSetName);
-  oppAdminRow.append(
-    oppAdminSetWrap,
+  const oppAdminMenuPanel = document.createElement("div");
+  oppAdminMenuPanel.className = "other-player-profile__admin-menu-panel";
+  oppAdminMenuPanel.hidden = true;
+  oppAdminMenuPanel.setAttribute("role", "menu");
+  oppAdminMenuPanel.append(
     oppAdClear,
     oppAdBan,
     oppAdAllow,
     oppAdMute,
     oppAdUnmute
   );
+  oppAdminMenuWrap.append(oppAdminMenuBtn, oppAdminMenuPanel);
+  oppAdminRow.appendChild(oppAdminMenuWrap);
   async function adminModerationPost(
     action: string,
     extra?: Record<string, unknown>
@@ -1842,31 +1876,81 @@ export function createHud(
       oppProfileNote.hidden = false;
       return;
     }
+    closeAdminProfileMenu();
     void showPlayerProfileView(
       target,
       oppDisplayNameEl.textContent || walletDisplayName(target),
       "other"
     );
   }
+  let adminProfileMenuOutsideBound = false;
+  let adminProfileMenuEsc: ((e: KeyboardEvent) => void) | null = null;
+  function detachAdminProfileMenuListeners(): void {
+    if (adminProfileMenuEsc) {
+      window.removeEventListener("keydown", adminProfileMenuEsc);
+      adminProfileMenuEsc = null;
+    }
+    if (!adminProfileMenuOutsideBound) return;
+    adminProfileMenuOutsideBound = false;
+    window.removeEventListener("pointerdown", onAdminProfileMenuOutsidePointerDown);
+  }
+  function onAdminProfileMenuOutsidePointerDown(e: PointerEvent): void {
+    if (oppAdminMenuPanel.hidden) return;
+    if (oppAdminMenuWrap.contains(e.target as Node)) return;
+    closeAdminProfileMenu();
+  }
+  function onAdminProfileMenuEscape(e: KeyboardEvent): void {
+    if (e.key !== "Escape") return;
+    closeAdminProfileMenu();
+  }
+  function closeAdminProfileMenu(): void {
+    oppAdminMenuPanel.hidden = true;
+    oppAdminMenuBtn.setAttribute("aria-expanded", "false");
+    detachAdminProfileMenuListeners();
+  }
+  function openAdminProfileMenu(): void {
+    oppAdminMenuPanel.hidden = false;
+    oppAdminMenuBtn.setAttribute("aria-expanded", "true");
+    if (!adminProfileMenuOutsideBound) {
+      adminProfileMenuOutsideBound = true;
+      window.addEventListener("pointerdown", onAdminProfileMenuOutsidePointerDown);
+    }
+    if (!adminProfileMenuEsc) {
+      adminProfileMenuEsc = onAdminProfileMenuEscape;
+      window.addEventListener("keydown", adminProfileMenuEsc);
+    }
+    requestAnimationFrame(() => {
+      oppAdClear.focus();
+    });
+  }
+  oppAdminMenuBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (oppAdminMenuPanel.hidden) openAdminProfileMenu();
+    else closeAdminProfileMenu();
+  });
+  for (const b of [oppAdClear, oppAdBan, oppAdAllow, oppAdMute, oppAdUnmute]) {
+    b.setAttribute("role", "menuitem");
+  }
   oppAdClear.addEventListener("click", () => {
+    closeAdminProfileMenu();
     void adminModerationPost("clear_username");
   });
   oppAdBan.addEventListener("click", () => {
+    closeAdminProfileMenu();
     void adminModerationPost("username_ban", { banned: true });
   });
   oppAdAllow.addEventListener("click", () => {
+    closeAdminProfileMenu();
     void adminModerationPost("username_ban", { banned: false });
   });
   oppAdMute.addEventListener("click", () => {
+    closeAdminProfileMenu();
     void adminModerationPost("channel_mute", { muted: true });
   });
   oppAdUnmute.addEventListener("click", () => {
+    closeAdminProfileMenu();
     void adminModerationPost("channel_mute", { muted: false });
-  });
-  oppAdSetName.addEventListener("click", () => {
-    void adminModerationPost("set_username", {
-      username: oppAdminNameInput.value.trim(),
-    });
   });
   const oppProfileMessage = document.createElement("div");
   oppProfileMessage.className = "other-player-profile__message-wrap";
@@ -2033,6 +2117,37 @@ export function createHud(
   let profileMessageLastSaved = "";
   let profileUsernameEditing = false;
   let profileUsernameSavedCustom = "";
+  let profileAdminOtherUsernameEditing = false;
+  let profileChannelMutedForSubject = false;
+
+  function applyMuteBadgeVisibility(): void {
+    oppMuteBadge.hidden =
+      !profileChannelMutedForSubject || profileAdminOtherUsernameEditing;
+  }
+
+  function endAdminOtherUsernameEditVisual(): void {
+    profileAdminOtherUsernameEditing = false;
+    oppAdminNameInput.hidden = true;
+    oppDisplayNameEl.hidden = false;
+    applyMuteBadgeVisibility();
+  }
+
+  function beginAdminOtherUsernameEdit(): void {
+    if (profileMessageKindOpen !== "other" || opts?.isGameAdmin?.() !== true)
+      return;
+    if (profileAdminOtherUsernameEditing) return;
+    if (profileUsernameEditing) return;
+    closeAdminProfileMenu();
+    profileAdminOtherUsernameEditing = true;
+    oppDisplayNameEl.hidden = true;
+    oppAdminNameInput.hidden = false;
+    oppAdminNameInput.value = profileUsernameSavedCustom;
+    applyMuteBadgeVisibility();
+    requestAnimationFrame(() => {
+      oppAdminNameInput.focus();
+      oppAdminNameInput.select();
+    });
+  }
 
   function endUsernameEditVisual(): void {
     profileUsernameEditing = false;
@@ -2055,22 +2170,28 @@ export function createHud(
   }
 
   function updateProfileNameHitInteractivity(kind: "self" | "other"): void {
-    if (kind !== "self") {
-      oppDisplayNameEl.classList.remove("other-player-profile__display-name--editable");
-      oppDisplayNameEl.removeAttribute("role");
-      oppDisplayNameEl.removeAttribute("tabindex");
+    if (kind === "self") {
+      const locked = oppUsernameInput.readOnly;
+      if (locked) {
+        oppDisplayNameEl.classList.remove("other-player-profile__display-name--editable");
+        oppDisplayNameEl.removeAttribute("role");
+        oppDisplayNameEl.removeAttribute("tabindex");
+      } else {
+        oppDisplayNameEl.classList.add("other-player-profile__display-name--editable");
+        oppDisplayNameEl.setAttribute("role", "button");
+        oppDisplayNameEl.tabIndex = 0;
+      }
       return;
     }
-    const locked = oppUsernameInput.readOnly;
-    if (locked) {
-      oppDisplayNameEl.classList.remove("other-player-profile__display-name--editable");
-      oppDisplayNameEl.removeAttribute("role");
-      oppDisplayNameEl.removeAttribute("tabindex");
-    } else {
+    if (opts?.isGameAdmin?.() === true) {
       oppDisplayNameEl.classList.add("other-player-profile__display-name--editable");
       oppDisplayNameEl.setAttribute("role", "button");
       oppDisplayNameEl.tabIndex = 0;
+      return;
     }
+    oppDisplayNameEl.classList.remove("other-player-profile__display-name--editable");
+    oppDisplayNameEl.removeAttribute("role");
+    oppDisplayNameEl.removeAttribute("tabindex");
   }
 
   async function maybeCommitUsernameBlur(): Promise<void> {
@@ -2083,6 +2204,20 @@ export function createHud(
     const ok = await commitSelfUsername();
     if (ok) endUsernameEditVisual();
     else requestAnimationFrame(() => oppUsernameInput.focus());
+  }
+
+  async function maybeCommitAdminOtherUsernameBlur(): Promise<void> {
+    if (!profileAdminOtherUsernameEditing) return;
+    const v = oppAdminNameInput.value.trim();
+    if (v === profileUsernameSavedCustom) {
+      endAdminOtherUsernameEditVisual();
+      return;
+    }
+    clearProfileMessageNote();
+    await adminModerationPost("set_username", { username: v });
+    if (profileAdminOtherUsernameEditing && !oppProfileNote.hidden) {
+      requestAnimationFrame(() => oppAdminNameInput.focus());
+    }
   }
 
   /** Same length as two-line sample: THISISONETHISITHISISONETHISITHISISONETHISITHISISONETHISITHISISO */
@@ -2334,15 +2469,32 @@ export function createHud(
   }
 
   oppDisplayNameEl.addEventListener("click", () => {
-    if (profileMessageKindOpen !== "self") return;
-    if (oppUsernameInput.readOnly) return;
-    beginUsernameEdit();
+    if (profileMessageKindOpen === "self") {
+      if (oppUsernameInput.readOnly) return;
+      beginUsernameEdit();
+      return;
+    }
+    if (
+      profileMessageKindOpen === "other" &&
+      opts?.isGameAdmin?.() === true
+    ) {
+      beginAdminOtherUsernameEdit();
+    }
   });
   oppDisplayNameEl.addEventListener("keydown", (e) => {
-    if (profileMessageKindOpen !== "self" || oppUsernameInput.readOnly) return;
-    if (e.key === "Enter" || e.key === " ") {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    if (profileMessageKindOpen === "self") {
+      if (oppUsernameInput.readOnly) return;
       e.preventDefault();
       beginUsernameEdit();
+      return;
+    }
+    if (
+      profileMessageKindOpen === "other" &&
+      opts?.isGameAdmin?.() === true
+    ) {
+      e.preventDefault();
+      beginAdminOtherUsernameEdit();
     }
   });
   oppUsernameInput.addEventListener("blur", () => {
@@ -2355,6 +2507,32 @@ export function createHud(
     void (async () => {
       const ok = await commitSelfUsername();
       if (ok) endUsernameEditVisual();
+    })();
+  });
+  oppAdminNameInput.addEventListener("blur", () => {
+    void maybeCommitAdminOtherUsernameBlur();
+  });
+  oppAdminNameInput.addEventListener("keydown", (e) => {
+    if (!profileAdminOtherUsernameEditing) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      oppAdminNameInput.value = profileUsernameSavedCustom;
+      endAdminOtherUsernameEditVisual();
+      return;
+    }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    void (async () => {
+      const v = oppAdminNameInput.value.trim();
+      if (v === profileUsernameSavedCustom) {
+        endAdminOtherUsernameEditVisual();
+        return;
+      }
+      clearProfileMessageNote();
+      await adminModerationPost("set_username", { username: v });
+      if (profileAdminOtherUsernameEditing && !oppProfileNote.hidden) {
+        requestAnimationFrame(() => oppAdminNameInput.focus());
+      }
     })();
   });
 
@@ -2373,6 +2551,11 @@ export function createHud(
     clearProfileMessageNote();
     oppSendNim.textContent = "Send NIM";
     endUsernameEditVisual();
+    closeAdminProfileMenu();
+    profileChannelMutedForSubject = false;
+    profileAdminOtherUsernameEditing = false;
+    oppAdminNameInput.hidden = true;
+    oppMuteBadge.hidden = true;
     oppDisplayNameEl.textContent = "";
     oppAliasTip.textContent = "";
     oppAliasHost.hidden = true;
@@ -2517,6 +2700,17 @@ export function createHud(
         cancelSelfProfileMessageEdit();
         return;
       }
+      if (!oppAdminMenuPanel.hidden) {
+        e.preventDefault();
+        closeAdminProfileMenu();
+        return;
+      }
+      if (profileAdminOtherUsernameEditing) {
+        e.preventDefault();
+        oppAdminNameInput.value = profileUsernameSavedCustom;
+        endAdminOtherUsernameEditVisual();
+        return;
+      }
       if (profileUsernameEditing) {
         e.preventDefault();
         oppUsernameInput.value = profileUsernameSavedCustom;
@@ -2548,11 +2742,15 @@ export function createHud(
     if (!compact) return;
     profileOpenCompact = compact;
     profileMessageKindOpen = kind;
+    if (kind === "other") updateProfileNameHitInteractivity("other");
     profileMessageLastSaved = "";
     clearProfileMessageNote();
     setProfileNimiqPayTipVisible(false);
     setProfileAliasTipVisible(false);
     endUsernameEditVisual();
+    profileChannelMutedForSubject = false;
+    endAdminOtherUsernameEditVisual();
+    closeAdminProfileMenu();
     oppDisplayNameEl.textContent =
       _displayName.trim() || walletDisplayName(compact);
     oppWalletShortEl.hidden = true;
@@ -2620,13 +2818,15 @@ export function createHud(
         usernameLockedUntil?: number | null;
         usernameSetBanned?: boolean;
         subjectUsernameBanned?: boolean;
-        subjectChannelMuted?: boolean;
+        channelMuted?: boolean;
         usernameSelfServiceEnabled?: boolean;
       };
       if (profileOpenCompact !== openFor) return;
       if (typeof j.effectiveDisplayName === "string" && j.effectiveDisplayName.trim()) {
         oppDisplayNameEl.textContent = j.effectiveDisplayName.trim();
       }
+      profileChannelMutedForSubject = j.channelMuted === true;
+      applyMuteBadgeVisibility();
       const aliases = Array.isArray(j.recentAliases)
         ? j.recentAliases.map((x) => String(x).trim()).filter(Boolean)
         : [];
@@ -2637,7 +2837,7 @@ export function createHud(
       oppAdminRow.hidden = !admin;
       if (admin) {
         const banned = j.subjectUsernameBanned === true;
-        const muted = j.subjectChannelMuted === true;
+        const muted = j.channelMuted === true;
         oppAdBan.hidden = banned;
         oppAdAllow.hidden = !banned;
         oppAdMute.hidden = muted;

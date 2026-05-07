@@ -3667,32 +3667,94 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
-.other-player-profile__admin-set-name {
-  display: flex;
-  flex-wrap: wrap;
+.other-player-profile__mute-badge {
+  flex-shrink: 0;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  margin-bottom: 4px;
+  justify-content: center;
+  line-height: 0;
+  color: rgba(251, 191, 36, 0.92);
 }
 
-.other-player-profile__admin-name-input {
-  flex: 1 1 100px;
-  min-width: 0;
-  max-width: 160px;
-  box-sizing: border-box;
-  padding: 4px 8px;
+.other-player-profile__mute-badge[hidden] {
+  display: none !important;
+}
+
+.other-player-profile__mute-badge-icon.nq-icon,
+.other-player-profile__mute-badge-icon .nq-icon {
+  display: block;
+  fill: currentColor;
+  color: inherit;
+}
+
+.other-player-profile__admin-name-input--inline {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.other-player-profile__admin-menu-wrap {
+  position: relative;
+}
+
+.other-player-profile__admin-menu-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 4px 6px;
+  border: 1px solid rgba(100, 116, 139, 0.45);
   border-radius: 6px;
-  border: 1px solid rgba(100, 116, 139, 0.55);
-  background: rgba(15, 23, 42, 0.85);
+  background: rgba(30, 41, 59, 0.55);
+  color: rgba(226, 232, 240, 0.85);
+  cursor: pointer;
+  line-height: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.other-player-profile__admin-menu-btn:hover {
+  background: rgba(51, 65, 85, 0.65);
   color: #f1f5f9;
-  font: inherit;
-  font-size: 12px;
+}
+
+.other-player-profile__admin-menu-btn-icon.nq-icon,
+.other-player-profile__admin-menu-btn-icon .nq-icon {
+  display: block;
+  fill: currentColor;
+}
+
+.other-player-profile__admin-menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 10.5rem;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid rgba(100, 116, 139, 0.55);
+  background: rgba(15, 23, 42, 0.97);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.other-player-profile__admin-menu-panel[hidden] {
+  display: none !important;
+}
+
+.other-player-profile__admin-menu-item {
+  width: 100%;
+  text-align: left;
+  justify-content: flex-start;
+  border-radius: 5px;
 }
 
 .other-player-profile__admin-mod {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: 6px;
   margin-bottom: 8px;
 }

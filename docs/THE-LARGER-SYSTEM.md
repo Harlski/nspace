@@ -53,6 +53,23 @@ After that, the author **reviews diffs**, then **`git add`**, **`git commit`**, 
 
 **Norm:** Do not merge accumulated `UNRELEASED` work to `main` without running `prepare-merge` (or an equivalent manual freeze that keeps folder name and `package.json` in lockstep). Agents assisting with merges should run or insist on this script when the user says they are ready to merge.
 
+### Monetization: incoming NIM payment intents (sidecar — partial ship)
+
+**Shipped in-repo (infrastructure + player API proxy; product entitlements still TBD):**
+
+- **`payment-intent-service`** (npm workspace): HTTP API with **SQLite** intent ledger, **pluggable `featureKind`** handlers ([`payment-intent-service/src/features/`](../payment-intent-service/src/features/)), working **`nspace.test.min`** quote path, **reserved stubs** for username / billboard slot / land / teleporter, and **on-chain verify** via Nimiq **`getTransaction`** (recipient, sender = payer, value ≥ quote, memo match, confirmations). **Read/verify** require a **`payerWallet`** scoped to the intent row (query param on `GET`, body field on `POST /verify`) so bearer-secret callers cannot iterate all intents by id alone.
+- **`/health`** includes a trivial **SQLite** check (`db` / `ok` reflect reachability).
+- **Deploy:** dedicated **Docker image**; Compose service **`payment-intent`** behind profile **`payment`**; host volume **`./data/payment-intent/`**; env and troubleshooting in [docker-deployment.md](docker-deployment.md) and [process.md](process.md).
+- **Game server proxy (JWT):** when `PAYMENT_INTENT_SERVICE_URL` and `PAYMENT_INTENT_API_SECRET` are set, **`POST /api/payment/intents`**, **`GET /api/payment/intents/:intentId`**, **`POST /api/payment/intents/:intentId/verify`** forward to the sidecar with **`payerWallet` forced from JWT `sub`** ([`server/src/paymentIntentRoutes.ts`](../server/src/paymentIntentRoutes.ts), [`server/src/paymentIntentClient.ts`](../server/src/paymentIntentClient.ts)). If unset, these routes respond **`503`** `payment_intent_unavailable`.
+- **Operations / admin:** **`GET /api/admin/system/snapshot`** optionally probes the sidecar (**`/health`**, **`/v1/meta/features`**); **`/admin/system`** renders that block ([`server/src/paymentIntentProbe.ts`](../server/src/paymentIntentProbe.ts), [`server/src/adminSystemPage.ts`](../server/src/adminSystemPage.ts)).
+- **Quality:** automated tests (memo, SQLite + payer scope, sidecar config probe, world-state baseline); root **`npm test`**.
+
+**Explicitly not shipped yet (intentional boundary for the next implementation phase):**
+
+- **No** exclusive username registry, billboard slot ledger, land grant, or teleporter entitlement **written on the game server** after a verified intent — callers can complete **quote → pay → verify** via HTTP, but **nothing in `rooms.ts` / profile stores yet consumes** a confirmed intent automatically (see [brainstorm/monetized-features-username-teleporter-land-billboards.md](brainstorm/monetized-features-username-teleporter-land-billboards.md) for sketches only).
+
+**Constraints to preserve:** keep **incoming** NIM verification (sidecar) **separate** from the **outgoing** Nim payout worker inside the main server; never expose **`PAYMENT_INTENT_API_SECRET`** to browsers; **`payerWallet` on proxy routes must always come from JWT `sub`**, never from unauthenticated client-only fields.
+
 ---
 
 ## Changelog (optional)
@@ -64,3 +81,5 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-05-07** — Principle: client-only decorative overlays on obstacles; picking/selection use solid mesh bounds only. See [reasons/reason_834162.md](reasons/reason_834162.md).
 - **2026-05-07** — Release line: `prepare-merge` freezes `UNRELEASED` patch notes and bumps root semver before merge to `main`. See [reasons/reason_291847.md](reasons/reason_291847.md).
 - **2026-05-07** — Companion rationales moved to **`docs/reasons/`** (see [reasons/reason_105892.md](reasons/reason_105892.md)).
+- **2026-05-07** — Documented completed **payment-intent** sidecar scope vs. intentional “not wired to gameplay API yet” boundary. See [reasons/reason_472901.md](reasons/reason_472901.md).
+- **2026-05-07** — Payment intents: **JWT proxy routes** on `nspace`, **payer-scoped** sidecar reads/verify, **`/health` + SQLite**. See [reasons/reason_519027.md](reasons/reason_519027.md).

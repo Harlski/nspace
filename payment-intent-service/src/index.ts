@@ -6,7 +6,7 @@ import { registerBuiltinFeatureHandlers } from "./features/builtin.js";
 import { listRegisteredFeatureKinds } from "./features/registry.js";
 import {
   createIntent,
-  getIntent,
+  getIntentForPayer,
   verifyIntentTx,
   type CreateIntentBody,
 } from "./intents.js";
@@ -22,7 +22,18 @@ app.use(cors({ origin: false }));
 app.use(express.json({ limit: "64kb" }));
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "nspace-payment-intent" });
+  let dbOk = false;
+  try {
+    store.db.prepare("SELECT 1 AS ok").get();
+    dbOk = true;
+  } catch {
+    dbOk = false;
+  }
+  res.json({
+    ok: dbOk,
+    service: "nspace-payment-intent",
+    db: dbOk,
+  });
 });
 
 const auth = bearerApiAuth(cfg);
@@ -53,7 +64,12 @@ app.post("/v1/intents", auth, async (req, res) => {
 });
 
 app.get("/v1/intents/:intentId", auth, (req, res) => {
-  const intent = getIntent(store, req.params.intentId ?? "");
+  const payerWallet = String(req.query.payerWallet ?? "").trim();
+  if (!payerWallet) {
+    res.status(400).json({ error: "payerWallet query parameter is required" });
+    return;
+  }
+  const intent = getIntentForPayer(store, req.params.intentId ?? "", payerWallet);
   if (!intent) {
     res.status(404).json({ error: "not_found" });
     return;
@@ -63,11 +79,14 @@ app.get("/v1/intents/:intentId", auth, (req, res) => {
 
 app.post("/v1/intents/:intentId/verify", auth, async (req, res) => {
   try {
-    const txHash = String((req.body as { txHash?: string })?.txHash ?? "");
+    const body = req.body as { txHash?: string; payerWallet?: string };
+    const txHash = String(body?.txHash ?? "");
+    const payerWallet = String(body?.payerWallet ?? "");
     const result = await verifyIntentTx(
       store,
       cfg,
       req.params.intentId ?? "",
+      payerWallet,
       txHash
     );
     res.json(result);
@@ -77,7 +96,7 @@ app.post("/v1/intents/:intentId/verify", auth, async (req, res) => {
       res.status(404).json({ error: msg });
       return;
     }
-    if (msg === "txHash is required") {
+    if (msg === "txHash is required" || msg === "payerWallet is required") {
       res.status(400).json({ error: msg });
       return;
     }

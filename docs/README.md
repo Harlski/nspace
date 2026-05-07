@@ -30,7 +30,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 |----------|----------|
 | [live-service-implementation.md](live-service-implementation.md) | Split SPA + API, Docker services, env vars, persistence — **as run today** |
 | [deploy-github-docker.md](deploy-github-docker.md) | GitHub Actions → VPS; SSH keys and secrets |
-| [docker-deployment.md](docker-deployment.md) | Compose, volumes, optional **payment-intent** sidecar (profile `payment`), common operations |
+| [docker-deployment.md](docker-deployment.md) | Compose, volumes, optional **payment-intent** sidecar (profile `payment`), **`/api/payment/*`** JWT proxy, common operations |
 
 ## Security & payouts
 

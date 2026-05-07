@@ -139,13 +139,18 @@ export async function verifyIntentTx(
   store: IntentStore,
   cfg: AppConfig,
   intentId: string,
+  payerWallet: string,
   txHash: string
 ): Promise<VerifyResult> {
+  const payer = normalizeWalletId(String(payerWallet || ""));
+  if (!payer) throw new Error("payerWallet is required");
+
   const hash = String(txHash || "").trim();
   if (!hash) throw new Error("txHash is required");
 
   const row = store.findById(intentId.trim());
   if (!row) throw new Error("Intent not found");
+  if (payer !== row.payer_wallet) throw new Error("Intent not found");
 
   const live = assertFresh(row, store);
   if (live.status === "expired" || live.status === "failed") {
@@ -233,5 +238,18 @@ export async function verifyIntentTx(
 export function getIntent(store: IntentStore, intentId: string): PublicIntent | null {
   const row = store.findById(intentId.trim());
   if (!row) return null;
+  return rowToPublic(assertFresh(row, store));
+}
+
+/** Scoped read: same response shape as missing intent when payer does not match (no oracle). */
+export function getIntentForPayer(
+  store: IntentStore,
+  intentId: string,
+  payerWallet: string
+): PublicIntent | null {
+  const payer = normalizeWalletId(String(payerWallet || ""));
+  if (!payer) return null;
+  const row = store.findById(intentId.trim());
+  if (!row || row.payer_wallet !== payer) return null;
   return rowToPublic(assertFresh(row, store));
 }

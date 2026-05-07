@@ -55,6 +55,7 @@ import {
 } from "./adminRuntimeSettingsStore.js";
 import { getAdminSystemSnapshot, startAdminSystemMonitor } from "./adminSystemMonitor.js";
 import { probePaymentIntentService } from "./paymentIntentProbe.js";
+import { registerPaymentIntentPlayerApi } from "./paymentIntentRoutes.js";
 import { isAdmin } from "./config.js";
 import {
   type AnalyticsPageViewAnonReason,
@@ -254,13 +255,13 @@ app.get("/api/player-profile/:address", (req, res) => {
     const pub = getPlayerProfilePublicJson(addr) as Record<string, unknown>;
     pub.usernameSelfServiceEnabled =
       getAdminRuntimeSettings().playerUsernameSelfServiceEnabled;
+    pub.channelMuted = isChannelMuted(addr);
     const t = bearerToken(req);
     if (t) {
       try {
         const sub = normalizeWalletId(verifySession(t, jwtSecret).sub);
         if (sub === addr) {
           pub.usernameSetBanned = isUsernameSetBanned(addr);
-          pub.channelMuted = isChannelMuted(addr);
         } else if (isAdmin(sub)) {
           pub.subjectUsernameBanned = isUsernameSetBanned(addr);
           pub.subjectChannelMuted = isChannelMuted(addr);
@@ -1016,6 +1017,12 @@ app.put("/api/player-profile/username", requireJwt, (req, res) => {
     effectiveDisplayName: result.effectiveDisplayName,
     usernameLockedUntil: result.usernameLockedUntil,
   });
+});
+
+registerPaymentIntentPlayerApi(app, {
+  requireJwt,
+  jwtAddressFromReq,
+  normalizeWalletId,
 });
 
 app.post("/api/admin/moderation", requireSystemAdminWallet, (req, res) => {

@@ -81,17 +81,27 @@ The **`payment-intent`** service is a **separate** Node container from `nspace` 
 
 | Method | Path | Purpose |
 |--------|------|--------|
-| `GET` | `/health` | Liveness (no auth) |
+| `GET` | `/health` | Liveness + SQLite ping (no auth); JSON includes `db` |
 | `GET` | `/v1/meta/features` | Lists registered `featureKind` strings |
 | `POST` | `/v1/intents` | Create intent: `featureKind`, `payerWallet`, optional `featurePayload`, optional `idempotencyKey` → `{ intent: { intentId, amountLuna, recipient, memo, … } }` |
-| `GET` | `/v1/intents/:intentId` | Read status |
-| `POST` | `/v1/intents/:intentId/verify` | Body `{ "txHash": "…" }` → `{ ok, intent, chainMessage? }`; checks recipient, sender = payer, value ≥ quoted amount, memo matches, confirmations |
+| `GET` | `/v1/intents/:intentId` | Read status — **requires** query `payerWallet` matching the intent row |
+| `POST` | `/v1/intents/:intentId/verify` | Body `{ "txHash", "payerWallet" }` (both required) → `{ ok, intent, chainMessage? }`; checks payer, recipient, sender, value, memo, confirmations |
+
+**Game server (JWT, same-origin or API host):** when `PAYMENT_INTENT_SERVICE_URL` + `PAYMENT_INTENT_API_SECRET` are set on `nspace`, clients use **`Authorization: Bearer <player JWT>`** on:
+
+| Method | Path | Purpose |
+|--------|------|--------|
+| `POST` | `/api/payment/intents` | Create intent; body `{ featureKind, featurePayload?, idempotencyKey? }` — **`payerWallet` is taken from JWT `sub` only** |
+| `GET` | `/api/payment/intents/:intentId` | Read own intent |
+| `POST` | `/api/payment/intents/:intentId/verify` | Body `{ txHash }` — forwards verify with wallet from JWT |
+
+If the sidecar is not configured, these return **`503`** `{ "error": "payment_intent_unavailable" }`.
 
 **Extending:** register new `PaymentFeatureHandler` modules (see `payment-intent-service/src/features/`). Built-in kinds include `nspace.test.min` (integration tests) and reserved stubs `nspace.username.exclusive`, `nspace.billboard.slot`, `nspace.teleporter.purchase`, `nspace.land.grant`.
 
 **Local dev without Docker:** `npm run dev:payment-intent` from the repo root (set the same env vars first).
 
-**Game server (`nspace` container) wiring:** `docker-compose.yml` passes through `PAYMENT_INTENT_SERVICE_URL` and `PAYMENT_INTENT_API_SECRET` from your `.env`. When you run `docker compose --profile payment up -d`, set e.g. `PAYMENT_INTENT_SERVICE_URL=http://payment-intent:3090` so `/admin/system` can reach the sidecar on the default Docker network.
+**Game server (`nspace` container) wiring:** `docker-compose.yml` passes through `PAYMENT_INTENT_SERVICE_URL` and `PAYMENT_INTENT_API_SECRET` from your `.env`. With `docker compose --profile payment up -d`, set e.g. `PAYMENT_INTENT_SERVICE_URL=http://payment-intent:3090` so **`/admin/system`** probes and **`/api/payment/*`** player routes reach the sidecar on the default Docker network.
 
 ### Production Deployment
 

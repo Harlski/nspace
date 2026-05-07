@@ -40,6 +40,7 @@ You are working on **Nimiq Space**, an open multiplayer isometric social space f
 - **Admin allowlist:** [server/src/config.ts](server/src/config.ts)
 - **Event / replay logging:** [server/src/eventLog.ts](server/src/eventLog.ts)
 - **Payment intents (optional sidecar):** [payment-intent-service/src/index.ts](payment-intent-service/src/index.ts) — quotes, SQLite ledger, Nimiq `getTransaction` verification; compose profile `payment` ([docker-compose.yml](docker-compose.yml)).
+- **Payment intents (player HTTP on game server):** [server/src/paymentIntentRoutes.ts](server/src/paymentIntentRoutes.ts) — JWT **`/api/payment/*`** proxy to the sidecar ([server/src/paymentIntentClient.ts](server/src/paymentIntentClient.ts)).
 
 ## Maintenance expectations
 

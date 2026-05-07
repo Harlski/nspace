@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AppConfig } from "../src/config.js";
 import { registerBuiltinFeatureHandlers } from "../src/features/builtin.js";
-import { createIntent, getIntent } from "../src/intents.js";
+import { createIntent, getIntent, getIntentForPayer } from "../src/intents.js";
 import { IntentStore } from "../src/store.js";
 
 registerBuiltinFeatureHandlers();
@@ -33,6 +33,20 @@ test("createIntent persists row and returns memo with intent id", async () => {
   const again = getIntent(store, pub.intentId);
   assert.ok(again);
   assert.equal(again.status, "pending");
+});
+
+test("getIntentForPayer rejects wrong wallet", async () => {
+  const store = new IntentStore(":memory:");
+  const pub = await createIntent(store, testCfg, {
+    featureKind: "nspace.test.min",
+    payerWallet: testRecipient,
+    featurePayload: {},
+  });
+  const wrong = getIntentForPayer(store, pub.intentId, "NQ00 0000 0000 0000 0000 0000 0000 0000 0001");
+  assert.equal(wrong, null);
+  const ok = getIntentForPayer(store, pub.intentId, testRecipient);
+  assert.ok(ok);
+  assert.equal(ok.intentId, pub.intentId);
 });
 
 test("idempotency returns same intent when still pending", async () => {

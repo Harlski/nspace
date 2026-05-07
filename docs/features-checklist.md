@@ -4,10 +4,12 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 
 ## Payment intents (optional microservice)
 
-- [x] Workspace [`payment-intent-service`](../payment-intent-service/) — Express HTTP API, SQLite ledger, Nimiq `getTransaction` verification for incoming NIM to a configured hot wallet
-- [x] Docker image + Compose service `payment-intent` (profile **`payment`**); not wired from the main game server yet (server-to-server integration TBD)
+- [x] Workspace [`payment-intent-service`](../payment-intent-service/) — Express HTTP API, SQLite ledger, Nimiq `getTransaction` verification for incoming NIM to a configured hot wallet; **`GET /v1/intents/:id`** requires query **`payerWallet`**; **`POST …/verify`** requires body **`payerWallet`** matching the intent; **`/health`** pings SQLite
+- [x] Docker image + Compose service `payment-intent` (profile **`payment`**)
 - [x] Pluggable **`featureKind`** handlers (`nspace.test.min` + reserved stubs for usernames, billboard slots, land, teleporter — see `src/features/builtin.ts`)
+- [x] Game server **JWT proxy** — `POST /api/payment/intents`, `GET /api/payment/intents/:intentId`, `POST /api/payment/intents/:intentId/verify` ([`server/src/paymentIntentRoutes.ts`](../server/src/paymentIntentRoutes.ts)); **`503`** if sidecar env missing; **`payerWallet` always from JWT `sub`**
 - [x] `/admin/system` — when `PAYMENT_INTENT_SERVICE_URL` is set on the game server, snapshot includes **health** + optional **authenticated API** probe (`PAYMENT_INTENT_API_SECRET`); see [`server/src/paymentIntentProbe.ts`](../server/src/paymentIntentProbe.ts)
+- [ ] **Product entitlements** — e.g. exclusive username registry after verified intent (not implemented; brainstorm only)
 
 ## Auth and session
 
