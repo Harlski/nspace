@@ -12,6 +12,8 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 | [features-checklist.md](features-checklist.md) | What the server and client implement today (WebSocket, rooms, build, replay, etc.) |
 | [build.md](build.md) | Stack, world model, authority, rendering, high-level message flow |
 | [process.md](process.md) | How to extend synced features, tick loop, env vars, local dev, rate limits |
+| [THE-LARGER-SYSTEM.md](THE-LARGER-SYSTEM.md) | Evolving design principles and cross-cutting decisions; substantive edits ship a companion file in [reasons/](reasons/) (see also [MEMORY.md](../MEMORY.md)) |
+| [reasons/](reasons/) | `THE-LARGER-SYSTEM` edit rationales only: `reason_{six-digit-id}.md` |
 | [signboards-admin-guide.md](signboards-admin-guide.md) | Signboard rules by room, WebSocket messages, persistence |
 
 ## Styling & assets
@@ -28,7 +30,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 |----------|----------|
 | [live-service-implementation.md](live-service-implementation.md) | Split SPA + API, Docker services, env vars, persistence — **as run today** |
 | [deploy-github-docker.md](deploy-github-docker.md) | GitHub Actions → VPS; SSH keys and secrets |
-| [docker-deployment.md](docker-deployment.md) | Compose, volumes, common operations |
+| [docker-deployment.md](docker-deployment.md) | Compose, volumes, optional **payment-intent** sidecar (profile `payment`), common operations |
 
 ## Security & payouts
 
@@ -57,6 +59,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 | Document | Contents |
 |----------|----------|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Fork/PR workflow, conventions, important file paths |
+| [patchnote/README.md](../patchnote/README.md) | **Patch notes** per version: `versions/<version>/reasons.md` + `public/` (brief, players, operators, developers); start from `versions/UNRELEASED/` |
 
 ---
 

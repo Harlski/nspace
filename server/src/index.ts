@@ -54,6 +54,7 @@ import {
   patchAdminRuntimeSettings,
 } from "./adminRuntimeSettingsStore.js";
 import { getAdminSystemSnapshot, startAdminSystemMonitor } from "./adminSystemMonitor.js";
+import { probePaymentIntentService } from "./paymentIntentProbe.js";
 import { isAdmin } from "./config.js";
 import {
   type AnalyticsPageViewAnonReason,
@@ -841,8 +842,15 @@ app.get("/admin/settings", (_req, res) => {
   res.type("html").send(adminSettingsPageHtml());
 });
 
-app.get("/api/admin/system/snapshot", requireSystemAdminWallet, (_req, res) => {
-  res.json(getAdminSystemSnapshot());
+app.get("/api/admin/system/snapshot", requireSystemAdminWallet, async (_req, res) => {
+  try {
+    const snapshot = getAdminSystemSnapshot();
+    const paymentIntent = await probePaymentIntentService();
+    res.json({ ...snapshot, paymentIntent });
+  } catch (e) {
+    console.error("[api/admin/system/snapshot]", e);
+    res.status(500).json({ error: "internal" });
+  }
 });
 
 app.get("/api/admin/settings", requireSystemAdminWallet, (_req, res) => {

@@ -640,6 +640,99 @@ function createChatBubbleSprite(
 /** Placeholder isometric block (cube) — one tile footprint, sits on floor. */
 const BLOCK_SIZE = 0.82;
 
+/** GPU particles around active (minable) claimable blocks. */
+const MINEABLE_SPARKLE_COUNT = 48;
+
+/**
+ * Children of a placed-block `THREE.Group` with this flag are **purely decorative**:
+ * omitted from build-mode selection `Box3`, and they do not participate in block ray picks.
+ * Reuse for future per-block VFX (auras, particles, etc.).
+ */
+const SKIP_BLOCK_PICK_AND_BOUNDS = "skipBlockPickAndBounds";
+
+function makeMineableSparklePoints(hVis: number, vis: number): THREE.Points {
+  const n = MINEABLE_SPARKLE_COUNT;
+  /** Tight shell just outside the mesh hull (depthTest off keeps glints visible). */
+  const sphereR =
+    0.42 * Math.hypot(BLOCK_SIZE * vis, hVis, BLOCK_SIZE * vis) + 0.012;
+  const base = new Float32Array(n * 3);
+  const phases = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const u = Math.random();
+    const v = Math.random();
+    const theta = 2 * Math.PI * u;
+    const phi = Math.acos(2 * v - 1);
+    const sinp = Math.sin(phi);
+    base[i * 3] = sphereR * sinp * Math.cos(theta);
+    base[i * 3 + 1] = sphereR * Math.cos(phi) * 0.9;
+    base[i * 3 + 2] = sphereR * sinp * Math.sin(theta);
+    phases[i] = Math.random() * Math.PI * 2;
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.BufferAttribute(base.slice(), 3));
+  /** World-space point radius so glints scale with orthographic zoom like block geometry (unlike fixed px). */
+  const minSpan = Math.min(BLOCK_SIZE * vis, hVis);
+  const pointWorldSize = minSpan * 0.03;
+  const mat = new THREE.PointsMaterial({
+    /** No `map` — small hardware squares (crisp, pixel-ish when zoomed in). */
+    color: 0xfffff8,
+    size: pointWorldSize,
+    sizeAttenuation: true,
+    transparent: true,
+    opacity: 1,
+    depthWrite: false,
+    /** Most shell points lie *behind* block faces from isometric views; depth-on discards them. */
+    depthTest: false,
+    toneMapped: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const pts = new THREE.Points(geom, mat);
+  pts.frustumCulled = false;
+  pts.renderOrder = 12;
+  pts.userData.isMineableSparkle = true;
+  pts.userData[SKIP_BLOCK_PICK_AND_BOUNDS] = true;
+  pts.userData.sparkleBasePositions = base;
+  pts.userData.sparklePhases = phases;
+  /** Decorative shell must not steal picks or inflate the white selection wireframe. */
+  pts.raycast = (_raycaster: THREE.Raycaster, _intersects: THREE.Intersection[]) => {};
+  return pts;
+}
+
+/** World-space AABB of solid block meshes only (excludes {@link SKIP_BLOCK_PICK_AND_BOUNDS} children). */
+function blockGroupWorldBoundsForSelectionOutline(
+  group: THREE.Object3D
+): THREE.Box3 | null {
+  group.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  let any = false;
+  group.traverse((obj: THREE.Object3D) => {
+    if (obj.userData[SKIP_BLOCK_PICK_AND_BOUNDS]) return;
+    if (obj instanceof THREE.Mesh) {
+      const b = new THREE.Box3().setFromObject(obj);
+      if (b.isEmpty()) return;
+      if (!any) {
+        box.copy(b);
+        any = true;
+      } else {
+        box.union(b);
+      }
+    }
+  });
+  return any ? box : null;
+}
+
+function disposePlacedBlockGroupContents(g: THREE.Object3D): void {
+  g.traverse((child: THREE.Object3D) => {
+    if (child instanceof THREE.Mesh) {
+      child.geometry.dispose();
+      (child.material as THREE.Material).dispose();
+    } else if (child instanceof THREE.Points) {
+      child.geometry.dispose();
+      (child.material as THREE.Material).dispose();
+    }
+  });
+}
+
 /**
  * If `newPath` equals `oldPath.slice(k)` for some k, returns k (tiles dropped from the start).
  * Otherwise null (new click or path jumped).
@@ -1036,6 +1129,8 @@ export class Game {
   private readonly canvasIdenticonMeshes = new Map<string, THREE.Mesh>();
   /** Time elapsed for door tile pulse animation */
   private doorPulseTime = 0;
+  /** Phase clock for active claimable (minable) block sparkle particles. */
+  private mineableSparkleAnimTime = 0;
   /** Signboards (admin-placed message signs) */
   private readonly signboards = new Map<
     string,
@@ -1470,14 +1565,7 @@ export class Game {
     // Clear block meshes from scene
     for (const [, mesh] of this.blockMeshes) {
       this.scene.remove(mesh);
-      mesh.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) {
-          obj.geometry.dispose();
-          if (obj.material instanceof THREE.Material) {
-            obj.material.dispose();
-          }
-        }
-      });
+      disposePlacedBlockGroupContents(mesh);
     }
     this.blockMeshes.clear();
     this.clearTeleporterMarkers();
@@ -2836,7 +2924,12 @@ export class Game {
       const sy = h * vis + padding;
       size = new THREE.Vector3(foot + padding, sy, foot + padding);
     } else {
-      const box = new THREE.Box3().setFromObject(g);
+      const box = blockGroupWorldBoundsForSelectionOutline(g);
+      if (!box) {
+        this.selectionOutline.visible = false;
+        this.refreshTeleporterLinkHighlight();
+        return;
+      }
       size = new THREE.Vector3();
       box.getSize(size);
       box.getCenter(center);
@@ -5386,12 +5479,7 @@ export class Game {
     this.canvasIdenticonMeshes.clear();
     for (const [, mesh] of this.blockMeshes) {
       this.scene.remove(mesh);
-      mesh.traverse((child: THREE.Object3D) => {
-        if (child instanceof THREE.Mesh) {
-          child.geometry.dispose();
-          (child.material as THREE.Material).dispose();
-        }
-      });
+      disposePlacedBlockGroupContents(mesh);
     }
     this.blockMeshes.clear();
     for (const [, mesh] of this.walkableFloorMeshes) {
@@ -6119,12 +6207,7 @@ export class Game {
       ) {
         if (g) {
           this.scene.remove(g);
-          g.traverse((child: THREE.Object3D) => {
-            if (child instanceof THREE.Mesh) {
-              child.geometry.dispose();
-              (child.material as THREE.Material).dispose();
-            }
-          });
+          disposePlacedBlockGroupContents(g);
           this.blockMeshes.delete(k);
         }
         continue;
@@ -6155,12 +6238,7 @@ export class Game {
       }
       if (g) {
         this.scene.remove(g);
-        g.traverse((child: THREE.Object3D) => {
-          if (child instanceof THREE.Mesh) {
-            child.geometry.dispose();
-            (child.material as THREE.Material).dispose();
-          }
-        });
+        disposePlacedBlockGroupContents(g);
         this.blockMeshes.delete(k);
       }
       g = this.makeBlockMesh(meta);
@@ -6174,12 +6252,7 @@ export class Game {
     for (const [k, mesh] of [...this.blockMeshes]) {
       if (!seen.has(k)) {
         this.scene.remove(mesh);
-        mesh.traverse((child: THREE.Object3D) => {
-          if (child instanceof THREE.Mesh) {
-            child.geometry.dispose();
-            (child.material as THREE.Material).dispose();
-          }
-        });
+        disposePlacedBlockGroupContents(mesh);
         this.blockMeshes.delete(k);
       }
     }
@@ -6259,9 +6332,7 @@ export class Game {
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       g.add(mesh);
-      return g;
-    }
-    if (meta.sphere) {
+    } else if (meta.sphere) {
       const r = BLOCK_SIZE * 0.5 * 0.94 * vis;
       const geom = new THREE.SphereGeometry(r, 20, 16);
       const mesh = new THREE.Mesh(geom, mat);
@@ -6295,6 +6366,13 @@ export class Game {
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       g.add(mesh);
+    }
+    if (meta.claimable && meta.active && !ghost) {
+      const sparkles = makeMineableSparklePoints(hVis, vis);
+      g.userData.mineableSparklePoints = sparkles;
+      g.add(sparkles);
+    } else {
+      g.userData.mineableSparklePoints = undefined;
     }
     return g;
   }
@@ -6373,8 +6451,51 @@ export class Game {
     this.syncPlacementRangeHints();
   }
 
+  private updateMineableBlockSparkles(): void {
+    const t = this.mineableSparkleAnimTime;
+    const emissivePulse = 0.5 + 0.5 * Math.sin(t * 2.35);
+    for (const g of this.blockMeshes.values()) {
+      const pts = g.userData["mineableSparklePoints"] as THREE.Points | undefined;
+      if (!pts) continue;
+      for (const c of g.children) {
+        if (c instanceof THREE.Mesh) {
+          const mm = c.material;
+          if (
+            mm instanceof THREE.MeshStandardMaterial &&
+            mm.emissive.r > 0.02
+          ) {
+            mm.emissiveIntensity = 0.16 + 0.44 * emissivePulse;
+          }
+        }
+      }
+      const basePos = pts.userData["sparkleBasePositions"] as
+        | Float32Array
+        | undefined;
+      const phases = pts.userData["sparklePhases"] as Float32Array | undefined;
+      if (!basePos || !phases) continue;
+      const posAttr = pts.geometry.getAttribute(
+        "position"
+      ) as THREE.BufferAttribute | undefined;
+      if (!posAttr) continue;
+      const arr = posAttr.array as Float32Array;
+      const n = phases.length;
+      for (let i = 0; i < n; i++) {
+        const breathe = 1 + 0.065 * Math.sin(t * 2.4 + phases[i]!);
+        arr[i * 3] = basePos[i * 3]! * breathe;
+        arr[i * 3 + 1] = basePos[i * 3 + 1]! * breathe;
+        arr[i * 3 + 2] = basePos[i * 3 + 2]! * breathe;
+      }
+      posAttr.needsUpdate = true;
+      pts.rotation.y = t * 0.38;
+      const mat = pts.material as THREE.PointsMaterial;
+      mat.opacity = 0.78 + 0.22 * Math.sin(t * 1.85);
+    }
+  }
+
   tick(dt: number): void {
     this.doorPulseTime += dt;
+    this.mineableSparkleAnimTime += dt;
+    this.updateMineableBlockSparkles();
     this.animateDoorTiles();
     this.updateVoxelTextTween();
     

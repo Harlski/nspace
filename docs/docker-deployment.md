@@ -67,6 +67,32 @@ World state is persisted to `./data/` on your host machine (mapped to `/app/serv
 
 This volume ensures your data survives container restarts.
 
+### Payment intent sidecar (optional)
+
+The **`payment-intent`** service is a **separate** Node container from `nspace` (and from the Nim payout worker inside the game server). It implements a small **payment intent ledger** plus **on-chain verification** for incoming NIM, so future product features (exclusive username, billboard slots, land, teleporters) can share one flow: quote → pay with memo → verify transaction.
+
+- **Enable:** `docker compose --profile payment up -d` (the profile is required; the service is off by default).
+- **Build context:** repository root; Dockerfile [`payment-intent-service/Dockerfile`](../payment-intent-service/Dockerfile).
+- **Port:** `127.0.0.1:3090` → `3090` in the container.
+- **Persistence:** host directory `./data/payment-intent` → `/data` (SQLite file `payment-intents.sqlite` via `PAYMENT_INTENT_SQLITE_PATH`).
+- **Required env:** `PAYMENT_INTENT_API_SECRET`, `PAYMENT_INTENT_RECIPIENT_ADDRESS`, and `NIM_NETWORK` (place in root `.env` or `server/.env` like the main app). See [`payment-intent-service/.env.example`](../payment-intent-service/.env.example).
+
+**HTTP API** (all `/v1/*` routes require `Authorization: Bearer <PAYMENT_INTENT_API_SECRET>`):
+
+| Method | Path | Purpose |
+|--------|------|--------|
+| `GET` | `/health` | Liveness (no auth) |
+| `GET` | `/v1/meta/features` | Lists registered `featureKind` strings |
+| `POST` | `/v1/intents` | Create intent: `featureKind`, `payerWallet`, optional `featurePayload`, optional `idempotencyKey` → `{ intent: { intentId, amountLuna, recipient, memo, … } }` |
+| `GET` | `/v1/intents/:intentId` | Read status |
+| `POST` | `/v1/intents/:intentId/verify` | Body `{ "txHash": "…" }` → `{ ok, intent, chainMessage? }`; checks recipient, sender = payer, value ≥ quoted amount, memo matches, confirmations |
+
+**Extending:** register new `PaymentFeatureHandler` modules (see `payment-intent-service/src/features/`). Built-in kinds include `nspace.test.min` (integration tests) and reserved stubs `nspace.username.exclusive`, `nspace.billboard.slot`, `nspace.teleporter.purchase`, `nspace.land.grant`.
+
+**Local dev without Docker:** `npm run dev:payment-intent` from the repo root (set the same env vars first).
+
+**Game server (`nspace` container) wiring:** `docker-compose.yml` passes through `PAYMENT_INTENT_SERVICE_URL` and `PAYMENT_INTENT_API_SECRET` from your `.env`. When you run `docker compose --profile payment up -d`, set e.g. `PAYMENT_INTENT_SERVICE_URL=http://payment-intent:3090` so `/admin/system` can reach the sidecar on the default Docker network.
+
 ### Production Deployment
 
 **For VPS deployment:**
@@ -115,6 +141,10 @@ docker compose logs
 # - Port 3001 already in use
 # - Permissions on ./data/ volume
 ```
+
+**`nspace` keeps restarting with profile `payment`:** `NODE_ENV=production` rejects `JWT_SECRET=dev-insecure-change-me` from `server/.env`. Set a real secret (e.g. `openssl rand -base64 32`) in `./.env` and/or `./server/.env`, then `docker compose --profile payment up -d --force-recreate`.
+
+**`payment-intent` keeps restarting:** The sidecar requires `PAYMENT_INTENT_API_SECRET` and `PAYMENT_INTENT_RECIPIENT_ADDRESS` (and usually `NIM_NETWORK`). Put them in the **repository root** `.env` so Compose can substitute them into the service, or define them in `server/.env` (loaded via `env_file`). Check: `docker compose logs payment-intent --tail 30`.
 
 **Update to latest code:**
 ```bash
@@ -166,6 +196,12 @@ docker stop nspace
 docker rm nspace
 ```
 
+Payment intent image (from repo root):
+
+```bash
+docker build -f payment-intent-service/Dockerfile -t nspace-payment-intent:latest .
+```
+
 ## Security Checklist
 
 Before deploying to production:
@@ -176,7 +212,7 @@ Before deploying to production:
 - [ ] Restrict admin HTTP endpoints (or disable `VITE_ADMIN_ENABLED`)
 - [ ] Keep `.env` file secure (never commit to git)
 - [ ] Set up firewall rules
-- [ ] Regular backups of `./data/` volume
+- [ ] Regular backups of `./data/` volume (include `./data/payment-intent/` if you use the payment sidecar)
 - [ ] Monitor logs for suspicious activity
 
 ---

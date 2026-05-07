@@ -15,6 +15,7 @@ Thank you for your interest in contributing to nspace! This document provides gu
    git remote add upstream https://github.com/ORIGINAL-OWNER/nspace.git
    ```
 4. **Set up your development environment** (see [getting-started.md](getting-started.md))
+5. **Run automated checks** from the repo root: `npm test` (runs [`payment-intent-service`](../payment-intent-service/) tests and [`server`](../server/) unit tests, including the world-state baseline fixture).
 
 ## 🔄 Development Workflow
 

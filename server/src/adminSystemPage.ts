@@ -206,6 +206,61 @@ export function adminSystemPageHtml(): string {
         }
         var j = await r.json();
         setPolling(true);
+        var pi = j.paymentIntent || null;
+        var piBlock = "";
+        if (!pi || !pi.configured) {
+          piBlock =
+            "<div class='sys-section'><h2>Payment intent service</h2><p class='sys-hint'>" +
+            esc(pi && pi.hint ? pi.hint : "Set PAYMENT_INTENT_SERVICE_URL on this server to probe the sidecar. With Docker Compose profile <code class='mono'>payment</code>, use <code class='mono'>http://payment-intent:3090</code>.") +
+            "</p></div>";
+        } else {
+          var hst = pi.health || {};
+          var api = pi.api || {};
+          var healthLabel = hst.ok ? "OK" : hst.reached ? "HTTP error" : "Unreachable";
+          var apiLine = "";
+          if (api.skipReason === "no_secret_on_game_server") {
+            apiLine =
+              "<p class='sys-hint'>Set <code class='mono'>PAYMENT_INTENT_API_SECRET</code> on <strong>this</strong> server (same value as the sidecar) to verify <code class='mono'>GET /v1/meta/features</code>.</p>";
+          } else if (api.attempted && api.ok) {
+            apiLine =
+              "<p class='sys-hint'><strong>Authenticated API</strong> — OK in " +
+              esc(String(api.latencyMs)) +
+              " ms (" +
+              esc(String(api.featureKindCount != null ? api.featureKindCount : "?")) +
+              " feature kinds).</p>";
+          } else if (api.attempted) {
+            apiLine =
+              "<p class='sys-hint err'><strong>Authenticated API</strong> — " +
+              esc(String(api.error || "failed")) +
+              "</p>";
+          }
+          piBlock =
+            "<div class='sys-section'><h2>Payment intent service</h2>" +
+            "<p class='sys-hint'>Probed at <code class='mono'>" +
+            esc(pi.baseUrl || "") +
+            "</code> (read-only; no secrets returned).</p>" +
+            "<div class='sys-grid'>" +
+            "<div class='sys-card'><label>Health</label><div class='val'>" +
+            esc(healthLabel) +
+            "</div></div>" +
+            "<div class='sys-card'><label>HTTP status</label><div class='val'>" +
+            esc(String(hst.statusCode != null ? hst.statusCode : "—")) +
+            "</div></div>" +
+            "<div class='sys-card'><label>Latency</label><div class='val'>" +
+            esc(String(hst.latencyMs != null ? hst.latencyMs : "—")) +
+            " ms</div></div>" +
+            "<div class='sys-card'><label>Service id</label><div class='val' style='font-size:0.78rem'>" +
+            esc(String(hst.service || "—")) +
+            "</div></div>" +
+            "</div>" +
+            (hst.error && !hst.ok
+              ? "<p class='sys-hint err'><strong>Health detail</strong> — " +
+                esc(String(hst.error)) +
+                "</p>"
+              : "") +
+            apiLine +
+            "</div>";
+        }
         var p = j.process || {};
         var uptimeStr = "—";
         if (j.uptimeSec != null && Number.isFinite(Number(j.uptimeSec))) {
@@ -213,6 +268,7 @@ export function adminSystemPageHtml(): string {
           uptimeStr = Math.floor(sec / 60) + "m " + (sec % 60) + "s";
         }
         panel.innerHTML =
+          piBlock +
           "<div class='sys-actions'>" +
           "<button type='button' id='sys-refresh'>Refresh now</button>" +
           "<label><input type='checkbox' id='sys-poll' checked/> Auto-refresh every 10s</label></div>" +

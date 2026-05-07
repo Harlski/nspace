@@ -1,18 +1,22 @@
 {
   "name": "nspace",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "workspaces": [
     "client",
-    "server"
+    "server",
+    "payment-intent-service"
   ],
   "overrides": {
     "@nimiq/core": "2.2.2"
   },
   "scripts": {
+    "prepare-merge": "node scripts/prepare-merge.cjs",
     "dev": "concurrently -n client,server -c blue,green \"npm run dev -w client\" \"npm run dev -w server\"",
     "build": "npm run build -w client && npm run build -w server",
     "start": "npm run start -w server",
+    "dev:payment-intent": "npm run dev -w payment-intent-service",
+    "test": "npm test -w payment-intent-service && npm test -w server",
     "postinstall": "node scripts/postinstall.cjs"
   },
   "devDependencies": {

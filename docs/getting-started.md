@@ -132,6 +132,12 @@ docker compose up -d
 docker compose logs -f
 ```
 
+Optional **incoming payment intent** sidecar (separate container; does not run unless you enable the Compose profile and set `PAYMENT_INTENT_*` — see [docker-deployment.md](docker-deployment.md)):
+
+```bash
+docker compose --profile payment up -d
+```
+
 **Important:** The server requires `JWT_SECRET` to be set and will refuse to start without it in production mode.
 
 See [docker-deployment.md](docker-deployment.md) for detailed Docker deployment guide, including automated CI/CD deployment with GitHub Actions.

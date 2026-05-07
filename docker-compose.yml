@@ -40,8 +40,39 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: "3001"
+      # Optional: `/admin/system` probes + future purchase flows (set when Compose profile `payment` is used)
+      PAYMENT_INTENT_SERVICE_URL: ${PAYMENT_INTENT_SERVICE_URL:-}
+      PAYMENT_INTENT_API_SECRET: ${PAYMENT_INTENT_API_SECRET:-}
       # JWT_SECRET should be set in ./.env and/or ./server/.env (not dev-insecure-change-me in prod)
       # DEV_AUTH_BYPASS should NOT be set in production
     volumes:
       # world-state.json and events-*.jsonl live under server/data in the app
       - ./data:/app/server/data
+
+  # Optional: incoming NIM payment intents (quotes + chain verify). Not started by default.
+  # Requires PAYMENT_INTENT_* in .env — see docs/docker-deployment.md
+  payment-intent:
+    profiles: ["payment"]
+    build:
+      context: .
+      dockerfile: payment-intent-service/Dockerfile
+    image: nspace-payment-intent:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3090:3090"
+    env_file:
+      - path: ./.env
+        required: false
+      - path: ./server/.env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3090"
+      PAYMENT_INTENT_SQLITE_PATH: /data/payment-intents.sqlite
+      # Interpolated from the project `.env` (same file Compose uses for ${…} substitution).
+      # Required for the container to start; see docs/docker-deployment.md
+      PAYMENT_INTENT_API_SECRET: ${PAYMENT_INTENT_API_SECRET:-}
+      PAYMENT_INTENT_RECIPIENT_ADDRESS: ${PAYMENT_INTENT_RECIPIENT_ADDRESS:-}
+      NIM_NETWORK: ${NIM_NETWORK:-testalbatross}
+    volumes:
+      - ./data/payment-intent:/data

@@ -2,9 +2,11 @@
 
 You are working on **Nimiq Space**, an open multiplayer isometric social space for the **Nimiq** ecosystem. The product name on the web is often “Nimiq Space”; the repository package name is **`nspace`**.
 
+**Always consider [docs/THE-LARGER-SYSTEM.md](docs/THE-LARGER-SYSTEM.md)** when designing or implementing features that affect world model, sync, extensibility, or long-lived player expectations. It is the living place for cross-cutting design principles and notable decisions; update it when you solidify or discover something worth preserving. **Whenever you intentionally edit that file**, also add **`docs/reasons/reason_{unique_6digit_id}.md`** per its “How to use it” rules (why the update, how it serves the larger system). For a short pointer to that doc and this handbook, see [MEMORY.md](MEMORY.md).
+
 ## What this repo is
 
-- **Monorepo** (npm workspaces): **`client`** — Vite, TypeScript, Three.js; **`server`** — Express, WebSocket (`ws`), TypeScript.
+- **Monorepo** (npm workspaces): **`client`** — Vite, TypeScript, Three.js; **`server`** — Express, WebSocket (`ws`), TypeScript; optional **`payment-intent-service`** — HTTP API for incoming NIM payment intents (separate Docker image from the main game server).
 - **Auth:** Nimiq wallet (Hub or mini-app) message signing → JWT session. Optional dev bypass for local work only.
 - **Gameplay authority** lives on the **server** (`server/src/rooms.ts`). Clients send intents over the WebSocket; the server validates, mutates room state, and broadcasts snapshots.
 
@@ -12,6 +14,9 @@ You are working on **Nimiq Space**, an open multiplayer isometric social space f
 
 | Document | Use when you need |
 |----------|-------------------|
+| [MEMORY.md](MEMORY.md) | Anchor to durable design intent; points to **THE-LARGER-SYSTEM**, **patchnote/**, and this handbook |
+| [patchnote/README.md](patchnote/README.md) | **Patch notes** — `patchnote/versions/<version>/` ([UNRELEASED/reasons.md](patchnote/versions/UNRELEASED/reasons.md) + [public/](patchnote/versions/UNRELEASED/public/) tiers) |
+| [docs/THE-LARGER-SYSTEM.md](docs/THE-LARGER-SYSTEM.md) | Evolving **design principles** and important cross-cutting decisions — **consult before substantial work**; extend when principles are agreed or discovered |
 | [docs/README.md](docs/README.md) | Index of all topical docs |
 | [docs/build.md](docs/build.md) | Stack, world model, authority, rendering, message flow |
 | [docs/process.md](docs/process.md) | Extending synced features, tick loop, env vars, local dev |
@@ -34,6 +39,7 @@ You are working on **Nimiq Space**, an open multiplayer isometric social space f
 - **Wallet login:** [client/src/auth/nimiq.ts](client/src/auth/nimiq.ts), [server/src/auth.ts](server/src/auth.ts)
 - **Admin allowlist:** [server/src/config.ts](server/src/config.ts)
 - **Event / replay logging:** [server/src/eventLog.ts](server/src/eventLog.ts)
+- **Payment intents (optional sidecar):** [payment-intent-service/src/index.ts](payment-intent-service/src/index.ts) — quotes, SQLite ledger, Nimiq `getTransaction` verification; compose profile `payment` ([docker-compose.yml](docker-compose.yml)).
 
 ## Maintenance expectations
 
@@ -47,6 +53,10 @@ When you change **any** of the following, update the matching **`docs/*.md`** (a
 **Do not** record the new truth only under `docs/brainstorm/` — that folder is for exploration and archived write-ups.
 
 If you remove or rename a doc, grep the repo for old links and fix them.
+
+**Updates to [docs/THE-LARGER-SYSTEM.md](docs/THE-LARGER-SYSTEM.md)** (substantive content) must include a new **`docs/reasons/reason_XXXXXX.md`** rationale file; see **How to use it** in that document.
+
+**Patch notes:** each **patch-notes version** has its own folder `patchnote/versions/<version>/`. Append technical detail to **`reasons.md`** and audience-specific public copy to **`public/*.md`** for the same version. While developing, use **`patchnote/versions/UNRELEASED/`**. When the user is **preparing to merge to `main`** (e.g. says **“Prepare for merge”**), run **`npm run prepare-merge`** from the repo root so **`UNRELEASED`** is frozen under the next semver and **`package.json`** stays aligned (see [docs/THE-LARGER-SYSTEM.md](docs/THE-LARGER-SYSTEM.md) and [patchnote/README.md](patchnote/README.md)). Stub: [patchnote/reasons_UNRELEASED.md](patchnote/reasons_UNRELEASED.md).
 
 ## After multi-iteration debugging
 

@@ -2,6 +2,13 @@
 
 Inventory of major areas as implemented in the repo. Use checkboxes for tracking; not all items may need to stay checked in every fork.
 
+## Payment intents (optional microservice)
+
+- [x] Workspace [`payment-intent-service`](../payment-intent-service/) — Express HTTP API, SQLite ledger, Nimiq `getTransaction` verification for incoming NIM to a configured hot wallet
+- [x] Docker image + Compose service `payment-intent` (profile **`payment`**); not wired from the main game server yet (server-to-server integration TBD)
+- [x] Pluggable **`featureKind`** handlers (`nspace.test.min` + reserved stubs for usernames, billboard slots, land, teleporter — see `src/features/builtin.ts`)
+- [x] `/admin/system` — when `PAYMENT_INTENT_SERVICE_URL` is set on the game server, snapshot includes **health** + optional **authenticated API** probe (`PAYMENT_INTENT_API_SECRET`); see [`server/src/paymentIntentProbe.ts`](../server/src/paymentIntentProbe.ts)
+
 ## Auth and session
 
 - [x] `GET /api/auth/nonce` — challenge nonce
@@ -35,6 +42,7 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 - [x] `removeObstacle`, `moveObstacle` (props preserved)
 - [x] Client: build mode (`B`), placement bar, object edit panel, reposition flow
 - [x] Client meshes: box / hex / pyramid / sphere / ramp, heights, palette ([client/src/game/blockStyle.ts](../client/src/game/blockStyle.ts))
+- [x] Active **claimable** (minable) blocks: gold styling + additive sparkle particles around the mesh ([client/src/game/Game.ts](../client/src/game/Game.ts) `makeMineableSparklePoints` / `updateMineableBlockSparkles`)
 
 ## Billboards & world objects
 
