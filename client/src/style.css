@@ -818,6 +818,161 @@ html.nspace-pseudo-fs #app {
   padding-top: env(safe-area-inset-top, 0px);
 }
 
+.hud-header-marquee-host {
+  flex: 0 0 auto;
+  width: 100%;
+  pointer-events: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  box-sizing: border-box;
+}
+
+.hud-header-marquee {
+  pointer-events: none;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #e8ecf4;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.hud-header-marquee__viewport {
+  position: relative;
+  overflow: hidden;
+  min-height: 1.7rem;
+  max-height: 2.05rem;
+}
+
+.hud-header-marquee__panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.48s ease;
+  padding: 0.22rem 0.55rem;
+  box-sizing: border-box;
+  z-index: 0;
+}
+
+.hud-header-marquee__panel--front {
+  opacity: 1;
+  z-index: 1;
+}
+
+.hud-header-marquee__ticker {
+  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+  mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 6%,
+    #000 94%,
+    transparent
+  );
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 6%,
+    #000 94%,
+    transparent
+  );
+}
+
+.hud-header-marquee__ticker-track {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  align-items: center;
+  white-space: nowrap;
+  width: max-content;
+  min-width: max-content;
+  box-sizing: border-box;
+  animation: hud-header-marquee-scroll linear infinite;
+  will-change: transform;
+}
+
+/**
+ * Two identical chunks: one iteration = −50% of this element’s width (one full chunk).
+ * Percentages are relative to the track box (CSS transforms), not the viewport.
+ */
+@keyframes hud-header-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.hud-header-marquee__ticker-chunk {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  align-items: center;
+  white-space: nowrap;
+  gap: 0;
+}
+
+.hud-header-marquee__ticker-chunk-fill {
+  flex: 0 0 0px;
+  flex-shrink: 0;
+  width: 0;
+  min-width: 0;
+  align-self: stretch;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.hud-header-marquee__entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.hud-header-marquee__fire {
+  flex-shrink: 0;
+}
+
+.hud-header-marquee__ident {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  object-fit: cover;
+  vertical-align: middle;
+}
+
+.hud-header-marquee__name {
+  color: #f8fafc;
+}
+
+.hud-header-marquee__days {
+  color: #b8c5d9;
+  font-weight: 500;
+}
+
+.hud-header-marquee__sep {
+  color: #5c6b82;
+  padding: 0 0.15rem;
+}
+
+.hud-header-marquee__news {
+  margin: 0;
+  width: 100%;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: #fef3c7;
+}
+
 .hud {
   /* Fallback until JS sets `--hud-below-top-wrap` from measured `.hud-top-wrap` height */
   --hud-below-top-wrap: calc(52px + env(safe-area-inset-top, 0px));
@@ -836,6 +991,23 @@ html.nspace-pseudo-fs #app {
 
 .hud-top-strip {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  pointer-events: auto;
+  background: rgba(15, 17, 23, 0.82);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.22);
+}
+
+.hud-top-strip__main {
+  display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
   align-items: center;
@@ -844,14 +1016,6 @@ html.nspace-pseudo-fs #app {
   box-sizing: border-box;
   min-width: 0;
   max-width: 100%;
-  /* Eat taps on the whole bar (gaps, padding, wallet row) — do not click through to the game */
-  pointer-events: auto;
-  /* Readable on bright sky/water: dark frosted bar */
-  background: rgba(15, 17, 23, 0.82);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.22);
 }
 
 /* Top HUD labels: no accidental highlight/copy (stat tooltips stay selectable). */
@@ -1331,7 +1495,7 @@ button.hud-brand:focus-visible {
 
 /* Narrow touch: keep ONE row — shrink mid, let toolbar take remaining width and scroll horizontally */
 @media (pointer: coarse) and (max-width: 960px) {
-  .hud-top-strip {
+  .hud-top-strip__main {
     flex-wrap: nowrap;
     padding-left: max(6px, env(safe-area-inset-left, 0px));
     padding-right: max(6px, env(safe-area-inset-right, 0px));

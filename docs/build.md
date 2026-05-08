@@ -10,7 +10,7 @@ Concise description of how nspace is put together today.
 
 ## Runtime shape
 
-- **HTTP**: Express on `PORT` (default `3001`) — e.g. `/api/health`, `/api/auth/nonce`, `/api/auth/verify`, `/api/admin/random-layout` ([server/src/index.ts](../server/src/index.ts)).
+- **HTTP**: Express on `PORT` (default `3001`) — e.g. `/api/health`, `/api/auth/nonce`, `/api/auth/verify`, `/api/header-marquee` (public in-game banner: streak leaderboard + `newsMessages[]` rotation, dwell/fallback seconds from JSON settings; **scroll layout and loop detection are client-side** in [client/src/ui/headerMarquee.ts](../client/src/ui/headerMarquee.ts)), `/api/admin/header-marquee` (admin), `/admin/header` (HTML), `/api/admin/random-layout` ([server/src/index.ts](../server/src/index.ts)).
 - **WebSocket**: Path `/ws`; query params include `token` (JWT), `room`, optional `sx`/`sz` spawn hints. Unauthorized connections close with code `4001`.
 - **Static UI**: If `client/dist` exists, the server serves it and falls back to `index.html` for SPA routes.
 

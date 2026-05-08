@@ -170,7 +170,13 @@ export function analyticsTopbarCss(): string {
   `;
 }
 
-export type MainSiteHeaderPage = "analytics" | "admin" | "payouts" | "system" | "settings";
+export type MainSiteHeaderPage =
+  | "analytics"
+  | "admin"
+  | "payouts"
+  | "system"
+  | "settings"
+  | "header";
 
 function navLink(
   page: MainSiteHeaderPage,
@@ -198,6 +204,7 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
           ${navLink("admin", currentPage, "/admin", "Admin", true)}
           ${navLink("system", currentPage, "/admin/system", "System", true)}
           ${navLink("settings", currentPage, "/admin/settings", "Settings", true)}
+          ${navLink("header", currentPage, "/admin/header", "Header", true)}
           ${
             currentPage === "admin"
               ? `<a class="main-site-nav__link" href="#admin-quick-payout">Quick payout</a>`

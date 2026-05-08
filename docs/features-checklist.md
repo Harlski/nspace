@@ -65,6 +65,7 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 
 ## UI / shell
 
+- [x] In-game **header marquee** — streak ticker: seamless duplicated strip (`translateX` `0` → `-50%` of track), duration from measured half-width; **per-chunk invisible fill** when text is shorter than the ticker so a full loop covers the **visible width** on large screens; `ResizeObserver` + image load/error remeasure (identicons). With announcements, next line after **one full horizontal loop** (`animationiteration`); server **`marqueeStreakSeconds`** is safety fallback; message dwell **`marqueeMessageSeconds`** (`GET /api/header-marquee`, `/admin/header`, persisted JSON stores)
 - [x] Letterboxed 16∶9 HUD, status line, chat log + input
 - [x] Fullscreen toggle
 - [x] Input shell to reduce accidental browser shortcuts (best-effort)

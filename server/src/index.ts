@@ -49,10 +49,19 @@ import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
 import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
 import { adminSystemPageHtml } from "./adminSystemPage.js";
 import { adminSettingsPageHtml } from "./adminSettingsPage.js";
+import { adminHeaderPageHtml } from "./adminHeaderPage.js";
 import {
   getAdminRuntimeSettings,
   patchAdminRuntimeSettings,
 } from "./adminRuntimeSettingsStore.js";
+import {
+  getHeaderMarqueeSettings,
+  patchHeaderMarqueeSettings,
+  headerMarqueePublicVisible,
+  sanitizeNewsMessagesList,
+  type HeaderMarqueeSettings,
+} from "./headerMarqueeSettingsStore.js";
+import { getTopLoginStreaks, recordLoginStreakForWallet } from "./loginStreakStore.js";
 import { getAdminSystemSnapshot, startAdminSystemMonitor } from "./adminSystemMonitor.js";
 import { probePaymentIntentService } from "./paymentIntentProbe.js";
 import { isAdmin } from "./config.js";
@@ -69,6 +78,7 @@ import {
 import {
   adminClearPlayerUsername,
   adminSetUsernameOnTarget,
+  getEffectivePlayerDisplayName,
   getPlayerProfilePublicJson,
   setPlayerProfileMessage,
   trySetPlayerUsername,
@@ -81,6 +91,7 @@ import {
   setUsernameSetBanned,
 } from "./moderationStore.js";
 import { nimiqIdenticonDataUrl } from "./nimiqIdenticonServer.js";
+import { walletDisplayName } from "./walletDisplayName.js";
 
 function analyticsDayStartUtcMs(dayStr: string): number | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayStr.trim());
@@ -842,6 +853,10 @@ app.get("/admin/settings", (_req, res) => {
   res.type("html").send(adminSettingsPageHtml());
 });
 
+app.get("/admin/header", (_req, res) => {
+  res.type("html").send(adminHeaderPageHtml());
+});
+
 app.get("/api/admin/system/snapshot", requireSystemAdminWallet, async (_req, res) => {
   try {
     const snapshot = getAdminSystemSnapshot();
@@ -868,6 +883,103 @@ app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
       body.playerUsernameSelfServiceEnabled === true;
   }
   res.json(patchAdminRuntimeSettings(patch));
+});
+
+app.get("/api/admin/header-marquee", requireSystemAdminWallet, (_req, res) => {
+  res.json(getHeaderMarqueeSettings());
+});
+
+app.put("/api/admin/header-marquee", requireSystemAdminWallet, (req, res) => {
+  const body = req.body as Record<string, unknown> | null;
+  if (!body || typeof body !== "object") {
+    res.status(400).json({ error: "bad_body" });
+    return;
+  }
+  const patch: Partial<HeaderMarqueeSettings> = {};
+  if (Object.prototype.hasOwnProperty.call(body, "bannerEnabled")) {
+    patch.bannerEnabled = body.bannerEnabled === true;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "loginStreakLeaderboardEnabled")) {
+    patch.loginStreakLeaderboardEnabled =
+      body.loginStreakLeaderboardEnabled === true;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "newsMessageEnabled")) {
+    patch.newsMessageEnabled = body.newsMessageEnabled === true;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "newsMessages")) {
+    patch.newsMessages = sanitizeNewsMessagesList(body.newsMessages);
+  } else if (Object.prototype.hasOwnProperty.call(body, "newsMessage")) {
+    patch.newsMessages = sanitizeNewsMessagesList([String(body.newsMessage ?? "")]);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "marqueeStreakSeconds")) {
+    patch.marqueeStreakSeconds = Number(body.marqueeStreakSeconds);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "marqueeMessageSeconds")) {
+    patch.marqueeMessageSeconds = Number(body.marqueeMessageSeconds);
+  }
+  res.json(patchHeaderMarqueeSettings(patch));
+});
+
+function disambiguateMarqueeLeaderboardLabels(
+  wallets: string[],
+  labels: string[]
+): string[] {
+  const countBy = new Map<string, number>();
+  for (const l of labels) {
+    countBy.set(l, (countBy.get(l) ?? 0) + 1);
+  }
+  return labels.map((label, i) => {
+    if ((countBy.get(label) ?? 0) <= 1) return label;
+    const w = wallets[i];
+    return w ? `${label} (${walletDisplayName(w)})` : label;
+  });
+}
+
+app.get("/api/header-marquee", async (_req, res) => {
+  try {
+    const settings = getHeaderMarqueeSettings();
+    const top =
+      settings.bannerEnabled && settings.loginStreakLeaderboardEnabled
+        ? getTopLoginStreaks(10)
+        : [];
+    const newsMessages = settings.newsMessageEnabled
+      ? sanitizeNewsMessagesList(settings.newsMessages)
+      : [];
+    const rawLabels = top.map((row) => getEffectivePlayerDisplayName(row.wallet));
+    const displayLabels = disambiguateMarqueeLeaderboardLabels(
+      top.map((r) => r.wallet),
+      rawLabels
+    );
+    const leaderboard = [];
+    for (let i = 0; i < top.length; i++) {
+      const row = top[i]!;
+      const identicon = await nimiqIdenticonDataUrl(row.wallet);
+      leaderboard.push({
+        walletId: row.wallet,
+        displayLabel: displayLabels[i] ?? rawLabels[i] ?? "",
+        streakDays: row.streakDays,
+        identicon,
+      });
+    }
+    const visible = headerMarqueePublicVisible(
+      settings,
+      leaderboard.length > 0,
+      newsMessages
+    );
+    res.json({
+      visible,
+      bannerEnabled: settings.bannerEnabled,
+      loginStreakLeaderboardEnabled: settings.loginStreakLeaderboardEnabled,
+      newsMessageEnabled: settings.newsMessageEnabled,
+      newsMessages,
+      marqueeStreakSeconds: settings.marqueeStreakSeconds,
+      marqueeMessageSeconds: settings.marqueeMessageSeconds,
+      leaderboard,
+    });
+  } catch (e) {
+    console.error("[api/header-marquee]", e);
+    res.status(500).json({ error: "internal" });
+  }
 });
 
 /** Backward-compat redirect. */
@@ -1167,6 +1279,11 @@ app.post("/api/auth/verify", async (req, res) => {
   const signerEmpty = signerKeyPresent && normalizeWalletId(signer) === "";
   const nimiqPay = claimsPayClient && signerEmpty;
   const token = signSession(sessionAddress, jwtSecret, { nimiqPay });
+  try {
+    recordLoginStreakForWallet(normalizeWalletId(sessionAddress));
+  } catch (e) {
+    console.error("[login-streak]", e);
+  }
   res.json({ token, address: sessionAddress, nimiqPay });
 });
 

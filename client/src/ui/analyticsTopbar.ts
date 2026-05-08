@@ -66,7 +66,8 @@ function applyMainSiteNavAuth(status: AnalyticsAuthStatus): void {
       (nav === "analytics" && status.analyticsAuthorized) ||
       (nav === "admin" && status.analyticsManager) ||
       (nav === "system" && status.systemAdmin) ||
-      (nav === "settings" && status.systemAdmin);
+      (nav === "settings" && status.systemAdmin) ||
+      (nav === "header" && status.systemAdmin);
     link.hidden = !visible;
   });
 }
@@ -131,10 +132,17 @@ function hubAppNameForPage(page: MainSitePage): string {
   if (page === "payouts") return "Nimiq Space payouts";
   if (page === "system") return "nspace system";
   if (page === "settings") return "nspace admin settings";
+  if (page === "header") return "nspace admin header";
   return "nspace analytics";
 }
 
-export type MainSitePage = "analytics" | "admin" | "payouts" | "system" | "settings";
+export type MainSitePage =
+  | "analytics"
+  | "admin"
+  | "payouts"
+  | "system"
+  | "settings"
+  | "header";
 
 /** Default wallet login used by main-site pages when no custom handler is passed. */
 export async function mainSiteWalletLogin(page: MainSitePage): Promise<void> {

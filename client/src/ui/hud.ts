@@ -50,6 +50,7 @@ import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 import { ringHueFromClient } from "./ringHuePick.js";
+import { mountHeaderMarquee } from "./headerMarquee.js";
 
 const LS_HUD_CHAT_MINIMIZED = "nspace_hud_chat_minimized";
 
@@ -523,8 +524,15 @@ export function createHud(
   const topWrap = document.createElement("div");
   topWrap.className = "hud-top-wrap";
 
+  const headerMarqueeHost = document.createElement("div");
+  headerMarqueeHost.className = "hud-header-marquee-host";
+  const disposeHeaderMarquee = mountHeaderMarquee(headerMarqueeHost);
+
   const topStrip = document.createElement("div");
   topStrip.className = "hud-top-strip";
+
+  const topStripMain = document.createElement("div");
+  topStripMain.className = "hud-top-strip__main";
 
   const brand = document.createElement("button");
   brand.type = "button";
@@ -571,9 +579,9 @@ export function createHud(
   statusSub.setAttribute("aria-live", "polite");
   statusSub.textContent = "";
 
-  topStrip.appendChild(brand);
-  topStrip.appendChild(playerBar);
-  topStrip.appendChild(topStripMid);
+  topStripMain.appendChild(brand);
+  topStripMain.appendChild(playerBar);
+  topStripMain.appendChild(topStripMid);
 
   const topToolbar = document.createElement("div");
   topToolbar.className = "hud-top-toolbar";
@@ -848,7 +856,9 @@ export function createHud(
   topToolbar.appendChild(nimBalance);
   topToolbar.appendChild(fsBtn);
   topToolbar.appendChild(lobbyBtn);
-  topStrip.appendChild(topToolbar);
+  topStripMain.appendChild(topToolbar);
+  topStrip.appendChild(topStripMain);
+  topStrip.appendChild(headerMarqueeHost);
 
   const leftStack = document.createElement("div");
   leftStack.className = "hud-left-stack";
@@ -7533,6 +7543,7 @@ export function createHud(
     },
     bindTileInspectorPreviewGame,
     destroy() {
+      disposeHeaderMarquee();
       clearLoadingOverlayTimers();
       finishLoadingOverlayDismiss();
       if (brandLinksTitleEl) {

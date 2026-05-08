@@ -22,6 +22,8 @@ _Add sections here as the system matures. Keep each bullet concrete enough that 
 
 - Prefer designs that **scale from simple to rich** without rewriting core contracts (e.g. identifiers, message shapes, room authority) unless there is a deliberate migration story.
 
+- **Player-adjacent durable state** — For account-scoped data that will **grow**, be **queried**, or need **consistent updates**, default to a **bounded persistence layer** (shared DB or equivalent) with explicit migrations — not a new whole-file JSON store for every feature. JSON-on-disk remains acceptable for small, cold, or transitional data; see **Player-adjacent persistence** under *Recorded decisions*.
+
 - **Client-only visuals on authoritative world objects** — Sparkles, auras, and similar **non-gameplay** overlays on server-owned geometry (e.g. placed obstacles) stay **client render only**: they do not change server state. They must **not** participate in block ray picks or build-mode selection **bounds** unless they are intentionally part of the solid body. Mark decorative children explicitly (e.g. `userData.skipBlockPickAndBounds` in [client/src/game/Game.ts](../client/src/game/Game.ts)) and derive selection outlines from solid `THREE.Mesh` descendants only (`blockGroupWorldBoundsForSelectionOutline`).
 
 ---
@@ -38,6 +40,29 @@ _Add sections here as the system matures. Keep each bullet concrete enough that 
 - A path for **persistence and authority** if tile state is shared or player-owned (server as source of truth where gameplay or fairness matters).
 
 Update this subsection when the data model or sync story is chosen.
+
+### Player-adjacent persistence: beyond one-off JSON files
+
+**Today:** several features persist **per-wallet or global** data as **JSON documents on disk** (e.g. profiles, moderation flags, optional streaks / admin banner settings, allowlists). That is fine for **early scale** and simple ops (copy a file, inspect in an editor).
+
+**Risk as the product grows:** each new `{thing}.json` tends to imply **full-file read / parse / rewrite** on change, weak **concurrency** story under parallel requests, ad hoc **schema evolution**, and **N unrelated silos** that are hard to query, migrate, or reason about together. Player-facing features that accumulate history (streaks, cosmetics, entitlements) especially deserve a **clear home**, not an endless sprawl of flat files.
+
+**Direction (for future design — migrate gradually):**
+
+- Prefer **one bounded persistence layer** for “player-adjacent” state over time — e.g. a **single-process embedded DB** (SQLite is already a precedent in this repo for the payment-intent sidecar) or a **small set of well-named tables/services**, not a new root-level JSON store for every feature by default.
+- Treat **normalized wallet id** (or another stable account key) as the **primary key** where the data is account-scoped; keep **migrations and versioning** explicit when the shape changes.
+- When adding a feature, ask: **does this need transactional updates, indexed queries, or growth in row count?** If yes, **wire it against the shared persistence path** (or introduce one) rather than bolting on another whole-file JSON lifecycle.
+- **Migration** can be incremental: backfill from existing JSON into tables, run dual-write or read-fallback during a transition, then retire the file. Old files can remain as **export / disaster-recovery** snapshots if useful, but should not be the long-term source of truth for hot paths.
+
+Update this subsection when the first consolidated store is chosen and named in implementation docs.
+
+### Public HUD messaging (header marquee)
+
+**Today:** The in-game **header marquee** combines an optional **login-streak leaderboard** ticker with rotating **`newsMessages[]`** when admins enable it. The **server** is the source of truth for **visibility**, **copy**, **leaderboard rows** (including label disambiguation and wallet dedupe), **`marqueeMessageSeconds`** dwell, and a clamped **`marqueeStreakSeconds`** safety window if the client never observes a horizontal loop end. The **client** owns **layout and motion**: a duplicated horizontal strip, CSS **`animationiteration`** to advance streak → message rotation in sync with **one full seamless loop**, **`ResizeObserver`** and image **load/error** hooks to remeasure when identicons decode, and—when natural text width is **shorter than the ticker viewport**—per-chunk invisible padding so **one loop still traverses at least the visible width** on large screens without breaking the duplicate seam.
+
+**Direction:** Keep the public **`GET /api/header-marquee`** payload JSON-safe and bounded; do not move scroll timing to the server unless there is a deliberate product reason (e.g. synchronized broadcast across clients). If copy or rows grow substantially later, prefer explicit limits, truncation, or composition rules over ad hoc growth in the hot response.
+
+Update this subsection if the API shape, authority split, or rotation contract changes.
 
 ### Release line: patch notes + semver on merge
 
@@ -64,3 +89,5 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-05-07** — Principle: client-only decorative overlays on obstacles; picking/selection use solid mesh bounds only. See [reasons/reason_834162.md](reasons/reason_834162.md).
 - **2026-05-07** — Release line: `prepare-merge` freezes `UNRELEASED` patch notes and bumps root semver before merge to `main`. See [reasons/reason_291847.md](reasons/reason_291847.md).
 - **2026-05-07** — Companion rationales moved to **`docs/reasons/`** (see [reasons/reason_105892.md](reasons/reason_105892.md)).
+- **2026-05-07** — Player-adjacent persistence: prefer a bounded DB (or similar) over proliferating JSON files; migrate incrementally. See [reasons/reason_472039.md](reasons/reason_472039.md).
+- **2026-05-07** — Recorded decision: header marquee — server owns payload and timing bounds; client owns ticker layout, seamless scroll, and viewport-wide loop distance. See [reasons/reason_770142.md](reasons/reason_770142.md).
