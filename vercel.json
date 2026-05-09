@@ -35,6 +35,14 @@
     {
       "source": "/nim-chart-api/:path*",
       "destination": "https://api.nimiq.space/nim-chart-api/:path*"
+    },
+    {
+      "source": "/patchnotes",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/patchnotes/",
+      "destination": "/index.html"
     }
   ]
 }
