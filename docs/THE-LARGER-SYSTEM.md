@@ -94,6 +94,24 @@ After that, the author **reviews diffs**, then **`git add`**, **`git commit`**, 
 
 **Norm:** Do not merge accumulated `UNRELEASED` work to `main` without running `prepare-merge` (or an equivalent manual freeze that keeps folder name and `package.json` in lockstep). Agents assisting with merges should run or insist on this script when the user says they are ready to merge.
 
+### Public patch notes (voice, outline, in-app)
+
+**Intent:** `patchnote/versions/<semver>/public/*.md` is **player- and operator-facing truth** for “what changed in the product,” not a transcript of design discussion. Prefer **few words**, **observable outcomes**, and **impact order**: lead with **new capabilities** (`[NEW]` in lists where tagged), then **fixes** (`[FIX]`), then **intentional behavior changes** (`[CHANGE]`), then **performance** (`[PERF]`), then **deploy/ops** (`[OPS]`) or **security** (`[SEC]`) when relevant. The same ordering helps scanning in Discord or blog paste-outs.
+
+**Tiers (short):** **Brief** — ultra-short, no jargon. **Players** — what you feel or can do in-world. **Operators** — env, Docker, migrations, breaking defaults. **Developers** — integrator-facing deltas (API/WS), still scannable; deep file paths and message inventories stay in **`reasons.md`** for that version.
+
+**Authoring guide:** [patchnotes-release.md](patchnotes-release.md) — tier-by-tier shape, tag legend, pre-freeze checklist. [MEMORY.md](../MEMORY.md) points here so agents and humans share one outline.
+
+**In-app:** `/patchnotes` bundles frozen semver `public/*.md` at client build time; optional list (and leading-paragraph) tags **`[NEW]`**, **`[FIX]`**, **`[CHANGE]`**, **`[PERF]`**, **`[OPS]`**, **`[SEC]`** render as compact badges (see [client/src/patchnotes/mdToHtml.ts](../client/src/patchnotes/mdToHtml.ts)).
+
+### Production VPS deploy: stop, backup `data/`, then upgrade
+
+**Today:** The [GitHub Actions deploy workflow](../.github/workflows/deploy-docker.yml) (documented in [deploy-github-docker.md](deploy-github-docker.md)) **stops** the Compose project first (`docker compose stop`) so the `nspace` container receives **SIGTERM** and the server’s shutdown path sync-flushes world state, event logs, and related on-disk stores. It then writes a **gzip tarball** of the host **`data/`** tree (the bind mount for live persistence, including optional `data/payment-intent/` when that sidecar is used) under **`backups/nspace-data-<UTC-timestamp>.tar.gz`** beside the clone, then fast-forwards git and runs **`docker compose build`** / **`up -d`**.
+
+**Operator expectation:** Archives are **not** pruned automatically—plan disk retention (delete old tarballs or copy them off-box). Restoring from a tarball is unpack-and-replace `data/` with containers stopped, then start again.
+
+Update this subsection if the workflow name, paths, or backup format change.
+
 ---
 
 ## Changelog (optional)
@@ -110,3 +128,5 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-05-08** — Principle: in-world UI (context menus, short prompts) stays idiomatic—brief labels, no tutorial paragraphs on every interaction. See [reasons/reason_503821.md](reasons/reason_503821.md).
 - **2026-05-08** — Principle: authoring UI separates **Objects** (placeable content) from **Room** (room-level settings such as background and guest spawn). See [reasons/reason_640281.md](reasons/reason_640281.md).
 - **2026-05-09** — Principle + recorded UX: **reposition ghost previews** for placeable obstacles (client-only hover visualization; gates / billboards / generic blocks). See [reasons/reason_927415.md](reasons/reason_927415.md).
+- **2026-05-09** — Public patch notes norm + editorial guide ([patchnotes-release.md](patchnotes-release.md)); optional in-app change tags. See [reasons/reason_673942.md](reasons/reason_673942.md).
+- **2026-05-09** — Recorded decision: GitHub Actions VPS deploy stops the stack, tarballs host `data/` under `backups/`, then rebuilds. See [reasons/reason_458291.md](reasons/reason_458291.md).

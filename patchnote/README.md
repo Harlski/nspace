@@ -1,6 +1,8 @@
 # Patch notes
 
-Nimiq Space does not yet ship a single canonical **public patch feed**. This tree still supports **version-scoped** work: every patch-notes **version** gets attached **technical reasons** and optional **public summaries** at several explanation depths and for different interests.
+The web client ships a **public patch feed** at **`/patchnotes`**: it bundles the `versions/<semver>/public/*.md` tiers from this tree at build time (see [`client/src/patchnotes/`](../client/src/patchnotes/)). This tree still supports **version-scoped** work: every patch-notes **version** gets attached **technical reasons** and optional **public summaries** at several explanation depths and for different interests.
+
+**How to write public copy:** follow **[`docs/patchnotes-release.md`](../docs/patchnotes-release.md)** (outline per tier, optional list tags **`[NEW]`**, **`[FIX]`**, **`[CHANGE]`**, **`[PERF]`**, **`[OPS]`**, **`[SEC]`** for in-app badges). Principles also live under *Public patch notes* in [`docs/THE-LARGER-SYSTEM.md`](../docs/THE-LARGER-SYSTEM.md).
 
 ## Layout
 
@@ -38,5 +40,6 @@ Legacy path **`reasons_UNRELEASED.md`** at the root of `patchnote/` is a **stub*
 ## What to write in `public/*.md`
 
 - **Audience-specific** summaries so you can submit the same release as **brief**, **player**, **operator**, or **developer** patch notes without duplicating the full reasons file.
+- Optional **change tags** on list lines: `- [FIX] …`, `- [NEW] …`, etc. (full set in [`docs/patchnotes-release.md`](../docs/patchnotes-release.md)); rendered as badges in `/patchnotes`.
 
-See also [MEMORY.md](../MEMORY.md), [AGENTS.md](../AGENTS.md), and [docs/THE-LARGER-SYSTEM.md](../docs/THE-LARGER-SYSTEM.md) (release gate before merge to `main`).
+See also [MEMORY.md](../MEMORY.md), [AGENTS.md](../AGENTS.md), [docs/patchnotes-release.md](../docs/patchnotes-release.md), and [docs/THE-LARGER-SYSTEM.md](../docs/THE-LARGER-SYSTEM.md) (release gate before merge to `main`).

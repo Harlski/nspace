@@ -17,3 +17,5 @@ docs/toremove/*
 server/data/
 # Docker volume data
 data/
+# Pre-deploy archives (VPS or local ops scripts)
+backups/

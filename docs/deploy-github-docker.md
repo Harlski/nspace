@@ -1,6 +1,8 @@
 # Deploy with GitHub Actions + Docker on your VPS
 
-Pushing to `main` runs [.github/workflows/deploy-docker.yml](../.github/workflows/deploy-docker.yml): SSH into the server, `git fetch` + `git reset --hard origin/main` (not `git pull`), then `docker compose build`, `docker compose up -d`.
+Pushing to `main` runs [.github/workflows/deploy-docker.yml](../.github/workflows/deploy-docker.yml): SSH into the server, **`docker compose stop`** (graceful shutdown so the game server flushes persistence), **archive `./data` into `./backups/nspace-data-<UTC-timestamp>.tar.gz`**, then `git fetch` + `git reset --hard origin/main` (not `git pull`), then `docker compose build`, `docker compose up -d`.
+
+World state and logs already live on the **host** at `./data` (Compose bind mount); the backup step copies that tree from disk, not from inside a running container.
 
 The workflow assumes the repository is cloned at **`/opt/nspace`** on the host. Change the `cd` path in the workflow if you use a different directory.
 
@@ -213,6 +215,12 @@ curl -sS http://127.0.0.1:3001/api/health
 ```
 
 After GitHub secrets are set, merging or pushing to `main` will run the workflow and refresh the container.
+
+## Pre-deploy backup (automated)
+
+Each deploy creates **`/opt/nspace/backups/nspace-data-*.tar.gz`** (same `DEPLOY_ROOT` as above) **after** the stack is stopped, so the archive is not taken while containers are writing. The tarball includes the full `data/` tree (world state, `events/`, optional `data/payment-intent/` if you use that sidecar).
+
+**Disk:** Monitor free space on the VPS; old archives are not pruned automatically. Remove or rotate archives on a schedule that fits your retention policy.
 
 ## Troubleshooting
 

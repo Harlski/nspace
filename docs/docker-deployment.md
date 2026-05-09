@@ -167,7 +167,7 @@ docker compose up -d
 
 ### CI/CD Integration
 
-See [docs/deploy-github-docker.md](../docs/deploy-github-docker.md) for GitHub Actions automated deployment setup.
+See [docs/deploy-github-docker.md](../docs/deploy-github-docker.md) for GitHub Actions automated deployment setup. That workflow stops the stack, writes **`backups/nspace-data-<timestamp>.tar.gz`** on the host (full `data/` tree), then updates git and rebuilds.
 
 ## Manual Docker Build (without Compose)
 
@@ -212,7 +212,7 @@ Before deploying to production:
 - [ ] Restrict admin HTTP endpoints (or disable `VITE_ADMIN_ENABLED`)
 - [ ] Keep `.env` file secure (never commit to git)
 - [ ] Set up firewall rules
-- [ ] Regular backups of `./data/` volume (include `./data/payment-intent/` if you use the payment sidecar)
+- [ ] Regular backups of `./data/` (included in each GitHub deploy tarball under `backups/`; rotate or copy off-box for long retention)
 - [ ] Monitor logs for suspicious activity
 
 ---

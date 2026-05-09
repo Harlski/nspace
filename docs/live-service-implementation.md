@@ -30,7 +30,7 @@ This document describes how **Nimiq Space** is structured for production-style h
 
 ## Deploy automation
 
-GitHub Actions workflow [`.github/workflows/deploy-docker.yml`](../.github/workflows/deploy-docker.yml): on push to `main`, SSH to the server, `git fetch` + `git reset --hard origin/main`, then `docker compose build` and `docker compose up -d`. Setup: [deploy-github-docker.md](deploy-github-docker.md).
+GitHub Actions workflow [`.github/workflows/deploy-docker.yml`](../.github/workflows/deploy-docker.yml): on push to `main`, SSH to the server, `docker compose stop`, tarball of host `data/` under `backups/`, then `git fetch` + `git reset --hard origin/main`, `docker compose build`, and `docker compose up -d`. Setup: [deploy-github-docker.md](deploy-github-docker.md).
 
 ## Extra floor “launch policy”
 

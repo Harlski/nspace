@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createLogger, defineConfig } from "vite";
+import { createLogger, defineConfig, type Plugin } from "vite";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
@@ -129,7 +129,35 @@ function attachDevProxyHandlers(proxy: EventEmitter): void {
   installDevApiProxyErrorHandler(proxy);
 }
 
+/** `index.html` SPA: serve main bundle for `/patchnotes` (dev + preview; production uses Express `*`). */
+function patchnotesSpaFallbackPlugin(): Plugin {
+  const rewrite = (req: { url?: string }): void => {
+    const raw = req.url ?? "";
+    const path = raw.split("?")[0] ?? "";
+    if (path === "/patchnotes" || path === "/patchnotes/") {
+      const q = raw.includes("?") ? raw.slice(raw.indexOf("?")) : "";
+      req.url = "/" + q;
+    }
+  };
+  return {
+    name: "nspace-patchnotes-spa-fallback",
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        rewrite(req);
+        next();
+      });
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        rewrite(req);
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
+  plugins: [patchnotesSpaFallbackPlugin()],
   /** Shown on the wallet login / main menu — matches monorepo root `package.json` `version`. */
   define: {
     __NSPACE_APP_VERSION__: JSON.stringify(appDisplayVersion),
@@ -146,6 +174,9 @@ export default defineConfig({
     },
   },
   server: {
+    fs: {
+      allow: [resolve(__dirname, "..")],
+    },
     /** Listen on all interfaces so other devices on the LAN can open the dev app (same Wi‑Fi). */
     host: true,
     port: 5173,

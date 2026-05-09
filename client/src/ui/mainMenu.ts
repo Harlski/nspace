@@ -238,7 +238,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
                 <span class="main-menu__social-label">X</span>
               </a>
             </div>
-            <p class="main-menu__version">${APP_DISPLAY_VERSION}</p>
+            <a class="main-menu__version" href="/patchnotes">${APP_DISPLAY_VERSION}</a>
           </footer>
         </div>
       </div>

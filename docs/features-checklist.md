@@ -67,6 +67,7 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 
 ## UI / shell
 
+- [x] **Patch notes** — main-menu version label links to **`/patchnotes`**, which lists frozen semver releases from `patchnote/versions/<x.y.z>/public/*.md` (bundled at client build time); newest release expanded by default; optional list tags **`[NEW]`**, **`[FIX]`**, **`[CHANGE]`**, **`[PERF]`**, **`[OPS]`**, **`[SEC]`** render as badges ([`client/src/patchnotes/`](../client/src/patchnotes/), editorial guide [patchnotes-release.md](patchnotes-release.md))
 - [x] In-game **header marquee** — streak ticker: seamless duplicated strip (`translateX` `0` → `-50%` of track), duration from measured half-width; **per-chunk invisible fill** when text is shorter than the ticker so a full loop covers the **visible width** on large screens; `ResizeObserver` + image load/error remeasure (identicons). With announcements, next line after **one full horizontal loop** (`animationiteration`); server **`marqueeStreakSeconds`** is safety fallback; message dwell **`marqueeMessageSeconds`** (`GET /api/header-marquee`, `/admin/header`, persisted JSON stores)
 - [x] Letterboxed 16∶9 HUD, status line, chat log + input
 - [x] Fullscreen toggle

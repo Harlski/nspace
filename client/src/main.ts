@@ -72,6 +72,7 @@ import {
 } from "./ui/pseudoFullscreen.js";
 import { installInputShell } from "./ui/inputShell.js";
 import { formatWalletAddressConnectAs } from "./formatWalletAddress.js";
+import { mountPatchnotesPage } from "./patchnotes/mountPatchnotesPage.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
 import { nimiqIconUseMarkup } from "./ui/nimiqIcons.js";
 import { mountNimiqPaySiteAdvisory } from "./ui/nimiqPayAdvisory.js";
@@ -3885,7 +3886,18 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   });
 }
 
+function isPatchnotesPath(): boolean {
+  const p = (typeof location !== "undefined" ? location.pathname : "/").replace(/\/$/, "") || "/";
+  return p === "/patchnotes";
+}
+
 function main(): void {
+  if (isPatchnotesPath()) {
+    document.title = "Patch notes — Nimiq Space";
+    const app = document.getElementById("app");
+    if (app) mountPatchnotesPage(app);
+    return;
+  }
   document.title = "Nimiq Space";
   openMainMenu();
 }

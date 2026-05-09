@@ -37,7 +37,7 @@ jobs:
             exit 1
           fi
 
-      - name: SSH — pull, build, restart
+      - name: SSH — stop, backup data, pull, build, up
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ env.DEPLOY_HOST_RESOLVED }}
@@ -64,6 +64,18 @@ jobs:
               exit 1
             fi
             cd "$DEPLOY_ROOT"
+            # Graceful stop so nspace receives SIGTERM and flushes world/event/canvas state (see server/src/index.ts).
+            echo "Stopping Compose stack before backup and git update…"
+            docker compose stop
+            mkdir -p "$DEPLOY_ROOT/backups"
+            BACKUP_TS="$(date -u +%Y%m%dT%H%M%SZ)"
+            if [ -d "$DEPLOY_ROOT/data" ]; then
+              echo "Archiving host data/ → backups/nspace-data-${BACKUP_TS}.tar.gz"
+              tar -C "$DEPLOY_ROOT" -czf "$DEPLOY_ROOT/backups/nspace-data-${BACKUP_TS}.tar.gz" data
+              ls -lh "$DEPLOY_ROOT/backups/nspace-data-${BACKUP_TS}.tar.gz"
+            else
+              echo "WARNING: $DEPLOY_ROOT/data not found — skipping pre-deploy backup (first deploy?)."
+            fi
             git fetch origin main
             git reset --hard origin/main
             docker compose build --pull

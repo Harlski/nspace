@@ -6762,6 +6762,25 @@ button.hud-brand:focus-visible {
   line-height: 1;
 }
 
+a.main-menu__version {
+  text-decoration: none;
+  cursor: pointer;
+  color: inherit;
+  border-bottom: 1px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+a.main-menu__version:hover {
+  color: var(--menu-muted-bright);
+  border-bottom-color: rgba(121, 184, 255, 0.35);
+}
+
+a.main-menu__version:focus-visible {
+  outline: 2px solid var(--menu-link);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
 .main-menu__welcome {
   margin: 0.45rem 0 0;
   font-size: clamp(0.68rem, 2vw, 0.78rem);
@@ -7398,6 +7417,361 @@ button.hud-brand:focus-visible {
   font-weight: 600;
   color: var(--menu-err);
   line-height: 1.4;
+}
+
+/* —— Patch notes (`/patchnotes`) — same menu shell, slim per-release `<details>` —— */
+.patchnotes-page .main-menu__card-inner {
+  text-align: left;
+}
+
+.patchnotes-page__header {
+  margin-bottom: 0.35rem;
+}
+
+.patchnotes-page__topbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: start;
+  width: 100%;
+  column-gap: 0.35rem;
+}
+
+.patchnotes-page__title-wrap {
+  grid-column: 2;
+  justify-self: center;
+  text-align: center;
+  min-width: 0;
+}
+
+.patchnotes-page__title.main-menu__title {
+  justify-content: center;
+}
+
+.patchnotes-page__back {
+  grid-column: 1;
+  justify-self: start;
+  align-self: start;
+  display: inline-block;
+  margin: 0;
+  padding: 0.15rem 0.35rem 0.15rem 0;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--menu-link);
+  text-decoration: none;
+  line-height: 1;
+  border-bottom: 1px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.patchnotes-page__back:hover {
+  color: #a8d4ff;
+  border-bottom-color: rgba(121, 184, 255, 0.45);
+}
+
+.patchnotes-page__back:focus-visible {
+  outline: 2px solid var(--menu-link);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.patchnotes-page__topbar-balance {
+  grid-column: 3;
+  width: 0;
+  min-height: 1px;
+  pointer-events: none;
+}
+
+.patchnotes-page__meta {
+  margin: 0.35rem 0 0;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--menu-muted);
+  line-height: 1.45;
+}
+
+.patchnotes-page__meta--center {
+  text-align: center;
+}
+
+.patchnotes-page__tier-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  margin: 0.15rem 0 0.1rem;
+}
+
+.patchnotes-page__meta-ver {
+  color: var(--menu-muted-bright);
+}
+
+.patchnotes-page__list {
+  margin-top: 0.85rem;
+  max-height: min(52vh, 28rem);
+  overflow-y: auto;
+  padding-right: 0.15rem;
+  scrollbar-color: var(--menu-border-soft) transparent;
+}
+
+.patchnotes-page__empty {
+  margin: 0.5rem 0 0;
+  font-size: 0.78rem;
+  color: var(--menu-muted-bright);
+  line-height: 1.5;
+}
+
+.patchnotes-page__rel {
+  border-bottom: 1px solid rgba(40, 50, 68, 0.85);
+}
+
+.patchnotes-page__rel:last-child {
+  border-bottom: none;
+}
+
+.patchnotes-page__sum {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.42rem 0.1rem;
+  cursor: pointer;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--menu-muted-bright);
+  user-select: none;
+  transition: color 0.15s ease;
+}
+
+.patchnotes-page__sum::-webkit-details-marker {
+  display: none;
+}
+
+.patchnotes-page__sum::after {
+  content: "›";
+  flex-shrink: 0;
+  font-size: 1.05em;
+  color: var(--menu-muted);
+  transition: transform 0.18s ease, color 0.15s ease;
+}
+
+.patchnotes-page__rel[open] > .patchnotes-page__sum {
+  color: var(--menu-text);
+}
+
+.patchnotes-page__rel[open] > .patchnotes-page__sum::after {
+  transform: rotate(90deg);
+  color: var(--menu-orange-soft);
+}
+
+.patchnotes-page__body {
+  padding: 0.15rem 0 0.65rem 0.2rem;
+}
+
+.patchnotes-page__tier-pop {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.patchnotes-page__tier-trigger {
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: center;
+  color: #4a5568;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  line-height: 1.35;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.18em;
+  transition:
+    color 0.15s ease,
+    text-decoration-color 0.15s ease;
+}
+
+.patchnotes-page__tier-trigger:hover {
+  color: var(--menu-muted-bright);
+  text-decoration-color: rgba(121, 184, 255, 0.4);
+}
+
+.patchnotes-page__tier-trigger:focus-visible {
+  outline: 2px solid var(--menu-link);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.patchnotes-page__tier-menu {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: calc(100% + 2px);
+  z-index: 5;
+  margin: 0;
+  padding: 0.08rem 0;
+  list-style: none;
+  min-width: max(100%, 6.25rem);
+  background: #080b10;
+  border: 1px solid rgba(40, 50, 68, 0.95);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.patchnotes-page__tier-option {
+  margin: 0;
+  padding: 0.14rem 0.45rem;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.54rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: center;
+  color: #8b9cb3;
+  cursor: pointer;
+  line-height: 1.2;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
+}
+
+.patchnotes-page__tier-option:hover,
+.patchnotes-page__tier-option:focus-visible {
+  background: rgba(43, 94, 167, 0.2);
+  color: var(--menu-text);
+  outline: none;
+}
+
+.patchnotes-page__tier-view {
+  min-height: 0;
+}
+
+.patchnotes-page__tier-panel[hidden] {
+  display: none !important;
+}
+
+.patchnotes-page__md {
+  font-size: clamp(0.76rem, 2.1vw, 0.84rem);
+  line-height: 1.55;
+  color: var(--menu-text);
+}
+
+.patchnotes-page__md h1,
+.patchnotes-page__md h2,
+.patchnotes-page__md h3 {
+  margin: 0.65rem 0 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--menu-muted-bright);
+}
+
+.patchnotes-page__md h1:first-child,
+.patchnotes-page__md h2:first-child,
+.patchnotes-page__md h3:first-child {
+  margin-top: 0;
+}
+
+.patchnotes-page__md p {
+  margin: 0.35rem 0;
+}
+
+.patchnotes-page__md ul {
+  margin: 0.35rem 0;
+  padding-left: 1.15rem;
+}
+
+.patchnotes-page__md li {
+  margin: 0.2rem 0;
+}
+
+.patchnotes-page__md .patchnote-tag {
+  display: inline-block;
+  vertical-align: 0.08em;
+  margin-right: 0.4em;
+  margin-bottom: 0.1em;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.62em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.2em 0.42em;
+  border-radius: 3px;
+  line-height: 1.15;
+  border: 1px solid transparent;
+}
+
+.patchnotes-page__md .patchnote-tag--new {
+  color: #b8e0c4;
+  background: rgba(46, 120, 80, 0.28);
+  border-color: rgba(90, 180, 130, 0.35);
+}
+
+.patchnotes-page__md .patchnote-tag--fix {
+  color: #ffc9a8;
+  background: rgba(180, 90, 50, 0.22);
+  border-color: rgba(252, 135, 2, 0.35);
+}
+
+.patchnotes-page__md .patchnote-tag--change {
+  color: #b8d4ff;
+  background: rgba(43, 94, 167, 0.22);
+  border-color: rgba(77, 131, 208, 0.4);
+}
+
+.patchnotes-page__md .patchnote-tag--perf {
+  color: #d4c4f7;
+  background: rgba(110, 70, 160, 0.2);
+  border-color: rgba(160, 120, 220, 0.35);
+}
+
+.patchnotes-page__md .patchnote-tag--ops {
+  color: #c9d4e3;
+  background: rgba(70, 88, 110, 0.35);
+  border-color: rgba(107, 125, 149, 0.45);
+}
+
+.patchnotes-page__md .patchnote-tag--sec {
+  color: #ffb8b8;
+  background: rgba(140, 40, 50, 0.28);
+  border-color: rgba(220, 90, 90, 0.4);
+}
+
+.patchnotes-page__md hr {
+  margin: 0.65rem 0;
+  border: none;
+  border-top: 1px solid var(--menu-border-soft);
+}
+
+.patchnotes-page__md code {
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.88em;
+  padding: 0.08em 0.28em;
+  border-radius: 4px;
+  background: rgba(10, 14, 22, 0.55);
+  border: 1px solid var(--menu-border);
+}
+
+.patchnotes-page__md a {
+  color: var(--menu-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.patchnotes-page__md a:hover {
+  color: #a8d4ff;
 }
 
 /**
