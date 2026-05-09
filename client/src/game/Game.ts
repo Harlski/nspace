@@ -1089,6 +1089,11 @@ export class Game {
   private readonly lastPointerClientPixels = { x: 0, y: 0 };
   private repositionGateGhostGroup: THREE.Group | null = null;
   private repositionGateGhostSig = "";
+  /** Stack level of the obstacle being moved; used with `repositionFrom` for `blockKey` and ghost height. */
+  private repositionSourceYLevel = 0;
+  /** Non-gate obstacle move: translucent mesh at valid hover (same material path as placement ghost). */
+  private repositionObstacleGhostGroup: THREE.Group | null = null;
+  private repositionObstacleGhostSig = "";
   private gateNeighborExitHint: THREE.Mesh | null = null;
   private gateNeighborFrontHint: THREE.Mesh | null = null;
   private readonly gateNeighborOkMat: THREE.MeshBasicMaterial;
@@ -3157,6 +3162,7 @@ export class Game {
     this.clearRepositionBillboardVisualState();
     this.repositionFrom = { x, y: z };
     const yb = Math.max(0, Math.min(2, Math.floor(yLevel)));
+    this.repositionSourceYLevel = yb;
     const gateMeta = this.placedObjects.get(blockKey(x, z, yb));
     if (gateMeta?.gate) {
       const g = gateMeta.gate;
@@ -4594,6 +4600,7 @@ export class Game {
     }
     this.clearGateNeighborFloorHints();
     this.clearRepositionGateGhost();
+    this.clearRepositionObstacleGhost();
   }
 
   /** Build bar gate tool: show exit/front neighbor tint while hovering a valid anchor tile. */
@@ -4627,6 +4634,22 @@ export class Game {
     });
     this.repositionGateGhostGroup = null;
     this.repositionGateGhostSig = "";
+  }
+
+  private clearRepositionObstacleGhost(): void {
+    if (!this.repositionObstacleGhostGroup) {
+      this.repositionObstacleGhostSig = "";
+      return;
+    }
+    this.scene.remove(this.repositionObstacleGhostGroup);
+    this.repositionObstacleGhostGroup.traverse((child: THREE.Object3D) => {
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        (child.material as THREE.Material).dispose();
+      }
+    });
+    this.repositionObstacleGhostGroup = null;
+    this.repositionObstacleGhostSig = "";
   }
 
   /**
@@ -4701,6 +4724,39 @@ export class Game {
     });
     this.repositionGateGhostGroup.position.set(hoverGx, yWorld, hoverGz);
     this.scene.add(this.repositionGateGhostGroup);
+  }
+
+  private syncRepositionObstacleGhost(
+    hoverGx: number,
+    hoverGz: number,
+    meta: BlockStyleProps
+  ): void {
+    const yLevel = this.nextOpenLevelAt(hoverGx, hoverGz);
+    if (yLevel === null) {
+      this.clearRepositionObstacleGhost();
+      return;
+    }
+    const hVis = this.obstacleHeight(meta);
+    const vis = this.blockVisualScale;
+    const yWorld = yLevel * BLOCK_SIZE + (hVis * vis) / 2;
+    const styleSig = this.placementPreviewStyleSignature(meta);
+    const sig = `${hoverGx}|${hoverGz}|${yLevel}|${styleSig}`;
+    if (
+      this.repositionObstacleGhostSig === sig &&
+      this.repositionObstacleGhostGroup
+    ) {
+      this.repositionObstacleGhostGroup.position.set(hoverGx, yWorld, hoverGz);
+      return;
+    }
+    this.clearRepositionObstacleGhost();
+    this.repositionObstacleGhostSig = sig;
+    this.repositionObstacleGhostGroup = this.makeBlockMesh(meta, {
+      ghost: true,
+      tileX: hoverGx,
+      tileZ: hoverGz,
+    });
+    this.repositionObstacleGhostGroup.position.set(hoverGx, yWorld, hoverGz);
+    this.scene.add(this.repositionObstacleGhostGroup);
   }
 
   private ensureGateNeighborHintMeshes(): void {
@@ -4783,6 +4839,31 @@ export class Game {
     frontM.visible = true;
   }
 
+  /** Same validity as a generic obstacle move click (empty destination column, radius, hub). */
+  private tryGenericObstacleMoveHoverTile(
+    clientX: number,
+    clientY: number
+  ): { x: number; z: number } | null {
+    if (
+      !this.selfMesh ||
+      !this.repositionFrom ||
+      this.repositionBillboardId ||
+      this.repositionGateHint
+    ) {
+      return null;
+    }
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest || !this.tileWalkable(dest)) return null;
+    if (this.hubNoBuildTile(dest.x, dest.y)) return null;
+    const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    if (Math.hypot(here.x - dest.x, here.y - dest.y) > this.placeRadiusBlocks + 1e-6) {
+      return null;
+    }
+    if (here.x === dest.x && here.y === dest.y) return null;
+    if (this.hasAnyBlockAtTile(dest.x, dest.y)) return null;
+    return { x: dest.x, z: dest.y };
+  }
+
   private tryGateMoveHoverTile(
     clientX: number,
     clientY: number
@@ -4834,6 +4915,7 @@ export class Game {
       return;
     }
     if (this.repositionGateHint && this.repositionFrom && !this.repositionBillboardId) {
+      this.clearRepositionObstacleGhost();
       const hover = this.tryGateMoveHoverTile(clientX, clientY);
       if (hover) {
         const preview = this.resolveGateRepositionPreviewAtHover(hover);
@@ -4847,8 +4929,28 @@ export class Game {
       }
       return;
     }
+    if (
+      this.repositionFrom &&
+      !this.repositionBillboardId &&
+      !this.repositionGateHint &&
+      this.selfMesh
+    ) {
+      this.clearRepositionGateGhost();
+      const hover = this.tryGenericObstacleMoveHoverTile(clientX, clientY);
+      const from = this.repositionFrom;
+      const meta = this.placedObjects.get(
+        blockKey(from.x, from.y, this.repositionSourceYLevel)
+      );
+      if (hover && meta) {
+        this.syncRepositionObstacleGhost(hover.x, hover.z, meta);
+      } else {
+        this.clearRepositionObstacleGhost();
+      }
+      return;
+    }
     this.clearGateNeighborFloorHints();
     this.clearRepositionGateGhost();
+    this.clearRepositionObstacleGhost();
   }
 
   private syncPlacementPreviewAt(wx: number, wz: number, wyLevel: number): void {

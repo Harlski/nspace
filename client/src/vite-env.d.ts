@@ -1,5 +1,8 @@
 /// <reference types="vite/client" />
 
+/** Monorepo release label, e.g. `v0.3.4` — set in `vite.config.ts`. */
+declare const __NSPACE_APP_VERSION__: string;
+
 /** Seeded by Nimiq Pay before mini-app scripts run ([docs](https://nimiq.dev/mini-apps/)). */
 interface NimiqPayHostContext {
   readonly language?: string;

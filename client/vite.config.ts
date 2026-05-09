@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { resolve } from "node:path";
@@ -6,6 +7,15 @@ import { fileURLToPath } from "node:url";
 import { createLogger, defineConfig } from "vite";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
+
+const rootPackageJsonPath = resolve(__dirname, "../package.json");
+const rootPackageVersion = JSON.parse(readFileSync(rootPackageJsonPath, "utf8")) as {
+  version?: string;
+};
+const appDisplayVersion =
+  typeof rootPackageVersion.version === "string" && rootPackageVersion.version.length > 0
+    ? `v${rootPackageVersion.version}`
+    : "v0.0.0";
 
 /** How often we repeat the “backend not ready” hint (Vite may re-evaluate config; use global). */
 const BACKEND_DOWN_LOG_THROTTLE_MS = 10_000;
@@ -120,6 +130,10 @@ function attachDevProxyHandlers(proxy: EventEmitter): void {
 }
 
 export default defineConfig({
+  /** Shown on the wallet login / main menu — matches monorepo root `package.json` `version`. */
+  define: {
+    __NSPACE_APP_VERSION__: JSON.stringify(appDisplayVersion),
+  },
   customLogger: createDevProxyFriendlyLogger(),
   build: {
     rollupOptions: {

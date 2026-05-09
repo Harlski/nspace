@@ -3,10 +3,9 @@ import xIconUrl from "../assets/social/x.svg?url";
 import { fetchNonce, signInWithWallet, verifyWithServer } from "../auth/nimiq.js";
 import { formatWalletAddressGap4 } from "../formatWalletAddress.js";
 import { identiconDataUrl } from "../game/identiconTexture.js";
+import { APP_DISPLAY_VERSION } from "../appVersion.js";
 import { apiUrl } from "../net/apiBase.js";
 import { TELEGRAM_URL, X_URL } from "../socialLinks.js";
-
-const VERSION = "v0.3.0";
 
 /** Public asset — Vite serves `client/public` at `/`. */
 const NIM_LOGO_SRC = "/branding/nimiq-nim-logo.svg";
@@ -239,7 +238,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
                 <span class="main-menu__social-label">X</span>
               </a>
             </div>
-            <p class="main-menu__version">${VERSION}</p>
+            <p class="main-menu__version">${APP_DISPLAY_VERSION}</p>
           </footer>
         </div>
       </div>

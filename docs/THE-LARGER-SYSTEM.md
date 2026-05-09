@@ -30,6 +30,8 @@ _Add sections here as the system matures. Keep each bullet concrete enough that 
 
 - **Objects vs Room (authoring UI)** — Treat **placeable world content** (blocks, props, billboards, teleporters, etc.) under an **Objects** affordance. Treat **room-level configuration** that is not a placed obstacle—**ambient presentation** (e.g. background hue), **topology affordances** (extra floor where supported), **guest entry spawn**, and similar—under a **Room** affordance. Keep new features on the matching side so players and implementers share one mental model and we avoid overloading the object tool list with room settings.
 
+- **Reposition ghost previews (authoring)** — When the player is **moving** or **repositioning** a placeable obstacle in build/edit flows, the client should show a **semi-transparent preview (“ghost”)** at a **valid** hover destination so intent is obvious before commit. That preview is **client-only** and must **not** be treated as authoritative world state until the server accepts the move. Prefer **one visual language** across object kinds: block-shaped props use the same translucent material path as **new-block placement preview** (`makeBlockMesh` with `ghost: true` on the client); gates and billboards may add their own cues (e.g. exit/front floor tints, footprint highlights, billboard-specific ghost mesh) on top. **New** reposition or drag-to-move flows should ship **with** an appropriate ghost or equivalent footprint preview in the same change, not as a follow-up polish item.
+
 ---
 
 ## Recorded decisions & forward constraints
@@ -68,6 +70,16 @@ Update this subsection when the first consolidated store is chosen and named in 
 
 Update this subsection if the API shape, authority split, or rotation contract changes.
 
+### Authoring UX: reposition ghost previews
+
+**Norm:** See the principle **Reposition ghost previews (authoring)** above: valid-hover **ghost** before commit; **server** remains source of truth for placed obstacles until a move succeeds.
+
+**Concrete paths today (client):** **New-block placement** uses a translucent block mesh at the hover stack slot. **Gate** reposition adds a gate-shaped ghost, exit/front **floor tints**, and optionally **freezes** the source mesh’s rendered opening until the move ends. **Billboard** reposition uses **footprint tile highlights** plus a **translucent billboard** proxy. **Other obstacles** (shapes rendered via `makeBlockMesh`) use the same ghost material path at the hover tile when move targets are valid.
+
+**Forward constraint:** Adding a new placeable type with a reposition or drag-to-move interaction should include its ghost (or an equivalent clear preview), reusing shared helpers where possible.
+
+Update this subsection if preview ownership, materials, or which interactions require a ghost changes materially.
+
 ### Release line: patch notes + semver on merge
 
 **Intent:** One clear moment ties **shipping semver** (root `package.json`) to **frozen patch notes**, so `main` always carries a coherent “what we just released” folder without hand-renaming drift.
@@ -97,3 +109,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-05-07** — Recorded decision: header marquee — server owns payload and timing bounds; client owns ticker layout, seamless scroll, and viewport-wide loop distance. See [reasons/reason_770142.md](reasons/reason_770142.md).
 - **2026-05-08** — Principle: in-world UI (context menus, short prompts) stays idiomatic—brief labels, no tutorial paragraphs on every interaction. See [reasons/reason_503821.md](reasons/reason_503821.md).
 - **2026-05-08** — Principle: authoring UI separates **Objects** (placeable content) from **Room** (room-level settings such as background and guest spawn). See [reasons/reason_640281.md](reasons/reason_640281.md).
+- **2026-05-09** — Principle + recorded UX: **reposition ghost previews** for placeable obstacles (client-only hover visualization; gates / billboards / generic blocks). See [reasons/reason_927415.md](reasons/reason_927415.md).
