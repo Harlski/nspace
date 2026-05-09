@@ -134,7 +134,7 @@ export type MainMenuOptions = {
 };
 
 /**
- * Full-screen lobby: title, floating hexes, identicon continue / Nimiq sign-in, social tiles (Telegram / X).
+ * Full-screen lobby: title, floating hexes, identicon continue / Nimiq wallet entry, social tiles (Telegram / X).
  */
 export function mountMainMenu(opts: MainMenuOptions): () => void {
   const {
@@ -173,9 +173,10 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
           <div class="main-menu__actions" id="main-menu-actions">
             <div class="main-menu__actions-swap">
             <div class="main-menu__actions-default" id="main-menu-actions-default">
-              <button type="button" class="nq-button main-menu__nq-btn main-menu__nq-btn--pill" id="btn-nimiq-account">
-                Sign In
+              <button type="button" class="nq-button light-blue main-menu__nq-btn main-menu__nq-btn--pill main-menu__nq-btn--wallet-cta" id="btn-nimiq-account">
+                Enter game
               </button>
+              <p class="main-menu__wallet-hint">Sign in with your Nimiq wallet</p>
               ${
                 devBypass
                   ? `<button type="button" class="nq-button light-blue main-menu__nq-btn main-menu__nq-btn--pill" id="btn-dev-login">Dev login</button>`
@@ -228,6 +229,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
           : ""
       }
           <footer class="main-menu__footer">
+            <p class="main-menu__footer-social-lead">Community</p>
             <div class="main-menu__social">
               <a class="main-menu__social-tile" href="${TELEGRAM_URL}" target="_blank" rel="noopener noreferrer">
                 <img class="main-menu__social-icon" src="${telegramIconUrl}" alt="" width="22" height="22" aria-hidden="true" />
@@ -286,7 +288,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   welcomeEl.hidden = cachedSessions.length === 0;
   cachedWrap.hidden = cachedSessions.length === 0;
   btnNimiqAccount.textContent =
-    cachedSessions.length > 0 ? "Add account" : "Sign In";
+    cachedSessions.length > 0 ? "Add account" : "Enter game";
 
   const perAccountButtons = new Set<HTMLButtonElement>();
   const registerAccountButton = (el: Element | null): void => {

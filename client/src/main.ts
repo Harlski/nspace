@@ -1405,6 +1405,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   } | null = null;
   /** Extra delay before complete so server tick accumulation reaches holdMs. */
   const NIM_CLAIM_COMPLETE_SLACK_MS = 550;
+  /** Hide the NIM reward hint if the player stays away from the block this long. */
+  const NIM_CLAIM_AWAY_DISMISS_MS = 4500;
 
   let disposed = false;
   let rafId = 0;
@@ -2249,13 +2251,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       let lastTickSent = 0;
       let raf = 0;
       let cancelled = false;
+      let notAdjacentSince: number | null = null;
 
-      const finish = (): void => {
+      const finish = (fadeOut?: boolean): void => {
         if (cancelled) return;
         cancelled = true;
         if (raf) cancelAnimationFrame(raf);
         raf = 0;
-        hud.setNimClaimProgress(null);
+        hud.setNimClaimProgress(null, fadeOut ? { fadeOutMs: 400 } : undefined);
         nimClaimUiRef = null;
         if (cancelActiveNimClaim === cancelThisClaim) {
           cancelActiveNimClaim = null;
@@ -2284,6 +2287,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         );
 
         if (adjacent) {
+          notAdjacentSince = null;
           if (!beginSent) {
             sendBeginBlockClaim(socket, x, z, y);
             beginSent = true;
@@ -2317,6 +2321,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         }
 
         hud.setNimClaimProgress({ progress, adjacent });
+
+        if (!adjacent) {
+          if (notAdjacentSince === null) {
+            notAdjacentSince = now;
+          } else if (now - notAdjacentSince >= NIM_CLAIM_AWAY_DISMISS_MS) {
+            finish(true);
+            return;
+          }
+        }
 
         const readyToComplete =
           ref.claimId &&

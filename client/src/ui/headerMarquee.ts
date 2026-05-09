@@ -17,6 +17,47 @@ type MarqueePayload = {
 
 const POLL_MS = 90_000;
 
+/** After the player has seen every announcement line once, hide the marquee for this long if lines unchanged. */
+const NEWS_SUPPRESS_MS = 10 * 60 * 1000;
+
+const LS_NEWS_SUPPRESS = "nspace.headerMarquee.newsSuppress";
+
+function newsMessagesSig(messages: string[]): string {
+  return messages.join("\x1e");
+}
+
+function readNewsSuppress(): { until: number; sig: string } | null {
+  try {
+    const raw = localStorage.getItem(LS_NEWS_SUPPRESS);
+    if (!raw) return null;
+    const j = JSON.parse(raw) as { until?: unknown; sig?: unknown };
+    if (typeof j.until !== "number" || typeof j.sig !== "string") return null;
+    if (Date.now() >= j.until) {
+      localStorage.removeItem(LS_NEWS_SUPPRESS);
+      return null;
+    }
+    return { until: j.until, sig: j.sig };
+  } catch {
+    return null;
+  }
+}
+
+function shouldSuppressNewsForSig(sig: string): boolean {
+  const s = readNewsSuppress();
+  return Boolean(s && s.sig === sig);
+}
+
+function writeNewsSuppress(sig: string): void {
+  try {
+    localStorage.setItem(
+      LS_NEWS_SUPPRESS,
+      JSON.stringify({ until: Date.now() + NEWS_SUPPRESS_MS, sig })
+    );
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 function h(tag: string, className?: string): HTMLElement {
   const n = document.createElement(tag);
   if (className) n.className = className;
@@ -273,8 +314,45 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let rotateTimer: ReturnType<typeof setTimeout> | null = null;
   let cancelled = false;
+  /** Bumps on each `applyFromPayload` so stale timers / transitionend ignore superseded runs. */
+  let marqueeApplyId = 0;
 
   let aIsFront = true;
+
+  function beginNewsSuppressFade(applyId: number, sig: string): void {
+    if (cancelled || applyId !== marqueeApplyId) return;
+    clearRotate();
+    clearPanels();
+    host.hidden = false;
+    host.classList.remove("hud-header-marquee-root--fading");
+    void host.offsetWidth;
+    host.classList.add("hud-header-marquee-root--fading");
+
+    let finished = false;
+    const settle = (): void => {
+      if (cancelled) return;
+      if (applyId !== marqueeApplyId) {
+        host.classList.remove("hud-header-marquee-root--fading");
+        return;
+      }
+      if (finished) return;
+      finished = true;
+      host.removeEventListener("transitionend", onEnd);
+      host.classList.remove("hud-header-marquee-root--fading");
+      host.hidden = true;
+      writeNewsSuppress(sig);
+    };
+
+    const onEnd = (ev: TransitionEvent): void => {
+      if (ev.target !== host || ev.propertyName !== "opacity") return;
+      settle();
+    };
+    host.addEventListener("transitionend", onEnd);
+
+    window.setTimeout(() => {
+      settle();
+    }, 700);
+  }
 
   function clearRotate(): void {
     if (rotateTimer !== null) {
@@ -306,7 +384,9 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
     rows: LeaderboardRow[],
     messages: string[],
     streakFallbackMs: number,
-    msgMs: number
+    msgMs: number,
+    applyId: number,
+    msgSig: string
   ): void {
     clearRotate();
     aIsFront = true;
@@ -323,7 +403,7 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
       });
 
     function afterStreakScrollLoop(): void {
-      if (cancelled || !showingStreak) return;
+      if (cancelled || !showingStreak || applyId !== marqueeApplyId) return;
       const back = aIsFront ? panelB : panelA;
       disposeStreakTickerIn(back);
       renderNews(back, messages[msgIdx] ?? "");
@@ -335,14 +415,19 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
     }
 
     function afterMessageSlice(): void {
-      if (cancelled) return;
+      if (cancelled || applyId !== marqueeApplyId) return;
+      const n = Math.max(1, messages.length);
+      if (msgIdx === n - 1) {
+        beginNewsSuppressFade(applyId, msgSig);
+        return;
+      }
       const back = aIsFront ? panelB : panelA;
       disposeStreakTickerIn(back);
       renderStreak(back, rows, mountStreakTicker);
       void back.offsetHeight;
       aIsFront = !aIsFront;
       showingStreak = true;
-      msgIdx = (msgIdx + 1) % Math.max(1, messages.length);
+      msgIdx = (msgIdx + 1) % n;
       applyFront();
     }
 
@@ -351,7 +436,12 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
     applyFront();
   }
 
-  function scheduleMessagesOnly(messages: string[], msgMs: number): void {
+  function scheduleMessagesOnly(
+    messages: string[],
+    msgMs: number,
+    applyId: number,
+    msgSig: string
+  ): void {
     clearRotate();
     if (messages.length === 0) return;
     aIsFront = true;
@@ -360,10 +450,21 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
     panelB.replaceChildren();
     panelA.classList.add("hud-header-marquee__panel--front");
     panelB.classList.remove("hud-header-marquee__panel--front");
-    if (messages.length === 1) return;
+    if (messages.length === 1) {
+      rotateTimer = setTimeout(() => {
+        if (cancelled || applyId !== marqueeApplyId) return;
+        beginNewsSuppressFade(applyId, msgSig);
+      }, msgMs);
+      return;
+    }
 
     const tick = (): void => {
-      if (cancelled) return;
+      if (cancelled || applyId !== marqueeApplyId) return;
+      const prev = idx;
+      if (prev === messages.length - 1) {
+        beginNewsSuppressFade(applyId, msgSig);
+        return;
+      }
       idx = (idx + 1) % messages.length;
       const back = aIsFront ? panelB : panelA;
       renderNews(back, messages[idx]!);
@@ -376,6 +477,8 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
   }
 
   function applyFromPayload(j: MarqueePayload): void {
+    marqueeApplyId++;
+    const applyId = marqueeApplyId;
     clearRotate();
     clearPanels();
 
@@ -400,13 +503,22 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
 
     const streakOn = rows.length > 0;
     const newsOn = messages.length > 0;
+    const msgSig = newsMessagesSig(messages);
 
     if (!j.visible || (!streakOn && !newsOn)) {
       host.hidden = true;
+      host.classList.remove("hud-header-marquee-root--fading");
+      return;
+    }
+
+    if (newsOn && shouldSuppressNewsForSig(msgSig)) {
+      host.hidden = true;
+      host.classList.remove("hud-header-marquee-root--fading");
       return;
     }
 
     host.hidden = false;
+    host.classList.remove("hud-header-marquee-root--fading");
 
     if (streakOn && !newsOn) {
       renderStreak(panelA, rows, attachStreakTickerScroll);
@@ -414,11 +526,11 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
       return;
     }
     if (!streakOn && newsOn) {
-      scheduleMessagesOnly(messages, msgMs);
+      scheduleMessagesOnly(messages, msgMs, applyId, msgSig);
       return;
     }
 
-    scheduleStreakAndMessages(rows, messages, streakFallbackMs, msgMs);
+    scheduleStreakAndMessages(rows, messages, streakFallbackMs, msgMs, applyId, msgSig);
   }
 
   async function pull(): Promise<void> {
@@ -447,6 +559,7 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
       clearInterval(pollTimer);
       pollTimer = null;
     }
+    host.classList.remove("hud-header-marquee-root--fading");
     host.replaceChildren();
     host.hidden = true;
   };

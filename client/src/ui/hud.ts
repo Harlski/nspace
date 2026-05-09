@@ -528,7 +528,8 @@ export function createHud(
   setLoadingLabel: (text: string) => void;
   /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
   setNimClaimProgress: (
-    state: null | { progress: number; adjacent: boolean }
+    state: null | { progress: number; adjacent: boolean },
+    opts?: { fadeOutMs?: number }
   ) => void;
   /** Show or hide the in-game Reconnect control (e.g. after WebSocket loss). */
   setReconnectOffer: (visible: boolean) => void;
@@ -3004,6 +3005,7 @@ export function createHud(
   nimClaimBar.className = "nim-claim-bar";
   nimClaimBar.hidden = true;
   nimClaimBar.setAttribute("aria-live", "polite");
+  let nimClaimFadeTimer: ReturnType<typeof setTimeout> | null = null;
   nimClaimBar.innerHTML = `
     <div class="nim-claim-bar__label">NIM reward</div>
     <div class="nim-claim-bar__track">
@@ -6929,12 +6931,12 @@ export function createHud(
               <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close billboard menu">${dismissMarkup}</button>
             </div>
             <div class="build-object-panel-context__advanced build-object-panel-context__advanced--row">
-              <button type="button" class="build-object-panel__btn build-object-panel__btn--secondary build-object-panel-context__edit-billboard">Edit</button>
+              <button type="button" class="build-object-panel__btn build-object-panel-context__edit-billboard nq-button-pill light-blue">Edit</button>
               <button type="button" class="build-object-panel__advanced-toggle build-block-bar__advanced-toggle tile-inspector__advanced-link" hidden disabled aria-hidden="true">Advanced…</button>
             </div>
             <div class="build-object-panel-context__actions">
-              <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
-              <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
+              <button type="button" class="build-object-panel__btn build-object-panel__move nq-button-pill light-blue">Move</button>
+              <button type="button" class="build-object-panel__btn build-object-panel__remove nq-button-pill">Delete</button>
             </div>
           </div>`
           : `
@@ -8155,13 +8157,34 @@ export function createHud(
       reconnectHandler = fn;
     },
     setNimClaimProgress(
-      state: null | { progress: number; adjacent: boolean }
+      state: null | { progress: number; adjacent: boolean },
+      opts?: { fadeOutMs?: number }
     ) {
+      if (nimClaimFadeTimer !== null) {
+        clearTimeout(nimClaimFadeTimer);
+        nimClaimFadeTimer = null;
+      }
       if (!state) {
+        const fadeMs = opts?.fadeOutMs;
+        if (
+          typeof fadeMs === "number" &&
+          fadeMs > 0 &&
+          !nimClaimBar.hidden &&
+          !nimClaimBar.classList.contains("nim-claim-bar--fading")
+        ) {
+          nimClaimBar.classList.add("nim-claim-bar--fading");
+          nimClaimFadeTimer = window.setTimeout(() => {
+            nimClaimFadeTimer = null;
+            nimClaimBar.classList.remove("nim-claim-bar--fading", "nim-claim-bar--adjacent");
+            nimClaimBar.hidden = true;
+          }, fadeMs);
+          return;
+        }
+        nimClaimBar.classList.remove("nim-claim-bar--fading", "nim-claim-bar--adjacent");
         nimClaimBar.hidden = true;
-        nimClaimBar.classList.remove("nim-claim-bar--adjacent");
         return;
       }
+      nimClaimBar.classList.remove("nim-claim-bar--fading");
       nimClaimBar.hidden = false;
       const p = Math.max(0, Math.min(1, state.progress));
       if (nimClaimFill) {
@@ -8313,6 +8336,11 @@ export function createHud(
       setPanelShapePopoverOpen(false);
       hideObjectEditPanel();
       hideLobbyConfirm();
+      if (nimClaimFadeTimer !== null) {
+        clearTimeout(nimClaimFadeTimer);
+        nimClaimFadeTimer = null;
+      }
+      nimClaimBar.classList.remove("nim-claim-bar--fading", "nim-claim-bar--adjacent");
       nimClaimBar.hidden = true;
       canvasCountdown.hidden = true;
       ro.disconnect();

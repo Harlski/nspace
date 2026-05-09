@@ -824,6 +824,19 @@ html.nspace-pseudo-fs #app {
   pointer-events: none;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   box-sizing: border-box;
+  opacity: 1;
+  max-height: 5rem;
+  overflow: hidden;
+  transition:
+    opacity 0.5s ease,
+    max-height 0.55s ease 0.05s,
+    border-top-color 0.45s ease;
+}
+
+.hud-header-marquee-host.hud-header-marquee-root--fading {
+  opacity: 0;
+  max-height: 0;
+  border-top-color: transparent;
 }
 
 .hud-header-marquee {
@@ -1371,12 +1384,6 @@ button.hud-brand:focus-visible {
   text-decoration: none;
   font-size: 14px;
   font-weight: 700;
-}
-
-/* Nimiq pill ::before/::after extend hit area; match feedback button — clicks only on visible pill. */
-.brand-links-overlay__wallet.nq-button-pill::before,
-.brand-links-overlay__wallet.nq-button-pill::after {
-  pointer-events: none;
 }
 
 /* Fills space between player bar and toolbar; Reconnect aligns to the right edge of this region */
@@ -3407,12 +3414,6 @@ button.hud-brand:focus-visible {
   filter: brightness(1.06);
 }
 
-/* Nimiq pill ::before/::after use negative insets for a larger touch target; keep clicks on the visible pill only. */
-.hud-mode-feedback.nq-button-pill::before,
-.hud-mode-feedback.nq-button-pill::after {
-  pointer-events: none;
-}
-
 /* Feedback — same sheet chrome as Create Signpost (.signpost-overlay__dialog + header/body/btn). */
 .signpost-overlay.feedback-overlay {
   position: absolute;
@@ -3491,6 +3492,22 @@ button.hud-brand:focus-visible {
 .hud-portal-enter.nq-button-pill {
   min-height: 0;
   height: auto;
+}
+
+/*
+ * Nimiq Style (@nimiq/style): .nq-button-pill and .nq-button-s set ::before to
+ * `left/top/right/bottom: -1.5rem` and ::after to `-5px` for a larger touch target.
+ * Those pseudo boxes still participate in hit-testing, so DevTools shows a huge
+ * rect and clicks register far outside the visible pill. Exclude pseudos from
+ * pointer events everywhere we use Nimiq controls in this app.
+ */
+#app .nq-button-pill::before,
+#app .nq-button-pill::after,
+#app .nq-button-s::before,
+#app .nq-button-s::after,
+#app .nq-button::before,
+#app .nq-button::after {
+  pointer-events: none;
 }
 
 /* Keep portal CTA hidden until standing on an enterable tile/door. */
@@ -5041,6 +5058,51 @@ button.hud-brand:focus-visible {
   width: min(220px, calc(100vw - 24px));
 }
 
+/* Billboard floater: same Nimiq pill + scale as HUD “Enter” (not heavy panel chrome). */
+.build-object-panel-context--billboard .build-object-panel__btn.nq-button-pill.light-blue {
+  position: static;
+  left: auto;
+  top: auto;
+  transform: none;
+  z-index: auto;
+  width: auto;
+  min-width: 0;
+  padding: 4px 12px;
+  font-size: 13px;
+  line-height: 1.2;
+  min-height: 0;
+  height: auto;
+  box-sizing: border-box;
+}
+
+.build-object-panel-context--billboard .build-object-panel__btn.nq-button-pill.light-blue:hover {
+  background: rgba(14, 116, 144, 0.5);
+}
+
+.build-object-panel-context--billboard .build-object-panel__btn.build-object-panel__remove.nq-button-pill {
+  position: static;
+  left: auto;
+  top: auto;
+  transform: none;
+  z-index: auto;
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 1.2;
+  min-height: 0;
+  height: auto;
+  box-sizing: border-box;
+  border-radius: 999px;
+  border-color: #7f1d1d;
+  color: #fecaca;
+  background: rgba(50, 15, 15, 0.75);
+}
+
+.build-object-panel-context--billboard .build-object-panel__btn.build-object-panel__remove.nq-button-pill:hover {
+  background: rgba(80, 22, 22, 0.88);
+  border-color: #991b1b;
+  color: #fff;
+}
+
 .build-object-panel-context__actions {
   display: flex;
   flex-direction: row;
@@ -5054,6 +5116,24 @@ button.hud-brand:focus-visible {
   min-width: 0;
   padding-left: 0;
   padding-right: 0;
+}
+
+/* Billboard: __actions flex-grow makes each <button> fill half the row — clicks land on “empty” pill space. */
+.build-object-panel-context--billboard .build-object-panel-context__actions {
+  justify-content: flex-start;
+}
+
+.build-object-panel-context--billboard .build-object-panel-context__actions .build-object-panel__btn {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+/* Author `display: inline-flex` on Advanced… otherwise beats UA `[hidden]` — leaves a dead flex slot. */
+.build-object-panel-context--billboard .build-block-bar__advanced-toggle[hidden] {
+  display: none !important;
 }
 
 /* Teleporter edit: destination controls live in the floating card (rail panel hidden). */
@@ -6148,6 +6228,12 @@ button.hud-brand:focus-visible {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
   pointer-events: none;
   z-index: 2;
+  opacity: 1;
+  transition: opacity 0.38s ease-out;
+}
+
+.nim-claim-bar.nim-claim-bar--fading {
+  opacity: 0;
 }
 
 .nim-claim-bar__label {
@@ -6751,6 +6837,16 @@ button.hud-brand:focus-visible {
   gap: 0.75rem;
 }
 
+.main-menu__footer-social-lead {
+  margin: 0;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--menu-muted);
+  user-select: none;
+}
+
 .main-menu__version {
   margin: 0;
   font-family: "Fira Mono", ui-monospace, monospace;
@@ -6912,11 +7008,11 @@ a.main-menu__version:focus-visible {
 
 .main-menu__actions-default {
   display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
+  flex-direction: column;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: center;
-  gap: 0.4rem 0.5rem;
+  gap: 0.35rem;
 }
 
 .main-menu__actions-account {
@@ -7160,6 +7256,29 @@ a.main-menu__version:focus-visible {
   hyphens: auto;
 }
 
+.main-menu .nq-button.light-blue.main-menu__nq-btn.main-menu__nq-btn--pill.main-menu__nq-btn--wallet-cta {
+  width: min(100%, 15rem);
+  max-width: min(100%, 15rem);
+  min-height: 2.7rem;
+  padding: 0.45rem 1.15rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  box-shadow:
+    0 0 0 1px rgba(252, 135, 2, 0.42),
+    0 10px 28px rgba(0, 0, 0, 0.28);
+}
+
+.main-menu__wallet-hint {
+  margin: 0.1rem 0 0;
+  padding: 0 0.35rem;
+  max-width: 16rem;
+  text-align: center;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--menu-muted-bright);
+}
+
 .main-menu__identicon-clear {
   position: absolute;
   top: -6px;
@@ -7227,16 +7346,16 @@ a.main-menu__version:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 0.42rem;
-  min-height: 2.25rem;
-  padding: 0.28rem 0.75rem 0.28rem 0.55rem;
+  min-height: 2rem;
+  padding: 0.22rem 0.65rem 0.22rem 0.5rem;
   border-radius: 999px;
-  border: 1px solid #2f3d53;
-  background: rgba(22, 29, 42, 0.75);
-  color: var(--menu-muted-bright);
+  border: 1px solid rgba(36, 48, 64, 0.95);
+  background: rgba(18, 24, 34, 0.72);
+  color: var(--menu-muted);
   text-decoration: none;
   pointer-events: auto;
-  font-size: 0.72rem;
-  font-weight: 650;
+  font-size: 0.68rem;
+  font-weight: 600;
   transition:
     color 0.15s ease,
     border-color 0.15s ease,
