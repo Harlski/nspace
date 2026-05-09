@@ -1,4 +1,8 @@
-import { getRoomBaseBounds } from "./roomLayouts.js";
+import {
+  getRoomBaseBounds,
+  HUB_ROOM_ID,
+  normalizeRoomId,
+} from "./roomLayouts.js";
 
 /** Integer tile indices on the floor plane: x = column (world X), y = row (world Z). */
 export type FloorTile = { x: number; y: number };
@@ -239,10 +243,108 @@ export type TerrainProps = {
   claimReactivateAtMs?: number;
   claimedBy?: string; // Address of player who last claimed
   /**
+   * Solid gate: `authorizedAddresses` (max {@link GATE_AUTH_MAX}) may open; `adminAddress` manages ACL.
+   * Legacy persisted tiles may use only `authorizedAddress` (treated as sole opener + admin).
+   */
+  gate?: {
+    adminAddress?: string;
+    authorizedAddress?: string;
+    authorizedAddresses?: string[];
+    exitX: number;
+    exitZ: number;
+  };
+  /** Ephemeral: gate passage for {@link TerrainProps.gateOpen.openedBy} until `untilMs`. */
+  gateOpen?: {
+    openedBy: string;
+    untilMs: number;
+  };
+  /**
    * Pyramid only: multiplier on default inscribed base radius (`1` = default footprint).
    */
   pyramidBaseScale?: number;
 };
+
+export function normalizeWalletKey(addr: string): string {
+  return String(addr).replace(/\s+/g, "").toUpperCase();
+}
+
+/** Max distinct wallets allowed to open a gate (UI table rows). */
+export const GATE_AUTH_MAX = 5;
+
+export type GateConfigNormalized = {
+  adminAddress: string;
+  authorizedAddresses: string[];
+  exitX: number;
+  exitZ: number;
+};
+
+/**
+ * Canonical gate ACL from stored props (migrates legacy `authorizedAddress`).
+ * Returns null only when there is no usable opener/admin.
+ */
+export function normalizeGateConfig(
+  g: NonNullable<TerrainProps["gate"]>
+): GateConfigNormalized | null {
+  const exitX = g.exitX;
+  const exitZ = g.exitZ;
+  const legacy = g.authorizedAddress
+    ? normalizeWalletKey(String(g.authorizedAddress))
+    : "";
+  let auths: string[] = [];
+  if (Array.isArray(g.authorizedAddresses)) {
+    for (const a of g.authorizedAddresses) {
+      const c = normalizeWalletKey(String(a));
+      if (c) auths.push(c);
+    }
+  }
+  if (legacy && !auths.includes(legacy)) auths.unshift(legacy);
+  auths = [...new Set(auths)].filter(Boolean).slice(0, GATE_AUTH_MAX);
+  let admin = g.adminAddress ? normalizeWalletKey(String(g.adminAddress)) : "";
+  if (!admin) admin = legacy;
+  if (!admin && auths.length > 0) admin = auths[0]!;
+  if (!admin) return null;
+  if (!auths.includes(admin)) {
+    auths = [admin, ...auths.filter((x) => x !== admin)].slice(0, GATE_AUTH_MAX);
+  }
+  if (auths.length === 0) auths = [admin];
+  return { adminAddress: admin, authorizedAddresses: auths, exitX, exitZ };
+}
+
+/** Payload for obstacle broadcasts (always includes admin + list). */
+export function gateWirePayload(
+  g: NonNullable<TerrainProps["gate"]>
+): GateConfigNormalized {
+  const n = normalizeGateConfig(g);
+  if (n) return n;
+  const leg = normalizeWalletKey(String(g.authorizedAddress || ""));
+  return {
+    adminAddress: leg,
+    authorizedAddresses: leg ? [leg] : [],
+    exitX: g.exitX,
+    exitZ: g.exitZ,
+  };
+}
+
+export function isGatePassableForMover(
+  p: TerrainProps | undefined,
+  moverAddress: string | null,
+  nowMs: number,
+  roomId?: string
+): boolean {
+  if (!p?.gate || !p.gateOpen) return false;
+  if (nowMs >= p.gateOpen.untilMs) return false;
+  if (!moverAddress) return false;
+  if (
+    roomId !== undefined &&
+    normalizeRoomId(roomId) === HUB_ROOM_ID
+  ) {
+    return true;
+  }
+  return (
+    normalizeWalletKey(moverAddress) ===
+    normalizeWalletKey(p.gateOpen.openedBy)
+  );
+}
 
 const PYRAMID_BASE_SCALE_MIN = 1;
 const PYRAMID_BASE_SCALE_MAX = 1.65;
@@ -332,16 +434,31 @@ const STAND_ON_TOP_ABOVE = 0.5;
  * Uses feet height and tile occupancy; when `snapToTile` rounds to an empty neighbor
  * near a block edge, still detects layer 1 so pathfinding matches actual stance.
  */
+export type PathfindMoverContext = { address: string; nowMs: number };
+
 export function inferTerrainStartLayer(
   px: number,
   pz: number,
   py: number,
-  placed: ReadonlyMap<string, TerrainProps>
+  placed: ReadonlyMap<string, TerrainProps>,
+  moverCtx?: PathfindMoverContext | null,
+  roomId?: string
 ): 0 | 1 {
   const t = snapToTile(px, pz);
   const propHere = floorLevelTerrain(placed, t.x, t.z);
   if (propHere?.ramp) return 0;
   if (propHere && !propHere.passable && !propHere.ramp) {
+    if (
+      moverCtx &&
+      isGatePassableForMover(
+        propHere,
+        moverCtx.address,
+        moverCtx.nowMs,
+        roomId
+      )
+    ) {
+      return 0;
+    }
     const h = terrainObstacleHeight(propHere);
     if (py >= h - STAND_ON_TOP_BELOW) return 1;
     return 0;
@@ -385,6 +502,25 @@ export function floorWalkableTerrain(
   const p = placed.get(tileKey(x, z)) ?? placed.get(blockKey(x, z, 0));
   if (!p) return true;
   if (p.passable || p.ramp) return true;
+  return false;
+}
+
+/** Like {@link floorWalkableTerrain}, but a gate that is open for `moverAddress` counts as walkable. */
+export function floorWalkableTerrainForMover(
+  x: number,
+  z: number,
+  placed: ReadonlyMap<string, TerrainProps>,
+  extraWalkable: ReadonlySet<string>,
+  roomId: string,
+  baseRemoved: ReadonlySet<string> | null | undefined,
+  moverAddress: string | null,
+  nowMs: number
+): boolean {
+  if (!isWalkableTile(x, z, extraWalkable, roomId, baseRemoved)) return false;
+  const p = placed.get(tileKey(x, z)) ?? placed.get(blockKey(x, z, 0));
+  if (!p) return true;
+  if (p.passable || p.ramp) return true;
+  if (isGatePassableForMover(p, moverAddress, nowMs, roomId)) return true;
   return false;
 }
 
@@ -471,21 +607,6 @@ function canLeaveRampToFloorNeighbor(
   return false;
 }
 
-function isValidTerrainGoal(
-  tx: number,
-  tz: number,
-  goalLayer: 0 | 1,
-  placed: ReadonlyMap<string, TerrainProps>,
-  extraWalkable: ReadonlySet<string>,
-  roomId: string,
-  baseRemoved?: ReadonlySet<string> | null
-): boolean {
-  if (goalLayer === 0) {
-    return floorWalkableTerrain(tx, tz, placed, extraWalkable, roomId, baseRemoved);
-  }
-  return level1SurfaceOpen(placed, tx, tz);
-}
-
 /**
  * Pathfind with floor (layer 0) and block tops (layer 1). Ramps connect floor to a
  * neighboring solid block's top. On floor, you may only **enter** a ramp tile from the
@@ -506,14 +627,44 @@ export function pathfindTerrain(
   placed: ReadonlyMap<string, TerrainProps>,
   extraWalkable: ReadonlySet<string>,
   roomId: string,
-  baseRemoved?: ReadonlySet<string> | null
+  baseRemoved?: ReadonlySet<string> | null,
+  moverCtx?: PathfindMoverContext | null
 ): { x: number; z: number; layer: 0 | 1 }[] | null {
-  if (!isValidTerrainGoal(tx, tz, goalLayer, placed, extraWalkable, roomId, baseRemoved)) {
+  const fw = (x: number, z: number): boolean =>
+    moverCtx
+      ? floorWalkableTerrainForMover(
+          x,
+          z,
+          placed,
+          extraWalkable,
+          roomId,
+          baseRemoved ?? null,
+          moverCtx.address,
+          moverCtx.nowMs
+        )
+      : floorWalkableTerrain(
+          x,
+          z,
+          placed,
+          extraWalkable,
+          roomId,
+          baseRemoved
+        );
+
+  const isValidTerrainGoalLocal = (
+    gx: number,
+    gz: number,
+    gl: 0 | 1
+  ): boolean => {
+    if (gl === 0) return fw(gx, gz);
+    return level1SurfaceOpen(placed, gx, gz);
+  };
+
+  if (!isValidTerrainGoalLocal(tx, tz, goalLayer)) {
     return null;
   }
   if (startLayer === 0) {
-    if (!floorWalkableTerrain(sx, sz, placed, extraWalkable, roomId, baseRemoved))
-      return null;
+    if (!fw(sx, sz)) return null;
   } else {
     if (!level1SurfaceOpen(placed, sx, sz)) return null;
   }
@@ -554,8 +705,7 @@ export function pathfindTerrain(
         if (!isWalkableTile(nx, nz, extraWalkable, roomId, baseRemoved)) continue;
         const n0 = terrainNodeKey(nx, nz, 0);
         if (cameFrom.has(n0)) continue;
-        if (!floorWalkableTerrain(nx, nz, placed, extraWalkable, roomId, baseRemoved))
-          continue;
+        if (!fw(nx, nz)) continue;
         const pTarget = floorLevelTerrain(placed, nx, nz);
         if (
           pCurFloor?.ramp &&
@@ -604,10 +754,7 @@ export function pathfindTerrain(
         const nz = cur.z + dz;
         if (!isWalkableTile(nx, nz, extraWalkable, roomId, baseRemoved)) continue;
         const pN = floorLevelTerrain(placed, nx, nz);
-        if (
-          floorWalkableTerrain(nx, nz, placed, extraWalkable, roomId, baseRemoved) &&
-          rampFacesSolid(pN, nx, nz, cur.x, cur.z)
-        ) {
+        if (fw(nx, nz) && rampFacesSolid(pN, nx, nz, cur.x, cur.z)) {
           const fk = terrainNodeKey(nx, nz, 0);
           if (!cameFrom.has(fk)) {
             cameFrom.set(fk, ck);
@@ -629,6 +776,19 @@ export function pathfindTerrain(
   return null;
 }
 
+/** Remove persisted `gateOpen` once past `untilMs` (process restarts). */
+export function stripStaleGateOpenOnLoad(
+  p: TerrainProps,
+  nowMs: number
+): TerrainProps {
+  if (!p.gateOpen) return p;
+  if (nowMs >= p.gateOpen.untilMs) {
+    const { gateOpen: _go, ...rest } = p;
+    return rest as TerrainProps;
+  }
+  return p;
+}
+
 /** Legacy paired teleporters stored `pairId`; strip on load. */
 export function normalizeTeleporterPropsForLoad(p: TerrainProps): TerrainProps {
   const base: TerrainProps = {
@@ -640,8 +800,10 @@ export function normalizeTeleporterPropsForLoad(p: TerrainProps): TerrainProps {
     pyramidBaseScale: p.pyramidBaseScale,
   };
   const tp = base.teleporter;
-  if (!tp) return coerceTerrainPrismFields(base);
-  if ("pending" in tp && tp.pending) return coerceTerrainPrismFields(base);
+  const now = Date.now();
+  if (!tp) return stripStaleGateOpenOnLoad(coerceTerrainPrismFields(base), now);
+  if ("pending" in tp && tp.pending)
+    return stripStaleGateOpenOnLoad(coerceTerrainPrismFields(base), now);
   if ("pairId" in tp) {
     const t = tp as {
       pairId: string;
@@ -649,14 +811,17 @@ export function normalizeTeleporterPropsForLoad(p: TerrainProps): TerrainProps {
       targetX: number;
       targetZ: number;
     };
-    return coerceTerrainPrismFields({
-      ...base,
-      teleporter: {
-        targetRoomId: t.targetRoomId,
-        targetX: t.targetX,
-        targetZ: t.targetZ,
-      },
-    });
+    return stripStaleGateOpenOnLoad(
+      coerceTerrainPrismFields({
+        ...base,
+        teleporter: {
+          targetRoomId: t.targetRoomId,
+          targetX: t.targetX,
+          targetZ: t.targetZ,
+        },
+      }),
+      now
+    );
   }
-  return coerceTerrainPrismFields(base);
+  return stripStaleGateOpenOnLoad(coerceTerrainPrismFields(base), now);
 }

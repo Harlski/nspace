@@ -4,19 +4,24 @@ import {
   blockKey,
   canPlaceTeleporterFoot,
   floorWalkableTerrain,
+  floorWalkableTerrainForMover,
   inTileBounds,
   inferTerrainStartLayer,
   isBaseTile,
   isOrthogonallyAdjacentToTile,
   isWalkableTile,
   clampPyramidBaseScale,
+  GATE_AUTH_MAX,
+  gateWirePayload,
   normalizeBlockPrismParts,
+  normalizeGateConfig,
   pathfindTiles,
   pathfindTerrain,
   level1SurfaceOpen,
   snapToTile,
   terrainObstacleHeight,
   tileKey,
+  type PathfindMoverContext,
   type TerrainProps,
 } from "./grid.js";
 import {
@@ -41,7 +46,9 @@ import {
 } from "./builtinRoomNames.js";
 import {
   allowActorRoomBackgroundHueEdit,
+  allowActorRoomJoinSpawnEdit,
   getDynamicRoomBackgroundState,
+  getDynamicRoomJoinSpawn,
   getDynamicRoomOwnerAddress,
   normalizeBackgroundHuePatch,
   normalizeBackgroundNeutralPatch,
@@ -310,6 +317,15 @@ function broadcastTickStateIfAllowed(
 
 const CHAT_MAX = 256;
 const RATE_MOVE_TO_MS = 120;
+/** Gate stays open for the opener to cross; then server clears `gateOpen`. */
+const GATE_OPEN_PASS_MS = 1_000;
+
+const CARDINAL_DIRS: readonly [number, number][] = [
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+  [0, -1],
+];
 /** Set `NSPACE_DEBUG_MOVEMENT=1` on the server for `[movement]` path and tile-crossing logs. */
 const DEBUG_MOVEMENT =
   process.env.NSPACE_DEBUG_MOVEMENT === "1" ||
@@ -455,6 +471,16 @@ export type ObstacleTile = {
         /** Snapshot of destination room name when configured (private rooms may be absent from catalog). */
         targetRoomDisplayName?: string;
       };
+  gate?: {
+    adminAddress: string;
+    authorizedAddresses: string[];
+    exitX: number;
+    exitZ: number;
+  };
+  gateOpen?: {
+    openedBy: string;
+    untilMs: number;
+  };
 };
 
 const BLOCK_COLOR_MAX = 9;
@@ -606,12 +632,23 @@ type OutMsg =
       roomBackgroundHueDeg?: number | null;
       /** Dynamic rooms: solid black / white / gray sky; overrides hue when non-null. */
       roomBackgroundNeutral?: RoomBackgroundNeutral | null;
+      /** Dynamic rooms: tile used for default visitor spawn (custom or room center). */
+      roomJoinSpawn?: { x: number; z: number; customized: boolean };
+      /** Dynamic rooms: this client may PATCH `joinSpawn` via `updateRoom`. */
+      allowRoomJoinSpawnEdit?: boolean;
     }
   | {
       type: "roomBackgroundHue";
       roomId: string;
       hueDeg: number | null;
       neutral?: RoomBackgroundNeutral | null;
+    }
+  | {
+      type: "roomJoinSpawn";
+      roomId: string;
+      x: number;
+      z: number;
+      customized: boolean;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
@@ -692,6 +729,8 @@ type OutMsg =
       at: number;
       bubbleOnly?: boolean; // If true, only show as bubble, not in chat log
     }
+  /** Opening player only: gate swung visually but they cannot walk onto exit/front (or no path). */
+  | { type: "gateWalkBlocked"; x: number; z: number; y: number }
   | { type: "error"; code: string }
   | {
       type: "blockClaimOffered";
@@ -751,6 +790,17 @@ type OutMsg =
   | { type: "clientPong"; id: number };
 
 const rooms = new Map<string, Map<string, ClientConn>>();
+
+function humanCompactAddressesInRoom(roomId: string): Set<string> {
+  const r = rooms.get(normalizeRoomId(roomId));
+  const out = new Set<string>();
+  if (!r) return out;
+  for (const c of r.values()) {
+    if (String(c.displayName || "").trimStart().startsWith("[NPC]")) continue;
+    out.add(compactAddress(c.address));
+  }
+  return out;
+}
 /** Server-driven avatars (not WebSocket clients); merged into player snapshots / ticks. */
 const roomFakePlayers = new Map<
   string,
@@ -900,21 +950,10 @@ function generateCanvasMaze(): void {
   });
   
   // Broadcast the new maze to all players in canvas room
-  const obstaclesList = Array.from(placed.entries()).map(([k, v]) => {
-    const [x, z] = k.split(",").map(Number);
-    return {
-      x: x!,
-      z: z!,
-      y: 0,
-      ...v,
-      pyramidBaseScale: clampPyramidBaseScale(v.pyramidBaseScale ?? 1),
-    };
-  });
-  
   broadcast(CANVAS_ROOM_ID, {
     type: "obstacles",
     roomId: canvasId,
-    tiles: obstaclesList,
+    tiles: obstaclesToList(canvasId),
   });
 
   console.log(`[canvas] New maze generated with ${walls.size} wall blocks and exit portal at (${exitX}, ${exitZ}), seed: ${seed}`);
@@ -1210,9 +1249,18 @@ function blockingKeys(roomId: string): Set<string> {
 
 function inferStartLayer(
   p: PlayerState,
-  placed: ReadonlyMap<string, PlacedProps>
+  placed: ReadonlyMap<string, PlacedProps>,
+  moverCtx: PathfindMoverContext | null | undefined,
+  roomId: string
 ): 0 | 1 {
-  return inferTerrainStartLayer(p.x, p.z, p.y, placed);
+  return inferTerrainStartLayer(
+    p.x,
+    p.z,
+    p.y,
+    placed,
+    moverCtx ?? undefined,
+    roomId
+  );
 }
 
 function waypointY(
@@ -1236,19 +1284,33 @@ function resolveNearestTerrainNode(
   px: number,
   py: number,
   pz: number,
-  placed: ReadonlyMap<string, PlacedProps>
+  placed: ReadonlyMap<string, PlacedProps>,
+  moverCtx?: PathfindMoverContext | null
 ): { x: number; z: number; layer: 0 | 1 } | null {
   const extra = extraFloorSet(roomId);
   const br = baseRemovedReadonly(roomId);
   const center = snapToTile(px, pz);
   let bestD = Number.POSITIVE_INFINITY;
   let best: { x: number; z: number; layer: 0 | 1 } | null = null;
+  const floorOk = (x: number, z: number): boolean =>
+    moverCtx
+      ? floorWalkableTerrainForMover(
+          x,
+          z,
+          placed,
+          extra,
+          roomId,
+          br,
+          moverCtx.address,
+          moverCtx.nowMs
+        )
+      : floorWalkableTerrain(x, z, placed, extra, roomId, br);
   for (let dz = -1; dz <= 1; dz++) {
     for (let dx = -1; dx <= 1; dx++) {
       const x = center.x + dx;
       const z = center.z + dz;
       if (!inTileBounds(x, z)) continue;
-      if (floorWalkableTerrain(x, z, placed, extra, roomId, br)) {
+      if (floorOk(x, z)) {
         const wy = waypointY(0, x, z, placed);
         const d =
           (px - x) ** 2 + (pz - z) ** 2 + (py - wy) ** 2;
@@ -1275,27 +1337,48 @@ function resolveNearestTerrainNode(
 function resolvePathfindStartNode(
   roomId: string,
   p: PlayerState,
-  placed: ReadonlyMap<string, PlacedProps>
+  placed: ReadonlyMap<string, PlacedProps>,
+  moverCtx?: PathfindMoverContext | null
 ): { x: number; z: number; layer: 0 | 1 } | null {
   const extra = extraFloorSet(roomId);
   const br = baseRemovedReadonly(roomId);
   const t = snapToTile(p.x, p.z);
-  const layer = inferStartLayer(p, placed);
+  const layer = inferStartLayer(p, placed, moverCtx, roomId);
+  const floorOk =
+    layer === 0 &&
+    (moverCtx
+      ? floorWalkableTerrainForMover(
+          t.x,
+          t.z,
+          placed,
+          extra,
+          roomId,
+          br,
+          moverCtx.address,
+          moverCtx.nowMs
+        )
+      : floorWalkableTerrain(t.x, t.z, placed, extra, roomId, br));
   const ok =
-    (layer === 0 &&
-      floorWalkableTerrain(t.x, t.z, placed, extra, roomId, br)) ||
-    (layer === 1 && level1SurfaceOpen(placed, t.x, t.z));
+    floorOk || (layer === 1 && level1SurfaceOpen(placed, t.x, t.z));
   if (ok) return { x: t.x, z: t.z, layer };
-  return resolveNearestTerrainNode(roomId, p.x, p.y, p.z, placed);
+  return resolveNearestTerrainNode(roomId, p.x, p.y, p.z, placed, moverCtx);
 }
 
 /** When a path is cleared mid-walk, snap to the nearest legal terrain stance (never into a solid from bad rounding). */
 function snapPlayerToTerrainGrid(
   p: PlayerState,
   placed: ReadonlyMap<string, PlacedProps>,
-  roomId: string
+  roomId: string,
+  moverCtx?: PathfindMoverContext | null
 ): void {
-  const solved = resolveNearestTerrainNode(roomId, p.x, p.y, p.z, placed);
+  const solved = resolveNearestTerrainNode(
+    roomId,
+    p.x,
+    p.y,
+    p.z,
+    placed,
+    moverCtx
+  );
   if (solved) {
     p.x = solved.x;
     p.z = solved.z;
@@ -1304,7 +1387,7 @@ function snapPlayerToTerrainGrid(
     const t = snapToTile(p.x, p.z);
     p.x = t.x;
     p.z = t.z;
-    const layer = inferStartLayer(p, placed);
+    const layer = inferStartLayer(p, placed, moverCtx, roomId);
     p.y = waypointY(layer, t.x, t.z, placed);
   }
   p.vx = 0;
@@ -1319,7 +1402,8 @@ function findRecoveryTerrainPath(
   placed: ReadonlyMap<string, PlacedProps>,
   extra: ReadonlySet<string>,
   /** Layer already used in the failed primary `pathfindTerrain` from `snapToTile(player)`. */
-  primaryStartLayer: 0 | 1
+  primaryStartLayer: 0 | 1,
+  moverCtx?: PathfindMoverContext | null
 ):
   | {
       full: { x: number; z: number; layer: 0 | 1 }[];
@@ -1362,7 +1446,8 @@ function findRecoveryTerrainPath(
       placed,
       extra,
       roomId,
-      baseRemovedReadonly(roomId)
+      baseRemovedReadonly(roomId),
+      moverCtx ?? undefined
     );
     if (full && full.length > 0) {
       return {
@@ -1406,6 +1491,8 @@ function obstacleTileFromPlaced(roomId: string, tileKeyStr: string): ObstacleTil
     claimReactivateAtMs: v.claimReactivateAtMs,
     claimedBy: v.claimedBy,
     teleporter: v.teleporter,
+    gate: v.gate ? gateWirePayload(v.gate) : undefined,
+    gateOpen: v.gateOpen,
   };
 }
 
@@ -1443,6 +1530,8 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       claimReactivateAtMs: v.claimReactivateAtMs,
       claimedBy: v.claimedBy,
       teleporter: v.teleporter,
+      gate: v.gate ? gateWirePayload(v.gate) : undefined,
+      gateOpen: v.gateOpen,
     });
   }
   return out;
@@ -1655,8 +1744,69 @@ function reconcileSpawnY(player: PlayerState, roomId: string): void {
       player.y = h;
     }
   }
-  const layer = inferStartLayer(player, placed);
+  const layer = inferStartLayer(player, placed, undefined, roomId);
   player.y = waypointY(layer, t.x, t.z, placed);
+}
+
+/** First-time / no-saved spawn for wallet-created rooms: custom join tile, else center, else random walkable. */
+function resolveDefaultSpawnForPlayerRoom(roomId: string): {
+  x: number;
+  z: number;
+} | null {
+  const n = normalizeRoomId(roomId);
+  if (!isPlayerCreatedRoom(n)) return null;
+  const b = getRoomBaseBounds(n);
+  const cx = Math.floor((b.minX + b.maxX) / 2);
+  const cz = Math.floor((b.minZ + b.maxZ) / 2);
+  const custom = getDynamicRoomJoinSpawn(n);
+  if (custom) {
+    const s = snapToTile(custom.x, custom.z);
+    if (isWalkableForRoom(n, s.x, s.z)) return { x: s.x, z: s.z };
+  }
+  const cSnap = snapToTile(cx, cz);
+  if (isWalkableForRoom(n, cSnap.x, cSnap.z)) return { x: cSnap.x, z: cSnap.z };
+  const seed =
+    (n.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0) ^ 0x9e3779b9) >>>
+    0;
+  const rng = mulberry32(seed);
+  return pickRandomWalkableTile(n, rng);
+}
+
+function joinSpawnBroadcastPayload(roomId: string): {
+  x: number;
+  z: number;
+  customized: boolean;
+} {
+  const n = normalizeRoomId(roomId);
+  const b = getRoomBaseBounds(n);
+  const cx = Math.floor((b.minX + b.maxX) / 2);
+  const cz = Math.floor((b.minZ + b.maxZ) / 2);
+  const custom = getDynamicRoomJoinSpawn(n);
+  if (custom) {
+    const s = snapToTile(custom.x, custom.z);
+    return { x: s.x, z: s.z, customized: true };
+  }
+  const cSnap = snapToTile(cx, cz);
+  return { x: cSnap.x, z: cSnap.z, customized: false };
+}
+
+function joinSpawnWelcomeExtras(
+  roomId: string,
+  address: string
+): {
+  roomJoinSpawn?: { x: number; z: number; customized: boolean };
+  allowRoomJoinSpawnEdit?: boolean;
+} {
+  const n = normalizeRoomId(roomId);
+  if (!isPlayerCreatedRoom(n)) return {};
+  return {
+    roomJoinSpawn: joinSpawnBroadcastPayload(n),
+    allowRoomJoinSpawnEdit: allowActorRoomJoinSpawnEdit(
+      n,
+      compactAddress(address),
+      isAdmin(address)
+    ),
+  };
 }
 
 function roomOf(roomId: string): Map<string, ClientConn> {
@@ -2329,6 +2479,204 @@ function configureTeleporterDestination(
   return true;
 }
 
+/**
+ * True if some human occupies `(tx,tz)` in `roomId`, excluding `ignoreCompact` (empty = exclude nobody).
+ * Used so the editor can stand on the exit or front tile while rotating a gate.
+ */
+function roomTileOccupiedByPlayerOtherThan(
+  roomId: string,
+  tx: number,
+  tz: number,
+  ignoreCompact: string | null
+): boolean {
+  for (const [rid, r] of rooms) {
+    if (normalizeRoomId(rid) !== normalizeRoomId(roomId)) continue;
+    for (const cl of r.values()) {
+      const st = snapToTile(cl.player.x, cl.player.z);
+      if (st.x !== tx || st.z !== tz) continue;
+      if (ignoreCompact && compactAddress(cl.address) === ignoreCompact) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Shared rules for gate exit + front neighbors for **placement / exit edits** (not walkability).
+ * Exit/front may be unwalkable by design; `openGate` still validates walking with `gateWalkBlocked` UX.
+ */
+function gateExitNeighborLayoutValid(
+  roomId: string,
+  gx: number,
+  gz: number,
+  ex: number,
+  ez: number,
+  /** Placer / editor may stand on exit or front while aiming the opening; they do not block those tiles. */
+  neighborsIgnoreOccupantCompact: string | null
+): boolean {
+  if (!inTileBounds(ex, ez)) return false;
+  if (Math.abs(ex - gx) + Math.abs(ez - gz) !== 1) return false;
+  const frontX = gx * 2 - ex;
+  const frontZ = gz * 2 - ez;
+  if (Math.abs(frontX - gx) + Math.abs(frontZ - gz) !== 1) return false;
+  if (!inTileBounds(frontX, frontZ)) return false;
+  if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(gx, gz)) return false;
+  if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(ex, ez)) return false;
+  if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(frontX, frontZ))
+    return false;
+  if (getSignboardAt(roomId, gx, gz)) return false;
+  if (roomTileOccupiedByPlayerOtherThan(roomId, gx, gz, null)) return false;
+  if (roomTileOccupiedByPlayerOtherThan(roomId, ex, ez, neighborsIgnoreOccupantCompact))
+    return false;
+  if (
+    roomTileOccupiedByPlayerOtherThan(
+      roomId,
+      frontX,
+      frontZ,
+      neighborsIgnoreOccupantCompact
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function placePendingGateAt(
+  conn: ClientConn,
+  roomId: string,
+  x: number,
+  z: number,
+  exitDir: number,
+  _faceDir: number,
+  colorId: number
+): boolean {
+  const address = conn.address;
+  if (!canEditRoomContent(roomId, address)) return false;
+  if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) return false;
+  if (!hasRoom(roomId)) return false;
+
+  const placed = placedMap(roomId);
+  const extra = extraFloorSet(roomId);
+  const br = baseRemovedReadonly(roomId);
+
+  const yLevel = nextOpenStackLevel(placed, x, z);
+  if (yLevel !== 0) return false;
+
+  if (!canPlaceTeleporterFoot(roomId, x, z, placed, extra, br)) return false;
+
+  const dirIdx = Math.max(0, Math.min(3, Math.floor(exitDir)));
+  /** Swing variant removed from UX; hinge direction is derived from exit side on the client. */
+  const faceIdx = 0;
+  const [dx, dz] = CARDINAL_DIRS[dirIdx]!;
+  const ex = x + dx;
+  const ez = z + dz;
+  if (
+    !gateExitNeighborLayoutValid(
+      roomId,
+      x,
+      z,
+      ex,
+      ez,
+      compactAddress(address)
+    )
+  ) {
+    return false;
+  }
+
+  const k = blockKey(x, z, 0);
+  const who = compactAddress(address);
+  placed.set(k, {
+    passable: false,
+    half: false,
+    quarter: false,
+    hex: false,
+    pyramid: false,
+    pyramidBaseScale: 1,
+    sphere: false,
+    ramp: false,
+    rampDir: faceIdx,
+    colorId: clampColorId(colorId),
+    locked: false,
+    gate: {
+      adminAddress: who,
+      authorizedAddresses: [who],
+      exitX: ex,
+      exitZ: ez,
+    },
+  });
+  const nRoom = normalizeRoomId(roomId);
+  const dTile = obstacleTileFromPlaced(nRoom, k);
+  if (dTile) {
+    broadcast(nRoom, {
+      type: "obstaclesDelta",
+      roomId: nRoom,
+      add: [dTile],
+      remove: [],
+    });
+  }
+  schedulePersistWorldState();
+  logGameplayEvent(conn.sessionId, address, nRoom, "place_gate", {
+    x,
+    z,
+    exitX: ex,
+    exitZ: ez,
+    exitDir: dirIdx,
+    faceDir: faceIdx,
+    colorId: clampColorId(colorId),
+  });
+  return true;
+}
+
+function tickExpiredGatesForRoom(roomId: string, now: number): boolean {
+  const placed = roomPlaced.get(roomId);
+  if (!placed) return false;
+  const addTiles: ObstacleTile[] = [];
+  for (const [k, v] of placed) {
+    if (!v.gateOpen || now < v.gateOpen.untilMs) continue;
+    const { gateOpen: _go, ...rest } = v;
+    placed.set(k, rest as PlacedProps);
+    const d = obstacleTileFromPlaced(roomId, k);
+    if (d) addTiles.push(d);
+  }
+  if (addTiles.length === 0) return false;
+  broadcast(roomId, {
+    type: "obstaclesDelta",
+    roomId,
+    add: addTiles,
+    remove: [],
+  });
+  schedulePersistWorldState();
+  return true;
+}
+
+/** Set `gateOpen`, broadcast obstacle delta, persist — shared by successful opens and blocked swing UX. */
+function applyGateOpenForTile(
+  roomId: string,
+  tileKey: string,
+  base: PlacedProps,
+  openerCompact: string,
+  now: number
+): void {
+  const placed = placedMap(roomId);
+  placed.set(tileKey, {
+    ...base,
+    gateOpen: {
+      openedBy: openerCompact,
+      untilMs: now + GATE_OPEN_PASS_MS,
+    },
+  });
+  const dTile = obstacleTileFromPlaced(roomId, tileKey);
+  if (dTile) {
+    broadcast(roomId, {
+      type: "obstaclesDelta",
+      roomId,
+      add: [dTile],
+      remove: [],
+    });
+  }
+  schedulePersistWorldState();
+}
+
 function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>): void {
   const alreadyFinished = canvasFinishers.some((f) => f.address === conn.address);
   if (alreadyFinished) return;
@@ -2753,6 +3101,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       allowRoomBackgroundHueEdit,
       roomBackgroundHueDeg: welcomeBgState.hueDeg,
       roomBackgroundNeutral: welcomeBgState.neutral,
+      ...joinSpawnWelcomeExtras(targetRoomId, address),
     } satisfies OutMsg);
   sendRoomCatalog(conn.ws, address);
 
@@ -2783,6 +3132,7 @@ export function startRoomTick(): void {
       const dt = TICK_MS / 1000;
       let changed = false;
       const placed = placedMap(roomId);
+      if (tickExpiredGatesForRoom(roomId, now)) changed = true;
       const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
       for (const c of room.values()) {
         const result = advanceAlongPathHuman(
@@ -2816,12 +3166,17 @@ export function startRoomTick(): void {
           });
         }
         if (c.pathQueue.length === 0) {
+          const moverCtx: PathfindMoverContext = {
+            address: compactAddress(c.address),
+            nowMs: now,
+          };
           const drift = resolveNearestTerrainNode(
             roomId,
             c.player.x,
             c.player.y,
             c.player.z,
-            placed
+            placed,
+            moverCtx
           );
           if (drift) {
             const wy = waypointY(
@@ -2836,7 +3191,7 @@ export function startRoomTick(): void {
               c.player.z - drift.z
             );
             if (d > STANCE_SNAP_DRIFT_EPS) {
-              snapPlayerToTerrainGrid(c.player, placed, roomId);
+              snapPlayerToTerrainGrid(c.player, placed, roomId, moverCtx);
               changed = true;
             }
           }
@@ -3042,6 +3397,14 @@ export function addClient(
       }
     }
   }
+  if (!resolvedSpawnTile && !isCanvasRoom) {
+    const def = resolveDefaultSpawnForPlayerRoom(roomId);
+    if (def) {
+      player.x = def.x;
+      player.z = def.z;
+      resolvedSpawnTile = true;
+    }
+  }
 
   if (resolvedSpawnTile) {
     reconcileSpawnY(player, roomId);
@@ -3160,6 +3523,7 @@ export function addClient(
       allowRoomBackgroundHueEdit: joinAllowRoomBackgroundHueEdit,
       roomBackgroundHueDeg: joinWelcomeBgState.hueDeg,
       roomBackgroundNeutral: joinWelcomeBgState.neutral,
+      ...joinSpawnWelcomeExtras(roomId, address),
     } satisfies OutMsg);
   sendRoomCatalog(ws, address);
 
@@ -3425,6 +3789,7 @@ export function addClient(
         isPublic?: boolean;
         backgroundHueDeg?: number | null;
         backgroundNeutral?: RoomBackgroundNeutral | null;
+        joinSpawn?: { x: number; z: number } | null;
       } = {};
       if (msg.displayName !== undefined) {
         patch.displayName = String(msg.displayName);
@@ -3464,17 +3829,58 @@ export function addClient(
         }
         patch.backgroundNeutral = nn.neutral;
       }
+      const rawJoinSpawn = (msg as { joinSpawn?: unknown }).joinSpawn;
+      if (rawJoinSpawn !== undefined) {
+        if (rawJoinSpawn === null) {
+          patch.joinSpawn = null;
+        } else if (rawJoinSpawn && typeof rawJoinSpawn === "object") {
+          const ox = Number((rawJoinSpawn as { x?: unknown }).x);
+          const oz = Number((rawJoinSpawn as { z?: unknown }).z);
+          if (!Number.isFinite(ox) || !Number.isFinite(oz)) {
+            wsSafeSend(ws, {
+                type: "chat",
+                from: "System",
+                fromAddress: "SYSTEM",
+                text: "Entry spawn needs numeric x and z.",
+                at: Date.now(),
+              } satisfies OutMsg);
+            return;
+          }
+          const st = snapToTile(ox, oz);
+          if (!isWalkableForRoom(roomId, st.x, st.z)) {
+            wsSafeSend(ws, {
+                type: "chat",
+                from: "System",
+                fromAddress: "SYSTEM",
+                text: "Entry spawn must be a walkable floor tile.",
+                at: Date.now(),
+              } satisfies OutMsg);
+            return;
+          }
+          patch.joinSpawn = { x: st.x, z: st.z };
+        } else {
+          wsSafeSend(ws, {
+              type: "chat",
+              from: "System",
+              fromAddress: "SYSTEM",
+              text: "joinSpawn must be null or { x, z }.",
+              at: Date.now(),
+            } satisfies OutMsg);
+          return;
+        }
+      }
       if (
         patch.displayName === undefined &&
         patch.isPublic === undefined &&
         patch.backgroundHueDeg === undefined &&
-        patch.backgroundNeutral === undefined
+        patch.backgroundNeutral === undefined &&
+        patch.joinSpawn === undefined
       ) {
         wsSafeSend(ws, {
             type: "chat",
             from: "System",
             fromAddress: "SYSTEM",
-            text: "Send a display name, public/private setting, and/or background options.",
+            text: "Send a room field to update (name, visibility, background, or entry spawn).",
             at: Date.now(),
           } satisfies OutMsg);
         return;
@@ -3496,17 +3902,27 @@ export function addClient(
         return;
       }
       broadcastRoomCatalogToAll();
+      const nR = normalizeRoomId(roomId);
       if (
         patch.backgroundHueDeg !== undefined ||
         patch.backgroundNeutral !== undefined
       ) {
-        const nR = normalizeRoomId(roomId);
         const st = getDynamicRoomBackgroundState(nR);
         broadcast(nR, {
           type: "roomBackgroundHue",
           roomId: nR,
           hueDeg: st.hueDeg,
           neutral: st.neutral,
+        });
+      }
+      if (patch.joinSpawn !== undefined) {
+        const p = joinSpawnBroadcastPayload(nR);
+        broadcast(nR, {
+          type: "roomJoinSpawn",
+          roomId: nR,
+          x: p.x,
+          z: p.z,
+          customized: p.customized,
         });
       }
       return;
@@ -3574,8 +3990,15 @@ export function addClient(
         return;
       }
       const b = getRoomBaseBounds(targetRoomId);
-      const spawnX = Math.floor((b.minX + b.maxX) / 2);
-      const spawnZ = Math.floor((b.minZ + b.maxZ) / 2);
+      let spawnX = Math.floor((b.minX + b.maxX) / 2);
+      let spawnZ = Math.floor((b.minZ + b.maxZ) / 2);
+      if (isPlayerCreatedRoom(targetRoomId)) {
+        const t = resolveDefaultSpawnForPlayerRoom(targetRoomId);
+        if (t) {
+          spawnX = t.x;
+          spawnZ = t.z;
+        }
+      }
       teleportPlayer(conn, targetRoomId, spawnX, spawnZ);
       return;
     }
@@ -3604,9 +4027,18 @@ export function addClient(
       const p = conn.player;
       const placed = placedMap(currentRoomId);
       const extra = extraFloorSet(currentRoomId);
-      const startNode = resolvePathfindStartNode(currentRoomId, p, placed);
+      const moverCtx: PathfindMoverContext = {
+        address: compactAddress(address),
+        nowMs: now,
+      };
+      const startNode = resolvePathfindStartNode(
+        currentRoomId,
+        p,
+        placed,
+        moverCtx
+      );
       if (!startNode) {
-        snapPlayerToTerrainGrid(p, placed, currentRoomId);
+        snapPlayerToTerrainGrid(p, placed, currentRoomId, moverCtx);
         conn.pathQueue = [];
         pendingTickStateBroadcast.add(currentRoomId);
         return;
@@ -3624,7 +4056,8 @@ export function addClient(
         placed,
         extra,
         currentRoomId,
-        baseRemovedReadonly(currentRoomId)
+        baseRemovedReadonly(currentRoomId),
+        moverCtx
       );
       if (!full || full.length === 0) {
         const prevWorld = { x: p.x, y: p.y, z: p.z };
@@ -3635,7 +4068,8 @@ export function addClient(
           goalLayer,
           placed,
           extra,
-          startNode.layer
+          startNode.layer,
+          moverCtx
         );
         if (!recovered) {
           logMovementDebug("moveTo:noPath", {
@@ -3647,7 +4081,7 @@ export function addClient(
             dest,
             goalLayer,
           });
-          snapPlayerToTerrainGrid(p, placed, currentRoomId);
+          snapPlayerToTerrainGrid(p, placed, currentRoomId, moverCtx);
           conn.pathQueue = [];
           pendingTickStateBroadcast.add(currentRoomId);
           return;
@@ -3843,6 +4277,308 @@ export function addClient(
       return;
     }
 
+    if (msg.type === "placePendingGate") {
+      if (!canEditRoomContent(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      const exitDir = Number(msg.exitDir ?? 0);
+      const faceDir = Number(msg.faceDir ?? 0);
+      const gateColorId = clampColorId(Number(msg.colorId ?? 7));
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const tile = snapToTile(tx, tz);
+      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      const ok = placePendingGateAt(
+        conn,
+        currentRoomId,
+        tile.x,
+        tile.z,
+        exitDir,
+        faceDir,
+        gateColorId
+      );
+      if (!ok) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "",
+          text: "Could not place gate. Use an empty floor tile on layer 0 within build rules (not canvas); avoid hub spawn tiles, signposts on the gate tile, or other players on the gate or its two neighbor tiles.",
+          at: now,
+        } satisfies OutMsg);
+      }
+      return;
+    }
+
+    if (msg.type === "openGate") {
+      const now = Date.now();
+      const gx = Math.round(Number(msg.x));
+      const gz = Math.round(Number(msg.z));
+      const gy = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
+      if (!Number.isFinite(gx) || !Number.isFinite(gz)) return;
+      if (!withinBlockActionRange(conn.player, gx, gz)) return;
+      if (!isOrthogonallyAdjacentToTile(conn.player.x, conn.player.z, gx, gz)) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "",
+          text: "Stand next to the gate to open it.",
+          at: now,
+        } satisfies OutMsg);
+        return;
+      }
+      const placed = placedMap(currentRoomId);
+      const k = blockKey(gx, gz, gy);
+      const v = placed.get(k);
+      if (!v?.gate) return;
+      const gNorm = normalizeGateConfig(v.gate);
+      if (!gNorm) return;
+      const whoC = compactAddress(address);
+      const inHub = normalizeRoomId(currentRoomId) === HUB_ROOM_ID;
+      const authOk =
+        inHub ||
+        isAdmin(address) ||
+        gNorm.authorizedAddresses.some((a) => compactAddress(a) === whoC);
+      if (!authOk) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "",
+          text: "You are not allowed to open this gate.",
+          at: now,
+        } satisfies OutMsg);
+        return;
+      }
+      if (v.gateOpen && now < v.gateOpen.untilMs) return;
+
+      const ex = v.gate.exitX;
+      const ez = v.gate.exitZ;
+      if (Math.abs(ex - gx) + Math.abs(ez - gz) !== 1) return;
+      const frontX = gx * 2 - ex;
+      const frontZ = gz * 2 - ez;
+      if (Math.abs(frontX - gx) + Math.abs(frontZ - gz) !== 1) return;
+      const extra = extraFloorSet(currentRoomId);
+      const br = baseRemovedReadonly(currentRoomId);
+      const exitWalkable = floorWalkableTerrain(
+        ex,
+        ez,
+        placed,
+        extra,
+        currentRoomId,
+        br
+      );
+      const frontWalkable = floorWalkableTerrain(
+        frontX,
+        frontZ,
+        placed,
+        extra,
+        currentRoomId,
+        br
+      );
+      const who = compactAddress(address);
+
+      if (!exitWalkable || !frontWalkable) {
+        applyGateOpenForTile(currentRoomId, k, v, who, now);
+        wsSafeSend(ws, {
+          type: "gateWalkBlocked",
+          x: gx,
+          z: gz,
+          y: gy,
+        } satisfies OutMsg);
+        return;
+      }
+
+      applyGateOpenForTile(currentRoomId, k, v, who, now);
+
+      const p = conn.player;
+      const moverCtx: PathfindMoverContext = { address: who, nowMs: now };
+      const startNode = resolvePathfindStartNode(
+        currentRoomId,
+        p,
+        placed,
+        moverCtx
+      );
+      if (!startNode) {
+        const cur = placed.get(k);
+        if (cur) {
+          const { gateOpen: _go, ...rest } = cur;
+          placed.set(k, rest as PlacedProps);
+          const rb = obstacleTileFromPlaced(currentRoomId, k);
+          if (rb) {
+            broadcast(currentRoomId, {
+              type: "obstaclesDelta",
+              roomId: currentRoomId,
+              add: [rb],
+              remove: [],
+            });
+          }
+          schedulePersistWorldState();
+        }
+        return;
+      }
+      const ps = snapToTile(p.x, p.z);
+      const onBack = ps.x === ex && ps.z === ez;
+      const onFront = ps.x === frontX && ps.z === frontZ;
+      const goalX = onBack && !onFront ? frontX : ex;
+      const goalZ = onBack && !onFront ? frontZ : ez;
+
+      const full = pathfindTerrain(
+        startNode.x,
+        startNode.z,
+        startNode.layer,
+        goalX,
+        goalZ,
+        0,
+        placed,
+        extra,
+        currentRoomId,
+        br,
+        moverCtx
+      );
+      if (!full || full.length < 1) {
+        wsSafeSend(ws, {
+          type: "gateWalkBlocked",
+          x: gx,
+          z: gz,
+          y: gy,
+        } satisfies OutMsg);
+        return;
+      }
+      if (full.length < 2) {
+        conn.pathQueue = [];
+      } else {
+        conn.pathQueue = full.slice(1);
+      }
+      pendingTickStateBroadcast.add(currentRoomId);
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "open_gate", {
+        gx,
+        gz,
+        gy,
+        exitX: ex,
+        exitZ: ez,
+        goalX,
+        goalZ,
+      });
+      return;
+    }
+
+    if (msg.type === "setGateAuthorizedAddresses") {
+      if (!canEditRoomContent(currentRoomId, address)) return;
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      const ty = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const tile = snapToTile(tx, tz);
+      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      const placed = placedMap(currentRoomId);
+      const entry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
+      if (!entry?.props.gate) return;
+      const existing = entry.props;
+      if (existing.locked && !isAdmin(address)) {
+        wsSafeSend(ws, { type: "error", code: "object_locked" });
+        return;
+      }
+      const gateRaw = existing.gate;
+      if (!gateRaw) return;
+      const gPrev = normalizeGateConfig(gateRaw);
+      if (!gPrev) return;
+      const requesterC = compactAddress(address);
+      const canEditAcl =
+        isAdmin(address) || requesterC === gPrev.adminAddress;
+      if (!canEditAcl) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "",
+          text: "Only the gate owner or a server admin can change who may open this gate.",
+          at: now,
+        } satisfies OutMsg);
+        return;
+      }
+      const raw = msg.addresses;
+      if (!Array.isArray(raw) || raw.length === 0) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "",
+          text: "Provide at least one wallet allowed to open the gate.",
+          at: now,
+        } satisfies OutMsg);
+        return;
+      }
+      let next: string[] = [];
+      for (const a of raw) {
+        const c = compactAddress(String(a));
+        if (c) next.push(c);
+      }
+      next = [...new Set(next)].slice(0, GATE_AUTH_MAX);
+      if (next.length === 0) return;
+      if (!next.includes(gPrev.adminAddress)) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "",
+          text: "The gate owner must stay on the access list.",
+          at: now,
+        } satisfies OutMsg);
+        return;
+      }
+      const inRoom = humanCompactAddressesInRoom(currentRoomId);
+      const prevSet = new Set(gPrev.authorizedAddresses);
+      const strictRoom = !isAdmin(address);
+      for (const a of next) {
+        if (prevSet.has(a)) continue;
+        if (strictRoom && !inRoom.has(a)) {
+          wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "",
+            text: "You can only add players who are currently in this room.",
+            at: now,
+          } satisfies OutMsg);
+          return;
+        }
+      }
+      const { key: storageKey } = entry;
+      const canonicalKey = blockKey(tile.x, tile.z, ty);
+      if (storageKey !== canonicalKey) {
+        placed.delete(storageKey);
+      }
+      const nextProps: PlacedProps = {
+        ...existing,
+        gate: {
+          adminAddress: gPrev.adminAddress,
+          authorizedAddresses: next,
+          exitX: gPrev.exitX,
+          exitZ: gPrev.exitZ,
+        },
+      };
+      placed.set(canonicalKey, nextProps);
+      const deltaGate = obstacleTileFromPlaced(currentRoomId, canonicalKey);
+      if (deltaGate) {
+        broadcast(currentRoomId, {
+          type: "obstaclesDelta",
+          roomId: currentRoomId,
+          add: [deltaGate],
+          remove: storageKey !== canonicalKey ? [storageKey] : [],
+        });
+      }
+      schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "set_gate_acl", {
+        x: tile.x,
+        z: tile.z,
+        y: ty,
+        count: next.length,
+      });
+      return;
+    }
+
     if (msg.type === "configureTeleporter") {
       if (!canEditRoomContent(currentRoomId, address)) {
         return;
@@ -3945,7 +4681,107 @@ export function addClient(
       
       // Only admins can change lock status
       const finalLocked = isAdmin(address) ? locked : (existing.locked || false);
-      
+
+      if (existing.gate && ty === 0) {
+        const gx = tile.x;
+        const gz = tile.z;
+        const rawExit = Number(msg.gateExitDir);
+        let exitIdx = 0;
+        if (Number.isFinite(rawExit)) {
+          exitIdx = Math.max(0, Math.min(3, Math.floor(rawExit)));
+        } else {
+          const g = existing.gate;
+          const edx = g.exitX - gx;
+          const edz = g.exitZ - gz;
+          for (let i = 0; i < 4; i++) {
+            const d = CARDINAL_DIRS[i]!;
+            if (d[0] === edx && d[1] === edz) {
+              exitIdx = i;
+              break;
+            }
+          }
+        }
+        const [gdx, gdz] = CARDINAL_DIRS[exitIdx]!;
+        const ex = gx + gdx;
+        const ez = gz + gdz;
+        if (
+          !gateExitNeighborLayoutValid(
+            currentRoomId,
+            gx,
+            gz,
+            ex,
+            ez,
+            compactAddress(address)
+          )
+        ) {
+          wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "",
+            text: "Could not update gate. Keep a cardinal opening direction; avoid hub spawn tiles, a signpost on the gate tile, or other players on the gate or its exit/front tiles.",
+            at: now,
+          } satisfies OutMsg);
+          return;
+        }
+        const swingDir = Math.max(
+          0,
+          Math.min(3, Math.floor(Number(msg.rampDir ?? existing.rampDir ?? 0)))
+        );
+        const nextColor = clampColorId(
+          Number(msg.colorId ?? existing.colorId ?? 0)
+        );
+        const gNorm = normalizeGateConfig(existing.gate);
+        if (!gNorm) return;
+        const nextProps: PlacedProps = {
+          passable: false,
+          half: false,
+          quarter: false,
+          hex: false,
+          pyramid: false,
+          pyramidBaseScale: 1,
+          sphere: false,
+          ramp: false,
+          rampDir: swingDir,
+          colorId: nextColor,
+          locked: finalLocked,
+          gate: {
+            adminAddress: gNorm.adminAddress,
+            authorizedAddresses: [...gNorm.authorizedAddresses],
+            exitX: ex,
+            exitZ: ez,
+          },
+          ...(existing.claimable !== undefined ? { claimable: existing.claimable } : {}),
+          ...(existing.active !== undefined ? { active: existing.active } : {}),
+          ...(existing.cooldownMs !== undefined ? { cooldownMs: existing.cooldownMs } : {}),
+          ...(existing.lastClaimedAt !== undefined ? { lastClaimedAt: existing.lastClaimedAt } : {}),
+          ...(existing.claimReactivateAtMs !== undefined
+            ? { claimReactivateAtMs: existing.claimReactivateAtMs }
+            : {}),
+          ...(existing.claimedBy !== undefined ? { claimedBy: existing.claimedBy } : {}),
+        };
+        placed.set(canonicalKey, nextProps);
+        const deltaGate = obstacleTileFromPlaced(currentRoomId, canonicalKey);
+        if (deltaGate) {
+          broadcast(currentRoomId, {
+            type: "obstaclesDelta",
+            roomId: currentRoomId,
+            add: [deltaGate],
+            remove: storageKey !== canonicalKey ? [storageKey] : [],
+          });
+        }
+        schedulePersistWorldState();
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "set_gate_props", {
+          x: tile.x,
+          z: tile.z,
+          y: ty,
+          exitX: ex,
+          exitZ: ez,
+          swingDir,
+          colorId: nextColor,
+        });
+        return;
+      }
+
       placed.set(canonicalKey, {
         passable,
         half,
@@ -3967,6 +4803,8 @@ export function addClient(
           ? { claimReactivateAtMs: existing.claimReactivateAtMs }
           : {}),
         ...(existing.claimedBy !== undefined ? { claimedBy: existing.claimedBy } : {}),
+        ...(existing.gate ? { gate: existing.gate } : {}),
+        ...(existing.gateOpen ? { gateOpen: existing.gateOpen } : {}),
       });
       const deltaTile = obstacleTileFromPlaced(currentRoomId, canonicalKey);
       if (deltaTile) {
@@ -4489,7 +5327,22 @@ export function addClient(
         if (st.x === to.x && st.z === to.z) return;
       }
       placed.delete(fk);
-      placed.set(destKey, { ...props });
+      let movedProps: PlacedProps = { ...props };
+      if (movedProps.gate) {
+        const dx = to.x - from.x;
+        const dz = to.z - from.z;
+        movedProps = {
+          ...movedProps,
+          gate: {
+            ...movedProps.gate,
+            exitX: movedProps.gate.exitX + dx,
+            exitZ: movedProps.gate.exitZ + dz,
+          },
+        };
+        const { gateOpen: _gone, ...noOpen } = movedProps;
+        movedProps = noOpen;
+      }
+      placed.set(destKey, movedProps);
 
       // If there's a signboard at the old location, move it to the new location
       const signboard = fy === 0 ? getSignboardAt(currentRoomId, from.x, from.z) : null;

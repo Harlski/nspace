@@ -62,13 +62,17 @@ import {
   blockKey,
   type FloorTile,
   floorWalkableTerrain,
+  gatePassageNeighborHintsOk,
   inferStartLayerClient,
   isBaseTile,
+  isGatePassableForMover,
   isWalkableTile,
+  type PathfindMoverContext,
   pathfindTerrain,
   snapFloorTile,
   tileKey,
   waypointWorldY,
+  isOrthogonallyAdjacentToFloorTile,
 } from "./grid.js";
 import {
   type RoomBounds,
@@ -743,6 +747,8 @@ const FLOATING_REWARD_MINING_TEXT_OUTLINE_PX = 18;
 const FLOATING_REWARD_LOGO_OUTLINE_PX = 3;
 const FLOATING_REWARD_MINING_LOGO_OUTLINE_PX = 6;
 const FLOATING_REWARD_DEFAULT_DURATION_MS = 2000;
+/** Plain floaters (spring motion): extra time for damped settle before fade-out. */
+const FLOATING_SPRING_DURATION_MS = 2600;
 /** Mining reward floater stays 1s longer than generic floaters (TODO). */
 const FLOATING_REWARD_MINING_DURATION_MS = 3000;
 const FLOATING_REWARD_MINING_FONT = "bold 64px 'Muli', sans-serif";
@@ -866,6 +872,8 @@ export class Game {
     startY: number;
     /** Total visible lifetime in ms (mining rewards use longer). */
     durationMs: number;
+    /** `classic` = legacy ease-up + fade; `spring` = half-rise then damped settle. */
+    verticalMotion: "classic" | "spring";
   }>();
   private readonly targetPos = new Map<string, THREE.Vector3>();
   private ro: ResizeObserver;
@@ -880,12 +888,24 @@ export class Game {
     null;
   private claimBlockHandler: ((x: number, z: number, y: number) => void) | null =
     null;
+  /** Walk mode: double primary click on an adjacent gate invokes open / denied feedback. */
+  private gateDoubleOpenHandler:
+    | ((x: number, z: number, y: number) => void)
+    | null = null;
+  private lastGatePrimaryTap: { key: string; at: number } | null = null;
+  private static readonly GATE_DOUBLE_TAP_MS = 420;
   private moveBlockHandler:
     | ((fromX: number, fromZ: number, toX: number, toZ: number) => void)
     | null = null;
   private obstacleSelectHandler: ((x: number, z: number, y: number) => void) | null =
     null;
   private placeExtraFloorHandler: ((x: number, z: number) => void) | null = null;
+  /**
+   * When set, the next successful walkable floor pointer-up in floor-expand mode
+   * invokes this with tile coords then clears (room entry spawn pick).
+   */
+  private roomEntrySpawnPickHandler: ((x: number, z: number) => void) | null =
+    null;
   private removeExtraFloorHandler: ((x: number, z: number) => void) | null = null;
   private buildMode = false;
   /** Place walkable tiles outside the core room (toggle with F). */
@@ -940,6 +960,9 @@ export class Game {
   private placementClaimable = false;
   /** Live props for the object-edit tile inspector 3D preview (null = panel closed). */
   private inspectorSelectionObstacle: ObstacleProps | null = null;
+  /** Tile coords for selection preview (gates need true tile for exit alignment). */
+  private inspectorSelectionTileRef: { x: number; z: number; y: number } | null =
+    null;
   /** Off-main-scene 1×1 tile + block mesh for build bar / object panel. */
   private inspectorPlacementPort: InspectorTilePreviewPort | null = null;
   private inspectorSelectionPort: InspectorTilePreviewPort | null = null;
@@ -1041,6 +1064,35 @@ export class Game {
   private readonly placementHintGeom: THREE.PlaneGeometry;
   private readonly placementHintMat: THREE.MeshBasicMaterial;
   private readonly placementHintMeshes = new Map<string, THREE.Mesh>();
+  /** Gate tool: soft green/red on exit vs front neighbor tiles (matches server gate layout rules). */
+  private gateFloorHintsActive = false;
+  private repositionGateHint: {
+    fromX: number;
+    fromZ: number;
+    fromYLevel: number;
+    exitX: number;
+    exitZ: number;
+    colorId: number;
+    rampDir: number;
+    quarter: boolean;
+    half: boolean;
+    adminAddress: string;
+    authorizedAddresses: string[];
+  } | null = null;
+  /**
+   * While repositioning a gate, the placed mesh at the source tile keeps this exit (world coords)
+   * so panel/server preview updates do not rotate the solid block — only the transparent ghost does.
+   */
+  private repositionGatePlacedVisualFreeze: { exitX: number; exitZ: number } | null =
+    null;
+  /** Last pointer position (px) for refreshing gate move / neighbor previews without pointer motion. */
+  private readonly lastPointerClientPixels = { x: 0, y: 0 };
+  private repositionGateGhostGroup: THREE.Group | null = null;
+  private repositionGateGhostSig = "";
+  private gateNeighborExitHint: THREE.Mesh | null = null;
+  private gateNeighborFrontHint: THREE.Mesh | null = null;
+  private readonly gateNeighborOkMat: THREE.MeshBasicMaterial;
+  private readonly gateNeighborBadMat: THREE.MeshBasicMaterial;
   /** Active touch pointers on the canvas (for two-finger pinch zoom). */
   private readonly touchPointers = new Map<
     number,
@@ -1101,6 +1153,16 @@ export class Game {
   } | null = null;
   private static readonly SELF_EMOJI_LONGPRESS_MS = 480;
   private static readonly SELF_EMOJI_LONGPRESS_MOVE_PX = 14;
+
+  private gateContextOpener:
+    | ((
+        pick: {
+          blockKey: string;
+          clientX: number;
+          clientY: number;
+        }
+      ) => void)
+    | null = null;
 
   /** Right-click / long-press other human (non-NPC) avatar — HUD context menu. */
   private otherPlayerContextOpener:
@@ -1308,6 +1370,18 @@ export class Game {
       opacity: 0.14,
       depthWrite: false,
     });
+    this.gateNeighborOkMat = new THREE.MeshBasicMaterial({
+      color: 0x22c55e,
+      transparent: true,
+      opacity: 0.26,
+      depthWrite: false,
+    });
+    this.gateNeighborBadMat = new THREE.MeshBasicMaterial({
+      color: 0xef4444,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+    });
 
     this.billboardFootprintPreviewGeom = new THREE.PlaneGeometry(0.92, 0.92);
     this.billboardFootprintPreviewValidMat = new THREE.MeshBasicMaterial({
@@ -1385,6 +1459,21 @@ export class Game {
     this.teleporterLinkHighlight.position.set(0, 0.024, 0);
     this.teleporterLinkHighlight.visible = false;
     this.scene.add(this.teleporterLinkHighlight);
+
+    this.roomEntrySpawnRingMat = new THREE.MeshBasicMaterial({
+      color: 0x34d399,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.roomEntrySpawnRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.22, 0.42, 48),
+      this.roomEntrySpawnRingMat
+    );
+    this.roomEntrySpawnRing.rotation.x = -Math.PI / 2;
+    this.roomEntrySpawnRing.visible = false;
+    this.scene.add(this.roomEntrySpawnRing);
 
     const fogInner = Game.readFogNumber(LS_FOG_INNER, FOG_INNER_RADIUS);
     const fogOuter = Game.readFogNumber(LS_FOG_OUTER, FOG_OUTER_RADIUS);
@@ -1577,6 +1666,9 @@ export class Game {
     this.selectedBlockKey = null;
     this.selectionOutline.visible = false;
     this.teleporterLinkHighlight.visible = false;
+    this.roomJoinSpawnTile = null;
+    this.roomEntrySpawnRing.visible = false;
+    this.roomEntrySpawnPickHandler = null;
     this.hideTrailImmediate();
     this.beginPathFadeOut();
     this.syncWalkableFloorMeshes();
@@ -1588,6 +1680,35 @@ export class Game {
     if (normalizeRoomId(prevRoomId) === CANVAS_ROOM_ID && normalizeRoomId(this.roomId) !== CANVAS_ROOM_ID) {
       this.clearCanvasIdenticons();
     }
+  }
+
+  setRoomJoinSpawnFromWelcome(
+    tile: { x: number; z: number; customized: boolean } | null
+  ): void {
+    this.roomJoinSpawnTile = tile;
+    this.syncRoomEntrySpawnMarker(performance.now() * 0.001);
+  }
+
+  private syncRoomEntrySpawnMarker(phaseSec: number): void {
+    const ring = this.roomEntrySpawnRing;
+    if (!this.floorExpandMode || !this.roomJoinSpawnTile) {
+      ring.visible = false;
+      return;
+    }
+    const t = this.roomJoinSpawnTile;
+    ring.position.set(
+      t.x,
+      0.042 + 0.012 * Math.sin(phaseSec * 3.6),
+      t.z
+    );
+    const pulse = 1 + 0.06 * Math.sin(phaseSec * 2.8);
+    ring.scale.set(pulse, pulse, 1);
+    this.roomEntrySpawnRingMat.color.setHex(
+      t.customized ? 0x2dd4bf : 0x6ee7b7
+    );
+    this.roomEntrySpawnRingMat.opacity =
+      0.72 + 0.2 * Math.sin(phaseSec * 2.2);
+    ring.visible = true;
   }
 
   setRoomChangeHandler(
@@ -2015,6 +2136,22 @@ export class Game {
       e.stopPropagation();
       return;
     }
+    if (!this.buildMode && this.gateContextOpener) {
+      const bk = this.pickBlockKey(e.clientX, e.clientY);
+      if (bk) {
+        const m = this.placedObjects.get(bk);
+        if (m?.gate) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.gateContextOpener({
+            blockKey: bk,
+            clientX: e.clientX,
+            clientY: e.clientY,
+          });
+          return;
+        }
+      }
+    }
     const g = this.pickClosestAvatarGroupAt(e.clientX, e.clientY);
     if (!g) return;
     const address = String(g.userData.address ?? "");
@@ -2120,7 +2257,9 @@ export class Game {
           Game.PENDING_WALK_CANCEL_DRAG_PX;
         this.clearPendingPrimaryWalk(slop);
         if (slop) {
-          this.tryExecuteWalkNavigationAt(e.clientX, e.clientY);
+          if (!this.tryGateDoubleOpenAt(e.clientX, e.clientY)) {
+            this.tryExecuteWalkNavigationAt(e.clientX, e.clientY);
+          }
         } else {
           this.refreshPathLine();
         }
@@ -2266,6 +2405,12 @@ export class Game {
     this.claimBlockHandler = handler;
   }
 
+  setGateDoubleOpenHandler(
+    handler: ((x: number, z: number, y: number) => void) | null
+  ): void {
+    this.gateDoubleOpenHandler = handler;
+  }
+
   setMoveBlockHandler(
     handler:
       | ((fromX: number, fromZ: number, toX: number, toZ: number) => void)
@@ -2301,6 +2446,23 @@ export class Game {
     if (!handler) this.clearOtherProfileTouchSession();
   }
 
+  setGateContextOpener(
+    handler:
+      | ((pick: {
+          blockKey: string;
+          clientX: number;
+          clientY: number;
+        }) => void)
+      | null
+  ): void {
+    this.gateContextOpener = handler;
+  }
+
+  /** Placement ramp direction 0–3 (also used as gate exit cardinal). */
+  getPlacementRampDir(): number {
+    return this.placementRampDir;
+  }
+
   private clearSelfEmojiTouchSession(): void {
     if (!this.selfEmojiTouchSession) return;
     clearTimeout(this.selfEmojiTouchSession.timer);
@@ -2317,6 +2479,13 @@ export class Game {
     handler: ((x: number, z: number) => void) | null
   ): void {
     this.placeExtraFloorHandler = handler;
+  }
+
+  /** Arm next floor-expand click to set room entry spawn (cleared after fire or mode exit). */
+  setRoomEntrySpawnPickHandler(
+    handler: ((x: number, z: number) => void) | null
+  ): void {
+    this.roomEntrySpawnPickHandler = handler;
   }
 
   setRemoveExtraFloorHandler(
@@ -2983,10 +3152,35 @@ export class Game {
     this.teleporterLinkHighlight.visible = true;
   }
 
-  beginReposition(x: number, z: number): void {
+  beginReposition(x: number, z: number, yLevel = 0): void {
     this.clearPlacementPreview();
     this.clearRepositionBillboardVisualState();
     this.repositionFrom = { x, y: z };
+    const yb = Math.max(0, Math.min(2, Math.floor(yLevel)));
+    const gateMeta = this.placedObjects.get(blockKey(x, z, yb));
+    if (gateMeta?.gate) {
+      const g = gateMeta.gate;
+      this.repositionGateHint = {
+        fromX: x,
+        fromZ: z,
+        fromYLevel: yb,
+        exitX: g.exitX,
+        exitZ: g.exitZ,
+        colorId: gateMeta.colorId,
+        rampDir: gateMeta.rampDir & 3,
+        quarter: gateMeta.quarter,
+        half: gateMeta.half,
+        adminAddress: g.adminAddress,
+        authorizedAddresses: [...(g.authorizedAddresses ?? [])],
+      };
+      this.repositionGatePlacedVisualFreeze = {
+        exitX: g.exitX,
+        exitZ: g.exitZ,
+      };
+    } else {
+      this.repositionGateHint = null;
+      this.repositionGatePlacedVisualFreeze = null;
+    }
     const bb = this.billboardIdForFloorTile(x, z, 0);
     this.repositionBillboardId = bb;
     if (bb) {
@@ -3000,12 +3194,26 @@ export class Game {
   cancelReposition(): void {
     this.clearRepositionBillboardVisualState();
     this.repositionFrom = null;
+    this.repositionGateHint = null;
+    this.repositionGatePlacedVisualFreeze = null;
     this.clearPlacementPreview();
     this.syncHighlightColor();
   }
 
   isRepositioning(): boolean {
     return this.repositionFrom !== null;
+  }
+
+  /**
+   * Re-run gate-move neighbor tint and transparent ghost using the last canvas pointer position
+   * (e.g. after changing opening direction from the object panel without moving the mouse).
+   */
+  refreshGateRepositionPreviewsFromStoredPointer(): void {
+    this.refreshGateNeighborTileHints(
+      this.lastPointerClientPixels.x,
+      this.lastPointerClientPixels.y,
+      null
+    );
   }
 
   setBillboardPlacementPreviewActive(active: boolean): void {
@@ -3161,7 +3369,7 @@ export class Game {
     if (!this.moveBlockHandler) return false;
     const t = this.getSelectedBlockTile();
     if (!t) return false;
-    this.beginReposition(t.x, t.z);
+    this.beginReposition(t.x, t.z, t.y);
     return true;
   }
 
@@ -3173,12 +3381,15 @@ export class Game {
       this.clearPlacementPreview();
       this.clearRepositionBillboardVisualState();
       this.repositionFrom = null;
+      this.repositionGateHint = null;
+      this.repositionGatePlacedVisualFreeze = null;
       this.setBillboardPlacementPreviewActive(false);
       this.clearSelectedBlock();
     }
     this.syncHighlightColor();
     this.refreshSelectionOutline();
     this.syncPlacementRangeHints();
+    this.syncRoomEntrySpawnMarker(performance.now() * 0.001);
   }
 
   getBuildMode(): boolean {
@@ -3193,10 +3404,15 @@ export class Game {
       this.clearPlacementPreview();
       this.clearRepositionBillboardVisualState();
       this.repositionFrom = null;
+      this.repositionGateHint = null;
+      this.repositionGatePlacedVisualFreeze = null;
       this.setBillboardPlacementPreviewActive(false);
+    } else {
+      this.roomEntrySpawnPickHandler = null;
     }
     this.syncHighlightColor();
     this.syncPlacementRangeHints();
+    this.syncRoomEntrySpawnMarker(performance.now() * 0.001);
   }
 
   getFloorExpandMode(): boolean {
@@ -3974,6 +4190,13 @@ export class Game {
             targetZ: number;
             targetRoomDisplayName?: string;
           };
+      gate?: {
+        adminAddress: string;
+        authorizedAddresses: string[];
+        exitX: number;
+        exitZ: number;
+      };
+      gateOpen?: { openedBy: string; untilMs: number };
     }[]
   ): void {
     this.placedObjects.clear();
@@ -4017,6 +4240,8 @@ export class Game {
         lastClaimedAt: t.lastClaimedAt,
         claimedBy: t.claimedBy,
         teleporter: t.teleporter,
+        gate: t.gate,
+        gateOpen: t.gateOpen,
       });
       if (y === 0 && !t.passable && !prism.ramp) {
         this.blockingTileKeys.add(tileKey(t.x, t.z));
@@ -4061,6 +4286,13 @@ export class Game {
             targetZ: number;
             targetRoomDisplayName?: string;
           };
+      gate?: {
+        adminAddress: string;
+        authorizedAddresses: string[];
+        exitX: number;
+        exitZ: number;
+      };
+      gateOpen?: { openedBy: string; untilMs: number };
     }[],
     remove: readonly string[]
   ): void {
@@ -4125,6 +4357,8 @@ export class Game {
         lastClaimedAt: t.lastClaimedAt,
         claimedBy: t.claimedBy,
         teleporter: t.teleporter,
+        gate: t.gate,
+        gateOpen: t.gateOpen,
       });
 
       if (y === 0 && !t.passable && !prism.ramp) {
@@ -4358,6 +4592,263 @@ export class Game {
       });
       this.placementPreviewGroup = null;
     }
+    this.clearGateNeighborFloorHints();
+    this.clearRepositionGateGhost();
+  }
+
+  /** Build bar gate tool: show exit/front neighbor tint while hovering a valid anchor tile. */
+  setGateFloorHintsActive(on: boolean): void {
+    this.gateFloorHintsActive = on;
+    if (!on) {
+      this.clearGateNeighborFloorHints();
+    }
+  }
+
+  private clearGateNeighborFloorHints(): void {
+    if (this.gateNeighborExitHint) {
+      this.gateNeighborExitHint.visible = false;
+    }
+    if (this.gateNeighborFrontHint) {
+      this.gateNeighborFrontHint.visible = false;
+    }
+  }
+
+  private clearRepositionGateGhost(): void {
+    if (!this.repositionGateGhostGroup) {
+      this.repositionGateGhostSig = "";
+      return;
+    }
+    this.scene.remove(this.repositionGateGhostGroup);
+    this.repositionGateGhostGroup.traverse((child: THREE.Object3D) => {
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        (child.material as THREE.Material).dispose();
+      }
+    });
+    this.repositionGateGhostGroup = null;
+    this.repositionGateGhostSig = "";
+  }
+
+  /**
+   * Gate move preview: exit/front at hover follow live panel edits (opening rotation) and anchor delta.
+   */
+  private resolveGateRepositionPreviewAtHover(hover: {
+    x: number;
+    z: number;
+  }): { gx: number; gz: number; ex: number; ez: number } | null {
+    const h = this.repositionGateHint;
+    if (!h) return null;
+    const g = this.inspectorSelectionObstacle?.gate;
+    const baseEx = g?.exitX ?? h.exitX;
+    const baseEz = g?.exitZ ?? h.exitZ;
+    return {
+      gx: hover.x,
+      gz: hover.z,
+      ex: baseEx + (hover.x - h.fromX),
+      ez: baseEz + (hover.z - h.fromZ),
+    };
+  }
+
+  private syncRepositionGateGhost(
+    hoverGx: number,
+    hoverGz: number,
+    p: { gx: number; gz: number; ex: number; ez: number }
+  ): void {
+    const hint = this.repositionGateHint;
+    if (!hint) {
+      this.clearRepositionGateGhost();
+      return;
+    }
+    const ins = this.inspectorSelectionObstacle;
+    const colorId = ins?.colorId ?? hint.colorId;
+    const quarter = ins?.quarter ?? hint.quarter;
+    const half = ins?.half ?? hint.half;
+    const rampDir = ins?.rampDir ?? hint.rampDir;
+    const admin = ins?.gate?.adminAddress ?? hint.adminAddress;
+    const auth = ins?.gate?.authorizedAddresses ?? hint.authorizedAddresses;
+    const meta: BlockStyleProps = {
+      passable: false,
+      quarter,
+      half,
+      hex: false,
+      pyramid: false,
+      pyramidBaseScale: 1,
+      sphere: false,
+      ramp: false,
+      rampDir: rampDir & 3,
+      colorId,
+      gate: {
+        adminAddress: admin,
+        authorizedAddresses: [...auth],
+        exitX: p.ex,
+        exitZ: p.ez,
+      },
+    };
+    const sig = `${hoverGx}|${hoverGz}|${p.ex}|${p.ez}|${colorId}|${quarter}|${half}|${rampDir & 3}|${admin}|${auth.join(",")}`;
+    const hVis = this.obstacleHeight(meta);
+    const vis = this.blockVisualScale;
+    const yWorld = hint.fromYLevel * BLOCK_SIZE + (hVis * vis) / 2;
+    if (this.repositionGateGhostSig === sig && this.repositionGateGhostGroup) {
+      this.repositionGateGhostGroup.position.set(hoverGx, yWorld, hoverGz);
+      return;
+    }
+    this.clearRepositionGateGhost();
+    this.repositionGateGhostSig = sig;
+    this.repositionGateGhostGroup = this.makeBlockMesh(meta, {
+      ghost: true,
+      tileX: hoverGx,
+      tileZ: hoverGz,
+    });
+    this.repositionGateGhostGroup.position.set(hoverGx, yWorld, hoverGz);
+    this.scene.add(this.repositionGateGhostGroup);
+  }
+
+  private ensureGateNeighborHintMeshes(): void {
+    if (this.gateNeighborExitHint && this.gateNeighborFrontHint) {
+      return;
+    }
+    const mk = (): THREE.Mesh => {
+      const m = new THREE.Mesh(this.placementHintGeom, this.gateNeighborBadMat);
+      m.rotation.x = -Math.PI / 2;
+      m.renderOrder = 2;
+      m.visible = false;
+      this.scene.add(m);
+      return m;
+    };
+    this.gateNeighborExitHint = mk();
+    this.gateNeighborFrontHint = mk();
+  }
+
+  private playerOccupiesFloorTile(tx: number, tz: number): boolean {
+    if (this.selfMesh) {
+      const t = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+      if (t.x === tx && t.y === tz) return true;
+    }
+    for (const g of this.others.values()) {
+      const t = snapFloorTile(g.position.x, g.position.z);
+      if (t.x === tx && t.y === tz) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Exit/front gate hint: local player may stand on that tile while aiming; only **other**
+   * avatars count as blocking (matches server gate neighbor rules).
+   */
+  private gateNeighborExitFrontTileBlockedByOthers(tx: number, tz: number): boolean {
+    for (const g of this.others.values()) {
+      const t = snapFloorTile(g.position.x, g.position.z);
+      if (t.x === tx && t.y === tz) return true;
+    }
+    return false;
+  }
+
+  private syncGateNeighborFloorHints(p: {
+    gx: number;
+    gz: number;
+    ex: number;
+    ez: number;
+  }): void {
+    this.ensureGateNeighborHintMeshes();
+    const frontX = p.gx * 2 - p.ex;
+    const frontZ = p.gz * 2 - p.ez;
+    const { exitOk, frontOk } = gatePassageNeighborHintsOk({
+      roomId: this.roomId,
+      gx: p.gx,
+      gz: p.gz,
+      ex: p.ex,
+      ez: p.ez,
+      placed: this.placedObjects,
+      extraWalkable: this.extraFloorKeys,
+      baseRemoved:
+        this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined,
+      signboardOnGateTile: this.signboards.has(tileKey(p.gx, p.gz)),
+      playerOnTile: (x, z) => {
+        if (x === p.ex && z === p.ez) {
+          return this.gateNeighborExitFrontTileBlockedByOthers(x, z);
+        }
+        if (x === frontX && z === frontZ) {
+          return this.gateNeighborExitFrontTileBlockedByOthers(x, z);
+        }
+        return this.playerOccupiesFloorTile(x, z);
+      },
+    });
+    const exitM = this.gateNeighborExitHint!;
+    const frontM = this.gateNeighborFrontHint!;
+    exitM.position.set(p.ex, 0.024, p.ez);
+    frontM.position.set(frontX, 0.024, frontZ);
+    exitM.material = exitOk ? this.gateNeighborOkMat : this.gateNeighborBadMat;
+    frontM.material = frontOk ? this.gateNeighborOkMat : this.gateNeighborBadMat;
+    exitM.visible = true;
+    frontM.visible = true;
+  }
+
+  private tryGateMoveHoverTile(
+    clientX: number,
+    clientY: number
+  ): { x: number; z: number } | null {
+    if (
+      !this.selfMesh ||
+      !this.repositionFrom ||
+      this.repositionBillboardId ||
+      !this.repositionGateHint
+    ) {
+      return null;
+    }
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest || !this.tileWalkable(dest)) return null;
+    const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    if (Math.hypot(here.x - dest.x, here.y - dest.y) > this.placeRadiusBlocks + 1e-6) {
+      return null;
+    }
+    if (this.hubNoBuildTile(dest.x, dest.y)) return null;
+    if (here.x === dest.x && here.y === dest.y) return null;
+    if (this.hasAnyBlockAtTile(dest.x, dest.y)) return null;
+    return { x: dest.x, z: dest.y };
+  }
+
+  private refreshGateNeighborTileHints(
+    clientX: number,
+    clientY: number,
+    placeTile: { x: number; z: number } | null
+  ): void {
+    const dirs: readonly [number, number][] = [
+      [1, 0],
+      [0, 1],
+      [-1, 0],
+      [0, -1],
+    ];
+    if (
+      this.gateFloorHintsActive &&
+      placeTile &&
+      !this.repositionFrom &&
+      !this.billboardPlacementPreview
+    ) {
+      const [dx, dz] = dirs[this.placementRampDir & 3]!;
+      this.syncGateNeighborFloorHints({
+        gx: placeTile.x,
+        gz: placeTile.z,
+        ex: placeTile.x + dx,
+        ez: placeTile.z + dz,
+      });
+      return;
+    }
+    if (this.repositionGateHint && this.repositionFrom && !this.repositionBillboardId) {
+      const hover = this.tryGateMoveHoverTile(clientX, clientY);
+      if (hover) {
+        const preview = this.resolveGateRepositionPreviewAtHover(hover);
+        if (preview) {
+          this.syncGateNeighborFloorHints(preview);
+          this.syncRepositionGateGhost(hover.x, hover.z, preview);
+        }
+      } else {
+        this.clearGateNeighborFloorHints();
+        this.clearRepositionGateGhost();
+      }
+      return;
+    }
+    this.clearGateNeighborFloorHints();
+    this.clearRepositionGateGhost();
   }
 
   private syncPlacementPreviewAt(wx: number, wz: number, wyLevel: number): void {
@@ -4378,7 +4869,11 @@ export class Game {
         this.placementPreviewGroup = null;
       }
       this.placementPreviewStyleSig = sig;
-      this.placementPreviewGroup = this.makeBlockMesh(meta, { ghost: true });
+      this.placementPreviewGroup = this.makeBlockMesh(meta, {
+        ghost: true,
+        tileX: wx,
+        tileZ: wz,
+      });
       this.scene.add(this.placementPreviewGroup);
     }
     this.placementPreviewAnchor = { x: wx, z: wz, y: wyLevel };
@@ -4454,7 +4949,12 @@ export class Game {
       const distance = Math.hypot(dx, dz);
       if (distance <= this.placeRadiusBlocks + 1e-6) return null;
       const k = tileKey(dest.x, dest.y);
-      if (this.blockingTileKeys.has(k)) return null;
+      if (
+        this.blockingTileKeys.has(k) &&
+        !this.selfGatePassFloorTile(dest.x, dest.y)
+      ) {
+        return null;
+      }
       return { ft: dest, layer: 0 };
     }
 
@@ -4474,8 +4974,27 @@ export class Game {
     const dest = this.pickWalkableTile(clientX, clientY);
     if (!dest) return null;
     const k = tileKey(dest.x, dest.y);
-    if (this.blockingTileKeys.has(k)) return null;
+    if (
+      this.blockingTileKeys.has(k) &&
+      !this.selfGatePassFloorTile(dest.x, dest.y)
+    ) {
+      return null;
+    }
     return { ft: dest, layer: 0 };
+  }
+
+  /** True when this tile is a gate the local player may walk while it is open for them. */
+  private selfGatePassFloorTile(tx: number, tz: number): boolean {
+    const meta =
+      this.placedObjects.get(blockKey(tx, tz, 0)) ??
+      this.placedObjects.get(tileKey(tx, tz));
+    if (!meta || !this.selfAddress) return false;
+    return isGatePassableForMover(
+      meta,
+      this.selfAddress.replace(/\s+/g, "").toUpperCase(),
+      Date.now(),
+      this.roomId
+    );
   }
 
   /** Show the route the player would take if they release at the current pick (pointerdown). */
@@ -4504,6 +5023,48 @@ export class Game {
     } else {
       this.tileClickHandler(goal.ft.x, goal.ft.y, 0);
     }
+  }
+
+  /**
+   * When the player double-clicks the same gate mesh (primary, low movement), and they are
+   * adjacent and within place radius, invokes {@link gateDoubleOpenHandler} and returns
+   * true so the deferred walk is skipped. Otherwise returns false.
+   */
+  private tryGateDoubleOpenAt(clientX: number, clientY: number): boolean {
+    if (this.buildMode || !this.selfMesh || !this.gateDoubleOpenHandler) {
+      return false;
+    }
+    const blockKey = this.pickBlockKey(clientX, clientY);
+    if (!blockKey) return false;
+    const meta = this.placedObjects.get(blockKey);
+    if (!meta?.gate) return false;
+    const now = performance.now();
+    const prev = this.lastGatePrimaryTap;
+    const isDouble =
+      prev !== null &&
+      prev.key === blockKey &&
+      now - prev.at <= Game.GATE_DOUBLE_TAP_MS;
+    if (!isDouble) {
+      this.lastGatePrimaryTap = { key: blockKey, at: now };
+      return false;
+    }
+    this.lastGatePrimaryTap = null;
+    const parts = blockKey.split(",").map(Number);
+    const bx = parts[0];
+    const bz = parts[1];
+    if (bx === undefined || bz === undefined) return false;
+    const by =
+      parts.length >= 3 && Number.isFinite(parts[2])
+        ? Math.max(0, Math.min(2, Math.floor(parts[2]!)))
+        : 0;
+    const px = this.selfMesh.position.x;
+    const pz = this.selfMesh.position.z;
+    if (!isOrthogonallyAdjacentToFloorTile(px, pz, bx, bz)) return false;
+    const dx = px - bx;
+    const dz = pz - bz;
+    if (Math.hypot(dx, dz) > this.placeRadiusBlocks + 1e-6) return false;
+    this.gateDoubleOpenHandler(bx, bz, by);
+    return true;
   }
 
   private updateNdc(clientX: number, clientY: number): boolean {
@@ -4679,6 +5240,8 @@ export class Game {
       e.preventDefault();
       return;
     }
+    this.lastPointerClientPixels.x = e.clientX;
+    this.lastPointerClientPixels.y = e.clientY;
     if (e.pointerType === "touch") {
       this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
@@ -4722,16 +5285,19 @@ export class Game {
       e.pointerId === this.pendingBuildPlace.pointerId
     ) {
       const t = this.tryBuildPlacementFloorTile(e.clientX, e.clientY);
+      let placeForHints: { x: number; z: number } | null = null;
       if (t && !this.billboardPlacementPreview) {
         const yLevel = this.nextOpenLevelAt(t.x, t.z);
         if (yLevel !== null) {
           this.syncPlacementPreviewAt(t.x, t.z, yLevel);
+          placeForHints = t;
         } else {
           this.clearPlacementPreview();
         }
       } else if (!t) {
         this.clearPlacementPreview();
       }
+      this.refreshGateNeighborTileHints(e.clientX, e.clientY, placeForHints);
     }
     if (this.touchPointers.size >= 2) {
       if (this.zoomLocked) {
@@ -4823,6 +5389,7 @@ export class Game {
         this.clearPlacementPreview();
         const meta = this.placedObjects.get(blockHit);
         if (meta && !meta.passable && !meta.ramp) {
+          this.clearGateNeighborFloorHints();
           const [bx, bz, byRaw] = blockHit.split(",").map(Number);
           const by = Number.isFinite(byRaw) ? Math.floor(byRaw ?? 0) : 0;
           const h = this.obstacleHeight(meta);
@@ -4845,6 +5412,7 @@ export class Game {
         }
       }
       if (this.repositionFrom && this.repositionBillboardId) {
+        this.clearGateNeighborFloorHints();
         this.lastBillboardPointerClientX = e.clientX;
         this.lastBillboardPointerClientY = e.clientY;
         this.syncBillboardRepositionPreviews(e.clientX, e.clientY);
@@ -4852,6 +5420,7 @@ export class Game {
         return;
       }
       if (this.billboardPlacementPreview) {
+        this.clearGateNeighborFloorHints();
         this.lastBillboardPointerClientX = e.clientX;
         this.lastBillboardPointerClientY = e.clientY;
         this.syncBillboardPlacementPreviews(e.clientX, e.clientY);
@@ -4873,6 +5442,7 @@ export class Game {
         this.clearPlacementPreview();
         this.tileHighlight.visible = false;
       }
+      this.refreshGateNeighborTileHints(e.clientX, e.clientY, placeTile);
       this.signboardHoverHandler?.(null);
       return;
     }
@@ -5136,6 +5706,13 @@ export class Game {
     if (this.floorExpandMode) {
       const dest = this.pickFloor(e.clientX, e.clientY);
       if (!dest) return;
+      if (this.roomEntrySpawnPickHandler) {
+        if (!this.tileWalkable(dest)) return;
+        const fn = this.roomEntrySpawnPickHandler;
+        this.roomEntrySpawnPickHandler = null;
+        fn(dest.x, dest.y);
+        return;
+      }
       const k = tileKey(dest.x, dest.y);
       if (this.extraFloorKeys.has(k) && !isBaseTile(dest.x, dest.y, this.roomId)) {
         if (this.hasAnyBlockAtTile(dest.x, dest.y)) return;
@@ -5457,6 +6034,7 @@ export class Game {
     this.clearOtherProfileTouchSession();
     this.selfQuickEmojiOpener = null;
     this.otherPlayerContextOpener = null;
+    this.gateDoubleOpenHandler = null;
     if (this.selfMesh) {
       this.disposeAvatarGroup(this.selfMesh);
       this.scene.remove(this.selfMesh);
@@ -5504,6 +6082,8 @@ export class Game {
     this.selectionOutlineMat.dispose();
     this.teleporterLinkHighlight.geometry.dispose();
     this.teleporterLinkHighlightMat.dispose();
+    this.roomEntrySpawnRing.geometry.dispose();
+    this.roomEntrySpawnRingMat.dispose();
     this.tileHighlightMat.dispose();
     this.blockTopHighlight.geometry.dispose();
     (this.blockTopHighlight.material as THREE.Material).dispose();
@@ -5664,12 +6244,20 @@ export class Game {
       return;
     }
     const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    const moverCtx: PathfindMoverContext | null = this.selfAddress
+      ? {
+          address: this.selfAddress.replace(/\s+/g, "").toUpperCase(),
+          nowMs: Date.now(),
+        }
+      : null;
     if (here.x === goal.ft.x && here.y === goal.ft.y) {
       const curLayer = inferStartLayerClient(
         this.selfMesh.position.x,
         this.selfMesh.position.z,
         this.selfMesh.position.y,
-        this.placedObjects
+        this.placedObjects,
+        moverCtx,
+        this.roomId
       );
       if (curLayer === goal.layer) {
         if (this.pathPreviewGoal) {
@@ -5687,7 +6275,9 @@ export class Game {
       this.selfMesh.position.x,
       this.selfMesh.position.z,
       this.selfMesh.position.y,
-      this.placedObjects
+      this.placedObjects,
+      moverCtx,
+      this.roomId
     );
     const remaining = pathfindTerrain(
       here.x,
@@ -5699,7 +6289,8 @@ export class Game {
       this.placedObjects,
       this.extraFloorKeys,
       this.roomId,
-      this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined
+      this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined,
+      moverCtx ?? undefined
     );
     if (!remaining || remaining.length < 2) {
       if (this.pathPreviewGoal) {
@@ -6192,14 +6783,44 @@ export class Game {
     return VOXEL_TEXT_ROTATE_STEP_RAD;
   }
 
+  /** Gate move: draw the source block with frozen opening while `repositionGatePlacedVisualFreeze` is set. */
+  private gateRepositionPlacedRenderMeta(
+    wx: number,
+    wz: number,
+    wyLevel: number,
+    meta: BlockStyleProps
+  ): BlockStyleProps {
+    const rh = this.repositionGateHint;
+    const rf = this.repositionGatePlacedVisualFreeze;
+    if (
+      !rh ||
+      !rf ||
+      !meta.gate ||
+      wx !== rh.fromX ||
+      wz !== rh.fromZ ||
+      wyLevel !== rh.fromYLevel
+    ) {
+      return meta;
+    }
+    return {
+      ...meta,
+      gate: {
+        ...meta.gate,
+        exitX: rf.exitX,
+        exitZ: rf.exitZ,
+      },
+    };
+  }
+
   private syncBlockMeshes(): void {
     const seen = new Set(this.placedObjects.keys());
     for (const k of seen) {
-      const meta = this.placedObjects.get(k)!;
+      const metaRaw = this.placedObjects.get(k)!;
       const parts = k.split(",").map(Number);
       const wx = parts[0]!;
       const wz = parts[1]!;
       const wyLevel = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
+      const meta = this.gateRepositionPlacedRenderMeta(wx, wz, wyLevel, metaRaw);
       let g = this.blockMeshes.get(k);
       if (
         wyLevel === 0 &&
@@ -6232,7 +6853,9 @@ export class Game {
         prev.colorId === meta.colorId &&
         prev.claimable === meta.claimable &&
         prev.active === meta.active &&
-        JSON.stringify(prev.teleporter) === JSON.stringify(meta.teleporter);
+        JSON.stringify(prev.teleporter) === JSON.stringify(meta.teleporter) &&
+        JSON.stringify(prev.gate) === JSON.stringify(meta.gate) &&
+        JSON.stringify(prev.gateOpen) === JSON.stringify(meta.gateOpen);
       if (unchanged) {
         continue;
       }
@@ -6241,7 +6864,7 @@ export class Game {
         disposePlacedBlockGroupContents(g);
         this.blockMeshes.delete(k);
       }
-      g = this.makeBlockMesh(meta);
+      g = this.makeBlockMesh(meta, { tileX: wx, tileZ: wz });
       g.userData.tileKey = k;
       g.userData.blockMeta = { ...meta };
       g.userData.blockRenderScale = vis;
@@ -6264,6 +6887,77 @@ export class Game {
     if (meta.quarter) return BLOCK_SIZE * 0.25;
     if (meta.half) return BLOCK_SIZE * 0.5;
     return BLOCK_SIZE;
+  }
+
+  /**
+   * One thin panel for {@link BlockStyleProps.gate}: hinge on the front (non-exit) edge,
+   * ~90° about Y when `gateOpen` is active. Swing handedness follows exit side only.
+   */
+  private makeGateBlockGroup(
+    meta: BlockStyleProps,
+    ghost: boolean,
+    tileX: number,
+    tileZ: number
+  ): THREE.Group {
+    const gate = meta.gate;
+    const h = this.obstacleHeight(meta);
+    const vis = this.blockVisualScale;
+    const hVis = h * vis;
+    const B = BLOCK_SIZE * vis;
+    const base = blockColorHex(meta.colorId);
+    const mat = new THREE.MeshStandardMaterial({
+      color: base,
+      roughness: 0.55,
+      metalness: 0.18,
+      transparent: ghost,
+      opacity: ghost ? 0.42 : 1,
+      depthWrite: !ghost,
+    });
+    const root = new THREE.Group();
+    if (!gate) {
+      return root;
+    }
+    const dirs: readonly [number, number][] = [
+      [1, 0],
+      [0, 1],
+      [-1, 0],
+      [0, -1],
+    ];
+    const edx = gate.exitX - tileX;
+    const edz = gate.exitZ - tileZ;
+    let exitIdx = 0;
+    for (let i = 0; i < 4; i++) {
+      const d = dirs[i]!;
+      if (d[0] === edx && d[1] === edz) {
+        exitIdx = i;
+        break;
+      }
+    }
+    const open =
+      Boolean(meta.gateOpen) && Date.now() < (meta.gateOpen?.untilMs ?? 0);
+    /** Consistent hinge direction from exit side only (not persisted `rampDir`). */
+    const swingSign = exitIdx === 0 || exitIdx === 3 ? 1 : -1;
+    const openYaw = open ? swingSign * (Math.PI / 2) : 0;
+
+    const align = new THREE.Group();
+    align.rotation.y = (-exitIdx * Math.PI) / 2;
+
+    const pivot = new THREE.Group();
+    pivot.position.set(-B * 0.46, 0, 0);
+    pivot.rotation.y = openYaw;
+
+    const thick = B * 0.08;
+    const span = B * 0.94;
+    const doorGeom = new THREE.BoxGeometry(thick, hVis, span);
+    const door = new THREE.Mesh(doorGeom, mat);
+    door.position.set(B * 0.47, 0, 0);
+    door.castShadow = false;
+    door.receiveShadow = false;
+
+    pivot.add(door);
+    align.add(pivot);
+    root.add(align);
+    return root;
   }
 
   /** Wedge with low edge at −X and high edge at +X, then rotated by `rampDir` (0–3). */
@@ -6293,9 +6987,17 @@ export class Game {
 
   private makeBlockMesh(
     meta: BlockStyleProps,
-    opts?: { ghost?: boolean }
+    opts?: { ghost?: boolean; tileX?: number; tileZ?: number }
   ): THREE.Group {
     const ghost = Boolean(opts?.ghost);
+    if (meta.gate) {
+      const tx = opts?.tileX;
+      const tz = opts?.tileZ;
+      if (Number.isFinite(tx) && Number.isFinite(tz)) {
+        return this.makeGateBlockGroup(meta, ghost, tx!, tz!);
+      }
+      return this.makeGateBlockGroup(meta, ghost, 0, 0);
+    }
     const h = this.obstacleHeight(meta);
     const vis = this.blockVisualScale;
     const hVis = h * vis;
@@ -6581,6 +7283,7 @@ export class Game {
     this.updateChatBubbles();
     this.updateTypingIndicatorAnimation();
     this.updateFloatingTexts();
+    this.syncRoomEntrySpawnMarker(performance.now() * 0.001);
   }
 
   /** Canonical corner yaw in [0, 2π) nearest to `yawRad` (any real angle). */
@@ -6775,16 +7478,23 @@ export class Game {
     z: number,
     text: string,
     color = "#ffc107",
-    opts?: { nimLogo?: boolean }
+    opts?: {
+      nimLogo?: boolean;
+      /** Default: spring for plain text, classic when `nimLogo` is true. */
+      verticalMotion?: "classic" | "spring";
+    }
   ): void {
     const key = `${x},${z},${Date.now()}`;
     const nimLogo = Boolean(opts?.nimLogo);
+    const verticalMotion =
+      opts?.verticalMotion ?? (nimLogo ? "classic" : "spring");
     const label =
       nimLogo ? text.replace(/\s*NIM\s*$/i, "").trim() : text;
 
     const addSpriteFromCanvas = (
       canvas: HTMLCanvasElement,
-      durationMs: number
+      durationMs: number,
+      motion: "classic" | "spring"
     ): void => {
       const w = canvas.width;
       const h = canvas.height;
@@ -6817,6 +7527,7 @@ export class Game {
         startedAt: performance.now(),
         startY,
         durationMs,
+        verticalMotion: motion,
       });
     };
 
@@ -6837,7 +7548,11 @@ export class Game {
       ctx.textBaseline = "middle";
       ctx.textAlign = "center";
       fillTextWithWhiteOutline(ctx, label, w / 2, h / 2, color);
-      addSpriteFromCanvas(canvas, FLOATING_REWARD_DEFAULT_DURATION_MS);
+      const dur =
+        verticalMotion === "spring"
+          ? FLOATING_SPRING_DURATION_MS
+          : FLOATING_REWARD_DEFAULT_DURATION_MS;
+      addSpriteFromCanvas(canvas, dur, verticalMotion);
     };
 
     if (!nimLogo) {
@@ -6905,7 +7620,11 @@ export class Game {
         }
       }
 
-      addSpriteFromCanvas(canvas, FLOATING_REWARD_MINING_DURATION_MS);
+      addSpriteFromCanvas(
+        canvas,
+        FLOATING_REWARD_MINING_DURATION_MS,
+        verticalMotion
+      );
     };
 
     if (logo.complete && logo.naturalWidth > 0) {
@@ -6931,8 +7650,8 @@ export class Game {
 
   private updateFloatingTexts(): void {
     const now = performance.now();
-    const riseDistance = 2.0; // Rise 2 units upward
-    
+    const riseDistanceClassic = 2.0;
+
     for (const [key, entry] of this.floatingTexts) {
       const duration = entry.durationMs;
       const elapsed = now - entry.startedAt;
@@ -6943,15 +7662,38 @@ export class Game {
         this.floatingTexts.delete(key);
         continue;
       }
-      
+
       const progress = elapsed / duration;
-      // Ease out cubic
-      const easeOut = 1 - Math.pow(1 - progress, 3);
-      
-      // Move upward
-      entry.sprite.position.y = entry.startY + riseDistance * easeOut;
-      
-      // Fade out in the last 30% of duration
+
+      if (entry.verticalMotion === "spring") {
+        // Short rise, then small damped wobble toward rest (low excursion, no tall bounce).
+        const peak = 0.28;
+        const riseFrac = 0.2;
+        let yOff: number;
+        if (progress < riseFrac) {
+          const u = progress / riseFrac;
+          const eased = 1 - (1 - u) ** 3;
+          yOff = peak * eased;
+        } else {
+          const u = (progress - riseFrac) / (1 - riseFrac);
+          const damp = Math.exp(-7.5 * u);
+          const wobble = 0.62 + 0.38 * Math.cos(Math.PI * 2 * 1.55 * u);
+          yOff = peak * damp * wobble;
+        }
+        entry.sprite.position.y = entry.startY + yOff;
+        const fadeStart = 0.76;
+        if (progress > fadeStart) {
+          const fadeProgress = (progress - fadeStart) / (1 - fadeStart);
+          entry.material.opacity = 1 - fadeProgress;
+        } else {
+          entry.material.opacity = 1;
+        }
+        continue;
+      }
+
+      const easeOut = 1 - (1 - progress) ** 3;
+      entry.sprite.position.y =
+        entry.startY + riseDistanceClassic * easeOut;
       if (progress > 0.7) {
         const fadeProgress = (progress - 0.7) / 0.3;
         entry.material.opacity = 1 - fadeProgress;
@@ -7172,7 +7914,7 @@ export class Game {
   }
 
   private inspectorTilePreviewSignature(meta: BlockStyleProps): string {
-    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.pyramid}|${meta.pyramidBaseScale ?? 1}|${meta.sphere}|${meta.ramp}|${meta.rampDir}|${meta.colorId}|${Boolean(meta.claimable)}|${this.blockVisualScale}|${this.floorTileQuadSize}`;
+    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.pyramid}|${meta.pyramidBaseScale ?? 1}|${meta.sphere}|${meta.ramp}|${meta.rampDir}|${meta.colorId}|${Boolean(meta.claimable)}|${JSON.stringify(meta.gate ?? null)}|${this.blockVisualScale}|${this.floorTileQuadSize}`;
   }
 
   private applyInspectorPreviewFrustum(
@@ -7212,6 +7954,9 @@ export class Game {
               ramp: this.inspectorSelectionObstacle.ramp,
               rampDir: this.inspectorSelectionObstacle.rampDir,
               colorId: this.inspectorSelectionObstacle.colorId,
+              ...(this.inspectorSelectionObstacle.gate
+                ? { gate: this.inspectorSelectionObstacle.gate }
+                : {}),
             } as BlockStyleProps);
     if (!meta) {
       while (port.blockSlot.children.length > 0) {
@@ -7260,7 +8005,14 @@ export class Game {
           }
         });
       }
-      port.blockSlot.add(this.makeBlockMesh(meta, { ghost: false }));
+      const tRef = this.inspectorSelectionTileRef;
+      port.blockSlot.add(
+        this.makeBlockMesh(meta, {
+          ghost: false,
+          tileX: tRef?.x,
+          tileZ: tRef?.z,
+        })
+      );
     }
     const r = port.canvas.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return;
@@ -7354,6 +8106,20 @@ export class Game {
   /** Updates the object-panel 3D preview; pass `null` when the panel closes. */
   syncInspectorSelectionTilePreview(props: ObstacleProps | null): void {
     this.inspectorSelectionObstacle = props;
+    if (
+      props &&
+      props.editorTileX !== undefined &&
+      props.editorTileZ !== undefined &&
+      props.editorTileY !== undefined
+    ) {
+      this.inspectorSelectionTileRef = {
+        x: props.editorTileX,
+        z: props.editorTileZ,
+        y: props.editorTileY,
+      };
+    } else {
+      this.inspectorSelectionTileRef = null;
+    }
     this.renderInspectorTilePreview("selection");
   }
 

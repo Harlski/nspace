@@ -117,6 +117,17 @@ export type BlockStyleProps = {
         targetZ: number;
         targetRoomDisplayName?: string;
       };
+  gate?: {
+    adminAddress?: string;
+    authorizedAddress?: string;
+    authorizedAddresses?: string[];
+    exitX: number;
+    exitZ: number;
+  };
+  gateOpen?: {
+    openedBy: string;
+    untilMs: number;
+  };
   // Experimental: Claimable/minable blocks
   claimable?: boolean;
   active?: boolean;

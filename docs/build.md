@@ -52,4 +52,4 @@ flowchart LR
   WSrecv --> UI
 ```
 
-Typical server → client messages include: `welcome`, `state` / `stateDelta`, `obstacles` / `obstaclesDelta`, `extraFloor` / `extraFloorDelta`, `playerJoined` / `playerLeft`, `chat`, `signboards`, `billboards`, and room-specific payloads — see [client/src/main.ts](../client/src/main.ts) dispatch and [docs/features-checklist.md](features-checklist.md).
+Typical server → client messages include: `welcome`, `state` / `stateDelta`, `obstacles` / `obstaclesDelta`, `extraFloor` / `extraFloorDelta`, `playerJoined` / `playerLeft`, `chat`, `signboards`, `billboards`, `roomBackgroundHue`, `roomJoinSpawn` (dynamic room entry tile), **`gateWalkBlocked`** (opener-only after `openGate` when the hinge opens but walking across is blocked), and room-specific payloads — see [client/src/main.ts](../client/src/main.ts) dispatch and [docs/features-checklist.md](features-checklist.md).

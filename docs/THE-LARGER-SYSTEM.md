@@ -26,6 +26,10 @@ _Add sections here as the system matures. Keep each bullet concrete enough that 
 
 - **Client-only visuals on authoritative world objects** — Sparkles, auras, and similar **non-gameplay** overlays on server-owned geometry (e.g. placed obstacles) stay **client render only**: they do not change server state. They must **not** participate in block ray picks or build-mode selection **bounds** unless they are intentionally part of the solid body. Mark decorative children explicitly (e.g. `userData.skipBlockPickAndBounds` in [client/src/game/Game.ts](../client/src/game/Game.ts)) and derive selection outlines from solid `THREE.Mesh` descendants only (`blockGroupWorldBoundsForSelectionOutline`).
 
+- **In-world UI copy stays idiomatic** — Context actions, tool labels, and short prompts should read like **controls** (a few words), not tutorials. Prefer **one clear verb phrase** per menu row; put explanations in docs, patch notes, or optional help surfaces—not stacked lines on every right-click. Unauthorized or irrelevant actions belong as **no menu**, a disabled control, or a terse system line—not a paragraph in the menu.
+
+- **Objects vs Room (authoring UI)** — Treat **placeable world content** (blocks, props, billboards, teleporters, etc.) under an **Objects** affordance. Treat **room-level configuration** that is not a placed obstacle—**ambient presentation** (e.g. background hue), **topology affordances** (extra floor where supported), **guest entry spawn**, and similar—under a **Room** affordance. Keep new features on the matching side so players and implementers share one mental model and we avoid overloading the object tool list with room settings.
+
 ---
 
 ## Recorded decisions & forward constraints
@@ -91,3 +95,5 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-05-07** — Companion rationales moved to **`docs/reasons/`** (see [reasons/reason_105892.md](reasons/reason_105892.md)).
 - **2026-05-07** — Player-adjacent persistence: prefer a bounded DB (or similar) over proliferating JSON files; migrate incrementally. See [reasons/reason_472039.md](reasons/reason_472039.md).
 - **2026-05-07** — Recorded decision: header marquee — server owns payload and timing bounds; client owns ticker layout, seamless scroll, and viewport-wide loop distance. See [reasons/reason_770142.md](reasons/reason_770142.md).
+- **2026-05-08** — Principle: in-world UI (context menus, short prompts) stays idiomatic—brief labels, no tutorial paragraphs on every interaction. See [reasons/reason_503821.md](reasons/reason_503821.md).
+- **2026-05-08** — Principle: authoring UI separates **Objects** (placeable content) from **Room** (room-level settings such as background and guest spawn). See [reasons/reason_640281.md](reasons/reason_640281.md).

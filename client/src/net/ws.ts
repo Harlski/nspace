@@ -1,5 +1,8 @@
 import type { PlayerState } from "../types.js";
-import { clampPyramidBaseScale } from "../game/blockStyle.js";
+import {
+  BLOCK_COLOR_COUNT,
+  clampPyramidBaseScale,
+} from "../game/blockStyle.js";
 import { resolveApiBaseUrl } from "./apiBase.js";
 
 export type ObstacleTile = {
@@ -27,6 +30,16 @@ export type ObstacleTile = {
         targetZ: number;
         targetRoomDisplayName?: string;
       };
+  gate?: {
+    adminAddress: string;
+    authorizedAddresses: string[];
+    exitX: number;
+    exitZ: number;
+  };
+  gateOpen?: {
+    openedBy: string;
+    untilMs: number;
+  };
 };
 
 export type ObstacleProps = {
@@ -41,6 +54,19 @@ export type ObstacleProps = {
   rampDir: number;
   colorId: number;
   locked?: boolean;
+  /** Placed gate: ACL + exit/swing edited via object panel / ACL menu. */
+  gate?: {
+    adminAddress: string;
+    authorizedAddresses: string[];
+    exitX: number;
+    exitZ: number;
+  };
+  /** Gate only: cardinal exit index 0–3 (+X,+Z,−X,−Z from gate tile). */
+  gateExitDir?: number;
+  /** Client-only: tile being edited (inspector preview). Not sent on the wire. */
+  editorTileX?: number;
+  editorTileY?: number;
+  editorTileZ?: number;
 };
 
 export type ObstacleRef = {
@@ -170,12 +196,23 @@ export type ServerMessage =
       roomBackgroundHueDeg?: number | null;
       /** Dynamic rooms: solid black / white / gray; overrides hue when non-null. */
       roomBackgroundNeutral?: RoomBackgroundNeutral | null;
+      /** Dynamic rooms: default visitor spawn tile (custom or geometric center). */
+      roomJoinSpawn?: { x: number; z: number; customized: boolean };
+      /** Dynamic rooms: client may send `updateRoom` with `joinSpawn`. */
+      allowRoomJoinSpawnEdit?: boolean;
     }
   | {
       type: "roomBackgroundHue";
       roomId: string;
       hueDeg: number | null;
       neutral?: RoomBackgroundNeutral | null;
+    }
+  | {
+      type: "roomJoinSpawn";
+      roomId: string;
+      x: number;
+      z: number;
+      customized: boolean;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
@@ -233,6 +270,7 @@ export type ServerMessage =
       at: number;
       bubbleOnly?: boolean;
     }
+  | { type: "gateWalkBlocked"; x: number; z: number; y: number }
   | { type: "error"; code: string }
   | { type: "joinRoomFailed"; roomId: string; reason: "not_found" }
   | {
@@ -379,6 +417,70 @@ export function sendPlacePendingTeleporter(
   ws.send(JSON.stringify({ type: "placePendingTeleporter", x, z }));
 }
 
+export function sendPlacePendingGate(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  exitDir: number,
+  faceDir: number,
+  colorId?: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const cid = Math.max(
+    0,
+    Math.min(
+      BLOCK_COLOR_COUNT - 1,
+      Math.floor(Number(colorId ?? 7))
+    )
+  );
+  ws.send(
+    JSON.stringify({
+      type: "placePendingGate",
+      x,
+      z,
+      exitDir: Math.max(0, Math.min(3, Math.floor(exitDir))),
+      faceDir: Math.max(0, Math.min(3, Math.floor(faceDir))),
+      colorId: cid,
+    })
+  );
+}
+
+export function sendOpenGate(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  y: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "openGate",
+      x,
+      z,
+      y: Math.max(0, Math.min(2, Math.floor(y))),
+    })
+  );
+}
+
+export function sendSetGateAuthorizedAddresses(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  y: number,
+  addresses: string[]
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "setGateAuthorizedAddresses",
+      x,
+      z,
+      y: Math.max(0, Math.min(2, Math.floor(y))),
+      addresses,
+    })
+  );
+}
+
 export function sendConfigureTeleporter(
   ws: WebSocket,
   x: number,
@@ -459,6 +561,8 @@ export function sendUpdateRoom(
     isPublic?: boolean;
     backgroundHueDeg?: number | null;
     backgroundNeutral?: RoomBackgroundNeutral | null;
+    /** Set walkable tile for default visitors; null clears to room center. */
+    joinSpawn?: { x: number; z: number } | null;
   }
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
@@ -617,25 +721,32 @@ export function sendSetObstacleProps(
     ? clampPyramidBaseScale(Number(props.pyramidBaseScale ?? 1))
     : 1;
   
-  ws.send(
-    JSON.stringify({
-      type: "setObstacleProps",
-      x,
-      z,
-      y,
-      passable: props.passable,
-      half,
-      quarter,
-      hex,
-      pyramid,
-      pyramidBaseScale,
-      sphere,
-      ramp,
-      rampDir: ramp ? rampDir : 0,
-      colorId: props.colorId,
-      locked,
-    })
-  );
+  const body: Record<string, unknown> = {
+    type: "setObstacleProps",
+    x,
+    z,
+    y,
+    passable: props.passable,
+    half,
+    quarter,
+    hex,
+    pyramid,
+    pyramidBaseScale,
+    sphere,
+    ramp,
+    colorId: props.colorId,
+    locked,
+  };
+  if (props.gate) {
+    body.rampDir = rampDir;
+    body.gateExitDir = Math.max(
+      0,
+      Math.min(3, Math.floor(Number(props.gateExitDir ?? 0)))
+    );
+  } else {
+    body.rampDir = ramp ? rampDir : 0;
+  }
+  ws.send(JSON.stringify(body));
 }
 
 export function sendRemoveObstacle(ws: WebSocket, x: number, z: number): void {

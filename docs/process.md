@@ -6,7 +6,7 @@ How we extend the game and run it locally. Prefer linking to source files over d
 
 Obstacles are the reference case ([server/src/rooms.ts](../server/src/rooms.ts), [client/src/net/ws.ts](../client/src/net/ws.ts), [client/src/game/Game.ts](../client/src/game/Game.ts)):
 
-1. **Server**: Extend stored props (`PlacedProps`), message handlers (`placeBlock`, `setObstacleProps`, …), and `obstaclesToList` / broadcast payloads.
+1. **Server**: Extend stored props (`PlacedProps`), message handlers (`placeBlock`, `setObstacleProps`, dedicated intents like `setGateAuthorizedAddresses` when the edit is not a generic prop patch, …), **server →client** notifications (e.g. `gateWalkBlocked` after `openGate`), and `obstaclesToList` / broadcast payloads.
 2. **Wire types**: Mirror fields on `ObstacleTile` / `ObstacleProps` in `ws.ts`.
 3. **Client game**: Parse in `setObstacles`, keep in `placedObjects`, rebuild or update meshes when relevant fields change.
 4. **HUD**: If players edit the concept, extend the panel / placement bar and message senders.

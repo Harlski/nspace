@@ -1,4 +1,10 @@
-import { getRoomBaseBounds } from "./roomLayouts.js";
+import {
+  CANVAS_ROOM_ID,
+  getRoomBaseBounds,
+  HUB_ROOM_ID,
+  isHubSpawnSafeZone,
+  normalizeRoomId,
+} from "./roomLayouts.js";
 import { TILE_COORD_MAX, TILE_COORD_MIN } from "./constants.js";
 
 /**
@@ -235,7 +241,43 @@ export type TerrainProps = {
         targetZ: number;
         targetRoomDisplayName?: string;
       };
+  gate?: {
+    adminAddress?: string;
+    authorizedAddress?: string;
+    authorizedAddresses?: string[];
+    exitX: number;
+    exitZ: number;
+  };
+  gateOpen?: {
+    openedBy: string;
+    untilMs: number;
+  };
 };
+
+export function normalizeWalletKey(addr: string): string {
+  return String(addr).replace(/\s+/g, "").toUpperCase();
+}
+
+export function isGatePassableForMover(
+  p: TerrainProps | undefined,
+  moverAddress: string | null,
+  nowMs: number,
+  roomId?: string
+): boolean {
+  if (!p?.gate || !p.gateOpen) return false;
+  if (nowMs >= p.gateOpen.untilMs) return false;
+  if (!moverAddress) return false;
+  if (
+    roomId !== undefined &&
+    normalizeRoomId(roomId) === HUB_ROOM_ID
+  ) {
+    return true;
+  }
+  return (
+    normalizeWalletKey(moverAddress) ===
+    normalizeWalletKey(p.gateOpen.openedBy)
+  );
+}
 
 export function terrainObstacleHeight(p: TerrainProps): number {
   if (p.quarter) return TERRAIN_BLOCK * 0.25;
@@ -291,16 +333,31 @@ function inWorldTileBounds(x: number, z: number): boolean {
 /**
  * Same logic as server `inferTerrainStartLayer` (see server `grid.ts`).
  */
+export type PathfindMoverContext = { address: string; nowMs: number };
+
 export function inferTerrainStartLayer(
   wx: number,
   wz: number,
   wy: number,
-  placed: ReadonlyMap<string, TerrainProps>
+  placed: ReadonlyMap<string, TerrainProps>,
+  moverCtx?: PathfindMoverContext | null,
+  roomId?: string
 ): 0 | 1 {
   const t = snapFloorTile(wx, wz);
   const propHere = floorLevelTerrain(placed, t.x, t.y);
   if (propHere?.ramp) return 0;
   if (propHere && !propHere.passable && !propHere.ramp) {
+    if (
+      moverCtx &&
+      isGatePassableForMover(
+        propHere,
+        moverCtx.address,
+        moverCtx.nowMs,
+        roomId
+      )
+    ) {
+      return 0;
+    }
     const h = terrainObstacleHeight(propHere);
     if (wy >= h - STAND_ON_TOP_BELOW) return 1;
     return 0;
@@ -345,6 +402,95 @@ export function floorWalkableTerrain(
   const p = placed.get(tileKey(x, z)) ?? placed.get(blockKey(x, z, 0));
   if (!p) return true;
   if (p.passable || p.ramp) return true;
+  return false;
+}
+
+/**
+ * Per-neighbor clearance for a gate at `(gx,gz)` with exit tile `(ex,ez)` (cardinal neighbor).
+ * **Walkability** here is for green/red hints only; server placement allows unwalkable exit/front.
+ */
+export function gatePassageNeighborHintsOk(opts: {
+  roomId: string;
+  gx: number;
+  gz: number;
+  ex: number;
+  ez: number;
+  placed: ReadonlyMap<string, TerrainProps>;
+  extraWalkable: ReadonlySet<string>;
+  baseRemoved?: ReadonlySet<string> | null;
+  signboardOnGateTile: boolean;
+  playerOnTile: (x: number, z: number) => boolean;
+}): { exitOk: boolean; frontOk: boolean } {
+  const nRoom = normalizeRoomId(opts.roomId);
+  if (nRoom === CANVAS_ROOM_ID) {
+    return { exitOk: false, frontOk: false };
+  }
+  const { gx, gz, ex, ez } = opts;
+  const adj =
+    Math.abs(ex - gx) + Math.abs(ez - gz) === 1 &&
+    inWorldTileBounds(gx, gz) &&
+    inWorldTileBounds(ex, ez);
+  if (!adj) {
+    return { exitOk: false, frontOk: false };
+  }
+  const frontX = gx * 2 - ex;
+  const frontZ = gz * 2 - ez;
+  const frontAdj =
+    Math.abs(frontX - gx) + Math.abs(frontZ - gz) === 1 &&
+    inWorldTileBounds(frontX, frontZ);
+  if (!frontAdj) {
+    return { exitOk: false, frontOk: false };
+  }
+
+  const anchorOk =
+    !opts.signboardOnGateTile &&
+    !(nRoom === HUB_ROOM_ID && isHubSpawnSafeZone(gx, gz)) &&
+    !opts.playerOnTile(gx, gz);
+
+  const exitOk =
+    anchorOk &&
+    floorWalkableTerrain(
+      ex,
+      ez,
+      opts.placed,
+      opts.extraWalkable,
+      opts.roomId,
+      opts.baseRemoved
+    ) &&
+    !(nRoom === HUB_ROOM_ID && isHubSpawnSafeZone(ex, ez)) &&
+    !opts.playerOnTile(ex, ez);
+
+  const frontOk =
+    anchorOk &&
+    floorWalkableTerrain(
+      frontX,
+      frontZ,
+      opts.placed,
+      opts.extraWalkable,
+      opts.roomId,
+      opts.baseRemoved
+    ) &&
+    !(nRoom === HUB_ROOM_ID && isHubSpawnSafeZone(frontX, frontZ)) &&
+    !opts.playerOnTile(frontX, frontZ);
+
+  return { exitOk, frontOk };
+}
+
+export function floorWalkableTerrainForMover(
+  x: number,
+  z: number,
+  placed: ReadonlyMap<string, TerrainProps>,
+  extraWalkable: ReadonlySet<string>,
+  roomId: string,
+  baseRemoved: ReadonlySet<string> | null | undefined,
+  moverAddress: string | null,
+  nowMs: number
+): boolean {
+  if (!isWalkableTile(x, z, extraWalkable, roomId, baseRemoved)) return false;
+  const p = placed.get(tileKey(x, z)) ?? placed.get(blockKey(x, z, 0));
+  if (!p) return true;
+  if (p.passable || p.ramp) return true;
+  if (isGatePassableForMover(p, moverAddress, nowMs, roomId)) return true;
   return false;
 }
 
@@ -404,28 +550,22 @@ function canLeaveRampToFloorNeighbor(
   return false;
 }
 
-function isValidTerrainGoal(
-  tx: number,
-  tz: number,
-  goalLayer: 0 | 1,
-  placed: ReadonlyMap<string, TerrainProps>,
-  extraWalkable: ReadonlySet<string>,
-  roomId: string,
-  baseRemoved?: ReadonlySet<string> | null
-): boolean {
-  if (goalLayer === 0) {
-    return floorWalkableTerrain(tx, tz, placed, extraWalkable, roomId, baseRemoved);
-  }
-  return level1SurfaceOpen(placed, tx, tz);
-}
-
 export function inferStartLayerClient(
   wx: number,
   wz: number,
   wy: number,
-  placed: ReadonlyMap<string, TerrainProps>
+  placed: ReadonlyMap<string, TerrainProps>,
+  moverCtx?: PathfindMoverContext | null,
+  roomId?: string
 ): 0 | 1 {
-  return inferTerrainStartLayer(wx, wz, wy, placed);
+  return inferTerrainStartLayer(
+    wx,
+    wz,
+    wy,
+    placed,
+    moverCtx ?? undefined,
+    roomId
+  );
 }
 
 export function waypointWorldY(
@@ -454,15 +594,40 @@ export function pathfindTerrain(
   placed: ReadonlyMap<string, TerrainProps>,
   extraWalkable: ReadonlySet<string>,
   roomId: string,
-  baseRemoved?: ReadonlySet<string> | null
+  baseRemoved?: ReadonlySet<string> | null,
+  moverCtx?: PathfindMoverContext | null
 ): { x: number; z: number; layer: 0 | 1 }[] | null {
-  if (!isValidTerrainGoal(tx, tz, goalLayer, placed, extraWalkable, roomId, baseRemoved)) {
+  const fw = (x: number, z: number): boolean =>
+    moverCtx
+      ? floorWalkableTerrainForMover(
+          x,
+          z,
+          placed,
+          extraWalkable,
+          roomId,
+          baseRemoved ?? null,
+          moverCtx.address,
+          moverCtx.nowMs
+        )
+      : floorWalkableTerrain(
+          x,
+          z,
+          placed,
+          extraWalkable,
+          roomId,
+          baseRemoved
+        );
+
+  const goalOk =
+    goalLayer === 0
+      ? fw(tx, tz)
+      : level1SurfaceOpen(placed, tx, tz);
+  if (!goalOk) {
     return null;
   }
 
   if (startLayer === 0) {
-    if (!floorWalkableTerrain(sx, sz, placed, extraWalkable, roomId, baseRemoved))
-      return null;
+    if (!fw(sx, sz)) return null;
   } else {
     if (!level1SurfaceOpen(placed, sx, sz)) return null;
   }
@@ -503,8 +668,7 @@ export function pathfindTerrain(
         if (!isWalkableTile(nx, nz, extraWalkable, roomId, baseRemoved)) continue;
         const n0 = terrainNodeKey(nx, nz, 0);
         if (cameFrom.has(n0)) continue;
-        if (!floorWalkableTerrain(nx, nz, placed, extraWalkable, roomId, baseRemoved))
-          continue;
+        if (!fw(nx, nz)) continue;
         const pTarget = floorLevelTerrain(placed, nx, nz);
         if (
           pCurFloor?.ramp &&
@@ -553,10 +717,7 @@ export function pathfindTerrain(
         const nz = cur.z + dz;
         if (!isWalkableTile(nx, nz, extraWalkable, roomId, baseRemoved)) continue;
         const pN = floorLevelTerrain(placed, nx, nz);
-        if (
-          floorWalkableTerrain(nx, nz, placed, extraWalkable, roomId, baseRemoved) &&
-          rampFacesSolid(pN, nx, nz, cur.x, cur.z)
-        ) {
+        if (fw(nx, nz) && rampFacesSolid(pN, nx, nz, cur.x, cur.z)) {
           const fk = terrainNodeKey(nx, nz, 0);
           if (!cameFrom.has(fk)) {
             cameFrom.set(fk, ck);

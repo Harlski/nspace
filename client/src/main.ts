@@ -10,8 +10,15 @@ import {
   saveCachedSession,
 } from "./auth/session.js";
 import { CHAMBER_DEFAULT_SPAWN, ROOM_ID } from "./game/constants.js";
+import type { BlockStyleProps } from "./game/blockStyle.js";
+import {
+  canOpenGateAs,
+  isGateAclAdmin,
+  normalizeClientGate,
+} from "./game/gateAuth.js";
 import { Game } from "./game/Game.js";
 import { isOrthogonallyAdjacentToFloorTile, snapFloorTile } from "./game/grid.js";
+import { remotePlayerIsNpc } from "./remotePlayerNpc.js";
 import {
   HUB_ROOM_ID,
   CHAMBER_ROOM_ID,
@@ -41,13 +48,17 @@ import {
   sendPlaceBillboard,
   sendUpdateBillboard,
   sendPlacePendingTeleporter,
+  sendPlacePendingGate,
+  sendOpenGate,
   sendConfigureTeleporter,
   sendPlaceExtraFloor,
   sendRemoveExtraFloor,
   sendRemoveObstacleAt,
   sendRemoveVoxelText,
   sendSetVoxelText,
+  sendSetGateAuthorizedAddresses,
   sendSetObstacleProps,
+  type ObstacleProps,
   type RoomBackgroundNeutral,
   type ServerMessage,
 } from "./net/ws.js";
@@ -66,6 +77,75 @@ import { nimiqIconUseMarkup } from "./ui/nimiqIcons.js";
 import { mountNimiqPaySiteAdvisory } from "./ui/nimiqPayAdvisory.js";
 
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
+
+const GATE_CARDINAL: readonly [number, number][] = [
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+  [0, -1],
+];
+
+function gateExitDirFromNeighbor(
+  gx: number,
+  gz: number,
+  gate: Pick<NonNullable<BlockStyleProps["gate"]>, "exitX" | "exitZ">
+): number {
+  const dx = gate.exitX - gx;
+  const dz = gate.exitZ - gz;
+  for (let i = 0; i < 4; i++) {
+    const d = GATE_CARDINAL[i]!;
+    if (d[0] === dx && d[1] === dz) return i;
+  }
+  return 0;
+}
+
+/** Props for the object panel + selection inspector (includes tile ref for gate preview). */
+function placedMetaToPanelObstacleProps(
+  x: number,
+  z: number,
+  y: number,
+  m: BlockStyleProps
+): ObstacleProps {
+  const base: ObstacleProps = {
+    passable: m.passable,
+    half: m.half,
+    quarter: m.quarter,
+    hex: m.hex,
+    pyramid: m.pyramid,
+    pyramidBaseScale: m.pyramidBaseScale ?? 1,
+    sphere: m.sphere,
+    ramp: m.ramp,
+    rampDir: m.rampDir,
+    colorId: m.colorId,
+    locked: m.locked || false,
+    editorTileX: x,
+    editorTileY: y,
+    editorTileZ: z,
+  };
+  if (m.gate) {
+    const gw = normalizeClientGate(m.gate);
+    return {
+      ...base,
+      passable: false,
+      half: false,
+      quarter: false,
+      hex: false,
+      pyramid: false,
+      pyramidBaseScale: 1,
+      sphere: false,
+      ramp: false,
+      rampDir: m.rampDir,
+      gate: {
+        adminAddress: gw.adminAddress,
+        authorizedAddresses: [...gw.authorizedAddresses],
+        exitX: gw.exitX,
+        exitZ: gw.exitZ,
+      },
+      gateExitDir: gateExitDirFromNeighbor(x, z, gw),
+    };
+  }
+  return base;
+}
 /** Inactivity: return to chamber home spawn (not lobby). */
 const IDLE_RETURN_HUB_MS = 15 * 60 * 1000;
 const LS_ZOOM_NON_MAZE_FRUSTUM = "nspace_zoom_non_maze_frustum";
@@ -1282,6 +1362,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   let roomAllowExtraFloor = true;
   /** From server welcome; who may change dynamic room background hue. */
   let welcomeAllowRoomBackgroundHueEdit = false;
+  /** From server welcome; who may set wallet-room guest join tile (`joinSpawn`). */
+  let welcomeAllowRoomJoinSpawnEdit = false;
   /** Last welcome `roomBackgroundHueDeg` (undefined = built-in / omitted). */
   let latestWelcomeBackgroundHueDeg: number | null | undefined = undefined;
   /** Last welcome `roomBackgroundNeutral` (undefined = built-in / omitted). */
@@ -1665,6 +1747,37 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     hud.syncRoomBackgroundHueRing(ringHue, panelNeutral);
   }
 
+  function syncRoomEntrySpawnPanel(): void {
+    const rid = normalizeRoomId(game.getRoomId());
+    const isCanvas = rid === CANVAS_ROOM_ID;
+    const isBuiltInPlaySpace =
+      rid === HUB_ROOM_ID || rid === CHAMBER_ROOM_ID || rid === CANVAS_ROOM_ID;
+    const dynamicRoom = !isBuiltInPlaySpace;
+    const actor = selfAddress.trim() !== "" ? selfAddress : address;
+    const isAdminViewer = isAdmin(actor);
+    const allowJoinSpawn = welcomeAllowRoomJoinSpawnEdit;
+    const wsOpen = ws && ws.readyState === WebSocket.OPEN;
+    const show =
+      allowJoinSpawn &&
+      wsOpen &&
+      ((isCanvas && isAdminViewer) ||
+        (game.getFloorExpandMode() &&
+          roomAllowExtraFloor &&
+          !isCanvas &&
+          (dynamicRoom || rid === HUB_ROOM_ID || rid === CHAMBER_ROOM_ID)));
+    hud.setRoomEntrySpawnPanelVisible(show);
+    if (!show) {
+      hud.clearRoomEntrySpawnPickUi();
+      game.setRoomEntrySpawnPickHandler(null);
+      return;
+    }
+  }
+
+  function syncRoomSidePanels(): void {
+    syncRoomBackgroundHuePanel();
+    syncRoomEntrySpawnPanel();
+  }
+
   hud.onRoomBackgroundHueAdjust({
     onHueDeg(deg: number) {
       game.setRoomSceneBackgroundHueDeg(deg);
@@ -1701,7 +1814,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     sendUpdateRoom(ws, normalizeRoomId(game.getRoomId()), {
       backgroundNeutral: neutral,
     });
-    syncRoomBackgroundHuePanel();
+    syncRoomSidePanels();
   });
 
   function syncBuildHud(): void {
@@ -1769,10 +1882,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       return;
     }
     if (game.getFloorExpandMode() && canFloor) {
+      const entryPickHint = hud.isRoomEntrySpawnPickArmed()
+        ? touchUi
+          ? " Guest entry: tap a walkable tile (or turn off “Pick tile” in the sidebar)."
+          : " Guest entry: click a walkable floor tile, or turn off “Pick tile on map…” in the sidebar."
+        : "";
       hud.setStatus(
         touchUi
-          ? "Floor — tap tiles next to walkable space (F or Build off when done)"
-          : "Expand floor — click next to walkable space to add a tile; click an extra tile again to remove it (F to exit)."
+          ? `Floor — tap tiles next to walkable space (F or Build off when done)${entryPickHint}`
+          : `Expand floor — click next to walkable space to add a tile; click an extra tile again to remove it (F to exit).${entryPickHint}`
       );
       hud.setBuildBlockBarState({
         visible: false,
@@ -1787,6 +1905,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       const tpHint = hud.isTeleporterModeActive()
         ? " Teleporter: click an empty floor tile to place."
         : "";
+      const gateHint = hud.isGateModeActive()
+        ? " Gate: R rotates opening direction; green/red on neighbors show clearance; click an empty floor tile."
+        : "";
       const sel = game.getSelectedBlockTile();
       const selectedHint = sel
         ? touchUi
@@ -1795,8 +1916,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         : "";
       hud.setStatus(
         touchUi
-          ? `Build — tap a block to edit, empty tile to place (Build off to exit)${tpHint}${selectedHint}`
-          : `Build mode — click a block to edit, empty floor to place (B or Build off to exit)${tpHint}${selectedHint}`
+          ? `Build — tap a block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${selectedHint}`
+          : `Build mode — click a block to edit, empty floor to place (B or Build off to exit)${tpHint}${gateHint}${selectedHint}`
       );
       hud.setBuildBlockBarState({
         visible: true,
@@ -1829,7 +1950,17 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     hud.setStatus(touchUi ? touchIdleHint : desktopHint);
     hud.setPlayModeState(playModeFromGame());
     } finally {
-      syncRoomBackgroundHuePanel();
+      const isCanvasRoom = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
+      const canBuildGates = roomAllowPlaceBlocks && !isCanvasRoom;
+      game.setGateFloorHintsActive(
+        Boolean(
+          canBuildGates &&
+          game.getBuildMode() &&
+          hud.isGateModeActive() &&
+          !game.isRepositioning()
+        )
+      );
+      syncRoomSidePanels();
     }
   }
 
@@ -1858,10 +1989,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       game.clearSelectedBlock();
       // Deactivate signpost mode when leaving build
       hud.deactivateSignpostMode();
+      hud.deactivateGateMode();
+      hud.clearRoomEntrySpawnPickUi();
+      game.setRoomEntrySpawnPickHandler(null);
     } else if (mode === "build") {
       game.setTeleporterDestPickHandler(null);
       game.setFloorExpandMode(false);
       game.setBuildMode(true);
+      hud.clearRoomEntrySpawnPickUi();
+      game.setRoomEntrySpawnPickHandler(null);
     } else {
       game.setTeleporterDestPickHandler(null);
       game.setBuildMode(false);
@@ -1871,6 +2007,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       game.clearSelectedBlock();
       // Deactivate signpost mode when leaving build
       hud.deactivateSignpostMode();
+      hud.deactivateGateMode();
+      hud.clearRoomEntrySpawnPickUi();
+      game.setRoomEntrySpawnPickHandler(null);
     }
     syncBuildHud();
   });
@@ -1888,6 +2027,34 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     closeRoomsCreateModal();
     resetEditDeleteUi();
     hud.deactivateTeleporterMode();
+    hud.deactivateGateMode();
+    hud.clearRoomEntrySpawnPickUi();
+    game.setRoomEntrySpawnPickHandler(null);
+    hud.onRoomEntrySpawnPickState((armed) => {
+      if (armed) {
+        game.setRoomEntrySpawnPickHandler((x, z) => {
+          if (socket.readyState === WebSocket.OPEN) {
+            sendUpdateRoom(socket, normalizeRoomId(game.getRoomId()), {
+              joinSpawn: { x, z },
+            });
+          }
+          hud.clearRoomEntrySpawnPickUi();
+          syncRoomSidePanels();
+        });
+      } else {
+        game.setRoomEntrySpawnPickHandler(null);
+      }
+    });
+    hud.onRoomEntrySpawnUseCenter(() => {
+      if (socket.readyState === WebSocket.OPEN) {
+        sendUpdateRoom(socket, normalizeRoomId(game.getRoomId()), {
+          joinSpawn: null,
+        });
+      }
+      hud.clearRoomEntrySpawnPickUi();
+      game.setRoomEntrySpawnPickHandler(null);
+      syncRoomSidePanels();
+    });
     cancelActiveNimClaim?.();
     cancelActiveNimClaim = null;
     nimClaimUiRef = null;
@@ -1935,6 +2102,46 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       );
     });
 
+    game.setGateContextOpener((pick) => {
+      const parts = pick.blockKey.split(",").map(Number);
+      const bx = parts[0];
+      const bz = parts[1];
+      const byRaw = parts[2];
+      if (bx === undefined || bz === undefined) return;
+      const by = Number.isFinite(byRaw) ? Math.floor(byRaw!) : 0;
+      hud.showGateContextMenu(pick.clientX, pick.clientY, {
+        onOpen: () => {
+          const meta = game.getPlacedAt(bx, bz, by);
+          if (!meta?.gate) return;
+          if (
+            !canOpenGateAs(address, meta.gate, game.getRoomId()) &&
+            !isAdmin(address)
+          ) {
+            game.showFloatingText(bx, bz, "You can't open that");
+            return;
+          }
+          if (socket.readyState === WebSocket.OPEN) {
+            sendOpenGate(socket, bx, bz, by);
+          }
+        },
+      });
+    });
+
+    game.setGateDoubleOpenHandler((bx, bz, by) => {
+      const meta = game.getPlacedAt(bx, bz, by);
+      if (!meta?.gate) return;
+      if (
+        !canOpenGateAs(address, meta.gate, game.getRoomId()) &&
+        !isAdmin(address)
+      ) {
+        game.showFloatingText(bx, bz, "You can't open that");
+        return;
+      }
+      if (socket.readyState === WebSocket.OPEN) {
+        sendOpenGate(socket, bx, bz, by);
+      }
+    });
+
     game.setTileClickHandler((x, z, layer = 0) => {
       hud.dismissOtherPlayerOverlays();
       // Check if in signpost mode (only in build mode)
@@ -1974,6 +2181,18 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     game.setPlaceBlockHandler((x, z) => {
       if (hud.isTeleporterModeActive()) {
         sendPlacePendingTeleporter(socket, x, z);
+        return;
+      }
+      if (hud.isGateModeActive()) {
+        const st = game.getPlacementBlockStyle();
+        sendPlacePendingGate(
+          socket,
+          x,
+          z,
+          game.getPlacementRampDir(),
+          0,
+          st.colorId
+        );
         return;
       }
       // Don't place blocks if in signpost mode
@@ -2337,7 +2556,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           },
           onMove: () => {
             game.setTeleporterDestPickHandler(null);
-            game.beginReposition(x, z);
+            game.beginReposition(x, z, y);
             editingTile = null;
             hud.hideObjectEditPanel();
             syncBuildHud();
@@ -2354,9 +2573,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         return;
       }
 
+      const gateWire = m.gate ? normalizeClientGate(m.gate) : null;
       hud.showObjectEditPanel({
         x,
         z,
+        y,
         passable: m.passable,
         half: m.half,
         quarter: m.quarter,
@@ -2369,6 +2590,43 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         colorId: m.colorId,
         locked: m.locked || false,
         isAdmin: isAdmin(selfAddress),
+        ...(gateWire
+          ? {
+              gate: {
+                adminAddress: gateWire.adminAddress,
+                authorizedAddresses: [...gateWire.authorizedAddresses],
+                exitX: gateWire.exitX,
+                exitZ: gateWire.exitZ,
+              },
+              gateExitDir: gateExitDirFromNeighbor(x, z, gateWire),
+              ...(isGateAclAdmin(selfAddress, m.gate) || isAdmin(selfAddress)
+                ? {
+                    onEditGateAcl: () => {
+                      hud.showGateAclEditor({
+                        x,
+                        z,
+                        y,
+                        adminAddress: gateWire.adminAddress,
+                        addresses: [...gateWire.authorizedAddresses],
+                        players: lastPlayers.filter(
+                          (p) =>
+                            !remotePlayerIsNpc(p.address, p.displayName)
+                        ),
+                        onSave: (next) => {
+                          sendSetGateAuthorizedAddresses(
+                            socket,
+                            x,
+                            z,
+                            y,
+                            next
+                          );
+                        },
+                      });
+                    },
+                  }
+                : {}),
+            }
+          : {}),
         onPropsChange: (p) => {
           sendSetObstacleProps(socket, x, z, y, p);
         },
@@ -2380,7 +2638,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           syncBuildHud();
         },
         onMove: () => {
-          game.beginReposition(x, z);
+          game.beginReposition(x, z, y);
           editingTile = null;
           hud.hideObjectEditPanel();
           syncBuildHud();
@@ -2553,6 +2811,17 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }
       return;
     }
+    if (msg.type === "roomJoinSpawn") {
+      const nr = normalizeRoomId(msg.roomId);
+      if (nr === normalizeRoomId(game.getRoomId())) {
+        game.setRoomJoinSpawnFromWelcome({
+          x: msg.x,
+          z: msg.z,
+          customized: msg.customized,
+        });
+      }
+      return;
+    }
     if (msg.type === "roomBackgroundHue") {
       const nr = normalizeRoomId(msg.roomId);
       if (nr === normalizeRoomId(game.getRoomId())) {
@@ -2573,7 +2842,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
             n === "black" || n === "white" || n === "gray" ? n : null;
         }
       }
-      syncRoomBackgroundHuePanel();
+      syncRoomSidePanels();
       return;
     }
     if (msg.type === "welcome") {
@@ -2658,6 +2927,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       roomAllowExtraFloor = msg.allowExtraFloor !== false;
       welcomeAllowRoomBackgroundHueEdit =
         msg.allowRoomBackgroundHueEdit === true;
+      welcomeAllowRoomJoinSpawnEdit = msg.allowRoomJoinSpawnEdit === true;
       if (msg.roomBackgroundHueDeg === undefined) {
         latestWelcomeBackgroundHueDeg = undefined;
       } else if (msg.roomBackgroundHueDeg === null) {
@@ -2689,10 +2959,13 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         allowPlaceBlocks: roomAllowPlaceBlocks,
         allowExtraFloor: roomAllowExtraFloor,
       });
+      game.setRoomJoinSpawnFromWelcome(msg.roomJoinSpawn ?? null);
 
       if (isCanvas || !roomAllowPlaceBlocks) {
         game.setBuildMode(false);
         hud.deactivateSignpostMode();
+        hud.clearRoomEntrySpawnPickUi();
+        game.setRoomEntrySpawnPickHandler(null);
       }
       if (isCanvas || !roomAllowExtraFloor) {
         game.setFloorExpandMode(false);
@@ -2814,7 +3087,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           if (c !== 0) return c;
           return a.id.localeCompare(b.id);
         });
-      syncRoomBackgroundHuePanel();
+      syncRoomSidePanels();
       if (!roomsModal.hidden) {
         renderRoomsModalList();
       }
@@ -2879,6 +3152,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     if (msg.type === "onlineCount") {
       totalOnlinePlayers = Math.max(0, Math.floor(msg.count));
       syncPlayerCountHud();
+      return;
+    }
+    if (msg.type === "gateWalkBlocked") {
+      const bx = Number(msg.x);
+      const bz = Number(msg.z);
+      const by = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
+      if (Number.isFinite(bx) && Number.isFinite(bz)) {
+        game.showFloatingText(bx, bz, "You can't walk into that");
+      }
       return;
     }
     if (msg.type === "chat") {
@@ -2967,13 +3249,20 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     if (msg.type === "obstacles") {
       game.setObstacles(msg.tiles);
       if (editingTile) {
-          const m = game.getPlacedAt(editingTile.x, editingTile.z, editingTile.y);
+        const m = game.getPlacedAt(editingTile.x, editingTile.z, editingTile.y);
         if (!m) {
           editingTile = null;
           hud.hideObjectEditPanel();
           game.clearSelectedBlock();
         } else {
-          hud.setObjectPanelProps(m);
+          hud.setObjectPanelProps(
+            placedMetaToPanelObstacleProps(
+              editingTile.x,
+              editingTile.z,
+              editingTile.y,
+              m
+            )
+          );
         }
       }
       syncBuildHud();
@@ -2987,7 +3276,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           hud.hideObjectEditPanel();
           game.clearSelectedBlock();
         } else {
-          hud.setObjectPanelProps(m);
+          hud.setObjectPanelProps(
+            placedMetaToPanelObstacleProps(
+              editingTile.x,
+              editingTile.z,
+              editingTile.y,
+              m
+            )
+          );
         }
       }
       syncBuildHud();
@@ -3396,6 +3692,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           return;
         }
         if (game.getFloorExpandMode()) {
+          hud.clearRoomEntrySpawnPickUi();
+          game.setRoomEntrySpawnPickHandler(null);
           game.setFloorExpandMode(false);
           syncBuildHud();
           return;
@@ -3475,6 +3773,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           return;
         }
         if (k === "r" || k === "R") {
+          if (hud.isGateModeActive() && hud.rotateRampToward(1)) {
+            e.preventDefault();
+            return;
+          }
           if (game.cycleBillboardInteractionYaw(1)) {
             e.preventDefault();
             return;

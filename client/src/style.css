@@ -3199,6 +3199,44 @@ button.hud-brand:focus-visible {
   outline-offset: 1px;
 }
 
+.hud-mode-sidebar__room-entry-spawn {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 6px 10px;
+  margin-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  pointer-events: auto;
+  max-width: 168px;
+}
+
+.hud-mode-sidebar__room-entry-spawn[hidden] {
+  display: none !important;
+}
+
+.hud-mode-sidebar__room-entry-spawn-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+  text-align: center;
+}
+
+.hud-mode-sidebar__room-entry-spawn-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.55);
+  text-align: center;
+}
+
+.hud-mode-sidebar__room-entry-spawn .tile-inspector__reset-btn {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .hud-mode-sidebar__header {
   flex-shrink: 0;
   display: flex;
@@ -5855,6 +5893,15 @@ button.hud-brand:focus-visible {
   gap: 6px;
 }
 
+/* Gate tool strip: rows live outside Advanced popover — need explicit flex */
+#build-block-bar-gate .build-block-bar__gate-tool-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 .build-block-bar__ramp-dir-label {
   width: 100%;
   margin-bottom: 4px;
@@ -7760,4 +7807,234 @@ button.hud-brand:focus-visible {
   font-size: 18px;
   font-weight: 500;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* Gate access list (object panel + standalone modal) */
+.build-object-panel-context__gate-acl-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.build-object-panel-context__gate-acl-summary {
+  font-size: 12px;
+  opacity: 0.9;
+  flex: 1;
+  min-width: 0;
+}
+
+.gate-acl-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  background: rgba(6, 9, 14, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.gate-acl-dialog {
+  width: min(400px, 100%);
+  max-height: min(88vh, 520px);
+  overflow: auto;
+  background: #131b27;
+  border: 1px solid #2a394f;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  padding: 14px 16px 16px;
+  color: #e4eaf2;
+}
+.gate-acl-dialog__head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  align-items: start;
+  margin-bottom: 8px;
+}
+.gate-acl-dialog__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  grid-column: 1;
+}
+.gate-acl-dialog__coords {
+  margin: 0;
+  font-size: 11px;
+  opacity: 0.75;
+  grid-column: 1;
+}
+.gate-acl-dialog__close {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: start;
+  border: none;
+  background: transparent;
+  color: #aab6c5;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.gate-acl-dialog__close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+.gate-acl-dialog__hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.88;
+}
+.gate-acl-table-wrap {
+  border: 1px solid #2a394f;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.gate-acl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.gate-acl-row:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+.gate-acl-cell {
+  padding: 6px 8px;
+  vertical-align: middle;
+}
+.gate-acl-cell--icon {
+  width: 40px;
+}
+.gate-acl-ident {
+  display: block;
+  border-radius: 6px;
+  background: #0c0e14;
+}
+.gate-acl-name {
+  font-weight: 500;
+  line-height: 1.25;
+}
+.gate-acl-mono {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  opacity: 0.75;
+  margin-top: 2px;
+}
+.gate-acl-cell--rm {
+  width: 36px;
+  text-align: center;
+}
+.gate-acl-remove {
+  border: none;
+  background: transparent;
+  color: #e53935;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.gate-acl-remove:hover {
+  background: rgba(229, 57, 53, 0.12);
+}
+.gate-acl-owner-mark {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+}
+.gate-acl-add-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.gate-acl-add-label {
+  font-size: 11px;
+  opacity: 0.8;
+}
+.gate-acl-add-picker {
+  width: 100%;
+  max-height: 200px;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid #2a394f;
+  background: #0c0e14;
+  padding: 4px;
+  box-sizing: border-box;
+}
+.gate-acl-add-picker-empty {
+  margin: 0;
+  padding: 8px 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(148, 163, 184, 0.92);
+}
+.gate-acl-add-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0 0 2px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #e4eaf2;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.gate-acl-add-option:last-child {
+  margin-bottom: 0;
+}
+.gate-acl-add-option:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.gate-acl-add-option-ident {
+  flex: 0 0 auto;
+  border-radius: 4px;
+  object-fit: cover;
+}
+.gate-acl-add-option-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gate-acl-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.gate-acl-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.gate-acl-btn--secondary {
+  background: transparent;
+  border-color: #3d4d63;
+  color: #cfd8e6;
+}
+.gate-acl-btn--secondary:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.gate-acl-btn--primary {
+  background: #5b8cff;
+  border-color: #5b8cff;
+  color: #fff;
+}
+.gate-acl-btn--primary:hover {
+  filter: brightness(1.06);
 }

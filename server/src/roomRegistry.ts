@@ -26,6 +26,9 @@ export type PersistedRoomDef = {
   backgroundHueDeg?: number | null;
   /** Solid neutral sky when set; takes precedence over hue. */
   backgroundNeutral?: RoomBackgroundNeutral | null;
+  /** v6+: default tile where new visitors spawn when they have no saved position; omitted = room center. */
+  joinSpawnX?: number | null;
+  joinSpawnZ?: number | null;
 };
 
 type PersistedRoomsFileV1 = {
@@ -53,12 +56,18 @@ type PersistedRoomsFileV5 = {
   rooms: PersistedRoomDef[];
 };
 
+type PersistedRoomsFileV6 = {
+  version: 6;
+  rooms: PersistedRoomDef[];
+};
+
 type PersistedRoomsFile =
   | PersistedRoomsFileV1
   | PersistedRoomsFileV2
   | PersistedRoomsFileV3
   | PersistedRoomsFileV4
-  | PersistedRoomsFileV5;
+  | PersistedRoomsFileV5
+  | PersistedRoomsFileV6;
 
 type DynamicRoomEntry = {
   bounds: RoomBounds;
@@ -75,6 +84,9 @@ type DynamicRoomEntry = {
   backgroundHueDeg: number | null;
   /** Solid neutral background; when non-null, overrides hue for rendering. */
   backgroundNeutral: RoomBackgroundNeutral | null;
+  /** Custom default join tile (integers); both null = use room bounds center. */
+  joinSpawnX: number | null;
+  joinSpawnZ: number | null;
 };
 
 const dynamicRooms = new Map<string, DynamicRoomEntry>();
@@ -170,8 +182,8 @@ function generateUniqueRoomId(defaultRoomIds: ReadonlySet<string>): string {
 
 function persistRoomsFile(): void {
   ensureDataDir();
-  const payload: PersistedRoomsFileV5 = {
-    version: 5,
+  const payload: PersistedRoomsFileV6 = {
+    version: 6,
     rooms: [...dynamicRooms.entries()].map(([id, entry]) => ({
       id,
       bounds: entry.bounds,
@@ -185,6 +197,9 @@ function persistRoomsFile(): void {
         : {}),
       ...(entry.backgroundNeutral != null
         ? { backgroundNeutral: entry.backgroundNeutral }
+        : {}),
+      ...(entry.joinSpawnX != null && entry.joinSpawnZ != null
+        ? { joinSpawnX: entry.joinSpawnX, joinSpawnZ: entry.joinSpawnZ }
         : {}),
     })),
   };
@@ -205,7 +220,8 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
       raw.version !== 2 &&
       raw.version !== 3 &&
       raw.version !== 4 &&
-      raw.version !== 5
+      raw.version !== 5 &&
+      raw.version !== 6
     ) {
       return;
     }
@@ -256,6 +272,22 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
         (r as { backgroundNeutral?: unknown }).backgroundNeutral
       );
 
+      let joinSpawnX: number | null = null;
+      let joinSpawnZ: number | null = null;
+      if (raw.version >= 6) {
+        const jx = (r as { joinSpawnX?: unknown }).joinSpawnX;
+        const jz = (r as { joinSpawnZ?: unknown }).joinSpawnZ;
+        if (
+          typeof jx === "number" &&
+          Number.isFinite(jx) &&
+          typeof jz === "number" &&
+          Number.isFinite(jz)
+        ) {
+          joinSpawnX = Math.floor(jx);
+          joinSpawnZ = Math.floor(jz);
+        }
+      }
+
       dynamicRooms.set(id, {
         bounds: {
           minX: Math.floor(r.bounds.minX),
@@ -270,6 +302,8 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
         isOfficial,
         backgroundHueDeg,
         backgroundNeutral,
+        joinSpawnX,
+        joinSpawnZ,
       });
     }
   } catch (err) {
@@ -427,6 +461,8 @@ export function createDynamicRoom(
     isOfficial: false,
     backgroundHueDeg: null,
     backgroundNeutral: null,
+    joinSpawnX: null,
+    joinSpawnZ: null,
   });
   persistRoomsFile();
   return { ok: true, id };
@@ -466,9 +502,44 @@ export function createOfficialDynamicRoom(
     isOfficial: true,
     backgroundHueDeg: null,
     backgroundNeutral: null,
+    joinSpawnX: null,
+    joinSpawnZ: null,
   });
   persistRoomsFile();
   return { ok: true, id };
+}
+
+/** Configured join spawn tile (integers), or null when using geometric room center. */
+export function getDynamicRoomJoinSpawn(
+  roomId: string
+): { x: number; z: number } | null {
+  const id = normalizeRoomIdRaw(roomId);
+  const entry = dynamicRooms.get(id);
+  if (!entry || entry.deletedAt) return null;
+  if (
+    entry.joinSpawnX == null ||
+    entry.joinSpawnZ == null ||
+    !Number.isFinite(entry.joinSpawnX) ||
+    !Number.isFinite(entry.joinSpawnZ)
+  ) {
+    return null;
+  }
+  return { x: entry.joinSpawnX, z: entry.joinSpawnZ };
+}
+
+/** Who may set `joinSpawn` via `updateRoom` (official rooms: admins only). */
+export function allowActorRoomJoinSpawnEdit(
+  roomId: string,
+  actorCompact: string,
+  isAdminUser: boolean
+): boolean {
+  const id = normalizeRoomIdRaw(roomId);
+  const entry = dynamicRooms.get(id);
+  if (!entry || entry.deletedAt) return false;
+  if (isAdminUser) return true;
+  if (entry.isOfficial) return false;
+  if (!entry.ownerAddress) return false;
+  return compactAddress(entry.ownerAddress) === actorCompact;
 }
 
 export function getDynamicRoomBackgroundHueDeg(roomId: string): number | null {
@@ -515,6 +586,8 @@ export function updateDynamicRoomMetadata(
     isPublic?: boolean;
     backgroundHueDeg?: number | null;
     backgroundNeutral?: RoomBackgroundNeutral | null;
+    /** Non-null = set tile; null = clear to default (room center). */
+    joinSpawn?: { x: number; z: number } | null;
   },
   actorCompact: string,
   isAdminUser: boolean
@@ -523,7 +596,8 @@ export function updateDynamicRoomMetadata(
     patch.displayName === undefined &&
     patch.isPublic === undefined &&
     patch.backgroundHueDeg === undefined &&
-    patch.backgroundNeutral === undefined
+    patch.backgroundNeutral === undefined &&
+    patch.joinSpawn === undefined
   ) {
     return { ok: false, reason: "Nothing to update." };
   }
@@ -534,6 +608,12 @@ export function updateDynamicRoomMetadata(
   }
   if (entry.deletedAt) {
     return { ok: false, reason: "Room is deleted." };
+  }
+  if (
+    patch.joinSpawn !== undefined &&
+    !allowActorRoomJoinSpawnEdit(id, actorCompact, isAdminUser)
+  ) {
+    return { ok: false, reason: "Not authorized to set this room’s entry spawn." };
   }
   if (
     (patch.backgroundHueDeg !== undefined ||
@@ -578,6 +658,15 @@ export function updateDynamicRoomMetadata(
     entry.backgroundNeutral = patch.backgroundNeutral;
     if (patch.backgroundNeutral != null) {
       entry.backgroundHueDeg = null;
+    }
+  }
+  if (patch.joinSpawn !== undefined) {
+    if (patch.joinSpawn === null) {
+      entry.joinSpawnX = null;
+      entry.joinSpawnZ = null;
+    } else {
+      entry.joinSpawnX = Math.floor(patch.joinSpawn.x);
+      entry.joinSpawnZ = Math.floor(patch.joinSpawn.z);
     }
   }
   dynamicRooms.set(id, entry);
