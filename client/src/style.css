@@ -7538,7 +7538,7 @@ a.main-menu__version:focus-visible {
   line-height: 1.4;
 }
 
-/* —— Patch notes (`/patchnotes`) — same menu shell, slim per-release `<details>` —— */
+/* —— Patch notes (`/patchnotes`) — same menu shell; version + tier dropdowns, one release body —— */
 .patchnotes-page .main-menu__card-inner {
   text-align: left;
 }
@@ -7619,8 +7619,10 @@ a.main-menu__version:focus-visible {
 
 .patchnotes-page__tier-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   align-items: center;
+  gap: 0.75rem;
   width: 100%;
   margin: 0.15rem 0 0.1rem;
 }
@@ -7635,6 +7637,8 @@ a.main-menu__version:focus-visible {
   overflow-y: auto;
   padding-right: 0.15rem;
   scrollbar-color: var(--menu-border-soft) transparent;
+  /* Prose: prefer Muli (matches root body stack); main menu shell lists Mulish first. */
+  font-family: "Muli", "Mulish", system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
 }
 
 .patchnotes-page__empty {
@@ -7644,51 +7648,13 @@ a.main-menu__version:focus-visible {
   line-height: 1.5;
 }
 
-.patchnotes-page__rel {
-  border-bottom: 1px solid rgba(40, 50, 68, 0.85);
+.patchnotes-page__rel-panel {
+  border-top: 1px solid rgba(40, 50, 68, 0.65);
+  padding-top: 0.35rem;
 }
 
-.patchnotes-page__rel:last-child {
-  border-bottom: none;
-}
-
-.patchnotes-page__sum {
-  list-style: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.42rem 0.1rem;
-  cursor: pointer;
-  font-family: "Fira Mono", ui-monospace, monospace;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--menu-muted-bright);
-  user-select: none;
-  transition: color 0.15s ease;
-}
-
-.patchnotes-page__sum::-webkit-details-marker {
-  display: none;
-}
-
-.patchnotes-page__sum::after {
-  content: "›";
-  flex-shrink: 0;
-  font-size: 1.05em;
-  color: var(--menu-muted);
-  transition: transform 0.18s ease, color 0.15s ease;
-}
-
-.patchnotes-page__rel[open] > .patchnotes-page__sum {
-  color: var(--menu-text);
-}
-
-.patchnotes-page__rel[open] > .patchnotes-page__sum::after {
-  transform: rotate(90deg);
-  color: var(--menu-orange-soft);
+.patchnotes-page__rel-panel[hidden] {
+  display: none !important;
 }
 
 .patchnotes-page__body {

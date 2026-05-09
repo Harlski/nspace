@@ -82,11 +82,15 @@ Update this subsection if preview ownership, materials, or which interactions re
 
 ### Release line: patch notes + semver on merge
 
-**Intent:** One clear moment ties **shipping semver** (root `package.json`) to **frozen patch notes**, so `main` always carries a coherent “what we just released” folder without hand-renaming drift.
+**Intent:** One clear moment ties **shipping semver** (root `package.json`) to **frozen patch notes**, so `main` always carries a coherent “what we just released” **folder and version labels** without hand-renaming drift.
+
+**What “hands off” means here (today):** **`npm run prepare-merge`** automates the **mechanical release line** only—semver bump, renaming `UNRELEASED` → `<next-semver>`, rewriting **structural** `UNRELEASED` references in the frozen markdown (paths, titles), and seeding the **next** `UNRELEASED/` tree. You should not hand-rename version folders or bump `package.json` separately from that freeze.
+
+**What is *not* automated (today):** The script does **not** write or rewrite **audience copy** in `public/*.md`, does **not** remove template lines such as “draft / not published” placeholders, and does **not** pull summaries from `reasons.md` into the public tiers. **Player-, operator-, and developer-facing prose** is still **authored deliberately** under `UNRELEASED` (or edited in the frozen `versions/<semver>/` folder before you ship a client build). Treat “ready to merge” as: **technical + public copy are already what you want frozen**, then run `prepare-merge` so the tree and semver stay honest.
 
 **Human / agent cue:** **“Prepare for merge”** (to `main`) means: run **`npm run prepare-merge`** first (default **patch** bump; use `--minor` or `--major` when the change set warrants it). That command:
 
-1. Renames `patchnote/versions/UNRELEASED/` → `patchnote/versions/<next-semver>/` and rewrites `UNRELEASED` markers inside those markdown files to that version.
+1. Renames `patchnote/versions/UNRELEASED/` → `patchnote/versions/<next-semver>/` and rewrites `UNRELEASED` markers inside those markdown files to that version (structure and labels, not editorial pass on body copy).
 2. Bumps the **root** `package.json` `version` to the same `<next-semver>`.
 3. Creates a fresh `patchnote/versions/UNRELEASED/` with empty starter `reasons.md` and `public/*.md` templates for the next cycle.
 
@@ -97,6 +101,8 @@ After that, the author **reviews diffs**, then **`git add`**, **`git commit`**, 
 ### Public patch notes (voice, outline, in-app)
 
 **Intent:** `patchnote/versions/<semver>/public/*.md` is **player- and operator-facing truth** for “what changed in the product,” not a transcript of design discussion. Prefer **few words**, **observable outcomes**, and **impact order**: lead with **new capabilities** (`[NEW]` in lists where tagged), then **fixes** (`[FIX]`), then **intentional behavior changes** (`[CHANGE]`), then **performance** (`[PERF]`), then **deploy/ops** (`[OPS]`) or **security** (`[SEC]`) when relevant. The same ordering helps scanning in Discord or blog paste-outs.
+
+**Relationship to automation:** Filling and cleaning `public/*.md` is **editorial work before merge** (or a follow-up edit on the frozen folder before publishing a build). It is **outside** what `prepare-merge` automates; see **Release line: patch notes + semver on merge** above.
 
 **Tiers (short):** **Brief** — ultra-short, no jargon. **Players** — what you feel or can do in-world. **Operators** — env, Docker, migrations, breaking defaults. **Developers** — integrator-facing deltas (API/WS), still scannable; deep file paths and message inventories stay in **`reasons.md`** for that version.
 
@@ -130,3 +136,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-05-09** — Principle + recorded UX: **reposition ghost previews** for placeable obstacles (client-only hover visualization; gates / billboards / generic blocks). See [reasons/reason_927415.md](reasons/reason_927415.md).
 - **2026-05-09** — Public patch notes norm + editorial guide ([patchnotes-release.md](patchnotes-release.md)); optional in-app change tags. See [reasons/reason_673942.md](reasons/reason_673942.md).
 - **2026-05-09** — Recorded decision: GitHub Actions VPS deploy stops the stack, tarballs host `data/` under `backups/`, then rebuilds. See [reasons/reason_458291.md](reasons/reason_458291.md).
+- **2026-05-10** — Release line: clarify **automated** (semver + folder freeze) vs **not automated** (`public/*.md` copy, draft placeholders). See [reasons/reason_551903.md](reasons/reason_551903.md).

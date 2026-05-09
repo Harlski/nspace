@@ -10,7 +10,9 @@ function escapeAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
-function defaultGlobalTierId(releases: { tiers: PatchnoteTier[] }[]): string | null {
+function defaultGlobalTierId(
+  releases: { tiers: PatchnoteTier[] }[]
+): (typeof PATCHNOTE_TIER_ORDER)[number] | null {
   if (releases.length === 0) return null;
   const union = new Set<string>();
   for (const r of releases) for (const t of r.tiers) union.add(t.tierId);
@@ -24,13 +26,34 @@ function tierLabel(id: string): string {
   return (PATCHNOTE_TIER_LABEL as Record<string, string>)[id] ?? id;
 }
 
-function initialVisibleTierForRelease(rel: { tiers: PatchnoteTier[] }, preferred: string): string {
+/** Display tag for a semver folder name (matches former `<summary>` styling). */
+function versionTag(version: string): string {
+  return version.startsWith("v") ? version : `v${version}`;
+}
+
+function versionTriggerLabel(version: string, isLatest: boolean): string {
+  const tag = versionTag(version);
+  return isLatest ? `LATEST NOTES ${tag}` : `NOTES ${tag}`;
+}
+
+function initialVisibleTierForRelease(
+  rel: { tiers: PatchnoteTier[] },
+  preferred: (typeof PATCHNOTE_TIER_ORDER)[number]
+): (typeof PATCHNOTE_TIER_ORDER)[number] {
   const ids = new Set(rel.tiers.map((t) => t.tierId));
   if (ids.has(preferred)) return preferred;
   for (const id of PATCHNOTE_TIER_ORDER) {
     if (ids.has(id)) return id;
   }
   return rel.tiers[0]!.tierId;
+}
+
+function applyVisibleRelease(root: HTMLElement, versionIdx: number): void {
+  for (const panel of root.querySelectorAll(".patchnotes-page__rel-panel")) {
+    const idx = Number((panel as HTMLElement).dataset.versionIdx);
+    if (Number.isNaN(idx)) continue;
+    (panel as HTMLElement).hidden = idx !== versionIdx;
+  }
 }
 
 function applyGlobalTier(root: HTMLElement, preferredId: string): void {
@@ -58,14 +81,13 @@ function applyGlobalTier(root: HTMLElement, preferredId: string): void {
 }
 
 /**
- * Full-screen patch notes: same shell as the main menu card, slim `<details>` per release.
- * Newest release is expanded by default.
+ * Full-screen patch notes: same shell as the main menu card; version and audience tier are
+ * custom dropdowns; one release body visible at a time (newest by default).
  */
 export function mountPatchnotesPage(app: HTMLElement): () => void {
   app.innerHTML = "";
 
   const releases = PATCHNOTE_RELEASES;
-  const latest = releases[0]?.version ?? "";
   const globalTierDefault = defaultGlobalTierId(releases);
   const tierIdsInAny = new Set<string>();
   for (const r of releases) for (const t of r.tiers) tierIdsInAny.add(t.tierId);
@@ -73,18 +95,36 @@ export function mountPatchnotesPage(app: HTMLElement): () => void {
 
   const clientMetaHtml = `<p class="patchnotes-page__meta patchnotes-page__meta--center">
       Client ${escapeAttr(APP_DISPLAY_VERSION)}
-      ${
-        latest
-          ? ` · latest notes <span class="patchnotes-page__meta-ver">${escapeAttr(latest)}</span>`
-          : ""
-      }
     </p>`;
 
-  const tierRowHtml =
+  const versionPickerHtml =
+    releases.length === 0
+      ? ""
+      : `<div class="patchnotes-page__tier-pop">
+            <button
+              type="button"
+              class="patchnotes-page__tier-trigger"
+              id="patchnotes-version-trigger"
+              aria-expanded="false"
+              aria-haspopup="listbox"
+              aria-label="Patch notes version"
+            >${escapeAttr(versionTriggerLabel(releases[0]!.version, true))}</button>
+            <ul class="patchnotes-page__tier-menu" id="patchnotes-version-menu" role="listbox" hidden>
+              ${releases
+                .map(
+                  (rel, idx) => `
+              <li role="option" tabindex="-1" class="patchnotes-page__tier-option" data-version-idx="${String(idx)}">${escapeAttr(
+                    versionTag(rel.version)
+                  )}</li>`
+                )
+                .join("")}
+            </ul>
+          </div>`;
+
+  const tierPickerHtml =
     releases.length === 0 || !globalTierDefault
       ? ""
-      : `<div class="patchnotes-page__tier-row">
-          <div class="patchnotes-page__tier-pop">
+      : `<div class="patchnotes-page__tier-pop">
             <button
               type="button"
               class="patchnotes-page__tier-trigger"
@@ -103,16 +143,20 @@ export function mountPatchnotesPage(app: HTMLElement): () => void {
                 )
                 .join("")}
             </ul>
-          </div>
-        </div>`;
+          </div>`;
+
+  const controlsRowHtml =
+    releases.length === 0 || !globalTierDefault
+      ? versionPickerHtml
+        ? `<div class="patchnotes-page__tier-row">${versionPickerHtml}</div>`
+        : ""
+      : `<div class="patchnotes-page__tier-row">${versionPickerHtml}${tierPickerHtml}</div>`;
 
   const rows =
     releases.length === 0
       ? `<p class="patchnotes-page__empty">No published patch notes in this build yet.</p>`
       : releases
           .map((rel, idx) => {
-            const open = idx === 0 ? " open" : "";
-            const vLabel = rel.version.startsWith("v") ? rel.version : `v${rel.version}`;
             const visId = initialVisibleTierForRelease(rel, globalTierDefault!);
             const panels = rel.tiers
               .map(
@@ -125,12 +169,11 @@ export function mountPatchnotesPage(app: HTMLElement): () => void {
               )
               .join("");
             return `
-            <details class="patchnotes-page__rel"${open}>
-              <summary class="patchnotes-page__sum"><span>${escapeAttr(vLabel)}</span></summary>
+            <div class="patchnotes-page__rel-panel" data-version-idx="${String(idx)}"${idx === 0 ? "" : " hidden"}>
               <div class="patchnotes-page__body">
                 <div class="patchnotes-page__tier-view">${panels}</div>
               </div>
-            </details>`;
+            </div>`;
           })
           .join("");
 
@@ -154,7 +197,7 @@ export function mountPatchnotesPage(app: HTMLElement): () => void {
               <span class="patchnotes-page__topbar-balance" aria-hidden="true"></span>
             </div>
             ${clientMetaHtml}
-            ${tierRowHtml}
+            ${controlsRowHtml}
           </header>
           <div class="patchnotes-page__list">${rows}</div>
         </div>
@@ -165,54 +208,102 @@ export function mountPatchnotesPage(app: HTMLElement): () => void {
 
   if (globalTierDefault) applyGlobalTier(root, globalTierDefault);
 
-  const trigger = root.querySelector("#patchnotes-tier-trigger") as HTMLButtonElement | null;
-  const menu = root.querySelector("#patchnotes-tier-menu") as HTMLUListElement | null;
-  const pop = root.querySelector(".patchnotes-page__tier-pop") as HTMLElement | null;
+  const tierTrigger = root.querySelector("#patchnotes-tier-trigger") as HTMLButtonElement | null;
+  const tierMenu = root.querySelector("#patchnotes-tier-menu") as HTMLUListElement | null;
+  const versionTrigger = root.querySelector("#patchnotes-version-trigger") as HTMLButtonElement | null;
+  const versionMenu = root.querySelector("#patchnotes-version-menu") as HTMLUListElement | null;
+  const pops = [...root.querySelectorAll(".patchnotes-page__tier-pop")] as HTMLElement[];
 
-  let menuOpen = false;
-  const closeMenu = (): void => {
-    if (!menuOpen) return;
-    menuOpen = false;
-    if (menu) menu.hidden = true;
-    trigger?.setAttribute("aria-expanded", "false");
+  let tierMenuOpen = false;
+  let versionMenuOpen = false;
+
+  const closeTierMenu = (): void => {
+    if (!tierMenuOpen) return;
+    tierMenuOpen = false;
+    if (tierMenu) tierMenu.hidden = true;
+    tierTrigger?.setAttribute("aria-expanded", "false");
   };
 
-  const openMenu = (): void => {
-    menuOpen = true;
-    if (menu) menu.hidden = false;
-    trigger?.setAttribute("aria-expanded", "true");
+  const openTierMenu = (): void => {
+    tierMenuOpen = true;
+    if (tierMenu) tierMenu.hidden = false;
+    tierTrigger?.setAttribute("aria-expanded", "true");
+  };
+
+  const closeVersionMenu = (): void => {
+    if (!versionMenuOpen) return;
+    versionMenuOpen = false;
+    if (versionMenu) versionMenu.hidden = true;
+    versionTrigger?.setAttribute("aria-expanded", "false");
+  };
+
+  const openVersionMenu = (): void => {
+    versionMenuOpen = true;
+    if (versionMenu) versionMenu.hidden = false;
+    versionTrigger?.setAttribute("aria-expanded", "true");
+  };
+
+  const closeAllMenus = (): void => {
+    closeTierMenu();
+    closeVersionMenu();
   };
 
   const onDocMouseDown = (ev: MouseEvent): void => {
-    if (!menuOpen || !pop) return;
+    if (!tierMenuOpen && !versionMenuOpen) return;
     const t = ev.target as Node;
-    if (pop.contains(t)) return;
-    closeMenu();
+    for (const p of pops) {
+      if (p.contains(t)) return;
+    }
+    closeAllMenus();
   };
 
   const onKeyDown = (ev: KeyboardEvent): void => {
-    if (ev.key === "Escape") closeMenu();
+    if (ev.key === "Escape") closeAllMenus();
   };
 
-  if (trigger && menu && pop && globalTierDefault) {
-    trigger.addEventListener("click", (ev) => {
+  if (versionTrigger && versionMenu && releases.length > 0) {
+    versionTrigger.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      if (menuOpen) closeMenu();
-      else openMenu();
+      closeTierMenu();
+      if (versionMenuOpen) closeVersionMenu();
+      else openVersionMenu();
     });
 
-    menu.addEventListener("click", (ev) => {
+    versionMenu.addEventListener("click", (ev) => {
       const opt = (ev.target as HTMLElement).closest(
         ".patchnotes-page__tier-option"
       ) as HTMLElement | null;
-      if (!opt) return;
-      const id = opt.dataset.tierId;
-      if (!id) return;
-      trigger.textContent = tierLabel(id);
-      applyGlobalTier(root, id);
-      closeMenu();
+      if (!opt || opt.dataset.versionIdx === undefined) return;
+      const idx = Number(opt.dataset.versionIdx);
+      if (Number.isNaN(idx) || idx < 0 || idx >= releases.length) return;
+      const rel = releases[idx]!;
+      versionTrigger.textContent = versionTriggerLabel(rel.version, idx === 0);
+      applyVisibleRelease(root, idx);
+      closeVersionMenu();
+    });
+  }
+
+  if (tierTrigger && tierMenu && globalTierDefault) {
+    tierTrigger.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      closeVersionMenu();
+      if (tierMenuOpen) closeTierMenu();
+      else openTierMenu();
     });
 
+    tierMenu.addEventListener("click", (ev) => {
+      const opt = (ev.target as HTMLElement).closest(
+        ".patchnotes-page__tier-option"
+      ) as HTMLElement | null;
+      if (!opt || opt.dataset.tierId === undefined) return;
+      const id = opt.dataset.tierId;
+      tierTrigger.textContent = tierLabel(id);
+      applyGlobalTier(root, id);
+      closeTierMenu();
+    });
+  }
+
+  if (pops.length > 0) {
     document.addEventListener("mousedown", onDocMouseDown, true);
     document.addEventListener("keydown", onKeyDown, true);
   }
