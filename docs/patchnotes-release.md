@@ -23,8 +23,11 @@ Public patch copy should answer **one question**: *what is different for me in t
 | **`01-players.md`** | People who play | **Short bullets** grouped by theme if helpful. Focus on **feel, controls, fairness, visibility**. | “You can…”, “Fixed…”, still no paths or module names unless it’s a renamed control players see. |
 | **`02-operators.md`** | Self-hosters, deploy | **Bullets**: env vars, migrations, Docker/compose, breaking config, defaults. Link to longer ops docs if needed. | Precise names; say **what to do** (set X, bump image). |
 | **`03-developers.md`** | Integrators / contributors | **Summary** of API/WS surface or extension points touched—not a dump of `reasons.md`. | Technical but still **scannable**; point to code paths when it saves a paragraph. |
+| **`04-hotfix.md`** *(optional)* | Anyone during a **corrective** release | **Short incident-shaped** summary: what was wrong, what we patched, why we shipped fast, optional follow-up. **Not** a replacement for Brief → Developers or for full `reasons.md`. | Factual and compact; avoid marketing tone; optional **`[FIX]`** / **`[SEC]`** / **`[OPS]`** tags like other tiers. |
 
 **`reasons.md`** (same version folder) remains the **technical inventory** for that release: paths, messages, migrations. It does **not** ship in `/patchnotes`; it complements `public/*.md` for people who need to reconstruct the change set.
+
+**Hotfix tier:** Add **`04-hotfix.md`** only when the version warrants a dedicated hotfix narrative. **`npm run prepare-merge` does not create this file**—create it under **`UNRELEASED/public/`** (or in a frozen **`versions/<semver>/public/`** before you publish a build). See *Hotfix release notes* in [THE-LARGER-SYSTEM.md](THE-LARGER-SYSTEM.md) and **[`.cursor/skills/hotfix-release-notes/SKILL.md`](../.cursor/skills/hotfix-release-notes/SKILL.md)** (**HRN**).
 
 ### When a build is mostly ops / dev (nothing meaningful for players)
 
@@ -82,6 +85,7 @@ In **`public/*.md`**, you may prefix **list items** (and optionally a whole **pa
 - [ ] **Players** bullets are **true in production** and ordered by impact.
 - [ ] **Operators** mentions anything that breaks or upgrades a deployment.
 - [ ] **Developers** flags anything an integrator must **react** to (API, WS, auth).
+- [ ] **Hotfix** — if **`04-hotfix.md`** exists for this version, it is real hotfix copy (not a placeholder); **delete** the file before freeze / publish if this release is **not** hotfix-driven.
 - [ ] Tags are **honest** (a `[FIX]` is user-visible wrongness repaired, not a refactor).
 
 ---

@@ -2,7 +2,7 @@
 name: completed-feature-document
 description: >-
   Nimiq Space incremental patch-note capture: writes or updates audience copy in
-  patchnote/versions/UNRELEASED/public (00-brief through 03-developers) from the
+  patchnote/versions/UNRELEASED/public (00-brief through 03-developers; optional 04-hotfix.md) from the
   current task or completed work. Use when the user says Use completed-feature-document,
   CFD, completed feature document, or save patch notes / public patch notes from this work.
 ---
@@ -26,6 +26,7 @@ During development, **`reasons.md`** and **`public/*.md`** do not update themsel
    - **`01-players.md`** — What players feel, can do, or see fixed.
    - **`02-operators.md`** — Deploy, Docker, env, breaking defaults.
    - **`03-developers.md`** — API/WS/modules touched; scannable bullets, not a full dump of `reasons.md`.
+   - **`04-hotfix.md`** — Only when the user wants **hotfix / incident-shaped** copy; use **[`hotfix-release-notes`](../hotfix-release-notes/SKILL.md)** (**HRN**) instead of guessing.
 4. **Formatting:** Prefer new **list lines**; optional tags **`[NEW]`**, **`[FIX]`**, **`[CHANGE]`**, **`[PERF]`**, **`[OPS]`**, **`[SEC]`** on bullets where they help `/patchnotes` badges.
 5. **Draft placeholder:** When a file gains **real** audience copy, **remove** `_(Draft — not published.)_` (and similar template-only lines) from that file so `/patchnotes` does not show a fake draft line above real content.
 6. **Dedupe:** Do not repeat the same line across tiers unless each wording serves a different audience; merge with existing bullets when obvious.

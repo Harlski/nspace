@@ -104,11 +104,13 @@ After that, the author **reviews diffs**, then **`git add`**, **`git commit`**, 
 
 **Relationship to automation:** Filling and cleaning `public/*.md` is **editorial work before merge** (or a follow-up edit on the frozen folder before publishing a build). It is **outside** what `prepare-merge` automates; see **Release line: patch notes + semver on merge** above.
 
-**Tiers (short):** **Brief** — ultra-short, no jargon. **Players** — what you feel or can do in-world. **Operators** — env, Docker, migrations, breaking defaults. **Developers** — integrator-facing deltas (API/WS), still scannable; deep file paths and message inventories stay in **`reasons.md`** for that version.
+**Tiers (short):** **Brief** — ultra-short, no jargon. **Players** — what you feel or can do in-world. **Operators** — env, Docker, migrations, breaking defaults. **Developers** — integrator-facing deltas (API/WS), still scannable; deep file paths and message inventories stay in **`reasons.md`** for that version. **Hotfix** — optional fifth tier (`public/04-hotfix.md`): urgent corrective narrative (what was wrong, what was patched, why now); **separate** from the normal Brief → Developers story so routine notes stay outcome-focused while hotfixes still get an honest incident-shaped summary. Omit the file for versions that are not hotfix-driven (`npm run prepare-merge` does not create it).
+
+**Hotfix release notes (workflow):** Treat **Hotfix** as a small **form** for pressure releases, not a second copy of `reasons.md`. Authors add **`patchnote/versions/<version>/public/04-hotfix.md`** only when needed; follow **[`.cursor/skills/hotfix-release-notes/SKILL.md`](../.cursor/skills/hotfix-release-notes/SKILL.md)** when drafting (**HRN** / **Use hotfix release notes**). Pre-merge audience polish (**PPA**) should drop or fill this file so frozen trees do not ship placeholder-only Hotfix copy.
 
 **Authoring guide:** [patchnotes-release.md](patchnotes-release.md) — tier-by-tier shape, tag legend, pre-freeze checklist. [MEMORY.md](../MEMORY.md) points here so agents and humans share one outline.
 
-**In-app:** `/patchnotes` bundles frozen semver `public/*.md` at client build time; optional list (and leading-paragraph) tags **`[NEW]`**, **`[FIX]`**, **`[CHANGE]`**, **`[PERF]`**, **`[OPS]`**, **`[SEC]`** render as compact badges (see [client/src/patchnotes/mdToHtml.ts](../client/src/patchnotes/mdToHtml.ts)).
+**In-app:** `/patchnotes` bundles frozen semver `public/*.md` at client build time; optional list (and leading-paragraph) tags **`[NEW]`**, **`[FIX]`**, **`[CHANGE]`**, **`[PERF]`**, **`[OPS]`**, **`[SEC]`** render as compact badges (see [client/src/patchnotes/mdToHtml.ts](../client/src/patchnotes/mdToHtml.ts)). The audience dropdown includes **Hotfix** when that version’s `04-hotfix.md` exists and is non-empty.
 
 ### Production VPS deploy: stop, backup `data/`, then upgrade
 
@@ -137,3 +139,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-05-09** — Public patch notes norm + editorial guide ([patchnotes-release.md](patchnotes-release.md)); optional in-app change tags. See [reasons/reason_673942.md](reasons/reason_673942.md).
 - **2026-05-09** — Recorded decision: GitHub Actions VPS deploy stops the stack, tarballs host `data/` under `backups/`, then rebuilds. See [reasons/reason_458291.md](reasons/reason_458291.md).
 - **2026-05-10** — Release line: clarify **automated** (semver + folder freeze) vs **not automated** (`public/*.md` copy, draft placeholders). See [reasons/reason_551903.md](reasons/reason_551903.md).
+- **2026-05-10** — Optional **`/patchnotes` Hotfix** tier (`public/04-hotfix.md`) + agent skill for hotfix narratives (separate from Brief → Developers). See [reasons/reason_384729.md](reasons/reason_384729.md).

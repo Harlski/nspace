@@ -2,7 +2,7 @@
 
 The web client ships a **public patch feed** at **`/patchnotes`**: it bundles the `versions/<semver>/public/*.md` tiers from this tree at build time (see [`client/src/patchnotes/`](../client/src/patchnotes/)). This tree still supports **version-scoped** work: every patch-notes **version** gets attached **technical reasons** and optional **public summaries** at several explanation depths and for different interests.
 
-**How to write public copy:** follow **[`docs/patchnotes-release.md`](../docs/patchnotes-release.md)** (outline per tier, optional list tags **`[NEW]`**, **`[FIX]`**, **`[CHANGE]`**, **`[PERF]`**, **`[OPS]`**, **`[SEC]`** for in-app badges). Principles also live under *Public patch notes* in [`docs/THE-LARGER-SYSTEM.md`](../docs/THE-LARGER-SYSTEM.md).
+**How to write public copy:** follow **[`docs/patchnotes-release.md`](../docs/patchnotes-release.md)** (outline per tier including optional **Hotfix**, optional list tags **`[NEW]`**, **`[FIX]`**, **`[CHANGE]`**, **`[PERF]`**, **`[OPS]`**, **`[SEC]`** for in-app badges). Principles also live under *Public patch notes* in [`docs/THE-LARGER-SYSTEM.md`](../docs/THE-LARGER-SYSTEM.md).
 
 ## Layout
 
@@ -16,7 +16,10 @@ patchnote/versions/<version>/
     01-players.md     ← players / non-technical
     02-operators.md   ← self-hosters, deploy, env, migrations
     03-developers.md  ← integrators / contributors (summary, not full reasons)
+    04-hotfix.md      ← optional; urgent corrective narrative (see THE-LARGER-SYSTEM, patchnotes-release.md, hotfix skill)
 ```
+
+- **`04-hotfix.md`** is **not** created by **`npm run prepare-merge`**. Add it manually when a version needs a hotfix story; omit the file when not needed (see [`.cursor/skills/hotfix-release-notes/SKILL.md`](../.cursor/skills/hotfix-release-notes/SKILL.md)).
 
 - **`<version>`** should match the **root** `package.json` semver after a normal merge freeze (see **`npm run prepare-merge`**). Other unique labels (calendar tag `2026.05.06`, `deploy-*`) remain possible for exceptional releases if ever needed.
 - **`reasons.md`** is the low-level **why / what changed** log for **that** patch-notes version only. Do not mix versions in one file.

@@ -7341,12 +7341,14 @@ export class Game {
     }
   }
 
-  private updateMineableBlockSparkles(): void {
+  private updateMineableBlockSparkles(): boolean {
     const t = this.mineableSparkleAnimTime;
     const emissivePulse = 0.5 + 0.5 * Math.sin(t * 2.35);
+    let any = false;
     for (const g of this.blockMeshes.values()) {
       const pts = g.userData["mineableSparklePoints"] as THREE.Points | undefined;
       if (!pts) continue;
+      any = true;
       for (const c of g.children) {
         if (c instanceof THREE.Mesh) {
           const mm = c.material;
@@ -7380,6 +7382,7 @@ export class Game {
       const mat = pts.material as THREE.PointsMaterial;
       mat.opacity = 0.78 + 0.22 * Math.sin(t * 1.85);
     }
+    return any;
   }
 
   tick(dt: number): void {
@@ -7501,9 +7504,11 @@ export class Game {
     this.updateFloatingTexts();
     this.syncRoomEntrySpawnMarker(renderNow * 0.001);
 
-    if (visualActive) {
+    const hasMineableSparkles = this.updateMineableBlockSparkles();
+    if (visualActive || hasMineableSparkles) {
       this.requestRender(250);
-      this.updateMineableBlockSparkles();
+    }
+    if (visualActive) {
       this.animateDoorTiles();
     }
 

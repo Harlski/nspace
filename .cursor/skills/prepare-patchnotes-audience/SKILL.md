@@ -2,7 +2,7 @@
 name: prepare-patchnotes-audience
 description: >-
   Finalizes Nimiq Space audience-facing patch notes under patchnote/versions/UNRELEASED/public
-  (Brief, Players, Operators, Developers) before npm run prepare-merge freezes UNRELEASED.
+  (Brief, Players, Operators, Developers; optional 04-hotfix.md) before npm run prepare-merge freezes UNRELEASED.
   Alias PPA — use when the user says Use PPA, PPA, Prepare for merge, prepare-merge, audience
   patch notes, public patch tiers, or is about to freeze UNRELEASED; after prepare-merge, use
   only if public/*.md still need edits in the new semver folder.
@@ -25,6 +25,7 @@ Work from **`reasons.md`** (same `UNRELEASED` folder) as the source of facts; **
 - [ ] **`01-players.md`** — In-world / UX outcomes; same draft-line rule.
 - [ ] **`02-operators.md`** — Deploy / env / Docker / migrations as needed; same draft-line rule.
 - [ ] **`03-developers.md`** — API/WS / integrator summary; not a dump of `reasons.md`; same draft-line rule.
+- [ ] **`04-hotfix.md`** *(only if present)* — Real hotfix narrative per [hotfix-release-notes](../hotfix-release-notes/SKILL.md); remove the file if this release is **not** a hotfix (see [docs/THE-LARGER-SYSTEM.md](../../../docs/THE-LARGER-SYSTEM.md) *Public patch notes*).
 - [ ] Optional **`[NEW]` / `[FIX]` / …** list tags per [docs/patchnotes-release.md](../../../docs/patchnotes-release.md) for in-app badges.
 - [ ] If a tier has **nothing** for that audience, say so explicitly (one honest line) instead of leaving only the draft placeholder.
 

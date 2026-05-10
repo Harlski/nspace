@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareSemverDesc } from "./collectPatchnotes.js";
+import { compareSemverDesc, PATCHNOTE_TIER_ORDER } from "./collectPatchnotes.js";
 import { patchnoteMdToHtml, stripPatchnoteAudienceDepth } from "./mdToHtml.js";
 
 describe("patchnoteMdToHtml", () => {
@@ -50,5 +50,11 @@ describe("compareSemverDesc", () => {
     expect(compareSemverDesc("0.3.4", "0.3.3")).toBeLessThan(0);
     expect(compareSemverDesc("0.3.3", "0.3.4")).toBeGreaterThan(0);
     expect(compareSemverDesc("0.3.4", "0.3.4")).toBe(0);
+  });
+});
+
+describe("PATCHNOTE_TIER_ORDER", () => {
+  it("ends with optional hotfix tier id", () => {
+    expect(PATCHNOTE_TIER_ORDER[PATCHNOTE_TIER_ORDER.length - 1]).toBe("04-hotfix");
   });
 });

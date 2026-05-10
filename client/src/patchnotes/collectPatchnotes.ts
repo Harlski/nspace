@@ -5,6 +5,7 @@ export const PATCHNOTE_TIER_ORDER = [
   "01-players",
   "02-operators",
   "03-developers",
+  "04-hotfix",
 ] as const;
 
 const TIER_LABEL: Record<(typeof PATCHNOTE_TIER_ORDER)[number], string> = {
@@ -12,6 +13,7 @@ const TIER_LABEL: Record<(typeof PATCHNOTE_TIER_ORDER)[number], string> = {
   "01-players": "Players",
   "02-operators": "Operators",
   "03-developers": "Developers",
+  "04-hotfix": "Hotfix",
 };
 
 export const PATCHNOTE_TIER_LABEL = TIER_LABEL;

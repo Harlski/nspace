@@ -13,7 +13,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 | [build.md](build.md) | Stack, world model, authority, rendering, high-level message flow |
 | [process.md](process.md) | How to extend synced features, tick loop, env vars, local dev, rate limits |
 | [THE-LARGER-SYSTEM.md](THE-LARGER-SYSTEM.md) | Evolving design principles and cross-cutting decisions; substantive edits ship a companion file in [reasons/](reasons/) (see also [MEMORY.md](../MEMORY.md)) |
-| [patchnotes-release.md](patchnotes-release.md) | How to write `patchnote/…/public/*.md` (tiers, brevity, optional `[NEW]`/`[FIX]`/… tags for in-app `/patchnotes`) |
+| [patchnotes-release.md](patchnotes-release.md) | How to write `patchnote/…/public/*.md` (tiers, optional **`04-hotfix.md`**, brevity, optional `[NEW]`/`[FIX]`/… tags for in-app `/patchnotes`) |
 | [reasons/](reasons/) | `THE-LARGER-SYSTEM` edit rationales only: `reason_{six-digit-id}.md` |
 | [signboards-admin-guide.md](signboards-admin-guide.md) | Signboard rules by room, WebSocket messages, persistence |
 
@@ -60,7 +60,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 | Document | Contents |
 |----------|----------|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Fork/PR workflow, conventions, important file paths |
-| [patchnote/README.md](../patchnote/README.md) | **Patch notes** per version: `versions/<version>/reasons.md` + `public/` (brief, players, operators, developers); start from `versions/UNRELEASED/` |
+| [patchnote/README.md](../patchnote/README.md) | **Patch notes** per version: `versions/<version>/reasons.md` + `public/` (brief, players, operators, developers; optional **hotfix**); start from `versions/UNRELEASED/` |
 
 ---
 
