@@ -309,15 +309,13 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   if (!app) return;
   unmountMainMenu?.();
   unmountMainMenu = null;
-
   app.innerHTML = "";
   const hudRoot = document.createElement("div");
   hudRoot.style.height = "100%";
   app.appendChild(hudRoot);
 
-  const showDebugHud =
-    import.meta.env.DEV ||
-    new URLSearchParams(location.search).has("debug");
+  const query = new URLSearchParams(location.search);
+  const showDebugHud = import.meta.env.DEV || query.has("debug");
 
   let ws: WebSocket | null = null;
   const perfPingSentAt = new Map<number, number>();
@@ -1381,6 +1379,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     | { kind: "billboard"; visitUrl: string; visitName: string }
     | null = null;
   let connectGen = 0;
+  /** Cleared when `welcome` arrives or the socket closes; avoids infinite loading if the server never responds. */
+  let welcomeDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearWelcomeDeadlineTimer = (): void => {
+    if (welcomeDeadlineTimer !== null) {
+      clearTimeout(welcomeDeadlineTimer);
+      welcomeDeadlineTimer = null;
+    }
+  };
   let mazeZoomLocked = false;
   let nonMazeFrustum: number | null = (() => {
     try {
@@ -1493,6 +1499,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   );
 
   function cleanupResources(): void {
+    clearWelcomeDeadlineTimer();
     setPseudoFullscreen(false);
     notifyChatNotTyping();
     if (nimWalletPollTimer !== null) {
@@ -1759,7 +1766,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const actor = selfAddress.trim() !== "" ? selfAddress : address;
     const isAdminViewer = isAdmin(actor);
     const allowJoinSpawn = welcomeAllowRoomJoinSpawnEdit;
-    const wsOpen = ws && ws.readyState === WebSocket.OPEN;
+    const wsOpen = ws?.readyState === WebSocket.OPEN;
     const show =
       allowJoinSpawn &&
       wsOpen &&
@@ -2860,6 +2867,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       return;
     }
     if (msg.type === "welcome") {
+      clearWelcomeDeadlineTimer();
       if (pendingCreateRoomAwaiting) {
         closeRoomsModal();
       }
@@ -3393,6 +3401,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   ): void => {
     connectGen += 1;
     const myGen = connectGen;
+    clearWelcomeDeadlineTimer();
     hud.setLoadingLabel(loadingLabelForTargetRoom(room));
     hud.setLoadingVisible(true);
     requestAnimationFrame(() => {
@@ -3412,6 +3421,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         },
         (ev) => {
           if (myGen !== connectGen) return;
+          clearWelcomeDeadlineTimer();
           if (ev.code === 4001) {
             clearCachedSession();
             location.reload();
@@ -3426,6 +3436,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : undefined
       );
       wireWsHandlers(ws);
+      welcomeDeadlineTimer = setTimeout(() => {
+        welcomeDeadlineTimer = null;
+        if (disposed || myGen !== connectGen) return;
+        hud.setLoadingVisible(false, { skipMinWait: true });
+        hud.setReconnectOffer(true);
+        hud.setStatus(
+          "No response from server — tap Reconnect, or start the game server if it stopped"
+        );
+      }, 35_000);
     });
   };
 
@@ -3827,15 +3846,27 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   });
 
   let last = performance.now();
-  let fpsSmoothed = 60;
+  /** Smoothed inter-RAF cadence (Hz); reflects how often `loop` runs, not monitor refresh. */
+  let debugDispHzSmoothed = 60;
+  /** Smoothed previous-frame RAF callback duration (ms); CPU/work in the game loop. */
+  let debugLoopMsSmoothed = 16.67;
+  /** Previous RAF callback wall (ms); used before this frame's `loopEnd` is known. */
+  let prevRafCallbackMsForDebugFps = 16.67;
+
   function loop(now: number): void {
     if (disposed) return;
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const loopStart = performance.now();
+    const rawDelta = now - last;
+    /** Inter-RAF spacing for sim + HUD; clamp non-positive (clock blips) and huge tab-background gaps. */
+    let rawMs = rawDelta;
+    if (!Number.isFinite(rawDelta) || rawDelta <= 0) {
+      rawMs = 1000 / 60;
+    } else if (rawDelta > 120_000) {
+      rawMs = 120_000;
+    }
+    const dt = Math.min(0.05, rawMs / 1000);
     last = now;
     game.tick(dt);
-    if (hud.isPerfHudEnabled()) {
-      hud.feedPerfHudFrame(now);
-    }
     syncPortalEnterButton();
     if (hud.isSelfEmojiMenuOpen()) {
       const ea = game.getSelfScreenPosition(1.32);
@@ -3844,8 +3875,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       hud.setSelfEmojiMenuAnchor(ea ? ea.x : null, ea ? ea.y : null, floor);
     }
     if (showDebugHud) {
-      const inst = dt > 1e-6 ? 1 / dt : 0;
-      fpsSmoothed = fpsSmoothed * 0.9 + inst * 0.1;
+      const rawClamped = Math.min(400, Math.max(1, rawMs));
+      const instHz = 1000 / rawClamped;
+      debugDispHzSmoothed = debugDispHzSmoothed * 0.9 + instHz * 0.1;
+      const loopClamped = Math.min(400, Math.max(0.5, prevRafCallbackMsForDebugFps));
+      debugLoopMsSmoothed = debugLoopMsSmoothed * 0.9 + loopClamped * 0.1;
       const d = game.getDebugStats();
       const b = d.bounds;
       const pos = d.selfPosition;
@@ -3874,10 +3908,16 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           `pos: ${posStr}`,
           `zoom: ${d.zoomFrustum.toFixed(2)}   fog: ${d.fogEnabled ? "on" : "off"} (${d.fogInner.toFixed(1)} / ${d.fogOuter.toFixed(1)})`,
           `mode: ${d.buildMode ? "build" : d.floorExpandMode ? "floor+" : "walk"}`,
-          `ws: ${wsLabel}   fps: ${fpsSmoothed.toFixed(0)}`,
+          `ws: ${wsLabel}   ${debugDispHzSmoothed.toFixed(0)}Hz disp · ${debugLoopMsSmoothed.toFixed(1)}ms loop`,
         ].join("\n")
       );
     }
+    const loopEnd = performance.now();
+    const rafCallbackMs = loopEnd - loopStart;
+    if (hud.isPerfHudEnabled()) {
+      hud.feedPerfHudFrame(now);
+    }
+    prevRafCallbackMsForDebugFps = rafCallbackMs;
     rafId = requestAnimationFrame(loop);
   }
   rafId = requestAnimationFrame(loop);

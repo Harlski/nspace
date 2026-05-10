@@ -111,83 +111,39 @@ const SELF_EXTRAP_GOAL_ALONG_BUFFER = 0.12;
  * (`inferStartLayerClient` + `pathfindTerrain`) would draw rooftop-height routes over air.
  */
 const SELF_EXTRAP_MAX_OFFSET_XZ = 0.22;
-
 /** Default scale on unit floor plane; >1 hides subpixel seams (tunable in admin). */
 const DEFAULT_FLOOR_TILE_QUAD = 1.08;
 /** 1 = match server footprint; scale geometry only (grid Y unchanged) to debug floor seam flicker. */
 const DEFAULT_BLOCK_VISUAL_SCALE = 1;
 /** Walkable floor tile thickness in world Y; top stays near y≈0, volume extends downward. */
 const WALKABLE_FLOOR_TILE_THICKNESS = 0.16;
-/** Blend factor toward white for vertical tile faces (0–1). */
-const WALKABLE_FLOOR_SIDE_LIGHTEN = 0.48;
-/** Blend factor toward black for underside (-Y) face. */
-const WALKABLE_FLOOR_BOTTOM_DARKEN = 0.22;
 
-function lightenTerrainHex(hex: number, blend: number): number {
-  const t = Math.max(0, Math.min(1, blend));
-  const r = (hex >> 16) & 0xff;
-  const g = (hex >> 8) & 0xff;
-  const b = hex & 0xff;
-  const lr = Math.min(255, Math.round(r + (255 - r) * t));
-  const lg = Math.min(255, Math.round(g + (255 - g) * t));
-  const lb = Math.min(255, Math.round(b + (255 - b) * t));
-  return (lr << 16) | (lg << 8) | lb;
-}
-
-function darkenTerrainHex(hex: number, blend: number): number {
-  const t = Math.max(0, Math.min(1, blend));
-  const f = 1 - t * 0.55;
-  const r = (hex >> 16) & 0xff;
-  const g = (hex >> 8) & 0xff;
-  const b = hex & 0xff;
-  return (
-    (Math.round(r * f) << 16) |
-    (Math.round(g * f) << 8) |
-    Math.round(b * f)
-  );
+function readWebglRenderScale(): number {
+  if (typeof location === "undefined") return 1;
+  const raw = new URLSearchParams(location.search).get("webglRenderScale");
+  if (raw === null) return 1;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.max(0.25, Math.min(1, n)) : 1;
 }
 
 function createWalkableFloorTileMaterials(
   isPortalGlow: boolean,
   isExtra: boolean
-): THREE.MeshStandardMaterial[] {
+): THREE.MeshStandardMaterial {
   const topHex = isPortalGlow
     ? TERRAIN_TILE_DOOR_COLOR
     : isExtra
       ? TERRAIN_TILE_EXTRA_COLOR
       : TERRAIN_TILE_CORE_COLOR;
-  const sideHex = lightenTerrainHex(topHex, WALKABLE_FLOOR_SIDE_LIGHTEN);
-  const bottomHex = darkenTerrainHex(topHex, WALKABLE_FLOOR_BOTTOM_DARKEN);
   const roughTop = isPortalGlow ? 0.3 : isExtra ? 0.88 : 0.9;
   const metalTop = isPortalGlow ? 0.5 : isExtra ? 0.06 : 0.05;
-  const roughSide = isPortalGlow ? 0.38 : 0.9;
-  const metalSide = isPortalGlow ? 0.42 : 0.06;
-  const mk = (
-    color: number,
-    opts: {
-      roughness: number;
-      metalness: number;
-      emissiveScale: number;
-    }
-  ) =>
-    new THREE.MeshStandardMaterial({
-      color,
-      roughness: opts.roughness,
-      metalness: opts.metalness,
-      emissive: isPortalGlow ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000,
-      emissiveIntensity: isPortalGlow
-        ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * opts.emissiveScale
-        : 0,
-    });
-  // BoxGeometry groups: +x, -x, +y (top), -y (bottom), +z, -z
-  return [
-    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
-    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
-    mk(topHex, { roughness: roughTop, metalness: metalTop, emissiveScale: 1 }),
-    mk(bottomHex, { roughness: 0.95, metalness: 0.04, emissiveScale: 0 }),
-    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
-    mk(sideHex, { roughness: roughSide, metalness: metalSide, emissiveScale: 0.42 }),
-  ];
+  return new THREE.MeshStandardMaterial({
+    color: topHex,
+    roughness: roughTop,
+    metalness: metalTop,
+    emissive: isPortalGlow ? TERRAIN_TILE_DOOR_EMISSIVE : 0x000000,
+    emissiveIntensity: isPortalGlow ? TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY : 0,
+  });
 }
 
 function applyWalkableFloorTileMaterials(
@@ -200,39 +156,25 @@ function applyWalkableFloorTileMaterials(
     : isExtra
       ? TERRAIN_TILE_EXTRA_COLOR
       : TERRAIN_TILE_CORE_COLOR;
-  const sideHex = lightenTerrainHex(topHex, WALKABLE_FLOOR_SIDE_LIGHTEN);
-  const bottomHex = darkenTerrainHex(topHex, WALKABLE_FLOOR_BOTTOM_DARKEN);
   const roughTop = isPortalGlow ? 0.3 : isExtra ? 0.88 : 0.9;
   const metalTop = isPortalGlow ? 0.5 : isExtra ? 0.06 : 0.05;
-  const roughSide = isPortalGlow ? 0.38 : 0.9;
-  const metalSide = isPortalGlow ? 0.42 : 0.06;
-  const mats = mesh.material as THREE.MeshStandardMaterial[];
-  const set = (
-    i: number,
-    hex: number,
-    rough: number,
-    metal: number,
-    emissiveScale: number
-  ): void => {
-    const m = mats[i]!;
-    m.color.setHex(hex);
-    m.roughness = rough;
-    m.metalness = metal;
-    if (isPortalGlow) {
-      m.emissive.setHex(TERRAIN_TILE_DOOR_EMISSIVE);
-      m.emissiveIntensity =
-        TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * emissiveScale;
-    } else {
-      m.emissive.setHex(0x000000);
-      m.emissiveIntensity = 0;
-    }
-  };
-  set(0, sideHex, roughSide, metalSide, 0.42);
-  set(1, sideHex, roughSide, metalSide, 0.42);
-  set(2, topHex, roughTop, metalTop, 1);
-  set(3, bottomHex, 0.95, 0.04, 0);
-  set(4, sideHex, roughSide, metalSide, 0.42);
-  set(5, sideHex, roughSide, metalSide, 0.42);
+  const material = mesh.material;
+  if (Array.isArray(material)) {
+    for (const mat of material) mat.dispose();
+    mesh.material = createWalkableFloorTileMaterials(isPortalGlow, isExtra);
+    return;
+  }
+  const mat = material as THREE.MeshStandardMaterial;
+  mat.color.setHex(topHex);
+  mat.roughness = roughTop;
+  mat.metalness = metalTop;
+  if (isPortalGlow) {
+    mat.emissive.setHex(TERRAIN_TILE_DOOR_EMISSIVE);
+    mat.emissiveIntensity = TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY;
+  } else {
+    mat.emissive.setHex(0x000000);
+    mat.emissiveIntensity = 0;
+  }
 }
 
 function disposeWalkableFloorMeshMaterials(mesh: THREE.Mesh): void {
@@ -848,6 +790,9 @@ export class Game {
   readonly camera: THREE.OrthographicCamera;
   readonly renderer: THREE.WebGLRenderer;
   private readonly canvasHost: HTMLElement;
+  private renderDirty = true;
+  private continuousRenderUntilMono = 0;
+  private lastSceneMutation: { reason: string; atMono: number } | null = null;
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
   private readonly hit = new THREE.Vector3();
@@ -922,6 +867,7 @@ export class Game {
   } | null = null;
   /** One slab mesh per walkable tile (core grid + extra); void shows scene background only. */
   private readonly walkableFloorMeshes = new Map<string, THREE.Mesh>();
+  private readonly walkableFloorVisualMeshes: THREE.InstancedMesh[] = [];
   /** White marker blocks on door tiles (teleport squares). */
   private readonly doorMarkerMeshes = new Map<string, THREE.Mesh>();
   /** Same pillar effect on player-placed teleporters once a destination is set. */
@@ -1323,7 +1269,8 @@ export class Game {
     this.applyCameraPose();
 
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      alpha: false,
+      antialias: false,
       powerPreference: "high-performance",
     });
     this.renderer.setPixelRatio(1);
@@ -1596,6 +1543,8 @@ export class Game {
     fogOuter: number;
     buildMode: boolean;
     floorExpandMode: boolean;
+    walkableFloorMeshCount: number;
+    lastSceneMutation: { reason: string; msAgo: number } | null;
   } {
     const self = this.selfMesh;
     const r = this.getFogOfWarRadii();
@@ -1620,7 +1569,29 @@ export class Game {
       fogOuter: r.outer,
       buildMode: this.buildMode,
       floorExpandMode: this.floorExpandMode,
+      walkableFloorMeshCount: this.walkableFloorMeshes.size,
+      lastSceneMutation: this.lastSceneMutation
+        ? {
+            reason: this.lastSceneMutation.reason,
+            msAgo: Math.round(performance.now() - this.lastSceneMutation.atMono),
+          }
+        : null,
     };
+  }
+
+  private markSceneMutation(reason: string): void {
+    this.lastSceneMutation = { reason, atMono: performance.now() };
+    this.requestRender();
+  }
+
+  private requestRender(continuousMs = 0): void {
+    this.renderDirty = true;
+    if (continuousMs > 0) {
+      this.continuousRenderUntilMono = Math.max(
+        this.continuousRenderUntilMono,
+        performance.now() + continuousMs
+      );
+    }
   }
 
   applyRoomFromWelcome(msg: {
@@ -1680,6 +1651,7 @@ export class Game {
     this.syncVoxelWordSign();
     this.refreshPathLine();
     this.syncPlacementRangeHints();
+    this.markSceneMutation("applyRoomFromWelcome");
     
     // Clear canvas identicons when leaving canvas room
     if (normalizeRoomId(prevRoomId) === CANVAS_ROOM_ID && normalizeRoomId(this.roomId) !== CANVAS_ROOM_ID) {
@@ -1822,6 +1794,7 @@ export class Game {
   setFogOfWarEnabled(enabled: boolean): void {
     this.fogOfWar.setEnabled(enabled);
     localStorage.setItem(LS_FOG_ENABLED, enabled ? "1" : "0");
+    this.requestRender();
   }
 
   getFogOfWarRadii(): { inner: number; outer: number } {
@@ -1833,6 +1806,7 @@ export class Game {
     this.fogOfWar.setRadii(r.inner, r.outer);
     localStorage.setItem(LS_FOG_INNER, String(r.inner));
     localStorage.setItem(LS_FOG_OUTER, String(r.outer));
+    this.requestRender();
   }
 
   getZoomFrustumSize(): number {
@@ -1904,6 +1878,7 @@ export class Game {
     for (const [, mesh] of this.walkableFloorMeshes) {
       mesh.scale.set(s, 1, s);
     }
+    this.rebuildWalkableFloorVisualMeshes();
   }
 
   /**
@@ -1941,6 +1916,7 @@ export class Game {
     this.refreshAllNameLabelScales();
     this.refreshChatBubbleVerticalPositions();
     this.refreshAllTypingIndicatorLayouts();
+    this.requestRender();
   }
 
   setZoomFrustumSize(size: number, persist = true): void {
@@ -1962,6 +1938,7 @@ export class Game {
     this.refreshAllNameLabelScales();
     this.refreshChatBubbleVerticalPositions();
     this.refreshAllTypingIndicatorLayouts();
+    this.requestRender();
   }
 
   /** Euler angles (degrees) for the identicon sphere mesh (XYZ order). */
@@ -2208,9 +2185,11 @@ export class Game {
     const scale = Math.exp(-e.deltaY * 0.0015);
     const next = this.frustumSize / scale;
     this.setZoomFrustumSize(next);
+    this.requestRender(250);
   };
 
   private readonly onPointerUp = (e: PointerEvent): void => {
+    this.requestRender(250);
     const isCancel = e.type === "pointercancel";
     if (
       this.rightOrbitDrag &&
@@ -3396,6 +3375,7 @@ export class Game {
     this.refreshSelectionOutline();
     this.syncPlacementRangeHints();
     this.syncRoomEntrySpawnMarker(performance.now() * 0.001);
+    this.requestRender();
   }
 
   getBuildMode(): boolean {
@@ -3419,6 +3399,7 @@ export class Game {
     this.syncHighlightColor();
     this.syncPlacementRangeHints();
     this.syncRoomEntrySpawnMarker(performance.now() * 0.001);
+    this.requestRender();
   }
 
   getFloorExpandMode(): boolean {
@@ -3784,6 +3765,29 @@ export class Game {
     let showUnavailableOnCanvas = false;
     let nextPollAt = Date.now() + POLL_MS;
 
+    /** Timers must not run heavy chart work in the same turn as gameplay RAF — defer to idle. */
+    const scheduleRedrawChartCanvas = (): void => {
+      const run = (): void => {
+        redrawChartCanvas();
+      };
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(run, { timeout: 120 });
+      } else {
+        setTimeout(run, 0);
+      }
+    };
+
+    const schedulePaint = (): void => {
+      const run = (): void => {
+        void paint();
+      };
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(run, { timeout: 200 });
+      } else {
+        setTimeout(run, 0);
+      }
+    };
+
     const redrawChartCanvas = (): void => {
       if (gen !== this.billboardSyncGen) return;
       if (this.billboardRoots.get(b.id) !== root) return;
@@ -3955,17 +3959,17 @@ export class Game {
     const tickKey = `chartTick:${b.id}`;
     const pollTimer = window.setInterval(() => {
       nextPollAt = Date.now() + POLL_MS;
-      void paint();
+      schedulePaint();
     }, POLL_MS);
     this.billboardTimers.set(pollKey, pollTimer);
-    const tickTimer = window.setInterval(() => redrawChartCanvas(), 1000);
+    const tickTimer = window.setInterval(() => scheduleRedrawChartCanvas(), 1000);
     this.billboardTimers.set(tickKey, tickTimer);
     if (rangeCycleOn) {
       const cycleKey = `chartCycle:${b.id}`;
       const cycleTimer = window.setInterval(() => {
         cyclePhase = (cyclePhase + 1) % CHART_CYCLE_ORDER.length;
         lastCandles = null;
-        void paint();
+        schedulePaint();
       }, cycleIntervalMs);
       this.billboardTimers.set(cycleKey, cycleTimer);
     }
@@ -4257,6 +4261,7 @@ export class Game {
     this.refreshPathLine();
     this.refreshSelectionOutline();
     this.syncPlacementRangeHints();
+    this.markSceneMutation(`setObstacles:${tiles.length}`);
   }
 
   /**
@@ -4375,6 +4380,7 @@ export class Game {
     this.syncBlockMeshes();
     this.refreshPathLine();
     this.syncPlacementRangeHints();
+    this.markSceneMutation(`applyObstaclesDelta:add${add.length}:remove${remove.length}`);
   }
 
   /** Floor tiles where a new block can be placed (within server place radius, empty, walkable). */
@@ -5328,6 +5334,7 @@ export class Game {
   }
 
   private onPointerMove = (e: PointerEvent): void => {
+    this.requestRender(120);
     if (
       this.rightOrbitDrag &&
       e.pointerId === this.rightOrbitDrag.pointerId &&
@@ -5596,6 +5603,7 @@ export class Game {
   };
 
   private onPointerDown = (e: PointerEvent): void => {
+    this.requestRender(250);
     if (e.button === 2 && Game.canUseRightDragCameraOrbit(e)) {
       this.suppressAvatarContextMenuFromRightOrbit = false;
       this.cameraOrbitEase = null;
@@ -6167,6 +6175,7 @@ export class Game {
       disposeWalkableFloorMeshMaterials(mesh);
     }
     this.walkableFloorMeshes.clear();
+    this.disposeWalkableFloorVisualMeshes();
     for (const [, marker] of this.doorMarkerMeshes) {
       this.scene.remove(marker);
       marker.geometry.dispose();
@@ -6572,10 +6581,10 @@ export class Game {
           topY - WALKABLE_FLOOR_TILE_THICKNESS / 2,
           wz
         );
+        mesh.visible = false;
         mesh.userData["isExtra"] = isExtra;
         mesh.userData["isDoor"] = isDoor;
         mesh.userData["isPortalGlow"] = isPortalGlow;
-        this.scene.add(mesh);
         this.walkableFloorMeshes.set(k, mesh);
       } else {
         const wantExtra = isExtra;
@@ -6633,6 +6642,59 @@ export class Game {
       this.scene.remove(g);
       this.scene.add(g);
     }
+  }
+
+  private disposeWalkableFloorVisualMeshes(): void {
+    for (const mesh of this.walkableFloorVisualMeshes) {
+      this.scene.remove(mesh);
+      if (mesh.material instanceof THREE.Material) mesh.material.dispose();
+    }
+    this.walkableFloorVisualMeshes.length = 0;
+  }
+
+  private rebuildWalkableFloorVisualMeshes(): void {
+    this.disposeWalkableFloorVisualMeshes();
+    const byKind: Record<"core" | "extra" | "portal", THREE.Vector3[]> = {
+      core: [],
+      extra: [],
+      portal: [],
+    };
+    for (const [, mesh] of this.walkableFloorMeshes) {
+      const kind = mesh.userData["isPortalGlow"]
+        ? "portal"
+        : mesh.userData["isExtra"]
+          ? "extra"
+          : "core";
+      byKind[kind].push(mesh.position);
+    }
+    const dummy = new THREE.Object3D();
+    const addBatch = (
+      kind: "core" | "extra" | "portal",
+      positions: THREE.Vector3[]
+    ): void => {
+      if (positions.length === 0) return;
+      const batch = new THREE.InstancedMesh(
+        this.walkableFloorTileGeom,
+        createWalkableFloorTileMaterials(kind === "portal", kind === "extra"),
+        positions.length
+      );
+      batch.frustumCulled = false;
+      for (let i = 0; i < positions.length; i++) {
+        const p = positions[i]!;
+        dummy.position.copy(p);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(this.floorTileQuadSize, 1, this.floorTileQuadSize);
+        dummy.updateMatrix();
+        batch.setMatrixAt(i, dummy.matrix);
+      }
+      batch.instanceMatrix.needsUpdate = true;
+      batch.userData["floorVisualKind"] = kind;
+      this.scene.add(batch);
+      this.walkableFloorVisualMeshes.push(batch);
+    };
+    addBatch("core", byKind.core);
+    addBatch("extra", byKind.extra);
+    addBatch("portal", byKind.portal);
   }
 
   private clearVoxelWordSign(): void {
@@ -7184,7 +7246,8 @@ export class Game {
   resize(): void {
     const w = this.canvasHost.clientWidth;
     const h = this.canvasHost.clientHeight;
-    const dpr = Math.min(window.devicePixelRatio, 2);
+    const renderScale = readWebglRenderScale();
+    const dpr = Math.min(window.devicePixelRatio, 2) * renderScale;
     this.renderer.setSize(w, h, false);
     this.renderer.setPixelRatio(dpr);
     this.applyOrthographicFrustum();
@@ -7192,9 +7255,11 @@ export class Game {
     this.refreshAllNameLabelScales();
     this.refreshChatBubbleVerticalPositions();
     this.refreshAllTypingIndicatorLayouts();
+    this.requestRender();
   }
 
   syncState(players: PlayerState[]): void {
+    let visualChanged = false;
     const seen = new Set<string>();
     for (const p of players) {
       seen.add(p.address);
@@ -7204,7 +7269,14 @@ export class Game {
           if (!this.selfTargetPos) {
             this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
             this.selfMesh.position.set(p.x, py, p.z);
+            visualChanged = true;
           } else {
+            visualChanged =
+              visualChanged ||
+              Math.hypot(this.selfTargetPos.x - p.x, this.selfTargetPos.z - p.z) > 0.001 ||
+              Math.abs(this.selfTargetPos.y - py) > 0.001 ||
+              Math.abs(this.selfServerVx - p.vx) > 0.001 ||
+              Math.abs(this.selfServerVz - p.vz) > 0.001;
             this.selfTargetPos.set(p.x, py, p.z);
           }
           this.selfLastServerRecvMs = performance.now();
@@ -7217,11 +7289,13 @@ export class Game {
             Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5;
           if (jumped) {
             this.selfMesh.position.set(p.x, py, p.z);
+            visualChanged = true;
           }
           if (!this.cameraFollowReady || jumped) {
             this.cameraLookAt.set(p.x, py, p.z);
             this.applyCameraPose();
             this.cameraFollowReady = true;
+            visualChanged = true;
           }
           this.syncAvatarNameLabelFromState(this.selfMesh, p);
           this.syncTypingIndicatorForGroup(this.selfMesh, p);
@@ -7233,11 +7307,19 @@ export class Game {
         g = this.makeAvatar(p.address, p.displayName);
         this.others.set(p.address, g);
         this.scene.add(g);
+        this.markSceneMutation("syncState:addRemoteAvatar");
         this.targetPos.set(p.address, new THREE.Vector3(p.x, py, p.z));
         g.position.set(p.x, py, p.z);
+        visualChanged = true;
       }
       const t = this.targetPos.get(p.address);
-      if (t) t.set(p.x, py, p.z);
+      if (t) {
+        visualChanged =
+          visualChanged ||
+          Math.hypot(t.x - p.x, t.z - p.z) > 0.001 ||
+          Math.abs(t.y - py) > 0.001;
+        t.set(p.x, py, p.z);
+      }
       this.syncAvatarNameLabelFromState(g, p);
       this.syncTypingIndicatorForGroup(g, p);
     }
@@ -7250,9 +7332,13 @@ export class Game {
         }
         this.others.delete(addr);
         this.targetPos.delete(addr);
+        visualChanged = true;
       }
     }
     this.syncPlacementRangeHints();
+    if (visualChanged) {
+      this.requestRender(400);
+    }
   }
 
   private updateMineableBlockSparkles(): void {
@@ -7297,12 +7383,13 @@ export class Game {
   }
 
   tick(dt: number): void {
+    const renderNow = performance.now();
+    let visualActive = false;
+
     this.doorPulseTime += dt;
     this.mineableSparkleAnimTime += dt;
-    this.updateMineableBlockSparkles();
-    this.animateDoorTiles();
     this.updateVoxelTextTween();
-    
+
     if (this.selfMesh && this.selfTargetPos) {
       const t = this.selfTargetPos;
       const mx = this.selfMesh.position.x;
@@ -7312,6 +7399,7 @@ export class Game {
         Math.hypot(t.x - mx, t.z - mz) > 6 || Math.abs(t.y - my) > 1.5;
       if (jumped) {
         this.selfMesh.position.copy(t);
+        visualActive = true;
       } else {
         const ageSec = Math.min(
           SELF_EXTRAP_MAX_AGE_SEC,
@@ -7358,22 +7446,48 @@ export class Game {
           // Never extrapolate Y from horizontal velocity "speed top-up"; server y is
           // authoritative. Old vyExt path lifted the mesh over gaps while xz ran ahead.
           this.selfExtrapGoal.set(t.x + ex, t.y, t.z + ez);
-          this.selfMesh.position.lerp(
-            this.selfExtrapGoal,
-            1 - Math.exp(-LERP_SELF * dt)
-          );
+          const beforeX = this.selfMesh.position.x;
+          const beforeY = this.selfMesh.position.y;
+          const beforeZ = this.selfMesh.position.z;
+          this.selfMesh.position.lerp(this.selfExtrapGoal, 1 - Math.exp(-LERP_SELF * dt));
+          visualActive =
+            visualActive ||
+            Math.hypot(
+              this.selfMesh.position.x - beforeX,
+              this.selfMesh.position.z - beforeZ
+            ) > 0.0005 ||
+            Math.abs(this.selfMesh.position.y - beforeY) > 0.0005;
         }
       }
     }
+
     for (const [addr, g] of this.others) {
       const t = this.targetPos.get(addr);
       if (!t) continue;
+      const beforeX = g.position.x;
+      const beforeY = g.position.y;
+      const beforeZ = g.position.z;
       g.position.lerp(t, 1 - Math.exp(-LERP * dt));
+      visualActive =
+        visualActive ||
+        Math.hypot(g.position.x - beforeX, g.position.z - beforeZ) > 0.0005 ||
+        Math.abs(g.position.y - beforeY) > 0.0005;
     }
+
+    const orbitWasActive = this.cameraOrbitEase !== null;
     this.updateCameraOrbitEase();
+    visualActive = visualActive || orbitWasActive || this.cameraOrbitEase !== null;
     this.updateCameraFollow(dt);
     this.refreshPathLine();
+    visualActive =
+      visualActive ||
+      this.pathGoal !== null ||
+      this.pathPreviewGoal !== null ||
+      this.pathFadingOut ||
+      this.trailFadingOut ||
+      this.floatingTexts.size > 0;
     this.updatePathFade(dt);
+
     const px = this.selfMesh
       ? this.selfMesh.position.x
       : this.cameraLookAt.x;
@@ -7381,11 +7495,27 @@ export class Game {
       ? this.selfMesh.position.z
       : this.cameraLookAt.z;
     this.fogOfWar.setPlayerPosition(px, pz);
-    this.fogOfWar.render(this.renderer, this.scene, this.camera);
+
     this.updateChatBubbles();
     this.updateTypingIndicatorAnimation();
     this.updateFloatingTexts();
-    this.syncRoomEntrySpawnMarker(performance.now() * 0.001);
+    this.syncRoomEntrySpawnMarker(renderNow * 0.001);
+
+    if (visualActive) {
+      this.requestRender(250);
+      this.updateMineableBlockSparkles();
+      this.animateDoorTiles();
+    }
+
+    if (this.renderDirty || renderNow < this.continuousRenderUntilMono) {
+      if (this.fogOfWar.getEnabled()) {
+        this.fogOfWar.render(this.renderer, this.scene, this.camera);
+      } else {
+        this.renderer.setRenderTarget(null);
+        this.renderer.render(this.scene, this.camera);
+      }
+      this.renderDirty = false;
+    }
   }
 
   /** Canonical corner yaw in [0, 2π) nearest to `yawRad` (any real angle). */
@@ -8228,23 +8358,12 @@ export class Game {
   private animateDoorTiles(): void {
     const pulse = Math.sin(this.doorPulseTime * 2) * 0.5 + 0.5;
     const doorIntensity = TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY * (0.6 + pulse * 0.4);
-
-    for (const [, mesh] of this.walkableFloorMeshes) {
-      const mats = mesh.material as
-        | THREE.MeshStandardMaterial
-        | THREE.MeshStandardMaterial[];
-      const list = Array.isArray(mats) ? mats : [mats];
-      const isPortalGlow = mesh.userData["isPortalGlow"];
-      for (let i = 0; i < list.length; i++) {
-        const mat = list[i]!;
-        if (isPortalGlow) {
-          const scale = i === 2 ? 1 : i === 3 ? 0 : 0.45;
-          mat.emissive.setHex(TERRAIN_TILE_DOOR_EMISSIVE);
-          mat.emissiveIntensity = doorIntensity * scale;
-        } else {
-          mat.emissive.setHex(0x000000);
-          mat.emissiveIntensity = 0;
-        }
+    for (const mesh of this.walkableFloorVisualMeshes) {
+      if (mesh.userData["floorVisualKind"] !== "portal") continue;
+      const mat = mesh.material;
+      if (mat instanceof THREE.MeshStandardMaterial) {
+        mat.emissive.setHex(TERRAIN_TILE_DOOR_EMISSIVE);
+        mat.emissiveIntensity = doorIntensity;
       }
     }
   }

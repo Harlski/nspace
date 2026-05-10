@@ -29,7 +29,7 @@ Concise description of how nspace is put together today.
 ## Rendering (client)
 
 - **Three.js** orthographic camera with a fixed-style offset ([client/src/game/Game.ts](../client/src/game/Game.ts)) — not top-down; floor tiles read as rhombuses on screen.
-- **Fog of war** (optional): shader pass using distance on XZ from the local player ([client/src/game/fogOfWar.ts](../client/src/game/fogOfWar.ts)).
+- **Fog of war** (**legacy / optional**; default off in normal play — `localStorage` `nspace_fog_enabled`): normal rendering bypasses the fog pass when disabled; enabling fog uses the shader pass in [client/src/game/fogOfWar.ts](../client/src/game/fogOfWar.ts).
 - **Content**: Walkable floor planes, tile highlight, path line, identicon avatars, user-placed blocks (box, hex, pyramid, sphere, ramp, palette colors), **active claimable (minable)** blocks with client-only additive sparkles + emissive pulse ([client/src/game/Game.ts](../client/src/game/Game.ts)), optional admin overlay ([client/src/ui/adminOverlay.ts](../client/src/ui/adminOverlay.ts)). **Build-mode reposition** shows a **semi-transparent ghost** at valid hover targets for obstacles (shared `makeBlockMesh` ghost path with placement preview where applicable); product-level rules live in [THE-LARGER-SYSTEM.md](THE-LARGER-SYSTEM.md).
 
 ## Message flow (high level)
