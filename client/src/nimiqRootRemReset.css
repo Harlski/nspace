@@ -1,0 +1,10 @@
+/**
+ * @nimiq/style sets `html { font-size: 8px }` and `body { font-size: 2.25rem }` for its component scale.
+ * In production, Vite can emit that framework in a separate CSS file that loads *after* `./style.css`,
+ * which would otherwise restore 18px on `html`/`body`. Import this file immediately after Nimiq so the
+ * reset stays in the same asset and wins the cascade.
+ */
+html,
+body {
+  font-size: 18px;
+}

@@ -1,4 +1,4 @@
-import "@nimiq/style/nimiq-style.min.css";
+import "./nimiqStyleShell.js";
 import "./style.css";
 import {
   clearCachedSession,
