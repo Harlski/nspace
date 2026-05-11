@@ -109,6 +109,8 @@ export type BlockStyleProps = {
   colorId: number;
   /** Whether this object is locked (admin-only editing). */
   locked?: boolean;
+  /** Present when this tile hosts a signboard (server `obstacles` / delta). */
+  signboardId?: string;
   teleporter?:
     | { pending: true }
     | {

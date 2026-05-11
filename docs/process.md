@@ -6,7 +6,7 @@ How we extend the game and run it locally. Prefer linking to source files over d
 
 Obstacles are the reference case ([server/src/rooms.ts](../server/src/rooms.ts), [client/src/net/ws.ts](../client/src/net/ws.ts), [client/src/game/Game.ts](../client/src/game/Game.ts)):
 
-1. **Server**: Extend stored props (`PlacedProps`), message handlers (`placeBlock`, `setObstacleProps`, dedicated intents like `setGateAuthorizedAddresses` when the edit is not a generic prop patch, …), **server →client** notifications (e.g. `gateWalkBlocked` after `openGate`), and `obstaclesToList` / broadcast payloads.
+1. **Server**: Extend stored props (`PlacedProps`), message handlers (`placeBlock`, `setObstacleProps`, dedicated intents like `setGateAuthorizedAddresses` when the edit is not a generic prop patch, …), **server →client** notifications (e.g. `gateWalkBlocked` after `openGate`; cross-cutting notices like `serverNotice`), and `obstaclesToList` / broadcast payloads.
 2. **Wire types**: Mirror fields on `ObstacleTile` / `ObstacleProps` in `ws.ts`.
 3. **Client game**: Parse in `setObstacles`, keep in `placedObjects`, rebuild or update meshes when relevant fields change.
 4. **HUD**: If players edit the concept, extend the panel / placement bar and message senders.
@@ -19,6 +19,7 @@ Defined near the top of [server/src/rooms.ts](../server/src/rooms.ts), for examp
 
 - `RATE_MOVE_TO_MS` — throttles `moveTo`
 - `RATE_CHAT_MS` — chat
+- `CHAT_BACKLOG_MAX_LINES` / `CHAT_BACKLOG_WINDOW_MS` — in-memory room chat replay list included on each `welcome` (`chatBacklog`; not persisted across server restart)
 - `RATE_PLACE_MS` — placement and obstacle edits
 
 Adjust when tuning feel or abuse resistance.
@@ -36,6 +37,7 @@ Adjust when tuning feel or abuse resistance.
 | Variable | Where | Notes |
 |----------|--------|--------|
 | `JWT_SECRET` | server | Required for real auth; dev script uses a placeholder |
+| `DEPLOY_RESTART_HOOK_SECRET` | server | Optional. When set (≥16 chars), enables **`POST /api/hooks/pre-deploy-restart`** with `Authorization: Bearer …` for CI/VPS scripts (see [deploy-github-docker.md](deploy-github-docker.md)) |
 | `TERMS_PRIVACY_ACCEPTANCE_STORE_FILE` | server | Optional JSON path for per-wallet Terms/Privacy acknowledgement (default `server/data/terms-privacy-acceptance.json`; merged read with legacy `legal-consent.json` when unset) |
 | `LEGAL_CONSENT_STORE_FILE` | server | Deprecated alias — same override as **`TERMS_PRIVACY_ACCEPTANCE_STORE_FILE`** |
 | `DEV_AUTH_BYPASS` | server | `1` = skip signature verification (development only) |
@@ -58,6 +60,10 @@ Adjust when tuning feel or abuse resistance.
 | `NIM_CLIENT_LOG_LEVEL` | payment-intent-service | Nimiq client log level (default `warn`) |
 | `PAYMENT_INTENT_SERVICE_URL` | server | Base URL of the payment-intent sidecar for `/admin/system` probes (e.g. `http://127.0.0.1:3090` or `http://payment-intent:3090` in Compose) |
 | `PAYMENT_INTENT_API_SECRET` | server | Same secret as the sidecar; when set on the game server, `/admin/system` also probes `GET /v1/meta/features` |
+
+**Game admin** (`ADMIN_ADDRESSES` JWT, `Authorization: Bearer`): `POST /api/admin/announce-restart` in [server/src/index.ts](../server/src/index.ts) — JSON `{ "etaSeconds": number, "message"?: string }` with **`etaSeconds` in 5…7200**; broadcasts **`serverNotice`** / **`restart_pending`** to every connected game WebSocket ([server/src/rooms.ts](../server/src/rooms.ts) `broadcastRestartPendingNotice`), then calls the normal **`shutdown`** flush path when the countdown ends. Posting again replaces the previous scheduled exit.
+
+**Deploy hook** (optional, no JWT): `POST /api/hooks/pre-deploy-restart` with **`Authorization: Bearer <DEPLOY_RESTART_HOOK_SECRET>`** — same JSON body and broadcast behavior as **`announce-restart`**, but enabled only when **`DEPLOY_RESTART_HOOK_SECRET`** is set in the server environment (≥16 characters). Returns **404** with `{ "error": "not_configured" }` when unset so the route does not advertise itself. Intended for the VPS host / [`.github/workflows/deploy-docker.yml`](../.github/workflows/deploy-docker.yml) to warn players before `docker compose stop`.
 
 **Admin HTTP API**: `POST /api/admin/random-layout` is currently **unauthenticated** in [server/src/index.ts](../server/src/index.ts). Do not expose that endpoint publicly without adding a secret or network restriction. The client `.env.development` comment mentioning `ADMIN_SECRET` is misleading unless you add server-side checks.
 

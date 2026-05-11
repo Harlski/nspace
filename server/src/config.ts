@@ -16,3 +16,13 @@ export function isAdmin(address: string): boolean {
   const c = String(address || "").replace(/\s+/g, "").toUpperCase();
   return ADMIN_COMPACT_KEYS.has(c);
 }
+
+/**
+ * When set (≥16 chars), `POST /api/hooks/pre-deploy-restart` accepts
+ * `Authorization: Bearer <this value>` from the deploy host (e.g. GitHub Actions SSH script)
+ * so CI can warn players before `docker compose stop` without a JWT.
+ */
+export function getDeployRestartHookSecret(): string | null {
+  const s = String(process.env.DEPLOY_RESTART_HOOK_SECRET ?? "").trim();
+  return s.length >= 16 ? s : null;
+}

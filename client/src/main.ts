@@ -2818,6 +2818,16 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
 
   const handleServerMessage = async (msg: ServerMessage): Promise<void> => {
+    if (msg.type === "serverNotice") {
+      if (msg.kind === "restart_pending") {
+        hud.setServerRestartPendingNotice({
+          etaSeconds: msg.etaSeconds,
+          message: msg.message,
+          seq: msg.seq,
+        });
+      }
+      return;
+    }
     if (msg.type === "clientPong") {
       const t0 = perfPingSentAt.get(msg.id);
       if (t0 !== undefined) {
@@ -2909,6 +2919,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }
 
       try {
+      hud.resetRoomChatDom();
       hud.setReconnectOffer(false);
       hud.setLoadingLabel(loadingLabelForTargetRoom(msg.roomId));
       hud.setLoadingVisible(true);
@@ -2927,6 +2938,27 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       });
       game.setSelf(msg.self.address, msg.self.displayName);
       selfAddress = msg.self.address;
+
+      const selfKey = selfAddress.replace(/\s+/g, "").trim().toUpperCase();
+      const backlog = Array.isArray(msg.chatBacklog) ? msg.chatBacklog : [];
+      for (const line of backlog) {
+        if (
+          !line ||
+          typeof line.from !== "string" ||
+          typeof line.text !== "string"
+        ) {
+          continue;
+        }
+        const fromAddr =
+          typeof line.fromAddress === "string" ? line.fromAddress : "";
+        const fromKey = fromAddr.replace(/\s+/g, "").trim().toUpperCase();
+        hud.appendChat(line.from, line.text, {
+          fromAddress: fromAddr || undefined,
+          profileIsSelf: !!fromKey && fromKey === selfKey,
+          historical: true,
+          skipSystemDedup: true,
+        });
+      }
 
       const isCanvas = normalizeRoomId(msg.roomId) === CANVAS_ROOM_ID;
       if (!isCanvas) {
@@ -3451,9 +3483,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
             location.reload();
             return;
           }
+          const restartDrop = hud.consumeRestartDisconnectForStatus();
           hud.setLoadingVisible(false, { skipMinWait: true });
           hud.setReconnectOffer(true);
-          hud.setStatus("Disconnected — tap Reconnect or reload");
+          hud.setStatus(
+            restartDrop
+              ? "Server restart — tap Reconnect or wait a moment"
+              : "Disconnected — tap Reconnect or reload"
+          );
           perfPingSentAt.clear();
           hud.setPerfHudLatencyMs(null);
         },

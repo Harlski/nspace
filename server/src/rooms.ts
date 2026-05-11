@@ -316,6 +316,43 @@ function broadcastTickStateIfAllowed(
 }
 
 const CHAT_MAX = 256;
+/** Room-scoped chat replayed on `welcome` (lines that also hit `broadcast` as non-bubble chat). */
+const CHAT_BACKLOG_MAX_LINES = 50;
+const CHAT_BACKLOG_WINDOW_MS = 10 * 60 * 1000;
+
+type ChatBacklogLine = {
+  from: string;
+  fromAddress: string;
+  text: string;
+  at: number;
+};
+
+const chatBacklogByNormalizedRoom = new Map<string, ChatBacklogLine[]>();
+
+function appendChatBacklogLine(roomId: string, line: ChatBacklogLine): void {
+  const key = normalizeRoomId(roomId);
+  let buf = chatBacklogByNormalizedRoom.get(key);
+  if (!buf) {
+    buf = [];
+    chatBacklogByNormalizedRoom.set(key, buf);
+  }
+  buf.push(line);
+  const cutoff = line.at - CHAT_BACKLOG_WINDOW_MS;
+  while (buf.length > 0 && buf[0]!.at < cutoff) {
+    buf.shift();
+  }
+  while (buf.length > CHAT_BACKLOG_MAX_LINES) {
+    buf.shift();
+  }
+}
+
+function chatBacklogSnapshotForWelcome(roomId: string, now: number): ChatBacklogLine[] {
+  const key = normalizeRoomId(roomId);
+  const buf = chatBacklogByNormalizedRoom.get(key);
+  if (!buf?.length) return [];
+  const cutoff = now - CHAT_BACKLOG_WINDOW_MS;
+  return buf.filter((l) => l.at >= cutoff);
+}
 const RATE_MOVE_TO_MS = 120;
 /** Gate stays open for the opener to cross; then server clears `gateOpen`. */
 const GATE_OPEN_PASS_MS = 1_000;
@@ -636,6 +673,8 @@ type OutMsg =
       roomJoinSpawn?: { x: number; z: number; customized: boolean };
       /** Dynamic rooms: this client may PATCH `joinSpawn` via `updateRoom`. */
       allowRoomJoinSpawnEdit?: boolean;
+      /** Recent room chat (non-bubble); same order as live `chat` messages. */
+      chatBacklog: ChatBacklogLine[];
     }
   | {
       type: "roomBackgroundHue";
@@ -787,7 +826,16 @@ type OutMsg =
     }
   | { type: "canvasCountdown"; text: string; msRemaining: number }
   /** Echo for RTT / latency HUD (see `clientPing` inbound). */
-  | { type: "clientPong"; id: number };
+  | { type: "clientPong"; id: number }
+  | {
+      type: "serverNotice";
+      kind: "restart_pending";
+      /** Seconds until the server process is expected to exit (operator-scheduled). */
+      etaSeconds: number;
+      message?: string;
+      /** Monotonic per-process; higher values supersede older notices on the client. */
+      seq: number;
+    };
 
 const rooms = new Map<string, Map<string, ClientConn>>();
 
@@ -1520,7 +1568,7 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       ramp: v.ramp ?? false,
       rampDir: Math.max(0, Math.min(3, Math.floor(v.rampDir ?? 0))),
       colorId: clampColorId(v.colorId ?? 0),
-      signboardId: signboardMap.get(k),
+      signboardId: signboardMap.get(tileKey(x!, z!)),
       locked: v.locked ?? false,
       // Experimental: claimable blocks
       claimable: v.claimable,
@@ -1829,6 +1877,14 @@ function findPlayerRoom(address: string): string | null {
 }
 
 function broadcast(roomId: string, msg: OutMsg, except?: string): void {
+  if (msg.type === "chat" && !msg.bubbleOnly) {
+    appendChatBacklogLine(roomId, {
+      from: msg.from,
+      fromAddress: msg.fromAddress,
+      text: msg.text,
+      at: msg.at,
+    });
+  }
   const r = roomOf(roomId);
   const payload = JSON.stringify(msg);
   let recipients = 0;
@@ -1874,6 +1930,21 @@ function broadcastAll(msg: OutMsg): void {
       if (c.ws.readyState === 1) c.ws.send(payload);
     }
   }
+}
+
+/** Broadcast maintenance countdown to every connected game client (all rooms). */
+export function broadcastRestartPendingNotice(
+  etaSeconds: number,
+  message: string | undefined,
+  seq: number
+): void {
+  broadcastAll({
+    type: "serverNotice",
+    kind: "restart_pending",
+    etaSeconds,
+    message,
+    seq,
+  } satisfies OutMsg);
 }
 
 function countRealPlayersInRoom(roomId: string): number {
@@ -3107,6 +3178,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       roomBackgroundHueDeg: welcomeBgState.hueDeg,
       roomBackgroundNeutral: welcomeBgState.neutral,
       ...joinSpawnWelcomeExtras(targetRoomId, address),
+      chatBacklog: chatBacklogSnapshotForWelcome(targetRoomId, Date.now()),
     } satisfies OutMsg);
   sendRoomCatalog(conn.ws, address);
 
@@ -3529,6 +3601,7 @@ export function addClient(
       roomBackgroundHueDeg: joinWelcomeBgState.hueDeg,
       roomBackgroundNeutral: joinWelcomeBgState.neutral,
       ...joinSpawnWelcomeExtras(roomId, address),
+      chatBacklog: chatBacklogSnapshotForWelcome(roomId, Date.now()),
     } satisfies OutMsg);
   sendRoomCatalog(ws, address);
 

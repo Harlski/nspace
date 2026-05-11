@@ -200,6 +200,13 @@ export type ServerMessage =
       roomJoinSpawn?: { x: number; z: number; customized: boolean };
       /** Dynamic rooms: client may send `updateRoom` with `joinSpawn`. */
       allowRoomJoinSpawnEdit?: boolean;
+      /** Recent room chat for reconnect / room switch; omit on older servers. */
+      chatBacklog?: Array<{
+        from: string;
+        fromAddress: string;
+        text: string;
+        at: number;
+      }>;
     }
   | {
       type: "roomBackgroundHue";
@@ -300,7 +307,14 @@ export type ServerMessage =
       z?: number;
       amountNim?: string;
     }
-  | { type: "clientPong"; id: number };
+  | { type: "clientPong"; id: number }
+  | {
+      type: "serverNotice";
+      kind: "restart_pending";
+      etaSeconds: number;
+      message?: string;
+      seq: number;
+    };
 
 export type ConnectGameWsOptions = {
   spawnX?: number;

@@ -64,6 +64,29 @@ jobs:
               exit 1
             fi
             cd "$DEPLOY_ROOT"
+            # Optional: 60s in-game countdown (see docs/deploy-github-docker.md — set DEPLOY_RESTART_HOOK_SECRET in .env).
+            if [ -f "$DEPLOY_ROOT/.env" ]; then
+              set -a
+              # shellcheck source=/dev/null
+              . "$DEPLOY_ROOT/.env"
+              set +a
+            fi
+            if [ -n "${DEPLOY_RESTART_HOOK_SECRET:-}" ]; then
+              echo "Notifying connected players (60s) via pre-deploy hook…"
+              if curl -fsS -X POST "http://127.0.0.1:3001/api/hooks/pre-deploy-restart" \
+                -H "Authorization: Bearer ${DEPLOY_RESTART_HOOK_SECRET}" \
+                -H "Content-Type: application/json" \
+                -d '{"etaSeconds":60,"message":"Deploying a new version — brief disconnect ahead."}' \
+                -o /dev/null; then
+                echo "Waiting 60s for countdown…"
+                sleep 60
+              else
+                echo "WARN: pre-deploy hook failed (is the stack up on 127.0.0.1:3001?). Continuing in 5s…"
+                sleep 5
+              fi
+            else
+              echo "DEPLOY_RESTART_HOOK_SECRET not set in .env — skipping pre-stop player notice."
+            fi
             # Graceful stop so nspace receives SIGTERM and flushes world/event/canvas state (see server/src/index.ts).
             echo "Stopping Compose stack before backup and git update…"
             docker compose stop

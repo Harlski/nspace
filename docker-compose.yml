@@ -44,6 +44,7 @@ services:
       PAYMENT_INTENT_SERVICE_URL: ${PAYMENT_INTENT_SERVICE_URL:-}
       PAYMENT_INTENT_API_SECRET: ${PAYMENT_INTENT_API_SECRET:-}
       # JWT_SECRET should be set in ./.env and/or ./server/.env (not dev-insecure-change-me in prod)
+      # Optional: DEPLOY_RESTART_HOOK_SECRET (≥16 chars) — enables POST /api/hooks/pre-deploy-restart for CI (see docs/deploy-github-docker.md)
       # DEV_AUTH_BYPASS should NOT be set in production
     volumes:
       # world-state.json and events-*.jsonl live under server/data in the app

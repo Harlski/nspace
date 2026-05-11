@@ -7,10 +7,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import dotenv from "dotenv";
+import { timingSafeEqual } from "node:crypto";
 import { createNonce, consumeNonce, signSession, verifySession } from "./auth.js";
 import {
   addClient,
   adminRandomExtraFloorLayout,
+  broadcastRestartPendingNotice,
   getLiveRealPlayerCountInRoom,
   startRoomTick,
   syncPlayerProfileDisplayNameForWallet,
@@ -70,7 +72,7 @@ import {
 import { getTopLoginStreaks, recordLoginStreakForWallet } from "./loginStreakStore.js";
 import { getAdminSystemSnapshot, startAdminSystemMonitor } from "./adminSystemMonitor.js";
 import { probePaymentIntentService } from "./paymentIntentProbe.js";
-import { isAdmin } from "./config.js";
+import { getDeployRestartHookSecret, isAdmin } from "./config.js";
 import {
   type AnalyticsPageViewAnonReason,
   getAnalyticsPageViewsByDay,
@@ -1219,6 +1221,100 @@ app.get("/admin/bans", requireSystemAdminWallet, (_req, res) => {
   res.json(listModerationSnapshot());
 });
 
+/**
+ * Schedule a graceful process exit after `etaSeconds` and warn all game WebSockets.
+ * Body: `{ "etaSeconds": number, "message"?: string }` — `etaSeconds` in **[5, 7200]**.
+ * Re-posting replaces the previous schedule. Used by admin JWT and by the optional deploy hook.
+ */
+let announceRestartTimer: ReturnType<typeof setTimeout> | null = null;
+let announceRestartSeq = 0;
+
+function parseAnnounceRestartBody(
+  body: Record<string, unknown> | null | undefined
+):
+  | { ok: true; eta: number; message: string | undefined }
+  | { ok: false; status: number; json: Record<string, unknown> } {
+  const eta = Math.floor(Number(body?.etaSeconds));
+  if (!Number.isFinite(eta) || eta < 5 || eta > 7200) {
+    return {
+      ok: false,
+      status: 400,
+      json: { error: "invalid_eta_seconds", min: 5, max: 7200 },
+    };
+  }
+  let message: string | undefined;
+  if (typeof body?.message === "string") {
+    const t = body.message.trim();
+    if (t.length > 0) message = t.slice(0, 200);
+  }
+  return { ok: true, eta, message };
+}
+
+function bearerMatchesDeployHookSecret(
+  token: string | null,
+  secret: string
+): boolean {
+  if (!token) return false;
+  const a = Buffer.from(token, "utf8");
+  const b = Buffer.from(secret, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+function scheduleRestartBroadcastAndExit(
+  etaSeconds: number,
+  message: string | undefined
+): { seq: number; etaSeconds: number } {
+  if (announceRestartTimer) {
+    clearTimeout(announceRestartTimer);
+    announceRestartTimer = null;
+  }
+  announceRestartSeq += 1;
+  broadcastRestartPendingNotice(etaSeconds, message, announceRestartSeq);
+  announceRestartTimer = setTimeout(() => {
+    announceRestartTimer = null;
+    shutdown("ANNOUNCED_RESTART");
+  }, etaSeconds * 1000);
+  return { seq: announceRestartSeq, etaSeconds: etaSeconds };
+}
+
+app.post("/api/admin/announce-restart", requireSystemAdminWallet, (req, res) => {
+  const parsed = parseAnnounceRestartBody(
+    req.body as Record<string, unknown> | null
+  );
+  if (!parsed.ok) {
+    res.status(parsed.status).json(parsed.json);
+    return;
+  }
+  const out = scheduleRestartBroadcastAndExit(parsed.eta, parsed.message);
+  res.json({ ok: true, ...out });
+});
+
+/**
+ * CI / VPS deploy script: same broadcast + exit schedule as `announce-restart`, but
+ * `Authorization: Bearer <DEPLOY_RESTART_HOOK_SECRET>` (no JWT). Returns **404** when unset.
+ */
+app.post("/api/hooks/pre-deploy-restart", (req, res) => {
+  const secret = getDeployRestartHookSecret();
+  if (!secret) {
+    res.status(404).json({ error: "not_configured" });
+    return;
+  }
+  if (!bearerMatchesDeployHookSecret(bearerToken(req), secret)) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const parsed = parseAnnounceRestartBody(
+    req.body as Record<string, unknown> | null
+  );
+  if (!parsed.ok) {
+    res.status(parsed.status).json(parsed.json);
+    return;
+  }
+  const out = scheduleRestartBroadcastAndExit(parsed.eta, parsed.message);
+  res.json({ ok: true, ...out });
+});
+
 app.get("/api/auth/nonce", (_req, res) => {
   const { nonce, expiresAt } = createNonce();
   res.json({ nonce, expiresAt });
@@ -1415,6 +1511,10 @@ function logListenUrls(port: number, host: string): void {
 }
 
 function shutdown(signal: string): void {
+  if (announceRestartTimer) {
+    clearTimeout(announceRestartTimer);
+    announceRestartTimer = null;
+  }
   console.log(`\n${signal} — flushing world state…`);
   flushPersistWorldStateSync();
   flushEventLogSync();

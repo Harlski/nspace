@@ -1,6 +1,6 @@
 # Deploy with GitHub Actions + Docker on your VPS
 
-Pushing to `main` runs [.github/workflows/deploy-docker.yml](../.github/workflows/deploy-docker.yml): SSH into the server, **`docker compose stop`** (graceful shutdown so the game server flushes persistence), **archive `./data` into `./backups/nspace-data-<UTC-timestamp>.tar.gz`**, then `git fetch` + `git reset --hard origin/main` (not `git pull`), then `docker compose build`, `docker compose up -d`.
+Pushing to `main` runs [.github/workflows/deploy-docker.yml](../.github/workflows/deploy-docker.yml): SSH into the server, optionally **POST `/api/hooks/pre-deploy-restart`** (60s countdown for connected players) and **`sleep 60`**, then **`docker compose stop`** (graceful shutdown so the game server flushes persistence), **archive `./data` into `./backups/nspace-data-<UTC-timestamp>.tar.gz`**, then `git fetch` + `git reset --hard origin/main` (not `git pull`), then `docker compose build`, `docker compose up -d`.
 
 World state and logs already live on the **host** at `./data` (Compose bind mount); the backup step copies that tree from disk, not from inside a running container.
 
@@ -155,6 +155,21 @@ NODE_ENV=production
 ```
 
 Do **not** commit `.env`. The compose file binds `127.0.0.1:3001:3001`; put **Caddy or Nginx** in front for TLS and proxy `/`, `/api`, and **`/ws`** (WebSockets).
+
+### Pre-stop player notice (optional, GitHub deploy)
+
+When **`DEPLOY_RESTART_HOOK_SECRET`** is set in **`/opt/nspace/.env`** (same file Compose uses):
+
+1. Generate a long random string (≥16 characters), e.g. `openssl rand -hex 24`.
+2. Add a line: `DEPLOY_RESTART_HOOK_SECRET=<that value>` (no quotes unless your shell requires them for special characters).
+3. Ensure the **`nspace`** container receives it: with the default `env_file: ./.env` in [docker-compose.yml](../docker-compose.yml), the key is passed into the Node process automatically after **`docker compose up -d`** (redeploy once after editing `.env`).
+
+On each push to **`main`**, the deploy script **sources** `.env`, then **`curl`**s `http://127.0.0.1:3001/api/hooks/pre-deploy-restart` with **`Authorization: Bearer <DEPLOY_RESTART_HOOK_SECRET>`** and JSON **`{"etaSeconds":60,"message":"…"}`**. If the request succeeds, the workflow **waits 60 seconds** so clients can show the orange HUD banner before **`docker compose stop`**.
+
+- If the secret is **unset**, the script skips the hook and proceeds immediately (same behavior as before this feature).
+- If **`curl` fails** (game not running, wrong secret, or hook not configured in the running image yet), the script logs a warning, waits **5 seconds**, then continues so deploy does not hang forever.
+
+The hook is also documented in [docs/process.md](process.md). Manual trigger (same as CI): `curl -fsS -X POST http://127.0.0.1:3001/api/hooks/pre-deploy-restart -H "Authorization: Bearer $DEPLOY_RESTART_HOOK_SECRET" -H "Content-Type: application/json" -d '{"etaSeconds":60}'`.
 
 ### Reverse proxy (Caddy)
 

@@ -92,6 +92,7 @@ import {
   clampPyramidBaseScale,
   normalizeBlockPrismParts,
 } from "./blockStyle.js";
+import nimiqIconsData from "nimiq-icons/icons.json";
 
 const LERP = 12;
 /**
@@ -691,6 +692,12 @@ function disposePlacedBlockGroupContents(g: THREE.Object3D): void {
     } else if (child instanceof THREE.Points) {
       child.geometry.dispose();
       (child.material as THREE.Material).dispose();
+    } else if (child instanceof THREE.Sprite) {
+      const mat = child.material as THREE.SpriteMaterial;
+      if (child.userData.isSignpostHintIcon) {
+        mat.map = null;
+      }
+      mat.dispose();
     }
   });
 }
@@ -810,6 +817,12 @@ export class Game {
   private continuousRenderUntilMono = 0;
   private lastSceneMutation: { reason: string; atMono: number } | null = null;
   private readonly raycaster = new THREE.Raycaster();
+  /** Ray from camera → signpost hint; ignores hits on the hint’s own block group. */
+  private readonly signpostHintOcclRay = new THREE.Raycaster();
+  private readonly signpostHintOcclCamW = new THREE.Vector3();
+  private readonly signpostHintOcclHintW = new THREE.Vector3();
+  private readonly signpostHintOcclDirW = new THREE.Vector3();
+  private readonly signpostHintOcclBlkRoots: THREE.Object3D[] = [];
   private readonly ndc = new THREE.Vector2();
   private readonly hit = new THREE.Vector3();
   private selfAddress = "";
@@ -1151,6 +1164,10 @@ export class Game {
   } | null = null;
   private static readonly OTHER_PROFILE_LONGPRESS_MS = 480;
   private static readonly OTHER_PROFILE_LONGPRESS_MOVE_PX = 14;
+  /** On-screen height of the floating signpost hint icon (px at current zoom). */
+  private static readonly SIGNPOST_HINT_SCREEN_PX = 28;
+  /** World-space bounce amplitude for the signpost hint (subtle). */
+  private static readonly SIGNPOST_HINT_BOUNCE_AMP = 0.042;
 
   /** Canvas room tile claims: map of "x,z" => address */
   private readonly canvasClaims = new Map<string, string>();
@@ -1182,6 +1199,8 @@ export class Game {
         createdAt: number;
       } | null) => void)
     | null = null;
+  /** Floor `tileKey` for the signboard under the cursor (HUD hover); drives hint opacity. */
+  private signboardHoverFloorKey: string | null = null;
 
   private billboardSyncGen = 0;
   private readonly billboardRoots = new Map<string, THREE.Group>();
@@ -1232,6 +1251,11 @@ export class Game {
   private billboardInteractGhost: THREE.Group | null = null;
   private billboardInteractGhostSig = "";
   private readonly billboardPreviewPlaceholderTex: THREE.CanvasTexture;
+  /** Transparent 2×2 map so `SpriteMaterial` stays valid before the SVG rasterizes. */
+  private readonly signpostHintPlaceholderTexture: THREE.CanvasTexture;
+  /** Shared `duotone-document` raster for all signpost hint sprites. */
+  private signpostHintDocTexture: THREE.CanvasTexture | null = null;
+  private signpostHintDocTextureLoadStarted = false;
 
   /** Identicon sphere Euler (degrees); applied to all player avatars. */
   private identiconRotDeg = { x: 0, y: 0, z: 0 };
@@ -1365,6 +1389,17 @@ export class Game {
       depthWrite: false,
     });
     this.billboardPreviewPlaceholderTex = makeFallbackBillboardTexture();
+
+    {
+      const c = document.createElement("canvas");
+      c.width = 2;
+      c.height = 2;
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.needsUpdate = true;
+      this.signpostHintPlaceholderTexture = t;
+    }
+    void this.ensureSignpostHintDocTexture();
 
     this.pathGeom.setAttribute(
       "position",
@@ -2032,6 +2067,201 @@ export class Game {
     const h = this.canvasHost.clientHeight;
     if (w < 1) return px * 0.001;
     return (px / w) * this.frustumSize * (w / h);
+  }
+
+  /** Rasterize Nimiq `duotone-document` once for all signpost hint sprites. */
+  private ensureSignpostHintDocTexture(): void {
+    if (this.signpostHintDocTextureLoadStarted) return;
+    this.signpostHintDocTextureLoadStarted = true;
+    const ic = nimiqIconsData.icons["duotone-document"];
+    if (!ic?.body) {
+      console.warn("[Game] nimiq-icons: missing duotone-document");
+      return;
+    }
+    const vw = ic.width ?? 24;
+    const vh = ic.height ?? 24;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${String(vw)} ${String(
+      vh
+    )}" fill="none">${ic.body}</svg>`;
+    const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const out = 72;
+      const canvas = document.createElement("canvas");
+      canvas.width = out;
+      canvas.height = out;
+      const ctx = canvas.getContext("2d")!;
+      ctx.clearRect(0, 0, out, out);
+      ctx.drawImage(img, 0, 0, out, out);
+      URL.revokeObjectURL(url);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      tex.needsUpdate = true;
+      this.signpostHintDocTexture = tex;
+      this.bindSignpostHintDocTextureToSprites();
+      this.refreshSignpostHintSpriteScales();
+      this.requestRender();
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      console.warn("[Game] Failed to rasterize duotone-document icon");
+    };
+    img.src = url;
+  }
+
+  private bindSignpostHintDocTextureToSprites(): void {
+    const tex = this.signpostHintDocTexture;
+    if (!tex) return;
+    for (const g of this.blockMeshes.values()) {
+      const sp = g.userData.signpostHintSprite as THREE.Sprite | undefined;
+      if (!sp?.userData.needsSignpostDocMap) continue;
+      const m = sp.material as THREE.SpriteMaterial;
+      if (m.map === this.signpostHintPlaceholderTexture) {
+        m.map = tex;
+      }
+      m.opacity = 1;
+      m.needsUpdate = true;
+      sp.userData.needsSignpostDocMap = false;
+    }
+  }
+
+  private refreshSignpostHintSpriteScales(): void {
+    const worldH = this.pixelToWorldY(Game.SIGNPOST_HINT_SCREEN_PX);
+    const worldW = worldH;
+    for (const g of this.blockMeshes.values()) {
+      const sp = g.userData.signpostHintSprite as THREE.Sprite | undefined;
+      if (!sp) continue;
+      const meta = g.userData.blockMeta as BlockStyleProps | undefined;
+      if (!meta?.signboardId) continue;
+      sp.scale.set(worldW, worldH, 1);
+      g.userData.signpostHintBaseY = this.computeSignpostHintBaseYLocal(meta, worldH);
+    }
+  }
+
+  /** Local Y of the sprite center: world-unit offsets so every signpost uses the same on-screen icon size. */
+  private computeSignpostHintBaseYLocal(
+    _meta: BlockStyleProps,
+    worldIconH: number
+  ): number {
+    const clearance = this.pixelToWorldY(28);
+    const extraLift = this.pixelToWorldY(16);
+    return clearance + extraLift + worldIconH * 0.52;
+  }
+
+  private floorTileKeyFromBlockMeshKey(blockMeshKey: string): string | null {
+    const parts = blockMeshKey.split(",").map(Number);
+    if (
+      parts.length < 3 ||
+      !Number.isFinite(parts[0]) ||
+      !Number.isFinite(parts[1]) ||
+      !Number.isFinite(parts[2])
+    ) {
+      return null;
+    }
+    if (Math.floor(parts[2]!) !== 0) return null;
+    return tileKey(parts[0]!, parts[1]!);
+  }
+
+  /** Another obstacle stacked on this floor tile hides the floating signpost hint. */
+  private isSignpostHintOccludedByStack(meshKey: string): boolean {
+    const parts = meshKey.split(",").map(Number);
+    if (
+      parts.length < 3 ||
+      !Number.isFinite(parts[0]) ||
+      !Number.isFinite(parts[1]) ||
+      !Number.isFinite(parts[2])
+    ) {
+      return false;
+    }
+    const xi = Math.floor(parts[0]!);
+    const zi = Math.floor(parts[1]!);
+    const yL = Math.floor(parts[2]!);
+    if (yL !== 0) return false;
+    return (
+      this.blockMeshes.has(blockKey(xi, zi, 1)) ||
+      this.blockMeshes.has(blockKey(xi, zi, 2))
+    );
+  }
+
+  private static blockMeshRootFromPickObject(
+    obj: THREE.Object3D
+  ): THREE.Group | null {
+    let o: THREE.Object3D | null = obj;
+    while (o) {
+      const tk = o.userData?.tileKey as string | undefined;
+      if (tk) return o as THREE.Group;
+      o = o.parent;
+    }
+    return null;
+  }
+
+  /**
+   * True when some other placed block lies between the camera and `hintWorld`
+   * (same logic as `pickBlockKey` root walk, but skips hits on `ownGroup`).
+   */
+  private isSignpostHintOccludedByForeground(
+    ownGroup: THREE.Group,
+    hintWorld: THREE.Vector3,
+    roots: THREE.Object3D[]
+  ): boolean {
+    this.camera.updateMatrixWorld();
+    this.camera.getWorldPosition(this.signpostHintOcclCamW);
+    this.signpostHintOcclDirW.copy(hintWorld).sub(this.signpostHintOcclCamW);
+    const dist = this.signpostHintOcclDirW.length();
+    const nearClip = 0.12;
+    const margin = 0.085;
+    if (dist < nearClip + margin * 2) return false;
+    this.signpostHintOcclDirW.multiplyScalar(1 / dist);
+    this.signpostHintOcclRay.set(
+      this.signpostHintOcclCamW,
+      this.signpostHintOcclDirW
+    );
+    this.signpostHintOcclRay.near = nearClip;
+    this.signpostHintOcclRay.far = Math.max(nearClip + 1e-4, dist - margin);
+    const hits = this.signpostHintOcclRay.intersectObjects(roots, true);
+    for (const h of hits) {
+      const owner = Game.blockMeshRootFromPickObject(h.object);
+      if (owner === ownGroup) continue;
+      return true;
+    }
+    return false;
+  }
+
+  private attachSignpostHintToBlockGroup(
+    g: THREE.Group,
+    meta: BlockStyleProps
+  ): void {
+    void this.ensureSignpostHintDocTexture();
+    const worldH = this.pixelToWorldY(Game.SIGNPOST_HINT_SCREEN_PX);
+    const worldW = worldH;
+    const docReady = this.signpostHintDocTexture !== null;
+    const mat = new THREE.SpriteMaterial({
+      map: docReady
+        ? this.signpostHintDocTexture
+        : this.signpostHintPlaceholderTexture,
+      transparent: true,
+      depthTest: false,
+      opacity: docReady ? 1 : 0,
+      toneMapped: false,
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.renderOrder = 14;
+    sprite.userData[SKIP_BLOCK_PICK_AND_BOUNDS] = true;
+    sprite.userData.isSignpostHintIcon = true;
+    sprite.raycast = (_r: THREE.Raycaster, _i: THREE.Intersection[]) => {};
+    if (!docReady) {
+      sprite.userData.needsSignpostDocMap = true;
+    }
+    sprite.scale.set(worldW, worldH, 1);
+    const baseY = this.computeSignpostHintBaseYLocal(meta, worldH);
+    sprite.position.set(0, baseY, 0);
+    g.userData.signpostHintSprite = sprite;
+    g.userData.signpostHintBaseY = baseY;
+    g.add(sprite);
   }
 
   /** Keeps name tags near constant on-screen size at any orthographic zoom. */
@@ -3599,7 +3829,17 @@ export class Game {
         } | null) => void)
       | null
   ): void {
-    this.signboardHoverHandler = handler;
+    if (!handler) {
+      this.signboardHoverHandler = null;
+      this.signboardHoverFloorKey = null;
+      return;
+    }
+    this.signboardHoverHandler = (signboard) => {
+      this.signboardHoverFloorKey = signboard
+        ? tileKey(signboard.x, signboard.z)
+        : null;
+      handler(signboard);
+    };
   }
 
   private rebuildBillboardFootprintFloorKeys(): void {
@@ -4223,6 +4463,7 @@ export class Game {
         exitZ: number;
       };
       gateOpen?: { openedBy: string; untilMs: number };
+      signboardId?: string;
     }[]
   ): void {
     this.placedObjects.clear();
@@ -4248,6 +4489,10 @@ export class Game {
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(t.colorId ?? 0))
       );
       const locked = Boolean(t.locked);
+      const signboardId =
+        typeof t.signboardId === "string" && t.signboardId.trim().length > 0
+          ? t.signboardId.trim()
+          : undefined;
       this.placedObjects.set(k, {
         passable: t.passable,
         half,
@@ -4260,6 +4505,7 @@ export class Game {
         rampDir: prism.ramp ? rampDir : 0,
         colorId,
         locked,
+        signboardId,
         claimable: t.claimable,
         active: t.active,
         cooldownMs: t.cooldownMs,
@@ -4320,6 +4566,7 @@ export class Game {
         exitZ: number;
       };
       gateOpen?: { openedBy: string; untilMs: number };
+      signboardId?: string;
     }[],
     remove: readonly string[]
   ): void {
@@ -4365,6 +4612,10 @@ export class Game {
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(t.colorId ?? 0))
       );
       const locked = Boolean(t.locked);
+      const signboardId =
+        typeof t.signboardId === "string" && t.signboardId.trim().length > 0
+          ? t.signboardId.trim()
+          : undefined;
 
       this.placedObjects.set(k, {
         passable: t.passable,
@@ -4378,6 +4629,7 @@ export class Game {
         rampDir: prism.ramp ? rampDir : 0,
         colorId,
         locked,
+        signboardId,
         claimable: t.claimable,
         active: t.active,
         cooldownMs: t.cooldownMs,
@@ -6229,6 +6481,8 @@ export class Game {
     this.billboardFootprintPreviewInvalidMat.dispose();
     this.removeBillboardInteractGhost();
     this.billboardPreviewPlaceholderTex.dispose();
+    this.signpostHintPlaceholderTexture.dispose();
+    this.signpostHintDocTexture?.dispose();
     this.fogOfWar.dispose();
     for (const addr of [...this.typingIndicatorByAddress.keys()]) {
       this.removeTypingIndicator(addr);
@@ -7035,7 +7289,8 @@ export class Game {
         prev.active === meta.active &&
         JSON.stringify(prev.teleporter) === JSON.stringify(meta.teleporter) &&
         JSON.stringify(prev.gate) === JSON.stringify(meta.gate) &&
-        JSON.stringify(prev.gateOpen) === JSON.stringify(meta.gateOpen);
+        JSON.stringify(prev.gateOpen) === JSON.stringify(meta.gateOpen) &&
+        (prev.signboardId ?? "") === (meta.signboardId ?? "");
       if (unchanged) {
         continue;
       }
@@ -7044,7 +7299,11 @@ export class Game {
         disposePlacedBlockGroupContents(g);
         this.blockMeshes.delete(k);
       }
-      g = this.makeBlockMesh(meta, { tileX: wx, tileZ: wz });
+      g = this.makeBlockMesh(meta, {
+        tileX: wx,
+        tileZ: wz,
+        floorLayer: wyLevel,
+      });
       g.userData.tileKey = k;
       g.userData.blockMeta = { ...meta };
       g.userData.blockRenderScale = vis;
@@ -7167,7 +7426,7 @@ export class Game {
 
   private makeBlockMesh(
     meta: BlockStyleProps,
-    opts?: { ghost?: boolean; tileX?: number; tileZ?: number }
+    opts?: { ghost?: boolean; tileX?: number; tileZ?: number; floorLayer?: number }
   ): THREE.Group {
     const ghost = Boolean(opts?.ghost);
     if (meta.gate) {
@@ -7256,6 +7515,18 @@ export class Game {
     } else {
       g.userData.mineableSparklePoints = undefined;
     }
+    const floorLayer = Math.max(
+      0,
+      Math.min(2, Math.floor(opts?.floorLayer ?? 0))
+    );
+    if (
+      !ghost &&
+      meta.signboardId &&
+      floorLayer === 0 &&
+      !meta.claimable
+    ) {
+      this.attachSignpostHintToBlockGroup(g, meta);
+    }
     return g;
   }
 
@@ -7269,6 +7540,7 @@ export class Game {
     this.applyOrthographicFrustum();
     this.fogOfWar.setSize(w, h, dpr);
     this.refreshAllNameLabelScales();
+    this.refreshSignpostHintSpriteScales();
     this.refreshChatBubbleVerticalPositions();
     this.refreshAllTypingIndicatorLayouts();
     this.requestRender();
@@ -7401,6 +7673,72 @@ export class Game {
     return any;
   }
 
+  private updateSignpostHintSprites(): boolean {
+    const t = this.mineableSparkleAnimTime;
+    let any = false;
+    const px = this.selfMesh?.position.x ?? this.cameraLookAt.x;
+    const pz = this.selfMesh?.position.z ?? this.cameraLookAt.z;
+    const build = this.buildMode;
+    const docLoaded = this.signpostHintDocTexture !== null;
+    const hoverFloor = this.signboardHoverFloorKey;
+    const occlRootsBuf = this.signpostHintOcclBlkRoots;
+    let occlRoots: THREE.Object3D[] | null = null;
+    if (docLoaded && !build) {
+      occlRootsBuf.length = 0;
+      for (const rg of this.blockMeshes.values()) occlRootsBuf.push(rg);
+      occlRoots = occlRootsBuf;
+    }
+    for (const g of this.blockMeshes.values()) {
+      const sp = g.userData.signpostHintSprite as THREE.Sprite | undefined;
+      if (!sp) continue;
+      any = true;
+      const mat = sp.material as THREE.SpriteMaterial;
+      const baseY = g.userData.signpostHintBaseY as number;
+      sp.position.y =
+        baseY + Math.sin(t * 3.0) * Game.SIGNPOST_HINT_BOUNCE_AMP;
+      if (!docLoaded) {
+        mat.opacity = 0;
+        continue;
+      }
+      const dx = g.position.x - px;
+      const dz = g.position.z - pz;
+      const dist = Math.hypot(dx, dz);
+      const distFade = Math.max(0, Math.min(1, (10.5 - dist) / 8.5));
+      const distMul = this.selfMesh ? distFade : 0.45 + 0.45 * distFade;
+      if (build) {
+        mat.opacity = 0;
+      } else {
+        const meshKey = g.userData.tileKey as string | undefined;
+        let geoHidden = false;
+        if (meshKey && this.isSignpostHintOccludedByStack(meshKey)) {
+          geoHidden = true;
+        } else if (occlRoots) {
+          g.updateMatrixWorld(true);
+          sp.getWorldPosition(this.signpostHintOcclHintW);
+          geoHidden = this.isSignpostHintOccludedByForeground(
+            g,
+            this.signpostHintOcclHintW,
+            occlRoots
+          );
+        }
+        if (geoHidden) {
+          mat.opacity = 0;
+        } else {
+          const pulse = 0.94 + 0.06 * Math.sin(t * 2.0);
+          const floorK = meshKey
+            ? this.floorTileKeyFromBlockMeshKey(meshKey)
+            : null;
+          const hovered =
+            hoverFloor !== null && floorK !== null && floorK === hoverFloor;
+          const idleOpacity = pulse * Math.max(0.22, distMul * 0.38);
+          const hoverOpacity = pulse * Math.max(0.78, distMul);
+          mat.opacity = hovered ? hoverOpacity : idleOpacity;
+        }
+      }
+    }
+    return any;
+  }
+
   tick(dt: number): void {
     const renderNow = performance.now();
     let visualActive = false;
@@ -7521,7 +7859,8 @@ export class Game {
     this.syncRoomEntrySpawnMarker(renderNow * 0.001);
 
     const hasMineableSparkles = this.updateMineableBlockSparkles();
-    if (visualActive || hasMineableSparkles) {
+    const hasSignpostHintMotion = this.updateSignpostHintSprites();
+    if (visualActive || hasMineableSparkles || hasSignpostHintMotion) {
       this.requestRender(250);
     }
     if (visualActive) {

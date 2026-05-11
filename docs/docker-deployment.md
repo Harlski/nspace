@@ -167,7 +167,7 @@ docker compose up -d
 
 ### CI/CD Integration
 
-See [docs/deploy-github-docker.md](../docs/deploy-github-docker.md) for GitHub Actions automated deployment setup. That workflow stops the stack, writes **`backups/nspace-data-<timestamp>.tar.gz`** on the host (full `data/` tree), then updates git and rebuilds.
+See [docs/deploy-github-docker.md](../docs/deploy-github-docker.md) for GitHub Actions automated deployment setup. That workflow may call **`POST /api/hooks/pre-deploy-restart`** and wait **60s** when **`DEPLOY_RESTART_HOOK_SECRET`** is set in host `.env`, then stops the stack, writes **`backups/nspace-data-<timestamp>.tar.gz`** on the host (full `data/` tree), then updates git and rebuilds.
 
 ## Manual Docker Build (without Compose)
 

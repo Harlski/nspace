@@ -185,8 +185,14 @@ export function createHud(
     opts?: {
       fromAddress?: string | null;
       profileIsSelf?: boolean;
+      /** Slightly muted styling (e.g. server backlog on welcome). */
+      historical?: boolean;
+      /** When true, skip rapid duplicate suppression for system lines (backlog replay). */
+      skipSystemDedup?: boolean;
     }
   ) => void;
+  /** Clears world + system chat panels; call before applying server `chatBacklog` on `welcome`. */
+  resetRoomChatDom: () => void;
   getChatInput: () => HTMLInputElement;
   /** Player hid the chat via minimize; persisted in localStorage until cleared. */
   isChatMinimized: () => boolean;
@@ -535,6 +541,14 @@ export function createHud(
   ) => void;
   /** Show or hide the in-game Reconnect control (e.g. after WebSocket loss). */
   setReconnectOffer: (visible: boolean) => void;
+  /** Operator-scheduled maintenance: orange countdown strip + friendlier disconnect copy. */
+  setServerRestartPendingNotice: (p: {
+    etaSeconds: number;
+    message?: string;
+    seq: number;
+  }) => void;
+  /** If a restart notice was shown, next disconnect status line uses maintenance wording once. */
+  consumeRestartDisconnectForStatus: () => boolean;
   onReconnect: (fn: () => void) => void;
   /** Wire WebGL 1×1 tile previews; call after `new Game()` with the same instance (or `null` on teardown). */
   bindTileInspectorPreviewGame: (game: Game | null) => void;
@@ -566,6 +580,18 @@ export function createHud(
 
   const topWrap = document.createElement("div");
   topWrap.className = "hud-top-wrap";
+
+  const restartBanner = document.createElement("div");
+  restartBanner.className = "hud-restart-banner";
+  restartBanner.hidden = true;
+  restartBanner.setAttribute("role", "status");
+  restartBanner.setAttribute("aria-live", "assertive");
+  const restartBannerLine = document.createElement("div");
+  restartBannerLine.className = "hud-restart-banner__line";
+  const restartBannerDetail = document.createElement("div");
+  restartBannerDetail.className = "hud-restart-banner__detail";
+  restartBannerDetail.hidden = true;
+  restartBanner.append(restartBannerLine, restartBannerDetail);
 
   const headerMarqueeHost = document.createElement("div");
   headerMarqueeHost.className = "hud-header-marquee-host";
@@ -1241,6 +1267,7 @@ export function createHud(
     });
   }
   
+  topWrap.appendChild(restartBanner);
   topWrap.appendChild(topStrip);
   topWrap.appendChild(statusSub);
   ui.appendChild(topWrap);
@@ -6601,6 +6628,31 @@ export function createHud(
 
   const lastSystemChatAtByText = new Map<string, number>();
 
+  let restartBannerTick: ReturnType<typeof setInterval> | null = null;
+  let restartPendingEndMono = 0;
+  let restartPendingLastSeq = 0;
+  let restartDisconnectExpectActive = false;
+
+  function stopRestartBannerTick(): void {
+    if (restartBannerTick) {
+      clearInterval(restartBannerTick);
+      restartBannerTick = null;
+    }
+  }
+
+  function syncRestartBannerVisual(): void {
+    const remainSec = Math.max(
+      0,
+      Math.ceil((restartPendingEndMono - performance.now()) / 1000)
+    );
+    restartBannerLine.textContent = `Server restart in ${remainSec}s`;
+    if (performance.now() >= restartPendingEndMono) {
+      stopRestartBannerTick();
+      restartBanner.hidden = true;
+      syncHudBelowTopWrap();
+    }
+  }
+
   return {
     setStatus(s: string) {
       const t = s.trim();
@@ -6609,16 +6661,23 @@ export function createHud(
       ui.classList.toggle("hud--has-status-sub", !!t);
       syncHudBelowTopWrap();
     },
+    resetRoomChatDom() {
+      worldChatLog.replaceChildren();
+      systemChatLog.replaceChildren();
+      lastSystemChatAtByText.clear();
+    },
     appendChat(
       from: string,
       text: string,
       opts?: {
         fromAddress?: string | null;
         profileIsSelf?: boolean;
+        historical?: boolean;
+        skipSystemDedup?: boolean;
       }
     ) {
       const isSystem = from.trim().toLowerCase() === "system";
-      if (isSystem) {
+      if (isSystem && !opts?.skipSystemDedup) {
         const now = Date.now();
         const key = text.trim();
         const lastAt = lastSystemChatAtByText.get(key) ?? 0;
@@ -6630,6 +6689,9 @@ export function createHud(
       }
       const line = document.createElement("div");
       line.className = "chat-line";
+      if (opts?.historical) {
+        line.classList.add("chat-line--historical");
+      }
       const prefix = document.createElement("span");
       prefix.className = "chat-line__prefix";
       prefix.textContent = `${from}: `;
@@ -6650,6 +6712,12 @@ export function createHud(
       }
       const targetLog = isSystem ? systemChatLog : worldChatLog;
       targetLog.appendChild(line);
+      if (!isSystem) {
+        const maxWorld = 200;
+        while (worldChatLog.childElementCount > maxWorld) {
+          worldChatLog.removeChild(worldChatLog.firstElementChild!);
+        }
+      }
       targetLog.scrollTop = targetLog.scrollHeight;
       if (isSystem && activeChatTab !== "system") {
         systemTabBtn.classList.add("chat-tabs__btn--has-unread");
@@ -8463,6 +8531,37 @@ export function createHud(
     setReconnectOffer(visible: boolean) {
       reconnectBtn.hidden = !visible;
     },
+    setServerRestartPendingNotice(p: {
+      etaSeconds: number;
+      message?: string;
+      seq: number;
+    }) {
+      if (p.seq < restartPendingLastSeq) return;
+      restartPendingLastSeq = p.seq;
+      const sec = Math.max(
+        1,
+        Math.min(86400, Math.floor(Number(p.etaSeconds)) || 60)
+      );
+      restartPendingEndMono = performance.now() + sec * 1000;
+      restartDisconnectExpectActive = true;
+      if (p.message && p.message.trim()) {
+        restartBannerDetail.textContent = p.message.trim();
+        restartBannerDetail.hidden = false;
+      } else {
+        restartBannerDetail.textContent = "";
+        restartBannerDetail.hidden = true;
+      }
+      restartBanner.hidden = false;
+      stopRestartBannerTick();
+      syncRestartBannerVisual();
+      restartBannerTick = setInterval(syncRestartBannerVisual, 400);
+      syncHudBelowTopWrap();
+    },
+    consumeRestartDisconnectForStatus() {
+      if (!restartDisconnectExpectActive) return false;
+      restartDisconnectExpectActive = false;
+      return true;
+    },
     onReconnect(fn: () => void) {
       reconnectHandler = fn;
     },
@@ -8612,6 +8711,7 @@ export function createHud(
     },
     bindTileInspectorPreviewGame,
     destroy() {
+      stopRestartBannerTick();
       disposeHeaderMarquee();
       clearLoadingOverlayTimers();
       finishLoadingOverlayDismiss();
