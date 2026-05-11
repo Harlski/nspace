@@ -6847,6 +6847,44 @@ button.hud-brand:focus-visible {
   user-select: none;
 }
 
+.main-menu__legal-version-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem 0.72rem;
+  margin: 0;
+}
+
+.main-menu__legal-foot-link {
+  margin: 0;
+  padding: 0;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.52rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--menu-muted);
+  line-height: 1;
+  border-bottom: 1px solid transparent;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+a.main-menu__legal-foot-link:hover {
+  color: var(--menu-muted-bright);
+  border-bottom-color: rgba(121, 184, 255, 0.35);
+}
+
+a.main-menu__legal-foot-link:focus-visible {
+  outline: 2px solid var(--menu-link);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
 .main-menu__version {
   margin: 0;
   font-family: "Fira Mono", ui-monospace, monospace;
@@ -6903,7 +6941,7 @@ a.main-menu__version:focus-visible {
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
   gap: 0.5rem;
   max-width: 100%;
@@ -6920,6 +6958,55 @@ a.main-menu__version:focus-visible {
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+.main-menu__cached-item--add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Official Nimiq outline mono hex (`nimiq-icons` / Iconify `logos-nimiq-hexagon-outline-mono`) + plus — tile size matches identicon row. */
+.main-menu__cached-add-hex {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: rgba(248, 250, 252, 0.88);
+  line-height: 0;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    color 0.18s ease,
+    filter 0.18s ease;
+}
+
+.main-menu__cached-add-hex:hover {
+  color: rgba(255, 255, 255, 0.98);
+  filter: drop-shadow(0 0 4px rgba(121, 184, 255, 0.35));
+}
+
+.main-menu__cached-add-hex:focus-visible {
+  outline: 2px solid var(--menu-link);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.main-menu__cached-add-hex:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.main-menu__cached-add-hex__graphic {
+  display: block;
+  width: 44px;
+  height: auto;
 }
 
 /* Wallet row: Nimiq `@nimiq/identicons` via `toDataUrl()` — one SVG data URL in `<img>` (see identiconTexture.ts). */
@@ -7256,20 +7343,8 @@ a.main-menu__version:focus-visible {
   hyphens: auto;
 }
 
-.main-menu .nq-button.light-blue.main-menu__nq-btn.main-menu__nq-btn--pill.main-menu__nq-btn--wallet-cta {
-  width: min(100%, 15rem);
-  max-width: min(100%, 15rem);
-  min-height: 2.7rem;
-  padding: 0.45rem 1.15rem;
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  box-shadow:
-    0 0 0 1px rgba(252, 135, 2, 0.42),
-    0 10px 28px rgba(0, 0, 0, 0.28);
-}
-
 .main-menu__wallet-hint {
-  margin: 0.1rem 0 0;
+  margin: 0.65rem 0 0.35rem;
   padding: 0 0.35rem;
   max-width: 16rem;
   text-align: center;
@@ -7277,6 +7352,111 @@ a.main-menu__version:focus-visible {
   font-weight: 600;
   line-height: 1.35;
   color: var(--menu-muted-bright);
+}
+
+/* Wallet sign-in + cached “add” hex live in `.main-menu__wallet-signin-hex-wrap` (+ tooltip span). */
+.main-menu__wallet-signin-hex-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  margin-block: 0.2rem 0.45rem;
+}
+
+.main-menu__wallet-signin-hex-wrap--cached-add {
+  width: auto;
+  margin-block: 0;
+}
+
+.main-menu__terms-required-tooltip {
+  /* `position: fixed` + JS inset: escapes .main-menu__card overflow and cached list scroll ports. */
+  position: fixed;
+  z-index: 10050;
+  margin: 0;
+  max-width: min(16rem, calc(100vw - 16px));
+  padding: 0.42rem 0.58rem;
+  box-sizing: border-box;
+  text-align: center;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1.38;
+  color: #f1f5f9;
+  background: rgba(15, 23, 42, 0.98);
+  border: 1px solid rgba(125, 211, 252, 0.42);
+  border-radius: 8px;
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  pointer-events: none;
+}
+
+.main-menu__wallet-signin-hex {
+  margin-block: 0;
+}
+
+.main-menu__terms-privacy {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.main-menu__terms-privacy-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: fit-content;
+  max-width: min(22rem, 100%);
+  margin: 0;
+  cursor: pointer;
+  box-sizing: border-box;
+  font-size: 0.64rem;
+  font-weight: 600;
+  line-height: 1.42;
+  color: var(--menu-muted-bright);
+  text-align: left;
+}
+
+.main-menu__terms-privacy-label > span {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.main-menu__terms-privacy-label input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin: 0.12em 0 0;
+  padding: 0;
+  border: 1.5px solid rgba(248, 250, 252, 0.82);
+  border-radius: 0.18rem;
+  background: rgba(15, 23, 42, 0.55);
+  cursor: pointer;
+}
+
+.main-menu__terms-privacy-label input[type="checkbox"]:checked {
+  background-color: #38bdf8;
+  border-color: #7dd3fc;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230f172a' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+  background-size: 0.62rem 0.62rem;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.main-menu__terms-privacy-label input[type="checkbox"]:focus-visible {
+  outline: 2px solid #7dd3fc;
+  outline-offset: 2px;
+}
+
+.main-menu__terms-privacy-label a {
+  color: #7dd3fc;
 }
 
 .main-menu__identicon-clear {
@@ -7859,6 +8039,99 @@ a.main-menu__version:focus-visible {
   color: #a8d4ff;
 }
 
+/* Doc footer: Terms / Privacy / Patch notes shells (matches main-menu link + mono meta tone). */
+.patchnotes-page .terms-privacy-doc-page__site-footer {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(40, 50, 68, 0.65);
+  text-align: center;
+}
+
+.patchnotes-page .terms-privacy-doc-page__nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0.2rem 0.42rem;
+  margin: 0;
+}
+
+.patchnotes-page .terms-privacy-doc-page__nav-link {
+  margin: 0;
+  padding: 0;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--menu-link);
+  text-decoration: none;
+  line-height: 1.35;
+  border-bottom: 1px solid transparent;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.patchnotes-page .terms-privacy-doc-page__nav-link:hover {
+  color: #a8d4ff;
+  border-bottom-color: rgba(121, 184, 255, 0.45);
+}
+
+.patchnotes-page .terms-privacy-doc-page__nav-link:focus-visible {
+  outline: 2px solid var(--menu-link);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.patchnotes-page .terms-privacy-doc-page__nav-link--current {
+  color: var(--menu-muted-bright);
+  border-bottom-color: rgba(140, 160, 186, 0.35);
+  cursor: default;
+}
+
+.patchnotes-page .terms-privacy-doc-page__nav-link--current:hover {
+  color: var(--menu-muted-bright);
+  border-bottom-color: rgba(140, 160, 186, 0.35);
+}
+
+.patchnotes-page .terms-privacy-doc-page__nav-dot {
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.55rem;
+  color: rgba(107, 125, 149, 0.85);
+  user-select: none;
+}
+
+.patchnotes-page .terms-privacy-doc-page__contact-line {
+  margin: 0.55rem 0 0;
+}
+
+.patchnotes-page .terms-privacy-doc-page__contact-mail {
+  margin: 0;
+  padding: 0;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 0.55rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--menu-muted-bright);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.patchnotes-page .terms-privacy-doc-page__contact-mail:hover {
+  color: #a8d4ff;
+  border-bottom-color: rgba(121, 184, 255, 0.4);
+}
+
+.patchnotes-page .terms-privacy-doc-page__contact-mail:focus-visible {
+  outline: 2px solid var(--menu-link);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /**
  * Phone landscape & other short-wide viewports: avoid clipping, use horizontal space,
  * respect safe areas (notch / home indicator).
@@ -7979,10 +8252,10 @@ a.main-menu__version:focus-visible {
     gap: 0.5rem 1rem;
   }
 
-  .main-menu__card-inner:has(#main-menu-cached[hidden]) .main-menu__version {
+  .main-menu__card-inner:has(#main-menu-cached[hidden]) .main-menu__legal-version-row {
     margin: 0;
     margin-left: auto;
-    text-align: right;
+    justify-content: flex-end;
   }
 }
 

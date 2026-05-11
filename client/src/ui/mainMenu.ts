@@ -1,11 +1,18 @@
 import telegramIconUrl from "../assets/social/telegram.svg?url";
 import xIconUrl from "../assets/social/x.svg?url";
-import { fetchNonce, signInWithWallet, verifyWithServer } from "../auth/nimiq.js";
+import { signInWithWallet } from "../auth/nimiq.js";
+import {
+  completeAuthVerifyWithTermsPrivacyRetry,
+  completeWalletPayloadAuthWithTermsPrivacyRetry,
+} from "../auth/authTermsPrivacyVerify.js";
+import { hasTermsPrivacyAckCachedLocally } from "../auth/termsPrivacyAckLocal.js";
+import { TERMS_PRIVACY_DOCS_VERSION } from "../termsPrivacyVersion.js";
 import { formatWalletAddressGap4 } from "../formatWalletAddress.js";
 import { identiconDataUrl } from "../game/identiconTexture.js";
 import { APP_DISPLAY_VERSION } from "../appVersion.js";
 import { apiUrl } from "../net/apiBase.js";
 import { TELEGRAM_URL, X_URL } from "../socialLinks.js";
+import { nimiqLogosHexOutlineMonoPlusMarkup } from "./nimiqIcons.js";
 
 /** Public asset — Vite serves `client/public` at `/`. */
 const NIM_LOGO_SRC = "/branding/nimiq-nim-logo.svg";
@@ -173,10 +180,14 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
           <div class="main-menu__actions" id="main-menu-actions">
             <div class="main-menu__actions-swap">
             <div class="main-menu__actions-default" id="main-menu-actions-default">
-              <button type="button" class="nq-button light-blue main-menu__nq-btn main-menu__nq-btn--pill main-menu__nq-btn--wallet-cta" id="btn-nimiq-account">
-                Enter game
-              </button>
-              <p class="main-menu__wallet-hint">Sign in with your Nimiq wallet</p>
+              <p class="main-menu__wallet-hint" id="main-menu-wallet-hint">Sign in with your Nimiq wallet</p>
+              <div class="main-menu__wallet-signin-hex-wrap" id="main-menu-wallet-signin-wrap">
+                <button type="button" class="main-menu__cached-add-hex main-menu__wallet-signin-hex" id="main-menu-wallet-signin" aria-label="Sign in with your Nimiq wallet"></button>
+                <span id="main-menu-wallet-signin-terms-tooltip" class="main-menu__terms-required-tooltip" hidden role="tooltip"></span>
+              </div>
+              <div class="main-menu__terms-privacy" id="main-menu-terms-privacy-row" hidden>
+                <label class="main-menu__terms-privacy-label"><input type="checkbox" id="main-menu-terms-privacy-cb" autocomplete="off" /><span>I have read and agree to the <a href="/tacs" target="_blank" rel="noopener noreferrer">Terms</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</span></label>
+              </div>
               ${
                 devBypass
                   ? `<button type="button" class="nq-button light-blue main-menu__nq-btn main-menu__nq-btn--pill" id="btn-dev-login">Dev login</button>`
@@ -240,7 +251,11 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
                 <span class="main-menu__social-label">X</span>
               </a>
             </div>
-            <a class="main-menu__version" href="/patchnotes">${APP_DISPLAY_VERSION}</a>
+            <div class="main-menu__legal-version-row">
+              <a class="main-menu__legal-foot-link" href="/tacs">Terms</a>
+              <a class="main-menu__version" href="/patchnotes">${APP_DISPLAY_VERSION}</a>
+              <a class="main-menu__legal-foot-link" href="/privacy">Privacy</a>
+            </div>
           </footer>
         </div>
       </div>
@@ -267,6 +282,11 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     nimLayer.appendChild(wrap);
   }
 
+  /** Logged-out-only control; omit entirely when the account picker row is shown. */
+  if (cachedSessions.length > 0) {
+    root.querySelector("#main-menu-wallet-signin-wrap")?.remove();
+  }
+
   const errEl = root.querySelector("#main-menu-err") as HTMLElement;
   const showErr = (s: string): void => {
     if (!s) {
@@ -281,14 +301,108 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   const welcomeEl = root.querySelector("#main-menu-welcome") as HTMLElement;
   const cachedWrap = root.querySelector("#main-menu-cached") as HTMLElement;
   const cachedList = root.querySelector("#main-menu-cached-list") as HTMLElement;
-  const btnNimiqAccount = root.querySelector(
-    "#btn-nimiq-account"
-  ) as HTMLButtonElement;
+  const walletSigninHexBtn = root.querySelector(
+    "#main-menu-wallet-signin"
+  ) as HTMLButtonElement | null;
+  const walletSigninTermsTooltipEl = root.querySelector(
+    "#main-menu-wallet-signin-terms-tooltip"
+  ) as HTMLElement | null;
+  if (walletSigninHexBtn) {
+    walletSigninHexBtn.innerHTML = nimiqLogosHexOutlineMonoPlusMarkup();
+  }
+  const walletHintEl = root.querySelector("#main-menu-wallet-hint") as HTMLElement;
+
+  const termsPrivacyRow = root.querySelector("#main-menu-terms-privacy-row") as HTMLElement;
+  const termsPrivacyCb = root.querySelector("#main-menu-terms-privacy-cb") as HTMLInputElement;
+  const refreshTermsPrivacyAckRowVisibility = (): void => {
+    termsPrivacyRow.hidden = hasTermsPrivacyAckCachedLocally();
+    termsPrivacyCb.checked = false;
+  };
+  refreshTermsPrivacyAckRowVisibility();
+
+  let termsTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
+  let activeTermsTooltipEl: HTMLElement | null = null;
+  const hideTermsRequiredTooltip = (): void => {
+    if (termsTooltipHideTimer !== null) {
+      clearTimeout(termsTooltipHideTimer);
+      termsTooltipHideTimer = null;
+    }
+    if (activeTermsTooltipEl) {
+      const el = activeTermsTooltipEl;
+      el.hidden = true;
+      el.style.position = "";
+      el.style.left = "";
+      el.style.top = "";
+      el.style.right = "";
+      el.style.transform = "";
+      el.style.zIndex = "";
+      el.style.opacity = "";
+      activeTermsTooltipEl = null;
+    }
+  };
+  const showTermsRequiredTooltip = (tooltipEl: HTMLElement): void => {
+    hideTermsRequiredTooltip();
+    activeTermsTooltipEl = tooltipEl;
+    tooltipEl.textContent =
+      "Tick the Terms and Privacy checkbox below before signing in.";
+    const wrap = tooltipEl.closest(".main-menu__wallet-signin-hex-wrap");
+    const anchor =
+      wrap?.querySelector<HTMLElement>(
+        ".main-menu__cached-add-hex, .main-menu__wallet-signin-hex"
+      ) ?? wrap;
+    tooltipEl.hidden = false;
+    tooltipEl.style.position = "fixed";
+    tooltipEl.style.transform = "none";
+    tooltipEl.style.zIndex = "10050";
+    tooltipEl.style.left = "-99999px";
+    tooltipEl.style.top = "0";
+    tooltipEl.style.opacity = "0";
+
+    const place = (): void => {
+      if (!root.isConnected) return;
+      if (!anchor || !tooltipEl.isConnected) {
+        tooltipEl.style.opacity = "";
+        tooltipEl.hidden = true;
+        return;
+      }
+      const tw = Math.max(tooltipEl.offsetWidth, 1);
+      const th = Math.max(tooltipEl.offsetHeight, 1);
+      const ar = anchor.getBoundingClientRect();
+      const gap = 7;
+      const pad = 8;
+      let left = Math.round(ar.left + ar.width / 2 - tw / 2);
+      let top = Math.round(ar.bottom + gap);
+      left = Math.max(pad, Math.min(left, window.innerWidth - tw - pad));
+      const roomBelow = window.innerHeight - pad - top;
+      if (roomBelow < th && ar.top > th + gap + pad) {
+        top = Math.round(ar.top - gap - th);
+      }
+      const maxTop = window.innerHeight - th - pad;
+      top = Math.max(pad, Math.min(top, maxTop));
+      tooltipEl.style.left = `${left}px`;
+      tooltipEl.style.top = `${top}px`;
+      tooltipEl.style.opacity = "1";
+    };
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(place);
+      termsTooltipHideTimer = setTimeout(() => {
+        hideTermsRequiredTooltip();
+      }, 4500);
+    });
+  };
+  /** Cached “add wallet” hex tooltip — created in `renderCachedAccounts`. */
+  let cachedAddTermsTooltipEl: HTMLElement | null = null;
+  termsPrivacyCb.addEventListener("change", () => {
+    if (termsPrivacyCb.checked) hideTermsRequiredTooltip();
+  });
 
   welcomeEl.hidden = cachedSessions.length === 0;
   cachedWrap.hidden = cachedSessions.length === 0;
-  btnNimiqAccount.textContent =
-    cachedSessions.length > 0 ? "Add account" : "Enter game";
+  walletHintEl.hidden = cachedSessions.length > 0;
+
+  /** Present when cached sessions exist — Nimiq-sign-in (+ hex) beside identicons only. */
+  let cachedAddWalletBtn: HTMLButtonElement | null = null;
 
   const perAccountButtons = new Set<HTMLButtonElement>();
   const registerAccountButton = (el: Element | null): void => {
@@ -315,7 +429,9 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
 
   const syncCachedSelectionUi = (): void => {
     if (!root.isConnected) return;
-    for (const el of cachedList.querySelectorAll(".main-menu__cached-item")) {
+    for (const el of cachedList.querySelectorAll(
+      ".main-menu__cached-item:not(.main-menu__cached-item--add)"
+    )) {
       const item = el as HTMLElement;
       const addr = item.dataset.address ?? "";
       const open =
@@ -368,8 +484,31 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     }
   };
 
+  /**
+   * Wallet / dev login on this menu must tick the checkbox when the row is visible,
+   * or when a prior session stored local ack (row may be hidden until we reveal it).
+   */
+  const requiresTermsCheckboxTickForLogin = (): boolean =>
+    !termsPrivacyRow.hidden || hasTermsPrivacyAckCachedLocally();
+
+  /**
+   * Local ack hides the terms row; hex / dev still need an explicit tick — show the row again for this mount.
+   */
+  const revealTermsRowIfWalletConsentSuppressedByAck = (): boolean => {
+    if (!termsPrivacyRow.hidden || !hasTermsPrivacyAckCachedLocally()) return false;
+    termsPrivacyRow.hidden = false;
+    termsPrivacyCb.checked = false;
+    if (cachedSessions.length > 0) clearCachedAccountSelection();
+    requestAnimationFrame(() => {
+      termsPrivacyRow.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+    return true;
+  };
+
   const renderCachedAccounts = (): void => {
     cachedList.replaceChildren();
+    cachedAddWalletBtn = null;
+    cachedAddTermsTooltipEl = null;
     if (cachedSessions.length === 0) return;
     for (const entry of cachedSessions) {
       const item = document.createElement("div");
@@ -415,8 +554,35 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       item.appendChild(avatarBtn);
       cachedList.appendChild(item);
     }
+
+    const addItem = document.createElement("div");
+    addItem.className = "main-menu__cached-item main-menu__cached-item--add";
+    addItem.setAttribute("role", "presentation");
+    const addWrap = document.createElement("div");
+    addWrap.className =
+      "main-menu__wallet-signin-hex-wrap main-menu__wallet-signin-hex-wrap--cached-add";
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.id = "main-menu-cached-add-wallet";
+    addBtn.className = "main-menu__cached-add-hex";
+    addBtn.setAttribute(
+      "aria-label",
+      "Add another Nimiq wallet account — sign in to link it"
+    );
+    addBtn.innerHTML = nimiqLogosHexOutlineMonoPlusMarkup();
+    const addTermsTooltip = document.createElement("span");
+    addTermsTooltip.className = "main-menu__terms-required-tooltip";
+    addTermsTooltip.setAttribute("role", "tooltip");
+    addTermsTooltip.hidden = true;
+    cachedAddTermsTooltipEl = addTermsTooltip;
+    addWrap.appendChild(addBtn);
+    addWrap.appendChild(addTermsTooltip);
+    addItem.appendChild(addWrap);
+    cachedList.appendChild(addItem);
+    cachedAddWalletBtn = addBtn;
   };
   renderCachedAccounts();
+  if (cachedAddWalletBtn) registerAccountButton(cachedAddWalletBtn);
   syncCachedSelectionUi();
 
   registerAccountButton(actionsForgetBtn);
@@ -449,7 +615,10 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   const disposeCachedMenuListeners: Array<() => void> = [];
   if (cachedSessions.length > 0) {
     const onDocKeyDown = (ev: KeyboardEvent): void => {
-      if (ev.key === "Escape") clearCachedAccountSelection();
+      if (ev.key === "Escape") {
+        hideTermsRequiredTooltip();
+        clearCachedAccountSelection();
+      }
     };
     document.addEventListener("keydown", onDocKeyDown, true);
     disposeCachedMenuListeners.push(() =>
@@ -458,14 +627,26 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   }
 
   const runNimiqWalletSignIn = async (): Promise<void> => {
-    const { nonce } = await fetchNonce();
-    const signed = await signInWithWallet(nonce);
-    const { token, address, nimiqPay } = await verifyWithServer(signed);
+    revealTermsRowIfWalletConsentSuppressedByAck();
+    if (requiresTermsCheckboxTickForLogin() && !termsPrivacyCb.checked) {
+      showErr("Please confirm below that you have read the Terms and Privacy Policy.");
+      setBusy(false);
+      return;
+    }
+    const { token, address, nimiqPay } = await completeWalletPayloadAuthWithTermsPrivacyRetry(
+      (nonce) => signInWithWallet(nonce),
+      {
+        initialAcceptedTermsPrivacy: termsPrivacyCb.checked
+          ? TERMS_PRIVACY_DOCS_VERSION
+          : undefined,
+      }
+    );
+    refreshTermsPrivacyAckRowVisibility();
     onLoggedIn(token, address, nimiqPay);
   };
 
   const setBusy = (busy: boolean): void => {
-    btnNimiqAccount.disabled = busy;
+    if (walletSigninHexBtn) walletSigninHexBtn.disabled = busy;
     perAccountButtons.forEach((b) => {
       b.disabled = busy;
     });
@@ -477,7 +658,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     actionsEnterBtn.disabled = busy;
   };
 
-  btnNimiqAccount.addEventListener("click", async () => {
+  const invokePrimaryWalletLogin = async (): Promise<void> => {
     showErr("");
     setBusy(true);
     try {
@@ -486,14 +667,40 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       showErr(e instanceof Error ? e.message : "login_failed");
       setBusy(false);
     }
+  };
+
+  if (walletSigninHexBtn) {
+    const tipWallet = walletSigninTermsTooltipEl;
+    walletSigninHexBtn.addEventListener("click", () => {
+      revealTermsRowIfWalletConsentSuppressedByAck();
+      if (requiresTermsCheckboxTickForLogin() && !termsPrivacyCb.checked) {
+        if (tipWallet) showTermsRequiredTooltip(tipWallet);
+        return;
+      }
+      void invokePrimaryWalletLogin();
+    });
+  }
+
+  cachedAddWalletBtn?.addEventListener("click", () => {
+    revealTermsRowIfWalletConsentSuppressedByAck();
+    if (requiresTermsCheckboxTickForLogin() && !termsPrivacyCb.checked) {
+      if (cachedAddTermsTooltipEl)
+        showTermsRequiredTooltip(cachedAddTermsTooltipEl);
+      return;
+    }
+    void invokePrimaryWalletLogin();
   });
 
   root.querySelector("#btn-dev-login")?.addEventListener("click", async () => {
     showErr("");
     setBusy(true);
     try {
-      const { nonce } = await fetchNonce();
-      const message = `Login:v1:${nonce}`;
+      revealTermsRowIfWalletConsentSuppressedByAck();
+      if (requiresTermsCheckboxTickForLogin() && !termsPrivacyCb.checked) {
+        showErr("Please confirm below that you have read the Terms and Privacy Policy.");
+        setBusy(false);
+        return;
+      }
       const z32 = new Uint8Array(32);
       const z64 = new Uint8Array(64);
       const b64 = (u: Uint8Array): string => {
@@ -501,13 +708,21 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]!);
         return btoa(s);
       };
-      const { token, address, nimiqPay } = await verifyWithServer({
-        nonce,
-        message,
-        signer: "NQ07 DEV0000000000000000000000000000000000",
-        signerPublicKey: b64(z32),
-        signature: b64(z64),
-      });
+      const { token, address, nimiqPay } = await completeAuthVerifyWithTermsPrivacyRetry(
+        async (nonce) => ({
+          nonce,
+          message: `Login:v1:${nonce}`,
+          signer: "NQ07 DEV0000000000000000000000000000000000",
+          signerPublicKey: b64(z32),
+          signature: b64(z64),
+        }),
+        {
+          initialAcceptedTermsPrivacy: termsPrivacyCb.checked
+            ? TERMS_PRIVACY_DOCS_VERSION
+            : undefined,
+        }
+      );
+      refreshTermsPrivacyAckRowVisibility();
       onLoggedIn(token, address, nimiqPay);
     } catch (e) {
       showErr(e instanceof Error ? e.message : "dev_login_failed");
@@ -517,6 +732,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
 
   if (!replayUiEnabled) {
     return () => {
+      hideTermsRequiredTooltip();
       clearCachedAccountSelection();
       for (const d of disposeCachedMenuListeners) d();
       app.innerHTML = "";
@@ -667,6 +883,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   });
 
   return () => {
+    hideTermsRequiredTooltip();
     clearCachedAccountSelection();
     for (const d of disposeCachedMenuListeners) d();
     app.innerHTML = "";

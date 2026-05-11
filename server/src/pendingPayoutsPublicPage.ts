@@ -4,6 +4,7 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
+import { browserTermsPrivacyRuntimeScript } from "./browserTermsPrivacyAuthSnippet.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
 
@@ -34,6 +35,7 @@ export function pendingPayoutsPublicPageHtml(): string {
   <div id="wrap"></div>
   <script>
     var MS_SIGNING_HEX_SPINNER = ${msSigningHexSpinner};
+    ${browserTermsPrivacyRuntimeScript()}
     var AUTH_KEYS = ["nspace_analytics_auth_token", "nspace_pending_payouts_token"];
     var AUTH_ADDR_KEY = "nspace_analytics_auth_addr";
     function readAuthToken() {
@@ -454,34 +456,51 @@ export function pendingPayoutsPublicPageHtml(): string {
         startPayoutSigningDotsIn(wrap);
       }
       try {
-        var nonceResp = await fetch("/api/auth/nonce");
-        if (!nonceResp.ok) throw new Error("nonce_failed");
-        var nonceJson = await nonceResp.json();
-        var nonce = String(nonceJson.nonce || "");
         var HubMod = await import("https://esm.sh/@nimiq/hub-api");
         var HubApi = HubMod.default;
         var hub = new HubApi("https://hub.nimiq.com");
-        var message = "Login:v1:" + nonce;
-        var signed = await hub.signMessage({ appName: "Nimiq Space payouts", message: message });
-        var verifyResp = await fetch("/api/auth/verify", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            nonce: nonce,
-            message: message,
-            signer: signed.signer,
-            signerPublicKey: toB64(signed.signerPublicKey),
-            signature: toB64(signed.signature),
-          }),
-        });
-        if (!verifyResp.ok) {
-          var errBody = await verifyResp.json().catch(function () { return {}; });
+        var extraTpAck = undefined;
+        var verified = null;
+        var lastSigned = null;
+        retryTpAck: while (true) {
+          var nonceResp = await fetch("/api/auth/nonce");
+          if (!nonceResp.ok) throw new Error("nonce_failed");
+          var nonceJson = await nonceResp.json();
+          var nonce = String(nonceJson.nonce || "");
+          var message = "Login:v1:" + nonce;
+          lastSigned = await hub.signMessage({ appName: "Nimiq Space payouts", message: message });
+          var verifyPayload = window.nspaceTermsPrivacyVerifyPayload(
+            {
+              nonce: nonce,
+              message: message,
+              signer: lastSigned.signer,
+              signerPublicKey: toB64(lastSigned.signerPublicKey),
+              signature: toB64(lastSigned.signature),
+            },
+            extraTpAck
+          );
+          var verifyResp = await window.nspacePostAuthVerify(verifyPayload);
+          if (verifyResp.ok) {
+            window.nspaceTermsPrivacyPersistLocal();
+            verified = await verifyResp.json();
+            break retryTpAck;
+          }
+          var errBody = await verifyResp.json().catch(function () {
+            return {};
+          });
+          if (
+            verifyResp.status === 403 &&
+            (errBody.error === "terms_privacy_ack_required" || errBody.error === "legal_consent_required")
+          ) {
+            await window.nspaceShowTermsPrivacyAckBarrier();
+            extraTpAck = window.NSPACE_TERMS_PRIVACY_DOCS_VERSION;
+            continue;
+          }
           throw new Error(String(errBody.error || "verify_failed"));
         }
-        var verified = await verifyResp.json();
         var token = String(verified.token || "");
         if (!token) throw new Error("missing_token");
-        var addr = String(verified.address || signed.signer || "");
+        var addr = String(verified.address || (lastSigned && lastSigned.signer) || "");
         if (addr) sessionStorage.setItem(AUTH_ADDR_KEY, addr);
         writeAuthToken(token);
         stopPayoutSigningDots();

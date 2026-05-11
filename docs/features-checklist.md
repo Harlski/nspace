@@ -12,7 +12,7 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 ## Auth and session
 
 - [x] `GET /api/auth/nonce` — challenge nonce
-- [x] `POST /api/auth/verify` — Nimiq signed message → JWT + address (or dev bypass)
+- [x] `POST /api/auth/verify` — Nimiq signed message → JWT + address (or dev bypass); first-time wallets must send `acceptedTermsPrivacyVersion` matching server `termsPrivacyVersion` until ack is recorded in server data (`terms-privacy-acceptance.json`; optional **`TERMS_PRIVACY_ACCEPTANCE_STORE_FILE`** / legacy **`LEGAL_CONSENT_STORE_FILE`**)
 - [x] WebSocket auth via `token` query param
 - [x] Client session cache (localStorage) for token + address
 - [x] Dev login path when `DEV_AUTH_BYPASS=1` on server and `VITE_DEV_AUTH_BYPASS=1` on client

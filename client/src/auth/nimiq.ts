@@ -140,7 +140,23 @@ export type VerifyAuthResponse = {
   nimiqPay?: boolean;
 };
 
-export async function verifyWithServer(body: LoginSignPayload): Promise<VerifyAuthResponse> {
+/** Optional fields on `POST /api/auth/verify` in addition to the signed Nimiq payload. */
+export type VerifyAuthBody = LoginSignPayload & {
+  acceptedTermsPrivacyVersion?: string;
+  /** Deprecated — server still honours this field. Prefer `acceptedTermsPrivacyVersion`. */
+  acceptedLegalVersion?: string;
+};
+
+export class TermsPrivacyAcknowledgementRequiredError extends Error {
+  readonly requiredVersion: string;
+  constructor(requiredVersion: string) {
+    super("terms_privacy_ack_required");
+    this.name = "TermsPrivacyAcknowledgementRequiredError";
+    this.requiredVersion = requiredVersion;
+  }
+}
+
+export async function verifyWithServer(body: VerifyAuthBody): Promise<VerifyAuthResponse> {
   const r = await fetch(apiUrl("/api/auth/verify"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -148,7 +164,16 @@ export async function verifyWithServer(body: LoginSignPayload): Promise<VerifyAu
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error || "verify_failed");
+    const code = String((err as { error?: string }).error || "");
+    if (
+      r.status === 403 &&
+      (code === "terms_privacy_ack_required" || code === "legal_consent_required")
+    ) {
+      throw new TermsPrivacyAcknowledgementRequiredError(
+        String((err as { requiredVersion?: string }).requiredVersion || "")
+      );
+    }
+    throw new Error(code || "verify_failed");
   }
   return r.json() as Promise<VerifyAuthResponse>;
 }

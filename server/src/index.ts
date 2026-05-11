@@ -33,6 +33,11 @@ import { getTopMazeRecords } from "./mazeRecords.js";
 import { installSwarmErrorForwarder } from "./swarmLogForwarder.js";
 import { CHAMBER_ROOM_ID } from "./roomLayouts.js";
 import {
+  hasAcceptedCurrentTermsPrivacyDocs,
+  recordTermsPrivacyAcceptance,
+} from "./termsPrivacyAcceptanceStore.js";
+import { TERMS_PRIVACY_DOCS_VERSION } from "./termsPrivacyVersion.js";
+import {
   flushNimPayoutQueueSync,
   getNimPayoutWalletBalanceLuna,
   getPendingPayoutSnapshotForWallet,
@@ -1278,6 +1283,26 @@ app.post("/api/auth/verify", async (req, res) => {
   const signerKeyPresent = Object.prototype.hasOwnProperty.call(body, "signer");
   const signerEmpty = signerKeyPresent && normalizeWalletId(signer) === "";
   const nimiqPay = claimsPayClient && signerEmpty;
+
+  const normAddr = normalizeWalletId(sessionAddress);
+  const rawTp =
+    typeof body.acceptedTermsPrivacyVersion === "string"
+      ? String(body.acceptedTermsPrivacyVersion).trim()
+      : "";
+  const rawLegacy =
+    typeof body.acceptedLegalVersion === "string" ? String(body.acceptedLegalVersion).trim() : "";
+  const acceptedTermsPrivacy = rawTp || rawLegacy;
+  if (!hasAcceptedCurrentTermsPrivacyDocs(normAddr)) {
+    if (acceptedTermsPrivacy !== TERMS_PRIVACY_DOCS_VERSION) {
+      res.status(403).json({
+        error: "terms_privacy_ack_required",
+        requiredVersion: TERMS_PRIVACY_DOCS_VERSION,
+      });
+      return;
+    }
+    recordTermsPrivacyAcceptance(normAddr, TERMS_PRIVACY_DOCS_VERSION);
+  }
+
   const token = signSession(sessionAddress, jwtSecret, { nimiqPay });
   try {
     recordLoginStreakForWallet(normalizeWalletId(sessionAddress));
@@ -1328,7 +1353,23 @@ wss.on("connection", (ws, req) => {
 });
 
 const clientDist = path.join(__dirname, "../../client/dist");
+
+function sendTermsPrivacyPage(res: Response, htmlFileName: string): void {
+  const resolved = path.join(clientDist, htmlFileName);
+  if (!fs.existsSync(resolved)) {
+    res.status(404).type("text/plain").send(`${htmlFileName} not built (missing client/dist asset)`);
+    return;
+  }
+  res.sendFile(resolved);
+}
+
 if (fs.existsSync(clientDist)) {
+  app.get(["/tacs", "/tacs/"], (_req, res) => {
+    sendTermsPrivacyPage(res, "tacs.html");
+  });
+  app.get(["/privacy", "/privacy/"], (_req, res) => {
+    sendTermsPrivacyPage(res, "privacy.html");
+  });
   app.use(express.static(clientDist));
   app.get("*", (req, res) => {
     if (req.path.startsWith("/api")) {

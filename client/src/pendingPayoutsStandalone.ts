@@ -1,4 +1,5 @@
-import { fetchNonce, signLoginChallenge, verifyWithServer } from "./auth/nimiq.js";
+import { signLoginChallenge } from "./auth/nimiq.js";
+import { completeWalletPayloadAuthWithTermsPrivacyRetry } from "./auth/authTermsPrivacyVerify.js";
 import { apiUrl } from "./net/apiBase.js";
 import { refreshMainSiteNavFromSession, renderMainSiteTopbar } from "./ui/analyticsTopbar.js";
 import { readMainSiteAuthToken, writeMainSiteAuthToken } from "./ui/mainSiteAuthKeys.js";
@@ -142,9 +143,9 @@ async function runLogin(): Promise<void> {
     stopDots = animateSigningDots(wrap);
   }
   try {
-    const { nonce } = await fetchNonce();
-    const signed = await signLoginChallenge(nonce, "Nimiq Space payouts");
-    const { token, address } = await verifyWithServer(signed);
+    const { token, address } = await completeWalletPayloadAuthWithTermsPrivacyRetry((nonce) =>
+      signLoginChallenge(nonce, "Nimiq Space payouts")
+    );
     if (!token) throw new Error("missing_token");
     writeMainSiteAuthToken(token, address);
     stopDots();

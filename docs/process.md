@@ -36,6 +36,8 @@ Adjust when tuning feel or abuse resistance.
 | Variable | Where | Notes |
 |----------|--------|--------|
 | `JWT_SECRET` | server | Required for real auth; dev script uses a placeholder |
+| `TERMS_PRIVACY_ACCEPTANCE_STORE_FILE` | server | Optional JSON path for per-wallet Terms/Privacy acknowledgement (default `server/data/terms-privacy-acceptance.json`; merged read with legacy `legal-consent.json` when unset) |
+| `LEGAL_CONSENT_STORE_FILE` | server | Deprecated alias — same override as **`TERMS_PRIVACY_ACCEPTANCE_STORE_FILE`** |
 | `DEV_AUTH_BYPASS` | server | `1` = skip signature verification (development only) |
 | `NODE_ENV` | server | `development` enables bypass flag pairing in some setups |
 | `PORT` | server | HTTP + WebSocket listen port (default `3001`) |

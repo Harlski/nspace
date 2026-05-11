@@ -129,14 +129,22 @@ function attachDevProxyHandlers(proxy: EventEmitter): void {
   installDevApiProxyErrorHandler(proxy);
 }
 
-/** `index.html` SPA: serve main bundle for `/patchnotes` (dev + preview; production uses Express `*`). */
+/** Dev/preview middleware: SPA entry for `/patchnotes`; map clean paths to Terms/Privacy MPA HTML. */
 function patchnotesSpaFallbackPlugin(): Plugin {
   const rewrite = (req: { url?: string }): void => {
     const raw = req.url ?? "";
-    const path = raw.split("?")[0] ?? "";
-    if (path === "/patchnotes" || path === "/patchnotes/") {
-      const q = raw.includes("?") ? raw.slice(raw.indexOf("?")) : "";
+    const pathOnly = raw.split("?")[0] ?? "";
+    const q = raw.includes("?") ? raw.slice(raw.indexOf("?")) : "";
+    if (pathOnly === "/patchnotes" || pathOnly === "/patchnotes/") {
       req.url = "/" + q;
+      return;
+    }
+    if (pathOnly === "/tacs" || pathOnly === "/tacs/") {
+      req.url = "/tacs.html" + q;
+      return;
+    }
+    if (pathOnly === "/privacy" || pathOnly === "/privacy/") {
+      req.url = "/privacy.html" + q;
     }
   };
   return {
@@ -170,6 +178,8 @@ export default defineConfig({
         payouts: resolve(__dirname, "payouts.html"),
         analytics: resolve(__dirname, "analytics.html"),
         admin: resolve(__dirname, "admin.html"),
+        tacs: resolve(__dirname, "tacs.html"),
+        privacy: resolve(__dirname, "privacy.html"),
       },
     },
   },

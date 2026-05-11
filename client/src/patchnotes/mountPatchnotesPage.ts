@@ -5,6 +5,7 @@ import {
   type PatchnoteTier,
 } from "./collectPatchnotes.js";
 import { PATCHNOTE_RELEASES } from "./patchnoteData.js";
+import { siteDocFooterHtml } from "../ui/docPageSiteFooterHtml.js";
 
 function escapeAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -200,6 +201,7 @@ export function mountPatchnotesPage(app: HTMLElement): () => void {
             ${controlsRowHtml}
           </header>
           <div class="patchnotes-page__list">${rows}</div>
+          ${siteDocFooterHtml("patchnotes")}
         </div>
       </div>
     </div>

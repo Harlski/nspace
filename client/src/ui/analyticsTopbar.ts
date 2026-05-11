@@ -4,7 +4,8 @@ import {
   MAIN_SITE_MAX_CACHED_ACCOUNTS,
 } from "../auth/session.js";
 import { apiUrl } from "../net/apiBase.js";
-import { fetchNonce, signLoginChallenge, verifyWithServer } from "../auth/nimiq.js";
+import { signLoginChallenge } from "../auth/nimiq.js";
+import { completeWalletPayloadAuthWithTermsPrivacyRetry } from "../auth/authTermsPrivacyVerify.js";
 import {
   activateMainSiteCachedAccount,
   clearMainSiteAuthSession,
@@ -146,9 +147,9 @@ export type MainSitePage =
 
 /** Default wallet login used by main-site pages when no custom handler is passed. */
 export async function mainSiteWalletLogin(page: MainSitePage): Promise<void> {
-  const { nonce } = await fetchNonce();
-  const signed = await signLoginChallenge(nonce, hubAppNameForPage(page));
-  const { token, address } = await verifyWithServer(signed);
+  const { token, address } = await completeWalletPayloadAuthWithTermsPrivacyRetry((nonce) =>
+    signLoginChallenge(nonce, hubAppNameForPage(page))
+  );
   if (!token) throw new Error("missing_token");
   writeMainSiteAuthToken(token, address);
   window.location.reload();

@@ -1,5 +1,6 @@
 import "./mainSiteClient.css";
-import { fetchNonce, signLoginChallenge, verifyWithServer } from "./auth/nimiq.js";
+import { signLoginChallenge } from "./auth/nimiq.js";
+import { completeWalletPayloadAuthWithTermsPrivacyRetry } from "./auth/authTermsPrivacyVerify.js";
 import { isTokenExpired } from "./auth/session.js";
 import { apiUrl } from "./net/apiBase.js";
 import { refreshMainSiteNavFromSession, renderMainSiteTopbar } from "./ui/analyticsTopbar.js";
@@ -212,9 +213,9 @@ async function load(): Promise<void> {
       (authGateEl as HTMLElement).className = "auth-gate mono";
       authGateEl.innerHTML = walletSigningMarkup();
       stopDots = animateSigningDots(authGateEl);
-      const { nonce } = await fetchNonce();
-      const signed = await signLoginChallenge(nonce, "nspace analytics");
-      const { token, address } = await verifyWithServer(signed);
+      const { token, address } = await completeWalletPayloadAuthWithTermsPrivacyRetry((nonce) =>
+        signLoginChallenge(nonce, "nspace analytics")
+      );
       if (!token) throw new Error("missing_token");
       writeMainSiteAuthToken(token, address);
       stopDots();
