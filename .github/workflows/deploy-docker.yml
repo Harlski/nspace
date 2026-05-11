@@ -73,15 +73,24 @@ jobs:
             fi
             if [ -n "${DEPLOY_RESTART_HOOK_SECRET:-}" ]; then
               echo "Notifying connected players (60s) via pre-deploy hook…"
-              if curl -fsS -X POST "http://127.0.0.1:3001/api/hooks/pre-deploy-restart" \
+              # Do not use curl -f: 404 means "no hook on this binary yet" (deploy before this route shipped)
+              # or "not_configured" (secret not in the running container env). Deploy must still succeed.
+              HOOK_CODE=$(curl -sS --max-time 25 -o /dev/null -w "%{http_code}" -X POST \
+                "http://127.0.0.1:3001/api/hooks/pre-deploy-restart" \
                 -H "Authorization: Bearer ${DEPLOY_RESTART_HOOK_SECRET}" \
                 -H "Content-Type: application/json" \
                 -d '{"etaSeconds":60,"message":"Deploying a new version — brief disconnect ahead."}' \
-                -o /dev/null; then
-                echo "Waiting 60s for countdown…"
+                2>/dev/null || echo "000")
+              HOOK_CODE=${HOOK_CODE//[^0-9]/}
+              HOOK_CODE=${HOOK_CODE:-000}
+              if [ "$HOOK_CODE" = "200" ]; then
+                echo "Hook OK (HTTP 200). Waiting 60s for countdown…"
                 sleep 60
+              elif [ "$HOOK_CODE" = "404" ]; then
+                echo "WARN: pre-deploy hook HTTP 404 (old server build without route, or hook disabled / secret not in process). Skipping 60s wait."
+                sleep 3
               else
-                echo "WARN: pre-deploy hook failed (is the stack up on 127.0.0.1:3001?). Continuing in 5s…"
+                echo "WARN: pre-deploy hook HTTP ${HOOK_CODE:-?} (connection refused, auth, or server error). Continuing in 5s…"
                 sleep 5
               fi
             else

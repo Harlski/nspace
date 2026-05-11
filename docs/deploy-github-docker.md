@@ -164,12 +164,13 @@ When **`DEPLOY_RESTART_HOOK_SECRET`** is set in **`/opt/nspace/.env`** (same fil
 2. Add a line: `DEPLOY_RESTART_HOOK_SECRET=<that value>` (no quotes unless your shell requires them for special characters).
 3. Ensure the **`nspace`** container receives it: with the default `env_file: ./.env` in [docker-compose.yml](../docker-compose.yml), the key is passed into the Node process automatically after **`docker compose up -d`** (redeploy once after editing `.env`).
 
-On each push to **`main`**, the deploy script **sources** `.env`, then **`curl`**s `http://127.0.0.1:3001/api/hooks/pre-deploy-restart` with **`Authorization: Bearer <DEPLOY_RESTART_HOOK_SECRET>`** and JSON **`{"etaSeconds":60,"message":"…"}`**. If the request succeeds, the workflow **waits 60 seconds** so clients can show the orange HUD banner before **`docker compose stop`**.
+On each push to **`main`**, the deploy script **sources** `.env`, then **`curl`**s `http://127.0.0.1:3001/api/hooks/pre-deploy-restart` with **`Authorization: Bearer <DEPLOY_RESTART_HOOK_SECRET>`** and JSON **`{"etaSeconds":60,"message":"…"}`** (without **`curl -f`**). If the response is **HTTP 200**, the workflow **waits 60 seconds** so clients can show the orange HUD banner before **`docker compose stop`**.
 
 - If the secret is **unset**, the script skips the hook and proceeds immediately (same behavior as before this feature).
-- If **`curl` fails** (game not running, wrong secret, or hook not configured in the running image yet), the script logs a warning, waits **5 seconds**, then continues so deploy does not hang forever.
+- **HTTP 404** — the running container may be an **older image** (route not shipped yet) or the hook is **disabled** (`not_configured` when the process has no secret). The workflow **skips the 60s wait** and continues so the first green deploy after adding the hook still succeeds.
+- **Other errors** (connection refused, **401**, 5xx): the script logs a warning, waits **5 seconds**, then continues.
 
-The hook is also documented in [docs/process.md](process.md). Manual trigger (same as CI): `curl -fsS -X POST http://127.0.0.1:3001/api/hooks/pre-deploy-restart -H "Authorization: Bearer $DEPLOY_RESTART_HOOK_SECRET" -H "Content-Type: application/json" -d '{"etaSeconds":60}'`.
+The hook is also documented in [docs/process.md](process.md). Manual test (inspect HTTP code; avoid **`-f`** if the server might return **404**): `curl -sS -o /dev/null -w "%{http_code}\n" -X POST http://127.0.0.1:3001/api/hooks/pre-deploy-restart -H "Authorization: Bearer $DEPLOY_RESTART_HOOK_SECRET" -H "Content-Type: application/json" -d '{"etaSeconds":60}'`.
 
 ### Reverse proxy (Caddy)
 
@@ -239,6 +240,7 @@ Each deploy creates **`/opt/nspace/backups/nspace-data-*.tar.gz`** (same `DEPLOY
 
 ## Troubleshooting
 
+- **GitHub Actions fails at “pre-deploy hook” / `curl` exit 22:** Older workflows used **`curl -f`**, which treats **404** as failure. The first deploy that adds **`DEPLOY_RESTART_HOOK_SECRET`** often hits **404** while the **still-running** server predates `POST /api/hooks/pre-deploy-restart`. Update to the latest **`.github/workflows/deploy-docker.yml`** (no `-f`; **404** skips the long wait) or temporarily remove the secret from `.env` until one successful deploy has shipped the hook.
 - **`docker: command not found`** (exit 127): Docker is not installed, or the **Compose v2** plugin is missing, or `deployer` was never added to the **`docker`** group (and did not start a new session after `usermod`). On the VPS as `deployer`, run `command -v docker && docker compose version`. Install example for Debian/Ubuntu: `sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2` then `sudo usermod -aG docker deployer` and **log out and back in** (or reboot) so group membership applies to SSH sessions.
 - **Permission denied (publickey)** from Actions: check `DEPLOY_USER`, `DEPLOY_HOST`, and that the matching **public** key is in that user’s `authorized_keys`.
 - **`git fetch` fails on server**: test `ssh -T git@github.com` on the VPS; fix deploy key / `~/.ssh/config`.
