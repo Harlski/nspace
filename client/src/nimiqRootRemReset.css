@@ -9,8 +9,9 @@
  *
  * Nimiq also ends with `body { color: var(--nimiq-blue); background: var(--nimiq-gray); … }` (dark text on
  * light gray). That loads after `style.css` in production and overrides `body { color: #e8eaef }`, so any
- * UI that inherits color (e.g. `.chat-line` / `.chat-log` without their own `color`) looks black on dark
- * panels. Re-assert the app shell typography and colors here too.
+ * UI that inherits color from body would look black on dark panels. Re-assert the app shell typography
+ * and colors here as the broad fallback. Surfaces that historically broke (e.g. chat) now also self-declare
+ * their own `color` in `style.css` so they no longer depend on this reset surviving every load order.
  *
  * In-game Nimiq pills (`.nq-button-pill`, etc.) are already constrained by higher-specificity rules in
  * `style.css` (e.g. `.hud-portal-enter.nq-button-pill`, `.main-menu .nq-button-s…`). Do not scope this

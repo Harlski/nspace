@@ -11,6 +11,7 @@ import { createNonce, consumeNonce, signSession, verifySession } from "./auth.js
 import {
   addClient,
   adminRandomExtraFloorLayout,
+  getLiveRealPlayerCountInRoom,
   startRoomTick,
   syncPlayerProfileDisplayNameForWallet,
 } from "./rooms.js";
@@ -95,6 +96,7 @@ import {
   setChannelMuted,
   setUsernameSetBanned,
 } from "./moderationStore.js";
+import { listRoomsOwnedBy } from "./roomRegistry.js";
 import { nimiqIdenticonDataUrl } from "./nimiqIdenticonServer.js";
 import { walletDisplayName } from "./walletDisplayName.js";
 
@@ -270,6 +272,7 @@ app.get("/api/player-profile/:address", (req, res) => {
     const pub = getPlayerProfilePublicJson(addr) as Record<string, unknown>;
     pub.usernameSelfServiceEnabled =
       getAdminRuntimeSettings().playerUsernameSelfServiceEnabled;
+    let canSeePrivateRooms = false;
     const t = bearerToken(req);
     if (t) {
       try {
@@ -277,14 +280,31 @@ app.get("/api/player-profile/:address", (req, res) => {
         if (sub === addr) {
           pub.usernameSetBanned = isUsernameSetBanned(addr);
           pub.channelMuted = isChannelMuted(addr);
+          canSeePrivateRooms = true;
         } else if (isAdmin(sub)) {
           pub.subjectUsernameBanned = isUsernameSetBanned(addr);
           pub.subjectChannelMuted = isChannelMuted(addr);
+          canSeePrivateRooms = true;
         }
       } catch {
         /* ignore invalid bearer on public read */
       }
     }
+    const ownedRooms = listRoomsOwnedBy(addr).filter(
+      (room) => room.isPublic || canSeePrivateRooms
+    );
+    pub.rooms = ownedRooms
+      .map((room) => ({
+        ...room,
+        playerCount: getLiveRealPlayerCountInRoom(room.id),
+      }))
+      .sort(
+        (a, b) =>
+          b.playerCount - a.playerCount ||
+          a.displayName.localeCompare(b.displayName) ||
+          a.id.localeCompare(b.id)
+      )
+      .slice(0, 3);
     res.json(pub);
   } catch (err) {
     console.error("[player-profile/get]", err);

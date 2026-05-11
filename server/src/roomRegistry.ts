@@ -388,6 +388,32 @@ export function countRoomsOwnedBy(ownerAddress: string): number {
   return n;
 }
 
+export function listRoomsOwnedBy(ownerAddress: string): Array<{
+  id: string;
+  displayName: string;
+  isPublic: boolean;
+}> {
+  const want = compactAddress(ownerAddress);
+  if (!want) return [];
+  const out: Array<{
+    id: string;
+    displayName: string;
+    isPublic: boolean;
+  }> = [];
+  for (const [id, entry] of dynamicRooms.entries()) {
+    if (entry.deletedAt) continue;
+    if (entry.isOfficial) continue;
+    if (!entry.ownerAddress || compactAddress(entry.ownerAddress) !== want) continue;
+    out.push({
+      id,
+      displayName: entry.displayName,
+      isPublic: entry.isPublic,
+    });
+  }
+  out.sort((a, b) => a.displayName.localeCompare(b.displayName) || a.id.localeCompare(b.id));
+  return out;
+}
+
 export function getDynamicRoomBounds(roomId: string): RoomBounds | null {
   const id = normalizeRoomIdRaw(roomId);
   const entry = dynamicRooms.get(id);

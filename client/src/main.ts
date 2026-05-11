@@ -718,6 +718,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   let roomsEditingRoomId: string | null = null;
   /** Set when joining via the code field; cleared on result or modal/ws reset. */
   let pendingModalJoinRoomId: string | null = null;
+  /** Set when joining from a player profile room row; cleared on result. */
+  let pendingProfileJoinRoomId: string | null = null;
   /** After Create & enter is sent; cleared on welcome, failure chat, or closing the create modal. */
   let pendingCreateRoomAwaiting = false;
 
@@ -1273,6 +1275,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
 
   hud.onRoomsOpen(() => openRoomsModal());
+  hud.onProfileRoomJoin((roomId) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (normalizeRoomId(game.getRoomId()) === normalizeRoomId(roomId)) return;
+    pendingProfileJoinRoomId = roomId;
+    sendJoinRoom(ws, roomId);
+  });
   const adminOverlay = installAdminOverlay(hudRoot, game, {
     roomId: ROOM_ID,
     enabled: isAdmin(address),
@@ -2819,6 +2827,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
     if (msg.type === "joinRoomFailed") {
       if (
+        pendingProfileJoinRoomId &&
+        normalizeRoomId(msg.roomId).toLowerCase() ===
+          normalizeRoomId(pendingProfileJoinRoomId).toLowerCase()
+      ) {
+        pendingProfileJoinRoomId = null;
+        hud.appendChat("System", "Room not found.");
+      }
+      if (
         pendingModalJoinRoomId &&
         normalizeRoomId(msg.roomId).toLowerCase() ===
           normalizeRoomId(pendingModalJoinRoomId).toLowerCase()
@@ -2876,6 +2892,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         pendingModalJoinRoomId !== null &&
         normalizeRoomId(msg.roomId).toLowerCase() ===
           normalizeRoomId(pendingModalJoinRoomId).toLowerCase();
+      const joinedViaProfileJoin =
+        pendingProfileJoinRoomId !== null &&
+        normalizeRoomId(msg.roomId).toLowerCase() ===
+          normalizeRoomId(pendingProfileJoinRoomId).toLowerCase();
 
       if (joinedViaModalJoin) {
         roomsJoinStatus.hidden = true;
@@ -3038,6 +3058,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         if (joinedViaModalJoin) {
           pendingModalJoinRoomId = null;
           roomsJoinSubmitBtn.disabled = false;
+        }
+        if (joinedViaProfileJoin) {
+          pendingProfileJoinRoomId = null;
         }
       }
       return;

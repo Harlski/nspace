@@ -36,6 +36,21 @@ export function nimiqLogosHexOutlineMonoPlusMarkup(opts?: { graphicClass?: strin
   );
 }
 
+export function nimiqIconifyMarkup(
+  iconId: string,
+  opts?: { class?: string; width?: number; height?: number }
+): string {
+  const ic = nimiqIconsData.icons[iconId];
+  const body = ic?.body;
+  if (!body) throw new Error(`[nimiqIcons] nimiq-icons: missing ${iconId}`);
+  const w = opts?.width ?? ic.width ?? 16;
+  const h = opts?.height ?? ic.height ?? 16;
+  const cls = ["nq-icon", opts?.class].filter(Boolean).join(" ");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${String(
+    w
+  )} ${String(h)}" class="${cls}" aria-hidden="true">${body}</svg>`;
+}
+
 export function nimiqIconUseMarkup(
   symbolId: string,
   opts?: { class?: string; width?: number; height?: number }

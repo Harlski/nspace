@@ -183,10 +183,10 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
               <p class="main-menu__wallet-hint" id="main-menu-wallet-hint">Sign in with your Nimiq wallet</p>
               <div class="main-menu__wallet-signin-hex-wrap" id="main-menu-wallet-signin-wrap">
                 <button type="button" class="main-menu__cached-add-hex main-menu__wallet-signin-hex" id="main-menu-wallet-signin" aria-label="Sign in with your Nimiq wallet"></button>
-                <span id="main-menu-wallet-signin-terms-tooltip" class="main-menu__terms-required-tooltip" hidden role="tooltip"></span>
               </div>
               <div class="main-menu__terms-privacy" id="main-menu-terms-privacy-row" hidden>
-                <label class="main-menu__terms-privacy-label"><input type="checkbox" id="main-menu-terms-privacy-cb" autocomplete="off" /><span>I have read and agree to the <a href="/tacs" target="_blank" rel="noopener noreferrer">Terms</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</span></label>
+                <span id="main-menu-terms-required-tooltip" class="main-menu__terms-required-tooltip" hidden role="tooltip"></span>
+                <label class="main-menu__terms-privacy-label"><input type="checkbox" id="main-menu-terms-privacy-cb" autocomplete="off" /><span id="main-menu-terms-privacy-text">I have read and agree to the <a href="/tacs" target="_blank" rel="noopener noreferrer">Terms</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</span></label>
               </div>
               ${
                 devBypass
@@ -304,9 +304,6 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   const walletSigninHexBtn = root.querySelector(
     "#main-menu-wallet-signin"
   ) as HTMLButtonElement | null;
-  const walletSigninTermsTooltipEl = root.querySelector(
-    "#main-menu-wallet-signin-terms-tooltip"
-  ) as HTMLElement | null;
   if (walletSigninHexBtn) {
     walletSigninHexBtn.innerHTML = nimiqLogosHexOutlineMonoPlusMarkup();
   }
@@ -314,11 +311,60 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
 
   const termsPrivacyRow = root.querySelector("#main-menu-terms-privacy-row") as HTMLElement;
   const termsPrivacyCb = root.querySelector("#main-menu-terms-privacy-cb") as HTMLInputElement;
-  const refreshTermsPrivacyAckRowVisibility = (): void => {
-    termsPrivacyRow.hidden = hasTermsPrivacyAckCachedLocally();
-    termsPrivacyCb.checked = false;
+  const termsPrivacyTextEl = root.querySelector(
+    "#main-menu-terms-privacy-text"
+  ) as HTMLElement | null;
+  const termsRequiredTooltipEl = root.querySelector(
+    "#main-menu-terms-required-tooltip"
+  ) as HTMLElement;
+
+  /** Without a prior wallet (+) interaction, the terms row stays hidden (unless local ack defers it). */
+  let termsCheckboxRowDisclosed = false;
+
+  const hideTermsPrivacyRowImmediate = (): void => {
+    termsPrivacyRow.classList.remove("main-menu__terms-privacy--disclosed");
+    termsPrivacyRow.hidden = true;
   };
-  refreshTermsPrivacyAckRowVisibility();
+
+  const showTermsPrivacyRowAnimated = (): void => {
+    termsPrivacyRow.classList.remove("main-menu__terms-privacy--disclosed");
+    termsPrivacyRow.hidden = false;
+    const reduced =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+    if (reduced) {
+      termsPrivacyRow.classList.add("main-menu__terms-privacy--disclosed");
+      return;
+    }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        termsPrivacyRow.classList.add("main-menu__terms-privacy--disclosed");
+      });
+    });
+  };
+
+  const syncTermsPrivacyRowAfterAckState = (): void => {
+    termsPrivacyCb.checked = false;
+    if (hasTermsPrivacyAckCachedLocally()) {
+      termsCheckboxRowDisclosed = false;
+      hideTermsPrivacyRowImmediate();
+      return;
+    }
+    if (!termsCheckboxRowDisclosed) {
+      hideTermsPrivacyRowImmediate();
+    } else {
+      termsPrivacyRow.hidden = false;
+      termsPrivacyRow.classList.add("main-menu__terms-privacy--disclosed");
+    }
+  };
+
+  const discloseTermsCheckboxRow = (): void => {
+    if (hasTermsPrivacyAckCachedLocally()) return;
+    termsCheckboxRowDisclosed = true;
+    showTermsPrivacyRowAnimated();
+  };
+
+  syncTermsPrivacyRowAfterAckState();
 
   let termsTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
   let activeTermsTooltipEl: HTMLElement | null = null;
@@ -339,17 +385,15 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       el.style.opacity = "";
       activeTermsTooltipEl = null;
     }
+    termsPrivacyCb.removeAttribute("aria-describedby");
   };
-  const showTermsRequiredTooltip = (tooltipEl: HTMLElement): void => {
+  /** Fixed tooltip centered under `anchor` (consent copy span — not the checkbox). */
+  const showTermsRequiredTooltip = (tooltipEl: HTMLElement, anchor: HTMLElement): void => {
     hideTermsRequiredTooltip();
     activeTermsTooltipEl = tooltipEl;
     tooltipEl.textContent =
-      "Tick the Terms and Privacy checkbox below before signing in.";
-    const wrap = tooltipEl.closest(".main-menu__wallet-signin-hex-wrap");
-    const anchor =
-      wrap?.querySelector<HTMLElement>(
-        ".main-menu__cached-add-hex, .main-menu__wallet-signin-hex"
-      ) ?? wrap;
+      "Tick here to approve — then use the Nimiq wallet button again.";
+    termsPrivacyCb.setAttribute("aria-describedby", "main-menu-terms-required-tooltip");
     tooltipEl.hidden = false;
     tooltipEl.style.position = "fixed";
     tooltipEl.style.transform = "none";
@@ -360,7 +404,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
 
     const place = (): void => {
       if (!root.isConnected) return;
-      if (!anchor || !tooltipEl.isConnected) {
+      if (!anchor.isConnected || !tooltipEl.isConnected) {
         tooltipEl.style.opacity = "";
         tooltipEl.hidden = true;
         return;
@@ -391,8 +435,6 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       }, 4500);
     });
   };
-  /** Cached “add wallet” hex tooltip — created in `renderCachedAccounts`. */
-  let cachedAddTermsTooltipEl: HTMLElement | null = null;
   termsPrivacyCb.addEventListener("change", () => {
     if (termsPrivacyCb.checked) hideTermsRequiredTooltip();
   });
@@ -485,19 +527,13 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   };
 
   /**
-   * Wallet / dev login on this menu must tick the checkbox when the row is visible,
-   * or when a prior session stored local ack (row may be hidden until we reveal it).
-   */
-  const requiresTermsCheckboxTickForLogin = (): boolean =>
-    !termsPrivacyRow.hidden || hasTermsPrivacyAckCachedLocally();
-
-  /**
    * Local ack hides the terms row; hex / dev still need an explicit tick — show the row again for this mount.
    */
   const revealTermsRowIfWalletConsentSuppressedByAck = (): boolean => {
     if (!termsPrivacyRow.hidden || !hasTermsPrivacyAckCachedLocally()) return false;
-    termsPrivacyRow.hidden = false;
+    termsCheckboxRowDisclosed = true;
     termsPrivacyCb.checked = false;
+    showTermsPrivacyRowAnimated();
     if (cachedSessions.length > 0) clearCachedAccountSelection();
     requestAnimationFrame(() => {
       termsPrivacyRow.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -505,10 +541,14 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     return true;
   };
 
+  const primeTermsConsentUiForWalletAttempt = (): void => {
+    revealTermsRowIfWalletConsentSuppressedByAck();
+    discloseTermsCheckboxRow();
+  };
+
   const renderCachedAccounts = (): void => {
     cachedList.replaceChildren();
     cachedAddWalletBtn = null;
-    cachedAddTermsTooltipEl = null;
     if (cachedSessions.length === 0) return;
     for (const entry of cachedSessions) {
       const item = document.createElement("div");
@@ -570,13 +610,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       "Add another Nimiq wallet account — sign in to link it"
     );
     addBtn.innerHTML = nimiqLogosHexOutlineMonoPlusMarkup();
-    const addTermsTooltip = document.createElement("span");
-    addTermsTooltip.className = "main-menu__terms-required-tooltip";
-    addTermsTooltip.setAttribute("role", "tooltip");
-    addTermsTooltip.hidden = true;
-    cachedAddTermsTooltipEl = addTermsTooltip;
     addWrap.appendChild(addBtn);
-    addWrap.appendChild(addTermsTooltip);
     addItem.appendChild(addWrap);
     cachedList.appendChild(addItem);
     cachedAddWalletBtn = addBtn;
@@ -627,8 +661,8 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   }
 
   const runNimiqWalletSignIn = async (): Promise<void> => {
-    revealTermsRowIfWalletConsentSuppressedByAck();
-    if (requiresTermsCheckboxTickForLogin() && !termsPrivacyCb.checked) {
+    primeTermsConsentUiForWalletAttempt();
+    if (!termsPrivacyCb.checked) {
       showErr("Please confirm below that you have read the Terms and Privacy Policy.");
       setBusy(false);
       return;
@@ -641,7 +675,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
           : undefined,
       }
     );
-    refreshTermsPrivacyAckRowVisibility();
+    syncTermsPrivacyRowAfterAckState();
     onLoggedIn(token, address, nimiqPay);
   };
 
@@ -670,11 +704,18 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   };
 
   if (walletSigninHexBtn) {
-    const tipWallet = walletSigninTermsTooltipEl;
     walletSigninHexBtn.addEventListener("click", () => {
-      revealTermsRowIfWalletConsentSuppressedByAck();
-      if (requiresTermsCheckboxTickForLogin() && !termsPrivacyCb.checked) {
-        if (tipWallet) showTermsRequiredTooltip(tipWallet);
+      primeTermsConsentUiForWalletAttempt();
+      if (!termsPrivacyCb.checked) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            showTermsRequiredTooltip(
+              termsRequiredTooltipEl,
+              termsPrivacyTextEl ?? termsPrivacyCb
+            );
+          });
+        });
+        termsPrivacyCb.focus();
         return;
       }
       void invokePrimaryWalletLogin();
@@ -682,10 +723,23 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   }
 
   cachedAddWalletBtn?.addEventListener("click", () => {
-    revealTermsRowIfWalletConsentSuppressedByAck();
-    if (requiresTermsCheckboxTickForLogin() && !termsPrivacyCb.checked) {
-      if (cachedAddTermsTooltipEl)
-        showTermsRequiredTooltip(cachedAddTermsTooltipEl);
+    primeTermsConsentUiForWalletAttempt();
+    if (
+      cachedSessions.length > 0 &&
+      actionsDefaultEl.classList.contains("main-menu__actions-pane--hidden")
+    ) {
+      clearCachedAccountSelection();
+    }
+    if (!termsPrivacyCb.checked) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          showTermsRequiredTooltip(
+            termsRequiredTooltipEl,
+            termsPrivacyTextEl ?? termsPrivacyCb
+          );
+        });
+      });
+      termsPrivacyCb.focus();
       return;
     }
     void invokePrimaryWalletLogin();
@@ -695,8 +749,8 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     showErr("");
     setBusy(true);
     try {
-      revealTermsRowIfWalletConsentSuppressedByAck();
-      if (requiresTermsCheckboxTickForLogin() && !termsPrivacyCb.checked) {
+      primeTermsConsentUiForWalletAttempt();
+      if (!termsPrivacyCb.checked) {
         showErr("Please confirm below that you have read the Terms and Privacy Policy.");
         setBusy(false);
         return;
@@ -722,7 +776,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
             : undefined,
         }
       );
-      refreshTermsPrivacyAckRowVisibility();
+      syncTermsPrivacyRowAfterAckState();
       onLoggedIn(token, address, nimiqPay);
     } catch (e) {
       showErr(e instanceof Error ? e.message : "dev_login_failed");

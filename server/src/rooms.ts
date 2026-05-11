@@ -1886,6 +1886,11 @@ function countRealPlayersInRoom(roomId: string): number {
   return n;
 }
 
+/** Live non-NPC client count (HTTP profile, admin tools). */
+export function getLiveRealPlayerCountInRoom(roomIdRaw: string): number {
+  return countRealPlayersInRoom(normalizeRoomId(roomIdRaw));
+}
+
 /** 6-char codes are case-insensitive; other ids use normal normalization. */
 function normalizeJoinRoomId(raw: string): string {
   const t = String(raw).trim().replace(/\s+/g, "");

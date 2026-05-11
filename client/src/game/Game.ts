@@ -465,6 +465,19 @@ function createNameLabelSprite(
   sprite.renderOrder = 999;
   sprite.userData.nameLabelTexW = w;
   sprite.userData.nameLabelTexH = h;
+  /*
+   * Name labels are decorative chrome on top of an authoritative avatar group, not part of the
+   * pickable body. Per the "Client-only visuals on authoritative world objects" principle in
+   * `docs/THE-LARGER-SYSTEM.md`, decorative children must not steal raycasts from the geometry
+   * they sit above. Without this, the sprite (drawn with `depthTest: false` and high `renderOrder`)
+   * wins avatar / right-click picks whenever a player's name plate visually overlaps the target
+   * underneath — most painfully on touch (`pickClosestAvatarGroupAt` in `onPointerDown`) where a
+   * tap meant for a block under another player's nameplate opens the player profile instead.
+   * Suppressing the sprite raycast lets the ray continue to the body mesh (avatar still pickable
+   * when the body itself is on the ray) or to the next pick step (block / floor).
+   */
+  sprite.userData[SKIP_BLOCK_PICK_AND_BOUNDS] = true;
+  sprite.raycast = (_raycaster: THREE.Raycaster, _intersects: THREE.Intersection[]) => {};
   /* World scale set in Game.syncNameLabelScaleAndPosition from screen px + frustum. */
   sprite.scale.set(1, 1, 1);
   sprite.position.y = 0;
@@ -590,9 +603,12 @@ const BLOCK_SIZE = 0.82;
 const MINEABLE_SPARKLE_COUNT = 48;
 
 /**
- * Children of a placed-block `THREE.Group` with this flag are **purely decorative**:
- * omitted from build-mode selection `Box3`, and they do not participate in block ray picks.
- * Reuse for future per-block VFX (auras, particles, etc.).
+ * Decorative children inside an authoritative `THREE.Group` (placed block, avatar) carrying this
+ * flag are **purely visual**: omitted from build-mode selection `Box3`, and they should not
+ * participate in any raycast (block picks, avatar picks, etc.). Originally introduced for placed-
+ * block VFX (mineable sparkles, future auras); also applied to nameplate sprites so they do not
+ * shadow taps / right-clicks aimed at geometry behind them. See "Client-only visuals on
+ * authoritative world objects" in `docs/THE-LARGER-SYSTEM.md`.
  */
 const SKIP_BLOCK_PICK_AND_BOUNDS = "skipBlockPickAndBounds";
 

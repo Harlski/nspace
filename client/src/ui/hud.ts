@@ -47,7 +47,7 @@ import {
   X_URL,
   nimiqWalletRecipientDeepLink,
 } from "../socialLinks.js";
-import { nimiqIconUseMarkup } from "./nimiqIcons.js";
+import { nimiqIconUseMarkup, nimiqIconifyMarkup } from "./nimiqIcons.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
@@ -253,6 +253,8 @@ export function createHud(
   onReturnToLobby: (fn: () => void) => void;
   /** Open the large Rooms browser (list / join / create). */
   onRoomsOpen: (fn: () => void) => void;
+  /** Confirmed from a room listed on a player profile. */
+  onProfileRoomJoin: (fn: (roomId: string) => void) => void;
   /** Build toggle: walk off / on; on + Objects vs Room (dropdown) maps to build vs floor. */
   onPlayModeSelect: (fn: (mode: "walk" | "build" | "floor") => void) => void;
   setPlayModeState: (mode: "walk" | "build" | "floor") => void;
@@ -567,7 +569,17 @@ export function createHud(
 
   const headerMarqueeHost = document.createElement("div");
   headerMarqueeHost.className = "hud-header-marquee-host";
-  const disposeHeaderMarquee = mountHeaderMarquee(headerMarqueeHost);
+  const disposeHeaderMarquee = mountHeaderMarquee(headerMarqueeHost, {
+    onPlayerProfileOpen: (walletId, displayName) => {
+      const compact = walletKeyForProfile(walletId);
+      const self = walletKeyForProfile(brandLinksPlayerAddress);
+      if (compact && self && compact === self) {
+        openOwnPlayerProfileFromBar();
+        return;
+      }
+      void showPlayerProfileView(walletId, displayName, "other");
+    },
+  });
 
   const topStrip = document.createElement("div");
   topStrip.className = "hud-top-strip";
@@ -578,7 +590,7 @@ export function createHud(
   const brand = document.createElement("button");
   brand.type = "button";
   brand.className = "hud-brand";
-  brand.setAttribute("aria-label", "Nimiq Space — community links and wallet");
+  brand.setAttribute("aria-label", "Nimiq Space, community links and wallet");
   const nimiqSpan = document.createElement("span");
   nimiqSpan.className = "main-menu__title-nimiq";
   nimiqSpan.textContent = "NIMIQ";
@@ -635,7 +647,7 @@ export function createHud(
     class: "hud-toolbar-nq-icon",
   });
   lobbyBtn.setAttribute("aria-label", "Lobby");
-  lobbyBtn.title = "Lobby — back to main menu (stay logged in)";
+  lobbyBtn.title = "Return to the lobby and stay signed in.";
   const fsBtn = document.createElement("button");
   fsBtn.type = "button";
   fsBtn.className = "hud-fs hud-icon-btn";
@@ -698,7 +710,7 @@ export function createHud(
   ) as HTMLElement;
   nimBalanceTip.addEventListener("click", (e) => e.stopPropagation());
 
-  /** Toolbar uses horizontal scroll + overflow-y hidden; abs tooltips are clipped — dock to viewport here. */
+  /** Toolbar uses horizontal scroll + overflow-y hidden; abs tooltips are clipped, so dock to viewport here. */
   const HUD_STAT_TIP_VIEWPORT_MQ = window.matchMedia(
     "(pointer: coarse) and (max-width: 960px)"
   );
@@ -738,7 +750,7 @@ export function createHud(
     });
   }
 
-  /** In-game profile Nimiq Pay badge — wired after `other-player-profile` DOM is built. */
+  /** In-game profile Nimiq Pay badge, wired after `other-player-profile` DOM is built. */
   let profileNimiqPayTipAnchor: HTMLElement | null = null;
   let profileNimiqPayTipEl: HTMLElement | null = null;
   let profileAliasTipAnchor: HTMLElement | null = null;
@@ -755,7 +767,7 @@ export function createHud(
   function setProfileNimiqPayTipVisible(show: boolean): void {
     if (!profileNimiqPayTipAnchor || !profileNimiqPayTipEl) return;
     profileNimiqPayTipAnchor.classList.toggle("hud-player-count--show-tip", show);
-    /* Profile lives under nested `position: fixed` / letterbox — viewport `left`/`top` px are wrong on mobile; keep abs like desktop. */
+    /* Profile lives under nested `position: fixed` / letterbox; viewport `left`/`top` px are wrong on mobile, so keep abs like desktop. */
     syncHudStatTooltipViewport(profileNimiqPayTipAnchor, profileNimiqPayTipEl, show, {
       dockViewport: false,
     });
@@ -808,7 +820,7 @@ export function createHud(
   roomsBtn.className = "hud-rooms";
   roomsBtn.innerHTML = `<span class="hud-rooms__inner"><span class="hud-rooms__text">Rooms</span>${nimiqIconUseMarkup("nq-caret-right-small", { width: 10, height: 10, class: "hud-rooms__caret" })}</span>`;
   roomsBtn.setAttribute("aria-label", "Rooms");
-  roomsBtn.title = "Rooms — browse, join, or create";
+  roomsBtn.title = "Browse, join, or create rooms.";
 
   const setNimTipVisible = (show: boolean): void => {
     nimBalance.classList.toggle("hud-nim-balance--show-tip", show);
@@ -866,7 +878,7 @@ export function createHud(
   translateClipboardHintToast.setAttribute("role", "status");
   translateClipboardHintToast.setAttribute("aria-live", "polite");
   translateClipboardHintToast.textContent =
-    "Message copied — paste in Google Translate if it opens empty.";
+    "Message copied. Paste it into Google Translate if the page opens empty.";
   let translateClipboardHintTimer: ReturnType<typeof setTimeout> | null = null;
 
   function showTranslateClipboardHintToast(): void {
@@ -1162,7 +1174,7 @@ export function createHud(
       </div>
       <div class="signpost-overlay__body">
         <label class="signpost-overlay__label" for="hud-feedback-textarea">We appreciate your feedback. Please share issue details and what you'd like improved (max ${FEEDBACK_MESSAGE_MAX} characters)</label>
-        <textarea id="hud-feedback-textarea" class="signpost-overlay__textarea" maxlength="${FEEDBACK_MESSAGE_MAX}" placeholder="Thanks for your feedback — what happened, where, and what should be improved?" rows="6"></textarea>
+        <textarea id="hud-feedback-textarea" class="signpost-overlay__textarea" maxlength="${FEEDBACK_MESSAGE_MAX}" placeholder="Thank you for your feedback. Please describe what happened, where it occurred, and what should be improved." rows="6"></textarea>
         <p class="feedback-overlay__error" hidden></p>
         <div class="signpost-overlay__char-count">0 / ${FEEDBACK_MESSAGE_MAX}</div>
       </div>
@@ -1333,9 +1345,9 @@ export function createHud(
   buildToggleBtn.innerHTML = `${HUD_MODE_ICON_BUILD}<span class="hud-mode-sidebar__tab-label">Build</span>`;
   buildToggleBtn.setAttribute(
     "aria-label",
-    "Build — on to edit objects or room; off to move"
+    "Build. Turn on to edit objects or rooms; turn off to move."
   );
-  buildToggleBtn.title = "Build — on to edit; off to move (B)";
+  buildToggleBtn.title = "Build. Turn on to edit; turn off to move. Shortcut: B.";
 
   const modeSidebarBody = document.createElement("div");
   modeSidebarBody.className = "hud-mode-sidebar__body";
@@ -1585,7 +1597,7 @@ export function createHud(
       buildEditKindSelect.value = "room";
     }
     buildToggleBtn.title = showRail
-      ? "Build — on to edit objects or room; off to move (B)"
+      ? "Build. Turn on to edit objects or rooms; turn off to move. Shortcut: B."
       : "Editing is disabled in this room";
   }
 
@@ -1738,6 +1750,17 @@ export function createHud(
   otherPlayerCtxViewCol.appendChild(otherPlayerCtxViewLabel);
   otherPlayerCtxViewBtn.append(otherPlayerCtxIdent, otherPlayerCtxViewCol);
   otherPlayerCtxSingle.appendChild(otherPlayerCtxViewBtn);
+  /*
+   * Copy wallet sits next to View profile so the most common identity actions are one
+   * click away; the wallet copy on the profile card is otherwise two clicks away. Idiomatic
+   * single verb per row per the in-world UI principle in `docs/THE-LARGER-SYSTEM.md`.
+   */
+  const otherPlayerCtxCopyAddressBtn = document.createElement("button");
+  otherPlayerCtxCopyAddressBtn.type = "button";
+  otherPlayerCtxCopyAddressBtn.className = "other-player-ctx__item";
+  otherPlayerCtxCopyAddressBtn.setAttribute("role", "menuitem");
+  otherPlayerCtxCopyAddressBtn.textContent = "Copy wallet";
+  otherPlayerCtxSingle.appendChild(otherPlayerCtxCopyAddressBtn);
   otherPlayerCtx.append(otherPlayerCtxMulti, otherPlayerCtxSingle);
 
   const otherPlayerProfile = document.createElement("div");
@@ -1765,8 +1788,8 @@ export function createHud(
   const oppIdent = document.createElement("img");
   oppIdent.className = "other-player-profile__identicon";
   oppIdent.alt = "";
-  oppIdent.width = 64;
-  oppIdent.height = 64;
+  oppIdent.width = 76;
+  oppIdent.height = 76;
   oppIdent.hidden = true;
   const oppNimiqPayHost = document.createElement("div");
   oppNimiqPayHost.className = "other-player-profile__nimiq-pay-inline";
@@ -1775,7 +1798,7 @@ export function createHud(
   oppNimiqPayHost.setAttribute("tabindex", "0");
   oppNimiqPayHost.setAttribute(
     "aria-label",
-    "Nimiq Pay — tap for details about this session"
+    "Nimiq Pay. Select for details about this session."
   );
   oppNimiqPayHost.innerHTML = `${nimiqIconUseMarkup("nq-logos-fm-mono", {
     width: 16,
@@ -1827,7 +1850,17 @@ export function createHud(
     const t = oppUsernameInput.value.replace(/[^a-zA-Z0-9]/g, "");
     if (t !== oppUsernameInput.value) oppUsernameInput.value = t;
   });
-  oppNamePrimaryWrap.append(oppDisplayNameEl, oppUsernameInput);
+  const oppUsernameCommitBtn = document.createElement("button");
+  oppUsernameCommitBtn.type = "button";
+  oppUsernameCommitBtn.className = "other-player-profile__username-commit";
+  oppUsernameCommitBtn.setAttribute("aria-label", "Save username");
+  oppUsernameCommitBtn.hidden = true;
+  oppUsernameCommitBtn.innerHTML = nimiqIconifyMarkup("check", {
+    width: 16,
+    height: 16,
+    class: "other-player-profile__username-commit-icon",
+  });
+  oppNamePrimaryWrap.append(oppDisplayNameEl, oppUsernameInput, oppUsernameCommitBtn);
   const oppWalletShortEl = document.createElement("span");
   oppWalletShortEl.className = "other-player-profile__wallet-short";
   oppWalletShortEl.hidden = true;
@@ -1888,47 +1921,17 @@ export function createHud(
   const oppAdminRow = document.createElement("div");
   oppAdminRow.className = "other-player-profile__admin-mod";
   oppAdminRow.hidden = true;
-  const mkAdminBtn = (label: string): HTMLButtonElement => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "other-player-profile__admin-btn";
-    b.textContent = label;
-    return b;
-  };
-  const oppAdClear = mkAdminBtn("Clear");
-  const oppAdBan = mkAdminBtn("Ban name");
-  const oppAdAllow = mkAdminBtn("Allow name");
-  const oppAdMute = mkAdminBtn("Mute");
-  const oppAdUnmute = mkAdminBtn("Unmute");
-  const oppAdminSetWrap = document.createElement("div");
-  oppAdminSetWrap.className = "other-player-profile__admin-set-name";
-  const oppAdminNameInput = document.createElement("input");
-  oppAdminNameInput.type = "text";
-  oppAdminNameInput.className = "other-player-profile__admin-name-input";
-  oppAdminNameInput.maxLength = 12;
-  oppAdminNameInput.autocomplete = "off";
-  oppAdminNameInput.setAttribute("aria-label", "Set username");
-  oppAdminNameInput.addEventListener("input", () => {
-    const t = oppAdminNameInput.value.replace(/[^a-zA-Z0-9]/g, "");
-    if (t !== oppAdminNameInput.value) oppAdminNameInput.value = t;
-  });
-  const oppAdSetName = mkAdminBtn("Set name");
-  oppAdminSetWrap.append(oppAdminNameInput, oppAdSetName);
-  oppAdminRow.append(
-    oppAdminSetWrap,
-    oppAdClear,
-    oppAdBan,
-    oppAdAllow,
-    oppAdMute,
-    oppAdUnmute
-  );
+  const oppAdminActions = document.createElement("select");
+  oppAdminActions.className = "other-player-profile__admin-actions";
+  oppAdminActions.setAttribute("aria-label", "Admin actions");
+  oppAdminRow.append(oppAdminActions);
   async function adminModerationPost(
     action: string,
     extra?: Record<string, unknown>
-  ): Promise<void> {
+  ): Promise<boolean> {
     const tok = opts?.getGameAuthToken?.() ?? null;
     const target = profileOpenCompact;
-    if (!tok || !target) return;
+    if (!tok || !target) return false;
     const r = await fetch("/api/admin/moderation", {
       method: "POST",
       headers: {
@@ -1946,36 +1949,52 @@ export function createHud(
       };
       oppProfileNote.textContent = map[errBody.error ?? ""] ?? "Error.";
       oppProfileNote.hidden = false;
-      return;
+      return false;
+    }
+    if (!r.ok) {
+      oppProfileNote.textContent = "Error.";
+      oppProfileNote.hidden = false;
+      return false;
     }
     void showPlayerProfileView(
       target,
       oppDisplayNameEl.textContent || walletDisplayName(target),
       "other"
     );
+    return true;
   }
-  oppAdClear.addEventListener("click", () => {
-    void adminModerationPost("clear_username");
-  });
-  oppAdBan.addEventListener("click", () => {
-    void adminModerationPost("username_ban", { banned: true });
-  });
-  oppAdAllow.addEventListener("click", () => {
-    void adminModerationPost("username_ban", { banned: false });
-  });
-  oppAdMute.addEventListener("click", () => {
-    void adminModerationPost("channel_mute", { muted: true });
-  });
-  oppAdUnmute.addEventListener("click", () => {
-    void adminModerationPost("channel_mute", { muted: false });
-  });
-  oppAdSetName.addEventListener("click", () => {
-    void adminModerationPost("set_username", {
-      username: oppAdminNameInput.value.trim(),
-    });
+  function syncAdminActions(banned: boolean, muted: boolean): void {
+    oppAdminActions.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Actions";
+    oppAdminActions.appendChild(placeholder);
+    const actions = [
+      ["clear_username", "Clear"],
+      [banned ? "allow_name" : "ban_name", banned ? "Allow name" : "Ban name"],
+      [muted ? "unmute" : "mute", muted ? "Unmute" : "Mute"],
+    ] as const;
+    for (const [value, label] of actions) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      oppAdminActions.appendChild(opt);
+    }
+    oppAdminActions.value = "";
+  }
+  oppAdminActions.addEventListener("change", () => {
+    const v = oppAdminActions.value;
+    oppAdminActions.value = "";
+    if (v === "clear_username") void adminModerationPost("clear_username");
+    else if (v === "ban_name") void adminModerationPost("username_ban", { banned: true });
+    else if (v === "allow_name") void adminModerationPost("username_ban", { banned: false });
+    else if (v === "mute") void adminModerationPost("channel_mute", { muted: true });
+    else if (v === "unmute") void adminModerationPost("channel_mute", { muted: false });
   });
   const oppProfileMessage = document.createElement("div");
   oppProfileMessage.className = "other-player-profile__message-wrap";
+  const oppProfileRooms = document.createElement("div");
+  oppProfileRooms.className = "other-player-profile__rooms";
   const oppProfileNote = document.createElement("p");
   oppProfileNote.className = "other-player-profile__message-note";
   oppProfileNote.hidden = true;
@@ -1986,7 +2005,13 @@ export function createHud(
   const oppCardFooter = document.createElement("div");
   oppCardFooter.className = "other-player-profile__card-footer";
   oppCardFooter.appendChild(oppSendNim);
-  oppCardBody.append(oppAddrRow, oppAdminRow, oppProfileMessage, oppProfileNote);
+  oppCardBody.append(
+    oppAddrRow,
+    oppAdminRow,
+    oppProfileMessage,
+    oppProfileRooms,
+    oppProfileNote
+  );
   oppCardMain.append(oppIdent, oppCardBody);
   oppCard.append(oppCardMain, oppCardFooter);
   oppDialog.appendChild(oppClose);
@@ -1994,6 +2019,49 @@ export function createHud(
   otherPlayerProfile.appendChild(oppBackdrop);
   otherPlayerProfile.appendChild(oppDialog);
   letter.appendChild(otherPlayerCtx);
+  const profileRoomConfirm = document.createElement("div");
+  profileRoomConfirm.className = "other-player-profile-room-confirm";
+  profileRoomConfirm.hidden = true;
+  profileRoomConfirm.setAttribute("aria-hidden", "true");
+  const profileRoomConfirmBackdrop = document.createElement("button");
+  profileRoomConfirmBackdrop.type = "button";
+  profileRoomConfirmBackdrop.className =
+    "other-player-profile-room-confirm__backdrop";
+  profileRoomConfirmBackdrop.setAttribute("aria-label", "Cancel room join");
+  const profileRoomConfirmDialog = document.createElement("div");
+  profileRoomConfirmDialog.className = "other-player-profile-room-confirm__dialog";
+  profileRoomConfirmDialog.setAttribute("role", "dialog");
+  profileRoomConfirmDialog.setAttribute("aria-modal", "true");
+  profileRoomConfirmDialog.setAttribute(
+    "aria-labelledby",
+    "other-player-profile-room-confirm-title"
+  );
+  const profileRoomConfirmTitle = document.createElement("h2");
+  profileRoomConfirmTitle.id = "other-player-profile-room-confirm-title";
+  profileRoomConfirmTitle.className = "other-player-profile-room-confirm__title";
+  const profileRoomConfirmLead = document.createElement("p");
+  profileRoomConfirmLead.className = "other-player-profile-room-confirm__lead";
+  profileRoomConfirmLead.textContent = "Join this room?";
+  const profileRoomConfirmActions = document.createElement("div");
+  profileRoomConfirmActions.className = "other-player-profile-room-confirm__actions";
+  const profileRoomConfirmCancel = document.createElement("button");
+  profileRoomConfirmCancel.type = "button";
+  profileRoomConfirmCancel.className =
+    "other-player-profile-room-confirm__btn other-player-profile-room-confirm__btn--cancel";
+  profileRoomConfirmCancel.textContent = "Cancel";
+  const profileRoomConfirmJoin = document.createElement("button");
+  profileRoomConfirmJoin.type = "button";
+  profileRoomConfirmJoin.className =
+    "other-player-profile-room-confirm__btn other-player-profile-room-confirm__btn--join";
+  profileRoomConfirmJoin.textContent = "Join room";
+  profileRoomConfirmActions.append(profileRoomConfirmCancel, profileRoomConfirmJoin);
+  profileRoomConfirmDialog.append(
+    profileRoomConfirmTitle,
+    profileRoomConfirmLead,
+    profileRoomConfirmActions
+  );
+  profileRoomConfirm.append(profileRoomConfirmBackdrop, profileRoomConfirmDialog);
+  letter.appendChild(profileRoomConfirm);
   const chatLineCtx = document.createElement("div");
   chatLineCtx.className = "other-player-ctx";
   chatLineCtx.hidden = true;
@@ -2004,12 +2072,21 @@ export function createHud(
   chatLineCtxViewProfileBtn.className = "other-player-ctx__item";
   chatLineCtxViewProfileBtn.setAttribute("role", "menuitem");
   chatLineCtxViewProfileBtn.textContent = "View profile";
+  const chatLineCtxCopyBtn = document.createElement("button");
+  chatLineCtxCopyBtn.type = "button";
+  chatLineCtxCopyBtn.className = "other-player-ctx__item";
+  chatLineCtxCopyBtn.setAttribute("role", "menuitem");
+  chatLineCtxCopyBtn.textContent = "Copy message";
   const chatLineCtxTranslateBtn = document.createElement("button");
   chatLineCtxTranslateBtn.type = "button";
   chatLineCtxTranslateBtn.className = "other-player-ctx__item";
   chatLineCtxTranslateBtn.setAttribute("role", "menuitem");
   chatLineCtxTranslateBtn.textContent = "Translate";
-  chatLineCtx.append(chatLineCtxViewProfileBtn, chatLineCtxTranslateBtn);
+  chatLineCtx.append(
+    chatLineCtxViewProfileBtn,
+    chatLineCtxCopyBtn,
+    chatLineCtxTranslateBtn
+  );
   letter.appendChild(chatLineCtx);
 
   const gateCtx = document.createElement("div");
@@ -2143,6 +2220,17 @@ export function createHud(
     }
   });
 
+  chatLineCtxCopyBtn.addEventListener("click", () => {
+    const p = chatLineCtxPayload;
+    closeChatLineContextMenu();
+    const text = p?.translateText.trim() ?? "";
+    if (!text) return;
+    /* Idiomatic silent copy, matches `oppCopyAddressBtn` pattern. */
+    void navigator.clipboard?.writeText(text).catch(() => {
+      /* ignore */
+    });
+  });
+
   chatLineCtxTranslateBtn.addEventListener("click", () => {
     const p = chatLineCtxPayload;
     closeChatLineContextMenu();
@@ -2173,21 +2261,68 @@ export function createHud(
   let profileMessageLastSaved = "";
   let profileUsernameEditing = false;
   let profileUsernameSavedCustom = "";
+  let profileUsernameEditBaseline = "";
+  let profileRoomJoinPending: { id: string; displayName: string } | null = null;
+  let profileRoomConfirmEsc: ((e: KeyboardEvent) => void) | null = null;
+
+  function hideProfileRoomJoinConfirm(): void {
+    profileRoomJoinPending = null;
+    profileRoomConfirm.hidden = true;
+    profileRoomConfirm.setAttribute("aria-hidden", "true");
+    if (profileRoomConfirmEsc) {
+      window.removeEventListener("keydown", profileRoomConfirmEsc);
+      profileRoomConfirmEsc = null;
+    }
+  }
+
+  function presentProfileRoomJoinConfirm(room: {
+    id: string;
+    displayName: string;
+  }): void {
+    profileRoomJoinPending = room;
+    profileRoomConfirmTitle.textContent =
+      room.displayName || `Room ${room.id.toUpperCase()}`;
+    profileRoomConfirm.hidden = false;
+    profileRoomConfirm.setAttribute("aria-hidden", "false");
+    profileRoomConfirmEsc = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      hideProfileRoomJoinConfirm();
+    };
+    window.addEventListener("keydown", profileRoomConfirmEsc);
+    profileRoomConfirmJoin.focus({ preventScroll: true });
+  }
+  profileRoomConfirmBackdrop.addEventListener("click", hideProfileRoomJoinConfirm);
+  profileRoomConfirmCancel.addEventListener("click", hideProfileRoomJoinConfirm);
+  profileRoomConfirmJoin.addEventListener("click", () => {
+    const pending = profileRoomJoinPending;
+    hideProfileRoomJoinConfirm();
+    if (!pending) return;
+    profileRoomJoinHandler(pending.id);
+    closeOtherPlayerProfile();
+  });
 
   function endUsernameEditVisual(): void {
     profileUsernameEditing = false;
+    profileUsernameEditBaseline = "";
     oppUsernameInput.hidden = true;
+    oppUsernameCommitBtn.hidden = true;
     oppDisplayNameEl.hidden = false;
   }
 
   function beginUsernameEdit(): void {
-    if (profileMessageKindOpen !== "self") return;
-    if (oppUsernameInput.readOnly) return;
+    const adminOther =
+      profileMessageKindOpen === "other" && opts?.isGameAdmin?.() === true;
+    if (profileMessageKindOpen !== "self" && !adminOther) return;
+    if (profileMessageKindOpen === "self" && oppUsernameInput.readOnly) return;
     if (profileUsernameEditing) return;
     profileUsernameEditing = true;
     oppDisplayNameEl.hidden = true;
     oppUsernameInput.hidden = false;
-    oppUsernameInput.value = profileUsernameSavedCustom;
+    oppUsernameCommitBtn.hidden = false;
+    profileUsernameEditBaseline =
+      profileUsernameSavedCustom || oppDisplayNameEl.textContent?.trim() || "";
+    oppUsernameInput.value = profileUsernameEditBaseline;
     requestAnimationFrame(() => {
       oppUsernameInput.focus();
       oppUsernameInput.select();
@@ -2195,13 +2330,14 @@ export function createHud(
   }
 
   function updateProfileNameHitInteractivity(kind: "self" | "other"): void {
-    if (kind !== "self") {
+    const adminOther = kind === "other" && opts?.isGameAdmin?.() === true;
+    if (kind !== "self" && !adminOther) {
       oppDisplayNameEl.classList.remove("other-player-profile__display-name--editable");
       oppDisplayNameEl.removeAttribute("role");
       oppDisplayNameEl.removeAttribute("tabindex");
       return;
     }
-    const locked = oppUsernameInput.readOnly;
+    const locked = kind === "self" && oppUsernameInput.readOnly;
     if (locked) {
       oppDisplayNameEl.classList.remove("other-player-profile__display-name--editable");
       oppDisplayNameEl.removeAttribute("role");
@@ -2216,11 +2352,14 @@ export function createHud(
   async function maybeCommitUsernameBlur(): Promise<void> {
     if (!profileUsernameEditing) return;
     const v = oppUsernameInput.value.trim();
-    if (v === profileUsernameSavedCustom) {
+    if (v === profileUsernameEditBaseline) {
       endUsernameEditVisual();
       return;
     }
-    const ok = await commitSelfUsername();
+    const ok =
+      profileMessageKindOpen === "self"
+        ? await commitSelfUsername()
+        : await commitAdminUsername();
     if (ok) endUsernameEditVisual();
     else requestAnimationFrame(() => oppUsernameInput.focus());
   }
@@ -2303,7 +2442,7 @@ export function createHud(
     box.setAttribute("role", "button");
     box.setAttribute(
       "aria-label",
-      "Your profile description — click to edit"
+      "Your profile description. Click to edit."
     );
     if (trimmed) {
       box.textContent = message;
@@ -2355,6 +2494,77 @@ export function createHud(
     oppProfileMessage.appendChild(box);
   }
 
+  function renderProfileRooms(
+    kind: "self" | "other",
+    rooms: Array<{
+      id: string;
+      displayName: string;
+      isPublic?: boolean;
+      playerCount?: number;
+    }>
+  ): void {
+    oppProfileRooms.replaceChildren();
+    const title = document.createElement("div");
+    title.className = "other-player-profile__rooms-title";
+    title.textContent = "Rooms";
+    oppProfileRooms.appendChild(title);
+    if (rooms.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "other-player-profile__rooms-empty";
+      empty.textContent =
+        kind === "self" ? "No rooms yet." : "No public rooms yet.";
+      oppProfileRooms.appendChild(empty);
+      return;
+    }
+    const list = document.createElement("div");
+    list.className = "other-player-profile__rooms-list";
+    for (const room of rooms) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "other-player-profile__room";
+      const n = Math.max(0, Math.floor(room.playerCount ?? 0));
+      const disp = room.displayName || `Room ${room.id.toUpperCase()}`;
+      const pub = room.isPublic !== false;
+      row.setAttribute(
+        "aria-label",
+        `Join ${disp} — ${n} ${n === 1 ? "player" : "players"}${pub ? "" : ", private"}`
+      );
+      const name = document.createElement("span");
+      name.className = "other-player-profile__room-name";
+      name.textContent = disp;
+      const meta = document.createElement("span");
+      meta.className = "other-player-profile__room-meta";
+      if (!pub) {
+        const prv = document.createElement("span");
+        prv.className = "other-player-profile__room-meta-private";
+        prv.textContent = "Private · ";
+        meta.appendChild(prv);
+      }
+      const countEl = document.createElement("span");
+      countEl.className = "other-player-profile__room-meta-count";
+      countEl.textContent = String(n);
+      meta.appendChild(countEl);
+      const iconWrap = document.createElement("span");
+      iconWrap.className = "other-player-profile__room-meta-icon-wrap";
+      iconWrap.setAttribute("aria-hidden", "true");
+      iconWrap.innerHTML = nimiqIconifyMarkup("person-1", {
+        class: "other-player-profile__room-meta-icon",
+        width: 14,
+        height: 14,
+      });
+      meta.appendChild(iconWrap);
+      row.append(name, meta);
+      row.addEventListener("click", () => {
+        presentProfileRoomJoinConfirm({
+          id: room.id,
+          displayName: disp,
+        });
+      });
+      list.appendChild(row);
+    }
+    oppProfileRooms.appendChild(list);
+  }
+
   async function commitSelfProfileMessageEdit(): Promise<void> {
     const el = profileMessageEditor;
     if (!el || profileMessageKindOpen !== "self" || el.contentEditable !== "true")
@@ -2375,7 +2585,7 @@ export function createHud(
     }
     const tok = opts?.getGameAuthToken?.() ?? null;
     if (!tok) {
-      oppProfileNote.textContent = "Session missing — rejoin from the lobby.";
+      oppProfileNote.textContent = "Session missing. Rejoin from the lobby.";
       oppProfileNote.hidden = false;
       renderProfileMessageDisplay("self", profileMessageLastSaved);
       return;
@@ -2396,7 +2606,7 @@ export function createHud(
       if (!r.ok) {
         oppProfileNote.textContent =
           j.error === "unauthorized"
-            ? "Session expired — rejoin from the lobby."
+            ? "Session expired. Rejoin from the lobby."
             : "Could not save.";
         oppProfileNote.hidden = false;
         renderProfileMessageDisplay("self", profileMessageLastSaved);
@@ -2473,13 +2683,30 @@ export function createHud(
     }
   }
 
+  async function commitAdminUsername(): Promise<boolean> {
+    if (profileMessageKindOpen !== "other" || opts?.isGameAdmin?.() !== true) {
+      return false;
+    }
+    const raw = oppUsernameInput.value.trim();
+    const ok = await adminModerationPost("set_username", { username: raw });
+    if (ok) {
+      profileUsernameSavedCustom = raw;
+    }
+    return ok;
+  }
+
   oppDisplayNameEl.addEventListener("click", () => {
-    if (profileMessageKindOpen !== "self") return;
-    if (oppUsernameInput.readOnly) return;
+    const adminOther =
+      profileMessageKindOpen === "other" && opts?.isGameAdmin?.() === true;
+    if (profileMessageKindOpen !== "self" && !adminOther) return;
+    if (profileMessageKindOpen === "self" && oppUsernameInput.readOnly) return;
     beginUsernameEdit();
   });
   oppDisplayNameEl.addEventListener("keydown", (e) => {
-    if (profileMessageKindOpen !== "self" || oppUsernameInput.readOnly) return;
+    const adminOther =
+      profileMessageKindOpen === "other" && opts?.isGameAdmin?.() === true;
+    if (profileMessageKindOpen !== "self" && !adminOther) return;
+    if (profileMessageKindOpen === "self" && oppUsernameInput.readOnly) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       beginUsernameEdit();
@@ -2493,12 +2720,29 @@ export function createHud(
     if (!profileUsernameEditing) return;
     e.preventDefault();
     void (async () => {
-      const ok = await commitSelfUsername();
+      const ok =
+        profileMessageKindOpen === "self"
+          ? await commitSelfUsername()
+          : await commitAdminUsername();
+      if (ok) endUsernameEditVisual();
+    })();
+  });
+  oppUsernameCommitBtn.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+  });
+  oppUsernameCommitBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    void (async () => {
+      const ok =
+        profileMessageKindOpen === "self"
+          ? await commitSelfUsername()
+          : await commitAdminUsername();
       if (ok) endUsernameEditVisual();
     })();
   });
 
   function closeOtherPlayerProfile(): void {
+    hideProfileRoomJoinConfirm();
     setProfileNimiqPayTipVisible(false);
     setProfileAliasTipVisible(false);
     detachProfileEscape();
@@ -2510,6 +2754,7 @@ export function createHud(
     profileDescEditBlurHandler = null;
     profileMessageEditor = null;
     oppProfileMessage.replaceChildren();
+    oppProfileRooms.replaceChildren();
     clearProfileMessageNote();
     oppSendNim.textContent = "Send NIM";
     endUsernameEditVisual();
@@ -2522,7 +2767,7 @@ export function createHud(
     oppUsernameInput.value = "";
     oppUsernameInput.readOnly = false;
     oppAdminRow.hidden = true;
-    oppAdminNameInput.value = "";
+    oppAdminActions.replaceChildren();
     otherPlayerProfile.hidden = true;
     otherPlayerProfile.setAttribute("aria-hidden", "true");
     oppIdent.hidden = true;
@@ -2660,7 +2905,7 @@ export function createHud(
       }
       if (profileUsernameEditing) {
         e.preventDefault();
-        oppUsernameInput.value = profileUsernameSavedCustom;
+        oppUsernameInput.value = profileUsernameEditBaseline;
         endUsernameEditVisual();
         return;
       }
@@ -2709,6 +2954,7 @@ export function createHud(
     profileDescEditBlurHandler = null;
     profileMessageEditor = null;
     oppProfileMessage.replaceChildren();
+    oppProfileRooms.replaceChildren();
     const loading = document.createElement("div");
     loading.className =
       "other-player-profile__message-text other-player-profile__message-text--loading";
@@ -2763,6 +3009,12 @@ export function createHud(
         subjectUsernameBanned?: boolean;
         subjectChannelMuted?: boolean;
         usernameSelfServiceEnabled?: boolean;
+        rooms?: Array<{
+          id?: unknown;
+          displayName?: unknown;
+          isPublic?: unknown;
+          playerCount?: unknown;
+        }>;
       };
       if (profileOpenCompact !== openFor) return;
       if (typeof j.effectiveDisplayName === "string" && j.effectiveDisplayName.trim()) {
@@ -2779,10 +3031,7 @@ export function createHud(
       if (admin) {
         const banned = j.subjectUsernameBanned === true;
         const muted = j.subjectChannelMuted === true;
-        oppAdBan.hidden = banned;
-        oppAdAllow.hidden = !banned;
-        oppAdMute.hidden = muted;
-        oppAdUnmute.hidden = !muted;
+        syncAdminActions(banned, muted);
       }
       profileUsernameSavedCustom = j.customUsername?.trim() ?? "";
       const hasCustom = Boolean(profileUsernameSavedCustom);
@@ -2809,14 +3058,37 @@ export function createHud(
         updateProfileNameHitInteractivity("self");
       } else {
         oppUsernameInput.value = "";
+        oppUsernameInput.readOnly = false;
         updateProfileNameHitInteractivity("other");
       }
       const msg = typeof j.message === "string" ? j.message : "";
       profileMessageLastSaved = msg;
       renderProfileMessageDisplay(kind, msg);
+      const rooms = Array.isArray(j.rooms)
+        ? j.rooms
+            .map((room) => ({
+              id: String(room.id ?? "").trim(),
+              displayName: String(room.displayName ?? "").trim(),
+              isPublic: room.isPublic === false ? false : true,
+              playerCount:
+                typeof room.playerCount === "number" &&
+                Number.isFinite(room.playerCount)
+                  ? Math.max(0, Math.floor(room.playerCount))
+                  : 0,
+            }))
+            .filter((room) => room.id)
+        : [];
+      rooms.sort(
+        (a, b) =>
+          b.playerCount - a.playerCount ||
+          a.displayName.localeCompare(b.displayName) ||
+          a.id.localeCompare(b.id)
+      );
+      renderProfileRooms(kind, rooms.slice(0, 3));
     } catch {
       if (profileOpenCompact !== openFor) return;
       profileMessageLastSaved = "";
+      oppProfileRooms.replaceChildren();
       if (kind === "self") {
         renderProfileMessageDisplay("self", "");
       } else {
@@ -2860,6 +3132,17 @@ export function createHud(
     const disp = otherPlayerCtxViewBtn.dataset.displayName ?? "";
     closeOtherPlayerContextMenu();
     if (addr) void showPlayerProfileView(addr, disp, "other");
+  });
+
+  otherPlayerCtxCopyAddressBtn.addEventListener("click", () => {
+    /* Single source of truth: the address stamped on the View row when the menu opened. */
+    const addr = (otherPlayerCtxViewBtn.dataset.address ?? "").trim();
+    closeOtherPlayerContextMenu();
+    if (!addr) return;
+    /* Idiomatic silent copy, matches `oppCopyAddressBtn` pattern. */
+    void navigator.clipboard?.writeText(addr).catch(() => {
+      /* ignore */
+    });
   });
 
   const chatPanel = document.createElement("div");
@@ -3194,7 +3477,7 @@ export function createHud(
         <p class="build-block-bar__teleporter-hint">Click an empty walkable floor tile to place. Select the teleporter to set its destination (room and X/Z).</p>
       </div>
       <div class="build-block-bar__teleporter" id="build-block-bar-gate" hidden>
-        <p class="build-block-bar__teleporter-hint">Click an empty walkable floor tile for the gate. Green/red shows whether each side is clear to walk through — you can still place a decorative or blocked doorway.</p>
+        <p class="build-block-bar__teleporter-hint">Click an empty walkable floor tile for the gate. Green/red shows whether each side is clear to walk through. You can still place a decorative or blocked doorway.</p>
         <div class="build-block-bar__ramp-dir-row build-block-bar__gate-tool-row">
           <span class="build-block-bar__ramp-dir-label">Opening direction</span>
           <div class="build-block-bar__ramp-dir-controls">
@@ -3279,7 +3562,7 @@ export function createHud(
   const barHueRingWrap = document.createElement("div");
   barHueRingWrap.className =
     "build-block-bar__hue-ring-wrap hud-mode-sidebar__room-bg-hue-wrap";
-  barHueRingWrap.title = "Color — drag on ring (snaps to nearest preset)";
+  barHueRingWrap.title = "Color. Drag on the ring; selection snaps to the nearest preset.";
   barHueRingWrap.innerHTML = `
             <div class="build-block-bar__hue-ring" role="slider" tabindex="0" aria-label="Block color" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0"></div>
             <div class="build-block-bar__hue-core" aria-hidden="true"></div>
@@ -3530,25 +3813,25 @@ export function createHud(
     if (!tileInspectorHeadHint) return;
     if (teleporterModeActive) {
       tileInspectorHeadHint.textContent =
-        "Teleporter — choose an empty floor tile to place.";
+        "Teleporter. Choose an empty floor tile to place.";
       tileInspectorHeadHint.hidden = false;
       return;
     }
     if (gateModeActive) {
       tileInspectorHeadHint.textContent =
-        "Gate — R rotates opening direction; green/red on neighbors show clearance; pick color, then click an empty floor tile.";
+        "Gate. R rotates the opening direction. Green/red on neighbors shows clearance. Pick a color, then click an empty floor tile.";
       tileInspectorHeadHint.hidden = false;
       return;
     }
     if (signpostModeActive) {
       tileInspectorHeadHint.textContent =
-        "Signpost — tap a tile to add your message.";
+        "Signpost. Tap a tile to add your message.";
       tileInspectorHeadHint.hidden = false;
       return;
     }
     if (billboardModeActive) {
       tileInspectorHeadHint.textContent =
-        "Billboard — hover for footprint + preview; M move selection (M again cancel). Tap anchor to place.";
+        "Billboard. Hover for footprint and preview. Press M to move the selection, or press M again to cancel. Tap the anchor to place.";
       tileInspectorHeadHint.hidden = false;
       return;
     }
@@ -3813,7 +4096,7 @@ export function createHud(
       ctx.font = "22px system-ui,Segoe UI,sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(
-        "Preview unavailable — chart API unreachable or OHLC fetch failed.",
+        "Preview unavailable. The chart API is unreachable or the OHLC fetch failed.",
         cv.width / 2,
         cv.height / 2
       );
@@ -4369,7 +4652,7 @@ export function createHud(
     playerBar.setAttribute("role", "button");
     playerBar.setAttribute(
       "aria-label",
-      "Your wallet — open your player profile"
+      "Your wallet. Open your player profile."
     );
     playerBar.style.cursor = "pointer";
     void (async (): Promise<void> => {
@@ -5255,6 +5538,7 @@ export function createHud(
   let portalEnterHandler = (): void => {};
   let lobbyHandler = (): void => {};
   let roomsOpenHandler = (): void => {};
+  let profileRoomJoinHandler: (roomId: string) => void = (): void => {};
   let playModeHandler: (mode: "walk" | "build" | "floor") => void = (): void => {};
   let lobbyConfirmEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
 
@@ -5645,7 +5929,7 @@ export function createHud(
     void rebuildAddPickerList();
   }
 
-  /** Context card + object Advanced popover — fixed just left of the mode sidebar rail. */
+  /** Context card + object Advanced popover, fixed just left of the mode sidebar rail. */
   function layoutObjectPanelSatellites(): void {
     if (!objectPanel) return;
     const margin = 8;
@@ -5909,8 +6193,8 @@ export function createHud(
     );
     panelCollisionToggle.innerHTML = panelCollisionToggleIconMarkup(passable);
     panelCollisionToggle.title = passable
-      ? "Walk-through — click for solid (collision)"
-      : "Solid — click for walk-through (no collision)";
+      ? "Walk-through. Select to make solid with collision."
+      : "Solid. Select to make walk-through with no collision.";
     panelCollisionToggle.setAttribute(
       "aria-label",
       passable
@@ -5928,8 +6212,8 @@ export function createHud(
     );
     panelLockToggle.innerHTML = panelLockToggleIconMarkup(locked);
     panelLockToggle.title = locked
-      ? "Locked — click to unlock"
-      : "Unlocked — click to lock";
+      ? "Locked. Select to unlock."
+      : "Unlocked. Select to lock.";
     panelLockToggle.setAttribute(
       "aria-label",
       locked ? "Locked for players. Activate to unlock." : "Unlocked. Activate to lock."
@@ -6492,6 +6776,9 @@ export function createHud(
     onRoomsOpen(fn: () => void) {
       roomsOpenHandler = fn;
     },
+    onProfileRoomJoin(fn: (roomId: string) => void) {
+      profileRoomJoinHandler = fn;
+    },
     onPlayModeSelect(fn: (mode: "walk" | "build" | "floor") => void) {
       playModeHandler = fn;
     },
@@ -6616,8 +6903,8 @@ export function createHud(
               </div>
               <p class="build-object-panel-context__tp-lead">${
                 te.pending
-                  ? "No destination yet — pick a room and save."
-                  : "One-way teleport — change destination below."
+                  ? "No destination yet. Pick a room and save."
+                  : "One-way teleport. Change the destination below."
               }</p>
               <div class="build-object-panel-context__tp-field build-object-panel-context__tp-field--room">
                 <button type="button" id="build-object-panel-tp-room-open" class="build-object-panel-context__tp-room-trigger" aria-haspopup="listbox" aria-expanded="false">
@@ -7111,8 +7398,8 @@ export function createHud(
       panelDockHueWrap.className =
         "build-block-bar__hue-ring-wrap hud-mode-sidebar__room-bg-hue-wrap";
       panelDockHueWrap.title = gateEdit
-        ? "Gate color — drag on ring (snaps to nearest preset)"
-        : "Color — drag on ring (snaps to nearest preset)";
+        ? "Gate color. Drag on the ring; selection snaps to the nearest preset."
+        : "Color. Drag on the ring; selection snaps to the nearest preset.";
       panelDockHueWrap.innerHTML = `
             <div class="build-block-bar__hue-ring" role="slider" tabindex="0" aria-label="Block color" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0"></div>
             <div class="build-block-bar__hue-core" aria-hidden="true"></div>
@@ -8086,15 +8373,25 @@ export function createHud(
       const tipEl = playerCount.querySelector(
         ".hud-player-count__tooltip"
       ) as HTMLElement | null;
+      const room = Number.isFinite(roomCount as number)
+        ? Math.max(0, Math.floor(roomCount as number))
+        : count;
       if (countEl) {
-        countEl.textContent = String(count);
+        if (room === count) {
+          countEl.textContent = String(count);
+        } else {
+          countEl.innerHTML = `<span class="hud-player-count__room-num">${room}</span><span class="hud-player-count__total-wrap" aria-hidden="true"><span class="hud-player-count__total-sep">/</span><span class="hud-player-count__total-num">${count}</span></span>`;
+        }
       }
       if (tipEl) {
-        const room = Number.isFinite(roomCount as number)
-          ? Math.max(0, Math.floor(roomCount as number))
-          : count;
         tipEl.textContent = `Online now: ${count} total · ${room} in this room.`;
       }
+      playerCount.setAttribute(
+        "aria-label",
+        room === count
+          ? `${count} players online`
+          : `${room} in this room, ${count} players online total`
+      );
       repositionOpenHudStatTips();
     },
     showPlayerJoinedToast(address: string) {

@@ -15,6 +15,10 @@ type MarqueePayload = {
   leaderboard: LeaderboardRow[];
 };
 
+type HeaderMarqueeOpts = {
+  onPlayerProfileOpen?: (walletId: string, displayName: string) => void;
+};
+
 const POLL_MS = 90_000;
 
 /** After the player has seen every announcement line once, hide the marquee for this long if lines unchanged. */
@@ -95,7 +99,10 @@ function disambiguateDisplayLabels(rows: LeaderboardRow[]): LeaderboardRow[] {
   });
 }
 
-function buildStreakTicker(rows: LeaderboardRow[]): HTMLElement {
+function buildStreakTicker(
+  rows: LeaderboardRow[],
+  opts?: HeaderMarqueeOpts
+): HTMLElement {
   const wrap = h("div", "hud-header-marquee__ticker");
   const inner = h("div", "hud-header-marquee__ticker-track");
   const chunk = h("div", "hud-header-marquee__ticker-chunk");
@@ -113,8 +120,17 @@ function buildStreakTicker(rows: LeaderboardRow[]): HTMLElement {
     img.height = 18;
     img.decoding = "sync";
     if (row.identicon) img.src = row.identicon;
-    const name = h("span", "hud-header-marquee__name");
+    const name = document.createElement(
+      opts?.onPlayerProfileOpen ? "button" : "span"
+    );
+    name.className = "hud-header-marquee__name";
     name.textContent = row.displayLabel;
+    if (name instanceof HTMLButtonElement) {
+      name.type = "button";
+      name.dataset.walletId = row.walletId;
+      name.dataset.displayLabel = row.displayLabel;
+      name.setAttribute("aria-label", `View ${row.displayLabel}'s profile`);
+    }
     const days = h("span", "hud-header-marquee__days");
     const d = row.streakDays;
     days.textContent = d === 1 ? " (1 day)" : ` (${d} days!)`;
@@ -135,6 +151,15 @@ function buildStreakTicker(rows: LeaderboardRow[]): HTMLElement {
   inner.appendChild(chunk);
   inner.appendChild(chunk.cloneNode(true) as HTMLElement);
   wrap.appendChild(inner);
+  if (opts?.onPlayerProfileOpen) {
+    wrap.addEventListener("click", (ev) => {
+      const target = ev.target instanceof Element ? ev.target : null;
+      const btn = target?.closest<HTMLButtonElement>(".hud-header-marquee__name");
+      const walletId = btn?.dataset.walletId?.trim() ?? "";
+      if (!btn || !walletId) return;
+      opts.onPlayerProfileOpen?.(walletId, btn.dataset.displayLabel ?? "");
+    });
+  }
   return wrap;
 }
 
@@ -264,11 +289,12 @@ function attachStreakTickerScroll(
 function renderStreak(
   target: HTMLElement,
   rows: LeaderboardRow[],
-  onTickerMount: ((wrap: HTMLElement) => () => void) | null
+  onTickerMount: ((wrap: HTMLElement) => () => void) | null,
+  opts?: HeaderMarqueeOpts
 ): void {
   target.replaceChildren();
   if (rows.length === 0) return;
-  const wrap = buildStreakTicker(rows);
+  const wrap = buildStreakTicker(rows, opts);
   target.appendChild(wrap);
   if (onTickerMount) {
     queueMicrotask(() => {
@@ -297,9 +323,12 @@ function renderNews(target: HTMLElement, text: string): void {
 /**
  * In-game header marquee: login-streak ticker and/or rotating announcements (`/admin/header`).
  */
-export function mountHeaderMarquee(host: HTMLElement): () => void {
+export function mountHeaderMarquee(
+  host: HTMLElement,
+  opts?: HeaderMarqueeOpts
+): () => void {
   host.classList.add("hud-header-marquee-root");
-  host.setAttribute("aria-hidden", "true");
+  host.setAttribute("aria-hidden", "false");
   host.hidden = true;
 
   const bar = h("div", "hud-header-marquee");
@@ -423,7 +452,7 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
       }
       const back = aIsFront ? panelB : panelA;
       disposeStreakTickerIn(back);
-      renderStreak(back, rows, mountStreakTicker);
+      renderStreak(back, rows, mountStreakTicker, opts);
       void back.offsetHeight;
       aIsFront = !aIsFront;
       showingStreak = true;
@@ -431,7 +460,7 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
       applyFront();
     }
 
-    renderStreak(panelA, rows, mountStreakTicker);
+    renderStreak(panelA, rows, mountStreakTicker, opts);
     panelB.replaceChildren();
     applyFront();
   }
@@ -521,7 +550,7 @@ export function mountHeaderMarquee(host: HTMLElement): () => void {
     host.classList.remove("hud-header-marquee-root--fading");
 
     if (streakOn && !newsOn) {
-      renderStreak(panelA, rows, attachStreakTickerScroll);
+      renderStreak(panelA, rows, attachStreakTickerScroll, opts);
       panelA.classList.add("hud-header-marquee__panel--front");
       return;
     }
