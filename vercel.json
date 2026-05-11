@@ -60,5 +60,17 @@
       "source": "/privacy/",
       "destination": "/privacy.html"
     }
+  ],
+  "redirects": [
+    {
+      "source": "/tac",
+      "destination": "/tacs",
+      "permanent": true
+    },
+    {
+      "source": "/tac/",
+      "destination": "/tacs",
+      "permanent": true
+    }
   ]
 }

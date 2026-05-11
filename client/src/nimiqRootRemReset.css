@@ -1,11 +1,17 @@
 /**
- * @nimiq/style assumes `html { font-size: 8px }` so `.nq-*` components size in `rem` correctly.
- * `./style.css` expects ~18px root for lobby / `.main-menu-*` rules (same as historical dev order).
- * In production, Nimiq’s bundle can load after `style.css`, so we re-assert typography here — but only
- * while a `.main-menu` shell is mounted (login, patch notes, terms). In-game HUD also uses `.nq-button-pill`
- * (e.g. portal “Enter”); those must keep Nimiq’s 8px root, so we must not set `html { font-size: 18px }` globally.
+ * @nimiq/style sets `html { font-size: 8px }` for its own `rem` scale; this app’s `style.css` uses `rem` on
+ * the HUD and lobby assuming ~18px (see `html, body { font-size: 18px }` there).
+ *
+ * Historically, dev served CSS in JS import order (`nimiq-style` then `./style.css`), so the app root won.
+ * Production splits CSS: the Nimiq file can be linked *after* the big app sheet, so Nimiq’s `8px` root
+ * would win and shrink the whole UI (login first looked “tiny”). Loading this file immediately after
+ * Nimiq keeps the reset in the same built asset so it always wins here.
+ *
+ * In-game Nimiq pills (`.nq-button-pill`, etc.) are already constrained by higher-specificity rules in
+ * `style.css` (e.g. `.hud-portal-enter.nq-button-pill`, `.main-menu .nq-button-s…`). Do not scope this
+ * reset to `:has(.main-menu)` — that leaves `html` at 8px in-world and shrinks every other HUD `rem`.
  */
-html:has(.main-menu),
-html:has(.main-menu) body {
+html,
+body {
   font-size: 18px;
 }
