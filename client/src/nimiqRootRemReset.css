@@ -1,10 +1,11 @@
 /**
- * @nimiq/style sets `html { font-size: 8px }` and `body { font-size: 2.25rem }` for its component scale.
- * In production, Vite can emit that framework in a separate CSS file that loads *after* `./style.css`,
- * which would otherwise restore 18px on `html`/`body`. Import this file immediately after Nimiq so the
- * reset stays in the same asset and wins the cascade.
+ * @nimiq/style assumes `html { font-size: 8px }` so `.nq-*` components size in `rem` correctly.
+ * `./style.css` expects ~18px root for lobby / `.main-menu-*` rules (same as historical dev order).
+ * In production, Nimiq’s bundle can load after `style.css`, so we re-assert typography here — but only
+ * while a `.main-menu` shell is mounted (login, patch notes, terms). In-game HUD also uses `.nq-button-pill`
+ * (e.g. portal “Enter”); those must keep Nimiq’s 8px root, so we must not set `html { font-size: 18px }` globally.
  */
-html,
-body {
+html:has(.main-menu),
+html:has(.main-menu) body {
   font-size: 18px;
 }

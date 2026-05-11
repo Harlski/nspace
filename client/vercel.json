@@ -39,6 +39,34 @@
     {
       "source": "/patchnotes/",
       "destination": "/index.html"
+    },
+    {
+      "source": "/tacs",
+      "destination": "/tacs.html"
+    },
+    {
+      "source": "/tacs/",
+      "destination": "/tacs.html"
+    },
+    {
+      "source": "/privacy",
+      "destination": "/privacy.html"
+    },
+    {
+      "source": "/privacy/",
+      "destination": "/privacy.html"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/tac",
+      "destination": "/tacs",
+      "permanent": true
+    },
+    {
+      "source": "/tac/",
+      "destination": "/tacs",
+      "permanent": true
     }
   ]
 }
