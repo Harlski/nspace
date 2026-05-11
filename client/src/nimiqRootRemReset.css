@@ -7,6 +7,11 @@
  * would win and shrink the whole UI (login first looked “tiny”). Loading this file immediately after
  * Nimiq keeps the reset in the same built asset so it always wins here.
  *
+ * Nimiq also ends with `body { color: var(--nimiq-blue); background: var(--nimiq-gray); … }` (dark text on
+ * light gray). That loads after `style.css` in production and overrides `body { color: #e8eaef }`, so any
+ * UI that inherits color (e.g. `.chat-line` / `.chat-log` without their own `color`) looks black on dark
+ * panels. Re-assert the app shell typography and colors here too.
+ *
  * In-game Nimiq pills (`.nq-button-pill`, etc.) are already constrained by higher-specificity rules in
  * `style.css` (e.g. `.hud-portal-enter.nq-button-pill`, `.main-menu .nq-button-s…`). Do not scope this
  * reset to `:has(.main-menu)` — that leaves `html` at 8px in-world and shrinks every other HUD `rem`.
@@ -14,4 +19,20 @@
 html,
 body {
   font-size: 18px;
+  color: #e8eaef;
+}
+
+body {
+  margin: 0;
+  background: #000000;
+  font-weight: 600;
+  font-family:
+    "Muli",
+    "Mulish",
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    Ubuntu,
+    sans-serif;
 }
