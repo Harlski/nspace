@@ -291,7 +291,7 @@ app.get("/api/player-profile/:address", (req, res) => {
       }
     }
     const ownedRooms = listRoomsOwnedBy(addr).filter(
-      (room) => room.isPublic || canSeePrivateRooms
+      (room) => canSeePrivateRooms || room.isPublic === true
     );
     pub.rooms = ownedRooms
       .map((room) => ({

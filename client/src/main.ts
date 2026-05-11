@@ -1108,9 +1108,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       });
     } else if (roomsCatalogTab === "user") {
       filtered.sort((a, b) => {
-        const ao = viewerOwnsRoom(a) ? 0 : 1;
-        const bo = viewerOwnsRoom(b) ? 0 : 1;
-        if (ao !== bo) return ao - bo;
+        const pc =
+          Math.max(0, Math.floor(b.playerCount)) -
+          Math.max(0, Math.floor(a.playerCount));
+        if (pc !== 0) return pc;
         const c = safeRoomNameCompare(a.displayName, b.displayName);
         if (c !== 0) return c;
         return a.id.localeCompare(b.id);

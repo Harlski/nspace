@@ -2524,7 +2524,7 @@ export function createHud(
       row.className = "other-player-profile__room";
       const n = Math.max(0, Math.floor(room.playerCount ?? 0));
       const disp = room.displayName || `Room ${room.id.toUpperCase()}`;
-      const pub = room.isPublic !== false;
+      const pub = room.isPublic === true;
       row.setAttribute(
         "aria-label",
         `Join ${disp} — ${n} ${n === 1 ? "player" : "players"}${pub ? "" : ", private"}`
@@ -3026,9 +3026,10 @@ export function createHud(
       oppAliasTip.textContent =
         aliases.length > 0 ? `Previously known as\n${aliases.join("\n")}` : "";
       oppAliasHost.hidden = aliases.length === 0;
-      const admin = opts?.isGameAdmin?.() === true && kind === "other";
-      oppAdminRow.hidden = !admin;
-      if (admin) {
+      const adminOther =
+        kind === "other" && opts?.isGameAdmin?.() === true;
+      oppAdminRow.hidden = !adminOther;
+      if (adminOther) {
         const banned = j.subjectUsernameBanned === true;
         const muted = j.subjectChannelMuted === true;
         syncAdminActions(banned, muted);
@@ -3066,17 +3067,29 @@ export function createHud(
       renderProfileMessageDisplay(kind, msg);
       const rooms = Array.isArray(j.rooms)
         ? j.rooms
-            .map((room) => ({
-              id: String(room.id ?? "").trim(),
-              displayName: String(room.displayName ?? "").trim(),
-              isPublic: room.isPublic === false ? false : true,
-              playerCount:
+            .map((room) => {
+              const id = String(room.id ?? "").trim();
+              const displayName = String(room.displayName ?? "").trim();
+              const rawPub = room.isPublic;
+              const isPublicKnown = typeof rawPub === "boolean";
+              const isPublic =
+                isPublicKnown
+                  ? rawPub
+                  : kind === "self" || adminOther
+                    ? true
+                    : false;
+              const playerCount =
                 typeof room.playerCount === "number" &&
                 Number.isFinite(room.playerCount)
                   ? Math.max(0, Math.floor(room.playerCount))
-                  : 0,
-            }))
+                  : 0;
+              return { id, displayName, isPublic, playerCount };
+            })
             .filter((room) => room.id)
+            .filter((room) => {
+              if (kind === "self" || adminOther) return true;
+              return room.isPublic === true;
+            })
         : [];
       rooms.sort(
         (a, b) =>

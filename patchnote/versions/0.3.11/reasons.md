@@ -10,6 +10,8 @@
 
 Terms/Privacy pages and versioned sign-in consent; main menu wallet UX (hex-first disclosure of the terms row, fade-in, tooltip on consent copy); optional server-side acknowledgement store and verify body extension. Player profile **rooms** list: live **`playerCount`**, busiest-first selection, Nimiq **`person-1`** icon in row meta, layout/spacing pass; HUD player pill shows **in-room / total** when they differ. UX polish: chat colour self-defended against Nimiq cascade, name-plate raycast pass-through, copy actions in chat / player context menus.
 
+**Hotfix narrative (optional public tier):** [public/04-hotfix.md](public/04-hotfix.md) — scannable “what was wrong / what we patched / why now” for the corrective spine (chat, picks, lobby terms disclosure) without duplicating the full inventory below.
+
 ---
 
 ## By area

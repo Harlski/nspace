@@ -185,10 +185,14 @@ function main() {
   pkg.version = nextVersion;
   fs.writeFileSync(PKG, JSON.stringify(pkg, null, 2) + "\n", "utf8");
 
-  fs.mkdirSync(path.join(VERSIONS, "UNRELEASED", "public"), { recursive: true });
-  fs.writeFileSync(path.join(VERSIONS, "UNRELEASED", "reasons.md"), REASONS_TEMPLATE, "utf8");
+  // `renameSync` above should leave no `UNRELEASED` path; still remove first so a
+  // partial/interrupted run or stray tree cannot merge with freshly written files
+  // (e.g. extra `public/*.md` tiers carrying over into the next buffer).
+  fs.rmSync(UNRELEASED, { recursive: true, force: true });
+  fs.mkdirSync(path.join(UNRELEASED, "public"), { recursive: true });
+  fs.writeFileSync(path.join(UNRELEASED, "reasons.md"), REASONS_TEMPLATE, "utf8");
   for (const [name, body] of Object.entries(PUBLIC)) {
-    fs.writeFileSync(path.join(VERSIONS, "UNRELEASED", "public", name), body, "utf8");
+    fs.writeFileSync(path.join(UNRELEASED, "public", name), body, "utf8");
   }
 
   console.log(`Done. Next: review, git add, commit, push (version ${nextVersion} is now in the tree).`);
