@@ -3658,6 +3658,20 @@ button.hud-brand:focus-visible {
   background: rgba(56, 189, 248, 0.12);
 }
 
+.other-player-ctx__item--destructive {
+  color: #f87171;
+}
+
+.other-player-ctx__item-suffix--mine-timing {
+  color: #f87171;
+  font-weight: 600;
+}
+
+.other-player-ctx__item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .other-player-ctx__item.other-player-ctx__item--row {
   display: flex;
   align-items: center;

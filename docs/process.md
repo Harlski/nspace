@@ -24,6 +24,10 @@ Defined near the top of [server/src/rooms.ts](../server/src/rooms.ts), for examp
 
 Adjust when tuning feel or abuse resistance.
 
+## WebSocket: optional `claimIntent` on `beginBlockClaim`
+
+Clients may send an optional string field **`claimIntent`** on **`beginBlockClaim`** ([client/src/net/ws.ts](../client/src/net/ws.ts) `sendBeginBlockClaim`). The server normalizes it to lowercase **`[a-z0-9_]`**, max **48** characters, and omits it when empty after normalization ([server/src/rooms.ts](../server/src/rooms.ts)). Each accepted begin is logged to the gameplay JSONL as **`begin_block_claim`** ([`ANALYTICS_EVENT_KINDS.beginBlockClaim`](../server/src/eventLog.ts)) with `claimId`, tile coordinates, and `claimIntent` when present. Current client slugs: **`world_ctx_adjacent`** (Mine from the world context menu while already cardinally beside the block), **`world_ctx_auto_walk`** (Mine from the menu or **primary-click** on the block from farther away; client pathfinds to a cardinal neighbor first), **`direct_adjacent_click`** (primary click on the block while already beside it — default hold duration). For **`world_ctx_adjacent`** and **`world_ctx_auto_walk`** only, the server requires **50% longer** adjacent hold than the default (`BLOCK_CLAIM_HOLD_MS` → **1.5×** in `blockClaimOffered.holdMs` and in the `completeBlockClaim` gate).
+
 ## Tick loop
 
 `startRoomTick` runs on a fixed interval (`TICK_MS`):

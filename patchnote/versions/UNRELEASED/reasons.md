@@ -8,7 +8,7 @@
 
 ## Summary
 
-CI deploy: pre-stop **`curl`** must not use **`-f`** on the restart hook so **404** (first deploy after hook lands, or `not_configured`) never fails **`script_stop`** SSH.
+_Add a one-line roll-up here when the buffer gets long._
 
 ---
 
@@ -32,4 +32,4 @@ CI deploy: pre-stop **`curl`** must not use **`-f`** on the restart hook so **40
 
 ### Deploy / ops
 
-- [`.github/workflows/deploy-docker.yml`](../../.github/workflows/deploy-docker.yml): pre-deploy **`curl`** no longer uses **`-f`** so HTTP **404** (old binary without hook, or hook `not_configured`) does not fail the SSH step under **`script_stop: true`**; **200** → **60s** wait, **404** → short skip, other → **5s** then continue.
+- _(none in this change set)_

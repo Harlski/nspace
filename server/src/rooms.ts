@@ -71,6 +71,7 @@ import {
   LUNA_PER_NIM,
 } from "./nimPayout/index.js";
 import {
+  ANALYTICS_EVENT_KINDS,
   beginSession,
   endSession,
   logGameplayEvent,
@@ -402,6 +403,11 @@ const MAX_OWNED_ROOMS_PER_PLAYER = ((): number => {
 
 /** Server-authoritative NIM / claimable-block flow (see beginBlockClaim / blockClaimTick / completeBlockClaim). */
 const BLOCK_CLAIM_HOLD_MS = 3000;
+/** `beginBlockClaim.claimIntent` values from the world context menu Mine action — longer required adjacent hold. */
+const BLOCK_CLAIM_CONTEXT_MENU_MINE_INTENTS = new Set([
+  "world_ctx_adjacent",
+  "world_ctx_auto_walk",
+]);
 const BLOCK_CLAIM_SESSION_MS = 45_000;
 const RATE_BEGIN_BLOCK_CLAIM_MS = 600;
 const RATE_BLOCK_CLAIM_TICK_MS = 170;
@@ -1121,6 +1127,8 @@ interface BlockClaimSession {
   tileY: number;
   startedAt: number;
   completeBy: number;
+  /** Required contiguous adjacent time before `completeBlockClaim` succeeds. */
+  holdMsRequired: number;
   accumAdjacentMs: number;
   /** Last wall-clock sample for contiguous adjacent-time accumulation (0 = none). */
   lastSampleAt: number;
@@ -5716,6 +5724,23 @@ export function addClient(
 
       const claimId = newBlockClaimId();
       const completeBy = now + BLOCK_CLAIM_SESSION_MS;
+
+      const rawCi = (msg as { claimIntent?: unknown }).claimIntent;
+      let claimIntent: string | undefined;
+      if (typeof rawCi === "string") {
+        const t = rawCi
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9_]/g, "")
+          .slice(0, 48);
+        if (t) claimIntent = t;
+      }
+
+      const holdMs =
+        claimIntent && BLOCK_CLAIM_CONTEXT_MENU_MINE_INTENTS.has(claimIntent)
+          ? Math.round(BLOCK_CLAIM_HOLD_MS * 1.5)
+          : BLOCK_CLAIM_HOLD_MS;
+
       blockClaimSessions.set(claimId, {
         address,
         roomId: currentRoomId,
@@ -5724,6 +5749,7 @@ export function addClient(
         tileY,
         startedAt: now,
         completeBy,
+        holdMsRequired: holdMs,
         accumAdjacentMs: 0,
         lastSampleAt: 0,
       });
@@ -5734,15 +5760,29 @@ export function addClient(
       });
       conn.pendingBlockClaimId = claimId;
 
-      wsSafeSend(ws, {
-          type: "blockClaimOffered",
-          claimId,
+      logGameplayEvent(
+        conn.sessionId,
+        address,
+        currentRoomId,
+        ANALYTICS_EVENT_KINDS.beginBlockClaim,
+        {
           x: tile.x,
           z: tile.z,
-          ...(tileY !== 0 ? { y: tileY } : {}),
-          holdMs: BLOCK_CLAIM_HOLD_MS,
-          completeBy,
-        } satisfies OutMsg);
+          y: tileY,
+          claimId,
+          ...(claimIntent ? { claimIntent } : {}),
+        }
+      );
+
+      wsSafeSend(ws, {
+        type: "blockClaimOffered",
+        claimId,
+        x: tile.x,
+        z: tile.z,
+        ...(tileY !== 0 ? { y: tileY } : {}),
+        holdMs,
+        completeBy,
+      } satisfies OutMsg);
       return;
     }
 
@@ -5848,7 +5888,7 @@ export function addClient(
         return;
       }
 
-      if (s.accumAdjacentMs < BLOCK_CLAIM_HOLD_MS) {
+      if (s.accumAdjacentMs < s.holdMsRequired) {
         wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,

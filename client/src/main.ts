@@ -2132,17 +2132,47 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         onOpen: () => {
           const meta = game.getPlacedAt(bx, bz, by);
           if (!meta?.gate) return;
-          if (
-            !canOpenGateAs(address, meta.gate, game.getRoomId()) &&
-            !isAdmin(address)
-          ) {
-            game.showFloatingText(bx, bz, "You can't open that");
-            return;
-          }
-          if (socket.readyState === WebSocket.OPEN) {
-            sendOpenGate(socket, bx, bz, by);
-          }
+          game.queueWalkToGateThenInteract(bx, bz, by);
         },
+      });
+    });
+
+    game.setWorldTileContextOpener((pick) => {
+      const cx = pick.clientX;
+      const cy = pick.clientY;
+      const walkAt = pick.walkAt;
+      const mine = pick.mine;
+      hud.showWorldTileContextMenu(cx, cy, {
+        onWalkHere: walkAt
+          ? () => {
+              hud.dismissOtherPlayerOverlays();
+              game.performWalkNavigationAtScreen(
+                walkAt.clientX,
+                walkAt.clientY
+              );
+            }
+          : null,
+        onMine: mine
+          ? () => {
+              hud.dismissOtherPlayerOverlays();
+              const pos = game.getSelfPosition();
+              const adjacent = !!(
+                pos &&
+                isOrthogonallyAdjacentToFloorTile(
+                  pos.x,
+                  pos.z,
+                  mine.x,
+                  mine.z
+                )
+              );
+              const claimIntent = adjacent
+                ? "world_ctx_adjacent"
+                : "world_ctx_auto_walk";
+              game.performClaimBlockAtWorld(mine.x, mine.z, mine.y, {
+                claimIntent,
+              });
+            }
+          : null,
       });
     });
 
@@ -2276,6 +2306,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         raf = 0;
         hud.setNimClaimProgress(null, fadeOut ? { fadeOutMs: 400 } : undefined);
         nimClaimUiRef = null;
+        game.clearBlockClaimBeginIntent();
         if (cancelActiveNimClaim === cancelThisClaim) {
           cancelActiveNimClaim = null;
         }
@@ -2304,8 +2335,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
 
         if (adjacent) {
           notAdjacentSince = null;
-          if (!beginSent) {
-            sendBeginBlockClaim(socket, x, z, y);
+          if (!beginSent && socket.readyState === WebSocket.OPEN) {
+            const claimIntent = game.takeBlockClaimBeginIntent();
+            sendBeginBlockClaim(socket, x, z, y, claimIntent);
             beginSent = true;
           }
           const cid = ref.claimId;

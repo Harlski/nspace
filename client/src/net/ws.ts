@@ -782,15 +782,23 @@ export function sendBeginBlockClaim(
   ws: WebSocket,
   x: number,
   z: number,
-  y = 0
+  y = 0,
+  claimIntent?: string
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  const payload: { type: string; x: number; z: number; y?: number } = {
+  const payload: {
+    type: string;
+    x: number;
+    z: number;
+    y?: number;
+    claimIntent?: string;
+  } = {
     type: "beginBlockClaim",
     x,
     z,
   };
   if (y !== 0) payload.y = y;
+  if (claimIntent) payload.claimIntent = claimIntent;
   ws.send(JSON.stringify(payload));
 }
 

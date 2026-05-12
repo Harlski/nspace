@@ -36,6 +36,8 @@ export type SessionSummary = {
 export const ANALYTICS_EVENT_KINDS = {
   sessionStart: "session_start",
   sessionEnd: "session_end",
+  /** Fired when a client successfully starts a NIM block claim (adjacent to target). */
+  beginBlockClaim: "begin_block_claim",
   claimBlock: "claim_block",
   nimPayoutSent: "nim_payout_sent",
   nimPayoutDeadLetter: "nim_payout_dead_letter",

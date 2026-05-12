@@ -714,6 +714,8 @@ const FLOATING_REWARD_MINING_LOGO_OUTLINE_PX = 6;
 const FLOATING_REWARD_DEFAULT_DURATION_MS = 2000;
 /** Plain floaters (spring motion): extra time for damped settle before fade-out. */
 const FLOATING_SPRING_DURATION_MS = 2600;
+/** `floatingTexts` map key for {@link Game.showSelfPlayerActionMessage} (single slot; replace removes previous). */
+const SELF_PLAYER_ACTION_FLOAT_KEY = "__self_player_action__";
 /** Mining reward floater stays 1s longer than generic floaters (TODO). */
 const FLOATING_REWARD_MINING_DURATION_MS = 3000;
 const FLOATING_REWARD_MINING_FONT = "bold 64px 'Muli', sans-serif";
@@ -838,17 +840,20 @@ export class Game {
   private readonly others = new Map<string, THREE.Group>();
   private readonly chatBubbleByAddress = new Map<string, ChatBubbleEntry>();
   private readonly typingIndicatorByAddress = new Map<string, TypingIndicatorEntry>();
-  private readonly floatingTexts = new Map<string, {
-    sprite: THREE.Sprite;
-    material: THREE.SpriteMaterial;
-    texture: THREE.CanvasTexture;
-    startedAt: number;
-    startY: number;
-    /** Total visible lifetime in ms (mining rewards use longer). */
-    durationMs: number;
-    /** `classic` = legacy ease-up + fade; `spring` = half-rise then damped settle. */
-    verticalMotion: "classic" | "spring";
-  }>();
+  private readonly floatingTexts = new Map<
+    string,
+    {
+      sprite: THREE.Sprite;
+      material: THREE.SpriteMaterial;
+      texture: THREE.CanvasTexture;
+      startedAt: number;
+      startY: number;
+      /** Total visible lifetime in ms (mining rewards use longer). */
+      durationMs: number;
+      /** `classic` = legacy ease-up + fade; `spring` = half-rise then damped settle. */
+      verticalMotion: "classic" | "spring";
+    }
+  >();
   private readonly targetPos = new Map<string, THREE.Vector3>();
   private ro: ResizeObserver;
   private tileHighlight: THREE.Mesh;
@@ -862,10 +867,27 @@ export class Game {
     null;
   private claimBlockHandler: ((x: number, z: number, y: number) => void) | null =
     null;
-  /** Walk mode: double primary click on an adjacent gate invokes open / denied feedback. */
+  /**
+   * Optional analytics slug for the next `beginBlockClaim` (set by {@link performClaimBlockAtWorld},
+   * consumed in the client claim tick when `sendBeginBlockClaim` runs).
+   */
+  private blockClaimBeginIntent: string | null = null;
+  /**
+   * Walk mode: when the player reaches a gate tile orthogonally (after walk or already there),
+   * run open / denied feedback — used for double-click on a gate and **Open gate** from the
+   * context menu (see {@link queueWalkToGateThenInteract}).
+   */
   private gateDoubleOpenHandler:
     | ((x: number, z: number, y: number) => void)
     | null = null;
+  /** After {@link queueWalkToGateThenInteract}, fire {@link gateDoubleOpenHandler} once adjacent. */
+  private pendingGateAdjacentInteract: {
+    bx: number;
+    bz: number;
+    by: number;
+  } | null = null;
+  /** True only while {@link commitResolvedWalkGoal} runs for a gate-queued walk (clears other pending). */
+  private gateWalkQueuedFromGame = false;
   private lastGatePrimaryTap: { key: string; at: number } | null = null;
   private static readonly GATE_DOUBLE_TAP_MS = 420;
   private moveBlockHandler:
@@ -947,12 +969,21 @@ export class Game {
   /** After "Move", next click on an empty tile relocates the object. */
   private repositionFrom: FloorTile | null = null;
   /** Destination tile + layer; remaining route is recomputed each frame from current position. */
-  private pathGoal: { ft: FloorTile; layer: 0 | 1 } | null = null;
+  private pathGoal: {
+    ft: FloorTile;
+    layer: 0 | 1;
+    /** Unreachable path stays silent (gate walk goals). */
+    suppressCantMoveMessage?: boolean;
+  } | null = null;
   /**
    * Optional route shown while primary button is held before `pointerup` (deferred walk).
    * Does not send movement to the server; cleared when the real `pathGoal` is set.
    */
-  private pathPreviewGoal: { ft: FloorTile; layer: 0 | 1 } | null = null;
+  private pathPreviewGoal: {
+    ft: FloorTile;
+    layer: 0 | 1;
+    suppressCantMoveMessage?: boolean;
+  } | null = null;
   private roomId = ROOM_ID;
   private roomBounds: RoomBounds = getRoomBaseBounds(ROOM_ID);
   private doors: {
@@ -1142,6 +1173,16 @@ export class Game {
           clientY: number;
         }
       ) => void)
+    | null = null;
+
+  /** Right-click / long-press walkable floor or mineable block (walk mode) — HUD world context menu. */
+  private worldTileContextOpener:
+    | ((p: {
+        clientX: number;
+        clientY: number;
+        mine: { x: number; z: number; y: number } | null;
+        walkAt: { clientX: number; clientY: number } | null;
+      }) => void)
     | null = null;
 
   /** Right-click / long-press other human (non-NPC) avatar — HUD context menu. */
@@ -1689,6 +1730,7 @@ export class Game {
     this.rebuildDoorKeys();
     this.pathGoal = null;
     this.pathPreviewGoal = null;
+    this.pendingGateAdjacentInteract = null;
     this.lastTerrainPath = null;
     this.selectedBlockKey = null;
     this.selectionOutline.visible = false;
@@ -2357,72 +2399,96 @@ export class Game {
     this.camera.updateProjectionMatrix();
   }
 
-  private readonly onCanvasContextMenu = (e: MouseEvent): void => {
-    if (this.suppressAvatarContextMenuFromRightOrbit) {
-      this.suppressAvatarContextMenuFromRightOrbit = false;
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
+  /**
+   * Gate / walkable tile / mineable / avatar menus — opened on **right-button pointerup**
+   * so the pick matches the release position (after right-drag orbit without movement,
+   * `suppressAvatarContextMenuFromRightOrbit` skips opening here; `contextmenu` still clears it).
+   */
+  private openInGameContextMenuAt(clientX: number, clientY: number): void {
     if (!this.buildMode && this.gateContextOpener) {
-      const bk = this.pickBlockKey(e.clientX, e.clientY);
+      const bk = this.pickBlockKey(clientX, clientY);
       if (bk) {
         const m = this.placedObjects.get(bk);
         if (m?.gate) {
-          e.preventDefault();
-          e.stopPropagation();
           this.gateContextOpener({
             blockKey: bk,
-            clientX: e.clientX,
-            clientY: e.clientY,
+            clientX,
+            clientY,
           });
           return;
         }
       }
     }
-    const g = this.pickClosestAvatarGroupAt(e.clientX, e.clientY);
-    if (!g) return;
+    const g = this.pickClosestAvatarGroupAt(clientX, clientY);
+    if (!g) {
+      if (
+        !this.buildMode &&
+        this.worldTileContextOpener &&
+        this.selfMesh
+      ) {
+        const mine = this.pickActiveMineableClaimAtScreen(clientX, clientY);
+        const walkGoal =
+          mine !== null || !this.tileClickHandler
+            ? null
+            : this.resolveWalkNavigationGoalAt(clientX, clientY);
+        if (mine !== null || walkGoal !== null) {
+          this.worldTileContextOpener({
+            clientX,
+            clientY,
+            mine,
+            walkAt:
+              walkGoal !== null ? { clientX, clientY } : null,
+          });
+        }
+      }
+      return;
+    }
     const address = String(g.userData.address ?? "");
     const displayName = String(g.userData.displayName ?? "");
     if (g === this.selfMesh) {
-      const others = this.pickAllOtherHumanAvatarsAt(e.clientX, e.clientY);
+      const others = this.pickAllOtherHumanAvatarsAt(clientX, clientY);
       if (others.length > 0 && this.otherPlayerContextOpener) {
-        e.preventDefault();
-        e.stopPropagation();
         this.otherPlayerContextOpener({
           targets: others,
-          clientX: e.clientX,
-          clientY: e.clientY,
+          clientX,
+          clientY,
           emoteRowFirst:
             !!this.selfQuickEmojiOpener &&
-            this.rayPickHitsSelfAvatar(e.clientX, e.clientY),
+            this.rayPickHitsSelfAvatar(clientX, clientY),
         });
         return;
       }
       if (!this.selfQuickEmojiOpener) return;
-      e.preventDefault();
-      e.stopPropagation();
       this.selfQuickEmojiOpener();
       return;
     }
     if (remotePlayerIsNpc(address, displayName)) {
-      e.preventDefault();
-      e.stopPropagation();
       return;
     }
     if (!this.otherPlayerContextOpener) return;
-    const targets = this.pickAllOtherHumanAvatarsAt(e.clientX, e.clientY);
+    const targets = this.pickAllOtherHumanAvatarsAt(clientX, clientY);
     if (targets.length === 0) return;
-    e.preventDefault();
-    e.stopPropagation();
     this.otherPlayerContextOpener({
       targets,
-      clientX: e.clientX,
-      clientY: e.clientY,
+      clientX,
+      clientY,
       emoteRowFirst:
         !!this.selfQuickEmojiOpener &&
-        this.rayPickHitsSelfAvatar(e.clientX, e.clientY),
+        this.rayPickHitsSelfAvatar(clientX, clientY),
     });
+  }
+
+  private readonly onCanvasContextMenu = (e: MouseEvent): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (this.suppressAvatarContextMenuFromRightOrbit) {
+      this.suppressAvatarContextMenuFromRightOrbit = false;
+      return;
+    }
+    const pt = (e as PointerEvent & MouseEvent).pointerType;
+    if (pt === "touch") {
+      this.openInGameContextMenuAt(e.clientX, e.clientY);
+    }
   };
 
   private readonly onWheel = (e: WheelEvent): void => {
@@ -2456,6 +2522,13 @@ export class Game {
       this.rightOrbitDrag = null;
       this.renderer.domElement.style.cursor = "pointer";
       this.beginCameraOrbitEaseToNearestCorner();
+    }
+    if (!isCancel && e.button === 2) {
+      if (this.suppressAvatarContextMenuFromRightOrbit) {
+        this.suppressAvatarContextMenuFromRightOrbit = false;
+      } else {
+        this.openInGameContextMenuAt(e.clientX, e.clientY);
+      }
     }
     if (
       this.selfEmojiTouchSession &&
@@ -2639,6 +2712,38 @@ export class Game {
     handler: ((x: number, z: number, y: number) => void) | null
   ): void {
     this.gateDoubleOpenHandler = handler;
+    if (!handler) this.pendingGateAdjacentInteract = null;
+  }
+
+  /**
+   * Walk to a cardinal neighbor of the gate (if needed), then run
+   * {@link setGateDoubleOpenHandler} once the local player is in range — same checks as
+   * double-click open (ACL, admin, `sendOpenGate`).
+   * @returns false if nothing was started (caller may fall back to normal walk).
+   */
+  queueWalkToGateThenInteract(bx: number, bz: number, by: number): boolean {
+    if (this.buildMode || !this.selfMesh || !this.tileClickHandler) return false;
+    const meta = this.getPlacedAt(bx, bz, by);
+    if (!meta?.gate || !this.gateDoubleOpenHandler) return false;
+    if (this.selfWithinGateInteractRange(bx, bz)) {
+      this.gateDoubleOpenHandler(bx, bz, by);
+      return true;
+    }
+    const stand = this.findBestAdjacentStandForBlockClaim(bx, bz);
+    if (!stand) return false;
+    this.pendingGateAdjacentInteract = { bx, bz, by };
+    this.gateWalkQueuedFromGame = true;
+    const outcome = this.commitResolvedWalkGoal({
+      ft: stand,
+      layer: 0,
+      suppressCantMoveMessage: true,
+    });
+    this.gateWalkQueuedFromGame = false;
+    if (outcome === "failed") {
+      this.pendingGateAdjacentInteract = null;
+      return false;
+    }
+    return true;
   }
 
   setMoveBlockHandler(
@@ -2686,6 +2791,93 @@ export class Game {
       | null
   ): void {
     this.gateContextOpener = handler;
+  }
+
+  setWorldTileContextOpener(
+    handler:
+      | ((p: {
+          clientX: number;
+          clientY: number;
+          mine: { x: number; z: number; y: number } | null;
+          walkAt: { clientX: number; clientY: number } | null;
+        }) => void)
+      | null
+  ): void {
+    this.worldTileContextOpener = handler;
+  }
+
+  /** Same as choosing "Mine" on the world tile context menu (NIM claim UI + server flow). */
+  performClaimBlockAtWorld(
+    x: number,
+    z: number,
+    y: number,
+    opts?: { claimIntent?: string | null }
+  ): void {
+    if (!this.claimBlockHandler) return;
+    this.blockClaimBeginIntent = Game.normalizeBlockClaimIntentSlug(
+      opts?.claimIntent ?? null
+    );
+
+    const pos = this.getSelfPosition();
+    const adjacent = !!(
+      pos && isOrthogonallyAdjacentToFloorTile(pos.x, pos.z, x, z)
+    );
+
+    if (!adjacent) {
+      if (!this.selfMesh || !this.tileClickHandler) {
+        this.clearBlockClaimBeginIntent();
+        return;
+      }
+      const stand = this.findBestAdjacentStandForBlockClaim(x, z);
+      if (!stand) {
+        this.showSelfPlayerActionMessage("I can't move here");
+        this.clearBlockClaimBeginIntent();
+        return;
+      }
+      const walk = this.commitResolvedWalkGoal({ ft: stand, layer: 0 });
+      if (walk === "failed") {
+        this.clearBlockClaimBeginIntent();
+        return;
+      }
+    }
+
+    this.claimBlockHandler(x, z, y);
+  }
+
+  /**
+   * Slug for `beginBlockClaim.claimIntent` (lowercase `a-z`, digits, underscore; max 48).
+   * Invalid input becomes `null` (server omits the field).
+   */
+  private static normalizeBlockClaimIntentSlug(
+    raw: string | null | undefined
+  ): string | null {
+    if (raw == null) return null;
+    const t = String(raw)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, "")
+      .slice(0, 48);
+    return t || null;
+  }
+
+  /** Clears a pending claim intent without sending (e.g. claim UI cancelled). */
+  clearBlockClaimBeginIntent(): void {
+    this.blockClaimBeginIntent = null;
+  }
+
+  /**
+   * Returns and clears the slug to send on the next `beginBlockClaim`, if any.
+   * Call once when issuing `sendBeginBlockClaim`.
+   */
+  takeBlockClaimBeginIntent(): string | undefined {
+    const v = this.blockClaimBeginIntent;
+    this.blockClaimBeginIntent = null;
+    return v === null ? undefined : v;
+  }
+
+  /** Same as choosing "Walk here" on the world tile context menu. */
+  performWalkNavigationAtScreen(clientX: number, clientY: number): void {
+    this.tryExecuteWalkNavigationAt(clientX, clientY);
   }
 
   /** Placement ramp direction 0–3 (also used as gate exit cardinal). */
@@ -3606,7 +3798,10 @@ export class Game {
 
   setBuildMode(on: boolean): void {
     this.buildMode = on;
-    if (on) this.floorExpandMode = false;
+    if (on) {
+      this.floorExpandMode = false;
+      this.pendingGateAdjacentInteract = null;
+    }
     if (!on) {
       this.clearPendingBuildPlace();
       this.clearPlacementPreview();
@@ -3632,6 +3827,7 @@ export class Game {
     this.floorExpandMode = on;
     if (on) {
       this.buildMode = false;
+      this.pendingGateAdjacentInteract = null;
       this.clearPendingBuildPlace();
       this.clearPlacementPreview();
       this.clearRepositionBillboardVisualState();
@@ -5283,6 +5479,27 @@ export class Game {
     return this.tileWalkable(t) ? t : null;
   }
 
+  private pickActiveMineableClaimAtScreen(
+    clientX: number,
+    clientY: number
+  ): { x: number; z: number; y: number } | null {
+    if (!this.claimBlockHandler) return null;
+    const bk = this.pickBlockKey(clientX, clientY);
+    if (!bk) return null;
+    const bm = this.placedObjects.get(bk);
+    if (!bm?.claimable || !bm.active || bm.passable) return null;
+    const parts = bk.split(",").map(Number);
+    const bx = parts[0];
+    const bz = parts[1];
+    if (bx === undefined || bz === undefined) return null;
+    const byRaw = parts[2];
+    const by =
+      parts.length >= 3 && Number.isFinite(byRaw)
+        ? Math.max(0, Math.min(2, Math.floor(byRaw!)))
+        : 0;
+    return { x: bx, z: bz, y: by };
+  }
+
   /**
    * @param skipRefresh Pass true when the caller will immediately call `tryExecuteWalkNavigationAt`
    * (avoids one frame with no path line between preview clear and committed goal).
@@ -5307,12 +5524,17 @@ export class Game {
 
   /**
    * Resolve a deferred-walk destination from a screen point (same rules as executing a walk).
-   * Claimable blocks return null (mining is pointerdown-only).
+   * Active claimable (minable) blocks return null — mining starts via primary click on the
+   * block or the world context menu, not via this walk goal.
    */
   private resolveWalkNavigationGoalAt(
     clientX: number,
     clientY: number
-  ): { ft: FloorTile; layer: 0 | 1 } | null {
+  ): {
+    ft: FloorTile;
+    layer: 0 | 1;
+    suppressCantMoveMessage?: boolean;
+  } | null {
     if (!this.selfMesh) return null;
     if (this.floorExpandMode) return null;
 
@@ -5343,7 +5565,12 @@ export class Game {
         }
         if (!bm.passable && !bm.ramp) {
           const [bx, bz] = blockForWalk.split(",").map(Number);
-          return { ft: { x: bx!, y: bz! }, layer: 1 };
+          if (bx === undefined || bz === undefined) return null;
+          /** Gates: movement only from double-click → {@link queueWalkToGateThenInteract}, not single-click walk. */
+          if (bm.gate) {
+            return null;
+          }
+          return { ft: { x: bx, y: bz }, layer: 1 };
         }
       }
     }
@@ -5373,6 +5600,71 @@ export class Game {
     );
   }
 
+  /** Floor tile the local player can path onto (walkable base/extra + gate blocking rules). */
+  private floorTileNavigableForWalk(ft: FloorTile): boolean {
+    if (!this.tileWalkable(ft)) return false;
+    const k = tileKey(ft.x, ft.y);
+    if (
+      this.blockingTileKeys.has(k) &&
+      !this.selfGatePassFloorTile(ft.x, ft.y)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Cardinal floor neighbor of a block with a valid path from the current pose; prefers shorter routes.
+   */
+  private findBestAdjacentStandForBlockClaim(
+    blockX: number,
+    blockZ: number
+  ): FloorTile | null {
+    if (!this.selfMesh) return null;
+    const cands: FloorTile[] = [
+      { x: blockX + 1, y: blockZ },
+      { x: blockX - 1, y: blockZ },
+      { x: blockX, y: blockZ + 1 },
+      { x: blockX, y: blockZ - 1 },
+    ];
+    const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    const moverCtx: PathfindMoverContext | null = this.selfAddress
+      ? {
+          address: this.selfAddress.replace(/\s+/g, "").toUpperCase(),
+          nowMs: Date.now(),
+        }
+      : null;
+    const startLayer = inferStartLayerClient(
+      this.selfMesh.position.x,
+      this.selfMesh.position.z,
+      this.selfMesh.position.y,
+      this.placedObjects,
+      moverCtx,
+      this.roomId
+    );
+    let best: { ft: FloorTile; len: number } | null = null;
+    for (const ft of cands) {
+      if (!this.floorTileNavigableForWalk(ft)) continue;
+      const remaining = pathfindTerrain(
+        here.x,
+        here.y,
+        startLayer,
+        ft.x,
+        ft.y,
+        0,
+        this.placedObjects,
+        this.extraFloorKeys,
+        this.roomId,
+        this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined,
+        moverCtx ?? undefined
+      );
+      if (!remaining || remaining.length < 2) continue;
+      const len = remaining.length;
+      if (!best || len < best.len) best = { ft, len };
+    }
+    return best?.ft ?? null;
+  }
+
   /** Show the route the player would take if they release at the current pick (pointerdown). */
   private previewWalkNavigationAt(clientX: number, clientY: number): void {
     if (!this.selfMesh) return;
@@ -5381,8 +5673,50 @@ export class Game {
   }
 
   /**
+   * Commit a resolved walk goal: refresh path, optionally send `moveTo` via `tileClickHandler`.
+   * @returns whether the player still needs to move (`sent`), is already there (`at_goal`), or cannot (`failed`).
+   */
+  private commitResolvedWalkGoal(goal: {
+    ft: FloorTile;
+    layer: 0 | 1;
+    suppressCantMoveMessage?: boolean;
+  }): "sent" | "at_goal" | "failed" {
+    if (!this.selfMesh || !this.tileClickHandler) return "failed";
+    if (this.pendingGateAdjacentInteract && !this.gateWalkQueuedFromGame) {
+      this.pendingGateAdjacentInteract = null;
+    }
+    this.pathGoal = goal;
+    const outcome = this.refreshPathLine();
+    if (outcome === "no_path") {
+      if (!goal.suppressCantMoveMessage) {
+        this.showSelfPlayerActionMessage("I can't move here");
+      }
+      this.pathGoal = null;
+      this.refreshPathLine();
+      return "failed";
+    }
+    if (outcome === "no_goal") {
+      this.pathGoal = null;
+      this.refreshPathLine();
+      return "failed";
+    }
+    if (outcome === "at_goal") {
+      this.pathGoal = null;
+      this.refreshPathLine();
+      return "at_goal";
+    }
+    if (goal.layer === 1) {
+      this.tileClickHandler(goal.ft.x, goal.ft.y, 1);
+    } else {
+      this.tileClickHandler(goal.ft.x, goal.ft.y, 0);
+    }
+    return "sent";
+  }
+
+  /**
    * Run walk / path request from a screen point (typically pointerup client coords).
-   * Claimable-block mining is handled separately on pointerdown.
+   * Active claimable-block mining is started on pointerdown (primary click on the block or
+   * context menu Mine), not from this deferred walk path.
    */
   private tryExecuteWalkNavigationAt(clientX: number, clientY: number): void {
     if (!this.selfMesh || !this.tileClickHandler) return;
@@ -5392,19 +5726,13 @@ export class Game {
       this.refreshPathLine();
       return;
     }
-    this.pathGoal = goal;
-    this.refreshPathLine();
-    if (goal.layer === 1) {
-      this.tileClickHandler(goal.ft.x, goal.ft.y, 1);
-    } else {
-      this.tileClickHandler(goal.ft.x, goal.ft.y, 0);
-    }
+    void this.commitResolvedWalkGoal(goal);
   }
 
   /**
-   * When the player double-clicks the same gate mesh (primary, low movement), and they are
-   * adjacent and within place radius, invokes {@link gateDoubleOpenHandler} and returns
-   * true so the deferred walk is skipped. Otherwise returns false.
+   * When the player double-clicks the same gate mesh (primary, low movement), walks to the
+   * gate if needed and invokes {@link gateDoubleOpenHandler} once in range — returns true so
+   * the default deferred walk is skipped.
    */
   private tryGateDoubleOpenAt(clientX: number, clientY: number): boolean {
     if (this.buildMode || !this.selfMesh || !this.gateDoubleOpenHandler) {
@@ -5433,14 +5761,32 @@ export class Game {
       parts.length >= 3 && Number.isFinite(parts[2])
         ? Math.max(0, Math.min(2, Math.floor(parts[2]!)))
         : 0;
+    return this.queueWalkToGateThenInteract(bx, bz, by);
+  }
+
+  /** Orthogonal to the gate column and within build / interact radius (matches prior double-open). */
+  private selfWithinGateInteractRange(bx: number, bz: number): boolean {
+    if (!this.selfMesh) return false;
     const px = this.selfMesh.position.x;
     const pz = this.selfMesh.position.z;
     if (!isOrthogonallyAdjacentToFloorTile(px, pz, bx, bz)) return false;
     const dx = px - bx;
     const dz = pz - bz;
-    if (Math.hypot(dx, dz) > this.placeRadiusBlocks + 1e-6) return false;
-    this.gateDoubleOpenHandler(bx, bz, by);
-    return true;
+    return Math.hypot(dx, dz) <= this.placeRadiusBlocks + 1e-6;
+  }
+
+  private maybeFirePendingGateAdjacentInteract(): void {
+    const p = this.pendingGateAdjacentInteract;
+    if (!p || !this.selfMesh || !this.gateDoubleOpenHandler) return;
+    const meta = this.getPlacedAt(p.bx, p.bz, p.by);
+    if (!meta?.gate) {
+      this.pendingGateAdjacentInteract = null;
+      return;
+    }
+    if (this.selfWithinGateInteractRange(p.bx, p.bz)) {
+      this.pendingGateAdjacentInteract = null;
+      this.gateDoubleOpenHandler(p.bx, p.bz, p.by);
+    }
   }
 
   private updateNdc(clientX: number, clientY: number): boolean {
@@ -6298,17 +6644,26 @@ export class Game {
     if (blockForWalk) {
       const bm = this.placedObjects.get(blockForWalk);
       if (bm) {
-        // Check if this is an active claimable block
-        if (bm.claimable && bm.active && !bm.passable) {
-          const parts = blockForWalk.split(",").map(Number);
-          const bx = parts[0]!;
-          const bz = parts[1]!;
-          const by =
-            parts.length >= 3 && Number.isFinite(parts[2])
-              ? Math.max(0, Math.min(2, Math.floor(parts[2]!)))
-              : 0;
+        if (bm.claimable && !bm.passable) {
+          if (!bm.active) {
+            this.showSelfPlayerActionMessage("There's no NIM left here :(");
+            return;
+          }
           if (this.claimBlockHandler) {
-            this.claimBlockHandler(bx, bz, by);
+            const [bx, bz, byRaw] = blockForWalk.split(",").map(Number);
+            const by = Number.isFinite(byRaw)
+              ? Math.max(0, Math.min(2, Math.floor(byRaw!)))
+              : 0;
+            const pos = this.getSelfPosition();
+            const adjacent = !!(
+              pos &&
+              isOrthogonallyAdjacentToFloorTile(pos.x, pos.z, bx!, bz!)
+            );
+            const claimIntent = adjacent
+              ? "direct_adjacent_click"
+              : "world_ctx_auto_walk";
+            this.performClaimBlockAtWorld(bx!, bz!, by, { claimIntent });
+            return;
           }
           return;
         }
@@ -6369,6 +6724,7 @@ export class Game {
     this.clearPendingBuildPlace();
     this.clearPlacementPreview();
     this.clearPendingPrimaryWalk();
+    this.pendingGateAdjacentInteract = null;
     if (this.rightOrbitDrag) {
       const id = this.rightOrbitDrag.pointerId;
       try {
@@ -6412,6 +6768,7 @@ export class Game {
     this.clearOtherProfileTouchSession();
     this.selfQuickEmojiOpener = null;
     this.otherPlayerContextOpener = null;
+    this.worldTileContextOpener = null;
     this.gateDoubleOpenHandler = null;
     if (this.selfMesh) {
       this.disposeAvatarGroup(this.selfMesh);
@@ -6486,6 +6843,9 @@ export class Game {
     this.fogOfWar.dispose();
     for (const addr of [...this.typingIndicatorByAddress.keys()]) {
       this.removeTypingIndicator(addr);
+    }
+    for (const k of [...this.floatingTexts.keys()]) {
+      this.removeFloatingTextEntry(k);
     }
     this.renderer.dispose();
   }
@@ -6616,13 +6976,17 @@ export class Game {
   }
 
   /** Updates the line to only the remaining route (BFS around obstacles, same as server). */
-  private refreshPathLine(): void {
+  private refreshPathLine():
+    | "no_goal"
+    | "at_goal"
+    | "no_path"
+    | "ok" {
     const goal = this.pathPreviewGoal ?? this.pathGoal;
     if (!goal || !this.selfMesh) {
       this.lastTerrainPath = null;
       this.hideTrailImmediate();
       this.beginPathFadeOut();
-      return;
+      return "no_goal";
     }
     const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
     const moverCtx: PathfindMoverContext | null = this.selfAddress
@@ -6649,7 +7013,7 @@ export class Game {
         this.lastTerrainPath = null;
         this.hideTrailImmediate();
         this.beginPathFadeOut();
-        return;
+        return "at_goal";
       }
     }
     const startLayer = inferStartLayerClient(
@@ -6682,9 +7046,10 @@ export class Game {
       this.lastTerrainPath = null;
       this.hideTrailImmediate();
       this.beginPathFadeOut();
-      return;
+      return "no_path";
     }
     this.setPathPolylineTerrain(remaining);
+    return "ok";
   }
 
   /** Door tile currently under the local player, if any. */
@@ -7818,6 +8183,8 @@ export class Game {
       }
     }
 
+    this.maybeFirePendingGateAdjacentInteract();
+
     for (const [addr, g] of this.others) {
       const t = this.targetPos.get(addr);
       if (!t) continue;
@@ -8035,6 +8402,117 @@ export class Game {
     this.chatBubbleByAddress.set(addr, entry);
   }
 
+  /**
+   * Shared sprite spawn for {@link showFloatingText} plain text and self-player action messages.
+   */
+  private addFloatingTextFromCanvas(
+    mapKey: string,
+    x: number,
+    z: number,
+    canvas: HTMLCanvasElement,
+    durationMs: number,
+    motion: "classic" | "spring"
+  ): void {
+    const w = canvas.width;
+    const h = canvas.height;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
+    });
+
+    const sprite = new THREE.Sprite(material);
+    sprite.renderOrder = 100;
+
+    const blockHeight = 1.0;
+    const startY = blockHeight + 0.5;
+    sprite.position.set(x, startY, z);
+
+    const scale = 1.5;
+    sprite.scale.set(scale, scale * (h / w), 1);
+
+    this.scene.add(sprite);
+
+    this.floatingTexts.set(mapKey, {
+      sprite,
+      material,
+      texture,
+      startedAt: performance.now(),
+      startY,
+      durationMs,
+      verticalMotion: motion,
+    });
+  }
+
+  /** Plain floating label (no NIM logo); `mapKey` must be unique unless intentionally replacing a slot. */
+  private spawnPlainFloatingTextAt(
+    mapKey: string,
+    x: number,
+    z: number,
+    label: string,
+    color: string,
+    verticalMotion: "classic" | "spring"
+  ): void {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+    ctx.font = "bold 32px 'Muli', sans-serif";
+    const metrics = ctx.measureText(label);
+    const padX =
+      40 +
+      FLOATING_REWARD_TEXT_OUTLINE_PX * 2 +
+      FLOATING_REWARD_TEXT_SHADOW_PAD * 2;
+    const w = Math.ceil(metrics.width + padX);
+    const h = 72;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.font = "bold 32px 'Muli', sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    fillTextWithWhiteOutline(ctx, label, w / 2, h / 2, color);
+    const dur =
+      verticalMotion === "spring"
+        ? FLOATING_SPRING_DURATION_MS
+        : FLOATING_REWARD_DEFAULT_DURATION_MS;
+    this.addFloatingTextFromCanvas(mapKey, x, z, canvas, dur, verticalMotion);
+  }
+
+  private removeFloatingTextEntry(key: string): void {
+    const entry = this.floatingTexts.get(key);
+    if (!entry) return;
+    entry.sprite.removeFromParent();
+    entry.texture.dispose();
+    entry.material.dispose();
+    this.floatingTexts.delete(key);
+  }
+
+  /**
+   * Local-player action feedback using the same world **floating text** as mining rewards and
+   * gate denial (`showFloatingText`). Only one such message at a time: a new call removes the
+   * current one immediately and shows the new text (no overlap; rapid calls always show the latest).
+   */
+  showSelfPlayerActionMessage(text: string): void {
+    if (!this.selfMesh) return;
+    const trimmed = text.trim().slice(0, 200);
+    if (!trimmed) return;
+    if (this.floatingTexts.has(SELF_PLAYER_ACTION_FLOAT_KEY)) {
+      this.removeFloatingTextEntry(SELF_PLAYER_ACTION_FLOAT_KEY);
+    }
+    const { x, z } = this.selfMesh.position;
+    this.spawnPlainFloatingTextAt(
+      SELF_PLAYER_ACTION_FLOAT_KEY,
+      x,
+      z,
+      trimmed,
+      "#ffc107",
+      "spring"
+    );
+    this.requestRender(250);
+  }
+
   private removeChatBubbleEntry(addr: string): void {
     const entry = this.chatBubbleByAddress.get(addr);
     if (!entry) return;
@@ -8083,46 +8561,6 @@ export class Game {
     const label =
       nimLogo ? text.replace(/\s*NIM\s*$/i, "").trim() : text;
 
-    const addSpriteFromCanvas = (
-      canvas: HTMLCanvasElement,
-      durationMs: number,
-      motion: "classic" | "spring"
-    ): void => {
-      const w = canvas.width;
-      const h = canvas.height;
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.needsUpdate = true;
-
-      const material = new THREE.SpriteMaterial({
-        map: texture,
-        transparent: true,
-        depthTest: true,
-        depthWrite: false,
-      });
-
-      const sprite = new THREE.Sprite(material);
-      sprite.renderOrder = 100;
-
-      const blockHeight = 1.0;
-      const startY = blockHeight + 0.5;
-      sprite.position.set(x, startY, z);
-
-      const scale = 1.5;
-      sprite.scale.set(scale, scale * (h / w), 1);
-
-      this.scene.add(sprite);
-
-      this.floatingTexts.set(key, {
-        sprite,
-        material,
-        texture,
-        startedAt: performance.now(),
-        startY,
-        durationMs,
-        verticalMotion: motion,
-      });
-    };
-
     const drawPlain = (): void => {
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d")!;
@@ -8144,7 +8582,7 @@ export class Game {
         verticalMotion === "spring"
           ? FLOATING_SPRING_DURATION_MS
           : FLOATING_REWARD_DEFAULT_DURATION_MS;
-      addSpriteFromCanvas(canvas, dur, verticalMotion);
+      this.addFloatingTextFromCanvas(key, x, z, canvas, dur, verticalMotion);
     };
 
     if (!nimLogo) {
@@ -8212,7 +8650,10 @@ export class Game {
         }
       }
 
-      addSpriteFromCanvas(
+      this.addFloatingTextFromCanvas(
+        key,
+        x,
+        z,
         canvas,
         FLOATING_REWARD_MINING_DURATION_MS,
         verticalMotion
@@ -8247,11 +8688,9 @@ export class Game {
     for (const [key, entry] of this.floatingTexts) {
       const duration = entry.durationMs;
       const elapsed = now - entry.startedAt;
+
       if (elapsed >= duration) {
-        entry.sprite.removeFromParent();
-        entry.texture.dispose();
-        entry.material.dispose();
-        this.floatingTexts.delete(key);
+        this.removeFloatingTextEntry(key);
         continue;
       }
 

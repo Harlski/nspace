@@ -48,6 +48,7 @@ import {
   nimiqWalletRecipientDeepLink,
 } from "../socialLinks.js";
 import { nimiqIconUseMarkup, nimiqIconifyMarkup } from "./nimiqIcons.js";
+import { createWorldContextMenu, type WorldContextMenuItem } from "./worldContextMenu.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
@@ -256,6 +257,15 @@ export function createHud(
     opts: { onOpen: () => void }
   ) => void;
   hideGateContextMenu: () => void;
+  /** Walk mode: right-click / long-press walkable tile or mineable block (uses unified world context menu). */
+  showWorldTileContextMenu: (
+    clientX: number,
+    clientY: number,
+    opts: {
+      onWalkHere: (() => void) | null;
+      onMine: (() => void) | null;
+    }
+  ) => void;
   onReturnToLobby: (fn: () => void) => void;
   /** Open the large Rooms browser (list / join / create). */
   onRoomsOpen: (fn: () => void) => void;
@@ -577,6 +587,8 @@ export function createHud(
   const ui = document.createElement("div");
   ui.className = "hud";
   letter.appendChild(ui);
+
+  const worldCtx = createWorldContextMenu({ parent: letter });
 
   const topWrap = document.createElement("div");
   topWrap.className = "hud-top-wrap";
@@ -2089,106 +2101,14 @@ export function createHud(
   );
   profileRoomConfirm.append(profileRoomConfirmBackdrop, profileRoomConfirmDialog);
   letter.appendChild(profileRoomConfirm);
-  const chatLineCtx = document.createElement("div");
-  chatLineCtx.className = "other-player-ctx";
-  chatLineCtx.hidden = true;
-  chatLineCtx.setAttribute("role", "menu");
-  chatLineCtx.setAttribute("aria-label", "Chat message actions");
-  const chatLineCtxViewProfileBtn = document.createElement("button");
-  chatLineCtxViewProfileBtn.type = "button";
-  chatLineCtxViewProfileBtn.className = "other-player-ctx__item";
-  chatLineCtxViewProfileBtn.setAttribute("role", "menuitem");
-  chatLineCtxViewProfileBtn.textContent = "View profile";
-  const chatLineCtxCopyBtn = document.createElement("button");
-  chatLineCtxCopyBtn.type = "button";
-  chatLineCtxCopyBtn.className = "other-player-ctx__item";
-  chatLineCtxCopyBtn.setAttribute("role", "menuitem");
-  chatLineCtxCopyBtn.textContent = "Copy message";
-  const chatLineCtxTranslateBtn = document.createElement("button");
-  chatLineCtxTranslateBtn.type = "button";
-  chatLineCtxTranslateBtn.className = "other-player-ctx__item";
-  chatLineCtxTranslateBtn.setAttribute("role", "menuitem");
-  chatLineCtxTranslateBtn.textContent = "Translate";
-  chatLineCtx.append(
-    chatLineCtxViewProfileBtn,
-    chatLineCtxCopyBtn,
-    chatLineCtxTranslateBtn
-  );
-  letter.appendChild(chatLineCtx);
-
-  const gateCtx = document.createElement("div");
-  gateCtx.className = "other-player-ctx";
-  gateCtx.hidden = true;
-  gateCtx.setAttribute("role", "menu");
-  gateCtx.setAttribute("aria-label", "Gate");
-  const gateCtxOpenBtn = document.createElement("button");
-  gateCtxOpenBtn.type = "button";
-  gateCtxOpenBtn.className = "other-player-ctx__item";
-  gateCtxOpenBtn.setAttribute("role", "menuitem");
-  gateCtxOpenBtn.textContent = "Open gate";
-  gateCtx.append(gateCtxOpenBtn);
-  letter.appendChild(gateCtx);
-
-  let gateCtxOutsideBound = false;
-  let gateCtxEsc: ((e: KeyboardEvent) => void) | null = null;
-  function closeGateContextMenu(): void {
-    gateCtx.hidden = true;
-    gateCtxOpenBtn.onclick = null;
-    if (gateCtxEsc) {
-      window.removeEventListener("keydown", gateCtxEsc);
-      gateCtxEsc = null;
-    }
-    if (gateCtxOutsideBound) {
-      window.removeEventListener("pointerdown", onGateCtxOutside, true);
-      gateCtxOutsideBound = false;
-    }
-  }
-  function onGateCtxOutside(ev: PointerEvent): void {
-    if (!gateCtx.hidden && !gateCtx.contains(ev.target as Node)) {
-      closeGateContextMenu();
-    }
-  }
-
   letter.appendChild(otherPlayerProfile);
 
-  let chatLineCtxOutsideBound = false;
-  let chatLineCtxEsc: ((e: KeyboardEvent) => void) | null = null;
   type ChatLineCtxPayload = {
     fromAddress: string;
     displayName: string;
     profileIsSelf: boolean;
     translateText: string;
   };
-  let chatLineCtxPayload: ChatLineCtxPayload | null = null;
-
-  function closeChatLineContextMenu(): void {
-    chatLineCtx.hidden = true;
-    chatLineCtxPayload = null;
-    if (chatLineCtxEsc) {
-      window.removeEventListener("keydown", chatLineCtxEsc);
-      chatLineCtxEsc = null;
-    }
-    if (!chatLineCtxOutsideBound) return;
-    chatLineCtxOutsideBound = false;
-    window.removeEventListener("pointerdown", onChatLineCtxOutsidePointerDown);
-  }
-
-  function onChatLineCtxOutsidePointerDown(e: PointerEvent): void {
-    if (chatLineCtx.hidden) return;
-    if (chatLineCtx.contains(e.target as Node)) return;
-    closeChatLineContextMenu();
-  }
-
-  function onChatLineCtxEscape(e: KeyboardEvent): void {
-    if (e.key !== "Escape") return;
-    closeChatLineContextMenu();
-  }
-
-  function bindChatLineCtxOutside(): void {
-    if (chatLineCtxOutsideBound) return;
-    chatLineCtxOutsideBound = true;
-    window.addEventListener("pointerdown", onChatLineCtxOutsidePointerDown);
-  }
 
   function googleTranslateUrlForText(message: string): string {
     const raw = message.trim();
@@ -2211,76 +2131,72 @@ export function createHud(
     clientY: number,
     payload: ChatLineCtxPayload
   ): void {
-    closeChatLineContextMenu();
-    closeOtherPlayerContextMenu();
+    worldCtx.close();
     closeSelfEmojiMenu();
-    chatLineCtxPayload = payload;
-    const hasProfile = !!payload.fromAddress;
-    chatLineCtxViewProfileBtn.hidden = !hasProfile;
-    chatLineCtx.hidden = false;
-    chatLineCtx.style.position = "fixed";
-    chatLineCtxEsc = onChatLineCtxEscape;
-    window.addEventListener("keydown", chatLineCtxEsc);
-    requestAnimationFrame(() => {
-      const w = chatLineCtx.offsetWidth || 160;
-      const h = chatLineCtx.offsetHeight || 44;
-      const pad = 8;
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const x = Math.min(Math.max(pad, clientX), vw - w - pad);
-      const y = Math.min(Math.max(pad, clientY), vh - h - pad);
-      chatLineCtx.style.left = `${x}px`;
-      chatLineCtx.style.top = `${y}px`;
-      bindChatLineCtxOutside();
-      chatLineCtxTranslateBtn.focus();
+    const items: WorldContextMenuItem[] = [];
+    if (payload.fromAddress) {
+      items.push({
+        id: "profile",
+        label: "View profile",
+        onSelect: () => {
+          if (payload.profileIsSelf) {
+            openOwnPlayerProfileFromBar();
+          } else {
+            void showPlayerProfileView(
+              payload.fromAddress,
+              payload.displayName,
+              "other"
+            );
+          }
+        },
+      });
+    }
+    items.push(
+      {
+        id: "copy",
+        label: "Copy message",
+        onSelect: () => {
+          const text = payload.translateText.trim();
+          if (!text) return;
+          void navigator.clipboard?.writeText(text).catch(() => {
+            /* ignore */
+          });
+        },
+      },
+      {
+        id: "translate",
+        label: "Translate",
+        onSelect: () => {
+          const text = payload.translateText.trim();
+          if (!text) return;
+          const url = googleTranslateUrlForText(text);
+          presentExternalVisitConfirm({
+            url,
+            displayName: "Google Translate",
+            onConfirm: () => {
+              const assist = prefersTranslateClipboardAssist();
+              if (assist && navigator.clipboard?.writeText) {
+                void navigator.clipboard.writeText(text).then(
+                  () => showTranslateClipboardHintToast(),
+                  () => {}
+                );
+              }
+              window.open(url, "_blank", "noopener,noreferrer");
+            },
+          });
+        },
+      }
+    );
+    worldCtx.open({
+      kind: "items",
+      clientX,
+      clientY,
+      ariaLabel: "Chat message actions",
+      items,
+      initialFocus: "last",
     });
   }
 
-  chatLineCtxViewProfileBtn.addEventListener("click", () => {
-    const p = chatLineCtxPayload;
-    closeChatLineContextMenu();
-    if (!p?.fromAddress) return;
-    if (p.profileIsSelf) {
-      openOwnPlayerProfileFromBar();
-    } else {
-      void showPlayerProfileView(p.fromAddress, p.displayName, "other");
-    }
-  });
-
-  chatLineCtxCopyBtn.addEventListener("click", () => {
-    const p = chatLineCtxPayload;
-    closeChatLineContextMenu();
-    const text = p?.translateText.trim() ?? "";
-    if (!text) return;
-    /* Idiomatic silent copy, matches `oppCopyAddressBtn` pattern. */
-    void navigator.clipboard?.writeText(text).catch(() => {
-      /* ignore */
-    });
-  });
-
-  chatLineCtxTranslateBtn.addEventListener("click", () => {
-    const p = chatLineCtxPayload;
-    closeChatLineContextMenu();
-    if (!p?.translateText.trim()) return;
-    const text = p.translateText.trim();
-    const url = googleTranslateUrlForText(text);
-    presentExternalVisitConfirm({
-      url,
-      displayName: "Google Translate",
-      onConfirm: () => {
-        const assist = prefersTranslateClipboardAssist();
-        if (assist && navigator.clipboard?.writeText) {
-          void navigator.clipboard.writeText(text).then(
-            () => showTranslateClipboardHintToast(),
-            () => {}
-          );
-        }
-        window.open(url, "_blank", "noopener,noreferrer");
-      },
-    });
-  });
-
-  let otherCtxOutsideBound = false;
   let profileOpenCompact = "";
   let profileMessageEditor: HTMLElement | null = null;
   let profileDescEditBlurHandler: (() => void) | null = null;
@@ -2805,7 +2721,7 @@ export function createHud(
     oppCopyAddressBtn.removeAttribute("title");
   }
 
-  function closeOtherPlayerContextMenu(): void {
+  function resetOtherPlayerContextMenuVisual(): void {
     otherPlayerCtx.hidden = true;
     otherPlayerCtxMulti.replaceChildren();
     otherPlayerCtxMulti.hidden = true;
@@ -2813,17 +2729,15 @@ export function createHud(
     otherPlayerCtxIdent.hidden = true;
     otherPlayerCtxIdent.removeAttribute("src");
     delete otherPlayerCtxIdent.dataset.address;
-    if (!otherCtxOutsideBound) return;
-    otherCtxOutsideBound = false;
-    window.removeEventListener("pointerdown", onOtherCtxOutsidePointerDown);
-    window.removeEventListener("keydown", onOtherCtxEscape);
+  }
+
+  function closeOtherPlayerContextMenu(): void {
+    worldCtx.closeIfActiveOwnedElement(otherPlayerCtx);
   }
 
   function closeOtherPlayerUiOverlays(): void {
     closeOtherPlayerProfile();
-    closeOtherPlayerContextMenu();
-    closeChatLineContextMenu();
-    closeGateContextMenu();
+    worldCtx.close();
   }
 
   async function loadCtxIdenticon(
@@ -2904,17 +2818,6 @@ export function createHud(
     otherPlayerCtxSingle.hidden = true;
   }
 
-  function onOtherCtxOutsidePointerDown(e: PointerEvent): void {
-    if (otherPlayerCtx.hidden) return;
-    if (otherPlayerCtx.contains(e.target as Node)) return;
-    closeOtherPlayerContextMenu();
-  }
-
-  function onOtherCtxEscape(e: KeyboardEvent): void {
-    if (e.key !== "Escape") return;
-    closeOtherPlayerContextMenu();
-  }
-
   let profileEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
   function detachProfileEscape(): void {
     if (!profileEscapeHandler) return;
@@ -2939,13 +2842,6 @@ export function createHud(
       closeOtherPlayerProfile();
     };
     window.addEventListener("keydown", profileEscapeHandler);
-  }
-
-  function bindOtherCtxOutside(): void {
-    if (otherCtxOutsideBound) return;
-    otherCtxOutsideBound = true;
-    window.addEventListener("pointerdown", onOtherCtxOutsidePointerDown);
-    window.addEventListener("keydown", onOtherCtxEscape);
   }
 
   function walletKeyForProfile(a: string): string {
@@ -6802,12 +6698,9 @@ export function createHud(
       opts?: { emoteRowFirst?: boolean; onEmote?: () => void }
     ) {
       closeSelfEmojiMenu();
-      closeChatLineContextMenu();
-      closeGateContextMenu();
+      worldCtx.close();
       closeOtherPlayerProfile();
       if (targets.length === 0) return;
-      otherPlayerCtx.hidden = false;
-      otherPlayerCtx.style.position = "fixed";
       const emoteBlock =
         opts?.emoteRowFirst && typeof opts.onEmote === "function"
           ? { onEmote: opts.onEmote }
@@ -6823,17 +6716,18 @@ export function createHud(
       } else {
         openOtherPlayerMultiPicker(targets);
       }
-      requestAnimationFrame(() => {
-        const w = otherPlayerCtx.offsetWidth || 160;
-        const h = otherPlayerCtx.offsetHeight || 44;
-        const pad = 8;
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-        const x = Math.min(Math.max(pad, clientX), vw - w - pad);
-        const y = Math.min(Math.max(pad, clientY), vh - h - pad);
-        otherPlayerCtx.style.left = `${x}px`;
-        otherPlayerCtx.style.top = `${y}px`;
-        bindOtherCtxOutside();
+      const ariaLabel = emoteBlock
+        ? "Emote and nearby players"
+        : targets.length > 1
+          ? "Players here"
+          : "Player actions";
+      worldCtx.open({
+        kind: "owned",
+        clientX,
+        clientY,
+        ariaLabel,
+        element: otherPlayerCtx,
+        onOwnedClose: resetOtherPlayerContextMenuVisual,
       });
     },
     hideOtherPlayerContextMenu() {
@@ -7997,35 +7891,63 @@ export function createHud(
       opts: { onOpen: () => void }
     ) {
       closeSelfEmojiMenu();
-      closeChatLineContextMenu();
-      closeOtherPlayerContextMenu();
-      closeGateContextMenu();
-      gateCtxOpenBtn.onclick = () => {
-        closeGateContextMenu();
-        opts.onOpen();
-      };
-      gateCtx.hidden = false;
-      requestAnimationFrame(() => {
-        const w = gateCtx.offsetWidth || 160;
-        const h = gateCtx.offsetHeight || 44;
-        const pad = 8;
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-        const x = Math.min(Math.max(pad, clientX), vw - w - pad);
-        const y = Math.min(Math.max(pad, clientY), vh - h - pad);
-        gateCtx.style.left = `${x}px`;
-        gateCtx.style.top = `${y}px`;
-        gateCtx.style.position = "fixed";
-        gateCtxEsc = (e: KeyboardEvent) => {
-          if (e.key === "Escape") closeGateContextMenu();
-        };
-        window.addEventListener("keydown", gateCtxEsc);
-        window.addEventListener("pointerdown", onGateCtxOutside, true);
-        gateCtxOutsideBound = true;
+      worldCtx.close();
+      closeOtherPlayerProfile();
+      worldCtx.open({
+        kind: "items",
+        clientX,
+        clientY,
+        ariaLabel: "Gate",
+        items: [
+          {
+            id: "open",
+            label: "Open gate",
+            onSelect: () => {
+              opts.onOpen();
+            },
+          },
+        ],
       });
     },
     hideGateContextMenu() {
-      closeGateContextMenu();
+      worldCtx.close();
+    },
+    showWorldTileContextMenu(
+      clientX: number,
+      clientY: number,
+      opts: {
+        onWalkHere: (() => void) | null;
+        onMine: (() => void) | null;
+      }
+    ) {
+      closeSelfEmojiMenu();
+      worldCtx.close();
+      closeOtherPlayerProfile();
+      const items: WorldContextMenuItem[] = [];
+      if (opts.onWalkHere) {
+        items.push({
+          id: "walk",
+          label: "Walk here",
+          onSelect: opts.onWalkHere,
+        });
+      }
+      if (opts.onMine) {
+        items.push({
+          id: "mine",
+          label: "Mine",
+          labelSuffix: " (50% ↑ time)",
+          suffixClass: "other-player-ctx__item-suffix--mine-timing",
+          onSelect: opts.onMine,
+        });
+      }
+      if (items.length === 0) return;
+      worldCtx.open({
+        kind: "items",
+        clientX,
+        clientY,
+        ariaLabel: "World",
+        items,
+      });
     },
     onBuildToolSelect(
       fn: (
@@ -8722,8 +8644,7 @@ export function createHud(
       bindTileInspectorPreviewGame(null);
       closeSelfEmojiMenu();
       closeOtherPlayerProfile();
-      closeOtherPlayerContextMenu();
-      closeChatLineContextMenu();
+      worldCtx.close();
       chatHoverZone.removeEventListener("contextmenu", onChatHoverZoneContextMenu);
       hideBrandLinksOverlay();
       hideFeedbackOverlay();
