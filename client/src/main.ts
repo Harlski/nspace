@@ -1704,6 +1704,19 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     return "walk";
   }
 
+  function removeSelectedPlacedObject(): void {
+    if (!ws) return;
+    const sel = game.getSelectedBlockTile();
+    const t = sel ?? editingTile;
+    if (!t) return;
+    game.setTeleporterDestPickHandler(null);
+    sendRemoveObstacleAt(ws, t.x, t.z, t.y);
+    editingTile = null;
+    hud.hideObjectEditPanel();
+    game.clearSelectedBlock();
+    syncBuildHud();
+  }
+
   function canEditCurrentRoomBackgroundHue(
     row: KnownRoomRow | undefined
   ): boolean {
@@ -2041,6 +2054,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     hud.hideObjectEditPanel();
     game.clearSelectedBlock();
     syncBuildHud();
+  });
+
+  hud.onSelectedObjectDelete(() => {
+    removeSelectedPlacedObject();
   });
 
   hud.onPlayModeSelect((mode) => {
@@ -3993,14 +4010,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           return;
         }
         if (k === "d" || k === "D") {
-          const sel = game.getSelectedBlockTile();
-          const t = sel ?? editingTile;
-          if (t && ws) {
-            sendRemoveObstacleAt(ws, t.x, t.z, t.y);
-            editingTile = null;
-            hud.hideObjectEditPanel();
-            game.clearSelectedBlock();
-            syncBuildHud();
+          if (hud.isObjectSelectionActive()) {
+            removeSelectedPlacedObject();
           }
           e.preventDefault();
           return;

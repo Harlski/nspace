@@ -381,6 +381,8 @@ export function createHud(
   isObjectSelectionActive: () => boolean;
   /** Clear map selection + close selection satellites (context card, selection hue). */
   onObjectSelectionDismiss: (fn: (() => void) | null) => void;
+  /** Delete the currently selected placed object (same as D on desktop). */
+  onSelectedObjectDelete: (fn: (() => void) | null) => void;
   /** Standalone modal: edit up to {@link GATE_AUTH_MAX} wallets allowed to open a gate. */
   showGateAclEditor: (opts: {
     x: number;
@@ -1485,7 +1487,23 @@ export function createHud(
   buildDockRotateCw.textContent = "↻";
   buildDockRotateCw.title = "Rotate clockwise";
   buildDockRotateCw.setAttribute("aria-label", "Rotate clockwise");
-  buildDockRotateScope.append(buildDockRotateCcw, buildDockRotateCw);
+  const buildDockDeleteBtn = document.createElement("button");
+  buildDockDeleteBtn.type = "button";
+  buildDockDeleteBtn.className =
+    "hud-build-bottom-dock__rotate hud-build-bottom-dock__rotate--delete";
+  buildDockDeleteBtn.hidden = true;
+  buildDockDeleteBtn.title = "Delete selected object";
+  buildDockDeleteBtn.setAttribute("aria-label", "Delete selected object");
+  buildDockDeleteBtn.innerHTML = nimiqIconUseMarkup("nq-cross", {
+    width: 10,
+    height: 10,
+    class: "hud-build-bottom-dock__rotate-icon",
+  });
+  buildDockRotateScope.append(
+    buildDockRotateCcw,
+    buildDockRotateCw,
+    buildDockDeleteBtn
+  );
   buildEditKindWrap.append(buildDockRotateScope, buildEditKindPicker);
 
   const buildToggleBtn = document.createElement("button");
@@ -3731,9 +3749,14 @@ export function createHud(
     const roomEdit =
       hudPlayMode === "floor" ||
       (hudPlayMode === "build" && buildEditKindSelect.value === "room");
-    const show =
-      !roomEdit && !buildEditKindWrap.hidden && buildDockRotateApplicable();
-    buildDockRotateScope.hidden = !show;
+    const selection = isBuildObjectSelectionActive();
+    const rotate = buildDockRotateApplicable();
+    const showScope =
+      !roomEdit && !buildEditKindWrap.hidden && (selection || rotate);
+    buildDockRotateScope.hidden = !showScope;
+    buildDockDeleteBtn.hidden = !selection;
+    buildDockRotateCcw.hidden = !rotate;
+    buildDockRotateCw.hidden = !rotate;
   }
 
   function applyBuildDockRotate(delta: -1 | 1): boolean {
@@ -4112,6 +4135,7 @@ export function createHud(
     "#hud-build-dock-advanced"
   ) as HTMLButtonElement;
   let objectSelectionDismissHandler: (() => void) | null = null;
+  let objectSelectionDeleteHandler: (() => void) | null = null;
   let billboardSelectionEditHandler: (() => void) | null = null;
 
   function isBuildObjectSelectionActive(): boolean {
@@ -4241,6 +4265,15 @@ export function createHud(
     onBuildDockRotatePointer(-1)
   );
   buildDockRotateCw.addEventListener("pointerdown", onBuildDockRotatePointer(1));
+
+  const onBuildDockDeletePointer = (e: Event): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (buildDockDeleteBtn.hidden) return;
+    objectSelectionDeleteHandler?.();
+  };
+  buildDockDeleteBtn.addEventListener("pointerdown", onBuildDockDeletePointer);
+  buildDockDeleteBtn.addEventListener("click", onBuildDockDeletePointer);
   const buildDockContextColor = buildBottomDockContext.querySelector(
     ".hud-build-bottom-dock__context-color"
   ) as HTMLElement;
@@ -9226,6 +9259,9 @@ export function createHud(
     },
     onObjectSelectionDismiss(fn: (() => void) | null) {
       objectSelectionDismissHandler = fn;
+    },
+    onSelectedObjectDelete(fn: (() => void) | null) {
+      objectSelectionDeleteHandler = fn;
     },
     showGateAclEditor(opts) {
       showGateAclEditor(opts);

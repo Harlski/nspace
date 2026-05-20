@@ -60,7 +60,8 @@ Use **Reference ID** in feedback (e.g. “increase `build-dock-context-mods` scr
 | `build-dock-deselect` | `.hud-build-bottom-dock__deselect` | White circle **×** on the **Selected** GL preview (top-right of thumbnail); clears selection (`onObjectSelectionDismiss`) |
 | `build-dock-tabs` | `.hud-build-bottom-dock__tabs` | Tab row + edit-scope select |
 | `build-dock-category-tabs` | `.hud-build-bottom-dock__category-tabs` | **Terrain / Props / Buildings** |
-| `build-dock-edit-scope` | `.hud-build-bottom-dock__edit-scope` | **Objects / Room** picker (native `<select>` or mobile overlay) |
+| `build-dock-edit-scope` | `.hud-build-bottom-dock__edit-scope` | **Objects / Room** picker; **rotate** (ramps) and **delete** (`nq-cross`, selected object) beside it |
+| `build-dock-selection-delete` | `.hud-build-bottom-dock__rotate--delete` | Deletes the selected placed object (same as **D** on desktop) |
 | `build-dock-picker-row` | `.hud-build-bottom-dock__row--picker` | Tool strip + context grid |
 | `build-dock-max-height` | `--hud-build-dock-panel-max-height` | CSS variable on `.hud` (default `min(40vh, 164px)`) |
 

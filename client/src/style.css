@@ -5392,6 +5392,16 @@ button.hud-brand:focus-visible {
   color: #e8eaef;
 }
 
+.hud-build-bottom-dock__rotate-icon {
+  display: block;
+  pointer-events: none;
+}
+
+.hud-build-bottom-dock__rotate--delete:hover {
+  border-color: rgba(248, 113, 113, 0.5);
+  color: #fecaca;
+}
+
 .hud-build-bottom-dock__step:disabled {
   opacity: 0.38;
   cursor: default;
