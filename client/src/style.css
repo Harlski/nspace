@@ -1615,10 +1615,6 @@ button.hud-brand:focus-visible {
   white-space: nowrap;
 }
 
-.hud-debug[hidden] {
-  display: none !important;
-}
-
 .hud-debug {
   margin: 0;
   padding: 8px 10px;
@@ -3869,6 +3865,15 @@ button.hud-brand:focus-visible {
   box-shadow: none;
   background: transparent;
   display: block;
+}
+
+.other-player-profile__identicon--debug-toggle {
+  cursor: pointer;
+}
+
+.other-player-profile__identicon--debug-toggle:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.55);
+  outline-offset: 3px;
 }
 
 .other-player-profile__name-primary-wrap {

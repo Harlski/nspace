@@ -543,6 +543,8 @@ export function createHud(
     createdAt: number;
   } | null) => void;
   setDebugText: (text: string) => void;
+  isDebugPanelVisible: () => boolean;
+  setDebugPanelVisible: (visible: boolean) => void;
   setCanvasLeaderboardVisible: (visible: boolean) => void;
   updateCanvasLeaderboard: (leaders: Array<{ address: string; bestMs: number }>) => void;
   setCanvasTimer: (timeRemaining: number) => void;
@@ -590,7 +592,9 @@ export function createHud(
 } {
   root.innerHTML = "";
 
-  const showDebug = opts?.showDebug ?? false;
+  /** Room stats overlay; toggled from your profile identicon (hidden by default). */
+  let debugPanelVisible = opts?.showDebug === true;
+  let debugPanelText = "";
 
   const frame = document.createElement("div");
   frame.className = "game-frame";
@@ -976,8 +980,31 @@ export function createHud(
 
   const debugPanel = document.createElement("pre");
   debugPanel.className = "hud-debug";
-  debugPanel.hidden = !showDebug;
-  debugPanel.setAttribute("aria-hidden", showDebug ? "false" : "true");
+  debugPanel.setAttribute("aria-label", "Debug info");
+
+  function syncDebugPanelChrome(): void {
+    debugPanel.hidden = !debugPanelVisible;
+    debugPanel.setAttribute("aria-hidden", debugPanelVisible ? "false" : "true");
+    if (debugPanelVisible && debugPanelText) {
+      debugPanel.textContent = debugPanelText;
+    }
+  }
+
+  function applyDebugPanelVisible(visible: boolean): void {
+    if (debugPanelVisible === visible) return;
+    debugPanelVisible = visible;
+    syncDebugPanelChrome();
+    if (profileMessageKindOpen === "self") {
+      oppIdent.setAttribute("aria-pressed", visible ? "true" : "false");
+      oppIdent.title = visible ? "Hide debug info" : "Show debug info";
+      oppIdent.setAttribute(
+        "aria-label",
+        visible ? "Hide debug info" : "Show debug info"
+      );
+    }
+  }
+
+  syncDebugPanelChrome();
 
   const perfHud = document.createElement("div");
   perfHud.className = "hud-perf-hud";
@@ -1288,9 +1315,7 @@ export function createHud(
     </div>
   `;
 
-  if (showDebug) {
-    leftStack.appendChild(debugPanel);
-  }
+  leftStack.appendChild(debugPanel);
   leftStack.appendChild(canvasLeaderboard);
   
   // Close button for signboard tooltip
@@ -1849,6 +1874,18 @@ export function createHud(
   oppIdent.width = 76;
   oppIdent.height = 76;
   oppIdent.hidden = true;
+  oppIdent.addEventListener("click", (e) => {
+    if (profileMessageKindOpen !== "self") return;
+    e.stopPropagation();
+    applyDebugPanelVisible(!debugPanelVisible);
+  });
+  oppIdent.addEventListener("keydown", (e) => {
+    if (profileMessageKindOpen !== "self") return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    e.stopPropagation();
+    applyDebugPanelVisible(!debugPanelVisible);
+  });
   const oppNimiqPayHost = document.createElement("div");
   oppNimiqPayHost.className = "other-player-profile__nimiq-pay-inline";
   oppNimiqPayHost.hidden = true;
@@ -2915,6 +2952,29 @@ export function createHud(
     oppIdent.hidden = false;
     oppIdent.removeAttribute("src");
     oppIdent.dataset.address = compact;
+    const selfProfile = kind === "self";
+    oppIdent.classList.toggle(
+      "other-player-profile__identicon--debug-toggle",
+      selfProfile
+    );
+    if (selfProfile) {
+      oppIdent.setAttribute("role", "button");
+      oppIdent.tabIndex = 0;
+      oppIdent.title = debugPanelVisible
+        ? "Hide debug info"
+        : "Show debug info";
+      oppIdent.setAttribute(
+        "aria-label",
+        debugPanelVisible ? "Hide debug info" : "Show debug info"
+      );
+      oppIdent.setAttribute("aria-pressed", debugPanelVisible ? "true" : "false");
+    } else {
+      oppIdent.removeAttribute("role");
+      oppIdent.tabIndex = -1;
+      oppIdent.removeAttribute("title");
+      oppIdent.removeAttribute("aria-label");
+      oppIdent.removeAttribute("aria-pressed");
+    }
     void (async (): Promise<void> => {
       try {
         const { identiconDataUrl } = await import("../game/identiconTexture.js");
@@ -9629,8 +9689,16 @@ export function createHud(
       presentExternalVisitConfirm(p);
     },
     setDebugText(text: string) {
-      if (!showDebug) return;
-      debugPanel.textContent = text;
+      debugPanelText = text;
+      if (debugPanelVisible) {
+        debugPanel.textContent = text;
+      }
+    },
+    isDebugPanelVisible() {
+      return debugPanelVisible;
+    },
+    setDebugPanelVisible(visible: boolean) {
+      applyDebugPanelVisible(visible);
     },
     setCanvasLeaderboardVisible(visible: boolean) {
       canvasLeaderboard.hidden = !visible;

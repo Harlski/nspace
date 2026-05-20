@@ -355,10 +355,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   app.appendChild(hudRoot);
 
   const query = new URLSearchParams(location.search);
-  /** Dev server always; production builds only with `?debug` (never `import.meta.env.DEV` alone). */
-  const showDebugHud = import.meta.env.PROD
-    ? query.has("debug")
-    : import.meta.env.DEV || query.has("debug");
+  const showDebugHud = query.has("debug");
 
   let ws: WebSocket | null = null;
   const perfPingSentAt = new Map<number, number>();
@@ -4077,7 +4074,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       const floor = pos ? snapFloorTile(pos.x, pos.z) : null;
       hud.setSelfEmojiMenuAnchor(ea ? ea.x : null, ea ? ea.y : null, floor);
     }
-    if (showDebugHud) {
+    if (hud.isDebugPanelVisible()) {
       const rawClamped = Math.min(400, Math.max(1, rawMs));
       const instHz = 1000 / rawClamped;
       debugDispHzSmoothed = debugDispHzSmoothed * 0.9 + instHz * 0.1;
