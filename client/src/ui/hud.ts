@@ -52,16 +52,26 @@ import { createWorldContextMenu, type WorldContextMenuItem } from "./worldContex
 import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
 import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
-import { ringHueFromClient } from "./ringHuePick.js";
+import {
+  buildDockContextParamVisible,
+  type BuildDockContextParamId,
+  type BuildDockContextTool,
+} from "./buildDockContextParams.js";
+import {
+  attachPaletteHueRingArrowKeys,
+  attachPaletteHueRingPointerHandlers,
+  createPaletteHueRing,
+  PALETTE_HUE_RING_BAND,
+  PALETTE_HUE_RING_CORE,
+} from "./paletteHueRing.js";
 import { mountHeaderMarquee } from "./headerMarquee.js";
 
 const LS_HUD_CHAT_MINIMIZED = "nspace_hud_chat_minimized";
 
-/** Shape picker list (placement + object-edit popovers). Add new shapes here. */
-const SHAPE_PICKER_OPTIONS_HTML = `
-  <div class="build-block-bar-shape-popover__inner">
+/** Prism shape buttons (embedded in placement / object “More options” panels). Add new shapes here. */
+const SHAPE_PICKER_BODY_HTML = `
     <div class="build-block-bar__popover-heading">Shape</div>
-    <div class="build-block-bar-shape-popover__options" role="group" aria-label="Block shape">
+    <div class="build-block-bar-shape-popover__options build-block-bar-advanced__shape-options" role="group" aria-label="Block shape">
       <button type="button" class="tile-inspector__shape-btn tile-inspector__shape-btn--active" data-shape="cube" aria-pressed="true" aria-label="Cube">
         <svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6 12l10-5 10 5v10l-10 5-10-5V12zm0 0l10 5 10-5m-10 5v10"/></svg>
         <span class="tile-inspector__shape-label">Cube</span>
@@ -82,19 +92,7 @@ const SHAPE_PICKER_OPTIONS_HTML = `
         <svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6 24h20l-8-16H6v16z"/></svg>
         <span class="tile-inspector__shape-label">Ramp</span>
       </button>
-    </div>
-  </div>`;
-
-const SHAPE_TRIG_SVG: Record<
-  "cube" | "hex" | "pyramid" | "sphere" | "ramp",
-  string
-> = {
-  cube: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6 12l10-5 10 5v10l-10 5-10-5V12zm0 0l10 5 10-5m-10 5v10"/></svg>`,
-  hex: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M16 5l9.5 5.5v11L16 27l-9.5-5.5v-11L16 5z"/></svg>`,
-  pyramid: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M16 5L7 25h18L16 5z"/></svg>`,
-  sphere: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><ellipse fill="none" stroke="currentColor" stroke-width="1.5" cx="16" cy="16" rx="8" ry="8"/><path fill="none" stroke="currentColor" stroke-width="1.1" d="M8 16h16M16 8a12 12 0 000 16"/></svg>`,
-  ramp: `<svg class="tile-inspector__shape-icon" viewBox="0 0 32 32" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M6 24h20l-8-16H6v16z"/></svg>`,
-};
+    </div>`;
 
 function cssHex(n: number): string {
   return `#${n.toString(16).padStart(6, "0")}`;
@@ -271,7 +269,7 @@ export function createHud(
   onRoomsOpen: (fn: () => void) => void;
   /** Confirmed from a room listed on a player profile. */
   onProfileRoomJoin: (fn: (roomId: string) => void) => void;
-  /** Build toggle: walk off / on; on + Objects vs Room (dropdown) maps to build vs floor. */
+  /** Build toggle: walk off / on; Objects vs Room `<select>` in the bottom dock tab row maps to build vs floor when both caps apply. */
   onPlayModeSelect: (fn: (mode: "walk" | "build" | "floor") => void) => void;
   setPlayModeState: (mode: "walk" | "build" | "floor") => void;
   /** Per-room edit caps from server welcome; disables Build / Floor when false. */
@@ -312,6 +310,9 @@ export function createHud(
           colorId: number;
           locked?: boolean;
           isAdmin?: boolean;
+          /** Claimable (minable) block; preview uses gold when active. */
+          claimable?: boolean;
+          active?: boolean;
           /** When set, panel edits opening direction for an existing gate. */
           gate?: {
             adminAddress: string;
@@ -335,6 +336,10 @@ export function createHud(
             destRoomId: string;
             destX: number;
             destZ: number;
+            /** Source tile stack level (for server pair placement). */
+            y: number;
+            /** True when this teleporter is linked to another in the same room (bidirectional). */
+            isBidirectionalPair?: boolean;
             /** Room the player is standing in; pick-by-click only applies when destination room matches. */
             currentRoomId: string;
             roomOptions: Array<{
@@ -347,7 +352,7 @@ export function createHud(
             }>;
             onPickTileInCurrentRoom: () => void;
             onPickCancel: () => void;
-            onConfigure: (
+            onCommitDestination: (
               destRoomId: string,
               destX: number,
               destZ: number
@@ -372,6 +377,10 @@ export function createHud(
         }
   ) => void;
   hideObjectEditPanel: () => void;
+  /** True while a placed object / billboard is selected in build mode. */
+  isObjectSelectionActive: () => boolean;
+  /** Clear map selection + close selection satellites (context card, selection hue). */
+  onObjectSelectionDismiss: (fn: (() => void) | null) => void;
   /** Standalone modal: edit up to {@link GATE_AUTH_MAX} wallets allowed to open a gate. */
   showGateAclEditor: (opts: {
     x: number;
@@ -389,6 +398,16 @@ export function createHud(
     destZ: number;
   }) => void;
   setObjectPanelProps: (p: ObstacleProps) => void;
+  /** Refresh teleporter selection preview + status after server updates the tile. */
+  refreshTeleporterObjectSelection: (opts: {
+    pending: boolean;
+    isBidirectionalPair?: boolean;
+    x: number;
+    z: number;
+    y: number;
+  }) => void;
+  /** After server applies destination, align dirty baseline with current draft. */
+  ackTeleporterDestinationBaseline: () => void;
   onBuildPlacementStyle: (
     fn: (patch: {
       half?: boolean;
@@ -404,6 +423,7 @@ export function createHud(
     }) => void
   ) => void;
   setBuildBlockBarState: (state: BuildBlockBarState) => void;
+  refreshBuildDockToolStrip: () => void;
   isSignpostModeActive: () => boolean;
   isBillboardModeActive: () => boolean;
   deactivateSignpostMode: () => void;
@@ -1345,24 +1365,43 @@ export function createHud(
   const topActions = document.createElement("div");
   topActions.className = "hud-top-actions";
 
-  const modeSidebar = document.createElement("aside");
-  modeSidebar.className = "hud-mode-sidebar";
-  modeSidebar.setAttribute("aria-label", "Play mode");
-
   const modeTablist = document.createElement("div");
   modeTablist.className = "hud-mode-sidebar__tabs";
   modeTablist.setAttribute("aria-label", "Build mode");
 
-  const buildEditKindLabel = document.createElement("div");
-  buildEditKindLabel.className = "hud-mode-sidebar__edit-label";
-  buildEditKindLabel.textContent = "Edit";
-  buildEditKindLabel.hidden = true;
-
   const buildEditKindWrap = document.createElement("div");
-  buildEditKindWrap.className = "hud-mode-sidebar__edit-kind-wrap";
+  buildEditKindWrap.className = "hud-build-bottom-dock__edit-scope";
   buildEditKindWrap.hidden = true;
+  const BUILD_EDIT_KIND_OVERLAY_MQ = window.matchMedia(
+    "(pointer: coarse) and (max-width: 960px)"
+  );
+  const buildEditKindPicker = document.createElement("div");
+  buildEditKindPicker.className = "hud-build-bottom-dock__edit-kind-picker";
+  const buildEditKindTrigger = document.createElement("button");
+  buildEditKindTrigger.type = "button";
+  buildEditKindTrigger.className = "hud-build-bottom-dock__edit-kind-trigger";
+  buildEditKindTrigger.id = "hud-build-edit-kind-trigger";
+  buildEditKindTrigger.setAttribute("aria-haspopup", "listbox");
+  buildEditKindTrigger.setAttribute("aria-expanded", "false");
+  buildEditKindTrigger.setAttribute(
+    "aria-controls",
+    "hud-build-edit-kind-popover"
+  );
+  const buildEditKindTriggerLabel = document.createElement("span");
+  buildEditKindTriggerLabel.className =
+    "hud-build-bottom-dock__edit-kind-trigger-label";
+  buildEditKindTriggerLabel.textContent = "Objects";
+  const buildEditKindTriggerCaret = document.createElement("span");
+  buildEditKindTriggerCaret.className =
+    "hud-build-bottom-dock__edit-kind-trigger-caret";
+  buildEditKindTriggerCaret.setAttribute("aria-hidden", "true");
+  buildEditKindTriggerCaret.textContent = "▾";
+  buildEditKindTrigger.append(
+    buildEditKindTriggerLabel,
+    buildEditKindTriggerCaret
+  );
   const buildEditKindSelect = document.createElement("select");
-  buildEditKindSelect.className = "hud-mode-sidebar__edit-kind-select";
+  buildEditKindSelect.className = "hud-build-bottom-dock__edit-kind-select";
   buildEditKindSelect.id = "hud-build-edit-kind";
   buildEditKindSelect.setAttribute("aria-label", "What to edit");
   const buildEditOptObjects = document.createElement("option");
@@ -1373,7 +1412,54 @@ export function createHud(
   buildEditOptRoom.textContent = "Room";
   buildEditKindSelect.appendChild(buildEditOptObjects);
   buildEditKindSelect.appendChild(buildEditOptRoom);
-  buildEditKindWrap.appendChild(buildEditKindSelect);
+  const buildEditKindPopover = document.createElement("div");
+  buildEditKindPopover.className =
+    "hud-build-bottom-dock__edit-kind-popover";
+  buildEditKindPopover.id = "hud-build-edit-kind-popover";
+  buildEditKindPopover.hidden = true;
+  buildEditKindPopover.setAttribute("role", "listbox");
+  buildEditKindPopover.setAttribute("aria-label", "What to edit");
+  const buildEditKindOptObjectsBtn = document.createElement("button");
+  buildEditKindOptObjectsBtn.type = "button";
+  buildEditKindOptObjectsBtn.className =
+    "hud-build-bottom-dock__edit-kind-popover-option";
+  buildEditKindOptObjectsBtn.dataset.value = "objects";
+  buildEditKindOptObjectsBtn.setAttribute("role", "option");
+  buildEditKindOptObjectsBtn.textContent = "Objects";
+  const buildEditKindOptRoomBtn = document.createElement("button");
+  buildEditKindOptRoomBtn.type = "button";
+  buildEditKindOptRoomBtn.className =
+    "hud-build-bottom-dock__edit-kind-popover-option";
+  buildEditKindOptRoomBtn.dataset.value = "room";
+  buildEditKindOptRoomBtn.setAttribute("role", "option");
+  buildEditKindOptRoomBtn.textContent = "Room";
+  buildEditKindPopover.append(
+    buildEditKindOptObjectsBtn,
+    buildEditKindOptRoomBtn
+  );
+  buildEditKindPicker.append(buildEditKindTrigger, buildEditKindSelect);
+  const buildDockRotateScope = document.createElement("div");
+  buildDockRotateScope.className = "hud-build-bottom-dock__rotate-scope";
+  buildDockRotateScope.hidden = true;
+  buildDockRotateScope.setAttribute("role", "group");
+  buildDockRotateScope.setAttribute("aria-label", "Rotate");
+  const buildDockRotateCcw = document.createElement("button");
+  buildDockRotateCcw.type = "button";
+  buildDockRotateCcw.className = "hud-build-bottom-dock__rotate";
+  buildDockRotateCcw.textContent = "↺";
+  buildDockRotateCcw.title = "Rotate counter-clockwise";
+  buildDockRotateCcw.setAttribute(
+    "aria-label",
+    "Rotate counter-clockwise"
+  );
+  const buildDockRotateCw = document.createElement("button");
+  buildDockRotateCw.type = "button";
+  buildDockRotateCw.className = "hud-build-bottom-dock__rotate";
+  buildDockRotateCw.textContent = "↻";
+  buildDockRotateCw.title = "Rotate clockwise";
+  buildDockRotateCw.setAttribute("aria-label", "Rotate clockwise");
+  buildDockRotateScope.append(buildDockRotateCcw, buildDockRotateCw);
+  buildEditKindWrap.append(buildDockRotateScope, buildEditKindPicker);
 
   const buildToggleBtn = document.createElement("button");
   buildToggleBtn.type = "button";
@@ -1381,22 +1467,17 @@ export function createHud(
   buildToggleBtn.id = "hud-mode-tab-build";
   buildToggleBtn.setAttribute("role", "button");
   buildToggleBtn.setAttribute("aria-pressed", "false");
-  buildToggleBtn.innerHTML = `${HUD_MODE_ICON_BUILD}<span class="hud-mode-sidebar__tab-label">Build</span>`;
+  buildToggleBtn.innerHTML = `<span class="hud-mode-sidebar__tab-inner">${HUD_MODE_ICON_BUILD}<span class="hud-mode-sidebar__tab-label">Build</span></span>`;
   buildToggleBtn.setAttribute(
     "aria-label",
     "Build. Turn on to edit objects or rooms; turn off to move."
   );
   buildToggleBtn.title = "Build. Turn on to edit; turn off to move. Shortcut: B.";
 
-  const modeSidebarBody = document.createElement("div");
-  modeSidebarBody.className = "hud-mode-sidebar__body";
-  modeSidebarBody.id = "hud-mode-sidebar-panel";
-  modeSidebarBody.setAttribute("role", "tabpanel");
-  modeSidebarBody.setAttribute("aria-labelledby", "hud-mode-tab-build");
-  modeSidebarBody.setAttribute("aria-label", "Mode tools");
-
   const modeSidebarBuildMount = document.createElement("div");
-  modeSidebarBuildMount.className = "hud-mode-sidebar__build-mount";
+  modeSidebarBuildMount.className =
+    "hud-mode-sidebar__build-mount hud-build-block-bar-offdock";
+  ui.appendChild(modeSidebarBuildMount);
   const hueDock = document.createElement("div");
   hueDock.className = "hud-mode-sidebar__hue-dock";
 
@@ -1404,22 +1485,13 @@ export function createHud(
   const roomBgHuePanel = document.createElement("div");
   roomBgHuePanel.className = "hud-mode-sidebar__room-bg";
   roomBgHuePanel.hidden = true;
-  const roomBgHueWrap = document.createElement("div");
-  roomBgHueWrap.className =
-    "build-block-bar__hue-ring-wrap hud-mode-sidebar__room-bg-hue-wrap";
-  const roomBgHueRing = document.createElement("div");
-  roomBgHueRing.className = "build-block-bar__hue-ring";
-  roomBgHueRing.setAttribute("role", "slider");
-  roomBgHueRing.setAttribute("tabindex", "0");
-  roomBgHueRing.setAttribute("aria-valuemin", "0");
-  roomBgHueRing.setAttribute("aria-valuemax", "359");
-  roomBgHueRing.setAttribute("aria-valuenow", String(ROOM_BG_HUE_DEFAULT_RING));
-  roomBgHueRing.setAttribute("aria-label", "Background hue");
-  const roomBgHueCore = document.createElement("div");
-  roomBgHueCore.className = "build-block-bar__hue-core";
-  roomBgHueCore.setAttribute("aria-hidden", "true");
-  roomBgHueWrap.appendChild(roomBgHueRing);
-  roomBgHueWrap.appendChild(roomBgHueCore);
+  const roomBgHueParts = createPaletteHueRing({
+    ariaLabel: "Background hue",
+    ariaValueNow: ROOM_BG_HUE_DEFAULT_RING,
+  });
+  const roomBgHueWrap = roomBgHueParts.wrap;
+  const roomBgHueRing = roomBgHueParts.ring;
+  const roomBgHueCore = roomBgHueParts.core;
   roomBgHuePanel.appendChild(roomBgHueWrap);
 
   const roomBgNeutralRow = document.createElement("div");
@@ -1451,8 +1523,6 @@ export function createHud(
     roomBgNeutralRow.appendChild(b);
   }
   roomBgHuePanel.appendChild(roomBgNeutralRow);
-
-  hueDock.appendChild(roomBgHuePanel);
 
   const roomEntrySpawnPanel = document.createElement("div");
   roomEntrySpawnPanel.className = "hud-mode-sidebar__room-entry-spawn";
@@ -1508,12 +1578,11 @@ export function createHud(
     }
   }
 
-  modeSidebarBody.appendChild(modeSidebarBuildMount);
-  modeSidebarBody.appendChild(hueDock);
-
   let roomBgHueDragging = false;
   let roomBgHueInputHandler: ((deg: number) => void) | null = null;
   let roomBgHueUpHandler: (() => void) | null = null;
+  let roomBgSettingsAllowed = false;
+  let buildDockRoomBgPopover: HTMLDivElement | null = null;
 
   function syncRoomBgHueCoreVisual(deg: number): void {
     const ringDeg = Math.round(((deg % 360) + 360) % 360);
@@ -1526,53 +1595,33 @@ export function createHud(
         btn.setAttribute("aria-pressed", "false");
       }
     }
+    syncRoomBgDockSwatchFill();
   }
 
-  function applyRoomBgPointerHue(ev: PointerEvent): void {
-    const hue = ringHueFromClient(roomBgHueRing, ev.clientX, ev.clientY);
-    if (hue === null) return;
-    const deg = Math.round(hue);
-    syncRoomBgHueCoreVisual(deg);
-    roomBgHueInputHandler?.(deg);
+  function syncRoomBgDockSwatchFill(): void {
+    buildDockRoomBgSwatchFill.style.background = roomBgHueCore.style.background;
   }
 
-  roomBgHueWrap.addEventListener("pointerdown", (e) => {
-    if (roomBgHuePanel.hidden) return;
-    roomBgHueDragging = true;
-    roomBgHueWrap.setPointerCapture(e.pointerId);
-    applyRoomBgPointerHue(e);
-  });
-  roomBgHueWrap.addEventListener("pointermove", (e) => {
-    if (!roomBgHueWrap.hasPointerCapture(e.pointerId)) return;
-    applyRoomBgPointerHue(e);
-  });
-  const releaseRoomBgCapture = (e: PointerEvent): void => {
-    if (!roomBgHueWrap.hasPointerCapture(e.pointerId)) return;
-    try {
-      roomBgHueWrap.releasePointerCapture(e.pointerId);
-    } catch {
-      /* */
+  attachPaletteHueRingPointerHandlers(
+    roomBgHueWrap,
+    roomBgHueRing,
+    (hue) => {
+      const deg = Math.round(hue);
+      syncRoomBgHueCoreVisual(deg);
+      roomBgHueInputHandler?.(deg);
+    },
+    {
+      guard: () =>
+        buildDockRoomBgPopover !== null && !buildDockRoomBgPopover.hidden,
+      onPointerDownAccepted: () => {
+        roomBgHueDragging = true;
+      },
+      onPointerUpAfterRelease: () => {
+        roomBgHueDragging = false;
+        roomBgHueUpHandler?.();
+      },
     }
-    roomBgHueDragging = false;
-    roomBgHueUpHandler?.();
-  };
-  roomBgHueWrap.addEventListener("pointerup", releaseRoomBgCapture);
-  roomBgHueWrap.addEventListener("pointercancel", releaseRoomBgCapture);
-
-  const modeSidebarHeader = document.createElement("div");
-  modeSidebarHeader.className = "hud-mode-sidebar__header";
-
-  const modeSidebarCollapseTab = document.createElement("button");
-  modeSidebarCollapseTab.type = "button";
-  modeSidebarCollapseTab.className =
-    "hud-mode-sidebar-edge-tab hud-mode-sidebar-collapse-tab";
-  modeSidebarCollapseTab.setAttribute("aria-label", "Hide play tools");
-  modeSidebarCollapseTab.title = "Hide play tools panel";
-  modeSidebarCollapseTab.innerHTML = nimiqIconUseMarkup("nq-caret-right-small", {
-    width: 14,
-    height: 14,
-    class: "hud-mode-sidebar-collapse-tab__icon",
-  });
+  );
 
   const feedbackBtn = document.createElement("button");
   feedbackBtn.type = "button";
@@ -1580,54 +1629,20 @@ export function createHud(
   feedbackBtn.textContent = "Feedback";
   feedbackBtn.setAttribute("aria-label", "Send feedback");
   feedbackBtn.title = "Send feedback";
-  modeSidebarHeader.appendChild(feedbackBtn);
+  topToolbar.appendChild(feedbackBtn);
 
-  const modeSidebarReopenBtn = document.createElement("button");
-  modeSidebarReopenBtn.type = "button";
-  modeSidebarReopenBtn.className =
-    "hud-mode-sidebar-edge-tab hud-mode-sidebar-reopen";
-  modeSidebarReopenBtn.hidden = true;
-  modeSidebarReopenBtn.setAttribute("aria-label", "Show play tools");
-  modeSidebarReopenBtn.title = "Build tools";
-  modeSidebarReopenBtn.innerHTML = nimiqIconUseMarkup("nq-caret-right-small", {
-    width: 14,
-    height: 14,
-    class: "hud-mode-sidebar-reopen__icon",
-  });
-
-  function applyModeSidebarCollapsed(collapsed: boolean): void {
-    ui.classList.toggle("hud--mode-sidebar-collapsed", collapsed);
-    modeSidebarReopenBtn.hidden = !collapsed;
-  }
-
-  modeSidebarCollapseTab.addEventListener("click", () => {
-    applyModeSidebarCollapsed(true);
-    if (buildToggleBtn.getAttribute("aria-pressed") === "true") {
-      if (document.activeElement === chatInput) {
-        chatInput.blur();
-      }
-      queueMicrotask(() => {
-        playModeHandler("walk");
-      });
-    }
-  });
-  modeSidebarReopenBtn.addEventListener("click", () => {
-    applyModeSidebarCollapsed(false);
-  });
-
-  modeTablist.appendChild(buildEditKindLabel);
-  modeTablist.appendChild(buildEditKindWrap);
   modeTablist.appendChild(buildToggleBtn);
-  modeSidebar.appendChild(modeSidebarCollapseTab);
-  modeSidebar.appendChild(modeSidebarHeader);
-  modeSidebar.appendChild(modeSidebarBody);
-  modeSidebar.appendChild(modeTablist);
+
+  const buildModeStrip = document.createElement("div");
+  buildModeStrip.className = "hud-build-mode-strip";
+  buildModeStrip.setAttribute("aria-label", "Build mode");
+  buildModeStrip.appendChild(modeTablist);
 
   let roomAllowPlaceBlocks = true;
   let roomAllowExtraFloor = true;
   function applyRoomEditCaps(): void {
     const showRail = roomAllowPlaceBlocks || roomAllowExtraFloor;
-    modeTablist.hidden = !showRail;
+    buildModeStrip.hidden = !showRail;
     buildEditOptObjects.disabled = !roomAllowPlaceBlocks;
     buildEditOptRoom.disabled = !roomAllowExtraFloor;
     if (roomAllowPlaceBlocks && !roomAllowExtraFloor) {
@@ -1635,6 +1650,9 @@ export function createHud(
     } else if (!roomAllowPlaceBlocks && roomAllowExtraFloor) {
       buildEditKindSelect.value = "room";
     }
+    buildEditKindOptObjectsBtn.disabled = !roomAllowPlaceBlocks;
+    buildEditKindOptRoomBtn.disabled = !roomAllowExtraFloor;
+    syncBuildEditKindTriggerFromSelect();
     buildToggleBtn.title = showRail
       ? "Build. Turn on to edit objects or rooms; turn off to move. Shortcut: B."
       : "Editing is disabled in this room";
@@ -1645,8 +1663,7 @@ export function createHud(
   topBar.appendChild(returnHomeBtn);
   topBar.appendChild(topActions);
   ui.appendChild(topBar);
-  ui.appendChild(modeSidebar);
-  ui.appendChild(modeSidebarReopenBtn);
+  ui.appendChild(buildModeStrip);
   letter.appendChild(portalEnterBtn);
 
   const SELF_QUICK_EMOJIS = ["👍", "❤️", "😂", "🎉", "😮"] as const;
@@ -3374,51 +3391,99 @@ export function createHud(
   buildBlockBar.innerHTML = `
     <div class="build-block-bar__surface">
       <div class="tile-inspector" id="tile-inspector-placement">
-        <p class="tile-inspector__head-hint" id="tile-inspector-head-hint" hidden></p>
-        <div class="tile-inspector__tool-row tile-inspector__toolbar">
+        <div class="tile-inspector__tool-row tile-inspector__toolbar tile-inspector__toolbar--dock-hidden">
           <label class="tile-inspector__tool-label" for="tile-inspector-tool">Tool</label>
           <select id="tile-inspector-tool" class="tile-inspector__tool-select" aria-label="Placement tool">
-            <option value="block" selected>Block</option>
+            <option value="block" selected>Cube</option>
             <option value="signpost">Signpost</option>
             <option value="billboard">Billboard</option>
             <option value="teleporter">Teleporter</option>
             <option value="gate">Gate</option>
           </select>
         </div>
-        <div class="tile-inspector__section tile-inspector__section--block-only">
-          <div class="tile-inspector__section-head">Parameters</div>
-          <label class="tile-inspector__param" for="tile-inspector-height">
+        <div class="tile-inspector__section tile-inspector__section--dock-params">
+          <div class="tile-inspector__section tile-inspector__section--block-only">
+          <div
+            class="tile-inspector__param tile-inspector__param--stepper"
+            data-build-dock-param="height"
+          >
             <span class="tile-inspector__param-label">Height</span>
-            <input type="range" id="tile-inspector-height" class="tile-inspector__slider" min="0" max="2" step="1" value="2" aria-valuetext="Full" />
-            <span class="tile-inspector__param-value" id="tile-inspector-height-val">1.0 m</span>
-          </label>
+            <div class="tile-inspector__param-stepper">
+              <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-height-dec" aria-label="Decrease height">−</button>
+              <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-height-inc" aria-label="Increase height">+</button>
+              <span class="tile-inspector__param-step-value" id="tile-inspector-height-val">1.0 m</span>
+            </div>
+            <input type="hidden" id="tile-inspector-height" value="2" aria-valuetext="Full" />
+          </div>
+          <div
+            class="tile-inspector__param tile-inspector__param--stepper"
+            id="tile-inspector-pyramid-base-row"
+            data-build-dock-param="pyramid-base"
+            hidden
+          >
+            <span class="tile-inspector__param-label">Base</span>
+            <div class="tile-inspector__param-stepper">
+              <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-pyramid-base-dec" aria-label="Decrease base size">−</button>
+              <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-pyramid-base-inc" aria-label="Increase base size">+</button>
+              <span class="tile-inspector__param-step-value" id="tile-inspector-pyramid-base-val">100%</span>
+            </div>
+            <input type="hidden" id="tile-inspector-pyramid-base" value="100" aria-valuetext="100%" />
+          </div>
+          </div>
+          <div
+            class="tile-inspector__param tile-inspector__param--stepper"
+            data-build-dock-param="billboard-edit"
+            hidden
+          >
+            <span class="tile-inspector__param-label">Content</span>
+            <div class="tile-inspector__param-stepper">
+              <button
+                type="button"
+                id="build-dock-billboard-edit"
+                class="tile-inspector__param-step hud-build-bottom-dock__step hud-build-bottom-dock__step--text"
+              >Edit</button>
+            </div>
+          </div>
         </div>
-        <div class="tile-inspector__section tile-inspector__section--block-only" id="tile-inspector-pyramid-base-section" hidden>
-          <label class="tile-inspector__param" for="tile-inspector-pyramid-base">
-            <span class="tile-inspector__param-label">Pyramid base</span>
-            <input type="range" id="tile-inspector-pyramid-base" class="tile-inspector__slider" min="100" max="165" step="5" value="100" aria-valuetext="100%" />
-            <span class="tile-inspector__param-value" id="tile-inspector-pyramid-base-val">100%</span>
-          </label>
-        </div>
-        <div class="tile-inspector__section tile-inspector__section--block-only">
-          <button type="button" class="build-block-bar__advanced-toggle tile-inspector__advanced-link" aria-expanded="false" aria-controls="build-block-bar-advanced">Advanced…</button>
-        </div>
-        <button type="button" class="tile-inspector__reset-btn" id="tile-inspector-reset">Reset to defaults</button>
       </div>
       <input type="checkbox" class="build-block-bar__hex" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
       <input type="checkbox" class="build-block-bar__pyramid" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
       <input type="checkbox" class="build-block-bar__sphere" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
       <input type="checkbox" class="build-block-bar__ramp" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
       <div class="build-block-bar__teleporter" id="build-block-bar-teleporter" hidden>
-        <p class="build-block-bar__teleporter-hint">Click an empty walkable floor tile to place. Select the teleporter to set its destination (room and X/Z).</p>
-      </div>
-      <div class="build-block-bar__teleporter" id="build-block-bar-gate" hidden>
-        <p class="build-block-bar__teleporter-hint">Click an empty walkable floor tile for the gate. Green/red shows whether each side is clear to walk through. You can still place a decorative or blocked doorway.</p>
-        <div class="build-block-bar__ramp-dir-row build-block-bar__gate-tool-row">
-          <span class="build-block-bar__ramp-dir-label">Opening direction</span>
-          <div class="build-block-bar__ramp-dir-controls">
-            <button type="button" class="build-block-bar__ramp-rot build-block-bar__gate-exit-ccw" title="Rotate opening direction counter-clockwise" aria-label="Rotate gate opening direction counter-clockwise">↺</button>
-            <button type="button" class="build-block-bar__ramp-rot build-block-bar__gate-exit-cw" title="Rotate opening direction clockwise" aria-label="Rotate gate opening direction clockwise">↻</button>
+        <div id="tile-inspector-teleporter-dock" class="tile-inspector-tp-dock" hidden>
+          <div class="tile-inspector-tp-dock__main-row">
+            <div class="tile-inspector-tp-dock__field">
+            <select
+              id="dock-tp-dest-room-select"
+              class="tile-inspector-tp-dock__room-select"
+              aria-label="Destination room"
+            ></select>
+            </div>
+            <div id="dock-tp-actions" class="tile-inspector-tp-dock__actions" hidden>
+              <button
+                type="button"
+                id="dock-tp-confirm"
+                class="tile-inspector-tp-dock__action tile-inspector-tp-dock__action--confirm"
+                aria-label="Save destination"
+                hidden
+              >${nimiqIconUseMarkup("nq-checkmark-small", { width: 12, height: 12, class: "tile-inspector-tp-dock__action-icon" })}</button>
+              <button
+                type="button"
+                id="dock-tp-cancel"
+                class="tile-inspector-tp-dock__action tile-inspector-tp-dock__action--cancel"
+                aria-label="Cancel changes"
+                hidden
+              >${nimiqIconUseMarkup("nq-cross", { width: 12, height: 12, class: "tile-inspector-tp-dock__action-icon" })}</button>
+            </div>
+          </div>
+          <div id="dock-tp-coords-section" class="tile-inspector-tp-dock__coords-section" hidden>
+            <button
+              type="button"
+              id="dock-tp-coords"
+              class="tile-inspector-tp-dock__coords-value"
+              aria-label="Pick destination tile on the map"
+            >(0, 0)</button>
           </div>
         </div>
       </div>
@@ -3433,6 +3498,10 @@ export function createHud(
   barAdvancedPopover.hidden = true;
   barAdvancedPopover.innerHTML = `
     <div class="build-block-bar-advanced__inner">
+      <div class="build-block-bar-advanced__shape-section" role="region" aria-label="Prism shape">
+        ${SHAPE_PICKER_BODY_HTML}
+      </div>
+      <div class="build-block-bar__popover-divider" aria-hidden="true"></div>
       <div class="build-block-bar__ramp-dir-row build-block-bar__ramp-dir-row--popover" hidden>
         <span class="build-block-bar__ramp-dir-label">Ramp rotation</span>
         <div class="build-block-bar__ramp-dir-controls">
@@ -3450,10 +3519,13 @@ export function createHud(
         <div class="build-block-bar__popover-divider" aria-hidden="true"></div>
         <div class="build-block-bar__popover-heading">Experimental</div>
         <button type="button" class="build-block-bar__claim-toggle" aria-pressed="false">Claimable (mining)</button>
-        <p class="build-block-bar__experimental-hint">When on, players can mine this block for rewards.</p>
       </div>
     </div>
   `;
+
+  const barShapeBtns = Array.from(
+    barAdvancedPopover.querySelectorAll(".tile-inspector__shape-btn")
+  ) as HTMLButtonElement[];
 
   const bottomLeftStack = document.createElement("div");
   bottomLeftStack.className = "hud-bottom-left";
@@ -3463,75 +3535,88 @@ export function createHud(
   ui.appendChild(bottomLeftStack);
   ui.appendChild(barAdvancedPopover);
 
-  const barShapePopover = document.createElement("div");
-  barShapePopover.id = "build-block-bar-shape-popover";
-  barShapePopover.className = "build-block-bar-shape-popover";
-  barShapePopover.hidden = true;
-  barShapePopover.setAttribute("role", "dialog");
-  barShapePopover.setAttribute("aria-label", "Block shape");
-  barShapePopover.innerHTML = SHAPE_PICKER_OPTIONS_HTML;
-  ui.appendChild(barShapePopover);
-
-  const panelShapePopover = document.createElement("div");
-  panelShapePopover.id = "build-object-panel-shape-popover";
-  panelShapePopover.className =
-    "build-block-bar-shape-popover build-block-bar-shape-popover--dock-trigger";
-  panelShapePopover.hidden = true;
-  panelShapePopover.setAttribute("role", "dialog");
-  panelShapePopover.setAttribute("aria-label", "Block shape");
-  panelShapePopover.innerHTML = SHAPE_PICKER_OPTIONS_HTML;
-  ui.appendChild(panelShapePopover);
-
   const barShapeColorRow = document.createElement("div");
   barShapeColorRow.className =
-    "hud-mode-sidebar__shape-color-row hud-mode-sidebar__shape-color-row--placement";
+    "hud-mode-sidebar__shape-color-row hud-mode-sidebar__shape-color-row--placement hud-mode-sidebar__shape-color-row--hue-only";
   barShapeColorRow.hidden = true;
-  const barShapeTrigger = document.createElement("button");
-  barShapeTrigger.type = "button";
-  barShapeTrigger.className = "hud-mode-sidebar__shape-trigger";
-  barShapeTrigger.title = "Block shape";
-  barShapeTrigger.setAttribute("aria-haspopup", "dialog");
-  barShapeTrigger.setAttribute("aria-expanded", "false");
-  barShapeTrigger.setAttribute("aria-controls", "build-block-bar-shape-popover");
-  barShapeTrigger.innerHTML = `<span class="hud-mode-sidebar__shape-trigger-icon" aria-hidden="true">${SHAPE_TRIG_SVG.cube}</span><span class="hud-mode-sidebar__shape-trigger-label">Cube</span>`;
 
-  const barHueRingWrap = document.createElement("div");
-  barHueRingWrap.className =
-    "build-block-bar__hue-ring-wrap hud-mode-sidebar__room-bg-hue-wrap";
-  barHueRingWrap.title = "Color. Drag on the ring; selection snaps to the nearest preset.";
-  barHueRingWrap.innerHTML = `
-            <div class="build-block-bar__hue-ring" role="slider" tabindex="0" aria-label="Block color" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0"></div>
-            <div class="build-block-bar__hue-core" aria-hidden="true"></div>
-          `;
-  barShapeColorRow.appendChild(barShapeTrigger);
+  const barHueRingParts = createPaletteHueRing({
+    ariaLabel: "Block color",
+    title: "Color. Drag on the ring; selection snaps to the nearest preset.",
+  });
+  const barHueRingWrap = barHueRingParts.wrap;
+  const barHueRing = barHueRingParts.ring;
+  const barHueCore = barHueRingParts.core;
   barShapeColorRow.appendChild(barHueRingWrap);
-  hueDock.appendChild(barShapeColorRow);
 
   const hueDockBlockPreview = document.createElement("div");
   hueDockBlockPreview.className = "hud-mode-sidebar__block-preview-dock";
   hueDockBlockPreview.innerHTML = `
-    <div class="tile-inspector__section-head tile-inspector__section-head--dock">Preview</div>
+    <div class="tile-inspector__section-head tile-inspector__section-head--dock">Selected</div>
     <div id="tile-inspector-preview-placement-slot" class="hud-mode-sidebar__block-preview-slot">
       <div class="tile-inspector__preview-box tile-inspector__preview-box--tile tile-inspector__preview-box--dock">
-        <canvas id="tile-inspector-preview-canvas" class="tile-inspector__preview-canvas" width="120" height="120" aria-hidden="true"></canvas>
+        <canvas id="tile-inspector-preview-canvas" class="tile-inspector__preview-canvas" width="176" height="176" aria-hidden="true"></canvas>
+        <span class="tile-inspector__preview-caption" hidden aria-hidden="true"></span>
       </div>
     </div>
     <div id="tile-inspector-preview-selection-slot" class="hud-mode-sidebar__block-preview-slot" hidden>
       <div class="tile-inspector__preview-box tile-inspector__preview-box--tile tile-inspector__preview-box--dock">
-        <canvas id="panel-tile-inspector-preview-canvas" class="tile-inspector__preview-canvas" width="120" height="120" aria-hidden="true"></canvas>
+        <canvas id="panel-tile-inspector-preview-canvas" class="tile-inspector__preview-canvas" width="176" height="176" aria-hidden="true"></canvas>
+        <span class="tile-inspector__preview-caption" hidden aria-hidden="true"></span>
       </div>
     </div>
   `;
-  hueDock.appendChild(hueDockBlockPreview);
+  const inspectorTilePreviewMount = document.createElement("div");
+  inspectorTilePreviewMount.className = "hud-inspector-tile-preview-mount";
+  inspectorTilePreviewMount.setAttribute("aria-hidden", "true");
+  ui.appendChild(inspectorTilePreviewMount);
+  inspectorTilePreviewMount.appendChild(hueDockBlockPreview);
+  /** Stable tail marker in `.hud-mode-sidebar__hue-dock` (selection hue row inserts before this). */
+  const hueDockStackTail = document.createElement("div");
+  hueDockStackTail.className = "hud-mode-sidebar__hue-dock-tail";
+  hueDock.appendChild(hueDockStackTail);
 
   /** Declared before build-bar init runs `syncBlockPreviewDockSlots` (avoids TDZ on `objectPanel`). */
   let objectPanel: HTMLDivElement | null = null;
+  /** Hoisted for dock param sync during bar init (`syncBarShapeButtons` → `buildDockBlockSelectionParamsActive`). */
+  let panelOnPropsChange: ((p: ObstacleProps) => void) | null = null;
+  let panelObjectEditGate = false;
+  let panelPyramidCb: HTMLInputElement | null = null;
+  let panelRampCb: HTMLInputElement | null = null;
   /** Block color ring docked in `.hud-mode-sidebar__hue-dock` while editing a placed tile. */
   let panelDockHueWrap: HTMLElement | null = null;
-  /** Row: shape trigger + hue ring while editing a placed block. */
+  /** Row: hue ring while editing a placed block (shape controls live in Advanced). */
   let panelShapeColorRow: HTMLElement | null = null;
-  let panelShapeTriggerEl: HTMLButtonElement | null = null;
-  let panelShapePopoverAbort: AbortController | null = null;
+
+  /** GL selection slot (blocks, teleporters, billboards). */
+  function buildDockSelectionPreviewActive(): boolean {
+    if (objectPanel === null) return false;
+    if (objectPanel.querySelector("#tile-inspector-selection") !== null) {
+      return true;
+    }
+    if (
+      objectPanelContextPopover.classList.contains(
+        "build-object-panel-context--teleporter"
+      )
+    ) {
+      return true;
+    }
+    return objectPanelContextPopover.classList.contains(
+      "build-object-panel-context--billboard"
+    );
+  }
+
+  function queueDockInspectorPreviewRelayout(
+    slot: "placement" | "selection"
+  ): void {
+    const g = inspectorPreviewGameRef;
+    if (!g) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        g.relayoutInspectorTilePreview(slot);
+      });
+    });
+  }
 
   function syncBlockPreviewDockSlots(): void {
     const pSlot = hueDockBlockPreview.querySelector(
@@ -3541,31 +3626,77 @@ export function createHud(
       "#tile-inspector-preview-selection-slot"
     ) as HTMLElement | null;
     if (!pSlot || !sSlot) return;
-    const selectionOn =
-      objectPanel !== null &&
-      objectPanel.querySelector("#tile-inspector-selection") !== null;
-    const blockToolRail =
+    const objectEditActive = isBuildObjectSelectionActive();
+    const selectionPreviewActive = buildDockSelectionPreviewActive();
+    const showPlacementPreview =
       hudPlayMode === "build" &&
-      !buildBlockBar.hidden &&
-      !signpostModeActive &&
-      !billboardModeActive &&
-      !teleporterModeActive &&
-      !gateModeActive;
-    pSlot.hidden = !blockToolRail || selectionOn;
-    sSlot.hidden = !selectionOn;
+      !selectionPreviewActive &&
+      (!buildBlockBar.hidden || objectEditActive);
+    const showSelectionPreview = selectionPreviewActive;
+    pSlot.hidden = !showPlacementPreview;
+    sSlot.hidden = !showSelectionPreview;
     hueDockBlockPreview.hidden = pSlot.hidden && sSlot.hidden;
+    syncBuildDockBlockPreviewMount({
+      inDock: buildDockShowsPlacementPreview(),
+      compactDockChrome:
+        buildBottomDockTools.querySelector(
+          ".hud-build-bottom-dock__terrain-shape-card"
+        ) !== null,
+    });
+    syncBuildDockPreviewSatelliteVisibility();
+    syncBuildDockPreviewCaption();
+    if (showSelectionPreview) {
+      queueDockInspectorPreviewRelayout("selection");
+    } else if (showPlacementPreview) {
+      queueDockInspectorPreviewRelayout("placement");
+    }
+  }
+
+  function buildDockRotateApplicable(): boolean {
+    if (
+      objectPanel &&
+      panelRampCb?.checked &&
+      rampDirRow &&
+      !rampDirRow.hidden
+    ) {
+      return true;
+    }
+    if (!buildBlockBar.hidden && barRampCb.checked) return true;
+    return false;
+  }
+
+  function syncBuildDockRotateChrome(): void {
+    const roomEdit =
+      hudPlayMode === "floor" ||
+      (hudPlayMode === "build" && buildEditKindSelect.value === "room");
+    const show =
+      !roomEdit && !buildEditKindWrap.hidden && buildDockRotateApplicable();
+    buildDockRotateScope.hidden = !show;
+  }
+
+  function applyBuildDockRotate(delta: -1 | 1): boolean {
+    if (
+      objectPanel &&
+      panelRampCb?.checked &&
+      rampDirRow &&
+      !rampDirRow.hidden
+    ) {
+      panelRampDir = (panelRampDir + delta + 4) % 4;
+      emitPanelProps();
+      return true;
+    }
+    if (!buildBlockBar.hidden && barRampCb.checked) {
+      rotateBarRamp(delta);
+      return true;
+    }
+    return false;
   }
 
   modeSidebarBuildMount.appendChild(buildBlockBar);
-  buildBlockBar.classList.add("build-block-bar--rail");
 
   const teleporterSection = buildBlockBar.querySelector(
     "#build-block-bar-teleporter"
   ) as HTMLElement | null;
-  const gateSection = buildBlockBar.querySelector(
-    "#build-block-bar-gate"
-  ) as HTMLElement | null;
-
   let buildToolChangeHandler:
     | ((
         tool: "block" | "signpost" | "teleporter" | "billboard" | "gate"
@@ -3619,12 +3750,6 @@ export function createHud(
     ".build-block-bar__ramp-cw"
   ) as HTMLButtonElement;
   let barRampDir = 0;
-  const barGateExitCCW = gateSection?.querySelector(
-    ".build-block-bar__gate-exit-ccw"
-  ) as HTMLButtonElement | null;
-  const barGateExitCW = gateSection?.querySelector(
-    ".build-block-bar__gate-exit-cw"
-  ) as HTMLButtonElement | null;
   const barSwatchesRecent = barAdvancedPopover.querySelector(
     ".build-block-bar__swatches-recent"
   ) as HTMLDivElement;
@@ -3636,24 +3761,12 @@ export function createHud(
   ) as HTMLButtonElement;
   const barAdvancedToggle = buildBlockBar.querySelector(
     ".build-block-bar__advanced-toggle"
-  ) as HTMLButtonElement;
+  ) as HTMLButtonElement | null;
   const tileInspectorToolSelect = buildBlockBar.querySelector(
     "#tile-inspector-tool"
   ) as HTMLSelectElement;
-  const barShapeBtns = Array.from(
-    barShapePopover.querySelectorAll(".tile-inspector__shape-btn")
-  ) as HTMLButtonElement[];
-  const barHueRing = barHueRingWrap.querySelector(
-    ".build-block-bar__hue-ring"
-  ) as HTMLElement;
-  const barHueCore = barHueRingWrap.querySelector(
-    ".build-block-bar__hue-core"
-  ) as HTMLElement;
   const tileInspectorRoot = buildBlockBar.querySelector(
     ".tile-inspector"
-  ) as HTMLElement;
-  const tileInspectorHeadHint = buildBlockBar.querySelector(
-    "#tile-inspector-head-hint"
   ) as HTMLElement;
   const tileInspectorHeightInput = buildBlockBar.querySelector(
     "#tile-inspector-height"
@@ -3661,65 +3774,1520 @@ export function createHud(
   const tileInspectorHeightVal = buildBlockBar.querySelector(
     "#tile-inspector-height-val"
   ) as HTMLElement;
-  const tileInspectorResetBtn = buildBlockBar.querySelector(
-    "#tile-inspector-reset"
-  ) as HTMLButtonElement;
+  const tileInspectorHeightDec = buildBlockBar.querySelector(
+    "#tile-inspector-height-dec"
+  ) as HTMLButtonElement | null;
+  const tileInspectorHeightInc = buildBlockBar.querySelector(
+    "#tile-inspector-height-inc"
+  ) as HTMLButtonElement | null;
+  const buildDockBillboardEditBtn = buildBlockBar.querySelector(
+    "#build-dock-billboard-edit"
+  ) as HTMLButtonElement | null;
   let signpostModeActive = false;
   /** Teleporter tool: place pending tiles; configure destination via object panel. */
   let teleporterModeActive = false;
   /** Gate tool: solid block with authorized opener and exit neighbor. */
   let gateModeActive = false;
   let billboardModeActive = false;
-  const tileInspectorPyramidBaseSection = buildBlockBar.querySelector(
-    "#tile-inspector-pyramid-base-section"
+  let teleporterSelectionDockActive = false;
+  function syncTeleporterDockSectionVisibility(): void {
+    if (!teleporterSection) return;
+    teleporterSection.hidden =
+      !teleporterModeActive && !teleporterSelectionDockActive;
+    const dock = teleporterSection.querySelector(
+      "#tile-inspector-teleporter-dock"
+    ) as HTMLElement | null;
+    if (dock) dock.hidden = !teleporterSelectionDockActive;
+  }
+
+  function syncPlacementInspectorPreviewGame(): void {
+    const g = inspectorPreviewGameRef;
+    if (!g) return;
+    if (
+      !teleporterModeActive &&
+      !gateModeActive &&
+      !billboardModeActive &&
+      !signpostModeActive
+    ) {
+      g.setPlacementInspectorPreviewKind("block");
+      return;
+    }
+    if (teleporterModeActive) {
+      g.setPlacementInspectorPreviewKind("teleporter");
+    } else if (gateModeActive) {
+      g.setPlacementInspectorPreviewKind("gate");
+    } else if (billboardModeActive) {
+      g.setPlacementInspectorPreviewKind("billboard");
+    } else {
+      g.setPlacementInspectorPreviewKind("signpost");
+    }
+  }
+
+  type BuildDockCategoryId = "terrain" | "props" | "buildings";
+  const BUILD_DOCK_CATEGORY_ORDER: BuildDockCategoryId[] = [
+    "terrain",
+    "props",
+    "buildings",
+  ];
+  const BUILD_DOCK_CATEGORY_LABEL: Record<BuildDockCategoryId, string> = {
+    terrain: "Terrain",
+    props: "Props",
+    buildings: "Buildings",
+  };
+  const BUILD_DOCK_TOOLS: Record<
+    BuildDockCategoryId,
+    Array<"block" | "signpost" | "teleporter" | "billboard" | "gate">
+  > = {
+    terrain: ["block"],
+    props: ["signpost"],
+    buildings: ["teleporter", "gate", "billboard"],
+  };
+  let buildDockCategory: BuildDockCategoryId = "terrain";
+  const buildBottomDock = document.createElement("div");
+  buildBottomDock.className = "hud-build-bottom-dock";
+  buildBottomDock.hidden = true;
+  const buildBottomDockStack = document.createElement("div");
+  buildBottomDockStack.className = "hud-build-bottom-dock__stack";
+  const buildBottomDockPreviewSatellite = document.createElement("div");
+  buildBottomDockPreviewSatellite.className =
+    "hud-build-bottom-dock__preview-satellite";
+  buildBottomDockPreviewSatellite.hidden = true;
+  buildBottomDockPreviewSatellite.setAttribute(
+    "aria-label",
+    "Placement preview"
+  );
+  const buildDockPreviewSatelliteInner = document.createElement("div");
+  buildDockPreviewSatelliteInner.className =
+    "hud-build-bottom-dock__preview-satellite-inner";
+  const buildDockPreviewSatellitePreview = document.createElement("div");
+  buildDockPreviewSatellitePreview.className =
+    "hud-build-bottom-dock__preview-satellite-gl";
+  buildDockPreviewSatelliteInner.appendChild(buildDockPreviewSatellitePreview);
+  buildBottomDockPreviewSatellite.appendChild(buildDockPreviewSatelliteInner);
+  const buildBottomDockPanel = document.createElement("div");
+  buildBottomDockPanel.className = "hud-build-bottom-dock__panel";
+  const buildBottomDockDeselectBtn = document.createElement("button");
+  buildBottomDockDeselectBtn.type = "button";
+  buildBottomDockDeselectBtn.className = "hud-build-bottom-dock__deselect";
+  buildBottomDockDeselectBtn.hidden = true;
+  buildBottomDockDeselectBtn.setAttribute("aria-label", "Deselect object");
+  buildBottomDockDeselectBtn.title = "Deselect";
+  buildBottomDockDeselectBtn.innerHTML = nimiqIconUseMarkup("nq-cross", {
+    width: 14,
+    height: 14,
+    class: "hud-build-bottom-dock__deselect-icon",
+  });
+  buildDockPreviewSatelliteInner.appendChild(buildBottomDockDeselectBtn);
+  const buildBottomDockTabs = document.createElement("div");
+  buildBottomDockTabs.className = "hud-build-bottom-dock__tabs";
+  buildBottomDockTabs.setAttribute("role", "toolbar");
+  buildBottomDockTabs.setAttribute("aria-label", "Build toolbar");
+  const buildBottomDockCategoryTabs = document.createElement("div");
+  buildBottomDockCategoryTabs.className = "hud-build-bottom-dock__category-tabs";
+  buildBottomDockCategoryTabs.setAttribute("role", "tablist");
+  buildBottomDockCategoryTabs.setAttribute("aria-label", "Build categories");
+  const buildDockTabByCategory = new Map<
+    BuildDockCategoryId,
+    HTMLButtonElement
+  >();
+  for (const cat of BUILD_DOCK_CATEGORY_ORDER) {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "hud-build-bottom-dock__tab";
+    tab.setAttribute("role", "tab");
+    tab.dataset.category = cat;
+    tab.textContent = BUILD_DOCK_CATEGORY_LABEL[cat].toUpperCase();
+    tab.setAttribute("aria-selected", cat === buildDockCategory ? "true" : "false");
+    if (cat === buildDockCategory) {
+      tab.classList.add("hud-build-bottom-dock__tab--active");
+    }
+    tab.addEventListener("click", () => {
+      buildDockCategory = cat;
+      for (const [c, b] of buildDockTabByCategory) {
+        const on = c === cat;
+        b.setAttribute("aria-selected", on ? "true" : "false");
+        b.classList.toggle("hud-build-bottom-dock__tab--active", on);
+      }
+      const tools = BUILD_DOCK_TOOLS[cat];
+      const curTool = tileInspectorToolSelect.value as
+        | "block"
+        | "signpost"
+        | "teleporter"
+        | "billboard"
+        | "gate";
+      if (tools.length > 0 && !tools.includes(curTool)) {
+        const first = tools[0]!;
+        tileInspectorToolSelect.value = first;
+        tileInspectorToolSelect.dispatchEvent(
+          new Event("change", { bubbles: true })
+        );
+      } else {
+        syncBuildDockToolStrip();
+      }
+    });
+    buildDockTabByCategory.set(cat, tab);
+    buildBottomDockCategoryTabs.appendChild(tab);
+  }
+  buildBottomDockTabs.appendChild(buildBottomDockCategoryTabs);
+
+  type BuildDockRoomCategoryId = "floor" | "roomSettings";
+  const BUILD_DOCK_ROOM_CATEGORY_ORDER: BuildDockRoomCategoryId[] = [
+    "floor",
+    "roomSettings",
+  ];
+  const BUILD_DOCK_ROOM_CATEGORY_LABEL: Record<BuildDockRoomCategoryId, string> =
+    {
+      floor: "Floor",
+      roomSettings: "Room settings",
+    };
+  let buildDockRoomCategory: BuildDockRoomCategoryId = "floor";
+  const buildBottomDockRoomCategoryTabs = document.createElement("div");
+  buildBottomDockRoomCategoryTabs.className =
+    "hud-build-bottom-dock__category-tabs hud-build-bottom-dock__category-tabs--room";
+  buildBottomDockRoomCategoryTabs.setAttribute("role", "tablist");
+  buildBottomDockRoomCategoryTabs.setAttribute(
+    "aria-label",
+    "Room build categories"
+  );
+  buildBottomDockRoomCategoryTabs.hidden = true;
+  const buildDockRoomTabByCategory = new Map<
+    BuildDockRoomCategoryId,
+    HTMLButtonElement
+  >();
+  for (const cat of BUILD_DOCK_ROOM_CATEGORY_ORDER) {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "hud-build-bottom-dock__tab";
+    tab.setAttribute("role", "tab");
+    tab.dataset.roomCategory = cat;
+    tab.textContent = BUILD_DOCK_ROOM_CATEGORY_LABEL[cat].toUpperCase();
+    tab.setAttribute(
+      "aria-selected",
+      cat === buildDockRoomCategory ? "true" : "false"
+    );
+    if (cat === buildDockRoomCategory) {
+      tab.classList.add("hud-build-bottom-dock__tab--active");
+    }
+    tab.addEventListener("click", () => {
+      buildDockRoomCategory = cat;
+      for (const [c, b] of buildDockRoomTabByCategory) {
+        const on = c === cat;
+        b.setAttribute("aria-selected", on ? "true" : "false");
+        b.classList.toggle("hud-build-bottom-dock__tab--active", on);
+      }
+      setBuildDockRoomBgPopoverOpen(false);
+      syncBuildDockRoomCategoryChrome();
+      syncBuildDockToolStrip();
+      requestAnimationFrame(() => updateBuildBottomDockInset());
+    });
+    buildDockRoomTabByCategory.set(cat, tab);
+    buildBottomDockRoomCategoryTabs.appendChild(tab);
+  }
+  buildBottomDockTabs.appendChild(buildBottomDockRoomCategoryTabs);
+  buildBottomDockTabs.appendChild(buildEditKindWrap);
+
+  const buildBottomDockRowA = document.createElement("div");
+  buildBottomDockRowA.className =
+    "hud-build-bottom-dock__row hud-build-bottom-dock__row--picker";
+  const buildBottomDockTools = document.createElement("div");
+  buildBottomDockTools.className = "hud-build-bottom-dock__tools";
+  buildBottomDockTools.setAttribute("role", "group");
+  buildBottomDockTools.setAttribute("aria-label", "Placement items");
+  const buildBottomDockToolsEmpty = document.createElement("div");
+  buildBottomDockToolsEmpty.className = "hud-build-bottom-dock__tools-empty";
+  buildBottomDockToolsEmpty.textContent = "Nothing in this category yet.";
+  buildBottomDockToolsEmpty.hidden = true;
+  buildBottomDockTools.appendChild(buildBottomDockToolsEmpty);
+  const buildDockRoomSettingsPanel = document.createElement("div");
+  buildDockRoomSettingsPanel.className =
+    "hud-build-bottom-dock__room-settings";
+  buildDockRoomSettingsPanel.hidden = true;
+  buildDockRoomSettingsPanel.setAttribute("role", "group");
+  buildDockRoomSettingsPanel.setAttribute("aria-label", "Room settings");
+  const buildDockRoomBgSettingRow = document.createElement("div");
+  buildDockRoomBgSettingRow.className =
+    "hud-build-bottom-dock__room-setting";
+  const buildDockRoomBgLabel = document.createElement("span");
+  buildDockRoomBgLabel.className = "hud-build-bottom-dock__room-setting-label";
+  buildDockRoomBgLabel.textContent = "Room BG Color";
+  const buildDockRoomBgSwatch = document.createElement("button");
+  buildDockRoomBgSwatch.type = "button";
+  buildDockRoomBgSwatch.className = "hud-build-bottom-dock__room-bg-swatch";
+  buildDockRoomBgSwatch.setAttribute("aria-label", "Room background color");
+  buildDockRoomBgSwatch.setAttribute("aria-haspopup", "dialog");
+  buildDockRoomBgSwatch.setAttribute("aria-expanded", "false");
+  buildDockRoomBgSwatch.title = "Change room background color";
+  const buildDockRoomBgSwatchFill = document.createElement("span");
+  buildDockRoomBgSwatchFill.className =
+    "hud-build-bottom-dock__room-bg-swatch-fill";
+  buildDockRoomBgSwatchFill.setAttribute("aria-hidden", "true");
+  buildDockRoomBgSwatchFill.style.background = `hsl(${ROOM_BG_HUE_DEFAULT_RING} 42% 11%)`;
+  buildDockRoomBgSwatch.appendChild(buildDockRoomBgSwatchFill);
+  buildDockRoomBgSettingRow.append(
+    buildDockRoomBgLabel,
+    buildDockRoomBgSwatch
+  );
+  buildDockRoomSettingsPanel.appendChild(buildDockRoomBgSettingRow);
+
+  const buildBottomDockContext = document.createElement("aside");
+  buildBottomDockContext.className = "hud-build-bottom-dock__context";
+  buildBottomDockContext.setAttribute("aria-label", "Placement details");
+  buildBottomDockContext.innerHTML = `
+    <div class="hud-build-bottom-dock__context-grid">
+      <div class="hud-build-bottom-dock__context-mods">
+        <div class="hud-build-bottom-dock__context-top">
+          <span class="hud-build-bottom-dock__place" id="hud-build-dock-place">Place: Block</span>
+        </div>
+        <button type="button" class="hud-build-bottom-dock__advanced-link" id="hud-build-dock-advanced" hidden>More options…</button>
+      </div>
+      <div class="hud-build-bottom-dock__context-color" aria-label="Color"></div>
+    </div>
+  `;
+  const buildDockPlaceEl = buildBottomDockContext.querySelector(
+    "#hud-build-dock-place"
+  ) as HTMLElement;
+  const buildDockAdvancedBtn = buildBottomDockContext.querySelector(
+    "#hud-build-dock-advanced"
+  ) as HTMLButtonElement;
+  let objectSelectionDismissHandler: (() => void) | null = null;
+  let billboardSelectionEditHandler: (() => void) | null = null;
+
+  function isBuildObjectSelectionActive(): boolean {
+    return objectPanel !== null;
+  }
+
+  function buildDockSelectionPreviewCaption(): string | null {
+    if (!isBuildObjectSelectionActive()) return null;
+    if (
+      objectPanelContextPopover.classList.contains(
+        "build-object-panel-context--teleporter"
+      )
+    ) {
+      return "Teleporter";
+    }
+    if (
+      objectPanelContextPopover.classList.contains(
+        "build-object-panel-context--billboard"
+      )
+    ) {
+      return "Billboard";
+    }
+    if (panelObjectEditGate) return "Gate";
+    const live = buildLivePanelObstacleProps();
+    if (live) {
+      return dockTerrainShapeLabel(
+        dockTerrainShapeActiveId({
+          hex: live.hex,
+          pyramid: live.pyramid,
+          sphere: live.sphere,
+          ramp: live.ramp,
+        })
+      );
+    }
+    return null;
+  }
+
+  function syncBuildDockPreviewCaption(): void {
+    const text = buildDockSelectionPreviewCaption();
+    for (const slotId of [
+      "tile-inspector-preview-placement-slot",
+      "tile-inspector-preview-selection-slot",
+    ] as const) {
+      const slot = hueDockBlockPreview.querySelector(
+        `#${slotId}`
+      ) as HTMLElement | null;
+      if (!slot) continue;
+      const cap = slot.querySelector(
+        ".tile-inspector__preview-caption"
+      ) as HTMLElement | null;
+      if (!cap) continue;
+      const show = !slot.hidden && text !== null;
+      cap.hidden = !show;
+      cap.setAttribute("aria-hidden", show ? "false" : "true");
+      cap.textContent = show ? text : "";
+    }
+  }
+
+  function syncBuildDockDeselectChrome(): void {
+    const show = !buildBottomDock.hidden;
+    buildBottomDockDeselectBtn.hidden = !show;
+    const selectionActive = isBuildObjectSelectionActive();
+    buildBottomDockDeselectBtn.setAttribute(
+      "aria-label",
+      selectionActive ? "Deselect object" : "Close build menu"
+    );
+    buildBottomDockDeselectBtn.title = selectionActive
+      ? "Deselect"
+      : "Close build";
+    const mountTarget = buildBottomDockPreviewSatellite.hidden
+      ? buildBottomDockPanel
+      : buildDockPreviewSatelliteInner;
+    if (buildBottomDockDeselectBtn.parentElement !== mountTarget) {
+      mountTarget.appendChild(buildBottomDockDeselectBtn);
+    }
+  }
+
+  function syncBuildDockSelectionChrome(): void {
+    const on = isBuildObjectSelectionActive();
+    buildDockPreviewSatelliteInner.classList.toggle(
+      "hud-build-bottom-dock__preview-satellite-inner--selection",
+      on
+    );
+    buildBottomDockPanel.classList.toggle(
+      "hud-build-bottom-dock__panel--selection",
+      on
+    );
+    buildDockContextTop.hidden = on;
+    syncBuildDockDeselectChrome();
+    syncBuildDockRotateChrome();
+    syncBuildDockTerrainShapeCardHighlights();
+    syncBuildDockPreviewCaption();
+  }
+
+  function dismissBuildObjectSelection(): void {
+    if (!isBuildObjectSelectionActive()) return;
+    objectSelectionDismissHandler?.();
+  }
+
+  function closeBuildMenu(): void {
+    resetBuildEditScopeToObjects();
+    if (hudPlayMode !== "walk") {
+      playModeHandler("walk");
+    }
+  }
+
+  const onBuildDockDeselectPointer = (e: Event): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isBuildObjectSelectionActive()) {
+      dismissBuildObjectSelection();
+      return;
+    }
+    closeBuildMenu();
+  };
+  buildBottomDockDeselectBtn.addEventListener("pointerdown", onBuildDockDeselectPointer);
+  buildBottomDockDeselectBtn.addEventListener("click", onBuildDockDeselectPointer);
+
+  const onBuildDockRotatePointer = (delta: -1 | 1) => (e: Event): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (buildDockRotateScope.hidden) return;
+    applyBuildDockRotate(delta);
+  };
+  buildDockRotateCcw.addEventListener(
+    "pointerdown",
+    onBuildDockRotatePointer(-1)
+  );
+  buildDockRotateCw.addEventListener("pointerdown", onBuildDockRotatePointer(1));
+  const buildDockContextColor = buildBottomDockContext.querySelector(
+    ".hud-build-bottom-dock__context-color"
+  ) as HTMLElement;
+  buildDockContextColor.appendChild(barShapeColorRow);
+  buildDockContextColor.appendChild(hueDock);
+
+  const buildDockContextTop = buildBottomDockContext.querySelector(
+    ".hud-build-bottom-dock__context-top"
+  ) as HTMLElement;
+  const buildDockContextMods = buildBottomDockContext.querySelector(
+    ".hud-build-bottom-dock__context-mods"
+  ) as HTMLElement;
+  buildDockContextMods.prepend(buildDockRoomSettingsPanel);
+  buildDockContextTop.insertAdjacentElement("afterend", tileInspectorRoot);
+  if (teleporterSection) {
+    tileInspectorRoot.insertAdjacentElement("afterend", teleporterSection);
+  }
+  const buildDockTerrainPreviewHost = document.createElement("div");
+  buildDockTerrainPreviewHost.className =
+    "hud-build-bottom-dock__terrain-preview-host";
+  buildDockTerrainPreviewHost.hidden = true;
+  buildDockTerrainPreviewHost.setAttribute("aria-hidden", "true");
+  buildBottomDockTools.appendChild(buildDockTerrainPreviewHost);
+
+  buildBottomDockRowA.appendChild(buildBottomDockTools);
+  buildBottomDockRowA.appendChild(buildBottomDockContext);
+
+  buildDockRoomBgPopover = document.createElement("div");
+  buildDockRoomBgPopover.className =
+    "hud-build-bottom-dock__room-bg-popover";
+  buildDockRoomBgPopover.id = "hud-build-dock-room-bg-popover";
+  buildDockRoomBgPopover.hidden = true;
+  buildDockRoomBgPopover.setAttribute("role", "dialog");
+  buildDockRoomBgPopover.setAttribute("aria-label", "Room background color");
+  const buildDockRoomBgPopoverInner = document.createElement("div");
+  buildDockRoomBgPopoverInner.className =
+    "hud-build-bottom-dock__room-bg-popover-inner";
+  buildDockRoomBgPopoverInner.appendChild(roomBgHuePanel);
+  buildDockRoomBgPopover.appendChild(buildDockRoomBgPopoverInner);
+
+  buildBottomDockPanel.appendChild(buildBottomDockTabs);
+  buildBottomDockPanel.appendChild(buildBottomDockRowA);
+  buildBottomDockStack.appendChild(buildBottomDockPreviewSatellite);
+  buildBottomDockStack.appendChild(buildBottomDockPanel);
+  buildBottomDock.appendChild(buildBottomDockStack);
+  ui.appendChild(buildDockRoomBgPopover);
+  ui.appendChild(buildEditKindPopover);
+
+  function syncBuildEditKindTriggerFromSelect(): void {
+    const room = buildEditKindSelect.value === "room";
+    buildEditKindTriggerLabel.textContent = room ? "Room" : "Objects";
+    buildEditKindOptObjectsBtn.setAttribute(
+      "aria-selected",
+      room ? "false" : "true"
+    );
+    buildEditKindOptRoomBtn.setAttribute(
+      "aria-selected",
+      room ? "true" : "false"
+    );
+  }
+
+  function layoutBuildEditKindPopover(): void {
+    if (buildEditKindPopover.hidden) return;
+    const margin = 8;
+    const ar = buildEditKindTrigger.getBoundingClientRect();
+    const pr = buildEditKindPopover.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = ar.left;
+    left = Math.max(margin, Math.min(left, vw - margin - pr.width));
+    let top = ar.bottom + margin;
+    if (top + pr.height > vh - margin) {
+      top = ar.top - pr.height - margin;
+    }
+    top = Math.max(margin, Math.min(top, vh - margin - pr.height));
+    buildEditKindPopover.style.left = `${left}px`;
+    buildEditKindPopover.style.top = `${top}px`;
+  }
+
+  function setBuildEditKindOverlayOpen(open: boolean): void {
+    if (!BUILD_EDIT_KIND_OVERLAY_MQ.matches) {
+      buildEditKindPopover.hidden = true;
+      buildEditKindTrigger.setAttribute("aria-expanded", "false");
+      buildEditKindTrigger.classList.remove(
+        "hud-build-bottom-dock__edit-kind-trigger--open"
+      );
+      return;
+    }
+    if (!open) {
+      buildEditKindPopover.hidden = true;
+      buildEditKindTrigger.setAttribute("aria-expanded", "false");
+      buildEditKindTrigger.classList.remove(
+        "hud-build-bottom-dock__edit-kind-trigger--open"
+      );
+      return;
+    }
+    setBuildDockRoomBgPopoverOpen(false);
+    buildEditKindPopover.hidden = false;
+    buildEditKindTrigger.setAttribute("aria-expanded", "true");
+    buildEditKindTrigger.classList.add(
+      "hud-build-bottom-dock__edit-kind-trigger--open"
+    );
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => layoutBuildEditKindPopover());
+    });
+  }
+
+  buildEditKindTrigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!BUILD_EDIT_KIND_OVERLAY_MQ.matches) return;
+    setBuildEditKindOverlayOpen(buildEditKindPopover.hidden);
+  });
+
+  for (const btn of [buildEditKindOptObjectsBtn, buildEditKindOptRoomBtn]) {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (btn.disabled) return;
+      const value = btn.dataset.value === "room" ? "room" : "objects";
+      if (buildEditKindSelect.value !== value) {
+        buildEditKindSelect.value = value;
+        syncBuildEditKindTriggerFromSelect();
+        onBuildEditKindChanged();
+      }
+      setBuildEditKindOverlayOpen(false);
+    });
+  }
+
+  BUILD_EDIT_KIND_OVERLAY_MQ.addEventListener("change", () => {
+    setBuildEditKindOverlayOpen(false);
+  });
+
+  function resetBuildDockRoomCategoryToFloor(): void {
+    buildDockRoomCategory = "floor";
+    for (const [c, b] of buildDockRoomTabByCategory) {
+      const on = c === "floor";
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      b.classList.toggle("hud-build-bottom-dock__tab--active", on);
+    }
+  }
+
+  /** Objects scope + Floor tab — used when closing build or opening it fresh. */
+  function resetBuildEditScopeToObjects(): void {
+    buildEditKindSelect.value = "objects";
+    syncBuildEditKindTriggerFromSelect();
+    resetBuildDockRoomCategoryToFloor();
+    setBuildDockRoomBgPopoverOpen(false);
+    setBuildEditKindOverlayOpen(false);
+  }
+
+  function hueDockPanelShapeInsertRef(): ChildNode {
+    return hueDockStackTail;
+  }
+
+  /** True when the bottom dock shows object placement (not room/floor chrome-only layout). */
+  function buildDockShowsPlacementPreview(): boolean {
+    if (buildBottomDock.hidden) return false;
+    return !buildDockRoomEditActive();
+  }
+
+  /**
+   * Reparents live placement GL preview: dock “Selected” host vs off-screen mount.
+   * `compactDockChrome` hides the section title next to the terrain shape strip only.
+   */
+  function mountBuildDockPreviewGl(host: HTMLElement): void {
+    if (hueDockBlockPreview.parentElement !== host) {
+      host.prepend(hueDockBlockPreview);
+    }
+  }
+
+  function syncBuildDockPreviewSatelliteVisibility(): void {
+    const show =
+      !buildBottomDock.hidden &&
+      !buildDockRoomEditActive() &&
+      !hueDockBlockPreview.hidden;
+    buildBottomDockPreviewSatellite.hidden = !show;
+    syncBuildDockDeselectChrome();
+    updateBuildBottomDockInset();
+  }
+
+  function syncBuildDockBlockPreviewMount(opts: {
+    inDock: boolean;
+    compactDockChrome?: boolean;
+  }): void {
+    const compact = opts.compactDockChrome ?? false;
+    hueDockBlockPreview.classList.toggle(
+      "hud-mode-sidebar__block-preview-dock--terrain-pick",
+      compact
+    );
+    const objectEditActive = isBuildObjectSelectionActive();
+    const selectionPreviewActive = buildDockSelectionPreviewActive();
+    const showInSatellite =
+      !hueDockBlockPreview.hidden ||
+      selectionPreviewActive ||
+      (opts.inDock && !selectionPreviewActive) ||
+      (objectEditActive && !selectionPreviewActive);
+    if (showInSatellite) {
+      buildDockTerrainPreviewHost.hidden = true;
+      mountBuildDockPreviewGl(buildDockPreviewSatellitePreview);
+      return;
+    }
+    if (
+      hueDockBlockPreview.parentElement === buildDockPreviewSatellitePreview
+    ) {
+      inspectorTilePreviewMount.appendChild(hueDockBlockPreview);
+    }
+    buildDockTerrainPreviewHost.hidden = true;
+    if (hueDockBlockPreview.parentElement === buildDockTerrainPreviewHost) {
+      inspectorTilePreviewMount.appendChild(hueDockBlockPreview);
+    }
+  }
+
+  function toolLabelDock(
+    t: "block" | "signpost" | "teleporter" | "billboard" | "gate"
+  ): string {
+    if (t === "block") return "Cube";
+    if (t === "signpost") return "Signpost";
+    if (t === "teleporter") return "Teleporter";
+    if (t === "gate") return "Gate";
+    return "Billboard";
+  }
+
+  function buildDockPlacementPlaceLabel(): string {
+    if (buildDockRoomEditActive()) return "Edit: Room";
+    const tool = tileInspectorToolSelect.value as
+      | "block"
+      | "signpost"
+      | "teleporter"
+      | "billboard"
+      | "gate";
+    if (buildDockCategory === "terrain" && tool === "block") {
+      return `Place: ${dockTerrainShapeLabel(dockTerrainShapeActiveIdResolved())}`;
+    }
+    return `Place: ${toolLabelDock(tool)}`;
+  }
+
+  function syncBuildDockPlaceLabel(): void {
+    if (!buildDockPlaceEl) return;
+    buildDockPlaceEl.textContent = buildDockPlacementPlaceLabel();
+  }
+
+  function categoryForToolDock(
+    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate"
+  ): BuildDockCategoryId {
+    for (const c of BUILD_DOCK_CATEGORY_ORDER) {
+      if (BUILD_DOCK_TOOLS[c].includes(tool)) return c;
+    }
+    return "terrain";
+  }
+
+  /** Bumped on each dock strip refresh so in-flight thumbnail `requestAnimationFrame` passes self-cancel. */
+  let dockThumbGlBindGen = 0;
+  let dockThumbApplyTimeout: ReturnType<typeof setTimeout> | null = null;
+  let terrainShapeThumbTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  type DockTerrainShapeId = "cube" | "hex" | "pyramid" | "sphere" | "ramp";
+  const DOCK_TERRAIN_SHAPE_ORDER: readonly DockTerrainShapeId[] = [
+    "cube",
+    "hex",
+    "pyramid",
+    "sphere",
+    "ramp",
+  ];
+
+  function dockTerrainShapeActiveId(st: {
+    hex: boolean;
+    pyramid: boolean;
+    sphere: boolean;
+    ramp: boolean;
+  }): DockTerrainShapeId {
+    if (st.ramp) return "ramp";
+    if (st.pyramid) return "pyramid";
+    if (st.sphere) return "sphere";
+    if (st.hex) return "hex";
+    return "cube";
+  }
+
+  function dockTerrainShapeLabel(shape: DockTerrainShapeId): string {
+    if (shape === "cube") return "Cube";
+    if (shape === "hex") return "Hex";
+    if (shape === "pyramid") return "Pyramid";
+    if (shape === "sphere") return "Sphere";
+    return "Ramp";
+  }
+
+  function dockTerrainShapePlacementPatch(shape: DockTerrainShapeId): {
+    hex?: boolean;
+    pyramid?: boolean;
+    sphere?: boolean;
+    ramp?: boolean;
+  } {
+    if (shape === "cube") {
+      return { hex: false, pyramid: false, sphere: false, ramp: false };
+    }
+    if (shape === "hex") {
+      return { hex: true, pyramid: false, sphere: false, ramp: false };
+    }
+    if (shape === "pyramid") {
+      return { pyramid: true, hex: false, sphere: false, ramp: false };
+    }
+    if (shape === "sphere") {
+      return { sphere: true, hex: false, pyramid: false, ramp: false };
+    }
+    return { ramp: true, hex: false, pyramid: false, sphere: false };
+  }
+
+  /** Active prism on the selected tile (not gates / teleporter / billboard cards). */
+  function dockTerrainShapeActiveIdFromSelection(): DockTerrainShapeId | null {
+    if (
+      !panelOnPropsChange ||
+      panelObjectEditGate ||
+      !objectPanel?.querySelector("#tile-inspector-selection") ||
+      !panelHexCb ||
+      !panelPyramidCb ||
+      !panelSphereCb ||
+      !panelRampCb
+    ) {
+      return null;
+    }
+    return dockTerrainShapeActiveId({
+      hex: panelHexCb.checked,
+      pyramid: panelPyramidCb.checked,
+      sphere: panelSphereCb.checked,
+      ramp: panelRampCb.checked,
+    });
+  }
+
+  function dockTerrainShapeActiveIdResolved(): DockTerrainShapeId {
+    const fromSelection = dockTerrainShapeActiveIdFromSelection();
+    if (fromSelection !== null) return fromSelection;
+    const st = inspectorPreviewGameRef?.getPlacementBlockStyle();
+    return st ? dockTerrainShapeActiveId(st) : "cube";
+  }
+
+  function buildDockRoomEditActive(): boolean {
+    return (
+      hudPlayMode === "floor" ||
+      (hudPlayMode === "build" && buildEditKindSelect.value === "room")
+    );
+  }
+
+  function syncBuildDockRoomFloorStrip(): void {
+    dockThumbGlBindGen += 1;
+    if (dockThumbApplyTimeout !== null) {
+      clearTimeout(dockThumbApplyTimeout);
+      dockThumbApplyTimeout = null;
+    }
+    if (terrainShapeThumbTimeout !== null) {
+      clearTimeout(terrainShapeThumbTimeout);
+      terrainShapeThumbTimeout = null;
+    }
+    buildBottomDockToolsEmpty.hidden = true;
+    for (const el of buildBottomDockTools.querySelectorAll(
+      ".hud-build-bottom-dock__tool-card, .hud-build-bottom-dock__terrain-shape-card"
+    )) {
+      el.remove();
+    }
+    syncBuildDockBlockPreviewMount({
+      inDock: false,
+      compactDockChrome: false,
+    });
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className =
+      "hud-build-bottom-dock__tool-card hud-build-bottom-dock__tool-card--active hud-build-bottom-dock__room-floor-card";
+    card.dataset.roomFloor = "1";
+    card.setAttribute("aria-pressed", "true");
+    card.setAttribute("aria-label", "Floor");
+    const wrap = document.createElement("span");
+    wrap.className = "hud-build-bottom-dock__tool-card-preview-wrap";
+    const img = document.createElement("img");
+    img.className = "hud-build-bottom-dock__tool-card-thumb";
+    img.width = 128;
+    img.height = 128;
+    img.decoding = "async";
+    img.alt = "";
+    img.draggable = false;
+    img.dataset.dockRoomFloorPreview = "1";
+    img.setAttribute("aria-hidden", "true");
+    wrap.appendChild(img);
+    card.appendChild(wrap);
+    const lab = document.createElement("span");
+    lab.className = "hud-build-bottom-dock__tool-card-label";
+    lab.textContent = "FLOOR";
+    card.appendChild(lab);
+    card.addEventListener("click", () => {
+      if (buildToggleBtn.getAttribute("aria-pressed") !== "true") return;
+      if (!buildDockRoomEditActive()) {
+        buildEditKindSelect.value = "room";
+        playModeHandler("floor");
+      }
+    });
+    buildBottomDockTools.appendChild(card);
+    const g = inspectorPreviewGameRef;
+    if (!g) return;
+    const pass = dockThumbGlBindGen;
+    dockThumbApplyTimeout = window.setTimeout(() => {
+      dockThumbApplyTimeout = null;
+      if (pass !== dockThumbGlBindGen || !inspectorPreviewGameRef) return;
+      requestAnimationFrame(() => {
+        if (pass !== dockThumbGlBindGen || !inspectorPreviewGameRef) return;
+        img.src = inspectorPreviewGameRef.getFloorDockThumbnailDataUrl();
+      });
+    }, 64);
+  }
+
+  function syncBuildDockTerrainShapeCardHighlights(
+    activeShape: DockTerrainShapeId = dockTerrainShapeActiveIdResolved()
+  ): void {
+    for (const node of buildBottomDockTools.querySelectorAll(
+      ".hud-build-bottom-dock__terrain-shape-card"
+    )) {
+      const card = node as HTMLButtonElement;
+      const shape = card.dataset.terrainShape as DockTerrainShapeId | undefined;
+      if (!shape) continue;
+      const on = shape === activeShape;
+      card.classList.toggle("hud-build-bottom-dock__tool-card--active", on);
+      card.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    syncBuildDockPlaceLabel();
+  }
+
+  function dockTerrainBlockChromeActive(): boolean {
+    return (
+      !buildBottomDock.hidden &&
+      hudPlayMode === "build" &&
+      buildDockCategory === "terrain" &&
+      tileInspectorToolSelect.value === "block"
+    );
+  }
+
+  function applyDockTerrainBlockPlacementChrome(): void {
+    const on = dockTerrainBlockChromeActive();
+    buildDockAdvancedBtn.hidden = true;
+    if (barAdvancedToggle) {
+      barAdvancedToggle.hidden = on;
+    }
+    if (on) {
+      setBarPopoverOpen(false);
+      barRampDirRow.hidden = true;
+    } else {
+      barRampDirRow.hidden = !barRampCb.checked;
+    }
+  }
+
+  function syncBuildDockToolStrip(): void {
+    if (buildDockRoomEditActive()) {
+      if (buildDockRoomCategory === "roomSettings") {
+        return;
+      }
+      syncBuildDockRoomFloorStrip();
+      return;
+    }
+    dockThumbGlBindGen += 1;
+    if (dockThumbApplyTimeout !== null) {
+      clearTimeout(dockThumbApplyTimeout);
+      dockThumbApplyTimeout = null;
+    }
+    if (terrainShapeThumbTimeout !== null) {
+      clearTimeout(terrainShapeThumbTimeout);
+      terrainShapeThumbTimeout = null;
+    }
+    const admin = barExperimentalOnly && !barExperimentalOnly.hidden;
+    const list = BUILD_DOCK_TOOLS[buildDockCategory].filter((tid) => {
+      if (tid === "billboard") return admin;
+      return true;
+    });
+    const cur = tileInspectorToolSelect.value as
+      | "block"
+      | "signpost"
+      | "teleporter"
+      | "billboard"
+      | "gate";
+    const terrainBlockOnly =
+      buildDockCategory === "terrain" &&
+      list.length === 1 &&
+      list[0] === "block";
+
+    if (terrainBlockOnly) {
+      for (const el of buildBottomDockTools.querySelectorAll(
+        ".hud-build-bottom-dock__tool-card"
+      )) {
+        el.remove();
+      }
+      for (const el of buildBottomDockTools.querySelectorAll(
+        ".hud-build-bottom-dock__terrain-shape-card"
+      )) {
+        el.remove();
+      }
+      buildBottomDockToolsEmpty.hidden = true;
+      syncBuildDockBlockPreviewMount({
+        inDock: buildDockShowsPlacementPreview(),
+        compactDockChrome: true,
+      });
+      const activeShape: DockTerrainShapeId = dockTerrainShapeActiveIdResolved();
+      const terrainThumbRows: {
+        shape: DockTerrainShapeId;
+        img: HTMLImageElement;
+      }[] = [];
+      for (const shape of DOCK_TERRAIN_SHAPE_ORDER) {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className =
+          "hud-build-bottom-dock__tool-card hud-build-bottom-dock__terrain-shape-card";
+        if (shape === activeShape) {
+          card.classList.add("hud-build-bottom-dock__tool-card--active");
+        }
+        card.dataset.terrainShape = shape;
+        card.setAttribute(
+          "aria-pressed",
+          shape === activeShape ? "true" : "false"
+        );
+        card.setAttribute("aria-label", dockTerrainShapeLabel(shape));
+        const wrap = document.createElement("span");
+        wrap.className = "hud-build-bottom-dock__tool-card-preview-wrap";
+        const img = document.createElement("img");
+        img.className = "hud-build-bottom-dock__tool-card-thumb";
+        img.width = 128;
+        img.height = 128;
+        img.decoding = "async";
+        img.alt = "";
+        img.draggable = false;
+        img.dataset.dockTerrainShapePreview = shape;
+        img.setAttribute("aria-hidden", "true");
+        wrap.appendChild(img);
+        card.appendChild(wrap);
+        terrainThumbRows.push({ shape, img });
+        const lab = document.createElement("span");
+        lab.className = "hud-build-bottom-dock__tool-card-label";
+        lab.textContent = dockTerrainShapeLabel(shape).toUpperCase();
+        card.appendChild(lab);
+        card.addEventListener("click", () => {
+          if (tileInspectorToolSelect.value !== "block") {
+            tileInspectorToolSelect.value = "block";
+            tileInspectorToolSelect.dispatchEvent(
+              new Event("change", { bubbles: true })
+            );
+          }
+          if (!applyPanelTerrainShape(shape)) {
+            placementStyleHandler(dockTerrainShapePlacementPatch(shape));
+            syncBuildDockTerrainShapeCardHighlights(shape);
+          }
+        });
+        buildBottomDockTools.appendChild(card);
+      }
+      const gTerrain = inspectorPreviewGameRef;
+      if (gTerrain && terrainThumbRows.length > 0) {
+        const passTerrain = dockThumbGlBindGen;
+        const shapeIds = DOCK_TERRAIN_SHAPE_ORDER;
+        terrainShapeThumbTimeout = window.setTimeout(() => {
+          terrainShapeThumbTimeout = null;
+          if (passTerrain !== dockThumbGlBindGen || !inspectorPreviewGameRef) {
+            return;
+          }
+          requestAnimationFrame(() => {
+            if (passTerrain !== dockThumbGlBindGen || !inspectorPreviewGameRef) {
+              return;
+            }
+            const urls =
+              inspectorPreviewGameRef.getTerrainDockShapeThumbnailDataUrls(
+                shapeIds
+              );
+            for (const { shape, img } of terrainThumbRows) {
+              const u = urls.get(shape);
+              if (u) img.src = u;
+            }
+          });
+        }, 64);
+      }
+      return;
+    }
+
+    syncBuildDockBlockPreviewMount({
+      inDock: buildDockShowsPlacementPreview(),
+      compactDockChrome: false,
+    });
+
+    buildBottomDockToolsEmpty.hidden = list.length > 0;
+    for (const el of buildBottomDockTools.querySelectorAll(
+      ".hud-build-bottom-dock__terrain-shape-card"
+    )) {
+      el.remove();
+    }
+    for (const el of buildBottomDockTools.querySelectorAll(
+      ".hud-build-bottom-dock__tool-card"
+    )) {
+      el.remove();
+    }
+    for (const tid of list) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "hud-build-bottom-dock__tool-card";
+      if (tid === cur) card.classList.add("hud-build-bottom-dock__tool-card--active");
+      card.dataset.tool = tid;
+      card.setAttribute("aria-pressed", tid === cur ? "true" : "false");
+      card.setAttribute("aria-label", toolLabelDock(tid));
+      const isDockPreviewTool =
+        tid === "teleporter" ||
+        tid === "gate" ||
+        tid === "billboard" ||
+        tid === "signpost";
+      if (isDockPreviewTool) {
+        const wrap = document.createElement("span");
+        wrap.className = "hud-build-bottom-dock__tool-card-preview-wrap";
+        const img = document.createElement("img");
+        img.className = "hud-build-bottom-dock__tool-card-thumb";
+        img.width = 128;
+        img.height = 128;
+        img.decoding = "async";
+        img.alt = "";
+        img.draggable = false;
+        img.dataset.dockToolPreview = tid;
+        img.setAttribute("aria-hidden", "true");
+        wrap.appendChild(img);
+        card.appendChild(wrap);
+      } else {
+        const mini = document.createElement("span");
+        mini.className = "hud-build-bottom-dock__tool-card-icon";
+        mini.setAttribute("aria-hidden", "true");
+        mini.textContent =
+          tid === "block"
+            ? "▣"
+            : tid === "signpost"
+              ? "⚑"
+              : tid === "teleporter"
+                ? "◇"
+                : tid === "gate"
+                  ? "⌂"
+                  : "▤";
+        card.appendChild(mini);
+      }
+      const lab = document.createElement("span");
+      lab.className = "hud-build-bottom-dock__tool-card-label";
+      lab.textContent = toolLabelDock(tid);
+      card.appendChild(lab);
+      card.addEventListener("click", () => {
+        if (tileInspectorToolSelect.value !== tid) {
+          tileInspectorToolSelect.value = tid;
+          tileInspectorToolSelect.dispatchEvent(
+            new Event("change", { bubbles: true })
+          );
+        }
+      });
+      buildBottomDockTools.appendChild(card);
+    }
+    type DockThumbTool = "teleporter" | "gate" | "billboard" | "signpost";
+    const thumbRows: { tid: DockThumbTool; img: HTMLImageElement }[] = [];
+    for (const tid of list) {
+      if (
+        tid !== "teleporter" &&
+        tid !== "gate" &&
+        tid !== "billboard" &&
+        tid !== "signpost"
+      ) {
+        continue;
+      }
+      const btn = buildBottomDockTools.querySelector(
+        `button.hud-build-bottom-dock__tool-card[data-tool="${tid}"]`
+      ) as HTMLButtonElement | null;
+      const img = btn?.querySelector(
+        "img.hud-build-bottom-dock__tool-card-thumb"
+      ) as HTMLImageElement | null;
+      if (img) {
+        thumbRows.push({ tid, img });
+      }
+    }
+    const g = inspectorPreviewGameRef;
+    if (!g || thumbRows.length === 0) {
+      return;
+    }
+    const pass = dockThumbGlBindGen;
+    const tids = thumbRows.map((r) => r.tid);
+    dockThumbApplyTimeout = window.setTimeout(() => {
+      dockThumbApplyTimeout = null;
+      if (pass !== dockThumbGlBindGen || !inspectorPreviewGameRef) {
+        return;
+      }
+      requestAnimationFrame(() => {
+        if (pass !== dockThumbGlBindGen || !inspectorPreviewGameRef) {
+          return;
+        }
+        const urls = inspectorPreviewGameRef.getDockStripThumbnailDataUrls(tids);
+        for (const { tid, img } of thumbRows) {
+          const u = urls.get(tid);
+          if (u) img.src = u;
+        }
+      });
+    }, 64);
+  }
+
+  function syncBuildDockFromToolSelect(): void {
+    const tool = tileInspectorToolSelect.value as
+      | "block"
+      | "signpost"
+      | "teleporter"
+      | "billboard"
+      | "gate";
+    buildDockCategory = categoryForToolDock(tool);
+    for (const [c, b] of buildDockTabByCategory) {
+      const on = c === buildDockCategory;
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      b.classList.toggle("hud-build-bottom-dock__tab--active", on);
+    }
+    syncBuildDockToolStrip();
+    syncBuildDockPlaceLabel();
+    syncBuildDockAdvancedLink();
+    applyDockTerrainBlockPlacementChrome();
+  }
+
+  function syncBuildBottomDockLayoutMode(): void {
+    const roomEdit = buildDockRoomEditActive();
+    buildBottomDockCategoryTabs.hidden = roomEdit;
+    buildBottomDockRoomCategoryTabs.hidden = !roomEdit;
+    buildBottomDockRowA.classList.remove(
+      "hud-build-bottom-dock__row--picker-hidden"
+    );
+    if (roomEdit) {
+      syncBuildDockRoomCategoryChrome();
+    } else {
+      setBuildDockRoomBgPopoverOpen(false);
+      buildDockRoomSettingsPanel.hidden = true;
+      buildBottomDockContext.classList.remove(
+        "hud-build-bottom-dock__context--room-settings"
+      );
+      buildBottomDockContext.hidden = false;
+      buildBottomDockTools.hidden = false;
+    }
+    syncBuildDockToolStrip();
+    requestAnimationFrame(() => updateBuildBottomDockInset());
+  }
+
+  function updateBuildBottomDockToolsRowHeight(): void {
+    if (buildBottomDock.hidden || buildBottomDockRowA.classList.contains(
+      "hud-build-bottom-dock__row--picker-hidden"
+    )) {
+      buildBottomDockRowA.style.removeProperty("--hud-build-dock-tools-row-height");
+      return;
+    }
+    const toolsH = Math.ceil(buildBottomDockTools.getBoundingClientRect().height);
+    buildBottomDockRowA.style.setProperty(
+      "--hud-build-dock-tools-row-height",
+      `${toolsH}px`
+    );
+  }
+
+  function updateBuildBottomDockInset(): void {
+    if (buildBottomDock.hidden) {
+      ui.style.setProperty("--hud-build-dock-height", "0px");
+      buildBottomDockRowA.style.removeProperty("--hud-build-dock-tools-row-height");
+      return;
+    }
+    updateBuildBottomDockToolsRowHeight();
+    const panelH = Math.ceil(buildBottomDockPanel.getBoundingClientRect().height);
+    const satelliteGap = 5;
+    const satelliteH = buildBottomDockPreviewSatellite.hidden
+      ? 0
+      : Math.ceil(buildBottomDockPreviewSatellite.getBoundingClientRect().height) +
+        satelliteGap;
+    ui.style.setProperty(
+      "--hud-build-dock-height",
+      `${panelH + satelliteH}px`
+    );
+  }
+
+  function syncBuildBottomDockVisibility(): void {
+    const editMode = hudPlayMode === "build" || hudPlayMode === "floor";
+    const show = editMode && !buildModeStrip.hidden;
+    if (!show) {
+      setBuildDockRoomBgPopoverOpen(false);
+    }
+    buildBottomDock.hidden = !show;
+    ui.classList.toggle("hud--build-bottom-dock-visible", show);
+    syncBuildBottomDockLayoutMode();
+    syncBuildDockFromToolSelect();
+    syncBuildDockDeselectChrome();
+    updateBuildBottomDockInset();
+    requestAnimationFrame(() => syncHudBelowTopWrap());
+  }
+
+  const buildBottomDockResizeRo = new ResizeObserver(() => {
+    updateBuildBottomDockInset();
+  });
+  buildBottomDockResizeRo.observe(buildBottomDock);
+  buildBottomDockResizeRo.observe(buildBottomDockPanel);
+  buildBottomDockResizeRo.observe(buildBottomDockTools);
+  buildBottomDockResizeRo.observe(buildBottomDockPreviewSatellite);
+
+  function layoutBuildDockRoomBgPopover(): void {
+    if (!buildDockRoomBgPopover || buildDockRoomBgPopover.hidden) return;
+    const margin = 8;
+    const anchor = buildDockRoomBgSwatch;
+    const ar = anchor.getBoundingClientRect();
+    const pr = buildDockRoomBgPopover.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = ar.left + ar.width / 2 - pr.width / 2;
+    left = Math.max(margin, Math.min(left, vw - margin - pr.width));
+    let top = ar.top - pr.height - margin;
+    const minTop = margin;
+    if (top < minTop) {
+      top = ar.bottom + margin;
+    }
+    if (top + pr.height > vh - margin) {
+      top = Math.max(minTop, vh - margin - pr.height);
+    }
+    buildDockRoomBgPopover.style.left = `${left}px`;
+    buildDockRoomBgPopover.style.top = `${top}px`;
+  }
+
+  function setBuildDockRoomBgPopoverOpen(open: boolean): void {
+    if (!buildDockRoomBgPopover) return;
+    if (!open) {
+      buildDockRoomBgPopover.hidden = true;
+      buildDockRoomBgSwatch.setAttribute("aria-expanded", "false");
+      buildDockRoomBgSwatch.classList.remove(
+        "hud-build-bottom-dock__room-bg-swatch--open"
+      );
+      return;
+    }
+    if (!roomBgSettingsAllowed || !buildDockRoomEditActive()) return;
+    setBuildEditKindOverlayOpen(false);
+    buildDockRoomBgPopover.hidden = false;
+    buildDockRoomBgSwatch.setAttribute("aria-expanded", "true");
+    buildDockRoomBgSwatch.classList.add(
+      "hud-build-bottom-dock__room-bg-swatch--open"
+    );
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => layoutBuildDockRoomBgPopover());
+    });
+  }
+
+  buildDockRoomBgSwatch.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setBuildDockRoomBgPopoverOpen(buildDockRoomBgPopover.hidden);
+  });
+
+  ui.addEventListener(
+    "pointerdown",
+    (e) => {
+      const t = e.target as Node;
+      if (buildDockRoomBgPopover && !buildDockRoomBgPopover.hidden) {
+        if (
+          !buildDockRoomBgPopover.contains(t) &&
+          !buildDockRoomBgSwatch.contains(t)
+        ) {
+          setBuildDockRoomBgPopoverOpen(false);
+        }
+      }
+      if (!buildEditKindPopover.hidden) {
+        if (
+          !buildEditKindPopover.contains(t) &&
+          !buildEditKindTrigger.contains(t)
+        ) {
+          setBuildEditKindOverlayOpen(false);
+        }
+      }
+    },
+    true
+  );
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (buildDockRoomBgPopover && !buildDockRoomBgPopover.hidden) {
+      setBuildDockRoomBgPopoverOpen(false);
+    }
+    if (!buildEditKindPopover.hidden) {
+      setBuildEditKindOverlayOpen(false);
+    }
+  });
+
+  function syncBuildDockRoomCategoryChrome(): void {
+    const roomEdit = buildDockRoomEditActive();
+    if (!roomEdit) {
+      buildDockRoomSettingsPanel.hidden = true;
+      buildBottomDockContext.classList.remove(
+        "hud-build-bottom-dock__context--room-settings"
+      );
+      buildBottomDockTools.hidden = false;
+      buildBottomDockContext.hidden = false;
+      buildDockContextColor.hidden = false;
+      buildDockContextTop.hidden = false;
+      if (tileInspectorRoot) tileInspectorRoot.hidden = false;
+      return;
+    }
+    const settingsTab = buildDockRoomCategory === "roomSettings";
+    buildBottomDockTools.hidden = settingsTab;
+    buildDockRoomSettingsPanel.hidden =
+      !settingsTab || !roomBgSettingsAllowed;
+    buildDockRoomBgSwatch.disabled = !roomBgSettingsAllowed;
+    buildBottomDockContext.classList.toggle(
+      "hud-build-bottom-dock__context--room-settings",
+      settingsTab && roomBgSettingsAllowed
+    );
+    if (settingsTab && roomBgSettingsAllowed) {
+      buildBottomDockContext.hidden = false;
+      buildDockContextColor.hidden = true;
+      buildDockContextTop.hidden = true;
+      if (tileInspectorRoot) tileInspectorRoot.hidden = true;
+      return;
+    }
+    setBuildDockRoomBgPopoverOpen(false);
+    /* Floor tab: no placement params in the context column. */
+    buildBottomDockContext.hidden = true;
+    buildDockContextColor.hidden = true;
+    buildDockContextTop.hidden = true;
+    if (tileInspectorRoot) tileInspectorRoot.hidden = true;
+  }
+
+  ui.appendChild(buildBottomDock);
+
+  const tileInspectorPyramidBaseRow = tileInspectorRoot.querySelector(
+    "#tile-inspector-pyramid-base-row"
   ) as HTMLElement | null;
-  const tileInspectorPyramidBaseInput = buildBlockBar.querySelector(
+  const tileInspectorPyramidBaseInput = tileInspectorRoot.querySelector(
     "#tile-inspector-pyramid-base"
   ) as HTMLInputElement | null;
-  const tileInspectorPyramidBaseVal = buildBlockBar.querySelector(
+  const tileInspectorPyramidBaseVal = tileInspectorRoot.querySelector(
     "#tile-inspector-pyramid-base-val"
   ) as HTMLElement | null;
+  const tileInspectorPyramidBaseDec = tileInspectorRoot.querySelector(
+    "#tile-inspector-pyramid-base-dec"
+  ) as HTMLButtonElement | null;
+  const tileInspectorPyramidBaseInc = tileInspectorRoot.querySelector(
+    "#tile-inspector-pyramid-base-inc"
+  ) as HTMLButtonElement | null;
 
+  function syncTileInspectorPyramidBaseLabel(): void {
+    if (!tileInspectorPyramidBaseInput || !tileInspectorPyramidBaseVal) return;
+    const raw = Math.min(
+      165,
+      Math.max(100, Math.floor(Number(tileInspectorPyramidBaseInput.value)))
+    );
+    tileInspectorPyramidBaseInput.value = String(raw);
+    tileInspectorPyramidBaseVal.textContent = `${raw}%`;
+    tileInspectorPyramidBaseInput.setAttribute("aria-valuetext", `${raw}%`);
+    if (tileInspectorPyramidBaseDec) {
+      tileInspectorPyramidBaseDec.disabled = raw <= 100;
+    }
+    if (tileInspectorPyramidBaseInc) {
+      tileInspectorPyramidBaseInc.disabled = raw >= 165;
+    }
+  }
   function pyramidBasePercentFromScale(scale: number): number {
     return Math.round(clampPyramidBaseScale(scale) * 100);
   }
 
   function syncBarPyramidBaseSliderFromScale(scale: number): void {
-    if (!tileInspectorPyramidBaseInput || !tileInspectorPyramidBaseVal) return;
+    if (buildDockBlockSelectionParamsActive()) return;
+    if (!tileInspectorPyramidBaseInput) return;
     const pct = pyramidBasePercentFromScale(scale);
     const stepped = Math.round((pct - 100) / 5) * 5 + 100;
     const v = Math.min(165, Math.max(100, stepped));
     tileInspectorPyramidBaseInput.value = String(v);
-    tileInspectorPyramidBaseVal.textContent = `${v}%`;
-    tileInspectorPyramidBaseInput.setAttribute("aria-valuetext", `${v}%`);
+    syncTileInspectorPyramidBaseLabel();
+  }
+
+  function buildDockContextTool(): BuildDockContextTool {
+    return tileInspectorToolSelect.value as BuildDockContextTool;
+  }
+
+  /** Block tile selected for edit; dock params drive `emitPanelProps`. */
+  function buildDockBlockSelectionParamsActive(): boolean {
+    if (!objectPanel) return false;
+    return (
+      panelOnPropsChange !== null &&
+      !panelObjectEditGate &&
+      objectPanel.querySelector("#tile-inspector-selection") !== null
+    );
+  }
+
+  function buildDockContextShapeState(): { pyramid: boolean; ramp: boolean } {
+    const fromSelection = dockTerrainShapeActiveIdFromSelection();
+    if (fromSelection !== null) {
+      return {
+        pyramid: fromSelection === "pyramid",
+        ramp: fromSelection === "ramp",
+      };
+    }
+    const st = inspectorPreviewGameRef?.getPlacementBlockStyle();
+    const shape = st
+      ? dockTerrainShapeActiveId(st)
+      : dockTerrainShapeActiveId({
+          hex: barHexCb.checked,
+          pyramid: barPyramidCb.checked,
+          sphere: barSphereCb.checked,
+          ramp: barRampCb.checked,
+        });
+    return {
+      pyramid: shape === "pyramid",
+      ramp: shape === "ramp",
+    };
+  }
+
+  function buildDockContextBlockParamsAllowed(): boolean {
+    if (
+      signpostModeActive ||
+      teleporterModeActive ||
+      gateModeActive ||
+      billboardModeActive
+    ) {
+      return false;
+    }
+    if (!objectPanel) return true;
+    if (panelObjectEditGate) return false;
+    if (
+      objectPanelContextPopover.classList.contains(
+        "build-object-panel-context--teleporter"
+      ) ||
+      objectPanelContextPopover.classList.contains(
+        "build-object-panel-context--billboard"
+      )
+    ) {
+      return false;
+    }
+    return objectPanel.querySelector("#tile-inspector-selection") !== null;
+  }
+
+  function buildDockBillboardSelectionEditActive(): boolean {
+    if (!isBuildObjectSelectionActive()) return false;
+    if (
+      !objectPanelContextPopover.classList.contains(
+        "build-object-panel-context--billboard"
+      )
+    ) {
+      return false;
+    }
+    return !objectPanelContextPopover.classList.contains(
+      "build-object-panel-context--billboard-readonly"
+    );
+  }
+
+  function syncBuildDockContextParamVisibility(): void {
+    if (buildDockRoomEditActive()) {
+      for (const id of [
+        "height",
+        "pyramid-base",
+        "billboard-edit",
+      ] as const) {
+        const row = tileInspectorRoot.querySelector(
+          `[data-build-dock-param="${id}"]`
+        ) as HTMLElement | null;
+        if (row) row.hidden = true;
+      }
+      return;
+    }
+    const tool = buildDockContextTool();
+    const minimalInspector =
+      signpostModeActive ||
+      teleporterModeActive ||
+      gateModeActive ||
+      billboardModeActive;
+    const blockParams = buildDockContextBlockParamsAllowed();
+    const { pyramid, ramp } = buildDockContextShapeState();
+    const billboardSelectionEdit = buildDockBillboardSelectionEditActive();
+    const ctx = {
+      tool,
+      pyramid,
+      ramp,
+      minimalInspector,
+      blockParams,
+      billboardSelectionEdit,
+    };
+    for (const id of [
+      "height",
+      "pyramid-base",
+      "billboard-edit",
+    ] as const) {
+      const row = tileInspectorRoot.querySelector(
+        `[data-build-dock-param="${id}"]`
+      ) as HTMLElement | null;
+      if (row) row.hidden = !buildDockContextParamVisible(id, ctx);
+    }
+  }
+
+  function syncDockHeightFromQuarterHalf(
+    quarter: boolean,
+    half: boolean
+  ): void {
+    if (!tileInspectorHeightInput) return;
+    const v = quarter ? 0 : half ? 1 : 2;
+    tileInspectorHeightInput.value = String(v);
+    syncTileInspectorHeightLabel();
+  }
+
+  function syncBuildDockContextParams(): void {
+    syncBuildDockContextParamVisibility();
   }
 
   function syncPlacementPyramidBaseSectionVisibility(): void {
-    if (!tileInspectorPyramidBaseSection) return;
-    const show =
-      !signpostModeActive &&
-      !billboardModeActive &&
-      !teleporterModeActive &&
-      !gateModeActive &&
-      barPyramidCb.checked &&
-      !barRampCb.checked;
-    tileInspectorPyramidBaseSection.hidden = !show;
+    syncBuildDockContextParamVisibility();
   }
 
   let inspectorPreviewGameRef: Game | null = null;
 
-  const barTitleEl = tileInspectorHeadHint;
   /** Matches the mode passed to `setPlayModeState`; keeps placement shape+hue hidden in floor (room) edit. */
   let hudPlayMode: "walk" | "build" | "floor" = "walk";
 
   function syncModeSidebarBodyInteractive(): void {
-    modeSidebarBody.classList.toggle(
-      "hud-mode-sidebar__body--interactive",
+    buildModeStrip.classList.toggle(
+      "hud-build-mode-strip--interactive",
       !roomBgHuePanel.hidden ||
         !roomEntrySpawnPanel.hidden ||
         !buildBlockBar.hidden ||
         objectPanel !== null
     );
+  }
+
+  function syncBuildDockAdvancedLink(): void {
+    buildDockAdvancedBtn.hidden = true;
+    buildDockAdvancedBtn.setAttribute("aria-expanded", "false");
   }
 
   function syncHueDockVisibility(): void {
@@ -3736,43 +5304,17 @@ export function createHud(
     const panelHueDocked =
       panelShapeColorRow !== null && !panelShapeColorRow.hidden;
     hueDock.hidden =
-      roomBgHuePanel.hidden &&
       roomEntrySpawnPanel.hidden &&
       barShapeColorRow.hidden &&
       !panelHueDocked;
     syncBlockPreviewDockSlots();
+    syncPlacementInspectorPreviewGame();
+    syncBuildBottomDockVisibility();
+    syncBuildDockAdvancedLink();
+    syncBuildDockRotateChrome();
   }
 
   let lastHueDeg = 0;
-
-  function refreshBuildBarTitle(): void {
-    if (!tileInspectorHeadHint) return;
-    if (teleporterModeActive) {
-      tileInspectorHeadHint.textContent =
-        "Teleporter. Choose an empty floor tile to place.";
-      tileInspectorHeadHint.hidden = false;
-      return;
-    }
-    if (gateModeActive) {
-      tileInspectorHeadHint.textContent =
-        "Gate. R rotates the opening direction. Green/red on neighbors shows clearance. Pick a color, then click an empty floor tile.";
-      tileInspectorHeadHint.hidden = false;
-      return;
-    }
-    if (signpostModeActive) {
-      tileInspectorHeadHint.textContent =
-        "Signpost. Tap a tile to add your message.";
-      tileInspectorHeadHint.hidden = false;
-      return;
-    }
-    if (billboardModeActive) {
-      tileInspectorHeadHint.textContent =
-        "Billboard. Hover for footprint and preview. Press M to move the selection, or press M again to cancel. Tap the anchor to place.";
-      tileInspectorHeadHint.hidden = false;
-      return;
-    }
-    tileInspectorHeadHint.hidden = true;
-  }
 
   const signpostTextarea = signpostOverlay.querySelector(".signpost-overlay__textarea") as HTMLTextAreaElement;
   const signpostCharCount = signpostOverlay.querySelector(".signpost-overlay__char-count") as HTMLElement;
@@ -3785,21 +5327,23 @@ export function createHud(
   function activateBuildTool(
     tool: "block" | "signpost" | "teleporter" | "billboard" | "gate"
   ): void {
-    setBarShapePopoverOpen(false);
+    const toolChanging = tileInspectorToolSelect.value !== tool;
+    if (toolChanging && isBuildObjectSelectionActive()) {
+      dismissBuildObjectSelection();
+    }
+    if (!barAdvancedPopover.hidden) {
+      setBarPopoverOpen(false);
+    }
     signpostModeActive = tool === "signpost";
     teleporterModeActive = tool === "teleporter";
     gateModeActive = tool === "gate";
     billboardModeActive = tool === "billboard";
     if (teleporterSection) {
-      teleporterSection.hidden = !teleporterModeActive;
-    }
-    if (gateSection) {
-      gateSection.hidden = !gateModeActive;
+      syncTeleporterDockSectionVisibility();
     }
     if (tileInspectorToolSelect && tileInspectorToolSelect.value !== tool) {
       tileInspectorToolSelect.value = tool;
     }
-    refreshBuildBarTitle();
     if (tileInspectorRoot) {
       tileInspectorRoot.classList.toggle(
         "tile-inspector--minimal",
@@ -3809,15 +5353,12 @@ export function createHud(
           billboardModeActive
       );
     }
-    if (tileInspectorResetBtn) {
-      tileInspectorResetBtn.hidden =
-        signpostModeActive ||
-        teleporterModeActive ||
-        gateModeActive ||
-        billboardModeActive;
-    }
     buildToolChangeHandler?.(tool);
     syncBlockPreviewDockSlots();
+    syncPlacementInspectorPreviewGame();
+    syncBuildDockFromToolSelect();
+    syncBuildDockContextParams();
+    syncBuildDockRotateChrome();
   }
 
   // Signpost textarea character counter
@@ -4913,14 +6454,48 @@ export function createHud(
   function syncTileInspectorHeightLabel(): void {
     if (!tileInspectorHeightInput || !tileInspectorHeightVal) return;
     const v = Math.min(2, Math.max(0, Math.floor(Number(tileInspectorHeightInput.value))));
-    /* Slider left = low slab, right = full height. */
+    /* Stepper left = low slab, right = full height. */
     const labelsM = ["0.25 m", "0.5 m", "1.0 m"] as const;
     const labelsShort = ["¼", "Half", "Full"] as const;
     tileInspectorHeightVal.textContent = labelsM[v] ?? "1.0 m";
     tileInspectorHeightInput.setAttribute("aria-valuetext", labelsShort[v] ?? "Full");
+    if (tileInspectorHeightDec) tileInspectorHeightDec.disabled = v <= 0;
+    if (tileInspectorHeightInc) tileInspectorHeightInc.disabled = v >= 2;
+  }
+
+  function applyTileInspectorHeightValue(next: number): void {
+    if (!tileInspectorHeightInput) return;
+    const v = Math.min(2, Math.max(0, Math.floor(next)));
+    tileInspectorHeightInput.value = String(v);
+    syncTileInspectorHeightLabel();
+    if (buildDockBlockSelectionParamsActive()) {
+      emitPanelProps();
+      return;
+    }
+    if (v <= 0) {
+      placementStyleHandler({ quarter: true, half: false });
+    } else if (v === 1) {
+      placementStyleHandler({ quarter: false, half: true });
+    } else {
+      placementStyleHandler({ quarter: false, half: false });
+    }
+  }
+
+  function applyTileInspectorPyramidBaseValue(next: number): void {
+    if (!tileInspectorPyramidBaseInput) return;
+    const raw = Math.min(165, Math.max(100, Math.floor(next)));
+    const stepped = Math.round((raw - 100) / 5) * 5 + 100;
+    tileInspectorPyramidBaseInput.value = String(stepped);
+    syncTileInspectorPyramidBaseLabel();
+    if (buildDockBlockSelectionParamsActive()) {
+      emitPanelProps();
+      return;
+    }
+    placementStyleHandler({ pyramidBaseScale: stepped / 100 });
   }
 
   function syncBarHeightButtons(quarter: boolean, half: boolean): void {
+    if (buildDockBlockSelectionParamsActive()) return;
     if (!tileInspectorHeightInput) return;
     const v = quarter ? 0 : half ? 1 : 2;
     tileInspectorHeightInput.value = String(v);
@@ -4928,160 +6503,112 @@ export function createHud(
   }
 
   function layoutBarAdvancedPopover(): void {
-    if (barAdvancedPopover.hidden || buildBlockBar.hidden) return;
+    if (barAdvancedPopover.hidden || buildBlockBar.hidden) {
+      return;
+    }
     const margin = 8;
     const vw = document.documentElement.clientWidth;
     const vh = document.documentElement.clientHeight;
-    const sb = modeSidebar.getBoundingClientRect();
-    const rightPx = Math.max(margin, vw - sb.left + margin);
-    const br = buildBlockBar.getBoundingClientRect();
-    const w = Math.min(260, Math.max(180, br.width));
+    const anchor =
+      barAdvancedToggle && !barAdvancedToggle.hidden
+        ? barAdvancedToggle
+        : !buildDockAdvancedBtn.hidden
+          ? buildDockAdvancedBtn
+          : null;
+    if (!anchor) {
+      return;
+    }
+    const ar = anchor.getBoundingClientRect();
+    const w = Math.min(260, Math.max(180, vw * 0.36));
     barAdvancedPopover.style.width = `${w}px`;
     barAdvancedPopover.style.maxWidth = `${Math.max(120, vw - 16)}px`;
-    barAdvancedPopover.style.right = `${rightPx}px`;
+    barAdvancedPopover.style.right = `${Math.max(margin, vw - ar.right + margin)}px`;
     barAdvancedPopover.style.left = "auto";
-    const pr = barAdvancedPopover.getBoundingClientRect();
-    let top = br.top - pr.height - margin;
+    barAdvancedPopover.style.bottom = "auto";
+    let pr = barAdvancedPopover.getBoundingClientRect();
+    let top = ar.top - pr.height - margin;
     const minTop = 52;
     if (top < minTop) top = minTop;
     if (top + pr.height > vh - margin) {
       top = Math.max(minTop, vh - margin - pr.height);
     }
     barAdvancedPopover.style.top = `${top}px`;
-    barAdvancedPopover.style.bottom = "auto";
-  }
-
-  function layoutBarShapePopover(): void {
-    if (barShapePopover.hidden) return;
-    const margin = 8;
-    const vw = document.documentElement.clientWidth;
-    const vh = document.documentElement.clientHeight;
-    const minTop = 52;
-    const sb = modeSidebar.getBoundingClientRect();
-    const rightPx = Math.max(margin, vw - sb.left + margin);
-    barShapePopover.style.width = `${Math.min(200, Math.max(160, 180))}px`;
-    barShapePopover.style.maxWidth = `${Math.max(120, vw - 16)}px`;
-    barShapePopover.style.right = `${rightPx}px`;
-    barShapePopover.style.left = "auto";
-    barShapePopover.style.bottom = "auto";
-    const tr = barShapeTrigger.getBoundingClientRect();
-    let top = tr.bottom + margin;
-    barShapePopover.style.top = `${top}px`;
-    let pr = barShapePopover.getBoundingClientRect();
-    if (pr.bottom > vh - margin) {
-      top = tr.top - pr.height - margin;
-      barShapePopover.style.top = `${top}px`;
-      pr = barShapePopover.getBoundingClientRect();
-    }
-    if (top < minTop) {
-      top = minTop;
-      barShapePopover.style.top = `${top}px`;
-      pr = barShapePopover.getBoundingClientRect();
-    }
-    if (pr.bottom > vh - margin) {
-      top = Math.max(minTop, vh - margin - pr.height);
-      barShapePopover.style.top = `${top}px`;
-    }
-  }
-
-  function layoutPanelShapePopover(): void {
-    if (panelShapePopover.hidden || !panelShapeTriggerEl) return;
-    const margin = 8;
-    const vw = document.documentElement.clientWidth;
-    const vh = document.documentElement.clientHeight;
-    const minTop = 52;
-    const sb = modeSidebar.getBoundingClientRect();
-    const rightPx = Math.max(margin, vw - sb.left + margin);
-    /* Match hue-dock shape trigger width (~44px) + chrome */
-    const tw = panelShapeTriggerEl.getBoundingClientRect().width || 44;
-    const compactW = Math.round(Math.min(56, Math.max(48, tw + 8)));
-    panelShapePopover.style.width = `${compactW}px`;
-    panelShapePopover.style.maxWidth = `${Math.min(compactW, vw - 16)}px`;
-    panelShapePopover.style.right = `${rightPx}px`;
-    panelShapePopover.style.left = "auto";
-    panelShapePopover.style.bottom = "auto";
-    const tr = panelShapeTriggerEl.getBoundingClientRect();
-    let top = tr.bottom + margin;
-    panelShapePopover.style.top = `${top}px`;
-    let pr = panelShapePopover.getBoundingClientRect();
-    if (pr.bottom > vh - margin) {
-      top = tr.top - pr.height - margin;
-      panelShapePopover.style.top = `${top}px`;
-      pr = panelShapePopover.getBoundingClientRect();
-    }
-    if (top < minTop) {
-      top = minTop;
-      panelShapePopover.style.top = `${top}px`;
-      pr = panelShapePopover.getBoundingClientRect();
-    }
-    if (pr.bottom > vh - margin) {
-      top = Math.max(minTop, vh - margin - pr.height);
-      panelShapePopover.style.top = `${top}px`;
-    }
-  }
-
-  function setBarShapePopoverOpen(open: boolean): void {
-    barShapePopover.hidden = !open;
-    barShapeTrigger.setAttribute("aria-expanded", open ? "true" : "false");
-    if (open) {
-      if (!barAdvancedPopover.hidden) setBarPopoverOpen(false);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => layoutBarShapePopover());
-      });
-    }
-  }
-
-  function setPanelShapePopoverOpen(open: boolean): void {
-    panelShapePopover.hidden = !open;
-    panelShapeTriggerEl?.setAttribute("aria-expanded", open ? "true" : "false");
-    if (open) {
-      if (!objectPanelAdvancedPopover.hidden) setPanelAdvancedOpen(false);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => layoutPanelShapePopover());
-      });
-    }
   }
 
   function setBarPopoverOpen(open: boolean): void {
-    barAdvancedPopover.hidden = !open;
-    barAdvancedToggle.setAttribute("aria-expanded", open ? "true" : "false");
-    barAdvancedToggle.classList.toggle(
-      "build-block-bar__advanced-toggle--open",
-      open
-    );
-    if (open) {
-      setBarShapePopoverOpen(false);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => layoutBarAdvancedPopover());
-      });
+    if (!open) {
+      barAdvancedPopover.hidden = true;
+      if (barAdvancedToggle) {
+        barAdvancedToggle.setAttribute("aria-expanded", "false");
+        barAdvancedToggle.classList.remove("build-block-bar__advanced-toggle--open");
+      }
+      syncBuildDockAdvancedLink();
+      return;
     }
+    const anchor =
+      barAdvancedToggle && !barAdvancedToggle.hidden
+        ? barAdvancedToggle
+        : buildDockAdvancedBtn;
+    if (anchor.hidden) {
+      return;
+    }
+    barAdvancedPopover.hidden = false;
+    if (barAdvancedToggle) {
+      const onRail = anchor === barAdvancedToggle;
+      barAdvancedToggle.setAttribute("aria-expanded", onRail ? "true" : "false");
+      barAdvancedToggle.classList.toggle(
+        "build-block-bar__advanced-toggle--open",
+        onRail
+      );
+    }
+    syncBuildDockAdvancedLink();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => layoutBarAdvancedPopover());
+    });
   }
 
-  tileInspectorHeightInput.addEventListener("input", () => {
-    const v = Math.min(2, Math.max(0, Math.floor(Number(tileInspectorHeightInput.value))));
-    if (v <= 0) {
-      placementStyleHandler({ quarter: true, half: false });
-      syncBarHeightButtons(true, false);
-    } else if (v === 1) {
-      placementStyleHandler({ quarter: false, half: true });
-      syncBarHeightButtons(false, true);
-    } else {
-      placementStyleHandler({ quarter: false, half: false });
-      syncBarHeightButtons(false, false);
-    }
-    syncTileInspectorHeightLabel();
+  buildDockAdvancedBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setBarPopoverOpen(barAdvancedPopover.hidden);
   });
 
-  tileInspectorPyramidBaseInput?.addEventListener("input", () => {
-    if (!tileInspectorPyramidBaseInput || !tileInspectorPyramidBaseVal) return;
-    const raw = Math.min(
-      165,
-      Math.max(100, Math.floor(Number(tileInspectorPyramidBaseInput.value)))
+  tileInspectorHeightDec?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorHeightInput) return;
+    applyTileInspectorHeightValue(
+      Math.floor(Number(tileInspectorHeightInput.value)) - 1
     );
-    tileInspectorPyramidBaseInput.value = String(raw);
-    tileInspectorPyramidBaseVal.textContent = `${raw}%`;
-    tileInspectorPyramidBaseInput.setAttribute("aria-valuetext", `${raw}%`);
-    placementStyleHandler({ pyramidBaseScale: raw / 100 });
+  });
+  tileInspectorHeightInc?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorHeightInput) return;
+    applyTileInspectorHeightValue(
+      Math.floor(Number(tileInspectorHeightInput.value)) + 1
+    );
+  });
+  buildDockBillboardEditBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    billboardSelectionEditHandler?.();
+  });
+
+  tileInspectorPyramidBaseDec?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorPyramidBaseInput) return;
+    applyTileInspectorPyramidBaseValue(
+      Math.floor(Number(tileInspectorPyramidBaseInput.value)) - 5
+    );
+  });
+  tileInspectorPyramidBaseInc?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorPyramidBaseInput) return;
+    applyTileInspectorPyramidBaseValue(
+      Math.floor(Number(tileInspectorPyramidBaseInput.value)) + 5
+    );
   });
 
   barHexCb.addEventListener("change", () => {
@@ -5110,19 +6637,17 @@ export function createHud(
   });
 
   function rotateBarRamp(delta: -1 | 1): void {
-    if (!barRampCb.checked && !gateModeActive) return;
+    if (!barRampCb.checked) return;
     barRampDir = (barRampDir + delta + 4) % 4;
     placementStyleHandler({ rampDir: barRampDir });
   }
 
   barRampRotCCW.addEventListener("click", () => rotateBarRamp(-1));
   barRampRotCW.addEventListener("click", () => rotateBarRamp(1));
-  barGateExitCCW?.addEventListener("click", () => rotateBarRamp(-1));
-  barGateExitCW?.addEventListener("click", () => rotateBarRamp(1));
 
   barRampCb.addEventListener("change", () => {
     const on = barRampCb.checked;
-    barRampDirRow.hidden = !on && !gateModeActive;
+    barRampDirRow.hidden = !on;
     placementStyleHandler({
       ramp: on,
       hex: on ? false : barHexCb.checked,
@@ -5136,65 +6661,6 @@ export function createHud(
     }
     syncBarShapeButtons();
   });
-
-  function syncBarShapeTriggerVisual(): void {
-    const ramp = barRampCb.checked;
-    const pyramid = !ramp && barPyramidCb.checked;
-    const sphere = !ramp && barSphereCb.checked;
-    const hex = barHexCb.checked && !ramp && !pyramid && !sphere;
-    const shape: "cube" | "hex" | "pyramid" | "sphere" | "ramp" = ramp
-      ? "ramp"
-      : sphere
-        ? "sphere"
-        : pyramid
-          ? "pyramid"
-          : hex
-            ? "hex"
-            : "cube";
-    const label = ramp
-      ? "Ramp"
-      : sphere
-        ? "Sphere"
-        : pyramid
-          ? "Pyramid"
-          : hex
-            ? "Hex"
-            : "Cube";
-    const lab = barShapeTrigger.querySelector(".hud-mode-sidebar__shape-trigger-label");
-    if (lab) lab.textContent = label;
-    const icon = barShapeTrigger.querySelector(".hud-mode-sidebar__shape-trigger-icon");
-    if (icon) icon.innerHTML = SHAPE_TRIG_SVG[shape];
-  }
-
-  function syncPanelShapeTriggerVisual(): void {
-    if (!panelShapeTriggerEl || !panelRampCb || !panelHexCb) return;
-    const ramp = panelRampCb.checked;
-    const pyramid = !ramp && (panelPyramidCb?.checked ?? false);
-    const sphere = !ramp && (panelSphereCb?.checked ?? false);
-    const hex = !ramp && panelHexCb.checked && !pyramid && !sphere;
-    const shape: "cube" | "hex" | "pyramid" | "sphere" | "ramp" = ramp
-      ? "ramp"
-      : sphere
-        ? "sphere"
-        : pyramid
-          ? "pyramid"
-          : hex
-            ? "hex"
-            : "cube";
-    const label = ramp
-      ? "Ramp"
-      : sphere
-        ? "Sphere"
-        : pyramid
-          ? "Pyramid"
-          : hex
-            ? "Hex"
-            : "Cube";
-    const lab = panelShapeTriggerEl.querySelector(".hud-mode-sidebar__shape-trigger-label");
-    if (lab) lab.textContent = label;
-    const icon = panelShapeTriggerEl.querySelector(".hud-mode-sidebar__shape-trigger-icon");
-    if (icon) icon.innerHTML = SHAPE_TRIG_SVG[shape];
-  }
 
   function syncBarShapeButtons(): void {
     const ramp = barRampCb.checked;
@@ -5213,7 +6679,6 @@ export function createHud(
       b.classList.toggle("tile-inspector__shape-btn--active", !!on);
       b.setAttribute("aria-pressed", on ? "true" : "false");
     });
-    refreshBuildBarTitle();
     if (tileInspectorRoot) {
       tileInspectorRoot.classList.toggle(
         "tile-inspector--minimal",
@@ -5223,15 +6688,10 @@ export function createHud(
           billboardModeActive
       );
     }
-    if (tileInspectorResetBtn) {
-      tileInspectorResetBtn.hidden =
-        signpostModeActive ||
-        teleporterModeActive ||
-        gateModeActive ||
-        billboardModeActive;
-    }
-    syncBarShapeTriggerVisual();
     syncPlacementPyramidBaseSectionVisibility();
+    syncBuildDockContextParams();
+    syncTileInspectorHeightLabel();
+    syncTileInspectorPyramidBaseLabel();
     syncBlockPreviewDockSlots();
   }
 
@@ -5246,70 +6706,10 @@ export function createHud(
     refreshBarSwatches(id);
   }
 
-  function ringHueFromClient(
-    ringEl: HTMLElement,
-    clientX: number,
-    clientY: number
-  ): number | null {
-    const ringRect = ringEl.getBoundingClientRect();
-    const cx = ringRect.left + ringRect.width / 2;
-    const cy = ringRect.top + ringRect.height / 2;
-    const dx = clientX - cx;
-    const dy = clientY - cy;
-    const dist = Math.hypot(dx, dy);
-    const outer = ringRect.width * 0.5;
-    const inner = ringRect.width * 0.22;
-    if (dist < inner || dist === 0) return null;
-    if (dist > outer) {
-      const ang = Math.atan2(dy, dx);
-      let deg = (ang * 180) / Math.PI;
-      return (deg + 90 + 360) % 360;
-    }
-    const ang = Math.atan2(dy, dx);
-    let deg = (ang * 180) / Math.PI;
-    return (deg + 90 + 360) % 360;
-  }
-
-  function onHuePointer(ev: PointerEvent): void {
-    const hue = ringHueFromClient(barHueRing, ev.clientX, ev.clientY);
-    if (hue === null) return;
+  attachPaletteHueRingPointerHandlers(barHueRingWrap, barHueRing, (hue) => {
     applyHueDegrees(hue);
-  }
-
-  barHueRingWrap.addEventListener("pointerdown", (e) => {
-    barHueRingWrap.setPointerCapture(e.pointerId);
-    onHuePointer(e);
   });
-  barHueRingWrap.addEventListener("pointermove", (e) => {
-    if (!barHueRingWrap.hasPointerCapture(e.pointerId)) return;
-    onHuePointer(e);
-  });
-  barHueRingWrap.addEventListener("pointerup", (e) => {
-    if (barHueRingWrap.hasPointerCapture(e.pointerId)) {
-      try {
-        barHueRingWrap.releasePointerCapture(e.pointerId);
-      } catch {
-        /* already released */
-      }
-    }
-  });
-  barHueRingWrap.addEventListener("pointercancel", (ev) => {
-    try {
-      barHueRingWrap.releasePointerCapture(ev.pointerId);
-    } catch {
-      /* */
-    }
-  });
-
-  barHueRing.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
-      e.preventDefault();
-      applyHueDegrees(lastHueDeg - 12);
-    } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
-      e.preventDefault();
-      applyHueDegrees(lastHueDeg + 12);
-    }
-  });
+  attachPaletteHueRingArrowKeys(barHueRing, () => lastHueDeg, applyHueDegrees);
 
   barShapeBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -5376,19 +6776,7 @@ export function createHud(
         });
       }
       syncBarShapeButtons();
-      setBarShapePopoverOpen(false);
     });
-  });
-
-  barShapeTrigger.addEventListener("click", (e) => {
-    e.stopPropagation();
-    setBarShapePopoverOpen(barShapePopover.hidden);
-  });
-  barShapeTrigger.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !barShapePopover.hidden) {
-      e.preventDefault();
-      setBarShapePopoverOpen(false);
-    }
   });
 
   syncBarShapeButtons();
@@ -5404,46 +6792,21 @@ export function createHud(
     if (!barAdvancedPopover.hidden) {
       requestAnimationFrame(() => layoutBarAdvancedPopover());
     }
-    if (!barShapePopover.hidden) {
-      requestAnimationFrame(() => layoutBarShapePopover());
-    }
   });
 
-  barAdvancedToggle.addEventListener("click", (e) => {
-    e.stopPropagation();
-    setBarPopoverOpen(barAdvancedPopover.hidden);
-  });
-
-  barAdvancedToggle.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !barAdvancedPopover.hidden) {
-      e.preventDefault();
-      setBarPopoverOpen(false);
-    }
-  });
-
-  tileInspectorResetBtn.addEventListener("click", () => {
-    barHexCb.checked = false;
-    barPyramidCb.checked = false;
-    barSphereCb.checked = false;
-    barRampCb.checked = false;
-    barRampDir = 0;
-    barRampDirRow.hidden = true;
-    placementStyleHandler({
-      quarter: false,
-      half: false,
-      hex: false,
-      pyramid: false,
-      sphere: false,
-      ramp: false,
-      rampDir: 0,
-      colorId: 0,
-      pyramidBaseScale: 1,
+  if (barAdvancedToggle) {
+    barAdvancedToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setBarPopoverOpen(barAdvancedPopover.hidden);
     });
-    syncBarHeightButtons(false, false);
-    syncBarPyramidBaseSliderFromScale(1);
-    syncBarShapeButtons();
-    applyHueDegrees(estimateHueFromPaletteId(0));
-  });
+
+    barAdvancedToggle.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !barAdvancedPopover.hidden) {
+        e.preventDefault();
+        setBarPopoverOpen(false);
+      }
+    });
+  }
 
   barClaimToggle.addEventListener("click", () => {
     const next = barClaimToggle.getAttribute("aria-pressed") !== "true";
@@ -5527,24 +6890,35 @@ export function createHud(
     }
     const both = roomAllowPlaceBlocks && roomAllowExtraFloor;
     if (both) {
-      playModeHandler(
-        buildEditKindSelect.value === "room" ? "floor" : "build"
-      );
+      resetBuildEditScopeToObjects();
+      playModeHandler("build");
     } else if (roomAllowPlaceBlocks) {
+      resetBuildEditScopeToObjects();
       playModeHandler("build");
     } else {
+      resetBuildDockRoomCategoryToFloor();
+      setBuildDockRoomBgPopoverOpen(false);
+      setBuildEditKindOverlayOpen(false);
       playModeHandler("floor");
     }
   });
 
-  buildEditKindSelect.addEventListener("change", () => {
+  function onBuildEditKindChanged(): void {
     if (buildToggleBtn.getAttribute("aria-pressed") !== "true") return;
     if (!roomAllowPlaceBlocks || !roomAllowExtraFloor) return;
+    setBuildDockRoomBgPopoverOpen(false);
+    setBuildEditKindOverlayOpen(false);
     playModeHandler(
       buildEditKindSelect.value === "room" ? "floor" : "build"
     );
     syncHueDockVisibility();
     syncBlockPreviewDockSlots();
+    syncBuildBottomDockVisibility();
+  }
+
+  buildEditKindSelect.addEventListener("change", () => {
+    syncBuildEditKindTriggerFromSelect();
+    onBuildEditKindChanged();
   });
 
   /** Pixel height of `.hud-top-wrap` (strip + status); drives `--hud-below-top-wrap` so the mode rail meets the chrome. */
@@ -5559,13 +6933,12 @@ export function createHud(
     layoutLetterbox(frame, letter);
     syncHudBelowTopWrap();
     layoutBarAdvancedPopover();
-    layoutBarShapePopover();
-    layoutPanelShapePopover();
     layoutObjectPanelSatellites();
   });
   ro.observe(frame);
   ro.observe(topWrap);
-  ro.observe(modeSidebar);
+  ro.observe(buildModeStrip);
+  ro.observe(buildBottomDock);
 
   layoutLetterbox(frame, letter);
   syncHudBelowTopWrap();
@@ -5582,17 +6955,13 @@ export function createHud(
   /** When lock UI is hidden (non-admin), server lock state for emit. */
   let panelLockedState = false;
   let panelHexCb: HTMLInputElement | null = null;
-  let panelPyramidCb: HTMLInputElement | null = null;
   let panelSphereCb: HTMLInputElement | null = null;
-  let panelRampCb: HTMLInputElement | null = null;
   let panelHeightBtns: HTMLButtonElement[] = [];
   let panelShapeBtns: HTMLButtonElement[] = [];
   let rampDirRow: HTMLElement | null = null;
   let panelRampRotCCW: HTMLButtonElement | null = null;
   let panelRampRotCW: HTMLButtonElement | null = null;
   let panelRampDir = 0;
-  /** Object panel: editing a placed gate (opening direction, not generic prism). */
-  let panelObjectEditGate = false;
   let panelGateExitDir = 0;
   let panelGateAdminAddress = "";
   let panelGateAuthorizedAddresses: string[] = [];
@@ -5606,12 +6975,11 @@ export function createHud(
   let panelOnEditGateAcl: (() => void) | null = null;
   let gateAclBackdrop: HTMLDivElement | null = null;
   let gateAclKeyHandler: ((e: KeyboardEvent) => void) | null = null;
-  let panelGateExitCCW: HTMLButtonElement | null = null;
-  let panelGateExitCW: HTMLButtonElement | null = null;
   let panelContextHeightRow: HTMLElement | null = null;
   let panelAdvancedToggle: HTMLButtonElement | null = null;
   let panelSelectedColorId = 0;
-  let panelOnPropsChange: ((p: ObstacleProps) => void) | null = null;
+  let panelClaimable = false;
+  let panelClaimableActive = false;
   let panelLastHueDeg = 0;
   let panelHueRingWrap: HTMLElement | null = null;
   let panelHueRing: HTMLElement | null = null;
@@ -5625,6 +6993,7 @@ export function createHud(
   /** Debounced commit so `change` + `pointerup` + `blur` do not race or duplicate spam. */
   let panelPyramidBaseCommitTimer: ReturnType<typeof setTimeout> | null = null;
   let teleporterPanelCleanup: (() => void) | null = null;
+  const TELEPORTER_THIS_ROOM_VALUE = "__THIS_ROOM_PAIR__";
   type TeleporterRoomPickerRow = {
     id: string;
     displayName: string;
@@ -5641,12 +7010,142 @@ export function createHud(
     null;
   let panelTeleporterRoomPickerKeydown: ((ev: KeyboardEvent) => void) | null =
     null;
-  let panelTeleporterX: HTMLInputElement | null = null;
-  let panelTeleporterZ: HTMLInputElement | null = null;
+  let panelTeleporterDestX = 0;
+  let panelTeleporterDestZ = 0;
+  let panelTeleporterCurrentRoomId = "";
+  let panelTeleporterCoordsSection: HTMLElement | null = null;
+  let panelTeleporterCoordsBtn: HTMLButtonElement | null = null;
+  let panelTeleporterConfirmBtn: HTMLButtonElement | null = null;
+  let panelTeleporterCancelBtn: HTMLButtonElement | null = null;
+  let panelTeleporterCommittedRoom = "";
+  let panelTeleporterCommittedX = 0;
+  let panelTeleporterCommittedZ = 0;
   let applyTeleporterHubUi: (() => void) | null = null;
   let teleporterPanelSyncRoomTrigger: (() => void) | null = null;
   let teleporterPanelEnsureRowForId: ((id: string) => void) | null = null;
   let teleporterPanelRenderPickerList: (() => void) | null = null;
+  let panelTeleporterStatusEl: HTMLElement | null = null;
+  let panelTeleporterLeadEl: HTMLElement | null = null;
+  let panelTeleporterEditPending = false;
+  let panelTeleporterEditBidirectional = false;
+
+  function syncTeleporterSelectionChrome(
+    pending: boolean,
+    isBidirectionalPair = false
+  ): void {
+    panelTeleporterEditPending = pending;
+    panelTeleporterEditBidirectional = isBidirectionalPair;
+    if (panelTeleporterStatusEl) {
+      panelTeleporterStatusEl.textContent = pending ? "Inactive" : "Active";
+      panelTeleporterStatusEl.classList.toggle(
+        "build-object-panel-context__tp-status--inactive",
+        pending
+      );
+      panelTeleporterStatusEl.classList.toggle(
+        "build-object-panel-context__tp-status--active",
+        !pending
+      );
+    }
+    if (panelTeleporterLeadEl) {
+      panelTeleporterLeadEl.innerHTML = pending
+        ? "Choose a destination room. For <strong>This room</strong>, tap the coords and pick the exit tile on the map."
+        : isBidirectionalPair
+          ? "Linked in this room — tap coords to change the exit, then confirm."
+          : "Choose a room and destination tile, then confirm.";
+    }
+  }
+
+  function syncTeleporterCoordsButton(): void {
+    if (panelTeleporterCoordsBtn) {
+      panelTeleporterCoordsBtn.textContent = `(${panelTeleporterDestX}, ${panelTeleporterDestZ})`;
+    }
+  }
+
+  function teleporterDockDraftRoom(): string {
+    const dockSel = buildBlockBar.querySelector(
+      "#dock-tp-dest-room-select"
+    ) as HTMLSelectElement | null;
+    return dockSel?.value ?? "";
+  }
+
+  function teleporterDockIsDirty(): boolean {
+    return (
+      teleporterDockDraftRoom() !== panelTeleporterCommittedRoom ||
+      panelTeleporterDestX !== panelTeleporterCommittedX ||
+      panelTeleporterDestZ !== panelTeleporterCommittedZ
+    );
+  }
+
+  function teleporterDraftDestMapHighlightAllowed(): boolean {
+    if (
+      !objectPanelContextPopover.classList.contains(
+        "build-object-panel-context--teleporter"
+      )
+    ) {
+      return false;
+    }
+    const dockSel = buildBlockBar.querySelector(
+      "#dock-tp-dest-room-select"
+    ) as HTMLSelectElement | null;
+    const roomVal = dockSel?.value ?? "";
+    if (roomVal === HUB_ROOM_ID) return false;
+    const here = normalizeRoomId(panelTeleporterCurrentRoomId);
+    if (roomVal === TELEPORTER_THIS_ROOM_VALUE) return true;
+    return normalizeRoomId(roomVal) === here;
+  }
+
+  function syncTeleporterDraftDestMapHighlight(): void {
+    const g = inspectorPreviewGameRef;
+    if (!g) return;
+    if (g.isTeleporterDestPickActive()) {
+      g.setTeleporterDestinationDraftHighlight(null);
+      return;
+    }
+    if (!teleporterSelectionDockActive || !teleporterDraftDestMapHighlightAllowed()) {
+      g.setTeleporterDestinationDraftHighlight(null);
+      return;
+    }
+    if (!teleporterDockIsDirty()) {
+      g.setTeleporterDestinationDraftHighlight(null);
+      return;
+    }
+    g.setTeleporterDestinationDraftHighlight({
+      x: panelTeleporterDestX,
+      z: panelTeleporterDestZ,
+    });
+  }
+
+  function syncTeleporterCommittedFromDraft(): void {
+    panelTeleporterCommittedRoom = teleporterDockDraftRoom();
+    panelTeleporterCommittedX = panelTeleporterDestX;
+    panelTeleporterCommittedZ = panelTeleporterDestZ;
+    syncTeleporterDockActions();
+  }
+
+  function syncTeleporterDockActions(): void {
+    const dirty = teleporterDockIsDirty();
+    if (panelTeleporterConfirmBtn) {
+      panelTeleporterConfirmBtn.hidden = !dirty;
+    }
+    if (panelTeleporterCancelBtn) {
+      panelTeleporterCancelBtn.hidden = !dirty;
+    }
+    syncTeleporterDraftDestMapHighlight();
+  }
+
+  function revertTeleporterDraftToCommitted(): void {
+    panelTeleporterDestX = panelTeleporterCommittedX;
+    panelTeleporterDestZ = panelTeleporterCommittedZ;
+    const dockSel = buildBlockBar.querySelector(
+      "#dock-tp-dest-room-select"
+    ) as HTMLSelectElement | null;
+    if (dockSel && panelTeleporterCommittedRoom) {
+      dockSel.value = panelTeleporterCommittedRoom;
+    }
+    syncTeleporterCoordsButton();
+    syncTeleporterDockActions();
+    applyTeleporterHubUi?.();
+  }
 
   function hideGateAclEditor(): void {
     if (gateAclKeyHandler) {
@@ -5865,23 +7364,30 @@ export function createHud(
     void rebuildAddPickerList();
   }
 
-  /** Context card + object Advanced popover, fixed just left of the mode sidebar rail. */
+  /** Context card + object Advanced popover, anchored above the bottom build dock. */
   function layoutObjectPanelSatellites(): void {
     if (!objectPanel) return;
     const margin = 8;
     const vw = document.documentElement.clientWidth;
     const vh = document.documentElement.clientHeight;
     const minTop = 52;
-    const sb = modeSidebar.getBoundingClientRect();
-    const rightPx = Math.max(margin, vw - sb.left + margin);
+    const panelBr = objectPanel.getBoundingClientRect();
+    const rightPx = Math.max(margin, vw - panelBr.right + margin);
 
     if (!objectPanelContextPopover.hidden) {
       objectPanelContextPopover.style.right = `${rightPx}px`;
       objectPanelContextPopover.style.left = "auto";
       objectPanelContextPopover.style.top = "auto";
       const letterBr = letter.getBoundingClientRect();
-      /* Align bottom edge with letterbox (game area); min gap from viewport when flush. */
-      const bottomPx = Math.max(6, vh - letterBr.bottom);
+      const dockH =
+        !buildBottomDock.hidden && buildBottomDock.isConnected
+          ? buildBottomDock.getBoundingClientRect().height
+          : 0;
+      const bottomPx = Math.max(
+        8,
+        dockH + 8,
+        vh - letterBr.bottom
+      );
       objectPanelContextPopover.style.bottom = `${bottomPx}px`;
     }
 
@@ -5933,7 +7439,6 @@ export function createHud(
       );
     }
     if (open) {
-      setPanelShapePopoverOpen(false);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => layoutObjectPanelAdvancedPopover());
       });
@@ -5946,39 +7451,14 @@ export function createHud(
       if (
         buildBlockBar.contains(t) ||
         barAdvancedPopover.contains(t) ||
+        buildBottomDock.contains(t) ||
+        buildBottomDockPreviewSatellite.contains(t) ||
         hueDock.contains(t) ||
         modeSidebarBuildMount.contains(t)
       ) {
         return;
       }
       setBarPopoverOpen(false);
-    }
-    if (!barShapePopover.hidden) {
-      if (
-        barShapeColorRow.contains(t) ||
-        barShapePopover.contains(t) ||
-        buildBlockBar.contains(t) ||
-        barAdvancedPopover.contains(t) ||
-        hueDock.contains(t) ||
-        modeSidebarBuildMount.contains(t)
-      ) {
-        return;
-      }
-      setBarShapePopoverOpen(false);
-    }
-    if (!panelShapePopover.hidden) {
-      if (
-        (panelShapeColorRow && panelShapeColorRow.contains(t)) ||
-        panelShapePopover.contains(t) ||
-        (objectPanel && objectPanel.contains(t)) ||
-        objectPanelContextPopover.contains(t) ||
-        objectPanelAdvancedPopover.contains(t) ||
-        hueDock.contains(t) ||
-        modeSidebarBuildMount.contains(t)
-      ) {
-        return;
-      }
-      setPanelShapePopoverOpen(false);
     }
     if (!objectPanelAdvancedPopover.hidden) {
       if (
@@ -5994,20 +7474,19 @@ export function createHud(
   document.addEventListener("pointerdown", closeHudAdvancedPopoversOnOutside);
 
   function syncPanelPyramidBaseSliderFromScale(scale: number): void {
-    if (!panelPyramidBaseInput || !panelPyramidBaseVal) return;
-    const pct = pyramidBasePercentFromScale(scale);
-    const stepped = Math.round((pct - 100) / 5) * 5 + 100;
-    const v = Math.min(165, Math.max(100, stepped));
-    panelPyramidBaseInput.value = String(v);
-    panelPyramidBaseVal.textContent = `${v}%`;
-    panelPyramidBaseInput.setAttribute("aria-valuetext", `${v}%`);
+    if (panelPyramidBaseInput && panelPyramidBaseVal) {
+      const pct = pyramidBasePercentFromScale(scale);
+      const stepped = Math.round((pct - 100) / 5) * 5 + 100;
+      const v = Math.min(165, Math.max(100, stepped));
+      panelPyramidBaseInput.value = String(v);
+      panelPyramidBaseVal.textContent = `${v}%`;
+      panelPyramidBaseInput.setAttribute("aria-valuetext", `${v}%`);
+    }
+    syncBarPyramidBaseSliderFromScale(scale);
   }
 
   function syncPanelPyramidBaseRowVisibility(): void {
-    if (!panelPyramidBaseRow || !panelRampCb || !panelPyramidCb) return;
-    panelPyramidBaseRow.hidden = !(
-      panelPyramidCb.checked && !panelRampCb.checked
-    );
+    syncBuildDockContextParamVisibility();
   }
 
   function syncPanelTileHeightLabel(): void {
@@ -6040,6 +7519,7 @@ export function createHud(
       panelTileInspectorHeightInput.value = String(v);
       syncPanelTileHeightLabel();
     }
+    syncDockHeightFromQuarterHalf(quarter, half);
   }
 
   function refreshPanelWireframe(): void {
@@ -6050,16 +7530,6 @@ export function createHud(
   function syncPanelShapeButtons(): void {
     if (panelObjectEditGate) {
       refreshPanelWireframe();
-      if (panelShapeTriggerEl) {
-        const lab = panelShapeTriggerEl.querySelector(
-          ".hud-mode-sidebar__shape-trigger-label"
-        );
-        if (lab) lab.textContent = "Gate";
-        const icon = panelShapeTriggerEl.querySelector(
-          ".hud-mode-sidebar__shape-trigger-icon"
-        );
-        if (icon) icon.innerHTML = SHAPE_TRIG_SVG.cube;
-      }
       return;
     }
     if (
@@ -6088,8 +7558,57 @@ export function createHud(
       b.setAttribute("aria-pressed", on ? "true" : "false");
     });
     refreshPanelWireframe();
-    syncPanelShapeTriggerVisual();
     syncPanelPyramidBaseRowVisibility();
+    syncBuildDockTerrainShapeCardHighlights();
+  }
+
+  function applyPanelTerrainShape(shape: DockTerrainShapeId): boolean {
+    if (
+      !panelOnPropsChange ||
+      panelObjectEditGate ||
+      !objectPanel?.querySelector("#tile-inspector-selection") ||
+      !panelHexCb ||
+      !panelPyramidCb ||
+      !panelSphereCb ||
+      !panelRampCb
+    ) {
+      return false;
+    }
+    if (shape === "cube") {
+      panelHexCb.checked = false;
+      panelPyramidCb.checked = false;
+      panelSphereCb.checked = false;
+      panelRampCb.checked = false;
+      if (rampDirRow) rampDirRow.hidden = true;
+    } else if (shape === "hex") {
+      panelHexCb.checked = true;
+      panelPyramidCb.checked = false;
+      panelSphereCb.checked = false;
+      panelRampCb.checked = false;
+      if (rampDirRow) rampDirRow.hidden = true;
+    } else if (shape === "pyramid") {
+      panelPyramidCb.checked = true;
+      panelHexCb.checked = false;
+      panelSphereCb.checked = false;
+      panelRampCb.checked = false;
+      if (rampDirRow) rampDirRow.hidden = true;
+    } else if (shape === "sphere") {
+      panelSphereCb.checked = true;
+      panelHexCb.checked = false;
+      panelPyramidCb.checked = false;
+      panelRampCb.checked = false;
+      if (rampDirRow) rampDirRow.hidden = true;
+    } else if (shape === "ramp") {
+      panelRampCb.checked = true;
+      panelHexCb.checked = false;
+      panelPyramidCb.checked = false;
+      panelSphereCb.checked = false;
+      if (rampDirRow) rampDirRow.hidden = false;
+    }
+    syncPanelShapeButtons();
+    syncBuildDockTerrainShapeCardHighlights(shape);
+    emitPanelProps();
+    return true;
   }
 
   function panelCollisionToggleIconMarkup(passable: boolean): string {
@@ -6231,10 +7750,13 @@ export function createHud(
     }
     let quarter = false;
     let half = false;
-    if (panelTileInspectorHeightInput) {
+    const heightInput = buildDockBlockSelectionParamsActive()
+      ? tileInspectorHeightInput
+      : panelTileInspectorHeightInput ?? tileInspectorHeightInput;
+    if (heightInput) {
       const v = Math.min(
         2,
-        Math.max(0, Math.floor(Number(panelTileInspectorHeightInput.value)))
+        Math.max(0, Math.floor(Number(heightInput.value)))
       );
       quarter = v <= 0;
       half = v === 1;
@@ -6261,9 +7783,12 @@ export function createHud(
       sphere: panelSphereCb.checked,
       ramp,
     });
+    const pyramidBaseInput = buildDockBlockSelectionParamsActive()
+      ? tileInspectorPyramidBaseInput
+      : panelPyramidBaseInput ?? tileInspectorPyramidBaseInput;
     const pyramidBaseScale = prism.pyramid
       ? clampPyramidBaseScale(
-          Number(panelPyramidBaseInput?.value ?? 100) / 100
+          Number(pyramidBaseInput?.value ?? 100) / 100
         )
       : 1;
     return {
@@ -6278,6 +7803,12 @@ export function createHud(
       rampDir: prism.ramp ? rampDir : 0,
       colorId: panelSelectedColorId,
       locked: getPanelLocked(),
+      ...(panelClaimable
+        ? { claimable: true, active: panelClaimableActive }
+        : {}),
+      editorTileX: panelObjectTileX,
+      editorTileY: panelObjectTileY,
+      editorTileZ: panelObjectTileZ,
     };
   }
 
@@ -6288,6 +7819,8 @@ export function createHud(
     panelOnPropsChange(next);
     inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(next);
     inspectorPreviewGameRef?.refreshGateRepositionPreviewsFromStoredPointer();
+    syncBuildDockRotateChrome();
+    syncBuildDockPreviewCaption();
   }
 
   function previewInspectorSelectionFromPanel(): void {
@@ -6296,14 +7829,21 @@ export function createHud(
       inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(next);
       inspectorPreviewGameRef?.refreshGateRepositionPreviewsFromStoredPointer();
     }
+    syncBuildDockPreviewCaption();
   }
 
   function panelPyramidBaseSliderUiBusy(): boolean {
-    if (!panelPyramidBaseInput) return false;
-    return (
-      document.activeElement === panelPyramidBaseInput ||
-      panelPyramidBaseInput.matches(":active")
-    );
+    const input = buildDockBlockSelectionParamsActive()
+      ? tileInspectorPyramidBaseInput
+      : panelPyramidBaseInput;
+    if (input && document.activeElement === input) return true;
+    const dec = buildDockBlockSelectionParamsActive()
+      ? tileInspectorPyramidBaseDec
+      : null;
+    const inc = buildDockBlockSelectionParamsActive()
+      ? tileInspectorPyramidBaseInc
+      : null;
+    return Boolean(dec?.matches(":active") || inc?.matches(":active"));
   }
 
   function schedulePanelPyramidBaseCommit(): void {
@@ -6316,59 +7856,23 @@ export function createHud(
     }, 50);
   }
 
-  panelShapePopover.addEventListener("click", (e) => {
+  objectPanelAdvancedPopover.addEventListener("click", (e) => {
     const btn = (e.target as HTMLElement).closest(
       ".tile-inspector__shape-btn"
     ) as HTMLButtonElement | null;
-    if (!btn || !panelShapePopover.contains(btn)) return;
+    if (!btn || !objectPanelAdvancedPopover.contains(btn)) return;
+    const shape = btn.dataset.shape as DockTerrainShapeId | undefined;
     if (
-      !objectPanel?.querySelector("#tile-inspector-selection") ||
-      !panelRampCb ||
-      !panelHexCb ||
-      !panelPyramidCb ||
-      !panelSphereCb
+      !shape ||
+      (shape !== "cube" &&
+        shape !== "hex" &&
+        shape !== "pyramid" &&
+        shape !== "sphere" &&
+        shape !== "ramp")
     ) {
       return;
     }
-    const shape = btn.dataset.shape;
-    if (shape === "cube") {
-      panelHexCb.checked = false;
-      panelPyramidCb.checked = false;
-      panelSphereCb.checked = false;
-      panelRampCb.checked = false;
-      if (rampDirRow) rampDirRow.hidden = true;
-      emitPanelProps();
-    } else if (shape === "hex") {
-      panelHexCb.checked = true;
-      panelPyramidCb.checked = false;
-      panelSphereCb.checked = false;
-      panelRampCb.checked = false;
-      if (rampDirRow) rampDirRow.hidden = true;
-      emitPanelProps();
-    } else if (shape === "pyramid") {
-      panelPyramidCb.checked = true;
-      panelHexCb.checked = false;
-      panelSphereCb.checked = false;
-      panelRampCb.checked = false;
-      if (rampDirRow) rampDirRow.hidden = true;
-      emitPanelProps();
-    } else if (shape === "sphere") {
-      panelSphereCb.checked = true;
-      panelHexCb.checked = false;
-      panelPyramidCb.checked = false;
-      panelRampCb.checked = false;
-      if (rampDirRow) rampDirRow.hidden = true;
-      emitPanelProps();
-    } else if (shape === "ramp") {
-      panelRampCb.checked = true;
-      panelHexCb.checked = false;
-      panelPyramidCb.checked = false;
-      panelSphereCb.checked = false;
-      if (rampDirRow) rampDirRow.hidden = false;
-      emitPanelProps();
-    }
-    syncPanelShapeButtons();
-    setPanelShapePopoverOpen(false);
+    applyPanelTerrainShape(shape);
   });
 
   function applyPanelHueDegrees(hueDeg: number): void {
@@ -6400,18 +7904,22 @@ export function createHud(
   }
 
   function hideObjectEditPanel(): void {
+    teleporterSelectionDockActive = false;
+    syncTeleporterDockSectionVisibility();
     hideGateAclEditor();
     inspectorPreviewGameRef?.bindInspectorTilePreviewCanvas("selection", null);
+    inspectorPreviewGameRef?.syncInspectorSelectionTeleporterPreview(null);
+    inspectorPreviewGameRef?.syncInspectorSelectionBillboardPreview(null);
     inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(null);
+    inspectorPreviewGameRef?.setTeleporterDestinationDraftHighlight(null);
     if (panelPyramidBaseCommitTimer !== null) {
       clearTimeout(panelPyramidBaseCommitTimer);
       panelPyramidBaseCommitTimer = null;
-      if (panelOnPropsChange && panelPyramidBaseInput) {
+      if (panelOnPropsChange && (panelPyramidBaseInput || tileInspectorPyramidBaseInput)) {
         emitPanelProps();
       }
     }
     setPanelAdvancedOpen(false);
-    setPanelShapePopoverOpen(false);
     objectPanelAdvancedPopover.replaceChildren();
     objectPanelAdvancedPopover.hidden = true;
     objectPanelContextPopover.hidden = true;
@@ -6429,21 +7937,28 @@ export function createHud(
     panelTeleporterRoomPicker = null;
     panelTeleporterRoomPickerDocDown = null;
     panelTeleporterRoomPickerKeydown = null;
-    panelTeleporterX = null;
-    panelTeleporterZ = null;
+    panelTeleporterCoordsSection = null;
+    panelTeleporterCoordsBtn = null;
+    panelTeleporterConfirmBtn = null;
+    panelTeleporterCancelBtn = null;
+    panelTeleporterCurrentRoomId = "";
+    panelTeleporterCommittedRoom = "";
+    panelTeleporterCommittedX = 0;
+    panelTeleporterCommittedZ = 0;
+    panelTeleporterDestX = 0;
+    panelTeleporterDestZ = 0;
     applyTeleporterHubUi = null;
     teleporterPanelSyncRoomTrigger = null;
     teleporterPanelEnsureRowForId = null;
     teleporterPanelRenderPickerList = null;
+    panelTeleporterStatusEl = null;
+    panelTeleporterLeadEl = null;
+    panelTeleporterEditPending = false;
+    panelTeleporterEditBidirectional = false;
     if (objectPanel) {
       objectPanel.remove();
       objectPanel = null;
     }
-    if (panelShapePopoverAbort) {
-      panelShapePopoverAbort.abort();
-      panelShapePopoverAbort = null;
-    }
-    panelShapeTriggerEl = null;
     if (panelShapeColorRow) {
       panelShapeColorRow.remove();
       panelShapeColorRow = null;
@@ -6475,8 +7990,8 @@ export function createHud(
     panelGateAclSummaryEl = null;
     panelGateAclBtn = null;
     panelOnEditGateAcl = null;
-    panelGateExitCCW = null;
-    panelGateExitCW = null;
+    billboardSelectionEditHandler = null;
+    syncBuildDockContextParams();
     panelContextHeightRow = null;
     panelAdvancedToggle = null;
     panelHueRingWrap = null;
@@ -6484,7 +7999,10 @@ export function createHud(
     panelHueCore = null;
     panelOnPropsChange = null;
     panelLockedState = false;
+    panelClaimable = false;
+    panelClaimableActive = false;
     syncBlockPreviewDockSlots();
+    syncBuildDockSelectionChrome();
   }
 
   function refreshBarSwatches(selectedId: number): void {
@@ -6505,20 +8023,31 @@ export function createHud(
   }
 
   function bindTileInspectorPreviewGame(game: Game | null): void {
+    dockThumbGlBindGen += 1;
     const prev = inspectorPreviewGameRef;
     inspectorPreviewGameRef = game;
+    const unbindDock = (g: Game): void => {
+      g.clearDockStripThumbnailCache();
+    };
     if (prev && prev !== game) {
       prev.bindInspectorTilePreviewCanvas("placement", null);
       prev.bindInspectorTilePreviewCanvas("selection", null);
+      unbindDock(prev);
     }
     if (game) {
       const placementCanvas = hueDockBlockPreview.querySelector(
         "#tile-inspector-preview-canvas"
       ) as HTMLCanvasElement | null;
       game.bindInspectorTilePreviewCanvas("placement", placementCanvas);
+      syncPlacementInspectorPreviewGame();
+      syncBuildDockToolStrip();
+      queueMicrotask(() => {
+        inspectorPreviewGameRef?.prewarmDockStripThumbnails();
+      });
     } else if (prev) {
       prev.bindInspectorTilePreviewCanvas("placement", null);
       prev.bindInspectorTilePreviewCanvas("selection", null);
+      unbindDock(prev);
     }
   }
 
@@ -6547,6 +8076,118 @@ export function createHud(
       restartBanner.hidden = true;
       syncHudBelowTopWrap();
     }
+  }
+
+  function obstacleHeightMatches(
+    a: { quarter: boolean; half: boolean },
+    b: { quarter: boolean; half: boolean }
+  ): boolean {
+    return a.quarter === b.quarter && a.half === b.half;
+  }
+
+  function obstaclePyramidBaseMatches(a: number, b: number): boolean {
+    return (
+      Math.abs(clampPyramidBaseScale(a) - clampPyramidBaseScale(b)) < 0.001
+    );
+  }
+
+  function applyObjectPanelPropsFromServer(p: ObstacleProps): void {
+    if (p.gate) {
+      panelClaimable = false;
+      panelClaimableActive = false;
+      panelObjectEditGate = true;
+      panelGateAdminAddress = normalizeWalletKey(p.gate.adminAddress);
+      panelGateAuthorizedAddresses = p.gate.authorizedAddresses.map((a) =>
+        normalizeWalletKey(String(a))
+      );
+      if (p.editorTileX !== undefined && p.editorTileZ !== undefined) {
+        panelObjectTileX = p.editorTileX;
+        panelObjectTileY = p.editorTileY ?? 0;
+        panelObjectTileZ = p.editorTileZ;
+      }
+      panelGateExitDir =
+        p.gateExitDir !== undefined && Number.isFinite(p.gateExitDir)
+          ? Math.max(0, Math.min(3, Math.floor(p.gateExitDir)))
+          : gateExitDirFromTile(panelObjectTileX, panelObjectTileZ, p.gate);
+      panelRampDir = Math.max(0, Math.min(3, Math.floor(p.rampDir)));
+      panelLockedState = p.locked || false;
+      syncPanelLockToggle(panelLockedState);
+      panelSelectedColorId = Math.max(
+        0,
+        Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(p.colorId))
+      );
+      syncPanelHueVisualFromColorId(panelSelectedColorId);
+      if (panelGateAclSummaryEl) {
+        const n = panelGateAuthorizedAddresses.length;
+        panelGateAclSummaryEl.textContent = `${n} wallet${
+          n === 1 ? "" : "s"
+        } can open`;
+      }
+      if (panelGateAclBtn) {
+        panelGateAclBtn.disabled = !panelOnEditGateAcl;
+        panelGateAclBtn.onclick = panelOnEditGateAcl ?? null;
+      }
+      if (panelGateEditBlock) panelGateEditBlock.hidden = false;
+      if (panelContextHeightRow) panelContextHeightRow.hidden = true;
+      const panelAdvShapeSection = objectPanelAdvancedPopover.querySelector(
+        "#panel-adv-shape-section"
+      ) as HTMLElement | null;
+      if (panelAdvShapeSection) panelAdvShapeSection.hidden = true;
+      if (panelCollisionToggle) {
+        panelCollisionToggle.hidden = true;
+        syncPanelCollisionToggle(false);
+      }
+      if (panelTileInspectorResetBtn) {
+        panelTileInspectorResetBtn.hidden = true;
+      }
+      if (rampDirRow) rampDirRow.hidden = true;
+      syncPanelShapeButtons();
+      inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(p);
+      return;
+    }
+    panelObjectEditGate = false;
+    if (panelGateEditBlock) panelGateEditBlock.hidden = true;
+    if (panelGateAclBar) panelGateAclBar.hidden = true;
+    if (panelContextHeightRow) panelContextHeightRow.hidden = false;
+    const panelAdvShapeSection = objectPanelAdvancedPopover.querySelector(
+      "#panel-adv-shape-section"
+    ) as HTMLElement | null;
+    if (panelAdvShapeSection) panelAdvShapeSection.hidden = false;
+    if (panelCollisionToggle) panelCollisionToggle.hidden = false;
+    if (panelTileInspectorResetBtn) panelTileInspectorResetBtn.hidden = false;
+    syncPanelCollisionToggle(p.passable);
+    panelLockedState = p.locked || false;
+    syncPanelLockToggle(panelLockedState);
+    const live = buildLivePanelObstacleProps();
+    if (!live || obstacleHeightMatches(p, live)) {
+      syncPanelHeightButtons(p.quarter, p.quarter ? false : p.half);
+    }
+    if (panelHexCb) panelHexCb.checked = p.ramp ? false : p.hex;
+    if (panelPyramidCb) {
+      panelPyramidCb.checked = p.ramp ? false : p.pyramid;
+    }
+    if (panelSphereCb) {
+      panelSphereCb.checked = p.ramp ? false : p.sphere;
+    }
+    if (panelRampCb) panelRampCb.checked = p.ramp;
+    if (!panelPyramidBaseSliderUiBusy()) {
+      const serverBase = p.pyramidBaseScale ?? 1;
+      if (!live || obstaclePyramidBaseMatches(serverBase, live.pyramidBaseScale)) {
+        syncPanelPyramidBaseSliderFromScale(serverBase);
+      }
+    }
+    panelRampDir = Math.max(0, Math.min(3, Math.floor(p.rampDir)));
+    if (rampDirRow) rampDirRow.hidden = !p.ramp;
+    syncPanelShapeButtons();
+    syncBuildDockContextParams();
+    panelSelectedColorId = Math.max(
+      0,
+      Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(p.colorId))
+    );
+    panelClaimable = Boolean(p.claimable);
+    panelClaimableActive = panelClaimable && p.active !== false;
+    syncPanelHueVisualFromColorId(panelSelectedColorId);
+    inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(p);
   }
 
   return {
@@ -6768,7 +8409,9 @@ export function createHud(
       syncBlockPreviewDockSlots();
     },
     setRoomBackgroundHuePanelVisible(visible: boolean) {
-      roomBgHuePanel.hidden = !visible;
+      roomBgSettingsAllowed = visible;
+      roomBgHuePanel.hidden = false;
+      syncBuildDockRoomCategoryChrome();
       syncModeSidebarBodyInteractive();
       syncHueDockVisibility();
     },
@@ -6817,6 +8460,7 @@ export function createHud(
           btn.setAttribute("aria-pressed", on ? "true" : "false");
         }
       }
+      syncRoomBgDockSwatchFill();
     },
     onRoomBackgroundHueAdjust(handlers: {
       onHueDeg: (deg: number) => void;
@@ -6836,16 +8480,19 @@ export function createHud(
         editOn
       );
       buildToggleBtn.setAttribute("aria-pressed", editOn ? "true" : "false");
-      if (mode === "floor") {
+      if (mode === "walk") {
+        resetBuildEditScopeToObjects();
+      } else if (mode === "floor") {
         buildEditKindSelect.value = "room";
+        syncBuildEditKindTriggerFromSelect();
       } else if (mode === "build") {
         buildEditKindSelect.value = "objects";
+        syncBuildEditKindTriggerFromSelect();
       }
       const showKindPicker =
         editOn && roomAllowPlaceBlocks && roomAllowExtraFloor;
       buildEditKindWrap.hidden = !showKindPicker;
-      buildEditKindLabel.hidden = buildEditKindWrap.hidden;
-      modeSidebarBody.setAttribute("aria-labelledby", "hud-mode-tab-build");
+      buildModeStrip.setAttribute("aria-labelledby", "hud-mode-tab-build");
       syncHueDockVisibility();
     },
     showObjectEditPanel(opts) {
@@ -6868,118 +8515,56 @@ export function createHud(
         );
         objectPanelContextPopover.innerHTML = `
           <div class="build-object-panel-context__inner build-object-panel-context__inner--teleporter">
-            <div class="build-object-panel-context__tp-stack">
-              <div class="build-object-panel-context__tp-head">
-                <div class="build-object-panel-context__tp-head-main">
-                  <span class="build-object-panel-context__tp-title">Teleporter</span>
-                  <span class="build-object-panel-context__tp-coords">(${opts.x}, ${opts.z})</span>
-                </div>
-                <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close teleporter editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
+            <div class="build-object-panel-context__tp-head">
+              <div class="build-object-panel-context__tp-head-main">
+                <span class="build-object-panel-context__tp-title">Teleporter</span>
+                <span class="build-object-panel-context__tp-status build-object-panel-context__tp-status--inactive">Inactive</span>
+                <span class="build-object-panel-context__tp-coords">(${opts.x}, ${opts.z})</span>
               </div>
-              <p class="build-object-panel-context__tp-lead">${
-                te.pending
-                  ? "No destination yet. Pick a room and save."
-                  : "One-way teleport. Change the destination below."
-              }</p>
-              <div class="build-object-panel-context__tp-field build-object-panel-context__tp-field--room">
-                <button type="button" id="build-object-panel-tp-room-open" class="build-object-panel-context__tp-room-trigger" aria-haspopup="listbox" aria-expanded="false">
-                  <span class="build-object-panel-context__tp-room-trigger-cap">Room</span>
-                  <span class="build-object-panel-context__tp-room-trigger-name" id="build-object-panel-tp-room-name"></span>
-                  <span class="build-object-panel-context__tp-room-trigger-meta" id="build-object-panel-tp-room-meta"></span>
-                </button>
-              </div>
-              <p class="build-object-panel-context__tp-hint" id="build-object-panel-tp-hub-hint" hidden>Hub: spawn is fixed at the center (0, 0).</p>
-              <div class="build-object-panel-context__tp-coords-wrap" id="build-object-panel-tp-dest-coords-wrap">
-                <div class="build-object-panel-context__tp-xz">
-                  <label class="build-object-panel-context__tp-num-label">X <input type="number" id="build-object-panel-tp-x" class="build-object-panel-context__tp-num" step="1" inputmode="numeric" /></label>
-                  <label class="build-object-panel-context__tp-num-label">Z <input type="number" id="build-object-panel-tp-z" class="build-object-panel-context__tp-num" step="1" inputmode="numeric" /></label>
-                </div>
-                <button type="button" class="build-object-panel__btn build-object-panel-context__tp-pick" id="build-object-panel-tp-pick">Use tile I click…</button>
-              </div>
-              <button type="button" class="build-object-panel__btn build-object-panel-context__tp-save" id="build-object-panel-tp-save">Save destination</button>
-              <div class="build-object-panel-context__actions">
-                <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
-                <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
-              </div>
+              <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close teleporter editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
             </div>
-            <div id="build-object-panel-tp-room-picker" class="build-object-panel-context__tp-room-picker" hidden>
-              <div class="build-object-panel-context__tp-room-picker-head">
-                <button type="button" class="build-object-panel-context__tp-room-picker-back" id="build-object-panel-tp-room-picker-back">← Back</button>
-                <span class="build-object-panel-context__tp-room-picker-title">Choose room</span>
-              </div>
-              <ul class="build-object-panel-context__tp-room-picker-list" id="build-object-panel-tp-room-picker-list" role="listbox" aria-label="Rooms"></ul>
+            <p class="build-object-panel-context__tp-lead"></p>
+            <div class="build-object-panel-context__actions">
+              <button type="button" class="build-object-panel__btn build-object-panel__move">Move</button>
+              <button type="button" class="build-object-panel__btn build-object-panel__remove">Delete</button>
             </div>
           </div>`;
+
         const tpRoot = objectPanelContextPopover;
-        const tpFormatRoomCode = (id: string): string =>
-          normalizeRoomId(id).toUpperCase();
-        const tpSubtitleForRow = (row: TeleporterRoomPickerRow): string => {
-          const code = tpFormatRoomCode(row.id);
-          const bits: string[] = [];
-          if (row.isBuiltin) bits.push("Built-in");
-          else if (row.isOfficial) bits.push("Official");
-          bits.push(row.isPublic ? "Public" : "Private");
-          bits.push(`${row.playerCount} online`);
-          return `${code} · ${bits.join(" · ")}`;
-        };
-        const roomOpenBtn = tpRoot.querySelector(
-          "#build-object-panel-tp-room-open"
-        ) as HTMLButtonElement;
-        const roomNameEl = tpRoot.querySelector(
-          "#build-object-panel-tp-room-name"
-        ) as HTMLElement;
-        const roomMetaEl = tpRoot.querySelector(
-          "#build-object-panel-tp-room-meta"
-        ) as HTMLElement;
-        const roomPicker = tpRoot.querySelector(
-          "#build-object-panel-tp-room-picker"
-        ) as HTMLElement;
-        const roomPickerList = tpRoot.querySelector(
-          "#build-object-panel-tp-room-picker-list"
-        ) as HTMLUListElement;
-        const detachTeleporterRoomPickerListeners = (): void => {
-          if (panelTeleporterRoomPickerDocDown) {
-            document.removeEventListener(
-              "mousedown",
-              panelTeleporterRoomPickerDocDown,
-              true
-            );
-            panelTeleporterRoomPickerDocDown = null;
-          }
-          if (panelTeleporterRoomPickerKeydown) {
-            document.removeEventListener(
-              "keydown",
-              panelTeleporterRoomPickerKeydown,
-              true
-            );
-            panelTeleporterRoomPickerKeydown = null;
-          }
-        };
-        const closeTeleporterRoomPicker = (): void => {
-          detachTeleporterRoomPickerListeners();
-          if (roomPicker) roomPicker.hidden = true;
-          if (roomOpenBtn) roomOpenBtn.setAttribute("aria-expanded", "false");
-        };
-        const syncTeleporterRoomTrigger = (): void => {
-          if (!roomNameEl || !roomMetaEl) return;
-          const id = panelTeleporterSelectedRoomId ?? "";
-          if (!id) {
-            roomNameEl.textContent = "—";
-            roomMetaEl.textContent = "Tap to choose";
-            return;
-          }
-          const row = panelTeleporterRoomRows?.find(
-            (r) => normalizeRoomId(r.id) === id
-          );
-          if (row) {
-            roomNameEl.textContent = row.displayName;
-            roomMetaEl.textContent = tpSubtitleForRow(row);
-          } else {
-            roomNameEl.textContent = `↪ ${tpFormatRoomCode(id)}`;
-            roomMetaEl.textContent =
-              "Open list to pick a catalog room, or save with current X/Z.";
-          }
-        };
+        panelTeleporterStatusEl = tpRoot.querySelector(
+          ".build-object-panel-context__tp-status"
+        ) as HTMLElement | null;
+        panelTeleporterLeadEl = tpRoot.querySelector(
+          ".build-object-panel-context__tp-lead"
+        ) as HTMLElement | null;
+        syncTeleporterSelectionChrome(te.pending, te.isBidirectionalPair);
+        const dockRoot = teleporterSection?.querySelector(
+          "#tile-inspector-teleporter-dock"
+        ) as HTMLElement | null;
+        const dockSel = dockRoot?.querySelector(
+          "#dock-tp-dest-room-select"
+        ) as HTMLSelectElement | null;
+        const dockCoordsSection = dockRoot?.querySelector(
+          "#dock-tp-coords-section"
+        ) as HTMLElement | null;
+        const dockCoordsBtn = dockRoot?.querySelector(
+          "#dock-tp-coords"
+        ) as HTMLButtonElement | null;
+        const dockActions = dockRoot?.querySelector(
+          "#dock-tp-actions"
+        ) as HTMLElement | null;
+        const dockConfirm = dockRoot?.querySelector(
+          "#dock-tp-confirm"
+        ) as HTMLButtonElement | null;
+        const dockCancel = dockRoot?.querySelector(
+          "#dock-tp-cancel"
+        ) as HTMLButtonElement | null;
+        panelTeleporterCoordsSection = dockCoordsSection;
+        panelTeleporterCoordsBtn = dockCoordsBtn;
+        panelTeleporterConfirmBtn = dockConfirm;
+        panelTeleporterCancelBtn = dockCancel;
+        panelTeleporterCurrentRoomId = normalizeRoomId(te.currentRoomId);
+
         const ensureTeleporterRowForId = (destId: string): void => {
           if (!panelTeleporterRoomRows) return;
           const n = normalizeRoomId(destId);
@@ -6998,130 +8583,131 @@ export function createHud(
             isBuiltin: false,
           });
         };
-        const renderTeleporterRoomPickerList = (): void => {
-          if (!roomPickerList) return;
-          const selId = panelTeleporterSelectedRoomId
-            ? normalizeRoomId(panelTeleporterSelectedRoomId)
-            : "";
-          roomPickerList.replaceChildren();
-          const rows = panelTeleporterRoomRows ?? [];
-          for (const row of rows) {
-            const rid = normalizeRoomId(row.id);
-            const li = document.createElement("li");
-            li.className = "build-object-panel-context__tp-room-picker-item";
-            li.setAttribute("role", "presentation");
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "build-object-panel-context__tp-room-picker-row";
-            btn.setAttribute("role", "option");
-            btn.setAttribute(
-              "aria-selected",
-              rid === selId ? "true" : "false"
-            );
-            const main = document.createElement("div");
-            main.className =
-              "build-object-panel-context__tp-room-picker-row-name";
-            main.textContent = row.displayName;
-            const sub = document.createElement("div");
-            sub.className =
-              "build-object-panel-context__tp-room-picker-row-meta";
-            sub.textContent = tpSubtitleForRow(row);
-            btn.appendChild(main);
-            btn.appendChild(sub);
-            btn.addEventListener("click", () => {
-              panelTeleporterSelectedRoomId = rid;
-              syncTeleporterRoomTrigger();
-              applyTeleporterHubUi?.();
-              closeTeleporterRoomPicker();
-            });
-            li.appendChild(btn);
-            roomPickerList.appendChild(li);
-          }
-        };
-        teleporterPanelSyncRoomTrigger = syncTeleporterRoomTrigger;
-        teleporterPanelEnsureRowForId = ensureTeleporterRowForId;
-        teleporterPanelRenderPickerList = renderTeleporterRoomPickerList;
-        const openTeleporterRoomPicker = (): void => {
-          closeTeleporterRoomPicker();
-          renderTeleporterRoomPickerList();
-          roomPicker.hidden = false;
-          roomOpenBtn.setAttribute("aria-expanded", "true");
-          panelTeleporterRoomPickerDocDown = (ev: MouseEvent) => {
-            const t = ev.target as Node | null;
-            if (!t) return;
-            if (roomOpenBtn.contains(t)) return;
-            if (roomPicker.contains(t)) return;
-            closeTeleporterRoomPicker();
-          };
-          document.addEventListener(
-            "mousedown",
-            panelTeleporterRoomPickerDocDown,
-            true
-          );
-          panelTeleporterRoomPickerKeydown = (ev: KeyboardEvent) => {
-            if (ev.key === "Escape") {
-              ev.preventDefault();
-              closeTeleporterRoomPicker();
-            }
-          };
-          document.addEventListener(
-            "keydown",
-            panelTeleporterRoomPickerKeydown,
-            true
-          );
-        };
+
         panelTeleporterRoomRows = te.roomOptions.map((o) => ({ ...o }));
         panelTeleporterSelectedRoomId = normalizeRoomId(te.destRoomId);
         if (panelTeleporterSelectedRoomId) {
           ensureTeleporterRowForId(panelTeleporterSelectedRoomId);
         }
-        panelTeleporterRoomNameEl = roomNameEl;
-        panelTeleporterRoomPicker = roomPicker;
-        syncTeleporterRoomTrigger();
-        const xIn = tpRoot.querySelector(
-          "#build-object-panel-tp-x"
-        ) as HTMLInputElement;
-        const zIn = tpRoot.querySelector(
-          "#build-object-panel-tp-z"
-        ) as HTMLInputElement;
-        xIn.value = String(te.destX);
-        zIn.value = String(te.destZ);
-        panelTeleporterX = xIn;
-        panelTeleporterZ = zIn;
-        applyTeleporterHubUi = () => {
-          const wrap = tpRoot.querySelector(
-            "#build-object-panel-tp-dest-coords-wrap"
-          ) as HTMLElement | null;
-          const hubHint = tpRoot.querySelector(
-            "#build-object-panel-tp-hub-hint"
-          ) as HTMLElement | null;
-          const pickBtn = tpRoot.querySelector(
-            "#build-object-panel-tp-pick"
-          ) as HTMLButtonElement | null;
-          if (!wrap || !hubHint) return;
-          const destRoom = panelTeleporterSelectedRoomId
-            ? normalizeRoomId(panelTeleporterSelectedRoomId)
-            : "";
-          const isHub = destRoom === HUB_ROOM_ID;
-          wrap.hidden = isHub;
-          hubHint.hidden = !isHub;
-          if (pickBtn) {
-            const here = normalizeRoomId(te.currentRoomId);
-            pickBtn.hidden = isHub || destRoom !== here;
+        panelTeleporterRoomNameEl = null;
+        panelTeleporterRoomPicker = null;
+        panelTeleporterRoomPickerDocDown = null;
+        panelTeleporterRoomPickerKeydown = null;
+        teleporterPanelSyncRoomTrigger = null;
+        teleporterPanelEnsureRowForId = ensureTeleporterRowForId;
+        teleporterPanelRenderPickerList = null;
+
+        if (dockSel) {
+          dockSel.replaceChildren();
+          const optPair = document.createElement("option");
+          optPair.value = TELEPORTER_THIS_ROOM_VALUE;
+          optPair.textContent = "This room";
+          dockSel.appendChild(optPair);
+          for (const row of panelTeleporterRoomRows) {
+            const rid = normalizeRoomId(row.id);
+            const o = document.createElement("option");
+            o.value = rid;
+            o.textContent = row.displayName;
+            dockSel.appendChild(o);
+          }
+          if (te.pending || te.isBidirectionalPair) {
+            dockSel.value = TELEPORTER_THIS_ROOM_VALUE;
+          } else if (panelTeleporterSelectedRoomId) {
+            const match = [...dockSel.options].find(
+              (op) =>
+                normalizeRoomId(op.value) === panelTeleporterSelectedRoomId
+            );
+            dockSel.value = match
+              ? match.value
+              : panelTeleporterSelectedRoomId;
+          }
+        }
+
+        panelTeleporterDestX = te.destX;
+        panelTeleporterDestZ = te.destZ;
+        syncTeleporterCoordsButton();
+
+        const teleporterDestIsThisRoom = (): boolean =>
+          dockSel?.value === TELEPORTER_THIS_ROOM_VALUE;
+
+        const syncDockTeleporterUi = (): void => {
+          const pair = teleporterDestIsThisRoom();
+          const roomId = dockSel ? normalizeRoomId(dockSel.value) : "";
+          const here = normalizeRoomId(te.currentRoomId);
+          const isHub = roomId === HUB_ROOM_ID;
+          const canPickOnMap = pair || (roomId === here && !isHub);
+
+          const dirty = teleporterDockIsDirty();
+          if (dockCoordsSection) {
+            dockCoordsSection.hidden = !canPickOnMap && !dirty;
+          }
+          if (dockCoordsBtn) {
+            dockCoordsBtn.hidden = !canPickOnMap;
+            dockCoordsBtn.setAttribute(
+              "aria-label",
+              "Pick destination tile on the map"
+            );
+          }
+          if (dockActions) {
+            dockActions.hidden = !dirty;
+          }
+          syncTeleporterCoordsButton();
+          syncTeleporterDockActions();
+        };
+        applyTeleporterHubUi = syncDockTeleporterUi;
+
+        const onDockTpChange = (): void => {
+          te.onPickCancel();
+          syncDockTeleporterUi();
+        };
+        dockSel?.addEventListener("change", onDockTpChange);
+
+        const onDockCoordsClick = (): void => {
+          const pair = teleporterDestIsThisRoom();
+          const roomId = dockSel ? normalizeRoomId(dockSel.value) : "";
+          const here = normalizeRoomId(te.currentRoomId);
+          const isHub = roomId === HUB_ROOM_ID;
+          const canPickOnMap = pair || (roomId === here && !isHub);
+          if (!canPickOnMap) return;
+          te.onPickTileInCurrentRoom();
+          syncTeleporterDraftDestMapHighlight();
+        };
+
+        const onDockConfirmClick = (): void => {
+          const room = dockSel?.value ?? "";
+          if (!room) return;
+          if (room === HUB_ROOM_ID) {
+            te.onCommitDestination(HUB_ROOM_ID, 0, 0);
+          } else {
+            te.onCommitDestination(
+              room,
+              Math.floor(panelTeleporterDestX),
+              Math.floor(panelTeleporterDestZ)
+            );
           }
         };
-        roomOpenBtn.addEventListener("click", () => {
-          if (roomPicker.hidden) openTeleporterRoomPicker();
-          else closeTeleporterRoomPicker();
-        });
-        tpRoot
-          .querySelector("#build-object-panel-tp-room-picker-back")
-          ?.addEventListener("click", () => closeTeleporterRoomPicker());
+
+        const onDockCancelClick = (): void => {
+          te.onPickCancel();
+          revertTeleporterDraftToCommitted();
+        };
+
         teleporterPanelCleanup = () => {
-          closeTeleporterRoomPicker();
+          dockSel?.removeEventListener("change", onDockTpChange);
+          dockCoordsBtn?.removeEventListener("click", onDockCoordsClick);
+          dockConfirm?.removeEventListener("click", onDockConfirmClick);
+          dockCancel?.removeEventListener("click", onDockCancelClick);
           te.onPickCancel();
         };
-        applyTeleporterHubUi();
+        dockCoordsBtn?.addEventListener("click", onDockCoordsClick);
+        dockConfirm?.addEventListener("click", onDockConfirmClick);
+        dockCancel?.addEventListener("click", onDockCancelClick);
+
+        teleporterSelectionDockActive = true;
+        syncTeleporterDockSectionVisibility();
+        syncDockTeleporterUi();
+        syncTeleporterCommittedFromDraft();
+
         objectPanelContextPopover.hidden = false;
         objectPanelContextPopover
           .querySelector(".build-object-panel__move")
@@ -7132,29 +8718,23 @@ export function createHud(
         objectPanelContextPopover
           .querySelector(".build-object-panel-context__dismiss")
           ?.addEventListener("click", () => opts.onClose());
-        tpRoot
-          .querySelector("#build-object-panel-tp-pick")
-          ?.addEventListener("click", () => {
-            te.onPickTileInCurrentRoom();
-          });
-        tpRoot
-          .querySelector("#build-object-panel-tp-save")
-          ?.addEventListener("click", () => {
-            const roomId = panelTeleporterSelectedRoomId
-              ? normalizeRoomId(panelTeleporterSelectedRoomId)
-              : "";
-            if (!roomId) return;
-            if (roomId === HUB_ROOM_ID) {
-              te.onConfigure(roomId, 0, 0);
-              return;
-            }
-            const dx = Number(xIn.value);
-            const dz = Number(zIn.value);
-            if (!Number.isFinite(dx) || !Number.isFinite(dz)) {
-              return;
-            }
-            te.onConfigure(roomId, Math.floor(dx), Math.floor(dz));
-          });
+
+        syncBlockPreviewDockSlots();
+        inspectorPreviewGameRef?.bindInspectorTilePreviewCanvas(
+          "selection",
+          hueDockBlockPreview.querySelector(
+            "#panel-tile-inspector-preview-canvas"
+          ) as HTMLCanvasElement | null
+        );
+        inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(null);
+        inspectorPreviewGameRef?.syncInspectorSelectionTeleporterPreview({
+          pending: te.pending,
+          tileX: opts.x,
+          tileZ: opts.z,
+          tileY: te.y,
+        });
+        syncHueDockVisibility();
+        syncBuildDockSelectionChrome();
         requestAnimationFrame(() => {
           layoutObjectPanelSatellites();
           requestAnimationFrame(() => layoutObjectPanelSatellites());
@@ -7164,6 +8744,7 @@ export function createHud(
       if ("billboardSelection" in opts) {
         const bs = opts.billboardSelection;
         panelOnPropsChange = null;
+        billboardSelectionEditHandler = bs.canModify ? () => bs.onEdit() : null;
         objectPanel = document.createElement("div");
         objectPanel.className =
           "build-object-panel build-object-panel--teleporter";
@@ -7225,12 +8806,26 @@ export function createHud(
         objectPanelContextPopover
           .querySelector(".build-object-panel-context__dismiss")
           ?.addEventListener("click", () => bs.onClose());
+        syncBlockPreviewDockSlots();
+        inspectorPreviewGameRef?.bindInspectorTilePreviewCanvas(
+          "selection",
+          hueDockBlockPreview.querySelector(
+            "#panel-tile-inspector-preview-canvas"
+          ) as HTMLCanvasElement | null
+        );
+        inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(null);
+        inspectorPreviewGameRef?.syncInspectorSelectionTeleporterPreview(null);
+        inspectorPreviewGameRef?.syncInspectorSelectionBillboardPreview(bs.id);
+        syncHueDockVisibility();
+        syncBuildDockSelectionChrome();
+        syncBuildDockContextParams();
         requestAnimationFrame(() => {
           layoutObjectPanelSatellites();
           requestAnimationFrame(() => layoutObjectPanelSatellites());
         });
         return;
       }
+      billboardSelectionEditHandler = null;
       objectPanelContextPopover.classList.remove(
         "build-object-panel-context--billboard"
       );
@@ -7259,11 +8854,19 @@ export function createHud(
         panelRampDir = Math.max(0, Math.min(3, Math.floor(opts.rampDir)));
       } else {
         panelOnEditGateAcl = null;
+        panelObjectTileX = opts.x;
+        panelObjectTileZ = opts.z;
+        panelObjectTileY = Math.max(
+          0,
+          Math.min(2, Math.floor(Number(opts.y ?? 0)))
+        );
       }
       panelSelectedColorId = Math.max(
         0,
         Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(opts.colorId))
       );
+      panelClaimable = Boolean(opts.claimable);
+      panelClaimableActive = panelClaimable && opts.active !== false;
       objectPanel = document.createElement("div");
       objectPanel.className =
         "tile-inspector build-object-panel build-object-panel--rail";
@@ -7283,6 +8886,10 @@ export function createHud(
       `;
       objectPanelAdvancedPopover.innerHTML = `
         <div class="build-object-panel-advanced__inner">
+          <div id="panel-adv-shape-section" class="build-block-bar-advanced__shape-section" role="region" aria-label="Prism shape">
+            ${SHAPE_PICKER_BODY_HTML}
+          </div>
+          <div class="build-block-bar__popover-divider" aria-hidden="true"></div>
           <div class="build-object-panel-adv__icon-toggles" role="toolbar" aria-label="Block options">
             <button type="button" id="panel-adv-collision-toggle" class="build-object-panel-adv__icon-toggle"></button>
             <div class="build-object-panel-adv__lock-wrap" hidden>
@@ -7303,29 +8910,10 @@ export function createHud(
           <div class="build-object-panel-context__height-row">
             <div class="build-object-panel-context__height-main">
               ${lockIcon}
-              <label class="tile-inspector__param build-object-panel-context__height-param" for="panel-tile-inspector-height">
-                <span class="tile-inspector__param-label">Height</span>
-                <input type="range" id="panel-tile-inspector-height" class="tile-inspector__slider" min="0" max="2" step="1" value="2" aria-valuetext="Full" />
-                <span class="tile-inspector__param-value" id="panel-tile-inspector-height-val">1.0 m</span>
-              </label>
             </div>
             <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close block editor">${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}</button>
           </div>
-          <div class="build-object-panel-context__pyramid-base-row" id="panel-tile-inspector-pyramid-base-row" hidden>
-            <label class="tile-inspector__param build-object-panel-context__height-param" for="panel-tile-inspector-pyramid-base">
-              <span class="tile-inspector__param-label">Pyramid base</span>
-              <input type="range" id="panel-tile-inspector-pyramid-base" class="tile-inspector__slider" min="100" max="165" step="5" value="100" aria-valuetext="100%" />
-              <span class="tile-inspector__param-value" id="panel-tile-inspector-pyramid-base-val">100%</span>
-            </label>
-          </div>
           <div class="build-object-panel-context__gate-edit-block" id="panel-gate-edit-block" hidden>
-            <div class="build-block-bar__ramp-dir-row build-block-bar__gate-tool-row">
-              <span class="build-block-bar__ramp-dir-label">Opening direction</span>
-              <div class="build-block-bar__ramp-dir-controls">
-                <button type="button" class="build-block-bar__ramp-rot build-block-bar__panel-gate-exit-ccw" title="Rotate opening direction counter-clockwise" aria-label="Rotate gate opening direction counter-clockwise">↺</button>
-                <button type="button" class="build-block-bar__ramp-rot build-block-bar__panel-gate-exit-cw" title="Rotate opening direction clockwise" aria-label="Rotate gate opening direction clockwise">↻</button>
-              </div>
-            </div>
             <div class="build-object-panel-context__gate-acl-bar" id="panel-gate-acl-bar" hidden>
               <span class="build-object-panel-context__gate-acl-summary" id="panel-gate-acl-summary"></span>
               <button type="button" class="build-object-panel__btn build-object-panel__btn--secondary" id="panel-gate-acl-open">Permissions</button>
@@ -7341,47 +8929,24 @@ export function createHud(
         </div>`;
       objectPanelContextPopover.hidden = false;
       modeSidebarBuildMount.appendChild(objectPanel);
-      if (panelShapePopoverAbort) {
-        panelShapePopoverAbort.abort();
-        panelShapePopoverAbort = null;
-      }
       if (panelShapeColorRow) {
         panelShapeColorRow.remove();
         panelShapeColorRow = null;
       }
       panelDockHueWrap = null;
-      panelShapeTriggerEl = null;
       panelShapeColorRow = document.createElement("div");
       panelShapeColorRow.className =
-        "hud-mode-sidebar__shape-color-row hud-mode-sidebar__shape-color-row--selection";
-      const pShapeTrigger = document.createElement("button");
-      pShapeTrigger.type = "button";
-      pShapeTrigger.className = "hud-mode-sidebar__shape-trigger";
-      pShapeTrigger.title = "Block shape";
-      pShapeTrigger.setAttribute("aria-haspopup", "dialog");
-      pShapeTrigger.setAttribute("aria-expanded", "false");
-      pShapeTrigger.setAttribute(
-        "aria-controls",
-        "build-object-panel-shape-popover"
-      );
-      pShapeTrigger.innerHTML = `<span class="hud-mode-sidebar__shape-trigger-icon" aria-hidden="true">${SHAPE_TRIG_SVG.cube}</span><span class="hud-mode-sidebar__shape-trigger-label">Cube</span>`;
-      panelShapeTriggerEl = pShapeTrigger;
-      if (gateEdit) {
-        panelShapeTriggerEl.hidden = true;
-      }
-      panelDockHueWrap = document.createElement("div");
-      panelDockHueWrap.className =
-        "build-block-bar__hue-ring-wrap hud-mode-sidebar__room-bg-hue-wrap";
-      panelDockHueWrap.title = gateEdit
-        ? "Gate color. Drag on the ring; selection snaps to the nearest preset."
-        : "Color. Drag on the ring; selection snaps to the nearest preset.";
-      panelDockHueWrap.innerHTML = `
-            <div class="build-block-bar__hue-ring" role="slider" tabindex="0" aria-label="Block color" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0"></div>
-            <div class="build-block-bar__hue-core" aria-hidden="true"></div>
-          `;
-      panelShapeColorRow.appendChild(pShapeTrigger);
+        "hud-mode-sidebar__shape-color-row hud-mode-sidebar__shape-color-row--selection hud-mode-sidebar__shape-color-row--hue-only";
+      const panelHueRingParts = createPaletteHueRing({
+        ariaLabel: "Block color",
+        title: gateEdit
+          ? "Gate color. Drag on the ring; selection snaps to the nearest preset."
+          : "Color. Drag on the ring; selection snaps to the nearest preset.",
+      });
+      panelDockHueWrap = panelHueRingParts.wrap;
       panelShapeColorRow.appendChild(panelDockHueWrap);
-      hueDock.insertBefore(panelShapeColorRow, hueDockBlockPreview);
+      hueDock.insertBefore(panelShapeColorRow, hueDockPanelShapeInsertRef());
+      syncBlockPreviewDockSlots();
       inspectorPreviewGameRef?.bindInspectorTilePreviewCanvas(
         "selection",
         hueDockBlockPreview.querySelector(
@@ -7389,6 +8954,12 @@ export function createHud(
         ) as HTMLCanvasElement | null
       );
       syncHueDockVisibility();
+      const panelAdvShapeSection = objectPanelAdvancedPopover.querySelector(
+        "#panel-adv-shape-section"
+      ) as HTMLElement | null;
+      if (panelAdvShapeSection) {
+        panelAdvShapeSection.hidden = gateEdit;
+      }
       panelCollisionToggle = objectPanelAdvancedPopover.querySelector(
         "#panel-adv-collision-toggle"
       ) as HTMLButtonElement;
@@ -7423,12 +8994,6 @@ export function createHud(
       panelGateAclBtn = objectPanelContextPopover.querySelector(
         "#panel-gate-acl-open"
       ) as HTMLButtonElement | null;
-      panelGateExitCCW = objectPanelContextPopover.querySelector(
-        ".build-block-bar__panel-gate-exit-ccw"
-      ) as HTMLButtonElement | null;
-      panelGateExitCW = objectPanelContextPopover.querySelector(
-        ".build-block-bar__panel-gate-exit-cw"
-      ) as HTMLButtonElement | null;
       if (gateEdit) {
         if (panelContextHeightRow) panelContextHeightRow.hidden = true;
         if (panelGateEditBlock) panelGateEditBlock.hidden = false;
@@ -7448,17 +9013,9 @@ export function createHud(
         if (panelGateEditBlock) panelGateEditBlock.hidden = true;
         if (panelGateAclBar) panelGateAclBar.hidden = true;
       }
-      panelGateExitCCW?.addEventListener("click", () => {
-        panelGateExitDir = (panelGateExitDir - 1 + 4) % 4;
-        emitPanelProps();
-      });
-      panelGateExitCW?.addEventListener("click", () => {
-        panelGateExitDir = (panelGateExitDir + 1) % 4;
-        emitPanelProps();
-      });
       panelHeightBtns = [];
       panelShapeBtns = Array.from(
-        panelShapePopover.querySelectorAll(".tile-inspector__shape-btn")
+        objectPanelAdvancedPopover.querySelectorAll(".tile-inspector__shape-btn")
       ) as HTMLButtonElement[];
       panelHexCb = objectPanel.querySelector(
         ".build-object-panel__hex"
@@ -7477,32 +9034,22 @@ export function createHud(
       ) as HTMLButtonElement;
       panelHueRingWrap = panelDockHueWrap;
       panelHueRing = panelDockHueWrap.querySelector(
-        ".build-block-bar__hue-ring"
+        `.${PALETTE_HUE_RING_BAND}`
       ) as HTMLElement;
       panelHueCore = panelDockHueWrap.querySelector(
-        ".build-block-bar__hue-core"
+        `.${PALETTE_HUE_RING_CORE}`
       ) as HTMLElement;
-      panelTileInspectorHeightInput = objectPanelContextPopover.querySelector(
-        "#panel-tile-inspector-height"
-      ) as HTMLInputElement;
-      panelTileInspectorHeightVal = objectPanelContextPopover.querySelector(
-        "#panel-tile-inspector-height-val"
-      ) as HTMLElement;
+      panelTileInspectorHeightInput = null;
+      panelTileInspectorHeightVal = null;
       panelTileInspectorResetBtn = objectPanel.querySelector(
         "#panel-tile-inspector-reset"
       ) as HTMLButtonElement;
       if (gateEdit) {
         panelTileInspectorResetBtn.hidden = true;
       }
-      panelPyramidBaseRow = objectPanelContextPopover.querySelector(
-        "#panel-tile-inspector-pyramid-base-row"
-      ) as HTMLElement | null;
-      panelPyramidBaseInput = objectPanelContextPopover.querySelector(
-        "#panel-tile-inspector-pyramid-base"
-      ) as HTMLInputElement | null;
-      panelPyramidBaseVal = objectPanelContextPopover.querySelector(
-        "#panel-tile-inspector-pyramid-base-val"
-      ) as HTMLElement | null;
+      panelPyramidBaseRow = null;
+      panelPyramidBaseInput = null;
+      panelPyramidBaseVal = null;
       syncPanelCollisionToggle(gateEdit ? false : opts.passable);
       if (gateEdit && panelCollisionToggle) {
         panelCollisionToggle.hidden = true;
@@ -7522,6 +9069,7 @@ export function createHud(
       rampDirRow.hidden = !opts.ramp || gateEdit;
       syncPanelPyramidBaseSliderFromScale(opts.pyramidBaseScale ?? 1);
       syncPanelShapeButtons();
+      syncBuildDockContextParams();
 
       panelAdvancedToggle!.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -7534,50 +9082,24 @@ export function createHud(
         }
       });
       syncPanelHueVisualFromColorId(panelSelectedColorId);
+      inspectorPreviewGameRef?.syncInspectorSelectionTeleporterPreview(null);
       {
         const live = buildLivePanelObstacleProps();
         if (live) inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(live);
       }
 
-      function onPanelHuePointer(ev: PointerEvent): void {
-        if (!panelHueRing) return;
-        const hue = ringHueFromClient(panelHueRing, ev.clientX, ev.clientY);
-        if (hue === null) return;
-        applyPanelHueDegrees(hue);
-      }
-      panelHueRingWrap!.addEventListener("pointerdown", (e) => {
-        panelHueRingWrap!.setPointerCapture(e.pointerId);
-        onPanelHuePointer(e);
-      });
-      panelHueRingWrap!.addEventListener("pointermove", (e) => {
-        if (!panelHueRingWrap!.hasPointerCapture(e.pointerId)) return;
-        onPanelHuePointer(e);
-      });
-      panelHueRingWrap!.addEventListener("pointerup", (e) => {
-        if (panelHueRingWrap!.hasPointerCapture(e.pointerId)) {
-          try {
-            panelHueRingWrap!.releasePointerCapture(e.pointerId);
-          } catch {
-            /* already released */
-          }
+      attachPaletteHueRingPointerHandlers(
+        panelHueRingWrap!,
+        panelHueRing!,
+        (hue) => {
+          applyPanelHueDegrees(hue);
         }
-      });
-      panelHueRingWrap!.addEventListener("pointercancel", (ev) => {
-        try {
-          panelHueRingWrap!.releasePointerCapture(ev.pointerId);
-        } catch {
-          /* */
-        }
-      });
-      panelHueRing!.addEventListener("keydown", (e) => {
-        if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
-          e.preventDefault();
-          applyPanelHueDegrees(panelLastHueDeg - 12);
-        } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
-          e.preventDefault();
-          applyPanelHueDegrees(panelLastHueDeg + 12);
-        }
-      });
+      );
+      attachPaletteHueRingArrowKeys(
+        panelHueRing!,
+        () => panelLastHueDeg,
+        applyPanelHueDegrees
+      );
 
       panelCollisionToggle!.addEventListener("click", () => {
         syncPanelCollisionToggle(!getPanelPassable());
@@ -7588,30 +9110,6 @@ export function createHud(
         panelLockedState = next;
         syncPanelLockToggle(next);
         emitPanelProps();
-      });
-      panelTileInspectorHeightInput!.addEventListener("input", () => {
-        emitPanelProps();
-        syncPanelTileHeightLabel();
-      });
-      panelPyramidBaseInput?.addEventListener("input", () => {
-        if (!panelPyramidBaseInput || !panelPyramidBaseVal) return;
-        const raw = Math.min(
-          165,
-          Math.max(100, Math.floor(Number(panelPyramidBaseInput.value)))
-        );
-        panelPyramidBaseInput.value = String(raw);
-        panelPyramidBaseVal.textContent = `${raw}%`;
-        panelPyramidBaseInput.setAttribute("aria-valuetext", `${raw}%`);
-        previewInspectorSelectionFromPanel();
-      });
-      panelPyramidBaseInput?.addEventListener("change", () => {
-        schedulePanelPyramidBaseCommit();
-      });
-      panelPyramidBaseInput?.addEventListener("pointerup", () => {
-        schedulePanelPyramidBaseCommit();
-      });
-      panelPyramidBaseInput?.addEventListener("blur", () => {
-        schedulePanelPyramidBaseCommit();
       });
       panelTileInspectorResetBtn!.addEventListener("click", () => {
         if (!panelHexCb || !panelRampCb || !panelPyramidCb || !panelSphereCb) {
@@ -7631,26 +9129,6 @@ export function createHud(
         syncPanelPyramidBaseSliderFromScale(1);
         emitPanelProps();
       });
-      panelShapePopoverAbort = new AbortController();
-      const pShapeSig = panelShapePopoverAbort.signal;
-      panelShapeTriggerEl.addEventListener(
-        "click",
-        (e) => {
-          e.stopPropagation();
-          setPanelShapePopoverOpen(panelShapePopover.hidden);
-        },
-        { signal: pShapeSig }
-      );
-      panelShapeTriggerEl.addEventListener(
-        "keydown",
-        (e) => {
-          if (e.key === "Escape" && !panelShapePopover.hidden) {
-            e.preventDefault();
-            setPanelShapePopoverOpen(false);
-          }
-        },
-        { signal: pShapeSig }
-      );
       const rotatePanelRamp = (delta: -1 | 1): void => {
         if (!panelRampCb?.checked) return;
         panelRampDir = (panelRampDir + delta + 4) % 4;
@@ -7666,13 +9144,13 @@ export function createHud(
         ?.addEventListener("click", () => opts.onRemove());
       const dismissPanel = (): void => {
         setPanelAdvancedOpen(false);
-        setPanelShapePopoverOpen(false);
         opts.onClose();
       };
       objectPanelContextPopover
         .querySelector(".build-object-panel-context__dismiss")
         ?.addEventListener("click", () => dismissPanel());
       syncBlockPreviewDockSlots();
+      syncBuildDockSelectionChrome();
       requestAnimationFrame(() => {
         layoutObjectPanelSatellites();
         requestAnimationFrame(() => layoutObjectPanelSatellites());
@@ -7680,6 +9158,12 @@ export function createHud(
     },
     hideObjectEditPanel() {
       hideObjectEditPanel();
+    },
+    isObjectSelectionActive() {
+      return isBuildObjectSelectionActive();
+    },
+    onObjectSelectionDismiss(fn: (() => void) | null) {
+      objectSelectionDismissHandler = fn;
     },
     showGateAclEditor(opts) {
       showGateAclEditor(opts);
@@ -7692,140 +9176,66 @@ export function createHud(
       destX: number;
       destZ: number;
     }) {
-      if (
-        !panelTeleporterRoomNameEl ||
-        !panelTeleporterX ||
-        !panelTeleporterZ
-      ) {
-        return;
-      }
       const n = normalizeRoomId(p.destRoomId);
       panelTeleporterSelectedRoomId = n;
+      panelTeleporterDestX = Math.floor(p.destX);
+      panelTeleporterDestZ = Math.floor(p.destZ);
       teleporterPanelEnsureRowForId?.(n);
-      teleporterPanelSyncRoomTrigger?.();
-      if (
-        panelTeleporterRoomPicker &&
-        !panelTeleporterRoomPicker.hidden
-      ) {
-        teleporterPanelRenderPickerList?.();
+      const dockSel = buildBlockBar.querySelector(
+        "#dock-tp-dest-room-select"
+      ) as HTMLSelectElement | null;
+      if (dockSel) {
+        const here = normalizeRoomId(panelTeleporterCurrentRoomId);
+        const draftRoom = teleporterDockDraftRoom();
+        if (
+          draftRoom === TELEPORTER_THIS_ROOM_VALUE &&
+          n === here
+        ) {
+          dockSel.value = TELEPORTER_THIS_ROOM_VALUE;
+        } else if (panelTeleporterEditBidirectional && n === here) {
+          dockSel.value = TELEPORTER_THIS_ROOM_VALUE;
+        } else {
+          const match = [...dockSel.options].find(
+            (op) => normalizeRoomId(op.value) === n
+          );
+          if (match) dockSel.value = match.value;
+          else dockSel.value = n || dockSel.value;
+        }
       }
-      panelTeleporterX.value = String(p.destX);
-      panelTeleporterZ.value = String(p.destZ);
+      syncTeleporterCoordsButton();
       applyTeleporterHubUi?.();
     },
     setObjectPanelProps(p: ObstacleProps) {
-      if (p.gate) {
-        panelObjectEditGate = true;
-        panelGateAdminAddress = normalizeWalletKey(p.gate.adminAddress);
-        panelGateAuthorizedAddresses = p.gate.authorizedAddresses.map((a) =>
-          normalizeWalletKey(String(a))
-        );
-        if (p.editorTileX !== undefined && p.editorTileZ !== undefined) {
-          panelObjectTileX = p.editorTileX;
-          panelObjectTileY = p.editorTileY ?? 0;
-          panelObjectTileZ = p.editorTileZ;
-        }
-        panelGateExitDir =
-          p.gateExitDir !== undefined && Number.isFinite(p.gateExitDir)
-            ? Math.max(0, Math.min(3, Math.floor(p.gateExitDir)))
-            : gateExitDirFromTile(
-                panelObjectTileX,
-                panelObjectTileZ,
-                p.gate
-              );
-        panelRampDir = Math.max(0, Math.min(3, Math.floor(p.rampDir)));
-        panelLockedState = p.locked || false;
-        syncPanelLockToggle(panelLockedState);
-        panelSelectedColorId = Math.max(
-          0,
-          Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(p.colorId))
-        );
-        syncPanelHueVisualFromColorId(panelSelectedColorId);
-        if (panelGateAclSummaryEl) {
-          const n = panelGateAuthorizedAddresses.length;
-          panelGateAclSummaryEl.textContent = `${n} wallet${
-            n === 1 ? "" : "s"
-          } can open`;
-        }
-        if (panelGateAclBtn) {
-          panelGateAclBtn.disabled = !panelOnEditGateAcl;
-          panelGateAclBtn.onclick = panelOnEditGateAcl ?? null;
-        }
-        if (panelGateEditBlock) panelGateEditBlock.hidden = false;
-        if (panelContextHeightRow) panelContextHeightRow.hidden = true;
-        if (panelShapeTriggerEl) panelShapeTriggerEl.hidden = true;
-        if (panelCollisionToggle) {
-          panelCollisionToggle.hidden = true;
-          syncPanelCollisionToggle(false);
-        }
-        if (panelTileInspectorResetBtn) {
-          panelTileInspectorResetBtn.hidden = true;
-        }
-        if (rampDirRow) rampDirRow.hidden = true;
-        syncPanelShapeButtons();
-        inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(p);
+      applyObjectPanelPropsFromServer(p);
+    },
+    refreshTeleporterObjectSelection(opts) {
+      if (
+        !objectPanelContextPopover.classList.contains(
+          "build-object-panel-context--teleporter"
+        )
+      ) {
         return;
       }
-      panelObjectEditGate = false;
-      if (panelGateEditBlock) panelGateEditBlock.hidden = true;
-      if (panelGateAclBar) panelGateAclBar.hidden = true;
-      if (panelContextHeightRow) panelContextHeightRow.hidden = false;
-      if (panelShapeTriggerEl) panelShapeTriggerEl.hidden = false;
-      if (panelCollisionToggle) panelCollisionToggle.hidden = false;
-      if (panelTileInspectorResetBtn) panelTileInspectorResetBtn.hidden = false;
-      syncPanelCollisionToggle(p.passable);
-      panelLockedState = p.locked || false;
-      syncPanelLockToggle(panelLockedState);
-      syncPanelHeightButtons(p.quarter, p.quarter ? false : p.half);
-      if (panelHexCb) panelHexCb.checked = p.ramp ? false : p.hex;
-      if (panelPyramidCb) {
-        panelPyramidCb.checked = p.ramp ? false : p.pyramid;
-      }
-      if (panelSphereCb) {
-        panelSphereCb.checked = p.ramp ? false : p.sphere;
-      }
-      if (panelRampCb) panelRampCb.checked = p.ramp;
-      if (!panelPyramidBaseSliderUiBusy()) {
-        syncPanelPyramidBaseSliderFromScale(p.pyramidBaseScale ?? 1);
-      }
-      panelRampDir = Math.max(0, Math.min(3, Math.floor(p.rampDir)));
-      if (rampDirRow) rampDirRow.hidden = !p.ramp;
-      syncPanelShapeButtons();
-      panelSelectedColorId = Math.max(
-        0,
-        Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(p.colorId))
-      );
-      syncPanelHueVisualFromColorId(panelSelectedColorId);
-      inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(p);
+      syncTeleporterSelectionChrome(opts.pending, opts.isBidirectionalPair);
+      inspectorPreviewGameRef?.syncInspectorSelectionTeleporterPreview({
+        pending: opts.pending,
+        tileX: opts.x,
+        tileZ: opts.z,
+        tileY: opts.y,
+      });
+      applyTeleporterHubUi?.();
+    },
+    ackTeleporterDestinationBaseline() {
+      syncTeleporterCommittedFromDraft();
     },
     rotateRampToward(delta: -1 | 1): boolean {
-      if (objectPanel && panelObjectEditGate) {
-        panelGateExitDir = (panelGateExitDir + delta + 4) % 4;
-        emitPanelProps();
-        return true;
-      }
-      if (
-        objectPanel &&
-        panelRampCb?.checked &&
-        rampDirRow &&
-        !rampDirRow.hidden
-      ) {
-        panelRampDir = (panelRampDir + delta + 4) % 4;
-        emitPanelProps();
-        return true;
-      }
-      if (barRampCb.checked && !buildBlockBar.hidden) {
-        rotateBarRamp(delta);
-        return true;
-      }
-      if (gateModeActive) {
-        rotateBarRamp(delta);
-        return true;
-      }
-      return false;
+      return applyBuildDockRotate(delta);
     },
     onBuildPlacementStyle(fn) {
       placementStyleHandler = fn;
+    },
+    refreshBuildDockToolStrip() {
+      syncBuildDockToolStrip();
     },
     setBuildBlockBarState(state) {
       const hideBarForObjectPanel =
@@ -7837,7 +9247,6 @@ export function createHud(
         !state.visible || hideBarForObjectPanel || hideForObjectEdit;
       if (buildBlockBar.hidden) {
         setBarPopoverOpen(false);
-        setBarShapePopoverOpen(false);
       }
       syncModeSidebarBodyInteractive();
       syncHueDockVisibility();
@@ -7862,7 +9271,7 @@ export function createHud(
       syncBarPyramidBaseSliderFromScale(state.pyramidBaseScale ?? 1);
       barRampCb.checked = state.ramp;
       barRampDir = Math.max(0, Math.min(3, Math.floor(state.rampDir)));
-      barRampDirRow.hidden = !state.ramp && !gateModeActive;
+      barRampDirRow.hidden = !state.ramp;
       const claim = state.claimable ?? false;
       barClaimToggle.setAttribute("aria-pressed", claim ? "true" : "false");
       barClaimToggle.classList.toggle("build-block-bar__claim-toggle--active", claim);
@@ -7872,6 +9281,9 @@ export function createHud(
       lastHueDeg = Math.round(estimateHueFromPaletteId(state.colorId));
       barHueRing.setAttribute("aria-valuenow", String(lastHueDeg));
       syncBarShapeButtons();
+      syncBuildDockToolStrip();
+      syncPlacementInspectorPreviewGame();
+      applyDockTerrainBlockPlacementChrome();
     },
     isSignpostModeActive(): boolean {
       return signpostModeActive;
@@ -8663,8 +10075,6 @@ export function createHud(
       document.removeEventListener("nspace-pseudo-fullscreen-change", onFullscreenChange);
       document.removeEventListener("click", closeHudTooltips);
       document.removeEventListener("pointerdown", closeHudAdvancedPopoversOnOutside);
-      setBarShapePopoverOpen(false);
-      setPanelShapePopoverOpen(false);
       hideObjectEditPanel();
       hideLobbyConfirm();
       if (nimClaimFadeTimer !== null) {

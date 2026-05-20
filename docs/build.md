@@ -32,6 +32,11 @@ Concise description of how nspace is put together today.
 - **Fog of war** (**legacy / optional**; default off in normal play — `localStorage` `nspace_fog_enabled`): normal rendering bypasses the fog pass when disabled; enabling fog uses the shader pass in [client/src/game/fogOfWar.ts](../client/src/game/fogOfWar.ts).
 - **Content**: Walkable floor planes, tile highlight, path line, identicon avatars, user-placed blocks (box, hex, pyramid, sphere, ramp, palette colors), **active claimable (minable)** blocks with client-only additive sparkles + emissive pulse ([client/src/game/Game.ts](../client/src/game/Game.ts)), optional admin overlay ([client/src/ui/adminOverlay.ts](../client/src/ui/adminOverlay.ts)). **Build-mode reposition** shows a **semi-transparent ghost** at valid hover targets for obstacles (shared `makeBlockMesh` ghost path with placement preview where applicable); product-level rules live in [THE-LARGER-SYSTEM.md](THE-LARGER-SYSTEM.md).
 
+## Build mode HUD (client)
+
+- **Bottom build dock** ([client/src/ui/hud.ts](../client/src/ui/hud.ts), reference [build_menu.md](build_menu.md)): **Terrain / Props / Buildings** (Objects scope) or **Floor / Room settings** (Room scope); tool cards (**PNG thumbnails** via `Game` bakes), **two-column context** (modifiers + hue ring; **room background** swatch on Room settings), **live WebGL previews**. **Objects / Room** (`#hud-build-edit-kind` or mobile `#hud-build-edit-kind-popover`) on the **right** of the tab row; **reopening build** defaults to **Objects**. See **Authoring HUD: bottom build dock** in [THE-LARGER-SYSTEM.md](THE-LARGER-SYSTEM.md).
+- **Compact strip**: **Build** toggle (and related mode chrome) lives in the narrow **build mode strip**; avoid duplicating the Objects/Room choice there when the dock is active.
+
 ## Message flow (high level)
 
 ```mermaid

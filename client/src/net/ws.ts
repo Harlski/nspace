@@ -67,6 +67,9 @@ export type ObstacleProps = {
   editorTileX?: number;
   editorTileY?: number;
   editorTileZ?: number;
+  /** Client-only: claimable / minable block preview (not sent on the wire). */
+  claimable?: boolean;
+  active?: boolean;
 };
 
 export type ObstacleRef = {
@@ -512,6 +515,27 @@ export function sendConfigureTeleporter(
       z,
       y,
       destRoomId,
+      destX,
+      destZ,
+    })
+  );
+}
+
+export function sendPlaceTeleporterBidirectionalPair(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  y: number,
+  destX: number,
+  destZ: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "placeTeleporterBidirectionalPair",
+      x,
+      z,
+      y: Math.max(0, Math.min(2, Math.floor(y))),
       destX,
       destZ,
     })

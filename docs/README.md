@@ -11,6 +11,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 | [getting-started.md](getting-started.md) | Install, env vars, controls, Docker overview, project tree |
 | [features-checklist.md](features-checklist.md) | What the server and client implement today (WebSocket, rooms, build, replay, etc.) |
 | [build.md](build.md) | Stack, world model, authority, rendering, high-level message flow |
+| [build_menu.md](build_menu.md) | **Build bottom dock** — component names, selection vs placement, how to reference UI in feedback |
 | [process.md](process.md) | How to extend synced features, tick loop, env vars, local dev, rate limits |
 | [THE-LARGER-SYSTEM.md](THE-LARGER-SYSTEM.md) | Evolving design principles and cross-cutting decisions; substantive edits ship a companion file in [reasons/](reasons/) (see also [MEMORY.md](../MEMORY.md)) |
 | [patchnotes-release.md](patchnotes-release.md) | How to write `patchnote/…/public/*.md` (tiers, optional **`04-hotfix.md`**, brevity, optional `[NEW]`/`[FIX]`/… tags for in-app `/patchnotes`) |

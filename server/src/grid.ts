@@ -233,6 +233,8 @@ export type TerrainProps = {
         targetZ: number;
         /** Denormalized label for clients that do not have the room in their catalog (e.g. private). */
         targetRoomDisplayName?: string;
+        /** Same-room bidirectional pair: `blockKey` of the other teleporter; deleting either removes both. */
+        pairedPeerKey?: string;
       };
   // Experimental: Claimable/minable blocks
   claimable?: boolean;

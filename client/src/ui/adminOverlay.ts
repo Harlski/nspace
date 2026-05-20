@@ -1,4 +1,8 @@
-import type { Game, VoxelTextSpec } from "../game/Game.js";
+import type {
+  Game,
+  InspectorPreviewLayoutProfileId,
+  VoxelTextSpec,
+} from "../game/Game.js";
 import { apiUrl } from "../net/apiBase.js";
 
 const DEV_ENABLED = import.meta.env.VITE_ADMIN_ENABLED === "true";
@@ -13,6 +17,8 @@ export function installAdminOverlay(
     enabled?: boolean;
     onSetVoxelText?: (spec: VoxelTextSpec) => void;
     onRemoveVoxelText?: (roomId: string, id: string) => void;
+    /** Re-run build-dock thumbnail strip after inspector preview layout tweaks. */
+    onInspectorPreviewLayoutChange?: () => void;
   }
 ): { destroy: () => void; isVoxelEditorOpen: () => boolean } {
   const enabled = Boolean(opts.enabled) || DEV_ENABLED;
@@ -71,6 +77,26 @@ export function installAdminOverlay(
       <label class="admin-overlay-field"><span>Block visual scale</span>
         <input type="range" class="admin-overlay-range" id="block-visual-scale" min="0.86" max="1.06" step="0.001" value="1" />
         <span class="admin-overlay-range-val" id="block-visual-scale-val">1.000</span>
+      </label>
+      <p class="admin-overlay-hint">Build HUD 3D previews (placement strip, dock thumbnails). Does not change world block scale above. Persists locally per profile.</p>
+      <label class="admin-overlay-field"><span>Preview profile</span>
+        <select class="admin-overlay-input" id="inspector-preview-profile">
+          <option value="default">Default (blocks, gates, signposts, terrain…)</option>
+          <option value="billboard">Billboard</option>
+          <option value="teleporter">Teleporter</option>
+        </select>
+      </label>
+      <label class="admin-overlay-field"><span>Preview display scale</span>
+        <input type="range" class="admin-overlay-range" id="inspector-preview-scale" min="0.35" max="2.5" step="0.01" value="1" />
+        <span class="admin-overlay-range-val" id="inspector-preview-scale-val">1.00</span>
+      </label>
+      <label class="admin-overlay-field"><span>Preview pan X (world)</span>
+        <input type="range" class="admin-overlay-range" id="inspector-preview-pan-x" min="-1.5" max="1.5" step="0.01" value="0" />
+        <span class="admin-overlay-range-val" id="inspector-preview-pan-x-val">0.00</span>
+      </label>
+      <label class="admin-overlay-field"><span>Preview pan Y → world Z</span>
+        <input type="range" class="admin-overlay-range" id="inspector-preview-pan-z" min="-1.5" max="1.5" step="0.01" value="0" />
+        <span class="admin-overlay-range-val" id="inspector-preview-pan-z-val">0.00</span>
       </label>
     </div>
     <div class="admin-overlay-tab-panel" data-panel="fog" hidden>
@@ -210,6 +236,21 @@ export function installAdminOverlay(
   const floorTileQuadVal = $("floor-tile-quad-val") as HTMLSpanElement;
   const blockVisualScale = $("block-visual-scale") as HTMLInputElement;
   const blockVisualScaleVal = $("block-visual-scale-val") as HTMLSpanElement;
+  const inspectorPreviewProfile = $(
+    "inspector-preview-profile"
+  ) as HTMLSelectElement;
+  const inspectorPreviewScale = $("inspector-preview-scale") as HTMLInputElement;
+  const inspectorPreviewScaleVal = $(
+    "inspector-preview-scale-val"
+  ) as HTMLSpanElement;
+  const inspectorPreviewPanX = $("inspector-preview-pan-x") as HTMLInputElement;
+  const inspectorPreviewPanXVal = $(
+    "inspector-preview-pan-x-val"
+  ) as HTMLSpanElement;
+  const inspectorPreviewPanZ = $("inspector-preview-pan-z") as HTMLInputElement;
+  const inspectorPreviewPanZVal = $(
+    "inspector-preview-pan-z-val"
+  ) as HTMLSpanElement;
   const voxelId = $("voxel-id") as HTMLSelectElement;
   const voxelText = $("voxel-text") as HTMLInputElement;
   const voxelRoom = $("voxel-room") as HTMLInputElement;
@@ -234,6 +275,26 @@ export function installAdminOverlay(
     const s = game.getBlockVisualScale();
     blockVisualScale.value = String(s);
     blockVisualScaleVal.textContent = s.toFixed(3);
+  };
+
+  const notifyInspectorPreviewLayout = (): void => {
+    opts.onInspectorPreviewLayoutChange?.();
+  };
+
+  const inspectorPreviewProfileId = (): InspectorPreviewLayoutProfileId => {
+    const v = inspectorPreviewProfile.value;
+    if (v === "billboard" || v === "teleporter" || v === "default") return v;
+    return "default";
+  };
+
+  const syncInspectorPreviewFields = (): void => {
+    const row = game.getInspectorPreviewLayout(inspectorPreviewProfileId());
+    inspectorPreviewScale.value = String(row.scale);
+    inspectorPreviewScaleVal.textContent = row.scale.toFixed(2);
+    inspectorPreviewPanX.value = String(row.panX);
+    inspectorPreviewPanZ.value = String(row.panZ);
+    inspectorPreviewPanXVal.textContent = row.panX.toFixed(2);
+    inspectorPreviewPanZVal.textContent = row.panZ.toFixed(2);
   };
 
   const parseHexColor = (raw: string, fallback: number): number => {
@@ -337,6 +398,7 @@ export function installAdminOverlay(
     if (id === "layout") {
       syncFloorTileFields();
       syncBlockVisualFields();
+      syncInspectorPreviewFields();
     }
     if (id === "voxel") syncVoxelFields();
   };
@@ -359,6 +421,7 @@ export function installAdminOverlay(
     syncAvatarFields();
     syncFloorTileFields();
     syncBlockVisualFields();
+    syncInspectorPreviewFields();
     syncVoxelFields();
     setTab("layout");
     setStatus(`Frustum: ${game.getZoomFrustumSize().toFixed(1)} · Fog: ${game.getFogOfWarEnabled() ? "on" : "off"}`);
@@ -436,6 +499,39 @@ export function installAdminOverlay(
     setStatus(`Block visual scale ${s.toFixed(3)} (persists locally)`);
   };
   blockVisualScale.addEventListener("input", onBlockVisualScaleInput);
+
+  const onInspectorPreviewScaleInput = (): void => {
+    const id = inspectorPreviewProfileId();
+    game.setInspectorPreviewLayout(id, {
+      scale: Number(inspectorPreviewScale.value),
+    });
+    syncInspectorPreviewFields();
+    const row = game.getInspectorPreviewLayout(id);
+    setStatus(
+      `Inspector [${id}] scale ${row.scale.toFixed(2)} (persists locally)`
+    );
+    notifyInspectorPreviewLayout();
+  };
+  inspectorPreviewScale.addEventListener("input", onInspectorPreviewScaleInput);
+
+  const onInspectorPreviewPanInput = (): void => {
+    const id = inspectorPreviewProfileId();
+    game.setInspectorPreviewLayout(id, {
+      panX: Number(inspectorPreviewPanX.value),
+      panZ: Number(inspectorPreviewPanZ.value),
+    });
+    syncInspectorPreviewFields();
+    const row = game.getInspectorPreviewLayout(id);
+    setStatus(
+      `Inspector [${id}] pan X ${row.panX.toFixed(2)} · Z ${row.panZ.toFixed(2)} (world)`
+    );
+    notifyInspectorPreviewLayout();
+  };
+  inspectorPreviewPanX.addEventListener("input", onInspectorPreviewPanInput);
+  inspectorPreviewPanZ.addEventListener("input", onInspectorPreviewPanInput);
+  inspectorPreviewProfile.addEventListener("change", () => {
+    syncInspectorPreviewFields();
+  });
 
   $("admin-random").addEventListener("click", async () => {
     const roomId = roomInput.value.trim() || opts.roomId;

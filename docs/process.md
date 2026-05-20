@@ -49,7 +49,7 @@ Clients may send an optional string field **`claimIntent`** on **`beginBlockClai
 | `PORT` | server | HTTP + WebSocket listen port (default `3001`) |
 | `FAKE_PLAYER_COUNT` | server | `0`–`32` NPC wanderers per room (default **2**; display names prefixed with `[NPC]`; set `0` to disable) |
 | `VITE_DEV_AUTH_BYPASS` | client | `1` shows Dev login |
-| `VITE_ADMIN_ENABLED` | client | `true` shows Admin overlay (layout / fog / camera) |
+| `VITE_ADMIN_ENABLED` | client | `true` shows Admin overlay (layout / fog / camera / avatar / voxel; **Layout** includes build HUD **inspector preview** per-profile scale + ground-plane pan — **default** (blocks, gates, signposts, terrain thumbs), **billboard**, **teleporter** — persisted as JSON `localStorage` key `nspace_inspector_preview_layouts_v2`; legacy `nspace_inspector_preview_display_scale` / `_pan_*` migrate into **default** only) |
 | `VITE_HUB_URL` | client | Nimiq Hub base URL (optional override) |
 | `VITE_API_BASE_URL` | client | API origin when SPA and API differ. Prefer full URL (`https://api.example.com`). Host-only (`api.example.com`) is normalized to `https://…` so it is not treated as a path on the SPA host. |
 | `VITE_WS_BASE_URL` | client | Optional WebSocket origin (`wss://…` or host-only); otherwise derived from resolved API base or page |

@@ -237,8 +237,16 @@ type InspectorTilePreviewPort = {
 
 /** Ortho half-extent (vertical, world units); larger = smaller subject in frame. */
 const INSPECTOR_PREVIEW_HALF_V = 1.02;
+/** Light neutral backdrop; slightly cool so gold / yellow blocks stay visible. */
+const INSPECTOR_TILE_PREVIEW_BG = 0xd6dbe5;
 /** Slightly shrink the tile + block together vs full-size preview. */
 const INSPECTOR_PREVIEW_SCENE_SCALE = 0.72;
+/** Billboard object-preview plane is 40% smaller than full-size dock bake. */
+const INSPECTOR_BILLBOARD_PREVIEW_SCALE = 0.6;
+/** Extra shrink for Buildings-tab billboard tool thumbnail (128px bake). */
+const DOCK_STRIP_BILLBOARD_THUMB_SCALE = 0.48;
+/** Fixed raster size for dock tool / terrain-shape PNG thumbnails (HUD `<img>`). */
+const DOCK_STRIP_THUMB_PX = 128;
 const VOXEL_TEXT_MIN_UNIT = 0.05;
 const VOXEL_TEXT_DEFAULT_Z_TWEEN_AMP = 0.18;
 const VOXEL_TEXT_DEFAULT_Z_TWEEN_SPEED = 1.4;
@@ -957,12 +965,43 @@ export class Game {
   private placementClaimable = false;
   /** Live props for the object-edit tile inspector 3D preview (null = panel closed). */
   private inspectorSelectionObstacle: ObstacleProps | null = null;
+  /**
+   * When set, the selection-slot canvas shows a teleporter pillar instead of block props
+   * (placed teleporter editor has no `ObstacleProps` / `#tile-inspector-selection`).
+   */
+  private inspectorSelectionSpecialDockKind: "teleporter" | "billboard" | null =
+    null;
+  private inspectorSelectionBillboardId: string | null = null;
+  /** `false` = configured / active (portal pillar); `true` = pending / inactive block. */
+  private inspectorSelectionTeleporterPending = false;
+  private inspectorSelectionTeleporterTileRef: {
+    x: number;
+    z: number;
+    y: number;
+  } | null = null;
   /** Tile coords for selection preview (gates need true tile for exit alignment). */
   private inspectorSelectionTileRef: { x: number; z: number; y: number } | null =
     null;
   /** Off-main-scene 1×1 tile + block mesh for build bar / object panel. */
   private inspectorPlacementPort: InspectorTilePreviewPort | null = null;
   private inspectorSelectionPort: InspectorTilePreviewPort | null = null;
+  private inspectorPlacementPreviewKind:
+    | "block"
+    | "teleporter"
+    | "gate"
+    | "billboard"
+    | "signpost" = "block";
+  /** Off-DOM inspector-style port used only to bake dock `<img>` thumbnails. */
+  private dockStripBakePort: InspectorTilePreviewPort | null = null;
+  private readonly dockStripThumbByTool = new Map<
+    "teleporter" | "gate" | "billboard" | "signpost",
+    { sig: string; dataUrl: string }
+  >();
+  private readonly dockStripThumbByTerrainShape = new Map<
+    "cube" | "hex" | "pyramid" | "sphere" | "ramp",
+    { sig: string; dataUrl: string }
+  >();
+  private dockStripThumbFloor: { sig: string; dataUrl: string } | null = null;
   /** Subset of tile keys that block pathfinding (not passable). */
   private readonly blockingTileKeys = new Set<string>();
   private readonly blockMeshes = new Map<string, THREE.Group>();
@@ -1011,6 +1050,10 @@ export class Game {
   /** Floor tile highlight for teleporter warp destination (same room only). */
   private readonly teleporterLinkHighlight: THREE.Mesh;
   private readonly teleporterLinkHighlightMat: THREE.MeshBasicMaterial;
+  /** Unsaved “this room” exit tile while editing teleporter destination in the build dock. */
+  private readonly teleporterDraftDestHighlight: THREE.Mesh;
+  private readonly teleporterDraftDestHighlightMat: THREE.MeshBasicMaterial;
+  private teleporterEditDestDraft: { x: number; z: number } | null = null;
   private readonly pathGeom = new THREE.BufferGeometry();
   private readonly pathLine: THREE.Line;
   /** Fades out segments that were just walked (prefix trimmed from main path). */
@@ -1504,6 +1547,21 @@ export class Game {
     this.teleporterLinkHighlight.visible = false;
     this.scene.add(this.teleporterLinkHighlight);
 
+    this.teleporterDraftDestHighlightMat = new THREE.MeshBasicMaterial({
+      color: 0x22c55e,
+      transparent: true,
+      opacity: 0.52,
+      depthWrite: false,
+    });
+    this.teleporterDraftDestHighlight = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.92, 0.92),
+      this.teleporterDraftDestHighlightMat
+    );
+    this.teleporterDraftDestHighlight.rotation.x = -Math.PI / 2;
+    this.teleporterDraftDestHighlight.position.set(0, 0.026, 0);
+    this.teleporterDraftDestHighlight.visible = false;
+    this.scene.add(this.teleporterDraftDestHighlight);
+
     this.roomEntrySpawnRingMat = new THREE.MeshBasicMaterial({
       color: 0x34d399,
       transparent: true,
@@ -1735,6 +1793,8 @@ export class Game {
     this.selectedBlockKey = null;
     this.selectionOutline.visible = false;
     this.teleporterLinkHighlight.visible = false;
+    this.teleporterDraftDestHighlight.visible = false;
+    this.teleporterEditDestDraft = null;
     this.roomJoinSpawnTile = null;
     this.roomEntrySpawnRing.visible = false;
     this.roomEntrySpawnPickHandler = null;
@@ -2696,6 +2756,34 @@ export class Game {
     handler: ((x: number, z: number) => void) | null
   ): void {
     this.teleporterDestPickHandler = handler;
+    if (handler) {
+      this.syncTeleporterDestPickHover(
+        this.lastPointerClientPixels.x,
+        this.lastPointerClientPixels.y
+      );
+    } else {
+      this.syncHighlightColor();
+      this.refreshTeleporterLinkHighlight();
+    }
+  }
+
+  /**
+   * Floor tint for an unsaved in-room teleporter exit tile (build dock). Pass `null` to clear.
+   */
+  setTeleporterDestinationDraftHighlight(
+    dest: { x: number; z: number } | null
+  ): void {
+    this.teleporterEditDestDraft = dest
+      ? {
+          x: Math.floor(dest.x),
+          z: Math.floor(dest.z),
+        }
+      : null;
+    if (dest) {
+      this.tileHighlight.visible = false;
+    }
+    this.refreshTeleporterLinkHighlight();
+    this.requestRender(120);
   }
 
   isTeleporterDestPickActive(): boolean {
@@ -3062,6 +3150,7 @@ export class Game {
   clearSelectedBlock(): void {
     this.selectedBlockKey = null;
     this.selectedBillboardId = null;
+    this.teleporterEditDestDraft = null;
     this.refreshSelectionOutline();
   }
 
@@ -3550,12 +3639,24 @@ export class Game {
     this.refreshTeleporterLinkHighlight();
   }
 
-  /** When a teleporter is selected in build mode, tint the floor tile it warps to (this room only). */
+  /** When a teleporter is selected in build mode, tint its in-room exit (saved + unsaved draft). */
   private refreshTeleporterLinkHighlight(): void {
+    const hideAll = (): void => {
+      this.teleporterLinkHighlight.visible = false;
+      this.teleporterDraftDestHighlight.visible = false;
+    };
     if (!this.buildMode || !this.selectedBlockKey) {
+      hideAll();
+      return;
+    }
+    const draft = this.teleporterEditDestDraft;
+    if (draft) {
+      this.teleporterDraftDestHighlight.position.set(draft.x, 0.026, draft.z);
+      this.teleporterDraftDestHighlight.visible = true;
       this.teleporterLinkHighlight.visible = false;
       return;
     }
+    this.teleporterDraftDestHighlight.visible = false;
     const meta = this.placedObjects.get(this.selectedBlockKey);
     const tp = meta?.teleporter;
     if (!tp || ("pending" in tp && tp.pending) || !("targetRoomId" in tp)) {
@@ -3689,18 +3790,25 @@ export class Game {
     liveChartCycleIntervalSec?: number;
     billboardSourceTab?: "images" | "other";
   }): void {
+    let previewPoseChanged = false;
     if (patch.orientation !== undefined) {
       let o = patch.orientation;
       if (BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED && o === "vertical") {
         o = "horizontal";
       }
       this.billboardPlacementDraft.orientation = o;
+      previewPoseChanged = true;
     }
     if (patch.yawSteps !== undefined) {
       this.billboardPlacementDraft.yawSteps = Math.max(
         0,
         Math.min(3, Math.floor(patch.yawSteps))
       );
+      previewPoseChanged = true;
+    }
+    if (previewPoseChanged && this.inspectorPlacementPort) {
+      this.inspectorPlacementPort.lastSig = "";
+      this.renderInspectorTilePreview("placement");
     }
     if (patch.advertIds !== undefined) {
       const cleaned = patch.advertIds
@@ -4488,6 +4596,7 @@ export class Game {
       mat.map = tex;
       mat.needsUpdate = true;
       if (old && old !== tex) old.dispose();
+      this.refreshInspectorBillboardSelectionPreviewIfNeeded(b.id);
     } catch {
       /* keep black placeholder */
     }
@@ -4651,6 +4760,7 @@ export class Game {
             targetX: number;
             targetZ: number;
             targetRoomDisplayName?: string;
+            pairedPeerKey?: string;
           };
       gate?: {
         adminAddress: string;
@@ -4754,6 +4864,7 @@ export class Game {
             targetX: number;
             targetZ: number;
             targetRoomDisplayName?: string;
+            pairedPeerKey?: string;
           };
       gate?: {
         adminAddress: string;
@@ -4908,6 +5019,35 @@ export class Game {
       return;
     }
     this.tileHighlightMat.color.setHex(0x2dd4bf);
+  }
+
+  private teleporterDestPickTileValid(x: number, z: number): boolean {
+    return (
+      this.tileWalkable({ x, y: z }) &&
+      !this.hasAnyBlockAtTile(x, z) &&
+      !this.hubNoBuildTile(x, z)
+    );
+  }
+
+  /** Cursor tile while choosing a teleporter exit on the map (build dock coords pick). */
+  private syncTeleporterDestPickHover(
+    clientX: number,
+    clientY: number
+  ): void {
+    this.blockTopHighlight.visible = false;
+    this.clearPlacementPreview();
+    this.clearGateNeighborFloorHints();
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest) {
+      this.tileHighlight.visible = false;
+      this.requestRender(80);
+      return;
+    }
+    const valid = this.teleporterDestPickTileValid(dest.x, dest.y);
+    this.tileHighlightMat.color.setHex(valid ? 0xf59e0b : 0xef4444);
+    this.tileHighlight.position.set(dest.x, 0.027, dest.y);
+    this.tileHighlight.visible = true;
+    this.requestRender(80);
   }
 
   private tileWalkable(ft: FloorTile): boolean {
@@ -6084,6 +6224,11 @@ export class Game {
     }
 
     if (!Game.canShowPointerHoverTiles()) {
+      if (this.teleporterDestPickHandler) {
+        this.syncTeleporterDestPickHover(e.clientX, e.clientY);
+        this.signboardHoverHandler?.(null);
+        return;
+      }
       this.tileHighlight.visible = false;
       this.blockTopHighlight.visible = false;
       // Touch devices do not use hover targeting; keep any tapped signboard tooltip
@@ -6106,6 +6251,11 @@ export class Game {
       return;
     }
     if (this.buildMode) {
+      if (this.teleporterDestPickHandler) {
+        this.syncTeleporterDestPickHover(e.clientX, e.clientY);
+        this.signboardHoverHandler?.(null);
+        return;
+      }
       this.blockTopHighlight.visible = false;
       const blockHit = this.pickBlockKey(e.clientX, e.clientY);
       if (blockHit) {
@@ -6818,6 +6968,8 @@ export class Game {
     this.selectionOutlineMat.dispose();
     this.teleporterLinkHighlight.geometry.dispose();
     this.teleporterLinkHighlightMat.dispose();
+    this.teleporterDraftDestHighlight.geometry.dispose();
+    this.teleporterDraftDestHighlightMat.dispose();
     this.roomEntrySpawnRing.geometry.dispose();
     this.roomEntrySpawnRingMat.dispose();
     this.tileHighlightMat.dispose();
@@ -7791,7 +7943,14 @@ export class Game {
 
   private makeBlockMesh(
     meta: BlockStyleProps,
-    opts?: { ghost?: boolean; tileX?: number; tileZ?: number; floorLayer?: number }
+    opts?: {
+      ghost?: boolean;
+      tileX?: number;
+      tileZ?: number;
+      floorLayer?: number;
+      /** Isolated dock / inspector GL canvas — no mineable sparkle shell. */
+      inspectorPreview?: boolean;
+    }
   ): THREE.Group {
     const ghost = Boolean(opts?.ghost);
     if (meta.gate) {
@@ -7873,7 +8032,7 @@ export class Game {
       mesh.receiveShadow = false;
       g.add(mesh);
     }
-    if (meta.claimable && meta.active && !ghost) {
+    if (meta.claimable && meta.active && !ghost && !opts?.inspectorPreview) {
       const sparkles = makeMineableSparklePoints(hVis, vis);
       g.userData.mineableSparklePoints = sparkles;
       g.add(sparkles);
@@ -8927,25 +9086,148 @@ export class Game {
     return g;
   }
 
-  private disposeInspectorTilePreviewPort(port: InspectorTilePreviewPort): void {
-    port.resizeObserver.disconnect();
-    port.renderer.dispose();
-    port.scene.traverse((child: THREE.Object3D) => {
-      if (child instanceof THREE.Mesh) {
+  private disposeInspectorPreviewSubtree(root: THREE.Object3D): void {
+    root.traverse((child: THREE.Object3D) => {
+      if (child instanceof THREE.Mesh || child instanceof THREE.Points) {
         child.geometry.dispose();
         const m = child.material;
         if (Array.isArray(m)) {
-          for (const mm of m) mm.dispose();
+          for (const mm of m) m.dispose();
         } else {
           (m as THREE.Material).dispose();
         }
       }
     });
+  }
+
+  private disposeInspectorPreviewBlockChildren(
+    port: InspectorTilePreviewPort
+  ): void {
+    while (port.blockSlot.children.length > 0) {
+      const c = port.blockSlot.children[0]!;
+      port.blockSlot.remove(c);
+      this.disposeInspectorPreviewSubtree(c);
+    }
+  }
+
+  private resetInspectorPreviewBlockSlot(port: InspectorTilePreviewPort): void {
+    this.disposeInspectorPreviewBlockChildren(port);
+    port.lastSig = "";
+  }
+
+  private disposeInspectorTilePreviewPort(port: InspectorTilePreviewPort): void {
+    port.resizeObserver.disconnect();
+    this.resetInspectorPreviewBlockSlot(port);
+    port.renderer.dispose();
     port.scene.clear();
   }
 
   private inspectorTilePreviewSignature(meta: BlockStyleProps): string {
-    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.pyramid}|${meta.pyramidBaseScale ?? 1}|${meta.sphere}|${meta.ramp}|${meta.rampDir}|${meta.colorId}|${Boolean(meta.claimable)}|${JSON.stringify(meta.gate ?? null)}|${this.blockVisualScale}|${this.floorTileQuadSize}`;
+    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.pyramid}|${meta.pyramidBaseScale ?? 1}|${meta.sphere}|${meta.ramp}|${meta.rampDir}|${meta.colorId}|${Boolean(meta.claimable)}|${meta.active ? 1 : 0}|${JSON.stringify(meta.gate ?? null)}|${this.blockVisualScale}|${this.floorTileQuadSize}`;
+  }
+
+  private applyInspectorPreviewFloorPortalGlow(
+    port: InspectorTilePreviewPort,
+    portalGlow: boolean
+  ): void {
+    const mat = port.floor.material;
+    if (!(mat instanceof THREE.MeshStandardMaterial)) return;
+    if (portalGlow) {
+      mat.color.setHex(TERRAIN_TILE_DOOR_COLOR);
+      mat.roughness = 0.3;
+      mat.metalness = 0.5;
+      mat.emissive.setHex(TERRAIN_TILE_DOOR_EMISSIVE);
+      mat.emissiveIntensity = TERRAIN_TILE_DOOR_EMISSIVE_INTENSITY;
+    } else {
+      mat.color.setHex(TERRAIN_TILE_CORE_COLOR);
+      mat.roughness = 0.9;
+      mat.metalness = 0.05;
+      mat.emissive.setHex(0x000000);
+      mat.emissiveIntensity = 0;
+    }
+  }
+
+  /** Centers a billboard mesh on the inspector ortho look-at (default y = 0.1). */
+  private centerBillboardRootInPreviewFrame(
+    root: THREE.Group,
+    scale: number,
+    lookY = 0.1
+  ): void {
+    if (Math.abs(scale - 1) > 1e-6) {
+      root.scale.setScalar(scale);
+    }
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    root.position.x -= center.x;
+    root.position.y -= center.y - lookY;
+    root.position.z -= center.z;
+  }
+
+  private prepareInspectorBillboardPreviewRoot(
+    root: THREE.Group,
+    port: InspectorTilePreviewPort,
+    scale = INSPECTOR_BILLBOARD_PREVIEW_SCALE
+  ): void {
+    this.centerBillboardRootInPreviewFrame(root, scale);
+    port.floor.visible = false;
+  }
+
+  private inspectorBillboardPreviewSignature(
+    orientation: "horizontal" | "vertical",
+    yawSteps: number,
+    texture: THREE.Texture,
+    slot: "placement" | "selection",
+    billboardId?: string
+  ): string {
+    const idPart = billboardId ? `|${billboardId}` : "";
+    return `bb_${slot}|${orientation}|${yawSteps}|${texture.uuid}${idPart}|${this.blockVisualScale}|${this.floorTileQuadSize}`;
+  }
+
+  private mountInspectorBillboardPreview(
+    port: InspectorTilePreviewPort,
+    spec: {
+      orientation: "horizontal" | "vertical";
+      yawSteps: number;
+    },
+    texture: THREE.Texture,
+    scale = INSPECTOR_BILLBOARD_PREVIEW_SCALE
+  ): void {
+    port.blockSlot.position.set(0, 0, 0);
+    const root = createBillboardRoot(
+      {
+        anchorX: 0,
+        anchorZ: 0,
+        orientation: spec.orientation,
+        yawSteps: spec.yawSteps,
+      },
+      BLOCK_SIZE,
+      texture
+    );
+    this.prepareInspectorBillboardPreviewRoot(root, port, scale);
+    port.blockSlot.add(root);
+  }
+
+  private billboardTextureForInspectorPreview(id: string): THREE.Texture {
+    const root = this.billboardRoots.get(id);
+    const mesh = root?.userData["billboardMesh"] as THREE.Mesh | undefined;
+    const map = (mesh?.material as THREE.MeshBasicMaterial | undefined)?.map;
+    if (map) return map;
+    return this.billboardPreviewPlaceholderTex;
+  }
+
+  private refreshInspectorBillboardSelectionPreviewIfNeeded(
+    billboardId: string
+  ): void {
+    if (
+      this.inspectorSelectionBillboardId !== billboardId ||
+      !this.inspectorSelectionPort
+    ) {
+      return;
+    }
+    this.inspectorSelectionPort.lastSig = "";
+    this.renderInspectorTilePreview("selection");
   }
 
   private applyInspectorPreviewFrustum(
@@ -8969,6 +9251,150 @@ export class Game {
         ? this.inspectorPlacementPort
         : this.inspectorSelectionPort;
     if (!port) return;
+    port.floor.visible = true;
+    if (
+      slot === "selection" &&
+      this.inspectorSelectionSpecialDockKind === "teleporter"
+    ) {
+      const pending = this.inspectorSelectionTeleporterPending;
+      const tRef = this.inspectorSelectionTeleporterTileRef;
+      const placed =
+        tRef !== null
+          ? this.getPlacedAt(tRef.x, tRef.z, tRef.y)
+          : null;
+      const blockSig = placed
+        ? this.inspectorTilePreviewSignature(placed)
+        : "none";
+      const sig = `tp_sel|${pending ? "off" : "on"}|${
+        tRef !== null ? `${tRef.x},${tRef.z},${tRef.y}|` : ""
+      }${blockSig}|${this.blockVisualScale}|${this.floorTileQuadSize}`;
+      if (port.lastSig !== sig) {
+        port.lastSig = sig;
+        this.resetInspectorPreviewBlockSlot(port);
+        this.applyInspectorPreviewFloorPortalGlow(port, !pending);
+        if (pending && placed) {
+          const h = this.obstacleHeight(placed);
+          const vis = this.blockVisualScale;
+          const yWorld = (h * vis) / 2;
+          port.blockSlot.position.set(0, yWorld, 0);
+          port.blockSlot.add(
+            this.makeBlockMesh(placed, {
+              ghost: false,
+              tileX: tRef?.x,
+              tileZ: tRef?.z,
+              inspectorPreview: true,
+            })
+          );
+        } else {
+          port.blockSlot.position.set(0, 0, 0);
+          port.blockSlot.add(this.createPortalPillarMesh(0, 0));
+        }
+      }
+      const r = port.canvas.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) return;
+      const rw = Math.max(1, Math.floor(r.width));
+      const rh = Math.max(1, Math.floor(r.height));
+      port.renderer.setSize(rw, rh, false);
+      port.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.applyInspectorPreviewFrustum(port.camera, rw, rh);
+      port.renderer.render(port.scene, port.camera);
+      return;
+    }
+    if (
+      slot === "selection" &&
+      this.inspectorSelectionSpecialDockKind === "billboard"
+    ) {
+      const id = this.inspectorSelectionBillboardId;
+      const spec = id ? this.billboardSpecs.get(id) : undefined;
+      if (!id || !spec) {
+        this.resetInspectorPreviewBlockSlot(port);
+      } else {
+        const tex = this.billboardTextureForInspectorPreview(id);
+        const sig = this.inspectorBillboardPreviewSignature(
+          spec.orientation,
+          spec.yawSteps,
+          tex,
+          "selection",
+          id
+        );
+        if (port.lastSig !== sig) {
+          port.lastSig = sig;
+          this.resetInspectorPreviewBlockSlot(port);
+          this.applyInspectorPreviewFloorPortalGlow(port, false);
+          this.mountInspectorBillboardPreview(
+            port,
+            {
+              orientation: spec.orientation,
+              yawSteps: spec.yawSteps,
+            },
+            tex
+          );
+        }
+      }
+      const rBb = port.canvas.getBoundingClientRect();
+      if (rBb.width < 2 || rBb.height < 2) return;
+      const rwBb = Math.max(1, Math.floor(rBb.width));
+      const rhBb = Math.max(1, Math.floor(rBb.height));
+      port.renderer.setSize(rwBb, rhBb, false);
+      port.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.applyInspectorPreviewFrustum(port.camera, rwBb, rhBb);
+      port.renderer.render(port.scene, port.camera);
+      return;
+    }
+    if (
+      slot === "placement" &&
+      this.inspectorPlacementPreviewKind === "billboard"
+    ) {
+      const d = this.billboardPlacementDraft;
+      const tex = this.billboardPreviewPlaceholderTex;
+      const sig = this.inspectorBillboardPreviewSignature(
+        d.orientation,
+        d.yawSteps,
+        tex,
+        "placement"
+      );
+      if (port.lastSig !== sig) {
+        port.lastSig = sig;
+        this.resetInspectorPreviewBlockSlot(port);
+        this.applyInspectorPreviewFloorPortalGlow(port, false);
+        this.mountInspectorBillboardPreview(
+          port,
+          { orientation: d.orientation, yawSteps: d.yawSteps },
+          tex
+        );
+      }
+      const rPlBb = port.canvas.getBoundingClientRect();
+      if (rPlBb.width < 2 || rPlBb.height < 2) return;
+      const rwPlBb = Math.max(1, Math.floor(rPlBb.width));
+      const rhPlBb = Math.max(1, Math.floor(rPlBb.height));
+      port.renderer.setSize(rwPlBb, rhPlBb, false);
+      port.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.applyInspectorPreviewFrustum(port.camera, rwPlBb, rhPlBb);
+      port.renderer.render(port.scene, port.camera);
+      return;
+    }
+    if (
+      slot === "placement" &&
+      this.inspectorPlacementPreviewKind !== "block"
+    ) {
+      const tool = this.inspectorPlacementPreviewKind;
+      const sig = this.dockStripToolThumbnailSignature(tool);
+      if (port.lastSig !== sig) {
+        port.lastSig = sig;
+        this.resetInspectorPreviewBlockSlot(port);
+        this.applyInspectorPreviewFloorPortalGlow(port, tool === "teleporter");
+        this.renderDockStripToolIntoBakePort(port, tool);
+      }
+      const rPl = port.canvas.getBoundingClientRect();
+      if (rPl.width < 2 || rPl.height < 2) return;
+      const rwPl = Math.max(1, Math.floor(rPl.width));
+      const rhPl = Math.max(1, Math.floor(rPl.height));
+      port.renderer.setSize(rwPl, rhPl, false);
+      port.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.applyInspectorPreviewFrustum(port.camera, rwPl, rhPl);
+      port.renderer.render(port.scene, port.camera);
+      return;
+    }
     const meta =
       slot === "placement"
         ? this.placementPreviewMetaForNewBlock()
@@ -8985,27 +9411,18 @@ export class Game {
               ramp: this.inspectorSelectionObstacle.ramp,
               rampDir: this.inspectorSelectionObstacle.rampDir,
               colorId: this.inspectorSelectionObstacle.colorId,
+              ...(this.inspectorSelectionObstacle.claimable
+                ? {
+                    claimable: true,
+                    active: this.inspectorSelectionObstacle.active,
+                  }
+                : {}),
               ...(this.inspectorSelectionObstacle.gate
                 ? { gate: this.inspectorSelectionObstacle.gate }
                 : {}),
             } as BlockStyleProps);
     if (!meta) {
-      while (port.blockSlot.children.length > 0) {
-        const c = port.blockSlot.children[0]!;
-        port.blockSlot.remove(c);
-        c.traverse((child: THREE.Object3D) => {
-          if (child instanceof THREE.Mesh) {
-            child.geometry.dispose();
-            const m = child.material;
-            if (Array.isArray(m)) {
-              for (const mm of m) mm.dispose();
-            } else {
-              (m as THREE.Material).dispose();
-            }
-          }
-        });
-      }
-      port.lastSig = "";
+      this.resetInspectorPreviewBlockSlot(port);
       const w0 = port.canvas.clientWidth || 1;
       const h0 = port.canvas.clientHeight || 1;
       port.renderer.setSize(w0, h0, false);
@@ -9014,34 +9431,23 @@ export class Game {
       port.renderer.render(port.scene, port.camera);
       return;
     }
-    const sig = this.inspectorTilePreviewSignature(meta);
+    const tRef = slot === "selection" ? this.inspectorSelectionTileRef : null;
+    const sig = `${
+      tRef !== null ? `${tRef.x},${tRef.z},${tRef.y}|` : ""
+    }${this.inspectorTilePreviewSignature(meta)}`;
     const h = this.obstacleHeight(meta);
     const vis = this.blockVisualScale;
     const yWorld = (h * vis) / 2;
     port.blockSlot.position.set(0, yWorld, 0);
     if (port.lastSig !== sig) {
       port.lastSig = sig;
-      while (port.blockSlot.children.length > 0) {
-        const c = port.blockSlot.children[0]!;
-        port.blockSlot.remove(c);
-        c.traverse((child: THREE.Object3D) => {
-          if (child instanceof THREE.Mesh) {
-            child.geometry.dispose();
-            const m = child.material;
-            if (Array.isArray(m)) {
-              for (const mm of m) mm.dispose();
-            } else {
-              (m as THREE.Material).dispose();
-            }
-          }
-        });
-      }
-      const tRef = this.inspectorSelectionTileRef;
+      this.disposeInspectorPreviewBlockChildren(port);
       port.blockSlot.add(
         this.makeBlockMesh(meta, {
           ghost: false,
           tileX: tRef?.x,
           tileZ: tRef?.z,
+          inspectorPreview: true,
         })
       );
     }
@@ -9053,6 +9459,348 @@ export class Game {
     port.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.applyInspectorPreviewFrustum(port.camera, rw, rh);
     port.renderer.render(port.scene, port.camera);
+  }
+
+  private dockStripToolThumbnailSignature(
+    tool: "teleporter" | "gate" | "billboard" | "signpost"
+  ): string {
+    const lay = `${this.blockVisualScale}|${this.floorTileQuadSize}`;
+    if (tool === "teleporter") return `tp|${lay}`;
+    if (tool === "gate") {
+      return `gate|${this.placementRampDir & 3}|${this.placementColorId}|${lay}`;
+    }
+    if (tool === "billboard") {
+      const b = this.billboardPlacementDraft;
+      return `bb|${b.orientation}|${b.yawSteps}|${DOCK_STRIP_BILLBOARD_THUMB_SCALE}|${lay}`;
+    }
+    return `sp|${this.placementPreviewStyleSignature(this.placementPreviewMetaForNewBlock())}|${lay}`;
+  }
+
+  private terrainDockThumbMetaForShape(
+    shape: "cube" | "hex" | "pyramid" | "sphere" | "ramp"
+  ): BlockStyleProps {
+    const b = this.placementPreviewMetaForNewBlock();
+    return {
+      ...b,
+      hex: shape === "hex",
+      pyramid: shape === "pyramid",
+      pyramidBaseScale: shape === "pyramid" ? b.pyramidBaseScale : 1,
+      sphere: shape === "sphere",
+      ramp: shape === "ramp",
+      rampDir: shape === "ramp" ? b.rampDir : 0,
+    };
+  }
+
+  private disposeDockStripBakePort(): void {
+    if (!this.dockStripBakePort) return;
+    this.disposeInspectorTilePreviewPort(this.dockStripBakePort);
+    this.dockStripBakePort = null;
+  }
+
+  private getOrCreateDockStripBakePort(): InspectorTilePreviewPort {
+    if (this.dockStripBakePort) return this.dockStripBakePort;
+    const canvas = document.createElement("canvas");
+    canvas.width = DOCK_STRIP_THUMB_PX;
+    canvas.height = DOCK_STRIP_THUMB_PX;
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      alpha: true,
+      antialias: true,
+      powerPreference: "low-power",
+    });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.NoToneMapping;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(INSPECTOR_TILE_PREVIEW_BG);
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 72);
+    this.applyInspectorPreviewFrustum(
+      camera,
+      DOCK_STRIP_THUMB_PX,
+      DOCK_STRIP_THUMB_PX
+    );
+    const camDir = new THREE.Vector3(18, 21, 18).normalize().multiplyScalar(6.4);
+    camera.position.copy(camDir);
+    camera.lookAt(0, 0.1, 0);
+    camera.up.copy(this.worldUp);
+
+    const amb = new THREE.AmbientLight(0xffffff, 0.58);
+    scene.add(amb);
+    const dir = new THREE.DirectionalLight(0xfff5ee, 0.82);
+    dir.position.set(5, 11, 7);
+    scene.add(dir);
+
+    const content = new THREE.Group();
+    content.scale.setScalar(INSPECTOR_PREVIEW_SCENE_SCALE);
+    scene.add(content);
+
+    const topY = 0.01;
+    const floorGeom = new THREE.BoxGeometry(1, WALKABLE_FLOOR_TILE_THICKNESS, 1);
+    const floor = new THREE.Mesh(
+      floorGeom,
+      createWalkableFloorTileMaterials(false, false)
+    );
+    floor.scale.set(this.floorTileQuadSize, 1, this.floorTileQuadSize);
+    floor.position.set(0, topY - WALKABLE_FLOOR_TILE_THICKNESS / 2, 0);
+    content.add(floor);
+
+    const blockSlot = new THREE.Group();
+    content.add(blockSlot);
+
+    const resizeObserver = new ResizeObserver(() => {});
+    resizeObserver.observe(canvas);
+
+    this.dockStripBakePort = {
+      canvas,
+      renderer,
+      scene,
+      camera,
+      content,
+      blockSlot,
+      floor,
+      resizeObserver,
+      lastSig: "",
+    };
+    return this.dockStripBakePort;
+  }
+
+  /**
+   * Clears `blockSlot` for a dock bake. Skips disposing shared textures used by billboards
+   * and signpost hint sprites so global materials stay valid.
+   */
+  private clearDockStripBakeBlockSlot(port: InspectorTilePreviewPort): void {
+    const neverDisposeMap = new Set<THREE.Texture>([
+      this.billboardPreviewPlaceholderTex,
+      this.signpostHintPlaceholderTexture,
+    ]);
+    if (this.signpostHintDocTexture) {
+      neverDisposeMap.add(this.signpostHintDocTexture);
+    }
+    while (port.blockSlot.children.length > 0) {
+      const c = port.blockSlot.children[0]!;
+      port.blockSlot.remove(c);
+      c.traverse((child: THREE.Object3D) => {
+        if (
+          child instanceof THREE.Mesh ||
+          child instanceof THREE.Sprite ||
+          child instanceof THREE.Line ||
+          child instanceof THREE.LineSegments
+        ) {
+          const drawable = child as THREE.Mesh;
+          drawable.geometry.dispose();
+          const m = drawable.material;
+          const mats = Array.isArray(m) ? m : [m];
+          for (const mm of mats) {
+            const mat = mm as THREE.Material & { map?: THREE.Texture | null };
+            if (mat.map && !neverDisposeMap.has(mat.map)) {
+              mat.map.dispose();
+            }
+            mat.dispose();
+          }
+        }
+      });
+    }
+    port.lastSig = "";
+  }
+
+  private finishDockStripBakeRender(port: InspectorTilePreviewPort): void {
+    const rw = DOCK_STRIP_THUMB_PX;
+    const rh = DOCK_STRIP_THUMB_PX;
+    port.renderer.setSize(rw, rh, false);
+    port.renderer.setPixelRatio(1);
+    this.applyInspectorPreviewFrustum(port.camera, rw, rh);
+    port.renderer.render(port.scene, port.camera);
+  }
+
+  private renderDockStripToolIntoBakePort(
+    port: InspectorTilePreviewPort,
+    tool: "teleporter" | "gate" | "billboard" | "signpost"
+  ): void {
+    port.floor.visible = tool !== "billboard";
+    if (tool === "teleporter") {
+      port.blockSlot.position.set(0, 0, 0);
+      port.blockSlot.add(this.createPortalPillarMesh(0, 0));
+      return;
+    }
+    if (tool === "gate") {
+      const dirs: readonly [number, number][] = [
+        [1, 0],
+        [0, 1],
+        [-1, 0],
+        [0, -1],
+      ];
+      const [dx, dz] = dirs[this.placementRampDir & 3]!;
+      const meta: BlockStyleProps = {
+        passable: false,
+        half: false,
+        quarter: false,
+        hex: false,
+        pyramid: false,
+        pyramidBaseScale: 1,
+        sphere: false,
+        ramp: false,
+        rampDir: 0,
+        colorId: this.placementColorId,
+        gate: {
+          adminAddress: "NQ1000000000000000000000000000000000000",
+          authorizedAddresses: [],
+          exitX: dx,
+          exitZ: dz,
+        },
+      };
+      const h = this.obstacleHeight(meta);
+      const vis = this.blockVisualScale;
+      port.blockSlot.position.set(0, (h * vis) / 2, 0);
+      port.blockSlot.add(
+        this.makeBlockMesh(meta, {
+          ghost: false,
+          tileX: 0,
+          tileZ: 0,
+          inspectorPreview: true,
+        })
+      );
+      return;
+    }
+    if (tool === "billboard") {
+      const d = this.billboardPlacementDraft;
+      this.mountInspectorBillboardPreview(
+        port,
+        { orientation: d.orientation, yawSteps: d.yawSteps },
+        this.billboardPreviewPlaceholderTex,
+        DOCK_STRIP_BILLBOARD_THUMB_SCALE
+      );
+      return;
+    }
+    void this.ensureSignpostHintDocTexture();
+    const base = this.placementPreviewMetaForNewBlock();
+    const meta: BlockStyleProps = {
+      ...base,
+      signboardId: "__hud_thumb__",
+    };
+    const h = this.obstacleHeight(meta);
+    const vis = this.blockVisualScale;
+    port.blockSlot.position.set(0, (h * vis) / 2, 0);
+    const g = this.makeBlockMesh(meta, {
+      ghost: false,
+      tileX: 0,
+      tileZ: 0,
+      inspectorPreview: true,
+    });
+    this.attachSignpostHintToBlockGroup(g, meta);
+    port.blockSlot.add(g);
+  }
+
+  /**
+   * Build HUD calls this when switching placement tools. This Game build keeps the
+   * placement inspector block-only; the call must exist so HUD never throws.
+   */
+  setPlacementInspectorPreviewKind(
+    kind: "block" | "teleporter" | "gate" | "billboard" | "signpost"
+  ): void {
+    if (this.inspectorPlacementPreviewKind === kind) return;
+    this.inspectorPlacementPreviewKind = kind;
+    if (this.inspectorPlacementPort) {
+      this.inspectorPlacementPort.lastSig = "";
+      this.renderInspectorTilePreview("placement");
+    }
+  }
+
+  getDockStripThumbnailDataUrls(
+    tools: readonly ("teleporter" | "gate" | "billboard" | "signpost")[]
+  ): Map<string, string> {
+    const out = new Map<string, string>();
+    const port = this.getOrCreateDockStripBakePort();
+    for (const t of tools) {
+      const sig = this.dockStripToolThumbnailSignature(t);
+      const cached = this.dockStripThumbByTool.get(t);
+      if (cached?.sig === sig) {
+        out.set(t, cached.dataUrl);
+        continue;
+      }
+      this.clearDockStripBakeBlockSlot(port);
+      this.renderDockStripToolIntoBakePort(port, t);
+      this.finishDockStripBakeRender(port);
+      const dataUrl = port.canvas.toDataURL("image/png");
+      this.dockStripThumbByTool.set(t, { sig, dataUrl });
+      out.set(t, dataUrl);
+    }
+    return out;
+  }
+
+  getTerrainDockShapeThumbnailDataUrls(
+    shapes: readonly ("cube" | "hex" | "pyramid" | "sphere" | "ramp")[]
+  ): Map<string, string> {
+    const out = new Map<string, string>();
+    const port = this.getOrCreateDockStripBakePort();
+    for (const s of shapes) {
+      const meta = this.terrainDockThumbMetaForShape(s);
+      const sig = `shape|${s}|${this.inspectorTilePreviewSignature(meta)}`;
+      const cached = this.dockStripThumbByTerrainShape.get(s);
+      if (cached?.sig === sig) {
+        out.set(s, cached.dataUrl);
+        continue;
+      }
+      this.clearDockStripBakeBlockSlot(port);
+      const h = this.obstacleHeight(meta);
+      const vis = this.blockVisualScale;
+      port.blockSlot.position.set(0, (h * vis) / 2, 0);
+      port.blockSlot.add(
+        this.makeBlockMesh(meta, {
+          ghost: false,
+          tileX: 0,
+          tileZ: 0,
+          inspectorPreview: true,
+        })
+      );
+      this.finishDockStripBakeRender(port);
+      const dataUrl = port.canvas.toDataURL("image/png");
+      this.dockStripThumbByTerrainShape.set(s, { sig, dataUrl });
+      out.set(s, dataUrl);
+    }
+    return out;
+  }
+
+  getFloorDockThumbnailDataUrl(): string {
+    const sig = `floor|${this.floorTileQuadSize}`;
+    if (this.dockStripThumbFloor?.sig === sig) {
+      return this.dockStripThumbFloor.dataUrl;
+    }
+    const port = this.getOrCreateDockStripBakePort();
+    this.clearDockStripBakeBlockSlot(port);
+    port.floor.visible = true;
+    applyWalkableFloorTileMaterials(port.floor, false, true);
+    this.finishDockStripBakeRender(port);
+    const dataUrl = port.canvas.toDataURL("image/png");
+    this.dockStripThumbFloor = { sig, dataUrl };
+    return dataUrl;
+  }
+
+  clearDockStripThumbnailCache(): void {
+    this.dockStripThumbByTool.clear();
+    this.dockStripThumbByTerrainShape.clear();
+    this.dockStripThumbFloor = null;
+    this.disposeDockStripBakePort();
+  }
+
+  prewarmDockStripThumbnails(): void {
+    this.getDockStripThumbnailDataUrls([
+      "teleporter",
+      "gate",
+      "billboard",
+      "signpost",
+    ]);
+    this.getTerrainDockShapeThumbnailDataUrls([
+      "cube",
+      "hex",
+      "pyramid",
+      "sphere",
+      "ramp",
+    ]);
+    this.getFloorDockThumbnailDataUrl();
+  }
+
+  /** First-person toggle (not wired in this build). */
+  toggleFirstPersonView(): boolean {
+    return false;
   }
 
   /**
@@ -9081,8 +9829,9 @@ export class Game {
       powerPreference: "low-power",
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.NoToneMapping;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0c0e14);
+    scene.background = new THREE.Color(INSPECTOR_TILE_PREVIEW_BG);
     const cw = Math.max(1, canvas.clientWidth);
     const ch = Math.max(1, canvas.clientHeight);
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 72);
@@ -9132,10 +9881,29 @@ export class Game {
     if (slot === "placement") this.inspectorPlacementPort = port;
     else this.inspectorSelectionPort = port;
     this.renderInspectorTilePreview(slot);
+    if (canvas.getBoundingClientRect().width < 2) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => this.renderInspectorTilePreview(slot));
+      });
+    }
+  }
+
+  /** Re-measure and redraw after the dock preview slot becomes visible. */
+  relayoutInspectorTilePreview(slot: "placement" | "selection"): void {
+    const port =
+      slot === "placement"
+        ? this.inspectorPlacementPort
+        : this.inspectorSelectionPort;
+    if (port) port.lastSig = "";
+    this.renderInspectorTilePreview(slot);
   }
 
   /** Updates the object-panel 3D preview; pass `null` when the panel closes. */
   syncInspectorSelectionTilePreview(props: ObstacleProps | null): void {
+    this.inspectorSelectionSpecialDockKind = null;
+    this.inspectorSelectionBillboardId = null;
+    this.inspectorSelectionTeleporterPending = false;
+    this.inspectorSelectionTeleporterTileRef = null;
     this.inspectorSelectionObstacle = props;
     if (
       props &&
@@ -9151,7 +9919,83 @@ export class Game {
     } else {
       this.inspectorSelectionTileRef = null;
     }
+    if (this.inspectorSelectionPort) {
+      this.inspectorSelectionPort.lastSig = "";
+    }
     this.renderInspectorTilePreview("selection");
+    if (props === null && this.inspectorPlacementPort) {
+      this.inspectorPlacementPort.lastSig = "";
+      this.renderInspectorTilePreview("placement");
+    }
+  }
+
+  /**
+   * Selection-slot preview while the teleporter destination panel is open (no block props).
+   * Pending teleporters show the inactive block; configured ones show the portal pillar.
+   */
+  syncInspectorSelectionTeleporterPreview(
+    opts: {
+      pending: boolean;
+      tileX: number;
+      tileZ: number;
+      tileY: number;
+    } | null
+  ): void {
+    if (opts === null) {
+      this.inspectorSelectionSpecialDockKind = null;
+      this.inspectorSelectionBillboardId = null;
+      this.inspectorSelectionTeleporterPending = false;
+      this.inspectorSelectionTeleporterTileRef = null;
+      this.inspectorSelectionObstacle = null;
+      this.inspectorSelectionTileRef = null;
+    } else {
+      this.inspectorSelectionSpecialDockKind = "teleporter";
+      this.inspectorSelectionBillboardId = null;
+      this.inspectorSelectionTeleporterPending = opts.pending;
+      this.inspectorSelectionTeleporterTileRef = {
+        x: opts.tileX,
+        z: opts.tileZ,
+        y: opts.tileY,
+      };
+      this.inspectorSelectionObstacle = null;
+      this.inspectorSelectionTileRef = {
+        x: opts.tileX,
+        z: opts.tileZ,
+        y: opts.tileY,
+      };
+    }
+    if (this.inspectorSelectionPort) {
+      this.inspectorSelectionPort.lastSig = "";
+    }
+    this.renderInspectorTilePreview("selection");
+  }
+
+  /** Selection-slot preview for a placed billboard (no floor block props). */
+  syncInspectorSelectionBillboardPreview(billboardId: string | null): void {
+    if (billboardId === null) {
+      this.inspectorSelectionSpecialDockKind = null;
+      this.inspectorSelectionBillboardId = null;
+      this.inspectorSelectionObstacle = null;
+      this.inspectorSelectionTileRef = null;
+    } else {
+      const spec = this.billboardSpecs.get(billboardId);
+      this.inspectorSelectionSpecialDockKind = "billboard";
+      this.inspectorSelectionBillboardId = billboardId;
+      this.inspectorSelectionTeleporterPending = false;
+      this.inspectorSelectionTeleporterTileRef = null;
+      this.inspectorSelectionObstacle = null;
+      this.inspectorSelectionTileRef = spec
+        ? { x: spec.anchorX, z: spec.anchorZ, y: 0 }
+        : null;
+    }
+    if (this.inspectorSelectionPort) {
+      this.inspectorSelectionPort.lastSig = "";
+    }
+    this.renderInspectorTilePreview("selection");
+    if (billboardId === null && this.inspectorPlacementPort) {
+      this.inspectorPlacementPort.lastSig = "";
+      this.renderInspectorTilePreview("placement");
+    }
   }
 
   private animateDoorTiles(): void {

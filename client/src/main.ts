@@ -9,7 +9,7 @@ import {
   removeCachedSession,
   saveCachedSession,
 } from "./auth/session.js";
-import { CHAMBER_DEFAULT_SPAWN, ROOM_ID } from "./game/constants.js";
+import { CHAMBER_DEFAULT_SPAWN, ROOM_ID, VIEW_FRUSTUM_SIZE } from "./game/constants.js";
 import type { BlockStyleProps } from "./game/blockStyle.js";
 import {
   canOpenGateAs,
@@ -51,6 +51,7 @@ import {
   sendPlacePendingGate,
   sendOpenGate,
   sendConfigureTeleporter,
+  sendPlaceTeleporterBidirectionalPair,
   sendPlaceExtraFloor,
   sendRemoveExtraFloor,
   sendRemoveObstacleAt,
@@ -122,6 +123,9 @@ function placedMetaToPanelObstacleProps(
     editorTileX: x,
     editorTileY: y,
     editorTileZ: z,
+    ...(m.claimable
+      ? { claimable: true, active: m.active !== false }
+      : {}),
   };
   if (m.gate) {
     const gw = normalizeClientGate(m.gate);
@@ -147,6 +151,42 @@ function placedMetaToPanelObstacleProps(
   }
   return base;
 }
+
+function teleporterPanelRefreshFromPlaced(
+  x: number,
+  z: number,
+  y: number,
+  m: BlockStyleProps,
+  currentRoomId: string
+): void {
+  const tp = m.teleporter;
+  if (!tp) return;
+  const pending = "pending" in tp && tp.pending;
+  const isBidirectionalPair =
+    !pending &&
+    "pairedPeerKey" in tp &&
+    typeof (tp as { pairedPeerKey?: unknown }).pairedPeerKey === "string" &&
+    Boolean((tp as { pairedPeerKey: string }).pairedPeerKey) &&
+    "targetRoomId" in tp &&
+    normalizeRoomId((tp as { targetRoomId: string }).targetRoomId) ===
+      normalizeRoomId(currentRoomId);
+  hud.refreshTeleporterObjectSelection({
+    pending,
+    isBidirectionalPair,
+    x,
+    z,
+    y,
+  });
+  if (!pending && "targetRoomId" in tp) {
+    hud.setTeleporterEditFields({
+      destRoomId: tp.targetRoomId,
+      destX: tp.targetX,
+      destZ: tp.targetZ,
+    });
+  }
+  hud.ackTeleporterDestinationBaseline();
+}
+
 /** Inactivity: return to chamber home spawn (not lobby). */
 const IDLE_RETURN_HUB_MS = 15 * 60 * 1000;
 const LS_ZOOM_NON_MAZE_FRUSTUM = "nspace_zoom_non_maze_frustum";
@@ -1293,6 +1333,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       if (!ws) return;
       sendRemoveVoxelText(ws, roomId, id);
     },
+    onInspectorPreviewLayoutChange: () => {
+      hud.refreshBuildDockToolStrip();
+    },
   });
 
   const uninstallShell = installInputShell(hudRoot);
@@ -1925,7 +1968,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         ? " Teleporter: click an empty floor tile to place."
         : "";
       const gateHint = hud.isGateModeActive()
-        ? " Gate: R rotates opening direction; green/red on neighbors show clearance; click an empty floor tile."
+        ? " Gate: green/red on neighbors show clearance; click an empty floor tile."
         : "";
       const sel = game.getSelectedBlockTile();
       const selectedHint = sel
@@ -1962,9 +2005,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           : "This room is view-only for building";
     const touchIdleHint =
       canBuild && canFloor
-        ? "Build toggle bottom-right (F: floor if allowed)"
+        ? "Build: edge toggle + palette along the bottom (F: floor if allowed)"
         : canBuild
-          ? "Build toggle bottom-right"
+          ? "Build: edge toggle + palette along the bottom"
           : desktopHint;
     hud.setStatus(touchUi ? touchIdleHint : desktopHint);
     hud.setPlayModeState(playModeFromGame());
@@ -1989,6 +2032,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       const d = game.getBillboardPlacementDraft();
       hud.applyBillboardModalDraft(d);
     }
+    syncBuildHud();
+  });
+
+  hud.onObjectSelectionDismiss(() => {
+    game.setTeleporterDestPickHandler(null);
+    editingTile = null;
+    hud.hideObjectEditPanel();
+    game.clearSelectedBlock();
     syncBuildHud();
   });
 
@@ -2564,6 +2615,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       const tp = m.teleporter;
       if (tp) {
         const pending = "pending" in tp && tp.pending;
+        const isBidirectionalPair =
+          !pending &&
+          "pairedPeerKey" in tp &&
+          typeof (tp as { pairedPeerKey?: unknown }).pairedPeerKey === "string" &&
+          Boolean((tp as { pairedPeerKey: string }).pairedPeerKey) &&
+          "targetRoomId" in tp &&
+          normalizeRoomId((tp as { targetRoomId: string }).targetRoomId) ===
+            normalizeRoomId(game.getRoomId());
         let destRoomId = normalizeRoomId(game.getRoomId());
         let destX = 0;
         let destZ = 0;
@@ -2577,6 +2636,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           z,
           teleporterEdit: {
             pending,
+            y,
+            isBidirectionalPair,
             destRoomId,
             destX,
             destZ,
@@ -2584,11 +2645,16 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
             roomOptions: teleporterDestinationRoomOptions(),
             onPickTileInCurrentRoom: () => {
               game.setTeleporterDestPickHandler((px, pz) => {
+                const here = normalizeRoomId(game.getRoomId());
+                const tx = Math.floor(px);
+                const tz = Math.floor(pz);
+                game.setTeleporterDestPickHandler(null);
                 hud.setTeleporterEditFields({
-                  destRoomId: normalizeRoomId(game.getRoomId()),
-                  destX: px,
-                  destZ: pz,
+                  destRoomId: here,
+                  destX: tx,
+                  destZ: tz,
                 });
+                game.setTeleporterDestinationDraftHighlight({ x: tx, z: tz });
                 syncBuildHud();
               });
               syncBuildHud();
@@ -2596,16 +2662,26 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
             onPickCancel: () => {
               game.setTeleporterDestPickHandler(null);
             },
-            onConfigure: (roomId, dx, dz) => {
-              sendConfigureTeleporter(
-                socket,
-                x,
-                z,
-                y,
-                normalizeRoomId(roomId),
-                dx,
-                dz
-              );
+            onCommitDestination: (destRoomId, dx, dz) => {
+              const destX = Math.floor(dx);
+              const destZ = Math.floor(dz);
+              if (destRoomId === "__THIS_ROOM_PAIR__") {
+                sendPlaceTeleporterBidirectionalPair(
+                  socket,
+                  x,
+                  z,
+                  y,
+                  destX,
+                  destZ
+                );
+                return;
+              }
+              const rid = normalizeRoomId(destRoomId);
+              if (rid === HUB_ROOM_ID) {
+                sendConfigureTeleporter(socket, x, z, y, HUB_ROOM_ID, 0, 0);
+                return;
+              }
+              sendConfigureTeleporter(socket, x, z, y, rid, destX, destZ);
             },
           },
           onRemove: () => {
@@ -2652,6 +2728,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         colorId: m.colorId,
         locked: m.locked || false,
         isAdmin: isAdmin(selfAddress),
+        ...(m.claimable
+          ? { claimable: true, active: m.active !== false }
+          : {}),
         ...(gateWire
           ? {
               gate: {
@@ -3364,6 +3443,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           editingTile = null;
           hud.hideObjectEditPanel();
           game.clearSelectedBlock();
+        } else if (m.teleporter) {
+          teleporterPanelRefreshFromPlaced(
+            editingTile.x,
+            editingTile.z,
+            editingTile.y,
+            m,
+            game.getRoomId()
+          );
         } else {
           hud.setObjectPanelProps(
             placedMetaToPanelObstacleProps(
@@ -3385,6 +3472,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           editingTile = null;
           hud.hideObjectEditPanel();
           game.clearSelectedBlock();
+        } else if (m.teleporter) {
+          teleporterPanelRefreshFromPlaced(
+            editingTile.x,
+            editingTile.z,
+            editingTile.y,
+            m,
+            game.getRoomId()
+          );
         } else {
           hud.setObjectPanelProps(
             placedMetaToPanelObstacleProps(
@@ -3714,6 +3809,18 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         (e.key === "m" || e.key === "M")
       ) {
         if (game.tryToggleRepositionWithKeyboard()) {
+          e.preventDefault();
+          return;
+        }
+      }
+      if (
+        !inFormField &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        (e.key === "p" || e.key === "P")
+      ) {
+        if (game.toggleFirstPersonView()) {
           e.preventDefault();
           return;
         }

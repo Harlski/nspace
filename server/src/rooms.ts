@@ -2457,6 +2457,31 @@ function roomCatalogDisplayNameForTeleporter(roomId: string): string {
   return n && n.length > 0 ? n : id;
 }
 
+/** Keys to remove from `obstaclesDelta.remove` for a stored placed key (handles legacy vs blockKey). */
+function obstacleRemovalKeysForPlacedKey(storageKey: string): string[] {
+  const parts = storageKey.split(",").map(Number);
+  const x = parts[0]!;
+  const z = parts[1]!;
+  const yRaw = parts[2];
+  const ty = Number.isFinite(yRaw) ? Math.max(0, Math.min(2, Math.floor(yRaw))) : 0;
+  const clientKey = blockKey(x, z, ty);
+  return storageKey !== clientKey ? [storageKey, clientKey] : [clientKey];
+}
+
+function deleteTeleporterPeerIfLinked(
+  placed: Map<string, PlacedProps>,
+  tp: NonNullable<TerrainProps["teleporter"]>
+): string[] {
+  if (!("pairedPeerKey" in tp) || typeof tp.pairedPeerKey !== "string" || !tp.pairedPeerKey) {
+    return [];
+  }
+  const pk = tp.pairedPeerKey;
+  if (!placed.has(pk)) return [];
+  const rem = obstacleRemovalKeysForPlacedKey(pk);
+  placed.delete(pk);
+  return rem;
+}
+
 /** One-way teleporter: only the source tile is placed; destination is where the player warps. */
 function configureTeleporterDestination(
   conn: ClientConn,
@@ -2489,6 +2514,25 @@ function configureTeleporterDestination(
 
   const nDest = normalizeRoomId(destRoomId);
   const nSrc = normalizeRoomId(srcRoomId);
+
+  const oldTp = srcResolved.props.teleporter;
+  if (
+    oldTp &&
+    !("pending" in oldTp && oldTp.pending) &&
+    "pairedPeerKey" in oldTp &&
+    oldTp.pairedPeerKey
+  ) {
+    const peerRem = deleteTeleporterPeerIfLinked(srcPlaced, oldTp);
+    if (peerRem.length > 0) {
+      broadcast(nSrc, {
+        type: "obstaclesDelta",
+        roomId: nSrc,
+        add: [],
+        remove: peerRem,
+      });
+    }
+  }
+
   let warpX = destX;
   let warpZ = destZ;
   if (nDest === HUB_ROOM_ID) {
@@ -2559,6 +2603,131 @@ function configureTeleporterDestination(
     destRoomId: nDest,
     destX: warpX,
     destZ: warpZ,
+  });
+  return true;
+}
+
+/** Same-room bidirectional pair: place/update exit tile and link both teleporters. */
+function placeBidirectionalTeleporterPairAt(
+  conn: ClientConn,
+  roomId: string,
+  srcX: number,
+  srcZ: number,
+  srcY: number,
+  destX: number,
+  destZ: number
+): boolean {
+  const address = conn.address;
+  if (!canEditRoomContent(roomId, address)) return false;
+  if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) return false;
+  if (!hasRoom(roomId)) return false;
+
+  const placed = placedMap(roomId);
+  const extra = extraFloorSet(roomId);
+  const br = baseRemovedReadonly(roomId);
+  const nRoom = normalizeRoomId(roomId);
+
+  const srcResolved = getPlacedAtLevel(placed, srcX, srcZ, srcY);
+  if (!srcResolved?.props.teleporter) return false;
+  const canonicalSrc = blockKey(srcX, srcZ, srcY);
+  if (srcResolved.key !== canonicalSrc) {
+    placed.delete(srcResolved.key);
+  }
+
+  const oldTp = srcResolved.props.teleporter;
+  if (
+    oldTp &&
+    !("pending" in oldTp && oldTp.pending) &&
+    "pairedPeerKey" in oldTp &&
+    oldTp.pairedPeerKey
+  ) {
+    const peerRem = deleteTeleporterPeerIfLinked(placed, oldTp);
+    if (peerRem.length > 0) {
+      broadcast(nRoom, {
+        type: "obstaclesDelta",
+        roomId: nRoom,
+        add: [],
+        remove: peerRem,
+      });
+    }
+  }
+
+  const st = snapToTile(srcX, srcZ);
+  const dt = snapToTile(destX, destZ);
+  const destY = nextOpenStackLevel(placed, dt.x, dt.z);
+  if (destY === null) return false;
+  if (
+    destY === 0 &&
+    !canPlaceTeleporterFoot(roomId, dt.x, dt.z, placed, extra, br)
+  ) {
+    return false;
+  }
+  if (destY > 0 && !getPlacedAtLevel(placed, dt.x, dt.z, destY - 1)) return false;
+  if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(dt.x, dt.z)) return false;
+  if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(st.x, st.z)) return false;
+
+  const destKey = blockKey(dt.x, dt.z, destY);
+  if (destKey === canonicalSrc) return false;
+
+  if (getSignboardAt(roomId, dt.x, dt.z)) return false;
+  if (getSignboardAt(roomId, st.x, st.z)) return false;
+
+  for (const [rid, r] of rooms) {
+    for (const c of r.values()) {
+      if (c.address === address) continue;
+      const snap = snapToTile(c.player.x, c.player.z);
+      if (normalizeRoomId(rid) === nRoom && snap.x === st.x && snap.z === st.z) {
+        return false;
+      }
+      if (normalizeRoomId(rid) === nRoom && snap.x === dt.x && snap.z === dt.z) {
+        return false;
+      }
+    }
+  }
+
+  placed.set(destKey, {
+    ...TELEPORTER_VISUAL,
+    teleporter: {
+      targetRoomId: nRoom,
+      targetX: st.x,
+      targetZ: st.z,
+      targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(nRoom),
+      pairedPeerKey: canonicalSrc,
+    },
+  });
+
+  placed.set(canonicalSrc, {
+    ...TELEPORTER_VISUAL,
+    teleporter: {
+      targetRoomId: nRoom,
+      targetX: dt.x,
+      targetZ: dt.z,
+      targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(nRoom),
+      pairedPeerKey: destKey,
+    },
+  });
+
+  const dSrc = obstacleTileFromPlaced(nRoom, canonicalSrc);
+  const dDest = obstacleTileFromPlaced(nRoom, destKey);
+  const add: ObstacleTile[] = [];
+  if (dSrc) add.push(dSrc);
+  if (dDest) add.push(dDest);
+  if (add.length > 0) {
+    broadcast(nRoom, {
+      type: "obstaclesDelta",
+      roomId: nRoom,
+      add,
+      remove: [],
+    });
+  }
+  schedulePersistWorldState();
+  logGameplayEvent(conn.sessionId, address, nRoom, "place_teleporter_pair", {
+    srcX: st.x,
+    srcZ: st.z,
+    srcY,
+    destX: dt.x,
+    destZ: dt.z,
+    destY,
   });
   return true;
 }
@@ -4690,6 +4859,7 @@ export function addClient(
       const tile = snapToTile(tx, tz);
       const dt = snapToTile(destX, destZ);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      if (!withinBlockActionRange(conn.player, dt.x, dt.z)) return;
       const placed = placedMap(currentRoomId);
       const srcEntry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
       if (!srcEntry?.props.teleporter) return;
@@ -4712,6 +4882,45 @@ export function addClient(
             text: "Could not set teleporter destination. Check room id, empty walkable tile at X/Z, and that you can edit that room.",
             at: now,
           } satisfies OutMsg);
+      }
+      return;
+    }
+
+    if (msg.type === "placeTeleporterBidirectionalPair") {
+      if (!canEditRoomContent(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      const ty = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
+      let destX = Number(msg.destX);
+      let destZ = Number(msg.destZ);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      if (!Number.isFinite(destX) || !Number.isFinite(destZ)) return;
+      const tile = snapToTile(tx, tz);
+      const dt = snapToTile(destX, destZ);
+      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      if (!withinBlockActionRange(conn.player, dt.x, dt.z)) return;
+      const ok = placeBidirectionalTeleporterPairAt(
+        conn,
+        currentRoomId,
+        tile.x,
+        tile.z,
+        ty,
+        dt.x,
+        dt.z
+      );
+      if (!ok) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "",
+          text: "Could not place linked teleporter. Use a different empty walkable floor tile in this room (not on a player).",
+          at: now,
+        } satisfies OutMsg);
       }
       return;
     }
@@ -4992,12 +5201,19 @@ export function addClient(
           deleteSignboard(signboard.id);
           signboardDeleted = true;
         }
+        const tp = props.teleporter;
+        const peerRem =
+          tp && !("pending" in tp && tp.pending)
+            ? deleteTeleporterPeerIfLinked(placed, tp)
+            : [];
         placed.delete(k);
+        const baseRem = k !== clientKey ? [k, clientKey] : [clientKey];
+        const remove = [...new Set([...baseRem, ...peerRem])];
         broadcast(currentRoomId, {
           type: "obstaclesDelta",
           roomId: currentRoomId,
           add: [],
-          remove: k !== clientKey ? [k, clientKey] : [clientKey],
+          remove,
         });
         schedulePersistWorldState();
         if (signboardDeleted) {

@@ -214,7 +214,7 @@ Admins can:
 - Lock/unlock objects to prevent editing
 - Place signposts in the **chamber** (players can place in **hub** and in **rooms they own**, within build range; **canvas** disallows signpost placement)
 - Update or remove **any** signboard’s message (`updateSignboard` / `removeSignboard`)
-- Access admin overlay (if `VITE_ADMIN_ENABLED=true`)
+- Access admin overlay (if `VITE_ADMIN_ENABLED=true`) — optional **build HUD preview** framing: **default** / **billboard** / **teleporter** profiles (`localStorage` `nspace_inspector_preview_layouts_v2`; see [process.md](process.md) `VITE_ADMIN_ENABLED`).
 
 See [signboards-admin-guide.md](signboards-admin-guide.md) for protocol details.
 
