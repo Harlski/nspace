@@ -355,7 +355,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   app.appendChild(hudRoot);
 
   const query = new URLSearchParams(location.search);
-  const showDebugHud = import.meta.env.DEV || query.has("debug");
+  /** Dev server always; production builds only with `?debug` (never `import.meta.env.DEV` alone). */
+  const showDebugHud = import.meta.env.PROD
+    ? query.has("debug")
+    : import.meta.env.DEV || query.has("debug");
 
   let ws: WebSocket | null = null;
   const perfPingSentAt = new Map<number, number>();

@@ -1615,6 +1615,10 @@ button.hud-brand:focus-visible {
   white-space: nowrap;
 }
 
+.hud-debug[hidden] {
+  display: none !important;
+}
+
 .hud-debug {
   margin: 0;
   padding: 8px 10px;

@@ -976,8 +976,8 @@ export function createHud(
 
   const debugPanel = document.createElement("pre");
   debugPanel.className = "hud-debug";
-  debugPanel.setAttribute("aria-hidden", "true");
   debugPanel.hidden = !showDebug;
+  debugPanel.setAttribute("aria-hidden", showDebug ? "false" : "true");
 
   const perfHud = document.createElement("div");
   perfHud.className = "hud-perf-hud";
@@ -1288,7 +1288,9 @@ export function createHud(
     </div>
   `;
 
-  leftStack.appendChild(debugPanel);
+  if (showDebug) {
+    leftStack.appendChild(debugPanel);
+  }
   leftStack.appendChild(canvasLeaderboard);
   
   // Close button for signboard tooltip
