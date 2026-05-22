@@ -10,7 +10,11 @@ import {
   saveCachedSession,
 } from "./auth/session.js";
 import { CHAMBER_DEFAULT_SPAWN, ROOM_ID, VIEW_FRUSTUM_SIZE } from "./game/constants.js";
-import type { BlockStyleProps } from "./game/blockStyle.js";
+import {
+  type BlockStyleProps,
+  BLOCK_COLOR_EXIT_PORTAL_RGB,
+  resolveBlockColorRgb,
+} from "./game/blockStyle.js";
 import {
   canOpenGateAs,
   isGateAclAdmin,
@@ -65,6 +69,7 @@ import {
 } from "./net/ws.js";
 import { installAdminOverlay } from "./ui/adminOverlay.js";
 import { createHud } from "./ui/hud.js";
+import { isPaletteHueHexPopoverTyping } from "./ui/paletteHueHexPopover.js";
 import {
   isPseudoFullscreenActive,
   requestMiniAppImmersiveLayout,
@@ -115,10 +120,12 @@ function placedMetaToPanelObstacleProps(
     hex: m.hex,
     pyramid: m.pyramid,
     pyramidBaseScale: m.pyramidBaseScale ?? 1,
+    hexRadiusScale: m.hexRadiusScale ?? 1,
+    sphereRadiusScale: m.sphereRadiusScale ?? 1,
     sphere: m.sphere,
     ramp: m.ramp,
     rampDir: m.rampDir,
-    colorId: m.colorId,
+    colorRgb: m.colorRgb ?? resolveBlockColorRgb(m),
     locked: m.locked || false,
     editorTileX: x,
     editorTileY: y,
@@ -137,7 +144,9 @@ function placedMetaToPanelObstacleProps(
       hex: false,
       pyramid: false,
       pyramidBaseScale: 1,
+      hexRadiusScale: 1,
       sphere: false,
+      sphereRadiusScale: 1,
       ramp: false,
       rampDir: m.rampDir,
       gate: {
@@ -1875,7 +1884,13 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     },
   });
 
+  hud.onRoomBackgroundNeutralPreview((neutral) => {
+    game.setRoomSceneBackground({ hueDeg: null, neutral });
+  });
+
   hud.onRoomBackgroundNeutralPick((neutral) => {
+    clearRoomHueThrottleTimer();
+    roomHueThrottlePending = null;
     game.setRoomSceneBackground({ hueDeg: null, neutral });
     const r = knownRooms.find(
       (x) => normalizeRoomId(x.id) === normalizeRoomId(game.getRoomId())
@@ -2308,7 +2323,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           z,
           game.getPlacementRampDir(),
           0,
-          st.colorId
+          st.colorRgb
         );
         return;
       }
@@ -2739,10 +2754,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         hex: m.hex,
         pyramid: m.pyramid,
         pyramidBaseScale: m.pyramidBaseScale ?? 1,
+        hexRadiusScale: m.hexRadiusScale ?? 1,
+    sphereRadiusScale: m.sphereRadiusScale ?? 1,
         sphere: m.sphere,
         ramp: m.ramp,
         rampDir: m.rampDir,
-        colorId: m.colorId,
+        colorRgb: m.colorRgb ?? resolveBlockColorRgb(m),
         locked: m.locked || false,
         isAdmin: isAdmin(selfAddress),
         ...(m.claimable
@@ -2816,7 +2833,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     passable: boolean;
     quarter: boolean;
     hex: boolean;
-    colorId: number;
+    colorRgb: number;
     locked?: boolean;
     teleporter?: unknown;
   } | null): boolean {
@@ -2825,7 +2842,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         meta.passable &&
         meta.quarter &&
         meta.hex &&
-        meta.colorId === 4 &&
+        resolveBlockColorRgb(meta) === BLOCK_COLOR_EXIT_PORTAL_RGB &&
         meta.locked &&
         !meta.teleporter
     );
@@ -3819,6 +3836,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       const tag = ae?.tagName ?? "";
       const inFormField =
         tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      /** Hex popover: letters go into the field only; Escape still exits build (below). */
+      if (isPaletteHueHexPopoverTyping() && e.key !== "Escape") {
+        return;
+      }
       if (
         game.getBuildMode() &&
         !inFormField &&
@@ -3996,19 +4017,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           return;
         }
         const k = e.key;
-        if (k >= "1" && k <= "9") {
-          const id = Number(k) - 1;
-          game.setPlacementBlockStyle({ colorId: id });
-          syncBuildHud();
-          e.preventDefault();
-          return;
-        }
-        if (k === "0") {
-          game.setPlacementBlockStyle({ colorId: 9 });
-          syncBuildHud();
-          e.preventDefault();
-          return;
-        }
         if (k === "d" || k === "D") {
           if (hud.isObjectSelectionActive()) {
             removeSelectedPlacedObject();

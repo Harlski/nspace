@@ -1,5 +1,5 @@
-/** Preset colors for blocks; index is stored on the server as `colorId`. */
-export const BLOCK_COLOR_PALETTE: readonly number[] = [
+/** Legacy preset table — migration only; new blocks use `colorRgb` from the hue ring. */
+const LEGACY_BLOCK_COLOR_PALETTE: readonly number[] = [
   0x5b6b8c,
   0xc94c4c,
   0x4caf50,
@@ -8,26 +8,102 @@ export const BLOCK_COLOR_PALETTE: readonly number[] = [
   0x9c27b0,
   0x795548,
   0x00bcd4,
-  /** True orange (Material palette); good default for accent hex slabs. */
   0xff9800,
-  /** Gold (#E9B213). */
   0xe9b213,
+  0xe91e63,
+  0x8bc34a,
+  0x3f51b5,
+  0x009688,
+  0x37474f,
+  0xfff8e1,
 ];
 
-export const BLOCK_COLOR_COUNT = BLOCK_COLOR_PALETTE.length;
+export const DEFAULT_BLOCK_COLOR_RGB = 0x5b6b8c;
+export const DEFAULT_GATE_BLOCK_COLOR_RGB = 0x795548;
+/** Canvas exit portal / teleporter slab (legacy `colorId` 4). */
+export const BLOCK_COLOR_EXIT_PORTAL_RGB = 0xffc107;
 
-/** Palette index for the Material orange swatch (`0xff9800`). */
-export const BLOCK_COLOR_ORANGE_ID = 8;
+export function clampColorRgb(v: number): number {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n)) return DEFAULT_BLOCK_COLOR_RGB;
+  return Math.max(0, Math.min(0xffffff, n));
+}
 
-/** Palette index for gold `#E9B213`. */
-export const BLOCK_COLOR_GOLD_ID = 9;
+/** Parse `#RRGGBB` or `RRGGBB`; returns `fallback` when invalid. */
+export function parseColorRgbHex(
+  raw: string,
+  fallback: number = DEFAULT_BLOCK_COLOR_RGB
+): number {
+  const parsed = tryParseColorRgbHex(raw);
+  return parsed ?? fallback;
+}
 
-export function blockColorHex(colorId: number): number {
+/** Strict parse: `#RGB` or `#RRGGBB` (optional `#`). */
+export function tryParseColorRgbHex(raw: string): number | null {
+  const v = raw.trim().replace(/^#/, "");
+  if (/^[0-9a-fA-F]{6}$/.test(v)) {
+    return clampColorRgb(Number.parseInt(v, 16));
+  }
+  if (/^[0-9a-fA-F]{3}$/.test(v)) {
+    const r = v[0]! + v[0]!;
+    const g = v[1]! + v[1]!;
+    const b = v[2]! + v[2]!;
+    return clampColorRgb(Number.parseInt(r + g + b, 16));
+  }
+  return null;
+}
+
+/**
+ * Loose parse while typing (pads partial digits with `0` for live preview).
+ * Returns `null` when the string is empty or not hex-like.
+ */
+export function previewColorRgbHex(raw: string): number | null {
+  const v = raw.trim().replace(/^#/, "");
+  if (v.length === 0 || !/^[0-9a-fA-F]*$/.test(v) || v.length > 6) {
+    return null;
+  }
+  const padded = v.padEnd(6, "0").slice(0, 6);
+  return clampColorRgb(Number.parseInt(padded, 16));
+}
+
+/** `#rrggbb` for display in hex inputs. */
+export function formatColorRgbHex(n: number): string {
+  const c = clampColorRgb(n);
+  return `#${formatColorRgbHexDigits(c)}`;
+}
+
+/** Six hex digits only (no `#`), lowercase. */
+export function formatColorRgbHexDigits(n: number): string {
+  return clampColorRgb(n).toString(16).padStart(6, "0");
+}
+
+/** Strip to at most six `[0-9a-f]` digits for the popover field. */
+export function sanitizeHexColorDigits(raw: string): string {
+  return raw.replace(/[^0-9a-fA-F]/g, "").slice(0, 6).toLowerCase();
+}
+
+export function legacyPaletteRgb(colorId: number): number {
   const id = Math.max(
     0,
-    Math.min(BLOCK_COLOR_PALETTE.length - 1, Math.floor(colorId))
+    Math.min(LEGACY_BLOCK_COLOR_PALETTE.length - 1, Math.floor(colorId))
   );
-  return BLOCK_COLOR_PALETTE[id]!;
+  return LEGACY_BLOCK_COLOR_PALETTE[id]!;
+}
+
+export function resolveBlockColorRgb(props: {
+  colorRgb?: number;
+  colorId?: number;
+}): number {
+  const raw = props.colorRgb;
+  if (raw !== undefined && Number.isFinite(Number(raw))) {
+    return clampColorRgb(Number(raw));
+  }
+  return legacyPaletteRgb(props.colorId ?? 0);
+}
+
+/** @deprecated Use {@link resolveBlockColorRgb}. */
+export function blockColorHex(colorId: number): number {
+  return legacyPaletteRgb(colorId);
 }
 
 /** HSL with `h`,`s`,`l` in 0–1; returns sRGB 0–255 per channel. */
@@ -61,55 +137,94 @@ export function hslToRgb(
   };
 }
 
-/** Map an arbitrary RGB to the closest preset `colorId` (server stores indices only). */
-export function nearestPaletteColorIdFromRgb(
-  r: number,
-  g: number,
-  b: number
-): number {
-  let bestI = 0;
-  let bestD = Infinity;
-  for (let i = 0; i < BLOCK_COLOR_PALETTE.length; i++) {
-    const c = BLOCK_COLOR_PALETTE[i]!;
-    const pr = (c >> 16) & 0xff;
-    const pg = (c >> 8) & 0xff;
-    const pb = c & 0xff;
-    const d =
-      (r - pr) * (r - pr) +
-      (g - pg) * (g - pg) +
-      (b - pb) * (b - pb);
-    if (d < bestD) {
-      bestD = d;
-      bestI = i;
-    }
+/** Build ring color: full saturation, fixed lightness (matches build hue ring). */
+export function hueDegToBlockColorRgb(hueDeg: number): number {
+  const h = (((hueDeg % 360) + 360) % 360) / 360;
+  const { r, g, b } = hslToRgb(h, 1, 0.52);
+  return (r << 16) | (g << 8) | b;
+}
+
+export function blockColorRgbToHueDeg(rgb: number): number {
+  const c = clampColorRgb(rgb);
+  const r = ((c >> 16) & 0xff) / 255;
+  const g = ((c >> 8) & 0xff) / 255;
+  const b = (c & 0xff) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  if (max === min) return 0;
+  const d = max - min;
+  let h = 0;
+  if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  return Math.round((h / 6) * 360) % 360;
+}
+
+/** Room sky tint HSL — matches `Game.setRoomSceneBackground` (not block ring S/L). */
+export const ROOM_SCENE_BG_HSL_S = 0.42;
+export const ROOM_SCENE_BG_HSL_L = 0.11;
+
+export const ROOM_BG_NEUTRAL_RGB = {
+  black: 0x070a0f,
+  white: 0xd4dce8,
+  gray: 0x2a313c,
+} as const;
+
+/** RGB for the room-bg hue ring core at the given hue (fixed S/L). */
+export function roomBgHueDegToRgb(hueDeg: number): number {
+  const h = (((hueDeg % 360) + 360) % 360) / 360;
+  const { r, g, b } = hslToRgb(h, ROOM_SCENE_BG_HSL_S, ROOM_SCENE_BG_HSL_L);
+  return (r << 16) | (g << 8) | b;
+}
+
+export type RoomBgNeutralId = keyof typeof ROOM_BG_NEUTRAL_RGB;
+
+export type RoomBgColorFromRgb =
+  | { mode: "neutral"; neutral: RoomBgNeutralId }
+  | { mode: "hue"; hueDeg: number };
+
+/**
+ * Map a hex RGB to room sky storage: neutrals for grayscale, else hue tint.
+ * Avoids `blockColorRgbToHueDeg` returning 0° (red) for #000 / #fff.
+ */
+export function roomBgColorFromRgb(rgb: number): RoomBgColorFromRgb {
+  const c = clampColorRgb(rgb);
+  const r = ((c >> 16) & 0xff) / 255;
+  const g = ((c >> 8) & 0xff) / 255;
+  const b = (c & 0xff) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  const s =
+    max === 0 || d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+
+  if (s < 0.1 || max === min) {
+    if (l <= 0.12) return { mode: "neutral", neutral: "black" };
+    if (l >= 0.62) return { mode: "neutral", neutral: "white" };
+    return { mode: "neutral", neutral: "gray" };
   }
-  return bestI;
+  return { mode: "hue", hueDeg: blockColorRgbToHueDeg(c) };
 }
 
 export type BlockStyleProps = {
   passable: boolean;
-  /** Slab height (ignored if `quarter` is true). */
   half: boolean;
-  /** Low slab — supersedes `half` when true. */
   quarter: boolean;
-  /** Hexagonal prism (flat-top), same footprint as a tile. */
   hex: boolean;
-  /** Square pyramid (apex up), one tile footprint. Mutually exclusive with hex / sphere / ramp. */
   pyramid: boolean;
-  /**
-   * Pyramid only: multiplier on default inscribed base radius (`1` = flush with hex-style footprint).
-   * Ignored when `pyramid` is false.
-   */
   pyramidBaseScale?: number;
-  /** Sphere column inscribed in the tile footprint. Mutually exclusive with hex / pyramid / ramp. */
+  hexRadiusScale?: number;
   sphere: boolean;
-  /** Walkable ramp; use `rampDir` 0–3 = +X,+Z,−X,−Z toward solid block climbed. */
+  /** When `sphere`: radius multiplier (1 = default). */
+  sphereRadiusScale?: number;
   ramp: boolean;
   rampDir: number;
-  colorId: number;
-  /** Whether this object is locked (admin-only editing). */
+  /** Block tint 0xRRGGBB (hue ring). */
+  colorRgb: number;
+  /** Legacy persisted index; ignored when `colorRgb` is set on wire. */
+  colorId?: number;
   locked?: boolean;
-  /** Present when this tile hosts a signboard (server `obstacles` / delta). */
   signboardId?: string;
   teleporter?:
     | { pending: true }
@@ -131,7 +246,6 @@ export type BlockStyleProps = {
     openedBy: string;
     untilMs: number;
   };
-  // Experimental: Claimable/minable blocks
   claimable?: boolean;
   active?: boolean;
   cooldownMs?: number;
@@ -151,7 +265,29 @@ export function clampPyramidBaseScale(v: number): number {
   );
 }
 
-/** Canonicalize prism shape flags (ramp wins, then sphere, pyramid, then hex). */
+export const HEX_RADIUS_SCALE_MIN = 0.25;
+export const HEX_RADIUS_SCALE_MAX = 1;
+export const SPHERE_RADIUS_SCALE_MIN = 0.25;
+export const SPHERE_RADIUS_SCALE_MAX = 1;
+
+export function clampHexRadiusScale(v: number): number {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return 1;
+  return Math.max(
+    HEX_RADIUS_SCALE_MIN,
+    Math.min(HEX_RADIUS_SCALE_MAX, x)
+  );
+}
+
+export function clampSphereRadiusScale(v: number): number {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return 1;
+  return Math.max(
+    SPHERE_RADIUS_SCALE_MIN,
+    Math.min(SPHERE_RADIUS_SCALE_MAX, x)
+  );
+}
+
 export function normalizeBlockPrismParts(input: {
   hex?: boolean;
   pyramid?: boolean;

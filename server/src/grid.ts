@@ -1,3 +1,4 @@
+import { resolveBlockColorRgb } from "./blockColors.js";
 import {
   getRoomBaseBounds,
   HUB_ROOM_ID,
@@ -220,7 +221,9 @@ export type TerrainProps = {
   sphere: boolean;
   ramp: boolean;
   rampDir: number;
-  colorId: number;
+  colorRgb: number;
+  /** Legacy persisted palette index (migration). */
+  colorId?: number;
   locked?: boolean;
   /**
    * One-way teleporter: `pending` until destination is set; then warps to target tile.
@@ -264,6 +267,14 @@ export type TerrainProps = {
    * Pyramid only: multiplier on default inscribed base radius (`1` = default footprint).
    */
   pyramidBaseScale?: number;
+  /**
+   * Hex prism only: multiplier on inscribed radius (`1` = default footprint).
+   */
+  hexRadiusScale?: number;
+  /**
+   * Sphere only: multiplier on radius (`1` = default size).
+   */
+  sphereRadiusScale?: number;
 };
 
 export function normalizeWalletKey(addr: string): string {
@@ -360,6 +371,29 @@ export function clampPyramidBaseScale(v: number): number {
   );
 }
 
+const HEX_RADIUS_SCALE_MIN = 0.25;
+const HEX_RADIUS_SCALE_MAX = 1;
+const SPHERE_RADIUS_SCALE_MIN = 0.25;
+const SPHERE_RADIUS_SCALE_MAX = 1;
+
+export function clampHexRadiusScale(v: number): number {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return 1;
+  return Math.max(
+    HEX_RADIUS_SCALE_MIN,
+    Math.min(HEX_RADIUS_SCALE_MAX, x)
+  );
+}
+
+export function clampSphereRadiusScale(v: number): number {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return 1;
+  return Math.max(
+    SPHERE_RADIUS_SCALE_MIN,
+    Math.min(SPHERE_RADIUS_SCALE_MAX, x)
+  );
+}
+
 /** Canonicalize prism shape flags (ramp wins, then sphere, pyramid, then hex). */
 export function normalizeBlockPrismParts(input: {
   hex?: boolean;
@@ -376,17 +410,43 @@ export function normalizeBlockPrismParts(input: {
   return { hex: Boolean(input.hex), pyramid: false, sphere: false, ramp: false };
 }
 
-/** Ensure persisted / partial JSON has valid mutually exclusive prism flags. */
+export function coerceTerrainColorFields(p: TerrainProps): TerrainProps {
+  return { ...p, colorRgb: resolveBlockColorRgb(p) };
+}
+
 export function coerceTerrainPrismFields(p: TerrainProps): TerrainProps {
   const n = normalizeBlockPrismParts(p);
   const merged = { ...p, ...n };
+  let out: TerrainProps = merged;
   if (!merged.pyramid) {
-    return { ...merged, pyramidBaseScale: 1 };
+    out = { ...out, pyramidBaseScale: 1 };
+  } else {
+    out = {
+      ...out,
+      pyramidBaseScale: clampPyramidBaseScale(merged.pyramidBaseScale ?? 1),
+    };
   }
-  return {
-    ...merged,
-    pyramidBaseScale: clampPyramidBaseScale(merged.pyramidBaseScale ?? 1),
-  };
+  if (!merged.hex) {
+    out = { ...out, hexRadiusScale: 1 };
+  } else {
+    out = {
+      ...out,
+      hexRadiusScale: clampHexRadiusScale(
+        merged.hexRadiusScale ??
+          (merged as { hexHeightScale?: number }).hexHeightScale ??
+          1
+      ),
+    };
+  }
+  if (!merged.sphere) {
+    out = { ...out, sphereRadiusScale: 1 };
+  } else {
+    out = {
+      ...out,
+      sphereRadiusScale: clampSphereRadiusScale(merged.sphereRadiusScale ?? 1),
+    };
+  }
+  return coerceTerrainColorFields(out);
 }
 
 export function terrainObstacleHeight(p: TerrainProps): number {

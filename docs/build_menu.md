@@ -95,7 +95,7 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
 |--------------|---------------------|------|
 | `build-dock-context` | `.hud-build-bottom-dock__context` | White sub-panel beside tool strip |
 | `build-dock-context-grid` | `.hud-build-bottom-dock__context-grid` | Mods column + color column |
-| `build-dock-context-mods` | `.hud-build-bottom-dock__context-mods` | **Scrollable** placement controls (height, gate direction, billboard view…); **Room settings** (`.hud-build-bottom-dock__room-settings`, Room BG swatch) when Room scope + **Room settings** tab |
+| `build-dock-context-mods` | `.hud-build-bottom-dock__context-mods` | Placement controls (height, **hex thickness**, **sphere size**, pyramid base, gate direction, billboard view…); **Room settings** (`.hud-build-bottom-dock__room-settings`, Room BG swatch + hue wheel) when Room scope + **Room settings** tab |
 | `build-dock-context-room-settings` | `.hud-build-bottom-dock__context--room-settings` | Modifier on context panel: room BG only, color column hidden |
 | `build-dock-context-color` | `.hud-build-bottom-dock__context-color` | Hue ring + hue dock stack |
 | `build-dock-place-label` | `#hud-build-dock-place` | “Place: Cube/Hex/Pyramid…” (terrain shape) or tool name / “Edit: Room” |
@@ -105,6 +105,8 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
 **Placement inspector root:** `#tile-inspector-placement` (`.tile-inspector`) — reparented into `build-dock-context-mods`. Block params live in `.tile-inspector__section--dock-params` (`data-build-dock-param` on each row; visibility via [`buildDockContextParams.ts`](../client/src/ui/buildDockContextParams.ts)):
 
 - Height: `#tile-inspector-height` (`data-build-dock-param="height"`)
+- Thickness (hex): `#tile-inspector-hex-width-row` (`data-build-dock-param="hex-width"`, hex shape only)
+- Size (sphere): `#tile-inspector-sphere-size-row` (`data-build-dock-param="sphere-size"`, sphere shape only)
 - Base (pyramid): `#tile-inspector-pyramid-base-row` / `#tile-inspector-pyramid-base` (`data-build-dock-param="pyramid-base"`, pyramid shape only)
 - Gate opening: `#build-block-bar-gate` (gate tool)
 - Teleporter placeholder: `#build-block-bar-teleporter`
@@ -113,7 +115,7 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
 
 | Reference ID | Module / class | Role |
 |--------------|----------------|------|
-| `palette-hue-ring` | `createPaletteHueRing()` in [`paletteHueRing.ts`](../client/src/ui/paletteHueRing.ts) | Shared circular hue control |
+| `palette-hue-ring` | `createPaletteHueRing()` in [`paletteHueRing.ts`](../client/src/ui/paletteHueRing.ts) | Shared circular hue control; **center click** opens custom `#RRGGBB` popover ([`paletteHueHexPopover.ts`](../client/src/ui/paletteHueHexPopover.ts)) |
 | `build-dock-placement-hue-row` | `.hud-mode-sidebar__shape-color-row--placement` | Ring while **placing** next object |
 | `build-dock-selection-hue-row` | `.hud-mode-sidebar__shape-color-row--selection` | Ring while **editing** selected tile |
 | `hue-dock` | `.hud-mode-sidebar__hue-dock` | Stack under color column (room sky, guest entry, selection ring) |
@@ -124,7 +126,7 @@ Placement vs selection: only one hue row visible; see `syncHueDockVisibility()` 
 
 | Reference ID | Element | Role |
 |--------------|---------|------|
-| `build-bar-advanced` | `#build-block-bar-advanced` | Shape picker, palette swatches, ramp rotation, experimental claim |
+| `build-bar-advanced` | `#build-block-bar-advanced` | Shape picker, ramp rotation, experimental claim (color via hue ring in dock context) |
 | `build-bar` | `.build-block-bar` | Hidden host for inspector markup (off-dock); drives shared state |
 
 ---
@@ -185,7 +187,7 @@ flowchart LR
 | `syncBuildDockToolStrip()` | `hud.ts` | Rebuild tool cards + thumbnails |
 | `syncBuildDockFromToolSelect()` | `hud.ts` | Sync labels, category highlight, strip |
 | `syncBuildDockContextParams()` | `hud.ts` | Show/hide dock param rows; sync height/base when selection or placement changes |
-| `buildDockContextParamVisible()` | `buildDockContextParams.ts` | Param row visibility rules (`height`, `pyramid-base`) |
+| `buildDockContextParamVisible()` | `buildDockContextParams.ts` | Param row visibility rules (`height`, `pyramid-base`, `hex-width`) |
 | `activateBuildTool(tool)` | `hud.ts` | Tool mode flags + dismiss selection if tool changes |
 | `syncHueDockVisibility()` | `hud.ts` | Placement vs selection hue rows |
 | `showObjectEditPanel(opts)` | `hud.ts` | Open selection UI |

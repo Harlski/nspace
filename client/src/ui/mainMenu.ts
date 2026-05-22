@@ -14,9 +14,6 @@ import { apiUrl } from "../net/apiBase.js";
 import { TELEGRAM_URL, X_URL } from "../socialLinks.js";
 import { nimiqLogosHexOutlineMonoPlusMarkup } from "./nimiqIcons.js";
 
-/** Public asset — Vite serves `client/public` at `/`. */
-const NIM_LOGO_SRC = "/branding/nimiq-nim-logo.svg";
-
 /** Session replay UI only on loopback — not on public deployments (e.g. Vercel). */
 function isReplayMenuHost(): boolean {
   if (typeof location === "undefined") return false;
@@ -160,7 +157,6 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   const root = document.createElement("div");
   root.className = "main-menu";
   root.innerHTML = `
-    <div class="main-menu__nim-layer" aria-hidden="true"></div>
     <div class="main-menu__backdrop" aria-hidden="true"></div>
     <div class="main-menu__content">
       <div class="main-menu__card" role="presentation">
@@ -262,25 +258,6 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     </div>
   `;
   app.appendChild(root);
-
-  const nimLayer = root.querySelector(".main-menu__nim-layer") as HTMLElement;
-  const nNim = 16;
-  for (let i = 0; i < nNim; i++) {
-    const wrap = document.createElement("div");
-    wrap.className = "main-menu__nim-wrap";
-    wrap.style.left = `${8 + Math.random() * 84}%`;
-    wrap.style.top = `${8 + Math.random() * 84}%`;
-    wrap.style.setProperty("--rot", `${Math.random() * 360}deg`);
-    const img = document.createElement("img");
-    img.className = "main-menu__nim-logo";
-    img.src = NIM_LOGO_SRC;
-    img.alt = "";
-    img.draggable = false;
-    img.style.setProperty("--dur", `${18 + Math.random() * 22}s`);
-    img.style.setProperty("--delay", `${-Math.random() * 25}s`);
-    wrap.appendChild(img);
-    nimLayer.appendChild(wrap);
-  }
 
   /** Logged-out-only control; omit entirely when the account picker row is shown. */
   if (cachedSessions.length > 0) {

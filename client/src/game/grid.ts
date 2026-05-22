@@ -229,10 +229,15 @@ export type TerrainProps = {
   pyramid: boolean;
   /** Pyramid only; default 1 when omitted. */
   pyramidBaseScale?: number;
+  /** Hex prism only; default 1 when omitted. */
+  hexRadiusScale?: number;
+  /** Sphere only; default 1 when omitted. */
+  sphereRadiusScale?: number;
   sphere: boolean;
   ramp: boolean;
   rampDir: number;
-  colorId: number;
+  colorRgb: number;
+  colorId?: number;
   teleporter?:
     | { pending: true }
     | {

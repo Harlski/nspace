@@ -29,7 +29,9 @@ export function createPaletteHueRing(opts: {
   ring.setAttribute("aria-label", opts.ariaLabel);
   const core = document.createElement("div");
   core.className = PALETTE_HUE_RING_CORE;
-  core.setAttribute("aria-hidden", "true");
+  if (!opts.title) {
+    core.setAttribute("aria-hidden", "true");
+  }
   wrap.appendChild(ring);
   wrap.appendChild(core);
   return { wrap, ring, core };

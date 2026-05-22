@@ -1,7 +1,12 @@
 import type { PlayerState } from "../types.js";
 import {
-  BLOCK_COLOR_COUNT,
+  clampColorRgb,
+  clampHexRadiusScale,
   clampPyramidBaseScale,
+  clampSphereRadiusScale,
+  DEFAULT_BLOCK_COLOR_RGB,
+  DEFAULT_GATE_BLOCK_COLOR_RGB,
+  resolveBlockColorRgb,
 } from "../game/blockStyle.js";
 import { resolveApiBaseUrl } from "./apiBase.js";
 
@@ -16,10 +21,14 @@ export type ObstacleTile = {
   hex: boolean;
   pyramid: boolean;
   pyramidBaseScale: number;
+  hexRadiusScale: number;
   sphere: boolean;
+  sphereRadiusScale: number;
   ramp: boolean;
   rampDir: number;
-  colorId: number;
+  colorRgb: number;
+  /** Legacy wire field (migration). */
+  colorId?: number;
   signboardId?: string;
   locked?: boolean;
   teleporter?:
@@ -49,10 +58,14 @@ export type ObstacleProps = {
   hex: boolean;
   pyramid: boolean;
   pyramidBaseScale: number;
+  hexRadiusScale: number;
   sphere: boolean;
+  sphereRadiusScale: number;
   ramp: boolean;
   rampDir: number;
-  colorId: number;
+  colorRgb: number;
+  /** Legacy client field; not sent on wire. */
+  colorId?: number;
   locked?: boolean;
   /** Placed gate: ACL + exit/swing edited via object panel / ACL menu. */
   gate?: {
@@ -440,16 +453,16 @@ export function sendPlacePendingGate(
   z: number,
   exitDir: number,
   faceDir: number,
-  colorId?: number
+  colorRgb?: number,
+  legacyColorId?: number
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  const cid = Math.max(
-    0,
-    Math.min(
-      BLOCK_COLOR_COUNT - 1,
-      Math.floor(Number(colorId ?? 7))
-    )
-  );
+  const rgb = resolveBlockColorRgb({
+    colorRgb,
+    colorId: legacyColorId ?? 7,
+  });
+  const gateRgb =
+    rgb === DEFAULT_BLOCK_COLOR_RGB ? DEFAULT_GATE_BLOCK_COLOR_RGB : rgb;
   ws.send(
     JSON.stringify({
       type: "placePendingGate",
@@ -457,7 +470,7 @@ export function sendPlacePendingGate(
       z,
       exitDir: Math.max(0, Math.min(3, Math.floor(exitDir))),
       faceDir: Math.max(0, Math.min(3, Math.floor(faceDir))),
-      colorId: cid,
+      colorRgb: gateRgb,
     })
   );
 }
@@ -633,10 +646,12 @@ export function sendPlaceBlock(
     hex?: boolean;
     pyramid?: boolean;
     pyramidBaseScale?: number;
+    hexRadiusScale?: number;
+    sphereRadiusScale?: number;
     sphere?: boolean;
     ramp?: boolean;
     rampDir?: number;
-    colorId?: number;
+    colorRgb?: number;
     claimable?: boolean;
   }
 ): void {
@@ -652,6 +667,12 @@ export function sendPlaceBlock(
   const pyramidBaseScale = pyramid
     ? clampPyramidBaseScale(Number(style?.pyramidBaseScale ?? 1))
     : 1;
+  const hexRadiusScale = hex
+    ? clampHexRadiusScale(Number(style?.hexRadiusScale ?? 1))
+    : 1;
+  const sphereRadiusScale = sphere
+    ? clampSphereRadiusScale(Number(style?.sphereRadiusScale ?? 1))
+    : 1;
   ws.send(
     JSON.stringify({
       type: "placeBlock",
@@ -662,10 +683,12 @@ export function sendPlaceBlock(
       hex,
       pyramid,
       pyramidBaseScale,
+      hexRadiusScale,
       sphere,
+      sphereRadiusScale,
       ramp,
       rampDir: ramp ? rampDir : 0,
-      colorId: style?.colorId ?? 0,
+      colorRgb: clampColorRgb(style?.colorRgb ?? DEFAULT_BLOCK_COLOR_RGB),
       claimable,
     })
   );
@@ -758,7 +781,13 @@ export function sendSetObstacleProps(
   const pyramidBaseScale = pyramid
     ? clampPyramidBaseScale(Number(props.pyramidBaseScale ?? 1))
     : 1;
-  
+  const hexRadiusScale = hex
+    ? clampHexRadiusScale(Number(props.hexRadiusScale ?? 1))
+    : 1;
+  const sphereRadiusScale = sphere
+    ? clampSphereRadiusScale(Number(props.sphereRadiusScale ?? 1))
+    : 1;
+
   const body: Record<string, unknown> = {
     type: "setObstacleProps",
     x,
@@ -770,9 +799,11 @@ export function sendSetObstacleProps(
     hex,
     pyramid,
     pyramidBaseScale,
+    hexRadiusScale,
     sphere,
+    sphereRadiusScale,
     ramp,
-    colorId: props.colorId,
+    colorRgb: clampColorRgb(props.colorRgb),
     locked,
   };
   if (props.gate) {

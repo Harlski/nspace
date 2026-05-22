@@ -10,6 +10,8 @@ import {
   isBaseTile,
   isOrthogonallyAdjacentToTile,
   isWalkableTile,
+  clampHexRadiusScale,
+  clampSphereRadiusScale,
   clampPyramidBaseScale,
   GATE_AUTH_MAX,
   gateWirePayload,
@@ -148,6 +150,16 @@ import {
   recordGameWsOutbound,
   utf8ByteLengthOfWsData,
 } from "./gameWsMetrics.js";
+import {
+  BLOCK_COLOR_BILLBOARD_SLAB_RGB,
+  BLOCK_COLOR_EXIT_PORTAL_RGB,
+  BLOCK_COLOR_MAZE_RGB,
+  BLOCK_COLOR_SIGNPOST_RGB,
+  clampColorRgb,
+  DEFAULT_BLOCK_COLOR_RGB,
+  DEFAULT_GATE_BLOCK_COLOR_RGB,
+  resolveBlockColorRgb,
+} from "./blockColors.js";
 
 function buildBillboardSlidesFromAdvertIds(
   ids: readonly string[]
@@ -487,13 +499,17 @@ export type ObstacleTile = {
   pyramid: boolean;
   /** When `pyramid`: base radius multiplier (1 = default). */
   pyramidBaseScale: number;
+  /** When `hex`: inscribed radius multiplier (1 = default; lower = thinner prism). */
+  hexRadiusScale: number;
   /** Sphere column inscribed in tile; mutually exclusive with hex / pyramid / ramp. */
   sphere: boolean;
+  /** When `sphere`: radius multiplier (1 = default). */
+  sphereRadiusScale: number;
   /** Sloped ramp (walkable floor); `rampDir` 0–3 = +X,+Z,−X,−Z toward climbed block. */
   ramp: boolean;
   rampDir: number;
-  /** Index into client color palette (0..9). */
-  colorId: number;
+  /** Block tint 0xRRGGBB (hue ring). */
+  colorRgb: number;
   /** Optional signboard ID if there's a signboard at this location. */
   signboardId?: string;
   /** Whether this obstacle is locked (admin-only editing). */
@@ -526,14 +542,20 @@ export type ObstacleTile = {
   };
 };
 
-const BLOCK_COLOR_MAX = 9;
-
 type PlacedProps = TerrainProps;
 
-function clampColorId(n: number): number {
-  const k = Math.floor(Number(n));
-  if (!Number.isFinite(k)) return 0;
-  return Math.max(0, Math.min(BLOCK_COLOR_MAX, k));
+function colorRgbFromWire(msg: {
+  colorRgb?: unknown;
+  colorId?: unknown;
+}): number {
+  if (msg.colorRgb !== undefined && Number.isFinite(Number(msg.colorRgb))) {
+    return clampColorRgb(Number(msg.colorRgb));
+  }
+  const legacyId = msg.colorId;
+  if (legacyId !== undefined && Number.isFinite(Number(legacyId))) {
+    return resolveBlockColorRgb({ colorId: Number(legacyId) });
+  }
+  return resolveBlockColorRgb({});
 }
 
 export type ExtraFloorTile = { x: number; z: number };
@@ -979,10 +1001,12 @@ function generateCanvasMaze(): void {
       hex: false,
       pyramid: false,
       pyramidBaseScale: 1,
+      hexRadiusScale: 1,
       sphere: false,
+      sphereRadiusScale: 1,
       ramp: false,
       rampDir: 0,
-      colorId: 5, // Purple color for maze walls
+      colorRgb: BLOCK_COLOR_MAZE_RGB,
       locked: true, // Lock maze walls so they can't be edited
     });
   }
@@ -996,10 +1020,12 @@ function generateCanvasMaze(): void {
     hex: true, // Hexagonal shape for visual distinction
     pyramid: false,
     pyramidBaseScale: 1,
+    hexRadiusScale: 1,
     sphere: false,
+    sphereRadiusScale: 1,
     ramp: false,
     rampDir: 0,
-    colorId: 4, // Blue color for exit portal
+    colorRgb: BLOCK_COLOR_EXIT_PORTAL_RGB,
     locked: true, // Lock so players can't edit it
   });
   
@@ -1533,10 +1559,14 @@ function obstacleTileFromPlaced(roomId: string, tileKeyStr: string): ObstacleTil
     hex: v.hex ?? false,
     pyramid: v.pyramid ?? false,
     pyramidBaseScale: clampPyramidBaseScale(v.pyramidBaseScale ?? 1),
+    hexRadiusScale: clampHexRadiusScale(
+      v.hexRadiusScale ?? (v as { hexHeightScale?: number }).hexHeightScale ?? 1
+    ),
     sphere: v.sphere ?? false,
+    sphereRadiusScale: clampSphereRadiusScale(v.sphereRadiusScale ?? 1),
     ramp: v.ramp ?? false,
     rampDir: Math.max(0, Math.min(3, Math.floor(v.rampDir ?? 0))),
-    colorId: clampColorId(v.colorId ?? 0),
+    colorRgb: resolveBlockColorRgb(v),
     signboardId: signboard?.id,
     locked: v.locked ?? false,
     // Experimental: claimable blocks
@@ -1572,10 +1602,14 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       hex: v.hex ?? false,
       pyramid: v.pyramid ?? false,
       pyramidBaseScale: clampPyramidBaseScale(v.pyramidBaseScale ?? 1),
+      hexRadiusScale: clampHexRadiusScale(
+      v.hexRadiusScale ?? (v as { hexHeightScale?: number }).hexHeightScale ?? 1
+    ),
       sphere: v.sphere ?? false,
+      sphereRadiusScale: clampSphereRadiusScale(v.sphereRadiusScale ?? 1),
       ramp: v.ramp ?? false,
       rampDir: Math.max(0, Math.min(3, Math.floor(v.rampDir ?? 0))),
-      colorId: clampColorId(v.colorId ?? 0),
+      colorRgb: resolveBlockColorRgb(v),
       signboardId: signboardMap.get(tileKey(x!, z!)),
       locked: v.locked ?? false,
       // Experimental: claimable blocks
@@ -2371,7 +2405,7 @@ function isExitPortalTile(tileProps: PlacedProps | undefined): boolean {
       tileProps.passable &&
       tileProps.quarter &&
       tileProps.hex &&
-      tileProps.colorId === 4 &&
+      resolveBlockColorRgb(tileProps) === BLOCK_COLOR_EXIT_PORTAL_RGB &&
       tileProps.locked &&
       !tileProps.teleporter
   );
@@ -2383,11 +2417,13 @@ const TELEPORTER_VISUAL: PlacedProps = {
   hex: true,
   pyramid: false,
   pyramidBaseScale: 1,
+  hexRadiusScale: 1,
   sphere: false,
+  sphereRadiusScale: 1,
   half: false,
   ramp: false,
   rampDir: 0,
-  colorId: 4,
+  colorRgb: BLOCK_COLOR_EXIT_PORTAL_RGB,
   locked: true,
 };
 
@@ -2801,7 +2837,7 @@ function placePendingGateAt(
   z: number,
   exitDir: number,
   _faceDir: number,
-  colorId: number
+  colorRgb: number
 ): boolean {
   const address = conn.address;
   if (!canEditRoomContent(roomId, address)) return false;
@@ -2845,10 +2881,12 @@ function placePendingGateAt(
     hex: false,
     pyramid: false,
     pyramidBaseScale: 1,
+    hexRadiusScale: 1,
     sphere: false,
+    sphereRadiusScale: 1,
     ramp: false,
     rampDir: faceIdx,
-    colorId: clampColorId(colorId),
+    colorRgb: clampColorRgb(colorRgb),
     locked: false,
     gate: {
       adminAddress: who,
@@ -2875,7 +2913,7 @@ function placePendingGateAt(
     exitZ: ez,
     exitDir: dirIdx,
     faceDir: faceIdx,
-    colorId: clampColorId(colorId),
+    colorRgb: clampColorRgb(colorRgb),
   });
   return true;
 }
@@ -4448,7 +4486,19 @@ export function addClient(
       const pyramidBaseScale = prism.pyramid
         ? clampPyramidBaseScale(Number(msg.pyramidBaseScale ?? 1))
         : 1;
-      const colorId = clampColorId(Number(msg.colorId ?? 0));
+      const hexRadiusScale = prism.hex
+        ? clampHexRadiusScale(
+            Number(
+              msg.hexRadiusScale ??
+                (msg as { hexHeightScale?: number }).hexHeightScale ??
+                1
+            )
+          )
+        : 1;
+      const sphereRadiusScale = prism.sphere
+        ? clampSphereRadiusScale(Number(msg.sphereRadiusScale ?? 1))
+        : 1;
+      const colorRgb = colorRgbFromWire(msg);
       const requestedClaimable = Boolean(msg.claimable);
       const claimable =
         requestedClaimable && canPlaceMineableBlocks(address);
@@ -4469,10 +4519,12 @@ export function addClient(
         hex: prism.hex,
         pyramid: prism.pyramid,
         pyramidBaseScale,
+        hexRadiusScale,
         sphere: prism.sphere,
+        sphereRadiusScale,
         ramp: prism.ramp,
         rampDir: prism.ramp ? rampDir : 0,
-        colorId,
+        colorRgb,
         locked: false,
         // Experimental: claimable blocks
         claimable: claimable || undefined,
@@ -4502,7 +4554,7 @@ export function addClient(
         sphere: prism.sphere,
         ramp: prism.ramp,
         rampDir: prism.ramp ? rampDir : 0,
-        colorId,
+        colorRgb,
       });
       return;
     }
@@ -4543,7 +4595,10 @@ export function addClient(
       const tz = Number(msg.z);
       const exitDir = Number(msg.exitDir ?? 0);
       const faceDir = Number(msg.faceDir ?? 0);
-      const gateColorId = clampColorId(Number(msg.colorId ?? 7));
+      const gateColorRgb = colorRgbFromWire({
+        colorRgb: msg.colorRgb,
+        colorId: msg.colorId ?? 7,
+      });
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
@@ -4554,7 +4609,9 @@ export function addClient(
         tile.z,
         exitDir,
         faceDir,
-        gateColorId
+        gateColorRgb === DEFAULT_BLOCK_COLOR_RGB
+          ? DEFAULT_GATE_BLOCK_COLOR_RGB
+          : gateColorRgb
       );
       if (!ok) {
         wsSafeSend(ws, {
@@ -4948,7 +5005,7 @@ export function addClient(
         sphere: Boolean(msg.sphere),
         ramp,
       });
-      const colorId = clampColorId(Number(msg.colorId ?? 0));
+      const colorRgb = colorRgbFromWire(msg);
       const locked = Boolean(msg.locked);
       
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
@@ -4961,6 +5018,22 @@ export function addClient(
       const pyramidBaseScale = prism.pyramid
         ? clampPyramidBaseScale(
             Number(msg.pyramidBaseScale ?? existing.pyramidBaseScale ?? 1)
+          )
+        : 1;
+      const hexRadiusScale = prism.hex
+        ? clampHexRadiusScale(
+            Number(
+              msg.hexRadiusScale ??
+                (msg as { hexHeightScale?: number }).hexHeightScale ??
+                existing.hexRadiusScale ??
+                (existing as { hexHeightScale?: number }).hexHeightScale ??
+                1
+            )
+          )
+        : 1;
+      const sphereRadiusScale = prism.sphere
+        ? clampSphereRadiusScale(
+            Number(msg.sphereRadiusScale ?? existing.sphereRadiusScale ?? 1)
           )
         : 1;
       const canonicalKey = blockKey(tile.x, tile.z, ty);
@@ -5022,9 +5095,13 @@ export function addClient(
           0,
           Math.min(3, Math.floor(Number(msg.rampDir ?? existing.rampDir ?? 0)))
         );
-        const nextColor = clampColorId(
-          Number(msg.colorId ?? existing.colorId ?? 0)
-        );
+        const nextColor = colorRgbFromWire({
+          colorRgb: msg.colorRgb,
+          colorId:
+            msg.colorId !== undefined
+              ? msg.colorId
+              : existing.colorId,
+        });
         const gNorm = normalizeGateConfig(existing.gate);
         if (!gNorm) return;
         const nextProps: PlacedProps = {
@@ -5034,10 +5111,12 @@ export function addClient(
           hex: false,
           pyramid: false,
           pyramidBaseScale: 1,
+          hexRadiusScale: 1,
           sphere: false,
+          sphereRadiusScale: 1,
           ramp: false,
           rampDir: swingDir,
-          colorId: nextColor,
+          colorRgb: nextColor,
           locked: finalLocked,
           gate: {
             adminAddress: gNorm.adminAddress,
@@ -5072,7 +5151,7 @@ export function addClient(
           exitX: ex,
           exitZ: ez,
           swingDir,
-          colorId: nextColor,
+          colorRgb: nextColor,
         });
         return;
       }
@@ -5084,10 +5163,12 @@ export function addClient(
         hex: prism.hex,
         pyramid: prism.pyramid,
         pyramidBaseScale,
+        hexRadiusScale,
         sphere: prism.sphere,
+        sphereRadiusScale,
         ramp: prism.ramp,
         rampDir: prism.ramp ? rampDir : 0,
-        colorId,
+        colorRgb,
         locked: finalLocked,
         ...(existing.teleporter ? { teleporter: existing.teleporter } : {}),
         ...(existing.claimable !== undefined ? { claimable: existing.claimable } : {}),
@@ -5123,7 +5204,7 @@ export function addClient(
         sphere: prism.sphere,
         ramp: prism.ramp,
         rampDir: prism.ramp ? rampDir : 0,
-        colorId,
+        colorRgb,
       });
       return;
     }
@@ -5423,10 +5504,12 @@ export function addClient(
               hex: false,
               pyramid: false,
               pyramidBaseScale: 1,
+              hexRadiusScale: 1,
               sphere: false,
+              sphereRadiusScale: 1,
               ramp: false,
               rampDir: 0,
-              colorId: 5,
+              colorRgb: BLOCK_COLOR_BILLBOARD_SLAB_RGB,
             });
             const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
             if (deltaTile) addTiles.push(deltaTile);
@@ -5575,10 +5658,12 @@ export function addClient(
             hex: false,
             pyramid: false,
             pyramidBaseScale: 1,
+            hexRadiusScale: 1,
             sphere: false,
+            sphereRadiusScale: 1,
             ramp: false,
             rampDir: 0,
-            colorId: 5,
+            colorRgb: BLOCK_COLOR_BILLBOARD_SLAB_RGB,
           });
           const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
           if (deltaTile) addTiles.push(deltaTile);
@@ -6269,10 +6354,12 @@ export function addClient(
         hex: false,
         pyramid: false,
         pyramidBaseScale: 1,
+        hexRadiusScale: 1,
         sphere: false,
+        sphereRadiusScale: 1,
         ramp: false,
         rampDir: 0,
-        colorId: 8, // Use a specific color for signboards (light gray/white)
+        colorRgb: BLOCK_COLOR_SIGNPOST_RGB,
       });
       const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
       broadcast(currentRoomId, {
@@ -6460,10 +6547,12 @@ export function addClient(
           hex: false,
           pyramid: false,
           pyramidBaseScale: 1,
+          hexRadiusScale: 1,
           sphere: false,
+          sphereRadiusScale: 1,
           ramp: false,
           rampDir: 0,
-          colorId: 5,
+          colorRgb: BLOCK_COLOR_BILLBOARD_SLAB_RGB,
         });
         const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
         if (deltaTile) addTiles.push(deltaTile);
@@ -6741,10 +6830,12 @@ export function addClient(
           hex: false,
           pyramid: false,
           pyramidBaseScale: 1,
+          hexRadiusScale: 1,
           sphere: false,
+          sphereRadiusScale: 1,
           ramp: false,
           rampDir: 0,
-          colorId: 5,
+          colorRgb: BLOCK_COLOR_BILLBOARD_SLAB_RGB,
         });
         const deltaTile = obstacleTileFromPlaced(currentRoomId, k);
         if (deltaTile) addTiles.push(deltaTile);

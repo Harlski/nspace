@@ -1,10 +1,17 @@
 import {
-  BLOCK_COLOR_COUNT,
-  BLOCK_COLOR_PALETTE,
+  blockColorRgbToHueDeg,
+  clampColorRgb,
+  clampHexRadiusScale,
   clampPyramidBaseScale,
-  hslToRgb,
-  nearestPaletteColorIdFromRgb,
+  clampSphereRadiusScale,
+  DEFAULT_BLOCK_COLOR_RGB,
+  hueDegToBlockColorRgb,
   normalizeBlockPrismParts,
+  resolveBlockColorRgb,
+  roomBgColorFromRgb,
+  roomBgHueDegToRgb,
+  ROOM_BG_NEUTRAL_RGB,
+  type RoomBgNeutralId,
 } from "../game/blockStyle.js";
 import type { Game } from "../game/Game.js";
 import { GATE_AUTH_MAX } from "../game/gateAuth.js";
@@ -51,7 +58,6 @@ import { nimiqIconUseMarkup, nimiqIconifyMarkup } from "./nimiqIcons.js";
 import { createWorldContextMenu, type WorldContextMenuItem } from "./worldContextMenu.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
-import { loadRecentColorIds, pushRecentColorId } from "./recentColors.js";
 import {
   buildDockContextParamVisible,
   type BuildDockContextParamId,
@@ -64,6 +70,10 @@ import {
   PALETTE_HUE_RING_BAND,
   PALETTE_HUE_RING_CORE,
 } from "./paletteHueRing.js";
+import {
+  attachPaletteHueRingHexPopover,
+  closePaletteHueHexPopover,
+} from "./paletteHueHexPopover.js";
 import { mountHeaderMarquee } from "./headerMarquee.js";
 
 const LS_HUD_CHAT_MINIMIZED = "nspace_hud_chat_minimized";
@@ -113,28 +123,8 @@ function estimateHueDegFromRgb(r255: number, g255: number, b255: number): number
   return (h * 360 + 360) % 360;
 }
 
-function estimateHueFromPaletteId(id: number): number {
-  const c = BLOCK_COLOR_PALETTE[
-    Math.max(0, Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(id)))
-  ]!;
-  const r = (c >> 16) & 0xff;
-  const g = (c >> 8) & 0xff;
-  const b = c & 0xff;
-  return estimateHueDegFromRgb(r, g, b);
-}
-
 /** Inline SVG for Build mode toggle (label via text). */
 const HUD_MODE_ICON_BUILD = `<svg class="hud-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="6" width="14" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="1.8" d="M5 10h14M5 14h8m3 0h6"/></svg>`;
-
-function makeColorSwatchButton(id: number): HTMLButtonElement {
-  const b = document.createElement("button");
-  b.type = "button";
-  b.className = "block-color-swatch";
-  b.dataset.colorId = String(id);
-  b.style.background = cssHex(BLOCK_COLOR_PALETTE[id]!);
-  b.title = `Color ${id + 1}`;
-  return b;
-}
 
 export type BuildBlockBarState = {
   visible: boolean;
@@ -144,10 +134,14 @@ export type BuildBlockBarState = {
   pyramid: boolean;
   /** Pyramid only; base radius multiplier (1–1.65). */
   pyramidBaseScale: number;
+  /** Hex prism only; inscribed radius multiplier (0.25–1; lower = thinner). */
+  hexRadiusScale: number;
+  /** Sphere only; radius multiplier (0.25–1). */
+  sphereRadiusScale: number;
   sphere: boolean;
   ramp: boolean;
   rampDir: number;
-  colorId: number;
+  colorRgb: number;
   // Experimental features
   claimable?: boolean;
   /** When false, mining / claimable UI is hidden (must match server admin list). */
@@ -289,6 +283,10 @@ export function createHud(
   onRoomBackgroundNeutralPick: (
     fn: (neutral: RoomBackgroundNeutral) => void
   ) => void;
+  /** Live preview only (no server) while editing room-bg hex. */
+  onRoomBackgroundNeutralPreview: (
+    fn: (neutral: RoomBackgroundNeutral) => void
+  ) => void;
   /** Rotate ramp “toward” (placement bar or object panel when ramp is on). */
   rotateRampToward: (delta: -1 | 1) => boolean;
   showObjectEditPanel: (
@@ -304,10 +302,12 @@ export function createHud(
           hex: boolean;
           pyramid: boolean;
           pyramidBaseScale: number;
+          hexRadiusScale: number;
           sphere: boolean;
+          sphereRadiusScale: number;
           ramp: boolean;
           rampDir: number;
-          colorId: number;
+          colorRgb: number;
           locked?: boolean;
           isAdmin?: boolean;
           /** Claimable (minable) block; preview uses gold when active. */
@@ -417,10 +417,11 @@ export function createHud(
       hex?: boolean;
       pyramid?: boolean;
       pyramidBaseScale?: number;
+      hexRadiusScale?: number;
       sphere?: boolean;
       ramp?: boolean;
       rampDir?: number;
-      colorId?: number;
+      colorRgb?: number;
       claimable?: boolean;
     }) => void
   ) => void;
@@ -1531,43 +1532,22 @@ export function createHud(
   roomBgHuePanel.className = "hud-mode-sidebar__room-bg";
   roomBgHuePanel.hidden = true;
   const roomBgHueParts = createPaletteHueRing({
-    ariaLabel: "Background hue",
+    ariaLabel: "Room background hue",
+    title: "Drag the ring for hue. Click the center for a custom hex code.",
     ariaValueNow: ROOM_BG_HUE_DEFAULT_RING,
   });
   const roomBgHueWrap = roomBgHueParts.wrap;
   const roomBgHueRing = roomBgHueParts.ring;
   const roomBgHueCore = roomBgHueParts.core;
-  roomBgHuePanel.appendChild(roomBgHueWrap);
+  const roomBgHueWheelPad = document.createElement("div");
+  roomBgHueWheelPad.className = "hud-mode-sidebar__room-bg-wheel-pad";
+  roomBgHueWheelPad.appendChild(roomBgHueWrap);
+  roomBgHuePanel.appendChild(roomBgHueWheelPad);
 
-  const roomBgNeutralRow = document.createElement("div");
-  roomBgNeutralRow.className = "hud-mode-sidebar__room-bg-neutrals";
-  roomBgNeutralRow.setAttribute("role", "group");
-  roomBgNeutralRow.setAttribute("aria-label", "Solid background");
-  const roomBgNeutralBtns: Partial<
-    Record<RoomBackgroundNeutral, HTMLButtonElement>
-  > = {};
-  const neutralDefs: Array<{ id: RoomBackgroundNeutral; label: string }> = [
-    { id: "black", label: "Black" },
-    { id: "white", label: "White" },
-    { id: "gray", label: "Gray" },
-  ];
   let roomBgNeutralPickHandler: ((n: RoomBackgroundNeutral) => void) | null =
     null;
-  for (const { id, label } of neutralDefs) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = `hud-mode-sidebar__room-bg-neutral hud-mode-sidebar__room-bg-neutral--${id}`;
-    b.setAttribute("aria-label", `${label} background`);
-    b.title = label;
-    b.dataset.neutral = id;
-    b.addEventListener("click", () => {
-      if (roomBgHuePanel.hidden) return;
-      roomBgNeutralPickHandler?.(id);
-    });
-    roomBgNeutralBtns[id] = b;
-    roomBgNeutralRow.appendChild(b);
-  }
-  roomBgHuePanel.appendChild(roomBgNeutralRow);
+  let roomBgNeutralPreviewHandler: ((n: RoomBackgroundNeutral) => void) | null =
+    null;
 
   const roomEntrySpawnPanel = document.createElement("div");
   roomEntrySpawnPanel.className = "hud-mode-sidebar__room-entry-spawn";
@@ -1627,20 +1607,67 @@ export function createHud(
   let roomBgHueInputHandler: ((deg: number) => void) | null = null;
   let roomBgHueUpHandler: (() => void) | null = null;
   let roomBgSettingsAllowed = false;
+  let roomBgActiveNeutral: RoomBackgroundNeutral | null = null;
+  let roomBgLastHueDeg = ROOM_BG_HUE_DEFAULT_RING;
   let buildDockRoomBgPopover: HTMLDivElement | null = null;
 
-  function syncRoomBgHueCoreVisual(deg: number): void {
+  function roomBgHueDegFromRing(): number {
+    const raw = Number(roomBgHueRing.getAttribute("aria-valuenow"));
+    return Number.isFinite(raw)
+      ? Math.round(((raw % 360) + 360) % 360)
+      : roomBgLastHueDeg;
+  }
+
+  function getRoomBgColorRgb(): number {
+    if (roomBgActiveNeutral) {
+      return ROOM_BG_NEUTRAL_RGB[roomBgActiveNeutral];
+    }
+    return roomBgHueDegToRgb(roomBgHueDegFromRing());
+  }
+
+  function syncRoomBgNeutralUi(neutral: RoomBgNeutralId): void {
+    roomBgActiveNeutral = neutral;
+    const coreBg =
+      neutral === "black"
+        ? "#070a0f"
+        : neutral === "white"
+          ? "#d4dce8"
+          : "#2a313c";
+    roomBgHueCore.style.background = coreBg;
+    syncRoomBgDockSwatchFill();
+  }
+
+  function applyRoomBgHueDeg(deg: number, flush = false): void {
+    roomBgActiveNeutral = null;
     const ringDeg = Math.round(((deg % 360) + 360) % 360);
+    roomBgLastHueDeg = ringDeg;
     roomBgHueRing.setAttribute("aria-valuenow", String(ringDeg));
     roomBgHueCore.style.background = `hsl(${ringDeg} 42% 11%)`;
-    for (const nd of neutralDefs) {
-      const btn = roomBgNeutralBtns[nd.id];
-      if (btn) {
-        btn.classList.remove("hud-mode-sidebar__room-bg-neutral--active");
-        btn.setAttribute("aria-pressed", "false");
-      }
-    }
     syncRoomBgDockSwatchFill();
+    roomBgHueInputHandler?.(ringDeg);
+    if (flush) roomBgHueUpHandler?.();
+  }
+
+  function applyRoomBgFromRgb(rgb: number, flush = false): void {
+    const style = roomBgColorFromRgb(rgb);
+    if (style.mode === "neutral") {
+      syncRoomBgNeutralUi(style.neutral);
+      if (flush) {
+        roomBgNeutralPickHandler?.(style.neutral);
+      } else {
+        roomBgNeutralPreviewHandler?.(style.neutral);
+      }
+      return;
+    }
+    applyRoomBgHueDeg(style.hueDeg, flush);
+  }
+
+  function previewRoomBgColorRgb(rgb: number): void {
+    applyRoomBgFromRgb(rgb, false);
+  }
+
+  function commitRoomBgColorRgb(rgb: number): void {
+    applyRoomBgFromRgb(rgb, true);
   }
 
   function syncRoomBgDockSwatchFill(): void {
@@ -1651,9 +1678,7 @@ export function createHud(
     roomBgHueWrap,
     roomBgHueRing,
     (hue) => {
-      const deg = Math.round(hue);
-      syncRoomBgHueCoreVisual(deg);
-      roomBgHueInputHandler?.(deg);
+      applyRoomBgHueDeg(Math.round(hue));
     },
     {
       guard: () =>
@@ -1667,6 +1692,24 @@ export function createHud(
       },
     }
   );
+  attachPaletteHueRingArrowKeys(
+    roomBgHueRing,
+    roomBgHueDegFromRing,
+    (deg) => {
+      applyRoomBgHueDeg(deg);
+    }
+  );
+  attachPaletteHueRingHexPopover({
+    wrap: roomBgHueWrap,
+    core: roomBgHueCore,
+    getRgb: getRoomBgColorRgb,
+    onRgbPreview: previewRoomBgColorRgb,
+    onRgbCommit: commitRoomBgColorRgb,
+    guard: () =>
+      buildDockRoomBgPopover !== null && !buildDockRoomBgPopover.hidden,
+    triggerTitle: "Custom hex color",
+    triggerAriaLabel: "Custom hex color",
+  });
 
   const feedbackBtn = document.createElement("button");
   feedbackBtn.type = "button";
@@ -3509,6 +3552,34 @@ export function createHud(
             </div>
             <input type="hidden" id="tile-inspector-pyramid-base" value="100" aria-valuetext="100%" />
           </div>
+          <div
+            class="tile-inspector__param tile-inspector__param--stepper"
+            id="tile-inspector-hex-width-row"
+            data-build-dock-param="hex-width"
+            hidden
+          >
+            <span class="tile-inspector__param-label">Thickness</span>
+            <div class="tile-inspector__param-stepper">
+              <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-hex-width-dec" aria-label="Decrease thickness">−</button>
+              <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-hex-width-inc" aria-label="Increase thickness">+</button>
+              <span class="tile-inspector__param-step-value" id="tile-inspector-hex-width-val">100%</span>
+            </div>
+            <input type="hidden" id="tile-inspector-hex-width" value="100" aria-valuetext="100%" />
+          </div>
+          <div
+            class="tile-inspector__param tile-inspector__param--stepper"
+            id="tile-inspector-sphere-size-row"
+            data-build-dock-param="sphere-size"
+            hidden
+          >
+            <span class="tile-inspector__param-label">Size</span>
+            <div class="tile-inspector__param-stepper">
+              <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-sphere-size-dec" aria-label="Decrease size">−</button>
+              <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-sphere-size-inc" aria-label="Increase size">+</button>
+              <span class="tile-inspector__param-step-value" id="tile-inspector-sphere-size-val">100%</span>
+            </div>
+            <input type="hidden" id="tile-inspector-sphere-size" value="100" aria-valuetext="100%" />
+          </div>
           </div>
           <div
             class="tile-inspector__param tile-inspector__param--stepper"
@@ -3589,12 +3660,6 @@ export function createHud(
           <button type="button" class="build-block-bar__ramp-rot build-block-bar__ramp-cw" title="Rotate clockwise" aria-label="Rotate ramp clockwise">↻</button>
         </div>
       </div>
-      <div class="build-block-bar__palette-label">Palette</div>
-      <div class="build-block-bar__colors" aria-label="Preset colors">
-        <div class="build-block-bar__swatches-recent"></div>
-        <button type="button" class="build-block-bar__more-colors">More colors</button>
-        <div class="build-block-bar__swatches-all" hidden></div>
-      </div>
       <div class="build-block-bar__experimental-only" hidden>
         <div class="build-block-bar__popover-divider" aria-hidden="true"></div>
         <div class="build-block-bar__popover-heading">Experimental</div>
@@ -3622,7 +3687,7 @@ export function createHud(
 
   const barHueRingParts = createPaletteHueRing({
     ariaLabel: "Block color",
-    title: "Color. Drag on the ring; selection snaps to the nearest preset.",
+    title: "Drag the ring for hue. Click the center for a custom hex code.",
   });
   const barHueRingWrap = barHueRingParts.wrap;
   const barHueRing = barHueRingParts.ring;
@@ -3835,15 +3900,6 @@ export function createHud(
     ".build-block-bar__ramp-cw"
   ) as HTMLButtonElement;
   let barRampDir = 0;
-  const barSwatchesRecent = barAdvancedPopover.querySelector(
-    ".build-block-bar__swatches-recent"
-  ) as HTMLDivElement;
-  const barSwatchesAll = barAdvancedPopover.querySelector(
-    ".build-block-bar__swatches-all"
-  ) as HTMLDivElement;
-  const barMoreColorsBtn = barAdvancedPopover.querySelector(
-    ".build-block-bar__more-colors"
-  ) as HTMLButtonElement;
   const barAdvancedToggle = buildBlockBar.querySelector(
     ".build-block-bar__advanced-toggle"
   ) as HTMLButtonElement | null;
@@ -5085,6 +5141,7 @@ export function createHud(
   function setBuildDockRoomBgPopoverOpen(open: boolean): void {
     if (!buildDockRoomBgPopover) return;
     if (!open) {
+      closePaletteHueHexPopover();
       buildDockRoomBgPopover.hidden = true;
       buildDockRoomBgSwatch.setAttribute("aria-expanded", "false");
       buildDockRoomBgSwatch.classList.remove(
@@ -5198,6 +5255,36 @@ export function createHud(
   const tileInspectorPyramidBaseInc = tileInspectorRoot.querySelector(
     "#tile-inspector-pyramid-base-inc"
   ) as HTMLButtonElement | null;
+  const tileInspectorHexWidthRow = tileInspectorRoot.querySelector(
+    "#tile-inspector-hex-width-row"
+  ) as HTMLElement | null;
+  const tileInspectorHexWidthInput = tileInspectorRoot.querySelector(
+    "#tile-inspector-hex-width"
+  ) as HTMLInputElement | null;
+  const tileInspectorHexWidthVal = tileInspectorRoot.querySelector(
+    "#tile-inspector-hex-width-val"
+  ) as HTMLElement | null;
+  const tileInspectorHexWidthDec = tileInspectorRoot.querySelector(
+    "#tile-inspector-hex-width-dec"
+  ) as HTMLButtonElement | null;
+  const tileInspectorHexWidthInc = tileInspectorRoot.querySelector(
+    "#tile-inspector-hex-width-inc"
+  ) as HTMLButtonElement | null;
+  const tileInspectorSphereSizeRow = tileInspectorRoot.querySelector(
+    "#tile-inspector-sphere-size-row"
+  ) as HTMLElement | null;
+  const tileInspectorSphereSizeInput = tileInspectorRoot.querySelector(
+    "#tile-inspector-sphere-size"
+  ) as HTMLInputElement | null;
+  const tileInspectorSphereSizeVal = tileInspectorRoot.querySelector(
+    "#tile-inspector-sphere-size-val"
+  ) as HTMLElement | null;
+  const tileInspectorSphereSizeDec = tileInspectorRoot.querySelector(
+    "#tile-inspector-sphere-size-dec"
+  ) as HTMLButtonElement | null;
+  const tileInspectorSphereSizeInc = tileInspectorRoot.querySelector(
+    "#tile-inspector-sphere-size-inc"
+  ) as HTMLButtonElement | null;
 
   function syncTileInspectorPyramidBaseLabel(): void {
     if (!tileInspectorPyramidBaseInput || !tileInspectorPyramidBaseVal) return;
@@ -5229,6 +5316,72 @@ export function createHud(
     syncTileInspectorPyramidBaseLabel();
   }
 
+  function prismRadiusPercentFromScale(scale: number): number {
+    return Math.round(clampHexRadiusScale(scale) * 100);
+  }
+
+  function syncTileInspectorHexWidthLabel(): void {
+    if (!tileInspectorHexWidthInput || !tileInspectorHexWidthVal) return;
+    const raw = Math.min(
+      100,
+      Math.max(25, Math.floor(Number(tileInspectorHexWidthInput.value)))
+    );
+    tileInspectorHexWidthInput.value = String(raw);
+    tileInspectorHexWidthVal.textContent = `${raw}%`;
+    tileInspectorHexWidthInput.setAttribute("aria-valuetext", `${raw}%`);
+    if (tileInspectorHexWidthDec) {
+      tileInspectorHexWidthDec.disabled = raw <= 25;
+    }
+    if (tileInspectorHexWidthInc) {
+      tileInspectorHexWidthInc.disabled = raw >= 100;
+    }
+  }
+
+  function syncTileInspectorSphereSizeLabel(): void {
+    if (!tileInspectorSphereSizeInput || !tileInspectorSphereSizeVal) return;
+    const raw = Math.min(
+      100,
+      Math.max(25, Math.floor(Number(tileInspectorSphereSizeInput.value)))
+    );
+    tileInspectorSphereSizeInput.value = String(raw);
+    tileInspectorSphereSizeVal.textContent = `${raw}%`;
+    tileInspectorSphereSizeInput.setAttribute("aria-valuetext", `${raw}%`);
+    if (tileInspectorSphereSizeDec) {
+      tileInspectorSphereSizeDec.disabled = raw <= 25;
+    }
+    if (tileInspectorSphereSizeInc) {
+      tileInspectorSphereSizeInc.disabled = raw >= 100;
+    }
+  }
+
+  function syncBarHexWidthFromScale(scale: number): void {
+    if (buildDockBlockSelectionParamsActive()) return;
+    syncTileInspectorHexWidthSliderFromScale(scale);
+  }
+
+  function syncBarSphereSizeFromScale(scale: number): void {
+    if (buildDockBlockSelectionParamsActive()) return;
+    syncTileInspectorSphereSizeSliderFromScale(scale);
+  }
+
+  function syncTileInspectorHexWidthSliderFromScale(scale: number): void {
+    if (!tileInspectorHexWidthInput) return;
+    const pct = prismRadiusPercentFromScale(scale);
+    const stepped = Math.round((pct - 25) / 5) * 5 + 25;
+    const v = Math.min(100, Math.max(25, stepped));
+    tileInspectorHexWidthInput.value = String(v);
+    syncTileInspectorHexWidthLabel();
+  }
+
+  function syncTileInspectorSphereSizeSliderFromScale(scale: number): void {
+    if (!tileInspectorSphereSizeInput) return;
+    const pct = Math.round(clampSphereRadiusScale(scale) * 100);
+    const stepped = Math.round((pct - 25) / 5) * 5 + 25;
+    const v = Math.min(100, Math.max(25, stepped));
+    tileInspectorSphereSizeInput.value = String(v);
+    syncTileInspectorSphereSizeLabel();
+  }
+
   function buildDockContextTool(): BuildDockContextTool {
     return tileInspectorToolSelect.value as BuildDockContextTool;
   }
@@ -5243,11 +5396,18 @@ export function createHud(
     );
   }
 
-  function buildDockContextShapeState(): { pyramid: boolean; ramp: boolean } {
+  function buildDockContextShapeState(): {
+    pyramid: boolean;
+    hex: boolean;
+    sphere: boolean;
+    ramp: boolean;
+  } {
     const fromSelection = dockTerrainShapeActiveIdFromSelection();
     if (fromSelection !== null) {
       return {
         pyramid: fromSelection === "pyramid",
+        hex: fromSelection === "hex",
+        sphere: fromSelection === "sphere",
         ramp: fromSelection === "ramp",
       };
     }
@@ -5262,6 +5422,8 @@ export function createHud(
         });
     return {
       pyramid: shape === "pyramid",
+      hex: shape === "hex",
+      sphere: shape === "sphere",
       ramp: shape === "ramp",
     };
   }
@@ -5309,6 +5471,8 @@ export function createHud(
       for (const id of [
         "height",
         "pyramid-base",
+        "hex-width",
+        "sphere-size",
         "billboard-edit",
       ] as const) {
         const row = tileInspectorRoot.querySelector(
@@ -5325,11 +5489,13 @@ export function createHud(
       gateModeActive ||
       billboardModeActive;
     const blockParams = buildDockContextBlockParamsAllowed();
-    const { pyramid, ramp } = buildDockContextShapeState();
+    const { pyramid, hex, sphere, ramp } = buildDockContextShapeState();
     const billboardSelectionEdit = buildDockBillboardSelectionEditActive();
     const ctx = {
       tool,
       pyramid,
+      hex,
+      sphere,
       ramp,
       minimalInspector,
       blockParams,
@@ -5338,6 +5504,8 @@ export function createHud(
     for (const id of [
       "height",
       "pyramid-base",
+      "hex-width",
+      "sphere-size",
       "billboard-edit",
     ] as const) {
       const row = tileInspectorRoot.querySelector(
@@ -5410,6 +5578,7 @@ export function createHud(
   }
 
   let lastHueDeg = 0;
+  let placementColorRgb = DEFAULT_BLOCK_COLOR_RGB;
 
   const signpostTextarea = signpostOverlay.querySelector(".signpost-overlay__textarea") as HTMLTextAreaElement;
   const signpostCharCount = signpostOverlay.querySelector(".signpost-overlay__char-count") as HTMLElement;
@@ -6522,17 +6691,6 @@ export function createHud(
     activateBuildTool(tool);
   });
 
-  for (let i = 0; i < BLOCK_COLOR_COUNT; i++) {
-    barSwatchesAll.appendChild(makeColorSwatchButton(i));
-  }
-  function rebuildBarRecentSwatches(ids: readonly number[]): void {
-    barSwatchesRecent.replaceChildren();
-    for (const id of ids) {
-      barSwatchesRecent.appendChild(makeColorSwatchButton(id));
-    }
-  }
-  rebuildBarRecentSwatches(loadRecentColorIds());
-
   let placementStyleHandler: (patch: {
     half?: boolean;
     quarter?: boolean;
@@ -6542,7 +6700,9 @@ export function createHud(
     sphere?: boolean;
     ramp?: boolean;
     rampDir?: number;
-    colorId?: number;
+    colorRgb?: number;
+    hexRadiusScale?: number;
+    sphereRadiusScale?: number;
     claimable?: boolean;
   }) => void = (): void => {};
 
@@ -6587,6 +6747,44 @@ export function createHud(
       return;
     }
     placementStyleHandler({ pyramidBaseScale: stepped / 100 });
+  }
+
+  function applyTileInspectorHexWidthValue(next: number): void {
+    if (!tileInspectorHexWidthInput) return;
+    const raw = Math.min(100, Math.max(25, Math.floor(next)));
+    const stepped = Math.round((raw - 25) / 5) * 5 + 25;
+    tileInspectorHexWidthInput.value = String(stepped);
+    syncTileInspectorHexWidthLabel();
+    if (buildDockBlockSelectionParamsActive()) {
+      emitPanelProps();
+      return;
+    }
+    placementStyleHandler({
+      hex: true,
+      pyramid: false,
+      sphere: false,
+      ramp: false,
+      hexRadiusScale: stepped / 100,
+    });
+  }
+
+  function applyTileInspectorSphereSizeValue(next: number): void {
+    if (!tileInspectorSphereSizeInput) return;
+    const raw = Math.min(100, Math.max(25, Math.floor(next)));
+    const stepped = Math.round((raw - 25) / 5) * 5 + 25;
+    tileInspectorSphereSizeInput.value = String(stepped);
+    syncTileInspectorSphereSizeLabel();
+    if (buildDockBlockSelectionParamsActive()) {
+      emitPanelProps();
+      return;
+    }
+    placementStyleHandler({
+      hex: false,
+      pyramid: false,
+      sphere: true,
+      ramp: false,
+      sphereRadiusScale: stepped / 100,
+    });
   }
 
   function syncBarHeightButtons(quarter: boolean, half: boolean): void {
@@ -6706,6 +6904,39 @@ export function createHud(
     );
   });
 
+  tileInspectorHexWidthDec?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorHexWidthInput) return;
+    applyTileInspectorHexWidthValue(
+      Math.floor(Number(tileInspectorHexWidthInput.value)) - 5
+    );
+  });
+  tileInspectorHexWidthInc?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorHexWidthInput) return;
+    applyTileInspectorHexWidthValue(
+      Math.floor(Number(tileInspectorHexWidthInput.value)) + 5
+    );
+  });
+  tileInspectorSphereSizeDec?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorSphereSizeInput) return;
+    applyTileInspectorSphereSizeValue(
+      Math.floor(Number(tileInspectorSphereSizeInput.value)) - 5
+    );
+  });
+  tileInspectorSphereSizeInc?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorSphereSizeInput) return;
+    applyTileInspectorSphereSizeValue(
+      Math.floor(Number(tileInspectorSphereSizeInput.value)) + 5
+    );
+  });
+
   barHexCb.addEventListener("change", () => {
     placementStyleHandler({
       hex: barHexCb.checked,
@@ -6790,21 +7021,74 @@ export function createHud(
     syncBlockPreviewDockSlots();
   }
 
+  function isBuildObjectColorEditActive(): boolean {
+    return panelShapeColorRow !== null && !panelShapeColorRow.hidden;
+  }
+
+  function getActiveBlockColorRgb(): number {
+    return isBuildObjectColorEditActive()
+      ? panelSelectedColorRgb
+      : placementColorRgb;
+  }
+
+  function previewActiveBlockColorRgb(rgb: number): void {
+    if (isBuildObjectColorEditActive()) {
+      previewPanelColorRgb(rgb);
+    } else {
+      previewPlacementColorRgb(rgb);
+    }
+  }
+
+  /** Selected tile → `setObstacleProps`; otherwise new-placement color. */
+  function commitActiveBlockColorRgb(rgb: number): void {
+    if (isBuildObjectColorEditActive()) {
+      applyPanelColorRgb(rgb);
+    } else {
+      applyPlacementColorRgb(rgb);
+    }
+  }
+
+  /** Update bar hue UI only (no `placementStyleHandler` — avoids syncBuildHud ↔ setBuildBlockBarState loop). */
+  function syncPlacementColorRgbUi(rgb: number): void {
+    placementColorRgb = clampColorRgb(rgb);
+    lastHueDeg = blockColorRgbToHueDeg(placementColorRgb);
+    barHueRing.setAttribute("aria-valuenow", String(lastHueDeg));
+    barHueCore.style.background = cssHex(placementColorRgb);
+  }
+
+  /** Live hex typing: UI + 3D preview only (no `syncBuildHud` — same idea as `previewPanelColorRgb`). */
+  function previewPlacementColorRgb(rgb: number): void {
+    syncPlacementColorRgbUi(rgb);
+    inspectorPreviewGameRef?.setPlacementBlockStyle({
+      colorRgb: placementColorRgb,
+    });
+  }
+
+  function applyPlacementColorRgb(rgb: number): void {
+    syncPlacementColorRgbUi(rgb);
+    placementStyleHandler({ colorRgb: placementColorRgb });
+  }
+
   function applyHueDegrees(hueDeg: number): void {
     const h = ((hueDeg % 360) + 360) % 360;
     lastHueDeg = Math.round(h);
-    barHueRing.setAttribute("aria-valuenow", String(lastHueDeg));
-    const { r, g, b } = hslToRgb(h / 360, 1, 0.52);
-    const id = nearestPaletteColorIdFromRgb(r, g, b);
-    rebuildBarRecentSwatches(pushRecentColorId(id));
-    placementStyleHandler({ colorId: id });
-    refreshBarSwatches(id);
+    applyPlacementColorRgb(hueDegToBlockColorRgb(h));
   }
 
   attachPaletteHueRingPointerHandlers(barHueRingWrap, barHueRing, (hue) => {
     applyHueDegrees(hue);
   });
   attachPaletteHueRingArrowKeys(barHueRing, () => lastHueDeg, applyHueDegrees);
+  attachPaletteHueRingHexPopover({
+    wrap: barHueRingWrap,
+    core: barHueCore,
+    getRgb: getActiveBlockColorRgb,
+    onRgbPreview: previewActiveBlockColorRgb,
+    onRgbCommit: commitActiveBlockColorRgb,
+    guard: () => !barShapeColorRow.hidden,
+    triggerTitle: "Custom hex color",
+    triggerAriaLabel: "Custom hex color",
+  });
 
   barShapeBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -6877,18 +7161,6 @@ export function createHud(
   syncBarShapeButtons();
   syncBlockPreviewDockSlots();
 
-  let barColorsExpanded = false;
-  barMoreColorsBtn.addEventListener("click", () => {
-    barColorsExpanded = !barColorsExpanded;
-    barSwatchesAll.hidden = !barColorsExpanded;
-    barMoreColorsBtn.textContent = barColorsExpanded
-      ? "Hide colors"
-      : "More colors";
-    if (!barAdvancedPopover.hidden) {
-      requestAnimationFrame(() => layoutBarAdvancedPopover());
-    }
-  });
-
   if (barAdvancedToggle) {
     barAdvancedToggle.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -6909,22 +7181,6 @@ export function createHud(
     barClaimToggle.classList.toggle("build-block-bar__claim-toggle--active", next);
     placementStyleHandler({ claimable: next });
   });
-
-  function onBarColorSwatchClick(ev: Event): void {
-    const t = ev.target as HTMLElement;
-    const btn = t.closest(".block-color-swatch") as HTMLButtonElement | null;
-    if (!btn) return;
-    if (!buildBlockBar.contains(btn) && !barAdvancedPopover.contains(btn)) {
-      return;
-    }
-    const id = Number(btn.dataset.colorId);
-    if (!Number.isFinite(id)) return;
-    rebuildBarRecentSwatches(pushRecentColorId(id));
-    placementStyleHandler({ colorId: id });
-    refreshBarSwatches(id);
-  }
-  buildBlockBar.addEventListener("click", onBarColorSwatchClick);
-  barAdvancedPopover.addEventListener("click", onBarColorSwatchClick);
 
   let fsHandler = (): void => {};
   let reconnectHandler = (): void => {};
@@ -7072,7 +7328,7 @@ export function createHud(
   let gateAclKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   let panelContextHeightRow: HTMLElement | null = null;
   let panelAdvancedToggle: HTMLButtonElement | null = null;
-  let panelSelectedColorId = 0;
+  let panelSelectedColorRgb = DEFAULT_BLOCK_COLOR_RGB;
   let panelClaimable = false;
   let panelClaimableActive = false;
   let panelLastHueDeg = 0;
@@ -7826,10 +8082,11 @@ export function createHud(
         hex: false,
         pyramid: false,
         pyramidBaseScale: 1,
+        hexRadiusScale: 1,
         sphere: false,
         ramp: false,
         rampDir: 0,
-        colorId: panelSelectedColorId,
+        colorRgb: panelSelectedColorRgb,
         locked: getPanelLocked(),
         gate: {
           adminAddress: panelGateAdminAddress,
@@ -7886,6 +8143,17 @@ export function createHud(
           Number(pyramidBaseInput?.value ?? 100) / 100
         )
       : 1;
+    const hexWidthInput = buildDockBlockSelectionParamsActive()
+      ? tileInspectorHexWidthInput
+      : tileInspectorHexWidthInput;
+    const hexRadiusScale = prism.hex
+      ? clampHexRadiusScale(Number(hexWidthInput?.value ?? 100) / 100)
+      : 1;
+    const sphereRadiusScale = prism.sphere
+      ? clampSphereRadiusScale(
+          Number(tileInspectorSphereSizeInput?.value ?? 100) / 100
+        )
+      : 1;
     return {
       passable: getPanelPassable(),
       quarter,
@@ -7893,10 +8161,12 @@ export function createHud(
       hex: prism.hex,
       pyramid: prism.pyramid,
       pyramidBaseScale,
+      hexRadiusScale,
       sphere: prism.sphere,
+      sphereRadiusScale,
       ramp: prism.ramp,
       rampDir: prism.ramp ? rampDir : 0,
-      colorId: panelSelectedColorId,
+      colorRgb: panelSelectedColorRgb,
       locked: getPanelLocked(),
       ...(panelClaimable
         ? { claimable: true, active: panelClaimableActive }
@@ -7941,6 +8211,16 @@ export function createHud(
     return Boolean(dec?.matches(":active") || inc?.matches(":active"));
   }
 
+  /** While ± is held on dock prism size rows, ignore stale server echoes. */
+  function tileInspectorPrismSizeStepperUiBusy(): boolean {
+    return Boolean(
+      tileInspectorHexWidthDec?.matches(":active") ||
+        tileInspectorHexWidthInc?.matches(":active") ||
+        tileInspectorSphereSizeDec?.matches(":active") ||
+        tileInspectorSphereSizeInc?.matches(":active")
+    );
+  }
+
   function schedulePanelPyramidBaseCommit(): void {
     if (panelPyramidBaseCommitTimer !== null) {
       clearTimeout(panelPyramidBaseCommitTimer);
@@ -7970,35 +8250,40 @@ export function createHud(
     applyPanelTerrainShape(shape);
   });
 
-  function applyPanelHueDegrees(hueDeg: number): void {
+  function previewPanelColorRgb(rgb: number): void {
     if (!panelHueRing || !panelHueCore) return;
-    const h = ((hueDeg % 360) + 360) % 360;
-    panelLastHueDeg = Math.round(h);
+    panelSelectedColorRgb = clampColorRgb(rgb);
+    panelLastHueDeg = blockColorRgbToHueDeg(panelSelectedColorRgb);
     panelHueRing.setAttribute("aria-valuenow", String(panelLastHueDeg));
-    const { r, g, b } = hslToRgb(h / 360, 1, 0.52);
-    const id = nearestPaletteColorIdFromRgb(r, g, b);
-    panelSelectedColorId = id;
-    pushRecentColorId(id);
-    const sid = Math.max(
-      0,
-      Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(id))
-    );
-    panelHueCore.style.background = cssHex(BLOCK_COLOR_PALETTE[sid]!);
+    panelHueCore.style.background = cssHex(panelSelectedColorRgb);
+    const next = buildLivePanelObstacleProps();
+    if (next) {
+      inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(next);
+      inspectorPreviewGameRef?.refreshGateRepositionPreviewsFromStoredPointer();
+    }
+  }
+
+  function applyPanelColorRgb(rgb: number): void {
+    previewPanelColorRgb(rgb);
     emitPanelProps();
   }
 
-  function syncPanelHueVisualFromColorId(colorId: number): void {
+  function applyPanelHueDegrees(hueDeg: number): void {
+    const h = ((hueDeg % 360) + 360) % 360;
+    panelLastHueDeg = Math.round(h);
+    applyPanelColorRgb(hueDegToBlockColorRgb(h));
+  }
+
+  function syncPanelHueVisualFromColorRgb(colorRgb: number): void {
     if (!panelHueRing || !panelHueCore) return;
-    const sid = Math.max(
-      0,
-      Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(colorId))
-    );
-    panelLastHueDeg = Math.round(estimateHueFromPaletteId(sid));
+    panelSelectedColorRgb = clampColorRgb(colorRgb);
+    panelLastHueDeg = blockColorRgbToHueDeg(panelSelectedColorRgb);
     panelHueRing.setAttribute("aria-valuenow", String(panelLastHueDeg));
-    panelHueCore.style.background = cssHex(BLOCK_COLOR_PALETTE[sid]!);
+    panelHueCore.style.background = cssHex(panelSelectedColorRgb);
   }
 
   function hideObjectEditPanel(): void {
+    closePaletteHueHexPopover();
     teleporterSelectionDockActive = false;
     syncTeleporterDockSectionVisibility();
     hideGateAclEditor();
@@ -8100,23 +8385,6 @@ export function createHud(
     syncBuildDockSelectionChrome();
   }
 
-  function refreshBarSwatches(selectedId: number): void {
-    const buttons = barAdvancedPopover.querySelectorAll(".block-color-swatch");
-    buttons.forEach((node) => {
-      const el = node as HTMLButtonElement;
-      const id = Number(el.dataset.colorId);
-      el.classList.toggle(
-        "block-color-swatch--selected",
-        id === selectedId
-      );
-    });
-    const sid = Math.max(
-      0,
-      Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(selectedId))
-    );
-    barHueCore.style.background = cssHex(BLOCK_COLOR_PALETTE[sid]!);
-  }
-
   function bindTileInspectorPreviewGame(game: Game | null): void {
     dockThumbGlBindGen += 1;
     const prev = inspectorPreviewGameRef;
@@ -8186,6 +8454,16 @@ export function createHud(
     );
   }
 
+  function obstacleHexWidthMatches(a: number, b: number): boolean {
+    return Math.abs(clampHexRadiusScale(a) - clampHexRadiusScale(b)) < 0.001;
+  }
+
+  function obstacleSphereSizeMatches(a: number, b: number): boolean {
+    return (
+      Math.abs(clampSphereRadiusScale(a) - clampSphereRadiusScale(b)) < 0.001
+    );
+  }
+
   function applyObjectPanelPropsFromServer(p: ObstacleProps): void {
     if (p.gate) {
       panelClaimable = false;
@@ -8207,11 +8485,8 @@ export function createHud(
       panelRampDir = Math.max(0, Math.min(3, Math.floor(p.rampDir)));
       panelLockedState = p.locked || false;
       syncPanelLockToggle(panelLockedState);
-      panelSelectedColorId = Math.max(
-        0,
-        Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(p.colorId))
-      );
-      syncPanelHueVisualFromColorId(panelSelectedColorId);
+      panelSelectedColorRgb = resolveBlockColorRgb(p);
+      syncPanelHueVisualFromColorRgb(panelSelectedColorRgb);
       if (panelGateAclSummaryEl) {
         const n = panelGateAuthorizedAddresses.length;
         panelGateAclSummaryEl.textContent = `${n} wallet${
@@ -8271,17 +8546,27 @@ export function createHud(
         syncPanelPyramidBaseSliderFromScale(serverBase);
       }
     }
+    if (!tileInspectorPrismSizeStepperUiBusy()) {
+      const serverHexWidth = p.hexRadiusScale ?? 1;
+      if (!live || obstacleHexWidthMatches(serverHexWidth, live.hexRadiusScale)) {
+        syncTileInspectorHexWidthSliderFromScale(serverHexWidth);
+      }
+      const serverSphereSize = p.sphereRadiusScale ?? 1;
+      if (
+        !live ||
+        obstacleSphereSizeMatches(serverSphereSize, live.sphereRadiusScale)
+      ) {
+        syncTileInspectorSphereSizeSliderFromScale(serverSphereSize);
+      }
+    }
     panelRampDir = Math.max(0, Math.min(3, Math.floor(p.rampDir)));
     if (rampDirRow) rampDirRow.hidden = !p.ramp;
     syncPanelShapeButtons();
     syncBuildDockContextParams();
-    panelSelectedColorId = Math.max(
-      0,
-      Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(p.colorId))
-    );
+    panelSelectedColorRgb = resolveBlockColorRgb(p);
     panelClaimable = Boolean(p.claimable);
     panelClaimableActive = panelClaimable && p.active !== false;
-    syncPanelHueVisualFromColorId(panelSelectedColorId);
+    syncPanelHueVisualFromColorRgb(panelSelectedColorRgb);
     inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(p);
   }
 
@@ -8530,10 +8815,12 @@ export function createHud(
       neutral: RoomBackgroundNeutral | null
     ) {
       if (roomBgHueDragging) return;
+      roomBgActiveNeutral = neutral;
       const ringDeg =
         hueDeg !== null && Number.isFinite(hueDeg)
           ? Math.round(((hueDeg % 360) + 360) % 360)
           : ROOM_BG_HUE_DEFAULT_RING;
+      roomBgLastHueDeg = ringDeg;
       roomBgHueRing.setAttribute("aria-valuenow", String(ringDeg));
       const coreBg =
         neutral === "black"
@@ -8544,17 +8831,6 @@ export function createHud(
               ? "#2a313c"
               : `hsl(${ringDeg} 42% 11%)`;
       roomBgHueCore.style.background = coreBg;
-      for (const id of neutralDefs) {
-        const btn = roomBgNeutralBtns[id.id];
-        if (btn) {
-          const on = neutral === id.id;
-          btn.classList.toggle(
-            "hud-mode-sidebar__room-bg-neutral--active",
-            on
-          );
-          btn.setAttribute("aria-pressed", on ? "true" : "false");
-        }
-      }
       syncRoomBgDockSwatchFill();
     },
     onRoomBackgroundHueAdjust(handlers: {
@@ -8566,6 +8842,9 @@ export function createHud(
     },
     onRoomBackgroundNeutralPick(fn: (neutral: RoomBackgroundNeutral) => void) {
       roomBgNeutralPickHandler = fn;
+    },
+    onRoomBackgroundNeutralPreview(fn: (neutral: RoomBackgroundNeutral) => void) {
+      roomBgNeutralPreviewHandler = fn;
     },
     setPlayModeState(mode: "walk" | "build" | "floor") {
       hudPlayMode = mode;
@@ -8956,10 +9235,7 @@ export function createHud(
           Math.min(2, Math.floor(Number(opts.y ?? 0)))
         );
       }
-      panelSelectedColorId = Math.max(
-        0,
-        Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(opts.colorId))
-      );
+      panelSelectedColorRgb = resolveBlockColorRgb(opts);
       panelClaimable = Boolean(opts.claimable);
       panelClaimableActive = panelClaimable && opts.active !== false;
       objectPanel = document.createElement("div");
@@ -9035,8 +9311,8 @@ export function createHud(
       const panelHueRingParts = createPaletteHueRing({
         ariaLabel: "Block color",
         title: gateEdit
-          ? "Gate color. Drag on the ring; selection snaps to the nearest preset."
-          : "Color. Drag on the ring; selection snaps to the nearest preset.",
+          ? "Gate color. Drag the ring for hue. Click the center for a custom hex code."
+          : "Drag the ring for hue. Click the center for a custom hex code.",
       });
       panelDockHueWrap = panelHueRingParts.wrap;
       panelShapeColorRow.appendChild(panelDockHueWrap);
@@ -9163,6 +9439,8 @@ export function createHud(
       panelRampCb.checked = opts.ramp;
       rampDirRow.hidden = !opts.ramp || gateEdit;
       syncPanelPyramidBaseSliderFromScale(opts.pyramidBaseScale ?? 1);
+      syncTileInspectorHexWidthSliderFromScale(opts.hexRadiusScale ?? 1);
+      syncTileInspectorSphereSizeSliderFromScale(opts.sphereRadiusScale ?? 1);
       syncPanelShapeButtons();
       syncBuildDockContextParams();
 
@@ -9176,7 +9454,7 @@ export function createHud(
           setPanelAdvancedOpen(false);
         }
       });
-      syncPanelHueVisualFromColorId(panelSelectedColorId);
+      syncPanelHueVisualFromColorRgb(panelSelectedColorRgb);
       inspectorPreviewGameRef?.syncInspectorSelectionTeleporterPreview(null);
       {
         const live = buildLivePanelObstacleProps();
@@ -9195,6 +9473,16 @@ export function createHud(
         () => panelLastHueDeg,
         applyPanelHueDegrees
       );
+      attachPaletteHueRingHexPopover({
+        wrap: panelHueRingWrap!,
+        core: panelHueCore!,
+        getRgb: getActiveBlockColorRgb,
+        onRgbPreview: previewActiveBlockColorRgb,
+        onRgbCommit: commitActiveBlockColorRgb,
+        guard: () => panelHueRingWrap !== null && !panelHueRingWrap.hidden,
+        triggerTitle: "Custom hex color",
+        triggerAriaLabel: "Custom hex color",
+      });
 
       panelCollisionToggle!.addEventListener("click", () => {
         syncPanelCollisionToggle(!getPanelPassable());
@@ -9216,11 +9504,11 @@ export function createHud(
         panelRampCb.checked = false;
         panelRampDir = 0;
         if (rampDirRow) rampDirRow.hidden = true;
-        panelSelectedColorId = 0;
+        panelSelectedColorRgb = DEFAULT_BLOCK_COLOR_RGB;
         syncPanelHeightButtons(false, false);
         syncPanelShapeButtons();
         syncPanelCollisionToggle(false);
-        syncPanelHueVisualFromColorId(0);
+        syncPanelHueVisualFromColorRgb(DEFAULT_BLOCK_COLOR_RGB);
         syncPanelPyramidBaseSliderFromScale(1);
         emitPanelProps();
       });
@@ -9367,17 +9655,15 @@ export function createHud(
       barPyramidCb.checked = state.ramp ? false : state.pyramid;
       barSphereCb.checked = state.ramp ? false : state.sphere;
       syncBarPyramidBaseSliderFromScale(state.pyramidBaseScale ?? 1);
+      syncBarHexWidthFromScale(state.hexRadiusScale ?? 1);
+      syncBarSphereSizeFromScale(state.sphereRadiusScale ?? 1);
       barRampCb.checked = state.ramp;
       barRampDir = Math.max(0, Math.min(3, Math.floor(state.rampDir)));
       barRampDirRow.hidden = !state.ramp;
       const claim = state.claimable ?? false;
       barClaimToggle.setAttribute("aria-pressed", claim ? "true" : "false");
       barClaimToggle.classList.toggle("build-block-bar__claim-toggle--active", claim);
-      refreshBarSwatches(
-        Math.max(0, Math.min(BLOCK_COLOR_COUNT - 1, Math.floor(state.colorId)))
-      );
-      lastHueDeg = Math.round(estimateHueFromPaletteId(state.colorId));
-      barHueRing.setAttribute("aria-valuenow", String(lastHueDeg));
+      syncPlacementColorRgbUi(clampColorRgb(state.colorRgb));
       syncBarShapeButtons();
       syncBuildDockToolStrip();
       syncPlacementInspectorPreviewGame();
