@@ -7,9 +7,9 @@
   "signboardCount": 1,
   "voxelTextCount": 1,
   "fileBytes": 1527,
-  "welcomePayloadBytes": 1055,
-  "obstacleBroadcastBytes": 568,
-  "obstacleDeltaBroadcastBytes": 236,
-  "extraFloorBroadcastBytes": 94,
-  "extraFloorDeltaBroadcastBytes": 77
+  "welcomePayloadBytes": 1169,
+  "obstacleBroadcastBytes": 625,
+  "obstacleDeltaBroadcastBytes": 255,
+  "extraFloorBroadcastBytes": 151,
+  "extraFloorDeltaBroadcastBytes": 96
 }

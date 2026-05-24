@@ -9,6 +9,7 @@ export type BuildDockContextParamId =
   | "pyramid-base"
   | "hex-width"
   | "sphere-size"
+  | "cube-rotation"
   | "billboard-edit";
 
 export type BuildDockContextTool =
@@ -26,6 +27,8 @@ export function buildDockContextParamVisible(
     hex: boolean;
     sphere: boolean;
     ramp: boolean;
+    /** Plain cube (not hex / pyramid / sphere / ramp). */
+    plainCube?: boolean;
     /** Signpost / teleporter / gate / billboard placement tools hide block params. */
     minimalInspector: boolean;
     /** False while editing teleporter, gate, billboard, etc. on the map. */
@@ -48,6 +51,16 @@ export function buildDockContextParamVisible(
   }
   if (param === "sphere-size") {
     return ctx.tool === "block" && ctx.sphere && !ctx.ramp;
+  }
+  if (param === "cube-rotation") {
+    return (
+      ctx.tool === "block" &&
+      ctx.plainCube === true &&
+      !ctx.hex &&
+      !ctx.pyramid &&
+      !ctx.sphere &&
+      !ctx.ramp
+    );
   }
   return false;
 }

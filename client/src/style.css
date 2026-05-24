@@ -3053,6 +3053,10 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
+.hud-mode-sidebar__shape-color-row--floor[hidden] {
+  display: none !important;
+}
+
 .hud-mode-sidebar__shape-color-row--hue-only {
   gap: 0;
   justify-content: center;
@@ -5750,6 +5754,29 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
+.hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-grid {
+  flex-direction: row;
+  justify-content: flex-end;
+}
+
+.hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-mods {
+  display: none !important;
+}
+
+.hud-build-bottom-dock__context--floor {
+  width: auto;
+  min-width: 0;
+}
+
+.hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-color {
+  flex: 0 0 min(56px, 20vw);
+  width: min(56px, 20vw);
+  justify-content: flex-start;
+  align-self: stretch;
+  padding-top: 4px;
+  padding-right: 4px;
+}
+
 .hud-build-bottom-dock__context-mods > .hud-build-bottom-dock__room-settings .hud-build-bottom-dock__room-setting-label {
   color: var(--hud-build-chrome-text-muted);
 }
@@ -5845,6 +5872,146 @@ button.hud-brand:focus-visible {
 .hud-build-bottom-dock__room-bg-popover-inner .palette-hue-ring {
   width: 56px;
   height: 56px;
+}
+
+.hud-build-bottom-dock__context-mods
+  > #tile-inspector-placement
+  .tile-inspector__param--rotation-trigger {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.hud-build-bottom-dock__cube-rot-trigger {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--hud-build-chrome-control-border);
+  background: var(--hud-build-chrome-control-bg);
+  color: var(--hud-build-chrome-text);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  cursor: pointer;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  text-align: center;
+}
+
+.hud-build-bottom-dock__cube-rot-trigger:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.hud-build-bottom-dock__cube-rot-trigger--open {
+  border-color: var(--hud-build-accent-border);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.25);
+}
+
+.hud-build-bottom-dock__cube-rot-trigger-label {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud-build-bottom-dock__cube-rot-popover {
+  position: fixed;
+  z-index: 22;
+  width: min(152px, calc(100vw - 24px));
+  border-radius: 6px;
+  border: 1px solid var(--hud-build-chrome-border);
+  background: rgba(15, 17, 23, 0.94);
+  backdrop-filter: var(--hud-build-chrome-blur);
+  -webkit-backdrop-filter: var(--hud-build-chrome-blur);
+  box-shadow: var(--hud-build-chrome-shadow);
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+
+.hud-build-bottom-dock__cube-rot-popover[hidden] {
+  display: none !important;
+}
+
+.hud-build-bottom-dock__cube-rot-popover-inner {
+  padding: 4px 6px 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  box-sizing: border-box;
+}
+
+.hud-build-bottom-dock__cube-rot-pad {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px 5px;
+  border-radius: 5px;
+  background: rgba(28, 34, 48, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-sizing: border-box;
+}
+
+.hud-build-bottom-dock__cube-rot-pad-head {
+  margin: 0 0 1px;
+  padding: 0;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
+  text-align: center;
+  line-height: 1.15;
+}
+
+.hud-build-bottom-dock__cube-rot-axis {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.hud-build-bottom-dock__cube-rot-axis-label {
+  flex: 0 0 0.85rem;
+  font-size: 8px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.72);
+  text-align: center;
+  line-height: 1;
+}
+
+.hud-build-bottom-dock__cube-rot-axis .tile-inspector__param-stepper {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  gap: 1px;
+}
+
+.hud-build-bottom-dock__cube-rot-popover .hud-build-bottom-dock__step {
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  border-radius: 3px;
+}
+
+.hud-build-bottom-dock__cube-rot-popover .tile-inspector__param-step-value {
+  min-width: 2rem;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--hud-build-chrome-text);
+}
+
+.hud-build-bottom-dock__cube-rot-axis input[type="hidden"] {
+  display: none;
 }
 
 .hud-build-bottom-dock__tools {
@@ -6143,6 +6310,11 @@ button.hud-brand:focus-visible {
   justify-content: center;
   align-items: center;
   margin: 0;
+}
+
+.hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-color > .hud-mode-sidebar__shape-color-row--floor {
+  flex: 0 0 auto;
+  min-height: 0;
 }
 
 /* Fixed-size hue ring: same for every placement tool (terrain shapes, props, buildings). */

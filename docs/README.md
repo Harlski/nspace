@@ -23,7 +23,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 | Document | Contents |
 |----------|----------|
 | [ui-styling.md](ui-styling.md) | HUD, overlays, tokens, layout conventions |
-| [tile.md](tile.md) | Grid, camera, and **current** floor/block mesh sizes (solid-color floors today) |
+| [tile.md](tile.md) | Grid, camera, and **current** floor/block mesh sizes (per-tile floor color + instanced top quads) |
 | [NIMIQDESIGN.md](NIMIQDESIGN.md) | How `@nimiq/identicons` is wired for avatars (client + server) |
 
 ## Deploy & operations

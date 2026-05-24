@@ -89,9 +89,14 @@ import {
   type BlockStyleProps,
   blockColorRgbToHueDeg,
   clampColorRgb,
+  applyPlainCubeMeshRotation,
+  cubeRotationForPlainCube,
   clampHexRadiusScale,
   clampSphereRadiusScale,
   clampPyramidBaseScale,
+  isPlainCubeTerrain,
+  normalizeCubeRotation,
+  type CubeRotation,
   DEFAULT_BLOCK_COLOR_RGB,
   hueDegToBlockColorRgb,
   normalizeBlockPrismParts,
@@ -118,11 +123,16 @@ const SELF_EXTRAP_GOAL_ALONG_BUFFER = 0.12;
  */
 const SELF_EXTRAP_MAX_OFFSET_XZ = 0.22;
 /** Default scale on unit floor plane; >1 hides subpixel seams (tunable in admin). */
-const DEFAULT_FLOOR_TILE_QUAD = 1.08;
+const DEFAULT_FLOOR_TILE_QUAD = 1.01;
 /** 1 = match server footprint; scale geometry only (grid Y unchanged) to debug floor seam flicker. */
 const DEFAULT_BLOCK_VISUAL_SCALE = 1;
 /** Walkable floor tile thickness in world Y; top stays near y≈0, volume extends downward. */
 const WALKABLE_FLOOR_TILE_THICKNESS = 0.16;
+/** World Y of the visible floor surface (slightly above y=0 to sit above void tint). */
+const WALKABLE_FLOOR_TOP_Y = 0.01;
+/** Shared with placed blocks so hue-ring colors read the same on floor tiles and objects. */
+const PLACED_COLOR_SURFACE_ROUGHNESS = 0.65;
+const PLACED_COLOR_SURFACE_METALNESS = 0.15;
 
 function readWebglRenderScale(): number {
   if (typeof location === "undefined") return 1;
@@ -132,15 +142,30 @@ function readWebglRenderScale(): number {
   return Number.isFinite(n) ? Math.max(0.25, Math.min(1, n)) : 1;
 }
 
+function walkableFloorTopColor(
+  isPortalGlow: boolean,
+  isExtra: boolean,
+  extraColorRgb?: number,
+  coreColorOverride?: number
+): number {
+  if (isPortalGlow) return TERRAIN_TILE_DOOR_COLOR;
+  if (coreColorOverride !== undefined) return coreColorOverride;
+  if (isExtra) return extraColorRgb ?? TERRAIN_TILE_EXTRA_COLOR;
+  return TERRAIN_TILE_CORE_COLOR;
+}
+
 function createWalkableFloorTileMaterials(
   isPortalGlow: boolean,
-  isExtra: boolean
+  isExtra: boolean,
+  extraColorRgb?: number,
+  coreColorOverride?: number
 ): THREE.MeshStandardMaterial {
-  const topHex = isPortalGlow
-    ? TERRAIN_TILE_DOOR_COLOR
-    : isExtra
-      ? TERRAIN_TILE_EXTRA_COLOR
-      : TERRAIN_TILE_CORE_COLOR;
+  const topHex = walkableFloorTopColor(
+    isPortalGlow,
+    isExtra,
+    extraColorRgb,
+    coreColorOverride
+  );
   const roughTop = isPortalGlow ? 0.3 : isExtra ? 0.88 : 0.9;
   const metalTop = isPortalGlow ? 0.5 : isExtra ? 0.06 : 0.05;
   return new THREE.MeshStandardMaterial({
@@ -152,22 +177,52 @@ function createWalkableFloorTileMaterials(
   });
 }
 
+/** Lit top quads; per-tile tint via InstancedMesh.instanceColor (matches block shading). */
+function createWalkableFloorVisualMaterial(): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: PLACED_COLOR_SURFACE_ROUGHNESS,
+    metalness: PLACED_COLOR_SURFACE_METALNESS,
+  });
+}
+
+/** Horizontal instanced floor quad at tile center (wx, wz). */
+function setWalkableFloorVisualInstanceTransform(
+  dummy: THREE.Object3D,
+  wx: number,
+  wz: number,
+  quadSize: number
+): void {
+  dummy.position.set(wx, WALKABLE_FLOOR_TOP_Y, wz);
+  dummy.rotation.set(-Math.PI / 2, 0, 0);
+  dummy.scale.set(quadSize, quadSize, 1);
+  dummy.updateMatrix();
+}
+
 function applyWalkableFloorTileMaterials(
   mesh: THREE.Mesh,
   isPortalGlow: boolean,
-  isExtra: boolean
+  isExtra: boolean,
+  extraColorRgb?: number,
+  coreColorOverride?: number
 ): void {
-  const topHex = isPortalGlow
-    ? TERRAIN_TILE_DOOR_COLOR
-    : isExtra
-      ? TERRAIN_TILE_EXTRA_COLOR
-      : TERRAIN_TILE_CORE_COLOR;
+  const topHex = walkableFloorTopColor(
+    isPortalGlow,
+    isExtra,
+    extraColorRgb,
+    coreColorOverride
+  );
   const roughTop = isPortalGlow ? 0.3 : isExtra ? 0.88 : 0.9;
   const metalTop = isPortalGlow ? 0.5 : isExtra ? 0.06 : 0.05;
   const material = mesh.material;
   if (Array.isArray(material)) {
     for (const mat of material) mat.dispose();
-    mesh.material = createWalkableFloorTileMaterials(isPortalGlow, isExtra);
+    mesh.material = createWalkableFloorTileMaterials(
+      isPortalGlow,
+      isExtra,
+      extraColorRgb,
+      coreColorOverride
+    );
     return;
   }
   const mat = material as THREE.MeshStandardMaterial;
@@ -908,7 +963,9 @@ export class Game {
     | null = null;
   private obstacleSelectHandler: ((x: number, z: number, y: number) => void) | null =
     null;
-  private placeExtraFloorHandler: ((x: number, z: number) => void) | null = null;
+  private placeExtraFloorHandler:
+    | ((x: number, z: number, colorRgb: number) => void)
+    | null = null;
   /**
    * When set, the next successful walkable floor pointer-up in floor-expand mode
    * invokes this with tile coords then clears (room entry spawn pick).
@@ -920,6 +977,10 @@ export class Game {
   /** Place walkable tiles outside the core room (toggle with F). */
   private floorExpandMode = false;
   private readonly extraFloorKeys = new Set<string>();
+  /** Top color per extra floor tile (`tileKey` → 0xRRGGBB). */
+  private readonly extraFloorColorByKey = new Map<string, number>();
+  /** Custom tint on core/base walkable floor tiles (`tileKey` → 0xRRGGBB). */
+  private readonly baseFloorColorByKey = new Map<string, number>();
   /** Base tiles carved out in custom rooms (server-synced). */
   private readonly removedBaseFloorKeys = new Set<string>();
   /** Mining/claiming state for experimental claimable blocks */
@@ -952,6 +1013,8 @@ export class Game {
     WALKABLE_FLOOR_TILE_THICKNESS,
     1
   );
+  /** Top-only footprint for instanced visuals — avoids vertical box faces at tile seams. */
+  private readonly walkableFloorTileTopGeom = new THREE.PlaneGeometry(1, 1);
   private floorTileQuadSize = DEFAULT_FLOOR_TILE_QUAD;
   /** Uniform scale on block/ramp/hex geometry only; bottoms stay on layer planes. */
   private blockVisualScale = DEFAULT_BLOCK_VISUAL_SCALE;
@@ -965,7 +1028,12 @@ export class Game {
   private placementSphere = false;
   private placementRamp = false;
   private placementRampDir = 0;
+  private placementCubeRotX = 0;
+  private placementCubeRotY = 0;
+  private placementCubeRotZ = 0;
   private placementColorRgb = DEFAULT_BLOCK_COLOR_RGB;
+  /** Floor-expand hover / highlight tint (from build dock floor hue ring). */
+  private floorPlacementColorRgb = TERRAIN_TILE_EXTRA_COLOR;
   private placementPyramidBaseScale = 1;
   private placementHexRadiusScale = 1;
   private placementSphereRadiusScale = 1;
@@ -1401,7 +1469,7 @@ export class Game {
 
     this.renderer = new THREE.WebGLRenderer({
       alpha: false,
-      antialias: false,
+      antialias: true,
       powerPreference: "high-performance",
     });
     this.renderer.setPixelRatio(1);
@@ -1782,6 +1850,8 @@ export class Game {
     this.placedObjects.clear();
     this.blockingTileKeys.clear();
     this.extraFloorKeys.clear();
+    this.extraFloorColorByKey.clear();
+    this.baseFloorColorByKey.clear();
     this.removedBaseFloorKeys.clear();
 
     // Clear block meshes from scene
@@ -1863,7 +1933,7 @@ export class Game {
 
   private static clampFloorTileQuad(n: number): number {
     if (!Number.isFinite(n)) return DEFAULT_FLOOR_TILE_QUAD;
-    return Math.min(1.08, Math.max(1.0, n));
+    return Math.min(1.12, Math.max(1.0, n));
   }
 
   private static readFloorTileQuad(key: string, fallback: number): number {
@@ -2593,6 +2663,12 @@ export class Game {
     if (!isCancel && e.button === 2) {
       if (this.suppressAvatarContextMenuFromRightOrbit) {
         this.suppressAvatarContextMenuFromRightOrbit = false;
+      } else if (
+        this.floorExpandMode &&
+        Game.isDesktopFinePointer() &&
+        this.tryFloorExpandRemoveAtScreen(e.clientX, e.clientY)
+      ) {
+        /* Floor edit: RMB removes tile (LMB places). */
       } else {
         this.openInGameContextMenuAt(e.clientX, e.clientY);
       }
@@ -2993,7 +3069,7 @@ export class Game {
   }
 
   setPlaceExtraFloorHandler(
-    handler: ((x: number, z: number) => void) | null
+    handler: ((x: number, z: number, colorRgb: number) => void) | null
   ): void {
     this.placeExtraFloorHandler = handler;
   }
@@ -3059,26 +3135,40 @@ export class Game {
     sphereRadiusScale: number;
     ramp: boolean;
     rampDir: number;
+    cubeRotX: number;
+    cubeRotY: number;
+    cubeRotZ: number;
     colorRgb: number;
     claimable: boolean;
   } {
+    const prism = {
+      hex: this.placementHex,
+      pyramid: this.placementPyramid,
+      sphere: this.placementSphere,
+      ramp: this.placementRamp,
+    };
     return {
       half: this.placementHalf,
       quarter: this.placementQuarter,
-      hex: this.placementHex,
-      pyramid: this.placementPyramid,
+      hex: prism.hex,
+      pyramid: prism.pyramid,
       pyramidBaseScale: this.placementPyramid
         ? this.placementPyramidBaseScale
         : 1,
       hexRadiusScale: this.placementHex
         ? this.placementHexRadiusScale
         : 1,
-      sphere: this.placementSphere,
+      sphere: prism.sphere,
       sphereRadiusScale: this.placementSphere
         ? this.placementSphereRadiusScale
         : 1,
-      ramp: this.placementRamp,
+      ramp: prism.ramp,
       rampDir: this.placementRampDir,
+      ...cubeRotationForPlainCube(prism, {
+        cubeRotX: this.placementCubeRotX,
+        cubeRotY: this.placementCubeRotY,
+        cubeRotZ: this.placementCubeRotZ,
+      }),
       colorRgb: this.placementColorRgb,
       claimable: this.placementClaimable,
     };
@@ -3095,6 +3185,11 @@ export class Game {
     sphere?: boolean;
     ramp?: boolean;
     rampDir?: number;
+    cubeRotX?: number;
+    cubeRotY?: number;
+    cubeRotZ?: number;
+    /** @deprecated */
+    cubePitch?: number;
     colorRgb?: number;
     claimable?: boolean;
   }): void {
@@ -3138,6 +3233,26 @@ export class Game {
         p.sphereRadiusScale
       );
     }
+    if (
+      p.cubeRotX !== undefined ||
+      p.cubeRotY !== undefined ||
+      p.cubeRotZ !== undefined ||
+      p.cubePitch !== undefined
+    ) {
+      const rot = normalizeCubeRotation({
+        cubeRotX: p.cubeRotX ?? this.placementCubeRotX,
+        cubeRotY: p.cubeRotY ?? this.placementCubeRotY,
+        cubeRotZ: p.cubeRotZ ?? this.placementCubeRotZ,
+        cubePitch: p.cubePitch,
+      });
+      this.placementCubeRotX = rot.cubeRotX;
+      this.placementCubeRotY = rot.cubeRotY;
+      this.placementCubeRotZ = rot.cubeRotZ;
+      this.placementPreviewStyleSig = "";
+      if (this.inspectorPlacementPort) {
+        this.inspectorPlacementPort.lastSig = "";
+      }
+    }
     const prism = normalizeBlockPrismParts({
       hex: this.placementHex,
       pyramid: this.placementPyramid,
@@ -3168,6 +3283,20 @@ export class Game {
       this.placementSphereRadiusScale = clampSphereRadiusScale(
         this.placementSphereRadiusScale
       );
+    }
+    if (!isPlainCubeTerrain(prism)) {
+      this.placementCubeRotX = 0;
+      this.placementCubeRotY = 0;
+      this.placementCubeRotZ = 0;
+    } else {
+      const rot = normalizeCubeRotation({
+        cubeRotX: this.placementCubeRotX,
+        cubeRotY: this.placementCubeRotY,
+        cubeRotZ: this.placementCubeRotZ,
+      });
+      this.placementCubeRotX = rot.cubeRotX;
+      this.placementCubeRotY = rot.cubeRotY;
+      this.placementCubeRotZ = rot.cubeRotZ;
     }
     const anchor = this.placementPreviewAnchor;
     if (anchor) {
@@ -3992,6 +4121,12 @@ export class Game {
     return this.floorExpandMode;
   }
 
+  setFloorPlacementColorRgb(rgb: number): void {
+    this.floorPlacementColorRgb = clampColorRgb(rgb);
+    this.syncHighlightColor();
+    this.requestRender(80);
+  }
+
   /**
    * Dynamic-room sky: neutral solid, hue tint, or default water when neither applies.
    */
@@ -4032,10 +4167,20 @@ export class Game {
   }
 
   /** Extra walkable tiles outside the core grid (server-synced). */
-  setExtraFloorTiles(tiles: readonly { x: number; z: number }[]): void {
+  setExtraFloorTiles(
+    tiles: readonly { x: number; z: number; colorRgb?: number }[]
+  ): void {
     this.extraFloorKeys.clear();
+    this.extraFloorColorByKey.clear();
     for (const t of tiles) {
-      this.extraFloorKeys.add(tileKey(t.x, t.z));
+      const k = tileKey(t.x, t.z);
+      this.extraFloorKeys.add(k);
+      this.extraFloorColorByKey.set(
+        k,
+        t.colorRgb !== undefined
+          ? clampColorRgb(t.colorRgb)
+          : TERRAIN_TILE_EXTRA_COLOR
+      );
     }
     this.syncWalkableFloorMeshes();
     this.refreshPathLine();
@@ -4044,18 +4189,53 @@ export class Game {
 
   /** Incremental extra-floor update (server-synced). */
   applyExtraFloorDelta(
-    add: readonly { x: number; z: number }[],
+    add: readonly { x: number; z: number; colorRgb?: number }[],
     remove: readonly string[]
   ): void {
     for (const k of remove) {
       this.extraFloorKeys.delete(k);
+      this.extraFloorColorByKey.delete(k);
     }
     for (const t of add) {
-      this.extraFloorKeys.add(tileKey(t.x, t.z));
+      const k = tileKey(t.x, t.z);
+      this.extraFloorKeys.add(k);
+      this.extraFloorColorByKey.set(
+        k,
+        t.colorRgb !== undefined
+          ? clampColorRgb(t.colorRgb)
+          : TERRAIN_TILE_EXTRA_COLOR
+      );
     }
     this.syncWalkableFloorMeshes();
     this.refreshPathLine();
     this.syncPlacementRangeHints();
+  }
+
+  /** Custom tint on core/base walkable floor (server-synced). */
+  setBaseFloorColorTiles(
+    tiles: readonly { x: number; z: number; colorRgb?: number }[]
+  ): void {
+    this.baseFloorColorByKey.clear();
+    for (const t of tiles) {
+      const k = tileKey(t.x, t.z);
+      if (t.colorRgb === undefined) continue;
+      this.baseFloorColorByKey.set(k, clampColorRgb(t.colorRgb));
+    }
+    this.syncWalkableFloorMeshes();
+  }
+
+  applyBaseFloorColorDelta(
+    add: readonly { x: number; z: number; colorRgb?: number }[],
+    remove: readonly string[]
+  ): void {
+    for (const k of remove) {
+      this.baseFloorColorByKey.delete(k);
+    }
+    for (const t of add) {
+      if (t.colorRgb === undefined) continue;
+      this.baseFloorColorByKey.set(tileKey(t.x, t.z), clampColorRgb(t.colorRgb));
+    }
+    this.syncWalkableFloorMeshes();
   }
 
   setRemovedBaseFloorTiles(tiles: readonly { x: number; z: number }[]): void {
@@ -4074,6 +4254,7 @@ export class Game {
     }
     for (const k of add) {
       this.removedBaseFloorKeys.add(k);
+      this.baseFloorColorByKey.delete(k);
     }
     this.syncWalkableFloorMeshes();
     this.refreshPathLine();
@@ -4839,6 +5020,7 @@ export class Game {
       const sphereRadiusScale = prism.sphere
         ? clampSphereRadiusScale(Number(t.sphereRadiusScale ?? 1))
         : 1;
+      const cubeRot = cubeRotationForPlainCube(prism, t);
       const colorRgb = resolveBlockColorRgb(t);
       const locked = Boolean(t.locked);
       const signboardId =
@@ -4857,6 +5039,7 @@ export class Game {
         sphereRadiusScale,
         ramp: prism.ramp,
         rampDir: prism.ramp ? rampDir : 0,
+        ...cubeRot,
         colorRgb,
         locked,
         signboardId,
@@ -4900,6 +5083,10 @@ export class Game {
       sphere?: boolean;
       ramp?: boolean;
       rampDir?: number;
+      cubeRotX?: number;
+      cubeRotY?: number;
+      cubeRotZ?: number;
+      cubePitch?: number;
       colorRgb?: number;
       locked?: boolean;
       claimable?: boolean;
@@ -4976,6 +5163,7 @@ export class Game {
       const sphereRadiusScale = prism.sphere
         ? clampSphereRadiusScale(Number(t.sphereRadiusScale ?? 1))
         : 1;
+      const cubeRot = cubeRotationForPlainCube(prism, t);
       const colorRgb = resolveBlockColorRgb(t);
       const locked = Boolean(t.locked);
       const signboardId =
@@ -4995,6 +5183,7 @@ export class Game {
         sphereRadiusScale,
         ramp: prism.ramp,
         rampDir: prism.ramp ? rampDir : 0,
+        ...cubeRot,
         colorRgb,
         locked,
         signboardId,
@@ -5072,7 +5261,7 @@ export class Game {
       return;
     }
     if (this.floorExpandMode) {
-      this.tileHighlightMat.color.setHex(0x34d399);
+      this.tileHighlightMat.color.setHex(this.floorPlacementColorRgb);
       return;
     }
     if (this.buildMode) {
@@ -5174,6 +5363,19 @@ export class Game {
         : 1,
       ramp: this.placementRamp,
       rampDir: this.placementRampDir,
+      ...cubeRotationForPlainCube(
+        {
+          hex: this.placementHex,
+          pyramid: this.placementPyramid,
+          sphere: this.placementSphere,
+          ramp: this.placementRamp,
+        },
+        {
+          cubeRotX: this.placementCubeRotX,
+          cubeRotY: this.placementCubeRotY,
+          cubeRotZ: this.placementCubeRotZ,
+        }
+      ),
       colorRgb: this.placementColorRgb,
       claimable: this.placementClaimable || undefined,
       active: this.placementClaimable ? true : undefined,
@@ -5181,7 +5383,16 @@ export class Game {
   }
 
   private placementPreviewStyleSignature(meta: BlockStyleProps): string {
-    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.pyramid}|${meta.pyramidBaseScale ?? 1}|${meta.hexRadiusScale ?? 1}|${meta.sphere}|${meta.sphereRadiusScale ?? 1}|${meta.ramp}|${meta.rampDir}|${meta.colorRgb}|${Boolean(meta.claimable)}|${this.blockVisualScale}`;
+    const rot = cubeRotationForPlainCube(
+      {
+        hex: meta.hex,
+        pyramid: meta.pyramid,
+        sphere: meta.sphere,
+        ramp: meta.ramp,
+      },
+      meta
+    );
+    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.pyramid}|${meta.pyramidBaseScale ?? 1}|${meta.hexRadiusScale ?? 1}|${meta.sphere}|${meta.sphereRadiusScale ?? 1}|${meta.ramp}|${meta.rampDir}|${rot.cubeRotX}|${rot.cubeRotY}|${rot.cubeRotZ}|${meta.colorRgb}|${Boolean(meta.claimable)}|${this.blockVisualScale}`;
   }
 
   /**
@@ -5923,6 +6134,88 @@ export class Game {
     return "sent";
   }
 
+  private tryRemoveFloorTileAt(x: number, z: number): boolean {
+    if (!this.floorExpandMode || !this.removeExtraFloorHandler) return false;
+    const k = tileKey(x, z);
+    if (this.extraFloorKeys.has(k) && !isBaseTile(x, z, this.roomId)) {
+      if (this.hasAnyBlockAtTile(x, z)) return false;
+      this.removeExtraFloorHandler(x, z);
+      return true;
+    }
+    if (!isBuiltinRoomId(this.roomId) && isBaseTile(x, z, this.roomId)) {
+      if (this.hasAnyBlockAtTile(x, z)) return false;
+      this.removeExtraFloorHandler(x, z);
+      return true;
+    }
+    return false;
+  }
+
+  private isFloorRecolorTarget(x: number, z: number): boolean {
+    const k = tileKey(x, z);
+    if (this.extraFloorKeys.has(k) && !isBaseTile(x, z, this.roomId)) {
+      return true;
+    }
+    return isBaseTile(x, z, this.roomId) && !this.removedBaseFloorKeys.has(k);
+  }
+
+  private canPaintFloorTileAt(x: number, z: number): boolean {
+    if (!this.floorExpandMode || this.roomEntrySpawnPickHandler) return false;
+    const k = tileKey(x, z);
+
+    if (this.isFloorRecolorTarget(x, z)) {
+      return true;
+    }
+
+    if (this.hasAnyBlockAtTile(x, z)) return false;
+
+    if (!isBuiltinRoomId(this.roomId)) {
+      if (this.removedBaseFloorKeys.has(k)) return true;
+      if (isBaseTile(x, z, this.roomId)) return false;
+    }
+    if (this.extraFloorKeys.has(k)) return false;
+    return true;
+  }
+
+  private tryPlaceFloorTileAt(x: number, z: number): boolean {
+    if (!this.floorExpandMode || !this.placeExtraFloorHandler) return false;
+    if (!this.canPaintFloorTileAt(x, z)) return false;
+    this.placeExtraFloorHandler(x, z, this.floorPlacementColorRgb);
+    return true;
+  }
+
+  private syncFloorExpandTileHover(clientX: number, clientY: number): void {
+    const t = this.pickFloor(clientX, clientY);
+    if (!t) {
+      this.tileHighlight.visible = false;
+      return;
+    }
+    if (this.roomEntrySpawnPickHandler) {
+      this.tileHighlightMat.color.setHex(
+        this.tileWalkable(t) ? 0x34d399 : 0xef4444
+      );
+    } else {
+      this.tileHighlightMat.color.setHex(this.floorPlacementColorRgb);
+    }
+    this.tileHighlight.position.set(t.x, 0.03, t.y);
+    this.tileHighlight.visible = true;
+  }
+
+  /** Touch / coarse pointer: same tile toggles place vs remove. */
+  private tryFloorExpandToggleAt(x: number, z: number): void {
+    if (this.tryRemoveFloorTileAt(x, z)) return;
+    this.tryPlaceFloorTileAt(x, z);
+  }
+
+  private tryFloorExpandRemoveAtScreen(
+    clientX: number,
+    clientY: number
+  ): boolean {
+    if (!this.floorExpandMode || this.roomEntrySpawnPickHandler) return false;
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest) return false;
+    return this.tryRemoveFloorTileAt(dest.x, dest.y);
+  }
+
   /**
    * Run walk / path request from a screen point (typically pointerup client coords).
    * Active claimable-block mining is started on pointerdown (primary click on the block or
@@ -6020,6 +6313,11 @@ export class Game {
   /** Mouse-style desktop: right-drag camera orbit (not touch / pen-primary tablets). */
   private static canUseRightDragCameraOrbit(e: PointerEvent): boolean {
     if (e.pointerType === "touch") return false;
+    return Game.isDesktopFinePointer();
+  }
+
+  /** Fine pointer + hover (desktop mouse); used for floor LMB place / RMB remove. */
+  private static isDesktopFinePointer(): boolean {
     if (typeof window === "undefined") return false;
     return (
       window.matchMedia("(hover: hover)").matches &&
@@ -6309,14 +6607,7 @@ export class Game {
       return;
     }
     if (this.floorExpandMode) {
-      const t = this.pickFloor(e.clientX, e.clientY);
-      if (!t) {
-        this.tileHighlight.visible = false;
-        this.signboardHoverHandler?.(null);
-        return;
-      }
-      this.tileHighlight.position.set(t.x, 0.03, t.y);
-      this.tileHighlight.visible = true;
+      this.syncFloorExpandTileHover(e.clientX, e.clientY);
       this.signboardHoverHandler?.(null);
       return;
     }
@@ -6657,24 +6948,11 @@ export class Game {
         fn(dest.x, dest.y);
         return;
       }
-      const k = tileKey(dest.x, dest.y);
-      if (this.extraFloorKeys.has(k) && !isBaseTile(dest.x, dest.y, this.roomId)) {
-        if (this.hasAnyBlockAtTile(dest.x, dest.y)) return;
-        this.removeExtraFloorHandler?.(dest.x, dest.y);
-        return;
+      if (Game.isDesktopFinePointer()) {
+        this.tryPlaceFloorTileAt(dest.x, dest.y);
+      } else {
+        this.tryFloorExpandToggleAt(dest.x, dest.y);
       }
-      if (!isBuiltinRoomId(this.roomId)) {
-        if (this.removedBaseFloorKeys.has(k)) {
-          this.placeExtraFloorHandler?.(dest.x, dest.y);
-          return;
-        }
-        if (isBaseTile(dest.x, dest.y, this.roomId)) {
-          if (this.hasAnyBlockAtTile(dest.x, dest.y)) return;
-          this.removeExtraFloorHandler?.(dest.x, dest.y);
-          return;
-        }
-      }
-      this.placeExtraFloorHandler?.(dest.x, dest.y);
       return;
     }
 
@@ -7030,6 +7308,7 @@ export class Game {
     this.clearTeleporterMarkers();
     this.clearVoxelWordSign();
     this.walkableFloorTileGeom.dispose();
+    this.walkableFloorTileTopGeom.dispose();
     this.pathGeom.dispose();
     (this.pathLine.material as THREE.Material).dispose();
     this.trailGeom.dispose();
@@ -7425,37 +7704,65 @@ export class Game {
       const isExtra = !isBaseTile(wx, wz, this.roomId);
       const isDoor = this.doorTileKeys.has(k);
       const isPortalGlow = isDoor || activeTeleporterKeys.has(k);
+      const wantExtraColor = isExtra
+        ? (this.extraFloorColorByKey.get(k) ?? TERRAIN_TILE_EXTRA_COLOR)
+        : undefined;
+      const wantCoreColor = !isExtra
+        ? this.baseFloorColorByKey.get(k)
+        : undefined;
       let mesh = this.walkableFloorMeshes.get(k);
       if (!mesh) {
         mesh = new THREE.Mesh(
           this.walkableFloorTileGeom,
-          createWalkableFloorTileMaterials(isPortalGlow, isExtra)
+          createWalkableFloorTileMaterials(
+            isPortalGlow,
+            isExtra,
+            wantExtraColor,
+            wantCoreColor
+          )
         );
         mesh.scale.set(this.floorTileQuadSize, 1, this.floorTileQuadSize);
-        const topY = 0.01;
         mesh.position.set(
           wx,
-          topY - WALKABLE_FLOOR_TILE_THICKNESS / 2,
+          WALKABLE_FLOOR_TOP_Y - WALKABLE_FLOOR_TILE_THICKNESS / 2,
           wz
         );
         mesh.visible = false;
         mesh.userData["isExtra"] = isExtra;
         mesh.userData["isDoor"] = isDoor;
         mesh.userData["isPortalGlow"] = isPortalGlow;
+        mesh.userData["extraColorRgb"] = wantExtraColor;
+        mesh.userData["coreColorRgb"] = wantCoreColor;
         this.walkableFloorMeshes.set(k, mesh);
       } else {
         const wantExtra = isExtra;
         const wantDoor = isDoor;
         const wantPortalGlow = isPortalGlow;
+        const prevExtraColor = mesh.userData["extraColorRgb"] as
+          | number
+          | undefined;
+        const prevCoreColor = mesh.userData["coreColorRgb"] as
+          | number
+          | undefined;
         if (
           mesh.userData["isExtra"] !== wantExtra ||
           mesh.userData["isDoor"] !== wantDoor ||
-          mesh.userData["isPortalGlow"] !== wantPortalGlow
+          mesh.userData["isPortalGlow"] !== wantPortalGlow ||
+          prevExtraColor !== wantExtraColor ||
+          prevCoreColor !== wantCoreColor
         ) {
-          applyWalkableFloorTileMaterials(mesh, wantPortalGlow, wantExtra);
+          applyWalkableFloorTileMaterials(
+            mesh,
+            wantPortalGlow,
+            wantExtra,
+            wantExtraColor,
+            wantCoreColor
+          );
           mesh.userData["isExtra"] = wantExtra;
           mesh.userData["isDoor"] = wantDoor;
           mesh.userData["isPortalGlow"] = wantPortalGlow;
+          mesh.userData["extraColorRgb"] = wantExtraColor;
+          mesh.userData["coreColorRgb"] = wantCoreColor;
         }
       }
 
@@ -7511,47 +7818,78 @@ export class Game {
 
   private rebuildWalkableFloorVisualMeshes(): void {
     this.disposeWalkableFloorVisualMeshes();
-    const byKind: Record<"core" | "extra" | "portal", THREE.Vector3[]> = {
-      core: [],
-      extra: [],
-      portal: [],
-    };
+    const floorTiles: { wx: number; wz: number; color: number }[] = [];
+    const portalTiles: { wx: number; wz: number }[] = [];
     for (const [, mesh] of this.walkableFloorMeshes) {
-      const kind = mesh.userData["isPortalGlow"]
-        ? "portal"
-        : mesh.userData["isExtra"]
-          ? "extra"
-          : "core";
-      byKind[kind].push(mesh.position);
+      const wx = mesh.position.x;
+      const wz = mesh.position.z;
+      if (mesh.userData["isPortalGlow"]) {
+        portalTiles.push({ wx, wz });
+        continue;
+      }
+      let color: number;
+      if (mesh.userData["isExtra"]) {
+        color =
+          (mesh.userData["extraColorRgb"] as number | undefined) ??
+          TERRAIN_TILE_EXTRA_COLOR;
+      } else {
+        color =
+          (mesh.userData["coreColorRgb"] as number | undefined) ??
+          TERRAIN_TILE_CORE_COLOR;
+      }
+      floorTiles.push({ wx, wz, color });
     }
     const dummy = new THREE.Object3D();
-    const addBatch = (
-      kind: "core" | "extra" | "portal",
-      positions: THREE.Vector3[]
-    ): void => {
-      if (positions.length === 0) return;
+    const tileColor = new THREE.Color();
+    if (floorTiles.length > 0) {
       const batch = new THREE.InstancedMesh(
-        this.walkableFloorTileGeom,
-        createWalkableFloorTileMaterials(kind === "portal", kind === "extra"),
-        positions.length
+        this.walkableFloorTileTopGeom,
+        createWalkableFloorVisualMaterial(),
+        floorTiles.length
       );
       batch.frustumCulled = false;
-      for (let i = 0; i < positions.length; i++) {
-        const p = positions[i]!;
-        dummy.position.copy(p);
-        dummy.rotation.set(0, 0, 0);
-        dummy.scale.set(this.floorTileQuadSize, 1, this.floorTileQuadSize);
-        dummy.updateMatrix();
+      batch.renderOrder = 0;
+      for (let i = 0; i < floorTiles.length; i++) {
+        const t = floorTiles[i]!;
+        setWalkableFloorVisualInstanceTransform(
+          dummy,
+          t.wx,
+          t.wz,
+          this.floorTileQuadSize
+        );
+        batch.setMatrixAt(i, dummy.matrix);
+        tileColor.setHex(t.color);
+        batch.setColorAt(i, tileColor);
+      }
+      batch.instanceMatrix.needsUpdate = true;
+      if (batch.instanceColor) batch.instanceColor.needsUpdate = true;
+      batch.userData["floorVisualKind"] = "solid";
+      this.scene.add(batch);
+      this.walkableFloorVisualMeshes.push(batch);
+    }
+    if (portalTiles.length > 0) {
+      const batch = new THREE.InstancedMesh(
+        this.walkableFloorTileTopGeom,
+        createWalkableFloorTileMaterials(true, false),
+        portalTiles.length
+      );
+      batch.frustumCulled = false;
+      batch.renderOrder = 0;
+      for (let i = 0; i < portalTiles.length; i++) {
+        const t = portalTiles[i]!;
+        setWalkableFloorVisualInstanceTransform(
+          dummy,
+          t.wx,
+          t.wz,
+          this.floorTileQuadSize
+        );
         batch.setMatrixAt(i, dummy.matrix);
       }
       batch.instanceMatrix.needsUpdate = true;
-      batch.userData["floorVisualKind"] = kind;
+      batch.userData["floorVisualKind"] = "portal";
       this.scene.add(batch);
       this.walkableFloorVisualMeshes.push(batch);
-    };
-    addBatch("core", byKind.core);
-    addBatch("extra", byKind.extra);
-    addBatch("portal", byKind.portal);
+    }
   }
 
   private clearVoxelWordSign(): void {
@@ -7873,6 +8211,28 @@ export class Game {
         (prev.sphereRadiusScale ?? 1) === (meta.sphereRadiusScale ?? 1) &&
         prev.ramp === meta.ramp &&
         prev.rampDir === meta.rampDir &&
+        JSON.stringify(
+          cubeRotationForPlainCube(
+            {
+              hex: prev.hex,
+              pyramid: prev.pyramid,
+              sphere: prev.sphere,
+              ramp: prev.ramp,
+            },
+            prev
+          )
+        ) ===
+          JSON.stringify(
+            cubeRotationForPlainCube(
+              {
+                hex: meta.hex,
+                pyramid: meta.pyramid,
+                sphere: meta.sphere,
+                ramp: meta.ramp,
+              },
+              meta
+            )
+          ) &&
         prev.colorRgb === meta.colorRgb &&
         prev.claimable === meta.claimable &&
         prev.active === meta.active &&
@@ -8054,8 +8414,8 @@ export class Game {
     
     const mat = new THREE.MeshStandardMaterial({
       color: base,
-      roughness: 0.65,
-      metalness: 0.15,
+      roughness: PLACED_COLOR_SURFACE_ROUGHNESS,
+      metalness: PLACED_COLOR_SURFACE_METALNESS,
       transparent: ghost || meta.passable,
       opacity: ghost ? 0.42 : meta.passable ? 0.45 : 1,
       depthWrite: ghost ? false : !meta.passable,
@@ -8102,6 +8462,18 @@ export class Game {
         BLOCK_SIZE * vis
       );
       const mesh = new THREE.Mesh(geom, mat);
+      applyPlainCubeMeshRotation(
+        mesh.rotation,
+        cubeRotationForPlainCube(
+          {
+            hex: meta.hex,
+            pyramid: meta.pyramid,
+            sphere: meta.sphere,
+            ramp: meta.ramp,
+          },
+          meta
+        )
+      );
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       g.add(mesh);
@@ -9197,7 +9569,16 @@ export class Game {
   }
 
   private inspectorTilePreviewSignature(meta: BlockStyleProps): string {
-    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.pyramid}|${meta.pyramidBaseScale ?? 1}|${meta.hexRadiusScale ?? 1}|${meta.sphere}|${meta.sphereRadiusScale ?? 1}|${meta.ramp}|${meta.rampDir}|${meta.colorRgb}|${Boolean(meta.claimable)}|${meta.active ? 1 : 0}|${JSON.stringify(meta.gate ?? null)}|${this.blockVisualScale}|${this.floorTileQuadSize}`;
+    const rot = cubeRotationForPlainCube(
+      {
+        hex: meta.hex,
+        pyramid: meta.pyramid,
+        sphere: meta.sphere,
+        ramp: meta.ramp,
+      },
+      meta
+    );
+    return `${meta.half}|${meta.quarter}|${meta.hex}|${meta.pyramid}|${meta.pyramidBaseScale ?? 1}|${meta.hexRadiusScale ?? 1}|${meta.sphere}|${meta.sphereRadiusScale ?? 1}|${meta.ramp}|${meta.rampDir}|${rot.cubeRotX}|${rot.cubeRotY}|${rot.cubeRotZ}|${meta.colorRgb}|${Boolean(meta.claimable)}|${meta.active ? 1 : 0}|${JSON.stringify(meta.gate ?? null)}|${this.blockVisualScale}|${this.floorTileQuadSize}`;
   }
 
   private applyInspectorPreviewFloorPortalGlow(
@@ -9483,8 +9864,19 @@ export class Game {
               pyramidBaseScale: this.inspectorSelectionObstacle.pyramidBaseScale,
               hexRadiusScale: this.inspectorSelectionObstacle.hexRadiusScale,
               sphere: this.inspectorSelectionObstacle.sphere,
+              sphereRadiusScale:
+                this.inspectorSelectionObstacle.sphereRadiusScale,
               ramp: this.inspectorSelectionObstacle.ramp,
               rampDir: this.inspectorSelectionObstacle.rampDir,
+              ...cubeRotationForPlainCube(
+                {
+                  hex: this.inspectorSelectionObstacle.hex,
+                  pyramid: this.inspectorSelectionObstacle.pyramid,
+                  sphere: this.inspectorSelectionObstacle.sphere,
+                  ramp: this.inspectorSelectionObstacle.ramp,
+                },
+                this.inspectorSelectionObstacle
+              ),
               colorRgb: this.inspectorSelectionObstacle.colorRgb,
               ...(this.inspectorSelectionObstacle.claimable
                 ? {

@@ -1,11 +1,16 @@
 import {
   blockColorRgbToHueDeg,
   clampColorRgb,
+  clampCubeRotStep,
+  cubeRotStepLabel,
+  cubeRotationForPlainCube,
+  normalizeCubeRotation,
   clampHexRadiusScale,
   clampPyramidBaseScale,
   clampSphereRadiusScale,
   DEFAULT_BLOCK_COLOR_RGB,
   hueDegToBlockColorRgb,
+  isPlainCubeTerrain,
   normalizeBlockPrismParts,
   resolveBlockColorRgb,
   roomBgColorFromRgb,
@@ -141,6 +146,10 @@ export type BuildBlockBarState = {
   sphere: boolean;
   ramp: boolean;
   rampDir: number;
+  /** Plain cube only: 0–3 = 90° steps per axis. */
+  cubeRotX: number;
+  cubeRotY: number;
+  cubeRotZ: number;
   colorRgb: number;
   // Experimental features
   claimable?: boolean;
@@ -425,6 +434,8 @@ export function createHud(
       claimable?: boolean;
     }) => void
   ) => void;
+  /** Live floor tile tint while expanding room floor (build dock floor hue ring). */
+  onFloorPlacementColor: (fn: (colorRgb: number) => void) => void;
   setBuildBlockBarState: (state: BuildBlockBarState) => void;
   refreshBuildDockToolStrip: () => void;
   isSignpostModeActive: () => boolean;
@@ -3580,6 +3591,26 @@ export function createHud(
             </div>
             <input type="hidden" id="tile-inspector-sphere-size" value="100" aria-valuetext="100%" />
           </div>
+          <div
+            class="tile-inspector__param tile-inspector__param--rotation-trigger"
+            data-build-dock-param="cube-rotation"
+            hidden
+          >
+            <span class="tile-inspector__param-label">Rotation</span>
+            <button
+              type="button"
+              class="hud-build-bottom-dock__cube-rot-trigger"
+              id="build-dock-cube-rot-trigger"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+              title="Cube rotation (X, Y, Z)"
+            >
+              <span
+                class="hud-build-bottom-dock__cube-rot-trigger-label"
+                id="build-dock-cube-rot-trigger-label"
+              >0°, 0°, 0°</span>
+            </button>
+          </div>
           </div>
           <div
             class="tile-inspector__param tile-inspector__param--stepper"
@@ -3694,6 +3725,22 @@ export function createHud(
   const barHueCore = barHueRingParts.core;
   barShapeColorRow.appendChild(barHueRingWrap);
 
+  /** Extra floor tile top color today (`Game.ts` `TERRAIN_TILE_EXTRA_COLOR`); wheel only for now. */
+  const FLOOR_TILE_DEFAULT_COLOR_RGB = 0x3d5a4a;
+  const floorShapeColorRow = document.createElement("div");
+  floorShapeColorRow.className =
+    "hud-mode-sidebar__shape-color-row hud-mode-sidebar__shape-color-row--floor hud-mode-sidebar__shape-color-row--hue-only";
+  floorShapeColorRow.hidden = true;
+  const floorHueRingParts = createPaletteHueRing({
+    ariaLabel: "Floor tile color",
+    title: "Drag the ring for hue. Click the center for a custom hex code.",
+    ariaValueNow: blockColorRgbToHueDeg(FLOOR_TILE_DEFAULT_COLOR_RGB),
+  });
+  const floorHueRingWrap = floorHueRingParts.wrap;
+  const floorHueRing = floorHueRingParts.ring;
+  const floorHueCore = floorHueRingParts.core;
+  floorShapeColorRow.appendChild(floorHueRingWrap);
+
   const hueDockBlockPreview = document.createElement("div");
   hueDockBlockPreview.className = "hud-mode-sidebar__block-preview-dock";
   hueDockBlockPreview.innerHTML = `
@@ -3797,6 +3844,27 @@ export function createHud(
     }
   }
 
+  function barIsPlainCube(): boolean {
+    return (
+      !barHexCb.checked &&
+      !barPyramidCb.checked &&
+      !barSphereCb.checked &&
+      !barRampCb.checked
+    );
+  }
+
+  function panelIsPlainCube(): boolean {
+    if (!panelHexCb || !panelPyramidCb || !panelSphereCb || !panelRampCb) {
+      return false;
+    }
+    return (
+      !panelHexCb.checked &&
+      !panelPyramidCb.checked &&
+      !panelSphereCb.checked &&
+      !panelRampCb.checked
+    );
+  }
+
   function buildDockRotateApplicable(): boolean {
     if (
       objectPanel &&
@@ -3807,6 +3875,8 @@ export function createHud(
       return true;
     }
     if (!buildBlockBar.hidden && barRampCb.checked) return true;
+    if (objectPanel && panelIsPlainCube()) return true;
+    if (!buildBlockBar.hidden && barIsPlainCube()) return true;
     return false;
   }
 
@@ -3822,6 +3892,22 @@ export function createHud(
     buildDockDeleteBtn.hidden = !selection;
     buildDockRotateCcw.hidden = !rotate;
     buildDockRotateCw.hidden = !rotate;
+    const cubeRotate =
+      rotate &&
+      ((objectPanel && panelIsPlainCube()) ||
+        (!buildBlockBar.hidden && barIsPlainCube()));
+    const rotTitle = cubeRotate
+      ? "Rotate cube left (Y axis)"
+      : "Rotate counter-clockwise";
+    buildDockRotateCcw.title = rotTitle;
+    buildDockRotateCcw.setAttribute("aria-label", rotTitle);
+    buildDockRotateCw.title = cubeRotate
+      ? "Rotate cube right (Y axis)"
+      : "Rotate clockwise";
+    buildDockRotateCw.setAttribute(
+      "aria-label",
+      cubeRotate ? "Rotate cube right (Y axis)" : "Rotate clockwise"
+    );
   }
 
   function applyBuildDockRotate(delta: -1 | 1): boolean {
@@ -3837,6 +3923,20 @@ export function createHud(
     }
     if (!buildBlockBar.hidden && barRampCb.checked) {
       rotateBarRamp(delta);
+      return true;
+    }
+    if (objectPanel && panelIsPlainCube()) {
+      if (!tileInspectorCubeRotYInput) return false;
+      applyTileInspectorCubeRotYValue(
+        bumpCubeRotStep(Number(tileInspectorCubeRotYInput.value), delta)
+      );
+      return true;
+    }
+    if (!buildBlockBar.hidden && barIsPlainCube()) {
+      if (!tileInspectorCubeRotYInput) return false;
+      applyTileInspectorCubeRotYValue(
+        bumpCubeRotStep(Number(tileInspectorCubeRotYInput.value), delta)
+      );
       return true;
     }
     return false;
@@ -4334,6 +4434,7 @@ export function createHud(
     ".hud-build-bottom-dock__context-color"
   ) as HTMLElement;
   buildDockContextColor.appendChild(barShapeColorRow);
+  buildDockContextColor.appendChild(floorShapeColorRow);
   buildDockContextColor.appendChild(hueDock);
 
   const buildDockContextTop = buildBottomDockContext.querySelector(
@@ -4376,6 +4477,61 @@ export function createHud(
   buildBottomDockStack.appendChild(buildBottomDockPanel);
   buildBottomDock.appendChild(buildBottomDockStack);
   ui.appendChild(buildDockRoomBgPopover);
+
+  let buildDockCubeRotPopover: HTMLDivElement | null = null;
+  /* Trigger lives under tileInspectorRoot (moved into the dock context above). */
+  const buildDockCubeRotTrigger = tileInspectorRoot.querySelector(
+    "#build-dock-cube-rot-trigger"
+  ) as HTMLButtonElement | null;
+  const buildDockCubeRotTriggerLabel = tileInspectorRoot.querySelector(
+    "#build-dock-cube-rot-trigger-label"
+  ) as HTMLElement | null;
+  buildDockCubeRotPopover = document.createElement("div");
+  buildDockCubeRotPopover.className =
+    "hud-build-bottom-dock__cube-rot-popover";
+  buildDockCubeRotPopover.id = "hud-build-dock-cube-rot-popover";
+  buildDockCubeRotPopover.hidden = true;
+  buildDockCubeRotPopover.setAttribute("role", "dialog");
+  buildDockCubeRotPopover.setAttribute("aria-label", "Rotation");
+  const buildDockCubeRotPopoverInner = document.createElement("div");
+  buildDockCubeRotPopoverInner.className =
+    "hud-build-bottom-dock__cube-rot-popover-inner";
+  const buildDockCubeRotPad = document.createElement("div");
+  buildDockCubeRotPad.className = "hud-build-bottom-dock__cube-rot-pad";
+  buildDockCubeRotPad.innerHTML = `
+    <span class="hud-build-bottom-dock__cube-rot-pad-head">Rotation</span>
+    <div class="hud-build-bottom-dock__cube-rot-axis" data-axis="x">
+      <span class="hud-build-bottom-dock__cube-rot-axis-label">X</span>
+      <div class="tile-inspector__param-stepper">
+        <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-cube-rot-x-dec" aria-label="Decrease X rotation">−</button>
+        <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-cube-rot-x-inc" aria-label="Increase X rotation">+</button>
+        <span class="tile-inspector__param-step-value" id="tile-inspector-cube-rot-x-val">0°</span>
+      </div>
+      <input type="hidden" id="tile-inspector-cube-rot-x" value="0" aria-valuetext="0°" />
+    </div>
+    <div class="hud-build-bottom-dock__cube-rot-axis" data-axis="y">
+      <span class="hud-build-bottom-dock__cube-rot-axis-label">Y</span>
+      <div class="tile-inspector__param-stepper">
+        <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-cube-rot-y-dec" aria-label="Decrease Y rotation">−</button>
+        <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-cube-rot-y-inc" aria-label="Increase Y rotation">+</button>
+        <span class="tile-inspector__param-step-value" id="tile-inspector-cube-rot-y-val">0°</span>
+      </div>
+      <input type="hidden" id="tile-inspector-cube-rot-y" value="0" aria-valuetext="0°" />
+    </div>
+    <div class="hud-build-bottom-dock__cube-rot-axis" data-axis="z">
+      <span class="hud-build-bottom-dock__cube-rot-axis-label">Z</span>
+      <div class="tile-inspector__param-stepper">
+        <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-cube-rot-z-dec" aria-label="Decrease Z rotation">−</button>
+        <button type="button" class="tile-inspector__param-step hud-build-bottom-dock__step" id="tile-inspector-cube-rot-z-inc" aria-label="Increase Z rotation">+</button>
+        <span class="tile-inspector__param-step-value" id="tile-inspector-cube-rot-z-val">0°</span>
+      </div>
+      <input type="hidden" id="tile-inspector-cube-rot-z" value="0" aria-valuetext="0°" />
+    </div>
+  `;
+  buildDockCubeRotPopoverInner.appendChild(buildDockCubeRotPad);
+  buildDockCubeRotPopover.appendChild(buildDockCubeRotPopoverInner);
+  ui.appendChild(buildDockCubeRotPopover);
+
   ui.appendChild(buildEditKindPopover);
 
   function syncBuildEditKindTriggerFromSelect(): void {
@@ -4427,6 +4583,7 @@ export function createHud(
       return;
     }
     setBuildDockRoomBgPopoverOpen(false);
+    setBuildDockCubeRotPopoverOpen(false);
     buildEditKindPopover.hidden = false;
     buildEditKindTrigger.setAttribute("aria-expanded", "true");
     buildEditKindTrigger.classList.add(
@@ -4718,7 +4875,8 @@ export function createHud(
       if (buildToggleBtn.getAttribute("aria-pressed") !== "true") return;
       if (!buildDockRoomEditActive()) {
         buildEditKindSelect.value = "room";
-        playModeHandler("floor");
+        syncBuildEditKindTriggerFromSelect();
+        onBuildEditKindChanged();
       }
     });
     buildBottomDockTools.appendChild(card);
@@ -5051,10 +5209,12 @@ export function createHud(
       setBuildDockRoomBgPopoverOpen(false);
       buildDockRoomSettingsPanel.hidden = true;
       buildBottomDockContext.classList.remove(
-        "hud-build-bottom-dock__context--room-settings"
+        "hud-build-bottom-dock__context--room-settings",
+        "hud-build-bottom-dock__context--floor"
       );
       buildBottomDockContext.hidden = false;
       buildBottomDockTools.hidden = false;
+      syncBuildDockFloorHueRowVisibility();
     }
     syncBuildDockToolStrip();
     requestAnimationFrame(() => updateBuildBottomDockInset());
@@ -5110,6 +5270,9 @@ export function createHud(
 
   const buildBottomDockResizeRo = new ResizeObserver(() => {
     updateBuildBottomDockInset();
+    if (buildDockCubeRotPopover && !buildDockCubeRotPopover.hidden) {
+      layoutBuildDockCubeRotPopover();
+    }
   });
   buildBottomDockResizeRo.observe(buildBottomDock);
   buildBottomDockResizeRo.observe(buildBottomDockPanel);
@@ -5150,6 +5313,7 @@ export function createHud(
       return;
     }
     if (!roomBgSettingsAllowed || !buildDockRoomEditActive()) return;
+    setBuildDockCubeRotPopoverOpen(false);
     setBuildEditKindOverlayOpen(false);
     buildDockRoomBgPopover.hidden = false;
     buildDockRoomBgSwatch.setAttribute("aria-expanded", "true");
@@ -5166,10 +5330,89 @@ export function createHud(
     setBuildDockRoomBgPopoverOpen(buildDockRoomBgPopover.hidden);
   });
 
+  function layoutBuildDockCubeRotPopover(): void {
+    if (!buildDockCubeRotPopover || buildDockCubeRotPopover.hidden) return;
+    const margin = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const pr = buildDockCubeRotPopover.getBoundingClientRect();
+    const minTop = margin;
+
+    if (!buildBottomDockPreviewSatellite.hidden) {
+      const ar = buildBottomDockPreviewSatellite.getBoundingClientRect();
+      let left = ar.left - pr.width - margin;
+      let top = ar.top + (ar.height - pr.height) / 2;
+      left = Math.max(margin, Math.min(left, vw - margin - pr.width));
+      top = Math.max(minTop, Math.min(top, vh - margin - pr.height));
+      buildDockCubeRotPopover.style.left = `${left}px`;
+      buildDockCubeRotPopover.style.top = `${top}px`;
+      return;
+    }
+
+    if (!buildDockCubeRotTrigger) return;
+    const ar = buildDockCubeRotTrigger.getBoundingClientRect();
+    let left = ar.left + ar.width / 2 - pr.width / 2;
+    left = Math.max(margin, Math.min(left, vw - margin - pr.width));
+    let top = ar.top - pr.height - margin;
+    if (top < minTop) {
+      top = ar.bottom + margin;
+    }
+    if (top + pr.height > vh - margin) {
+      top = Math.max(minTop, vh - margin - pr.height);
+    }
+    buildDockCubeRotPopover.style.left = `${left}px`;
+    buildDockCubeRotPopover.style.top = `${top}px`;
+  }
+
+  function setBuildDockCubeRotPopoverOpen(open: boolean): void {
+    if (!buildDockCubeRotPopover || !buildDockCubeRotTrigger) return;
+    if (!open) {
+      buildDockCubeRotPopover.hidden = true;
+      buildDockCubeRotTrigger.setAttribute("aria-expanded", "false");
+      buildDockCubeRotTrigger.classList.remove(
+        "hud-build-bottom-dock__cube-rot-trigger--open"
+      );
+      return;
+    }
+    if (buildDockRoomEditActive()) return;
+    const { pyramid, hex, sphere, ramp } = buildDockContextShapeState();
+    if (hex || pyramid || sphere || ramp) return;
+    setBuildDockRoomBgPopoverOpen(false);
+    setBuildEditKindOverlayOpen(false);
+    buildDockCubeRotPopover.hidden = false;
+    buildDockCubeRotTrigger.setAttribute("aria-expanded", "true");
+    buildDockCubeRotTrigger.classList.add(
+      "hud-build-bottom-dock__cube-rot-trigger--open"
+    );
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => layoutBuildDockCubeRotPopover());
+    });
+  }
+
+  if (buildDockCubeRotTrigger) {
+    buildDockCubeRotTrigger.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+    });
+    buildDockCubeRotTrigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!buildDockCubeRotPopover) return;
+      setBuildDockCubeRotPopoverOpen(buildDockCubeRotPopover.hidden);
+    });
+  }
+
   ui.addEventListener(
     "pointerdown",
     (e) => {
       const t = e.target as Node;
+      if (buildDockCubeRotPopover && !buildDockCubeRotPopover.hidden) {
+        if (
+          !buildDockCubeRotPopover.contains(t) &&
+          buildDockCubeRotTrigger &&
+          !buildDockCubeRotTrigger.contains(t)
+        ) {
+          setBuildDockCubeRotPopoverOpen(false);
+        }
+      }
       if (buildDockRoomBgPopover && !buildDockRoomBgPopover.hidden) {
         if (
           !buildDockRoomBgPopover.contains(t) &&
@@ -5192,6 +5435,9 @@ export function createHud(
 
   window.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    if (buildDockCubeRotPopover && !buildDockCubeRotPopover.hidden) {
+      setBuildDockCubeRotPopoverOpen(false);
+    }
     if (buildDockRoomBgPopover && !buildDockRoomBgPopover.hidden) {
       setBuildDockRoomBgPopoverOpen(false);
     }
@@ -5200,21 +5446,30 @@ export function createHud(
     }
   });
 
+  function syncBuildDockFloorHueRowVisibility(): void {
+    const floorTabActive =
+      buildDockRoomEditActive() && buildDockRoomCategory === "floor";
+    floorShapeColorRow.hidden = !floorTabActive;
+  }
+
   function syncBuildDockRoomCategoryChrome(): void {
     const roomEdit = buildDockRoomEditActive();
     if (!roomEdit) {
       buildDockRoomSettingsPanel.hidden = true;
       buildBottomDockContext.classList.remove(
-        "hud-build-bottom-dock__context--room-settings"
+        "hud-build-bottom-dock__context--room-settings",
+        "hud-build-bottom-dock__context--floor"
       );
       buildBottomDockTools.hidden = false;
       buildBottomDockContext.hidden = false;
       buildDockContextColor.hidden = false;
       buildDockContextTop.hidden = false;
       if (tileInspectorRoot) tileInspectorRoot.hidden = false;
+      syncBuildDockFloorHueRowVisibility();
       return;
     }
     const settingsTab = buildDockRoomCategory === "roomSettings";
+    const floorTab = buildDockRoomCategory === "floor";
     buildBottomDockTools.hidden = settingsTab;
     buildDockRoomSettingsPanel.hidden =
       !settingsTab || !roomBgSettingsAllowed;
@@ -5223,19 +5478,34 @@ export function createHud(
       "hud-build-bottom-dock__context--room-settings",
       settingsTab && roomBgSettingsAllowed
     );
+    buildBottomDockContext.classList.toggle(
+      "hud-build-bottom-dock__context--floor",
+      floorTab
+    );
     if (settingsTab && roomBgSettingsAllowed) {
       buildBottomDockContext.hidden = false;
       buildDockContextColor.hidden = true;
       buildDockContextTop.hidden = true;
       if (tileInspectorRoot) tileInspectorRoot.hidden = true;
+      syncBuildDockFloorHueRowVisibility();
       return;
     }
     setBuildDockRoomBgPopoverOpen(false);
-    /* Floor tab: no placement params in the context column. */
+    setBuildDockCubeRotPopoverOpen(false);
+    if (floorTab) {
+      /* Floor tab: color wheel in the context column (tile tint wired later). */
+      buildBottomDockContext.hidden = false;
+      buildDockContextColor.hidden = false;
+      buildDockContextTop.hidden = true;
+      if (tileInspectorRoot) tileInspectorRoot.hidden = true;
+      syncBuildDockFloorHueRowVisibility();
+      return;
+    }
     buildBottomDockContext.hidden = true;
     buildDockContextColor.hidden = true;
     buildDockContextTop.hidden = true;
     if (tileInspectorRoot) tileInspectorRoot.hidden = true;
+    syncBuildDockFloorHueRowVisibility();
   }
 
   ui.appendChild(buildBottomDock);
@@ -5285,6 +5555,149 @@ export function createHud(
   const tileInspectorSphereSizeInc = tileInspectorRoot.querySelector(
     "#tile-inspector-sphere-size-inc"
   ) as HTMLButtonElement | null;
+  const tileInspectorCubeRotXInput = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-x"
+  ) as HTMLInputElement | null;
+  const tileInspectorCubeRotXVal = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-x-val"
+  ) as HTMLElement | null;
+  const tileInspectorCubeRotXDec = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-x-dec"
+  ) as HTMLButtonElement | null;
+  const tileInspectorCubeRotXInc = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-x-inc"
+  ) as HTMLButtonElement | null;
+  const tileInspectorCubeRotYInput = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-y"
+  ) as HTMLInputElement | null;
+  const tileInspectorCubeRotYVal = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-y-val"
+  ) as HTMLElement | null;
+  const tileInspectorCubeRotYDec = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-y-dec"
+  ) as HTMLButtonElement | null;
+  const tileInspectorCubeRotYInc = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-y-inc"
+  ) as HTMLButtonElement | null;
+  const tileInspectorCubeRotZInput = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-z"
+  ) as HTMLInputElement | null;
+  const tileInspectorCubeRotZVal = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-z-val"
+  ) as HTMLElement | null;
+  const tileInspectorCubeRotZDec = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-z-dec"
+  ) as HTMLButtonElement | null;
+  const tileInspectorCubeRotZInc = buildDockCubeRotPopover?.querySelector(
+    "#tile-inspector-cube-rot-z-inc"
+  ) as HTMLButtonElement | null;
+
+  function syncTileInspectorCubeRotAxisLabel(
+    input: HTMLInputElement | null,
+    valEl: HTMLElement | null,
+    dec: HTMLButtonElement | null,
+    inc: HTMLButtonElement | null
+  ): void {
+    if (!input || !valEl) return;
+    const step = clampCubeRotStep(input.value);
+    input.value = String(step);
+    const label = cubeRotStepLabel(step);
+    valEl.textContent = label;
+    input.setAttribute("aria-valuetext", label);
+    if (dec) dec.disabled = step <= 0;
+    if (inc) inc.disabled = step >= 3;
+  }
+
+  function syncBuildDockCubeRotTriggerLabel(): void {
+    if (!buildDockCubeRotTriggerLabel) return;
+    const rot = normalizeCubeRotation({
+      cubeRotX: Number(tileInspectorCubeRotXInput?.value ?? 0),
+      cubeRotY: Number(tileInspectorCubeRotYInput?.value ?? 0),
+      cubeRotZ: Number(tileInspectorCubeRotZInput?.value ?? 0),
+    });
+    buildDockCubeRotTriggerLabel.textContent = `${cubeRotStepLabel(rot.cubeRotX)}, ${cubeRotStepLabel(rot.cubeRotY)}, ${cubeRotStepLabel(rot.cubeRotZ)}`;
+    if (buildDockCubeRotTrigger) {
+      buildDockCubeRotTrigger.title = `Rotation — X ${cubeRotStepLabel(rot.cubeRotX)}, Y ${cubeRotStepLabel(rot.cubeRotY)}, Z ${cubeRotStepLabel(rot.cubeRotZ)}`;
+    }
+  }
+
+  function syncTileInspectorCubeRotLabels(): void {
+    syncTileInspectorCubeRotAxisLabel(
+      tileInspectorCubeRotXInput,
+      tileInspectorCubeRotXVal,
+      tileInspectorCubeRotXDec,
+      tileInspectorCubeRotXInc
+    );
+    syncTileInspectorCubeRotAxisLabel(
+      tileInspectorCubeRotYInput,
+      tileInspectorCubeRotYVal,
+      tileInspectorCubeRotYDec,
+      tileInspectorCubeRotYInc
+    );
+    syncTileInspectorCubeRotAxisLabel(
+      tileInspectorCubeRotZInput,
+      tileInspectorCubeRotZVal,
+      tileInspectorCubeRotZDec,
+      tileInspectorCubeRotZInc
+    );
+    syncBuildDockCubeRotTriggerLabel();
+  }
+
+  function syncTileInspectorCubeRotFromSteps(
+    rotX: number,
+    rotY: number,
+    rotZ: number
+  ): void {
+    if (tileInspectorCubeRotXInput) {
+      tileInspectorCubeRotXInput.value = String(clampCubeRotStep(rotX));
+    }
+    if (tileInspectorCubeRotYInput) {
+      tileInspectorCubeRotYInput.value = String(clampCubeRotStep(rotY));
+    }
+    if (tileInspectorCubeRotZInput) {
+      tileInspectorCubeRotZInput.value = String(clampCubeRotStep(rotZ));
+    }
+    syncTileInspectorCubeRotLabels();
+  }
+
+  function emitTileInspectorCubeRotChange(): void {
+    const rot = normalizeCubeRotation({
+      cubeRotX: Number(tileInspectorCubeRotXInput?.value ?? 0),
+      cubeRotY: Number(tileInspectorCubeRotYInput?.value ?? 0),
+      cubeRotZ: Number(tileInspectorCubeRotZInput?.value ?? 0),
+    });
+    if (buildDockBlockSelectionParamsActive()) {
+      emitPanelProps();
+      return;
+    }
+    /* Like color preview: update game + 3D only — avoid syncBuildHud resetting steppers. */
+    inspectorPreviewGameRef?.setPlacementBlockStyle(rot);
+  }
+
+  function bumpCubeRotStep(current: number, delta: number): number {
+    return clampCubeRotStep(clampCubeRotStep(current) + delta);
+  }
+
+  function applyTileInspectorCubeRotXValue(next: number): void {
+    if (!tileInspectorCubeRotXInput) return;
+    tileInspectorCubeRotXInput.value = String(clampCubeRotStep(next));
+    syncTileInspectorCubeRotLabels();
+    emitTileInspectorCubeRotChange();
+  }
+
+  function applyTileInspectorCubeRotYValue(next: number): void {
+    if (!tileInspectorCubeRotYInput) return;
+    tileInspectorCubeRotYInput.value = String(clampCubeRotStep(next));
+    syncTileInspectorCubeRotLabels();
+    emitTileInspectorCubeRotChange();
+  }
+
+  function applyTileInspectorCubeRotZValue(next: number): void {
+    if (!tileInspectorCubeRotZInput) return;
+    tileInspectorCubeRotZInput.value = String(clampCubeRotStep(next));
+    syncTileInspectorCubeRotLabels();
+    emitTileInspectorCubeRotChange();
+  }
 
   function syncTileInspectorPyramidBaseLabel(): void {
     if (!tileInspectorPyramidBaseInput || !tileInspectorPyramidBaseVal) return;
@@ -5473,6 +5886,7 @@ export function createHud(
         "pyramid-base",
         "hex-width",
         "sphere-size",
+        "cube-rotation",
         "billboard-edit",
       ] as const) {
         const row = tileInspectorRoot.querySelector(
@@ -5480,6 +5894,7 @@ export function createHud(
         ) as HTMLElement | null;
         if (row) row.hidden = true;
       }
+      setBuildDockCubeRotPopoverOpen(false);
       return;
     }
     const tool = buildDockContextTool();
@@ -5490,6 +5905,7 @@ export function createHud(
       billboardModeActive;
     const blockParams = buildDockContextBlockParamsAllowed();
     const { pyramid, hex, sphere, ramp } = buildDockContextShapeState();
+    const plainCube = !hex && !pyramid && !sphere && !ramp;
     const billboardSelectionEdit = buildDockBillboardSelectionEditActive();
     const ctx = {
       tool,
@@ -5497,6 +5913,7 @@ export function createHud(
       hex,
       sphere,
       ramp,
+      plainCube,
       minimalInspector,
       blockParams,
       billboardSelectionEdit,
@@ -5506,12 +5923,16 @@ export function createHud(
       "pyramid-base",
       "hex-width",
       "sphere-size",
+      "cube-rotation",
       "billboard-edit",
     ] as const) {
       const row = tileInspectorRoot.querySelector(
         `[data-build-dock-param="${id}"]`
       ) as HTMLElement | null;
       if (row) row.hidden = !buildDockContextParamVisible(id, ctx);
+    }
+    if (!buildDockContextParamVisible("cube-rotation", ctx)) {
+      setBuildDockCubeRotPopoverOpen(false);
     }
   }
 
@@ -5559,6 +5980,7 @@ export function createHud(
       hudPlayMode === "floor" ||
       (buildToggleBtn.getAttribute("aria-pressed") === "true" &&
         buildEditKindSelect.value === "room");
+    syncBuildDockFloorHueRowVisibility();
     if (panelShapeColorRow !== null) {
       barShapeColorRow.hidden = true;
     } else {
@@ -6703,8 +7125,14 @@ export function createHud(
     colorRgb?: number;
     hexRadiusScale?: number;
     sphereRadiusScale?: number;
+    cubeRotX?: number;
+    cubeRotY?: number;
+    cubeRotZ?: number;
+    cubePitch?: number;
     claimable?: boolean;
   }) => void = (): void => {};
+
+  let floorPlacementColorHandler: ((colorRgb: number) => void) | null = null;
 
   function syncTileInspectorHeightLabel(): void {
     if (!tileInspectorHeightInput || !tileInspectorHeightVal) return;
@@ -6937,6 +7365,55 @@ export function createHud(
     );
   });
 
+  tileInspectorCubeRotXDec?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorCubeRotXInput) return;
+    applyTileInspectorCubeRotXValue(
+      bumpCubeRotStep(Number(tileInspectorCubeRotXInput.value), -1)
+    );
+  });
+  tileInspectorCubeRotXInc?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorCubeRotXInput) return;
+    applyTileInspectorCubeRotXValue(
+      bumpCubeRotStep(Number(tileInspectorCubeRotXInput.value), 1)
+    );
+  });
+  tileInspectorCubeRotYDec?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorCubeRotYInput) return;
+    applyTileInspectorCubeRotYValue(
+      bumpCubeRotStep(Number(tileInspectorCubeRotYInput.value), -1)
+    );
+  });
+  tileInspectorCubeRotYInc?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorCubeRotYInput) return;
+    applyTileInspectorCubeRotYValue(
+      bumpCubeRotStep(Number(tileInspectorCubeRotYInput.value), 1)
+    );
+  });
+  tileInspectorCubeRotZDec?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorCubeRotZInput) return;
+    applyTileInspectorCubeRotZValue(
+      bumpCubeRotStep(Number(tileInspectorCubeRotZInput.value), -1)
+    );
+  });
+  tileInspectorCubeRotZInc?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!tileInspectorCubeRotZInput) return;
+    applyTileInspectorCubeRotZValue(
+      bumpCubeRotStep(Number(tileInspectorCubeRotZInput.value), 1)
+    );
+  });
+
   barHexCb.addEventListener("change", () => {
     placementStyleHandler({
       hex: barHexCb.checked,
@@ -7090,6 +7567,50 @@ export function createHud(
     triggerAriaLabel: "Custom hex color",
   });
 
+  let floorColorRgb = FLOOR_TILE_DEFAULT_COLOR_RGB;
+  let floorLastHueDeg = blockColorRgbToHueDeg(FLOOR_TILE_DEFAULT_COLOR_RGB);
+  floorHueCore.style.background = cssHex(floorColorRgb);
+
+  function syncFloorColorRgbUi(rgb: number): void {
+    floorColorRgb = clampColorRgb(rgb);
+    floorLastHueDeg = blockColorRgbToHueDeg(floorColorRgb);
+    floorHueRing.setAttribute("aria-valuenow", String(floorLastHueDeg));
+    floorHueCore.style.background = cssHex(floorColorRgb);
+    floorPlacementColorHandler?.(floorColorRgb);
+  }
+
+  function applyFloorHueDegrees(hueDeg: number): void {
+    const h = ((hueDeg % 360) + 360) % 360;
+    floorLastHueDeg = Math.round(h);
+    syncFloorColorRgbUi(hueDegToBlockColorRgb(h));
+  }
+
+  attachPaletteHueRingPointerHandlers(
+    floorHueRingWrap,
+    floorHueRing,
+    (hue) => {
+      applyFloorHueDegrees(hue);
+    },
+    {
+      guard: () => !floorShapeColorRow.hidden,
+    }
+  );
+  attachPaletteHueRingArrowKeys(
+    floorHueRing,
+    () => floorLastHueDeg,
+    applyFloorHueDegrees
+  );
+  attachPaletteHueRingHexPopover({
+    wrap: floorHueRingWrap,
+    core: floorHueCore,
+    getRgb: () => floorColorRgb,
+    onRgbPreview: syncFloorColorRgbUi,
+    onRgbCommit: syncFloorColorRgbUi,
+    guard: () => !floorShapeColorRow.hidden,
+    triggerTitle: "Custom floor hex color",
+    triggerAriaLabel: "Custom floor hex color",
+  });
+
   barShapeBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
       const shape = btn.dataset.shape;
@@ -7099,11 +7620,16 @@ export function createHud(
         barSphereCb.checked = false;
         barRampCb.checked = false;
         barRampDirRow.hidden = true;
+        setBuildDockCubeRotPopoverOpen(false);
+        syncTileInspectorCubeRotFromSteps(0, 0, 0);
         placementStyleHandler({
           hex: false,
           pyramid: false,
           sphere: false,
           ramp: false,
+          cubeRotX: 0,
+          cubeRotY: 0,
+          cubeRotZ: 0,
         });
       } else if (shape === "hex") {
         barHexCb.checked = true;
@@ -7111,11 +7637,16 @@ export function createHud(
         barSphereCb.checked = false;
         barRampCb.checked = false;
         barRampDirRow.hidden = true;
+        setBuildDockCubeRotPopoverOpen(false);
+        syncTileInspectorCubeRotFromSteps(0, 0, 0);
         placementStyleHandler({
           hex: true,
           pyramid: false,
           sphere: false,
           ramp: false,
+          cubeRotX: 0,
+          cubeRotY: 0,
+          cubeRotZ: 0,
         });
       } else if (shape === "pyramid") {
         barPyramidCb.checked = true;
@@ -7123,11 +7654,16 @@ export function createHud(
         barSphereCb.checked = false;
         barRampCb.checked = false;
         barRampDirRow.hidden = true;
+        setBuildDockCubeRotPopoverOpen(false);
+        syncTileInspectorCubeRotFromSteps(0, 0, 0);
         placementStyleHandler({
           pyramid: true,
           hex: false,
           sphere: false,
           ramp: false,
+          cubeRotX: 0,
+          cubeRotY: 0,
+          cubeRotZ: 0,
         });
       } else if (shape === "sphere") {
         barSphereCb.checked = true;
@@ -7135,11 +7671,16 @@ export function createHud(
         barPyramidCb.checked = false;
         barRampCb.checked = false;
         barRampDirRow.hidden = true;
+        setBuildDockCubeRotPopoverOpen(false);
+        syncTileInspectorCubeRotFromSteps(0, 0, 0);
         placementStyleHandler({
           sphere: true,
           hex: false,
           pyramid: false,
           ramp: false,
+          cubeRotX: 0,
+          cubeRotY: 0,
+          cubeRotZ: 0,
         });
       } else if (shape === "ramp") {
         barRampCb.checked = true;
@@ -7147,11 +7688,16 @@ export function createHud(
         barPyramidCb.checked = false;
         barSphereCb.checked = false;
         barRampDirRow.hidden = false;
+        setBuildDockCubeRotPopoverOpen(false);
+        syncTileInspectorCubeRotFromSteps(0, 0, 0);
         placementStyleHandler({
           ramp: true,
           hex: false,
           pyramid: false,
           sphere: false,
+          cubeRotX: 0,
+          cubeRotY: 0,
+          cubeRotZ: 0,
         });
       }
       syncBarShapeButtons();
@@ -7249,6 +7795,7 @@ export function createHud(
     } else {
       resetBuildDockRoomCategoryToFloor();
       setBuildDockRoomBgPopoverOpen(false);
+      setBuildDockCubeRotPopoverOpen(false);
       setBuildEditKindOverlayOpen(false);
       playModeHandler("floor");
     }
@@ -7256,12 +7803,13 @@ export function createHud(
 
   function onBuildEditKindChanged(): void {
     if (buildToggleBtn.getAttribute("aria-pressed") !== "true") return;
-    if (!roomAllowPlaceBlocks || !roomAllowExtraFloor) return;
+    const wantRoom = buildEditKindSelect.value === "room";
+    if (wantRoom && !roomAllowExtraFloor) return;
+    if (!wantRoom && !roomAllowPlaceBlocks) return;
     setBuildDockRoomBgPopoverOpen(false);
+    setBuildDockCubeRotPopoverOpen(false);
     setBuildEditKindOverlayOpen(false);
-    playModeHandler(
-      buildEditKindSelect.value === "room" ? "floor" : "build"
-    );
+    playModeHandler(wantRoom ? "floor" : "build");
     syncHueDockVisibility();
     syncBlockPreviewDockSlots();
     syncBuildBottomDockVisibility();
@@ -7931,7 +8479,10 @@ export function createHud(
       panelSphereCb.checked = false;
       panelRampCb.checked = false;
       if (rampDirRow) rampDirRow.hidden = true;
-    } else if (shape === "hex") {
+    } else {
+      syncTileInspectorCubeRotFromSteps(0, 0, 0);
+    }
+    if (shape === "hex") {
       panelHexCb.checked = true;
       panelPyramidCb.checked = false;
       panelSphereCb.checked = false;
@@ -8154,6 +8705,13 @@ export function createHud(
           Number(tileInspectorSphereSizeInput?.value ?? 100) / 100
         )
       : 1;
+    const cubeRot = isPlainCubeTerrain(prism)
+      ? normalizeCubeRotation({
+          cubeRotX: Number(tileInspectorCubeRotXInput?.value ?? 0),
+          cubeRotY: Number(tileInspectorCubeRotYInput?.value ?? 0),
+          cubeRotZ: Number(tileInspectorCubeRotZInput?.value ?? 0),
+        })
+      : { cubeRotX: 0, cubeRotY: 0, cubeRotZ: 0 };
     return {
       passable: getPanelPassable(),
       quarter,
@@ -8166,6 +8724,7 @@ export function createHud(
       sphereRadiusScale,
       ramp: prism.ramp,
       rampDir: prism.ramp ? rampDir : 0,
+      ...cubeRot,
       colorRgb: panelSelectedColorRgb,
       locked: getPanelLocked(),
       ...(panelClaimable
@@ -8217,7 +8776,13 @@ export function createHud(
       tileInspectorHexWidthDec?.matches(":active") ||
         tileInspectorHexWidthInc?.matches(":active") ||
         tileInspectorSphereSizeDec?.matches(":active") ||
-        tileInspectorSphereSizeInc?.matches(":active")
+        tileInspectorSphereSizeInc?.matches(":active") ||
+        tileInspectorCubeRotXDec?.matches(":active") ||
+        tileInspectorCubeRotXInc?.matches(":active") ||
+        tileInspectorCubeRotYDec?.matches(":active") ||
+        tileInspectorCubeRotYInc?.matches(":active") ||
+        tileInspectorCubeRotZDec?.matches(":active") ||
+        tileInspectorCubeRotZInc?.matches(":active")
     );
   }
 
@@ -8560,6 +9125,51 @@ export function createHud(
       }
     }
     panelRampDir = Math.max(0, Math.min(3, Math.floor(p.rampDir)));
+    if (!tileInspectorPrismSizeStepperUiBusy()) {
+      if (
+        isPlainCubeTerrain({
+          hex: p.ramp ? false : p.hex,
+          pyramid: p.ramp ? false : p.pyramid,
+          sphere: p.ramp ? false : p.sphere,
+          ramp: p.ramp,
+        })
+      ) {
+        const rot = cubeRotationForPlainCube(
+          {
+            hex: p.ramp ? false : p.hex,
+            pyramid: p.ramp ? false : p.pyramid,
+            sphere: p.ramp ? false : p.sphere,
+            ramp: p.ramp,
+          },
+          p
+        );
+        const liveRot = live
+          ? cubeRotationForPlainCube(
+              {
+                hex: live.ramp ? false : live.hex,
+                pyramid: live.ramp ? false : live.pyramid,
+                sphere: live.ramp ? false : live.sphere,
+                ramp: live.ramp,
+              },
+              live
+            )
+          : null;
+        if (
+          !liveRot ||
+          liveRot.cubeRotX !== rot.cubeRotX ||
+          liveRot.cubeRotY !== rot.cubeRotY ||
+          liveRot.cubeRotZ !== rot.cubeRotZ
+        ) {
+          syncTileInspectorCubeRotFromSteps(
+            rot.cubeRotX,
+            rot.cubeRotY,
+            rot.cubeRotZ
+          );
+        }
+      } else {
+        syncTileInspectorCubeRotFromSteps(0, 0, 0);
+      }
+    }
     if (rampDirRow) rampDirRow.hidden = !p.ramp;
     syncPanelShapeButtons();
     syncBuildDockContextParams();
@@ -9350,6 +9960,24 @@ export function createHud(
         ".build-block-bar__ramp-cw"
       ) as HTMLButtonElement;
       panelRampDir = Math.max(0, Math.min(3, Math.floor(opts.rampDir)));
+      {
+        const prism = normalizeBlockPrismParts({
+          hex: opts.ramp ? false : opts.hex,
+          pyramid: opts.ramp ? false : opts.pyramid,
+          sphere: opts.ramp ? false : opts.sphere,
+          ramp: opts.ramp,
+        });
+        if (isPlainCubeTerrain(prism)) {
+          const rot = cubeRotationForPlainCube(prism, opts);
+          syncTileInspectorCubeRotFromSteps(
+            rot.cubeRotX,
+            rot.cubeRotY,
+            rot.cubeRotZ
+          );
+        } else {
+          syncTileInspectorCubeRotFromSteps(0, 0, 0);
+        }
+      }
       panelContextHeightRow = objectPanelContextPopover.querySelector(
         ".build-object-panel-context__height-row"
       ) as HTMLElement | null;
@@ -9503,6 +10131,7 @@ export function createHud(
         panelSphereCb.checked = false;
         panelRampCb.checked = false;
         panelRampDir = 0;
+        syncTileInspectorCubeRotFromSteps(0, 0, 0);
         if (rampDirRow) rampDirRow.hidden = true;
         panelSelectedColorRgb = DEFAULT_BLOCK_COLOR_RGB;
         syncPanelHeightButtons(false, false);
@@ -9620,6 +10249,10 @@ export function createHud(
     onBuildPlacementStyle(fn) {
       placementStyleHandler = fn;
     },
+    onFloorPlacementColor(fn) {
+      floorPlacementColorHandler = fn;
+      fn(floorColorRgb);
+    },
     refreshBuildDockToolStrip() {
       syncBuildDockToolStrip();
     },
@@ -9660,6 +10293,22 @@ export function createHud(
       barRampCb.checked = state.ramp;
       barRampDir = Math.max(0, Math.min(3, Math.floor(state.rampDir)));
       barRampDirRow.hidden = !state.ramp;
+      if (!buildDockBlockSelectionParamsActive()) {
+        const rot = cubeRotationForPlainCube(
+          {
+            hex: state.ramp ? false : state.hex,
+            pyramid: state.ramp ? false : state.pyramid,
+            sphere: state.ramp ? false : state.sphere,
+            ramp: state.ramp,
+          },
+          state
+        );
+        syncTileInspectorCubeRotFromSteps(
+          rot.cubeRotX,
+          rot.cubeRotY,
+          rot.cubeRotZ
+        );
+      }
       const claim = state.claimable ?? false;
       barClaimToggle.setAttribute("aria-pressed", claim ? "true" : "false");
       barClaimToggle.classList.toggle("build-block-bar__claim-toggle--active", claim);

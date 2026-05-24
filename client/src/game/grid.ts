@@ -236,6 +236,11 @@ export type TerrainProps = {
   sphere: boolean;
   ramp: boolean;
   rampDir: number;
+  cubeRotX?: number;
+  cubeRotY?: number;
+  cubeRotZ?: number;
+  /** @deprecated */
+  cubePitch?: number;
   colorRgb: number;
   colorId?: number;
   teleporter?:

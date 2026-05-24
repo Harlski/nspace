@@ -35,11 +35,16 @@ export function isBaseTile(x: number, z: number, roomId: string): boolean {
   );
 }
 
+/** Extra floor tile keys (`Set`) or keyed map (`Map` values are ignored). */
+export type ExtraWalkableRef =
+  | ReadonlySet<string>
+  | ReadonlyMap<string, unknown>;
+
 /** Tile is walkable: base floor for this room or an extra floor tile (within world bounds). */
 export function isWalkableTile(
   x: number,
   z: number,
-  extraWalkable: ReadonlySet<string>,
+  extraWalkable: ExtraWalkableRef,
   roomId: string,
   /** Base tiles carved out in custom rooms (tileKey); omit when none. */
   baseRemoved?: ReadonlySet<string> | null
@@ -131,7 +136,7 @@ function isPassableTile(
   x: number,
   z: number,
   blocked: ReadonlySet<string>,
-  extraWalkable: ReadonlySet<string>,
+  extraWalkable: ExtraWalkableRef,
   roomId: string,
   baseRemoved?: ReadonlySet<string> | null
 ): boolean {
@@ -154,7 +159,7 @@ export function pathfindTiles(
   tx: number,
   tz: number,
   blocked: ReadonlySet<string>,
-  extraWalkable: ReadonlySet<string>,
+  extraWalkable: ExtraWalkableRef,
   roomId: string,
   baseRemoved?: ReadonlySet<string> | null
 ): { x: number; z: number }[] | null {
@@ -275,6 +280,14 @@ export type TerrainProps = {
    * Sphere only: multiplier on radius (`1` = default size).
    */
   sphereRadiusScale?: number;
+  /**
+   * Plain cube only: 0–3 = 0°, 90°, 180°, 270° per axis (visual; walk height unchanged).
+   */
+  cubeRotX?: number;
+  cubeRotY?: number;
+  cubeRotZ?: number;
+  /** @deprecated Migrated to `cubeRotX` on load. */
+  cubePitch?: number;
 };
 
 export function normalizeWalletKey(addr: string): string {
@@ -394,6 +407,67 @@ export function clampSphereRadiusScale(v: number): number {
   );
 }
 
+export function isPlainCubeTerrain(parts: {
+  hex: boolean;
+  pyramid: boolean;
+  sphere: boolean;
+  ramp: boolean;
+}): boolean {
+  return !parts.hex && !parts.pyramid && !parts.sphere && !parts.ramp;
+}
+
+export function clampCubePitch(v: unknown): number {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n) || n !== 1) return 0;
+  return 1;
+}
+
+export type CubeRotation = {
+  cubeRotX: number;
+  cubeRotY: number;
+  cubeRotZ: number;
+};
+
+export function clampCubeRotStep(v: unknown): number {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n)) return 0;
+  return ((n % 4) + 4) % 4;
+}
+
+export function normalizeCubeRotation(src: {
+  cubeRotX?: unknown;
+  cubeRotY?: unknown;
+  cubeRotZ?: unknown;
+  cubePitch?: unknown;
+}): CubeRotation {
+  const rotX =
+    src.cubeRotX !== undefined
+      ? clampCubeRotStep(src.cubeRotX)
+      : clampCubePitch(src.cubePitch) === 1
+        ? 1
+        : 0;
+  return {
+    cubeRotX: rotX,
+    cubeRotY: clampCubeRotStep(src.cubeRotY ?? 0),
+    cubeRotZ: clampCubeRotStep(src.cubeRotZ ?? 0),
+  };
+}
+
+export function cubeRotationForPlainCube(
+  parts: { hex: boolean; pyramid: boolean; sphere: boolean; ramp: boolean },
+  src: {
+    cubeRotX?: unknown;
+    cubeRotY?: unknown;
+    cubeRotZ?: unknown;
+    cubePitch?: unknown;
+  }
+): CubeRotation {
+  if (!isPlainCubeTerrain(parts)) {
+    return { cubeRotX: 0, cubeRotY: 0, cubeRotZ: 0 };
+  }
+  return normalizeCubeRotation(src);
+}
+
 /** Canonicalize prism shape flags (ramp wins, then sphere, pyramid, then hex). */
 export function normalizeBlockPrismParts(input: {
   hex?: boolean;
@@ -445,6 +519,12 @@ export function coerceTerrainPrismFields(p: TerrainProps): TerrainProps {
       ...out,
       sphereRadiusScale: clampSphereRadiusScale(merged.sphereRadiusScale ?? 1),
     };
+  }
+  if (!isPlainCubeTerrain(n)) {
+    out = { ...out, cubeRotX: 0, cubeRotY: 0, cubeRotZ: 0 };
+  } else {
+    const rot = normalizeCubeRotation(merged);
+    out = { ...out, ...rot };
   }
   return coerceTerrainColorFields(out);
 }
@@ -559,7 +639,7 @@ export function floorWalkableTerrain(
   x: number,
   z: number,
   placed: ReadonlyMap<string, TerrainProps>,
-  extraWalkable: ReadonlySet<string>,
+  extraWalkable: ExtraWalkableRef,
   roomId: string,
   baseRemoved?: ReadonlySet<string> | null
 ): boolean {
@@ -575,7 +655,7 @@ export function floorWalkableTerrainForMover(
   x: number,
   z: number,
   placed: ReadonlyMap<string, TerrainProps>,
-  extraWalkable: ReadonlySet<string>,
+  extraWalkable: ExtraWalkableRef,
   roomId: string,
   baseRemoved: ReadonlySet<string> | null | undefined,
   moverAddress: string | null,
@@ -595,7 +675,7 @@ export function canPlaceTeleporterFoot(
   x: number,
   z: number,
   placed: ReadonlyMap<string, TerrainProps>,
-  extraWalkable: ReadonlySet<string>,
+  extraWalkable: ExtraWalkableRef,
   baseRemoved?: ReadonlySet<string> | null
 ): boolean {
   if (!floorWalkableTerrain(x, z, placed, extraWalkable, roomId, baseRemoved)) return false;
@@ -690,7 +770,7 @@ export function pathfindTerrain(
   tz: number,
   goalLayer: 0 | 1,
   placed: ReadonlyMap<string, TerrainProps>,
-  extraWalkable: ReadonlySet<string>,
+  extraWalkable: ExtraWalkableRef,
   roomId: string,
   baseRemoved?: ReadonlySet<string> | null,
   moverCtx?: PathfindMoverContext | null

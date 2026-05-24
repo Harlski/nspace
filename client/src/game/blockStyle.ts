@@ -220,6 +220,14 @@ export type BlockStyleProps = {
   sphereRadiusScale?: number;
   ramp: boolean;
   rampDir: number;
+  /**
+   * Plain cube only: 0–3 = 0°, 90°, 180°, 270° on each axis (visual only; walk height unchanged).
+   */
+  cubeRotX?: number;
+  cubeRotY?: number;
+  cubeRotZ?: number;
+  /** @deprecated Migrated to `cubeRotX` on load (`1` → one 90° X step). */
+  cubePitch?: number;
   /** Block tint 0xRRGGBB (hue ring). */
   colorRgb: number;
   /** Legacy persisted index; ignored when `colorRgb` is set on wire. */
@@ -286,6 +294,85 @@ export function clampSphereRadiusScale(v: number): number {
     SPHERE_RADIUS_SCALE_MIN,
     Math.min(SPHERE_RADIUS_SCALE_MAX, x)
   );
+}
+
+/** True when terrain props are a plain cube (not hex / pyramid / sphere / ramp). */
+export function isPlainCubeTerrain(parts: {
+  hex: boolean;
+  pyramid: boolean;
+  sphere: boolean;
+  ramp: boolean;
+}): boolean {
+  return !parts.hex && !parts.pyramid && !parts.sphere && !parts.ramp;
+}
+
+export function clampCubePitch(v: unknown): number {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n) || n !== 1) return 0;
+  return 1;
+}
+
+export type CubeRotation = {
+  cubeRotX: number;
+  cubeRotY: number;
+  cubeRotZ: number;
+};
+
+/** Plain-cube orientation step: 0–3 (multiples of 90°). */
+export function clampCubeRotStep(v: unknown): number {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n)) return 0;
+  return ((n % 4) + 4) % 4;
+}
+
+export function cubeRotStepLabel(step: number): string {
+  const s = clampCubeRotStep(step);
+  return s === 0 ? "0°" : `${s * 90}°`;
+}
+
+/** Read persisted cube orientation; migrates legacy `cubePitch`. */
+export function normalizeCubeRotation(src: {
+  cubeRotX?: unknown;
+  cubeRotY?: unknown;
+  cubeRotZ?: unknown;
+  cubePitch?: unknown;
+}): CubeRotation {
+  const rotX =
+    src.cubeRotX !== undefined
+      ? clampCubeRotStep(src.cubeRotX)
+      : clampCubePitch(src.cubePitch) === 1
+        ? 1
+        : 0;
+  return {
+    cubeRotX: rotX,
+    cubeRotY: clampCubeRotStep(src.cubeRotY ?? 0),
+    cubeRotZ: clampCubeRotStep(src.cubeRotZ ?? 0),
+  };
+}
+
+export function applyPlainCubeMeshRotation(
+  rotation: { order: string; x: number; y: number; z: number },
+  rot: CubeRotation
+): void {
+  rotation.order = "XYZ";
+  rotation.x = clampCubeRotStep(rot.cubeRotX) * (Math.PI / 2);
+  rotation.y = clampCubeRotStep(rot.cubeRotY) * (Math.PI / 2);
+  rotation.z = clampCubeRotStep(rot.cubeRotZ) * (Math.PI / 2);
+}
+
+export function cubeRotationForPlainCube(
+  parts: { hex: boolean; pyramid: boolean; sphere: boolean; ramp: boolean },
+  src: {
+    cubeRotX?: unknown;
+    cubeRotY?: unknown;
+    cubeRotZ?: unknown;
+    cubePitch?: unknown;
+  }
+): CubeRotation {
+  if (!isPlainCubeTerrain(parts)) {
+    return { cubeRotX: 0, cubeRotY: 0, cubeRotZ: 0 };
+  }
+  return normalizeCubeRotation(src);
 }
 
 export function normalizeBlockPrismParts(input: {

@@ -23,7 +23,7 @@ Use these to match existing floor, highlight, and blocks:
 
 | Element            | Approximate size / placement                                                                                              |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| Walkable floor     | Plane **0.98 × 0.98**, centered on `(tileX, 0.01, tileZ)` — small inset vs. 1×1 to reduce z-fighting between neighbors |
+| Walkable floor     | Instanced horizontal top quads, default **1.01×1.01** footprint (admin-tunable **tile quad scale**), centered on `(tileX, 0.01, tileZ)` — lit **`MeshStandardMaterial`** matching placed blocks; overlap hides subpixel void gaps |
 | Selection highlight| **0.92 × 0.92** at **y ≈ 0.02–0.03**                                                                                      |
 | Block (box)        | Footprint **`BLOCK_SIZE` (0.82)**, centered on tile; height = full / half / quarter of that                                 |
 | Block (hex)        | Hex prism with radius **≈ 0.47**, same xz center, **y = h/2**                                                              |

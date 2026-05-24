@@ -19,6 +19,9 @@ const LEGACY_BLOCK_COLOR_PALETTE: readonly number[] = [
 ];
 
 export const DEFAULT_BLOCK_COLOR_RGB = 0x5b6b8c;
+
+/** Default top color for player-placed extra floor tiles (matches client `TERRAIN_TILE_EXTRA_COLOR`). */
+export const DEFAULT_EXTRA_FLOOR_COLOR_RGB = 0x3d5a4a;
 /** Default gate panel tint (legacy palette index 7). */
 export const DEFAULT_GATE_BLOCK_COLOR_RGB = 0x795548;
 export const BLOCK_COLOR_MAZE_RGB = 0x9c27b0;
@@ -51,4 +54,12 @@ export function resolveBlockColorRgb(props: {
     return clampColorRgb(Number(raw));
   }
   return legacyPaletteRgb(props.colorId ?? 0);
+}
+
+export function resolveExtraFloorColorRgb(raw: unknown): number {
+  const n = Math.floor(Number(raw));
+  if (Number.isFinite(n)) {
+    return Math.max(0, Math.min(0xffffff, n));
+  }
+  return DEFAULT_EXTRA_FLOOR_COLOR_RGB;
 }

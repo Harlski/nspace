@@ -13,6 +13,7 @@ import { CHAMBER_DEFAULT_SPAWN, ROOM_ID, VIEW_FRUSTUM_SIZE } from "./game/consta
 import {
   type BlockStyleProps,
   BLOCK_COLOR_EXIT_PORTAL_RGB,
+  cubeRotationForPlainCube,
   resolveBlockColorRgb,
 } from "./game/blockStyle.js";
 import {
@@ -125,6 +126,15 @@ function placedMetaToPanelObstacleProps(
     sphere: m.sphere,
     ramp: m.ramp,
     rampDir: m.rampDir,
+    ...cubeRotationForPlainCube(
+      {
+        hex: m.hex,
+        pyramid: m.pyramid,
+        sphere: m.sphere,
+        ramp: m.ramp,
+      },
+      m
+    ),
     colorRgb: m.colorRgb ?? resolveBlockColorRgb(m),
     locked: m.locked || false,
     editorTileX: x,
@@ -1980,7 +1990,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       hud.setStatus(
         touchUi
           ? `Floor — tap tiles next to walkable space (F or Build off when done)${entryPickHint}`
-          : `Expand floor — click next to walkable space to add a tile; click an extra tile again to remove it (F to exit).${entryPickHint}`
+          : `Expand floor — left-click to add a tile; right-click to remove (F to exit).${entryPickHint}`
       );
       hud.setBuildBlockBarState({
         visible: false,
@@ -2119,6 +2129,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   hud.onBuildPlacementStyle((patch) => {
     game.setPlacementBlockStyle(patch);
     syncBuildHud();
+  });
+  hud.onFloorPlacementColor((rgb) => {
+    game.setFloorPlacementColorRgb(rgb);
   });
 
   const wireWsHandlers = (socket: WebSocket): void => {
@@ -2501,8 +2514,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       if (toY === null) return;
       sendMoveObstacle(socket, fromX, fromZ, fromY, toX, toZ, toY);
     });
-    game.setPlaceExtraFloorHandler((x, z) => {
-      sendPlaceExtraFloor(socket, x, z);
+    game.setPlaceExtraFloorHandler((x, z, colorRgb) => {
+      sendPlaceExtraFloor(socket, x, z, colorRgb);
     });
     game.setRemoveExtraFloorHandler((x, z) => {
       sendRemoveExtraFloor(socket, x, z);
@@ -2759,6 +2772,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         sphere: m.sphere,
         ramp: m.ramp,
         rampDir: m.rampDir,
+        ...cubeRotationForPlainCube(
+          {
+            hex: m.hex,
+            pyramid: m.pyramid,
+            sphere: m.sphere,
+            ramp: m.ramp,
+          },
+          m
+        ),
         colorRgb: m.colorRgb ?? resolveBlockColorRgb(m),
         locked: m.locked || false,
         isAdmin: isAdmin(selfAddress),
@@ -3199,6 +3221,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       // Extra floor before obstacles so walkable quads sit earlier in the scene graph
       // than blocks on those tiles (avoids depth-tie flicker until blocks are rebuilt).
       game.setExtraFloorTiles(msg.extraFloorTiles);
+      game.setBaseFloorColorTiles(msg.baseFloorColorTiles ?? []);
       game.setRemovedBaseFloorTiles(msg.removedBaseFloorTiles ?? []);
       game.setObstacles(msg.obstacles);
       game.setSignboards(msg.signboards);
@@ -3533,6 +3556,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
     if (msg.type === "extraFloorDelta") {
       game.applyExtraFloorDelta(msg.add, msg.remove);
+      syncBuildHud();
+    }
+    if (msg.type === "baseFloorColorDelta") {
+      if (normalizeRoomId(msg.roomId) === normalizeRoomId(game.getRoomId())) {
+        game.applyBaseFloorColorDelta(msg.add, msg.remove);
+      }
       syncBuildHud();
     }
     if (msg.type === "removedBaseFloorDelta") {

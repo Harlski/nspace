@@ -5,6 +5,134 @@ import {
   normalizeTeleporterPropsForLoad,
   type TerrainProps,
 } from "./grid.js";
+import {
+  clampColorRgb,
+  DEFAULT_EXTRA_FLOOR_COLOR_RGB,
+} from "./blockColors.js";
+
+export type ExtraFloorColorMap = Map<string, number>;
+
+type PersistedExtraFloorEntry =
+  | string
+  | { x: number; z: number; colorRgb?: number; tile?: string; tileKey?: string };
+
+function normalizeTileKeyFromString(raw: string): string | null {
+  const parts = raw.trim().split(",").map((p) => p.trim());
+  if (parts.length !== 2) return null;
+  const x = Number(parts[0]);
+  const z = Number(parts[1]);
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+  return `${Math.round(x)},${Math.round(z)}`;
+}
+
+function extraFloorColorFromEntry(
+  colorRgb: unknown
+): number {
+  if (colorRgb !== undefined && Number.isFinite(Number(colorRgb))) {
+    return clampColorRgb(Number(colorRgb));
+  }
+  return DEFAULT_EXTRA_FLOOR_COLOR_RGB;
+}
+
+function loadExtraFloorEntries(entries: unknown): ExtraFloorColorMap {
+  const map: ExtraFloorColorMap = new Map();
+  if (entries == null) return map;
+
+  if (!Array.isArray(entries)) {
+    if (typeof entries === "object") {
+      for (const [rawKey, value] of Object.entries(entries)) {
+        const k = normalizeTileKeyFromString(rawKey);
+        if (k) map.set(k, extraFloorColorFromEntry(value));
+      }
+    }
+    return map;
+  }
+
+  for (const entry of entries) {
+    if (typeof entry === "string") {
+      const k = normalizeTileKeyFromString(entry);
+      if (k) map.set(k, DEFAULT_EXTRA_FLOOR_COLOR_RGB);
+      continue;
+    }
+    if (entry && typeof entry === "object") {
+      const o = entry as PersistedExtraFloorEntry & {
+        x?: unknown;
+        z?: unknown;
+        colorRgb?: unknown;
+        tile?: unknown;
+        tileKey?: unknown;
+      };
+      const tileStr =
+        typeof o.tile === "string"
+          ? o.tile
+          : typeof o.tileKey === "string"
+            ? o.tileKey
+            : null;
+      if (tileStr) {
+        const k = normalizeTileKeyFromString(tileStr);
+        if (k) map.set(k, extraFloorColorFromEntry(o.colorRgb));
+        continue;
+      }
+      const x = Number(o.x);
+      const z = Number(o.z);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+      const k = `${Math.round(x)},${Math.round(z)}`;
+      map.set(k, extraFloorColorFromEntry(o.colorRgb));
+    }
+  }
+  return map;
+}
+
+/** Merge extra floor from legacy `world-state.json` when split room files omit tiles. */
+function mergeLegacyExtraFloorFromFile(
+  roomExtraFloor: Map<string, ExtraFloorColorMap>,
+  normalizeRoomId: (id: string) => string
+): void {
+  if (!fs.existsSync(STATE_FILE)) return;
+  try {
+    const raw = JSON.parse(fs.readFileSync(STATE_FILE, "utf8")) as PersistedFile;
+    if (raw.version !== 1 || !raw.rooms || typeof raw.rooms !== "object") return;
+    let merged = 0;
+    for (const [ridRaw, room] of Object.entries(raw.rooms)) {
+      const roomId = normalizeRoomId(ridRaw);
+      const legacy = loadExtraFloorEntries(room.extraFloor);
+      if (legacy.size === 0) continue;
+      let current = roomExtraFloor.get(roomId);
+      if (!current) {
+        roomExtraFloor.set(roomId, legacy);
+        merged += legacy.size;
+        continue;
+      }
+      for (const [k, color] of legacy) {
+        if (!current.has(k)) {
+          current.set(k, color);
+          merged++;
+        }
+      }
+    }
+    if (merged > 0) {
+      console.log(
+        `[world] merged ${merged} extra floor tile(s) from legacy ${STATE_FILE}`
+      );
+    }
+  } catch (e) {
+    console.warn("[world] legacy extra-floor merge skipped", e);
+  }
+}
+
+function serializeExtraFloor(map: ExtraFloorColorMap): Array<{
+  x: number;
+  z: number;
+  colorRgb: number;
+}> {
+  const out: Array<{ x: number; z: number; colorRgb: number }> = [];
+  for (const [k, colorRgb] of map) {
+    const [x, z] = k.split(",").map(Number);
+    out.push({ x: x!, z: z!, colorRgb });
+  }
+  out.sort((a, b) => a.x - b.x || a.z - b.z || a.colorRgb - b.colorRgb);
+  return out;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -21,7 +149,9 @@ const STATE_VERSION = 1 as const;
 
 type PersistedRoom = {
   obstacles: Array<{ tile: string; props: TerrainProps }>;
-  extraFloor: string[];
+  extraFloor: PersistedExtraFloorEntry[];
+  /** Custom tint on core/base walkable floor tiles. */
+  baseFloorColors?: PersistedExtraFloorEntry[];
   /** Carved-out base tiles in custom rooms (tileKey "x,z"). */
   removedBaseFloor?: string[];
   /** Last disconnect position; `y` is feet height (on block top or floor). */
@@ -37,7 +167,8 @@ type PersistedRoomGeometry = {
   version: typeof STATE_VERSION;
   roomId: string;
   obstacles: Array<{ tile: string; props: TerrainProps }>;
-  extraFloor: string[];
+  extraFloor: PersistedExtraFloorEntry[];
+  baseFloorColors?: PersistedExtraFloorEntry[];
   removedBaseFloor?: string[];
 };
 
@@ -82,7 +213,8 @@ function writeJsonAtomically(filePath: string, payload: unknown): void {
 
 function loadLegacyWorldState(
   roomPlaced: Map<string, Map<string, TerrainProps>>,
-  roomExtraFloor: Map<string, Set<string>>,
+  roomExtraFloor: Map<string, ExtraFloorColorMap>,
+  roomBaseFloorColors: Map<string, ExtraFloorColorMap>,
   roomBaseFloorRemoved: Map<string, Set<string>>,
   lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
   normalizeRoomId: (id: string) => string
@@ -114,8 +246,10 @@ function loadLegacyWorldState(
       }
       roomPlaced.set(roomId, placed);
 
-      const ex = new Set<string>(room.extraFloor ?? []);
+      const ex = loadExtraFloorEntries(room.extraFloor);
       roomExtraFloor.set(roomId, ex);
+
+      roomBaseFloorColors.set(roomId, loadExtraFloorEntries(room.baseFloorColors));
 
       const rb = new Set<string>(room.removedBaseFloor ?? []);
       roomBaseFloorRemoved.set(roomId, rb);
@@ -155,7 +289,8 @@ function hasSplitState(): boolean {
 
 function loadSplitWorldState(
   roomPlaced: Map<string, Map<string, TerrainProps>>,
-  roomExtraFloor: Map<string, Set<string>>,
+  roomExtraFloor: Map<string, ExtraFloorColorMap>,
+  roomBaseFloorColors: Map<string, ExtraFloorColorMap>,
   roomBaseFloorRemoved: Map<string, Set<string>>,
   lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
   normalizeRoomId: (id: string) => string
@@ -184,7 +319,11 @@ function loadSplitWorldState(
           );
         }
         roomPlaced.set(roomId, placed);
-        roomExtraFloor.set(roomId, new Set<string>(raw.extraFloor ?? []));
+        roomExtraFloor.set(roomId, loadExtraFloorEntries(raw.extraFloor));
+        roomBaseFloorColors.set(
+          roomId,
+          loadExtraFloorEntries(raw.baseFloorColors)
+        );
         roomBaseFloorRemoved.set(
           roomId,
           new Set<string>(raw.removedBaseFloor ?? [])
@@ -230,7 +369,8 @@ const SAVE_DEBOUNCE_MS = 400;
 
 let refs: {
   roomPlaced: Map<string, Map<string, TerrainProps>>;
-  roomExtraFloor: Map<string, Set<string>>;
+  roomExtraFloor: Map<string, ExtraFloorColorMap>;
+  roomBaseFloorColors: Map<string, ExtraFloorColorMap>;
   roomBaseFloorRemoved: Map<string, Set<string>>;
   lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>;
   normalizeRoomId: (id: string) => string;
@@ -238,12 +378,20 @@ let refs: {
 
 export function registerWorldStateRefs(
   roomPlaced: Map<string, Map<string, TerrainProps>>,
-  roomExtraFloor: Map<string, Set<string>>,
+  roomExtraFloor: Map<string, ExtraFloorColorMap>,
+  roomBaseFloorColors: Map<string, ExtraFloorColorMap>,
   roomBaseFloorRemoved: Map<string, Set<string>>,
   lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
   normalizeRoomId: (id: string) => string
 ): void {
-  refs = { roomPlaced, roomExtraFloor, roomBaseFloorRemoved, lastSpawnByRoom, normalizeRoomId };
+  refs = {
+    roomPlaced,
+    roomExtraFloor,
+    roomBaseFloorColors,
+    roomBaseFloorRemoved,
+    lastSpawnByRoom,
+    normalizeRoomId,
+  };
 }
 
 /**
@@ -252,7 +400,8 @@ export function registerWorldStateRefs(
  */
 export function loadWorldState(
   roomPlaced: Map<string, Map<string, TerrainProps>>,
-  roomExtraFloor: Map<string, Set<string>>,
+  roomExtraFloor: Map<string, ExtraFloorColorMap>,
+  roomBaseFloorColors: Map<string, ExtraFloorColorMap>,
   roomBaseFloorRemoved: Map<string, Set<string>>,
   lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
   normalizeRoomId: (id: string) => string
@@ -261,16 +410,19 @@ export function loadWorldState(
     loadSplitWorldState(
       roomPlaced,
       roomExtraFloor,
+      roomBaseFloorColors,
       roomBaseFloorRemoved,
       lastSpawnByRoom,
       normalizeRoomId
     );
+    mergeLegacyExtraFloorFromFile(roomExtraFloor, normalizeRoomId);
     console.log(`[world] loaded split state from ${ROOMS_DIR} + ${SPAWNS_DIR}`);
     return;
   }
   loadLegacyWorldState(
     roomPlaced,
     roomExtraFloor,
+    roomBaseFloorColors,
     roomBaseFloorRemoved,
     lastSpawnByRoom,
     normalizeRoomId
@@ -300,11 +452,12 @@ export function flushPersistWorldStateSync(): void {
 
 function persistWorldStateNow(): void {
   if (!refs) return;
-  const { roomPlaced, roomExtraFloor, roomBaseFloorRemoved, lastSpawnByRoom, normalizeRoomId } =
+  const { roomPlaced, roomExtraFloor, roomBaseFloorColors, roomBaseFloorRemoved, lastSpawnByRoom, normalizeRoomId } =
     refs;
   const roomIds = new Set<string>();
   for (const k of roomPlaced.keys()) roomIds.add(k);
   for (const k of roomExtraFloor.keys()) roomIds.add(k);
+  for (const k of roomBaseFloorColors.keys()) roomIds.add(k);
   for (const k of roomBaseFloorRemoved.keys()) roomIds.add(k);
   for (const k of lastSpawnByRoom.keys()) roomIds.add(k);
 
@@ -315,6 +468,7 @@ function persistWorldStateNow(): void {
   for (const roomId of roomIds) {
     const placed = roomPlaced.get(roomId);
     const ex = roomExtraFloor.get(roomId);
+    const baseColors = roomBaseFloorColors.get(roomId);
     const rb = roomBaseFloorRemoved.get(roomId);
     const spawns = lastSpawnByRoom.get(roomId);
     const obstacles: PersistedRoom["obstacles"] = [];
@@ -323,7 +477,8 @@ function persistWorldStateNow(): void {
         obstacles.push({ tile, props: { ...props } });
       }
     }
-    const extraFloor = ex ? [...ex].sort() : [];
+    const extraFloor = ex ? serializeExtraFloor(ex) : [];
+    const baseFloorColors = baseColors ? serializeExtraFloor(baseColors) : [];
     const removedBaseFloor = rb && rb.size > 0 ? [...rb].sort() : [];
     const spawnObj: Record<string, { x: number; z: number; y?: number }> = {};
     if (spawns) {
@@ -338,6 +493,7 @@ function persistWorldStateNow(): void {
     if (
       obstacles.length === 0 &&
       extraFloor.length === 0 &&
+      baseFloorColors.length === 0 &&
       removedBaseFloor.length === 0 &&
       Object.keys(spawnObj).length === 0
     ) {
@@ -350,13 +506,19 @@ function persistWorldStateNow(): void {
     }
 
     const normalizedRoomId = normalizeRoomId(roomId);
-    if (obstacles.length > 0 || extraFloor.length > 0 || removedBaseFloor.length > 0) {
+    if (
+      obstacles.length > 0 ||
+      extraFloor.length > 0 ||
+      baseFloorColors.length > 0 ||
+      removedBaseFloor.length > 0
+    ) {
       geometryRoomIds.add(normalizedRoomId);
       const payload: PersistedRoomGeometry = {
         version: STATE_VERSION,
         roomId: normalizedRoomId,
         obstacles,
         extraFloor,
+        ...(baseFloorColors.length > 0 ? { baseFloorColors } : {}),
         ...(removedBaseFloor.length > 0 ? { removedBaseFloor } : {}),
       };
       writeJsonAtomically(roomFilePath(normalizedRoomId), payload);

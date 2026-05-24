@@ -125,11 +125,13 @@ function toObstacleTiles(entries: ReadonlyMap<string, TerrainProps>): Array<{
   return out;
 }
 
-function toExtraFloorTiles(entries: ReadonlySet<string>): Array<{ x: number; z: number }> {
-  const out: Array<{ x: number; z: number }> = [];
-  for (const tileKey of entries) {
+function toExtraFloorTiles(
+  entries: ReadonlyMap<string, number>
+): Array<{ x: number; z: number; colorRgb: number }> {
+  const out: Array<{ x: number; z: number; colorRgb: number }> = [];
+  for (const [tileKey, colorRgb] of entries) {
     const [x, z] = tileKey.split(",").map(Number);
-    out.push({ x: x ?? 0, z: z ?? 0 });
+    out.push({ x: x ?? 0, z: z ?? 0, colorRgb });
   }
   return out;
 }
@@ -167,14 +169,16 @@ export async function collectWorldStateMetrics(
   }: {
     loadWorldState: (
       roomPlaced: Map<string, Map<string, TerrainProps>>,
-      roomExtraFloor: Map<string, Set<string>>,
+      roomExtraFloor: Map<string, Map<string, number>>,
+      roomBaseFloorColors: Map<string, Map<string, number>>,
       roomBaseFloorRemoved: Map<string, Set<string>>,
       lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
       normalize: (roomId: string) => string
     ) => void;
     registerWorldStateRefs: (
       roomPlaced: Map<string, Map<string, TerrainProps>>,
-      roomExtraFloor: Map<string, Set<string>>,
+      roomExtraFloor: Map<string, Map<string, number>>,
+      roomBaseFloorColors: Map<string, Map<string, number>>,
       roomBaseFloorRemoved: Map<string, Set<string>>,
       lastSpawnByRoom: Map<string, Map<string, { x: number; z: number; y?: number }>>,
       normalize: (roomId: string) => string
@@ -183,7 +187,8 @@ export async function collectWorldStateMetrics(
   } = persistence;
 
   const roomPlaced = new Map<string, Map<string, TerrainProps>>();
-  const roomExtraFloor = new Map<string, Set<string>>();
+  const roomExtraFloor = new Map<string, Map<string, number>>();
+  const roomBaseFloorColors = new Map<string, Map<string, number>>();
   const roomBaseFloorRemoved = new Map<string, Set<string>>();
   const lastSpawnByRoom = new Map<string, Map<string, { x: number; z: number; y?: number }>>();
 
@@ -191,6 +196,7 @@ export async function collectWorldStateMetrics(
   loadWorldState(
     roomPlaced,
     roomExtraFloor,
+    roomBaseFloorColors,
     roomBaseFloorRemoved,
     lastSpawnByRoom,
     normalizeRoomId
@@ -200,6 +206,7 @@ export async function collectWorldStateMetrics(
   registerWorldStateRefs(
     roomPlaced,
     roomExtraFloor,
+    roomBaseFloorColors,
     roomBaseFloorRemoved,
     lastSpawnByRoom,
     normalizeRoomId
@@ -209,7 +216,7 @@ export async function collectWorldStateMetrics(
   const persistMs = performance.now() - persistStart;
 
   const roomObstacles = roomPlaced.get(roomId) ?? new Map<string, TerrainProps>();
-  const roomExtra = roomExtraFloor.get(roomId) ?? new Set<string>();
+  const roomExtra = roomExtraFloor.get(roomId) ?? new Map<string, number>();
   const roomSpawns = lastSpawnByRoom.get(roomId) ?? new Map<string, { x: number; z: number; y?: number }>();
 
   const obstacles = toObstacleTiles(roomObstacles);

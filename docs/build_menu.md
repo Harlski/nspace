@@ -14,7 +14,7 @@ Reference for the **in-game build palette** shown along the bottom of the screen
 |------|----------------|---------------|
 | **Walk** | Build tab off | Dock hidden |
 | **Build → Objects** | Build on, scope **Objects** | Full dock: category tabs, tool strip, placement context |
-| **Build → Room** | Build on, scope **Room** | **Floor** / **Room settings** tabs; Floor tool strip; **Room settings** tab shows sky background in `build-dock-context` (swatch + popover wheel) |
+| **Build → Room** | Build on, scope **Room** | **Floor** / **Room settings** tabs; Floor tool strip + **floor tile hue ring** in `build-dock-context`; **Room settings** tab shows sky background in `build-dock-context` (swatch + popover wheel) |
 
 Toggle: **Build** tab on the mode strip (`#hud-mode-tab-build`). Scope: **Objects / Room** (`.hud-build-bottom-dock__edit-kind-select` on desktop; on coarse-pointer mobile, `#hud-build-edit-kind-trigger` opens a fixed overlay list `#hud-build-edit-kind-popover` instead of the native select sheet).
 
@@ -60,7 +60,7 @@ Use **Reference ID** in feedback (e.g. “increase `build-dock-context-mods` scr
 | `build-dock-deselect` | `.hud-build-bottom-dock__deselect` | White circle **×** on the **Selected** GL preview (top-right of thumbnail); clears selection (`onObjectSelectionDismiss`) |
 | `build-dock-tabs` | `.hud-build-bottom-dock__tabs` | Tab row + edit-scope select |
 | `build-dock-category-tabs` | `.hud-build-bottom-dock__category-tabs` | **Terrain / Props / Buildings** |
-| `build-dock-edit-scope` | `.hud-build-bottom-dock__edit-scope` | **Objects / Room** picker; **rotate** (ramps) and **delete** (`nq-cross`, selected object) beside it |
+| `build-dock-edit-scope` | `.hud-build-bottom-dock__edit-scope` | **Objects / Room** picker; **rotate** (ramps or plain **cube Y** via ↺ ↻ / **R**; **Rot X/Y/Z** steppers in context column) and **delete** (`nq-cross`, selected object) beside it |
 | `build-dock-selection-delete` | `.hud-build-bottom-dock__rotate--delete` | Deletes the selected placed object (same as **D** on desktop) |
 | `build-dock-picker-row` | `.hud-build-bottom-dock__row--picker` | Tool strip + context grid |
 | `build-dock-max-height` | `--hud-build-dock-panel-max-height` | CSS variable on `.hud` (default `min(40vh, 164px)`) |
@@ -97,6 +97,7 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
 | `build-dock-context-grid` | `.hud-build-bottom-dock__context-grid` | Mods column + color column |
 | `build-dock-context-mods` | `.hud-build-bottom-dock__context-mods` | Placement controls (height, **hex thickness**, **sphere size**, pyramid base, gate direction, billboard view…); **Room settings** (`.hud-build-bottom-dock__room-settings`, Room BG swatch + hue wheel) when Room scope + **Room settings** tab |
 | `build-dock-context-room-settings` | `.hud-build-bottom-dock__context--room-settings` | Modifier on context panel: room BG only, color column hidden |
+| `build-dock-context-floor` | `.hud-build-bottom-dock__context--floor` | Modifier on context panel: **Floor** tab — hue ring only (mods column hidden) |
 | `build-dock-context-color` | `.hud-build-bottom-dock__context-color` | Hue ring + hue dock stack |
 | `build-dock-place-label` | `#hud-build-dock-place` | “Place: Cube/Hex/Pyramid…” (terrain shape) or tool name / “Edit: Room” |
 | `build-dock-advanced-link` | `#hud-build-dock-advanced` | “More options…” → placement Advanced popover |
@@ -117,6 +118,7 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
 |--------------|----------------|------|
 | `palette-hue-ring` | `createPaletteHueRing()` in [`paletteHueRing.ts`](../client/src/ui/paletteHueRing.ts) | Shared circular hue control; **center click** opens custom `#RRGGBB` popover ([`paletteHueHexPopover.ts`](../client/src/ui/paletteHueHexPopover.ts)) |
 | `build-dock-placement-hue-row` | `.hud-mode-sidebar__shape-color-row--placement` | Ring while **placing** next object |
+| `build-dock-floor-hue-row` | `.hud-mode-sidebar__shape-color-row--floor` | Ring on **Floor** tab (Room scope); tints **hover preview**; **left-click** places new tiles or **recolors** existing core/extra floor (`colorRgb` on `placeExtraFloor`), including tiles with blocks on top |
 | `build-dock-selection-hue-row` | `.hud-mode-sidebar__shape-color-row--selection` | Ring while **editing** selected tile |
 | `hue-dock` | `.hud-mode-sidebar__hue-dock` | Stack under color column (room sky, guest entry, selection ring) |
 

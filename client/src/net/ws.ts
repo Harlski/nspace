@@ -1,9 +1,11 @@
 import type { PlayerState } from "../types.js";
 import {
   clampColorRgb,
+  cubeRotationForPlainCube,
   clampHexRadiusScale,
   clampPyramidBaseScale,
   clampSphereRadiusScale,
+  isPlainCubeTerrain,
   DEFAULT_BLOCK_COLOR_RGB,
   DEFAULT_GATE_BLOCK_COLOR_RGB,
   resolveBlockColorRgb,
@@ -26,6 +28,9 @@ export type ObstacleTile = {
   sphereRadiusScale: number;
   ramp: boolean;
   rampDir: number;
+  cubeRotX: number;
+  cubeRotY: number;
+  cubeRotZ: number;
   colorRgb: number;
   /** Legacy wire field (migration). */
   colorId?: number;
@@ -63,6 +68,9 @@ export type ObstacleProps = {
   sphereRadiusScale: number;
   ramp: boolean;
   rampDir: number;
+  cubeRotX: number;
+  cubeRotY: number;
+  cubeRotZ: number;
   colorRgb: number;
   /** Legacy client field; not sent on wire. */
   colorId?: number;
@@ -91,7 +99,7 @@ export type ObstacleRef = {
   y: number;
 };
 
-export type ExtraFloorTile = { x: number; z: number };
+export type ExtraFloorTile = { x: number; z: number; colorRgb?: number };
 export type BillboardState = {
   id: string;
   anchorX: number;
@@ -189,6 +197,7 @@ export type ServerMessage =
       placeRadiusBlocks: number;
       obstacles: ObstacleTile[];
       extraFloorTiles: ExtraFloorTile[];
+      baseFloorColorTiles?: ExtraFloorTile[];
       removedBaseFloorTiles?: ExtraFloorTile[];
       canvasClaims?: Array<{ x: number; z: number; address: string }>;
       signboards: Array<{
@@ -256,6 +265,12 @@ export type ServerMessage =
       roomId: string;
       add: ExtraFloorTile[];
       /** Tile keys ("x,z") that should be removed from the room. */
+      remove: string[];
+    }
+  | {
+      type: "baseFloorColorDelta";
+      roomId: string;
+      add: ExtraFloorTile[];
       remove: string[];
     }
   | {
@@ -651,6 +666,11 @@ export function sendPlaceBlock(
     sphere?: boolean;
     ramp?: boolean;
     rampDir?: number;
+    cubeRotX?: number;
+    cubeRotY?: number;
+    cubeRotZ?: number;
+    /** @deprecated */
+    cubePitch?: number;
     colorRgb?: number;
     claimable?: boolean;
   }
@@ -673,6 +693,10 @@ export function sendPlaceBlock(
   const sphereRadiusScale = sphere
     ? clampSphereRadiusScale(Number(style?.sphereRadiusScale ?? 1))
     : 1;
+  const cubeRot = cubeRotationForPlainCube(
+    { hex, pyramid, sphere, ramp },
+    style ?? {}
+  );
   ws.send(
     JSON.stringify({
       type: "placeBlock",
@@ -688,6 +712,7 @@ export function sendPlaceBlock(
       sphereRadiusScale,
       ramp,
       rampDir: ramp ? rampDir : 0,
+      ...cubeRot,
       colorRgb: clampColorRgb(style?.colorRgb ?? DEFAULT_BLOCK_COLOR_RGB),
       claimable,
     })
@@ -787,6 +812,10 @@ export function sendSetObstacleProps(
   const sphereRadiusScale = sphere
     ? clampSphereRadiusScale(Number(props.sphereRadiusScale ?? 1))
     : 1;
+  const cubeRot = cubeRotationForPlainCube(
+    { hex, pyramid, sphere, ramp },
+    props
+  );
 
   const body: Record<string, unknown> = {
     type: "setObstacleProps",
@@ -803,6 +832,7 @@ export function sendSetObstacleProps(
     sphere,
     sphereRadiusScale,
     ramp,
+    ...cubeRot,
     colorRgb: clampColorRgb(props.colorRgb),
     locked,
   };
@@ -867,9 +897,14 @@ export function sendCompleteBlockClaim(ws: WebSocket, claimId: string): void {
   ws.send(JSON.stringify({ type: "completeBlockClaim", claimId }));
 }
 
-export function sendPlaceExtraFloor(ws: WebSocket, x: number, z: number): void {
+export function sendPlaceExtraFloor(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  colorRgb: number
+): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: "placeExtraFloor", x, z }));
+  ws.send(JSON.stringify({ type: "placeExtraFloor", x, z, colorRgb }));
 }
 
 export function sendRemoveExtraFloor(ws: WebSocket, x: number, z: number): void {

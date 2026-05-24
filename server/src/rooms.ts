@@ -10,6 +10,7 @@ import {
   isBaseTile,
   isOrthogonallyAdjacentToTile,
   isWalkableTile,
+  cubeRotationForPlainCube,
   clampHexRadiusScale,
   clampSphereRadiusScale,
   clampPyramidBaseScale,
@@ -25,6 +26,7 @@ import {
   tileKey,
   type PathfindMoverContext,
   type TerrainProps,
+  type ExtraWalkableRef,
 } from "./grid.js";
 import {
   createOfficialRoomWithSize,
@@ -157,8 +159,10 @@ import {
   BLOCK_COLOR_SIGNPOST_RGB,
   clampColorRgb,
   DEFAULT_BLOCK_COLOR_RGB,
+  DEFAULT_EXTRA_FLOOR_COLOR_RGB,
   DEFAULT_GATE_BLOCK_COLOR_RGB,
   resolveBlockColorRgb,
+  resolveExtraFloorColorRgb,
 } from "./blockColors.js";
 
 function buildBillboardSlidesFromAdvertIds(
@@ -508,6 +512,10 @@ export type ObstacleTile = {
   /** Sloped ramp (walkable floor); `rampDir` 0–3 = +X,+Z,−X,−Z toward climbed block. */
   ramp: boolean;
   rampDir: number;
+  /** Plain cube only: 0–3 = 90° steps per axis (visual). */
+  cubeRotX: number;
+  cubeRotY: number;
+  cubeRotZ: number;
   /** Block tint 0xRRGGBB (hue ring). */
   colorRgb: number;
   /** Optional signboard ID if there's a signboard at this location. */
@@ -558,7 +566,7 @@ function colorRgbFromWire(msg: {
   return resolveBlockColorRgb({});
 }
 
-export type ExtraFloorTile = { x: number; z: number };
+export type ExtraFloorTile = { x: number; z: number; colorRgb?: number };
 
 interface ClientConn {
   ws: WebSocket;
@@ -651,6 +659,8 @@ type OutMsg =
       placeRadiusBlocks: number;
       obstacles: ObstacleTile[];
       extraFloorTiles: ExtraFloorTile[];
+      /** Custom tint on core/base walkable floor tiles. */
+      baseFloorColorTiles?: ExtraFloorTile[];
       /** Base tiles removed in custom rooms (same shape as extra floor coords). */
       removedBaseFloorTiles?: ExtraFloorTile[];
       canvasClaims?: Array<{ x: number; z: number; address: string }>;
@@ -737,6 +747,12 @@ type OutMsg =
       roomId: string;
       add: ExtraFloorTile[];
       /** Tile keys ("x,z") that should be removed from the room. */
+      remove: string[];
+    }
+  | {
+      type: "baseFloorColorDelta";
+      roomId: string;
+      add: ExtraFloorTile[];
       remove: string[];
     }
   | {
@@ -900,13 +916,16 @@ const lastSpawnByRoom = new Map<
 /** Placed objects per room: key = blockKey(x,z,y), value = props. */
 const roomPlaced = new Map<string, Map<string, PlacedProps>>();
 /** Walkable tiles outside the core room (must connect to core or another extra). */
-const roomExtraFloor = new Map<string, Set<string>>();
+const roomExtraFloor = new Map<string, Map<string, number>>();
+/** Custom tint on core/base walkable floor tiles within the room grid. */
+const roomBaseFloorColors = new Map<string, Map<string, number>>();
 /** Base-room tiles carved away in custom (dynamic) rooms only; tileKey "x,z". */
 const roomBaseFloorRemoved = new Map<string, Set<string>>();
 
 loadWorldState(
   roomPlaced,
   roomExtraFloor,
+  roomBaseFloorColors,
   roomBaseFloorRemoved,
   lastSpawnByRoom,
   normalizeRoomId
@@ -914,6 +933,7 @@ loadWorldState(
 registerWorldStateRefs(
   roomPlaced,
   roomExtraFloor,
+  roomBaseFloorColors,
   roomBaseFloorRemoved,
   lastSpawnByRoom,
   normalizeRoomId
@@ -1369,7 +1389,7 @@ function resolveNearestTerrainNode(
   placed: ReadonlyMap<string, PlacedProps>,
   moverCtx?: PathfindMoverContext | null
 ): { x: number; z: number; layer: 0 | 1 } | null {
-  const extra = extraFloorSet(roomId);
+  const extra = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
   const center = snapToTile(px, pz);
   let bestD = Number.POSITIVE_INFINITY;
@@ -1422,7 +1442,7 @@ function resolvePathfindStartNode(
   placed: ReadonlyMap<string, PlacedProps>,
   moverCtx?: PathfindMoverContext | null
 ): { x: number; z: number; layer: 0 | 1 } | null {
-  const extra = extraFloorSet(roomId);
+  const extra = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
   const t = snapToTile(p.x, p.z);
   const layer = inferStartLayer(p, placed, moverCtx, roomId);
@@ -1482,7 +1502,7 @@ function findRecoveryTerrainPath(
   dest: { x: number; z: number },
   goalLayer: 0 | 1,
   placed: ReadonlyMap<string, PlacedProps>,
-  extra: ReadonlySet<string>,
+  extra: ExtraWalkableRef,
   /** Layer already used in the failed primary `pathfindTerrain` from `snapToTile(player)`. */
   primaryStartLayer: 0 | 1,
   moverCtx?: PathfindMoverContext | null
@@ -1566,6 +1586,15 @@ function obstacleTileFromPlaced(roomId: string, tileKeyStr: string): ObstacleTil
     sphereRadiusScale: clampSphereRadiusScale(v.sphereRadiusScale ?? 1),
     ramp: v.ramp ?? false,
     rampDir: Math.max(0, Math.min(3, Math.floor(v.rampDir ?? 0))),
+    ...cubeRotationForPlainCube(
+      {
+        hex: v.hex ?? false,
+        pyramid: v.pyramid ?? false,
+        sphere: v.sphere ?? false,
+        ramp: v.ramp ?? false,
+      },
+      v
+    ),
     colorRgb: resolveBlockColorRgb(v),
     signboardId: signboard?.id,
     locked: v.locked ?? false,
@@ -1609,6 +1638,15 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       sphereRadiusScale: clampSphereRadiusScale(v.sphereRadiusScale ?? 1),
       ramp: v.ramp ?? false,
       rampDir: Math.max(0, Math.min(3, Math.floor(v.rampDir ?? 0))),
+      ...cubeRotationForPlainCube(
+        {
+          hex: v.hex ?? false,
+          pyramid: v.pyramid ?? false,
+          sphere: v.sphere ?? false,
+          ramp: v.ramp ?? false,
+        },
+        v
+      ),
       colorRgb: resolveBlockColorRgb(v),
       signboardId: signboardMap.get(tileKey(x!, z!)),
       locked: v.locked ?? false,
@@ -1627,10 +1665,10 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
   return out;
 }
 
-function extraFloorSet(roomId: string): Set<string> {
+function extraFloorMap(roomId: string): Map<string, number> {
   let s = roomExtraFloor.get(roomId);
   if (!s) {
-    s = new Set();
+    s = new Map();
     roomExtraFloor.set(roomId, s);
   }
   return s;
@@ -1640,11 +1678,67 @@ function extraFloorToList(roomId: string): ExtraFloorTile[] {
   const s = roomExtraFloor.get(roomId);
   if (!s) return [];
   const out: ExtraFloorTile[] = [];
-  for (const k of s) {
+  for (const [k, colorRgb] of s) {
     const [x, z] = k.split(",").map(Number);
-    out.push({ x: x!, z: z! });
+    out.push({ x: x!, z: z!, colorRgb });
   }
   return out;
+}
+
+function baseFloorColorMap(roomId: string): Map<string, number> {
+  let s = roomBaseFloorColors.get(roomId);
+  if (!s) {
+    s = new Map();
+    roomBaseFloorColors.set(roomId, s);
+  }
+  return s;
+}
+
+function baseFloorColorToList(roomId: string): ExtraFloorTile[] {
+  const s = roomBaseFloorColors.get(roomId);
+  if (!s) return [];
+  const out: ExtraFloorTile[] = [];
+  for (const [k, colorRgb] of s) {
+    const [x, z] = k.split(",").map(Number);
+    out.push({ x: x!, z: z!, colorRgb });
+  }
+  return out;
+}
+
+function otherPlayerOnTile(
+  room: Map<string, ClientConn>,
+  tile: { x: number; z: number },
+  selfAddress: string
+): boolean {
+  for (const c of room.values()) {
+    if (c.address === selfAddress) continue;
+    const st = snapToTile(c.player.x, c.player.z);
+    if (st.x === tile.x && st.z === tile.z) return true;
+  }
+  return false;
+}
+
+function anyPlayerOnTile(
+  room: Map<string, ClientConn>,
+  tile: { x: number; z: number }
+): boolean {
+  for (const c of room.values()) {
+    const st = snapToTile(c.player.x, c.player.z);
+    if (st.x === tile.x && st.z === tile.z) return true;
+  }
+  return false;
+}
+
+function tileHasPlacedBlocks(
+  placed: ReadonlyMap<string, PlacedProps>,
+  x: number,
+  z: number
+): boolean {
+  const prefix = `${x},${z},`;
+  for (const key of placed.keys()) {
+    if (key.startsWith(prefix)) return true;
+  }
+  return false;
 }
 
 function baseFloorRemovedEnsure(roomId: string): Set<string> {
@@ -1692,7 +1786,10 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-function buildInitialFrontier(roomId: string, ex: Set<string>): Set<string> {
+function buildInitialFrontier(
+  roomId: string,
+  ex: ReadonlyMap<string, number>
+): Set<string> {
   const b = getRoomBaseBounds(roomId);
   const frontier = new Set<string>();
   for (let x = b.minX - 1; x <= b.maxX + 1; x++) {
@@ -1711,7 +1808,7 @@ function addNeighborsToFrontier(
   x: number,
   z: number,
   frontier: Set<string>,
-  ex: Set<string>
+  ex: ReadonlyMap<string, number>
 ): void {
   for (const [dx, dz] of ADJ_DIRS) {
     const nx = x + dx;
@@ -1740,7 +1837,7 @@ export function adminRandomExtraFloorLayout(
     return { ok: false, error: "invalid_target_count" };
   }
   const seed = Math.floor(Number(opts.seed)) | 0;
-  const ex = extraFloorSet(roomId);
+  const ex = extraFloorMap(roomId);
   if (opts.clearExisting) {
     ex.clear();
   }
@@ -1752,7 +1849,7 @@ export function adminRandomExtraFloorLayout(
     const pick = keys[Math.floor(rng() * keys.length)]!;
     frontier.delete(pick);
     const [x, z] = pick.split(",").map(Number);
-    ex.add(pick);
+    ex.set(pick, DEFAULT_EXTRA_FLOOR_COLOR_RGB);
     addNeighborsToFrontier(roomId, x!, z!, frontier, ex);
     placed++;
   }
@@ -1770,7 +1867,7 @@ function isWalkableForRoom(roomId: string, x: number, z: number): boolean {
   return isWalkableTile(
     x,
     z,
-    extraFloorSet(roomId),
+    extraFloorMap(roomId),
     roomId,
     baseRemovedReadonly(roomId)
   );
@@ -1779,7 +1876,7 @@ function isWalkableForRoom(roomId: string, x: number, z: number): boolean {
 /** New extra tile must be outside the core grid and orthogonally adjacent to some walkable tile. */
 function canPlaceExtraFloor(roomId: string, x: number, z: number): boolean {
   if (isPlayerCreatedRoom(roomId)) return false;
-  const ex = extraFloorSet(roomId);
+  const ex = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
   if (ex.has(tileKey(x, z))) return false;
   if (isBaseTile(x, z, roomId)) return false;
@@ -1802,7 +1899,7 @@ function walkBounds(roomId: string): {
   let maxZ = b.maxZ;
   const ex = roomExtraFloor.get(roomId);
   if (ex) {
-    for (const k of ex) {
+    for (const k of ex.keys()) {
       const [x, z] = k.split(",").map(Number);
       minX = Math.min(minX, x!);
       maxX = Math.max(maxX, x!);
@@ -2439,7 +2536,7 @@ function placePendingTeleporterAt(
   if (!hasRoom(roomId)) return false;
 
   const placed = placedMap(roomId);
-  const extra = extraFloorSet(roomId);
+  const extra = extraFloorMap(roomId);
   const yLevel = nextOpenStackLevel(placed, x, z);
   if (yLevel === null) return false;
   const k = blockKey(x, z, yLevel);
@@ -2539,7 +2636,7 @@ function configureTeleporterDestination(
 
   const srcPlaced = placedMap(srcRoomId);
   const destPlaced = placedMap(destRoomId);
-  const destExtra = extraFloorSet(destRoomId);
+  const destExtra = extraFloorMap(destRoomId);
 
   const srcResolved = getPlacedAtLevel(srcPlaced, srcX, srcZ, srcY);
   if (!srcResolved?.props.teleporter) return false;
@@ -2659,7 +2756,7 @@ function placeBidirectionalTeleporterPairAt(
   if (!hasRoom(roomId)) return false;
 
   const placed = placedMap(roomId);
-  const extra = extraFloorSet(roomId);
+  const extra = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
   const nRoom = normalizeRoomId(roomId);
 
@@ -2845,7 +2942,7 @@ function placePendingGateAt(
   if (!hasRoom(roomId)) return false;
 
   const placed = placedMap(roomId);
-  const extra = extraFloorSet(roomId);
+  const extra = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
 
   const yLevel = nextOpenStackLevel(placed, x, z);
@@ -3381,6 +3478,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       placeRadiusBlocks: PLACE_RADIUS_BLOCKS,
       obstacles: obstaclesToList(targetRoomId),
       extraFloorTiles: extraFloorToList(targetRoomId),
+      baseFloorColorTiles: baseFloorColorToList(targetRoomId),
       removedBaseFloorTiles: removedBaseFloorToList(targetRoomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
@@ -3533,7 +3631,7 @@ export function startRoomTick(): void {
       const fakes = roomFakePlayers.get(roomId);
       if (fakes?.size) {
         const blocked = blockingKeys(roomId);
-        const extra = extraFloorSet(roomId);
+        const extra = extraFloorMap(roomId);
         const rng = mulberry32((now ^ roomId.length) | 0);
         for (const bot of fakes.values()) {
           const changedMove = advanceAlongPathBot(
@@ -3804,6 +3902,7 @@ export function addClient(
       placeRadiusBlocks: PLACE_RADIUS_BLOCKS,
       obstacles: obstaclesToList(roomId),
       extraFloorTiles: extraFloorToList(roomId),
+      baseFloorColorTiles: baseFloorColorToList(roomId),
       removedBaseFloorTiles: removedBaseFloorToList(roomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
@@ -4319,7 +4418,7 @@ export function addClient(
       const dest = snapToTile(tx, tz);
       const p = conn.player;
       const placed = placedMap(currentRoomId);
-      const extra = extraFloorSet(currentRoomId);
+      const extra = extraFloorMap(currentRoomId);
       const moverCtx: PathfindMoverContext = {
         address: compactAddress(address),
         nowMs: now,
@@ -4498,6 +4597,7 @@ export function addClient(
       const sphereRadiusScale = prism.sphere
         ? clampSphereRadiusScale(Number(msg.sphereRadiusScale ?? 1))
         : 1;
+      const cubeRot = cubeRotationForPlainCube(prism, msg as TerrainProps);
       const colorRgb = colorRgbFromWire(msg);
       const requestedClaimable = Boolean(msg.claimable);
       const claimable =
@@ -4524,6 +4624,7 @@ export function addClient(
         sphereRadiusScale,
         ramp: prism.ramp,
         rampDir: prism.ramp ? rampDir : 0,
+        ...cubeRot,
         colorRgb,
         locked: false,
         // Experimental: claimable blocks
@@ -4672,7 +4773,7 @@ export function addClient(
       const frontX = gx * 2 - ex;
       const frontZ = gz * 2 - ez;
       if (Math.abs(frontX - gx) + Math.abs(frontZ - gz) !== 1) return;
-      const extra = extraFloorSet(currentRoomId);
+      const extra = extraFloorMap(currentRoomId);
       const br = baseRemovedReadonly(currentRoomId);
       const exitWalkable = floorWalkableTerrain(
         ex,
@@ -5036,6 +5137,10 @@ export function addClient(
             Number(msg.sphereRadiusScale ?? existing.sphereRadiusScale ?? 1)
           )
         : 1;
+      const cubeRot = cubeRotationForPlainCube(prism, {
+        ...existing,
+        ...(msg as TerrainProps),
+      });
       const canonicalKey = blockKey(tile.x, tile.z, ty);
       if (storageKey !== canonicalKey) {
         placed.delete(storageKey);
@@ -5168,6 +5273,7 @@ export function addClient(
         sphereRadiusScale,
         ramp: prism.ramp,
         rampDir: prism.ramp ? rampDir : 0,
+        ...cubeRot,
         colorRgb,
         locked: finalLocked,
         ...(existing.teleporter ? { teleporter: existing.teleporter } : {}),
@@ -5783,15 +5889,14 @@ export function addClient(
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
-      if (isPlayerCreatedRoom(currentRoomId)) {
-        const rm = baseFloorRemovedEnsure(currentRoomId);
-        if (!rm.has(k)) return;
+      if (
+        isPlayerCreatedRoom(currentRoomId) &&
+        baseFloorRemovedEnsure(currentRoomId).has(k)
+      ) {
         const placedRm = placedMap(currentRoomId);
-        if (placedRm.has(k)) return;
-        for (const c of room.values()) {
-          const st = snapToTile(c.player.x, c.player.z);
-          if (st.x === tile.x && st.z === tile.z) return;
-        }
+        if (tileHasPlacedBlocks(placedRm, tile.x, tile.z)) return;
+        if (anyPlayerOnTile(room, tile)) return;
+        const rm = baseFloorRemovedEnsure(currentRoomId);
         rm.delete(k);
         if (rm.size === 0) {
           roomBaseFloorRemoved.delete(currentRoomId);
@@ -5809,16 +5914,58 @@ export function addClient(
         });
         return;
       }
-      if (!canPlaceExtraFloor(currentRoomId, tile.x, tile.z)) return;
-      for (const c of room.values()) {
-        const st = snapToTile(c.player.x, c.player.z);
-        if (st.x === tile.x && st.z === tile.z) return;
+
+      const colorRgb = resolveExtraFloorColorRgb(
+        (msg as { colorRgb?: unknown }).colorRgb
+      );
+      const ex = extraFloorMap(currentRoomId);
+
+      if (ex.has(k)) {
+        if (otherPlayerOnTile(room, tile, address)) return;
+        if (ex.get(k) === colorRgb) return;
+        ex.set(k, colorRgb);
+        broadcast(currentRoomId, {
+          type: "extraFloorDelta",
+          roomId: currentRoomId,
+          add: [{ x: tile.x, z: tile.z, colorRgb }],
+          remove: [],
+        });
+        schedulePersistWorldState();
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "recolor_extra_floor", {
+          x: tile.x,
+          z: tile.z,
+        });
+        return;
       }
-      extraFloorSet(currentRoomId).add(tileKey(tile.x, tile.z));
+
+      if (isBaseTile(tile.x, tile.z, currentRoomId)) {
+        const br = baseRemovedReadonly(currentRoomId);
+        if (br?.has(k)) return;
+        if (otherPlayerOnTile(room, tile, address)) return;
+        const baseColors = baseFloorColorMap(currentRoomId);
+        if (baseColors.get(k) === colorRgb) return;
+        baseColors.set(k, colorRgb);
+        broadcast(currentRoomId, {
+          type: "baseFloorColorDelta",
+          roomId: currentRoomId,
+          add: [{ x: tile.x, z: tile.z, colorRgb }],
+          remove: [],
+        });
+        schedulePersistWorldState();
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "recolor_base_floor", {
+          x: tile.x,
+          z: tile.z,
+        });
+        return;
+      }
+
+      if (!canPlaceExtraFloor(currentRoomId, tile.x, tile.z)) return;
+      if (anyPlayerOnTile(room, tile)) return;
+      ex.set(tileKey(tile.x, tile.z), colorRgb);
       broadcast(currentRoomId, {
         type: "extraFloorDelta",
         roomId: currentRoomId,
-        add: [{ x: tile.x, z: tile.z }],
+        add: [{ x: tile.x, z: tile.z, colorRgb }],
         remove: [],
       });
       schedulePersistWorldState();
@@ -5841,7 +5988,7 @@ export function addClient(
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
       const k = tileKey(tile.x, tile.z);
-      const ex = extraFloorSet(currentRoomId);
+      const ex = extraFloorMap(currentRoomId);
       if (ex.has(k)) {
         if (isBaseTile(tile.x, tile.z, currentRoomId)) return;
         const placed = placedMap(currentRoomId);
@@ -5877,6 +6024,7 @@ export function addClient(
           if (st.x === tile.x && st.z === tile.z) return;
         }
         rm.add(k);
+        baseFloorColorMap(currentRoomId).delete(k);
         broadcast(currentRoomId, {
           type: "removedBaseFloorDelta",
           roomId: currentRoomId,
