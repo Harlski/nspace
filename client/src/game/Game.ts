@@ -128,6 +128,8 @@ const DEFAULT_FLOOR_TILE_QUAD = 1.01;
 const DEFAULT_BLOCK_VISUAL_SCALE = 1;
 /** Walkable floor tile thickness in world Y; top stays near y≈0, volume extends downward. */
 const WALKABLE_FLOOR_TILE_THICKNESS = 0.16;
+/** Instanced floor batches are split by chunk so frustum culling skips off-screen regions. */
+const WALKABLE_FLOOR_VISUAL_CHUNK_TILES = 32;
 /** World Y of the visible floor surface (slightly above y=0 to sit above void tint). */
 const WALKABLE_FLOOR_TOP_Y = 0.01;
 /** Shared with placed blocks so hue-ring colors read the same on floor tiles and objects. */
@@ -197,6 +199,11 @@ function setWalkableFloorVisualInstanceTransform(
   dummy.rotation.set(-Math.PI / 2, 0, 0);
   dummy.scale.set(quadSize, quadSize, 1);
   dummy.updateMatrix();
+}
+
+function walkableFloorVisualChunkKey(wx: number, wz: number): string {
+  const c = WALKABLE_FLOOR_VISUAL_CHUNK_TILES;
+  return `${Math.floor(wx / c)},${Math.floor(wz / c)}`;
 }
 
 function applyWalkableFloorTileMaterials(
@@ -668,6 +675,109 @@ function createChatBubbleSprite(
 /** Placeholder isometric block (cube) — one tile footprint, sits on floor. */
 const BLOCK_SIZE = 0.82;
 
+const plainCubeInstanceGeometryCache = new Map<string, THREE.BoxGeometry>();
+const plainCubeInstanceMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
+
+function plainCubeObstacleHeight(meta: BlockStyleProps): number {
+  if (meta.quarter) return BLOCK_SIZE * 0.25;
+  if (meta.half) return BLOCK_SIZE * 0.5;
+  return BLOCK_SIZE;
+}
+
+/** Opaque plain cubes without overlays — safe to batch into InstancedMesh. */
+function canUsePlainCubeInstancing(meta: BlockStyleProps): boolean {
+  if (meta.gate) return false;
+  if (!isPlainCubeTerrain(normalizeBlockPrismParts(meta))) return false;
+  if (meta.passable) return false;
+  if (meta.claimable) return false;
+  if (meta.signboardId) return false;
+  return true;
+}
+
+function plainCubeInstanceHeightKey(meta: BlockStyleProps): string {
+  if (meta.quarter) return "q";
+  if (meta.half) return "h";
+  return "f";
+}
+
+function plainCubeInstanceMaterialKey(meta: BlockStyleProps): string {
+  const color = resolveBlockColorRgb(meta);
+  return `${color}|${PLACED_COLOR_SURFACE_ROUGHNESS}|${PLACED_COLOR_SURFACE_METALNESS}`;
+}
+
+function getPlainCubeInstanceGeometry(
+  vis: number,
+  meta: BlockStyleProps
+): THREE.BoxGeometry {
+  const hVis = plainCubeObstacleHeight(meta) * vis;
+  const key = `${vis}|${hVis}`;
+  let geo = plainCubeInstanceGeometryCache.get(key);
+  if (!geo) {
+    geo = new THREE.BoxGeometry(BLOCK_SIZE * vis, hVis, BLOCK_SIZE * vis);
+    plainCubeInstanceGeometryCache.set(key, geo);
+  }
+  return geo;
+}
+
+function getPlainCubeInstanceMaterial(
+  meta: BlockStyleProps
+): THREE.MeshStandardMaterial {
+  const key = plainCubeInstanceMaterialKey(meta);
+  let mat = plainCubeInstanceMaterialCache.get(key);
+  if (!mat) {
+    mat = new THREE.MeshStandardMaterial({
+      color: resolveBlockColorRgb(meta),
+      roughness: PLACED_COLOR_SURFACE_ROUGHNESS,
+      metalness: PLACED_COLOR_SURFACE_METALNESS,
+    });
+    plainCubeInstanceMaterialCache.set(key, mat);
+  }
+  return mat;
+}
+
+function plainCubeInstanceBatchKey(
+  wx: number,
+  wz: number,
+  vis: number,
+  meta: BlockStyleProps
+): string {
+  return `${walkableFloorVisualChunkKey(wx, wz)}|${vis}|${plainCubeInstanceHeightKey(meta)}|${plainCubeInstanceMaterialKey(meta)}`;
+}
+
+function plainCubeInstanceEntrySig(meta: BlockStyleProps, vis: number): string {
+  const rot = cubeRotationForPlainCube(normalizeBlockPrismParts(meta), meta);
+  return `${plainCubeInstanceHeightKey(meta)}|${plainCubeInstanceMaterialKey(meta)}|${JSON.stringify(rot)}|${vis}`;
+}
+
+function setPlainCubeInstanceMatrix(
+  dummy: THREE.Object3D,
+  wx: number,
+  wz: number,
+  wyLevel: number,
+  meta: BlockStyleProps,
+  vis: number
+): void {
+  const h = plainCubeObstacleHeight(meta);
+  dummy.position.set(wx, wyLevel * BLOCK_SIZE + (h * vis) / 2, wz);
+  applyPlainCubeMeshRotation(
+    dummy.rotation,
+    cubeRotationForPlainCube(normalizeBlockPrismParts(meta), meta)
+  );
+  dummy.scale.set(1, 1, 1);
+  dummy.updateMatrix();
+}
+
+function tileKeyFromInstancedPick(
+  obj: THREE.Object3D,
+  instanceId: number | undefined
+): string | null {
+  if (!(obj instanceof THREE.InstancedMesh) || instanceId === undefined) {
+    return null;
+  }
+  const keys = obj.userData["plainCubeTileKeys"] as string[] | undefined;
+  return keys?.[instanceId] ?? null;
+}
+
 /** GPU particles around active (minable) claimable blocks. */
 const MINEABLE_SPARKLE_COUNT = 48;
 
@@ -1080,6 +1190,12 @@ export class Game {
   /** Subset of tile keys that block pathfinding (not passable). */
   private readonly blockingTileKeys = new Set<string>();
   private readonly blockMeshes = new Map<string, THREE.Group>();
+  /** Instanced plain opaque cubes (see `syncPlainCubeInstancedMeshes`). */
+  private readonly plainCubeInstancedMeshes: THREE.InstancedMesh[] = [];
+  private readonly plainCubeInstancedTileKeys = new Set<string>();
+  private readonly blockPickRootsBuf: THREE.Object3D[] = [];
+  private plainCubeInstanceRenderSig = "";
+  private readonly plainCubeInstanceDummy = new THREE.Object3D();
   /** After "Move", next click on an empty tile relocates the object. */
   private repositionFrom: FloorTile | null = null;
   /** Destination tile + layer; remaining route is recomputed each frame from current position. */
@@ -1860,6 +1976,7 @@ export class Game {
       disposePlacedBlockGroupContents(mesh);
     }
     this.blockMeshes.clear();
+    this.disposePlainCubeInstancedMeshes();
     this.clearTeleporterMarkers();
 
     this.rebuildDoorKeys();
@@ -2361,8 +2478,8 @@ export class Game {
     const yL = Math.floor(parts[2]!);
     if (yL !== 0) return false;
     return (
-      this.blockMeshes.has(blockKey(xi, zi, 1)) ||
-      this.blockMeshes.has(blockKey(xi, zi, 2))
+      this.hasRenderedBlockAtKey(blockKey(xi, zi, 1)) ||
+      this.hasRenderedBlockAtKey(blockKey(xi, zi, 2))
     );
   }
 
@@ -3752,23 +3869,38 @@ export class Game {
       return;
     }
     const g = this.blockMeshes.get(this.selectedBlockKey);
-    if (!g) {
-      this.selectionOutline.visible = false;
-      this.refreshTeleporterLinkHighlight();
-      return;
-    }
     const meta = this.placedObjects.get(this.selectedBlockKey);
     const vis = this.blockVisualScale;
     const padding = 0.04;
     let size: THREE.Vector3;
-    const center = new THREE.Vector3().copy(g.position);
-    /** Pyramid base can scale past the tile; keep the selection box one tile so it stays predictable. */
-    if (meta?.pyramid) {
+    const center = new THREE.Vector3();
+    if (!g) {
+      if (
+        !meta ||
+        !this.plainCubeInstancedTileKeys.has(this.selectedBlockKey)
+      ) {
+        this.selectionOutline.visible = false;
+        this.refreshTeleporterLinkHighlight();
+        return;
+      }
+      const parts = this.selectedBlockKey.split(",").map(Number);
+      const wx = parts[0]!;
+      const wz = parts[1]!;
+      const wyLevel = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
       const h = this.obstacleHeight(meta);
+      center.set(wx, wyLevel * BLOCK_SIZE + (h * vis) / 2, wz);
       const foot = BLOCK_SIZE * vis;
       const sy = h * vis + padding;
       size = new THREE.Vector3(foot + padding, sy, foot + padding);
-    } else {
+    } else if (meta?.pyramid) {
+      const h = this.obstacleHeight(meta);
+      center.copy(g.position);
+      const foot = BLOCK_SIZE * vis;
+      const sy = h * vis + padding;
+      size = new THREE.Vector3(foot + padding, sy, foot + padding);
+    } else if (g) {
+      center.copy(g.position);
+      /** Pyramid base can scale past the tile; keep the selection box one tile so it stays predictable. */
       const box = blockGroupWorldBoundsForSelectionOutline(g);
       if (!box) {
         this.selectionOutline.visible = false;
@@ -3786,6 +3918,10 @@ export class Game {
       size.x += padding;
       size.y += padding;
       size.z += padding;
+    } else {
+      this.selectionOutline.visible = false;
+      this.refreshTeleporterLinkHighlight();
+      return;
     }
     if (size.x < 1e-6 || size.y < 1e-6 || size.z < 1e-6) {
       this.selectionOutline.visible = false;
@@ -6442,9 +6578,11 @@ export class Game {
     this.camera.updateMatrixWorld();
     this.camera.updateProjectionMatrix();
     this.raycaster.setFromCamera(this.ndc, this.camera);
-    const roots = [...this.blockMeshes.values()];
+    const roots = this.collectPlacedBlockPickRoots();
     const hits = this.raycaster.intersectObjects(roots, true);
     for (const h of hits) {
+      const instanced = tileKeyFromInstancedPick(h.object, h.instanceId);
+      if (instanced) return instanced;
       let o: THREE.Object3D | null = h.object;
       while (o) {
         const k = o.userData["tileKey"] as string | undefined;
@@ -7293,6 +7431,7 @@ export class Game {
       disposePlacedBlockGroupContents(mesh);
     }
     this.blockMeshes.clear();
+    this.disposePlainCubeInstancedMeshes();
     for (const [, mesh] of this.walkableFloorMeshes) {
       this.scene.remove(mesh);
       disposeWalkableFloorMeshMaterials(mesh);
@@ -7806,6 +7945,112 @@ export class Game {
       this.scene.remove(g);
       this.scene.add(g);
     }
+    for (const batch of this.plainCubeInstancedMeshes) {
+      this.scene.remove(batch);
+      this.scene.add(batch);
+    }
+  }
+
+  private hasRenderedBlockAtKey(k: string): boolean {
+    return this.blockMeshes.has(k) || this.plainCubeInstancedTileKeys.has(k);
+  }
+
+  private collectPlacedBlockPickRoots(): THREE.Object3D[] {
+    this.blockPickRootsBuf.length = 0;
+    for (const g of this.blockMeshes.values()) {
+      this.blockPickRootsBuf.push(g);
+    }
+    for (const m of this.plainCubeInstancedMeshes) {
+      this.blockPickRootsBuf.push(m);
+    }
+    return this.blockPickRootsBuf;
+  }
+
+  private disposePlainCubeInstancedMeshes(clearSig = true): void {
+    for (const mesh of this.plainCubeInstancedMeshes) {
+      this.scene.remove(mesh);
+    }
+    this.plainCubeInstancedMeshes.length = 0;
+    this.plainCubeInstancedTileKeys.clear();
+    if (clearSig) this.plainCubeInstanceRenderSig = "";
+  }
+
+  private syncPlainCubeInstancedMeshes(): void {
+    const vis = this.blockVisualScale;
+    const sigParts: string[] = [];
+    type PlainCubeEntry = {
+      tileKey: string;
+      wx: number;
+      wz: number;
+      wyLevel: number;
+      meta: BlockStyleProps;
+    };
+    const entries: PlainCubeEntry[] = [];
+
+    for (const [k, metaRaw] of this.placedObjects) {
+      const parts = k.split(",").map(Number);
+      const wx = parts[0]!;
+      const wz = parts[1]!;
+      const wyLevel = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
+      const meta = this.gateRepositionPlacedRenderMeta(wx, wz, wyLevel, metaRaw);
+      if (!canUsePlainCubeInstancing(meta)) continue;
+      if (
+        wyLevel === 0 &&
+        this.billboardFootprintFloorKeys.has(`${wx},${wz}`)
+      ) {
+        continue;
+      }
+      entries.push({ tileKey: k, wx, wz, wyLevel, meta });
+      sigParts.push(`${k}|${plainCubeInstanceEntrySig(meta, vis)}`);
+    }
+    sigParts.sort();
+    const sig = sigParts.join(";");
+    if (sig === this.plainCubeInstanceRenderSig) return;
+    this.plainCubeInstanceRenderSig = sig;
+
+    this.disposePlainCubeInstancedMeshes(false);
+
+    const byBatch = new Map<string, PlainCubeEntry[]>();
+    for (const entry of entries) {
+      const batchKey = plainCubeInstanceBatchKey(
+        entry.wx,
+        entry.wz,
+        vis,
+        entry.meta
+      );
+      let list = byBatch.get(batchKey);
+      if (!list) {
+        list = [];
+        byBatch.set(batchKey, list);
+      }
+      list.push(entry);
+    }
+
+    const dummy = this.plainCubeInstanceDummy;
+    for (const batchEntries of byBatch.values()) {
+      if (batchEntries.length === 0) continue;
+      const sample = batchEntries[0]!.meta;
+      const batch = new THREE.InstancedMesh(
+        getPlainCubeInstanceGeometry(vis, sample),
+        getPlainCubeInstanceMaterial(sample),
+        batchEntries.length
+      );
+      batch.castShadow = false;
+      batch.receiveShadow = false;
+      const tileKeys: string[] = new Array(batchEntries.length);
+      for (let i = 0; i < batchEntries.length; i++) {
+        const e = batchEntries[i]!;
+        setPlainCubeInstanceMatrix(dummy, e.wx, e.wz, e.wyLevel, e.meta, vis);
+        batch.setMatrixAt(i, dummy.matrix);
+        tileKeys[i] = e.tileKey;
+        this.plainCubeInstancedTileKeys.add(e.tileKey);
+      }
+      batch.instanceMatrix.needsUpdate = true;
+      batch.userData["plainCubeTileKeys"] = tileKeys;
+      batch.computeBoundingSphere();
+      this.scene.add(batch);
+      this.plainCubeInstancedMeshes.push(batch);
+    }
   }
 
   private disposeWalkableFloorVisualMeshes(): void {
@@ -7818,13 +8063,22 @@ export class Game {
 
   private rebuildWalkableFloorVisualMeshes(): void {
     this.disposeWalkableFloorVisualMeshes();
-    const floorTiles: { wx: number; wz: number; color: number }[] = [];
-    const portalTiles: { wx: number; wz: number }[] = [];
+    const floorByChunk = new Map<
+      string,
+      { wx: number; wz: number; color: number }[]
+    >();
+    const portalByChunk = new Map<string, { wx: number; wz: number }[]>();
     for (const [, mesh] of this.walkableFloorMeshes) {
       const wx = mesh.position.x;
       const wz = mesh.position.z;
+      const chunkKey = walkableFloorVisualChunkKey(wx, wz);
       if (mesh.userData["isPortalGlow"]) {
-        portalTiles.push({ wx, wz });
+        let list = portalByChunk.get(chunkKey);
+        if (!list) {
+          list = [];
+          portalByChunk.set(chunkKey, list);
+        }
+        list.push({ wx, wz });
         continue;
       }
       let color: number;
@@ -7837,17 +8091,22 @@ export class Game {
           (mesh.userData["coreColorRgb"] as number | undefined) ??
           TERRAIN_TILE_CORE_COLOR;
       }
-      floorTiles.push({ wx, wz, color });
+      let list = floorByChunk.get(chunkKey);
+      if (!list) {
+        list = [];
+        floorByChunk.set(chunkKey, list);
+      }
+      list.push({ wx, wz, color });
     }
     const dummy = new THREE.Object3D();
     const tileColor = new THREE.Color();
-    if (floorTiles.length > 0) {
+    for (const floorTiles of floorByChunk.values()) {
+      if (floorTiles.length === 0) continue;
       const batch = new THREE.InstancedMesh(
         this.walkableFloorTileTopGeom,
         createWalkableFloorVisualMaterial(),
         floorTiles.length
       );
-      batch.frustumCulled = false;
       batch.renderOrder = 0;
       for (let i = 0; i < floorTiles.length; i++) {
         const t = floorTiles[i]!;
@@ -7863,17 +8122,18 @@ export class Game {
       }
       batch.instanceMatrix.needsUpdate = true;
       if (batch.instanceColor) batch.instanceColor.needsUpdate = true;
+      batch.computeBoundingSphere();
       batch.userData["floorVisualKind"] = "solid";
       this.scene.add(batch);
       this.walkableFloorVisualMeshes.push(batch);
     }
-    if (portalTiles.length > 0) {
+    for (const portalTiles of portalByChunk.values()) {
+      if (portalTiles.length === 0) continue;
       const batch = new THREE.InstancedMesh(
         this.walkableFloorTileTopGeom,
         createWalkableFloorTileMaterials(true, false),
         portalTiles.length
       );
-      batch.frustumCulled = false;
       batch.renderOrder = 0;
       for (let i = 0; i < portalTiles.length; i++) {
         const t = portalTiles[i]!;
@@ -7886,6 +8146,7 @@ export class Game {
         batch.setMatrixAt(i, dummy.matrix);
       }
       batch.instanceMatrix.needsUpdate = true;
+      batch.computeBoundingSphere();
       batch.userData["floorVisualKind"] = "portal";
       this.scene.add(batch);
       this.walkableFloorVisualMeshes.push(batch);
@@ -8192,6 +8453,14 @@ export class Game {
         }
         continue;
       }
+      if (canUsePlainCubeInstancing(meta)) {
+        if (g) {
+          this.scene.remove(g);
+          disposePlacedBlockGroupContents(g);
+          this.blockMeshes.delete(k);
+        }
+        continue;
+      }
       const h = this.obstacleHeight(meta);
       const vis = this.blockVisualScale;
       const prev = g?.userData["blockMeta"] as BlockStyleProps | undefined;
@@ -8267,6 +8536,7 @@ export class Game {
         this.blockMeshes.delete(k);
       }
     }
+    this.syncPlainCubeInstancedMeshes();
     this.refreshSelectionOutline();
     this.syncTeleporterMarkers();
   }
@@ -8656,6 +8926,7 @@ export class Game {
     if (docLoaded && !build) {
       occlRootsBuf.length = 0;
       for (const rg of this.blockMeshes.values()) occlRootsBuf.push(rg);
+      for (const im of this.plainCubeInstancedMeshes) occlRootsBuf.push(im);
       occlRoots = occlRootsBuf;
     }
     for (const g of this.blockMeshes.values()) {
