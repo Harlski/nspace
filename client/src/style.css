@@ -9070,6 +9070,46 @@ a.main-menu__version:focus-visible {
   color: #fca5a5;
 }
 
+.main-menu__terms-privacy-host--account {
+  margin: 0 0 0.55rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid rgba(40, 50, 68, 0.9);
+}
+
+.main-menu__terms-privacy-host--account .main-menu__terms-privacy:not([hidden]) {
+  margin: 0;
+  padding: 0;
+  border-bottom: none;
+}
+
+.main-menu__terms-privacy-host--account .main-menu__terms-privacy-label {
+  max-width: 100%;
+  justify-content: flex-start;
+}
+
+.main-menu__terms-privacy-required {
+  flex-shrink: 0;
+  display: inline;
+  visibility: hidden;
+  color: #ef4444;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.42;
+  margin: 0 0 0 0.12rem;
+  align-self: flex-start;
+}
+
+.main-menu__terms-privacy--needs-ack .main-menu__terms-privacy-required {
+  visibility: visible;
+}
+
+.main-menu__terms-privacy--needs-ack
+  .main-menu__terms-privacy-label
+  input[type="checkbox"]:not(:checked) {
+  border-color: #f87171;
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.45);
+}
+
 .main-menu__actions-account__row {
   display: flex;
   flex-direction: row;

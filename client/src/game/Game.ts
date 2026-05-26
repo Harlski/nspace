@@ -691,6 +691,10 @@ function canUsePlainCubeInstancing(meta: BlockStyleProps): boolean {
   if (meta.passable) return false;
   if (meta.claimable) return false;
   if (meta.signboardId) return false;
+  const rot = cubeRotationForPlainCube(normalizeBlockPrismParts(meta), meta);
+  if (rot.cubeRotX !== 0 || rot.cubeRotY !== 0 || rot.cubeRotZ !== 0) {
+    return false;
+  }
   return true;
 }
 
@@ -703,6 +707,23 @@ function plainCubeInstanceHeightKey(meta: BlockStyleProps): string {
 function plainCubeInstanceMaterialKey(meta: BlockStyleProps): string {
   const color = resolveBlockColorRgb(meta);
   return `${color}|${PLACED_COLOR_SURFACE_ROUGHNESS}|${PLACED_COLOR_SURFACE_METALNESS}`;
+}
+
+/** Lower stack layers render later so they win depth ties over upper layers at overlap. */
+function placedBlockStackRenderOrder(wyLevel: number): number {
+  const y = Math.max(0, Math.min(2, Math.floor(wyLevel)));
+  return 2 - y;
+}
+
+/** Bias upper-layer depth back so the block below keeps its color at contact overlap. */
+function applyUpperStackLayerDepthBias(
+  mat: THREE.MeshStandardMaterial,
+  wyLevel: number
+): void {
+  if (wyLevel <= 0) return;
+  mat.polygonOffset = true;
+  mat.polygonOffsetFactor = 2;
+  mat.polygonOffsetUnits = 3 + wyLevel * 2;
 }
 
 function getPlainCubeInstanceGeometry(
@@ -720,9 +741,10 @@ function getPlainCubeInstanceGeometry(
 }
 
 function getPlainCubeInstanceMaterial(
-  meta: BlockStyleProps
+  meta: BlockStyleProps,
+  wyLevel: number
 ): THREE.MeshStandardMaterial {
-  const key = plainCubeInstanceMaterialKey(meta);
+  const key = `${plainCubeInstanceMaterialKey(meta)}|y${wyLevel}`;
   let mat = plainCubeInstanceMaterialCache.get(key);
   if (!mat) {
     mat = new THREE.MeshStandardMaterial({
@@ -730,6 +752,9 @@ function getPlainCubeInstanceMaterial(
       roughness: PLACED_COLOR_SURFACE_ROUGHNESS,
       metalness: PLACED_COLOR_SURFACE_METALNESS,
     });
+    if (wyLevel > 0) {
+      applyUpperStackLayerDepthBias(mat, wyLevel);
+    }
     plainCubeInstanceMaterialCache.set(key, mat);
   }
   return mat;
@@ -738,10 +763,11 @@ function getPlainCubeInstanceMaterial(
 function plainCubeInstanceBatchKey(
   wx: number,
   wz: number,
+  wyLevel: number,
   vis: number,
   meta: BlockStyleProps
 ): string {
-  return `${walkableFloorVisualChunkKey(wx, wz)}|${vis}|${plainCubeInstanceHeightKey(meta)}|${plainCubeInstanceMaterialKey(meta)}`;
+  return `${walkableFloorVisualChunkKey(wx, wz)}|${vis}|y${wyLevel}|${plainCubeInstanceHeightKey(meta)}|${plainCubeInstanceMaterialKey(meta)}`;
 }
 
 function plainCubeInstanceEntrySig(meta: BlockStyleProps, vis: number): string {
@@ -759,6 +785,7 @@ function setPlainCubeInstanceMatrix(
 ): void {
   const h = plainCubeObstacleHeight(meta);
   dummy.position.set(wx, wyLevel * BLOCK_SIZE + (h * vis) / 2, wz);
+  dummy.rotation.set(0, 0, 0);
   applyPlainCubeMeshRotation(
     dummy.rotation,
     cubeRotationForPlainCube(normalizeBlockPrismParts(meta), meta)
@@ -3935,7 +3962,18 @@ export class Game {
     this.selectionOutline.geometry = edges;
     prev.dispose();
     this.selectionOutline.position.copy(center);
-    this.selectionOutline.rotation.set(0, 0, 0);
+    if (
+      meta &&
+      isPlainCubeTerrain(normalizeBlockPrismParts(meta)) &&
+      !meta.pyramid
+    ) {
+      applyPlainCubeMeshRotation(
+        this.selectionOutline.rotation,
+        cubeRotationForPlainCube(normalizeBlockPrismParts(meta), meta)
+      );
+    } else {
+      this.selectionOutline.rotation.set(0, 0, 0);
+    }
     this.selectionOutline.visible = true;
     this.refreshTeleporterLinkHighlight();
   }
@@ -8015,6 +8053,7 @@ export class Game {
       const batchKey = plainCubeInstanceBatchKey(
         entry.wx,
         entry.wz,
+        entry.wyLevel,
         vis,
         entry.meta
       );
@@ -8029,14 +8068,15 @@ export class Game {
     const dummy = this.plainCubeInstanceDummy;
     for (const batchEntries of byBatch.values()) {
       if (batchEntries.length === 0) continue;
-      const sample = batchEntries[0]!.meta;
+      const sample = batchEntries[0]!;
       const batch = new THREE.InstancedMesh(
-        getPlainCubeInstanceGeometry(vis, sample),
-        getPlainCubeInstanceMaterial(sample),
+        getPlainCubeInstanceGeometry(vis, sample.meta),
+        getPlainCubeInstanceMaterial(sample.meta, sample.wyLevel),
         batchEntries.length
       );
       batch.castShadow = false;
       batch.receiveShadow = false;
+      batch.renderOrder = placedBlockStackRenderOrder(sample.wyLevel);
       const tileKeys: string[] = new Array(batchEntries.length);
       for (let i = 0; i < batchEntries.length; i++) {
         const e = batchEntries[i]!;
@@ -8666,6 +8706,10 @@ export class Game {
     const h = this.obstacleHeight(meta);
     const vis = this.blockVisualScale;
     const hVis = h * vis;
+    const floorLayer = Math.max(
+      0,
+      Math.min(2, Math.floor(opts?.floorLayer ?? 0))
+    );
     const g = new THREE.Group();
     
     // Special handling for claimable blocks: override color based on active state
@@ -8692,6 +8736,9 @@ export class Game {
       emissive: meta.claimable && meta.active ? 0xffc107 : 0x000000,
       emissiveIntensity: meta.claimable && meta.active ? 0.28 : 0,
     });
+    if (!ghost && floorLayer > 0 && !meta.passable) {
+      applyUpperStackLayerDepthBias(mat, floorLayer);
+    }
     if (meta.ramp) {
       const geom = this.makeRampGeometry(h, meta.rampDir, vis);
       const mesh = new THREE.Mesh(geom, mat);
@@ -8755,10 +8802,7 @@ export class Game {
     } else {
       g.userData.mineableSparklePoints = undefined;
     }
-    const floorLayer = Math.max(
-      0,
-      Math.min(2, Math.floor(opts?.floorLayer ?? 0))
-    );
+    g.renderOrder = placedBlockStackRenderOrder(floorLayer);
     if (
       !ghost &&
       meta.signboardId &&

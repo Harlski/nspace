@@ -180,10 +180,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
               <div class="main-menu__wallet-signin-hex-wrap" id="main-menu-wallet-signin-wrap">
                 <button type="button" class="main-menu__cached-add-hex main-menu__wallet-signin-hex" id="main-menu-wallet-signin" aria-label="Sign in with your Nimiq wallet"></button>
               </div>
-              <div class="main-menu__terms-privacy" id="main-menu-terms-privacy-row" hidden>
-                <span id="main-menu-terms-required-tooltip" class="main-menu__terms-required-tooltip" hidden role="tooltip"></span>
-                <label class="main-menu__terms-privacy-label"><input type="checkbox" id="main-menu-terms-privacy-cb" autocomplete="off" /><span id="main-menu-terms-privacy-text">I have read and agree to the <a href="/tacs" target="_blank" rel="noopener noreferrer">Terms</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</span></label>
-              </div>
+              <div class="main-menu__terms-privacy-host" id="main-menu-terms-privacy-host-default"></div>
               ${
                 devBypass
                   ? `<button type="button" class="nq-button light-blue main-menu__nq-btn main-menu__nq-btn--pill" id="btn-dev-login">Dev login</button>`
@@ -193,6 +190,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
             <div class="main-menu__actions-account main-menu__actions-pane--hidden" id="main-menu-actions-account">
               <p class="main-menu__actions-account__addr" id="main-menu-actions-account-addr"></p>
               <p class="main-menu__actions-account__expiry" id="main-menu-actions-account-expiry"></p>
+              <div class="main-menu__terms-privacy-host main-menu__terms-privacy-host--account" id="main-menu-terms-privacy-host-account"></div>
               <div class="main-menu__actions-account__row">
                 <button type="button" class="main-menu__actions-account__pill main-menu__actions-account__pill--forget" id="main-menu-actions-forget">Forget</button>
                 <div class="main-menu__actions-account__cluster">
@@ -259,6 +257,18 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   `;
   app.appendChild(root);
 
+  const termsPrivacyRow = document.createElement("div");
+  termsPrivacyRow.className = "main-menu__terms-privacy";
+  termsPrivacyRow.id = "main-menu-terms-privacy-row";
+  termsPrivacyRow.hidden = true;
+  termsPrivacyRow.innerHTML = `
+    <label class="main-menu__terms-privacy-label"><input type="checkbox" id="main-menu-terms-privacy-cb" autocomplete="off" /><span id="main-menu-terms-privacy-text">I have read and agree to the <a href="/tacs" target="_blank" rel="noopener noreferrer">Terms</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</span><span class="main-menu__terms-privacy-required" aria-hidden="true">*</span></label>
+  `;
+  const defaultTermsHost = root.querySelector(
+    "#main-menu-terms-privacy-host-default"
+  ) as HTMLElement;
+  defaultTermsHost.appendChild(termsPrivacyRow);
+
   /** Logged-out-only control; omit entirely when the account picker row is shown. */
   if (cachedSessions.length > 0) {
     root.querySelector("#main-menu-wallet-signin-wrap")?.remove();
@@ -286,20 +296,33 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   }
   const walletHintEl = root.querySelector("#main-menu-wallet-hint") as HTMLElement;
 
-  const termsPrivacyRow = root.querySelector("#main-menu-terms-privacy-row") as HTMLElement;
-  const termsPrivacyCb = root.querySelector("#main-menu-terms-privacy-cb") as HTMLInputElement;
-  const termsPrivacyTextEl = root.querySelector(
-    "#main-menu-terms-privacy-text"
-  ) as HTMLElement | null;
-  const termsRequiredTooltipEl = root.querySelector(
-    "#main-menu-terms-required-tooltip"
+  const accountTermsHost = root.querySelector(
+    "#main-menu-terms-privacy-host-account"
   ) as HTMLElement;
+
+  const termsPrivacyCb = root.querySelector("#main-menu-terms-privacy-cb") as HTMLInputElement;
 
   /** Without a prior wallet (+) interaction, the terms row stays hidden (unless local ack defers it). */
   let termsCheckboxRowDisclosed = false;
 
+  const indicateTermsRequired = (): void => {
+    termsPrivacyRow.classList.add("main-menu__terms-privacy--needs-ack");
+    termsPrivacyCb.focus();
+  };
+
+  const clearTermsRequiredIndication = (): void => {
+    termsPrivacyRow.classList.remove("main-menu__terms-privacy--needs-ack");
+  };
+
+  const requireTermsChecked = (): boolean => {
+    if (termsPrivacyCb.checked) return true;
+    indicateTermsRequired();
+    return false;
+  };
+
   const hideTermsPrivacyRowImmediate = (): void => {
     termsPrivacyRow.classList.remove("main-menu__terms-privacy--disclosed");
+    clearTermsRequiredIndication();
     termsPrivacyRow.hidden = true;
   };
 
@@ -323,8 +346,21 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   const syncTermsPrivacyRowAfterAckState = (): void => {
     termsPrivacyCb.checked = false;
     if (hasTermsPrivacyAckCachedLocally()) {
+      if (shouldShowExpiredAccountTerms() && accountTermsHost.contains(termsPrivacyRow)) {
+        termsPrivacyRow.hidden = false;
+        termsPrivacyRow.classList.add("main-menu__terms-privacy--disclosed");
+        return;
+      }
       termsCheckboxRowDisclosed = false;
       hideTermsPrivacyRowImmediate();
+      return;
+    }
+    if (
+      selectedCachedSession?.isExpired &&
+      accountTermsHost.contains(termsPrivacyRow)
+    ) {
+      termsPrivacyRow.hidden = false;
+      termsPrivacyRow.classList.add("main-menu__terms-privacy--disclosed");
       return;
     }
     if (!termsCheckboxRowDisclosed) {
@@ -335,85 +371,20 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     }
   };
 
+  const mountTermsPrivacyRowIn = (host: HTMLElement): void => {
+    if (termsPrivacyRow.parentElement !== host) {
+      host.appendChild(termsPrivacyRow);
+    }
+  };
+
   const discloseTermsCheckboxRow = (): void => {
     if (hasTermsPrivacyAckCachedLocally()) return;
     termsCheckboxRowDisclosed = true;
     showTermsPrivacyRowAnimated();
   };
 
-  syncTermsPrivacyRowAfterAckState();
-
-  let termsTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
-  let activeTermsTooltipEl: HTMLElement | null = null;
-  const hideTermsRequiredTooltip = (): void => {
-    if (termsTooltipHideTimer !== null) {
-      clearTimeout(termsTooltipHideTimer);
-      termsTooltipHideTimer = null;
-    }
-    if (activeTermsTooltipEl) {
-      const el = activeTermsTooltipEl;
-      el.hidden = true;
-      el.style.position = "";
-      el.style.left = "";
-      el.style.top = "";
-      el.style.right = "";
-      el.style.transform = "";
-      el.style.zIndex = "";
-      el.style.opacity = "";
-      activeTermsTooltipEl = null;
-    }
-    termsPrivacyCb.removeAttribute("aria-describedby");
-  };
-  /** Fixed tooltip centered under `anchor` (consent copy span — not the checkbox). */
-  const showTermsRequiredTooltip = (tooltipEl: HTMLElement, anchor: HTMLElement): void => {
-    hideTermsRequiredTooltip();
-    activeTermsTooltipEl = tooltipEl;
-    tooltipEl.textContent =
-      "Tick here to approve — then use the Nimiq wallet button again.";
-    termsPrivacyCb.setAttribute("aria-describedby", "main-menu-terms-required-tooltip");
-    tooltipEl.hidden = false;
-    tooltipEl.style.position = "fixed";
-    tooltipEl.style.transform = "none";
-    tooltipEl.style.zIndex = "10050";
-    tooltipEl.style.left = "-99999px";
-    tooltipEl.style.top = "0";
-    tooltipEl.style.opacity = "0";
-
-    const place = (): void => {
-      if (!root.isConnected) return;
-      if (!anchor.isConnected || !tooltipEl.isConnected) {
-        tooltipEl.style.opacity = "";
-        tooltipEl.hidden = true;
-        return;
-      }
-      const tw = Math.max(tooltipEl.offsetWidth, 1);
-      const th = Math.max(tooltipEl.offsetHeight, 1);
-      const ar = anchor.getBoundingClientRect();
-      const gap = 7;
-      const pad = 8;
-      let left = Math.round(ar.left + ar.width / 2 - tw / 2);
-      let top = Math.round(ar.bottom + gap);
-      left = Math.max(pad, Math.min(left, window.innerWidth - tw - pad));
-      const roomBelow = window.innerHeight - pad - top;
-      if (roomBelow < th && ar.top > th + gap + pad) {
-        top = Math.round(ar.top - gap - th);
-      }
-      const maxTop = window.innerHeight - th - pad;
-      top = Math.max(pad, Math.min(top, maxTop));
-      tooltipEl.style.left = `${left}px`;
-      tooltipEl.style.top = `${top}px`;
-      tooltipEl.style.opacity = "1";
-    };
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(place);
-      termsTooltipHideTimer = setTimeout(() => {
-        hideTermsRequiredTooltip();
-      }, 4500);
-    });
-  };
   termsPrivacyCb.addEventListener("change", () => {
-    if (termsPrivacyCb.checked) hideTermsRequiredTooltip();
+    if (termsPrivacyCb.checked) clearTermsRequiredIndication();
   });
 
   welcomeEl.hidden = cachedSessions.length === 0;
@@ -440,9 +411,42 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   const actionsForgetBtn = root.querySelector("#main-menu-actions-forget") as HTMLButtonElement;
 
   let selectedCachedSession: CachedSessionMenuEntry | null = null;
+  /** User clicked Re-login on an expired cached session — swap expiry copy for terms. */
+  let expiredReloginTermsPrompt = false;
+
+  const shouldShowExpiredAccountTerms = (): boolean =>
+    selectedCachedSession?.isExpired === true &&
+    (expiredReloginTermsPrompt || !hasTermsPrivacyAckCachedLocally());
+
+  /** Expired cached session: terms replace expiry copy; keep account actions visible. */
+  const syncExpiredAccountTermsUi = (): boolean => {
+    const showInAccount = shouldShowExpiredAccountTerms();
+    if (showInAccount) {
+      mountTermsPrivacyRowIn(accountTermsHost);
+      actionsAccountExpiryEl.hidden = true;
+      termsCheckboxRowDisclosed = true;
+      termsPrivacyRow.hidden = false;
+      termsPrivacyRow.classList.add("main-menu__terms-privacy--disclosed");
+      return true;
+    }
+    mountTermsPrivacyRowIn(defaultTermsHost);
+    actionsAccountExpiryEl.hidden = false;
+    if (!termsCheckboxRowDisclosed) {
+      hideTermsPrivacyRowImmediate();
+    }
+    return false;
+  };
+
+  const discloseExpiredReloginTerms = (): void => {
+    if (!selectedCachedSession?.isExpired) return;
+    expiredReloginTermsPrompt = true;
+    termsCheckboxRowDisclosed = true;
+    syncCachedSelectionUi();
+  };
 
   const clearCachedAccountSelection = (): void => {
     selectedCachedSession = null;
+    expiredReloginTermsPrompt = false;
     syncCachedSelectionUi();
   };
 
@@ -490,16 +494,20 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       actionsAccountAddrEl.textContent = formatWalletAddressGap4(
         selectedCachedSession.address
       );
-      actionsAccountExpiryEl.textContent = formatRelativeExpiry(
-        selectedCachedSession.expiresAtMs
-      );
-      actionsAccountExpiryEl.classList.toggle(
-        "main-menu__actions-account__expiry--expired",
-        selectedCachedSession.isExpired
-      );
+      if (!syncExpiredAccountTermsUi()) {
+        actionsAccountExpiryEl.textContent = formatRelativeExpiry(
+          selectedCachedSession.expiresAtMs
+        );
+        actionsAccountExpiryEl.classList.toggle(
+          "main-menu__actions-account__expiry--expired",
+          selectedCachedSession.isExpired
+        );
+      }
       actionsEnterBtn.textContent = selectedCachedSession.isExpired
         ? "Re-login"
         : "Enter";
+    } else {
+      syncExpiredAccountTermsUi();
     }
   };
 
@@ -511,7 +519,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     termsCheckboxRowDisclosed = true;
     termsPrivacyCb.checked = false;
     showTermsPrivacyRowAnimated();
-    if (cachedSessions.length > 0) clearCachedAccountSelection();
+    syncCachedSelectionUi();
     requestAnimationFrame(() => {
       termsPrivacyRow.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
@@ -520,6 +528,10 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
 
   const primeTermsConsentUiForWalletAttempt = (): void => {
     revealTermsRowIfWalletConsentSuppressedByAck();
+    if (selectedCachedSession?.isExpired) {
+      discloseExpiredReloginTerms();
+      return;
+    }
     discloseTermsCheckboxRow();
   };
 
@@ -564,6 +576,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
           clearCachedAccountSelection();
           return;
         }
+        expiredReloginTermsPrompt = false;
         selectedCachedSession = entry;
         syncCachedSelectionUi();
       });
@@ -594,6 +607,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   };
   renderCachedAccounts();
   if (cachedAddWalletBtn) registerAccountButton(cachedAddWalletBtn);
+  syncTermsPrivacyRowAfterAckState();
   syncCachedSelectionUi();
 
   registerAccountButton(actionsForgetBtn);
@@ -614,6 +628,10 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       onReconnect(selectedCachedSession.address);
       return;
     }
+    if (!shouldShowExpiredAccountTerms()) {
+      discloseExpiredReloginTerms();
+    }
+    if (!requireTermsChecked()) return;
     setBusy(true);
     try {
       await runNimiqWalletSignIn();
@@ -627,7 +645,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   if (cachedSessions.length > 0) {
     const onDocKeyDown = (ev: KeyboardEvent): void => {
       if (ev.key === "Escape") {
-        hideTermsRequiredTooltip();
+        clearTermsRequiredIndication();
         clearCachedAccountSelection();
       }
     };
@@ -638,9 +656,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   }
 
   const runNimiqWalletSignIn = async (): Promise<void> => {
-    primeTermsConsentUiForWalletAttempt();
-    if (!termsPrivacyCb.checked) {
-      showErr("Please confirm below that you have read the Terms and Privacy Policy.");
+    if (!requireTermsChecked()) {
       setBusy(false);
       return;
     }
@@ -683,18 +699,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   if (walletSigninHexBtn) {
     walletSigninHexBtn.addEventListener("click", () => {
       primeTermsConsentUiForWalletAttempt();
-      if (!termsPrivacyCb.checked) {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            showTermsRequiredTooltip(
-              termsRequiredTooltipEl,
-              termsPrivacyTextEl ?? termsPrivacyCb
-            );
-          });
-        });
-        termsPrivacyCb.focus();
-        return;
-      }
+      if (!requireTermsChecked()) return;
       void invokePrimaryWalletLogin();
     });
   }
@@ -707,18 +712,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     ) {
       clearCachedAccountSelection();
     }
-    if (!termsPrivacyCb.checked) {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          showTermsRequiredTooltip(
-            termsRequiredTooltipEl,
-            termsPrivacyTextEl ?? termsPrivacyCb
-          );
-        });
-      });
-      termsPrivacyCb.focus();
-      return;
-    }
+    if (!requireTermsChecked()) return;
     void invokePrimaryWalletLogin();
   });
 
@@ -727,8 +721,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     setBusy(true);
     try {
       primeTermsConsentUiForWalletAttempt();
-      if (!termsPrivacyCb.checked) {
-        showErr("Please confirm below that you have read the Terms and Privacy Policy.");
+      if (!requireTermsChecked()) {
         setBusy(false);
         return;
       }
@@ -763,7 +756,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
 
   if (!replayUiEnabled) {
     return () => {
-      hideTermsRequiredTooltip();
+      clearTermsRequiredIndication();
       clearCachedAccountSelection();
       for (const d of disposeCachedMenuListeners) d();
       app.innerHTML = "";
@@ -914,7 +907,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   });
 
   return () => {
-    hideTermsRequiredTooltip();
+    clearTermsRequiredIndication();
     clearCachedAccountSelection();
     for (const d of disposeCachedMenuListeners) d();
     app.innerHTML = "";
