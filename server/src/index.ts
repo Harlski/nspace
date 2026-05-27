@@ -30,6 +30,13 @@ import {
 } from "./eventLog.js";
 import { flushCanvasClaimsSync } from "./canvasCanvas.js";
 import { flushSignboardsSync } from "./signboards.js";
+import {
+  designToWire,
+  flushDesignsSync,
+  getDesignSnapshotForWallet,
+  listPlaceableDesigns,
+  listPublicDesigns,
+} from "./designs.js";
 import { flushBillboardsSync } from "./billboards.js";
 import { flushVoxelTextsSync } from "./voxelTexts.js";
 import { getTopMazeRecords } from "./mazeRecords.js";
@@ -1315,6 +1322,46 @@ app.post("/api/hooks/pre-deploy-restart", (req, res) => {
   res.json({ ok: true, ...out });
 });
 
+
+app.get("/api/designs", (req, res) => {
+  const kind = req.query.kind === "room" ? "room" : req.query.kind === "object" ? "object" : undefined;
+  const rows = listPublicDesigns({ kind, limit: 50 }).map(designToWire);
+  res.json({ designs: rows });
+});
+
+app.get("/api/designs/placeable", (req, res) => {
+  const kind = req.query.kind === "room" ? "room" : req.query.kind === "object" ? "object" : undefined;
+  const address = jwtAddressFromReq(req);
+  if (!address) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const rows = listPlaceableDesigns(address, {
+    kind: kind ?? "object",
+    limit: 80,
+  }).map(designToWire);
+  res.json({ designs: rows });
+});
+
+app.get("/api/designs/:id/snapshot", (req, res) => {
+  const address = jwtAddressFromReq(req);
+  if (!address) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const designId = String(req.params.id ?? "").trim();
+  if (!designId) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  const snapshot = getDesignSnapshotForWallet(address, designId);
+  if (!snapshot) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ snapshot });
+});
+
 app.get("/api/auth/nonce", (_req, res) => {
   const { nonce, expiresAt } = createNonce();
   res.json({ nonce, expiresAt });
@@ -1520,6 +1567,7 @@ function shutdown(signal: string): void {
   flushEventLogSync();
   flushCanvasClaimsSync();
   flushSignboardsSync();
+  flushDesignsSync();
   flushBillboardsSync();
   flushVoxelTextsSync();
   flushNimPayoutQueueSync();

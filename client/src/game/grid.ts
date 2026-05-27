@@ -4,6 +4,7 @@ import {
   HUB_ROOM_ID,
   isHubSpawnSafeZone,
   normalizeRoomId,
+  type RoomBounds,
 } from "./roomLayouts.js";
 import { TILE_COORD_MAX, TILE_COORD_MIN } from "./constants.js";
 
@@ -54,6 +55,25 @@ export function isWalkableTile(
     return true;
   }
   return extraWalkable.has(k);
+}
+
+/** Base room bounds expanded to include every extra-floor tile (matches server `walkBounds`). */
+export function walkBoundsForRoom(
+  baseBounds: RoomBounds,
+  extraWalkable: ReadonlySet<string>
+): RoomBounds {
+  let { minX, maxX, minZ, maxZ } = baseBounds;
+  for (const k of extraWalkable) {
+    const parts = k.split(",");
+    const x = Number(parts[0]);
+    const z = Number(parts[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minZ = Math.min(minZ, z);
+    maxZ = Math.max(maxZ, z);
+  }
+  return { minX, maxX, minZ, maxZ };
 }
 
 export function snapFloorTile(wx: number, wz: number): FloorTile {

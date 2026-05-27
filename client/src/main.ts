@@ -49,7 +49,10 @@ import {
   sendUpdateRoom,
   sendMoveObstacle,
   sendMoveTo,
+  sendPublishDesign,
+  sendPlaceDesignInRoom,
   sendPlaceBlock,
+  type DesignWire,
   sendPlaceBillboard,
   sendUpdateBillboard,
   sendPlacePendingTeleporter,
@@ -69,6 +72,7 @@ import {
   type ServerMessage,
 } from "./net/ws.js";
 import { installAdminOverlay } from "./ui/adminOverlay.js";
+import { nimToLunaString } from "./ui/objectPrefabAuthoring.js";
 import { createHud } from "./ui/hud.js";
 import { isPaletteHueHexPopoverTyping } from "./ui/paletteHueHexPopover.js";
 import {
@@ -1434,6 +1438,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   let welcomeAllowRoomBackgroundHueEdit = false;
   /** From server welcome; who may set wallet-room guest join tile (`joinSpawn`). */
   let welcomeAllowRoomJoinSpawnEdit = false;
+  let welcomeAllowPublishDesign = false;
   /** Last welcome `roomBackgroundHueDeg` (undefined = built-in / omitted). */
   let latestWelcomeBackgroundHueDeg: number | null | undefined = undefined;
   /** Last welcome `roomBackgroundNeutral` (undefined = built-in / omitted). */
@@ -2008,6 +2013,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       const gateHint = hud.isGateModeActive()
         ? " Gate: green/red on neighbors show clearance; click an empty floor tile."
         : "";
+      const prefabHint = hud.isObjectPrefabPlaceModeActive()
+        ? " Prefab: pick one, hover anchor, click to place (↺ ↻ rotate)."
+        : hud.isObjectPrefabSaveModeActive()
+          ? " Prefab: click and drag on the floor to capture your prefab area."
+          : "";
       const sel = game.getSelectedBlockTile();
       const selectedHint = sel
         ? touchUi
@@ -2016,8 +2026,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         : "";
       hud.setStatus(
         touchUi
-          ? `Build — tap a block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${selectedHint}`
-          : `Build mode — click a block to edit, empty floor to place (B or Build off to exit)${tpHint}${gateHint}${selectedHint}`
+          ? `Build — tap a block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
+          : `Build mode — click a block to edit, empty floor to place (B or Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
       );
       hud.setBuildBlockBarState({
         visible: true,
@@ -2064,14 +2074,183 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
   }
 
+  const prefabUi = hud.getObjectPrefabAuthoringUi();
+
+  function canPlacePrefabInRoom(): boolean {
+    const rid = normalizeRoomId(game.getRoomId());
+    if (rid === CANVAS_ROOM_ID) return false;
+    return roomAllowPlaceBlocks;
+  }
+
+  function syncObjectPrefabModes(
+    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab"
+  ): void {
+    prefabUi.setAllowPublish(welcomeAllowPublishDesign);
+    const canUse =
+      tool === "prefab" && game.getBuildMode() && canPlacePrefabInRoom();
+    if (!canUse) {
+      game.setObjectPrefabSaveActive(false);
+      game.setObjectPrefabPlaceActive(false);
+      prefabUi.setPrefabToolActive(false);
+      return;
+    }
+    prefabUi.setPrefabToolActive(true);
+    if (!welcomeAllowPublishDesign && prefabUi.getMode() === "save") {
+      prefabUi.setMode("place");
+    }
+    const mode = prefabUi.getMode();
+    game.setObjectPrefabSaveActive(mode === "save" && welcomeAllowPublishDesign);
+    game.setObjectPrefabPlaceActive(mode === "place");
+    const design = prefabUi.getSelectedDesign();
+    if (mode === "place" && design) {
+      void loadPrefabSnapshotForDesign(design);
+    } else {
+      game.setObjectPrefabPlaceDesign(null);
+      game.setObjectPrefabPlaceSnapshot(null);
+    }
+    hud.refreshPrefabAuthoringChrome();
+  }
+
+  async function fetchPlaceableDesigns(): Promise<void> {
+    try {
+      const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+      const base = resolveApiBaseUrl() || "";
+      const res = await fetch(`${base}/api/designs/placeable?kind=object`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { designs?: DesignWire[] };
+      const designs = data.designs ?? [];
+      prefabUi.setPlaceableDesigns(designs);
+      void prefetchPrefabSnapshotsForCatalog(designs);
+      if (hud.isObjectPrefabToolActive()) {
+        syncObjectPrefabModes("prefab");
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   hud.onBuildToolSelect((tool) => {
     game.setBillboardPlacementPreviewActive(tool === "billboard");
+    syncObjectPrefabModes(tool);
     if (tool === "billboard") {
       const d = game.getBillboardPlacementDraft();
       hud.applyBillboardModalDraft(d);
     }
     syncBuildHud();
   });
+
+  game.setObjectPrefabBboxStatsHandler((stats) => {
+    prefabUi.updateStats(
+      stats
+        ? {
+            footprintW: stats.footprintW,
+            footprintD: stats.footprintD,
+            tileCount: stats.tileCount,
+          }
+        : null
+    );
+  });
+  game.setObjectPrefabBboxCompleteHandler((bbox) => {
+    if (!welcomeAllowPublishDesign) return;
+    prefabUi.openPublishModal(bbox, (payload) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      prefabUi.setPublishBusy(true);
+      sendPublishDesign(ws, {
+        kind: "object",
+        minX: payload.bbox.minX,
+        maxX: payload.bbox.maxX,
+        minZ: payload.bbox.minZ,
+        maxZ: payload.bbox.maxZ,
+        name: payload.name,
+        description: payload.description,
+        visibility: payload.visibility,
+        priceLuna: nimToLunaString(payload.priceNim),
+      });
+    });
+  });
+
+  prefabUi.onModeChange(() => {
+    if (hud.isObjectPrefabToolActive()) {
+      syncObjectPrefabModes("prefab");
+    }
+    hud.refreshPrefabAuthoringChrome();
+  });
+
+  const prefabSnapshotCache = new Map<string, import("./game/designFootprint.js").DesignSnapshotV1>();
+
+  hud.setPrefabSnapshotForThumb((id) => prefabSnapshotCache.get(id) ?? null);
+
+  async function fetchPrefabSnapshotIntoCache(
+    design: DesignWire
+  ): Promise<import("./game/designFootprint.js").DesignSnapshotV1 | null> {
+    const cached = prefabSnapshotCache.get(design.id);
+    if (cached) return cached;
+    try {
+      const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+      const base = resolveApiBaseUrl() || "";
+      const res = await fetch(
+        `${base}/api/designs/${encodeURIComponent(design.id)}/snapshot`,
+        { headers: { authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        snapshot?: import("./game/designFootprint.js").DesignSnapshotV1;
+      };
+      if (!data.snapshot?.obstacles) return null;
+      prefabSnapshotCache.set(design.id, data.snapshot);
+      return data.snapshot;
+    } catch {
+      return null;
+    }
+  }
+
+  async function prefetchPrefabSnapshotsForCatalog(
+    designs: DesignWire[]
+  ): Promise<void> {
+    if (designs.length === 0) return;
+    await Promise.all(designs.map((d) => fetchPrefabSnapshotIntoCache(d)));
+    hud.refreshPrefabAuthoringChrome();
+  }
+
+  async function loadPrefabSnapshotForDesign(
+    design: DesignWire | null
+  ): Promise<void> {
+    if (!design) {
+      game.setObjectPrefabPlaceSnapshot(null);
+      return;
+    }
+    game.setObjectPrefabPlaceDesign({
+      id: design.id,
+      footprintW: design.footprintW,
+      footprintD: design.footprintD,
+    });
+    const snapshot = await fetchPrefabSnapshotIntoCache(design);
+    game.setObjectPrefabPlaceSnapshot(snapshot);
+  }
+
+  prefabUi.onDesignChange((design) => {
+    void loadPrefabSnapshotForDesign(design);
+  });
+
+  hud.onPrefabPlaceRotate((delta) => {
+    game.cycleObjectPrefabPlaceYaw(delta);
+  });
+
+  game.setObjectPrefabPlaceHandler((anchorX, anchorZ, yawSteps) => {
+    const designId = prefabUi.getSelectedDesignId();
+    if (!designId || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!game.isPrefabPlaceValidAt(anchorX, anchorZ)) return;
+    sendPlaceDesignInRoom(ws, {
+      designId,
+      anchorX,
+      anchorZ,
+      yawSteps,
+    });
+  });
+
+  void fetchPlaceableDesigns();
 
   hud.onObjectSelectionDismiss(() => {
     game.setTeleporterDestPickHandler(null);
@@ -2102,6 +2281,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       // Deactivate signpost mode when leaving build
       hud.deactivateSignpostMode();
       hud.deactivateGateMode();
+      syncObjectPrefabModes("prefab");
       hud.clearRoomEntrySpawnPickUi();
       game.setRoomEntrySpawnPickHandler(null);
     } else if (mode === "build") {
@@ -3170,6 +3350,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       welcomeAllowRoomBackgroundHueEdit =
         msg.allowRoomBackgroundHueEdit === true;
       welcomeAllowRoomJoinSpawnEdit = msg.allowRoomJoinSpawnEdit === true;
+      welcomeAllowPublishDesign = msg.allowPublishDesign === true;
+      prefabUi.setAllowPublish(welcomeAllowPublishDesign);
+      void fetchPlaceableDesigns();
+      if (hud.isObjectPrefabToolActive()) {
+        syncObjectPrefabModes("prefab");
+      }
       if (msg.roomBackgroundHueDeg === undefined) {
         latestWelcomeBackgroundHueDeg = undefined;
       } else if (msg.roomBackgroundHueDeg === null) {
@@ -3587,6 +3773,49 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       hud.setCanvasCountdown(msg.text, msg.msRemaining);
       return;
     }
+    if (msg.type === "designPublished") {
+      prefabUi.setPublishBusy(false);
+      prefabUi.closePublishModal();
+      hud.appendChat(
+        "System",
+        `Object prefab published: "${msg.design.name}" (${msg.design.footprintW}×${msg.design.footprintD}).`
+      );
+      prefabSnapshotCache.delete(msg.design.id);
+      void fetchPlaceableDesigns();
+      if (prefabUi.getSelectedDesignId() === msg.design.id) {
+        void loadPrefabSnapshotForDesign(msg.design);
+      }
+      return;
+    }
+    if (msg.type === "designStampResult") {
+      if (msg.ok) {
+        const n = msg.obstacleCount ?? 0;
+        hud.appendChat(
+          "System",
+          n > 0 ? `Placed prefab (${n} blocks).` : "Placed prefab."
+        );
+      } else {
+        const stampMessages: Record<string, string> = {
+          not_entitled: "You are not allowed to place this prefab.",
+          out_of_bounds: "Prefab does not fit here.",
+          unwalkable_tile: "Prefab needs walkable floor tiles.",
+          overlap: "Could not replace blocks in this area.",
+          player_on_tile: "A player is standing in the footprint.",
+          out_of_range: "Too far away to place.",
+          room_not_supported: "You cannot place prefabs in this room.",
+          design_not_found: "Prefab not found.",
+          snapshot_missing: "Prefab data is missing.",
+          empty_design: "Prefab is empty.",
+          no_bounds: "Room has no build bounds.",
+        };
+        const code = msg.code ?? "error";
+        hud.appendChat(
+          "System",
+          stampMessages[code] ?? `Could not place prefab (${code}).`
+        );
+      }
+      return;
+    }
     if (msg.type === "error") {
       // Handle canvas cooldown error
       if (msg.code === "CANVAS_COOLDOWN") {
@@ -3603,6 +3832,23 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         hud.appendChat(
           "System",
           "Only admins can place billboards right now."
+        );
+      }
+      if (msg.code === "publish_design_forbidden") {
+        hud.appendChat(
+          "System",
+          "You cannot publish prefabs in this room."
+        );
+        hud.getObjectPrefabAuthoringUi().setPublishBusy(false);
+      }
+      if (
+        msg.code === "footprint_too_large" ||
+        msg.code === "too_many_obstacles" ||
+        msg.code === "empty_selection" ||
+        msg.code === "name_required"
+      ) {
+        hud.getObjectPrefabAuthoringUi().showPublishError(
+          msg.code.replace(/_/g, " ")
         );
       }
       if (msg.code === "billboard_vertical_disabled") {
@@ -3864,7 +4110,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       const ae = document.activeElement;
       const tag = ae?.tagName ?? "";
       const inFormField =
-        tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        (ae instanceof HTMLElement && ae.isContentEditable);
       /** Hex popover: letters go into the field only; Escape still exits build (below). */
       if (isPaletteHueHexPopoverTyping() && e.key !== "Escape") {
         return;
@@ -4005,13 +4254,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         // Return to walk mode if in any build mode
         if (game.getBuildMode()) {
           game.setBuildMode(false);
+          syncObjectPrefabModes("prefab");
           syncBuildHud();
         }
         game.clearSelectedBlock();
         return;
       }
       if (e.key === "f" || e.key === "F") {
-        if (document.activeElement === chatInput) return;
+        if (inFormField) return;
 
         const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
         if (isCanvas || !roomAllowExtraFloor) return;
@@ -4021,7 +4271,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         return;
       }
       if (e.key === "b" || e.key === "B") {
-        if (document.activeElement === chatInput) return;
+        if (inFormField) return;
 
         const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
         if (isCanvas || !roomAllowPlaceBlocks) return;
@@ -4032,19 +4282,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           editingTile = null;
           hud.hideObjectEditPanel();
           game.clearSelectedBlock();
+          syncObjectPrefabModes("prefab");
         }
         syncBuildHud();
       }
-      if (game.getBuildMode() && document.activeElement !== chatInput) {
-        const ae = document.activeElement;
-        if (
-          ae &&
-          (ae.tagName === "INPUT" ||
-            ae.tagName === "TEXTAREA" ||
-            ae.tagName === "SELECT")
-        ) {
-          return;
-        }
+      if (game.getBuildMode() && !inFormField) {
         const k = e.key;
         if (k === "d" || k === "D") {
           if (hud.isObjectSelectionActive()) {

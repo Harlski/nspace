@@ -37,6 +37,11 @@ import {
   updateBillboardRootPose,
 } from "./billboardVisual.js";
 import { billboardFootprintTilesXZ } from "./billboardFootprintMath.js";
+import {
+  footprintTiles,
+  rotateDesignOffset,
+  type DesignSnapshotV1,
+} from "./designFootprint.js";
 import { BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED } from "./billboardPlacementFlags.js";
 import { pickBillboardVisitOnFootprintTile } from "./billboardVisitProximity.js";
 import { billboardSlideshowPhaseIndex } from "./billboardSlideshowPhase.js";
@@ -71,6 +76,7 @@ import {
   pathfindTerrain,
   snapFloorTile,
   tileKey,
+  walkBoundsForRoom,
   waypointWorldY,
   isOrthogonallyAdjacentToFloorTile,
 } from "./grid.js";
@@ -1213,6 +1219,10 @@ export class Game {
     "cube" | "hex" | "pyramid" | "sphere" | "ramp",
     { sig: string; dataUrl: string }
   >();
+  private readonly dockStripThumbByPrefabDesign = new Map<
+    string,
+    { sig: string; dataUrl: string }
+  >();
   private dockStripThumbFloor: { sig: string; dataUrl: string } | null = null;
   /** Subset of tile keys that block pathfinding (not passable). */
   private readonly blockingTileKeys = new Set<string>();
@@ -1327,7 +1337,7 @@ export class Game {
   /** Extra highlight on solid block tops when hovering in walk mode. */
   private readonly blockTopHighlight: THREE.Mesh;
   /** Server max place distance (world units); 0 = unlimited (no ring overlay). */
-  private placeRadiusBlocks = 5;
+  private placeRadiusBlocks = 9;
   private readonly placementHintGeom: THREE.PlaneGeometry;
   private readonly placementHintMat: THREE.MeshBasicMaterial;
   private readonly placementHintMeshes = new Map<string, THREE.Mesh>();
@@ -1550,6 +1560,45 @@ export class Game {
   private readonly billboardFootprintPreviewValidMat: THREE.MeshBasicMaterial;
   private readonly billboardFootprintPreviewInvalidMat: THREE.MeshBasicMaterial;
   private readonly billboardFootprintPreviewMeshes: THREE.Mesh[] = [];
+  /** Object prefab capture: drag rectangle on floor (wallet room, build mode). */
+  private objectPrefabSaveActive = false;
+  private prefabBboxDrag: {
+    pointerId: number;
+    startX: number;
+    startZ: number;
+    curX: number;
+    curZ: number;
+  } | null = null;
+  private prefabBboxCompleteHandler: ((bbox: {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  }) => void) | null = null;
+  private prefabBboxStatsHandler:
+    | ((stats: {
+        footprintW: number;
+        footprintD: number;
+        tileCount: number;
+      } | null) => void)
+    | null = null;
+  private readonly prefabBboxPreviewMeshes: THREE.Mesh[] = [];
+  /** Object prefab stamp: footprint ghost + click to place. */
+  private objectPrefabPlaceActive = false;
+  private prefabPlaceDesign: {
+    id: string;
+    footprintW: number;
+    footprintD: number;
+  } | null = null;
+  private prefabPlaceYawSteps = 0;
+  private prefabPlaceHandler:
+    | ((anchorX: number, anchorZ: number, yawSteps: number) => void)
+    | null = null;
+  private prefabPlaceGhostValid = false;
+  private prefabPlaceHoverAnchor: { x: number; z: number } | null = null;
+  private prefabPlaceSnapshot: DesignSnapshotV1 | null = null;
+  private prefabPlaceMeshGroup: THREE.Group | null = null;
+  private prefabPlaceMeshTemplateSig = "";
   private billboardInteractGhost: THREE.Group | null = null;
   private billboardInteractGhostSig = "";
   private readonly billboardPreviewPlaceholderTex: THREE.CanvasTexture;
@@ -2856,7 +2905,35 @@ export class Game {
       }
     }
 
-    if (this.pendingBuildPlace && this.pendingBuildPlace.pointerId === e.pointerId) {
+    if (
+      this.prefabBboxDrag &&
+      this.prefabBboxDrag.pointerId === e.pointerId
+    ) {
+      const drag = this.prefabBboxDrag;
+      this.prefabBboxDrag = null;
+      try {
+        if (this.renderer.domElement.hasPointerCapture?.(e.pointerId)) {
+          this.renderer.domElement.releasePointerCapture(e.pointerId);
+        }
+      } catch {
+        /* ignore */
+      }
+      if (!isCancel && e.button === 0) {
+        const bbox = {
+          minX: Math.min(drag.startX, drag.curX),
+          maxX: Math.max(drag.startX, drag.curX),
+          minZ: Math.min(drag.startZ, drag.curZ),
+          maxZ: Math.max(drag.startZ, drag.curZ),
+        };
+        this.clearPrefabBboxPreview();
+        this.prefabBboxCompleteHandler?.(bbox);
+      } else {
+        this.clearPrefabBboxPreview();
+      }
+      return;
+    }
+
+        if (this.pendingBuildPlace && this.pendingBuildPlace.pointerId === e.pointerId) {
       const pb = this.pendingBuildPlace;
       this.pendingBuildPlace = null;
       try {
@@ -3503,6 +3580,364 @@ export class Game {
       if (tiles.some((t) => t.x === x && t.z === z)) return b.id;
     }
     return null;
+  }
+
+
+  setObjectPrefabSaveActive(active: boolean): void {
+    this.objectPrefabSaveActive = active;
+    if (!active) {
+      this.prefabBboxDrag = null;
+      this.clearPrefabBboxPreview();
+      this.prefabBboxStatsHandler?.(null);
+    }
+  }
+
+  isObjectPrefabSaveActive(): boolean {
+    return this.objectPrefabSaveActive;
+  }
+
+  setObjectPrefabPlaceActive(active: boolean): void {
+    this.objectPrefabPlaceActive = active;
+    if (!active) {
+      this.prefabPlaceHoverAnchor = null;
+      this.prefabPlaceGhostValid = false;
+      this.clearBillboardFootprintPreviewTiles();
+      this.clearPrefabPlaceMeshGhost();
+    }
+  }
+
+  /** Drop save/place previews when leaving build (or floor-expand overrides build). */
+  private clearObjectPrefabToolVisuals(): void {
+    this.setObjectPrefabSaveActive(false);
+    this.setObjectPrefabPlaceActive(false);
+    this.prefabPlaceDesign = null;
+    this.prefabPlaceSnapshot = null;
+  }
+
+  isObjectPrefabPlaceActive(): boolean {
+    return this.objectPrefabPlaceActive;
+  }
+
+  setObjectPrefabPlaceDesign(
+    design: { id: string; footprintW: number; footprintD: number } | null
+  ): void {
+    this.prefabPlaceDesign = design;
+    this.prefabPlaceYawSteps = 0;
+    if (!design) {
+      this.prefabPlaceSnapshot = null;
+      this.clearBillboardFootprintPreviewTiles();
+      this.clearPrefabPlaceMeshGhost();
+      return;
+    }
+    this.rebuildPrefabPlaceMeshTemplate();
+    this.syncPrefabPlaceGhostAt(
+      this.lastPointerClientPixels.x,
+      this.lastPointerClientPixels.y
+    );
+  }
+
+  setObjectPrefabPlaceSnapshot(snapshot: DesignSnapshotV1 | null): void {
+    this.prefabPlaceSnapshot = snapshot;
+    this.rebuildPrefabPlaceMeshTemplate();
+    this.syncPrefabPlaceGhostAt(
+      this.lastPointerClientPixels.x,
+      this.lastPointerClientPixels.y
+    );
+  }
+
+  setObjectPrefabPlaceYaw(yawSteps: number): void {
+    this.prefabPlaceYawSteps = ((Math.floor(yawSteps) % 4) + 4) % 4;
+    this.rebuildPrefabPlaceMeshTemplate();
+    this.syncPrefabPlaceGhostAt(
+      this.lastPointerClientPixels.x,
+      this.lastPointerClientPixels.y
+    );
+  }
+
+  cycleObjectPrefabPlaceYaw(delta: -1 | 1): void {
+    this.setObjectPrefabPlaceYaw(this.prefabPlaceYawSteps + delta);
+  }
+
+  getObjectPrefabPlaceYaw(): number {
+    return this.prefabPlaceYawSteps;
+  }
+
+  setObjectPrefabPlaceHandler(
+    handler:
+      | ((anchorX: number, anchorZ: number, yawSteps: number) => void)
+      | null
+  ): void {
+    this.prefabPlaceHandler = handler;
+  }
+
+  isPrefabPlaceValidAt(anchorX: number, anchorZ: number): boolean {
+    if (!this.prefabPlaceDesign || !this.prefabPlaceSnapshot) return false;
+    const design = this.prefabPlaceDesign;
+    const tiles = footprintTiles(
+      anchorX,
+      anchorZ,
+      design.footprintW,
+      design.footprintD,
+      this.prefabPlaceYawSteps
+    );
+    const b = walkBoundsForRoom(this.roomBounds, this.extraFloorKeys);
+    const self = this.getSelfPosition();
+    const radius = this.getPlaceRadiusBlocks();
+    for (const { x, z } of tiles) {
+      if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) {
+        return false;
+      }
+      if (!this.tileWalkable({ x, y: z })) return false;
+      if (self) {
+        const dx = self.x - x;
+        const dz = self.z - z;
+        if (Math.hypot(dx, dz) > radius + 1e-6) return false;
+      }
+    }
+    return tiles.length > 0;
+  }
+
+  /** Prefer last hover anchor so click matches the ghost (re-picking can snap to a neighbor tile). */
+  private resolvePrefabPlaceAnchorAtClick(
+    clientX: number,
+    clientY: number
+  ): { x: number; z: number } | null {
+    const hover = this.prefabPlaceHoverAnchor;
+    if (
+      hover &&
+      this.prefabPlaceGhostValid &&
+      this.isPrefabPlaceValidAt(hover.x, hover.z)
+    ) {
+      return hover;
+    }
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest || !this.tileWalkable(dest)) return null;
+    if (!this.isPrefabPlaceValidAt(dest.x, dest.y)) return null;
+    return { x: dest.x, z: dest.y };
+  }
+
+  private clearPrefabPlaceMeshGhost(): void {
+    if (this.prefabPlaceMeshGroup) {
+      this.scene.remove(this.prefabPlaceMeshGroup);
+      this.prefabPlaceMeshGroup.traverse((child: THREE.Object3D) => {
+        disposePlacedBlockGroupContents(child);
+      });
+      this.prefabPlaceMeshGroup = null;
+    }
+    this.prefabPlaceMeshTemplateSig = "";
+  }
+
+  private rebuildPrefabPlaceMeshTemplate(): void {
+    const design = this.prefabPlaceDesign;
+    const snap = this.prefabPlaceSnapshot;
+    const sig = design && snap
+      ? `${design.id}|${design.footprintW}|${design.footprintD}|${this.prefabPlaceYawSteps}|${snap.obstacles.length}`
+      : "";
+    if (sig === this.prefabPlaceMeshTemplateSig && this.prefabPlaceMeshGroup) {
+      return;
+    }
+    this.clearPrefabPlaceMeshGhost();
+    this.prefabPlaceMeshTemplateSig = sig;
+    if (!design || !snap || snap.obstacles.length === 0) return;
+
+    const group = new THREE.Group();
+    const vis = this.blockVisualScale;
+    for (const obs of snap.obstacles) {
+      const { dx, dz } = rotateDesignOffset(
+        obs.dx,
+        obs.dz,
+        design.footprintW,
+        design.footprintD,
+        this.prefabPlaceYawSteps
+      );
+      const yLevel = Math.max(0, Math.min(2, Math.floor(obs.y)));
+      const meta = { ...obs.props } as BlockStyleProps;
+      const h = this.obstacleHeight(meta);
+      const mesh = this.makeBlockMesh(meta, {
+        ghost: true,
+        floorLayer: yLevel,
+      });
+      mesh.userData.prefabRelDx = dx;
+      mesh.userData.prefabRelDz = dz;
+      mesh.userData.prefabYWorld =
+        yLevel * BLOCK_SIZE + (h * vis) / 2;
+      mesh.position.set(0, mesh.userData.prefabYWorld as number, 0);
+      group.add(mesh);
+    }
+    group.visible = false;
+    this.prefabPlaceMeshGroup = group;
+    this.scene.add(group);
+  }
+
+  private setPrefabPlaceMeshGhostOpacity(valid: boolean): void {
+    if (!this.prefabPlaceMeshGroup) return;
+    const opacity = valid ? 0.48 : 0.28;
+    this.prefabPlaceMeshGroup.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const mats = Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material];
+      for (const m of mats) {
+        if (!m || !("opacity" in m)) continue;
+        const mat = m as THREE.Material & { opacity: number; transparent: boolean };
+        mat.transparent = true;
+        mat.opacity = opacity;
+      }
+    });
+  }
+
+  private syncPrefabPlaceMeshAt(anchorX: number, anchorZ: number, valid: boolean): void {
+    if (!this.prefabPlaceMeshGroup) return;
+    const ax = Math.floor(anchorX);
+    const az = Math.floor(anchorZ);
+    this.prefabPlaceMeshGroup.position.set(0, 0, 0);
+    for (const child of this.prefabPlaceMeshGroup.children) {
+      const rdx = child.userData.prefabRelDx as number | undefined;
+      const rdz = child.userData.prefabRelDz as number | undefined;
+      const yWorld = child.userData.prefabYWorld as number | undefined;
+      if (
+        rdx === undefined ||
+        rdz === undefined ||
+        yWorld === undefined ||
+        !Number.isFinite(rdx) ||
+        !Number.isFinite(rdz)
+      ) {
+        continue;
+      }
+      child.position.set(ax + rdx, yWorld, az + rdz);
+    }
+    this.prefabPlaceMeshGroup.visible = true;
+    this.setPrefabPlaceMeshGhostOpacity(valid);
+  }
+
+  private syncPrefabPlaceGhostAt(clientX: number, clientY: number): void {
+    if (!this.objectPrefabPlaceActive || !this.prefabPlaceDesign) {
+      this.clearBillboardFootprintPreviewTiles();
+      this.clearPrefabPlaceMeshGhost();
+      return;
+    }
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest || !this.tileWalkable(dest)) {
+      this.prefabPlaceHoverAnchor = null;
+      this.prefabPlaceGhostValid = false;
+      this.clearBillboardFootprintPreviewTiles();
+      if (this.prefabPlaceMeshGroup) this.prefabPlaceMeshGroup.visible = false;
+      return;
+    }
+    const ax = dest.x;
+    const az = dest.y;
+    this.prefabPlaceHoverAnchor = { x: ax, z: az };
+    const valid = this.isPrefabPlaceValidAt(ax, az);
+    this.prefabPlaceGhostValid = valid;
+    const tiles = footprintTiles(
+      ax,
+      az,
+      this.prefabPlaceDesign.footprintW,
+      this.prefabPlaceDesign.footprintD,
+      this.prefabPlaceYawSteps
+    );
+    this.syncBillboardFootprintHighlightTiles(tiles, valid);
+    this.syncPrefabPlaceMeshAt(ax, az, valid);
+  }
+
+  setObjectPrefabBboxCompleteHandler(
+    handler: ((bbox: {
+      minX: number;
+      maxX: number;
+      minZ: number;
+      maxZ: number;
+    }) => void) | null
+  ): void {
+    this.prefabBboxCompleteHandler = handler;
+  }
+
+  setObjectPrefabBboxStatsHandler(
+    handler:
+      | ((stats: {
+          footprintW: number;
+          footprintD: number;
+          tileCount: number;
+        }) => void)
+      | null
+  ): void {
+    this.prefabBboxStatsHandler = handler;
+  }
+
+  /** Mobile preset: fixed square from anchor corner (tap once). */
+  tryObjectPrefabPresetAt(clientX: number, clientY: number, size: number): boolean {
+    if (!this.objectPrefabSaveActive || !this.buildMode) return false;
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest || !this.tileWalkable(dest)) return false;
+    const ax = dest.x;
+    const az = dest.y;
+    const bbox = {
+      minX: ax,
+      maxX: ax + size - 1,
+      minZ: az,
+      maxZ: az + size - 1,
+    };
+    this.syncPrefabBboxOverlay(bbox);
+    this.emitPrefabBboxStats(bbox);
+    this.prefabBboxCompleteHandler?.(bbox);
+    return true;
+  }
+
+  private clearPrefabBboxPreview(): void {
+    for (const m of this.prefabBboxPreviewMeshes) {
+      m.visible = false;
+    }
+  }
+
+  private emitPrefabBboxStats(bbox: {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  }): void {
+    const w = bbox.maxX - bbox.minX + 1;
+    const d = bbox.maxZ - bbox.minZ + 1;
+    this.prefabBboxStatsHandler?.({
+      footprintW: w,
+      footprintD: d,
+      tileCount: w * d,
+    });
+  }
+
+  private syncPrefabBboxOverlay(bbox: {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  }): void {
+    const tiles: { x: number; z: number }[] = [];
+    for (let x = bbox.minX; x <= bbox.maxX; x++) {
+      for (let z = bbox.minZ; z <= bbox.maxZ; z++) {
+        tiles.push({ x, z });
+      }
+    }
+    const maxFoot = 6;
+    const valid =
+      tiles.length > 0 &&
+      bbox.maxX - bbox.minX + 1 <= maxFoot &&
+      bbox.maxZ - bbox.minZ + 1 <= maxFoot;
+    this.syncBillboardFootprintHighlightTiles(tiles, valid);
+  }
+
+  private prefabBboxFromDrag(): {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  } | null {
+    if (!this.prefabBboxDrag) return null;
+    const { startX, startZ, curX, curZ } = this.prefabBboxDrag;
+    return {
+      minX: Math.min(startX, curX),
+      maxX: Math.max(startX, curX),
+      minZ: Math.min(startZ, curZ),
+      maxZ: Math.max(startZ, curZ),
+    };
   }
 
   private clearBillboardFootprintPreviewTiles(): void {
@@ -4258,6 +4693,7 @@ export class Game {
       this.repositionGatePlacedVisualFreeze = null;
       this.setBillboardPlacementPreviewActive(false);
       this.clearSelectedBlock();
+      this.clearObjectPrefabToolVisuals();
     }
     this.syncHighlightColor();
     this.refreshSelectionOutline();
@@ -4282,6 +4718,7 @@ export class Game {
       this.repositionGateHint = null;
       this.repositionGatePlacedVisualFreeze = null;
       this.setBillboardPlacementPreviewActive(false);
+      this.clearObjectPrefabToolVisuals();
     } else {
       this.roomEntrySpawnPickHandler = null;
     }
@@ -6649,6 +7086,22 @@ export class Game {
     }
     this.lastPointerClientPixels.x = e.clientX;
     this.lastPointerClientPixels.y = e.clientY;
+    if (
+      this.prefabBboxDrag &&
+      e.pointerId === this.prefabBboxDrag.pointerId
+    ) {
+      const dest = this.pickFloor(e.clientX, e.clientY);
+      if (dest && this.tileWalkable(dest)) {
+        this.prefabBboxDrag.curX = dest.x;
+        this.prefabBboxDrag.curZ = dest.y;
+        const bbox = this.prefabBboxFromDrag();
+        if (bbox) {
+          this.syncPrefabBboxOverlay(bbox);
+          this.emitPrefabBboxStats(bbox);
+        }
+      }
+      return;
+    }
     if (e.pointerType === "touch") {
       this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
@@ -6834,6 +7287,12 @@ export class Game {
         this.lastBillboardPointerClientX = e.clientX;
         this.lastBillboardPointerClientY = e.clientY;
         this.syncBillboardPlacementPreviews(e.clientX, e.clientY);
+        this.signboardHoverHandler?.(null);
+        return;
+      }
+      if (this.objectPrefabPlaceActive && this.prefabPlaceDesign) {
+        this.clearGateNeighborFloorHints();
+        this.syncPrefabPlaceGhostAt(e.clientX, e.clientY);
         this.signboardHoverHandler?.(null);
         return;
       }
@@ -7133,6 +7592,47 @@ export class Game {
     }
 
     if (this.buildMode) {
+      if (this.objectPrefabPlaceActive && this.prefabPlaceDesign) {
+        const anchor = this.resolvePrefabPlaceAnchorAtClick(
+          e.clientX,
+          e.clientY
+        );
+        if (anchor) {
+          this.prefabPlaceHandler?.(
+            anchor.x,
+            anchor.z,
+            this.prefabPlaceYawSteps
+          );
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (this.objectPrefabSaveActive) {
+        const dest = this.pickFloor(e.clientX, e.clientY);
+        if (dest && this.tileWalkable(dest)) {
+          this.prefabBboxDrag = {
+            pointerId: e.pointerId,
+            startX: dest.x,
+            startZ: dest.y,
+            curX: dest.x,
+            curZ: dest.y,
+          };
+          try {
+            this.renderer.domElement.setPointerCapture(e.pointerId);
+          } catch {
+            /* ignore */
+          }
+          const bbox = this.prefabBboxFromDrag();
+          if (bbox) {
+            this.syncPrefabBboxOverlay(bbox);
+            this.emitPrefabBboxStats(bbox);
+          }
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (this.teleporterDestPickHandler) {
         const dest = this.pickFloor(e.clientX, e.clientY);
         if (!dest) return;
@@ -10490,6 +10990,89 @@ export class Game {
     }
   }
 
+  private prefabDesignThumbnailSignature(
+    designId: string,
+    footprintW: number,
+    footprintD: number,
+    snapshot: DesignSnapshotV1,
+    version?: number
+  ): string {
+    return `prefab|${designId}|v${version ?? 0}|${footprintW}|${footprintD}|${snapshot.obstacles.length}|${this.blockVisualScale}`;
+  }
+
+  private renderPrefabDesignIntoBakePort(
+    port: InspectorTilePreviewPort,
+    snapshot: DesignSnapshotV1,
+    footprintW: number,
+    footprintD: number
+  ): void {
+    port.floor.visible = true;
+    const cx = (footprintW - 1) / 2;
+    const cz = (footprintD - 1) / 2;
+    const span = Math.max(footprintW, footprintD, 1);
+    const layoutScale = Math.min(1, 4.5 / span);
+    port.blockSlot.position.set(0, 0, 0);
+    const vis = this.blockVisualScale;
+    const prefabRoot = new THREE.Group();
+    prefabRoot.scale.setScalar(layoutScale);
+    for (const obs of snapshot.obstacles) {
+      const yLevel = Math.max(0, Math.min(2, Math.floor(obs.y)));
+      const meta = { ...obs.props } as BlockStyleProps;
+      const h = this.obstacleHeight(meta);
+      const mesh = this.makeBlockMesh(meta, {
+        ghost: false,
+        inspectorPreview: true,
+      });
+      mesh.position.set(
+        obs.dx - cx,
+        yLevel * BLOCK_SIZE + (h * vis) / 2,
+        obs.dz - cz
+      );
+      prefabRoot.add(mesh);
+    }
+    port.blockSlot.add(prefabRoot);
+  }
+
+  getPrefabDesignThumbnailDataUrls(
+    entries: readonly {
+      id: string;
+      snapshot: DesignSnapshotV1;
+      footprintW: number;
+      footprintD: number;
+      version?: number;
+    }[]
+  ): Map<string, string> {
+    const out = new Map<string, string>();
+    if (entries.length === 0) return out;
+    const port = this.getOrCreateDockStripBakePort();
+    for (const e of entries) {
+      const sig = this.prefabDesignThumbnailSignature(
+        e.id,
+        e.footprintW,
+        e.footprintD,
+        e.snapshot,
+        e.version
+      );
+      const cached = this.dockStripThumbByPrefabDesign.get(e.id);
+      if (cached?.sig === sig) {
+        out.set(e.id, cached.dataUrl);
+        continue;
+      }
+      this.clearDockStripBakeBlockSlot(port);
+      this.renderPrefabDesignIntoBakePort(
+        port,
+        e.snapshot,
+        e.footprintW,
+        e.footprintD
+      );
+      this.finishDockStripBakeRender(port);
+      const dataUrl = port.canvas.toDataURL("image/png");
+      this.dockStripThumbByPrefabDesign.set(e.id, { sig, dataUrl });
+      out.set(e.id, dataUrl);
+    }
+    return out;
+  }
+
   getDockStripThumbnailDataUrls(
     tools: readonly ("teleporter" | "gate" | "billboard" | "signpost")[]
   ): Map<string, string> {
@@ -10563,6 +11146,7 @@ export class Game {
   clearDockStripThumbnailCache(): void {
     this.dockStripThumbByTool.clear();
     this.dockStripThumbByTerrainShape.clear();
+    this.dockStripThumbByPrefabDesign.clear();
     this.dockStripThumbFloor = null;
     this.disposeDockStripBakePort();
   }

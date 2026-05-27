@@ -104,6 +104,13 @@ import {
   HUB_MAZE_EXIT_SPAWN,
 } from "./roomLayouts.js";
 import {
+  designToWire,
+  loadDesigns,
+  publishDesign,
+} from "./designs.js";
+import { planDesignStampInRoom } from "./designPlacement.js";
+import type { DesignKind } from "./designSnapshot.js";
+import {
   createSignboard,
   deleteSignboard,
   getSignboardAt,
@@ -386,6 +393,8 @@ const DEBUG_MOVEMENT =
   String(process.env.NSPACE_DEBUG_MOVEMENT ?? "").toLowerCase() === "true";
 const RATE_CHAT_MS = 800;
 const RATE_PLACE_MS = 200;
+const RATE_PUBLISH_DESIGN_MS = 1200;
+const RATE_DESIGN_STAMP_MS = 800;
 const ARRIVE_EPS = 0.04;
 /** If idle (no path) and farther than this from the nearest legal stance, snap to that stance (unstick). */
 const STANCE_SNAP_DRIFT_EPS = 0.48;
@@ -402,7 +411,7 @@ const FAKE_PATH_MAX_STEPS = 5;
 /** Max distance on XZ (world units) from player to tile for block edit actions; enforced server-side. */
 const PLACE_RADIUS_BLOCKS = Math.max(
   0,
-  Math.min(64, Number(process.env.PLACE_RADIUS_BLOCKS ?? "5"))
+  Math.min(64, Number(process.env.PLACE_RADIUS_BLOCKS ?? "9"))
 );
 
 /**
@@ -577,6 +586,8 @@ interface ClientConn {
   lastMoveToAt: number;
   lastChatAt: number;
   lastPlaceAt: number;
+  lastPublishDesignAt?: number;
+  lastDesignStampAt?: number;
   player: PlayerState;
   pathQueue: { x: number; z: number; layer: 0 | 1 }[];
   /** Single active claim session id for this connection (enforces one claim at a time). */
@@ -641,6 +652,12 @@ function canEditRoomContent(roomId: string, address: string): boolean {
   return true;
 }
 
+/** Same rooms where the wallet may place blocks (Hub, owned wallet room, etc.). */
+function canPublishDesign(roomId: string, address: string): boolean {
+  return canEditRoomContent(roomId, address);
+}
+
+
 type OutMsg =
   | {
       type: "welcome";
@@ -699,6 +716,8 @@ type OutMsg =
       onlinePlayerCount: number;
       /** Client may show build mode only when true; server still enforces. */
       allowPlaceBlocks: boolean;
+      /** Wallet-room owner may capture object/room prefabs from this room. */
+      allowPublishDesign?: boolean;
       /** Client may show floor-expand mode only when true; server still enforces. */
       allowExtraFloor: boolean;
       /** Dynamic rooms: this player may PATCH `backgroundHueDeg` (sidebar hue ring). */
@@ -815,6 +834,16 @@ type OutMsg =
   /** Opening player only: gate swung visually but they cannot walk onto exit/front (or no path). */
   | { type: "gateWalkBlocked"; x: number; z: number; y: number }
   | { type: "error"; code: string }
+  | {
+      type: "designPublished";
+      design: ReturnType<typeof designToWire>;
+    }
+  | {
+      type: "designStampResult";
+      ok: boolean;
+      code?: string;
+      obstacleCount?: number;
+    }
   | {
       type: "blockClaimOffered";
       claimId: string;
@@ -3468,6 +3497,8 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       )
     : false;
 
+  const allowPublishDesign = canPublishDesign(targetRoomId, address);
+
   wsSafeSend(conn.ws, {
       type: "welcome",
       self: playerToOutState(conn),
@@ -3486,6 +3517,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       voxelTexts: getVoxelTextsForRoom(targetRoomId),
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
+      allowPublishDesign,
       allowExtraFloor: allowFloorExpand,
       allowRoomBackgroundHueEdit,
       roomBackgroundHueDeg: welcomeBgState.hueDeg,
@@ -3503,6 +3535,7 @@ export function startRoomTick(): void {
   loadCanvasClaims();
   loadSignboards();
   loadBillboards();
+  loadDesigns();
   loadVoxelTexts();
   loadMazeRecords();
   tickClaimableBlockReactivations(Date.now());
@@ -3910,6 +3943,7 @@ export function addClient(
       voxelTexts: getVoxelTextsForRoom(roomId),
       onlinePlayerCount: countOnlineRealPlayers(),
       allowPlaceBlocks: allowEdit,
+      allowPublishDesign: canPublishDesign(roomId, address),
       allowExtraFloor: allowFloorExpand,
       allowRoomBackgroundHueEdit: joinAllowRoomBackgroundHueEdit,
       roomBackgroundHueDeg: joinWelcomeBgState.hueDeg,
@@ -4659,6 +4693,153 @@ export function addClient(
       });
       return;
     }
+
+
+    if (msg.type === "publishDesign") {
+      if (!canEditRoomContent(currentRoomId, address)) return;
+      if (!canPublishDesign(currentRoomId, address)) {
+        wsSafeSend(ws, { type: "error", code: "publish_design_forbidden" } satisfies OutMsg);
+        return;
+      }
+      const now = Date.now();
+      if (now - (conn.lastPublishDesignAt ?? 0) < RATE_PUBLISH_DESIGN_MS) return;
+      conn.lastPublishDesignAt = now;
+      const kindRaw = String(msg.kind ?? "object");
+      const kind: DesignKind = kindRaw === "room" ? "room" : "object";
+      const minX = Number(msg.minX);
+      const maxX = Number(msg.maxX);
+      const minZ = Number(msg.minZ);
+      const maxZ = Number(msg.maxZ);
+      if (![minX, maxX, minZ, maxZ].every(Number.isFinite)) return;
+      let priceLuna = 0n;
+      if (msg.priceLuna !== undefined && msg.priceLuna !== null) {
+        try {
+          priceLuna = BigInt(String(msg.priceLuna));
+          if (priceLuna < 0n) priceLuna = 0n;
+        } catch {
+          wsSafeSend(ws, { type: "error", code: "invalid_price" } satisfies OutMsg);
+          return;
+        }
+      }
+      const visibilityRaw = String(msg.visibility ?? "private");
+      const visibility =
+        visibilityRaw === "public" || visibilityRaw === "unlisted"
+          ? visibilityRaw
+          : "private";
+      const placed = placedMap(currentRoomId);
+      const result = publishDesign({
+        kind,
+        creatorWallet: address,
+        sourceRoomId: currentRoomId,
+        minX,
+        maxX,
+        minZ,
+        maxZ,
+        name: String(msg.name ?? ""),
+        description: String(msg.description ?? ""),
+        tags: Array.isArray(msg.tags) ? (msg.tags as unknown[]).map((x) => String(x)) : [],
+        visibility,
+        priceLuna,
+        hubStampAllowed: Boolean(msg.hubStampAllowed),
+        placed,
+        extraFloor: extraFloorMap(currentRoomId),
+        baseFloorColors: baseFloorColorMap(currentRoomId),
+      });
+      if (!result.ok) {
+        wsSafeSend(ws, { type: "error", code: result.code } satisfies OutMsg);
+        return;
+      }
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "design_published", {
+        designId: result.design.id,
+        kind: result.design.kind,
+        footprintW: result.design.footprintW,
+        footprintD: result.design.footprintD,
+      });
+      wsSafeSend(ws, {
+        type: "designPublished",
+        design: designToWire(result.design),
+      } satisfies OutMsg);
+      return;
+    }
+
+    if (msg.type === "placeDesignInRoom") {
+      if (!canEditRoomContent(currentRoomId, address)) return;
+      const now = Date.now();
+      if (now - (conn.lastDesignStampAt ?? 0) < RATE_DESIGN_STAMP_MS) return;
+      conn.lastDesignStampAt = now;
+      const designId = String(msg.designId ?? "");
+      const anchorX = Number(msg.anchorX);
+      const anchorZ = Number(msg.anchorZ);
+      const yawSteps = Math.floor(Number(msg.yawSteps ?? 0));
+      if (!designId || !Number.isFinite(anchorX) || !Number.isFinite(anchorZ)) return;
+      if (!withinBlockActionRange(conn.player, anchorX, anchorZ)) {
+        wsSafeSend(ws, {
+          type: "designStampResult",
+          ok: false,
+          code: "out_of_range",
+        } satisfies OutMsg);
+        return;
+      }
+      const placed = placedMap(currentRoomId);
+      const plan = planDesignStampInRoom({
+        designId,
+        wallet: address,
+        roomId: currentRoomId,
+        bounds: walkBounds(currentRoomId),
+        anchorX,
+        anchorZ,
+        yawSteps,
+        placed,
+        isWalkable: (x, z) => isWalkableForRoom(currentRoomId, x, z),
+        playerOnTile: (x, z) => {
+          for (const c of room.values()) {
+            const st = snapToTile(c.player.x, c.player.z);
+            if (st.x === x && st.z === z) return true;
+          }
+          return false;
+        },
+      });
+      if (!plan.ok) {
+        wsSafeSend(ws, {
+          type: "designStampResult",
+          ok: false,
+          code: plan.code,
+        } satisfies OutMsg);
+        return;
+      }
+      for (const key of plan.removals) {
+        placed.delete(key);
+      }
+      const add: ObstacleTile[] = [];
+      for (const p of plan.placements) {
+        placed.set(p.key, p.props);
+        const deltaTile = obstacleTileFromPlaced(currentRoomId, p.key);
+        if (deltaTile) add.push(deltaTile);
+      }
+      if (plan.removals.length > 0 || add.length > 0) {
+        broadcast(currentRoomId, {
+          type: "obstaclesDelta",
+          roomId: currentRoomId,
+          add,
+          remove: plan.removals,
+        });
+      }
+      schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "design_stamped", {
+        designId: plan.design.id,
+        kind: plan.design.kind,
+        anchorX,
+        anchorZ,
+        obstacleCount: add.length,
+      });
+      wsSafeSend(ws, {
+        type: "designStampResult",
+        ok: true,
+        obstacleCount: add.length,
+      } satisfies OutMsg);
+      return;
+    }
+
 
     if (msg.type === "placePendingTeleporter") {
       if (!canEditRoomContent(currentRoomId, address)) {

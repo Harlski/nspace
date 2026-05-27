@@ -64,6 +64,13 @@ import { createWorldContextMenu, type WorldContextMenuItem } from "./worldContex
 import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
 import {
+  createObjectPrefabAuthoringUi,
+  nimToLunaString,
+  type ObjectPrefabAuthoringUi,
+  type PrefabBbox,
+} from "./objectPrefabAuthoring.js";
+import { createPrefabDockPickerUi } from "./prefabDockPicker.js";
+import {
   buildDockContextParamVisible,
   type BuildDockContextParamId,
   type BuildDockContextTool,
@@ -241,7 +248,7 @@ export function createHud(
   isTeleporterModeActive: () => boolean;
   onBuildToolSelect: (
     fn: (
-      tool: "block" | "signpost" | "teleporter" | "billboard" | "gate"
+      tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab"
     ) => void
   ) => void;
   deactivateTeleporterMode: () => void;
@@ -438,8 +445,17 @@ export function createHud(
   onFloorPlacementColor: (fn: (colorRgb: number) => void) => void;
   setBuildBlockBarState: (state: BuildBlockBarState) => void;
   refreshBuildDockToolStrip: () => void;
+  refreshPrefabAuthoringChrome: () => void;
+  setPrefabSnapshotForThumb: (
+    fn: ((designId: string) => import("../game/designFootprint.js").DesignSnapshotV1 | null) | null
+  ) => void;
   isSignpostModeActive: () => boolean;
   isBillboardModeActive: () => boolean;
+  isObjectPrefabSaveModeActive: () => boolean;
+  isObjectPrefabPlaceModeActive: () => boolean;
+  isObjectPrefabToolActive: () => boolean;
+  onPrefabPlaceRotate: (fn: ((delta: -1 | 1) => void) | null) => void;
+  getObjectPrefabAuthoringUi: () => ObjectPrefabAuthoringUi;
   deactivateSignpostMode: () => void;
   promptSignpostMessage: (x: number, z: number) => void;
   onSignpostPlace: (fn: (x: number, z: number, message: string) => void) => void;
@@ -1499,6 +1515,21 @@ export function createHud(
   buildDockRotateCw.textContent = "↻";
   buildDockRotateCw.title = "Rotate clockwise";
   buildDockRotateCw.setAttribute("aria-label", "Rotate clockwise");
+  const buildDockWalkThroughBtn = document.createElement("button");
+  buildDockWalkThroughBtn.type = "button";
+  buildDockWalkThroughBtn.className =
+    "hud-build-bottom-dock__rotate hud-build-bottom-dock__rotate--walk-through";
+  buildDockWalkThroughBtn.hidden = true;
+  buildDockWalkThroughBtn.innerHTML = nimiqIconifyMarkup("eye", {
+    width: 14,
+    height: 14,
+    class: "hud-build-bottom-dock__rotate-icon",
+  });
+  buildDockWalkThroughBtn.title = "Solid. Activate for walk-through.";
+  buildDockWalkThroughBtn.setAttribute(
+    "aria-label",
+    "Solid collision. Activate for walk-through."
+  );
   const buildDockDeleteBtn = document.createElement("button");
   buildDockDeleteBtn.type = "button";
   buildDockDeleteBtn.className =
@@ -1514,6 +1545,7 @@ export function createHud(
   buildDockRotateScope.append(
     buildDockRotateCcw,
     buildDockRotateCw,
+    buildDockWalkThroughBtn,
     buildDockDeleteBtn
   );
   buildEditKindWrap.append(buildDockRotateScope, buildEditKindPicker);
@@ -3533,6 +3565,7 @@ export function createHud(
             <option value="billboard">Billboard</option>
             <option value="teleporter">Teleporter</option>
             <option value="gate">Gate</option>
+            <option value="prefab">Prefab</option>
           </select>
         </div>
         <div class="tile-inspector__section tile-inspector__section--dock-params">
@@ -3865,7 +3898,49 @@ export function createHud(
     );
   }
 
+  function buildDockPassableToggleApplicable(): boolean {
+    if (!isBuildObjectSelectionActive()) return false;
+    if (!panelCollisionToggle || panelCollisionToggle.hidden) return false;
+    return true;
+  }
+
+  function buildDockWalkThroughIconMarkup(passable: boolean): string {
+    return nimiqIconifyMarkup(passable ? "eyeslash" : "eye", {
+      width: 14,
+      height: 14,
+      class: "hud-build-bottom-dock__rotate-icon",
+    });
+  }
+
+  function syncBuildDockWalkThroughBtn(passable: boolean): void {
+    buildDockWalkThroughBtn.innerHTML = buildDockWalkThroughIconMarkup(passable);
+    buildDockWalkThroughBtn.setAttribute(
+      "aria-pressed",
+      passable ? "true" : "false"
+    );
+    buildDockWalkThroughBtn.classList.toggle(
+      "hud-build-bottom-dock__rotate--walk-through-active",
+      passable
+    );
+    buildDockWalkThroughBtn.title = passable
+      ? "Walk-through. Activate for solid collision."
+      : "Solid. Activate for walk-through.";
+    buildDockWalkThroughBtn.setAttribute(
+      "aria-label",
+      passable
+        ? "Walk-through, no collision. Activate for solid collision."
+        : "Solid collision. Activate for walk-through."
+    );
+  }
+
   function buildDockRotateApplicable(): boolean {
+    if (
+      prefabToolActive &&
+      objectPrefabAuthoring.isPlaceModeActive() &&
+      objectPrefabAuthoring.getSelectedDesign()
+    ) {
+      return true;
+    }
     if (
       objectPanel &&
       panelRampCb?.checked &&
@@ -3890,6 +3965,11 @@ export function createHud(
       !roomEdit && !buildEditKindWrap.hidden && (selection || rotate);
     buildDockRotateScope.hidden = !showScope;
     buildDockDeleteBtn.hidden = !selection;
+    const walkThrough = buildDockPassableToggleApplicable();
+    buildDockWalkThroughBtn.hidden = !walkThrough;
+    if (walkThrough) {
+      syncBuildDockWalkThroughBtn(getPanelPassable());
+    }
     buildDockRotateCcw.hidden = !rotate;
     buildDockRotateCw.hidden = !rotate;
     const cubeRotate =
@@ -3911,6 +3991,14 @@ export function createHud(
   }
 
   function applyBuildDockRotate(delta: -1 | 1): boolean {
+    if (
+      prefabToolActive &&
+      objectPrefabAuthoring.isPlaceModeActive() &&
+      prefabPlaceRotateHandler
+    ) {
+      prefabPlaceRotateHandler(delta);
+      return true;
+    }
     if (
       objectPanel &&
       panelRampCb?.checked &&
@@ -4025,6 +4113,15 @@ export function createHud(
     "#build-dock-billboard-edit"
   ) as HTMLButtonElement | null;
   let signpostModeActive = false;
+  let prefabToolActive = false;
+  let prefabPlaceRotateHandler: ((delta: -1 | 1) => void) | null = null;
+  let prefabSnapshotForThumb:
+    | ((designId: string) => import("../game/designFootprint.js").DesignSnapshotV1 | null)
+    | null = null;
+  const objectPrefabAuthoring = createObjectPrefabAuthoringUi();
+  const prefabDockPicker = createPrefabDockPickerUi();
+  letter.appendChild(objectPrefabAuthoring.root);
+  letter.appendChild(prefabDockPicker.root);
   /** Teleporter tool: place pending tiles; configure destination via object panel. */
   let teleporterModeActive = false;
   /** Gate tool: solid block with authorized opener and exit neighbor. */
@@ -4064,24 +4161,27 @@ export function createHud(
     }
   }
 
-  type BuildDockCategoryId = "terrain" | "props" | "buildings";
+  type BuildDockCategoryId = "terrain" | "props" | "buildings" | "prefab";
   const BUILD_DOCK_CATEGORY_ORDER: BuildDockCategoryId[] = [
     "terrain",
     "props",
     "buildings",
+    "prefab",
   ];
   const BUILD_DOCK_CATEGORY_LABEL: Record<BuildDockCategoryId, string> = {
     terrain: "Terrain",
     props: "Props",
     buildings: "Buildings",
+    prefab: "Prefab",
   };
   const BUILD_DOCK_TOOLS: Record<
     BuildDockCategoryId,
-    Array<"block" | "signpost" | "teleporter" | "billboard" | "gate">
+    Array<"block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab">
   > = {
     terrain: ["block"],
     props: ["signpost"],
     buildings: ["teleporter", "gate", "billboard"],
+    prefab: [],
   };
   let buildDockCategory: BuildDockCategoryId = "terrain";
   const buildBottomDock = document.createElement("div");
@@ -4149,13 +4249,26 @@ export function createHud(
         b.setAttribute("aria-selected", on ? "true" : "false");
         b.classList.toggle("hud-build-bottom-dock__tab--active", on);
       }
+      if (cat === "prefab") {
+        if (tileInspectorToolSelect.value !== "prefab") {
+          tileInspectorToolSelect.value = "prefab";
+          tileInspectorToolSelect.dispatchEvent(
+            new Event("change", { bubbles: true })
+          );
+        } else {
+          syncBuildDockToolStrip();
+          syncBuildDockContextParams();
+        }
+        return;
+      }
       const tools = BUILD_DOCK_TOOLS[cat];
       const curTool = tileInspectorToolSelect.value as
         | "block"
         | "signpost"
         | "teleporter"
         | "billboard"
-        | "gate";
+        | "gate"
+        | "prefab";
       if (tools.length > 0 && !tools.includes(curTool)) {
         const first = tools[0]!;
         tileInspectorToolSelect.value = first;
@@ -4279,7 +4392,6 @@ export function createHud(
         <div class="hud-build-bottom-dock__context-top">
           <span class="hud-build-bottom-dock__place" id="hud-build-dock-place">Place: Block</span>
         </div>
-        <button type="button" class="hud-build-bottom-dock__advanced-link" id="hud-build-dock-advanced" hidden>More options…</button>
       </div>
       <div class="hud-build-bottom-dock__context-color" aria-label="Color"></div>
     </div>
@@ -4287,9 +4399,6 @@ export function createHud(
   const buildDockPlaceEl = buildBottomDockContext.querySelector(
     "#hud-build-dock-place"
   ) as HTMLElement;
-  const buildDockAdvancedBtn = buildBottomDockContext.querySelector(
-    "#hud-build-dock-advanced"
-  ) as HTMLButtonElement;
   let objectSelectionDismissHandler: (() => void) | null = null;
   let objectSelectionDeleteHandler: (() => void) | null = null;
   let billboardSelectionEditHandler: (() => void) | null = null;
@@ -4422,6 +4531,18 @@ export function createHud(
   );
   buildDockRotateCw.addEventListener("pointerdown", onBuildDockRotatePointer(1));
 
+  const onBuildDockWalkThroughPointer = (e: Event): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (buildDockWalkThroughBtn.hidden) return;
+    syncPanelCollisionToggle(!getPanelPassable());
+    emitPanelProps();
+  };
+  buildDockWalkThroughBtn.addEventListener(
+    "pointerdown",
+    onBuildDockWalkThroughPointer
+  );
+
   const onBuildDockDeletePointer = (e: Event): void => {
     e.preventDefault();
     e.stopPropagation();
@@ -4448,6 +4569,17 @@ export function createHud(
   if (teleporterSection) {
     tileInspectorRoot.insertAdjacentElement("afterend", teleporterSection);
   }
+  buildDockContextMods.appendChild(objectPrefabAuthoring.dockPanel);
+  objectPrefabAuthoring.onCatalogChange(() => {
+    if (buildDockCategory === "prefab") {
+      syncBuildDockToolStrip();
+    }
+  });
+  prefabDockPicker.onDockSelectionChange(() => {
+    if (buildDockCategory === "prefab") {
+      syncBuildDockToolStrip();
+    }
+  });
   const buildDockTerrainPreviewHost = document.createElement("div");
   buildDockTerrainPreviewHost.className =
     "hud-build-bottom-dock__terrain-preview-host";
@@ -4705,6 +4837,7 @@ export function createHud(
     if (t === "signpost") return "Signpost";
     if (t === "teleporter") return "Teleporter";
     if (t === "gate") return "Gate";
+    if (t === "prefab") return "Prefab";
     return "Billboard";
   }
 
@@ -4715,7 +4848,8 @@ export function createHud(
       | "signpost"
       | "teleporter"
       | "billboard"
-      | "gate";
+      | "gate"
+      | "prefab";
     if (buildDockCategory === "terrain" && tool === "block") {
       return `Place: ${dockTerrainShapeLabel(dockTerrainShapeActiveIdResolved())}`;
     }
@@ -4728,12 +4862,231 @@ export function createHud(
   }
 
   function categoryForToolDock(
-    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate"
+    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab"
   ): BuildDockCategoryId {
+    if (tool === "prefab") return "prefab";
     for (const c of BUILD_DOCK_CATEGORY_ORDER) {
       if (BUILD_DOCK_TOOLS[c].includes(tool)) return c;
     }
     return "terrain";
+  }
+
+  function activatePrefabDockSelection(
+    action: "save" | { designId: string }
+  ): void {
+    if (action === "save") {
+      if (!objectPrefabAuthoring.getAllowPublish()) return;
+      objectPrefabAuthoring.setMode("save");
+    } else {
+      objectPrefabAuthoring.setMode("place");
+      objectPrefabAuthoring.selectDesign(action.designId);
+    }
+    if (tileInspectorToolSelect.value !== "prefab") {
+      tileInspectorToolSelect.value = "prefab";
+      tileInspectorToolSelect.dispatchEvent(
+        new Event("change", { bubbles: true })
+      );
+    } else {
+      buildToolChangeHandler?.("prefab");
+      syncBuildDockToolStrip();
+      syncBuildDockContextParams();
+      syncBuildDockRotateChrome();
+    }
+  }
+
+  function schedulePrefabThumbnailUrls(
+    designs: readonly import("../net/ws.js").DesignWire[],
+    prefabThumbRows: { id: string; img: HTMLImageElement }[]
+  ): void {
+    const g = inspectorPreviewGameRef;
+    if (!g || prefabThumbRows.length === 0 || !prefabSnapshotForThumb) return;
+    const pass = dockThumbGlBindGen;
+    const thumbEntries: {
+      id: string;
+      snapshot: import("../game/designFootprint.js").DesignSnapshotV1;
+      footprintW: number;
+      footprintD: number;
+      version: number;
+    }[] = [];
+    for (const d of designs) {
+      const snapshot = prefabSnapshotForThumb(d.id);
+      if (!snapshot?.obstacles?.length) continue;
+      thumbEntries.push({
+        id: d.id,
+        snapshot,
+        footprintW: d.footprintW,
+        footprintD: d.footprintD,
+        version: d.version,
+      });
+    }
+    if (thumbEntries.length === 0) return;
+    dockThumbApplyTimeout = window.setTimeout(() => {
+      dockThumbApplyTimeout = null;
+      if (pass !== dockThumbGlBindGen || !inspectorPreviewGameRef) {
+        return;
+      }
+      requestAnimationFrame(() => {
+        if (pass !== dockThumbGlBindGen || !inspectorPreviewGameRef) {
+          return;
+        }
+        const urls =
+          inspectorPreviewGameRef.getPrefabDesignThumbnailDataUrls(thumbEntries);
+        for (const { id, img } of prefabThumbRows) {
+          const u = urls.get(id);
+          if (u) img.src = u;
+        }
+      });
+    }, 64);
+  }
+
+  function openPrefabLibraryPicker(): void {
+    const catalog = objectPrefabAuthoring.getPlaceableDesigns();
+    prefabDockPicker.open({
+      designs: catalog,
+      applyThumb: (rows) => schedulePrefabThumbnailUrls(catalog, rows),
+    });
+  }
+
+  function syncPrefabCategoryToolStrip(): void {
+    syncBuildDockBlockPreviewMount({
+      inDock: false,
+      compactDockChrome: false,
+    });
+    buildBottomDockTools.scrollLeft = 0;
+    for (const el of buildBottomDockTools.querySelectorAll(
+      ".hud-build-bottom-dock__terrain-shape-card, .hud-build-bottom-dock__tool-card, .hud-build-bottom-dock__prefab-actions"
+    )) {
+      el.remove();
+    }
+    const catalog = objectPrefabAuthoring.getPlaceableDesigns();
+    const designs = prefabDockPicker.getDockDesigns(catalog);
+    const allowSave = objectPrefabAuthoring.getAllowPublish();
+    const saveMode = objectPrefabAuthoring.isSaveModeActive();
+    const selectedId = objectPrefabAuthoring.getSelectedDesignId();
+    const showPrefabCreate = allowSave;
+    const showPrefabLibrary = catalog.length > 0;
+    buildBottomDockToolsEmpty.textContent = allowSave
+      ? designs.length === 0
+        ? "Open Library to choose prefabs for the build menu."
+        : "No prefabs yet — use Create to capture one."
+      : designs.length === 0
+        ? "Open Library to choose prefabs for the build menu."
+        : "No prefabs yet.";
+    buildBottomDockToolsEmpty.hidden =
+      showPrefabCreate || showPrefabLibrary || designs.length > 0;
+
+    const mkCard = (
+      label: string,
+      sublabel: string,
+      active: boolean,
+      onClick: () => void,
+      extraClass?: string
+    ): HTMLButtonElement => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "hud-build-bottom-dock__tool-card";
+      if (extraClass) card.classList.add(extraClass);
+      if (active) card.classList.add("hud-build-bottom-dock__tool-card--active");
+      card.setAttribute("aria-pressed", active ? "true" : "false");
+      const mini = document.createElement("span");
+      mini.className = "hud-build-bottom-dock__tool-card-icon";
+      mini.setAttribute("aria-hidden", "true");
+      mini.textContent = "⊞";
+      card.appendChild(mini);
+      const lab = document.createElement("span");
+      lab.className = "hud-build-bottom-dock__tool-card-label";
+      lab.textContent = label;
+      card.appendChild(lab);
+      if (sublabel) {
+        const sub = document.createElement("span");
+        sub.className = "hud-build-bottom-dock__tool-card-sublabel";
+        sub.textContent = sublabel;
+        card.appendChild(sub);
+      }
+      card.addEventListener("click", onClick);
+      return card;
+    };
+
+    if (showPrefabCreate || showPrefabLibrary) {
+      const prefabActions = document.createElement("div");
+      prefabActions.className = "hud-build-bottom-dock__prefab-actions";
+      if (showPrefabCreate) {
+        const createCard = mkCard(
+          "CREATE",
+          "",
+          saveMode,
+          () => activatePrefabDockSelection("save"),
+          "hud-build-bottom-dock__prefab-save-card"
+        );
+        createCard.querySelector(".hud-build-bottom-dock__tool-card-icon")!.textContent =
+          "+";
+        createCard.setAttribute("aria-label", "Create prefab");
+        prefabActions.appendChild(createCard);
+      }
+      if (showPrefabLibrary) {
+        const libraryCard = mkCard(
+          "LIBRARY",
+          "",
+          prefabDockPicker.isOpen(),
+          () => openPrefabLibraryPicker(),
+          "hud-build-bottom-dock__prefab-library-card"
+        );
+        libraryCard.querySelector(
+          ".hud-build-bottom-dock__tool-card-icon"
+        )!.textContent = "▦";
+        libraryCard.setAttribute("aria-label", "Open prefab library");
+        prefabActions.appendChild(libraryCard);
+      }
+      const firstDesignCard = buildBottomDockTools.querySelector(
+        ".hud-build-bottom-dock__prefab-design-card"
+      );
+      if (firstDesignCard) {
+        buildBottomDockTools.insertBefore(prefabActions, firstDesignCard);
+      } else {
+        buildBottomDockTools.appendChild(prefabActions);
+      }
+    }
+
+    const prefabThumbRows: { id: string; img: HTMLImageElement }[] = [];
+    for (const d of designs) {
+      const active =
+        !saveMode && objectPrefabAuthoring.isPlaceModeActive() && selectedId === d.id;
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className =
+        "hud-build-bottom-dock__tool-card hud-build-bottom-dock__prefab-design-card";
+      if (active) card.classList.add("hud-build-bottom-dock__tool-card--active");
+      card.dataset.designId = d.id;
+      card.setAttribute("aria-pressed", active ? "true" : "false");
+      card.setAttribute(
+        "aria-label",
+        `${d.name}, ${d.footprintW} by ${d.footprintD} tiles`
+      );
+      const wrap = document.createElement("span");
+      wrap.className = "hud-build-bottom-dock__tool-card-preview-wrap";
+      const img = document.createElement("img");
+      img.className = "hud-build-bottom-dock__tool-card-thumb";
+      img.width = 128;
+      img.height = 128;
+      img.decoding = "async";
+      img.alt = "";
+      img.draggable = false;
+      img.dataset.prefabDesignThumb = d.id;
+      img.setAttribute("aria-hidden", "true");
+      wrap.appendChild(img);
+      card.appendChild(wrap);
+      const lab = document.createElement("span");
+      lab.className = "hud-build-bottom-dock__tool-card-label";
+      lab.textContent = d.name;
+      card.appendChild(lab);
+      card.addEventListener("click", () => {
+        activatePrefabDockSelection({ designId: d.id });
+      });
+      buildBottomDockTools.appendChild(card);
+      prefabThumbRows.push({ id: d.id, img });
+    }
+
+    schedulePrefabThumbnailUrls(designs, prefabThumbRows);
   }
 
   /** Bumped on each dock strip refresh so in-flight thumbnail `requestAnimationFrame` passes self-cancel. */
@@ -4920,7 +5273,6 @@ export function createHud(
 
   function applyDockTerrainBlockPlacementChrome(): void {
     const on = dockTerrainBlockChromeActive();
-    buildDockAdvancedBtn.hidden = true;
     if (barAdvancedToggle) {
       barAdvancedToggle.hidden = on;
     }
@@ -4950,6 +5302,11 @@ export function createHud(
       terrainShapeThumbTimeout = null;
     }
     const admin = barExperimentalOnly && !barExperimentalOnly.hidden;
+    if (buildDockCategory === "prefab") {
+      syncPrefabCategoryToolStrip();
+      return;
+    }
+
     const list = BUILD_DOCK_TOOLS[buildDockCategory].filter((tid) => {
       if (tid === "billboard") return admin;
       return true;
@@ -4959,7 +5316,8 @@ export function createHud(
       | "signpost"
       | "teleporter"
       | "billboard"
-      | "gate";
+      | "gate"
+      | "prefab";
     const terrainBlockOnly =
       buildDockCategory === "terrain" &&
       list.length === 1 &&
@@ -5115,7 +5473,9 @@ export function createHud(
                 ? "◇"
                 : tid === "gate"
                   ? "⌂"
-                  : "▤";
+                  : tid === "prefab"
+                    ? "⊞"
+                    : "▤";
         card.appendChild(mini);
       }
       const lab = document.createElement("span");
@@ -5183,7 +5543,8 @@ export function createHud(
       | "signpost"
       | "teleporter"
       | "billboard"
-      | "gate";
+      | "gate"
+      | "prefab";
     buildDockCategory = categoryForToolDock(tool);
     for (const [c, b] of buildDockTabByCategory) {
       const on = c === buildDockCategory;
@@ -5192,7 +5553,6 @@ export function createHud(
     }
     syncBuildDockToolStrip();
     syncBuildDockPlaceLabel();
-    syncBuildDockAdvancedLink();
     applyDockTerrainBlockPlacementChrome();
   }
 
@@ -5846,7 +6206,8 @@ export function createHud(
       signpostModeActive ||
       teleporterModeActive ||
       gateModeActive ||
-      billboardModeActive
+      billboardModeActive ||
+      prefabToolActive
     ) {
       return false;
     }
@@ -5946,7 +6307,42 @@ export function createHud(
     syncTileInspectorHeightLabel();
   }
 
+  function syncPrefabDockChrome(): void {
+    const placeMode =
+      prefabToolActive && objectPrefabAuthoring.isPlaceModeActive();
+    const saveMode =
+      prefabToolActive && objectPrefabAuthoring.isSaveModeActive();
+    const prefabPanel = prefabToolActive && (placeMode || saveMode);
+    buildBottomDockContext.classList.toggle(
+      "hud-build-bottom-dock__context--prefab",
+      prefabPanel
+    );
+    if (tileInspectorRoot) {
+      tileInspectorRoot.hidden = prefabPanel;
+    }
+    objectPrefabAuthoring.dockPanel.classList.toggle(
+      "hud-prefab-dock--place",
+      placeMode
+    );
+    objectPrefabAuthoring.dockPanel.classList.toggle(
+      "hud-prefab-dock--save",
+      saveMode
+    );
+    buildDockContextColor.hidden = prefabPanel;
+    buildDockContextTop.hidden = prefabPanel;
+    buildDockPlaceEl.hidden = prefabPanel;
+    objectPrefabAuthoring.dockPanel.hidden = !prefabToolActive;
+  }
+
   function syncBuildDockContextParams(): void {
+    const prefabTool =
+      !buildBottomDock.hidden &&
+      hudPlayMode === "build" &&
+      !buildDockRoomEditActive() &&
+      buildDockCategory === "prefab";
+    prefabToolActive = prefabTool;
+    objectPrefabAuthoring.setPrefabToolActive(prefabTool);
+    syncPrefabDockChrome();
     syncBuildDockContextParamVisibility();
   }
 
@@ -5967,11 +6363,6 @@ export function createHud(
         !buildBlockBar.hidden ||
         objectPanel !== null
     );
-  }
-
-  function syncBuildDockAdvancedLink(): void {
-    buildDockAdvancedBtn.hidden = true;
-    buildDockAdvancedBtn.setAttribute("aria-expanded", "false");
   }
 
   function syncHueDockVisibility(): void {
@@ -5995,7 +6386,6 @@ export function createHud(
     syncBlockPreviewDockSlots();
     syncPlacementInspectorPreviewGame();
     syncBuildBottomDockVisibility();
-    syncBuildDockAdvancedLink();
     syncBuildDockRotateChrome();
   }
 
@@ -6011,7 +6401,7 @@ export function createHud(
   let signpostPlaceHandler: ((x: number, z: number, message: string) => void) | null = null;
 
   function activateBuildTool(
-    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate"
+    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab"
   ): void {
     const toolChanging = tileInspectorToolSelect.value !== tool;
     if (toolChanging && isBuildObjectSelectionActive()) {
@@ -6024,6 +6414,8 @@ export function createHud(
     teleporterModeActive = tool === "teleporter";
     gateModeActive = tool === "gate";
     billboardModeActive = tool === "billboard";
+    prefabToolActive = tool === "prefab";
+    objectPrefabAuthoring.setPrefabToolActive(tool === "prefab");
     if (teleporterSection) {
       syncTeleporterDockSectionVisibility();
     }
@@ -6036,7 +6428,8 @@ export function createHud(
         signpostModeActive ||
           teleporterModeActive ||
           gateModeActive ||
-          billboardModeActive
+          billboardModeActive ||
+          prefabToolActive
       );
     }
     buildToolChangeHandler?.(tool);
@@ -7100,7 +7493,7 @@ export function createHud(
 
   tileInspectorToolSelect.addEventListener("change", () => {
     const raw = tileInspectorToolSelect.value;
-    const tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" =
+    const tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab" =
       raw === "signpost"
         ? "signpost"
         : raw === "teleporter"
@@ -7109,7 +7502,9 @@ export function createHud(
             ? "gate"
             : raw === "billboard"
               ? "billboard"
-              : "block";
+              : raw === "prefab"
+                ? "prefab"
+                : "block";
     activateBuildTool(tool);
   });
 
@@ -7230,15 +7625,10 @@ export function createHud(
     const margin = 8;
     const vw = document.documentElement.clientWidth;
     const vh = document.documentElement.clientHeight;
-    const anchor =
-      barAdvancedToggle && !barAdvancedToggle.hidden
-        ? barAdvancedToggle
-        : !buildDockAdvancedBtn.hidden
-          ? buildDockAdvancedBtn
-          : null;
-    if (!anchor) {
+    if (!barAdvancedToggle || barAdvancedToggle.hidden) {
       return;
     }
+    const anchor = barAdvancedToggle;
     const ar = anchor.getBoundingClientRect();
     const w = Math.min(260, Math.max(180, vw * 0.36));
     barAdvancedPopover.style.width = `${w}px`;
@@ -7263,16 +7653,12 @@ export function createHud(
         barAdvancedToggle.setAttribute("aria-expanded", "false");
         barAdvancedToggle.classList.remove("build-block-bar__advanced-toggle--open");
       }
-      syncBuildDockAdvancedLink();
       return;
     }
-    const anchor =
-      barAdvancedToggle && !barAdvancedToggle.hidden
-        ? barAdvancedToggle
-        : buildDockAdvancedBtn;
-    if (anchor.hidden) {
+    if (!barAdvancedToggle || barAdvancedToggle.hidden) {
       return;
     }
+    const anchor = barAdvancedToggle;
     barAdvancedPopover.hidden = false;
     if (barAdvancedToggle) {
       const onRail = anchor === barAdvancedToggle;
@@ -7282,16 +7668,10 @@ export function createHud(
         onRail
       );
     }
-    syncBuildDockAdvancedLink();
     requestAnimationFrame(() => {
       requestAnimationFrame(() => layoutBarAdvancedPopover());
     });
   }
-
-  buildDockAdvancedBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    setBarPopoverOpen(barAdvancedPopover.hidden);
-  });
 
   tileInspectorHeightDec?.addEventListener("click", (e) => {
     e.preventDefault();
@@ -7488,7 +7868,8 @@ export function createHud(
         signpostModeActive ||
           teleporterModeActive ||
           gateModeActive ||
-          billboardModeActive
+          billboardModeActive ||
+          prefabToolActive
       );
     }
     syncPlacementPyramidBaseSectionVisibility();
@@ -8543,6 +8924,9 @@ export function createHud(
 
   function syncPanelCollisionToggle(passable: boolean): void {
     if (!panelCollisionToggle) return;
+    if (buildDockPassableToggleApplicable()) {
+      syncBuildDockWalkThroughBtn(passable);
+    }
     panelCollisionToggle.setAttribute("aria-pressed", passable ? "true" : "false");
     panelCollisionToggle.classList.toggle(
       "build-object-panel-adv__icon-toggle--passable",
@@ -10256,6 +10640,16 @@ export function createHud(
     refreshBuildDockToolStrip() {
       syncBuildDockToolStrip();
     },
+    refreshPrefabAuthoringChrome() {
+      syncPrefabDockChrome();
+      syncBuildDockRotateChrome();
+    },
+    setPrefabSnapshotForThumb(fn) {
+      prefabSnapshotForThumb = fn;
+      if (buildDockCategory === "prefab") {
+        syncBuildDockToolStrip();
+      }
+    },
     setBuildBlockBarState(state) {
       const hideBarForObjectPanel =
         objectPanel !== null &&
@@ -10326,6 +10720,21 @@ export function createHud(
     },
     isTeleporterModeActive(): boolean {
       return teleporterModeActive;
+    },
+    isObjectPrefabSaveModeActive(): boolean {
+      return objectPrefabAuthoring.isSaveModeActive();
+    },
+    isObjectPrefabPlaceModeActive(): boolean {
+      return objectPrefabAuthoring.isPlaceModeActive();
+    },
+    isObjectPrefabToolActive(): boolean {
+      return prefabToolActive;
+    },
+    onPrefabPlaceRotate(fn: ((delta: -1 | 1) => void) | null) {
+      prefabPlaceRotateHandler = fn;
+    },
+    getObjectPrefabAuthoringUi() {
+      return objectPrefabAuthoring;
     },
     isGateModeActive(): boolean {
       return gateModeActive;
@@ -10897,6 +11306,7 @@ export function createHud(
     },
     setBrandLinksPlayerAddress(address: string) {
       brandLinksPlayerAddress = address.replace(/\s+/g, "").trim();
+      prefabDockPicker.setWallet(brandLinksPlayerAddress);
       syncBrandLinksWalletAddressDisplay();
       syncTopBarPlayerIdentity();
       if (!brandLinksOverlay.hidden) {

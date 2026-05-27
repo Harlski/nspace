@@ -17,7 +17,8 @@ export type BuildDockContextTool =
   | "signpost"
   | "teleporter"
   | "billboard"
-  | "gate";
+  | "gate"
+  | "prefab";
 
 export function buildDockContextParamVisible(
   param: BuildDockContextParamId,

@@ -54,7 +54,7 @@ Clients may send an optional string field **`claimIntent`** on **`beginBlockClai
 | `VITE_API_BASE_URL` | client | API origin when SPA and API differ. Prefer full URL (`https://api.example.com`). Host-only (`api.example.com`) is normalized to `https://…` so it is not treated as a path on the SPA host. |
 | `VITE_WS_BASE_URL` | client | Optional WebSocket origin (`wss://…` or host-only); otherwise derived from resolved API base or page |
 | `EVENT_LOG_DIR` | server | Directory for append-only JSONL replay logs (`events-*.jsonl`); default `server/data/events` |
-| `PLACE_RADIUS_BLOCKS` | server | Max horizontal distance for block place/edit/move actions (default `5`) |
+| `PLACE_RADIUS_BLOCKS` | server | Max horizontal distance for block place/edit/move actions (default `9`) |
 | `PAYMENT_INTENT_API_SECRET` | payment-intent-service | Required when running the sidecar; `Authorization: Bearer …` on `/v1/*` |
 | `PAYMENT_INTENT_RECIPIENT_ADDRESS` | payment-intent-service | Hot wallet (incoming NIM) user-friendly address |
 | `PAYMENT_INTENT_SQLITE_PATH` | payment-intent-service | SQLite path (default `./data/payment-intents.sqlite`; Docker compose uses `/data/payment-intents.sqlite`) |

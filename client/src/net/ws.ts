@@ -214,6 +214,7 @@ export type ServerMessage =
       onlinePlayerCount?: number;
       /** Omitted on older servers; client defaults to true. */
       allowPlaceBlocks?: boolean;
+      allowPublishDesign?: boolean;
       allowExtraFloor?: boolean;
       /** Dynamic rooms: this player may send `updateRoom` background hue patches. */
       allowRoomBackgroundHueEdit?: boolean;
@@ -310,6 +311,13 @@ export type ServerMessage =
     }
   | { type: "gateWalkBlocked"; x: number; z: number; y: number }
   | { type: "error"; code: string }
+  | { type: "designPublished"; design: DesignWire }
+  | {
+      type: "designStampResult";
+      ok: boolean;
+      code?: string;
+      obstacleCount?: number;
+    }
   | { type: "joinRoomFailed"; roomId: string; reason: "not_found" }
   | {
       type: "roomActionResult";
@@ -649,6 +657,67 @@ export function sendDeleteRoom(ws: WebSocket, roomId: string): void {
 export function sendRestoreRoom(ws: WebSocket, roomId: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "restoreRoom", roomId }));
+}
+
+export type DesignWire = {
+  id: string;
+  kind: "object" | "room";
+  creatorWallet: string;
+  name: string;
+  description: string;
+  tags: string[];
+  version: number;
+  footprintW: number;
+  footprintD: number;
+  priceLuna: string;
+  hubStampAllowed: boolean;
+  visibility: "private" | "unlisted" | "public";
+  updatedAt: number;
+};
+
+export function sendPublishDesign(
+  socket: WebSocket,
+  payload: {
+    kind: "object" | "room";
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+    name: string;
+    description?: string;
+    tags?: string[];
+    visibility?: "private" | "unlisted" | "public";
+    priceLuna?: string;
+    hubStampAllowed?: boolean;
+  }
+): void {
+  socket.send(
+    JSON.stringify({
+      type: "publishDesign",
+      ...payload,
+    })
+  );
+}
+
+export function sendPlaceDesignInRoom(
+  socket: WebSocket,
+  payload: {
+    designId: string;
+    anchorX: number;
+    anchorZ: number;
+    yawSteps: number;
+  }
+): void {
+  if (socket.readyState !== WebSocket.OPEN) return;
+  socket.send(
+    JSON.stringify({
+      type: "placeDesignInRoom",
+      designId: payload.designId,
+      anchorX: payload.anchorX,
+      anchorZ: payload.anchorZ,
+      yawSteps: payload.yawSteps,
+    })
+  );
 }
 
 export function sendPlaceBlock(
