@@ -24,7 +24,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
 const DESIGNS_FILE = path.join(DATA_DIR, "designs.json");
 
-export type DesignVisibility = "private" | "unlisted" | "public";
+export type DesignVisibility = "private" | "public";
+
+/** Max length for object prefab display names (UI + publish). */
+export const DESIGN_OBJECT_NAME_MAX_LENGTH = 12;
+
+function normalizeDesignVisibility(raw: string | undefined): DesignVisibility {
+  return raw === "public" ? "public" : "private";
+}
 
 export type DesignRecord = {
   id: string;
@@ -86,6 +93,14 @@ export function loadDesigns(): void {
     designs = data.designs ?? [];
     snapshots = data.snapshots ?? [];
     entitlements = data.entitlements ?? [];
+    for (const d of designs) {
+      if ((d.visibility as string) === "unlisted") {
+        d.visibility = "private";
+        dirty = true;
+      } else {
+        d.visibility = normalizeDesignVisibility(d.visibility);
+      }
+    }
     console.log(`[designs] Loaded ${designs.length} designs`);
   } catch (err) {
     console.error("[designs] Failed to load:", err);
@@ -256,10 +271,14 @@ export function publishDesign(input: PublishDesignInput): PublishDesignResult {
   }
 
   const { w, d } = footprintFromBbox(bbox);
-  const name = String(input.name ?? "").trim().slice(0, 64);
-  if (!name) return { ok: false, code: "name_required" };
+  const nameRaw = String(input.name ?? "").trim();
+  if (!nameRaw) return { ok: false, code: "name_required" };
+  if (nameRaw.length > DESIGN_OBJECT_NAME_MAX_LENGTH) {
+    return { ok: false, code: "name_too_long" };
+  }
+  const name = nameRaw;
 
-  const visibility = input.visibility ?? "private";
+  const visibility = normalizeDesignVisibility(input.visibility);
   const priceLuna = (input.priceLuna ?? 0n).toString();
   const now = Date.now();
   const id = randomUUID();
@@ -294,6 +313,46 @@ export function publishDesign(input: PublishDesignInput): PublishDesignResult {
   dirty = true;
   saveDesigns();
   return { ok: true, design };
+}
+
+export type DeleteDesignResult =
+  | { ok: true }
+  | { ok: false; code: "not_found" | "forbidden" };
+
+export function deleteDesign(
+  wallet: string,
+  designId: string
+): DeleteDesignResult {
+  const w = normalizeWalletKey(wallet);
+  const idx = designs.findIndex((d) => d.id === designId);
+  if (idx < 0) return { ok: false, code: "not_found" };
+  if (designs[idx]!.creatorWallet !== w) return { ok: false, code: "forbidden" };
+  designs.splice(idx, 1);
+  snapshots = snapshots.filter((s) => s.designId !== designId);
+  entitlements = entitlements.filter((e) => e.designId !== designId);
+  dirty = true;
+  saveDesigns();
+  return { ok: true };
+}
+
+export type UpdateDesignVisibilityResult =
+  | { ok: true; design: DesignRecord }
+  | { ok: false; code: "not_found" | "forbidden" };
+
+export function updateDesignVisibility(
+  wallet: string,
+  designId: string,
+  visibility: DesignVisibility
+): UpdateDesignVisibilityResult {
+  const w = normalizeWalletKey(wallet);
+  const d = getDesignById(designId);
+  if (!d) return { ok: false, code: "not_found" };
+  if (d.creatorWallet !== w) return { ok: false, code: "forbidden" };
+  d.visibility = normalizeDesignVisibility(visibility);
+  d.updatedAt = Date.now();
+  dirty = true;
+  saveDesigns();
+  return { ok: true, design: d };
 }
 
 export function grantEntitlement(e: Omit<DesignEntitlement, "purchasedAt">): void {

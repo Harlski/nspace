@@ -15,13 +15,14 @@ export type PrefabCaptureStats = {
   footprintW: number;
   footprintD: number;
   tileCount: number;
+  previewDataUrl: string | null;
 };
 
 export type PrefabPublishPayload = {
   bbox: PrefabBbox;
   name: string;
   description: string;
-  visibility: "private" | "unlisted" | "public";
+  visibility: "private" | "public";
   priceNim: string;
 };
 
@@ -50,11 +51,16 @@ export type ObjectPrefabAuthoringUi = {
   onDesignChange: (cb: (design: DesignWire | null) => void) => void;
   onCatalogChange: (cb: (() => void) | null) => void;
   updateStats: (stats: PrefabCaptureStats | null) => void;
+  /** Live capture thumbnail in the build preview satellite (above the dock). */
+  bindSavePreviewHost: (host: HTMLElement, img: HTMLImageElement) => void;
+  onSaveCapturePreviewChange: (cb: (() => void) | null) => void;
   openPublishModal: (
     bbox: PrefabBbox,
+    previewDataUrl: string | null,
     onSubmit: (payload: PrefabPublishPayload) => void
   ) => void;
   closePublishModal: () => void;
+  onPublishModalClose: (cb: (() => void) | null) => void;
   setPublishBusy: (busy: boolean) => void;
   showPublishError: (message: string) => void;
   setMobilePresetSize: (size: 3 | 4 | 6) => void;
@@ -73,26 +79,14 @@ export function createObjectPrefabAuthoringUi(): ObjectPrefabAuthoringUi {
   let modeChangeCb: ((mode: PrefabAuthoringMode) => void) | null = null;
   let designChangeCb: ((design: DesignWire | null) => void) | null = null;
   let catalogChangeCb: (() => void) | null = null;
+  let publishModalCloseCb: (() => void) | null = null;
+  let saveCapturePreviewChangeCb: (() => void) | null = null;
 
   const dockPanel = document.createElement("div");
   dockPanel.className = "hud-prefab-dock";
   dockPanel.hidden = true;
   dockPanel.setAttribute("role", "group");
   dockPanel.setAttribute("aria-label", "Object prefab");
-
-  const modeRow = document.createElement("div");
-  modeRow.className = "hud-prefab-dock__mode";
-  const saveModeBtn = document.createElement("button");
-  saveModeBtn.type = "button";
-  saveModeBtn.className = "hud-prefab-dock__mode-btn";
-  saveModeBtn.textContent = "Save";
-  const placeModeBtn = document.createElement("button");
-  placeModeBtn.type = "button";
-  placeModeBtn.className = "hud-prefab-dock__mode-btn hud-prefab-dock__mode-btn--active";
-  placeModeBtn.textContent = "Place";
-  modeRow.appendChild(saveModeBtn);
-  modeRow.appendChild(placeModeBtn);
-  modeRow.hidden = true;
 
   const saveSection = document.createElement("div");
   saveSection.className = "hud-prefab-save";
@@ -102,6 +96,9 @@ export function createObjectPrefabAuthoringUi(): ObjectPrefabAuthoringUi {
   saveHint.className = "hud-prefab-save__hint";
   saveHint.textContent =
     "Click and drag on the floor to capture the area you want as a prefab.";
+
+  let savePreviewHost: HTMLElement | null = null;
+  let savePreviewImg: HTMLImageElement | null = null;
 
   const statsEl = document.createElement("p");
   statsEl.className = "hud-prefab-save__stats";
@@ -149,7 +146,6 @@ export function createObjectPrefabAuthoringUi(): ObjectPrefabAuthoringUi {
   placeSection.appendChild(designList);
   placeSection.appendChild(designEmpty);
 
-  dockPanel.appendChild(modeRow);
   dockPanel.appendChild(saveSection);
   dockPanel.appendChild(placeMeta);
   dockPanel.appendChild(placeSection);
@@ -200,16 +196,10 @@ export function createObjectPrefabAuthoringUi(): ObjectPrefabAuthoringUi {
   }
 
   function syncModeChrome(): void {
-    const saveOn = mode === "save";
-    saveModeBtn.classList.toggle("hud-prefab-dock__mode-btn--active", saveOn);
-    placeModeBtn.classList.toggle("hud-prefab-dock__mode-btn--active", !saveOn);
-    saveSection.hidden = !saveOn;
+    saveSection.hidden = true;
     placeSection.hidden = true;
-    saveModeBtn.hidden = !allowPublish;
     if (!allowPublish && mode === "save") {
       mode = "place";
-      saveSection.hidden = true;
-      placeSection.hidden = false;
     }
     syncPlaceMeta();
   }
@@ -267,50 +257,48 @@ export function createObjectPrefabAuthoringUi(): ObjectPrefabAuthoringUi {
     catalogChangeCb?.();
   }
 
-  saveModeBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    if (!allowPublish) return;
-    mode = "save";
-    emitMode();
-  });
-
-  placeModeBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    mode = "place";
-    emitMode();
-  });
-
   const overlay = document.createElement("div");
-  overlay.className = "signpost-overlay prefab-publish-overlay";
+  overlay.className = "prefab-publish-overlay";
   overlay.hidden = true;
 
+  const backdrop = document.createElement("button");
+  backdrop.type = "button";
+  backdrop.className = "prefab-publish-overlay__backdrop";
+  backdrop.setAttribute("aria-label", "Dismiss");
+
   const dialog = document.createElement("div");
-  dialog.className = "signpost-overlay__dialog";
+  dialog.className = "prefab-publish-overlay__dialog";
   dialog.setAttribute("role", "dialog");
   dialog.setAttribute("aria-modal", "true");
+  dialog.setAttribute("aria-labelledby", "prefab-publish-title");
   dialog.innerHTML = `
-    <div class="signpost-overlay__header">
-      <span class="signpost-overlay__title">Publish object</span>
-      <div class="signpost-overlay__header-actions">
-        <button type="button" class="signpost-overlay__btn signpost-overlay__btn--cancel" data-prefab-cancel>Cancel</button>
-        <button type="button" class="signpost-overlay__btn signpost-overlay__btn--create" data-prefab-publish>Publish</button>
+    <button type="button" class="prefab-publish-overlay__close" data-prefab-cancel aria-label="Close">×</button>
+    <h2 class="prefab-publish-overlay__title" id="prefab-publish-title">Save prefab</h2>
+    <div class="prefab-publish-overlay__main">
+      <div class="prefab-publish-overlay__aside">
+        <div class="prefab-publish-overlay__preview" data-prefab-publish-preview>
+          <img class="prefab-publish-overlay__preview-img" data-prefab-publish-preview-img alt="" width="96" height="96" decoding="async" draggable="false" />
+          <p class="prefab-publish-overlay__preview-empty" data-prefab-publish-preview-empty hidden>No blocks</p>
+        </div>
+        <div class="prefab-publish-overlay__vis" role="group" aria-label="Visibility">
+          <button type="button" class="prefab-publish-overlay__vis-btn prefab-publish-overlay__vis-btn--active" data-prefab-vis="private" aria-pressed="true">Private</button>
+          <button type="button" class="prefab-publish-overlay__vis-btn" data-prefab-vis="public" aria-pressed="false">Public</button>
+        </div>
+      </div>
+      <div class="prefab-publish-overlay__form">
+        <label class="prefab-publish-overlay__label" for="prefab-publish-name">Name</label>
+        <input id="prefab-publish-name" type="text" class="prefab-publish-overlay__input" data-prefab-name maxlength="12" placeholder="My rocks" autocomplete="off" />
+        <label class="prefab-publish-overlay__label" for="prefab-publish-desc">Description</label>
+        <textarea id="prefab-publish-desc" class="prefab-publish-overlay__textarea" data-prefab-desc maxlength="256" rows="2" placeholder="Optional"></textarea>
+        <p class="prefab-publish-overlay__error" data-prefab-error hidden></p>
       </div>
     </div>
-    <div class="signpost-overlay__body">
-      <label class="signpost-overlay__label">Name</label>
-      <input type="text" class="prefab-publish-overlay__input" data-prefab-name maxlength="64" placeholder="House, rocks, arch…" />
-      <label class="signpost-overlay__label">Description (optional)</label>
-      <textarea class="signpost-overlay__textarea prefab-publish-overlay__textarea" data-prefab-desc maxlength="256" rows="2"></textarea>
-      <label class="signpost-overlay__label">Visibility</label>
-      <select class="prefab-publish-overlay__select" data-prefab-visibility>
-        <option value="private">Private</option>
-        <option value="unlisted">Unlisted</option>
-        <option value="public">Public</option>
-      </select>
-      <p class="prefab-publish-overlay__error" data-prefab-error hidden></p>
+    <div class="prefab-publish-overlay__footer">
+      <button type="button" class="prefab-publish-overlay__btn prefab-publish-overlay__btn--cancel" data-prefab-cancel>Cancel</button>
+      <button type="button" class="prefab-publish-overlay__btn prefab-publish-overlay__btn--publish" data-prefab-publish>Save</button>
     </div>
   `;
-  overlay.appendChild(dialog);
+  overlay.append(backdrop, dialog);
 
   const nameInput = dialog.querySelector(
     "[data-prefab-name]"
@@ -318,18 +306,89 @@ export function createObjectPrefabAuthoringUi(): ObjectPrefabAuthoringUi {
   const descInput = dialog.querySelector(
     "[data-prefab-desc]"
   ) as HTMLTextAreaElement;
-  const visSelect = dialog.querySelector(
-    "[data-prefab-visibility]"
-  ) as HTMLSelectElement;
+  const visPrivateBtn = dialog.querySelector(
+    '[data-prefab-vis="private"]'
+  ) as HTMLButtonElement;
+  const visPublicBtn = dialog.querySelector(
+    '[data-prefab-vis="public"]'
+  ) as HTMLButtonElement;
+  let publishVisibility: "private" | "public" = "private";
+
+  function syncPublishVisibilityUi(): void {
+    const priv = publishVisibility === "private";
+    visPrivateBtn.classList.toggle(
+      "prefab-publish-overlay__vis-btn--active",
+      priv
+    );
+    visPublicBtn.classList.toggle(
+      "prefab-publish-overlay__vis-btn--active",
+      !priv
+    );
+    visPrivateBtn.setAttribute("aria-pressed", priv ? "true" : "false");
+    visPublicBtn.setAttribute("aria-pressed", priv ? "false" : "true");
+  }
+
+  function setPublishVisibility(next: "private" | "public"): void {
+    publishVisibility = next;
+    syncPublishVisibilityUi();
+  }
+
+  visPrivateBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    setPublishVisibility("private");
+  });
+  visPublicBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    setPublishVisibility("public");
+  });
+
   const errEl = dialog.querySelector(
     "[data-prefab-error]"
   ) as HTMLParagraphElement;
-  const cancelBtn = dialog.querySelector(
-    "[data-prefab-cancel]"
-  ) as HTMLButtonElement;
   const publishBtn = dialog.querySelector(
     "[data-prefab-publish]"
   ) as HTMLButtonElement;
+  const publishPreviewWrap = dialog.querySelector(
+    "[data-prefab-publish-preview]"
+  ) as HTMLDivElement;
+  const publishPreviewImg = dialog.querySelector(
+    "[data-prefab-publish-preview-img]"
+  ) as HTMLImageElement;
+  const publishPreviewEmpty = dialog.querySelector(
+    "[data-prefab-publish-preview-empty]"
+  ) as HTMLParagraphElement;
+
+  function setCapturePreview(
+    previewDataUrl: string | null,
+    opts?: { inModal?: boolean }
+  ): void {
+    const inModal = opts?.inModal ?? false;
+    if (inModal) {
+      publishPreviewWrap.hidden = false;
+      if (previewDataUrl) {
+        publishPreviewImg.src = previewDataUrl;
+        publishPreviewImg.hidden = false;
+        publishPreviewEmpty.hidden = true;
+      } else {
+        publishPreviewImg.removeAttribute("src");
+        publishPreviewImg.hidden = true;
+        publishPreviewEmpty.hidden = false;
+      }
+      return;
+    }
+    if (savePreviewHost && savePreviewImg) {
+      if (previewDataUrl) {
+        savePreviewImg.src = previewDataUrl;
+        savePreviewHost.hidden = false;
+      } else {
+        savePreviewImg.removeAttribute("src");
+        savePreviewHost.hidden = true;
+      }
+    }
+    if (!inModal) {
+      saveCapturePreviewChangeCb?.();
+    }
+  }
 
   function closePublishModal(): void {
     overlay.hidden = true;
@@ -337,9 +396,18 @@ export function createObjectPrefabAuthoringUi(): ObjectPrefabAuthoringUi {
     pendingBbox = null;
     errEl.hidden = true;
     publishBtn.disabled = false;
+    publishPreviewWrap.hidden = true;
+    publishPreviewImg.removeAttribute("src");
+    publishModalCloseCb?.();
   }
 
-  cancelBtn.addEventListener("click", (e) => {
+  for (const el of dialog.querySelectorAll("[data-prefab-cancel]")) {
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      closePublishModal();
+    });
+  }
+  backdrop.addEventListener("click", (e) => {
     e.preventDefault();
     closePublishModal();
   });
@@ -353,12 +421,17 @@ export function createObjectPrefabAuthoringUi(): ObjectPrefabAuthoringUi {
       errEl.hidden = false;
       return;
     }
+    if (name.length > 12) {
+      errEl.textContent = "Name must be 12 characters or fewer.";
+      errEl.hidden = false;
+      return;
+    }
     errEl.hidden = true;
     pendingSubmit({
       bbox: pendingBbox,
       name,
       description: descInput.value.trim(),
-      visibility: visSelect.value as "private" | "unlisted" | "public",
+      visibility: publishVisibility,
       priceNim: "0",
     });
   });
@@ -376,7 +449,7 @@ export function createObjectPrefabAuthoringUi(): ObjectPrefabAuthoringUi {
     overlay,
     setPrefabToolActive(active: boolean) {
       prefabToolActive = active;
-      dockPanel.hidden = !active;
+      dockPanel.hidden = true;
       if (!active) closePublishModal();
     },
     setAllowPublish(allow: boolean) {
@@ -437,33 +510,45 @@ export function createObjectPrefabAuthoringUi(): ObjectPrefabAuthoringUi {
     onCatalogChange(cb) {
       catalogChangeCb = cb;
     },
+    bindSavePreviewHost(host, img) {
+      savePreviewHost = host;
+      savePreviewImg = img;
+    },
+    onSaveCapturePreviewChange(cb) {
+      saveCapturePreviewChangeCb = cb;
+    },
     updateStats(stats: PrefabCaptureStats | null) {
       if (!stats) {
         statsEl.textContent = "";
+        setCapturePreview(null);
         return;
       }
       statsEl.textContent = `${stats.footprintW}×${stats.footprintD} · ${stats.tileCount} tiles`;
+      setCapturePreview(stats.previewDataUrl);
     },
-    openPublishModal(bbox, onSubmit) {
+    openPublishModal(bbox, previewDataUrl, onSubmit) {
       pendingBbox = bbox;
       pendingSubmit = onSubmit;
       nameInput.value = "";
       descInput.value = "";
-      visSelect.value = "private";
+      setPublishVisibility("private");
       errEl.hidden = true;
+      setCapturePreview(previewDataUrl, { inModal: true });
       overlay.hidden = false;
-      nameInput.focus();
     },
     closePublishModal,
+    onPublishModalClose(cb) {
+      publishModalCloseCb = cb;
+    },
     setPublishBusy(busy: boolean) {
       publishBtn.disabled = busy;
-      publishBtn.textContent = busy ? "Publishing…" : "Publish";
+      publishBtn.textContent = busy ? "Saving…" : "Save";
     },
     showPublishError(message: string) {
       errEl.textContent = message;
       errEl.hidden = false;
       publishBtn.disabled = false;
-      publishBtn.textContent = "Publish";
+      publishBtn.textContent = "Save";
     },
     setMobilePresetSize(size: 3 | 4 | 6) {
       mobilePresetSize = size;

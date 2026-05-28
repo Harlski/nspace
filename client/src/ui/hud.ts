@@ -455,6 +455,20 @@ export function createHud(
   isObjectPrefabPlaceModeActive: () => boolean;
   isObjectPrefabToolActive: () => boolean;
   onPrefabPlaceRotate: (fn: ((delta: -1 | 1) => void) | null) => void;
+  onPrefabPlaceConfirm: (fn: (() => void) | null) => void;
+  onPrefabPlaceCancel: (fn: (() => void) | null) => void;
+  setPrefabPlacePreviewChrome: (state: {
+    armed: boolean;
+    canConfirm: boolean;
+  }) => void;
+  onPrefabDesignManage: (
+    fn:
+      | ((
+          action: import("./prefabDockPicker.js").PrefabDesignManageAction,
+          design: import("../net/ws.js").DesignWire
+        ) => void)
+      | null
+  ) => void;
   getObjectPrefabAuthoringUi: () => ObjectPrefabAuthoringUi;
   deactivateSignpostMode: () => void;
   promptSignpostMessage: (x: number, z: number) => void;
@@ -1542,11 +1556,29 @@ export function createHud(
     height: 10,
     class: "hud-build-bottom-dock__rotate-icon",
   });
+  const buildDockPrefabPlaceBtn = document.createElement("button");
+  buildDockPrefabPlaceBtn.type = "button";
+  buildDockPrefabPlaceBtn.className =
+    "hud-build-bottom-dock__rotate hud-build-bottom-dock__rotate--prefab-place";
+  buildDockPrefabPlaceBtn.hidden = true;
+  buildDockPrefabPlaceBtn.textContent = "Place";
+  buildDockPrefabPlaceBtn.title = "Place prefab at preview";
+  buildDockPrefabPlaceBtn.setAttribute("aria-label", "Place prefab");
+  const buildDockPrefabCancelBtn = document.createElement("button");
+  buildDockPrefabCancelBtn.type = "button";
+  buildDockPrefabCancelBtn.className =
+    "hud-build-bottom-dock__rotate hud-build-bottom-dock__rotate--prefab-cancel";
+  buildDockPrefabCancelBtn.hidden = true;
+  buildDockPrefabCancelBtn.textContent = "Cancel";
+  buildDockPrefabCancelBtn.title = "Cancel prefab placement preview";
+  buildDockPrefabCancelBtn.setAttribute("aria-label", "Cancel prefab placement");
   buildDockRotateScope.append(
     buildDockRotateCcw,
     buildDockRotateCw,
     buildDockWalkThroughBtn,
-    buildDockDeleteBtn
+    buildDockDeleteBtn,
+    buildDockPrefabPlaceBtn,
+    buildDockPrefabCancelBtn
   );
   buildEditKindWrap.append(buildDockRotateScope, buildEditKindPicker);
 
@@ -3790,12 +3822,21 @@ export function createHud(
         <span class="tile-inspector__preview-caption" hidden aria-hidden="true"></span>
       </div>
     </div>
+    <div id="tile-inspector-preview-prefab-capture-slot" class="hud-mode-sidebar__block-preview-slot" hidden>
+      <div class="tile-inspector__preview-box tile-inspector__preview-box--tile tile-inspector__preview-box--dock tile-inspector__preview-box--prefab-capture">
+        <img id="tile-inspector-prefab-capture-preview-img" class="tile-inspector__prefab-capture-preview-img" alt="" width="176" height="176" decoding="async" draggable="false" />
+        <span class="tile-inspector__preview-caption tile-inspector__preview-caption--prefab-capture" hidden aria-hidden="true"></span>
+      </div>
+    </div>
   `;
   const inspectorTilePreviewMount = document.createElement("div");
   inspectorTilePreviewMount.className = "hud-inspector-tile-preview-mount";
   inspectorTilePreviewMount.setAttribute("aria-hidden", "true");
   ui.appendChild(inspectorTilePreviewMount);
   inspectorTilePreviewMount.appendChild(hueDockBlockPreview);
+  const hueDockPreviewSectionHead = hueDockBlockPreview.querySelector(
+    ".tile-inspector__section-head--dock"
+  ) as HTMLElement | null;
   /** Stable tail marker in `.hud-mode-sidebar__hue-dock` (selection hue row inserts before this). */
   const hueDockStackTail = document.createElement("div");
   hueDockStackTail.className = "hud-mode-sidebar__hue-dock-tail";
@@ -3850,17 +3891,31 @@ export function createHud(
     const sSlot = hueDockBlockPreview.querySelector(
       "#tile-inspector-preview-selection-slot"
     ) as HTMLElement | null;
-    if (!pSlot || !sSlot) return;
+    const prefabCaptureSlot = hueDockBlockPreview.querySelector(
+      "#tile-inspector-preview-prefab-capture-slot"
+    ) as HTMLElement | null;
+    if (!pSlot || !sSlot || !prefabCaptureSlot) return;
+    const prefabSaveActive =
+      prefabToolActive && objectPrefabAuthoring.isSaveModeActive();
     const objectEditActive = isBuildObjectSelectionActive();
     const selectionPreviewActive = buildDockSelectionPreviewActive();
     const showPlacementPreview =
+      !prefabSaveActive &&
       hudPlayMode === "build" &&
       !selectionPreviewActive &&
       (!buildBlockBar.hidden || objectEditActive);
-    const showSelectionPreview = selectionPreviewActive;
+    const showSelectionPreview = !prefabSaveActive && selectionPreviewActive;
+    const showPrefabCapturePreview = prefabSaveActive;
     pSlot.hidden = !showPlacementPreview;
     sSlot.hidden = !showSelectionPreview;
-    hueDockBlockPreview.hidden = pSlot.hidden && sSlot.hidden;
+    prefabCaptureSlot.hidden = !showPrefabCapturePreview;
+    hueDockBlockPreview.hidden =
+      pSlot.hidden && sSlot.hidden && prefabCaptureSlot.hidden;
+    if (hueDockPreviewSectionHead) {
+      hueDockPreviewSectionHead.textContent = prefabSaveActive
+        ? "Capture"
+        : "Selected";
+    }
     syncBuildDockBlockPreviewMount({
       inDock: buildDockShowsPlacementPreview(),
       compactDockChrome:
@@ -3961,8 +4016,15 @@ export function createHud(
       (hudPlayMode === "build" && buildEditKindSelect.value === "room");
     const selection = isBuildObjectSelectionActive();
     const rotate = buildDockRotateApplicable();
+    const prefabTouchPlace =
+      !roomEdit &&
+      prefabToolActive &&
+      objectPrefabAuthoring.isPlaceModeActive() &&
+      coarsePointerBuildUi();
     const showScope =
-      !roomEdit && !buildEditKindWrap.hidden && (selection || rotate);
+      !roomEdit &&
+      !buildEditKindWrap.hidden &&
+      (selection || rotate || prefabTouchPlace);
     buildDockRotateScope.hidden = !showScope;
     buildDockDeleteBtn.hidden = !selection;
     const walkThrough = buildDockPassableToggleApplicable();
@@ -3970,8 +4032,13 @@ export function createHud(
     if (walkThrough) {
       syncBuildDockWalkThroughBtn(getPanelPassable());
     }
-    buildDockRotateCcw.hidden = !rotate;
-    buildDockRotateCw.hidden = !rotate;
+    const showPrefabPlaceActions =
+      prefabTouchPlace && prefabPlacePreviewArmed;
+    buildDockPrefabPlaceBtn.hidden = !showPrefabPlaceActions;
+    buildDockPrefabCancelBtn.hidden = !showPrefabPlaceActions;
+    buildDockPrefabPlaceBtn.disabled = !prefabPlacePreviewCanConfirm;
+    buildDockRotateCcw.hidden = !rotate && !prefabTouchPlace;
+    buildDockRotateCw.hidden = !rotate && !prefabTouchPlace;
     const cubeRotate =
       rotate &&
       ((objectPanel && panelIsPlainCube()) ||
@@ -4115,10 +4182,40 @@ export function createHud(
   let signpostModeActive = false;
   let prefabToolActive = false;
   let prefabPlaceRotateHandler: ((delta: -1 | 1) => void) | null = null;
+  let prefabPlaceConfirmHandler: (() => void) | null = null;
+  let prefabPlaceCancelHandler: (() => void) | null = null;
+  let prefabPlacePreviewArmed = false;
+  let prefabPlacePreviewCanConfirm = false;
+
+  function coarsePointerBuildUi(): boolean {
+    if (typeof window === "undefined") return false;
+    return (
+      !window.matchMedia("(hover: hover)").matches ||
+      !window.matchMedia("(pointer: fine)").matches
+    );
+  }
   let prefabSnapshotForThumb:
     | ((designId: string) => import("../game/designFootprint.js").DesignSnapshotV1 | null)
     | null = null;
   const objectPrefabAuthoring = createObjectPrefabAuthoringUi();
+  {
+    const prefabCapturePreviewSlot = hueDockBlockPreview.querySelector(
+      "#tile-inspector-preview-prefab-capture-slot"
+    ) as HTMLElement | null;
+    const prefabCapturePreviewImg = hueDockBlockPreview.querySelector(
+      "#tile-inspector-prefab-capture-preview-img"
+    ) as HTMLImageElement | null;
+    if (prefabCapturePreviewSlot && prefabCapturePreviewImg) {
+      objectPrefabAuthoring.bindSavePreviewHost(
+        prefabCapturePreviewSlot,
+        prefabCapturePreviewImg
+      );
+    }
+  }
+  objectPrefabAuthoring.onSaveCapturePreviewChange(() => {
+    syncBuildDockPreviewCaption();
+    syncBuildDockPreviewSatelliteVisibility();
+  });
   const prefabDockPicker = createPrefabDockPickerUi();
   letter.appendChild(objectPrefabAuthoring.root);
   letter.appendChild(prefabDockPicker.root);
@@ -4439,10 +4536,15 @@ export function createHud(
   }
 
   function syncBuildDockPreviewCaption(): void {
-    const text = buildDockSelectionPreviewCaption();
+    const prefabSaveActive =
+      prefabToolActive && objectPrefabAuthoring.isSaveModeActive();
+    const text = prefabSaveActive
+      ? objectPrefabAuthoring.statsEl.textContent.trim() || null
+      : buildDockSelectionPreviewCaption();
     for (const slotId of [
       "tile-inspector-preview-placement-slot",
       "tile-inspector-preview-selection-slot",
+      "tile-inspector-preview-prefab-capture-slot",
     ] as const) {
       const slot = hueDockBlockPreview.querySelector(
         `#${slotId}`
@@ -4551,6 +4653,33 @@ export function createHud(
   };
   buildDockDeleteBtn.addEventListener("pointerdown", onBuildDockDeletePointer);
   buildDockDeleteBtn.addEventListener("click", onBuildDockDeletePointer);
+  const onBuildDockPrefabPlacePointer = (e: Event): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (buildDockPrefabPlaceBtn.hidden || buildDockPrefabPlaceBtn.disabled) {
+      return;
+    }
+    prefabPlaceConfirmHandler?.();
+  };
+  buildDockPrefabPlaceBtn.addEventListener(
+    "pointerdown",
+    onBuildDockPrefabPlacePointer
+  );
+  buildDockPrefabPlaceBtn.addEventListener("click", onBuildDockPrefabPlacePointer);
+  const onBuildDockPrefabCancelPointer = (e: Event): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (buildDockPrefabCancelBtn.hidden) return;
+    prefabPlaceCancelHandler?.();
+  };
+  buildDockPrefabCancelBtn.addEventListener(
+    "pointerdown",
+    onBuildDockPrefabCancelPointer
+  );
+  buildDockPrefabCancelBtn.addEventListener(
+    "click",
+    onBuildDockPrefabCancelPointer
+  );
   const buildDockContextColor = buildBottomDockContext.querySelector(
     ".hud-build-bottom-dock__context-color"
   ) as HTMLElement;
@@ -4570,15 +4699,35 @@ export function createHud(
     tileInspectorRoot.insertAdjacentElement("afterend", teleporterSection);
   }
   buildDockContextMods.appendChild(objectPrefabAuthoring.dockPanel);
+  let prefabDesignManageHandler:
+    | ((
+        action: import("./prefabDockPicker.js").PrefabDesignManageAction,
+        design: import("../net/ws.js").DesignWire
+      ) => void)
+    | null = null;
+
   objectPrefabAuthoring.onCatalogChange(() => {
     if (buildDockCategory === "prefab") {
       syncBuildDockToolStrip();
+    }
+    if (prefabDockPicker.isOpen()) {
+      prefabDockPicker.refreshCatalog(objectPrefabAuthoring.getPlaceableDesigns());
     }
   });
   prefabDockPicker.onDockSelectionChange(() => {
     if (buildDockCategory === "prefab") {
       syncBuildDockToolStrip();
     }
+  });
+  prefabDockPicker.onDesignManage((action, design) => {
+    prefabDesignManageHandler?.(action, design);
+  });
+  prefabDockPicker.onCreatorProfileOpen((address, kind) => {
+    void showPlayerProfileView(
+      address,
+      walletDisplayName(address),
+      kind
+    );
   });
   const buildDockTerrainPreviewHost = document.createElement("div");
   buildDockTerrainPreviewHost.className =
@@ -4759,11 +4908,34 @@ export function createHud(
     }
   }
 
+  /** Terrain tab + block tool — used when closing build so reopening does not stay on Prefab. */
+  function resetBuildDockCategoryToTerrain(): void {
+    buildDockCategory = "terrain";
+    for (const [c, b] of buildDockTabByCategory) {
+      const on = c === "terrain";
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      b.classList.toggle("hud-build-bottom-dock__tab--active", on);
+    }
+    if (objectPrefabAuthoring.isSaveModeActive()) {
+      objectPrefabAuthoring.setMode("place");
+    }
+    if (prefabDockPicker.isOpen()) {
+      prefabDockPicker.close();
+    }
+    if (tileInspectorToolSelect.value !== "block") {
+      tileInspectorToolSelect.value = "block";
+      tileInspectorToolSelect.dispatchEvent(
+        new Event("change", { bubbles: true })
+      );
+    }
+  }
+
   /** Objects scope + Floor tab — used when closing build or opening it fresh. */
   function resetBuildEditScopeToObjects(): void {
     buildEditKindSelect.value = "objects";
     syncBuildEditKindTriggerFromSelect();
     resetBuildDockRoomCategoryToFloor();
+    resetBuildDockCategoryToTerrain();
     setBuildDockRoomBgPopoverOpen(false);
     setBuildEditKindOverlayOpen(false);
   }
@@ -4807,10 +4979,13 @@ export function createHud(
       "hud-mode-sidebar__block-preview-dock--terrain-pick",
       compact
     );
+    const prefabSaveActive =
+      prefabToolActive && objectPrefabAuthoring.isSaveModeActive();
     const objectEditActive = isBuildObjectSelectionActive();
     const selectionPreviewActive = buildDockSelectionPreviewActive();
     const showInSatellite =
       !hueDockBlockPreview.hidden ||
+      prefabSaveActive ||
       selectionPreviewActive ||
       (opts.inDock && !selectionPreviewActive) ||
       (objectEditActive && !selectionPreviewActive);
@@ -6312,13 +6487,13 @@ export function createHud(
       prefabToolActive && objectPrefabAuthoring.isPlaceModeActive();
     const saveMode =
       prefabToolActive && objectPrefabAuthoring.isSaveModeActive();
-    const prefabPanel = prefabToolActive && (placeMode || saveMode);
+    const prefabStripActive = prefabToolActive && (placeMode || saveMode);
     buildBottomDockContext.classList.toggle(
       "hud-build-bottom-dock__context--prefab",
-      prefabPanel
+      prefabStripActive
     );
     if (tileInspectorRoot) {
-      tileInspectorRoot.hidden = prefabPanel;
+      tileInspectorRoot.hidden = prefabStripActive;
     }
     objectPrefabAuthoring.dockPanel.classList.toggle(
       "hud-prefab-dock--place",
@@ -6328,10 +6503,11 @@ export function createHud(
       "hud-prefab-dock--save",
       saveMode
     );
-    buildDockContextColor.hidden = prefabPanel;
-    buildDockContextTop.hidden = prefabPanel;
-    buildDockPlaceEl.hidden = prefabPanel;
-    objectPrefabAuthoring.dockPanel.hidden = !prefabToolActive;
+    buildDockContextColor.hidden = prefabStripActive;
+    buildDockContextTop.hidden = prefabStripActive;
+    buildDockPlaceEl.hidden = prefabStripActive;
+    objectPrefabAuthoring.dockPanel.hidden = true;
+    buildBottomDockContext.hidden = prefabStripActive;
   }
 
   function syncBuildDockContextParams(): void {
@@ -10643,6 +10819,8 @@ export function createHud(
     refreshPrefabAuthoringChrome() {
       syncPrefabDockChrome();
       syncBuildDockRotateChrome();
+      syncBlockPreviewDockSlots();
+      syncBuildDockPreviewCaption();
     },
     setPrefabSnapshotForThumb(fn) {
       prefabSnapshotForThumb = fn;
@@ -10732,6 +10910,23 @@ export function createHud(
     },
     onPrefabPlaceRotate(fn: ((delta: -1 | 1) => void) | null) {
       prefabPlaceRotateHandler = fn;
+    },
+    onPrefabPlaceConfirm(fn: (() => void) | null) {
+      prefabPlaceConfirmHandler = fn;
+    },
+    onPrefabPlaceCancel(fn: (() => void) | null) {
+      prefabPlaceCancelHandler = fn;
+    },
+    setPrefabPlacePreviewChrome(state: {
+      armed: boolean;
+      canConfirm: boolean;
+    }) {
+      prefabPlacePreviewArmed = state.armed;
+      prefabPlacePreviewCanConfirm = state.canConfirm;
+      syncBuildDockRotateChrome();
+    },
+    onPrefabDesignManage(fn) {
+      prefabDesignManageHandler = fn;
     },
     getObjectPrefabAuthoringUi() {
       return objectPrefabAuthoring;

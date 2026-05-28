@@ -312,6 +312,8 @@ export type ServerMessage =
   | { type: "gateWalkBlocked"; x: number; z: number; y: number }
   | { type: "error"; code: string }
   | { type: "designPublished"; design: DesignWire }
+  | { type: "designDeleted"; designId: string }
+  | { type: "designUpdated"; design: DesignWire }
   | {
       type: "designStampResult";
       ok: boolean;
@@ -671,7 +673,7 @@ export type DesignWire = {
   footprintD: number;
   priceLuna: string;
   hubStampAllowed: boolean;
-  visibility: "private" | "unlisted" | "public";
+  visibility: "private" | "public";
   updatedAt: number;
 };
 
@@ -686,7 +688,7 @@ export function sendPublishDesign(
     name: string;
     description?: string;
     tags?: string[];
-    visibility?: "private" | "unlisted" | "public";
+    visibility?: "private" | "public";
     priceLuna?: string;
     hubStampAllowed?: boolean;
   }
@@ -696,6 +698,22 @@ export function sendPublishDesign(
       type: "publishDesign",
       ...payload,
     })
+  );
+}
+
+export function sendDeleteDesign(socket: WebSocket, designId: string): void {
+  if (socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: "deleteDesign", designId }));
+}
+
+export function sendUpdateDesignVisibility(
+  socket: WebSocket,
+  designId: string,
+  visibility: "private" | "public"
+): void {
+  if (socket.readyState !== WebSocket.OPEN) return;
+  socket.send(
+    JSON.stringify({ type: "updateDesignVisibility", designId, visibility })
   );
 }
 

@@ -50,6 +50,8 @@ import {
   sendMoveObstacle,
   sendMoveTo,
   sendPublishDesign,
+  sendDeleteDesign,
+  sendUpdateDesignVisibility,
   sendPlaceDesignInRoom,
   sendPlaceBlock,
   type DesignWire,
@@ -2014,9 +2016,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         ? " Gate: green/red on neighbors show clearance; click an empty floor tile."
         : "";
       const prefabHint = hud.isObjectPrefabPlaceModeActive()
-        ? " Prefab: pick one, hover anchor, click to place (↺ ↻ rotate)."
+        ? touchUi
+          ? game.isPrefabPlacePreviewArmed()
+            ? " Prefab: tap the same spot again or Place to stamp; Cancel to clear preview (↺ ↻ rotate)."
+            : " Prefab: tap the floor to preview placement (↺ ↻ rotate)."
+          : " Prefab: pick one, hover anchor, click to place (↺ ↻ rotate)."
         : hud.isObjectPrefabSaveModeActive()
-          ? " Prefab: click and drag on the floor to capture your prefab area."
+          ? touchUi
+            ? " Prefab: press and drag on the floor to capture your prefab area."
+            : " Prefab: click and drag on the floor to capture your prefab area."
           : "";
       const sel = game.getSelectedBlockTile();
       const selectedHint = sel
@@ -2142,33 +2150,34 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   });
 
   game.setObjectPrefabBboxStatsHandler((stats) => {
-    prefabUi.updateStats(
-      stats
-        ? {
-            footprintW: stats.footprintW,
-            footprintD: stats.footprintD,
-            tileCount: stats.tileCount,
-          }
-        : null
-    );
+    prefabUi.updateStats(stats);
   });
+  prefabUi.onPublishModalClose(() => {
+    game.clearPrefabSaveCapturePreview();
+    prefabUi.updateStats(null);
+  });
+
   game.setObjectPrefabBboxCompleteHandler((bbox) => {
     if (!welcomeAllowPublishDesign) return;
-    prefabUi.openPublishModal(bbox, (payload) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      prefabUi.setPublishBusy(true);
-      sendPublishDesign(ws, {
-        kind: "object",
-        minX: payload.bbox.minX,
-        maxX: payload.bbox.maxX,
-        minZ: payload.bbox.minZ,
-        maxZ: payload.bbox.maxZ,
-        name: payload.name,
-        description: payload.description,
-        visibility: payload.visibility,
-        priceLuna: nimToLunaString(payload.priceNim),
-      });
-    });
+    prefabUi.openPublishModal(
+      bbox,
+      game.getPrefabCaptureThumbnailDataUrl(bbox),
+      (payload) => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        prefabUi.setPublishBusy(true);
+        sendPublishDesign(ws, {
+          kind: "object",
+          minX: payload.bbox.minX,
+          maxX: payload.bbox.maxX,
+          minZ: payload.bbox.minZ,
+          maxZ: payload.bbox.maxZ,
+          name: payload.name,
+          description: payload.description,
+          visibility: payload.visibility,
+          priceLuna: nimToLunaString(payload.priceNim),
+        });
+      }
+    );
   });
 
   prefabUi.onModeChange(() => {
@@ -2176,6 +2185,17 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       syncObjectPrefabModes("prefab");
     }
     hud.refreshPrefabAuthoringChrome();
+    syncPrefabPlacePreviewHud();
+  });
+
+  hud.onPrefabDesignManage((action, design) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (action === "delete") {
+      sendDeleteDesign(ws, design.id);
+      return;
+    }
+    const next = design.visibility === "public" ? "private" : "public";
+    sendUpdateDesignVisibility(ws, design.id, next);
   });
 
   const prefabSnapshotCache = new Map<string, import("./game/designFootprint.js").DesignSnapshotV1>();
@@ -2231,11 +2251,37 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
 
   prefabUi.onDesignChange((design) => {
+    game.cancelPrefabPlacePreview();
+    syncPrefabPlacePreviewHud();
     void loadPrefabSnapshotForDesign(design);
   });
 
   hud.onPrefabPlaceRotate((delta) => {
     game.cycleObjectPrefabPlaceYaw(delta);
+  });
+
+  function syncPrefabPlacePreviewHud(): void {
+    hud.setPrefabPlacePreviewChrome({
+      armed: game.isPrefabPlacePreviewArmed(),
+      canConfirm: game.canConfirmArmedPrefabPlace(),
+    });
+  }
+
+  game.setPrefabPlacePreviewChangeHandler(() => {
+    syncPrefabPlacePreviewHud();
+    hud.refreshPrefabAuthoringChrome();
+  });
+
+  hud.onPrefabPlaceConfirm(() => {
+    if (game.confirmArmedPrefabPlace()) {
+      syncBuildHud();
+    }
+  });
+
+  hud.onPrefabPlaceCancel(() => {
+    game.cancelPrefabPlacePreview();
+    syncPrefabPlacePreviewHud();
+    syncBuildHud();
   });
 
   game.setObjectPrefabPlaceHandler((anchorX, anchorZ, yawSteps) => {
@@ -3787,6 +3833,26 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }
       return;
     }
+    if (msg.type === "designDeleted") {
+      prefabSnapshotCache.delete(msg.designId);
+      if (prefabUi.getSelectedDesignId() === msg.designId) {
+        prefabUi.selectDesign(null);
+        game.setObjectPrefabPlaceDesign(null);
+        game.setObjectPrefabPlaceSnapshot(null);
+      }
+      void fetchPlaceableDesigns();
+      hud.appendChat("System", "Prefab deleted.");
+      return;
+    }
+    if (msg.type === "designUpdated") {
+      prefabSnapshotCache.delete(msg.design.id);
+      void fetchPlaceableDesigns();
+      hud.appendChat(
+        "System",
+        `Prefab "${msg.design.name}" is now ${msg.design.visibility === "public" ? "public" : "private"}.`
+      );
+      return;
+    }
     if (msg.type === "designStampResult") {
       if (msg.ok) {
         const n = msg.obstacleCount ?? 0;
@@ -3842,13 +3908,33 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         hud.getObjectPrefabAuthoringUi().setPublishBusy(false);
       }
       if (
+        msg.code === "design_not_found" ||
+        msg.code === "design_delete_forbidden" ||
+        msg.code === "design_visibility_forbidden"
+      ) {
+        const designErr: Record<string, string> = {
+          design_not_found: "Prefab not found.",
+          design_delete_forbidden: "You cannot delete that prefab.",
+          design_visibility_forbidden: "You cannot change that prefab's visibility.",
+        };
+        hud.appendChat("System", designErr[msg.code] ?? "Could not update prefab.");
+      }
+      if (
         msg.code === "footprint_too_large" ||
         msg.code === "too_many_obstacles" ||
         msg.code === "empty_selection" ||
-        msg.code === "name_required"
+        msg.code === "name_required" ||
+        msg.code === "name_too_long"
       ) {
+        const publishErr: Record<string, string> = {
+          footprint_too_large: "Selection is too large (max 6×6).",
+          too_many_obstacles: "Too many blocks in this area.",
+          empty_selection: "No blocks in this area.",
+          name_required: "Name is required.",
+          name_too_long: "Name must be 12 characters or fewer.",
+        };
         hud.getObjectPrefabAuthoringUi().showPublishError(
-          msg.code.replace(/_/g, " ")
+          publishErr[msg.code] ?? msg.code.replace(/_/g, " ")
         );
       }
       if (msg.code === "billboard_vertical_disabled") {
@@ -4250,6 +4336,13 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         if (editingTile) {
           editingTile = null;
           hud.hideObjectEditPanel();
+        }
+        if (game.isPrefabPlacePreviewArmed()) {
+          game.cancelPrefabPlacePreview();
+          syncPrefabPlacePreviewHud();
+          syncBuildHud();
+          e.preventDefault();
+          return;
         }
         // Return to walk mode if in any build mode
         if (game.getBuildMode()) {

@@ -104,9 +104,11 @@ import {
   HUB_MAZE_EXIT_SPAWN,
 } from "./roomLayouts.js";
 import {
+  deleteDesign,
   designToWire,
   loadDesigns,
   publishDesign,
+  updateDesignVisibility,
 } from "./designs.js";
 import { planDesignStampInRoom } from "./designPlacement.js";
 import type { DesignKind } from "./designSnapshot.js";
@@ -836,6 +838,11 @@ type OutMsg =
   | { type: "error"; code: string }
   | {
       type: "designPublished";
+      design: ReturnType<typeof designToWire>;
+    }
+  | { type: "designDeleted"; designId: string }
+  | {
+      type: "designUpdated";
       design: ReturnType<typeof designToWire>;
     }
   | {
@@ -4722,10 +4729,7 @@ export function addClient(
         }
       }
       const visibilityRaw = String(msg.visibility ?? "private");
-      const visibility =
-        visibilityRaw === "public" || visibilityRaw === "unlisted"
-          ? visibilityRaw
-          : "private";
+      const visibility = visibilityRaw === "public" ? "public" : "private";
       const placed = placedMap(currentRoomId);
       const result = publishDesign({
         kind,
@@ -4757,6 +4761,60 @@ export function addClient(
       });
       wsSafeSend(ws, {
         type: "designPublished",
+        design: designToWire(result.design),
+      } satisfies OutMsg);
+      return;
+    }
+
+    if (msg.type === "deleteDesign") {
+      const now = Date.now();
+      if (now - (conn.lastPublishDesignAt ?? 0) < RATE_PUBLISH_DESIGN_MS) return;
+      conn.lastPublishDesignAt = now;
+      const designId = String(msg.designId ?? "").trim();
+      if (!designId) return;
+      const result = deleteDesign(address, designId);
+      if (!result.ok) {
+        wsSafeSend(ws, {
+          type: "error",
+          code: result.code === "forbidden" ? "design_delete_forbidden" : "design_not_found",
+        } satisfies OutMsg);
+        return;
+      }
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "design_deleted", {
+        designId,
+      });
+      wsSafeSend(ws, { type: "designDeleted", designId } satisfies OutMsg);
+      return;
+    }
+
+    if (msg.type === "updateDesignVisibility") {
+      const now = Date.now();
+      if (now - (conn.lastPublishDesignAt ?? 0) < RATE_PUBLISH_DESIGN_MS) return;
+      conn.lastPublishDesignAt = now;
+      const designId = String(msg.designId ?? "").trim();
+      const visibilityRaw = String(msg.visibility ?? "private");
+      const visibility = visibilityRaw === "public" ? "public" : "private";
+      if (!designId) return;
+      const result = updateDesignVisibility(address, designId, visibility);
+      if (!result.ok) {
+        wsSafeSend(ws, {
+          type: "error",
+          code:
+            result.code === "forbidden"
+              ? "design_visibility_forbidden"
+              : "design_not_found",
+        } satisfies OutMsg);
+        return;
+      }
+      logGameplayEvent(
+        conn.sessionId,
+        address,
+        currentRoomId,
+        "design_visibility_updated",
+        { designId, visibility: result.design.visibility }
+      );
+      wsSafeSend(ws, {
+        type: "designUpdated",
         design: designToWire(result.design),
       } satisfies OutMsg);
       return;

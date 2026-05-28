@@ -14,6 +14,77 @@ export type DesignSnapshotV1 = {
   obstacles: DesignSnapshotObstacle[];
 };
 
+export type DesignBbox = {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+};
+
+export function footprintFromBbox(bbox: DesignBbox): { w: number; d: number } {
+  return {
+    w: bbox.maxX - bbox.minX + 1,
+    d: bbox.maxZ - bbox.minZ + 1,
+  };
+}
+
+/** Strip non-portable obstacle props (mirrors server/src/designSnapshot.ts). */
+export function sanitizeObstaclePropsForExport(
+  props: ObstacleProps
+): ObstacleProps | null {
+  if (props.teleporter) return null;
+  if (props.gate) return null;
+  if (props.claimable) return null;
+  return {
+    passable: props.passable,
+    half: props.half,
+    quarter: props.quarter,
+    hex: props.hex,
+    pyramid: props.pyramid,
+    sphere: props.sphere,
+    ramp: props.ramp,
+    rampDir: props.rampDir,
+    colorRgb: props.colorRgb,
+    locked: props.locked,
+    pyramidBaseScale: props.pyramidBaseScale,
+    hexRadiusScale: props.hexRadiusScale,
+    sphereRadiusScale: props.sphereRadiusScale,
+    cubeRotX: props.cubeRotX,
+    cubeRotY: props.cubeRotY,
+    cubeRotZ: props.cubeRotZ,
+  };
+}
+
+/** Capture portable snapshot from room blocks in bbox (matches server publish). */
+export function captureDesignSnapshot(
+  placed: ReadonlyMap<string, ObstacleProps>,
+  bbox: DesignBbox
+): { snapshot: DesignSnapshotV1; obstacleCount: number } {
+  const obstacles: DesignSnapshotObstacle[] = [];
+  for (const [key, props] of placed) {
+    const parts = key.split(",").map(Number);
+    if (parts.length < 3) continue;
+    const x = parts[0]!;
+    const z = parts[1]!;
+    const y = parts[2]!;
+    if (x < bbox.minX || x > bbox.maxX || z < bbox.minZ || z > bbox.maxZ) {
+      continue;
+    }
+    const clean = sanitizeObstaclePropsForExport(props);
+    if (!clean) continue;
+    obstacles.push({
+      dx: x - bbox.minX,
+      dz: z - bbox.minZ,
+      y,
+      props: clean,
+    });
+  }
+  return {
+    snapshot: { schema: 1, obstacles },
+    obstacleCount: obstacles.length,
+  };
+}
+
 export function rotateDesignOffset(
   dx: number,
   dz: number,
