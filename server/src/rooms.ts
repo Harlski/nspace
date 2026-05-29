@@ -5,6 +5,8 @@ import {
   canPlaceTeleporterFoot,
   floorWalkableTerrain,
   floorWalkableTerrainForMover,
+  type FloorBrushSize,
+  floorBrushTiles,
   inTileBounds,
   inferTerrainStartLayer,
   isBaseTile,
@@ -1920,6 +1922,67 @@ function canPlaceExtraFloor(roomId: string, x: number, z: number): boolean {
     if (isWalkableTile(x + dx, z + dz, ex, roomId, br)) return true;
   }
   return false;
+}
+
+type PlaceExtraFloorTileOutcome =
+  | { kind: "none" }
+  | { kind: "restore_base"; key: string; x: number; z: number }
+  | { kind: "recolor_extra"; x: number; z: number; colorRgb: number }
+  | { kind: "recolor_base"; x: number; z: number; colorRgb: number }
+  | { kind: "place_extra"; x: number; z: number; colorRgb: number };
+
+function applyPlaceExtraFloorAtTile(
+  roomId: string,
+  room: Map<string, ClientConn>,
+  address: string,
+  tile: { x: number; z: number },
+  colorRgb: number
+): PlaceExtraFloorTileOutcome {
+  const k = tileKey(tile.x, tile.z);
+  if (
+    isPlayerCreatedRoom(roomId) &&
+    baseFloorRemovedEnsure(roomId).has(k)
+  ) {
+    const placedRm = placedMap(roomId);
+    if (tileHasPlacedBlocks(placedRm, tile.x, tile.z)) return { kind: "none" };
+    if (anyPlayerOnTile(room, tile)) return { kind: "none" };
+    const rm = baseFloorRemovedEnsure(roomId);
+    rm.delete(k);
+    if (rm.size === 0) {
+      roomBaseFloorRemoved.delete(roomId);
+    }
+    return { kind: "restore_base", key: k, x: tile.x, z: tile.z };
+  }
+
+  const ex = extraFloorMap(roomId);
+
+  if (ex.has(k)) {
+    if (otherPlayerOnTile(room, tile, address)) return { kind: "none" };
+    if (ex.get(k) === colorRgb) return { kind: "none" };
+    ex.set(k, colorRgb);
+    return { kind: "recolor_extra", x: tile.x, z: tile.z, colorRgb };
+  }
+
+  if (isBaseTile(tile.x, tile.z, roomId)) {
+    const br = baseRemovedReadonly(roomId);
+    if (br?.has(k)) return { kind: "none" };
+    if (otherPlayerOnTile(room, tile, address)) return { kind: "none" };
+    const baseColors = baseFloorColorMap(roomId);
+    if (baseColors.get(k) === colorRgb) return { kind: "none" };
+    baseColors.set(k, colorRgb);
+    return { kind: "recolor_base", x: tile.x, z: tile.z, colorRgb };
+  }
+
+  if (!canPlaceExtraFloor(roomId, tile.x, tile.z)) return { kind: "none" };
+  if (anyPlayerOnTile(room, tile)) return { kind: "none" };
+  ex.set(k, colorRgb);
+  return { kind: "place_extra", x: tile.x, z: tile.z, colorRgb };
+}
+
+function parseFloorBrushSize(raw: unknown): FloorBrushSize {
+  const n = Math.floor(Number(raw));
+  if (n === 2) return 2;
+  return 1;
 }
 
 function walkBounds(roomId: string): {
@@ -6119,99 +6182,126 @@ export function addClient(
       if (!canEditRoomContent(currentRoomId, address)) {
         return;
       }
-      
+
       const now = Date.now();
       if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
       conn.lastPlaceAt = now;
       const tx = Number(msg.x);
       const tz = Number(msg.z);
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
-      const tile = snapToTile(tx, tz);
-      const k = tileKey(tile.x, tile.z);
-      if (
-        isPlayerCreatedRoom(currentRoomId) &&
-        baseFloorRemovedEnsure(currentRoomId).has(k)
-      ) {
-        const placedRm = placedMap(currentRoomId);
-        if (tileHasPlacedBlocks(placedRm, tile.x, tile.z)) return;
-        if (anyPlayerOnTile(room, tile)) return;
-        const rm = baseFloorRemovedEnsure(currentRoomId);
-        rm.delete(k);
-        if (rm.size === 0) {
-          roomBaseFloorRemoved.delete(currentRoomId);
+      const anchor = snapToTile(tx, tz);
+      const colorRgb = resolveExtraFloorColorRgb(
+        (msg as { colorRgb?: unknown }).colorRgb
+      );
+      const brushSize = parseFloorBrushSize(
+        (msg as { brushSize?: unknown }).brushSize
+      );
+      const tiles =
+        brushSize === 1
+          ? [anchor]
+          : floorBrushTiles(anchor.x, anchor.z, brushSize);
+
+      const extraAdds: { x: number; z: number; colorRgb: number }[] = [];
+      const baseAdds: { x: number; z: number; colorRgb: number }[] = [];
+      const restoredBase: string[] = [];
+
+      for (const tile of tiles) {
+        const outcome = applyPlaceExtraFloorAtTile(
+          currentRoomId,
+          room,
+          address,
+          tile,
+          colorRgb
+        );
+        switch (outcome.kind) {
+          case "none":
+            break;
+          case "restore_base":
+            restoredBase.push(outcome.key);
+            logGameplayEvent(
+              conn.sessionId,
+              address,
+              currentRoomId,
+              "restore_base_floor",
+              { x: outcome.x, z: outcome.z }
+            );
+            break;
+          case "recolor_extra":
+            extraAdds.push({
+              x: outcome.x,
+              z: outcome.z,
+              colorRgb: outcome.colorRgb,
+            });
+            logGameplayEvent(
+              conn.sessionId,
+              address,
+              currentRoomId,
+              "recolor_extra_floor",
+              { x: outcome.x, z: outcome.z }
+            );
+            break;
+          case "recolor_base":
+            baseAdds.push({
+              x: outcome.x,
+              z: outcome.z,
+              colorRgb: outcome.colorRgb,
+            });
+            logGameplayEvent(
+              conn.sessionId,
+              address,
+              currentRoomId,
+              "recolor_base_floor",
+              { x: outcome.x, z: outcome.z }
+            );
+            break;
+          case "place_extra":
+            extraAdds.push({
+              x: outcome.x,
+              z: outcome.z,
+              colorRgb: outcome.colorRgb,
+            });
+            logGameplayEvent(
+              conn.sessionId,
+              address,
+              currentRoomId,
+              "place_extra_floor",
+              { x: outcome.x, z: outcome.z }
+            );
+            break;
         }
+      }
+
+      const changed =
+        extraAdds.length > 0 ||
+        baseAdds.length > 0 ||
+        restoredBase.length > 0;
+      if (!changed) return;
+
+      if (restoredBase.length > 0) {
         broadcast(currentRoomId, {
           type: "removedBaseFloorDelta",
           roomId: currentRoomId,
           add: [],
-          remove: [k],
+          remove: restoredBase,
         });
-        schedulePersistWorldState();
-        logGameplayEvent(conn.sessionId, address, currentRoomId, "restore_base_floor", {
-          x: tile.x,
-          z: tile.z,
-        });
-        return;
       }
-
-      const colorRgb = resolveExtraFloorColorRgb(
-        (msg as { colorRgb?: unknown }).colorRgb
-      );
-      const ex = extraFloorMap(currentRoomId);
-
-      if (ex.has(k)) {
-        if (otherPlayerOnTile(room, tile, address)) return;
-        if (ex.get(k) === colorRgb) return;
-        ex.set(k, colorRgb);
+      if (extraAdds.length > 0) {
         broadcast(currentRoomId, {
           type: "extraFloorDelta",
           roomId: currentRoomId,
-          add: [{ x: tile.x, z: tile.z, colorRgb }],
+          add: extraAdds,
           remove: [],
         });
-        schedulePersistWorldState();
-        logGameplayEvent(conn.sessionId, address, currentRoomId, "recolor_extra_floor", {
-          x: tile.x,
-          z: tile.z,
-        });
-        return;
       }
-
-      if (isBaseTile(tile.x, tile.z, currentRoomId)) {
-        const br = baseRemovedReadonly(currentRoomId);
-        if (br?.has(k)) return;
-        if (otherPlayerOnTile(room, tile, address)) return;
-        const baseColors = baseFloorColorMap(currentRoomId);
-        if (baseColors.get(k) === colorRgb) return;
-        baseColors.set(k, colorRgb);
+      if (baseAdds.length > 0) {
         broadcast(currentRoomId, {
           type: "baseFloorColorDelta",
           roomId: currentRoomId,
-          add: [{ x: tile.x, z: tile.z, colorRgb }],
+          add: baseAdds,
           remove: [],
         });
-        schedulePersistWorldState();
-        logGameplayEvent(conn.sessionId, address, currentRoomId, "recolor_base_floor", {
-          x: tile.x,
-          z: tile.z,
-        });
-        return;
       }
-
-      if (!canPlaceExtraFloor(currentRoomId, tile.x, tile.z)) return;
-      if (anyPlayerOnTile(room, tile)) return;
-      ex.set(tileKey(tile.x, tile.z), colorRgb);
-      broadcast(currentRoomId, {
-        type: "extraFloorDelta",
-        roomId: currentRoomId,
-        add: [{ x: tile.x, z: tile.z, colorRgb }],
-        remove: [],
-      });
       schedulePersistWorldState();
-      logGameplayEvent(conn.sessionId, address, currentRoomId, "place_extra_floor", {
-        x: tile.x,
-        z: tile.z,
-      });
       return;
     }
 

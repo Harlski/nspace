@@ -3057,6 +3057,46 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
+.hud-floor-brush-size-select {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 3rem;
+  height: 24px;
+  margin: 0;
+  padding: 0 14px 0 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  background: rgba(30, 36, 51, 0.92);
+  color: #e8eaef;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%23a8b0c0' d='M0 0l4 5 4-5z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.hud-floor-brush-size-select:hover {
+  background-color: rgba(45, 52, 70, 0.95);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.hud-floor-brush-size-select:focus {
+  outline: 2px solid rgba(59, 130, 246, 0.45);
+  outline-offset: 1px;
+}
+
+.hud-floor-brush-size-select option {
+  background: #1e2433;
+  color: #e8eaef;
+}
+
 .hud-mode-sidebar__shape-color-row--hue-only {
   gap: 0;
   justify-content: center;
@@ -5800,11 +5840,29 @@ button.hud-brand:focus-visible {
 
 .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-grid {
   flex-direction: row;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
 }
 
 .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-mods {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  padding-left: 4px;
+}
+
+.hud-build-bottom-dock__context--floor
+  .hud-build-bottom-dock__context-mods
+  > :not(.hud-build-bottom-dock__floor-brush-setting) {
   display: none !important;
+}
+
+.hud-build-bottom-dock__context--floor .hud-build-bottom-dock__floor-brush-setting {
+  margin: 0;
 }
 
 .hud-build-bottom-dock__context--floor {
@@ -5815,10 +5873,11 @@ button.hud-brand:focus-visible {
 .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-color {
   flex: 0 0 min(56px, 20vw);
   width: min(56px, 20vw);
-  justify-content: flex-start;
+  justify-content: flex-end;
+  align-items: flex-end;
   align-self: stretch;
   padding-top: 4px;
-  padding-right: 4px;
+  padding-right: 2px;
 }
 
 .hud-build-bottom-dock__context-mods > .hud-build-bottom-dock__room-settings .hud-build-bottom-dock__room-setting-label {
@@ -6458,6 +6517,10 @@ button.hud-brand:focus-visible {
 .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-color > .hud-mode-sidebar__shape-color-row--floor {
   flex: 0 0 auto;
   min-height: 0;
+  width: auto;
+  gap: 0;
+  justify-content: flex-end;
+  align-items: center;
 }
 
 /* Fixed-size hue ring: same for every placement tool (terrain shapes, props, buildings). */

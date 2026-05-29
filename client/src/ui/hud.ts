@@ -443,6 +443,8 @@ export function createHud(
   ) => void;
   /** Live floor tile tint while expanding room floor (build dock floor hue ring). */
   onFloorPlacementColor: (fn: (colorRgb: number) => void) => void;
+  /** N×N floor paintbrush size (1 or 2). */
+  onFloorBrushSize: (fn: (size: 1 | 2) => void) => void;
   setBuildBlockBarState: (state: BuildBlockBarState) => void;
   refreshBuildDockToolStrip: () => void;
   refreshPrefabAuthoringChrome: () => void;
@@ -3794,7 +3796,7 @@ export function createHud(
   const FLOOR_TILE_DEFAULT_COLOR_RGB = 0x3d5a4a;
   const floorShapeColorRow = document.createElement("div");
   floorShapeColorRow.className =
-    "hud-mode-sidebar__shape-color-row hud-mode-sidebar__shape-color-row--floor hud-mode-sidebar__shape-color-row--hue-only";
+    "hud-mode-sidebar__shape-color-row hud-mode-sidebar__shape-color-row--floor";
   floorShapeColorRow.hidden = true;
   const floorHueRingParts = createPaletteHueRing({
     ariaLabel: "Floor tile color",
@@ -3805,6 +3807,28 @@ export function createHud(
   const floorHueRing = floorHueRingParts.ring;
   const floorHueCore = floorHueRingParts.core;
   floorShapeColorRow.appendChild(floorHueRingWrap);
+
+  const buildDockFloorBrushSettingRow = document.createElement("div");
+  buildDockFloorBrushSettingRow.className =
+    "hud-build-bottom-dock__room-setting hud-build-bottom-dock__floor-brush-setting";
+  buildDockFloorBrushSettingRow.hidden = true;
+  const floorBrushSizeLabel = document.createElement("span");
+  floorBrushSizeLabel.className = "hud-build-bottom-dock__room-setting-label";
+  floorBrushSizeLabel.textContent = "Size:";
+  const floorBrushSizeSelect = document.createElement("select");
+  floorBrushSizeSelect.className = "hud-floor-brush-size-select";
+  floorBrushSizeSelect.setAttribute("aria-label", "Floor brush size");
+  floorBrushSizeSelect.title = "Paintbrush size";
+  for (const size of [1, 2] as const) {
+    const opt = document.createElement("option");
+    opt.value = String(size);
+    opt.textContent = `${size}×${size}`;
+    floorBrushSizeSelect.appendChild(opt);
+  }
+  buildDockFloorBrushSettingRow.append(
+    floorBrushSizeLabel,
+    floorBrushSizeSelect
+  );
 
   const hueDockBlockPreview = document.createElement("div");
   hueDockBlockPreview.className = "hud-mode-sidebar__block-preview-dock";
@@ -3884,6 +3908,55 @@ export function createHud(
     });
   }
 
+  function prefabPlaceSelectionPreviewActive(): boolean {
+    return (
+      prefabToolActive &&
+      objectPrefabAuthoring.isPlaceModeActive() &&
+      objectPrefabAuthoring.getSelectedDesign() !== null
+    );
+  }
+
+  function syncPrefabPlaceSelectionPreview(): void {
+    const img = hueDockBlockPreview.querySelector(
+      "#tile-inspector-prefab-capture-preview-img"
+    ) as HTMLImageElement | null;
+    if (!img) return;
+    const saveActive =
+      prefabToolActive && objectPrefabAuthoring.isSaveModeActive();
+    if (saveActive || !prefabPlaceSelectionPreviewActive()) {
+      if (!saveActive) {
+        img.removeAttribute("src");
+      }
+      return;
+    }
+    const design = objectPrefabAuthoring.getSelectedDesign();
+    const snapshot = design ? prefabSnapshotForThumb?.(design.id) : null;
+    if (!design || !snapshot?.obstacles?.length) {
+      img.removeAttribute("src");
+      return;
+    }
+    const g = inspectorPreviewGameRef;
+    if (!g) return;
+    const pass = dockThumbGlBindGen;
+    const entry = {
+      id: design.id,
+      snapshot,
+      footprintW: design.footprintW,
+      footprintD: design.footprintD,
+      version: design.version,
+    };
+    requestAnimationFrame(() => {
+      if (pass !== dockThumbGlBindGen || !inspectorPreviewGameRef) return;
+      const urls = inspectorPreviewGameRef.getPrefabDesignThumbnailDataUrls([
+        entry,
+      ]);
+      const u = urls.get(design.id);
+      if (u && prefabPlaceSelectionPreviewActive()) {
+        img.src = u;
+      }
+    });
+  }
+
   function syncBlockPreviewDockSlots(): void {
     const pSlot = hueDockBlockPreview.querySelector(
       "#tile-inspector-preview-placement-slot"
@@ -3897,18 +3970,20 @@ export function createHud(
     if (!pSlot || !sSlot || !prefabCaptureSlot) return;
     const prefabSaveActive =
       prefabToolActive && objectPrefabAuthoring.isSaveModeActive();
+    const prefabPlacePreviewActive = prefabPlaceSelectionPreviewActive();
+    const showPrefabPreviewSlot = prefabSaveActive || prefabPlacePreviewActive;
     const objectEditActive = isBuildObjectSelectionActive();
     const selectionPreviewActive = buildDockSelectionPreviewActive();
     const showPlacementPreview =
-      !prefabSaveActive &&
+      !showPrefabPreviewSlot &&
       hudPlayMode === "build" &&
       !selectionPreviewActive &&
       (!buildBlockBar.hidden || objectEditActive);
-    const showSelectionPreview = !prefabSaveActive && selectionPreviewActive;
-    const showPrefabCapturePreview = prefabSaveActive;
+    const showSelectionPreview =
+      !showPrefabPreviewSlot && selectionPreviewActive;
     pSlot.hidden = !showPlacementPreview;
     sSlot.hidden = !showSelectionPreview;
-    prefabCaptureSlot.hidden = !showPrefabCapturePreview;
+    prefabCaptureSlot.hidden = !showPrefabPreviewSlot;
     hueDockBlockPreview.hidden =
       pSlot.hidden && sSlot.hidden && prefabCaptureSlot.hidden;
     if (hueDockPreviewSectionHead) {
@@ -3916,6 +3991,7 @@ export function createHud(
         ? "Capture"
         : "Selected";
     }
+    syncPrefabPlaceSelectionPreview();
     syncBuildDockBlockPreviewMount({
       inDock: buildDockShowsPlacementPreview(),
       compactDockChrome:
@@ -4538,9 +4614,15 @@ export function createHud(
   function syncBuildDockPreviewCaption(): void {
     const prefabSaveActive =
       prefabToolActive && objectPrefabAuthoring.isSaveModeActive();
+    const prefabPlacePreviewActive = prefabPlaceSelectionPreviewActive();
+    const placeDesign = prefabPlacePreviewActive
+      ? objectPrefabAuthoring.getSelectedDesign()
+      : null;
     const text = prefabSaveActive
       ? objectPrefabAuthoring.statsEl.textContent.trim() || null
-      : buildDockSelectionPreviewCaption();
+      : placeDesign
+        ? `${placeDesign.name} · ${placeDesign.footprintW}×${placeDesign.footprintD}`
+        : buildDockSelectionPreviewCaption();
     for (const slotId of [
       "tile-inspector-preview-placement-slot",
       "tile-inspector-preview-selection-slot",
@@ -4694,6 +4776,7 @@ export function createHud(
     ".hud-build-bottom-dock__context-mods"
   ) as HTMLElement;
   buildDockContextMods.prepend(buildDockRoomSettingsPanel);
+  buildDockContextMods.prepend(buildDockFloorBrushSettingRow);
   buildDockContextTop.insertAdjacentElement("afterend", tileInspectorRoot);
   if (teleporterSection) {
     tileInspectorRoot.insertAdjacentElement("afterend", teleporterSection);
@@ -4981,11 +5064,13 @@ export function createHud(
     );
     const prefabSaveActive =
       prefabToolActive && objectPrefabAuthoring.isSaveModeActive();
+    const prefabPlacePreviewActive = prefabPlaceSelectionPreviewActive();
     const objectEditActive = isBuildObjectSelectionActive();
     const selectionPreviewActive = buildDockSelectionPreviewActive();
     const showInSatellite =
       !hueDockBlockPreview.hidden ||
       prefabSaveActive ||
+      prefabPlacePreviewActive ||
       selectionPreviewActive ||
       (opts.inDock && !selectionPreviewActive) ||
       (objectEditActive && !selectionPreviewActive);
@@ -5985,6 +6070,7 @@ export function createHud(
     const floorTabActive =
       buildDockRoomEditActive() && buildDockRoomCategory === "floor";
     floorShapeColorRow.hidden = !floorTabActive;
+    buildDockFloorBrushSettingRow.hidden = !floorTabActive;
   }
 
   function syncBuildDockRoomCategoryChrome(): void {
@@ -7704,6 +7790,8 @@ export function createHud(
   }) => void = (): void => {};
 
   let floorPlacementColorHandler: ((colorRgb: number) => void) | null = null;
+  let floorBrushSizeHandler: ((size: 1 | 2) => void) | null = null;
+  let floorBrushSize: 1 | 2 = 1;
 
   function syncTileInspectorHeightLabel(): void {
     if (!tileInspectorHeightInput || !tileInspectorHeightVal) return;
@@ -8166,6 +8254,17 @@ export function createHud(
     guard: () => !floorShapeColorRow.hidden,
     triggerTitle: "Custom floor hex color",
     triggerAriaLabel: "Custom floor hex color",
+  });
+
+  function syncFloorBrushSizeUi(size: 1 | 2): void {
+    floorBrushSize = size;
+    floorBrushSizeSelect.value = String(size);
+    floorBrushSizeHandler?.(size);
+  }
+
+  floorBrushSizeSelect.addEventListener("change", () => {
+    const raw = Number(floorBrushSizeSelect.value);
+    syncFloorBrushSizeUi(raw === 2 ? 2 : 1);
   });
 
   barShapeBtns.forEach((btn) => {
@@ -10812,6 +10911,10 @@ export function createHud(
     onFloorPlacementColor(fn) {
       floorPlacementColorHandler = fn;
       fn(floorColorRgb);
+    },
+    onFloorBrushSize(fn) {
+      floorBrushSizeHandler = fn;
+      fn(floorBrushSize);
     },
     refreshBuildDockToolStrip() {
       syncBuildDockToolStrip();

@@ -2248,12 +2248,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     });
     const snapshot = await fetchPrefabSnapshotIntoCache(design);
     game.setObjectPrefabPlaceSnapshot(snapshot);
+    hud.refreshPrefabAuthoringChrome();
   }
 
   prefabUi.onDesignChange((design) => {
     game.cancelPrefabPlacePreview();
     syncPrefabPlacePreviewHud();
     void loadPrefabSnapshotForDesign(design);
+    hud.refreshPrefabAuthoringChrome();
   });
 
   hud.onPrefabPlaceRotate((delta) => {
@@ -2358,6 +2360,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   });
   hud.onFloorPlacementColor((rgb) => {
     game.setFloorPlacementColorRgb(rgb);
+  });
+  hud.onFloorBrushSize((size) => {
+    game.setFloorBrushSize(size);
   });
 
   const wireWsHandlers = (socket: WebSocket): void => {
@@ -2740,8 +2745,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       if (toY === null) return;
       sendMoveObstacle(socket, fromX, fromZ, fromY, toX, toZ, toY);
     });
-    game.setPlaceExtraFloorHandler((x, z, colorRgb) => {
-      sendPlaceExtraFloor(socket, x, z, colorRgb);
+    game.setPlaceExtraFloorHandler((x, z, colorRgb, brushSize) => {
+      sendPlaceExtraFloor(socket, x, z, colorRgb, brushSize);
     });
     game.setRemoveExtraFloorHandler((x, z) => {
       sendRemoveExtraFloor(socket, x, z);

@@ -8,6 +8,28 @@ import {
 /** Integer tile indices on the floor plane: x = column (world X), y = row (world Z). */
 export type FloorTile = { x: number; y: number };
 
+export type FloorBrushSize = 1 | 2;
+
+/** Tile coords covered by an N×N floor brush anchored at the picked tile. */
+export function floorBrushTiles(
+  anchorX: number,
+  anchorZ: number,
+  size: FloorBrushSize
+): { x: number; z: number }[] {
+  const ax = Math.floor(anchorX);
+  const az = Math.floor(anchorZ);
+  const half = Math.floor(size / 2);
+  const startX = size % 2 === 1 ? ax - half : ax;
+  const startZ = size % 2 === 1 ? az - half : az;
+  const tiles: { x: number; z: number }[] = [];
+  for (let dx = 0; dx < size; dx++) {
+    for (let dz = 0; dz < size; dz++) {
+      tiles.push({ x: startX + dx, z: startZ + dz });
+    }
+  }
+  return tiles;
+}
+
 /** Inclusive tile coordinate bounds: 500×500 grid (–250…249 on each axis). */
 export const TILE_COORD_MIN = -250;
 export const TILE_COORD_MAX = 249;

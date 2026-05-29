@@ -69,6 +69,8 @@ import {
 import {
   blockKey,
   type FloorTile,
+  type FloorBrushSize,
+  floorBrushTiles,
   floorWalkableTerrain,
   gatePassageNeighborHintsOk,
   inferStartLayerClient,
@@ -1115,7 +1117,7 @@ export class Game {
   private obstacleSelectHandler: ((x: number, z: number, y: number) => void) | null =
     null;
   private placeExtraFloorHandler:
-    | ((x: number, z: number, colorRgb: number) => void)
+    | ((x: number, z: number, colorRgb: number, brushSize?: FloorBrushSize) => void)
     | null = null;
   /**
    * When set, the next successful walkable floor pointer-up in floor-expand mode
@@ -1185,6 +1187,8 @@ export class Game {
   private placementColorRgb = DEFAULT_BLOCK_COLOR_RGB;
   /** Floor-expand hover / highlight tint (from build dock floor hue ring). */
   private floorPlacementColorRgb = TERRAIN_TILE_EXTRA_COLOR;
+  /** N×N floor paintbrush size (1 = single tile). */
+  private floorBrushSize: FloorBrushSize = 1;
   private placementPyramidBaseScale = 1;
   private placementHexRadiusScale = 1;
   private placementSphereRadiusScale = 1;
@@ -1568,6 +1572,10 @@ export class Game {
   private readonly billboardFootprintPreviewValidMat: THREE.MeshBasicMaterial;
   private readonly billboardFootprintPreviewInvalidMat: THREE.MeshBasicMaterial;
   private readonly billboardFootprintPreviewMeshes: THREE.Mesh[] = [];
+  private readonly floorBrushPreviewGeom: THREE.PlaneGeometry;
+  private readonly floorBrushPreviewValidMat: THREE.MeshBasicMaterial;
+  private readonly floorBrushPreviewInvalidMat: THREE.MeshBasicMaterial;
+  private readonly floorBrushPreviewMeshes: THREE.Mesh[] = [];
   /** Object prefab capture: drag rectangle on floor (wallet room, build mode). */
   private objectPrefabSaveActive = false;
   private prefabBboxDrag: {
@@ -1620,6 +1628,12 @@ export class Game {
    */
   private prefabPlaceArmedAnchor: { x: number; z: number } | null = null;
   private prefabPlacePreviewChangeHandler: (() => void) | null = null;
+  /**
+   * Floor `x,z` keys under the active prefab-place footprint — hide existing placed
+   * blocks there so the solid preview shows the stamped result.
+   */
+  private readonly prefabPlaceSuppressFloorKeys = new Set<string>();
+  private prefabPlaceSuppressFootprintSig = "";
   private billboardInteractGhost: THREE.Group | null = null;
   private billboardInteractGhostSig = "";
   private readonly billboardPreviewPlaceholderTex: THREE.CanvasTexture;
@@ -1755,6 +1769,19 @@ export class Game {
       depthWrite: false,
     });
     this.billboardFootprintPreviewInvalidMat = new THREE.MeshBasicMaterial({
+      color: 0xef4444,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
+    });
+    this.floorBrushPreviewGeom = new THREE.PlaneGeometry(0.92, 0.92);
+    this.floorBrushPreviewValidMat = new THREE.MeshBasicMaterial({
+      color: TERRAIN_TILE_EXTRA_COLOR,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false,
+    });
+    this.floorBrushPreviewInvalidMat = new THREE.MeshBasicMaterial({
       color: 0xef4444,
       transparent: true,
       opacity: 0.32,
@@ -3330,7 +3357,9 @@ export class Game {
   }
 
   setPlaceExtraFloorHandler(
-    handler: ((x: number, z: number, colorRgb: number) => void) | null
+    handler:
+      | ((x: number, z: number, colorRgb: number, brushSize?: FloorBrushSize) => void)
+      | null
   ): void {
     this.placeExtraFloorHandler = handler;
   }
@@ -3665,6 +3694,7 @@ export class Game {
     this.prefabPlaceGhostValid = false;
     this.clearBillboardFootprintPreviewTiles();
     this.clearPrefabPlaceMeshGhost();
+    this.clearPrefabPlaceSuppressFootprint();
     if (had) this.prefabPlacePreviewChangeHandler?.();
   }
 
@@ -3699,6 +3729,7 @@ export class Game {
       this.prefabPlaceSnapshot = null;
       this.clearBillboardFootprintPreviewTiles();
       this.clearPrefabPlaceMeshGhost();
+      this.clearPrefabPlaceSuppressFootprint();
       return;
     }
     this.rebuildPrefabPlaceMeshTemplate();
@@ -3764,6 +3795,11 @@ export class Game {
     return !Game.canShowPointerHoverTiles();
   }
 
+  /**
+   * Floor anchor for prefab stamp preview. Uses the y=0 plane only — not block mesh
+   * raycasts — so hiding blocks inside the preview footprint cannot shift the anchor
+   * (which would flicker as picks alternate with suppression).
+   */
   private resolvePrefabPlaceAnchorFromPick(
     clientX: number,
     clientY: number
@@ -3848,6 +3884,31 @@ export class Game {
     this.prefabPlaceMeshTemplateSig = "";
   }
 
+  private clearPrefabPlaceSuppressFootprint(): void {
+    this.syncPrefabPlaceSuppressFootprint(null);
+  }
+
+  /** Hide placed blocks in the stamp footprint while the place preview is visible. */
+  private syncPrefabPlaceSuppressFootprint(
+    tiles: readonly { x: number; z: number }[] | null
+  ): void {
+    const sig = tiles
+      ? tiles
+          .map((t) => `${t.x},${t.z}`)
+          .sort()
+          .join(";")
+      : "";
+    if (sig === this.prefabPlaceSuppressFootprintSig) return;
+    this.prefabPlaceSuppressFootprintSig = sig;
+    this.prefabPlaceSuppressFloorKeys.clear();
+    if (tiles) {
+      for (const t of tiles) {
+        this.prefabPlaceSuppressFloorKeys.add(`${t.x},${t.z}`);
+      }
+    }
+    this.syncBlockMeshes();
+  }
+
   private rebuildPrefabPlaceMeshTemplate(): void {
     const design = this.prefabPlaceDesign;
     const snap = this.prefabPlaceSnapshot;
@@ -3875,7 +3936,6 @@ export class Game {
       const meta = { ...obs.props } as BlockStyleProps;
       const h = this.obstacleHeight(meta);
       const mesh = this.makeBlockMesh(meta, {
-        ghost: true,
         floorLayer: yLevel,
       });
       mesh.userData.prefabRelDx = dx;
@@ -3885,30 +3945,13 @@ export class Game {
       mesh.position.set(0, mesh.userData.prefabYWorld as number, 0);
       group.add(mesh);
     }
+    group.renderOrder = 6;
     group.visible = false;
     this.prefabPlaceMeshGroup = group;
     this.scene.add(group);
   }
 
-  private setPrefabPlaceMeshGhostOpacity(valid: boolean): void {
-    if (!this.prefabPlaceMeshGroup) return;
-    const opacity = valid ? 0.48 : 0.28;
-    this.prefabPlaceMeshGroup.traverse((obj) => {
-      const mesh = obj as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      const mats = Array.isArray(mesh.material)
-        ? mesh.material
-        : [mesh.material];
-      for (const m of mats) {
-        if (!m || !("opacity" in m)) continue;
-        const mat = m as THREE.Material & { opacity: number; transparent: boolean };
-        mat.transparent = true;
-        mat.opacity = opacity;
-      }
-    });
-  }
-
-  private syncPrefabPlaceMeshAt(anchorX: number, anchorZ: number, valid: boolean): void {
+  private syncPrefabPlaceMeshAt(anchorX: number, anchorZ: number): void {
     if (!this.prefabPlaceMeshGroup) return;
     const ax = Math.floor(anchorX);
     const az = Math.floor(anchorZ);
@@ -3929,13 +3972,13 @@ export class Game {
       child.position.set(ax + rdx, yWorld, az + rdz);
     }
     this.prefabPlaceMeshGroup.visible = true;
-    this.setPrefabPlaceMeshGhostOpacity(valid);
   }
 
   private syncPrefabPlaceGhostAtAnchor(anchorX: number, anchorZ: number): void {
     if (!this.objectPrefabPlaceActive || !this.prefabPlaceDesign) {
       this.clearBillboardFootprintPreviewTiles();
       this.clearPrefabPlaceMeshGhost();
+      this.clearPrefabPlaceSuppressFootprint();
       return;
     }
     const ax = Math.floor(anchorX);
@@ -3951,14 +3994,16 @@ export class Game {
       this.prefabPlaceYawSteps
     );
     this.syncBillboardFootprintHighlightTiles(tiles, valid);
+    this.syncPrefabPlaceSuppressFootprint(tiles);
     this.rebuildPrefabPlaceMeshTemplate();
-    this.syncPrefabPlaceMeshAt(ax, az, valid);
+    this.syncPrefabPlaceMeshAt(ax, az);
   }
 
   private syncPrefabPlaceGhostAt(clientX: number, clientY: number): void {
     if (!this.objectPrefabPlaceActive || !this.prefabPlaceDesign) {
       this.clearBillboardFootprintPreviewTiles();
       this.clearPrefabPlaceMeshGhost();
+      this.clearPrefabPlaceSuppressFootprint();
       return;
     }
     const picked = this.resolvePrefabPlaceAnchorFromPick(clientX, clientY);
@@ -3966,6 +4011,7 @@ export class Game {
       this.prefabPlaceHoverAnchor = null;
       this.prefabPlaceGhostValid = false;
       this.clearBillboardFootprintPreviewTiles();
+      this.clearPrefabPlaceSuppressFootprint();
       if (this.prefabPlaceMeshGroup) this.prefabPlaceMeshGroup.visible = false;
       return;
     }
@@ -4280,6 +4326,40 @@ export class Game {
   private clearBillboardFootprintPreviewTiles(): void {
     for (const m of this.billboardFootprintPreviewMeshes) {
       m.visible = false;
+    }
+  }
+
+  private clearFloorBrushPreviewTiles(): void {
+    for (const m of this.floorBrushPreviewMeshes) {
+      m.visible = false;
+    }
+  }
+
+  private syncFloorBrushPreviewTiles(
+    tiles: readonly { x: number; z: number }[]
+  ): void {
+    while (this.floorBrushPreviewMeshes.length < tiles.length) {
+      const m = new THREE.Mesh(
+        this.floorBrushPreviewGeom,
+        this.floorBrushPreviewValidMat
+      );
+      m.rotation.x = -Math.PI / 2;
+      m.renderOrder = 3;
+      this.scene.add(m);
+      this.floorBrushPreviewMeshes.push(m);
+    }
+    for (let i = 0; i < tiles.length; i++) {
+      const m = this.floorBrushPreviewMeshes[i]!;
+      const t = tiles[i]!;
+      const valid = this.canPaintFloorTileAt(t.x, t.z);
+      m.material = valid
+        ? this.floorBrushPreviewValidMat
+        : this.floorBrushPreviewInvalidMat;
+      m.position.set(t.x, 0.03, t.z);
+      m.visible = true;
+    }
+    for (let i = tiles.length; i < this.floorBrushPreviewMeshes.length; i++) {
+      this.floorBrushPreviewMeshes[i]!.visible = false;
     }
   }
 
@@ -5058,6 +5138,7 @@ export class Game {
       this.clearObjectPrefabToolVisuals();
     } else {
       this.roomEntrySpawnPickHandler = null;
+      this.clearFloorBrushPreviewTiles();
     }
     this.syncHighlightColor();
     this.syncPlacementRangeHints();
@@ -5071,8 +5152,18 @@ export class Game {
 
   setFloorPlacementColorRgb(rgb: number): void {
     this.floorPlacementColorRgb = clampColorRgb(rgb);
+    this.floorBrushPreviewValidMat.color.setHex(this.floorPlacementColorRgb);
     this.syncHighlightColor();
     this.requestRender(80);
+  }
+
+  setFloorBrushSize(size: FloorBrushSize): void {
+    this.floorBrushSize = size;
+    this.requestRender(80);
+  }
+
+  getFloorBrushSize(): FloorBrushSize {
+    return this.floorBrushSize;
   }
 
   /**
@@ -7126,8 +7217,15 @@ export class Game {
 
   private tryPlaceFloorTileAt(x: number, z: number): boolean {
     if (!this.floorExpandMode || !this.placeExtraFloorHandler) return false;
-    if (!this.canPaintFloorTileAt(x, z)) return false;
-    this.placeExtraFloorHandler(x, z, this.floorPlacementColorRgb);
+    const tiles = floorBrushTiles(x, z, this.floorBrushSize);
+    const hasValid = tiles.some((t) => this.canPaintFloorTileAt(t.x, t.z));
+    if (!hasValid) return false;
+    this.placeExtraFloorHandler(
+      x,
+      z,
+      this.floorPlacementColorRgb,
+      this.floorBrushSize
+    );
     return true;
   }
 
@@ -7135,17 +7233,27 @@ export class Game {
     const t = this.pickFloor(clientX, clientY);
     if (!t) {
       this.tileHighlight.visible = false;
+      this.clearFloorBrushPreviewTiles();
       return;
     }
     if (this.roomEntrySpawnPickHandler) {
+      this.clearFloorBrushPreviewTiles();
       this.tileHighlightMat.color.setHex(
         this.tileWalkable(t) ? 0x34d399 : 0xef4444
       );
-    } else {
-      this.tileHighlightMat.color.setHex(this.floorPlacementColorRgb);
+      this.tileHighlight.position.set(t.x, 0.03, t.y);
+      this.tileHighlight.visible = true;
+      return;
     }
-    this.tileHighlight.position.set(t.x, 0.03, t.y);
-    this.tileHighlight.visible = true;
+    if (this.floorBrushSize === 1) {
+      this.clearFloorBrushPreviewTiles();
+      this.tileHighlightMat.color.setHex(this.floorPlacementColorRgb);
+      this.tileHighlight.position.set(t.x, 0.03, t.y);
+      this.tileHighlight.visible = true;
+      return;
+    }
+    this.tileHighlight.visible = false;
+    this.syncFloorBrushPreviewTiles(floorBrushTiles(t.x, t.y, this.floorBrushSize));
   }
 
   /** Touch / coarse pointer: same tile toggles place vs remove. */
@@ -7590,6 +7698,35 @@ export class Game {
         return;
       }
       this.blockTopHighlight.visible = false;
+      if (this.repositionFrom && this.repositionBillboardId) {
+        this.clearGateNeighborFloorHints();
+        this.lastBillboardPointerClientX = e.clientX;
+        this.lastBillboardPointerClientY = e.clientY;
+        this.syncBillboardRepositionPreviews(e.clientX, e.clientY);
+        this.signboardHoverHandler?.(null);
+        return;
+      }
+      if (this.billboardPlacementPreview) {
+        this.clearGateNeighborFloorHints();
+        this.lastBillboardPointerClientX = e.clientX;
+        this.lastBillboardPointerClientY = e.clientY;
+        this.syncBillboardPlacementPreviews(e.clientX, e.clientY);
+        this.signboardHoverHandler?.(null);
+        return;
+      }
+      if (this.objectPrefabPlaceActive && this.prefabPlaceDesign) {
+        this.clearGateNeighborFloorHints();
+        this.tileHighlight.visible = false;
+        this.syncPrefabPlaceGhostAt(e.clientX, e.clientY);
+        this.signboardHoverHandler?.(null);
+        return;
+      }
+      if (this.objectPrefabSaveActive && !this.prefabBboxDrag) {
+        this.clearGateNeighborFloorHints();
+        this.syncPrefabSaveHoverAt(e.clientX, e.clientY);
+        this.signboardHoverHandler?.(null);
+        return;
+      }
       const blockHit = this.pickBlockKey(e.clientX, e.clientY);
       if (blockHit) {
         this.clearPlacementPreview();
@@ -7616,34 +7753,6 @@ export class Game {
           }
           return;
         }
-      }
-      if (this.repositionFrom && this.repositionBillboardId) {
-        this.clearGateNeighborFloorHints();
-        this.lastBillboardPointerClientX = e.clientX;
-        this.lastBillboardPointerClientY = e.clientY;
-        this.syncBillboardRepositionPreviews(e.clientX, e.clientY);
-        this.signboardHoverHandler?.(null);
-        return;
-      }
-      if (this.billboardPlacementPreview) {
-        this.clearGateNeighborFloorHints();
-        this.lastBillboardPointerClientX = e.clientX;
-        this.lastBillboardPointerClientY = e.clientY;
-        this.syncBillboardPlacementPreviews(e.clientX, e.clientY);
-        this.signboardHoverHandler?.(null);
-        return;
-      }
-      if (this.objectPrefabPlaceActive && this.prefabPlaceDesign) {
-        this.clearGateNeighborFloorHints();
-        this.syncPrefabPlaceGhostAt(e.clientX, e.clientY);
-        this.signboardHoverHandler?.(null);
-        return;
-      }
-      if (this.objectPrefabSaveActive && !this.prefabBboxDrag) {
-        this.clearGateNeighborFloorHints();
-        this.syncPrefabSaveHoverAt(e.clientX, e.clientY);
-        this.signboardHoverHandler?.(null);
-        return;
       }
       const placeTile = this.tryFloorBlockPlacementTile(e.clientX, e.clientY);
       if (placeTile) {
@@ -8368,6 +8477,13 @@ export class Game {
     this.billboardFootprintPreviewGeom.dispose();
     this.billboardFootprintPreviewValidMat.dispose();
     this.billboardFootprintPreviewInvalidMat.dispose();
+    for (const m of this.floorBrushPreviewMeshes) {
+      this.scene.remove(m);
+    }
+    this.floorBrushPreviewMeshes.length = 0;
+    this.floorBrushPreviewGeom.dispose();
+    this.floorBrushPreviewValidMat.dispose();
+    this.floorBrushPreviewInvalidMat.dispose();
     for (const m of this.prefabSaveFootprintMeshes) {
       this.scene.remove(m);
     }
@@ -8900,6 +9016,9 @@ export class Game {
       ) {
         continue;
       }
+      if (this.prefabPlaceSuppressFloorKeys.has(`${wx},${wz}`)) {
+        continue;
+      }
       entries.push({ tileKey: k, wx, wz, wyLevel, meta });
       sigParts.push(`${k}|${plainCubeInstanceEntrySig(meta, vis)}`);
     }
@@ -9348,6 +9467,14 @@ export class Game {
         wyLevel === 0 &&
         this.billboardFootprintFloorKeys.has(`${wx},${wz}`)
       ) {
+        if (g) {
+          this.scene.remove(g);
+          disposePlacedBlockGroupContents(g);
+          this.blockMeshes.delete(k);
+        }
+        continue;
+      }
+      if (this.prefabPlaceSuppressFloorKeys.has(`${wx},${wz}`)) {
         if (g) {
           this.scene.remove(g);
           disposePlacedBlockGroupContents(g);

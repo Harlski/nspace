@@ -988,10 +988,18 @@ export function sendPlaceExtraFloor(
   ws: WebSocket,
   x: number,
   z: number,
-  colorRgb: number
+  colorRgb: number,
+  brushSize?: 1 | 2
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: "placeExtraFloor", x, z, colorRgb }));
+  const payload: Record<string, unknown> = {
+    type: "placeExtraFloor",
+    x,
+    z,
+    colorRgb,
+  };
+  if (brushSize && brushSize > 1) payload.brushSize = brushSize;
+  ws.send(JSON.stringify(payload));
 }
 
 export function sendRemoveExtraFloor(ws: WebSocket, x: number, z: number): void {
