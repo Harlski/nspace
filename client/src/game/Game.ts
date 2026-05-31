@@ -107,6 +107,7 @@ import {
   interestChunksForTileKeys,
   interestChunksFromRect,
   NON_ADMIN_MAX_INTEREST_HALF_TILES,
+  NON_ADMIN_MAX_ZOOM_FRUSTUM,
   roomUsesSpatialInterest,
   tileChunkKey,
   VIEW_INTEREST_PADDING_TILES,
@@ -2414,20 +2415,9 @@ export class Game {
       !this.streamPresentationActive &&
       roomUsesSpatialInterest(this.roomBounds)
     ) {
-      max = Math.min(
-        max,
-        this.frustumSizeForInterestHalfTiles(NON_ADMIN_MAX_INTEREST_HALF_TILES)
-      );
+      max = Math.min(max, NON_ADMIN_MAX_ZOOM_FRUSTUM);
     }
     return max;
-  }
-
-  /** Ortho half-height matching a view-interest half-extent in tiles (inverse of {@link getViewInterestRect}). */
-  private frustumSizeForInterestHalfTiles(halfTiles: number): number {
-    return Math.max(
-      this.zoomMin,
-      2 * (halfTiles - VIEW_INTEREST_PADDING_TILES)
-    );
   }
 
   /** When false, large-room zoom-out and tile subscriptions stay near the player. */
@@ -3401,6 +3391,13 @@ export class Game {
     halfHeight: number
   ): { left: number; right: number; top: number; bottom: number } | null {
     if (!this.roomNeedsFrustumFit()) return null;
+    // Non-admins in spatial rooms (e.g. Pixel): keep the capped zoom — do not widen projection to the full grid.
+    if (
+      !this.mapOverviewUnlocked &&
+      roomUsesSpatialInterest(this.roomBounds)
+    ) {
+      return null;
+    }
     if (halfHeight < this.effectiveZoomMax() * 0.65) return null;
 
     this.applyCameraPose();

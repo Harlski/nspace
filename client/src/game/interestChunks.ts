@@ -4,9 +4,12 @@ export const INTEREST_CHUNK_TILES = 32;
 export const INTEREST_ROOM_TILE_THRESHOLD = 10_000;
 /** Matches server default before the client reports camera interest. */
 export const DEFAULT_INTEREST_HALF_TILES = 64;
-/** Max half-extent (tiles) for non-admin players in spatial rooms (server-enforced). */
-export const NON_ADMIN_MAX_INTEREST_HALF_TILES = 96;
 export const VIEW_INTEREST_PADDING_TILES = 16;
+/** Max orthographic frustum for non-admin zoom-out in spatial rooms (debug HUD `zoom`). */
+export const NON_ADMIN_MAX_ZOOM_FRUSTUM = 22.92;
+/** Max view-interest half-extent (tiles); aligned with {@link NON_ADMIN_MAX_ZOOM_FRUSTUM}. */
+export const NON_ADMIN_MAX_INTEREST_HALF_TILES =
+  NON_ADMIN_MAX_ZOOM_FRUSTUM / 2 + VIEW_INTEREST_PADDING_TILES;
 
 export type ViewInterestRect = {
   centerX: number;
