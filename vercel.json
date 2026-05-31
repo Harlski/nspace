@@ -25,6 +25,10 @@
       "destination": "https://api.nimiq.space/admin/header"
     },
     {
+      "source": "/admin/settings",
+      "destination": "https://api.nimiq.space/admin/settings"
+    },
+    {
       "source": "/payouts",
       "destination": "https://api.nimiq.space/payouts"
     },
