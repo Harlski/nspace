@@ -29,6 +29,9 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 ## Rooms and travel
 
 - [x] Hub (`hub` / legacy `lobby`) and chamber (`chamber`) with distinct base bounds
+- [x] **Pixel** (`pixel`) — **500×500** floor-only paint board (full global grid); Hub north door `(0, 12)`; no object placement; no NPC wanderers; floor recolor within a **square** **`PLACE_RADIUS_BLOCKS`** zone (±9 tiles on X and Z from the player's tile; default 9); admins may set room **background hue/neutral** via the hue ring; **neutral gray** implicit base floor (only painted tiles persisted/synced); join loads **nearby chunks only** (~32×32 tile regions), not the full grid; **forward-only paint log** (`server/data/pixel/paint-log.jsonl` — baseline snapshot + ordered `paint` lines with `colorRgb` for future timelapse); public live snapshot **`GET /pixels.png`** (500×500 PNG, 1 px per tile, cached, `ETag` / short `max-age`) ([server/src/pixelPaintLog.ts](../server/src/pixelPaintLog.ts), [server/src/pixelBoardImage.ts](../server/src/pixelBoardImage.ts), [server/src/roomLayouts.ts](../server/src/roomLayouts.ts), [server/src/rooms.ts](../server/src/rooms.ts), [server/src/blockColors.ts](../server/src/blockColors.ts))
+- [x] **Stream cinema** — `?stream=1` hides HUD, forces continuous render, **top-down** view that **fills the window** with crisp tiles and **slow pan** across large maps; **observer-only** (not listed as a player, no movement or floor edits); **allowlisted wallets only** (`STREAM_OBSERVER_ADDRESSES` env and/or **`/admin/settings`** — rejects unauthorized `?stream=1` with WS close **4403**); top-left **Nimiq Space** broadcast overlay (“Play Nimiq Space at https://nimiq.space”); player **identicons only** (no name pills), **3×3 floor tiles** in top-down overview (smoothly back to **1×1** when spotlight zooms to a player); `?streamFollow=1` cycles overview ↔ random player spotlight (~30s **isometric** follow with smooth top-down ↔ iso zoom transition); `?noScroll=1` disables overview pan (fixed framing); `?streamChat=1` shows chat; `?streamDebug=1` on-screen pan tuning (speed + X/Y edge insets); `?room=pixel` join hint; default room `pixel` when `stream` without `room` ([client/src/main.ts](../client/src/main.ts), [client/src/stream/streamDirector.ts](../client/src/stream/streamDirector.ts), [client/src/stream/streamPanDebug.ts](../client/src/stream/streamPanDebug.ts), [client/src/game/Game.ts](../client/src/game/Game.ts), [client/src/ui/hud.ts](../client/src/ui/hud.ts), [server/src/index.ts](../server/src/index.ts), [server/src/config.ts](../server/src/config.ts), [server/src/rooms.ts](../server/src/rooms.ts))
+- [x] **Spatial tile sync (large rooms)** — rooms ≥10k tiles (e.g. Pixel 500×500): server sends floor/block deltas only inside the client’s view-interest chunks (32×32 tiles); **non-admins** capped to **±96 tiles** (zoom + subscriptions); **admins** and **stream observers** may request wider regions; client reports camera bounds via `setViewInterest`; welcome payload is chunked; incremental floor mesh updates avoid full-room rebuilds on single-tile edits ([server/src/interestChunks.ts](../server/src/interestChunks.ts), [server/src/rooms.ts](../server/src/rooms.ts), [client/src/game/interestChunks.ts](../client/src/game/interestChunks.ts), [client/src/game/Game.ts](../client/src/game/Game.ts))
 - [x] Doors on base grid; client reconnects with spawn hint when crossing
 - [x] “Return to hub” when not in hub (client-driven room change)
 - [x] **Wallet rooms:** configurable default **entry spawn** (persisted in `rooms.json` v6+); used when a player has no saved position in that room; `updateRoom` with `joinSpawn`, `welcome` / `roomJoinSpawn` wire updates; build-mode floor ring + **Entry spawn** tool ([server/src/roomRegistry.ts](../server/src/roomRegistry.ts), [server/src/rooms.ts](../server/src/rooms.ts), [client/src/main.ts](../client/src/main.ts))
@@ -67,7 +70,7 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 - [x] Server JSONL event log per day (`EVENT_LOG_DIR`, `events-*.jsonl`) — session boundaries, moves, builds, chat
 - [x] `GET /api/replay/players`, `/api/replay/sessions`, `/api/replay/session/:id/events` (Bearer JWT)
 - [x] Main menu “Session replay” — pick player, session, action timeline (**localhost only**; hidden on public origins)
-- [x] Server-side max distance for block actions (`PLACE_RADIUS_BLOCKS`, default 9 world units on XZ)
+- [x] Server-side max distance for block actions (`PLACE_RADIUS_BLOCKS`, default 9 world units on XZ, circular); floor recolor uses the same limit as an **axis-aligned square** (±R tiles from the player's tile on X and Z)
 
 ## UI / shell
 
@@ -81,7 +84,7 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 
 ## NPCs (fake players)
 
-- [x] `FAKE_PLAYER_COUNT` env — server-side wanderers merged into `PlayerState` snapshots
+- [x] `FAKE_PLAYER_COUNT` env — server-side wanderers merged into `PlayerState` snapshots (disabled in **Pixel**)
 - [x] Display names chosen from a curated list ([server/src/guestNames.ts](../server/src/guestNames.ts)); duplicates get a numeric suffix
 - [x] Idle up to 2s between choosing new random destinations; cleared when room has no real clients
 

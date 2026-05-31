@@ -45,6 +45,7 @@ Clients may send an optional string field **`claimIntent`** on **`beginBlockClai
 | `TERMS_PRIVACY_ACCEPTANCE_STORE_FILE` | server | Optional JSON path for per-wallet Terms/Privacy acknowledgement (default `server/data/terms-privacy-acceptance.json`; merged read with legacy `legal-consent.json` when unset) |
 | `LEGAL_CONSENT_STORE_FILE` | server | Deprecated alias — same override as **`TERMS_PRIVACY_ACCEPTANCE_STORE_FILE`** |
 | `DEV_AUTH_BYPASS` | server | `1` = skip signature verification (development only) |
+| `STREAM_OBSERVER_ADDRESSES` | server | Comma-separated Nimiq wallets allowed for cinema `?stream=1` observer sessions (full-board tile sync). **Merged** with wallets saved in **`/admin/settings`** (runtime JSON). **Unset everywhere = stream observer disabled for everyone.** Spaces inside an address are optional. |
 | `NODE_ENV` | server | `development` enables bypass flag pairing in some setups |
 | `PORT` | server | HTTP + WebSocket listen port (default `3001`) |
 | `FAKE_PLAYER_COUNT` | server | `0`–`32` NPC wanderers per room (default **2**; display names prefixed with `[NPC]`; set `0` to disable) |
@@ -54,6 +55,7 @@ Clients may send an optional string field **`claimIntent`** on **`beginBlockClai
 | `VITE_API_BASE_URL` | client | API origin when SPA and API differ. Prefer full URL (`https://api.example.com`). Host-only (`api.example.com`) is normalized to `https://…` so it is not treated as a path on the SPA host. |
 | `VITE_WS_BASE_URL` | client | Optional WebSocket origin (`wss://…` or host-only); otherwise derived from resolved API base or page |
 | `EVENT_LOG_DIR` | server | Directory for append-only JSONL replay logs (`events-*.jsonl`); default `server/data/events` |
+| `PIXEL_PAINT_LOG_FILE` | server | Append-only Pixel room paint history for timelapse (`paint` + one-time `baseline` records); default `server/data/pixel/paint-log.jsonl` |
 | `PLACE_RADIUS_BLOCKS` | server | Max horizontal distance for block place/edit/move actions (default `9`) |
 | `PAYMENT_INTENT_API_SECRET` | payment-intent-service | Required when running the sidecar; `Authorization: Bearer …` on `/v1/*` |
 | `PAYMENT_INTENT_RECIPIENT_ADDRESS` | payment-intent-service | Hot wallet (incoming NIM) user-friendly address |

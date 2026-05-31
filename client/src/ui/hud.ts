@@ -287,6 +287,24 @@ export function createHud(
     allowPlaceBlocks: boolean;
     allowExtraFloor: boolean;
   }) => void;
+  /** Hide HUD chrome for 24/7 stream capture (`?stream=1`). */
+  setStreamCinemaMode: (
+    enabled: boolean,
+    opts?: { showChat?: boolean; onLayout?: () => void }
+  ) => void;
+  /** Lower-third branding for stream / OBS viewers. */
+  setStreamBroadcastOverlay: (opts: {
+    visible: boolean;
+    roomTitle?: string;
+    subtitle?: string;
+  }) => void;
+  /** Top bar while stream follow spotlight is active (`?streamFollow=1`). */
+  setStreamFollowBar: (opts: {
+    visible: boolean;
+    playerName?: string;
+    /** 1 = full, 0 = drained. */
+    progress?: number;
+  }) => void;
   setRoomBackgroundHuePanelVisible: (visible: boolean) => void;
   syncRoomBackgroundHueRing: (
     hueDeg: number | null,
@@ -612,6 +630,8 @@ export function createHud(
   ) => void;
   /** Shown under the spinner while the loading overlay is visible. */
   setLoadingLabel: (text: string) => void;
+  /** Room transition progress: `indeterminate` while waiting; 0–1 while loading welcome payload. */
+  setLoadingProgress: (state: null | "indeterminate" | number) => void;
   /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
   setNimClaimProgress: (
     state: null | { progress: number; adjacent: boolean },
@@ -641,6 +661,7 @@ export function createHud(
   /** Room stats overlay; toggled from your profile identicon (hidden by default). */
   let debugPanelVisible = opts?.showDebug === true;
   let debugPanelText = "";
+  let streamCinemaFillViewport = false;
 
   const frame = document.createElement("div");
   frame.className = "game-frame";
@@ -653,6 +674,44 @@ export function createHud(
   const canvasHost = document.createElement("div");
   canvasHost.className = "canvas-host";
   letter.appendChild(canvasHost);
+
+  const streamBroadcastOverlay = document.createElement("div");
+  streamBroadcastOverlay.className = "stream-broadcast-overlay";
+  streamBroadcastOverlay.hidden = true;
+  streamBroadcastOverlay.setAttribute("aria-hidden", "true");
+  streamBroadcastOverlay.innerHTML = `
+    <div class="stream-broadcast-overlay__brand" aria-hidden="true">
+      <span class="main-menu__title-nimiq">NIMIQ</span><span class="main-menu__title-space">SPACE</span>
+    </div>
+    <p class="stream-broadcast-overlay__subtitle">Play Nimiq Space at https://nimiq.space</p>
+    <p class="stream-broadcast-overlay__pixels">View the Pixel room at https://nimiq.space/pixels.png</p>
+    <p class="stream-broadcast-overlay__room" hidden></p>
+  `;
+  letter.appendChild(streamBroadcastOverlay);
+  const streamBroadcastRoomEl = streamBroadcastOverlay.querySelector(
+    ".stream-broadcast-overlay__room"
+  ) as HTMLParagraphElement | null;
+  const streamBroadcastSubtitleEl = streamBroadcastOverlay.querySelector(
+    ".stream-broadcast-overlay__subtitle"
+  ) as HTMLParagraphElement | null;
+
+  const streamFollowBar = document.createElement("div");
+  streamFollowBar.className = "stream-follow-bar";
+  streamFollowBar.hidden = true;
+  streamFollowBar.setAttribute("aria-hidden", "true");
+  streamFollowBar.innerHTML = `
+    <p class="stream-follow-bar__label"></p>
+    <div class="stream-follow-bar__track" aria-hidden="true">
+      <div class="stream-follow-bar__fill"></div>
+    </div>
+  `;
+  letter.appendChild(streamFollowBar);
+  const streamFollowBarLabel = streamFollowBar.querySelector(
+    ".stream-follow-bar__label"
+  ) as HTMLParagraphElement | null;
+  const streamFollowBarFill = streamFollowBar.querySelector(
+    ".stream-follow-bar__fill"
+  ) as HTMLDivElement | null;
 
   const ui = document.createElement("div");
   ui.className = "hud";
@@ -1393,11 +1452,25 @@ export function createHud(
     <div class="loading-overlay__content">
       ${nimiqHexLoaderSvg("loading-overlay__spinner")}
       <div class="loading-overlay__text">Loading room...</div>
+      <div class="loading-overlay__progress" hidden>
+        <div class="loading-overlay__progress-track">
+          <div class="loading-overlay__progress-fill"></div>
+        </div>
+      </div>
     </div>
   `;
   const loadingOverlayText = loadingOverlay.querySelector(
     ".loading-overlay__text"
   ) as HTMLDivElement | null;
+  const loadingProgressWrap = loadingOverlay.querySelector(
+    ".loading-overlay__progress"
+  ) as HTMLElement | null;
+  const loadingProgressTrack = loadingOverlay.querySelector(
+    ".loading-overlay__progress-track"
+  ) as HTMLElement | null;
+  const loadingProgressFill = loadingOverlay.querySelector(
+    ".loading-overlay__progress-fill"
+  ) as HTMLElement | null;
   letter.appendChild(loadingOverlay);
 
   const LOADING_MIN_MS = 2000;
@@ -1421,6 +1494,11 @@ export function createHud(
     loadingOverlay.classList.remove("loading-overlay--fade-out");
     loadingOverlay.hidden = true;
     loadingShownAt = null;
+    if (loadingProgressWrap) loadingProgressWrap.hidden = true;
+    loadingProgressTrack?.classList.remove(
+      "loading-overlay__progress-track--indeterminate"
+    );
+    if (loadingProgressFill) loadingProgressFill.style.width = "0%";
   }
 
   const topBar = document.createElement("div");
@@ -3829,6 +3907,7 @@ export function createHud(
     floorBrushSizeLabel,
     floorBrushSizeSelect
   );
+  floorShapeColorRow.appendChild(buildDockFloorBrushSettingRow);
 
   const hueDockBlockPreview = document.createElement("div");
   hueDockBlockPreview.className = "hud-mode-sidebar__block-preview-dock";
@@ -4677,6 +4756,7 @@ export function createHud(
     syncBuildDockRotateChrome();
     syncBuildDockTerrainShapeCardHighlights();
     syncBuildDockPreviewCaption();
+    syncBuildDockFloorHueRowVisibility();
   }
 
   function dismissBuildObjectSelection(): void {
@@ -4776,7 +4856,6 @@ export function createHud(
     ".hud-build-bottom-dock__context-mods"
   ) as HTMLElement;
   buildDockContextMods.prepend(buildDockRoomSettingsPanel);
-  buildDockContextMods.prepend(buildDockFloorBrushSettingRow);
   buildDockContextTop.insertAdjacentElement("afterend", tileInspectorRoot);
   if (teleporterSection) {
     tileInspectorRoot.insertAdjacentElement("afterend", teleporterSection);
@@ -5833,6 +5912,7 @@ export function createHud(
         "hud-build-bottom-dock__context--floor"
       );
       buildBottomDockContext.hidden = false;
+      buildDockContextMods.hidden = false;
       buildBottomDockTools.hidden = false;
       syncBuildDockFloorHueRowVisibility();
     }
@@ -6069,8 +6149,12 @@ export function createHud(
   function syncBuildDockFloorHueRowVisibility(): void {
     const floorTabActive =
       buildDockRoomEditActive() && buildDockRoomCategory === "floor";
+    const floorPaintActive =
+      floorTabActive &&
+      inspectorPreviewGameRef?.getFloorExpandMode() === true &&
+      !isBuildObjectSelectionActive();
     floorShapeColorRow.hidden = !floorTabActive;
-    buildDockFloorBrushSettingRow.hidden = !floorTabActive;
+    buildDockFloorBrushSettingRow.hidden = !floorPaintActive;
   }
 
   function syncBuildDockRoomCategoryChrome(): void {
@@ -6114,9 +6198,10 @@ export function createHud(
     setBuildDockRoomBgPopoverOpen(false);
     setBuildDockCubeRotPopoverOpen(false);
     if (floorTab) {
-      /* Floor tab: color wheel in the context column (tile tint wired later). */
+      /* Floor tab: color wheel + brush in the context column (tile tint wired later). */
       buildBottomDockContext.hidden = false;
       buildDockContextColor.hidden = false;
+      buildDockContextMods.hidden = true;
       buildDockContextTop.hidden = true;
       if (tileInspectorRoot) tileInspectorRoot.hidden = true;
       syncBuildDockFloorHueRowVisibility();
@@ -6124,6 +6209,7 @@ export function createHud(
     }
     buildBottomDockContext.hidden = true;
     buildDockContextColor.hidden = true;
+    buildDockContextMods.hidden = true;
     buildDockContextTop.hidden = true;
     if (tileInspectorRoot) tileInspectorRoot.hidden = true;
     syncBuildDockFloorHueRowVisibility();
@@ -8485,7 +8571,7 @@ export function createHud(
   }
 
   const ro = new ResizeObserver(() => {
-    layoutLetterbox(frame, letter);
+    layoutLetterbox(frame, letter, streamCinemaFillViewport);
     syncHudBelowTopWrap();
     layoutBarAdvancedPopover();
     layoutObjectPanelSatellites();
@@ -8495,7 +8581,7 @@ export function createHud(
   ro.observe(buildModeStrip);
   ro.observe(buildBottomDock);
 
-  layoutLetterbox(frame, letter);
+  layoutLetterbox(frame, letter, streamCinemaFillViewport);
   syncHudBelowTopWrap();
   requestAnimationFrame(() => {
     syncHudBelowTopWrap();
@@ -10057,6 +10143,65 @@ export function createHud(
       syncHueDockVisibility();
       syncBlockPreviewDockSlots();
     },
+    setStreamCinemaMode(
+      enabled: boolean,
+      opts?: { showChat?: boolean; onLayout?: () => void }
+    ) {
+      streamCinemaFillViewport = enabled;
+      ui.classList.toggle("hud--stream-cinema", enabled);
+      ui.classList.toggle(
+        "hud--stream-cinema-chat",
+        enabled && opts?.showChat === true
+      );
+      layoutLetterbox(frame, letter, streamCinemaFillViewport);
+      opts?.onLayout?.();
+    },
+    setStreamBroadcastOverlay(opts: {
+      visible: boolean;
+      roomTitle?: string;
+      subtitle?: string;
+    }) {
+      streamBroadcastOverlay.hidden = !opts.visible;
+      streamBroadcastOverlay.setAttribute(
+        "aria-hidden",
+        opts.visible ? "false" : "true"
+      );
+      if (streamBroadcastRoomEl) {
+        const title = opts.roomTitle?.trim();
+        if (title) {
+          streamBroadcastRoomEl.textContent = title;
+          streamBroadcastRoomEl.hidden = false;
+        } else {
+          streamBroadcastRoomEl.textContent = "";
+          streamBroadcastRoomEl.hidden = true;
+        }
+      }
+      if (streamBroadcastSubtitleEl && opts.subtitle !== undefined) {
+        const sub = opts.subtitle.trim();
+        streamBroadcastSubtitleEl.textContent = sub;
+        streamBroadcastSubtitleEl.hidden = sub === "";
+      }
+    },
+    setStreamFollowBar(opts: {
+      visible: boolean;
+      playerName?: string;
+      progress?: number;
+    }) {
+      streamFollowBar.hidden = !opts.visible;
+      streamFollowBar.setAttribute(
+        "aria-hidden",
+        opts.visible ? "false" : "true"
+      );
+      if (!opts.visible) return;
+      const name = opts.playerName?.trim() || "someone";
+      if (streamFollowBarLabel) {
+        streamFollowBarLabel.textContent = `Following ${name}`;
+      }
+      const p = Math.max(0, Math.min(1, opts.progress ?? 1));
+      if (streamFollowBarFill) {
+        streamFollowBarFill.style.transform = `scaleX(${p})`;
+      }
+    },
     setRoomBackgroundHuePanelVisible(visible: boolean) {
       roomBgSettingsAllowed = visible;
       roomBgHuePanel.hidden = false;
@@ -11531,6 +11676,32 @@ export function createHud(
     setLoadingLabel(text: string) {
       if (loadingOverlayText) loadingOverlayText.textContent = text;
     },
+    setLoadingProgress(state: null | "indeterminate" | number) {
+      if (!loadingProgressWrap || !loadingProgressFill || !loadingProgressTrack) {
+        return;
+      }
+      if (state === null) {
+        loadingProgressWrap.hidden = true;
+        loadingProgressTrack.classList.remove(
+          "loading-overlay__progress-track--indeterminate"
+        );
+        loadingProgressFill.style.width = "0%";
+        return;
+      }
+      loadingProgressWrap.hidden = false;
+      if (state === "indeterminate") {
+        loadingProgressTrack.classList.add(
+          "loading-overlay__progress-track--indeterminate"
+        );
+        loadingProgressFill.style.width = "";
+        return;
+      }
+      loadingProgressTrack.classList.remove(
+        "loading-overlay__progress-track--indeterminate"
+      );
+      const p = Math.max(0, Math.min(1, state));
+      loadingProgressFill.style.width = `${(p * 100).toFixed(1)}%`;
+    },
     setPlayerCount(count: number, roomCount?: number) {
       const countEl = playerCount.querySelector(".hud-player-count__number");
       const tipEl = playerCount.querySelector(
@@ -11838,10 +12009,19 @@ export function createHud(
   };
 }
 
-function layoutLetterbox(frame: HTMLElement, letter: HTMLElement): void {
+function layoutLetterbox(
+  frame: HTMLElement,
+  letter: HTMLElement,
+  fillViewport = false
+): void {
   const fw = frame.clientWidth;
   const fh = frame.clientHeight;
   if (!fw || !fh) return;
+  if (fillViewport) {
+    letter.style.width = `${fw}px`;
+    letter.style.height = `${fh}px`;
+    return;
+  }
   const targetAspect = DESIGN_WIDTH / DESIGN_HEIGHT;
   const viewAspect = fw / fh;
   let w: number;

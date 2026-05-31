@@ -216,6 +216,8 @@ export type ServerMessage =
       allowPlaceBlocks?: boolean;
       allowPublishDesign?: boolean;
       allowExtraFloor?: boolean;
+      /** Cinema `?stream=1` — observer session, not shown as a player. */
+      streamObserver?: boolean;
       /** Dynamic rooms: this player may send `updateRoom` background hue patches. */
       allowRoomBackgroundHueEdit?: boolean;
       /** Dynamic rooms: custom sky hue (0–359); null when neutral or default water. */
@@ -273,6 +275,8 @@ export type ServerMessage =
       roomId: string;
       add: ExtraFloorTile[];
       remove: string[];
+      /** Spatial rooms: materialize default floor for these 32×32 chunks (add may be empty). */
+      loadChunks?: string[];
     }
   | {
       type: "removedBaseFloorDelta";
@@ -360,6 +364,8 @@ export type ServerMessage =
 export type ConnectGameWsOptions = {
   spawnX?: number;
   spawnZ?: number;
+  /** Cinema observer — server omits player from room presence. */
+  stream?: boolean;
 };
 
 export function connectGameWs(
@@ -380,6 +386,9 @@ export function connectGameWs(
   ) {
     q.set("sx", String(opts.spawnX));
     q.set("sz", String(opts.spawnZ));
+  }
+  if (opts?.stream) {
+    q.set("stream", "1");
   }
   let originBase: string;
   const wsEnv = import.meta.env.VITE_WS_BASE_URL;
@@ -1039,6 +1048,30 @@ export function sendNimSendIntent(ws: WebSocket, active: boolean): void {
 export function sendChatTyping(ws: WebSocket, active: boolean): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "chatTyping", active }));
+}
+
+/** Reports camera view bounds for spatial tile sync in large rooms. */
+export function sendViewInterest(
+  ws: WebSocket,
+  rect: {
+    centerX: number;
+    centerZ: number;
+    halfW: number;
+    halfH: number;
+  },
+  opts?: { retainLoaded?: boolean }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "setViewInterest",
+      centerX: rect.centerX,
+      centerZ: rect.centerZ,
+      halfW: rect.halfW,
+      halfH: rect.halfH,
+      ...(opts?.retainLoaded ? { retainLoaded: true } : {}),
+    })
+  );
 }
 
 /** Lightweight RTT probe; server replies with `{ type: "clientPong", id }`. */

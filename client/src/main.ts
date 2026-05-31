@@ -10,6 +10,8 @@ import {
   saveCachedSession,
 } from "./auth/session.js";
 import { CHAMBER_DEFAULT_SPAWN, ROOM_ID, VIEW_FRUSTUM_SIZE } from "./game/constants.js";
+import { StreamDirector } from "./stream/streamDirector.js";
+import { mountStreamPanDebugPanel } from "./stream/streamPanDebug.js";
 import {
   type BlockStyleProps,
   BLOCK_COLOR_EXIT_PORTAL_RGB,
@@ -28,12 +30,14 @@ import {
   HUB_ROOM_ID,
   CHAMBER_ROOM_ID,
   CANVAS_ROOM_ID,
+  PIXEL_ROOM_ID,
   normalizeRoomId,
 } from "./game/roomLayouts.js";
 import {
   connectGameWs,
   sendChat,
   sendChatTyping,
+  sendViewInterest,
   sendClientPing,
   sendNimSendIntent,
   sendBeginBlockClaim,
@@ -322,7 +326,12 @@ function loadingLabelForTargetRoom(room: string): string {
   if (id === HUB_ROOM_ID) return "Loading hub...";
   if (id === CANVAS_ROOM_ID) return "Loading maze...";
   if (id === CHAMBER_ROOM_ID) return "Loading chamber...";
+  if (id === PIXEL_ROOM_ID) return "Loading pixel board...";
   return "Loading room...";
+}
+
+function isPixelRoomId(roomId: string): boolean {
+  return normalizeRoomId(roomId) === PIXEL_ROOM_ID;
 }
 
 function openMainMenu(): void {
@@ -381,6 +390,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
 
   const query = new URLSearchParams(location.search);
   const showDebugHud = query.has("debug");
+  const streamMode = query.has("stream");
+  const streamFollow = query.has("streamFollow");
+  const streamChat = query.has("streamChat");
+  const streamDebug = query.has("streamDebug");
+  const streamNoScroll = query.has("noScroll");
 
   let ws: WebSocket | null = null;
   const perfPingSentAt = new Map<number, number>();
@@ -453,13 +467,105 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       syncPerfPingInterval(enabled);
     },
   });
+  let roomTransitionProgressTimer: ReturnType<typeof setInterval> | null = null;
+  function clearRoomTransitionProgressTimer(): void {
+    if (roomTransitionProgressTimer !== null) {
+      clearInterval(roomTransitionProgressTimer);
+      roomTransitionProgressTimer = null;
+    }
+  }
+  /** Black loading screen + progress immediately on room change (before server welcome). */
+  function beginRoomTransition(roomId: string): void {
+    clearRoomTransitionProgressTimer();
+    hud.setLoadingLabel(loadingLabelForTargetRoom(roomId));
+    hud.setLoadingProgress("indeterminate");
+    hud.setLoadingVisible(true);
+    let fake = 0.06;
+    roomTransitionProgressTimer = setInterval(() => {
+      fake = Math.min(0.45, fake + 0.014);
+      hud.setLoadingProgress(fake);
+    }, 140);
+  }
+  function bumpRoomLoadProgress(value: number): void {
+    hud.setLoadingProgress(Math.max(0, Math.min(1, value)));
+  }
   hud.setBrandLinksPlayerAddress(address);
   if (sessionNimiqPay) {
     disposeNimiqPayAdvisory = mountNimiqPaySiteAdvisory(hudRoot);
   }
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
+  game.setMapOverviewUnlocked(isAdmin(address));
+  if (streamMode) {
+    game.setStreamObserverMode(true);
+    game.setStreamBubblesHidden(!streamChat);
+  }
   hud.bindTileInspectorPreviewGame(game);
+  game.setViewInterestReporter((rect) => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      sendViewInterest(ws, rect, {
+        retainLoaded: game.isStreamPresentationActive(),
+      });
+    }
+  });
+
+  let streamDirector: StreamDirector | null = null;
+  let unmountStreamPanDebug: (() => void) | null = null;
+  if (streamMode && streamDebug) {
+    unmountStreamPanDebug = mountStreamPanDebugPanel(game, hudRoot);
+  }
+
+  function resolveInitialRoomId(): string {
+    const roomParam = query.get("room")?.trim();
+    if (roomParam) return normalizeRoomId(roomParam);
+    if (streamMode) return PIXEL_ROOM_ID;
+    return ROOM_ID;
+  }
+
+  function applyStreamPresentation(): void {
+    if (!streamMode) return;
+    hud.setStreamCinemaMode(true, {
+      showChat: streamChat,
+      onLayout: () => game.resize(),
+    });
+    hud.setStreamBroadcastOverlay({
+      visible: true,
+      subtitle: "Play Nimiq Space at https://nimiq.space",
+    });
+    game.setStreamPresentationActive(true);
+    game.setContinuousRender(true);
+    game.setStreamBubblesHidden(!streamChat);
+    game.animateZoomFrustumTo(game.getStreamOverviewFrustumSize(), 0);
+    const center = game.getRoomLookAtCenter();
+    game.setCameraLookAtTarget(center.x, center.y, center.z, { instant: true });
+    if (streamFollow) {
+      streamDirector?.stop();
+      streamDirector = new StreamDirector({
+        game,
+        selfAddress: address,
+        panOverview: !streamNoScroll,
+        onFollowBar: (state) => hud.setStreamFollowBar(state),
+      });
+      streamDirector.start();
+    } else if (!streamNoScroll) {
+      game.setStreamPanEnabled(true);
+    } else {
+      game.setStreamPanEnabled(false);
+    }
+    // Letterbox + room bounds may settle after this tick; refresh stream sizing.
+    game.resize();
+    requestAnimationFrame(() => {
+      game.resize();
+    });
+  }
+
+  if (streamMode) {
+    hud.setStreamCinemaMode(true, { showChat: streamChat });
+    hud.setStreamBroadcastOverlay({
+      visible: true,
+      subtitle: "Play Nimiq Space at https://nimiq.space",
+    });
+  }
   type KnownRoomRow = {
     id: string;
     displayName: string;
@@ -1035,6 +1141,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     roomsJoinStatus.textContent = "Joining Room..";
     roomsJoinStatus.classList.remove("rooms-modal__join-status--error");
     roomsJoinStatus.classList.add("rooms-modal__join-status--loading");
+    beginRoomTransition(roomIdToJoin);
     sendJoinRoom(ws, roomIdToJoin);
   });
 
@@ -1311,6 +1418,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       join.addEventListener("click", () => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         if (normalizeRoomId(game.getRoomId()) === normalizeRoomId(room.id)) return;
+        beginRoomTransition(room.id);
         sendJoinRoom(ws, room.id);
         closeRoomsModal();
       });
@@ -1345,6 +1453,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (normalizeRoomId(game.getRoomId()) === normalizeRoomId(roomId)) return;
     pendingProfileJoinRoomId = roomId;
+    beginRoomTransition(roomId);
     sendJoinRoom(ws, roomId);
   });
   const adminOverlay = installAdminOverlay(hudRoot, game, {
@@ -1590,6 +1699,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
     idleCleanup?.();
     idleCleanup = null;
+    clearRoomTransitionProgressTimer();
     cancelActiveNimClaim?.();
     cancelActiveNimClaim = null;
     nimClaimUiRef = null;
@@ -1753,7 +1863,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     if (
       rid === HUB_ROOM_ID ||
       rid === CHAMBER_ROOM_ID ||
-      rid === CANVAS_ROOM_ID
+      rid === CANVAS_ROOM_ID ||
+      rid === PIXEL_ROOM_ID
     ) {
       return isAdmin(actor);
     }
@@ -1809,6 +1920,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const rid = normalizeRoomId(game.getRoomId());
     const row = knownRooms.find((r) => normalizeRoomId(r.id) === rid);
     const isCanvas = rid === CANVAS_ROOM_ID;
+    const isPixel = rid === PIXEL_ROOM_ID;
     const isBuiltInPlaySpace =
       rid === HUB_ROOM_ID || rid === CHAMBER_ROOM_ID || rid === CANVAS_ROOM_ID;
     const dynamicRoom = !isBuiltInPlaySpace;
@@ -1818,9 +1930,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const show =
       allowHue &&
       ((isCanvas && isAdminViewer) ||
+        (isPixel && isAdminViewer) ||
         (game.getFloorExpandMode() &&
           roomAllowExtraFloor &&
           !isCanvas &&
+          !isPixel &&
           (dynamicRoom || rid === HUB_ROOM_ID || rid === CHAMBER_ROOM_ID)));
     hud.setRoomBackgroundHuePanelVisible(show);
     if (!show) return;
@@ -1931,7 +2045,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       typeof window !== "undefined" &&
       window.matchMedia("(pointer: coarse)").matches;
     const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
-    const canBuild = roomAllowPlaceBlocks && !isCanvas;
+    const isPixel = isPixelRoomId(game.getRoomId());
+    const canBuild = roomAllowPlaceBlocks && !isCanvas && !isPixel;
     const canFloor = roomAllowExtraFloor && !isCanvas;
 
     if (!canBuild && game.getBuildMode()) {
@@ -1996,8 +2111,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         : "";
       hud.setStatus(
         touchUi
-          ? `Floor — tap tiles next to walkable space (F or Build off when done)${entryPickHint}`
-          : `Expand floor — left-click to add a tile; right-click to remove (F to exit).${entryPickHint}`
+          ? isPixel
+            ? `Paint — tap tiles to recolor (F or Build off when done)${entryPickHint}`
+            : `Floor — tap tiles next to walkable space (F or Build off when done)${entryPickHint}`
+          : isPixel
+            ? `Paint — left-click tiles to recolor (F to exit).${entryPickHint}`
+            : `Expand floor — left-click to add a tile; right-click to remove (F to exit).${entryPickHint}`
       );
       hud.setBuildBlockBarState({
         visible: false,
@@ -2052,7 +2171,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     });
     const modeHints: string[] = [];
     if (canBuild) modeHints.push("B: blocks");
-    if (canFloor) modeHints.push("F: expand walkable floor");
+    if (canFloor) {
+      modeHints.push(isPixelRoomId(game.getRoomId()) ? "F: paint floor" : "F: expand walkable floor");
+    }
     const desktopHint =
       modeHints.length > 0
         ? modeHints.join(" · ")
@@ -2086,7 +2207,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
 
   function canPlacePrefabInRoom(): boolean {
     const rid = normalizeRoomId(game.getRoomId());
-    if (rid === CANVAS_ROOM_ID) return false;
+    if (rid === CANVAS_ROOM_ID || rid === PIXEL_ROOM_ID) return false;
     return roomAllowPlaceBlocks;
   }
 
@@ -2314,9 +2435,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
 
   hud.onPlayModeSelect((mode) => {
     if (document.activeElement === hud.getChatInput()) return;
+    if (streamMode) return;
 
     const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
-    if (mode === "build" && (!roomAllowPlaceBlocks || isCanvas)) return;
+    if (mode === "build" && (!roomAllowPlaceBlocks || isCanvas || isPixelRoomId(game.getRoomId()))) return;
     if (mode === "floor" && (!roomAllowExtraFloor || isCanvas)) return;
     
     if (mode === "walk") {
@@ -2519,6 +2641,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     });
 
     game.setTileClickHandler((x, z, layer = 0) => {
+      if (streamMode) return;
       hud.dismissOtherPlayerOverlays();
       // Check if in signpost mode (only in build mode)
       if (game.getBuildMode() && hud.isSignpostModeActive()) {
@@ -2746,9 +2869,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       sendMoveObstacle(socket, fromX, fromZ, fromY, toX, toZ, toY);
     });
     game.setPlaceExtraFloorHandler((x, z, colorRgb, brushSize) => {
+      if (streamMode) return;
       sendPlaceExtraFloor(socket, x, z, colorRgb, brushSize);
     });
     game.setRemoveExtraFloorHandler((x, z) => {
+      if (streamMode) return;
       sendRemoveExtraFloor(socket, x, z);
     });
     hud.onSignpostPlace((x, z, message) => {
@@ -3122,6 +3247,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     if (n === HUB_ROOM_ID) return "Hub";
     if (n === CANVAS_ROOM_ID) return "Canvas";
     if (n === CHAMBER_ROOM_ID) return "Chamber";
+    if (n === PIXEL_ROOM_ID) return "Pixel";
     return formatRoomJoinCode(n);
   }
 
@@ -3235,6 +3361,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       return;
     }
     if (msg.type === "joinRoomFailed") {
+      clearRoomTransitionProgressTimer();
+      hud.setLoadingProgress(null);
+      hud.setLoadingVisible(false, { skipMinWait: true });
       if (
         pendingProfileJoinRoomId &&
         normalizeRoomId(msg.roomId).toLowerCase() ===
@@ -3317,10 +3446,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }
 
       try {
+      clearRoomTransitionProgressTimer();
       hud.resetRoomChatDom();
       hud.setReconnectOffer(false);
-      hud.setLoadingLabel(loadingLabelForTargetRoom(msg.roomId));
-      hud.setLoadingVisible(true);
+      bumpRoomLoadProgress(0.12);
       
       game.applyRoomFromWelcome({
         roomId: msg.roomId,
@@ -3329,6 +3458,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         placeRadiusBlocks: Number.isFinite(msg.placeRadiusBlocks)
           ? msg.placeRadiusBlocks
           : 5,
+      });
+      bumpRoomLoadProgress(0.22);
+      requestAnimationFrame(() => {
+        game.resize();
       });
       game.setRoomSceneBackground({
         hueDeg: msg.roomBackgroundHueDeg,
@@ -3359,6 +3492,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }
 
       const isCanvas = normalizeRoomId(msg.roomId) === CANVAS_ROOM_ID;
+      const isPixel = isPixelRoomId(msg.roomId);
       if (!isCanvas) {
         hud.setCanvasCountdown(null);
       }
@@ -3457,9 +3591,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
 
       // Extra floor before obstacles so walkable quads sit earlier in the scene graph
       // than blocks on those tiles (avoids depth-tie flicker until blocks are rebuilt).
-      game.setExtraFloorTiles(msg.extraFloorTiles);
-      game.setBaseFloorColorTiles(msg.baseFloorColorTiles ?? []);
-      game.setRemovedBaseFloorTiles(msg.removedBaseFloorTiles ?? []);
+      bumpRoomLoadProgress(0.38);
+      game.applyWelcomeFloorPayload({
+        extraFloorTiles: msg.extraFloorTiles,
+        baseFloorColorTiles: msg.baseFloorColorTiles ?? [],
+        removedBaseFloorTiles: msg.removedBaseFloorTiles ?? [],
+        spawnX: msg.self.x,
+        spawnZ: msg.self.z,
+      });
+      bumpRoomLoadProgress(0.62);
       game.setObstacles(msg.obstacles);
       game.setSignboards(msg.signboards);
       game.setBillboards(msg.billboards ?? []);
@@ -3470,8 +3610,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         await game.setCanvasClaims(msg.canvasClaims);
       }
       
-      lastPlayers = [msg.self, ...msg.others];
+      lastPlayers = streamMode || msg.streamObserver
+        ? [...msg.others]
+        : [msg.self, ...msg.others];
       game.syncState(lastPlayers);
+      bumpRoomLoadProgress(0.88);
       syncReturnHomeButton();
       await updateCanvasLeaderboard();
       const welcomeOnlineCount =
@@ -3485,9 +3628,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           : roomRealPlayerCount(lastPlayers);
       syncPlayerCountHud();
       
-      // Hide loading overlay after everything is loaded
+      bumpRoomLoadProgress(1);
       hud.setLoadingVisible(false);
       syncBuildHud();
+      applyStreamPresentation();
       if (ws && ws.readyState === WebSocket.OPEN) {
         sendListRooms(ws);
         syncAwayPresenceToServer();
@@ -3530,7 +3674,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
               ? r.isBuiltin
               : id === HUB_ROOM_ID ||
                 id === CHAMBER_ROOM_ID ||
-                id === CANVAS_ROOM_ID;
+                id === CANVAS_ROOM_ID ||
+                id === PIXEL_ROOM_ID;
           return {
             id,
             displayName: normalizeRoomCatalogDisplayName(
@@ -3797,7 +3942,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
     if (msg.type === "baseFloorColorDelta") {
       if (normalizeRoomId(msg.roomId) === normalizeRoomId(game.getRoomId())) {
-        game.applyBaseFloorColorDelta(msg.add, msg.remove);
+        game.applyBaseFloorColorDelta(msg.add, msg.remove, msg.loadChunks);
       }
       syncBuildHud();
     }
@@ -3985,8 +4130,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     connectGen += 1;
     const myGen = connectGen;
     clearWelcomeDeadlineTimer();
-    hud.setLoadingLabel(loadingLabelForTargetRoom(room));
-    hud.setLoadingVisible(true);
+    beginRoomTransition(room);
     requestAnimationFrame(() => {
       if (myGen !== connectGen) return;
       if (
@@ -4010,6 +4154,24 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
             location.reload();
             return;
           }
+          if (ev.code === 4403) {
+            streamDirector?.stop();
+            hud.setStreamFollowBar({ visible: false });
+            streamDirector = null;
+            hud.setStreamCinemaMode(false);
+            hud.setStreamBroadcastOverlay({ visible: false });
+            game.setStreamPresentationActive(false);
+            game.setStreamObserverMode(false);
+            game.setContinuousRender(false);
+            hud.setLoadingVisible(false, { skipMinWait: true });
+            hud.setReconnectOffer(false);
+            hud.setStatus(
+              "Stream view is restricted — sign in with an authorized stream wallet, or remove ?stream=1 from the URL."
+            );
+            perfPingSentAt.clear();
+            hud.setPerfHudLatencyMs(null);
+            return;
+          }
           const restartDrop = hud.consumeRestartDisconnectForStatus();
           hud.setLoadingVisible(false, { skipMinWait: true });
           hud.setReconnectOffer(true);
@@ -4021,7 +4183,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           perfPingSentAt.clear();
           hud.setPerfHudLatencyMs(null);
         },
-        spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : undefined
+        {
+          ...(spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : {}),
+          stream: streamMode,
+        }
       );
       wireWsHandlers(ws);
       welcomeDeadlineTimer = setTimeout(() => {
@@ -4036,16 +4201,18 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     });
   };
 
-  idleCleanup = startIdleReturnToHub(IDLE_RETURN_HUB_MS, () => {
-    if (disposed) return;
-    connectToRoom(CHAMBER_ROOM_ID, {
-      x: CHAMBER_DEFAULT_SPAWN.x,
-      z: CHAMBER_DEFAULT_SPAWN.z,
+  if (!streamMode) {
+    idleCleanup = startIdleReturnToHub(IDLE_RETURN_HUB_MS, () => {
+      if (disposed) return;
+      connectToRoom(CHAMBER_ROOM_ID, {
+        x: CHAMBER_DEFAULT_SPAWN.x,
+        z: CHAMBER_DEFAULT_SPAWN.z,
+      });
+      hud.setStatus(
+        "Returned to the chamber after 15 minutes inactive — explore again anytime"
+      );
     });
-    hud.setStatus(
-      "Returned to the chamber after 15 minutes inactive — explore again anytime"
-    );
-  });
+  }
 
   game.setRoomChangeHandler((targetRoomId, spawnX, spawnZ) => {
     connectToRoom(targetRoomId, { x: spawnX, z: spawnZ });
@@ -4104,6 +4271,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   });
   hud.onPortalEnter(() => {
     if (portalAction?.kind === "door") {
+      const d = game.getStandingDoor();
+      if (d) beginRoomTransition(d.targetRoomId);
       void game.triggerStandingDoorTransition();
       return;
     }
@@ -4140,7 +4309,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     });
   });
 
-  connectToRoom(ROOM_ID, {
+  connectToRoom(resolveInitialRoomId(), {
     x: CHAMBER_DEFAULT_SPAWN.x,
     z: CHAMBER_DEFAULT_SPAWN.z,
   });
@@ -4372,7 +4541,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         if (inFormField) return;
 
         const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
-        if (isCanvas || !roomAllowPlaceBlocks) return;
+        if (isCanvas || isPixelRoomId(game.getRoomId()) || !roomAllowPlaceBlocks) return;
         
         const next = !game.getBuildMode();
         game.setBuildMode(next);

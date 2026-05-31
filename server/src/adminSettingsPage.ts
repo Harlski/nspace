@@ -31,6 +31,11 @@ export function adminSettingsPageHtml(): string {
       border-radius: 6px; padding: 0.4rem 0.75rem; cursor: pointer; font: inherit; font-size: 0.82rem;
     }
     .set-hint { font-size: 0.76rem; color: #6b7d95; margin: 0.35rem 0 0; line-height: 1.45; }
+    .set-text {
+      width: 100%; box-sizing: border-box; min-height: 3.2rem; resize: vertical;
+      background: #0a1018; color: #d8e2f0; border: 1px solid #263348; border-radius: 6px;
+      padding: 0.45rem 0.55rem; font: inherit; font-size: 0.82rem; line-height: 1.45;
+    }
     .err { color: #f87171; font-size: 0.82rem; }
     .ok { color: #86efac; font-size: 0.78rem; }
     #panel.ms-panel { max-width: 48rem; }
@@ -51,6 +56,47 @@ export function adminSettingsPageHtml(): string {
         if (t) return t;
       }
       return "";
+    }
+    function escHtml(s) {
+      return String(s || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/"/g, "&quot;");
+    }
+    async function saveSettings(token, body, msgEl) {
+      if (!msgEl) return false;
+      msgEl.hidden = true;
+      try {
+        var pr = await fetch("/api/admin/settings", {
+          method: "PUT",
+          headers: {
+            authorization: "Bearer " + token,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
+        if (pr.status === 400) {
+          msgEl.textContent = "Invalid Nimiq address — check format (with or without spaces).";
+          msgEl.className = "err";
+          msgEl.hidden = false;
+          return false;
+        }
+        if (!pr.ok) {
+          msgEl.textContent = "Save failed (" + pr.status + ").";
+          msgEl.className = "err";
+          msgEl.hidden = false;
+          return false;
+        }
+        msgEl.textContent = "Saved.";
+        msgEl.className = "ok";
+        msgEl.hidden = false;
+        return true;
+      } catch {
+        msgEl.textContent = "Network error.";
+        msgEl.className = "err";
+        msgEl.hidden = false;
+        return false;
+      }
     }
     async function load() {
       var panel = document.getElementById("panel");
@@ -77,6 +123,9 @@ export function adminSettingsPageHtml(): string {
         }
         var j = await r.json();
         var on = Boolean(j.playerUsernameSelfServiceEnabled);
+        var streamAddrs = String(j.streamObserverAddresses || "");
+        var envStream = Boolean(j.streamObserverEnvConfigured);
+        var streamActive = Boolean(j.streamObserverAllowlistConfigured);
         panel.innerHTML =
           "<div class='set-panel'>" +
           "<h2>Usernames</h2>" +
@@ -88,39 +137,58 @@ export function adminSettingsPageHtml(): string {
           "</div>" +
           "<p class='set-hint'>In-game admins can still set names via profile moderation while this is off.</p>" +
           "<div class='set-actions'>" +
-          "<button type='button' id='save-btn'>Save</button>" +
-          "<span id='save-msg' class='ok' hidden></span>" +
+          "<button type='button' id='save-username-btn'>Save</button>" +
+          "<span id='save-username-msg' class='ok' hidden></span>" +
+          "</div></div>" +
+          "<div class='set-panel'>" +
+          "<h2>Stream cinema wallet</h2>" +
+          "<p class='set-hint'>Wallets allowed to connect with <code>?stream=1</code> (OBS / broadcast observer). Comma-separated for multiple bots. Spaces optional — grouped or compact both work.</p>" +
+          "<textarea class='set-text' id='stream-wallets' rows='2' placeholder='NQXX XXXX XXXX …'>" +
+          escHtml(streamAddrs) +
+          "</textarea>" +
+          (envStream
+            ? "<p class='set-hint'>Also configured via <code>STREAM_OBSERVER_ADDRESSES</code> env (merged with this list).</p>"
+            : "") +
+          "<p class='set-hint'>" +
+          (streamActive
+            ? "Stream observer mode is <strong>enabled</strong> (at least one wallet configured)."
+            : "Stream observer mode is <strong>disabled</strong> until a wallet is set here or in env.") +
+          "</p>" +
+          "<div class='set-actions'>" +
+          "<button type='button' id='save-stream-btn'>Save</button>" +
+          "<span id='save-stream-msg' class='ok' hidden></span>" +
           "</div></div>";
-        var saveBtn = document.getElementById("save-btn");
+        var saveUsernameBtn = document.getElementById("save-username-btn");
         var cb = document.getElementById("self-username");
-        var msg = document.getElementById("save-msg");
-        if (saveBtn && cb && msg) {
-          saveBtn.addEventListener("click", async function () {
-            msg.hidden = true;
-            try {
-              var pr = await fetch("/api/admin/settings", {
-                method: "PUT",
-                headers: {
-                  authorization: "Bearer " + token,
-                  "content-type": "application/json",
-                },
-                body: JSON.stringify({
-                  playerUsernameSelfServiceEnabled: cb.checked,
-                }),
+        var usernameMsg = document.getElementById("save-username-msg");
+        if (saveUsernameBtn && cb && usernameMsg) {
+          saveUsernameBtn.addEventListener("click", function () {
+            saveSettings(
+              token,
+              { playerUsernameSelfServiceEnabled: cb.checked },
+              usernameMsg
+            );
+          });
+        }
+        var saveStreamBtn = document.getElementById("save-stream-btn");
+        var streamInput = document.getElementById("stream-wallets");
+        var streamMsg = document.getElementById("save-stream-msg");
+        if (saveStreamBtn && streamInput && streamMsg) {
+          saveStreamBtn.addEventListener("click", async function () {
+            var ok = await saveSettings(
+              token,
+              { streamObserverAddresses: streamInput.value },
+              streamMsg
+            );
+            if (ok) {
+              var rr = await fetch("/api/admin/settings", {
+                headers: { authorization: "Bearer " + token },
+                cache: "no-store",
               });
-              if (!pr.ok) {
-                msg.textContent = "Save failed (" + pr.status + ").";
-                msg.className = "err";
-                msg.hidden = false;
-                return;
+              if (rr.ok) {
+                var jj = await rr.json();
+                streamInput.value = String(jj.streamObserverAddresses || "");
               }
-              msg.textContent = "Saved.";
-              msg.className = "ok";
-              msg.hidden = false;
-            } catch {
-              msg.textContent = "Network error.";
-              msg.className = "err";
-              msg.hidden = false;
             }
           });
         }

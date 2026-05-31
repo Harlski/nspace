@@ -11,11 +11,21 @@ const ADMIN_COMPACT_KEYS = new Set(
   [...ADMIN_ADDRESSES].map((a) => a.replace(/\s+/g, "").toUpperCase())
 );
 
+function compactWalletKey(address: string): string {
+  return String(address || "").replace(/\s+/g, "").trim().toUpperCase();
+}
+
 /** Check if a wallet address has admin privileges (JWT `sub` may be grouped or compact). */
 export function isAdmin(address: string): boolean {
-  const c = String(address || "").replace(/\s+/g, "").toUpperCase();
+  const c = compactWalletKey(address);
   return ADMIN_COMPACT_KEYS.has(c);
 }
+
+export {
+  isStreamObserver,
+  streamObserverAllowlistConfigured,
+  streamObserverEnvConfigured,
+} from "./streamObserverAllowlist.js";
 
 /**
  * When set (≥16 chars), `POST /api/hooks/pre-deploy-restart` accepts

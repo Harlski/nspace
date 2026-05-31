@@ -134,6 +134,14 @@ After that, the author **reviews diffs**, then **`git add`**, **`git commit`**, 
 
 Update this subsection if the workflow name, paths, or backup format change.
 
+### Pixel board: ordered paint history + public snapshot
+
+**Today:** The **Pixel** room (`pixel`) stores **current** floor tints in `roomBaseFloorColors` / `data/rooms/pixel.json` (sparse map — implicit neutral `#d4d4d4` elsewhere). **Forward-only** paint order is appended to **`server/data/pixel/paint-log.jsonl`** (override via **`PIXEL_PAINT_LOG_FILE`**): a one-time **`baseline`** record on first deploy after this feature, then one **`paint`** line per successful tile recolor (`ts`, `x`, `z`, `colorRgb`, painter address). Past paint order before the baseline cannot be reconstructed. A public **`GET /pixels.png`** renders the live board as a **500×500** PNG (1 px per tile), cached in memory and invalidated on each Pixel paint.
+
+**Direction:** Timelapse playback (Phase 2+) should **replay baseline + paint lines by `ts`** onto an RGB buffer — not infer order from persisted map sort order or session-scoped analytics JSONL alone. Optional periodic **snapshots** in the log can accelerate seek for long histories. Keep the paint log **append-only** and room-global (all painters), separate from session replay APIs.
+
+Update this subsection when export APIs, retention, or snapshot cadence ship.
+
 ---
 
 ## Changelog (optional)
@@ -157,4 +165,5 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-05-14** — Authoring HUD: bottom build dock contract + Objects/Room scope aligned to dock tab row (principle tweak). See [reasons/reason_906712.md](reasons/reason_906712.md).
 - **2026-05-19** — Build dock: Room settings in context column, mobile scope overlay, reset to Objects on close/reopen. See [reasons/reason_917384.md](reasons/reason_917384.md).
 - **2026-05-21** — Build dock: `colorRgb`, shared hex popover, live preview without per-keystroke `syncBuildHud`. See [reasons/reason_284651.md](reasons/reason_284651.md).
+- **2026-05-29** — Pixel board: forward-only paint log + public `/pixels.png` snapshot. See [reasons/reason_482901.md](reasons/reason_482901.md).
 - **2026-05-24** — Per-tile floor `colorRgb` (Room → Floor hue ring); cube rotation steppers; tiles “today” note. See [reasons/reason_392847.md](reasons/reason_392847.md).

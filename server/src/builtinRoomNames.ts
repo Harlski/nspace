@@ -7,6 +7,7 @@ import type { RoomBackgroundNeutral } from "./roomRegistry.js";
 const HUB_ROOM_ID = "hub";
 const CHAMBER_ROOM_ID = "chamber";
 const CANVAS_ROOM_ID = "canvas";
+const PIXEL_ROOM_ID = "pixel";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -24,6 +25,7 @@ const DEFAULTS: Record<string, string> = {
   [HUB_ROOM_ID]: "Hub",
   [CHAMBER_ROOM_ID]: "Chamber",
   [CANVAS_ROOM_ID]: "Canvas",
+  [PIXEL_ROOM_ID]: "Pixel",
 };
 
 let cache: FileShapeV3 | null = null;

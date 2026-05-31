@@ -144,6 +144,12 @@ const DATA_DIR = process.env.WORLD_STATE_DIR
 const STATE_FILE = path.join(DATA_DIR, "world-state.json");
 const ROOMS_DIR = path.join(DATA_DIR, "rooms");
 const SPAWNS_DIR = path.join(DATA_DIR, "spawns");
+/** One-time marker: Pixel room base floor reset from random seed to neutral gray. */
+const PIXEL_NEUTRAL_FLOOR_FLAG = path.join(DATA_DIR, ".pixel-neutral-floor-v1");
+/** One-time marker: drop explicit neutral entries — implicit default on client. */
+const PIXEL_IMPLICIT_FLOOR_FLAG = path.join(DATA_DIR, ".pixel-implicit-floor-v2");
+/** One-time marker: checkerboard implicit floor + spawn square (drop redundant paints). */
+const PIXEL_CHECKERBOARD_FLOOR_FLAG = path.join(DATA_DIR, ".pixel-checkerboard-v3");
 
 const STATE_VERSION = 1 as const;
 
@@ -440,6 +446,33 @@ export function schedulePersistWorldState(): void {
       console.error("[world] save failed", e);
     }
   }, SAVE_DEBOUNCE_MS);
+}
+
+export function hasPixelNeutralFloorMigration(): boolean {
+  return fs.existsSync(PIXEL_NEUTRAL_FLOOR_FLAG);
+}
+
+export function markPixelNeutralFloorMigration(): void {
+  ensureDataDir();
+  fs.writeFileSync(PIXEL_NEUTRAL_FLOOR_FLAG, new Date().toISOString(), "utf8");
+}
+
+export function hasPixelImplicitFloorMigration(): boolean {
+  return fs.existsSync(PIXEL_IMPLICIT_FLOOR_FLAG);
+}
+
+export function markPixelImplicitFloorMigration(): void {
+  ensureDataDir();
+  fs.writeFileSync(PIXEL_IMPLICIT_FLOOR_FLAG, new Date().toISOString(), "utf8");
+}
+
+export function hasPixelCheckerboardFloorMigration(): boolean {
+  return fs.existsSync(PIXEL_CHECKERBOARD_FLOOR_FLAG);
+}
+
+export function markPixelCheckerboardFloorMigration(): void {
+  ensureDataDir();
+  fs.writeFileSync(PIXEL_CHECKERBOARD_FLOOR_FLAG, new Date().toISOString(), "utf8");
 }
 
 export function flushPersistWorldStateSync(): void {

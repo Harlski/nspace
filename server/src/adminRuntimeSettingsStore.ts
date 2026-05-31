@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  invalidateStreamObserverAllowlistCache,
+} from "./streamObserverAllowlist.js";
+import { normalizeStreamObserverAddressesField } from "./walletAddresses.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -11,10 +15,13 @@ const STORE_FILE = process.env.ADMIN_RUNTIME_SETTINGS_FILE
 export type AdminRuntimeSettings = {
   /** When true, signed-in players may set their own username. When false, only admins may assign names (moderation API or own wallet as admin). */
   playerUsernameSelfServiceEnabled: boolean;
+  /** Comma-separated Nimiq wallets allowed for cinema `?stream=1` (merged with `STREAM_OBSERVER_ADDRESSES` env). */
+  streamObserverAddresses: string;
 };
 
 const DEFAULTS: AdminRuntimeSettings = {
   playerUsernameSelfServiceEnabled: false,
+  streamObserverAddresses: "",
 };
 
 type StoreFile = { settings: AdminRuntimeSettings };
@@ -39,6 +46,10 @@ function readStore(): StoreFile {
     };
     merged.playerUsernameSelfServiceEnabled =
       Boolean((s as AdminRuntimeSettings).playerUsernameSelfServiceEnabled);
+    merged.streamObserverAddresses =
+      typeof (s as AdminRuntimeSettings).streamObserverAddresses === "string"
+        ? (s as AdminRuntimeSettings).streamObserverAddresses
+        : DEFAULTS.streamObserverAddresses;
     return { settings: merged };
   } catch {
     return { settings: { ...DEFAULTS } };
@@ -67,6 +78,17 @@ export function patchAdminRuntimeSettings(
   if (patch.playerUsernameSelfServiceEnabled !== undefined) {
     next.playerUsernameSelfServiceEnabled = Boolean(patch.playerUsernameSelfServiceEnabled);
   }
+  if (patch.streamObserverAddresses !== undefined) {
+    next.streamObserverAddresses = patch.streamObserverAddresses;
+  }
   writeStore({ settings: next });
+  if (patch.streamObserverAddresses !== undefined) {
+    invalidateStreamObserverAllowlistCache();
+  }
   return next;
+}
+
+export function patchStreamObserverAddresses(raw: string): AdminRuntimeSettings {
+  const normalized = normalizeStreamObserverAddressesField(raw);
+  return patchAdminRuntimeSettings({ streamObserverAddresses: normalized });
 }

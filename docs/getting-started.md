@@ -17,10 +17,11 @@ A multiplayer isometric social space built with **Nimiq wallet** authentication,
 - **Real-time Multiplayer**: WebSocket-powered synchronized player movement and interactions
 - **Building System**: Place and customize blocks with various shapes (cubes, ramps, hexagons) and colors
 - **Canvas Room**: Claim tiles with your identicon and compete on the leaderboard
+- **Pixel Room**: Collaborative **500×500** floor painting only (no blocks) — reach it from the Hub north door; starts as a field of varied tile colors
 - **Signposts**: Leave messages on tiles (hub / your rooms; rules vary by room — see signboards guide)
 - **Admin Tools**: Lock objects, manage rooms, and moderate content
 - **NPCs**: Server-side “fake players” that wander rooms when `FAKE_PLAYER_COUNT` is greater than 0 (random destinations, guest-style names — not LLM-driven)
-- **Multiple Rooms**: Hub, chamber, and canvas rooms with portal teleportation
+- **Multiple Rooms**: Hub, chamber, canvas, and pixel rooms with portal teleportation
 
 ## 🚀 Quick Start
 
@@ -79,6 +80,20 @@ A multiplayer isometric social space built with **Nimiq wallet** authentication,
 | Edit Block | Click existing block in build mode |
 | Cancel/Close | `Esc` |
 | Fullscreen | Button in top-right |
+
+### Stream / OBS capture (optional)
+
+For a HUD-less overview of the Pixel board (e.g. 24/7 stream):
+
+- `/?room=pixel&stream=1` — cinema mode (no HUD, continuous render, top-down view with slow pan across the board). **Server-side:** only allowlisted wallets may connect with `?stream=1` (configure via **`/admin/settings`** or **`STREAM_OBSERVER_ADDRESSES`** on the game server; spaces in the address are optional); others are rejected (use a dedicated stream-bot wallet).
+- Add `&streamDebug=1` for an on-screen pan tuning panel (speed + edge insets)
+- Add `&streamFollow=1` to cycle panned overview and random player spotlight (~30s isometric follow with smooth top-down ↔ iso transition)
+- Add `&noScroll=1` to keep the overview camera fixed on the room center (no slow pan)
+- Add `&streamChat=1` to show the chat panel on stream
+- Optional: `&webglRenderScale=0.5`–`1` (defaults to **1** when `stream` is set — use 1 for sharpest pixels)
+- **`/pixels.png`** — live 500×500 PNG of the Pixel board (1 pixel per tile); refreshes on reload; served from the game API (Vercel rewrite to API host on split deploy)
+
+Use a dedicated wallet for the stream bot; run capture on a separate GPU host from the game server when the hub is busy.
 
 ### Building
 

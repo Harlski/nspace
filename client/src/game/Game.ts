@@ -29,6 +29,10 @@ const LS_FLOOR_TILE_QUAD = "nspace_floor_tile_quad";
 const LS_BLOCK_VISUAL_SCALE = "nspace_block_visual_scale";
 const DEFAULT_ZOOM_MIN = 6.5;
 const DEFAULT_ZOOM_MAX = 13.44;
+/** Ortho stream camera sits above look-at; height only matters for near/far clipping. */
+const STREAM_CAMERA_HEIGHT = 100;
+/** Top-down stream overview: identicon footprint spans this many floor tiles (1 tile at spotlight zoom). */
+const STREAM_TOPDOWN_AVATAR_TILE_SPAN = 3;
 import { loadIdenticonTexture } from "./identiconTexture.js";
 import {
   createBillboardRoot,
@@ -89,6 +93,7 @@ import {
   type RoomBounds,
   HUB_ROOM_ID,
   CANVAS_ROOM_ID,
+  PIXEL_ROOM_ID,
   getDoorsForRoom,
   getRoomBaseBounds,
   isBuiltinRoomId,
@@ -96,6 +101,17 @@ import {
   normalizeRoomId,
   registerClientRoomBounds,
 } from "./roomLayouts.js";
+import {
+  DEFAULT_INTEREST_HALF_TILES,
+  INTEREST_CHUNK_TILES,
+  interestChunksForTileKeys,
+  interestChunksFromRect,
+  NON_ADMIN_MAX_INTEREST_HALF_TILES,
+  roomUsesSpatialInterest,
+  tileChunkKey,
+  VIEW_INTEREST_PADDING_TILES,
+  type ViewInterestRect,
+} from "./interestChunks.js";
 import {
   type BlockStyleProps,
   blockColorRgbToHueDeg,
@@ -149,10 +165,14 @@ const PLACED_COLOR_SURFACE_METALNESS = 0.15;
 
 function readWebglRenderScale(): number {
   if (typeof location === "undefined") return 1;
-  const raw = new URLSearchParams(location.search).get("webglRenderScale");
-  if (raw === null) return 1;
-  const n = Number(raw);
-  return Number.isFinite(n) ? Math.max(0.25, Math.min(1, n)) : 1;
+  const query = new URLSearchParams(location.search);
+  const raw = query.get("webglRenderScale");
+  if (raw !== null) {
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.max(0.25, Math.min(1, n)) : 1;
+  }
+  if (query.has("stream")) return 1;
+  return 1;
 }
 
 function walkableFloorTopColor(
@@ -212,11 +232,6 @@ function setWalkableFloorVisualInstanceTransform(
   dummy.updateMatrix();
 }
 
-function walkableFloorVisualChunkKey(wx: number, wz: number): string {
-  const c = WALKABLE_FLOOR_VISUAL_CHUNK_TILES;
-  return `${Math.floor(wx / c)},${Math.floor(wz / c)}`;
-}
-
 function applyWalkableFloorTileMaterials(
   mesh: THREE.Mesh,
   isPortalGlow: boolean,
@@ -269,6 +284,8 @@ function disposeWalkableFloorMeshMaterials(mesh: THREE.Mesh): void {
 const TERRAIN_WATER_COLOR = 0xa8d8ea;
 /** Core room / expanded floor / door — black–gray tones (not grass). */
 const TERRAIN_TILE_CORE_COLOR = 0x2d3340;
+/** Pixel room implicit base tint when a tile has no explicit `baseFloorColor` entry. */
+import { pixelImplicitFloorColorRgb } from "./pixelFloorColors.js";
 const TERRAIN_TILE_EXTRA_COLOR = 0x3d5a4a;
 /** Door tiles glow with cyan/teal portal effect */
 const TERRAIN_TILE_DOOR_COLOR = 0x06b6d4;
@@ -406,6 +423,9 @@ const CHAT_BUBBLE_FONT =
 const NAME_LABEL_MAX_PX = 280;
 /** On-screen height (px) for the name pill; scales with ortho zoom so text stays readable. */
 const NAME_LABEL_SCREEN_HEIGHT_PX = 24;
+/** Smaller name pills in stream cinema (top-down overview). */
+const STREAM_NAME_LABEL_SCREEN_HEIGHT_PX = 14;
+const STREAM_NAME_LABEL_MAX_PX = 168;
 /** Target screen height for chat bubbles (similar to name labels for consistent readability). */
 const CHAT_BUBBLE_MIN_HEIGHT_PX = 30;
 const CHAT_MAX_PX = 260;
@@ -778,7 +798,7 @@ function plainCubeInstanceBatchKey(
   vis: number,
   meta: BlockStyleProps
 ): string {
-  return `${walkableFloorVisualChunkKey(wx, wz)}|${vis}|y${wyLevel}|${plainCubeInstanceHeightKey(meta)}|${plainCubeInstanceMaterialKey(meta)}`;
+  return `${tileChunkKey(wx, wz)}|${vis}|y${wyLevel}|${plainCubeInstanceHeightKey(meta)}|${plainCubeInstanceMaterialKey(meta)}`;
 }
 
 function plainCubeInstanceEntrySig(meta: BlockStyleProps, vis: number): string {
@@ -1031,6 +1051,34 @@ function findPrefixTerrainRemoved(
   return k;
 }
 
+export type StreamPanTune = {
+  /** World-units per second (horizontal plane). */
+  speed: number;
+  /** Extra inset from room north edge (screen top); world +Z is south. */
+  marginNorth: number;
+  marginSouth: number;
+  marginWest: number;
+  marginEast: number;
+};
+
+export type StreamPanDebugInfo = {
+  lookX: number;
+  lookZ: number;
+  halfW: number;
+  halfH: number;
+  west: number;
+  east: number;
+  north: number;
+  south: number;
+  roomMinZ: number;
+  roomMaxZ: number;
+  limitMinX: number;
+  limitMaxX: number;
+  limitMinZ: number;
+  limitMaxZ: number;
+  tune: StreamPanTune;
+};
+
 export class Game {
   readonly scene: THREE.Scene;
   readonly camera: THREE.OrthographicCamera;
@@ -1129,6 +1177,8 @@ export class Game {
   private buildMode = false;
   /** Place walkable tiles outside the core room (toggle with F). */
   private floorExpandMode = false;
+  /** Cinema `?stream=1` — no avatar, no movement or floor edits. */
+  private streamObserverMode = false;
   private readonly extraFloorKeys = new Set<string>();
   /** Top color per extra floor tile (`tileKey` → 0xRRGGBB). */
   private readonly extraFloorColorByKey = new Map<string, number>();
@@ -1146,6 +1196,8 @@ export class Game {
   /** One slab mesh per walkable tile (core grid + extra); void shows scene background only. */
   private readonly walkableFloorMeshes = new Map<string, THREE.Mesh>();
   private readonly walkableFloorVisualMeshes: THREE.InstancedMesh[] = [];
+  /** Tile key → instance index in the unified solid floor InstancedMesh (stream / large rooms). */
+  private readonly walkableFloorSolidVisualIndex = new Map<string, number>();
   /** White marker blocks on door tiles (teleport squares). */
   private readonly doorMarkerMeshes = new Map<string, THREE.Mesh>();
   /** Same pillar effect on player-placed teleporters once a destination is set. */
@@ -1306,6 +1358,8 @@ export class Game {
   private readonly cameraOffsetBase = new THREE.Vector3(18, 18, 18);
   private readonly worldUp = new THREE.Vector3(0, 1, 0);
   private readonly cameraOrbitOffsetScratch = new THREE.Vector3();
+  /** Scratch for projecting room ground samples into camera view space (ortho frustum fit). */
+  private readonly frustumFitScratch = new THREE.Vector3();
   /** Yaw (rad): world +Y rotation of the isometric offset (desktop right-drag; fixed circle). */
   private cameraOrbitYawRad = 0;
   /** Desktop right-drag orbit; suppresses avatar context menu after a real drag. */
@@ -1333,6 +1387,56 @@ export class Game {
   private readonly cameraFollowDeadZoneBase = 3.2;
   private readonly cameraFollowSmoothing = 12;
   private cameraFollowReady = false;
+  /** Stream / cinema presentation: detached or follow-remote camera instead of self. */
+  private streamCameraMode: "followSelf" | "detached" | "followAddress" =
+    "followSelf";
+  private streamFollowAddress: string | null = null;
+  private streamPresentationActive = false;
+  private streamBubblesHidden = false;
+  private streamPanEnabled = false;
+  private streamPanVelX = 0;
+  private streamPanVelZ = 0;
+  private streamPanTune: StreamPanTune = {
+    speed: 11,
+    marginNorth: 0,
+    marginSouth: 0,
+    marginWest: 1,
+    marginEast: 0,
+  };
+  private viewInterestReporter: ((rect: ViewInterestRect) => void) | null = null;
+  private lastViewInterestSig = "";
+  private lastViewInterestSentAt = 0;
+  /** Stream: never shrink reported interest below the max seen (keeps server chunks loaded). */
+  private streamInterestHalfW = 0;
+  private streamInterestHalfH = 0;
+  private streamInterestCenterOverride: { x: number; z: number } | null = null;
+  private continuousRenderForced = false;
+  private fogEnabledBeforeStream: boolean | null = null;
+  private zoomFrustumAnim: {
+    from: number;
+    to: number;
+    startedAtMs: number;
+    durationMs: number;
+  } | null = null;
+  private lookAtAnim: {
+    fromX: number;
+    fromY: number;
+    fromZ: number;
+    toX: number;
+    toY: number;
+    toZ: number;
+    startedAtMs: number;
+    durationMs: number;
+  } | null = null;
+  /** 0 = stream top-down; 1 = normal isometric (smooth blend for player spotlight). */
+  private streamCameraPoseBlend = 0;
+  private streamCameraPoseAnim: {
+    from: number;
+    to: number;
+    startedAtMs: number;
+    durationMs: number;
+  } | null = null;
+  private readonly streamTopDownUpScratch = new THREE.Vector3(0, 0, -1);
   /** Look-ahead offset based on movement direction (world units). */
   private readonly cameraLookAhead = new THREE.Vector3(0, 0, 0);
   private readonly cameraLookAheadSmoothing = 8;
@@ -1343,6 +1447,10 @@ export class Game {
   private frustumSize: number;
   private zoomMin: number;
   private zoomMax: number;
+  /** Raised for large rooms so max zoom-out can frame the full base grid (see `zoomMaxForRoomBounds`). */
+  private roomZoomMax = DEFAULT_ZOOM_MAX;
+  /** Admins (and stream cinema) may zoom out / subscribe to wide map regions. */
+  private mapOverviewUnlocked = false;
   private zoomLocked = false;
   private zoomLockedFrustum: number | null = null;
   private readonly fogOfWar: FogOfWarPass;
@@ -1353,6 +1461,17 @@ export class Game {
   private readonly placementHintGeom: THREE.PlaneGeometry;
   private readonly placementHintMat: THREE.MeshBasicMaterial;
   private readonly placementHintMeshes = new Map<string, THREE.Mesh>();
+  /** Floor paint mode: white perimeter of the build zone (no fill overlay). */
+  private readonly floorBuildOutlineMat: THREE.LineBasicMaterial;
+  private floorBuildOutlineLines: THREE.LineSegments | null = null;
+  private readonly floorHoverOutlineValidMat: THREE.LineBasicMaterial;
+  private readonly floorHoverOutlineInvalidMat: THREE.LineBasicMaterial;
+  private floorHoverOutlineValidLines: THREE.LineSegments | null = null;
+  private floorHoverOutlineInvalidLines: THREE.LineSegments | null = null;
+  private readonly floorHoverPreviewGeom: THREE.PlaneGeometry;
+  private readonly floorHoverPreviewMat: THREE.MeshBasicMaterial;
+  private readonly floorHoverPreviewMeshes: THREE.Mesh[] = [];
+  private floorHoverPreviewTiles: Array<{ x: number; z: number }> = [];
   /** Gate tool: soft green/red on exit vs front neighbor tiles (matches server gate layout rules). */
   private gateFloorHintsActive = false;
   private repositionGateHint: {
@@ -1748,6 +1867,25 @@ export class Game {
       opacity: 0.14,
       depthWrite: false,
     });
+    this.floorBuildOutlineMat = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      depthWrite: false,
+    });
+    this.floorHoverOutlineValidMat = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      depthWrite: false,
+    });
+    this.floorHoverOutlineInvalidMat = new THREE.LineBasicMaterial({
+      color: 0xef4444,
+      depthWrite: false,
+    });
+    this.floorHoverPreviewGeom = new THREE.PlaneGeometry(1, 1);
+    this.floorHoverPreviewMat = new THREE.MeshBasicMaterial({
+      color: TERRAIN_TILE_EXTRA_COLOR,
+      transparent: true,
+      opacity: 0.62,
+      depthWrite: false,
+    });
     this.gateNeighborOkMat = new THREE.MeshBasicMaterial({
       color: 0x22c55e,
       transparent: true,
@@ -2094,6 +2232,7 @@ export class Game {
     this.roomId = msg.roomId;
     this.roomBounds = msg.roomBounds;
     registerClientRoomBounds(msg.roomId, msg.roomBounds);
+    this.syncRoomZoomMaxFromBounds(msg.roomBounds);
     this.doors = msg.doors.map((d) => ({ ...d }));
     if (
       msg.placeRadiusBlocks !== undefined &&
@@ -2137,7 +2276,9 @@ export class Game {
     this.roomEntrySpawnPickHandler = null;
     this.hideTrailImmediate();
     this.beginPathFadeOut();
-    this.syncWalkableFloorMeshes();
+    if (!roomUsesSpatialInterest(msg.roomBounds)) {
+      this.syncWalkableFloorMeshes();
+    }
     this.syncVoxelWordSign();
     this.refreshPathLine();
     this.syncPlacementRangeHints();
@@ -2249,6 +2390,77 @@ export class Game {
     return Math.max(lo, Math.min(hi, v));
   }
 
+  /**
+   * Ortho half-height for max zoom-out in a room.
+   * Hub (25 tiles) ≈ DEFAULT_ZOOM_MAX; large rooms scale up with diagonal span so the
+   * isometric diamond fits even when the camera follows a spawn near one edge.
+   */
+  private static zoomMaxForRoomBounds(bounds: RoomBounds): number {
+    const w = bounds.maxX - bounds.minX + 1;
+    const h = bounds.maxZ - bounds.minZ + 1;
+    const tiles = Math.max(w, h);
+    const perTile = DEFAULT_ZOOM_MAX / 25;
+    const halfDiag = Math.hypot(w, h) * 0.5;
+    const hubHalfDiag = 12.5 * Math.SQRT2;
+    const diagZoom = (halfDiag / hubHalfDiag) * DEFAULT_ZOOM_MAX;
+    const axisZoom = tiles * perTile;
+    return Math.max(DEFAULT_ZOOM_MAX, diagZoom, axisZoom * 1.85);
+  }
+
+  private effectiveZoomMax(): number {
+    let max = Math.max(this.zoomMax, this.roomZoomMax);
+    if (
+      !this.mapOverviewUnlocked &&
+      !this.streamPresentationActive &&
+      roomUsesSpatialInterest(this.roomBounds)
+    ) {
+      max = Math.min(
+        max,
+        this.frustumSizeForInterestHalfTiles(NON_ADMIN_MAX_INTEREST_HALF_TILES)
+      );
+    }
+    return max;
+  }
+
+  /** Ortho half-height matching a view-interest half-extent in tiles (inverse of {@link getViewInterestRect}). */
+  private frustumSizeForInterestHalfTiles(halfTiles: number): number {
+    return Math.max(
+      this.zoomMin,
+      2 * (halfTiles - VIEW_INTEREST_PADDING_TILES)
+    );
+  }
+
+  /** When false, large-room zoom-out and tile subscriptions stay near the player. */
+  setMapOverviewUnlocked(unlocked: boolean): void {
+    if (unlocked === this.mapOverviewUnlocked) return;
+    this.mapOverviewUnlocked = unlocked;
+    this.frustumSize = Game.clampZoom(
+      this.frustumSize,
+      this.zoomMin,
+      this.effectiveZoomMax(),
+      VIEW_FRUSTUM_SIZE
+    );
+    this.applyOrthographicFrustum();
+    this.lastViewInterestSig = "";
+    this.maybeReportViewInterest();
+    this.requestRender();
+  }
+
+  private syncRoomZoomMaxFromBounds(bounds: RoomBounds): void {
+    this.roomZoomMax = Game.zoomMaxForRoomBounds(bounds);
+    this.frustumSize = Game.clampZoom(
+      this.frustumSize,
+      this.zoomMin,
+      this.effectiveZoomMax(),
+      VIEW_FRUSTUM_SIZE
+    );
+    if (this.streamPresentationActive) {
+      this.resize();
+    } else {
+      this.applyOrthographicFrustum();
+    }
+  }
+
   private static readFogNumber(key: string, fallback: number): number {
     const raw = localStorage.getItem(key);
     if (raw === null) return fallback;
@@ -2304,7 +2516,7 @@ export class Game {
   }
 
   getZoomBounds(): { min: number; max: number } {
-    return { min: this.zoomMin, max: this.zoomMax };
+    return { min: this.zoomMin, max: this.effectiveZoomMax() };
   }
 
   setZoomLocked(locked: boolean, forcedFrustum?: number): void {
@@ -2319,10 +2531,388 @@ export class Game {
     this.zoomLockedFrustum = Game.clampZoom(
       target,
       this.zoomMin,
-      this.zoomMax,
+      this.effectiveZoomMax(),
       VIEW_FRUSTUM_SIZE
     );
     this.setZoomFrustumSize(this.zoomLockedFrustum, false);
+  }
+
+  setStreamPresentationActive(active: boolean): void {
+    if (active === this.streamPresentationActive) return;
+    this.streamPresentationActive = active;
+    if (active) {
+      this.fogEnabledBeforeStream = this.fogOfWar.getEnabled();
+      this.fogOfWar.setEnabled(false);
+      this.cameraLookAhead.set(0, 0, 0);
+      this.streamCameraPoseBlend = 0;
+      this.streamCameraPoseAnim = null;
+      this.streamInterestHalfW = 0;
+      this.streamInterestHalfH = 0;
+      this.streamInterestCenterOverride = null;
+      this.setStreamCameraMode("detached");
+    } else {
+      if (this.fogEnabledBeforeStream !== null) {
+        this.fogOfWar.setEnabled(this.fogEnabledBeforeStream);
+        this.fogEnabledBeforeStream = null;
+      }
+      this.setStreamCameraMode("followSelf");
+      this.streamPanEnabled = false;
+      this.streamCameraPoseBlend = 0;
+      this.streamCameraPoseAnim = null;
+      this.streamInterestHalfW = 0;
+      this.streamInterestHalfH = 0;
+      this.streamInterestCenterOverride = null;
+      this.zoomFrustumAnim = null;
+      this.lookAtAnim = null;
+    }
+    this.applyCameraPose();
+    this.resize();
+    this.tileHighlight.visible = false;
+    this.blockTopHighlight.visible = false;
+    this.clearFloorHoverVisuals();
+    this.applyIdenticonTransformToAllAvatars();
+    this.refreshAllNameLabelScales();
+    this.requestRender();
+  }
+
+  setStreamBubblesHidden(hidden: boolean): void {
+    this.streamBubblesHidden = hidden;
+    if (hidden) {
+      for (const addr of [...this.chatBubbleByAddress.keys()]) {
+        this.removeChatBubbleEntry(addr);
+      }
+      for (const addr of [...this.typingIndicatorByAddress.keys()]) {
+        this.removeTypingIndicator(addr);
+      }
+    }
+    this.requestRender();
+  }
+
+  isStreamPresentationActive(): boolean {
+    return this.streamPresentationActive;
+  }
+
+  /** 1 at isometric spotlight zoom; {@link STREAM_TOPDOWN_AVATAR_TILE_SPAN} at top-down overview. */
+  private streamAvatarDisplaySizeMul(): number {
+    if (!this.streamPresentationActive) return 1;
+    const topDown = 1 - this.streamCameraPoseBlend;
+    return 1 + (STREAM_TOPDOWN_AVATAR_TILE_SPAN - 1) * topDown;
+  }
+
+  private avatarIdenticonWorldDiameter(): number {
+    return (
+      AVATAR_SPHERE_RADIUS * 2 * this.identiconScale * this.streamAvatarDisplaySizeMul()
+    );
+  }
+
+  /** World XZ center of the current room base bounds (for stream overview framing). */
+  getRoomLookAtCenter(): { x: number; y: number; z: number } {
+    const b = this.roomBounds;
+    return {
+      x: (b.minX + b.maxX) / 2,
+      y: 0,
+      z: (b.minZ + b.maxZ) / 2,
+    };
+  }
+
+  /** Stream overview zoom — slightly inset on large rooms so pan can sweep edge-to-edge. */
+  getStreamOverviewFrustumSize(): number {
+    const max = this.effectiveZoomMax();
+    if (!this.streamPresentationActive) return max;
+    if (!roomUsesSpatialInterest(this.roomBounds)) return max;
+    return max * 0.52;
+  }
+
+  getStreamPanTune(): StreamPanTune {
+    return { ...this.streamPanTune };
+  }
+
+  setViewInterestReporter(
+    reporter: ((rect: ViewInterestRect) => void) | null
+  ): void {
+    this.viewInterestReporter = reporter;
+    this.lastViewInterestSig = "";
+  }
+
+  getViewInterestRect(): ViewInterestRect | null {
+    if (!roomUsesSpatialInterest(this.roomBounds)) return null;
+    const cx = this.streamInterestCenterOverride?.x ?? this.cameraLookAt.x;
+    const cz = this.streamInterestCenterOverride?.z ?? this.cameraLookAt.z;
+    const pad = VIEW_INTEREST_PADDING_TILES;
+    let halfW: number;
+    let halfH: number;
+    if (this.streamPresentationActive) {
+      const w = this.canvasHost.clientWidth;
+      const h = this.canvasHost.clientHeight;
+      const fit = this.getStreamFrustumHalfExtentsFinal(w, h);
+      halfW = fit.halfW + pad;
+      halfH = fit.halfH + pad;
+      this.streamInterestHalfW = Math.max(this.streamInterestHalfW, halfW);
+      this.streamInterestHalfH = Math.max(this.streamInterestHalfH, halfH);
+      halfW = this.streamInterestHalfW;
+      halfH = this.streamInterestHalfH;
+    } else {
+      const w = this.canvasHost.clientWidth;
+      const h = this.canvasHost.clientHeight;
+      const aspect = w > 0 && h > 0 ? w / h : 1;
+      halfH = this.frustumSize / 2 + pad;
+      halfW = halfH * aspect + pad;
+      if (!this.mapOverviewUnlocked) {
+        halfH = Math.min(halfH, NON_ADMIN_MAX_INTEREST_HALF_TILES);
+        halfW = Math.min(halfW, NON_ADMIN_MAX_INTEREST_HALF_TILES);
+      }
+    }
+    return { centerX: cx, centerZ: cz, halfW, halfH };
+  }
+
+  /** Before zoom-out, widen interest to cover the full room so cached tiles stay subscribed. */
+  expandStreamViewInterestForOverview(): void {
+    if (!this.streamPresentationActive || !roomUsesSpatialInterest(this.roomBounds)) {
+      return;
+    }
+    const b = this.roomBounds;
+    const pad = VIEW_INTEREST_PADDING_TILES;
+    const roomHalfW = (b.maxX - b.minX + 1) * 0.5 + pad;
+    const roomHalfH = (b.maxZ - b.minZ + 1) * 0.5 + pad;
+    this.streamInterestCenterOverride = {
+      x: (b.minX + b.maxX + 1) * 0.5,
+      z: (b.minZ + b.maxZ + 1) * 0.5,
+    };
+    this.streamInterestHalfW = Math.max(this.streamInterestHalfW, roomHalfW);
+    this.streamInterestHalfH = Math.max(this.streamInterestHalfH, roomHalfH);
+    this.lastViewInterestSig = "";
+    this.maybeReportViewInterest();
+  }
+
+  refreshStreamViewInterest(): void {
+    this.lastViewInterestSig = "";
+    this.maybeReportViewInterest();
+  }
+
+  private spatialStreamRetainLoaded(): boolean {
+    return (
+      this.streamPresentationActive &&
+      roomUsesSpatialInterest(this.roomBounds)
+    );
+  }
+
+  private maybeReportViewInterest(): void {
+    const reporter = this.viewInterestReporter;
+    if (!reporter) return;
+    const rect = this.getViewInterestRect();
+    if (!rect) return;
+    const sig = `${rect.centerX.toFixed(1)},${rect.centerZ.toFixed(1)},${rect.halfW.toFixed(1)},${rect.halfH.toFixed(1)}`;
+    const now = performance.now();
+    if (sig === this.lastViewInterestSig && now - this.lastViewInterestSentAt < 400) {
+      return;
+    }
+    this.lastViewInterestSig = sig;
+    this.lastViewInterestSentAt = now;
+    reporter(rect);
+  }
+
+  setStreamPanTune(partial: Partial<StreamPanTune>): void {
+    const prev = this.streamPanTune;
+    const next: StreamPanTune = {
+      speed:
+        partial.speed !== undefined && Number.isFinite(partial.speed)
+          ? Math.max(0.5, Math.min(40, partial.speed))
+          : prev.speed,
+      marginNorth:
+        partial.marginNorth !== undefined && Number.isFinite(partial.marginNorth)
+          ? Math.max(0, Math.min(200, partial.marginNorth))
+          : prev.marginNorth,
+      marginSouth:
+        partial.marginSouth !== undefined && Number.isFinite(partial.marginSouth)
+          ? Math.max(0, Math.min(200, partial.marginSouth))
+          : prev.marginSouth,
+      marginWest:
+        partial.marginWest !== undefined && Number.isFinite(partial.marginWest)
+          ? Math.max(0, Math.min(200, partial.marginWest))
+          : prev.marginWest,
+      marginEast:
+        partial.marginEast !== undefined && Number.isFinite(partial.marginEast)
+          ? Math.max(0, Math.min(200, partial.marginEast))
+          : prev.marginEast,
+    };
+    this.streamPanTune = next;
+    if (partial.speed !== undefined) {
+      const mag = Math.hypot(this.streamPanVelX, this.streamPanVelZ);
+      if (mag > 1e-6) {
+        const scale = next.speed / mag;
+        this.streamPanVelX *= scale;
+        this.streamPanVelZ *= scale;
+      }
+    }
+    this.requestRender();
+  }
+
+  getStreamPanDebugInfo(): StreamPanDebugInfo | null {
+    if (!this.streamPresentationActive) return null;
+    const w = this.canvasHost.clientWidth;
+    const h = this.canvasHost.clientHeight;
+    const { halfW, halfH } = this.getStreamFrustumHalfExtentsFinal(w, h);
+    if (halfW <= 0 || halfH <= 0) return null;
+    const lookX = this.cameraLookAt.x;
+    const lookZ = this.cameraLookAt.z;
+    const corners = this.streamViewCorners(lookX, lookZ, halfW, halfH);
+    const limits = this.streamPanLookAtLimits();
+    const room = this.streamRoomOuterBounds();
+    return {
+      lookX,
+      lookZ,
+      halfW,
+      halfH,
+      west: corners.west,
+      east: corners.east,
+      north: corners.north,
+      south: corners.south,
+      roomMinZ: room.minZ,
+      roomMaxZ: room.maxZ,
+      limitMinX: limits?.minX ?? lookX,
+      limitMaxX: limits?.maxX ?? lookX,
+      limitMinZ: limits?.minZ ?? lookZ,
+      limitMaxZ: limits?.maxZ ?? lookZ,
+      tune: this.getStreamPanTune(),
+    };
+  }
+
+  setStreamPanEnabled(
+    enabled: boolean,
+    opts?: { resetLookAt?: boolean }
+  ): void {
+    this.streamPanEnabled = enabled;
+    if (enabled) {
+      const resetLookAt = opts?.resetLookAt !== false;
+      if (resetLookAt) {
+        const c = this.getRoomLookAtCenter();
+        this.cameraLookAt.x = c.x;
+        this.cameraLookAt.z = c.z;
+      }
+      const speed = this.streamPanTune.speed;
+      const velMag = Math.hypot(this.streamPanVelX, this.streamPanVelZ);
+      if (resetLookAt || velMag < 0.01) {
+        const angle = Math.PI * 0.27;
+        this.streamPanVelX = Math.cos(angle) * speed;
+        this.streamPanVelZ = Math.sin(angle) * speed;
+      }
+      this.applyCameraPose();
+      this.applyOrthographicFrustum();
+    } else {
+      this.streamPanVelX = 0;
+      this.streamPanVelZ = 0;
+    }
+    this.requestRender();
+  }
+
+  setContinuousRender(enabled: boolean): void {
+    this.continuousRenderForced = enabled;
+    if (enabled) this.requestRender();
+  }
+
+  setStreamCameraMode(
+    mode: "followSelf" | "detached" | "followAddress",
+    followAddress?: string | null
+  ): void {
+    this.streamCameraMode = mode;
+    this.streamFollowAddress =
+      mode === "followAddress" ? (followAddress?.trim() || null) : null;
+  }
+
+  setCameraLookAtTarget(
+    x: number,
+    y: number,
+    z: number,
+    opts?: { instant?: boolean; durationMs?: number }
+  ): void {
+    const durationMs = opts?.durationMs ?? 0;
+    if (opts?.instant || durationMs <= 0) {
+      this.lookAtAnim = null;
+      this.cameraLookAt.set(x, y, z);
+      this.applyCameraPose();
+      this.requestRender();
+      return;
+    }
+    this.lookAtAnim = {
+      fromX: this.cameraLookAt.x,
+      fromY: this.cameraLookAt.y,
+      fromZ: this.cameraLookAt.z,
+      toX: x,
+      toY: y,
+      toZ: z,
+      startedAtMs: performance.now(),
+      durationMs,
+    };
+    this.requestRender();
+  }
+
+  /** Blend stream camera between top-down (0) and isometric (1). */
+  animateStreamCameraPoseTo(target: number, durationMs: number): void {
+    const to = Math.max(0, Math.min(1, target));
+    if (durationMs <= 0) {
+      this.streamCameraPoseAnim = null;
+      this.streamCameraPoseBlend = to;
+      this.applyCameraPose();
+      this.applyOrthographicFrustum();
+      this.applyIdenticonTransformToAllAvatars();
+      this.refreshChatBubbleVerticalPositions();
+      this.refreshAllTypingIndicatorLayouts();
+      this.requestRender();
+      return;
+    }
+    this.streamCameraPoseAnim = {
+      from: this.streamCameraPoseBlend,
+      to,
+      startedAtMs: performance.now(),
+      durationMs,
+    };
+    this.requestRender();
+  }
+
+  animateZoomFrustumTo(target: number, durationMs: number): void {
+    const to = Game.clampZoom(target, this.zoomMin, this.effectiveZoomMax(), VIEW_FRUSTUM_SIZE);
+    if (durationMs <= 0) {
+      this.zoomFrustumAnim = null;
+      this.frustumSize = to;
+      this.applyOrthographicFrustum();
+      this.refreshAllNameLabelScales();
+      this.refreshChatBubbleVerticalPositions();
+      this.refreshAllTypingIndicatorLayouts();
+      this.requestRender();
+      return;
+    }
+    this.zoomFrustumAnim = {
+      from: this.frustumSize,
+      to,
+      startedAtMs: performance.now(),
+      durationMs,
+    };
+    this.requestRender();
+  }
+
+  listFollowablePlayers(): Array<{
+    address: string;
+    displayName: string;
+    x: number;
+    y: number;
+    z: number;
+  }> {
+    const out: Array<{
+      address: string;
+      displayName: string;
+      x: number;
+      y: number;
+      z: number;
+    }> = [];
+    for (const [addr, g] of this.others) {
+      const t = this.targetPos.get(addr);
+      const x = t?.x ?? g.position.x;
+      const y = t?.y ?? g.position.y;
+      const z = t?.z ?? g.position.z;
+      const displayName = String(g.userData.displayName ?? "").trim();
+      out.push({ address: addr, displayName, x, y, z });
+    }
+    return out;
   }
 
   /** Uniform XY scale on shared 1×1 floor quads (reduces seam flicker when > 1). Persists in localStorage. */
@@ -2390,14 +2980,14 @@ export class Game {
     this.frustumSize = Game.clampZoom(
       this.frustumSize,
       this.zoomMin,
-      this.zoomMax,
+      this.effectiveZoomMax(),
       VIEW_FRUSTUM_SIZE
     );
     if (this.zoomLocked && this.zoomLockedFrustum !== null) {
       this.frustumSize = Game.clampZoom(
         this.zoomLockedFrustum,
         this.zoomMin,
-        this.zoomMax,
+        this.effectiveZoomMax(),
         VIEW_FRUSTUM_SIZE
       );
     }
@@ -2418,7 +3008,7 @@ export class Game {
     this.frustumSize = Game.clampZoom(
       target,
       this.zoomMin,
-      this.zoomMax,
+      this.effectiveZoomMax(),
       VIEW_FRUSTUM_SIZE
     );
     if (persist) {
@@ -2477,15 +3067,14 @@ export class Game {
 
   private applyIdenticonTransformToAllAvatars(): void {
     const e = this.getIdenticonEuler();
-    const s = this.identiconScale;
-    const d = AVATAR_SPHERE_RADIUS * 2 * s;
+    const d = this.avatarIdenticonWorldDiameter();
     const apply = (g: THREE.Group | null): void => {
       if (!g) return;
       const identicon = g.userData.identiconMesh as THREE.Sprite | undefined;
       if (identicon) {
         identicon.rotation.copy(e);
         identicon.scale.set(d, d, 1);
-        identicon.position.y = AVATAR_SPHERE_RADIUS * s;
+        identicon.position.y = d / 2;
       }
       this.updateAvatarNameLabelHeight(g);
     };
@@ -2710,9 +3299,20 @@ export class Game {
     const tw = nameSprite.userData.nameLabelTexW as number | undefined;
     const th = nameSprite.userData.nameLabelTexH as number | undefined;
     if (!tw || !th) return;
-    let worldH = this.pixelToWorldY(NAME_LABEL_SCREEN_HEIGHT_PX);
+    if (this.streamPresentationActive) {
+      nameSprite.visible = false;
+      return;
+    }
+    nameSprite.visible = true;
+    const screenH = this.streamPresentationActive
+      ? STREAM_NAME_LABEL_SCREEN_HEIGHT_PX
+      : NAME_LABEL_SCREEN_HEIGHT_PX;
+    const maxPx = this.streamPresentationActive
+      ? STREAM_NAME_LABEL_MAX_PX
+      : NAME_LABEL_MAX_PX;
+    let worldH = this.pixelToWorldY(screenH);
     let worldW = worldH * (tw / th);
-    const maxW = this.pixelToWorldX(NAME_LABEL_MAX_PX);
+    const maxW = this.pixelToWorldX(maxPx);
     if (worldW > maxW) {
       const s = maxW / worldW;
       worldW *= s;
@@ -2778,21 +3378,352 @@ export class Game {
     entry.sprite.scale.set(worldW, worldH, 1);
     
     // Position chat bubble above the avatar
-    const avatarTop = AVATAR_SPHERE_RADIUS * 2 * this.identiconScale;
+    const avatarTop = this.avatarIdenticonWorldDiameter();
     const ch = worldH;
     const gapAboveAvatar = 0.12;
     entry.sprite.position.y = avatarTop + gapAboveAvatar + ch / 2;
+  }
+
+  /** Large rooms need an asymmetric ortho frustum when zoomed out — symmetric half-extent clips the south diamond tip. */
+  private roomNeedsFrustumFit(): boolean {
+    const b = this.roomBounds;
+    const w = b.maxX - b.minX + 1;
+    const h = b.maxZ - b.minZ + 1;
+    return Math.max(w, h) > 40;
+  }
+
+  /**
+   * When zoomed out in a large room, expand left/right/top/bottom so every ground-boundary
+   * sample fits in camera view space. Camera pose is unchanged; only the projection shifts.
+   */
+  private tryExpandFrustumForRoomGround(
+    aspect: number,
+    halfHeight: number
+  ): { left: number; right: number; top: number; bottom: number } | null {
+    if (!this.roomNeedsFrustumFit()) return null;
+    if (halfHeight < this.effectiveZoomMax() * 0.65) return null;
+
+    this.applyCameraPose();
+    this.camera.updateMatrixWorld(true);
+    const inv = this.camera.matrixWorldInverse;
+    const p = this.frustumFitScratch;
+    const b = this.roomBounds;
+    const cx = (b.minX + b.maxX) * 0.5;
+    const cz = (b.minZ + b.maxZ) * 0.5;
+    const margin = 3;
+    const hx = 0.5;
+    const hz = 0.5;
+    const samples: Array<[number, number]> = [
+      [b.minX - hx, b.minZ - hz],
+      [b.maxX + hx, b.minZ - hz],
+      [b.minX - hx, b.maxZ + hz],
+      [b.maxX + hx, b.maxZ + hz],
+      [cx, b.minZ - hz],
+      [cx, b.maxZ + hz],
+      [b.minX - hx, cz],
+      [b.maxX + hx, cz],
+    ];
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const [wx, wz] of samples) {
+      p.set(wx, 0, wz);
+      p.applyMatrix4(inv);
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+
+    minX -= margin;
+    maxX += margin;
+    minY -= margin;
+    maxY += margin;
+
+    const halfW = halfHeight * aspect * 0.5;
+    const symLeft = -halfW;
+    const symRight = halfW;
+    const symTop = halfHeight * 0.5;
+    const symBottom = -halfHeight * 0.5;
+
+    return {
+      left: Math.min(symLeft, minX),
+      right: Math.max(symRight, maxX),
+      bottom: Math.min(symBottom, minY),
+      top: Math.max(symTop, maxY),
+    };
+  }
+
+  /**
+   * Stream top-down ortho half-extents in world units (before tile-edge ±0.5).
+   * Matches viewport aspect so pixels stay square.
+   */
+  private getStreamFrustumHalfExtentsWorld(): { halfW: number; halfH: number } {
+    const b = this.roomBounds;
+    const roomHalfW = (b.maxX - b.minX + 1) * 0.5;
+    const roomHalfH = (b.maxZ - b.minZ + 1) * 0.5;
+    const zoom = this.frustumSize / this.effectiveZoomMax();
+    let halfW = roomHalfW * zoom;
+    let halfH = roomHalfH * zoom;
+    const w = this.canvasHost.clientWidth;
+    const h = this.canvasHost.clientHeight;
+    const aspect = w > 0 && h > 0 ? w / h : 16 / 9;
+    const roomAspect = (roomHalfW * 2) / (roomHalfH * 2);
+    if (aspect > roomAspect) {
+      halfH = halfW / aspect;
+    } else if (aspect < roomAspect) {
+      halfW = halfH * aspect;
+    }
+    return { halfW, halfH };
+  }
+
+  private streamRoomOuterBounds(): {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  } {
+    const b = this.roomBounds;
+    return {
+      minX: b.minX - 0.5,
+      maxX: b.maxX + 0.5,
+      minZ: b.minZ - 0.5,
+      maxZ: b.maxZ + 0.5,
+    };
+  }
+
+  private streamPanContentBounds(): {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  } {
+    const t = this.streamPanTune;
+    const r = this.streamRoomOuterBounds();
+    return {
+      minX: r.minX + t.marginWest,
+      maxX: r.maxX - t.marginEast,
+      minZ: r.minZ + t.marginNorth,
+      maxZ: r.maxZ - t.marginSouth,
+    };
+  }
+
+  private streamViewCorners(
+    lookX: number,
+    lookZ: number,
+    halfW: number,
+    halfH: number
+  ): { west: number; east: number; north: number; south: number } {
+    return {
+      west: lookX - halfW + 0.5,
+      east: lookX + halfW - 0.5,
+      north: lookZ - halfH + 0.5,
+      south: lookZ + halfH - 0.5,
+    };
+  }
+
+  /** Look-at limits so a symmetric stream frustum never crosses the room outer edge. */
+  private streamPanLookAtLimits(): {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  } | null {
+    const { minX: x0, maxX: x1, minZ: z0, maxZ: z1 } =
+      this.streamPanContentBounds();
+    const w = this.canvasHost.clientWidth;
+    const h = this.canvasHost.clientHeight;
+    const { halfW, halfH } = this.getStreamFrustumHalfExtentsFinal(w, h);
+    if (halfW <= 0 || halfH <= 0) return null;
+
+    const minLookX = x0 + halfW - 0.5;
+    const maxLookX = x1 - halfW + 0.5;
+    const minLookZ = z0 + halfH - 0.5;
+    const maxLookZ = z1 - halfH + 0.5;
+    if (minLookX > maxLookX || minLookZ > maxLookZ) return null;
+
+    return {
+      minX: minLookX,
+      maxX: maxLookX,
+      minZ: minLookZ,
+      maxZ: maxLookZ,
+    };
+  }
+
+  /** Half-extents used for stream frustum + pan limits (includes crisp-tile shrink). */
+  private getStreamFrustumHalfExtentsFinal(
+    viewW: number,
+    viewH: number
+  ): { halfW: number; halfH: number } {
+    let { halfW, halfH } = this.getStreamFrustumHalfExtentsWorld();
+    if (viewW > 0 && viewH > 0) {
+      const worldW = Math.max(1, 2 * halfW - 1);
+      const worldH = Math.max(1, 2 * halfH - 1);
+      const pxPerUnit = Math.max(
+        1,
+        Math.floor(Math.min(viewW / worldW, viewH / worldH))
+      );
+      const idealW = viewW / pxPerUnit;
+      const idealH = viewH / pxPerUnit;
+      if (idealW < worldW || idealH < worldH) {
+        const scale = Math.min(idealW / worldW, idealH / worldH, 1);
+        halfW *= scale;
+        halfH *= scale;
+      }
+    }
+    return { halfW, halfH };
+  }
+
+  private clampStreamLookAtToRoom(
+    lookX: number,
+    lookZ: number,
+    halfW: number,
+    halfH: number
+  ): { x: number; z: number } {
+    const { minX: x0, maxX: x1, minZ: z0, maxZ: z1 } =
+      this.streamPanContentBounds();
+    const minLookX = x0 + halfW - 0.5;
+    const maxLookX = x1 - halfW + 0.5;
+    const minLookZ = z0 + halfH - 0.5;
+    const maxLookZ = z1 - halfH + 0.5;
+    return {
+      x: Math.max(minLookX, Math.min(maxLookX, lookX)),
+      z: Math.max(minLookZ, Math.min(maxLookZ, lookZ)),
+    };
+  }
+
+  /**
+   * Build stream ortho in camera space (look-at is the frustum center).
+   */
+  private buildStreamOrthoFrustum(
+    viewW: number,
+    viewH: number
+  ): { left: number; right: number; top: number; bottom: number } {
+    const { halfW, halfH } = this.getStreamFrustumHalfExtentsFinal(viewW, viewH);
+    return {
+      left: -halfW + 0.5,
+      right: halfW - 0.5,
+      top: halfH - 0.5,
+      bottom: -halfH + 0.5,
+    };
+  }
+
+  /** Integer pixels per tile so stream capture stays sharp when the canvas is scaled to the window. */
+  private applyStreamRenderSize(viewW: number, viewH: number): void {
+    if (viewW < 1 || viewH < 1) return;
+    this.renderer.setPixelRatio(1);
+    this.renderer.setSize(viewW, viewH, false);
+    const el = this.renderer.domElement;
+    el.style.width = `${viewW}px`;
+    el.style.height = `${viewH}px`;
+    el.style.objectFit = "";
+    el.style.objectPosition = "";
+  }
+
+  private applyStreamOrthographicFrustum(viewW: number, viewH: number): void {
+    this.applyCameraPose();
+    const aspect = viewW > 0 && viewH > 0 ? viewW / viewH : 16 / 9;
+    const blend = this.streamCameraPoseBlend;
+    const streamFit = this.buildStreamOrthoFrustum(viewW, viewH);
+    const f = this.frustumSize;
+    const isoLeft = (f * aspect) / -2;
+    const isoRight = (f * aspect) / 2;
+    const isoTop = f / 2;
+    const isoBottom = f / -2;
+    if (blend <= 0) {
+      this.camera.left = streamFit.left;
+      this.camera.right = streamFit.right;
+      this.camera.top = streamFit.top;
+      this.camera.bottom = streamFit.bottom;
+    } else if (blend >= 1) {
+      this.camera.left = isoLeft;
+      this.camera.right = isoRight;
+      this.camera.top = isoTop;
+      this.camera.bottom = isoBottom;
+    } else {
+      this.camera.left = streamFit.left + (isoLeft - streamFit.left) * blend;
+      this.camera.right = streamFit.right + (isoRight - streamFit.right) * blend;
+      this.camera.top = streamFit.top + (isoTop - streamFit.top) * blend;
+      this.camera.bottom =
+        streamFit.bottom + (isoBottom - streamFit.bottom) * blend;
+    }
+    this.camera.updateProjectionMatrix();
+  }
+
+  private updateStreamPan(dt: number): void {
+    if (!this.streamPanEnabled || !this.streamPresentationActive) return;
+    if (this.streamCameraMode !== "detached") return;
+    if (this.lookAtAnim || this.zoomFrustumAnim) return;
+
+    const limits = this.streamPanLookAtLimits();
+    if (!limits) return;
+
+    let lookX = this.cameraLookAt.x + this.streamPanVelX * dt;
+    let lookZ = this.cameraLookAt.z + this.streamPanVelZ * dt;
+
+    lookX = Math.max(limits.minX, Math.min(limits.maxX, lookX));
+    lookZ = Math.max(limits.minZ, Math.min(limits.maxZ, lookZ));
+
+    if (lookX <= limits.minX + 1e-5 && this.streamPanVelX < 0) {
+      this.streamPanVelX *= -1;
+    }
+    if (lookX >= limits.maxX - 1e-5 && this.streamPanVelX > 0) {
+      this.streamPanVelX *= -1;
+    }
+    if (lookZ <= limits.minZ + 1e-5 && this.streamPanVelZ < 0) {
+      this.streamPanVelZ *= -1;
+    }
+    if (lookZ >= limits.maxZ - 1e-5 && this.streamPanVelZ > 0) {
+      this.streamPanVelZ *= -1;
+    }
+
+    if (
+      Math.abs(lookX - this.cameraLookAt.x) < 0.0005 &&
+      Math.abs(lookZ - this.cameraLookAt.z) < 0.0005
+    ) {
+      return;
+    }
+
+    this.cameraLookAt.x = lookX;
+    this.cameraLookAt.z = lookZ;
+    this.applyCameraPose();
+    this.applyOrthographicFrustum();
+    this.requestRender();
+  }
+
+  private resetStreamRenderSize(viewW: number, viewH: number, dpr: number): void {
+    const el = this.renderer.domElement;
+    el.style.width = "";
+    el.style.height = "";
+    el.style.objectFit = "";
+    el.style.objectPosition = "";
+    this.renderer.setPixelRatio(dpr);
+    this.renderer.setSize(viewW, viewH, false);
   }
 
   private applyOrthographicFrustum(): void {
     const w = this.canvasHost.clientWidth;
     const h = this.canvasHost.clientHeight;
     const aspect = w > 0 && h > 0 ? w / h : 16 / 9;
+    if (this.streamPresentationActive) {
+      this.applyStreamOrthographicFrustum(w, h);
+      return;
+    }
     const f = this.frustumSize;
-    this.camera.left = (f * aspect) / -2;
-    this.camera.right = (f * aspect) / 2;
-    this.camera.top = f / 2;
-    this.camera.bottom = f / -2;
+    const expanded = this.tryExpandFrustumForRoomGround(aspect, f);
+    if (expanded) {
+      this.camera.left = expanded.left;
+      this.camera.right = expanded.right;
+      this.camera.top = expanded.top;
+      this.camera.bottom = expanded.bottom;
+    } else {
+      this.camera.left = (f * aspect) / -2;
+      this.camera.right = (f * aspect) / 2;
+      this.camera.top = f / 2;
+      this.camera.bottom = f / -2;
+    }
     this.camera.updateProjectionMatrix();
   }
 
@@ -2890,7 +3821,7 @@ export class Game {
 
   private readonly onWheel = (e: WheelEvent): void => {
     e.preventDefault();
-    if (this.zoomLocked) return;
+    if (this.zoomLocked || this.streamPresentationActive) return;
     const scale = Math.exp(-e.deltaY * 0.0015);
     const next = this.frustumSize / scale;
     this.setZoomFrustumSize(next);
@@ -5123,6 +6054,41 @@ export class Game {
     return this.buildMode;
   }
 
+  setStreamObserverMode(on: boolean): void {
+    if (on === this.streamObserverMode) return;
+    this.streamObserverMode = on;
+    if (on) {
+      this.setBuildMode(false);
+      this.setFloorExpandMode(false);
+      this.tileHighlight.visible = false;
+      this.blockTopHighlight.visible = false;
+      this.clearFloorHoverVisuals();
+      if (this.selfMesh) {
+        this.disposeAvatarGroup(this.selfMesh);
+        this.scene.remove(this.selfMesh);
+        this.selfMesh = null;
+      }
+      this.selfTargetPos = null;
+    }
+    this.syncPlacementRangeHints();
+    this.requestRender();
+  }
+
+  isStreamObserverMode(): boolean {
+    return this.streamObserverMode;
+  }
+
+  private tileWithinPlaceRadius(tx: number, tz: number): boolean {
+    if (!this.selfMesh || this.placeRadiusBlocks <= 0) return false;
+    const px = this.selfMesh.position.x;
+    const pz = this.selfMesh.position.z;
+    const stand = snapFloorTile(px, pz);
+    return (
+      Math.abs(tx - stand.x) <= this.placeRadiusBlocks &&
+      Math.abs(tz - stand.y) <= this.placeRadiusBlocks
+    );
+  }
+
   setFloorExpandMode(on: boolean): void {
     this.floorExpandMode = on;
     if (on) {
@@ -5139,6 +6105,7 @@ export class Game {
     } else {
       this.roomEntrySpawnPickHandler = null;
       this.clearFloorBrushPreviewTiles();
+      this.clearFloorHoverVisuals();
     }
     this.syncHighlightColor();
     this.syncPlacementRangeHints();
@@ -5153,6 +6120,10 @@ export class Game {
   setFloorPlacementColorRgb(rgb: number): void {
     this.floorPlacementColorRgb = clampColorRgb(rgb);
     this.floorBrushPreviewValidMat.color.setHex(this.floorPlacementColorRgb);
+    this.floorHoverPreviewMat.color.setHex(this.floorPlacementColorRgb);
+    if (this.floorHoverPreviewTiles.length > 0) {
+      this.syncFloorHoverColorPreview(this.floorHoverPreviewTiles);
+    }
     this.syncHighlightColor();
     this.requestRender(80);
   }
@@ -5205,7 +6176,53 @@ export class Game {
     this.setRoomSceneBackground({ hueDeg, neutral: null });
   }
 
-  /** Extra walkable tiles outside the core grid (server-synced). */
+  /** Welcome batch — one floor mesh pass for large spatial rooms (e.g. Pixel). */
+  applyWelcomeFloorPayload(opts: {
+    extraFloorTiles?: readonly { x: number; z: number; colorRgb?: number }[];
+    baseFloorColorTiles?: readonly { x: number; z: number; colorRgb?: number }[];
+    removedBaseFloorTiles?: readonly { x: number; z: number }[];
+    spawnX: number;
+    spawnZ: number;
+  }): void {
+    this.extraFloorKeys.clear();
+    this.extraFloorColorByKey.clear();
+    for (const t of opts.extraFloorTiles ?? []) {
+      const k = tileKey(t.x, t.z);
+      this.extraFloorKeys.add(k);
+      this.extraFloorColorByKey.set(
+        k,
+        t.colorRgb !== undefined
+          ? clampColorRgb(t.colorRgb)
+          : TERRAIN_TILE_EXTRA_COLOR
+      );
+    }
+    this.baseFloorColorByKey.clear();
+    for (const t of opts.baseFloorColorTiles ?? []) {
+      if (t.colorRgb === undefined) continue;
+      this.baseFloorColorByKey.set(
+        tileKey(t.x, t.z),
+        clampColorRgb(t.colorRgb)
+      );
+    }
+    this.removedBaseFloorKeys.clear();
+    for (const t of opts.removedBaseFloorTiles ?? []) {
+      this.removedBaseFloorKeys.add(tileKey(t.x, t.z));
+    }
+    if (roomUsesSpatialInterest(this.roomBounds)) {
+      const chunkKeys = interestChunksFromRect({
+        centerX: opts.spawnX,
+        centerZ: opts.spawnZ,
+        halfW: DEFAULT_INTEREST_HALF_TILES,
+        halfH: DEFAULT_INTEREST_HALF_TILES,
+      });
+      this.syncWalkableFloorChunkKeys(chunkKeys);
+    } else {
+      this.syncWalkableFloorMeshes();
+    }
+    this.refreshPathLine();
+    this.syncPlacementRangeHints();
+  }
+
   setExtraFloorTiles(
     tiles: readonly { x: number; z: number; colorRgb?: number }[]
   ): void {
@@ -5221,7 +6238,18 @@ export class Game {
           : TERRAIN_TILE_EXTRA_COLOR
       );
     }
-    this.syncWalkableFloorMeshes();
+    if (roomUsesSpatialInterest(this.roomBounds)) {
+      const chunkKeys = interestChunksForTileKeys([
+        ...this.extraFloorKeys,
+        ...this.baseFloorColorByKey.keys(),
+        ...this.removedBaseFloorKeys,
+      ]);
+      if (chunkKeys.size > 0) {
+        this.syncWalkableFloorChunkKeys(chunkKeys);
+      }
+    } else {
+      this.syncWalkableFloorMeshes();
+    }
     this.refreshPathLine();
     this.syncPlacementRangeHints();
   }
@@ -5231,9 +6259,11 @@ export class Game {
     add: readonly { x: number; z: number; colorRgb?: number }[],
     remove: readonly string[]
   ): void {
-    for (const k of remove) {
-      this.extraFloorKeys.delete(k);
-      this.extraFloorColorByKey.delete(k);
+    if (!this.spatialStreamRetainLoaded()) {
+      for (const k of remove) {
+        this.extraFloorKeys.delete(k);
+        this.extraFloorColorByKey.delete(k);
+      }
     }
     for (const t of add) {
       const k = tileKey(t.x, t.z);
@@ -5245,7 +6275,10 @@ export class Game {
           : TERRAIN_TILE_EXTRA_COLOR
       );
     }
-    this.syncWalkableFloorMeshes();
+    this.syncWalkableFloorTiles([
+      ...remove,
+      ...add.map((t) => tileKey(t.x, t.z)),
+    ]);
     this.refreshPathLine();
     this.syncPlacementRangeHints();
   }
@@ -5260,21 +6293,43 @@ export class Game {
       if (t.colorRgb === undefined) continue;
       this.baseFloorColorByKey.set(k, clampColorRgb(t.colorRgb));
     }
-    this.syncWalkableFloorMeshes();
+    if (roomUsesSpatialInterest(this.roomBounds)) {
+      const chunkKeys = interestChunksForTileKeys([
+        ...this.baseFloorColorByKey.keys(),
+      ]);
+      if (chunkKeys.size > 0) {
+        this.syncWalkableFloorChunkKeys(chunkKeys);
+      }
+    } else {
+      this.syncWalkableFloorMeshes();
+    }
   }
 
   applyBaseFloorColorDelta(
     add: readonly { x: number; z: number; colorRgb?: number }[],
-    remove: readonly string[]
+    remove: readonly string[],
+    loadChunks?: readonly string[]
   ): void {
-    for (const k of remove) {
+    const effectiveRemove = this.spatialStreamRetainLoaded() ? [] : remove;
+    for (const k of effectiveRemove) {
       this.baseFloorColorByKey.delete(k);
     }
     for (const t of add) {
       if (t.colorRgb === undefined) continue;
       this.baseFloorColorByKey.set(tileKey(t.x, t.z), clampColorRgb(t.colorRgb));
     }
-    this.syncWalkableFloorMeshes();
+    if (
+      loadChunks &&
+      loadChunks.length > 0 &&
+      roomUsesSpatialInterest(this.roomBounds)
+    ) {
+      this.syncWalkableFloorChunkKeys(new Set(loadChunks));
+      return;
+    }
+    this.syncWalkableFloorTiles([
+      ...effectiveRemove,
+      ...add.map((t) => tileKey(t.x, t.z)),
+    ]);
   }
 
   setRemovedBaseFloorTiles(tiles: readonly { x: number; z: number }[]): void {
@@ -5282,20 +6337,30 @@ export class Game {
     for (const t of tiles) {
       this.removedBaseFloorKeys.add(tileKey(t.x, t.z));
     }
-    this.syncWalkableFloorMeshes();
+    if (roomUsesSpatialInterest(this.roomBounds)) {
+      const chunkKeys = interestChunksForTileKeys([
+        ...this.removedBaseFloorKeys,
+      ]);
+      if (chunkKeys.size > 0) {
+        this.syncWalkableFloorChunkKeys(chunkKeys);
+      }
+    } else {
+      this.syncWalkableFloorMeshes();
+    }
     this.refreshPathLine();
     this.syncPlacementRangeHints();
   }
 
   applyRemovedBaseFloorDelta(add: readonly string[], remove: readonly string[]): void {
-    for (const k of remove) {
+    const effectiveRemove = this.spatialStreamRetainLoaded() ? [] : remove;
+    for (const k of effectiveRemove) {
       this.removedBaseFloorKeys.delete(k);
     }
     for (const k of add) {
       this.removedBaseFloorKeys.add(k);
       this.baseFloorColorByKey.delete(k);
     }
-    this.syncWalkableFloorMeshes();
+    this.syncWalkableFloorTiles([...effectiveRemove, ...add]);
     this.refreshPathLine();
     this.syncPlacementRangeHints();
   }
@@ -6154,15 +7219,17 @@ export class Game {
     remove: readonly string[]
   ): void {
     // Remove tiles first so that replacements don't leave stale blocking keys.
-    for (const k of remove) {
-      const existing = this.placedObjects.get(k);
-      if (!existing) continue;
-      if (!existing.passable && !existing.ramp) {
-        const [rx, rz, ryRaw] = k.split(",").map(Number);
-        const ry = Number.isFinite(ryRaw) ? Math.floor(ryRaw ?? 0) : 0;
-        if (ry === 0) this.blockingTileKeys.delete(tileKey(rx!, rz!));
+    if (!this.spatialStreamRetainLoaded()) {
+      for (const k of remove) {
+        const existing = this.placedObjects.get(k);
+        if (!existing) continue;
+        if (!existing.passable && !existing.ramp) {
+          const [rx, rz, ryRaw] = k.split(",").map(Number);
+          const ry = Number.isFinite(ryRaw) ? Math.floor(ryRaw ?? 0) : 0;
+          if (ry === 0) this.blockingTileKeys.delete(tileKey(rx!, rz!));
+        }
+        this.placedObjects.delete(k);
       }
-      this.placedObjects.delete(k);
     }
 
     for (const t of add) {
@@ -6241,19 +7308,241 @@ export class Game {
       }
     }
 
-    this.syncBlockMeshes();
-    this.refreshPathLine();
-    this.syncPlacementRangeHints();
+    const changedKeys = new Set<string>(remove);
+    for (const t of add) {
+      const y = Math.max(0, Math.min(2, Math.floor(t.y ?? 0)));
+      changedKeys.add(blockKey(t.x, t.z, y));
+    }
+    this.syncBlockMeshesForKeys(changedKeys);
+    if (!this.streamPresentationActive) {
+      this.refreshPathLine();
+      this.syncPlacementRangeHints();
+    }
     this.markSceneMutation(`applyObstaclesDelta:add${add.length}:remove${remove.length}`);
   }
 
   /** Floor tiles where a new block can be placed (within server place radius, empty, walkable). */
+  private clearFloorHoverPreview(): void {
+    for (const m of this.floorHoverPreviewMeshes) {
+      m.visible = false;
+    }
+    this.floorHoverPreviewTiles = [];
+  }
+
+  private clearFloorHoverVisuals(): void {
+    this.clearFloorHoverOutline();
+    this.clearFloorHoverPreview();
+  }
+
+  private syncFloorHoverColorPreview(
+    tiles: readonly { x: number; z: number }[]
+  ): void {
+    this.floorHoverPreviewMat.color.setHex(this.floorPlacementColorRgb);
+    const validTiles = tiles.filter((t) => this.canPaintFloorTileAt(t.x, t.z));
+    this.floorHoverPreviewTiles = validTiles.map((t) => ({ x: t.x, z: t.z }));
+    while (this.floorHoverPreviewMeshes.length < validTiles.length) {
+      const m = new THREE.Mesh(
+        this.floorHoverPreviewGeom,
+        this.floorHoverPreviewMat
+      );
+      m.rotation.x = -Math.PI / 2;
+      m.renderOrder = 2;
+      this.scene.add(m);
+      this.floorHoverPreviewMeshes.push(m);
+    }
+    for (let i = 0; i < validTiles.length; i++) {
+      const m = this.floorHoverPreviewMeshes[i]!;
+      const t = validTiles[i]!;
+      m.position.set(t.x, 0.026, t.z);
+      m.visible = true;
+    }
+    for (let i = validTiles.length; i < this.floorHoverPreviewMeshes.length; i++) {
+      this.floorHoverPreviewMeshes[i]!.visible = false;
+    }
+  }
+
+  private syncFloorHoverVisuals(
+    tiles: readonly { x: number; z: number }[]
+  ): void {
+    this.syncFloorHoverOutline(tiles);
+    this.syncFloorHoverColorPreview(tiles);
+  }
+
+  private clearFloorHoverOutline(): void {
+    if (this.floorHoverOutlineValidLines) {
+      this.scene.remove(this.floorHoverOutlineValidLines);
+      this.floorHoverOutlineValidLines.geometry.dispose();
+      this.floorHoverOutlineValidLines = null;
+    }
+    if (this.floorHoverOutlineInvalidLines) {
+      this.scene.remove(this.floorHoverOutlineInvalidLines);
+      this.floorHoverOutlineInvalidLines.geometry.dispose();
+      this.floorHoverOutlineInvalidLines = null;
+    }
+  }
+
+  private pushTileSquareOutlineSegments(
+    segments: number[],
+    tx: number,
+    tz: number,
+    y: number
+  ): void {
+    segments.push(
+      tx - 0.5,
+      y,
+      tz - 0.5,
+      tx + 0.5,
+      y,
+      tz - 0.5,
+      tx + 0.5,
+      y,
+      tz - 0.5,
+      tx + 0.5,
+      y,
+      tz + 0.5,
+      tx + 0.5,
+      y,
+      tz + 0.5,
+      tx - 0.5,
+      y,
+      tz + 0.5,
+      tx - 0.5,
+      y,
+      tz + 0.5,
+      tx - 0.5,
+      y,
+      tz - 0.5
+    );
+  }
+
+  private syncFloorHoverOutline(
+    tiles: readonly { x: number; z: number }[]
+  ): void {
+    this.clearFloorHoverOutline();
+    if (tiles.length === 0) return;
+    const y = 0.028;
+    const validSegs: number[] = [];
+    const invalidSegs: number[] = [];
+    for (const t of tiles) {
+      const target = this.canPaintFloorTileAt(t.x, t.z) ? validSegs : invalidSegs;
+      this.pushTileSquareOutlineSegments(target, t.x, t.z, y);
+    }
+    if (validSegs.length > 0) {
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(validSegs, 3)
+      );
+      const lines = new THREE.LineSegments(geom, this.floorHoverOutlineValidMat);
+      lines.renderOrder = 3;
+      this.scene.add(lines);
+      this.floorHoverOutlineValidLines = lines;
+    }
+    if (invalidSegs.length > 0) {
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(invalidSegs, 3)
+      );
+      const lines = new THREE.LineSegments(geom, this.floorHoverOutlineInvalidMat);
+      lines.renderOrder = 3;
+      this.scene.add(lines);
+      this.floorHoverOutlineInvalidLines = lines;
+    }
+  }
+
+  private clearFloorBuildRangeOutlines(): void {
+    if (this.floorBuildOutlineLines) {
+      this.scene.remove(this.floorBuildOutlineLines);
+      this.floorBuildOutlineLines.geometry.dispose();
+      this.floorBuildOutlineLines = null;
+    }
+  }
+
+  private floorBuildTileInRange(
+    tx: number,
+    tz: number,
+    px: number,
+    pz: number,
+    radius: number
+  ): boolean {
+    const stand = snapFloorTile(px, pz);
+    if (
+      Math.abs(tx - stand.x) > radius ||
+      Math.abs(tz - stand.y) > radius
+    ) {
+      return false;
+    }
+    return this.floorTilePaintable(tx, tz);
+  }
+
+  /** White square-tile edges on the outside of the paintable build region only. */
+  private syncFloorBuildPerimeterOutline(
+    px: number,
+    pz: number,
+    radius: number
+  ): void {
+    const stand = snapFloorTile(px, pz);
+    const minX = stand.x - radius;
+    const maxX = stand.x + radius;
+    const minZ = stand.y - radius;
+    const maxZ = stand.y + radius;
+    const inRange = new Set<string>();
+    for (let tx = minX; tx <= maxX; tx++) {
+      for (let tz = minZ; tz <= maxZ; tz++) {
+        if (!this.floorBuildTileInRange(tx, tz, px, pz, radius)) continue;
+        inRange.add(tileKey(tx, tz));
+      }
+    }
+    if (inRange.size === 0) return;
+
+    const y = 0.022;
+    const segments: number[] = [];
+    const has = (tx: number, tz: number) => inRange.has(tileKey(tx, tz));
+
+    for (const k of inRange) {
+      const parts = k.split(",").map(Number);
+      const tx = parts[0];
+      const tz = parts[1];
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) continue;
+      if (!has(tx - 1, tz)) {
+        segments.push(tx - 0.5, y, tz - 0.5, tx - 0.5, y, tz + 0.5);
+      }
+      if (!has(tx + 1, tz)) {
+        segments.push(tx + 0.5, y, tz - 0.5, tx + 0.5, y, tz + 0.5);
+      }
+      if (!has(tx, tz - 1)) {
+        segments.push(tx - 0.5, y, tz - 0.5, tx + 0.5, y, tz - 0.5);
+      }
+      if (!has(tx, tz + 1)) {
+        segments.push(tx - 0.5, y, tz + 0.5, tx + 0.5, y, tz + 0.5);
+      }
+    }
+
+    if (segments.length === 0) return;
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(segments, 3)
+    );
+    const lines = new THREE.LineSegments(geom, this.floorBuildOutlineMat);
+    lines.renderOrder = 2;
+    this.scene.add(lines);
+    this.floorBuildOutlineLines = lines;
+  }
+
   private syncPlacementRangeHints(): void {
     for (const [, m] of this.placementHintMeshes) {
       this.scene.remove(m);
     }
     this.placementHintMeshes.clear();
-    if (!this.buildMode || !this.selfMesh || this.placeRadiusBlocks <= 0) {
+    this.clearFloorBuildRangeOutlines();
+    if (
+      this.streamPresentationActive ||
+      this.streamObserverMode ||
+      !this.selfMesh ||
+      this.placeRadiusBlocks <= 0
+    ) {
       return;
     }
     const R = this.placeRadiusBlocks;
@@ -6264,34 +7553,39 @@ export class Game {
     const maxX = Math.ceil(px + R) + 1;
     const minZ = Math.floor(pz - R) - 1;
     const maxZ = Math.ceil(pz + R) + 1;
-    for (let tx = minX; tx <= maxX; tx++) {
-      for (let tz = minZ; tz <= maxZ; tz++) {
-        if (Math.hypot(px - tx, pz - tz) > R + 1e-6) continue;
-        const k = tileKey(tx, tz);
-        if (this.doorTileKeys.has(k)) continue;
-        if (
-          !floorWalkableTerrain(
-            tx,
-            tz,
-            this.placedObjects,
-            this.extraFloorKeys,
-            this.roomId,
-            this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined
-          )
-        ) {
-          continue;
+    if (this.buildMode) {
+      for (let tx = minX; tx <= maxX; tx++) {
+        for (let tz = minZ; tz <= maxZ; tz++) {
+          if (Math.hypot(px - tx, pz - tz) > R + 1e-6) continue;
+          const k = tileKey(tx, tz);
+          if (this.doorTileKeys.has(k)) continue;
+          if (
+            !floorWalkableTerrain(
+              tx,
+              tz,
+              this.placedObjects,
+              this.extraFloorKeys,
+              this.roomId,
+              this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined
+            )
+          ) {
+            continue;
+          }
+          if (this.nextOpenLevelAt(tx, tz) === null) continue;
+          if (this.hubNoBuildTile(tx, tz)) continue;
+          if (tx === here.x && tz === here.y) continue;
+          const mesh = new THREE.Mesh(this.placementHintGeom, this.placementHintMat);
+          mesh.rotation.x = -Math.PI / 2;
+          mesh.position.set(tx, 0.018, tz);
+          mesh.renderOrder = 1;
+          this.scene.add(mesh);
+          this.placementHintMeshes.set(k, mesh);
         }
-        if (this.nextOpenLevelAt(tx, tz) === null) continue;
-        if (this.hubNoBuildTile(tx, tz)) continue;
-        if (tx === here.x && tz === here.y) continue;
-        const mesh = new THREE.Mesh(this.placementHintGeom, this.placementHintMat);
-        mesh.rotation.x = -Math.PI / 2;
-        mesh.position.set(tx, 0.018, tz);
-        mesh.renderOrder = 1;
-        this.scene.add(mesh);
-        this.placementHintMeshes.set(k, mesh);
       }
+      return;
     }
+    if (!this.floorExpandMode) return;
+    this.syncFloorBuildPerimeterOutline(px, pz, R);
   }
 
   private syncHighlightColor(): void {
@@ -7175,6 +8469,7 @@ export class Game {
 
   private tryRemoveFloorTileAt(x: number, z: number): boolean {
     if (!this.floorExpandMode || !this.removeExtraFloorHandler) return false;
+    if (!this.tileWithinPlaceRadius(x, z)) return false;
     const k = tileKey(x, z);
     if (this.extraFloorKeys.has(k) && !isBaseTile(x, z, this.roomId)) {
       if (this.hasAnyBlockAtTile(x, z)) return false;
@@ -7199,6 +8494,11 @@ export class Game {
 
   private canPaintFloorTileAt(x: number, z: number): boolean {
     if (!this.floorExpandMode || this.roomEntrySpawnPickHandler) return false;
+    if (!this.floorTilePaintable(x, z)) return false;
+    return this.tileWithinPlaceRadius(x, z);
+  }
+
+  private floorTilePaintable(x: number, z: number): boolean {
     const k = tileKey(x, z);
 
     if (this.isFloorRecolorTarget(x, z)) {
@@ -7217,6 +8517,7 @@ export class Game {
 
   private tryPlaceFloorTileAt(x: number, z: number): boolean {
     if (!this.floorExpandMode || !this.placeExtraFloorHandler) return false;
+    if (this.streamObserverMode) return false;
     const tiles = floorBrushTiles(x, z, this.floorBrushSize);
     const hasValid = tiles.some((t) => this.canPaintFloorTileAt(t.x, t.z));
     if (!hasValid) return false;
@@ -7234,9 +8535,11 @@ export class Game {
     if (!t) {
       this.tileHighlight.visible = false;
       this.clearFloorBrushPreviewTiles();
+      this.clearFloorHoverVisuals();
       return;
     }
     if (this.roomEntrySpawnPickHandler) {
+      this.clearFloorHoverVisuals();
       this.clearFloorBrushPreviewTiles();
       this.tileHighlightMat.color.setHex(
         this.tileWalkable(t) ? 0x34d399 : 0xef4444
@@ -7245,15 +8548,13 @@ export class Game {
       this.tileHighlight.visible = true;
       return;
     }
-    if (this.floorBrushSize === 1) {
-      this.clearFloorBrushPreviewTiles();
-      this.tileHighlightMat.color.setHex(this.floorPlacementColorRgb);
-      this.tileHighlight.position.set(t.x, 0.03, t.y);
-      this.tileHighlight.visible = true;
-      return;
-    }
     this.tileHighlight.visible = false;
-    this.syncFloorBrushPreviewTiles(floorBrushTiles(t.x, t.y, this.floorBrushSize));
+    this.clearFloorBrushPreviewTiles();
+    const tiles =
+      this.floorBrushSize === 1
+        ? [{ x: t.x, z: t.y }]
+        : floorBrushTiles(t.x, t.y, this.floorBrushSize);
+    this.syncFloorHoverVisuals(tiles);
   }
 
   /** Touch / coarse pointer: same tile toggles place vs remove. */
@@ -7278,6 +8579,7 @@ export class Game {
    * context menu Mine), not from this deferred walk path.
    */
   private tryExecuteWalkNavigationAt(clientX: number, clientY: number): void {
+    if (this.streamObserverMode) return;
     if (!this.selfMesh || !this.tileClickHandler) return;
     this.pathPreviewGoal = null;
     const goal = this.resolveWalkNavigationGoalAt(clientX, clientY);
@@ -7364,6 +8666,11 @@ export class Game {
       window.matchMedia("(hover: hover)").matches &&
       window.matchMedia("(pointer: fine)").matches
     );
+  }
+
+  private shouldShowPointerTileHover(): boolean {
+    if (this.streamPresentationActive || this.streamObserverMode) return false;
+    return Game.canShowPointerHoverTiles();
   }
 
   /** Mouse-style desktop: right-drag camera orbit (not touch / pen-primary tablets). */
@@ -7671,7 +8978,7 @@ export class Game {
       return;
     }
 
-    if (!Game.canShowPointerHoverTiles()) {
+    if (!this.shouldShowPointerTileHover()) {
       if (this.teleporterDestPickHandler) {
         this.syncTeleporterDestPickHover(e.clientX, e.clientY);
         this.signboardHoverHandler?.(null);
@@ -7679,6 +8986,7 @@ export class Game {
       }
       this.tileHighlight.visible = false;
       this.blockTopHighlight.visible = false;
+      this.clearFloorHoverVisuals();
       // Touch devices do not use hover targeting; keep any tapped signboard tooltip
       // stable instead of clearing it on every post-tap pointermove jitter.
       if (e.pointerType !== "touch") {
@@ -8351,6 +9659,9 @@ export class Game {
       this.scene.remove(this.selfMesh);
       this.selfMesh = null;
     }
+    if (this.streamObserverMode) {
+      return;
+    }
     const label = displayName || walletDisplayName(address);
     const g = this.makeAvatar(address, label);
     this.selfMesh = g;
@@ -8470,6 +9781,17 @@ export class Game {
     this.placementHintMeshes.clear();
     this.placementHintGeom.dispose();
     this.placementHintMat.dispose();
+    this.clearFloorBuildRangeOutlines();
+    this.floorBuildOutlineMat.dispose();
+    this.clearFloorHoverVisuals();
+    this.floorHoverOutlineValidMat.dispose();
+    this.floorHoverOutlineInvalidMat.dispose();
+    for (const m of this.floorHoverPreviewMeshes) {
+      this.scene.remove(m);
+    }
+    this.floorHoverPreviewMeshes.length = 0;
+    this.floorHoverPreviewGeom.dispose();
+    this.floorHoverPreviewMat.dispose();
     for (const m of this.billboardFootprintPreviewMeshes) {
       this.scene.remove(m);
     }
@@ -8830,6 +10152,200 @@ export class Game {
   }
 
   /** Visual floor only where avatars can walk (core + extra); gaps show scene background only. */
+  private shouldShowWalkableFloorAtKey(k: string): boolean {
+    const [x, z] = k.split(",").map(Number);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+    if (this.removedBaseFloorKeys.has(k)) return false;
+    if (isBaseTile(x, z, this.roomId)) return true;
+    // Extra floor may sit outside the core room bounds (e.g. hub walkways).
+    return this.extraFloorKeys.has(k);
+  }
+
+  private removeWalkableFloorMeshAtKey(k: string): void {
+    const mesh = this.walkableFloorMeshes.get(k);
+    if (mesh) {
+      this.scene.remove(mesh);
+      disposeWalkableFloorMeshMaterials(mesh);
+      this.walkableFloorMeshes.delete(k);
+    }
+    const marker = this.doorMarkerMeshes.get(k);
+    if (marker) {
+      this.scene.remove(marker);
+      marker.geometry.dispose();
+      (marker.material as THREE.Material).dispose();
+      this.doorMarkerMeshes.delete(k);
+    }
+  }
+
+  private upsertWalkableFloorMeshAtKey(k: string): void {
+    if (!this.shouldShowWalkableFloorAtKey(k)) {
+      this.removeWalkableFloorMeshAtKey(k);
+      return;
+    }
+    const [x, z] = k.split(",").map(Number);
+    const wx = x!;
+    const wz = z!;
+    const isExtra = !isBaseTile(wx, wz, this.roomId);
+    const isDoor = this.doorTileKeys.has(k);
+    let isPortalGlow = isDoor;
+    if (!isPortalGlow) {
+      for (const [key, meta] of this.placedObjects) {
+        if (this.isActiveTeleporterPortal(meta.teleporter)) {
+          const parts = key.split(",").map(Number);
+          if (tileKey(parts[0]!, parts[1]!) === k) {
+            isPortalGlow = true;
+            break;
+          }
+        }
+      }
+    }
+    const wantExtraColor = isExtra
+      ? (this.extraFloorColorByKey.get(k) ?? TERRAIN_TILE_EXTRA_COLOR)
+      : undefined;
+    const wantCoreColor = !isExtra
+      ? (this.baseFloorColorByKey.get(k) ??
+        this.implicitBaseFloorColorRgb(wx, wz))
+      : undefined;
+    let mesh = this.walkableFloorMeshes.get(k);
+    if (!mesh) {
+      mesh = new THREE.Mesh(
+        this.walkableFloorTileGeom,
+        createWalkableFloorTileMaterials(
+          isPortalGlow,
+          isExtra,
+          wantExtraColor,
+          wantCoreColor
+        )
+      );
+      mesh.scale.set(this.floorTileQuadSize, 1, this.floorTileQuadSize);
+      mesh.position.set(
+        wx,
+        WALKABLE_FLOOR_TOP_Y - WALKABLE_FLOOR_TILE_THICKNESS / 2,
+        wz
+      );
+      mesh.visible = false;
+      mesh.userData["isExtra"] = isExtra;
+      mesh.userData["isDoor"] = isDoor;
+      mesh.userData["isPortalGlow"] = isPortalGlow;
+      mesh.userData["extraColorRgb"] = wantExtraColor;
+      mesh.userData["coreColorRgb"] = wantCoreColor;
+      this.walkableFloorMeshes.set(k, mesh);
+    } else {
+      const prevExtraColor = mesh.userData["extraColorRgb"] as
+        | number
+        | undefined;
+      const prevCoreColor = mesh.userData["coreColorRgb"] as
+        | number
+        | undefined;
+      if (
+        mesh.userData["isExtra"] !== isExtra ||
+        mesh.userData["isDoor"] !== isDoor ||
+        mesh.userData["isPortalGlow"] !== isPortalGlow ||
+        prevExtraColor !== wantExtraColor ||
+        prevCoreColor !== wantCoreColor
+      ) {
+        applyWalkableFloorTileMaterials(
+          mesh,
+          isPortalGlow,
+          isExtra,
+          wantExtraColor,
+          wantCoreColor
+        );
+        mesh.userData["isExtra"] = isExtra;
+        mesh.userData["isDoor"] = isDoor;
+        mesh.userData["isPortalGlow"] = isPortalGlow;
+        mesh.userData["extraColorRgb"] = wantExtraColor;
+        mesh.userData["coreColorRgb"] = wantCoreColor;
+      }
+    }
+
+    const marker = this.doorMarkerMeshes.get(k);
+    if (isDoor) {
+      if (!marker) {
+        const doorMarker = this.createPortalPillarMesh(wx, wz);
+        this.scene.add(doorMarker);
+        this.doorMarkerMeshes.set(k, doorMarker);
+      }
+    } else if (marker) {
+      this.scene.remove(marker);
+      marker.geometry.dispose();
+      (marker.material as THREE.Material).dispose();
+      this.doorMarkerMeshes.delete(k);
+    }
+  }
+
+  private implicitBaseFloorColorRgb(x: number, z: number): number | undefined {
+    if (normalizeRoomId(this.roomId) !== PIXEL_ROOM_ID) return undefined;
+    if (!isBaseTile(x, z, this.roomId)) return undefined;
+    return pixelImplicitFloorColorRgb(x, z);
+  }
+
+  private tilesInFloorChunk(
+    chunkKey: string,
+    bounds: RoomBounds
+  ): Array<{ x: number; z: number }> {
+    const [cx, cz] = chunkKey.split(",").map(Number);
+    if (!Number.isFinite(cx) || !Number.isFinite(cz)) return [];
+    const c = INTEREST_CHUNK_TILES;
+    const minX = cx! * c;
+    const maxX = minX + c - 1;
+    const minZ = cz! * c;
+    const maxZ = minZ + c - 1;
+    const out: Array<{ x: number; z: number }> = [];
+    for (let x = Math.max(bounds.minX, minX); x <= Math.min(bounds.maxX, maxX); x++) {
+      for (let z = Math.max(bounds.minZ, minZ); z <= Math.min(bounds.maxZ, maxZ); z++) {
+        out.push({ x, z });
+      }
+    }
+    return out;
+  }
+
+  /** Spatial rooms: build walkable floor for 32×32 chunks only (not the full 500×500 grid). */
+  private syncWalkableFloorChunkKeys(chunkKeys: Set<string>): void {
+    for (const ck of chunkKeys) {
+      for (const { x, z } of this.tilesInFloorChunk(ck, this.roomBounds)) {
+        this.upsertWalkableFloorMeshAtKey(tileKey(x, z));
+      }
+    }
+    if (this.floorVisualUseSingleBatch()) {
+      this.rebuildWalkableFloorVisualMeshes();
+    } else {
+      this.rebuildWalkableFloorVisualMeshes(chunkKeys);
+    }
+    this.applyFloorTileQuadScale();
+    this.bringPlacedBlockGroupsToSceneTail();
+    this.markSceneMutation("syncWalkableFloorChunkKeys");
+    this.requestRender();
+  }
+
+  private syncWalkableFloorTiles(keys: Iterable<string>): void {
+    const keyList = [...keys];
+    for (const k of keyList) {
+      this.upsertWalkableFloorMeshAtKey(k);
+    }
+    if (keyList.length > 0 && this.updateWalkableFloorSolidVisualTiles(keyList)) {
+      this.requestRender();
+      return;
+    }
+    const chunkKeys = interestChunksForTileKeys(keyList);
+    if (chunkKeys.size > 0) {
+      this.rebuildWalkableFloorVisualChunks(chunkKeys);
+      this.bringPlacedBlockGroupsToSceneTail();
+    }
+  }
+
+  private rebuildWalkableFloorVisualChunks(chunkKeys: Set<string>): void {
+    this.rebuildWalkableFloorVisualMeshes(chunkKeys);
+  }
+
+  /** One InstancedMesh avoids z-fighting seams between 32×32 chunk batches (stream / large rooms). */
+  private floorVisualUseSingleBatch(): boolean {
+    return (
+      this.streamPresentationActive ||
+      roomUsesSpatialInterest(this.roomBounds)
+    );
+  }
+
   private syncWalkableFloorMeshes(): void {
     const b = this.roomBounds;
     const seen = new Set<string>();
@@ -8844,96 +10360,8 @@ export class Game {
       seen.add(k);
     }
 
-    const activeTeleporterKeys = new Set<string>();
-    for (const [key, meta] of this.placedObjects) {
-      if (this.isActiveTeleporterPortal(meta.teleporter)) {
-        const parts = key.split(",").map(Number);
-        activeTeleporterKeys.add(tileKey(parts[0]!, parts[1]!));
-      }
-    }
-
     for (const k of seen) {
-      const [x, z] = k.split(",").map(Number);
-      const wx = x!;
-      const wz = z!;
-      const isExtra = !isBaseTile(wx, wz, this.roomId);
-      const isDoor = this.doorTileKeys.has(k);
-      const isPortalGlow = isDoor || activeTeleporterKeys.has(k);
-      const wantExtraColor = isExtra
-        ? (this.extraFloorColorByKey.get(k) ?? TERRAIN_TILE_EXTRA_COLOR)
-        : undefined;
-      const wantCoreColor = !isExtra
-        ? this.baseFloorColorByKey.get(k)
-        : undefined;
-      let mesh = this.walkableFloorMeshes.get(k);
-      if (!mesh) {
-        mesh = new THREE.Mesh(
-          this.walkableFloorTileGeom,
-          createWalkableFloorTileMaterials(
-            isPortalGlow,
-            isExtra,
-            wantExtraColor,
-            wantCoreColor
-          )
-        );
-        mesh.scale.set(this.floorTileQuadSize, 1, this.floorTileQuadSize);
-        mesh.position.set(
-          wx,
-          WALKABLE_FLOOR_TOP_Y - WALKABLE_FLOOR_TILE_THICKNESS / 2,
-          wz
-        );
-        mesh.visible = false;
-        mesh.userData["isExtra"] = isExtra;
-        mesh.userData["isDoor"] = isDoor;
-        mesh.userData["isPortalGlow"] = isPortalGlow;
-        mesh.userData["extraColorRgb"] = wantExtraColor;
-        mesh.userData["coreColorRgb"] = wantCoreColor;
-        this.walkableFloorMeshes.set(k, mesh);
-      } else {
-        const wantExtra = isExtra;
-        const wantDoor = isDoor;
-        const wantPortalGlow = isPortalGlow;
-        const prevExtraColor = mesh.userData["extraColorRgb"] as
-          | number
-          | undefined;
-        const prevCoreColor = mesh.userData["coreColorRgb"] as
-          | number
-          | undefined;
-        if (
-          mesh.userData["isExtra"] !== wantExtra ||
-          mesh.userData["isDoor"] !== wantDoor ||
-          mesh.userData["isPortalGlow"] !== wantPortalGlow ||
-          prevExtraColor !== wantExtraColor ||
-          prevCoreColor !== wantCoreColor
-        ) {
-          applyWalkableFloorTileMaterials(
-            mesh,
-            wantPortalGlow,
-            wantExtra,
-            wantExtraColor,
-            wantCoreColor
-          );
-          mesh.userData["isExtra"] = wantExtra;
-          mesh.userData["isDoor"] = wantDoor;
-          mesh.userData["isPortalGlow"] = wantPortalGlow;
-          mesh.userData["extraColorRgb"] = wantExtraColor;
-          mesh.userData["coreColorRgb"] = wantCoreColor;
-        }
-      }
-
-      const marker = this.doorMarkerMeshes.get(k);
-      if (isDoor) {
-        if (!marker) {
-          const doorMarker = this.createPortalPillarMesh(wx, wz);
-          this.scene.add(doorMarker);
-          this.doorMarkerMeshes.set(k, doorMarker);
-        }
-      } else if (marker) {
-        this.scene.remove(marker);
-        marker.geometry.dispose();
-        (marker.material as THREE.Material).dispose();
-        this.doorMarkerMeshes.delete(k);
-      }
+      this.upsertWalkableFloorMeshAtKey(k);
     }
     for (const [k, mesh] of [...this.walkableFloorMeshes]) {
       if (!seen.has(k)) {
@@ -8991,9 +10419,13 @@ export class Game {
     if (clearSig) this.plainCubeInstanceRenderSig = "";
   }
 
-  private syncPlainCubeInstancedMeshes(): void {
-    const vis = this.blockVisualScale;
-    const sigParts: string[] = [];
+  private collectPlainCubeInstancedEntries(vis: number): {
+    tileKey: string;
+    wx: number;
+    wz: number;
+    wyLevel: number;
+    meta: BlockStyleProps;
+  }[] {
     type PlainCubeEntry = {
       tileKey: string;
       wx: number;
@@ -9002,7 +10434,6 @@ export class Game {
       meta: BlockStyleProps;
     };
     const entries: PlainCubeEntry[] = [];
-
     for (const [k, metaRaw] of this.placedObjects) {
       const parts = k.split(",").map(Number);
       const wx = parts[0]!;
@@ -9020,16 +10451,41 @@ export class Game {
         continue;
       }
       entries.push({ tileKey: k, wx, wz, wyLevel, meta });
-      sigParts.push(`${k}|${plainCubeInstanceEntrySig(meta, vis)}`);
+    }
+    return entries;
+  }
+
+  private recomputePlainCubeInstanceRenderSig(vis: number): void {
+    const sigParts: string[] = [];
+    for (const entry of this.collectPlainCubeInstancedEntries(vis)) {
+      sigParts.push(
+        `${entry.tileKey}|${plainCubeInstanceEntrySig(entry.meta, vis)}`
+      );
     }
     sigParts.sort();
-    const sig = sigParts.join(";");
-    if (sig === this.plainCubeInstanceRenderSig) return;
-    this.plainCubeInstanceRenderSig = sig;
+    this.plainCubeInstanceRenderSig = sigParts.join(";");
+  }
 
-    this.disposePlainCubeInstancedMeshes(false);
-
-    const byBatch = new Map<string, PlainCubeEntry[]>();
+  private appendPlainCubeInstancedBatches(
+    entries: {
+      tileKey: string;
+      wx: number;
+      wz: number;
+      wyLevel: number;
+      meta: BlockStyleProps;
+    }[],
+    vis: number
+  ): void {
+    const byBatch = new Map<
+      string,
+      {
+        tileKey: string;
+        wx: number;
+        wz: number;
+        wyLevel: number;
+        meta: BlockStyleProps;
+      }[]
+    >();
     for (const entry of entries) {
       const batchKey = plainCubeInstanceBatchKey(
         entry.wx,
@@ -9047,7 +10503,7 @@ export class Game {
     }
 
     const dummy = this.plainCubeInstanceDummy;
-    for (const batchEntries of byBatch.values()) {
+    for (const [batchKey, batchEntries] of byBatch) {
       if (batchEntries.length === 0) continue;
       const sample = batchEntries[0]!;
       const batch = new THREE.InstancedMesh(
@@ -9068,10 +10524,78 @@ export class Game {
       }
       batch.instanceMatrix.needsUpdate = true;
       batch.userData["plainCubeTileKeys"] = tileKeys;
+      batch.userData["plainCubeBatchKey"] = batchKey;
       batch.computeBoundingSphere();
       this.scene.add(batch);
       this.plainCubeInstancedMeshes.push(batch);
     }
+  }
+
+  /** Rebuild instanced-cube batches only in the given floor chunks. */
+  private rebuildPlainCubeInstancedForChunks(
+    chunks: ReadonlySet<string>,
+    vis: number
+  ): boolean {
+    const kept: THREE.InstancedMesh[] = [];
+    for (const mesh of this.plainCubeInstancedMeshes) {
+      const batchKey = mesh.userData["plainCubeBatchKey"] as string | undefined;
+      const chunk = batchKey?.split("|")[0];
+      if (chunk && chunks.has(chunk)) {
+        this.scene.remove(mesh);
+        const tileKeys = mesh.userData["plainCubeTileKeys"] as
+          | string[]
+          | undefined;
+        if (tileKeys) {
+          for (const tk of tileKeys) this.plainCubeInstancedTileKeys.delete(tk);
+        }
+      } else {
+        kept.push(mesh);
+      }
+    }
+    this.plainCubeInstancedMeshes.length = 0;
+    this.plainCubeInstancedMeshes.push(...kept);
+
+    const entries = this.collectPlainCubeInstancedEntries(vis).filter((e) =>
+      chunks.has(tileChunkKey(e.wx, e.wz))
+    );
+    this.appendPlainCubeInstancedBatches(entries, vis);
+    return true;
+  }
+
+  private syncPlainCubeInstancedMeshes(changedKeys?: ReadonlySet<string>): void {
+    const vis = this.blockVisualScale;
+    if (changedKeys && changedKeys.size > 0 && changedKeys.size <= 512) {
+      const chunks = new Set<string>();
+      for (const k of changedKeys) {
+        const parts = k.split(",").map(Number);
+        if (Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
+          chunks.add(tileChunkKey(parts[0]!, parts[1]!));
+        }
+      }
+      if (
+        chunks.size > 0 &&
+        chunks.size <= 16 &&
+        this.rebuildPlainCubeInstancedForChunks(chunks, vis)
+      ) {
+        this.recomputePlainCubeInstanceRenderSig(vis);
+        return;
+      }
+    }
+
+    const sigParts: string[] = [];
+    const entries = this.collectPlainCubeInstancedEntries(vis);
+    for (const entry of entries) {
+      sigParts.push(
+        `${entry.tileKey}|${plainCubeInstanceEntrySig(entry.meta, vis)}`
+      );
+    }
+    sigParts.sort();
+    const sig = sigParts.join(";");
+    if (sig === this.plainCubeInstanceRenderSig) return;
+    this.plainCubeInstanceRenderSig = sig;
+
+    this.disposePlainCubeInstancedMeshes(false);
+    this.appendPlainCubeInstancedBatches(entries, vis);
   }
 
   private disposeWalkableFloorVisualMeshes(): void {
@@ -9080,19 +10604,87 @@ export class Game {
       if (mesh.material instanceof THREE.Material) mesh.material.dispose();
     }
     this.walkableFloorVisualMeshes.length = 0;
+    this.walkableFloorSolidVisualIndex.clear();
   }
 
-  private rebuildWalkableFloorVisualMeshes(): void {
-    this.disposeWalkableFloorVisualMeshes();
+  /**
+   * Patch colors/matrices for existing tiles in the unified solid floor batch (O(changed) not O(all)).
+   */
+  private updateWalkableFloorSolidVisualTiles(keys: readonly string[]): boolean {
+    if (!this.floorVisualUseSingleBatch()) return false;
+    if (this.walkableFloorSolidVisualIndex.size === 0) return false;
+    const batch = this.walkableFloorVisualMeshes.find(
+      (m) =>
+        m.userData["floorVisualKind"] === "solid" &&
+        m.userData["walkableFloorChunkKey"] === "__all__"
+    );
+    if (!batch) return false;
+
+    const dummy = new THREE.Object3D();
+    const tileColor = new THREE.Color();
+    for (const k of keys) {
+      const src = this.walkableFloorMeshes.get(k);
+      if (!src) return false;
+      if (src.userData["isPortalGlow"]) continue;
+      const idx = this.walkableFloorSolidVisualIndex.get(k);
+      if (idx === undefined) return false;
+
+      let color: number;
+      if (src.userData["isExtra"]) {
+        color =
+          (src.userData["extraColorRgb"] as number | undefined) ??
+          TERRAIN_TILE_EXTRA_COLOR;
+      } else {
+        color =
+          (src.userData["coreColorRgb"] as number | undefined) ??
+          TERRAIN_TILE_CORE_COLOR;
+      }
+      setWalkableFloorVisualInstanceTransform(
+        dummy,
+        src.position.x,
+        src.position.z,
+        this.floorTileQuadSize
+      );
+      batch.setMatrixAt(idx, dummy.matrix);
+      tileColor.setHex(color);
+      batch.setColorAt(idx, tileColor);
+    }
+    batch.instanceMatrix.needsUpdate = true;
+    if (batch.instanceColor) batch.instanceColor.needsUpdate = true;
+    return true;
+  }
+
+  private rebuildWalkableFloorVisualMeshes(onlyChunks?: Set<string>): void {
+    const singleBatch = this.floorVisualUseSingleBatch();
+    if (singleBatch) {
+      onlyChunks = undefined;
+    }
+    if (!onlyChunks) {
+      this.disposeWalkableFloorVisualMeshes();
+    } else {
+      this.walkableFloorVisualMeshes = this.walkableFloorVisualMeshes.filter(
+        (mesh) => {
+          const ck = mesh.userData["walkableFloorChunkKey"] as
+            | string
+            | undefined;
+          if (!ck || !onlyChunks.has(ck)) return true;
+          this.scene.remove(mesh);
+          if (mesh.material instanceof THREE.Material) mesh.material.dispose();
+          return false;
+        }
+      );
+    }
     const floorByChunk = new Map<
       string,
       { wx: number; wz: number; color: number }[]
     >();
     const portalByChunk = new Map<string, { wx: number; wz: number }[]>();
+    const solidBatchKey = singleBatch ? "__all__" : null;
     for (const [, mesh] of this.walkableFloorMeshes) {
       const wx = mesh.position.x;
       const wz = mesh.position.z;
-      const chunkKey = walkableFloorVisualChunkKey(wx, wz);
+      const chunkKey = solidBatchKey ?? tileChunkKey(wx, wz);
+      if (onlyChunks && !onlyChunks.has(chunkKey)) continue;
       if (mesh.userData["isPortalGlow"]) {
         let list = portalByChunk.get(chunkKey);
         if (!list) {
@@ -9121,7 +10713,7 @@ export class Game {
     }
     const dummy = new THREE.Object3D();
     const tileColor = new THREE.Color();
-    for (const floorTiles of floorByChunk.values()) {
+    for (const [chunkKey, floorTiles] of floorByChunk) {
       if (floorTiles.length === 0) continue;
       const batch = new THREE.InstancedMesh(
         this.walkableFloorTileTopGeom,
@@ -9144,11 +10736,20 @@ export class Game {
       batch.instanceMatrix.needsUpdate = true;
       if (batch.instanceColor) batch.instanceColor.needsUpdate = true;
       batch.computeBoundingSphere();
+      batch.frustumCulled = false;
       batch.userData["floorVisualKind"] = "solid";
+      batch.userData["walkableFloorChunkKey"] = chunkKey;
+      if (chunkKey === "__all__") {
+        this.walkableFloorSolidVisualIndex.clear();
+        for (let i = 0; i < floorTiles.length; i++) {
+          const t = floorTiles[i]!;
+          this.walkableFloorSolidVisualIndex.set(tileKey(t.wx, t.wz), i);
+        }
+      }
       this.scene.add(batch);
       this.walkableFloorVisualMeshes.push(batch);
     }
-    for (const portalTiles of portalByChunk.values()) {
+    for (const [chunkKey, portalTiles] of portalByChunk) {
       if (portalTiles.length === 0) continue;
       const batch = new THREE.InstancedMesh(
         this.walkableFloorTileTopGeom,
@@ -9168,7 +10769,9 @@ export class Game {
       }
       batch.instanceMatrix.needsUpdate = true;
       batch.computeBoundingSphere();
+      batch.frustumCulled = false;
       batch.userData["floorVisualKind"] = "portal";
+      batch.userData["walkableFloorChunkKey"] = chunkKey;
       this.scene.add(batch);
       this.walkableFloorVisualMeshes.push(batch);
     }
@@ -9453,10 +11056,18 @@ export class Game {
     };
   }
 
-  private syncBlockMeshes(): void {
-    const seen = new Set(this.placedObjects.keys());
-    for (const k of seen) {
-      const metaRaw = this.placedObjects.get(k)!;
+  private syncBlockMeshesForKeys(keys: ReadonlySet<string>): void {
+    for (const k of keys) {
+      const metaRaw = this.placedObjects.get(k);
+      if (!metaRaw) {
+        const mesh = this.blockMeshes.get(k);
+        if (mesh) {
+          this.scene.remove(mesh);
+          disposePlacedBlockGroupContents(mesh);
+          this.blockMeshes.delete(k);
+        }
+        continue;
+      }
       const parts = k.split(",").map(Number);
       const wx = parts[0]!;
       const wz = parts[1]!;
@@ -9558,16 +11169,17 @@ export class Game {
       this.scene.add(g);
       this.blockMeshes.set(k, g);
     }
-    for (const [k, mesh] of [...this.blockMeshes]) {
-      if (!seen.has(k)) {
-        this.scene.remove(mesh);
-        disposePlacedBlockGroupContents(mesh);
-        this.blockMeshes.delete(k);
-      }
+    this.syncPlainCubeInstancedMeshes(keys);
+    if (!this.streamPresentationActive) {
+      this.refreshSelectionOutline();
     }
-    this.syncPlainCubeInstancedMeshes();
-    this.refreshSelectionOutline();
     this.syncTeleporterMarkers();
+  }
+
+  private syncBlockMeshes(): void {
+    const keys = new Set(this.placedObjects.keys());
+    for (const k of this.blockMeshes.keys()) keys.add(k);
+    this.syncBlockMeshesForKeys(keys);
   }
 
   private obstacleHeight(meta: BlockStyleProps): number {
@@ -9808,10 +11420,14 @@ export class Game {
     const h = this.canvasHost.clientHeight;
     const renderScale = readWebglRenderScale();
     const dpr = Math.min(window.devicePixelRatio, 2) * renderScale;
-    this.renderer.setSize(w, h, false);
-    this.renderer.setPixelRatio(dpr);
+    if (this.streamPresentationActive) {
+      this.applyStreamRenderSize(w, h);
+      this.fogOfWar.setSize(w, h, 1);
+    } else {
+      this.resetStreamRenderSize(w, h, dpr);
+      this.fogOfWar.setSize(w, h, dpr);
+    }
     this.applyOrthographicFrustum();
-    this.fogOfWar.setSize(w, h, dpr);
     this.refreshAllNameLabelScales();
     this.refreshSignpostHintSpriteScales();
     this.refreshChatBubbleVerticalPositions();
@@ -10110,7 +11726,10 @@ export class Game {
     const orbitWasActive = this.cameraOrbitEase !== null;
     this.updateCameraOrbitEase();
     visualActive = visualActive || orbitWasActive || this.cameraOrbitEase !== null;
-    this.updateCameraFollow(dt);
+    this.updateStreamCameraAnims();
+    this.updateStreamCameraFollow(dt);
+    this.updateStreamPan(dt);
+    this.maybeReportViewInterest();
     this.refreshPathLine();
     visualActive =
       visualActive ||
@@ -10129,7 +11748,9 @@ export class Game {
       : this.cameraLookAt.z;
     this.fogOfWar.setPlayerPosition(px, pz);
 
-    this.updateChatBubbles();
+    if (!this.streamBubblesHidden) {
+      this.updateChatBubbles();
+    }
     this.updateTypingIndicatorAnimation();
     this.updateFloatingTexts();
     this.syncRoomEntrySpawnMarker(renderNow * 0.001);
@@ -10143,7 +11764,7 @@ export class Game {
       this.animateDoorTiles();
     }
 
-    if (this.renderDirty || renderNow < this.continuousRenderUntilMono) {
+    if (this.renderDirty || renderNow < this.continuousRenderUntilMono || this.continuousRenderForced) {
       if (this.fogOfWar.getEnabled()) {
         this.fogOfWar.render(this.renderer, this.scene, this.camera);
       } else {
@@ -10209,6 +11830,57 @@ export class Game {
   }
 
   private applyCameraPose(): void {
+    const targetX = this.cameraLookAt.x + this.cameraLookAhead.x;
+    const targetY = this.cameraLookAt.y + this.cameraLookAhead.y;
+    const targetZ = this.cameraLookAt.z + this.cameraLookAhead.z;
+
+    if (this.streamPresentationActive) {
+      const blend = this.streamCameraPoseBlend;
+
+      if (blend <= 0) {
+        this.camera.position.set(
+          targetX,
+          targetY + STREAM_CAMERA_HEIGHT,
+          targetZ
+        );
+        this.camera.up.set(0, 0, -1);
+        this.camera.lookAt(targetX, targetY, targetZ);
+        return;
+      }
+
+      const topX = targetX;
+      const topY = targetY + STREAM_CAMERA_HEIGHT;
+      const topZ = targetZ;
+
+      const v = this.cameraOrbitOffsetScratch
+        .copy(this.cameraOffsetBase)
+        .applyAxisAngle(this.worldUp, this.cameraOrbitYawRad);
+      const isoX = this.cameraLookAt.x + v.x + this.cameraLookAhead.x;
+      const isoY = this.cameraLookAt.y + v.y + this.cameraLookAhead.y;
+      const isoZ = this.cameraLookAt.z + v.z + this.cameraLookAhead.z;
+
+      if (blend >= 1) {
+        this.camera.up.copy(this.worldUp);
+        this.camera.position.set(isoX, isoY, isoZ);
+        this.camera.lookAt(targetX, targetY, targetZ);
+        return;
+      }
+
+      this.camera.position.set(
+        topX + (isoX - topX) * blend,
+        topY + (isoY - topY) * blend,
+        topZ + (isoZ - topZ) * blend
+      );
+      this.streamTopDownUpScratch.set(0, 0, -1);
+      this.camera.up
+        .copy(this.streamTopDownUpScratch)
+        .lerp(this.worldUp, blend)
+        .normalize();
+      this.camera.lookAt(targetX, targetY, targetZ);
+      return;
+    }
+
+    this.camera.up.copy(this.worldUp);
     const v = this.cameraOrbitOffsetScratch
       .copy(this.cameraOffsetBase)
       .applyAxisAngle(this.worldUp, this.cameraOrbitYawRad);
@@ -10222,6 +11894,77 @@ export class Game {
       this.cameraLookAt.y + this.cameraLookAhead.y,
       this.cameraLookAt.z + this.cameraLookAhead.z
     );
+  }
+
+  private updateStreamCameraAnims(): void {
+    const now = performance.now();
+    if (this.zoomFrustumAnim) {
+      const a = this.zoomFrustumAnim;
+      const t = Math.min(1, (now - a.startedAtMs) / a.durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      this.frustumSize = a.from + (a.to - a.from) * eased;
+      this.applyOrthographicFrustum();
+      this.refreshAllNameLabelScales();
+      this.refreshChatBubbleVerticalPositions();
+      this.refreshAllTypingIndicatorLayouts();
+      if (t >= 1) this.zoomFrustumAnim = null;
+      this.requestRender();
+    }
+    if (this.lookAtAnim) {
+      const a = this.lookAtAnim;
+      const t = Math.min(1, (now - a.startedAtMs) / a.durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      this.cameraLookAt.set(
+        a.fromX + (a.toX - a.fromX) * eased,
+        a.fromY + (a.toY - a.fromY) * eased,
+        a.fromZ + (a.toZ - a.fromZ) * eased
+      );
+      this.applyCameraPose();
+      if (this.streamPresentationActive || this.roomNeedsFrustumFit()) {
+        this.applyOrthographicFrustum();
+      }
+      if (t >= 1) this.lookAtAnim = null;
+      this.requestRender();
+    }
+    if (this.streamCameraPoseAnim) {
+      const a = this.streamCameraPoseAnim;
+      const t = Math.min(1, (now - a.startedAtMs) / a.durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      this.streamCameraPoseBlend = a.from + (a.to - a.from) * eased;
+      this.applyCameraPose();
+      this.applyOrthographicFrustum();
+      this.applyIdenticonTransformToAllAvatars();
+      this.refreshChatBubbleVerticalPositions();
+      this.refreshAllTypingIndicatorLayouts();
+      if (t >= 1) this.streamCameraPoseAnim = null;
+      this.requestRender();
+    }
+  }
+
+  private updateStreamCameraFollow(dt: number): void {
+    if (this.streamCameraMode === "followSelf") {
+      this.updateCameraFollow(dt);
+      return;
+    }
+    if (this.streamCameraMode === "detached") {
+      return;
+    }
+    const addr = this.streamFollowAddress;
+    if (!addr) return;
+    const g = this.others.get(addr);
+    const t = this.targetPos.get(addr);
+    if (!g && !t) return;
+    const px = t?.x ?? g!.position.x;
+    const py = t?.y ?? g!.position.y;
+    const pz = t?.z ?? g!.position.z;
+    const alpha = 1 - Math.exp(-this.cameraFollowSmoothing * dt);
+    this.cameraLookAt.x += (px - this.cameraLookAt.x) * alpha;
+    this.cameraLookAt.y += (py - this.cameraLookAt.y) * alpha;
+    this.cameraLookAt.z += (pz - this.cameraLookAt.z) * alpha;
+    this.applyCameraPose();
+    if (this.streamPresentationActive || this.roomNeedsFrustumFit()) {
+      this.applyOrthographicFrustum();
+    }
   }
 
   /** Pans only when the local player nears the edge of the dead zone (soft follow). */
@@ -10257,6 +12000,9 @@ export class Game {
     this.cameraLookAt.y += (py - this.cameraLookAt.y) * alpha;
     this.cameraLookAt.z += (pz - this.cameraLookAt.z) * alpha;
     this.applyCameraPose();
+    if (this.streamPresentationActive || this.roomNeedsFrustumFit()) {
+      this.applyOrthographicFrustum();
+    }
   }
 
   /** Shows a short-lived speech bubble above the player (used for chat). */
@@ -10265,6 +12011,7 @@ export class Game {
     text: string,
     displayNameFallback?: string
   ): void {
+    if (this.streamBubblesHidden) return;
     let g: THREE.Group | null = null;
     if (fromAddress && this.selfAddress === fromAddress) {
       g = this.selfMesh;
@@ -10672,7 +12419,7 @@ export class Game {
       const gap = this.pixelToWorldY(2);
       entry.sprite.position.y = topY + gap + worldH * 0.5;
     } else {
-      const avatarTop = AVATAR_SPHERE_RADIUS * 2 * this.identiconScale;
+      const avatarTop = this.avatarIdenticonWorldDiameter();
       const gapAbove = this.pixelToWorldY(4);
       entry.sprite.position.y = avatarTop + gapAbove + worldH * 0.5;
     }
@@ -10681,6 +12428,10 @@ export class Game {
 
   private syncTypingIndicatorForGroup(g: THREE.Group, p: PlayerState): void {
     const addr = p.address;
+    if (this.streamBubblesHidden) {
+      this.removeTypingIndicator(addr);
+      return;
+    }
     if (!p.chatTyping) {
       this.removeTypingIndicator(addr);
       return;
@@ -10788,8 +12539,7 @@ export class Game {
     const g = new THREE.Group();
     g.userData.address = address;
     g.userData.displayName = displayName ?? "";
-    const s = this.identiconScale;
-    const d = AVATAR_SPHERE_RADIUS * 2 * s;
+    const d = this.avatarIdenticonWorldDiameter();
     const mat = new THREE.SpriteMaterial({
       color: 0x8899aa,
       transparent: true,
@@ -10805,7 +12555,7 @@ export class Game {
     /** After billboards (see billboardVisual mesh renderOrder) so plane depth is in the buffer. */
     body.renderOrder = 2;
     body.scale.set(d, d, 1);
-    body.position.y = AVATAR_SPHERE_RADIUS * s;
+    body.position.y = d / 2;
     body.rotation.copy(this.getIdenticonEuler());
     g.userData.identiconMesh = body;
     g.add(body);

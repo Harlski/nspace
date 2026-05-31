@@ -22,6 +22,35 @@ export const DEFAULT_BLOCK_COLOR_RGB = 0x5b6b8c;
 
 /** Default top color for player-placed extra floor tiles (matches client `TERRAIN_TILE_EXTRA_COLOR`). */
 export const DEFAULT_EXTRA_FLOOR_COLOR_RGB = 0x3d5a4a;
+/** Neutral canvas tint (legacy single-color Pixel seed / checker light square). */
+export const DEFAULT_PIXEL_CANVAS_COLOR_RGB = 0xd4d4d4;
+/** Checkerboard dark square on implicit Pixel floor. */
+export const PIXEL_CHECKER_DARK_RGB = 0xbcbcbc;
+/** Black hub spawn pad (origin-centered square). */
+export const PIXEL_SPAWN_SQUARE_COLOR_RGB = 0x000000;
+/** Half-size in tiles: spawn pad is `(2 × half + 1)²` centered on origin. */
+export const PIXEL_SPAWN_SQUARE_HALF = 16;
+/** @deprecated Legacy central disc color — cleaned up by checkerboard migration. */
+export const DEFAULT_PIXEL_CENTRAL_DARK_COLOR_RGB = 0x2a2a2a;
+/** @deprecated Legacy central disc radius. */
+export const PIXEL_CENTRAL_DARK_RADIUS = 16;
+
+export function isPixelSpawnSquareTile(tileX: number, tileZ: number): boolean {
+  return (
+    Math.abs(tileX) <= PIXEL_SPAWN_SQUARE_HALF &&
+    Math.abs(tileZ) <= PIXEL_SPAWN_SQUARE_HALF
+  );
+}
+
+/** Implicit Pixel floor tint when no explicit paint is stored for the tile. */
+export function pixelImplicitFloorColorRgb(tileX: number, tileZ: number): number {
+  if (isPixelSpawnSquareTile(tileX, tileZ)) {
+    return PIXEL_SPAWN_SQUARE_COLOR_RGB;
+  }
+  return (tileX + tileZ) % 2 === 0
+    ? DEFAULT_PIXEL_CANVAS_COLOR_RGB
+    : PIXEL_CHECKER_DARK_RGB;
+}
 /** Default gate panel tint (legacy palette index 7). */
 export const DEFAULT_GATE_BLOCK_COLOR_RGB = 0x795548;
 export const BLOCK_COLOR_MAZE_RGB = 0x9c27b0;
@@ -62,4 +91,11 @@ export function resolveExtraFloorColorRgb(raw: unknown): number {
     return Math.max(0, Math.min(0xffffff, n));
   }
   return DEFAULT_EXTRA_FLOOR_COLOR_RGB;
+}
+
+/**
+ * Neutral RGB for Pixel room base tiles on first seed (uniform canvas).
+ */
+export function pixelSeedColorForTile(tileX: number, tileZ: number): number {
+  return pixelImplicitFloorColorRgb(tileX, tileZ);
 }

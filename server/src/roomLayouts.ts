@@ -27,6 +27,8 @@ export const HUB_ROOM_ID = "hub";
 export const CHAMBER_ROOM_ID = "chamber";
 /** Collaborative canvas room where players claim tiles with their identicons. */
 export const CANVAS_ROOM_ID = "canvas";
+/** Floor-only collaborative paint board (no object placement). */
+export const PIXEL_ROOM_ID = "pixel";
 
 /**
  * Hub center 4×4 tiles (inclusive indices) — no blocks may be placed here.
@@ -60,6 +62,18 @@ const CANVAS_BOUNDS: RoomBounds = {
   maxZ: 15,
 };
 
+/** 500×500 floor canvas — full global grid (−250…249); stream pans across regions at partial zoom. */
+const PIXEL_BOUNDS: RoomBounds = {
+  minX: -250,
+  maxX: 249,
+  minZ: -250,
+  maxZ: 249,
+};
+
+/** Hub return teleporter tile in Pixel; players spawn one tile toward +Z (in front of it). */
+export const PIXEL_HUB_TELEPORTER = { x: 0, z: -12 } as const;
+export const PIXEL_DEFAULT_SPAWN = { x: 0, z: -11 } as const;
+
 export type DoorDef = {
   x: number;
   z: number;
@@ -83,6 +97,13 @@ const HUB_DOORS: DoorDef[] = [
     targetRoomId: CANVAS_ROOM_ID,
     spawnX: 0,
     spawnZ: 14,
+  },
+  {
+    x: 0,
+    z: 12,
+    targetRoomId: PIXEL_ROOM_ID,
+    spawnX: PIXEL_DEFAULT_SPAWN.x,
+    spawnZ: PIXEL_DEFAULT_SPAWN.z,
   },
 ];
 
@@ -109,10 +130,21 @@ const CANVAS_DOORS: DoorDef[] = [
   },
 ];
 
+const PIXEL_DOORS: DoorDef[] = [
+  {
+    x: PIXEL_HUB_TELEPORTER.x,
+    z: PIXEL_HUB_TELEPORTER.z,
+    targetRoomId: HUB_ROOM_ID,
+    spawnX: 0,
+    spawnZ: 11,
+  },
+];
+
 const BUILTIN_ROOM_IDS = new Set([
   HUB_ROOM_ID,
   CHAMBER_ROOM_ID,
   CANVAS_ROOM_ID,
+  PIXEL_ROOM_ID,
 ]);
 loadRoomRegistry(BUILTIN_ROOM_IDS);
 
@@ -131,6 +163,8 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
       return CHAMBER_BOUNDS;
     case CANVAS_ROOM_ID:
       return CANVAS_BOUNDS;
+    case PIXEL_ROOM_ID:
+      return PIXEL_BOUNDS;
     default:
       return getDynamicRoomBounds(id) ?? HUB_BOUNDS;
   }
@@ -142,6 +176,7 @@ export function getDoorsForRoom(roomId: string): DoorDef[] {
   if (id === HUB_ROOM_ID) return HUB_DOORS;
   if (id === CHAMBER_ROOM_ID) return CHAMBER_DOORS;
   if (id === CANVAS_ROOM_ID) return CANVAS_DOORS;
+  if (id === PIXEL_ROOM_ID) return PIXEL_DOORS;
   return [];
 }
 
@@ -217,6 +252,14 @@ export function listRoomDefinitions(): RoomDefinition[] {
       ownerAddress: null,
       displayName: getBuiltinRoomDisplayName(CANVAS_ROOM_ID, "Canvas"),
       isPublic: getBuiltinRoomIsPublic(CANVAS_ROOM_ID),
+      isBuiltin: true,
+    },
+    {
+      id: PIXEL_ROOM_ID,
+      bounds: PIXEL_BOUNDS,
+      ownerAddress: null,
+      displayName: getBuiltinRoomDisplayName(PIXEL_ROOM_ID, "Pixel"),
+      isPublic: getBuiltinRoomIsPublic(PIXEL_ROOM_ID),
       isBuiltin: true,
     },
     ...listDynamicRooms().map((r) => ({

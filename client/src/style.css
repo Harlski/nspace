@@ -1057,6 +1057,212 @@ html.nspace-pseudo-fs #app {
   --hud-below-top-wrap: calc(78px + env(safe-area-inset-top, 0px));
 }
 
+/* Stream / OBS capture: canvas only; optional chat via hud--stream-cinema-chat */
+.hud.hud--stream-cinema .hud-top-wrap,
+.hud.hud--stream-cinema .hud-build-mode-strip,
+.hud.hud--stream-cinema .hud-build-bottom-dock,
+.hud.hud--stream-cinema .hud-bottom-left,
+.hud.hud--stream-cinema .hud-left-stack,
+.hud.hud--stream-cinema .hud-top,
+.hud.hud--stream-cinema .hud-player-join-toast,
+.hud.hud--stream-cinema .self-emoji-menu {
+  display: none !important;
+}
+
+.hud.hud--stream-cinema:not(.hud--stream-cinema-chat) .chat-panel {
+  display: none !important;
+}
+
+.hud.hud--stream-cinema {
+  --hud-below-top-wrap: 0px;
+  --hud-build-dock-height: 0px;
+}
+
+.hud.hud--stream-cinema .letterbox {
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.hud.hud--stream-cinema .canvas-host {
+  overflow: hidden;
+}
+
+.hud.hud--stream-cinema .canvas-host canvas {
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+}
+
+.stream-broadcast-overlay {
+  position: absolute;
+  left: max(1rem, env(safe-area-inset-left, 0px));
+  top: max(1rem, env(safe-area-inset-top, 0px));
+  bottom: auto;
+  z-index: 50;
+  pointer-events: none;
+  max-width: min(22rem, calc(100% - 2rem));
+  padding: 0.65rem 0.85rem 0.7rem;
+  border-radius: 10px;
+  background: rgba(7, 10, 15, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  color: #e8edf2;
+  font-family: system-ui, sans-serif;
+}
+
+.stream-broadcast-overlay[hidden] {
+  display: none !important;
+}
+
+.stream-broadcast-overlay__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.1;
+  margin-bottom: 0.35rem;
+}
+
+.stream-broadcast-overlay__subtitle,
+.stream-broadcast-overlay__pixels,
+.stream-broadcast-overlay__room {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: rgba(232, 237, 242, 0.82);
+}
+
+.stream-broadcast-overlay__pixels {
+  margin-top: 0.2rem;
+}
+
+.stream-broadcast-overlay__room {
+  margin-top: 0.2rem;
+  font-weight: 600;
+  color: rgba(232, 237, 242, 0.95);
+}
+
+.stream-follow-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 45;
+  pointer-events: none;
+  padding: max(0.55rem, env(safe-area-inset-top, 0px)) 1rem 0.5rem;
+  background: linear-gradient(
+    180deg,
+    rgba(7, 10, 15, 0.88) 0%,
+    rgba(7, 10, 15, 0.55) 72%,
+    rgba(7, 10, 15, 0) 100%
+  );
+  color: #e8edf2;
+  font-family: system-ui, sans-serif;
+  text-align: center;
+}
+
+.stream-follow-bar[hidden] {
+  display: none !important;
+}
+
+.stream-follow-bar__label {
+  margin: 0 0 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(232, 237, 242, 0.92);
+}
+
+.stream-follow-bar__track {
+  height: 4px;
+  max-width: 28rem;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+
+.stream-follow-bar__fill {
+  height: 100%;
+  width: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #e9b213 0%, #ffc107 100%);
+  transform-origin: left center;
+  transform: scaleX(1);
+  will-change: transform;
+}
+
+.stream-pan-debug {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 50;
+  max-width: min(22rem, calc(100vw - 1rem));
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  background: rgba(10, 14, 22, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  pointer-events: auto;
+}
+
+.stream-pan-debug__title {
+  font-weight: 700;
+  font-size: 12px;
+  margin-bottom: 0.35rem;
+}
+
+.stream-pan-debug__hint {
+  opacity: 0.75;
+  margin-bottom: 0.5rem;
+}
+
+.stream-pan-debug__row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.15rem;
+  margin-bottom: 0.45rem;
+}
+
+.stream-pan-debug__label {
+  font-size: 10px;
+  opacity: 0.9;
+}
+
+.stream-pan-debug__row input[type="range"] {
+  width: 100%;
+}
+
+.stream-pan-debug__readout {
+  margin: 0.5rem 0;
+  padding: 0.4rem;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  white-space: pre-wrap;
+  font-size: 10px;
+}
+
+.stream-pan-debug__copy {
+  font-size: 10px;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(30, 41, 59, 0.9);
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.stream-pan-debug__copy:hover {
+  background: rgba(51, 65, 85, 0.95);
+}
+
 .hud-top-strip {
   display: flex;
   flex-direction: column;
@@ -5846,23 +6052,7 @@ button.hud-brand:focus-visible {
 }
 
 .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-mods {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
-  padding-left: 4px;
-}
-
-.hud-build-bottom-dock__context--floor
-  .hud-build-bottom-dock__context-mods
-  > :not(.hud-build-bottom-dock__floor-brush-setting) {
   display: none !important;
-}
-
-.hud-build-bottom-dock__context--floor .hud-build-bottom-dock__floor-brush-setting {
-  margin: 0;
 }
 
 .hud-build-bottom-dock__context--floor {
@@ -5871,13 +6061,27 @@ button.hud-brand:focus-visible {
 }
 
 .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-color {
-  flex: 0 0 min(56px, 20vw);
-  width: min(56px, 20vw);
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: row;
   justify-content: flex-end;
-  align-items: flex-end;
+  align-items: center;
   align-self: stretch;
+  gap: 10px;
   padding-top: 4px;
   padding-right: 2px;
+}
+
+.hud-mode-sidebar__shape-color-row--floor {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.hud-build-bottom-dock__context--floor .hud-build-bottom-dock__floor-brush-setting {
+  margin: 0;
+  align-self: stretch;
+  justify-content: flex-end;
 }
 
 .hud-build-bottom-dock__context-mods > .hud-build-bottom-dock__room-settings .hud-build-bottom-dock__room-setting-label {
@@ -10765,6 +10969,44 @@ a.main-menu__version:focus-visible {
   font-size: 18px;
   font-weight: 500;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  max-width: min(90vw, 22rem);
+}
+
+.loading-overlay__progress {
+  width: min(280px, 72vw);
+  margin-top: 4px;
+}
+
+.loading-overlay__progress-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+  position: relative;
+}
+
+.loading-overlay__progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #38bdf8, #818cf8);
+  transition: width 0.22s ease-out;
+}
+
+.loading-overlay__progress-track--indeterminate .loading-overlay__progress-fill {
+  width: 38% !important;
+  transition: none;
+  animation: loading-overlay-indeterminate 1.15s ease-in-out infinite;
+}
+
+@keyframes loading-overlay-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
 }
 
 /* Gate access list (object panel + standalone modal) */

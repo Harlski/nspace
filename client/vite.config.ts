@@ -227,6 +227,12 @@ export default defineConfig({
         changeOrigin: true,
         configure: attachDevProxyHandlers,
       },
+      /** Live Pixel board PNG from game server (`GET /pixels.png`). */
+      "/pixels.png": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+        configure: attachDevProxyHandlers,
+      },
       /** Standalone nim-chart-service (Docker :3080 or `node nim-chart-service/server.mjs`). */
       "/nim-chart-api": {
         target: "http://127.0.0.1:3080",
@@ -238,5 +244,17 @@ export default defineConfig({
   preview: {
     host: true,
     port: 4173,
+    proxy: {
+      "/pixels.png": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+        configure: attachDevProxyHandlers,
+      },
+      "/api": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+        configure: attachDevProxyHandlers,
+      },
+    },
   },
 });

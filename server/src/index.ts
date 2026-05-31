@@ -79,7 +79,9 @@ import {
 import { getTopLoginStreaks, recordLoginStreakForWallet } from "./loginStreakStore.js";
 import { getAdminSystemSnapshot, startAdminSystemMonitor } from "./adminSystemMonitor.js";
 import { probePaymentIntentService } from "./paymentIntentProbe.js";
-import { getDeployRestartHookSecret, isAdmin } from "./config.js";
+import { getDeployRestartHookSecret, isAdmin, isStreamObserver, streamObserverAllowlistConfigured, streamObserverEnvConfigured } from "./config.js";
+import { normalizeStreamObserverAddressesField } from "./walletAddresses.js";
+import { getPixelBoardPngCached } from "./pixelBoardImage.js";
 import {
   type AnalyticsPageViewAnonReason,
   getAnalyticsPageViewsByDay,
@@ -544,6 +546,24 @@ app.get("/api/canvas/leaderboard", (_req, res) => {
   }
 });
 
+/** Live 1000×1000 PNG of the Pixel room floor (2 px per tile). Public read-only. */
+app.get("/pixels.png", (req, res) => {
+  try {
+    const { body, etag } = getPixelBoardPngCached();
+    if (req.headers["if-none-match"] === etag) {
+      res.status(304).end();
+      return;
+    }
+    res.set("Content-Type", "image/png");
+    res.set("Cache-Control", "public, max-age=5");
+    res.set("ETag", etag);
+    res.send(body);
+  } catch (err) {
+    console.error("[pixels.png]", err);
+    res.status(500).end();
+  }
+});
+
 const NIM_BALANCE_API_TIMEOUT_MS = Math.max(
   3000,
   Number(process.env.NIM_BALANCE_API_TIMEOUT_MS ?? 28_000)
@@ -903,12 +923,19 @@ app.get("/api/admin/system/snapshot", requireSystemAdminWallet, async (_req, res
 });
 
 app.get("/api/admin/settings", requireSystemAdminWallet, (_req, res) => {
-  res.json(getAdminRuntimeSettings());
+  res.json({
+    ...getAdminRuntimeSettings(),
+    streamObserverEnvConfigured: streamObserverEnvConfigured(),
+    streamObserverAllowlistConfigured: streamObserverAllowlistConfigured(),
+  });
 });
 
 app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
   const body = req.body as Record<string, unknown> | null;
-  const patch: { playerUsernameSelfServiceEnabled?: boolean } = {};
+  const patch: {
+    playerUsernameSelfServiceEnabled?: boolean;
+    streamObserverAddresses?: string;
+  } = {};
   if (
     body &&
     Object.prototype.hasOwnProperty.call(body, "playerUsernameSelfServiceEnabled")
@@ -916,7 +943,25 @@ app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
     patch.playerUsernameSelfServiceEnabled =
       body.playerUsernameSelfServiceEnabled === true;
   }
-  res.json(patchAdminRuntimeSettings(patch));
+  if (body && Object.prototype.hasOwnProperty.call(body, "streamObserverAddresses")) {
+    try {
+      patch.streamObserverAddresses = normalizeStreamObserverAddressesField(
+        String(body.streamObserverAddresses ?? "")
+      );
+    } catch {
+      res.status(400).json({ error: "invalid_stream_observer_address" });
+      return;
+    }
+  }
+  const next =
+    Object.keys(patch).length > 0
+      ? patchAdminRuntimeSettings(patch)
+      : getAdminRuntimeSettings();
+  res.json({
+    ...next,
+    streamObserverEnvConfigured: streamObserverEnvConfigured(),
+    streamObserverAllowlistConfigured: streamObserverAllowlistConfigured(),
+  });
 });
 
 app.get("/api/admin/header-marquee", requireSystemAdminWallet, (_req, res) => {
@@ -1509,8 +1554,14 @@ wss.on("connection", (ws, req) => {
       spawnHint = { x, z };
     }
   }
+  const streamRequested = url.searchParams.get("stream") === "1";
+  if (streamRequested && !isStreamObserver(address)) {
+    ws.close(4403, "stream_unauthorized");
+    return;
+  }
   addClient(roomId, ws, address, spawnHint, {
     nimiqPay: sessionNimiqPay,
+    streamObserver: streamRequested,
   });
   void sendTelegramConnectNotice(address, roomId);
 });
@@ -1589,4 +1640,9 @@ server.listen(PORT, HOST, () => {
     })
   );
   if (DEV_AUTH_BYPASS) console.warn("DEV_AUTH_BYPASS enabled — not for production");
+  if (!streamObserverAllowlistConfigured()) {
+    console.warn(
+      "[stream] No stream observer wallets configured — set `/admin/settings` or STREAM_OBSERVER_ADDRESSES; ?stream=1 is disabled"
+    );
+  }
 });
