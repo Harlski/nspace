@@ -1,6 +1,6 @@
 import telegramIconUrl from "../assets/social/telegram.svg?url";
 import xIconUrl from "../assets/social/x.svg?url";
-import { signInWithWallet } from "../auth/nimiq.js";
+import { signInWithWallet, type UsernamePromptStatus } from "../auth/nimiq.js";
 import {
   completeAuthVerifyWithTermsPrivacyRetry,
   completeWalletPayloadAuthWithTermsPrivacyRetry,
@@ -133,7 +133,12 @@ export type MainMenuOptions = {
   authToken: string | null;
   devBypass: boolean;
   onReconnect: (address: string) => void | Promise<void>;
-  onLoggedIn: (token: string, address: string, nimiqPay?: boolean) => void | Promise<void>;
+  onLoggedIn: (
+    token: string,
+    address: string,
+    nimiqPay?: boolean,
+    usernamePrompt?: UsernamePromptStatus
+  ) => void | Promise<void>;
   onLogout: (address?: string) => void;
 };
 
@@ -675,7 +680,12 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         }
       );
       syncTermsPrivacyRowAfterAckState();
-      await onLoggedIn(verified.token, verified.address, verified.nimiqPay);
+      await onLoggedIn(
+        verified.token,
+        verified.address,
+        verified.nimiqPay,
+        verified.usernamePrompt
+      );
     } finally {
       if (root.isConnected) setBusy(false);
     }
@@ -756,7 +766,12 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         }
       );
       syncTermsPrivacyRowAfterAckState();
-      await onLoggedIn(verified.token, verified.address, verified.nimiqPay);
+      await onLoggedIn(
+        verified.token,
+        verified.address,
+        verified.nimiqPay,
+        verified.usernamePrompt
+      );
     } catch (e) {
       showErr(e instanceof Error ? e.message : "dev_login_failed");
     } finally {

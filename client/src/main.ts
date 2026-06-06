@@ -370,9 +370,9 @@ function openMainMenu(): void {
       if (!ok) return;
       enterGame(c.token, c.address, np);
     },
-    onLoggedIn: async (token, address, nimiqPay) => {
+    onLoggedIn: async (token, address, nimiqPay, usernamePrompt) => {
       saveCachedSession(token, address, nimiqPay);
-      const ok = await runUsernamePromptGate(token, address);
+      const ok = await runUsernamePromptGate(token, address, usernamePrompt);
       if (!ok) return;
       enterGame(token, address, nimiqPay);
     },

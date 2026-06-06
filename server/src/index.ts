@@ -353,13 +353,18 @@ function jwtAddressFromReq(req: Request): string | null {
 
 /** Must register before `GET /api/player-profile/:address` (otherwise `:address` captures `username-prompt`). */
 app.get("/api/player-profile/username-prompt", requireJwt, (req, res) => {
-  const sub = jwtAddressFromReq(req);
-  const signer = normalizeWalletId(sub ?? "");
-  if (!signer) {
-    res.status(401).json({ error: "unauthorized" });
-    return;
+  try {
+    const sub = jwtAddressFromReq(req);
+    const signer = normalizeWalletId(sub ?? "");
+    if (!signer) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    res.json(getUsernamePromptStatus(signer));
+  } catch (err) {
+    console.error("[player-profile/username-prompt]", err);
+    res.status(500).json({ error: "internal" });
   }
-  res.json(getUsernamePromptStatus(signer));
 });
 
 app.post("/api/player-profile/username/defer", requireJwt, (req, res) => {
@@ -591,10 +596,9 @@ async function sendTelegramFeedback(text: string): Promise<boolean> {
   }
 }
 
-async function sendTelegramConnectNotice(address: string, roomId: string): Promise<void> {
+async function sendTelegramPlainText(text: string, logTag: string): Promise<void> {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-  const text = `NSpace connect\nWallet: ${address}\nRoom: ${roomId}\nAt: ${new Date().toISOString()}`;
   try {
     const chatIdPayload =
       /^-?\d+$/.test(TELEGRAM_CHAT_ID) ? Number(TELEGRAM_CHAT_ID) : TELEGRAM_CHAT_ID;
@@ -608,8 +612,19 @@ async function sendTelegramConnectNotice(address: string, roomId: string): Promi
       }),
     });
   } catch (err) {
-    console.error("[connect] Telegram notify failed:", err);
+    console.error(`[${logTag}] Telegram notify failed:`, err);
   }
+}
+
+async function sendTelegramConnectNotice(address: string, roomId: string): Promise<void> {
+  await sendTelegramPlainText(
+    `NSpace connect\nWallet: ${address}\nRoom: ${roomId}\nAt: ${new Date().toISOString()}`,
+    "connect"
+  );
+}
+
+function notifyUsernameSet(wallet: string, username: string): void {
+  void sendTelegramPlainText(`Name Update:\n${wallet} -> ${username}`, "username");
 }
 
 app.get("/api/canvas/leaderboard", (_req, res) => {
@@ -1486,6 +1501,7 @@ app.put("/api/player-profile/username", requireJwt, (req, res) => {
     return;
   }
   syncPlayerProfileDisplayNameForWallet(signer);
+  notifyUsernameSet(signer, result.customUsername);
   res.json({
     ok: true,
     customUsername: result.customUsername,
@@ -1535,6 +1551,7 @@ app.post("/api/admin/moderation", requireSystemAdminWallet, (req, res) => {
         return;
       }
       syncPlayerProfileDisplayNameForWallet(target);
+      notifyUsernameSet(target, result.customUsername);
       res.json({
         ok: true,
         customUsername: result.customUsername,
@@ -1807,7 +1824,7 @@ app.post("/api/auth/verify", async (req, res) => {
     token,
     address: sessionAddress,
     nimiqPay,
-    ...(usernamePrompt.needsPrompt ? { usernamePrompt } : {}),
+    usernamePrompt,
   });
 });
 

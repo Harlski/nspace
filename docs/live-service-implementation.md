@@ -12,7 +12,7 @@ This document describes how **Nimiq Space** is structured for production-style h
 
 ## Client ↔ API when origins differ
 
-- **`VITE_API_BASE_URL`** — API origin; empty means same-origin (Vite dev proxy or single-host prod). Implemented in [`client/src/net/apiBase.ts`](../client/src/net/apiBase.ts) (`apiUrl()`).
+- **`VITE_API_BASE_URL`** — API origin; **leave empty on Vercel** (`nimiq.space`) so HTTP uses same-origin `/api/*` rewrites (see [`vercel.json`](../vercel.json)). The client forces same-origin on `nimiq.space` even if this env is set; WebSocket still uses `wss://api.nimiq.space` via `resolveWsApiOrigin`. Implemented in [`client/src/net/apiBase.ts`](../client/src/net/apiBase.ts) (`apiUrl()`).
 - **`VITE_WS_BASE_URL`** — WebSocket origin override; otherwise derived from the page / API base. See [`client/src/net/ws.ts`](../client/src/net/ws.ts).
 - **Build-time chart URL:** Docker build args / Vercel env may set `VITE_NIM_CHART_API_URL` (see compose `args` and deploy docs).
 

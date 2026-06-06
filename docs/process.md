@@ -45,7 +45,7 @@ Clients may send an optional string field **`claimIntent`** on **`beginBlockClai
 | `TERMS_PRIVACY_ACCEPTANCE_STORE_FILE` | server | Optional JSON path for per-wallet Terms/Privacy acknowledgement (default `server/data/terms-privacy-acceptance.json`; merged read with legacy `legal-consent.json` when unset) |
 | `PLAYER_LAST_SESSION_STORE_FILE` | server | Optional JSON path for last disconnect room/tile per wallet (default `server/data/player-last-sessions.json`; used by `resume=1` reconnect within **10 minutes**) |
 | `FEEDBACK_STORE_FILE` | server | Optional JSON path for player feedback tickets (default `server/data/feedback/tickets.json`) |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | server | Optional — ping on **new** feedback tickets (not the authoritative store) |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | server | Optional — ping on **new** feedback tickets, **username set** (`Name Update: wallet -> name`), and connect notices (not the authoritative store) |
 | `LEGAL_CONSENT_STORE_FILE` | server | Deprecated alias — same override as **`TERMS_PRIVACY_ACCEPTANCE_STORE_FILE`** |
 | `DEV_AUTH_BYPASS` | server | `1` = skip signature verification (development only) |
 | `STREAM_OBSERVER_ADDRESSES` | server | Comma-separated Nimiq wallets allowed for cinema `?stream=1` observer sessions (full-board tile sync). **Merged** with wallets saved in **`/admin/settings`** (runtime JSON). **Unset everywhere = stream observer disabled for everyone.** Spaces inside an address are optional. |

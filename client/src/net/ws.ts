@@ -10,7 +10,7 @@ import {
   DEFAULT_GATE_BLOCK_COLOR_RGB,
   resolveBlockColorRgb,
 } from "../game/blockStyle.js";
-import { resolveApiBaseUrl } from "./apiBase.js";
+import { resolveWsApiOrigin } from "./apiBase.js";
 
 export type ObstacleTile = {
   x: number;
@@ -395,38 +395,13 @@ export function connectGameWs(
     q.set("stream", "1");
   }
   let originBase: string;
-  const wsEnv = import.meta.env.VITE_WS_BASE_URL;
-  if (wsEnv) {
-    let w = String(wsEnv).trim().replace(/\/$/, "");
-    if (!w.includes("://")) {
-      const lower = w.toLowerCase();
-      const useWs =
-        lower.startsWith("localhost") ||
-        lower.startsWith("127.0.0.1") ||
-        lower.startsWith("[::1]");
-      w = `${useWs ? "ws://" : "wss://"}${w}`;
-    }
-    try {
-      originBase = new URL(w).origin;
-    } catch {
-      const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      originBase = `${proto}//${location.host}`;
-    }
-  } else {
-    const api = resolveApiBaseUrl();
-    if (api) {
-      try {
-        const u = new URL(api);
-        u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
-        originBase = u.origin;
-      } catch {
-        const proto = location.protocol === "https:" ? "wss:" : "ws:";
-        originBase = `${proto}//${location.host}`;
-      }
-    } else {
-      const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      originBase = `${proto}//${location.host}`;
-    }
+  try {
+    const u = new URL(resolveWsApiOrigin());
+    u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+    originBase = u.origin;
+  } catch {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    originBase = `${proto}//${location.host}`;
   }
   const url = `${originBase}/ws?${q}`;
   const ws = new WebSocket(url);

@@ -81,7 +81,7 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 - [x] **Player APIs** — `POST /api/feedback` (create ticket + first message; optional `kind`, `source: "report"` with `report` object for chat reports), `GET /api/feedback/mine` (`unreadCount` + per-ticket `unread`), `GET /api/feedback/:id` (marks read), `POST /api/feedback/:id/messages` (JWT; 700 chars; 20s send cooldown; max **3 new tickets / wallet / day**)
 - [x] **Persistence** — JSON store default `server/data/feedback/tickets.json`; optional **`FEEDBACK_STORE_FILE`**
 - [x] **Admin hub** — `/admin/feedback` + `GET/PATCH /api/admin/feedback`, reply + status (`open` / `answered` / `integrated` / `closed`), **`POST …/reward`** (0.10–2 NIM via `enqueueNimPayout` when status is **integrated**; one reward per ticket); chat reports show reported player, quoted message, and captured chat history ([`server/src/feedbackTicketStore.ts`](../server/src/feedbackTicketStore.ts), [`server/src/adminFeedbackPage.ts`](../server/src/adminFeedbackPage.ts))
-- [x] **Telegram ping** (optional) — new tickets still notify via `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` when configured; store is source of truth
+- [x] **Telegram ping** (optional) — new tickets, **username set** (`Name Update: wallet -> name`), and connect notices via `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` when configured; store is source of truth
 
 ## UI / shell
 

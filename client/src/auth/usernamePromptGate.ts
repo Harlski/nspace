@@ -56,7 +56,13 @@ async function deferUsernamePrompt(
   return { ok: true };
 }
 
-async function loadUsernamePromptStatus(token: string): Promise<UsernamePromptStatus | null> {
+async function loadUsernamePromptStatus(
+  token: string,
+  initial?: UsernamePromptStatus | null
+): Promise<UsernamePromptStatus | null> {
+  if (initial && typeof initial.needsPrompt === "boolean") {
+    return initial;
+  }
   for (;;) {
     try {
       return await fetchUsernamePromptStatus(token);
@@ -74,12 +80,13 @@ async function loadUsernamePromptStatus(token: string): Promise<UsernamePromptSt
  */
 export async function runUsernamePromptGate(
   token: string,
-  walletAddress?: string
+  walletAddress?: string,
+  initialStatus?: UsernamePromptStatus | null
 ): Promise<boolean> {
   const address =
     walletAddress?.replace(/\s+/g, "").trim() || parseJwtSub(token);
 
-  const status = await loadUsernamePromptStatus(token);
+  const status = await loadUsernamePromptStatus(token, initialStatus);
   if (!status) return false;
   if (!status.needsPrompt) return true;
 
