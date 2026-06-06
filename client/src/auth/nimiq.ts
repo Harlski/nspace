@@ -133,11 +133,19 @@ export async function fetchNonce(): Promise<{ nonce: string; expiresAt: number }
   return r.json() as Promise<{ nonce: string; expiresAt: number }>;
 }
 
+export type UsernamePromptStatus = {
+  needsPrompt: boolean;
+  deferCount: number;
+  deferralsRemaining: number;
+  mustSetUsername: boolean;
+};
+
 export type VerifyAuthResponse = {
   token: string;
   address: string;
   /** Server-derived: true when login used the Nimiq Pay signing path (empty `signer` on verify). */
   nimiqPay?: boolean;
+  usernamePrompt?: UsernamePromptStatus;
 };
 
 /** Optional fields on `POST /api/auth/verify` in addition to the signed Nimiq payload. */

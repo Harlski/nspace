@@ -1585,6 +1585,14 @@ export class Game {
         clientY: number;
         mine: { x: number; z: number; y: number } | null;
         walkAt: { clientX: number; clientY: number } | null;
+        signboard: {
+          id: string;
+          x: number;
+          z: number;
+          message: string;
+          createdBy: string;
+          createdAt: number;
+        } | null;
       }) => void)
     | null = null;
 
@@ -1645,6 +1653,8 @@ export class Game {
     | null = null;
   /** Floor `tileKey` for the signboard under the cursor (HUD hover); drives hint opacity. */
   private signboardHoverFloorKey: string | null = null;
+  /** Last signboard id sent to the hover handler — skips redundant HUD updates on pointermove. */
+  private signboardHoverActiveId: string | null = null;
 
   private billboardSyncGen = 0;
   private readonly billboardRoots = new Map<string, THREE.Group>();
@@ -3756,13 +3766,15 @@ export class Game {
           mine !== null || !this.tileClickHandler
             ? null
             : this.resolveWalkNavigationGoalAt(clientX, clientY);
-        if (mine !== null || walkGoal !== null) {
+        const signboard = this.pickSignboardAtScreen(clientX, clientY);
+        if (mine !== null || walkGoal !== null || signboard !== null) {
           this.worldTileContextOpener({
             clientX,
             clientY,
             mine,
             walkAt:
               walkGoal !== null ? { clientX, clientY } : null,
+            signboard,
           });
         }
       }
@@ -4187,10 +4199,43 @@ export class Game {
           clientY: number;
           mine: { x: number; z: number; y: number } | null;
           walkAt: { clientX: number; clientY: number } | null;
+          signboard: {
+            id: string;
+            x: number;
+            z: number;
+            message: string;
+            createdBy: string;
+            createdAt: number;
+          } | null;
         }) => void)
       | null
   ): void {
     this.worldTileContextOpener = handler;
+  }
+
+  /** Signboard under a screen point (passable block or floor tile), if any. */
+  private pickSignboardAtScreen(
+    clientX: number,
+    clientY: number
+  ): {
+    id: string;
+    x: number;
+    z: number;
+    message: string;
+    createdBy: string;
+    createdAt: number;
+  } | null {
+    const blockHit = this.pickBlockKey(clientX, clientY);
+    if (blockHit) {
+      const onBlock = this.signboards.get(blockHit);
+      if (onBlock) return onBlock;
+    }
+    const floor = this.pickFloor(clientX, clientY);
+    if (floor) {
+      const onFloor = this.signboards.get(tileKey(floor.x, floor.y));
+      if (onFloor) return onFloor;
+    }
+    return null;
   }
 
   /** Same as choosing "Mine" on the world tile context menu (NIM claim UI + server flow). */
@@ -6432,10 +6477,21 @@ export class Game {
       createdAt: number;
     }[]
   ): void {
+    const prevHoverKey = this.signboardHoverFloorKey;
     this.signboards.clear();
     for (const s of signboards) {
       const k = tileKey(s.x, s.z);
       this.signboards.set(k, { ...s });
+    }
+    if (!prevHoverKey || !this.signboardHoverHandler) return;
+    const hovered = this.signboards.get(prevHoverKey);
+    if (hovered) {
+      this.signboardHoverActiveId = null;
+      this.signboardHoverHandler(hovered);
+    } else {
+      this.signboardHoverActiveId = null;
+      this.signboardHoverFloorKey = null;
+      this.signboardHoverHandler(null);
     }
   }
 
@@ -6454,9 +6510,13 @@ export class Game {
     if (!handler) {
       this.signboardHoverHandler = null;
       this.signboardHoverFloorKey = null;
+      this.signboardHoverActiveId = null;
       return;
     }
     this.signboardHoverHandler = (signboard) => {
+      const nextId = signboard?.id ?? null;
+      if (nextId === this.signboardHoverActiveId) return;
+      this.signboardHoverActiveId = nextId;
       this.signboardHoverFloorKey = signboard
         ? tileKey(signboard.x, signboard.z)
         : null;

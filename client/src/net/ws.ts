@@ -366,6 +366,8 @@ export type ConnectGameWsOptions = {
   spawnZ?: number;
   /** Cinema observer — server omits player from room presence. */
   stream?: boolean;
+  /** Restore last room + tile when disconnect was within server grace window. */
+  resume?: boolean;
 };
 
 export function connectGameWs(
@@ -379,7 +381,9 @@ export function connectGameWs(
     token,
     room,
   });
-  if (
+  if (opts?.resume) {
+    q.set("resume", "1");
+  } else if (
     opts &&
     Number.isFinite(opts.spawnX) &&
     Number.isFinite(opts.spawnZ)

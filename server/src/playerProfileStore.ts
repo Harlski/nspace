@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { walletDisplayName } from "./walletDisplayName.js";
 import { isUsernameSetBanned } from "./moderationStore.js";
+import { usernameAssignmentError } from "./usernamePolicy.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -11,14 +12,16 @@ const STORE_FILE = process.env.PLAYER_PROFILE_STORE_FILE
   : path.join(__dirname, "..", "data", "player-profiles.json");
 
 export const USERNAME_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-const USERNAME_MIN_LEN = 1;
-const USERNAME_MAX_LEN = 12;
+export const USERNAME_PROMPT_MAX_DEFERRALS = 5;
+export { USERNAME_MAX_LEN, USERNAME_MIN_LEN } from "./usernamePolicy.js";
 
 type Row = {
   message: string;
   updatedAt: number;
   customUsername?: string | null;
   usernameChangedAt?: number;
+  /** Times the player chose "Not now" on the login username prompt (max {@link USERNAME_PROMPT_MAX_DEFERRALS}). */
+  usernamePromptDeferCount?: number;
   recentAliases?: string[];
 };
 
@@ -66,6 +69,11 @@ function rowEnsure(base: Partial<Row> | undefined): Row {
         : String(base.customUsername),
     usernameChangedAt:
       typeof base?.usernameChangedAt === "number" ? base.usernameChangedAt : undefined,
+    usernamePromptDeferCount:
+      typeof base?.usernamePromptDeferCount === "number" &&
+      Number.isFinite(base.usernamePromptDeferCount)
+        ? Math.max(0, Math.floor(base.usernamePromptDeferCount))
+        : 0,
     recentAliases: Array.isArray(base?.recentAliases)
       ? base.recentAliases.map((x) => String(x)).filter(Boolean)
       : [],
@@ -94,6 +102,61 @@ export function getEffectivePlayerDisplayName(
   const c = r.customUsername?.trim();
   if (c) return c;
   return walletDisplayName(key);
+}
+
+export function playerHasCustomUsername(normalizedAddress: string): boolean {
+  const key = normalizedAddress.trim().toUpperCase();
+  if (!key) return false;
+  return Boolean(getRow(key).customUsername?.trim());
+}
+
+export type UsernamePromptStatus = {
+  needsPrompt: boolean;
+  deferCount: number;
+  deferralsRemaining: number;
+  mustSetUsername: boolean;
+};
+
+/** Login prompt: players without a custom username are nudged until they set one or exhaust deferrals. */
+export function getUsernamePromptStatus(normalizedAddress: string): UsernamePromptStatus {
+  const key = normalizedAddress.trim().toUpperCase();
+  if (!key || playerHasCustomUsername(key) || isUsernameSetBanned(key)) {
+    return {
+      needsPrompt: false,
+      deferCount: 0,
+      deferralsRemaining: USERNAME_PROMPT_MAX_DEFERRALS,
+      mustSetUsername: false,
+    };
+  }
+  const deferCount = getRow(key).usernamePromptDeferCount ?? 0;
+  const deferralsRemaining = Math.max(0, USERNAME_PROMPT_MAX_DEFERRALS - deferCount);
+  return {
+    needsPrompt: true,
+    deferCount,
+    deferralsRemaining,
+    mustSetUsername: deferCount >= USERNAME_PROMPT_MAX_DEFERRALS,
+  };
+}
+
+export function recordUsernamePromptDeferral(
+  normalizedAddress: string
+): { ok: true; deferralsRemaining: number } | { ok: false; error: string } {
+  const key = normalizedAddress.trim().toUpperCase();
+  if (!key) return { ok: false, error: "invalid_address" };
+  if (playerHasCustomUsername(key)) return { ok: false, error: "username_already_set" };
+  const data = readStore();
+  const prev = rowEnsure(data.profiles[key]);
+  const deferCount = prev.usernamePromptDeferCount ?? 0;
+  if (deferCount >= USERNAME_PROMPT_MAX_DEFERRALS) {
+    return { ok: false, error: "username_prompt_required" };
+  }
+  const nextCount = deferCount + 1;
+  data.profiles[key] = { ...prev, usernamePromptDeferCount: nextCount };
+  writeStore(data);
+  return {
+    ok: true,
+    deferralsRemaining: Math.max(0, USERNAME_PROMPT_MAX_DEFERRALS - nextCount),
+  };
 }
 
 export function getRecentAliases(normalizedAddress: string): string[] {
@@ -131,12 +194,6 @@ function pushAlias(aliases: string[], name: string): string[] {
   if (!t) return aliases.slice(0, 3);
   const next = [t, ...aliases.filter((a) => a !== t)];
   return next.slice(0, 3);
-}
-
-function isValidUsernameCandidate(s: string): boolean {
-  if (s.length < USERNAME_MIN_LEN || s.length > USERNAME_MAX_LEN) return false;
-  if (/^\[NPC\]/i.test(s)) return false;
-  return /^[a-zA-Z0-9]+$/.test(s);
 }
 
 function usernameTakenByOther(
@@ -184,7 +241,8 @@ function applyUsernameChange(
   if (!key) return { ok: false, error: "invalid_address" };
   if (isUsernameSetBanned(key)) return { ok: false, error: "username_set_banned" };
   const next = String(rawUsername ?? "").trim();
-  if (!isValidUsernameCandidate(next)) return { ok: false, error: "invalid_username" };
+  const policyErr = usernameAssignmentError(next);
+  if (policyErr) return { ok: false, error: policyErr };
 
   const data = readStore();
   if (usernameTakenByOther(key, next.toLowerCase(), data)) {
@@ -272,6 +330,7 @@ export function adminClearPlayerUsername(normalizedTarget: string): {
     ...prevRow,
     customUsername: null,
     usernameChangedAt: undefined,
+    usernamePromptDeferCount: 0,
     recentAliases: aliases,
   };
   writeStore(data);

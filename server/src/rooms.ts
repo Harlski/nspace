@@ -42,7 +42,6 @@ import {
 import {
   createOfficialRoomWithSize,
   createRoomWithSize,
-  defaultRoomDisplayName,
   getDoorsForRoom,
   getRoomBaseBounds,
   HUB_ROOM_ID,
@@ -97,6 +96,11 @@ import {
   endSession,
   logGameplayEvent,
 } from "./eventLog.js";
+import {
+  getPlayerLastSession,
+  PLAYER_RECONNECT_GRACE_MS,
+  setPlayerLastSession,
+} from "./playerLastSessionStore.js";
 import { ensurePixelPaintBaseline, logPixelPaint } from "./pixelPaintLog.js";
 import {
   invalidatePixelBoardPngCache,
@@ -140,6 +144,7 @@ import {
   createSignboard,
   deleteSignboard,
   getSignboardAt,
+  getSignboardById,
   getSignboardsForRoom,
   loadSignboards,
   SIGNBOARD_MESSAGE_MAX_LEN,
@@ -404,6 +409,35 @@ function chatBacklogSnapshotForWelcome(roomId: string, now: number): ChatBacklog
   if (!buf?.length) return [];
   const cutoff = now - CHAT_BACKLOG_WINDOW_MS;
   return buf.filter((l) => l.at >= cutoff);
+}
+
+/** Recent chat lines from one wallet (server backlog, ~10 min window) for moderation reports. */
+export function snapshotChatHistoryForWallet(
+  wallet: string,
+  roomId?: string
+): ChatBacklogLine[] {
+  const key = compactAddress(wallet);
+  if (!key) return [];
+  const now = Date.now();
+  const cutoff = now - CHAT_BACKLOG_WINDOW_MS;
+  const out: ChatBacklogLine[] = [];
+  const collect = (buf: ChatBacklogLine[] | undefined): void => {
+    if (!buf?.length) return;
+    for (const line of buf) {
+      if (line.at < cutoff) continue;
+      if (compactAddress(line.fromAddress) !== key) continue;
+      out.push({ ...line });
+    }
+  };
+  if (roomId) {
+    collect(chatBacklogByNormalizedRoom.get(normalizeRoomId(roomId)));
+  } else {
+    for (const buf of chatBacklogByNormalizedRoom.values()) {
+      collect(buf);
+    }
+  }
+  out.sort((a, b) => a.at - b.at);
+  return out;
 }
 const RATE_MOVE_TO_MS = 120;
 /** Gate stays open for the opener to cross; then server clears `gateOpen`. */
@@ -4316,6 +4350,37 @@ export function startRoomTick(): void {
   }, TICK_MS);
 }
 
+/** Login / reconnect placement when client sends `resume=1` (within grace window). */
+export function resolveResumeLogin(address: string): {
+  roomId: string;
+  spawn: { x: number; z: number; y?: number };
+} {
+  const fallback = {
+    roomId: CHAMBER_ROOM_ID,
+    spawn: {
+      x: CHAMBER_DEFAULT_SPAWN.x,
+      z: CHAMBER_DEFAULT_SPAWN.z,
+    },
+  };
+  const last = getPlayerLastSession(compactAddress(address));
+  if (!last) return fallback;
+  if (Date.now() - last.disconnectedAt > PLAYER_RECONNECT_GRACE_MS) {
+    return fallback;
+  }
+  const roomId = normalizeRoomId(last.roomId);
+  if (!hasRoom(roomId)) return fallback;
+  const t = snapToTile(last.x, last.z);
+  if (!isWalkableForRoom(roomId, t.x, t.z)) return fallback;
+  return {
+    roomId,
+    spawn: {
+      x: t.x,
+      z: t.z,
+      ...(typeof last.y === "number" && Number.isFinite(last.y) ? { y: last.y } : {}),
+    },
+  };
+}
+
 export function addClient(
   roomIdRaw: string,
   ws: WebSocket,
@@ -4361,43 +4426,57 @@ export function addClient(
   const isCanvasRoom = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
   const isChamberRoom = normalizeRoomId(roomId) === CHAMBER_ROOM_ID;
   const isPixelRoomConnect = normalizeRoomId(roomId) === PIXEL_ROOM_ID;
-  if (isCanvasRoom) {
-    const t = snapToTile(CANVAS_SPAWN_X, CANVAS_SPAWN_Z);
-    if (isWalkableForRoom(roomId, t.x, t.z)) {
-      player.x = t.x;
-      player.z = t.z;
-      placedSpawn = true;
-      resolvedSpawnTile = true;
+
+  const applySpawnHint = (): boolean => {
+    if (
+      !spawnHintForPlacement ||
+      !Number.isFinite(spawnHintForPlacement.x) ||
+      !Number.isFinite(spawnHintForPlacement.z)
+    ) {
+      return false;
     }
-  } else if (isChamberRoom) {
-    const t = snapToTile(CHAMBER_DEFAULT_SPAWN.x, CHAMBER_DEFAULT_SPAWN.z);
-    if (isWalkableForRoom(roomId, t.x, t.z)) {
-      player.x = t.x;
-      player.z = t.z;
-      placedSpawn = true;
-      resolvedSpawnTile = true;
+    const t = snapToTile(spawnHintForPlacement.x, spawnHintForPlacement.z);
+    if (!isWalkableForRoom(roomId, t.x, t.z)) return false;
+    player.x = t.x;
+    player.z = t.z;
+    placedSpawn = true;
+    resolvedSpawnTile = true;
+    return true;
+  };
+
+  if (isCanvasRoom) {
+    if (!applySpawnHint()) {
+      const t = snapToTile(CANVAS_SPAWN_X, CANVAS_SPAWN_Z);
+      if (isWalkableForRoom(roomId, t.x, t.z)) {
+        player.x = t.x;
+        player.z = t.z;
+        placedSpawn = true;
+        resolvedSpawnTile = true;
+      }
     }
   } else if (isPixelRoomConnect) {
-    const t = snapToTile(PIXEL_DEFAULT_SPAWN.x, PIXEL_DEFAULT_SPAWN.z);
-    if (isWalkableForRoom(roomId, t.x, t.z)) {
-      player.x = t.x;
-      player.z = t.z;
-      player.y = 0;
-      placedSpawn = true;
-      resolvedSpawnTile = true;
+    if (!applySpawnHint()) {
+      const t = snapToTile(PIXEL_DEFAULT_SPAWN.x, PIXEL_DEFAULT_SPAWN.z);
+      if (isWalkableForRoom(roomId, t.x, t.z)) {
+        player.x = t.x;
+        player.z = t.z;
+        player.y = 0;
+        placedSpawn = true;
+        resolvedSpawnTile = true;
+      }
     }
-  } else if (
-    spawnHintForPlacement &&
-    Number.isFinite(spawnHintForPlacement.x) &&
-    Number.isFinite(spawnHintForPlacement.z)
-  ) {
-    const t = snapToTile(spawnHintForPlacement.x, spawnHintForPlacement.z);
-    if (isWalkableForRoom(roomId, t.x, t.z)) {
-      player.x = t.x;
-      player.z = t.z;
-      placedSpawn = true;
-      resolvedSpawnTile = true;
+  } else if (isChamberRoom) {
+    if (!applySpawnHint()) {
+      const t = snapToTile(CHAMBER_DEFAULT_SPAWN.x, CHAMBER_DEFAULT_SPAWN.z);
+      if (isWalkableForRoom(roomId, t.x, t.z)) {
+        player.x = t.x;
+        player.z = t.z;
+        placedSpawn = true;
+        resolvedSpawnTile = true;
+      }
     }
+  } else if (applySpawnHint()) {
+    /* explicit spawn hint for this room */
   }
   if (!placedSpawn && !isCanvasRoom) {
     const saved = spawnMap(roomId).get(address);
@@ -4679,12 +4758,17 @@ export function addClient(
     if (msg.type === "createRoom") {
       const widthTiles = Number(msg.widthTiles);
       const heightTiles = Number(msg.heightTiles);
-      const rawName =
-        msg.displayName !== undefined ? String(msg.displayName) : "";
-      const displayName =
-        rawName.trim().length > 0
-          ? rawName.trim()
-          : defaultRoomDisplayName(address);
+      const displayName = String(msg.displayName ?? "").trim();
+      if (!displayName) {
+        wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "SYSTEM",
+            text: "Choose a room name before creating a room.",
+            at: Date.now(),
+          } satisfies OutMsg);
+        return;
+      }
       const isPublic = msg.isPublic === false ? false : true;
       const created = createRoomWithSize(
         widthTiles,
@@ -7962,19 +8046,21 @@ export function addClient(
     }
 
     if (msg.type === "updateSignboard") {
-      if (!canPlaceBlocksInRoom(currentRoomId, address)) {
-        wsSafeSend(ws, { type: "error", code: "admin_required" });
-        return;
-      }
-      // Admin-only: update a signboard's message
-      if (!isAdmin(address)) {
-        wsSafeSend(ws, { type: "error", code: "admin_required" });
-        return;
-      }
       const signboardId = String(msg.signboardId ?? "");
       const message = String(msg.message ?? "").trim();
       if (!signboardId || !message || message.length > SIGNBOARD_MESSAGE_MAX_LEN) {
         wsSafeSend(ws, { type: "error", code: "invalid_message" });
+        return;
+      }
+      const sb = getSignboardById(signboardId);
+      if (!sb || sb.roomId !== currentRoomId) {
+        wsSafeSend(ws, { type: "error", code: "signboard_not_found" });
+        return;
+      }
+      const ownerKey = compactAddress(sb.createdBy);
+      const signerKey = compactAddress(address);
+      if (!isAdmin(address) && ownerKey !== signerKey) {
+        wsSafeSend(ws, { type: "error", code: "not_signboard_owner" });
         return;
       }
       if (!updateSignboard(signboardId, message)) {
@@ -8117,16 +8203,22 @@ export function addClient(
     const playerCurrentRoom = findPlayerRoom(address);
     if (playerCurrentRoom) {
       endSession(conn.sessionId, address, playerCurrentRoom, conn.sessionStartedAt);
-      if (
-        !conn.streamObserver &&
-        normalizeRoomId(playerCurrentRoom) !== CHAMBER_ROOM_ID
-      ) {
-        spawnMap(playerCurrentRoom).set(address, {
+      if (!conn.streamObserver) {
+        setPlayerLastSession(compactAddress(address), {
+          roomId: playerCurrentRoom,
           x: conn.player.x,
           z: conn.player.z,
           y: conn.player.y,
+          disconnectedAt: Date.now(),
         });
-        schedulePersistWorldState();
+        if (normalizeRoomId(playerCurrentRoom) !== CHAMBER_ROOM_ID) {
+          spawnMap(playerCurrentRoom).set(address, {
+            x: conn.player.x,
+            z: conn.player.z,
+            y: conn.player.y,
+          });
+          schedulePersistWorldState();
+        }
       }
       const room = roomOf(playerCurrentRoom);
       room.delete(address);

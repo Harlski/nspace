@@ -4,7 +4,7 @@ export const DESIGN_HEIGHT = 720;
 
 import { CHAMBER_DEFAULT_SPAWN, CHAMBER_ROOM_ID } from "./roomLayouts.js";
 
-/** Default WebSocket room for new sessions and reconnects (spawn uses `CHAMBER_DEFAULT_SPAWN`). */
+/** Default WebSocket room for new sessions (server may override with `resume=1`). */
 export const ROOM_ID = CHAMBER_ROOM_ID;
 
 export { CHAMBER_DEFAULT_SPAWN };

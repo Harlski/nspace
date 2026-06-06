@@ -11,7 +11,7 @@ const DATA_DIR = path.join(__dirname, "..", "data");
 const SIGNBOARDS_FILE = path.join(DATA_DIR, "signboards.json");
 
 /** Max UTF-16 code units for signboard message text (client UI matches). */
-export const SIGNBOARD_MESSAGE_MAX_LEN = 64;
+export const SIGNBOARD_MESSAGE_MAX_LEN = 256;
 
 export type Signboard = {
   id: string; // unique ID (UUID or timestamp-based)
@@ -138,6 +138,13 @@ export function getSignboardAt(
     signboards.find((s) => s.roomId === roomId && s.x === x && s.z === z) ||
     null
   );
+}
+
+/** Get signboard by id */
+export function getSignboardById(id: string): Signboard | null {
+  const t = String(id ?? "").trim();
+  if (!t) return null;
+  return signboards.find((s) => s.id === t) ?? null;
 }
 
 /** Get all signboards */

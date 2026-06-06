@@ -132,8 +132,8 @@ export type MainMenuOptions = {
   /** JWT for `/api/replay/*` (session action log). */
   authToken: string | null;
   devBypass: boolean;
-  onReconnect: (address: string) => void;
-  onLoggedIn: (token: string, address: string, nimiqPay?: boolean) => void;
+  onReconnect: (address: string) => void | Promise<void>;
+  onLoggedIn: (token: string, address: string, nimiqPay?: boolean) => void | Promise<void>;
   onLogout: (address?: string) => void;
 };
 
@@ -625,7 +625,12 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     if (!selectedCachedSession) return;
     showErr("");
     if (!selectedCachedSession.isExpired) {
-      onReconnect(selectedCachedSession.address);
+      setBusy(true);
+      try {
+        await onReconnect(selectedCachedSession.address);
+      } finally {
+        setBusy(false);
+      }
       return;
     }
     if (!shouldShowExpiredAccountTerms()) {
@@ -660,16 +665,20 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       setBusy(false);
       return;
     }
-    const { token, address, nimiqPay } = await completeWalletPayloadAuthWithTermsPrivacyRetry(
-      (nonce) => signInWithWallet(nonce),
-      {
-        initialAcceptedTermsPrivacy: termsPrivacyCb.checked
-          ? TERMS_PRIVACY_DOCS_VERSION
-          : undefined,
-      }
-    );
-    syncTermsPrivacyRowAfterAckState();
-    onLoggedIn(token, address, nimiqPay);
+    try {
+      const verified = await completeWalletPayloadAuthWithTermsPrivacyRetry(
+        (nonce) => signInWithWallet(nonce),
+        {
+          initialAcceptedTermsPrivacy: termsPrivacyCb.checked
+            ? TERMS_PRIVACY_DOCS_VERSION
+            : undefined,
+        }
+      );
+      syncTermsPrivacyRowAfterAckState();
+      await onLoggedIn(verified.token, verified.address, verified.nimiqPay);
+    } finally {
+      if (root.isConnected) setBusy(false);
+    }
   };
 
   const setBusy = (busy: boolean): void => {
@@ -732,7 +741,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]!);
         return btoa(s);
       };
-      const { token, address, nimiqPay } = await completeAuthVerifyWithTermsPrivacyRetry(
+      const verified = await completeAuthVerifyWithTermsPrivacyRetry(
         async (nonce) => ({
           nonce,
           message: `Login:v1:${nonce}`,
@@ -747,10 +756,11 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         }
       );
       syncTermsPrivacyRowAfterAckState();
-      onLoggedIn(token, address, nimiqPay);
+      await onLoggedIn(verified.token, verified.address, verified.nimiqPay);
     } catch (e) {
       showErr(e instanceof Error ? e.message : "dev_login_failed");
-      setBusy(false);
+    } finally {
+      if (root.isConnected) setBusy(false);
     }
   });
 

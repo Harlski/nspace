@@ -1,6 +1,6 @@
 # Signboards (signposts) — behavior and messages
 
-Signboards are passable half-height blocks with a short message. Any player can **hover** to read them; **placement** and **editing** rules depend on the room (see below). **Updating** or **removing** a signboard’s message is **admin-only**.
+Signboards are passable half-height blocks with a short message. Any player can **hover** or use **Read Sign** (world context menu) to read them; **placement** rules depend on the room (see below). The **owner** (wallet that placed the sign) may **edit the message** from the Read Sign modal; **admins** may also update messages via the same WebSocket path. **Removing** a signboard is still **admin-only**.
 
 ## Who can place signboards?
 
@@ -13,7 +13,7 @@ Rules are enforced in `server/src/rooms.ts` via `canEditRoomContent` and `isAdmi
 | **Chamber** | **Admins only** |
 | **Player-created rooms** | The **room owner** wallet, or an admin |
 
-Messages are limited to **`SIGNBOARD_MESSAGE_MAX_LEN`** (currently **64** UTF-16 code units — see `server/src/signboards.ts`). Rate limits apply (`RATE_PLACE_MS` in `rooms.ts`).
+Messages are limited to **`SIGNBOARD_MESSAGE_MAX_LEN`** (currently **256** UTF-16 code units — see `server/src/signboards.ts`). Rate limits apply (`RATE_PLACE_MS` in `rooms.ts`).
 
 ## Admin accounts
 
@@ -38,7 +38,9 @@ Add or remove addresses in `server/src/config.ts` on your fork.
 
 Requirements: walkable tile, no obstacle at tile, no existing signboard there, within placement radius, message non-empty and within max length.
 
-### Update message (`updateSignboard`) — admin only
+### Update message (`updateSignboard`) — owner or admin
+
+The signer must be the signboard **`createdBy`** wallet or a server admin. Message must be non-empty and within max length.
 
 ```json
 {
@@ -47,6 +49,8 @@ Requirements: walkable tile, no obstacle at tile, no existing signboard there, w
   "message": "New text"
 }
 ```
+
+Error codes include `not_signboard_owner`, `signboard_not_found`, and `invalid_message`.
 
 ### Remove (`removeSignboard`) — admin only
 
@@ -60,6 +64,7 @@ Requirements: walkable tile, no obstacle at tile, no existing signboard there, w
 ## Client UX
 
 - Hovering a signboard shows a tooltip (message + creator address).
+- **Read Sign** (right-click / long-press on the tile) opens a profile-style modal; owners see **Edit message** to change text after placement.
 - Updates are broadcast as `type: "signboards"` with the full list for the room.
 
 ## Persistence

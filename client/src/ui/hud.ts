@@ -164,6 +164,68 @@ export type BuildBlockBarState = {
   placementAdmin?: boolean;
 };
 
+export type FeedbackKind = "bug" | "feature" | "suggestion";
+
+export type FeedbackTicketSummary = {
+  id: string;
+  kind: FeedbackKind;
+  status: string;
+  source?: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  preview: string;
+  unread?: boolean;
+  rewardLuna?: string;
+};
+
+export type FeedbackMessageWire = {
+  id: string;
+  authorWallet: string;
+  body: string;
+  createdAtMs: number;
+  isAdmin: boolean;
+};
+
+export type FeedbackTicketDetail = {
+  id: string;
+  kind: FeedbackKind;
+  status: string;
+  source?: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  rewardLuna?: string;
+  messages: FeedbackMessageWire[];
+};
+
+export type FeedbackHandlers = {
+  createTicket: (
+    kind: FeedbackKind,
+    message: string,
+    opts?: {
+      source?: "report";
+      report?: {
+        reportedWallet: string;
+        reportedDisplayName: string;
+        reportedMessage: string;
+        reportedAtMs?: number;
+        roomId?: string;
+      };
+    }
+  ) => Promise<{ ok: boolean; error?: string }>;
+  listMine: () => Promise<{
+    ok: boolean;
+    tickets?: FeedbackTicketSummary[];
+    unreadCount?: number;
+    error?: string;
+  }>;
+  getTicket: (id: string) => Promise<{
+    ok: boolean;
+    ticket?: FeedbackTicketDetail;
+    error?: string;
+  }>;
+  reply: (id: string, message: string) => Promise<{ ok: boolean; error?: string }>;
+};
+
 export function createHud(
   root: HTMLElement,
   opts?: {
@@ -272,7 +334,32 @@ export function createHud(
     opts: {
       onWalkHere: (() => void) | null;
       onMine: (() => void) | null;
+      onReadSign?: (() => void) | null;
     }
+  ) => void;
+  /** Modal reader for a signpost message (context menu “Read Sign”). */
+  showSignReadModal: (signboard: {
+    id: string;
+    x: number;
+    z: number;
+    message: string;
+    createdBy: string;
+    createdAt: number;
+  }) => void;
+  /** Revert Read Sign UI after a failed `updateSignboard`. */
+  reportSignReadSaveError: (code: string) => void;
+  syncSignReadFromSignboards: (
+    signboards: Array<{ id: string; message: string }>
+  ) => void;
+  syncSignboardTooltipFromSignboards: (
+    signboards: Array<{
+      id: string;
+      x: number;
+      z: number;
+      message: string;
+      createdBy: string;
+      createdAt: number;
+    }>
   ) => void;
   onReturnToLobby: (fn: () => void) => void;
   /** Open the large Rooms browser (list / join / create). */
@@ -493,6 +580,9 @@ export function createHud(
   deactivateSignpostMode: () => void;
   promptSignpostMessage: (x: number, z: number) => void;
   onSignpostPlace: (fn: (x: number, z: number, message: string) => void) => void;
+  onSignpostUpdate: (
+    fn: (signboardId: string, message: string) => void
+  ) => void;
   promptBillboardPlace: (
     x: number,
     z: number,
@@ -615,15 +705,15 @@ export function createHud(
   setCanvasCountdown: (text: string | null, msRemaining?: number) => void;
   setPlayerCount: (count: number, roomCount?: number) => void;
   showPlayerJoinedToast: (address: string) => void;
-  /** Submit feedback text; return ok + optional user-facing error message. */
-  onFeedbackSubmit: (
-    fn: (
-      message: string
-    ) => Promise<{ ok: boolean; error?: string }>
-  ) => void;
+  /** Wire feedback ticket APIs (create, list, thread, reply). */
+  setFeedbackHandlers: (handlers: FeedbackHandlers) => void;
+  /** Current room id for chat-report context (updated on welcome). */
+  setFeedbackReportRoomId: (roomId: string) => void;
   setNimWalletStatus: (status: string) => void;
   /** Wallet identicon in the brand links modal; call when entering the game. */
   setBrandLinksPlayerAddress: (address: string) => void;
+  /** Effective in-game display name (custom username or wallet shorthand) for the top bar. */
+  setBrandLinksPlayerDisplayName: (displayName: string) => void;
   setLoadingVisible: (
     visible: boolean,
     opts?: { skipMinWait?: boolean }
@@ -770,6 +860,8 @@ export function createHud(
   const playerBar = document.createElement("div");
   playerBar.className = "hud-player-bar";
   playerBar.setAttribute("aria-label", "Your wallet");
+  const playerBarIdentWrap = document.createElement("span");
+  playerBarIdentWrap.className = "hud-player-bar__ident-wrap";
   const playerBarIdenticon = document.createElement("img");
   playerBarIdenticon.className = "hud-player-bar__identicon";
   playerBarIdenticon.alt = "";
@@ -777,9 +869,10 @@ export function createHud(
   playerBarIdenticon.height = 22;
   playerBarIdenticon.decoding = "async";
   playerBarIdenticon.hidden = true;
+  playerBarIdentWrap.appendChild(playerBarIdenticon);
   const playerBarAddr = document.createElement("span");
   playerBarAddr.className = "hud-player-bar__addr";
-  playerBar.appendChild(playerBarIdenticon);
+  playerBar.appendChild(playerBarIdentWrap);
   playerBar.appendChild(playerBarAddr);
 
   const topStripMid = document.createElement("div");
@@ -1165,6 +1258,16 @@ export function createHud(
       <span class="signboard-tooltip__author"></span>
     </div>
   `;
+  let signboardTooltipActiveId: string | null = null;
+  const signboardTooltipMessageEl = signboardTooltip.querySelector(
+    ".signboard-tooltip__message"
+  ) as HTMLElement | null;
+  const signboardTooltipIdenticonEl = signboardTooltip.querySelector(
+    ".signboard-tooltip__identicon"
+  ) as HTMLImageElement | null;
+  const signboardTooltipAuthorEl = signboardTooltip.querySelector(
+    ".signboard-tooltip__author"
+  ) as HTMLElement | null;
 
   // Signpost message input overlay
   const signpostOverlay = document.createElement("div");
@@ -1172,7 +1275,7 @@ export function createHud(
   signpostOverlay.hidden = true;
   const signpostDialog = document.createElement("div");
   signpostDialog.className = "signpost-overlay__dialog";
-  const SIGNPOST_MESSAGE_MAX = 64;
+  const SIGNPOST_MESSAGE_MAX = 256;
   signpostDialog.innerHTML = `
     <div class="signpost-overlay__header">
       <span class="signpost-overlay__title">Create Signpost</span>
@@ -1188,6 +1291,85 @@ export function createHud(
     </div>
   `;
   signpostOverlay.appendChild(signpostDialog);
+
+  const signReadOverlay = document.createElement("div");
+  signReadOverlay.className = "other-player-profile sign-read-overlay";
+  signReadOverlay.hidden = true;
+  signReadOverlay.setAttribute("aria-hidden", "true");
+  signReadOverlay.innerHTML = `
+    <button type="button" class="other-player-profile__backdrop sign-read-overlay__backdrop" aria-label="Close"></button>
+    <div
+      class="other-player-profile__dialog sign-read-overlay__dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sign-read-overlay-title"
+    >
+      <button type="button" class="other-player-profile__close sign-read-overlay__close" aria-label="Close">×</button>
+      <div class="other-player-profile__card">
+        <div class="other-player-profile__card-main">
+          <img class="other-player-profile__identicon sign-read-overlay__identicon" alt="" width="76" height="76" hidden />
+          <div class="other-player-profile__card-body">
+            <div class="other-player-profile__name-primary-wrap">
+              <button type="button" class="other-player-profile__display-name sign-read-overlay__author-name" id="sign-read-overlay-title"></button>
+              <span class="other-player-profile__wallet-short sign-read-overlay__wallet-short" hidden></span>
+            </div>
+            <div class="other-player-profile__message-wrap sign-read-overlay__message-wrap">
+              <div class="other-player-profile__message-text sign-read-overlay__message"></div>
+              <textarea class="other-player-profile__message-text other-player-profile__message-text--editing sign-read-overlay__edit" maxlength="${SIGNPOST_MESSAGE_MAX}" rows="4" hidden aria-label="Sign message"></textarea>
+              <div class="signpost-overlay__char-count sign-read-overlay__char-count" hidden></div>
+            </div>
+          </div>
+        </div>
+        <div class="other-player-profile__card-footer sign-read-overlay__footer" hidden>
+          <p class="sign-read-overlay__note" hidden role="status" aria-live="polite"></p>
+          <div class="sign-read-overlay__footer-actions">
+            <button type="button" class="signpost-overlay__btn signpost-overlay__btn--cancel sign-read-overlay__edit-btn">Edit message</button>
+            <button type="button" class="signpost-overlay__btn signpost-overlay__btn--create sign-read-overlay__save-btn" hidden>Save</button>
+            <button type="button" class="signpost-overlay__btn signpost-overlay__btn--cancel sign-read-overlay__cancel-edit-btn" hidden>Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  const signReadMessageEl = signReadOverlay.querySelector(
+    ".sign-read-overlay__message"
+  ) as HTMLElement;
+  const signReadEditEl = signReadOverlay.querySelector(
+    ".sign-read-overlay__edit"
+  ) as HTMLTextAreaElement;
+  const signReadCharCountEl = signReadOverlay.querySelector(
+    ".sign-read-overlay__char-count"
+  ) as HTMLElement;
+  const signReadNoteEl = signReadOverlay.querySelector(
+    ".sign-read-overlay__note"
+  ) as HTMLElement;
+  const signReadAuthorBtn = signReadOverlay.querySelector(
+    ".sign-read-overlay__author-name"
+  ) as HTMLButtonElement;
+  const signReadWalletShortEl = signReadOverlay.querySelector(
+    ".sign-read-overlay__wallet-short"
+  ) as HTMLElement;
+  const signReadIdenticonEl = signReadOverlay.querySelector(
+    ".sign-read-overlay__identicon"
+  ) as HTMLImageElement;
+  const signReadCloseBtn = signReadOverlay.querySelector(
+    ".sign-read-overlay__close"
+  ) as HTMLButtonElement;
+  const signReadBackdrop = signReadOverlay.querySelector(
+    ".sign-read-overlay__backdrop"
+  ) as HTMLButtonElement;
+  const signReadFooterEl = signReadOverlay.querySelector(
+    ".sign-read-overlay__footer"
+  ) as HTMLElement;
+  const signReadEditBtn = signReadOverlay.querySelector(
+    ".sign-read-overlay__edit-btn"
+  ) as HTMLButtonElement;
+  const signReadSaveBtn = signReadOverlay.querySelector(
+    ".sign-read-overlay__save-btn"
+  ) as HTMLButtonElement;
+  const signReadCancelEditBtn = signReadOverlay.querySelector(
+    ".sign-read-overlay__cancel-edit-btn"
+  ) as HTMLButtonElement;
 
   const billboardOverlay = document.createElement("div");
   billboardOverlay.className = "billboard-modal";
@@ -1348,6 +1530,7 @@ export function createHud(
   `;
 
   const FEEDBACK_MESSAGE_MAX = 700;
+  const FEEDBACK_REPORT_REASON_MAX = 400;
   const feedbackOverlay = document.createElement("div");
   feedbackOverlay.className = "signpost-overlay feedback-overlay";
   feedbackOverlay.hidden = true;
@@ -1355,18 +1538,63 @@ export function createHud(
   feedbackOverlay.innerHTML = `
     <div class="feedback-overlay__backdrop" aria-hidden="true"></div>
     <div class="signpost-overlay__dialog" role="dialog" aria-modal="true" aria-labelledby="hud-feedback-title">
-      <div class="signpost-overlay__header">
-        <span id="hud-feedback-title" class="signpost-overlay__title">Send feedback</span>
-        <div class="signpost-overlay__header-actions">
-          <button type="button" class="signpost-overlay__btn signpost-overlay__btn--cancel">Cancel</button>
-          <button type="button" class="signpost-overlay__btn signpost-overlay__btn--create">Send</button>
+      <div class="signpost-overlay__header feedback-overlay__header">
+        <div class="feedback-overlay__header-side feedback-overlay__header-side--start">
+          <button type="button" class="signpost-overlay__btn signpost-overlay__btn--create" id="hud-feedback-primary">Send</button>
+        </div>
+        <div class="feedback-overlay__header-center">
+          <span id="hud-feedback-title" class="signpost-overlay__title feedback-overlay__title">Feedback</span>
+          <div class="feedback-overlay__tabs" role="tablist" aria-label="Feedback views">
+            <button type="button" class="feedback-overlay__tab is-active" data-feedback-tab="new" role="tab" aria-selected="true">New</button>
+            <button type="button" class="feedback-overlay__tab" data-feedback-tab="mine" role="tab" aria-selected="false">My feedback</button>
+          </div>
+        </div>
+        <div class="feedback-overlay__header-side feedback-overlay__header-side--end">
+          <button type="button" class="signpost-overlay__btn signpost-overlay__btn--cancel">Close</button>
         </div>
       </div>
-      <div class="signpost-overlay__body">
-        <label class="signpost-overlay__label" for="hud-feedback-textarea">We appreciate your feedback. Please share issue details and what you'd like improved (max ${FEEDBACK_MESSAGE_MAX} characters)</label>
-        <textarea id="hud-feedback-textarea" class="signpost-overlay__textarea" maxlength="${FEEDBACK_MESSAGE_MAX}" placeholder="Thank you for your feedback. Please describe what happened, where it occurred, and what should be improved." rows="6"></textarea>
+      <div class="signpost-overlay__body feedback-overlay__body">
+        <div class="feedback-overlay__panel" data-feedback-panel="new">
+          <div id="hud-feedback-kind-wrap" class="feedback-overlay__kind-wrap">
+            <label class="signpost-overlay__label" for="hud-feedback-kind">Type</label>
+            <select id="hud-feedback-kind" class="feedback-overlay__kind">
+              <option value="bug">Bug</option>
+              <option value="feature">Feature request</option>
+              <option value="suggestion" selected>Suggestion</option>
+            </select>
+          </div>
+          <div id="hud-feedback-report-context" class="feedback-overlay__report-context" hidden>
+            <div class="feedback-overlay__report-heading">Reported message</div>
+            <dl class="feedback-overlay__report-meta">
+              <div class="feedback-overlay__report-meta-row">
+                <dt>Player</dt>
+                <dd id="hud-feedback-report-player"></dd>
+              </div>
+              <div class="feedback-overlay__report-meta-row">
+                <dt>Wallet</dt>
+                <dd id="hud-feedback-report-wallet" class="mono"></dd>
+              </div>
+            </dl>
+            <div id="hud-feedback-report-message" class="feedback-overlay__report-message" aria-readonly="true"></div>
+          </div>
+          <label class="signpost-overlay__label" for="hud-feedback-textarea" id="hud-feedback-label">Share issue details and what you'd like improved (max ${FEEDBACK_MESSAGE_MAX} characters)</label>
+          <textarea id="hud-feedback-textarea" class="signpost-overlay__textarea" maxlength="${FEEDBACK_MESSAGE_MAX}" placeholder="Describe what happened, where it occurred, and what should be improved." rows="6"></textarea>
+          <div class="signpost-overlay__char-count" id="hud-feedback-char-count">0 / ${FEEDBACK_MESSAGE_MAX}</div>
+        </div>
+        <div class="feedback-overlay__panel" data-feedback-panel="mine" hidden>
+          <p class="feedback-overlay__hint">Your submitted tickets and admin replies.</p>
+          <div id="hud-feedback-list" class="feedback-overlay__list" role="list"></div>
+          <p id="hud-feedback-list-empty" class="feedback-overlay__empty" hidden>No feedback yet.</p>
+        </div>
+        <div class="feedback-overlay__panel" data-feedback-panel="thread" hidden>
+          <button type="button" class="feedback-overlay__back" id="hud-feedback-back">← Back to list</button>
+          <div id="hud-feedback-thread-meta" class="feedback-overlay__thread-meta"></div>
+          <div id="hud-feedback-thread-msgs" class="feedback-overlay__thread"></div>
+          <label class="signpost-overlay__label" for="hud-feedback-reply">Your reply</label>
+          <textarea id="hud-feedback-reply" class="signpost-overlay__textarea" maxlength="${FEEDBACK_MESSAGE_MAX}" placeholder="Add a follow-up…" rows="4"></textarea>
+          <div class="signpost-overlay__char-count" id="hud-feedback-reply-count">0 / ${FEEDBACK_MESSAGE_MAX}</div>
+        </div>
         <p class="feedback-overlay__error" hidden></p>
-        <div class="signpost-overlay__char-count">0 / ${FEEDBACK_MESSAGE_MAX}</div>
       </div>
     </div>
   `;
@@ -1427,6 +1655,7 @@ export function createHud(
   const signboardCloseBtn = signboardTooltip.querySelector(".signboard-tooltip__close");
   if (signboardCloseBtn) {
     signboardCloseBtn.addEventListener("click", () => {
+      signboardTooltipActiveId = null;
       signboardTooltip.hidden = true;
     });
   }
@@ -1439,6 +1668,7 @@ export function createHud(
   ui.appendChild(leftStack);
   ui.appendChild(perfHud);
   letter.appendChild(signpostOverlay);
+  letter.appendChild(signReadOverlay);
   letter.appendChild(billboardOverlay);
   letter.appendChild(externalVisitConfirmOverlay);
   letter.appendChild(feedbackOverlay);
@@ -1609,6 +1839,21 @@ export function createHud(
   buildDockRotateCw.textContent = "↻";
   buildDockRotateCw.title = "Rotate clockwise";
   buildDockRotateCw.setAttribute("aria-label", "Rotate clockwise");
+  const buildDockGatePermissionsBtn = document.createElement("button");
+  buildDockGatePermissionsBtn.type = "button";
+  buildDockGatePermissionsBtn.className =
+    "hud-build-bottom-dock__rotate hud-build-bottom-dock__rotate--gate-permissions";
+  buildDockGatePermissionsBtn.hidden = true;
+  buildDockGatePermissionsBtn.innerHTML = nimiqIconifyMarkup("person-1", {
+    width: 14,
+    height: 14,
+    class: "hud-build-bottom-dock__rotate-icon",
+  });
+  buildDockGatePermissionsBtn.title = "Edit gate permissions";
+  buildDockGatePermissionsBtn.setAttribute(
+    "aria-label",
+    "Edit gate permissions"
+  );
   const buildDockWalkThroughBtn = document.createElement("button");
   buildDockWalkThroughBtn.type = "button";
   buildDockWalkThroughBtn.className =
@@ -1655,6 +1900,7 @@ export function createHud(
   buildDockRotateScope.append(
     buildDockRotateCcw,
     buildDockRotateCw,
+    buildDockGatePermissionsBtn,
     buildDockWalkThroughBtn,
     buildDockDeleteBtn,
     buildDockPrefabPlaceBtn,
@@ -1866,13 +2112,6 @@ export function createHud(
     triggerAriaLabel: "Custom hex color",
   });
 
-  const feedbackBtn = document.createElement("button");
-  feedbackBtn.type = "button";
-  feedbackBtn.className = "nq-button-pill light-blue hud-mode-feedback";
-  feedbackBtn.textContent = "Feedback";
-  feedbackBtn.setAttribute("aria-label", "Send feedback");
-  feedbackBtn.title = "Send feedback";
-  topToolbar.appendChild(feedbackBtn);
 
   modeTablist.appendChild(buildToggleBtn);
 
@@ -2255,6 +2494,8 @@ export function createHud(
       const errBody = (await r.json().catch(() => ({}))) as { error?: string };
       const map: Record<string, string> = {
         username_taken: "Taken.",
+        username_profanity: "Not allowed.",
+        username_restricted: "Reserved.",
         invalid_username: "Invalid.",
         username_set_banned: "Banned.",
       };
@@ -2309,13 +2550,20 @@ export function createHud(
   const oppProfileNote = document.createElement("p");
   oppProfileNote.className = "other-player-profile__message-note";
   oppProfileNote.hidden = true;
+  const oppProfileFeedbackBtn = document.createElement("button");
+  oppProfileFeedbackBtn.type = "button";
+  oppProfileFeedbackBtn.className = "other-player-profile__feedback-btn";
+  oppProfileFeedbackBtn.textContent = "Feedback";
+  oppProfileFeedbackBtn.setAttribute("aria-label", "Feedback");
+  oppProfileFeedbackBtn.title = "Feedback";
+  oppProfileFeedbackBtn.hidden = true;
   const oppSendNim = document.createElement("button");
   oppSendNim.type = "button";
   oppSendNim.className = "other-player-profile__send-nim";
   oppSendNim.textContent = "Send NIM";
   const oppCardFooter = document.createElement("div");
   oppCardFooter.className = "other-player-profile__card-footer";
-  oppCardFooter.appendChild(oppSendNim);
+  oppCardFooter.append(oppProfileFeedbackBtn, oppSendNim);
   oppCardBody.append(
     oppAddrRow,
     oppAdminRow,
@@ -2409,7 +2657,7 @@ export function createHud(
     if (payload.fromAddress) {
       items.push({
         id: "profile",
-        label: "View profile",
+        label: "View Profile",
         onSelect: () => {
           if (payload.profileIsSelf) {
             openOwnPlayerProfileFromBar();
@@ -2423,49 +2671,70 @@ export function createHud(
         },
       });
     }
-    items.push(
-      {
-        id: "copy",
-        label: "Copy message",
+    if (payload.fromAddress && !payload.profileIsSelf) {
+      items.push({
+        id: "report",
+        label: "Report Message",
         onSelect: () => {
-          const text = payload.translateText.trim();
-          if (!text) return;
-          void navigator.clipboard?.writeText(text).catch(() => {
-            /* ignore */
-          });
-        },
-      },
-      {
-        id: "translate",
-        label: "Translate",
-        onSelect: () => {
-          const text = payload.translateText.trim();
-          if (!text) return;
-          const url = googleTranslateUrlForText(text);
-          presentExternalVisitConfirm({
-            url,
-            displayName: "Google Translate",
-            onConfirm: () => {
-              const assist = prefersTranslateClipboardAssist();
-              if (assist && navigator.clipboard?.writeText) {
-                void navigator.clipboard.writeText(text).then(
-                  () => showTranslateClipboardHintToast(),
-                  () => {}
-                );
-              }
-              window.open(url, "_blank", "noopener,noreferrer");
+          const message = payload.translateText.trim();
+          showFeedbackOverlay({
+            title: "Report message",
+            report: {
+              reportedDisplayName: payload.displayName || "Unknown",
+              reportedWallet: payload.fromAddress,
+              reportedMessage: message,
             },
           });
         },
-      }
-    );
+      });
+    }
+    items.push({
+      id: "more",
+      label: "More",
+      children: [
+        {
+          id: "copy",
+          label: "Copy Message",
+          onSelect: () => {
+            const text = payload.translateText.trim();
+            if (!text) return;
+            void navigator.clipboard?.writeText(text).catch(() => {
+              /* ignore */
+            });
+          },
+        },
+        {
+          id: "translate",
+          label: "Translate",
+          onSelect: () => {
+            const text = payload.translateText.trim();
+            if (!text) return;
+            const url = googleTranslateUrlForText(text);
+            presentExternalVisitConfirm({
+              url,
+              displayName: "Google Translate",
+              onConfirm: () => {
+                const assist = prefersTranslateClipboardAssist();
+                if (assist && navigator.clipboard?.writeText) {
+                  void navigator.clipboard.writeText(text).then(
+                    () => showTranslateClipboardHintToast(),
+                    () => {}
+                  );
+                }
+                window.open(url, "_blank", "noopener,noreferrer");
+              },
+            });
+          },
+        },
+      ],
+    });
     worldCtx.open({
       kind: "items",
       clientX,
       clientY,
       ariaLabel: "Chat message actions",
       items,
-      initialFocus: "last",
+      initialFocus: "first",
     });
   }
 
@@ -2867,6 +3136,8 @@ export function createHud(
           username_cooldown: "Wait 24h.",
           username_taken: "Taken.",
           invalid_username: "Invalid.",
+          username_profanity: "Not allowed.",
+          username_restricted: "Reserved.",
           username_set_banned: "Blocked.",
           username_self_service_disabled: "Admins only.",
         };
@@ -2880,6 +3151,8 @@ export function createHud(
       profileUsernameSavedCustom = String(j.customUsername ?? "").trim();
       if (typeof j.effectiveDisplayName === "string") {
         oppDisplayNameEl.textContent = j.effectiveDisplayName.trim();
+        playerBarDisplayName = j.effectiveDisplayName.trim();
+        syncTopBarPlayerIdentity();
       }
       const compact = profileOpenCompact;
       if (compact) {
@@ -3016,16 +3289,19 @@ export function createHud(
     img: HTMLImageElement,
     compact: string
   ): Promise<void> {
+    const key = compact.replace(/\s+/g, "").trim().toUpperCase();
+    if (!key) return;
+    if (img.dataset.address === key && img.src) return;
     img.hidden = false;
     img.removeAttribute("src");
-    img.dataset.address = compact;
+    img.dataset.address = key;
     try {
       const { identiconDataUrl } = await import("../game/identiconTexture.js");
-      const url = await identiconDataUrl(compact);
-      if (img.dataset.address !== compact) return;
+      const url = await identiconDataUrl(key);
+      if (img.dataset.address !== key) return;
       img.src = url;
     } catch {
-      if (img.dataset.address === compact) {
+      if (img.dataset.address === key) {
         img.hidden = true;
       }
     }
@@ -3158,9 +3434,11 @@ export function createHud(
 
     oppCopyAddressBtn.title = compact;
     oppCopyAddressBtn.dataset.fullAddress = compact;
+    oppProfileFeedbackBtn.hidden = kind !== "self";
     if (kind === "self") {
       oppSendNim.textContent = "Open Wallet";
       oppSendNim.dataset.walletUrl = NIMIQ_WALLET_URL;
+      void refreshFeedbackUnreadBadge();
     } else {
       oppSendNim.textContent = "Send NIM";
       oppSendNim.dataset.walletUrl = nimiqWalletRecipientDeepLink(compact);
@@ -3264,7 +3542,8 @@ export function createHud(
         const until = j.usernameLockedUntil ?? 0;
         const allowByPolicy =
           j.usernameSelfServiceEnabled === true ||
-          opts?.isGameAdmin?.() === true;
+          opts?.isGameAdmin?.() === true ||
+          !hasCustom;
         oppUsernameInput.readOnly =
           !allowByPolicy ||
           bannedSelf ||
@@ -4194,6 +4473,9 @@ export function createHud(
     buildDockPrefabPlaceBtn.disabled = !prefabPlacePreviewCanConfirm;
     buildDockRotateCcw.hidden = !rotate && !prefabTouchPlace;
     buildDockRotateCw.hidden = !rotate && !prefabTouchPlace;
+    const gatePermissions = panelObjectEditGate;
+    buildDockGatePermissionsBtn.hidden = !gatePermissions;
+    buildDockGatePermissionsBtn.disabled = !panelOnEditGateAcl;
     const cubeRotate =
       rotate &&
       ((objectPanel && panelIsPlainCube()) ||
@@ -4794,6 +5076,19 @@ export function createHud(
     onBuildDockRotatePointer(-1)
   );
   buildDockRotateCw.addEventListener("pointerdown", onBuildDockRotatePointer(1));
+
+  const onBuildDockGatePermissionsPointer = (e: Event): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (buildDockGatePermissionsBtn.hidden || buildDockGatePermissionsBtn.disabled) {
+      return;
+    }
+    panelOnEditGateAcl?.();
+  };
+  buildDockGatePermissionsBtn.addEventListener(
+    "pointerdown",
+    onBuildDockGatePermissionsPointer
+  );
 
   const onBuildDockWalkThroughPointer = (e: Event): void => {
     e.preventDefault();
@@ -6837,6 +7132,289 @@ export function createHud(
     });
   }
 
+  let signReadDismissAc: AbortController | null = null;
+  let signReadOpenSignboard: {
+    id: string;
+    x: number;
+    z: number;
+    message: string;
+    createdBy: string;
+    createdAt: number;
+  } | null = null;
+  let signReadEditing = false;
+  let signpostUpdateHandler: ((signboardId: string, message: string) => void) | null =
+    null;
+
+  function signReadOwnerKey(createdBy: string): string {
+    return createdBy.replace(/\s+/g, "").trim().toUpperCase();
+  }
+
+  function isSignReadOwner(createdBy: string): boolean {
+    const self = brandLinksPlayerAddress.replace(/\s+/g, "").trim().toUpperCase();
+    const owner = signReadOwnerKey(createdBy);
+    return Boolean(self) && self === owner;
+  }
+
+  function clearSignReadNote(): void {
+    signReadNoteEl.textContent = "";
+    signReadNoteEl.hidden = true;
+    signReadNoteEl.classList.remove("sign-read-overlay__note--error");
+  }
+
+  function setSignReadNote(text: string, isError = false): void {
+    signReadNoteEl.textContent = text;
+    signReadNoteEl.hidden = !text;
+    signReadNoteEl.classList.toggle("sign-read-overlay__note--error", Boolean(text) && isError);
+  }
+
+  function syncSignReadCharCount(): void {
+    const len = signReadEditEl.value.length;
+    signReadCharCountEl.textContent = `${len} / ${SIGNPOST_MESSAGE_MAX}`;
+  }
+
+  function endSignReadEditMode(opts?: { keepNote?: boolean }): void {
+    signReadEditing = false;
+    signReadMessageEl.hidden = false;
+    signReadEditEl.hidden = true;
+    signReadCharCountEl.hidden = true;
+    signReadEditBtn.hidden = false;
+    signReadSaveBtn.hidden = true;
+    signReadCancelEditBtn.hidden = true;
+    if (!opts?.keepNote) clearSignReadNote();
+  }
+
+  function beginSignReadEditMode(): void {
+    if (!signReadOpenSignboard) return;
+    signReadEditing = true;
+    signReadEditEl.value = signReadOpenSignboard.message;
+    syncSignReadCharCount();
+    signReadMessageEl.hidden = true;
+    signReadEditEl.hidden = false;
+    signReadCharCountEl.hidden = false;
+    signReadEditBtn.hidden = true;
+    signReadSaveBtn.hidden = false;
+    signReadCancelEditBtn.hidden = false;
+    clearSignReadNote();
+    requestAnimationFrame(() => {
+      signReadEditEl.focus();
+      signReadEditEl.select();
+    });
+  }
+
+  function hideSignReadModal(): void {
+    signReadDismissAc?.abort();
+    signReadDismissAc = null;
+    signReadOpenSignboard = null;
+    signReadEditing = false;
+    signReadOverlay.hidden = true;
+    signReadOverlay.setAttribute("aria-hidden", "true");
+    endSignReadEditMode();
+    signReadFooterEl.hidden = true;
+    clearSignReadNote();
+  }
+
+  async function resolveSignAuthorProfile(
+    compact: string
+  ): Promise<{ displayName: string; hasCustomUsername: boolean }> {
+    try {
+      const r = await fetch(
+        `/api/player-profile/${encodeURIComponent(compact)}`
+      );
+      if (!r.ok) {
+        return { displayName: walletDisplayName(compact), hasCustomUsername: false };
+      }
+      const j = (await r.json()) as {
+        effectiveDisplayName?: string;
+        customUsername?: string | null;
+      };
+      const custom = String(j.customUsername ?? "").trim();
+      const effective = String(j.effectiveDisplayName ?? "").trim();
+      return {
+        displayName: effective || walletDisplayName(compact),
+        hasCustomUsername: Boolean(custom),
+      };
+    } catch {
+      return { displayName: walletDisplayName(compact), hasCustomUsername: false };
+    }
+  }
+
+  function showSignReadModal(signboard: {
+    id: string;
+    x: number;
+    z: number;
+    message: string;
+    createdBy: string;
+    createdAt: number;
+  }): void {
+    closeSelfEmojiMenu();
+    worldCtx.close();
+    closeOtherPlayerProfile();
+    signboardTooltip.hidden = true;
+    signboardTooltipActiveId = signboard.id;
+    signReadOpenSignboard = { ...signboard };
+    signReadEditing = false;
+    signReadMessageEl.textContent = signboard.message;
+    signReadMessageEl.hidden = false;
+    signReadEditEl.hidden = true;
+    signReadCharCountEl.hidden = true;
+    signReadSaveBtn.hidden = true;
+    signReadCancelEditBtn.hidden = true;
+    clearSignReadNote();
+    const compact = signReadOwnerKey(signboard.createdBy);
+    const fallback = walletDisplayName(compact);
+    signReadAuthorBtn.textContent = fallback;
+    signReadAuthorBtn.dataset.address = compact;
+    signReadAuthorBtn.dataset.displayName = fallback;
+    signReadWalletShortEl.textContent = fallback;
+    signReadWalletShortEl.hidden = true;
+    const isOwner = isSignReadOwner(signboard.createdBy);
+    signReadEditBtn.hidden = false;
+    signReadFooterEl.hidden = !isOwner;
+    signReadOverlay.hidden = false;
+    signReadOverlay.setAttribute("aria-hidden", "false");
+    void loadCtxIdenticon(signReadIdenticonEl, compact);
+    void resolveSignAuthorProfile(compact).then((profile) => {
+      if (signReadOpenSignboard?.id !== signboard.id) return;
+      signReadAuthorBtn.textContent = profile.displayName;
+      signReadAuthorBtn.dataset.displayName = profile.displayName;
+      signReadWalletShortEl.textContent = fallback;
+      signReadWalletShortEl.hidden = !profile.hasCustomUsername;
+    });
+    signReadDismissAc?.abort();
+    signReadDismissAc = new AbortController();
+    const { signal } = signReadDismissAc;
+    signReadCloseBtn.addEventListener("click", () => hideSignReadModal(), {
+      signal,
+      once: true,
+    });
+    signReadBackdrop.addEventListener("click", () => hideSignReadModal(), {
+      signal,
+      once: true,
+    });
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key === "Escape") {
+          if (signReadEditing) {
+            endSignReadEditMode();
+            if (signReadOpenSignboard) {
+              signReadEditEl.value = signReadOpenSignboard.message;
+            }
+            return;
+          }
+          hideSignReadModal();
+        }
+      },
+      { signal }
+    );
+    requestAnimationFrame(() => signReadCloseBtn.focus());
+  }
+
+  signReadAuthorBtn.addEventListener("click", () => {
+    if (signReadEditing) return;
+    const addr = signReadAuthorBtn.dataset.address?.trim();
+    if (!addr) return;
+    const name =
+      signReadAuthorBtn.dataset.displayName?.trim() ||
+      signReadAuthorBtn.textContent?.trim() ||
+      walletDisplayName(addr);
+    hideSignReadModal();
+    signboardTooltipActiveId = null;
+    void showPlayerProfileView(addr, name, "other");
+  });
+
+  signReadEditBtn.addEventListener("click", () => beginSignReadEditMode());
+
+  signReadCancelEditBtn.addEventListener("click", () => {
+    if (signReadOpenSignboard) {
+      signReadEditEl.value = signReadOpenSignboard.message;
+    }
+    endSignReadEditMode();
+  });
+
+  signReadEditEl.addEventListener("input", () => syncSignReadCharCount());
+
+  signReadSaveBtn.addEventListener("click", () => {
+    if (!signReadOpenSignboard || !signpostUpdateHandler) return;
+    const message = signReadEditEl.value.trim();
+    if (!message) {
+      setSignReadNote("Message cannot be empty.", true);
+      return;
+    }
+    if (message.length > SIGNPOST_MESSAGE_MAX) {
+      setSignReadNote("Message is too long.", true);
+      return;
+    }
+    signpostUpdateHandler(signReadOpenSignboard.id, message);
+    signReadOpenSignboard = { ...signReadOpenSignboard, message };
+    signReadMessageEl.textContent = message;
+    setSignReadNote("Saving…");
+  });
+
+  function syncSignboardTooltipFromSignboards(
+    signboards: Array<{
+      id: string;
+      x: number;
+      z: number;
+      message: string;
+      createdBy: string;
+      createdAt: number;
+    }>
+  ): void {
+    if (!signboardTooltipActiveId || signboardTooltip.hidden) return;
+    const sb = signboards.find((s) => s.id === signboardTooltipActiveId);
+    if (!sb) {
+      signboardTooltipActiveId = null;
+      signboardTooltip.hidden = true;
+      return;
+    }
+    signboardTooltipMessageEl!.textContent = sb.message;
+  }
+
+  function reportSignReadSaveError(code: string): void {
+    const map: Record<string, string> = {
+      invalid_message: "Invalid message.",
+      not_signboard_owner: "Only the sign owner can edit this.",
+      signboard_not_found: "Signpost not found.",
+    };
+    if (signReadOpenSignboard) {
+      signReadEditEl.value = signReadOpenSignboard.message;
+      signReadMessageEl.textContent = signReadOpenSignboard.message;
+    }
+    setSignReadNote(map[code] ?? "Could not save.", true);
+  }
+
+  function syncSignReadFromSignboards(
+    signboards: Array<{ id: string; message: string }>
+  ): void {
+    if (!signReadOpenSignboard) return;
+    const sb = signboards.find((s) => s.id === signReadOpenSignboard!.id);
+    if (!sb) return;
+    const wasSaving = signReadNoteEl.textContent === "Saving…";
+    signReadOpenSignboard = { ...signReadOpenSignboard, message: sb.message };
+    signReadEditEl.value = sb.message;
+    signReadMessageEl.textContent = sb.message;
+    if (wasSaving) {
+      endSignReadEditMode({ keepNote: true });
+      setSignReadNote("Saved.");
+      window.setTimeout(() => {
+        if (signReadOpenSignboard && !signReadEditing) clearSignReadNote();
+      }, 1800);
+    }
+  }
+
+  signReadEditEl.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      signReadCancelEditBtn.click();
+      return;
+    }
+    if (e.key === "Enter" && e.ctrlKey) {
+      e.preventDefault();
+      signReadSaveBtn.click();
+    }
+  });
+
   const billboardSize4x1Btn = billboardDialog.querySelector(
     "#billboard-size-4x1"
   ) as HTMLButtonElement | null;
@@ -7376,31 +7954,99 @@ export function createHud(
   const feedbackBackdropEl = feedbackOverlay.querySelector(
     ".feedback-overlay__backdrop"
   ) as HTMLElement | null;
+  const feedbackHeaderEl = feedbackOverlay.querySelector(
+    ".feedback-overlay__header"
+  ) as HTMLElement | null;
+  const feedbackTitleEl = feedbackOverlay.querySelector(
+    "#hud-feedback-title"
+  ) as HTMLElement | null;
+  const feedbackLabelEl = feedbackOverlay.querySelector(
+    "#hud-feedback-label"
+  ) as HTMLLabelElement | null;
+  const feedbackKindSelect = feedbackOverlay.querySelector(
+    "#hud-feedback-kind"
+  ) as HTMLSelectElement | null;
+  const feedbackKindWrap = feedbackOverlay.querySelector(
+    "#hud-feedback-kind-wrap"
+  ) as HTMLElement | null;
   const feedbackTextarea = feedbackOverlay.querySelector(
     "#hud-feedback-textarea"
   ) as HTMLTextAreaElement | null;
   const feedbackCharCount = feedbackOverlay.querySelector(
-    ".signpost-overlay__char-count"
+    "#hud-feedback-char-count"
   ) as HTMLElement | null;
   const feedbackCancelBtn = feedbackOverlay.querySelector(
     ".signpost-overlay__btn--cancel"
   ) as HTMLButtonElement | null;
-  const feedbackSendBtn = feedbackOverlay.querySelector(
-    ".signpost-overlay__btn--create"
+  const feedbackPrimaryBtn = feedbackOverlay.querySelector(
+    "#hud-feedback-primary"
   ) as HTMLButtonElement | null;
   const feedbackErrorEl = feedbackOverlay.querySelector(
     ".feedback-overlay__error"
   ) as HTMLElement | null;
+  const feedbackTabBtns = feedbackOverlay.querySelectorAll<HTMLButtonElement>(
+    "[data-feedback-tab]"
+  );
+  const feedbackPanels = feedbackOverlay.querySelectorAll<HTMLElement>(
+    "[data-feedback-panel]"
+  );
+  const feedbackListEl = feedbackOverlay.querySelector(
+    "#hud-feedback-list"
+  ) as HTMLElement | null;
+  const feedbackListEmptyEl = feedbackOverlay.querySelector(
+    "#hud-feedback-list-empty"
+  ) as HTMLElement | null;
+  const feedbackThreadMetaEl = feedbackOverlay.querySelector(
+    "#hud-feedback-thread-meta"
+  ) as HTMLElement | null;
+  const feedbackThreadMsgsEl = feedbackOverlay.querySelector(
+    "#hud-feedback-thread-msgs"
+  ) as HTMLElement | null;
+  const feedbackReplyTextarea = feedbackOverlay.querySelector(
+    "#hud-feedback-reply"
+  ) as HTMLTextAreaElement | null;
+  const feedbackReplyCount = feedbackOverlay.querySelector(
+    "#hud-feedback-reply-count"
+  ) as HTMLElement | null;
+  const feedbackBackBtn = feedbackOverlay.querySelector(
+    "#hud-feedback-back"
+  ) as HTMLButtonElement | null;
+  const feedbackReportContextEl = feedbackOverlay.querySelector(
+    "#hud-feedback-report-context"
+  ) as HTMLElement | null;
+  const feedbackReportPlayerEl = feedbackOverlay.querySelector(
+    "#hud-feedback-report-player"
+  ) as HTMLElement | null;
+  const feedbackReportWalletEl = feedbackOverlay.querySelector(
+    "#hud-feedback-report-wallet"
+  ) as HTMLElement | null;
+  const feedbackReportMessageEl = feedbackOverlay.querySelector(
+    "#hud-feedback-report-message"
+  ) as HTMLElement | null;
 
-  let feedbackSubmitHandler: (
-    message: string
-  ) => Promise<{ ok: boolean; error?: string }> = async () => ({
-    ok: false,
-    error: "Feedback is not available.",
-  });
+  let feedbackHandlers: FeedbackHandlers = {
+    createTicket: async () => ({ ok: false, error: "Feedback is not available." }),
+    listMine: async () => ({ ok: false, error: "Feedback is not available." }),
+    getTicket: async () => ({ ok: false, error: "Feedback is not available." }),
+    reply: async () => ({ ok: false, error: "Feedback is not available." }),
+  };
 
   let feedbackEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
   let feedbackSending = false;
+  let feedbackView: "new" | "mine" | "thread" = "new";
+  let feedbackActiveTicketId = "";
+  let feedbackReportSource = false;
+  let feedbackReportRoomId = "";
+  let feedbackReportContext: {
+    reportedWallet: string;
+    reportedDisplayName: string;
+    reportedMessage: string;
+    reportedAtMs?: number;
+  } | null = null;
+  const feedbackDefaultTitle = feedbackTitleEl?.textContent ?? "Feedback";
+  const feedbackDefaultLabel =
+    feedbackLabelEl?.textContent ??
+    "Share issue details and what you'd like improved (max 700 characters)";
 
   function setFeedbackError(msg: string | null): void {
     if (!feedbackErrorEl) return;
@@ -7413,35 +8059,303 @@ export function createHud(
     }
   }
 
+  function syncFeedbackKindVisibility(): void {
+    if (feedbackKindWrap) feedbackKindWrap.hidden = feedbackReportSource;
+  }
+
+  function syncFeedbackFormLimits(): void {
+    if (!feedbackTextarea || !feedbackCharCount) return;
+    const max = feedbackReportSource ? FEEDBACK_REPORT_REASON_MAX : FEEDBACK_MESSAGE_MAX;
+    feedbackTextarea.maxLength = max;
+    syncFeedbackCharCount(feedbackTextarea, feedbackCharCount, max);
+  }
+
+  function syncFeedbackCharCount(
+    ta: HTMLTextAreaElement | null,
+    countEl: HTMLElement | null,
+    max = FEEDBACK_MESSAGE_MAX
+  ): void {
+    if (!ta || !countEl) return;
+    countEl.textContent = `${ta.value.length} / ${max}`;
+  }
+
+  function feedbackStatusLabel(status: string): string {
+    const s = String(status || "open");
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  function feedbackRewardNimLabel(rewardLuna?: string): string {
+    if (!rewardLuna) return "";
+    const n = Number(rewardLuna);
+    if (!Number.isFinite(n)) return "";
+    return `+${(n / 100_000).toFixed(2)} NIM`;
+  }
+
+  let feedbackHasUnread = false;
+
+  function playerBarAriaLabel(hasUnread: boolean): string {
+    const compact = brandLinksPlayerAddress.replace(/\s+/g, "").trim();
+    const who =
+      compact && playerBarShowsUsername(compact)
+        ? playerBarDisplayName.trim()
+        : "Your wallet";
+    const prefix =
+      who === "Your wallet" ? who : `Signed in as ${who}`;
+    return hasUnread
+      ? `${prefix}. New feedback reply. Open your player profile.`
+      : `${prefix}. Open your player profile.`;
+  }
+
+  function syncFeedbackUnreadBadge(hasUnread: boolean): void {
+    feedbackHasUnread = hasUnread;
+    oppProfileFeedbackBtn.classList.toggle(
+      "other-player-profile__feedback-btn--unread",
+      hasUnread
+    );
+    const label = hasUnread ? "Feedback — new reply" : "Feedback";
+    oppProfileFeedbackBtn.setAttribute("aria-label", label);
+    oppProfileFeedbackBtn.title = label;
+    playerBar.classList.toggle("hud-player-bar--feedback-unread", hasUnread);
+    if (brandLinksPlayerAddress.trim()) {
+      playerBar.setAttribute("aria-label", playerBarAriaLabel(hasUnread));
+    }
+  }
+
+  async function refreshFeedbackUnreadBadge(): Promise<void> {
+    const out = await feedbackHandlers.listMine();
+    if (!out.ok) return;
+    const count =
+      typeof out.unreadCount === "number"
+        ? out.unreadCount
+        : (out.tickets ?? []).filter((t) => t.unread).length;
+    syncFeedbackUnreadBadge(count > 0);
+  }
+
+  let feedbackUnreadPoll: ReturnType<typeof setInterval> | null = null;
+
+  function setFeedbackView(view: "new" | "mine" | "thread"): void {
+    feedbackView = view;
+    feedbackPanels.forEach((panel) => {
+      const name = panel.getAttribute("data-feedback-panel");
+      panel.hidden = name !== view;
+    });
+    feedbackTabBtns.forEach((btn) => {
+      const tab = btn.getAttribute("data-feedback-tab");
+      const active = view === "new" ? tab === "new" : view !== "new" && tab === "mine";
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+      btn.hidden = view === "thread";
+    });
+    if (feedbackPrimaryBtn) {
+      if (view === "new") {
+        feedbackPrimaryBtn.textContent = "Send";
+        feedbackPrimaryBtn.hidden = false;
+      } else if (view === "thread") {
+        feedbackPrimaryBtn.textContent = "Reply";
+        feedbackPrimaryBtn.hidden = false;
+      } else {
+        feedbackPrimaryBtn.hidden = true;
+      }
+    }
+    feedbackHeaderEl?.classList.toggle(
+      "feedback-overlay__header--thread",
+      view === "thread"
+    );
+    if (feedbackTitleEl) {
+      feedbackTitleEl.textContent =
+        view === "thread" ? "Feedback thread" : feedbackDefaultTitle;
+    }
+  }
+
+  function renderFeedbackList(tickets: FeedbackTicketSummary[]): void {
+    if (!feedbackListEl || !feedbackListEmptyEl) return;
+    feedbackListEl.innerHTML = "";
+    if (!tickets.length) {
+      feedbackListEmptyEl.hidden = false;
+      return;
+    }
+    feedbackListEmptyEl.hidden = true;
+    for (const t of tickets) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "feedback-overlay__list-item";
+      row.setAttribute("role", "listitem");
+      const reward = feedbackRewardNimLabel(t.rewardLuna);
+      const unreadMark = t.unread
+        ? '<span class="feedback-overlay__list-unread">New reply</span>'
+        : "";
+      row.innerHTML = `
+        <span class="feedback-overlay__list-status">${feedbackStatusLabel(t.status)}</span>
+        <span class="feedback-overlay__list-kind">${t.kind}</span>
+        ${unreadMark}
+        ${reward ? `<span class="feedback-overlay__list-reward">${reward}</span>` : ""}
+        <span class="feedback-overlay__list-preview">${t.preview}</span>
+      `;
+      row.addEventListener("click", () => {
+        void openFeedbackThread(t.id);
+      });
+      feedbackListEl.appendChild(row);
+    }
+  }
+
+  function renderFeedbackThread(ticket: FeedbackTicketDetail): void {
+    if (!feedbackThreadMetaEl || !feedbackThreadMsgsEl) return;
+    const reward = feedbackRewardNimLabel(ticket.rewardLuna);
+    feedbackThreadMetaEl.innerHTML = `
+      <span class="feedback-overlay__thread-badge">${feedbackStatusLabel(ticket.status)}</span>
+      <span class="feedback-overlay__thread-kind">${ticket.kind}</span>
+      ${reward ? `<span class="feedback-overlay__thread-reward">${reward}</span>` : ""}
+    `;
+    feedbackThreadMsgsEl.innerHTML = "";
+    const msgs = [...ticket.messages].sort((a, b) => b.createdAtMs - a.createdAtMs);
+    for (const m of msgs) {
+      const el = document.createElement("div");
+      el.className = `feedback-overlay__msg${m.isAdmin ? " feedback-overlay__msg--admin" : ""}`;
+      const who = m.isAdmin ? "Team" : "You";
+      el.innerHTML = `
+        <div class="feedback-overlay__msg-meta">${who}</div>
+        <div class="feedback-overlay__msg-body"></div>
+      `;
+      const body = el.querySelector(".feedback-overlay__msg-body");
+      if (body) body.textContent = m.body;
+      feedbackThreadMsgsEl.appendChild(el);
+    }
+    if (feedbackReplyTextarea) {
+      feedbackReplyTextarea.value = "";
+      syncFeedbackCharCount(feedbackReplyTextarea, feedbackReplyCount);
+      feedbackReplyTextarea.disabled = ticket.status === "closed";
+    }
+    if (feedbackPrimaryBtn) {
+      feedbackPrimaryBtn.disabled = ticket.status === "closed";
+    }
+  }
+
+  async function refreshFeedbackList(): Promise<void> {
+    const out = await feedbackHandlers.listMine();
+    if (!out.ok) {
+      setFeedbackError(out.error ?? "Could not load your feedback.");
+      return;
+    }
+    renderFeedbackList(out.tickets ?? []);
+  }
+
+  async function openFeedbackThread(ticketId: string): Promise<void> {
+    setFeedbackError(null);
+    const out = await feedbackHandlers.getTicket(ticketId);
+    if (!out.ok || !out.ticket) {
+      setFeedbackError(out.error ?? "Could not open that ticket.");
+      return;
+    }
+    feedbackActiveTicketId = ticketId;
+    renderFeedbackThread(out.ticket);
+    setFeedbackView("thread");
+    feedbackReplyTextarea?.focus();
+    void refreshFeedbackUnreadBadge();
+  }
+
+  function resetFeedbackForm(): void {
+    if (feedbackTextarea) feedbackTextarea.value = "";
+    if (feedbackKindSelect) feedbackKindSelect.value = "suggestion";
+    if (feedbackReportContextEl) feedbackReportContextEl.hidden = true;
+    if (feedbackReportPlayerEl) feedbackReportPlayerEl.textContent = "";
+    if (feedbackReportWalletEl) feedbackReportWalletEl.textContent = "";
+    if (feedbackReportMessageEl) feedbackReportMessageEl.textContent = "";
+    feedbackReportContext = null;
+    syncFeedbackFormLimits();
+    if (feedbackTitleEl) feedbackTitleEl.textContent = feedbackDefaultTitle;
+    if (feedbackLabelEl) feedbackLabelEl.textContent = feedbackDefaultLabel;
+    if (feedbackTextarea) {
+      feedbackTextarea.placeholder =
+        "Describe what happened, where it occurred, and what should be improved.";
+    }
+    feedbackReportSource = false;
+    syncFeedbackKindVisibility();
+  }
+
   function hideFeedbackOverlay(): void {
     feedbackOverlay.hidden = true;
     feedbackOverlay.setAttribute("aria-hidden", "true");
-    if (feedbackTextarea) feedbackTextarea.value = "";
-    if (feedbackCharCount) {
-      feedbackCharCount.textContent = `0 / ${FEEDBACK_MESSAGE_MAX}`;
-    }
+    resetFeedbackForm();
+    if (feedbackReplyTextarea) feedbackReplyTextarea.value = "";
+    syncFeedbackCharCount(feedbackReplyTextarea, feedbackReplyCount);
+    feedbackActiveTicketId = "";
+    setFeedbackView("new");
     setFeedbackError(null);
     if (feedbackEscapeHandler) {
       window.removeEventListener("keydown", feedbackEscapeHandler);
       feedbackEscapeHandler = null;
     }
     feedbackSending = false;
-    if (feedbackSendBtn) feedbackSendBtn.disabled = false;
+    if (feedbackPrimaryBtn) {
+      feedbackPrimaryBtn.disabled = false;
+      feedbackPrimaryBtn.hidden = false;
+    }
     if (feedbackCancelBtn) feedbackCancelBtn.disabled = false;
+    void refreshFeedbackUnreadBadge();
   }
 
-  function showFeedbackOverlay(): void {
-    if (!feedbackOverlay.hidden) return;
+  function showFeedbackOverlay(opts?: {
+    title?: string;
+    report?: {
+      reportedWallet: string;
+      reportedDisplayName: string;
+      reportedMessage: string;
+      reportedAtMs?: number;
+    };
+  }): void {
+    closeOtherPlayerProfile();
     setFeedbackError(null);
+    resetFeedbackForm();
+    setFeedbackView("new");
+    if (opts?.report) {
+      if (feedbackKindSelect) feedbackKindSelect.value = "bug";
+      feedbackReportSource = true;
+      feedbackReportContext = {
+        reportedWallet: opts.report.reportedWallet.replace(/\s+/g, "").trim(),
+        reportedDisplayName: opts.report.reportedDisplayName.trim() || "Unknown",
+        reportedMessage: opts.report.reportedMessage.trim(),
+        ...(opts.report.reportedAtMs !== undefined
+          ? { reportedAtMs: opts.report.reportedAtMs }
+          : {}),
+      };
+      if (feedbackTitleEl) feedbackTitleEl.textContent = opts.title ?? "Report message";
+      if (feedbackLabelEl) {
+        feedbackLabelEl.textContent = `Why are you reporting this message? (max ${FEEDBACK_REPORT_REASON_MAX} characters)`;
+      }
+      if (feedbackTextarea) {
+        feedbackTextarea.placeholder = "Explain why this message should be reviewed…";
+        feedbackTextarea.value = "";
+      }
+      if (feedbackReportContextEl) feedbackReportContextEl.hidden = false;
+      if (feedbackReportPlayerEl) {
+        feedbackReportPlayerEl.textContent = feedbackReportContext.reportedDisplayName;
+      }
+      if (feedbackReportWalletEl) {
+        feedbackReportWalletEl.textContent = feedbackReportContext.reportedWallet;
+      }
+      if (feedbackReportMessageEl) {
+        feedbackReportMessageEl.textContent =
+          feedbackReportContext.reportedMessage || "(empty message)";
+      }
+      syncFeedbackFormLimits();
+      syncFeedbackKindVisibility();
+    }
     feedbackOverlay.hidden = false;
     feedbackOverlay.setAttribute("aria-hidden", "false");
-    feedbackEscapeHandler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        hideFeedbackOverlay();
-      }
-    };
-    window.addEventListener("keydown", feedbackEscapeHandler);
+    if (!feedbackEscapeHandler) {
+      feedbackEscapeHandler = (e: KeyboardEvent) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          if (feedbackView === "thread") {
+            setFeedbackView("mine");
+            void refreshFeedbackList();
+            return;
+          }
+          hideFeedbackOverlay();
+        }
+      };
+      window.addEventListener("keydown", feedbackEscapeHandler);
+    }
     feedbackTextarea?.focus();
   }
 
@@ -7456,8 +8370,13 @@ export function createHud(
 
   if (feedbackTextarea && feedbackCharCount) {
     feedbackTextarea.addEventListener("input", () => {
-      const len = feedbackTextarea.value.length;
-      feedbackCharCount.textContent = `${len} / ${FEEDBACK_MESSAGE_MAX}`;
+      syncFeedbackCharCount(feedbackTextarea, feedbackCharCount);
+      setFeedbackError(null);
+    });
+  }
+  if (feedbackReplyTextarea && feedbackReplyCount) {
+    feedbackReplyTextarea.addEventListener("input", () => {
+      syncFeedbackCharCount(feedbackReplyTextarea, feedbackReplyCount);
       setFeedbackError(null);
     });
   }
@@ -7470,22 +8389,94 @@ export function createHud(
     });
   }
 
-  if (feedbackSendBtn && feedbackTextarea) {
-    feedbackSendBtn.addEventListener("click", (e) => {
+  feedbackTabBtns.forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const tab = btn.getAttribute("data-feedback-tab");
+      if (tab === "mine") {
+        setFeedbackView("mine");
+        void refreshFeedbackList();
+      } else {
+        setFeedbackView("new");
+      }
+      setFeedbackError(null);
+    });
+  });
+
+  if (feedbackBackBtn) {
+    feedbackBackBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      feedbackActiveTicketId = "";
+      setFeedbackView("mine");
+      void refreshFeedbackList();
+    });
+  }
+
+  if (feedbackPrimaryBtn) {
+    feedbackPrimaryBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       void (async () => {
         if (feedbackSending) return;
-        const text = feedbackTextarea.value.trim();
-        if (!text) {
-          setFeedbackError("Please enter a message.");
+        setFeedbackError(null);
+        if (feedbackView === "thread") {
+          const text = feedbackReplyTextarea?.value.trim() ?? "";
+          if (!text) {
+            setFeedbackError("Please enter a reply.");
+            return;
+          }
+          if (!feedbackActiveTicketId) return;
+          feedbackSending = true;
+          feedbackPrimaryBtn.disabled = true;
+          try {
+            const result = await feedbackHandlers.reply(feedbackActiveTicketId, text);
+            if (result.ok) {
+              await openFeedbackThread(feedbackActiveTicketId);
+            } else {
+              setFeedbackError(result.error ?? "Could not send reply.");
+            }
+          } catch {
+            setFeedbackError("Could not send reply.");
+          } finally {
+            feedbackSending = false;
+            feedbackPrimaryBtn.disabled = false;
+          }
           return;
         }
+        const text = feedbackTextarea?.value.trim() ?? "";
+        if (!text) {
+          setFeedbackError(
+            feedbackReportSource
+              ? "Please explain why you are reporting this message."
+              : "Please enter a message."
+          );
+          return;
+        }
+        const kind = (
+          feedbackReportSource ? "bug" : (feedbackKindSelect?.value ?? "suggestion")
+        ) as FeedbackKind;
         feedbackSending = true;
-        feedbackSendBtn.disabled = true;
-        setFeedbackError(null);
+        feedbackPrimaryBtn.disabled = true;
         try {
-          const result = await feedbackSubmitHandler(text);
+          const reportPayload =
+            feedbackReportSource && feedbackReportContext
+              ? {
+                  source: "report" as const,
+                  report: {
+                    ...feedbackReportContext,
+                    ...(feedbackReportRoomId
+                      ? { roomId: feedbackReportRoomId }
+                      : {}),
+                  },
+                }
+              : undefined;
+          const result = await feedbackHandlers.createTicket(
+            kind,
+            text,
+            reportPayload
+          );
           if (result.ok) {
             hideFeedbackOverlay();
           } else {
@@ -7495,17 +8486,20 @@ export function createHud(
           setFeedbackError("Could not send feedback.");
         } finally {
           feedbackSending = false;
-          feedbackSendBtn.disabled = false;
+          feedbackPrimaryBtn.disabled = false;
         }
       })();
     });
   }
 
   if (feedbackTextarea) {
+    feedbackTextarea.addEventListener("input", () => {
+      syncFeedbackFormLimits();
+    });
     feedbackTextarea.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && e.ctrlKey) {
         e.preventDefault();
-        feedbackSendBtn?.click();
+        if (feedbackView === "new") feedbackPrimaryBtn?.click();
       }
       if (e.key === "Escape") {
         e.preventDefault();
@@ -7515,13 +8509,30 @@ export function createHud(
     });
   }
 
+  oppProfileFeedbackBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showFeedbackOverlay();
+  });
+
   let brandLinksPlayerAddress = "";
+  let playerBarDisplayName = "";
+
+  function playerBarWalletShort(compact: string): string {
+    return formatWalletAddressConnectAs(compact);
+  }
+
+  function playerBarShowsUsername(compact: string): boolean {
+    const name = playerBarDisplayName.trim();
+    if (!name) return false;
+    return name !== playerBarWalletShort(compact);
+  }
 
   function openOwnPlayerProfileFromBar(): void {
     const compact = brandLinksPlayerAddress.trim();
     if (!compact) return;
     closeOtherPlayerUiOverlays();
-    const label = walletDisplayName(compact);
+    const label = playerBarDisplayName.trim() || walletDisplayName(compact);
     void showPlayerProfileView(compact, label, "self");
   }
 
@@ -7536,28 +8547,38 @@ export function createHud(
   function syncTopBarPlayerIdentity(): void {
     const raw = brandLinksPlayerAddress.trim();
     if (!raw) {
+      playerBarDisplayName = "";
       playerBarAddr.textContent = "";
+      playerBarAddr.classList.remove("hud-player-bar__addr--username");
       playerBarIdenticon.hidden = true;
       playerBarIdenticon.removeAttribute("src");
       delete playerBarIdenticon.dataset.address;
+      playerBar.removeAttribute("title");
       playerBar.classList.remove("hud-player-bar--interactive");
+      playerBar.classList.remove("hud-player-bar--feedback-unread");
       playerBar.removeAttribute("tabindex");
       playerBar.removeAttribute("role");
       playerBar.style.cursor = "";
+      playerBar.setAttribute("aria-label", "Your wallet");
       return;
     }
     const compact = raw.replace(/\s+/g, "").trim();
-    playerBarAddr.textContent = formatWalletAddressConnectAs(compact);
+    const walletShort = playerBarWalletShort(compact);
+    const showUsername = playerBarShowsUsername(compact);
+    playerBarAddr.textContent = showUsername
+      ? playerBarDisplayName.trim()
+      : walletShort;
+    playerBarAddr.classList.toggle("hud-player-bar__addr--username", showUsername);
+    playerBar.title = showUsername
+      ? `${playerBarDisplayName.trim()} (${formatWalletAddressGap4(compact)})`
+      : compact;
     playerBarIdenticon.hidden = false;
     playerBarIdenticon.removeAttribute("src");
     playerBarIdenticon.dataset.address = compact;
     playerBar.classList.add("hud-player-bar--interactive");
     playerBar.tabIndex = 0;
     playerBar.setAttribute("role", "button");
-    playerBar.setAttribute(
-      "aria-label",
-      "Your wallet. Open your player profile."
-    );
+    playerBar.setAttribute("aria-label", playerBarAriaLabel(feedbackHasUnread));
     playerBar.style.cursor = "pointer";
     void (async (): Promise<void> => {
       try {
@@ -8517,7 +9538,6 @@ export function createHud(
   fsBtn.addEventListener("click", () => fsHandler());
   roomsBtn.addEventListener("click", () => roomsOpenHandler());
   reconnectBtn.addEventListener("click", () => reconnectHandler());
-  feedbackBtn.addEventListener("click", () => showFeedbackOverlay());
   returnHomeBtn.addEventListener("click", () => returnHomeHandler());
   portalEnterBtn.addEventListener("click", () => portalEnterHandler());
   lobbyBtn.addEventListener("click", () => openLobbyConfirm());
@@ -11215,12 +12235,20 @@ export function createHud(
       opts: {
         onWalkHere: (() => void) | null;
         onMine: (() => void) | null;
+        onReadSign?: (() => void) | null;
       }
     ) {
       closeSelfEmojiMenu();
       worldCtx.close();
       closeOtherPlayerProfile();
       const items: WorldContextMenuItem[] = [];
+      if (opts.onReadSign) {
+        items.push({
+          id: "read-sign",
+          label: "Read Sign",
+          onSelect: opts.onReadSign,
+        });
+      }
       if (opts.onWalkHere) {
         items.push({
           id: "walk",
@@ -11272,6 +12300,9 @@ export function createHud(
     },
     onSignpostPlace(fn: (x: number, z: number, message: string) => void) {
       signpostPlaceHandler = fn;
+    },
+    onSignpostUpdate(fn: (signboardId: string, message: string) => void) {
+      signpostUpdateHandler = fn;
     },
     promptBillboardPlace(
       x: number,
@@ -11763,10 +12794,14 @@ export function createHud(
         playerJoinToastTimer = null;
       }, 2600);
     },
-    onFeedbackSubmit(
-      fn: (message: string) => Promise<{ ok: boolean; error?: string }>
-    ) {
-      feedbackSubmitHandler = fn;
+    setFeedbackHandlers(handlers: FeedbackHandlers) {
+      feedbackHandlers = handlers;
+      if (feedbackUnreadPoll) clearInterval(feedbackUnreadPoll);
+      void refreshFeedbackUnreadBadge();
+      feedbackUnreadPoll = setInterval(() => void refreshFeedbackUnreadBadge(), 45_000);
+    },
+    setFeedbackReportRoomId(roomId: string) {
+      feedbackReportRoomId = String(roomId || "").trim();
     },
     setNimWalletStatus(status: string) {
       if (nimBalanceValue) {
@@ -11781,6 +12816,10 @@ export function createHud(
       if (!brandLinksOverlay.hidden) {
         syncBrandLinksWalletIdenticon();
       }
+    },
+    setBrandLinksPlayerDisplayName(displayName: string) {
+      playerBarDisplayName = String(displayName ?? "").trim();
+      syncTopBarPlayerIdentity();
     },
     setReconnectOffer(visible: boolean) {
       reconnectBtn.hidden = !visible;
@@ -11903,46 +12942,40 @@ export function createHud(
       } | null
     ) {
       if (!signboard) {
+        signboardTooltipActiveId = null;
         signboardTooltip.hidden = true;
         return;
       }
-      const messageEl = signboardTooltip.querySelector(".signboard-tooltip__message");
-      const identiconEl = signboardTooltip.querySelector(
-        ".signboard-tooltip__identicon"
-      ) as HTMLImageElement | null;
-      const authorEl = signboardTooltip.querySelector(".signboard-tooltip__author");
-      if (messageEl) {
-        messageEl.textContent = signboard.message;
+      if (
+        signboard.id === signboardTooltipActiveId &&
+        !signboardTooltip.hidden
+      ) {
+        if (signboardTooltipMessageEl) {
+          signboardTooltipMessageEl.textContent = signboard.message;
+        }
+        return;
       }
-      if (authorEl) {
-        const addr = signboard.createdBy;
-        const formatted = addr.length >= 8 
-          ? `${addr.slice(0, 4)}…${addr.slice(-4)}`
-          : addr;
-        authorEl.textContent = `— ${formatted}`;
-        (authorEl as HTMLElement).title = addr;
+      signboardTooltipActiveId = signboard.id;
+      if (signboardTooltipMessageEl) {
+        signboardTooltipMessageEl.textContent = signboard.message;
       }
-      if (identiconEl) {
-        const addr = signboard.createdBy;
-        identiconEl.hidden = false;
-        identiconEl.removeAttribute("src");
-        identiconEl.dataset.address = addr;
-        void (async () => {
-          try {
-            const { identiconDataUrl } = await import("../game/identiconTexture.js");
-            const dataUrl = await identiconDataUrl(addr);
-            // Drop stale async result if tooltip changed to another signboard.
-            if (identiconEl.dataset.address !== addr) return;
-            identiconEl.src = dataUrl;
-          } catch {
-            if (identiconEl.dataset.address === addr) {
-              identiconEl.hidden = true;
-            }
-          }
-        })();
+      if (signboardTooltipAuthorEl) {
+        const addr = signboard.createdBy.replace(/\s+/g, "").trim().toUpperCase();
+        const formatted =
+          addr.length >= 8 ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : addr;
+        signboardTooltipAuthorEl.textContent = `— ${formatted}`;
+        signboardTooltipAuthorEl.title = addr;
+      }
+      if (signboardTooltipIdenticonEl) {
+        const addr = signboard.createdBy.replace(/\s+/g, "").trim().toUpperCase();
+        void loadCtxIdenticon(signboardTooltipIdenticonEl, addr);
       }
       signboardTooltip.hidden = false;
     },
+    showSignReadModal,
+    reportSignReadSaveError,
+    syncSignReadFromSignboards,
+    syncSignboardTooltipFromSignboards,
     isPerfHudEnabled() {
       return perfHudEnabled;
     },
@@ -11980,6 +13013,7 @@ export function createHud(
       chatHoverZone.removeEventListener("contextmenu", onChatHoverZoneContextMenu);
       hideBrandLinksOverlay();
       hideFeedbackOverlay();
+      hideSignReadModal();
       if (playerJoinToastTimer) {
         clearTimeout(playerJoinToastTimer);
         playerJoinToastTimer = null;

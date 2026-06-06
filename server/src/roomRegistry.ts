@@ -250,14 +250,11 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
       } else {
         displayName = `Room ${id.toUpperCase()}`;
       }
-      const isPublic =
-        raw.version === 3 || raw.version === 4 || raw.version === 5
-          ? r.isPublic !== false
-          : true;
+      const isPublic = raw.version >= 3 ? r.isPublic !== false : true;
 
       let deletedAt: number | null = null;
       if (
-        (raw.version === 4 || raw.version === 5) &&
+        raw.version >= 4 &&
         typeof r.deletedAt === "number" &&
         Number.isFinite(r.deletedAt)
       ) {

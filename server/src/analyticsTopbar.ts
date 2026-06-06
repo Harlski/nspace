@@ -176,7 +176,8 @@ export type MainSiteHeaderPage =
   | "payouts"
   | "system"
   | "settings"
-  | "header";
+  | "header"
+  | "feedback";
 
 function navLink(
   page: MainSiteHeaderPage,
@@ -205,6 +206,7 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
           ${navLink("system", currentPage, "/admin/system", "System", true)}
           ${navLink("settings", currentPage, "/admin/settings", "Settings", true)}
           ${navLink("header", currentPage, "/admin/header", "Header", true)}
+          ${navLink("feedback", currentPage, "/admin/feedback", "Feedback", true)}
           ${
             currentPage === "admin"
               ? `<a class="main-site-nav__link" href="#admin-quick-payout">Quick payout</a>`
@@ -246,7 +248,9 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
             (nav === "analytics" && status.analyticsAuthorized) ||
             (nav === "admin" && status.analyticsManager) ||
             (nav === "system" && status.systemAdmin) ||
-            (nav === "settings" && status.systemAdmin)
+            (nav === "settings" && status.systemAdmin) ||
+            (nav === "header" && status.systemAdmin) ||
+            (nav === "feedback" && status.systemAdmin)
           );
         });
       }

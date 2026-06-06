@@ -1670,6 +1670,12 @@ button.hud-brand:focus-visible {
   pointer-events: none;
 }
 
+.hud-player-bar__ident-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
 .hud-player-bar__identicon {
   width: 22px;
   height: 22px;
@@ -1679,14 +1685,40 @@ button.hud-brand:focus-visible {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
+.hud-player-bar--feedback-unread .hud-player-bar__ident-wrap::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  border: 2px solid rgba(15, 23, 42, 0.95);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.45);
+  pointer-events: none;
+}
+
 .hud-player-bar__addr {
   font-family: ui-monospace, monospace;
   font-size: 12.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
-  white-space: nowrap;
   color: rgba(248, 250, 252, 0.96);
+  line-height: 1.2;
+  max-width: 9.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+.hud-player-bar__addr--username {
+  font-family: inherit;
+  font-variant-numeric: normal;
+  letter-spacing: 0.01em;
+  max-width: 11rem;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
 }
 
@@ -3706,13 +3738,18 @@ button.hud-brand:focus-visible {
   filter: brightness(1.06);
 }
 
-/* Feedback — same sheet chrome as Create Signpost (.signpost-overlay__dialog + header/body/btn). */
+/* Feedback — centered modal (~75% width); same chrome as signpost overlay dialog. */
 .signpost-overlay.feedback-overlay {
   position: absolute;
   inset: 0;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
-  padding: 0;
+  padding: max(12px, env(safe-area-inset-top, 0px))
+    max(12px, env(safe-area-inset-right, 0px))
+    max(12px, env(safe-area-inset-bottom, 0px))
+    max(12px, env(safe-area-inset-left, 0px));
   pointer-events: auto;
 }
 
@@ -3733,6 +3770,15 @@ button.hud-brand:focus-visible {
 .signpost-overlay.feedback-overlay .signpost-overlay__dialog {
   position: relative;
   z-index: 1;
+  width: 75%;
+  max-width: 75%;
+  height: auto;
+  max-height: min(72vh, 72dvh);
+  min-height: min(42vh, 360px);
+  margin: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(61, 70, 90, 0.85);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   pointer-events: auto;
 }
 
@@ -3751,6 +3797,502 @@ button.hud-brand:focus-visible {
 .signpost-overlay.feedback-overlay .signpost-overlay__btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.feedback-overlay__header {
+  display: grid;
+  grid-template-columns: minmax(88px, 1fr) auto minmax(88px, 1fr);
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+}
+
+.feedback-overlay__header-side {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.feedback-overlay__header-side--start {
+  justify-content: flex-start;
+}
+
+.feedback-overlay__header-side--end {
+  justify-content: flex-end;
+}
+
+.feedback-overlay__header-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-width: 0;
+}
+
+.feedback-overlay__title {
+  flex: none;
+  font-size: 14px;
+  text-align: center;
+}
+
+.feedback-overlay__header:not(.feedback-overlay__header--thread) .feedback-overlay__title {
+  display: none;
+}
+
+.feedback-overlay__header--thread .feedback-overlay__tabs {
+  display: none;
+}
+
+.feedback-overlay__tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 4px;
+  background: rgba(0, 0, 0, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+}
+
+.feedback-overlay__tab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(216, 232, 255, 0.82);
+  border-radius: 9px;
+  padding: 8px 22px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.feedback-overlay__tab:hover:not(.is-active) {
+  background: rgba(255, 255, 255, 0.06);
+  color: #eef6ff;
+}
+
+.feedback-overlay__tab.is-active {
+  background: rgba(56, 189, 248, 0.28);
+  border-color: rgba(125, 211, 252, 0.55);
+  color: #f8fbff;
+  box-shadow: 0 1px 6px rgba(14, 116, 144, 0.35);
+}
+
+.feedback-overlay__kind {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 10px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #eef6ff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  color-scheme: dark;
+  accent-color: #0a0a0a;
+}
+
+.feedback-overlay__kind option {
+  background-color: #0a0a0a;
+  color: #eef6ff;
+}
+
+.feedback-overlay__kind option:checked,
+.feedback-overlay__kind option:hover,
+.feedback-overlay__kind option:focus {
+  background-color: #0a0a0a;
+  color: #eef6ff;
+}
+
+.feedback-overlay__report-context {
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(252, 211, 77, 0.28);
+  background: rgba(20, 16, 8, 0.55);
+}
+
+.feedback-overlay__report-heading {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(252, 211, 77, 0.92);
+}
+
+.feedback-overlay__report-meta {
+  margin: 0 0 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.feedback-overlay__report-meta-row {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+}
+
+.feedback-overlay__report-meta dt {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.feedback-overlay__report-meta dd {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.88);
+  word-break: break-all;
+}
+
+.feedback-overlay__report-message {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+  font-size: 12px;
+  color: rgba(245, 230, 200, 0.95);
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(74, 56, 32, 0.65);
+  background: rgba(12, 10, 6, 0.72);
+  user-select: text;
+}
+
+.feedback-overlay__hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.feedback-overlay__empty {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.feedback-overlay__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(42vh, 320px);
+  overflow: auto;
+  margin-top: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(61, 70, 90, 0.95) rgba(8, 10, 14, 0.72);
+}
+
+.feedback-overlay__list-item {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 6px 8px;
+  align-items: start;
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #eef6ff;
+  padding: 10px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.feedback-overlay__list-item:hover {
+  border-color: rgba(125, 211, 252, 0.45);
+}
+
+.feedback-overlay__list-status,
+.feedback-overlay__list-kind,
+.feedback-overlay__thread-badge,
+.feedback-overlay__thread-kind {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.18);
+  color: #bae6fd;
+}
+
+.feedback-overlay__list-reward,
+.feedback-overlay__thread-reward {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+}
+
+.feedback-overlay__list-unread {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.22);
+  color: #fca5a5;
+}
+
+.feedback-overlay__list-preview {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.82);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.feedback-overlay__back {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #93c5fd;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0;
+  margin: 0 0 10px;
+  cursor: pointer;
+}
+
+.feedback-overlay__thread-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.feedback-overlay__thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(34vh, 260px);
+  overflow: auto;
+  margin-bottom: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(61, 70, 90, 0.95) rgba(8, 10, 14, 0.72);
+}
+
+.feedback-overlay__thread::-webkit-scrollbar,
+.feedback-overlay__list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.feedback-overlay__thread::-webkit-scrollbar-track,
+.feedback-overlay__list::-webkit-scrollbar-track {
+  background: rgba(8, 10, 14, 0.72);
+  border-radius: 99px;
+}
+
+.feedback-overlay__thread::-webkit-scrollbar-thumb,
+.feedback-overlay__list::-webkit-scrollbar-thumb {
+  background: rgba(61, 70, 90, 0.95);
+  border-radius: 99px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.feedback-overlay__thread::-webkit-scrollbar-thumb:hover,
+.feedback-overlay__list::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.88);
+}
+
+.feedback-overlay__thread::-webkit-scrollbar-button,
+.feedback-overlay__list::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.feedback-overlay__msg {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  padding: 8px 10px;
+}
+
+.feedback-overlay__msg--admin {
+  border-color: rgba(34, 197, 94, 0.28);
+  background: rgba(12, 30, 22, 0.55);
+}
+
+.feedback-overlay__msg-meta {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  margin-bottom: 4px;
+}
+
+.feedback-overlay__msg-body {
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+@media (max-width: 768px) {
+  .signpost-overlay.feedback-overlay {
+    position: fixed;
+    z-index: 10002;
+    align-items: flex-start;
+    justify-content: stretch;
+    padding: env(safe-area-inset-top, 0) 0 0;
+  }
+
+  .signpost-overlay.feedback-overlay .signpost-overlay__dialog {
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: min(85vh, 85dvh);
+    min-height: min(50vh, 360px);
+    margin: 0;
+    border-radius: 0 0 10px 10px;
+    border-top: none;
+  }
+}
+
+/* Sign read modal — profile card layout; lighter scrim so the world stays visible. */
+.sign-read-overlay.other-player-profile {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top, 0px))
+    max(16px, env(safe-area-inset-right, 0px))
+    max(16px, env(safe-area-inset-bottom, 0px))
+    max(16px, env(safe-area-inset-left, 0px));
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.sign-read-overlay.other-player-profile[hidden] {
+  display: none !important;
+}
+
+.sign-read-overlay .other-player-profile__backdrop {
+  background: rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.sign-read-overlay .other-player-profile__dialog {
+  background: linear-gradient(
+    165deg,
+    rgba(28, 32, 42, 0.84) 0%,
+    rgba(15, 17, 23, 0.9) 55%
+  );
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+
+.sign-read-overlay__message-wrap {
+  margin-top: 2px;
+  min-height: 4.5em;
+}
+
+.sign-read-overlay__message.other-player-profile__message-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+  max-height: none;
+}
+
+.sign-read-overlay__message {
+  user-select: text;
+  -webkit-user-select: text;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.sign-read-overlay__message[hidden] {
+  display: none !important;
+}
+
+.sign-read-overlay__edit.other-player-profile__message-text--editing {
+  display: block;
+  max-height: none;
+  overflow: auto;
+}
+
+.sign-read-overlay__edit {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: none;
+  resize: vertical;
+  min-height: 4.5em;
+  field-sizing: content;
+}
+
+.sign-read-overlay__edit[hidden],
+.sign-read-overlay__char-count[hidden],
+.sign-read-overlay__footer[hidden],
+.sign-read-overlay__note[hidden] {
+  display: none !important;
+}
+
+.sign-read-overlay__footer {
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.sign-read-overlay__note {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: left;
+  color: rgba(167, 243, 208, 0.92);
+}
+
+.sign-read-overlay__note--error {
+  color: #f87171;
+}
+
+.sign-read-overlay__footer-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.sign-read-overlay__char-count {
+  margin-top: 6px;
+  text-align: right;
+}
+
+.sign-read-overlay__author-name {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sign-read-overlay__author-name:hover {
+  color: #fff;
+}
+
+.sign-read-overlay__author-name:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.55);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 .hud-return-home {
@@ -3887,6 +4429,39 @@ button.hud-brand:focus-visible {
 .other-player-ctx__item:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.other-player-ctx__item--submenu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.other-player-ctx__submenu-chevron {
+  flex-shrink: 0;
+  color: rgba(232, 234, 239, 0.55);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.other-player-ctx__submenu-wrap {
+  position: relative;
+}
+
+.other-player-ctx__submenu {
+  position: fixed;
+  z-index: 10003;
+  min-width: 160px;
+  padding: 4px 0;
+  border-radius: 8px;
+  border: 1px solid rgba(61, 70, 90, 0.95);
+  background: rgba(15, 17, 23, 0.97);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
+}
+
+.other-player-ctx__submenu[hidden] {
+  display: none !important;
 }
 
 .other-player-ctx__item.other-player-ctx__item--row {
@@ -4042,8 +4617,9 @@ button.hud-brand:focus-visible {
 .other-player-profile__card-footer {
   display: flex;
   flex-direction: row;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
+  gap: 10px;
   width: 100%;
   box-sizing: border-box;
   margin-top: 4px;
@@ -4376,6 +4952,48 @@ button.hud-brand:focus-visible {
   background: rgba(51, 65, 85, 0.75);
   border-color: rgba(148, 163, 184, 0.45);
   color: #fff;
+}
+
+.other-player-profile__feedback-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: auto;
+  min-height: 34px;
+  margin: 0;
+  padding: 7px 14px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 8px;
+  background: rgba(14, 116, 144, 0.22);
+  color: rgba(224, 242, 254, 0.96);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.other-player-profile__feedback-btn:hover {
+  background: rgba(14, 116, 144, 0.38);
+  border-color: rgba(125, 211, 252, 0.55);
+  color: #fff;
+}
+
+.other-player-profile__feedback-btn--unread::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  border: 2px solid rgba(15, 23, 42, 0.95);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.45);
+  pointer-events: none;
 }
 
 .other-player-profile__message-wrap {
@@ -10962,6 +11580,135 @@ a.main-menu__version:focus-visible {
   100% {
     stroke-dashoffset: 165.5;
   }
+}
+
+.username-prompt-overlay__card {
+  background: #161d2a;
+  border: 1px solid #324258;
+  border-radius: 12px;
+  max-width: 22rem;
+  width: 100%;
+  padding: 1.25rem 1.1rem 1.1rem;
+  color: #e6edf3;
+  font: 500 0.875rem ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+
+.username-prompt__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 6.5rem;
+  color: #7dd3fc;
+}
+
+/* Author `display: flex` beats `[hidden]`’s UA default. */
+.username-prompt__loading[hidden],
+.username-prompt__content[hidden] {
+  display: none;
+}
+
+.username-prompt__spinner {
+  display: block;
+  width: 54px;
+  height: 48px;
+  flex-shrink: 0;
+}
+
+.username-prompt__spinner .big-hex {
+  stroke-dashoffset: -40.5;
+  animation: loading-big-hex 4s cubic-bezier(0.76, 0.29, 0.29, 0.76) infinite;
+}
+
+.username-prompt__spinner .small-hex {
+  stroke-dashoffset: 13;
+  animation: loading-small-hex 4s cubic-bezier(0.76, 0.29, 0.29, 0.76) infinite;
+}
+
+.username-prompt__content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.65rem;
+}
+
+.username-prompt__ident {
+  width: 80px;
+  height: 80px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.username-prompt__title {
+  margin: 0;
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: 0.03em;
+  width: 100%;
+  text-align: center;
+}
+
+.username-prompt__defers {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  color: #8b9cb3;
+}
+
+.username-prompt__input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0.15rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid #3d5169;
+  background: #0f141c;
+  color: #e6edf3;
+  font: inherit;
+  text-align: center;
+}
+
+.username-prompt__error {
+  margin: 0;
+  width: 100%;
+  color: #f87171;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.username-prompt__error[hidden] {
+  display: none;
+}
+
+.username-prompt__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.username-prompt__btn {
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 0.42rem 0.75rem;
+  font: inherit;
+  font-weight: 600;
+}
+
+.username-prompt__btn--ghost {
+  background: transparent;
+  border: 1px solid #3d5169;
+  color: #c8d4e4;
+}
+
+.username-prompt__btn--primary {
+  background: rgba(90, 160, 255, 0.25);
+  border: 1px solid #5aa0ff;
+  color: #e8f0fc;
 }
 
 .loading-overlay__text {

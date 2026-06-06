@@ -31,6 +31,7 @@ import {
   CHAMBER_ROOM_ID,
   CANVAS_ROOM_ID,
   PIXEL_ROOM_ID,
+  PIXEL_DEFAULT_SPAWN,
   normalizeRoomId,
 } from "./game/roomLayouts.js";
 import {
@@ -90,6 +91,7 @@ import {
 import { installInputShell } from "./ui/inputShell.js";
 import { formatWalletAddressConnectAs } from "./formatWalletAddress.js";
 import { mountPatchnotesPage } from "./patchnotes/mountPatchnotesPage.js";
+import { runUsernamePromptGate } from "./auth/usernamePromptGate.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
 import { nimiqIconUseMarkup } from "./ui/nimiqIcons.js";
 import { mountNimiqPaySiteAdvisory } from "./ui/nimiqPayAdvisory.js";
@@ -359,15 +361,19 @@ function openMainMenu(): void {
     authToken:
       hasValid && cached && !isTokenExpired(cached.token) ? cached.token : null,
     devBypass: DEV_CLIENT_BYPASS,
-    onReconnect: (address) => {
+    onReconnect: async (address) => {
       const c = listCachedSessions().find((e) => e.address === address);
       if (!c || isTokenExpired(c.token)) return;
       const np = c.nimiqPay === true;
       saveCachedSession(c.token, c.address, np);
+      const ok = await runUsernamePromptGate(c.token, c.address);
+      if (!ok) return;
       enterGame(c.token, c.address, np);
     },
-    onLoggedIn: (token, address, nimiqPay) => {
+    onLoggedIn: async (token, address, nimiqPay) => {
       saveCachedSession(token, address, nimiqPay);
+      const ok = await runUsernamePromptGate(token, address);
+      if (!ok) return;
       enterGame(token, address, nimiqPay);
     },
     onLogout: (address) => {
@@ -785,7 +791,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         <button type="button" class="rooms-modal__back" id="rooms-create-modal-back">← Back</button>
         <p class="rooms-modal__fineprint">New rooms get a random 6-character code (e.g. AB12CD). Max size 30×30 tiles.</p>
         <label class="rooms-modal__label" for="rooms-create-name">Name</label>
-        <input class="rooms-modal__input rooms-modal__input--full" id="rooms-create-name" type="text" maxlength="48" autocomplete="off" />
+        <input class="rooms-modal__input rooms-modal__input--full" id="rooms-create-name" type="text" maxlength="48" autocomplete="off" placeholder="Your room name" required />
         <div class="rooms-modal__create-grid">
           <label class="rooms-modal__label" for="rooms-create-w">Width</label>
           <label class="rooms-modal__label" for="rooms-create-h">Height</label>
@@ -944,7 +950,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
 
   function openRoomsCreateModal(): void {
-    roomsCreateNameInput.value = `${formatWalletAddressConnectAs(address)}'s room`;
+    roomsCreateNameInput.value = "";
     roomsCreateWInput.value = "16";
     roomsCreateHInput.value = "16";
     roomsCreatePublicInput.checked = true;
@@ -1171,8 +1177,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
     const nameRaw = roomsCreateNameInput.value.trim();
     const asOfficial = isAdmin(address) && roomsCreateOfficialInput.checked;
-    if (asOfficial && !nameRaw) {
-      roomsCreateHint.textContent = "Official rooms need a display name.";
+    if (!nameRaw) {
+      roomsCreateHint.textContent = "Enter a room name.";
       roomsCreateHint.hidden = false;
       return;
     }
@@ -1187,7 +1193,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       });
     } else {
       sendCreateRoom(ws, w, h, {
-        ...(nameRaw.length > 0 ? { displayName: nameRaw } : {}),
+        displayName: nameRaw,
         isPublic: roomsCreatePublicInput.checked,
       });
     }
@@ -2591,6 +2597,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       const cy = pick.clientY;
       const walkAt = pick.walkAt;
       const mine = pick.mine;
+      const signboard = pick.signboard;
       hud.showWorldTileContextMenu(cx, cy, {
         onWalkHere: walkAt
           ? () => {
@@ -2622,6 +2629,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
               });
             }
           : null,
+        onReadSign: signboard ? () => hud.showSignReadModal(signboard) : null,
       });
     });
 
@@ -2883,6 +2891,16 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         z,
         message,
       }));
+    });
+    hud.onSignpostUpdate((signboardId, message) => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      socket.send(
+        JSON.stringify({
+          type: "updateSignboard",
+          signboardId,
+          message,
+        })
+      );
     });
     hud.onBillboardPlace((x, z, opts) => {
       if ("liveChart" in opts && opts.liveChart) {
@@ -3449,6 +3467,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       clearRoomTransitionProgressTimer();
       hud.resetRoomChatDom();
       hud.setReconnectOffer(false);
+      hud.setFeedbackReportRoomId(msg.roomId);
       bumpRoomLoadProgress(0.12);
       
       game.applyRoomFromWelcome({
@@ -3469,6 +3488,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       });
       game.setSelf(msg.self.address, msg.self.displayName);
       selfAddress = msg.self.address;
+      hud.setBrandLinksPlayerDisplayName(msg.self.displayName);
 
       const selfKey = selfAddress.replace(/\s+/g, "").trim().toUpperCase();
       const backlog = Array.isArray(msg.chatBacklog) ? msg.chatBacklog : [];
@@ -4044,6 +4064,13 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           "Only whoever placed this billboard (or an admin) can edit, move, or remove it."
         );
       }
+      if (
+        msg.code === "invalid_message" ||
+        msg.code === "not_signboard_owner" ||
+        msg.code === "signboard_not_found"
+      ) {
+        hud.reportSignReadSaveError(String(msg.code ?? ""));
+      }
       if (msg.code === "billboard_admin_only") {
         hud.appendChat(
           "System",
@@ -4111,8 +4138,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
     if (msg.type === "signboards") {
       game.setSignboards(msg.signboards);
-      // Clear signboard tooltip if it's showing a deleted signboard
-      hud.setSignboardTooltip(null);
+      hud.syncSignReadFromSignboards(msg.signboards);
+      hud.syncSignboardTooltipFromSignboards(msg.signboards);
     }
     if (msg.type === "billboards") {
       game.setBillboards(msg.billboards);
@@ -4125,12 +4152,20 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
 
   const connectToRoom = (
     room: string,
-    spawn?: { x: number; z: number }
+    spawn?: { x: number; z: number },
+    opts?: { resume?: boolean }
   ): void => {
     connectGen += 1;
     const myGen = connectGen;
     clearWelcomeDeadlineTimer();
-    beginRoomTransition(room);
+    if (opts?.resume) {
+      clearRoomTransitionProgressTimer();
+      hud.setLoadingLabel("Loading…");
+      hud.setLoadingProgress("indeterminate");
+      hud.setLoadingVisible(true);
+    } else {
+      beginRoomTransition(room);
+    }
     requestAnimationFrame(() => {
       if (myGen !== connectGen) return;
       if (
@@ -4184,7 +4219,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           hud.setPerfHudLatencyMs(null);
         },
         {
-          ...(spawn ? { spawnX: spawn.x, spawnZ: spawn.z } : {}),
+          ...(opts?.resume
+            ? { resume: true }
+            : spawn
+              ? { spawnX: spawn.x, spawnZ: spawn.z }
+              : {}),
           stream: streamMode,
         }
       );
@@ -4228,46 +4267,139 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       z: CHAMBER_DEFAULT_SPAWN.z,
     });
   });
-  hud.onFeedbackSubmit(async (message) => {
-    const text = message.trim();
-    if (!text) {
-      return { ok: false, error: "Please enter a message." };
-    }
-    if (text.length > 700) {
-      hud.appendChat("System", "Feedback is too long (max 700 characters).");
-      return { ok: false, error: "Message is too long (max 700 characters)." };
-    }
-    try {
-      const { resolveApiBaseUrl } = await import("./net/apiBase.js");
-      const base = resolveApiBaseUrl() || "";
-      const res = await fetch(`${base}/api/feedback`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ message: text }),
-      });
-      if (res.ok) {
-        hud.appendChat("System", "Feedback sent. Thank you!");
-        return { ok: true };
+  hud.setFeedbackHandlers({
+    createTicket: async (kind, message, opts) => {
+      const text = message.trim();
+      if (!text) {
+        return {
+          ok: false,
+          error: opts?.source === "report"
+            ? "Please explain why you are reporting this message."
+            : "Please enter a message.",
+        };
       }
-      const body = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        retryAfterMs?: number;
-      };
-      if (res.status === 429 && typeof body.retryAfterMs === "number") {
-        const s = Math.max(1, Math.ceil(body.retryAfterMs / 1000));
-        const err = `Please wait ${s}s before sending again.`;
-        hud.appendChat("System", `Feedback rate limit: please wait ${s}s.`);
-        return { ok: false, error: err };
+      const maxLen = opts?.source === "report" ? 400 : 700;
+      if (text.length > maxLen) {
+        return { ok: false, error: "Message is too long." };
       }
-      hud.appendChat("System", "Could not send feedback right now.");
-      return { ok: false, error: "Could not send feedback right now." };
-    } catch {
-      hud.appendChat("System", "Could not send feedback right now.");
-      return { ok: false, error: "Could not send feedback right now." };
-    }
+      if (opts?.source === "report" && !opts.report?.reportedWallet) {
+        return { ok: false, error: "Invalid report." };
+      }
+      try {
+        const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+        const base = resolveApiBaseUrl() || "";
+        const res = await fetch(`${base}/api/feedback`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            kind,
+            message: text,
+            ...(opts?.source === "report"
+              ? { source: "report", report: opts.report }
+              : {}),
+          }),
+        });
+        if (res.ok) {
+          hud.appendChat("System", "Feedback sent. Thank you!");
+          return { ok: true };
+        }
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          retryAfterMs?: number;
+        };
+        if (body.error === "daily_ticket_limit") {
+          const err = "Daily feedback limit reached (max 3 new tickets per day).";
+          hud.appendChat("System", err);
+          return { ok: false, error: err };
+        }
+        if (res.status === 429 && typeof body.retryAfterMs === "number") {
+          const s = Math.max(1, Math.ceil(body.retryAfterMs / 1000));
+          const err = `Please wait ${s}s before sending again.`;
+          hud.appendChat("System", `Feedback rate limit: please wait ${s}s.`);
+          return { ok: false, error: err };
+        }
+        return { ok: false, error: "Could not send feedback right now." };
+      } catch {
+        return { ok: false, error: "Could not send feedback right now." };
+      }
+    },
+    listMine: async () => {
+      try {
+        const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+        const base = resolveApiBaseUrl() || "";
+        const res = await fetch(`${base}/api/feedback/mine`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return { ok: false, error: "Could not load your feedback." };
+        const data = (await res.json()) as {
+          tickets?: unknown[];
+          unreadCount?: number;
+        };
+        return {
+          ok: true,
+          tickets: (data.tickets ?? []) as import("./ui/hud.js").FeedbackTicketSummary[],
+          unreadCount:
+            typeof data.unreadCount === "number" ? data.unreadCount : undefined,
+        };
+      } catch {
+        return { ok: false, error: "Could not load your feedback." };
+      }
+    },
+    getTicket: async (id) => {
+      try {
+        const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+        const base = resolveApiBaseUrl() || "";
+        const res = await fetch(`${base}/api/feedback/${encodeURIComponent(id)}`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return { ok: false, error: "Could not open that ticket." };
+        const data = (await res.json()) as { ticket?: import("./ui/hud.js").FeedbackTicketDetail };
+        if (!data.ticket) return { ok: false, error: "Could not open that ticket." };
+        return { ok: true, ticket: data.ticket };
+      } catch {
+        return { ok: false, error: "Could not open that ticket." };
+      }
+    },
+    reply: async (id, message) => {
+      const text = message.trim();
+      if (!text) return { ok: false, error: "Please enter a reply." };
+      if (text.length > 700) {
+        return { ok: false, error: "Reply is too long (max 700 characters)." };
+      }
+      try {
+        const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+        const base = resolveApiBaseUrl() || "";
+        const res = await fetch(
+          `${base}/api/feedback/${encodeURIComponent(id)}/messages`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ message: text }),
+          }
+        );
+        if (res.ok) return { ok: true };
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          retryAfterMs?: number;
+        };
+        if (body.error === "ticket_closed") {
+          return { ok: false, error: "This ticket is closed." };
+        }
+        if (res.status === 429 && typeof body.retryAfterMs === "number") {
+          const s = Math.max(1, Math.ceil(body.retryAfterMs / 1000));
+          return { ok: false, error: `Please wait ${s}s before sending again.` };
+        }
+        return { ok: false, error: "Could not send reply." };
+      } catch {
+        return { ok: false, error: "Could not send reply." };
+      }
+    },
   });
   hud.onPortalEnter(() => {
     if (portalAction?.kind === "door") {
@@ -4303,16 +4435,17 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     if (disposed) return;
     hud.setReconnectOffer(false);
     hud.setStatus("Connecting…");
-    connectToRoom(CHAMBER_ROOM_ID, {
-      x: CHAMBER_DEFAULT_SPAWN.x,
-      z: CHAMBER_DEFAULT_SPAWN.z,
-    });
+    connectToRoom(CHAMBER_ROOM_ID, undefined, { resume: true });
   });
 
-  connectToRoom(resolveInitialRoomId(), {
-    x: CHAMBER_DEFAULT_SPAWN.x,
-    z: CHAMBER_DEFAULT_SPAWN.z,
-  });
+  if (streamMode) {
+    connectToRoom(PIXEL_ROOM_ID, {
+      x: PIXEL_DEFAULT_SPAWN.x,
+      z: PIXEL_DEFAULT_SPAWN.z,
+    });
+  } else {
+    connectToRoom(resolveInitialRoomId(), undefined, { resume: true });
+  }
   scheduleNextNimWalletPoll(0);
 
   syncBuildHud();

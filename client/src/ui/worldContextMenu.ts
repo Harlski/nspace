@@ -14,7 +14,9 @@ export type WorldContextMenuItem = {
   icon?: string;
   destructive?: boolean;
   disabled?: boolean;
-  onSelect: () => void;
+  /** Nested row (e.g. chat “More → Copy / Translate”). Omit when `children` is set. */
+  onSelect?: () => void;
+  children?: WorldContextMenuItem[];
 };
 
 export type WorldContextMenuOpenItems = {
@@ -177,36 +179,166 @@ export function createWorldContextMenu(opts: {
     itemsRoot.hidden = true;
   }
 
+  function applyMenuItemLabel(
+    btn: HTMLButtonElement,
+    it: WorldContextMenuItem
+  ): void {
+    if (it.labelSuffix && it.suffixClass) {
+      btn.textContent = "";
+      btn.appendChild(document.createTextNode(it.label));
+      const suf = document.createElement("span");
+      suf.className = it.suffixClass;
+      suf.textContent = it.labelSuffix;
+      btn.appendChild(suf);
+    } else {
+      btn.textContent = it.label;
+    }
+  }
+
+  function createLeafMenuButton(
+    it: WorldContextMenuItem,
+    onActivate: () => void
+  ): HTMLButtonElement {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "other-player-ctx__item";
+    if (it.destructive) {
+      btn.classList.add("other-player-ctx__item--destructive");
+    }
+    btn.setAttribute("role", "menuitem");
+    applyMenuItemLabel(btn, it);
+    btn.disabled = it.disabled === true;
+    btn.addEventListener("click", () => {
+      if (it.disabled) return;
+      onActivate();
+    });
+    return btn;
+  }
+
+  function positionSubmenuPanel(
+    trigger: HTMLElement,
+    panel: HTMLElement
+  ): void {
+    const pad = 8;
+    const tr = trigger.getBoundingClientRect();
+    panel.hidden = false;
+    const pw = panel.offsetWidth || 160;
+    const ph = panel.offsetHeight || 44;
+    let left = tr.right - 2;
+    if (left + pw > window.innerWidth - pad) {
+      left = tr.left - pw + 2;
+    }
+    let top = tr.top;
+    if (top + ph > window.innerHeight - pad) {
+      top = Math.max(pad, window.innerHeight - ph - pad);
+    }
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+  }
+
+  function appendContextMenuItem(
+    parent: HTMLElement,
+    it: WorldContextMenuItem
+  ): void {
+    const children = it.children;
+    if (children && children.length > 0) {
+      const wrap = document.createElement("div");
+      wrap.className = "other-player-ctx__submenu-wrap";
+
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className =
+        "other-player-ctx__item other-player-ctx__item--submenu-trigger";
+      if (it.destructive) {
+        trigger.classList.add("other-player-ctx__item--destructive");
+      }
+      trigger.setAttribute("role", "menuitem");
+      trigger.setAttribute("aria-haspopup", "menu");
+      trigger.setAttribute("aria-expanded", "false");
+      trigger.disabled = it.disabled === true;
+      applyMenuItemLabel(trigger, it);
+      const chevron = document.createElement("span");
+      chevron.className = "other-player-ctx__submenu-chevron";
+      chevron.setAttribute("aria-hidden", "true");
+      chevron.textContent = "›";
+      trigger.appendChild(chevron);
+
+      const panel = document.createElement("div");
+      panel.className = "other-player-ctx__submenu";
+      panel.setAttribute("role", "menu");
+      panel.hidden = true;
+      for (const child of children) {
+        panel.appendChild(
+          createLeafMenuButton(child, () => {
+            close();
+            child.onSelect?.();
+          })
+        );
+      }
+
+      let hideTimer: ReturnType<typeof setTimeout> | null = null;
+      const showPanel = (): void => {
+        if (hideTimer) {
+          clearTimeout(hideTimer);
+          hideTimer = null;
+        }
+        trigger.setAttribute("aria-expanded", "true");
+        positionSubmenuPanel(trigger, panel);
+      };
+      const hidePanel = (): void => {
+        trigger.setAttribute("aria-expanded", "false");
+        panel.hidden = true;
+      };
+      const scheduleHide = (): void => {
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => {
+          hideTimer = null;
+          hidePanel();
+        }, 120);
+      };
+
+      wrap.addEventListener("mouseenter", showPanel);
+      wrap.addEventListener("mouseleave", scheduleHide);
+      trigger.addEventListener("focus", showPanel);
+      trigger.addEventListener("blur", scheduleHide);
+      trigger.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (it.disabled) return;
+        if (panel.hidden) showPanel();
+        else hidePanel();
+      });
+      trigger.addEventListener("keydown", (ev) => {
+        if (ev.key === "ArrowRight") {
+          ev.preventDefault();
+          showPanel();
+          const first = panel.querySelector<HTMLElement>(
+            ".other-player-ctx__item"
+          );
+          first?.focus();
+        }
+      });
+
+      wrap.append(trigger, panel);
+      parent.appendChild(wrap);
+      return;
+    }
+
+    parent.appendChild(
+      createLeafMenuButton(it, () => {
+        close();
+        it.onSelect?.();
+      })
+    );
+  }
+
   function openItems(o: WorldContextMenuOpenItems): void {
     close();
     mode = "items";
     itemsRoot.setAttribute("aria-label", o.ariaLabel);
     itemsRoot.replaceChildren();
     for (const it of o.items) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "other-player-ctx__item";
-      if (it.destructive) {
-        btn.classList.add("other-player-ctx__item--destructive");
-      }
-      btn.setAttribute("role", "menuitem");
-      if (it.labelSuffix && it.suffixClass) {
-        btn.textContent = "";
-        btn.appendChild(document.createTextNode(it.label));
-        const suf = document.createElement("span");
-        suf.className = it.suffixClass;
-        suf.textContent = it.labelSuffix;
-        btn.appendChild(suf);
-      } else {
-        btn.textContent = it.label;
-      }
-      btn.disabled = it.disabled === true;
-      btn.addEventListener("click", () => {
-        if (it.disabled) return;
-        close();
-        it.onSelect();
-      });
-      itemsRoot.appendChild(btn);
+      appendContextMenuItem(itemsRoot, it);
     }
     itemsRoot.hidden = false;
     requestAnimationFrame(() => {

@@ -12,6 +12,7 @@
   "dependencies": {
     "@nimiq/core": "2.2.2",
     "@nimiq/identicons": "^1.6.2",
+    "bad-words": "^4.0.0",
     "cors": "^2.8.5",
     "dom-parser": "^1.1.5",
     "dotenv": "^17.4.2",

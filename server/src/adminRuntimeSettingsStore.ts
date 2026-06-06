@@ -20,7 +20,7 @@ export type AdminRuntimeSettings = {
 };
 
 const DEFAULTS: AdminRuntimeSettings = {
-  playerUsernameSelfServiceEnabled: false,
+  playerUsernameSelfServiceEnabled: true,
   streamObserverAddresses: "",
 };
 

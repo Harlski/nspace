@@ -14,6 +14,8 @@ import {
   adminRandomExtraFloorLayout,
   broadcastRestartPendingNotice,
   getLiveRealPlayerCountInRoom,
+  resolveResumeLogin,
+  snapshotChatHistoryForWallet,
   startRoomTick,
   syncPlayerProfileDisplayNameForWallet,
 } from "./rooms.js";
@@ -58,6 +60,8 @@ import {
   isNimPayoutSenderConfigured,
   peekNimPayoutBalanceCacheLuna,
   startNimPayoutProcessor,
+  enqueueNimPayout,
+  LUNA_PER_NIM,
 } from "./nimPayout/index.js";
 import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
 import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
@@ -65,6 +69,32 @@ import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
 import { adminSystemPageHtml } from "./adminSystemPage.js";
 import { adminSettingsPageHtml } from "./adminSettingsPage.js";
 import { adminHeaderPageHtml } from "./adminHeaderPage.js";
+import { adminFeedbackPageHtml } from "./adminFeedbackPage.js";
+import {
+  addAdminFeedbackMessage,
+  addPlayerFeedbackMessage,
+  composeReportTicketMessage,
+  createFeedbackTicket,
+  FEEDBACK_COOLDOWN_MS,
+  FEEDBACK_MAX_CHARS,
+  FEEDBACK_REPORT_REASON_MAX,
+  FEEDBACK_REWARD_MAX_LUNA,
+  FEEDBACK_REWARD_MIN_LUNA,
+  getFeedbackTicketAdmin,
+  getFeedbackTicketForWallet,
+  listFeedbackTicketsAdmin,
+  listFeedbackTicketsForWallet,
+  markFeedbackTicketRewarded,
+  parseFeedbackKindInput,
+  parseFeedbackReportInput,
+  patchFeedbackTicketStatus,
+  ticketToAdminDetail,
+  ticketToPlayerDetail,
+  ticketToPlayerSummary,
+  type FeedbackKind,
+  type FeedbackReportContext,
+  type FeedbackStatus,
+} from "./feedbackTicketStore.js";
 import {
   getAdminRuntimeSettings,
   patchAdminRuntimeSettings,
@@ -97,6 +127,9 @@ import {
   adminSetUsernameOnTarget,
   getEffectivePlayerDisplayName,
   getPlayerProfilePublicJson,
+  getUsernamePromptStatus,
+  playerHasCustomUsername,
+  recordUsernamePromptDeferral,
   setPlayerProfileMessage,
   trySetPlayerUsername,
 } from "./playerProfileStore.js";
@@ -201,9 +234,25 @@ function telegramEnvTrim(key: string): string {
 
 const TELEGRAM_BOT_TOKEN = telegramEnvTrim("TELEGRAM_BOT_TOKEN");
 const TELEGRAM_CHAT_ID = telegramEnvTrim("TELEGRAM_CHAT_ID");
-const FEEDBACK_MAX_CHARS = 700;
-const FEEDBACK_COOLDOWN_MS = 20_000;
 const feedbackLastByAddress = new Map<string, number>();
+
+function feedbackRateLimit(address: string, res: Response): boolean {
+  const now = Date.now();
+  const lastAt = feedbackLastByAddress.get(address) ?? 0;
+  const retryAfterMs = FEEDBACK_COOLDOWN_MS - (now - lastAt);
+  if (retryAfterMs > 0) {
+    res.status(429).json({ error: "rate_limited", retryAfterMs });
+    return true;
+  }
+  feedbackLastByAddress.set(address, now);
+  return false;
+}
+
+function parseFeedbackStatusInput(raw: unknown): FeedbackStatus | null {
+  const s = String(raw ?? "").trim();
+  if (s === "open" || s === "answered" || s === "integrated" || s === "closed") return s;
+  return null;
+}
 const DEFAULT_ANALYTICS_AUTHORIZED_WALLET =
   "NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y";
 
@@ -271,6 +320,64 @@ app.get("/api/identicon/:wallet", async (req, res) => {
   }
 });
 
+function bearerToken(req: Request): string | null {
+  const h = req.headers.authorization;
+  if (!h || typeof h !== "string") return null;
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  return m?.[1]?.trim() || null;
+}
+
+function requireJwt(req: Request, res: Response, next: NextFunction): void {
+  const t = bearerToken(req);
+  if (!t) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  try {
+    verifySession(t, jwtSecret);
+    next();
+  } catch {
+    res.status(401).json({ error: "unauthorized" });
+  }
+}
+
+function jwtAddressFromReq(req: Request): string | null {
+  const t = bearerToken(req);
+  if (!t) return null;
+  try {
+    return verifySession(t, jwtSecret).sub;
+  } catch {
+    return null;
+  }
+}
+
+/** Must register before `GET /api/player-profile/:address` (otherwise `:address` captures `username-prompt`). */
+app.get("/api/player-profile/username-prompt", requireJwt, (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  res.json(getUsernamePromptStatus(signer));
+});
+
+app.post("/api/player-profile/username/defer", requireJwt, (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const result = recordUsernamePromptDeferral(signer);
+  if (!result.ok) {
+    const status = result.error === "username_prompt_required" ? 403 : 400;
+    res.status(status).json({ error: result.error });
+    return;
+  }
+  res.json({ ok: true, deferralsRemaining: result.deferralsRemaining });
+});
+
 /** Public read: profile message, display name, aliases (normalized `NQ…` in path). */
 app.get("/api/player-profile/:address", (req, res) => {
   try {
@@ -322,37 +429,6 @@ app.get("/api/player-profile/:address", (req, res) => {
     res.status(500).json({ error: "internal" });
   }
 });
-
-function bearerToken(req: Request): string | null {
-  const h = req.headers.authorization;
-  if (!h || typeof h !== "string") return null;
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m?.[1]?.trim() || null;
-}
-
-function requireJwt(req: Request, res: Response, next: NextFunction): void {
-  const t = bearerToken(req);
-  if (!t) {
-    res.status(401).json({ error: "unauthorized" });
-    return;
-  }
-  try {
-    verifySession(t, jwtSecret);
-    next();
-  } catch {
-    res.status(401).json({ error: "unauthorized" });
-  }
-}
-
-function jwtAddressFromReq(req: Request): string | null {
-  const t = bearerToken(req);
-  if (!t) return null;
-  try {
-    return verifySession(t, jwtSecret).sub;
-  } catch {
-    return null;
-  }
-}
 
 /** In-game profile description — max length matches client two-line sample string. */
 const PROFILE_MESSAGE_MAX_LEN =
@@ -911,6 +987,10 @@ app.get("/admin/header", (_req, res) => {
   res.type("html").send(adminHeaderPageHtml());
 });
 
+app.get("/admin/feedback", (_req, res) => {
+  res.type("html").send(adminFeedbackPageHtml());
+});
+
 app.get("/api/admin/system/snapshot", requireSystemAdminWallet, async (_req, res) => {
   try {
     const snapshot = getAdminSystemSnapshot();
@@ -1112,41 +1192,245 @@ app.post("/api/feedback", requireJwt, async (req, res) => {
     res.status(401).json({ error: "unauthorized" });
     return;
   }
-  const raw = (req.body as Record<string, unknown> | null)?.message;
+  const body = req.body as Record<string, unknown> | null;
+  const raw = body?.message;
   const message = typeof raw === "string" ? raw.trim() : "";
-  console.log(
-    "[feedback] Received request:",
-    JSON.stringify({
-      address,
-      messageLength: message.length,
-    })
+  const sourceRaw = String(body?.source ?? "").trim();
+  const source = sourceRaw === "report" ? "report" : "player";
+  const kind = parseFeedbackKindInput(
+    body?.kind,
+    source === "report" ? "bug" : "suggestion"
   );
   if (!message) {
     res.status(400).json({ error: "missing_message" });
     return;
   }
-  if (message.length > FEEDBACK_MAX_CHARS) {
+  if (feedbackRateLimit(normalizeWalletId(address), res)) return;
+
+  let ticketMessage = message;
+  let reportContext: FeedbackReportContext | undefined;
+  if (source === "report") {
+    if (message.length > FEEDBACK_REPORT_REASON_MAX) {
+      res.status(400).json({ error: "message_too_long" });
+      return;
+    }
+    const parsed = parseFeedbackReportInput(body?.report);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const chatHistory = snapshotChatHistoryForWallet(
+      parsed.ctx.reportedWallet,
+      parsed.ctx.roomId
+    );
+    reportContext = {
+      ...parsed.ctx,
+      reportedUserChatHistory: chatHistory,
+    };
+    ticketMessage = composeReportTicketMessage(reportContext, message);
+    if (ticketMessage.length > FEEDBACK_MAX_CHARS) {
+      res.status(400).json({ error: "message_too_long" });
+      return;
+    }
+  } else if (message.length > FEEDBACK_MAX_CHARS) {
     res.status(400).json({ error: "message_too_long" });
     return;
   }
-  const now = Date.now();
-  const lastAt = feedbackLastByAddress.get(address) ?? 0;
-  const retryAfterMs = FEEDBACK_COOLDOWN_MS - (now - lastAt);
-  if (retryAfterMs > 0) {
-    res.status(429).json({ error: "rate_limited", retryAfterMs });
+
+  const created = createFeedbackTicket({
+    wallet: address,
+    kind,
+    message: ticketMessage,
+    source,
+    reportContext,
+  });
+  if (!created.ok) {
+    const err = created.error;
+    if (err === "daily_ticket_limit") {
+      res.status(429).json({ error: err });
+      return;
+    }
+    res.status(400).json({ error: err });
     return;
   }
-  feedbackLastByAddress.set(address, now);
-  const ok = await sendTelegramFeedback(
-    `NSpace feedback\nWallet: ${address}\n\n${message}`
+
+  const ticket = created.ticket;
+  void sendTelegramFeedback(
+    `NSpace feedback [${ticket.kind}] #${ticket.id.slice(0, 8)}\nWallet: ${address}\nStatus: ${ticket.status}\n\n${ticketMessage}`
   );
-  if (!ok) {
-    console.warn("[feedback] sendTelegramFeedback returned false");
-    res.status(503).json({ error: "telegram_unavailable" });
+  console.log(
+    "[feedback] ticket created",
+    JSON.stringify({ address, ticketId: ticket.id, kind: ticket.kind })
+  );
+  res.json({ ok: true, ticketId: ticket.id, ticket: ticketToPlayerSummary(ticket) });
+});
+
+app.get("/api/feedback/mine", requireJwt, (req, res) => {
+  const address = jwtAddressFromReq(req);
+  if (!address) {
+    res.status(401).json({ error: "unauthorized" });
     return;
   }
-  console.log("[feedback] sent successfully", JSON.stringify({ address }));
-  res.json({ ok: true });
+  const rows = listFeedbackTicketsForWallet(address);
+  const tickets = rows.map(ticketToPlayerSummary);
+  res.json({
+    tickets,
+    unreadCount: rows.filter((t) => ticketToPlayerSummary(t).unread).length,
+  });
+});
+
+app.get("/api/feedback/:id", requireJwt, (req, res) => {
+  const address = jwtAddressFromReq(req);
+  if (!address) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const ticket = getFeedbackTicketForWallet(address, String(req.params.id ?? ""), {
+    markRead: true,
+  });
+  if (!ticket) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ ticket: ticketToPlayerDetail(ticket) });
+});
+
+app.post("/api/feedback/:id/messages", requireJwt, (req, res) => {
+  const address = jwtAddressFromReq(req);
+  if (!address) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const raw = (req.body as Record<string, unknown> | null)?.message;
+  const message = typeof raw === "string" ? raw.trim() : "";
+  if (!message) {
+    res.status(400).json({ error: "missing_message" });
+    return;
+  }
+  if (feedbackRateLimit(normalizeWalletId(address), res)) return;
+
+  const out = addPlayerFeedbackMessage({
+    wallet: address,
+    ticketId: String(req.params.id ?? ""),
+    body: message,
+  });
+  if (!out.ok) {
+    const status =
+      out.error === "forbidden" ? 403 : out.error === "not_found" ? 404 : 400;
+    res.status(status).json({ error: out.error });
+    return;
+  }
+  res.json({ ok: true, ticket: ticketToPlayerDetail(out.ticket) });
+});
+
+app.get("/api/admin/feedback", requireSystemAdminWallet, (req, res) => {
+  const status = parseFeedbackStatusInput(req.query.status);
+  const kindRaw = String(req.query.kind ?? "").trim();
+  const kind: FeedbackKind | undefined =
+    kindRaw === "bug" || kindRaw === "feature" || kindRaw === "suggestion"
+      ? kindRaw
+      : undefined;
+  const wallet = String(req.query.wallet ?? "").trim() || undefined;
+  const limit = Number(req.query.limit);
+  const offset = Number(req.query.offset);
+  const out = listFeedbackTicketsAdmin({
+    status: status ?? undefined,
+    kind,
+    wallet,
+    limit: Number.isFinite(limit) ? limit : undefined,
+    offset: Number.isFinite(offset) ? offset : undefined,
+  });
+  res.json({
+    total: out.total,
+    tickets: out.tickets.map(ticketToPlayerSummary),
+    _filterStatus: status ?? "",
+    _filterKind: kind ?? "",
+    _filterWallet: wallet ?? "",
+  });
+});
+
+app.get("/api/admin/feedback/:id", requireSystemAdminWallet, (req, res) => {
+  const ticket = getFeedbackTicketAdmin(String(req.params.id ?? ""));
+  if (!ticket) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ ticket: ticketToAdminDetail(ticket) });
+});
+
+app.post("/api/admin/feedback/:id/messages", requireSystemAdminWallet, (req, res) => {
+  const adminWallet = jwtAddressFromReq(req);
+  if (!adminWallet) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const raw = (req.body as Record<string, unknown> | null)?.message;
+  const message = typeof raw === "string" ? raw.trim() : "";
+  if (!message) {
+    res.status(400).json({ error: "missing_message" });
+    return;
+  }
+  const out = addAdminFeedbackMessage({
+    adminWallet,
+    ticketId: String(req.params.id ?? ""),
+    body: message,
+  });
+  if (!out.ok) {
+    res.status(out.error === "not_found" ? 404 : 400).json({ error: out.error });
+    return;
+  }
+  res.json({ ok: true, ticket: ticketToPlayerDetail(out.ticket) });
+});
+
+app.patch("/api/admin/feedback/:id", requireSystemAdminWallet, (req, res) => {
+  const status = parseFeedbackStatusInput((req.body as Record<string, unknown> | null)?.status);
+  if (!status) {
+    res.status(400).json({ error: "invalid_status" });
+    return;
+  }
+  const out = patchFeedbackTicketStatus({
+    ticketId: String(req.params.id ?? ""),
+    status,
+  });
+  if (!out.ok) {
+    res.status(out.error === "not_found" ? 404 : 400).json({ error: out.error });
+    return;
+  }
+  res.json({ ok: true, ticket: ticketToPlayerDetail(out.ticket) });
+});
+
+app.post("/api/admin/feedback/:id/reward", requireSystemAdminWallet, (req, res) => {
+  const ticketId = String(req.params.id ?? "");
+  const ticket = getFeedbackTicketAdmin(ticketId);
+  if (!ticket) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const amountNim = Number((req.body as Record<string, unknown> | null)?.amountNim);
+  if (!Number.isFinite(amountNim) || amountNim < 0.1 || amountNim > 2) {
+    res.status(400).json({ error: "invalid_reward_amount" });
+    return;
+  }
+  const amountLuna = BigInt(Math.round(amountNim * Number(LUNA_PER_NIM)));
+  if (amountLuna < FEEDBACK_REWARD_MIN_LUNA || amountLuna > FEEDBACK_REWARD_MAX_LUNA) {
+    res.status(400).json({ error: "invalid_reward_amount" });
+    return;
+  }
+  const claimId = `feedback-${ticketId}`;
+  const marked = markFeedbackTicketRewarded({ ticketId, amountLuna, claimId });
+  if (!marked.ok) {
+    res.status(400).json({ error: marked.error });
+    return;
+  }
+  enqueueNimPayout({
+    claimId,
+    recipientAddress: ticket.wallet,
+    amountLuna,
+    roomId: "feedback",
+    tileKey: "admin-reward",
+    txMessage: "Nimiq Space — thank you for integrated feedback",
+  });
+  res.json({ ok: true, ticket: ticketToPlayerDetail(marked.ticket) });
 });
 
 /** Body: `{ "message": "…" }` — only the JWT wallet (`sub`) may update; max length enforced server-side. */
@@ -1177,7 +1461,8 @@ app.put("/api/player-profile/username", requireJwt, (req, res) => {
     return;
   }
   const selfService = getAdminRuntimeSettings().playerUsernameSelfServiceEnabled;
-  if (!isAdmin(signer) && !selfService) {
+  const hasCustom = playerHasCustomUsername(signer);
+  if (!isAdmin(signer) && !selfService && hasCustom) {
     res.status(403).json({ error: "username_self_service_disabled" });
     return;
   }
@@ -1187,7 +1472,7 @@ app.put("/api/player-profile/username", requireJwt, (req, res) => {
     return;
   }
   const result = trySetPlayerUsername(signer, raw, {
-    skipCooldown: isAdmin(signer),
+    skipCooldown: isAdmin(signer) || !hasCustom,
   });
   if (!result.ok) {
     const e = result.error;
@@ -1517,7 +1802,13 @@ app.post("/api/auth/verify", async (req, res) => {
   } catch (e) {
     console.error("[login-streak]", e);
   }
-  res.json({ token, address: sessionAddress, nimiqPay });
+  const usernamePrompt = getUsernamePromptStatus(normAddr);
+  res.json({
+    token,
+    address: sessionAddress,
+    nimiqPay,
+    ...(usernamePrompt.needsPrompt ? { usernamePrompt } : {}),
+  });
 });
 
 const server = createServer(app);
@@ -1543,9 +1834,10 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
-  const roomId = url.searchParams.get("room") || CHAMBER_ROOM_ID;
+  const roomIdParam = url.searchParams.get("room") || CHAMBER_ROOM_ID;
   const sx = url.searchParams.get("sx");
   const sz = url.searchParams.get("sz");
+  const resumeSession = url.searchParams.get("resume") === "1";
   let spawnHint: { x: number; z: number } | undefined;
   if (sx !== null && sz !== null) {
     const x = Number(sx);
@@ -1558,6 +1850,12 @@ wss.on("connection", (ws, req) => {
   if (streamRequested && !isStreamObserver(address)) {
     ws.close(4403, "stream_unauthorized");
     return;
+  }
+  let roomId = roomIdParam;
+  if (resumeSession && !streamRequested) {
+    const resolved = resolveResumeLogin(address);
+    roomId = resolved.roomId;
+    spawnHint = { x: resolved.spawn.x, z: resolved.spawn.z };
   }
   addClient(roomId, ws, address, spawnHint, {
     nimiqPay: sessionNimiqPay,
