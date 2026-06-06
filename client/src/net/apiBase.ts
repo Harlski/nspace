@@ -5,7 +5,7 @@
  *
  * On known SPA hosts (`nimiq.space`), HTTP always uses same-origin so `/api/*` rewrites
  * apply and browser requests avoid cross-origin CORS (502 upstream errors otherwise
- * look like CORS failures). WebSocket still uses {@link resolveWsApiOrigin}.
+ * look like CORS failures). WebSocket uses {@link resolveWebSocketOrigin} (`wss://api.nimiq.space` on prod).
  *
  * If the env value has no `https://` / `http://`, it is treated as a hostname and
  * `https://` is prepended (or `http://` for localhost / 127.0.0.1). Otherwise a value
@@ -48,6 +48,21 @@ export function isSpaApiProxyHost(hostname?: string): boolean {
   return SPA_API_PROXY_HOSTS.has(h);
 }
 
+function isLocalHostname(hostname: string): boolean {
+  const h = hostname.trim().toLowerCase();
+  return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
+}
+
+function httpOriginFromEnvValue(raw: string): string {
+  const noTrailSlash = raw.replace(/\/$/, "");
+  if (/^wss?:\/\//i.test(noTrailSlash)) {
+    const u = new URL(noTrailSlash);
+    u.protocol = u.protocol === "wss:" ? "https:" : "http:";
+    return u.origin;
+  }
+  return normalizeEnvOrigin(noTrailSlash);
+}
+
 export function resolveApiBaseUrl(): string {
   if (isSpaApiProxyHost()) return "";
   const raw = String(import.meta.env.VITE_API_BASE_URL ?? "").trim();
@@ -58,12 +73,22 @@ export function resolveApiBaseUrl(): string {
 /** HTTPS (or HTTP) origin used to derive the WebSocket URL. */
 export function resolveWsApiOrigin(): string {
   const wsEnv = String(import.meta.env.VITE_WS_BASE_URL ?? "").trim();
-  if (wsEnv) return normalizeEnvOrigin(wsEnv.replace(/\/$/, ""));
+  if (wsEnv) return httpOriginFromEnvValue(wsEnv);
   if (isSpaApiProxyHost()) return DEFAULT_PROD_API_ORIGIN;
   const api = resolveApiBaseUrl();
   if (api) return api;
   if (typeof location !== "undefined") return location.origin;
   return DEFAULT_PROD_API_ORIGIN;
+}
+
+/** WebSocket origin — `wss://` on HTTPS pages and non-local API hosts. */
+export function resolveWebSocketOrigin(): string {
+  const u = new URL(resolveWsApiOrigin());
+  const pageHttps =
+    typeof location !== "undefined" && location.protocol === "https:";
+  const secure = pageHttps || !isLocalHostname(u.hostname);
+  u.protocol = secure ? "wss:" : "ws:";
+  return u.origin;
 }
 
 export function apiUrl(path: string): string {

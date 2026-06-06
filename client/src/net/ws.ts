@@ -10,7 +10,7 @@ import {
   DEFAULT_GATE_BLOCK_COLOR_RGB,
   resolveBlockColorRgb,
 } from "../game/blockStyle.js";
-import { resolveWsApiOrigin } from "./apiBase.js";
+import { resolveWebSocketOrigin } from "./apiBase.js";
 
 export type ObstacleTile = {
   x: number;
@@ -396,9 +396,7 @@ export function connectGameWs(
   }
   let originBase: string;
   try {
-    const u = new URL(resolveWsApiOrigin());
-    u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
-    originBase = u.origin;
+    originBase = resolveWebSocketOrigin();
   } catch {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     originBase = `${proto}//${location.host}`;
