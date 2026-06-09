@@ -83,6 +83,9 @@ import { nimToLunaString } from "./ui/objectPrefabAuthoring.js";
 import { createHud } from "./ui/hud.js";
 import { isPaletteHueHexPopoverTyping } from "./ui/paletteHueHexPopover.js";
 import {
+  enableNimiqPayViewportLayout,
+  initNimiqPayDevEmulation,
+  isNimiqPayPortraitDocument,
   isPseudoFullscreenActive,
   requestMiniAppImmersiveLayout,
   setPseudoFullscreen,
@@ -387,6 +390,7 @@ function openMainMenu(): void {
 function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   const app = document.getElementById("app");
   if (!app) return;
+  enableNimiqPayViewportLayout();
   unmountMainMenu?.();
   unmountMainMenu = null;
   app.innerHTML = "";
@@ -726,13 +730,13 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
               <p class="rooms-modal__hint" id="rooms-join-hint" hidden></p>
             </div>
             <p class="rooms-modal__section-title" id="rooms-list-heading">Official rooms</p>
+            <p id="rooms-modal-current-line" class="rooms-modal__current-line" aria-live="polite"></p>
             <ul class="rooms-modal__list rooms-modal__list--rows rooms-modal__list--catalog" id="rooms-modal-list"></ul>
           </div>
           <div class="rooms-modal__list-footer">
             <div class="rooms-modal__list-footer-start">
               <button type="button" class="rooms-modal__btn rooms-modal__btn--primary rooms-modal__create-launch" id="rooms-open-create">Create a room</button>
             </div>
-            <p id="rooms-modal-current-line" class="rooms-modal__current-line" aria-live="polite"></p>
             <div id="rooms-user-pagination" class="rooms-modal__user-pagination" hidden>
               <button type="button" class="rooms-modal__btn rooms-modal__btn--compact" id="rooms-user-page-prev">Previous</button>
               <span class="rooms-modal__user-page-label" id="rooms-user-page-label" aria-live="polite"></span>
@@ -1649,6 +1653,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
 
   /** When the game API is down, backing off avoids spamming the Vite proxy (ECONNREFUSED every 30s). */
   let nimWalletPollTimer: ReturnType<typeof setTimeout> | null = null;
+  let nimWalletPollStarted = false;
   let nimWalletPollFailStreak = 0;
   const NIM_WALLET_POLL_OK_MS = 30_000;
   const NIM_WALLET_POLL_FAIL_BASE_MS = 45_000;
@@ -1810,6 +1815,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       hud.setNimWalletStatus("unavailable");
       return false;
     }
+  }
+
+  function ensureNimWalletPollStarted(): void {
+    if (nimWalletPollStarted || disposed) return;
+    nimWalletPollStarted = true;
+    scheduleNextNimWalletPoll(0);
   }
 
   function scheduleNextNimWalletPoll(delayMs: number): void {
@@ -2050,6 +2061,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     const touchUi =
       typeof window !== "undefined" &&
       window.matchMedia("(pointer: coarse)").matches;
+    const payPortrait = isNimiqPayPortraitDocument();
     const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
     const isPixel = isPixelRoomId(game.getRoomId());
     const canBuild = roomAllowPlaceBlocks && !isCanvas && !isPixel;
@@ -2143,23 +2155,33 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       const prefabHint = hud.isObjectPrefabPlaceModeActive()
         ? touchUi
           ? game.isPrefabPlacePreviewArmed()
-            ? " Prefab: tap the same spot again or Place to stamp; Cancel to clear preview (↺ ↻ rotate)."
-            : " Prefab: tap the floor to preview placement (↺ ↻ rotate)."
+            ? payPortrait
+              ? " Prefab: tap again or Place; Cancel clears (↺ ↻)."
+              : " Prefab: tap the same spot again or Place to stamp; Cancel to clear preview (↺ ↻ rotate)."
+            : payPortrait
+              ? " Prefab: tap floor to preview (↺ ↻)."
+              : " Prefab: tap the floor to preview placement (↺ ↻ rotate)."
           : " Prefab: pick one, hover anchor, click to place (↺ ↻ rotate)."
         : hud.isObjectPrefabSaveModeActive()
           ? touchUi
-            ? " Prefab: press and drag on the floor to capture your prefab area."
+            ? payPortrait
+              ? " Prefab: drag on floor to capture."
+              : " Prefab: press and drag on the floor to capture your prefab area."
             : " Prefab: click and drag on the floor to capture your prefab area."
           : "";
       const sel = game.getSelectedBlockTile();
       const selectedHint = sel
         ? touchUi
-          ? " Selected block: D delete, R rotate ramp, Ctrl+tap selected block to stack higher."
+          ? payPortrait
+            ? " Selected: D delete, R rotate ramp."
+            : " Selected block: D delete, R rotate ramp, Ctrl+tap selected block to stack higher."
           : " Selected block: D delete, R rotate ramp, Ctrl+click selected block to stack higher."
         : "";
       hud.setStatus(
         touchUi
-          ? `Build — tap a block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
+          ? payPortrait
+            ? `Build — tap block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
+            : `Build — tap a block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
           : `Build mode — click a block to edit, empty floor to place (B or Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
       );
       hud.setBuildBlockBarState({
@@ -2188,9 +2210,13 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           : "This room is view-only for building";
     const touchIdleHint =
       canBuild && canFloor
-        ? "Build: edge toggle + palette along the bottom (F: floor if allowed)"
+        ? payPortrait
+          ? "Build: toggle at top-right · palette along bottom"
+          : "Build: edge toggle + palette along the bottom (F: floor if allowed)"
         : canBuild
-          ? "Build: edge toggle + palette along the bottom"
+          ? payPortrait
+            ? "Build: toggle at top-right · palette along bottom"
+            : "Build: edge toggle + palette along the bottom"
           : desktopHint;
     hud.setStatus(touchUi ? touchIdleHint : desktopHint);
     hud.setPlayModeState(playModeFromGame());
@@ -3652,6 +3678,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       hud.setLoadingVisible(false);
       syncBuildHud();
       applyStreamPresentation();
+      ensureNimWalletPollStarted();
       if (ws && ws.readyState === WebSocket.OPEN) {
         sendListRooms(ws);
         syncAwayPresenceToServer();
@@ -4446,7 +4473,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   } else {
     connectToRoom(resolveInitialRoomId(), undefined, { resume: true });
   }
-  scheduleNextNimWalletPoll(0);
 
   syncBuildHud();
 
@@ -4835,6 +4861,8 @@ function isPatchnotesPath(): boolean {
 }
 
 function main(): void {
+  initNimiqPayDevEmulation();
+  enableNimiqPayViewportLayout();
   if (isPatchnotesPath()) {
     document.title = "Patch notes — Nimiq Space";
     const app = document.getElementById("app");

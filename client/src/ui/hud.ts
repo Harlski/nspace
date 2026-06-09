@@ -62,7 +62,12 @@ import {
 import { nimiqIconUseMarkup, nimiqIconifyMarkup } from "./nimiqIcons.js";
 import { createWorldContextMenu, type WorldContextMenuItem } from "./worldContextMenu.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
-import { isVisualFullscreenActive } from "./pseudoFullscreen.js";
+import {
+  isNimiqPayHostDocument,
+  isNimiqPayPortraitViewport,
+  isVisualFullscreenActive,
+  syncNimiqPayOrientationClasses,
+} from "./pseudoFullscreen.js";
 import {
   createObjectPrefabAuthoringUi,
   nimToLunaString,
@@ -752,6 +757,18 @@ export function createHud(
   let debugPanelVisible = opts?.showDebug === true;
   let debugPanelText = "";
   let streamCinemaFillViewport = false;
+  type PayLayoutMode = "portrait" | "landscape";
+  const nimiqPayHost = isNimiqPayHostDocument();
+  const payRightRail = nimiqPayHost
+    ? (() => {
+        const rail = document.createElement("div");
+        rail.className = "hud-pay-right-rail";
+        rail.setAttribute("aria-label", "Game actions");
+        rail.hidden = true;
+        return rail;
+      })()
+    : null;
+  let payLayoutMode: PayLayoutMode | null = null;
 
   const frame = document.createElement("div");
   frame.className = "game-frame";
@@ -805,6 +822,9 @@ export function createHud(
 
   const ui = document.createElement("div");
   ui.className = "hud";
+  if (nimiqPayHost) {
+    ui.classList.add("hud--nimiq-pay-host");
+  }
   letter.appendChild(ui);
 
   const worldCtx = createWorldContextMenu({ parent: letter });
@@ -826,17 +846,19 @@ export function createHud(
 
   const headerMarqueeHost = document.createElement("div");
   headerMarqueeHost.className = "hud-header-marquee-host";
-  const disposeHeaderMarquee = mountHeaderMarquee(headerMarqueeHost, {
-    onPlayerProfileOpen: (walletId, displayName) => {
-      const compact = walletKeyForProfile(walletId);
-      const self = walletKeyForProfile(brandLinksPlayerAddress);
-      if (compact && self && compact === self) {
-        openOwnPlayerProfileFromBar();
-        return;
-      }
-      void showPlayerProfileView(walletId, displayName, "other");
-    },
-  });
+  const disposeHeaderMarquee = nimiqPayHost
+    ? (): void => {}
+    : mountHeaderMarquee(headerMarqueeHost, {
+        onPlayerProfileOpen: (walletId, displayName) => {
+          const compact = walletKeyForProfile(walletId);
+          const self = walletKeyForProfile(brandLinksPlayerAddress);
+          if (compact && self && compact === self) {
+            openOwnPlayerProfileFromBar();
+            return;
+          }
+          void showPlayerProfileView(walletId, displayName, "other");
+        },
+      });
 
   const topStrip = document.createElement("div");
   topStrip.className = "hud-top-strip";
@@ -1171,7 +1193,9 @@ export function createHud(
   topToolbar.appendChild(lobbyBtn);
   topStripMain.appendChild(topToolbar);
   topStrip.appendChild(topStripMain);
-  topStrip.appendChild(headerMarqueeHost);
+  if (!nimiqPayHost) {
+    topStrip.appendChild(headerMarqueeHost);
+  }
 
   const leftStack = document.createElement("div");
   leftStack.className = "hud-left-stack";
@@ -2146,6 +2170,9 @@ export function createHud(
   topBar.appendChild(topActions);
   ui.appendChild(topBar);
   ui.appendChild(buildModeStrip);
+  if (payRightRail) {
+    ui.appendChild(payRightRail);
+  }
   letter.appendChild(portalEnterBtn);
 
   const SELF_QUICK_EMOJIS = ["👍", "❤️", "😂", "🎉", "😮"] as const;
@@ -5137,6 +5164,9 @@ export function createHud(
     "click",
     onBuildDockPrefabCancelPointer
   );
+  const buildDockContextGrid = buildBottomDockContext.querySelector(
+    ".hud-build-bottom-dock__context-grid"
+  ) as HTMLElement;
   const buildDockContextColor = buildBottomDockContext.querySelector(
     ".hud-build-bottom-dock__context-color"
   ) as HTMLElement;
@@ -6229,23 +6259,99 @@ export function createHud(
     );
   }
 
+  /**
+   * Portrait Pay: reparent the color column out of the parameters panel so `position: fixed`
+   * is not trapped by the panel's `backdrop-filter` / `overflow` containing block.
+   */
+  function mountBuildDockContextColorSpread(): void {
+    const spread =
+      payLayoutMode === "portrait" &&
+      nimiqPayHost &&
+      !buildBottomDock.hidden &&
+      ui.classList.contains("hud--build-bottom-dock-visible");
+    const colorHome = spread ? buildBottomDock : buildDockContextGrid;
+    if (buildDockContextColor.parentElement !== colorHome) {
+      colorHome.appendChild(buildDockContextColor);
+    }
+  }
+
+  /** Portrait Pay spread layout: measure params (left) and preview + color stack (right). */
+  function applyBuildDockSpreadFloatVars(): void {
+    if (payLayoutMode !== "portrait" || buildBottomDock.hidden) {
+      ui.style.removeProperty("--hud-build-dock-context-height");
+      ui.style.removeProperty("--hud-build-dock-preview-height");
+      ui.style.removeProperty("--hud-build-dock-color-stack-height");
+      ui.style.removeProperty("--hud-build-dock-preview-color-gap");
+      return;
+    }
+
+    const floorShell =
+      buildBottomDockContext.classList.contains(
+        "hud-build-bottom-dock__context--floor"
+      ) && !buildBottomDockContext.hidden;
+
+    let contextH = 0;
+    if (!buildBottomDockContext.hidden && !floorShell) {
+      const h = Math.ceil(buildBottomDockContext.getBoundingClientRect().height);
+      if (h > 0) contextH = h;
+    }
+
+    let previewH = 0;
+    if (!buildBottomDockPreviewSatellite.hidden) {
+      const h = Math.ceil(
+        buildBottomDockPreviewSatellite.getBoundingClientRect().height
+      );
+      if (h > 0) previewH = h;
+    }
+
+    let colorStackH = 0;
+    if (!buildDockContextColor.hidden) {
+      const colorH = Math.ceil(
+        buildDockContextColor.getBoundingClientRect().height
+      );
+      if (colorH > 0) colorStackH = colorH;
+    }
+
+    const previewColorGap = previewH > 0 && colorStackH > 0 ? 6 : 0;
+    ui.style.setProperty("--hud-build-dock-context-height", `${contextH}px`);
+    ui.style.setProperty("--hud-build-dock-preview-height", `${previewH}px`);
+    ui.style.setProperty("--hud-build-dock-color-stack-height", `${colorStackH}px`);
+    ui.style.setProperty("--hud-build-dock-preview-color-gap", `${previewColorGap}px`);
+  }
+
+  function syncBuildDockSpreadFloatVars(): void {
+    mountBuildDockContextColorSpread();
+    applyBuildDockSpreadFloatVars();
+    requestAnimationFrame(() => applyBuildDockSpreadFloatVars());
+  }
+
   function updateBuildBottomDockInset(): void {
     if (buildBottomDock.hidden) {
       ui.style.setProperty("--hud-build-dock-height", "0px");
       buildBottomDockRowA.style.removeProperty("--hud-build-dock-tools-row-height");
+      ui.style.removeProperty("--hud-build-dock-context-height");
+      ui.style.removeProperty("--hud-build-dock-preview-height");
+      ui.style.removeProperty("--hud-build-dock-color-stack-height");
+      ui.style.removeProperty("--hud-build-dock-preview-color-gap");
       return;
     }
     updateBuildBottomDockToolsRowHeight();
     const panelH = Math.ceil(buildBottomDockPanel.getBoundingClientRect().height);
-    const satelliteGap = 5;
-    const satelliteH = buildBottomDockPreviewSatellite.hidden
-      ? 0
-      : Math.ceil(buildBottomDockPreviewSatellite.getBoundingClientRect().height) +
-        satelliteGap;
+    const previewFloated =
+      payLayoutMode === "portrait" ||
+      (payRightRail !== null &&
+        buildBottomDockPreviewSatellite.parentElement === payRightRail);
+    const satelliteGap = previewFloated ? 0 : 5;
+    const satelliteH =
+      previewFloated || buildBottomDockPreviewSatellite.hidden
+        ? 0
+        : Math.ceil(buildBottomDockPreviewSatellite.getBoundingClientRect().height) +
+          satelliteGap;
     ui.style.setProperty(
       "--hud-build-dock-height",
       `${panelH + satelliteH}px`
     );
+    syncBuildDockSpreadFloatVars();
   }
 
   function syncBuildBottomDockVisibility(): void {
@@ -6273,6 +6379,8 @@ export function createHud(
   buildBottomDockResizeRo.observe(buildBottomDockPanel);
   buildBottomDockResizeRo.observe(buildBottomDockTools);
   buildBottomDockResizeRo.observe(buildBottomDockPreviewSatellite);
+  buildBottomDockResizeRo.observe(buildDockContextColor);
+  buildBottomDockResizeRo.observe(buildBottomDockContext);
 
   function layoutBuildDockRoomBgPopover(): void {
     if (!buildDockRoomBgPopover || buildDockRoomBgPopover.hidden) return;
@@ -6959,8 +7067,12 @@ export function createHud(
       "hud-build-bottom-dock__context--prefab",
       prefabStripActive
     );
+    buildBottomDockRowA.classList.toggle(
+      "hud-build-bottom-dock__row--prefab-category",
+      prefabToolActive
+    );
     if (tileInspectorRoot) {
-      tileInspectorRoot.hidden = prefabStripActive;
+      tileInspectorRoot.hidden = prefabToolActive;
     }
     objectPrefabAuthoring.dockPanel.classList.toggle(
       "hud-prefab-dock--place",
@@ -6970,11 +7082,11 @@ export function createHud(
       "hud-prefab-dock--save",
       saveMode
     );
-    buildDockContextColor.hidden = prefabStripActive;
-    buildDockContextTop.hidden = prefabStripActive;
-    buildDockPlaceEl.hidden = prefabStripActive;
+    buildDockContextColor.hidden = prefabToolActive;
+    buildDockContextTop.hidden = prefabToolActive;
+    buildDockPlaceEl.hidden = prefabToolActive;
     objectPrefabAuthoring.dockPanel.hidden = true;
-    buildBottomDockContext.hidden = prefabStripActive;
+    buildBottomDockContext.hidden = prefabToolActive;
   }
 
   function syncBuildDockContextParams(): void {
@@ -6987,6 +7099,7 @@ export function createHud(
     objectPrefabAuthoring.setPrefabToolActive(prefabTool);
     syncPrefabDockChrome();
     syncBuildDockContextParamVisibility();
+    syncBuildDockSpreadFloatVars();
   }
 
   function syncPlacementPyramidBaseSectionVisibility(): void {
@@ -7018,7 +7131,11 @@ export function createHud(
     if (panelShapeColorRow !== null) {
       barShapeColorRow.hidden = true;
     } else {
-      barShapeColorRow.hidden = buildBlockBar.hidden || editRoomTab;
+      barShapeColorRow.hidden =
+        editRoomTab ||
+        prefabToolActive ||
+        panelShapeColorRow !== null ||
+        (buildBottomDock.hidden && buildBlockBar.hidden);
     }
     const panelHueDocked =
       panelShapeColorRow !== null && !panelShapeColorRow.hidden;
@@ -9590,9 +9707,126 @@ export function createHud(
     }
   }
 
-  const ro = new ResizeObserver(() => {
-    layoutLetterbox(frame, letter, streamCinemaFillViewport);
+  function mountPayPreviewSatellite(mode: PayLayoutMode): void {
+    if (mode === "landscape" && payRightRail) {
+      if (buildBottomDockPreviewSatellite.parentElement !== payRightRail) {
+        payRightRail.appendChild(buildBottomDockPreviewSatellite);
+      }
+      return;
+    }
+    if (buildBottomDockPreviewSatellite.parentElement !== buildBottomDockStack) {
+      buildBottomDockStack.insertBefore(
+        buildBottomDockPreviewSatellite,
+        buildBottomDockPanel
+      );
+    }
+  }
+
+  function mountPayActionChrome(mode: PayLayoutMode): void {
+    if (!nimiqPayHost || !payRightRail) return;
+
+    if (mode === "landscape") {
+      payRightRail.hidden = false;
+      if (topBar.contains(buildModeStrip)) {
+        topBar.removeChild(buildModeStrip);
+      }
+      if (ui.contains(buildModeStrip)) {
+        ui.removeChild(buildModeStrip);
+      }
+      if (topBar.contains(returnHomeBtn)) {
+        topBar.removeChild(returnHomeBtn);
+      }
+      payRightRail.replaceChildren(returnHomeBtn, buildModeStrip);
+      mountPayPreviewSatellite(mode);
+      return;
+    }
+
+    payRightRail.hidden = true;
+    if (payRightRail.contains(returnHomeBtn)) {
+      payRightRail.removeChild(returnHomeBtn);
+    }
+    if (payRightRail.contains(buildModeStrip)) {
+      payRightRail.removeChild(buildModeStrip);
+    }
+    if (ui.contains(buildModeStrip)) {
+      ui.removeChild(buildModeStrip);
+    }
+    if (!topBar.contains(returnHomeBtn)) {
+      topBar.insertBefore(returnHomeBtn, topActions);
+    }
+    if (!topBar.contains(buildModeStrip)) {
+      topBar.insertBefore(buildModeStrip, topActions);
+    }
+    mountPayPreviewSatellite(mode);
+  }
+
+  /** Portrait Pay: Rooms under Return Home; player/NIM/lobby inline with brand row. */
+  function mountPayPortraitTopChrome(portrait: boolean): void {
+    if (!nimiqPayHost) return;
+
+    const toolbarStats: HTMLElement[] = [playerCount, nimBalance, lobbyBtn];
+
+    if (portrait) {
+      const roomsAnchor = topBar.contains(buildModeStrip)
+        ? buildModeStrip
+        : topActions;
+      if (roomsBtn.parentElement !== topBar) {
+        topBar.insertBefore(roomsBtn, roomsAnchor);
+      } else if (roomsBtn.nextElementSibling !== roomsAnchor) {
+        topBar.insertBefore(roomsBtn, roomsAnchor);
+      }
+
+      let after: HTMLElement = topStripMid;
+      for (const el of toolbarStats) {
+        if (el.parentElement !== topStripMain) {
+          topStripMain.insertBefore(el, after.nextSibling);
+        } else {
+          topStripMain.insertBefore(el, after.nextSibling);
+        }
+        after = el;
+      }
+      return;
+    }
+
+    if (roomsBtn.parentElement === topBar || playerCount.parentElement === topStripMain) {
+      for (const el of [roomsBtn, ...toolbarStats, fsBtn]) {
+        topToolbar.appendChild(el);
+      }
+    }
+  }
+
+  function syncPayLayoutMode(): void {
+    if (!nimiqPayHost) return;
+    const fw = frame.clientWidth;
+    const fh = frame.clientHeight;
+    if (!fw || !fh) return;
+    syncNimiqPayOrientationClasses(fw, fh);
+    const next: PayLayoutMode = isNimiqPayPortraitViewport(fw, fh)
+      ? "portrait"
+      : "landscape";
+    if (payLayoutMode !== next) {
+      payLayoutMode = next;
+      ui.classList.toggle("hud--nimiq-pay-portrait", next === "portrait");
+      ui.classList.toggle("hud--nimiq-pay-landscape", next === "landscape");
+      mountPayActionChrome(next);
+    }
+    mountPayPortraitTopChrome(next === "portrait");
+    layoutLetterbox(frame, letter, streamCinemaFillViewport, payLayoutMode);
+    updateBuildBottomDockInset();
     syncHudBelowTopWrap();
+  }
+
+  if (nimiqPayHost) {
+    syncPayLayoutMode();
+  }
+
+  const ro = new ResizeObserver(() => {
+    if (nimiqPayHost) {
+      syncPayLayoutMode();
+    } else {
+      layoutLetterbox(frame, letter, streamCinemaFillViewport, null);
+      syncHudBelowTopWrap();
+    }
     layoutBarAdvancedPopover();
     layoutObjectPanelSatellites();
   });
@@ -9601,7 +9835,11 @@ export function createHud(
   ro.observe(buildModeStrip);
   ro.observe(buildBottomDock);
 
-  layoutLetterbox(frame, letter, streamCinemaFillViewport);
+  if (nimiqPayHost) {
+    layoutLetterbox(frame, letter, streamCinemaFillViewport, payLayoutMode);
+  } else {
+    layoutLetterbox(frame, letter, streamCinemaFillViewport, null);
+  }
   syncHudBelowTopWrap();
   requestAnimationFrame(() => {
     syncHudBelowTopWrap();
@@ -9609,6 +9847,20 @@ export function createHud(
       syncHudBelowTopWrap();
     });
   });
+
+  const onPayViewportChange = nimiqPayHost
+    ? (): void => {
+        syncPayLayoutMode();
+      }
+    : null;
+  if (onPayViewportChange) {
+    window.visualViewport?.addEventListener("resize", onPayViewportChange);
+    window.visualViewport?.addEventListener("scroll", onPayViewportChange);
+    document.addEventListener(
+      "nspace-pseudo-fullscreen-change",
+      onPayViewportChange
+    );
+  }
 
   let panelCollisionToggle: HTMLButtonElement | null = null;
   let panelLockToggle: HTMLButtonElement | null = null;
@@ -11173,7 +11425,12 @@ export function createHud(
         "hud--stream-cinema-chat",
         enabled && opts?.showChat === true
       );
-      layoutLetterbox(frame, letter, streamCinemaFillViewport);
+      layoutLetterbox(
+        frame,
+        letter,
+        streamCinemaFillViewport,
+        enabled ? null : payLayoutMode
+      );
       opts?.onLayout?.();
     },
     setStreamBroadcastOverlay(opts: {
@@ -13038,6 +13295,14 @@ export function createHud(
       nimClaimBar.classList.remove("nim-claim-bar--fading", "nim-claim-bar--adjacent");
       nimClaimBar.hidden = true;
       canvasCountdown.hidden = true;
+      if (onPayViewportChange) {
+        window.visualViewport?.removeEventListener("resize", onPayViewportChange);
+        window.visualViewport?.removeEventListener("scroll", onPayViewportChange);
+        document.removeEventListener(
+          "nspace-pseudo-fullscreen-change",
+          onPayViewportChange
+        );
+      }
       ro.disconnect();
     },
   };
@@ -13046,21 +13311,26 @@ export function createHud(
 function layoutLetterbox(
   frame: HTMLElement,
   letter: HTMLElement,
-  fillViewport = false
+  fillViewport = false,
+  payMode: "portrait" | "landscape" | null = null
 ): void {
   const fw = frame.clientWidth;
   const fh = frame.clientHeight;
   if (!fw || !fh) return;
-  if (fillViewport) {
+  if (fillViewport || payMode === "portrait") {
     letter.style.width = `${fw}px`;
     letter.style.height = `${fh}px`;
+    letter.style.removeProperty("--hud-letterbox-crop-x");
     return;
   }
   const targetAspect = DESIGN_WIDTH / DESIGN_HEIGHT;
   const viewAspect = fw / fh;
   let w: number;
   let h: number;
-  if (viewAspect > targetAspect) {
+  if (payMode === "landscape") {
+    h = fh;
+    w = fh * targetAspect;
+  } else if (viewAspect > targetAspect) {
     h = fh;
     w = fh * targetAspect;
   } else {
@@ -13069,4 +13339,5 @@ function layoutLetterbox(
   }
   letter.style.width = `${w}px`;
   letter.style.height = `${h}px`;
+  letter.style.removeProperty("--hud-letterbox-crop-x");
 }

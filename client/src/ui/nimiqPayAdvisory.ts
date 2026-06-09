@@ -70,7 +70,6 @@ export function mountNimiqPaySiteAdvisory(host: HTMLElement): () => void {
             hidden
           ></span>
         </span>.
-        The Nimiq Pay application is not yet fully supported.
       </p>
       <div class="nimiq-pay-advisory__actions">
         <a
@@ -78,9 +77,9 @@ export function mountNimiqPaySiteAdvisory(host: HTMLElement): () => void {
           href="${TELEGRAM_URL}"
           target="_blank"
           rel="noopener noreferrer"
+          aria-label="Telegram"
         >
-          <img class="nimiq-pay-advisory__social-icon" src="${telegramIconUrl}" alt="" width="18" height="18" aria-hidden="true" />
-          <span>Telegram</span>
+          <img class="nimiq-pay-advisory__social-icon" src="${telegramIconUrl}" alt="" width="20" height="20" aria-hidden="true" />
         </a>
         <button type="button" class="nimiq-pay-advisory__continue" id="nimiq-pay-advisory-continue">
           Continue
@@ -90,9 +89,9 @@ export function mountNimiqPaySiteAdvisory(host: HTMLElement): () => void {
           href="${X_URL}"
           target="_blank"
           rel="noopener noreferrer"
+          aria-label="X"
         >
-          <img class="nimiq-pay-advisory__social-icon" src="${xIconUrl}" alt="" width="18" height="18" aria-hidden="true" />
-          <span>X</span>
+          <img class="nimiq-pay-advisory__social-icon" src="${xIconUrl}" alt="" width="20" height="20" aria-hidden="true" />
         </a>
       </div>
     </div>

@@ -29,10 +29,13 @@ function normalizeEnvOrigin(raw: string): string {
     }
   }
   const lower = noTrailSlash.toLowerCase();
+  const hostOnly = lower.replace(/:\d+$/, "");
   const useHttp =
-    lower.startsWith("localhost") ||
-    lower.startsWith("127.0.0.1") ||
-    lower.startsWith("[::1]");
+    hostOnly === "localhost" ||
+    hostOnly === "127.0.0.1" ||
+    hostOnly === "[::1]" ||
+    hostOnly === "::1" ||
+    isPrivateNetworkHostname(hostOnly);
   const withScheme = `${useHttp ? "http://" : "https://"}${noTrailSlash}`;
   try {
     return new URL(withScheme).origin;
@@ -51,6 +54,26 @@ export function isSpaApiProxyHost(hostname?: string): boolean {
 function isLocalHostname(hostname: string): boolean {
   const h = hostname.trim().toLowerCase();
   return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
+}
+
+/** RFC1918 / link-local IPv4 — typical Vite LAN dev URLs (`http://192.168.x.x:5173`). */
+function isPrivateNetworkHostname(hostname: string): boolean {
+  const h = hostname.trim().toLowerCase();
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!m) return false;
+  const octets = m.slice(1, 5).map((x) => Number(x));
+  if (octets.some((o) => o > 255)) return false;
+  const [a, b] = octets;
+  if (a === 10) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 169 && b === 254) return true;
+  return false;
+}
+
+/** Localhost or LAN dev host — WebSocket scheme follows the page (`ws` on http, `wss` on https). */
+function isLocalDevHostname(hostname: string): boolean {
+  return isLocalHostname(hostname) || isPrivateNetworkHostname(hostname);
 }
 
 function httpOriginFromEnvValue(raw: string): string {
@@ -86,7 +109,8 @@ export function resolveWebSocketOrigin(): string {
   const u = new URL(resolveWsApiOrigin());
   const pageHttps =
     typeof location !== "undefined" && location.protocol === "https:";
-  const secure = pageHttps || !isLocalHostname(u.hostname);
+  const localDev = isLocalDevHostname(u.hostname);
+  const secure = localDev ? pageHttps : pageHttps || !isLocalHostname(u.hostname);
   u.protocol = secure ? "wss:" : "ws:";
   return u.origin;
 }

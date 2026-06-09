@@ -52,13 +52,13 @@ export function showUsernamePromptStatusErrorModal(): Promise<"retry" | "cancel"
     card.className = "username-prompt-overlay__card";
 
     const title = document.createElement("div");
-    title.textContent = "Could not check username";
+    title.textContent = "Something went wrong";
     title.style.cssText = "font-weight:700;font-size:1rem;margin:0 0 0.5rem;";
     card.appendChild(title);
 
     const p = document.createElement("p");
     p.style.margin = "0 0 1rem";
-    p.textContent = "The server did not respond. Check your connection and try again.";
+    p.textContent = "We couldn't finish signing you in. Please try again in a moment.";
     card.appendChild(p);
 
     const btnRow = document.createElement("div");

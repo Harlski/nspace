@@ -215,6 +215,31 @@ flowchart LR
 
 ---
 
+## Nimiq Pay (portrait-first)
+
+When the client runs inside the **Nimiq Pay** mini-app WebView (`window.nimiqPay`), orientation classes on `<html>` drive layout:
+
+| Orientation | Letterbox | Build dock | Return Home / Build |
+|-------------|-----------|------------|---------------------|
+| **Portrait** (`nspace-nimiq-pay-portrait`) | Fills the Pay viewport (`letterbox` = frame size; camera adapts to aspect) | **Spread layout** while the dock is open: bottom **action bar** + **object carousel**; **left** — **parameters** panel; **right** — **hue ring** above GL **preview** | One top row: brand + wallet + player/NIM/lobby; **Return Home**, **Rooms**, **Build** stacked top-right |
+
+### Desktop dev emulation
+
+Pay layout normally requires the Nimiq Pay WebView (`window.nimiqPay`). In **local dev** (`npm run dev`), add a query param:
+
+| URL | Effect |
+|-----|--------|
+| `http://localhost:5173/?payEmulate=portrait` | Stub Pay host + **force portrait** HUD (spread build dock, top action stack) |
+| `http://localhost:5173/?payEmulate=landscape` | Stub Pay host + force landscape (right rail) |
+| `http://localhost:5173/?payEmulate=1` | Stub Pay host; portrait vs landscape from viewport aspect |
+
+Use **Chrome DevTools → device toolbar** (e.g. iPhone 12, ~390×844) so width/height match a real phone. Dev login works as usual. Production builds ignore `payEmulate`.
+| **Landscape** (`nspace-nimiq-pay-landscape`, best-effort) | Height-first | Inset by ~88px right rail | `.hud-pay-right-rail` column |
+
+Portrait uses a **single top row** (brand + wallet + player/NIM/lobby) and **Return Home**, **Rooms**, and **Build** stacked top-right.
+
+---
+
 ## Related docs
 
 - [build.md](build.md) — world model, authority, placement messages
