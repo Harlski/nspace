@@ -33,6 +33,9 @@ const CHAMBER_BOUNDS: RoomBounds = {
   maxZ: 6,
 };
 
+/** Max orthographic half-height when zoomed out in the chamber (world units). */
+export const CHAMBER_MAX_ZOOM_FRUSTUM = 18.9;
+
 /** Must match server `CHAMBER_DEFAULT_SPAWN` — session start / re-login arrival tile. */
 export const CHAMBER_DEFAULT_SPAWN = { x: -5, z: 0 } as const;
 

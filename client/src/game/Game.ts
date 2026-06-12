@@ -91,6 +91,8 @@ import {
 } from "./grid.js";
 import {
   type RoomBounds,
+  CHAMBER_MAX_ZOOM_FRUSTUM,
+  CHAMBER_ROOM_ID,
   HUB_ROOM_ID,
   CANVAS_ROOM_ID,
   PIXEL_ROOM_ID,
@@ -2406,7 +2408,10 @@ export class Game {
    * Hub (25 tiles) ≈ DEFAULT_ZOOM_MAX; large rooms scale up with diagonal span so the
    * isometric diamond fits even when the camera follows a spawn near one edge.
    */
-  private static zoomMaxForRoomBounds(bounds: RoomBounds): number {
+  private static zoomMaxForRoomBounds(bounds: RoomBounds, roomId?: string): number {
+    if (roomId && normalizeRoomId(roomId) === CHAMBER_ROOM_ID) {
+      return CHAMBER_MAX_ZOOM_FRUSTUM;
+    }
     const w = bounds.maxX - bounds.minX + 1;
     const h = bounds.maxZ - bounds.minZ + 1;
     const tiles = Math.max(w, h);
@@ -2447,7 +2452,7 @@ export class Game {
   }
 
   private syncRoomZoomMaxFromBounds(bounds: RoomBounds): void {
-    this.roomZoomMax = Game.zoomMaxForRoomBounds(bounds);
+    this.roomZoomMax = Game.zoomMaxForRoomBounds(bounds, this.roomId);
     this.frustumSize = Game.clampZoom(
       this.frustumSize,
       this.zoomMin,

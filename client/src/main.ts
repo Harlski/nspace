@@ -223,8 +223,6 @@ function teleporterPanelRefreshFromPlaced(
 
 /** Inactivity: return to chamber home spawn (not lobby). */
 const IDLE_RETURN_HUB_MS = 15 * 60 * 1000;
-const LS_ZOOM_NON_MAZE_FRUSTUM = "nspace_zoom_non_maze_frustum";
-
 /** Admin wallet addresses (must match server `config.ADMIN_ADDRESSES`). */
 const ADMIN_ADDRESSES = new Set([
   "NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y",
@@ -1584,16 +1582,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       welcomeDeadlineTimer = null;
     }
   };
-  let mazeZoomLocked = false;
-  let nonMazeFrustum: number | null = (() => {
-    try {
-      const raw = localStorage.getItem(LS_ZOOM_NON_MAZE_FRUSTUM);
-      const n = raw === null ? NaN : Number(raw);
-      return Number.isFinite(n) ? n : null;
-    } catch {
-      return null;
-    }
-  })();
   let cancelActiveNimClaim: (() => void) | null = null;
   /** Active claimable-block UI session (aligned with server begin → complete flow). */
   let nimClaimUiRef: {
@@ -3544,33 +3532,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }
       const zoomMin = game.getZoomBounds().min;
       if (isCanvas) {
-        if (!mazeZoomLocked) {
-          nonMazeFrustum = game.getZoomFrustumSize();
-          try {
-            localStorage.setItem(
-              LS_ZOOM_NON_MAZE_FRUSTUM,
-              String(nonMazeFrustum)
-            );
-          } catch {
-            /* ignore quota */
-          }
-        }
         game.setZoomLocked(true, zoomMin);
-        mazeZoomLocked = true;
       } else {
         game.setZoomLocked(false);
-        const restore = nonMazeFrustum ?? game.getZoomFrustumSize();
-        game.setZoomFrustumSize(restore);
-        nonMazeFrustum = game.getZoomFrustumSize();
-        try {
-          localStorage.setItem(
-            LS_ZOOM_NON_MAZE_FRUSTUM,
-            String(nonMazeFrustum)
-          );
-        } catch {
-          /* ignore quota */
-        }
-        mazeZoomLocked = false;
+        game.setZoomFrustumSize(game.getZoomBounds().max);
       }
       portalEnterVisible = false;
       portalAction = null;
