@@ -22,14 +22,6 @@ export function ensureCampaignUploadsDir(): void {
   fs.mkdirSync(campaignUploadsDir(), { recursive: true });
 }
 
-function normalizeWalletFolder(wallet: string): string {
-  const compact = String(wallet || "")
-    .replace(/\s+/g, "")
-    .toUpperCase();
-  if (!compact || compact.length < 4) return "unknown";
-  return compact.slice(0, 12);
-}
-
 export function detectCampaignImageFormat(
   buffer: Buffer
 ): CampaignImageFormat | null {
@@ -114,17 +106,13 @@ export function fileExtensionForFormat(format: CampaignImageFormat): string {
  * accepted by {@link isAllowedBillboardImageUrl}.
  */
 export function saveCampaignImageUpload(
-  ownerWallet: string,
   buffer: Buffer,
   format: CampaignImageFormat
 ): string {
   ensureCampaignUploadsDir();
-  const folder = normalizeWalletFolder(ownerWallet);
-  const dir = path.join(campaignUploadsDir(), folder);
-  fs.mkdirSync(dir, { recursive: true });
   const ext = fileExtensionForFormat(format);
   const filename = `${randomUUID()}.${ext}`;
-  const fullPath = path.join(dir, filename);
+  const fullPath = path.join(campaignUploadsDir(), filename);
   fs.writeFileSync(fullPath, buffer);
-  return `/advertise/uploads/${folder}/${filename}`;
+  return `/advertise/uploads/${filename}`;
 }

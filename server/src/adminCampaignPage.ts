@@ -115,6 +115,16 @@ export function adminCampaignPageHtml(): string {
       font-size: 0.72rem;
       color: #7b8da8;
     }
+    .cp-admin-tools {
+      margin-top: 0.75rem; padding-top: 0.65rem; border-top: 1px solid #1e293b;
+    }
+    .cp-admin-tools__title {
+      margin: 0 0 0.45rem; font-size: 0.75rem; font-weight: 600; color: #9fb0c7;
+    }
+    .cp-admin-tools__credit {
+      margin-top: 0.65rem; padding-top: 0.55rem; border-top: 1px dashed #263348;
+    }
+    .cp-admin-tools__actions { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.35rem; }
     .cp-tx-date { color: #9fb0c7; }
     .cp-tx-amount { font-variant-numeric: tabular-nums; color: #c8d4e4; }
     .cp-table tr.cp-row-selectable { cursor: pointer; }
@@ -600,6 +610,161 @@ export function adminCampaignPageHtml(): string {
       );
     }
 
+    function renderCampaignAdminToolsHtml(campaign) {
+      if (!campaign || !campaign.id) return "";
+      var status = String(campaign.status || "");
+      if (status === "rejected") return "";
+      var html =
+        '<div class="cp-admin-tools" id="cpAdminTools">' +
+        '<h3 class="cp-admin-tools__title">Admin</h3>' +
+        '<div class="cp-field"><label for="cpAdminName">Project name</label>' +
+        '<input id="cpAdminName" type="text" maxlength="80" value="' +
+        esc(campaign.projectName || "") +
+        '"/></div>' +
+        '<div class="cp-field"><label for="cpAdminUrl">Project URL</label>' +
+        '<input id="cpAdminUrl" type="url" value="' +
+        esc(campaign.miniappTargetUrl || "") +
+        '"/></div>' +
+        '<div class="cp-admin-tools__actions">' +
+        '<button type="button" class="cp-btn cp-btn--accent" id="cpAdminSaveBtn">Save details</button>' +
+        "</div>" +
+        '<div id="cpAdminSaveMsg" class="cp-msg" hidden></div>';
+      if (
+        status === "approved" ||
+        status === "expired" ||
+        status === "pending_approval"
+      ) {
+        html +=
+          '<div class="cp-admin-tools__credit">' +
+          '<div class="cp-field"><label for="cpAdminCreditNim">Bonus credit (NIM)</label>' +
+          '<input id="cpAdminCreditNim" type="text" inputmode="decimal" autocomplete="off" placeholder="10"/></div>' +
+          '<div class="cp-admin-tools__actions">' +
+          '<button type="button" class="cp-btn" id="cpAdminCreditBtn">Add bonus credit</button>' +
+          "</div>" +
+          '<div id="cpAdminCreditMsg" class="cp-msg" hidden></div>' +
+          "</div>";
+      }
+      html += "</div>";
+      return html;
+    }
+
+    function mapAdminCampaignError(code) {
+      if (code === "invalid_project_name") {
+        return "Project name must be 1–80 characters.";
+      }
+      if (code === "invalid_miniapp_target_url") {
+        return "Project URL must be a valid HTTPS URL.";
+      }
+      if (code === "campaign_not_editable") {
+        return "This campaign cannot be edited.";
+      }
+      if (code === "invalid_amount" || code === "amount_required") {
+        return "Enter a valid NIM amount (at least 0.00001).";
+      }
+      if (code === "campaign_not_creditable") {
+        return "Bonus credit cannot be added to this campaign.";
+      }
+      return code || "Request failed.";
+    }
+
+    function bindCampaignAdminTools(campaignId) {
+      var saveBtn = document.getElementById("cpAdminSaveBtn");
+      var creditBtn = document.getElementById("cpAdminCreditBtn");
+      if (saveBtn) {
+        saveBtn.addEventListener("click", function () {
+          var nameEl = document.getElementById("cpAdminName");
+          var urlEl = document.getElementById("cpAdminUrl");
+          var msgEl = document.getElementById("cpAdminSaveMsg");
+          if (!nameEl || !urlEl) return;
+          saveBtn.disabled = true;
+          if (msgEl) {
+            msgEl.hidden = true;
+            msgEl.textContent = "";
+          }
+          api("/api/admin/advertise/campaigns/" + encodeURIComponent(campaignId), {
+            method: "PATCH",
+            body: JSON.stringify({
+              projectName: String(nameEl.value || "").trim(),
+              miniappTargetUrl: String(urlEl.value || "").trim(),
+            }),
+          })
+            .then(function (r) {
+              if (!r.ok) {
+                if (msgEl) {
+                  msgEl.className = "cp-err";
+                  msgEl.textContent = mapAdminCampaignError(
+                    r.body && r.body.error
+                  );
+                  msgEl.hidden = false;
+                }
+                return;
+              }
+              if (msgEl) {
+                msgEl.className = "cp-msg";
+                msgEl.textContent = "Saved.";
+                msgEl.hidden = false;
+              }
+              return load();
+            })
+            .finally(function () {
+              saveBtn.disabled = false;
+            });
+        });
+      }
+      if (creditBtn) {
+        creditBtn.addEventListener("click", function () {
+          var amountEl = document.getElementById("cpAdminCreditNim");
+          var msgEl = document.getElementById("cpAdminCreditMsg");
+          if (!amountEl) return;
+          var amountNim = String(amountEl.value || "").trim();
+          if (!amountNim) {
+            if (msgEl) {
+              msgEl.className = "cp-err";
+              msgEl.textContent = "Enter a NIM amount.";
+              msgEl.hidden = false;
+            }
+            return;
+          }
+          creditBtn.disabled = true;
+          if (msgEl) {
+            msgEl.hidden = true;
+            msgEl.textContent = "";
+          }
+          api(
+            "/api/admin/advertise/campaigns/" +
+              encodeURIComponent(campaignId) +
+              "/credit",
+            {
+              method: "POST",
+              body: JSON.stringify({ amountNim: amountNim }),
+            }
+          )
+            .then(function (r) {
+              if (!r.ok) {
+                if (msgEl) {
+                  msgEl.className = "cp-err";
+                  msgEl.textContent = mapAdminCampaignError(
+                    r.body && r.body.error
+                  );
+                  msgEl.hidden = false;
+                }
+                return;
+              }
+              amountEl.value = "";
+              if (msgEl) {
+                msgEl.className = "cp-msg";
+                msgEl.textContent = "Bonus credit added.";
+                msgEl.hidden = false;
+              }
+              return load();
+            })
+            .finally(function () {
+              creditBtn.disabled = false;
+            });
+        });
+      }
+    }
+
     function renderPreviewDetailsHtml(payload) {
       if (!payload || payload.kind === "idle") {
         return '<p class="cp-preview-caption">Select a slide to preview.</p>';
@@ -707,6 +872,7 @@ export function adminCampaignPageHtml(): string {
         '<div class="cp-preview-details">' +
         renderPreviewDetailsHtml(payload) +
         "</div>" +
+        '<div class="cp-admin-tools-slot"></div>' +
         '<div class="cp-tx-history"></div>' +
         "</div>"
       );
@@ -779,11 +945,14 @@ export function adminCampaignPageHtml(): string {
       var html = '<h3 class="cp-tx-title">Payments</h3><ul class="cp-tx-list">';
       for (var i = 0; i < transactions.length; i++) {
         var tx = transactions[i];
+        var txHash = String(tx.txHash || "").toLowerCase();
         var link = tx.explorerUrl
           ? '<a class="ms-link-expl" href="' +
             esc(tx.explorerUrl) +
             '" target="_blank" rel="noopener noreferrer">nimiq.watch</a>'
-          : "";
+          : txHash.indexOf("admin-credit:") === 0
+            ? '<span class="cp-tx-admin">Admin credit</span>'
+            : "";
         html +=
           '<li class="cp-tx-item">' +
           '<span class="cp-tx-date">' +
@@ -832,6 +1001,15 @@ export function adminCampaignPageHtml(): string {
       if (!panel) return;
       var details = panel.querySelector(".cp-preview-details");
       if (details) details.innerHTML = renderPreviewDetailsHtml(payload);
+      var toolsSlot = panel.querySelector(".cp-admin-tools-slot");
+      if (toolsSlot) {
+        if (payload && payload.kind === "campaign" && payload.campaign) {
+          toolsSlot.innerHTML = renderCampaignAdminToolsHtml(payload.campaign);
+          bindCampaignAdminTools(payload.campaign.id);
+        } else {
+          toolsSlot.innerHTML = "";
+        }
+      }
       var canvas = panel.querySelector(".cp-preview-canvas");
       var warnEl = panel.querySelector(".cp-preview-warn");
       if (canvas && typeof window.__advUpdateBillboardPreview === "function") {

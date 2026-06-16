@@ -122,7 +122,9 @@ import {
 } from "./campaignAnalyticsStore.js";
 import {
   approveCampaignForInGame,
+  adminUpdateCampaignDetailsForInGame,
   createCampaignPaymentIntent,
+  grantCampaignAdminCreditForInGame,
   rejectCampaignForInGame,
   syncCampaignPaymentStatus,
   syncOwnerCampaignsPaymentStatus,
@@ -1117,11 +1119,7 @@ app.post(
     return;
   }
   try {
-    const imageUrl = saveCampaignImageUpload(
-      signer,
-      parsed.buffer,
-      parsed.format
-    );
+    const imageUrl = saveCampaignImageUpload(parsed.buffer, parsed.format);
     res.status(201).json({ imageUrl });
   } catch (e) {
     console.error("[api/advertise/upload-image]", e);
@@ -1516,6 +1514,75 @@ app.post(
       res.json({ campaign: result.campaign });
     } catch (e) {
       console.error("[api/admin/advertise/reject]", e);
+      res.status(500).json({ error: "internal" });
+    }
+  }
+);
+
+app.patch(
+  "/api/admin/advertise/campaigns/:id",
+  requireSystemAdminWallet,
+  async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as {
+        projectName?: string;
+        miniappTargetUrl?: string;
+      };
+      const patch: { projectName?: string; miniappTargetUrl?: string } = {};
+      if (typeof body.projectName === "string") patch.projectName = body.projectName;
+      if (typeof body.miniappTargetUrl === "string") {
+        patch.miniappTargetUrl = body.miniappTargetUrl;
+      }
+      const result = await adminUpdateCampaignDetailsForInGame(
+        String(req.params.id ?? ""),
+        patch
+      );
+      if (!result.ok) {
+        const status =
+          result.error === "campaign_not_found" ? 404 : 400;
+        res.status(status).json({ error: result.error });
+        return;
+      }
+      res.json({ campaign: result.campaign });
+    } catch (e) {
+      console.error("[api/admin/advertise/patch]", e);
+      res.status(500).json({ error: "internal" });
+    }
+  }
+);
+
+app.post(
+  "/api/admin/advertise/campaigns/:id/credit",
+  requireSystemAdminWallet,
+  async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as { amountNim?: string | number };
+      if (
+        body.amountNim === undefined ||
+        body.amountNim === null ||
+        String(body.amountNim).trim() === ""
+      ) {
+        res.status(400).json({ error: "amount_required" });
+        return;
+      }
+      const luna = nimAmountToLuna(String(body.amountNim));
+      if (luna === null || luna < 1n) {
+        res.status(400).json({ error: "invalid_amount" });
+        return;
+      }
+      const result = await grantCampaignAdminCreditForInGame(
+        String(req.params.id ?? ""),
+        luna
+      );
+      if (!result.ok) {
+        const status =
+          result.error === "campaign_not_found" ? 404 : 400;
+        res.status(status).json({ error: result.error });
+        return;
+      }
+      res.json({ campaign: result.campaign });
+    } catch (e) {
+      console.error("[api/admin/advertise/credit]", e);
       res.status(500).json({ error: "internal" });
     }
   }

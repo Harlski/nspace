@@ -1,6 +1,9 @@
+import { validateBillboardHttpsTarget } from "./billboardAdvertsCatalog.js";
 import {
   approveCampaign,
   applyCampaignTopUpPayment,
+  adminUpdateCampaignFields,
+  grantCampaignAdminCredit,
   expireCampaign,
   findCampaignByIntentId,
   getCampaignById,
@@ -19,7 +22,7 @@ import {
   getPaymentIntent,
   isPaymentIntentClientConfigured,
 } from "./paymentIntentClient.js";
-import { removeCampaignFromAllRotationSets } from "./rotationSetStore.js";
+import { removeCampaignFromAllRotationSets, listRotationSetIdsContainingCampaign } from "./rotationSetStore.js";
 import {
   rebuildAllRotationBillboards,
   rebuildBillboardsForRotationSet,
@@ -354,4 +357,60 @@ export function rebuildRotationSetsAndBillboards(setIds: string[]): number {
     rebuilt += rebuildBillboardsForRotationSet(setId);
   }
   return rebuilt;
+}
+
+export async function adminUpdateCampaignDetailsForInGame(
+  campaignId: string,
+  patch: { projectName?: string; miniappTargetUrl?: string }
+): Promise<
+  | { ok: true; campaign: CampaignPublic }
+  | { ok: false; error: string }
+> {
+  const id = String(campaignId ?? "").trim();
+  if (!id) return { ok: false, error: "campaign_not_found" };
+  const existing = getCampaignById(id);
+  if (!existing) return { ok: false, error: "campaign_not_found" };
+  if (patch.projectName === undefined && patch.miniappTargetUrl === undefined) {
+    return { ok: false, error: "no_fields" };
+  }
+  if (patch.projectName !== undefined) {
+    const name = String(patch.projectName).trim();
+    if (!name || name.length > 80) {
+      return { ok: false, error: "invalid_project_name" };
+    }
+  }
+  if (patch.miniappTargetUrl !== undefined) {
+    if (!validateBillboardHttpsTarget(String(patch.miniappTargetUrl).trim())) {
+      return { ok: false, error: "invalid_miniapp_target_url" };
+    }
+  }
+
+  const updated = adminUpdateCampaignFields(id, patch);
+  if (!updated) return { ok: false, error: "campaign_not_editable" };
+
+  const setIds = listRotationSetIdsContainingCampaign(id);
+  if (setIds.length) rebuildRotationSetsAndBillboards(setIds);
+  return { ok: true, campaign: updated };
+}
+
+export async function grantCampaignAdminCreditForInGame(
+  campaignId: string,
+  amountLuna: bigint
+): Promise<
+  | { ok: true; campaign: CampaignPublic }
+  | { ok: false; error: string }
+> {
+  const id = String(campaignId ?? "").trim();
+  if (!id) return { ok: false, error: "campaign_not_found" };
+  if (amountLuna < 1n) return { ok: false, error: "invalid_amount" };
+  if (!getCampaignById(id)) return { ok: false, error: "campaign_not_found" };
+
+  const updated = grantCampaignAdminCredit(id, amountLuna);
+  if (!updated) return { ok: false, error: "campaign_not_creditable" };
+
+  if (updated.status === "approved") {
+    const setIds = listRotationSetIdsContainingCampaign(id);
+    if (setIds.length) rebuildRotationSetsAndBillboards(setIds);
+  }
+  return { ok: true, campaign: updated };
 }

@@ -1087,6 +1087,34 @@ export function advertisePageHtml(): string {
       }
       setFundPaymentUi("idle");
     }
+    var FUNDING_POPUP_CLOSED_MSG = "Funding popup was closed.";
+    function isFundingPopupClosedMessage(payMsg) {
+      if (!payMsg) return false;
+      if (payMsg === FUNDING_POPUP_CLOSED_MSG || payMsg === "Payment cancelled.") return true;
+      var lower = payMsg.toLowerCase();
+      if (lower.indexOf("popup blocked") !== -1) return false;
+      return (
+        lower.indexOf("cancel") !== -1 ||
+        lower.indexOf("abort") !== -1 ||
+        lower.indexOf("denied") !== -1 ||
+        lower.indexOf("rejected") !== -1 ||
+        lower.indexOf("closed") !== -1 ||
+        lower.indexOf("dismiss") !== -1
+      );
+    }
+    function handleFundingPopupClosed() {
+      stopPaymentSyncPoll();
+      if (advFundSuccessCloseTimer) {
+        clearTimeout(advFundSuccessCloseTimer);
+        advFundSuccessCloseTimer = null;
+      }
+      if (!fundOverlayOpenForCampaign(advDashboardState.fundCampaignId)) return;
+      setFundPaymentUi("error", FUNDING_POPUP_CLOSED_MSG);
+      advFundSuccessCloseTimer = setTimeout(function () {
+        advFundSuccessCloseTimer = null;
+        closeFundPopover();
+      }, 1800);
+    }
     function fundOverlayOpenForCampaign(campaignId) {
       var overlay = document.getElementById("advFundOverlay");
       return (
@@ -1551,7 +1579,7 @@ export function advertisePageHtml(): string {
     }
     function isFundPreflightError(payMsg) {
       if (!payMsg) return true;
-      if (payMsg === "Payment cancelled.") return false;
+      if (isFundingPopupClosedMessage(payMsg)) return false;
       if (payMsg.indexOf("popup blocked") !== -1) return true;
       if (payMsg.indexOf("pay manually") !== -1) return true;
       return (
@@ -1876,9 +1904,11 @@ export function advertisePageHtml(): string {
         lower.indexOf("cancel") !== -1 ||
         lower.indexOf("abort") !== -1 ||
         lower.indexOf("denied") !== -1 ||
-        lower.indexOf("rejected") !== -1
+        lower.indexOf("rejected") !== -1 ||
+        (lower.indexOf("closed") !== -1 && lower.indexOf("popup blocked") === -1) ||
+        lower.indexOf("dismiss") !== -1
       ) {
-        return "Payment cancelled.";
+        return FUNDING_POPUP_CLOSED_MSG;
       }
       return msg;
     }
@@ -2377,15 +2407,8 @@ export function advertisePageHtml(): string {
         startPaymentSyncPoll(id);
       } catch (payErr) {
         var payMsg = walletPaymentErrorMessage(payErr);
-        if (payMsg === "Payment cancelled.") {
-          resetFundPaymentUi();
-          if (msg) {
-            msg.textContent = "Payment cancelled. Use Retry payment to try again.";
-            msg.className = "adv-hint";
-            msg.hidden = false;
-          }
-          refreshCampaignsUi();
-          startPaymentSyncPoll(id);
+        if (isFundingPopupClosedMessage(payMsg)) {
+          handleFundingPopupClosed();
         } else if (isFundPreflightError(payMsg)) {
           resetFundPaymentUi();
           if (msg) {

@@ -185,7 +185,9 @@ function normalizeTxHash(v: string): string {
 }
 
 function campaignTxExplorerUrl(txHash: string): string {
-  const hex = normalizeTxHash(txHash).replace(/^0x/, "");
+  const normalized = normalizeTxHash(txHash);
+  if (!normalized || normalized.startsWith("admin-credit:")) return "";
+  const hex = normalized.replace(/^0x/, "");
   return hex ? `https://nimiq.watch/#${hex}` : "";
 }
 
@@ -806,6 +808,102 @@ export function rejectCampaign(
     .run(rejectNote, now, id.trim());
   if (info.changes === 0) return null;
   return getCampaignById(id);
+}
+
+const ADMIN_EDITABLE_CAMPAIGN_STATUSES: CampaignStatus[] = [
+  "draft",
+  "pending_payment",
+  "pending_approval",
+  "approved",
+  "expired",
+];
+
+/** Admin may change display name and target URL (not rejected campaigns). */
+export function adminUpdateCampaignFields(
+  id: string,
+  patch: { projectName?: string; miniappTargetUrl?: string }
+): CampaignPublic | null {
+  const campaignId = String(id ?? "").trim();
+  if (!campaignId) return null;
+  const existing = getCampaignById(campaignId);
+  if (!existing || !ADMIN_EDITABLE_CAMPAIGN_STATUSES.includes(existing.status)) {
+    return null;
+  }
+  const nextName =
+    patch.projectName !== undefined
+      ? String(patch.projectName).trim()
+      : existing.projectName;
+  const nextUrl =
+    patch.miniappTargetUrl !== undefined
+      ? String(patch.miniappTargetUrl).trim()
+      : existing.miniappTargetUrl;
+  if (!nextName || nextName.length > 80) return null;
+  if (!validateBillboardHttpsTarget(nextUrl)) return null;
+  const now = Date.now();
+  const info = requireDb()
+    .prepare(
+      `UPDATE campaigns SET
+        project_name = ?,
+        miniapp_target_url = ?,
+        updated_at_ms = ?
+       WHERE id = ? AND status IN ('draft', 'pending_payment', 'pending_approval', 'approved', 'expired')`
+    )
+    .run(nextName, nextUrl, now, campaignId);
+  if (info.changes === 0) return null;
+  return getCampaignById(campaignId);
+}
+
+const ADMIN_CREDIT_CAMPAIGN_STATUSES: CampaignStatus[] = [
+  "pending_approval",
+  "approved",
+  "expired",
+];
+
+/** Grants prepaid bonus balance; records a synthetic admin-credit ledger row. */
+export function grantCampaignAdminCredit(
+  id: string,
+  amountLuna: bigint
+): CampaignPublic | null {
+  const campaignId = String(id ?? "").trim();
+  if (!campaignId || amountLuna < 1n) return null;
+
+  const row = requireDb()
+    .prepare(`SELECT status, balance_luna FROM campaigns WHERE id = ?`)
+    .get(campaignId) as
+    | { status: CampaignStatus; balance_luna: string | null }
+    | undefined;
+  if (!row || !ADMIN_CREDIT_CAMPAIGN_STATUSES.includes(row.status)) return null;
+
+  let balance = 0n;
+  try {
+    balance = BigInt(row.balance_luna ?? 0);
+  } catch {
+    balance = 0n;
+  }
+  const newBalance = balance + amountLuna;
+  const newStatus = row.status === "expired" ? "approved" : row.status;
+  const now = Date.now();
+  const txHash = `admin-credit:${randomUUID()}`;
+
+  const info = requireDb()
+    .prepare(
+      `UPDATE campaigns SET
+        balance_luna = ?,
+        status = ?,
+        updated_at_ms = ?
+       WHERE id = ? AND status IN ('pending_approval', 'approved', 'expired')`
+    )
+    .run(newBalance.toString(), newStatus, now, campaignId);
+  if (info.changes === 0) return null;
+
+  recordCampaignFundingTransaction({
+    campaignId,
+    intentId: null,
+    txHash,
+    amountLuna,
+    recordedAtMs: now,
+  });
+  return getCampaignById(campaignId);
 }
 
 /** @deprecated use approveCampaign — kept for migration references */
