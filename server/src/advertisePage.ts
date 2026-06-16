@@ -469,6 +469,7 @@ export function advertisePageHtml(): string {
     </div>
   </div>
   <script>
+    var AUTH_KEYS = ["nspace_analytics_auth_token", "nspace_pending_payouts_token"];
     var NIMIQ_HEX_SPINNER = ${nimiqHexSpinner};
     var ADV_TELEGRAM_URL = "https://t.me/nimiqspace";
     function advertiseSupportMessageText() {
