@@ -17,6 +17,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 | [patchnotes-release.md](patchnotes-release.md) | How to write `patchnote/…/public/*.md` (tiers, optional **`04-hotfix.md`**, brevity, optional `[NEW]`/`[FIX]`/… tags for in-app `/patchnotes`) |
 | [reasons/](reasons/) | `THE-LARGER-SYSTEM` edit rationales only: `reason_{six-digit-id}.md` |
 | [signboards-admin-guide.md](signboards-admin-guide.md) | Signboard rules by room, WebSocket messages, persistence |
+| [advertise-guide.md](advertise-guide.md) | **Paid billboard campaigns** — advertiser flow, prepaid visibility, admin placement; live page **`/advertise/how-it-works`** |
 
 ## Styling & assets
 

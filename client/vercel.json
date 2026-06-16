@@ -33,6 +33,10 @@
       "destination": "https://api.nimiq.space/payouts"
     },
     {
+      "source": "/advertise",
+      "destination": "https://api.nimiq.space/advertise"
+    },
+    {
       "source": "/pending-payouts",
       "destination": "https://api.nimiq.space/payouts"
     },

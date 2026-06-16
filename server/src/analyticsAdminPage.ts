@@ -4,7 +4,6 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
-import { browserTermsPrivacyRuntimeScript } from "./browserTermsPrivacyAuthSnippet.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
 
@@ -22,7 +21,7 @@ export function analyticsAdminPageHtml(): string {
     ${analyticsPageRootCss()}
     ${mainSiteShellCss()}
     ${analyticsTopbarCss()}
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.84rem; }
+    .mono { font-size: 0.84rem; }
     .row { display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center; margin-top: 0.6rem; }
     input { flex: 1 1 420px; min-width: 220px; background: #0f1622; color: #dbe6f4; border: 1px solid #2c3b52; border-radius: 6px; padding: 0.45rem 0.55rem; }
     #panel button { background: var(--ms-accent); color: #eef6ff; border: 1px solid var(--ms-accent-hover-border); border-radius: 6px; padding: 0.4rem 0.7rem; cursor: pointer; }
@@ -193,7 +192,6 @@ export function analyticsAdminPageHtml(): string {
   <div id="panel" class="ms-panel ms-mono">Loading...</div>
   <script>
     var MS_SIGNING_HEX_SPINNER = ${msSigningHexSpinner};
-    ${browserTermsPrivacyRuntimeScript()}
     var AUTH_KEYS = ["nspace_analytics_auth_token", "nspace_pending_payouts_token"];
     var AUTH_ADDR_KEY = "nspace_analytics_auth_addr";
     function readAuthToken() {
@@ -282,7 +280,6 @@ export function analyticsAdminPageHtml(): string {
         return "";
       }
     }
-    var authMenuDocBound = false;
     function toB64(u8) {
       var s = "";
       for (var i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
@@ -410,23 +407,9 @@ export function analyticsAdminPageHtml(): string {
         }
       }
     }
-    async function renderSignInTop() {
-      var authUserEl = document.getElementById("authUser");
-      if (!authUserEl) return;
-      authUserEl.style.display = "block";
-      authUserEl.innerHTML =
-        "<span id='authTopLogin' class='auth-user-signin' role='button' tabindex='0'>Sign In</span>";
-      var loginEl = document.getElementById("authTopLogin");
-      if (loginEl) {
-        loginEl.addEventListener("click", function () {
-          void runWalletLogin();
-        });
-        loginEl.addEventListener("keydown", function (e) {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            void runWalletLogin();
-          }
-        });
+    async function refreshAuthTopbar() {
+      if (typeof window.__nsRenderMainSiteAuthTopbar === "function") {
+        await window.__nsRenderMainSiteAuthTopbar();
       }
     }
     async function fetchAnalyticsAuthStatus(token) {
@@ -445,171 +428,6 @@ export function analyticsAdminPageHtml(): string {
         return { analyticsAuthorized: false, analyticsManager: false };
       }
     }
-    function walletNormAdmin(a) {
-      return String(a || "").replace(/\s+/g, "").toUpperCase();
-    }
-    var MAX_MAIN_SITE_ACCOUNTS = 5;
-    async function populateAdminAuthPicker(activeAddr) {
-      var picker = document.getElementById("authAccountPicker");
-      if (!picker || typeof window.__nsListMainSiteCachedAccounts !== "function") return;
-      var rows = window.__nsListMainSiteCachedAccounts() || [];
-      var activeN = walletNormAdmin(activeAddr);
-      var html = "";
-      for (var ai = 0; ai < rows.length; ai++) {
-        var row = rows[ai];
-        var ident = await fetchIdenticon(row.address);
-        var isAct = walletNormAdmin(row.address) === activeN;
-        var exp = row.expired;
-        var img = ident
-          ? "<img class='auth-user-account-ident' src='" + esc(ident) + "' alt='' width='22' height='22'/>"
-          : "<span class='auth-user-account-ident auth-user-account-ident--ph' aria-hidden='true'></span>";
-        var dis = exp ? " disabled" : "";
-        var rowCls =
-          "auth-user-account-row" +
-          (exp ? " auth-user-account-row--expired" : "") +
-          (isAct ? " auth-user-account-row--active" : "");
-        var check = isAct ? "<span class='auth-user-account-check' aria-label='Active'>✓</span>" : "";
-        html +=
-          "<button type='button' class='" +
-          rowCls +
-          "' data-switch-account='" +
-          esc(row.address) +
-          "'" +
-          dis +
-          ">" +
-          img +
-          "<span class='mono'>" +
-          esc(walletShort(row.address)) +
-          "</span>" +
-          check +
-          "</button>";
-      }
-      if (rows.length >= MAX_MAIN_SITE_ACCOUNTS) {
-        html +=
-          "<p class='auth-user-account-cap mono'>Maximum " +
-          MAX_MAIN_SITE_ACCOUNTS +
-          " accounts saved.</p>";
-      } else {
-        html +=
-          "<button type='button' class='auth-user-account-row auth-user-account-row--add' id='authAddAccount'>Add account</button>";
-      }
-      picker.innerHTML = html;
-      picker.querySelectorAll("[data-switch-account]").forEach(function (b) {
-        b.addEventListener("click", function (ev) {
-          ev.stopPropagation();
-          var addr = String(b.getAttribute("data-switch-account") || "");
-          if (!addr || walletNormAdmin(addr) === activeN) {
-            picker.style.display = "none";
-            return;
-          }
-          if (typeof window.__nsActivateMainSiteCachedAccount === "function") {
-            window.__nsActivateMainSiteCachedAccount(addr);
-          }
-        });
-      });
-      var addBtn = document.getElementById("authAddAccount");
-      if (addBtn) {
-        addBtn.addEventListener("click", function (ev) {
-          ev.stopPropagation();
-          picker.style.display = "none";
-          var m = document.getElementById("authUserMenu");
-          if (m) m.style.display = "none";
-          void runWalletLogin();
-        });
-      }
-    }
-    function bindAdminAuthAccountSwitcher(activeAddr) {
-      var toggle = document.getElementById("authChangeAccountToggle");
-      var picker = document.getElementById("authAccountPicker");
-      if (!toggle || !picker) return;
-      toggle.addEventListener("click", function (e) {
-        e.stopPropagation();
-        var opening = picker.style.display !== "block";
-        picker.style.display = opening ? "block" : "none";
-        if (opening) void populateAdminAuthPicker(activeAddr);
-      });
-      void populateAdminAuthPicker(activeAddr);
-    }
-    async function renderAuthUser(address, canViewAnalytics) {
-      var authUserEl = document.getElementById("authUser");
-      if (!authUserEl || !address) return;
-      authUserEl.style.display = "block";
-      var ident = await fetchIdenticon(address);
-      var tok = readAuthToken();
-      var sessionExpired =
-        !!tok && typeof window.__nsMainSiteJwtExpired === "function" && window.__nsMainSiteJwtExpired(tok);
-      var alertSvg =
-        "<svg class='nq-icon auth-user-session-alert' width='14' height='14' aria-hidden='true' focusable='false'><use href='/nimiq-style.icons.svg#nq-alert-circle'/></svg>";
-      var identWrap = "";
-      if (ident || sessionExpired) {
-        identWrap =
-          "<span class='auth-user-ident-wrap" +
-          (ident ? "" : " auth-user-ident-wrap--solo") +
-          "'>" +
-          (ident ? "<img class='ident' src='" + esc(ident) + "' alt='wallet'/>" : "") +
-          (sessionExpired ? alertSvg : "") +
-          "</span>";
-      }
-      var btnTitle = sessionExpired
-        ? "Session expired — sign in again (" + esc(address) + ")"
-        : "Signed in as " + esc(address);
-      var acctSection =
-        "<div class='auth-user-menu-section'><button type='button' id='authChangeAccountToggle' class='auth-user-menu-row'>Change account</button><div id='authAccountPicker' class='auth-user-submenu' style='display:none' role='group' aria-label='Choose wallet'></div></div>";
-      var menuInner =
-        (sessionExpired
-          ? "<button type='button' id='authRefreshSession' class='auth-user-menu-row'>Sign in again</button>"
-          : "") +
-        acctSection +
-        "<button type='button' id='authUserLogout' class='auth-user-menu-row'>Logout</button>";
-      authUserEl.innerHTML =
-        "<button type='button' id='authUserBtn' class='auth-user-btn' title='" +
-        btnTitle +
-        "'>" +
-        identWrap +
-        "<span class='mono'>" +
-        esc(walletShort(address)) +
-        "</span>" +
-        "</button>" +
-        "<div id='authUserMenu' class='auth-user-menu'>" +
-        menuInner +
-        "</div>";
-      var btn = document.getElementById("authUserBtn");
-      var menu = document.getElementById("authUserMenu");
-      var refreshSess = document.getElementById("authRefreshSession");
-      var logout = document.getElementById("authUserLogout");
-      if (refreshSess) {
-        refreshSess.addEventListener("click", function () {
-          if (menu) menu.style.display = "none";
-          void runWalletLogin();
-        });
-      }
-      if (btn && menu) {
-        btn.addEventListener("click", function (e) {
-          e.stopPropagation();
-          var open = menu.style.display !== "block";
-          menu.style.display = open ? "block" : "none";
-          var sub = document.getElementById("authAccountPicker");
-          if (!open && sub) sub.style.display = "none";
-        });
-        if (!authMenuDocBound) {
-          document.addEventListener("click", function (ev) {
-            if (ev.target && ev.target.closest && ev.target.closest("#authUser")) return;
-            var m = document.getElementById("authUserMenu");
-            if (m) m.style.display = "none";
-            var sub2 = document.getElementById("authAccountPicker");
-            if (sub2) sub2.style.display = "none";
-          });
-          authMenuDocBound = true;
-        }
-      }
-      bindAdminAuthAccountSwitcher(address);
-      if (logout) {
-        logout.addEventListener("click", function () {
-          clearAuthSession();
-          window.location.reload();
-        });
-      }
-    }
     async function load() {
       var panel = document.getElementById("panel");
       var docTitle = document.getElementById("adminDocTitle");
@@ -620,7 +438,7 @@ export function analyticsAdminPageHtml(): string {
       if (signed) sessionStorage.setItem(AUTH_ADDR_KEY, signed);
       if (!token) {
         if (docTitle) docTitle.hidden = true;
-        await renderSignInTop();
+        await refreshAuthTopbar();
         panel.innerHTML =
           "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
           "<div class='ms-auth-gate-msg'>You must be signed in.</div>" +
@@ -631,7 +449,7 @@ export function analyticsAdminPageHtml(): string {
         typeof window.__nsMainSiteJwtExpired === "function" && window.__nsMainSiteJwtExpired(token);
       if (jwtExpired) {
         if (docTitle) docTitle.hidden = false;
-        await renderAuthUser(signed, false);
+        await refreshAuthTopbar();
         panel.innerHTML =
           "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
           "<div class='ms-auth-gate-msg'>Your session has expired. Use <strong>Sign in again</strong> above.</div>" +
@@ -1213,12 +1031,12 @@ export function analyticsAdminPageHtml(): string {
           })(),
           refreshPayoutAdmin(),
         ]);
-        if (signed) await renderAuthUser(signed, authStatus.analyticsAuthorized);
+        if (signed) await refreshAuthTopbar();
         render("", false);
       } catch (err) {
         var errMsg = String((err && err.message) || err);
         if (errMsg.indexOf("Session expired") !== -1) {
-          if (signed) await renderAuthUser(signed, false);
+          if (signed) await refreshAuthTopbar();
           if (typeof window.__nsRefreshMainSiteNavFromSession === "function") {
             window.__nsRefreshMainSiteNavFromSession();
           }
@@ -1228,7 +1046,7 @@ export function analyticsAdminPageHtml(): string {
             "</div>";
           return;
         }
-        if (signed) await renderAuthUser(signed, authStatus.analyticsAuthorized);
+        if (signed) await refreshAuthTopbar();
         if (typeof window.__nsRefreshMainSiteNavFromSession === "function") {
           window.__nsRefreshMainSiteNavFromSession();
         }
@@ -1248,6 +1066,9 @@ export function analyticsAdminPageHtml(): string {
           "</div></div>";
       }
     }
+    window.__nsMainSiteLoginClick = function () {
+      void runWalletLogin();
+    };
     load();
   </script>
 </body>

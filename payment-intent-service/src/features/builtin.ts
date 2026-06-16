@@ -35,6 +35,44 @@ const testMinHandler: PaymentFeatureHandler = {
   },
 };
 
+/** Paid in-world Hub billboard slot (fulfilled by game server after verify). */
+const billboardSlotHandler: PaymentFeatureHandler = {
+  kind: "nspace.billboard.slot",
+  validatePayload(payload) {
+    if (payload !== null && typeof payload !== "object") {
+      throw new Error("featurePayload must be an object or null");
+    }
+    const o = (payload ?? {}) as Record<string, unknown>;
+    const campaignId = String(o.campaignId ?? "").trim();
+    if (!campaignId) throw new Error("featurePayload.campaignId is required");
+  },
+  quote(input: FeatureQuoteInput) {
+    const o = (input.featurePayload ?? {}) as Record<string, unknown>;
+    const payloadLuna = o["amountLuna"];
+    let amountLuna: bigint;
+    if (payloadLuna !== undefined && payloadLuna !== null) {
+      amountLuna = readBigIntLuna(payloadLuna, "amountLuna");
+    } else {
+      const raw = process.env.BILLBOARD_SLOT_NIM_LUNA?.trim();
+      amountLuna = LUNA_PER_NIM * 10n;
+      if (raw && /^\d+$/.test(raw)) {
+        amountLuna = BigInt(raw);
+      } else {
+        const nim = process.env.BILLBOARD_SLOT_NIM?.trim();
+        if (nim && /^\d+$/.test(nim)) {
+          amountLuna = BigInt(nim) * LUNA_PER_NIM;
+        }
+      }
+    }
+    if (amountLuna < 1n) throw new Error("amountLuna must be >= 1");
+    const campaignId = String(o.campaignId ?? "").trim();
+    return {
+      amountLuna,
+      quoteMetadata: { campaignId, tier: "billboard_slot" },
+    };
+  },
+};
+
 function notImplemented(kind: string): PaymentFeatureHandler {
   return {
     kind,
@@ -49,7 +87,7 @@ function notImplemented(kind: string): PaymentFeatureHandler {
 export function registerBuiltinFeatureHandlers(): void {
   registerFeatureHandler(testMinHandler);
   registerFeatureHandler(notImplemented("nspace.username.exclusive"));
-  registerFeatureHandler(notImplemented("nspace.billboard.slot"));
+  registerFeatureHandler(billboardSlotHandler);
   registerFeatureHandler(notImplemented("nspace.teleporter.purchase"));
   registerFeatureHandler(notImplemented("nspace.land.grant"));
 }

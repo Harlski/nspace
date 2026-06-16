@@ -5,6 +5,7 @@ import { bearerApiAuth } from "./auth.js";
 import { registerBuiltinFeatureHandlers } from "./features/builtin.js";
 import { listRegisteredFeatureKinds } from "./features/registry.js";
 import {
+  checkIntentPayment,
   createIntent,
   getIntent,
   verifyIntentTx,
@@ -59,6 +60,34 @@ app.get("/v1/intents/:intentId", auth, (req, res) => {
     return;
   }
   res.json({ intent });
+});
+
+app.post("/v1/intents/:intentId/check", auth, async (req, res) => {
+  try {
+    const result = await checkIntentPayment(
+      store,
+      cfg,
+      req.params.intentId ?? ""
+    );
+    res.json(result);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "error";
+    if (msg === "Intent not found") {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    const pub = getIntent(store, String(req.params.intentId ?? ""));
+    if (pub) {
+      res.json({
+        ok: false,
+        intent: pub,
+        chainMessage: msg,
+      });
+      return;
+    }
+    console.error("[payment-intent] check", e);
+    res.status(500).json({ error: "internal" });
+  }
 });
 
 app.post("/v1/intents/:intentId/verify", auth, async (req, res) => {

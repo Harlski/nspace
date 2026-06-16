@@ -87,7 +87,9 @@ The **`payment-intent`** service is a **separate** Node container from `nspace` 
 | `GET` | `/v1/intents/:intentId` | Read status |
 | `POST` | `/v1/intents/:intentId/verify` | Body `{ "txHash": "…" }` → `{ ok, intent, chainMessage? }`; checks recipient, sender = payer, value ≥ quoted amount, memo matches, confirmations |
 
-**Extending:** register new `PaymentFeatureHandler` modules (see `payment-intent-service/src/features/`). Built-in kinds include `nspace.test.min` (integration tests) and reserved stubs `nspace.username.exclusive`, `nspace.billboard.slot`, `nspace.teleporter.purchase`, `nspace.land.grant`.
+**Extending:** register new `PaymentFeatureHandler` modules (see `payment-intent-service/src/features/`). Built-in kinds include `nspace.test.min` (integration tests), **`nspace.billboard.slot`** (paid Hub billboard campaigns — quote via `BILLBOARD_SLOT_NIM` or `BILLBOARD_SLOT_NIM_LUNA` on the payment-intent service), and reserved stubs `nspace.username.exclusive`, `nspace.teleporter.purchase`, `nspace.land.grant`.
+
+**Billboard campaigns (game server):** set `PAYMENT_INTENT_SERVICE_URL` + `PAYMENT_INTENT_API_SECRET` on the game server; optional `BILLBOARD_SLOT_NIM` (default **10**), `BILLBOARD_SLOT_DURATION_DAYS` (default **7**), `CAMPAIGN_STORE_SQLITE_PATH` (default `server/data/campaigns.sqlite`). Players manage campaigns at **`/advertise`**.
 
 **Local dev without Docker:** `npm run dev:payment-intent` from the repo root (set the same env vars first).
 

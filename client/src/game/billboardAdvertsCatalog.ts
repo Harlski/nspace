@@ -11,6 +11,8 @@ export type BillboardAdvertCatalogEntry = {
   name: string;
   /** Empty = billboard art only; no “Visit” pill when standing on the footprint. */
   visitUrl: string;
+  /** Nimiq Pay mini-app target; client builds deeplink at visit time. */
+  miniappTargetUrl?: string;
   slides: readonly string[];
   intervalMs: number;
 };
@@ -43,6 +45,14 @@ export const BILLBOARD_ADVERTS_CATALOG: readonly BillboardAdvertCatalogEntry[] =
       name: "Cute Penguin",
       visitUrl: "",
       slides: ["/ai-bb.png"],
+      intervalMs: 8000,
+    },
+    {
+      id: "radio_miniapp_bb",
+      name: "Radio mini-app",
+      visitUrl: "https://radio.nimiqapps.com",
+      miniappTargetUrl: "https://radio.nimiqapps.com",
+      slides: ["/nimiq-bb.png"],
       intervalMs: 8000,
     },
   ];

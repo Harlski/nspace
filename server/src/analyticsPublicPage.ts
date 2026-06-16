@@ -4,7 +4,6 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
-import { browserTermsPrivacyRuntimeScript } from "./browserTermsPrivacyAuthSnippet.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
 
@@ -27,7 +26,7 @@ export function analyticsPublicPageHtml(): string {
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 1rem; }
     .panel { background: #161d2a; border: 1px solid #283244; border-radius: 10px; padding: 0.8rem; }
     .panel h2 { margin: 0 0 0.5rem 0; font-size: 1rem; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; }
+    .mono { font-size: 0.82rem; }
     .row { display: grid; grid-template-columns: 2.2rem 1fr auto; gap: 0.6rem; align-items: center; margin: 0.2rem 0; }
     .barWrap { height: 0.8rem; background: #202a3a; border-radius: 999px; overflow: hidden; }
     .bar { height: 100%; background: linear-gradient(90deg, #5aa0ff, #7dd3fc); }
@@ -177,7 +176,6 @@ export function analyticsPublicPageHtml(): string {
   </div>
   <script>
     var MS_SIGNING_HEX_SPINNER = ${msSigningHexSpinner};
-    ${browserTermsPrivacyRuntimeScript()}
     function esc(s) {
       return String(s)
         .replace(/&/g, "&amp;")
@@ -408,7 +406,6 @@ export function analyticsPublicPageHtml(): string {
       beaconAnalyticsPageView();
       var authGateEl = document.getElementById("authGate");
       var gridEl = document.getElementById("analyticsGrid");
-      var authUserEl = document.getElementById("authUser");
       function setAuthedVisible(visible) {
         if (gridEl) gridEl.style.display = visible ? "grid" : "none";
       }
@@ -433,187 +430,9 @@ export function analyticsPublicPageHtml(): string {
           return "";
         }
       }
-      var authMenuDocBound = false;
-      async function renderTopLoginButton() {
-        if (!authUserEl) return;
-        authUserEl.style.display = "block";
-        authUserEl.innerHTML =
-          "<span id='authTopLogin' class='auth-user-signin' role='button' tabindex='0'>Sign In</span>";
-        var loginEl = document.getElementById("authTopLogin");
-        if (loginEl) {
-          loginEl.addEventListener("click", function () {
-            void runAnalyticsLogin();
-          });
-          loginEl.addEventListener("keydown", function (e) {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              void runAnalyticsLogin();
-            }
-          });
-        }
-      }
-      function walletNormTop(a) {
-        return String(a || "").replace(/\s+/g, "").toUpperCase();
-      }
-      var MAX_MAIN_SITE_ACCOUNTS = 5;
-      async function populateAuthAccountPicker(activeAddr) {
-        var picker = document.getElementById("authAccountPicker");
-        if (!picker || typeof window.__nsListMainSiteCachedAccounts !== "function") return;
-        var rows = window.__nsListMainSiteCachedAccounts() || [];
-        var activeN = walletNormTop(activeAddr);
-        var html = "";
-        for (var ai = 0; ai < rows.length; ai++) {
-          var row = rows[ai];
-          var ident = await fetchIdenticon(row.address);
-          var isAct = walletNormTop(row.address) === activeN;
-          var exp = row.expired;
-          var img = ident
-            ? "<img class='auth-user-account-ident' src='" + esc(ident) + "' alt='' width='22' height='22'/>"
-            : "<span class='auth-user-account-ident auth-user-account-ident--ph' aria-hidden='true'></span>";
-          var dis = exp ? " disabled" : "";
-          var rowCls =
-            "auth-user-account-row" +
-            (exp ? " auth-user-account-row--expired" : "") +
-            (isAct ? " auth-user-account-row--active" : "");
-          var check = isAct ? "<span class='auth-user-account-check' aria-label='Active'>✓</span>" : "";
-          html +=
-            "<button type='button' class='" +
-            rowCls +
-            "' data-switch-account='" +
-            esc(row.address) +
-            "'" +
-            dis +
-            ">" +
-            img +
-            "<span class='mono'>" +
-            esc(walletShort(row.address)) +
-            "</span>" +
-            check +
-            "</button>";
-        }
-        if (rows.length >= MAX_MAIN_SITE_ACCOUNTS) {
-          html +=
-            "<p class='auth-user-account-cap mono'>Maximum " +
-            MAX_MAIN_SITE_ACCOUNTS +
-            " accounts saved.</p>";
-        } else {
-          html +=
-            "<button type='button' class='auth-user-account-row auth-user-account-row--add' id='authAddAccount'>Add account</button>";
-        }
-        picker.innerHTML = html;
-        picker.querySelectorAll("[data-switch-account]").forEach(function (b) {
-          b.addEventListener("click", function (ev) {
-            ev.stopPropagation();
-            var addr = String(b.getAttribute("data-switch-account") || "");
-            if (!addr || walletNormTop(addr) === activeN) {
-              picker.style.display = "none";
-              return;
-            }
-            if (typeof window.__nsActivateMainSiteCachedAccount === "function") {
-              window.__nsActivateMainSiteCachedAccount(addr);
-            }
-          });
-        });
-        var addBtn = document.getElementById("authAddAccount");
-        if (addBtn) {
-          addBtn.addEventListener("click", function (ev) {
-            ev.stopPropagation();
-            picker.style.display = "none";
-            var m = document.getElementById("authUserMenu");
-            if (m) m.style.display = "none";
-            void runAnalyticsLogin();
-          });
-        }
-      }
-      function bindAuthAccountSwitcher(activeAddr) {
-        var toggle = document.getElementById("authChangeAccountToggle");
-        var picker = document.getElementById("authAccountPicker");
-        if (!toggle || !picker) return;
-        toggle.addEventListener("click", function (e) {
-          e.stopPropagation();
-          var opening = picker.style.display !== "block";
-          picker.style.display = opening ? "block" : "none";
-          if (opening) void populateAuthAccountPicker(activeAddr);
-        });
-        void populateAuthAccountPicker(activeAddr);
-      }
-      async function renderAuthUser(address, canManageWallets) {
-        if (!authUserEl || !address) return;
-        authUserEl.style.display = "block";
-        var ident = await fetchIdenticon(address);
-        var tok = readSiteToken();
-        var sessionExpired =
-          !!tok && typeof window.__nsMainSiteJwtExpired === "function" && window.__nsMainSiteJwtExpired(tok);
-        var alertSvg =
-          "<svg class='nq-icon auth-user-session-alert' width='14' height='14' aria-hidden='true' focusable='false'><use href='/nimiq-style.icons.svg#nq-alert-circle'/></svg>";
-        var identWrap = "";
-        if (ident || sessionExpired) {
-          identWrap =
-            "<span class='auth-user-ident-wrap" +
-            (ident ? "" : " auth-user-ident-wrap--solo") +
-            "'>" +
-            (ident ? "<img class='ident' src='" + esc(ident) + "' alt='wallet'/>" : "") +
-            (sessionExpired ? alertSvg : "") +
-            "</span>";
-        }
-        var btnTitle = sessionExpired
-          ? "Session expired — sign in again (" + esc(address) + ")"
-          : "Signed in as " + esc(address);
-        var acctSection =
-          "<div class='auth-user-menu-section'><button type='button' id='authChangeAccountToggle' class='auth-user-menu-row'>Change account</button><div id='authAccountPicker' class='auth-user-submenu' style='display:none' role='group' aria-label='Choose wallet'></div></div>";
-        var menuTop =
-          (sessionExpired
-            ? "<button type='button' id='authRefreshSession' class='auth-user-menu-row'>Sign in again</button>"
-            : "") +
-          acctSection +
-          "<button type='button' id='authUserLogout' class='auth-user-menu-row'>Logout</button>";
-        authUserEl.innerHTML =
-          "<button id='authUserBtn' class='auth-user-btn' title='" +
-          btnTitle +
-          "'>" +
-          identWrap +
-          "<span class='mono'>" +
-          esc(walletShort(address)) +
-          "</span>" +
-          "</button>" +
-          "<div id='authUserMenu' class='auth-user-menu'>" +
-          menuTop +
-          "</div>";
-        var btn = document.getElementById("authUserBtn");
-        var menu = document.getElementById("authUserMenu");
-        var refreshSess = document.getElementById("authRefreshSession");
-        var logout = document.getElementById("authUserLogout");
-        if (refreshSess) {
-          refreshSess.addEventListener("click", function () {
-            if (menu) menu.style.display = "none";
-            void runAnalyticsLogin();
-          });
-        }
-        if (btn && menu) {
-          btn.addEventListener("click", function (e) {
-            e.stopPropagation();
-            var open = menu.style.display !== "block";
-            menu.style.display = open ? "block" : "none";
-            var sub = document.getElementById("authAccountPicker");
-            if (!open && sub) sub.style.display = "none";
-          });
-          if (!authMenuDocBound) {
-            document.addEventListener("click", function (ev) {
-              if (ev.target && ev.target.closest && ev.target.closest("#authUser")) return;
-              var m = document.getElementById("authUserMenu");
-              if (m) m.style.display = "none";
-              var sub2 = document.getElementById("authAccountPicker");
-              if (sub2) sub2.style.display = "none";
-            });
-            authMenuDocBound = true;
-          }
-        }
-        bindAuthAccountSwitcher(address);
-        if (logout) {
-          logout.addEventListener("click", function () {
-            clearSiteSession();
-            window.location.reload();
-          });
+      async function refreshAuthTopbar() {
+        if (typeof window.__nsRenderMainSiteAuthTopbar === "function") {
+          await window.__nsRenderMainSiteAuthTopbar();
         }
       }
       function showAuthGateMessage(msg, layout) {
@@ -737,7 +556,7 @@ export function analyticsPublicPageHtml(): string {
       var signedAddress = sessionStorage.getItem(AUTH_ADDR_KEY) || parseJwtSub(token);
       if (signedAddress) {
         sessionStorage.setItem(AUTH_ADDR_KEY, signedAddress);
-        await renderAuthUser(signedAddress, false);
+        await refreshAuthTopbar();
       }
       if (!token) {
         setAuthedVisible(false);
@@ -747,7 +566,7 @@ export function analyticsPublicPageHtml(): string {
           stNoTok.style.display = "none";
         }
         showAuthGateMessage("You must be signed in.", "standalone");
-        await renderTopLoginButton();
+        await refreshAuthTopbar();
         return;
       }
       var jwtExpired =
@@ -760,8 +579,8 @@ export function analyticsPublicPageHtml(): string {
           stExp.style.display = "";
         }
         showAuthGateMessage("Your session has expired.", "standalone");
-        if (signedAddress) await renderAuthUser(signedAddress, false);
-        else await renderTopLoginButton();
+        if (signedAddress) await refreshAuthTopbar();
+        else await refreshAuthTopbar();
         if (typeof window.__nsRefreshMainSiteNavFromSession === "function") {
           window.__nsRefreshMainSiteNavFromSession();
         }
@@ -770,7 +589,7 @@ export function analyticsPublicPageHtml(): string {
       var stTok = document.getElementById("status");
       if (stTok) stTok.style.display = "";
       var canManage = await canManageWallets(token);
-      if (signedAddress) await renderAuthUser(signedAddress, canManage);
+      if (signedAddress) await refreshAuthTopbar();
 
       if (!params.get("days")) params.set("days", "7");
       if (!params.get("sessions")) params.set("sessions", "300");
@@ -1162,8 +981,8 @@ export function analyticsPublicPageHtml(): string {
           showAuthGateMessage("Your session has expired.");
           document.getElementById("status").innerHTML =
             "<span class='err'>Session expired.</span>";
-          if (signedAddress) await renderAuthUser(signedAddress, false);
-          else await renderTopLoginButton();
+          if (signedAddress) await refreshAuthTopbar();
+          else await refreshAuthTopbar();
           if (typeof window.__nsRefreshMainSiteNavFromSession === "function") {
             window.__nsRefreshMainSiteNavFromSession();
           }
@@ -2479,6 +2298,9 @@ export function analyticsPublicPageHtml(): string {
       })();
 
     }
+    window.__nsMainSiteLoginClick = function () {
+      void runAnalyticsLogin();
+    };
     load().catch(function (err) {
       document.getElementById("status").innerHTML = "<span class='err'>" + esc(err && err.message ? err.message : String(err)) + "</span>";
     });

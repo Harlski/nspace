@@ -23,6 +23,18 @@ import {
   isGateAclAdmin,
   normalizeClientGate,
 } from "./game/gateAuth.js";
+import {
+  consumeGameReturnResume,
+  markGameReturnResume,
+} from "./game/gameReturnResume.js";
+import {
+  miniappTargetToHttpsUrl,
+  openMiniappTarget,
+} from "./net/miniappDeepLink.js";
+import {
+  CAMPAIGN_VIEWER_AFK_MS,
+  visibleCampaignIdsNearPlayer,
+} from "./game/campaignBillboardVisibility.js";
 import { Game } from "./game/Game.js";
 import { isOrthogonallyAdjacentToFloorTile, snapFloorTile } from "./game/grid.js";
 import { remotePlayerIsNpc } from "./remotePlayerNpc.js";
@@ -74,6 +86,8 @@ import {
   sendSetVoxelText,
   sendSetGateAuthorizedAddresses,
   sendSetObstacleProps,
+  sendCampaignImpressions,
+  sendCampaignLinkClick,
   type ObstacleProps,
   type RoomBackgroundNeutral,
   type ServerMessage,
@@ -86,10 +100,14 @@ import {
   enableNimiqPayViewportLayout,
   initNimiqPayDevEmulation,
   isNimiqPayPortraitDocument,
+  isNimiqPayWebViewHost,
   isPseudoFullscreenActive,
   requestMiniAppImmersiveLayout,
+  scheduleNimiqPayLayoutResync,
   setPseudoFullscreen,
   tryRequestFullscreen,
+  unlockScreenOrientation,
+  waitForNimiqPayWebViewHost,
 } from "./ui/pseudoFullscreen.js";
 import { installInputShell } from "./ui/inputShell.js";
 import { formatWalletAddressConnectAs } from "./formatWalletAddress.js";
@@ -97,9 +115,21 @@ import { mountPatchnotesPage } from "./patchnotes/mountPatchnotesPage.js";
 import { runUsernamePromptGate } from "./auth/usernamePromptGate.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
 import { nimiqIconUseMarkup } from "./ui/nimiqIcons.js";
-import { mountNimiqPaySiteAdvisory } from "./ui/nimiqPayAdvisory.js";
 
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
+
+/** Let WebGL paint loaded room geometry before lifting the blackout overlay. */
+function waitForPaintFrames(count = 2): Promise<void> {
+  return new Promise((resolve) => {
+    let painted = 0;
+    const step = (): void => {
+      painted += 1;
+      if (painted >= count) resolve();
+      else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
 
 const GATE_CARDINAL: readonly [number, number][] = [
   [1, 0],
@@ -338,10 +368,7 @@ function isPixelRoomId(roomId: string): boolean {
 }
 
 function openMainMenu(): void {
-  const orientation = (screen as Screen & {
-    orientation?: { unlock?: () => void };
-  }).orientation;
-  orientation?.unlock?.();
+  unlockScreenOrientation();
   const app = document.getElementById("app");
   if (!app) return;
   const cachedEntries = listCachedSessions();
@@ -388,6 +415,7 @@ function openMainMenu(): void {
 function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   const app = document.getElementById("app");
   if (!app) return;
+  unlockScreenOrientation();
   enableNimiqPayViewportLayout();
   unmountMainMenu?.();
   unmountMainMenu = null;
@@ -442,6 +470,89 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   /** True after “Send NIM” opened the wallet link until the game tab is focused again. */
   let walletSendNimFlowOpen = false;
 
+  let lastCampaignViewerActivityMs = Date.now();
+  const markCampaignViewerActivity = (): void => {
+    lastCampaignViewerActivityMs = Date.now();
+  };
+  const campaignViewerActivityOpts: AddEventListenerOptions = {
+    capture: true,
+    passive: true,
+  };
+  const campaignViewerActivityEvents = [
+    "pointerdown",
+    "pointermove",
+    "keydown",
+    "wheel",
+    "touchstart",
+  ] as const;
+  for (const ev of campaignViewerActivityEvents) {
+    document.addEventListener(ev, markCampaignViewerActivity, campaignViewerActivityOpts);
+  }
+
+  let campaignImpressionAccum = new Map<string, number>();
+  let lastCampaignImpressionSampleMs = 0;
+  const CAMPAIGN_IMPRESSION_SAMPLE_MS = 1000;
+  const CAMPAIGN_IMPRESSION_FLUSH_MS = 5000;
+  let lastCampaignImpressionFlushMs = 0;
+
+  const campaignViewerCountsAsActive = (): boolean => {
+    if (document.hidden || walletSendNimFlowOpen) return false;
+    return Date.now() - lastCampaignViewerActivityMs < CAMPAIGN_VIEWER_AFK_MS;
+  };
+
+  const flushCampaignImpressions = (nowMs: number): void => {
+    if (!ws || ws.readyState !== WebSocket.OPEN || streamMode) return;
+    if (campaignImpressionAccum.size === 0) {
+      lastCampaignImpressionFlushMs = nowMs;
+      return;
+    }
+    const items = [...campaignImpressionAccum.entries()].map(
+      ([campaignId, visibleMs]) => ({
+        campaignId,
+        visibleMs: Math.min(Math.max(1, Math.floor(visibleMs)), 60_000),
+      })
+    );
+    campaignImpressionAccum.clear();
+    lastCampaignImpressionFlushMs = nowMs;
+    sendCampaignImpressions(ws, items);
+  };
+
+  const sampleCampaignImpressions = (nowMs: number): void => {
+    if (!ws || ws.readyState !== WebSocket.OPEN || streamMode) return;
+    if (!campaignViewerCountsAsActive()) return;
+    const pos = game.getSelfPosition();
+    if (!pos) return;
+    if (
+      lastCampaignImpressionSampleMs > 0 &&
+      nowMs - lastCampaignImpressionSampleMs < CAMPAIGN_IMPRESSION_SAMPLE_MS
+    ) {
+      return;
+    }
+    const delta =
+      lastCampaignImpressionSampleMs > 0
+        ? nowMs - lastCampaignImpressionSampleMs
+        : CAMPAIGN_IMPRESSION_SAMPLE_MS;
+    lastCampaignImpressionSampleMs = nowMs;
+    const visible = visibleCampaignIdsNearPlayer(
+      game.iterBillboardSpecs(),
+      pos.x,
+      pos.z,
+      nowMs
+    );
+    for (const campaignId of visible) {
+      campaignImpressionAccum.set(
+        campaignId,
+        (campaignImpressionAccum.get(campaignId) ?? 0) + delta
+      );
+    }
+    if (
+      lastCampaignImpressionFlushMs === 0 ||
+      nowMs - lastCampaignImpressionFlushMs >= CAMPAIGN_IMPRESSION_FLUSH_MS
+    ) {
+      flushCampaignImpressions(nowMs);
+    }
+  };
+
   function syncAwayPresenceToServer(): void {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const away = document.hidden || walletSendNimFlowOpen;
@@ -449,7 +560,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
 
   const sessionNimiqPay = nimiqPay === true;
-  let disposeNimiqPayAdvisory: (() => void) | null = null;
   const hud = createHud(hudRoot, {
     showDebug: showDebugHud,
     getGameAuthToken: () => token,
@@ -475,6 +585,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       syncPerfPingInterval(enabled);
     },
   });
+  hud.setLoadingVisible(true, { blackout: true });
+  if (isNimiqPayWebViewHost()) {
+    scheduleNimiqPayLayoutResync();
+  }
   let roomTransitionProgressTimer: ReturnType<typeof setInterval> | null = null;
   function clearRoomTransitionProgressTimer(): void {
     if (roomTransitionProgressTimer !== null) {
@@ -498,9 +612,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     hud.setLoadingProgress(Math.max(0, Math.min(1, value)));
   }
   hud.setBrandLinksPlayerAddress(address);
-  if (sessionNimiqPay) {
-    disposeNimiqPayAdvisory = mountNimiqPaySiteAdvisory(hudRoot);
-  }
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
   game.setMapOverviewUnlocked(isAdmin(address));
@@ -508,6 +619,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     game.setStreamObserverMode(true);
     game.setStreamBubblesHidden(!streamChat);
   }
+
   hud.bindTileInspectorPreviewGame(game);
   game.setViewInterestReporter((rect) => {
     if (ws?.readyState === WebSocket.OPEN) {
@@ -1494,12 +1606,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   let orientationRetryTimer: ReturnType<typeof setInterval> | null = null;
 
   const lockLandscape = (): void => {
-    if (!isCoarsePointer || !screenOrientation?.lock) return;
+    if (isNimiqPayWebViewHost() || !isCoarsePointer || !screenOrientation?.lock) return;
     void screenOrientation.lock("landscape").catch(() => {});
   };
 
   const ensureGameLandscape = (): void => {
-    if (!isCoarsePointer || disposed) return;
+    if (isNimiqPayWebViewHost() || !isCoarsePointer || disposed) return;
     const fullscreenEl = document.fullscreenElement;
     const isGameFullscreen =
       isPseudoFullscreenActive() ||
@@ -1520,7 +1632,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   };
 
   const startLandscapeRetries = (): void => {
-    if (!isCoarsePointer) return;
+    if (isNimiqPayWebViewHost() || !isCoarsePointer) return;
     if (orientationRetryTimer) clearInterval(orientationRetryTimer);
     let attempts = 0;
     orientationRetryTimer = setInterval(() => {
@@ -1571,7 +1683,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     | { kind: "door" }
     | { kind: "canvas-exit" }
     | { kind: "teleporter" }
-    | { kind: "billboard"; visitUrl: string; visitName: string }
+    | {
+        kind: "billboard";
+        billboardId: string;
+        campaignId?: string;
+        visitUrl: string;
+        visitName: string;
+        miniappTargetUrl?: string;
+      }
     | null = null;
   let connectGen = 0;
   /** Cleared when `welcome` arrives or the socket closes; avoids infinite loading if the server never responds. */
@@ -1663,6 +1782,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }
       syncAwayPresenceToServer();
       if (document.hidden) return;
+      if (isNimiqPayWebViewHost()) {
+        unlockScreenOrientation();
+        enableNimiqPayViewportLayout();
+        scheduleNimiqPayLayoutResync();
+        return;
+      }
       ensureGameLandscape();
       startLandscapeRetries();
     },
@@ -1703,6 +1828,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     cancelActiveNimClaim = null;
     nimClaimUiRef = null;
     hud.setNimClaimProgress(null);
+    flushCampaignImpressions(Date.now());
+    for (const ev of campaignViewerActivityEvents) {
+      document.removeEventListener(
+        ev,
+        markCampaignViewerActivity,
+        campaignViewerActivityOpts
+      );
+    }
     cancelAnimationFrame(rafId);
     ac.abort();
     if (
@@ -1713,8 +1846,6 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       ws.close();
     }
     ws = null;
-    disposeNimiqPayAdvisory?.();
-    disposeNimiqPayAdvisory = null;
     adminOverlay.destroy();
     game.dispose();
     uninstallShell();
@@ -2917,7 +3048,20 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       );
     });
     hud.onBillboardPlace((x, z, opts) => {
-      if ("liveChart" in opts && opts.liveChart) {
+      if ("rotationSetId" in opts && opts.rotationSetId) {
+        game.setBillboardPlacementDraft({
+          orientation: opts.orientation,
+          yawSteps: 0,
+          rotationSetId: opts.rotationSetId,
+          billboardSourceTab: "campaign",
+        });
+        sendPlaceBillboard(socket, {
+          x,
+          z,
+          orientation: opts.orientation,
+          rotationSetId: opts.rotationSetId,
+        });
+      } else if ("liveChart" in opts && opts.liveChart) {
         game.setBillboardPlacementDraft({
           orientation: opts.orientation,
           yawSteps: 0,
@@ -3335,8 +3479,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       if (visit) {
         portalAction = {
           kind: "billboard",
+          billboardId: visit.billboardId,
+          campaignId: visit.campaignId,
           visitUrl: visit.visitUrl,
           visitName: visit.visitName,
+          miniappTargetUrl: visit.miniappTargetUrl,
         };
         hud.setPortalEnterLabel(formatBillboardPortalLabel(visit.visitName));
         if (!portalEnterVisible) {
@@ -3640,7 +3787,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       syncPlayerCountHud();
       
       bumpRoomLoadProgress(1);
-      hud.setLoadingVisible(false);
+      if (loadingBlackoutReveal) {
+        await waitForPaintFrames(2);
+      }
+      hud.setLoadingVisible(false, {
+        skipMinWait: loadingBlackoutReveal,
+      });
       syncBuildHud();
       applyStreamPresentation();
       ensureNimWalletPollStarted();
@@ -4115,6 +4267,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       if (msg.code === "invalid_billboard_advert") {
         hud.appendChat("System", "That billboard advert is not available.");
       }
+      if (msg.code === "invalid_rotation_set") {
+        hud.appendChat("System", "That campaign rotation set is not available.");
+      }
       if (
         msg.code === "invalid_billboard_visit_url" ||
         msg.code === "invalid_billboard_url"
@@ -4134,7 +4289,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       hud.syncSignboardTooltipFromSignboards(msg.signboards);
     }
     if (msg.type === "billboards") {
-      game.setBillboards(msg.billboards);
+      game.setBillboards(msg.billboards, { refreshRotationContent: false });
     }
     if (msg.type === "voxelTexts") {
       game.setVoxelTextsForRoom(msg.roomId, msg.texts);
@@ -4142,19 +4297,26 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
   };
 
+  let loadingBlackoutReveal = false;
+
   const connectToRoom = (
     room: string,
     spawn?: { x: number; z: number },
-    opts?: { resume?: boolean }
+    opts?: { resume?: boolean; blackout?: boolean }
   ): void => {
     connectGen += 1;
     const myGen = connectGen;
     clearWelcomeDeadlineTimer();
     if (opts?.resume) {
+      loadingBlackoutReveal = opts.blackout === true;
       clearRoomTransitionProgressTimer();
-      hud.setLoadingLabel("Loading…");
-      hud.setLoadingProgress("indeterminate");
-      hud.setLoadingVisible(true);
+      if (loadingBlackoutReveal) {
+        hud.setLoadingVisible(true, { blackout: true });
+      } else {
+        hud.setLoadingLabel("Loading…");
+        hud.setLoadingProgress("indeterminate");
+        hud.setLoadingVisible(true);
+      }
     } else {
       beginRoomTransition(room);
     }
@@ -4401,11 +4563,40 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       return;
     }
     if (portalAction?.kind === "billboard") {
-      const { visitUrl, visitName } = portalAction;
-      hud.showBillboardExternalVisitConfirm({
-        url: visitUrl,
+      const {
+        visitUrl,
+        visitName,
+        miniappTargetUrl,
+        campaignId,
+        billboardId,
+      } = portalAction;
+      const displayUrl =
+        visitUrl ||
+        (miniappTargetUrl ? miniappTargetToHttpsUrl(miniappTargetUrl) : "");
+      const reportLinkClick = (): void => {
+        if (campaignId && ws && ws.readyState === WebSocket.OPEN) {
+          sendCampaignLinkClick(ws, { campaignId, billboardId });
+        }
+      };
+      if (miniappTargetUrl) {
+        hud.showNavigateAwayConfirm({
+          kind: "miniapp",
+          url: displayUrl,
+          displayName: visitName,
+          onConfirm: () => {
+            reportLinkClick();
+            markGameReturnResume();
+            openMiniappTarget(miniappTargetUrl);
+          },
+        });
+        return;
+      }
+      hud.showNavigateAwayConfirm({
+        kind: "external",
+        url: displayUrl,
         displayName: visitName,
         onConfirm: () => {
+          reportLinkClick();
           window.open(visitUrl, "_blank", "noopener,noreferrer");
         },
       });
@@ -4436,7 +4627,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       z: PIXEL_DEFAULT_SPAWN.z,
     });
   } else {
-    connectToRoom(resolveInitialRoomId(), undefined, { resume: true });
+    connectToRoom(resolveInitialRoomId(), undefined, {
+      resume: true,
+      blackout: true,
+    });
   }
 
   syncBuildHud();
@@ -4749,6 +4943,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     last = now;
     game.tick(dt);
     syncPortalEnterButton();
+    sampleCampaignImpressions(now);
     if (hud.isSelfEmojiMenuOpen()) {
       const ea = game.getSelfScreenPosition(1.32);
       const pos = game.getSelfPosition();
@@ -4835,6 +5030,22 @@ function main(): void {
     return;
   }
   document.title = "Nimiq Space";
+  void bootstrapMainMenuOrResume();
+}
+
+async function bootstrapMainMenuOrResume(): Promise<void> {
+  if (consumeGameReturnResume()) {
+    unlockScreenOrientation();
+    await waitForNimiqPayWebViewHost();
+    const cached = loadCachedSession();
+    if (cached && !isTokenExpired(cached.token)) {
+      const ok = await runUsernamePromptGate(cached.token, cached.address);
+      if (ok) {
+        enterGame(cached.token, cached.address, cached.nimiqPay);
+        return;
+      }
+    }
+  }
   openMainMenu();
 }
 

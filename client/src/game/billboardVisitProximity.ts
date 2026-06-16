@@ -1,7 +1,9 @@
 import { billboardFootprintTilesXZ } from "./billboardFootprintMath.js";
 import type { BillboardState } from "../net/ws.js";
 import { getBillboardAdvertById } from "./billboardAdvertsCatalog.js";
+import { campaignIdForBillboardSlide } from "./campaignBillboardVisibility.js";
 import { billboardSlideshowPhaseIndex } from "./billboardSlideshowPhase.js";
+import { miniappTargetToHttpsUrl } from "../net/miniappDeepLink.js";
 
 function billboardAdvertKeyRing(b: BillboardState): string[] {
   const raw = b.advertIds;
@@ -15,9 +17,32 @@ function billboardAdvertKeyRing(b: BillboardState): string[] {
 function resolveBillboardVisitForSlideIndex(
   b: BillboardState,
   slideIdx: number
-): { visitName: string; visitUrl: string } | null {
+): { visitName: string; visitUrl: string; miniappTargetUrl?: string } | null {
   const n = Math.max(1, b.slides.length);
   const idx = ((slideIdx % n) + n) % n;
+  const wireNames = b.slideVisitNames;
+  const wireUrls = b.slideVisitUrls;
+  const wireMinis = b.slideMiniappTargetUrls;
+  if (Array.isArray(wireUrls) && wireUrls.length === n) {
+    const visitUrl = String(wireUrls[idx] ?? "").trim();
+    const miniRaw = Array.isArray(wireMinis)
+      ? String(wireMinis[idx] ?? "").trim()
+      : "";
+    const visitName = Array.isArray(wireNames)
+      ? String(wireNames[idx] ?? "").trim()
+      : "";
+    const miniappTargetUrl = miniRaw || undefined;
+    const resolvedUrl =
+      visitUrl ||
+      (miniappTargetUrl ? miniappTargetToHttpsUrl(miniappTargetUrl) : "");
+    if (resolvedUrl || miniappTargetUrl) {
+      return {
+        visitName: visitName || "link",
+        visitUrl: resolvedUrl,
+        miniappTargetUrl,
+      };
+    }
+  }
   const keys = billboardAdvertKeyRing(b);
   let key: string | undefined;
   if (keys.length === n) {
@@ -29,18 +54,31 @@ function resolveBillboardVisitForSlideIndex(
   }
   if (key) {
     const e = getBillboardAdvertById(key);
+    const mini = String(e?.miniappTargetUrl ?? "").trim();
     const u = String(e?.visitUrl ?? "").trim();
-    if (u) {
+    const wireMini = String(b.miniappTargetUrl ?? "").trim();
+    const wireVisit = String(b.visitUrl ?? "").trim();
+    const miniappTargetUrl = mini || wireMini || undefined;
+    const visitUrl =
+      u ||
+      wireVisit ||
+      (miniappTargetUrl ? miniappTargetToHttpsUrl(miniappTargetUrl) : "");
+    if (visitUrl || miniappTargetUrl) {
       return {
-        visitUrl: u,
+        visitUrl,
+        miniappTargetUrl,
         visitName: String(e?.name ?? "").trim() || "link",
       };
     }
   }
+  const wireMini = String(b.miniappTargetUrl ?? "").trim();
   const fallbackUrl = String(b.visitUrl ?? "").trim();
-  if (!fallbackUrl) return null;
+  const visitUrl =
+    fallbackUrl || (wireMini ? miniappTargetToHttpsUrl(wireMini) : "");
+  if (!visitUrl && !wireMini) return null;
   return {
-    visitUrl: fallbackUrl,
+    visitUrl,
+    miniappTargetUrl: wireMini || undefined,
     visitName: String(b.visitName ?? "").trim() || "link",
   };
 }
@@ -54,12 +92,24 @@ export function pickBillboardVisitOnFootprintTile(
   tileZ: number,
   billboards: Iterable<BillboardState>,
   nowMs: number
-): { id: string; visitName: string; visitUrl: string } | null {
-  let best: { id: string; visitName: string; visitUrl: string } | null = null;
+): {
+  id: string;
+  campaignId?: string;
+  visitName: string;
+  visitUrl: string;
+  miniappTargetUrl?: string;
+} | null {
+  let best: {
+    id: string;
+    campaignId?: string;
+    visitName: string;
+    visitUrl: string;
+    miniappTargetUrl?: string;
+  } | null = null;
   for (const b of billboards) {
     const slideIdx = billboardSlideshowPhaseIndex(b, nowMs);
     const hit = resolveBillboardVisitForSlideIndex(b, slideIdx);
-    if (!hit?.visitUrl) continue;
+    if (!hit?.visitUrl && !hit?.miniappTargetUrl) continue;
     const tiles = billboardFootprintTilesXZ(
       b.anchorX,
       b.anchorZ,
@@ -69,7 +119,14 @@ export function pickBillboardVisitOnFootprintTile(
     const onTile = tiles.some((t) => t.x === tileX && t.z === tileZ);
     if (!onTile) continue;
     if (!best || b.id < best.id) {
-      best = { id: b.id, visitName: hit.visitName, visitUrl: hit.visitUrl };
+      const campaignId = campaignIdForBillboardSlide(b, slideIdx) ?? undefined;
+      best = {
+        id: b.id,
+        campaignId,
+        visitName: hit.visitName,
+        visitUrl: hit.visitUrl,
+        miniappTargetUrl: hit.miniappTargetUrl,
+      };
     }
   }
   return best;

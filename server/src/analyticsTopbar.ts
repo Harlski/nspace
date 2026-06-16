@@ -1,16 +1,28 @@
 import { mainSiteSessionBridgeSnippet } from "./mainSiteSessionBridgeSnippet.js";
+import { browserTermsPrivacyRuntimeScript } from "./browserTermsPrivacyAuthSnippet.js";
+import { mainSiteAuthTopbarRuntimeScript } from "./mainSiteAuthTopbar.js";
+import {
+  mainSiteNavDropdownCss,
+  mainSiteNavDropdownHtml,
+  mainSiteNavRuntimeScript,
+  type MainSiteHeaderPage,
+} from "./mainSiteNav.js";
 
-/** Google Fonts: Mulish is the current name for the Muli family. */
-export function analyticsFontLinkTags(): string {
-  return `<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Mulish:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet"/>`;
-}
+import {
+  analyticsFontLinkTags,
+  analyticsPageRootCss,
+  mainSiteNimiqFontLinkTags,
+  mainSiteTypographyCss,
+} from "./mainSiteTypography.js";
 
-/** Use with analyticsFontLinkTags() in <head>. Keeps .mono as monospace. */
-export function analyticsPageRootCss(): string {
-  return `:root { font-family: 'Mulish', 'Muli', system-ui, sans-serif; }`;
-}
+export {
+  analyticsFontLinkTags,
+  analyticsPageRootCss,
+  mainSiteNimiqFontLinkTags,
+  mainSiteTypographyCss,
+};
+
+export type { MainSiteHeaderPage };
 
 export function analyticsTopbarCss(): string {
   return `
@@ -36,45 +48,7 @@ export function analyticsTopbarCss(): string {
     .brand-title { margin: 0; font-size: clamp(18px, 3vw, 26px); font-weight: 800; letter-spacing: -0.035em; line-height: 1; display: inline-flex; align-items: baseline; justify-content: flex-start; gap: 0.18em; text-transform: uppercase; min-width: 0; }
     .brand-title__nimiq { color: #ffffff; }
     .brand-title__space { color: #fc8702; }
-    .main-site-nav {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.18rem;
-      min-width: 0;
-      padding: 0.16rem;
-      border: 1px solid rgba(42, 57, 79, 0.82);
-      border-radius: 999px;
-      background: rgba(15, 22, 34, 0.58);
-    }
-    .main-site-nav__link {
-      display: inline-flex;
-      align-items: center;
-      min-height: 1.8rem;
-      padding: 0 0.62rem;
-      border-radius: 999px;
-      color: var(--ms-muted-bright, #9fb0c7);
-      font-size: 0.78rem;
-      font-weight: 650;
-      line-height: 1;
-      text-decoration: none;
-      white-space: nowrap;
-    }
-    .main-site-nav__link:hover {
-      color: #e6edf3;
-      background: rgba(255, 255, 255, 0.05);
-    }
-    .main-site-nav__link:focus-visible {
-      outline: 2px solid var(--ms-link, #79b8ff);
-      outline-offset: 2px;
-    }
-    .main-site-nav__link[aria-current="page"] {
-      color: #eef6ff;
-      background: var(--ms-accent-tint, rgba(90, 160, 255, 0.12));
-      box-shadow: inset 0 0 0 1px rgba(77, 131, 208, 0.38);
-    }
-    [data-auth-nav][hidden] {
-      display: none !important;
-    }
+    ${mainSiteNavDropdownCss()}
     .analytics-topbar {
       display: flex;
       justify-content: flex-end;
@@ -164,31 +138,8 @@ export function analyticsTopbarCss(): string {
       .title-row { gap: 0.55rem; flex-wrap: wrap; }
       .title-left { display: contents; }
       .analytics-topbar { margin-left: auto; }
-      .main-site-nav { order: 3; flex: 1 0 100%; width: 100%; overflow-x: auto; justify-content: flex-start; border-radius: 12px; }
-      .main-site-nav__link { min-height: 2rem; }
     }
   `;
-}
-
-export type MainSiteHeaderPage =
-  | "analytics"
-  | "admin"
-  | "payouts"
-  | "system"
-  | "settings"
-  | "header"
-  | "feedback";
-
-function navLink(
-  page: MainSiteHeaderPage,
-  currentPage: MainSiteHeaderPage,
-  href: string,
-  label: string,
-  authRequired = false
-): string {
-  const current = page === currentPage ? ` aria-current="page"` : "";
-  const authAttrs = authRequired ? ` data-auth-nav="${page}" hidden` : "";
-  return `<a class="main-site-nav__link" href="${href}"${current}${authAttrs}>${label}</a>`;
 }
 
 export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics"): string {
@@ -200,18 +151,7 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
           <span class="brand-title"><span class="brand-title__nimiq">NIMIQ</span> <span class="brand-title__space">SPACE</span></span>
         </a>
         <nav class="main-site-nav" aria-label="Main site">
-          ${navLink("payouts", currentPage, "/payouts", "Payouts")}
-          ${navLink("analytics", currentPage, "/analytics", "Analytics", true)}
-          ${navLink("admin", currentPage, "/admin", "Admin", true)}
-          ${navLink("system", currentPage, "/admin/system", "System", true)}
-          ${navLink("settings", currentPage, "/admin/settings", "Settings", true)}
-          ${navLink("header", currentPage, "/admin/header", "Header", true)}
-          ${navLink("feedback", currentPage, "/admin/feedback", "Feedback", true)}
-          ${
-            currentPage === "admin"
-              ? `<a class="main-site-nav__link" href="#admin-quick-payout">Quick payout</a>`
-              : ""
-          }
+          ${mainSiteNavDropdownHtml(currentPage)}
         </nav>
       </div>
       <div class="analytics-topbar">
@@ -228,6 +168,9 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
     </div>
   </header>
   <script>${mainSiteSessionBridgeSnippet()}</script>
+  <script>${browserTermsPrivacyRuntimeScript()}</script>
+  <script>${mainSiteNavRuntimeScript()}</script>
+  <script>${mainSiteAuthTopbarRuntimeScript(currentPage)}</script>
   <script>
     (function () {
       var keys = ["nspace_analytics_auth_token", "nspace_pending_payouts_token"];
@@ -241,27 +184,26 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
         }
         return "";
       }
-      function applyNav(status) {
-        document.querySelectorAll("[data-auth-nav]").forEach(function (link) {
-          var nav = link.getAttribute("data-auth-nav");
-          link.hidden = !(
-            (nav === "analytics" && status.analyticsAuthorized) ||
-            (nav === "admin" && status.analyticsManager) ||
-            (nav === "system" && status.systemAdmin) ||
-            (nav === "settings" && status.systemAdmin) ||
-            (nav === "header" && status.systemAdmin) ||
-            (nav === "feedback" && status.systemAdmin)
-          );
-        });
-      }
       function refreshNavFromSession() {
         var token = readToken();
+        var applyNav = window.__nsApplyMainSiteNav;
+        if (!applyNav) return;
         if (!token) {
-          applyNav({ analyticsAuthorized: false, analyticsManager: false, systemAdmin: false });
+          applyNav({
+            signedIn: false,
+            analyticsAuthorized: false,
+            analyticsManager: false,
+            systemAdmin: false,
+          });
           return;
         }
         if (typeof window.__nsMainSiteJwtExpired === "function" && window.__nsMainSiteJwtExpired(token)) {
-          applyNav({ analyticsAuthorized: false, analyticsManager: false, systemAdmin: false });
+          applyNav({
+            signedIn: false,
+            analyticsAuthorized: false,
+            analyticsManager: false,
+            systemAdmin: false,
+          });
           return;
         }
         fetch("/api/analytics/auth-status", {
@@ -273,17 +215,25 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
           })
           .then(function (status) {
             applyNav({
+              signedIn: true,
               analyticsAuthorized: Boolean(status.analyticsAuthorized),
               analyticsManager: Boolean(status.analyticsManager),
               systemAdmin: Boolean(status.systemAdmin),
             });
           })
           .catch(function () {
-            applyNav({ analyticsAuthorized: false, analyticsManager: false, systemAdmin: false });
+            applyNav({
+              signedIn: true,
+              analyticsAuthorized: false,
+              analyticsManager: false,
+              systemAdmin: false,
+            });
           });
       }
-      window.__nsApplyMainSiteNav = applyNav;
       window.__nsRefreshMainSiteNavFromSession = refreshNavFromSession;
+      if (typeof window.__nsBindMainSiteNavDropdown === "function") {
+        window.__nsBindMainSiteNavDropdown();
+      }
       refreshNavFromSession();
     })();
   </script>

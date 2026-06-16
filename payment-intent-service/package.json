@@ -14,7 +14,8 @@
     "better-sqlite3": "^11.10.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "fake-indexeddb": "^6.2.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

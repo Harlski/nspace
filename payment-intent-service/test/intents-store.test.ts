@@ -15,6 +15,7 @@ const testCfg: AppConfig = {
   sqlitePath: ":memory:",
   recipientAddress: testRecipient,
   nimNetwork: "testalbatross",
+  nimRpcUrl: null,
   nimClientLogLevel: "error",
   intentTtlMs: 120_000,
   minConfirmations: 1,

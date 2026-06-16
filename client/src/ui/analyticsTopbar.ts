@@ -15,6 +15,12 @@ import {
   writeMainSiteAuthToken,
 } from "./mainSiteAuthKeys.js";
 import { nimiqIconUseMarkup } from "./nimiqIcons.js";
+import {
+  applyMainSiteNavAuth,
+  bindMainSiteNavDropdown,
+  mountMainSiteNav,
+  type MainSiteNavPage,
+} from "./mainSiteNav.js";
 
 function esc(s: unknown): string {
   return String(s)
@@ -55,30 +61,19 @@ async function fetchIdenticon(wallet: string): Promise<string> {
 
 type AnalyticsAuthStatus = {
   authenticated: boolean;
+  signedIn: boolean;
   analyticsAuthorized: boolean;
   analyticsManager: boolean;
   systemAdmin: boolean;
 };
 
-function applyMainSiteNavAuth(status: AnalyticsAuthStatus): void {
-  document.querySelectorAll<HTMLAnchorElement>("[data-auth-nav]").forEach((link) => {
-    const nav = link.getAttribute("data-auth-nav");
-    const visible =
-      (nav === "analytics" && status.analyticsAuthorized) ||
-      (nav === "admin" && status.analyticsManager) ||
-      (nav === "system" && status.systemAdmin) ||
-      (nav === "settings" && status.systemAdmin) ||
-      (nav === "header" && status.systemAdmin);
-    link.hidden = !visible;
-  });
-}
-
-/** Re-fetch `/api/analytics/auth-status` and update Analytics / Admin nav links. */
+/** Re-fetch `/api/analytics/auth-status` and update nav links. */
 export async function refreshMainSiteNavFromSession(): Promise<void> {
   const token = readMainSiteAuthToken();
   if (!token || isTokenExpired(token)) {
     applyMainSiteNavAuth({
       authenticated: false,
+      signedIn: false,
       analyticsAuthorized: false,
       analyticsManager: false,
       systemAdmin: false,
@@ -86,13 +81,14 @@ export async function refreshMainSiteNavFromSession(): Promise<void> {
     return;
   }
   const s = await fetchAnalyticsAuthStatus(token);
-  applyMainSiteNavAuth(s);
+  applyMainSiteNavAuth({ ...s, signedIn: true });
 }
 
 async function fetchAnalyticsAuthStatus(token: string): Promise<AnalyticsAuthStatus> {
   if (!token) {
     return {
       authenticated: false,
+      signedIn: false,
       analyticsAuthorized: false,
       analyticsManager: false,
       systemAdmin: false,
@@ -101,6 +97,7 @@ async function fetchAnalyticsAuthStatus(token: string): Promise<AnalyticsAuthSta
   if (isTokenExpired(token)) {
     return {
       authenticated: false,
+      signedIn: false,
       analyticsAuthorized: false,
       analyticsManager: false,
       systemAdmin: false,
@@ -115,6 +112,7 @@ async function fetchAnalyticsAuthStatus(token: string): Promise<AnalyticsAuthSta
     const j = (await r.json()) as Partial<AnalyticsAuthStatus>;
     return {
       authenticated: Boolean(j.authenticated),
+      signedIn: true,
       analyticsAuthorized: Boolean(j.analyticsAuthorized),
       analyticsManager: Boolean(j.analyticsManager),
       systemAdmin: Boolean(j.systemAdmin),
@@ -122,6 +120,7 @@ async function fetchAnalyticsAuthStatus(token: string): Promise<AnalyticsAuthSta
   } catch {
     return {
       authenticated: false,
+      signedIn: true,
       analyticsAuthorized: false,
       analyticsManager: false,
       systemAdmin: false,
@@ -131,19 +130,15 @@ async function fetchAnalyticsAuthStatus(token: string): Promise<AnalyticsAuthSta
 
 function hubAppNameForPage(page: MainSitePage): string {
   if (page === "payouts") return "Nimiq Space payouts";
+  if (page === "advertise") return "Nimiq Space advertise";
   if (page === "system") return "nspace system";
   if (page === "settings") return "nspace admin settings";
   if (page === "header") return "nspace admin header";
+  if (page === "feedback") return "nspace admin feedback";
   return "nspace analytics";
 }
 
-export type MainSitePage =
-  | "analytics"
-  | "admin"
-  | "payouts"
-  | "system"
-  | "settings"
-  | "header";
+export type MainSitePage = MainSiteNavPage;
 
 /** Default wallet login used by main-site pages when no custom handler is passed. */
 export async function mainSiteWalletLogin(page: MainSitePage): Promise<void> {
@@ -170,6 +165,9 @@ export async function renderMainSiteTopbar(
   currentPage: MainSitePage,
   opts?: RenderMainSiteTopbarOpts
 ): Promise<void> {
+  mountMainSiteNav(currentPage);
+  bindMainSiteNavDropdown();
+
   const authUserEl = document.getElementById("authUser");
   if (!authUserEl) return;
 
@@ -188,6 +186,7 @@ export async function renderMainSiteTopbar(
   if (!signed || !token) {
     applyMainSiteNavAuth({
       authenticated: false,
+      signedIn: false,
       analyticsAuthorized: false,
       analyticsManager: false,
       systemAdmin: false,
@@ -217,13 +216,16 @@ export async function renderMainSiteTopbar(
     sessionExpired
       ? Promise.resolve({
           authenticated: false,
+          signedIn: false,
           analyticsAuthorized: false,
           analyticsManager: false,
           systemAdmin: false,
         })
       : fetchAnalyticsAuthStatus(token),
   ]);
-  applyMainSiteNavAuth(authStatus);
+  applyMainSiteNavAuth(
+    sessionExpired ? authStatus : { ...authStatus, signedIn: true }
+  );
   authUserEl.style.display = "block";
   const navRows: string[] = [];
   if (sessionExpired) {

@@ -63,9 +63,12 @@ import { nimiqIconUseMarkup, nimiqIconifyMarkup } from "./nimiqIcons.js";
 import { createWorldContextMenu, type WorldContextMenuItem } from "./worldContextMenu.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 import {
+  getNimiqPayViewportSize,
   isNimiqPayHostDocument,
   isNimiqPayPortraitViewport,
+  isNimiqPayWebViewHost,
   isVisualFullscreenActive,
+  markNimiqPayHostDocument,
   syncNimiqPayOrientationClasses,
 } from "./pseudoFullscreen.js";
 import {
@@ -75,6 +78,10 @@ import {
   type PrefabBbox,
 } from "./objectPrefabAuthoring.js";
 import { createPrefabDockPickerUi } from "./prefabDockPicker.js";
+import {
+  navigateAwayConfirmCopy,
+  type NavigateAwayConfirmRequest,
+} from "./navigateAwayConfirm.js";
 import {
   buildDockContextParamVisible,
   type BuildDockContextParamId,
@@ -639,6 +646,10 @@ export function createHud(
       opts:
         | {
             orientation: "horizontal" | "vertical";
+            rotationSetId: string;
+          }
+        | {
+            orientation: "horizontal" | "vertical";
             advertId: string;
             advertIds: string[];
             intervalSec: number;
@@ -670,6 +681,10 @@ export function createHud(
       opts:
         | {
             orientation: "horizontal" | "vertical";
+            rotationSetId: string;
+          }
+        | {
+            orientation: "horizontal" | "vertical";
             advertId: string;
             advertIds: string[];
             intervalSec: number;
@@ -688,6 +703,9 @@ export function createHud(
           }
     ) => void
   ) => void;
+  /** Reusable “navigate away” confirm (billboard visits, mini-apps, external links). */
+  showNavigateAwayConfirm: (p: import("./navigateAwayConfirm.js").NavigateAwayConfirmRequest) => void;
+  /** @deprecated Use {@link showNavigateAwayConfirm} with `kind: "external"`. */
   showBillboardExternalVisitConfirm: (p: {
     url: string;
     displayName: string;
@@ -721,7 +739,7 @@ export function createHud(
   setBrandLinksPlayerDisplayName: (displayName: string) => void;
   setLoadingVisible: (
     visible: boolean,
-    opts?: { skipMinWait?: boolean }
+    opts?: { skipMinWait?: boolean; blackout?: boolean }
   ) => void;
   /** Shown under the spinner while the loading overlay is visible. */
   setLoadingLabel: (text: string) => void;
@@ -758,6 +776,9 @@ export function createHud(
   let debugPanelText = "";
   let streamCinemaFillViewport = false;
   type PayLayoutMode = "portrait" | "landscape";
+  if (isNimiqPayWebViewHost()) {
+    markNimiqPayHostDocument();
+  }
   const nimiqPayHost = isNimiqPayHostDocument();
   const payRightRail = nimiqPayHost
     ? (() => {
@@ -1422,6 +1443,7 @@ export function createHud(
       </div>
       <div class="billboard-modal__tabs" role="tablist" aria-label="Billboard content">
         <button type="button" id="billboard-tab-images" class="billboard-modal__tab billboard-modal__tab--active" role="tab" aria-selected="true">Images</button>
+        <button type="button" id="billboard-tab-campaign" class="billboard-modal__tab" role="tab" aria-selected="false" hidden>Campaign</button>
         <button type="button" id="billboard-tab-other" class="billboard-modal__tab" role="tab" aria-selected="false">Other</button>
       </div>
       <div id="billboard-panel-images" class="billboard-modal__source-panel">
@@ -1440,6 +1462,13 @@ export function createHud(
         </div>
         <div class="billboard-modal__preview" aria-hidden="true">
           <img id="billboard-preview-img" class="billboard-modal__preview-img" alt="" decoding="async" />
+        </div>
+      </div>
+      <div id="billboard-panel-campaign" class="billboard-modal__source-panel" hidden>
+        <div class="billboard-modal__field">
+          <label class="billboard-modal__label" for="billboard-rotation-set">Rotation set</label>
+          <select id="billboard-rotation-set" class="billboard-modal__select" aria-label="Campaign rotation set"></select>
+          <p class="billboard-modal__hint">Admin-managed playlist of placeholders and approved campaigns. Content updates when players change rooms.</p>
         </div>
       </div>
       <div id="billboard-panel-other" class="billboard-modal__source-panel" hidden>
@@ -1504,12 +1533,21 @@ export function createHud(
   const billboardTabOtherBtn = billboardDialog.querySelector(
     "#billboard-tab-other"
   ) as HTMLButtonElement | null;
+  const billboardTabCampaignBtn = billboardDialog.querySelector(
+    "#billboard-tab-campaign"
+  ) as HTMLButtonElement | null;
   const billboardPanelImagesEl = billboardDialog.querySelector(
     "#billboard-panel-images"
+  ) as HTMLElement | null;
+  const billboardPanelCampaignEl = billboardDialog.querySelector(
+    "#billboard-panel-campaign"
   ) as HTMLElement | null;
   const billboardPanelOtherEl = billboardDialog.querySelector(
     "#billboard-panel-other"
   ) as HTMLElement | null;
+  const billboardRotationSetSelect = billboardDialog.querySelector(
+    "#billboard-rotation-set"
+  ) as HTMLSelectElement | null;
   const billboardChartRangeSelect = billboardDialog.querySelector(
     "#billboard-chart-range"
   ) as HTMLSelectElement | null;
@@ -1543,9 +1581,9 @@ export function createHud(
     <div class="external-visit-confirm__backdrop" aria-hidden="true"></div>
     <div class="external-visit-confirm__dialog" role="dialog" aria-modal="true" aria-labelledby="external-visit-title">
       <h2 id="external-visit-title" class="external-visit-confirm__title">Open external website?</h2>
-      <p class="external-visit-confirm__lead">You are about to leave Nimiq Space and open a link in a new tab.</p>
+      <p class="external-visit-confirm__lead" id="external-visit-lead">You are about to leave Nimiq Space and open a link in a new tab.</p>
       <p class="external-visit-confirm__url" id="external-visit-url"></p>
-      <p class="external-visit-confirm__disclaimer"><em>Nimiq Space does not control the content or safety of external sites.</em></p>
+      <p class="external-visit-confirm__disclaimer" id="external-visit-disclaimer"><em>Nimiq Space does not control the content or safety of external sites.</em></p>
       <div class="external-visit-confirm__actions">
         <button type="button" class="external-visit-confirm__btn external-visit-confirm__btn--cancel">Cancel</button>
         <button type="button" class="external-visit-confirm__btn external-visit-confirm__btn--confirm">Continue</button>
@@ -1745,7 +1783,10 @@ export function createHud(
   }
 
   function finishLoadingOverlayDismiss(): void {
-    loadingOverlay.classList.remove("loading-overlay--fade-out");
+    loadingOverlay.classList.remove(
+      "loading-overlay--fade-out",
+      "loading-overlay--blackout"
+    );
     loadingOverlay.hidden = true;
     loadingShownAt = null;
     if (loadingProgressWrap) loadingProgressWrap.hidden = true;
@@ -2737,7 +2778,8 @@ export function createHud(
             const text = payload.translateText.trim();
             if (!text) return;
             const url = googleTranslateUrlForText(text);
-            presentExternalVisitConfirm({
+            presentNavigateAwayConfirm({
+              kind: "external",
               url,
               displayName: "Google Translate",
               onConfirm: () => {
@@ -7627,7 +7669,51 @@ export function createHud(
     | null = null;
 
   let billboardRotationAdvertIds: string[] = [];
-  let billboardSourceTab: "images" | "other" = "images";
+  let billboardSourceTab: "images" | "other" | "campaign" = "images";
+  let billboardRotationSetId = "";
+  let billboardRotationSetsLoaded = false;
+
+  async function ensureBillboardRotationSetsLoaded(): Promise<void> {
+    if (billboardRotationSetsLoaded || !billboardRotationSetSelect) return;
+    const tok = opts?.getGameAuthToken?.() ?? null;
+    if (!tok) return;
+    try {
+      const r = await fetch("/api/admin/campaign/rotation-sets/summary", {
+        headers: { authorization: `Bearer ${tok}` },
+      });
+      if (!r.ok) return;
+      const body = (await r.json()) as {
+        rotationSets?: Array<{ id: string; name: string }>;
+      };
+      billboardRotationSetSelect.innerHTML = "";
+      const sets = body.rotationSets ?? [];
+      if (!sets.length) {
+        const o = document.createElement("option");
+        o.value = "";
+        o.textContent = "No rotation sets";
+        billboardRotationSetSelect.appendChild(o);
+        return;
+      }
+      for (const s of sets) {
+        const o = document.createElement("option");
+        o.value = s.id;
+        o.textContent = s.name;
+        billboardRotationSetSelect.appendChild(o);
+      }
+      if (!billboardRotationSetId && sets[0]) {
+        billboardRotationSetId = sets[0].id;
+      }
+      billboardRotationSetSelect.value = billboardRotationSetId || sets[0]!.id;
+      billboardRotationSetsLoaded = true;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function syncBillboardCampaignTabVisibility(): void {
+    const show = opts?.isGameAdmin?.() === true;
+    if (billboardTabCampaignBtn) billboardTabCampaignBtn.hidden = !show;
+  }
 
   function chartRangeFromSelect(): NimBillboardChartRange {
     const v = String(billboardChartRangeSelect?.value ?? "24h").trim();
@@ -7660,12 +7746,25 @@ export function createHud(
 
   function syncBillboardSourceTabUi(): void {
     const img = billboardSourceTab === "images";
+    const campaign = billboardSourceTab === "campaign";
     billboardTabImagesBtn?.classList.toggle("billboard-modal__tab--active", img);
-    billboardTabOtherBtn?.classList.toggle("billboard-modal__tab--active", !img);
+    billboardTabCampaignBtn?.classList.toggle(
+      "billboard-modal__tab--active",
+      campaign
+    );
+    billboardTabOtherBtn?.classList.toggle("billboard-modal__tab--active", !img && !campaign);
     billboardTabImagesBtn?.setAttribute("aria-selected", img ? "true" : "false");
-    billboardTabOtherBtn?.setAttribute("aria-selected", img ? "false" : "true");
+    billboardTabCampaignBtn?.setAttribute(
+      "aria-selected",
+      campaign ? "true" : "false"
+    );
+    billboardTabOtherBtn?.setAttribute(
+      "aria-selected",
+      !img && !campaign ? "true" : "false"
+    );
     if (billboardPanelImagesEl) billboardPanelImagesEl.hidden = !img;
-    if (billboardPanelOtherEl) billboardPanelOtherEl.hidden = img;
+    if (billboardPanelCampaignEl) billboardPanelCampaignEl.hidden = !campaign;
+    if (billboardPanelOtherEl) billboardPanelOtherEl.hidden = img || campaign;
   }
 
   let chartPreviewBusy = false;
@@ -7886,6 +7985,14 @@ export function createHud(
     syncBillboardSourceTabUi();
     emitBillboardDraftFromForm();
   });
+  billboardTabCampaignBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    billboardSourceTab = "campaign";
+    syncBillboardSourceTabUi();
+    void ensureBillboardRotationSetsLoaded();
+    emitBillboardDraftFromForm();
+  });
   billboardTabOtherBtn?.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -7933,6 +8040,13 @@ export function createHud(
     });
   }
 
+  if (billboardRotationSetSelect) {
+    billboardRotationSetSelect.addEventListener("change", () => {
+      billboardRotationSetId = billboardRotationSetSelect.value.trim();
+      emitBillboardDraftFromForm();
+    });
+  }
+
   if (billboardCreateBtn) {
     billboardCreateBtn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -7952,7 +8066,14 @@ export function createHud(
       if (!advertId) return;
       const intervalSec = getBillboardRotationIntervalSec();
       const opts =
-        billboardSourceTab === "other"
+        billboardSourceTab === "campaign"
+          ? {
+              orientation,
+              rotationSetId:
+                billboardRotationSetSelect?.value?.trim() ||
+                billboardRotationSetId,
+            }
+          : billboardSourceTab === "other"
           ? {
               orientation,
               advertId: fallback,
@@ -7971,7 +8092,14 @@ export function createHud(
             }
           : { orientation, advertId, advertIds, intervalSec };
       if (billboardEditTargetId) {
-        billboardUpdateHandler?.(billboardEditTargetId, opts);
+        if (billboardSourceTab === "campaign") {
+          appendChat(
+            "System",
+            "Campaign rotation billboards cannot be edited in-game."
+          );
+          return;
+        }
+        billboardUpdateHandler?.(billboardEditTargetId, opts as never);
       } else {
         if (!billboardPendingTile) return;
         billboardPlaceHandler?.(
@@ -8008,8 +8136,17 @@ export function createHud(
   const extVisitBackdrop = externalVisitConfirmOverlay.querySelector(
     ".external-visit-confirm__backdrop"
   ) as HTMLElement | null;
+  const extVisitTitleEl = externalVisitConfirmOverlay.querySelector(
+    "#external-visit-title"
+  ) as HTMLElement | null;
+  const extVisitLeadEl = externalVisitConfirmOverlay.querySelector(
+    "#external-visit-lead"
+  ) as HTMLElement | null;
   const extVisitUrlEl = externalVisitConfirmOverlay.querySelector(
     "#external-visit-url"
+  ) as HTMLElement | null;
+  const extVisitDisclaimerEl = externalVisitConfirmOverlay.querySelector(
+    "#external-visit-disclaimer"
   ) as HTMLElement | null;
   const extVisitCancel = externalVisitConfirmOverlay.querySelector(
     ".external-visit-confirm__btn--cancel"
@@ -8031,13 +8168,15 @@ export function createHud(
     }
   }
 
-  function presentExternalVisitConfirm(p: {
-    url: string;
-    displayName: string;
-    onConfirm: () => void;
-  }): void {
+  function presentNavigateAwayConfirm(p: NavigateAwayConfirmRequest): void {
+    const copy = navigateAwayConfirmCopy(p.kind, p.displayName);
     extVisitPending = { onConfirm: p.onConfirm };
+    if (extVisitTitleEl) extVisitTitleEl.textContent = copy.title;
+    if (extVisitLeadEl) extVisitLeadEl.textContent = copy.lead;
     if (extVisitUrlEl) extVisitUrlEl.textContent = p.url;
+    if (extVisitDisclaimerEl) {
+      extVisitDisclaimerEl.innerHTML = `<em>${copy.disclaimer}</em>`;
+    }
     externalVisitConfirmOverlay.hidden = false;
     externalVisitConfirmOverlay.setAttribute("aria-hidden", "false");
     extVisitEsc = (e: KeyboardEvent) => {
@@ -9796,12 +9935,14 @@ export function createHud(
   }
 
   function syncPayLayoutMode(): void {
-    if (!nimiqPayHost) return;
-    const fw = frame.clientWidth;
-    const fh = frame.clientHeight;
-    if (!fw || !fh) return;
-    syncNimiqPayOrientationClasses(fw, fh);
-    const next: PayLayoutMode = isNimiqPayPortraitViewport(fw, fh)
+    if (!nimiqPayHost && !isNimiqPayWebViewHost()) return;
+    if (!nimiqPayHost && isNimiqPayWebViewHost()) {
+      markNimiqPayHostDocument();
+    }
+    if (!isNimiqPayHostDocument()) return;
+    const { width: vw, height: vh } = getNimiqPayViewportSize();
+    syncNimiqPayOrientationClasses(vw, vh);
+    const next: PayLayoutMode = isNimiqPayPortraitViewport(vw, vh)
       ? "portrait"
       : "landscape";
     if (payLayoutMode !== next) {
@@ -9811,9 +9952,13 @@ export function createHud(
       mountPayActionChrome(next);
     }
     mountPayPortraitTopChrome(next === "portrait");
-    layoutLetterbox(frame, letter, streamCinemaFillViewport, payLayoutMode);
-    updateBuildBottomDockInset();
-    syncHudBelowTopWrap();
+    const fw = frame.clientWidth;
+    const fh = frame.clientHeight;
+    if (fw && fh) {
+      layoutLetterbox(frame, letter, streamCinemaFillViewport, payLayoutMode);
+      updateBuildBottomDockInset();
+      syncHudBelowTopWrap();
+    }
   }
 
   if (nimiqPayHost) {
@@ -12614,8 +12759,14 @@ export function createHud(
       }
       syncBillboardChartCycleUi();
       billboardSourceTab =
-        draft?.billboardSourceTab === "other" ? "other" : "images";
+        draft?.billboardSourceTab === "campaign"
+          ? "campaign"
+          : draft?.billboardSourceTab === "other"
+            ? "other"
+            : "images";
+      syncBillboardCampaignTabVisibility();
       syncBillboardSourceTabUi();
+      if (billboardSourceTab === "campaign") void ensureBillboardRotationSetsLoaded();
       if (billboardSourceTab === "other") void refreshBillboardChartPreview();
       emitBillboardDraftFromForm();
       billboardOverlay.hidden = false;
@@ -12792,12 +12943,20 @@ export function createHud(
     ) {
       billboardUpdateHandler = fn;
     },
+    showNavigateAwayConfirm(p: NavigateAwayConfirmRequest): void {
+      presentNavigateAwayConfirm(p);
+    },
     showBillboardExternalVisitConfirm(p: {
       url: string;
       displayName: string;
       onConfirm: () => void;
     }): void {
-      presentExternalVisitConfirm(p);
+      presentNavigateAwayConfirm({
+        kind: "external",
+        url: p.url,
+        displayName: p.displayName,
+        onConfirm: p.onConfirm,
+      });
     },
     setDebugText(text: string) {
       debugPanelText = text;
@@ -12893,12 +13052,18 @@ export function createHud(
         list.appendChild(entry);
       }
     },
-    setLoadingVisible(visible: boolean, opts?: { skipMinWait?: boolean }) {
+    setLoadingVisible(visible: boolean, opts?: { skipMinWait?: boolean; blackout?: boolean }) {
       if (visible) {
         clearLoadingOverlayTimers();
         loadingOverlay.classList.remove("loading-overlay--fade-out");
+        loadingOverlay.classList.toggle(
+          "loading-overlay--blackout",
+          opts?.blackout === true
+        );
         loadingOverlay.hidden = false;
-        if (loadingShownAt === null) {
+        if (opts?.blackout === true) {
+          loadingShownAt = null;
+        } else if (loadingShownAt === null) {
           loadingShownAt = performance.now();
         }
         return;

@@ -28,6 +28,10 @@ Adjust when tuning feel or abuse resistance.
 
 Clients may send an optional string field **`claimIntent`** on **`beginBlockClaim`** ([client/src/net/ws.ts](../client/src/net/ws.ts) `sendBeginBlockClaim`). The server normalizes it to lowercase **`[a-z0-9_]`**, max **48** characters, and omits it when empty after normalization ([server/src/rooms.ts](../server/src/rooms.ts)). Each accepted begin is logged to the gameplay JSONL as **`begin_block_claim`** ([`ANALYTICS_EVENT_KINDS.beginBlockClaim`](../server/src/eventLog.ts)) with `claimId`, tile coordinates, and `claimIntent` when present. Current client slugs: **`world_ctx_adjacent`** (Mine from the world context menu while already cardinally beside the block), **`world_ctx_auto_walk`** (Mine from the menu or **primary-click** on the block from farther away; client pathfinds to a cardinal neighbor first), **`direct_adjacent_click`** (primary click on the block while already beside it — default hold duration). For **`world_ctx_adjacent`** and **`world_ctx_auto_walk`** only, the server requires **50% longer** adjacent hold than the default (`BLOCK_CLAIM_HOLD_MS` → **1.5×** in `blockClaimOffered.holdMs` and in the `completeBlockClaim` gate).
 
+## WebSocket: campaign billboard audience stats
+
+Clients sample every **~1s** while the game tab is visible, the player is not AFK (**2 minutes** without pointer/keyboard input), and not in the wallet-send away flow (`nimSendIntent`). When within **7 floor tiles** of a rotation billboard whose active slide maps to a funded campaign (`slideCampaignIds`), the client batches **`campaignImpression`** messages `{ items: [{ campaignId, visibleMs }] }` ([client/src/game/campaignBillboardVisibility.ts](../client/src/game/campaignBillboardVisibility.ts), [server/src/rooms.ts](../server/src/rooms.ts)). The server ignores impressions when **`nimSendIntent`** is active (tab hidden / wallet flow). Each accepted impression line **debits** `balance_luna` by `lunaPerSecond × visibleMs / 1000` ([server/src/campaignVisibilityEconomics.ts](../server/src/campaignVisibilityEconomics.ts) `lunaDrainForVisibleMs`) for **approved** campaigns; at zero balance the campaign **expires** and is removed from rotation sets. **Time left** in `/advertise` and `/admin/campaign` is derived from **remaining balance** at the on-screen rate (not a calendar estimate). Confirmed billboard **Visit** navigations send **`campaignLinkClick`**. Aggregates per wallet land in SQLite **`campaign_viewer_stats`** ([server/src/campaignAnalyticsStore.ts](../server/src/campaignAnalyticsStore.ts)). Legacy rows with `expires_at_ms` may still be expired by the hourly `tickExpiredCampaignBillboards` job until drained-only expiry applies to all campaigns.
+
 ## Tick loop
 
 `startRoomTick` runs on a fixed interval (`TICK_MS`):
@@ -82,7 +86,7 @@ Clients may send an optional string field **`claimIntent`** on **`beginBlockClai
 
 ## Local development
 
-- From repo root: `npm install`, then `npm run dev` — runs Vite (default [http://127.0.0.1:5173](http://127.0.0.1:5173)) and the server with `tsx watch`; Vite proxies `/api` and `/ws` to `3001`.
+- From repo root: `npm install`, then `npm run dev` — runs Vite (default [http://127.0.0.1:5173](http://127.0.0.1:5173)) and the server with `tsx watch`; Vite proxies `/api`, `/ws`, and server-rendered main-site HTML (`/analytics`, `/advertise`, `/advertise/how-it-works`, `/admin`, `/payouts`, …) to `3001`.
 - Optional payment intent sidecar: `npm run dev:payment-intent` (requires `PAYMENT_INTENT_*` and `NIM_NETWORK`; see [docker-deployment.md](docker-deployment.md)).
 - [client/.env.development](../client/.env.development) can enable dev login and admin UI; match `DEV_AUTH_BYPASS` on the server for dev login.
 - Production: `npm run build` (client + server), then `npm run start -w server` with a strong `JWT_SECRET` and **no** `DEV_AUTH_BYPASS`.

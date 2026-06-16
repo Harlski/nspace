@@ -20,7 +20,7 @@ export function adminSettingsPageHtml(): string {
     ${analyticsPageRootCss()}
     ${mainSiteShellCss()}
     ${analyticsTopbarCss()}
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.84rem; }
+    .mono { font-size: 0.84rem; }
     .set-panel { max-width: 36rem; margin: 0.75rem 0 1.25rem; padding: 0.85rem 1rem; border: 1px solid #263348; border-radius: 10px; background: #0f1622; }
     .set-panel h2 { margin: 0 0 0.5rem; font-size: 0.95rem; color: #c8d4e4; font-weight: 600; }
     .set-row { display: flex; align-items: flex-start; gap: 0.65rem; flex-wrap: wrap; }

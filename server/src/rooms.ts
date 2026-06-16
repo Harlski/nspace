@@ -91,6 +91,11 @@ import {
   LUNA_PER_NIM,
 } from "./nimPayout/index.js";
 import {
+  CAMPAIGN_IMPRESSION_BATCH_MAX,
+  recordCampaignImpressions,
+  recordCampaignLinkClick,
+} from "./campaignAnalyticsStore.js";
+import {
   ANALYTICS_EVENT_KINDS,
   beginSession,
   endSession,
@@ -165,6 +170,7 @@ import {
   getBillboardsForRoom,
   hasBillboardFootprintConflict,
   isAllowedBillboardImageUrl,
+  isManagedCampaignBillboard,
   patchBillboardRecord,
   loadBillboards,
   setBillboardContent,
@@ -176,6 +182,8 @@ import {
   parseBillboardAdvertIdsFromMessage,
   validateAdvertRotationVisitHttps,
 } from "./billboardAdvertsCatalog.js";
+import { compileRotationSet } from "./rotationSetCompile.js";
+import { getRotationSetById } from "./rotationSetStore.js";
 import {
   getVoxelTextsForRoom,
   loadVoxelTexts,
@@ -702,8 +710,9 @@ function compactAddress(addr: string): string {
   return String(addr).replace(/\s+/g, "").toUpperCase();
 }
 
-/** Placer or admin may change/remove/move/rotate/update a billboard. */
+/** Placer or admin may change/remove/move/rotate/update a billboard (managed campaign boards: admin only). */
 function canModifyOwnBillboard(bb: Billboard, address: string): boolean {
+  if (isManagedCampaignBillboard(bb)) return isAdmin(address);
   if (isAdmin(address)) return true;
   const owner = String(bb.createdBy ?? "").trim();
   if (!owner) return false;
@@ -4755,6 +4764,34 @@ export function addClient(
       return;
     }
 
+    if (msg.type === "campaignImpression") {
+      if (conn.streamObserver || conn.nimSendIntent) return;
+      const rawItems = (msg as { items?: unknown }).items;
+      if (!Array.isArray(rawItems)) return;
+      const items: Array<{ campaignId: string; visibleMs: number }> = [];
+      for (const raw of rawItems.slice(0, CAMPAIGN_IMPRESSION_BATCH_MAX)) {
+        if (!raw || typeof raw !== "object") continue;
+        const o = raw as Record<string, unknown>;
+        const campaignId = String(o.campaignId ?? "").trim();
+        const visibleMs = Number(o.visibleMs);
+        if (!campaignId || !Number.isFinite(visibleMs) || visibleMs < 1) continue;
+        items.push({ campaignId, visibleMs });
+      }
+      if (items.length === 0) return;
+      recordCampaignImpressions({ wallet: address, items });
+      return;
+    }
+
+    if (msg.type === "campaignLinkClick") {
+      if (conn.streamObserver) return;
+      const campaignId = String(
+        (msg as { campaignId?: unknown }).campaignId ?? ""
+      ).trim();
+      if (!campaignId) return;
+      recordCampaignLinkClick({ wallet: address, campaignId });
+      return;
+    }
+
     if (msg.type === "createRoom") {
       const widthTiles = Number(msg.widthTiles);
       const heightTiles = Number(msg.heightTiles);
@@ -7576,13 +7613,55 @@ export function addClient(
       const yawSteps = 0;
       const rawMsg = msg as Record<string, unknown>;
       const liveChart = parseBillboardLiveChartFromMessage(rawMsg);
+      const rotationSetId = String(rawMsg.rotationSetId ?? "").trim();
       let advertIds: string[] = [];
       let slides: string[] = [];
       let intervalMs: number;
       let visitName: string;
       let visitUrl: string;
+      let miniappTargetUrl: string | undefined;
+      let rotationMeta:
+        | {
+            rotationSetId: string;
+            rotationRevision: number;
+            slideDurationsMs: number[];
+            slideVisitNames: string[];
+            slideVisitUrls: string[];
+            slideMiniappTargetUrls: string[];
+            slideCampaignIds: string[];
+            advertIds: string[];
+            billboardKind: "rotation_set";
+          }
+        | undefined;
 
-      if (liveChart) {
+      if (rotationSetId) {
+        if (!getRotationSetById(rotationSetId)) {
+          wsSafeSend(ws, { type: "error", code: "invalid_rotation_set" });
+          return;
+        }
+        const compiled = compileRotationSet(rotationSetId);
+        if (!compiled) {
+          wsSafeSend(ws, { type: "error", code: "invalid_rotation_set" });
+          return;
+        }
+        slides = compiled.slides;
+        advertIds = compiled.advertIds;
+        intervalMs = compiled.intervalMs;
+        visitName = compiled.visitName;
+        visitUrl = compiled.visitUrl;
+        miniappTargetUrl = compiled.miniappTargetUrl;
+        rotationMeta = {
+          rotationSetId: compiled.setId,
+          rotationRevision: compiled.revision,
+          slideDurationsMs: compiled.slideDurationsMs,
+          slideVisitNames: compiled.slideVisitNames,
+          slideVisitUrls: compiled.slideVisitUrls,
+          slideMiniappTargetUrls: compiled.slideMiniappTargetUrls,
+          slideCampaignIds: compiled.slideCampaignIds,
+          advertIds: compiled.advertIds,
+          billboardKind: "rotation_set",
+        };
+      } else if (liveChart) {
         slides = [BILLBOARD_LIVE_CHART_PLACEHOLDER_SLIDE];
         intervalMs = 60_000;
         visitName = "NIM (CoinGecko)";
@@ -7610,6 +7689,8 @@ export function addClient(
         const first = getBillboardAdvertById(advertIds[0]!);
         visitName = String(first?.name ?? "").trim() || "Advertiser";
         visitUrl = String(first?.visitUrl ?? "").trim();
+        miniappTargetUrl =
+          String(first?.miniappTargetUrl ?? "").trim() || undefined;
       }
 
       const footprintProbe: Billboard = {
@@ -7680,7 +7761,24 @@ export function addClient(
         slides,
         intervalMs,
         address,
-        liveChart
+        rotationMeta
+          ? {
+              advertId: rotationMeta.advertIds[0],
+              advertIds: rotationMeta.advertIds,
+              visitName,
+              visitUrl,
+              miniappTargetUrl,
+              slideshowEpochMs: now,
+              rotationSetId: rotationMeta.rotationSetId,
+              rotationRevision: rotationMeta.rotationRevision,
+              slideDurationsMs: rotationMeta.slideDurationsMs,
+              slideVisitNames: rotationMeta.slideVisitNames,
+              slideVisitUrls: rotationMeta.slideVisitUrls,
+              slideMiniappTargetUrls: rotationMeta.slideMiniappTargetUrls,
+              slideCampaignIds: rotationMeta.slideCampaignIds,
+              billboardKind: rotationMeta.billboardKind,
+            }
+          : liveChart
           ? {
               visitName,
               visitUrl,
@@ -7692,6 +7790,7 @@ export function addClient(
               advertIds,
               visitName,
               visitUrl,
+              miniappTargetUrl,
               slideshowEpochMs: now,
             }
       );
@@ -7775,6 +7874,7 @@ export function addClient(
       let intervalMs: number;
       let visitName: string;
       let visitUrl: string;
+      let miniappTargetUrl: string | undefined;
 
       if (liveChart) {
         slides = [BILLBOARD_LIVE_CHART_PLACEHOLDER_SLIDE];
@@ -7804,6 +7904,8 @@ export function addClient(
         const first = getBillboardAdvertById(advertIds[0]!);
         visitName = String(first?.name ?? "").trim() || "Advertiser";
         visitUrl = String(first?.visitUrl ?? "").trim();
+        miniappTargetUrl =
+          String(first?.miniappTargetUrl ?? "").trim() || undefined;
       }
 
       const liveChartRing = (
@@ -7911,6 +8013,7 @@ export function addClient(
                 slideshowEpochMs,
                 visitName,
                 visitUrl,
+                miniappTargetUrl,
               }
         );
         broadcast(currentRoomId, {
@@ -8021,6 +8124,7 @@ export function addClient(
               slideshowEpochMs,
               visitName,
               visitUrl,
+              miniappTargetUrl,
             }
       );
       const uniqRemove = [...new Set(removeKeys)];
@@ -8250,4 +8354,166 @@ export function syncPlayerProfileDisplayNameForWallet(walletRaw: string): void {
       return;
     }
   }
+}
+
+/** Place a paid mini-app campaign billboard (server-side fulfillment; bypasses admin WS gate). */
+export function placePaidCampaignBillboard(opts: {
+  campaignId: string;
+  ownerWallet: string;
+  roomId: string;
+  anchorX: number;
+  anchorZ: number;
+  projectName: string;
+  miniappTargetUrl: string;
+  imageUrl: string;
+  durationMs: number;
+}): { ok: true; billboardId: string } | { ok: false; error: string } {
+  const roomId = normalizeRoomId(opts.roomId);
+  const anchorX = Math.floor(opts.anchorX);
+  const anchorZ = Math.floor(opts.anchorZ);
+  const orientation: BillboardOrientation = "horizontal";
+  const yawSteps = 0;
+  const slides = [opts.imageUrl.trim()];
+  if (!slides[0]) return { ok: false, error: "invalid_image_url" };
+
+  const footprintProbe: Billboard = {
+    id: "_campaign_probe",
+    roomId,
+    anchorX,
+    anchorZ,
+    orientation,
+    yawSteps,
+    slides: ["/"],
+    intervalMs: 8000,
+    visitName: "",
+    visitUrl: "",
+    createdBy: "",
+    createdAt: 0,
+    updatedAt: 0,
+  };
+  const footTiles = footprintTileCoords(footprintProbe);
+  if (
+    normalizeRoomId(roomId) === HUB_ROOM_ID &&
+    footTiles.some((t) => isHubSpawnSafeZone(t.x, t.z))
+  ) {
+    return { ok: false, error: "slot_in_spawn_safe_zone" };
+  }
+  const placed = placedMap(roomId);
+  for (const { x: fx, z: fz } of footTiles) {
+    if (!isWalkableForRoom(roomId, fx, fz)) {
+      return { ok: false, error: "slot_not_walkable" };
+    }
+    if (getPlacedAtLevel(placed, fx, fz, 0)) {
+      return { ok: false, error: "slot_occupied" };
+    }
+    if (getSignboardAt(roomId, fx, fz)) {
+      return { ok: false, error: "slot_occupied" };
+    }
+    if (getBillboardAtTile(roomId, fx, fz)) {
+      return { ok: false, error: "slot_occupied" };
+    }
+  }
+  if (
+    hasBillboardFootprintConflict(
+      roomId,
+      anchorX,
+      anchorZ,
+      orientation,
+      undefined,
+      yawSteps
+    )
+  ) {
+    return { ok: false, error: "slot_footprint_conflict" };
+  }
+
+  const now = Date.now();
+  const visitName = String(opts.projectName ?? "").trim() || "Mini-app";
+  const miniappTargetUrl = String(opts.miniappTargetUrl ?? "").trim();
+  const billboard = createBillboard(
+    roomId,
+    anchorX,
+    anchorZ,
+    orientation,
+    yawSteps,
+    slides,
+    8000,
+    opts.ownerWallet,
+    {
+      visitName,
+      visitUrl: miniappTargetUrl,
+      miniappTargetUrl,
+      campaignId: opts.campaignId,
+      slideshowEpochMs: now,
+    }
+  );
+
+  const addTiles: ObstacleTile[] = [];
+  for (const { x: fx, z: fz } of footTiles) {
+    const k = blockKey(fx, fz, 0);
+    placed.set(k, {
+      passable: true,
+      half: true,
+      quarter: false,
+      hex: false,
+      pyramid: false,
+      pyramidBaseScale: 1,
+      hexRadiusScale: 1,
+      sphere: false,
+      sphereRadiusScale: 1,
+      ramp: false,
+      rampDir: 0,
+      colorRgb: BLOCK_COLOR_BILLBOARD_SLAB_RGB,
+    });
+    const deltaTile = obstacleTileFromPlaced(roomId, k);
+    if (deltaTile) addTiles.push(deltaTile);
+  }
+  broadcast(roomId, {
+    type: "billboards",
+    roomId,
+    billboards: getBillboardsForRoom(roomId).map(billboardToWire),
+  });
+  broadcast(roomId, {
+    type: "obstaclesDelta",
+    roomId,
+    add: addTiles,
+    remove: [],
+  });
+  schedulePersistWorldState();
+  return { ok: true, billboardId: billboard.id };
+}
+
+/** Remove a campaign-owned billboard and its floor footprint (expiry / admin). */
+export function removePaidCampaignBillboardById(
+  billboardId: string
+): boolean {
+  const bb = getBillboardById(billboardId);
+  if (!bb) return false;
+  const roomId = bb.roomId;
+  const placed = placedMap(roomId);
+  const footprints = footprintTileCoords(bb);
+  const removeKeys: string[] = [];
+  for (const { x: fx, z: fz } of footprints) {
+    const fk = getFloorLevelPlacedKey(placed, fx, fz);
+    if (fk) {
+      placed.delete(fk);
+      removeKeys.push(fk);
+      const bc = blockKey(fx, fz, 0);
+      if (bc !== fk) removeKeys.push(bc);
+    }
+  }
+  deleteBillboard(bb.id);
+  const uniq = [...new Set(removeKeys)];
+  broadcast(roomId, {
+    type: "obstaclesDelta",
+    roomId,
+    add: [],
+    remove: uniq,
+  });
+  broadcast(roomId, {
+    type: "billboards",
+    roomId,
+    billboards: getBillboardsForRoom(roomId).map(billboardToWire),
+  });
+  schedulePersistWorldState();
+  return true;
 }

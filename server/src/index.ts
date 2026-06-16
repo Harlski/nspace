@@ -70,6 +70,80 @@ import { adminSystemPageHtml } from "./adminSystemPage.js";
 import { adminSettingsPageHtml } from "./adminSettingsPage.js";
 import { adminHeaderPageHtml } from "./adminHeaderPage.js";
 import { adminFeedbackPageHtml } from "./adminFeedbackPage.js";
+import { adminCampaignPageHtml } from "./adminCampaignPage.js";
+import { advertisePageHtml } from "./advertisePage.js";
+import { advertiseGuidePageHtml } from "./advertiseGuidePage.js";
+import {
+  campaignUploadsDir,
+  CAMPAIGN_IMAGE_UPLOAD_MAX_BYTES,
+  ensureCampaignUploadsDir,
+  isCampaignImageUploadContentType,
+  parseCampaignImageBuffer,
+  saveCampaignImageUpload,
+} from "./campaignImageUpload.js";
+import {
+  billboardSlotDurationMs,
+  ADVERTISE_FUND_RECIPIENT_ADDRESS,
+  billboardSlotPriceLuna,
+  campaignMinimumFundLuna,
+  campaignPlacementModesForApi,
+  campaignSlideDwellTiersForApi,
+  campaignVisibilityEconomicsForApi,
+  estimateCampaignDurationForApi,
+  formatLunaAsNimLabel,
+  isCampaignSlideDwellSec,
+  nimAmountToLuna,
+  nimFor24hVisibility,
+  campaignPrepaidDisplayForApi,
+  type CampaignPrepaidDisplay,
+} from "./advertiseConfig.js";
+import { billboardImageSpecForApi } from "./billboardImageSpec.js";
+import {
+  createCampaign,
+  getCampaignForOwner,
+  initCampaignStore,
+  listCampaignsForOwner,
+  listCampaignsPendingApproval,
+  listApprovedCampaigns,
+  listExpiredCampaigns,
+  listUnfundedCampaigns,
+  updateCampaignDraft,
+  updateCampaignDisplayInterval,
+  listCampaignTransactions,
+  getCampaignById,
+  repairInflatedCampaignBalances,
+  sumCampaignFundingLuna,
+  type CampaignPublic,
+} from "./campaignStore.js";
+import {
+  getCampaignAnalyticsSummary,
+  initCampaignAnalyticsStore,
+  type CampaignAnalyticsSummary,
+} from "./campaignAnalyticsStore.js";
+import {
+  approveCampaignForInGame,
+  createCampaignPaymentIntent,
+  rejectCampaignForInGame,
+  syncCampaignPaymentStatus,
+  syncOwnerCampaignsPaymentStatus,
+  tickExpiredCampaignBillboards,
+} from "./campaignFulfill.js";
+import {
+  initRotationSetStore,
+  createRotationSet,
+  deleteRotationSet,
+  getRotationSetById,
+  listRotationSets,
+  listRotationSetSummaries,
+  replaceRotationSetItems,
+  updateRotationSetMeta,
+  campaignIdsInRotationSets,
+  listRotationSetIdsContainingCampaign,
+} from "./rotationSetStore.js";
+import { rebuildBillboardsForRotationSet } from "./rotationSetSync.js";
+import { getPaymentIntent } from "./paymentIntentClient.js";
+import { BILLBOARD_ADVERTS_CATALOG } from "./billboardAdvertsCatalog.js";
+import { sendTelegramPlainText } from "./telegramNotify.js";
 import {
   addAdminFeedbackMessage,
   addPlayerFeedbackMessage,
@@ -182,7 +256,10 @@ function parseAnalyticsTimeWindowFromQuery(q: { [key: string]: unknown }):
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, "../.env") });
+const repoRootEnv = path.join(__dirname, "../../.env");
+const serverEnv = path.join(__dirname, "../.env");
+dotenv.config({ path: repoRootEnv });
+dotenv.config({ path: serverEnv });
 const SWARM_ERROR_LOG_PATH =
   process.env.SWARM_ERROR_LOG_PATH ??
   path.join(__dirname, "../data/swarm-errors.log");
@@ -218,7 +295,21 @@ const DEV_AUTH_BYPASS =
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: "64kb" }));
+const jsonBody = express.json({ limit: "64kb" });
+/** Binary image upload — skip JSON parser (base64 JSON was slow/hung on large bodies). */
+const campaignImageUploadRaw = express.raw({
+  limit: CAMPAIGN_IMAGE_UPLOAD_MAX_BYTES,
+  type: (req) => isCampaignImageUploadContentType(String(req.headers["content-type"] ?? "")),
+});
+app.use((req, res, next) => {
+  if (
+    req.method === "POST" &&
+    req.path === "/api/advertise/campaigns/upload-image"
+  ) {
+    return next();
+  }
+  return jsonBody(req, res, next);
+});
 
 /** Trim and strip a single pair of surrounding quotes (common .env typo). */
 function telegramEnvTrim(key: string): string {
@@ -593,26 +684,6 @@ async function sendTelegramFeedback(text: string): Promise<boolean> {
   } catch (err) {
     console.error("[feedback] Telegram fetch error:", err);
     return false;
-  }
-}
-
-async function sendTelegramPlainText(text: string, logTag: string): Promise<void> {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-  try {
-    const chatIdPayload =
-      /^-?\d+$/.test(TELEGRAM_CHAT_ID) ? Number(TELEGRAM_CHAT_ID) : TELEGRAM_CHAT_ID;
-    await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatIdPayload,
-        text,
-        disable_web_page_preview: true,
-      }),
-    });
-  } catch (err) {
-    console.error(`[${logTag}] Telegram notify failed:`, err);
   }
 }
 
@@ -1005,6 +1076,563 @@ app.get("/admin/header", (_req, res) => {
 app.get("/admin/feedback", (_req, res) => {
   res.type("html").send(adminFeedbackPageHtml());
 });
+
+app.get("/admin/campaign", (_req, res) => {
+  res.type("html").send(adminCampaignPageHtml());
+});
+
+app.get("/advertise", (_req, res) => {
+  res.type("html").send(advertisePageHtml());
+});
+
+app.get("/advertise/how-it-works", (_req, res) => {
+  res.type("html").send(advertiseGuidePageHtml());
+});
+
+ensureCampaignUploadsDir();
+app.use(
+  "/advertise/uploads",
+  express.static(campaignUploadsDir(), {
+    maxAge: "7d",
+    immutable: true,
+    fallthrough: false,
+  })
+);
+
+app.post(
+  "/api/advertise/campaigns/upload-image",
+  campaignImageUploadRaw,
+  requireJwt,
+  (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  const parsed = parseCampaignImageBuffer(buffer);
+  if ("error" in parsed) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+  try {
+    const imageUrl = saveCampaignImageUpload(
+      signer,
+      parsed.buffer,
+      parsed.format
+    );
+    res.status(201).json({ imageUrl });
+  } catch (e) {
+    console.error("[api/advertise/upload-image]", e);
+    res.status(500).json({ error: "upload_failed" });
+  }
+  }
+);
+
+app.get("/api/advertise/meta", (_req, res) => {
+  const luna = billboardSlotPriceLuna();
+  const nimWhole = luna / 100_000n;
+  const nimFrac = Number(luna % 100_000n) / 100_000;
+  const priceNimLabel =
+    nimFrac > 0 ? `${nimWhole}.${String(nimFrac).slice(2, 7)}` : String(nimWhole);
+  const minFundLuna = campaignMinimumFundLuna();
+  const minFundWhole = minFundLuna / 100_000n;
+  const minFundFrac = Number(minFundLuna % 100_000n) / 100_000;
+  const minFundNimLabel =
+    minFundFrac > 0
+      ? `${minFundWhole}.${String(minFundFrac).slice(2, 7)}`
+      : String(minFundWhole);
+  const exampleFundNim = nimFor24hVisibility();
+  res.json({
+    priceLuna: luna.toString(),
+    priceNimLabel,
+    durationDays: Math.round(billboardSlotDurationMs() / (24 * 60 * 60 * 1000)),
+    extendSlotPriceNimLabel: priceNimLabel,
+    billboard: billboardImageSpecForApi(),
+    fundRecipientAddress: ADVERTISE_FUND_RECIPIENT_ADDRESS,
+    placementModes: campaignPlacementModesForApi(),
+    slideDwellTiers: campaignSlideDwellTiersForApi(),
+    visibilityEconomics: campaignVisibilityEconomicsForApi(),
+    minimumFundNimLabel: minFundNimLabel,
+    noMinimumFund: minFundLuna <= 1n,
+    exampleFundNim24h: exampleFundNim,
+    fundEstimateExample: estimateCampaignDurationForApi(
+      exampleFundNim,
+      10
+    ),
+    paymentIntentConfigured: Boolean(
+      process.env.PAYMENT_INTENT_SERVICE_URL?.trim() &&
+        process.env.PAYMENT_INTENT_API_SECRET?.trim()
+    ),
+  });
+});
+
+app.get("/api/advertise/estimate", (req, res) => {
+  const fundRaw = String(req.query.fundNim ?? "").trim();
+  const dwellQ = req.query.dwellSec;
+  if (!/^\d+(\.\d+)?$/.test(fundRaw)) {
+    res.status(400).json({ error: "invalid_fund_nim" });
+    return;
+  }
+  let dwellSec: number | undefined;
+  if (dwellQ !== undefined && dwellQ !== "") {
+    const dwellRaw = Number(dwellQ);
+    if (!isCampaignSlideDwellSec(dwellRaw)) {
+      res.status(400).json({ error: "invalid_dwell_sec" });
+      return;
+    }
+    dwellSec = Math.floor(dwellRaw);
+  }
+  res.json(estimateCampaignDurationForApi(Number(fundRaw), dwellSec));
+});
+
+type CampaignAdvertisePortal = CampaignPublic & {
+  inRotationSet: boolean;
+  analytics: CampaignAnalyticsSummary;
+  prepaid: CampaignPrepaidDisplay;
+};
+
+function campaignTotalFundedLuna(campaignId: string): bigint {
+  return sumCampaignFundingLuna(campaignId);
+}
+
+function enrichCampaignPrepaid(campaign: CampaignPublic): CampaignPrepaidDisplay {
+  const totalFundedLuna = campaignTotalFundedLuna(campaign.id);
+  return campaignPrepaidDisplayForApi({
+    balanceLuna: campaign.balanceLuna,
+    totalFundedLuna: totalFundedLuna > 0n ? totalFundedLuna : null,
+    status: campaign.status,
+    formatNim: formatLunaAsNimLabel,
+  });
+}
+
+function enrichCampaignForAdvertisePortal(
+  campaign: CampaignPublic,
+  liveCampaignIds?: Set<string>
+): CampaignAdvertisePortal {
+  const inRotationSet =
+    campaign.status === "approved" &&
+    (liveCampaignIds
+      ? liveCampaignIds.has(campaign.id)
+      : listRotationSetIdsContainingCampaign(campaign.id).length > 0);
+  return {
+    ...campaign,
+    inRotationSet,
+    analytics: getCampaignAnalyticsSummary(campaign.id),
+    prepaid: enrichCampaignPrepaid(campaign),
+  };
+}
+
+app.get("/api/advertise/campaigns", requireJwt, async (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  try {
+    await syncOwnerCampaignsPaymentStatus(signer);
+    const liveIds = campaignIdsInRotationSets();
+    res.json({
+      campaigns: listCampaignsForOwner(signer).map((c) =>
+        enrichCampaignForAdvertisePortal(c, liveIds)
+      ),
+    });
+  } catch (e) {
+    console.error("[api/advertise/campaigns]", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.post("/api/advertise/campaigns", requireJwt, (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const body = req.body as Record<string, unknown> | null;
+  const created = createCampaign(signer, {
+    projectName: String(body?.projectName ?? ""),
+    miniappTargetUrl: String(body?.miniappTargetUrl ?? ""),
+    imageUrl: String(body?.imageUrl ?? ""),
+    displayIntervalSec: Number(body?.displayIntervalSec ?? 10),
+  });
+  if (!created) {
+    res.status(400).json({ error: "invalid_campaign" });
+    return;
+  }
+  res.status(201).json({ campaign: enrichCampaignForAdvertisePortal(created) });
+});
+
+app.get("/api/advertise/campaigns/:id/transactions", requireJwt, (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const campaignId = String(req.params.id ?? "");
+  const campaign = getCampaignForOwner(campaignId, signer);
+  if (!campaign) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ transactions: listCampaignTransactions(campaignId) });
+});
+
+app.get("/api/advertise/campaigns/:id", requireJwt, (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const campaign = getCampaignForOwner(String(req.params.id ?? ""), signer);
+  if (!campaign) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ campaign: enrichCampaignForAdvertisePortal(campaign) });
+});
+
+app.put("/api/advertise/campaigns/:id", requireJwt, (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const body = req.body as Record<string, unknown> | null;
+  const campaignId = String(req.params.id ?? "");
+  const displayIntervalSec =
+    body && body.displayIntervalSec !== undefined
+      ? Number(body.displayIntervalSec)
+      : undefined;
+  let updated = updateCampaignDraft(campaignId, signer, {
+    projectName:
+      body && Object.prototype.hasOwnProperty.call(body, "projectName")
+        ? String(body.projectName ?? "")
+        : undefined,
+    miniappTargetUrl:
+      body && Object.prototype.hasOwnProperty.call(body, "miniappTargetUrl")
+        ? String(body.miniappTargetUrl ?? "")
+        : undefined,
+    imageUrl:
+      body && Object.prototype.hasOwnProperty.call(body, "imageUrl")
+        ? String(body.imageUrl ?? "")
+        : undefined,
+    displayIntervalSec,
+  });
+  if (!updated && displayIntervalSec !== undefined) {
+    updated = updateCampaignDisplayInterval(campaignId, signer, displayIntervalSec);
+  }
+  if (!updated) {
+    res.status(400).json({ error: "update_failed" });
+    return;
+  }
+  res.json({ campaign: enrichCampaignForAdvertisePortal(updated) });
+});
+
+app.post("/api/advertise/campaigns/:id/intent", requireJwt, async (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  try {
+    const body = (req.body ?? {}) as { amountNim?: string | number };
+    let amountLuna: bigint | undefined;
+    if (
+      body.amountNim === undefined ||
+      body.amountNim === null ||
+      String(body.amountNim).trim() === ""
+    ) {
+      res.status(400).json({ error: "amount_required" });
+      return;
+    }
+    const parsed = nimAmountToLuna(String(body.amountNim));
+    if (!parsed) {
+      res.status(400).json({ error: "invalid_amount" });
+      return;
+    }
+    amountLuna = parsed;
+    const result = await createCampaignPaymentIntent(
+      String(req.params.id ?? ""),
+      signer,
+      amountLuna
+    );
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    const luna = /^\d+$/.test(result.intent.amountLuna)
+      ? BigInt(result.intent.amountLuna)
+      : amountLuna!;
+    const amountNimLabel = formatLunaAsNimLabel(luna);
+    res.json({
+      campaign: enrichCampaignForAdvertisePortal(result.campaign),
+      intent: {
+        ...result.intent,
+        amountLuna: luna.toString(),
+        amountNimLabel,
+      },
+    });
+  } catch (e) {
+    console.error("[api/advertise/intent]", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.get("/api/advertise/campaigns/:id/intent", requireJwt, async (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  try {
+    const campaign = getCampaignForOwner(String(req.params.id ?? ""), signer);
+    if (!campaign) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (!campaign.intentId) {
+      res.status(404).json({ error: "no_intent" });
+      return;
+    }
+    const pi = await getPaymentIntent(campaign.intentId);
+    if (!pi.ok) {
+      const status = pi.status === 404 ? 404 : 400;
+      res.status(status).json({ error: pi.error });
+      return;
+    }
+    const amountNimLabel = formatLunaAsNimLabel(pi.intent.amountLuna);
+    res.json({
+      campaign: enrichCampaignForAdvertisePortal(campaign),
+      intent: {
+        ...pi.intent,
+        amountLuna: pi.intent.amountLuna,
+        amountNimLabel,
+      },
+    });
+  } catch (e) {
+    console.error("[api/advertise/intent GET]", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.post("/api/advertise/campaigns/:id/sync", requireJwt, async (req, res) => {
+  const sub = jwtAddressFromReq(req);
+  const signer = normalizeWalletId(sub ?? "");
+  if (!signer) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  try {
+    const result = await syncCampaignPaymentStatus(
+      String(req.params.id ?? ""),
+      signer
+    );
+    if (!result.ok) {
+      res.status(result.paymentPending ? 202 : 400).json({
+        error: result.error,
+        paymentPending: result.paymentPending ?? false,
+        intentExpired: result.intentExpired ?? false,
+        campaign: (() => {
+          const c = getCampaignForOwner(String(req.params.id ?? ""), signer);
+          return c ? enrichCampaignForAdvertisePortal(c) : null;
+        })(),
+      });
+      return;
+    }
+    res.json({
+      campaign: enrichCampaignForAdvertisePortal(result.campaign),
+      paymentPending: result.paymentPending ?? false,
+      topUpApplied: result.topUpApplied ?? false,
+    });
+  } catch (e) {
+    console.error("[api/advertise/sync]", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.get(
+  "/api/admin/advertise/campaigns/pending",
+  requireSystemAdminWallet,
+  (_req, res) => {
+    res.json({ campaigns: listCampaignsPendingApproval() });
+  }
+);
+
+app.get(
+  "/api/admin/advertise/campaigns/:id/transactions",
+  requireSystemAdminWallet,
+  (req, res) => {
+    const campaignId = String(req.params.id ?? "");
+    if (!getCampaignById(campaignId)) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    res.json({ transactions: listCampaignTransactions(campaignId) });
+  }
+);
+
+app.post(
+  "/api/admin/advertise/campaigns/:id/approve",
+  requireSystemAdminWallet,
+  async (req, res) => {
+    try {
+      const result = await approveCampaignForInGame(String(req.params.id ?? ""));
+      if (!result.ok) {
+        res.status(400).json({ error: result.error });
+        return;
+      }
+      res.json({ campaign: result.campaign });
+    } catch (e) {
+      console.error("[api/admin/advertise/approve]", e);
+      res.status(500).json({ error: "internal" });
+    }
+  }
+);
+
+app.post(
+  "/api/admin/advertise/campaigns/:id/reject",
+  requireSystemAdminWallet,
+  async (req, res) => {
+    try {
+      const note =
+        req.body && typeof req.body.note === "string" ? req.body.note : undefined;
+      const result = await rejectCampaignForInGame(
+        String(req.params.id ?? ""),
+        note
+      );
+      if (!result.ok) {
+        res.status(400).json({ error: result.error });
+        return;
+      }
+      res.json({ campaign: result.campaign });
+    } catch (e) {
+      console.error("[api/admin/advertise/reject]", e);
+      res.status(500).json({ error: "internal" });
+    }
+  }
+);
+
+app.get("/api/admin/campaign/overview", requireSystemAdminWallet, (_req, res) => {
+  const liveIds = campaignIdsInRotationSets();
+  const enrich = (c: ReturnType<typeof listCampaignsPendingApproval>[number]) => {
+    const txs = listCampaignTransactions(c.id);
+    let totalFundedLuna = 0n;
+    for (const t of txs) {
+      try {
+        totalFundedLuna += BigInt(t.amountLuna);
+      } catch {
+        /* ignore bad row */
+      }
+    }
+    let remainingLuna = 0n;
+    try {
+      if (c.balanceLuna) remainingLuna = BigInt(c.balanceLuna);
+    } catch {
+      /* ignore */
+    }
+    const usedLuna =
+      totalFundedLuna > remainingLuna ? totalFundedLuna - remainingLuna : 0n;
+    return {
+      ...c,
+      ownerDisplayName: getEffectivePlayerDisplayName(c.ownerWallet),
+      inRotationSet: liveIds.has(c.id),
+      totalFundedLuna: totalFundedLuna.toString(),
+      usedLuna: usedLuna.toString(),
+      remainingLuna: remainingLuna.toString(),
+      totalFundedNimLabel: formatLunaAsNimLabel(totalFundedLuna),
+      usedNimLabel: formatLunaAsNimLabel(usedLuna),
+      remainingNimLabel: formatLunaAsNimLabel(remainingLuna),
+      analytics: getCampaignAnalyticsSummary(c.id),
+      prepaid: enrichCampaignPrepaid(c),
+    };
+  };
+  res.json({
+    pendingCampaigns: listCampaignsPendingApproval().map(enrich),
+    approvedCampaigns: listApprovedCampaigns().map(enrich),
+    expiredCampaigns: listExpiredCampaigns().map(enrich),
+    unfundedCampaigns: listUnfundedCampaigns().map(enrich),
+    rotationSets: listRotationSets(),
+    placeholders: BILLBOARD_ADVERTS_CATALOG.map((a) => ({
+      id: a.id,
+      name: a.name,
+      imageUrl: a.slides[0] ?? "",
+      visitUrl: a.visitUrl || a.miniappTargetUrl || "",
+    })),
+    audienceStatsAvailable: true,
+  });
+});
+
+app.get(
+  "/api/admin/campaign/rotation-sets/summary",
+  requireSystemAdminWallet,
+  (_req, res) => {
+    res.json({ rotationSets: listRotationSetSummaries() });
+  }
+);
+
+app.post("/api/admin/campaign/rotation-sets", requireSystemAdminWallet, (req, res) => {
+  const body = req.body ?? {};
+  const created = createRotationSet({
+    name: String(body.name ?? ""),
+    placeholderDwellSec:
+      body.placeholderDwellSec !== undefined
+        ? Number(body.placeholderDwellSec)
+        : undefined,
+    items: Array.isArray(body.items) ? body.items : undefined,
+  });
+  if (!created) {
+    res.status(400).json({ error: "invalid_rotation_set" });
+    return;
+  }
+  res.status(201).json({ rotationSet: created });
+});
+
+app.put(
+  "/api/admin/campaign/rotation-sets/:id",
+  requireSystemAdminWallet,
+  (req, res) => {
+    const id = String(req.params.id ?? "").trim();
+    const body = req.body ?? {};
+    let updated = updateRotationSetMeta(id, {
+      name: body.name !== undefined ? String(body.name) : undefined,
+      placeholderDwellSec:
+        body.placeholderDwellSec !== undefined
+          ? Number(body.placeholderDwellSec)
+          : undefined,
+    });
+    if (!updated) {
+      res.status(404).json({ error: "rotation_set_not_found" });
+      return;
+    }
+    if (Array.isArray(body.items)) {
+      updated = replaceRotationSetItems(id, body.items) ?? updated;
+    }
+    rebuildBillboardsForRotationSet(id);
+    res.json({ rotationSet: getRotationSetById(id) });
+  }
+);
+
+app.delete(
+  "/api/admin/campaign/rotation-sets/:id",
+  requireSystemAdminWallet,
+  (req, res) => {
+    const id = String(req.params.id ?? "").trim();
+    if (!deleteRotationSet(id)) {
+      res.status(404).json({ error: "rotation_set_not_found" });
+      return;
+    }
+    res.json({ ok: true });
+  }
+);
 
 app.get("/api/admin/system/snapshot", requireSystemAdminWallet, async (_req, res) => {
   try {
@@ -1832,7 +2460,23 @@ const server = createServer(app);
 
 const wss = new WebSocketServer({ server, path: "/ws" });
 
+initCampaignStore();
+initCampaignAnalyticsStore();
+const repairedCampaignBalances = repairInflatedCampaignBalances();
+if (repairedCampaignBalances > 0) {
+  console.log(
+    `[campaigns] repaired ${repairedCampaignBalances} inflated prepaid balance(s)`
+  );
+}
+initRotationSetStore();
 startRoomTick();
+setInterval(() => {
+  try {
+    tickExpiredCampaignBillboards(Date.now());
+  } catch (e) {
+    console.error("[campaigns] expiry tick", e);
+  }
+}, 60_000);
 startAdminSystemMonitor();
 startGameWsMetricsFlushTimer();
 startNimPayoutProcessor();

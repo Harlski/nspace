@@ -14,7 +14,7 @@ COPY payment-intent-service/package.json payment-intent-service/
 COPY scripts/postinstall.cjs scripts/
 COPY patches/ patches/
 
-RUN npm ci -w payment-intent-service
+RUN npm ci -w payment-intent-service && node scripts/postinstall.cjs
 
 COPY payment-intent-service/tsconfig.json payment-intent-service/
 COPY payment-intent-service/src payment-intent-service/src

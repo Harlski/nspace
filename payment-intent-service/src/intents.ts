@@ -3,7 +3,9 @@ import type { AppConfig } from "./config.js";
 import { getFeatureHandler } from "./features/registry.js";
 import type { IntentStore, PaymentIntentRow } from "./store.js";
 import { fetchTransactionDetails } from "./nim/client.js";
+import { fetchTransactionDetailsViaRpc } from "./nim/rpcTx.js";
 import { memoFromTransactionDetails } from "./nim/memo.js";
+import { fetchRecentTransactionsForAddress } from "./nim/rpc.js";
 import { normalizeWalletId } from "./wallet.js";
 
 const MEMO_PREFIX = "NSPACE:pi:";
@@ -139,7 +141,8 @@ export async function verifyIntentTx(
   store: IntentStore,
   cfg: AppConfig,
   intentId: string,
-  txHash: string
+  txHash: string,
+  opts?: { softMismatch?: boolean }
 ): Promise<VerifyResult> {
   const hash = String(txHash || "").trim();
   if (!hash) throw new Error("txHash is required");
@@ -167,12 +170,21 @@ export async function verifyIntentTx(
     return { ok: false, intent: rowToPublic(failed), chainMessage: msg };
   }
 
-  const details = await fetchTransactionDetails(hash, {
-    network: cfg.nimNetwork,
-    logLevel: cfg.nimClientLogLevel,
-  });
+  const details = cfg.nimRpcUrl?.trim()
+    ? await fetchTransactionDetailsViaRpc(cfg.nimRpcUrl, hash)
+    : await fetchTransactionDetails(hash, {
+        network: cfg.nimNetwork,
+        logLevel: cfg.nimClientLogLevel,
+      });
 
   const fail = (reason: string) => {
+    if (opts?.softMismatch) {
+      return {
+        ok: false,
+        intent: rowToPublic(live),
+        chainMessage: reason,
+      } as const;
+    }
     store.updateStatus(live.id, "failed", { failure_reason: reason });
     const failed = store.findById(live.id)!;
     return { ok: false, intent: rowToPublic(failed), chainMessage: reason } as const;
@@ -234,4 +246,74 @@ export function getIntent(store: IntentStore, intentId: string): PublicIntent | 
   const row = store.findById(intentId.trim());
   if (!row) return null;
   return rowToPublic(assertFresh(row, store));
+}
+
+/** Scan recipient history and verify the first matching on-chain payment (no user tx hash). */
+export async function checkIntentPayment(
+  store: IntentStore,
+  cfg: AppConfig,
+  intentId: string
+): Promise<VerifyResult> {
+  const row = store.findById(intentId.trim());
+  if (!row) throw new Error("Intent not found");
+  const live = assertFresh(row, store);
+  if (live.status === "confirmed") {
+    return { ok: true, intent: rowToPublic(live) };
+  }
+  if (live.status === "expired" || live.status === "failed") {
+    return {
+      ok: false,
+      intent: rowToPublic(live),
+      chainMessage: live.failure_reason || "Intent not payable",
+    };
+  }
+  const rpcUrl = cfg.nimRpcUrl?.trim();
+  if (!rpcUrl) {
+    return {
+      ok: false,
+      intent: rowToPublic(live),
+      chainMessage: "Payment auto-check unavailable (RPC not configured)",
+    };
+  }
+  const txs = await fetchRecentTransactionsForAddress(
+    rpcUrl,
+    live.recipient_address,
+    160
+  );
+  const createdSec = Math.floor(live.created_at_ms / 1000);
+  const expectedRecipient = normalizeWalletId(live.recipient_address);
+  const requiredLuna = BigInt(live.amount_luna);
+  const candidates = txs
+    .filter((tx) => {
+      const hash = String(tx.hash ?? "").trim();
+      if (!hash) return false;
+      const ts = Number(tx.timestamp ?? 0);
+      if (ts > 0 && ts + 120 < createdSec) return false;
+      const to = normalizeWalletId(
+        String(tx.toAddress ?? tx.to ?? "").trim()
+      );
+      if (!to || to !== expectedRecipient) return false;
+      const value = BigInt(String(tx.value ?? 0));
+      if (value < requiredLuna) return false;
+      return true;
+    })
+    .sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0));
+  for (const tx of candidates) {
+    const hash = String(tx.hash ?? "").trim();
+    if (!hash) continue;
+    try {
+      const verified = await verifyIntentTx(store, cfg, intentId, hash, {
+        softMismatch: true,
+      });
+      if (verified.ok) return verified;
+      if (verified.intent.status === "confirmed") return verified;
+    } catch {
+      continue;
+    }
+  }
+  return {
+    ok: false,
+    intent: rowToPublic(assertFresh(store.findById(intentId.trim())!, store)),
+    chainMessage: "No matching payment found yet",
+  };
 }

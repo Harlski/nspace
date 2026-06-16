@@ -8,7 +8,7 @@ This document describes **main-site** pages: HTML served from the game API host 
 
 ## Goals
 
-- One visual language for all main-site routes: dark canvas, Mulish + mono data, NIMIQ / SPACE brand header where appropriate.
+- One visual language for all main-site routes: dark canvas, **Muli** (Nimiq Style) + **Fira Mono** data, NIMIQ / SPACE brand header where appropriate.
 - New pages should ship quickly by composing **shell + topbar + (optional) document title + content**, not one-off CSS.
 - Prefer **CSS variables** and **`ms-` prefixed utility classes** over page-specific rules.
 - **Unsigned** states should look intentional: same vertical rhythm as other gate-only screens, not an empty grid with only the topbar.
@@ -20,7 +20,8 @@ This document describes **main-site** pages: HTML served from the game API host 
 | Piece | Server (canonical) | Client (Vite static pages) |
 |--------|----------------------|----------------------------|
 | Tokens + layout + tables + buttons + auth gate utilities | `server/src/mainSiteShell.ts` → `mainSiteShellCss()` | `client/src/mainSiteClient.css` (keep in sync when tokens change) |
-| Brand row + `#authUser` | `server/src/analyticsTopbar.ts` | Same header markup in static HTML or `renderMainSiteTopbar()` |
+| Nimiq Style fonts (Muli + Fira Mono) | `server/src/mainSiteTypography.ts` | Same `@import` + stacks in `mainSiteClient.css` |
+| Brand row + `#authUser` | `server/src/analyticsTopbar.ts` + `server/src/mainSiteNav.ts` + `server/src/mainSiteAuthTopbar.ts` | `renderMainSiteTopbar()` in `client/src/ui/analyticsTopbar.ts` |
 | Wallet “Signing in…” UI (spinner + cycling dots) | Inline markup + interval in server page scripts | `client/src/ui/walletSigningUi.ts` (`walletSigningMarkup`, `animateSigningDots`, `isSigningUserCancelledError`) |
 
 ---
@@ -31,7 +32,7 @@ This document describes **main-site** pages: HTML served from the game API host 
 
 Use when the user has a valid session (or the page is public and needs no wallet).
 
-1. **Top:** `${analyticsTopbarHtml("…")}` or equivalent — brand + nav + `#authUser` (script fills Sign in / account menu).
+1. **Top:** `${analyticsTopbarHtml("…")}` or equivalent — brand + grouped **nav dropdown** + `#authUser` (shared script fills Sign In / wallet menu on every route). Nav links are permission-gated; empty groups hide automatically. Categories: **Site** (Payouts, Advertise) and **Admin** (Admin, Analytics, System, Settings, Header, Feedback). Pages with custom sign-in UX may set `window.__nsMainSiteLoginClick`; otherwise the topbar runs the default Hub login for that route.
 2. **Document title (optional but typical):** a single `<h1 class="ms-doc-title" id="…">Page name</h1>` for the **topic** of the route (e.g. “Payout queue”, “Admin”). Do **not** repeat the NIMIQ SPACE wordmark here.
 3. **Auxiliary line (optional):** `<p class="ms-status …">` for loading / generated-at meta — keep short.
 4. **Content:** panels (`ms-panel`), tables under `.ms-site`, toolbars (`ms-toolbar`), etc.
@@ -84,8 +85,8 @@ Use one **canonical user string** (exact copy) whenever the JWT is valid but the
 
 ## Page skeleton (server-rendered)
 
-1. **Head:** `analyticsFontLinkTags()`, then `<style>` with:
-   - `analyticsPageRootCss()` (Mulish on `:root`)
+1. **Head:** `mainSiteNimiqFontLinkTags()` (or `analyticsFontLinkTags()` alias), then `<style>` with:
+   - `mainSiteTypographyCss()` (Muli / Nimiq Style stacks; Fira Mono for `.mono` / `.ms-mono`)
    - `mainSiteShellCss()`
    - `analyticsTopbarCss()` when using the topbar
    - Page-specific rules last (charts, grids, etc.)
@@ -148,7 +149,7 @@ Tooltips or small CTAs that point to main-site pages should:
 ## Checklist before merging a new main-site page
 
 - [ ] `body.ms-site` (+ `--wide` if needed)
-- [ ] Fonts: Mulish via `analyticsFontLinkTags` or `mainSiteClient.css` `@import`
+- [ ] Fonts: Muli + Fira Mono via `mainSiteNimiqFontLinkTags()` or `mainSiteClient.css` `@import`
 - [ ] Brand topbar if the page is user-facing operator tooling
 - [ ] If signed-in-only: `ms-doc-title` with stable `id` so scripts can hide it when unsigned
 - [ ] Unsigned: **standalone** `ms-auth-gate` + hide doc title + no duplicate “Sign in” button in the body

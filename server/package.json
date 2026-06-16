@@ -10,6 +10,7 @@
     "bench:world-state": "tsx scripts/benchmark-world-state.ts"
   },
   "dependencies": {
+    "better-sqlite3": "^11.10.0",
     "@nimiq/core": "2.2.2",
     "@nimiq/identicons": "^1.6.2",
     "bad-words": "^4.0.0",
@@ -23,6 +24,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.9",

@@ -37,8 +37,23 @@ export type Billboard = {
   slideshowEpochMs?: number;
   /** Label for “Visit {name}” and UI. */
   visitName: string;
-  /** External HTTPS URL opened after user confirmation. */
+  /** External HTTPS URL for display / browser fallback outside Nimiq Pay. */
   visitUrl: string;
+  /** Nimiq Pay mini-app target (HTTPS); client builds `nimiqpay://` deeplink at click time. */
+  miniappTargetUrl?: string;
+  /** Paid campaign id when placed via legacy fulfillment (deprecated). */
+  campaignId?: string;
+  /** Admin-managed rotation set (compiled slides refresh server-side). */
+  rotationSetId?: string;
+  rotationRevision?: number;
+  /** Per-slide dwell when `rotationSetId` is set (parallel to `slides`). */
+  slideDurationsMs?: number[];
+  slideVisitNames?: string[];
+  slideVisitUrls?: string[];
+  slideMiniappTargetUrls?: string[];
+  slideCampaignIds?: string[];
+  /** Future: user-claimable static billboard slot. */
+  billboardKind?: "rotation_set" | "static_slot";
   /** Live NIM candlestick chart (client fetches OHLC from nim-chart-service). */
   liveChart?: BillboardLiveChart;
   createdBy: string;
@@ -225,6 +240,43 @@ function normalizeLoaded(raw: unknown): Billboard | null {
   }
   const visitName = String(o.visitName ?? "").trim();
   const visitUrl = String(o.visitUrl ?? "").trim();
+  const miniappTargetUrl =
+    String(o.miniappTargetUrl ?? "").trim() || undefined;
+  const campaignId = String(o.campaignId ?? "").trim() || undefined;
+  const rotationSetId = String(o.rotationSetId ?? "").trim() || undefined;
+  let rotationRevision = Math.floor(Number(o.rotationRevision ?? NaN));
+  if (!Number.isFinite(rotationRevision)) rotationRevision = 1;
+  rotationRevision = Math.max(1, rotationRevision);
+  const parseStringArray = (raw: unknown, max: number): string[] | undefined => {
+    if (!Array.isArray(raw)) return undefined;
+    const out = raw
+      .map((x) => String(x ?? "").trim())
+      .slice(0, max);
+    return out.length ? out : undefined;
+  };
+  const parseNumberArray = (raw: unknown, max: number): number[] | undefined => {
+    if (!Array.isArray(raw)) return undefined;
+    const out = raw
+      .map((x) => Math.floor(Number(x)))
+      .filter((n) => Number.isFinite(n))
+      .slice(0, max);
+    return out.length ? out : undefined;
+  };
+  const slideDurationsMs = parseNumberArray(o.slideDurationsMs, BILLBOARD_MAX_SLIDES);
+  const slideVisitNames = parseStringArray(o.slideVisitNames, BILLBOARD_MAX_SLIDES);
+  const slideVisitUrls = parseStringArray(o.slideVisitUrls, BILLBOARD_MAX_SLIDES);
+  const slideMiniappTargetUrls = parseStringArray(
+    o.slideMiniappTargetUrls,
+    BILLBOARD_MAX_SLIDES
+  );
+  const slideCampaignIds = parseStringArray(o.slideCampaignIds, BILLBOARD_MAX_SLIDES);
+  const kindRaw = String(o.billboardKind ?? "").trim();
+  const billboardKind =
+    kindRaw === "static_slot"
+      ? "static_slot"
+      : rotationSetId
+        ? "rotation_set"
+        : undefined;
   return {
     id,
     roomId,
@@ -239,6 +291,16 @@ function normalizeLoaded(raw: unknown): Billboard | null {
     slideshowEpochMs,
     visitName,
     visitUrl,
+    miniappTargetUrl,
+    campaignId,
+    rotationSetId,
+    rotationRevision,
+    slideDurationsMs,
+    slideVisitNames,
+    slideVisitUrls,
+    slideMiniappTargetUrls,
+    slideCampaignIds,
+    billboardKind,
     liveChart,
     createdBy,
     createdAt,
@@ -280,6 +342,16 @@ export function createBillboard(
     advertIds?: string[];
     visitName: string;
     visitUrl: string;
+    miniappTargetUrl?: string;
+    campaignId?: string;
+    rotationSetId?: string;
+    rotationRevision?: number;
+    slideDurationsMs?: number[];
+    slideVisitNames?: string[];
+    slideVisitUrls?: string[];
+    slideMiniappTargetUrls?: string[];
+    slideCampaignIds?: string[];
+    billboardKind?: "rotation_set" | "static_slot";
     slideshowEpochMs: number;
     liveChart?: BillboardLiveChart;
   }
@@ -304,6 +376,26 @@ export function createBillboard(
     slideshowEpochMs: visitMeta.slideshowEpochMs,
     visitName: visitMeta.visitName,
     visitUrl: visitMeta.visitUrl,
+    miniappTargetUrl: visitMeta.miniappTargetUrl,
+    campaignId: visitMeta.campaignId,
+    rotationSetId: visitMeta.rotationSetId,
+    rotationRevision: visitMeta.rotationRevision,
+    slideDurationsMs: visitMeta.slideDurationsMs?.length
+      ? [...visitMeta.slideDurationsMs]
+      : undefined,
+    slideVisitNames: visitMeta.slideVisitNames?.length
+      ? [...visitMeta.slideVisitNames]
+      : undefined,
+    slideVisitUrls: visitMeta.slideVisitUrls?.length
+      ? [...visitMeta.slideVisitUrls]
+      : undefined,
+    slideMiniappTargetUrls: visitMeta.slideMiniappTargetUrls?.length
+      ? [...visitMeta.slideMiniappTargetUrls]
+      : undefined,
+    slideCampaignIds: visitMeta.slideCampaignIds?.length
+      ? [...visitMeta.slideCampaignIds]
+      : undefined,
+    billboardKind: visitMeta.billboardKind,
     liveChart: visitMeta.liveChart,
     createdBy,
     createdAt: now,
@@ -334,6 +426,16 @@ export function billboardToWire(b: Billboard) {
     slideshowEpochMs: b.slideshowEpochMs ?? b.createdAt,
     visitName: b.visitName ?? "",
     visitUrl: b.visitUrl ?? "",
+    miniappTargetUrl: b.miniappTargetUrl ?? "",
+    campaignId: b.campaignId ?? "",
+    rotationSetId: b.rotationSetId ?? "",
+    rotationRevision: b.rotationRevision ?? 0,
+    slideDurationsMs: b.slideDurationsMs ?? [],
+    slideVisitNames: b.slideVisitNames ?? [],
+    slideVisitUrls: b.slideVisitUrls ?? [],
+    slideMiniappTargetUrls: b.slideMiniappTargetUrls ?? [],
+    slideCampaignIds: b.slideCampaignIds ?? [],
+    billboardKind: b.billboardKind ?? "",
     liveChart: b.liveChart,
     createdBy: b.createdBy,
     createdAt: b.createdAt,
@@ -352,6 +454,65 @@ export function getBillboardById(id: string): Billboard | undefined {
   return billboards.find((b) => b.id === id);
 }
 
+export function isManagedCampaignBillboard(b: Billboard): boolean {
+  if (String(b.rotationSetId ?? "").trim()) return true;
+  if (b.billboardKind === "static_slot") return true;
+  if (String(b.campaignId ?? "").trim()) return true;
+  return false;
+}
+
+export function listBillboardsWithRotationSet(setId?: string): Billboard[] {
+  if (setId) {
+    const sid = setId.trim();
+    return billboards.filter((b) => b.rotationSetId === sid);
+  }
+  return billboards.filter((b) => Boolean(b.rotationSetId?.trim()));
+}
+
+export function setBillboardRotationContent(
+  id: string,
+  next: {
+    slides: string[];
+    intervalMs: number;
+    slideDurationsMs: number[];
+    slideVisitNames: string[];
+    slideVisitUrls: string[];
+    slideMiniappTargetUrls: string[];
+    slideCampaignIds: string[];
+    advertIds: string[];
+    visitName: string;
+    visitUrl: string;
+    miniappTargetUrl?: string;
+    rotationRevision: number;
+    slideshowEpochMs?: number;
+  }
+): boolean {
+  const b = billboards.find((x) => x.id === id);
+  if (!b || !b.rotationSetId) return false;
+  b.slides = [...next.slides];
+  b.intervalMs = next.intervalMs;
+  b.slideDurationsMs = [...next.slideDurationsMs];
+  b.slideVisitNames = [...next.slideVisitNames];
+  b.slideVisitUrls = [...next.slideVisitUrls];
+  b.slideMiniappTargetUrls = [...next.slideMiniappTargetUrls];
+  b.slideCampaignIds = [...next.slideCampaignIds];
+  b.advertIds = next.advertIds.length ? [...next.advertIds] : undefined;
+  b.advertId = next.advertIds[0];
+  b.visitName = next.visitName;
+  b.visitUrl = next.visitUrl;
+  b.miniappTargetUrl = next.miniappTargetUrl;
+  b.rotationRevision = next.rotationRevision;
+  b.campaignId = undefined;
+  b.liveChart = undefined;
+  b.billboardKind = "rotation_set";
+  if (next.slideshowEpochMs !== undefined) {
+    b.slideshowEpochMs = next.slideshowEpochMs;
+  }
+  b.updatedAt = Date.now();
+  dirty = true;
+  return true;
+}
+
 /** Update content and pose fields in place (caller handles floor markers when footprint changes). */
 export function setBillboardContent(
   id: string,
@@ -365,6 +526,8 @@ export function setBillboardContent(
     slideshowEpochMs?: number;
     visitName: string;
     visitUrl: string;
+    miniappTargetUrl?: string;
+    campaignId?: string;
     liveChart?: BillboardLiveChart;
   }
 ): boolean {
@@ -390,6 +553,12 @@ export function setBillboardContent(
   }
   b.visitName = next.visitName;
   b.visitUrl = next.visitUrl;
+  if (next.miniappTargetUrl !== undefined) {
+    b.miniappTargetUrl = next.miniappTargetUrl.trim() || undefined;
+  }
+  if (next.campaignId !== undefined) {
+    b.campaignId = next.campaignId.trim() || undefined;
+  }
   b.updatedAt = Date.now();
   dirty = true;
   return true;

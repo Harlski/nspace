@@ -5,15 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin</title>
     <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Mulish:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap"
-      rel="stylesheet"
-    />
     <style>
       h1 { margin: 0 0 0.6rem 0; font-size: clamp(24px, 5vw, 34px); }
-      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.84rem; }
+      .mono { font-size: 0.84rem; }
       .panel { margin-top: 0.75rem; padding: 0.85rem; border-radius: 8px; border: 1px solid #2a394f; background: #131b27; }
       .row { display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center; margin-top: 0.6rem; }
       input { flex: 1 1 420px; min-width: 220px; background: #0f1622; color: #dbe6f4; border: 1px solid #2c3b52; border-radius: 6px; padding: 0.45rem 0.55rem; }
@@ -65,13 +59,7 @@
           <a class="brand-title-link" href="/" title="Nimiq Space (play)">
             <span class="brand-title"><span class="brand-title__nimiq">NIMIQ</span> <span class="brand-title__space">SPACE</span></span>
           </a>
-          <nav class="main-site-nav" aria-label="Main site">
-            <a class="main-site-nav__link" href="/payouts">Payouts</a>
-            <a class="main-site-nav__link" href="/analytics" data-auth-nav="analytics" hidden>Analytics</a>
-            <a class="main-site-nav__link" href="/admin" aria-current="page" data-auth-nav="admin" hidden>Admin</a>
-            <a class="main-site-nav__link" href="/admin/system" data-auth-nav="system" hidden>System</a>
-            <a class="main-site-nav__link" href="/admin/settings" data-auth-nav="settings" hidden>Settings</a>
-          </nav>
+          <nav class="main-site-nav" aria-label="Main site"></nav>
         </div>
         <div class="analytics-topbar">
           <div class="main-site-social" aria-label="Social links">

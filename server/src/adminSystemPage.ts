@@ -20,7 +20,7 @@ export function adminSystemPageHtml(): string {
     ${analyticsPageRootCss()}
     ${mainSiteShellCss()}
     ${analyticsTopbarCss()}
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.84rem; }
+    .mono { font-size: 0.84rem; }
     .sys-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.55rem; margin: 0.75rem 0 1rem; }
     .sys-card {
       background: #0f1622;

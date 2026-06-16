@@ -1,8 +1,9 @@
 /**
- * Main-site shell (client). Keep in sync with `server/src/mainSiteShell.ts` (`mainSiteShellCss`).
- * Used by static Vite pages that are not server-rendered.
+ * Main-site shell (client). Keep in sync with `server/src/mainSiteShell.ts` and
+ * `server/src/mainSiteTypography.ts` (Nimiq Style fonts).
  */
-@import url("https://fonts.googleapis.com/css2?family=Mulish:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Muli:wght@400;600;700;800&family=Mulish:wght@400;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css?family=Fira+Mono&text=0123456789ABCDEFGHJKLMNPQRSTUVXY%20");
 
 :root {
   --ms-bg: #0f1419;
@@ -23,7 +24,11 @@
 }
 
 html {
-  font-family: "Mulish", "Muli", system-ui, sans-serif;
+  font-family: Muli, Mulish, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans,
+    Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   background: var(--ms-bg);
 }
 
@@ -34,6 +39,10 @@ body.ms-site {
   box-sizing: border-box;
   background: var(--ms-bg);
   color: var(--ms-text);
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 1rem;
+  line-height: 1.45;
 }
 
 body.ms-site.ms-site--wide {
@@ -104,42 +113,159 @@ body.ms-site.ms-site--wide {
 .main-site-nav {
   display: inline-flex;
   align-items: center;
-  gap: 0.18rem;
   min-width: 0;
-  padding: 0.16rem;
+}
+
+.main-site-nav-dropdown {
+  position: relative;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.main-site-nav-dropdown__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0 0.72rem 0 0.82rem;
   border: 1px solid rgba(42, 57, 79, 0.82);
   border-radius: 999px;
   background: rgba(15, 22, 34, 0.58);
-}
-
-.main-site-nav__link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.8rem;
-  padding: 0 0.62rem;
-  border-radius: 999px;
   color: var(--ms-muted-bright);
+  font: inherit;
   font-size: 0.78rem;
   font-weight: 650;
   line-height: 1;
-  text-decoration: none;
+  cursor: pointer;
   white-space: nowrap;
+  max-width: min(12rem, 42vw);
 }
 
-.main-site-nav__link:hover {
+.main-site-nav-dropdown__trigger:hover {
   color: #e6edf3;
-  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--ms-accent-hover-border);
+  background: rgba(22, 29, 42, 0.82);
 }
 
-.main-site-nav__link:focus-visible {
+.main-site-nav-dropdown__trigger:focus-visible {
   outline: 2px solid var(--ms-link);
   outline-offset: 2px;
 }
 
-.main-site-nav__link[aria-current="page"] {
+.main-site-nav-dropdown__trigger[aria-expanded="true"] {
   color: #eef6ff;
   background: var(--ms-accent-tint);
   box-shadow: inset 0 0 0 1px rgba(77, 131, 208, 0.38);
+}
+
+#mainSiteNavCurrentLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.main-site-nav-dropdown__chevron {
+  font-size: 0.72rem;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.main-site-nav-dropdown__panel {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 24;
+  min-width: 13.5rem;
+  max-width: min(18rem, 92vw);
+  max-height: min(70vh, 24rem);
+  overflow: auto;
+  padding: 0.35rem;
+  border: 1px solid #2d3c52;
+  border-radius: 12px;
+  background: #121926;
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.32);
+}
+
+.main-site-nav-dropdown__panel[hidden] {
+  display: none !important;
+}
+
+.main-site-nav-dropdown__group {
+  border-bottom: 1px solid rgba(45, 60, 82, 0.75);
+  margin-bottom: 0.2rem;
+  padding-bottom: 0.2rem;
+}
+
+.main-site-nav-dropdown__group:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.main-site-nav-dropdown__group[hidden] {
+  display: none !important;
+}
+
+.main-site-nav-dropdown__group-label {
+  display: list-item;
+  list-style: none;
+  cursor: pointer;
+  padding: 0.28rem 0.45rem 0.18rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ms-muted);
+  user-select: none;
+}
+
+.main-site-nav-dropdown__group-label::-webkit-details-marker {
+  display: none;
+}
+
+.main-site-nav-dropdown__group-label::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.35rem;
+  font-size: 0.62rem;
+  transition: transform 0.12s ease;
+}
+
+.main-site-nav-dropdown__group[open] > .main-site-nav-dropdown__group-label::before {
+  transform: rotate(90deg);
+}
+
+.main-site-nav-dropdown__group-links {
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+  padding: 0.08rem 0.2rem 0.2rem;
+}
+
+.main-site-nav-dropdown__link {
+  display: block;
+  padding: 0.42rem 0.45rem;
+  border-radius: 6px;
+  color: #d6e0ef;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+}
+
+.main-site-nav-dropdown__link:hover {
+  background: #1f2a3a;
+  color: #f1f5f9;
+}
+
+.main-site-nav-dropdown__link:focus-visible {
+  outline: 2px solid var(--ms-link);
+  outline-offset: 1px;
+}
+
+.main-site-nav-dropdown__link[aria-current="page"] {
+  background: rgba(90, 160, 255, 0.12);
+  color: #eef6ff;
+  box-shadow: inset 0 0 0 1px rgba(77, 131, 208, 0.32);
 }
 
 [data-auth-nav][hidden] {
@@ -499,7 +625,7 @@ body.ms-site.ms-site--wide {
 }
 
 .ms-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Fira Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8rem;
 }
 
@@ -779,12 +905,22 @@ img.ident {
     order: 3;
     flex: 1 0 100%;
     width: 100%;
-    overflow-x: auto;
-    justify-content: flex-start;
-    border-radius: 12px;
   }
 
-  .main-site-nav__link {
-    min-height: 2rem;
+  .main-site-nav-dropdown {
+    width: 100%;
+  }
+
+  .main-site-nav-dropdown__trigger {
+    width: 100%;
+    max-width: none;
+    justify-content: space-between;
+  }
+
+  .main-site-nav-dropdown__panel {
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: none;
   }
 }

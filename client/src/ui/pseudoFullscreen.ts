@@ -29,6 +29,38 @@ export function isNimiqPayWebViewHost(): boolean {
   return window.nimiqPay != null;
 }
 
+/** Release a prior `screen.orientation.lock` (e.g. after visiting another mini-app). */
+export function unlockScreenOrientation(): void {
+  if (typeof screen === "undefined") return;
+  const orientation = (screen as Screen & { orientation?: { unlock?: () => void } })
+    .orientation;
+  orientation?.unlock?.();
+}
+
+/**
+ * After cross-mini-app navigation, `window.nimiqPay` can appear a few frames after load.
+ * Wait briefly so Pay HUD/layout initializes (login menu delay usually hides this race).
+ */
+export function waitForNimiqPayWebViewHost(timeoutMs = 3000): Promise<boolean> {
+  if (typeof window === "undefined") return Promise.resolve(false);
+  if (window.nimiqPay != null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const tick = (): void => {
+      if (window.nimiqPay != null) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        resolve(false);
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
+}
+
 const NIMIQ_PAY_HOST_CLASS = "nspace-nimiq-pay-host";
 const NIMIQ_PAY_PORTRAIT_CLASS = "nspace-nimiq-pay-portrait";
 const NIMIQ_PAY_LANDSCAPE_CLASS = "nspace-nimiq-pay-landscape";
@@ -51,6 +83,15 @@ export function isNimiqPayHostDocument(): boolean {
 export function isNimiqPayPortraitViewport(width: number, height: number): boolean {
   if (!width || !height) return false;
   return width / height < NIMIQ_PAY_GAME_ASPECT;
+}
+
+/** Visible viewport inside the Pay WebView (preferred over layout/frame size for orientation). */
+export function getNimiqPayViewportSize(): { width: number; height: number } {
+  const vv = window.visualViewport;
+  return {
+    width: vv?.width ?? window.innerWidth,
+    height: vv?.height ?? window.innerHeight,
+  };
 }
 
 export function isNimiqPayPortraitDocument(): boolean {
@@ -86,13 +127,62 @@ export function syncNimiqPayOrientationClasses(
   return portrait;
 }
 
+let payLayoutLifecycleBound = false;
+
+function bindNimiqPayLayoutLifecycle(): void {
+  if (payLayoutLifecycleBound || typeof window === "undefined") return;
+  payLayoutLifecycleBound = true;
+  window.addEventListener("pageshow", () => {
+    if (!isNimiqPayWebViewHost()) return;
+    enableNimiqPayViewportLayout();
+    scheduleNimiqPayLayoutResync();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !isNimiqPayWebViewHost()) return;
+    unlockScreenOrientation();
+    syncNimiqPayOrientationClasses();
+    requestMiniAppImmersiveLayout();
+    scheduleNimiqPayLayoutResync();
+  });
+  const screenOrientation = (screen as Screen & {
+    orientation?: { addEventListener?: ScreenOrientation["addEventListener"] };
+  }).orientation;
+  screenOrientation?.addEventListener?.("change", () => {
+    if (!isNimiqPayWebViewHost()) return;
+    scheduleNimiqPayLayoutResync();
+  });
+  window.addEventListener("orientationchange", () => {
+    if (!isNimiqPayWebViewHost()) return;
+    scheduleNimiqPayLayoutResync();
+  });
+}
+
+/**
+ * Re-sync Pay orientation after cross-mini-app navigation when the WebView
+ * reports layout vs visual viewport sizes out of step briefly.
+ */
+export function scheduleNimiqPayLayoutResync(): void {
+  if (!isNimiqPayWebViewHost()) return;
+  const tick = (): void => {
+    syncNimiqPayOrientationClasses();
+    document.dispatchEvent(new Event("nspace-pseudo-fullscreen-change"));
+  };
+  tick();
+  requestAnimationFrame(tick);
+  requestAnimationFrame(() => requestAnimationFrame(tick));
+  window.setTimeout(tick, 100);
+  window.setTimeout(tick, 400);
+}
+
 /** Fill the Pay WebView visible viewport (no Fullscreen API); safe to call repeatedly. */
 export function enableNimiqPayViewportLayout(): void {
   if (!isNimiqPayWebViewHost()) return;
   markNimiqPayHostDocument();
+  bindNimiqPayLayoutLifecycle();
   syncNimiqPayOrientationClasses();
   requestMiniAppImmersiveLayout();
   setPseudoFullscreen(true);
+  scheduleNimiqPayLayoutResync();
 }
 
 let visualViewportCleanup: (() => void) | null = null;

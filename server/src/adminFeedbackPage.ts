@@ -20,7 +20,7 @@ export function adminFeedbackPageHtml(): string {
     ${analyticsPageRootCss()}
     ${mainSiteShellCss()}
     ${analyticsTopbarCss()}
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.84rem; }
+    .mono { font-size: 0.84rem; }
     .fb-panel { border: 1px solid #263348; border-radius: 10px; background: #0f1622; padding: 0.75rem 0.85rem; width: 100%; box-sizing: border-box; }
     .fb-back {
       appearance: none; border: none; background: transparent; color: #93c5fd;

@@ -222,6 +222,11 @@ export default defineConfig({
         changeOrigin: true,
         configure: attachDevProxyHandlers,
       },
+      "/advertise": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+        configure: attachDevProxyHandlers,
+      },
       "/admin": {
         target: "http://127.0.0.1:3001",
         changeOrigin: true,

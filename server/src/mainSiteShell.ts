@@ -107,7 +107,7 @@ export function mainSiteShellCss(): string {
     }
     .ms-site .ms-mono,
     .ms-mono {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-family: "Fira Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 0.8rem;
     }
     .ms-summary {

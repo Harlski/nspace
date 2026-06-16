@@ -32,6 +32,8 @@ _Add sections here as the system matures. Keep each bullet concrete enough that 
 
 - **Reposition ghost previews (authoring)** — When the player is **moving** or **repositioning** a placeable obstacle in build/edit flows, the client should show a **semi-transparent preview (“ghost”)** at a **valid** hover destination so intent is obvious before commit. That preview is **client-only** and must **not** be treated as authoritative world state until the server accepts the move. Prefer **one visual language** across object kinds: block-shaped props use the same translucent material path as **new-block placement preview** (`makeBlockMesh` with `ghost: true` on the client); gates and billboards may add their own cues (e.g. exit/front floor tints, footprint highlights, billboard-specific ghost mesh) on top. **New** reposition or drag-to-move flows should ship **with** an appropriate ghost or equivalent footprint preview in the same change, not as a follow-up polish item.
 
+- **Mini Apps discovery via in-world links** — Billboards that promote Nimiq Mini Apps store a canonical **HTTPS** `miniappTargetUrl` on the server; the client navigates to that URL at **visit** time (in Nimiq Pay this loads the other mini-app in the same WebView). Reserve `nimiqpay://miniapp?url=…` for **external** entry (share links that open Pay from outside), not for hops between mini-apps already running in Pay. **Paid** campaign slots are fulfilled server-side after payment-intent verify (`/advertise` dashboard → Hub placement); do not store custom URL schemes in authoritative world state.
+
 ---
 
 ## Recorded decisions & forward constraints

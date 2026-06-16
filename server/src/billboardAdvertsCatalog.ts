@@ -8,6 +8,8 @@ export type BillboardAdvertCatalogEntry = {
   name: string;
   /** HTTPS target after user confirms; empty = no visit affordance. */
   visitUrl: string;
+  /** When set, client opens Nimiq Pay `nimiqpay://miniapp` deeplink in Pay WebView. */
+  miniappTargetUrl?: string;
   slides: readonly string[];
   intervalMs: number;
 };
@@ -40,6 +42,14 @@ export const BILLBOARD_ADVERTS_CATALOG: readonly BillboardAdvertCatalogEntry[] =
       name: "Cute Penguin",
       visitUrl: "",
       slides: ["/ai-bb.png"],
+      intervalMs: 8000,
+    },
+    {
+      id: "radio_miniapp_bb",
+      name: "Radio mini-app",
+      visitUrl: "https://radio.nimiqapps.com",
+      miniappTargetUrl: "https://radio.nimiqapps.com",
+      slides: ["/nimiq-bb.png"],
       intervalMs: 8000,
     },
   ];
@@ -80,20 +90,27 @@ export function parseBillboardAdvertIdsFromMessage(msg: {
   return ids;
 }
 
-/** Every advert in the rotation must have https visitUrl when a URL is set. */
+export function validateBillboardHttpsTarget(url: string): boolean {
+  const v = String(url ?? "").trim();
+  if (!v) return true;
+  try {
+    return new URL(v).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Every advert in the rotation must have valid https visit / mini-app targets when set. */
 export function validateAdvertRotationVisitHttps(
   ids: readonly string[]
 ): boolean {
   for (const id of ids) {
     const ad = getBillboardAdvertById(id);
     if (!ad) return false;
-    const v = String(ad.visitUrl ?? "").trim();
-    if (!v) continue;
-    try {
-      if (new URL(v).protocol !== "https:") return false;
-    } catch {
-      return false;
-    }
+    const visit = String(ad.visitUrl ?? "").trim();
+    const mini = String(ad.miniappTargetUrl ?? "").trim();
+    if (visit && !validateBillboardHttpsTarget(visit)) return false;
+    if (mini && !validateBillboardHttpsTarget(mini)) return false;
   }
   return true;
 }

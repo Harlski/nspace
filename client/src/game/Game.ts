@@ -1685,8 +1685,9 @@ export class Game {
     liveChartRangeCycle: boolean;
     /** Seconds per range when `liveChartRangeCycle`. */
     liveChartCycleIntervalSec: number;
-    /** Last Images vs Other tab (restored when reopening the modal). */
-    billboardSourceTab: "images" | "other";
+    /** Last Images vs Other vs Campaign tab (restored when reopening the modal). */
+    billboardSourceTab: "images" | "other" | "campaign";
+    rotationSetId: string;
   } = {
     orientation: "horizontal",
     yawSteps: 0,
@@ -1697,6 +1698,7 @@ export class Game {
     liveChartRangeCycle: false,
     liveChartCycleIntervalSec: 20,
     billboardSourceTab: "images",
+    rotationSetId: "",
   };
   private repositionBillboardId: string | null = null;
   private repositionDraftYaw = 0;
@@ -2116,8 +2118,11 @@ export class Game {
    * metadata for the HUD “Visit …” pill (same placement as portal Enter).
    */
   getStandingBillboardVisitOffer(): {
+    billboardId: string;
+    campaignId?: string;
     visitName: string;
     visitUrl: string;
+    miniappTargetUrl?: string;
   } | null {
     if (!this.selfMesh) return null;
     const t = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
@@ -2127,8 +2132,19 @@ export class Game {
       this.billboardSpecs.values(),
       Date.now()
     );
-    if (!hit?.visitUrl) return null;
-    return { visitName: hit.visitName, visitUrl: hit.visitUrl };
+    if (!hit?.visitUrl && !hit?.miniappTargetUrl) return null;
+    return {
+      billboardId: hit.id,
+      campaignId: hit.campaignId,
+      visitName: hit.visitName,
+      visitUrl: hit.visitUrl,
+      miniappTargetUrl: hit.miniappTargetUrl,
+    };
+  }
+
+  /** Iterable billboard specs for campaign proximity analytics. */
+  iterBillboardSpecs(): Iterable<BillboardState> {
+    return this.billboardSpecs.values();
   }
 
   getSelfPosition(): { x: number; y: number; z: number } | null {
@@ -5927,7 +5943,8 @@ export class Game {
     liveChartFallbackAdvertId: string;
     liveChartRangeCycle: boolean;
     liveChartCycleIntervalSec: number;
-    billboardSourceTab: "images" | "other";
+    billboardSourceTab: "images" | "other" | "campaign";
+    rotationSetId: string;
   } {
     const advertIds = [...this.billboardPlacementDraft.advertIds];
     return {
@@ -5944,6 +5961,7 @@ export class Game {
       liveChartCycleIntervalSec:
         this.billboardPlacementDraft.liveChartCycleIntervalSec,
       billboardSourceTab: this.billboardPlacementDraft.billboardSourceTab,
+      rotationSetId: this.billboardPlacementDraft.rotationSetId,
     };
   }
 
@@ -5957,7 +5975,8 @@ export class Game {
     liveChartFallbackAdvertId?: string;
     liveChartRangeCycle?: boolean;
     liveChartCycleIntervalSec?: number;
-    billboardSourceTab?: "images" | "other";
+    billboardSourceTab?: "images" | "other" | "campaign";
+    rotationSetId?: string;
   }): void {
     let previewPoseChanged = false;
     if (patch.orientation !== undefined) {
@@ -6011,6 +6030,11 @@ export class Game {
     }
     if (patch.billboardSourceTab !== undefined) {
       this.billboardPlacementDraft.billboardSourceTab = patch.billboardSourceTab;
+    }
+    if (patch.rotationSetId !== undefined) {
+      this.billboardPlacementDraft.rotationSetId = String(
+        patch.rotationSetId ?? ""
+      ).trim();
     }
     if (patch.liveChartFallbackAdvertId !== undefined) {
       const k = String(patch.liveChartFallbackAdvertId ?? "").trim();
@@ -6543,10 +6567,17 @@ export class Game {
     }
   }
 
-  setBillboards(billboards: readonly BillboardState[]): void {
+  setBillboards(
+    billboards: readonly BillboardState[],
+    opts?: { refreshRotationContent?: boolean }
+  ): void {
+    const refreshRotation = opts?.refreshRotationContent !== false;
     this.billboardSyncGen++;
     const gen = this.billboardSyncGen;
     const prevSelectedBb = this.selectedBillboardId;
+    const prevSpecs = refreshRotation
+      ? null
+      : new Map(this.billboardSpecs);
     for (const t of this.billboardTimers.values()) {
       clearInterval(t);
     }
@@ -6558,7 +6589,30 @@ export class Game {
     this.billboardRoots.clear();
     this.billboardSpecs.clear();
     for (const raw of billboards) {
-      const rawIds = raw.advertIds;
+      let merged = raw;
+      if (!refreshRotation && String(raw.rotationSetId ?? "").trim()) {
+        const prev = prevSpecs?.get(raw.id);
+        if (prev?.rotationSetId) {
+          merged = {
+            ...raw,
+            slides: prev.slides,
+            intervalMs: prev.intervalMs,
+            slideDurationsMs: prev.slideDurationsMs,
+            slideVisitNames: prev.slideVisitNames,
+            slideVisitUrls: prev.slideVisitUrls,
+            slideMiniappTargetUrls: prev.slideMiniappTargetUrls,
+            slideCampaignIds: prev.slideCampaignIds,
+            advertIds: prev.advertIds,
+            advertId: prev.advertId,
+            visitName: prev.visitName,
+            visitUrl: prev.visitUrl,
+            miniappTargetUrl: prev.miniappTargetUrl,
+            slideshowEpochMs: prev.slideshowEpochMs,
+            rotationRevision: prev.rotationRevision,
+          };
+        }
+      }
+      const rawIds = merged.advertIds;
       let advertIds: string[] | undefined;
       if (Array.isArray(rawIds) && rawIds.length > 0) {
         advertIds = rawIds
@@ -6566,11 +6620,11 @@ export class Game {
           .filter(Boolean)
           .slice(0, 8);
       }
-      if (!advertIds?.length && raw.advertId) {
-        advertIds = [String(raw.advertId).trim()].filter(Boolean);
+      if (!advertIds?.length && merged.advertId) {
+        advertIds = [String(merged.advertId).trim()].filter(Boolean);
       }
-      const se = Number(raw.slideshowEpochMs);
-      const lcRaw = raw.liveChart as
+      const se = Number(merged.slideshowEpochMs);
+      const lcRaw = merged.liveChart as
         | {
             range?: string;
             fallbackAdvertId?: string;
@@ -6608,12 +6662,31 @@ export class Game {
         };
       }
       const b: BillboardState = {
-        ...raw,
-        advertId: String(raw.advertId ?? "").trim(),
+        ...merged,
+        advertId: String(merged.advertId ?? "").trim(),
         advertIds: advertIds?.length ? advertIds : undefined,
         slideshowEpochMs: Number.isFinite(se) ? se : undefined,
-        visitName: String(raw.visitName ?? "").trim(),
-        visitUrl: String(raw.visitUrl ?? "").trim(),
+        visitName: String(merged.visitName ?? "").trim(),
+        visitUrl: String(merged.visitUrl ?? "").trim(),
+        miniappTargetUrl: String(merged.miniappTargetUrl ?? "").trim() || undefined,
+        campaignId: String(merged.campaignId ?? "").trim() || undefined,
+        rotationSetId: String(merged.rotationSetId ?? "").trim() || undefined,
+        rotationRevision: Number(merged.rotationRevision) || undefined,
+        slideDurationsMs: Array.isArray(merged.slideDurationsMs)
+          ? merged.slideDurationsMs
+          : undefined,
+        slideVisitNames: Array.isArray(merged.slideVisitNames)
+          ? merged.slideVisitNames
+          : undefined,
+        slideVisitUrls: Array.isArray(merged.slideVisitUrls)
+          ? merged.slideVisitUrls
+          : undefined,
+        slideMiniappTargetUrls: Array.isArray(merged.slideMiniappTargetUrls)
+          ? merged.slideMiniappTargetUrls
+          : undefined,
+        slideCampaignIds: Array.isArray(merged.slideCampaignIds)
+          ? merged.slideCampaignIds
+          : undefined,
         liveChart,
       };
       this.billboardSpecs.set(b.id, b);

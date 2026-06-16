@@ -115,6 +115,17 @@ export type BillboardState = {
   slideshowEpochMs?: number;
   visitName: string;
   visitUrl: string;
+  /** HTTPS mini-app target; client opens `nimiqpay://` deeplink in Nimiq Pay. */
+  miniappTargetUrl?: string;
+  campaignId?: string;
+  rotationSetId?: string;
+  rotationRevision?: number;
+  slideDurationsMs?: number[];
+  slideVisitNames?: string[];
+  slideVisitUrls?: string[];
+  slideMiniappTargetUrls?: string[];
+  slideCampaignIds?: string[];
+  billboardKind?: string;
   /** Live NIM OHLC chart; client loads data from nim-chart-service. */
   liveChart?: {
     range: "24h" | "7d";
@@ -798,9 +809,10 @@ export function sendPlaceBillboard(
     x: number;
     z: number;
     orientation: "horizontal" | "vertical";
-    advertId: string;
-    advertIds: string[];
-    intervalMs: number;
+    advertId?: string;
+    advertIds?: string[];
+    intervalMs?: number;
+    rotationSetId?: string;
     liveChart?: {
     range: "24h" | "7d";
     fallbackAdvertId: string;
@@ -815,10 +827,14 @@ export function sendPlaceBillboard(
     x: payload.x,
     z: payload.z,
     orientation: payload.orientation,
-    advertId: payload.advertId,
-    advertIds: payload.advertIds,
-    intervalMs: payload.intervalMs,
   };
+  if (payload.rotationSetId) {
+    body.rotationSetId = payload.rotationSetId;
+  } else {
+    body.advertId = payload.advertId ?? "";
+    body.advertIds = payload.advertIds ?? [];
+    body.intervalMs = payload.intervalMs ?? 8000;
+  }
   if (payload.liveChart) {
     body.liveChart = payload.liveChart;
   }
@@ -1055,6 +1071,30 @@ export function sendViewInterest(
 export function sendClientPing(ws: WebSocket, id: number): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "clientPing", id }));
+}
+
+/** Batched on-screen visibility for funded campaign slides (server aggregates per wallet). */
+export function sendCampaignImpressions(
+  ws: WebSocket,
+  items: Array<{ campaignId: string; visibleMs: number }>
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  if (!Array.isArray(items) || items.length === 0) return;
+  ws.send(JSON.stringify({ type: "campaignImpression", items }));
+}
+
+/** Player confirmed a billboard visit link for a campaign slide. */
+export function sendCampaignLinkClick(
+  ws: WebSocket,
+  payload: { campaignId: string; billboardId?: string }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const campaignId = String(payload.campaignId ?? "").trim();
+  if (!campaignId) return;
+  const body: Record<string, string> = { type: "campaignLinkClick", campaignId };
+  const billboardId = String(payload.billboardId ?? "").trim();
+  if (billboardId) body.billboardId = billboardId;
+  ws.send(JSON.stringify(body));
 }
 
 export function sendChat(ws: WebSocket, text: string): void {
