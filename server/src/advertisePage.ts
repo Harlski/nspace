@@ -76,6 +76,7 @@ export function advertisePageHtml(): string {
       color: #fcd34d;
       margin: 0 0 1rem;
     }
+    .adv-notice--warn a { color: #fde68a; font-weight: 600; }
     .adv-meta { font-size: 0.8125rem; color: #7b8da8; line-height: 1.45; }
     .adv-tx-history { margin-top: 1rem; padding-top: 0.85rem; border-top: 1px solid #1e293b; }
     .adv-tx-title { margin: 0 0 0.5rem; font-size: 0.8125rem; font-weight: 600; color: #9fb0c7; }
@@ -469,7 +470,19 @@ export function advertisePageHtml(): string {
   </div>
   <script>
     var NIMIQ_HEX_SPINNER = ${nimiqHexSpinner};
-    var AUTH_KEYS = ["nspace_analytics_auth_token", "nspace_pending_payouts_token"];
+    var ADV_TELEGRAM_URL = "https://t.me/nimiqspace";
+    function advertiseSupportMessageText() {
+      return "Something went wrong. Reach out on Telegram if it is not fixed soon.";
+    }
+    function advertiseSupportMessageHtml() {
+      return (
+        "Something went wrong. Reach out on " +
+        '<a href="' +
+        escHtml(ADV_TELEGRAM_URL) +
+        '" target="_blank" rel="noopener noreferrer">Telegram</a> ' +
+        "if it is not fixed soon."
+      );
+    }
     function readAuthToken() {
       if (typeof window.__nsHydrateMainSiteAuth === "function") {
         window.__nsHydrateMainSiteAuth();
@@ -1362,7 +1375,7 @@ export function advertisePageHtml(): string {
         return "Payment quote expired. Close and use Retry payment.";
       }
       if (code === "payment_intent_not_configured") {
-        return "Payments are not configured on this server.";
+        return advertiseSupportMessageText();
       }
       if (code === "campaign_not_awaiting_payment" || code === "campaign_missing_intent") {
         return "No payment is in progress for this campaign yet.";
@@ -1532,9 +1545,7 @@ export function advertisePageHtml(): string {
       if (meta && meta.paymentIntentConfigured) return "";
       return (
         '<p class="adv-notice adv-notice--warn">' +
-        "Campaign payments are not available on this server yet. " +
-        "The API host needs the payment-intent sidecar configured " +
-        "(<code>PAYMENT_INTENT_SERVICE_URL</code> and <code>PAYMENT_INTENT_API_SECRET</code>)." +
+        advertiseSupportMessageHtml() +
         "</p>"
       );
     }
@@ -1544,6 +1555,7 @@ export function advertisePageHtml(): string {
       if (payMsg.indexOf("popup blocked") !== -1) return true;
       if (payMsg.indexOf("pay manually") !== -1) return true;
       return (
+        payMsg.indexOf("Something went wrong") !== -1 ||
         payMsg.indexOf("not configured") !== -1 ||
         payMsg.indexOf("out of date") !== -1 ||
         payMsg.indexOf("cannot be funded") !== -1 ||
@@ -1872,7 +1884,7 @@ export function advertisePageHtml(): string {
     }
     function mapIntentCreateError(err) {
       if (err === "payment_intent_not_configured") {
-        return "Payments are not configured on this server. Set PAYMENT_INTENT_SERVICE_URL and PAYMENT_INTENT_API_SECRET in server/.env and run the payment-intent sidecar.";
+        return advertiseSupportMessageText();
       }
       if (err.indexOf("not implemented yet") !== -1 || err.indexOf("payment_intent_feature_stale") !== -1) {
         return "Payment service is out of date. Rebuild it: docker compose build payment-intent && docker compose --profile payment up -d payment-intent";
@@ -2337,8 +2349,7 @@ export function advertisePageHtml(): string {
       var meta = advDashboardState.meta || {};
       if (!meta.paymentIntentConfigured) {
         if (msg) {
-          msg.textContent =
-            "Payments are not configured on this server. Contact the operator to enable the payment-intent service.";
+          msg.innerHTML = advertiseSupportMessageHtml();
           msg.className = "err";
           msg.hidden = false;
         }
