@@ -68,6 +68,14 @@ export function advertisePageHtml(): string {
     .adv-actions button.secondary { background: #1a2433; border-color: #334155; color: #c8d4e4; font-weight: 600; }
     .adv-hint, .adv-small { font-size: 0.8125rem; color: #6b7d95; margin: 0.15rem 0 0; line-height: 1.45; }
     .adv-notice { font-size: 0.875rem; color: #9fb0c7; margin: 0.5rem 0 0; line-height: 1.45; }
+    .adv-notice--warn {
+      padding: 0.65rem 0.75rem;
+      border-radius: 8px;
+      border: 1px solid #854d0e;
+      background: #422006;
+      color: #fcd34d;
+      margin: 0 0 1rem;
+    }
     .adv-meta { font-size: 0.8125rem; color: #7b8da8; line-height: 1.45; }
     .adv-tx-history { margin-top: 1rem; padding-top: 0.85rem; border-top: 1px solid #1e293b; }
     .adv-tx-title { margin: 0 0 0.5rem; font-size: 0.8125rem; font-weight: 600; color: #9fb0c7; }
@@ -1346,11 +1354,18 @@ export function advertisePageHtml(): string {
       }
       if (fundOpen && body.error) {
         setFundPaymentUi("error", mapFundSyncError(body.error));
+        stopPaymentSyncPoll();
       }
     }
     function mapFundSyncError(code) {
       if (code === "payment_intent_expired") {
         return "Payment quote expired. Close and use Retry payment.";
+      }
+      if (code === "payment_intent_not_configured") {
+        return "Payments are not configured on this server.";
+      }
+      if (code === "campaign_not_awaiting_payment" || code === "campaign_missing_intent") {
+        return "No payment is in progress for this campaign yet.";
       }
       if (code === "payment_not_confirmed") {
         return "Payment not confirmed yet. Still checking…";
@@ -1513,8 +1528,33 @@ export function advertisePageHtml(): string {
         "</div>"
       );
     }
+    function renderPaymentSetupNotice(meta) {
+      if (meta && meta.paymentIntentConfigured) return "";
+      return (
+        '<p class="adv-notice adv-notice--warn">' +
+        "Campaign payments are not available on this server yet. " +
+        "The API host needs the payment-intent sidecar configured " +
+        "(<code>PAYMENT_INTENT_SERVICE_URL</code> and <code>PAYMENT_INTENT_API_SECRET</code>)." +
+        "</p>"
+      );
+    }
+    function isFundPreflightError(payMsg) {
+      if (!payMsg) return true;
+      if (payMsg === "Payment cancelled.") return false;
+      if (payMsg.indexOf("popup blocked") !== -1) return true;
+      if (payMsg.indexOf("pay manually") !== -1) return true;
+      return (
+        payMsg.indexOf("not configured") !== -1 ||
+        payMsg.indexOf("out of date") !== -1 ||
+        payMsg.indexOf("cannot be funded") !== -1 ||
+        payMsg.indexOf("valid fund amount") !== -1 ||
+        payMsg.indexOf("Enter a fund amount") !== -1 ||
+        payMsg.indexOf("Could not create payment intent") !== -1
+      );
+    }
     function renderAdvertiseDashboard(meta, campaigns, selectedId, previewWallet, activeTab) {
       return (
+        renderPaymentSetupNotice(meta) +
         renderAdvertiseTabBar(activeTab) +
         '<div class="adv-tab-panel" id="advTabNew" role="tabpanel"' +
         (activeTab === "new" ? "" : " hidden") +
@@ -1847,6 +1887,12 @@ export function advertisePageHtml(): string {
       if (err === "campaign_not_payable") {
         return "This campaign cannot be funded in its current state.";
       }
+      if (err === "campaign_update_failed") {
+        return "Could not update campaign for payment. Refresh and try again.";
+      }
+      if (err === "campaign_not_found") {
+        return "Campaign not found. Refresh the page and try again.";
+      }
       return err || "Could not create payment intent";
     }
     function preloadWalletSdks() {
@@ -1995,7 +2041,6 @@ export function advertisePageHtml(): string {
         updateCampaignInState(r.body.campaign);
         advDashboardState.selectedId = campaignId;
       }
-      refreshCampaignsUi();
       var amountLuna = resolvePaymentAmountLuna(intent, amountNim);
       if (amountLuna == null) {
         throw new Error("invalid_amount");
@@ -2289,6 +2334,16 @@ export function advertisePageHtml(): string {
         return;
       }
       if (msg) { msg.hidden = true; msg.textContent = ""; }
+      var meta = advDashboardState.meta || {};
+      if (!meta.paymentIntentConfigured) {
+        if (msg) {
+          msg.textContent =
+            "Payments are not configured on this server. Contact the operator to enable the payment-intent service.";
+          msg.className = "err";
+          msg.hidden = false;
+        }
+        return;
+      }
       if (confirmBtn) {
         confirmBtn.disabled = true;
         confirmBtn.textContent = isNimiqPayMiniApp() ? "Creating payment…" : "Opening wallet…";
@@ -2307,34 +2362,36 @@ export function advertisePageHtml(): string {
           await fundViaHubWithIntentPost(hub, id, amountNim);
         }
         setFundPaymentUi("confirming", "Payment sent. Confirming on chain…");
+        refreshCampaignsUi();
         startPaymentSyncPoll(id);
       } catch (payErr) {
         var payMsg = walletPaymentErrorMessage(payErr);
-        if (msg) {
-          if (payMsg === "Payment cancelled.") {
-            resetFundPaymentUi();
+        if (payMsg === "Payment cancelled.") {
+          resetFundPaymentUi();
+          if (msg) {
             msg.textContent = "Payment cancelled. Use Retry payment to try again.";
             msg.className = "adv-hint";
             msg.hidden = false;
-          } else if (
-            payMsg.indexOf("pay manually") !== -1 ||
-            payMsg.indexOf("popup blocked") !== -1 ||
-            payMsg.indexOf("not configured") !== -1
-          ) {
-            msg.textContent = payMsg;
-            msg.className = "err";
-            msg.hidden = false;
-          } else {
+          }
+          refreshCampaignsUi();
+          startPaymentSyncPoll(id);
+        } else if (isFundPreflightError(payMsg)) {
+          resetFundPaymentUi();
+          if (msg) {
             msg.textContent = payMsg;
             msg.className = "err";
             msg.hidden = false;
           }
-        }
-        if (
-          payMsg !== "Payment cancelled." &&
-          payMsg.indexOf("popup blocked") === -1
-        ) {
+        } else if (payMsg.indexOf("pay manually") !== -1) {
+          resetFundPaymentUi();
+          if (msg) {
+            msg.textContent = payMsg;
+            msg.className = "err";
+            msg.hidden = false;
+          }
+        } else {
           setFundPaymentUi("confirming", "Checking payment status…");
+          refreshCampaignsUi();
           startPaymentSyncPoll(id);
         }
       } finally {
