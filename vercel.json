@@ -33,6 +33,26 @@
       "destination": "https://api.nimiq.space/admin/feedback"
     },
     {
+      "source": "/admin/campaign",
+      "destination": "https://api.nimiq.space/admin/campaign"
+    },
+    {
+      "source": "/admin/bans",
+      "destination": "https://api.nimiq.space/admin/bans"
+    },
+    {
+      "source": "/advertise/uploads/:path*",
+      "destination": "https://api.nimiq.space/advertise/uploads/:path*"
+    },
+    {
+      "source": "/advertise/how-it-works",
+      "destination": "https://api.nimiq.space/advertise/how-it-works"
+    },
+    {
+      "source": "/advertise",
+      "destination": "https://api.nimiq.space/advertise"
+    },
+    {
       "source": "/payouts",
       "destination": "https://api.nimiq.space/payouts"
     },
