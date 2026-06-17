@@ -178,6 +178,7 @@ export default defineConfig({
         payouts: resolve(__dirname, "payouts.html"),
         analytics: resolve(__dirname, "analytics.html"),
         admin: resolve(__dirname, "admin.html"),
+        roomPreview: resolve(__dirname, "roomPreview.html"),
         tacs: resolve(__dirname, "tacs.html"),
         privacy: resolve(__dirname, "privacy.html"),
       },

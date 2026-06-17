@@ -34,6 +34,8 @@ _Add sections here as the system matures. Keep each bullet concrete enough that 
 
 - **Mini Apps discovery via in-world links** — Billboards that promote Nimiq Mini Apps store a canonical **HTTPS** `miniappTargetUrl` on the server; the client navigates to that URL at **visit** time (in Nimiq Pay this loads the other mini-app in the same WebView). Reserve `nimiqpay://miniapp?url=…` for **external** entry (share links that open Pay from outside), not for hops between mini-apps already running in Pay. **Paid** campaign slots are fulfilled server-side after payment-intent verify (`/advertise` dashboard → Hub placement); do not store custom URL schemes in authoritative world state.
 
+- **New routed surfaces ship with split-host routing** — Production serves the **client SPA** from a static host (Vercel) and the **game/API server** separately, and the SPA host has **no catch-all fallback**. So any **new server-rendered HTML route** (e.g. another `/admin/*` page) or **new clean-path client route** must add its rewrite to **both** [`vercel.json`](../vercel.json) and [`client/vercel.json`](../client/vercel.json) **in the same change** — otherwise it works on the all-in-one server but **404s on Vercel**. JSON under `/api/*` is already covered by the `/api/:path*` rewrite; static build artifacts referenced with their extension (e.g. `roomPreview.html`) are served directly and need none. See **Split SPA hosting: route parity for new pages** under *Recorded decisions*.
+
 ---
 
 ## Recorded decisions & forward constraints
@@ -128,6 +130,14 @@ After that, the author **reviews diffs**, then **`git add`**, **`git commit`**, 
 
 **In-app:** `/patchnotes` bundles frozen semver `public/*.md` at client build time; optional list (and leading-paragraph) tags **`[NEW]`**, **`[FIX]`**, **`[CHANGE]`**, **`[PERF]`**, **`[OPS]`**, **`[SEC]`** render as compact badges (see [client/src/patchnotes/mdToHtml.ts](../client/src/patchnotes/mdToHtml.ts)). The audience dropdown includes **Hotfix** when that version’s `04-hotfix.md` exists and is non-empty.
 
+### Split SPA hosting: route parity for new pages
+
+**Today:** Production hosts the **client SPA** on a static host (Vercel) and the **game/API server** separately (`api.nimiq.space`). Both [`vercel.json`](../vercel.json) (repo root — the active build config: `npm run build -w client`, `outputDirectory: client/dist`) and [`client/vercel.json`](../client/vercel.json) (used if the Vercel **Root Directory** is `client`) enumerate **explicit rewrites**; there is **no SPA catch-all**. `/api/:path*` and `/nim-chart-api/:path*` proxy all JSON to the API host. Each **server-rendered HTML page** has a 1:1 rewrite to the API host (`/admin`, `/admin/system`, `/admin/header`, `/admin/settings`, `/admin/feedback`, `/admin/campaign`, `/admin/bans`, `/admin/rooms`, `/analytics`, `/payouts`, `/advertise`, …). **Clean-path client routes** rewrite to their built HTML (`/patchnotes` → `/index.html`, `/tacs` → `/tacs.html`, `/privacy` → `/privacy.html`). Static MPA build artifacts referenced **with their extension** (e.g. `roomPreview.html`) are served directly with no rewrite.
+
+**Norm / forward constraint:** Adding a **new server-rendered page** or **new clean-path client route** must include the matching rewrite in **both** `vercel.json` files **in the same change**, and keep the route list in [live-service-implementation.md](live-service-implementation.md) current. New endpoints under `/api/*` need no new rewrite (the catch-all covers them). After editing, verify both files still parse as JSON.
+
+Update this subsection if the hosting split, the catch-all policy, or the API host changes.
+
 ### Production VPS deploy: stop, backup `data/`, then upgrade
 
 **Today:** The [GitHub Actions deploy workflow](../.github/workflows/deploy-docker.yml) (documented in [deploy-github-docker.md](deploy-github-docker.md)) **stops** the Compose project first (`docker compose stop`) so the `nspace` container receives **SIGTERM** and the server’s shutdown path sync-flushes world state, event logs, and related on-disk stores. It then writes a **gzip tarball** of the host **`data/`** tree (the bind mount for live persistence, including optional `data/payment-intent/` when that sidecar is used) under **`backups/nspace-data-<UTC-timestamp>.tar.gz`** beside the clone, then fast-forwards git and runs **`docker compose build`** / **`up -d`**.
@@ -169,3 +179,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-05-21** — Build dock: `colorRgb`, shared hex popover, live preview without per-keystroke `syncBuildHud`. See [reasons/reason_284651.md](reasons/reason_284651.md).
 - **2026-05-29** — Pixel board: forward-only paint log + public `/pixels.png` snapshot. See [reasons/reason_482901.md](reasons/reason_482901.md).
 - **2026-05-24** — Per-tile floor `colorRgb` (Room → Floor hue ring); cube rotation steppers; tiles “today” note. See [reasons/reason_392847.md](reasons/reason_392847.md).
+- **2026-06-17** — Principle + recorded decision: new server-rendered / clean-path routes must add Vercel rewrite parity in **both** `vercel.json` files in the same change (no SPA catch-all). See [reasons/reason_731654.md](reasons/reason_731654.md).

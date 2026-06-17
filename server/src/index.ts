@@ -13,7 +13,10 @@ import {
   addClient,
   adminRandomExtraFloorLayout,
   broadcastRestartPendingNotice,
+  broadcastRoomCatalogRefresh,
   getLiveRealPlayerCountInRoom,
+  getRoomFloorColorMapForThumbnail,
+  getRoomLayoutSnapshot,
   resolveResumeLogin,
   snapshotChatHistoryForWallet,
   startRoomTick,
@@ -43,7 +46,27 @@ import { flushBillboardsSync } from "./billboards.js";
 import { flushVoxelTextsSync } from "./voxelTexts.js";
 import { getTopMazeRecords } from "./mazeRecords.js";
 import { installSwarmErrorForwarder } from "./swarmLogForwarder.js";
-import { CHAMBER_ROOM_ID } from "./roomLayouts.js";
+import {
+  CHAMBER_ROOM_ID,
+  isBuiltinRoomId,
+  listDeletedRoomDefinitions,
+  listRoomDefinitions,
+  normalizeRoomId,
+  PIXEL_ROOM_ID,
+} from "./roomLayouts.js";
+import {
+  getDynamicRoomBuilderAddresses,
+  normalizeBackgroundHuePatch,
+  normalizeBackgroundNeutralPatch,
+  normalizeBuilderAddressesPatch,
+  updateDynamicRoomMetadata,
+} from "./roomRegistry.js";
+import {
+  getBuiltinRoomBuilderAddresses,
+  patchBuiltinRoomSettings,
+} from "./builtinRoomNames.js";
+import { renderRoomThumbnailPng } from "./roomThumbnailImage.js";
+import { adminRoomsPageHtml } from "./adminRoomsPage.js";
 import {
   hasAcceptedCurrentTermsPrivacyDocs,
   recordTermsPrivacyAcceptance,
@@ -204,6 +227,7 @@ import {
   getEffectivePlayerDisplayName,
   getPlayerProfilePublicJson,
   getUsernamePromptStatus,
+  listKnownPlayerUsernames,
   playerHasCustomUsername,
   recordUsernamePromptDeferral,
   setPlayerProfileMessage,
@@ -1083,6 +1107,10 @@ app.get("/admin/campaign", (_req, res) => {
   res.type("html").send(adminCampaignPageHtml());
 });
 
+app.get("/admin/rooms", (_req, res) => {
+  res.type("html").send(adminRoomsPageHtml());
+});
+
 app.get("/advertise", (_req, res) => {
   res.type("html").send(advertisePageHtml());
 });
@@ -1894,6 +1922,240 @@ app.post("/api/admin/random-layout", (req, res) => {
     return;
   }
   res.json({ placed: out.placed, totalExtra: out.totalExtra });
+});
+
+/** Admin room manager: full catalog with category + builder allowlists. */
+/**
+ * Known users for the builder-allowlist picker: recent players, anyone with a
+ * custom username, room owners, and existing builders. Labels reuse the in-game
+ * display-name resolution (custom username, else `NQAB…WXYZ` shorthand).
+ */
+app.get("/api/admin/users", requireSystemAdminWallet, (_req, res) => {
+  const wallets = new Set<string>();
+  const addWallet = (raw: string | null | undefined): void => {
+    const w = String(raw ?? "")
+      .replace(/\s+/g, "")
+      .toUpperCase();
+    if (/^NQ[0-9A-Z]{34}$/.test(w)) wallets.add(w);
+  };
+  for (const addr of listRecentPlayerAddresses(30, 1000)) addWallet(addr);
+  for (const { wallet } of listKnownPlayerUsernames()) addWallet(wallet);
+  for (const d of listRoomDefinitions()) {
+    addWallet(d.ownerAddress);
+    const builders = d.isBuiltin
+      ? getBuiltinRoomBuilderAddresses(d.id)
+      : getDynamicRoomBuilderAddresses(d.id);
+    for (const b of builders) addWallet(b);
+  }
+  for (const d of listDeletedRoomDefinitions()) {
+    addWallet(d.ownerAddress);
+    for (const b of getDynamicRoomBuilderAddresses(d.id)) addWallet(b);
+  }
+  const users = [...wallets]
+    .map((wallet) => {
+      const username = playerHasCustomUsername(wallet)
+        ? getEffectivePlayerDisplayName(wallet)
+        : null;
+      return {
+        wallet,
+        username,
+        label: username || walletDisplayName(wallet),
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .slice(0, 2000);
+  res.json({ users });
+});
+
+app.get("/api/admin/rooms", requireSystemAdminWallet, (_req, res) => {
+  const active = listRoomDefinitions().map((d) => {
+    const category: "builtin" | "official" | "player" = d.isBuiltin
+      ? "builtin"
+      : d.isOfficial
+        ? "official"
+        : "player";
+    return {
+      id: d.id,
+      displayName: d.displayName,
+      ownerAddress: d.ownerAddress,
+      category,
+      isBuiltin: d.isBuiltin,
+      isOfficial: Boolean(d.isOfficial),
+      isPublic: d.isPublic,
+      isDeleted: false,
+      playerCount: getLiveRealPlayerCountInRoom(d.id),
+      backgroundHueDeg: d.backgroundHueDeg ?? null,
+      backgroundNeutral: d.backgroundNeutral ?? null,
+      builderAddresses: d.isBuiltin
+        ? getBuiltinRoomBuilderAddresses(d.id)
+        : getDynamicRoomBuilderAddresses(d.id),
+      builderEditable: true,
+    };
+  });
+  const deleted = listDeletedRoomDefinitions().map((d) => ({
+    id: d.id,
+    displayName: d.displayName,
+    ownerAddress: d.ownerAddress,
+    category: (d.isOfficial ? "official" : "player") as "official" | "player",
+    isBuiltin: false,
+    isOfficial: Boolean(d.isOfficial),
+    isPublic: d.isPublic,
+    isDeleted: true,
+    playerCount: 0,
+    backgroundHueDeg: d.backgroundHueDeg ?? null,
+    backgroundNeutral: d.backgroundNeutral ?? null,
+    builderAddresses: getDynamicRoomBuilderAddresses(d.id),
+    builderEditable: true,
+  }));
+  res.json({ rooms: [...active, ...deleted] });
+});
+
+/** Full layout snapshot for the interactive 3D preview. */
+app.get("/api/admin/rooms/:id/layout", requireSystemAdminWallet, (req, res) => {
+  const snapshot = getRoomLayoutSnapshot(String(req.params.id ?? ""));
+  if (!snapshot) {
+    res.status(404).json({ error: "room_not_found" });
+    return;
+  }
+  res.json(snapshot);
+});
+
+/**
+ * 2D top-down thumbnail PNG. Authenticated via `?token=` query (so an `<img>`
+ * tag can load it) restricted to system admins.
+ */
+app.get("/api/admin/rooms/:id/thumbnail.png", (req, res) => {
+  const token =
+    bearerToken(req) || String((req.query.token as string | undefined) ?? "");
+  let authorized = false;
+  try {
+    if (token) authorized = isAdmin(verifySession(token, jwtSecret).sub);
+  } catch {
+    authorized = false;
+  }
+  if (!authorized) {
+    res.status(401).type("text/plain").send("unauthorized");
+    return;
+  }
+  const roomId = normalizeRoomId(String(req.params.id ?? ""));
+  const snapshot = getRoomLayoutSnapshot(roomId);
+  if (!snapshot) {
+    res.status(404).type("text/plain").send("room not found");
+    return;
+  }
+  let body: Buffer;
+  if (snapshot.spatial && roomId === PIXEL_ROOM_ID) {
+    body = getPixelBoardPngCached().body;
+  } else {
+    const floor = getRoomFloorColorMapForThumbnail(roomId);
+    if (!floor) {
+      res.status(404).type("text/plain").send("room not found");
+      return;
+    }
+    body = renderRoomThumbnailPng({
+      bounds: floor.bounds,
+      colorAt: floor.colorAt,
+      obstacles: snapshot.obstacles.map((o) => ({
+        x: o.x,
+        z: o.z,
+        y: o.y,
+        colorRgb: o.colorRgb,
+      })),
+    });
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.type("image/png").send(body);
+});
+
+/** Patch room properties (and, for dynamic rooms, the builder allowlist). */
+app.put("/api/admin/rooms/:id", requireSystemAdminWallet, (req, res) => {
+  const roomId = normalizeRoomId(String(req.params.id ?? ""));
+  const adminAddr = jwtAddressFromReq(req) ?? "";
+  const adminCompact = normalizeWalletId(adminAddr);
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  const patch: {
+    displayName?: string;
+    isPublic?: boolean;
+    backgroundHueDeg?: number | null;
+    backgroundNeutral?: "black" | "white" | "gray" | null;
+    joinSpawn?: { x: number; z: number } | null;
+    builderAddresses?: string[];
+  } = {};
+
+  if (body.displayName !== undefined) {
+    patch.displayName = String(body.displayName);
+  }
+  if (body.isPublic !== undefined) {
+    patch.isPublic = Boolean(body.isPublic);
+  }
+  if (body.backgroundHueDeg !== undefined) {
+    const hue = normalizeBackgroundHuePatch(body.backgroundHueDeg);
+    if (!hue.ok) {
+      res.status(400).json({ error: hue.reason });
+      return;
+    }
+    patch.backgroundHueDeg = hue.hue;
+  }
+  if (body.backgroundNeutral !== undefined) {
+    const neutral = normalizeBackgroundNeutralPatch(body.backgroundNeutral);
+    if (!neutral.ok) {
+      res.status(400).json({ error: neutral.reason });
+      return;
+    }
+    patch.backgroundNeutral = neutral.neutral;
+  }
+  if (body.joinSpawn !== undefined) {
+    if (body.joinSpawn === null) {
+      patch.joinSpawn = null;
+    } else {
+      const js = body.joinSpawn as { x?: unknown; z?: unknown };
+      const x = Number(js?.x);
+      const z = Number(js?.z);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) {
+        res.status(400).json({ error: "Invalid join spawn tile." });
+        return;
+      }
+      patch.joinSpawn = { x, z };
+    }
+  }
+  if (body.builderAddresses !== undefined) {
+    const builders = normalizeBuilderAddressesPatch(body.builderAddresses);
+    if (!builders.ok) {
+      res.status(400).json({ error: builders.reason });
+      return;
+    }
+    patch.builderAddresses = builders.builders;
+  }
+
+  if (isBuiltinRoomId(roomId)) {
+    if (patch.joinSpawn !== undefined) {
+      res
+        .status(400)
+        .json({ error: "Built-in rooms do not support a custom join spawn." });
+      return;
+    }
+    const out = patchBuiltinRoomSettings(roomId, {
+      displayName: patch.displayName,
+      isPublic: patch.isPublic,
+      backgroundHueDeg: patch.backgroundHueDeg,
+      backgroundNeutral: patch.backgroundNeutral,
+      builderAddresses: patch.builderAddresses,
+    });
+    if (!out.ok) {
+      res.status(400).json({ error: out.reason });
+      return;
+    }
+  } else {
+    const out = updateDynamicRoomMetadata(roomId, patch, adminCompact, true);
+    if (!out.ok) {
+      res.status(400).json({ error: out.reason });
+      return;
+    }
+  }
+
+  broadcastRoomCatalogRefresh();
+  res.json({ ok: true });
 });
 
 app.post("/api/feedback", requireJwt, async (req, res) => {

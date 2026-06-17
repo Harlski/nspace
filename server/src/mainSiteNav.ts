@@ -7,6 +7,7 @@ export type MainSiteHeaderPage =
   | "header"
   | "feedback"
   | "campaign"
+  | "rooms"
   | "advertise";
 
 export type MainSiteNavAuthStatus = {
@@ -49,6 +50,7 @@ const MAIN_SITE_NAV_GROUPS: MainSiteNavGroup[] = [
       { page: "header", href: "/admin/header", label: "Header", authKey: "header" },
       { page: "feedback", href: "/admin/feedback", label: "Feedback", authKey: "feedback" },
       { page: "campaign", href: "/admin/campaign", label: "Campaigns", authKey: "campaign" },
+      { page: "rooms", href: "/admin/rooms", label: "Rooms", authKey: "rooms" },
     ],
   },
 ];
@@ -71,7 +73,7 @@ export function isMainSiteNavItemVisible(
   if (authKey === "advertise") return status.signedIn;
   if (authKey === "analytics") return status.analyticsAuthorized;
   if (authKey === "admin") return status.analyticsManager;
-  if (authKey === "system" || authKey === "settings" || authKey === "header" || authKey === "feedback" || authKey === "campaign") {
+  if (authKey === "system" || authKey === "settings" || authKey === "header" || authKey === "feedback" || authKey === "campaign" || authKey === "rooms") {
     return status.systemAdmin;
   }
   return false;
@@ -287,7 +289,8 @@ export function mainSiteNavRuntimeScript(): string {
           (nav === "settings" && status.systemAdmin) ||
           (nav === "header" && status.systemAdmin) ||
           (nav === "feedback" && status.systemAdmin) ||
-          (nav === "campaign" && status.systemAdmin)
+          (nav === "campaign" && status.systemAdmin) ||
+          (nav === "rooms" && status.systemAdmin)
         );
       }
       function applyNav(status) {

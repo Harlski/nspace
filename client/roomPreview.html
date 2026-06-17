@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Room preview</title>
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <style>
+      html, body { margin: 0; height: 100%; background: #0b1119; overflow: hidden; }
+      #preview-host { position: absolute; inset: 0; }
+      #preview-host canvas { display: block; width: 100%; height: 100%; }
+      #preview-status {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        color: #c8d4e4;
+        font: 14px/1.4 system-ui, sans-serif;
+        background: rgba(11, 17, 25, 0.85);
+        border: 1px solid #2d3c52;
+        border-radius: 8px;
+        padding: 0.6rem 0.9rem;
+        max-width: 80%;
+        text-align: center;
+      }
+      #preview-status[hidden] { display: none; }
+      #preview-note {
+        position: absolute;
+        left: 0.6rem;
+        bottom: 0.6rem;
+        color: #9fb0c7;
+        font: 12px/1.3 system-ui, sans-serif;
+        background: rgba(11, 17, 25, 0.7);
+        border: 1px solid #243044;
+        border-radius: 6px;
+        padding: 0.3rem 0.5rem;
+      }
+      #preview-note[hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="preview-host"></div>
+    <div id="preview-status">Loading…</div>
+    <div id="preview-note" hidden></div>
+    <script type="module" src="/src/roomPreview.ts"></script>
+  </body>
+</html>

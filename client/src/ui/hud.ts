@@ -1971,7 +1971,26 @@ export function createHud(
     buildDockPrefabPlaceBtn,
     buildDockPrefabCancelBtn
   );
-  buildEditKindWrap.append(buildDockRotateScope, buildEditKindPicker);
+  // Admin-only: mark newly placed blocks as gold + mineable (claimable). Lives
+  // inline next to the rotate scope; mirrors the advanced-popover claim toggle.
+  const buildDockClaimToggle = document.createElement("button");
+  buildDockClaimToggle.type = "button";
+  buildDockClaimToggle.className =
+    "hud-build-bottom-dock__rotate hud-build-bottom-dock__rotate--claim";
+  buildDockClaimToggle.hidden = true;
+  buildDockClaimToggle.textContent = "Gold";
+  buildDockClaimToggle.setAttribute("role", "switch");
+  buildDockClaimToggle.setAttribute("aria-pressed", "false");
+  buildDockClaimToggle.title = "Place gold, mineable blocks (admin)";
+  buildDockClaimToggle.setAttribute("aria-label", "Place gold mineable blocks");
+  buildEditKindWrap.append(
+    buildDockRotateScope,
+    buildDockClaimToggle,
+    buildEditKindPicker
+  );
+  // Mirrors the placement claimable flag + admin capability for the inline dock toggle.
+  let placementClaimable = false;
+  let placementIsAdmin = false;
 
   const buildToggleBtn = document.createElement("button");
   buildToggleBtn.type = "button";
@@ -4462,6 +4481,11 @@ export function createHud(
     return true;
   }
 
+  /** A plain, editable block is selected (so its gold/mineable state can be toggled). */
+  function buildDockClaimSelectionApplicable(): boolean {
+    return buildDockPassableToggleApplicable() && !panelObjectEditGate;
+  }
+
   function buildDockWalkThroughIconMarkup(passable: boolean): string {
     return nimiqIconifyMarkup(passable ? "eyeslash" : "eye", {
       width: 14,
@@ -4561,6 +4585,7 @@ export function createHud(
       "aria-label",
       cubeRotate ? "Rotate cube right (Y axis)" : "Rotate clockwise"
     );
+    syncBuildDockClaimToggle();
   }
 
   function applyBuildDockRotate(delta: -1 | 1): boolean {
@@ -4639,6 +4664,56 @@ export function createHud(
   const barExperimentalOnly = barAdvancedPopover.querySelector(
     ".build-block-bar__experimental-only"
   ) as HTMLElement;
+
+  /** Reflect the claimable (gold mineable) flag on both the popover and inline dock toggles. */
+  function applyClaimToggleUi(next: boolean): void {
+    placementClaimable = next;
+    barClaimToggle.setAttribute("aria-pressed", next ? "true" : "false");
+    barClaimToggle.classList.toggle(
+      "build-block-bar__claim-toggle--active",
+      next
+    );
+    buildDockClaimToggle.setAttribute("aria-pressed", next ? "true" : "false");
+    buildDockClaimToggle.classList.toggle(
+      "hud-build-bottom-dock__rotate--claim-active",
+      next
+    );
+  }
+
+  /**
+   * Inline dock gold toggle (admins only). When a plain block is selected it
+   * edits that block's gold/mineable state; otherwise it controls the gold flag
+   * for newly placed blocks.
+   */
+  function syncBuildDockClaimToggle(): void {
+    const roomEdit =
+      hudPlayMode === "floor" ||
+      (hudPlayMode === "build" && buildEditKindSelect.value === "room");
+    const selection = buildDockClaimSelectionApplicable();
+    const blockTool =
+      !signpostModeActive &&
+      !teleporterModeActive &&
+      !gateModeActive &&
+      !billboardModeActive &&
+      !prefabToolActive &&
+      tileInspectorToolSelect.value === "block";
+    const placementContext =
+      hudPlayMode === "build" && !buildEditKindWrap.hidden && blockTool;
+    const show =
+      placementIsAdmin && !roomEdit && (selection || placementContext);
+    buildDockClaimToggle.hidden = !show;
+    const pressed = selection ? panelClaimable : placementClaimable;
+    buildDockClaimToggle.setAttribute("aria-pressed", pressed ? "true" : "false");
+    buildDockClaimToggle.classList.toggle(
+      "hud-build-bottom-dock__rotate--claim-active",
+      pressed
+    );
+    buildDockClaimToggle.title = selection
+      ? pressed
+        ? "Gold mineable block. Click to make it a normal block."
+        : "Make this block gold + mineable (admin)"
+      : "Place gold, mineable blocks (admin)";
+  }
   const barHexCb = buildBlockBar.querySelector(
     ".build-block-bar__hex"
   ) as HTMLInputElement;
@@ -9742,8 +9817,22 @@ export function createHud(
 
   barClaimToggle.addEventListener("click", () => {
     const next = barClaimToggle.getAttribute("aria-pressed") !== "true";
-    barClaimToggle.setAttribute("aria-pressed", next ? "true" : "false");
-    barClaimToggle.classList.toggle("build-block-bar__claim-toggle--active", next);
+    applyClaimToggleUi(next);
+    placementStyleHandler({ claimable: next });
+  });
+
+  buildDockClaimToggle.addEventListener("click", () => {
+    if (buildDockClaimSelectionApplicable()) {
+      const next = !panelClaimable;
+      panelClaimable = next;
+      panelClaimableActive = next;
+      if (next) syncPanelCollisionToggle(false);
+      emitPanelProps();
+      syncBuildDockClaimToggle();
+      return;
+    }
+    const next = buildDockClaimToggle.getAttribute("aria-pressed") !== "true";
+    applyClaimToggleUi(next);
     placementStyleHandler({ claimable: next });
   });
 
@@ -10889,9 +10978,8 @@ export function createHud(
       ...cubeRot,
       colorRgb: panelSelectedColorRgb,
       locked: getPanelLocked(),
-      ...(panelClaimable
-        ? { claimable: true, active: panelClaimableActive }
-        : {}),
+      claimable: panelClaimable,
+      active: panelClaimableActive,
       editorTileX: panelObjectTileX,
       editorTileY: panelObjectTileY,
       editorTileZ: panelObjectTileZ,
@@ -11339,6 +11427,7 @@ export function createHud(
     panelClaimable = Boolean(p.claimable);
     panelClaimableActive = panelClaimable && p.active !== false;
     syncPanelHueVisualFromColorRgb(panelSelectedColorRgb);
+    syncBuildDockClaimToggle();
     inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(p);
   }
 
@@ -12512,6 +12601,7 @@ export function createHud(
       syncModeSidebarBodyInteractive();
       syncHueDockVisibility();
       if (state.placementAdmin !== undefined) {
+        placementIsAdmin = state.placementAdmin === true;
         barExperimentalOnly.hidden = !state.placementAdmin;
         const bbOpt = tileInspectorToolSelect?.querySelector(
           "option[value=\"billboard\"]"
@@ -12552,11 +12642,11 @@ export function createHud(
         );
       }
       const claim = state.claimable ?? false;
-      barClaimToggle.setAttribute("aria-pressed", claim ? "true" : "false");
-      barClaimToggle.classList.toggle("build-block-bar__claim-toggle--active", claim);
+      applyClaimToggleUi(claim);
       syncPlacementColorRgbUi(clampColorRgb(state.colorRgb));
       syncBarShapeButtons();
       syncBuildDockToolStrip();
+      syncBuildDockClaimToggle();
       syncPlacementInspectorPreviewGame();
       applyDockTerrainBlockPlacementChrome();
     },

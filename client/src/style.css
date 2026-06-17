@@ -6960,6 +6960,28 @@ button.hud-brand:focus-visible {
   color: var(--hud-build-accent-text);
 }
 
+.hud-build-bottom-dock__rotate--claim {
+  width: auto;
+  min-width: 2.5rem;
+  height: 18px;
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.hud-build-bottom-dock__rotate--claim:hover {
+  border-color: rgba(251, 191, 36, 0.6);
+  color: #fde68a;
+}
+
+.hud-build-bottom-dock__rotate--claim-active,
+.hud-build-bottom-dock__rotate--claim-active:hover {
+  border-color: rgba(251, 191, 36, 0.85);
+  background: rgba(251, 191, 36, 0.22);
+  color: #fcd34d;
+}
+
 .hud-build-bottom-dock__rotate--prefab-place,
 .hud-build-bottom-dock__rotate--prefab-cancel {
   width: auto;

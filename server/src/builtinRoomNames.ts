@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { RoomBackgroundNeutral } from "./roomRegistry.js";
+import {
+  sanitizeBuilderAddresses,
+  type RoomBackgroundNeutral,
+} from "./roomRegistry.js";
 
 /** Must match `roomLayouts` ids (avoid circular import). */
 const HUB_ROOM_ID = "hub";
@@ -13,12 +16,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
 const BUILTIN_NAMES_FILE = path.join(DATA_DIR, "builtin-room-names.json");
 
-type FileShapeV3 = {
-  version: 3;
+type FileShapeV4 = {
+  version: 4;
   displayNames: Partial<Record<string, string>>;
   isPublic: Partial<Record<string, boolean>>;
   backgroundHueDeg: Partial<Record<string, number | null>>;
   backgroundNeutral: Partial<Record<string, RoomBackgroundNeutral | null>>;
+  builderAddresses: Partial<Record<string, string[]>>;
 };
 
 const DEFAULTS: Record<string, string> = {
@@ -28,7 +32,7 @@ const DEFAULTS: Record<string, string> = {
   [PIXEL_ROOM_ID]: "Pixel",
 };
 
-let cache: FileShapeV3 | null = null;
+let cache: FileShapeV4 | null = null;
 
 function ensureDataDir(): void {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -41,79 +45,65 @@ function validateDisplayName(raw: string): string | null {
   return t;
 }
 
-function emptyBackgroundMaps(): {
+function emptyOptionalMaps(): {
   backgroundHueDeg: Partial<Record<string, number | null>>;
   backgroundNeutral: Partial<Record<string, RoomBackgroundNeutral | null>>;
+  builderAddresses: Partial<Record<string, string[]>>;
 } {
-  return { backgroundHueDeg: {}, backgroundNeutral: {} };
+  return { backgroundHueDeg: {}, backgroundNeutral: {}, builderAddresses: {} };
 }
 
-function migrateFromDisk(raw: unknown): FileShapeV3 {
-  if (!raw || typeof raw !== "object") {
-    return {
-      version: 3,
-      displayNames: {},
-      isPublic: {},
-      ...emptyBackgroundMaps(),
-    };
+function sanitizeBuilderMap(raw: unknown): Partial<Record<string, string[]>> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Partial<Record<string, string[]>> = {};
+  for (const [id, list] of Object.entries(raw as Record<string, unknown>)) {
+    const builders = sanitizeBuilderAddresses(list);
+    if (builders.length > 0) out[id] = builders;
   }
-  const o = raw as Record<string, unknown>;
-  if (o.version === 1 && o.displayNames && typeof o.displayNames === "object") {
-    return {
-      version: 3,
-      displayNames: { ...(o.displayNames as Record<string, string>) },
-      isPublic: {},
-      ...emptyBackgroundMaps(),
-    };
-  }
-  if (o.version === 2 && o.displayNames && typeof o.displayNames === "object") {
-    const pub =
-      o.isPublic && typeof o.isPublic === "object"
-        ? { ...(o.isPublic as Record<string, boolean>) }
-        : {};
-    return {
-      version: 3,
-      displayNames: { ...(o.displayNames as Record<string, string>) },
-      isPublic: pub,
-      ...emptyBackgroundMaps(),
-    };
-  }
-  if (o.version === 3 && o.displayNames && typeof o.displayNames === "object") {
-    const pub =
-      o.isPublic && typeof o.isPublic === "object"
-        ? { ...(o.isPublic as Record<string, boolean>) }
-        : {};
-    const bh =
-      o.backgroundHueDeg && typeof o.backgroundHueDeg === "object"
-        ? { ...(o.backgroundHueDeg as Record<string, number | null>) }
-        : {};
-    const bn =
-      o.backgroundNeutral && typeof o.backgroundNeutral === "object"
-        ? { ...(o.backgroundNeutral as Record<string, RoomBackgroundNeutral | null>) }
-        : {};
-    return {
-      version: 3,
-      displayNames: { ...(o.displayNames as Record<string, string>) },
-      isPublic: pub,
-      backgroundHueDeg: bh,
-      backgroundNeutral: bn,
-    };
-  }
-  return {
-    version: 3,
+  return out;
+}
+
+function migrateFromDisk(raw: unknown): FileShapeV4 {
+  const fresh: FileShapeV4 = {
+    version: 4,
     displayNames: {},
     isPublic: {},
-    ...emptyBackgroundMaps(),
+    ...emptyOptionalMaps(),
+  };
+  if (!raw || typeof raw !== "object") return fresh;
+  const o = raw as Record<string, unknown>;
+  if (!o.displayNames || typeof o.displayNames !== "object") return fresh;
+  const displayNames = { ...(o.displayNames as Record<string, string>) };
+  const isPublic =
+    o.isPublic && typeof o.isPublic === "object"
+      ? { ...(o.isPublic as Record<string, boolean>) }
+      : {};
+  const backgroundHueDeg =
+    o.backgroundHueDeg && typeof o.backgroundHueDeg === "object"
+      ? { ...(o.backgroundHueDeg as Record<string, number | null>) }
+      : {};
+  const backgroundNeutral =
+    o.backgroundNeutral && typeof o.backgroundNeutral === "object"
+      ? { ...(o.backgroundNeutral as Record<string, RoomBackgroundNeutral | null>) }
+      : {};
+  const builderAddresses = sanitizeBuilderMap(o.builderAddresses);
+  return {
+    version: 4,
+    displayNames,
+    isPublic,
+    backgroundHueDeg,
+    backgroundNeutral,
+    builderAddresses,
   };
 }
 
-function loadFile(): FileShapeV3 {
+function loadFile(): FileShapeV4 {
   if (cache) return cache;
   cache = {
-    version: 3,
+    version: 4,
     displayNames: {},
     isPublic: {},
-    ...emptyBackgroundMaps(),
+    ...emptyOptionalMaps(),
   };
   if (!fs.existsSync(BUILTIN_NAMES_FILE)) return cache;
   try {
@@ -133,11 +123,12 @@ function persist(): void {
     tmp,
     JSON.stringify(
       {
-        version: 3,
+        version: 4,
         displayNames: data.displayNames,
         isPublic: data.isPublic,
         backgroundHueDeg: data.backgroundHueDeg,
         backgroundNeutral: data.backgroundNeutral,
+        builderAddresses: data.builderAddresses,
       },
       null,
       0
@@ -185,6 +176,26 @@ export function getBuiltinRoomBackgroundState(roomId: string): {
   return { hueDeg, neutral };
 }
 
+/** Builder allowlist for a built-in room (compact `NQ…` wallet addresses). */
+export function getBuiltinRoomBuilderAddresses(roomId: string): string[] {
+  const id = roomId.trim().toLowerCase();
+  if (!DEFAULTS[id]) return [];
+  const list = loadFile().builderAddresses[id];
+  return Array.isArray(list) ? [...list] : [];
+}
+
+/** True when `address` is on the built-in room's builder allowlist. */
+export function isBuiltinRoomBuilder(
+  roomId: string,
+  address: string | null | undefined
+): boolean {
+  const wallet = String(address ?? "")
+    .replace(/\s+/g, "")
+    .toUpperCase();
+  if (!/^NQ[0-9A-Z]{34}$/.test(wallet)) return false;
+  return getBuiltinRoomBuilderAddresses(roomId).includes(wallet);
+}
+
 export function patchBuiltinRoomSettings(
   roomIdRaw: string,
   patch: {
@@ -192,6 +203,7 @@ export function patchBuiltinRoomSettings(
     isPublic?: boolean;
     backgroundHueDeg?: number | null;
     backgroundNeutral?: RoomBackgroundNeutral | null;
+    builderAddresses?: string[];
   }
 ): { ok: true } | { ok: false; reason: string } {
   const id = roomIdRaw.trim().toLowerCase();
@@ -202,7 +214,8 @@ export function patchBuiltinRoomSettings(
     patch.displayName === undefined &&
     patch.isPublic === undefined &&
     patch.backgroundHueDeg === undefined &&
-    patch.backgroundNeutral === undefined
+    patch.backgroundNeutral === undefined &&
+    patch.builderAddresses === undefined
   ) {
     return { ok: false, reason: "Nothing to update." };
   }
@@ -229,6 +242,14 @@ export function patchBuiltinRoomSettings(
     data.backgroundNeutral[id] = patch.backgroundNeutral;
     if (patch.backgroundNeutral != null) {
       data.backgroundHueDeg[id] = null;
+    }
+  }
+  if (patch.builderAddresses !== undefined) {
+    const builders = sanitizeBuilderAddresses(patch.builderAddresses);
+    if (builders.length > 0) {
+      data.builderAddresses[id] = builders;
+    } else {
+      delete data.builderAddresses[id];
     }
   }
   cache = data;

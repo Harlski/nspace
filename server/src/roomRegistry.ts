@@ -29,6 +29,8 @@ export type PersistedRoomDef = {
   /** v6+: default tile where new visitors spawn when they have no saved position; omitted = room center. */
   joinSpawnX?: number | null;
   joinSpawnZ?: number | null;
+  /** v7+: extra wallets (compact NQ) allowed to build/edit in this room beyond owner/admin. */
+  builderAddresses?: string[];
 };
 
 type PersistedRoomsFileV1 = {
@@ -61,13 +63,22 @@ type PersistedRoomsFileV6 = {
   rooms: PersistedRoomDef[];
 };
 
+type PersistedRoomsFileV7 = {
+  version: 7;
+  rooms: PersistedRoomDef[];
+};
+
 type PersistedRoomsFile =
   | PersistedRoomsFileV1
   | PersistedRoomsFileV2
   | PersistedRoomsFileV3
   | PersistedRoomsFileV4
   | PersistedRoomsFileV5
-  | PersistedRoomsFileV6;
+  | PersistedRoomsFileV6
+  | PersistedRoomsFileV7;
+
+/** Max wallets on a single room's builder allowlist. */
+export const MAX_ROOM_BUILDERS = 50;
 
 type DynamicRoomEntry = {
   bounds: RoomBounds;
@@ -87,6 +98,8 @@ type DynamicRoomEntry = {
   /** Custom default join tile (integers); both null = use room bounds center. */
   joinSpawnX: number | null;
   joinSpawnZ: number | null;
+  /** Extra wallets (compact NQ keys) allowed to build/edit beyond owner/admin. */
+  builderAddresses: string[];
 };
 
 const dynamicRooms = new Map<string, DynamicRoomEntry>();
@@ -103,6 +116,51 @@ function normalizeRoomIdRaw(roomId: string): string {
 
 function compactAddress(addr: string): string {
   return String(addr).replace(/\s+/g, "").toUpperCase();
+}
+
+/** Compact + validate a Nimiq user address (NQ + 34 base32 chars); null if malformed. */
+function normalizeBuilderAddress(addr: unknown): string | null {
+  if (typeof addr !== "string") return null;
+  const c = compactAddress(addr);
+  return /^NQ[0-9A-Z]{34}$/.test(c) ? c : null;
+}
+
+/** Dedupe + validate a builder allowlist; caps at {@link MAX_ROOM_BUILDERS}. */
+export function sanitizeBuilderAddresses(list: unknown): string[] {
+  if (!Array.isArray(list)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of list) {
+    const c = normalizeBuilderAddress(raw);
+    if (!c || seen.has(c)) continue;
+    seen.add(c);
+    out.push(c);
+    if (out.length >= MAX_ROOM_BUILDERS) break;
+  }
+  return out;
+}
+
+export function normalizeBuilderAddressesPatch(
+  v: unknown
+): { ok: true; builders: string[] } | { ok: false; reason: string } {
+  if (!Array.isArray(v)) {
+    return { ok: false, reason: "Builder list must be an array of wallet addresses." };
+  }
+  if (v.length > MAX_ROOM_BUILDERS) {
+    return {
+      ok: false,
+      reason: `A room can have at most ${MAX_ROOM_BUILDERS} builders.`,
+    };
+  }
+  for (const raw of v) {
+    if (normalizeBuilderAddress(raw) === null) {
+      return {
+        ok: false,
+        reason: `Invalid wallet address: ${String(raw).slice(0, 48)}`,
+      };
+    }
+  }
+  return { ok: true, builders: sanitizeBuilderAddresses(v) };
 }
 
 function isValidBounds(bounds: RoomBounds): boolean {
@@ -182,8 +240,8 @@ function generateUniqueRoomId(defaultRoomIds: ReadonlySet<string>): string {
 
 function persistRoomsFile(): void {
   ensureDataDir();
-  const payload: PersistedRoomsFileV6 = {
-    version: 6,
+  const payload: PersistedRoomsFileV7 = {
+    version: 7,
     rooms: [...dynamicRooms.entries()].map(([id, entry]) => ({
       id,
       bounds: entry.bounds,
@@ -200,6 +258,9 @@ function persistRoomsFile(): void {
         : {}),
       ...(entry.joinSpawnX != null && entry.joinSpawnZ != null
         ? { joinSpawnX: entry.joinSpawnX, joinSpawnZ: entry.joinSpawnZ }
+        : {}),
+      ...(entry.builderAddresses.length
+        ? { builderAddresses: entry.builderAddresses }
         : {}),
     })),
   };
@@ -221,7 +282,8 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
       raw.version !== 3 &&
       raw.version !== 4 &&
       raw.version !== 5 &&
-      raw.version !== 6
+      raw.version !== 6 &&
+      raw.version !== 7
     ) {
       return;
     }
@@ -285,6 +347,13 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
         }
       }
 
+      const builderAddresses =
+        raw.version >= 7
+          ? sanitizeBuilderAddresses(
+              (r as { builderAddresses?: unknown }).builderAddresses
+            )
+          : [];
+
       dynamicRooms.set(id, {
         bounds: {
           minX: Math.floor(r.bounds.minX),
@@ -301,6 +370,7 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
         backgroundNeutral,
         joinSpawnX,
         joinSpawnZ,
+        builderAddresses,
       });
     }
   } catch (err) {
@@ -436,6 +506,22 @@ export function hasDynamicRoomEntry(roomId: string): boolean {
   return dynamicRooms.has(normalizeRoomIdRaw(roomId));
 }
 
+/** Compact builder allowlist for an active dynamic room (empty if none / not dynamic). */
+export function getDynamicRoomBuilderAddresses(roomId: string): string[] {
+  const id = normalizeRoomIdRaw(roomId);
+  const entry = dynamicRooms.get(id);
+  if (!entry || entry.deletedAt) return [];
+  return [...entry.builderAddresses];
+}
+
+/** True if `address` is on the room's builder allowlist (extra build/edit grant). */
+export function isDynamicRoomBuilder(roomId: string, address: string): boolean {
+  const id = normalizeRoomIdRaw(roomId);
+  const entry = dynamicRooms.get(id);
+  if (!entry || entry.deletedAt) return false;
+  return entry.builderAddresses.includes(compactAddress(address));
+}
+
 /**
  * New player rooms: unique 6-character A–Z / 0–9 id (stored lowercase).
  * Legacy persisted ids may be longer; those remain loadable.
@@ -486,6 +572,7 @@ export function createDynamicRoom(
     backgroundNeutral: null,
     joinSpawnX: null,
     joinSpawnZ: null,
+    builderAddresses: [],
   });
   persistRoomsFile();
   return { ok: true, id };
@@ -527,6 +614,7 @@ export function createOfficialDynamicRoom(
     backgroundNeutral: null,
     joinSpawnX: null,
     joinSpawnZ: null,
+    builderAddresses: [],
   });
   persistRoomsFile();
   return { ok: true, id };
@@ -611,6 +699,8 @@ export function updateDynamicRoomMetadata(
     backgroundNeutral?: RoomBackgroundNeutral | null;
     /** Non-null = set tile; null = clear to default (room center). */
     joinSpawn?: { x: number; z: number } | null;
+    /** Replace the room's builder allowlist (admin-only). */
+    builderAddresses?: string[];
   },
   actorCompact: string,
   isAdminUser: boolean
@@ -620,7 +710,8 @@ export function updateDynamicRoomMetadata(
     patch.isPublic === undefined &&
     patch.backgroundHueDeg === undefined &&
     patch.backgroundNeutral === undefined &&
-    patch.joinSpawn === undefined
+    patch.joinSpawn === undefined &&
+    patch.builderAddresses === undefined
   ) {
     return { ok: false, reason: "Nothing to update." };
   }
@@ -637,6 +728,12 @@ export function updateDynamicRoomMetadata(
     !allowActorRoomJoinSpawnEdit(id, actorCompact, isAdminUser)
   ) {
     return { ok: false, reason: "Not authorized to set this room’s entry spawn." };
+  }
+  if (patch.builderAddresses !== undefined && !isAdminUser) {
+    return {
+      ok: false,
+      reason: "Only admins can manage this room's builder allowlist.",
+    };
   }
   if (
     (patch.backgroundHueDeg !== undefined ||
@@ -691,6 +788,9 @@ export function updateDynamicRoomMetadata(
       entry.joinSpawnX = Math.floor(patch.joinSpawn.x);
       entry.joinSpawnZ = Math.floor(patch.joinSpawn.z);
     }
+  }
+  if (patch.builderAddresses !== undefined) {
+    entry.builderAddresses = sanitizeBuilderAddresses(patch.builderAddresses);
   }
   dynamicRooms.set(id, entry);
   persistRoomsFile();

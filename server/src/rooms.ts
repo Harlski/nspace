@@ -56,6 +56,7 @@ import {
 } from "./roomLayouts.js";
 import {
   getBuiltinRoomBackgroundState,
+  isBuiltinRoomBuilder,
   patchBuiltinRoomSettings,
 } from "./builtinRoomNames.js";
 import {
@@ -64,6 +65,7 @@ import {
   getDynamicRoomBackgroundState,
   getDynamicRoomJoinSpawn,
   getDynamicRoomOwnerAddress,
+  isDynamicRoomBuilder,
   normalizeBackgroundHuePatch,
   normalizeBackgroundNeutralPatch,
   restoreDynamicRoom,
@@ -720,6 +722,7 @@ function canModifyOwnBillboard(bb: Billboard, address: string): boolean {
 }
 
 function canPlaceMineableBlocks(address: string): boolean {
+  if (isAdmin(address)) return true;
   return MINEABLE_BLOCK_PLACER_ALLOWLIST.has(compactAddress(address));
 }
 
@@ -728,15 +731,19 @@ function canPlaceMineableBlocks(address: string): boolean {
  * - Canvas: no edits for anyone (view-only).
  * - Chamber: admins only.
  * - Pixel: floor recolor only (no blocks).
- * - Wallet-created rooms: owner or admin only; rooms with no owner on record: admin only.
+ * - Wallet-created rooms: owner, admin, or a wallet on the room's builder allowlist.
+ * - Official rooms (no owner): admin or a wallet on the builder allowlist.
  * - Hub and other built-ins: anyone may edit (subject to hub safe zone, etc.).
  */
 function canEditRoomContent(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
   if (id === CANVAS_ROOM_ID) return false;
-  if (id === CHAMBER_ROOM_ID) return isAdmin(address);
+  if (id === CHAMBER_ROOM_ID) {
+    return isAdmin(address) || isBuiltinRoomBuilder(id, address);
+  }
   if (isPlayerCreatedRoom(id)) {
     if (isAdmin(address)) return true;
+    if (isDynamicRoomBuilder(id, address)) return true;
     const owner = getDynamicRoomOwnerAddress(id);
     if (!owner) return false;
     return compactAddress(address) === owner;
@@ -2839,6 +2846,130 @@ function broadcastRoomCatalogToAll(): void {
 
 function sendRoomCatalog(ws: WebSocket, address: string): void {
   wsSafeSend(ws, roomCatalogMessage(address));
+}
+
+/** Re-send the room catalog to every connected client (e.g. after admin edits a room). */
+export function broadcastRoomCatalogRefresh(): void {
+  broadcastRoomCatalogToAll();
+}
+
+export type RoomLayoutSnapshot = {
+  roomId: string;
+  displayName: string;
+  isBuiltin: boolean;
+  roomBounds: RoomBounds;
+  doors: Array<{
+    x: number;
+    z: number;
+    targetRoomId: string;
+    spawnX: number;
+    spawnZ: number;
+  }>;
+  placeRadiusBlocks: number;
+  /** When true, this is a huge spatial room (e.g. Pixel); heavy tile lists are omitted. */
+  spatial: boolean;
+  obstacles: ObstacleTile[];
+  extraFloorTiles: ExtraFloorTile[];
+  baseFloorColorTiles: ExtraFloorTile[];
+  removedBaseFloorTiles: ExtraFloorTile[];
+  signboards: Array<{
+    id: string;
+    x: number;
+    z: number;
+    message: string;
+    createdBy: string;
+    createdAt: number;
+  }>;
+  billboards: ReturnType<typeof billboardToWire>[];
+  voxelTexts: ReturnType<typeof getVoxelTextsForRoom>;
+  roomBackgroundHueDeg: number | null;
+  roomBackgroundNeutral: RoomBackgroundNeutral | null;
+};
+
+/**
+ * Full, non-spatial room layout for offscreen rendering (admin preview).
+ * Mirrors the `welcome` geometry payload but with no player/connection context.
+ * For huge spatial rooms (Pixel), heavy floor lists are omitted (`spatial: true`)
+ * since a 2D raster (`/pixels.png`) is the appropriate preview.
+ */
+export function getRoomLayoutSnapshot(roomIdRaw: string): RoomLayoutSnapshot | null {
+  const roomId = normalizeRoomId(roomIdRaw);
+  const defs = listRoomDefinitions();
+  const def =
+    defs.find((d) => d.id === roomId) ??
+    listDeletedRoomDefinitions().find((d) => d.id === roomId);
+  if (!def) return null;
+  const rb = getRoomBaseBounds(roomId);
+  const doors = getDoorsForRoom(roomId).map((d) => ({
+    x: d.x,
+    z: d.z,
+    targetRoomId: normalizeRoomId(d.targetRoomId),
+    spawnX: d.spawnX,
+    spawnZ: d.spawnZ,
+  }));
+  const spatial = roomUsesSpatialInterest(rb);
+  const bgState = isPlayerCreatedRoom(roomId)
+    ? getDynamicRoomBackgroundState(roomId)
+    : getBuiltinRoomBackgroundState(roomId);
+  const signboards = getSignboardsForRoom(roomId).map((s) => ({
+    id: s.id,
+    x: s.x,
+    z: s.z,
+    message: s.message,
+    createdBy: s.createdBy,
+    createdAt: s.createdAt,
+  }));
+  return {
+    roomId,
+    displayName: def.displayName,
+    isBuiltin: def.isBuiltin,
+    roomBounds: rb,
+    doors,
+    placeRadiusBlocks: PLACE_RADIUS_BLOCKS,
+    spatial,
+    obstacles: obstaclesToList(roomId),
+    extraFloorTiles: spatial ? [] : extraFloorToList(roomId),
+    baseFloorColorTiles: spatial ? [] : baseFloorColorToList(roomId),
+    removedBaseFloorTiles: spatial ? [] : removedBaseFloorToList(roomId),
+    signboards,
+    billboards: getBillboardsForRoom(roomId).map(billboardToWire),
+    voxelTexts: getVoxelTextsForRoom(roomId),
+    roomBackgroundHueDeg: bgState.hueDeg,
+    roomBackgroundNeutral: bgState.neutral,
+  };
+}
+
+/** Top-down floor colors for a room (base + extra), for a 2D raster thumbnail. */
+export function getRoomFloorColorMapForThumbnail(roomIdRaw: string): {
+  bounds: RoomBounds;
+  colorAt: (x: number, z: number) => number | null;
+} | null {
+  const roomId = normalizeRoomId(roomIdRaw);
+  const defs = listRoomDefinitions();
+  const def =
+    defs.find((d) => d.id === roomId) ??
+    listDeletedRoomDefinitions().find((d) => d.id === roomId);
+  if (!def) return null;
+  const bounds = getRoomBaseBounds(roomId);
+  const baseColors = roomBaseFloorColors.get(roomId);
+  const extraColors = roomExtraFloor.get(roomId);
+  const removed = roomBaseFloorRemoved.get(roomId);
+  const isPixel = roomId === PIXEL_ROOM_ID;
+  /** Matches client `TERRAIN_TILE_CORE_COLOR` for un-painted base tiles. */
+  const CORE_FLOOR_COLOR_RGB = 0x2d3340;
+  return {
+    bounds,
+    colorAt: (x: number, z: number): number | null => {
+      const key = `${x},${z}`;
+      const extra = extraColors?.get(key);
+      if (extra !== undefined) return extra;
+      if (removed?.has(key)) return null;
+      if (!isBaseTile(x, z, roomId)) return null;
+      const base = baseColors?.get(key);
+      if (base !== undefined) return base;
+      return isPixel ? pixelImplicitFloorColorRgb(x, z) : CORE_FLOOR_COLOR_RGB;
+    },
+  };
 }
 
 function countOnlineRealPlayers(): number {
@@ -5420,7 +5551,7 @@ export function addClient(
             type: "chat",
             from: "System",
             fromAddress: "SYSTEM",
-            text: "Only the authorized reward wallet can place mineable blocks.",
+            text: "Only admins or the authorized reward wallet can place mineable blocks.",
             at: now,
           } satisfies OutMsg);
       }
@@ -6272,8 +6403,44 @@ export function addClient(
         return;
       }
 
+      // Claimable (gold / mineable) edit. By default preserve the block's claim
+      // state so unrelated edits (color, shape, collision) don't disturb it.
+      // Turning it on or off is gated like placement (admins / reward wallet).
+      const preserveClaim: Partial<PlacedProps> = {
+        ...(existing.claimable !== undefined ? { claimable: existing.claimable } : {}),
+        ...(existing.active !== undefined ? { active: existing.active } : {}),
+        ...(existing.cooldownMs !== undefined ? { cooldownMs: existing.cooldownMs } : {}),
+        ...(existing.lastClaimedAt !== undefined ? { lastClaimedAt: existing.lastClaimedAt } : {}),
+        ...(existing.claimReactivateAtMs !== undefined
+          ? { claimReactivateAtMs: existing.claimReactivateAtMs }
+          : {}),
+        ...(existing.claimedBy !== undefined ? { claimedBy: existing.claimedBy } : {}),
+      };
+      let claimFields: Partial<PlacedProps> = preserveClaim;
+      let finalPassable = passable;
+      if (msg.claimable === true && !existing.claimable) {
+        if (canPlaceMineableBlocks(address)) {
+          claimFields = { claimable: true, active: true, cooldownMs: 60000 };
+        } else {
+          wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "SYSTEM",
+            text: "Only admins or the authorized reward wallet can place mineable blocks.",
+            at: now,
+          } satisfies OutMsg);
+        }
+      } else if (msg.claimable === false && existing.claimable) {
+        // Only authorized wallets may strip a block's gold/mineable state.
+        if (canPlaceMineableBlocks(address)) {
+          claimFields = {};
+        }
+      }
+      // Mineable blocks must stay solid so they can be mined.
+      if (claimFields.claimable) finalPassable = false;
+
       placed.set(canonicalKey, {
-        passable,
+        passable: finalPassable,
         half,
         quarter,
         hex: prism.hex,
@@ -6288,14 +6455,7 @@ export function addClient(
         colorRgb,
         locked: finalLocked,
         ...(existing.teleporter ? { teleporter: existing.teleporter } : {}),
-        ...(existing.claimable !== undefined ? { claimable: existing.claimable } : {}),
-        ...(existing.active !== undefined ? { active: existing.active } : {}),
-        ...(existing.cooldownMs !== undefined ? { cooldownMs: existing.cooldownMs } : {}),
-        ...(existing.lastClaimedAt !== undefined ? { lastClaimedAt: existing.lastClaimedAt } : {}),
-        ...(existing.claimReactivateAtMs !== undefined
-          ? { claimReactivateAtMs: existing.claimReactivateAtMs }
-          : {}),
-        ...(existing.claimedBy !== undefined ? { claimedBy: existing.claimedBy } : {}),
+        ...claimFields,
         ...(existing.gate ? { gate: existing.gate } : {}),
         ...(existing.gateOpen ? { gateOpen: existing.gateOpen } : {}),
       });

@@ -37,6 +37,10 @@
       "destination": "https://api.nimiq.space/admin/bans"
     },
     {
+      "source": "/admin/rooms",
+      "destination": "https://api.nimiq.space/admin/rooms"
+    },
+    {
       "source": "/advertise/uploads/:path*",
       "destination": "https://api.nimiq.space/advertise/uploads/:path*"
     },

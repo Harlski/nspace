@@ -88,7 +88,7 @@ export type ObstacleProps = {
   editorTileX?: number;
   editorTileY?: number;
   editorTileZ?: number;
-  /** Client-only: claimable / minable block preview (not sent on the wire). */
+  /** Claimable / minable (gold) block. Sent on the wire for `setObstacleProps` edits. */
   claimable?: boolean;
   active?: boolean;
 };
@@ -924,6 +924,8 @@ export function sendSetObstacleProps(
     ...cubeRot,
     colorRgb: clampColorRgb(props.colorRgb),
     locked,
+    claimable: Boolean(props.claimable),
+    active: props.active !== false,
   };
   if (props.gate) {
     body.rampDir = rampDir;

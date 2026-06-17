@@ -80,6 +80,20 @@ function rowEnsure(base: Partial<Row> | undefined): Row {
   };
 }
 
+/** All wallets that have set a custom username, with that username. */
+export function listKnownPlayerUsernames(): Array<{
+  wallet: string;
+  username: string;
+}> {
+  const out: Array<{ wallet: string; username: string }> = [];
+  const store = readStore();
+  for (const [addr, row] of Object.entries(store.profiles)) {
+    const c = row?.customUsername?.trim();
+    if (c) out.push({ wallet: addr.trim().toUpperCase(), username: c });
+  }
+  return out;
+}
+
 export function getPlayerProfileMessage(normalizedAddress: string): string {
   const key = normalizedAddress.trim().toUpperCase();
   if (!key) return "";
