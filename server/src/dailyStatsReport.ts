@@ -1,0 +1,217 @@
+import {
+  getDailyStatsAggregate,
+  type DailyStatsAggregate,
+} from "./eventLog.js";
+import { isTelegramConfigured, sendTelegramPlainText } from "./telegramNotify.js";
+
+const DAY_MS = 86_400_000;
+/** Delay after UTC midnight before sending so late `session_end` writes for the day land first. */
+const SEND_OFFSET_MS = 2 * 60 * 1000;
+const LOG_TAG = "daily-stats";
+
+function envTrim(key: string): string {
+  return String(process.env[key] ?? "").trim();
+}
+
+function parseBoolEnv(value: string): boolean | null {
+  const v = value.toLowerCase();
+  if (v === "") return null;
+  if (["0", "false", "off", "no"].includes(v)) return false;
+  if (["1", "true", "on", "yes"].includes(v)) return true;
+  return null;
+}
+
+function lookbackDays(): number {
+  const raw = Number(envTrim("DAILY_STATS_LOOKBACK_DAYS"));
+  if (Number.isFinite(raw) && raw >= 1) return Math.floor(raw);
+  return 400;
+}
+
+function statsChatIdOverride(): string {
+  return envTrim("DAILY_STATS_TELEGRAM_CHAT_ID");
+}
+
+/** Whether the daily stats Telegram report should run. Defaults on when Telegram is configured. */
+export function dailyStatsReportEnabled(): boolean {
+  const explicit = parseBoolEnv(envTrim("DAILY_STATS_TELEGRAM_ENABLED"));
+  if (explicit === false) return false;
+  if (!isTelegramConfigured() && !statsChatIdOverride()) return false;
+  if (explicit === true) return true;
+  return isTelegramConfigured() || Boolean(statsChatIdOverride());
+}
+
+/** Start-of-day (UTC) in ms for the UTC calendar day containing `ts`. */
+export function utcDayStartMs(ts: number): number {
+  const d = new Date(ts);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/** Start-of-day (UTC) for the day before the one containing `ts`. */
+export function previousUtcDayStartMs(ts: number): number {
+  return utcDayStartMs(ts) - DAY_MS;
+}
+
+/** Parse a `YYYY-MM-DD` string into its UTC start-of-day ms, or null when invalid. */
+export function parseUtcDayStartMs(dayUtc: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayUtc.trim());
+  if (!m) return null;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (!Number.isFinite(ms)) return null;
+  return ms;
+}
+
+function trimNim(nim: string | null): string {
+  if (!nim) return "0";
+  if (!nim.includes(".")) return nim;
+  const trimmed = nim.replace(/0+$/, "").replace(/\.$/, "");
+  return trimmed === "" ? "0" : trimmed;
+}
+
+function formatActiveDuration(ms: number): string {
+  if (ms <= 0) return "0m";
+  const totalMinutes = Math.round(ms / 60_000);
+  if (totalMinutes < 1) return "<1m";
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || parts.length === 0) parts.push(`${minutes}m`);
+  return parts.join(" ");
+}
+
+function utcStamp(ts: number): string {
+  return new Date(ts).toISOString().slice(0, 16).replace("T", " ");
+}
+
+export function formatDailyStatsMessage(
+  agg: DailyStatsAggregate,
+  headerLabel?: string
+): string {
+  const header = headerLabel ?? `Daily stats for ${agg.dayUtc} (UTC)`;
+  const lines = [
+    `Nimiq Space - ${header}`,
+    "",
+    "Players",
+    `- Unique signed in: ${agg.uniqueSignedIn}`,
+    `- New users: ${agg.newSignedIn}`,
+    `- Nimiq Pay: ${agg.nimiqPaySignedIn} / Other: ${agg.nonNimiqPaySignedIn}`,
+    `- Total sign-ins: ${agg.sessionStarts}`,
+    "",
+    "NIM payouts",
+    `- Payouts sent: ${agg.payoutsSent} (to ${agg.payoutRecipients} wallet${
+      agg.payoutRecipients === 1 ? "" : "s"
+    })`,
+    `- Total paid out: ${trimNim(agg.payoutNimTotal)} NIM`,
+    "",
+    "Active in-game time (excludes AFK)",
+    `- Total: ${formatActiveDuration(agg.activePlayMsTotal)} across ${
+      agg.endedSessionsCounted
+    } ended session${agg.endedSessionsCounted === 1 ? "" : "s"}`,
+  ];
+  return lines.join("\n");
+}
+
+/** Build the aggregate + formatted message for an arbitrary window, with an explicit header label. */
+export async function buildStatsReport(
+  windowStartMs: number,
+  windowEndMs: number,
+  headerLabel: string
+): Promise<{ aggregate: DailyStatsAggregate; message: string }> {
+  const aggregate = await getDailyStatsAggregate(
+    windowStartMs,
+    windowEndMs,
+    lookbackDays()
+  );
+  return { aggregate, message: formatDailyStatsMessage(aggregate, headerLabel) };
+}
+
+/** Build the aggregate + formatted message for the UTC day starting at `dayStartMs`. */
+export async function buildDailyStatsReport(
+  dayStartMs: number
+): Promise<{ aggregate: DailyStatsAggregate; message: string }> {
+  return buildStatsReport(
+    dayStartMs,
+    dayStartMs + DAY_MS,
+    `Daily stats for ${new Date(dayStartMs).toISOString().slice(0, 10)} (UTC)`
+  );
+}
+
+/** Build the report for the rolling last 24 hours ending at `endMs` (defaults to now). */
+export async function buildRolling24hReport(
+  endMs: number = Date.now()
+): Promise<{ aggregate: DailyStatsAggregate; message: string }> {
+  const startMs = endMs - DAY_MS;
+  return buildStatsReport(
+    startMs,
+    endMs,
+    `Last 24h (${utcStamp(startMs)} -> ${utcStamp(endMs)} UTC)`
+  );
+}
+
+/** Build and send the report for the UTC day starting at `dayStartMs`. Returns the report. */
+export async function sendDailyStatsReport(
+  dayStartMs: number
+): Promise<{ aggregate: DailyStatsAggregate; message: string }> {
+  const report = await buildDailyStatsReport(dayStartMs);
+  await sendTelegramPlainText(report.message, LOG_TAG, statsChatIdOverride());
+  return report;
+}
+
+/** Build and send the rolling last-24-hours report. Returns the report. */
+export async function sendRolling24hReport(
+  endMs: number = Date.now()
+): Promise<{ aggregate: DailyStatsAggregate; message: string }> {
+  const report = await buildRolling24hReport(endMs);
+  await sendTelegramPlainText(report.message, LOG_TAG, statsChatIdOverride());
+  return report;
+}
+
+function scheduleNext(): void {
+  const now = Date.now();
+  const nextRun = utcDayStartMs(now) + DAY_MS + SEND_OFFSET_MS;
+  const delay = Math.max(1000, nextRun - now);
+  setTimeout(() => {
+    void runScheduledReport();
+    scheduleNext();
+  }, delay).unref?.();
+}
+
+async function runScheduledReport(): Promise<void> {
+  try {
+    const dayStartMs = previousUtcDayStartMs(Date.now());
+    const report = await sendDailyStatsReport(dayStartMs);
+    console.log(
+      `[${LOG_TAG}] sent report for ${report.aggregate.dayUtc}`,
+      JSON.stringify({
+        uniqueSignedIn: report.aggregate.uniqueSignedIn,
+        newSignedIn: report.aggregate.newSignedIn,
+        nimiqPaySignedIn: report.aggregate.nimiqPaySignedIn,
+        payoutsSent: report.aggregate.payoutsSent,
+        payoutNimTotal: report.aggregate.payoutNimTotal,
+      })
+    );
+  } catch (err) {
+    console.error(`[${LOG_TAG}] scheduled report failed:`, err);
+  }
+}
+
+/** Schedule the once-per-UTC-day Telegram stats report. No-op when disabled. */
+export function startDailyStatsScheduler(): void {
+  if (!dailyStatsReportEnabled()) {
+    console.log(
+      `[${LOG_TAG}] scheduler disabled`,
+      JSON.stringify({
+        telegramConfigured: isTelegramConfigured(),
+        hasChatOverride: Boolean(statsChatIdOverride()),
+      })
+    );
+    return;
+  }
+  console.log(
+    `[${LOG_TAG}] scheduler enabled`,
+    JSON.stringify({ lookbackDays: lookbackDays() })
+  );
+  scheduleNext();
+}

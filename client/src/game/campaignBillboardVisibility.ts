@@ -3,7 +3,7 @@ import { billboardPlaneCenterXZ } from "./billboardFootprintMath.js";
 import { billboardSlideshowPhaseIndex } from "./billboardSlideshowPhase.js";
 
 /** Player within this many floor tiles of a billboard center counts as viewing. */
-export const CAMPAIGN_BILLBOARD_VISIBILITY_RADIUS_TILES = 7;
+export const CAMPAIGN_BILLBOARD_VISIBILITY_RADIUS_TILES = 14;
 
 /** No pointer/keyboard activity for this long → not counted (tab-hidden is separate). */
 export const CAMPAIGN_VIEWER_AFK_MS = 2 * 60 * 1000;

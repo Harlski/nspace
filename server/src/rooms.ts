@@ -4647,7 +4647,8 @@ export function addClient(
 
   const { sessionId, startedAt: sessionStartedAt } = beginSession(
     address,
-    roomId
+    roomId,
+    { nimiqPay: sessionFlags?.nimiqPay === true }
   );
   const conn: ClientConn = {
     ws,

@@ -8,7 +8,7 @@
  * Prepaid estimate (full audience):
  *   visibleMinutes = fundNim ÷ baseNimPerMinute
  *
- * Default: 100 NIM ≈ 24h of on-screen time when players are present (~0.0694 NIM/min).
+ * Default: 400 NIM ≈ 24h of on-screen time when players are present (~0.2778 NIM/min).
  *
  * Future: audienceFactor ≈ 1.0 with viewers nearby, ~0.02 idle trickle.
  */
@@ -19,7 +19,7 @@ const LUNA_PER_NIM = 100_000n;
 export const CAMPAIGN_REFERENCE_DWELL_SEC = 10;
 
 /** Default prepaid price for ~24h of full-audience on-screen time. */
-export const CAMPAIGN_NIM_PER_24H_VISIBLE_DEFAULT = 100;
+export const CAMPAIGN_NIM_PER_24H_VISIBLE_DEFAULT = 400;
 
 /** @deprecated derived from {@link campaignNimPer24hVisible} */
 export const CAMPAIGN_VISIBILITY_NIM_PER_MINUTE_DEFAULT =

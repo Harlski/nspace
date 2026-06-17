@@ -791,7 +791,7 @@ export function advertisePageHtml(): string {
         return (
           '<div class="adv-audience-stats">' +
           "<h4>Audience</h4>" +
-          "<p>No views recorded yet. Stats count players within 7 blocks while active in the game tab.</p>" +
+          "<p>No views recorded yet. Stats count players within 14 blocks while active in the game tab.</p>" +
           "</div>"
         );
       }
@@ -871,7 +871,7 @@ export function advertisePageHtml(): string {
           : "") +
         '<p class="adv-time-remaining__expires">' +
         escHtml(
-          "Time left updates as balance drains while players are within 7 blocks and active in the game tab."
+          "Time left updates as balance drains while players are within 14 blocks and active in the game tab."
         ) +
         "</p></div>"
       );
@@ -1736,7 +1736,7 @@ export function advertisePageHtml(): string {
       if (secondary) {
         secondary.textContent =
           rate +
-          " NIM/min on-screen while active players are within 7 blocks · balance drains from real views";
+          " NIM/min on-screen while active players are within 14 blocks · balance drains from real views";
       }
     }
     function openFundPopover(campaignId) {

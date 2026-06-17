@@ -606,7 +606,7 @@ export function adminCampaignPageHtml(): string {
         "</span></div>" +
         '<div class="cp-preview-detail">' +
         '<span class="cp-preview-detail__label">Billing:</span> ' +
-        '<span class="cp-preview-detail__value">Drains from live views (7 blocks, active players)</span></div>'
+        '<span class="cp-preview-detail__value">Drains from live views (14 blocks, active players)</span></div>'
       );
     }
 
@@ -1150,7 +1150,7 @@ export function adminCampaignPageHtml(): string {
         (tab === "approved" ? "" : " hidden") + ">";
       html += '<div class="cp-tab-layout">';
       html += '<div class="cp-panel"><h2>Approved campaigns (' + approved.length + ")</h2>";
-      html += '<p class="cp-stat-note">Audience stats and balance drain use the same live-view rules (7 blocks, tab-visible, not AFK). Used balance reflects drained prepaid NIM.</p>';
+      html += '<p class="cp-stat-note">Audience stats and balance drain use the same live-view rules (14 blocks, tab-visible, not AFK). Used balance reflects drained prepaid NIM.</p>';
       if (!approved.length) {
         html += '<p class="cp-lead">None yet — approve funded campaigns on the Pending tab.</p>';
       } else {

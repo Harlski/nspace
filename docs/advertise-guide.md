@@ -12,10 +12,10 @@ This guide explains how a paid campaign becomes an in-game billboard advert. For
 
 1. **Sign in** at `/advertise` with your Nimiq wallet.
 2. **Create** a campaign: project name, HTTPS project URL, billboard image (upload or URL), on-screen duration (10 / 30 / 45 s).
-3. **Fund** with NIM via **Pay with wallet** (any amount; default **100 NIM ≈ 24 h** on-screen at full audience).
+3. **Fund** with NIM via **Pay with wallet** (any amount; default **400 NIM ≈ 24 h** on-screen at full audience).
 4. **Wait for approval** — status **Pending approval** until operators review.
 5. **Go live on billboards** — after approval, your advert is placed on billboards around the game. Until then: **Approved · Not Live**.
-6. **Players see your advert** within **7 blocks**; **Visit** opens your project URL. Balance **drains only** for verified on-screen time (tab visible, not AFK).
+6. **Players see your advert** within **14 blocks**; **Visit** opens your project URL. Balance **drains only** for verified on-screen time (tab visible, not AFK).
 7. **Add funds** anytime on approved/live campaigns to extend prepaid time without re-approval.
 
 ---

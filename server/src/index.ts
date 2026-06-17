@@ -33,6 +33,15 @@ import {
   listSessionsForPlayer,
   type AnalyticsTimeWindow,
 } from "./eventLog.js";
+import {
+  startDailyStatsScheduler,
+  buildDailyStatsReport,
+  sendDailyStatsReport,
+  buildRolling24hReport,
+  sendRolling24hReport,
+  parseUtcDayStartMs,
+  previousUtcDayStartMs,
+} from "./dailyStatsReport.js";
 import { flushCanvasClaimsSync } from "./canvasCanvas.js";
 import { flushSignboardsSync } from "./signboards.js";
 import {
@@ -949,6 +958,36 @@ app.get("/api/analytics/overview", requireAnalyticsWallet, async (req, res) => {
   }
 });
 
+/**
+ * Build (and optionally send) the end-of-day Telegram stats report on demand, for verifying
+ * the report without waiting for the scheduled 00:00 UTC run.
+ * Query: `day=YYYY-MM-DD` (UTC; defaults to the previous UTC day), `send=1` to actually push to Telegram.
+ */
+app.post("/api/admin/daily-stats/send", requireAnalyticsWalletAdmin, async (req, res) => {
+  const dayParam = typeof req.query.day === "string" ? req.query.day : "";
+  let dayStartMs: number;
+  if (dayParam) {
+    const parsed = parseUtcDayStartMs(dayParam);
+    if (parsed == null) {
+      res.status(400).json({ error: "invalid day (expected YYYY-MM-DD)" });
+      return;
+    }
+    dayStartMs = parsed;
+  } else {
+    dayStartMs = previousUtcDayStartMs(Date.now());
+  }
+  const doSend = req.query.send === "1" || req.query.send === "true";
+  try {
+    const report = doSend
+      ? await sendDailyStatsReport(dayStartMs)
+      : await buildDailyStatsReport(dayStartMs);
+    res.json({ sent: doSend, aggregate: report.aggregate, message: report.message });
+  } catch (err) {
+    console.error("[daily-stats] manual report", err);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
 app.get("/api/analytics/auth-status", (req: Request, res: Response) => {
   res.json(analyticsAuthStatus(req));
 });
@@ -1736,6 +1775,23 @@ app.get("/api/admin/system/snapshot", requireSystemAdminWallet, async (_req, res
     res.json({ ...snapshot, paymentIntent });
   } catch (e) {
     console.error("[api/admin/system/snapshot]", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+/**
+ * Send the stats report for the rolling last 24 hours to Telegram, on demand from `/admin/system`.
+ * `preview=1` returns the built report without sending.
+ */
+app.post("/api/admin/system/daily-stats/send", requireSystemAdminWallet, async (req, res) => {
+  const preview = req.query.preview === "1" || req.query.preview === "true";
+  try {
+    const report = preview
+      ? await buildRolling24hReport()
+      : await sendRolling24hReport();
+    res.json({ sent: !preview, aggregate: report.aggregate, message: report.message });
+  } catch (e) {
+    console.error("[api/admin/system/daily-stats/send]", e);
     res.status(500).json({ error: "internal" });
   }
 });
@@ -2809,6 +2865,7 @@ setInterval(() => {
 startAdminSystemMonitor();
 startGameWsMetricsFlushTimer();
 startNimPayoutProcessor();
+startDailyStatsScheduler();
 
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url || "", "http://localhost");

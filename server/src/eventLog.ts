@@ -236,7 +236,11 @@ function appendRecord(rec: EventRecord): void {
   fs.appendFileSync(todayFile(), line, "utf8");
 }
 
-export function beginSession(address: string, roomId: string): {
+export function beginSession(
+  address: string,
+  roomId: string,
+  opts?: { nimiqPay?: boolean }
+): {
   sessionId: string;
   startedAt: number;
 } {
@@ -248,6 +252,7 @@ export function beginSession(address: string, roomId: string): {
     sessionId,
     address,
     roomId,
+    ...(opts?.nimiqPay ? { payload: { nimiqPay: true } } : {}),
   });
   return { sessionId, startedAt };
 }
@@ -385,6 +390,144 @@ function enumerateInclusiveUtcDays(fromMs: number, toMs: number): string[] {
     t += 86_400_000;
   }
   return keys;
+}
+
+/**
+ * Single-pass aggregate of one UTC day's sign-in and payout activity for the end-of-day report.
+ *
+ * Sign-in metrics are derived from `session_start` events. New-user detection scans up to
+ * `lookbackDays` of event files (not bounded by the analytics snapshot's 30-day cap), so a wallet
+ * counts as "new" only when its first-ever `session_start` within the lookback falls inside the day.
+ * Active play time reuses the same capped-gap estimate as the analytics snapshot and only counts
+ * sessions that both started in the day and have ended in the logs.
+ */
+export type DailyStatsAggregate = {
+  dayUtc: string;
+  dayStartMs: number;
+  dayEndMs: number;
+  lookbackDays: number;
+  /** Distinct wallets with at least one `session_start` during the day. */
+  uniqueSignedIn: number;
+  /** Distinct wallets whose first-ever `session_start` within the lookback falls in the day. */
+  newSignedIn: number;
+  /** Day wallets whose sign-in came via Nimiq Pay (any of their day sessions flagged `nimiqPay`). */
+  nimiqPaySignedIn: number;
+  /** Day wallets without a Nimiq Pay sign-in (uniqueSignedIn - nimiqPaySignedIn). */
+  nonNimiqPaySignedIn: number;
+  /** Total `session_start` events in the day (includes repeat connects/reconnects). */
+  sessionStarts: number;
+  /** Successful NIM payouts (`nim_payout_sent`) whose `sentAt` falls in the day. */
+  payoutsSent: number;
+  /** Distinct payout recipients in the day. */
+  payoutRecipients: number;
+  payoutLunaTotal: string;
+  payoutNimTotal: string | null;
+  /** Summed capped-gap active play time for day-started sessions that ended in the logs (ms). */
+  activePlayMsTotal: number;
+  /** Number of day-started sessions counted toward `activePlayMsTotal`. */
+  endedSessionsCounted: number;
+};
+
+export async function getDailyStatsAggregate(
+  dayStartMs: number,
+  dayEndMs: number,
+  lookbackDays: number
+): Promise<DailyStatsAggregate> {
+  const scanDays = Math.max(1, Math.floor(lookbackDays));
+  const seenBefore = new Set<string>();
+  const dayWallets = new Set<string>();
+  const dayWalletPay = new Map<string, boolean>();
+  const payoutRecipients = new Set<string>();
+  let sessionStarts = 0;
+  let payoutsSent = 0;
+  let payoutLunaTotal = 0n;
+  let activePlayMsTotal = 0;
+  let endedSessionsCounted = 0;
+  type LiveSession = { lastTs: number; activeMs: number; ended: boolean };
+  const liveSessions = new Map<string, LiveSession>();
+
+  await forEachRecentEvent(scanDays, (rec) => {
+    if (rec.sessionId) {
+      const live = liveSessions.get(rec.sessionId);
+      if (live && !live.ended && kindContributesToActivePlay(rec.kind)) {
+        const gap = rec.ts - live.lastTs;
+        if (gap >= 0) {
+          live.activeMs += Math.min(gap, ANALYTICS_ACTIVE_PLAY_IDLE_CAP_MS);
+        }
+        live.lastTs = rec.ts;
+      }
+    }
+    if (rec.kind === ANALYTICS_EVENT_KINDS.sessionStart) {
+      if (!rec.address) return;
+      if (rec.ts < dayStartMs) {
+        seenBefore.add(rec.address);
+        return;
+      }
+      if (rec.ts >= dayEndMs) return;
+      sessionStarts += 1;
+      dayWallets.add(rec.address);
+      const pay = (rec.payload as { nimiqPay?: unknown } | undefined)?.nimiqPay === true;
+      dayWalletPay.set(rec.address, (dayWalletPay.get(rec.address) ?? false) || pay);
+      if (rec.sessionId) {
+        liveSessions.set(rec.sessionId, { lastTs: rec.ts, activeMs: 0, ended: false });
+      }
+      return;
+    }
+    if (rec.kind === ANALYTICS_EVENT_KINDS.sessionEnd) {
+      if (!rec.sessionId) return;
+      const live = liveSessions.get(rec.sessionId);
+      if (live && !live.ended) {
+        const gap = rec.ts - live.lastTs;
+        if (gap >= 0) {
+          live.activeMs += Math.min(gap, ANALYTICS_ACTIVE_PLAY_IDLE_CAP_MS);
+        }
+        live.ended = true;
+        activePlayMsTotal += live.activeMs;
+        endedSessionsCounted += 1;
+      }
+      return;
+    }
+    if (rec.kind === ANALYTICS_EVENT_KINDS.nimPayoutSent) {
+      const payload = rec.payload ?? {};
+      const txHash = typeof payload.txHash === "string" ? payload.txHash : "";
+      if (!txHash) return;
+      const sentAt = typeof payload.sentAt === "number" ? payload.sentAt : rec.ts;
+      if (sentAt < dayStartMs || sentAt >= dayEndMs) return;
+      payoutsSent += 1;
+      if (rec.address) payoutRecipients.add(rec.address);
+      if (typeof payload.amountLuna === "string" && /^\d+$/.test(payload.amountLuna)) {
+        payoutLunaTotal += BigInt(payload.amountLuna);
+      }
+    }
+  });
+
+  let newSignedIn = 0;
+  for (const w of dayWallets) {
+    if (!seenBefore.has(w)) newSignedIn += 1;
+  }
+  let nimiqPaySignedIn = 0;
+  for (const pay of dayWalletPay.values()) {
+    if (pay) nimiqPaySignedIn += 1;
+  }
+  const payoutLunaStr = payoutLunaTotal.toString();
+
+  return {
+    dayUtc: utcDayKey(dayStartMs),
+    dayStartMs,
+    dayEndMs,
+    lookbackDays: scanDays,
+    uniqueSignedIn: dayWallets.size,
+    newSignedIn,
+    nimiqPaySignedIn,
+    nonNimiqPaySignedIn: dayWallets.size - nimiqPaySignedIn,
+    sessionStarts,
+    payoutsSent,
+    payoutRecipients: payoutRecipients.size,
+    payoutLunaTotal: payoutLunaStr,
+    payoutNimTotal: formatLunaToNim(payoutLunaStr),
+    activePlayMsTotal,
+    endedSessionsCounted,
+  };
 }
 
 /** Unique addresses seen in session_start within recent files. */

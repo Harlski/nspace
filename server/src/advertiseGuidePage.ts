@@ -166,7 +166,7 @@ export function advertiseGuidePageHtml(): string {
         <p>
           Click <strong>Fund</strong>, enter any amount, and pay with your wallet (Nimiq Pay or Hub).
           There is no fixed minimum — more NIM buys more on-screen time. At the default rate,
-          <strong>100 NIM ≈ 24 hours</strong> of full-audience display while players are watching.
+          <strong>400 NIM ≈ 24 hours</strong> of full-audience display while players are watching.
         </p>
       </li>
       <li>
@@ -189,7 +189,7 @@ export function advertiseGuidePageHtml(): string {
         <h3>Players see your advert in game</h3>
         <p>
           When live, nearby players see your image on billboards in the world. Players within
-          <strong>7 blocks</strong> who have the game tab open and are not AFK count as viewers.
+          <strong>14 blocks</strong> who have the game tab open and are not AFK count as viewers.
           Tapping <strong>Visit</strong> opens your project URL.
         </p>
       </li>
@@ -229,7 +229,7 @@ export function advertiseGuidePageHtml(): string {
       <li>
         <h3>What counts as a viewer?</h3>
         <p>
-          A unique wallet within 7 blocks of the billboard, game tab visible, not AFK for 2+ minutes,
+          A unique wallet within 14 blocks of the billboard, game tab visible, not AFK for 2+ minutes,
           and not in a wallet-send flow. Stats on your dashboard match what billing uses.
         </p>
       </li>
