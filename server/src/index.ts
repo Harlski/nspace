@@ -88,19 +88,22 @@ import {
 } from "./termsPrivacyAcceptanceStore.js";
 import { TERMS_PRIVACY_DOCS_VERSION } from "./termsPrivacyVersion.js";
 import {
-  flushNimPayoutQueueSync,
-  getNimPayoutWalletBalanceLuna,
-  getPendingPayoutSnapshotForWallet,
-  getPublicPendingPayoutAdminPanelSnapshot,
-  getPublicPendingPayoutSnapshot,
-  getPublicPendingPayoutSummary,
-  manualBulkPayoutPendingForRecipient,
-  isNimPayoutSenderConfigured,
-  peekNimPayoutBalanceCacheLuna,
-  startNimPayoutProcessor,
-  enqueueNimPayout,
+  flushPayoutQueueOnShutdown,
+  getPayoutWalletBalanceLuna,
+  getPendingSnapshotForWallet,
+  getPublicPendingAdminPanelSnapshot,
+  getPublicPendingSnapshot,
+  getPublicPendingSummary,
+  triggerManualBulkPayout,
+  isPayoutSenderConfigured,
+  peekPayoutBalanceCacheLuna,
+  startPayoutProcessor,
+  enqueuePayIntent,
+  isPayoutServiceMode,
   LUNA_PER_NIM,
-} from "./nimPayout/index.js";
+} from "./payoutGateway.js";
+import { startPayoutOutboxDeliveryLoop } from "./payoutOutbox.js";
+import { startPayoutBalancePullLoop } from "./payoutBalancePull.js";
 import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
 import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
 import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
@@ -814,15 +817,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 app.get("/api/nim/payout-balance", async (_req, res) => {
-  if (!isNimPayoutSenderConfigured()) {
+  if (!isPayoutSenderConfigured()) {
     res.json({ configured: false, hasNim: false, balanceNim: "0.0000" });
     return;
   }
   try {
     const luna = await withTimeout(
-      getNimPayoutWalletBalanceLuna(),
+      getPayoutWalletBalanceLuna(),
       NIM_BALANCE_API_TIMEOUT_MS,
-      "getNimPayoutWalletBalanceLuna"
+      "getPayoutWalletBalanceLuna"
     );
     const balanceNim = (Number(luna) / 100_000).toFixed(4);
     res.json({
@@ -833,7 +836,7 @@ app.get("/api/nim/payout-balance", async (_req, res) => {
   } catch (err) {
     console.error("[nim/payout-balance]", err);
     if (NIM_BALANCE_API_STALE_MAX_MS > 0) {
-      const peek = peekNimPayoutBalanceCacheLuna();
+      const peek = peekPayoutBalanceCacheLuna();
       const age = peek ? Date.now() - peek.cachedAtMs : Infinity;
       if (peek && age <= NIM_BALANCE_API_STALE_MAX_MS) {
         const balanceNim = (Number(peek.luna) / 100_000).toFixed(4);
@@ -884,18 +887,18 @@ app.get("/api/nim/payouts", async (req, res) => {
             typeof rawPanel === "string" &&
             (rawPanel === "1" || rawPanel.toLowerCase() === "true");
           const snap = adminPanelLite
-            ? getPublicPendingPayoutAdminPanelSnapshot()
-            : await getPublicPendingPayoutSnapshot();
+            ? getPublicPendingAdminPanelSnapshot()
+            : await getPublicPendingSnapshot();
           res.json({ mode: "admin" as const, ...snap });
         } else {
-          res.json(await getPendingPayoutSnapshotForWallet(addr));
+          res.json(await getPendingSnapshotForWallet(addr));
         }
       } catch {
         res.status(401).json({ error: "unauthorized" });
       }
       return;
     }
-    res.json(await getPublicPendingPayoutSummary());
+    res.json(await getPublicPendingSummary());
   } catch (err) {
     console.error("[nim/payouts]", err);
     res.status(500).json({ error: "internal" });
@@ -920,7 +923,7 @@ app.post(
         res.status(400).json({ error: "missing_recipient" });
         return;
       }
-      const out = await manualBulkPayoutPendingForRecipient(recipient);
+      const out = await triggerManualBulkPayout(recipient);
       res.json(out);
     } catch (err) {
       const code = err instanceof Error ? err.message : "internal";
@@ -2478,7 +2481,7 @@ app.post("/api/admin/feedback/:id/reward", requireSystemAdminWallet, (req, res) 
     res.status(400).json({ error: marked.error });
     return;
   }
-  enqueueNimPayout({
+  enqueuePayIntent({
     claimId,
     recipientAddress: ticket.wallet,
     amountLuna,
@@ -2892,7 +2895,11 @@ setInterval(() => {
 }, 60_000);
 startAdminSystemMonitor();
 startGameWsMetricsFlushTimer();
-startNimPayoutProcessor();
+startPayoutProcessor();
+if (isPayoutServiceMode()) {
+  startPayoutOutboxDeliveryLoop();
+  startPayoutBalancePullLoop();
+}
 startDailyStatsScheduler();
 
 wss.on("connection", (ws, req) => {
@@ -2994,7 +3001,7 @@ function shutdown(signal: string): void {
   flushDesignsSync();
   flushBillboardsSync();
   flushVoxelTextsSync();
-  flushNimPayoutQueueSync();
+  flushPayoutQueueOnShutdown();
   process.exit(0);
 }
 

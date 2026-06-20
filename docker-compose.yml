@@ -43,6 +43,8 @@ services:
       # Optional: `/admin/system` probes + future purchase flows (set when Compose profile `payment` is used)
       PAYMENT_INTENT_SERVICE_URL: ${PAYMENT_INTENT_SERVICE_URL:-}
       PAYMENT_INTENT_API_SECRET: ${PAYMENT_INTENT_API_SECRET:-}
+      PAYOUT_SERVICE_URL: ${PAYOUT_SERVICE_URL:-}
+      PAYOUT_SERVICE_API_SECRET: ${PAYOUT_SERVICE_API_SECRET:-}
       # JWT_SECRET should be set in ./.env and/or ./server/.env (not dev-insecure-change-me in prod)
       # Optional: DEPLOY_RESTART_HOOK_SECRET (≥16 chars) — enables POST /api/hooks/pre-deploy-restart for CI (see docs/deploy-github-docker.md)
       # DEV_AUTH_BYPASS should NOT be set in production
@@ -77,3 +79,29 @@ services:
       NIM_NETWORK: ${NIM_NETWORK:-testalbatross}
     volumes:
       - ./data/payment-intent:/data
+
+  # Optional: outgoing NIM payouts (block-claim tracer bullet). Enable with PAYOUT_SERVICE_* on nspace.
+  payout:
+    profiles: ["payout"]
+    build:
+      context: .
+      dockerfile: payout-service/Dockerfile
+    image: nspace-payout:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3091:3091"
+    env_file:
+      - path: ./.env
+        required: false
+      - path: ./server/.env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3091"
+      HOST: 0.0.0.0
+      NIM_PAYOUT_DATA_DIR: /data
+      PAYOUT_SERVICE_API_SECRET: ${PAYOUT_SERVICE_API_SECRET:-}
+      NIM_PAYOUT_PRIVATE_KEY: ${NIM_PAYOUT_PRIVATE_KEY:-}
+      NIM_NETWORK: ${NIM_NETWORK:-testalbatross}
+    volumes:
+      - ./data/payout-service:/data

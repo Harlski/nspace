@@ -4,10 +4,10 @@ import {
 } from "./eventLog.js";
 import { isTelegramConfigured, sendTelegramPlainText } from "./telegramNotify.js";
 import {
-  flushAllPendingPayoutsNow,
-  getPendingPayoutQueueTotals,
-} from "./nimPayout/queue.js";
-import { isNimPayoutSenderConfigured } from "./nimPayout/sender.js";
+  getPendingQueueTotals,
+  isPayoutSenderConfigured,
+  triggerEndOfDayFlush,
+} from "./payoutGateway.js";
 // Seasonal World Cup goal recap (second Telegram message); returns null when the feature is
 // off or the day had no goals. Grep "worldcup" to find the deletable hooks.
 import { buildWorldcupGoalDayMessage } from "./worldcup/goalDayReport.js";
@@ -56,7 +56,7 @@ export function dailyPayoutFlushEnabled(): boolean {
   const explicit = parseBoolEnv(envTrim("NIM_PAYOUT_DAILY_FLUSH_ENABLED"));
   if (explicit === false) return false;
   if (explicit === true) return true;
-  return isNimPayoutSenderConfigured();
+  return isPayoutSenderConfigured();
 }
 
 /** Pending-queue context appended to a stats report so pending NIM is folded into the day total. */
@@ -71,7 +71,7 @@ export type PendingPayoutSummaryForReport = {
 
 /** Live pending-queue snapshot. `willFlush` marks whether this run pays it out after reporting. */
 function currentPendingSummary(willFlush: boolean): PendingPayoutSummaryForReport {
-  const t = getPendingPayoutQueueTotals();
+  const t = getPendingQueueTotals();
   return {
     jobCount: t.jobCount,
     recipientCount: t.recipientCount,
@@ -313,7 +313,7 @@ async function runScheduledReport(): Promise<void> {
   // Pay out the pending queue only after the report has been sent.
   if (willFlush) {
     try {
-      const flush = await flushAllPendingPayoutsNow();
+      const flush = await triggerEndOfDayFlush();
       console.log(
         `[${LOG_TAG}] end-of-day payout flush`,
         JSON.stringify({
@@ -343,7 +343,7 @@ export function startDailyStatsScheduler(): void {
       JSON.stringify({
         telegramConfigured: isTelegramConfigured(),
         hasChatOverride: Boolean(statsChatIdOverride()),
-        payoutSenderConfigured: isNimPayoutSenderConfigured(),
+        payoutSenderConfigured: isPayoutSenderConfigured(),
       })
     );
     return;

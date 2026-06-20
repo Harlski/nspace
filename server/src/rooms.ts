@@ -86,12 +86,13 @@ import {
   schedulePersistWorldState,
 } from "./worldPersistence.js";
 import {
-  enqueueNimPayout,
-  getNimPayoutWalletBalanceLuna,
-  isNimPayoutSenderConfigured,
-  peekNimPayoutBalanceCacheLuna,
+  enqueueBlockClaimPayIntent,
+  enqueuePayIntent,
+  getPayoutWalletBalanceLuna,
+  isPayoutSenderConfigured,
+  peekPayoutBalanceCacheLuna,
   LUNA_PER_NIM,
-} from "./nimPayout/index.js";
+} from "./payoutGateway.js";
 import {
   CAMPAIGN_IMPRESSION_BATCH_MAX,
   recordCampaignImpressions,
@@ -586,7 +587,7 @@ const CLAIM_ACCUM_DT_CAP_MS = 480;
  * funds gate if it shows enough for the minimum reward — **without** an age check — so the
  * claim path does not await Nimiq behind in-flight payouts. Payout jobs still send on-chain
  * asynchronously; a stale-high cache is rare for a dedicated hot wallet. Set `0` to always
- * `await getNimPayoutWalletBalanceLuna()` on each complete (blocks on the Nimiq mutex).
+ * `await getPayoutWalletBalanceLuna()` on each complete (blocks on the Nimiq mutex).
  */
 const NIM_CLAIM_BALANCE_PEEK_MAX_MS = Math.max(
   0,
@@ -1766,7 +1767,7 @@ function finalizeClaimableBlockReward(
     amountLuna: rewardLuna.toString(),
   });
 
-  enqueueNimPayout({
+  enqueueBlockClaimPayIntent({
     claimId,
     recipientAddress: address,
     amountLuna: rewardLuna,
@@ -4102,7 +4103,7 @@ function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>
 
   if (position === 1) {
     const mazeRewardClaimId = `maze-first-${canvasTimerEndTime}-${conn.address}`;
-    enqueueNimPayout({
+    enqueuePayIntent({
       claimId: mazeRewardClaimId,
       recipientAddress: conn.address,
       amountLuna: LUNA_PER_NIM,
@@ -4693,7 +4694,7 @@ function maybeQueueGoalReward(
   }
   // Use the normalized recipient the decision built the claimId from, so the payout target
   // and the idempotency key can never disagree.
-  enqueueNimPayout({
+  enqueuePayIntent({
     claimId: decision.claimId,
     recipientAddress: decision.recipientWallet,
     amountLuna: decision.amountLuna,
@@ -8969,13 +8970,13 @@ export function addClient(
       }
 
       let payoutHasFunds = false;
-      if (isNimPayoutSenderConfigured()) {
+      if (isPayoutSenderConfigured()) {
         try {
-          const peek = peekNimPayoutBalanceCacheLuna();
+          const peek = peekPayoutBalanceCacheLuna();
           if (NIM_CLAIM_BALANCE_PEEK_MAX_MS > 0 && peek !== null) {
             payoutHasFunds = peek.luna >= CLAIM_REWARD_MIN_LUNA;
           } else {
-            const payoutBalanceLuna = await getNimPayoutWalletBalanceLuna();
+            const payoutBalanceLuna = await getPayoutWalletBalanceLuna();
             payoutHasFunds = payoutBalanceLuna >= CLAIM_REWARD_MIN_LUNA;
           }
         } catch (err) {

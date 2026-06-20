@@ -55,3 +55,27 @@ down and is dragged, anchored at that point. Held, it steers the player continuo
 direction; released, it stops. Coexists with tap-to-move: a quick stationary tap still walks, a
 drag past a small threshold becomes the stick.
 _Avoid_: d-pad, controller, analog stick, dpad, fixed stick.
+
+## Payouts
+
+**Payout Service**:
+The dedicated sidecar process that owns all outgoing NIM: the queue, the signer hot wallet,
+retries, confirmation polling, balance, and the flush action. The game server never sends NIM
+itself; it hands intents to this service.
+_Avoid_: payout worker, nim service, tx service, payment service (that is the *incoming* one).
+
+**Payment Intent Service**:
+The pre-existing, separate sidecar for *incoming* NIM (advertise/campaign payment verification).
+Read-only on-chain; holds no signer. Distinct from the Payout Service.
+_Avoid_: payment service (ambiguous), payout service.
+
+**Pay-Intent**:
+A single "pay this claim N luna to this address" request produced by gameplay and handed from
+the game server to the Payout Service. Idempotent by its `claimId`.
+_Avoid_: payout job (that is the Payout Service's internal queue entry), payment intent (incoming).
+
+**Outbox**:
+The game server's minimal local, durable, append-only store of Pay-Intents not yet acknowledged
+by the Payout Service. A delivery loop drains it with retries so no payout is lost across a
+service outage or a game-server restart.
+_Avoid_: queue (the durable queue lives in the Payout Service), buffer, spool.

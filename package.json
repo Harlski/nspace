@@ -5,7 +5,8 @@
   "workspaces": [
     "client",
     "server",
-    "payment-intent-service"
+    "payment-intent-service",
+    "payout-service"
   ],
   "overrides": {
     "@nimiq/core": "2.2.2"
@@ -16,7 +17,8 @@
     "build": "npm run build -w client && npm run build -w server",
     "start": "npm run start -w server",
     "dev:payment-intent": "npm run dev -w payment-intent-service",
-    "test": "npm test -w payment-intent-service && npm test -w server",
+    "dev:payout": "npm run dev -w payout-service",
+    "test": "npm test -w payment-intent-service && npm test -w payout-service && npm test -w server",
     "postinstall": "node scripts/postinstall.cjs"
   },
   "devDependencies": {

@@ -1,7 +1,13 @@
+/**
+ * Internal barrel for `nimPayout/*` modules. Server code must use `payoutGateway.ts`
+ * instead — it is the only place that may import from here.
+ */
 export {
   enqueueNimPayout,
   startNimPayoutProcessor,
   flushNimPayoutQueueSync,
+  flushAllPendingPayoutsNow,
+  getPendingPayoutQueueTotals,
   getPublicPendingPayoutAdminPanelSnapshot,
   getPublicPendingPayoutSnapshot,
   getPublicPendingPayoutSummary,
