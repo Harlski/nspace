@@ -14,6 +14,28 @@ import {
   VIEW_FRUSTUM_SIZE,
 } from "./constants.js";
 import { FogOfWarPass } from "./fogOfWar.js";
+// worldcup: seasonal soccer rendering (feature-flagged, deletable)
+import type { BallWire, WorldcupPortalWire } from "../net/ws.js";
+import { flagEmoji as worldcupFlagEmoji } from "../worldcup/countries.js";
+import {
+  FIELD_BOUNDS as WORLDCUP_FIELD_BOUNDS,
+  FIELD_GOALS as WORLDCUP_FIELD_GOALS,
+  FIELD_OUTFIELD_MARGIN as WORLDCUP_FIELD_OUTFIELD_MARGIN,
+  WORLDCUP_ENABLED as WORLDCUP_ENABLED_CLIENT,
+  isFieldLikeRoomId as worldcupIsFieldLikeRoomId,
+  isMatchPitchRoomId as worldcupIsMatchPitchRoomId,
+} from "../worldcup/config.js";
+import {
+  buildGoalNet as worldcupBuildGoalNet,
+  buildStadium as worldcupBuildStadium,
+  buildStadiumGround as worldcupBuildStadiumGround,
+  frontRowStandSeat as worldcupFrontRowStandSeat,
+  makePitchSurface as worldcupMakePitchSurface,
+  makeSoccerBallTexture as worldcupMakeSoccerBallTexture,
+  WorldcupCrowd,
+} from "../worldcup/fieldVisuals.js";
+import { WorldcupGoalArrow } from "../worldcup/goalArrow.js";
+import type { WorldcupJoystickView } from "../worldcup/joystick.js";
 
 const LS_ZOOM_MIN = "nspace_zoom_min";
 const LS_ZOOM_MAX = "nspace_zoom_max";
@@ -33,7 +55,7 @@ const DEFAULT_ZOOM_MAX = 13.44;
 const STREAM_CAMERA_HEIGHT = 100;
 /** Top-down stream overview: identicon footprint spans this many floor tiles (1 tile at spotlight zoom). */
 const STREAM_TOPDOWN_AVATAR_TILE_SPAN = 3;
-import { loadIdenticonTexture } from "./identiconTexture.js";
+import { identiconDataUrl, loadIdenticonTexture } from "./identiconTexture.js";
 import {
   createBillboardRoot,
   disposeBillboardRoot,
@@ -1127,12 +1149,81 @@ export class Game {
     }
   >();
   private readonly targetPos = new Map<string, THREE.Vector3>();
+  // worldcup: seasonal soccer ball meshes + interpolation targets + goal frames
+  private readonly worldcupBalls = new Map<string, THREE.Mesh>();
+  private readonly worldcupBallTargets = new Map<
+    string,
+    { x: number; z: number; vx: number; vz: number; recvMs: number }
+  >();
+  private worldcupGoalsGroup: THREE.Group | null = null;
+  // worldcup: server-controlled Goalie objects (identicon billboard + keeper ring) +
+  // lateral interpolation targets.
+  private readonly worldcupGoalies = new Map<string, THREE.Group>();
+  private readonly worldcupGoalieTargets = new Map<
+    string,
+    { x: number; z: number; recvMs: number }
+  >();
+  /** Shared "house keeper" identicon texture (one fixed face for every Goalie). */
+  private worldcupGoalieIdenticonTex: THREE.CanvasTexture | null = null;
+  // worldcup: floating "open to 1v1" Challenge badge above players who raised one.
+  private readonly worldcupChallengeBubbles = new Map<string, THREE.Sprite>();
+  private worldcupChallengeBubbleTex: THREE.CanvasTexture | null = null;
+  /** worldcup: live 1v1 spectate portals in the current room (matchId = pitch room id). */
+  private readonly worldcupPortals = new Map<
+    string,
+    {
+      group: THREE.Group;
+      mat: THREE.SpriteMaterial;
+      /** Footprint tile you stand on to raise the "Watch" intent pill (door-like). */
+      tileX: number;
+      tileZ: number;
+      full: boolean;
+    }
+  >();
+  /** worldcup: visual-only floating joystick the game drives; null off touch hosts. */
+  private worldcupJoystickView: WorldcupJoystickView | null = null;
+  /** worldcup: true only when the joystick may engage (touch host, on the pitch, not spectating). */
+  private worldcupJoystickEnabled = false;
+  /**
+   * worldcup: while true (post-goal kickoff countdown) the local player is frozen — tap-to-move and
+   * the joystick are suppressed. The server also rejects moves, this just keeps the UI honest.
+   */
+  private worldcupMoveLocked = false;
+  /** worldcup: active floating-stick steering session (one finger owns it). */
+  private worldcupStick: {
+    pointerId: number;
+    dx: number;
+    dy: number;
+    timer: number | null;
+  } | null = null;
+  /** Single-finger pitch drag past this (px) turns a deferred walk into the floating joystick. */
+  private static readonly WORLDCUP_STICK_ENGAGE_PX = 14;
+  /** Throttle of held-direction emits (ms). Above the server moveTo rate limit (120ms). */
+  private static readonly WORLDCUP_STICK_EMIT_MS = 140;
+  private worldcupCrowd: WorldcupCrowd | null = null;
+  /** Previous-day champion country (ISO alpha-2) the crowd waves; persists across rebuilds. */
+  private worldcupCrowdFlag: string | null = null;
+  /** 1v1 Match crowd split (side a / side b country codes); applied on a Match Pitch. */
+  private worldcupCrowdSideFlags: { a: string | null; b: string | null } | null = null;
+  /** Free Play crowd allegiance: distinct country codes of players currently on the field. */
+  private worldcupCrowdRoster: string[] = [];
+  /** worldcup: normalized addresses of the two Match participants; everyone else in a Match
+   *  Pitch is a Spectator (seated on the stands, can't touch the ball). */
+  private readonly worldcupMatchParticipants = new Set<string>();
+  /** worldcup: true while the local player is a Spectator (camera frames + locks to the pitch). */
+  private worldcupSpectatorView = false;
+  /** worldcup: attacking-goal arrow above the local Match player's target net (null otherwise). */
+  private worldcupGoalArrow: WorldcupGoalArrow | null = null;
+  /** worldcup: which side the live attacking-goal arrow is for, so it isn't rebuilt every tick. */
+  private worldcupGoalArrowSide: "a" | "b" | null = null;
   private ro: ResizeObserver;
   private tileHighlight: THREE.Mesh;
   private readonly tileHighlightMat: THREE.MeshBasicMaterial;
   private tileClickHandler:
     | ((x: number, z: number, layer?: 0 | 1) => void)
     | null = null;
+  /** worldcup: send an un-rate-limited stop (touch-joystick release) so the player halts at once. */
+  private worldcupStopMoveHandler: (() => void) | null = null;
   private placeBlockHandler: ((x: number, z: number) => void) | null = null;
   /** When set, next empty floor click in build mode sets teleporter destination X/Z. */
   private teleporterDestPickHandler: ((x: number, z: number) => void) | null =
@@ -1308,6 +1399,8 @@ export class Game {
     layer: 0 | 1;
     /** Unreachable path stays silent (gate walk goals). */
     suppressCantMoveMessage?: boolean;
+    /** worldcup: exact float destination for free (any-direction) pitch movement. */
+    world?: { x: number; z: number };
   } | null = null;
   /**
    * Optional route shown while primary button is held before `pointerup` (deferred walk).
@@ -1317,6 +1410,8 @@ export class Game {
     ft: FloorTile;
     layer: 0 | 1;
     suppressCantMoveMessage?: boolean;
+    /** worldcup: exact float destination for the straight pitch preview line. */
+    world?: { x: number; z: number };
   } | null = null;
   private roomId = ROOM_ID;
   private roomBounds: RoomBounds = getRoomBaseBounds(ROOM_ID);
@@ -1601,7 +1696,11 @@ export class Game {
   /** Right-click / long-press other human (non-NPC) avatar — HUD context menu. */
   private otherPlayerContextOpener:
     | ((p: {
-        targets: Array<{ address: string; displayName: string }>;
+        targets: Array<{
+          address: string;
+          displayName: string;
+          challengeOpen?: boolean;
+        }>;
         clientX: number;
         clientY: number;
         /** True when your avatar is in front on this ray; HUD shows Emote first if supported. */
@@ -1613,7 +1712,11 @@ export class Game {
     startX: number;
     startY: number;
     timer: ReturnType<typeof setTimeout>;
-    targets: Array<{ address: string; displayName: string }>;
+    targets: Array<{
+      address: string;
+      displayName: string;
+      challengeOpen?: boolean;
+    }>;
     emoteRowFirst: boolean;
   } | null = null;
   private static readonly OTHER_PROFILE_LONGPRESS_MS = 480;
@@ -2289,6 +2392,11 @@ export class Game {
     this.blockMeshes.clear();
     this.disposePlainCubeInstancedMeshes();
     this.clearTeleporterMarkers();
+
+    // worldcup: balls + goalies are room-scoped; clear and rebuild goal frames per room
+    this.clearWorldcupBalls();
+    this.clearWorldcupGoalies();
+    this.syncWorldcupGoals(normalizeRoomId(msg.roomId));
 
     this.rebuildDoorKeys();
     this.pathGoal = null;
@@ -3324,6 +3432,15 @@ export class Game {
       nameSprite.visible = false;
       return;
     }
+    // worldcup: keep the soccer pitch uncluttered — NPCs wear no nametag here.
+    if (this.isWorldcupFreeMoveRoom()) {
+      const address = String(g.userData.address ?? "");
+      const displayName = String(g.userData.displayName ?? "");
+      if (remotePlayerIsNpc(address, displayName)) {
+        nameSprite.visible = false;
+        return;
+      }
+    }
     nameSprite.visible = true;
     const screenH = this.streamPresentationActive
       ? STREAM_NAME_LABEL_SCREEN_HEIGHT_PX
@@ -3861,6 +3978,12 @@ export class Game {
   private readonly onPointerUp = (e: PointerEvent): void => {
     this.requestRender(250);
     const isCancel = e.type === "pointercancel";
+    // worldcup: releasing the floating-joystick finger stops the player (no tap-to-move).
+    if (this.worldcupStick && this.worldcupStick.pointerId === e.pointerId) {
+      this.endWorldcupStick();
+      this.releaseTouchPointerId(e.pointerId);
+      return;
+    }
     if (
       this.rightOrbitDrag &&
       this.rightOrbitDrag.pointerId === e.pointerId
@@ -4027,6 +4150,7 @@ export class Game {
 
   /** Clear all tracked touches (tab background, bfcache, recovery from stuck state). */
   private flushTouchPointerGestureState(): void {
+    this.endWorldcupStick();
     this.clearPendingBuildPlace();
     const endingRotateOrbit =
       this.touchPointers.size >= 2 && this.touchTwoFingerMode === "rotate";
@@ -4078,6 +4202,11 @@ export class Game {
     handler: ((x: number, z: number, layer?: 0 | 1) => void) | null
   ): void {
     this.tileClickHandler = handler;
+  }
+
+  /** worldcup: handler that sends an immediate, un-rate-limited stop (joystick release). */
+  setWorldcupStopMoveHandler(handler: (() => void) | null): void {
+    this.worldcupStopMoveHandler = handler;
   }
 
   setPlaceBlockHandler(handler: ((x: number, z: number) => void) | null): void {
@@ -4190,7 +4319,11 @@ export class Game {
   setOtherPlayerContextOpener(
     handler:
       | ((p: {
-          targets: Array<{ address: string; displayName: string }>;
+          targets: Array<{
+            address: string;
+            displayName: string;
+            challengeOpen?: boolean;
+          }>;
           clientX: number;
           clientY: number;
           emoteRowFirst?: boolean;
@@ -8463,8 +8596,14 @@ export class Game {
         }
       }
     }
-    const dest = this.pickWalkableTile(clientX, clientY);
-    if (!dest) return null;
+    let dest = this.pickWalkableTile(clientX, clientY);
+    if (!dest) {
+      // Click-toward-tap: an off-tile / non-walkable click still walks to the nearest walkable
+      // tile under the cursor, so the player heads in the tapped direction.
+      const raw = this.pickFloorRaw(clientX, clientY);
+      if (raw) dest = this.nearestWalkableTileToWorld(raw.x, raw.z);
+      if (!dest) return null;
+    }
     const k = tileKey(dest.x, dest.y);
     if (
       this.blockingTileKeys.has(k) &&
@@ -8473,6 +8612,36 @@ export class Game {
       return null;
     }
     return { ft: dest, layer: 0 };
+  }
+
+  /** Nearest walkable (non-blocked) tile to a world ground point, searched in expanding rings. */
+  private nearestWalkableTileToWorld(wx: number, wz: number): FloorTile | null {
+    const c = snapFloorTile(wx, wz);
+    const maxR = 16;
+    for (let r = 0; r <= maxR; r++) {
+      let best: FloorTile | null = null;
+      let bestD = Infinity;
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dz = -r; dz <= r; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue; // ring perimeter only
+          const tx = c.x + dx;
+          const tz = c.y + dz;
+          const t: FloorTile = { x: tx, y: tz };
+          if (!this.tileWalkable(t)) continue;
+          const k = tileKey(tx, tz);
+          if (this.blockingTileKeys.has(k) && !this.selfGatePassFloorTile(tx, tz)) {
+            continue;
+          }
+          const d = Math.hypot(tx - wx, tz - wz);
+          if (d < bestD) {
+            bestD = d;
+            best = t;
+          }
+        }
+      }
+      if (best) return best;
+    }
+    return null;
   }
 
   /** True when this tile is a gate the local player may walk while it is open for them. */
@@ -8557,6 +8726,27 @@ export class Game {
   /** Show the route the player would take if they release at the current pick (pointerdown). */
   private previewWalkNavigationAt(clientX: number, clientY: number): void {
     if (!this.selfMesh) return;
+    // worldcup: pitch preview points straight at the raw float pick.
+    if (this.isWorldcupFreeMoveRoom() && !this.buildMode && !this.floorExpandMode) {
+      const hit = this.pickFloorRaw(clientX, clientY);
+      if (hit) {
+        const fx = Math.max(
+          WORLDCUP_FIELD_BOUNDS.minX,
+          Math.min(WORLDCUP_FIELD_BOUNDS.maxX, hit.x)
+        );
+        const fz = Math.max(
+          WORLDCUP_FIELD_BOUNDS.minZ,
+          Math.min(WORLDCUP_FIELD_BOUNDS.maxZ, hit.z)
+        );
+        this.pathPreviewGoal = {
+          ft: snapFloorTile(fx, fz),
+          layer: 0,
+          world: { x: fx, z: fz },
+        };
+        this.refreshPathLine();
+        return;
+      }
+    }
     this.pathPreviewGoal = this.resolveWalkNavigationGoalAt(clientX, clientY);
     this.refreshPathLine();
   }
@@ -8717,12 +8907,215 @@ export class Game {
     if (this.streamObserverMode) return;
     if (!this.selfMesh || !this.tileClickHandler) return;
     this.pathPreviewGoal = null;
+    // worldcup: free (any-direction) movement on the pitch — straight line to a float point.
+    if (this.tryFieldFreeWalkAt(clientX, clientY)) return;
     const goal = this.resolveWalkNavigationGoalAt(clientX, clientY);
     if (!goal) {
       this.refreshPathLine();
       return;
     }
     void this.commitResolvedWalkGoal(goal);
+  }
+
+  /** worldcup: true when the current room is the pitch (field or Match Pitch) with free movement. */
+  private isWorldcupFreeMoveRoom(): boolean {
+    return WORLDCUP_ENABLED_CLIENT && worldcupIsFieldLikeRoomId(this.roomId);
+  }
+
+  /** worldcup: register the floating-joystick visual (touch hosts only); null disables it. */
+  setWorldcupJoystickView(view: WorldcupJoystickView | null): void {
+    this.worldcupJoystickView = view;
+    if (!view) this.endWorldcupStick();
+  }
+
+  /** worldcup: allow the stick to engage (pitch + touch host + not spectating). */
+  setWorldcupJoystickEnabled(enabled: boolean): void {
+    this.worldcupJoystickEnabled = enabled;
+    if (!enabled) this.endWorldcupStick();
+  }
+
+  /**
+   * worldcup: freeze / unfreeze local movement during the post-goal kickoff countdown. Engaging the
+   * lock also stops any in-progress walk + joystick so the player snaps to the server-set spawn.
+   */
+  setWorldcupMoveLocked(locked: boolean): void {
+    this.worldcupMoveLocked = locked;
+    if (locked) {
+      this.endWorldcupStick();
+      this.pendingPrimaryWalk = null;
+      this.pathGoal = null;
+      this.pathPreviewGoal = null;
+      this.refreshPathLine();
+    }
+  }
+
+  /** worldcup: true when a single-finger pitch drag may be promoted to the floating stick. */
+  private worldcupStickCanEngage(): boolean {
+    return (
+      this.worldcupJoystickEnabled &&
+      !this.worldcupMoveLocked &&
+      this.worldcupJoystickView !== null &&
+      this.worldcupStick === null &&
+      this.isWorldcupFreeMoveRoom() &&
+      !this.buildMode &&
+      !this.floorExpandMode
+    );
+  }
+
+  /**
+   * worldcup: promote the in-progress deferred walk into a floating joystick. The base anchors at
+   * the thumb-down point (`startX/startY`); steering continues until the finger lifts.
+   */
+  private beginWorldcupStick(
+    pointerId: number,
+    startX: number,
+    startY: number,
+    curX: number,
+    curY: number
+  ): void {
+    // Keep the canvas pointer capture set by the deferred walk so moves keep flowing here.
+    this.pendingPrimaryWalk = null;
+    this.pathPreviewGoal = null;
+    const view = this.worldcupJoystickView;
+    if (!view) return;
+    view.showAt(startX, startY);
+    const v = view.moveThumbTo(curX, curY);
+    this.worldcupStick = { pointerId, dx: v.dx, dy: v.dy, timer: null };
+    this.worldcupJoystickMove(v.dx, v.dy);
+    this.worldcupStick.timer = window.setInterval(() => {
+      if (this.worldcupStick) {
+        this.worldcupJoystickMove(this.worldcupStick.dx, this.worldcupStick.dy);
+      }
+    }, Game.WORLDCUP_STICK_EMIT_MS);
+  }
+
+  /** worldcup: update the floating-stick thumb + heading from the steering finger's position. */
+  private updateWorldcupStick(clientX: number, clientY: number): void {
+    if (!this.worldcupStick || !this.worldcupJoystickView) return;
+    const v = this.worldcupJoystickView.moveThumbTo(clientX, clientY);
+    this.worldcupStick.dx = v.dx;
+    this.worldcupStick.dy = v.dy;
+  }
+
+  /** worldcup: tear down the floating-stick session and stop the player. */
+  private endWorldcupStick(): void {
+    const s = this.worldcupStick;
+    if (!s) return;
+    if (s.timer !== null) window.clearInterval(s.timer);
+    this.worldcupStick = null;
+    try {
+      const el = this.renderer.domElement;
+      if (el.hasPointerCapture?.(s.pointerId)) {
+        el.releasePointerCapture(s.pointerId);
+      }
+    } catch {
+      /* pointer may already be gone */
+    }
+    this.worldcupJoystickView?.hide();
+    this.worldcupJoystickStop();
+  }
+
+  /**
+   * worldcup: drive movement from the on-screen touch joystick. `screenDx`/`screenDy` are the
+   * thumb offset in -1..1 (y is down). Converts the screen direction into a world-ground heading
+   * via the camera basis and walks toward a far clamped point so the player glides continuously.
+   */
+  worldcupJoystickMove(screenDx: number, screenDy: number): void {
+    if (!this.isWorldcupFreeMoveRoom()) return;
+    if (this.worldcupMoveLocked) return;
+    if (this.buildMode || this.floorExpandMode) return;
+    if (!this.selfMesh || !this.tileClickHandler) return;
+    if (Math.hypot(screenDx, screenDy) < 0.05) {
+      this.worldcupJoystickStop();
+      return;
+    }
+    this.camera.updateMatrixWorld();
+    const e = this.camera.matrixWorld.elements;
+    // Camera right (+x) and up (+y) local axes, projected onto the ground plane (XZ).
+    let rx = e[0];
+    let rz = e[2];
+    let ux = e[4];
+    let uz = e[6];
+    const rl = Math.hypot(rx, rz) || 1;
+    rx /= rl;
+    rz /= rl;
+    const ul = Math.hypot(ux, uz) || 1;
+    ux /= ul;
+    uz /= ul;
+    // Pushing up the screen (dy < 0) heads into the scene.
+    let wx = rx * screenDx + ux * -screenDy;
+    let wz = rz * screenDx + uz * -screenDy;
+    const wl = Math.hypot(wx, wz) || 1;
+    wx /= wl;
+    wz /= wl;
+    const far = 48;
+    const b = this.worldcupFieldMoveBounds();
+    const tx = Math.max(b.minX, Math.min(b.maxX, this.selfMesh.position.x + wx * far));
+    const tz = Math.max(b.minZ, Math.min(b.maxZ, this.selfMesh.position.z + wz * far));
+    this.pathGoal = { ft: snapFloorTile(tx, tz), layer: 0, world: { x: tx, z: tz } };
+    this.refreshPathLine();
+    this.tileClickHandler(tx, tz, 0);
+  }
+
+  /**
+   * worldcup: stop joystick movement. Sends a dedicated stop intent (not a `moveTo` to the current
+   * spot) so it is never swallowed by the server's move rate limit — the player halts the instant
+   * the finger lifts instead of gliding on toward the last far joystick target.
+   */
+  worldcupJoystickStop(): void {
+    this.pathGoal = null;
+    this.refreshPathLine();
+    if (this.worldcupStopMoveHandler) {
+      this.worldcupStopMoveHandler();
+    } else if (this.selfMesh && this.tileClickHandler) {
+      this.tileClickHandler(this.selfMesh.position.x, this.selfMesh.position.z, 0);
+    }
+  }
+
+  /** worldcup: walkable extent on the pitch — base field bounds widened by the outfield margin. */
+  private worldcupFieldMoveBounds(): {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  } {
+    const m = WORLDCUP_FIELD_OUTFIELD_MARGIN;
+    const b = WORLDCUP_FIELD_BOUNDS;
+    return {
+      minX: b.minX - m,
+      maxX: b.maxX + m,
+      minZ: b.minZ - m,
+      maxZ: b.maxZ + m,
+    };
+  }
+
+  /**
+   * worldcup: on the pitch, send a straight-line move to the exact clicked float point so the
+   * ball can be kicked at any angle. Returns true when it handled the click.
+   */
+  private tryFieldFreeWalkAt(clientX: number, clientY: number): boolean {
+    if (!this.isWorldcupFreeMoveRoom()) return false;
+    if (this.buildMode || this.floorExpandMode) return false;
+    if (!this.selfMesh || !this.tileClickHandler) return false;
+    // worldcup: during the post-goal kickoff freeze, swallow the tap so the player stays put.
+    if (this.worldcupMoveLocked) return true;
+    const hit = this.pickFloorRaw(clientX, clientY);
+    if (!hit) return false;
+    // Clicks outside the pitch snap to the nearest point on the wall (the field boundary) rather
+    // than overshooting into the outfield margin — so a tap past the touchline walks you to the
+    // wall in line with where you tapped (matching the path preview). The outfield margin (for
+    // getting fully behind a wall-pinned ball) stays reachable via the joystick.
+    const b = WORLDCUP_FIELD_BOUNDS;
+    const fx = Math.max(b.minX, Math.min(b.maxX, hit.x));
+    const fz = Math.max(b.minZ, Math.min(b.maxZ, hit.z));
+    this.pathGoal = {
+      ft: snapFloorTile(fx, fz),
+      layer: 0,
+      world: { x: fx, z: fz },
+    };
+    this.refreshPathLine();
+    this.tileClickHandler(fx, fz, 0);
+    return true;
   }
 
   /**
@@ -8843,6 +9236,28 @@ export class Game {
     return snapFloorTile(this.hit.x, this.hit.z);
   }
 
+  /**
+   * worldcup: raw (unsnapped) floor intersection in world units, for free pitch movement.
+   * Returns null when the ray misses the y=0 plane.
+   */
+  private pickFloorRaw(
+    clientX: number,
+    clientY: number
+  ): { x: number; z: number } | null {
+    if (!this.updateNdc(clientX, clientY)) return null;
+    this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    const ray = this.raycaster.ray;
+    const n = floorPlane.normal;
+    const denom = n.dot(ray.direction);
+    if (Math.abs(denom) < 1e-8) return null;
+    const t = -(n.dot(ray.origin) + floorPlane.constant) / denom;
+    this.hit.copy(ray.direction).multiplyScalar(t).add(ray.origin);
+    if (!Number.isFinite(this.hit.x) || !Number.isFinite(this.hit.z)) return null;
+    return { x: this.hit.x, z: this.hit.z };
+  }
+
   /** Returns `tileKey` if the ray hits a placed block mesh, else null. */
   private resolveAvatarGroupFromHit(obj: THREE.Object3D): THREE.Group | null {
     let o: THREE.Object3D | null = obj;
@@ -8909,7 +9324,7 @@ export class Game {
   private pickAllOtherHumanAvatarsAt(
     clientX: number,
     clientY: number
-  ): Array<{ address: string; displayName: string }> {
+  ): Array<{ address: string; displayName: string; challengeOpen?: boolean }> {
     if (!this.updateNdc(clientX, clientY)) return [];
     this.camera.updateMatrixWorld();
     this.camera.updateProjectionMatrix();
@@ -8919,7 +9334,11 @@ export class Game {
     if (roots.length === 0) return [];
     const hits = this.raycaster.intersectObjects(roots, true);
     const seen = new Set<string>();
-    const out: Array<{ address: string; displayName: string }> = [];
+    const out: Array<{
+      address: string;
+      displayName: string;
+      challengeOpen?: boolean;
+    }> = [];
     const norm = (a: string) => a.replace(/\s+/g, "").toUpperCase();
     for (const h of hits) {
       const group = this.resolveAvatarGroupFromHit(h.object);
@@ -8930,7 +9349,11 @@ export class Game {
       const key = norm(address);
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      out.push({ address, displayName });
+      out.push({
+        address,
+        displayName,
+        challengeOpen: group.userData.challengeOpen === true,
+      });
     }
     return out;
   }
@@ -8973,6 +9396,16 @@ export class Game {
     }
     this.lastPointerClientPixels.x = e.clientX;
     this.lastPointerClientPixels.y = e.clientY;
+    // worldcup: floating joystick owns its finger — steer with it, ignore any other.
+    if (this.worldcupStick) {
+      if (e.pointerId === this.worldcupStick.pointerId) {
+        this.updateWorldcupStick(e.clientX, e.clientY);
+        e.preventDefault();
+      } else if (e.pointerType === "touch") {
+        e.preventDefault();
+      }
+      return;
+    }
     if (
       this.prefabBboxDrag &&
       e.pointerId === this.prefabBboxDrag.pointerId
@@ -9000,10 +9433,22 @@ export class Game {
     }
     if (this.pendingPrimaryWalk && e.pointerId === this.pendingPrimaryWalk.pointerId) {
       const p = this.pendingPrimaryWalk;
+      const dist = Math.hypot(e.clientX - p.startX, e.clientY - p.startY);
+      // worldcup: on the pitch, a single-finger drag past the engage threshold becomes the
+      // floating joystick (anchored where the thumb went down) instead of cancelling the walk.
       if (
-        Math.hypot(e.clientX - p.startX, e.clientY - p.startY) >
-        Game.PENDING_WALK_CANCEL_DRAG_PX
+        e.pointerType === "touch" &&
+        dist > Game.WORLDCUP_STICK_ENGAGE_PX &&
+        this.worldcupStickCanEngage()
       ) {
+        this.beginWorldcupStick(
+          p.pointerId,
+          p.startX,
+          p.startY,
+          e.clientX,
+          e.clientY
+        );
+      } else if (dist > Game.PENDING_WALK_CANCEL_DRAG_PX) {
         this.clearPendingPrimaryWalk();
       }
     }
@@ -9287,6 +9732,13 @@ export class Game {
     }
     if (e.button !== 0) return;
     if (e.pointerType === "touch") {
+      // worldcup: while the floating joystick owns a finger, ignore any other finger so a
+      // second touch can't start a two-finger camera/zoom mid-run.
+      if (this.worldcupStick && e.pointerId !== this.worldcupStick.pointerId) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this.touchPointers.size >= 2) {
         this.clearPendingPrimaryWalk();
@@ -9720,6 +10172,32 @@ export class Game {
       return;
     }
 
+    // worldcup: on the pitch (touch), defer to pointerup like elsewhere but accept ANY ground hit
+    // (not just walkable grid tiles), so tap-to-move and the floating joystick both work from
+    // wherever the thumb goes down — including the outfield margin behind the goals.
+    if (
+      e.pointerType === "touch" &&
+      this.isWorldcupFreeMoveRoom() &&
+      !this.worldcupMoveLocked &&
+      !this.buildMode &&
+      !this.floorExpandMode &&
+      this.tileClickHandler &&
+      this.pickFloorRaw(e.clientX, e.clientY)
+    ) {
+      this.pendingPrimaryWalk = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+      };
+      try {
+        this.renderer.domElement.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      this.previewWalkNavigationAt(e.clientX, e.clientY);
+      return;
+    }
+
     const blockForWalk = this.pickBlockKey(e.clientX, e.clientY);
     if (blockForWalk) {
       const bm = this.placedObjects.get(blockForWalk);
@@ -9804,6 +10282,7 @@ export class Game {
   }
 
   dispose(): void {
+    this.endWorldcupStick();
     this.clearPendingBuildPlace();
     this.clearPlacementPreview();
     this.clearPendingPrimaryWalk();
@@ -10101,6 +10580,10 @@ export class Game {
       this.beginPathFadeOut();
       return "no_goal";
     }
+    // worldcup: on the pitch, draw a straight line to the float target (no grid pathfinding).
+    if (this.isWorldcupFreeMoveRoom()) {
+      return this.refreshFieldStraightPathLine(goal);
+    }
     const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
     const moverCtx: PathfindMoverContext | null = this.selfAddress
       ? {
@@ -10162,6 +10645,39 @@ export class Game {
       return "no_path";
     }
     this.setPathPolylineTerrain(remaining);
+    return "ok";
+  }
+
+  /**
+   * worldcup: straight 2-point preview from the player to the float pitch target. Clears the
+   * goal on arrival so the door "Enter" affordance can appear once the player has stopped.
+   */
+  private refreshFieldStraightPathLine(goal: {
+    ft: FloorTile;
+    layer: 0 | 1;
+    world?: { x: number; z: number };
+  }): "at_goal" | "ok" {
+    const self = this.selfMesh!;
+    const target = goal.world ?? { x: goal.ft.x, z: goal.ft.y };
+    const dist = Math.hypot(
+      target.x - self.position.x,
+      target.z - self.position.z
+    );
+    if (dist < 0.25) {
+      if (this.pathPreviewGoal) {
+        this.pathPreviewGoal = null;
+      } else {
+        this.pathGoal = null;
+      }
+      this.lastTerrainPath = null;
+      this.hideTrailImmediate();
+      this.beginPathFadeOut();
+      return "at_goal";
+    }
+    this.setPathPolylineTerrain([
+      { x: self.position.x, z: self.position.z, layer: 0 },
+      { x: target.x, z: target.z, layer: 0 },
+    ]);
     return "ok";
   }
 
@@ -11611,6 +12127,7 @@ export class Game {
           }
           this.syncAvatarNameLabelFromState(this.selfMesh, p);
           this.syncTypingIndicatorForGroup(this.selfMesh, p);
+          this.syncWorldcupChallengeBubble(this.selfMesh, p);
         }
         continue;
       }
@@ -11634,6 +12151,7 @@ export class Game {
       }
       this.syncAvatarNameLabelFromState(g, p);
       this.syncTypingIndicatorForGroup(g, p);
+      this.syncWorldcupChallengeBubble(g, p);
     }
     for (const addr of this.others.keys()) {
       if (!seen.has(addr)) {
@@ -11651,6 +12169,641 @@ export class Game {
     if (visualChanged) {
       this.requestRender(400);
     }
+  }
+
+  // ---- worldcup: seasonal soccer ball + goals (feature-flagged, deletable) ----
+
+  private static readonly WORLDCUP_BALL_RADIUS = 0.45;
+
+  private makeWorldcupBallMesh(): THREE.Mesh {
+    const r = Game.WORLDCUP_BALL_RADIUS;
+    const geo = new THREE.SphereGeometry(r, 24, 18);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: worldcupMakeSoccerBallTexture(),
+      roughness: 0.5,
+      metalness: 0.0,
+      emissive: 0x222222,
+      emissiveIntensity: 0.12,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = false;
+    mesh.userData["skipBlockPickAndBounds"] = true;
+    return mesh;
+  }
+
+  /** Apply a server ball snapshot: upsert meshes/targets, remove stale balls. */
+  applyWorldcupBalls(balls: BallWire[]): void {
+    const seen = new Set<string>();
+    const now = performance.now();
+    for (const b of balls) {
+      seen.add(b.id);
+      let mesh = this.worldcupBalls.get(b.id);
+      if (!mesh) {
+        mesh = this.makeWorldcupBallMesh();
+        mesh.position.set(b.x, Game.WORLDCUP_BALL_RADIUS, b.z);
+        this.worldcupBalls.set(b.id, mesh);
+        this.scene.add(mesh);
+        this.markSceneMutation("worldcup:addBall");
+      }
+      this.worldcupBallTargets.set(b.id, {
+        x: b.x,
+        z: b.z,
+        vx: b.vx,
+        vz: b.vz,
+        recvMs: now,
+      });
+    }
+    for (const id of [...this.worldcupBalls.keys()]) {
+      if (seen.has(id)) continue;
+      const mesh = this.worldcupBalls.get(id);
+      if (mesh) {
+        this.scene.remove(mesh);
+        mesh.geometry.dispose();
+        (mesh.material as THREE.Material).dispose();
+      }
+      this.worldcupBalls.delete(id);
+      this.worldcupBallTargets.delete(id);
+    }
+    this.requestRender(400);
+  }
+
+  clearWorldcupBalls(): void {
+    for (const mesh of this.worldcupBalls.values()) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    this.worldcupBalls.clear();
+    this.worldcupBallTargets.clear();
+  }
+
+  // ---- worldcup: Goalies (server-controlled keepers, one per goal) ----
+
+  private static readonly WORLDCUP_GOALIE_HEIGHT = 1.6;
+  /**
+   * Fixed seed for the single "house keeper" identicon every Goalie wears. Stable constant
+   * (mirrors the server's GOALIE_SENTINEL_ADDRESS intent) so both keepers share one face and
+   * can never be mistaken for a real player.
+   */
+  private static readonly WORLDCUP_GOALIE_SEED = "NQGOALIEHOUSEKEEPER0000000000000000";
+
+  /** Lazily build + cache the shared keeper identicon, applying it to any live keeper sprites. */
+  private ensureWorldcupGoalieIdenticon(): void {
+    if (this.worldcupGoalieIdenticonTex) return;
+    void loadIdenticonTexture(Game.WORLDCUP_GOALIE_SEED)
+      .then((tex) => {
+        this.worldcupGoalieIdenticonTex = tex;
+        for (const group of this.worldcupGoalies.values()) {
+          const sprite = group.userData["keeperSprite"] as
+            | THREE.Sprite
+            | undefined;
+          if (sprite) {
+            const mat = sprite.material as THREE.SpriteMaterial;
+            mat.map = tex;
+            mat.color.setHex(0xffffff);
+            mat.needsUpdate = true;
+          }
+        }
+        this.requestRender(400);
+      })
+      .catch(() => {
+        /* keep the neutral placeholder color on failure */
+      });
+  }
+
+  /**
+   * A Goalie object: a billboarded "house keeper" identicon (one fixed face for every keeper)
+   * with a persistent bright keeper ring at its feet, so it reads as a defender — never a player.
+   */
+  private makeWorldcupGoalieObject(): THREE.Group {
+    const group = new THREE.Group();
+
+    const spriteMat = new THREE.SpriteMaterial({
+      color: 0xbfc7d4,
+      transparent: true,
+      depthWrite: false,
+    });
+    if (this.worldcupGoalieIdenticonTex) {
+      spriteMat.map = this.worldcupGoalieIdenticonTex;
+      spriteMat.color.setHex(0xffffff);
+    }
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(1.15, 1.15, 1);
+    sprite.position.set(0, Game.WORLDCUP_GOALIE_HEIGHT * 0.62, 0);
+    sprite.raycast = () => {};
+    sprite.userData["skipBlockPickAndBounds"] = true;
+    group.add(sprite);
+
+    // Keeper "tell": a bright glowing ring at the feet so the keeper is unmistakable.
+    const ringGeo = new THREE.TorusGeometry(0.5, 0.08, 8, 28);
+    const ringMat = new THREE.MeshStandardMaterial({
+      color: 0x18e0ff,
+      emissive: 0x0b6f88,
+      emissiveIntensity: 0.7,
+      roughness: 0.5,
+      metalness: 0,
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0, 0.06, 0);
+    ring.raycast = () => {};
+    ring.userData["skipBlockPickAndBounds"] = true;
+    group.add(ring);
+
+    group.userData["keeperSprite"] = sprite;
+    group.userData["skipBlockPickAndBounds"] = true;
+    return group;
+  }
+
+  private static disposeWorldcupGoalieObject(group: THREE.Group): void {
+    group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const mat = (o as THREE.Mesh | THREE.Sprite).material as
+        | THREE.Material
+        | THREE.Material[]
+        | undefined;
+      // Shared identicon texture is reused across keepers + rebuilds; only free materials.
+      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+      else if (mat) mat.dispose();
+    });
+  }
+
+  /** Apply a server Goalie snapshot: upsert keeper objects/targets, remove stale ones. */
+  applyWorldcupGoalies(goalies: Array<{ id: string; x: number; z: number }>): void {
+    const seen = new Set<string>();
+    const now = performance.now();
+    if (goalies.length > 0) this.ensureWorldcupGoalieIdenticon();
+    for (const g of goalies) {
+      seen.add(g.id);
+      let group = this.worldcupGoalies.get(g.id);
+      if (!group) {
+        group = this.makeWorldcupGoalieObject();
+        group.position.set(g.x, 0, g.z);
+        this.worldcupGoalies.set(g.id, group);
+        this.scene.add(group);
+        this.markSceneMutation("worldcup:addGoalie");
+      }
+      this.worldcupGoalieTargets.set(g.id, { x: g.x, z: g.z, recvMs: now });
+    }
+    for (const id of [...this.worldcupGoalies.keys()]) {
+      if (seen.has(id)) continue;
+      const group = this.worldcupGoalies.get(id);
+      if (group) {
+        this.scene.remove(group);
+        Game.disposeWorldcupGoalieObject(group);
+      }
+      this.worldcupGoalies.delete(id);
+      this.worldcupGoalieTargets.delete(id);
+    }
+    this.requestRender(400);
+  }
+
+  clearWorldcupGoalies(): void {
+    for (const group of this.worldcupGoalies.values()) {
+      this.scene.remove(group);
+      Game.disposeWorldcupGoalieObject(group);
+    }
+    this.worldcupGoalies.clear();
+    this.worldcupGoalieTargets.clear();
+  }
+
+  /** Per-frame Goalie interpolation (smooth lateral glide). Returns active. */
+  private updateWorldcupGoalies(dt: number): boolean {
+    if (this.worldcupGoalies.size === 0) return false;
+    let active = false;
+    const k = 1 - Math.exp(-16 * dt);
+    for (const [id, mesh] of this.worldcupGoalies) {
+      const t = this.worldcupGoalieTargets.get(id);
+      if (!t) continue;
+      const beforeX = mesh.position.x;
+      const beforeZ = mesh.position.z;
+      mesh.position.x += (t.x - mesh.position.x) * k;
+      mesh.position.z += (t.z - mesh.position.z) * k;
+      if (
+        Math.hypot(mesh.position.x - beforeX, mesh.position.z - beforeZ) > 0.00025
+      ) {
+        active = true;
+      }
+    }
+    return active;
+  }
+
+  /** Build/clear the goal frames for the soccer field room. */
+  syncWorldcupGoals(roomId: string): void {
+    if (this.worldcupGoalsGroup) {
+      this.scene.remove(this.worldcupGoalsGroup);
+      this.worldcupGoalsGroup.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+      this.worldcupGoalsGroup = null;
+    }
+    if (this.worldcupCrowd) {
+      this.scene.remove(this.worldcupCrowd.group);
+      this.worldcupCrowd.dispose();
+      this.worldcupCrowd = null;
+    }
+    // worldcup: the attacking-goal arrow is room-scoped; drop it when the decoration rebuilds.
+    this.setWorldcupAttackGoal(null);
+    if (!WORLDCUP_ENABLED_CLIENT || !worldcupIsFieldLikeRoomId(roomId)) return;
+
+    const group = new THREE.Group();
+    // Ground apron filling the gap between pitch and stands + the surrounding area.
+    group.add(worldcupBuildStadiumGround(WORLDCUP_FIELD_BOUNDS));
+    // Grass + line-markings pitch surface laid over the gray floor tiles.
+    group.add(worldcupMakePitchSurface(WORLDCUP_FIELD_BOUNDS));
+    // Stadium stands ringing the pitch (cosmetic; outside the walkable bounds).
+    group.add(worldcupBuildStadium(WORLDCUP_FIELD_BOUNDS));
+    const postMat = new THREE.MeshStandardMaterial({
+      color: 0xf5f5f5,
+      roughness: 0.6,
+      emissive: 0x222222,
+      emissiveIntensity: 0.2,
+    });
+    const postThickness = 0.18;
+    const postHeight = 2.0;
+    for (const g of WORLDCUP_FIELD_GOALS) {
+      // End line (world): outer edge of the goal band facing the pitch interior.
+      const isWest = g.id === "west";
+      const lineX = isWest ? g.minX - 0.5 : g.maxX + 0.5;
+      const zNear = g.minZ - 0.5;
+      const zFar = g.maxZ + 0.5;
+      const width = zFar - zNear;
+      const mkPost = (zc: number) => {
+        const m = new THREE.Mesh(
+          new THREE.BoxGeometry(postThickness, postHeight, postThickness),
+          postMat
+        );
+        m.position.set(lineX, postHeight / 2, zc);
+        m.userData["skipBlockPickAndBounds"] = true;
+        return m;
+      };
+      group.add(mkPost(zNear));
+      group.add(mkPost(zFar));
+      const bar = new THREE.Mesh(
+        new THREE.BoxGeometry(postThickness, postThickness, width),
+        postMat
+      );
+      bar.position.set(lineX, postHeight - postThickness / 2, (zNear + zFar) / 2);
+      bar.userData["skipBlockPickAndBounds"] = true;
+      group.add(bar);
+      // Netting behind the mouth.
+      group.add(
+        worldcupBuildGoalNet({ lineX, zNear, zFar, postHeight, isWest })
+      );
+    }
+    this.scene.add(group);
+    this.worldcupGoalsGroup = group;
+    // Cheering spectator crowd sitting on the stands.
+    const crowd = new WorldcupCrowd(WORLDCUP_FIELD_BOUNDS);
+    this.scene.add(crowd.group);
+    this.worldcupCrowd = crowd;
+    this.applyWorldcupCrowdFlags();
+    this.markSceneMutation("worldcup:goals");
+    this.requestRender(400);
+  }
+
+  /** Trigger a synchronized crowd celebration (called when a goal is scored). */
+  worldcupCrowdCheer(intensity = 1): void {
+    this.worldcupCrowd?.cheer(intensity);
+    if (this.worldcupCrowd) this.requestRender(1500);
+  }
+
+  /** Set the champion flag the stadium crowd waves (previous UTC day's winner). */
+  setWorldcupCrowdFlag(country: string | null): void {
+    this.worldcupCrowdFlag = country;
+    this.applyWorldcupCrowdFlags();
+    if (this.worldcupCrowd) this.requestRender(800);
+  }
+
+  /** 1v1 Match: split the crowd's flags by pitch side (a = west half, b = east half). */
+  setWorldcupCrowdSideFlags(aCountry: string | null, bCountry: string | null): void {
+    this.worldcupCrowdSideFlags = { a: aCountry, b: bCountry };
+    this.applyWorldcupCrowdFlags();
+    if (this.worldcupCrowd) this.requestRender(800);
+  }
+
+  /** Free Play: the distinct country codes of players currently on the field. */
+  setWorldcupCrowdRoster(codes: string[]): void {
+    this.worldcupCrowdRoster = codes;
+    this.applyWorldcupCrowdFlags();
+    if (this.worldcupCrowd) this.requestRender(800);
+  }
+
+  /** Pick the right crowd allegiance for the current room: side-split on a Match Pitch,
+   *  live field roster (champion fallback) on the Free Play Field. */
+  private applyWorldcupCrowdFlags(): void {
+    const crowd = this.worldcupCrowd;
+    if (!crowd) return;
+    if (worldcupIsMatchPitchRoomId(this.roomId)) {
+      crowd.setSideFlags(
+        this.worldcupCrowdSideFlags?.a ?? null,
+        this.worldcupCrowdSideFlags?.b ?? null
+      );
+    } else {
+      crowd.setRosterFlags(this.worldcupCrowdRoster, this.worldcupCrowdFlag);
+    }
+  }
+
+  // --- worldcup: Match Pitch view (spectator framing, goal arrow, orientation) ---
+
+  private static normAddr(a: string): string {
+    return a.replace(/\s+/g, "").toUpperCase();
+  }
+
+  /** worldcup: record the two Match participants so any other avatar in the pitch reads as a
+   *  Spectator (and gets seated on the stands). Cheap; safe to call every `matchState`. */
+  setWorldcupMatchParticipants(a: string | null, b: string | null): void {
+    this.worldcupMatchParticipants.clear();
+    if (a) this.worldcupMatchParticipants.add(Game.normAddr(a));
+    if (b) this.worldcupMatchParticipants.add(Game.normAddr(b));
+  }
+
+  /** worldcup: true for an avatar that is in a Match Pitch but is not one of the two players. */
+  private worldcupIsSpectatorAddr(addr: string): boolean {
+    if (!WORLDCUP_ENABLED_CLIENT) return false;
+    if (!worldcupIsMatchPitchRoomId(this.roomId)) return false;
+    return !this.worldcupMatchParticipants.has(Game.normAddr(addr));
+  }
+
+  /** worldcup: seat a Spectator avatar on the front row of the nearest stand (visual only — the
+   *  server keeps them at the touchline and excluded from the ball). */
+  private worldcupSeatSpectator(g: THREE.Group, addr: string): void {
+    if (!this.worldcupIsSpectatorAddr(addr)) return;
+    const seat = worldcupFrontRowStandSeat(WORLDCUP_FIELD_BOUNDS, g.position.z);
+    g.position.y = seat.y;
+    g.position.z = seat.z;
+  }
+
+  /** worldcup: while spectating, frame the whole pitch at a locked zoom (set false to restore). */
+  setWorldcupSpectatorView(active: boolean): void {
+    if (active === this.worldcupSpectatorView) return;
+    this.worldcupSpectatorView = active;
+    if (active) {
+      this.cameraLookAhead.set(0, 0, 0);
+      // effectiveZoomMax frames the pitch's isometric diamond; lock there so watching is steady.
+      this.setZoomLocked(true, this.effectiveZoomMax());
+    } else {
+      this.setZoomLocked(false);
+    }
+    this.applyCameraPose();
+    this.requestRender();
+  }
+
+  /** worldcup: show a bobbing arrow above the goal the local Match player attacks (a = east net,
+   *  b = west net); pass null to remove it (Spectators / off-match). */
+  setWorldcupAttackGoal(side: "a" | "b" | null): void {
+    if (side === this.worldcupGoalArrowSide) return;
+    this.worldcupGoalArrowSide = side;
+    if (this.worldcupGoalArrow) {
+      this.scene.remove(this.worldcupGoalArrow.group);
+      this.worldcupGoalArrow.dispose();
+      this.worldcupGoalArrow = null;
+    }
+    if (!side || !WORLDCUP_ENABLED_CLIENT) return;
+    const b = WORLDCUP_FIELD_BOUNDS;
+    const x = side === "a" ? b.maxX + 0.5 : b.minX - 0.5;
+    // Cyan matches the HUD "your score" highlight so the arrow reads as "yours".
+    const arrow = new WorldcupGoalArrow(x, 0, 3.2, 0x18e0ff);
+    this.scene.add(arrow.group);
+    this.worldcupGoalArrow = arrow;
+    this.requestRender(400);
+  }
+
+  /** worldcup: default the camera orientation on Match entry. Side a spawns on the west (the
+   *  upper-left/NW corner of the default iso view) and attacks east; rotating their view 180°
+   *  makes both players shoot toward the same screen direction. Still re-orbitable by the user. */
+  setWorldcupMatchOrientation(side: "a" | "b" | null): void {
+    const yaw = side === "a" ? Math.PI : 0;
+    if (this.cameraOrbitYawRad === yaw) return;
+    this.cameraOrbitYawRad = yaw;
+    this.cameraOrbitEase = null;
+    this.applyCameraPose();
+    this.requestRender();
+  }
+
+  // --- worldcup: 1v1 spectate portals -------------------------------------
+
+  /**
+   * worldcup: when the local player stands on a spectate portal's footprint tile, return its
+   * match id (and capacity flag) so the host can raise the "Watch" intent pill — mirroring
+   * how `getStandingDoor` drives the door Enter pill. No teleport-on-click anymore.
+   */
+  getStandingSpectatePortal(): { matchId: string; full: boolean } | null {
+    if (!WORLDCUP_ENABLED_CLIENT || !this.selfMesh) return null;
+    if (this.worldcupPortals.size === 0) return null;
+    const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    for (const [matchId, e] of this.worldcupPortals) {
+      if (e.tileX === here.x && e.tileZ === here.y) return { matchId, full: e.full };
+    }
+    return null;
+  }
+
+  /** Replace all spectate portals (called from each room's welcome payload). */
+  setWorldcupPortals(list: WorldcupPortalWire[]): void {
+    this.clearWorldcupPortals();
+    for (const p of list) this.addWorldcupPortal(p);
+  }
+
+  /** Spawn or refresh a single spectate portal. */
+  addWorldcupPortal(p: WorldcupPortalWire): void {
+    if (!WORLDCUP_ENABLED_CLIENT) return;
+    const tile = snapFloorTile(p.x, p.z);
+    const existing = this.worldcupPortals.get(p.matchId);
+    if (existing) {
+      existing.group.position.set(p.x, 0, p.z);
+      existing.tileX = tile.x;
+      existing.tileZ = tile.y;
+      existing.full = !!p.full;
+      this.refreshPortalLabel(existing.mat, p);
+      return;
+    }
+    const group = new THREE.Group();
+    group.position.set(p.x, 0, p.z);
+    group.userData["worldcupPortalMatchId"] = p.matchId;
+    group.add(this.createPortalPillarMesh(0, 0));
+    const mat = new THREE.SpriteMaterial({
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.renderOrder = 7;
+    sprite.scale.set(2.4, 1.2, 1);
+    sprite.position.set(0, 2.4, 0);
+    group.add(sprite);
+    this.scene.add(group);
+    this.worldcupPortals.set(p.matchId, {
+      group,
+      mat,
+      tileX: tile.x,
+      tileZ: tile.y,
+      full: !!p.full,
+    });
+    this.refreshPortalLabel(mat, p);
+    this.markSceneMutation("worldcup:portal");
+    this.requestRender(400);
+  }
+
+  /** Remove a single spectate portal (match ended or no longer present). */
+  removeWorldcupPortal(matchId: string): void {
+    const e = this.worldcupPortals.get(matchId);
+    if (!e) return;
+    this.scene.remove(e.group);
+    this.disposeWorldcupPortal(e);
+    this.worldcupPortals.delete(matchId);
+    this.requestRender(200);
+  }
+
+  private clearWorldcupPortals(): void {
+    if (this.worldcupPortals.size === 0) return;
+    for (const e of this.worldcupPortals.values()) {
+      this.scene.remove(e.group);
+      this.disposeWorldcupPortal(e);
+    }
+    this.worldcupPortals.clear();
+    this.requestRender(200);
+  }
+
+  private disposeWorldcupPortal(e: {
+    group: THREE.Group;
+    mat: THREE.SpriteMaterial;
+  }): void {
+    e.group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      mesh.geometry?.dispose?.();
+      const m = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(m)) m.forEach((mm) => mm.dispose());
+      else m?.dispose?.();
+    });
+    e.mat.map?.dispose();
+    e.mat.dispose();
+  }
+
+  private refreshPortalLabel(mat: THREE.SpriteMaterial, p: WorldcupPortalWire): void {
+    void this.buildPortalLabelTexture(p).then((tex) => {
+      if (mat.map) mat.map.dispose();
+      mat.map = tex;
+      mat.needsUpdate = true;
+      this.requestRender(200);
+    });
+  }
+
+  /** "{flag}{identicon} vs {identicon}{flag}" label (with a FULL badge when at capacity). */
+  private async buildPortalLabelTexture(
+    p: WorldcupPortalWire
+  ): Promise<THREE.CanvasTexture> {
+    const w = 320;
+    const h = 160;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+    const r = 26;
+    ctx.fillStyle = "rgba(18,20,28,0.93)";
+    ctx.strokeStyle = "#18e0ff";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(r, 4);
+    ctx.arcTo(w - 4, 4, w - 4, h - 4, r);
+    ctx.arcTo(w - 4, h - 4, 4, h - 4, r);
+    ctx.arcTo(4, h - 4, 4, 4, r);
+    ctx.arcTo(4, 4, w - 4, 4, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#eaf6ff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "600 22px system-ui, sans-serif";
+    ctx.fillText("Watch 1v1", w / 2, 26);
+
+    const loadImg = (url: string): Promise<HTMLImageElement> =>
+      new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im);
+        im.onerror = rej;
+        im.src = url;
+      });
+    const idSize = 64;
+    const cy = 86;
+    const draw = async (address: string, cx: number): Promise<void> => {
+      try {
+        const url = await identiconDataUrl(address);
+        const img = await loadImg(url);
+        ctx.drawImage(img, cx - idSize / 2, cy - idSize / 2, idSize, idSize);
+      } catch {
+        ctx.fillStyle = "#33384a";
+        ctx.fillRect(cx - idSize / 2, cy - idSize / 2, idSize, idSize);
+      }
+    };
+    await Promise.all([draw(p.aAddress, 86), draw(p.bAddress, w - 86)]);
+
+    ctx.fillStyle = "#cfe9ff";
+    ctx.font = "700 26px system-ui, sans-serif";
+    ctx.fillText("vs", w / 2, cy);
+
+    // Flags under each identicon.
+    ctx.font = "30px system-ui, 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif";
+    ctx.fillText(p.aCountry ? worldcupFlagEmoji(p.aCountry) : "\u{1F3F3}", 86, cy + 56);
+    ctx.fillText(
+      p.bCountry ? worldcupFlagEmoji(p.bCountry) : "\u{1F3F3}",
+      w - 86,
+      cy + 56
+    );
+
+    if (p.full) {
+      ctx.fillStyle = "#ff8a8a";
+      ctx.font = "700 20px system-ui, sans-serif";
+      ctx.fillText("FULL", w / 2, h - 18);
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  /** Per-frame ball interpolation (extrapolate by velocity, lerp, roll). Returns active. */
+  private updateWorldcupBalls(dt: number): boolean {
+    if (this.worldcupBalls.size === 0) return false;
+    let active = false;
+    const now = performance.now();
+    const r = Game.WORLDCUP_BALL_RADIUS;
+    for (const [id, mesh] of this.worldcupBalls) {
+      const t = this.worldcupBallTargets.get(id);
+      if (!t) continue;
+      const ageSec = Math.min(0.25, (now - t.recvMs) * 0.001);
+      const gx = t.x + t.vx * ageSec;
+      const gz = t.z + t.vz * ageSec;
+      const beforeX = mesh.position.x;
+      const beforeZ = mesh.position.z;
+      const k = 1 - Math.exp(-18 * dt);
+      mesh.position.x += (gx - mesh.position.x) * k;
+      mesh.position.z += (gz - mesh.position.z) * k;
+      mesh.position.y = r;
+      const moved = Math.hypot(
+        mesh.position.x - beforeX,
+        mesh.position.z - beforeZ
+      );
+      if (moved > 0.00025) {
+        // Roll: rotate around the axis perpendicular to travel.
+        const axisLen = Math.hypot(t.vx, t.vz);
+        if (axisLen > 1e-4) {
+          mesh.rotateOnWorldAxis(
+            new THREE.Vector3(t.vz / axisLen, 0, -t.vx / axisLen),
+            moved / r
+          );
+        }
+        active = true;
+      }
+    }
+    return active;
   }
 
   private updateMineableBlockSparkles(): boolean {
@@ -11852,10 +13005,27 @@ export class Game {
       const beforeY = g.position.y;
       const beforeZ = g.position.z;
       g.position.lerp(t, 1 - Math.exp(-LERP * dt));
+      // worldcup: lift Spectators out of the seating geometry onto the stand's front row.
+      this.worldcupSeatSpectator(g, addr);
       visualActive =
         visualActive ||
         Math.hypot(g.position.x - beforeX, g.position.z - beforeZ) > 0.0005 ||
         Math.abs(g.position.y - beforeY) > 0.0005;
+    }
+    // worldcup: the local player, when spectating, is also seated on the stands.
+    if (this.selfMesh && this.worldcupSpectatorView) {
+      this.worldcupSeatSpectator(this.selfMesh, this.selfAddress);
+    }
+
+    // worldcup: interpolate soccer balls
+    if (this.updateWorldcupBalls(dt)) visualActive = true;
+    if (this.updateWorldcupGoalies(dt)) visualActive = true;
+
+    // worldcup: animate the cheering stadium crowd
+    if (this.worldcupCrowd && this.worldcupCrowd.update(dt)) visualActive = true;
+    // worldcup: bob/spin the attacking-goal arrow for the local Match player.
+    if (this.worldcupGoalArrow && this.worldcupGoalArrow.update(dt)) {
+      visualActive = true;
     }
 
     const orbitWasActive = this.cameraOrbitEase !== null;
@@ -12105,6 +13275,20 @@ export class Game {
   /** Pans only when the local player nears the edge of the dead zone (soft follow). */
   private updateCameraFollow(dt: number): void {
     if (!this.selfMesh || !this.cameraFollowReady) return;
+    // worldcup: a Spectator's camera centers on the pitch (not their stand seat) so the locked
+    // frame shows the whole field.
+    if (this.worldcupSpectatorView) {
+      const b = WORLDCUP_FIELD_BOUNDS;
+      const cx = (b.minX + b.maxX) / 2;
+      const cz = (b.minZ + b.maxZ) / 2;
+      this.cameraLookAhead.set(0, 0, 0);
+      const a = 1 - Math.exp(-this.cameraFollowSmoothing * dt);
+      this.cameraLookAt.x += (cx - this.cameraLookAt.x) * a;
+      this.cameraLookAt.y += (0 - this.cameraLookAt.y) * a;
+      this.cameraLookAt.z += (cz - this.cameraLookAt.z) * a;
+      this.applyCameraPose();
+      return;
+    }
     const px = this.selfMesh.position.x;
     const py = this.selfMesh.position.y;
     const pz = this.selfMesh.position.z;
@@ -12581,6 +13765,89 @@ export class Game {
     this.layoutTypingSprite(g, entry);
   }
 
+  // ---- worldcup: floating 1v1 Challenge badge (shared texture, one sprite per player) ----
+
+  private worldcupChallengeBubbleTexture(): THREE.CanvasTexture {
+    if (this.worldcupChallengeBubbleTex) return this.worldcupChallengeBubbleTex;
+    const w = 256;
+    const h = 96;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+    const r = 22;
+    ctx.fillStyle = "rgba(20,22,30,0.92)";
+    ctx.strokeStyle = "#18e0ff";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(r + 3, 6);
+    ctx.arcTo(w - 3, 6, w - 3, h - 16, r);
+    ctx.arcTo(w - 3, h - 16, 3, h - 16, r);
+    ctx.arcTo(3, h - 16, 3, 6, r);
+    ctx.arcTo(3, 6, w - 3, 6, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Little pointer toward the player below.
+    ctx.fillStyle = "rgba(20,22,30,0.92)";
+    ctx.beginPath();
+    ctx.moveTo(w / 2 - 12, h - 17);
+    ctx.lineTo(w / 2 + 12, h - 17);
+    ctx.lineTo(w / 2, h - 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#eaf6ff";
+    ctx.font = "bold 44px system-ui, 'Segoe UI Emoji', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("\u26BD 1v1?", w / 2, (h - 14) / 2 + 4);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    this.worldcupChallengeBubbleTex = tex;
+    return tex;
+  }
+
+  private removeWorldcupChallengeBubble(addr: string): void {
+    const sprite = this.worldcupChallengeBubbles.get(addr);
+    if (!sprite) return;
+    sprite.removeFromParent();
+    const sm = sprite.material as THREE.SpriteMaterial;
+    // The badge texture is shared across players + reused — never dispose it here.
+    sm.map = null;
+    sm.dispose();
+    this.worldcupChallengeBubbles.delete(addr);
+  }
+
+  private syncWorldcupChallengeBubble(g: THREE.Group, p: PlayerState): void {
+    const addr = p.address;
+    // Stamp the flag on the avatar so the right-click picker can offer "Accept 1v1".
+    g.userData["challengeOpen"] = !!p.challengeOpen;
+    if (!WORLDCUP_ENABLED_CLIENT || !p.challengeOpen || this.streamBubblesHidden) {
+      this.removeWorldcupChallengeBubble(addr);
+      return;
+    }
+    let sprite = this.worldcupChallengeBubbles.get(addr);
+    if (!sprite) {
+      const mat = new THREE.SpriteMaterial({
+        map: this.worldcupChallengeBubbleTexture(),
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+      });
+      sprite = new THREE.Sprite(mat);
+      sprite.renderOrder = 6;
+      sprite.raycast = () => {};
+      sprite.userData["skipBlockPickAndBounds"] = true;
+      g.add(sprite);
+      this.worldcupChallengeBubbles.set(addr, sprite);
+    }
+    const worldH = this.pixelToWorldY(34);
+    sprite.scale.set(worldH * (256 / 96), worldH, 1);
+    const avatarTop = this.avatarIdenticonWorldDiameter();
+    sprite.position.set(0, avatarTop + this.pixelToWorldY(30) + worldH * 0.5, 0);
+  }
+
   private refreshAllTypingIndicatorLayouts(): void {
     for (const [addr, entry] of this.typingIndicatorByAddress) {
       const g =
@@ -12655,6 +13922,7 @@ export class Game {
     const addr = g.userData.address as string | undefined;
     if (addr) this.removeChatBubbleEntry(addr);
     if (addr) this.removeTypingIndicator(addr);
+    if (addr) this.removeWorldcupChallengeBubble(addr);
     g.traverse((child: THREE.Object3D) => {
       if (child instanceof THREE.Mesh) {
         const mat = child.material as THREE.MeshStandardMaterial;

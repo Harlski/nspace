@@ -162,6 +162,29 @@ export type RoomBounds = {
   maxZ: number;
 };
 
+/** worldcup: dynamic soccer ball wire shape (seasonal). */
+export type BallWire = {
+  id: string;
+  x: number;
+  z: number;
+  vx: number;
+  vz: number;
+};
+
+/** worldcup: a 1v1 spectate portal in a room — "{identicon} vs {identicon}", click to watch. */
+export type WorldcupPortalWire = {
+  /** Spectate key = the pitch room id to drop into. */
+  matchId: string;
+  x: number;
+  z: number;
+  aAddress: string;
+  bAddress: string;
+  aCountry: string | null;
+  bCountry: string | null;
+  /** True once the Spectator soft-cap is reached (portal shows "full"). */
+  full: boolean;
+};
+
 export type RoomDoor = {
   x: number;
   z: number;
@@ -246,6 +269,16 @@ export type ServerMessage =
         text: string;
         at: number;
       }>;
+      /** worldcup: balls currently in this room (seasonal soccer). */
+      balls?: BallWire[];
+      /** worldcup: this player's chosen country (null until picked). */
+      worldcupSelfCountry?: string | null;
+      /** worldcup: leading countries for the in-room scoreboard (today, UTC). */
+      worldcupTopCountries?: Array<{ code: string; goals: number }>;
+      /** worldcup: previous UTC day's winning country (crowd waves this flag). */
+      worldcupPrevWinnerCountry?: string | null;
+      /** worldcup: live 1v1 spectate portals in this room (click to watch the Match). */
+      worldcupPortals?: WorldcupPortalWire[];
     }
   | {
       type: "roomBackgroundHue";
@@ -364,6 +397,89 @@ export type ServerMessage =
       amountNim?: string;
     }
   | { type: "clientPong"; id: number }
+  // worldcup: dynamic ball positions (throttled) + goal celebration
+  | { type: "ballState"; roomId: string; balls: BallWire[] }
+  /** worldcup: server-controlled Goalie positions (one per goal), alongside the ball stream. */
+  | {
+      type: "goalieState";
+      roomId: string;
+      goalies: Array<{ id: string; x: number; z: number }>;
+    }
+  | {
+      type: "goalScored";
+      roomId: string;
+      goalId: string;
+      scorerAddress: string | null;
+      scorerName: string | null;
+      country: string | null;
+      topCountries: Array<{ code: string; goals: number }>;
+    }
+  // worldcup: pre-teleport handshake countdown shown in the origin room
+  | {
+      type: "matchCountdown";
+      roomId: string;
+      durationMs: number;
+      opponentAddress: string;
+      opponentCountry: string | null;
+      selfCountry: string | null;
+    }
+  // worldcup: spawn / remove a 1v1 spectate portal in a room (room-scoped)
+  | ({ type: "matchPortalSpawn"; roomId: string } & WorldcupPortalWire)
+  | { type: "matchPortalRemove"; roomId: string; matchId: string }
+  // worldcup: 1v1 Match live state + terminal result (Match Pitch rooms only)
+  | {
+      type: "matchState";
+      roomId: string;
+      matchId: string;
+      scoreA: number;
+      scoreB: number;
+      phase: "regulation" | "golden" | "ended";
+      /** Remaining ms in the current phase (regulation, then golden goal). */
+      remainingMs: number;
+      /** Wallet of side a (challenger) / side b (accepter). */
+      aAddress: string;
+      bAddress: string;
+      /** Chosen country (ISO alpha-2) of each side, or null; for the flag scoreboard + crowd. */
+      aCountry: string | null;
+      bCountry: string | null;
+    }
+  | {
+      type: "matchEnded";
+      roomId: string;
+      matchId: string;
+      outcome:
+        | null
+        | { result: "win"; winner: "a" | "b"; reason: "score" | "opponent_left" }
+        | { result: "draw" };
+      scoreA: number;
+      scoreB: number;
+      aAddress: string;
+      bAddress: string;
+      aCountry: string | null;
+      bCountry: string | null;
+    }
+  // worldcup: a goal in a 1v1 Match — flash "GOAL!" + (optionally) run the kickoff countdown
+  | {
+      type: "matchGoal";
+      roomId: string;
+      matchId: string;
+      side: "a" | "b";
+      scoreA: number;
+      scoreB: number;
+      country: string | null;
+      /** ms both players are frozen at kickoff (0 = this goal ended the Match). */
+      kickoffMs: number;
+    }
+  | {
+      type: "worldcupLeaderboard";
+      roomId: string;
+      selfCountry: string | null;
+      topCountries: Array<{ code: string; goals: number }>;
+      /** Previous UTC day's winning country (crowd flag); null if none yet. */
+      prevWinnerCountry?: string | null;
+      /** True when this update was triggered by the daily UTC reset. */
+      dailyReset?: boolean;
+    }
   | {
       type: "serverNotice";
       kind: "restart_pending";
@@ -453,6 +569,15 @@ export function sendMoveTo(
     });
   }
   ws.send(JSON.stringify({ type: "moveTo", x, z, layer }));
+}
+
+/**
+ * Stop the player immediately (clears the server path). Used on touch-joystick release so the
+ * player halts the moment the finger lifts; unlike a regular `moveTo` it is never rate-limited.
+ */
+export function sendStopMove(ws: WebSocket): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "moveTo", stop: true }));
 }
 
 export function sendEnterPortal(ws: WebSocket): void {
@@ -1102,6 +1227,48 @@ export function sendCampaignLinkClick(
 export function sendChat(ws: WebSocket, text: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "chat", text }));
+}
+
+/** worldcup: set/change the player's country (ISO 3166-1 alpha-2). */
+export function sendSetCountry(ws: WebSocket, code: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "setCountry", code }));
+}
+
+/** worldcup: place a kickable soccer ball at a tile in the current room (builders). */
+export function sendPlaceBall(ws: WebSocket, x: number, z: number): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "placeBall", x, z }));
+}
+
+/** worldcup: remove a player-placed soccer ball by id (builders). */
+export function sendRemoveBall(ws: WebSocket, ballId: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "removeBall", ballId }));
+}
+
+/** worldcup: raise (or cancel) an open 1v1 Challenge above the player. */
+export function sendSetChallenge(ws: WebSocket, active: boolean): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "setChallenge", active }));
+}
+
+/** worldcup: accept another player's open Challenge (starts a 1v1 Match). */
+export function sendAcceptChallenge(ws: WebSocket, targetAddress: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "acceptChallenge", targetAddress }));
+}
+
+/** worldcup: leave the current 1v1 Match (forfeits to the opponent). */
+export function sendLeaveMatch(ws: WebSocket): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "leaveMatch" }));
+}
+
+/** worldcup: ask to spectate a live 1v1 (drop into its stands). `matchId` is the pitch room id. */
+export function sendRequestSpectate(ws: WebSocket, matchId: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "requestSpectate", matchId }));
 }
 
 export function sendSetVoxelText(ws: WebSocket, spec: VoxelTextSpec): void {

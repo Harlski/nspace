@@ -36,6 +36,17 @@ import {
   visibleCampaignIdsNearPlayer,
 } from "./game/campaignBillboardVisibility.js";
 import { Game } from "./game/Game.js";
+// worldcup: seasonal soccer scoreboard + country picker (feature-flagged, deletable)
+import {
+  WORLDCUP_ENABLED as WORLDCUP_ENABLED_CLIENT,
+  FIELD_ROOM_ID as WORLDCUP_FIELD_ROOM_ID,
+  isFieldLikeRoomId as worldcupIsFieldLikeRoomId,
+  isMatchPitchRoomId as worldcupIsMatchPitchRoomId,
+} from "./worldcup/config.js";
+import { WorldcupScoreboard } from "./worldcup/scoreboard.js";
+import { WorldcupMatchHud } from "./worldcup/matchHud.js";
+import { WorldcupMatchCountdown } from "./worldcup/matchCountdown.js";
+import { WorldcupJoystick } from "./worldcup/joystick.js";
 import { isOrthogonallyAdjacentToFloorTile, snapFloorTile } from "./game/grid.js";
 import { remotePlayerIsNpc } from "./remotePlayerNpc.js";
 import {
@@ -49,6 +60,8 @@ import {
 import {
   connectGameWs,
   sendChat,
+  sendSetCountry,
+  sendPlaceBall,
   sendChatTyping,
   sendViewInterest,
   sendClientPing,
@@ -66,6 +79,7 @@ import {
   sendUpdateRoom,
   sendMoveObstacle,
   sendMoveTo,
+  sendStopMove,
   sendPublishDesign,
   sendDeleteDesign,
   sendUpdateDesignVisibility,
@@ -88,6 +102,10 @@ import {
   sendSetObstacleProps,
   sendCampaignImpressions,
   sendCampaignLinkClick,
+  sendSetChallenge,
+  sendAcceptChallenge,
+  sendLeaveMatch,
+  sendRequestSpectate,
   type ObstacleProps,
   type RoomBackgroundNeutral,
   type ServerMessage,
@@ -360,6 +378,8 @@ function loadingLabelForTargetRoom(room: string): string {
   if (id === CANVAS_ROOM_ID) return "Loading maze...";
   if (id === CHAMBER_ROOM_ID) return "Loading chamber...";
   if (id === PIXEL_ROOM_ID) return "Loading pixel board...";
+  // worldcup: entering a 1v1 Match Pitch (as a player or a spectator).
+  if (worldcupIsMatchPitchRoomId(id)) return "Entering the match...";
   return "Loading room...";
 }
 
@@ -597,9 +617,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
   }
   /** Black loading screen + progress immediately on room change (before server welcome). */
-  function beginRoomTransition(roomId: string): void {
+  function beginRoomTransition(roomId: string, labelOverride?: string): void {
     clearRoomTransitionProgressTimer();
-    hud.setLoadingLabel(loadingLabelForTargetRoom(roomId));
+    hud.setLoadingLabel(labelOverride ?? loadingLabelForTargetRoom(roomId));
     hud.setLoadingProgress("indeterminate");
     hud.setLoadingVisible(true);
     let fake = 0.06;
@@ -615,6 +635,68 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
   game.setMapOverviewUnlocked(isAdmin(address));
+  // worldcup: mount corner-docked worldcup HUD inside the letterbox (the rendered game area)
+  // so it stays within game bounds instead of spilling into the black letterbox bars.
+  const worldcupHudParent =
+    (canvasHost.parentElement as HTMLElement | null) ?? hudRoot;
+  // worldcup: seasonal soccer scoreboard (only meaningful in the field room)
+  const worldcupScoreboard = WORLDCUP_ENABLED_CLIENT
+    ? new WorldcupScoreboard(worldcupHudParent)
+    : null;
+  if (worldcupScoreboard) {
+    worldcupScoreboard.onChangeCountry = (code) => {
+      if (ws) sendSetCountry(ws, code);
+    };
+  }
+  let worldcupAutoPromptShown = false;
+  // worldcup: 1v1 Match HUD (clock + scores + result) shown only inside a Match Pitch.
+  const worldcupMatchHud = WORLDCUP_ENABLED_CLIENT
+    ? new WorldcupMatchHud(worldcupHudParent)
+    : null;
+  if (worldcupMatchHud) {
+    worldcupMatchHud.setSelfAddress(address);
+    worldcupMatchHud.onLeave = () => {
+      if (ws) sendLeaveMatch(ws);
+    };
+  }
+  // worldcup: pre-teleport handshake countdown overlay (shown in the origin room).
+  const worldcupMatchCountdown = WORLDCUP_ENABLED_CLIENT
+    ? new WorldcupMatchCountdown()
+    : null;
+  // worldcup: spectating is no longer a teleport-on-click. You walk onto the portal's
+  // footprint tile and press the "Watch" intent pill (see syncPortalEnterButton).
+  // worldcup: touch joystick for pitch movement (touch / Nimiq Pay only; coexists with tap-to-move).
+  const worldcupJoystickTouchHost =
+    (typeof window !== "undefined" &&
+      window.matchMedia?.("(pointer: coarse)").matches) ||
+    isNimiqPayWebViewHost();
+  const worldcupJoystick =
+    WORLDCUP_ENABLED_CLIENT && worldcupJoystickTouchHost
+      ? new WorldcupJoystick()
+      : null;
+  // The floating joystick is a visual the game positions; Game owns the tap-vs-drag gesture and
+  // drives showAt/moveThumbTo/hide from its own pitch pointer pipeline.
+  game.setWorldcupJoystickView(worldcupJoystick);
+  // Releasing the joystick sends an immediate (un-rate-limited) stop so the player halts at once.
+  game.setWorldcupStopMoveHandler(() => sendStopMove(socket));
+  // True while watching a 1v1 from the stands (fixed position; no joystick/tap movement).
+  let worldcupSpectating = false;
+  // worldcup: which side's default camera orientation we've applied for the current Match, so the
+  // 180-degree default for side a is set once on entry and never fights a manual re-orbit.
+  let worldcupAppliedMatchSide: "a" | "b" | null = null;
+  const updateWorldcupJoystickVisibility = (): void => {
+    game.setWorldcupJoystickEnabled(
+      !!worldcupJoystick &&
+        worldcupIsFieldLikeRoomId(worldcupCurrentRoomId) &&
+        !worldcupSpectating
+    );
+  };
+  // worldcup: local mirror of the open-Challenge toggle + current room (for the donut label).
+  let worldcupSelfChallengeOpen = false;
+  let worldcupCurrentRoomId = "";
+  // worldcup: scheduled "Entering the match..." loading screen fired when the pre-teleport
+  // countdown reaches zero; cleared if a room welcome (or socket close) preempts it.
+  let worldcupMatchEnterTimer: ReturnType<typeof setTimeout> | null = null;
   if (streamMode) {
     game.setStreamObserverMode(true);
     game.setStreamBubblesHidden(!streamChat);
@@ -1656,6 +1738,19 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     return players.filter((p) => !p.displayName.startsWith("[NPC] ")).length;
   }
 
+  // worldcup: in the Free Play Field, the crowd waves the flags of the players currently present
+  // (distinct countries). Recomputed whenever the roster or someone's country changes.
+  function refreshWorldcupCrowdRoster(): void {
+    if (!WORLDCUP_ENABLED_CLIENT) return;
+    if (normalizeRoomId(worldcupCurrentRoomId) !== WORLDCUP_FIELD_ROOM_ID) return;
+    const codes = new Set<string>();
+    for (const p of lastPlayers) {
+      const c = (p.worldcupCountry ?? "").trim().toUpperCase();
+      if (/^[A-Z]{2}$/.test(c)) codes.add(c);
+    }
+    game.setWorldcupCrowdRoster([...codes]);
+  }
+
   function syncPlayerCountHud(): void {
     const roomCount = roomRealPlayerCount(lastPlayers);
     const total = Math.max(totalOnlinePlayers, roomCount);
@@ -1683,6 +1778,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     | { kind: "door" }
     | { kind: "canvas-exit" }
     | { kind: "teleporter" }
+    | { kind: "spectate"; matchId: string; full: boolean }
     | {
         kind: "billboard";
         billboardId: string;
@@ -2679,45 +2775,63 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     nimClaimUiRef = null;
     hud.setNimClaimProgress(null);
 
+    // worldcup: shared Action Wheel handlers (emotes + Games sub-wheel incl. 1v1 toggle).
+    const buildActionWheelHandlers = () => ({
+      onEmote: (emoji: string) => {
+        if (socket.readyState === WebSocket.OPEN) sendChat(socket, emoji);
+      },
+      onJoinFreePlayField: () => {
+        sendJoinRoom(socket, WORLDCUP_FIELD_ROOM_ID);
+      },
+      onToggleChallenge: () => {
+        const next = !worldcupSelfChallengeOpen;
+        worldcupSelfChallengeOpen = next;
+        if (socket.readyState === WebSocket.OPEN) sendSetChallenge(socket, next);
+      },
+      challengeActive: worldcupSelfChallengeOpen,
+      challengeAvailable:
+        WORLDCUP_ENABLED_CLIENT &&
+        !worldcupIsFieldLikeRoomId(worldcupCurrentRoomId),
+    });
+
     game.setSelfQuickEmojiOpener(() => {
-      const a = game.getSelfScreenPosition(1.32);
+      // Centred on the avatar body (lower than the old head-height strip) so the
+      // transparent Hub frames the player inside the Action Wheel ring.
+      const a = game.getSelfScreenPosition(0.45);
       if (!a) return;
       const pos = game.getSelfPosition();
       const openedFloor = pos ? snapFloorTile(pos.x, pos.z) : null;
-      hud.showSelfEmojiMenu(
-        a.x,
-        a.y,
-        (emoji) => {
-          if (socket.readyState === WebSocket.OPEN) sendChat(socket, emoji);
-        },
-        openedFloor
-      );
+      hud.showActionWheel(a.x, a.y, buildActionWheelHandlers(), openedFloor);
     });
     game.setOtherPlayerContextOpener((pick) => {
+      const acceptOpts = {
+        onAcceptChallenge: (addr: string) => {
+          if (socket.readyState === WebSocket.OPEN)
+            sendAcceptChallenge(socket, addr);
+        },
+      };
       hud.showOtherPlayerContextMenu(
         pick.clientX,
         pick.clientY,
         pick.targets,
         pick.emoteRowFirst
           ? {
+              ...acceptOpts,
               emoteRowFirst: true,
               onEmote: () => {
-                const a = game.getSelfScreenPosition(1.32);
+                const a = game.getSelfScreenPosition(0.45);
                 if (!a) return;
                 const pos = game.getSelfPosition();
                 const openedFloor = pos ? snapFloorTile(pos.x, pos.z) : null;
-                hud.showSelfEmojiMenu(
+                hud.showActionWheel(
                   a.x,
                   a.y,
-                  (emoji) => {
-                    if (socket.readyState === WebSocket.OPEN)
-                      sendChat(socket, emoji);
-                  },
+                  buildActionWheelHandlers(),
                   openedFloor
                 );
               },
             }
-          : undefined
+          : acceptOpts
       );
     });
 
@@ -2831,6 +2945,23 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       sendMoveTo(socket, x, z, layer);
     });
     game.setPlaceBlockHandler((x, z) => {
+      // worldcup: place a kickable soccer ball at the clicked tile (builders only).
+      // Server validates room permission + walkability + per-room cap.
+      if (hud.isWorldcupBallModeActive()) {
+        const selfPos = game.getSelfPosition();
+        if (selfPos) {
+          const dx = selfPos.x - x;
+          const dz = selfPos.z - z;
+          const distance = Math.hypot(dx, dz);
+          const placeRadius = game.getPlaceRadiusBlocks();
+          if (distance > placeRadius + 1e-6) {
+            sendMoveTo(socket, x, z, 0);
+            return;
+          }
+        }
+        sendPlaceBall(socket, x, z);
+        return;
+      }
       if (hud.isTeleporterModeActive()) {
         sendPlacePendingTeleporter(socket, x, z);
         return;
@@ -3473,6 +3604,22 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }
       return;
     }
+    if (WORLDCUP_ENABLED_CLIENT) {
+      const standingPortal = game.getStandingSpectatePortal();
+      if (standingPortal) {
+        portalAction = {
+          kind: "spectate",
+          matchId: standingPortal.matchId,
+          full: standingPortal.full,
+        };
+        hud.setPortalEnterLabel(standingPortal.full ? "Stands full" : "Watch");
+        if (!portalEnterVisible) {
+          portalEnterVisible = true;
+          hud.setPortalEnterVisible(true);
+        }
+        return;
+      }
+    }
     const inCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
     if (!inCanvas) {
       const visit = game.getStandingBillboardVisitOffer();
@@ -3601,6 +3748,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
     if (msg.type === "welcome") {
       clearWelcomeDeadlineTimer();
+      // worldcup: any room change clears a stale post-goal movement freeze.
+      game.setWorldcupMoveLocked(false);
       if (pendingCreateRoomAwaiting) {
         closeRoomsModal();
       }
@@ -3650,6 +3799,39 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       game.setSelf(msg.self.address, msg.self.displayName);
       selfAddress = msg.self.address;
       hud.setBrandLinksPlayerDisplayName(msg.self.displayName);
+
+      // worldcup: track room + self Challenge flag for the donut toggle; the Match HUD only
+      // belongs inside a Match Pitch, so hide it whenever we land anywhere else.
+      worldcupCurrentRoomId = normalizeRoomId(msg.roomId);
+      worldcupSelfChallengeOpen = !!msg.self.challengeOpen;
+      // Any room change ends the pre-teleport countdown (we either landed on the pitch or left).
+      worldcupMatchCountdown?.hide();
+      // The countdown's scheduled "Entering the match..." loading screen has done its job (or is
+      // moot) once a welcome lands; cancel it so a cancelled match can't strand a black screen.
+      if (worldcupMatchEnterTimer !== null) {
+        clearTimeout(worldcupMatchEnterTimer);
+        worldcupMatchEnterTimer = null;
+      }
+      // A fresh room means we're no longer locked in the stands until a matchState says otherwise.
+      worldcupSpectating = false;
+      // Show the touch joystick only on the pitch (and not while spectating).
+      updateWorldcupJoystickVisibility();
+      // worldcup: leaving a Match Pitch tears down the Match-only view (spectator framing, goal
+      // arrow, participant set, and the 180-degree orientation). Inside a pitch, the matchState
+      // handler sets these up; the welcome handler runs first so we only clear on the way out.
+      if (!worldcupIsMatchPitchRoomId(worldcupCurrentRoomId)) {
+        game.setWorldcupSpectatorView(false);
+        game.setWorldcupAttackGoal(null);
+        game.setWorldcupMatchParticipants(null, null);
+        game.setWorldcupMatchOrientation(null);
+        worldcupAppliedMatchSide = null;
+      }
+      if (
+        worldcupMatchHud &&
+        !worldcupIsMatchPitchRoomId(worldcupCurrentRoomId)
+      ) {
+        worldcupMatchHud.hide();
+      }
 
       const selfKey = selfAddress.replace(/\s+/g, "").trim().toUpperCase();
       const backlog = Array.isArray(msg.chatBacklog) ? msg.chatBacklog : [];
@@ -3762,6 +3944,23 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       game.setSignboards(msg.signboards);
       game.setBillboards(msg.billboards ?? []);
       game.setVoxelTextsForRoom(msg.roomId, msg.voxelTexts ?? []);
+      // worldcup: render any balls present in this room
+      game.applyWorldcupBalls(msg.balls ?? []);
+      if (worldcupScoreboard) {
+        const inField = msg.roomId === WORLDCUP_FIELD_ROOM_ID;
+        worldcupScoreboard.setVisible(inField);
+        if (inField) {
+          worldcupScoreboard.setSelfCountry(msg.worldcupSelfCountry ?? null);
+          worldcupScoreboard.setLeaderboard(msg.worldcupTopCountries ?? []);
+          worldcupScoreboard.setPreviousWinner(
+            msg.worldcupPrevWinnerCountry ?? null
+          );
+        }
+      }
+      // worldcup: the crowd waves the previous UTC day's champion flag.
+      game.setWorldcupCrowdFlag(msg.worldcupPrevWinnerCountry ?? null);
+      // worldcup: live 1v1 spectate portals in this room.
+      game.setWorldcupPortals(msg.worldcupPortals ?? []);
       
       // Load canvas claims if present and wait for them to finish
       if (msg.canvasClaims) {
@@ -3772,6 +3971,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         ? [...msg.others]
         : [msg.self, ...msg.others];
       game.syncState(lastPlayers);
+      refreshWorldcupCrowdRoster();
       bumpRoomLoadProgress(0.88);
       syncReturnHomeButton();
       await updateCanvasLeaderboard();
@@ -3903,11 +4103,13 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       }
       game.syncState(lastPlayers);
       syncPlayerCountHud();
+      refreshWorldcupCrowdRoster();
       return;
     }
     if (msg.type === "playerLeft") {
       lastPlayers = lastPlayers.filter((p) => p.address !== msg.address);
       game.syncState(lastPlayers);
+      refreshWorldcupCrowdRoster();
       syncPlayerCountHud();
       return;
     }
@@ -3915,6 +4117,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       lastPlayers = msg.players;
       game.syncState(msg.players);
       syncPlayerCountHud();
+      refreshWorldcupCrowdRoster();
+      if (WORLDCUP_ENABLED_CLIENT) {
+        const selfKey = selfAddress.replace(/\s+/g, "").toUpperCase();
+        const self = msg.players.find(
+          (p) => p.address.replace(/\s+/g, "").toUpperCase() === selfKey
+        );
+        if (self) worldcupSelfChallengeOpen = !!self.challengeOpen;
+      }
       return;
     }
     if (msg.type === "stateDelta") {
@@ -3939,11 +4149,166 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       lastPlayers = [...byAddr.values()];
       game.syncState(lastPlayers);
       syncPlayerCountHud();
+      refreshWorldcupCrowdRoster();
       return;
     }
     if (msg.type === "onlineCount") {
       totalOnlinePlayers = Math.max(0, Math.floor(msg.count));
       syncPlayerCountHud();
+      return;
+    }
+    // worldcup: dynamic soccer ball positions
+    if (msg.type === "ballState") {
+      game.applyWorldcupBalls(msg.balls);
+      return;
+    }
+    // worldcup: server-controlled Goalie positions
+    if (msg.type === "goalieState") {
+      game.applyWorldcupGoalies(msg.goalies);
+      return;
+    }
+    // worldcup: a 1v1 spectate portal appeared / refreshed in the current room
+    if (msg.type === "matchPortalSpawn") {
+      game.addWorldcupPortal({
+        matchId: msg.matchId,
+        x: msg.x,
+        z: msg.z,
+        aAddress: msg.aAddress,
+        bAddress: msg.bAddress,
+        aCountry: msg.aCountry,
+        bCountry: msg.bCountry,
+        full: msg.full,
+      });
+      return;
+    }
+    // worldcup: a 1v1 spectate portal was removed (Match ended)
+    if (msg.type === "matchPortalRemove") {
+      game.removeWorldcupPortal(msg.matchId);
+      return;
+    }
+    // worldcup: handshake + "Match starting in 3…2…1" countdown before the teleport
+    if (msg.type === "matchCountdown") {
+      worldcupMatchCountdown?.show({
+        durationMs: msg.durationMs,
+        selfAddress: address,
+        selfCountry: msg.selfCountry,
+        opponentAddress: msg.opponentAddress,
+        opponentCountry: msg.opponentCountry,
+      });
+      // worldcup: when the countdown reaches zero the server teleports both players into the
+      // Match Pitch. Show the loading screen for that gap; the pitch welcome hides it. If the
+      // match is cancelled before then, the welcome (or close) handler clears this timer.
+      if (worldcupMatchEnterTimer !== null) clearTimeout(worldcupMatchEnterTimer);
+      worldcupMatchEnterTimer = setTimeout(() => {
+        worldcupMatchEnterTimer = null;
+        beginRoomTransition("", "Entering the match...");
+      }, Math.max(0, msg.durationMs));
+      return;
+    }
+    // worldcup: 1v1 Match live clock + scores
+    if (msg.type === "matchState") {
+      worldcupMatchHud?.update({
+        matchId: msg.matchId,
+        scoreA: msg.scoreA,
+        scoreB: msg.scoreB,
+        phase: msg.phase,
+        remainingMs: msg.remainingMs,
+        aAddress: msg.aAddress,
+        bAddress: msg.bAddress,
+        aCountry: msg.aCountry,
+        bCountry: msg.bCountry,
+      });
+      // The Match Pitch crowd splits by side: side a's half waves a's flag, b's half b's.
+      game.setWorldcupCrowdSideFlags(msg.aCountry, msg.bCountry);
+      // Record the two players so any other avatar in the pitch is seated on the stands.
+      game.setWorldcupMatchParticipants(msg.aAddress, msg.bAddress);
+      // If we're on the pitch but not a player, we're a Spectator (fixed in the stands).
+      const selfKey = selfAddress.replace(/\s+/g, "").toUpperCase();
+      const aKey = msg.aAddress.replace(/\s+/g, "").toUpperCase();
+      const bKey = msg.bAddress.replace(/\s+/g, "").toUpperCase();
+      const selfSide: "a" | "b" | null =
+        aKey === selfKey ? "a" : bKey === selfKey ? "b" : null;
+      const isParticipant = selfSide !== null;
+      const nowSpectating =
+        worldcupIsMatchPitchRoomId(worldcupCurrentRoomId) && !isParticipant;
+      // Spectators see the whole pitch at a locked zoom; participants get the normal follow cam.
+      game.setWorldcupSpectatorView(nowSpectating);
+      // Participants get an arrow above the goal they attack; Spectators get none.
+      game.setWorldcupAttackGoal(selfSide);
+      // Default side a's camera to 180 degrees once on entry (still re-orbitable by the user).
+      if (selfSide && worldcupAppliedMatchSide !== selfSide) {
+        game.setWorldcupMatchOrientation(selfSide);
+        worldcupAppliedMatchSide = selfSide;
+      }
+      if (nowSpectating !== worldcupSpectating) {
+        worldcupSpectating = nowSpectating;
+        updateWorldcupJoystickVisibility();
+      }
+      return;
+    }
+    // worldcup: a goal in the 1v1 Match — erupt the crowd, flash the goal banner, and (if play
+    // continues) run the kickoff countdown while both players are frozen at their spawns.
+    if (msg.type === "matchGoal") {
+      game.worldcupCrowdCheer(1);
+      worldcupMatchHud?.flashGoal(
+        msg.side,
+        msg.scoreA,
+        msg.scoreB,
+        msg.country,
+        msg.kickoffMs
+      );
+      if (msg.kickoffMs > 0) {
+        game.setWorldcupMoveLocked(true);
+        window.setTimeout(() => game.setWorldcupMoveLocked(false), msg.kickoffMs);
+      }
+      return;
+    }
+    // worldcup: 1v1 Match finished — show the result banner (entrants are returned shortly).
+    if (msg.type === "matchEnded") {
+      game.worldcupCrowdCheer(1);
+      game.setWorldcupMoveLocked(false);
+      worldcupMatchHud?.showResult(
+        msg.outcome,
+        msg.scoreA,
+        msg.scoreB,
+        msg.aAddress,
+        msg.bAddress,
+        msg.aCountry,
+        msg.bCountry
+      );
+      return;
+    }
+    if (msg.type === "goalScored") {
+      game.worldcupCrowdCheer(1);
+      if (worldcupScoreboard) {
+        worldcupScoreboard.setLeaderboard(msg.topCountries);
+        worldcupScoreboard.flashGoal(msg.scorerName, msg.country);
+        const norm = (a: string) => a.replace(/\s+/g, "").toUpperCase();
+        const isSelf =
+          msg.scorerAddress &&
+          selfAddress &&
+          norm(msg.scorerAddress) === norm(selfAddress);
+        if (isSelf && !msg.country && !worldcupAutoPromptShown) {
+          worldcupAutoPromptShown = true;
+          worldcupScoreboard.openPicker({
+            prompt: "You scored! Pick your country so your goals count.",
+            dismissable: true,
+          });
+        }
+      }
+      return;
+    }
+    if (msg.type === "worldcupLeaderboard") {
+      if (worldcupScoreboard) {
+        worldcupScoreboard.setSelfCountry(msg.selfCountry);
+        worldcupScoreboard.setLeaderboard(msg.topCountries);
+        if (msg.prevWinnerCountry !== undefined) {
+          worldcupScoreboard.setPreviousWinner(msg.prevWinnerCountry);
+        }
+      }
+      if (msg.prevWinnerCountry !== undefined) {
+        game.setWorldcupCrowdFlag(msg.prevWinnerCountry);
+      }
       return;
     }
     if (msg.type === "gateWalkBlocked") {
@@ -4197,6 +4562,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       return;
     }
     if (msg.type === "error") {
+      // worldcup: the spectate portal is at capacity.
+      if (msg.code === "spectate_full") {
+        hud.appendChat("System", "This match's stands are full — try again shortly.");
+      }
       // Handle canvas cooldown error
       if (msg.code === "CANVAS_COOLDOWN") {
         // Don't need to do anything special - server already sent chat message
@@ -4362,6 +4731,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
             return;
           }
           const restartDrop = hud.consumeRestartDisconnectForStatus();
+          if (worldcupMatchEnterTimer !== null) {
+            clearTimeout(worldcupMatchEnterTimer);
+            worldcupMatchEnterTimer = null;
+          }
           hud.setLoadingVisible(false, { skipMinWait: true });
           hud.setReconnectOffer(true);
           hud.setStatus(
@@ -4600,6 +4973,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           window.open(visitUrl, "_blank", "noopener,noreferrer");
         },
       });
+      return;
+    }
+    if (portalAction?.kind === "spectate" && ws) {
+      // worldcup: walk-on + intent to spectate. Show the loading screen while the server
+      // drops us into the Match Pitch stands. Skip the loading screen when the stands are
+      // full so a rejected request doesn't strand us on a black screen.
+      if (!portalAction.full) beginRoomTransition(portalAction.matchId);
+      sendRequestSpectate(ws, portalAction.matchId);
       return;
     }
     if (
@@ -4944,11 +5325,11 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     game.tick(dt);
     syncPortalEnterButton();
     sampleCampaignImpressions(now);
-    if (hud.isSelfEmojiMenuOpen()) {
-      const ea = game.getSelfScreenPosition(1.32);
+    if (hud.isActionWheelOpen()) {
+      const ea = game.getSelfScreenPosition(0.45);
       const pos = game.getSelfPosition();
       const floor = pos ? snapFloorTile(pos.x, pos.z) : null;
-      hud.setSelfEmojiMenuAnchor(ea ? ea.x : null, ea ? ea.y : null, floor);
+      hud.setActionWheelAnchor(ea ? ea.x : null, ea ? ea.y : null, floor);
     }
     if (hud.isDebugPanelVisible()) {
       const rawClamped = Math.min(400, Math.max(1, rawMs));

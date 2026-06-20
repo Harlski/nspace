@@ -18,9 +18,21 @@ import {
   ROOM_BG_NEUTRAL_RGB,
   type RoomBgNeutralId,
 } from "../game/blockStyle.js";
+// worldcup: seasonal soccer build-dock "Ball" prop (feature-flagged, deletable)
+import { WORLDCUP_ENABLED as WORLDCUP_ENABLED_CLIENT } from "../worldcup/config.js";
 import type { Game } from "../game/Game.js";
 import { GATE_AUTH_MAX } from "../game/gateAuth.js";
 import { normalizeWalletKey, type FloorTile } from "../game/grid.js";
+import {
+  equalSectors,
+  polarToXy,
+  hexApothem,
+  hexSegmentPath,
+  hexPolygonPath,
+  emotePageCount,
+  emotePageSlice,
+  nextPage,
+} from "./actionWheelGeometry.js";
 import type { PlayerState } from "../types.js";
 import {
   BILLBOARD_ADVERTS_CATALOG,
@@ -286,30 +298,46 @@ export function createHud(
   setPortalEnterScreenPosition: (x: number, y: number) => void;
   /** Same pill as portal Enter; use for “Visit …” on billboard tiles. */
   setPortalEnterLabel: (text: string) => void;
-  /** Quick emoji strip above the player (right-click / long-press self in game). */
-  showSelfEmojiMenu: (
+  /** Action Wheel: radial self-menu around the player (right-click / long-press self). */
+  showActionWheel: (
     anchorX: number,
     anchorY: number,
-    onPick: (emoji: string) => void,
-    /** Snapped floor tile when opened; menu closes after the player walks to another tile. */
+    handlers: {
+      onEmote: (emoji: string) => void;
+      onJoinFreePlayField: () => void;
+      /** worldcup: toggle an open 1v1 Challenge (Games sub-wheel). */
+      onToggleChallenge?: () => void;
+      /** worldcup: is a Challenge currently raised (toggle shows Cancel)? */
+      challengeActive?: boolean;
+      /** worldcup: may a Challenge be raised here (false on the pitch / mid-Match)? */
+      challengeAvailable?: boolean;
+    },
+    /** Snapped floor tile when opened; wheel closes after the player walks to another tile. */
     openedAtFloor?: FloorTile | null
   ) => void;
-  hideSelfEmojiMenu: () => void;
-  setSelfEmojiMenuAnchor: (
+  hideActionWheel: () => void;
+  setActionWheelAnchor: (
     x: number | null,
     y: number | null,
-    /** Current snapped floor tile (same frame as screen coords); closes menu if tile changed. */
+    /** Current snapped floor tile (same frame as screen coords); closes wheel if tile changed. */
     currentFloor?: FloorTile | null
   ) => void;
-  isSelfEmojiMenuOpen: () => boolean;
+  isActionWheelOpen: () => boolean;
   /** Context menu on another human player (right-click / long-press avatar). */
   showOtherPlayerContextMenu: (
     clientX: number,
     clientY: number,
-    targets: Array<{ address: string; displayName: string }>,
+    targets: Array<{
+      address: string;
+      displayName: string;
+      /** worldcup: this player has an open 1v1 Challenge (enables the Accept row). */
+      challengeOpen?: boolean;
+    }>,
     opts?: {
       emoteRowFirst?: boolean;
       onEmote?: () => void;
+      /** worldcup: accept the picked player's open Challenge (starts a 1v1 Match). */
+      onAcceptChallenge?: (address: string) => void;
     }
   ) => void;
   hideOtherPlayerContextMenu: () => void;
@@ -320,6 +348,8 @@ export function createHud(
   onReturnHome: (fn: () => void) => void;
   onPortalEnter: (fn: () => void) => void;
   isTeleporterModeActive: () => boolean;
+  /** worldcup: build-dock "Ball" prop is the active placement tool (seasonal soccer). */
+  isWorldcupBallModeActive: () => boolean;
   onBuildToolSelect: (
     fn: (
       tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab"
@@ -2235,115 +2265,328 @@ export function createHud(
   }
   letter.appendChild(portalEnterBtn);
 
-  const SELF_QUICK_EMOJIS = ["👍", "❤️", "😂", "🎉", "😮"] as const;
-  const selfEmojiMenu = document.createElement("div");
-  selfEmojiMenu.className = "self-emoji-menu";
-  selfEmojiMenu.hidden = true;
-  selfEmojiMenu.setAttribute("role", "menu");
-  selfEmojiMenu.setAttribute("aria-label", "Quick emoji to chat");
-  let selfEmojiPickHandler: ((emoji: string) => void) | null = null;
-  let selfEmojiOpenedFloor: FloorTile | null = null;
-  let selfEmojiAutoCloseTimer: ReturnType<typeof setTimeout> | null = null;
-  let selfEmojiFadeFallbackTimer: ReturnType<typeof setTimeout> | null = null;
-  const SELF_EMOJI_AUTO_CLOSE_MS = 5000;
-  const SELF_EMOJI_FADE_FALLBACK_MS = 700;
-  let selfEmojiOutsideBound = false;
-  const selfEmojiOutsideCapture = true;
-  const onSelfEmojiOutsidePointerDown = (e: PointerEvent): void => {
-    if (selfEmojiMenu.hidden) return;
-    if (selfEmojiMenu.contains(e.target as Node)) return;
-    closeSelfEmojiMenu();
+  /*
+   * Action Wheel — the hexagonal self-menu (see CONTEXT.md). Right-click / long-press
+   * your own avatar opens a flat-top hexagon centred on you: six fixed Sectors, one per
+   * edge. The bottom Sector is the Nav Sector — Close (root) / Back (sub-wheel); the rest
+   * hold actions (Emotes upper-left, Games upper-right) with unused edges drawn as dim,
+   * non-interactive reserved Sectors so the hexagon always reads whole. The transparent
+   * hexagonal Hub in the middle frames your avatar. Drawn as inline SVG polygon paths so
+   * each Sector's shape IS its hit target (no clip-path / paint drift). Geometry lives in
+   * actionWheelGeometry.ts. Replaces the old flat quick-emoji strip.
+   */
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const ACTION_WHEEL_EMOTES = [
+    "👍",
+    "❤️",
+    "😂",
+    "🎉",
+    "😮",
+    "😢",
+    "🔥",
+    "👏",
+    "🙌",
+    "🤔",
+    "😎",
+    "🙏",
+  ] as const;
+  /**
+   * The hexagon has six fixed Sectors: the bottom is the Nav Sector and one upper edge is
+   * the wrap-around More Sector, so the Emote Wheel shows at most four emotes per page.
+   */
+  const ACTION_WHEEL_EMOTES_PER_PAGE = 4;
+  /** Number of Sectors in the hexagon (one per edge). */
+  const ACTION_WHEEL_SECTORS = 6;
+  /** Circumradii (centre→vertex) of the outer hexagon and the inner Hub hexagon. */
+  const ACTION_WHEEL_R_OUTER = 100;
+  const ACTION_WHEEL_R_INNER = 48;
+  /** Glyphs/labels sit on the mid-ring, measured at the edge midpoint (apothem). */
+  const ACTION_WHEEL_R_LABEL = hexApothem(
+    (ACTION_WHEEL_R_OUTER + ACTION_WHEEL_R_INNER) / 2
+  );
+
+  type ActionWheelLevel = "root" | "emotes" | "games";
+  type ActionWheelSlice = {
+    glyph: string;
+    label: string;
+    ariaLabel: string;
+    disabled?: boolean;
+    /** A blank, non-interactive edge that only completes the hexagon frame. */
+    reserved?: boolean;
+    activate?: () => void;
   };
-  const onSelfEmojiEscape = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") closeSelfEmojiMenu();
+  /** A dim, empty Sector that reserves a hexagon edge for a future action. */
+  const ACTION_WHEEL_RESERVED: ActionWheelSlice = {
+    glyph: "",
+    label: "",
+    ariaLabel: "",
+    reserved: true,
+    disabled: true,
   };
-  const onSelfEmojiFadeTransitionEnd = (ev: TransitionEvent): void => {
-    if (ev.propertyName !== "opacity") return;
-    if (!selfEmojiMenu.classList.contains("self-emoji-menu--auto-hiding")) return;
-    if (selfEmojiFadeFallbackTimer !== null) {
-      clearTimeout(selfEmojiFadeFallbackTimer);
-      selfEmojiFadeFallbackTimer = null;
+  /**
+   * Lay actions onto the six hexagon Sectors. Slot 0 is the bottom Nav Sector; the rest are
+   * (by equalSectors index) 1 lower-left, 2 upper-left, 3 top, 4 upper-right, 5 lower-right.
+   * Empty slots stay reserved so the hexagon frame is always complete.
+   */
+  const fillHexSlots = (
+    nav: ActionWheelSlice,
+    bySlot: Partial<Record<number, ActionWheelSlice>>
+  ): ActionWheelSlice[] => {
+    const slots: ActionWheelSlice[] = [];
+    for (let i = 0; i < ACTION_WHEEL_SECTORS; i++) {
+      slots.push(i === 0 ? nav : bySlot[i] ?? ACTION_WHEEL_RESERVED);
     }
-    selfEmojiMenu.removeEventListener("transitionend", onSelfEmojiFadeTransitionEnd);
-    selfEmojiMenu.classList.remove("self-emoji-menu--auto-hiding");
-    selfEmojiMenu.hidden = true;
-    selfEmojiPickHandler = null;
-    selfEmojiOpenedFloor = null;
-    unbindSelfEmojiOutside();
+    return slots;
   };
-  function clearSelfEmojiAutoCloseTimer(): void {
-    if (selfEmojiAutoCloseTimer !== null) {
-      clearTimeout(selfEmojiAutoCloseTimer);
-      selfEmojiAutoCloseTimer = null;
+
+  const actionWheel = document.createElement("div");
+  actionWheel.className = "action-wheel";
+  actionWheel.hidden = true;
+  actionWheel.setAttribute("role", "menu");
+  actionWheel.setAttribute("aria-label", "Player action wheel");
+  const actionWheelSvg = document.createElementNS(SVG_NS, "svg");
+  actionWheelSvg.setAttribute("viewBox", "-110 -110 220 220");
+  actionWheelSvg.setAttribute("class", "action-wheel__svg");
+  actionWheel.appendChild(actionWheelSvg);
+  letter.appendChild(actionWheel);
+
+  let actionWheelLevel: ActionWheelLevel = "root";
+  let actionWheelEmotePage = 0;
+  let actionWheelEmoteHandler: ((emoji: string) => void) | null = null;
+  let actionWheelJoinFieldHandler: (() => void) | null = null;
+  // worldcup: 1v1 Challenge toggle (Games sub-wheel).
+  let actionWheelChallengeHandler: (() => void) | null = null;
+  let actionWheelChallengeActive = false;
+  let actionWheelChallengeAvailable = false;
+  let actionWheelOpenedFloor: FloorTile | null = null;
+  let actionWheelOutsideBound = false;
+
+  const onActionWheelOutsidePointerDown = (e: PointerEvent): void => {
+    if (actionWheel.hidden) return;
+    if (actionWheel.contains(e.target as Node)) return;
+    closeActionWheel();
+  };
+  const onActionWheelEscape = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") closeActionWheel();
+  };
+  function bindActionWheelOutside(): void {
+    if (actionWheelOutsideBound) return;
+    actionWheelOutsideBound = true;
+    window.addEventListener("pointerdown", onActionWheelOutsidePointerDown, {
+      capture: true,
+    });
+    window.addEventListener("keydown", onActionWheelEscape);
+  }
+  function unbindActionWheelOutside(): void {
+    if (!actionWheelOutsideBound) return;
+    actionWheelOutsideBound = false;
+    window.removeEventListener("pointerdown", onActionWheelOutsidePointerDown, {
+      capture: true,
+    });
+    window.removeEventListener("keydown", onActionWheelEscape);
+  }
+  function closeActionWheel(): void {
+    actionWheel.hidden = true;
+    actionWheel.classList.remove("action-wheel--open");
+    actionWheelLevel = "root";
+    actionWheelEmotePage = 0;
+    actionWheelEmoteHandler = null;
+    actionWheelJoinFieldHandler = null;
+    actionWheelChallengeHandler = null;
+    actionWheelChallengeActive = false;
+    actionWheelChallengeAvailable = false;
+    actionWheelOpenedFloor = null;
+    unbindActionWheelOutside();
+  }
+  function setActionWheelLevel(level: ActionWheelLevel): void {
+    actionWheelLevel = level;
+    if (level === "emotes") actionWheelEmotePage = 0;
+    renderActionWheel();
+  }
+  function buildActionWheelSlices(): ActionWheelSlice[] {
+    // Six fixed Sectors. Slot 0 is the bottom Nav Sector (Close at root, Back in a
+    // sub-wheel); primary actions flank the top (slot 2 = upper-left, 4 = upper-right).
+    const back: ActionWheelSlice = {
+      glyph: "↩",
+      label: "",
+      ariaLabel: "Back to actions",
+      activate: () => setActionWheelLevel("root"),
+    };
+    if (actionWheelLevel === "emotes") {
+      const emotes = ACTION_WHEEL_EMOTES.slice();
+      const pageCount = emotePageCount(
+        emotes.length,
+        ACTION_WHEEL_EMOTES_PER_PAGE
+      );
+      const pageEmotes = emotePageSlice(
+        emotes,
+        actionWheelEmotePage,
+        ACTION_WHEEL_EMOTES_PER_PAGE
+      );
+      // Fill emotes top → upper sides → lower-left; reserve lower-right (slot 5) for More.
+      const emoteSlotOrder = [3, 2, 4, 1];
+      const bySlot: Partial<Record<number, ActionWheelSlice>> = {};
+      pageEmotes.forEach((em, idx) => {
+        const slot = emoteSlotOrder[idx];
+        if (slot == null) return;
+        bySlot[slot] = {
+          glyph: em,
+          label: "",
+          ariaLabel: `Send ${em}`,
+          activate: () => {
+            actionWheelEmoteHandler?.(em);
+            closeActionWheel();
+          },
+        };
+      });
+      if (pageCount > 1) {
+        bySlot[5] = {
+          glyph: "…",
+          label: "",
+          ariaLabel: "More emotes",
+          activate: () => {
+            actionWheelEmotePage = nextPage(actionWheelEmotePage, pageCount);
+            renderActionWheel();
+          },
+        };
+      }
+      return fillHexSlots(back, bySlot);
     }
-  }
-  function clearSelfEmojiFadeFallbackTimer(): void {
-    if (selfEmojiFadeFallbackTimer !== null) {
-      clearTimeout(selfEmojiFadeFallbackTimer);
-      selfEmojiFadeFallbackTimer = null;
+    if (actionWheelLevel === "games") {
+      const freePlay: ActionWheelSlice = {
+        glyph: "⚽",
+        label: "Free Play",
+        ariaLabel: "Join the Free Play Field",
+        activate: () => {
+          actionWheelJoinFieldHandler?.();
+          closeActionWheel();
+        },
+      };
+      const oneVsOne: ActionWheelSlice = actionWheelChallengeAvailable
+        ? {
+            glyph: actionWheelChallengeActive ? "🛑" : "🥅",
+            label: actionWheelChallengeActive ? "Cancel 1v1" : "Open to 1v1",
+            ariaLabel: actionWheelChallengeActive
+              ? "Cancel your open 1v1 Challenge"
+              : "Raise an open 1v1 Challenge above you",
+            activate: () => {
+              actionWheelChallengeHandler?.();
+              closeActionWheel();
+            },
+          }
+        : {
+            glyph: "🥅",
+            label: "1v1 · here",
+            ariaLabel: "1v1 Challenges can't be raised on the pitch",
+            disabled: true,
+          };
+      return fillHexSlots(back, { 2: freePlay, 4: oneVsOne });
     }
-  }
-  function armSelfEmojiAutoCloseFade(): void {
-    clearSelfEmojiAutoCloseTimer();
-    selfEmojiAutoCloseTimer = window.setTimeout(() => {
-      selfEmojiAutoCloseTimer = null;
-      if (selfEmojiMenu.hidden) return;
-      selfEmojiMenu.addEventListener("transitionend", onSelfEmojiFadeTransitionEnd);
-      clearSelfEmojiFadeFallbackTimer();
-      selfEmojiFadeFallbackTimer = window.setTimeout(() => {
-        selfEmojiFadeFallbackTimer = null;
-        if (selfEmojiMenu.hidden) return;
-        if (!selfEmojiMenu.classList.contains("self-emoji-menu--auto-hiding")) return;
-        selfEmojiMenu.removeEventListener("transitionend", onSelfEmojiFadeTransitionEnd);
-        selfEmojiMenu.classList.remove("self-emoji-menu--auto-hiding");
-        selfEmojiMenu.hidden = true;
-        selfEmojiPickHandler = null;
-        selfEmojiOpenedFloor = null;
-        unbindSelfEmojiOutside();
-      }, SELF_EMOJI_FADE_FALLBACK_MS);
-      selfEmojiMenu.classList.add("self-emoji-menu--auto-hiding");
-    }, SELF_EMOJI_AUTO_CLOSE_MS);
-  }
-  function bindSelfEmojiOutside(): void {
-    if (selfEmojiOutsideBound) return;
-    selfEmojiOutsideBound = true;
-    window.addEventListener("pointerdown", onSelfEmojiOutsidePointerDown, {
-      capture: selfEmojiOutsideCapture,
+    const close: ActionWheelSlice = {
+      glyph: "✕",
+      label: "",
+      ariaLabel: "Close menu",
+      activate: () => closeActionWheel(),
+    };
+    return fillHexSlots(close, {
+      2: {
+        glyph: "😊",
+        label: "",
+        ariaLabel: "Open emotes",
+        activate: () => setActionWheelLevel("emotes"),
+      },
+      4: {
+        glyph: "⚽",
+        label: "",
+        ariaLabel: "Open games",
+        activate: () => setActionWheelLevel("games"),
+      },
     });
-    window.addEventListener("keydown", onSelfEmojiEscape);
   }
-  function unbindSelfEmojiOutside(): void {
-    if (!selfEmojiOutsideBound) return;
-    selfEmojiOutsideBound = false;
-    window.removeEventListener("pointerdown", onSelfEmojiOutsidePointerDown, {
-      capture: selfEmojiOutsideCapture,
-    });
-    window.removeEventListener("keydown", onSelfEmojiEscape);
+  function renderActionWheel(): void {
+    while (actionWheelSvg.firstChild) {
+      actionWheelSvg.removeChild(actionWheelSvg.firstChild);
+    }
+    const slices = buildActionWheelSlices();
+    // Always six fixed Sectors, one per hexagon edge.
+    const sectors = equalSectors(ACTION_WHEEL_SECTORS);
+    for (let i = 0; i < slices.length; i++) {
+      const slice = slices[i];
+      const sector = sectors[i];
+      if (!slice || !sector) continue;
+      const group = document.createElementNS(SVG_NS, "g");
+      group.setAttribute("class", "action-wheel__slice");
+      if (slice.reserved) {
+        // A blank edge that only completes the hexagon frame — hide it from the menu.
+        group.classList.add("action-wheel__slice--reserved");
+        group.setAttribute("aria-hidden", "true");
+      } else {
+        // Keep the menuitem role on disabled slices too (WAI-ARIA) — only drop them
+        // from the tab order and mark them aria-disabled.
+        group.setAttribute("role", "menuitem");
+        if (slice.disabled) {
+          group.classList.add("action-wheel__slice--disabled");
+          group.setAttribute("aria-disabled", "true");
+        } else {
+          group.setAttribute("tabindex", "0");
+        }
+        group.setAttribute("aria-label", slice.ariaLabel);
+      }
+
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("class", "action-wheel__wedge");
+      path.setAttribute(
+        "d",
+        hexSegmentPath(
+          0,
+          0,
+          ACTION_WHEEL_R_OUTER,
+          ACTION_WHEEL_R_INNER,
+          sector.midDeg
+        )
+      );
+      group.appendChild(path);
+
+      if (!slice.reserved) {
+        const center = polarToXy(0, 0, ACTION_WHEEL_R_LABEL, sector.midDeg);
+        const hasLabel = slice.label.length > 0;
+        const glyph = document.createElementNS(SVG_NS, "text");
+        glyph.setAttribute("class", "action-wheel__glyph");
+        glyph.setAttribute("x", center.x.toFixed(1));
+        glyph.setAttribute("y", (center.y + (hasLabel ? -8 : 0)).toFixed(1));
+        glyph.textContent = slice.glyph;
+        group.appendChild(glyph);
+        if (hasLabel) {
+          const label = document.createElementNS(SVG_NS, "text");
+          label.setAttribute("class", "action-wheel__label");
+          label.setAttribute("x", center.x.toFixed(1));
+          label.setAttribute("y", (center.y + 16).toFixed(1));
+          label.textContent = slice.label;
+          group.appendChild(label);
+        }
+      }
+
+      if (!slice.disabled && !slice.reserved && slice.activate) {
+        const activate = slice.activate;
+        group.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          activate();
+        });
+        group.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            activate();
+          }
+        });
+      }
+      actionWheelSvg.appendChild(group);
+    }
+    // Hexagon rim around the transparent Hub so the wheel visibly frames the avatar.
+    const rim = document.createElementNS(SVG_NS, "path");
+    rim.setAttribute("class", "action-wheel__rim");
+    rim.setAttribute("d", hexPolygonPath(0, 0, ACTION_WHEEL_R_INNER));
+    actionWheelSvg.appendChild(rim);
   }
-  function closeSelfEmojiMenu(): void {
-    clearSelfEmojiAutoCloseTimer();
-    clearSelfEmojiFadeFallbackTimer();
-    selfEmojiMenu.removeEventListener("transitionend", onSelfEmojiFadeTransitionEnd);
-    selfEmojiMenu.classList.remove("self-emoji-menu--auto-hiding");
-    selfEmojiMenu.hidden = true;
-    selfEmojiPickHandler = null;
-    selfEmojiOpenedFloor = null;
-    unbindSelfEmojiOutside();
-  }
-  for (const em of SELF_QUICK_EMOJIS) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "self-emoji-menu__btn";
-    btn.textContent = em;
-    btn.setAttribute("role", "menuitem");
-    btn.setAttribute("aria-label", `Send ${em} to chat`);
-    btn.addEventListener("click", () => {
-      selfEmojiPickHandler?.(em);
-      closeSelfEmojiMenu();
-    });
-    selfEmojiMenu.appendChild(btn);
-  }
-  letter.appendChild(selfEmojiMenu);
 
   const otherPlayerCtx = document.createElement("div");
   otherPlayerCtx.className = "other-player-ctx";
@@ -2386,6 +2629,15 @@ export function createHud(
   otherPlayerCtxCopyAddressBtn.setAttribute("role", "menuitem");
   otherPlayerCtxCopyAddressBtn.textContent = "Copy wallet";
   otherPlayerCtxSingle.appendChild(otherPlayerCtxCopyAddressBtn);
+  // worldcup: accept this player's open 1v1 Challenge (only shown when they have one raised).
+  const otherPlayerCtxAcceptChallengeBtn = document.createElement("button");
+  otherPlayerCtxAcceptChallengeBtn.type = "button";
+  otherPlayerCtxAcceptChallengeBtn.className =
+    "other-player-ctx__item other-player-ctx__item--accept-1v1";
+  otherPlayerCtxAcceptChallengeBtn.setAttribute("role", "menuitem");
+  otherPlayerCtxAcceptChallengeBtn.textContent = "⚽ Accept 1v1 challenge";
+  otherPlayerCtxAcceptChallengeBtn.hidden = true;
+  otherPlayerCtxSingle.appendChild(otherPlayerCtxAcceptChallengeBtn);
   otherPlayerCtx.append(otherPlayerCtxMulti, otherPlayerCtxSingle);
 
   const otherPlayerProfile = document.createElement("div");
@@ -2739,7 +2991,7 @@ export function createHud(
     payload: ChatLineCtxPayload
   ): void {
     worldCtx.close();
-    closeSelfEmojiMenu();
+    closeActionWheel();
     const items: WorldContextMenuItem[] = [];
     if (payload.fromAddress) {
       items.push({
@@ -3395,15 +3647,25 @@ export function createHud(
     }
   }
 
-  function setSingleCtxTarget(address: string, displayName: string): void {
+  function setSingleCtxTarget(
+    address: string,
+    displayName: string,
+    challengeOpen = false
+  ): void {
     const compact = address.replace(/\s+/g, "").trim();
     otherPlayerCtxViewBtn.dataset.address = compact;
     otherPlayerCtxViewBtn.dataset.displayName = displayName;
+    // worldcup: only offer "Accept 1v1" when this player actually has a Challenge raised.
+    otherPlayerCtxAcceptChallengeBtn.hidden = !challengeOpen;
     void loadCtxIdenticon(otherPlayerCtxIdent, compact);
   }
 
   function openOtherPlayerMultiPicker(
-    targets: Array<{ address: string; displayName: string }>,
+    targets: Array<{
+      address: string;
+      displayName: string;
+      challengeOpen?: boolean;
+    }>,
     emote?: { onEmote: () => void }
   ): void {
     otherPlayerCtxMulti.replaceChildren();
@@ -3446,7 +3708,7 @@ export function createHud(
       row.addEventListener("click", () => {
         otherPlayerCtxMulti.hidden = true;
         otherPlayerCtxSingle.hidden = false;
-        setSingleCtxTarget(t.address, t.displayName);
+        setSingleCtxTarget(t.address, t.displayName, t.challengeOpen ?? false);
       });
       otherPlayerCtxMulti.appendChild(row);
     }
@@ -3741,6 +4003,15 @@ export function createHud(
     void navigator.clipboard?.writeText(addr).catch(() => {
       /* ignore */
     });
+  });
+
+  // worldcup: accept the target's open 1v1 Challenge (address stamped on the View row).
+  let otherPlayerAcceptChallengeHandler: ((address: string) => void) | null =
+    null;
+  otherPlayerCtxAcceptChallengeBtn.addEventListener("click", () => {
+    const addr = (otherPlayerCtxViewBtn.dataset.address ?? "").trim();
+    closeOtherPlayerContextMenu();
+    if (addr) otherPlayerAcceptChallengeHandler?.(addr);
   });
 
   const chatPanel = document.createElement("div");
@@ -4805,6 +5076,8 @@ export function createHud(
   /** Gate tool: solid block with authorized opener and exit neighbor. */
   let gateModeActive = false;
   let billboardModeActive = false;
+  // worldcup: standalone "place a soccer ball" mode (isolated from the core tool union)
+  let worldcupBallModeActive = false;
   let teleporterSelectionDockActive = false;
   function syncTeleporterDockSectionVisibility(): void {
     if (!teleporterSection) return;
@@ -6273,6 +6546,53 @@ export function createHud(
       });
       buildBottomDockTools.appendChild(card);
     }
+    // worldcup: seasonal "Ball" prop — isolated standalone placement mode (not part
+    // of the core tool union, so it can be deleted with the rest of worldcup/).
+    if (WORLDCUP_ENABLED_CLIENT && buildDockCategory === "props") {
+      const ballCard = document.createElement("button");
+      ballCard.type = "button";
+      ballCard.className = "hud-build-bottom-dock__tool-card";
+      if (worldcupBallModeActive) {
+        ballCard.classList.add("hud-build-bottom-dock__tool-card--active");
+      }
+      ballCard.dataset.tool = "worldcupBall";
+      ballCard.setAttribute(
+        "aria-pressed",
+        worldcupBallModeActive ? "true" : "false"
+      );
+      ballCard.setAttribute("aria-label", "Soccer ball");
+      const ballIcon = document.createElement("span");
+      ballIcon.className = "hud-build-bottom-dock__tool-card-icon";
+      ballIcon.setAttribute("aria-hidden", "true");
+      ballIcon.textContent = "\u26BD";
+      ballCard.appendChild(ballIcon);
+      const ballLab = document.createElement("span");
+      ballLab.className = "hud-build-bottom-dock__tool-card-label";
+      ballLab.textContent = "BALL";
+      ballCard.appendChild(ballLab);
+      ballCard.addEventListener("click", () => {
+        // Reset to the neutral "block" tool first so activateBuildTool clears any
+        // other active mode (teleporter/gate/etc.). That also flips the dock to the
+        // "terrain" category, so we restore the "props" category + ball-mode flag
+        // afterwards. Grid clicks are intercepted in main.ts before block placement.
+        if (tileInspectorToolSelect.value !== "block") {
+          tileInspectorToolSelect.value = "block";
+          tileInspectorToolSelect.dispatchEvent(
+            new Event("change", { bubbles: true })
+          );
+        }
+        worldcupBallModeActive = true;
+        buildDockCategory = "props";
+        for (const [c, b] of buildDockTabByCategory) {
+          const on = c === "props";
+          b.setAttribute("aria-selected", on ? "true" : "false");
+          b.classList.toggle("hud-build-bottom-dock__tab--active", on);
+        }
+        syncBuildDockToolStrip();
+        syncBuildDockContextParams();
+      });
+      buildBottomDockTools.appendChild(ballCard);
+    }
     type DockThumbTool = "teleporter" | "gate" | "billboard" | "signpost";
     const thumbRows: { tid: DockThumbTool; img: HTMLImageElement }[] = [];
     for (const tid of list) {
@@ -7292,6 +7612,8 @@ export function createHud(
     gateModeActive = tool === "gate";
     billboardModeActive = tool === "billboard";
     prefabToolActive = tool === "prefab";
+    // worldcup: selecting any core build tool clears soccer-ball placement mode
+    worldcupBallModeActive = false;
     objectPrefabAuthoring.setPrefabToolActive(tool === "prefab");
     if (teleporterSection) {
       syncTeleporterDockSectionVisibility();
@@ -7480,7 +7802,7 @@ export function createHud(
     createdBy: string;
     createdAt: number;
   }): void {
-    closeSelfEmojiMenu();
+    closeActionWheel();
     worldCtx.close();
     closeOtherPlayerProfile();
     signboardTooltip.hidden = true;
@@ -11526,38 +11848,53 @@ export function createHud(
     setPortalEnterLabel(text: string) {
       portalEnterBtn.textContent = text;
     },
-    showSelfEmojiMenu(
+    showActionWheel(
       anchorX: number,
       anchorY: number,
-      onPick: (emoji: string) => void,
+      handlers: {
+        onEmote: (emoji: string) => void;
+        onJoinFreePlayField: () => void;
+        onToggleChallenge?: () => void;
+        challengeActive?: boolean;
+        challengeAvailable?: boolean;
+      },
       openedAtFloor: FloorTile | null = null
     ) {
       closeOtherPlayerUiOverlays();
-      closeSelfEmojiMenu();
-      selfEmojiOpenedFloor = openedAtFloor;
-      selfEmojiPickHandler = onPick;
-      selfEmojiMenu.style.left = `${anchorX}px`;
-      selfEmojiMenu.style.top = `${anchorY}px`;
-      selfEmojiMenu.hidden = false;
-      armSelfEmojiAutoCloseFade();
-      requestAnimationFrame(() => bindSelfEmojiOutside());
+      closeActionWheel();
+      actionWheelOpenedFloor = openedAtFloor;
+      actionWheelEmoteHandler = handlers.onEmote;
+      actionWheelJoinFieldHandler = handlers.onJoinFreePlayField;
+      actionWheelChallengeHandler = handlers.onToggleChallenge ?? null;
+      actionWheelChallengeActive = handlers.challengeActive ?? false;
+      actionWheelChallengeAvailable = handlers.challengeAvailable ?? false;
+      actionWheelLevel = "root";
+      actionWheelEmotePage = 0;
+      actionWheel.style.left = `${anchorX}px`;
+      actionWheel.style.top = `${anchorY}px`;
+      actionWheel.hidden = false;
+      renderActionWheel();
+      requestAnimationFrame(() => {
+        actionWheel.classList.add("action-wheel--open");
+        bindActionWheelOutside();
+      });
     },
-    hideSelfEmojiMenu() {
-      closeSelfEmojiMenu();
+    hideActionWheel() {
+      closeActionWheel();
     },
-    setSelfEmojiMenuAnchor(
+    setActionWheelAnchor(
       x: number | null,
       y: number | null,
       currentFloor?: FloorTile | null
     ) {
-      if (selfEmojiMenu.hidden) return;
+      if (actionWheel.hidden) return;
       if (
         currentFloor &&
-        selfEmojiOpenedFloor &&
-        (currentFloor.x !== selfEmojiOpenedFloor.x ||
-          currentFloor.y !== selfEmojiOpenedFloor.y)
+        actionWheelOpenedFloor &&
+        (currentFloor.x !== actionWheelOpenedFloor.x ||
+          currentFloor.y !== actionWheelOpenedFloor.y)
       ) {
-        closeSelfEmojiMenu();
+        closeActionWheel();
         return;
       }
       if (
@@ -11566,23 +11903,32 @@ export function createHud(
         Number.isFinite(x) &&
         Number.isFinite(y)
       ) {
-        selfEmojiMenu.style.left = `${x}px`;
-        selfEmojiMenu.style.top = `${y}px`;
+        actionWheel.style.left = `${x}px`;
+        actionWheel.style.top = `${y}px`;
       }
     },
-    isSelfEmojiMenuOpen() {
-      return !selfEmojiMenu.hidden;
+    isActionWheelOpen() {
+      return !actionWheel.hidden;
     },
     showOtherPlayerContextMenu(
       clientX: number,
       clientY: number,
-      targets: Array<{ address: string; displayName: string }>,
-      opts?: { emoteRowFirst?: boolean; onEmote?: () => void }
+      targets: Array<{
+        address: string;
+        displayName: string;
+        challengeOpen?: boolean;
+      }>,
+      opts?: {
+        emoteRowFirst?: boolean;
+        onEmote?: () => void;
+        onAcceptChallenge?: (address: string) => void;
+      }
     ) {
-      closeSelfEmojiMenu();
+      closeActionWheel();
       worldCtx.close();
       closeOtherPlayerProfile();
       if (targets.length === 0) return;
+      otherPlayerAcceptChallengeHandler = opts?.onAcceptChallenge ?? null;
       const emoteBlock =
         opts?.emoteRowFirst && typeof opts.onEmote === "function"
           ? { onEmote: opts.onEmote }
@@ -11594,7 +11940,7 @@ export function createHud(
         otherPlayerCtxMulti.hidden = true;
         otherPlayerCtxSingle.hidden = false;
         const t = targets[0]!;
-        setSingleCtxTarget(t.address, t.displayName);
+        setSingleCtxTarget(t.address, t.displayName, t.challengeOpen ?? false);
       } else {
         openOtherPlayerMultiPicker(targets);
       }
@@ -12659,6 +13005,9 @@ export function createHud(
     isTeleporterModeActive(): boolean {
       return teleporterModeActive;
     },
+    isWorldcupBallModeActive(): boolean {
+      return worldcupBallModeActive;
+    },
     isObjectPrefabSaveModeActive(): boolean {
       return objectPrefabAuthoring.isSaveModeActive();
     },
@@ -12699,7 +13048,7 @@ export function createHud(
       clientY: number,
       opts: { onOpen: () => void }
     ) {
-      closeSelfEmojiMenu();
+      closeActionWheel();
       worldCtx.close();
       closeOtherPlayerProfile();
       worldCtx.open({
@@ -12730,7 +13079,7 @@ export function createHud(
         onReadSign?: (() => void) | null;
       }
     ) {
-      closeSelfEmojiMenu();
+      closeActionWheel();
       worldCtx.close();
       closeOtherPlayerProfile();
       const items: WorldContextMenuItem[] = [];
@@ -13519,7 +13868,7 @@ export function createHud(
       }
       setPerfHudEnabled(false);
       bindTileInspectorPreviewGame(null);
-      closeSelfEmojiMenu();
+      closeActionWheel();
       closeOtherPlayerProfile();
       worldCtx.close();
       chatHoverZone.removeEventListener("contextmenu", onChatHoverZoneContextMenu);

@@ -1102,3 +1102,115 @@ export async function manualBulkPayoutPendingForRecipient(
     throw err;
   }
 }
+
+/** Live totals for NIM still owed on-chain (jobs `pending` or `processing`). */
+export type PendingPayoutQueueTotals = {
+  jobCount: number;
+  recipientCount: number;
+  /** Raw luna sum as a decimal string. */
+  totalLuna: string;
+  /** `totalLuna` rendered as NIM with 4 decimals. */
+  totalNim: string;
+};
+
+/**
+ * Snapshot of NIM still queued for payout (not yet broadcast on-chain).
+ * Used by the end-of-day stats report so pending NIM is visible alongside sent NIM.
+ */
+export function getPendingPayoutQueueTotals(): PendingPayoutQueueTotals {
+  const recipients = new Set<string>();
+  let totalLuna = 0n;
+  let jobCount = 0;
+  for (const j of jobs) {
+    if (j.status !== "pending" && j.status !== "processing") continue;
+    jobCount += 1;
+    totalLuna += j.amountLuna;
+    const k = normalizeNimWalletId(j.recipientAddress);
+    if (k) recipients.add(k);
+  }
+  return {
+    jobCount,
+    recipientCount: recipients.size,
+    totalLuna: totalLuna.toString(),
+    totalNim: formatLunaAsNim4(totalLuna),
+  };
+}
+
+export type FlushAllPendingPayoutsResult = {
+  recipientsAttempted: number;
+  recipientsPaid: number;
+  jobsCleared: number;
+  totalLuna: string;
+  totalNim: string;
+  failures: { walletId: string; error: string }[];
+  /** True when the payout sender is not configured, so nothing could be sent. */
+  skippedNotConfigured: boolean;
+};
+
+/**
+ * End-of-day auto-payout: combine each recipient's `pending` jobs into one on-chain
+ * transfer (same path as the admin "Payout in full" action) and clear them from the
+ * queue. Jobs whose send fails stay `pending` for the background worker to retry, so
+ * no owed NIM is ever dropped. Safe to run alongside the background processor — bulk
+ * sends atomically claim jobs (`pending` → `processing`) before broadcasting.
+ */
+export async function flushAllPendingPayoutsNow(): Promise<FlushAllPendingPayoutsResult> {
+  const result: FlushAllPendingPayoutsResult = {
+    recipientsAttempted: 0,
+    recipientsPaid: 0,
+    jobsCleared: 0,
+    totalLuna: "0",
+    totalNim: formatLunaAsNim4(0n),
+    failures: [],
+    skippedNotConfigured: false,
+  };
+  if (!isNimPayoutSenderConfigured()) {
+    result.skippedNotConfigured = true;
+    console.warn(
+      "[nim-payout] Daily flush skipped — NIM_PAYOUT_PRIVATE_KEY not configured"
+    );
+    return result;
+  }
+
+  const recipients: string[] = [];
+  const seen = new Set<string>();
+  for (const j of jobs) {
+    if (j.status !== "pending") continue;
+    const k = normalizeNimWalletId(j.recipientAddress);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    recipients.push(j.recipientAddress.trim());
+  }
+
+  let totalLuna = 0n;
+  for (const recipient of recipients) {
+    result.recipientsAttempted += 1;
+    try {
+      const r = await manualBulkPayoutPendingForRecipient(recipient);
+      result.recipientsPaid += 1;
+      result.jobsCleared += r.jobsCleared;
+      totalLuna += BigInt(r.totalLuna);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Races with the background worker are benign — those jobs are/were handled there.
+      if (msg === "no_pending_jobs" || msg === "wallet_payout_race_retry") continue;
+      result.failures.push({ walletId: recipient, error: msg });
+      console.error(
+        `[nim-payout] Daily flush failed for ${recipient.slice(0, 12)}…: ${msg}`
+      );
+    }
+  }
+  result.totalLuna = totalLuna.toString();
+  result.totalNim = formatLunaAsNim4(totalLuna);
+  console.log(
+    "[nim-payout] Daily flush complete",
+    JSON.stringify({
+      recipientsAttempted: result.recipientsAttempted,
+      recipientsPaid: result.recipientsPaid,
+      jobsCleared: result.jobsCleared,
+      totalNim: result.totalNim,
+      failures: result.failures.length,
+    })
+  );
+  return result;
+}

@@ -15,4 +15,8 @@ export interface PlayerState {
   nimSendAway?: boolean;
   /** Ephemeral: composing a chat message (typing indicator for others). */
   chatTyping?: boolean;
+  /** worldcup: this player has an open 1v1 Challenge floating above them (click to accept). */
+  challengeOpen?: boolean;
+  /** worldcup: this player's chosen country (ISO alpha-2), so the field crowd can wave their flag. */
+  worldcupCountry?: string | null;
 }

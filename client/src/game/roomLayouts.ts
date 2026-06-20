@@ -1,4 +1,12 @@
 /** Per-room rectangular base floor — must match `server/src/roomLayouts.ts`. */
+// worldcup: seasonal soccer field room (feature-flagged, deletable)
+import {
+  WORLDCUP_ENABLED as WORLDCUP_ENABLED_CLIENT,
+  FIELD_ROOM_ID as WORLDCUP_FIELD_ROOM_ID,
+  FIELD_BOUNDS as WORLDCUP_FIELD_BOUNDS,
+  HUB_FIELD_DOOR as WORLDCUP_HUB_FIELD_DOOR,
+  FIELD_HUB_DOOR as WORLDCUP_FIELD_HUB_DOOR,
+} from "../worldcup/config.js";
 
 export type RoomBounds = {
   minX: number;
@@ -134,6 +142,7 @@ export function registerClientRoomBounds(roomId: string, bounds: RoomBounds): vo
 
 export function isBuiltinRoomId(roomId: string): boolean {
   const id = normalizeRoomId(roomId);
+  if (WORLDCUP_ENABLED_CLIENT && id === WORLDCUP_FIELD_ROOM_ID) return true;
   return id === HUB_ROOM_ID || id === CHAMBER_ROOM_ID || id === CANVAS_ROOM_ID || id === PIXEL_ROOM_ID;
 }
 
@@ -149,6 +158,10 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
     case PIXEL_ROOM_ID:
       return PIXEL_BOUNDS;
     default: {
+      // worldcup: field room bounds when enabled
+      if (WORLDCUP_ENABLED_CLIENT && id === WORLDCUP_FIELD_ROOM_ID) {
+        return { ...WORLDCUP_FIELD_BOUNDS };
+      }
       const b = clientRoomBoundsById.get(id);
       return b ? { ...b } : HUB_BOUNDS;
     }
@@ -157,9 +170,18 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
 
 export function getDoorsForRoom(roomId: string): DoorDef[] {
   const id = normalizeRoomId(roomId);
-  if (id === HUB_ROOM_ID) return HUB_DOORS;
+  if (id === HUB_ROOM_ID) {
+    // worldcup: add the field door to the hub when enabled
+    return WORLDCUP_ENABLED_CLIENT
+      ? [...HUB_DOORS, { ...WORLDCUP_HUB_FIELD_DOOR }]
+      : HUB_DOORS;
+  }
   if (id === CHAMBER_ROOM_ID) return CHAMBER_DOORS;
   if (id === CANVAS_ROOM_ID) return CANVAS_DOORS;
   if (id === PIXEL_ROOM_ID) return PIXEL_DOORS;
+  // worldcup: field room door back to the hub
+  if (WORLDCUP_ENABLED_CLIENT && id === WORLDCUP_FIELD_ROOM_ID) {
+    return [{ ...WORLDCUP_FIELD_HUB_DOOR }];
+  }
   return [];
 }

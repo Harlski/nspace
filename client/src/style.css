@@ -1136,7 +1136,7 @@ html.nspace-pseudo-fs #app {
 .hud.hud--stream-cinema .hud-left-stack,
 .hud.hud--stream-cinema .hud-top,
 .hud.hud--stream-cinema .hud-player-join-toast,
-.hud.hud--stream-cinema .self-emoji-menu {
+.hud.hud--stream-cinema .action-wheel {
   display: none !important;
 }
 
@@ -4941,31 +4941,102 @@ button.hud-brand:focus-visible {
 }
 
 /* Quick emoji — right-click self (desktop) or long-press own avatar (touch) */
-.self-emoji-menu {
+/* Action Wheel — radial self-menu centred on the avatar (the transparent Hub frames it). */
+.action-wheel {
   position: absolute;
   z-index: 8;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(61, 70, 90, 0.95);
-  background: rgba(15, 17, 23, 0.94);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  transform: translate(-50%, calc(-100% - 10px));
-  pointer-events: auto;
-  opacity: 1;
-}
-
-.self-emoji-menu.self-emoji-menu--auto-hiding {
+  width: 216px;
+  height: 216px;
+  transform: translate(-50%, -50%) scale(0.86);
+  transform-origin: center;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.28s ease-out;
+  transition: opacity 0.14s ease-out, transform 0.14s ease-out;
 }
 
-.self-emoji-menu[hidden] {
+.action-wheel.action-wheel--open {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.action-wheel[hidden] {
   display: none !important;
+}
+
+.action-wheel__svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.45));
+}
+
+.action-wheel__slice {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.action-wheel__slice:focus {
+  outline: none;
+}
+
+.action-wheel__slice--disabled {
+  pointer-events: none;
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* Blank reserved edges: draw the frame but quieter, and never interactive. */
+.action-wheel__slice--reserved {
+  pointer-events: none;
+  cursor: default;
+}
+
+.action-wheel__slice--reserved .action-wheel__wedge {
+  fill: rgba(15, 17, 23, 0.55);
+  stroke: rgba(61, 70, 90, 0.55);
+}
+
+.action-wheel__wedge {
+  fill: rgba(15, 17, 23, 0.94);
+  stroke: rgba(61, 70, 90, 0.95);
+  stroke-width: 1.5;
+  transition: fill 0.12s ease;
+}
+
+.action-wheel__slice:hover .action-wheel__wedge,
+.action-wheel__slice:focus-visible .action-wheel__wedge {
+  fill: rgba(45, 53, 72, 0.96);
+}
+
+.action-wheel__slice:active .action-wheel__wedge {
+  fill: rgba(60, 70, 95, 0.98);
+}
+
+.action-wheel__rim {
+  fill: none;
+  stroke: rgba(150, 165, 195, 0.55);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.action-wheel__glyph {
+  fill: #fff;
+  font-size: 26px;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+}
+
+.action-wheel__label {
+  fill: rgba(230, 235, 245, 0.85);
+  font-size: 11px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
 }
 
 /* Other player — context menu (fixed viewport coords from Game) */
@@ -5851,32 +5922,6 @@ button.hud-brand:focus-visible {
 .other-player-profile-room-confirm__btn:hover {
   background: rgba(51, 65, 85, 0.82);
   color: #fff;
-}
-
-.self-emoji-menu__btn {
-  width: 38px;
-  height: 38px;
-  padding: 0;
-  margin: 0;
-  border: none;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.08);
-  font-size: 22px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.12s ease, transform 0.12s ease;
-}
-
-.self-emoji-menu__btn:hover {
-  background: rgba(255, 255, 255, 0.16);
-  transform: scale(1.06);
-}
-
-.self-emoji-menu__btn:active {
-  transform: scale(0.96);
 }
 
 .teleporter-fab {

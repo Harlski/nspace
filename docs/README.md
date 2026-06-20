@@ -16,6 +16,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 | [THE-LARGER-SYSTEM.md](THE-LARGER-SYSTEM.md) | Evolving design principles and cross-cutting decisions; substantive edits ship a companion file in [reasons/](reasons/) (see also [MEMORY.md](../MEMORY.md)) |
 | [patchnotes-release.md](patchnotes-release.md) | How to write `patchnote/…/public/*.md` (tiers, optional **`04-hotfix.md`**, brevity, optional `[NEW]`/`[FIX]`/… tags for in-app `/patchnotes`) |
 | [reasons/](reasons/) | `THE-LARGER-SYSTEM` edit rationales only: `reason_{six-digit-id}.md` |
+| [adr/](adr/) | **Architecture Decision Records** (`NNNN-slug.md`) — hard-to-reverse, non-obvious decisions and why they were made |
 | [signboards-admin-guide.md](signboards-admin-guide.md) | Signboard rules by room, WebSocket messages, persistence |
 | [advertise-guide.md](advertise-guide.md) | **Paid billboard campaigns** — advertiser flow, prepaid visibility, admin placement; live page **`/advertise/how-it-works`** |
 

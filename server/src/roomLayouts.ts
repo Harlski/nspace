@@ -14,6 +14,15 @@ import {
   type RoomBackgroundNeutral,
 } from "./roomRegistry.js";
 import { walletDisplayName } from "./walletDisplayName.js";
+// worldcup: seasonal soccer field room (feature-flagged, deletable)
+import {
+  WORLDCUP_ENABLED,
+  FIELD_ROOM_ID as WORLDCUP_FIELD_ROOM_ID,
+  FIELD_BOUNDS as WORLDCUP_FIELD_BOUNDS,
+  HUB_FIELD_DOOR as WORLDCUP_HUB_FIELD_DOOR,
+  FIELD_HUB_DOOR as WORLDCUP_FIELD_HUB_DOOR,
+  isMatchPitchRoomId as isWorldcupMatchPitchId,
+} from "./worldcup/config.js";
 
 export type RoomBounds = {
   minX: number;
@@ -166,6 +175,13 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
     case PIXEL_ROOM_ID:
       return PIXEL_BOUNDS;
     default:
+      // worldcup: field room + ephemeral 1v1 Match Pitches reuse the field bounds when enabled
+      if (
+        WORLDCUP_ENABLED &&
+        (id === WORLDCUP_FIELD_ROOM_ID || isWorldcupMatchPitchId(id))
+      ) {
+        return WORLDCUP_FIELD_BOUNDS;
+      }
       return getDynamicRoomBounds(id) ?? HUB_BOUNDS;
   }
 }
@@ -173,16 +189,25 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
 /** Door tiles (walkable base cells); stepping on them triggers a client transfer. */
 export function getDoorsForRoom(roomId: string): DoorDef[] {
   const id = normalizeRoomId(roomId);
-  if (id === HUB_ROOM_ID) return HUB_DOORS;
+  if (id === HUB_ROOM_ID) {
+    // worldcup: add the field door to the hub when enabled
+    return WORLDCUP_ENABLED ? [...HUB_DOORS, WORLDCUP_HUB_FIELD_DOOR] : HUB_DOORS;
+  }
   if (id === CHAMBER_ROOM_ID) return CHAMBER_DOORS;
   if (id === CANVAS_ROOM_ID) return CANVAS_DOORS;
   if (id === PIXEL_ROOM_ID) return PIXEL_DOORS;
+  // worldcup: field room door back to the hub
+  if (WORLDCUP_ENABLED && id === WORLDCUP_FIELD_ROOM_ID) {
+    return [WORLDCUP_FIELD_HUB_DOOR];
+  }
   return [];
 }
 
 export function hasRoom(roomId: string): boolean {
   const id = normalizeRoomId(roomId);
   if (BUILTIN_ROOM_IDS.has(id)) return true;
+  // worldcup: field room is a valid destination when enabled
+  if (WORLDCUP_ENABLED && id === WORLDCUP_FIELD_ROOM_ID) return true;
   return hasDynamicRoom(id);
 }
 
@@ -193,6 +218,7 @@ export function isPlayerCreatedRoom(roomId: string): boolean {
 
 export function isBuiltinRoomId(roomId: string): boolean {
   const id = normalizeRoomId(roomId);
+  if (WORLDCUP_ENABLED && id === WORLDCUP_FIELD_ROOM_ID) return true;
   return BUILTIN_ROOM_IDS.has(id);
 }
 
@@ -262,6 +288,22 @@ export function listRoomDefinitions(): RoomDefinition[] {
       isPublic: getBuiltinRoomIsPublic(PIXEL_ROOM_ID),
       isBuiltin: true,
     },
+    // worldcup: list the soccer field as a built-in room when enabled
+    ...(WORLDCUP_ENABLED
+      ? [
+          {
+            id: WORLDCUP_FIELD_ROOM_ID,
+            bounds: WORLDCUP_FIELD_BOUNDS,
+            ownerAddress: null,
+            displayName: getBuiltinRoomDisplayName(
+              WORLDCUP_FIELD_ROOM_ID,
+              "Soccer Field"
+            ),
+            isPublic: getBuiltinRoomIsPublic(WORLDCUP_FIELD_ROOM_ID),
+            isBuiltin: true as const,
+          },
+        ]
+      : []),
     ...listDynamicRooms().map((r) => ({
       id: r.id,
       bounds: r.bounds,

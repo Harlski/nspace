@@ -3,6 +3,11 @@ import {
   type DailyStatsAggregate,
 } from "./eventLog.js";
 import { isTelegramConfigured, sendTelegramPlainText } from "./telegramNotify.js";
+import {
+  flushAllPendingPayoutsNow,
+  getPendingPayoutQueueTotals,
+} from "./nimPayout/queue.js";
+import { isNimPayoutSenderConfigured } from "./nimPayout/sender.js";
 
 const DAY_MS = 86_400_000;
 /** Delay after UTC midnight before sending so late `session_end` writes for the day land first. */
@@ -38,6 +43,47 @@ export function dailyStatsReportEnabled(): boolean {
   if (!isTelegramConfigured() && !statsChatIdOverride()) return false;
   if (explicit === true) return true;
   return isTelegramConfigured() || Boolean(statsChatIdOverride());
+}
+
+/**
+ * Whether the pending NIM payout queue is auto-flushed at the end of each UTC day.
+ * Defaults on when the payout sender is configured; force with `NIM_PAYOUT_DAILY_FLUSH_ENABLED`.
+ */
+export function dailyPayoutFlushEnabled(): boolean {
+  const explicit = parseBoolEnv(envTrim("NIM_PAYOUT_DAILY_FLUSH_ENABLED"));
+  if (explicit === false) return false;
+  if (explicit === true) return true;
+  return isNimPayoutSenderConfigured();
+}
+
+/** Pending-queue context appended to a stats report so pending NIM is folded into the day total. */
+export type PendingPayoutSummaryForReport = {
+  jobCount: number;
+  recipientCount: number;
+  /** Raw luna sum still owed on-chain (combined with the day's sent luna for the day total). */
+  luna: string;
+  /** True when this run auto-flushes the queue right after the report is sent. */
+  willFlush: boolean;
+};
+
+/** Live pending-queue snapshot. `willFlush` marks whether this run pays it out after reporting. */
+function currentPendingSummary(willFlush: boolean): PendingPayoutSummaryForReport {
+  const t = getPendingPayoutQueueTotals();
+  return {
+    jobCount: t.jobCount,
+    recipientCount: t.recipientCount,
+    luna: t.totalLuna,
+    willFlush,
+  };
+}
+
+/** Format a raw luna string as NIM (5 decimals); mirrors the event-log aggregate formatting. */
+function lunaToNim(luna: string): string {
+  if (!/^\d+$/.test(luna)) return "0";
+  const v = BigInt(luna);
+  const whole = v / 100000n;
+  const frac = (v % 100000n).toString().padStart(5, "0");
+  return `${whole.toString()}.${frac}`;
 }
 
 /** Start-of-day (UTC) in ms for the UTC calendar day containing `ts`. */
@@ -85,9 +131,14 @@ function utcStamp(ts: number): string {
   return new Date(ts).toISOString().slice(0, 16).replace("T", " ");
 }
 
+function plural(n: number): string {
+  return n === 1 ? "" : "s";
+}
+
 export function formatDailyStatsMessage(
   agg: DailyStatsAggregate,
-  headerLabel?: string
+  headerLabel?: string,
+  pending?: PendingPayoutSummaryForReport
 ): string {
   const header = headerLabel ?? `Daily stats for ${agg.dayUtc} (UTC)`;
   const lines = [
@@ -100,41 +151,68 @@ export function formatDailyStatsMessage(
     `- Total sign-ins: ${agg.sessionStarts}`,
     "",
     "NIM payouts",
-    `- Payouts sent: ${agg.payoutsSent} (to ${agg.payoutRecipients} wallet${
-      agg.payoutRecipients === 1 ? "" : "s"
-    })`,
+    `- Payouts sent: ${agg.payoutsSent} (to ${agg.payoutRecipients} wallet${plural(
+      agg.payoutRecipients
+    )})`,
     `- Total paid out: ${trimNim(agg.payoutNimTotal)} NIM`,
+  ];
+  if (pending && pending.jobCount > 0) {
+    const note = pending.willFlush ? " — paying out now" : " — still queued";
+    lines.push(
+      `- Pending in queue: ${trimNim(lunaToNim(pending.luna))} NIM (${
+        pending.jobCount
+      } payout${plural(pending.jobCount)} to ${pending.recipientCount} wallet${plural(
+        pending.recipientCount
+      )})${note}`
+    );
+    const totalLuna = (
+      BigInt(/^\d+$/.test(agg.payoutLunaTotal) ? agg.payoutLunaTotal : "0") +
+      BigInt(/^\d+$/.test(pending.luna) ? pending.luna : "0")
+    ).toString();
+    lines.push(`- Total NIM (sent + pending): ${trimNim(lunaToNim(totalLuna))} NIM`);
+  }
+  lines.push(
     "",
     "Active in-game time (excludes AFK)",
     `- Total: ${formatActiveDuration(agg.activePlayMsTotal)} across ${
       agg.endedSessionsCounted
-    } ended session${agg.endedSessionsCounted === 1 ? "" : "s"}`,
-  ];
+    } ended session${plural(agg.endedSessionsCounted)}`
+  );
   return lines.join("\n");
 }
 
-/** Build the aggregate + formatted message for an arbitrary window, with an explicit header label. */
+/**
+ * Build the aggregate + formatted message for an arbitrary window, with an explicit header label.
+ * When `pending` is omitted, a live pending-queue snapshot (no flush) is included.
+ */
 export async function buildStatsReport(
   windowStartMs: number,
   windowEndMs: number,
-  headerLabel: string
+  headerLabel: string,
+  pending?: PendingPayoutSummaryForReport
 ): Promise<{ aggregate: DailyStatsAggregate; message: string }> {
   const aggregate = await getDailyStatsAggregate(
     windowStartMs,
     windowEndMs,
     lookbackDays()
   );
-  return { aggregate, message: formatDailyStatsMessage(aggregate, headerLabel) };
+  const pendingInfo = pending ?? currentPendingSummary(false);
+  return {
+    aggregate,
+    message: formatDailyStatsMessage(aggregate, headerLabel, pendingInfo),
+  };
 }
 
 /** Build the aggregate + formatted message for the UTC day starting at `dayStartMs`. */
 export async function buildDailyStatsReport(
-  dayStartMs: number
+  dayStartMs: number,
+  pending?: PendingPayoutSummaryForReport
 ): Promise<{ aggregate: DailyStatsAggregate; message: string }> {
   return buildStatsReport(
     dayStartMs,
     dayStartMs + DAY_MS,
-    `Daily stats for ${new Date(dayStartMs).toISOString().slice(0, 10)} (UTC)`
+    `Daily stats for ${new Date(dayStartMs).toISOString().slice(0, 10)} (UTC)`,
+    pending
   );
 }
 
@@ -152,9 +230,10 @@ export async function buildRolling24hReport(
 
 /** Build and send the report for the UTC day starting at `dayStartMs`. Returns the report. */
 export async function sendDailyStatsReport(
-  dayStartMs: number
+  dayStartMs: number,
+  pending?: PendingPayoutSummaryForReport
 ): Promise<{ aggregate: DailyStatsAggregate; message: string }> {
-  const report = await buildDailyStatsReport(dayStartMs);
+  const report = await buildDailyStatsReport(dayStartMs, pending);
   await sendTelegramPlainText(report.message, LOG_TAG, statsChatIdOverride());
   return report;
 }
@@ -179,39 +258,77 @@ function scheduleNext(): void {
 }
 
 async function runScheduledReport(): Promise<void> {
+  const willFlush = dailyPayoutFlushEnabled();
+  // Snapshot pending NIM *before* flushing so the day's stats include all NIM earned that day,
+  // then pay it out afterwards (the report's day total is backdated to fold in this pending NIM).
+  const pending = currentPendingSummary(willFlush);
+
   try {
-    const dayStartMs = previousUtcDayStartMs(Date.now());
-    const report = await sendDailyStatsReport(dayStartMs);
-    console.log(
-      `[${LOG_TAG}] sent report for ${report.aggregate.dayUtc}`,
-      JSON.stringify({
-        uniqueSignedIn: report.aggregate.uniqueSignedIn,
-        newSignedIn: report.aggregate.newSignedIn,
-        nimiqPaySignedIn: report.aggregate.nimiqPaySignedIn,
-        payoutsSent: report.aggregate.payoutsSent,
-        payoutNimTotal: report.aggregate.payoutNimTotal,
-      })
-    );
+    if (dailyStatsReportEnabled()) {
+      const dayStartMs = previousUtcDayStartMs(Date.now());
+      const report = await sendDailyStatsReport(dayStartMs, pending);
+      console.log(
+        `[${LOG_TAG}] sent report for ${report.aggregate.dayUtc}`,
+        JSON.stringify({
+          uniqueSignedIn: report.aggregate.uniqueSignedIn,
+          newSignedIn: report.aggregate.newSignedIn,
+          nimiqPaySignedIn: report.aggregate.nimiqPaySignedIn,
+          payoutsSent: report.aggregate.payoutsSent,
+          payoutLunaTotal: report.aggregate.payoutLunaTotal,
+          pendingLuna: pending.luna,
+          willFlush,
+        })
+      );
+    }
   } catch (err) {
     console.error(`[${LOG_TAG}] scheduled report failed:`, err);
   }
+
+  // Pay out the pending queue only after the report has been sent.
+  if (willFlush) {
+    try {
+      const flush = await flushAllPendingPayoutsNow();
+      console.log(
+        `[${LOG_TAG}] end-of-day payout flush`,
+        JSON.stringify({
+          recipientsPaid: flush.recipientsPaid,
+          jobsCleared: flush.jobsCleared,
+          totalNim: flush.totalNim,
+          failures: flush.failures.length,
+          skippedNotConfigured: flush.skippedNotConfigured,
+        })
+      );
+    } catch (err) {
+      console.error(`[${LOG_TAG}] end-of-day payout flush failed:`, err);
+    }
+  }
 }
 
-/** Schedule the once-per-UTC-day Telegram stats report. No-op when disabled. */
+/**
+ * Schedule the once-per-UTC-day end-of-day tasks: auto-flush the pending NIM payout queue
+ * and send the Telegram stats report. No-op only when both are disabled.
+ */
 export function startDailyStatsScheduler(): void {
-  if (!dailyStatsReportEnabled()) {
+  const reportEnabled = dailyStatsReportEnabled();
+  const flushEnabled = dailyPayoutFlushEnabled();
+  if (!reportEnabled && !flushEnabled) {
     console.log(
       `[${LOG_TAG}] scheduler disabled`,
       JSON.stringify({
         telegramConfigured: isTelegramConfigured(),
         hasChatOverride: Boolean(statsChatIdOverride()),
+        payoutSenderConfigured: isNimPayoutSenderConfigured(),
       })
     );
     return;
   }
   console.log(
     `[${LOG_TAG}] scheduler enabled`,
-    JSON.stringify({ lookbackDays: lookbackDays() })
+    JSON.stringify({
+      lookbackDays: lookbackDays(),
+      telegramReport: reportEnabled,
+      endOfDayPayoutFlush: flushEnabled,
+    })
   );
   scheduleNext();
 }

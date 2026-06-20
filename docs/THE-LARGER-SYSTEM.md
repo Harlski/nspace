@@ -154,6 +154,59 @@ Update this subsection if the workflow name, paths, or backup format change.
 
 Update this subsection when export APIs, retention, or snapshot cadence ship.
 
+### Server-simulated dynamic objects (seasonal, feature-flagged)
+
+**Today:** The world model holds **static** content (placed obstacles, floors, signboards,
+billboards, voxel text) and **pathing NPCs** (which reuse `PlayerState`). The World Cup
+soccer feature adds the **first server-simulated dynamic non-player object**: a ball with
+continuous position + velocity that the **authoritative 20 Hz tick** integrates (rolling
+friction, wall/obstacle bounce) and broadcasts. There is **no new client "kick" intent** —
+the server detects player/ball proximity from positions it already has and imparts velocity
+along the kicker's travel heading. Ball positions ship as their own **throttled
+`ballState`** message (delta-friendly, separate from player `state`), and goals emit
+`goalScored`. All of it is gated behind **`WORLDCUP_ENABLED`** (server) / **`VITE_WORLDCUP_ENABLED`**
+(client) and isolated under `server/src/worldcup/`, `client/src/worldcup/`, and the
+`worldcup/` issues backlog so the seasonal feature can be **disabled with a flag and later
+deleted** by removing those folders plus a few `worldcup`-tagged hook lines.
+
+**Direction:** Keep dynamic objects **server-authoritative** and on the same intent-in /
+snapshot-out contract as players; give each kind its **own bounded broadcast** rather than
+overloading `state`. Do **not** generalize into a shared dynamic-entity registry until a
+second long-lived dynamic object justifies it — prefer the deletable, flag-isolated module
+shape for experiments so core contracts stay stable. Scoring/tally for this feature uses a
+**single small JSON store** (`worldcup-scores.json`), acceptable here as **transitional,
+deprecatable** data per *Player-adjacent persistence* above.
+
+**Per-room movement variant (pitch):** Human movement is normally click-to-tile with
+**cardinal grid pathfinding** (axis-aligned segments, integer tile waypoints). The soccer
+field introduces the **first per-room exception**: a straight-line, **non-pathfinding**
+move to an exact float point (clamped to the open rectangle), so the ball can be kicked at
+**any angle** rather than only along ±X/±Z. It reuses the existing per-tick follower
+(`advanceAlongPathHuman`) and stays **server-authoritative**; only the destination source
+changes (no snap, no BFS, drift-snap skipped). This is justified by an obstacle-free room
+where straight lines are always safe — **do not** extend free movement to rooms with
+placed obstacles without a real collision model. Keep this flag-isolated and reversible
+(off ⇒ field reverts to standard grid movement).
+
+**Time-bucketed competitive state (daily UTC):** The soccer tally is the first **periodically
+reset** competitive surface. Scoring buckets per **UTC day** and resets at 00:00 UTC, but
+**nothing is destroyed**: each completed day is archived to `history` and the most recent
+winning day is retained as `prevWinner`. Two invariants make resets safe for long-lived player
+expectations: (1) **identity persists across resets** — a player's chosen country lives in
+`profiles`, only goal *counts* reset; (2) **rollover is forward-only** (`rolloverIfNeeded`,
+keyed by `utcDayKey`) so clock skew or replaying past timestamps can never archive or blank a
+live day. The reset is driven in-process from the room tick (no cron) and broadcast to
+field clients; the previous day's champion feeds a **purely cosmetic** crowd flag, keeping the
+seasonal flourish on the client side. Legacy cumulative stores migrate into a single
+`0000-legacy` history entry rather than being discarded. Prefer this pattern (archive +
+persistent identity + forward-only rollover) for any future recurring leaderboard before
+reaching for destructive resets.
+
+Update this subsection if dynamic objects become permanent, gain client-side prediction, or
+are consolidated into a shared registry, or if free movement generalizes beyond the pitch, or
+if recurring resets move off the in-process tick (e.g. to a scheduler) or grow finer than
+daily.
+
 ---
 
 ## Changelog (optional)
@@ -180,3 +233,8 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-05-29** — Pixel board: forward-only paint log + public `/pixels.png` snapshot. See [reasons/reason_482901.md](reasons/reason_482901.md).
 - **2026-05-24** — Per-tile floor `colorRgb` (Room → Floor hue ring); cube rotation steppers; tiles “today” note. See [reasons/reason_392847.md](reasons/reason_392847.md).
 - **2026-06-17** — Principle + recorded decision: new server-rendered / clean-path routes must add Vercel rewrite parity in **both** `vercel.json` files in the same change (no SPA catch-all). See [reasons/reason_731654.md](reasons/reason_731654.md).
+- **2026-06-18** — Recorded decision: server-simulated dynamic objects (first instance: World Cup soccer ball) stay server-authoritative with their own throttled `ballState` broadcast; seasonal feature is flag-isolated + deletable. See [reasons/reason_615240.md](reasons/reason_615240.md).
+- **2026-06-18** — Recorded decision: first **per-room non-pathfinding movement** variant (soccer pitch straight-line, any-angle) — server-authoritative, reuses the per-tick follower, justified only by an obstacle-free room; client-only pitch visuals stay raycast-disabled. See [reasons/reason_248173.md](reasons/reason_248173.md).
+- **2026-06-19** — Recorded decision: first **time-bucketed competitive state** (soccer tally resets daily at 00:00 UTC) — non-destructive (history archive), identity persists across resets, forward-only rollover on the in-process tick; previous day's champion drives a cosmetic client-only crowd flag. See [reasons/reason_407318.md](reasons/reason_407318.md).
+- **2026-06-19** — Monetization boundary + recorded decision: **NIM rewards for gameplay goals** ship **Free Play Field only**, never in private 1v1 Matches, behind layered env-tunable anti-farming guards (deterministic idempotent `claimId`, per-wallet daily cap, global daily budget, Contested ≥2-player requirement, credited-last-kicker attribution that excludes Goalie deflections). Server-controlled **Goalies** defend every goal (A/B `kicker`/`blocker` model) and broadcast lightweight positions alongside the ball stream. See [reasons/reason_562094.md](reasons/reason_562094.md).
+- **2026-06-19** — Goal-credit model revised (own-goal / deflection rule): a goal that **deflects off the Goalie** into the net — including a fumbled own-goal — now credits the **last real (human) kicker**, not nobody. The server tracks `lastRealKickerAddress` separately from the Goalie sentinel and credits it for the leaderboard **and** the Free Play NIM reward (still bounded by the same cap / budget / Contested guards); only a goal with no recent human touch credits nobody. This narrows but keeps the anti-farming boundary (the keeper still can't *score for itself*) while making saves feel fair, and supersedes the earlier "deflections credit nobody" wording. The ephemeral **1v1 Match Pitch** loop (Challenge → accept → match → return) ships behind the donut Action Wheel; Match goals are scored by which net is breached (own goals count for the opponent) and never pay NIM. See [reasons/reason_884213.md](reasons/reason_884213.md).

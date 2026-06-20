@@ -54,6 +54,9 @@ import {
 import { flushBillboardsSync } from "./billboards.js";
 import { flushVoxelTextsSync } from "./voxelTexts.js";
 import { getTopMazeRecords } from "./mazeRecords.js";
+// worldcup: seasonal soccer leaderboard API (feature-flagged, deletable)
+import { WORLDCUP_ENABLED } from "./worldcup/config.js";
+import { getLeaderboard as getWorldcupLeaderboard } from "./worldcup/scoreStore.js";
 import { installSwarmErrorForwarder } from "./swarmLogForwarder.js";
 import {
   CHAMBER_ROOM_ID,
@@ -739,6 +742,20 @@ app.get("/api/canvas/leaderboard", (_req, res) => {
     res.json({ leaderboard: top });
   } catch (err) {
     console.error("[canvas/leaderboard]", err);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// worldcup: public read of the seasonal soccer tally (404 when disabled)
+app.get("/api/worldcup/leaderboard", (_req, res) => {
+  if (!WORLDCUP_ENABLED) {
+    res.status(404).json({ error: "worldcup_disabled" });
+    return;
+  }
+  try {
+    res.json(getWorldcupLeaderboard());
+  } catch (err) {
+    console.error("[worldcup/leaderboard]", err);
     res.status(500).json({ error: "internal" });
   }
 });

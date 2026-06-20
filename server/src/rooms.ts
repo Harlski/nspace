@@ -138,6 +138,72 @@ import {
   PIXEL_ROOM_ID,
   PIXEL_DEFAULT_SPAWN,
 } from "./roomLayouts.js";
+// worldcup: seasonal soccer (feature-flagged, deletable — grep "worldcup")
+import {
+  WORLDCUP_ENABLED,
+  FIELD_ROOM_ID as WORLDCUP_FIELD_ROOM_ID,
+  FIELD_BOUNDS as WORLDCUP_FIELD_BOUNDS,
+  FIELD_OUTFIELD_MARGIN as WORLDCUP_FIELD_OUTFIELD_MARGIN,
+  FIELD_GOALS as WORLDCUP_FIELD_GOALS,
+  GOALIE as WORLDCUP_GOALIE,
+  GOALIE_SENTINEL_ADDRESS as WORLDCUP_GOALIE_SENTINEL,
+  GOAL_REWARD as WORLDCUP_GOAL_REWARD,
+  MATCH as WORLDCUP_MATCH,
+  WORLDCUP_GOALIE_MODE,
+  isMatchPitchRoomId as worldcupIsMatchPitch,
+  makeMatchPitchRoomId as worldcupMakeMatchPitchRoomId,
+  type GoalZone as WorldcupGoalZone,
+} from "./worldcup/config.js";
+import {
+  initMatchState as worldcupInitMatchState,
+  matchTimeRemainingMs as worldcupMatchTimeRemainingMs,
+  reduceMatch as worldcupReduceMatch,
+  type MatchConfig as WorldcupMatchConfig,
+  type MatchOutcome as WorldcupMatchOutcome,
+  type MatchPhase as WorldcupMatchPhase,
+  type MatchSide as WorldcupMatchSide,
+  type MatchState as WorldcupMatchState,
+} from "./worldcup/match.js";
+import {
+  matchSpawn as worldcupMatchSpawn,
+  scoringSideForGoal as worldcupScoringSideForGoal,
+} from "./worldcup/matchPitch.js";
+import {
+  decideAndCommitGoalReward as worldcupDecideGoalReward,
+  loadGoalRewards as loadWorldcupGoalRewards,
+} from "./worldcup/goalReward.js";
+import {
+  goalieCollider as worldcupGoalieCollider,
+  goalieLineX as worldcupGoalieLineX,
+  initGoalieState as worldcupInitGoalieState,
+  stepGoalie as worldcupStepGoalie,
+  type GoalieState as WorldcupGoalieState,
+} from "./worldcup/goalie.js";
+import {
+  addPlacedBall as worldcupAddPlacedBall,
+  ballsToWire as worldcupBallsToWire,
+  clearRoomBalls as worldcupClearRoomBalls,
+  getBalls as worldcupGetBalls,
+  loadBalls as loadWorldcupBalls,
+  removeBall as worldcupRemoveBall,
+  roomHasBalls as worldcupRoomHasBalls,
+  spawnMatchBall as worldcupSpawnMatchBall,
+  type BallWire as WorldcupBallWire,
+} from "./worldcup/ballStore.js";
+import {
+  forgetRoomBallBroadcast as worldcupForgetRoomBallBroadcast,
+  tickRoomBalls as worldcupTickRoomBalls,
+} from "./worldcup/ballTick.js";
+import {
+  getPlayerCountry as worldcupGetPlayerCountry,
+  getPreviousDayWinner as worldcupGetPreviousDayWinner,
+  getTopCountries as worldcupGetTopCountries,
+  isValidCountryCode as worldcupIsValidCountryCode,
+  loadScores as loadWorldcupScores,
+  recordGoal as worldcupRecordGoal,
+  rolloverIfNeeded as worldcupRolloverIfNeeded,
+  setCountry as worldcupSetCountry,
+} from "./worldcup/scoreStore.js";
 import {
   deleteDesign,
   designToWire,
@@ -286,7 +352,9 @@ function tickPlayerStatesEqual(a: PlayerState, b: PlayerState): boolean {
     nearTickCoord(a.vz, b.vz, TICK_STATE_EQ_VEL_EPS) &&
     (a.nimiqPay ?? false) === (b.nimiqPay ?? false) &&
     (a.nimSendAway ?? false) === (b.nimSendAway ?? false) &&
-    (a.chatTyping ?? false) === (b.chatTyping ?? false)
+    (a.chatTyping ?? false) === (b.chatTyping ?? false) &&
+    (a.challengeOpen ?? false) === (b.challengeOpen ?? false) &&
+    (a.worldcupCountry ?? null) === (b.worldcupCountry ?? null)
   );
 }
 
@@ -566,6 +634,10 @@ export interface PlayerState {
   nimSendAway?: boolean;
   /** Ephemeral: composing a chat message. */
   chatTyping?: boolean;
+  /** worldcup: this player has an open 1v1 Challenge floating above them (click to accept). */
+  challengeOpen?: boolean;
+  /** worldcup: this player's chosen country (ISO alpha-2), so the field crowd can wave their flag. */
+  worldcupCountry?: string | null;
 }
 
 export type ObstacleTile = {
@@ -671,6 +743,16 @@ interface ClientConn {
   nimSendIntent: boolean;
   /** Composing chat (broadcast as `chatTyping`). */
   chatTyping: boolean;
+  /** worldcup: open 1v1 Challenge raised by this player (broadcast as `challengeOpen`). */
+  challengeOpen: boolean;
+  /** worldcup: when the open Challenge was raised (ms epoch), for the auto-clear timeout. */
+  challengeRaisedAtMs: number;
+  /** worldcup: normalized Match Pitch room id while this player is in a 1v1, else null. */
+  matchId: string | null;
+  /** worldcup: pending-match id while in the pre-teleport handshake countdown, else null. */
+  pendingMatchId: string | null;
+  /** worldcup: pitch room id this player is *spectating* (in the stands), else null. */
+  spectatingMatchId: string | null;
   /** Camera / view interest for spatial sync in large rooms. */
   viewInterest: ViewInterestRect;
   /** Chunk keys (`cx,cz`) currently loaded for this client. */
@@ -756,11 +838,21 @@ function isPixelRoom(roomId: string): boolean {
 }
 
 function roomAllowsFakePlayers(roomId: string): boolean {
-  return !isPixelRoom(roomId);
+  if (isPixelRoom(roomId)) return false;
+  // worldcup: keep the pitch clear of wandering NPCs — the crowd lives in the
+  // (client-only) stands instead, so the field is reserved for real players.
+  if (WORLDCUP_ENABLED && normalizeRoomId(roomId) === WORLDCUP_FIELD_ROOM_ID) {
+    return false;
+  }
+  return true;
 }
 
 function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
   if (isPixelRoom(roomId)) return false;
+  // worldcup: keep the soccer pitch clear of placed blocks
+  if (WORLDCUP_ENABLED && normalizeRoomId(roomId) === WORLDCUP_FIELD_ROOM_ID) {
+    return false;
+  }
   return canEditRoomContent(roomId, address);
 }
 
@@ -768,6 +860,8 @@ function canRecolorFloorInRoom(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
   if (id === CANVAS_ROOM_ID) return false;
   if (id === PIXEL_ROOM_ID) return true;
+  // worldcup: no floor painting on the pitch
+  if (WORLDCUP_ENABLED && id === WORLDCUP_FIELD_ROOM_ID) return false;
   return canEditRoomContent(roomId, address);
 }
 
@@ -853,6 +947,16 @@ type OutMsg =
       allowRoomJoinSpawnEdit?: boolean;
       /** Recent room chat (non-bubble); same order as live `chat` messages. */
       chatBacklog: ChatBacklogLine[];
+      // worldcup: current balls in this room (seasonal soccer)
+      balls?: WorldcupBallWire[];
+      /** worldcup: this player's chosen country (null until picked). */
+      worldcupSelfCountry?: string | null;
+      /** worldcup: leading countries for the in-room scoreboard (today, UTC). */
+      worldcupTopCountries?: Array<{ code: string; goals: number }>;
+      /** worldcup: previous UTC day's winning country (crowd waves this flag). */
+      worldcupPrevWinnerCountry?: string | null;
+      /** worldcup: live 1v1 spectate portals in this room (click to watch the Match). */
+      worldcupPortals?: WorldcupPortalWire[];
     }
   | {
       type: "roomBackgroundHue";
@@ -1025,6 +1129,93 @@ type OutMsg =
       reason?: string;
     }
   | { type: "canvasCountdown"; text: string; msRemaining: number }
+  // worldcup: dynamic ball positions (throttled) + goal celebration
+  | { type: "ballState"; roomId: string; balls: WorldcupBallWire[] }
+  | { type: "goalieState"; roomId: string; goalies: WorldcupGoalieWire[] }
+  | {
+      type: "goalScored";
+      roomId: string;
+      goalId: string;
+      scorerAddress: string | null;
+      scorerName: string | null;
+      /** ISO country code credited, or null if the scorer has not picked one yet. */
+      country: string | null;
+      /** Leading countries after this goal (code + total goals). */
+      topCountries: Array<{ code: string; goals: number }>;
+    }
+  // worldcup: spawn / remove a 1v1 spectate portal in a room (room-scoped)
+  | ({ type: "matchPortalSpawn"; roomId: string } & WorldcupPortalWire)
+  | { type: "matchPortalRemove"; roomId: string; matchId: string }
+  // worldcup: pre-teleport handshake countdown shown to both players in the origin room
+  | {
+      type: "matchCountdown";
+      roomId: string;
+      /** ms until both players are teleported into the Match Pitch. */
+      durationMs: number;
+      /** The other player's wallet + chosen country (ISO alpha-2) or null, for the overlay. */
+      opponentAddress: string;
+      opponentCountry: string | null;
+      /** The receiving player's chosen country (ISO alpha-2) or null. */
+      selfCountry: string | null;
+    }
+  // worldcup: 1v1 Match live state + terminal result (Match Pitch rooms only)
+  | {
+      type: "matchState";
+      roomId: string;
+      matchId: string;
+      scoreA: number;
+      scoreB: number;
+      phase: WorldcupMatchPhase;
+      /** Remaining ms in the current phase (regulation, then golden goal). */
+      remainingMs: number;
+      /** Wallet of side a (challenger) / side b (accepter), so the client knows its side. */
+      aAddress: string;
+      bAddress: string;
+      /** Chosen country (ISO alpha-2) of each side, or null; for the flag scoreboard + crowd. */
+      aCountry: string | null;
+      bCountry: string | null;
+    }
+  | {
+      type: "matchEnded";
+      roomId: string;
+      matchId: string;
+      outcome: WorldcupMatchOutcome;
+      scoreA: number;
+      scoreB: number;
+      aAddress: string;
+      bAddress: string;
+      aCountry: string | null;
+      bCountry: string | null;
+    }
+  // worldcup: a goal was scored in a 1v1 Match — announce it + drive the kickoff reset countdown
+  | {
+      type: "matchGoal";
+      roomId: string;
+      matchId: string;
+      /** Which side scored (after own-goal resolution). */
+      side: WorldcupMatchSide;
+      scoreA: number;
+      scoreB: number;
+      /** Chosen country (ISO alpha-2) of the scoring side, or null, for the goal banner flag. */
+      country: string | null;
+      /**
+       * ms both players are reset + frozen before play resumes (0 when this goal ended the
+       * Match, so the client just flashes "GOAL!" and lets `matchEnded` show the result).
+       */
+      kickoffMs: number;
+    }
+  | {
+      type: "worldcupLeaderboard";
+      roomId: string;
+      /** The receiving player's chosen country (null until picked). */
+      selfCountry: string | null;
+      /** Leading countries today (UTC); empty right after a daily reset. */
+      topCountries: Array<{ code: string; goals: number }>;
+      /** Previous UTC day's winning country (crowd flag); null if none yet. */
+      prevWinnerCountry?: string | null;
+      /** True when this update was triggered by the daily UTC reset. */
+      dailyReset?: boolean;
+    }
   /** Echo for RTT / latency HUD (see `clientPing` inbound). */
   | { type: "clientPong"; id: number }
   | {
@@ -2231,6 +2422,30 @@ function walkBounds(roomId: string): {
   return { minX, maxX, minZ, maxZ };
 }
 
+/**
+ * worldcup: player movement clamp for a room. Field-like rooms (the pitch / Match Pitches) widen
+ * the base walk bounds by the outfield margin so a player can step just behind the ball; the
+ * ball's own collision walls are unchanged. Non-field rooms use the plain walk bounds.
+ */
+function worldcupMoveClampBounds(roomId: string): {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+} {
+  const wb = walkBounds(roomId);
+  if (!worldcupIsFieldLikeRoom(roomId) || WORLDCUP_FIELD_OUTFIELD_MARGIN <= 0) {
+    return wb;
+  }
+  const m = WORLDCUP_FIELD_OUTFIELD_MARGIN;
+  return {
+    minX: wb.minX - m,
+    maxX: wb.maxX + m,
+    minZ: wb.minZ - m,
+    maxZ: wb.maxZ + m,
+  };
+}
+
 function spawnMap(roomId: string): Map<string, { x: number; z: number; y?: number }> {
   let m = lastSpawnByRoom.get(roomId);
   if (!m) {
@@ -3173,7 +3388,7 @@ function advanceAlongPathHuman(
     }
     const step = MOVE_SPEED * dt;
     const t = Math.min(1, step / dist);
-    const wb = walkBounds(roomId);
+    const wb = worldcupMoveClampBounds(roomId);
     const prevTile = snapToTile(p.x, p.z);
     const nx = clamp(p.x + dx * t, wb.minX, wb.maxX);
     const ny = p.y + dy * t;
@@ -3197,8 +3412,13 @@ function playerToOutState(conn: ClientConn): PlayerState {
   const base = conn.nimSendIntent
     ? { ...conn.player, nimSendAway: true }
     : { ...conn.player };
-  if (!conn.chatTyping) return base;
-  return { ...base, chatTyping: true };
+  if (conn.chatTyping) base.chatTyping = true;
+  if (conn.challengeOpen) base.challengeOpen = true;
+  if (WORLDCUP_ENABLED) {
+    const country = worldcupGetPlayerCountry(conn.address);
+    if (country) base.worldcupCountry = country;
+  }
+  return base;
 }
 
 function snapshotPlayers(roomId: string): PlayerState[] {
@@ -4280,11 +4500,772 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       roomBackgroundNeutral: welcomeBgState.neutral,
       ...joinSpawnWelcomeExtras(targetRoomId, address),
       chatBacklog: chatBacklogSnapshotForWelcome(targetRoomId, Date.now()),
+      // worldcup: include any balls in this room
+      balls:
+        WORLDCUP_ENABLED && worldcupRoomHasBalls(targetRoomId)
+          ? worldcupBallsToWire(targetRoomId)
+          : undefined,
+      ...worldcupWelcomeExtras(targetRoomId, address),
+      worldcupPortals: WORLDCUP_ENABLED
+        ? worldcupPortalsForRoom(targetRoomId)
+        : undefined,
     } satisfies OutMsg);
   sendRoomCatalog(conn.ws, address);
 
   // Notify others in new room
   broadcast(targetRoomId, { type: "playerJoined", player: playerToOutState(conn) }, address);
+}
+
+// worldcup: who may drop a kickable ball in a room (builders; never the pitch/canvas/pixel).
+function canPlaceBallInRoom(roomId: string, address: string): boolean {
+  const id = normalizeRoomId(roomId);
+  if (id === WORLDCUP_FIELD_ROOM_ID) return false; // pitch has its own ball
+  if (id === CANVAS_ROOM_ID || id === PIXEL_ROOM_ID) return false;
+  return canEditRoomContent(roomId, address);
+}
+
+// worldcup: welcome extras for the field room (self country + scoreboard snapshot).
+function worldcupWelcomeExtras(
+  roomId: string,
+  address: string
+): {
+  worldcupSelfCountry?: string | null;
+  worldcupTopCountries?: Array<{ code: string; goals: number }>;
+  worldcupPrevWinnerCountry?: string | null;
+} {
+  if (!WORLDCUP_ENABLED) return {};
+  if (normalizeRoomId(roomId) !== WORLDCUP_FIELD_ROOM_ID) return {};
+  return {
+    worldcupSelfCountry: worldcupGetPlayerCountry(address),
+    worldcupTopCountries: worldcupGetTopCountries(8),
+    worldcupPrevWinnerCountry: worldcupGetPreviousDayWinner()?.country ?? null,
+  };
+}
+
+/**
+ * worldcup: live Goalie state per room, one keeper per goal. Created lazily and stepped each
+ * tick from the room's primary ball z. The field room is persistent so no teardown is needed.
+ */
+const worldcupGoalies = new Map<
+  string,
+  Map<WorldcupGoalZone["id"], WorldcupGoalieState>
+>();
+/** Throttle Goalie position broadcasts (slow movers — no need for every 50ms tick). */
+const worldcupGoalieBroadcastAt = new Map<string, number>();
+const WORLDCUP_GOALIE_BROADCAST_MIN_MS = 100;
+
+/** worldcup: lightweight Goalie position for the client (alongside the ball-state stream). */
+type WorldcupGoalieWire = { id: WorldcupGoalZone["id"]; x: number; z: number };
+
+function worldcupGoalieMapForRoom(
+  roomId: string
+): Map<WorldcupGoalZone["id"], WorldcupGoalieState> {
+  const id = normalizeRoomId(roomId);
+  let m = worldcupGoalies.get(id);
+  if (!m) {
+    m = new Map();
+    worldcupGoalies.set(id, m);
+  }
+  return m;
+}
+
+/**
+ * Step each goal's keeper toward the room's primary ball and return their wire positions
+ * plus (mode-dependent) the kicker pseudo-players / blocker colliders to feed the ball tick.
+ */
+function worldcupStepGoaliesForRoom(
+  roomId: string,
+  goals: readonly WorldcupGoalZone[]
+): {
+  wire: WorldcupGoalieWire[];
+  kickers: Array<{
+    x: number;
+    z: number;
+    vx: number;
+    vz: number;
+    address: string;
+    kickReach: number;
+  }>;
+  colliders: Array<{ x: number; z: number; radius: number }>;
+} {
+  const balls = worldcupGetBalls(roomId);
+  const primary = balls.find((b) => b.id === "field") ?? balls[0];
+  const ballZ = primary ? primary.z : 0;
+  const states = worldcupGoalieMapForRoom(roomId);
+  const dtSec = TICK_MS / 1000;
+  const wire: WorldcupGoalieWire[] = [];
+  const kickers: Array<{
+    x: number;
+    z: number;
+    vx: number;
+    vz: number;
+    address: string;
+    kickReach: number;
+  }> = [];
+  const colliders: Array<{ x: number; z: number; radius: number }> = [];
+
+  for (const goal of goals) {
+    const prev = states.get(goal.id) ?? worldcupInitGoalieState(goal);
+    const next = worldcupStepGoalie(prev, ballZ, TICK_MS, goal, WORLDCUP_GOALIE);
+    states.set(goal.id, next);
+    const lineX = worldcupGoalieLineX(goal);
+    if (WORLDCUP_GOALIE_MODE === "kicker") {
+      kickers.push({
+        x: lineX,
+        z: next.z,
+        vx: 0,
+        vz: dtSec > 0 ? (next.z - prev.z) / dtSec : 0,
+        address: WORLDCUP_GOALIE_SENTINEL,
+        kickReach: WORLDCUP_GOALIE.kickReach,
+      });
+    } else {
+      colliders.push(worldcupGoalieCollider(goal, next, WORLDCUP_GOALIE.radius));
+    }
+    wire.push({ id: goal.id, x: lineX, z: Math.round(next.z * 1000) / 1000 });
+  }
+  return { wire, kickers, colliders };
+}
+
+/** Distinct real (non-observer) players currently in a room — the Contested check input. */
+function worldcupDistinctPlayersInRoom(roomId: string): number {
+  const seen = new Set<string>();
+  for (const c of roomOf(roomId).values()) {
+    if (c.streamObserver) continue;
+    seen.add(compactAddress(c.address));
+  }
+  return seen.size;
+}
+
+/**
+ * worldcup: a Free Play Field goal queues a small NIM payout to the credited scorer,
+ * wrapped in the layered anti-farming guards (see worldcup/adr/0002). Matches never call
+ * this. Goals that fail a guard still count for the leaderboard — only the payout stops.
+ */
+function maybeQueueGoalReward(
+  roomId: string,
+  goalId: string,
+  scorerAddress: string | null
+): void {
+  if (normalizeRoomId(roomId) !== WORLDCUP_FIELD_ROOM_ID) return;
+  const decision = worldcupDecideGoalReward(
+    {
+      scorerWallet: scorerAddress,
+      distinctPlayersInField: worldcupDistinctPlayersInRoom(roomId),
+    },
+    {
+      rewardLuna: WORLDCUP_GOAL_REWARD.rewardLuna,
+      dailyCapPerWallet: WORLDCUP_GOAL_REWARD.dailyCapPerWallet,
+      dailyBudgetLuna: WORLDCUP_GOAL_REWARD.dailyBudgetLuna,
+      minPlayers: WORLDCUP_GOAL_REWARD.minPlayers,
+    }
+  );
+  if (
+    !decision.pay ||
+    !decision.claimId ||
+    !decision.recipientWallet ||
+    decision.amountLuna === undefined
+  ) {
+    return;
+  }
+  // Use the normalized recipient the decision built the claimId from, so the payout target
+  // and the idempotency key can never disagree.
+  enqueueNimPayout({
+    claimId: decision.claimId,
+    recipientAddress: decision.recipientWallet,
+    amountLuna: decision.amountLuna,
+    roomId,
+    tileKey: `wc-goal-${goalId}`,
+    txMessage: "Nimiq Space — World Cup goal! Thanks for playing :)",
+  });
+}
+
+// worldcup: credit a goal to the last kicker's country + broadcast the celebration.
+function handleWorldcupGoal(
+  roomId: string,
+  goalId: string,
+  scorerAddress: string | null
+): void {
+  let country: string | null = null;
+  let scorerName: string | null = null;
+  if (scorerAddress) {
+    const compact = compactAddress(scorerAddress);
+    scorerName = getEffectivePlayerDisplayName(compact);
+    const res = worldcupRecordGoal(scorerAddress, scorerName ?? undefined);
+    country = res.country;
+  }
+  // Free Play Field only: queue the NIM reward (guards enforced inside).
+  maybeQueueGoalReward(roomId, goalId, scorerAddress);
+  broadcast(roomId, {
+    type: "goalScored",
+    roomId,
+    goalId,
+    scorerAddress: scorerAddress ?? null,
+    scorerName,
+    country,
+    topCountries: worldcupGetTopCountries(8),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// worldcup: 1v1 Matches (ephemeral Match Pitches; see worldcup/adr/0001)
+// ---------------------------------------------------------------------------
+
+/** worldcup: a 1v1 spectate portal in a room — "{identicon} vs {identicon}", click to watch. */
+interface WorldcupPortalWire {
+  /** Spectate key = the pitch room id to drop into. */
+  matchId: string;
+  x: number;
+  z: number;
+  aAddress: string;
+  bAddress: string;
+  aCountry: string | null;
+  bCountry: string | null;
+  /** True once the Spectator soft-cap is reached (portal shows "full"). */
+  full: boolean;
+}
+
+interface WorldcupMatchRuntime {
+  id: string;
+  /** Normalized pitch room id (`wc-match-<id>`). */
+  pitchRoomId: string;
+  /** Compact wallet of side a (challenger) and side b (accepter). */
+  a: string;
+  b: string;
+  state: WorldcupMatchState;
+  /** Where each entrant came from, to return them when the Match ends. */
+  origins: Map<string, { roomId: string; x: number; z: number; y: number }>;
+  /** Room the Match was started from (where its spectate portal lives). */
+  originRoomId: string;
+  /** Spectate portal position in the origin room (a walkable tile near the challenger). */
+  portalX: number;
+  portalZ: number;
+  lastTickMs: number;
+  /** Set once the Match reaches `ended`; entrants are returned after the result linger. */
+  endedAtMs: number | null;
+  /** Throttle live `matchState` broadcasts. */
+  lastBroadcastMs: number;
+  /**
+   * While > now, the Match is in a post-goal kickoff freeze: both players are reset to their
+   * spawns, movement is rejected, and the Match clock is paused. 0 = live play.
+   */
+  kickoffUntilMs: number;
+}
+
+/** key: normalized pitch room id */
+const worldcupMatches = new Map<string, WorldcupMatchRuntime>();
+const WORLDCUP_MATCH_CFG: WorldcupMatchConfig = {
+  durationMs: WORLDCUP_MATCH.durationMs,
+  goldenGoalCapMs: WORLDCUP_MATCH.goldenGoalCapMs,
+};
+const WORLDCUP_MATCH_STATE_BROADCAST_MIN_MS = 250;
+let worldcupMatchSeq = 0;
+
+/** True for the Free Play Field or any ephemeral Match Pitch (field-like physics/goals). */
+function worldcupIsFieldLikeRoom(roomId: string): boolean {
+  if (!WORLDCUP_ENABLED) return false;
+  const id = normalizeRoomId(roomId);
+  return id === WORLDCUP_FIELD_ROOM_ID || worldcupIsMatchPitch(id);
+}
+
+function broadcastWorldcupMatchState(
+  m: WorldcupMatchRuntime,
+  force: boolean,
+  now: number
+): void {
+  if (!force && now - m.lastBroadcastMs < WORLDCUP_MATCH_STATE_BROADCAST_MIN_MS) {
+    return;
+  }
+  m.lastBroadcastMs = now;
+  broadcast(m.pitchRoomId, {
+    type: "matchState",
+    roomId: m.pitchRoomId,
+    matchId: m.id,
+    scoreA: m.state.scoreA,
+    scoreB: m.state.scoreB,
+    phase: m.state.phase,
+    remainingMs: worldcupMatchTimeRemainingMs(m.state, WORLDCUP_MATCH_CFG),
+    aAddress: m.a,
+    bAddress: m.b,
+    aCountry: worldcupGetPlayerCountry(m.a),
+    bCountry: worldcupGetPlayerCountry(m.b),
+  });
+}
+
+function worldcupOnMatchEnded(m: WorldcupMatchRuntime, now: number): void {
+  if (m.endedAtMs !== null) return;
+  m.endedAtMs = now;
+  // Pull the spectate portal immediately so onlookers can't drop into a finished Match.
+  worldcupRemovePortal(m);
+  broadcast(m.pitchRoomId, {
+    type: "matchEnded",
+    roomId: m.pitchRoomId,
+    matchId: m.id,
+    outcome: m.state.outcome,
+    scoreA: m.state.scoreA,
+    scoreB: m.state.scoreB,
+    aAddress: m.a,
+    bAddress: m.b,
+    aCountry: worldcupGetPlayerCountry(m.a),
+    bCountry: worldcupGetPlayerCountry(m.b),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// worldcup: Spectating — a "{identicon} vs {identicon}" portal in the origin room that
+// onlookers click to drop into the stands and watch (PRD spectating; issue 80).
+// ---------------------------------------------------------------------------
+
+/** Count the Spectators currently in a Match's stands. */
+function worldcupSpectatorCount(m: WorldcupMatchRuntime): number {
+  let n = 0;
+  for (const c of roomOf(m.pitchRoomId).values()) {
+    if (c.spectatingMatchId === m.pitchRoomId) n += 1;
+  }
+  return n;
+}
+
+/** Wire form of a Match's spectate portal (full state computed live). */
+function worldcupPortalWire(m: WorldcupMatchRuntime): WorldcupPortalWire {
+  return {
+    matchId: m.pitchRoomId,
+    x: m.portalX,
+    z: m.portalZ,
+    aAddress: m.a,
+    bAddress: m.b,
+    aCountry: worldcupGetPlayerCountry(m.a),
+    bCountry: worldcupGetPlayerCountry(m.b),
+    full: worldcupSpectatorCount(m) >= WORLDCUP_MATCH.spectatorCap,
+  };
+}
+
+/** All live spectate portals anchored in `roomId` (for the welcome payload). */
+function worldcupPortalsForRoom(roomId: string): WorldcupPortalWire[] {
+  if (!WORLDCUP_ENABLED) return [];
+  const norm = normalizeRoomId(roomId);
+  const out: WorldcupPortalWire[] = [];
+  for (const m of worldcupMatches.values()) {
+    if (m.state.phase === "ended") continue;
+    if (normalizeRoomId(m.originRoomId) === norm) out.push(worldcupPortalWire(m));
+  }
+  return out;
+}
+
+/** (Re)broadcast a Match's spectate portal to its origin room (spawn / full-state refresh). */
+function worldcupBroadcastPortal(m: WorldcupMatchRuntime): void {
+  if (m.endedAtMs !== null) return;
+  broadcast(m.originRoomId, {
+    type: "matchPortalSpawn",
+    roomId: m.originRoomId,
+    ...worldcupPortalWire(m),
+  });
+}
+
+/** Remove a Match's spectate portal from its origin room. */
+function worldcupRemovePortal(m: WorldcupMatchRuntime): void {
+  broadcast(m.originRoomId, {
+    type: "matchPortalRemove",
+    roomId: m.originRoomId,
+    matchId: m.pitchRoomId,
+  });
+}
+
+/**
+ * A fixed stand seat (world units, outside the pitch) for the `index`-th Spectator. Seats
+ * alternate between the north and south stands and spread along the touchline.
+ */
+function worldcupSpectatorSeat(index: number): { x: number; z: number } {
+  const b = WORLDCUP_FIELD_BOUNDS;
+  const perSide = Math.max(1, Math.ceil(WORLDCUP_MATCH.spectatorCap / 2));
+  const south = index % 2 === 0;
+  const i = Math.floor(index / 2);
+  const z = south ? b.maxZ + 2 : b.minZ - 2;
+  const span = b.maxX - b.minX;
+  const x = b.minX + ((i + 0.5) / perSide) * span;
+  return { x, z };
+}
+
+/** A goal in a Match Pitch: which net was scored decides the side (own goals count). */
+function worldcupHandleMatchGoal(pitchRoomId: string, goalId: string): void {
+  const m = worldcupMatches.get(normalizeRoomId(pitchRoomId));
+  if (!m || m.state.phase === "ended") return;
+  // Ignore goals during the post-goal kickoff freeze (players are frozen, ball just reset).
+  if (m.kickoffUntilMs > Date.now()) return;
+  if (goalId !== "west" && goalId !== "east") return;
+  const side = worldcupScoringSideForGoal(goalId);
+  m.state = worldcupReduceMatch(m.state, { type: "goal", side }, WORLDCUP_MATCH_CFG);
+  const now = Date.now();
+  broadcastWorldcupMatchState(m, true, now);
+  const matchEnded = m.state.phase === "ended";
+  // If this goal didn't end the Match, reset both players to their kickoff spots and freeze
+  // them for a short countdown before play resumes.
+  const kickoffMs = matchEnded ? 0 : WORLDCUP_MATCH.goalResetMs;
+  if (!matchEnded && kickoffMs > 0) worldcupKickoffReset(m, now);
+  // Announce the goal so the client can flash "GOAL!" + erupt the crowd (+ run the countdown).
+  broadcast(m.pitchRoomId, {
+    type: "matchGoal",
+    roomId: m.pitchRoomId,
+    matchId: m.id,
+    side,
+    scoreA: m.state.scoreA,
+    scoreB: m.state.scoreB,
+    country: worldcupGetPlayerCountry(side === "a" ? m.a : m.b),
+    kickoffMs,
+  });
+  if (matchEnded) worldcupOnMatchEnded(m, now);
+}
+
+/**
+ * Post-goal kickoff reset: snap both participants back to their kickoff spawns, re-centre the
+ * ball + keepers, and freeze movement for `MATCH.goalResetMs` while the client runs a countdown.
+ */
+function worldcupKickoffReset(m: WorldcupMatchRuntime, now: number): void {
+  m.kickoffUntilMs = now + WORLDCUP_MATCH.goalResetMs;
+  for (const conn of roomOf(m.pitchRoomId).values()) {
+    if (conn.matchId !== m.pitchRoomId || conn.spectatingMatchId) continue;
+    const compact = compactAddress(conn.address);
+    const side: WorldcupMatchSide = compact === m.a ? "a" : "b";
+    const spawn = worldcupMatchSpawn(side);
+    conn.player.x = spawn.x;
+    conn.player.z = spawn.z;
+    conn.player.y = 0;
+    conn.player.vx = 0;
+    conn.player.vz = 0;
+    conn.pathQueue = [];
+  }
+  // Fresh centre ball + recentred keepers for the restart.
+  worldcupSpawnMatchBall(m.pitchRoomId);
+  worldcupGoalies.delete(m.pitchRoomId);
+  broadcastRoomStateFull(m.pitchRoomId);
+}
+
+// worldcup: pre-teleport handshake countdown. A Match starts a few seconds after a Challenge
+// is accepted so both players see a 🤝 handshake and a "Match starting in 3…2…1" overlay in
+// the origin room before the pitch loads. A disconnect/leave during the countdown aborts it.
+interface WorldcupPendingMatch {
+  id: string;
+  /** Compact wallets of the challenger (side a) and accepter (side b). */
+  a: string;
+  b: string;
+  originRoomId: string;
+  /** When to teleport both into the freshly created Match Pitch (ms epoch). */
+  startAtMs: number;
+}
+/** key: pending id */
+const worldcupPending = new Map<string, WorldcupPendingMatch>();
+
+/** Show a one-off 🤝 handshake bubble above a player to everyone in their room. */
+function worldcupSendHandshake(conn: ClientConn, roomId: string): void {
+  broadcast(roomId, {
+    type: "chat",
+    from: conn.displayName,
+    fromAddress: conn.address,
+    text: "🤝",
+    at: Date.now(),
+    bubbleOnly: true,
+  });
+}
+
+/** Challenge accepted: lock both players, show the handshake + countdown, schedule the teleport. */
+function worldcupBeginMatch(
+  challenger: ClientConn,
+  accepter: ClientConn,
+  originRoomId: string
+): void {
+  // Both leave any open Challenge immediately so the bubble clears and they can't be re-grabbed.
+  for (const c of [challenger, accepter]) {
+    c.challengeOpen = false;
+    c.challengeRaisedAtMs = 0;
+  }
+  const countdownMs = WORLDCUP_MATCH.countdownMs;
+  if (countdownMs <= 0) {
+    broadcastRoomStateFull(originRoomId);
+    worldcupStartMatch(challenger, accepter, originRoomId);
+    return;
+  }
+  worldcupMatchSeq += 1;
+  const id = `pend_${Date.now().toString(36)}_${worldcupMatchSeq.toString(36)}`;
+  challenger.pendingMatchId = id;
+  accepter.pendingMatchId = id;
+  worldcupPending.set(id, {
+    id,
+    a: compactAddress(challenger.address),
+    b: compactAddress(accepter.address),
+    originRoomId,
+    startAtMs: Date.now() + countdownMs,
+  });
+  // Re-render the origin room so the (now accepted) Challenge bubble disappears for onlookers.
+  broadcastRoomStateFull(originRoomId);
+  worldcupSendHandshake(challenger, originRoomId);
+  worldcupSendHandshake(accepter, originRoomId);
+  const aCountry = worldcupGetPlayerCountry(challenger.address);
+  const bCountry = worldcupGetPlayerCountry(accepter.address);
+  wsSafeSend(challenger.ws, {
+    type: "matchCountdown",
+    roomId: originRoomId,
+    durationMs: countdownMs,
+    opponentAddress: accepter.address,
+    opponentCountry: bCountry,
+    selfCountry: aCountry,
+  } satisfies OutMsg);
+  wsSafeSend(accepter.ws, {
+    type: "matchCountdown",
+    roomId: originRoomId,
+    durationMs: countdownMs,
+    opponentAddress: challenger.address,
+    opponentCountry: aCountry,
+    selfCountry: bCountry,
+  } satisfies OutMsg);
+}
+
+/** Abort any pending Match a wallet is part of (it disconnected/left during the countdown). */
+function worldcupAbortPending(address: string): void {
+  const compact = compactAddress(address);
+  for (const [id, p] of [...worldcupPending]) {
+    if (p.a !== compact && p.b !== compact) continue;
+    worldcupPending.delete(id);
+    for (const r of rooms.values()) {
+      for (const c of r.values()) {
+        if (c.pendingMatchId === id) c.pendingMatchId = null;
+      }
+    }
+  }
+}
+
+/** Resolve both still-connected, still-pending participants of a pending Match (null if broken). */
+function worldcupResolvePending(
+  p: WorldcupPendingMatch
+): { challenger: ClientConn; accepter: ClientConn } | null {
+  const room = rooms.get(p.originRoomId);
+  if (!room) return null;
+  let challenger: ClientConn | null = null;
+  let accepter: ClientConn | null = null;
+  for (const c of room.values()) {
+    const k = compactAddress(c.address);
+    if (k === p.a) challenger = c;
+    else if (k === p.b) accepter = c;
+  }
+  if (!challenger || !accepter) return null;
+  if (challenger.pendingMatchId !== p.id || accepter.pendingMatchId !== p.id) {
+    return null;
+  }
+  return { challenger, accepter };
+}
+
+/** Per-interval: fire pending Matches whose countdown elapsed; drop ones that fell apart. */
+function worldcupTickPending(now: number): void {
+  if (worldcupPending.size === 0) return;
+  for (const [id, p] of [...worldcupPending]) {
+    if (now < p.startAtMs) continue;
+    worldcupPending.delete(id);
+    const pair = worldcupResolvePending(p);
+    if (!pair) {
+      worldcupAbortPending(p.a);
+      worldcupAbortPending(p.b);
+      continue;
+    }
+    pair.challenger.pendingMatchId = null;
+    pair.accepter.pendingMatchId = null;
+    worldcupStartMatch(pair.challenger, pair.accepter, p.originRoomId);
+  }
+}
+
+/** Start a 1v1: snapshot origins, spin up the pitch, teleport both in, clear challenges. */
+function worldcupStartMatch(
+  challenger: ClientConn,
+  accepter: ClientConn,
+  originRoomId: string
+): void {
+  worldcupMatchSeq += 1;
+  const id = `${Date.now().toString(36)}_${worldcupMatchSeq.toString(36)}`;
+  const pitchRoomId = normalizeRoomId(worldcupMakeMatchPitchRoomId(id));
+  const now = Date.now();
+
+  const origins = new Map<string, { roomId: string; x: number; z: number; y: number }>();
+  for (const c of [challenger, accepter]) {
+    origins.set(compactAddress(c.address), {
+      roomId: originRoomId,
+      x: c.player.x,
+      z: c.player.z,
+      y: c.player.y,
+    });
+  }
+
+  // The spectate portal sits where the challenger was standing (snapped to a tile).
+  const portalTile = snapToTile(challenger.player.x, challenger.player.z);
+  const runtime: WorldcupMatchRuntime = {
+    id,
+    pitchRoomId,
+    a: compactAddress(challenger.address),
+    b: compactAddress(accepter.address),
+    state: worldcupInitMatchState(),
+    origins,
+    originRoomId,
+    portalX: portalTile.x,
+    portalZ: portalTile.z,
+    lastTickMs: now,
+    endedAtMs: null,
+    lastBroadcastMs: 0,
+    kickoffUntilMs: 0,
+  };
+  worldcupMatches.set(pitchRoomId, runtime);
+
+  // Fresh kickoff ball + clean keeper state for the new pitch.
+  worldcupSpawnMatchBall(pitchRoomId);
+  worldcupGoalies.delete(pitchRoomId);
+
+  // Both leave any open Challenge and are flagged as in-Match.
+  for (const c of [challenger, accepter]) {
+    c.challengeOpen = false;
+    c.challengeRaisedAtMs = 0;
+    c.matchId = pitchRoomId;
+  }
+
+  const spawnA = worldcupMatchSpawn("a");
+  const spawnB = worldcupMatchSpawn("b");
+  teleportPlayer(challenger, pitchRoomId, spawnA.x, spawnA.z);
+  teleportPlayer(accepter, pitchRoomId, spawnB.x, spawnB.z);
+
+  // The origin room should re-render so the (now cleared) Challenge bubble disappears.
+  broadcastRoomStateFull(originRoomId);
+  // Spawn the "{identicon} vs {identicon}" spectate portal where the match was started from.
+  worldcupBroadcastPortal(runtime);
+  broadcastWorldcupMatchState(runtime, true, now);
+}
+
+/** Find the live (non-ended) Match a wallet is playing in, if any. */
+function worldcupActiveMatchForWallet(address: string): WorldcupMatchRuntime | null {
+  const compact = compactAddress(address);
+  for (const m of worldcupMatches.values()) {
+    if (m.state.phase === "ended") continue;
+    if (m.a === compact || m.b === compact) return m;
+  }
+  return null;
+}
+
+/** A Match player left (disconnect / leaveMatch): the opponent wins immediately. */
+function worldcupHandlePlayerDeparture(address: string): void {
+  const m = worldcupActiveMatchForWallet(address);
+  if (!m) return;
+  const compact = compactAddress(address);
+  const side: WorldcupMatchSide = m.a === compact ? "a" : "b";
+  m.state = worldcupReduceMatch(
+    m.state,
+    { type: "playerLeft", side },
+    WORLDCUP_MATCH_CFG
+  );
+  const now = Date.now();
+  broadcastWorldcupMatchState(m, true, now);
+  if (m.state.phase === "ended") worldcupOnMatchEnded(m, now);
+}
+
+/** Return one entrant to where they came from (if still connected) and clear their Match flag. */
+function worldcupReturnEntrant(m: WorldcupMatchRuntime, compact: string): void {
+  for (const conn of roomOf(m.pitchRoomId).values()) {
+    if (compactAddress(conn.address) !== compact) continue;
+    conn.matchId = null;
+    conn.spectatingMatchId = null;
+    const origin = m.origins.get(compact);
+    if (origin && hasRoom(origin.roomId)) {
+      teleportPlayer(conn, origin.roomId, origin.x, origin.z);
+    } else {
+      teleportPlayer(conn, HUB_ROOM_ID, HUB_MAZE_EXIT_SPAWN.x, HUB_MAZE_EXIT_SPAWN.z);
+    }
+    return;
+  }
+}
+
+/** Tear down a finished Match: return everyone still in the pitch, drop the room + ball + keepers. */
+function worldcupTeardownMatch(m: WorldcupMatchRuntime): void {
+  // Snapshot occupants before teleporting (teleport mutates the room map).
+  const occupants = [...roomOf(m.pitchRoomId).values()].map((c) =>
+    compactAddress(c.address)
+  );
+  for (const compact of occupants) {
+    worldcupReturnEntrant(m, compact);
+  }
+  // Any flagged-but-absent players (already disconnected) lose their stale flag.
+  for (const compact of [m.a, m.b]) {
+    const conn = [...rooms.values()]
+      .flatMap((r) => [...r.values()])
+      .find((c) => compactAddress(c.address) === compact && c.matchId === m.pitchRoomId);
+    if (conn) conn.matchId = null;
+  }
+  worldcupClearRoomBalls(m.pitchRoomId);
+  worldcupForgetRoomBallBroadcast(m.pitchRoomId);
+  worldcupGoalies.delete(m.pitchRoomId);
+  worldcupGoalieBroadcastAt.delete(m.pitchRoomId);
+  worldcupMatches.delete(m.pitchRoomId);
+  const room = rooms.get(m.pitchRoomId);
+  if (room && room.size === 0) rooms.delete(m.pitchRoomId);
+}
+
+/** Per-interval: advance live Match clocks, end them on time, and reclaim finished pitches. */
+function worldcupTickMatches(now: number): void {
+  if (worldcupMatches.size === 0) return;
+  for (const m of [...worldcupMatches.values()]) {
+    if (m.state.phase !== "ended") {
+      // Post-goal kickoff freeze: clock paused; just keep lastTickMs current so it resumes
+      // cleanly (no accumulated dt jump) when the countdown ends.
+      if (m.kickoffUntilMs > now) {
+        m.lastTickMs = now;
+        continue;
+      }
+      if (m.kickoffUntilMs !== 0) m.kickoffUntilMs = 0;
+      const dtMs = Math.max(0, now - m.lastTickMs);
+      m.lastTickMs = now;
+      m.state = worldcupReduceMatch(m.state, { type: "tick", dtMs }, WORLDCUP_MATCH_CFG);
+      broadcastWorldcupMatchState(m, false, now);
+      if (m.state.phase === "ended") worldcupOnMatchEnded(m, now);
+    } else if (
+      m.endedAtMs !== null &&
+      now - m.endedAtMs >= WORLDCUP_MATCH.resultLingerMs
+    ) {
+      worldcupTeardownMatch(m);
+    }
+  }
+}
+
+/** Auto-clear stale open Challenges (no one accepted within the timeout). */
+function worldcupSweepStaleChallenges(now: number): void {
+  if (!WORLDCUP_ENABLED) return;
+  const timeout = WORLDCUP_MATCH.challengeTimeoutMs;
+  if (timeout <= 0) return;
+  for (const [roomId, room] of rooms) {
+    let changed = false;
+    for (const conn of room.values()) {
+      if (!conn.challengeOpen) continue;
+      if (now - conn.challengeRaisedAtMs >= timeout) {
+        conn.challengeOpen = false;
+        conn.challengeRaisedAtMs = 0;
+        changed = true;
+      }
+    }
+    if (changed) broadcastRoomStateFull(roomId);
+  }
+}
+
+// worldcup: at UTC midnight the daily tally resets — push the cleared scoreboard and the
+// new champion flag to everyone on the pitch so the crowd starts celebrating yesterday's
+// winner. Cheap to call every tick; only does work at the day boundary.
+function worldcupCheckDailyReset(nowMs: number): void {
+  if (!WORLDCUP_ENABLED) return;
+  if (!worldcupRolloverIfNeeded(nowMs)) return;
+  const topCountries = worldcupGetTopCountries(8);
+  const prevWinnerCountry = worldcupGetPreviousDayWinner()?.country ?? null;
+  for (const [roomId, room] of rooms) {
+    if (normalizeRoomId(roomId) !== WORLDCUP_FIELD_ROOM_ID) continue;
+    for (const c of room.values()) {
+      if (c.ws.readyState !== 1) continue;
+      wsSafeSend(c.ws, {
+        type: "worldcupLeaderboard",
+        roomId,
+        selfCountry: worldcupGetPlayerCountry(c.address),
+        topCountries,
+        prevWinnerCountry,
+        dailyReset: true,
+      } satisfies OutMsg);
+    }
+  }
 }
 
 export function startRoomTick(): void {
@@ -4294,12 +5275,21 @@ export function startRoomTick(): void {
   loadDesigns();
   loadVoxelTexts();
   loadMazeRecords();
+  // worldcup: restore player-placed balls + the season tally + goal-reward counters
+  if (WORLDCUP_ENABLED) {
+    loadWorldcupBalls();
+    loadWorldcupScores();
+    loadWorldcupGoalRewards();
+  }
   tickClaimableBlockReactivations(Date.now());
   setInterval(() => {
     const now = Date.now();
 
     tickClaimableBlockReactivations(now);
-    
+
+    // worldcup: daily UTC scoreboard reset (broadcasts cleared tally + new champion flag)
+    worldcupCheckDailyReset(now);
+
     // Check canvas timer
     checkCanvasTimer();
     
@@ -4344,7 +5334,10 @@ export function startRoomTick(): void {
             queueLen: c.pathQueue.length,
           });
         }
-        if (c.pathQueue.length === 0) {
+        // worldcup: on the pitch (field or Match Pitch), free movement rests at the exact
+        // float point — skip the grid drift-snap that would pull players to a tile center.
+        const isFieldFreeMove = worldcupIsFieldLikeRoom(roomId);
+        if (c.pathQueue.length === 0 && !isFieldFreeMove) {
           const moverCtx: PathfindMoverContext = {
             address: compactAddress(c.address),
             nowMs: now,
@@ -4478,6 +5471,67 @@ export function startRoomTick(): void {
       }
       broadcastTickStateIfAllowed(roomId, room, now, changed);
 
+      // worldcup: simulate any balls in this room (single isolated hook)
+      if (WORLDCUP_ENABLED && worldcupRoomHasBalls(roomId)) {
+        const ballPlayers = [];
+        for (const c of room.values()) {
+          if (c.streamObserver) continue;
+          if (c.spectatingMatchId) continue; // worldcup: Spectators can't touch the ball
+          ballPlayers.push({
+            x: c.player.x,
+            z: c.player.z,
+            vx: c.player.vx,
+            vz: c.player.vz,
+            address: c.address,
+          });
+        }
+        const nRoom = normalizeRoomId(roomId);
+        const isFieldRoom = nRoom === WORLDCUP_FIELD_ROOM_ID;
+        const isMatchPitch = worldcupIsMatchPitch(nRoom);
+        // The Free Play Field and every ephemeral Match Pitch share the same open pitch:
+        // fixed field bounds (+ goal openings), Goalies on each goal, and goal scoring.
+        const isFieldLike = isFieldRoom || isMatchPitch;
+        // Non-field-like rooms: bounce balls off solid blocks and off the edge of the
+        // walkable floor, so a ball rolls across extra-floor tiles that extend the room
+        // past its base bounds instead of stopping at the original wall.
+        const ballBlocked = isFieldLike ? null : blockingKeys(roomId);
+        // worldcup: Goalies defend every goal. Step them, then either inject them as
+        // kicker pseudo-players (clear the ball) or as blocker colliders.
+        let goalieColliders: Array<{ x: number; z: number; radius: number }> | undefined;
+        if (isFieldLike) {
+          const g = worldcupStepGoaliesForRoom(roomId, WORLDCUP_FIELD_GOALS);
+          if (g.kickers.length > 0) ballPlayers.push(...g.kickers);
+          if (g.colliders.length > 0) goalieColliders = g.colliders;
+          const lastG = worldcupGoalieBroadcastAt.get(nRoom) ?? 0;
+          if (now - lastG >= WORLDCUP_GOALIE_BROADCAST_MIN_MS) {
+            broadcast(roomId, { type: "goalieState", roomId, goalies: g.wire });
+            worldcupGoalieBroadcastAt.set(nRoom, now);
+          }
+        }
+        worldcupTickRoomBalls({
+          roomId,
+          bounds: isFieldLike ? getRoomBaseBounds(roomId) : walkBounds(roomId),
+          players: ballPlayers,
+          now,
+          dt,
+          isSolidTile: ballBlocked
+            ? (tx, tz) =>
+                ballBlocked.has(tileKey(tx, tz)) ||
+                !isWalkableForRoom(roomId, tx, tz)
+            : undefined,
+          // goal scoring on the field (rewards + leaderboard) and in Match Pitches (score only)
+          goals: isFieldLike ? WORLDCUP_FIELD_GOALS : undefined,
+          onGoal: isFieldRoom
+            ? (_ball, goalId, scorer) => handleWorldcupGoal(roomId, goalId, scorer)
+            : isMatchPitch
+              ? (_ball, goalId) => worldcupHandleMatchGoal(nRoom, goalId)
+              : undefined,
+          colliders: goalieColliders,
+          broadcastBallState: (balls) =>
+            broadcast(roomId, { type: "ballState", roomId, balls }),
+        });
+      }
+
       // Send canvas timer updates every second
       if (isCanvas && canvasTimerActive && now % 1000 < TICK_MS) {
         const timeRemaining = Math.max(0, canvasTimerEndTime - now);
@@ -4486,6 +5540,13 @@ export function startRoomTick(): void {
           timeRemaining,
         });
       }
+    }
+
+    // worldcup: advance live 1v1 Match clocks / reclaim finished pitches + expire stale challenges
+    if (WORLDCUP_ENABLED) {
+      worldcupTickPending(now);
+      worldcupTickMatches(now);
+      worldcupSweepStaleChallenges(now);
     }
   }, TICK_MS);
 }
@@ -4667,6 +5728,11 @@ export function addClient(
     lastBlockClaimCompleteAttemptAt: 0,
     nimSendIntent: false,
     chatTyping: false,
+    challengeOpen: false,
+    challengeRaisedAtMs: 0,
+    matchId: null,
+    pendingMatchId: null,
+    spectatingMatchId: null,
     viewInterest: {
       centerX: player.x,
       centerZ: player.z,
@@ -4786,6 +5852,15 @@ export function addClient(
       roomBackgroundNeutral: joinWelcomeBgState.neutral,
       ...joinSpawnWelcomeExtras(roomId, address),
       chatBacklog: chatBacklogSnapshotForWelcome(roomId, Date.now()),
+      // worldcup: include any balls in this room
+      balls:
+        WORLDCUP_ENABLED && worldcupRoomHasBalls(roomId)
+          ? worldcupBallsToWire(roomId)
+          : undefined,
+      ...worldcupWelcomeExtras(roomId, address),
+      worldcupPortals: WORLDCUP_ENABLED
+        ? worldcupPortalsForRoom(roomId)
+        : undefined,
     } satisfies OutMsg);
   sendRoomCatalog(ws, address);
 
@@ -4893,6 +5968,172 @@ export function addClient(
       if (conn.chatTyping === next) return;
       conn.chatTyping = next;
       broadcastRoomStateFull(currentRoomId);
+      return;
+    }
+
+    // worldcup: raise / cancel an open 1v1 Challenge (the donut "Open to 1v1" toggle).
+    if (msg.type === "setChallenge") {
+      if (!WORLDCUP_ENABLED) return;
+      if (conn.streamObserver) return;
+      const active = Boolean((msg as { active?: unknown }).active);
+      if (active) {
+        // Not inside the shared kickaround, a live Match, a Match Pitch, or a pending match (PRD 8-9).
+        if (worldcupIsFieldLikeRoom(currentRoomId)) return;
+        if (conn.matchId || conn.pendingMatchId) return;
+        if (conn.challengeOpen) return;
+        conn.challengeOpen = true;
+        conn.challengeRaisedAtMs = Date.now();
+      } else {
+        if (!conn.challengeOpen) return;
+        conn.challengeOpen = false;
+        conn.challengeRaisedAtMs = 0;
+      }
+      broadcastRoomStateFull(currentRoomId);
+      return;
+    }
+
+    // worldcup: accept another player's open Challenge (first-accept-wins -> start the Match).
+    if (msg.type === "acceptChallenge") {
+      if (!WORLDCUP_ENABLED) return;
+      if (conn.streamObserver) return;
+      if (conn.matchId || conn.pendingMatchId) return;
+      const targetAddress = String(
+        (msg as { targetAddress?: unknown }).targetAddress ?? ""
+      ).trim();
+      if (!targetAddress) return;
+      const targetCompact = compactAddress(targetAddress);
+      if (targetCompact === compactAddress(address)) return;
+      const room = roomOf(currentRoomId);
+      let challenger: ClientConn | null = null;
+      for (const c of room.values()) {
+        if (compactAddress(c.address) === targetCompact) {
+          challenger = c;
+          break;
+        }
+      }
+      if (!challenger) return;
+      if (!challenger.challengeOpen || challenger.matchId || challenger.pendingMatchId) {
+        return;
+      }
+      worldcupBeginMatch(challenger, conn, currentRoomId);
+      return;
+    }
+
+    // worldcup: leave the current 1v1 (forfeits to the opponent, returns the leaver home).
+    // For a Spectator this just stops watching and returns them home (no forfeit).
+    if (msg.type === "leaveMatch") {
+      if (!WORLDCUP_ENABLED) return;
+      if (conn.spectatingMatchId) {
+        const sm = worldcupMatches.get(conn.spectatingMatchId);
+        if (sm) {
+          worldcupReturnEntrant(sm, compactAddress(address));
+          worldcupBroadcastPortal(sm);
+        } else {
+          conn.spectatingMatchId = null;
+        }
+        return;
+      }
+      const m = conn.matchId ? worldcupMatches.get(conn.matchId) : null;
+      worldcupHandlePlayerDeparture(address);
+      if (m) worldcupReturnEntrant(m, compactAddress(address));
+      return;
+    }
+
+    // worldcup: drop into a live Match's stands to watch it (Spectator).
+    if (msg.type === "requestSpectate") {
+      if (!WORLDCUP_ENABLED) return;
+      if (conn.streamObserver) return;
+      if (conn.matchId || conn.pendingMatchId || conn.spectatingMatchId) return;
+      const matchId = normalizeRoomId(
+        String((msg as { matchId?: unknown }).matchId ?? "").trim()
+      );
+      if (!matchId) return;
+      const m = worldcupMatches.get(matchId);
+      if (!m || m.state.phase === "ended") return;
+      if (worldcupSpectatorCount(m) >= WORLDCUP_MATCH.spectatorCap) {
+        // Portal is full — tell this onlooker (and refresh the portal's full state).
+        wsSafeSend(ws, { type: "error", code: "spectate_full" } satisfies OutMsg);
+        worldcupBroadcastPortal(m);
+        return;
+      }
+      // Snapshot where they came from so they're returned when the Match ends.
+      m.origins.set(compactAddress(address), {
+        roomId: currentRoomId,
+        x: conn.player.x,
+        z: conn.player.z,
+        y: conn.player.y,
+      });
+      conn.spectatingMatchId = matchId;
+      const seat = worldcupSpectatorSeat(worldcupSpectatorCount(m));
+      teleportPlayer(conn, matchId, seat.x, seat.z);
+      worldcupBroadcastPortal(m);
+      broadcastWorldcupMatchState(m, true, Date.now());
+      return;
+    }
+
+    // worldcup: player picks/changes their country (seasonal soccer)
+    if (msg.type === "setCountry") {
+      if (!WORLDCUP_ENABLED) return;
+      const code = String((msg as { code?: unknown }).code ?? "")
+        .trim()
+        .toUpperCase();
+      if (!worldcupIsValidCountryCode(code)) return;
+      worldcupSetCountry(address, code, conn.player.displayName);
+      wsSafeSend(ws, {
+        type: "worldcupLeaderboard",
+        roomId: currentRoomId,
+        selfCountry: code,
+        topCountries: worldcupGetTopCountries(8),
+        prevWinnerCountry: worldcupGetPreviousDayWinner()?.country ?? null,
+      } satisfies OutMsg);
+      // Re-broadcast so others (and the field crowd) pick up this player's new flag.
+      if (worldcupIsFieldLikeRoom(currentRoomId)) broadcastRoomStateFull(currentRoomId);
+      return;
+    }
+
+    // worldcup: place a kickable ball in the current room (builders only)
+    if (msg.type === "placeBall") {
+      if (!WORLDCUP_ENABLED) return;
+      if (conn.streamObserver) return;
+      if (!canPlaceBallInRoom(currentRoomId, address)) {
+        wsSafeSend(ws, { type: "error", code: "ball_place_forbidden" } satisfies OutMsg);
+        return;
+      }
+      const tx = Number((msg as { x?: unknown }).x);
+      const tz = Number((msg as { z?: unknown }).z);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const t = snapToTile(tx, tz);
+      if (!isWalkableForRoom(currentRoomId, t.x, t.z)) {
+        wsSafeSend(ws, { type: "error", code: "ball_place_blocked" } satisfies OutMsg);
+        return;
+      }
+      const ball = worldcupAddPlacedBall(currentRoomId, t.x, t.z, address);
+      if (!ball) {
+        wsSafeSend(ws, { type: "error", code: "ball_limit_reached" } satisfies OutMsg);
+        return;
+      }
+      broadcast(currentRoomId, {
+        type: "ballState",
+        roomId: currentRoomId,
+        balls: worldcupBallsToWire(currentRoomId),
+      } satisfies OutMsg);
+      return;
+    }
+
+    // worldcup: remove a player-placed ball (builders only)
+    if (msg.type === "removeBall") {
+      if (!WORLDCUP_ENABLED) return;
+      if (conn.streamObserver) return;
+      if (!canPlaceBallInRoom(currentRoomId, address)) return;
+      const ballId = String((msg as { ballId?: unknown }).ballId ?? "").trim();
+      if (!ballId) return;
+      if (worldcupRemoveBall(currentRoomId, ballId)) {
+        broadcast(currentRoomId, {
+          type: "ballState",
+          roomId: currentRoomId,
+          balls: worldcupBallsToWire(currentRoomId),
+        } satisfies OutMsg);
+      }
       return;
     }
 
@@ -5313,7 +6554,10 @@ export function addClient(
 
     if (msg.type === "joinRoom") {
       if (conn.streamObserver) return;
+      // worldcup: can't wander off mid-Match, and pitches are server-managed (not joinable).
+      if (conn.matchId) return;
       const targetRoomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
+      if (worldcupIsMatchPitch(normalizeRoomId(targetRoomId))) return;
       if (!hasRoom(targetRoomId)) {
         wsSafeSend(ws, {
             type: "joinRoomFailed",
@@ -5341,6 +6585,23 @@ export function addClient(
 
     if (msg.type === "moveTo") {
       if (conn.streamObserver) return;
+      if (conn.spectatingMatchId) return; // worldcup: Spectators are fixed in the stands
+      // worldcup: during the post-goal kickoff freeze, both players are locked in place until
+      // the countdown ends (the server already snapped them to their kickoff spots).
+      if (conn.matchId) {
+        const m = worldcupMatches.get(normalizeRoomId(conn.matchId));
+        if (m && m.kickoffUntilMs > Date.now()) return;
+      }
+      // A "stop" intent (e.g. releasing the touch joystick) clears the path immediately and is
+      // never rate-limited, so the player halts the instant the finger lifts instead of gliding
+      // on toward the last (far) joystick target — which the 120ms move rate limit would drop.
+      if (msg.stop === true) {
+        if (conn.pathQueue.length > 0) {
+          conn.pathQueue = [];
+          pendingTickStateBroadcast.add(currentRoomId);
+        }
+        return;
+      }
       if (
         normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID &&
         (!canvasTimerActive || canvasCountdownActive)
@@ -5360,6 +6621,26 @@ export function addClient(
       const tx = Number(msg.x);
       const tz = Number(msg.z);
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      // worldcup: the soccer pitch uses free (any-direction) movement — go in a straight
+      // line to the exact clicked float point (no tile snap, no grid pathfinding) so the
+      // ball can be kicked at any angle. The pitch is an open rectangle with no obstacles,
+      // so a clamped straight line is always safe; walls clamp in advanceAlongPathHuman.
+      if (worldcupIsFieldLikeRoom(currentRoomId)) {
+        const wb = worldcupMoveClampBounds(currentRoomId);
+        const fx = clamp(tx, wb.minX, wb.maxX);
+        const fz = clamp(tz, wb.minZ, wb.maxZ);
+        const from = { x: conn.player.x, z: conn.player.z };
+        conn.player.y = 0;
+        conn.pathQueue = [{ x: fx, z: fz, layer: 0 }];
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "move_to", {
+          fromX: from.x,
+          fromZ: from.z,
+          toX: fx,
+          toZ: fz,
+          goalLayer: 0,
+        });
+        return;
+      }
       const dest = snapToTile(tx, tz);
       const p = conn.player;
       const placed = placedMap(currentRoomId);
@@ -8463,6 +9744,21 @@ export function addClient(
   ws.on("close", () => {
     if (conn.pendingBlockClaimId) {
       releaseBlockClaimSession(conn.pendingBlockClaimId);
+    }
+    // worldcup: leaving mid-Match forfeits to the opponent (declared the winner immediately).
+    if (WORLDCUP_ENABLED && conn.matchId) {
+      worldcupHandlePlayerDeparture(address);
+      conn.matchId = null;
+    }
+    // worldcup: leaving during the pre-teleport countdown aborts the pending Match.
+    if (WORLDCUP_ENABLED && conn.pendingMatchId) {
+      worldcupAbortPending(address);
+    }
+    // worldcup: a Spectator disconnecting frees a stand slot — refresh the portal's full state.
+    if (WORLDCUP_ENABLED && conn.spectatingMatchId) {
+      const sm = worldcupMatches.get(conn.spectatingMatchId);
+      conn.spectatingMatchId = null;
+      if (sm) worldcupBroadcastPortal(sm);
     }
     // Find which room the player is currently in
     const playerCurrentRoom = findPlayerRoom(address);
