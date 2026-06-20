@@ -4144,6 +4144,14 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
           }),
           ...p,
           y: py,
+          // Each `stateDelta` entry is a complete per-player snapshot, but the server omits
+          // these presence/ephemeral flags when false/absent. Derive them from the delta
+          // (not the stale `prev`) so a cleared state can't leak forward — e.g. a finished
+          // 1v1 Challenge still offering "Accept 1v1" in the right-click menu.
+          nimSendAway: p.nimSendAway,
+          chatTyping: p.chatTyping,
+          challengeOpen: p.challengeOpen,
+          worldcupCountry: p.worldcupCountry,
         });
       }
       lastPlayers = [...byAddr.values()];
@@ -4294,6 +4302,25 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
             prompt: "You scored! Pick your country so your goals count.",
             dismissable: true,
           });
+        }
+      }
+      return;
+    }
+    if (msg.type === "goalRewardOutcome") {
+      // Only the scorer receives this; show a small personal note under the GOAL banner.
+      if (worldcupScoreboard) {
+        if (msg.reason === "ok" && msg.amountNim) {
+          worldcupScoreboard.flashReward("earned", `+${msg.amountNim} NIM earned!`);
+        } else if (msg.reason === "wallet_cap") {
+          worldcupScoreboard.flashReward(
+            "capped",
+            "Daily NIM cap reached — keep scoring for fun!"
+          );
+        } else if (msg.reason === "budget_exhausted") {
+          worldcupScoreboard.flashReward(
+            "capped",
+            "Today's NIM rewards are all claimed — back tomorrow!"
+          );
         }
       }
       return;

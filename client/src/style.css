@@ -5075,6 +5075,13 @@ button.hud-brand:focus-visible {
   -webkit-user-select: none;
 }
 
+/* Author `display: block` above beats the `hidden` attribute's UA default, so
+   JS toggles like `otherPlayerCtxAcceptChallengeBtn.hidden = true` (only show
+   "Accept 1v1" when a Challenge is open) had no effect. Re-honour `hidden`. */
+.other-player-ctx__item[hidden] {
+  display: none !important;
+}
+
 .other-player-ctx__item:hover {
   background: rgba(56, 189, 248, 0.12);
 }

@@ -172,6 +172,7 @@ import {
   decideAndCommitGoalReward as worldcupDecideGoalReward,
   loadGoalRewards as loadWorldcupGoalRewards,
 } from "./worldcup/goalReward.js";
+import type { GoalRewardDecision } from "./worldcup/goalReward.js";
 import {
   goalieCollider as worldcupGoalieCollider,
   goalieLineX as worldcupGoalieLineX,
@@ -1142,6 +1143,16 @@ type OutMsg =
       country: string | null;
       /** Leading countries after this goal (code + total goals). */
       topCountries: Array<{ code: string; goals: number }>;
+    }
+  // worldcup: per-scorer NIM reward outcome for a Free Play Field goal (sent only to the
+  // scorer, never broadcast — the reward cap/budget is personal, not public).
+  | {
+      type: "goalRewardOutcome";
+      roomId: string;
+      /** `ok` = NIM credited; `wallet_cap`/`budget_exhausted` = no NIM this time. */
+      reason: "ok" | "wallet_cap" | "budget_exhausted";
+      /** Set only when `reason === "ok"` — the NIM credited, e.g. "0.25". */
+      amountNim?: string;
     }
   // worldcup: spawn / remove a 1v1 spectate portal in a room (room-scoped)
   | ({ type: "matchPortalSpawn"; roomId: string } & WorldcupPortalWire)
@@ -4410,6 +4421,14 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     }
   }
 
+  // worldcup: a Challenge is room-scoped (accepted in the same room it was raised in), so a
+  // real room change clears it — otherwise the flag follows the player and shows a stale
+  // "Accept 1v1" option in a room (e.g. a field) where no Challenge actually exists.
+  if (conn.challengeOpen) {
+    conn.challengeOpen = false;
+    conn.challengeRaisedAtMs = 0;
+  }
+
   conn.player.x = x;
   conn.player.z = z;
   conn.player.y = 0;
@@ -4645,8 +4664,8 @@ function maybeQueueGoalReward(
   roomId: string,
   goalId: string,
   scorerAddress: string | null
-): void {
-  if (normalizeRoomId(roomId) !== WORLDCUP_FIELD_ROOM_ID) return;
+): GoalRewardDecision | null {
+  if (normalizeRoomId(roomId) !== WORLDCUP_FIELD_ROOM_ID) return null;
   const decision = worldcupDecideGoalReward(
     {
       scorerWallet: scorerAddress,
@@ -4665,7 +4684,7 @@ function maybeQueueGoalReward(
     !decision.recipientWallet ||
     decision.amountLuna === undefined
   ) {
-    return;
+    return decision;
   }
   // Use the normalized recipient the decision built the claimId from, so the payout target
   // and the idempotency key can never disagree.
@@ -4675,8 +4694,47 @@ function maybeQueueGoalReward(
     amountLuna: decision.amountLuna,
     roomId,
     tileKey: `wc-goal-${goalId}`,
-    txMessage: "Nimiq Space — World Cup goal! Thanks for playing :)",
+    txMessage: "Scored a goal on Nimiq Space!",
   });
+  return decision;
+}
+
+/** Format a luna reward as a compact NIM string (e.g. 25000 → "0.25", 100000 → "1"). */
+function formatGoalRewardNim(luna: bigint): string {
+  const nim = Number(luna) / Number(LUNA_PER_NIM);
+  return nim.toFixed(2).replace(/\.?0+$/, "");
+}
+
+/**
+ * worldcup: tell the scorer (and only the scorer) how their Free Play goal was rewarded —
+ * either the NIM they earned, or that they've hit their personal daily cap / the pool is
+ * spent. Other reasons (alone on the pitch, no credited kicker) stay silent.
+ */
+function sendGoalRewardOutcomeToScorer(
+  roomId: string,
+  scorerAddress: string,
+  decision: GoalRewardDecision
+): void {
+  let payload: Extract<OutMsg, { type: "goalRewardOutcome" }> | null = null;
+  if (decision.pay && decision.amountLuna !== undefined) {
+    payload = {
+      type: "goalRewardOutcome",
+      roomId,
+      reason: "ok",
+      amountNim: formatGoalRewardNim(decision.amountLuna),
+    };
+  } else if (decision.reason === "wallet_cap") {
+    payload = { type: "goalRewardOutcome", roomId, reason: "wallet_cap" };
+  } else if (decision.reason === "budget_exhausted") {
+    payload = { type: "goalRewardOutcome", roomId, reason: "budget_exhausted" };
+  }
+  if (!payload) return;
+  const want = compactAddress(scorerAddress);
+  for (const c of roomOf(roomId).values()) {
+    if (compactAddress(c.address) === want) {
+      wsSafeSend(c.ws, payload);
+    }
+  }
 }
 
 // worldcup: credit a goal to the last kicker's country + broadcast the celebration.
@@ -4694,7 +4752,7 @@ function handleWorldcupGoal(
     country = res.country;
   }
   // Free Play Field only: queue the NIM reward (guards enforced inside).
-  maybeQueueGoalReward(roomId, goalId, scorerAddress);
+  const rewardDecision = maybeQueueGoalReward(roomId, goalId, scorerAddress);
   broadcast(roomId, {
     type: "goalScored",
     roomId,
@@ -4704,6 +4762,10 @@ function handleWorldcupGoal(
     country,
     topCountries: worldcupGetTopCountries(8),
   });
+  // Personal reward feedback to the scorer only (earned NIM / cap reached).
+  if (scorerAddress && rewardDecision) {
+    sendGoalRewardOutcomeToScorer(roomId, scorerAddress, rewardDecision);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -6554,10 +6616,17 @@ export function addClient(
 
     if (msg.type === "joinRoom") {
       if (conn.streamObserver) return;
-      // worldcup: can't wander off mid-Match, and pitches are server-managed (not joinable).
-      if (conn.matchId) return;
       const targetRoomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
+      // worldcup: Match Pitches are server-managed and never directly joinable.
       if (worldcupIsMatchPitch(normalizeRoomId(targetRoomId))) return;
+      // worldcup: navigating to another room mid-Match forfeits to the opponent (same as
+      // pressing Leave), then proceeds to the requested room — e.g. leaving a 1v1 to go
+      // straight to the Free Play Field. A Spectator simply stops watching.
+      if (conn.matchId) {
+        worldcupHandlePlayerDeparture(address);
+        conn.matchId = null;
+      }
+      conn.spectatingMatchId = null;
       if (!hasRoom(targetRoomId)) {
         wsSafeSend(ws, {
             type: "joinRoomFailed",

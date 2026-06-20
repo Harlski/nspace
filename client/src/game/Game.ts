@@ -8730,14 +8730,11 @@ export class Game {
     if (this.isWorldcupFreeMoveRoom() && !this.buildMode && !this.floorExpandMode) {
       const hit = this.pickFloorRaw(clientX, clientY);
       if (hit) {
-        const fx = Math.max(
-          WORLDCUP_FIELD_BOUNDS.minX,
-          Math.min(WORLDCUP_FIELD_BOUNDS.maxX, hit.x)
-        );
-        const fz = Math.max(
-          WORLDCUP_FIELD_BOUNDS.minZ,
-          Math.min(WORLDCUP_FIELD_BOUNDS.maxZ, hit.z)
-        );
+        // Preview clamps to the outfield wall (bounds + margin), matching tryFieldFreeWalkAt so the
+        // dashed line lands where the avatar will actually stop when you tap toward the stands.
+        const b = this.worldcupFieldMoveBounds();
+        const fx = Math.max(b.minX, Math.min(b.maxX, hit.x));
+        const fz = Math.max(b.minZ, Math.min(b.maxZ, hit.z));
         this.pathPreviewGoal = {
           ft: snapFloorTile(fx, fz),
           layer: 0,
@@ -9101,11 +9098,11 @@ export class Game {
     if (this.worldcupMoveLocked) return true;
     const hit = this.pickFloorRaw(clientX, clientY);
     if (!hit) return false;
-    // Clicks outside the pitch snap to the nearest point on the wall (the field boundary) rather
-    // than overshooting into the outfield margin — so a tap past the touchline walks you to the
-    // wall in line with where you tapped (matching the path preview). The outfield margin (for
-    // getting fully behind a wall-pinned ball) stays reachable via the joystick.
-    const b = WORLDCUP_FIELD_BOUNDS;
+    // Clicks outside the pitch clamp to the outfield wall (true bounds + outfield margin), not the
+    // touchline — so a tap toward / onto the stands walks you all the way to the wall in line with
+    // where you tapped, letting you get fully behind a ball pinned against a wall by mouse/tap (the
+    // joystick already reached this margin). The ball's own collision walls stay at the true bounds.
+    const b = this.worldcupFieldMoveBounds();
     const fx = Math.max(b.minX, Math.min(b.maxX, hit.x));
     const fz = Math.max(b.minZ, Math.min(b.maxZ, hit.z));
     this.pathGoal = {
@@ -10172,11 +10169,12 @@ export class Game {
       return;
     }
 
-    // worldcup: on the pitch (touch), defer to pointerup like elsewhere but accept ANY ground hit
-    // (not just walkable grid tiles), so tap-to-move and the floating joystick both work from
-    // wherever the thumb goes down — including the outfield margin behind the goals.
+    // worldcup: on the pitch, defer to pointerup like elsewhere but accept ANY ground hit (not just
+    // walkable grid tiles), so tap/click-to-move and the floating joystick all work from wherever the
+    // pointer goes down — including over the stands / outfield margin behind the goals. This must run
+    // for mouse as well as touch: the generic walk path below uses `pickWalkableTile`, which returns
+    // nothing for an off-pitch click (the stands), so a mouse click there would otherwise be dropped.
     if (
-      e.pointerType === "touch" &&
       this.isWorldcupFreeMoveRoom() &&
       !this.worldcupMoveLocked &&
       !this.buildMode &&

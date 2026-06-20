@@ -414,6 +414,15 @@ export type ServerMessage =
       country: string | null;
       topCountries: Array<{ code: string; goals: number }>;
     }
+  // worldcup: per-scorer NIM reward outcome for a Free Play Field goal (only the scorer
+  // receives this — the reward cap/budget is personal, not public).
+  | {
+      type: "goalRewardOutcome";
+      roomId: string;
+      reason: "ok" | "wallet_cap" | "budget_exhausted";
+      /** Set only when `reason === "ok"` — the NIM credited, e.g. "0.25". */
+      amountNim?: string;
+    }
   // worldcup: pre-teleport handshake countdown shown in the origin room
   | {
       type: "matchCountdown";

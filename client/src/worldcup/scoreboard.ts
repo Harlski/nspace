@@ -35,9 +35,12 @@ export class WorldcupScoreboard {
   constructor(parent?: HTMLElement) {
     const root = document.createElement("div");
     // Absolute (not fixed) so it anchors to the letterbox game area, not the viewport. Width is
-    // responsive so it never crowds the top toolbar on narrow screens.
+    // responsive so it never crowds the top toolbar on narrow screens. `top` is anchored to the
+    // measured top-chrome height (brand row + login-streak marquee) plus room for the
+    // top-right "Return Home" button below it, so the panel never covers the header menu or
+    // the Return Home control (which lives in the same top-right corner).
     root.style.cssText =
-      "position:absolute;top:72px;right:12px;z-index:60;width:min(220px,46vw);max-width:220px;box-sizing:border-box;background:rgba(18,20,25,0.86);color:#f4f5f7;border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:0.6rem 0.7rem;box-shadow:0 10px 30px rgba(0,0,0,0.4);font-family:inherit;backdrop-filter:blur(6px);display:none;";
+      "position:absolute;top:calc(var(--hud-below-top-wrap, 52px) + 48px);right:12px;z-index:60;width:min(220px,46vw);max-width:220px;box-sizing:border-box;background:rgba(18,20,25,0.86);color:#f4f5f7;border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:0.6rem 0.7rem;box-shadow:0 10px 30px rgba(0,0,0,0.4);font-family:inherit;backdrop-filter:blur(6px);display:none;";
 
     const header = document.createElement("div");
     header.style.cssText =
@@ -252,6 +255,30 @@ export class WorldcupScoreboard {
       banner.style.transform = "translate(-50%, -8px)";
       setTimeout(() => banner.remove(), 550);
     }, 1900);
+  }
+
+  /**
+   * Personal NIM-reward note shown just under the GOAL banner — only to the player who scored.
+   * `earned` (green) confirms NIM credited; `capped` (amber) explains why none was paid (daily
+   * cap reached / pool spent for today). Local to the scorer; never shown to other players.
+   */
+  flashReward(kind: "earned" | "capped", text: string): void {
+    const note = document.createElement("div");
+    note.textContent = text;
+    const color = kind === "earned" ? "#8ef0b6" : "#ffd27a";
+    note.style.cssText =
+      `position:fixed;top:25%;left:50%;z-index:121;background:rgba(16,18,22,0.92);color:${color};border:1px solid rgba(255,255,255,0.16);border-radius:10px;padding:0.35rem 0.85rem;font-size:0.85rem;font-weight:700;letter-spacing:0.01em;box-shadow:0 12px 36px rgba(0,0,0,0.45);pointer-events:none;transition:opacity 0.5s ease, transform 0.5s ease;opacity:0;font-family:inherit;white-space:nowrap;`;
+    note.style.transform = "translate(-50%, 8px)";
+    document.body.appendChild(note);
+    requestAnimationFrame(() => {
+      note.style.opacity = "1";
+      note.style.transform = "translate(-50%, 0)";
+    });
+    setTimeout(() => {
+      note.style.opacity = "0";
+      note.style.transform = "translate(-50%, -8px)";
+      setTimeout(() => note.remove(), 550);
+    }, 2600);
   }
 
   destroy(): void {

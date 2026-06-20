@@ -5,10 +5,4 @@
 
 ---
 
-- [NEW] World Cup kickabout: a new Soccer Field room with goals, a ball you kick just by running into it, and a live country leaderboard — pick your flag and score for your nation.
-- [NEW] Drop a soccer ball in (almost) any room and kick it around with friends.
-- [NEW] Goalkeepers now defend every net, and scoring on the public field earns a little NIM.
-- [NEW] Challenge anyone to a quick 1v1 match: beat the keeper, watch the clock, win the game.
-- [NEW] Watch other people's 1v1 matches from the stands, with a 3-2-1 kickoff and crowds that cheer for each country.
-- [NEW] Smoother soccer controls: a thumb-stick on mobile, tap-anywhere to walk, and room to step behind the ball.
-- [NEW] 1v1 matches now celebrate goals with a "GOAL!" moment and a fresh kickoff after every score.
+When you score on the Free Play Field you now see whether you earned NIM (or hit the daily cap) — only you, not everyone in the room. The World Cup scoreboard sits below the top bar so it no longer covers Return Home or the login streak. Fixed the right-click menu always showing "Accept 1v1," and you can leave a match by walking to another room instead of getting stuck.

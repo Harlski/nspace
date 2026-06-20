@@ -19,3 +19,7 @@ server/data/
 data/
 # Pre-deploy archives (VPS or local ops scripts)
 backups/
+
+.agents/
+.cursor/skills/grill-me.md
+skills-lock.json

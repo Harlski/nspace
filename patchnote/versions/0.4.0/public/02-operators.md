@@ -1,0 +1,23 @@
+# Public patch notes — operators (`0.4.0`)
+
+**Audience:** self-hosters, deployers, infra — Docker, env vars, migrations, breaking ops changes.  
+**Depth:** concrete steps, new/removed variables, compose profiles, backup/restart expectations.
+
+---
+
+### World Cup soccer (seasonal, feature-flagged)
+
+- [OPS] **New env flags.** `WORLDCUP_ENABLED` (server) and `VITE_WORLDCUP_ENABLED` (client build) gate the whole feature. Both default **on**. Set to `0`/`false`/`off`/`no` to disable — this removes the hub→field door and turns off the ball, goals, scoring, and UI. The client flag is read at build time, so toggling it requires a client rebuild.
+- [OPS] **New persisted files** under `server/data/`:
+  - `worldcup-scores.json` — **daily (UTC)** scoreboard: today's country tally + per-player goals, an archive of every completed day under `history`, the previous day's champion, and persistent per-player country choices (the seasonal archive; keep it).
+  - `worldcup-balls.json` — definitions of player-placed balls (live positions reset on restart).
+  Back these up with the rest of `server/data/`. Both are created on demand; no migration step.
+- [OPS] **Daily UTC reset.** The visible scoreboard resets at **00:00 UTC** each day; the completed day is archived to `history` (nothing is lost) and its winning country becomes the flag the stadium crowd waves. Reset/archive happen in-process on the room tick — no cron or restart needed. An older cumulative `worldcup-scores.json` is migrated automatically on first load (its totals are preserved under a `0000-legacy` history entry).
+- [OPS] **Goalies, goal rewards & 1v1 tuning env** (all defaulted, documented in `server/.env.example`): `WORLDCUP_GOALIE_MODE` (+ `WORLDCUP_GOALIE_MOVE_SPEED` / `WORLDCUP_GOALIE_REACTION_MS` / `WORLDCUP_GOALIE_REACH_TENTHS`); goal rewards `WORLDCUP_GOAL_REWARD_LUNA` / `_DAILY_CAP_PER_WALLET` / `_DAILY_BUDGET_NIM` / `_MIN_PLAYERS`; 1v1 Matches `WORLDCUP_MATCH_DURATION_MS` / `_GOLDEN_GOAL_CAP_MS` / `WORLDCUP_CHALLENGE_TIMEOUT_MS` / `WORLDCUP_MATCH_RESULT_LINGER_MS` / `WORLDCUP_MATCH_SPECTATOR_CAP`.
+- [CHANGE] **Keeper retuned to be beatable + two new tuning knobs.** Default goalie difficulty lowered so corner shots reliably score: `WORLDCUP_GOALIE_MOVE_SPEED` default **4 → 2.5**, `WORLDCUP_GOALIE_REACTION_MS` default **180 → 260**, plus new `WORLDCUP_GOALIE_COVERAGE_PCT` (default **60** — % of the goal mouth the keeper patrols; below 100 leaves a permanent corner gap) and `WORLDCUP_GOALIE_KICK_REACH_TENTHS` (default **3** — kicker-mode clear reach, shorter than the player's 0.6). Affects the public field and 1v1 pitches; raise these to make the keeper tougher. Reward guardrails are unchanged — watch the daily payout report, since easier scoring nudges payout volume (still bounded by the per-wallet cap and global budget).
+- [OPS] **Goal rewards spend real NIM.** Scoring on the public field queues a payout (default 0.25 NIM) through the **existing** payout queue — keep the payout wallet funded. Layered guards bound spend: per-wallet daily cap, global daily budget, and a "Contested" ≥2-player requirement. New deletable per-UTC-day counter file `server/data/worldcup-goal-rewards.json` (override `WORLDCUP_GOAL_REWARDS_FILE`); resets forward-only on day rollover. No new ports/services.
+- [OPS] **1v1 Match Pitches are ephemeral.** Created on demand when a challenge is accepted and torn down when empty — never persisted, no new files. Match goals pay **no** NIM.
+- [OPS] **New tuning env (Match Polish, all defaulted, in `server/.env.example`):** `WORLDCUP_MATCH_COUNTDOWN_MS` (handshake + 3-2-1 kickoff countdown before teleport, default 3000; set `0` for instant), `WORLDCUP_FIELD_OUTFIELD_MARGIN` (world units a player may step past the pitch edges, default 1.0; only widens player movement, the ball's walls are unchanged), and `WORLDCUP_MATCH_GOAL_RESET_MS` (after a non-final 1v1 goal, how long both players are reset to spawns + frozen for the kickoff countdown while the match clock pauses, default 5000; set `0` to disable the reset). Spectator capacity continues to use the existing `WORLDCUP_MATCH_SPECTATOR_CAP`.
+- [OPS] **Spectating adds no infra.** Spectate portals and the stands run inside the existing game server — no new files, ports, services, or compose profiles.
+- [OPS] **No new ports, services, or compose profiles.** Runs inside the existing game server.
+- [OPS] **Deprecation/turn-down:** flip `WORLDCUP_ENABLED=0` to hide it; full removal is deleting `server/src/worldcup/`, `client/src/worldcup/`, `worldcup/issues/`, and the `worldcup`-tagged hook lines (grep `worldcup`). `worldcup-scores.json` is retained as the final archive.
