@@ -54,6 +54,14 @@ roster — the distinct countries of players currently on the pitch — falling 
 flag when nobody has picked.
 _Avoid_: crowd colors, fans, supporters.
 
+**La Ola**:
+The Mexican wave: a single crest of standing, hands-up (🙌) spectators that travels
+continuously around the whole stadium ring, looping a few times before petering out. Fires
+on a slow ambient timer during calm and is distinct from the everyday ambient cheer (a
+quick per-stand jump ripple) and the goal eruption (whole crowd jumps at once). A goal
+always cancels an in-progress La Ola.
+_Avoid_: the wave (ambiguous with the ambient cheer), stadium wave, ripple.
+
 **Outfield Margin**:
 The small distance a player may step past the pitch edges so they can get fully behind a ball
 pinned against a wall, rather than bouncing it off. Only player movement is widened; the ball's

@@ -8,6 +8,9 @@ import {
   getPendingPayoutQueueTotals,
 } from "./nimPayout/queue.js";
 import { isNimPayoutSenderConfigured } from "./nimPayout/sender.js";
+// Seasonal World Cup goal recap (second Telegram message); returns null when the feature is
+// off or the day had no goals. Grep "worldcup" to find the deletable hooks.
+import { buildWorldcupGoalDayMessage } from "./worldcup/goalDayReport.js";
 
 const DAY_MS = 86_400_000;
 /** Delay after UTC midnight before sending so late `session_end` writes for the day land first. */
@@ -203,17 +206,30 @@ export async function buildStatsReport(
   };
 }
 
-/** Build the aggregate + formatted message for the UTC day starting at `dayStartMs`. */
+/**
+ * Build the aggregate + formatted message for the UTC day starting at `dayStartMs`.
+ * `worldcupMessage` is the optional seasonal goal recap (second Telegram message); it is null
+ * when the World Cup feature is off or the day had no credited goals.
+ */
 export async function buildDailyStatsReport(
   dayStartMs: number,
   pending?: PendingPayoutSummaryForReport
-): Promise<{ aggregate: DailyStatsAggregate; message: string }> {
-  return buildStatsReport(
+): Promise<{
+  aggregate: DailyStatsAggregate;
+  message: string;
+  worldcupMessage: string | null;
+}> {
+  const dayKey = new Date(dayStartMs).toISOString().slice(0, 10);
+  const report = await buildStatsReport(
     dayStartMs,
     dayStartMs + DAY_MS,
-    `Daily stats for ${new Date(dayStartMs).toISOString().slice(0, 10)} (UTC)`,
+    `Daily stats for ${dayKey} (UTC)`,
     pending
   );
+  return {
+    ...report,
+    worldcupMessage: buildWorldcupGoalDayMessage(dayKey, `Match day for ${dayKey} (UTC)`),
+  };
 }
 
 /** Build the report for the rolling last 24 hours ending at `endMs` (defaults to now). */
@@ -228,13 +244,23 @@ export async function buildRolling24hReport(
   );
 }
 
-/** Build and send the report for the UTC day starting at `dayStartMs`. Returns the report. */
+/**
+ * Build and send the report for the UTC day starting at `dayStartMs`. Returns the report.
+ * Sends the seasonal World Cup goal recap as a second message when present.
+ */
 export async function sendDailyStatsReport(
   dayStartMs: number,
   pending?: PendingPayoutSummaryForReport
-): Promise<{ aggregate: DailyStatsAggregate; message: string }> {
+): Promise<{
+  aggregate: DailyStatsAggregate;
+  message: string;
+  worldcupMessage: string | null;
+}> {
   const report = await buildDailyStatsReport(dayStartMs, pending);
   await sendTelegramPlainText(report.message, LOG_TAG, statsChatIdOverride());
+  if (report.worldcupMessage) {
+    await sendTelegramPlainText(report.worldcupMessage, LOG_TAG, statsChatIdOverride());
+  }
   return report;
 }
 

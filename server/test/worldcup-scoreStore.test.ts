@@ -10,6 +10,7 @@ process.env.WORLDCUP_SCORES_FILE = path.join(TMP, "scores.json");
 
 const {
   __resetScoresForTests,
+  getDayReport,
   getLeaderboard,
   getPlayerCountry,
   getPreviousDayWinner,
@@ -132,4 +133,45 @@ test("a quiet day does not blank the previous champion flag", () => {
   // Another empty day rolls over with no goals — champion stays DE.
   rolloverIfNeeded(Date.now() + 48 * 60 * 60 * 1000);
   assert.equal(getPreviousDayWinner()?.country, "DE");
+});
+
+test("getDayReport summarizes the live day's goals, podium, and MVP", () => {
+  reset();
+  setCountry("NQ H1", "BR", "Pelé");
+  setCountry("NQ H2", "FR", "Zidane");
+  recordGoal("NQ H1", "Pelé"); // BR, Pelé 1
+  recordGoal("NQ H1", "Pelé"); // BR, Pelé 2
+  recordGoal("NQ H2", "Zidane"); // FR, Zidane 1
+  const rep = getDayReport(utcDayKey());
+  assert.equal(rep?.day, utcDayKey());
+  assert.equal(rep?.totalGoals, 3);
+  assert.equal(rep?.winner, "BR");
+  assert.equal(rep?.winnerGoals, 2);
+  assert.equal(rep?.countries[0]?.code, "BR");
+  assert.equal(rep?.players[0]?.name, "Pelé"); // MVP = top scorer
+  assert.equal(rep?.players[0]?.goals, 2);
+});
+
+test("getDayReport counts no-country (pending) goals in the total", () => {
+  reset();
+  recordGoal("NQ I1", "Anon"); // no country yet -> pending
+  const rep = getDayReport(utcDayKey());
+  assert.equal(rep?.totalGoals, 1);
+  assert.equal(rep?.winner, null);
+  assert.equal(rep?.countries.length, 0);
+  assert.equal(rep?.players[0]?.country, null);
+  assert.equal(rep?.players[0]?.goals, 1);
+});
+
+test("getDayReport reads an archived day and is null for an unknown day", () => {
+  reset();
+  setCountry("NQ J1", "AR", "Maradona");
+  recordGoal("NQ J1", "Maradona");
+  const dayKey = utcDayKey();
+  rolloverIfNeeded(Date.now() + 24 * 60 * 60 * 1000); // archive the AR day
+  const rep = getDayReport(dayKey);
+  assert.equal(rep?.totalGoals, 1);
+  assert.equal(rep?.winner, "AR");
+  assert.equal(rep?.players[0]?.name, "Maradona");
+  assert.equal(getDayReport("1999-01-01"), null);
 });

@@ -47,6 +47,10 @@ import { WorldcupScoreboard } from "./worldcup/scoreboard.js";
 import { WorldcupMatchHud } from "./worldcup/matchHud.js";
 import { WorldcupMatchCountdown } from "./worldcup/matchCountdown.js";
 import { WorldcupJoystick } from "./worldcup/joystick.js";
+// Country picker + flag emoji are reused for the profile flag / Flag Emote. They are pure UI
+// (no season gate), so they are imported unconditionally even when the World Cup is off.
+import { flagEmoji } from "./worldcup/countries.js";
+import { showCountryPickerModal } from "./worldcup/countryPickerModal.js";
 import { isOrthogonallyAdjacentToFloorTile, snapFloorTile } from "./game/grid.js";
 import { remotePlayerIsNpc } from "./remotePlayerNpc.js";
 import {
@@ -457,27 +461,34 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   let perfPingSeq = 0;
   let perfPingInterval: ReturnType<typeof setInterval> | null = null;
 
-  function syncPerfPingInterval(enabled: boolean): void {
-    if (enabled) {
+  /**
+   * RTT probes feed both the perf-HUD latency readout (brand-modal easter egg) and the
+   * debug-panel latency graph (profile identicon toggle). Either consumer keeps the 1s
+   * ping running; the 1s cadence is fine enough to surface periodic stalls (e.g. ~30s
+   * payout spikes) in the graph.
+   */
+  let perfHudPingActive = false;
+  let debugPanelPingActive = false;
+
+  function sendPerfPingOnce(): void {
+    const s = ws;
+    if (!s || s.readyState !== WebSocket.OPEN) return;
+    const id = ++perfPingSeq;
+    perfPingSentAt.set(id, performance.now());
+    sendClientPing(s, id);
+    while (perfPingSentAt.size > 8) {
+      const k = perfPingSentAt.keys().next().value;
+      if (k === undefined) break;
+      perfPingSentAt.delete(k);
+    }
+  }
+
+  function syncPerfPingInterval(): void {
+    const want = perfHudPingActive || debugPanelPingActive;
+    if (want) {
       if (perfPingInterval !== null) return;
-      const s0 = ws;
-      if (s0 && s0.readyState === WebSocket.OPEN) {
-        const id0 = ++perfPingSeq;
-        perfPingSentAt.set(id0, performance.now());
-        sendClientPing(s0, id0);
-      }
-      perfPingInterval = setInterval(() => {
-        const s = ws;
-        if (!s || s.readyState !== WebSocket.OPEN) return;
-        const id = ++perfPingSeq;
-        perfPingSentAt.set(id, performance.now());
-        sendClientPing(s, id);
-        while (perfPingSentAt.size > 8) {
-          const k = perfPingSentAt.keys().next().value;
-          if (k === undefined) break;
-          perfPingSentAt.delete(k);
-        }
-      }, 2000);
+      sendPerfPingOnce();
+      perfPingInterval = setInterval(sendPerfPingOnce, 1000);
     } else {
       if (perfPingInterval !== null) {
         clearInterval(perfPingInterval);
@@ -602,10 +613,41 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       syncAwayPresenceToServer();
     },
     onPerfHudEnabledChange: (enabled) => {
-      syncPerfPingInterval(enabled);
+      perfHudPingActive = enabled;
+      syncPerfPingInterval();
     },
+    onDebugPanelVisibleChange: (visible) => {
+      debugPanelPingActive = visible;
+      syncPerfPingInterval();
+    },
+    // Render a country code as its flag emoji for the profile card + Flag Emote.
+    flagEmojiFor: (code) => flagEmoji(code),
+    // Self clicked their profile flag chip → open the country picker.
+    onEditOwnCountry: () => openCountryPickerForSelf(),
   });
   hud.setLoadingVisible(true, { blackout: true });
+  // `?debug` opens the panel at load without firing onDebugPanelVisibleChange; start pings.
+  if (hud.isDebugPanelVisible()) {
+    debugPanelPingActive = true;
+    syncPerfPingInterval();
+  }
+  // The player's single chosen country (reused from the World Cup). Drives the profile flag
+  // chip and the Flag Emote on the player's own Emote Wheel; works regardless of the season.
+  let selfCountry: string | null = null;
+  function applySelfCountry(code: string | null): void {
+    selfCountry = code;
+    hud.setSelfCountry(code);
+  }
+  function openCountryPickerForSelf(): void {
+    showCountryPickerModal({
+      currentCode: selfCountry,
+      dismissable: true,
+      onPick: (code) => {
+        if (ws) sendSetCountry(ws, code);
+        applySelfCountry(code);
+      },
+    });
+  }
   if (isNimiqPayWebViewHost()) {
     scheduleNimiqPayLayoutResync();
   }
@@ -3682,7 +3724,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       const t0 = perfPingSentAt.get(msg.id);
       if (t0 !== undefined) {
         perfPingSentAt.delete(msg.id);
-        hud.setPerfHudLatencyMs(performance.now() - t0);
+        const rttMs = performance.now() - t0;
+        hud.setPerfHudLatencyMs(rttMs);
+        hud.pushLatencySample(rttMs);
       }
       return;
     }
@@ -3946,6 +3990,9 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       game.setVoxelTextsForRoom(msg.roomId, msg.voxelTexts ?? []);
       // worldcup: render any balls present in this room
       game.applyWorldcupBalls(msg.balls ?? []);
+      // Self country is sent in every room (not just the field) so the profile flag chip and
+      // Flag Emote reflect it everywhere; the scoreboard handles its own field-only display.
+      applySelfCountry(msg.worldcupSelfCountry ?? null);
       if (worldcupScoreboard) {
         const inField = msg.roomId === WORLDCUP_FIELD_ROOM_ID;
         worldcupScoreboard.setVisible(inField);
@@ -4326,6 +4373,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       return;
     }
     if (msg.type === "worldcupLeaderboard") {
+      applySelfCountry(msg.selfCountry);
       if (worldcupScoreboard) {
         worldcupScoreboard.setSelfCountry(msg.selfCountry);
         worldcupScoreboard.setLeaderboard(msg.topCountries);

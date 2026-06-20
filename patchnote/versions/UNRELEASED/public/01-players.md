@@ -5,10 +5,4 @@
 
 ---
 
-### World Cup soccer (seasonal)
-
-- [NEW] **Know if your goal paid off.** After you score on the Free Play Field, a short note appears under the GOAL banner — just for you — showing how much NIM you earned, or a friendly note if you've hit your daily cap or today's pool is spent.
-- [CHANGE] **Scoreboard out of the way.** The country standings panel now sits neatly below the top bar (with room for **Return Home**) instead of covering the header, login-streak marquee, or that button.
-- [FIX] **"Accept 1v1" only when it matters.** Right-clicking another player no longer always shows **Accept 1v1 challenge** — it appears only when they've actually raised a challenge.
-- [FIX] **Leave a match by changing rooms.** Walking through a door to another room while you're in a 1v1 now forfeits the match to your opponent and takes you where you meant to go, instead of silently blocking the move.
-- [FIX] **Challenges stay in the room.** Raising a 1v1 challenge no longer follows you into a different room after you teleport away.
+_(Draft — not published.)_

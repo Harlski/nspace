@@ -14,8 +14,49 @@ let clientPromise: Promise<Client> | null = null;
  */
 let nimiqMutexChain: Promise<void> = Promise.resolve();
 
-function withNimiqMutex<T>(fn: () => Promise<T>): Promise<T> {
-  const next = nimiqMutexChain.then(() => fn());
+/**
+ * Log a `[nim-mutex]` line whenever a critical section *waits* for or *holds* the shared
+ * Nimiq mutex longer than this many ms. This is the cheapest always-on way to confirm the
+ * suspicion that payout/balance work serializes and stalls other Nimiq users (and, via the
+ * event loop, the whole process). Set `NIM_MUTEX_LOG_MS=0` to log every acquisition.
+ */
+const NIM_MUTEX_LOG_MS = Math.max(
+  0,
+  Number(process.env.NIM_MUTEX_LOG_MS ?? 200)
+);
+
+let nimiqMutexActiveLabel: string | null = null;
+
+/**
+ * Run `fn` while holding the shared Nimiq mutex. `label` identifies the critical section in
+ * `[nim-mutex]` logs (e.g. `payout-send`, `balance`, `payout-poll`).
+ */
+function withNimiqMutex<T>(fn: () => Promise<T>, label = "nimiq"): Promise<T> {
+  const queuedAt = Date.now();
+  const waitingBehind = nimiqMutexActiveLabel;
+  const next = nimiqMutexChain.then(async () => {
+    const waitMs = Date.now() - queuedAt;
+    const startedAt = Date.now();
+    nimiqMutexActiveLabel = label;
+    try {
+      return await fn();
+    } finally {
+      const holdMs = Date.now() - startedAt;
+      nimiqMutexActiveLabel = null;
+      if (
+        waitMs >= NIM_MUTEX_LOG_MS ||
+        holdMs >= NIM_MUTEX_LOG_MS
+      ) {
+        const behind =
+          waitMs >= NIM_MUTEX_LOG_MS && waitingBehind
+            ? ` behind=${waitingBehind}`
+            : "";
+        console.log(
+          `[nim-mutex] ${label} waitMs=${waitMs} holdMs=${holdMs}${behind} at=${new Date(startedAt).toISOString()}`
+        );
+      }
+    }
+  });
   nimiqMutexChain = next.then(
     () => undefined,
     () => undefined
@@ -137,7 +178,7 @@ function fetchBalanceLunaThroughMutex(): Promise<bigint> {
     const luna = BigInt(account.balance);
     balanceCache = { luna, at: Date.now() };
     return luna;
-  }).finally(() => {
+  }, "balance").finally(() => {
     if (balanceFetchCoalesced === p) balanceFetchCoalesced = null;
   });
   balanceFetchCoalesced = p;
@@ -229,7 +270,7 @@ export async function sendNimPayoutTransaction(
       state: String(details.state),
     });
     return { hash: details.transactionHash, initialDetails: details };
-  });
+  }, "payout-send");
 
   const deadline =
     Date.now() + Number(process.env.NIM_TX_CONFIRM_TIMEOUT_MS ?? 120_000);
@@ -260,7 +301,7 @@ export async function sendNimPayoutTransaction(
       });
       const client = await getClient();
       return client.getTransaction(hash);
-    });
+    }, "payout-poll");
     pollN += 1;
     payoutTxTrace("poll_got_tx", trace, {
       poll: pollN,

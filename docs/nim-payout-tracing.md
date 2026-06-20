@@ -36,6 +36,24 @@ Restart the API process. Logs are prefixed with **`[nim-payout-tx]`**.
 
 Unset `NIM_PAYOUT_TX_TRACE` or set it to anything other than `1`.
 
+## Always-on contention logs (no `NIM_PAYOUT_TX_TRACE` needed)
+
+For diagnosing **periodic stalls** (e.g. the ~30s lag that lines up with payouts in docker logs) without enabling the full per-send trace, two low-noise logs are on by default:
+
+| Log | Source | Meaning |
+|-----|--------|---------|
+| `[nim-mutex] <label> waitMs=… holdMs=… [behind=…] at=…` | `server/src/nimPayout/sender.ts` | A Nimiq critical section **waited for** (`waitMs`) or **held** (`holdMs`) the shared Nimiq mutex past the threshold. `label` is `payout-send`, `balance`, or `payout-poll`; `behind` names the section that was holding it. High `waitMs` on `balance` with `behind=payout-send` is direct evidence payouts are stalling balance reads. |
+| `[event-loop] stall <ms> ending at <ISO>` | `server/src/adminSystemMonitor.ts` | The Node event loop was **blocked** for at least the threshold. Blocking affects *all* WebSocket traffic, not just Nimiq users. Match the timestamp against `[nim-payout] Sent` / `[nim-mutex]` lines. |
+
+Thresholds (set to `0` to disable, except `NIM_MUTEX_LOG_MS=0` which logs **every** acquisition):
+
+```bash
+NIM_MUTEX_LOG_MS=200          # log mutex wait/hold >= 200 ms
+EVENT_LOOP_STALL_LOG_MS=50    # log event-loop stalls >= 50 ms (0 disables)
+```
+
+On the **client**, the debug stats panel (click your own identicon in your profile) now shows a **server round-trip-time graph** sampled once per second, so periodic spikes are visible in-game while you watch the docker logs above.
+
 ## Related code
 
 | Area | Location |

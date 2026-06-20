@@ -8,7 +8,7 @@
  * To deprecate, delete this file and the `worldcup`-tagged hooks in `main.ts`.
  */
 import { identiconDataUrl } from "../game/identiconTexture.js";
-import { flagEmoji } from "./countries.js";
+import { createFlagImg } from "../ui/flags.js";
 
 export interface MatchCountdownView {
   durationMs: number;
@@ -114,7 +114,8 @@ export class WorldcupMatchCountdown {
   }
 
   private setFlag(el: HTMLSpanElement, code: string | null): void {
-    el.textContent = code ? flagEmoji(code) : "\u{1F3F3}";
+    const img = code ? createFlagImg(code) : null;
+    el.replaceChildren(img ?? document.createTextNode("\u{1F3F3}"));
   }
 
   private async setIdent(el: HTMLImageElement, address: string): Promise<void> {

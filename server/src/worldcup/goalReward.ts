@@ -12,6 +12,7 @@
  * Persistence is a small, deletable JSON (`worldcup-goal-rewards.json`), reset on UTC-day
  * rollover. This is seasonal, transitional data — acceptable per THE-LARGER-SYSTEM.
  */
+import { randomInt } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,8 +32,10 @@ function rewardsFile(): string {
 
 /** Tunable thresholds (resolved from env in config; passed in so the logic stays pure). */
 export interface GoalRewardConfig {
-  /** Payout per Paid Goal (luna). */
-  rewardLuna: bigint;
+  /** Minimum payout per Paid Goal (luna). */
+  minRewardLuna: bigint;
+  /** Maximum payout per Paid Goal (luna). */
+  maxRewardLuna: bigint;
   /** Per-wallet Paid Goals per UTC day. */
   dailyCapPerWallet: number;
   /** Global goal-reward budget per UTC day (luna). */
@@ -53,6 +56,8 @@ export interface GoalRewardInput {
   walletPaidCount: number;
   /** Global reward luna already committed today. */
   budgetSpentLuna: bigint;
+  /** Rolled payout for this goal (luna); set by `decideAndCommitGoalReward`. */
+  proposedRewardLuna: bigint;
 }
 
 export type GoalRewardReason =
@@ -90,6 +95,23 @@ export function goalRewardClaimId(
 }
 
 /**
+ * Uniform random payout between min and max (inclusive), capped by the remaining daily
+ * budget. Returns null when the budget cannot cover at least the minimum payout.
+ */
+export function pickGoalRewardLuna(
+  cfg: GoalRewardConfig,
+  budgetSpentLuna: bigint
+): bigint | null {
+  const remaining = cfg.dailyBudgetLuna - budgetSpentLuna;
+  if (remaining < cfg.minRewardLuna) return null;
+  const cap =
+    remaining < cfg.maxRewardLuna ? remaining : cfg.maxRewardLuna;
+  const min = Number(cfg.minRewardLuna);
+  const max = Number(cap);
+  return BigInt(randomInt(min, max + 1));
+}
+
+/**
  * Pure reward decision. Order of guards: a goal must have a real credited scorer, be
  * Contested, be under the per-wallet daily cap, and fit inside the remaining global budget.
  * Goals that fail any guard still count for the leaderboard upstream — only the payout
@@ -108,7 +130,7 @@ export function evaluateGoalReward(
   if (input.walletPaidCount >= cfg.dailyCapPerWallet) {
     return { pay: false, reason: "wallet_cap" };
   }
-  if (input.budgetSpentLuna + cfg.rewardLuna > cfg.dailyBudgetLuna) {
+  if (input.budgetSpentLuna + input.proposedRewardLuna > cfg.dailyBudgetLuna) {
     return { pay: false, reason: "budget_exhausted" };
   }
   const wallet = normalizeWallet(input.scorerWallet);
@@ -116,7 +138,7 @@ export function evaluateGoalReward(
     pay: true,
     reason: "ok",
     claimId: goalRewardClaimId(wallet, input.utcDay, input.walletPaidCount),
-    amountLuna: cfg.rewardLuna,
+    amountLuna: input.proposedRewardLuna,
     recipientWallet: wallet,
   };
 }
@@ -200,13 +222,28 @@ export function decideAndCommitGoalReward(
   const utcDay = state.day;
   const wallet = args.scorerWallet ? normalizeWallet(args.scorerWallet) : null;
   const walletPaidCount = wallet ? (state.walletPaid[wallet] ?? 0) : 0;
+  const budgetSpentLuna = BigInt(state.budgetSpentLuna);
+  if (!wallet) {
+    return { pay: false, reason: "no_scorer" };
+  }
+  if (args.distinctPlayersInField < cfg.minPlayers) {
+    return { pay: false, reason: "not_contested" };
+  }
+  if (walletPaidCount >= cfg.dailyCapPerWallet) {
+    return { pay: false, reason: "wallet_cap" };
+  }
+  const proposedRewardLuna = pickGoalRewardLuna(cfg, budgetSpentLuna);
+  if (!proposedRewardLuna) {
+    return { pay: false, reason: "budget_exhausted" };
+  }
   const decision = evaluateGoalReward(
     {
       scorerWallet: wallet,
       distinctPlayersInField: args.distinctPlayersInField,
       utcDay,
       walletPaidCount,
-      budgetSpentLuna: BigInt(state.budgetSpentLuna),
+      budgetSpentLuna,
+      proposedRewardLuna,
     },
     cfg
   );

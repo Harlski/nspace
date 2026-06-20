@@ -5,4 +5,6 @@
 
 ---
 
-- Nothing to configure for this release — no new env vars, migrations, or deploy steps. Ship the updated client and server together so goal-reward feedback and match-forfeit behavior stay in sync.
+_(Draft — not published.)_
+
+- _Deploy / config deltas vs previous patch-notes version._

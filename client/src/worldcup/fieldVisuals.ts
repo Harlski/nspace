@@ -10,6 +10,11 @@ import * as THREE from "three";
 
 import { loadIdenticonTexture } from "../game/identiconTexture.js";
 import { flagEmoji } from "./countries.js";
+import {
+  codeFromFlagEmoji,
+  getFlagImageIfReady,
+  loadFlagImage,
+} from "../ui/flags.js";
 
 type Bounds = { minX: number; maxX: number; minZ: number; maxZ: number };
 
@@ -510,13 +515,34 @@ function makeEmojiTexture(emoji: string): THREE.CanvasTexture {
   canvas.width = s;
   canvas.height = s;
   const ctx = canvas.getContext("2d")!;
-  ctx.clearRect(0, 0, s, s);
-  ctx.font = "48px system-ui, 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(emoji, s / 2, s / 2 + 2);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+
+  const drawText = (): void => {
+    ctx.clearRect(0, 0, s, s);
+    ctx.font = "48px system-ui, 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(emoji, s / 2, s / 2 + 2);
+    tex.needsUpdate = true;
+  };
+  const drawFlag = (img: HTMLImageElement): void => {
+    ctx.clearRect(0, 0, s, s);
+    const pad = 3;
+    ctx.drawImage(img, pad, pad, s - pad * 2, s - pad * 2);
+    tex.needsUpdate = true;
+  };
+
+  // Country flags become Twemoji images (Windows shows them as "AT" otherwise); other emoji
+  // (cheer reactions) keep the system emoji font. Flag images load async, so redraw on ready.
+  const code = codeFromFlagEmoji(emoji);
+  if (code) {
+    const ready = getFlagImageIfReady(code);
+    if (ready) drawFlag(ready);
+    else void loadFlagImage(code).then((img) => img && drawFlag(img));
+  } else {
+    drawText();
+  }
   tex.needsUpdate = true;
   emojiTexCache.set(emoji, tex);
   return tex;
@@ -529,6 +555,9 @@ type Seat = {
   phase: number;
   /** wave ordering 0..1 along the stand so cheers ripple. */
   waveT: number;
+  /** Continuous 0..1 position around the whole stadium ring, so a single la-ola crest can
+   *  travel through all four stands as one loop (unlike per-stand {@link waveT}). */
+  ringT: number;
   /** Which pitch half this seat sits on (west = "a", east = "b"); drives the 1v1 split. */
   side: "a" | "b";
   /** Flag emoji this seat currently waves, or null. Assigned by the set*Flags methods. */
@@ -544,6 +573,21 @@ type EmoteBubble = {
 };
 
 const CHEER_EMOJIS = ["\u26BD", "\uD83C\uDF89", "\u2764\uFE0F", "\uD83D\uDC4F", "\uD83D\uDE4C"];
+
+// --- La Ola (Mexican wave) tuning ---------------------------------------------
+/** Raising-hands emoji that marks the crest as it travels around the ring. */
+const OLA_EMOJI = "\uD83D\uDE4C";
+/** Half-width of the standing crest as a fraction of the ring (a narrow band). */
+const OLA_HALF_WIDTH = 0.06;
+/** Peak lift (world units) of a spectator at the very centre of the crest. */
+const OLA_LIFT = 0.42;
+/** Seconds for the crest to travel one full lap around the stadium. */
+const OLA_LAP_SECONDS = 3;
+/** Laps the crest makes before petering out (random within range, inclusive). */
+const OLA_LAPS_MIN = 2;
+const OLA_LAPS_MAX = 3;
+/** Throttle (seconds) between bursts of hands-up emoji along the crest. */
+const OLA_HAND_INTERVAL = 0.1;
 
 /** Center height of a seated spectator identicon above its seat. */
 const CROWD_AVATAR_CENTER_Y = 0.58;
@@ -573,6 +617,20 @@ export class WorldcupCrowd {
   /** Decaying cheer envelopes: ambient wave + goal eruption. */
   private waveEnv = 0;
   private goalEnv = 0;
+  /** La Ola: countdown to the next ambient Mexican wave. */
+  private olaTimer = 18 + Math.random() * 30;
+  /** True while a la-ola crest is sweeping the stands. */
+  private olaActive = false;
+  /** Crest start position on the ring (0..1) for the current la ola. */
+  private olaStart = 0;
+  /** Travel direction of the crest (+1 / -1), randomized per la ola. */
+  private olaDir = 1;
+  /** Laps completed so far this la ola (advances toward {@link olaLapsTotal}). */
+  private olaProgress = 0;
+  /** Laps this la ola will make before stopping. */
+  private olaLapsTotal = OLA_LAPS_MIN;
+  /** Throttle accumulator for spawning hands-up emoji along the crest. */
+  private olaHandTimer = 0;
   /** True while at least one seat is waving a flag (gates the banner sway animation). */
   private hasAnyFlag = false;
   private disposed = false;
@@ -730,6 +788,7 @@ export class WorldcupCrowd {
             feetY,
             phase: Math.random() * Math.PI * 2,
             waveT: (x - bounds.minX) / lengthX,
+            ringT: WorldcupCrowd.ringPos(x, z, cx, cz),
             side: x < cx ? "a" : "b",
             flag: null,
           });
@@ -749,6 +808,7 @@ export class WorldcupCrowd {
             feetY,
             phase: Math.random() * Math.PI * 2,
             waveT: (z - bounds.minZ) / lengthZ,
+            ringT: WorldcupCrowd.ringPos(x, z, cx, cz),
             side: x < cx ? "a" : "b",
             flag: null,
           });
@@ -756,6 +816,19 @@ export class WorldcupCrowd {
       }
     }
     return seats;
+  }
+
+  /** Continuous 0..1 angular position of a seat around the stadium ring (atan2 about the
+   *  pitch centre). Good enough as a loop parameter for the la-ola crest even though the
+   *  stands are rectangular rather than circular. */
+  private static ringPos(x: number, z: number, cx: number, cz: number): number {
+    return (Math.atan2(z - cz, x - cx) / (Math.PI * 2) + 1) % 1;
+  }
+
+  /** Shortest distance between two 0..1 ring positions, accounting for wraparound. */
+  private static ringDist(a: number, b: number): number {
+    const d = Math.abs(a - b);
+    return Math.min(d, 1 - d);
   }
 
   /** A varied, non-wallet seed string so each pooled identicon looks distinct. */
@@ -766,8 +839,58 @@ export class WorldcupCrowd {
   /** Trigger a synchronized celebration. intensity ~1 = goal eruption. */
   cheer(intensity = 1): void {
     this.goalEnv = Math.max(this.goalEnv, Math.min(1.2, intensity));
+    // A goal is the bigger moment: abandon any in-progress la ola so the whole crowd
+    // can erupt together, and hold the next one off until things calm down.
+    if (this.olaActive) {
+      this.olaActive = false;
+      this.scheduleNextOla();
+    }
     const count = Math.round(8 + intensity * 10);
     this.spawnBubbles(count, intensity >= 1);
+  }
+
+  /** Begin a Mexican wave: a single hands-up crest that loops the stadium a few times. */
+  private startOla(): void {
+    this.olaActive = true;
+    this.olaStart = Math.random();
+    this.olaDir = Math.random() < 0.5 ? 1 : -1;
+    this.olaProgress = 0;
+    this.olaLapsTotal =
+      OLA_LAPS_MIN + Math.floor(Math.random() * (OLA_LAPS_MAX - OLA_LAPS_MIN + 1));
+    this.olaHandTimer = 0;
+  }
+
+  /** Arm the slow ambient timer for the next la ola. */
+  private scheduleNextOla(): void {
+    this.olaTimer = 45 + Math.random() * 45;
+  }
+
+  /** Pop a couple of hands-up emoji above seats currently inside the crest band. */
+  private spawnOlaHands(crest: number): void {
+    const candidates: Seat[] = [];
+    for (const s of this.seats) {
+      if (WorldcupCrowd.ringDist(s.ringT, crest) < OLA_HALF_WIDTH) candidates.push(s);
+    }
+    if (candidates.length === 0) return;
+    let popped = 0;
+    for (const b of this.bubbles) {
+      if (popped >= 2) break;
+      if (b.life > 0) continue;
+      const seat = candidates[(Math.random() * candidates.length) | 0]!;
+      b.mat.map = makeEmojiTexture(OLA_EMOJI);
+      b.mat.needsUpdate = true;
+      b.sprite.position.set(
+        seat.x + (Math.random() - 0.5) * 0.3,
+        seat.feetY + 0.95,
+        seat.z
+      );
+      b.maxLife = 0.9 + Math.random() * 0.4;
+      b.life = b.maxLife;
+      b.vy = 0.7 + Math.random() * 0.4;
+      b.sprite.visible = true;
+      b.mat.opacity = 1;
+      popped += 1;
+    }
   }
 
   private spawnBubbles(count: number, goal: boolean): void {
@@ -801,6 +924,42 @@ export class WorldcupCrowd {
     }
   }
 
+  /**
+   * Advance the la-ola state machine. Returns the current crest position on the ring (or
+   * null when no wave is running) and a 0..1 fade that eases the crest in at the start and
+   * out as it peters out on the final lap.
+   */
+  private updateOla(dt: number): { crest: number | null; fade: number } {
+    // Start a new wave only during calm, on the slow ambient timer.
+    if (!this.olaActive) {
+      this.olaTimer -= dt;
+      if (this.olaTimer <= 0 && this.goalEnv <= 0.01) {
+        this.startOla();
+      } else {
+        return { crest: null, fade: 0 };
+      }
+    }
+
+    this.olaProgress += dt / OLA_LAP_SECONDS;
+    if (this.olaProgress >= this.olaLapsTotal) {
+      this.olaActive = false;
+      this.scheduleNextOla();
+      return { crest: null, fade: 0 };
+    }
+
+    const raw = this.olaStart + this.olaDir * this.olaProgress;
+    const crest = ((raw % 1) + 1) % 1;
+    const remaining = this.olaLapsTotal - this.olaProgress;
+    const fade = Math.max(0, Math.min(1, this.olaProgress / 0.4, remaining / 0.6));
+
+    this.olaHandTimer -= dt;
+    if (this.olaHandTimer <= 0) {
+      this.olaHandTimer = OLA_HAND_INTERVAL;
+      this.spawnOlaHands(crest);
+    }
+    return { crest, fade };
+  }
+
   /** Advance animation. Returns true while anything is moving (keeps the field rendering). */
   update(dt: number): boolean {
     this.t += dt;
@@ -815,6 +974,10 @@ export class WorldcupCrowd {
       this.spawnBubbles(4, false);
     }
 
+    // La Ola: a rarer Mexican wave that fires on a slow timer during calm. A single crest
+    // of standing, hands-up spectators travels around the whole ring a couple of laps.
+    const { crest: olaCrest, fade: olaFade } = this.updateOla(dt);
+
     const env = Math.max(this.waveEnv, this.goalEnv);
     for (const { sprite, seat } of this.avatars) {
       const bob = Math.sin(this.t * 1.8 + seat.phase) * 0.03;
@@ -828,7 +991,16 @@ export class WorldcupCrowd {
         const phase = this.t * 3 - seat.waveT * Math.PI * 4;
         jump = this.waveEnv * 0.32 * Math.max(0, Math.sin(phase));
       }
-      sprite.position.y = seat.feetY + CROWD_AVATAR_CENTER_Y + bob + jump;
+      let olaLift = 0;
+      if (olaCrest !== null) {
+        const d = WorldcupCrowd.ringDist(seat.ringT, olaCrest);
+        if (d < OLA_HALF_WIDTH) {
+          const k = 1 - d / OLA_HALF_WIDTH; // 1 at crest centre -> 0 at the band edge
+          olaLift = OLA_LIFT * olaFade * Math.sin((k * Math.PI) / 2);
+        }
+      }
+      sprite.position.y =
+        seat.feetY + CROWD_AVATAR_CENTER_Y + bob + jump + olaLift;
     }
 
     // Wave the held-up banners (held above the head, gently swaying).

@@ -4,8 +4,9 @@
  * A small fixed panel listing the leading countries, plus a flag button that opens the
  * country picker. Shown only in the field room. Fully self-contained (inline styles).
  */
-import { countryName, flagEmoji } from "./countries.js";
+import { countryName } from "./countries.js";
 import { showCountryPickerModal } from "./countryPickerModal.js";
+import { createFlagImg } from "../ui/flags.js";
 
 export type CountryGoals = { code: string; goals: number };
 
@@ -128,9 +129,15 @@ export class WorldcupScoreboard {
     this.chevronEl.textContent = this.collapsed ? "▸" : "▾";
     if (this.collapsed) {
       const leader = this.topCountries[0] ?? null;
-      this.titleEl.textContent = leader
-        ? `⚽ ${flagEmoji(leader.code)} ${leader.goals}`
-        : "⚽ World Cup";
+      if (leader) {
+        this.titleEl.replaceChildren(
+          document.createTextNode("⚽ "),
+          createFlagImg(leader.code) ?? document.createTextNode(""),
+          document.createTextNode(` ${leader.goals}`)
+        );
+      } else {
+        this.titleEl.textContent = "⚽ World Cup";
+      }
       this.championEl.style.display = "none";
     } else {
       this.titleEl.textContent = "⚽ World Cup";
@@ -192,15 +199,16 @@ export class WorldcupScoreboard {
       return;
     }
     this.championEl.style.display = "block";
-    this.championEl.textContent = `🏆 Yesterday: ${flagEmoji(
-      this.prevWinner
-    )} ${countryName(this.prevWinner)}`;
+    this.championEl.replaceChildren(
+      document.createTextNode("🏆 Yesterday: "),
+      createFlagImg(this.prevWinner) ?? document.createTextNode(""),
+      document.createTextNode(` ${countryName(this.prevWinner)}`)
+    );
   }
 
   private renderFlagButton(): void {
-    this.flagBtn.textContent = this.selfCountry
-      ? flagEmoji(this.selfCountry)
-      : "🏳️";
+    const img = this.selfCountry ? createFlagImg(this.selfCountry) : null;
+    this.flagBtn.replaceChildren(img ?? document.createTextNode("🏳️"));
   }
 
   private renderList(): void {
@@ -222,8 +230,9 @@ export class WorldcupScoreboard {
       r.textContent = `${rank}`;
       r.style.cssText = "width:1.1rem;opacity:0.55;text-align:right;";
       const flag = document.createElement("span");
-      flag.textContent = flagEmoji(c.code);
-      flag.style.cssText = "font-size:1.05rem;line-height:1;";
+      flag.style.cssText =
+        "font-size:1.05rem;line-height:1;display:inline-flex;align-items:center;";
+      flag.appendChild(createFlagImg(c.code) ?? document.createTextNode("🏳️"));
       const name = document.createElement("span");
       name.textContent = countryName(c.code);
       name.style.cssText =
@@ -239,9 +248,14 @@ export class WorldcupScoreboard {
   /** Brief centered celebration banner. */
   flashGoal(scorerName: string | null, country: string | null): void {
     const banner = document.createElement("div");
-    const flag = country ? `${flagEmoji(country)} ` : "";
+    const flagImg = country ? createFlagImg(country) : null;
     const who = scorerName ? ` — ${scorerName}` : "";
-    banner.textContent = `⚽ GOAL! ${flag}${who}`.trim();
+    banner.appendChild(document.createTextNode("⚽ GOAL!"));
+    if (flagImg) {
+      banner.appendChild(document.createTextNode(" "));
+      banner.appendChild(flagImg);
+    }
+    if (who) banner.appendChild(document.createTextNode(who));
     banner.style.cssText =
       "position:fixed;top:18%;left:50%;z-index:120;background:rgba(16,18,22,0.92);color:#fff;border:1px solid rgba(255,255,255,0.18);border-radius:14px;padding:0.7rem 1.2rem;font-size:1.3rem;font-weight:800;letter-spacing:0.02em;box-shadow:0 16px 50px rgba(0,0,0,0.5);pointer-events:none;transition:opacity 0.5s ease, transform 0.5s ease;opacity:0;font-family:inherit;";
     banner.style.transform = "translate(-50%, 8px)";

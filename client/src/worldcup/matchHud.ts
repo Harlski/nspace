@@ -12,7 +12,7 @@
  * delete this file and the `worldcup`-tagged hooks in `main.ts`.
  */
 import { identiconDataUrl } from "../game/identiconTexture.js";
-import { flagEmoji } from "./countries.js";
+import { createFlagImg } from "../ui/flags.js";
 
 export type MatchPhase = "regulation" | "golden" | "ended";
 
@@ -196,7 +196,8 @@ export class WorldcupMatchHud {
   }
 
   private setFlag(el: HTMLSpanElement, code: string | null): void {
-    el.textContent = code ? flagEmoji(code) : "\u{1F3F3}";
+    const img = code ? createFlagImg(code) : null;
+    el.replaceChildren(img ?? document.createTextNode("\u{1F3F3}"));
   }
 
   private setIdent(side: SideEls, address: string): void {
@@ -291,8 +292,13 @@ export class WorldcupMatchHud {
     this.goalTimer = null;
     this.goalHideTimer = null;
 
-    const flag = country ? `${flagEmoji(country)} ` : "";
-    this.goalTitle.textContent = `${flag}GOAL!`;
+    const flagImg = country ? createFlagImg(country) : null;
+    this.goalTitle.replaceChildren();
+    if (flagImg) {
+      this.goalTitle.appendChild(flagImg);
+      this.goalTitle.appendChild(document.createTextNode(" "));
+    }
+    this.goalTitle.appendChild(document.createTextNode("GOAL!"));
     this.goalTitle.style.color = side === this.selfSide(this.lastAAddress, this.lastBAddress)
       ? "#5fe08a"
       : "#f4f5f7";

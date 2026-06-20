@@ -4552,10 +4552,14 @@ function worldcupWelcomeExtras(
   worldcupTopCountries?: Array<{ code: string; goals: number }>;
   worldcupPrevWinnerCountry?: string | null;
 } {
-  if (!WORLDCUP_ENABLED) return {};
-  if (normalizeRoomId(roomId) !== WORLDCUP_FIELD_ROOM_ID) return {};
+  // The self country backs the profile flag + Flag Emote in every room, so it is always
+  // sent. The seasonal scoreboard extras stay gated to the field room while in-season.
+  const selfCountry = worldcupGetPlayerCountry(address);
+  if (!WORLDCUP_ENABLED || normalizeRoomId(roomId) !== WORLDCUP_FIELD_ROOM_ID) {
+    return { worldcupSelfCountry: selfCountry };
+  }
   return {
-    worldcupSelfCountry: worldcupGetPlayerCountry(address),
+    worldcupSelfCountry: selfCountry,
     worldcupTopCountries: worldcupGetTopCountries(8),
     worldcupPrevWinnerCountry: worldcupGetPreviousDayWinner()?.country ?? null,
   };
@@ -4672,7 +4676,8 @@ function maybeQueueGoalReward(
       distinctPlayersInField: worldcupDistinctPlayersInRoom(roomId),
     },
     {
-      rewardLuna: WORLDCUP_GOAL_REWARD.rewardLuna,
+      minRewardLuna: WORLDCUP_GOAL_REWARD.minRewardLuna,
+      maxRewardLuna: WORLDCUP_GOAL_REWARD.maxRewardLuna,
       dailyCapPerWallet: WORLDCUP_GOAL_REWARD.dailyCapPerWallet,
       dailyBudgetLuna: WORLDCUP_GOAL_REWARD.dailyBudgetLuna,
       minPlayers: WORLDCUP_GOAL_REWARD.minPlayers,
@@ -6133,9 +6138,11 @@ export function addClient(
       return;
     }
 
-    // worldcup: player picks/changes their country (seasonal soccer)
+    // Player picks/changes their country. This is the single per-player country: it both
+    // credits World Cup goals (in-season) AND backs the profile flag + Flag Emote, so it is
+    // accepted regardless of WORLDCUP_ENABLED. Only the seasonal leaderboard/crowd extras
+    // are gated behind the season flag.
     if (msg.type === "setCountry") {
-      if (!WORLDCUP_ENABLED) return;
       const code = String((msg as { code?: unknown }).code ?? "")
         .trim()
         .toUpperCase();
@@ -6145,11 +6152,14 @@ export function addClient(
         type: "worldcupLeaderboard",
         roomId: currentRoomId,
         selfCountry: code,
-        topCountries: worldcupGetTopCountries(8),
-        prevWinnerCountry: worldcupGetPreviousDayWinner()?.country ?? null,
+        topCountries: WORLDCUP_ENABLED ? worldcupGetTopCountries(8) : [],
+        prevWinnerCountry: WORLDCUP_ENABLED
+          ? worldcupGetPreviousDayWinner()?.country ?? null
+          : null,
       } satisfies OutMsg);
       // Re-broadcast so others (and the field crowd) pick up this player's new flag.
-      if (worldcupIsFieldLikeRoom(currentRoomId)) broadcastRoomStateFull(currentRoomId);
+      if (WORLDCUP_ENABLED && worldcupIsFieldLikeRoom(currentRoomId))
+        broadcastRoomStateFull(currentRoomId);
       return;
     }
 

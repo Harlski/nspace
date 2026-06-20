@@ -5,6 +5,7 @@
  * self-contained (inline styles) so it can be removed with the rest of `worldcup/`.
  */
 import { COUNTRIES, type Country, countryName, flagEmoji } from "./countries.js";
+import { createFlagImg } from "../ui/flags.js";
 
 export type CountryPickerOptions = {
   currentCode: string | null;
@@ -76,8 +77,9 @@ export function showCountryPickerModal(opts: CountryPickerOptions): void {
     const isCurrent = c.code === current;
     row.style.cssText = `display:flex;align-items:center;gap:0.6rem;width:100%;text-align:left;padding:0.5rem 0.6rem;border:none;border-radius:8px;background:${isCurrent ? "rgba(255,255,255,0.10)" : "transparent"};color:#f4f5f7;font-size:0.95rem;cursor:pointer;`;
     const flag = document.createElement("span");
-    flag.textContent = flagEmoji(c.code);
-    flag.style.cssText = "font-size:1.25rem;line-height:1;";
+    flag.style.cssText =
+      "font-size:1.25rem;line-height:1;display:inline-flex;align-items:center;";
+    flag.appendChild(createFlagImg(c.code) ?? document.createTextNode("🏳️"));
     const name = document.createElement("span");
     name.textContent = c.name;
     name.style.cssText = "flex:1 1 auto;";

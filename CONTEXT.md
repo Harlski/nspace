@@ -23,6 +23,14 @@ The sub-wheel reached by selecting the Emotes Sector — a ring of emote choices
 the old quick-emoji strip.
 _Avoid_: emoji strip, emote menu.
 
+**Flag Emote**:
+The viewer's own chosen country flag, surfaced as the first (top, most prominent) choice on
+the first page of their Emote Wheel so they can broadcast it like any other emote. Present
+only when the viewer has chosen a country; it reuses the single per-player Country (the same
+value the World Cup uses) and is selected from the Country Picker, now also reachable from
+the player's own profile.
+_Avoid_: nationality emote, country emoji.
+
 **Games Wheel**:
 The sub-wheel reached by selecting the Games Sector — choices for starting or joining a
 game (e.g. World Cup: join the Free Play Field, start a Match).

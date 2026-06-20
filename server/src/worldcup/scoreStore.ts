@@ -420,6 +420,66 @@ export function getHistory(limit = 30): DaySummary[] {
     .slice(0, Math.max(1, limit));
 }
 
+/** One UTC day's full goal breakdown (live `today` or an archived day) for reporting. */
+export interface DayGoalReport {
+  day: string;
+  /** Total goals credited to players that day (includes pending / no-country goals). */
+  totalGoals: number;
+  /** Winning country (most goals; ties broken by code), or null when no country scored. */
+  winner: string | null;
+  winnerGoals: number;
+  /** Countries by goals desc (ties by code asc). */
+  countries: CountryRow[];
+  /** Players by goals desc (ties by wallet asc), joined with their persistent profile. */
+  players: PlayerRow[];
+}
+
+/**
+ * Goal breakdown for a specific UTC day (`YYYY-MM-DD`): the live `today` bucket when `dayKey`
+ * is the current day, otherwise the archived `history` entry. Returns null for an unknown day.
+ * Player rows are joined with persistent profiles so names/countries survive the daily reset.
+ * Used by the end-of-day Telegram report; safe to call any time (rolls the day first).
+ */
+export function getDayReport(dayKey: string, limit = 50): DayGoalReport | null {
+  rolloverIfNeeded();
+  const isToday = dayKey === data.day;
+  const arch = isToday ? null : data.history[dayKey];
+  if (!isToday && !arch) return null;
+  const countriesRaw = isToday ? data.today.countries : arch!.countries;
+  const playersRaw = isToday ? data.today.players : arch!.players;
+  const cap = Math.max(1, limit);
+  const countries = Object.entries(countriesRaw)
+    .map(([code, goals]) => ({ code, goals }))
+    .filter((r) => r.goals > 0)
+    .sort((a, b) => b.goals - a.goals || a.code.localeCompare(b.code))
+    .slice(0, cap);
+  const players = Object.entries(playersRaw)
+    .map(([wallet, goals]) => ({
+      wallet,
+      name: data.profiles[wallet]?.name ?? "",
+      country: data.profiles[wallet]?.country ?? null,
+      goals,
+    }))
+    .filter((r) => r.goals > 0)
+    .sort((a, b) => b.goals - a.goals || a.wallet.localeCompare(b.wallet))
+    .slice(0, cap);
+  const totalGoals = Object.values(playersRaw).reduce(
+    (sum, n) => sum + (n > 0 ? n : 0),
+    0
+  );
+  let winner: string | null;
+  let winnerGoals: number;
+  if (isToday) {
+    const w = dayWinner(data.today);
+    winner = w.country;
+    winnerGoals = w.goals;
+  } else {
+    winner = arch!.winner;
+    winnerGoals = arch!.winnerGoals;
+  }
+  return { day: dayKey, totalGoals, winner, winnerGoals, countries, players };
+}
+
 export function getLeaderboard(): {
   season: string;
   day: string;

@@ -16,7 +16,11 @@ import {
 import { FogOfWarPass } from "./fogOfWar.js";
 // worldcup: seasonal soccer rendering (feature-flagged, deletable)
 import type { BallWire, WorldcupPortalWire } from "../net/ws.js";
-import { flagEmoji as worldcupFlagEmoji } from "../worldcup/countries.js";
+import {
+  getFlagImageIfReady,
+  loadFlagImage,
+  soleFlagCode,
+} from "../ui/flags.js";
 import {
   FIELD_BOUNDS as WORLDCUP_FIELD_BOUNDS,
   FIELD_GOALS as WORLDCUP_FIELD_GOALS,
@@ -643,7 +647,7 @@ function wrapChatLines(
 
 function createChatBubbleSprite(
   text: string,
-  opts?: { emojiOnly?: boolean }
+  opts?: { emojiOnly?: boolean; flagCode?: string | null }
 ): {
   sprite: THREE.Sprite;
   texture: THREE.CanvasTexture;
@@ -651,6 +655,8 @@ function createChatBubbleSprite(
   height: number;
 } {
   const emojiOnly = opts?.emojiOnly ?? false;
+  // A sole flag (the Flag Emote) renders as a Twemoji image — Windows has no flag glyphs.
+  const flagCode = opts?.flagCode ?? null;
   const raster = emojiOnly
     ? CHAT_BUBBLE_RASTER_EMOJI
     : CHAT_BUBBLE_RASTER_NORMAL;
@@ -660,9 +666,13 @@ function createChatBubbleSprite(
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { alpha: true })!;
   ctx.font = CHAT_BUBBLE_FONT;
-  const lines = wrapChatLines(ctx, text.trim() || " ", CHAT_MAX_PX);
+  const lines = flagCode
+    ? [" "]
+    : wrapChatLines(ctx, text.trim() || " ", CHAT_MAX_PX);
   const lineWidths = lines.map((ln) => Math.ceil(ctx.measureText(ln).width));
-  const maxLineW = Math.max(1, ...lineWidths);
+  const maxLineW = flagCode
+    ? CHAT_LINE_HEIGHT_PX
+    : Math.max(1, ...lineWidths);
   const innerW = Math.min(CHAT_MAX_PX, maxLineW);
   const w = Math.ceil(innerW + padX * 2);
   const lineH = CHAT_LINE_HEIGHT_PX;
@@ -704,10 +714,12 @@ function createChatBubbleSprite(
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = 1 / raster;
   ctx.fillStyle = "#1e293b";
-  lines.forEach((ln, i) => {
-    const cy = padY + i * lineH + lineH / 2;
-    ctx.fillText(ln, w / 2, cy);
-  });
+  if (!flagCode) {
+    lines.forEach((ln, i) => {
+      const cy = padY + i * lineH + lineH / 2;
+      ctx.fillText(ln, w / 2, cy);
+    });
+  }
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -715,6 +727,20 @@ function createChatBubbleSprite(
   tex.magFilter = THREE.LinearFilter;
   tex.generateMipmaps = false;
   tex.needsUpdate = true;
+
+  if (flagCode) {
+    // Draw the flag image centered (loads async, so redraw the texture once it is ready).
+    const fs = lineH;
+    const fx = (w - fs) / 2;
+    const fy = (h - fs) / 2;
+    const drawFlag = (img: HTMLImageElement): void => {
+      ctx.drawImage(img, fx, fy, fs, fs);
+      tex.needsUpdate = true;
+    };
+    const ready = getFlagImageIfReady(flagCode);
+    if (ready) drawFlag(ready);
+    else void loadFlagImage(flagCode).then((img) => img && drawFlag(img));
+  }
 
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({
@@ -12746,14 +12772,25 @@ export class Game {
     ctx.font = "700 26px system-ui, sans-serif";
     ctx.fillText("vs", w / 2, cy);
 
-    // Flags under each identicon.
-    ctx.font = "30px system-ui, 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif";
-    ctx.fillText(p.aCountry ? worldcupFlagEmoji(p.aCountry) : "\u{1F3F3}", 86, cy + 56);
-    ctx.fillText(
-      p.bCountry ? worldcupFlagEmoji(p.bCountry) : "\u{1F3F3}",
-      w - 86,
-      cy + 56
-    );
+    // Flags under each identicon (Twemoji images — Windows has no flag glyphs).
+    const drawBillboardFlag = async (
+      code: string | null,
+      x: number
+    ): Promise<void> => {
+      const img = code ? await loadFlagImage(code) : null;
+      if (img) {
+        ctx.drawImage(img, x - 18, cy + 56 - 18, 36, 36);
+      } else {
+        ctx.font = "30px system-ui, 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("\u{1F3F3}", x, cy + 56);
+      }
+    };
+    await Promise.all([
+      drawBillboardFlag(p.aCountry, 86),
+      drawBillboardFlag(p.bCountry, w - 86),
+    ]);
 
     if (p.full) {
       ctx.fillStyle = "#ff8a8a";
@@ -13352,9 +13389,13 @@ export class Game {
     if (!g) return;
     const addr = (g.userData.address as string) || fromAddress;
     this.removeChatBubbleEntry(addr);
-    const emojiOnly = isEmojiOnlyBubbleText(text);
+    // A sole country flag (the Flag Emote) gets the larger emoji-bubble treatment and renders
+    // as a Twemoji image; otherwise fall back to the usual emoji-only heuristic.
+    const flagCode = soleFlagCode(text);
+    const emojiOnly = flagCode ? true : isEmojiOnlyBubbleText(text);
     const { sprite, texture, width, height } = createChatBubbleSprite(text, {
       emojiOnly,
+      flagCode,
     });
     const mat = sprite.material as THREE.SpriteMaterial;
     

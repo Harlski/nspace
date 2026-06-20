@@ -16,7 +16,8 @@ const {
 } = await import("../src/worldcup/goalReward.js");
 
 const CFG = {
-  rewardLuna: 25_000n,
+  minRewardLuna: 25_000n,
+  maxRewardLuna: 25_000n,
   dailyCapPerWallet: 3,
   dailyBudgetLuna: 200_000n, // 8 rewards of 25000 fit
   minPlayers: 2,
@@ -32,6 +33,7 @@ function base() {
     utcDay: DAY,
     walletPaidCount: 0,
     budgetSpentLuna: 0n,
+    proposedRewardLuna: 25_000n,
   };
 }
 
@@ -64,7 +66,7 @@ test("at/over the per-wallet daily cap, no pay", () => {
 
 test("when the next reward would exceed the global budget, no pay", () => {
   const d = evaluateGoalReward(
-    { ...base(), budgetSpentLuna: 200_000n },
+    { ...base(), budgetSpentLuna: 200_000n, proposedRewardLuna: 25_000n },
     CFG
   );
   assert.equal(d.pay, false);

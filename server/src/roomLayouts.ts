@@ -297,7 +297,7 @@ export function listRoomDefinitions(): RoomDefinition[] {
             ownerAddress: null,
             displayName: getBuiltinRoomDisplayName(
               WORLDCUP_FIELD_ROOM_ID,
-              "Soccer Field"
+              "Free Play Field"
             ),
             isPublic: getBuiltinRoomIsPublic(WORLDCUP_FIELD_ROOM_ID),
             isBuiltin: true as const,

@@ -237,8 +237,10 @@ export function isMatchPitchRoomId(roomId: string | null | undefined): boolean {
 const LUNA_PER_NIM = 100_000n;
 
 export const GOAL_REWARD = {
-  /** Payout per Paid Goal (luna). Default 25000 = 0.25 NIM. */
-  rewardLuna: BigInt(envInt("WORLDCUP_GOAL_REWARD_LUNA", 25_000)),
+  /** Minimum payout per Paid Goal (luna). Default 50000 = 0.5 NIM. */
+  minRewardLuna: BigInt(envInt("WORLDCUP_GOAL_REWARD_MIN_LUNA", 50_000)),
+  /** Maximum payout per Paid Goal (luna). Default 200000 = 2 NIM. */
+  maxRewardLuna: BigInt(envInt("WORLDCUP_GOAL_REWARD_MAX_LUNA", 200_000)),
   /** Per-wallet Paid Goals per UTC day. */
   dailyCapPerWallet: envInt("WORLDCUP_GOAL_REWARD_DAILY_CAP_PER_WALLET", 40),
   /** Global goal-reward budget per UTC day (luna). Default 500 NIM. */

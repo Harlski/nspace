@@ -10,6 +10,18 @@ const SERIES_CAP = 120;
 const LOG_CAP = 250;
 const LOG_LINE_MAX = 480;
 
+/**
+ * Fine-grained event-loop stall detector. A timer scheduled every `STALL_PROBE_MS` that
+ * fires late by more than `STALL_LOG_MS` means the loop was blocked — useful to correlate
+ * timestamped stalls with `[nim-payout]` / `[nim-mutex]` lines in docker logs. The 5s
+ * `monitorEventLoopDelay` sampler above only reports aggregates to `/admin/system`; this
+ * prints the *moment* a stall happened to the console. `EVENT_LOOP_STALL_LOG_MS=0` disables.
+ */
+const STALL_PROBE_MS = 250;
+const STALL_LOG_MS = Math.max(0, Number(process.env.EVENT_LOOP_STALL_LOG_MS ?? 50));
+
+let stallTimer: ReturnType<typeof setTimeout> | null = null;
+
 export type AdminSystemLogLevel = "info" | "warn" | "error";
 
 export type AdminSystemLagPoint = { t: number; maxMs: number; meanMs: number };
@@ -104,6 +116,25 @@ export function getAdminSystemSnapshot(): {
   };
 }
 
+function startEventLoopStallProbe(): void {
+  if (stallTimer || STALL_LOG_MS <= 0) return;
+  let expected = Date.now() + STALL_PROBE_MS;
+  const tick = (): void => {
+    const now = Date.now();
+    const lateMs = now - expected;
+    if (lateMs >= STALL_LOG_MS) {
+      const msg = `[event-loop] stall ${lateMs} ms ending at ${new Date(now).toISOString()}`;
+      console.warn(msg);
+      appendAdminSystemLog("warn", msg);
+    }
+    expected = Date.now() + STALL_PROBE_MS;
+    stallTimer = setTimeout(tick, STALL_PROBE_MS);
+    if (typeof stallTimer.unref === "function") stallTimer.unref();
+  };
+  stallTimer = setTimeout(tick, STALL_PROBE_MS);
+  if (typeof stallTimer.unref === "function") stallTimer.unref();
+}
+
 /** Start periodic sampling (idempotent). */
 export function startAdminSystemMonitor(): void {
   if (sampleTimer) return;
@@ -119,4 +150,5 @@ export function startAdminSystemMonitor(): void {
   sampleTimer = setInterval(sampleOnce, SAMPLE_MS);
   if (typeof sampleTimer.unref === "function") sampleTimer.unref();
   sampleOnce();
+  startEventLoopStallProbe();
 }

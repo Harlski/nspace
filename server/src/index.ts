@@ -56,7 +56,10 @@ import { flushVoxelTextsSync } from "./voxelTexts.js";
 import { getTopMazeRecords } from "./mazeRecords.js";
 // worldcup: seasonal soccer leaderboard API (feature-flagged, deletable)
 import { WORLDCUP_ENABLED } from "./worldcup/config.js";
-import { getLeaderboard as getWorldcupLeaderboard } from "./worldcup/scoreStore.js";
+import {
+  getLeaderboard as getWorldcupLeaderboard,
+  getPlayerCountry as getWorldcupPlayerCountry,
+} from "./worldcup/scoreStore.js";
 import { installSwarmErrorForwarder } from "./swarmLogForwarder.js";
 import {
   CHAMBER_ROOM_ID,
@@ -524,6 +527,9 @@ app.get("/api/player-profile/:address", (req, res) => {
     const pub = getPlayerProfilePublicJson(addr) as Record<string, unknown>;
     pub.usernameSelfServiceEnabled =
       getAdminRuntimeSettings().playerUsernameSelfServiceEnabled;
+    // Chosen country flag (reused from the World Cup country); shown on the profile card
+    // and used for the player's own Flag Emote. Available regardless of the season gate.
+    pub.country = getWorldcupPlayerCountry(addr);
     let canSeePrivateRooms = false;
     const t = bearerToken(req);
     if (t) {
@@ -998,7 +1004,12 @@ app.post("/api/admin/daily-stats/send", requireAnalyticsWalletAdmin, async (req,
     const report = doSend
       ? await sendDailyStatsReport(dayStartMs)
       : await buildDailyStatsReport(dayStartMs);
-    res.json({ sent: doSend, aggregate: report.aggregate, message: report.message });
+    res.json({
+      sent: doSend,
+      aggregate: report.aggregate,
+      message: report.message,
+      worldcupMessage: report.worldcupMessage,
+    });
   } catch (err) {
     console.error("[daily-stats] manual report", err);
     res.status(500).json({ error: "internal" });

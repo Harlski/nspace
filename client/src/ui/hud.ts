@@ -21,6 +21,12 @@ import {
 // worldcup: seasonal soccer build-dock "Ball" prop (feature-flagged, deletable)
 import { WORLDCUP_ENABLED as WORLDCUP_ENABLED_CLIENT } from "../worldcup/config.js";
 import type { Game } from "../game/Game.js";
+import {
+  appendTextWithFlags,
+  codeFromFlagEmoji,
+  createFlagImg,
+  flagAssetUrl,
+} from "./flags.js";
 import { GATE_AUTH_MAX } from "../game/gateAuth.js";
 import { normalizeWalletKey, type FloorTile } from "../game/grid.js";
 import {
@@ -271,6 +277,12 @@ export function createHud(
     playerUsesNimiqPayInRoom?: (compactWalletKey: string) => boolean;
     /** Secret FPS / latency HUD toggled from the brand modal (five taps on the title). */
     onPerfHudEnabledChange?: (enabled: boolean) => void;
+    /** Debug stats panel (identicon toggle) shown/hidden; host uses it to drive RTT pings. */
+    onDebugPanelVisibleChange?: (visible: boolean) => void;
+    /** Render a country code (ISO alpha-2) as its flag emoji; omit to hide all flag UI. */
+    flagEmojiFor?: (code: string) => string;
+    /** Self clicked the profile flag chip → open the country picker (host owns the modal). */
+    onEditOwnCountry?: () => void;
   }
 ): {
   setStatus: (s: string) => void;
@@ -345,6 +357,11 @@ export function createHud(
   dismissOtherPlayerOverlays: () => void;
   /** Open the in-game profile card for the signed-in wallet (top bar identicon / address). */
   openOwnPlayerProfile: () => void;
+  /**
+   * Set the signed-in player's chosen country (ISO alpha-2, or null to clear). Updates the
+   * profile flag chip and prepends the matching Flag Emote to the player's Emote Wheel.
+   */
+  setSelfCountry: (code: string | null) => void;
   onReturnHome: (fn: () => void) => void;
   onPortalEnter: (fn: () => void) => void;
   isTeleporterModeActive: () => boolean;
@@ -752,6 +769,9 @@ export function createHud(
   setDebugText: (text: string) => void;
   isDebugPanelVisible: () => boolean;
   setDebugPanelVisible: (visible: boolean) => void;
+  /** Feed one server round-trip-time sample (ms) into the debug latency graph. */
+  pushLatencySample: (ms: number) => void;
+  clearLatencySamples: () => void;
   setCanvasLeaderboardVisible: (visible: boolean) => void;
   updateCanvasLeaderboard: (leaders: Array<{ address: string; bestMs: number }>) => void;
   setCanvasTimer: (timeRemaining: number) => void;
@@ -1255,18 +1275,139 @@ export function createHud(
   debugPanel.className = "hud-debug";
   debugPanel.setAttribute("aria-label", "Debug info");
 
+  /**
+   * Rolling server round-trip-time samples (ms) drawn as a sparkline under the debug
+   * panel. The host feeds samples via `pushLatencySample` while the panel is visible;
+   * the window is wide enough to see periodic spikes (e.g. ~30s payout stalls).
+   */
+  const LATENCY_GRAPH_CAP = 120;
+  const latencySamples: number[] = [];
+  let latencyGraphDrawQueued = false;
+
+  const latencyGraph = document.createElement("canvas");
+  latencyGraph.className = "hud-debug-latency";
+  latencyGraph.width = 440;
+  latencyGraph.height = 150;
+  latencyGraph.hidden = true;
+  latencyGraph.setAttribute("aria-hidden", "true");
+  latencyGraph.setAttribute("aria-label", "Server round-trip time graph");
+
+  function drawLatencyGraph(): void {
+    latencyGraphDrawQueued = false;
+    if (latencyGraph.hidden) return;
+    const ctx = latencyGraph.getContext("2d");
+    if (!ctx) return;
+    /** Backing store is 2× the CSS box; draw in logical (CSS) pixels for crisp text. */
+    const SCALE = 2;
+    ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+    const W = latencyGraph.width / SCALE;
+    const H = latencyGraph.height / SCALE;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "rgba(15, 17, 23, 0.82)";
+    ctx.fillRect(0, 0, W, H);
+
+    const padL = 8;
+    const padR = 8;
+    const padT = 20;
+    const padB = 8;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+
+    const n = latencySamples.length;
+    const cur = n ? (latencySamples[n - 1] ?? null) : null;
+    let min = Infinity;
+    let max = 0;
+    let sum = 0;
+    for (const v of latencySamples) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+      sum += v;
+    }
+    const avg = n ? sum / n : null;
+    const yMax = Math.max(50, max * 1.15);
+    /** Flag samples noticeably worse than the running average as spikes. */
+    const spikeMs = Math.max(150, (avg ?? 0) * 2.5);
+
+    ctx.font = "10px ui-monospace, Menlo, Monaco, Consolas, monospace";
+    ctx.textBaseline = "alphabetic";
+    const gridSteps = 3;
+    for (let i = 0; i <= gridSteps; i++) {
+      const yv = (yMax / gridSteps) * i;
+      const y = padT + plotH - (yv / yMax) * plotH;
+      ctx.strokeStyle = "rgba(61, 70, 90, 0.5)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(W - padR, y);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(148, 163, 184, 0.65)";
+      ctx.fillText(`${Math.round(yv)}`, padL + 2, y - 2);
+    }
+
+    if (n >= 2) {
+      const stepX = plotW / (LATENCY_GRAPH_CAP - 1);
+      const yOf = (v: number): number =>
+        padT + plotH - Math.min(1, v / yMax) * plotH;
+      const xOf = (i: number): number =>
+        padL + (i + (LATENCY_GRAPH_CAP - n)) * stepX;
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const v = latencySamples[i];
+        if (v === undefined) continue;
+        const x = xOf(i);
+        const y = yOf(v);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = "rgba(94, 234, 212, 0.95)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      for (let i = 0; i < n; i++) {
+        const v = latencySamples[i];
+        if (v === undefined || v < spikeMs) continue;
+        ctx.fillStyle = "rgba(248, 113, 113, 0.95)";
+        ctx.beginPath();
+        ctx.arc(xOf(i), yOf(v), 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    const fmt = (v: number | null): string =>
+      v === null || !Number.isFinite(v) ? "—" : `${Math.round(v)}`;
+    ctx.fillStyle = "rgba(226, 232, 240, 0.92)";
+    ctx.font = "11px ui-monospace, Menlo, Monaco, Consolas, monospace";
+    ctx.fillText(
+      `RTT  now ${fmt(cur)}  min ${fmt(min === Infinity ? null : min)}  avg ${fmt(avg)}  max ${fmt(max || null)} ms`,
+      padL,
+      15
+    );
+  }
+
+  function requestLatencyGraphDraw(): void {
+    if (latencyGraphDrawQueued) return;
+    latencyGraphDrawQueued = true;
+    requestAnimationFrame(drawLatencyGraph);
+  }
+
   function syncDebugPanelChrome(): void {
     debugPanel.hidden = !debugPanelVisible;
     debugPanel.setAttribute("aria-hidden", debugPanelVisible ? "false" : "true");
+    latencyGraph.hidden = !debugPanelVisible;
+    latencyGraph.setAttribute(
+      "aria-hidden",
+      debugPanelVisible ? "false" : "true"
+    );
     if (debugPanelVisible && debugPanelText) {
       debugPanel.textContent = debugPanelText;
     }
+    if (debugPanelVisible) requestLatencyGraphDraw();
   }
 
   function applyDebugPanelVisible(visible: boolean): void {
     if (debugPanelVisible === visible) return;
     debugPanelVisible = visible;
     syncDebugPanelChrome();
+    opts?.onDebugPanelVisibleChange?.(visible);
     if (profileMessageKindOpen === "self") {
       oppIdent.setAttribute("aria-pressed", visible ? "true" : "false");
       oppIdent.title = visible ? "Hide debug info" : "Show debug info";
@@ -1741,6 +1882,7 @@ export function createHud(
   `;
 
   leftStack.appendChild(debugPanel);
+  leftStack.appendChild(latencyGraph);
   leftStack.appendChild(canvasLeaderboard);
   
   // Close button for signboard tooltip
@@ -2350,6 +2492,14 @@ export function createHud(
   actionWheel.appendChild(actionWheelSvg);
   letter.appendChild(actionWheel);
 
+  // The signed-in player's chosen country (ISO alpha-2). When set, its flag is prepended as
+  // the first/top Emote on the wheel and shown on the player's own profile card.
+  let selfCountryCode: string | null = null;
+  const selfFlagEmote = (): string | null =>
+    selfCountryCode && opts?.flagEmojiFor
+      ? opts.flagEmojiFor(selfCountryCode)
+      : null;
+
   let actionWheelLevel: ActionWheelLevel = "root";
   let actionWheelEmotePage = 0;
   let actionWheelEmoteHandler: ((emoji: string) => void) | null = null;
@@ -2413,7 +2563,12 @@ export function createHud(
       activate: () => setActionWheelLevel("root"),
     };
     if (actionWheelLevel === "emotes") {
-      const emotes = ACTION_WHEEL_EMOTES.slice();
+      // Prepend the player's own flag (if chosen) so it is the first, top-most Emote on page
+      // one; the standard emotes shift down and paginate as before.
+      const flag = selfFlagEmote();
+      const emotes = flag
+        ? [flag, ...ACTION_WHEEL_EMOTES]
+        : ACTION_WHEEL_EMOTES.slice();
       const pageCount = emotePageCount(
         emotes.length,
         ACTION_WHEEL_EMOTES_PER_PAGE
@@ -2465,7 +2620,7 @@ export function createHud(
       const oneVsOne: ActionWheelSlice = actionWheelChallengeAvailable
         ? {
             glyph: actionWheelChallengeActive ? "🛑" : "🥅",
-            label: actionWheelChallengeActive ? "Cancel 1v1" : "Open to 1v1",
+            label: actionWheelChallengeActive ? "Cancel 1v1" : "1v1",
             ariaLabel: actionWheelChallengeActive
               ? "Cancel your open 1v1 Challenge"
               : "Raise an open 1v1 Challenge above you",
@@ -2550,12 +2705,34 @@ export function createHud(
       if (!slice.reserved) {
         const center = polarToXy(0, 0, ACTION_WHEEL_R_LABEL, sector.midDeg);
         const hasLabel = slice.label.length > 0;
-        const glyph = document.createElementNS(SVG_NS, "text");
-        glyph.setAttribute("class", "action-wheel__glyph");
-        glyph.setAttribute("x", center.x.toFixed(1));
-        glyph.setAttribute("y", (center.y + (hasLabel ? -8 : 0)).toFixed(1));
-        glyph.textContent = slice.glyph;
-        group.appendChild(glyph);
+        const glyphY = center.y + (hasLabel ? -8 : 0);
+        // A flag glyph (e.g. the Flag Emote) renders as a Twemoji image since Windows has no
+        // flag font glyphs; everything else stays as an SVG text emoji.
+        const flagCode = codeFromFlagEmoji(slice.glyph);
+        const flagUrl = flagCode ? flagAssetUrl(flagCode) : null;
+        if (flagUrl) {
+          const size = 32;
+          const flagImg = document.createElementNS(SVG_NS, "image");
+          flagImg.setAttribute("class", "action-wheel__glyph-img");
+          flagImg.setAttributeNS(
+            "http://www.w3.org/1999/xlink",
+            "href",
+            flagUrl
+          );
+          flagImg.setAttribute("href", flagUrl);
+          flagImg.setAttribute("x", (center.x - size / 2).toFixed(1));
+          flagImg.setAttribute("y", (glyphY - size / 2).toFixed(1));
+          flagImg.setAttribute("width", String(size));
+          flagImg.setAttribute("height", String(size));
+          group.appendChild(flagImg);
+        } else {
+          const glyph = document.createElementNS(SVG_NS, "text");
+          glyph.setAttribute("class", "action-wheel__glyph");
+          glyph.setAttribute("x", center.x.toFixed(1));
+          glyph.setAttribute("y", glyphY.toFixed(1));
+          glyph.textContent = slice.glyph;
+          group.appendChild(glyph);
+        }
         if (hasLabel) {
           const label = document.createElementNS(SVG_NS, "text");
           label.setAttribute("class", "action-wheel__label");
@@ -2749,7 +2926,23 @@ export function createHud(
     height: 16,
     class: "other-player-profile__username-commit-icon",
   });
-  oppNamePrimaryWrap.append(oppDisplayNameEl, oppUsernameInput, oppUsernameCommitBtn);
+  // Country flag chip. On the signed-in player's own card it is a button that opens the
+  // country picker; on other players' cards it is a non-interactive flag (hidden if unset).
+  const oppFlagBtn = document.createElement("button");
+  oppFlagBtn.type = "button";
+  oppFlagBtn.className = "other-player-profile__flag";
+  oppFlagBtn.hidden = true;
+  oppFlagBtn.addEventListener("click", (e) => {
+    if (profileMessageKindOpen !== "self") return;
+    e.stopPropagation();
+    opts?.onEditOwnCountry?.();
+  });
+  oppNamePrimaryWrap.append(
+    oppFlagBtn,
+    oppDisplayNameEl,
+    oppUsernameInput,
+    oppUsernameCommitBtn
+  );
   const oppWalletShortEl = document.createElement("span");
   oppWalletShortEl.className = "other-player-profile__wallet-short";
   oppWalletShortEl.hidden = true;
@@ -3746,6 +3939,31 @@ export function createHud(
     return a.replace(/\s+/g, "").trim().toUpperCase();
   }
 
+  /** Paint the profile flag chip for the open card (editable for self, read-only for others). */
+  function renderProfileFlag(kind: "self" | "other", code: string | null): void {
+    if (!opts?.flagEmojiFor) {
+      oppFlagBtn.hidden = true;
+      return;
+    }
+    const img = code ? createFlagImg(code) : null;
+    if (kind === "self") {
+      oppFlagBtn.hidden = false;
+      oppFlagBtn.disabled = false;
+      oppFlagBtn.replaceChildren(img ?? document.createTextNode("🏳️"));
+      const title = code ? "Change your country" : "Pick your country";
+      oppFlagBtn.title = title;
+      oppFlagBtn.setAttribute("aria-label", title);
+      oppFlagBtn.classList.toggle("other-player-profile__flag--empty", !img);
+    } else {
+      oppFlagBtn.hidden = !img;
+      oppFlagBtn.disabled = true;
+      oppFlagBtn.replaceChildren(...(img ? [img] : []));
+      oppFlagBtn.removeAttribute("title");
+      oppFlagBtn.removeAttribute("aria-label");
+      oppFlagBtn.classList.remove("other-player-profile__flag--empty");
+    }
+  }
+
   async function showPlayerProfileView(
     address: string,
     _displayName: string,
@@ -3760,6 +3978,9 @@ export function createHud(
     setProfileNimiqPayTipVisible(false);
     setProfileAliasTipVisible(false);
     endUsernameEditVisual();
+    // Show the chip immediately for self (from known state); hide for others until the
+    // profile fetch returns their country below.
+    renderProfileFlag(kind, kind === "self" ? selfCountryCode : null);
     oppDisplayNameEl.textContent =
       _displayName.trim() || walletDisplayName(compact);
     oppWalletShortEl.hidden = true;
@@ -3855,6 +4076,7 @@ export function createHud(
         subjectUsernameBanned?: boolean;
         subjectChannelMuted?: boolean;
         usernameSelfServiceEnabled?: boolean;
+        country?: string | null;
         rooms?: Array<{
           id?: unknown;
           displayName?: unknown;
@@ -3872,6 +4094,12 @@ export function createHud(
       oppAliasTip.textContent =
         aliases.length > 0 ? `Previously known as\n${aliases.join("\n")}` : "";
       oppAliasHost.hidden = aliases.length === 0;
+      const profileCountry =
+        typeof j.country === "string" && j.country.trim()
+          ? j.country.trim().toUpperCase()
+          : null;
+      if (kind === "self") selfCountryCode = profileCountry;
+      renderProfileFlag(kind, profileCountry);
       const adminOther =
         kind === "other" && opts?.isGameAdmin?.() === true;
       oppAdminRow.hidden = !adminOther;
@@ -11797,7 +12025,9 @@ export function createHud(
       prefix.textContent = `${from}: `;
       const body = document.createElement("span");
       body.className = "chat-line__body";
-      body.textContent = text;
+      // Render any country flags as images (Windows shows them as "AT" otherwise); the rest
+      // stays plain text. The raw text is preserved in the dataset for translation.
+      appendTextWithFlags(body, text);
       line.append(prefix, body);
       line.dataset.chatTranslateText = text;
       line.dataset.chatDisplayName = from;
@@ -11966,6 +12196,18 @@ export function createHud(
     },
     openOwnPlayerProfile() {
       openOwnPlayerProfileFromBar();
+    },
+    setSelfCountry(code: string | null) {
+      const next =
+        typeof code === "string" && code.trim()
+          ? code.trim().toUpperCase()
+          : null;
+      selfCountryCode = next;
+      // If the player's own profile is open, refresh the chip live; the Emote Wheel reads
+      // selfCountryCode lazily when it is next built.
+      if (!otherPlayerProfile.hidden && profileMessageKindOpen === "self") {
+        renderProfileFlag("self", next);
+      }
     },
     onReturnHome(fn: () => void) {
       returnHomeHandler = fn;
@@ -13408,6 +13650,19 @@ export function createHud(
     },
     setDebugPanelVisible(visible: boolean) {
       applyDebugPanelVisible(visible);
+    },
+    /** Feed one server round-trip-time sample (ms) into the debug latency graph. */
+    pushLatencySample(ms: number) {
+      if (!Number.isFinite(ms)) return;
+      latencySamples.push(ms);
+      if (latencySamples.length > LATENCY_GRAPH_CAP) {
+        latencySamples.splice(0, latencySamples.length - LATENCY_GRAPH_CAP);
+      }
+      if (!latencyGraph.hidden) requestLatencyGraphDraw();
+    },
+    clearLatencySamples() {
+      latencySamples.length = 0;
+      if (!latencyGraph.hidden) requestLatencyGraphDraw();
     },
     setCanvasLeaderboardVisible(visible: boolean) {
       canvasLeaderboard.hidden = !visible;
