@@ -73,7 +73,7 @@ for (;;) {
     console.log('Private key (hex, 32 bytes — keep secret, never commit):');
     console.log(privateKey.toHex());
     console.log('');
-    console.log('For server payouts, set: NIM_PAYOUT_PRIVATE_KEY=<hex above>');
+    console.log('For payout-service, set in payout-service/.env: NIM_PAYOUT_PRIVATE_KEY=<hex above>');
     console.log('');
     break;
   }

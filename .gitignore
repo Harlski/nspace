@@ -1,11 +1,39 @@
 node_modules
 dist
+
+# Local env (templates named .env.example stay tracked)
 .env
-.env.local
-.env.development
-.env.production
+.env.*
+!.env.example
+!**/.env.example
+
 *.log
 .DS_Store
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# SQLite ledgers / local stores (outside gitignored data/ mounts)
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+
+# Test coverage output
+coverage/
+
+# Editor / IDE local settings
+.vscode/
+.idea/
+*.swp
+*~
+
+# Private keys and certs (never commit)
+*.pem
+*.key
+id_rsa
+id_ed25519
 # Local-only doc snapshots (see docs workflow); tracked docs live under docs/*.md
 docs/backup/
 docs/brainstorm/
@@ -21,5 +49,9 @@ data/
 backups/
 
 .agents/
+# Cursor local state; repo skills under .cursor/skills/ stay tracked
+.cursor/*
+!.cursor/skills/
+!.cursor/skills/**
 .cursor/skills/grill-me.md
 skills-lock.json

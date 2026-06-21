@@ -135,3 +135,256 @@ export async function fetchBalanceFromService(): Promise<
 export type PayIntentDeliverer = (
   intent: PayIntentPayload
 ) => Promise<{ ok: true } | { ok: false; error: string; status?: number }>;
+
+export type PendingPayoutQueueTotals = {
+  jobCount: number;
+  recipientCount: number;
+  totalLuna: string;
+  totalNim: string;
+};
+
+export type PublicPendingPayoutRow = {
+  time: string;
+  identicon: string;
+  walletId: string;
+  amountNim: string;
+};
+
+export type PublicPayoutHistoryRow = {
+  time: string;
+  identicon: string;
+  walletId: string;
+  amountNim: string;
+  txHash: string;
+};
+
+export type PendingByRecipientSummaryRow = {
+  walletId: string;
+  jobCount: number;
+  amountLuna: string;
+  amountNim: string;
+};
+
+export type ManualBulkPayoutHistoryRow = {
+  time: string;
+  walletId: string;
+  amountNim: string;
+  jobsCleared: number;
+  state: string;
+  txHash: string;
+  txMessage: string;
+};
+
+export type PublicPendingPayoutSnapshot = {
+  allSent: boolean;
+  pendingTotal: number;
+  message: string | null;
+  rows: PublicPendingPayoutRow[];
+  historyRows: PublicPayoutHistoryRow[];
+  pendingByRecipient?: PendingByRecipientSummaryRow[];
+  manualBulkHistory?: ManualBulkPayoutHistoryRow[];
+};
+
+export type PublicPendingPayoutSummary = {
+  mode: "summary";
+  pendingTotal: number;
+  processedToday: number;
+  allSent: boolean;
+  message: string | null;
+};
+
+export type WalletPendingPayoutDetail = PublicPendingPayoutSnapshot & {
+  mode: "wallet";
+  processedToday: number;
+};
+
+export type FlushAllPendingPayoutsResult = {
+  recipientsAttempted: number;
+  recipientsPaid: number;
+  jobsCleared: number;
+  totalLuna: string;
+  totalNim: string;
+  failures: { walletId: string; error: string }[];
+  skippedNotConfigured: boolean;
+};
+
+type ServiceResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; status?: number };
+
+async function parseServiceJson<T>(
+  r: Awaited<ReturnType<typeof payoutFetch>>,
+  validate: (json: unknown) => T | null
+): Promise<ServiceResult<T>> {
+  if (!r.ok) {
+    return {
+      ok: false,
+      error: r.text || `HTTP ${r.status}`,
+      status: r.status || undefined,
+    };
+  }
+  const data = validate(r.json);
+  if (data === null) {
+    return { ok: false, error: "invalid_response", status: r.status };
+  }
+  return { ok: true, data };
+}
+
+function parsePendingTotals(json: unknown): PendingPayoutQueueTotals | null {
+  if (!json || typeof json !== "object") return null;
+  const o = json as Record<string, unknown>;
+  if (
+    typeof o.jobCount !== "number" ||
+    typeof o.recipientCount !== "number" ||
+    typeof o.totalLuna !== "string" ||
+    typeof o.totalNim !== "string"
+  ) {
+    return null;
+  }
+  return {
+    jobCount: o.jobCount,
+    recipientCount: o.recipientCount,
+    totalLuna: o.totalLuna,
+    totalNim: o.totalNim,
+  };
+}
+
+function parsePublicSummary(json: unknown): PublicPendingPayoutSummary | null {
+  if (!json || typeof json !== "object") return null;
+  const o = json as Record<string, unknown>;
+  if (
+    o.mode !== "summary" ||
+    typeof o.pendingTotal !== "number" ||
+    typeof o.processedToday !== "number" ||
+    typeof o.allSent !== "boolean" ||
+    (o.message !== null && typeof o.message !== "string")
+  ) {
+    return null;
+  }
+  return {
+    mode: "summary",
+    pendingTotal: o.pendingTotal,
+    processedToday: o.processedToday,
+    allSent: o.allSent,
+    message: o.message as string | null,
+  };
+}
+
+function parseSnapshot(json: unknown): PublicPendingPayoutSnapshot | null {
+  if (!json || typeof json !== "object") return null;
+  const o = json as Record<string, unknown>;
+  if (
+    typeof o.allSent !== "boolean" ||
+    typeof o.pendingTotal !== "number" ||
+    (o.message !== null && typeof o.message !== "string") ||
+    !Array.isArray(o.rows) ||
+    !Array.isArray(o.historyRows)
+  ) {
+    return null;
+  }
+  return json as PublicPendingPayoutSnapshot;
+}
+
+function parseWalletSnapshot(json: unknown): WalletPendingPayoutDetail | null {
+  const snap = parseSnapshot(json);
+  if (!snap || typeof json !== "object" || json === null) return null;
+  const o = json as Record<string, unknown>;
+  if (o.mode !== "wallet" || typeof o.processedToday !== "number") return null;
+  return { ...snap, mode: "wallet", processedToday: o.processedToday };
+}
+
+function parseFlushResult(json: unknown): FlushAllPendingPayoutsResult | null {
+  if (!json || typeof json !== "object") return null;
+  const o = json as Record<string, unknown>;
+  if (
+    typeof o.recipientsAttempted !== "number" ||
+    typeof o.recipientsPaid !== "number" ||
+    typeof o.jobsCleared !== "number" ||
+    typeof o.totalLuna !== "string" ||
+    typeof o.totalNim !== "string" ||
+    typeof o.skippedNotConfigured !== "boolean" ||
+    !Array.isArray(o.failures)
+  ) {
+    return null;
+  }
+  return json as FlushAllPendingPayoutsResult;
+}
+
+function parseManualBulkResult(
+  json: unknown
+): { txHash: string; jobsCleared: number; totalLuna: string } | null {
+  if (!json || typeof json !== "object") return null;
+  const o = json as Record<string, unknown>;
+  if (
+    typeof o.txHash !== "string" ||
+    typeof o.jobsCleared !== "number" ||
+    typeof o.totalLuna !== "string"
+  ) {
+    return null;
+  }
+  return {
+    txHash: o.txHash,
+    jobsCleared: o.jobsCleared,
+    totalLuna: o.totalLuna,
+  };
+}
+
+export async function fetchPendingQueueTotalsFromService(): Promise<
+  ServiceResult<PendingPayoutQueueTotals>
+> {
+  const r = await payoutFetch("/v1/pending/totals", { method: "GET" });
+  return parseServiceJson(r, parsePendingTotals);
+}
+
+export async function fetchPublicPendingSummaryFromService(): Promise<
+  ServiceResult<PublicPendingPayoutSummary>
+> {
+  const r = await payoutFetch("/v1/pending/summary", { method: "GET" });
+  return parseServiceJson(r, parsePublicSummary);
+}
+
+export async function fetchPendingSnapshotFromService(opts?: {
+  wallet?: string;
+  adminPanel?: boolean;
+}): Promise<ServiceResult<PublicPendingPayoutSnapshot | WalletPendingPayoutDetail>> {
+  const params = new URLSearchParams();
+  if (opts?.wallet?.trim()) params.set("wallet", opts.wallet.trim());
+  if (opts?.adminPanel) params.set("adminPanel", "1");
+  const qs = params.toString();
+  const path = qs ? `/v1/pending/snapshot?${qs}` : "/v1/pending/snapshot";
+  const r = await payoutFetch(path, { method: "GET" });
+  if (!r.ok) {
+    return {
+      ok: false,
+      error: r.text || `HTTP ${r.status}`,
+      status: r.status || undefined,
+    };
+  }
+  if (opts?.wallet?.trim()) {
+    const data = parseWalletSnapshot(r.json);
+    if (!data) return { ok: false, error: "invalid_response", status: r.status };
+    return { ok: true, data };
+  }
+  const data = parseSnapshot(r.json);
+  if (!data) return { ok: false, error: "invalid_response", status: r.status };
+  return { ok: true, data };
+}
+
+export async function triggerManualBulkPayoutViaService(
+  recipient: string
+): Promise<
+  ServiceResult<{ txHash: string; jobsCleared: number; totalLuna: string }>
+> {
+  const r = await payoutFetch("/v1/manual-bulk-payout", {
+    method: "POST",
+    body: JSON.stringify({ recipient }),
+  });
+  return parseServiceJson(r, parseManualBulkResult);
+}
+
+export async function triggerEndOfDayFlushViaService(): Promise<
+  ServiceResult<FlushAllPendingPayoutsResult>
+> {
+  const r = await payoutFetch("/v1/flush", { method: "POST", body: "{}" });
+  return parseServiceJson(r, parseFlushResult);
+}

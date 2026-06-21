@@ -7,7 +7,14 @@ import type { ChainClient } from "./chain/types.js";
 import { loadConfig, type AppConfig } from "./config.js";
 import {
   enqueuePayIntent,
+  flushAllPendingPayoutsNow,
+  getAdminPanelSnapshot,
+  getGlobalSnapshot,
+  getPendingQueueTotals,
+  getPublicSummary,
+  getWalletSnapshot,
   initPayoutQueue,
+  manualBulkPayoutPendingForRecipient,
   startPayoutProcessor,
   type PayIntentBody,
 } from "./queue.js";
@@ -73,6 +80,69 @@ export function createPayoutApp(opts: CreatePayoutAppOptions = {}) {
         return;
       }
       console.error("[payout-service] balance", e);
+      res.status(500).json({ error: "internal" });
+    }
+  });
+
+  app.get("/v1/pending/totals", auth, (_req, res) => {
+    res.json(getPendingQueueTotals());
+  });
+
+  app.get("/v1/pending/summary", auth, (_req, res) => {
+    res.json(getPublicSummary());
+  });
+
+  app.get("/v1/pending/snapshot", auth, (req, res) => {
+    const walletRaw = String(req.query.wallet ?? "").trim();
+    const rawPanel = req.query.adminPanel;
+    const adminPanel =
+      typeof rawPanel === "string" &&
+      (rawPanel === "1" || rawPanel.toLowerCase() === "true");
+    if (walletRaw) {
+      res.json(getWalletSnapshot(walletRaw));
+      return;
+    }
+    if (adminPanel) {
+      res.json(getAdminPanelSnapshot());
+      return;
+    }
+    res.json(getGlobalSnapshot());
+  });
+
+  app.post("/v1/manual-bulk-payout", auth, async (req, res) => {
+    try {
+      const recipient = String((req.body as { recipient?: string })?.recipient ?? "").trim();
+      if (!recipient) {
+        res.status(400).json({ error: "missing_recipient" });
+        return;
+      }
+      const out = await manualBulkPayoutPendingForRecipient(recipient);
+      res.json(out);
+    } catch (err) {
+      const code = err instanceof Error ? err.message : "internal";
+      if (code === "no_pending_jobs") {
+        res.status(400).json({ error: code });
+        return;
+      }
+      if (code === "wallet_payout_race_retry") {
+        res.status(409).json({ error: code });
+        return;
+      }
+      if (code === "invalid_recipient" || code === "nim_payout_not_configured") {
+        res.status(400).json({ error: code });
+        return;
+      }
+      console.error("[payout-service] manual-bulk-payout", err);
+      res.status(503).json({ error: "payout_failed", detail: code });
+    }
+  });
+
+  app.post("/v1/flush", auth, async (_req, res) => {
+    try {
+      const out = await flushAllPendingPayoutsNow();
+      res.json(out);
+    } catch (err) {
+      console.error("[payout-service] flush", err);
       res.status(500).json({ error: "internal" });
     }
   });

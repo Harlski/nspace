@@ -15,7 +15,7 @@ import {
 
 const testRecipient = "NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y";
 
-function testCfg(dataDir: string): AppConfig {
+function testCfg(dataDir: string, overrides?: Partial<AppConfig>): AppConfig {
   return {
     host: "127.0.0.1",
     port: 0,
@@ -25,6 +25,9 @@ function testCfg(dataDir: string): AppConfig {
     defaultTxMessage: "test payout",
     processIntervalMs: 50_000,
     balanceCacheMs: 20_000,
+    maxBackoffMs: 3_600_000,
+    deadLetterAfterAttempts: 80,
+    ...overrides,
   };
 }
 
@@ -132,7 +135,7 @@ test("enqueue is idempotent by claimId and sends once on fake chain", async (t) 
   });
 });
 
-test("service queue persists across restart and drains one send", async (t) => {
+test("service queue persists across restart and drains one send", { concurrency: false }, async (t) => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-restart-"));
   t.after(() => {
     fs.rmSync(dataDir, { recursive: true, force: true });

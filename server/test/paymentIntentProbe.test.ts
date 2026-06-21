@@ -23,6 +23,7 @@ test("probePaymentIntentService returns not configured when URL unset", async ()
     const out = await probePaymentIntentService(100);
     assert.equal(out.configured, false);
     if (!out.configured) {
+      assert.equal(out.statusTone, "off");
       assert.ok(out.hint.includes("PAYMENT_INTENT_SERVICE_URL"));
     }
   } finally {

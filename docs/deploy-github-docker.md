@@ -234,7 +234,11 @@ After GitHub secrets are set, merging or pushing to `main` will run the workflow
 
 ## Pre-deploy backup (automated)
 
-Each deploy creates **`/opt/nspace/backups/nspace-data-*.tar.gz`** (same `DEPLOY_ROOT` as above) **after** the stack is stopped, so the archive is not taken while containers are writing. The tarball includes the full `data/` tree (world state, `events/`, optional `data/payment-intent/` if you use that sidecar).
+Each deploy creates **`/opt/nspace/backups/nspace-data-*.tar.gz`** (same `DEPLOY_ROOT` as above) **after** the stack is stopped, so the archive is not taken while containers are writing. The tarball includes the full `data/` tree (world state, `events/`, `data/payout-service/`, optional `data/payment-intent/` if you use that sidecar).
+
+**After** the backup and `git reset`, the workflow runs [`scripts/migrate-payout-data-to-sidecar.sh`](../scripts/migrate-payout-data-to-sidecar.sh) to move any legacy `nim-payout-*` files from `data/` into `data/payout-service/` (idempotent; safe on every deploy). See [payout-cutover-runbook.md](payout-cutover-runbook.md).
+
+**`/admin/system`** (system admin wallet) shows green / yellow / red status for **Payment intent** and **Payout** sidecars, probe error text, and a `docker compose logs …` hint when not fully healthy.
 
 **Disk:** Monitor free space on the VPS; old archives are not pruned automatically. Remove or rotate archives on a schedule that fits your retention policy.
 

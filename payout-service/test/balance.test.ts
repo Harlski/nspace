@@ -26,6 +26,8 @@ function testCfg(dataDir: string): AppConfig {
     defaultTxMessage: "test payout",
     processIntervalMs: 50_000,
     balanceCacheMs: 60_000,
+    maxBackoffMs: 3_600_000,
+    deadLetterAfterAttempts: 80,
   };
 }
 

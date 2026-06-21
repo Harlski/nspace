@@ -50,7 +50,7 @@ export function dailyStatsReportEnabled(): boolean {
 
 /**
  * Whether the pending NIM payout queue is auto-flushed at the end of each UTC day.
- * Defaults on when the payout sender is configured; force with `NIM_PAYOUT_DAILY_FLUSH_ENABLED`.
+ * Defaults on when the Payout Service client is configured; force with `NIM_PAYOUT_DAILY_FLUSH_ENABLED`.
  */
 export function dailyPayoutFlushEnabled(): boolean {
   const explicit = parseBoolEnv(envTrim("NIM_PAYOUT_DAILY_FLUSH_ENABLED"));
@@ -70,8 +70,10 @@ export type PendingPayoutSummaryForReport = {
 };
 
 /** Live pending-queue snapshot. `willFlush` marks whether this run pays it out after reporting. */
-function currentPendingSummary(willFlush: boolean): PendingPayoutSummaryForReport {
-  const t = getPendingQueueTotals();
+async function currentPendingSummary(
+  willFlush: boolean
+): Promise<PendingPayoutSummaryForReport> {
+  const t = await getPendingQueueTotals();
   return {
     jobCount: t.jobCount,
     recipientCount: t.recipientCount,
@@ -199,7 +201,7 @@ export async function buildStatsReport(
     windowEndMs,
     lookbackDays()
   );
-  const pendingInfo = pending ?? currentPendingSummary(false);
+  const pendingInfo = pending ?? (await currentPendingSummary(false));
   return {
     aggregate,
     message: formatDailyStatsMessage(aggregate, headerLabel, pendingInfo),
@@ -284,23 +286,32 @@ function scheduleNext(): void {
 }
 
 async function runScheduledReport(): Promise<void> {
+  await runEndOfDaySnapshotReportFlushSequence();
+}
+
+/** Test hook: runs snapshot → report → flush and returns step order. */
+export async function runEndOfDaySnapshotReportFlushSequence(opts?: {
+  sendReport?: (
+    dayStartMs: number,
+    pending: PendingPayoutSummaryForReport
+  ) => Promise<unknown>;
+  flush?: () => Promise<unknown>;
+  recordStep?: (step: string) => void;
+}): Promise<PendingPayoutSummaryForReport> {
+  const record = opts?.recordStep ?? (() => {});
   const willFlush = dailyPayoutFlushEnabled();
-  // Snapshot pending NIM *before* flushing so the day's stats include all NIM earned that day,
-  // then pay it out afterwards (the report's day total is backdated to fold in this pending NIM).
-  const pending = currentPendingSummary(willFlush);
+  const pending = await currentPendingSummary(willFlush);
+  record("snapshot");
 
   try {
     if (dailyStatsReportEnabled()) {
       const dayStartMs = previousUtcDayStartMs(Date.now());
-      const report = await sendDailyStatsReport(dayStartMs, pending);
+      const send = opts?.sendReport ?? sendDailyStatsReport;
+      await send(dayStartMs, pending);
+      record("report");
       console.log(
-        `[${LOG_TAG}] sent report for ${report.aggregate.dayUtc}`,
+        `[${LOG_TAG}] sent report for ${new Date(dayStartMs).toISOString().slice(0, 10)}`,
         JSON.stringify({
-          uniqueSignedIn: report.aggregate.uniqueSignedIn,
-          newSignedIn: report.aggregate.newSignedIn,
-          nimiqPaySignedIn: report.aggregate.nimiqPaySignedIn,
-          payoutsSent: report.aggregate.payoutsSent,
-          payoutLunaTotal: report.aggregate.payoutLunaTotal,
           pendingLuna: pending.luna,
           willFlush,
         })
@@ -310,24 +321,18 @@ async function runScheduledReport(): Promise<void> {
     console.error(`[${LOG_TAG}] scheduled report failed:`, err);
   }
 
-  // Pay out the pending queue only after the report has been sent.
   if (willFlush) {
     try {
-      const flush = await triggerEndOfDayFlush();
-      console.log(
-        `[${LOG_TAG}] end-of-day payout flush`,
-        JSON.stringify({
-          recipientsPaid: flush.recipientsPaid,
-          jobsCleared: flush.jobsCleared,
-          totalNim: flush.totalNim,
-          failures: flush.failures.length,
-          skippedNotConfigured: flush.skippedNotConfigured,
-        })
-      );
+      const flushFn = opts?.flush ?? triggerEndOfDayFlush;
+      const flush = await flushFn();
+      record("flush");
+      console.log(`[${LOG_TAG}] end-of-day payout flush`, JSON.stringify(flush));
     } catch (err) {
       console.error(`[${LOG_TAG}] end-of-day payout flush failed:`, err);
     }
   }
+
+  return pending;
 }
 
 /**

@@ -69,7 +69,7 @@ This volume ensures your data survives container restarts.
 
 ### Payment intent sidecar (optional)
 
-The **`payment-intent`** service is a **separate** Node container from `nspace` (and from the Nim payout worker inside the game server). It implements a small **payment intent ledger** plus **on-chain verification** for incoming NIM, so future product features (exclusive username, billboard slots, land, teleporters) can share one flow: quote → pay with memo → verify transaction.
+The **`payment-intent`** service is a **separate** Node container from `nspace` and from the **`payout`** sidecar. It implements a small **payment intent ledger** plus **on-chain verification** for incoming NIM, so future product features (exclusive username, billboard slots, land, teleporters) can share one flow: quote → pay with memo → verify transaction.
 
 - **Enable:** `docker compose --profile payment up -d` (the profile is required; the service is off by default).
 - **Build context:** repository root; Dockerfile [`payment-intent-service/Dockerfile`](../payment-intent-service/Dockerfile).
@@ -94,6 +94,33 @@ The **`payment-intent`** service is a **separate** Node container from `nspace` 
 **Local dev without Docker:** `npm run dev:payment-intent` from the repo root (set the same env vars first).
 
 **Game server (`nspace` container) wiring:** `docker-compose.yml` passes through `PAYMENT_INTENT_SERVICE_URL` and `PAYMENT_INTENT_API_SECRET` from your `.env`. When you run `docker compose --profile payment up -d`, set e.g. `PAYMENT_INTENT_SERVICE_URL=http://payment-intent:3090` so `/admin/system` can reach the sidecar on the default Docker network.
+
+### Payout sidecar (default)
+
+Outgoing NIM rewards run in a dedicated **`payout`** container (not in the game-server process). It starts **by default** with `docker compose up` — no profile required.
+
+- **Build context:** repository root; Dockerfile [`payout-service/Dockerfile`](../payout-service/Dockerfile).
+- **Port:** `127.0.0.1:3091` → `3091` in the container (localhost-bound on the host).
+- **Persistence:** host directory `./data/payout-service` → `/data` (`NIM_PAYOUT_DATA_DIR`).
+- **Required env:** `PAYOUT_SERVICE_API_SECRET`, `NIM_PAYOUT_PRIVATE_KEY`, and `NIM_NETWORK` (root `.env` or `server/.env`). See [`payout-service/.env.example`](../payout-service/.env.example).
+- **Game server wiring:** `PAYOUT_SERVICE_URL=http://payout:3091` (default in compose) and the same `PAYOUT_SERVICE_API_SECRET`. **`NIM_PAYOUT_PRIVATE_KEY` must not be set on `nspace`.**
+
+**HTTP API** (all `/v1/*` routes require `Authorization: Bearer <PAYOUT_SERVICE_API_SECRET>`):
+
+| Method | Path | Purpose |
+|--------|------|--------|
+| `GET` | `/health` | Liveness (no auth) |
+| `POST` | `/v1/pay-intents` | Enqueue Pay-Intent (idempotent by `claimId`) |
+| `GET` | `/v1/balance` | Hot-wallet balance |
+| `GET` | `/v1/pending/totals` | Pending queue totals (reporting) |
+| `GET` | `/v1/pending/summary` | Public pending summary |
+| `GET` | `/v1/pending/snapshot` | Pending + history snapshot |
+| `POST` | `/v1/manual-bulk-payout` | Admin "Payout in full" for one recipient |
+| `POST` | `/v1/flush` | End-of-day flush |
+
+**Local dev without Docker:** `npm run dev:payout` from the repo root (configure `payout-service/.env` first).
+
+**Production cutover** from in-process payouts: [payout-cutover-runbook.md](payout-cutover-runbook.md).
 
 ### Production Deployment
 
@@ -147,6 +174,8 @@ docker compose logs
 **`nspace` keeps restarting with profile `payment`:** `NODE_ENV=production` rejects `JWT_SECRET=dev-insecure-change-me` from `server/.env`. Set a real secret (e.g. `openssl rand -base64 32`) in `./.env` and/or `./server/.env`, then `docker compose --profile payment up -d --force-recreate`.
 
 **`payment-intent` keeps restarting:** The sidecar requires `PAYMENT_INTENT_API_SECRET` and `PAYMENT_INTENT_RECIPIENT_ADDRESS` (and usually `NIM_NETWORK`). Put them in the **repository root** `.env` so Compose can substitute them into the service, or define them in `server/.env` (loaded via `env_file`). Check: `docker compose logs payment-intent --tail 30`.
+
+**`payout` keeps restarting:** The sidecar requires `PAYOUT_SERVICE_API_SECRET` and usually `NIM_PAYOUT_PRIVATE_KEY`. Put them in the **repository root** `.env`. Check: `docker compose logs payout --tail 30`.
 
 **Update to latest code:**
 ```bash
@@ -202,6 +231,12 @@ Payment intent image (from repo root):
 
 ```bash
 docker build -f payment-intent-service/Dockerfile -t nspace-payment-intent:latest .
+```
+
+Payout service image (from repo root):
+
+```bash
+docker build -f payout-service/Dockerfile -t nspace-payout:latest .
 ```
 
 ## Security Checklist

@@ -17,6 +17,8 @@ export type AppConfig = {
   defaultTxMessage: string;
   processIntervalMs: number;
   balanceCacheMs: number;
+  maxBackoffMs: number;
+  deadLetterAfterAttempts: number;
 };
 
 function req(name: string, v: string | undefined): string {
@@ -52,6 +54,14 @@ export function loadConfig(): AppConfig {
     balanceCacheMs: Math.max(
       0,
       Number(process.env.NIM_BALANCE_CACHE_MS ?? 20_000)
+    ),
+    maxBackoffMs: Math.max(
+      1000,
+      Number(process.env.NIM_PAYOUT_MAX_BACKOFF_MS ?? 3_600_000)
+    ),
+    deadLetterAfterAttempts: Math.max(
+      1,
+      Number(process.env.NIM_PAYOUT_DEAD_LETTER_ATTEMPTS ?? 80)
     ),
   };
 }

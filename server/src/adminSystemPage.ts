@@ -32,6 +32,16 @@ export function adminSystemPageHtml(): string {
     .sys-card .val { font-size: 1.05rem; font-weight: 600; color: #e6edf3; font-variant-numeric: tabular-nums; }
     .sys-section { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px solid #283244; }
     .sys-section h2 { margin: 0 0 0.45rem; font-size: 0.95rem; color: #c8d4e4; font-weight: 600; }
+    .sys-status-head { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.45rem; flex-wrap: wrap; }
+    .sys-status-head h2 { margin: 0; }
+    .sys-status-dot { width: 0.65rem; height: 0.65rem; border-radius: 50%; flex-shrink: 0; }
+    .sys-status-dot--ok { background: #34d399; box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.28); }
+    .sys-status-dot--warn { background: #fbbf24; box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.28); }
+    .sys-status-dot--error { background: #f87171; box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.28); }
+    .sys-status-dot--off { background: #4b5563; }
+    .sys-status-label { font-size: 0.78rem; color: #8b9cb3; font-weight: 500; }
+    .sys-logs-hint { margin-top: 0.35rem; }
+    .sys-logs-hint code { user-select: all; }
     .sys-hint { font-size: 0.76rem; color: #6b7d95; margin: 0 0 0.5rem; max-width: 52rem; line-height: 1.45; }
     .chart-block { display: flex; align-items: flex-start; gap: 0.35rem; margin-bottom: 0.5rem; }
     .chart-axis {
@@ -170,6 +180,93 @@ export function adminSystemPageHtml(): string {
         "</div>"
       );
     }
+    function sidecarStatusLabel(tone) {
+      if (tone === "ok") return "Healthy";
+      if (tone === "warn") return "Degraded";
+      if (tone === "error") return "Down";
+      return "Not configured";
+    }
+    function renderSidecarSection(title, snap, opts) {
+      opts = opts || {};
+      if (!snap || !snap.configured) {
+        return (
+          "<div class='sys-section'><h2>" +
+          esc(title) +
+          "</h2><p class='sys-hint'>" +
+          esc(snap && snap.hint ? snap.hint : opts.defaultHint || "Sidecar URL not set on this server.") +
+          "</p></div>"
+        );
+      }
+      var tone = snap.statusTone || "warn";
+      var hst = snap.health || {};
+      var api = snap.api || {};
+      var healthLabel = hst.ok ? "OK" : hst.reached ? "HTTP error" : "Unreachable";
+      var apiLine = "";
+      if (api.skipReason === "no_secret_on_game_server") {
+        apiLine =
+          "<p class='sys-hint'>Set <code class='mono'>" +
+          esc(opts.secretEnv || "API_SECRET") +
+          "</code> on <strong>this</strong> server (same value as the sidecar) to verify <code class='mono'>" +
+          esc(opts.apiPath || "/v1/…") +
+          "</code>.</p>";
+      } else if (api.attempted && api.ok) {
+        apiLine =
+          "<p class='sys-hint'><strong>Authenticated API</strong> — OK in " +
+          esc(String(api.latencyMs)) +
+          " ms" +
+          (opts.apiOkSuffix ? " " + opts.apiOkSuffix : "") +
+          ".</p>";
+      } else if (api.attempted) {
+        apiLine =
+          "<p class='sys-hint err'><strong>Authenticated API</strong> — " +
+          esc(String(api.error || "failed")) +
+          "</p>";
+      }
+      var logsBlock = "";
+      if (tone !== "ok" && snap.logsHint) {
+        logsBlock =
+          "<p class='sys-hint sys-logs-hint'><strong>Host logs</strong> — run on the VPS: <code class='mono'>" +
+          esc(String(snap.logsHint)) +
+          "</code></p>";
+      }
+      return (
+        "<div class='sys-section'>" +
+        "<div class='sys-status-head'>" +
+        "<span class='sys-status-dot sys-status-dot--" +
+        esc(tone) +
+        "' aria-hidden='true'></span>" +
+        "<h2>" +
+        esc(title) +
+        "</h2>" +
+        "<span class='sys-status-label'>" +
+        esc(sidecarStatusLabel(tone)) +
+        "</span></div>" +
+        "<p class='sys-hint'>Probed at <code class='mono'>" +
+        esc(snap.baseUrl || "") +
+        "</code> (read-only; no secrets returned).</p>" +
+        "<div class='sys-grid'>" +
+        "<div class='sys-card'><label>Health</label><div class='val'>" +
+        esc(healthLabel) +
+        "</div></div>" +
+        "<div class='sys-card'><label>HTTP status</label><div class='val'>" +
+        esc(String(hst.statusCode != null ? hst.statusCode : "—")) +
+        "</div></div>" +
+        "<div class='sys-card'><label>Latency</label><div class='val'>" +
+        esc(String(hst.latencyMs != null ? hst.latencyMs : "—")) +
+        " ms</div></div>" +
+        "<div class='sys-card'><label>Service id</label><div class='val' style='font-size:0.78rem'>" +
+        esc(String(hst.service || "—")) +
+        "</div></div></div>" +
+        (hst.error && !hst.ok
+          ? "<p class='sys-hint err'><strong>Health detail</strong> — " +
+            esc(String(hst.error)) +
+            "</p>"
+          : "") +
+        apiLine +
+        logsBlock +
+        "</div>"
+      );
+    }
     async function runStatsReport(preview) {
       var status = document.getElementById("sys-stats-status");
       var out = document.getElementById("sys-stats-out");
@@ -249,61 +346,24 @@ export function adminSystemPageHtml(): string {
         }
         var j = await r.json();
         setPolling(true);
-        var pi = j.paymentIntent || null;
-        var piBlock = "";
-        if (!pi || !pi.configured) {
-          piBlock =
-            "<div class='sys-section'><h2>Payment intent service</h2><p class='sys-hint'>" +
-            esc(pi && pi.hint ? pi.hint : "Set PAYMENT_INTENT_SERVICE_URL on this server to probe the sidecar. With Docker Compose profile <code class='mono'>payment</code>, use <code class='mono'>http://payment-intent:3090</code>.") +
-            "</p></div>";
-        } else {
-          var hst = pi.health || {};
-          var api = pi.api || {};
-          var healthLabel = hst.ok ? "OK" : hst.reached ? "HTTP error" : "Unreachable";
-          var apiLine = "";
-          if (api.skipReason === "no_secret_on_game_server") {
-            apiLine =
-              "<p class='sys-hint'>Set <code class='mono'>PAYMENT_INTENT_API_SECRET</code> on <strong>this</strong> server (same value as the sidecar) to verify <code class='mono'>GET /v1/meta/features</code>.</p>";
-          } else if (api.attempted && api.ok) {
-            apiLine =
-              "<p class='sys-hint'><strong>Authenticated API</strong> — OK in " +
-              esc(String(api.latencyMs)) +
-              " ms (" +
-              esc(String(api.featureKindCount != null ? api.featureKindCount : "?")) +
-              " feature kinds).</p>";
-          } else if (api.attempted) {
-            apiLine =
-              "<p class='sys-hint err'><strong>Authenticated API</strong> — " +
-              esc(String(api.error || "failed")) +
-              "</p>";
-          }
-          piBlock =
-            "<div class='sys-section'><h2>Payment intent service</h2>" +
-            "<p class='sys-hint'>Probed at <code class='mono'>" +
-            esc(pi.baseUrl || "") +
-            "</code> (read-only; no secrets returned).</p>" +
-            "<div class='sys-grid'>" +
-            "<div class='sys-card'><label>Health</label><div class='val'>" +
-            esc(healthLabel) +
-            "</div></div>" +
-            "<div class='sys-card'><label>HTTP status</label><div class='val'>" +
-            esc(String(hst.statusCode != null ? hst.statusCode : "—")) +
-            "</div></div>" +
-            "<div class='sys-card'><label>Latency</label><div class='val'>" +
-            esc(String(hst.latencyMs != null ? hst.latencyMs : "—")) +
-            " ms</div></div>" +
-            "<div class='sys-card'><label>Service id</label><div class='val' style='font-size:0.78rem'>" +
-            esc(String(hst.service || "—")) +
-            "</div></div>" +
-            "</div>" +
-            (hst.error && !hst.ok
-              ? "<p class='sys-hint err'><strong>Health detail</strong> — " +
-                esc(String(hst.error)) +
-                "</p>"
-              : "") +
-            apiLine +
-            "</div>";
-        }
+        var piFeatureCount =
+          j.paymentIntent && j.paymentIntent.configured && j.paymentIntent.api
+            ? j.paymentIntent.api.featureKindCount
+            : null;
+        var piBlock = renderSidecarSection("Payment intent service", j.paymentIntent, {
+          defaultHint:
+            "Set PAYMENT_INTENT_SERVICE_URL on this server. With Docker Compose profile <code class='mono'>payment</code>, use <code class='mono'>http://payment-intent:3090</code>.",
+          secretEnv: "PAYMENT_INTENT_API_SECRET",
+          apiPath: "GET /v1/meta/features",
+          apiOkSuffix:
+            piFeatureCount != null ? "(" + String(piFeatureCount) + " feature kinds)" : "",
+        });
+        var payoutBlock = renderSidecarSection("Payout service", j.payoutService, {
+          defaultHint:
+            "Set PAYOUT_SERVICE_URL on this server (Compose default: <code class='mono'>http://payout:3091</code>).",
+          secretEnv: "PAYOUT_SERVICE_API_SECRET",
+          apiPath: "GET /v1/pending/totals",
+        });
         var p = j.process || {};
         var uptimeStr = "—";
         if (j.uptimeSec != null && Number.isFinite(Number(j.uptimeSec))) {
@@ -312,6 +372,7 @@ export function adminSystemPageHtml(): string {
         }
         panel.innerHTML =
           piBlock +
+          payoutBlock +
           "<div class='sys-actions'>" +
           "<button type='button' id='sys-refresh'>Refresh now</button>" +
           "<label><input type='checkbox' id='sys-poll' checked/> Auto-refresh every 10s</label></div>" +

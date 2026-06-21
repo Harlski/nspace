@@ -43,11 +43,15 @@ services:
       # Optional: `/admin/system` probes + future purchase flows (set when Compose profile `payment` is used)
       PAYMENT_INTENT_SERVICE_URL: ${PAYMENT_INTENT_SERVICE_URL:-}
       PAYMENT_INTENT_API_SECRET: ${PAYMENT_INTENT_API_SECRET:-}
-      PAYOUT_SERVICE_URL: ${PAYOUT_SERVICE_URL:-}
+      PAYOUT_SERVICE_URL: ${PAYOUT_SERVICE_URL:-http://payout:3091}
       PAYOUT_SERVICE_API_SECRET: ${PAYOUT_SERVICE_API_SECRET:-}
+      # Strip hot-wallet key if still present in shared env_file (signer lives on payout only).
+      NIM_PAYOUT_PRIVATE_KEY: ""
       # JWT_SECRET should be set in ./.env and/or ./server/.env (not dev-insecure-change-me in prod)
       # Optional: DEPLOY_RESTART_HOOK_SECRET (≥16 chars) — enables POST /api/hooks/pre-deploy-restart for CI (see docs/deploy-github-docker.md)
       # DEV_AUTH_BYPASS should NOT be set in production
+    depends_on:
+      - payout
     volumes:
       # world-state.json and events-*.jsonl live under server/data in the app
       - ./data:/app/server/data
@@ -80,9 +84,8 @@ services:
     volumes:
       - ./data/payment-intent:/data
 
-  # Optional: outgoing NIM payouts (block-claim tracer bullet). Enable with PAYOUT_SERVICE_* on nspace.
+  # Outgoing NIM payouts — dedicated sidecar (ADR-0002). Runs by default in production.
   payout:
-    profiles: ["payout"]
     build:
       context: .
       dockerfile: payout-service/Dockerfile

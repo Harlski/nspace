@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { appendAdminSystemLog } from "./adminSystemMonitor.js";
 import type { PayIntent } from "./payoutServiceClient.js";
 import {
   deliverPayIntentToService,
@@ -153,9 +154,9 @@ export async function drainOutboxOnce(
       };
       const result = await send(payload);
       if (!result.ok) {
-        console.warn(
-          `[payout-outbox] Delivery failed claim=${record.claimId.slice(0, 10)}…: ${result.error}`
-        );
+        const msg = `[payout-outbox] Delivery failed claim=${record.claimId.slice(0, 10)}…: ${result.error}`;
+        console.warn(msg);
+        appendAdminSystemLog("warn", msg);
         continue;
       }
       deliveredClaimIds.add(record.claimId);
@@ -177,7 +178,12 @@ export function startPayoutOutboxDeliveryLoop(): void {
     try {
       await drainOutboxOnce();
     } catch (e) {
-      console.error("[payout-outbox] Delivery loop error:", e);
+      const msg =
+        e instanceof Error
+          ? `[payout-outbox] Delivery loop error: ${e.message}`
+          : `[payout-outbox] Delivery loop error: ${String(e)}`;
+      console.error(msg);
+      appendAdminSystemLog("error", msg);
     }
     deliveryTimer = setTimeout(run, DELIVERY_INTERVAL_MS);
   };
@@ -225,4 +231,14 @@ export function isClaimDeliveredForTests(claimId: string): boolean {
 
 export function reloadOutboxFromDiskForTests(): void {
   loadDeliveredClaimIds();
+}
+
+/** Simulates a crash after service accepted but before delivered-ids were persisted. */
+export function clearDeliveredClaimIdsForTests(): void {
+  deliveredClaimIds.clear();
+  try {
+    if (fs.existsSync(DELIVERED_FILE)) fs.unlinkSync(DELIVERED_FILE);
+  } catch {
+    /* ignore */
+  }
 }

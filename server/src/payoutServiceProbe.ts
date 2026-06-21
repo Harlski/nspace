@@ -1,32 +1,26 @@
 /**
- * Optional reachability checks for the payment-intent sidecar (used by `/admin/system`).
+ * Optional reachability checks for the Payout Service sidecar (used by `/admin/system`).
  * Never exposes secrets in return values.
  */
 
+import {
+  getPayoutServiceBaseUrl,
+  normalizePayoutServiceBaseUrl,
+} from "./payoutServiceClient.js";
+import type { SidecarStatusTone } from "./paymentIntentProbe.js";
+
 const DEFAULT_TIMEOUT_MS = 3000;
 
-export type SidecarStatusTone = "ok" | "warn" | "error" | "off";
+export { normalizePayoutServiceBaseUrl };
 
-export function normalizePaymentIntentServiceBaseUrl(
-  raw: string | undefined | null
-): string | null {
-  const t = String(raw ?? "").trim();
-  if (!t) return null;
-  return t.replace(/\/+$/, "");
-}
+export type { SidecarStatusTone };
 
-export function getPaymentIntentServiceBaseUrl(): string | null {
-  return normalizePaymentIntentServiceBaseUrl(
-    process.env.PAYMENT_INTENT_SERVICE_URL
-  );
-}
-
-function serverPaymentIntentApiSecret(): string | null {
-  const s = process.env.PAYMENT_INTENT_API_SECRET?.trim();
+function serverPayoutApiSecret(): string | null {
+  const s = process.env.PAYOUT_SERVICE_API_SECRET?.trim();
   return s || null;
 }
 
-export type PaymentIntentHealthProbe = {
+export type PayoutHealthProbe = {
   reached: boolean;
   ok: boolean;
   statusCode?: number;
@@ -35,24 +29,24 @@ export type PaymentIntentHealthProbe = {
   error?: string;
 };
 
-export type PaymentIntentApiProbe = {
+export type PayoutApiProbe = {
   attempted: boolean;
   ok?: boolean;
   statusCode?: number;
   latencyMs?: number;
-  featureKindCount?: number;
   error?: string;
   skipReason?: "no_secret_on_game_server";
 };
 
-export type PaymentIntentAdminSnapshot =
+export type PayoutServiceAdminSnapshot =
   | { configured: false; statusTone: "off"; hint: string }
   | {
       configured: true;
       statusTone: SidecarStatusTone;
       baseUrl: string;
-      health: PaymentIntentHealthProbe;
-      api: PaymentIntentApiProbe;
+      health: PayoutHealthProbe;
+      api: PayoutApiProbe;
+      /** Operator hint when status is not fully green (no host paths exposed). */
       logsHint: string;
     };
 
@@ -98,9 +92,9 @@ async function fetchJson(
   }
 }
 
-function computePaymentIntentStatusTone(
-  health: PaymentIntentHealthProbe,
-  api: PaymentIntentApiProbe
+function computeStatusTone(
+  health: PayoutHealthProbe,
+  api: PayoutApiProbe
 ): SidecarStatusTone {
   if (!health.ok) return "error";
   if (api.skipReason === "no_secret_on_game_server") return "warn";
@@ -111,19 +105,19 @@ function computePaymentIntentStatusTone(
 }
 
 /**
- * Probes `GET {base}/health` and, when `PAYMENT_INTENT_API_SECRET` is set on this process,
- * `GET {base}/v1/meta/features` with Bearer auth (validates end-to-end auth + handler wiring).
+ * Probes `GET {base}/health` and, when `PAYOUT_SERVICE_API_SECRET` is set on this process,
+ * `GET {base}/v1/pending/totals` with Bearer auth.
  */
-export async function probePaymentIntentService(
+export async function probePayoutService(
   timeoutMs = DEFAULT_TIMEOUT_MS
-): Promise<PaymentIntentAdminSnapshot> {
-  const baseUrl = getPaymentIntentServiceBaseUrl();
+): Promise<PayoutServiceAdminSnapshot> {
+  const baseUrl = getPayoutServiceBaseUrl();
   if (!baseUrl) {
     return {
       configured: false,
       statusTone: "off",
       hint:
-        "Set PAYMENT_INTENT_SERVICE_URL on the game server (e.g. http://127.0.0.1:3090 or http://payment-intent:3090 in Docker) to enable monitoring.",
+        "Set PAYOUT_SERVICE_URL on the game server (e.g. http://127.0.0.1:3091 or http://payout:3091 in Docker) to enable monitoring.",
     };
   }
 
@@ -138,7 +132,7 @@ export async function probePaymentIntentService(
     if (o.ok === true) bodyOk = true;
   }
 
-  const health: PaymentIntentHealthProbe = {
+  const health: PayoutHealthProbe = {
     reached: h.status > 0,
     ok: h.ok && h.status === 200 && bodyOk,
     statusCode: h.status || undefined,
@@ -152,25 +146,26 @@ export async function probePaymentIntentService(
           : h.text || `HTTP ${h.status}`,
   };
 
-  const secret = serverPaymentIntentApiSecret();
-  const api: PaymentIntentApiProbe = { attempted: false };
+  const secret = serverPayoutApiSecret();
+  const api: PayoutApiProbe = { attempted: false };
 
   if (!secret) {
     api.skipReason = "no_secret_on_game_server";
     api.attempted = false;
+    const statusTone = computeStatusTone(health, api);
     return {
       configured: true,
-      statusTone: computePaymentIntentStatusTone(health, api),
+      statusTone,
       baseUrl,
       health,
       api,
-      logsHint: "docker compose --profile payment logs payment-intent --tail 100",
+      logsHint: "docker compose logs payout --tail 100",
     };
   }
 
-  const featuresUrl = `${baseUrl}/v1/meta/features`;
-  const fr = await fetchJson(
-    featuresUrl,
+  const totalsUrl = `${baseUrl}/v1/pending/totals`;
+  const tr = await fetchJson(
+    totalsUrl,
     {
       method: "GET",
       headers: { authorization: `Bearer ${secret}` },
@@ -179,36 +174,42 @@ export async function probePaymentIntentService(
   );
 
   api.attempted = true;
-  api.statusCode = fr.status || undefined;
-  api.latencyMs = fr.latencyMs;
-  if (!fr.ok) {
+  api.statusCode = tr.status || undefined;
+  api.latencyMs = tr.latencyMs;
+  if (!tr.ok) {
     api.ok = false;
-    api.error = fr.text || `HTTP ${fr.status}`;
+    api.error = tr.text || `HTTP ${tr.status}`;
+    const statusTone = computeStatusTone(health, api);
     return {
       configured: true,
-      statusTone: computePaymentIntentStatusTone(health, api),
+      statusTone,
       baseUrl,
       health,
       api,
-      logsHint: "docker compose --profile payment logs payment-intent --tail 100",
+      logsHint: "docker compose logs payout --tail 100",
     };
   }
 
-  let featureKindCount: number | undefined;
-  if (fr.json && typeof fr.json === "object" && fr.json !== null) {
-    const o = fr.json as Record<string, unknown>;
-    const fk = o.featureKinds;
-    if (Array.isArray(fk)) featureKindCount = fk.length;
+  let totalsOk = false;
+  if (tr.json && typeof tr.json === "object" && tr.json !== null) {
+    const o = tr.json as Record<string, unknown>;
+    if (typeof o.jobCount === "number" && typeof o.totalLuna === "string") {
+      totalsOk = true;
+    }
   }
 
-  api.ok = true;
-  api.featureKindCount = featureKindCount;
+  api.ok = totalsOk;
+  if (!totalsOk) {
+    api.error = "invalid_response";
+  }
+
+  const statusTone = computeStatusTone(health, api);
   return {
     configured: true,
-    statusTone: computePaymentIntentStatusTone(health, api),
+    statusTone,
     baseUrl,
     health,
     api,
-    logsHint: "docker compose --profile payment logs payment-intent --tail 100",
+    logsHint: "docker compose logs payout --tail 100",
   };
 }

@@ -34,7 +34,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 |----------|----------|
 | [live-service-implementation.md](live-service-implementation.md) | Split SPA + API, Docker services, env vars, persistence — **as run today** |
 | [deploy-github-docker.md](deploy-github-docker.md) | GitHub Actions → VPS; SSH keys and secrets |
-| [docker-deployment.md](docker-deployment.md) | Compose, volumes, optional **payment-intent** sidecar (profile `payment`), common operations |
+| [docker-deployment.md](docker-deployment.md) | Compose, volumes, **payout** sidecar (default), optional **payment-intent** sidecar (profile `payment`), common operations |
 
 ## Security & payouts
 
@@ -42,7 +42,8 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 |----------|----------|
 | [SECURITY-REVIEW.md](SECURITY-REVIEW.md) | Checklist before making the repo public; production reminders |
 | [JWT-SECURITY-ISSUE.md](JWT-SECURITY-ISSUE.md) | JWT startup rules + link to archived audit |
-| [nim-payout-tracing.md](nim-payout-tracing.md) | `NIM_PAYOUT_TX_TRACE` log reference |
+| [nim-payout-tracing.md](nim-payout-tracing.md) | `NIM_PAYOUT_TX_TRACE` log reference (Payout Service) |
+| [payout-cutover-runbook.md](payout-cutover-runbook.md) | Hard cutover from in-process payouts to the sidecar |
 | [toremove/README.md](toremove/README.md) | **Local-only** incident log (`LEARNEDLESSONS.md` next to it — not in git); see [AGENTS.md](../AGENTS.md) |
 
 ## Main-site HTML (analytics, admin, payouts UI)

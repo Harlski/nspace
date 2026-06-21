@@ -1,26 +1,26 @@
-# Nimiq payout: trace logging (today)
+# Nimiq payout: trace logging
 
-How to enable **structured trace logs** for on-chain payout sends in the current server. For payout mutex behavior, balance cache tuning, and long incident-style notes, maintain **`docs/toremove/LEARNEDLESSONS.md` locally** (gitignored — see [toremove/README.md](toremove/README.md) and [AGENTS.md](../AGENTS.md)).
+Structured trace logs for on-chain payout sends in the **Payout Service** sidecar. The game server no longer runs the Nimiq light client for payouts ([ADR-0002](adr/0002-payouts-in-dedicated-sidecar-service.md), [payout-cutover-runbook.md](payout-cutover-runbook.md)).
 
-For a **separate payout worker / queue migration** (not implemented as a split process in the default compose file), see [brainstorm/nim-payout-worker-migration.md](brainstorm/nim-payout-worker-migration.md).
+For historical mutex/balance-cache incident notes, see **`docs/toremove/LEARNEDLESSONS.md`** locally (gitignored).
 
 ## Enable
 
-Set in the server environment (e.g. `server/.env`):
+Set on the **payout service** (e.g. `payout-service/.env` or the `payout` container env):
 
 ```bash
 NIM_PAYOUT_TX_TRACE=1
 ```
 
-Restart the API process. Logs are prefixed with **`[nim-payout-tx]`**.
+Restart the payout process. Logs are prefixed with **`[nim-payout-tx]`**.
 
 ## What you should see (in order)
 
 | Log | Meaning |
 |-----|---------|
-| `worker_before_send` | From `nimPayout/queue.ts` immediately before `sendNimPayoutTransaction`. Includes `sinceEnqueueMs`, `amountLuna`. |
-| `send_enter` | Entered `sendNimPayoutTransaction` (amount + recipient prefix). |
-| `mutex_phase1_acquired` + `queueWaitMs` | Time **waiting for `withNimiqMutex`** before phase 1 (build/sign/broadcast). Large values while gameplay feels stuck usually mean **another mutex user** (e.g. `getNimPayoutWalletBalanceLuna`, another payout phase, or poll `getTransaction`) is ahead. |
+| `worker_before_send` | From `payout-service/src/queue.ts` immediately before send. Includes `sinceEnqueueMs`, `amountLuna`. |
+| `send_enter` | Entered the chain send path (amount + recipient prefix). |
+| `mutex_phase1_acquired` + `queueWaitMs` | Time waiting for the Nimiq mutex before phase 1 (build/sign/broadcast). |
 | `after_getClient` + `stepMs` | `getClient()` finished. |
 | `after_waitForConsensus` + `stepMs` | `waitForConsensusEstablished()` finished. |
 | `after_getHeadAndNetworkId` + `stepMs` | Head block + network id read. |
@@ -32,33 +32,32 @@ Restart the API process. Logs are prefixed with **`[nim-payout-tx]`**.
 | `send_success` | Included/confirmed; cache adjusted. |
 | `send_tx_invalid` / `send_timeout` | Failure paths. |
 
+Successful sends also log **`[payout-service] Sent …`** from `payout-service/src/queue.ts`.
+
 ## Disable
 
 Unset `NIM_PAYOUT_TX_TRACE` or set it to anything other than `1`.
 
-## Always-on contention logs (no `NIM_PAYOUT_TX_TRACE` needed)
+## Post-cutover stall verification (game server)
 
-For diagnosing **periodic stalls** (e.g. the ~30s lag that lines up with payouts in docker logs) without enabling the full per-send trace, two low-noise logs are on by default:
+After cutover, payout WASM work runs in the sidecar — **not** on the game-server event loop.
 
 | Log | Source | Meaning |
 |-----|--------|---------|
-| `[nim-mutex] <label> waitMs=… holdMs=… [behind=…] at=…` | `server/src/nimPayout/sender.ts` | A Nimiq critical section **waited for** (`waitMs`) or **held** (`holdMs`) the shared Nimiq mutex past the threshold. `label` is `payout-send`, `balance`, or `payout-poll`; `behind` names the section that was holding it. High `waitMs` on `balance` with `behind=payout-send` is direct evidence payouts are stalling balance reads. |
-| `[event-loop] stall <ms> ending at <ISO>` | `server/src/adminSystemMonitor.ts` | The Node event loop was **blocked** for at least the threshold. Blocking affects *all* WebSocket traffic, not just Nimiq users. Match the timestamp against `[nim-payout] Sent` / `[nim-mutex]` lines. |
-
-Thresholds (set to `0` to disable, except `NIM_MUTEX_LOG_MS=0` which logs **every** acquisition):
+| `[event-loop] stall <ms> ending at <ISO>` | `server/src/adminSystemMonitor.ts` | Node event loop blocked on **nspace**. Should **not** correlate with payout sends after cutover. |
+| `[payout-service] Sent …` | `payout-service` container | On-chain send completed in the sidecar. |
 
 ```bash
-NIM_MUTEX_LOG_MS=200          # log mutex wait/hold >= 200 ms
 EVENT_LOOP_STALL_LOG_MS=50    # log event-loop stalls >= 50 ms (0 disables)
 ```
 
-On the **client**, the debug stats panel (click your own identicon in your profile) now shows a **server round-trip-time graph** sampled once per second, so periodic spikes are visible in-game while you watch the docker logs above.
+On the **client**, the debug stats panel (click your own identicon) shows a **server round-trip-time graph** — periodic spikes during payouts should flatten after cutover.
 
 ## Related code
 
 | Area | Location |
 |------|----------|
-| Mutex + send + trace | `server/src/nimPayout/sender.ts` |
-| Worker loop + enqueue | `server/src/nimPayout/queue.ts` |
-| Claim balance gate | `server/src/rooms.ts` |
-| Env examples | `server/.env.example` |
+| Chain send + trace | `payout-service/src/chain/nimiqClient.ts` |
+| Worker loop + enqueue | `payout-service/src/queue.ts` |
+| Claim balance gate (cached pull) | `server/src/rooms.ts`, `server/src/payoutBalancePull.ts` |
+| Env examples | `payout-service/.env.example`, `server/.env.example` |

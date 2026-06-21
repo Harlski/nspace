@@ -88,7 +88,6 @@ import {
 } from "./termsPrivacyAcceptanceStore.js";
 import { TERMS_PRIVACY_DOCS_VERSION } from "./termsPrivacyVersion.js";
 import {
-  flushPayoutQueueOnShutdown,
   getPayoutWalletBalanceLuna,
   getPendingSnapshotForWallet,
   getPublicPendingAdminPanelSnapshot,
@@ -97,9 +96,7 @@ import {
   triggerManualBulkPayout,
   isPayoutSenderConfigured,
   peekPayoutBalanceCacheLuna,
-  startPayoutProcessor,
   enqueuePayIntent,
-  isPayoutServiceMode,
   LUNA_PER_NIM,
 } from "./payoutGateway.js";
 import { startPayoutOutboxDeliveryLoop } from "./payoutOutbox.js";
@@ -226,6 +223,7 @@ import {
 import { getTopLoginStreaks, recordLoginStreakForWallet } from "./loginStreakStore.js";
 import { getAdminSystemSnapshot, startAdminSystemMonitor } from "./adminSystemMonitor.js";
 import { probePaymentIntentService } from "./paymentIntentProbe.js";
+import { probePayoutService } from "./payoutServiceProbe.js";
 import { getDeployRestartHookSecret, isAdmin, isStreamObserver, streamObserverAllowlistConfigured, streamObserverEnvConfigured } from "./config.js";
 import { normalizeStreamObserverAddressesField } from "./walletAddresses.js";
 import { getPixelBoardPngCached } from "./pixelBoardImage.js";
@@ -887,7 +885,7 @@ app.get("/api/nim/payouts", async (req, res) => {
             typeof rawPanel === "string" &&
             (rawPanel === "1" || rawPanel.toLowerCase() === "true");
           const snap = adminPanelLite
-            ? getPublicPendingAdminPanelSnapshot()
+            ? await getPublicPendingAdminPanelSnapshot()
             : await getPublicPendingSnapshot();
           res.json({ mode: "admin" as const, ...snap });
         } else {
@@ -1802,8 +1800,11 @@ app.delete(
 app.get("/api/admin/system/snapshot", requireSystemAdminWallet, async (_req, res) => {
   try {
     const snapshot = getAdminSystemSnapshot();
-    const paymentIntent = await probePaymentIntentService();
-    res.json({ ...snapshot, paymentIntent });
+    const [paymentIntent, payoutService] = await Promise.all([
+      probePaymentIntentService(),
+      probePayoutService(),
+    ]);
+    res.json({ ...snapshot, paymentIntent, payoutService });
   } catch (e) {
     console.error("[api/admin/system/snapshot]", e);
     res.status(500).json({ error: "internal" });
@@ -2895,11 +2896,8 @@ setInterval(() => {
 }, 60_000);
 startAdminSystemMonitor();
 startGameWsMetricsFlushTimer();
-startPayoutProcessor();
-if (isPayoutServiceMode()) {
-  startPayoutOutboxDeliveryLoop();
-  startPayoutBalancePullLoop();
-}
+startPayoutOutboxDeliveryLoop();
+startPayoutBalancePullLoop();
 startDailyStatsScheduler();
 
 wss.on("connection", (ws, req) => {
@@ -3001,7 +2999,6 @@ function shutdown(signal: string): void {
   flushDesignsSync();
   flushBillboardsSync();
   flushVoxelTextsSync();
-  flushPayoutQueueOnShutdown();
   process.exit(0);
 }
 

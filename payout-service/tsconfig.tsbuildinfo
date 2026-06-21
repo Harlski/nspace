@@ -1,1 +1,0 @@
-{"root":["./src/app.ts","./src/auth.ts","./src/balance.ts","./src/config.ts","./src/index.ts","./src/queue.ts","./src/chain/fakeClient.ts","./src/chain/nimiqClient.ts","./src/chain/types.ts"],"version":"5.7.3"}

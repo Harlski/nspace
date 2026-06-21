@@ -10,6 +10,7 @@ import {
   isClaimDeliveredForTests,
   listUndeliveredOutboxForTests,
   reloadOutboxFromDiskForTests,
+  clearDeliveredClaimIdsForTests,
 } from "../src/payoutOutbox.js";
 import type { PayIntentDeliverer, PayIntentPayload } from "../src/payoutServiceClient.js";
 
@@ -83,4 +84,29 @@ test("duplicate outbox append by claimId is ignored", async (t) => {
   appendPayIntentToOutbox(testIntent);
   appendPayIntentToOutbox(testIntent);
   assert.equal(listUndeliveredOutboxForTests().length, 1);
+});
+
+test("outbox delivers after service outage and game-server restart", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-outbox-outage-"));
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  process.env.PAYOUT_OUTBOX_DIR = dir;
+
+  let serviceUp = false;
+  initOutboxForTests({
+    deliverer: async () =>
+      serviceUp ? { ok: true } : { ok: false, error: "service unreachable" },
+  });
+  appendPayIntentToOutbox(testIntent);
+  await drainOutboxOnce();
+  assert.equal(isClaimDeliveredForTests(testIntent.claimId), false);
+
+  reloadOutboxFromDiskForTests();
+  assert.equal(listUndeliveredOutboxForTests().length, 1);
+
+  serviceUp = true;
+  await drainOutboxOnce();
+  assert.equal(isClaimDeliveredForTests(testIntent.claimId), true);
+  assert.equal(listUndeliveredOutboxForTests().length, 0);
 });

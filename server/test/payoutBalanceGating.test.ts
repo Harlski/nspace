@@ -33,6 +33,8 @@ async function withStubService(
     defaultTxMessage: "test",
     processIntervalMs: 50_000,
     balanceCacheMs: 60_000,
+    maxBackoffMs: 3_600_000,
+    deadLetterAfterAttempts: 80,
   };
   const { app } = createPayoutApp({
     cfg,
