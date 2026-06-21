@@ -9092,6 +9092,10 @@ export class Game {
   worldcupJoystickStop(): void {
     this.pathGoal = null;
     this.refreshPathLine();
+    // Halt local extrapolation immediately; server stop may arrive a tick later.
+    this.selfServerVx = 0;
+    this.selfServerVz = 0;
+    this.selfLastServerRecvMs = performance.now();
     if (this.worldcupStopMoveHandler) {
       this.worldcupStopMoveHandler();
     } else if (this.selfMesh && this.tileClickHandler) {

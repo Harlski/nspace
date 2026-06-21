@@ -70,8 +70,10 @@ On **Nimiq Pay** (touch / coarse pointer), releasing the **Touch Joystick** fing
 
 ## Comments
 
-### 2026-06-21 — implemented
+### 2026-06-21 — follow-up fix (root cause)
 
-**Fix:** `Game.onWindowTouchPointerEnd` now calls `endWorldcupStick()` when the lifted touch `pointerId` owns the active stick. Window capture already handled pinch/twist cleanup; Pay WebView / HUD lifts often never reach the canvas `pointerup` handler.
+**Root cause:** `setWorldcupStopMoveHandler(() => sendStopMove(socket))` referenced undefined `socket` (typo for `ws`). Joystick release cleared the client interval but **never sent** `{ type: "moveTo", stop: true }` — server kept the path and client extrapolated velocity indefinitely.
 
-**Verify on Pay:** drag joystick, release finger over HUD or off canvas — player should halt immediately.
+**Fix:** Use `ws` closure (`const s = ws; if (s) sendStopMove(s)`). Zero `selfServerVx`/`selfServerVz` in `worldcupJoystickStop()` for immediate local halt before the server ack.
+
+Window-level `endWorldcupStick` (prior commit) remains useful when canvas misses pointerup.

@@ -720,7 +720,10 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   // drives showAt/moveThumbTo/hide from its own pitch pointer pipeline.
   game.setWorldcupJoystickView(worldcupJoystick);
   // Releasing the joystick sends an immediate (un-rate-limited) stop so the player halts at once.
-  game.setWorldcupStopMoveHandler(() => sendStopMove(socket));
+  game.setWorldcupStopMoveHandler(() => {
+    const s = ws;
+    if (s) sendStopMove(s);
+  });
   // True while watching a 1v1 from the stands (fixed position; no joystick/tap movement).
   let worldcupSpectating = false;
   // worldcup: which side's default camera orientation we've applied for the current Match, so the
