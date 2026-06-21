@@ -1,10 +1,10 @@
 ---
 id: "03-1v1-goal-freeze-pay"
 category: bug
-triage: ready-for-agent
+triage: done
 priority: 3
 blocked_by: []
-status: todo
+status: done
 reporter: maintainer
 reported: 2026-06-21
 ---
