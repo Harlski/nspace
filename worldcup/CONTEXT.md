@@ -80,12 +80,20 @@ Sudden-death extra time after a tied Match timer — the next goal wins, capped 
 which the Match is a Draw.
 
 **Contested**:
-The condition under which a Free Play Field goal is eligible for a NIM reward: at least two
-distinct players present in the field at the moment of the goal.
+The condition for **full-rate** NIM on a Free Play Field goal: at least two distinct
+players present in the field at the moment of the goal. With only one player present, a
+goal may still pay at a reduced rate (see **Solo Goal**).
 _Avoid_: legitimate, valid.
 
+**Solo Goal**:
+A Free Play Field goal scored while exactly one distinct player is on the pitch. Eligible
+for a reduced NIM payout — half the amount that would have been drawn for a full-rate goal
+(`floor(amount / 2)`). Still requires a credited **Last Real Kicker**.
+_Avoid_: practice goal, warmup goal.
+
 **Paid Goal**:
-A Free Play Field goal that meets all reward guards and queues a NIM payout to the scorer.
+A Free Play Field goal that meets attribution rules and queues a NIM payout to the **Last
+Real Kicker** — at full rate when **Contested**, at reduced rate for a **Solo Goal**.
 
 **Last Real Kicker**:
 The most recent **human** player to touch the ball, tracked separately from Goalie touches
@@ -100,3 +108,12 @@ goals), shown as an identicon billboard with a subtle keeper ring so it can neve
 mistaken for a player. It is a **visual identity only** — the Goalie is still server
 authoritative and credits no goals.
 _Avoid_: using it as a synonym for the Goalie role; it names the look, not the defender.
+
+**Ball Edge Marker**:
+A screen-edge HUD chevron pointing toward the ball when it is off-screen. Opacity scales
+with how far past the viewport edge the ball sits (strong when far off-screen, fading as it
+nears the frame). Shown only while the ball is outside the letterboxed game viewport;
+hidden the moment any part of the ball enters frame. Stays visible through kickoff freezes
+and overlays whenever the ball remains off-screen. Active players on the Free Play Field
+or a Match Pitch only — never Spectators.
+_Avoid_: off-screen indicator, ball compass, edge arrow.

@@ -52,10 +52,21 @@ test("an uncredited goal (no scorer) never pays", () => {
   assert.equal(d.reason, "no_scorer");
 });
 
-test("a goal that is not contested (fewer than min players) does not pay", () => {
+test("a solo goal (one player) pays half the drawn amount", () => {
   const d = evaluateGoalReward({ ...base(), distinctPlayersInField: 1 }, CFG);
-  assert.equal(d.pay, false);
-  assert.equal(d.reason, "not_contested");
+  assert.equal(d.pay, true);
+  assert.equal(d.reason, "ok");
+  assert.equal(d.amountLuna, 12_500n); // floor(25000 / 2)
+});
+
+test("with caps disabled (0), wallet and budget never block", () => {
+  const uncapped = { ...CFG, dailyCapPerWallet: 0, dailyBudgetLuna: 0n };
+  const d = evaluateGoalReward(
+    { ...base(), walletPaidCount: 999, budgetSpentLuna: 999_999_999n },
+    uncapped
+  );
+  assert.equal(d.pay, true);
+  assert.equal(d.reason, "ok");
 });
 
 test("at/over the per-wallet daily cap, no pay", () => {
@@ -80,7 +91,7 @@ test("claimId is idempotent for the same goal (wallet + day + index)", () => {
 });
 
 test("successive paid goals get successive claim indices via the store", () => {
-  __resetGoalRewardsForTests();
+  __resetGoalRewardsForTests(DAY);
   const first = decideAndCommitGoalReward(
     { scorerWallet: "NQ BBBB", distinctPlayersInField: 2 },
     CFG,
@@ -95,8 +106,21 @@ test("successive paid goals get successive claim indices via the store", () => {
   assert.equal(second.claimId, goalRewardClaimId("NQBBBB", DAY, 1));
 });
 
+test("store pays solo goals at half rate", () => {
+  __resetGoalRewardsForTests(DAY);
+  const d = decideAndCommitGoalReward(
+    { scorerWallet: "NQ SOLO", distinctPlayersInField: 1 },
+    CFG,
+    NOON
+  );
+  assert.equal(d.pay, true);
+  assert.equal(d.reason, "ok");
+  assert.ok(d.amountLuna !== undefined);
+  assert.equal(d.amountLuna, 12_500n);
+});
+
 test("store enforces the per-wallet daily cap across calls", () => {
-  __resetGoalRewardsForTests();
+  __resetGoalRewardsForTests(DAY);
   const results = [];
   for (let i = 0; i < 5; i++) {
     results.push(
@@ -115,7 +139,7 @@ test("store enforces the per-wallet daily cap across calls", () => {
 });
 
 test("store enforces the global daily budget across wallets", () => {
-  __resetGoalRewardsForTests();
+  __resetGoalRewardsForTests(DAY);
   const tight = { ...CFG, dailyCapPerWallet: 100, dailyBudgetLuna: 50_000n }; // 2 rewards
   const a = decideAndCommitGoalReward(
     { scorerWallet: "NQ D1", distinctPlayersInField: 2 },
@@ -139,7 +163,7 @@ test("store enforces the global daily budget across wallets", () => {
 });
 
 test("UTC-day rollover resets the per-wallet and budget counters", () => {
-  __resetGoalRewardsForTests();
+  __resetGoalRewardsForTests(DAY);
   for (let i = 0; i < 3; i++) {
     decideAndCommitGoalReward(
       { scorerWallet: "NQ EEEE", distinctPlayersInField: 2 },

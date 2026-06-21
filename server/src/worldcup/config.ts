@@ -230,7 +230,7 @@ export function isMatchPitchRoomId(roomId: string | null | undefined): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Goal rewards (Free Play Field only; layered anti-farming — see ADR 0002)
+// Goal rewards (Free Play Field only; see ADR 0002 — unlimited caps by default)
 // ---------------------------------------------------------------------------
 
 /** Luna in 1 NIM (1 NIM = 100000 luna). Mirrors the payout sender's LUNA_PER_NIM. */
@@ -241,11 +241,11 @@ export const GOAL_REWARD = {
   minRewardLuna: BigInt(envInt("WORLDCUP_GOAL_REWARD_MIN_LUNA", 50_000)),
   /** Maximum payout per Paid Goal (luna). Default 200000 = 2 NIM. */
   maxRewardLuna: BigInt(envInt("WORLDCUP_GOAL_REWARD_MAX_LUNA", 200_000)),
-  /** Per-wallet Paid Goals per UTC day. */
-  dailyCapPerWallet: envInt("WORLDCUP_GOAL_REWARD_DAILY_CAP_PER_WALLET", 40),
-  /** Global goal-reward budget per UTC day (luna). Default 500 NIM. */
+  /** Per-wallet Paid Goals per UTC day; 0 = unlimited (emergency cap when set). */
+  dailyCapPerWallet: envInt("WORLDCUP_GOAL_REWARD_DAILY_CAP_PER_WALLET", 0),
+  /** Global goal-reward budget per UTC day (luna); 0 = unlimited (emergency cap when set). */
   dailyBudgetLuna:
-    BigInt(envInt("WORLDCUP_GOAL_REWARD_DAILY_BUDGET_NIM", 500)) * LUNA_PER_NIM,
-  /** Minimum distinct players present in the field for a goal to be Contested. */
+    BigInt(envInt("WORLDCUP_GOAL_REWARD_DAILY_BUDGET_NIM", 0)) * LUNA_PER_NIM,
+  /** Distinct players for full-rate payout; fewer → Solo Goal (half rate). */
   minPlayers: envInt("WORLDCUP_GOAL_REWARD_MIN_PLAYERS", 2),
 } as const;

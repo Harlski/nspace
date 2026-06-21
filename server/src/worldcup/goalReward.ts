@@ -2,7 +2,7 @@
  * World Cup soccer — Free Play Field goal rewards (FEATURE-FLAGGED, DEPRECATABLE).
  *
  * Scoring in the Free Play Field queues a small NIM payout to the credited scorer, wrapped
- * in layered anti-farming guards (see worldcup/adr/0002). Matches never pay.
+ * in env-tunable guards (see worldcup/adr/0002). Matches never pay.
  *
  * The decision is a pure function (`evaluateGoalReward`) so it is trivially table-tested
  * with no sockets, rooms, timers, or disk. A thin per-UTC-day store (per-wallet Paid Goal
@@ -36,11 +36,11 @@ export interface GoalRewardConfig {
   minRewardLuna: bigint;
   /** Maximum payout per Paid Goal (luna). */
   maxRewardLuna: bigint;
-  /** Per-wallet Paid Goals per UTC day. */
+  /** Per-wallet Paid Goals per UTC day; 0 = unlimited (emergency cap when set). */
   dailyCapPerWallet: number;
-  /** Global goal-reward budget per UTC day (luna). */
+  /** Global goal-reward budget per UTC day (luna); 0 = unlimited (emergency cap when set). */
   dailyBudgetLuna: bigint;
-  /** Minimum distinct players in the field for a goal to be Contested. */
+  /** Distinct players needed for full-rate payout; fewer → Solo Goal (half rate). */
   minPlayers: number;
 }
 
@@ -63,7 +63,6 @@ export interface GoalRewardInput {
 export type GoalRewardReason =
   | "ok"
   | "no_scorer"
-  | "not_contested"
   | "wallet_cap"
   | "budget_exhausted";
 
@@ -95,27 +94,42 @@ export function goalRewardClaimId(
 }
 
 /**
+ * Full-rate when Contested (≥ minPlayers); Solo Goal pays floor(amount / 2).
+ */
+export function effectiveGoalRewardLuna(
+  proposedRewardLuna: bigint,
+  distinctPlayersInField: number,
+  minPlayers: number
+): bigint {
+  if (distinctPlayersInField >= minPlayers) return proposedRewardLuna;
+  return proposedRewardLuna / 2n;
+}
+
+/**
  * Uniform random payout between min and max (inclusive), capped by the remaining daily
- * budget. Returns null when the budget cannot cover at least the minimum payout.
+ * budget when one is configured. Returns null when a finite budget cannot cover at least
+ * the minimum payout.
  */
 export function pickGoalRewardLuna(
   cfg: GoalRewardConfig,
   budgetSpentLuna: bigint
 ): bigint | null {
+  const min = Number(cfg.minRewardLuna);
+  const max = Number(cfg.maxRewardLuna);
+  if (cfg.dailyBudgetLuna <= 0n) {
+    return BigInt(randomInt(min, max + 1));
+  }
   const remaining = cfg.dailyBudgetLuna - budgetSpentLuna;
   if (remaining < cfg.minRewardLuna) return null;
-  const cap =
-    remaining < cfg.maxRewardLuna ? remaining : cfg.maxRewardLuna;
-  const min = Number(cfg.minRewardLuna);
-  const max = Number(cap);
-  return BigInt(randomInt(min, max + 1));
+  const cap = remaining < cfg.maxRewardLuna ? remaining : cfg.maxRewardLuna;
+  return BigInt(randomInt(min, Number(cap) + 1));
 }
 
 /**
  * Pure reward decision. Order of guards: a goal must have a real credited scorer, be
- * Contested, be under the per-wallet daily cap, and fit inside the remaining global budget.
- * Goals that fail any guard still count for the leaderboard upstream — only the payout
- * stops.
+ * under the per-wallet daily cap (when configured), and fit inside the remaining global
+ * budget (when configured). Solo goals pay half the drawn amount. Goals that fail any
+ * guard still count for the leaderboard upstream — only the payout stops.
  */
 export function evaluateGoalReward(
   input: GoalRewardInput,
@@ -124,13 +138,21 @@ export function evaluateGoalReward(
   if (!input.scorerWallet) {
     return { pay: false, reason: "no_scorer" };
   }
-  if (input.distinctPlayersInField < cfg.minPlayers) {
-    return { pay: false, reason: "not_contested" };
-  }
-  if (input.walletPaidCount >= cfg.dailyCapPerWallet) {
+  const amountLuna = effectiveGoalRewardLuna(
+    input.proposedRewardLuna,
+    input.distinctPlayersInField,
+    cfg.minPlayers
+  );
+  if (
+    cfg.dailyCapPerWallet > 0 &&
+    input.walletPaidCount >= cfg.dailyCapPerWallet
+  ) {
     return { pay: false, reason: "wallet_cap" };
   }
-  if (input.budgetSpentLuna + input.proposedRewardLuna > cfg.dailyBudgetLuna) {
+  if (
+    cfg.dailyBudgetLuna > 0n &&
+    input.budgetSpentLuna + amountLuna > cfg.dailyBudgetLuna
+  ) {
     return { pay: false, reason: "budget_exhausted" };
   }
   const wallet = normalizeWallet(input.scorerWallet);
@@ -138,7 +160,7 @@ export function evaluateGoalReward(
     pay: true,
     reason: "ok",
     claimId: goalRewardClaimId(wallet, input.utcDay, input.walletPaidCount),
-    amountLuna: input.proposedRewardLuna,
+    amountLuna,
     recipientWallet: wallet,
   };
 }
@@ -226,10 +248,7 @@ export function decideAndCommitGoalReward(
   if (!wallet) {
     return { pay: false, reason: "no_scorer" };
   }
-  if (args.distinctPlayersInField < cfg.minPlayers) {
-    return { pay: false, reason: "not_contested" };
-  }
-  if (walletPaidCount >= cfg.dailyCapPerWallet) {
+  if (cfg.dailyCapPerWallet > 0 && walletPaidCount >= cfg.dailyCapPerWallet) {
     return { pay: false, reason: "wallet_cap" };
   }
   const proposedRewardLuna = pickGoalRewardLuna(cfg, budgetSpentLuna);
@@ -257,9 +276,9 @@ export function decideAndCommitGoalReward(
   return decision;
 }
 
-/** Test-only: clear in-memory counters. */
-export function __resetGoalRewardsForTests(): void {
-  state.day = utcDayKey();
+/** Test-only: clear in-memory counters. Optional `dayKey` pins the UTC day bucket. */
+export function __resetGoalRewardsForTests(dayKey?: string): void {
+  state.day = dayKey ?? utcDayKey();
   state.walletPaid = {};
   state.budgetSpentLuna = "0";
 }

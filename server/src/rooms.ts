@@ -4652,7 +4652,7 @@ function worldcupStepGoaliesForRoom(
   return { wire, kickers, colliders };
 }
 
-/** Distinct real (non-observer) players currently in a room — the Contested check input. */
+/** Distinct real (non-observer) players currently in a room — Solo vs Contested rate input. */
 function worldcupDistinctPlayersInRoom(roomId: string): number {
   const seen = new Set<string>();
   for (const c of roomOf(roomId).values()) {
@@ -4664,8 +4664,8 @@ function worldcupDistinctPlayersInRoom(roomId: string): number {
 
 /**
  * worldcup: a Free Play Field goal queues a small NIM payout to the credited scorer,
- * wrapped in the layered anti-farming guards (see worldcup/adr/0002). Matches never call
- * this. Goals that fail a guard still count for the leaderboard — only the payout stops.
+ * wrapped in env-tunable guards (see worldcup/adr/0002). Matches never call this. Goals
+ * that fail a guard still count for the leaderboard — only the payout stops.
  */
 function maybeQueueGoalReward(
   roomId: string,
@@ -4716,7 +4716,7 @@ function formatGoalRewardNim(luna: bigint): string {
 /**
  * worldcup: tell the scorer (and only the scorer) how their Free Play goal was rewarded —
  * either the NIM they earned, or that they've hit their personal daily cap / the pool is
- * spent. Other reasons (alone on the pitch, no credited kicker) stay silent.
+ * spent. Other reasons (no credited kicker) stay silent.
  */
 function sendGoalRewardOutcomeToScorer(
   roomId: string,

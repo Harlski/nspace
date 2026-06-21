@@ -4,7 +4,7 @@ category: enhancement
 triage: needs-triage
 priority: —
 blocked_by: ["01-oversized-hud-buttons-prod", "02-joystick-runaway-pay", "03-1v1-goal-freeze-pay"]
-status: todo
+status: done
 reporter: maintainer
 reported: 2026-06-21
 ---
@@ -27,4 +27,11 @@ Remove or raise caps on **NIM rewards for goals in the Free Play Field** (curren
 
 ## Comments
 
-<!-- Grill outcomes and agent brief go here -->
+### Grill (2026-06-21)
+
+- **Eligibility:** Solo play earns NIM. One player in the Free Play Field → **50%** payout; two or more distinct players → **full** payout. Drops the old binary Contested gate (no pay when solo).
+- **Caps:** Unlimited per-wallet earning — remove per-wallet daily cap and global daily budget.
+- **Attribution:** Unchanged — only the **Last Real Kicker** at goal time is paid; goalie-only / no-human-touch goals still pay nobody.
+- **Treasury backstop:** Soft env ceiling only — no effective cap in normal ops; operators can set `WORLDCUP_GOAL_REWARD_DAILY_BUDGET_NIM` as an emergency brake (off/unlimited by default).
+- **Solo payout math:** Half the draw — same random amount picker as full rate; Solo Goal pays `floor(amount / 2)`.
+- **Wallet cap env:** Mirror global budget — no effective per-wallet cap in normal ops; `WORLDCUP_GOAL_REWARD_DAILY_CAP_PER_WALLET` remains an optional emergency-only knob (off/unlimited by default).
