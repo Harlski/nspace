@@ -13,8 +13,8 @@
  * and colors here as the broad fallback. Surfaces that historically broke (e.g. chat) now also self-declare
  * their own `color` in `style.css` so they no longer depend on this reset surviving every load order.
  *
- * In-game Nimiq pills (`.nq-button-pill`, etc.) are already constrained by higher-specificity rules in
- * `style.css` (e.g. `.hud-portal-enter.nq-button-pill`, `.main-menu .nq-button-s…`). Do not scope this
+ * In-game Nimiq pills (`.nq-button-pill`, etc.) are constrained by `#app … .nq-button-pill` rules in
+ * `style.css` (e.g. `.hud-portal-enter`, `.hud-reconnect-btn`, `.main-menu .nq-button-s…`). Do not scope this
  * reset to `:has(.main-menu)` — that leaves `html` at 8px in-world and shrinks every other HUD `rem`.
  */
 html,

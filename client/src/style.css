@@ -2333,12 +2333,6 @@ button.hud-brand:focus-visible {
 
 .hud-reconnect-btn {
   flex-shrink: 0;
-  min-height: 0;
-  height: auto;
-  padding: 4px 10px;
-  font-size: 11px;
-  line-height: 1.2;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
 .hud-reconnect-btn:active {
@@ -4930,11 +4924,6 @@ button.hud-brand:focus-visible {
   background: rgba(14, 116, 144, 0.5);
 }
 
-.hud-portal-enter.nq-button-pill {
-  min-height: 0;
-  height: auto;
-}
-
 /*
  * Nimiq Style (@nimiq/style): .nq-button-pill and .nq-button-s set ::before to
  * `left/top/right/bottom: -1.5rem` and ::after to `-5px` for a larger touch target.
@@ -4949,6 +4938,50 @@ button.hud-brand:focus-visible {
 #app .nq-button::before,
 #app .nq-button::after {
   pointer-events: none;
+}
+
+/*
+ * In-game HUD Nimiq pills — compact sizing. Vite production splits CSS: `@nimiq/style`
+ * often lands in a later `<link>` than `style.css`, so bare `.nq-button-pill` rem
+ * height/line-height (3.375rem) wins over single-class HUD overrides. `#app` + both
+ * classes beats `.nq-button-pill` regardless of chunk order.
+ */
+#app .hud-reconnect-btn.nq-button-pill,
+#app .hud-portal-enter.nq-button-pill,
+#app .hud-mode-feedback.nq-button-pill {
+  box-sizing: border-box;
+  min-height: 0;
+  height: auto;
+  line-height: 1.2;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+#app .hud-reconnect-btn.nq-button-pill {
+  padding: 4px 10px;
+  font-size: 11px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+#app .hud-portal-enter.nq-button-pill {
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+#app .hud-mode-feedback.nq-button-pill {
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#app .hud-top-toolbar .hud-mode-feedback.nq-button-pill {
+  padding: 4px 10px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 /* Keep portal CTA hidden until standing on an enterable tile/door. */
