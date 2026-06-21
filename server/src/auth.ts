@@ -33,8 +33,23 @@ export interface SessionPayload {
   sub: string;
   /** Present when the session was issued after Nimiq Pay mini-app login (empty `signer` on verify). */
   nimiqPay?: boolean;
+  /** Ephemeral Direct Invite guest session. */
+  guest?: true;
+  guestId?: string;
+  displayName?: string;
+  inviteSlug?: string;
+  /** Wallet linked after splash upgrade (guestId preserved). */
+  upgradedWallet?: string;
   iat: number;
   exp: number;
+}
+
+export function isGuestSession(payload: SessionPayload): boolean {
+  return payload.guest === true || payload.sub.startsWith("guest:");
+}
+
+export function guestSub(guestId: string): string {
+  return `guest:${guestId}`;
 }
 
 export function signSession(
@@ -49,4 +64,55 @@ export function signSession(
 
 export function verifySession(token: string, jwtSecret: string): SessionPayload {
   return jwt.verify(token, jwtSecret) as SessionPayload;
+}
+
+export function signGuestSession(
+  guestId: string,
+  displayName: string,
+  jwtSecret: string,
+  opts?: { inviteSlug?: string; ttlSec?: number }
+): string {
+  const payload: {
+    sub: string;
+    guest: true;
+    guestId: string;
+    displayName: string;
+    inviteSlug?: string;
+  } = {
+    sub: guestSub(guestId),
+    guest: true,
+    guestId,
+    displayName,
+  };
+  if (opts?.inviteSlug) payload.inviteSlug = opts.inviteSlug;
+  const ttl = opts?.ttlSec ?? 4 * 60 * 60;
+  return jwt.sign(payload, jwtSecret, { expiresIn: ttl });
+}
+
+export function signUpgradedGuestSession(
+  guestId: string,
+  wallet: string,
+  displayName: string,
+  jwtSecret: string,
+  opts?: { inviteSlug?: string; nimiqPay?: boolean; ttlSec?: number }
+): string {
+  const payload: {
+    sub: string;
+    guest: true;
+    guestId: string;
+    displayName: string;
+    upgradedWallet: string;
+    inviteSlug?: string;
+    nimiqPay?: boolean;
+  } = {
+    sub: guestSub(guestId),
+    guest: true,
+    guestId,
+    displayName,
+    upgradedWallet: wallet,
+  };
+  if (opts?.inviteSlug) payload.inviteSlug = opts.inviteSlug;
+  if (opts?.nimiqPay) payload.nimiqPay = true;
+  const ttl = opts?.ttlSec ?? 4 * 60 * 60;
+  return jwt.sign(payload, jwtSecret, { expiresIn: ttl });
 }

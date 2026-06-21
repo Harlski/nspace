@@ -8,19 +8,25 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import dotenv from "dotenv";
 import { timingSafeEqual } from "node:crypto";
-import { createNonce, consumeNonce, signSession, verifySession } from "./auth.js";
+import { createNonce, consumeNonce, signSession, verifySession, isGuestSession } from "./auth.js";
+import { registerDirectInviteRoutes } from "./directInvite/httpHandlers.js";
 import {
   addClient,
   adminRandomExtraFloorLayout,
   broadcastRestartPendingNotice,
   broadcastRoomCatalogRefresh,
+  directInviteOnCreated,
+  getHostDisplayNameForInvite,
   getLiveRealPlayerCountInRoom,
   getRoomFloorColorMapForThumbnail,
   getRoomLayoutSnapshot,
+  getWalletCurrentRoomId,
   resolveResumeLogin,
+  setDirectInvitePublicBaseUrl,
   snapshotChatHistoryForWallet,
   startRoomTick,
   syncPlayerProfileDisplayNameForWallet,
+  walletHasOpenChallenge,
 } from "./rooms.js";
 import { startGameWsMetricsFlushTimer } from "./gameWsMetrics.js";
 import { flushPersistWorldStateSync } from "./worldPersistence.js";
@@ -2873,6 +2879,20 @@ app.post("/api/auth/verify", async (req, res) => {
   });
 });
 
+const PUBLIC_BASE_URL =
+  process.env.PUBLIC_BASE_URL?.trim() ||
+  (NODE_ENV === "production" ? "https://nimiq.space" : `http://localhost:${PORT}`);
+setDirectInvitePublicBaseUrl(PUBLIC_BASE_URL);
+
+registerDirectInviteRoutes(app, {
+  jwtSecret,
+  publicBaseUrl: PUBLIC_BASE_URL,
+  getHostDisplayName: getHostDisplayNameForInvite,
+  getHostOriginRoomId: getWalletCurrentRoomId,
+  hostHasOpenChallenge: walletHasOpenChallenge,
+  onInviteCreated: directInviteOnCreated,
+});
+
 const server = createServer(app);
 
 const wss = new WebSocketServer({ server, path: "/ws" });
@@ -2905,10 +2925,16 @@ wss.on("connection", (ws, req) => {
   const token = url.searchParams.get("token") || "";
   let address: string;
   let sessionNimiqPay = false;
+  let guestDisplayName: string | undefined;
+  let guestId: string | undefined;
   try {
     const payload = verifySession(token, jwtSecret);
     address = payload.sub;
     sessionNimiqPay = payload.nimiqPay === true;
+    if (isGuestSession(payload)) {
+      guestDisplayName = payload.displayName;
+      guestId = payload.guestId;
+    }
   } catch {
     ws.close(4001, "unauthorized");
     return;
@@ -2940,6 +2966,8 @@ wss.on("connection", (ws, req) => {
   addClient(roomId, ws, address, spawnHint, {
     nimiqPay: sessionNimiqPay,
     streamObserver: streamRequested,
+    guestDisplayName,
+    guestId,
   });
   void sendTelegramConnectNotice(address, roomId);
 });

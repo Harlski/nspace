@@ -317,12 +317,16 @@ export function createHud(
     handlers: {
       onEmote: (emoji: string) => void;
       onJoinFreePlayField: () => void;
-      /** worldcup: toggle an open 1v1 Challenge (Games sub-wheel). */
+      /** worldcup: toggle an open 1v1 Challenge (Start Match → Find opponent here). */
       onToggleChallenge?: () => void;
+      /** worldcup: create a Direct Invite (Start Match → Invite a friend). */
+      onCreateDirectInvite?: () => void;
       /** worldcup: is a Challenge currently raised (toggle shows Cancel)? */
       challengeActive?: boolean;
       /** worldcup: may a Challenge be raised here (false on the pitch / mid-Match)? */
       challengeAvailable?: boolean;
+      /** directInvite: block invite when host already has one open. */
+      directInviteActive?: boolean;
     },
     /** Snapped floor tile when opened; wheel closes after the player walks to another tile. */
     openedAtFloor?: FloorTile | null
@@ -2447,7 +2451,7 @@ export function createHud(
     (ACTION_WHEEL_R_OUTER + ACTION_WHEEL_R_INNER) / 2
   );
 
-  type ActionWheelLevel = "root" | "emotes" | "games";
+  type ActionWheelLevel = "root" | "emotes" | "games" | "startMatch";
   type ActionWheelSlice = {
     glyph: string;
     label: string;
@@ -2506,8 +2510,10 @@ export function createHud(
   let actionWheelJoinFieldHandler: (() => void) | null = null;
   // worldcup: 1v1 Challenge toggle (Games sub-wheel).
   let actionWheelChallengeHandler: (() => void) | null = null;
+  let actionWheelCreateInviteHandler: (() => void) | null = null;
   let actionWheelChallengeActive = false;
   let actionWheelChallengeAvailable = false;
+  let actionWheelDirectInviteActive = false;
   let actionWheelOpenedFloor: FloorTile | null = null;
   let actionWheelOutsideBound = false;
 
@@ -2617,25 +2623,45 @@ export function createHud(
           closeActionWheel();
         },
       };
-      const oneVsOne: ActionWheelSlice = actionWheelChallengeAvailable
+      const startMatch: ActionWheelSlice = actionWheelChallengeAvailable
         ? {
-            glyph: actionWheelChallengeActive ? "🛑" : "🥅",
-            label: actionWheelChallengeActive ? "Cancel 1v1" : "1v1",
-            ariaLabel: actionWheelChallengeActive
-              ? "Cancel your open 1v1 Challenge"
-              : "Raise an open 1v1 Challenge above you",
-            activate: () => {
-              actionWheelChallengeHandler?.();
-              closeActionWheel();
-            },
+            glyph: "🥅",
+            label: "Start Match",
+            ariaLabel: "Start a 1v1 Match",
+            activate: () => setActionWheelLevel("startMatch"),
           }
         : {
             glyph: "🥅",
             label: "1v1 · here",
-            ariaLabel: "1v1 Challenges can't be raised on the pitch",
+            ariaLabel: "1v1 Matches can't be started on the pitch",
             disabled: true,
           };
-      return fillHexSlots(back, { 2: freePlay, 4: oneVsOne });
+      return fillHexSlots(back, { 2: freePlay, 4: startMatch });
+    }
+    if (actionWheelLevel === "startMatch") {
+      const findHere: ActionWheelSlice = {
+        glyph: actionWheelChallengeActive ? "🛑" : "🔍",
+        label: actionWheelChallengeActive ? "Cancel" : "Find here",
+        ariaLabel: actionWheelChallengeActive
+          ? "Cancel your open 1v1 Challenge"
+          : "Find an opponent in this room",
+        disabled: actionWheelDirectInviteActive,
+        activate: () => {
+          actionWheelChallengeHandler?.();
+          closeActionWheel();
+        },
+      };
+      const inviteFriend: ActionWheelSlice = {
+        glyph: "🔗",
+        label: "Invite",
+        ariaLabel: "Invite a friend with a link or QR",
+        disabled: actionWheelChallengeActive || actionWheelDirectInviteActive,
+        activate: () => {
+          actionWheelCreateInviteHandler?.();
+          closeActionWheel();
+        },
+      };
+      return fillHexSlots(back, { 2: findHere, 4: inviteFriend });
     }
     const close: ActionWheelSlice = {
       glyph: "✕",
@@ -12085,8 +12111,10 @@ export function createHud(
         onEmote: (emoji: string) => void;
         onJoinFreePlayField: () => void;
         onToggleChallenge?: () => void;
+        onCreateDirectInvite?: () => void;
         challengeActive?: boolean;
         challengeAvailable?: boolean;
+        directInviteActive?: boolean;
       },
       openedAtFloor: FloorTile | null = null
     ) {
@@ -12096,8 +12124,10 @@ export function createHud(
       actionWheelEmoteHandler = handlers.onEmote;
       actionWheelJoinFieldHandler = handlers.onJoinFreePlayField;
       actionWheelChallengeHandler = handlers.onToggleChallenge ?? null;
+      actionWheelCreateInviteHandler = handlers.onCreateDirectInvite ?? null;
       actionWheelChallengeActive = handlers.challengeActive ?? false;
       actionWheelChallengeAvailable = handlers.challengeAvailable ?? false;
+      actionWheelDirectInviteActive = handlers.directInviteActive ?? false;
       actionWheelLevel = "root";
       actionWheelEmotePage = 0;
       actionWheel.style.left = `${anchorX}px`;

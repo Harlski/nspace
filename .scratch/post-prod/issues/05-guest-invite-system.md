@@ -1,15 +1,23 @@
 ---
 id: "05-guest-invite-system"
 category: enhancement
-triage: needs-triage
+triage: done
 priority: —
 blocked_by: ["01-oversized-hud-buttons-prod", "02-joystick-runaway-pay", "03-1v1-goal-freeze-pay"]
-status: todo
+status: done
 reporter: maintainer
 reported: 2026-06-21
+prd: worldcup/PRD-direct-invite.md
 ---
 
 # 05 — Guest invite system (QR, URL, shortlink)
+
+## PRD
+
+**[worldcup/PRD-direct-invite.md](../../worldcup/PRD-direct-invite.md)** — `ready-for-agent`
+
+Split into implementation issues from the PRD (auth/HTTP, reducer+store, lobby+WS, client
+splash, client lobby+Games Wheel, ADR+docs).
 
 ## Idea (not yet grilled)
 
@@ -33,4 +41,25 @@ Reusable flow to invite **non–Nimiq Space players** into an activity (first us
 
 ## Comments
 
-<!-- Grill / PRD / split issues go here -->
+### Grill (2026-06-21)
+
+- **Guest identity:** Wallet optional. Server issues an ephemeral Guest session (display identity + short-lived JWT). Guest can play the full invited Match; wallet sign-in/create offered but never required for that session.
+- **vs Challenge:** Parallel paths. Challenge stays for spontaneous in-room matches. New **Direct Invite** flow (link/QR) reserves a Match slot for one out-of-band guest — no Challenge bubble.
+- **Link binding:** Single guest slot. First opener claims it; the same person may reopen the link (refresh, new device) until the Match starts or the invite expires. A different person is rejected.
+- **Lifetime:** 15 minutes from creation, then the invite expires.
+- **Guest landing:** Splash interstitial (“Joining {host}'s Match…”) with optional wallet sign-in, then the shared waiting state.
+- **Guest display name:** Server-assigned fun nickname on first open; editable on the splash (guest can change or tap through).
+- **Match start:** Host confirms — guest arrives, host taps **Start Match**, then **Kickoff Countdown** runs (not auto-start).
+- **Shortlink:** `nimiq.space/join/{slug}` — opaque slug, reserved `/join/` route.
+- **Host entry:** Games Wheel → Start Match → sub-choice: “Find opponent here” (Challenge) vs “Invite a friend” (Direct Invite).
+- **Waiting room:** Shared virtual lobby — host enters on invite creation, guest on splash completion; neither is in the hub or Match Pitch until **Start Match**.
+- **Wallet on splash:** Upgrade in place — signing in converts the guest session to a normal wallet session; same invite slot, same lobby, richer identity.
+
+### Implementation (2026-06-22)
+
+Shipped Direct Invite v1 per [worldcup/PRD-direct-invite.md](../../worldcup/PRD-direct-invite.md):
+
+- Server: `server/src/directInvite/` (reducer, store, guest JWT, HTTP routes)
+- ADR: [worldcup/adr/0003-guest-sessions-direct-invite.md](../../worldcup/adr/0003-guest-sessions-direct-invite.md)
+- Client: `/join/:slug` splash, lobby overlay (URL + QR), Games Wheel → Start Match sub-choice
+- Tests: `server/test/directInvite.test.ts`, `server/test/directInviteSession.test.ts`

@@ -46,6 +46,24 @@ The dedicated bottom (6 o'clock) edge of the Action Wheel hexagon. Shows Close a
 level and Back inside a sub-wheel; reused rather than adding a second nav Sector.
 _Avoid_: close button, back button, hub button.
 
+## Sessions
+
+**Guest**:
+A player holding an ephemeral session without a connected Nimiq wallet. They receive a
+server-assigned display name (a fun nickname, editable at entry) and can participate in
+invited activities (e.g. a Match); connecting or creating a wallet on the invite splash upgrades the session in place (same
+invite slot, richer identity); wallet is never required to finish that session.
+_Avoid_: anonymous user, temp user, visitor.
+
+**Direct Invite**:
+A host-created share link at `nimiq.space/join/{slug}` (URL or QR) that reserves an
+activity slot for one out-of-band guest — parallel to, not a replacement for, the World Cup
+**Challenge** bubble. One guest claims the slot on first open; that same guest may reopen
+the link until the activity starts or the invite expires (15 minutes from creation). First
+use case: a 1v1 Match. While pending, host and guest wait together in a shared virtual
+lobby (not the hub or Match Pitch) until the host starts the activity.
+_Avoid_: invite (ambiguous with Challenge), guest link, deep link.
+
 ## Movement
 
 **Touch Joystick**:

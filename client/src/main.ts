@@ -111,6 +111,8 @@ import {
   sendAcceptChallenge,
   sendLeaveMatch,
   sendRequestSpectate,
+  sendCancelDirectInvite,
+  sendStartDirectInviteMatch,
   type ObstacleProps,
   type RoomBackgroundNeutral,
   type ServerMessage,
@@ -138,6 +140,13 @@ import { mountPatchnotesPage } from "./patchnotes/mountPatchnotesPage.js";
 import { runUsernamePromptGate } from "./auth/usernamePromptGate.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
 import { nimiqIconUseMarkup } from "./ui/nimiqIcons.js";
+import {
+  createDirectInvite,
+  parseJoinSlugFromPath,
+  redeemDirectInvite,
+} from "./invite/api.js";
+import { createDirectInviteLobbyOverlay } from "./invite/lobbyOverlay.js";
+import { mountInviteSplash } from "./invite/splash.js";
 
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
 
@@ -437,7 +446,12 @@ function openMainMenu(): void {
   });
 }
 
-function enterGame(token: string, address: string, nimiqPay?: boolean): void {
+function enterGame(
+  token: string,
+  address: string,
+  nimiqPay?: boolean,
+  opts?: { initialRoomId?: string }
+): void {
   const app = document.getElementById("app");
   if (!app) return;
   unlockScreenOrientation();
@@ -750,6 +764,17 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   };
   // worldcup: local mirror of the open-Challenge toggle + current room (for the donut label).
   let worldcupSelfChallengeOpen = false;
+  let directInviteActive = false;
+  const directInviteLobby = createDirectInviteLobbyOverlay(hudRoot, {
+    onStartMatch: () => {
+      if (ws?.readyState === WebSocket.OPEN) sendStartDirectInviteMatch(ws);
+    },
+    onCancel: () => {
+      if (ws?.readyState === WebSocket.OPEN) sendCancelDirectInvite(ws);
+      directInviteActive = false;
+      directInviteLobby.hide();
+    },
+  });
   let worldcupCurrentRoomId = "";
   // worldcup: scheduled "Entering the match..." loading screen fired when the pre-teleport
   // countdown reaches zero; cleared if a room welcome (or socket close) preempts it.
@@ -775,6 +800,7 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
 
   function resolveInitialRoomId(): string {
+    if (opts?.initialRoomId) return normalizeRoomId(opts.initialRoomId);
     const roomParam = query.get("room")?.trim();
     if (roomParam) return normalizeRoomId(roomParam);
     if (streamMode) return PIXEL_ROOM_ID;
@@ -2845,10 +2871,29 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         worldcupSelfChallengeOpen = next;
         if (socket.readyState === WebSocket.OPEN) sendSetChallenge(socket, next);
       },
+      onCreateDirectInvite: () => {
+        void (async () => {
+          try {
+            const created = await createDirectInvite(token);
+            directInviteActive = true;
+            connectToRoom(created.lobbyRoomId);
+          } catch (e) {
+            const code = e instanceof Error ? e.message : "create_failed";
+            hud.setStatus(
+              code === "challenge_open"
+                ? "Cancel your open Challenge before inviting a friend."
+                : code === "host_busy"
+                  ? "You already have an open invite."
+                  : "Could not create invite — try again."
+            );
+          }
+        })();
+      },
       challengeActive: worldcupSelfChallengeOpen,
       challengeAvailable:
         WORLDCUP_ENABLED_CLIENT &&
         !worldcupIsFieldLikeRoomId(worldcupCurrentRoomId),
+      directInviteActive,
     });
 
     game.setSelfQuickEmojiOpener(() => {
@@ -4258,6 +4303,8 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     }
     // worldcup: handshake + "Match starting in 3…2…1" countdown before the teleport
     if (msg.type === "matchCountdown") {
+      directInviteLobby.hide();
+      directInviteActive = false;
       worldcupMatchCountdown?.show({
         durationMs: msg.durationMs,
         selfAddress: address,
@@ -4273,6 +4320,16 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         worldcupMatchEnterTimer = null;
         beginRoomTransition("", "Entering the match...");
       }, Math.max(0, msg.durationMs));
+      return;
+    }
+    if (msg.type === "directInviteState") {
+      directInviteActive = true;
+      directInviteLobby.show(msg);
+      return;
+    }
+    if (msg.type === "directInviteError") {
+      directInviteActive = false;
+      directInviteLobby.showError(msg.message ?? msg.code);
       return;
     }
     // worldcup: 1v1 Match live clock + scores
@@ -5510,6 +5567,49 @@ function isPatchnotesPath(): boolean {
   return p === "/patchnotes";
 }
 
+function isJoinInvitePath(): boolean {
+  return parseJoinSlugFromPath(location.pathname) !== null;
+}
+
+async function bootstrapJoinInvite(): Promise<boolean> {
+  const slug = parseJoinSlugFromPath(location.pathname);
+  if (!slug || !WORLDCUP_ENABLED_CLIENT) return false;
+  const app = document.getElementById("app");
+  if (!app) return false;
+  try {
+    const redeem = await redeemDirectInvite(slug);
+    const waitForSplash = mountInviteSplash(app, redeem, {
+      onSignIn: () => {
+        history.replaceState(null, "", "/");
+        openMainMenu();
+      },
+    });
+    const result = await waitForSplash();
+    if (!result.ok) {
+      app.innerHTML = `<p class="invite-splash__error">${result.error}</p>`;
+      return true;
+    }
+    saveCachedSession(result.token, result.address);
+    history.replaceState(null, "", "/");
+    enterGame(result.token, result.address, undefined, {
+      initialRoomId: result.lobbyRoomId,
+    });
+    return true;
+  } catch (e) {
+    const code = e instanceof Error ? e.message : "redeem_failed";
+    const message =
+      code === "expired"
+        ? "This invite has expired — ask the host for a new link."
+        : code === "slot_taken"
+          ? "This invite is already in use."
+          : code === "cancelled"
+            ? "This invite was cancelled."
+            : "Could not open this invite link.";
+    app.innerHTML = `<div class="invite-splash"><div class="invite-splash__card"><p>${message}</p></div></div>`;
+    return true;
+  }
+}
+
 function main(): void {
   initNimiqPayDevEmulation();
   enableNimiqPayViewportLayout();
@@ -5520,6 +5620,10 @@ function main(): void {
     return;
   }
   document.title = "Nimiq Space";
+  if (isJoinInvitePath()) {
+    void bootstrapJoinInvite();
+    return;
+  }
   void bootstrapMainMenuOrResume();
 }
 

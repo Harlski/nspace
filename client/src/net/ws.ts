@@ -492,6 +492,22 @@ export type ServerMessage =
       dailyReset?: boolean;
     }
   | {
+      type: "directInviteState";
+      slug: string;
+      phase: string;
+      hostDisplayName: string;
+      guestDisplayName: string | null;
+      shareUrl: string;
+      expiresAtMs: number;
+      isHost: boolean;
+      canStart: boolean;
+    }
+  | {
+      type: "directInviteError";
+      code: "expired" | "slot_taken" | "cancelled" | "not_found" | "disabled";
+      message?: string;
+    }
+  | {
       type: "serverNotice";
       kind: "restart_pending";
       etaSeconds: number;
@@ -1280,6 +1296,18 @@ export function sendLeaveMatch(ws: WebSocket): void {
 export function sendRequestSpectate(ws: WebSocket, matchId: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "requestSpectate", matchId }));
+}
+
+/** directInvite: host cancels an open invite from the lobby. */
+export function sendCancelDirectInvite(ws: WebSocket): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "cancelDirectInvite" }));
+}
+
+/** directInvite: host starts the Match from the lobby (Kickoff Countdown follows). */
+export function sendStartDirectInviteMatch(ws: WebSocket): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "startDirectInviteMatch" }));
 }
 
 export function sendSetVoxelText(ws: WebSocket, spec: VoxelTextSpec): void {

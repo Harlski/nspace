@@ -16,6 +16,25 @@ export function npcDisplayNameBase(full: string): string {
     ? full.slice(NPC_DISPLAY_PREFIX.length)
     : full;
 }
+/** Adjective+noun pairs for Direct Invite guest nicknames (not NPC-prefixed). */
+export const DIRECT_INVITE_GUEST_NAMES: readonly string[] = [
+  "Swift Fox",
+  "Bold Panda",
+  "Calm Otter",
+  "Keen Hawk",
+  "Lucky Star",
+  "Neon Comet",
+  "Pixel Knight",
+  "Cosmic Owl",
+  "Turbo Turtle",
+  "Mighty Finch",
+  "Silent Wolf",
+  "Happy Cloud",
+  "Golden Sparrow",
+  "Brave Maple",
+  "Clever Lynx",
+];
+
 export const GUEST_DISPLAY_NAMES: readonly string[] = [
   "LearningNim",
   "ExploringSpace",
@@ -28,6 +47,12 @@ export const GUEST_DISPLAY_NAMES: readonly string[] = [
   "JustBrowsing",
   "HangingOut",
 ];
+
+export function pickDirectInviteGuestName(rng: () => number): string {
+  const n = DIRECT_INVITE_GUEST_NAMES.length;
+  if (n === 0) return "Guest";
+  return DIRECT_INVITE_GUEST_NAMES[Math.floor(rng() * n)]!;
+}
 
 export function pickGuestDisplayName(
   rng: () => number,

@@ -13414,3 +13414,112 @@ a.main-menu__version:focus-visible {
   font-weight: 700;
   letter-spacing: 0.02em;
 }
+
+/* directInvite: guest splash + host/guest lobby overlay */
+.invite-splash,
+.direct-invite-lobby {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  padding: 16px;
+}
+
+.invite-splash__card,
+.direct-invite-lobby__panel {
+  width: min(420px, 100%);
+  background: #111827;
+  color: #f9fafb;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.invite-splash__title,
+.direct-invite-lobby__title {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+}
+
+.invite-splash__hint,
+.direct-invite-lobby__status {
+  margin: 0 0 16px;
+  color: #cbd5e1;
+}
+
+.invite-splash__label {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 0.875rem;
+}
+
+.invite-splash__input,
+.direct-invite-lobby__url {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #374151;
+  background: #0f172a;
+  color: inherit;
+}
+
+.invite-splash__actions,
+.direct-invite-lobby__actions,
+.direct-invite-lobby__share {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.invite-splash__continue,
+.invite-splash__signin,
+.direct-invite-lobby__copy,
+.direct-invite-lobby__start,
+.direct-invite-lobby__cancel {
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.invite-splash__continue,
+.direct-invite-lobby__start {
+  background: #22c55e;
+  color: #052e16;
+}
+
+.invite-splash__signin,
+.direct-invite-lobby__copy,
+.direct-invite-lobby__cancel {
+  background: #334155;
+  color: #f8fafc;
+}
+
+.direct-invite-lobby__start:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.direct-invite-lobby__qr {
+  display: flex;
+  justify-content: center;
+  margin: 12px 0;
+}
+
+.invite-splash__error,
+.direct-invite-lobby__error {
+  color: #fca5a5;
+  margin-top: 12px;
+}
+
+.direct-invite-lobby[hidden],
+.invite-splash:empty {
+  display: none;
+}

@@ -156,6 +156,20 @@ import {
   type GoalZone as WorldcupGoalZone,
 } from "./worldcup/config.js";
 import {
+  DIRECT_INVITE_ENABLED,
+  buildInviteStateWire,
+  cancelInvite,
+  getInviteByGuestId,
+  getInviteBySlug,
+  isInviteLobbyRoomId,
+  markGuestJoinedLobby,
+  markHostJoinedLobby,
+  markInviteStarted,
+  startInviteMatch,
+  tickInvites,
+  type DirectInviteRecord,
+} from "./directInvite/index.js";
+import {
   initMatchState as worldcupInitMatchState,
   matchTimeRemainingMs as worldcupMatchTimeRemainingMs,
   reduceMatch as worldcupReduceMatch,
@@ -755,6 +769,8 @@ interface ClientConn {
   pendingMatchId: string | null;
   /** worldcup: pitch room id this player is *spectating* (in the stands), else null. */
   spectatingMatchId: string | null;
+  /** directInvite: slug while host or guest is in a Direct Invite lobby. */
+  directInviteSlug: string | null;
   /** Camera / view interest for spatial sync in large rooms. */
   viewInterest: ViewInterestRect;
   /** Chunk keys (`cx,cz`) currently loaded for this client. */
@@ -1229,6 +1245,23 @@ type OutMsg =
       prevWinnerCountry?: string | null;
       /** True when this update was triggered by the daily UTC reset. */
       dailyReset?: boolean;
+    }
+  // directInvite: lobby overlay state for host/guest
+  | {
+      type: "directInviteState";
+      slug: string;
+      phase: string;
+      hostDisplayName: string;
+      guestDisplayName: string | null;
+      shareUrl: string;
+      expiresAtMs: number;
+      isHost: boolean;
+      canStart: boolean;
+    }
+  | {
+      type: "directInviteError";
+      code: "expired" | "slot_taken" | "cancelled" | "not_found" | "disabled";
+      message?: string;
     }
   /** Echo for RTT / latency HUD (see `clientPing` inbound). */
   | { type: "clientPong"; id: number }
@@ -5019,7 +5052,10 @@ interface WorldcupPendingMatch {
   /** Compact wallets of the challenger (side a) and accepter (side b). */
   a: string;
   b: string;
+  /** Room where both players wait during the pre-teleport countdown. */
   originRoomId: string;
+  /** Social room for the spectate portal (Direct Invite: host's room before the lobby). */
+  spectateOriginRoomId?: string;
   /** When to teleport both into the freshly created Match Pitch (ms epoch). */
   startAtMs: number;
 }
@@ -5042,7 +5078,8 @@ function worldcupSendHandshake(conn: ClientConn, roomId: string): void {
 function worldcupBeginMatch(
   challenger: ClientConn,
   accepter: ClientConn,
-  originRoomId: string
+  originRoomId: string,
+  spectateOriginRoomId?: string
 ): void {
   // Both leave any open Challenge immediately so the bubble clears and they can't be re-grabbed.
   for (const c of [challenger, accepter]) {
@@ -5064,6 +5101,7 @@ function worldcupBeginMatch(
     a: compactAddress(challenger.address),
     b: compactAddress(accepter.address),
     originRoomId,
+    ...(spectateOriginRoomId ? { spectateOriginRoomId } : {}),
     startAtMs: Date.now() + countdownMs,
   });
   // Re-render the origin room so the (now accepted) Challenge bubble disappears for onlookers.
@@ -5138,7 +5176,12 @@ function worldcupTickPending(now: number): void {
     }
     pair.challenger.pendingMatchId = null;
     pair.accepter.pendingMatchId = null;
-    worldcupStartMatch(pair.challenger, pair.accepter, p.originRoomId);
+    worldcupStartMatch(
+      pair.challenger,
+      pair.accepter,
+      p.originRoomId,
+      p.spectateOriginRoomId
+    );
   }
 }
 
@@ -5146,25 +5189,56 @@ function worldcupTickPending(now: number): void {
 function worldcupStartMatch(
   challenger: ClientConn,
   accepter: ClientConn,
-  originRoomId: string
+  countdownRoomId: string,
+  spectateOriginRoomId?: string
 ): void {
   worldcupMatchSeq += 1;
   const id = `${Date.now().toString(36)}_${worldcupMatchSeq.toString(36)}`;
   const pitchRoomId = normalizeRoomId(worldcupMakeMatchPitchRoomId(id));
   const now = Date.now();
+  const portalRoomId = spectateOriginRoomId ?? countdownRoomId;
 
   const origins = new Map<string, { roomId: string; x: number; z: number; y: number }>();
   for (const c of [challenger, accepter]) {
-    origins.set(compactAddress(c.address), {
-      roomId: originRoomId,
-      x: c.player.x,
-      z: c.player.z,
-      y: c.player.y,
-    });
+    const isGuest = c.address.startsWith("guest:");
+    const returnRoomId = isGuest ? CHAMBER_ROOM_ID : portalRoomId;
+    const saved = spawnMap(returnRoomId).get(c.address);
+    if (saved) {
+      origins.set(compactAddress(c.address), {
+        roomId: returnRoomId,
+        x: saved.x,
+        z: saved.z,
+        y: typeof saved.y === "number" ? saved.y : 0,
+      });
+    } else if (isGuest) {
+      origins.set(compactAddress(c.address), {
+        roomId: CHAMBER_ROOM_ID,
+        x: CHAMBER_DEFAULT_SPAWN.x,
+        z: CHAMBER_DEFAULT_SPAWN.z,
+        y: 0,
+      });
+    } else {
+      origins.set(compactAddress(c.address), {
+        roomId: countdownRoomId,
+        x: c.player.x,
+        z: c.player.z,
+        y: c.player.y,
+      });
+    }
   }
 
   // The spectate portal sits where the challenger was standing (snapped to a tile).
-  const portalTile = snapToTile(challenger.player.x, challenger.player.z);
+  let portalX = challenger.player.x;
+  let portalZ = challenger.player.z;
+  if (spectateOriginRoomId) {
+    const saved = spawnMap(spectateOriginRoomId).get(challenger.address);
+    if (saved) {
+      const t = snapToTile(saved.x, saved.z);
+      portalX = t.x;
+      portalZ = t.z;
+    }
+  }
+  const portalTile = snapToTile(portalX, portalZ);
   const runtime: WorldcupMatchRuntime = {
     id,
     pitchRoomId,
@@ -5172,7 +5246,7 @@ function worldcupStartMatch(
     b: compactAddress(accepter.address),
     state: worldcupInitMatchState(),
     origins,
-    originRoomId,
+    originRoomId: portalRoomId,
     portalX: portalTile.x,
     portalZ: portalTile.z,
     lastTickMs: now,
@@ -5198,8 +5272,8 @@ function worldcupStartMatch(
   teleportPlayer(challenger, pitchRoomId, spawnA.x, spawnA.z);
   teleportPlayer(accepter, pitchRoomId, spawnB.x, spawnB.z);
 
-  // The origin room should re-render so the (now cleared) Challenge bubble disappears.
-  broadcastRoomStateFull(originRoomId);
+  // The countdown room should re-render so the (now cleared) Challenge bubble disappears.
+  broadcastRoomStateFull(countdownRoomId);
   // Spawn the "{identicon} vs {identicon}" spectate portal where the match was started from.
   worldcupBroadcastPortal(runtime);
   broadcastWorldcupMatchState(runtime, true, now);
@@ -5316,6 +5390,161 @@ function worldcupSweepStaleChallenges(now: number): void {
     }
     if (changed) broadcastRoomStateFull(roomId);
   }
+}
+
+// ---------------------------------------------------------------------------
+// directInvite: virtual lobby + Match handoff (feature-flagged; grep "directInvite")
+// ---------------------------------------------------------------------------
+
+let directInvitePublicBaseUrl = "https://nimiq.space";
+
+export function setDirectInvitePublicBaseUrl(url: string): void {
+  directInvitePublicBaseUrl = url.replace(/\/$/, "") || "https://nimiq.space";
+}
+
+export function getWalletCurrentRoomId(wallet: string): string | null {
+  return findPlayerRoom(wallet);
+}
+
+function findConnByWallet(wallet: string): ClientConn | null {
+  const roomId = findPlayerRoom(wallet);
+  if (!roomId) return null;
+  return rooms.get(roomId)?.get(wallet) ?? null;
+}
+
+function findConnByGuestId(guestId: string): ClientConn | null {
+  const invite = getInviteByGuestId(guestId);
+  if (!invite) return null;
+  const room = rooms.get(invite.lobbyRoomId);
+  if (!room) return null;
+  return room.get(`guest:${guestId}`) ?? null;
+}
+
+function directInviteShareUrl(slug: string): string {
+  return `${directInvitePublicBaseUrl}/join/${slug}`;
+}
+
+function broadcastDirectInviteState(invite: DirectInviteRecord): void {
+  const room = rooms.get(invite.lobbyRoomId);
+  if (!room) return;
+  const hostName = getEffectivePlayerDisplayName(compactAddress(invite.hostWallet));
+  const shareUrl = directInviteShareUrl(invite.slug);
+  for (const c of room.values()) {
+    const viewerKey = c.address.startsWith("guest:")
+      ? c.address.slice("guest:".length)
+      : c.address;
+    const isParticipant =
+      c.address === invite.hostWallet ||
+      (invite.guestId !== null && viewerKey === invite.guestId);
+    if (!isParticipant) continue;
+    const wire = buildInviteStateWire(invite, viewerKey, hostName, shareUrl);
+    if (c.address === invite.hostWallet) {
+      wire.isHost = true;
+    } else if (invite.guestId && viewerKey === invite.guestId) {
+      wire.isHost = false;
+    }
+    wsSafeSend(c.ws, { type: "directInviteState", ...wire } satisfies OutMsg);
+  }
+}
+
+function directInviteReturnToOrigin(conn: ClientConn, originRoomId: string): void {
+  conn.directInviteSlug = null;
+  const saved = spawnMap(originRoomId).get(conn.address);
+  if (saved) {
+    teleportPlayer(conn, originRoomId, saved.x, saved.z);
+  } else {
+    teleportPlayer(conn, originRoomId, 0, 0);
+  }
+}
+
+export function directInviteOnCreated(invite: DirectInviteRecord): void {
+  if (!DIRECT_INVITE_ENABLED) return;
+  const host = findConnByWallet(invite.hostWallet);
+  if (!host) return;
+  if (host.challengeOpen) {
+    host.challengeOpen = false;
+    host.challengeRaisedAtMs = 0;
+  }
+  host.directInviteSlug = invite.slug;
+  teleportPlayer(host, invite.lobbyRoomId, 0, 0);
+  markHostJoinedLobby(invite.slug);
+  const updated = getInviteBySlug(invite.slug);
+  if (updated) broadcastDirectInviteState(updated);
+}
+
+function directInviteOnLobbyConnect(
+  conn: ClientConn,
+  roomId: string,
+  address: string,
+  sessionGuestId?: string
+): void {
+  if (!DIRECT_INVITE_ENABLED || !isInviteLobbyRoomId(roomId)) return;
+  const slug = roomId.replace("invite-lobby-", "");
+  const invite = getInviteBySlug(slug);
+  if (!invite || invite.lobbyRoomId !== roomId) return;
+  if (address === invite.hostWallet) {
+    conn.directInviteSlug = slug;
+    markHostJoinedLobby(slug);
+  } else if (sessionGuestId && invite.guestId === sessionGuestId) {
+    conn.directInviteSlug = slug;
+    markGuestJoinedLobby(slug, sessionGuestId);
+  }
+  const updated = getInviteBySlug(slug);
+  if (updated) broadcastDirectInviteState(updated);
+}
+
+function directInviteSweepExpired(now: number): void {
+  if (!DIRECT_INVITE_ENABLED) return;
+  const expiredSlugs = tickInvites(now);
+  for (const slug of expiredSlugs) {
+    const invite = getInviteBySlug(slug);
+    if (!invite) continue;
+    const room = rooms.get(invite.lobbyRoomId);
+    if (room) {
+      for (const c of room.values()) {
+        wsSafeSend(c.ws, {
+          type: "directInviteError",
+          code: "expired",
+          message: "Invite expired",
+        } satisfies OutMsg);
+        directInviteReturnToOrigin(c, invite.hostOriginRoomId);
+      }
+    }
+  }
+}
+
+function directInviteHandleCancel(conn: ClientConn): void {
+  if (!conn.directInviteSlug) return;
+  const invite = getInviteBySlug(conn.directInviteSlug);
+  if (!invite || invite.hostWallet !== conn.address) return;
+  cancelInvite(invite.slug, "host");
+  const room = rooms.get(invite.lobbyRoomId);
+  if (room) {
+    for (const c of room.values()) {
+      wsSafeSend(c.ws, {
+        type: "directInviteError",
+        code: "cancelled",
+        message: "Invite cancelled",
+      } satisfies OutMsg);
+      directInviteReturnToOrigin(c, invite.hostOriginRoomId);
+    }
+  }
+}
+
+function directInviteHandleStart(conn: ClientConn): void {
+  if (!conn.directInviteSlug) return;
+  const invite = getInviteBySlug(conn.directInviteSlug);
+  if (!invite || invite.hostWallet !== conn.address) return;
+  const started = startInviteMatch(invite.slug);
+  if (!started || started.phase !== "starting") return;
+  const host = findConnByWallet(invite.hostWallet);
+  const guest =
+    invite.guestId !== null ? findConnByGuestId(invite.guestId) : null;
+  if (!host || !guest) return;
+  markInviteStarted(invite.slug);
+  host.directInviteSlug = null;
+  guest.directInviteSlug = null;
+  worldcupBeginMatch(host, guest, invite.lobbyRoomId, invite.hostOriginRoomId);
 }
 
 // worldcup: at UTC midnight the daily tally resets — push the cleared scoreboard and the
@@ -5622,7 +5851,19 @@ export function startRoomTick(): void {
       worldcupTickMatches(now);
       worldcupSweepStaleChallenges(now);
     }
+    if (DIRECT_INVITE_ENABLED) {
+      directInviteSweepExpired(now);
+    }
   }, TICK_MS);
+}
+
+export function walletHasOpenChallenge(wallet: string): boolean {
+  const c = findConnByWallet(wallet);
+  return c?.challengeOpen === true;
+}
+
+export function getHostDisplayNameForInvite(wallet: string): string {
+  return getEffectivePlayerDisplayName(compactAddress(wallet));
 }
 
 /** Login / reconnect placement when client sends `resume=1` (within grace window). */
@@ -5661,7 +5902,12 @@ export function addClient(
   ws: WebSocket,
   address: string,
   spawnHint?: { x: number; z: number },
-  sessionFlags?: { nimiqPay?: boolean; streamObserver?: boolean }
+  sessionFlags?: {
+    nimiqPay?: boolean;
+    streamObserver?: boolean;
+    guestDisplayName?: string;
+    guestId?: string;
+  }
 ): void {
   const streamObserver = sessionFlags?.streamObserver === true;
   const requestedRoomId = normalizeRoomId(roomIdRaw);
@@ -5681,7 +5927,9 @@ export function addClient(
   ensureFakePlayers(roomId);
   const room = roomOf(roomId);
   const compactSelf = compactAddress(address);
-  const displayName = getEffectivePlayerDisplayName(compactSelf);
+  const displayName =
+    sessionFlags?.guestDisplayName?.trim() ||
+    getEffectivePlayerDisplayName(compactSelf);
   const recentAliases = getRecentAliases(compactSelf);
 
   const player: PlayerState = {
@@ -5807,6 +6055,7 @@ export function addClient(
     matchId: null,
     pendingMatchId: null,
     spectatingMatchId: null,
+    directInviteSlug: null,
     viewInterest: {
       centerX: player.x,
       centerZ: player.z,
@@ -5960,6 +6209,8 @@ export function addClient(
     sendMazePortalBlockedBubble(conn);
   }
 
+  directInviteOnLobbyConnect(conn, roomId, address, sessionFlags?.guestId);
+
   ws.on("message", async (raw) => {
     const rawInBytes = utf8ByteLengthOfWsData(raw);
     let data: unknown;
@@ -6055,6 +6306,7 @@ export function addClient(
         if (worldcupIsFieldLikeRoom(currentRoomId)) return;
         if (conn.matchId || conn.pendingMatchId) return;
         if (conn.challengeOpen) return;
+        if (conn.directInviteSlug) return;
         conn.challengeOpen = true;
         conn.challengeRaisedAtMs = Date.now();
       } else {
@@ -6090,6 +6342,20 @@ export function addClient(
         return;
       }
       worldcupBeginMatch(challenger, conn, currentRoomId);
+      return;
+    }
+
+    if (msg.type === "cancelDirectInvite") {
+      if (!DIRECT_INVITE_ENABLED) return;
+      if (conn.streamObserver) return;
+      directInviteHandleCancel(conn);
+      return;
+    }
+
+    if (msg.type === "startDirectInviteMatch") {
+      if (!DIRECT_INVITE_ENABLED) return;
+      if (conn.streamObserver) return;
+      directInviteHandleStart(conn);
       return;
     }
 
