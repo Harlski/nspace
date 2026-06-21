@@ -1180,6 +1180,8 @@ type OutMsg =
       phase: WorldcupMatchPhase;
       /** Remaining ms in the current phase (regulation, then golden goal). */
       remainingMs: number;
+      /** Post-goal kickoff freeze remaining (0 = movement allowed). */
+      kickoffRemainingMs: number;
       /** Wallet of side a (challenger) / side b (accepter), so the client knows its side. */
       aAddress: string;
       bAddress: string;
@@ -4844,6 +4846,8 @@ function broadcastWorldcupMatchState(
     return;
   }
   m.lastBroadcastMs = now;
+  const kickoffRemainingMs =
+    m.kickoffUntilMs > now ? Math.max(0, m.kickoffUntilMs - now) : 0;
   broadcast(m.pitchRoomId, {
     type: "matchState",
     roomId: m.pitchRoomId,
@@ -4852,6 +4856,7 @@ function broadcastWorldcupMatchState(
     scoreB: m.state.scoreB,
     phase: m.state.phase,
     remainingMs: worldcupMatchTimeRemainingMs(m.state, WORLDCUP_MATCH_CFG),
+    kickoffRemainingMs,
     aAddress: m.a,
     bAddress: m.b,
     aCountry: worldcupGetPlayerCountry(m.a),
@@ -5276,6 +5281,7 @@ function worldcupTickMatches(now: number): void {
       // cleanly (no accumulated dt jump) when the countdown ends.
       if (m.kickoffUntilMs > now) {
         m.lastTickMs = now;
+        broadcastWorldcupMatchState(m, false, now);
         continue;
       }
       if (m.kickoffUntilMs !== 0) m.kickoffUntilMs = 0;

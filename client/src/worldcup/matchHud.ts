@@ -27,6 +27,7 @@ export interface MatchStateView {
   scoreB: number;
   phase: MatchPhase;
   remainingMs: number;
+  kickoffRemainingMs: number;
   aAddress: string;
   bAddress: string;
   aCountry: string | null;
@@ -68,6 +69,7 @@ export class WorldcupMatchHud {
   private goalTimer: number | null = null;
   private goalHideTimer: number | null = null;
   private goalKickoffEndsAt = 0;
+  private goalKickoffEndHandler: (() => void) | null = null;
   /** Last-rendered side wallets, so the goal banner can tint when the local player scores. */
   private lastAAddress = "";
   private lastBAddress = "";
@@ -286,11 +288,19 @@ export class WorldcupMatchHud {
    * counts down "Kickoff in N" (movement is frozen server-side for that window); otherwise it just
    * lingers briefly (the goal that ended the Match — `showResult` follows).
    */
-  flashGoal(side: "a" | "b", scoreA: number, scoreB: number, country: string | null, kickoffMs: number): void {
+  flashGoal(
+    side: "a" | "b",
+    scoreA: number,
+    scoreB: number,
+    country: string | null,
+    kickoffMs: number,
+    onKickoffEnd?: () => void
+  ): void {
     if (this.goalTimer !== null) window.clearInterval(this.goalTimer);
     if (this.goalHideTimer !== null) window.clearTimeout(this.goalHideTimer);
     this.goalTimer = null;
     this.goalHideTimer = null;
+    this.goalKickoffEndHandler = onKickoffEnd ?? null;
 
     const flagImg = country ? createFlagImg(country) : null;
     this.goalTitle.replaceChildren();
@@ -333,6 +343,9 @@ export class WorldcupMatchHud {
       this.goalHideTimer = null;
     }
     this.goalBanner.style.display = "none";
+    const end = this.goalKickoffEndHandler;
+    this.goalKickoffEndHandler = null;
+    end?.();
   }
 
   hide(): void {

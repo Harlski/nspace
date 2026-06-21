@@ -701,6 +701,12 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
       if (ws) sendLeaveMatch(ws);
     };
   }
+  /** End post-goal kickoff freeze when HUD countdown or server matchState says play resumes. */
+  const finishWorldcupKickoffFreeze = (): void => {
+    if (game.isWorldcupMoveLocked()) {
+      game.setWorldcupMoveLocked(false);
+    }
+  };
   // worldcup: pre-teleport handshake countdown overlay (shown in the origin room).
   const worldcupMatchCountdown = WORLDCUP_ENABLED_CLIENT
     ? new WorldcupMatchCountdown()
@@ -4271,11 +4277,15 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
         scoreB: msg.scoreB,
         phase: msg.phase,
         remainingMs: msg.remainingMs,
+        kickoffRemainingMs: msg.kickoffRemainingMs ?? 0,
         aAddress: msg.aAddress,
         bAddress: msg.bAddress,
         aCountry: msg.aCountry,
         bCountry: msg.bCountry,
       });
+      if ((msg.kickoffRemainingMs ?? 0) <= 0) {
+        finishWorldcupKickoffFreeze();
+      }
       // The Match Pitch crowd splits by side: side a's half waves a's flag, b's half b's.
       game.setWorldcupCrowdSideFlags(msg.aCountry, msg.bCountry);
       // Record the two players so any other avatar in the pitch is seated on the stands.
@@ -4308,17 +4318,17 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     // continues) run the kickoff countdown while both players are frozen at their spawns.
     if (msg.type === "matchGoal") {
       game.worldcupCrowdCheer(1);
+      if (msg.kickoffMs > 0) {
+        game.setWorldcupMoveLocked(true);
+      }
       worldcupMatchHud?.flashGoal(
         msg.side,
         msg.scoreA,
         msg.scoreB,
         msg.country,
-        msg.kickoffMs
+        msg.kickoffMs,
+        msg.kickoffMs > 0 ? finishWorldcupKickoffFreeze : undefined
       );
-      if (msg.kickoffMs > 0) {
-        game.setWorldcupMoveLocked(true);
-        window.setTimeout(() => game.setWorldcupMoveLocked(false), msg.kickoffMs);
-      }
       return;
     }
     // worldcup: 1v1 Match finished — show the result banner (entrants are returned shortly).

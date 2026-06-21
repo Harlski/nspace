@@ -81,4 +81,13 @@ In the **World Cup 1v1 Match Pitch**, after **scoring a goal**, the scoring play
 
 ## Comments
 
-<!-- Append triage / implementation notes here -->
+### 2026-06-21 — implemented
+
+**Root cause:** Client unlock used a bare `setTimeout(kickoffMs)` while the Match HUD countdown used `performance.now()` + `setInterval`. Pay WebView can throttle or drop one-shot timers; the HUD interval often still runs, leaving `worldcupMoveLocked` true after kickoff while the server had already cleared `kickoffUntilMs`. Opponent's next `matchGoal` accidentally fixed it by scheduling another unlock attempt.
+
+**Fix:**
+- Unlock from the HUD kickoff countdown end callback (same timer as "Kickoff in N…").
+- Server broadcasts `kickoffRemainingMs` on `matchState` (including during kickoff freeze ticks) — client unlocks when it hits 0 as authoritative fallback.
+- Removed `setTimeout` unlock path.
+
+**Verify on Pay:** score in 1v1; after kickoff countdown both players move without waiting for another goal.

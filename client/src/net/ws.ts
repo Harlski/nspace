@@ -445,6 +445,8 @@ export type ServerMessage =
       phase: "regulation" | "golden" | "ended";
       /** Remaining ms in the current phase (regulation, then golden goal). */
       remainingMs: number;
+      /** Post-goal kickoff freeze remaining (0 = movement allowed). */
+      kickoffRemainingMs: number;
       /** Wallet of side a (challenger) / side b (accepter). */
       aAddress: string;
       bAddress: string;

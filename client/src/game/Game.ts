@@ -8976,6 +8976,11 @@ export class Game {
     }
   }
 
+  /** worldcup: true during the post-goal kickoff countdown freeze. */
+  isWorldcupMoveLocked(): boolean {
+    return this.worldcupMoveLocked;
+  }
+
   /** worldcup: true when a single-finger pitch drag may be promoted to the floating stick. */
   private worldcupStickCanEngage(): boolean {
     return (
