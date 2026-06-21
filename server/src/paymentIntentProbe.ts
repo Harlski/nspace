@@ -110,6 +110,10 @@ function computePaymentIntentStatusTone(
   return "error";
 }
 
+function looksLikePayoutPort(baseUrl: string): boolean {
+  return /:3091(?:\/|$)/.test(baseUrl);
+}
+
 /**
  * Probes `GET {base}/health` and, when `PAYMENT_INTENT_API_SECRET` is set on this process,
  * `GET {base}/v1/meta/features` with Bearer auth (validates end-to-end auth + handler wiring).
@@ -124,6 +128,25 @@ export async function probePaymentIntentService(
       statusTone: "off",
       hint:
         "Set PAYMENT_INTENT_SERVICE_URL on the game server (e.g. http://127.0.0.1:3090 or http://payment-intent:3090 in Docker) to enable monitoring.",
+    };
+  }
+
+  if (looksLikePayoutPort(baseUrl)) {
+    const health: PaymentIntentHealthProbe = {
+      reached: false,
+      ok: false,
+      latencyMs: 0,
+      error:
+        "PAYMENT_INTENT_SERVICE_URL uses port 3091 (payout sidecar). Payment-intent listens on 3090 — set http://payment-intent:3090 (Docker) or http://127.0.0.1:3090 (host).",
+    };
+    const api: PaymentIntentApiProbe = { attempted: false };
+    return {
+      configured: true,
+      statusTone: "error",
+      baseUrl,
+      health,
+      api,
+      logsHint: "docker compose --profile payment logs payment-intent --tail 100",
     };
   }
 

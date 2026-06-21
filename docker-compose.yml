@@ -41,7 +41,7 @@ services:
       HOST: 0.0.0.0
       PORT: "3001"
       # Optional: `/admin/system` probes + future purchase flows (set when Compose profile `payment` is used)
-      PAYMENT_INTENT_SERVICE_URL: ${PAYMENT_INTENT_SERVICE_URL:-}
+      PAYMENT_INTENT_SERVICE_URL: ${PAYMENT_INTENT_SERVICE_URL:-http://payment-intent:3090}
       PAYMENT_INTENT_API_SECRET: ${PAYMENT_INTENT_API_SECRET:-}
       PAYOUT_SERVICE_URL: ${PAYOUT_SERVICE_URL:-http://payout:3091}
       PAYOUT_SERVICE_API_SECRET: ${PAYOUT_SERVICE_API_SECRET:-}

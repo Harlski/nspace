@@ -57,7 +57,7 @@ On-disk payout file **names and JSON shapes are unchanged** — this is a direct
    docker compose up -d
    ```
 
-   On each GitHub deploy, after the full `data/` tarball backup, [`scripts/migrate-payout-data-to-sidecar.sh`](../scripts/migrate-payout-data-to-sidecar.sh) runs idempotently (no-op once legacy files are already under `data/payout-service/`).
+   On each GitHub deploy, after the full `data/` tarball backup, [`scripts/migrate-payout-data-on-host.sh`](../scripts/migrate-payout-data-on-host.sh) runs idempotently (no-op once legacy files are already under `data/payout-service/`). If `data/` or `data/payout-service/` is owned by root (normal after Docker writes), the host wrapper re-runs the same migration via a one-off Docker container as root.
 
 7. **Verify** (see below). Do **not** roll back to an old game-server image that still runs the in-process processor while the sidecar also holds the key.
 

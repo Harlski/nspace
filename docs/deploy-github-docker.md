@@ -236,7 +236,7 @@ After GitHub secrets are set, merging or pushing to `main` will run the workflow
 
 Each deploy creates **`/opt/nspace/backups/nspace-data-*.tar.gz`** (same `DEPLOY_ROOT` as above) **after** the stack is stopped, so the archive is not taken while containers are writing. The tarball includes the full `data/` tree (world state, `events/`, `data/payout-service/`, optional `data/payment-intent/` if you use that sidecar).
 
-**After** the backup and `git reset`, the workflow runs [`scripts/migrate-payout-data-to-sidecar.sh`](../scripts/migrate-payout-data-to-sidecar.sh) to move any legacy `nim-payout-*` files from `data/` into `data/payout-service/` (idempotent; safe on every deploy). See [payout-cutover-runbook.md](payout-cutover-runbook.md).
+**After** the backup and `git reset`, the workflow runs [`scripts/migrate-payout-data-on-host.sh`](../scripts/migrate-payout-data-on-host.sh) to move any legacy `nim-payout-*` files from `data/` into `data/payout-service/` (idempotent; safe on every deploy). If host permissions block `mv` (Docker writes `data/` as root), the wrapper retries the same migration via a one-off `bash:5-alpine` container. See [payout-cutover-runbook.md](payout-cutover-runbook.md).
 
 **`/admin/system`** (system admin wallet) shows green / yellow / red status for **Payment intent** and **Payout** sidecars, probe error text, and a `docker compose logs …` hint when not fully healthy.
 
@@ -244,7 +244,14 @@ Each deploy creates **`/opt/nspace/backups/nspace-data-*.tar.gz`** (same `DEPLOY
 
 ## Troubleshooting
 
-- **GitHub Actions fails at “pre-deploy hook” / `curl` exit 22:** Older workflows used **`curl -f`**, which treats **404** as failure. The first deploy that adds **`DEPLOY_RESTART_HOOK_SECRET`** often hits **404** while the **still-running** server predates `POST /api/hooks/pre-deploy-restart`. Update to the latest **`.github/workflows/deploy-docker.yml`** (no `-f`; **404** skips the long wait) or temporarily remove the secret from `.env` until one successful deploy has shipped the hook.
+- **Payout migration `Permission denied` during deploy** (`mv … nim-payout-pending.json …`): legacy payout files or `data/payout-service/` were created by Docker as **root** while the SSH deploy user is not. Update to the latest workflow (uses [`scripts/migrate-payout-data-on-host.sh`](../scripts/migrate-payout-data-on-host.sh) with a Docker root retry). **Unblock the VPS now** (stack is stopped after a failed deploy):
+  ```bash
+  cd /opt/nspace
+  bash scripts/migrate-payout-data-on-host.sh /opt/nspace
+  docker compose build --pull
+  docker compose up -d --remove-orphans
+  ```
+  Or one-shot: `sudo bash scripts/migrate-payout-data-to-sidecar.sh /opt/nspace`
 - **`docker: command not found`** (exit 127): Docker is not installed, or the **Compose v2** plugin is missing, or `deployer` was never added to the **`docker`** group (and did not start a new session after `usermod`). On the VPS as `deployer`, run `command -v docker && docker compose version`. Install example for Debian/Ubuntu: `sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2` then `sudo usermod -aG docker deployer` and **log out and back in** (or reboot) so group membership applies to SSH sessions.
 - **Permission denied (publickey)** from Actions: check `DEPLOY_USER`, `DEPLOY_HOST`, and that the matching **public** key is in that user’s `authorized_keys`.
 - **`git fetch` fails on server**: test `ssh -T git@github.com` on the VPS; fix deploy key / `~/.ssh/config`.

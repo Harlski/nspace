@@ -1,10 +1,10 @@
 ---
 id: "02-joystick-runaway-pay"
 category: bug
-triage: ready-for-agent
+triage: done
 priority: 2
 blocked_by: []
-status: todo
+status: done
 reporter: maintainer
 reported: 2026-06-21
 ---
@@ -70,4 +70,8 @@ On **Nimiq Pay** (touch / coarse pointer), releasing the **Touch Joystick** fing
 
 ## Comments
 
-<!-- Append triage / implementation notes here -->
+### 2026-06-21 — implemented
+
+**Fix:** `Game.onWindowTouchPointerEnd` now calls `endWorldcupStick()` when the lifted touch `pointerId` owns the active stick. Window capture already handled pinch/twist cleanup; Pay WebView / HUD lifts often never reach the canvas `pointerup` handler.
+
+**Verify on Pay:** drag joystick, release finger over HUD or off canvas — player should halt immediately.

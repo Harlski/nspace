@@ -4141,6 +4141,10 @@ export class Game {
 
   private readonly onWindowTouchPointerEnd = (e: PointerEvent): void => {
     if (e.pointerType !== "touch") return;
+    // worldcup: Pay WebView / HUD lifts often miss canvas pointerup; stop the stick here too.
+    if (this.worldcupStick?.pointerId === e.pointerId) {
+      this.endWorldcupStick();
+    }
     this.releaseTouchPointerId(e.pointerId);
   };
 

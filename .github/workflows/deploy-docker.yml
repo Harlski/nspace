@@ -110,11 +110,14 @@ jobs:
             fi
             git fetch origin main
             git reset --hard origin/main
-            if [[ -x "$DEPLOY_ROOT/scripts/migrate-payout-data-to-sidecar.sh" ]]; then
+            if [[ -x "$DEPLOY_ROOT/scripts/migrate-payout-data-on-host.sh" ]]; then
               echo "Migrating legacy payout data into data/payout-service/ (idempotent)…"
+              bash "$DEPLOY_ROOT/scripts/migrate-payout-data-on-host.sh" "$DEPLOY_ROOT"
+            elif [[ -x "$DEPLOY_ROOT/scripts/migrate-payout-data-to-sidecar.sh" ]]; then
+              echo "WARN: migrate-payout-data-on-host.sh missing — falling back to direct migration script."
               bash "$DEPLOY_ROOT/scripts/migrate-payout-data-to-sidecar.sh" "$DEPLOY_ROOT"
             else
-              echo "WARN: migrate-payout-data-to-sidecar.sh not found — skip payout data migration."
+              echo "WARN: payout data migration scripts not found — skip."
             fi
             docker compose build --pull
             docker compose up -d --remove-orphans

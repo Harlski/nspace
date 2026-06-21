@@ -33,3 +33,20 @@ test("probePaymentIntentService returns not configured when URL unset", async ()
     else delete process.env.PAYMENT_INTENT_API_SECRET;
   }
 });
+
+test("probePaymentIntentService rejects payout port 3091 with actionable error", async () => {
+  const prev = process.env.PAYMENT_INTENT_SERVICE_URL;
+  process.env.PAYMENT_INTENT_SERVICE_URL = "http://payment-intent:3091";
+  try {
+    const out = await probePaymentIntentService(100);
+    assert.equal(out.configured, true);
+    if (out.configured) {
+      assert.equal(out.statusTone, "error");
+      assert.ok(out.health.error?.includes("3090"));
+      assert.equal(out.health.reached, false);
+    }
+  } finally {
+    if (prev !== undefined) process.env.PAYMENT_INTENT_SERVICE_URL = prev;
+    else delete process.env.PAYMENT_INTENT_SERVICE_URL;
+  }
+});
