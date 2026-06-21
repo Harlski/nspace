@@ -1,10 +1,10 @@
 ---
 id: "04-off-screen-ball-indicator"
 category: enhancement
-triage: needs-triage
+triage: done
 priority: —
 blocked_by: ["01-oversized-hud-buttons-prod", "02-joystick-runaway-pay", "03-1v1-goal-freeze-pay"]
-status: todo
+status: done
 reporter: maintainer
 reported: 2026-06-21
 ---
@@ -27,4 +27,10 @@ When the ball is **off screen** in a World Cup field-like room, show a **visual 
 
 ## Comments
 
-<!-- Grill outcomes and agent brief go here -->
+### Grill (2026-06-21)
+
+- **Scope:** Ball Edge Marker on **Free Play Field + Match Pitch** for active players only. **Never** for Spectators.
+- **Appearance:** Chevron on the screen edge, pointing toward the ball. Opacity (or similar) scales with distance — stronger when far, fades as the player nears the ball.
+- **Visibility:** Viewport-gated only — show when the ball is off-screen; hide immediately once any part of the ball enters the letterboxed game viewport. No separate world-distance hide threshold.
+- **Opacity curve:** Screen-edge distance — stronger when the ball is far past the viewport edge; fades as the ball approaches the frame boundary.
+- **Suppressed states:** Always on when off-screen — no hide during kickoff freeze, goal banner, or other overlays.

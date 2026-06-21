@@ -21,8 +21,8 @@ Local issue tracker for work **after** the gameplay-loop blocker ships to produc
 | 01 | [issues/01-oversized-hud-buttons-prod.md](issues/01-oversized-hud-buttons-prod.md) | bug | `done` | Reconnect / teleporter pills huge on live, fine on localhost |
 | 02 | [issues/02-joystick-runaway-pay.md](issues/02-joystick-runaway-pay.md) | bug | `done` | Touch joystick: player keeps running after finger release (Pay) |
 | 03 | [issues/03-1v1-goal-freeze-pay.md](issues/03-1v1-goal-freeze-pay.md) | bug | `done` | 1v1 scorer stuck until opponent scores (Pay suspected) |
-| 04 | [issues/04-off-screen-ball-indicator.md](issues/04-off-screen-ball-indicator.md) | enhancement | `needs-triage` | Edge marker when ball is off-screen (World Cup) |
-| 05 | [issues/05-guest-invite-system.md](issues/05-guest-invite-system.md) | enhancement | `needs-triage` | QR / URL / shortlink guest invites + host status UI |
+| 04 | [issues/04-off-screen-ball-indicator.md](issues/04-off-screen-ball-indicator.md) | enhancement | `done` | Ball Edge Marker when ball is off-screen (World Cup) |
+| 05 | [issues/05-guest-invite-system.md](issues/05-guest-invite-system.md) | enhancement | `ready-for-agent` | Direct Invite PRD — [worldcup/PRD-direct-invite.md](../../worldcup/PRD-direct-invite.md) |
 | 06 | [issues/06-uncap-free-play-nim.md](issues/06-uncap-free-play-nim.md) | enhancement | `needs-triage` | Remove or raise Free Play Field NIM earning caps |
 
 ## Pick up work

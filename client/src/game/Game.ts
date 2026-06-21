@@ -2302,6 +2302,42 @@ export class Game {
     return { x: sx, y: sy };
   }
 
+  /** Canvas-local screen position of the primary World Cup ball (id `"field"` when present). */
+  getPrimaryWorldcupBallScreenPosition(): {
+    x: number;
+    y: number;
+    radius: number;
+  } | null {
+    const mesh =
+      this.worldcupBalls.get("field") ??
+      this.worldcupBalls.values().next().value;
+    if (!mesh) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const project = (wx: number, wy: number, wz: number) => {
+      const world = new THREE.Vector3(wx, wy, wz);
+      world.project(this.camera);
+      const sx = ((world.x + 1) * 0.5) * rect.width;
+      const sy = ((1 - world.y) * 0.5) * rect.height;
+      if (!Number.isFinite(sx) || !Number.isFinite(sy)) return null;
+      return { x: sx, y: sy };
+    };
+    const center = project(
+      mesh.position.x,
+      mesh.position.y,
+      mesh.position.z
+    );
+    if (!center) return null;
+    const edge = project(
+      mesh.position.x + Game.WORLDCUP_BALL_RADIUS,
+      mesh.position.y,
+      mesh.position.z
+    );
+    const radius = edge
+      ? Math.max(4, Math.hypot(edge.x - center.x, edge.y - center.y))
+      : 12;
+    return { x: center.x, y: center.y, radius };
+  }
+
   getPlaceRadiusBlocks(): number {
     return this.placeRadiusBlocks;
   }

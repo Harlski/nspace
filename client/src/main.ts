@@ -47,6 +47,7 @@ import { WorldcupScoreboard } from "./worldcup/scoreboard.js";
 import { WorldcupMatchHud } from "./worldcup/matchHud.js";
 import { WorldcupMatchCountdown } from "./worldcup/matchCountdown.js";
 import { WorldcupJoystick } from "./worldcup/joystick.js";
+import { WorldcupBallEdgeMarker } from "./worldcup/ballEdgeMarker.js";
 // Country picker + flag emoji are reused for the profile flag / Flag Emote. They are pure UI
 // (no season gate), so they are imported unconditionally even when the World Cup is off.
 import { flagEmoji } from "./worldcup/countries.js";
@@ -692,8 +693,13 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
   }
   let worldcupAutoPromptShown = false;
   // worldcup: 1v1 Match HUD (clock + scores + result) shown only inside a Match Pitch.
+  // worldcup: 1v1 Match HUD (clock + scores + result) shown only inside a Match Pitch.
   const worldcupMatchHud = WORLDCUP_ENABLED_CLIENT
     ? new WorldcupMatchHud(worldcupHudParent)
+    : null;
+  // worldcup: off-screen ball edge chevron for active pitch players.
+  const worldcupBallEdgeMarker = WORLDCUP_ENABLED_CLIENT
+    ? new WorldcupBallEdgeMarker(worldcupHudParent)
     : null;
   if (worldcupMatchHud) {
     worldcupMatchHud.setSelfAddress(address);
@@ -5412,6 +5418,21 @@ function enterGame(token: string, address: string, nimiqPay?: boolean): void {
     last = now;
     game.tick(dt);
     syncPortalEnterButton();
+    if (worldcupBallEdgeMarker) {
+      if (
+        worldcupIsFieldLikeRoomId(worldcupCurrentRoomId) &&
+        !worldcupSpectating
+      ) {
+        const vw = canvasHost.clientWidth;
+        const vh = canvasHost.clientHeight;
+        worldcupBallEdgeMarker.update(
+          game.getPrimaryWorldcupBallScreenPosition(),
+          { width: vw, height: vh }
+        );
+      } else {
+        worldcupBallEdgeMarker.hide();
+      }
+    }
     sampleCampaignImpressions(now);
     if (hud.isActionWheelOpen()) {
       const ea = game.getSelfScreenPosition(0.45);
