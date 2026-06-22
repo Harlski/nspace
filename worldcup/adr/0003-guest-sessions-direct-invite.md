@@ -27,6 +27,25 @@ The 1:1 staging lobby became a private, multi-person **Play Space** (see **Play 
 The guest-session decisions below (ephemeral `guest:{guestId}` JWTs, in-place wallet upgrade,
 reducer/store ownership) are unchanged.
 
+## Update (UNRELEASED) — **Join gate** (peek-before-claim)
+
+The `/join/{slug}` **Join gate** defers slot claim until the visitor commits. See **Join
+gate** in [worldcup/CONTEXT.md](../CONTEXT.md).
+
+- **Peek before claim.** `GET /api/invite/peek/:slug` returns host + joinability without
+  minting a guest cookie or claiming a slot. `closed` / `expired` hard-stop the UI. `full`
+  hard-stops new visitors but allows **reclaim** when the peek sees an existing participant
+  for the browser's `guestId` cookie.
+- **Guest path.** "Continue as guest" → redeem (claim) → identicon from `guestId` + nickname
+  (server suggestion pre-filled, focused + selected) → Enter game.
+- **Wallet fast path.** Saved or freshly signed-in wallets skip the guest form. One call:
+  `POST /api/invite/join-wallet/:slug` (wallet JWT) atomically claims, links the wallet,
+  sets display name from the wallet profile, returns an upgraded guest JWT. Sign-in stays
+  on `/join/{slug}` (no redirect to main menu).
+- **Account-first layout.** When cached wallet sessions exist, show identicon rows (+ Add
+  account, expired rows disabled with inline re-sign-in). With no cache, fork first: Sign in
+  with wallet | Continue as guest.
+
 ## Decision
 
 Direct Invite uses **ephemeral guest JWT sessions** distinct from wallet sessions:

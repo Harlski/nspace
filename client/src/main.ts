@@ -143,13 +143,12 @@ import {
   createDirectInvite,
   isInviteLobbyRoomId,
   parseJoinSlugFromPath,
-  redeemDirectInvite,
 } from "./invite/api.js";
 import {
   createDirectInviteLobbyOverlay,
   type DirectInviteLobbyState,
 } from "./invite/lobbyOverlay.js";
-import { mountInviteSplash } from "./invite/splash.js";
+import { mountJoinGate, joinGateErrorCard } from "./invite/joinGate.js";
 import { showGetWalletPrompt } from "./invite/getWalletPrompt.js";
 
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
@@ -2894,15 +2893,32 @@ function enterGame(
       // "Invite" / "Private Room": if we're already in a Play Space just re-open its share
       // panel; otherwise create (or return to, server-side idempotent) the space and join it.
       onOpenPlaySpace: () => {
-        if (directInviteActive) {
-          openDirectInviteSharePanel();
+        const inPlaySpace =
+          directInviteActive && isInviteLobbyRoomId(worldcupCurrentRoomId);
+        if (inPlaySpace) {
+          if (lastDirectInviteState) {
+            openDirectInviteSharePanel();
+          } else if (socket.readyState === WebSocket.OPEN) {
+            // State wire missed — same-room join re-registers with the server.
+            sendJoinRoom(socket, worldcupCurrentRoomId);
+          }
           return;
         }
         void (async () => {
           try {
             const created = await createDirectInvite(token);
             directInviteActive = true;
-            connectToRoom(created.lobbyRoomId);
+            const target = created.lobbyRoomId;
+            if (socket.readyState === WebSocket.OPEN) {
+              if (
+                normalizeRoomId(worldcupCurrentRoomId) !== normalizeRoomId(target)
+              ) {
+                beginRoomTransition(target);
+              }
+              sendJoinRoom(socket, target);
+            } else {
+              connectToRoom(target);
+            }
           } catch (e) {
             const code = e instanceof Error ? e.message : "create_failed";
             hud.setStatus(
@@ -5638,26 +5654,19 @@ async function bootstrapJoinInvite(): Promise<boolean> {
   const app = document.getElementById("app");
   if (!app) return false;
   try {
-    const redeem = await redeemDirectInvite(slug);
-    const waitForSplash = mountInviteSplash(app, redeem, {
-      onSignIn: () => {
-        history.replaceState(null, "", "/");
-        openMainMenu();
-      },
-    });
-    const result = await waitForSplash();
+    const waitForGate = mountJoinGate(app, slug);
+    const result = await waitForGate();
     if (!result.ok) {
-      app.innerHTML = `<p class="invite-splash__error">${result.error}</p>`;
+      app.innerHTML = joinGateErrorCard(result.error);
       return true;
     }
-    saveCachedSession(result.token, result.address);
     history.replaceState(null, "", "/");
-    enterGame(result.token, result.address, undefined, {
+    enterGame(result.token, result.address, result.nimiqPay, {
       initialRoomId: result.lobbyRoomId,
     });
     return true;
   } catch (e) {
-    const code = e instanceof Error ? e.message : "redeem_failed";
+    const code = e instanceof Error ? e.message : "join_failed";
     const message =
       code === "expired"
         ? "This invite has expired — ask the host for a new link."
@@ -5666,7 +5675,7 @@ async function bootstrapJoinInvite(): Promise<boolean> {
           : code === "closed"
             ? "This play space has closed."
             : "Could not open this invite link.";
-    app.innerHTML = `<div class="invite-splash"><div class="invite-splash__card"><p>${message}</p></div></div>`;
+    app.innerHTML = joinGateErrorCard(message);
     return true;
   }
 }

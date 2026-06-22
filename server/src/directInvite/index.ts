@@ -4,6 +4,11 @@ export {
   MAX_PLAY_SPACE_OCCUPANTS,
   isInviteLobbyRoomId,
 } from "./config.js";
+export {
+  PLAY_SPACE_BOUNDS,
+  PLAY_SPACE_SPAWN,
+  PLAY_SPACE_BACKGROUND_HUE_DEG,
+} from "./playSpaceLayout.js";
 export { registerDirectInviteRoutes } from "./httpHandlers.js";
 export type { DirectInviteHttpDeps } from "./httpHandlers.js";
 export { sanitizeGuestNickname, getParticipant } from "./reducer.js";
@@ -19,6 +24,7 @@ export {
   markHostLeftLobby,
   removeInviteParticipant,
   expireInvitePastTtl,
+  joinInviteAsWallet,
   listOpenInvites,
   tickInvites,
 } from "./store.js";

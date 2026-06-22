@@ -86,6 +86,20 @@ export function createInvite(input: CreateInviteInput): DirectInviteRecord {
   return invite!;
 }
 
+export function joinInviteAsWallet(
+  slug: string,
+  guestId: string,
+  wallet: string,
+  displayName: string,
+  nowMs = Date.now()
+): ReturnType<typeof evaluateRedeem> {
+  const claim = claimInvite(slug, guestId, nowMs);
+  if (!claim.ok) return claim;
+  upgradeInviteGuestWallet(slug, guestId, wallet);
+  setInviteNickname(slug, guestId, displayName);
+  return { ok: true, invite: getInviteBySlug(slug)! };
+}
+
 export function claimInvite(
   slug: string,
   guestId: string,
@@ -188,4 +202,4 @@ export function _resetInviteStoreForTests(): void {
   slugByGuestId.clear();
 }
 
-export { evaluateRedeem };
+export { evaluatePeek, evaluateRedeem } from "./reducer.js";

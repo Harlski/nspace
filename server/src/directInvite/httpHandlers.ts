@@ -8,11 +8,12 @@ import {
 } from "../auth.js";
 import { pickDirectInviteGuestName } from "../guestNames.js";
 import { DIRECT_INVITE_ENABLED, GUEST_SESSION_TTL_SEC } from "./config.js";
-import { getParticipant, sanitizeGuestNickname } from "./reducer.js";
+import { getParticipant, sanitizeGuestNickname, evaluatePeek } from "./reducer.js";
 import {
   claimInvite,
   createInvite,
   getInviteBySlug,
+  joinInviteAsWallet,
   setInviteNickname,
   upgradeInviteGuestWallet,
 } from "./store.js";
@@ -113,6 +114,90 @@ export function registerDirectInviteRoutes(
       slug: invite.slug,
       url,
       lobbyRoomId: invite.lobbyRoomId,
+      expiresAt: invite.expiresAtMs,
+    });
+  });
+
+  app.get("/api/invite/peek/:slug", (req, res) => {
+    if (!DIRECT_INVITE_ENABLED) {
+      res.status(404).json({ error: "disabled" });
+      return;
+    }
+    const slug = String(req.params.slug ?? "").trim();
+    if (!slug) {
+      res.status(400).json({ error: "missing_slug" });
+      return;
+    }
+    const guestId = readGuestIdCookie(req);
+    const invite = getInviteBySlug(slug);
+    const peek = evaluatePeek(invite, guestId, Date.now());
+    if (!peek.ok) {
+      res.status(peek.code === "not_found" ? 404 : 200).json({
+        slug,
+        joinable: false,
+        reclaimable: false,
+        error: peek.code,
+      });
+      return;
+    }
+    res.json({
+      slug,
+      hostDisplayName: deps.getHostDisplayName(peek.invite.hostWallet),
+      lobbyRoomId: peek.invite.lobbyRoomId,
+      expiresAt: peek.invite.expiresAtMs,
+      joinable: true,
+      reclaimable: peek.reclaimable,
+    });
+  });
+
+  app.post("/api/invite/join-wallet/:slug", (req, res) => {
+    if (!DIRECT_INVITE_ENABLED) {
+      res.status(404).json({ error: "disabled" });
+      return;
+    }
+    const walletPayload = requireWalletJwt(req, deps);
+    if (!walletPayload) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    const slug = String(req.params.slug ?? "").trim();
+    if (!slug) {
+      res.status(400).json({ error: "missing_slug" });
+      return;
+    }
+    let guestId = readGuestIdCookie(req);
+    if (!guestId) guestId = generateGuestId();
+    const displayName = deps.getHostDisplayName(walletPayload.sub);
+    const joined = joinInviteAsWallet(
+      slug,
+      guestId,
+      walletPayload.sub,
+      displayName
+    );
+    if (!joined.ok) {
+      res.status(joined.code === "not_found" ? 404 : 409).json({ error: joined.code });
+      return;
+    }
+    const invite = joined.invite;
+    const token = signUpgradedGuestSession(
+      guestId,
+      walletPayload.sub,
+      displayName,
+      deps.jwtSecret,
+      {
+        inviteSlug: slug,
+        nimiqPay: walletPayload.nimiqPay,
+        ttlSec: GUEST_SESSION_TTL_SEC,
+      }
+    );
+    setGuestIdCookie(res, guestId);
+    res.json({
+      token,
+      guestId,
+      address: `guest:${guestId}`,
+      displayName,
+      lobbyRoomId: invite.lobbyRoomId,
+      slug,
       expiresAt: invite.expiresAtMs,
     });
   });

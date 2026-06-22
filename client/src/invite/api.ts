@@ -7,6 +7,16 @@ export type CreateInviteResponse = {
   expiresAt: number;
 };
 
+export type PeekInviteResponse = {
+  slug: string;
+  hostDisplayName?: string;
+  lobbyRoomId?: string;
+  expiresAt?: number;
+  joinable: boolean;
+  reclaimable: boolean;
+  error?: "full" | "closed" | "expired" | "not_found";
+};
+
 export type RedeemInviteResponse = {
   token: string;
   guestId: string;
@@ -16,6 +26,43 @@ export type RedeemInviteResponse = {
   expiresAt: number;
   slug: string;
 };
+
+export type JoinWalletInviteResponse = {
+  token: string;
+  guestId: string;
+  address: string;
+  displayName: string;
+  lobbyRoomId: string;
+  slug: string;
+  expiresAt: number;
+};
+
+export async function peekDirectInvite(slug: string): Promise<PeekInviteResponse> {
+  const res = await fetch(apiUrl(`/api/invite/peek/${encodeURIComponent(slug)}`), {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? "peek_failed");
+  }
+  return res.json() as Promise<PeekInviteResponse>;
+}
+
+export async function joinInviteAsWallet(
+  slug: string,
+  walletToken: string
+): Promise<JoinWalletInviteResponse> {
+  const res = await fetch(apiUrl(`/api/invite/join-wallet/${encodeURIComponent(slug)}`), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${walletToken}` },
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? "join_wallet_failed");
+  }
+  return res.json() as Promise<JoinWalletInviteResponse>;
+}
 
 export async function createDirectInvite(
   token: string

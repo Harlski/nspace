@@ -3,11 +3,17 @@ import test from "node:test";
 
 import {
   evaluateRedeem,
+  evaluatePeek,
   getParticipant,
   reduceInvite,
   sanitizeGuestNickname,
 } from "../src/directInvite/reducer.js";
 import type { DirectInviteRecord, InviteEvent } from "../src/directInvite/types.js";
+import {
+  _resetInviteStoreForTests,
+  createInvite,
+  joinInviteAsWallet,
+} from "../src/directInvite/store.js";
 
 const CFG = { ttlMs: 900_000 };
 
@@ -112,6 +118,14 @@ test("host can leave and re-enter the lobby", () => {
   assert.equal(s.hostInLobby, true);
 });
 
+test("open Play Space stays redeemable past creation TTL", () => {
+  const open = drive([CREATE])!;
+  assert.deepEqual(evaluateRedeem(open, "guest-a", open.expiresAtMs + 60_000), {
+    ok: true,
+    invite: open,
+  });
+});
+
 test("close + expire are terminal and reject redeem", () => {
   const open = drive([CREATE])!;
 
@@ -142,4 +156,53 @@ test("claim/remove are ignored once terminal", () => {
     CFG
   )!;
   assert.equal(after.participants.length, 0);
+});
+
+test("evaluatePeek reports joinability without claiming", () => {
+  const open = drive([CREATE])!;
+  assert.deepEqual(evaluatePeek(open, null, 1_000_100), {
+    ok: true,
+    invite: open,
+    reclaimable: false,
+  });
+  const full = drive([
+    CREATE,
+    { type: "claim", guestId: "guest-a", nowMs: 1_000_100 },
+    { type: "claim", guestId: "guest-b", nowMs: 1_000_200 },
+  ])!;
+  assert.deepEqual(evaluatePeek(full, "guest-c", 1_000_300), {
+    ok: false,
+    code: "full",
+  });
+  assert.deepEqual(evaluatePeek(full, "guest-a", 1_000_300), {
+    ok: true,
+    invite: full,
+    reclaimable: true,
+  });
+  const closed = reduceInvite(open, { type: "close" }, CFG)!;
+  assert.deepEqual(evaluatePeek(closed, null, 1_000_400), {
+    ok: false,
+    code: "closed",
+  });
+});
+
+test("joinInviteAsWallet claims, links wallet, and sets display name", () => {
+  _resetInviteStoreForTests();
+  const invite = createInvite({
+    hostWallet: "NQHost123",
+    hostOriginRoomId: "hub",
+    activity: "worldcup-match",
+    nowMs: 1_000_000,
+  });
+  const joined = joinInviteAsWallet(
+    invite.slug,
+    "guest-a",
+    "NQGuestWallet",
+    "Player One"
+  );
+  assert.equal(joined.ok, true);
+  if (!joined.ok) return;
+  const p = getParticipant(joined.invite, "guest-a")!;
+  assert.equal(p.wallet, "NQGuestWallet");
+  assert.equal(p.displayName, "Player One");
 });

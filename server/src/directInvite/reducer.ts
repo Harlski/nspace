@@ -123,17 +123,42 @@ export function reduceInvite(
   return state;
 }
 
+export type PeekResult =
+  | { ok: false; code: "not_found" | "closed" | "expired" | "full" }
+  | { ok: true; invite: DirectInviteRecord; reclaimable: boolean };
+
+/** Read-only joinability check (no slot claim). */
+export function evaluatePeek(
+  invite: DirectInviteRecord | null,
+  guestId: string | null,
+  nowMs: number
+): PeekResult {
+  if (!invite) return { ok: false, code: "not_found" };
+  if (invite.phase === "closed") return { ok: false, code: "closed" };
+  if (invite.phase === "expired") return { ok: false, code: "expired" };
+  const reclaimable = !!(
+    guestId && invite.participants.some((p) => p.guestId === guestId)
+  );
+  if (reclaimable) return { ok: true, invite, reclaimable: true };
+  const redeem = evaluateRedeem(invite, guestId, nowMs);
+  if (!redeem.ok) {
+    const code = redeem.code === "not_found" ? "not_found" : redeem.code;
+    return { ok: false, code };
+  }
+  return { ok: true, invite, reclaimable: false };
+}
+
 /** Whether a guest may redeem (claim/reclaim) this invite. */
 export function evaluateRedeem(
   invite: DirectInviteRecord | null,
   guestId: string | null,
-  nowMs: number
+  _nowMs: number
 ): RedeemResult {
   if (!invite) return { ok: false, code: "not_found" };
   if (invite.phase === "closed") return { ok: false, code: "closed" };
-  if (nowMs >= invite.expiresAtMs || invite.phase === "expired") {
-    return { ok: false, code: "expired" };
-  }
+  if (invite.phase === "expired") return { ok: false, code: "expired" };
+  // Open Play Spaces stay joinable until explicitly closed — TTL is only a backstop for
+  // abandoned creates (see directInviteSweepExpired), not a cap on active sessions.
   // An already-claimed guest may always reclaim their own slot.
   if (guestId && invite.participants.some((p) => p.guestId === guestId)) {
     return { ok: true, invite };

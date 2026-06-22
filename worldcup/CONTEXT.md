@@ -42,6 +42,13 @@ and are **never eligible for NIM rewards**. A guest may optionally upgrade to a 
 keeping the same identity.
 _Avoid_: visitor, anon, temp user.
 
+**Join gate**:
+The identity screen at a Play Space join link before anyone enters the room. It shows who
+you are joining (host), saved wallet accounts when present, or a sign-in vs guest choice;
+a guest slot is claimed only after the visitor commits (wallet pick, wallet sign-in, or
+guest nickname confirm).
+_Avoid_: invite splash, join splash, redeem screen.
+
 **Goalie**:
 A server-controlled defender stationed at each goal that makes scoring harder. Present in
 both the Free Play Field and every Match Pitch.
