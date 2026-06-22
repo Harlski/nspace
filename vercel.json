@@ -73,6 +73,10 @@
       "destination": "https://api.nimiq.space/pixels.png"
     },
     {
+      "source": "/join/:slug",
+      "destination": "/index.html"
+    },
+    {
       "source": "/patchnotes",
       "destination": "/index.html"
     },

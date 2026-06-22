@@ -2,33 +2,28 @@ import type {
   DirectInviteRecord,
   InviteConfig,
   InviteEvent,
+  InviteParticipant,
   InvitePhase,
   RedeemResult,
 } from "./types.js";
 
-const TERMINAL: ReadonlySet<InvitePhase> = new Set([
-  "cancelled",
-  "expired",
-  "started",
-]);
+const TERMINAL: ReadonlySet<InvitePhase> = new Set(["closed", "expired"]);
 
 export function initInviteState(): null {
   return null;
 }
 
-function deriveLobbyPhase(rec: DirectInviteRecord): InvitePhase {
-  if (rec.hostInLobby && rec.guestInLobby && rec.guestId) return "lobby";
-  if (rec.guestId) return "claimed";
-  return "open";
+/** Number of guest slots still free (the creator occupies one of the `capacity` seats). */
+function freeGuestSlots(rec: DirectInviteRecord): number {
+  return Math.max(0, rec.capacity - 1 - rec.participants.length);
 }
 
-function applyLobbyTransition(rec: DirectInviteRecord): DirectInviteRecord {
-  if (TERMINAL.has(rec.phase) || rec.phase === "starting" || rec.phase === "started") {
-    return rec;
-  }
-  const nextPhase = deriveLobbyPhase(rec);
-  if (rec.phase === nextPhase) return rec;
-  return { ...rec, phase: nextPhase };
+function findParticipant(
+  rec: DirectInviteRecord,
+  guestId: string
+): { idx: number } | null {
+  const idx = rec.participants.findIndex((p) => p.guestId === guestId);
+  return idx === -1 ? null : { idx };
 }
 
 export function reduceInvite(
@@ -38,7 +33,6 @@ export function reduceInvite(
 ): DirectInviteRecord | null {
   if (event.type === "create") {
     if (state) return state;
-    const expiresAtMs = event.nowMs + event.ttlMs;
     return {
       slug: event.slug,
       activity: event.activity,
@@ -46,74 +40,84 @@ export function reduceInvite(
       hostOriginRoomId: event.hostOriginRoomId,
       lobbyRoomId: event.lobbyRoomId,
       phase: "open",
-      guestId: null,
-      guestDisplayName: null,
-      guestWallet: null,
+      participants: [],
       hostInLobby: true,
-      guestInLobby: false,
+      capacity: event.capacity,
       createdAtMs: event.nowMs,
-      expiresAtMs,
+      expiresAtMs: event.nowMs + event.ttlMs,
     };
   }
 
   if (!state || TERMINAL.has(state.phase)) return state;
 
   if (event.type === "tick") {
-    if (event.nowMs >= state.expiresAtMs) {
-      return { ...state, phase: "expired" };
-    }
+    if (event.nowMs >= state.expiresAtMs) return { ...state, phase: "expired" };
     return state;
   }
 
-  if (event.type === "cancel") {
-    return { ...state, phase: "cancelled" };
-  }
-
-  if (event.type === "started") {
-    return { ...state, phase: "started" };
+  if (event.type === "close") {
+    return { ...state, phase: "closed" };
   }
 
   if (event.type === "claim") {
-    if (state.phase !== "open" && state.phase !== "claimed") return state;
-    if (state.guestId && state.guestId !== event.guestId) return state;
-    const next: DirectInviteRecord = {
+    if (findParticipant(state, event.guestId)) return state; // idempotent reclaim
+    if (freeGuestSlots(state) <= 0) return state; // full (gated by evaluateRedeem)
+    return {
       ...state,
-      guestId: event.guestId,
-      phase: "claimed",
+      participants: [
+        ...state.participants,
+        { guestId: event.guestId, displayName: null, wallet: null, joinedLobby: false },
+      ],
     };
-    return applyLobbyTransition(next);
-  }
-
-  if (event.type === "reclaim") {
-    if (!state.guestId || state.guestId !== event.guestId) return state;
-    if (state.phase !== "claimed" && state.phase !== "lobby") return state;
-    return state;
   }
 
   if (event.type === "setNickname") {
-    if (!state.guestId || state.guestId !== event.guestId) return state;
-    return { ...state, guestDisplayName: event.nickname };
+    const found = findParticipant(state, event.guestId);
+    if (!found) return state;
+    const participants = state.participants.slice();
+    participants[found.idx] = {
+      ...participants[found.idx]!,
+      displayName: event.nickname,
+    };
+    return { ...state, participants };
   }
 
   if (event.type === "upgradeWallet") {
-    if (!state.guestId || state.guestId !== event.guestId) return state;
-    return { ...state, guestWallet: event.wallet };
+    const found = findParticipant(state, event.guestId);
+    if (!found) return state;
+    const participants = state.participants.slice();
+    participants[found.idx] = {
+      ...participants[found.idx]!,
+      wallet: event.wallet,
+    };
+    return { ...state, participants };
   }
 
   if (event.type === "guestJoinedLobby") {
-    if (!state.guestId || state.guestId !== event.guestId) return state;
-    const next = { ...state, guestInLobby: true };
-    return applyLobbyTransition(next);
+    const found = findParticipant(state, event.guestId);
+    if (!found) return state;
+    const participants = state.participants.slice();
+    participants[found.idx] = { ...participants[found.idx]!, joinedLobby: true };
+    return { ...state, participants };
   }
 
   if (event.type === "hostJoinedLobby") {
-    const next = { ...state, hostInLobby: true };
-    return applyLobbyTransition(next);
+    if (state.hostInLobby) return state;
+    return { ...state, hostInLobby: true };
   }
 
-  if (event.type === "hostStart") {
-    if (state.phase !== "lobby") return state;
-    return { ...state, phase: "starting" };
+  if (event.type === "hostLeftLobby") {
+    if (!state.hostInLobby) return state;
+    return { ...state, hostInLobby: false };
+  }
+
+  if (event.type === "removeParticipant") {
+    const found = findParticipant(state, event.guestId);
+    if (!found) return state;
+    return {
+      ...state,
+      participants: state.participants.filter((p) => p.guestId !== event.guestId),
+    };
   }
 
   return state;
@@ -126,16 +130,16 @@ export function evaluateRedeem(
   nowMs: number
 ): RedeemResult {
   if (!invite) return { ok: false, code: "not_found" };
-  if (invite.phase === "cancelled") return { ok: false, code: "cancelled" };
-  if (invite.phase === "started") return { ok: false, code: "started" };
+  if (invite.phase === "closed") return { ok: false, code: "closed" };
   if (nowMs >= invite.expiresAtMs || invite.phase === "expired") {
     return { ok: false, code: "expired" };
   }
-  if (invite.guestId && guestId && invite.guestId !== guestId) {
-    return { ok: false, code: "slot_taken" };
+  // An already-claimed guest may always reclaim their own slot.
+  if (guestId && invite.participants.some((p) => p.guestId === guestId)) {
+    return { ok: true, invite };
   }
-  if (invite.guestId && !guestId) {
-    return { ok: false, code: "slot_taken" };
+  if (invite.participants.length >= invite.capacity - 1) {
+    return { ok: false, code: "full" };
   }
   return { ok: true, invite };
 }
@@ -150,4 +154,12 @@ export function sanitizeGuestNickname(raw: string): string | null {
 
 export function isTerminalPhase(phase: InvitePhase): boolean {
   return TERMINAL.has(phase);
+}
+
+/** Look up a participant by guest id (read helper for the store/handlers). */
+export function getParticipant(
+  invite: DirectInviteRecord,
+  guestId: string
+): InviteParticipant | null {
+  return invite.participants.find((p) => p.guestId === guestId) ?? null;
 }

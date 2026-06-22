@@ -26,6 +26,22 @@ An open "looking for a Match" intent a player raises while in a social room. Sho
 their avatar; another player accepts it to start a Match.
 _Avoid_: invite, request, intent (reserve "intent" for the existing ephemeral-flag pattern).
 
+**Play Space**:
+A private, invite-only, ephemeral room opened from a shareable `nimiq.space/join/{slug}`
+link (and QR). Multiple people can join — the wallet **creator** plus up to a capped number
+of **Guests** — and anyone inside can raise their own 1v1 Challenges. The link is shared by
+any occupant. The space lives until the last member leaves (or its TTL lapses), surviving
+even while everyone is away in a Match it spawned. Guests are confined to it; the creator
+comes and goes freely.
+_Avoid_: invite lobby, direct invite, staging room, waiting room.
+
+**Guest**:
+A temporary, named identity (`guest:{id}`) minted when someone opens a Play Space link
+without a wallet. Guests live only inside their Play Space and the Match Pitches it launches,
+and are **never eligible for NIM rewards**. A guest may optionally upgrade to a wallet while
+keeping the same identity.
+_Avoid_: visitor, anon, temp user.
+
 **Goalie**:
 A server-controlled defender stationed at each goal that makes scoring harder. Present in
 both the Free Play Field and every Match Pitch.

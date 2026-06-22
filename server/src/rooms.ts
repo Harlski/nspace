@@ -158,15 +158,16 @@ import {
 import {
   DIRECT_INVITE_ENABLED,
   buildInviteStateWire,
-  cancelInvite,
-  getInviteByGuestId,
+  closeInvite,
   getInviteBySlug,
+  getParticipant,
   isInviteLobbyRoomId,
   markGuestJoinedLobby,
   markHostJoinedLobby,
-  markInviteStarted,
-  startInviteMatch,
-  tickInvites,
+  markHostLeftLobby,
+  removeInviteParticipant,
+  expireInvitePastTtl,
+  listOpenInvites,
   type DirectInviteRecord,
 } from "./directInvite/index.js";
 import {
@@ -1246,21 +1247,22 @@ type OutMsg =
       /** True when this update was triggered by the daily UTC reset. */
       dailyReset?: boolean;
     }
-  // directInvite: lobby overlay state for host/guest
+  // directInvite: Play Space overlay state (roster + capacity) for every member
   | {
       type: "directInviteState";
       slug: string;
       phase: string;
       hostDisplayName: string;
-      guestDisplayName: string | null;
       shareUrl: string;
       expiresAtMs: number;
       isHost: boolean;
-      canStart: boolean;
+      roster: Array<{ displayName: string }>;
+      occupancy: number;
+      capacity: number;
     }
   | {
       type: "directInviteError";
-      code: "expired" | "slot_taken" | "cancelled" | "not_found" | "disabled";
+      code: "expired" | "full" | "closed" | "not_found" | "disabled";
       message?: string;
     }
   /** Echo for RTT / latency HUD (see `clientPing` inbound). */
@@ -5311,6 +5313,16 @@ function worldcupReturnEntrant(m: WorldcupMatchRuntime, compact: string): void {
     if (compactAddress(conn.address) !== compact) continue;
     conn.matchId = null;
     conn.spectatingMatchId = null;
+    // Play Space members (players AND spectators) always return to their space — this keeps
+    // guests confined and re-registers them so the roster overlay refreshes.
+    if (conn.directInviteSlug) {
+      const inv = getInviteBySlug(conn.directInviteSlug);
+      if (inv && inv.phase === "open" && hasRoom(inv.lobbyRoomId)) {
+        teleportPlayer(conn, inv.lobbyRoomId, conn.player.x, conn.player.z);
+        directInviteOnLobbyConnect(conn, inv.lobbyRoomId, conn.address);
+        return;
+      }
+    }
     const origin = m.origins.get(compact);
     if (origin && hasRoom(origin.roomId)) {
       teleportPlayer(conn, origin.roomId, origin.x, origin.z);
@@ -5412,14 +5424,6 @@ function findConnByWallet(wallet: string): ClientConn | null {
   return rooms.get(roomId)?.get(wallet) ?? null;
 }
 
-function findConnByGuestId(guestId: string): ClientConn | null {
-  const invite = getInviteByGuestId(guestId);
-  if (!invite) return null;
-  const room = rooms.get(invite.lobbyRoomId);
-  if (!room) return null;
-  return room.get(`guest:${guestId}`) ?? null;
-}
-
 function directInviteShareUrl(slug: string): string {
   return `${directInvitePublicBaseUrl}/join/${slug}`;
 }
@@ -5429,32 +5433,71 @@ function broadcastDirectInviteState(invite: DirectInviteRecord): void {
   if (!room) return;
   const hostName = getEffectivePlayerDisplayName(compactAddress(invite.hostWallet));
   const shareUrl = directInviteShareUrl(invite.slug);
+  // Everyone in a Play Space room is a participant, so the roster goes to all of them.
   for (const c of room.values()) {
+    if (c.streamObserver) continue;
     const viewerKey = c.address.startsWith("guest:")
       ? c.address.slice("guest:".length)
       : c.address;
-    const isParticipant =
-      c.address === invite.hostWallet ||
-      (invite.guestId !== null && viewerKey === invite.guestId);
-    if (!isParticipant) continue;
     const wire = buildInviteStateWire(invite, viewerKey, hostName, shareUrl);
-    if (c.address === invite.hostWallet) {
-      wire.isHost = true;
-    } else if (invite.guestId && viewerKey === invite.guestId) {
-      wire.isHost = false;
-    }
     wsSafeSend(c.ws, { type: "directInviteState", ...wire } satisfies OutMsg);
   }
 }
 
-function directInviteReturnToOrigin(conn: ClientConn, originRoomId: string): void {
-  conn.directInviteSlug = null;
-  const saved = spawnMap(originRoomId).get(conn.address);
-  if (saved) {
-    teleportPlayer(conn, originRoomId, saved.x, saved.z);
-  } else {
-    teleportPlayer(conn, originRoomId, 0, 0);
+/** Count still-connected members of a Play Space (incl. those away at a Match Pitch). */
+function directInviteConnectedCount(slug: string): number {
+  let n = 0;
+  for (const room of rooms.values()) {
+    for (const c of room.values()) {
+      if (c.directInviteSlug === slug) n += 1;
+    }
   }
+  return n;
+}
+
+/** Tear down a Play Space once nobody carries its slug anymore. */
+function directInviteMaybeTeardown(slug: string): void {
+  if (directInviteConnectedCount(slug) > 0) return;
+  const invite = getInviteBySlug(slug);
+  if (!invite) return;
+  closeInvite(slug);
+  rooms.delete(invite.lobbyRoomId);
+}
+
+/** Detach a member from the Play Space store (host left / guest removed) + clear their flag. */
+function directInviteUnregister(conn: ClientConn, slug: string): void {
+  const invite = getInviteBySlug(slug);
+  conn.directInviteSlug = null;
+  if (!invite) return;
+  if (conn.address === invite.hostWallet) {
+    markHostLeftLobby(slug);
+  } else if (conn.address.startsWith("guest:")) {
+    removeInviteParticipant(slug, conn.address.slice("guest:".length));
+  }
+}
+
+function directInviteReturnParticipant(
+  conn: ClientConn,
+  invite: DirectInviteRecord
+): void {
+  conn.directInviteSlug = null;
+  const isHost = conn.address === invite.hostWallet;
+  if (isHost) {
+    const saved = spawnMap(invite.hostOriginRoomId).get(conn.address);
+    if (saved) {
+      teleportPlayer(conn, invite.hostOriginRoomId, saved.x, saved.z);
+      return;
+    }
+    const def = resolveDefaultSpawnForPlayerRoom(invite.hostOriginRoomId);
+    if (def) {
+      teleportPlayer(conn, invite.hostOriginRoomId, def.x, def.z);
+      return;
+    }
+    teleportPlayer(conn, invite.hostOriginRoomId, 0, 0);
+    return;
+  }
+  const guestSpawn = snapToTile(CHAMBER_DEFAULT_SPAWN.x, CHAMBER_DEFAULT_SPAWN.z);
+  teleportPlayer(conn, CHAMBER_ROOM_ID, guestSpawn.x, guestSpawn.z);
 }
 
 export function directInviteOnCreated(invite: DirectInviteRecord): void {
@@ -5465,6 +5508,12 @@ export function directInviteOnCreated(invite: DirectInviteRecord): void {
     host.challengeOpen = false;
     host.challengeRaisedAtMs = 0;
   }
+  // Snapshot where the host stood so cancel/expiry can return them precisely.
+  spawnMap(invite.hostOriginRoomId).set(invite.hostWallet, {
+    x: host.player.x,
+    z: host.player.z,
+    y: host.player.y,
+  });
   host.directInviteSlug = invite.slug;
   teleportPlayer(host, invite.lobbyRoomId, 0, 0);
   markHostJoinedLobby(invite.slug);
@@ -5475,19 +5524,40 @@ export function directInviteOnCreated(invite: DirectInviteRecord): void {
 function directInviteOnLobbyConnect(
   conn: ClientConn,
   roomId: string,
-  address: string,
-  sessionGuestId?: string
+  address: string
 ): void {
   if (!DIRECT_INVITE_ENABLED || !isInviteLobbyRoomId(roomId)) return;
   const slug = roomId.replace("invite-lobby-", "");
   const invite = getInviteBySlug(slug);
-  if (!invite || invite.lobbyRoomId !== roomId) return;
+  // The space is gone (expired / torn down): don't strand the visitor here.
+  if (!invite || invite.lobbyRoomId !== roomId || invite.phase !== "open") {
+    conn.directInviteSlug = null;
+    wsSafeSend(conn.ws, {
+      type: "directInviteError",
+      code: "expired",
+      message: "This play space has closed.",
+    } satisfies OutMsg);
+    return;
+  }
   if (address === invite.hostWallet) {
     conn.directInviteSlug = slug;
     markHostJoinedLobby(slug);
-  } else if (sessionGuestId && invite.guestId === sessionGuestId) {
+  } else if (address.startsWith("guest:")) {
+    const gid = address.slice("guest:".length);
+    if (!getParticipant(invite, gid)) {
+      // Not an authorized member (e.g. the space filled up): bounce them.
+      conn.directInviteSlug = null;
+      wsSafeSend(conn.ws, {
+        type: "directInviteError",
+        code: "full",
+        message: "This play space is full.",
+      } satisfies OutMsg);
+      return;
+    }
     conn.directInviteSlug = slug;
-    markGuestJoinedLobby(slug, sessionGuestId);
+    markGuestJoinedLobby(slug, gid);
+  } else {
+    return;
   }
   const updated = getInviteBySlug(slug);
   if (updated) broadcastDirectInviteState(updated);
@@ -5495,56 +5565,60 @@ function directInviteOnLobbyConnect(
 
 function directInviteSweepExpired(now: number): void {
   if (!DIRECT_INVITE_ENABLED) return;
-  const expiredSlugs = tickInvites(now);
-  for (const slug of expiredSlugs) {
-    const invite = getInviteBySlug(slug);
-    if (!invite) continue;
-    const room = rooms.get(invite.lobbyRoomId);
+  for (const invite of listOpenInvites()) {
+    if (now < invite.expiresAtMs) continue;
+    // The space survives while anyone still carries its slug (e.g. mid-Match on a pitch).
+    if (directInviteConnectedCount(invite.slug) > 0) continue;
+    expireInvitePastTtl(invite.slug);
+    const expired = getInviteBySlug(invite.slug);
+    if (!expired) continue;
+    const room = rooms.get(expired.lobbyRoomId);
     if (room) {
-      for (const c of room.values()) {
+      for (const c of [...room.values()]) {
         wsSafeSend(c.ws, {
           type: "directInviteError",
           code: "expired",
-          message: "Invite expired",
+          message: "Play space expired",
         } satisfies OutMsg);
-        directInviteReturnToOrigin(c, invite.hostOriginRoomId);
+        directInviteReturnParticipant(c, expired);
       }
     }
+    rooms.delete(expired.lobbyRoomId);
   }
 }
 
-function directInviteHandleCancel(conn: ClientConn): void {
-  if (!conn.directInviteSlug) return;
-  const invite = getInviteBySlug(conn.directInviteSlug);
-  if (!invite || invite.hostWallet !== conn.address) return;
-  cancelInvite(invite.slug, "host");
-  const room = rooms.get(invite.lobbyRoomId);
-  if (room) {
-    for (const c of room.values()) {
-      wsSafeSend(c.ws, {
-        type: "directInviteError",
-        code: "cancelled",
-        message: "Invite cancelled",
-      } satisfies OutMsg);
-      directInviteReturnToOrigin(c, invite.hostOriginRoomId);
+/** A member explicitly leaves the Play Space (host's Leave button, or a guest bailing out). */
+function directInviteHandleLeave(conn: ClientConn): void {
+  const slug = conn.directInviteSlug;
+  if (!slug) return;
+  const invite = getInviteBySlug(slug);
+  const isHost = !!invite && conn.address === invite.hostWallet;
+  directInviteUnregister(conn, slug);
+  if (isHost && invite) {
+    const saved = spawnMap(invite.hostOriginRoomId).get(conn.address);
+    if (saved) {
+      teleportPlayer(conn, invite.hostOriginRoomId, saved.x, saved.z);
+    } else {
+      const def = resolveDefaultSpawnForPlayerRoom(invite.hostOriginRoomId);
+      teleportPlayer(conn, invite.hostOriginRoomId, def?.x ?? 0, def?.z ?? 0);
     }
+  } else {
+    const g = snapToTile(CHAMBER_DEFAULT_SPAWN.x, CHAMBER_DEFAULT_SPAWN.z);
+    teleportPlayer(conn, CHAMBER_ROOM_ID, g.x, g.z);
   }
+  const updated = getInviteBySlug(slug);
+  if (updated) broadcastDirectInviteState(updated);
+  directInviteMaybeTeardown(slug);
 }
 
-function directInviteHandleStart(conn: ClientConn): void {
-  if (!conn.directInviteSlug) return;
-  const invite = getInviteBySlug(conn.directInviteSlug);
-  if (!invite || invite.hostWallet !== conn.address) return;
-  const started = startInviteMatch(invite.slug);
-  if (!started || started.phase !== "starting") return;
-  const host = findConnByWallet(invite.hostWallet);
-  const guest =
-    invite.guestId !== null ? findConnByGuestId(invite.guestId) : null;
-  if (!host || !guest) return;
-  markInviteStarted(invite.slug);
-  host.directInviteSlug = null;
-  guest.directInviteSlug = null;
-  worldcupBeginMatch(host, guest, invite.lobbyRoomId, invite.hostOriginRoomId);
+/** A member's socket closed: detach them and tear the space down if it is now empty. */
+function directInviteOnDisconnect(conn: ClientConn): void {
+  const slug = conn.directInviteSlug;
+  if (!slug) return;
+  directInviteUnregister(conn, slug);
+  const updated = getInviteBySlug(slug);
+  if (updated) broadcastDirectInviteState(updated);
+  directInviteMaybeTeardown(slug);
 }
 
 // worldcup: at UTC midnight the daily tally resets — push the cleared scoreboard and the
@@ -6209,7 +6283,7 @@ export function addClient(
     sendMazePortalBlockedBubble(conn);
   }
 
-  directInviteOnLobbyConnect(conn, roomId, address, sessionFlags?.guestId);
+  directInviteOnLobbyConnect(conn, roomId, address);
 
   ws.on("message", async (raw) => {
     const rawInBytes = utf8ByteLengthOfWsData(raw);
@@ -6302,11 +6376,11 @@ export function addClient(
       if (conn.streamObserver) return;
       const active = Boolean((msg as { active?: unknown }).active);
       if (active) {
-        // Not inside the shared kickaround, a live Match, a Match Pitch, or a pending match (PRD 8-9).
-        if (worldcupIsFieldLikeRoom(currentRoomId)) return;
+        // Not inside a live Match, a Match Pitch, or a pending match. Challenges ARE allowed
+        // inside a Play Space (members start their own 1v1s there).
+        if (worldcupIsMatchPitch(currentRoomId)) return;
         if (conn.matchId || conn.pendingMatchId) return;
         if (conn.challengeOpen) return;
-        if (conn.directInviteSlug) return;
         conn.challengeOpen = true;
         conn.challengeRaisedAtMs = Date.now();
       } else {
@@ -6345,17 +6419,12 @@ export function addClient(
       return;
     }
 
+    // A Play Space member explicitly leaving (host's Leave button). Guests are confined, so
+    // this is the host path in practice; either way the sender departs their space.
     if (msg.type === "cancelDirectInvite") {
       if (!DIRECT_INVITE_ENABLED) return;
       if (conn.streamObserver) return;
-      directInviteHandleCancel(conn);
-      return;
-    }
-
-    if (msg.type === "startDirectInviteMatch") {
-      if (!DIRECT_INVITE_ENABLED) return;
-      if (conn.streamObserver) return;
-      directInviteHandleStart(conn);
+      directInviteHandleLeave(conn);
       return;
     }
 
@@ -6899,6 +6968,15 @@ export function addClient(
 
     if (msg.type === "joinRoom") {
       if (conn.streamObserver) return;
+      // Guests are confined to their Play Space; they cannot navigate to other rooms.
+      if (address.startsWith("guest:")) {
+        wsSafeSend(ws, {
+          type: "joinRoomFailed",
+          roomId: String(msg.roomId ?? ""),
+          reason: "not_found",
+        } satisfies OutMsg);
+        return;
+      }
       const targetRoomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
       // worldcup: Match Pitches are server-managed and never directly joinable.
       if (worldcupIsMatchPitch(normalizeRoomId(targetRoomId))) return;
@@ -7099,6 +7177,8 @@ export function addClient(
     }
 
     if (msg.type === "enterPortal") {
+      // Guests are confined to their Play Space; teleporters are off-limits to them.
+      if (address.startsWith("guest:")) return;
       const here = snapToTile(conn.player.x, conn.player.z);
       const tileProps = getTopPlacedAtTile(placedMap(currentRoomId), here.x, here.z)?.props;
       if (tileProps?.teleporter) {
@@ -10143,6 +10223,11 @@ export function addClient(
         broadcastOnlineCount();
       }
       if (room.size === 0) clearFakePlayers(playerCurrentRoom);
+    }
+    // directInvite: detach from any Play Space (after the room delete above, so the empty
+    // check sees this socket as gone) and tear the space down once it is empty.
+    if (DIRECT_INVITE_ENABLED && conn.directInviteSlug) {
+      directInviteOnDisconnect(conn);
     }
   });
 }

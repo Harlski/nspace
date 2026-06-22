@@ -112,7 +112,6 @@ import {
   sendLeaveMatch,
   sendRequestSpectate,
   sendCancelDirectInvite,
-  sendStartDirectInviteMatch,
   type ObstacleProps,
   type RoomBackgroundNeutral,
   type ServerMessage,
@@ -142,11 +141,16 @@ import { mountMainMenu } from "./ui/mainMenu.js";
 import { nimiqIconUseMarkup } from "./ui/nimiqIcons.js";
 import {
   createDirectInvite,
+  isInviteLobbyRoomId,
   parseJoinSlugFromPath,
   redeemDirectInvite,
 } from "./invite/api.js";
-import { createDirectInviteLobbyOverlay } from "./invite/lobbyOverlay.js";
+import {
+  createDirectInviteLobbyOverlay,
+  type DirectInviteLobbyState,
+} from "./invite/lobbyOverlay.js";
 import { mountInviteSplash } from "./invite/splash.js";
+import { showGetWalletPrompt } from "./invite/getWalletPrompt.js";
 
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
 
@@ -765,16 +769,27 @@ function enterGame(
   // worldcup: local mirror of the open-Challenge toggle + current room (for the donut label).
   let worldcupSelfChallengeOpen = false;
   let directInviteActive = false;
+  // Latest Play Space state, kept so the persistent share button can re-open the panel with
+  // the current room code / QR after it's been dismissed.
+  let lastDirectInviteState: DirectInviteLobbyState | null = null;
+  // The Play Space whose share panel we've already auto-opened once (don't re-pop on updates).
+  let directInviteAutoShownSlug: string | null = null;
   const directInviteLobby = createDirectInviteLobbyOverlay(hudRoot, {
-    onStartMatch: () => {
-      if (ws?.readyState === WebSocket.OPEN) sendStartDirectInviteMatch(ws);
-    },
     onCancel: () => {
       if (ws?.readyState === WebSocket.OPEN) sendCancelDirectInvite(ws);
       directInviteActive = false;
+      lastDirectInviteState = null;
+      directInviteAutoShownSlug = null;
+      hud.setPlaySpaceShareVisible(false);
       directInviteLobby.hide();
     },
+    onClose: () => directInviteLobby.hide(),
   });
+  // Re-open the share panel from the persistent HUD button (owner + guests).
+  const openDirectInviteSharePanel = (): void => {
+    if (lastDirectInviteState) directInviteLobby.show(lastDirectInviteState);
+  };
+  hud.onPlaySpaceShareOpen(openDirectInviteSharePanel);
   let worldcupCurrentRoomId = "";
   // worldcup: scheduled "Entering the match..." loading screen fired when the pre-teleport
   // countdown reaches zero; cleared if a room welcome (or socket close) preempts it.
@@ -1734,6 +1749,10 @@ function enterGame(
   }
 
   hud.onRoomsOpen(() => openRoomsModal());
+  hud.setGuestToolbarMode(selfAddress.startsWith("guest:"));
+  hud.onGetWalletOpen(() => {
+    showGetWalletPrompt({ onWebWallet: () => openMainMenu() });
+  });
   hud.onProfileRoomJoin((roomId) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (normalizeRoomId(game.getRoomId()) === normalizeRoomId(roomId)) return;
@@ -2871,7 +2890,14 @@ function enterGame(
         worldcupSelfChallengeOpen = next;
         if (socket.readyState === WebSocket.OPEN) sendSetChallenge(socket, next);
       },
-      onCreateDirectInvite: () => {
+      onOpenRooms: () => openRoomsModal(),
+      // "Invite" / "Private Room": if we're already in a Play Space just re-open its share
+      // panel; otherwise create (or return to, server-side idempotent) the space and join it.
+      onOpenPlaySpace: () => {
+        if (directInviteActive) {
+          openDirectInviteSharePanel();
+          return;
+        }
         void (async () => {
           try {
             const created = await createDirectInvite(token);
@@ -2881,10 +2907,8 @@ function enterGame(
             const code = e instanceof Error ? e.message : "create_failed";
             hud.setStatus(
               code === "challenge_open"
-                ? "Cancel your open Challenge before inviting a friend."
-                : code === "host_busy"
-                  ? "You already have an open invite."
-                  : "Could not create invite — try again."
+                ? "Cancel your open Challenge before opening a play space."
+                : "Could not open play space — try again."
             );
           }
         })();
@@ -2892,8 +2916,10 @@ function enterGame(
       challengeActive: worldcupSelfChallengeOpen,
       challengeAvailable:
         WORLDCUP_ENABLED_CLIENT &&
-        !worldcupIsFieldLikeRoomId(worldcupCurrentRoomId),
+        !worldcupIsMatchPitchRoomId(worldcupCurrentRoomId),
       directInviteActive,
+      isGuest: selfAddress.startsWith("guest:"),
+      gamesAvailable: WORLDCUP_ENABLED_CLIENT,
     });
 
     game.setSelfQuickEmojiOpener(() => {
@@ -3908,6 +3934,18 @@ function enterGame(
       // belongs inside a Match Pitch, so hide it whenever we land anywhere else.
       worldcupCurrentRoomId = normalizeRoomId(msg.roomId);
       worldcupSelfChallengeOpen = !!msg.self.challengeOpen;
+      if (isInviteLobbyRoomId(worldcupCurrentRoomId)) {
+        directInviteActive = true;
+        // The share button persists across the play space; the panel itself follows the
+        // incoming directInviteState (auto-open once, re-openable via the button).
+        hud.setPlaySpaceShareVisible(true);
+      } else {
+        directInviteActive = false;
+        directInviteLobby.hide();
+        hud.setPlaySpaceShareVisible(false);
+        lastDirectInviteState = null;
+        directInviteAutoShownSlug = null;
+      }
       // Any room change ends the pre-teleport countdown (we either landed on the pitch or left).
       worldcupMatchCountdown?.hide();
       // The countdown's scheduled "Entering the match..." loading screen has done its job (or is
@@ -4324,12 +4362,33 @@ function enterGame(
     }
     if (msg.type === "directInviteState") {
       directInviteActive = true;
-      directInviteLobby.show(msg);
+      lastDirectInviteState = msg;
+      hud.setPlaySpaceShareVisible(true);
+      // Auto-open the share panel once per space; later roster updates only refresh it if it's
+      // still open, so a dismissed panel stays closed until the player taps the share button.
+      if (directInviteAutoShownSlug !== msg.slug) {
+        directInviteAutoShownSlug = msg.slug;
+        directInviteLobby.show(msg);
+      } else if (directInviteLobby.isOpen()) {
+        directInviteLobby.show(msg);
+      }
       return;
     }
     if (msg.type === "directInviteError") {
       directInviteActive = false;
-      directInviteLobby.showError(msg.message ?? msg.code);
+      directInviteLobby.hide();
+      hud.setPlaySpaceShareVisible(false);
+      lastDirectInviteState = null;
+      directInviteAutoShownSlug = null;
+      const text =
+        msg.code === "closed"
+          ? "Play space closed."
+          : msg.code === "expired"
+            ? "Play space expired."
+            : msg.code === "full"
+              ? "This play space is full."
+              : (msg.message ?? msg.code);
+      hud.setStatus(text);
       return;
     }
     // worldcup: 1v1 Match live clock + scores
@@ -5159,8 +5218,10 @@ function enterGame(
       z: PIXEL_DEFAULT_SPAWN.z,
     });
   } else {
-    connectToRoom(resolveInitialRoomId(), undefined, {
-      resume: true,
+    const initialRoomId = resolveInitialRoomId();
+    // Entering a Play Space must honor the explicit room (no resume → chamber fallback).
+    connectToRoom(initialRoomId, undefined, {
+      resume: !isInviteLobbyRoomId(initialRoomId),
       blackout: true,
     });
   }
@@ -5600,10 +5661,10 @@ async function bootstrapJoinInvite(): Promise<boolean> {
     const message =
       code === "expired"
         ? "This invite has expired — ask the host for a new link."
-        : code === "slot_taken"
-          ? "This invite is already in use."
-          : code === "cancelled"
-            ? "This invite was cancelled."
+        : code === "full"
+          ? "This play space is full."
+          : code === "closed"
+            ? "This play space has closed."
             : "Could not open this invite link.";
     app.innerHTML = `<div class="invite-splash"><div class="invite-splash__card"><p>${message}</p></div></div>`;
     return true;

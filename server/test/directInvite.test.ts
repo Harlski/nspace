@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   evaluateRedeem,
+  getParticipant,
   reduceInvite,
   sanitizeGuestNickname,
 } from "../src/directInvite/reducer.js";
@@ -17,6 +18,7 @@ function drive(events: InviteEvent[]): DirectInviteRecord | null {
   );
 }
 
+/** capacity 3 ⇒ host + 2 guests. */
 const CREATE: InviteEvent = {
   type: "create",
   hostWallet: "NQHost123",
@@ -26,111 +28,98 @@ const CREATE: InviteEvent = {
   nowMs: 1_000_000,
   ttlMs: CFG.ttlMs,
   activity: "worldcup-match",
+  capacity: 3,
 };
 
-test("create → open with future expiresAtMs", () => {
+test("create → open Play Space with no guests yet", () => {
   const s = drive([CREATE]);
   assert.ok(s);
   assert.equal(s!.phase, "open");
   assert.equal(s!.expiresAtMs, 1_000_000 + CFG.ttlMs);
   assert.equal(s!.hostInLobby, true);
-  assert.equal(s!.guestId, null);
+  assert.equal(s!.participants.length, 0);
+  assert.equal(s!.capacity, 3);
 });
 
-test("claim → claimed with guestId; second distinct guestId rejected", () => {
-  const s = drive([
-    CREATE,
-    { type: "claim", guestId: "guest-a", nowMs: 1_000_100 },
-  ]);
-  assert.equal(s!.phase, "claimed");
-  assert.equal(s!.guestId, "guest-a");
-
-  const rejected = reduceInvite(
-    s,
-    { type: "claim", guestId: "guest-b", nowMs: 1_000_200 },
-    CFG
-  );
-  assert.equal(rejected!.guestId, "guest-a");
-  assert.equal(rejected!.phase, "claimed");
-});
-
-test("reclaim with same guestId allowed in claimed and lobby", () => {
+test("multiple distinct guests can claim; reclaim is idempotent", () => {
   let s = drive([
     CREATE,
     { type: "claim", guestId: "guest-a", nowMs: 1_000_100 },
-    { type: "reclaim", guestId: "guest-a" },
+    { type: "claim", guestId: "guest-b", nowMs: 1_000_200 },
   ]);
-  assert.equal(s!.phase, "claimed");
-
-  s = reduceInvite(
-    s,
-    { type: "guestJoinedLobby", guestId: "guest-a" },
-    CFG
+  assert.equal(s!.participants.length, 2);
+  assert.deepEqual(
+    s!.participants.map((p) => p.guestId),
+    ["guest-a", "guest-b"]
   );
-  assert.equal(s!.phase, "lobby");
 
-  s = reduceInvite(s, { type: "reclaim", guestId: "guest-a" }, CFG);
-  assert.equal(s!.phase, "lobby");
+  // Reclaim by an existing guest does not add a duplicate.
+  s = reduceInvite(s, { type: "claim", guestId: "guest-a", nowMs: 1_000_300 }, CFG);
+  assert.equal(s!.participants.length, 2);
 });
 
-test("nickname commit stores sanitized name", () => {
+test("claim past capacity is gated by evaluateRedeem (full)", () => {
+  const s = drive([
+    CREATE,
+    { type: "claim", guestId: "guest-a", nowMs: 1_000_100 },
+    { type: "claim", guestId: "guest-b", nowMs: 1_000_200 },
+  ])!;
+  // capacity 3 ⇒ 2 guest slots already taken.
+  assert.deepEqual(evaluateRedeem(s, "guest-c", 1_000_300), {
+    ok: false,
+    code: "full",
+  });
+  // An existing guest may still reclaim even when full.
+  assert.deepEqual(evaluateRedeem(s, "guest-a", 1_000_300), {
+    ok: true,
+    invite: s,
+  });
+});
+
+test("nickname + lobby-join + wallet upgrade land on the right participant", () => {
   const s = drive([
     CREATE,
     { type: "claim", guestId: "guest-a", nowMs: 1_000_100 },
     { type: "setNickname", guestId: "guest-a", nickname: "Swift Fox" },
-  ]);
-  assert.equal(s!.guestDisplayName, "Swift Fox");
+    { type: "guestJoinedLobby", guestId: "guest-a" },
+    { type: "upgradeWallet", guestId: "guest-a", wallet: "NQGuestWallet" },
+  ])!;
+  const p = getParticipant(s, "guest-a")!;
+  assert.equal(p.displayName, "Swift Fox");
+  assert.equal(p.joinedLobby, true);
+  assert.equal(p.wallet, "NQGuestWallet");
   assert.equal(sanitizeGuestNickname("a"), null);
   assert.equal(sanitizeGuestNickname("Valid Name"), "Valid Name");
 });
 
-test("wallet upgrade sets guestWallet and preserves guestId", () => {
-  const s = drive([
+test("removeParticipant frees a slot", () => {
+  let s = drive([
     CREATE,
     { type: "claim", guestId: "guest-a", nowMs: 1_000_100 },
-    { type: "upgradeWallet", guestId: "guest-a", wallet: "NQGuestWallet" },
-  ]);
-  assert.equal(s!.guestId, "guest-a");
-  assert.equal(s!.guestWallet, "NQGuestWallet");
+    { type: "claim", guestId: "guest-b", nowMs: 1_000_200 },
+  ])!;
+  s = reduceInvite(s, { type: "removeParticipant", guestId: "guest-a" }, CFG)!;
+  assert.equal(s.participants.length, 1);
+  assert.equal(getParticipant(s, "guest-a"), null);
+  // The freed slot is claimable again.
+  assert.equal(evaluateRedeem(s, "guest-c", 1_000_400).ok, true);
 });
 
-test("both in lobby → lobby; host Start → starting", () => {
-  const s = drive([
-    CREATE,
-    { type: "claim", guestId: "guest-a", nowMs: 1_000_100 },
-    { type: "guestJoinedLobby", guestId: "guest-a" },
-    { type: "hostStart" },
-  ]);
-  assert.equal(s!.phase, "starting");
+test("host can leave and re-enter the lobby", () => {
+  let s = drive([CREATE, { type: "hostLeftLobby" }])!;
+  assert.equal(s.hostInLobby, false);
+  s = reduceInvite(s, { type: "hostJoinedLobby" }, CFG)!;
+  assert.equal(s.hostInLobby, true);
 });
 
-test("cancel / expire transitions", () => {
-  const open = drive([CREATE]);
-  const cancelled = reduceInvite(
-    open,
-    { type: "cancel", by: "host" },
-    CFG
-  );
-  assert.equal(cancelled!.phase, "cancelled");
-
-  const expired = reduceInvite(
-    open,
-    { type: "tick", nowMs: open!.expiresAtMs + 1 },
-    CFG
-  );
-  assert.equal(expired!.phase, "expired");
-});
-
-test("redeem after cancel or expire rejected", () => {
+test("close + expire are terminal and reject redeem", () => {
   const open = drive([CREATE])!;
-  const cancelled = reduceInvite(
-    open,
-    { type: "cancel", by: "host" },
-    CFG
-  )!;
-  assert.deepEqual(evaluateRedeem(cancelled, null, 1_000_500), {
+
+  const closed = reduceInvite(open, { type: "close" }, CFG)!;
+  assert.equal(closed.phase, "closed");
+  assert.deepEqual(evaluateRedeem(closed, "guest-a", 1_000_500), {
     ok: false,
-    code: "cancelled",
+    code: "closed",
   });
 
   const expired = reduceInvite(
@@ -138,37 +127,19 @@ test("redeem after cancel or expire rejected", () => {
     { type: "tick", nowMs: open.expiresAtMs + 1 },
     CFG
   )!;
-  assert.deepEqual(evaluateRedeem(expired, null, open.expiresAtMs + 1), {
+  assert.equal(expired.phase, "expired");
+  assert.deepEqual(evaluateRedeem(expired, "guest-a", open.expiresAtMs + 1), {
     ok: false,
     code: "expired",
   });
 });
 
-test("evaluateRedeem rejects slot taken by another guest", () => {
-  const s = drive([
-    CREATE,
-    { type: "claim", guestId: "guest-a", nowMs: 1_000_100 },
-  ])!;
-  assert.deepEqual(evaluateRedeem(s, "guest-b", 1_000_200), {
-    ok: false,
-    code: "slot_taken",
-  });
-  assert.deepEqual(evaluateRedeem(s, "guest-a", 1_000_200), {
-    ok: true,
-    invite: s,
-  });
-});
-
-test("tick past expiresAtMs expires from any non-terminal phase", () => {
-  const s = drive([
-    CREATE,
-    { type: "claim", guestId: "guest-a", nowMs: 1_000_100 },
-    { type: "guestJoinedLobby", guestId: "guest-a" },
-  ])!;
-  const expired = reduceInvite(
-    s,
-    { type: "tick", nowMs: s.expiresAtMs + 1 },
+test("claim/remove are ignored once terminal", () => {
+  const closed = reduceInvite(drive([CREATE]), { type: "close" }, CFG)!;
+  const after = reduceInvite(
+    closed,
+    { type: "claim", guestId: "guest-a", nowMs: 1_000_600 },
     CFG
-  );
-  assert.equal(expired!.phase, "expired");
+  )!;
+  assert.equal(after.participants.length, 0);
 });

@@ -52,6 +52,15 @@ test("an uncredited goal (no scorer) never pays", () => {
   assert.equal(d.reason, "no_scorer");
 });
 
+test("a guest scorer never earns NIM (guest:* identity)", () => {
+  const d = evaluateGoalReward(
+    { ...base(), scorerWallet: "guest:abc123" },
+    CFG
+  );
+  assert.equal(d.pay, false);
+  assert.equal(d.reason, "guest");
+});
+
 test("a solo goal (one player) pays half the drawn amount", () => {
   const d = evaluateGoalReward({ ...base(), distinctPlayersInField: 1 }, CFG);
   assert.equal(d.pay, true);

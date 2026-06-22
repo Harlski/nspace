@@ -9,6 +9,16 @@ depends_on_grill: .scratch/post-prod/issues/05-guest-invite-system.md
 
 # Direct Invite — Guest sessions & out-of-band Match invites
 
+> **Update (UNRELEASED): superseded by the multi-person Play Space.** The 1:1 host→guest
+> staging lobby described below evolved into a private, invite-only **Play Space** (up to
+> `DIRECT_INVITE_MAX_OCCUPANTS`, default 8): one shared ephemeral room per link where **any**
+> occupant raises their own 1v1 Challenges, guests are confined to the space (+ its Match
+> Pitches) and never earn NIM, the creator comes and goes freely, and the room is torn down
+> only when empty. Phases collapsed to `open`/`closed`/`expired` and the host "Start Match"
+> flow was dropped. See **Play Space** / **Guest** in [worldcup/CONTEXT.md](./CONTEXT.md) and
+> the Update section of [ADR 0003](./adr/0003-guest-sessions-direct-invite.md). Sections below
+> describe the original 1:1 design and are retained for history.
+
 > Vocabulary follows [CONTEXT.md](../CONTEXT.md) (**Guest**, **Direct Invite**) and
 > [worldcup/CONTEXT.md](./CONTEXT.md) (**Match**, **Match Pitch**, **Challenge**,
 > **Kickoff Countdown**). **Direct Invite** is parallel to **Challenge**, not a

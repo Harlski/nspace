@@ -63,8 +63,14 @@ export interface GoalRewardInput {
 export type GoalRewardReason =
   | "ok"
   | "no_scorer"
+  | "guest"
   | "wallet_cap"
   | "budget_exhausted";
+
+/** Guests (temporary invite identities, `guest:{id}`) are never eligible for NIM rewards. */
+export function isGuestWallet(wallet: string | null | undefined): boolean {
+  return typeof wallet === "string" && wallet.startsWith("guest:");
+}
 
 export interface GoalRewardDecision {
   pay: boolean;
@@ -137,6 +143,10 @@ export function evaluateGoalReward(
 ): GoalRewardDecision {
   if (!input.scorerWallet) {
     return { pay: false, reason: "no_scorer" };
+  }
+  // Guests (temporary invite identities) never earn NIM, even on the Free Play Field.
+  if (isGuestWallet(input.scorerWallet)) {
+    return { pay: false, reason: "guest" };
   }
   const amountLuna = effectiveGoalRewardLuna(
     input.proposedRewardLuna,

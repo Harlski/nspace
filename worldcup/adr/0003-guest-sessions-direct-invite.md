@@ -1,8 +1,31 @@
 # ADR 0003 — Guest sessions & Direct Invite
 
-**Status:** Accepted  
+**Status:** Accepted (amended — see Update)  
 **Date:** 2026-06-22  
 **Context:** [PRD-direct-invite.md](../PRD-direct-invite.md), [CONTEXT.md](../CONTEXT.md)
+
+## Update (UNRELEASED) — Direct Invite → multi-person **Play Space**
+
+The 1:1 staging lobby became a private, multi-person **Play Space** (see **Play Space** /
+**Guest** in [worldcup/CONTEXT.md](../CONTEXT.md)). What changed from the original decision:
+
+- **Multi-participant model.** `DirectInviteRecord` holds a `participants[]` collection +
+  `capacity`; phases collapse to `open` / `closed` / `expired`. `claimInvite` is additive and
+  cap-gated (`MAX_PLAY_SPACE_OCCUPANTS`, env `DIRECT_INVITE_MAX_OCCUPANTS`, default 8).
+- **In-room play, not host-start.** There is no host "Start Match"; **any** occupant raises a
+  normal **Challenge** in the space. Matches return players to the Play Space and surface the
+  Spectate Portal there. `startDirectInviteMatch` was removed; `cancelDirectInvite` now means
+  "leave the space".
+- **Guest confinement.** Guests may only occupy their Play Space and the Match Pitches it
+  launches; `joinRoom`/`enterPortal`/arbitrary-room connect are blocked, and WS connect forces
+  a guest onto their own space (also fixing the `resume=1` → chamber bug for fresh guests).
+- **Lifecycle by occupancy.** The space is torn down only when no connected socket carries its
+  slug (so it survives active Matches); the creator comes and goes freely.
+- **NIM exclusion is explicit.** `evaluateGoalReward` rejects `guest:*` scorers (`isGuestWallet`),
+  defence-in-depth beyond "Matches never pay".
+
+The guest-session decisions below (ephemeral `guest:{guestId}` JWTs, in-place wallet upgrade,
+reducer/store ownership) are unchanged.
 
 ## Decision
 

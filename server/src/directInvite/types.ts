@@ -1,14 +1,22 @@
 /** Activity target for a Direct Invite (extensible; v1 implements worldcup-match only). */
 export type DirectInviteActivity = "worldcup-match";
 
-export type InvitePhase =
-  | "open"
-  | "claimed"
-  | "lobby"
-  | "starting"
-  | "started"
-  | "cancelled"
-  | "expired";
+/**
+ * Play Space lifecycle. Unlike the old 1:1 staging lobby, a Play Space is just "alive"
+ * (`open`) until it empties or its TTL lapses — there is no host-driven start/cancel that
+ * ends it for everyone.
+ */
+export type InvitePhase = "open" | "closed" | "expired";
+
+/** One guest who claimed the invite link (a temporary, named participant). */
+export type InviteParticipant = {
+  guestId: string;
+  displayName: string | null;
+  /** Optional wallet linked via the upgrade flow (still plays under the guest id). */
+  wallet: string | null;
+  /** True once this guest has actually connected into the Play Space room. */
+  joinedLobby: boolean;
+};
 
 export type DirectInviteRecord = {
   slug: string;
@@ -17,11 +25,12 @@ export type DirectInviteRecord = {
   hostOriginRoomId: string;
   lobbyRoomId: string;
   phase: InvitePhase;
-  guestId: string | null;
-  guestDisplayName: string | null;
-  guestWallet: string | null;
+  /** Guests who claimed the link, in claim order. */
+  participants: InviteParticipant[];
+  /** True while the wallet creator is currently inside the Play Space. */
   hostInLobby: boolean;
-  guestInLobby: boolean;
+  /** Max total occupants (creator + guests). */
+  capacity: number;
   createdAtMs: number;
   expiresAtMs: number;
 };
@@ -36,21 +45,21 @@ export type InviteEvent =
       nowMs: number;
       ttlMs: number;
       activity: DirectInviteActivity;
+      capacity: number;
     }
   | { type: "claim"; guestId: string; nowMs: number }
-  | { type: "reclaim"; guestId: string }
   | { type: "setNickname"; guestId: string; nickname: string }
   | { type: "upgradeWallet"; guestId: string; wallet: string }
   | { type: "guestJoinedLobby"; guestId: string }
   | { type: "hostJoinedLobby" }
-  | { type: "hostStart" }
-  | { type: "cancel"; by: "host" | "system" }
-  | { type: "started" }
+  | { type: "hostLeftLobby" }
+  | { type: "removeParticipant"; guestId: string }
+  | { type: "close" }
   | { type: "tick"; nowMs: number };
 
 export type RedeemResult =
   | { ok: true; invite: DirectInviteRecord }
-  | { ok: false; code: "not_found" | "expired" | "slot_taken" | "cancelled" | "started" };
+  | { ok: false; code: "not_found" | "expired" | "closed" | "full" };
 
 export type InviteConfig = {
   ttlMs: number;

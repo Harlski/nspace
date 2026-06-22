@@ -11,6 +11,10 @@ import { timingSafeEqual } from "node:crypto";
 import { createNonce, consumeNonce, signSession, verifySession, isGuestSession } from "./auth.js";
 import { registerDirectInviteRoutes } from "./directInvite/httpHandlers.js";
 import {
+  isInviteLobbyRoomId,
+  makeInviteLobbyRoomId,
+} from "./directInvite/config.js";
+import {
   addClient,
   adminRandomExtraFloorLayout,
   broadcastRestartPendingNotice,
@@ -2927,6 +2931,7 @@ wss.on("connection", (ws, req) => {
   let sessionNimiqPay = false;
   let guestDisplayName: string | undefined;
   let guestId: string | undefined;
+  let guestInviteSlug: string | undefined;
   try {
     const payload = verifySession(token, jwtSecret);
     address = payload.sub;
@@ -2934,6 +2939,7 @@ wss.on("connection", (ws, req) => {
     if (isGuestSession(payload)) {
       guestDisplayName = payload.displayName;
       guestId = payload.guestId;
+      guestInviteSlug = payload.inviteSlug;
     }
   } catch {
     ws.close(4001, "unauthorized");
@@ -2958,10 +2964,28 @@ wss.on("connection", (ws, req) => {
     return;
   }
   let roomId = roomIdParam;
-  if (resumeSession && !streamRequested) {
+  // Honor an explicit Play Space target: `resume=1` must not override it back to chamber
+  // (a fresh guest has no prior session, so resume would otherwise drop them in the hub).
+  const targetIsPlaySpace = isInviteLobbyRoomId(normalizeRoomId(roomIdParam));
+  if (resumeSession && !streamRequested && !targetIsPlaySpace) {
     const resolved = resolveResumeLogin(address);
     roomId = resolved.roomId;
     spawnHint = { x: resolved.spawn.x, z: resolved.spawn.z };
+  }
+  // Guest confinement: a guest may only ever connect into their own Play Space. Any other
+  // requested/resumed room is forced back to it; a guest with no invite slug is rejected.
+  if (guestId !== undefined) {
+    const allowedLobby = guestInviteSlug
+      ? normalizeRoomId(makeInviteLobbyRoomId(guestInviteSlug))
+      : null;
+    if (!allowedLobby) {
+      ws.close(4003, "guest_no_invite");
+      return;
+    }
+    if (normalizeRoomId(roomId) !== allowedLobby) {
+      roomId = allowedLobby;
+      spawnHint = undefined;
+    }
   }
   addClient(roomId, ws, address, spawnHint, {
     nimiqPay: sessionNimiqPay,

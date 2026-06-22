@@ -1,50 +1,74 @@
-export { DIRECT_INVITE_ENABLED, GUEST_SESSION_TTL_SEC, isInviteLobbyRoomId } from "./config.js";
+export {
+  DIRECT_INVITE_ENABLED,
+  GUEST_SESSION_TTL_SEC,
+  MAX_PLAY_SPACE_OCCUPANTS,
+  isInviteLobbyRoomId,
+} from "./config.js";
 export { registerDirectInviteRoutes } from "./httpHandlers.js";
 export type { DirectInviteHttpDeps } from "./httpHandlers.js";
-export { sanitizeGuestNickname } from "./reducer.js";
+export { sanitizeGuestNickname, getParticipant } from "./reducer.js";
 export {
-  cancelInvite,
   claimInvite,
+  closeInvite,
   createInvite,
   getInviteByGuestId,
   getInviteByHost,
   getInviteBySlug,
   markGuestJoinedLobby,
   markHostJoinedLobby,
-  markInviteStarted,
-  startInviteMatch,
+  markHostLeftLobby,
+  removeInviteParticipant,
+  expireInvitePastTtl,
+  listOpenInvites,
   tickInvites,
 } from "./store.js";
-export type { DirectInviteRecord, InvitePhase } from "./types.js";
+export type {
+  DirectInviteRecord,
+  InviteParticipant,
+  InvitePhase,
+} from "./types.js";
+
+import type { DirectInviteRecord, InvitePhase } from "./types.js";
+
+export type DirectInviteRosterEntry = {
+  displayName: string;
+};
 
 export type DirectInviteStateWire = {
   slug: string;
   phase: InvitePhase;
   hostDisplayName: string;
-  guestDisplayName: string | null;
   shareUrl: string;
   expiresAtMs: number;
   isHost: boolean;
-  canStart: boolean;
+  /** Guests currently inside the Play Space (joined the room). */
+  roster: DirectInviteRosterEntry[];
+  /** Current occupants (creator-if-present + joined guests). */
+  occupancy: number;
+  /** Max occupants (creator + guests). */
+  capacity: number;
 };
 
-import type { InvitePhase } from "./types.js";
-
 export function buildInviteStateWire(
-  invite: import("./types.js").DirectInviteRecord,
+  invite: DirectInviteRecord,
   viewerWalletOrGuestId: string,
   hostDisplayName: string,
   shareUrl: string
 ): DirectInviteStateWire {
   const isHost = invite.hostWallet === viewerWalletOrGuestId;
+  const roster: DirectInviteRosterEntry[] = invite.participants
+    .filter((p) => p.joinedLobby)
+    .map((p) => ({ displayName: p.displayName ?? "Guest" }));
+  const occupancy = (invite.hostInLobby ? 1 : 0) + roster.length;
   return {
     slug: invite.slug,
     phase: invite.phase,
     hostDisplayName,
-    guestDisplayName: invite.guestDisplayName,
     shareUrl,
     expiresAtMs: invite.expiresAtMs,
     isHost,
-    canStart: isHost && invite.phase === "lobby",
+    roster,
+    occupancy,
+    capacity: invite.capacity,
   };
 }

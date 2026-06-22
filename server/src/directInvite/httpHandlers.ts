@@ -8,7 +8,7 @@ import {
 } from "../auth.js";
 import { pickDirectInviteGuestName } from "../guestNames.js";
 import { DIRECT_INVITE_ENABLED, GUEST_SESSION_TTL_SEC } from "./config.js";
-import { sanitizeGuestNickname } from "./reducer.js";
+import { getParticipant, sanitizeGuestNickname } from "./reducer.js";
 import {
   claimInvite,
   createInvite,
@@ -102,22 +102,18 @@ export function registerDirectInviteRoutes(
       res.status(409).json({ error: "challenge_open" });
       return;
     }
-    const result = createInvite({
+    const invite = createInvite({
       hostWallet: payload.sub,
       hostOriginRoomId: originRoomId,
       activity: "worldcup-match",
     });
-    if (!result.ok) {
-      res.status(409).json({ error: result.code });
-      return;
-    }
-    deps.onInviteCreated(result.invite);
-    const url = `${deps.publicBaseUrl.replace(/\/$/, "")}/join/${result.invite.slug}`;
+    deps.onInviteCreated(invite);
+    const url = `${deps.publicBaseUrl.replace(/\/$/, "")}/join/${invite.slug}`;
     res.json({
-      slug: result.invite.slug,
+      slug: invite.slug,
       url,
-      lobbyRoomId: result.invite.lobbyRoomId,
-      expiresAt: result.invite.expiresAtMs,
+      lobbyRoomId: invite.lobbyRoomId,
+      expiresAt: invite.expiresAtMs,
     });
   });
 
@@ -139,8 +135,9 @@ export function registerDirectInviteRoutes(
       return;
     }
     const invite = claim.invite;
+    const existing = getParticipant(invite, guestId);
     const suggestedName =
-      invite.guestDisplayName ?? pickDirectInviteGuestName(Math.random);
+      existing?.displayName ?? pickDirectInviteGuestName(Math.random);
     const token = signGuestSession(guestId, suggestedName, deps.jwtSecret, {
       inviteSlug: slug,
       ttlSec: GUEST_SESSION_TTL_SEC,
@@ -212,7 +209,7 @@ export function registerDirectInviteRoutes(
       return;
     }
     const invite = getInviteBySlug(slug);
-    if (!invite || invite.guestId !== guestPayload.guestId) {
+    if (!invite || !getParticipant(invite, guestPayload.guestId)) {
       res.status(409).json({ error: "invite_mismatch" });
       return;
     }

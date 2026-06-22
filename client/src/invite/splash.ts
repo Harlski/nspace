@@ -16,7 +16,7 @@ export function mountInviteSplash(
   root.className = "invite-splash";
   root.innerHTML = `
     <div class="invite-splash__card">
-      <h1 class="invite-splash__title">Joining ${escapeHtml(redeem.hostDisplayName)}'s Match…</h1>
+      <h1 class="invite-splash__title">Join ${escapeHtml(redeem.hostDisplayName)}'s play space</h1>
       <p class="invite-splash__hint">Pick a nickname — wallet sign-in is optional.</p>
       <label class="invite-splash__label">
         Nickname

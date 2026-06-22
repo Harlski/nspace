@@ -32,9 +32,21 @@ the player's own profile.
 _Avoid_: nationality emote, country emoji.
 
 **Games Wheel**:
-The sub-wheel reached by selecting the Games Sector — choices for starting or joining a
-game (e.g. World Cup: join the Free Play Field, start a Match).
+The sub-wheel reached by selecting the Games Sector — a list of games (today: Soccer).
+Selecting a game drills further: Soccer → Free Play (join the Free Play Field) or 1v1 →
+**This room** (raise a Challenge where you stand) / **Invite** (open your Play Space).
 _Avoid_: games menu, play menu.
+
+**1v1 Wheel**:
+The root-level shortcut Sector that skips straight to 1v1: it lists games and jumps to that
+game's 1v1 options (Soccer → This room / Invite), the same leaf the Games Wheel reaches the
+long way. A fast path, not a separate flow.
+_Avoid_: match menu, versus menu.
+
+**Home Wheel**:
+The sub-wheel reached by selecting the Home Sector — **My Rooms** (opens the Rooms browser)
+and **Private Room** (opens or returns to your Play Space and its Share Panel).
+_Avoid_: rooms menu, lobby menu.
 
 **Hub**:
 The transparent hexagonal center hole of the Action Wheel. A non-interactive window that
@@ -63,6 +75,34 @@ the link until the activity starts or the invite expires (15 minutes from creati
 use case: a 1v1 Match. While pending, host and guest wait together in a shared virtual
 lobby (not the hub or Match Pitch) until the host starts the activity.
 _Avoid_: invite (ambiguous with Challenge), guest link, deep link.
+
+**Share Panel**:
+The dismissible card shown inside a Play Space with its **Room Code**, full join link (copy),
+and QR. It auto-opens once on entering the space and is re-opened anytime from the persistent
+**Share Button** in the top toolbar — visible to every occupant (creator and Guests), since
+anyone may pull in more friends. Replaces the old always-blocking lobby overlay.
+_Avoid_: invite modal, lobby overlay, QR popup.
+
+**Room Code**:
+The Play Space's shareable code — the `{slug}` from its `nimiq.space/join/{slug}` link —
+surfaced on its own in the Share Panel so it can be read aloud or copied without the full URL.
+_Avoid_: invite code, pin, join code (the Rooms feature's separate 6-char code is distinct).
+
+**Get a Wallet Button**:
+The guest-only top-toolbar button that takes the slot the Rooms button occupies for full
+players. A Guest is confined to their Play Space, so room browsing is closed to them; this
+button replaces Rooms and opens the Get a Wallet Prompt instead. Full players (wallet or
+Nimiq Pay) keep the Rooms button unchanged.
+_Avoid_: join button, sign-up button, upgrade button.
+
+**Get a Wallet Prompt**:
+The dismissible full-screen overlay (over the game world) a Guest reaches from the Get a
+Wallet Button, encouraging them to create a real Nimiq wallet and become a full player.
+Offers two routes: the **web wallet** (the standard Nimiq wallet sign-in — log in or create
+a wallet — entered as a full player; this is a fresh full-player session, not an in-place
+guest upgrade) and the **Nimiq Pay** mobile app (App Store / Google Play, plus a QR to
+nimpay.app). Encouragement only — closeable, returning the Guest to play as a guest.
+_Avoid_: paywall, wallet gate, sign-up modal, upsell.
 
 ## Movement
 

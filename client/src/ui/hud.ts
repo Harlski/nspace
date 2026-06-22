@@ -317,16 +317,22 @@ export function createHud(
     handlers: {
       onEmote: (emoji: string) => void;
       onJoinFreePlayField: () => void;
-      /** worldcup: toggle an open 1v1 Challenge (Start Match → Find opponent here). */
+      /** worldcup: toggle an open 1v1 Challenge ("1v1 → … → This room"). */
       onToggleChallenge?: () => void;
-      /** worldcup: create a Direct Invite (Start Match → Invite a friend). */
-      onCreateDirectInvite?: () => void;
+      /** Open / return to the player's private Play Space + share ("Invite" / "Private Room"). */
+      onOpenPlaySpace?: () => void;
+      /** Open the Rooms modal ("Home → My Rooms"). */
+      onOpenRooms?: () => void;
       /** worldcup: is a Challenge currently raised (toggle shows Cancel)? */
       challengeActive?: boolean;
       /** worldcup: may a Challenge be raised here (false on the pitch / mid-Match)? */
       challengeAvailable?: boolean;
-      /** directInvite: block invite when host already has one open. */
+      /** directInvite: the player is already in a Play Space (Invite re-opens its share). */
       directInviteActive?: boolean;
+      /** Guest session — trim the wheel (confined to the Play Space). */
+      isGuest?: boolean;
+      /** worldcup enabled — show game / 1v1 entries. */
+      gamesAvailable?: boolean;
     },
     /** Snapped floor tile when opened; wheel closes after the player walks to another tile. */
     openedAtFloor?: FloorTile | null
@@ -427,6 +433,14 @@ export function createHud(
   onReturnToLobby: (fn: () => void) => void;
   /** Open the large Rooms browser (list / join / create). */
   onRoomsOpen: (fn: () => void) => void;
+  /** Guest toolbar: hide Rooms, show Get a Wallet instead. */
+  setGuestToolbarMode: (isGuest: boolean) => void;
+  /** Guest-only: open the Get a Wallet prompt. */
+  onGetWalletOpen: (fn: () => void) => void;
+  /** Show/hide the persistent Play Space share (room code + QR) button. */
+  setPlaySpaceShareVisible: (visible: boolean) => void;
+  /** Click handler for the persistent Play Space share button. */
+  onPlaySpaceShareOpen: (fn: () => void) => void;
   /** Confirmed from a room listed on a player profile. */
   onProfileRoomJoin: (fn: (roomId: string) => void) => void;
   /** Build toggle: walk off / on; Objects vs Room `<select>` in the bottom dock tab row maps to build vs floor when both caps apply. */
@@ -1179,6 +1193,28 @@ export function createHud(
   roomsBtn.setAttribute("aria-label", "Rooms");
   roomsBtn.title = "Browse, join, or create rooms.";
 
+  const getWalletBtn = document.createElement("button");
+  getWalletBtn.type = "button";
+  getWalletBtn.className = "hud-rooms hud-get-wallet";
+  getWalletBtn.hidden = true;
+  getWalletBtn.innerHTML = `<span class="hud-rooms__inner"><span class="hud-rooms__text">Get a wallet</span>${nimiqIconUseMarkup("nq-caret-right-small", { width: 10, height: 10, class: "hud-rooms__caret" })}</span>`;
+  getWalletBtn.setAttribute("aria-label", "Get a Nimiq wallet");
+  getWalletBtn.title = "Sign in with a wallet to explore all of Nimiq Space.";
+  let getWalletOpenHandler = (): void => {};
+  getWalletBtn.addEventListener("click", () => getWalletOpenHandler());
+
+  // Persistent Play Space share button — visible to every occupant (host + guests) while in
+  // a private Play Space; re-opens the room-code + QR share panel after it's dismissed.
+  const playSpaceShareBtn = document.createElement("button");
+  playSpaceShareBtn.type = "button";
+  playSpaceShareBtn.className = "hud-playspace-share";
+  playSpaceShareBtn.hidden = true;
+  playSpaceShareBtn.innerHTML = `<span class="hud-playspace-share__inner">🔗 <span class="hud-playspace-share__text">Room code</span></span>`;
+  playSpaceShareBtn.setAttribute("aria-label", "Show room code and QR");
+  playSpaceShareBtn.title = "Show this play space's room code and QR.";
+  let playSpaceShareHandler: () => void = () => {};
+  playSpaceShareBtn.addEventListener("click", () => playSpaceShareHandler());
+
   const setNimTipVisible = (show: boolean): void => {
     nimBalance.classList.toggle("hud-nim-balance--show-tip", show);
     syncHudStatTooltipViewport(nimBalance, nimBalanceTip, show);
@@ -1262,6 +1298,8 @@ export function createHud(
   }
 
   topToolbar.appendChild(roomsBtn);
+  topToolbar.appendChild(getWalletBtn);
+  topToolbar.appendChild(playSpaceShareBtn);
   topToolbar.appendChild(playerCount);
   topToolbar.appendChild(nimBalance);
   topToolbar.appendChild(fsBtn);
@@ -2451,7 +2489,14 @@ export function createHud(
     (ACTION_WHEEL_R_OUTER + ACTION_WHEEL_R_INNER) / 2
   );
 
-  type ActionWheelLevel = "root" | "emotes" | "games" | "startMatch";
+  type ActionWheelLevel =
+    | "root"
+    | "emotes"
+    | "home"
+    | "games"
+    | "soccer"
+    | "soccer1v1"
+    | "oneVone";
   type ActionWheelSlice = {
     glyph: string;
     label: string;
@@ -2505,15 +2550,25 @@ export function createHud(
       : null;
 
   let actionWheelLevel: ActionWheelLevel = "root";
+  // Breadcrumb of ancestor levels so Back returns to the correct parent (the 1v1 leaf is
+  // reachable from two parents: Games→Soccer→1v1 and the top-level 1v1→Soccer shortcut).
+  let actionWheelNav: ActionWheelLevel[] = [];
   let actionWheelEmotePage = 0;
   let actionWheelEmoteHandler: ((emoji: string) => void) | null = null;
   let actionWheelJoinFieldHandler: (() => void) | null = null;
-  // worldcup: 1v1 Challenge toggle (Games sub-wheel).
+  // worldcup: 1v1 Challenge toggle ("This room").
   let actionWheelChallengeHandler: (() => void) | null = null;
-  let actionWheelCreateInviteHandler: (() => void) | null = null;
+  // Open / return to the player's private Play Space + share panel ("Invite" / "Private Room").
+  let actionWheelOpenPlaySpaceHandler: (() => void) | null = null;
+  // Open the Rooms modal ("Home → My Rooms").
+  let actionWheelOpenRoomsHandler: (() => void) | null = null;
   let actionWheelChallengeActive = false;
   let actionWheelChallengeAvailable = false;
   let actionWheelDirectInviteActive = false;
+  // Guests are confined to their Play Space — their wheel is trimmed accordingly.
+  let actionWheelIsGuest = false;
+  // Whether game/1v1 entries should appear at all (worldcup enabled).
+  let actionWheelGamesAvailable = false;
   let actionWheelOpenedFloor: FloorTile | null = null;
   let actionWheelOutsideBound = false;
 
@@ -2545,18 +2600,31 @@ export function createHud(
     actionWheel.hidden = true;
     actionWheel.classList.remove("action-wheel--open");
     actionWheelLevel = "root";
+    actionWheelNav = [];
     actionWheelEmotePage = 0;
     actionWheelEmoteHandler = null;
     actionWheelJoinFieldHandler = null;
     actionWheelChallengeHandler = null;
+    actionWheelOpenPlaySpaceHandler = null;
+    actionWheelOpenRoomsHandler = null;
     actionWheelChallengeActive = false;
     actionWheelChallengeAvailable = false;
+    actionWheelDirectInviteActive = false;
+    actionWheelIsGuest = false;
+    actionWheelGamesAvailable = false;
     actionWheelOpenedFloor = null;
     unbindActionWheelOutside();
   }
-  function setActionWheelLevel(level: ActionWheelLevel): void {
+  /** Descend into a sub-wheel, remembering the parent for Back. */
+  function pushActionWheelLevel(level: ActionWheelLevel): void {
+    actionWheelNav.push(actionWheelLevel);
     actionWheelLevel = level;
     if (level === "emotes") actionWheelEmotePage = 0;
+    renderActionWheel();
+  }
+  /** Step back to the parent level (or root if the breadcrumb is empty). */
+  function popActionWheelLevel(): void {
+    actionWheelLevel = actionWheelNav.pop() ?? "root";
     renderActionWheel();
   }
   function buildActionWheelSlices(): ActionWheelSlice[] {
@@ -2565,8 +2633,34 @@ export function createHud(
     const back: ActionWheelSlice = {
       glyph: "↩",
       label: "",
-      ariaLabel: "Back to actions",
-      activate: () => setActionWheelLevel("root"),
+      ariaLabel: "Back",
+      activate: () => popActionWheelLevel(),
+    };
+    // Place 1–5 actions onto the hexagon's non-nav edges in a balanced arrangement.
+    const slotOrderFor = (count: number): number[] => {
+      switch (count) {
+        case 1:
+          return [3];
+        case 2:
+          return [2, 4];
+        case 3:
+          return [2, 3, 4];
+        case 4:
+          return [1, 2, 4, 5];
+        default:
+          return [1, 2, 3, 4, 5];
+      }
+    };
+    const placeSlices = (
+      items: ActionWheelSlice[]
+    ): Partial<Record<number, ActionWheelSlice>> => {
+      const order = slotOrderFor(items.length);
+      const bySlot: Partial<Record<number, ActionWheelSlice>> = {};
+      items.forEach((it, i) => {
+        const slot = order[i];
+        if (slot != null) bySlot[slot] = it;
+      });
+      return bySlot;
     };
     if (actionWheelLevel === "emotes") {
       // Prepend the player's own flag (if chosen) so it is the first, top-most Emote on page
@@ -2613,7 +2707,41 @@ export function createHud(
       }
       return fillHexSlots(back, bySlot);
     }
+    // Home → My Rooms (Rooms modal) / Private Room (your Play Space).
+    if (actionWheelLevel === "home") {
+      const myRooms: ActionWheelSlice = {
+        glyph: "🚪",
+        label: "My Rooms",
+        ariaLabel: "Browse and join rooms",
+        activate: () => {
+          actionWheelOpenRoomsHandler?.();
+          closeActionWheel();
+        },
+      };
+      const privateRoom: ActionWheelSlice = {
+        glyph: "🔒",
+        label: "Private Room",
+        ariaLabel: "Open your private play space",
+        disabled: !actionWheelGamesAvailable,
+        activate: () => {
+          actionWheelOpenPlaySpaceHandler?.();
+          closeActionWheel();
+        },
+      };
+      return fillHexSlots(back, placeSlices([myRooms, privateRoom]));
+    }
+    // Games → Soccer (extensible: more games become more entries here).
     if (actionWheelLevel === "games") {
+      const soccer: ActionWheelSlice = {
+        glyph: "⚽",
+        label: "Soccer",
+        ariaLabel: "Soccer",
+        activate: () => pushActionWheelLevel("soccer"),
+      };
+      return fillHexSlots(back, placeSlices([soccer]));
+    }
+    // Games → Soccer → Free Play / 1v1.
+    if (actionWheelLevel === "soccer") {
       const freePlay: ActionWheelSlice = {
         glyph: "⚽",
         label: "Free Play",
@@ -2623,45 +2751,53 @@ export function createHud(
           closeActionWheel();
         },
       };
-      const startMatch: ActionWheelSlice = actionWheelChallengeAvailable
-        ? {
-            glyph: "🥅",
-            label: "Start Match",
-            ariaLabel: "Start a 1v1 Match",
-            activate: () => setActionWheelLevel("startMatch"),
-          }
-        : {
-            glyph: "🥅",
-            label: "1v1 · here",
-            ariaLabel: "1v1 Matches can't be started on the pitch",
-            disabled: true,
-          };
-      return fillHexSlots(back, { 2: freePlay, 4: startMatch });
+      const oneVoneEntry: ActionWheelSlice = {
+        glyph: "🥅",
+        label: "1v1",
+        ariaLabel: "Start a 1v1",
+        activate: () => pushActionWheelLevel("soccer1v1"),
+      };
+      // Guests are confined and cannot join the Free Play Field.
+      const items = actionWheelIsGuest ? [oneVoneEntry] : [freePlay, oneVoneEntry];
+      return fillHexSlots(back, placeSlices(items));
     }
-    if (actionWheelLevel === "startMatch") {
-      const findHere: ActionWheelSlice = {
+    // The top-level 1v1 shortcut: pick a game, jump straight to its 1v1 options.
+    if (actionWheelLevel === "oneVone") {
+      const soccer: ActionWheelSlice = {
+        glyph: "⚽",
+        label: "Soccer",
+        ariaLabel: "Soccer 1v1",
+        activate: () => pushActionWheelLevel("soccer1v1"),
+      };
+      return fillHexSlots(back, placeSlices([soccer]));
+    }
+    // Soccer 1v1 leaf: raise a Challenge in this room, or open your Play Space.
+    if (actionWheelLevel === "soccer1v1") {
+      const thisRoom: ActionWheelSlice = {
         glyph: actionWheelChallengeActive ? "🛑" : "🔍",
-        label: actionWheelChallengeActive ? "Cancel" : "Find here",
+        label: actionWheelChallengeActive ? "Cancel" : "This room",
         ariaLabel: actionWheelChallengeActive
           ? "Cancel your open 1v1 Challenge"
           : "Find an opponent in this room",
-        disabled: actionWheelDirectInviteActive,
+        disabled: !actionWheelChallengeAvailable,
         activate: () => {
           actionWheelChallengeHandler?.();
           closeActionWheel();
         },
       };
-      const inviteFriend: ActionWheelSlice = {
+      const invite: ActionWheelSlice = {
         glyph: "🔗",
         label: "Invite",
-        ariaLabel: "Invite a friend with a link or QR",
-        disabled: actionWheelChallengeActive || actionWheelDirectInviteActive,
+        ariaLabel: "Open your private play space to invite friends",
+        // Can't spin up a new space while a public Challenge is open; but if already in a
+        // space this just re-opens the share panel, so don't block that case.
+        disabled: actionWheelChallengeActive && !actionWheelDirectInviteActive,
         activate: () => {
-          actionWheelCreateInviteHandler?.();
+          actionWheelOpenPlaySpaceHandler?.();
           closeActionWheel();
         },
       };
-      return fillHexSlots(back, { 2: findHere, 4: inviteFriend });
+      return fillHexSlots(back, placeSlices([thisRoom, invite]));
     }
     const close: ActionWheelSlice = {
       glyph: "✕",
@@ -2669,20 +2805,40 @@ export function createHud(
       ariaLabel: "Close menu",
       activate: () => closeActionWheel(),
     };
-    return fillHexSlots(close, {
-      2: {
-        glyph: "😊",
-        label: "",
-        ariaLabel: "Open emotes",
-        activate: () => setActionWheelLevel("emotes"),
-      },
-      4: {
-        glyph: "⚽",
-        label: "",
-        ariaLabel: "Open games",
-        activate: () => setActionWheelLevel("games"),
-      },
-    });
+    const emoji: ActionWheelSlice = {
+      glyph: "😊",
+      label: "Emoji",
+      ariaLabel: "Open emotes",
+      activate: () => pushActionWheelLevel("emotes"),
+    };
+    const home: ActionWheelSlice = {
+      glyph: "🏠",
+      label: "Home",
+      ariaLabel: "Home — rooms and your private room",
+      activate: () => pushActionWheelLevel("home"),
+    };
+    const games: ActionWheelSlice = {
+      glyph: "🎮",
+      label: "Games",
+      ariaLabel: "Open games",
+      activate: () => pushActionWheelLevel("games"),
+    };
+    const oneVone: ActionWheelSlice = {
+      glyph: "🥅",
+      label: "1v1",
+      ariaLabel: "Quick 1v1",
+      activate: () => pushActionWheelLevel("oneVone"),
+    };
+    // Guests are confined to their Play Space: only Emoji + the 1v1 shortcut (This room /
+    // Invite). Everyone else gets the full root; game entries require worldcup enabled.
+    const rootItems = actionWheelIsGuest
+      ? actionWheelGamesAvailable
+        ? [emoji, oneVone]
+        : [emoji]
+      : actionWheelGamesAvailable
+        ? [emoji, home, games, oneVone]
+        : [emoji, home];
+    return fillHexSlots(close, placeSlices(rootItems));
   }
   function renderActionWheel(): void {
     while (actionWheelSvg.firstChild) {
@@ -10564,20 +10720,21 @@ export function createHud(
     mountPayPreviewSatellite(mode);
   }
 
-  /** Portrait Pay: Rooms under Return Home; player/NIM/lobby inline with brand row. */
+  /** Portrait Pay: Rooms (or Get a wallet for guests) under Return Home. */
   function mountPayPortraitTopChrome(portrait: boolean): void {
     if (!nimiqPayHost) return;
 
     const toolbarStats: HTMLElement[] = [playerCount, nimBalance, lobbyBtn];
+    const roomsSlotBtn = getWalletBtn.hidden ? roomsBtn : getWalletBtn;
 
     if (portrait) {
       const roomsAnchor = topBar.contains(buildModeStrip)
         ? buildModeStrip
         : topActions;
-      if (roomsBtn.parentElement !== topBar) {
-        topBar.insertBefore(roomsBtn, roomsAnchor);
-      } else if (roomsBtn.nextElementSibling !== roomsAnchor) {
-        topBar.insertBefore(roomsBtn, roomsAnchor);
+      if (roomsSlotBtn.parentElement !== topBar) {
+        topBar.insertBefore(roomsSlotBtn, roomsAnchor);
+      } else if (roomsSlotBtn.nextElementSibling !== roomsAnchor) {
+        topBar.insertBefore(roomsSlotBtn, roomsAnchor);
       }
 
       let after: HTMLElement = topStripMid;
@@ -10592,8 +10749,8 @@ export function createHud(
       return;
     }
 
-    if (roomsBtn.parentElement === topBar || playerCount.parentElement === topStripMain) {
-      for (const el of [roomsBtn, ...toolbarStats, fsBtn]) {
+    if (roomsSlotBtn.parentElement === topBar || playerCount.parentElement === topStripMain) {
+      for (const el of [roomsBtn, getWalletBtn, ...toolbarStats, fsBtn]) {
         topToolbar.appendChild(el);
       }
     }
@@ -12111,10 +12268,13 @@ export function createHud(
         onEmote: (emoji: string) => void;
         onJoinFreePlayField: () => void;
         onToggleChallenge?: () => void;
-        onCreateDirectInvite?: () => void;
+        onOpenPlaySpace?: () => void;
+        onOpenRooms?: () => void;
         challengeActive?: boolean;
         challengeAvailable?: boolean;
         directInviteActive?: boolean;
+        isGuest?: boolean;
+        gamesAvailable?: boolean;
       },
       openedAtFloor: FloorTile | null = null
     ) {
@@ -12124,11 +12284,15 @@ export function createHud(
       actionWheelEmoteHandler = handlers.onEmote;
       actionWheelJoinFieldHandler = handlers.onJoinFreePlayField;
       actionWheelChallengeHandler = handlers.onToggleChallenge ?? null;
-      actionWheelCreateInviteHandler = handlers.onCreateDirectInvite ?? null;
+      actionWheelOpenPlaySpaceHandler = handlers.onOpenPlaySpace ?? null;
+      actionWheelOpenRoomsHandler = handlers.onOpenRooms ?? null;
       actionWheelChallengeActive = handlers.challengeActive ?? false;
       actionWheelChallengeAvailable = handlers.challengeAvailable ?? false;
       actionWheelDirectInviteActive = handlers.directInviteActive ?? false;
+      actionWheelIsGuest = handlers.isGuest ?? false;
+      actionWheelGamesAvailable = handlers.gamesAvailable ?? false;
       actionWheelLevel = "root";
+      actionWheelNav = [];
       actionWheelEmotePage = 0;
       actionWheel.style.left = `${anchorX}px`;
       actionWheel.style.top = `${anchorY}px`;
@@ -12250,6 +12414,20 @@ export function createHud(
     },
     onRoomsOpen(fn: () => void) {
       roomsOpenHandler = fn;
+    },
+    setGuestToolbarMode(isGuest: boolean) {
+      roomsBtn.hidden = isGuest;
+      getWalletBtn.hidden = !isGuest;
+      if (nimiqPayHost) syncPayLayoutMode();
+    },
+    onGetWalletOpen(fn: () => void) {
+      getWalletOpenHandler = fn;
+    },
+    setPlaySpaceShareVisible(visible: boolean) {
+      playSpaceShareBtn.hidden = !visible;
+    },
+    onPlaySpaceShareOpen(fn: () => void) {
+      playSpaceShareHandler = fn;
     },
     onProfileRoomJoin(fn: (roomId: string) => void) {
       profileRoomJoinHandler = fn;

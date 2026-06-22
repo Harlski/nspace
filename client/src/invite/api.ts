@@ -71,3 +71,10 @@ export function parseJoinSlugFromPath(pathname: string): string | null {
   const m = /^\/join\/([^/]+)\/?$/.exec(pathname);
   return m?.[1]?.trim() || null;
 }
+
+/** Ephemeral Direct Invite lobby rooms (must match server `INVITE_LOBBY_PREFIX`). */
+export const INVITE_LOBBY_PREFIX = "invite-lobby-";
+
+export function isInviteLobbyRoomId(roomId: string | null | undefined): boolean {
+  return typeof roomId === "string" && roomId.startsWith(INVITE_LOBBY_PREFIX);
+}

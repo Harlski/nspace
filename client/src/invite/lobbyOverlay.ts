@@ -2,18 +2,26 @@ export type DirectInviteLobbyState = {
   slug: string;
   phase: string;
   hostDisplayName: string;
-  guestDisplayName: string | null;
   shareUrl: string;
   expiresAtMs: number;
   isHost: boolean;
-  canStart: boolean;
+  roster: { displayName: string }[];
+  occupancy: number;
+  capacity: number;
 };
 
 export type DirectInviteLobbyHandlers = {
-  onStartMatch?: () => void;
   onCancel?: () => void;
   onCopyUrl?: (url: string) => void;
+  /** Dismiss the share panel (it can be re-opened from the persistent HUD button). */
+  onClose?: () => void;
 };
+
+/** Extract the short room code from a share URL (the `/join/{slug}` tail), or fall back. */
+function roomCodeFromShareUrl(shareUrl: string, slug: string): string {
+  const m = shareUrl.match(/\/join\/([^/?#]+)/);
+  return m?.[1] ?? slug;
+}
 
 export function createDirectInviteLobbyOverlay(
   hostEl: HTMLElement,
@@ -21,6 +29,7 @@ export function createDirectInviteLobbyOverlay(
 ): {
   show: (state: DirectInviteLobbyState) => void;
   hide: () => void;
+  isOpen: () => boolean;
   showError: (message: string) => void;
 } {
   const overlay = document.createElement("div");
@@ -28,16 +37,21 @@ export function createDirectInviteLobbyOverlay(
   overlay.hidden = true;
   overlay.innerHTML = `
     <div class="direct-invite-lobby__panel">
+      <button type="button" class="direct-invite-lobby__close" aria-label="Close">✕</button>
       <h2 class="direct-invite-lobby__title"></h2>
       <p class="direct-invite-lobby__status"></p>
+      <div class="direct-invite-lobby__code">
+        <span class="direct-invite-lobby__code-label">Room code</span>
+        <button type="button" class="direct-invite-lobby__code-value" title="Copy room code"></button>
+      </div>
+      <ul class="direct-invite-lobby__roster"></ul>
       <div class="direct-invite-lobby__share">
         <input class="direct-invite-lobby__url" readonly />
         <button type="button" class="direct-invite-lobby__copy">Copy link</button>
       </div>
       <div class="direct-invite-lobby__qr"></div>
       <div class="direct-invite-lobby__actions">
-        <button type="button" class="direct-invite-lobby__start">Start Match</button>
-        <button type="button" class="direct-invite-lobby__cancel">Cancel invite</button>
+        <button type="button" class="direct-invite-lobby__cancel">Leave</button>
       </div>
       <p class="direct-invite-lobby__error" hidden></p>
     </div>
@@ -46,16 +60,18 @@ export function createDirectInviteLobbyOverlay(
 
   const titleEl = overlay.querySelector<HTMLElement>(".direct-invite-lobby__title")!;
   const statusEl = overlay.querySelector<HTMLElement>(".direct-invite-lobby__status")!;
+  const codeEl = overlay.querySelector<HTMLButtonElement>(".direct-invite-lobby__code-value")!;
+  const rosterEl = overlay.querySelector<HTMLElement>(".direct-invite-lobby__roster")!;
   const urlEl = overlay.querySelector<HTMLInputElement>(".direct-invite-lobby__url")!;
   const copyBtn = overlay.querySelector<HTMLButtonElement>(".direct-invite-lobby__copy")!;
   const qrHost = overlay.querySelector<HTMLElement>(".direct-invite-lobby__qr")!;
-  const startBtn = overlay.querySelector<HTMLButtonElement>(".direct-invite-lobby__start")!;
   const cancelBtn = overlay.querySelector<HTMLButtonElement>(".direct-invite-lobby__cancel")!;
+  const closeBtn = overlay.querySelector<HTMLButtonElement>(".direct-invite-lobby__close")!;
   const errEl = overlay.querySelector<HTMLElement>(".direct-invite-lobby__error")!;
-  const shareBlock = overlay.querySelector<HTMLElement>(".direct-invite-lobby__share")!;
-  const actionsBlock = overlay.querySelector<HTMLElement>(".direct-invite-lobby__actions")!;
 
   let lastShareUrl = "";
+  let lastRoomCode = "";
+  let renderedQrUrl = "";
 
   copyBtn.addEventListener("click", () => {
     void navigator.clipboard.writeText(lastShareUrl);
@@ -66,7 +82,18 @@ export function createDirectInviteLobbyOverlay(
     }, 1500);
   });
 
-  startBtn.addEventListener("click", () => handlers.onStartMatch?.());
+  codeEl.addEventListener("click", () => {
+    if (!lastRoomCode) return;
+    void navigator.clipboard.writeText(lastRoomCode);
+    const prev = codeEl.textContent;
+    codeEl.textContent = "Copied!";
+    setTimeout(() => {
+      codeEl.textContent = prev;
+    }, 1200);
+  });
+
+  closeBtn.addEventListener("click", () => handlers.onClose?.());
+
   cancelBtn.addEventListener("click", () => handlers.onCancel?.());
 
   async function renderQr(url: string): Promise<void> {
@@ -83,41 +110,44 @@ export function createDirectInviteLobbyOverlay(
     }
   }
 
-  function statusLine(state: DirectInviteLobbyState): string {
-    if (state.phase === "open") return "Waiting for friend…";
-    if (state.phase === "claimed") return "Friend is joining…";
-    if (state.guestDisplayName && state.phase === "lobby") {
-      return `${state.guestDisplayName} is ready`;
+  function renderRoster(state: DirectInviteLobbyState): void {
+    rosterEl.replaceChildren();
+    const names = state.roster.map((p) => p.displayName);
+    for (const name of names) {
+      const li = document.createElement("li");
+      li.className = "direct-invite-lobby__roster-item";
+      li.textContent = name;
+      rosterEl.appendChild(li);
     }
-    if (state.phase === "starting") return "Starting match…";
-    return "Invite lobby";
   }
 
   return {
     show(state: DirectInviteLobbyState) {
       overlay.hidden = false;
       errEl.hidden = true;
-      titleEl.textContent = state.isHost
-        ? "Invite a friend"
-        : `${state.hostDisplayName}'s Match`;
-      statusEl.textContent = statusLine(state);
+      titleEl.textContent = "Private play space";
+      statusEl.textContent =
+        state.occupancy <= 1
+          ? "Share the link to invite friends in."
+          : `${state.occupancy}/${state.capacity} in the space`;
+      renderRoster(state);
       lastShareUrl = state.shareUrl;
+      lastRoomCode = roomCodeFromShareUrl(state.shareUrl, state.slug);
+      codeEl.textContent = lastRoomCode;
       urlEl.value = state.shareUrl;
-      shareBlock.hidden = !state.isHost;
-      qrHost.hidden = !state.isHost;
-      actionsBlock.hidden = false;
-      startBtn.hidden = !state.isHost;
-      startBtn.disabled = !state.canStart;
-      cancelBtn.hidden = !state.isHost;
-      cancelBtn.textContent = "Cancel invite";
-      if (state.isHost && state.shareUrl !== lastShareUrl) {
-        void renderQr(state.shareUrl);
-      } else if (state.isHost) {
+      // Any occupant may leave the space (server `cancelDirectInvite`).
+      cancelBtn.hidden = false;
+      cancelBtn.textContent = "Leave";
+      if (state.shareUrl && state.shareUrl !== renderedQrUrl) {
+        renderedQrUrl = state.shareUrl;
         void renderQr(state.shareUrl);
       }
     },
     hide() {
       overlay.hidden = true;
+    },
+    isOpen() {
+      return !overlay.hidden;
     },
     showError(message: string) {
       errEl.textContent = message;

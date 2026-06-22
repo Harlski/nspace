@@ -4319,6 +4319,35 @@ button.hud-brand:focus-visible {
   color: #fde68a;
 }
 
+.hud-playspace-share {
+  border-radius: 6px;
+  border: 1px solid #2f6b46;
+  background: rgba(15, 27, 20, 0.9);
+  color: #bbf7d0;
+  cursor: pointer;
+  padding: 6px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.hud-playspace-share:hover {
+  background: rgba(22, 45, 32, 0.95);
+}
+
+.hud-playspace-share__inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud-playspace-share[hidden] {
+  display: none;
+}
+
 /* Feedback — Nimiq pill in mode rail header */
 .hud-mode-feedback.nq-button-pill {
   box-sizing: border-box;
@@ -13438,6 +13467,61 @@ a.main-menu__version:focus-visible {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
 
+.direct-invite-lobby__panel {
+  position: relative;
+}
+
+.direct-invite-lobby__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: #1f2937;
+  color: #cbd5e1;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.direct-invite-lobby__close:hover {
+  background: #374151;
+  color: #f8fafc;
+}
+
+.direct-invite-lobby__code {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.direct-invite-lobby__code-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+}
+
+.direct-invite-lobby__code-value {
+  border: 1px dashed #475569;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 6px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.direct-invite-lobby__code-value:hover {
+  border-color: #64748b;
+}
+
 .invite-splash__title,
 .direct-invite-lobby__title {
   margin: 0 0 8px;
@@ -13480,7 +13564,6 @@ a.main-menu__version:focus-visible {
 .invite-splash__continue,
 .invite-splash__signin,
 .direct-invite-lobby__copy,
-.direct-invite-lobby__start,
 .direct-invite-lobby__cancel {
   border: none;
   border-radius: 8px;
@@ -13489,8 +13572,7 @@ a.main-menu__version:focus-visible {
   font-weight: 600;
 }
 
-.invite-splash__continue,
-.direct-invite-lobby__start {
+.invite-splash__continue {
   background: #22c55e;
   color: #052e16;
 }
@@ -13502,9 +13584,21 @@ a.main-menu__version:focus-visible {
   color: #f8fafc;
 }
 
-.direct-invite-lobby__start:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+.direct-invite-lobby__roster {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.direct-invite-lobby__roster-item {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 13px;
 }
 
 .direct-invite-lobby__qr {
@@ -13522,4 +13616,90 @@ a.main-menu__version:focus-visible {
 .direct-invite-lobby[hidden],
 .invite-splash:empty {
   display: none;
+}
+
+.get-wallet-prompt {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483645;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.55);
+  box-sizing: border-box;
+}
+
+.get-wallet-prompt__card {
+  position: relative;
+  width: min(420px, 100%);
+  padding: 24px 20px 20px;
+  border-radius: 16px;
+  background: rgba(18, 18, 22, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #f4f4f5;
+}
+
+.get-wallet-prompt__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border: none;
+  background: transparent;
+  color: #a1a1aa;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.get-wallet-prompt__title {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+}
+
+.get-wallet-prompt__hint {
+  margin: 0 0 16px;
+  color: #a1a1aa;
+  line-height: 1.45;
+}
+
+.get-wallet-prompt__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.get-wallet-prompt__web {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: none;
+  background: #f6c343;
+  color: #111;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.get-wallet-prompt__pay-label {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: #71717a;
+}
+
+.get-wallet-prompt__stores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.get-wallet-prompt__store {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e4e4e7;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.get-wallet-prompt__store:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
