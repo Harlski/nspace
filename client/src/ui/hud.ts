@@ -5062,11 +5062,12 @@ export function createHud(
       img.removeAttribute("src");
       return;
     }
+    const designId = design.id;
     const g = inspectorPreviewGameRef;
     if (!g) return;
     const pass = dockThumbGlBindGen;
     const entry = {
-      id: design.id,
+      id: designId,
       snapshot,
       footprintW: design.footprintW,
       footprintD: design.footprintD,
@@ -5074,10 +5075,11 @@ export function createHud(
     };
     requestAnimationFrame(() => {
       if (pass !== dockThumbGlBindGen || !inspectorPreviewGameRef) return;
+      if (objectPrefabAuthoring.getSelectedDesignId() !== designId) return;
       const urls = inspectorPreviewGameRef.getPrefabDesignThumbnailDataUrls([
         entry,
       ]);
-      const u = urls.get(design.id);
+      const u = urls.get(designId);
       if (u && prefabPlaceSelectionPreviewActive()) {
         img.src = u;
       }
@@ -6551,6 +6553,7 @@ export function createHud(
     }
 
     schedulePrefabThumbnailUrls(designs, prefabThumbRows);
+    syncPrefabPlaceSelectionPreview();
   }
 
   /** Bumped on each dock strip refresh so in-flight thumbnail `requestAnimationFrame` passes self-cancel. */

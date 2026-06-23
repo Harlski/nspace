@@ -75,6 +75,7 @@ import {
   type DesignBbox,
   type DesignSnapshotV1,
 } from "./designFootprint.js";
+import { prefabPlaceSnapshotMatchesDesign } from "./prefabPlacePreview.js";
 import { BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED } from "./billboardPlacementFlags.js";
 import { pickBillboardVisitOnFootprintTile } from "./billboardVisitProximity.js";
 import { billboardSlideshowPhaseIndex } from "./billboardSlideshowPhase.js";
@@ -1883,6 +1884,8 @@ export class Game {
   private prefabPlaceGhostValid = false;
   private prefabPlaceHoverAnchor: { x: number; z: number } | null = null;
   private prefabPlaceSnapshot: DesignSnapshotV1 | null = null;
+  /** Design id the current {@link prefabPlaceSnapshot} was loaded for. */
+  private prefabPlaceSnapshotDesignId: string | null = null;
   private prefabPlaceMeshGroup: THREE.Group | null = null;
   private prefabPlaceMeshTemplateSig = "";
   /**
@@ -4907,6 +4910,7 @@ export class Game {
     this.setObjectPrefabPlaceActive(false);
     this.prefabPlaceDesign = null;
     this.prefabPlaceSnapshot = null;
+    this.prefabPlaceSnapshotDesignId = null;
   }
 
   isObjectPrefabPlaceActive(): boolean {
@@ -4916,14 +4920,26 @@ export class Game {
   setObjectPrefabPlaceDesign(
     design: { id: string; footprintW: number; footprintD: number } | null
   ): void {
+    const prevId = this.prefabPlaceDesign?.id ?? null;
     this.prefabPlaceDesign = design;
     this.prefabPlaceYawSteps = 0;
     if (!design) {
       this.prefabPlaceSnapshot = null;
+      this.prefabPlaceSnapshotDesignId = null;
       this.clearBillboardFootprintPreviewTiles();
       this.clearPrefabPlaceMeshGhost();
       this.clearPrefabPlaceSuppressFootprint();
       return;
+    }
+    if (
+      prevId !== design.id ||
+      !prefabPlaceSnapshotMatchesDesign(
+        design.id,
+        this.prefabPlaceSnapshotDesignId
+      )
+    ) {
+      this.prefabPlaceSnapshot = null;
+      this.prefabPlaceSnapshotDesignId = null;
     }
     this.rebuildPrefabPlaceMeshTemplate();
     this.refreshPrefabPlaceGhostPreview();
@@ -4931,6 +4947,9 @@ export class Game {
 
   setObjectPrefabPlaceSnapshot(snapshot: DesignSnapshotV1 | null): void {
     this.prefabPlaceSnapshot = snapshot;
+    this.prefabPlaceSnapshotDesignId = snapshot
+      ? (this.prefabPlaceDesign?.id ?? null)
+      : null;
     this.rebuildPrefabPlaceMeshTemplate();
     this.refreshPrefabPlaceGhostPreview();
   }
@@ -4958,7 +4977,16 @@ export class Game {
   }
 
   isPrefabPlaceValidAt(anchorX: number, anchorZ: number): boolean {
-    if (!this.prefabPlaceDesign || !this.prefabPlaceSnapshot) return false;
+    if (
+      !this.prefabPlaceDesign ||
+      !this.prefabPlaceSnapshot ||
+      !prefabPlaceSnapshotMatchesDesign(
+        this.prefabPlaceDesign.id,
+        this.prefabPlaceSnapshotDesignId
+      )
+    ) {
+      return false;
+    }
     const design = this.prefabPlaceDesign;
     const tiles = footprintTiles(
       anchorX,
@@ -5104,7 +5132,12 @@ export class Game {
 
   private rebuildPrefabPlaceMeshTemplate(): void {
     const design = this.prefabPlaceDesign;
-    const snap = this.prefabPlaceSnapshot;
+    const snap = prefabPlaceSnapshotMatchesDesign(
+      design?.id,
+      this.prefabPlaceSnapshotDesignId
+    )
+      ? this.prefabPlaceSnapshot
+      : null;
     const sig = design && snap
       ? `${design.id}|${design.footprintW}|${design.footprintD}|${this.prefabPlaceYawSteps}|${snap.obstacles.length}`
       : "";
