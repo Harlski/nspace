@@ -37,6 +37,16 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function joinGateTitle(hostDisplayName: string): string {
+  return `Join ${hostDisplayName}'s Nimiq Space`;
+}
+
+function validCachedSessions() {
+  return listCachedSessions()
+    .filter((e) => !isTokenExpired(e.token))
+    .slice(0, MAIN_SITE_MAX_CACHED_ACCOUNTS);
+}
+
 function peekErrorMessage(peek: PeekInviteResponse): string {
   switch (peek.error) {
     case "expired":
@@ -58,7 +68,13 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
   root.className = "invite-splash join-gate";
   root.innerHTML = `
     <div class="invite-splash__card join-gate__card">
-      <h1 class="invite-splash__title join-gate__title"></h1>
+      <header class="join-gate__brand">
+        <h1 class="main-menu__title join-gate__brand-title">
+          <span class="main-menu__title-nimiq">NIMIQ</span>
+          <span class="main-menu__title-space">SPACE</span>
+        </h1>
+      </header>
+      <h2 class="invite-splash__title join-gate__title"></h2>
       <p class="invite-splash__hint join-gate__hint"></p>
       <div class="join-gate__body"></div>
       <p class="invite-splash__error join-gate__error" hidden></p>
@@ -139,7 +155,12 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
     }
   };
 
-  const renderGuestForm = (guestId: string, suggestedNickname: string, guestToken: string, lobbyRoomId: string): void => {
+  const renderGuestForm = (
+    guestId: string,
+    suggestedNickname: string,
+    guestToken: string,
+    lobbyRoomId: string
+  ): void => {
     bodyEl.innerHTML = `
       <div class="join-gate__guest">
         <img class="join-gate__guest-identicon" alt="" width="72" height="72" />
@@ -148,6 +169,7 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
           <input type="text" class="invite-splash__input join-gate__nickname" maxlength="24" autocomplete="nickname" />
         </label>
         <button type="button" class="invite-splash__continue join-gate__enter">Enter game</button>
+        <button type="button" class="join-gate__back">Go back</button>
       </div>
     `;
     hintEl.textContent = "Pick a nickname for this visit.";
@@ -183,6 +205,11 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
         setBusy(false);
       }
     });
+    bodyEl.querySelector<HTMLButtonElement>(".join-gate__back")!.addEventListener("click", () => {
+      if (busy) return;
+      clearErr();
+      renderIdentity();
+    });
   };
 
   const startGuestPath = async (): Promise<void> => {
@@ -204,7 +231,7 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
   };
 
   const renderAccountFirst = (): void => {
-    const sessions = listCachedSessions().slice(0, MAIN_SITE_MAX_CACHED_ACCOUNTS);
+    const sessions = validCachedSessions();
     bodyEl.innerHTML = `
       <div class="join-gate__accounts" role="list"></div>
       <button type="button" class="join-gate__guest-link">Continue as guest</button>
@@ -214,8 +241,7 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
     for (const entry of sessions) {
       const row = document.createElement("button");
       row.type = "button";
-      row.className =
-        "join-gate__account-row" + (isTokenExpired(entry.token) ? " join-gate__account-row--expired" : "");
+      row.className = "join-gate__account-row";
       row.setAttribute("role", "listitem");
       row.title = entry.address;
       const img = document.createElement("img");
@@ -225,9 +251,7 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
       img.height = 48;
       const label = document.createElement("span");
       label.className = "join-gate__account-label mono";
-      label.textContent = isTokenExpired(entry.token)
-        ? `${formatWalletAddressGap4(entry.address)} — sign in again`
-        : formatWalletAddressGap4(entry.address);
+      label.textContent = formatWalletAddressGap4(entry.address);
       row.appendChild(img);
       row.appendChild(label);
       void identiconDataUrl(entry.address).then((url) => {
@@ -235,10 +259,6 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
       });
       row.addEventListener("click", () => {
         if (busy) return;
-        if (isTokenExpired(entry.token)) {
-          void runWalletSignIn();
-          return;
-        }
         void finishWalletJoin(entry.token, entry.address, entry.nimiqPay);
       });
       listEl.appendChild(row);
@@ -274,26 +294,31 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
   };
 
   const renderIdentity = (): void => {
-    if (!peek) return;
-    titleEl.textContent = `Join ${peek.hostDisplayName}'s play space`;
-    const hasCache = listCachedSessions().length > 0;
-    if (hasCache) renderAccountFirst();
+    if (!peek?.hostDisplayName) return;
+    titleEl.textContent = joinGateTitle(peek.hostDisplayName);
+    if (validCachedSessions().length > 0) renderAccountFirst();
     else renderFork();
+  };
+
+  const renderBlocked = (heading: string, message: string): void => {
+    titleEl.textContent = heading;
+    hintEl.textContent = message;
+    bodyEl.innerHTML = `<button type="button" class="join-gate__home">Return home</button>`;
+    bodyEl.querySelector<HTMLButtonElement>(".join-gate__home")!.addEventListener("click", () => {
+      window.location.assign("/");
+    });
   };
 
   void (async () => {
     try {
       peek = await peekDirectInvite(slug);
       if (!peek.joinable) {
-        titleEl.textContent = "Cannot join";
-        hintEl.textContent = peekErrorMessage(peek);
-        bodyEl.replaceChildren();
+        renderBlocked("Cannot join", peekErrorMessage(peek));
         return;
       }
       renderIdentity();
     } catch {
-      titleEl.textContent = "Cannot join";
-      hintEl.textContent = "Could not open this invite link.";
+      renderBlocked("Cannot join", "Could not open this invite link.");
     }
   })();
 
@@ -301,5 +326,15 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
 }
 
 export function joinGateErrorCard(message: string): string {
-  return `<div class="invite-splash"><div class="invite-splash__card"><p>${escapeHtml(message)}</p></div></div>`;
+  return `<div class="invite-splash join-gate"><div class="invite-splash__card join-gate__card">
+    <header class="join-gate__brand">
+      <h1 class="main-menu__title join-gate__brand-title">
+        <span class="main-menu__title-nimiq">NIMIQ</span>
+        <span class="main-menu__title-space">SPACE</span>
+      </h1>
+    </header>
+    <h2 class="invite-splash__title join-gate__title">Cannot join</h2>
+    <p class="invite-splash__hint join-gate__hint">${escapeHtml(message)}</p>
+    <a class="join-gate__home" href="/">Return home</a>
+  </div></div>`;
 }

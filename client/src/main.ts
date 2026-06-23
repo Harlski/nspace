@@ -453,7 +453,7 @@ function enterGame(
   token: string,
   address: string,
   nimiqPay?: boolean,
-  opts?: { initialRoomId?: string }
+  opts?: { initialRoomId?: string; inviteLinkSlug?: string }
 ): void {
   const app = document.getElementById("app");
   if (!app) return;
@@ -466,6 +466,7 @@ function enterGame(
   hudRoot.style.height = "100%";
   app.appendChild(hudRoot);
 
+  const inviteLinkSlug = opts?.inviteLinkSlug?.trim() || null;
   const query = new URLSearchParams(location.search);
   const showDebugHud = query.has("debug");
   const streamMode = query.has("stream");
@@ -1008,22 +1009,23 @@ function enterGame(
               <button type="button" class="rooms-modal__tab" id="rooms-tab-deleted" role="tab" aria-selected="false" hidden>Deleted</button>
             </div>
           </div>
-          <div class="rooms-modal__list-view-scroll">
-            <div class="rooms-modal__join-code-block" hidden>
-              <p class="rooms-modal__section-title">Join with code</p>
-              <div class="rooms-modal__join-code-row">
-                <input class="rooms-modal__input rooms-modal__input--code" id="rooms-join-code" type="text" inputmode="text" maxlength="32" autocomplete="off" placeholder="AB12CD" aria-label="Room code" />
-                <button type="button" class="rooms-modal__btn rooms-modal__btn--primary" id="rooms-join-submit">Join</button>
-                <span class="rooms-modal__join-status" id="rooms-join-status" hidden aria-live="polite"></span>
-              </div>
-              <p class="rooms-modal__hint" id="rooms-join-hint" hidden></p>
-            </div>
+            <div class="rooms-modal__list-view-scroll">
             <p class="rooms-modal__section-title" id="rooms-list-heading">Official rooms</p>
             <p id="rooms-modal-current-line" class="rooms-modal__current-line" aria-live="polite"></p>
             <ul class="rooms-modal__list rooms-modal__list--rows rooms-modal__list--catalog" id="rooms-modal-list"></ul>
           </div>
+          <div class="rooms-modal__join-code-block" id="rooms-join-panel" hidden>
+            <p class="rooms-modal__section-title">Join with code</p>
+            <div class="rooms-modal__join-code-row">
+              <input class="rooms-modal__input rooms-modal__input--code" id="rooms-join-code" type="text" inputmode="text" maxlength="32" autocomplete="off" placeholder="AB12CD" aria-label="Room code" />
+              <button type="button" class="rooms-modal__btn rooms-modal__btn--primary" id="rooms-join-submit">Join</button>
+              <span class="rooms-modal__join-status" id="rooms-join-status" hidden aria-live="polite"></span>
+            </div>
+            <p class="rooms-modal__hint" id="rooms-join-hint" hidden></p>
+          </div>
           <div class="rooms-modal__list-footer">
             <div class="rooms-modal__list-footer-start">
+              <button type="button" class="rooms-modal__btn" id="rooms-open-join" aria-expanded="false" aria-controls="rooms-join-panel">Join Room</button>
               <button type="button" class="rooms-modal__btn rooms-modal__btn--primary rooms-modal__create-launch" id="rooms-open-create">Create a room</button>
             </div>
             <div id="rooms-user-pagination" class="rooms-modal__user-pagination" hidden>
@@ -1137,6 +1139,8 @@ function enterGame(
   const roomsJoinSubmitBtn = roomsModal.querySelector("#rooms-join-submit") as HTMLButtonElement;
   const roomsJoinHint = roomsModal.querySelector("#rooms-join-hint") as HTMLParagraphElement;
   const roomsJoinStatus = roomsModal.querySelector("#rooms-join-status") as HTMLSpanElement;
+  const roomsJoinPanel = roomsModal.querySelector("#rooms-join-panel") as HTMLDivElement;
+  const roomsOpenJoinBtn = roomsModal.querySelector("#rooms-open-join") as HTMLButtonElement;
   const roomsOpenCreateBtn = roomsModal.querySelector("#rooms-open-create") as HTMLButtonElement;
   const roomsCreateModalClose = roomsCreateModal.querySelector(
     "#rooms-create-modal-close"
@@ -1259,6 +1263,7 @@ function enterGame(
     closeRoomsCreateModal();
     if (roomsModal.hidden) return;
     roomsModal.hidden = true;
+    setRoomsJoinPanelOpen(false);
     showRoomsView("list");
     roomsEditingRoomId = null;
     resetEditDeleteUi();
@@ -1318,10 +1323,25 @@ function enterGame(
     roomsEditDeleteBtn.disabled = v !== "DELETE";
   });
 
+  function setRoomsJoinPanelOpen(open: boolean): void {
+    roomsJoinPanel.hidden = !open;
+    roomsOpenJoinBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (!open) {
+      roomsJoinCodeInput.value = "";
+      roomsJoinHint.hidden = true;
+      roomsJoinHint.textContent = "";
+      clearRoomsJoinProgress();
+      return;
+    }
+    requestAnimationFrame(() => {
+      roomsJoinCodeInput.focus();
+      roomsJoinCodeInput.select();
+    });
+  }
+
   function openRoomsModal(): void {
     closeRoomsCreateModal();
-    roomsJoinHint.hidden = true;
-    roomsJoinHint.textContent = "";
+    setRoomsJoinPanelOpen(false);
     clearRoomsJoinProgress();
     roomsModal.hidden = false;
     showRoomsView("list");
@@ -1437,11 +1457,14 @@ function enterGame(
     pendingModalJoinRoomId = roomIdToJoin;
     roomsJoinSubmitBtn.disabled = true;
     roomsJoinStatus.hidden = false;
-    roomsJoinStatus.textContent = "Joining Room..";
+    roomsJoinStatus.textContent = "Looking up room…";
     roomsJoinStatus.classList.remove("rooms-modal__join-status--error");
     roomsJoinStatus.classList.add("rooms-modal__join-status--loading");
-    beginRoomTransition(roomIdToJoin);
     sendJoinRoom(ws, roomIdToJoin);
+  });
+
+  roomsOpenJoinBtn.addEventListener("click", () => {
+    setRoomsJoinPanelOpen(roomsJoinPanel.hidden);
   });
 
   roomsOpenCreateBtn.addEventListener("click", () => openRoomsCreateModal());
@@ -1748,7 +1771,12 @@ function enterGame(
   }
 
   hud.onRoomsOpen(() => openRoomsModal());
-  hud.setGuestToolbarMode(selfAddress.startsWith("guest:"));
+  const syncGuestToolbarMode = (): void => {
+    hud.setGuestToolbarMode(
+      selfAddress.startsWith("guest:") || inviteLinkSlug !== null
+    );
+  };
+  syncGuestToolbarMode();
   hud.onGetWalletOpen(() => {
     showGetWalletPrompt({ onWebWallet: () => openMainMenu() });
   });
@@ -3910,6 +3938,7 @@ function enterGame(
           normalizeRoomId(pendingProfileJoinRoomId).toLowerCase();
 
       if (joinedViaModalJoin) {
+        beginRoomTransition(msg.roomId);
         roomsJoinStatus.hidden = true;
         roomsJoinStatus.textContent = "";
         roomsJoinStatus.classList.remove(
@@ -3944,6 +3973,7 @@ function enterGame(
       });
       game.setSelf(msg.self.address, msg.self.displayName);
       selfAddress = msg.self.address;
+      syncGuestToolbarMode();
       hud.setBrandLinksPlayerDisplayName(msg.self.displayName);
 
       // worldcup: track room + self Challenge flag for the donut toggle; the Match HUD only
@@ -4380,11 +4410,14 @@ function enterGame(
       directInviteActive = true;
       lastDirectInviteState = msg;
       hud.setPlaySpaceShareVisible(true);
-      // Auto-open the share panel once per space; later roster updates only refresh it if it's
-      // still open, so a dismissed panel stays closed until the player taps the share button.
+      // Auto-open the share panel once per space (skip when the player just used that space's
+      // invite link). Later roster updates only refresh it if it's still open, so a dismissed
+      // panel stays closed until the player taps the share button.
       if (directInviteAutoShownSlug !== msg.slug) {
         directInviteAutoShownSlug = msg.slug;
-        directInviteLobby.show(msg);
+        const arrivedViaThisInviteLink =
+          inviteLinkSlug !== null && msg.slug === inviteLinkSlug;
+        if (!arrivedViaThisInviteLink) directInviteLobby.show(msg);
       } else if (directInviteLobby.isOpen()) {
         directInviteLobby.show(msg);
       }
@@ -5663,6 +5696,7 @@ async function bootstrapJoinInvite(): Promise<boolean> {
     history.replaceState(null, "", "/");
     enterGame(result.token, result.address, result.nimiqPay, {
       initialRoomId: result.lobbyRoomId,
+      inviteLinkSlug: slug,
     });
     return true;
   } catch (e) {

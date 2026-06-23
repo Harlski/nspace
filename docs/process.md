@@ -81,7 +81,7 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 | `PAYMENT_INTENT_SERVICE_URL` | server | Base URL of the payment-intent sidecar for `/admin/system` probes (e.g. `http://127.0.0.1:3090` or `http://payment-intent:3090` in Compose) |
 | `PAYMENT_INTENT_API_SECRET` | server | Same secret as the sidecar; when set on the game server, `/admin/system` also probes `GET /v1/meta/features` |
 | `DIRECT_INVITE_ENABLED` | server | Optional — enable Play Space / guest invite flow (defaults to **`WORLDCUP_ENABLED`** when unset) |
-| `DIRECT_INVITE_TTL_MS` | server | Play Space lifetime from creation in ms (default **900000** = 15 minutes); expiry is deferred while any connected member still carries the space slug (e.g. mid-Match) |
+| `DIRECT_INVITE_TTL_MS` | server | Backstop TTL in ms for **abandoned** Play Space creates (default **900000** = 15 minutes). While a space is **open**, the join code stays valid until everyone leaves and it closes; TTL does not cut off active sessions. |
 | `DIRECT_INVITE_MAX_OCCUPANTS` | server | Max occupants per Play Space — creator + guests (default **8**) |
 | `GUEST_SESSION_TTL_SEC` | server | Guest JWT lifetime in seconds (default **14400** = 4 hours) |
 

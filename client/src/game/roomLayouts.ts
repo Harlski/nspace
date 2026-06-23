@@ -7,6 +7,7 @@ import {
   HUB_FIELD_DOOR as WORLDCUP_HUB_FIELD_DOOR,
   FIELD_HUB_DOOR as WORLDCUP_FIELD_HUB_DOOR,
 } from "../worldcup/config.js";
+import { isPlaySpaceRoomId, PLAY_SPACE_BOUNDS } from "../invite/playSpaceLayout.js";
 
 export type RoomBounds = {
   minX: number;
@@ -161,6 +162,9 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
       // worldcup: field room bounds when enabled
       if (WORLDCUP_ENABLED_CLIENT && id === WORLDCUP_FIELD_ROOM_ID) {
         return { ...WORLDCUP_FIELD_BOUNDS };
+      }
+      if (isPlaySpaceRoomId(id)) {
+        return { ...PLAY_SPACE_BOUNDS };
       }
       const b = clientRoomBoundsById.get(id);
       return b ? { ...b } : HUB_BOUNDS;

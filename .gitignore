@@ -37,6 +37,7 @@ id_ed25519
 # Local-only doc snapshots (see docs workflow); tracked docs live under docs/*.md
 docs/backup/
 docs/brainstorm/
+docs/planning/
 docs/toremove/
 # Local-only notes (incident log, scratch); only docs/toremove/README.md is tracked — see that file
 docs/toremove/*

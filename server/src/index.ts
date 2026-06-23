@@ -9,6 +9,7 @@ import { WebSocketServer } from "ws";
 import dotenv from "dotenv";
 import { timingSafeEqual } from "node:crypto";
 import { createNonce, consumeNonce, signSession, verifySession, isGuestSession } from "./auth.js";
+import { resolvePublicBaseUrl } from "./publicBaseUrl.js";
 import { registerDirectInviteRoutes } from "./directInvite/httpHandlers.js";
 import {
   isInviteLobbyRoomId,
@@ -2883,10 +2884,11 @@ app.post("/api/auth/verify", async (req, res) => {
   });
 });
 
-const PUBLIC_BASE_URL =
-  process.env.PUBLIC_BASE_URL?.trim() ||
-  (NODE_ENV === "production" ? "https://nimiq.space" : `http://localhost:${PORT}`);
+const PUBLIC_BASE_URL = resolvePublicBaseUrl(NODE_ENV);
 setDirectInvitePublicBaseUrl(PUBLIC_BASE_URL);
+if (NODE_ENV !== "production") {
+  console.log(`Play Space share links: ${PUBLIC_BASE_URL}/join/{slug}`);
+}
 
 registerDirectInviteRoutes(app, {
   jwtSecret,

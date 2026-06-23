@@ -171,6 +171,12 @@ import {
   type DirectInviteRecord,
 } from "./directInvite/index.js";
 import {
+  PLAY_SPACE_BACKGROUND_HUE_DEG,
+  PLAY_SPACE_BLOCKS,
+  PLAY_SPACE_FLOOR_TINTS,
+  PLAY_SPACE_SPAWN,
+} from "./directInvite/playSpaceLayout.js";
+import {
   initMatchState as worldcupInitMatchState,
   matchTimeRemainingMs as worldcupMatchTimeRemainingMs,
   reduceMatch as worldcupReduceMatch,
@@ -838,6 +844,7 @@ function canPlaceMineableBlocks(address: string): boolean {
  */
 function canEditRoomContent(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
+  if (isInviteLobbyRoomId(id)) return false;
   if (id === CANVAS_ROOM_ID) return false;
   if (id === CHAMBER_ROOM_ID) {
     return isAdmin(address) || isBuiltinRoomBuilder(id, address);
@@ -857,6 +864,7 @@ function isPixelRoom(roomId: string): boolean {
 }
 
 function roomAllowsFakePlayers(roomId: string): boolean {
+  if (isInviteLobbyRoomId(roomId)) return false;
   if (isPixelRoom(roomId)) return false;
   // worldcup: keep the pitch clear of wandering NPCs — the crowd lives in the
   // (client-only) stands instead, so the field is reserved for real players.
@@ -867,6 +875,7 @@ function roomAllowsFakePlayers(roomId: string): boolean {
 }
 
 function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
+  if (isInviteLobbyRoomId(roomId)) return false;
   if (isPixelRoom(roomId)) return false;
   // worldcup: keep the soccer pitch clear of placed blocks
   if (WORLDCUP_ENABLED && normalizeRoomId(roomId) === WORLDCUP_FIELD_ROOM_ID) {
@@ -877,6 +886,7 @@ function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
 
 function canRecolorFloorInRoom(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
+  if (isInviteLobbyRoomId(id)) return false;
   if (id === CANVAS_ROOM_ID) return false;
   if (id === PIXEL_ROOM_ID) return true;
   // worldcup: no floor painting on the pitch
@@ -1547,6 +1557,48 @@ function placedMap(roomId: string): Map<string, PlacedProps> {
     roomPlaced.set(roomId, m);
   }
   return m;
+}
+
+/** Play Space rooms that already received the shared lounge template. */
+const playSpaceLayoutSeeded = new Set<string>();
+
+/** Apply the reusable Play Space lounge (benches, plants, rug tints) once per room id. */
+function ensurePlaySpaceLayout(roomId: string): void {
+  if (!isInviteLobbyRoomId(roomId) || playSpaceLayoutSeeded.has(roomId)) return;
+  playSpaceLayoutSeeded.add(roomId);
+  const placed = placedMap(roomId);
+  for (const spec of PLAY_SPACE_BLOCKS) {
+    const y = spec.y ?? 0;
+    placed.set(blockKey(spec.x, spec.z, y), {
+      passable: spec.passable,
+      half: spec.half ?? false,
+      quarter: spec.quarter ?? false,
+      hex: spec.hex ?? false,
+      pyramid: spec.pyramid ?? false,
+      pyramidBaseScale: 1,
+      hexRadiusScale: 1,
+      sphere: spec.sphere ?? false,
+      sphereRadiusScale: 1,
+      ramp: spec.ramp ?? false,
+      rampDir: Math.max(0, Math.min(3, Math.floor(spec.rampDir ?? 0))),
+      colorRgb: spec.colorRgb,
+      locked: true,
+    });
+  }
+  const colors = baseFloorColorMap(roomId);
+  for (const tint of PLAY_SPACE_FLOOR_TINTS) {
+    colors.set(tileKey(tint.x, tint.z), tint.colorRgb);
+  }
+}
+
+/** Drop ephemeral Play Space geometry when the room is torn down. */
+function clearPlaySpaceLayout(roomId: string): void {
+  if (!isInviteLobbyRoomId(roomId)) return;
+  playSpaceLayoutSeeded.delete(roomId);
+  roomPlaced.delete(roomId);
+  roomBaseFloorColors.delete(roomId);
+  roomExtraFloor.delete(roomId);
+  lastSpawnByRoom.delete(roomId);
 }
 
 const STACK_MAX_LEVEL = 2;
@@ -4420,6 +4472,9 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   }
 
   const nTarget = normalizeRoomId(targetRoomId);
+  if (isInviteLobbyRoomId(nTarget)) {
+    ensurePlaySpaceLayout(nTarget);
+  }
   const enteringCanvas =
     nTarget === CANVAS_ROOM_ID &&
     (currentRoomId === null ||
@@ -4448,6 +4503,9 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     conn.player.y = 0;
     conn.pathQueue = [];
     broadcastRoomStateFull(currentRoomId);
+    if (isInviteLobbyRoomId(nTarget)) {
+      directInviteOnLobbyConnect(conn, nTarget, address);
+    }
     return;
   }
 
@@ -4508,7 +4566,9 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   const allowPlaceBlocks = canPlaceBlocksInRoom(targetRoomId, address);
   const allowFloorRecolor = canRecolorFloorInRoom(targetRoomId, address);
   const nWelcomeRoom = normalizeRoomId(targetRoomId);
-  const welcomeBgState = isPlayerCreatedRoom(nWelcomeRoom)
+  const welcomeBgState = isInviteLobbyRoomId(nWelcomeRoom)
+    ? { hueDeg: PLAY_SPACE_BACKGROUND_HUE_DEG, neutral: null as RoomBackgroundNeutral | null }
+    : isPlayerCreatedRoom(nWelcomeRoom)
     ? getDynamicRoomBackgroundState(nWelcomeRoom)
     : getBuiltinRoomBackgroundState(nWelcomeRoom);
   const allowRoomBackgroundHueEdit = isPlayerCreatedRoom(nWelcomeRoom)
@@ -4571,11 +4631,16 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
 
   // Notify others in new room
   broadcast(targetRoomId, { type: "playerJoined", player: playerToOutState(conn) }, address);
+
+  if (isInviteLobbyRoomId(nTarget)) {
+    directInviteOnLobbyConnect(conn, nTarget, address);
+  }
 }
 
 // worldcup: who may drop a kickable ball in a room (builders; never the pitch/canvas/pixel).
 function canPlaceBallInRoom(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
+  if (isInviteLobbyRoomId(id)) return false;
   if (id === WORLDCUP_FIELD_ROOM_ID) return false; // pitch has its own ball
   if (id === CANVAS_ROOM_ID || id === PIXEL_ROOM_ID) return false;
   return canEditRoomContent(roomId, address);
@@ -5461,6 +5526,7 @@ function directInviteMaybeTeardown(slug: string): void {
   const invite = getInviteBySlug(slug);
   if (!invite) return;
   closeInvite(slug);
+  clearPlaySpaceLayout(invite.lobbyRoomId);
   rooms.delete(invite.lobbyRoomId);
 }
 
@@ -5508,17 +5574,14 @@ export function directInviteOnCreated(invite: DirectInviteRecord): void {
     host.challengeOpen = false;
     host.challengeRaisedAtMs = 0;
   }
-  // Snapshot where the host stood so cancel/expiry can return them precisely.
+  // Snapshot where the host stood so leave/expiry can return them precisely. The client
+  // joins the lobby over the existing WebSocket (`joinRoom`) — do not teleport here or a
+  // follow-up `connectToRoom` disconnect would tear the space down before they land.
   spawnMap(invite.hostOriginRoomId).set(invite.hostWallet, {
     x: host.player.x,
     z: host.player.z,
     y: host.player.y,
   });
-  host.directInviteSlug = invite.slug;
-  teleportPlayer(host, invite.lobbyRoomId, 0, 0);
-  markHostJoinedLobby(invite.slug);
-  const updated = getInviteBySlug(invite.slug);
-  if (updated) broadcastDirectInviteState(updated);
 }
 
 function directInviteOnLobbyConnect(
@@ -5567,8 +5630,11 @@ function directInviteSweepExpired(now: number): void {
   if (!DIRECT_INVITE_ENABLED) return;
   for (const invite of listOpenInvites()) {
     if (now < invite.expiresAtMs) continue;
-    // The space survives while anyone still carries its slug (e.g. mid-Match on a pitch).
+    // Active spaces keep their join code until close/teardown — not the creation TTL.
+    if (invite.participants.length > 0) continue;
     if (directInviteConnectedCount(invite.slug) > 0) continue;
+    if (rooms.has(invite.lobbyRoomId)) continue;
+    // Abandoned create (never claimed, never joined): reclaim after TTL.
     expireInvitePastTtl(invite.slug);
     const expired = getInviteBySlug(invite.slug);
     if (!expired) continue;
@@ -5584,6 +5650,7 @@ function directInviteSweepExpired(now: number): void {
       }
     }
     rooms.delete(expired.lobbyRoomId);
+    clearPlaySpaceLayout(expired.lobbyRoomId);
   }
 }
 
@@ -5999,6 +6066,9 @@ export function addClient(
     : spawnHint;
   
   ensureFakePlayers(roomId);
+  if (isInviteLobbyRoomId(normalizeRoomId(roomId))) {
+    ensurePlaySpaceLayout(roomId);
+  }
   const room = roomOf(roomId);
   const compactSelf = compactAddress(address);
   const displayName =
@@ -6065,6 +6135,16 @@ export function addClient(
   } else if (isChamberRoom) {
     if (!applySpawnHint()) {
       const t = snapToTile(CHAMBER_DEFAULT_SPAWN.x, CHAMBER_DEFAULT_SPAWN.z);
+      if (isWalkableForRoom(roomId, t.x, t.z)) {
+        player.x = t.x;
+        player.z = t.z;
+        placedSpawn = true;
+        resolvedSpawnTile = true;
+      }
+    }
+  } else if (isInviteLobbyRoomId(normalizeRoomId(roomId))) {
+    if (!applySpawnHint()) {
+      const t = snapToTile(PLAY_SPACE_SPAWN.x, PLAY_SPACE_SPAWN.z);
       if (isWalkableForRoom(roomId, t.x, t.z)) {
         player.x = t.x;
         player.z = t.z;
@@ -6164,7 +6244,9 @@ export function addClient(
   const allowFloorRecolor =
     !streamObserver && canRecolorFloorInRoom(roomId, address);
   const nJoinRoom = normalizeRoomId(roomId);
-  const joinWelcomeBgState = isPlayerCreatedRoom(nJoinRoom)
+  const joinWelcomeBgState = isInviteLobbyRoomId(nJoinRoom)
+    ? { hueDeg: PLAY_SPACE_BACKGROUND_HUE_DEG, neutral: null as RoomBackgroundNeutral | null }
+    : isPlayerCreatedRoom(nJoinRoom)
     ? getDynamicRoomBackgroundState(nJoinRoom)
     : getBuiltinRoomBackgroundState(nJoinRoom);
   const joinAllowRoomBackgroundHueEdit = isPlayerCreatedRoom(nJoinRoom)
@@ -6988,7 +7070,26 @@ export function addClient(
         conn.matchId = null;
       }
       conn.spectatingMatchId = null;
-      if (!hasRoom(targetRoomId)) {
+      const inviteLobby = isInviteLobbyRoomId(targetRoomId);
+      if (inviteLobby) {
+        const slug = targetRoomId.slice("invite-lobby-".length);
+        const inv = getInviteBySlug(slug);
+        const mayEnter =
+          inv &&
+          inv.phase === "open" &&
+          inv.lobbyRoomId === targetRoomId &&
+          (inv.hostWallet === address ||
+            (address.startsWith("guest:") &&
+              getParticipant(inv, address.slice("guest:".length))));
+        if (!mayEnter) {
+          wsSafeSend(ws, {
+            type: "joinRoomFailed",
+            roomId: targetRoomId,
+            reason: "not_found",
+          } satisfies OutMsg);
+          return;
+        }
+      } else if (!hasRoom(targetRoomId)) {
         wsSafeSend(ws, {
             type: "joinRoomFailed",
             roomId: targetRoomId,
@@ -7002,6 +7103,9 @@ export function addClient(
       if (normalizeRoomId(targetRoomId) === PIXEL_ROOM_ID) {
         spawnX = PIXEL_DEFAULT_SPAWN.x;
         spawnZ = PIXEL_DEFAULT_SPAWN.z;
+      } else if (isInviteLobbyRoomId(targetRoomId)) {
+        spawnX = PLAY_SPACE_SPAWN.x;
+        spawnZ = PLAY_SPACE_SPAWN.z;
       } else if (isPlayerCreatedRoom(targetRoomId)) {
         const t = resolveDefaultSpawnForPlayerRoom(targetRoomId);
         if (t) {

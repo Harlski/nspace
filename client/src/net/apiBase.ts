@@ -57,7 +57,7 @@ function isLocalHostname(hostname: string): boolean {
 }
 
 /** RFC1918 / link-local IPv4 — typical Vite LAN dev URLs (`http://192.168.x.x:5173`). */
-function isPrivateNetworkHostname(hostname: string): boolean {
+export function isPrivateNetworkHostname(hostname: string): boolean {
   const h = hostname.trim().toLowerCase();
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
   if (!m) return false;
@@ -74,6 +74,12 @@ function isPrivateNetworkHostname(hostname: string): boolean {
 /** Localhost or LAN dev host — WebSocket scheme follows the page (`ws` on http, `wss` on https). */
 function isLocalDevHostname(hostname: string): boolean {
   return isLocalHostname(hostname) || isPrivateNetworkHostname(hostname);
+}
+
+/** True when the SPA is served from localhost or a private-network IP (typical Vite LAN dev). */
+export function isLocalDevPageOrigin(): boolean {
+  if (typeof location === "undefined") return false;
+  return isLocalDevHostname(location.hostname);
 }
 
 function httpOriginFromEnvValue(raw: string): string {

@@ -24,6 +24,7 @@ import {
   isMatchPitchRoomId as isWorldcupMatchPitchId,
 } from "./worldcup/config.js";
 import { isInviteLobbyRoomId as isDirectInviteLobbyId } from "./directInvite/config.js";
+import { PLAY_SPACE_BOUNDS } from "./directInvite/playSpaceLayout.js";
 
 export type RoomBounds = {
   minX: number;
@@ -183,9 +184,9 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
       ) {
         return WORLDCUP_FIELD_BOUNDS;
       }
-      // directInvite: ephemeral lobby rooms reuse field bounds (minimal flat floor)
+      // directInvite: ephemeral Play Space lounge (shared template, not the soccer pitch)
       if (isDirectInviteLobbyId(id)) {
-        return WORLDCUP_FIELD_BOUNDS;
+        return PLAY_SPACE_BOUNDS;
       }
       return getDynamicRoomBounds(id) ?? HUB_BOUNDS;
   }
