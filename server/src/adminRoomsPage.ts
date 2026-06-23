@@ -82,6 +82,16 @@ export function adminRoomsPageHtml(): string {
     .preview-head h3 { margin: 0; font-size: 0.95rem; color: #eef6ff; }
     .preview-close { background: transparent; border: 1px solid #3d4f66; color: #c8d4e4; border-radius: 8px; padding: 0.3rem 0.6rem; cursor: pointer; }
     .preview-frame { flex: 1; border: 0; width: 100%; background: #0b1119; }
+    .template-create-card { margin-bottom: 0.85rem; }
+    .template-create-preview { margin-top: 0.65rem; display: grid; grid-template-columns: minmax(140px, 220px) 1fr; gap: 0.75rem; align-items: stretch; }
+    .template-create-preview[hidden] { display: none; }
+    .template-create-preview__meta { grid-column: 1 / -1; font-size: 0.78rem; color: #9fb0c7; display: flex; flex-wrap: wrap; gap: 0.35rem 0.75rem; align-items: center; }
+    .template-create-preview__frame { min-height: 260px; border: 1px solid #243044; border-radius: 8px; overflow: hidden; background: #0b1119; }
+    .template-create-preview__frame iframe { width: 100%; height: 100%; min-height: 260px; border: 0; display: block; }
+    .template-create-actions { margin-top: 0.65rem; display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; }
+    @media (max-width: 720px) {
+      .template-create-preview { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body class="ms-site">
@@ -201,6 +211,8 @@ export function adminRoomsPageHtml(): string {
     var activeTab = "official";
     var token = "";
     var PLAY_SPACE_TEMPLATE_PICK_KEY = "nspace_admin_play_space_template_id";
+    var templateCreatePickId = "";
+    var templateCreateSnapshotOk = true;
 
     // Established short wallet form (first 4 + last 4, no gap), mirrors server walletDisplayName.
     function walletLabelShort(v) { var c = walletCompact(v); return c.length <= 8 ? c : c.slice(0, 4) + c.slice(-4); }
@@ -312,18 +324,122 @@ export function adminRoomsPageHtml(): string {
         "</div></div>";
     }
 
+    function isTemplateSourceRoomId(roomId) {
+      if (!roomId || roomId.indexOf("invite-lobby-") === 0) return false;
+      if (roomId.indexOf("match-pitch") !== -1) return false;
+      if (roomId === "pixel" || roomId === "canvas") return false;
+      return true;
+    }
+
+    function templateSourceRooms() {
+      return roomsData.filter(function (r) {
+        return !r.isDeleted && isTemplateSourceRoomId(r.id);
+      }).sort(function (a, b) {
+        return a.displayName.localeCompare(b.displayName) || a.id.localeCompare(b.id);
+      });
+    }
+
+    function roomCategoryLabel(room) {
+      if (room.isBuiltin) return "Built-in";
+      if (room.isOfficial) return "Official";
+      return "Player";
+    }
+
+    function templateCreateSelectHtml() {
+      var rooms = templateSourceRooms();
+      var opts = "<option value=''>Choose a room…</option>" + rooms.map(function (r) {
+        var selected = r.id === templateCreatePickId ? " selected" : "";
+        return "<option value='" + esc(r.id) + "'" + selected + ">" +
+          esc(r.displayName) + " (" + esc(r.id) + ") — " + esc(roomCategoryLabel(r)) + "</option>";
+      }).join("");
+      return "<select data-new-source aria-label='Source room'>" + opts + "</select>";
+    }
+
     function templatesPanelHtml() {
+      var picked = templateCreatePickId
+        ? roomsData.find(function (r) { return r.id === templateCreatePickId; })
+        : null;
+      var previewHidden = picked ? "" : " hidden";
       var createForm =
-        "<div class='room-card' style='margin-bottom:1rem'>" +
+        "<div class='room-card template-create-card'>" +
         "<div class='room-body'><div class='room-name'>Create template from room</div>" +
-        "<div class='room-field'><label>Source room id</label><input type='text' data-new-source placeholder='e.g. lounge' maxlength='64'/></div>" +
-        "<div class='room-field'><label>Display name</label><input type='text' data-new-name placeholder='Template name' maxlength='48'/></div>" +
-        "<div class='room-row'><button class='btn' data-create-template>Create</button><span class='room-card-status' data-create-status></span></div>" +
-        "</div></div>";
+        "<div class='room-field'><label>Source room</label>" + templateCreateSelectHtml() + "</div>" +
+        "<div class='template-create-preview'" + previewHidden + " data-create-preview>" +
+        (picked
+          ? "<div class='template-create-preview__meta'>" +
+            "<span><strong>Template name:</strong> " + esc(picked.displayName) + "</span>" +
+            "<span class='mono'>" + esc(picked.id) + "</span>" +
+            categoryTag(picked) +
+            "</div>" +
+            "<div class='room-thumb'><img alt='" + esc(picked.displayName) + " thumbnail' src='" + esc(thumbSrc(picked.id)) + "'/></div>" +
+            "<div class='template-create-preview__frame'>" +
+            "<iframe title='3D preview' src='/roomPreview.html?room=" + encodeURIComponent(picked.id) + "' loading='lazy'></iframe>" +
+            "</div>"
+          : "") +
+        "</div>" +
+        "<div class='template-create-actions'>" +
+        "<button class='btn' data-create-template" + (picked && templateCreateSnapshotOk ? "" : " disabled") + ">Create template</button>" +
+        "<span class='room-card-status' data-create-status></span>" +
+        "</div></div></div>";
       var list = templatesData.length
         ? "<div class='rooms-grid'>" + templatesData.map(templateCardHtml).join("") + "</div>"
         : "<p class='status'>No templates yet.</p>";
       return createForm + list;
+    }
+
+    async function verifyTemplateSourceSnapshot(roomId, statusEl, createBtn) {
+      if (!roomId) {
+        templateCreateSnapshotOk = true;
+        if (createBtn) createBtn.disabled = true;
+        return;
+      }
+      if (statusEl) statusEl.textContent = "Checking layout…";
+      templateCreateSnapshotOk = false;
+      if (createBtn) createBtn.disabled = true;
+      try {
+        var r = await fetch("/api/admin/rooms/" + encodeURIComponent(roomId) + "/layout", {
+          headers: { authorization: "Bearer " + token },
+          cache: "no-store",
+        });
+        if (!r.ok) {
+          if (statusEl) statusEl.textContent = "Could not load room layout.";
+          return;
+        }
+        var snap = await r.json();
+        if (snap.spatial) {
+          if (statusEl) statusEl.textContent = "This room uses a spatial layout and cannot be snapshotted.";
+          return;
+        }
+        templateCreateSnapshotOk = true;
+        if (createBtn) createBtn.disabled = false;
+        if (statusEl) statusEl.textContent = "";
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "Could not verify room layout.";
+      }
+    }
+
+    function bindTemplateCreateForm(panel) {
+      var selectEl = panel.querySelector("[data-new-source]");
+      if (!selectEl) return;
+      selectEl.addEventListener("change", function () {
+        templateCreatePickId = selectEl.value.trim();
+        templateCreateSnapshotOk = !templateCreatePickId;
+        rerender();
+        if (templateCreatePickId) {
+          void verifyTemplateSourceSnapshot(
+            templateCreatePickId,
+            panel.querySelector("[data-create-status]"),
+            panel.querySelector("[data-create-template]")
+          );
+        }
+      });
+      if (templateCreatePickId) {
+        void verifyTemplateSourceSnapshot(
+          templateCreatePickId,
+          panel.querySelector("[data-create-status]"),
+          panel.querySelector("[data-create-template]")
+        );
+      }
     }
 
     async function patchTemplate(id, body, statusEl) {
@@ -383,12 +499,18 @@ export function adminRoomsPageHtml(): string {
 
     async function createTemplateFromRoom(panel) {
       var sourceEl = panel.querySelector("[data-new-source]");
-      var nameEl = panel.querySelector("[data-new-name]");
       var statusEl = panel.querySelector("[data-create-status]");
       var sourceRoomId = sourceEl && sourceEl.value.trim();
-      var displayName = nameEl && nameEl.value.trim();
+      var room = sourceRoomId
+        ? roomsData.find(function (r) { return r.id === sourceRoomId; })
+        : null;
+      var displayName = room ? room.displayName.trim() : "";
       if (!sourceRoomId || !displayName) {
-        if (statusEl) statusEl.textContent = "Source room and name required.";
+        if (statusEl) statusEl.textContent = "Choose a source room first.";
+        return;
+      }
+      if (!templateCreateSnapshotOk) {
+        if (statusEl) statusEl.textContent = "This room cannot be used as a template source.";
         return;
       }
       if (statusEl) statusEl.textContent = "Creating…";
@@ -402,8 +524,8 @@ export function adminRoomsPageHtml(): string {
           var err = await r.json().catch(function () { return {}; });
           throw new Error(String(err.message || err.error || r.status));
         }
-        if (sourceEl) sourceEl.value = "";
-        if (nameEl) nameEl.value = "";
+        templateCreatePickId = "";
+        templateCreateSnapshotOk = true;
         await loadTemplates();
         if (statusEl) statusEl.textContent = "Created.";
       } catch (e) {
@@ -579,6 +701,7 @@ export function adminRoomsPageHtml(): string {
       if (activeTab === "templates") {
         var createBtn = panel.querySelector("[data-create-template]");
         if (createBtn) createBtn.addEventListener("click", function () { void createTemplateFromRoom(panel); });
+        bindTemplateCreateForm(panel);
         panel.querySelectorAll("[data-template-id]").forEach(bindTemplateCard);
       } else {
         panel.querySelectorAll(".room-card").forEach(bindCard);

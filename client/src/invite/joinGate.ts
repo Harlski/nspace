@@ -16,6 +16,7 @@ import {
   submitGuestNickname,
   type PeekInviteResponse,
 } from "./api.js";
+import { mountGuestPlaySpaceClosedOnboarding } from "./walletOnboarding.js";
 
 export type JoinGateResult =
   | {
@@ -56,9 +57,9 @@ function peekErrorMessage(peek: PeekInviteResponse): string {
     case "closed":
       return "This play space has closed.";
     case "not_found":
-      return "This invite link is not valid.";
+      return "This invite link has expired or is no longer valid.";
     default:
-      return "Could not open this invite link.";
+      return "This invite link has expired or is no longer valid.";
   }
 }
 
@@ -301,11 +302,12 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
   };
 
   const renderBlocked = (heading: string, message: string): void => {
-    titleEl.textContent = heading;
-    hintEl.textContent = message;
-    bodyEl.innerHTML = `<button type="button" class="join-gate__home">Return home</button>`;
-    bodyEl.querySelector<HTMLButtonElement>(".join-gate__home")!.addEventListener("click", () => {
-      window.location.assign("/");
+    mountGuestPlaySpaceClosedOnboarding(app, {
+      title: heading,
+      message,
+      onWebWallet: () => {
+        window.location.assign("/");
+      },
     });
   };
 
@@ -318,23 +320,9 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
       }
       renderIdentity();
     } catch {
-      renderBlocked("Cannot join", "Could not open this invite link.");
+      renderBlocked("Cannot join", "This invite link has expired or is no longer valid.");
     }
   })();
 
   return () => done;
-}
-
-export function joinGateErrorCard(message: string): string {
-  return `<div class="invite-splash join-gate"><div class="invite-splash__card join-gate__card">
-    <header class="join-gate__brand">
-      <h1 class="main-menu__title join-gate__brand-title">
-        <span class="main-menu__title-nimiq">NIMIQ</span>
-        <span class="main-menu__title-space">SPACE</span>
-      </h1>
-    </header>
-    <h2 class="invite-splash__title join-gate__title">Cannot join</h2>
-    <p class="invite-splash__hint join-gate__hint">${escapeHtml(message)}</p>
-    <a class="join-gate__home" href="/">Return home</a>
-  </div></div>`;
 }

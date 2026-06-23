@@ -5,5 +5,4 @@
 
 ---
 
-- Play Spaces: everyone in the room can build together for the session — changes don’t save when you leave.
-- Operators: manage Play Space starting layouts from the admin Rooms page.
+_(Draft — not published.)_

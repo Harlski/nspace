@@ -13580,42 +13580,56 @@ a.main-menu__version:focus-visible {
   min-width: 0;
 }
 
-.direct-invite-lobby__code-value {
+.direct-invite-lobby__value {
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  border: 1px dashed #475569;
-  border-radius: 10px;
-  background: #0f172a;
-  color: #f8fafc;
-  padding: clamp(8px, 1.5dvh, 12px) clamp(10px, 2vw, 14px);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: clamp(0.875rem, 2.2dvh + 0.35rem, 1.125rem);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  word-break: break-all;
-}
-
-.invite-splash__input,
-.direct-invite-lobby__url {
-  flex: 1;
-  min-width: 0;
-  display: block;
+  box-sizing: border-box;
   margin: 0;
+  min-height: 2.75rem;
   padding: clamp(8px, 1.5dvh, 12px) clamp(10px, 2vw, 14px);
   border-radius: 10px;
   border: 1px solid #334155;
   background: #0f172a;
   color: #e2e8f0;
   font-size: clamp(0.75rem, 1.6dvh + 0.3rem, 0.875rem);
+  line-height: 1.25;
+}
+
+.direct-invite-lobby__code-value {
+  border-style: dashed;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #f8fafc;
+  text-align: center;
+}
+
+.invite-splash__input {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #374151;
+  background: #0f172a;
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 0.9375rem;
+  box-sizing: border-box;
+}
+
+.direct-invite-lobby__url {
+  /* inherits .direct-invite-lobby__value */
 }
 
 .direct-invite-lobby__copy-btn {
   flex-shrink: 0;
+  align-self: stretch;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  min-height: 2.75rem;
   border: 1px solid #334155;
   border-radius: 10px;
   background: #1e293b;
@@ -13780,6 +13794,7 @@ a.main-menu__version:focus-visible {
 }
 
 .join-gate__card {
+  position: relative;
   text-align: center;
 }
 
@@ -13943,14 +13958,129 @@ a.main-menu__version:focus-visible {
   border-radius: 8px;
   background: transparent;
   color: #94a3b8;
-  font-size: 0.9375rem;
+  font-size: 0.8125rem;
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  text-decoration: none;
 }
 
 .join-gate__back:hover:not(:disabled) {
   color: #e2e8f0;
+  text-decoration: none;
+}
+
+.join-gate__close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.join-gate__close:hover {
+  background: #1f2937;
+  color: #f8fafc;
+}
+
+.join-gate__body--wallet {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.join-gate__wallet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 0;
+  width: 100%;
+}
+
+.join-gate__wallet-actions .join-gate__signin-wallet {
+  width: 100%;
+}
+
+.join-gate__miniapp-note {
+  margin: 12px 0;
+  font-size: 0.8125rem;
+  color: #64748b;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.join-gate__stores {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+}
+
+.join-gate__store {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #334155;
+  color: #f8fafc;
+  text-decoration: none;
+  background: #0f172a;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.join-gate__store:hover {
+  background: #1e293b;
+  border-color: #475569;
+}
+
+.join-gate__store--apple {
+  background: #020617;
+}
+
+.join-gate__store--apple:hover {
+  background: #0f172a;
+}
+
+.join-gate__store--google {
+  background: #0b1120;
+}
+
+.join-gate__store-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: #f8fafc;
+}
+
+.join-gate__store-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.15;
+}
+
+.join-gate__store-kicker {
+  font-size: 0.68rem;
+  color: #94a3b8;
+  letter-spacing: 0.01em;
+}
+
+.join-gate__store-name {
+  font-size: 0.9375rem;
+  font-weight: 650;
+  color: #f8fafc;
+}
+
+.invite-splash.join-gate--overlay {
+  z-index: 2147483645;
 }
 
 .direct-invite-lobby[hidden],
@@ -14016,90 +14146,4 @@ a.main-menu__version:focus-visible {
 .play-space-template-picker-actions button[data-pst-confirm] {
   background: rgba(99, 102, 241, 0.35);
   border-color: rgba(99, 102, 241, 0.5);
-}
-
-.get-wallet-prompt {
-  position: fixed;
-  inset: 0;
-  z-index: 2147483645;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  background: rgba(0, 0, 0, 0.55);
-  box-sizing: border-box;
-}
-
-.get-wallet-prompt__card {
-  position: relative;
-  width: min(420px, 100%);
-  padding: 24px 20px 20px;
-  border-radius: 16px;
-  background: rgba(18, 18, 22, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #f4f4f5;
-}
-
-.get-wallet-prompt__close {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  border: none;
-  background: transparent;
-  color: #a1a1aa;
-  font-size: 18px;
-  cursor: pointer;
-}
-
-.get-wallet-prompt__title {
-  margin: 0 0 8px;
-  font-size: 1.25rem;
-}
-
-.get-wallet-prompt__hint {
-  margin: 0 0 16px;
-  color: #a1a1aa;
-  line-height: 1.45;
-}
-
-.get-wallet-prompt__actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.get-wallet-prompt__web {
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: none;
-  background: #f6c343;
-  color: #111;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.get-wallet-prompt__pay-label {
-  margin: 0 0 8px;
-  font-size: 0.85rem;
-  color: #71717a;
-}
-
-.get-wallet-prompt__stores {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.get-wallet-prompt__store {
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #e4e4e7;
-  text-decoration: none;
-  font-size: 0.9rem;
-}
-
-.get-wallet-prompt__store:hover {
-  background: rgba(255, 255, 255, 0.06);
 }

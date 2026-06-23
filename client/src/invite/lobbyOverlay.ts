@@ -1,4 +1,5 @@
 import { nimiqIconUseMarkup } from "../ui/nimiqIcons.js";
+import { copyTextToClipboard } from "../util/copyText.js";
 import { resolvePlaySpaceShareUrl } from "./shareUrl.js";
 
 export type DirectInviteLobbyState = {
@@ -32,12 +33,12 @@ function roomCodeFromShareUrl(shareUrl: string, slug: string): string {
   return m?.[1] ?? slug;
 }
 
-function flashCopyLabel(btn: HTMLButtonElement, label = "Copy"): void {
+function flashCopyLabel(btn: HTMLButtonElement, ok: boolean): void {
   const prev = btn.innerHTML;
-  btn.textContent = "Copied!";
+  btn.innerHTML = `<span>${ok ? "Copied!" : "Copy failed"}</span>`;
   setTimeout(() => {
     btn.innerHTML = prev;
-  }, 1200);
+  }, ok ? 1200 : 1800);
 }
 
 export function createDirectInviteLobbyOverlay(
@@ -65,14 +66,14 @@ export function createDirectInviteLobbyOverlay(
           <div class="direct-invite-lobby__field">
             <span class="direct-invite-lobby__field-label">Room code</span>
             <div class="direct-invite-lobby__code-row">
-              <span class="direct-invite-lobby__code-value"></span>
+              <input type="text" class="direct-invite-lobby__value direct-invite-lobby__code-value" readonly aria-label="Room code" />
               <button type="button" class="direct-invite-lobby__copy-btn direct-invite-lobby__copy-code" aria-label="Copy room code">${COPY_ICON}<span>Copy</span></button>
             </div>
           </div>
           <div class="direct-invite-lobby__field">
             <span class="direct-invite-lobby__field-label">Join link</span>
             <div class="direct-invite-lobby__link-row">
-              <input class="direct-invite-lobby__url" readonly aria-label="Join link" />
+              <input type="text" class="direct-invite-lobby__value direct-invite-lobby__url" readonly aria-label="Join link" />
               <button type="button" class="direct-invite-lobby__copy-btn direct-invite-lobby__copy-link" aria-label="Copy join link">${COPY_ICON}<span>Copy</span></button>
             </div>
           </div>
@@ -94,7 +95,7 @@ export function createDirectInviteLobbyOverlay(
   hostEl.appendChild(overlay);
 
   const statusEl = panel.querySelector<HTMLElement>(".direct-invite-lobby__status")!;
-  const codeEl = panel.querySelector<HTMLElement>(".direct-invite-lobby__code-value")!;
+  const codeEl = panel.querySelector<HTMLInputElement>(".direct-invite-lobby__code-value")!;
   const rosterEl = panel.querySelector<HTMLElement>(".direct-invite-lobby__roster")!;
   const urlEl = panel.querySelector<HTMLInputElement>(".direct-invite-lobby__url")!;
   const copyCodeBtn = panel.querySelector<HTMLButtonElement>(
@@ -151,15 +152,27 @@ export function createDirectInviteLobbyOverlay(
   let renderedQrUrl = "";
 
   copyLinkBtn.addEventListener("click", () => {
-    void navigator.clipboard.writeText(lastShareUrl);
-    handlers.onCopyUrl?.(lastShareUrl);
-    flashCopyLabel(copyLinkBtn);
+    void (async () => {
+      const ok = await copyTextToClipboard(lastShareUrl);
+      if (!ok && lastShareUrl) {
+        urlEl.focus();
+        urlEl.select();
+      }
+      if (ok) handlers.onCopyUrl?.(lastShareUrl);
+      flashCopyLabel(copyLinkBtn, ok);
+    })();
   });
 
   copyCodeBtn.addEventListener("click", () => {
-    if (!lastRoomCode) return;
-    void navigator.clipboard.writeText(lastRoomCode);
-    flashCopyLabel(copyCodeBtn);
+    void (async () => {
+      if (!lastRoomCode) return;
+      const ok = await copyTextToClipboard(lastRoomCode);
+      if (!ok) {
+        codeEl.focus();
+        codeEl.select();
+      }
+      flashCopyLabel(copyCodeBtn, ok);
+    })();
   });
 
   const dismiss = (): void => handlers.onClose?.();
@@ -212,7 +225,7 @@ export function createDirectInviteLobbyOverlay(
       const shareUrl = resolvePlaySpaceShareUrl(state.shareUrl, state.slug);
       lastShareUrl = shareUrl;
       lastRoomCode = roomCodeFromShareUrl(shareUrl, state.slug);
-      codeEl.textContent = lastRoomCode;
+      codeEl.value = lastRoomCode;
       urlEl.value = shareUrl;
       leaveBtn.hidden = false;
       if (shareUrl && shareUrl !== renderedQrUrl) {
