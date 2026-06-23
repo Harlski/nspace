@@ -32,8 +32,56 @@ link (and QR). Multiple people can join — the wallet **creator** plus up to a 
 of **Guests** — and anyone inside can raise their own 1v1 Challenges. The link is shared by
 any occupant. The space lives until the last member leaves (or its TTL lapses), surviving
 even while everyone is away in a Match it spawned. Guests are confined to it; the creator
-comes and goes freely.
+comes and goes freely. **All occupants** may build and edit inside the space for the
+session only; those changes are not written back to the template or source room and are
+destroyed when the Play Space closes.
 _Avoid_: invite lobby, direct invite, staging room, waiting room.
+
+**Ephemeral Session Edits**:
+Build and layout changes any occupant may make inside an open Play Space — place, move,
+remove, and recolor within the room bounds, same as a normal editable room. Changes exist
+only for that Play Space instance and are discarded on teardown — never persisted to the
+**Play Space Template**, **Template Source Room**, or world state files. Teleporters and
+gates may not be placed — guest confinement must hold for the whole session.
+_Avoid_: temporary save, draft room, sandbox mode.
+
+**Play Space Template**:
+An admin-managed layout preset that seeds new Play Spaces. It is not in the public room
+catalog and cannot be entered on its own — a player only experiences it by **creating a
+Private Room** (Play Space) that is seeded from that template. Admins create templates by
+snapshotting a live room’s **Build Shell**; there is no separate “promote to official room”
+path. Exactly one template is the **Default Play Space Template** — ordinary creators use
+it automatically with no picker. System admins may choose any template when creating a Play
+Space. All creation paths share one template pool (not split by activity).
+_Avoid_: invite template, lobby template, official room clone, room template (ambiguous
+with the design catalog).
+
+**Default Play Space Template**:
+The Play Space Template applied when a non-admin creator opens a new Play Space. Only one
+template may be default at a time.
+_Avoid_: default lobby, default invite layout.
+
+**Archived Play Space Template**:
+A template retired from active use. It cannot be chosen for new Play Spaces or set as default
+but remains in the admin library and can be unarchived.
+_Avoid_: deleted template, hidden template.
+
+**Build Shell**:
+The portable part of a room’s layout copied into a Play Space Template: bounds, placed
+blocks, floor tints and removals, background, and join spawn. Excludes teleporters, gates,
+signboards, billboards, voxel text, and per-player spawns.
+_Avoid_: full snapshot, official room (templates are not catalog rooms).
+
+**Template Source Room**:
+The live room a Play Space Template was permanently bound to when the template was created
+(or when an admin last reassigned its source). Any room with a persisted **Build Shell**
+may serve as a source — player-owned, official, or built-in — but not ephemeral rooms
+(Play Spaces, Match Pitches). **Resync** replaces the template’s stored layout with that
+room’s current build state. Resync affects **future** Play Spaces only — already-open
+spaces keep the layout they were seeded with. If the source room is deleted or otherwise
+unavailable, the template keeps its last synced layout; **Resync** is disabled until an
+admin reassigns a new source.
+_Avoid_: linked room, parent room, master room, official room.
 
 **Guest**:
 A temporary, named identity (`guest:{id}`) minted when someone opens a Play Space link

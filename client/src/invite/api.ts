@@ -65,15 +65,18 @@ export async function joinInviteAsWallet(
 }
 
 export async function createDirectInvite(
-  token: string
+  token: string,
+  opts?: { templateId?: string }
 ): Promise<CreateInviteResponse> {
+  const body: Record<string, string> = { activity: "worldcup-match" };
+  if (opts?.templateId) body.templateId = opts.templateId;
   const res = await fetch(apiUrl("/api/invite/create"), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ activity: "worldcup-match" }),
+    body: JSON.stringify(body),
     credentials: "include",
   });
   if (!res.ok) {

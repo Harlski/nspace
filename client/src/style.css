@@ -13958,6 +13958,66 @@ a.main-menu__version:focus-visible {
   display: none;
 }
 
+.play-space-template-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483644;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.55);
+  box-sizing: border-box;
+}
+
+.play-space-template-picker {
+  width: min(420px, 100%);
+  padding: 1.25rem 1rem 1rem;
+  border-radius: 14px;
+  background: rgba(18, 18, 22, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+}
+
+.play-space-template-picker h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.play-space-template-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 1rem;
+}
+
+.play-space-template-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.play-space-template-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.play-space-template-picker-actions button {
+  padding: 0.45rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  cursor: pointer;
+}
+
+.play-space-template-picker-actions button[data-pst-confirm] {
+  background: rgba(99, 102, 241, 0.35);
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
 .get-wallet-prompt {
   position: fixed;
   inset: 0;

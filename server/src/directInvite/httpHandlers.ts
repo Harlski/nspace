@@ -6,6 +6,8 @@ import {
   verifySession,
   type SessionPayload,
 } from "../auth.js";
+import { isAdmin } from "../config.js";
+import { resolveTemplateIdForPlaySpaceCreate } from "../playSpaceTemplate/store.js";
 import { pickDirectInviteGuestName } from "../guestNames.js";
 import { DIRECT_INVITE_ENABLED, GUEST_SESSION_TTL_SEC } from "./config.js";
 import { getParticipant, sanitizeGuestNickname, evaluatePeek } from "./reducer.js";
@@ -103,10 +105,20 @@ export function registerDirectInviteRoutes(
       res.status(409).json({ error: "challenge_open" });
       return;
     }
+    const requestedTemplateId = body.templateId;
+    const resolved = resolveTemplateIdForPlaySpaceCreate(
+      isAdmin(payload.sub),
+      typeof requestedTemplateId === "string" ? requestedTemplateId : undefined
+    );
+    if (!resolved.ok) {
+      res.status(400).json({ error: "invalid_template", message: resolved.reason });
+      return;
+    }
     const invite = createInvite({
       hostWallet: payload.sub,
       hostOriginRoomId: originRoomId,
       activity: "worldcup-match",
+      templateId: resolved.templateId,
     });
     deps.onInviteCreated(invite);
     const url = `${deps.publicBaseUrl.replace(/\/$/, "")}/join/${invite.slug}`;

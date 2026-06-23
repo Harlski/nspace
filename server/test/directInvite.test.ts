@@ -12,8 +12,10 @@ import type { DirectInviteRecord, InviteEvent } from "../src/directInvite/types.
 import {
   _resetInviteStoreForTests,
   createInvite,
+  generateInviteSlug,
   joinInviteAsWallet,
 } from "../src/directInvite/store.js";
+import { PLAY_SPACE_SLUG_LENGTH } from "../src/directInvite/config.js";
 
 const CFG = { ttlMs: 900_000 };
 
@@ -35,6 +37,7 @@ const CREATE: InviteEvent = {
   ttlMs: CFG.ttlMs,
   activity: "worldcup-match",
   capacity: 3,
+  templateId: "template-default-test",
 };
 
 test("create → open Play Space with no guests yet", () => {
@@ -186,12 +189,22 @@ test("evaluatePeek reports joinability without claiming", () => {
   });
 });
 
+test("generateInviteSlug is alphanumeric mixed case", () => {
+  _resetInviteStoreForTests();
+  for (let i = 0; i < 40; i++) {
+    const slug = generateInviteSlug();
+    assert.equal(slug.length, PLAY_SPACE_SLUG_LENGTH);
+    assert.match(slug, /^[A-Za-z0-9]+$/);
+  }
+});
+
 test("joinInviteAsWallet claims, links wallet, and sets display name", () => {
   _resetInviteStoreForTests();
   const invite = createInvite({
     hostWallet: "NQHost123",
     hostOriginRoomId: "hub",
     activity: "worldcup-match",
+    templateId: "template-test",
     nowMs: 1_000_000,
   });
   const joined = joinInviteAsWallet(

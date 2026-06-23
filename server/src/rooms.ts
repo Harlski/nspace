@@ -52,6 +52,9 @@ import {
   listDeletedRoomDefinitions,
   listRoomDefinitions,
   normalizeRoomId,
+  registerPlaySpaceRoomRuntime,
+  clearPlaySpaceRoomRuntime,
+  getPlaySpaceRoomRuntime,
   type RoomBounds,
 } from "./roomLayouts.js";
 import {
@@ -171,9 +174,18 @@ import {
   type DirectInviteRecord,
 } from "./directInvite/index.js";
 import {
+  INVITE_LOBBY_PREFIX,
+} from "./directInvite/config.js";
+import {
+  applyBuildShell,
+  buildShellFromLayoutSnapshot,
+  getDefaultPlaySpaceTemplate,
+  getPlaySpaceTemplate,
+  initPlaySpaceTemplateStore,
+  type BuildShell,
+} from "./playSpaceTemplate/index.js";
+import {
   PLAY_SPACE_BACKGROUND_HUE_DEG,
-  PLAY_SPACE_BLOCKS,
-  PLAY_SPACE_FLOOR_TINTS,
   PLAY_SPACE_SPAWN,
 } from "./directInvite/playSpaceLayout.js";
 import {
@@ -844,7 +856,7 @@ function canPlaceMineableBlocks(address: string): boolean {
  */
 function canEditRoomContent(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
-  if (isInviteLobbyRoomId(id)) return false;
+  if (isInviteLobbyRoomId(id)) return true;
   if (id === CANVAS_ROOM_ID) return false;
   if (id === CHAMBER_ROOM_ID) {
     return isAdmin(address) || isBuiltinRoomBuilder(id, address);
@@ -875,7 +887,7 @@ function roomAllowsFakePlayers(roomId: string): boolean {
 }
 
 function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
-  if (isInviteLobbyRoomId(roomId)) return false;
+  if (isInviteLobbyRoomId(roomId)) return canEditRoomContent(roomId, address);
   if (isPixelRoom(roomId)) return false;
   // worldcup: keep the soccer pitch clear of placed blocks
   if (WORLDCUP_ENABLED && normalizeRoomId(roomId) === WORLDCUP_FIELD_ROOM_ID) {
@@ -886,7 +898,7 @@ function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
 
 function canRecolorFloorInRoom(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
-  if (isInviteLobbyRoomId(id)) return false;
+  if (isInviteLobbyRoomId(id)) return canEditRoomContent(roomId, address);
   if (id === CANVAS_ROOM_ID) return false;
   if (id === PIXEL_ROOM_ID) return true;
   // worldcup: no floor painting on the pitch
@@ -1353,6 +1365,7 @@ registerWorldStateRefs(
   lastSpawnByRoom,
   normalizeRoomId
 );
+initPlaySpaceTemplateStore();
 
 /** One-time: replace Pixel random-color seed with uniform neutral gray; then fill gaps. */
 function migratePixelRoomToNeutralBaseFloor(): void {
@@ -1559,46 +1572,108 @@ function placedMap(roomId: string): Map<string, PlacedProps> {
   return m;
 }
 
-/** Play Space rooms that already received the shared lounge template. */
+/** Play Space rooms that already received a template seed. */
 const playSpaceLayoutSeeded = new Set<string>();
 
-/** Apply the reusable Play Space lounge (benches, plants, rug tints) once per room id. */
+function playSpaceJoinSpawn(roomId: string): { x: number; z: number } {
+  const runtime = getPlaySpaceRoomRuntime(roomId);
+  if (runtime?.joinSpawn) return runtime.joinSpawn;
+  return { x: PLAY_SPACE_SPAWN.x, z: PLAY_SPACE_SPAWN.z };
+}
+
+function playSpaceBackgroundState(roomId: string): {
+  hueDeg: number | null;
+  neutral: RoomBackgroundNeutral | null;
+} {
+  const runtime = getPlaySpaceRoomRuntime(roomId);
+  if (runtime) {
+    return { hueDeg: runtime.backgroundHueDeg, neutral: runtime.backgroundNeutral };
+  }
+  return { hueDeg: PLAY_SPACE_BACKGROUND_HUE_DEG, neutral: null };
+}
+
+function templateIdForInviteLobbyRoom(roomId: string): string {
+  if (!isInviteLobbyRoomId(roomId)) {
+    return getDefaultPlaySpaceTemplate()?.id ?? "";
+  }
+  const slug = roomId.startsWith(INVITE_LOBBY_PREFIX)
+    ? roomId.slice(INVITE_LOBBY_PREFIX.length)
+    : roomId.replace("invite-lobby-", "");
+  const inv = getInviteBySlug(slug);
+  if (inv?.templateId) return inv.templateId;
+  return getDefaultPlaySpaceTemplate()?.id ?? "";
+}
+
+function resolvePlaySpaceTemplateForRoom(roomId: string) {
+  const templateId = templateIdForInviteLobbyRoom(roomId);
+  return (
+    getPlaySpaceTemplate(templateId) ??
+    getDefaultPlaySpaceTemplate() ??
+    null
+  );
+}
+
+/** Apply the Play Space Template build shell once per invite-lobby room id. */
 function ensurePlaySpaceLayout(roomId: string): void {
   if (!isInviteLobbyRoomId(roomId) || playSpaceLayoutSeeded.has(roomId)) return;
   playSpaceLayoutSeeded.add(roomId);
-  const placed = placedMap(roomId);
-  for (const spec of PLAY_SPACE_BLOCKS) {
-    const y = spec.y ?? 0;
-    placed.set(blockKey(spec.x, spec.z, y), {
-      passable: spec.passable,
-      half: spec.half ?? false,
-      quarter: spec.quarter ?? false,
-      hex: spec.hex ?? false,
-      pyramid: spec.pyramid ?? false,
-      pyramidBaseScale: 1,
-      hexRadiusScale: 1,
-      sphere: spec.sphere ?? false,
-      sphereRadiusScale: 1,
-      ramp: spec.ramp ?? false,
-      rampDir: Math.max(0, Math.min(3, Math.floor(spec.rampDir ?? 0))),
-      colorRgb: spec.colorRgb,
-      locked: true,
-    });
-  }
-  const colors = baseFloorColorMap(roomId);
-  for (const tint of PLAY_SPACE_FLOOR_TINTS) {
-    colors.set(tileKey(tint.x, tint.z), tint.colorRgb);
-  }
+  const template = resolvePlaySpaceTemplateForRoom(roomId);
+  if (!template) return;
+  const shell = template.buildShell;
+  registerPlaySpaceRoomRuntime(roomId, {
+    bounds: shell.bounds,
+    backgroundHueDeg: shell.backgroundHueDeg,
+    backgroundNeutral: shell.backgroundNeutral,
+    joinSpawn: shell.joinSpawn,
+  });
+  applyBuildShell(shell, {
+    clearGeometry: () => {
+      roomPlaced.delete(roomId);
+      roomBaseFloorColors.delete(roomId);
+      roomExtraFloor.delete(roomId);
+      roomBaseFloorRemoved.delete(roomId);
+    },
+    setObstacle: (tile, props) => {
+      placedMap(roomId).set(tile, { ...props, locked: false });
+    },
+    setExtraFloor: (x, z, colorRgb) => {
+      extraFloorMap(roomId).set(tileKey(x, z), colorRgb);
+    },
+    setBaseFloorColor: (x, z, colorRgb) => {
+      baseFloorColorMap(roomId).set(tileKey(x, z), colorRgb);
+    },
+    addRemovedBaseFloor: (key) => {
+      baseFloorRemovedEnsure(roomId).add(key);
+    },
+  });
 }
 
 /** Drop ephemeral Play Space geometry when the room is torn down. */
 function clearPlaySpaceLayout(roomId: string): void {
   if (!isInviteLobbyRoomId(roomId)) return;
   playSpaceLayoutSeeded.delete(roomId);
+  clearPlaySpaceRoomRuntime(roomId);
   roomPlaced.delete(roomId);
   roomBaseFloorColors.delete(roomId);
   roomExtraFloor.delete(roomId);
+  roomBaseFloorRemoved.delete(roomId);
   lastSpawnByRoom.delete(roomId);
+}
+
+/** Build Shell snapshot for admin Play Space Template authoring. */
+export function extractBuildShellForPlaySpaceTemplate(
+  roomIdRaw: string
+): BuildShell | null {
+  const roomId = normalizeRoomId(roomIdRaw);
+  if (isInviteLobbyRoomId(roomId) || worldcupIsMatchPitch(roomId)) return null;
+  const snap = getRoomLayoutSnapshot(roomId);
+  if (!snap || snap.spatial) return null;
+  const custom = getDynamicRoomJoinSpawn(roomId);
+  const joinSpawn = custom ?? {
+    x: Math.floor((snap.roomBounds.minX + snap.roomBounds.maxX) / 2),
+    z: Math.floor((snap.roomBounds.minZ + snap.roomBounds.maxZ) / 2),
+  };
+  return buildShellFromLayoutSnapshot(snap, joinSpawn);
 }
 
 const STACK_MAX_LEVEL = 2;
@@ -3056,6 +3131,22 @@ function normalizeJoinRoomId(raw: string): string {
   return normalizeRoomId(raw);
 }
 
+/** Resolve join target; Play Space slugs stay case-sensitive. */
+function resolveJoinRoomTarget(raw: string): string {
+  const trimmed = String(raw).trim().replace(/\s+/g, "");
+  if (!trimmed) return "";
+  const normalized = normalizeJoinRoomId(trimmed);
+  if (isInviteLobbyRoomId(normalized)) return normalized;
+  if (hasRoom(normalized)) return normalized;
+  const invite = getInviteBySlug(trimmed);
+  if (invite?.phase === "open" && hasRoom(invite.lobbyRoomId)) {
+    return invite.lobbyRoomId;
+  }
+  const lower = normalizeJoinRoomId(trimmed.toLowerCase());
+  if (hasRoom(lower)) return lower;
+  return normalized;
+}
+
 function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCatalog" }> {
   const viewer = compactAddress(forAddress);
   const admin = isAdmin(forAddress);
@@ -3614,6 +3705,7 @@ function placePendingTeleporterAt(
   z: number
 ): boolean {
   const address = conn.address;
+  if (isInviteLobbyRoomId(normalizeRoomId(roomId))) return false;
   if (!canPlaceBlocksInRoom(roomId, address)) return false;
   if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) return false;
   if (!hasRoom(roomId)) return false;
@@ -4025,6 +4117,7 @@ function placePendingGateAt(
   colorRgb: number
 ): boolean {
   const address = conn.address;
+  if (isInviteLobbyRoomId(normalizeRoomId(roomId))) return false;
   if (!canPlaceBlocksInRoom(roomId, address)) return false;
   if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) return false;
   if (!hasRoom(roomId)) return false;
@@ -4567,7 +4660,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   const allowFloorRecolor = canRecolorFloorInRoom(targetRoomId, address);
   const nWelcomeRoom = normalizeRoomId(targetRoomId);
   const welcomeBgState = isInviteLobbyRoomId(nWelcomeRoom)
-    ? { hueDeg: PLAY_SPACE_BACKGROUND_HUE_DEG, neutral: null as RoomBackgroundNeutral | null }
+    ? playSpaceBackgroundState(nWelcomeRoom)
     : isPlayerCreatedRoom(nWelcomeRoom)
     ? getDynamicRoomBackgroundState(nWelcomeRoom)
     : getBuiltinRoomBackgroundState(nWelcomeRoom);
@@ -6144,7 +6237,8 @@ export function addClient(
     }
   } else if (isInviteLobbyRoomId(normalizeRoomId(roomId))) {
     if (!applySpawnHint()) {
-      const t = snapToTile(PLAY_SPACE_SPAWN.x, PLAY_SPACE_SPAWN.z);
+      const ps = playSpaceJoinSpawn(roomId);
+      const t = snapToTile(ps.x, ps.z);
       if (isWalkableForRoom(roomId, t.x, t.z)) {
         player.x = t.x;
         player.z = t.z;
@@ -6245,7 +6339,7 @@ export function addClient(
     !streamObserver && canRecolorFloorInRoom(roomId, address);
   const nJoinRoom = normalizeRoomId(roomId);
   const joinWelcomeBgState = isInviteLobbyRoomId(nJoinRoom)
-    ? { hueDeg: PLAY_SPACE_BACKGROUND_HUE_DEG, neutral: null as RoomBackgroundNeutral | null }
+    ? playSpaceBackgroundState(nJoinRoom)
     : isPlayerCreatedRoom(nJoinRoom)
     ? getDynamicRoomBackgroundState(nJoinRoom)
     : getBuiltinRoomBackgroundState(nJoinRoom);
@@ -7059,7 +7153,7 @@ export function addClient(
         } satisfies OutMsg);
         return;
       }
-      const targetRoomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
+      const targetRoomId = resolveJoinRoomTarget(String(msg.roomId ?? ""));
       // worldcup: Match Pitches are server-managed and never directly joinable.
       if (worldcupIsMatchPitch(normalizeRoomId(targetRoomId))) return;
       // worldcup: navigating to another room mid-Match forfeits to the opponent (same as
@@ -7104,8 +7198,9 @@ export function addClient(
         spawnX = PIXEL_DEFAULT_SPAWN.x;
         spawnZ = PIXEL_DEFAULT_SPAWN.z;
       } else if (isInviteLobbyRoomId(targetRoomId)) {
-        spawnX = PLAY_SPACE_SPAWN.x;
-        spawnZ = PLAY_SPACE_SPAWN.z;
+        const ps = playSpaceJoinSpawn(targetRoomId);
+        spawnX = ps.x;
+        spawnZ = ps.z;
       } else if (isPlayerCreatedRoom(targetRoomId)) {
         const t = resolveDefaultSpawnForPlayerRoom(targetRoomId);
         if (t) {

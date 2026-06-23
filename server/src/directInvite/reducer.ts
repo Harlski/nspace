@@ -39,6 +39,7 @@ export function reduceInvite(
       hostWallet: event.hostWallet,
       hostOriginRoomId: event.hostOriginRoomId,
       lobbyRoomId: event.lobbyRoomId,
+      templateId: event.templateId,
       phase: "open",
       participants: [],
       hostInLobby: true,

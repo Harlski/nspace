@@ -33,6 +33,38 @@ export type RoomBounds = {
   maxZ: number;
 };
 
+export type PlaySpaceRoomRuntime = {
+  backgroundHueDeg: number | null;
+  backgroundNeutral: RoomBackgroundNeutral | null;
+  joinSpawn: { x: number; z: number } | null;
+};
+
+const playSpaceBoundsByRoomId = new Map<string, RoomBounds>();
+const playSpaceRuntimeByRoomId = new Map<string, PlaySpaceRoomRuntime>();
+
+export function registerPlaySpaceRoomRuntime(
+  roomId: string,
+  runtime: PlaySpaceRoomRuntime & { bounds: RoomBounds }
+): void {
+  const id = roomId.trim();
+  playSpaceBoundsByRoomId.set(id, { ...runtime.bounds });
+  playSpaceRuntimeByRoomId.set(id, {
+    backgroundHueDeg: runtime.backgroundHueDeg,
+    backgroundNeutral: runtime.backgroundNeutral,
+    joinSpawn: runtime.joinSpawn,
+  });
+}
+
+export function clearPlaySpaceRoomRuntime(roomId: string): void {
+  const id = roomId.trim();
+  playSpaceBoundsByRoomId.delete(id);
+  playSpaceRuntimeByRoomId.delete(id);
+}
+
+export function getPlaySpaceRoomRuntime(roomId: string): PlaySpaceRoomRuntime | null {
+  return playSpaceRuntimeByRoomId.get(roomId.trim()) ?? null;
+}
+
 export const HUB_ROOM_ID = "hub";
 /** Smaller instance space reachable from the hub. */
 export const CHAMBER_ROOM_ID = "chamber";
@@ -186,7 +218,7 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
       }
       // directInvite: ephemeral Play Space lounge (shared template, not the soccer pitch)
       if (isDirectInviteLobbyId(id)) {
-        return PLAY_SPACE_BOUNDS;
+        return playSpaceBoundsByRoomId.get(id) ?? PLAY_SPACE_BOUNDS;
       }
       return getDynamicRoomBounds(id) ?? HUB_BOUNDS;
   }

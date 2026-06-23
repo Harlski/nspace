@@ -144,10 +144,15 @@ import {
   isInviteLobbyRoomId,
   parseJoinSlugFromPath,
 } from "./invite/api.js";
+import { pickPlaySpaceTemplateId } from "./invite/playSpaceTemplatePicker.js";
 import {
   createDirectInviteLobbyOverlay,
   type DirectInviteLobbyState,
 } from "./invite/lobbyOverlay.js";
+import {
+  resolveRoomsJoinTarget,
+  sanitizeRoomsJoinCodeInput,
+} from "./invite/playSpaceLayout.js";
 import { mountJoinGate, joinGateErrorCard } from "./invite/joinGate.js";
 import { showGetWalletPrompt } from "./invite/getWalletPrompt.js";
 
@@ -1415,18 +1420,7 @@ function enterGame(
   });
 
   roomsJoinCodeInput.addEventListener("input", () => {
-    const v = roomsJoinCodeInput.value;
-    if (v.length <= 6) {
-      roomsJoinCodeInput.value = v
-        .toUpperCase()
-        .replace(/[^A-Z0-9]/g, "")
-        .slice(0, 6);
-    } else {
-      roomsJoinCodeInput.value = v
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]/g, "")
-        .slice(0, 32);
-    }
+    roomsJoinCodeInput.value = sanitizeRoomsJoinCodeInput(roomsJoinCodeInput.value);
     if (roomsJoinStatus.textContent === "Room not found") {
       roomsJoinStatus.hidden = true;
       roomsJoinStatus.textContent = "";
@@ -1444,12 +1438,11 @@ function enterGame(
       return;
     }
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    let roomIdToJoin: string;
-    if (/^[A-Za-z0-9]{6}$/.test(raw)) {
-      roomIdToJoin = raw.toLowerCase();
-    } else if (raw.length >= 2) {
-      roomIdToJoin = normalizeRoomId(raw);
-    } else {
+    const roomIdToJoin = resolveRoomsJoinTarget(
+      raw,
+      knownRooms.map((r) => r.id)
+    );
+    if (!roomIdToJoin) {
       roomsJoinHint.textContent = "Enter a valid room code or id.";
       roomsJoinHint.hidden = false;
       return;
@@ -2934,7 +2927,16 @@ function enterGame(
         }
         void (async () => {
           try {
-            const created = await createDirectInvite(token);
+            let templateId: string | undefined;
+            if (isAdmin(selfAddress)) {
+              const picked = await pickPlaySpaceTemplateId(token);
+              if (picked === null) return;
+              templateId = picked;
+            }
+            const created = await createDirectInvite(
+              token,
+              templateId ? { templateId } : undefined
+            );
             directInviteActive = true;
             const target = created.lobbyRoomId;
             if (socket.readyState === WebSocket.OPEN) {

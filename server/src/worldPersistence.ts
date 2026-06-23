@@ -5,6 +5,7 @@ import {
   normalizeTeleporterPropsForLoad,
   type TerrainProps,
 } from "./grid.js";
+import { isInviteLobbyRoomId } from "./directInvite/config.js";
 import {
   clampColorRgb,
   DEFAULT_EXTRA_FLOOR_COLOR_RGB,
@@ -499,6 +500,8 @@ function persistWorldStateNow(): void {
   const spawnRoomIds = new Set<string>();
 
   for (const roomId of roomIds) {
+    const normalizedRoomId = normalizeRoomId(roomId);
+    if (isInviteLobbyRoomId(normalizedRoomId)) continue;
     const placed = roomPlaced.get(roomId);
     const ex = roomExtraFloor.get(roomId);
     const baseColors = roomBaseFloorColors.get(roomId);
@@ -538,7 +541,6 @@ function persistWorldStateNow(): void {
       continue;
     }
 
-    const normalizedRoomId = normalizeRoomId(roomId);
     if (
       obstacles.length > 0 ||
       extraFloor.length > 0 ||

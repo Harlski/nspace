@@ -11,6 +11,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createNonce, consumeNonce, signSession, verifySession, isGuestSession } from "./auth.js";
 import { resolvePublicBaseUrl } from "./publicBaseUrl.js";
 import { registerDirectInviteRoutes } from "./directInvite/httpHandlers.js";
+import { registerPlaySpaceTemplateAdminRoutes } from "./playSpaceTemplate/routes.js";
 import {
   isInviteLobbyRoomId,
   makeInviteLobbyRoomId,
@@ -2898,6 +2899,7 @@ registerDirectInviteRoutes(app, {
   hostHasOpenChallenge: walletHasOpenChallenge,
   onInviteCreated: directInviteOnCreated,
 });
+registerPlaySpaceTemplateAdminRoutes(app, requireSystemAdminWallet);
 
 const server = createServer(app);
 

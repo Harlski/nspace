@@ -1,9 +1,11 @@
-import crypto from "node:crypto";
+import crypto, { randomInt } from "node:crypto";
 
 import {
   DIRECT_INVITE_TTL_MS,
   INVITE_CONFIG,
   MAX_PLAY_SPACE_OCCUPANTS,
+  PLAY_SPACE_SLUG_CHARS,
+  PLAY_SPACE_SLUG_LENGTH,
   makeInviteLobbyRoomId,
 } from "./config.js";
 import { evaluateRedeem, getParticipant, reduceInvite } from "./reducer.js";
@@ -18,7 +20,14 @@ const slugByHost = new Map<string, string>();
 const slugByGuestId = new Map<string, string>();
 
 export function generateInviteSlug(): string {
-  return crypto.randomBytes(6).toString("base64url").slice(0, 10);
+  for (let attempt = 0; attempt < 400; attempt++) {
+    let slug = "";
+    for (let i = 0; i < PLAY_SPACE_SLUG_LENGTH; i++) {
+      slug += PLAY_SPACE_SLUG_CHARS[randomInt(PLAY_SPACE_SLUG_CHARS.length)]!;
+    }
+    if (!invitesBySlug.has(slug)) return slug;
+  }
+  throw new Error("Could not allocate Play Space slug");
 }
 
 export function generateGuestId(): string {
@@ -59,6 +68,7 @@ export type CreateInviteInput = {
   hostWallet: string;
   hostOriginRoomId: string;
   activity: DirectInviteActivity;
+  templateId: string;
   nowMs?: number;
 };
 
@@ -82,6 +92,7 @@ export function createInvite(input: CreateInviteInput): DirectInviteRecord {
     ttlMs: DIRECT_INVITE_TTL_MS,
     activity: input.activity,
     capacity: MAX_PLAY_SPACE_OCCUPANTS,
+    templateId: input.templateId,
   });
   return invite!;
 }

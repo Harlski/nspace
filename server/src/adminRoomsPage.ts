@@ -195,10 +195,12 @@ export function adminRoomsPageHtml(): string {
     }
 
     var roomsData = [];
+    var templatesData = [];
     var usersData = [];
     var userByWallet = {};
     var activeTab = "official";
     var token = "";
+    var PLAY_SPACE_TEMPLATE_PICK_KEY = "nspace_admin_play_space_template_id";
 
     // Established short wallet form (first 4 + last 4, no gap), mirrors server walletDisplayName.
     function walletLabelShort(v) { var c = walletCompact(v); return c.length <= 8 ? c : c.slice(0, 4) + c.slice(-4); }
@@ -279,6 +281,134 @@ export function adminRoomsPageHtml(): string {
         if (tab === "official") return r.isBuiltin || r.isOfficial;
         return !r.isBuiltin && !r.isOfficial;
       });
+    }
+
+    function templateCardHtml(t) {
+      var tags =
+        (t.isDefault ? "<span class='room-tag room-tag--official'>Default</span>" : "") +
+        (t.archived ? "<span class='room-tag room-tag--deleted'>Archived</span>" : "") +
+        (t.sourceAvailable === false ? "<span class='room-tag room-tag--hidden'>Source missing</span>" : "");
+      var actions = "";
+      if (!t.archived && !t.isDefault) {
+        actions += "<button class='btn' data-tmpl-default>Set default</button>";
+      }
+      if (!t.archived) {
+        actions += "<button class='btn' data-tmpl-resync" + (t.sourceAvailable === false ? " disabled" : "") + ">Resync</button>";
+        actions += "<button class='btn' data-tmpl-pick>Use for next create</button>";
+        actions += "<button class='btn btn--danger' data-tmpl-archive>Archive</button>";
+      } else {
+        actions += "<button class='btn' data-tmpl-restore>Restore</button>";
+      }
+      return "<div class='room-card' data-template-id='" + esc(t.id) + "'>" +
+        "<div class='room-body'>" +
+        "<div class='room-name'>" + esc(t.displayName) + "</div>" +
+        "<div class='room-meta'>" + tags + "</div>" +
+        "<div class='room-meta'><span class='mono'>" + esc(t.id) + "</span>" +
+        (t.sourceRoomId ? "<span>Source <span class='mono'>" + esc(t.sourceRoomId) + "</span></span>" : "<span>No source</span>") +
+        "</div>" +
+        "<p class='status' style='margin:0.5rem 0 0'>" + esc(t.description || "") + "</p>" +
+        "<div class='room-row' style='margin-top:0.75rem;flex-wrap:wrap;gap:0.35rem'>" + actions +
+        "<span class='room-card-status' data-tmpl-status></span></div>" +
+        "</div></div>";
+    }
+
+    function templatesPanelHtml() {
+      var createForm =
+        "<div class='room-card' style='margin-bottom:1rem'>" +
+        "<div class='room-body'><div class='room-name'>Create template from room</div>" +
+        "<div class='room-field'><label>Source room id</label><input type='text' data-new-source placeholder='e.g. lounge' maxlength='64'/></div>" +
+        "<div class='room-field'><label>Display name</label><input type='text' data-new-name placeholder='Template name' maxlength='48'/></div>" +
+        "<div class='room-row'><button class='btn' data-create-template>Create</button><span class='room-card-status' data-create-status></span></div>" +
+        "</div></div>";
+      var list = templatesData.length
+        ? "<div class='rooms-grid'>" + templatesData.map(templateCardHtml).join("") + "</div>"
+        : "<p class='status'>No templates yet.</p>";
+      return createForm + list;
+    }
+
+    async function patchTemplate(id, body, statusEl) {
+      if (statusEl) statusEl.textContent = "Saving…";
+      try {
+        var r = await fetch("/api/admin/play-space-templates/" + encodeURIComponent(id), {
+          method: "PATCH",
+          headers: { authorization: "Bearer " + token, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          var err = await r.json().catch(function () { return {}; });
+          throw new Error(String(err.message || err.error || r.status));
+        }
+        await loadTemplates();
+        if (statusEl) statusEl.textContent = "Saved.";
+      } catch (e) {
+        if (statusEl) statusEl.textContent = String((e && e.message) || e);
+      }
+    }
+
+    async function resyncTemplate(id, statusEl) {
+      if (statusEl) statusEl.textContent = "Resyncing…";
+      try {
+        var r = await fetch("/api/admin/play-space-templates/" + encodeURIComponent(id) + "/resync", {
+          method: "POST",
+          headers: { authorization: "Bearer " + token },
+        });
+        if (!r.ok) {
+          var err = await r.json().catch(function () { return {}; });
+          throw new Error(String(err.message || err.error || r.status));
+        }
+        await loadTemplates();
+        if (statusEl) statusEl.textContent = "Resynced.";
+      } catch (e) {
+        if (statusEl) statusEl.textContent = String((e && e.message) || e);
+      }
+    }
+
+    function bindTemplateCard(card) {
+      var id = card.getAttribute("data-template-id");
+      var statusEl = card.querySelector("[data-tmpl-status]");
+      var defBtn = card.querySelector("[data-tmpl-default]");
+      if (defBtn) defBtn.addEventListener("click", function () { void patchTemplate(id, { setDefault: true }, statusEl); });
+      var archBtn = card.querySelector("[data-tmpl-archive]");
+      if (archBtn) archBtn.addEventListener("click", function () { void patchTemplate(id, { archived: true }, statusEl); });
+      var restoreBtn = card.querySelector("[data-tmpl-restore]");
+      if (restoreBtn) restoreBtn.addEventListener("click", function () { void patchTemplate(id, { archived: false }, statusEl); });
+      var resyncBtn = card.querySelector("[data-tmpl-resync]");
+      if (resyncBtn) resyncBtn.addEventListener("click", function () { void resyncTemplate(id, statusEl); });
+      var pickBtn = card.querySelector("[data-tmpl-pick]");
+      if (pickBtn) pickBtn.addEventListener("click", function () {
+        sessionStorage.setItem(PLAY_SPACE_TEMPLATE_PICK_KEY, id);
+        if (statusEl) statusEl.textContent = "Selected for next Play Space create.";
+      });
+    }
+
+    async function createTemplateFromRoom(panel) {
+      var sourceEl = panel.querySelector("[data-new-source]");
+      var nameEl = panel.querySelector("[data-new-name]");
+      var statusEl = panel.querySelector("[data-create-status]");
+      var sourceRoomId = sourceEl && sourceEl.value.trim();
+      var displayName = nameEl && nameEl.value.trim();
+      if (!sourceRoomId || !displayName) {
+        if (statusEl) statusEl.textContent = "Source room and name required.";
+        return;
+      }
+      if (statusEl) statusEl.textContent = "Creating…";
+      try {
+        var r = await fetch("/api/admin/play-space-templates", {
+          method: "POST",
+          headers: { authorization: "Bearer " + token, "content-type": "application/json" },
+          body: JSON.stringify({ sourceRoomId: sourceRoomId, displayName: displayName }),
+        });
+        if (!r.ok) {
+          var err = await r.json().catch(function () { return {}; });
+          throw new Error(String(err.message || err.error || r.status));
+        }
+        if (sourceEl) sourceEl.value = "";
+        if (nameEl) nameEl.value = "";
+        await loadTemplates();
+        if (statusEl) statusEl.textContent = "Created.";
+      } catch (e) {
+        if (statusEl) statusEl.textContent = String((e && e.message) || e);
+      }
     }
 
     function openPreview(id) {
@@ -427,20 +557,32 @@ export function adminRoomsPageHtml(): string {
 
     function rerender() {
       var panel = document.getElementById("panel");
-      var counts = { official: roomsForTab("official").length, player: roomsForTab("player").length };
+      var counts = { official: roomsForTab("official").length, player: roomsForTab("player").length, templates: templatesData.length };
       var tabs = "<div class='rooms-tabs'>" +
         "<button class='rooms-tab' data-tab='official' aria-selected='" + (activeTab === "official") + "'>Official rooms (" + counts.official + ")</button>" +
         "<button class='rooms-tab' data-tab='player' aria-selected='" + (activeTab === "player") + "'>Player Owned (" + counts.player + ")</button>" +
+        "<button class='rooms-tab' data-tab='templates' aria-selected='" + (activeTab === "templates") + "'>Play Space templates (" + counts.templates + ")</button>" +
         "</div>";
-      var list = roomsForTab(activeTab);
-      var grid = list.length
-        ? "<div class='rooms-grid'>" + list.map(cardHtml).join("") + "</div>"
-        : "<p class='status'>No rooms in this tab.</p>";
-      panel.innerHTML = tabs + grid;
+      var body;
+      if (activeTab === "templates") {
+        body = templatesPanelHtml();
+      } else {
+        var list = roomsForTab(activeTab);
+        body = list.length
+          ? "<div class='rooms-grid'>" + list.map(cardHtml).join("") + "</div>"
+          : "<p class='status'>No rooms in this tab.</p>";
+      }
+      panel.innerHTML = tabs + body;
       panel.querySelectorAll(".rooms-tab").forEach(function (b) {
         b.addEventListener("click", function () { activeTab = b.getAttribute("data-tab"); rerender(); });
       });
-      panel.querySelectorAll(".room-card").forEach(bindCard);
+      if (activeTab === "templates") {
+        var createBtn = panel.querySelector("[data-create-template]");
+        if (createBtn) createBtn.addEventListener("click", function () { void createTemplateFromRoom(panel); });
+        panel.querySelectorAll("[data-template-id]").forEach(bindTemplateCard);
+      } else {
+        panel.querySelectorAll(".room-card").forEach(bindCard);
+      }
     }
 
     async function loadUsers() {
@@ -452,6 +594,19 @@ export function adminRoomsPageHtml(): string {
         userByWallet = {};
         usersData.forEach(function (u) { userByWallet[walletCompact(u.wallet)] = u; });
       } catch (e) { /* non-fatal: combobox falls back to raw NQ entry */ }
+    }
+
+    async function loadTemplates() {
+      var r = await fetch("/api/admin/play-space-templates?includeArchived=1", {
+        headers: { authorization: "Bearer " + token },
+        cache: "no-store",
+      });
+      if (r.status === 401) throw new Error("Session expired. Sign in again.");
+      if (r.status === 403) throw new Error("NS_ADMIN_DENIED");
+      if (!r.ok) throw new Error("Request failed (" + r.status + ").");
+      var j = await r.json();
+      templatesData = Array.isArray(j.templates) ? j.templates : [];
+      rerender();
     }
 
     async function loadRooms() {
@@ -487,6 +642,7 @@ export function adminRoomsPageHtml(): string {
       }
       try {
         await loadUsers();
+        await loadTemplates();
         await loadRooms();
       } catch (e) {
         var msg = String((e && e.message) || e);

@@ -36,6 +36,21 @@ export const GUEST_SESSION_TTL_SEC = envInt("GUEST_SESSION_TTL_SEC", 4 * 60 * 60
 /** Ephemeral lobby room-id prefix. */
 export const INVITE_LOBBY_PREFIX = "invite-lobby-";
 
+/** Alphanumeric charset for shareable Play Space slugs (mixed case, no `-` / `_`). */
+export const PLAY_SPACE_SLUG_CHARS =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+/** Length of newly minted Play Space slugs. */
+export const PLAY_SPACE_SLUG_LENGTH = 8;
+
+export const PLAY_SPACE_SLUG_PATTERN = /^[A-Za-z0-9]+$/;
+
+export function isValidPlaySpaceSlug(slug: string): boolean {
+  return (
+    slug.length === PLAY_SPACE_SLUG_LENGTH && PLAY_SPACE_SLUG_PATTERN.test(slug)
+  );
+}
+
 export function makeInviteLobbyRoomId(slug: string): string {
   return `${INVITE_LOBBY_PREFIX}${slug}`;
 }

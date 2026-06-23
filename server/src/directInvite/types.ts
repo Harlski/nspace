@@ -24,6 +24,8 @@ export type DirectInviteRecord = {
   hostWallet: string;
   hostOriginRoomId: string;
   lobbyRoomId: string;
+  /** Play Space Template used to seed this space. */
+  templateId: string;
   phase: InvitePhase;
   /** Guests who claimed the link, in claim order. */
   participants: InviteParticipant[];
@@ -46,6 +48,7 @@ export type InviteEvent =
       ttlMs: number;
       activity: DirectInviteActivity;
       capacity: number;
+      templateId: string;
     }
   | { type: "claim"; guestId: string; nowMs: number }
   | { type: "setNickname"; guestId: string; nickname: string }
