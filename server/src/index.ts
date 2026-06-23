@@ -10,6 +10,10 @@ import dotenv from "dotenv";
 import { timingSafeEqual } from "node:crypto";
 import { createNonce, consumeNonce, signSession, verifySession, isGuestSession } from "./auth.js";
 import { resolvePublicBaseUrl } from "./publicBaseUrl.js";
+import {
+  getAdminChatMessageDetail,
+  queryAdminChatMessages,
+} from "./adminChatLog.js";
 import { registerDirectInviteRoutes } from "./directInvite/httpHandlers.js";
 import { registerPlaySpaceTemplateAdminRoutes } from "./playSpaceTemplate/routes.js";
 import {
@@ -120,6 +124,7 @@ import { adminSystemPageHtml } from "./adminSystemPage.js";
 import { adminSettingsPageHtml } from "./adminSettingsPage.js";
 import { adminHeaderPageHtml } from "./adminHeaderPage.js";
 import { adminFeedbackPageHtml } from "./adminFeedbackPage.js";
+import { adminChatPageHtml } from "./adminChatPage.js";
 import { adminCampaignPageHtml } from "./adminCampaignPage.js";
 import { advertisePageHtml } from "./advertisePage.js";
 import { advertiseGuidePageHtml } from "./advertiseGuidePage.js";
@@ -1189,6 +1194,68 @@ app.get("/admin/campaign", (_req, res) => {
 
 app.get("/admin/rooms", (_req, res) => {
   res.type("html").send(adminRoomsPageHtml());
+});
+
+app.get("/admin/chat", (_req, res) => {
+  res.type("html").send(adminChatPageHtml());
+});
+
+function parseAdminChatTs(raw: unknown): number | undefined {
+  if (raw == null || raw === "") return undefined;
+  const s = String(raw).trim();
+  if (/^\d+$/.test(s)) {
+    const n = Number(s);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  const d = Date.parse(s);
+  return Number.isFinite(d) ? d : undefined;
+}
+
+app.get("/api/admin/chat", requireSystemAdminWallet, (req, res) => {
+  const fromTs = parseAdminChatTs(req.query.from);
+  const toTs = parseAdminChatTs(req.query.to);
+  const roomId = String(req.query.roomId ?? "").trim() || undefined;
+  const wallet = String(req.query.wallet ?? "").trim() || undefined;
+  const cursor = String(req.query.cursor ?? "").trim() || undefined;
+  const limit = Number(req.query.limit);
+  try {
+    const out = queryAdminChatMessages({
+      fromTs,
+      toTs,
+      roomId,
+      wallet,
+      cursor,
+      limit: Number.isFinite(limit) ? limit : undefined,
+    });
+    res.json(out);
+  } catch (e) {
+    console.error("[api/admin/chat]", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.get("/api/admin/chat/message", requireSystemAdminWallet, (req, res) => {
+  const roomId = String(req.query.roomId ?? "").trim();
+  const fromAddress = String(req.query.fromAddress ?? "").trim();
+  const at = Number(req.query.at);
+  if (!roomId || !fromAddress || !Number.isFinite(at)) {
+    res.status(400).json({ error: "invalid_query" });
+    return;
+  }
+  const fromTs = parseAdminChatTs(req.query.from);
+  const toTs = parseAdminChatTs(req.query.to);
+  const message = getAdminChatMessageDetail({
+    roomId,
+    fromAddress,
+    at,
+    fromTs,
+    toTs,
+  });
+  if (!message) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ message });
 });
 
 app.get("/advertise", (_req, res) => {

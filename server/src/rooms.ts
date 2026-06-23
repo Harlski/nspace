@@ -107,6 +107,7 @@ import {
   endSession,
   logGameplayEvent,
 } from "./eventLog.js";
+import { censorChat, isEmptyAfterCensor } from "./profanityFilter.js";
 import {
   getPlayerLastSession,
   PLAYER_RECONNECT_GRACE_MS,
@@ -1319,6 +1320,40 @@ function humanCompactAddressesInRoom(roomId: string): Set<string> {
     out.add(compactAddress(c.address));
   }
   return out;
+}
+
+/** Human wallets present for chat audience (excludes stream observers and NPC labels). */
+function liveChatAudienceInRoom(roomId: string): string[] {
+  const r = rooms.get(normalizeRoomId(roomId));
+  const out: string[] = [];
+  if (!r) return out;
+  for (const c of r.values()) {
+    if (c.streamObserver) continue;
+    if (String(c.displayName || "").trimStart().startsWith("[NPC]")) continue;
+    out.push(compactAddress(c.address));
+  }
+  return out.sort();
+}
+
+function logChatBacklogDelivered(
+  sessionId: string,
+  address: string,
+  roomId: string,
+  backlog: ChatBacklogLine[]
+): void {
+  if (!backlog.length) return;
+  logGameplayEvent(
+    sessionId,
+    address,
+    roomId,
+    ANALYTICS_EVENT_KINDS.chatBacklogDelivered,
+    {
+      lines: backlog.map((l) => ({
+        at: l.at,
+        fromAddress: compactAddress(l.fromAddress),
+      })),
+    }
+  );
 }
 /** Server-driven avatars (not WebSocket clients); merged into player snapshots / ticks. */
 const roomFakePlayers = new Map<
@@ -4676,6 +4711,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   const teleportSpatialWelcome = roomUsesSpatialInterest(rb)
     ? welcomeSpatialLists(targetRoomId, conn)
     : null;
+  const chatBacklog = chatBacklogSnapshotForWelcome(targetRoomId, Date.now());
 
   wsSafeSend(conn.ws, {
       type: "welcome",
@@ -4709,7 +4745,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       roomBackgroundHueDeg: welcomeBgState.hueDeg,
       roomBackgroundNeutral: welcomeBgState.neutral,
       ...joinSpawnWelcomeExtras(targetRoomId, address),
-      chatBacklog: chatBacklogSnapshotForWelcome(targetRoomId, Date.now()),
+      chatBacklog,
       // worldcup: include any balls in this room
       balls:
         WORLDCUP_ENABLED && worldcupRoomHasBalls(targetRoomId)
@@ -4720,6 +4756,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
         ? worldcupPortalsForRoom(targetRoomId)
         : undefined,
     } satisfies OutMsg);
+  logChatBacklogDelivered(conn.sessionId, address, targetRoomId, chatBacklog);
   sendRoomCatalog(conn.ws, address);
 
   // Notify others in new room
@@ -6147,6 +6184,35 @@ export function addClient(
   const requestedRoomId = normalizeRoomId(roomIdRaw);
   let roomId = requestedRoomId;
   let canvasGateRedirect = false;
+
+  if (
+    address.startsWith("guest:") &&
+    isInviteLobbyRoomId(normalizeRoomId(roomId))
+  ) {
+    const slug = roomId.slice("invite-lobby-".length);
+    const invite = getInviteBySlug(slug);
+    const guestId = address.slice("guest:".length);
+    let denied: { code: "expired" | "full" | "closed"; message: string } | null =
+      null;
+    if (!invite || invite.lobbyRoomId !== roomId || invite.phase !== "open") {
+      denied = {
+        code: invite?.phase === "expired" ? "expired" : "closed",
+        message: "This play space has closed.",
+      };
+    } else if (!getParticipant(invite, guestId)) {
+      denied = { code: "closed", message: "This play space has closed." };
+    }
+    if (denied) {
+      wsSafeSend(ws, {
+        type: "directInviteError",
+        code: denied.code,
+        message: denied.message,
+      } satisfies OutMsg);
+      ws.close(4004, "play_space_unavailable");
+      return;
+    }
+  }
+
   if (requestedRoomId === CANVAS_ROOM_ID) {
     if (canvasCooldownActive || canvasTimerActive || canvasRoundEnding) {
       canvasGateRedirect = true;
@@ -6390,6 +6456,7 @@ export function addClient(
   const spatialWelcome = roomUsesSpatialInterest(rb)
     ? welcomeSpatialLists(roomId, conn)
     : null;
+  const chatBacklog = chatBacklogSnapshotForWelcome(roomId, Date.now());
 
   wsSafeSend(ws, {
       type: "welcome",
@@ -6424,7 +6491,7 @@ export function addClient(
       roomBackgroundHueDeg: joinWelcomeBgState.hueDeg,
       roomBackgroundNeutral: joinWelcomeBgState.neutral,
       ...joinSpawnWelcomeExtras(roomId, address),
-      chatBacklog: chatBacklogSnapshotForWelcome(roomId, Date.now()),
+      chatBacklog,
       // worldcup: include any balls in this room
       balls:
         WORLDCUP_ENABLED && worldcupRoomHasBalls(roomId)
@@ -6435,6 +6502,7 @@ export function addClient(
         ? worldcupPortalsForRoom(roomId)
         : undefined,
     } satisfies OutMsg);
+  logChatBacklogDelivered(conn.sessionId, address, roomId, chatBacklog);
   sendRoomCatalog(ws, address);
 
   if (!streamObserver) {
@@ -9172,8 +9240,15 @@ export function addClient(
       let text = String(msg.text ?? "").slice(0, CHAT_MAX);
       text = text.replace(/[\u0000-\u001F\u007F]/g, "").trim();
       if (!text) return;
+      const censored = censorChat(text);
+      if (isEmptyAfterCensor(censored.censored)) {
+        wsSafeSend(ws, { type: "error", code: "chat_blocked_profanity" } satisfies OutMsg);
+        return;
+      }
+      text = censored.censored;
       const hadTyping = conn.chatTyping;
       conn.chatTyping = false;
+      const audienceLive = liveChatAudienceInRoom(currentRoomId);
       broadcast(currentRoomId, {
         type: "chat",
         from: conn.displayName,
@@ -9184,8 +9259,14 @@ export function addClient(
       if (hadTyping) {
         broadcastRoomStateFull(currentRoomId);
       }
-      logGameplayEvent(conn.sessionId, address, currentRoomId, "chat", {
+      logGameplayEvent(conn.sessionId, address, currentRoomId, ANALYTICS_EVENT_KINDS.chat, {
         text,
+        at: now,
+        displayName: conn.displayName,
+        audienceLive,
+        ...(censored.wasFiltered && censored.original
+          ? { textOriginal: censored.original }
+          : {}),
       });
       return;
     }

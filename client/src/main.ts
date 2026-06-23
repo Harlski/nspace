@@ -153,8 +153,12 @@ import {
   resolveRoomsJoinTarget,
   sanitizeRoomsJoinCodeInput,
 } from "./invite/playSpaceLayout.js";
-import { mountJoinGate, joinGateErrorCard } from "./invite/joinGate.js";
+import { mountJoinGate } from "./invite/joinGate.js";
 import { showGetWalletPrompt } from "./invite/getWalletPrompt.js";
+import {
+  clearGuestInviteCookie,
+  mountGuestPlaySpaceClosedOnboarding,
+} from "./invite/walletOnboarding.js";
 
 const DEV_CLIENT_BYPASS = import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
 
@@ -472,6 +476,7 @@ function enterGame(
   app.appendChild(hudRoot);
 
   const inviteLinkSlug = opts?.inviteLinkSlug?.trim() || null;
+  selfAddress = address;
   const query = new URLSearchParams(location.search);
   const showDebugHud = query.has("debug");
   const streamMode = query.has("stream");
@@ -2090,6 +2095,25 @@ function enterGame(
         void tryRequestFullscreen(appEl).catch(() => {});
       });
     }
+  }
+
+  function redirectGuestToWalletOnboarding(message: string): void {
+    const actor = selfAddress.startsWith("guest:") ? selfAddress : address;
+    if (!actor.startsWith("guest:")) {
+      hud.setStatus(message);
+      return;
+    }
+    if (disposed) return;
+    disposed = true;
+    cleanupResources();
+    clearCachedSession();
+    clearGuestInviteCookie();
+    const appEl = document.getElementById("app");
+    if (!appEl) return;
+    mountGuestPlaySpaceClosedOnboarding(appEl, {
+      message,
+      onWebWallet: () => openMainMenu(),
+    });
   }
 
   const syncReturnHomeButton = (): void => {
@@ -4439,6 +4463,17 @@ function enterGame(
             : msg.code === "full"
               ? "This play space is full."
               : (msg.message ?? msg.code);
+      if (
+        msg.code === "expired" ||
+        msg.code === "closed" ||
+        msg.code === "full"
+      ) {
+        const actor = selfAddress.startsWith("guest:") ? selfAddress : address;
+        if (actor.startsWith("guest:")) {
+          redirectGuestToWalletOnboarding(text);
+          return;
+        }
+      }
       hud.setStatus(text);
       return;
     }
@@ -4912,6 +4947,9 @@ function enterGame(
       if (msg.code === "channel_muted") {
         hud.appendChat("System", "Muted.");
       }
+      if (msg.code === "chat_blocked_profanity") {
+        hud.appendChat("System", "Message blocked (inappropriate language).");
+      }
     }
     if (msg.type === "signboards") {
       game.setSignboards(msg.signboards);
@@ -4971,6 +5009,18 @@ function enterGame(
           if (ev.code === 4001) {
             clearCachedSession();
             location.reload();
+            return;
+          }
+          const guestActor = selfAddress.startsWith("guest:") ? selfAddress : address;
+          if (
+            guestActor.startsWith("guest:") &&
+            (ev.code === 4003 || ev.code === 4004)
+          ) {
+            redirectGuestToWalletOnboarding(
+              ev.code === 4003
+                ? "Your guest session is no longer valid."
+                : "This play space has closed — sign in with a wallet or get Nimiq Pay to keep exploring."
+            );
             return;
           }
           if (ev.code === 4403) {
@@ -5692,7 +5742,11 @@ async function bootstrapJoinInvite(): Promise<boolean> {
     const waitForGate = mountJoinGate(app, slug);
     const result = await waitForGate();
     if (!result.ok) {
-      app.innerHTML = joinGateErrorCard(result.error);
+      mountGuestPlaySpaceClosedOnboarding(app, {
+        title: "Cannot join",
+        message: result.error,
+        onWebWallet: () => openMainMenu(),
+      });
       return true;
     }
     history.replaceState(null, "", "/");
@@ -5710,8 +5764,12 @@ async function bootstrapJoinInvite(): Promise<boolean> {
           ? "This play space is full."
           : code === "closed"
             ? "This play space has closed."
-            : "Could not open this invite link.";
-    app.innerHTML = joinGateErrorCard(message);
+            : "This invite link has expired or is no longer valid.";
+    mountGuestPlaySpaceClosedOnboarding(app, {
+      title: "Cannot join",
+      message,
+      onWebWallet: () => openMainMenu(),
+    });
     return true;
   }
 }

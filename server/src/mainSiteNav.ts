@@ -8,6 +8,7 @@ export type MainSiteHeaderPage =
   | "feedback"
   | "campaign"
   | "rooms"
+  | "chat"
   | "advertise";
 
 export type MainSiteNavAuthStatus = {
@@ -51,6 +52,7 @@ const MAIN_SITE_NAV_GROUPS: MainSiteNavGroup[] = [
       { page: "feedback", href: "/admin/feedback", label: "Feedback", authKey: "feedback" },
       { page: "campaign", href: "/admin/campaign", label: "Campaigns", authKey: "campaign" },
       { page: "rooms", href: "/admin/rooms", label: "Rooms", authKey: "rooms" },
+      { page: "chat", href: "/admin/chat", label: "Chat", authKey: "chat" },
     ],
   },
 ];
@@ -73,7 +75,7 @@ export function isMainSiteNavItemVisible(
   if (authKey === "advertise") return status.signedIn;
   if (authKey === "analytics") return status.analyticsAuthorized;
   if (authKey === "admin") return status.analyticsManager;
-  if (authKey === "system" || authKey === "settings" || authKey === "header" || authKey === "feedback" || authKey === "campaign" || authKey === "rooms") {
+  if (authKey === "system" || authKey === "settings" || authKey === "header" || authKey === "feedback" || authKey === "campaign" || authKey === "rooms" || authKey === "chat") {
     return status.systemAdmin;
   }
   return false;

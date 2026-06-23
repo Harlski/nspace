@@ -1,4 +1,4 @@
-import { Filter } from "bad-words";
+import { isProfane } from "./profanityFilter.js";
 
 export const USERNAME_MIN_LEN = 1;
 export const USERNAME_MAX_LEN = 12;
@@ -23,8 +23,6 @@ const RESTRICTED_USERNAMES = new Set([
   "system",
 ]);
 
-const profanityFilter = new Filter();
-
 export type UsernamePolicyError =
   | "invalid_username"
   | "username_profanity"
@@ -42,6 +40,6 @@ export function usernameAssignmentError(raw: string): UsernamePolicyError | null
   if (!isValidUsernameFormat(next)) return "invalid_username";
   const lower = next.toLowerCase();
   if (RESTRICTED_USERNAMES.has(lower)) return "username_restricted";
-  if (profanityFilter.isProfane(next)) return "username_profanity";
+  if (isProfane(next)) return "username_profanity";
   return null;
 }

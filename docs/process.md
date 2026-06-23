@@ -19,7 +19,8 @@ Defined near the top of [server/src/rooms.ts](../server/src/rooms.ts), for examp
 
 - `RATE_MOVE_TO_MS` — throttles `moveTo`
 - `RATE_CHAT_MS` — chat
-- `CHAT_BACKLOG_MAX_LINES` / `CHAT_BACKLOG_WINDOW_MS` — in-memory room chat replay list included on each `welcome` (`chatBacklog`; not persisted across server restart)
+- `CHAT_BACKLOG_MAX_LINES` / `CHAT_BACKLOG_WINDOW_MS` — in-memory room chat replay list included on each `welcome` (`chatBacklog`; not persisted across server restart). Non-empty backlog delivery is also logged as `chat_backlog_delivered` in the daily JSONL for admin audience queries.
+- Player chat runs through shared profanity censor ([server/src/profanityFilter.ts](../server/src/profanityFilter.ts)); empty-after-censor sends return WS error `chat_blocked_profanity`. Successful `chat` events log censored `text`, optional `textOriginal`, `audienceLive`, and message `at` for admin history ([server/src/adminChatLog.ts](../server/src/adminChatLog.ts), `/admin/chat`).
 - `RATE_PLACE_MS` — placement and obstacle edits
 
 Adjust when tuning feel or abuse resistance.

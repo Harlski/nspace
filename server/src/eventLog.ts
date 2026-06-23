@@ -43,6 +43,8 @@ export const ANALYTICS_EVENT_KINDS = {
   nimPayoutDeadLetter: "nim_payout_dead_letter",
   placeBlock: "place_block",
   chat: "chat",
+  /** Player received room chat backlog lines on welcome. */
+  chatBacklogDelivered: "chat_backlog_delivered",
 } as const;
 
 /**

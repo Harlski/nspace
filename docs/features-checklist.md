@@ -25,7 +25,8 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 - [x] **`chatBacklog` on `welcome`** — bounded per-room buffer of recent non-bubble `chat` lines (reconnect / room switch)
 - [x] Periodic `state` / `stateDelta` with players’ positions and velocities (server tick; delta when only a subset changed)
 - [x] `playerJoined` / `playerLeft`
-- [x] `chat` broadcast with rate limit
+- [x] `chat` broadcast with rate limit; server-side **profanity censor** (shared word list with usernames + custom terms); all-profanity messages rejected with `chat_blocked_profanity`
+- [x] **Admin chat log** — `/admin/chat` + `GET /api/admin/chat` / `GET /api/admin/chat/message` (system admin): global / per-room / per-user search (7d default, 30d max), censored text with optional original + live/backlog audience; inline channel mute + feedback link ([server/src/adminChatLog.ts](../server/src/adminChatLog.ts), [server/src/adminChatPage.ts](../server/src/adminChatPage.ts), [server/src/profanityFilter.ts](../server/src/profanityFilter.ts))
 - [x] **`serverNotice` / `restart_pending`** — game-admin **`POST /api/admin/announce-restart`** (`etaSeconds` 5–7200, optional `message`) broadcasts a maintenance countdown on **all** game WebSockets, then exits via the normal shutdown path; optional **`POST /api/hooks/pre-deploy-restart`** (Bearer **`DEPLOY_RESTART_HOOK_SECRET`**, same body) for **GitHub Actions → VPS** deploy ([`.github/workflows/deploy-docker.yml`](../.github/workflows/deploy-docker.yml): 60s notice + wait before `docker compose stop`); client **HUD banner** + friendlier **disconnect** status line ([server/src/index.ts](../server/src/index.ts), [server/src/config.ts](../server/src/config.ts), [server/src/rooms.ts](../server/src/rooms.ts), [client/src/net/ws.ts](../client/src/net/ws.ts), [client/src/main.ts](../client/src/main.ts), [client/src/ui/hud.ts](../client/src/ui/hud.ts))
 
 ## Rooms and travel
