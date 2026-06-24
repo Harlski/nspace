@@ -74,8 +74,15 @@ import {
   restoreDynamicRoom,
   softDeleteDynamicRoom,
   updateDynamicRoomMetadata,
+  getDynamicRoomDeployablesAllowed,
   type RoomBackgroundNeutral,
 } from "./roomRegistry.js";
+import {
+  deployRejectMessage,
+  recordCosmeticDeploy,
+  validateCosmeticDeploy,
+} from "./cosmeticDeploy.js";
+import { getPublicLoadoutForWallet } from "./cosmeticStore.js";
 import {
   isJoinCode,
   isLegacyPlaySpaceSlug,
@@ -396,7 +403,11 @@ function tickPlayerStatesEqual(a: PlayerState, b: PlayerState): boolean {
     (a.nimSendAway ?? false) === (b.nimSendAway ?? false) &&
     (a.chatTyping ?? false) === (b.chatTyping ?? false) &&
     (a.challengeOpen ?? false) === (b.challengeOpen ?? false) &&
-    (a.worldcupCountry ?? null) === (b.worldcupCountry ?? null)
+    (a.worldcupCountry ?? null) === (b.worldcupCountry ?? null) &&
+    (a.cosmeticAura ?? null) === (b.cosmeticAura ?? null) &&
+    (a.cosmeticNameplate ?? null) === (b.cosmeticNameplate ?? null) &&
+    (a.cosmeticChatBubble ?? null) === (b.cosmeticChatBubble ?? null) &&
+    (a.cosmeticTrail ?? null) === (b.cosmeticTrail ?? null)
   );
 }
 
@@ -682,6 +693,11 @@ export interface PlayerState {
   challengeOpen?: boolean;
   /** worldcup: this player's chosen country (ISO alpha-2), so the field crowd can wave their flag. */
   worldcupCountry?: string | null;
+  /** Equipped passive cosmetic preset ids (compact; client renders VFX). */
+  cosmeticAura?: string | null;
+  cosmeticNameplate?: string | null;
+  cosmeticChatBubble?: string | null;
+  cosmeticTrail?: string | null;
 }
 
 export type ObstacleTile = {
@@ -993,6 +1009,10 @@ type OutMsg =
       roomJoinSpawn?: { x: number; z: number; customized: boolean };
       /** Dynamic rooms: this client may PATCH `joinSpawn` via `updateRoom`. */
       allowRoomJoinSpawnEdit?: boolean;
+      /** Dynamic rooms: deployable cosmetics allowed (default true). */
+      roomDeployablesAllowed?: boolean;
+      /** Dynamic rooms: owner may toggle deployables via `updateRoom`. */
+      allowRoomDeployablesEdit?: boolean;
       /** Recent room chat (non-bubble); same order as live `chat` messages. */
       chatBacklog: ChatBacklogLine[];
       // worldcup: current balls in this room (seasonal soccer)
@@ -1018,6 +1038,20 @@ type OutMsg =
       x: number;
       z: number;
       customized: boolean;
+    }
+  | {
+      type: "roomDeployablesAllowed";
+      roomId: string;
+      allowed: boolean;
+    }
+  | {
+      type: "cosmeticDeployed";
+      cosmeticSku: string;
+      presetId: string;
+      x: number;
+      z: number;
+      by: string;
+      expiresAt: number;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
@@ -2738,16 +2772,24 @@ function joinSpawnWelcomeExtras(
 ): {
   roomJoinSpawn?: { x: number; z: number; customized: boolean };
   allowRoomJoinSpawnEdit?: boolean;
+  roomDeployablesAllowed?: boolean;
+  allowRoomDeployablesEdit?: boolean;
 } {
   const n = normalizeRoomId(roomId);
   if (!isPlayerCreatedRoom(n)) return {};
+  const owner = getDynamicRoomOwnerAddress(n);
+  const actor = compactAddress(address);
+  const canEdit =
+    isAdmin(address) || (owner != null && compactAddress(owner) === actor);
   return {
     roomJoinSpawn: joinSpawnBroadcastPayload(n),
     allowRoomJoinSpawnEdit: allowActorRoomJoinSpawnEdit(
       n,
-      compactAddress(address),
+      actor,
       isAdmin(address)
     ),
+    roomDeployablesAllowed: getDynamicRoomDeployablesAllowed(n),
+    allowRoomDeployablesEdit: canEdit,
   };
 }
 
@@ -3662,10 +3704,19 @@ function advanceAlongPathHuman(
   return { changed: changedThis, arrivedTiles };
 }
 
+function applyCosmeticLoadoutToPlayer(player: PlayerState): void {
+  const loadout = getPublicLoadoutForWallet(player.address);
+  player.cosmeticAura = loadout.presetIds.aura ?? null;
+  player.cosmeticNameplate = loadout.presetIds.nameplate ?? null;
+  player.cosmeticChatBubble = loadout.presetIds.chatBubble ?? null;
+  player.cosmeticTrail = loadout.presetIds.trail ?? null;
+}
+
 function playerToOutState(conn: ClientConn): PlayerState {
   const base = conn.nimSendIntent
     ? { ...conn.player, nimSendAway: true }
     : { ...conn.player };
+  applyCosmeticLoadoutToPlayer(base);
   if (conn.chatTyping) base.chatTyping = true;
   if (conn.challengeOpen) base.challengeOpen = true;
   if (WORLDCUP_ENABLED) {
@@ -7051,6 +7102,7 @@ export function addClient(
         backgroundHueDeg?: number | null;
         backgroundNeutral?: RoomBackgroundNeutral | null;
         joinSpawn?: { x: number; z: number } | null;
+        deployablesAllowed?: boolean;
       } = {};
       if (msg.displayName !== undefined) {
         patch.displayName = String(msg.displayName);
@@ -7130,18 +7182,24 @@ export function addClient(
           return;
         }
       }
+      if ((msg as { deployablesAllowed?: unknown }).deployablesAllowed !== undefined) {
+        patch.deployablesAllowed = Boolean(
+          (msg as { deployablesAllowed?: unknown }).deployablesAllowed
+        );
+      }
       if (
         patch.displayName === undefined &&
         patch.isPublic === undefined &&
         patch.backgroundHueDeg === undefined &&
         patch.backgroundNeutral === undefined &&
-        patch.joinSpawn === undefined
+        patch.joinSpawn === undefined &&
+        patch.deployablesAllowed === undefined
       ) {
         wsSafeSend(ws, {
             type: "chat",
             from: "System",
             fromAddress: "SYSTEM",
-            text: "Send a room field to update (name, visibility, background, or entry spawn).",
+            text: "Send a room field to update (name, visibility, background, entry spawn, or deployables).",
             at: Date.now(),
           } satisfies OutMsg);
         return;
@@ -7186,6 +7244,64 @@ export function addClient(
           customized: p.customized,
         });
       }
+      if (patch.deployablesAllowed !== undefined) {
+        broadcast(nR, {
+          type: "roomDeployablesAllowed",
+          roomId: nR,
+          allowed: getDynamicRoomDeployablesAllowed(nR),
+        });
+      }
+      return;
+    }
+
+    if (msg.type === "deployCosmetic") {
+      const deployRoomId = normalizeRoomId(roomId);
+      const cosmeticSku = String(
+        (msg as { cosmeticSku?: string }).cosmeticSku ?? ""
+      ).trim();
+      const tx = Math.floor(Number((msg as { x?: unknown }).x));
+      const tz = Math.floor(Number((msg as { z?: unknown }).z));
+      if (!cosmeticSku || !Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const playerTile = snapToTile(conn.player.x, conn.player.z);
+      const validated = validateCosmeticDeploy({
+        wallet: address,
+        roomId: deployRoomId,
+        cosmeticSku,
+        playerX: playerTile.x,
+        playerZ: playerTile.z,
+        tileX: tx,
+        tileZ: tz,
+        deployablesAllowed: getDynamicRoomDeployablesAllowed(deployRoomId),
+        isWalkable: (x, z) => isWalkableForRoom(deployRoomId, x, z),
+      });
+      if (!validated.ok) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "SYSTEM",
+          text: deployRejectMessage(validated.reason),
+          at: Date.now(),
+        } satisfies OutMsg);
+        return;
+      }
+      recordCosmeticDeploy({
+        roomId: deployRoomId,
+        wallet: address,
+        cosmeticSku,
+        presetId: validated.presetId,
+        x: tx,
+        z: tz,
+        expiresAtMs: validated.expiresAtMs,
+      });
+      broadcast(deployRoomId, {
+        type: "cosmeticDeployed",
+        cosmeticSku,
+        presetId: validated.presetId,
+        x: tx,
+        z: tz,
+        by: address,
+        expiresAt: validated.expiresAtMs,
+      } satisfies OutMsg);
       return;
     }
 

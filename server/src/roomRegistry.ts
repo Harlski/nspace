@@ -31,6 +31,8 @@ export type PersistedRoomDef = {
   joinSpawnZ?: number | null;
   /** v7+: extra wallets (compact NQ) allowed to build/edit in this room beyond owner/admin. */
   builderAddresses?: string[];
+  /** v8+: when false, deployable cosmetics cannot be used in this room (default true). */
+  deployablesAllowed?: boolean;
 };
 
 type PersistedRoomsFileV1 = {
@@ -68,6 +70,11 @@ type PersistedRoomsFileV7 = {
   rooms: PersistedRoomDef[];
 };
 
+type PersistedRoomsFileV8 = {
+  version: 8;
+  rooms: PersistedRoomDef[];
+};
+
 type PersistedRoomsFile =
   | PersistedRoomsFileV1
   | PersistedRoomsFileV2
@@ -75,7 +82,8 @@ type PersistedRoomsFile =
   | PersistedRoomsFileV4
   | PersistedRoomsFileV5
   | PersistedRoomsFileV6
-  | PersistedRoomsFileV7;
+  | PersistedRoomsFileV7
+  | PersistedRoomsFileV8;
 
 /** Max wallets on a single room's builder allowlist. */
 export const MAX_ROOM_BUILDERS = 50;
@@ -100,6 +108,8 @@ type DynamicRoomEntry = {
   joinSpawnZ: number | null;
   /** Extra wallets (compact NQ keys) allowed to build/edit beyond owner/admin. */
   builderAddresses: string[];
+  /** When false, players cannot deploy tile cosmetics in this room. */
+  deployablesAllowed: boolean;
 };
 
 import { JOIN_CODE_CHARS, JOIN_CODE_LENGTH } from "./joinCode.js";
@@ -242,8 +252,8 @@ function generateUniqueRoomId(defaultRoomIds: ReadonlySet<string>): string {
 
 function persistRoomsFile(): void {
   ensureDataDir();
-  const payload: PersistedRoomsFileV7 = {
-    version: 7,
+  const payload: PersistedRoomsFileV8 = {
+    version: 8,
     rooms: [...dynamicRooms.entries()].map(([id, entry]) => ({
       id,
       bounds: entry.bounds,
@@ -264,6 +274,7 @@ function persistRoomsFile(): void {
       ...(entry.builderAddresses.length
         ? { builderAddresses: entry.builderAddresses }
         : {}),
+      ...(entry.deployablesAllowed === false ? { deployablesAllowed: false } : {}),
     })),
   };
   const tmp = `${ROOM_REGISTRY_FILE}.tmp`;
@@ -285,7 +296,8 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
       raw.version !== 4 &&
       raw.version !== 5 &&
       raw.version !== 6 &&
-      raw.version !== 7
+      raw.version !== 7 &&
+      raw.version !== 8
     ) {
       return;
     }
@@ -356,6 +368,11 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
             )
           : [];
 
+      const deployablesAllowed =
+        raw.version >= 8
+          ? (r as { deployablesAllowed?: unknown }).deployablesAllowed !== false
+          : true;
+
       dynamicRooms.set(id, {
         bounds: {
           minX: Math.floor(r.bounds.minX),
@@ -373,6 +390,7 @@ export function loadRoomRegistry(defaultRoomIds: ReadonlySet<string>): void {
         joinSpawnX,
         joinSpawnZ,
         builderAddresses,
+        deployablesAllowed,
       });
     }
   } catch (err) {
@@ -575,6 +593,7 @@ export function createDynamicRoom(
     joinSpawnX: null,
     joinSpawnZ: null,
     builderAddresses: [],
+    deployablesAllowed: true,
   });
   persistRoomsFile();
   return { ok: true, id };
@@ -617,6 +636,7 @@ export function createOfficialDynamicRoom(
     joinSpawnX: null,
     joinSpawnZ: null,
     builderAddresses: [],
+    deployablesAllowed: true,
   });
   persistRoomsFile();
   return { ok: true, id };
@@ -692,6 +712,12 @@ export function allowActorRoomBackgroundHueEdit(
   return compactAddress(entry.ownerAddress) === actorCompact;
 }
 
+export function getDynamicRoomDeployablesAllowed(roomId: string): boolean {
+  const entry = dynamicRooms.get(normalizeRoomIdRaw(roomId));
+  if (!entry) return true;
+  return entry.deployablesAllowed !== false;
+}
+
 export function updateDynamicRoomMetadata(
   roomId: string,
   patch: {
@@ -703,6 +729,7 @@ export function updateDynamicRoomMetadata(
     joinSpawn?: { x: number; z: number } | null;
     /** Replace the room's builder allowlist (admin-only). */
     builderAddresses?: string[];
+    deployablesAllowed?: boolean;
   },
   actorCompact: string,
   isAdminUser: boolean
@@ -713,7 +740,8 @@ export function updateDynamicRoomMetadata(
     patch.backgroundHueDeg === undefined &&
     patch.backgroundNeutral === undefined &&
     patch.joinSpawn === undefined &&
-    patch.builderAddresses === undefined
+    patch.builderAddresses === undefined &&
+    patch.deployablesAllowed === undefined
   ) {
     return { ok: false, reason: "Nothing to update." };
   }
@@ -793,6 +821,9 @@ export function updateDynamicRoomMetadata(
   }
   if (patch.builderAddresses !== undefined) {
     entry.builderAddresses = sanitizeBuilderAddresses(patch.builderAddresses);
+  }
+  if (patch.deployablesAllowed !== undefined) {
+    entry.deployablesAllowed = patch.deployablesAllowed !== false;
   }
   dynamicRooms.set(id, entry);
   persistRoomsFile();

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { PlayerState } from "../types.js";
+import { syncCosmeticLoadoutVfx, spawnDeployableVfx, nameplateColorForPreset } from "../cosmetics/loadoutVfx.js";
 import type {
   BillboardState,
   ObstacleProps,
@@ -562,7 +563,7 @@ function drawTypingDotsToCanvas(
 
 function createNameLabelSprite(
   displayName: string,
-  opts?: { away?: boolean }
+  opts?: { away?: boolean; borderColor?: string }
 ): {
   sprite: THREE.Sprite;
   texture: THREE.CanvasTexture;
@@ -592,6 +593,11 @@ function createNameLabelSprite(
   ctx.beginPath();
   ctx.roundRect(0, 0, w, h, radius);
   ctx.fill();
+  if (opts?.borderColor) {
+    ctx.strokeStyle = opts.borderColor;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
   ctx.textAlign = "left";
   ctx.fillStyle = away ? NAME_LABEL_TEXT_AWAY : NAME_LABEL_TEXT_ACTIVE;
   ctx.fillText(text, padX, h / 2 + 0.5);
@@ -1305,6 +1311,12 @@ export class Game {
   private buildMode = false;
   /** Place walkable tiles outside the core room (toggle with F). */
   private floorExpandMode = false;
+  private roomDeployablesAllowed = true;
+  private roomJoinSpawnTile: {
+    x: number;
+    z: number;
+    customized: boolean;
+  } | null = null;
   /** Cinema `?stream=1` — no avatar, no movement or floor edits. */
   private streamObserverMode = false;
   private readonly extraFloorKeys = new Set<string>();
@@ -1921,6 +1933,7 @@ export class Game {
   /** Uniform scale of the identicon sphere mesh (texture “zoom” via size). */
   private identiconScale = 1;
   private readonly identiconEulerScratch = new THREE.Euler();
+  private readonly cosmeticLastPos = new Map<string, { x: number; z: number; t: number }>();
 
   constructor(canvasHost: HTMLElement) {
     this.canvasHost = canvasHost;
@@ -2504,6 +2517,20 @@ export class Game {
   ): void {
     this.roomJoinSpawnTile = tile;
     this.syncRoomEntrySpawnMarker(performance.now() * 0.001);
+  }
+
+  setRoomDeployablesAllowed(allowed: boolean): void {
+    this.roomDeployablesAllowed = allowed;
+  }
+
+  showCosmeticDeployed(
+    presetId: string,
+    x: number,
+    z: number,
+    expiresAt: number
+  ): void {
+    spawnDeployableVfx(this.scene, presetId, x, z, expiresAt);
+    this.requestRender();
   }
 
   private syncRoomEntrySpawnMarker(phaseSec: number): void {
@@ -12281,6 +12308,15 @@ export class Game {
     this.requestRender();
   }
 
+  private playerMovedRecently(address: string, x: number, z: number): boolean {
+    const now = performance.now();
+    const prev = this.cosmeticLastPos.get(address);
+    this.cosmeticLastPos.set(address, { x, z, t: now });
+    if (!prev) return false;
+    const dist = Math.hypot(x - prev.x, z - prev.z);
+    return dist > 0.05 && now - prev.t < 500;
+  }
+
   syncState(players: PlayerState[]): void {
     let visualChanged = false;
     const seen = new Set<string>();
@@ -12323,6 +12359,11 @@ export class Game {
           this.syncAvatarNameLabelFromState(this.selfMesh, p);
           this.syncTypingIndicatorForGroup(this.selfMesh, p);
           this.syncWorldcupChallengeBubble(this.selfMesh, p);
+          syncCosmeticLoadoutVfx(
+            this.selfMesh,
+            p,
+            this.playerMovedRecently(p.address, p.x, p.z)
+          );
         }
         continue;
       }
@@ -12347,6 +12388,7 @@ export class Game {
       this.syncAvatarNameLabelFromState(g, p);
       this.syncTypingIndicatorForGroup(g, p);
       this.syncWorldcupChallengeBubble(g, p);
+      syncCosmeticLoadoutVfx(g, p, this.playerMovedRecently(p.address, p.x, p.z));
     }
     for (const addr of this.others.keys()) {
       if (!seen.has(addr)) {
@@ -14094,7 +14136,8 @@ export class Game {
   private replaceAvatarNameLabel(
     g: THREE.Group,
     displayName: string,
-    away: boolean
+    away: boolean,
+    nameplatePreset?: string | null
   ): void {
     const oldSprite = g.userData.nameSprite as THREE.Sprite | undefined;
     const oldTex = g.userData.nameTexture as THREE.CanvasTexture | undefined;
@@ -14109,7 +14152,7 @@ export class Game {
     }
     const { sprite: nameSprite, texture: nameTex } = createNameLabelSprite(
       displayName,
-      { away }
+      { away, borderColor: nameplateColorForPreset(nameplatePreset) ?? undefined }
     );
     g.userData.nameSprite = nameSprite;
     g.userData.nameTexture = nameTex;
@@ -14121,13 +14164,13 @@ export class Game {
     const name =
       (p.displayName && String(p.displayName).trim()) ||
       walletDisplayName(p.address);
-    const state = `${away ? 1 : 0}\0${name}`;
+    const state = `${away ? 1 : 0}\0${name}\0${p.cosmeticNameplate ?? ""}`;
     if (g.userData.nameLabelSyncState === state) {
       return;
     }
     g.userData.nameLabelSyncState = state;
     g.userData.displayName = name;
-    this.replaceAvatarNameLabel(g, name, away);
+    this.replaceAvatarNameLabel(g, name, away, p.cosmeticNameplate);
     this.syncNameLabelScaleAndPosition(g);
   }
 

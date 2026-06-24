@@ -126,6 +126,7 @@ import { adminHeaderPageHtml } from "./adminHeaderPage.js";
 import { adminFeedbackPageHtml } from "./adminFeedbackPage.js";
 import { adminChatPageHtml } from "./adminChatPage.js";
 import { adminCampaignPageHtml } from "./adminCampaignPage.js";
+import { adminCosmeticsPageHtml } from "./adminCosmeticsPage.js";
 import { advertisePageHtml } from "./advertisePage.js";
 import { advertiseGuidePageHtml } from "./advertiseGuidePage.js";
 import {
@@ -199,6 +200,28 @@ import {
 } from "./rotationSetStore.js";
 import { rebuildBillboardsForRotationSet } from "./rotationSetSync.js";
 import { getPaymentIntent } from "./paymentIntentClient.js";
+import {
+  initCosmeticStore,
+  listCosmeticPresets,
+  listAdminCatalog,
+  getCatalogEntry,
+  getCatalogChangelog,
+  createCatalogEntry,
+  updateCatalogEntry,
+  publishCatalogEntry,
+  archiveCatalogEntry,
+  grantEntitlement,
+  listPublishedShop,
+  listEntitlements,
+  getLoadout,
+  setLoadoutSlot,
+  getPublicLoadoutForWallet,
+} from "./cosmeticStore.js";
+import type { PassiveSlot } from "./cosmeticPresets.js";
+import {
+  createCosmeticUnlockPaymentIntent,
+  confirmCosmeticUnlockPaymentForSku,
+} from "./cosmeticFulfill.js";
 import { BILLBOARD_ADVERTS_CATALOG } from "./billboardAdvertsCatalog.js";
 import { sendTelegramPlainText } from "./telegramNotify.js";
 import {
@@ -581,6 +604,13 @@ app.get("/api/player-profile/:address", (req, res) => {
           a.id.localeCompare(b.id)
       )
       .slice(0, 3);
+    const loadout = getPublicLoadoutForWallet(addr);
+    pub.cosmeticLoadout = {
+      aura: loadout.presetIds.aura ?? null,
+      nameplate: loadout.presetIds.nameplate ?? null,
+      chatBubble: loadout.presetIds.chatBubble ?? null,
+      trail: loadout.presetIds.trail ?? null,
+    };
     res.json(pub);
   } catch (err) {
     console.error("[player-profile/get]", err);
@@ -1192,6 +1222,10 @@ app.get("/admin/campaign", (_req, res) => {
   res.type("html").send(adminCampaignPageHtml());
 });
 
+app.get("/admin/cosmetics", (_req, res) => {
+  res.type("html").send(adminCosmeticsPageHtml());
+});
+
 app.get("/admin/rooms", (_req, res) => {
   res.type("html").send(adminRoomsPageHtml());
 });
@@ -1762,6 +1796,271 @@ app.post(
     }
   }
 );
+
+app.get("/api/admin/cosmetics/presets", requireSystemAdminWallet, (_req, res) => {
+  res.json({ presets: listCosmeticPresets() });
+});
+
+app.get("/api/admin/cosmetics/catalog", requireSystemAdminWallet, (_req, res) => {
+  res.json({ entries: listAdminCatalog() });
+});
+
+app.post("/api/admin/cosmetics/catalog", requireSystemAdminWallet, (req, res) => {
+  const actor = jwtAddressFromReq(req);
+  if (!actor) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  let priceLuna: bigint;
+  try {
+    priceLuna = BigInt(String(body.priceLuna ?? "0"));
+  } catch {
+    res.status(400).json({ error: "invalid_price" });
+    return;
+  }
+  const result = createCatalogEntry(
+    {
+      cosmeticSku: String(body.cosmeticSku ?? ""),
+      presetId: String(body.presetId ?? ""),
+      displayName: String(body.displayName ?? ""),
+      description: String(body.description ?? ""),
+      collection: String(body.collection ?? ""),
+      sortOrder: Number(body.sortOrder) || 0,
+      priceLuna,
+      cooldownSec:
+        body.cooldownSec != null ? Number(body.cooldownSec) : undefined,
+      durationSec:
+        body.durationSec != null ? Number(body.durationSec) : undefined,
+      roomCap: body.roomCap != null ? Number(body.roomCap) : undefined,
+      deployRange:
+        body.deployRange != null ? Number(body.deployRange) : undefined,
+    },
+    actor
+  );
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.status(201).json({ entry: result.entry });
+});
+
+app.get("/api/admin/cosmetics/catalog/:sku", requireSystemAdminWallet, (req, res) => {
+  const entry = getCatalogEntry(String(req.params.sku ?? ""));
+  if (!entry) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ entry, changelog: getCatalogChangelog(entry.cosmeticSku) });
+});
+
+app.put("/api/admin/cosmetics/catalog/:sku", requireSystemAdminWallet, (req, res) => {
+  const actor = jwtAddressFromReq(req);
+  if (!actor) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const patch: Parameters<typeof updateCatalogEntry>[1] = {};
+  if (body.displayName !== undefined) patch.displayName = String(body.displayName);
+  if (body.description !== undefined) patch.description = String(body.description);
+  if (body.collection !== undefined) patch.collection = String(body.collection);
+  if (body.sortOrder !== undefined) patch.sortOrder = Number(body.sortOrder) || 0;
+  if (body.priceLuna !== undefined) {
+    try {
+      patch.priceLuna = BigInt(String(body.priceLuna));
+    } catch {
+      res.status(400).json({ error: "invalid_price" });
+      return;
+    }
+  }
+  if (body.cooldownSec !== undefined) {
+    patch.cooldownSec =
+      body.cooldownSec === null ? null : Number(body.cooldownSec);
+  }
+  if (body.durationSec !== undefined) {
+    patch.durationSec =
+      body.durationSec === null ? null : Number(body.durationSec);
+  }
+  if (body.roomCap !== undefined) {
+    patch.roomCap = body.roomCap === null ? null : Number(body.roomCap);
+  }
+  if (body.deployRange !== undefined) {
+    patch.deployRange =
+      body.deployRange === null ? null : Number(body.deployRange);
+  }
+  const result = updateCatalogEntry(String(req.params.sku ?? ""), patch, actor);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ entry: result.entry });
+});
+
+app.post(
+  "/api/admin/cosmetics/catalog/:sku/publish",
+  requireSystemAdminWallet,
+  (req, res) => {
+    const actor = jwtAddressFromReq(req);
+    if (!actor) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    const result = publishCatalogEntry(String(req.params.sku ?? ""), actor);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json({ entry: result.entry });
+  }
+);
+
+app.post(
+  "/api/admin/cosmetics/catalog/:sku/archive",
+  requireSystemAdminWallet,
+  (req, res) => {
+    const actor = jwtAddressFromReq(req);
+    if (!actor) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    const result = archiveCatalogEntry(String(req.params.sku ?? ""), actor);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json({ entry: result.entry });
+  }
+);
+
+app.post(
+  "/api/admin/cosmetics/catalog/:sku/grant",
+  requireSystemAdminWallet,
+  (req, res) => {
+    const actor = jwtAddressFromReq(req);
+    if (!actor) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    const wallet = String((req.body as { wallet?: string })?.wallet ?? "");
+    const result = grantEntitlement(wallet, String(req.params.sku ?? ""), actor, "grant");
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json({ ok: true, created: result.created });
+  }
+);
+
+app.get("/api/cosmetics/shop", (_req, res) => {
+  const entries = listPublishedShop();
+  const byCollection = new Map<string, typeof entries>();
+  for (const e of entries) {
+    const key = e.collection.trim() || "General";
+    const list = byCollection.get(key) ?? [];
+    list.push(e);
+    byCollection.set(key, list);
+  }
+  const collections = [...byCollection.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+    .map(([name, items]) => ({ name, items }));
+  res.json({ collections });
+});
+
+app.get("/api/cosmetics/wardrobe", requireJwt, (req, res) => {
+  const wallet = jwtAddressFromReq(req);
+  if (!wallet) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const ownedSkus = new Set(listEntitlements(wallet).map((e) => e.cosmeticSku));
+  const shop = listPublishedShop().map((e) => ({
+    ...e,
+    owned: ownedSkus.has(e.cosmeticSku),
+  }));
+  res.json({
+    entitlements: listEntitlements(wallet),
+    loadout: getLoadout(wallet),
+    shop,
+  });
+});
+
+app.put("/api/cosmetics/loadout", requireJwt, (req, res) => {
+  const wallet = jwtAddressFromReq(req);
+  if (!wallet) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const body = (req.body ?? {}) as { slot?: string; cosmeticSku?: string | null };
+  const slot = String(body.slot ?? "") as PassiveSlot;
+  const validSlots: PassiveSlot[] = ["aura", "nameplate", "chatBubble", "trail"];
+  if (!validSlots.includes(slot)) {
+    res.status(400).json({ error: "invalid_slot" });
+    return;
+  }
+  const sku =
+    body.cosmeticSku === null || body.cosmeticSku === undefined
+      ? null
+      : String(body.cosmeticSku);
+  const result = setLoadoutSlot(wallet, slot, sku);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ loadout: getLoadout(wallet) });
+});
+
+app.post("/api/cosmetics/unlock-intent", requireJwt, async (req, res) => {
+  const wallet = jwtAddressFromReq(req);
+  if (!wallet) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const cosmeticSku = String((req.body as { cosmeticSku?: string })?.cosmeticSku ?? "");
+  try {
+    const result = await createCosmeticUnlockPaymentIntent(wallet, cosmeticSku);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    const luna = BigInt(result.intent.amountLuna);
+    res.json({
+      entry: result.entry,
+      intent: {
+        ...result.intent,
+        amountNimLabel: formatLunaAsNimLabel(luna),
+      },
+    });
+  } catch (e) {
+    console.error("[api/cosmetics/unlock-intent]", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.post("/api/cosmetics/unlock-sync", requireJwt, async (req, res) => {
+  const wallet = jwtAddressFromReq(req);
+  if (!wallet) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const body = (req.body ?? {}) as { intentId?: string; cosmeticSku?: string };
+  try {
+    const result = await confirmCosmeticUnlockPaymentForSku(
+      wallet,
+      String(body.intentId ?? ""),
+      String(body.cosmeticSku ?? "")
+    );
+    if (!result.ok) {
+      const status = result.pending ? 202 : 400;
+      res.status(status).json({ error: result.error, pending: result.pending });
+      return;
+    }
+    res.json(result);
+  } catch (e) {
+    console.error("[api/cosmetics/unlock-sync]", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
 
 app.get("/api/admin/campaign/overview", requireSystemAdminWallet, (_req, res) => {
   const liveIds = campaignIdsInRotationSets();
@@ -2973,6 +3272,7 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
 
 initCampaignStore();
+initCosmeticStore();
 initCampaignAnalyticsStore();
 const repairedCampaignBalances = repairInflatedCampaignBalances();
 if (repairedCampaignBalances > 0) {

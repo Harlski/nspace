@@ -90,6 +90,7 @@ import {
   sendMoveObstacle,
   sendMoveTo,
   sendStopMove,
+  sendDeployCosmetic,
   sendPublishDesign,
   sendDeleteDesign,
   sendUpdateDesignVisibility,
@@ -1916,6 +1917,8 @@ function enterGame(
   let welcomeAllowRoomBackgroundHueEdit = false;
   /** From server welcome; who may set wallet-room guest join tile (`joinSpawn`). */
   let welcomeAllowRoomJoinSpawnEdit = false;
+  let welcomeAllowRoomDeployablesEdit = false;
+  let welcomeRoomDeployablesAllowed = true;
   let welcomeAllowPublishDesign = false;
   /** Last welcome `roomBackgroundHueDeg` (undefined = built-in / omitted). */
   let latestWelcomeBackgroundHueDeg: number | null | undefined = undefined;
@@ -2384,6 +2387,10 @@ function enterGame(
           !isCanvas &&
           (dynamicRoom || rid === HUB_ROOM_ID || rid === CHAMBER_ROOM_ID)));
     hud.setRoomEntrySpawnPanelVisible(show);
+    hud.setRoomDeployablesAllowedUi(
+      welcomeAllowRoomDeployablesEdit && wsOpen && dynamicRoom,
+      welcomeRoomDeployablesAllowed
+    );
     if (!show) {
       hud.clearRoomEntrySpawnPickUi();
       game.setRoomEntrySpawnPickHandler(null);
@@ -2943,6 +2950,13 @@ function enterGame(
       game.setRoomEntrySpawnPickHandler(null);
       syncRoomSidePanels();
     });
+    hud.onRoomDeployablesAllowedChange((allowed) => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      welcomeRoomDeployablesAllowed = allowed;
+      sendUpdateRoom(socket, normalizeRoomId(game.getRoomId()), {
+        deployablesAllowed: allowed,
+      });
+    });
     cancelActiveNimClaim?.();
     cancelActiveNimClaim = null;
     nimClaimUiRef = null;
@@ -3017,6 +3031,9 @@ function enterGame(
       directInviteActive,
       isGuest: selfAddress.startsWith("guest:"),
       gamesAvailable: WORLDCUP_ENABLED_CLIENT,
+      onArmDeployable: () => {
+        hud.setStatus("Tap a walkable tile to deploy your item.");
+      },
     });
 
     game.setSelfQuickEmojiOpener(() => {
@@ -3135,6 +3152,14 @@ function enterGame(
     game.setTileClickHandler((x, z, layer = 0) => {
       if (streamMode) return;
       hud.dismissOtherPlayerOverlays();
+      if (hud.isDeployableArmed()) {
+        const sku = hud.getArmedDeployableSku();
+        if (sku && socket.readyState === WebSocket.OPEN) {
+          sendDeployCosmetic(socket, sku, x, z);
+          hud.clearDeployableArm();
+        }
+        return;
+      }
       // Check if in signpost mode (only in build mode)
       if (game.getBuildMode() && hud.isSignpostModeActive()) {
         // Validate placement is within build radius
@@ -3948,6 +3973,21 @@ function enterGame(
       }
       return;
     }
+    if (msg.type === "roomDeployablesAllowed") {
+      if (normalizeRoomId(msg.roomId) === normalizeRoomId(game.getRoomId())) {
+        welcomeRoomDeployablesAllowed = msg.allowed;
+        game.setRoomDeployablesAllowed(msg.allowed);
+        hud.setRoomDeployablesAllowedUi(
+          welcomeAllowRoomDeployablesEdit,
+          msg.allowed
+        );
+      }
+      return;
+    }
+    if (msg.type === "cosmeticDeployed") {
+      game.showCosmeticDeployed(msg.presetId, msg.x, msg.z, msg.expiresAt);
+      return;
+    }
     if (msg.type === "roomBackgroundHue") {
       const nr = normalizeRoomId(msg.roomId);
       if (nr === normalizeRoomId(game.getRoomId())) {
@@ -4112,6 +4152,8 @@ function enterGame(
       welcomeAllowRoomBackgroundHueEdit =
         msg.allowRoomBackgroundHueEdit === true;
       welcomeAllowRoomJoinSpawnEdit = msg.allowRoomJoinSpawnEdit === true;
+      welcomeAllowRoomDeployablesEdit = msg.allowRoomDeployablesEdit === true;
+      welcomeRoomDeployablesAllowed = msg.roomDeployablesAllowed !== false;
       welcomeAllowPublishDesign = msg.allowPublishDesign === true;
       prefabUi.setAllowPublish(welcomeAllowPublishDesign);
       void fetchPlaceableDesigns();
@@ -4150,6 +4192,7 @@ function enterGame(
         allowExtraFloor: roomAllowExtraFloor,
       });
       game.setRoomJoinSpawnFromWelcome(msg.roomJoinSpawn ?? null);
+      game.setRoomDeployablesAllowed(msg.roomDeployablesAllowed !== false);
 
       if (isCanvas || !roomAllowPlaceBlocks) {
         game.setBuildMode(false);

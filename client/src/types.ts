@@ -19,4 +19,9 @@ export interface PlayerState {
   challengeOpen?: boolean;
   /** worldcup: this player's chosen country (ISO alpha-2), so the field crowd can wave their flag. */
   worldcupCountry?: string | null;
+  /** Equipped passive cosmetic preset ids from server loadout. */
+  cosmeticAura?: string | null;
+  cosmeticNameplate?: string | null;
+  cosmeticChatBubble?: string | null;
+  cosmeticTrail?: string | null;
 }

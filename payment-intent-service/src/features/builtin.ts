@@ -73,6 +73,33 @@ const billboardSlotHandler: PaymentFeatureHandler = {
   },
 };
 
+/** Paid cosmetic unlock (fulfilled by game server after verify). */
+const cosmeticUnlockHandler: PaymentFeatureHandler = {
+  kind: "nspace.cosmetic.unlock",
+  validatePayload(payload) {
+    if (payload !== null && typeof payload !== "object") {
+      throw new Error("featurePayload must be an object or null");
+    }
+    const o = (payload ?? {}) as Record<string, unknown>;
+    const cosmeticSku = String(o.cosmeticSku ?? "").trim();
+    if (!cosmeticSku) throw new Error("featurePayload.cosmeticSku is required");
+  },
+  quote(input: FeatureQuoteInput) {
+    const o = (input.featurePayload ?? {}) as Record<string, unknown>;
+    const payloadLuna = o["amountLuna"];
+    if (payloadLuna === undefined || payloadLuna === null) {
+      throw new Error("featurePayload.amountLuna is required for cosmetic unlock");
+    }
+    const amountLuna = readBigIntLuna(payloadLuna, "amountLuna");
+    if (amountLuna < 1n) throw new Error("amountLuna must be >= 1");
+    const cosmeticSku = String(o.cosmeticSku ?? "").trim();
+    return {
+      amountLuna,
+      quoteMetadata: { cosmeticSku, tier: "cosmetic_unlock" },
+    };
+  },
+};
+
 function notImplemented(kind: string): PaymentFeatureHandler {
   return {
     kind,
@@ -88,6 +115,7 @@ export function registerBuiltinFeatureHandlers(): void {
   registerFeatureHandler(testMinHandler);
   registerFeatureHandler(notImplemented("nspace.username.exclusive"));
   registerFeatureHandler(billboardSlotHandler);
+  registerFeatureHandler(cosmeticUnlockHandler);
   registerFeatureHandler(notImplemented("nspace.teleporter.purchase"));
   registerFeatureHandler(notImplemented("nspace.land.grant"));
 }

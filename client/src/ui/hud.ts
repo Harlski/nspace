@@ -283,6 +283,8 @@ export function createHud(
     flagEmojiFor?: (code: string) => string;
     /** Self clicked the profile flag chip → open the country picker (host owns the modal). */
     onEditOwnCountry?: () => void;
+    /** After Wardrobe equip/unequip — host may refresh local loadout preview. */
+    onCosmeticLoadoutChanged?: () => void;
   }
 ): {
   setStatus: (s: string) => void;
@@ -388,8 +390,13 @@ export function createHud(
   setRoomEntrySpawnPanelVisible: (visible: boolean) => void;
   onRoomEntrySpawnPickState: (fn: ((armed: boolean) => void) | null) => void;
   onRoomEntrySpawnUseCenter: (fn: (() => void) | null) => void;
+  onRoomDeployablesAllowedChange: (fn: ((allowed: boolean) => void) | null) => void;
+  setRoomDeployablesAllowedUi: (visible: boolean, allowed: boolean) => void;
   clearRoomEntrySpawnPickUi: () => void;
   isRoomEntrySpawnPickArmed: () => boolean;
+  isDeployableArmed: () => boolean;
+  getArmedDeployableSku: () => string | null;
+  clearDeployableArm: () => void;
   showGateContextMenu: (
     clientX: number,
     clientY: number,
@@ -2270,16 +2277,31 @@ export function createHud(
   roomEntrySpawnCenterBtn.className = "tile-inspector__reset-btn";
   roomEntrySpawnCenterBtn.id = "hud-room-entry-spawn-center";
   roomEntrySpawnCenterBtn.textContent = "Use room center";
+  const roomDeployablesRow = document.createElement("label");
+  roomDeployablesRow.className = "hud-mode-sidebar__deployables-row";
+  roomDeployablesRow.hidden = true;
+  const roomDeployablesCheckbox = document.createElement("input");
+  roomDeployablesCheckbox.type = "checkbox";
+  roomDeployablesCheckbox.id = "hud-room-deployables-allowed";
+  roomDeployablesCheckbox.checked = true;
+  const roomDeployablesText = document.createElement("span");
+  roomDeployablesText.textContent = "Allow deployables in this room";
+  roomDeployablesRow.append(roomDeployablesCheckbox, roomDeployablesText);
   roomEntrySpawnPanel.appendChild(roomEntrySpawnHead);
   roomEntrySpawnPanel.appendChild(roomEntrySpawnHintEl);
   roomEntrySpawnPanel.appendChild(roomEntrySpawnPickBtn);
   roomEntrySpawnPanel.appendChild(roomEntrySpawnCenterBtn);
+  roomEntrySpawnPanel.appendChild(roomDeployablesRow);
   hueDock.appendChild(roomEntrySpawnPanel);
 
   let roomEntrySpawnPickArmed = false;
   let roomEntrySpawnPickStateHandler: ((armed: boolean) => void) | null = null;
   let roomEntrySpawnUseCenterHandler: (() => void) | null = null;
+  let roomDeployablesChangeHandler: ((allowed: boolean) => void) | null = null;
 
+  roomDeployablesCheckbox.addEventListener("change", () => {
+    roomDeployablesChangeHandler?.(roomDeployablesCheckbox.checked);
+  });
   roomEntrySpawnPickBtn.addEventListener("click", (e) => {
     e.preventDefault();
     roomEntrySpawnPickArmed = !roomEntrySpawnPickArmed;
@@ -2496,7 +2518,8 @@ export function createHud(
     | "games"
     | "soccer"
     | "soccer1v1"
-    | "oneVone";
+    | "oneVone"
+    | "items";
   type ActionWheelSlice = {
     glyph: string;
     label: string;
@@ -2569,6 +2592,9 @@ export function createHud(
   let actionWheelIsGuest = false;
   // Whether game/1v1 entries should appear at all (worldcup enabled).
   let actionWheelGamesAvailable = false;
+  let actionWheelDeployables: Array<{ sku: string; label: string }> = [];
+  let actionWheelArmDeployHandler: ((sku: string) => void) | null = null;
+  let deployableArmSku: string | null = null;
   let actionWheelOpenedFloor: FloorTile | null = null;
   let actionWheelOutsideBound = false;
 
@@ -2707,7 +2733,29 @@ export function createHud(
       }
       return fillHexSlots(back, bySlot);
     }
-    // Home → My Rooms (Rooms modal) / Private Room (your Play Space).
+    if (actionWheelLevel === "items") {
+      const deploySlices: ActionWheelSlice[] = actionWheelDeployables.map(
+        (item) => ({
+          glyph: "✨",
+          label: item.label.slice(0, 8),
+          ariaLabel: `Deploy ${item.label}`,
+          activate: () => {
+            deployableArmSku = item.sku;
+            actionWheelArmDeployHandler?.(item.sku);
+            closeActionWheel();
+          },
+        })
+      );
+      if (deploySlices.length === 0) {
+        deploySlices.push({
+          glyph: "—",
+          label: "None",
+          ariaLabel: "No deployables owned",
+          disabled: true,
+        });
+      }
+      return fillHexSlots(back, placeSlices(deploySlices));
+    }
     if (actionWheelLevel === "home") {
       const myRooms: ActionWheelSlice = {
         glyph: "🚪",
@@ -2823,6 +2871,28 @@ export function createHud(
       ariaLabel: "Open games",
       activate: () => pushActionWheelLevel("games"),
     };
+    const items: ActionWheelSlice = {
+      glyph: "🎁",
+      label: "Items",
+      ariaLabel: "Owned deployables",
+      activate: () => {
+        void (async () => {
+          try {
+            const { fetchWardrobe } = await import("../cosmetics/api.js");
+            const w = await fetchWardrobe();
+            const owned = new Set(w.entitlements.map((e) => e.cosmeticSku));
+            actionWheelDeployables = w.shop
+              .filter(
+                (s) => s.slot === "deployable" && owned.has(s.cosmeticSku)
+              )
+              .map((s) => ({ sku: s.cosmeticSku, label: s.displayName }));
+          } catch {
+            actionWheelDeployables = [];
+          }
+          pushActionWheelLevel("items");
+        })();
+      },
+    };
     const oneVone: ActionWheelSlice = {
       glyph: "🥅",
       label: "1v1",
@@ -2836,8 +2906,8 @@ export function createHud(
         ? [emoji, oneVone]
         : [emoji]
       : actionWheelGamesAvailable
-        ? [emoji, home, games, oneVone]
-        : [emoji, home];
+        ? [emoji, items, home, games, oneVone]
+        : [emoji, items, home];
     return fillHexSlots(close, placeSlices(rootItems));
   }
   function renderActionWheel(): void {
@@ -3261,6 +3331,9 @@ export function createHud(
   oppProfileMessage.className = "other-player-profile__message-wrap";
   const oppProfileRooms = document.createElement("div");
   oppProfileRooms.className = "other-player-profile__rooms";
+  const oppProfileWardrobe = document.createElement("div");
+  oppProfileWardrobe.className = "other-player-profile__wardrobe";
+  oppProfileWardrobe.hidden = true;
   const oppProfileNote = document.createElement("p");
   oppProfileNote.className = "other-player-profile__message-note";
   oppProfileNote.hidden = true;
@@ -3283,6 +3356,7 @@ export function createHud(
     oppAdminRow,
     oppProfileMessage,
     oppProfileRooms,
+    oppProfileWardrobe,
     oppProfileNote
   );
   oppCardMain.append(oppIdent, oppCardBody);
@@ -4355,6 +4429,33 @@ export function createHud(
           a.id.localeCompare(b.id)
       );
       renderProfileRooms(kind, rooms.slice(0, 3));
+      if (kind === "self") {
+        oppProfileWardrobe.hidden = false;
+        const { mountWardrobePanel } = await import("../cosmetics/wardrobePanel.js");
+        mountWardrobePanel(oppProfileWardrobe, {
+          onLoadoutChanged: () => opts?.onCosmeticLoadoutChanged?.(),
+        });
+      } else {
+        oppProfileWardrobe.hidden = true;
+        oppProfileWardrobe.replaceChildren();
+        const loadout = (j as { cosmeticLoadout?: Record<string, string | null> })
+          .cosmeticLoadout;
+        if (loadout) {
+          const chips = document.createElement("div");
+          chips.className = "other-player-profile__cosmetic-chips";
+          for (const [slot, preset] of Object.entries(loadout)) {
+            if (!preset) continue;
+            const chip = document.createElement("span");
+            chip.className = "other-player-profile__cosmetic-chip";
+            chip.textContent = `${slot}: ${preset}`;
+            chips.appendChild(chip);
+          }
+          if (chips.childElementCount > 0) {
+            oppProfileWardrobe.hidden = false;
+            oppProfileWardrobe.replaceChildren(chips);
+          }
+        }
+      }
     } catch {
       if (profileOpenCompact !== openFor) return;
       profileMessageLastSaved = "";
@@ -12278,6 +12379,7 @@ export function createHud(
         directInviteActive?: boolean;
         isGuest?: boolean;
         gamesAvailable?: boolean;
+        onArmDeployable?: (cosmeticSku: string) => void;
       },
       openedAtFloor: FloorTile | null = null
     ) {
@@ -12289,6 +12391,7 @@ export function createHud(
       actionWheelChallengeHandler = handlers.onToggleChallenge ?? null;
       actionWheelOpenPlaySpaceHandler = handlers.onOpenPlaySpace ?? null;
       actionWheelOpenRoomsHandler = handlers.onOpenRooms ?? null;
+      actionWheelArmDeployHandler = handlers.onArmDeployable ?? null;
       actionWheelChallengeActive = handlers.challengeActive ?? false;
       actionWheelChallengeAvailable = handlers.challengeAvailable ?? false;
       actionWheelDirectInviteActive = handlers.directInviteActive ?? false;
@@ -12530,9 +12633,25 @@ export function createHud(
     onRoomEntrySpawnUseCenter(fn: (() => void) | null) {
       roomEntrySpawnUseCenterHandler = fn;
     },
+    onRoomDeployablesAllowedChange(fn: ((allowed: boolean) => void) | null) {
+      roomDeployablesChangeHandler = fn;
+    },
+    setRoomDeployablesAllowedUi(visible: boolean, allowed: boolean) {
+      roomDeployablesRow.hidden = !visible;
+      roomDeployablesCheckbox.checked = allowed;
+    },
     clearRoomEntrySpawnPickUi,
     isRoomEntrySpawnPickArmed(): boolean {
       return roomEntrySpawnPickArmed;
+    },
+    isDeployableArmed(): boolean {
+      return deployableArmSku != null;
+    },
+    getArmedDeployableSku(): string | null {
+      return deployableArmSku;
+    },
+    clearDeployableArm(): void {
+      deployableArmSku = null;
     },
     syncRoomBackgroundHueRing(
       hueDeg: number | null,

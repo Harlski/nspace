@@ -5968,6 +5968,94 @@ button.hud-brand:focus-visible {
   min-width: 0;
 }
 
+.other-player-profile__wardrobe {
+  margin-top: 0.65rem;
+}
+
+.wardrobe-panel__tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.wardrobe-panel__tab {
+  appearance: none;
+  border: 1px solid rgba(100, 116, 139, 0.45);
+  background: rgba(15, 23, 42, 0.85);
+  color: #cbd5e1;
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wardrobe-panel__tab.is-active {
+  background: rgba(59, 130, 246, 0.35);
+  border-color: rgba(96, 165, 250, 0.65);
+}
+
+.wardrobe-panel__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.45);
+  font-size: 12px;
+}
+
+.wardrobe-panel__btn {
+  appearance: none;
+  border: 1px solid rgba(100, 116, 139, 0.5);
+  background: rgba(30, 41, 59, 0.9);
+  color: #e2e8f0;
+  border-radius: 6px;
+  padding: 0.2rem 0.45rem;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.wardrobe-panel__tag {
+  font-size: 10px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wardrobe-panel__collection {
+  margin: 0.45rem 0 0.25rem;
+  font-size: 11px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.wardrobe-panel__note {
+  font-size: 11px;
+  color: #86efac;
+  margin: 0.35rem 0 0;
+}
+
+.wardrobe-panel__note--err {
+  color: #fca5a5;
+}
+
+.other-player-profile__cosmetic-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.other-player-profile__cosmetic-chip {
+  font-size: 10px;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(30, 41, 59, 0.85);
+  color: #cbd5e1;
+}
+
 .other-player-profile__room-meta-icon-wrap {
   display: inline-flex;
   align-items: center;

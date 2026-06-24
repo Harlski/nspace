@@ -262,6 +262,8 @@ export type ServerMessage =
       roomJoinSpawn?: { x: number; z: number; customized: boolean };
       /** Dynamic rooms: client may send `updateRoom` with `joinSpawn`. */
       allowRoomJoinSpawnEdit?: boolean;
+      roomDeployablesAllowed?: boolean;
+      allowRoomDeployablesEdit?: boolean;
       /** Recent room chat for reconnect / room switch; omit on older servers. */
       chatBacklog?: Array<{
         from: string;
@@ -292,6 +294,20 @@ export type ServerMessage =
       x: number;
       z: number;
       customized: boolean;
+    }
+  | {
+      type: "roomDeployablesAllowed";
+      roomId: string;
+      allowed: boolean;
+    }
+  | {
+      type: "cosmeticDeployed";
+      cosmeticSku: string;
+      presetId: string;
+      x: number;
+      z: number;
+      by: string;
+      expiresAt: number;
     }
   | { type: "playerJoined"; player: PlayerState }
   | { type: "playerLeft"; address: string }
@@ -791,6 +807,7 @@ export function sendUpdateRoom(
     backgroundNeutral?: RoomBackgroundNeutral | null;
     /** Set walkable tile for default visitors; null clears to room center. */
     joinSpawn?: { x: number; z: number } | null;
+    deployablesAllowed?: boolean;
   }
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
@@ -1266,6 +1283,16 @@ export function sendSetCountry(ws: WebSocket, code: string): void {
 }
 
 /** worldcup: place a kickable soccer ball at a tile in the current room (builders). */
+export function sendDeployCosmetic(
+  ws: WebSocket,
+  cosmeticSku: string,
+  x: number,
+  z: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "deployCosmetic", cosmeticSku, x, z }));
+}
+
 export function sendPlaceBall(ws: WebSocket, x: number, z: number): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "placeBall", x, z }));
