@@ -2755,13 +2755,15 @@ function enterGame(
       game.setObjectPrefabPlaceSnapshot(null);
       return;
     }
+    const designId = design.id;
     game.setObjectPrefabPlaceDesign({
-      id: design.id,
+      id: designId,
       footprintW: design.footprintW,
       footprintD: design.footprintD,
     });
     const snapshot = await fetchPrefabSnapshotIntoCache(design);
-    game.setObjectPrefabPlaceSnapshot(snapshot);
+    if (prefabUi.getSelectedDesignId() !== designId) return;
+    game.setObjectPrefabPlaceSnapshot(snapshot, designId);
     hud.refreshPrefabAuthoringChrome();
   }
 

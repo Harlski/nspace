@@ -75,7 +75,7 @@ import {
   type DesignBbox,
   type DesignSnapshotV1,
 } from "./designFootprint.js";
-import { prefabPlaceSnapshotMatchesDesign } from "./prefabPlacePreview.js";
+import { prefabPlaceSnapshotMatchesDesign, prefabPlaceMeshTemplateSignature, shouldApplyPrefabPlaceSnapshot } from "./prefabPlacePreview.js";
 import { BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED } from "./billboardPlacementFlags.js";
 import { pickBillboardVisitOnFootprintTile } from "./billboardVisitProximity.js";
 import { billboardSlideshowPhaseIndex } from "./billboardSlideshowPhase.js";
@@ -4945,11 +4945,20 @@ export class Game {
     this.refreshPrefabPlaceGhostPreview();
   }
 
-  setObjectPrefabPlaceSnapshot(snapshot: DesignSnapshotV1 | null): void {
+  setObjectPrefabPlaceSnapshot(
+    snapshot: DesignSnapshotV1 | null,
+    forDesignId: string | null = null
+  ): void {
+    if (
+      !shouldApplyPrefabPlaceSnapshot(
+        this.prefabPlaceDesign?.id ?? null,
+        forDesignId
+      )
+    ) {
+      return;
+    }
     this.prefabPlaceSnapshot = snapshot;
-    this.prefabPlaceSnapshotDesignId = snapshot
-      ? (this.prefabPlaceDesign?.id ?? null)
-      : null;
+    this.prefabPlaceSnapshotDesignId = snapshot ? forDesignId : null;
     this.rebuildPrefabPlaceMeshTemplate();
     this.refreshPrefabPlaceGhostPreview();
   }
@@ -5138,9 +5147,16 @@ export class Game {
     )
       ? this.prefabPlaceSnapshot
       : null;
-    const sig = design && snap
-      ? `${design.id}|${design.footprintW}|${design.footprintD}|${this.prefabPlaceYawSteps}|${snap.obstacles.length}`
-      : "";
+    const sig =
+      design && snap
+        ? prefabPlaceMeshTemplateSignature(
+            design.id,
+            design.footprintW,
+            design.footprintD,
+            this.prefabPlaceYawSteps,
+            snap.obstacles
+          )
+        : "";
     if (sig === this.prefabPlaceMeshTemplateSig && this.prefabPlaceMeshGroup) {
       return;
     }
@@ -5162,6 +5178,7 @@ export class Game {
       const meta = { ...obs.props } as BlockStyleProps;
       const h = this.obstacleHeight(meta);
       const mesh = this.makeBlockMesh(meta, {
+        ghost: true,
         floorLayer: yLevel,
       });
       mesh.userData.prefabRelDx = dx;
