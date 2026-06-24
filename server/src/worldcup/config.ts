@@ -195,8 +195,8 @@ export function isGoalieAddress(address: string | null | undefined): boolean {
 // ---------------------------------------------------------------------------
 
 export const MATCH = {
-  /** Handshake + "Match starting in 3…2…1" countdown before both players are teleported in (ms). */
-  countdownMs: envInt("WORLDCUP_MATCH_COUNTDOWN_MS", 3_000),
+  /** Handshake + "Match starting in N…" countdown before both players are teleported in (ms). */
+  countdownMs: envInt("WORLDCUP_MATCH_COUNTDOWN_MS", 10_000),
   /** Regulation length (ms). */
   durationMs: envInt("WORLDCUP_MATCH_DURATION_MS", 180_000),
   /** Golden Goal sudden-death cap (ms) after a tied regulation; then a Draw. */
@@ -206,7 +206,7 @@ export const MATCH = {
   /** Auto-clear a Challenge that no one accepts within this window (ms). */
   challengeTimeoutMs: envInt("WORLDCUP_CHALLENGE_TIMEOUT_MS", 60_000),
   /** How long the end-of-match result lingers before entrants are returned (ms). */
-  resultLingerMs: envInt("WORLDCUP_MATCH_RESULT_LINGER_MS", 5_000),
+  resultLingerMs: envInt("WORLDCUP_MATCH_RESULT_LINGER_MS", 10_000),
   /**
    * After a goal (that doesn't end the Match) both players are reset to their kickoff spots and
    * frozen for this long while a "Kickoff in 3…2…1" countdown plays; the Match clock pauses too.

@@ -17,32 +17,8 @@
       "destination": "https://api.nimiq.space/admin"
     },
     {
-      "source": "/admin/system",
-      "destination": "https://api.nimiq.space/admin/system"
-    },
-    {
-      "source": "/admin/header",
-      "destination": "https://api.nimiq.space/admin/header"
-    },
-    {
-      "source": "/admin/settings",
-      "destination": "https://api.nimiq.space/admin/settings"
-    },
-    {
-      "source": "/admin/feedback",
-      "destination": "https://api.nimiq.space/admin/feedback"
-    },
-    {
-      "source": "/admin/campaign",
-      "destination": "https://api.nimiq.space/admin/campaign"
-    },
-    {
-      "source": "/admin/bans",
-      "destination": "https://api.nimiq.space/admin/bans"
-    },
-    {
-      "source": "/admin/rooms",
-      "destination": "https://api.nimiq.space/admin/rooms"
+      "source": "/admin/:path*",
+      "destination": "https://api.nimiq.space/admin/:path*"
     },
     {
       "source": "/advertise/uploads/:path*",

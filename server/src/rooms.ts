@@ -76,6 +76,12 @@ import {
   updateDynamicRoomMetadata,
   type RoomBackgroundNeutral,
 } from "./roomRegistry.js";
+import {
+  isJoinCode,
+  isLegacyPlaySpaceSlug,
+  normalizeJoinCode,
+  walletRoomIdFromJoinCode,
+} from "./joinCode.js";
 import { generateMaze } from "./mazeGenerator.js";
 import {
   loadWorldState,
@@ -554,6 +560,8 @@ export function snapshotChatHistoryForWallet(
   return out;
 }
 const RATE_MOVE_TO_MS = 120;
+/** worldcup: pitch free-move (joystick / any-angle) needs faster heading updates than tap-to-walk. */
+const RATE_MOVE_TO_FIELD_MS = TICK_MS;
 /** Gate stays open for the opener to cross; then server clears `gateOpen`. */
 const GATE_OPEN_PASS_MS = 1_000;
 
@@ -890,10 +898,8 @@ function roomAllowsFakePlayers(roomId: string): boolean {
 function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
   if (isInviteLobbyRoomId(roomId)) return canEditRoomContent(roomId, address);
   if (isPixelRoom(roomId)) return false;
-  // worldcup: keep the soccer pitch clear of placed blocks
-  if (WORLDCUP_ENABLED && normalizeRoomId(roomId) === WORLDCUP_FIELD_ROOM_ID) {
-    return false;
-  }
+  // worldcup: keep field + 1v1 match pitches clear of placed blocks
+  if (worldcupIsFieldLikeRoom(roomId)) return false;
   return canEditRoomContent(roomId, address);
 }
 
@@ -902,8 +908,8 @@ function canRecolorFloorInRoom(roomId: string, address: string): boolean {
   if (isInviteLobbyRoomId(id)) return canEditRoomContent(roomId, address);
   if (id === CANVAS_ROOM_ID) return false;
   if (id === PIXEL_ROOM_ID) return true;
-  // worldcup: no floor painting on the pitch
-  if (WORLDCUP_ENABLED && id === WORLDCUP_FIELD_ROOM_ID) return false;
+  // worldcup: no floor painting on field or match pitches
+  if (worldcupIsFieldLikeRoom(roomId)) return false;
   return canEditRoomContent(roomId, address);
 }
 
@@ -1240,6 +1246,8 @@ type OutMsg =
       bAddress: string;
       aCountry: string | null;
       bCountry: string | null;
+      /** ms before entrants are returned home (drives the Match Result Overlay countdown). */
+      resultLingerMs: number;
     }
   // worldcup: a goal was scored in a 1v1 Match — announce it + drive the kickoff reset countdown
   | {
@@ -3159,25 +3167,44 @@ export function getLiveRealPlayerCountInRoom(roomIdRaw: string): number {
   return countRealPlayersInRoom(normalizeRoomId(roomIdRaw));
 }
 
-/** 6-char codes are case-insensitive; other ids use normal normalization. */
+/** Unified 6-char join codes (wallet rooms + Play Spaces) are case-insensitive. */
 function normalizeJoinRoomId(raw: string): string {
   const t = String(raw).trim().replace(/\s+/g, "");
-  if (/^[A-Za-z0-9]{6}$/.test(t)) return t.toLowerCase();
+  if (isJoinCode(t)) return walletRoomIdFromJoinCode(t);
   return normalizeRoomId(raw);
 }
 
-/** Resolve join target; Play Space slugs stay case-sensitive. */
+/** Resolve join target; legacy 8-char Play Space slugs stay case-sensitive. */
 function resolveJoinRoomTarget(raw: string): string {
   const trimmed = String(raw).trim().replace(/\s+/g, "");
   if (!trimmed) return "";
-  const normalized = normalizeJoinRoomId(trimmed);
+  const normalized = normalizeRoomId(trimmed);
   if (isInviteLobbyRoomId(normalized)) return normalized;
+
+  if (isLegacyPlaySpaceSlug(trimmed)) {
+    const invite = getInviteBySlug(trimmed);
+    if (invite?.phase === "open" && hasRoom(invite.lobbyRoomId)) {
+      return invite.lobbyRoomId;
+    }
+  }
+
+  if (isJoinCode(trimmed)) {
+    const walletId = walletRoomIdFromJoinCode(trimmed);
+    if (hasRoom(walletId)) return walletId;
+    const code = normalizeJoinCode(trimmed);
+    const invite = getInviteBySlug(code);
+    if (invite?.phase === "open" && hasRoom(invite.lobbyRoomId)) {
+      return invite.lobbyRoomId;
+    }
+    return walletId;
+  }
+
   if (hasRoom(normalized)) return normalized;
   const invite = getInviteBySlug(trimmed);
   if (invite?.phase === "open" && hasRoom(invite.lobbyRoomId)) {
     return invite.lobbyRoomId;
   }
-  const lower = normalizeJoinRoomId(trimmed.toLowerCase());
+  const lower = normalizeRoomId(trimmed.toLowerCase());
   if (hasRoom(lower)) return lower;
   return normalized;
 }
@@ -4771,7 +4798,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
 function canPlaceBallInRoom(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
   if (isInviteLobbyRoomId(id)) return false;
-  if (id === WORLDCUP_FIELD_ROOM_ID) return false; // pitch has its own ball
+  if (worldcupIsFieldLikeRoom(roomId)) return false; // pitch has its own ball
   if (id === CANVAS_ROOM_ID || id === PIXEL_ROOM_ID) return false;
   return canEditRoomContent(roomId, address);
 }
@@ -5097,6 +5124,8 @@ function broadcastWorldcupMatchState(
 function worldcupOnMatchEnded(m: WorldcupMatchRuntime, now: number): void {
   if (m.endedAtMs !== null) return;
   m.endedAtMs = now;
+  // Freeze participants on the pitch until teardown (same gate as post-goal kickoff freeze).
+  m.kickoffUntilMs = now + WORLDCUP_MATCH.resultLingerMs;
   // Pull the spectate portal immediately so onlookers can't drop into a finished Match.
   worldcupRemovePortal(m);
   broadcast(m.pitchRoomId, {
@@ -5110,6 +5139,7 @@ function worldcupOnMatchEnded(m: WorldcupMatchRuntime, now: number): void {
     bAddress: m.b,
     aCountry: worldcupGetPlayerCountry(m.a),
     bCountry: worldcupGetPlayerCountry(m.b),
+    resultLingerMs: WORLDCUP_MATCH.resultLingerMs,
   });
 }
 
@@ -7313,16 +7343,18 @@ export function addClient(
         return;
       }
       const now = Date.now();
-      if (now - conn.lastMoveToAt < RATE_MOVE_TO_MS) return;
-      conn.lastMoveToAt = now;
       const tx = Number(msg.x);
       const tz = Number(msg.z);
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const fieldFreeMove = worldcupIsFieldLikeRoom(currentRoomId);
+      const moveRateMs = fieldFreeMove ? RATE_MOVE_TO_FIELD_MS : RATE_MOVE_TO_MS;
+      if (now - conn.lastMoveToAt < moveRateMs) return;
+      conn.lastMoveToAt = now;
       // worldcup: the soccer pitch uses free (any-direction) movement — go in a straight
       // line to the exact clicked float point (no tile snap, no grid pathfinding) so the
       // ball can be kicked at any angle. The pitch is an open rectangle with no obstacles,
       // so a clamped straight line is always safe; walls clamp in advanceAlongPathHuman.
-      if (worldcupIsFieldLikeRoom(currentRoomId)) {
+      if (fieldFreeMove) {
         const wb = worldcupMoveClampBounds(currentRoomId);
         const fx = clamp(tx, wb.minX, wb.maxX);
         const fz = clamp(tz, wb.minZ, wb.maxZ);

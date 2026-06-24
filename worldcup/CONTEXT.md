@@ -114,7 +114,7 @@ _Avoid_: watch button, viewer pillar, teleporter.
 
 **Kickoff Countdown**:
 The brief handshake-and-countdown moment after a Challenge is accepted: both players show a 🤝
-bubble and see a "Match starting in 3…2…1" overlay in the origin room before the server teleports
+bubble and see a "Match starting in N…" overlay in the origin room before the server teleports
 them onto the Match Pitch. A disconnect/leave during the countdown aborts the Match.
 _Avoid_: warmup, pre-game, lobby.
 
@@ -133,6 +133,20 @@ quick per-stand jump ripple) and the goal eruption (whole crowd jumps at once). 
 always cancels an in-progress La Ola.
 _Avoid_: the wave (ambiguous with the ambient cheer), stadium wave, ripple.
 
+**Pitch Movement Mode**:
+On touch devices / the Nimiq Pay mini-app, how an active player steers on the Free Play Field or
+a Match Pitch — either **Tap** (stationary tap walks; drag does not summon the Touch Joystick) or
+**Joystick** (drag summons the floating Touch Joystick; taps do not walk). Defaults to Tap;
+the player's last choice persists locally across visits.
+_Avoid_: control scheme, input mode, movement setting.
+
+**Movement Mode Toggle**:
+The small experimental top-left control (touch / Pay hosts only, active players on pitch rooms
+only) that switches Pitch Movement Mode between Tap and Joystick. Shows the active mode label
+(`Tap` or `Stick`); switching stops any in-progress walk or stick session immediately. Sits
+under the top HUD chrome, stacking below the Match HUD bar when that bar is visible.
+_Avoid_: joystick button, controls menu, settings panel.
+
 **Outfield Margin**:
 The small distance a player may step past the pitch edges so they can get fully behind a ball
 pinned against a wall, rather than bouncing it off. Only player movement is widened; the ball's
@@ -145,6 +159,16 @@ their kickoff spawns, the ball and keepers re-centre, the Match clock pauses, an
 frozen for a short "Kickoff in 3…2…1" countdown before play resumes. A "GOAL!" banner (the
 scoring side's flag + new score) flashes alongside it.
 _Avoid_: respawn, restart, reset (bare).
+
+**Match Result Overlay**:
+The centre-screen card shown on the Match Pitch when a Match ends. Both sides' identicons appear
+side by side — the winner at full opacity, the loser faded (on a Draw, both stay full). A
+personalized headline for each participant ("You win!" / "You lost" / "Draw" / opponent-left
+copy); Spectators see neutral copy. Final score below the identicons; a "Returning in N…"
+countdown; and a Leave button (participants: **Leave**; Spectators: **Stop watching**) to return
+to the snapshotted origin room early. Movement is frozen for the full linger; the scoreboard bar
+stays visible with the final score. Auto-teleport home when the linger expires.
+_Avoid_: result screen, end card, victory screen, post-match modal.
 
 **Golden Goal**:
 Sudden-death extra time after a tied Match timer — the next goal wins, capped at 90s after

@@ -2,7 +2,7 @@
  * World Cup soccer — pre-teleport kickoff countdown overlay (CLIENT-ONLY, FEATURE-FLAGGED).
  *
  * Shown in the origin room for a few seconds after a Challenge is accepted: a "{you} vs
- * {opponent}" line (identicons + flags) and a "Match starting in 3…2…1" counter, while both
+ * {opponent}" line (identicons + flags) and a "Match starting in N…" counter, while both
  * players also flash a 🤝 handshake bubble (rendered via the normal chat-bubble path). When
  * the count reaches zero the server teleports both into the Match Pitch and this hides itself.
  * To deprecate, delete this file and the `worldcup`-tagged hooks in `main.ts`.

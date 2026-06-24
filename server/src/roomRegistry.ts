@@ -102,9 +102,11 @@ type DynamicRoomEntry = {
   builderAddresses: string[];
 };
 
+import { JOIN_CODE_CHARS, JOIN_CODE_LENGTH } from "./joinCode.js";
+
 const dynamicRooms = new Map<string, DynamicRoomEntry>();
 
-const NEW_ROOM_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+export { JOIN_CODE_LENGTH as WALLET_ROOM_CODE_LENGTH };
 
 function ensureDataDir(): void {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -229,8 +231,8 @@ export function normalizeBackgroundNeutralPatch(
 function generateUniqueRoomId(defaultRoomIds: ReadonlySet<string>): string {
   for (let attempt = 0; attempt < 400; attempt++) {
     let code = "";
-    for (let i = 0; i < 6; i++) {
-      code += NEW_ROOM_CODE_CHARS[randomInt(NEW_ROOM_CODE_CHARS.length)]!;
+    for (let i = 0; i < JOIN_CODE_LENGTH; i++) {
+      code += JOIN_CODE_CHARS[randomInt(JOIN_CODE_CHARS.length)]!;
     }
     const id = code.toLowerCase();
     if (!defaultRoomIds.has(id) && !dynamicRooms.has(id)) return id;
@@ -523,8 +525,8 @@ export function isDynamicRoomBuilder(roomId: string, address: string): boolean {
 }
 
 /**
- * New player rooms: unique 6-character A–Z / 0–9 id (stored lowercase).
- * Legacy persisted ids may be longer; those remain loadable.
+ * New player rooms: unique 6-character A–Z / 0–9 id (stored lowercase, shown uppercase).
+ * Same length and charset as Play Space join codes.
  */
 export function createDynamicRoom(
   bounds: RoomBounds,

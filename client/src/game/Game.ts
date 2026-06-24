@@ -179,6 +179,11 @@ const SELF_EXTRAP_GOAL_ALONG_BUFFER = 0.12;
  * (`inferStartLayerClient` + `pathfindTerrain`) would draw rooftop-height routes over air.
  */
 const SELF_EXTRAP_MAX_OFFSET_XZ = 0.22;
+/**
+ * worldcup: pitch free-move needs a larger cap — state broadcasts ~120ms apart at MOVE_SPEED 5
+ * (~0.6u/step) and grid path-preview safeguards do not apply on the open field.
+ */
+const SELF_EXTRAP_MAX_OFFSET_XZ_FIELD = 0.72;
 /** Default scale on unit floor plane; >1 hides subpixel seams (tunable in admin). */
 const DEFAULT_FLOOR_TILE_QUAD = 1.01;
 /** 1 = match server footprint; scale geometry only (grid Y unchanged) to debug floor seam flicker. */
@@ -1211,6 +1216,8 @@ export class Game {
   private worldcupJoystickView: WorldcupJoystickView | null = null;
   /** worldcup: true only when the joystick may engage (touch host, on the pitch, not spectating). */
   private worldcupJoystickEnabled = false;
+  /** worldcup: Tap (tap-to-walk) vs Joystick (drag stick only) on the pitch. */
+  private worldcupPitchMovementMode: "tap" | "joystick" = "tap";
   /**
    * worldcup: while true (post-goal kickoff countdown) the local player is frozen — tap-to-move and
    * the joystick are suppressed. The server also rejects moves, this just keeps the UI honest.
@@ -1225,8 +1232,8 @@ export class Game {
   } | null = null;
   /** Single-finger pitch drag past this (px) turns a deferred walk into the floating joystick. */
   private static readonly WORLDCUP_STICK_ENGAGE_PX = 14;
-  /** Throttle of held-direction emits (ms). Above the server moveTo rate limit (120ms). */
-  private static readonly WORLDCUP_STICK_EMIT_MS = 140;
+  /** Throttle of held-direction emits (ms). Matches the pitch moveTo rate limit (50ms). */
+  private static readonly WORLDCUP_STICK_EMIT_MS = 50;
   private worldcupCrowd: WorldcupCrowd | null = null;
   /** Previous-day champion country (ISO alpha-2) the crowd waves; persists across rebuilds. */
   private worldcupCrowdFlag: string | null = null;
@@ -8844,6 +8851,11 @@ export class Game {
     if (!this.selfMesh) return;
     // worldcup: pitch preview points straight at the raw float pick.
     if (this.isWorldcupFreeMoveRoom() && !this.buildMode && !this.floorExpandMode) {
+      if (this.worldcupPitchMovementMode === "joystick") {
+        this.pathPreviewGoal = null;
+        this.refreshPathLine();
+        return;
+      }
       const hit = this.pickFloorRaw(clientX, clientY);
       if (hit) {
         // Preview clamps to the outfield wall (bounds + margin), matching tryFieldFreeWalkAt so the
@@ -9035,6 +9047,26 @@ export class Game {
     return WORLDCUP_ENABLED_CLIENT && worldcupIsFieldLikeRoomId(this.roomId);
   }
 
+  /** Exact float XZ for a walk goal (pitch targets use `world`; grid rooms use tile centers). */
+  private pathGoalWorldXZ(goal: {
+    ft: FloorTile;
+    world?: { x: number; z: number };
+  }): { x: number; z: number } {
+    return goal.world ?? { x: goal.ft.x, z: goal.ft.y };
+  }
+
+  /**
+   * worldcup: predict local velocity immediately so movement feels continuous before the next
+   * server snapshot (straight-line pitch moves are not grid-snapped).
+   */
+  private predictSelfFieldMoveVelocity(wx: number, wz: number): void {
+    const len = Math.hypot(wx, wz);
+    if (len < 1e-6) return;
+    this.selfServerVx = (wx / len) * SERVER_PLAYER_MOVE_SPEED;
+    this.selfServerVz = (wz / len) * SERVER_PLAYER_MOVE_SPEED;
+    this.selfLastServerRecvMs = performance.now();
+  }
+
   /** worldcup: register the floating-joystick visual (touch hosts only); null disables it. */
   setWorldcupJoystickView(view: WorldcupJoystickView | null): void {
     this.worldcupJoystickView = view;
@@ -9045,6 +9077,38 @@ export class Game {
   setWorldcupJoystickEnabled(enabled: boolean): void {
     this.worldcupJoystickEnabled = enabled;
     if (!enabled) this.endWorldcupStick();
+  }
+
+  /** worldcup: Tap vs Joystick pitch movement; interrupts any in-progress walk or stick. */
+  setWorldcupPitchMovementMode(mode: "tap" | "joystick"): void {
+    if (this.worldcupPitchMovementMode === mode) return;
+    this.worldcupPitchMovementMode = mode;
+    this.interruptWorldcupPitchMovement();
+  }
+
+  getWorldcupPitchMovementMode(): "tap" | "joystick" {
+    return this.worldcupPitchMovementMode;
+  }
+
+  /** worldcup: halt pitch movement (walk, stick, or extrapolation) and notify the server. */
+  private interruptWorldcupPitchMovement(): void {
+    this.endWorldcupStick();
+    this.pendingPrimaryWalk = null;
+    this.pathPreviewGoal = null;
+    if (!this.isWorldcupFreeMoveRoom()) {
+      this.pathGoal = null;
+      this.refreshPathLine();
+      return;
+    }
+    if (
+      this.pathGoal !== null ||
+      Math.hypot(this.selfServerVx, this.selfServerVz) > 1e-6
+    ) {
+      this.worldcupJoystickStop();
+    } else {
+      this.pathGoal = null;
+      this.refreshPathLine();
+    }
   }
 
   /**
@@ -9071,6 +9135,7 @@ export class Game {
   private worldcupStickCanEngage(): boolean {
     return (
       this.worldcupJoystickEnabled &&
+      this.worldcupPitchMovementMode !== "tap" &&
       !this.worldcupMoveLocked &&
       this.worldcupJoystickView !== null &&
       this.worldcupStick === null &&
@@ -9171,6 +9236,7 @@ export class Game {
     const tx = Math.max(b.minX, Math.min(b.maxX, this.selfMesh.position.x + wx * far));
     const tz = Math.max(b.minZ, Math.min(b.maxZ, this.selfMesh.position.z + wz * far));
     this.pathGoal = { ft: snapFloorTile(tx, tz), layer: 0, world: { x: tx, z: tz } };
+    this.predictSelfFieldMoveVelocity(wx, wz);
     this.refreshPathLine();
     this.tileClickHandler(tx, tz, 0);
   }
@@ -9221,6 +9287,8 @@ export class Game {
     if (!this.selfMesh || !this.tileClickHandler) return false;
     // worldcup: during the post-goal kickoff freeze, swallow the tap so the player stays put.
     if (this.worldcupMoveLocked) return true;
+    // Joystick-only mode: taps do not walk (drag still promotes to the floating stick).
+    if (this.worldcupPitchMovementMode === "joystick") return true;
     const hit = this.pickFloorRaw(clientX, clientY);
     if (!hit) return false;
     // Clicks outside the pitch clamp to the outfield wall (true bounds + outfield margin), not the
@@ -9235,6 +9303,10 @@ export class Game {
       layer: 0,
       world: { x: fx, z: fz },
     };
+    this.predictSelfFieldMoveVelocity(
+      fx - this.selfMesh.position.x,
+      fz - this.selfMesh.position.z
+    );
     this.refreshPathLine();
     this.tileClickHandler(fx, fz, 0);
     return true;
@@ -13088,8 +13160,9 @@ export class Game {
           if (pg) {
             const speedH = Math.hypot(this.selfServerVx, this.selfServerVz);
             if (speedH > 1e-6) {
-              const gtx = pg.ft.x - t.x;
-              const gtz = pg.ft.y - t.z;
+              const gw = this.pathGoalWorldXZ(pg);
+              const gtx = gw.x - t.x;
+              const gtz = gw.z - t.z;
               const along =
                 (gtx * this.selfServerVx + gtz * this.selfServerVz) / speedH;
               const forward = speedH * ageSec;
@@ -13106,7 +13179,9 @@ export class Game {
           }
 
           const hex = Math.hypot(ex, ez);
-          const cap = SELF_EXTRAP_MAX_OFFSET_XZ;
+          const cap = this.isWorldcupFreeMoveRoom()
+            ? SELF_EXTRAP_MAX_OFFSET_XZ_FIELD
+            : SELF_EXTRAP_MAX_OFFSET_XZ;
           if (hex > cap && hex > 1e-8) {
             ex *= cap / hex;
             ez *= cap / hex;

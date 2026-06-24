@@ -13,6 +13,7 @@ function envInt(name: string, dflt: number): number {
   return Number.isFinite(n) && n >= 0 ? n : dflt;
 }
 
+import { JOIN_CODE_CHARS, JOIN_CODE_LENGTH, isJoinCode, isLegacyPlaySpaceSlug } from "../joinCode.js";
 import { WORLDCUP_ENABLED } from "../worldcup/config.js";
 
 /** Master switch — follows WORLDCUP_ENABLED unless overridden. */
@@ -36,19 +37,16 @@ export const GUEST_SESSION_TTL_SEC = envInt("GUEST_SESSION_TTL_SEC", 4 * 60 * 60
 /** Ephemeral lobby room-id prefix. */
 export const INVITE_LOBBY_PREFIX = "invite-lobby-";
 
-/** Alphanumeric charset for shareable Play Space slugs (mixed case, no `-` / `_`). */
-export const PLAY_SPACE_SLUG_CHARS =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+/** Alphanumeric charset for shareable Play Space slugs (uppercase A–Z / 0–9). */
+export const PLAY_SPACE_SLUG_CHARS = JOIN_CODE_CHARS;
 
-/** Length of newly minted Play Space slugs. */
-export const PLAY_SPACE_SLUG_LENGTH = 8;
+/** Length of newly minted Play Space slugs (same as wallet room join codes). */
+export const PLAY_SPACE_SLUG_LENGTH = JOIN_CODE_LENGTH;
 
 export const PLAY_SPACE_SLUG_PATTERN = /^[A-Za-z0-9]+$/;
 
 export function isValidPlaySpaceSlug(slug: string): boolean {
-  return (
-    slug.length === PLAY_SPACE_SLUG_LENGTH && PLAY_SPACE_SLUG_PATTERN.test(slug)
-  );
+  return isJoinCode(slug) || isLegacyPlaySpaceSlug(slug);
 }
 
 export function makeInviteLobbyRoomId(slug: string): string {

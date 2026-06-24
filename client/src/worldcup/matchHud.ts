@@ -6,8 +6,9 @@
  *   {flag}{identicon}  scoreA · clock · scoreB  {identicon}{flag}        [Leave]
  *
  * Both flags + identicons identify the two sides; the local player's score is highlighted.
- * When the Match ends the centre clock is replaced inline with the result (Win / Loss / Draw /
- * Opponent left) and the Leave button hides. Fed by the server's `matchState` / `matchEnded`.
+ * When the Match ends the scoreboard bar keeps the final score; a centre-screen **Match Result
+ * Overlay** shows both identicons (winner full opacity, loser faded), a personalized headline,
+ * final score, "Returning in N…" countdown, and a Leave button. Fed by `matchEnded`.
  * Shown only while the player is in a Match Pitch (participant or Spectator). To deprecate,
  * delete this file and the `worldcup`-tagged hooks in `main.ts`.
  */
@@ -70,6 +71,16 @@ export class WorldcupMatchHud {
   private goalHideTimer: number | null = null;
   private goalKickoffEndsAt = 0;
   private goalKickoffEndHandler: (() => void) | null = null;
+  /** Centre-screen Match Result Overlay (identicons + headline + countdown + Leave). */
+  private readonly resultOverlay: HTMLDivElement;
+  private readonly resultIdentA: HTMLImageElement;
+  private readonly resultIdentB: HTMLImageElement;
+  private readonly resultHeadline: HTMLDivElement;
+  private readonly resultScore: HTMLDivElement;
+  private readonly resultCountdown: HTMLDivElement;
+  private readonly resultLeaveBtn: HTMLButtonElement;
+  private resultTimer: number | null = null;
+  private resultEndsAt = 0;
   /** Last-rendered side wallets, so the goal banner can tint when the local player scores. */
   private lastAAddress = "";
   private lastBAddress = "";
@@ -85,6 +96,7 @@ export class WorldcupMatchHud {
    */
   constructor(parent?: HTMLElement) {
     const root = document.createElement("div");
+    root.className = "worldcup-match-hud";
     // Absolute (not fixed) so the bar spans the letterbox game area, not the whole viewport.
     root.style.cssText =
       "position:absolute;left:0;right:0;top:52px;z-index:60;display:none;pointer-events:none;";
@@ -147,6 +159,52 @@ export class WorldcupMatchHud {
     this.goalTitle = gTitle;
     this.goalScore = gScore;
     this.goalCount = gCount;
+
+    const result = document.createElement("div");
+    result.style.cssText =
+      "position:fixed;left:50%;top:38%;transform:translate(-50%,-50%);z-index:93;display:none;" +
+      "flex-direction:column;align-items:center;gap:0.55rem;pointer-events:none;text-align:center;" +
+      "background:rgba(14,16,22,0.9);color:#f4f5f7;border:1px solid rgba(255,255,255,0.14);" +
+      "border-radius:18px;padding:1.1rem 1.8rem 1rem;min-width:240px;" +
+      "box-shadow:0 18px 48px rgba(0,0,0,0.52);font-family:inherit;backdrop-filter:blur(10px);";
+    const identRow = document.createElement("div");
+    identRow.style.cssText = "display:flex;align-items:center;justify-content:center;gap:1.25rem;";
+    const rIdentA = document.createElement("img");
+    rIdentA.width = 64;
+    rIdentA.height = 64;
+    rIdentA.style.cssText =
+      "width:64px;height:64px;border-radius:14px;transition:opacity 0.25s ease;";
+    const rIdentB = document.createElement("img");
+    rIdentB.width = 64;
+    rIdentB.height = 64;
+    rIdentB.style.cssText =
+      "width:64px;height:64px;border-radius:14px;transition:opacity 0.25s ease;";
+    identRow.append(rIdentA, rIdentB);
+    const rHeadline = document.createElement("div");
+    rHeadline.style.cssText =
+      "font-size:1.45rem;font-weight:800;line-height:1.15;letter-spacing:0.01em;";
+    const rScore = document.createElement("div");
+    rScore.style.cssText =
+      "font-size:1.15rem;font-weight:700;font-variant-numeric:tabular-nums;opacity:0.92;";
+    const rCountdown = document.createElement("div");
+    rCountdown.style.cssText = "font-size:0.82rem;opacity:0.72;min-height:1.1em;";
+    const rLeave = document.createElement("button");
+    rLeave.type = "button";
+    rLeave.textContent = "Leave";
+    rLeave.style.cssText =
+      "pointer-events:auto;margin-top:0.15rem;border:1px solid rgba(255,255,255,0.2);" +
+      "background:rgba(255,255,255,0.08);border-radius:10px;padding:0.35rem 0.85rem;" +
+      "font-size:0.82rem;cursor:pointer;color:#fff;font-family:inherit;";
+    rLeave.addEventListener("click", () => this.onLeave());
+    result.append(identRow, rHeadline, rScore, rCountdown, rLeave);
+    document.body.appendChild(result);
+    this.resultOverlay = result;
+    this.resultIdentA = rIdentA;
+    this.resultIdentB = rIdentB;
+    this.resultHeadline = rHeadline;
+    this.resultScore = rScore;
+    this.resultCountdown = rCountdown;
+    this.resultLeaveBtn = rLeave;
 
     this.observeTopWrap();
   }
@@ -247,6 +305,57 @@ export class WorldcupMatchHud {
     this.centreEl.title = s.phase === "golden" ? "Golden Goal" : "";
   }
 
+  private headlineForResult(
+    outcome: MatchOutcome,
+    side: "a" | "b" | null
+  ): { text: string; color: string } {
+    if (!outcome) {
+      return { text: "Full time", color: "#f4f5f7" };
+    }
+    if (outcome.result === "draw") {
+      return { text: "Draw", color: "#cbd2dc" };
+    }
+    const won = side !== null && outcome.winner === side;
+    if (side === null) {
+      return {
+        text: `Side ${outcome.winner.toUpperCase()} wins`,
+        color: "#f4f5f7",
+      };
+    }
+    if (outcome.reason === "opponent_left") {
+      return {
+        text: won ? "You win — opponent left" : "You lost — opponent left",
+        color: won ? "#5fe08a" : "#ff8a8a",
+      };
+    }
+    return {
+      text: won ? "You win!" : "You lost",
+      color: won ? "#5fe08a" : "#ff8a8a",
+    };
+  }
+
+  private setResultIdent(
+    el: HTMLImageElement,
+    address: string,
+    opacity: number
+  ): void {
+    el.style.opacity = String(opacity);
+    const key = compact(address);
+    void identiconDataUrl(address)
+      .then((url) => {
+        if (compact(address) === key) el.src = url;
+      })
+      .catch(() => {});
+  }
+
+  private hideResultOverlay(): void {
+    if (this.resultTimer !== null) {
+      window.clearInterval(this.resultTimer);
+      this.resultTimer = null;
+    }
+    this.resultOverlay.style.display = "none";
+  }
+
   showResult(
     outcome: MatchOutcome,
     scoreA: number,
@@ -254,33 +363,50 @@ export class WorldcupMatchHud {
     aAddress: string,
     bAddress: string,
     aCountry: string | null,
-    bCountry: string | null
+    bCountry: string | null,
+    resultLingerMs: number
   ): void {
+    this.hideGoal();
+    this.hideResultOverlay();
     this.root.style.display = "block";
     this.leaveBtn.style.display = "none";
     this.renderSides({ aAddress, bAddress, aCountry, bCountry, scoreA, scoreB });
+    this.centreEl.textContent = "FT";
+    this.centreEl.style.color = "#cbd2dc";
+    this.centreEl.title = "";
 
     const side = this.selfSide(aAddress, bAddress);
-    let text = "Full time";
-    let color = "#f4f5f7";
-    if (!outcome) {
-      text = "Full time";
-    } else if (outcome.result === "draw") {
-      text = "Draw";
-      color = "#cbd2dc";
+    const { text, color } = this.headlineForResult(outcome, side);
+    this.resultHeadline.textContent = text;
+    this.resultHeadline.style.color = color;
+    this.resultScore.textContent = `${scoreA} – ${scoreB}`;
+
+    const loserOpacity = 0.35;
+    if (!outcome || outcome.result === "draw") {
+      this.setResultIdent(this.resultIdentA, aAddress, 1);
+      this.setResultIdent(this.resultIdentB, bAddress, 1);
     } else {
-      const won = side !== null && outcome.winner === side;
-      if (side === null) {
-        text = `Side ${outcome.winner.toUpperCase()} wins`;
-      } else if (outcome.reason === "opponent_left") {
-        text = won ? "You win — opponent left" : "You left";
-      } else {
-        text = won ? "🏆 You win!" : "You lost";
-      }
-      color = side === null ? "#f4f5f7" : won ? "#5fe08a" : "#ff8a8a";
+      const winner = outcome.winner;
+      this.setResultIdent(this.resultIdentA, aAddress, winner === "a" ? 1 : loserOpacity);
+      this.setResultIdent(this.resultIdentB, bAddress, winner === "b" ? 1 : loserOpacity);
     }
-    this.centreEl.textContent = text;
-    this.centreEl.style.color = color;
+
+    this.resultLeaveBtn.textContent = side ? "Leave" : "Stop watching";
+    this.resultOverlay.style.display = "flex";
+
+    const linger = Math.max(1000, resultLingerMs);
+    this.resultEndsAt = performance.now() + linger;
+    const tick = (): void => {
+      const remaining = this.resultEndsAt - performance.now();
+      if (remaining <= 0) {
+        this.resultCountdown.textContent = "Returning…";
+        this.hideResultOverlay();
+        return;
+      }
+      this.resultCountdown.textContent = `Returning in ${Math.ceil(remaining / 1000)}…`;
+    };
+    tick();
+    this.resultTimer = window.setInterval(tick, 200);
   }
 
   /**
@@ -351,11 +477,24 @@ export class WorldcupMatchHud {
   hide(): void {
     this.root.style.display = "none";
     this.hideGoal();
+    this.hideResultOverlay();
+  }
+
+  /** Root element for layout stacking (Movement Mode Toggle sits below this bar). */
+  get layoutRoot(): HTMLDivElement {
+    return this.root;
+  }
+
+  /** True while the scoreboard bar is shown (participants and Spectators). */
+  isBarVisible(): boolean {
+    return this.root.style.display !== "none";
   }
 
   destroy(): void {
     this.topWrapObserver?.disconnect();
     this.hideGoal();
+    this.hideResultOverlay();
+    this.resultOverlay.remove();
     this.goalBanner.remove();
     this.root.remove();
   }

@@ -2,10 +2,11 @@
  * World Cup soccer — floating on-screen touch joystick VISUAL (CLIENT-ONLY, FEATURE-FLAGGED).
  *
  * A left-thumb virtual stick for moving on the pitch from a touch device / Nimiq Pay mini-app,
- * where precise tap-to-move is fiddly. It coexists with tap-to-move: a quick stationary tap still
- * walks, while a single-finger drag past a small threshold summons this stick *where the thumb
- * went down* and steers from there. To keep one pointer pipeline, the tap-vs-drag gesture and the
- * throttled emit live in `Game.ts`; this class is a dumb visual the game positions and updates:
+ * where precise tap-to-move is fiddly. Pitch Movement Mode (Tap vs Joystick) is chosen via the
+ * Movement Mode Toggle; in Joystick mode a drag past a small threshold summons this stick *where
+ * the thumb went down* and steers from there. To keep one pointer pipeline, the tap-vs-drag
+ * gesture and the throttled emit live in `Game.ts`; this class is a dumb visual the game
+ * positions and updates:
  *   - `showAt(clientX, clientY)` materializes the base centred on the thumb-down point,
  *   - `moveThumbTo(clientX, clientY)` moves the thumb (clamped) and returns the normalized
  *     deflection (−1..1, y down) for the game to convert into a heading,

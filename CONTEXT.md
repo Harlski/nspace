@@ -23,6 +23,16 @@ The sub-wheel reached by selecting the Emotes Sector — a ring of emote choices
 the old quick-emoji strip.
 _Avoid_: emoji strip, emote menu.
 
+**Items Sector**:
+A root-level Action Wheel edge that opens the **Items Wheel** — owned Deployables with
+cooldown state. Selecting one arms tile deployment; distinct from the Emote Wheel.
+_Avoid_: consumables menu, effects menu, gadgets.
+
+**Items Wheel**:
+The sub-wheel reached by selecting the Items Sector — a ring of owned Deployables the player
+can arm and use on a walkable tile.
+_Avoid_: deployables menu, toolkit wheel.
+
 **Flag Emote**:
 The viewer's own chosen country flag, surfaced as the first (top, most prominent) choice on
 the first page of their Emote Wheel so they can broadcast it like any other emote. Present
@@ -108,11 +118,120 @@ _Avoid_: paywall, wallet gate, sign-up modal, upsell.
 
 **Touch Joystick**:
 The on-screen left-thumb virtual stick on touch devices / the Nimiq Pay mini-app while on the
-soccer pitch. It is *floating*: it has no fixed home — it materializes wherever the thumb presses
-down and is dragged, anchored at that point. Held, it steers the player continuously in the pushed
-direction; released, it stops. Coexists with tap-to-move: a quick stationary tap still walks, a
-drag past a small threshold becomes the stick.
+soccer pitch in **Joystick** Pitch Movement Mode. It is *floating*: it has no fixed home —
+it materializes wherever the thumb presses down and is dragged, anchored at that point. Held,
+it steers the player continuously in the pushed direction; released, it stops.
 _Avoid_: d-pad, controller, analog stick, dpad, fixed stick.
+
+## Cosmetics
+
+**Catalog Entry**:
+An operator-managed row in the cosmetic shop — display name, description, price, collection,
+sort order, on-sale flag, and which Preset it sells. Operators create and edit Catalog
+Entries from admin; players never buy a Preset directly, they buy the Catalog Entry that
+points at one.
+_Avoid_: SKU row, shop item, product.
+
+**Preset**:
+A developer-defined visual or deployable effect identified by a stable `presetId` (e.g.
+`aura.flame.v1`) and a fixed **Slot** (aura, nameplate, chat bubble, trail, or deployable).
+Rendering and behavior live in the client; operators pick a Preset when creating or editing a
+Catalog Entry but do not author Presets from admin in v1.
+_Avoid_: effect, asset, VFX pack.
+
+**Slot** (cosmetic):
+Which passive or active channel a Preset uses — aura, nameplate, chat bubble, trail, or
+deployable. Declared on the Preset; inherited read-only by every Catalog Entry that
+references it.
+_Avoid_: category, type, equip slot.
+
+**Cosmetic SKU**:
+The immutable identifier of a Catalog Entry — the key entitlements and payment intents bind to.
+Chosen by the operator at create time (a unique slug); display name and price may change later;
+the SKU does not.
+_Avoid_: product id, item code.
+
+**Catalog Preview**:
+An operator-only view in `/admin/cosmetics` that renders a selected Preset or Catalog Entry
+on a chosen wallet’s avatar (identicon, nameplate, etc.). The preview wallet defaults to the
+signed-in admin; any `NQ…` address may be entered. The target player need not be online.
+_Avoid_: try-on, fitting room, mannequin.
+
+**Draft** (Catalog Entry):
+A Catalog Entry visible only in admin — not offered in the player shop and not payable via
+payment intent until Published.
+_Avoid_: hidden, staging, unpublished (prefer **Draft** or **Archived** by intent).
+
+**Published** (Catalog Entry):
+A Catalog Entry live in the player shop; new purchases are allowed at its current price.
+_Avoid_: live, active, on-sale.
+
+**Archived** (Catalog Entry):
+A Catalog Entry retired from the shop; new purchases are blocked. Wallets that already own
+the Cosmetic SKU keep their entitlement.
+_Avoid_: deleted, removed, disabled.
+
+**Catalog Changelog**:
+The append-only history of operator edits to a Catalog Entry — who changed what, when, and
+the before/after of admin-editable fields. Shown on the SKU edit screen in admin; not the
+same as player purchase history.
+_Avoid_: audit trail (too generic), version history.
+
+**Cosmetic Unlock**:
+A one-off NIM purchase that permanently grants a wallet ownership of a Cosmetic SKU. Routed
+through the Payment Intent Service (`nspace.cosmetic.unlock`); the game server grants the
+Entitlement after verify. The quoted price is fixed when the intent is created; verify matches
+that amount even if the catalog price changes later. If the Catalog Entry is Archived before
+payment completes, the intent fails.
+_Avoid_: buy, purchase (use when speaking to players), microtransaction.
+
+**Entitlement**:
+Proof that a wallet owns a Cosmetic SKU — granted by a successful Cosmetic Unlock or by an
+operator **Grant** from admin. Permanent in v1; revocation is out of scope unless added later.
+_Avoid_: ownership record, inventory item.
+
+**Grant** (cosmetic):
+An operator action that awards an Entitlement to a wallet without NIM payment — for events,
+compensation, or testing. Recorded in the Catalog Changelog on the affected SKU.
+_Avoid_: comp, freebie, airdrop.
+
+**Collection** (cosmetic):
+A free-text shop grouping label on a Catalog Entry (e.g. “Elemental”, “Seasonal”). Grouped
+case-insensitively in the player shop; not a separate admin-managed entity in v1.
+_Avoid_: category, tag, series.
+
+**Loadout**:
+The wallet’s currently equipped passive cosmetics — at most one Entitlement per Slot (aura,
+nameplate, chat bubble, trail). Equipping a new item in a Slot replaces the previous one;
+both remain owned. Stored server-side and visible to other players in the room.
+_Avoid_: outfit, equipped set, active cosmetics.
+
+**Wardrobe**:
+The profile surface where a player views owned Entitlements, equips Loadout passives, and
+opens the shop to buy Published Catalog Entries. Deployables are owned here but **used**
+from the Action Wheel, not equipped as passives.
+_Avoid_: inventory, closet, customization menu.
+
+**Deployable**:
+A cosmetic whose Slot is deployable — owned like any Entitlement, **used** from the Action
+Wheel by arming it and tapping a walkable tile. Server enforces cooldown, duration, and
+room limits; operator-tunable fields on the Catalog Entry override Preset defaults in v1.
+_Avoid_: consumable, throwable, placeable effect.
+
+**Cosmetic Store**:
+The durable SQLite tables on the game server (same file as the campaign store) holding Catalog
+Entries, Catalog Changelog, Entitlements, and Loadouts.
+_Avoid_: cosmetics DB, shop database.
+
+**Deployables Allowed** (room):
+A per-room setting (default on) controlled by the room owner in Room settings. When off,
+Deployables cannot be used in that room; Loadout passives are unaffected.
+_Avoid_: effects ban, no gadgets.
+
+**Creator Catalog Entry** *(post-v1)*:
+A future Catalog Entry whose Preset is derived from a player-authored prefab, sold by that
+creator through the shop. Explicitly out of v1; operator-created Catalog Entries only at launch.
+_Avoid_: UGC SKU, player shop listing.
 
 ## Payouts
 

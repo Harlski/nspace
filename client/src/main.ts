@@ -47,6 +47,11 @@ import { WorldcupScoreboard } from "./worldcup/scoreboard.js";
 import { WorldcupMatchHud } from "./worldcup/matchHud.js";
 import { WorldcupMatchCountdown } from "./worldcup/matchCountdown.js";
 import { WorldcupJoystick } from "./worldcup/joystick.js";
+import {
+  WorldcupMovementModeToggle,
+  loadPitchMovementMode,
+  savePitchMovementMode,
+} from "./worldcup/movementModeToggle.js";
 import { WorldcupBallEdgeMarker } from "./worldcup/ballEdgeMarker.js";
 // Country picker + flag emoji are reused for the profile flag / Flag Emote. They are pure UI
 // (no season gate), so they are imported unconditionally even when the World Cup is off.
@@ -150,6 +155,7 @@ import {
   type DirectInviteLobbyState,
 } from "./invite/lobbyOverlay.js";
 import {
+  joinCodeMatchesRoom,
   resolveRoomsJoinTarget,
   sanitizeRoomsJoinCodeInput,
 } from "./invite/playSpaceLayout.js";
@@ -747,7 +753,7 @@ function enterGame(
     : null;
   // worldcup: spectating is no longer a teleport-on-click. You walk onto the portal's
   // footprint tile and press the "Watch" intent pill (see syncPortalEnterButton).
-  // worldcup: touch joystick for pitch movement (touch / Nimiq Pay only; coexists with tap-to-move).
+  // worldcup: touch joystick for pitch movement (touch / Nimiq Pay only).
   const worldcupJoystickTouchHost =
     (typeof window !== "undefined" &&
       window.matchMedia?.("(pointer: coarse)").matches) ||
@@ -756,9 +762,22 @@ function enterGame(
     WORLDCUP_ENABLED_CLIENT && worldcupJoystickTouchHost
       ? new WorldcupJoystick()
       : null;
+  const worldcupMovementModeToggle =
+    WORLDCUP_ENABLED_CLIENT && worldcupJoystickTouchHost
+      ? new WorldcupMovementModeToggle(worldcupHudParent)
+      : null;
   // The floating joystick is a visual the game positions; Game owns the tap-vs-drag gesture and
   // drives showAt/moveThumbTo/hide from its own pitch pointer pipeline.
   game.setWorldcupJoystickView(worldcupJoystick);
+  if (worldcupMovementModeToggle) {
+    const savedMoveMode = loadPitchMovementMode();
+    game.setWorldcupPitchMovementMode(savedMoveMode);
+    worldcupMovementModeToggle.setMode(savedMoveMode);
+    worldcupMovementModeToggle.onChange = (mode) => {
+      savePitchMovementMode(mode);
+      game.setWorldcupPitchMovementMode(mode);
+    };
+  }
   // Releasing the joystick sends an immediate (un-rate-limited) stop so the player halts at once.
   game.setWorldcupStopMoveHandler(() => {
     const s = ws;
@@ -769,12 +788,18 @@ function enterGame(
   // worldcup: which side's default camera orientation we've applied for the current Match, so the
   // 180-degree default for side a is set once on entry and never fights a manual re-orbit.
   let worldcupAppliedMatchSide: "a" | "b" | null = null;
-  const updateWorldcupJoystickVisibility = (): void => {
-    game.setWorldcupJoystickEnabled(
-      !!worldcupJoystick &&
-        worldcupIsFieldLikeRoomId(worldcupCurrentRoomId) &&
-        !worldcupSpectating
-    );
+  const updateWorldcupPitchControls = (): void => {
+    const onPitch =
+      worldcupIsFieldLikeRoomId(worldcupCurrentRoomId) && !worldcupSpectating;
+    game.setWorldcupJoystickEnabled(!!worldcupJoystick && onPitch);
+    worldcupMovementModeToggle?.setVisible(!!worldcupMovementModeToggle && onPitch);
+    const stackBelow =
+      onPitch &&
+      worldcupIsMatchPitchRoomId(worldcupCurrentRoomId) &&
+      worldcupMatchHud?.isBarVisible()
+        ? worldcupMatchHud.layoutRoot
+        : null;
+    worldcupMovementModeToggle?.setStackBelow(stackBelow);
   };
   // worldcup: local mirror of the open-Challenge toggle + current room (for the donut label).
   let worldcupSelfChallengeOpen = false;
@@ -3894,16 +3919,14 @@ function enterGame(
       hud.setLoadingVisible(false, { skipMinWait: true });
       if (
         pendingProfileJoinRoomId &&
-        normalizeRoomId(msg.roomId).toLowerCase() ===
-          normalizeRoomId(pendingProfileJoinRoomId).toLowerCase()
+        joinCodeMatchesRoom(pendingProfileJoinRoomId, msg.roomId)
       ) {
         pendingProfileJoinRoomId = null;
         hud.appendChat("System", "Room not found.");
       }
       if (
         pendingModalJoinRoomId &&
-        normalizeRoomId(msg.roomId).toLowerCase() ===
-          normalizeRoomId(pendingModalJoinRoomId).toLowerCase()
+        joinCodeMatchesRoom(pendingModalJoinRoomId, msg.roomId)
       ) {
         pendingModalJoinRoomId = null;
         roomsJoinSubmitBtn.disabled = false;
@@ -3958,12 +3981,10 @@ function enterGame(
 
       const joinedViaModalJoin =
         pendingModalJoinRoomId !== null &&
-        normalizeRoomId(msg.roomId).toLowerCase() ===
-          normalizeRoomId(pendingModalJoinRoomId).toLowerCase();
+        joinCodeMatchesRoom(pendingModalJoinRoomId, msg.roomId);
       const joinedViaProfileJoin =
         pendingProfileJoinRoomId !== null &&
-        normalizeRoomId(msg.roomId).toLowerCase() ===
-          normalizeRoomId(pendingProfileJoinRoomId).toLowerCase();
+        joinCodeMatchesRoom(pendingProfileJoinRoomId, msg.roomId);
 
       if (joinedViaModalJoin) {
         beginRoomTransition(msg.roomId);
@@ -4031,7 +4052,7 @@ function enterGame(
       // A fresh room means we're no longer locked in the stands until a matchState says otherwise.
       worldcupSpectating = false;
       // Show the touch joystick only on the pitch (and not while spectating).
-      updateWorldcupJoystickVisibility();
+      updateWorldcupPitchControls();
       // worldcup: leaving a Match Pitch tears down the Match-only view (spectator framing, goal
       // arrow, participant set, and the 180-degree orientation). Inside a pitch, the matchState
       // handler sets these up; the welcome handler runs first so we only clear on the way out.
@@ -4493,7 +4514,7 @@ function enterGame(
         aCountry: msg.aCountry,
         bCountry: msg.bCountry,
       });
-      if ((msg.kickoffRemainingMs ?? 0) <= 0) {
+      if ((msg.kickoffRemainingMs ?? 0) <= 0 && msg.phase !== "ended") {
         finishWorldcupKickoffFreeze();
       }
       // The Match Pitch crowd splits by side: side a's half waves a's flag, b's half b's.
@@ -4520,8 +4541,8 @@ function enterGame(
       }
       if (nowSpectating !== worldcupSpectating) {
         worldcupSpectating = nowSpectating;
-        updateWorldcupJoystickVisibility();
       }
+      updateWorldcupPitchControls();
       return;
     }
     // worldcup: a goal in the 1v1 Match — erupt the crowd, flash the goal banner, and (if play
@@ -4541,10 +4562,10 @@ function enterGame(
       );
       return;
     }
-    // worldcup: 1v1 Match finished — show the result banner (entrants are returned shortly).
+    // worldcup: 1v1 Match finished — Match Result Overlay + movement frozen until return home.
     if (msg.type === "matchEnded") {
       game.worldcupCrowdCheer(1);
-      game.setWorldcupMoveLocked(false);
+      game.setWorldcupMoveLocked(true);
       worldcupMatchHud?.showResult(
         msg.outcome,
         msg.scoreA,
@@ -4552,8 +4573,10 @@ function enterGame(
         msg.aAddress,
         msg.bAddress,
         msg.aCountry,
-        msg.bCountry
+        msg.bCountry,
+        msg.resultLingerMs
       );
+      updateWorldcupPitchControls();
       return;
     }
     if (msg.type === "goalScored") {

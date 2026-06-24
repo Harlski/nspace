@@ -468,6 +468,8 @@ export type ServerMessage =
       bAddress: string;
       aCountry: string | null;
       bCountry: string | null;
+      /** ms before entrants are returned home (Match Result Overlay countdown). */
+      resultLingerMs: number;
     }
   // worldcup: a goal in a 1v1 Match — flash "GOAL!" + (optionally) run the kickoff countdown
   | {
