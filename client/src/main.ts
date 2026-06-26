@@ -10,6 +10,7 @@ import {
   saveCachedSession,
 } from "./auth/session.js";
 import { CHAMBER_DEFAULT_SPAWN, ROOM_ID, VIEW_FRUSTUM_SIZE } from "./game/constants.js";
+import { COSMETIC_SHOP_JOIN_CODE } from "./cosmetics/galleryTypes.js";
 import { StreamDirector } from "./stream/streamDirector.js";
 import { mountStreamPanDebugPanel } from "./stream/streamPanDebug.js";
 import {
@@ -125,6 +126,7 @@ import {
 import { installAdminOverlay } from "./ui/adminOverlay.js";
 import { nimToLunaString } from "./ui/objectPrefabAuthoring.js";
 import { createHud } from "./ui/hud.js";
+import { chatBubbleClassForPreset } from "./cosmetics/loadoutVfx.js";
 import { isPaletteHueHexPopoverTyping } from "./ui/paletteHueHexPopover.js";
 import {
   enableNimiqPayViewportLayout,
@@ -407,9 +409,9 @@ function startIdleReturnToHub(ms: number, onIdle: () => void): () => void {
 
 function loadingLabelForTargetRoom(room: string): string {
   const id = normalizeRoomId(room);
-  if (id === HUB_ROOM_ID) return "Loading hub...";
+  if (id === HUB_ROOM_ID) return "Loading the Commons...";
   if (id === CANVAS_ROOM_ID) return "Loading maze...";
-  if (id === CHAMBER_ROOM_ID) return "Loading chamber...";
+  if (id === CHAMBER_ROOM_ID) return "Loading the Hub...";
   if (id === PIXEL_ROOM_ID) return "Loading pixel board...";
   // worldcup: entering a 1v1 Match Pitch (as a player or a spectator).
   if (worldcupIsMatchPitchRoomId(id)) return "Entering the match...";
@@ -1001,7 +1003,7 @@ function enterGame(
         id: normalizeRoomId(hubRow?.id ?? HUB_ROOM_ID),
         displayName: normalizeRoomCatalogDisplayName(
           hubRow?.displayName,
-          "Hub"
+          "Commons"
         ),
         isPublic: hubRow?.isPublic ?? true,
         playerCount: hubRow?.playerCount ?? 0,
@@ -1804,6 +1806,20 @@ function enterGame(
   hud.onGetWalletOpen(() => {
     showGetWalletPrompt({ onWebWallet: () => openMainMenu() });
   });
+  hud.onPlayerMenuLogout(() => {
+    if (selfAddress.startsWith("guest:")) {
+      clearCachedSession();
+      clearGuestInviteCookie();
+    } else {
+      removeCachedSession(selfAddress);
+    }
+    disposeToMenu();
+  });
+  hud.onPlayerMenuLeave(() => {
+    clearCachedSession();
+    clearGuestInviteCookie();
+    disposeToMenu();
+  });
   hud.onProfileRoomJoin((roomId) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (normalizeRoomId(game.getRoomId()) === normalizeRoomId(roomId)) return;
@@ -1887,6 +1903,72 @@ function enterGame(
 
   let lastPlayers: import("./types.js").PlayerState[] = [];
   let totalOnlinePlayers = 0;
+  function selfPlayerState(): import("./types.js").PlayerState | undefined {
+    const selfKey = address.replace(/\s+/g, "").trim().toUpperCase();
+    return lastPlayers.find(
+      (p) => p.address.replace(/\s+/g, "").trim().toUpperCase() === selfKey
+    );
+  }
+  hud.configureCosmeticHandlers({
+    onLoadoutChanged: () => {
+      game.clearSelfCosmeticPreview();
+      const self = selfPlayerState();
+      if (self) game.refreshSelfCosmeticsFromState(self);
+    },
+    onPreviewSlot: (slot, presetId) => {
+      if (
+        slot !== "aura" &&
+        slot !== "nameplate" &&
+        slot !== "chatBubble" &&
+        slot !== "trail"
+      ) {
+        return;
+      }
+      if (presetId === undefined) {
+        game.revertSelfCosmeticPreviewSlot(slot);
+      } else {
+        game.setSelfCosmeticPreviewSlot(slot, presetId);
+      }
+      const self = selfPlayerState();
+      if (self) game.refreshSelfCosmeticsFromState(self);
+    },
+    onRevertAllPreview: () => {
+      game.clearSelfCosmeticPreview();
+      const self = selfPlayerState();
+      if (self) game.refreshSelfCosmeticsFromState(self);
+    },
+    onPreviewCanvas: (canvas, wallet) => {
+      if (!canvas) {
+        game.bindWardrobeAvatarPreviewCanvas(null);
+        return;
+      }
+      const selfKey = address.replace(/\s+/g, "").trim().toUpperCase();
+      const wKey = wallet.replace(/\s+/g, "").trim().toUpperCase();
+      const self = selfPlayerState();
+      game.bindWardrobeAvatarPreviewCanvas(
+        canvas,
+        wallet,
+        wKey === selfKey ? self?.displayName : undefined
+      );
+    },
+    onPreviewCosmeticsChange: (presets) => {
+      game.updateWardrobeAvatarPreviewCosmetics({
+        aura: presets.aura ?? null,
+        nameplate: presets.nameplate ?? null,
+        chatBubble: presets.chatBubble ?? null,
+        trail: presets.trail ?? null,
+      });
+    },
+    onVisitCosmeticShop: () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (normalizeRoomId(game.getRoomId()) === normalizeRoomId(COSMETIC_SHOP_JOIN_CODE)) {
+        return;
+      }
+      pendingProfileJoinRoomId = COSMETIC_SHOP_JOIN_CODE;
+      beginRoomTransition(COSMETIC_SHOP_JOIN_CODE, "The Shaper");
+      sendJoinRoom(ws, COSMETIC_SHOP_JOIN_CODE);
+    },
+  });
   function roomRealPlayerCount(players: import("./types.js").PlayerState[]): number {
     return players.filter((p) => !p.displayName.startsWith("[NPC] ")).length;
   }
@@ -3801,9 +3883,9 @@ function enterGame(
     if (fromCatalog) return fromCatalog;
     const fromObstacle = obstacleSnapshotName?.trim();
     if (fromObstacle) return fromObstacle;
-    if (n === HUB_ROOM_ID) return "Hub";
+    if (n === HUB_ROOM_ID) return "Commons";
     if (n === CANVAS_ROOM_ID) return "Canvas";
-    if (n === CHAMBER_ROOM_ID) return "Chamber";
+    if (n === CHAMBER_ROOM_ID) return "Hub";
     if (n === PIXEL_ROOM_ID) return "Pixel";
     return formatRoomJoinCode(n);
   }
@@ -4244,6 +4326,7 @@ function enterGame(
       game.setWorldcupCrowdFlag(msg.worldcupPrevWinnerCountry ?? null);
       // worldcup: live 1v1 spectate portals in this room.
       game.setWorldcupPortals(msg.worldcupPortals ?? []);
+      game.setCosmeticGallery(msg.cosmeticGallery ?? null);
       
       // Load canvas claims if present and wait for them to finish
       if (msg.canvasClaims) {
@@ -4704,9 +4787,13 @@ function enterGame(
           .replace(/\s+/g, "")
           .trim()
           .toUpperCase();
+        const sender = lastPlayers.find(
+          (p) => p.address.replace(/\s+/g, "").trim().toUpperCase() === fromKey
+        );
         hud.appendChat(msg.from, msg.text, {
           fromAddress: msg.fromAddress || undefined,
           profileIsSelf: !!fromKey && fromKey === selfKey,
+          cosmeticBubbleClass: chatBubbleClassForPreset(sender?.cosmeticChatBubble),
         });
       }
       return;
@@ -5154,7 +5241,7 @@ function enterGame(
         z: CHAMBER_DEFAULT_SPAWN.z,
       });
       hud.setStatus(
-        "Returned to the chamber after 15 minutes inactive — explore again anytime"
+        "Returned to the Hub after 15 minutes inactive — explore again anytime"
       );
     });
   }

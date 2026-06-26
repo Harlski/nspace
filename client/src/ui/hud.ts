@@ -117,6 +117,7 @@ import {
   closePaletteHueHexPopover,
 } from "./paletteHueHexPopover.js";
 import { mountHeaderMarquee } from "./headerMarquee.js";
+import { createPlayerMenu, type PlayerMenuItemId } from "./playerMenu.js";
 
 const LS_HUD_CHAT_MINIMIZED = "nspace_hud_chat_minimized";
 
@@ -285,6 +286,18 @@ export function createHud(
     onEditOwnCountry?: () => void;
     /** After Wardrobe equip/unequip — host may refresh local loadout preview. */
     onCosmeticLoadoutChanged?: () => void;
+    /** Preview a slot on the local avatar (client-only); undefined reverts that slot. */
+    onCosmeticPreviewSlot?: (
+      slot: "aura" | "nameplate" | "chatBubble" | "trail",
+      presetId: string | null | undefined
+    ) => void;
+    onCosmeticRevertAllPreview?: () => void;
+    onCosmeticPreviewCanvas?: (canvas: HTMLCanvasElement | null, wallet: string) => void;
+    onCosmeticPreviewCosmeticsChange?: (
+      presets: Partial<
+        Record<"aura" | "nameplate" | "chatBubble" | "trail", string | null>
+      >
+    ) => void;
   }
 ): {
   setStatus: (s: string) => void;
@@ -444,6 +457,10 @@ export function createHud(
   setGuestToolbarMode: (isGuest: boolean) => void;
   /** Guest-only: open the Get a Wallet prompt. */
   onGetWalletOpen: (fn: () => void) => void;
+  /** Player Menu: end wallet session (clears cache in host). */
+  onPlayerMenuLogout: (fn: () => void) => void;
+  /** Player Menu: end guest session (clears cache in host). */
+  onPlayerMenuLeave: (fn: () => void) => void;
   /** Show/hide the persistent Play Space share (room code + QR) button. */
   setPlaySpaceShareVisible: (visible: boolean) => void;
   /** Click handler for the persistent Play Space share button. */
@@ -838,6 +855,21 @@ export function createHud(
   onReconnect: (fn: () => void) => void;
   /** Wire WebGL 1×1 tile previews; call after `new Game()` with the same instance (or `null` on teardown). */
   bindTileInspectorPreviewGame: (game: Game | null) => void;
+  configureCosmeticHandlers: (handlers: {
+    onLoadoutChanged?: () => void;
+    onPreviewSlot?: (
+      slot: "aura" | "nameplate" | "chatBubble" | "trail",
+      presetId: string | null | undefined
+    ) => void;
+    onRevertAllPreview?: () => void;
+    onPreviewCanvas?: (canvas: HTMLCanvasElement | null, wallet: string) => void;
+    onPreviewCosmeticsChange?: (
+      presets: Partial<
+        Record<"aura" | "nameplate" | "chatBubble" | "trail", string | null>
+      >
+    ) => void;
+    onVisitCosmeticShop?: () => void;
+  }) => void;
   /** FPS + server RTT overlay (easter egg: five taps on “NIMIQ SPACE” in the brand modal). */
   isPerfHudEnabled: () => boolean;
   feedPerfHudFrame: (now: number) => void;
@@ -845,6 +877,21 @@ export function createHud(
   destroy: () => void;
 } {
   root.innerHTML = "";
+
+  const cosmeticHandlers = {
+    onLoadoutChanged: opts?.onCosmeticLoadoutChanged,
+    onPreviewSlot: opts?.onCosmeticPreviewSlot,
+    onRevertAllPreview: opts?.onCosmeticRevertAllPreview,
+    onPreviewCanvas: opts?.onCosmeticPreviewCanvas,
+    onPreviewCosmeticsChange: opts?.onCosmeticPreviewCosmeticsChange,
+    onVisitCosmeticShop: undefined as (() => void) | undefined,
+  };
+  let wardrobeRevertAllPreview: (() => void) | null = null;
+  let wardrobeDisposePreview: (() => void) | null = null;
+  /** Drives the mounted wardrobe panel's view from the profile's bottom tab bar (self only). */
+  let wardrobeSetView: ((next: "wardrobe" | "shop") => void) | null = null;
+  /** Active profile bottom tab. */
+  let profileActiveTab: "wardrobe" | "shop" | "rooms" = "wardrobe";
 
   /** Room stats overlay; toggled from your profile identicon (hidden by default). */
   let debugPanelVisible = opts?.showDebug === true;
@@ -1906,6 +1953,9 @@ export function createHud(
             <span class="brand-links-overlay__social-label">X (Twitter)</span>
           </a>
         </div>
+        <button type="button" class="brand-links-overlay__feedback" hidden aria-label="Feedback">
+          <span class="brand-links-overlay__feedback-label">Feedback</span>
+        </button>
         <div class="brand-links-overlay__wallet-stack">
           <img class="brand-links-overlay__wallet-identicon" alt="" hidden />
           <div class="brand-links-overlay__address-row">
@@ -2022,7 +2072,7 @@ export function createHud(
   const returnHomeBtn = document.createElement("button");
   returnHomeBtn.type = "button";
   returnHomeBtn.className = "hud-return-home";
-  returnHomeBtn.textContent = "Return Home";
+  returnHomeBtn.textContent = "Return to Hub";
   returnHomeBtn.hidden = true;
   const portalEnterBtn = document.createElement("button");
   portalEnterBtn.type = "button";
@@ -3073,6 +3123,19 @@ export function createHud(
   otherPlayerProfile.className = "other-player-profile";
   otherPlayerProfile.hidden = true;
   otherPlayerProfile.setAttribute("aria-hidden", "true");
+  // Bottom-sheet vs centered modal: on narrow viewports OR the Nimiq Pay host the profile becomes a
+  // bottom-anchored sheet (tabs docked inside, panel flush to the screen bottom); on desktop it is a
+  // centered modal whose tabs hang off the bottom edge. Toggling a single `is-sheet` class keeps the
+  // CSS DRY instead of duplicating every rule across a media query and the host selector.
+  const profileSheetMql = window.matchMedia("(max-width: 560px)");
+  const applyProfileSheetMode = (): void => {
+    const sheet =
+      profileSheetMql.matches ||
+      document.documentElement.classList.contains("nspace-nimiq-pay-host");
+    otherPlayerProfile.classList.toggle("is-sheet", sheet);
+  };
+  applyProfileSheetMode();
+  profileSheetMql.addEventListener("change", applyProfileSheetMode);
   const oppBackdrop = document.createElement("button");
   oppBackdrop.type = "button";
   oppBackdrop.className = "other-player-profile__backdrop";
@@ -3189,15 +3252,18 @@ export function createHud(
     e.stopPropagation();
     opts?.onEditOwnCountry?.();
   });
+  const oppNameBlock = document.createElement("div");
+  oppNameBlock.className = "other-player-profile__name-block";
+  // Flag chip reads inline before the username (hidden when unset on other players' cards).
   oppNamePrimaryWrap.append(
     oppFlagBtn,
     oppDisplayNameEl,
     oppUsernameInput,
     oppUsernameCommitBtn
   );
+  oppNameBlock.append(oppNamePrimaryWrap);
   const oppWalletShortEl = document.createElement("span");
   oppWalletShortEl.className = "other-player-profile__wallet-short";
-  oppWalletShortEl.hidden = true;
   const oppAliasHost = document.createElement("div");
   oppAliasHost.className =
     "other-player-profile__alias-icon-wrap other-player-profile__nimiq-pay-inline";
@@ -3236,20 +3302,25 @@ export function createHud(
   oppDisplayNameEl.id = "other-player-profile-title";
   const oppAddrRow = document.createElement("div");
   oppAddrRow.className = "other-player-profile__addr-row";
+  // The short wallet address is itself the copy control: clicking it copies the full address.
+  // The copy glyph sits inline with the address (no separate standalone copy button near the X).
   const oppCopyAddressBtn = document.createElement("button");
   oppCopyAddressBtn.type = "button";
   oppCopyAddressBtn.className = "other-player-profile__copy-address";
   oppCopyAddressBtn.setAttribute("aria-label", "Copy address");
-  oppCopyAddressBtn.innerHTML = nimiqIconUseMarkup("nq-copy", {
-    width: 14,
-    height: 14,
+  oppCopyAddressBtn.hidden = true;
+  const oppCopyAddressIcon = document.createElement("span");
+  oppCopyAddressIcon.className = "other-player-profile__copy-address-glyph";
+  oppCopyAddressIcon.innerHTML = nimiqIconUseMarkup("nq-copy", {
+    width: 13,
+    height: 13,
     class: "other-player-profile__copy-address-icon",
   });
+  oppCopyAddressBtn.append(oppWalletShortEl, oppCopyAddressIcon);
   oppAddrRow.append(
-    oppNamePrimaryWrap,
-    oppWalletShortEl,
-    oppAliasHost,
+    oppNameBlock,
     oppCopyAddressBtn,
+    oppAliasHost,
     oppNimiqPayHost
   );
   const oppAdminRow = document.createElement("div");
@@ -3331,36 +3402,59 @@ export function createHud(
   oppProfileMessage.className = "other-player-profile__message-wrap";
   const oppProfileRooms = document.createElement("div");
   oppProfileRooms.className = "other-player-profile__rooms";
+  const oppProfileRoomsPanel = document.createElement("div");
+  oppProfileRoomsPanel.className = "other-player-profile__rooms-panel";
+  oppProfileRoomsPanel.hidden = true;
+  oppProfileRoomsPanel.appendChild(oppProfileRooms);
   const oppProfileWardrobe = document.createElement("div");
   oppProfileWardrobe.className = "other-player-profile__wardrobe";
   oppProfileWardrobe.hidden = true;
   const oppProfileNote = document.createElement("p");
   oppProfileNote.className = "other-player-profile__message-note";
   oppProfileNote.hidden = true;
-  const oppProfileFeedbackBtn = document.createElement("button");
-  oppProfileFeedbackBtn.type = "button";
-  oppProfileFeedbackBtn.className = "other-player-profile__feedback-btn";
-  oppProfileFeedbackBtn.textContent = "Feedback";
-  oppProfileFeedbackBtn.setAttribute("aria-label", "Feedback");
-  oppProfileFeedbackBtn.title = "Feedback";
-  oppProfileFeedbackBtn.hidden = true;
+  // Send NIM (other players only) lives inline in the identity header (appended to the address row
+  // below) rather than in a footer, so the bottom of the sheet is reserved for the pinned tabs.
+  // Feedback moved to the brand ("Nimiq Space") modal; the self "Open Wallet" action was removed.
   const oppSendNim = document.createElement("button");
   oppSendNim.type = "button";
   oppSendNim.className = "other-player-profile__send-nim";
   oppSendNim.textContent = "Send NIM";
-  const oppCardFooter = document.createElement("div");
-  oppCardFooter.className = "other-player-profile__card-footer";
-  oppCardFooter.append(oppProfileFeedbackBtn, oppSendNim);
-  oppCardBody.append(
-    oppAddrRow,
-    oppAdminRow,
-    oppProfileMessage,
-    oppProfileRooms,
-    oppProfileWardrobe,
-    oppProfileNote
-  );
-  oppCardMain.append(oppIdent, oppCardBody);
-  oppCard.append(oppCardMain, oppCardFooter);
+  oppSendNim.hidden = true;
+  oppAddrRow.append(oppSendNim);
+  // "User Rooms" is now a bottom tab (see oppTabBar) rather than a footer button. It keeps the
+  // rooms-btn class for existing show/hide + active wiring, plus the shared tab class.
+  const oppProfileRoomsBtn = document.createElement("button");
+  oppProfileRoomsBtn.type = "button";
+  oppProfileRoomsBtn.className = "other-player-profile__rooms-btn other-player-profile__tab";
+  oppProfileRoomsBtn.textContent = "User Rooms";
+  oppProfileRoomsBtn.setAttribute("aria-expanded", "false");
+  oppProfileRoomsBtn.setAttribute("aria-controls", "other-player-profile-rooms-panel");
+  oppProfileRoomsBtn.hidden = true;
+  // Bottom tab bar: Wardrobe / Shop (self only) + User Rooms. Switches the content area above.
+  const oppWardrobeTabBtn = document.createElement("button");
+  oppWardrobeTabBtn.type = "button";
+  oppWardrobeTabBtn.className = "other-player-profile__tab";
+  oppWardrobeTabBtn.textContent = "Wardrobe";
+  oppWardrobeTabBtn.hidden = true;
+  const oppShopTabBtn = document.createElement("button");
+  oppShopTabBtn.type = "button";
+  oppShopTabBtn.className = "other-player-profile__tab";
+  oppShopTabBtn.textContent = "Shop";
+  oppShopTabBtn.hidden = true;
+  const oppTabBar = document.createElement("div");
+  oppTabBar.className = "other-player-profile__tabbar";
+  oppTabBar.setAttribute("role", "tablist");
+  oppTabBar.append(oppWardrobeTabBtn, oppShopTabBtn, oppProfileRoomsBtn);
+  oppProfileRoomsPanel.id = "other-player-profile-rooms-panel";
+  oppCardBody.append(oppAddrRow, oppAdminRow, oppProfileMessage);
+  oppCardMain.append(oppCardBody);
+  // Scrollable middle zone between the fixed identity header (oppCardMain) and the pinned tab bar.
+  // Holds the wardrobe, the inline note, and the rooms panel; it scrolls internally when content is
+  // tall so the tabs stay pinned to the bottom of the sheet regardless of which tab is showing.
+  const oppContent = document.createElement("div");
+  oppContent.className = "other-player-profile__content";
+  oppContent.append(oppProfileWardrobe, oppProfileNote, oppProfileRoomsPanel);
+  oppCard.append(oppCardMain, oppContent, oppTabBar);
   oppDialog.appendChild(oppClose);
   oppDialog.appendChild(oppCard);
   otherPlayerProfile.appendChild(oppBackdrop);
@@ -3767,6 +3861,29 @@ export function createHud(
     oppProfileMessage.appendChild(box);
   }
 
+  function setProfileRoomsPanelOpen(open: boolean): void {
+    oppProfileRoomsPanel.hidden = !open;
+    oppProfileRoomsBtn.classList.toggle("is-active", open);
+    oppProfileRoomsBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  /**
+   * Switches the profile's bottom tab bar (self profile). `wardrobe`/`shop` show the cosmetics
+   * panel (driven via `wardrobeSetView`); `rooms` shows the user-rooms list. Other players' cards
+   * only have the rooms tab and keep their read-only wardrobe visible, so this is self-scoped.
+   */
+  function setProfileTab(tab: "wardrobe" | "shop" | "rooms"): void {
+    profileActiveTab = tab;
+    oppWardrobeTabBtn.classList.toggle("is-active", tab === "wardrobe");
+    oppShopTabBtn.classList.toggle("is-active", tab === "shop");
+    setProfileRoomsPanelOpen(tab === "rooms");
+    const showWardrobe = tab !== "rooms";
+    oppProfileWardrobe.hidden = !showWardrobe || !wardrobeSetView;
+    if (showWardrobe && wardrobeSetView) {
+      wardrobeSetView(tab === "shop" ? "shop" : "wardrobe");
+    }
+  }
+
   function renderProfileRooms(
     kind: "self" | "other",
     rooms: Array<{
@@ -3777,6 +3894,10 @@ export function createHud(
     }>
   ): void {
     oppProfileRooms.replaceChildren();
+    setProfileRoomsPanelOpen(false);
+    const showRoomsBtn = kind === "self" || rooms.length > 0;
+    oppProfileRoomsBtn.hidden = !showRoomsBtn;
+    if (!showRoomsBtn) return;
     const title = document.createElement("div");
     title.className = "other-player-profile__rooms-title";
     title.textContent = "Rooms";
@@ -3946,7 +4067,7 @@ export function createHud(
       const compact = profileOpenCompact;
       if (compact) {
         oppWalletShortEl.textContent = walletDisplayName(compact);
-        oppWalletShortEl.hidden = !profileUsernameSavedCustom;
+        oppCopyAddressBtn.hidden = !profileUsernameSavedCustom;
       }
       const until = Number(oppUsernameInput.dataset.lockedUntil);
       oppUsernameInput.readOnly =
@@ -3972,7 +4093,14 @@ export function createHud(
     return ok;
   }
 
-  oppDisplayNameEl.addEventListener("click", () => {
+  oppDisplayNameEl.addEventListener("click", (e) => {
+    // Dev affordance previously on the (now removed) identicon: shift-click your own name
+    // toggles the debug panel.
+    if (profileMessageKindOpen === "self" && (e as MouseEvent).shiftKey) {
+      e.preventDefault();
+      applyDebugPanelVisible(!debugPanelVisible);
+      return;
+    }
     const adminOther =
       profileMessageKindOpen === "other" && opts?.isGameAdmin?.() === true;
     if (profileMessageKindOpen !== "self" && !adminOther) return;
@@ -4025,6 +4153,12 @@ export function createHud(
     detachProfileEscape();
     profileOpenCompact = "";
     profileMessageKindOpen = null;
+    wardrobeRevertAllPreview?.();
+    wardrobeRevertAllPreview = null;
+    wardrobeDisposePreview?.();
+    wardrobeDisposePreview = null;
+    wardrobeSetView = null;
+    cosmeticHandlers.onRevertAllPreview?.();
     if (profileMessageEditor && profileDescEditBlurHandler) {
       profileMessageEditor.removeEventListener("blur", profileDescEditBlurHandler);
     }
@@ -4032,14 +4166,19 @@ export function createHud(
     profileMessageEditor = null;
     oppProfileMessage.replaceChildren();
     oppProfileRooms.replaceChildren();
+    setProfileRoomsPanelOpen(false);
+    oppProfileRoomsBtn.hidden = true;
+    oppProfileWardrobe.replaceChildren();
+    oppProfileWardrobe.hidden = true;
     clearProfileMessageNote();
+    oppSendNim.hidden = true;
     oppSendNim.textContent = "Send NIM";
     endUsernameEditVisual();
     oppDisplayNameEl.textContent = "";
     oppAliasTip.textContent = "";
     oppAliasHost.hidden = true;
     oppWalletShortEl.textContent = "";
-    oppWalletShortEl.hidden = true;
+    oppCopyAddressBtn.hidden = true;
     profileUsernameSavedCustom = "";
     oppUsernameInput.value = "";
     oppUsernameInput.readOnly = false;
@@ -4234,12 +4373,19 @@ export function createHud(
     setProfileNimiqPayTipVisible(false);
     setProfileAliasTipVisible(false);
     endUsernameEditVisual();
+    // Bottom tab bar: self gets Wardrobe + Shop + User Rooms; others only get User Rooms.
+    wardrobeSetView = null;
+    profileActiveTab = kind === "self" ? "wardrobe" : "rooms";
+    oppWardrobeTabBtn.hidden = kind !== "self";
+    oppShopTabBtn.hidden = kind !== "self";
+    oppWardrobeTabBtn.classList.toggle("is-active", kind === "self");
+    oppShopTabBtn.classList.remove("is-active");
     // Show the chip immediately for self (from known state); hide for others until the
     // profile fetch returns their country below.
     renderProfileFlag(kind, kind === "self" ? selfCountryCode : null);
     oppDisplayNameEl.textContent =
       _displayName.trim() || walletDisplayName(compact);
-    oppWalletShortEl.hidden = true;
+    oppCopyAddressBtn.hidden = true;
     profileUsernameSavedCustom = "";
     const showNimiqPayBadge =
       kind === "self"
@@ -4253,6 +4399,8 @@ export function createHud(
     profileMessageEditor = null;
     oppProfileMessage.replaceChildren();
     oppProfileRooms.replaceChildren();
+    setProfileRoomsPanelOpen(false);
+    oppProfileRoomsBtn.hidden = true;
     const loading = document.createElement("div");
     loading.className =
       "other-player-profile__message-text other-player-profile__message-text--loading";
@@ -4261,53 +4409,17 @@ export function createHud(
 
     oppCopyAddressBtn.title = compact;
     oppCopyAddressBtn.dataset.fullAddress = compact;
-    oppProfileFeedbackBtn.hidden = kind !== "self";
     if (kind === "self") {
-      oppSendNim.textContent = "Open Wallet";
-      oppSendNim.dataset.walletUrl = NIMIQ_WALLET_URL;
-      void refreshFeedbackUnreadBadge();
+      // Your own profile has no Send NIM action (Feedback moved to the brand modal; Open Wallet,
+      // redundant with that modal, was removed).
+      oppSendNim.hidden = true;
     } else {
+      oppSendNim.hidden = false;
       oppSendNim.textContent = "Send NIM";
       oppSendNim.dataset.walletUrl = nimiqWalletRecipientDeepLink(compact);
     }
-    oppIdent.hidden = false;
-    oppIdent.removeAttribute("src");
-    oppIdent.dataset.address = compact;
-    const selfProfile = kind === "self";
-    oppIdent.classList.toggle(
-      "other-player-profile__identicon--debug-toggle",
-      selfProfile
-    );
-    if (selfProfile) {
-      oppIdent.setAttribute("role", "button");
-      oppIdent.tabIndex = 0;
-      oppIdent.title = debugPanelVisible
-        ? "Hide debug info"
-        : "Show debug info";
-      oppIdent.setAttribute(
-        "aria-label",
-        debugPanelVisible ? "Hide debug info" : "Show debug info"
-      );
-      oppIdent.setAttribute("aria-pressed", debugPanelVisible ? "true" : "false");
-    } else {
-      oppIdent.removeAttribute("role");
-      oppIdent.tabIndex = -1;
-      oppIdent.removeAttribute("title");
-      oppIdent.removeAttribute("aria-label");
-      oppIdent.removeAttribute("aria-pressed");
-    }
-    void (async (): Promise<void> => {
-      try {
-        const { identiconDataUrl } = await import("../game/identiconTexture.js");
-        const url = await identiconDataUrl(compact);
-        if (oppIdent.dataset.address !== compact) return;
-        oppIdent.src = url;
-      } catch {
-        if (oppIdent.dataset.address === compact) {
-          oppIdent.hidden = true;
-        }
-      }
-    })();
+    // The profile identicon was removed from the layout; no avatar image to populate here.
+    applyProfileSheetMode();
     otherPlayerProfile.hidden = false;
     otherPlayerProfile.setAttribute("aria-hidden", "false");
     attachProfileEscape();
@@ -4368,7 +4480,7 @@ export function createHud(
       const hasCustom = Boolean(profileUsernameSavedCustom);
       if (compact) {
         oppWalletShortEl.textContent = walletDisplayName(compact);
-        oppWalletShortEl.hidden = !hasCustom;
+        oppCopyAddressBtn.hidden = !hasCustom;
       }
       if (kind === "self") {
         oppUsernameInput.value = profileUsernameSavedCustom;
@@ -4432,28 +4544,56 @@ export function createHud(
       if (kind === "self") {
         oppProfileWardrobe.hidden = false;
         const { mountWardrobePanel } = await import("../cosmetics/wardrobePanel.js");
-        mountWardrobePanel(oppProfileWardrobe, {
-          onLoadoutChanged: () => opts?.onCosmeticLoadoutChanged?.(),
+        const mounted = mountWardrobePanel(oppProfileWardrobe, openFor, {
+          hideTabs: true,
+          onLoadoutChanged: () => cosmeticHandlers.onLoadoutChanged?.(),
+          onPreviewSlot: (slot, presetId) =>
+            cosmeticHandlers.onPreviewSlot?.(slot, presetId),
+          onPreviewCanvas: (canvas, wallet) =>
+            cosmeticHandlers.onPreviewCanvas?.(canvas, wallet),
+          onPreviewCosmeticsChange: (presets) =>
+            cosmeticHandlers.onPreviewCosmeticsChange?.(presets),
+          onVisitCosmeticShop: () => {
+            closeOtherPlayerProfile();
+            cosmeticHandlers.onVisitCosmeticShop?.();
+          },
         });
+        wardrobeRevertAllPreview = () => mounted.revertAllPreview();
+        wardrobeDisposePreview = () => mounted.disposePreviewCanvas();
+        wardrobeSetView = (next) => mounted.setView(next);
+        // Restore the active tab (defaults to Wardrobe) now that the panel can switch views.
+        setProfileTab(profileActiveTab === "rooms" ? "rooms" : profileActiveTab);
       } else {
         oppProfileWardrobe.hidden = true;
         oppProfileWardrobe.replaceChildren();
-        const loadout = (j as { cosmeticLoadout?: Record<string, string | null> })
-          .cosmeticLoadout;
-        if (loadout) {
-          const chips = document.createElement("div");
-          chips.className = "other-player-profile__cosmetic-chips";
-          for (const [slot, preset] of Object.entries(loadout)) {
-            if (!preset) continue;
-            const chip = document.createElement("span");
-            chip.className = "other-player-profile__cosmetic-chip";
-            chip.textContent = `${slot}: ${preset}`;
-            chips.appendChild(chip);
-          }
-          if (chips.childElementCount > 0) {
-            oppProfileWardrobe.hidden = false;
-            oppProfileWardrobe.replaceChildren(chips);
-          }
+        const loadout = (j as {
+          cosmeticLoadout?: Record<string, string | null>;
+          cosmeticDeployables?: Array<{ presetId: string; displayName: string }>;
+        }).cosmeticLoadout;
+        const deployables =
+          (j as { cosmeticDeployables?: Array<{ presetId: string; displayName: string }> })
+            .cosmeticDeployables ?? [];
+        if (loadout || deployables.length > 0) {
+          const { mountWardrobeReadOnly } = await import("../cosmetics/wardrobePanel.js");
+          const readonlyMounted = mountWardrobeReadOnly(
+            oppProfileWardrobe,
+            openFor,
+            {
+              aura: loadout?.aura ?? null,
+              nameplate: loadout?.nameplate ?? null,
+              chatBubble: loadout?.chatBubble ?? null,
+              trail: loadout?.trail ?? null,
+            },
+            deployables,
+            {
+              onPreviewCanvas: (canvas, wallet) =>
+            cosmeticHandlers.onPreviewCanvas?.(canvas, wallet),
+              onPreviewCosmeticsChange: (presets) =>
+                cosmeticHandlers.onPreviewCosmeticsChange?.(presets),
+            }
+          );
+          wardrobeDisposePreview = () => readonlyMounted.disposePreviewCanvas();
+          oppProfileWardrobe.hidden = false;
         }
       }
     } catch {
@@ -4478,6 +4618,27 @@ export function createHud(
   });
   oppBackdrop.addEventListener("click", () => {
     closeOtherPlayerProfile();
+  });
+  oppWardrobeTabBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    setProfileTab("wardrobe");
+  });
+  oppShopTabBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    setProfileTab("shop");
+  });
+  oppProfileRoomsBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (profileMessageKindOpen === "self") {
+      // Tab behavior: toggle between the rooms list and the wardrobe content.
+      setProfileTab(profileActiveTab === "rooms" ? "wardrobe" : "rooms");
+    } else {
+      // Other players' cards keep their read-only wardrobe visible; this just toggles the panel.
+      setProfileRoomsPanelOpen(oppProfileRoomsPanel.hidden);
+    }
   });
   oppSendNim.addEventListener("click", (ev) => {
     ev.preventDefault();
@@ -7571,6 +7732,17 @@ export function createHud(
 
   ui.appendChild(buildBottomDock);
 
+  const playerMenu = createPlayerMenu(ui);
+  let playerMenuLogoutHandler = (): void => {};
+  let playerMenuLeaveHandler = (): void => {};
+  playerMenu.trigger.addEventListener(
+    "click",
+    () => {
+      closeActionWheel();
+    },
+    { capture: true }
+  );
+
   const tileInspectorPyramidBaseRow = tileInspectorRoot.querySelector(
     "#tile-inspector-pyramid-base-row"
   ) as HTMLElement | null;
@@ -9275,13 +9447,15 @@ export function createHud(
 
   function syncFeedbackUnreadBadge(hasUnread: boolean): void {
     feedbackHasUnread = hasUnread;
-    oppProfileFeedbackBtn.classList.toggle(
-      "other-player-profile__feedback-btn--unread",
-      hasUnread
-    );
     const label = hasUnread ? "Feedback — new reply" : "Feedback";
-    oppProfileFeedbackBtn.setAttribute("aria-label", label);
-    oppProfileFeedbackBtn.title = label;
+    if (brandLinksFeedbackBtn) {
+      brandLinksFeedbackBtn.classList.toggle(
+        "brand-links-overlay__feedback--unread",
+        hasUnread
+      );
+      brandLinksFeedbackBtn.setAttribute("aria-label", label);
+      brandLinksFeedbackBtn.title = label;
+    }
     playerBar.classList.toggle("hud-player-bar--feedback-unread", hasUnread);
     if (brandLinksPlayerAddress.trim()) {
       playerBar.setAttribute("aria-label", playerBarAriaLabel(hasUnread));
@@ -9676,12 +9850,6 @@ export function createHud(
     });
   }
 
-  oppProfileFeedbackBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    showFeedbackOverlay();
-  });
-
   let brandLinksPlayerAddress = "";
   let playerBarDisplayName = "";
 
@@ -9711,6 +9879,34 @@ export function createHud(
     }
   });
 
+  playerMenu.onAction((id: PlayerMenuItemId) => {
+    switch (id) {
+      case "profile":
+        openOwnPlayerProfileFromBar();
+        break;
+      case "wardrobe":
+        openOwnPlayerProfileFromBar();
+        setProfileTab("wardrobe");
+        break;
+      case "rooms":
+        roomsOpenHandler();
+        break;
+      case "return-to-hub":
+        returnHomeHandler();
+        break;
+      case "get-wallet":
+        getWalletOpenHandler();
+        break;
+      default:
+        break;
+    }
+  });
+
+  playerMenu.onConfirm((kind) => {
+    if (kind === "logout") playerMenuLogoutHandler();
+    else playerMenuLeaveHandler();
+  });
+
   function syncTopBarPlayerIdentity(): void {
     const raw = brandLinksPlayerAddress.trim();
     if (!raw) {
@@ -9720,6 +9916,7 @@ export function createHud(
       playerBarIdenticon.hidden = true;
       playerBarIdenticon.removeAttribute("src");
       delete playerBarIdenticon.dataset.address;
+      playerMenu.syncIdenticonFromBar(playerBarIdenticon);
       playerBar.removeAttribute("title");
       playerBar.classList.remove("hud-player-bar--interactive");
       playerBar.classList.remove("hud-player-bar--feedback-unread");
@@ -9742,6 +9939,7 @@ export function createHud(
     playerBarIdenticon.hidden = false;
     playerBarIdenticon.removeAttribute("src");
     playerBarIdenticon.dataset.address = compact;
+    playerMenu.syncIdenticonFromBar(playerBarIdenticon);
     playerBar.classList.add("hud-player-bar--interactive");
     playerBar.tabIndex = 0;
     playerBar.setAttribute("role", "button");
@@ -9753,9 +9951,11 @@ export function createHud(
         const url = await identiconDataUrl(compact);
         if (playerBarIdenticon.dataset.address !== compact) return;
         playerBarIdenticon.src = url;
+        playerMenu.syncIdenticonFromBar(playerBarIdenticon);
       } catch {
         if (playerBarIdenticon.dataset.address === compact) {
           playerBarIdenticon.hidden = true;
+          playerMenu.syncIdenticonFromBar(playerBarIdenticon);
         }
       }
     })();
@@ -9788,6 +9988,9 @@ export function createHud(
   const brandLinksTitleEl = brandLinksOverlay.querySelector(
     "#brand-links-title"
   ) as HTMLElement | null;
+  const brandLinksFeedbackBtn = brandLinksOverlay.querySelector(
+    ".brand-links-overlay__feedback"
+  ) as HTMLButtonElement | null;
 
   const onBrandLinksTitleSecretClick = (e: MouseEvent): void => {
     e.stopPropagation();
@@ -9989,6 +10192,12 @@ export function createHud(
     if (!brandLinksOverlay.hidden) return;
     closeBrandQrFullscreen();
     syncBrandLinksWalletIdenticon();
+    if (brandLinksFeedbackBtn) {
+      // Feedback is a signed-in action; only surface it once we know the player's wallet.
+      const signedIn = brandLinksPlayerAddress.trim().length > 0;
+      brandLinksFeedbackBtn.hidden = !signedIn;
+      if (signedIn) void refreshFeedbackUnreadBadge();
+    }
     brandLinksOverlay.hidden = false;
     brandLinksOverlay.setAttribute("aria-hidden", "false");
     brandLinksEscapeHandler = (e: KeyboardEvent): void => {
@@ -10025,6 +10234,14 @@ export function createHud(
   }
   if (brandLinksTitleEl) {
     brandLinksTitleEl.addEventListener("click", onBrandLinksTitleSecretClick);
+  }
+  if (brandLinksFeedbackBtn) {
+    brandLinksFeedbackBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideBrandLinksOverlay();
+      showFeedbackOverlay();
+    });
   }
 
   tileInspectorToolSelect.addEventListener("change", () => {
@@ -12289,6 +12506,7 @@ export function createHud(
         profileIsSelf?: boolean;
         historical?: boolean;
         skipSystemDedup?: boolean;
+        cosmeticBubbleClass?: string | null;
       }
     ) {
       const isSystem = from.trim().toLowerCase() === "system";
@@ -12304,6 +12522,9 @@ export function createHud(
       }
       const line = document.createElement("div");
       line.className = "chat-line";
+      if (opts?.cosmeticBubbleClass) {
+        line.classList.add(opts.cosmeticBubbleClass);
+      }
       if (opts?.historical) {
         line.classList.add("chat-line--historical");
       }
@@ -12354,6 +12575,7 @@ export function createHud(
     },
     setReturnHomeVisible(visible: boolean) {
       returnHomeBtn.hidden = !visible;
+      playerMenu.setReturnToHubVisible(visible);
     },
     setPortalEnterVisible(visible: boolean) {
       portalEnterBtn.hidden = !visible;
@@ -12385,6 +12607,7 @@ export function createHud(
     ) {
       closeOtherPlayerUiOverlays();
       closeActionWheel();
+      playerMenu.close();
       actionWheelOpenedFloor = openedAtFloor;
       actionWheelEmoteHandler = handlers.onEmote;
       actionWheelJoinFieldHandler = handlers.onJoinFreePlayField;
@@ -12524,10 +12747,17 @@ export function createHud(
     setGuestToolbarMode(isGuest: boolean) {
       roomsBtn.hidden = isGuest;
       getWalletBtn.hidden = !isGuest;
+      playerMenu.setGuestMode(isGuest);
       if (nimiqPayHost) syncPayLayoutMode();
     },
     onGetWalletOpen(fn: () => void) {
       getWalletOpenHandler = fn;
+    },
+    onPlayerMenuLogout(fn: () => void) {
+      playerMenuLogoutHandler = fn;
+    },
+    onPlayerMenuLeave(fn: () => void) {
+      playerMenuLeaveHandler = fn;
     },
     setPlaySpaceShareVisible(visible: boolean) {
       playSpaceShareBtn.hidden = !visible;
@@ -14443,6 +14673,26 @@ export function createHud(
         ms === null || !Number.isFinite(ms) ? "—" : `${Math.round(ms)} ms`;
     },
     bindTileInspectorPreviewGame,
+    configureCosmeticHandlers(handlers) {
+      if (handlers.onLoadoutChanged !== undefined) {
+        cosmeticHandlers.onLoadoutChanged = handlers.onLoadoutChanged;
+      }
+      if (handlers.onPreviewSlot !== undefined) {
+        cosmeticHandlers.onPreviewSlot = handlers.onPreviewSlot;
+      }
+      if (handlers.onRevertAllPreview !== undefined) {
+        cosmeticHandlers.onRevertAllPreview = handlers.onRevertAllPreview;
+      }
+      if (handlers.onPreviewCanvas !== undefined) {
+        cosmeticHandlers.onPreviewCanvas = handlers.onPreviewCanvas;
+      }
+      if (handlers.onPreviewCosmeticsChange !== undefined) {
+        cosmeticHandlers.onPreviewCosmeticsChange = handlers.onPreviewCosmeticsChange;
+      }
+      if (handlers.onVisitCosmeticShop !== undefined) {
+        cosmeticHandlers.onVisitCosmeticShop = handlers.onVisitCosmeticShop;
+      }
+    },
     destroy() {
       stopRestartBannerTick();
       disposeHeaderMarquee();

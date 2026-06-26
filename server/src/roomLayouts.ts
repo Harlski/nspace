@@ -25,6 +25,10 @@ import {
 } from "./worldcup/config.js";
 import { isInviteLobbyRoomId as isDirectInviteLobbyId } from "./directInvite/config.js";
 import { PLAY_SPACE_BOUNDS } from "./directInvite/playSpaceLayout.js";
+import {
+  COSMETIC_GALLERY_BOUNDS,
+  isCosmeticGalleryRoom,
+} from "./cosmeticGallery.js";
 
 export type RoomBounds = {
   minX: number;
@@ -209,6 +213,9 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
     case PIXEL_ROOM_ID:
       return PIXEL_BOUNDS;
     default:
+      if (isCosmeticGalleryRoom(id)) {
+        return { ...COSMETIC_GALLERY_BOUNDS };
+      }
       // worldcup: field room + ephemeral 1v1 Match Pitches reuse the field bounds when enabled
       if (
         WORLDCUP_ENABLED &&
@@ -244,6 +251,7 @@ export function getDoorsForRoom(roomId: string): DoorDef[] {
 export function hasRoom(roomId: string): boolean {
   const id = normalizeRoomId(roomId);
   if (BUILTIN_ROOM_IDS.has(id)) return true;
+  if (isCosmeticGalleryRoom(id)) return true;
   // worldcup: field room is a valid destination when enabled
   if (WORLDCUP_ENABLED && id === WORLDCUP_FIELD_ROOM_ID) return true;
   return hasDynamicRoom(id);
@@ -298,7 +306,7 @@ export function listRoomDefinitions(): RoomDefinition[] {
       id: HUB_ROOM_ID,
       bounds: HUB_BOUNDS,
       ownerAddress: null,
-      displayName: getBuiltinRoomDisplayName(HUB_ROOM_ID, "Hub"),
+      displayName: getBuiltinRoomDisplayName(HUB_ROOM_ID, "Commons"),
       isPublic: getBuiltinRoomIsPublic(HUB_ROOM_ID),
       isBuiltin: true,
     },
@@ -306,7 +314,7 @@ export function listRoomDefinitions(): RoomDefinition[] {
       id: CHAMBER_ROOM_ID,
       bounds: CHAMBER_BOUNDS,
       ownerAddress: null,
-      displayName: getBuiltinRoomDisplayName(CHAMBER_ROOM_ID, "Chamber"),
+      displayName: getBuiltinRoomDisplayName(CHAMBER_ROOM_ID, "Hub"),
       isPublic: getBuiltinRoomIsPublic(CHAMBER_ROOM_ID),
       isBuiltin: true,
     },

@@ -875,6 +875,164 @@ html.nspace-pseudo-fs #app {
   background: rgba(14, 116, 144, 0.58);
 }
 
+/* Player Menu — bottom-right identicon launcher (navigation/account). */
+.player-menu {
+  position: absolute;
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: calc(
+    10px + env(safe-area-inset-bottom, 0px) + var(--hud-build-dock-height, 0px)
+  );
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.player-menu__trigger,
+.player-menu__panel {
+  pointer-events: auto;
+}
+
+.player-menu__trigger {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.88);
+  box-shadow:
+    0 0 0 2px rgba(56, 189, 248, 0.45),
+    0 4px 14px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition:
+    box-shadow 0.18s ease,
+    transform 0.12s ease;
+}
+
+.player-menu__trigger:hover {
+  box-shadow:
+    0 0 0 2px rgba(56, 189, 248, 0.75),
+    0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.player-menu--open .player-menu__trigger {
+  box-shadow:
+    0 0 0 2px rgba(125, 211, 252, 0.95),
+    0 6px 18px rgba(0, 0, 0, 0.42);
+}
+
+.player-menu__identicon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.player-menu__panel {
+  min-width: 168px;
+  max-width: min(240px, calc(100vw - 24px));
+  padding: 6px;
+  border-radius: 10px;
+  background: rgba(15, 17, 23, 0.97);
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+}
+
+.player-menu__panel[hidden] {
+  display: none !important;
+}
+
+.player-menu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.player-menu__item {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #e8eaef;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.player-menu__item:hover {
+  background: rgba(45, 53, 72, 0.95);
+}
+
+.player-menu__item--destructive {
+  color: #fecaca;
+}
+
+.player-menu__item--destructive:hover {
+  background: rgba(127, 29, 29, 0.35);
+}
+
+.player-menu__confirm-msg {
+  margin: 4px 6px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #e8eaef;
+  font-weight: 600;
+}
+
+.player-menu__confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 0 4px 2px;
+}
+
+.player-menu__confirm-btn {
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #3d465a;
+  font-family: inherit;
+}
+
+.player-menu__confirm-btn--cancel {
+  background: rgba(30, 36, 51, 0.95);
+  color: #e8eaef;
+}
+
+.player-menu__confirm-btn--confirm {
+  background: rgba(127, 29, 29, 0.42);
+  border-color: #f87171;
+  color: #fecaca;
+}
+
+.hud.hud--stream-cinema .player-menu,
+.hud.hud--build-bottom-dock-visible .player-menu {
+  display: none !important;
+}
+
+html.nspace-nimiq-pay-host .player-menu {
+  bottom: var(--hud-nimiq-pay-bottom-inset);
+}
+
+html.nspace-nimiq-pay-landscape .player-menu {
+  right: calc(
+    var(--hud-nimiq-pay-rail-width) + max(8px, env(safe-area-inset-right, 0px))
+  );
+}
+
 .hud {
   position: absolute;
   inset: 0;
@@ -2065,9 +2223,55 @@ button.hud-brand:focus-visible {
 }
 
 .brand-links-overlay__body--qr-open .brand-links-overlay__social,
+.brand-links-overlay__body--qr-open .brand-links-overlay__feedback,
 .brand-links-overlay__body--qr-open .brand-links-overlay__wallet-stack {
   visibility: hidden;
   pointer-events: none;
+}
+
+/* Feedback entry inside the "Nimiq Space" brand modal (signed-in only). */
+.brand-links-overlay__feedback {
+  position: relative;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 160px;
+  padding: 9px 18px;
+  border: 1px solid rgba(100, 116, 139, 0.55);
+  border-radius: 10px;
+  background: rgba(30, 41, 59, 0.55);
+  color: rgba(226, 232, 240, 0.96);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.brand-links-overlay__feedback[hidden] {
+  display: none !important;
+}
+
+.brand-links-overlay__feedback:hover {
+  background: rgba(51, 65, 85, 0.75);
+  border-color: rgba(148, 163, 184, 0.45);
+  color: #fff;
+}
+
+/* Unread reply indicator: a dot on the corner of the Feedback button. */
+.brand-links-overlay__feedback--unread::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(15, 17, 23, 0.95);
 }
 
 .brand-links-overlay__social {
@@ -4877,9 +5081,15 @@ button.hud-brand:focus-visible {
 }
 
 .sign-read-overlay__footer {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  box-sizing: border-box;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .sign-read-overlay__note {
@@ -5300,6 +5510,8 @@ button.hud-brand:focus-visible {
   inset: 0;
   z-index: 10001;
   display: flex;
+  /* Desktop default: centered modal. On mobile / Nimiq Pay it becomes a bottom-anchored sheet —
+     see the `@media (max-width: 560px)` and `html.nspace-nimiq-pay-host` overrides below. */
   align-items: center;
   justify-content: center;
   padding: 20px 16px;
@@ -5328,7 +5540,7 @@ button.hud-brand:focus-visible {
 .other-player-profile__dialog {
   position: relative;
   z-index: 1;
-  width: min(400px, 100%);
+  width: min(420px, 100%);
   max-width: calc(100vw - 24px);
   box-sizing: border-box;
   overflow: visible;
@@ -5355,6 +5567,7 @@ button.hud-brand:focus-visible {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  gap: 12px;
   overflow: visible;
 }
 
@@ -5367,17 +5580,218 @@ button.hud-brand:focus-visible {
   box-sizing: border-box;
 }
 
-.other-player-profile__card-footer {
+/* Desktop default: the content wrapper is a layout passthrough (`display: contents`) so the
+   wardrobe / note / rooms panel sit directly in the card flow exactly as before the wrapper was
+   introduced. In sheet mode (below) it becomes the scrolling middle zone instead. */
+.other-player-profile__content {
+  display: contents;
+}
+
+/* ============================================================================================
+   Bottom-sheet mode (mobile widths / Nimiq Pay). The `is-sheet` class is toggled on the profile
+   overlay by JS (see applyProfileSheetMode in hud.ts) when the viewport is narrow OR the page is
+   the Nimiq Pay host. Desktop keeps the centered modal with tabs that hang off the bottom edge
+   (the default rules elsewhere in this file).
+   ============================================================================================ */
+.other-player-profile.is-sheet:not(.sign-read-overlay) {
+  align-items: flex-end;
+  padding: 0;
+  /* Reserve a little headroom at the top so a sliver of dimmed backdrop shows above a tall sheet. */
+  padding-top: max(24px, env(safe-area-inset-top, 0px));
+}
+
+/* Bottom-anchored sheet: docks flush to the viewport bottom, rounds only its top corners, and lets
+   the inner zones own their padding so the tab bar spans the full width at the bottom. */
+.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__dialog {
+  width: min(420px, 100%);
+  max-width: 100%;
+  max-height: 100%;
+  padding: 0;
+  border-radius: 16px 16px 0 0;
+  border-bottom: none;
+  /* Visible so header tooltips can overflow the panel edges; the middle zone scrolls on its own. */
+  overflow: visible;
+  box-shadow: 0 -14px 50px rgba(0, 0, 0, 0.55);
+  animation: opp-sheet-rise 0.22s ease-out;
+}
+
+@keyframes opp-sheet-rise {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__dialog {
+    animation: none;
+  }
+}
+
+/* Card fills the sheet so the three zones can divide its height: fixed header, scrolling middle,
+   pinned tab bar. */
+.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__card {
+  gap: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__card-main {
+  /* Fixed identity header. Right padding leaves room for the absolute close button. */
+  flex: 0 0 auto;
+  padding: 16px 44px 10px 18px;
+}
+
+/* Scrollable middle zone. A min-height floor keeps short tabs (e.g. Shop) from collapsing the
+   sheet; it is capped to the viewport (via the sheet's max-height) and scrolls internally when a
+   tall tab (the wardrobe) overflows, so the header and tabs stay put. */
+.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__content {
   display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  min-height: min(240px, 38vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 18px 14px;
+}
+
+.other-player-profile__rooms-panel {
   width: 100%;
   box-sizing: border-box;
-  margin-top: 4px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  margin-top: 0;
+  padding: 0;
+}
+
+.other-player-profile__rooms-panel[hidden] {
+  display: none !important;
+}
+
+.other-player-profile__rooms-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: auto;
+  min-height: 34px;
+  margin: 0;
+  padding: 7px 14px;
+  border: 1px solid rgba(100, 116, 139, 0.55);
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.55);
+  color: rgba(226, 232, 240, 0.96);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.other-player-profile__rooms-btn:hover,
+.other-player-profile__rooms-btn.is-active {
+  background: rgba(51, 65, 85, 0.75);
+  border-color: rgba(148, 163, 184, 0.45);
+  color: #fff;
+}
+
+.other-player-profile__rooms-btn[hidden] {
+  display: none !important;
+}
+
+/* Bottom tab bar — DESKTOP default: the tabs hang off the bottom edge of the modal (over the
+   blurred game), so nothing/no panel sits behind them. The bar breaks out of the dialog's bottom
+   padding with negative margins; each tab has only bottom-rounded corners and an opaque fill so the
+   game doesn't show through, and the active one drops its top border to read as merged ("open")
+   with the modal above. Sheet mode (mobile / Nimiq Pay) re-docks these inside the panel below. */
+.other-player-profile__tabbar {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  margin: 14px -42px -54px -18px;
+  padding: 0 18px;
+}
+
+.other-player-profile__tab {
+  flex: 0 1 124px;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 36px;
+  margin: 0;
+  padding: 0 14px;
+  /* Opaque fill so the blurred game behind the hanging tabs doesn't show through; the full border
+     (incl. top) outlines unselected tabs as recessed/closed beneath the modal. */
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  border-radius: 0 0 12px 12px;
+  background: #14171f;
+  color: rgba(203, 213, 225, 0.66);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 12px 18px rgba(0, 0, 0, 0.4);
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  position: relative;
+}
+
+.other-player-profile__tab:hover {
+  color: #fff;
+  background: #1a1f29;
+}
+
+/* Selected tab reads as "open": opaque fill, no separating line above it (no top border) so it
+   merges into the modal, with a cyan accent. */
+.other-player-profile__tab.is-active {
+  color: #fff;
+  background: #1c2431;
+  border-color: rgba(56, 189, 248, 0.55);
+  border-top: none;
+  z-index: 2;
+}
+
+.other-player-profile__tab[hidden] {
+  display: none !important;
+}
+
+/* Sheet mode: the tabs dock inside the panel as a flush bottom zone (there's nothing below to hang
+   over). They go transparent so they blend into the sheet rather than reading as filled boxes, and
+   drop the hanging drop-shadow. */
+.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__tabbar {
+  margin: 0;
+  gap: 6px;
+  flex: 0 0 auto;
+  justify-content: center;
+  padding: 0 10px max(8px, env(safe-area-inset-bottom, 0px));
+}
+
+.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__tab {
+  flex: 1 1 0;
+  max-width: 220px;
+  height: 38px;
+  padding: 0 12px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__tab:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__tab.is-active {
+  background: rgba(56, 189, 248, 0.1);
 }
 
 .other-player-profile__card-body {
@@ -5433,11 +5847,22 @@ button.hud-brand:focus-visible {
   outline-offset: 3px;
 }
 
+.other-player-profile__name-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  min-width: 0;
+  /* Don't grow: keep the wallet chip sitting right after the name rather than pushed to the
+     far edge (where the old standalone copy icon used to live next to the close button). */
+  flex: 0 1 auto;
+}
+
 .other-player-profile__name-primary-wrap {
   display: flex;
   align-items: center;
   min-width: 0;
-  flex: 1 1 auto;
+  width: 100%;
   gap: 0.35rem;
 }
 
@@ -5470,10 +5895,10 @@ button.hud-brand:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   padding: 0;
-  font-size: 17px;
+  font-size: 15px;
   line-height: 1;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 7px;
@@ -5664,17 +6089,27 @@ button.hud-brand:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   margin: 0;
-  margin-left: 2px;
-  padding: 5px;
+  padding: 3px 7px;
   border: none;
   border-radius: 7px;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.04);
   color: rgba(226, 232, 240, 0.72);
   cursor: pointer;
-  line-height: 0;
+  line-height: 1;
   -webkit-tap-highlight-color: transparent;
   align-self: center;
+}
+
+.other-player-profile__copy-address[hidden] {
+  display: none !important;
+}
+
+.other-player-profile__copy-address-glyph {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
 }
 
 .other-player-profile__copy-address:hover {
@@ -5757,6 +6192,17 @@ button.hud-brand:focus-visible {
   background: rgba(51, 65, 85, 0.75);
   border-color: rgba(148, 163, 184, 0.45);
   color: #fff;
+}
+
+/* Send NIM (other players only) sits inline in the identity header, pushed to the right edge of the
+   address row so it reads as the card's primary action without needing a separate footer. */
+.other-player-profile__addr-row > .other-player-profile__send-nim {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.other-player-profile__send-nim[hidden] {
+  display: none !important;
 }
 
 .other-player-profile__feedback-btn {
@@ -5891,6 +6337,8 @@ button.hud-brand:focus-visible {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  max-height: min(9.5rem, 28vh);
+  overflow-y: auto;
 }
 
 .other-player-profile__rooms:empty {
@@ -5969,7 +6417,35 @@ button.hud-brand:focus-visible {
 }
 
 .other-player-profile__wardrobe {
-  margin-top: 0.65rem;
+  margin-top: 0;
+  /* Desktop modal reserves extra right padding (42px) for the close button; reclaim it below the
+     header so the right cosmetic column lines up symmetrically with the left edge. In sheet mode the
+     close-button room lives on the header zone instead, so this is cancelled (see below). */
+  margin-right: -24px;
+}
+
+/* Sheet mode gives the content zone symmetric padding, so the reclaim hack would clip the right
+   column — cancel it. */
+.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__wardrobe {
+  margin-right: 0;
+}
+
+.other-player-profile__wardrobe .wardrobe-panel__tabs {
+  margin-bottom: 0.35rem;
+}
+
+.other-player-profile__wardrobe .wardrobe-doll__canvas {
+  max-width: 7.5rem;
+}
+
+.other-player-profile__wardrobe .wardrobe-doll__col .wardrobe-slot,
+.other-player-profile__wardrobe .wardrobe-doll__col .wardrobe-slot--readonly {
+  width: 3.65rem;
+  font-size: 9px;
+}
+
+.other-player-profile__wardrobe .wardrobe-slot__label {
+  font-size: 8px;
 }
 
 .wardrobe-panel__tabs {
@@ -5991,8 +6467,548 @@ button.hud-brand:focus-visible {
 }
 
 .wardrobe-panel__tab.is-active {
-  background: rgba(59, 130, 246, 0.35);
-  border-color: rgba(96, 165, 250, 0.65);
+  background: rgba(234, 88, 12, 0.28);
+  border-color: rgba(251, 146, 60, 0.75);
+  color: #ffedd5;
+}
+
+.wardrobe-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.wardrobe-doll__grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: stretch;
+  width: 100%;
+}
+
+.wardrobe-doll__col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  align-items: stretch;
+}
+
+.wardrobe-slot-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.wardrobe-slot__name {
+  max-width: 100%;
+  font-size: 9px;
+  line-height: 1.2;
+  font-weight: 600;
+  color: rgba(203, 213, 225, 0.92);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wardrobe-doll__col .wardrobe-slot,
+.wardrobe-doll__col .wardrobe-slot--readonly {
+  width: 4.25rem;
+  min-width: 0;
+}
+
+.wardrobe-doll__slot-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  width: 100%;
+}
+
+.wardrobe-doll__slot--center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll,
+.wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll__canvas {
+  width: 100%;
+  max-width: none;
+}
+
+/* Narrow / portrait viewports (e.g. the Nimiq Pay webview): reflow the same grid instead of
+   hiding it. Hiding the grid put the WebGL avatar canvas inside a `display:none` ancestor, giving
+   it zero size so the preview never rendered. Stack the preview on top with the four slots as a
+   2x2 below, keeping the single canvas visible.
+
+   The breakpoint is generous (≤560px) so every portrait phone — including widths like 430px that
+   previously fell into the 3-column desktop grid, where the read-only profile's negative
+   `margin-right` pushed the left/right cosmetic columns off the dialog edge — uses this layout. */
+@media (max-width: 560px) {
+  .wardrobe-doll__grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "preview preview"
+      "left right";
+    gap: 0.5rem 0.6rem;
+    justify-items: center;
+  }
+  .wardrobe-doll__slot--center {
+    grid-area: preview;
+  }
+  .wardrobe-doll__col--left {
+    grid-area: left;
+  }
+  .wardrobe-doll__col--right {
+    grid-area: right;
+  }
+  .wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll,
+  .wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll__canvas {
+    max-width: 9rem;
+  }
+  /* The negative right margin only makes sense for the 3-column desktop grid; in the stacked
+     reflow it would clip the right column, so cancel it here. */
+  .other-player-profile__wardrobe {
+    margin-right: 0;
+  }
+}
+
+/* Nimiq Pay webview: force the stacked reflow regardless of the reported viewport width. The
+   in-app webview can report a CSS width above the 560px breakpoint, which dropped the wardrobe
+   back to the 3-column desktop grid where the negative right margin pushed the side cosmetic
+   columns (Chat Bubble / Trail) off the dialog edge so they "weren't showing on the sides".
+   Pinning the stacked grid here guarantees all four slots stay visible under the preview. */
+html.nspace-nimiq-pay-host .wardrobe-doll__grid {
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "preview preview"
+    "left right";
+  gap: 0.5rem 0.6rem;
+  justify-items: center;
+}
+html.nspace-nimiq-pay-host .wardrobe-doll__slot--center {
+  grid-area: preview;
+}
+html.nspace-nimiq-pay-host .wardrobe-doll__col--left {
+  grid-area: left;
+}
+html.nspace-nimiq-pay-host .wardrobe-doll__col--right {
+  grid-area: right;
+}
+html.nspace-nimiq-pay-host .wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll,
+html.nspace-nimiq-pay-host .wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll__canvas {
+  max-width: 9rem;
+}
+html.nspace-nimiq-pay-host .other-player-profile__wardrobe {
+  margin-right: 0;
+}
+
+.wardrobe-doll__canvas {
+  display: block;
+  width: 100%;
+  max-width: 10.5rem;
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  background: #0f1419;
+}
+
+.wardrobe-doll--mini .wardrobe-doll__canvas {
+  max-width: 7rem;
+}
+
+.wardrobe-doll__vfx {
+  position: relative;
+  display: inline-flex;
+  border-radius: 50%;
+  padding: 3px;
+}
+
+.wardrobe-doll__ident {
+  display: block;
+  border-radius: 50%;
+  border: 2px solid rgba(71, 85, 105, 0.65);
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.wardrobe-doll__vfx--aura-cyan {
+  box-shadow: 0 0 0 3px rgba(68, 212, 255, 0.6);
+}
+
+.wardrobe-doll__vfx--aura-gold {
+  box-shadow: 0 0 0 3px rgba(255, 204, 68, 0.6);
+}
+
+.wardrobe-doll__vfx--aura-rose {
+  box-shadow: 0 0 0 3px rgba(255, 102, 153, 0.6);
+}
+
+.wardrobe-doll__vfx--aura-violet {
+  box-shadow: 0 0 0 3px rgba(170, 119, 255, 0.6);
+}
+
+.wardrobe-doll__vfx--aura-lime {
+  box-shadow: 0 0 0 3px rgba(136, 238, 85, 0.6);
+}
+
+.wardrobe-doll__vfx--nameplate-simple .wardrobe-doll__ident {
+  border-color: #c8d4e4;
+  box-shadow: 0 0 0 1px rgba(200, 212, 228, 0.35);
+}
+
+.wardrobe-doll__vfx--nameplate-neon .wardrobe-doll__ident {
+  border-color: #00ffcc;
+  box-shadow: 0 0 6px rgba(0, 255, 204, 0.45);
+}
+
+.wardrobe-doll__vfx--bubble-pastel::after,
+.wardrobe-doll__vfx--bubble-dark::after {
+  content: "";
+  position: absolute;
+  bottom: -4px;
+  right: -2px;
+  width: 14px;
+  height: 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+}
+
+.wardrobe-doll__vfx--bubble-pastel::after {
+  background: rgba(255, 210, 230, 0.85);
+}
+
+.wardrobe-doll__vfx--bubble-dark::after {
+  background: rgba(20, 24, 36, 0.92);
+}
+
+.wardrobe-doll__vfx--trail-sparkle::before,
+.wardrobe-doll__vfx--trail-smoke::before {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  opacity: 0.65;
+}
+
+.wardrobe-doll__vfx--trail-sparkle::before {
+  background: #ffffff;
+}
+
+.wardrobe-doll__vfx--trail-smoke::before {
+  background: #888888;
+}
+
+.wardrobe-slot {
+  appearance: none;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  box-sizing: border-box;
+  width: 4.25rem;
+  aspect-ratio: 1;
+  padding: 0.3rem 0.35rem;
+  border: 1px solid rgba(120, 53, 15, 0.55);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.98)),
+    radial-gradient(circle at 0 0, rgba(251, 146, 60, 0.12), transparent 55%);
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.wardrobe-slot--readonly {
+  cursor: default;
+  pointer-events: none;
+}
+
+.wardrobe-slot--equipped {
+  border-color: rgba(251, 146, 60, 0.85);
+  box-shadow:
+    inset 0 0 0 1px rgba(251, 146, 60, 0.35),
+    0 0 8px rgba(234, 88, 12, 0.25);
+}
+
+.wardrobe-slot--open {
+  border-color: rgba(96, 165, 250, 0.85);
+}
+
+.wardrobe-slot__label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 9px;
+  color: #94a3b8;
+}
+
+.wardrobe-swatch {
+  display: inline-block;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 4px;
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  background: rgba(30, 41, 59, 0.95);
+  flex-shrink: 0;
+}
+
+.wardrobe-swatch--empty {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(51, 65, 85, 0.5),
+    rgba(51, 65, 85, 0.5) 2px,
+    rgba(30, 41, 59, 0.5) 2px,
+    rgba(30, 41, 59, 0.5) 4px
+  );
+}
+
+.wardrobe-swatch--aura-cyan {
+  box-shadow: inset 0 0 0 2px #44d4ff;
+}
+
+.wardrobe-swatch--aura-gold {
+  box-shadow: inset 0 0 0 2px #ffcc44;
+}
+
+.wardrobe-swatch--aura-rose {
+  box-shadow: inset 0 0 0 2px #ff6699;
+}
+
+.wardrobe-swatch--aura-violet {
+  box-shadow: inset 0 0 0 2px #aa77ff;
+}
+
+.wardrobe-swatch--aura-lime {
+  box-shadow: inset 0 0 0 2px #88ee55;
+}
+
+.wardrobe-swatch--nameplate-simple {
+  border-color: #c8d4e4;
+}
+
+.wardrobe-swatch--nameplate-neon {
+  border-color: #00ffcc;
+  box-shadow: 0 0 4px rgba(0, 255, 204, 0.45);
+}
+
+.wardrobe-swatch--bubble-pastel {
+  background: rgba(255, 210, 230, 0.55);
+  border-radius: 8px;
+}
+
+.wardrobe-swatch--bubble-dark {
+  background: rgba(20, 24, 36, 0.92);
+  border-radius: 2px;
+}
+
+.wardrobe-swatch--trail-sparkle {
+  background: radial-gradient(circle, #fff 30%, rgba(255, 255, 255, 0.2) 70%);
+}
+
+.wardrobe-swatch--trail-smoke {
+  background: radial-gradient(circle, #888 30%, rgba(136, 136, 136, 0.2) 70%);
+}
+
+.wardrobe-swatch--trail-linger-cyan {
+  background: radial-gradient(circle, #44d4ff 35%, rgba(68, 212, 255, 0.15) 75%);
+}
+
+.wardrobe-swatch--trail-linger-gold {
+  background: radial-gradient(circle, #ffcc44 35%, rgba(255, 204, 68, 0.15) 75%);
+}
+
+.wardrobe-swatch--trail-linger-rose {
+  background: radial-gradient(circle, #ff6699 35%, rgba(255, 102, 153, 0.15) 75%);
+}
+
+.wardrobe-swatch--trail-linger-violet {
+  background: radial-gradient(circle, #aa77ff 35%, rgba(170, 119, 255, 0.15) 75%);
+}
+
+.wardrobe-swatch--trail-linger-lime {
+  background: radial-gradient(circle, #88ee55 35%, rgba(136, 238, 85, 0.15) 75%);
+}
+
+.wardrobe-doll__vfx--trail-linger-cyan::before,
+.wardrobe-doll__vfx--trail-linger-gold::before,
+.wardrobe-doll__vfx--trail-linger-rose::before,
+.wardrobe-doll__vfx--trail-linger-violet::before,
+.wardrobe-doll__vfx--trail-linger-lime::before {
+  content: "";
+  position: absolute;
+  inset: -6px -18px -10px;
+  border-radius: 999px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.wardrobe-doll__vfx--trail-linger-cyan::before {
+  background: radial-gradient(ellipse at 50% 80%, rgba(68, 212, 255, 0.55), transparent 70%);
+}
+
+.wardrobe-doll__vfx--trail-linger-gold::before {
+  background: radial-gradient(ellipse at 50% 80%, rgba(255, 204, 68, 0.55), transparent 70%);
+}
+
+.wardrobe-doll__vfx--trail-linger-rose::before {
+  background: radial-gradient(ellipse at 50% 80%, rgba(255, 102, 153, 0.55), transparent 70%);
+}
+
+.wardrobe-doll__vfx--trail-linger-violet::before {
+  background: radial-gradient(ellipse at 50% 80%, rgba(170, 119, 255, 0.55), transparent 70%);
+}
+
+.wardrobe-doll__vfx--trail-linger-lime::before {
+  background: radial-gradient(ellipse at 50% 80%, rgba(136, 238, 85, 0.55), transparent 70%);
+}
+
+.wardrobe-swatch--deployable {
+  background: linear-gradient(135deg, #ff66aa, #4488ff);
+}
+
+.wardrobe-dropdown {
+  margin-top: 0.45rem;
+  padding: 0.45rem;
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.96);
+}
+
+.wardrobe-dropdown__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.45rem;
+}
+
+.wardrobe-dropdown__row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.35rem 0.4rem;
+  border: none;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.45);
+  background: transparent;
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wardrobe-dropdown__row.is-selected {
+  background: rgba(234, 88, 12, 0.12);
+}
+
+.wardrobe-dropdown__row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.wardrobe-dropdown__price {
+  font-size: 10px;
+  color: #fbbf24;
+  white-space: nowrap;
+}
+
+.wardrobe-items__title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+}
+
+.wardrobe-items__hint {
+  margin: 0.15rem 0 0.35rem;
+  font-size: 10px;
+  color: #64748b;
+}
+
+.wardrobe-items__strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.wardrobe-shop__mini {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 0.45rem;
+}
+
+.wardrobe-shop__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.45rem;
+  margin-bottom: 0.65rem;
+}
+
+.wardrobe-shop__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.45rem;
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.88);
+  font-size: 11px;
+}
+
+.wardrobe-shop__desc {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.wardrobe-shop__card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.2rem;
+}
+
+.wardrobe-shop--link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.35rem 0.15rem 0.5rem;
+  text-align: center;
+}
+
+.wardrobe-shop__heading {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.wardrobe-shop__go {
+  align-self: center;
+  min-width: 9rem;
+}
+
+.wardrobe-shop__code {
+  margin: 0;
+  font-size: 10px;
+  color: #64748b;
 }
 
 .wardrobe-panel__row {
@@ -6042,6 +7058,54 @@ button.hud-brand:focus-visible {
   color: #fca5a5;
 }
 
+.wardrobe-panel__credits {
+  font-size: 10px;
+  color: #7b8da8;
+  margin: 0.45rem 0 0;
+  line-height: 1.35;
+}
+
+.wardrobe-panel__credits a {
+  color: #94a3b8;
+}
+
+/* Preset Gallery (SPACER) — try-on prompt when standing near a showcase */
+.cosmetic-gallery-tryon {
+  position: absolute;
+  left: 50%;
+  bottom: 5.5rem;
+  transform: translateX(-50%);
+  z-index: 120;
+  pointer-events: none;
+}
+
+.cosmetic-gallery-tryon__btn {
+  pointer-events: auto;
+  appearance: none;
+  border: 1px solid rgba(100, 180, 255, 0.55);
+  background: rgba(12, 22, 36, 0.92);
+  color: #e8f2ff;
+  border-radius: 999px;
+  padding: 0.55rem 1.1rem;
+  font: 600 0.82rem/1.2 "Muli", system-ui, sans-serif;
+  cursor: pointer;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  max-width: min(92vw, 22rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cosmetic-gallery-tryon__btn:hover {
+  border-color: rgba(130, 200, 255, 0.85);
+  background: rgba(18, 32, 52, 0.96);
+}
+
+.cosmetic-gallery-tryon__btn--active {
+  border-color: rgba(134, 239, 172, 0.65);
+  color: #d1fae5;
+}
+
 .other-player-profile__cosmetic-chips {
   display: flex;
   flex-wrap: wrap;
@@ -6054,6 +7118,30 @@ button.hud-brand:focus-visible {
   border-radius: 4px;
   background: rgba(30, 41, 59, 0.85);
   color: #cbd5e1;
+}
+
+.wardrobe-panel__btn--ghost {
+  background: transparent;
+  color: #94a3b8;
+}
+
+.wardrobe-panel__btn--accent {
+  border-color: rgba(251, 146, 60, 0.75);
+  background: rgba(234, 88, 12, 0.35);
+  color: #ffedd5;
+}
+
+.chat-line.chat-bubble--cosmetic-pastel .chat-line__body {
+  background: rgba(255, 220, 240, 0.15);
+  border-radius: 8px;
+  padding: 0 0.2rem;
+}
+
+.chat-line.chat-bubble--cosmetic-dark .chat-line__body {
+  background: rgba(20, 24, 36, 0.55);
+  border-radius: 2px;
+  padding: 0 0.2rem;
+  color: #e2e8f0;
 }
 
 .other-player-profile__room-meta-icon-wrap {

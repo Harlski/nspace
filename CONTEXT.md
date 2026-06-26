@@ -12,6 +12,13 @@ long-press (touch) yourself. The single entry point for self-actions. Its root l
 offers Sectors; drilling into one opens a sub-wheel.
 _Avoid_: radial menu, donut, self-menu, emote menu, pie menu.
 
+**Player Menu**:
+The persistent bottom-right circular identicon button that opens player-level navigation
+and account options, such as Profile, Wardrobe, Rooms, Return to Hub, and Logout. Distinct
+from the Action Wheel: it is for navigating the app/session, not performing in-world
+self-actions.
+_Avoid_: character window, account menu, navigation menu.
+
 **Sector**:
 One of the six fixed edges of the Action Wheel hexagon. Each holds at most one action;
 edges with nothing to show today are drawn as dim, non-interactive **reserved** Sectors
@@ -58,15 +65,31 @@ The sub-wheel reached by selecting the Home Sector — **My Rooms** (opens the R
 and **Private Room** (opens or returns to your Play Space and its Share Panel).
 _Avoid_: rooms menu, lobby menu.
 
-**Hub**:
+**Avatar Frame**:
 The transparent hexagonal center hole of the Action Wheel. A non-interactive window that
 always frames your own avatar so the wheel reads as belonging to you.
-_Avoid_: core, center button.
+_Avoid_: hub, core, center button.
 
 **Nav Sector**:
 The dedicated bottom (6 o'clock) edge of the Action Wheel hexagon. Shows Close at the root
 level and Back inside a sub-wheel; reused rather than adding a second nav Sector.
 _Avoid_: close button, back button, hub button.
+
+## Rooms
+
+**Hub**:
+The central social home room where players spawn, resume, and return from elsewhere.
+_Avoid_: chamber, lobby, main room.
+
+**Commons**:
+The open communal build room where all full players can freely build within room rules.
+It is the shared frontier outside the Hub.
+_Avoid_: wildlands, free-build room, public build room.
+
+**Return to Hub**:
+A navigation action that teleports the player back to the Hub default spawn while staying
+signed in.
+_Avoid_: go home, return home, go to chamber.
 
 ## Sessions
 
@@ -157,6 +180,14 @@ on a chosen wallet’s avatar (identicon, nameplate, etc.). The preview wallet d
 signed-in admin; any `NQ…` address may be entered. The target player need not be online.
 _Avoid_: try-on, fitting room, mannequin.
 
+**Preset Gallery**:
+A development-only in-world showroom for developer-defined Presets — one display per Preset
+in a line, with floor plaques and slot-appropriate demos (name label, chat bubble sample,
+trail pacing, deployable floor VFX). Join via dev room code **SPACER** (`cosmetic-gallery`);
+not listed in the public room browser. Distinct from the player **Wardrobe** shop and from
+operator **Catalog Preview**; a future in-world purchase surface may reuse the same room.
+_Avoid_: cosmetic shop room, mannequin room, SKU gallery.
+
 **Draft** (Catalog Entry):
 A Catalog Entry visible only in admin — not offered in the player shop and not payable via
 payment intent until Published.
@@ -208,9 +239,16 @@ _Avoid_: outfit, equipped set, active cosmetics.
 
 **Wardrobe**:
 The profile surface where a player views owned Entitlements, equips Loadout passives, and
-opens the shop to buy Published Catalog Entries. Deployables are owned here but **used**
+opens the shop to buy Published Catalog Entries. Self-only UI uses a paper-doll equip layout
+(Slot ring around the identicon); Deployables are listed for ownership context but **used**
 from the Action Wheel, not equipped as passives.
 _Avoid_: inventory, closet, customization menu.
+
+**Wardrobe Preview**:
+A client-only preview of how a Preset or Catalog Entry would look on the signed-in player
+before **Loadout** is saved — driven from the Wardrobe or Shop UI, not persisted until Equip.
+Distinct from operator **Catalog Preview** (any wallet, admin-only).
+_Avoid_: try-on, fitting room, mannequin.
 
 **Deployable**:
 A cosmetic whose Slot is deployable — owned like any Entitlement, **used** from the Action

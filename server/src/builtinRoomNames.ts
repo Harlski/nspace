@@ -26,8 +26,10 @@ type FileShapeV4 = {
 };
 
 const DEFAULTS: Record<string, string> = {
-  [HUB_ROOM_ID]: "Hub",
-  [CHAMBER_ROOM_ID]: "Chamber",
+  // Player-facing names: the central social home (`chamber` id) reads as "Hub";
+  // the open communal build room (`hub` id) reads as "Commons". Internal ids unchanged.
+  [HUB_ROOM_ID]: "Commons",
+  [CHAMBER_ROOM_ID]: "Hub",
   [CANVAS_ROOM_ID]: "Canvas",
   [PIXEL_ROOM_ID]: "Pixel",
 };

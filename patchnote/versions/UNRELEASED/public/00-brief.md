@@ -5,4 +5,6 @@
 
 ---
 
-_(Draft — not published.)_
+**[NEW]** Player Menu in the bottom-right — Profile, Wardrobe, Rooms, and Return to Hub from your identicon. Central home is **Hub**; open build is **Commons**.
+
+**[NEW]** Wardrobe on your profile is now a paper-doll equip screen — preview cosmetics on your avatar before you equip or buy.

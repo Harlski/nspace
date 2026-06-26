@@ -17,11 +17,11 @@ A multiplayer isometric social space built with **Nimiq wallet** authentication,
 - **Real-time Multiplayer**: WebSocket-powered synchronized player movement and interactions
 - **Building System**: Place and customize blocks with various shapes (cubes, ramps, hexagons) and colors
 - **Canvas Room**: Claim tiles with your identicon and compete on the leaderboard
-- **Pixel Room**: Collaborative **500×500** floor painting only (no blocks) — reach it from the Hub north door; starts as a field of varied tile colors
+- **Pixel Room**: Collaborative **500×500** floor painting only (no blocks) — reach it from the **Commons** north door; starts as a field of varied tile colors
 - **Signposts**: Leave messages on tiles (hub / your rooms; rules vary by room — see signboards guide)
 - **Admin Tools**: Lock objects, manage rooms, and moderate content
 - **NPCs**: Server-side “fake players” that wander rooms when `FAKE_PLAYER_COUNT` is greater than 0 (random destinations, guest-style names — not LLM-driven)
-- **Multiple Rooms**: Hub, chamber, canvas, and pixel rooms with portal teleportation
+- **Multiple Rooms**: **Hub** (central home), **Commons** (open communal build), canvas, and pixel rooms with portal teleportation
 
 ## 🚀 Quick Start
 
@@ -100,7 +100,7 @@ Use a dedicated wallet for the stream bot; run capture on a separate GPU host fr
 - **Build Mode (`B`)**: Place blocks, ramps, hexagons on empty tiles
 - **Edit Blocks**: Click placed blocks to change color, shape, height, or make walkable
 - **Lock Blocks** (Admin only): Prevent non-admins from editing specific objects
-- **Signposts**: Create message signs that display on hover (hub / owner rooms; not on canvas; chamber is admin-only for placement)
+- **Signposts**: Create message signs that display on hover (**Commons** / owner rooms; not on canvas; the central **Hub** is admin-only for placement)
 
 ## 🌐 Network/LAN Testing
 
@@ -227,7 +227,7 @@ export const ADMIN_ADDRESSES = new Set([
 
 Admins can:
 - Lock/unlock objects to prevent editing
-- Place signposts in the **chamber** (players can place in **hub** and in **rooms they own**, within build range; **canvas** disallows signpost placement)
+- Place signposts in the central **Hub** (players can place in the **Commons** and in **rooms they own**, within build range; **canvas** disallows signpost placement)
 - Update or remove **any** signboard’s message (`updateSignboard` / `removeSignboard`)
 - Access admin overlay (if `VITE_ADMIN_ENABLED=true`) — optional **build HUD preview** framing: **default** / **billboard** / **teleporter** profiles (`localStorage` `nspace_inspector_preview_layouts_v2`; see [process.md](process.md) `VITE_ADMIN_ENABLED`).
 

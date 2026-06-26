@@ -84,6 +84,12 @@ import {
 } from "./cosmeticDeploy.js";
 import { getPublicLoadoutForWallet } from "./cosmeticStore.js";
 import {
+  COSMETIC_GALLERY_DEFAULT_SPAWN,
+  cosmeticGalleryWelcomeExtras,
+  isCosmeticGalleryRoom,
+  resolveCosmeticGalleryJoinCode,
+} from "./cosmeticGallery.js";
+import {
   isJoinCode,
   isLegacyPlaySpaceSlug,
   normalizeJoinCode,
@@ -901,6 +907,7 @@ function isPixelRoom(roomId: string): boolean {
 }
 
 function roomAllowsFakePlayers(roomId: string): boolean {
+  if (isCosmeticGalleryRoom(roomId)) return false;
   if (isInviteLobbyRoomId(roomId)) return false;
   if (isPixelRoom(roomId)) return false;
   // worldcup: keep the pitch clear of wandering NPCs — the crowd lives in the
@@ -912,6 +919,7 @@ function roomAllowsFakePlayers(roomId: string): boolean {
 }
 
 function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
+  if (isCosmeticGalleryRoom(roomId)) return false;
   if (isInviteLobbyRoomId(roomId)) return canEditRoomContent(roomId, address);
   if (isPixelRoom(roomId)) return false;
   // worldcup: keep field + 1v1 match pitches clear of placed blocks
@@ -921,6 +929,7 @@ function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
 
 function canRecolorFloorInRoom(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
+  if (isCosmeticGalleryRoom(id)) return false;
   if (isInviteLobbyRoomId(id)) return canEditRoomContent(roomId, address);
   if (id === CANVAS_ROOM_ID) return false;
   if (id === PIXEL_ROOM_ID) return true;
@@ -1025,6 +1034,8 @@ type OutMsg =
       worldcupPrevWinnerCountry?: string | null;
       /** worldcup: live 1v1 spectate portals in this room (click to watch the Match). */
       worldcupPortals?: WorldcupPortalWire[];
+      /** Dev-only Preset Gallery (`cosmetic-gallery` / join code SPACER). */
+      cosmeticGallery?: import("./cosmeticGallery.js").CosmeticGalleryWire;
     }
   | {
       type: "roomBackgroundHue";
@@ -3220,6 +3231,8 @@ function normalizeJoinRoomId(raw: string): string {
 function resolveJoinRoomTarget(raw: string): string {
   const trimmed = String(raw).trim().replace(/\s+/g, "");
   if (!trimmed) return "";
+  const galleryTarget = resolveCosmeticGalleryJoinCode(trimmed);
+  if (galleryTarget) return galleryTarget;
   const normalized = normalizeRoomId(trimmed);
   if (isInviteLobbyRoomId(normalized)) return normalized;
 
@@ -4588,7 +4601,7 @@ function endCanvasRound(): void {
   if (canvasFinishers.length > 0) {
     const winner = canvasFinishers[0];
     if (winner) {
-      const message = `Time's up! ${winner.displayName} won by finishing first! Returning to hub...`;
+      const message = `Time's up! ${winner.displayName} won by finishing first! Returning to the Commons...`;
       
       // Broadcast to canvas room
       broadcast(CANVAS_ROOM_ID, {
@@ -4621,7 +4634,7 @@ function endCanvasRound(): void {
     
     if (topPlayer) {
       const playerName = canvasRoom.get(topPlayer)?.player.displayName || walletDisplayName(topPlayer);
-      const message = `Time's up! ${playerName} explored the most with ${maxSteps} steps! Returning to hub...`;
+      const message = `Time's up! ${playerName} explored the most with ${maxSteps} steps! Returning to the Commons...`;
       
       broadcast(CANVAS_ROOM_ID, {
         type: "chat",
@@ -4635,7 +4648,7 @@ function endCanvasRound(): void {
         type: "chat",
         from: "System",
         fromAddress: "",
-        text: "Time's up! Returning to hub...",
+        text: "Time's up! Returning to the Commons...",
         at: Date.now(),
       });
     }
@@ -4833,6 +4846,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       worldcupPortals: WORLDCUP_ENABLED
         ? worldcupPortalsForRoom(targetRoomId)
         : undefined,
+      ...cosmeticGalleryWelcomeExtras(targetRoomId),
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, targetRoomId, chatBacklog);
   sendRoomCatalog(conn.ws, address);
@@ -4848,6 +4862,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
 // worldcup: who may drop a kickable ball in a room (builders; never the pitch/canvas/pixel).
 function canPlaceBallInRoom(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
+  if (isCosmeticGalleryRoom(id)) return false;
   if (isInviteLobbyRoomId(id)) return false;
   if (worldcupIsFieldLikeRoom(roomId)) return false; // pitch has its own ball
   if (id === CANVAS_ROOM_ID || id === PIXEL_ROOM_ID) return false;
@@ -6333,6 +6348,7 @@ export function addClient(
   const isCanvasRoom = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
   const isChamberRoom = normalizeRoomId(roomId) === CHAMBER_ROOM_ID;
   const isPixelRoomConnect = normalizeRoomId(roomId) === PIXEL_ROOM_ID;
+  const isGalleryRoomConnect = isCosmeticGalleryRoom(roomId);
 
   const applySpawnHint = (): boolean => {
     if (
@@ -6378,6 +6394,20 @@ export function addClient(
       if (isWalkableForRoom(roomId, t.x, t.z)) {
         player.x = t.x;
         player.z = t.z;
+        placedSpawn = true;
+        resolvedSpawnTile = true;
+      }
+    }
+  } else if (isGalleryRoomConnect) {
+    if (!applySpawnHint()) {
+      const t = snapToTile(
+        COSMETIC_GALLERY_DEFAULT_SPAWN.x,
+        COSMETIC_GALLERY_DEFAULT_SPAWN.z
+      );
+      if (isWalkableForRoom(roomId, t.x, t.z)) {
+        player.x = t.x;
+        player.z = t.z;
+        player.y = 0;
         placedSpawn = true;
         resolvedSpawnTile = true;
       }
@@ -6582,6 +6612,7 @@ export function addClient(
       worldcupPortals: WORLDCUP_ENABLED
         ? worldcupPortalsForRoom(roomId)
         : undefined,
+      ...cosmeticGalleryWelcomeExtras(roomId),
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, roomId, chatBacklog);
   sendRoomCatalog(ws, address);
@@ -7411,6 +7442,9 @@ export function addClient(
       if (normalizeRoomId(targetRoomId) === PIXEL_ROOM_ID) {
         spawnX = PIXEL_DEFAULT_SPAWN.x;
         spawnZ = PIXEL_DEFAULT_SPAWN.z;
+      } else if (isCosmeticGalleryRoom(targetRoomId)) {
+        spawnX = COSMETIC_GALLERY_DEFAULT_SPAWN.x;
+        spawnZ = COSMETIC_GALLERY_DEFAULT_SPAWN.z;
       } else if (isInviteLobbyRoomId(targetRoomId)) {
         const ps = playSpaceJoinSpawn(targetRoomId);
         spawnX = ps.x;
