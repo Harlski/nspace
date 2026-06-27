@@ -81,14 +81,16 @@ import { nimiqIconUseMarkup, nimiqIconifyMarkup } from "./nimiqIcons.js";
 import { createWorldContextMenu, type WorldContextMenuItem } from "./worldContextMenu.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 import {
-  getNimiqPayViewportSize,
-  isNimiqPayHostDocument,
-  isNimiqPayPortraitViewport,
+  getMobilePlayViewportSize,
+  isMobilePlayHostDocument,
+  isMobilePortraitViewport,
   isNimiqPayWebViewHost,
   isVisualFullscreenActive,
+  markMobileBrowserPlayHostDocument,
   markNimiqPayHostDocument,
-  syncNimiqPayOrientationClasses,
+  syncMobileOrientationClasses,
 } from "./pseudoFullscreen.js";
+import { shouldUseMobileBrowserPlay } from "./mobileBrowserPlay.js";
 import {
   createObjectPrefabAuthoringUi,
   nimToLunaString,
@@ -897,12 +899,15 @@ export function createHud(
   let debugPanelVisible = opts?.showDebug === true;
   let debugPanelText = "";
   let streamCinemaFillViewport = false;
-  type PayLayoutMode = "portrait" | "landscape";
+  type MobilePlayLayoutMode = "portrait" | "landscape";
   if (isNimiqPayWebViewHost()) {
     markNimiqPayHostDocument();
   }
-  const nimiqPayHost = isNimiqPayHostDocument();
-  const payRightRail = nimiqPayHost
+  if (shouldUseMobileBrowserPlay()) {
+    markMobileBrowserPlayHostDocument();
+  }
+  const mobilePlayHost = isMobilePlayHostDocument();
+  const payRightRail = mobilePlayHost
     ? (() => {
         const rail = document.createElement("div");
         rail.className = "hud-pay-right-rail";
@@ -911,7 +916,7 @@ export function createHud(
         return rail;
       })()
     : null;
-  let payLayoutMode: PayLayoutMode | null = null;
+  let mobilePlayLayoutMode: MobilePlayLayoutMode | null = null;
 
   const frame = document.createElement("div");
   frame.className = "game-frame";
@@ -965,8 +970,8 @@ export function createHud(
 
   const ui = document.createElement("div");
   ui.className = "hud";
-  if (nimiqPayHost) {
-    ui.classList.add("hud--nimiq-pay-host");
+  if (mobilePlayHost) {
+    ui.classList.add("hud--mobile-play-host");
   }
   letter.appendChild(ui);
 
@@ -989,7 +994,7 @@ export function createHud(
 
   const headerMarqueeHost = document.createElement("div");
   headerMarqueeHost.className = "hud-header-marquee-host";
-  const disposeHeaderMarquee = nimiqPayHost
+  const disposeHeaderMarquee = mobilePlayHost
     ? (): void => {}
     : mountHeaderMarquee(headerMarqueeHost, {
         onPlayerProfileOpen: (walletId, displayName) => {
@@ -1360,7 +1365,7 @@ export function createHud(
   topToolbar.appendChild(lobbyBtn);
   topStripMain.appendChild(topToolbar);
   topStrip.appendChild(topStripMain);
-  if (!nimiqPayHost) {
+  if (!mobilePlayHost) {
     topStrip.appendChild(headerMarqueeHost);
   }
 
@@ -2556,7 +2561,10 @@ export function createHud(
   /** Circumradii (centre→vertex) of the outer hexagon and the inner Hub hexagon. */
   const ACTION_WHEEL_R_OUTER = 100;
   const ACTION_WHEEL_R_INNER = 48;
-  /** Glyphs/labels sit on the mid-ring, measured at the edge midpoint (apothem). */
+  /** Corner-fillet radii: softer outer silhouette, a tighter inner ring (Avatar Frame). */
+  const ACTION_WHEEL_CORNER_OUTER = 13;
+  const ACTION_WHEEL_CORNER_INNER = 6;
+  /** Glyphs sit on the mid-ring, measured at the edge midpoint (apothem). */
   const ACTION_WHEEL_R_LABEL = hexApothem(
     (ACTION_WHEEL_R_OUTER + ACTION_WHEEL_R_INNER) / 2
   );
@@ -2570,13 +2578,27 @@ export function createHud(
     | "soccer1v1"
     | "oneVone"
     | "items";
+  /** Wheel Title shown below the Nav Sector while inside a sub-wheel (root = none). */
+  const ACTION_WHEEL_LEVEL_TITLES: Record<ActionWheelLevel, string> = {
+    root: "",
+    emotes: "Emotes",
+    home: "Home",
+    games: "Games",
+    soccer: "Soccer",
+    soccer1v1: "1v1",
+    oneVone: "1v1",
+    items: "Items",
+  };
   type ActionWheelSlice = {
     glyph: string;
+    /** Short name surfaced as the Sector Title when this Sector is focused. */
     label: string;
     ariaLabel: string;
     disabled?: boolean;
     /** A blank, non-interactive edge that only completes the hexagon frame. */
     reserved?: boolean;
+    /** The bottom Nav Sector (Close/Back): single-tap on touch, never tap-to-reveal. */
+    nav?: boolean;
     activate?: () => void;
   };
   /** A dim, empty Sector that reserves a hexagon edge for a future action. */
@@ -2608,11 +2630,71 @@ export function createHud(
   actionWheel.hidden = true;
   actionWheel.setAttribute("role", "menu");
   actionWheel.setAttribute("aria-label", "Player action wheel");
+  // Sector Title: the focused Sector's name, floated above the hexagon. Decorative —
+  // each Sector already carries its own aria-label, so this is hidden from a11y.
+  const actionWheelSectorTitle = document.createElement("div");
+  actionWheelSectorTitle.className = "action-wheel__sector-title";
+  actionWheelSectorTitle.setAttribute("aria-hidden", "true");
+  actionWheelSectorTitle.hidden = true;
   const actionWheelSvg = document.createElementNS(SVG_NS, "svg");
   actionWheelSvg.setAttribute("viewBox", "-110 -110 220 220");
   actionWheelSvg.setAttribute("class", "action-wheel__svg");
-  actionWheel.appendChild(actionWheelSvg);
+  // Wheel Title: the current sub-wheel's name, below the Nav Sector (root = hidden).
+  const actionWheelWheelTitle = document.createElement("div");
+  actionWheelWheelTitle.className = "action-wheel__wheel-title";
+  actionWheelWheelTitle.setAttribute("aria-hidden", "true");
+  actionWheelWheelTitle.hidden = true;
+  actionWheel.append(
+    actionWheelSectorTitle,
+    actionWheelSvg,
+    actionWheelWheelTitle
+  );
   letter.appendChild(actionWheel);
+
+  // The Focused Sector: the Sector whose name is currently shown (hover/keyboard, or a
+  // first tap on touch). Tracked so a second touch tap on the same Sector activates it.
+  let actionWheelFocusedIndex: number | null = null;
+  let actionWheelFocusedGroup: SVGGElement | null = null;
+  // Last pointer that touched the wheel — touch needs tap-to-reveal then tap-to-activate.
+  let actionWheelLastPointerTouch = false;
+  const setSectorTitle = (text: string): void => {
+    const t = text.trim();
+    actionWheelSectorTitle.textContent = t;
+    actionWheelSectorTitle.hidden = t.length === 0;
+  };
+  const clearActionWheelFocus = (): void => {
+    if (actionWheelFocusedGroup) {
+      actionWheelFocusedGroup.classList.remove("action-wheel__slice--focused");
+    }
+    actionWheelFocusedGroup = null;
+    actionWheelFocusedIndex = null;
+    setSectorTitle("");
+  };
+  const focusActionWheelSector = (
+    index: number,
+    group: SVGGElement,
+    label: string
+  ): void => {
+    if (actionWheelFocusedGroup && actionWheelFocusedGroup !== group) {
+      actionWheelFocusedGroup.classList.remove("action-wheel__slice--focused");
+    }
+    actionWheelFocusedGroup = group;
+    actionWheelFocusedIndex = index;
+    group.classList.add("action-wheel__slice--focused");
+    setSectorTitle(label);
+  };
+  const updateWheelTitle = (): void => {
+    const title = ACTION_WHEEL_LEVEL_TITLES[actionWheelLevel] ?? "";
+    actionWheelWheelTitle.textContent = title;
+    actionWheelWheelTitle.hidden = title.length === 0;
+  };
+  actionWheelSvg.addEventListener(
+    "pointerdown",
+    (e) => {
+      actionWheelLastPointerTouch = e.pointerType === "touch";
+    },
+    { capture: true }
+  );
 
   // The signed-in player's chosen country (ISO alpha-2). When set, its flag is prepended as
   // the first/top Emote on the wheel and shown on the player's own profile card.
@@ -2675,6 +2757,7 @@ export function createHud(
   function closeActionWheel(): void {
     actionWheel.hidden = true;
     actionWheel.classList.remove("action-wheel--open");
+    clearActionWheelFocus();
     actionWheelLevel = "root";
     actionWheelNav = [];
     actionWheelEmotePage = 0;
@@ -2710,6 +2793,7 @@ export function createHud(
       glyph: "↩",
       label: "",
       ariaLabel: "Back",
+      nav: true,
       activate: () => popActionWheelLevel(),
     };
     // Place 1–5 actions onto the hexagon's non-nav edges in a balanced arrangement.
@@ -2901,6 +2985,7 @@ export function createHud(
       glyph: "✕",
       label: "",
       ariaLabel: "Close menu",
+      nav: true,
       activate: () => closeActionWheel(),
     };
     const emoji: ActionWheelSlice = {
@@ -2964,6 +3049,9 @@ export function createHud(
     while (actionWheelSvg.firstChild) {
       actionWheelSvg.removeChild(actionWheelSvg.firstChild);
     }
+    // A fresh render rebuilds every Sector, so any previous focus no longer applies.
+    clearActionWheelFocus();
+    updateWheelTitle();
     const slices = buildActionWheelSlices();
     // Always six fixed Sectors, one per hexagon edge.
     const sectors = equalSectors(ACTION_WHEEL_SECTORS);
@@ -2999,15 +3087,16 @@ export function createHud(
           0,
           ACTION_WHEEL_R_OUTER,
           ACTION_WHEEL_R_INNER,
-          sector.midDeg
+          sector.midDeg,
+          ACTION_WHEEL_CORNER_OUTER,
+          ACTION_WHEEL_CORNER_INNER
         )
       );
       group.appendChild(path);
 
       if (!slice.reserved) {
+        // Sectors are glyph-only now — the name is surfaced as the Sector Title on focus.
         const center = polarToXy(0, 0, ACTION_WHEEL_R_LABEL, sector.midDeg);
-        const hasLabel = slice.label.length > 0;
-        const glyphY = center.y + (hasLabel ? -8 : 0);
         // A flag glyph (e.g. the Flag Emote) renders as a Twemoji image since Windows has no
         // flag font glyphs; everything else stays as an SVG text emoji.
         const flagCode = codeFromFlagEmoji(slice.glyph);
@@ -3023,7 +3112,7 @@ export function createHud(
           );
           flagImg.setAttribute("href", flagUrl);
           flagImg.setAttribute("x", (center.x - size / 2).toFixed(1));
-          flagImg.setAttribute("y", (glyphY - size / 2).toFixed(1));
+          flagImg.setAttribute("y", (center.y - size / 2).toFixed(1));
           flagImg.setAttribute("width", String(size));
           flagImg.setAttribute("height", String(size));
           group.appendChild(flagImg);
@@ -3031,24 +3120,46 @@ export function createHud(
           const glyph = document.createElementNS(SVG_NS, "text");
           glyph.setAttribute("class", "action-wheel__glyph");
           glyph.setAttribute("x", center.x.toFixed(1));
-          glyph.setAttribute("y", glyphY.toFixed(1));
+          glyph.setAttribute("y", center.y.toFixed(1));
           glyph.textContent = slice.glyph;
           group.appendChild(glyph);
         }
-        if (hasLabel) {
-          const label = document.createElementNS(SVG_NS, "text");
-          label.setAttribute("class", "action-wheel__label");
-          label.setAttribute("x", center.x.toFixed(1));
-          label.setAttribute("y", (center.y + 16).toFixed(1));
-          label.textContent = slice.label;
-          group.appendChild(label);
-        }
+
+        // Focusing a Sector reveals its Sector Title. On pointer/keyboard devices this is
+        // hover/focus; on touch the first tap focuses (see the click handler below).
+        const index = i;
+        const reveal = (): void =>
+          focusActionWheelSector(index, group, slice.label);
+        group.addEventListener("pointerenter", (ev) => {
+          if (ev.pointerType === "touch") return; // touch reveals via tap, not hover
+          reveal();
+        });
+        group.addEventListener("pointerleave", (ev) => {
+          if (ev.pointerType === "touch") return;
+          if (actionWheelFocusedIndex === index) clearActionWheelFocus();
+        });
+        group.addEventListener("focus", reveal);
+        group.addEventListener("blur", () => {
+          if (actionWheelFocusedIndex === index) clearActionWheelFocus();
+        });
       }
 
       if (!slice.disabled && !slice.reserved && slice.activate) {
         const activate = slice.activate;
+        const index = i;
+        const isNav = slice.nav === true;
         group.addEventListener("click", (ev) => {
           ev.stopPropagation();
+          // Touch: the Nav Sector is exempt (single tap closes/backs); every other
+          // Sector takes one tap to focus (reveal its name) and a second to activate.
+          if (actionWheelLastPointerTouch && !isNav) {
+            if (actionWheelFocusedIndex === index) {
+              activate();
+            } else {
+              focusActionWheelSector(index, group, slice.label);
+            }
+            return;
+          }
           activate();
         });
         group.addEventListener("keydown", (ev) => {
@@ -3063,7 +3174,10 @@ export function createHud(
     // Hexagon rim around the transparent Hub so the wheel visibly frames the avatar.
     const rim = document.createElementNS(SVG_NS, "path");
     rim.setAttribute("class", "action-wheel__rim");
-    rim.setAttribute("d", hexPolygonPath(0, 0, ACTION_WHEEL_R_INNER));
+    rim.setAttribute(
+      "d",
+      hexPolygonPath(0, 0, ACTION_WHEEL_R_INNER, ACTION_WHEEL_CORNER_INNER)
+    );
     actionWheelSvg.appendChild(rim);
   }
 
@@ -3131,7 +3245,7 @@ export function createHud(
   const applyProfileSheetMode = (): void => {
     const sheet =
       profileSheetMql.matches ||
-      document.documentElement.classList.contains("nspace-nimiq-pay-host");
+      document.documentElement.classList.contains("nspace-mobile-play-host");
     otherPlayerProfile.classList.toggle("is-sheet", sheet);
   };
   applyProfileSheetMode();
@@ -7377,8 +7491,8 @@ export function createHud(
    */
   function mountBuildDockContextColorSpread(): void {
     const spread =
-      payLayoutMode === "portrait" &&
-      nimiqPayHost &&
+      mobilePlayLayoutMode === "portrait" &&
+      mobilePlayHost &&
       !buildBottomDock.hidden &&
       ui.classList.contains("hud--build-bottom-dock-visible");
     const colorHome = spread ? buildBottomDock : buildDockContextGrid;
@@ -7389,7 +7503,7 @@ export function createHud(
 
   /** Portrait Pay spread layout: measure params (left) and preview + color stack (right). */
   function applyBuildDockSpreadFloatVars(): void {
-    if (payLayoutMode !== "portrait" || buildBottomDock.hidden) {
+    if (mobilePlayLayoutMode !== "portrait" || buildBottomDock.hidden) {
       ui.style.removeProperty("--hud-build-dock-context-height");
       ui.style.removeProperty("--hud-build-dock-preview-height");
       ui.style.removeProperty("--hud-build-dock-color-stack-height");
@@ -7450,7 +7564,7 @@ export function createHud(
     updateBuildBottomDockToolsRowHeight();
     const panelH = Math.ceil(buildBottomDockPanel.getBoundingClientRect().height);
     const previewFloated =
-      payLayoutMode === "portrait" ||
+      mobilePlayLayoutMode === "portrait" ||
       (payRightRail !== null &&
         buildBottomDockPreviewSatellite.parentElement === payRightRail);
     const satelliteGap = previewFloated ? 0 : 5;
@@ -7735,7 +7849,7 @@ export function createHud(
   const playerMenu = createPlayerMenu(ui);
   let playerMenuLogoutHandler = (): void => {};
   let playerMenuLeaveHandler = (): void => {};
-  playerMenu.trigger.addEventListener(
+  playerMenu.root.addEventListener(
     "click",
     () => {
       closeActionWheel();
@@ -9917,6 +10031,7 @@ export function createHud(
       playerBarIdenticon.removeAttribute("src");
       delete playerBarIdenticon.dataset.address;
       playerMenu.syncIdenticonFromBar(playerBarIdenticon);
+      playerMenu.setName("");
       playerBar.removeAttribute("title");
       playerBar.classList.remove("hud-player-bar--interactive");
       playerBar.classList.remove("hud-player-bar--feedback-unread");
@@ -9932,6 +10047,7 @@ export function createHud(
     playerBarAddr.textContent = showUsername
       ? playerBarDisplayName.trim()
       : walletShort;
+    playerMenu.setName(showUsername ? playerBarDisplayName.trim() : walletShort);
     playerBarAddr.classList.toggle("hud-player-bar__addr--username", showUsername);
     playerBar.title = showUsername
       ? `${playerBarDisplayName.trim()} (${formatWalletAddressGap4(compact)})`
@@ -10988,7 +11104,7 @@ export function createHud(
     }
   }
 
-  function mountPayPreviewSatellite(mode: PayLayoutMode): void {
+  function mountPayPreviewSatellite(mode: MobilePlayLayoutMode): void {
     if (mode === "landscape" && payRightRail) {
       if (buildBottomDockPreviewSatellite.parentElement !== payRightRail) {
         payRightRail.appendChild(buildBottomDockPreviewSatellite);
@@ -11003,8 +11119,8 @@ export function createHud(
     }
   }
 
-  function mountPayActionChrome(mode: PayLayoutMode): void {
-    if (!nimiqPayHost || !payRightRail) return;
+  function mountPayActionChrome(mode: MobilePlayLayoutMode): void {
+    if (!mobilePlayHost || !payRightRail) return;
 
     if (mode === "landscape") {
       payRightRail.hidden = false;
@@ -11043,7 +11159,7 @@ export function createHud(
 
   /** Portrait Pay: Rooms (or Get a wallet for guests) under Return Home. */
   function mountPayPortraitTopChrome(portrait: boolean): void {
-    if (!nimiqPayHost) return;
+    if (!mobilePlayHost) return;
 
     const toolbarStats: HTMLElement[] = [playerCount, nimBalance, lobbyBtn];
     const roomsSlotBtn = getWalletBtn.hidden ? roomsBtn : getWalletBtn;
@@ -11077,40 +11193,45 @@ export function createHud(
     }
   }
 
-  function syncPayLayoutMode(): void {
-    if (!nimiqPayHost && !isNimiqPayWebViewHost()) return;
-    if (!nimiqPayHost && isNimiqPayWebViewHost()) {
+  function syncMobilePlayLayoutMode(): void {
+    if (!mobilePlayHost && !isNimiqPayWebViewHost() && !shouldUseMobileBrowserPlay()) {
+      return;
+    }
+    if (!mobilePlayHost && isNimiqPayWebViewHost()) {
       markNimiqPayHostDocument();
     }
-    if (!isNimiqPayHostDocument()) return;
-    const { width: vw, height: vh } = getNimiqPayViewportSize();
-    syncNimiqPayOrientationClasses(vw, vh);
-    const next: PayLayoutMode = isNimiqPayPortraitViewport(vw, vh)
+    if (!mobilePlayHost && shouldUseMobileBrowserPlay()) {
+      markMobileBrowserPlayHostDocument();
+    }
+    if (!isMobilePlayHostDocument()) return;
+    const { width: vw, height: vh } = getMobilePlayViewportSize();
+    syncMobileOrientationClasses(vw, vh);
+    const next: MobilePlayLayoutMode = isMobilePortraitViewport(vw, vh)
       ? "portrait"
       : "landscape";
-    if (payLayoutMode !== next) {
-      payLayoutMode = next;
-      ui.classList.toggle("hud--nimiq-pay-portrait", next === "portrait");
-      ui.classList.toggle("hud--nimiq-pay-landscape", next === "landscape");
+    if (mobilePlayLayoutMode !== next) {
+      mobilePlayLayoutMode = next;
+      ui.classList.toggle("hud--mobile-portrait", next === "portrait");
+      ui.classList.toggle("hud--mobile-landscape", next === "landscape");
       mountPayActionChrome(next);
     }
     mountPayPortraitTopChrome(next === "portrait");
     const fw = frame.clientWidth;
     const fh = frame.clientHeight;
     if (fw && fh) {
-      layoutLetterbox(frame, letter, streamCinemaFillViewport, payLayoutMode);
+      layoutLetterbox(frame, letter, streamCinemaFillViewport, mobilePlayLayoutMode);
       updateBuildBottomDockInset();
       syncHudBelowTopWrap();
     }
   }
 
-  if (nimiqPayHost) {
-    syncPayLayoutMode();
+  if (mobilePlayHost) {
+    syncMobilePlayLayoutMode();
   }
 
   const ro = new ResizeObserver(() => {
-    if (nimiqPayHost) {
-      syncPayLayoutMode();
+    if (mobilePlayHost) {
+      syncMobilePlayLayoutMode();
     } else {
       layoutLetterbox(frame, letter, streamCinemaFillViewport, null);
       syncHudBelowTopWrap();
@@ -11123,8 +11244,8 @@ export function createHud(
   ro.observe(buildModeStrip);
   ro.observe(buildBottomDock);
 
-  if (nimiqPayHost) {
-    layoutLetterbox(frame, letter, streamCinemaFillViewport, payLayoutMode);
+  if (mobilePlayHost) {
+    layoutLetterbox(frame, letter, streamCinemaFillViewport, mobilePlayLayoutMode);
   } else {
     layoutLetterbox(frame, letter, streamCinemaFillViewport, null);
   }
@@ -11136,17 +11257,17 @@ export function createHud(
     });
   });
 
-  const onPayViewportChange = nimiqPayHost
+  const onMobilePlayViewportChange = mobilePlayHost
     ? (): void => {
-        syncPayLayoutMode();
+        syncMobilePlayLayoutMode();
       }
     : null;
-  if (onPayViewportChange) {
-    window.visualViewport?.addEventListener("resize", onPayViewportChange);
-    window.visualViewport?.addEventListener("scroll", onPayViewportChange);
+  if (onMobilePlayViewportChange) {
+    window.visualViewport?.addEventListener("resize", onMobilePlayViewportChange);
+    window.visualViewport?.addEventListener("scroll", onMobilePlayViewportChange);
     document.addEventListener(
       "nspace-pseudo-fullscreen-change",
-      onPayViewportChange
+      onMobilePlayViewportChange
     );
   }
 
@@ -12748,7 +12869,7 @@ export function createHud(
       roomsBtn.hidden = isGuest;
       getWalletBtn.hidden = !isGuest;
       playerMenu.setGuestMode(isGuest);
-      if (nimiqPayHost) syncPayLayoutMode();
+      if (mobilePlayHost) syncMobilePlayLayoutMode();
     },
     onGetWalletOpen(fn: () => void) {
       getWalletOpenHandler = fn;
@@ -12795,7 +12916,7 @@ export function createHud(
         frame,
         letter,
         streamCinemaFillViewport,
-        enabled ? null : payLayoutMode
+        enabled ? null : mobilePlayLayoutMode
       );
       opts?.onLayout?.();
     },
@@ -14734,12 +14855,12 @@ export function createHud(
       nimClaimBar.classList.remove("nim-claim-bar--fading", "nim-claim-bar--adjacent");
       nimClaimBar.hidden = true;
       canvasCountdown.hidden = true;
-      if (onPayViewportChange) {
-        window.visualViewport?.removeEventListener("resize", onPayViewportChange);
-        window.visualViewport?.removeEventListener("scroll", onPayViewportChange);
+      if (onMobilePlayViewportChange) {
+        window.visualViewport?.removeEventListener("resize", onMobilePlayViewportChange);
+        window.visualViewport?.removeEventListener("scroll", onMobilePlayViewportChange);
         document.removeEventListener(
           "nspace-pseudo-fullscreen-change",
-          onPayViewportChange
+          onMobilePlayViewportChange
         );
       }
       ro.disconnect();

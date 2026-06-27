@@ -62,17 +62,41 @@ export function waitForNimiqPayWebViewHost(timeoutMs = 3000): Promise<boolean> {
 }
 
 const NIMIQ_PAY_HOST_CLASS = "nspace-nimiq-pay-host";
-const NIMIQ_PAY_PORTRAIT_CLASS = "nspace-nimiq-pay-portrait";
-const NIMIQ_PAY_LANDSCAPE_CLASS = "nspace-nimiq-pay-landscape";
+export const MOBILE_PLAY_HOST_CLASS = "nspace-mobile-play-host";
+export const MOBILE_BROWSER_HOST_CLASS = "nspace-mobile-browser-host";
+export const MOBILE_PORTRAIT_CLASS = "nspace-mobile-portrait";
+export const MOBILE_LANDSCAPE_CLASS = "nspace-mobile-landscape";
 
 /** Matches [`DESIGN_WIDTH` / `DESIGN_HEIGHT`](client/src/game/constants.ts) (16:9). */
-const NIMIQ_PAY_GAME_ASPECT = 1280 / 720;
+const MOBILE_GAME_ASPECT = 1280 / 720;
+
+export function markMobilePlayHostDocument(): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.add(MOBILE_PLAY_HOST_CLASS);
+}
+
+export function isMobilePlayHostDocument(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.documentElement.classList.contains(MOBILE_PLAY_HOST_CLASS);
+}
+
+export function markMobileBrowserPlayHostDocument(): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.add(MOBILE_BROWSER_HOST_CLASS);
+  markMobilePlayHostDocument();
+}
+
+export function isMobileBrowserPlayHostDocument(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.documentElement.classList.contains(MOBILE_BROWSER_HOST_CLASS);
+}
 
 /** Tag `<html>` when running inside Nimiq Pay (call once at startup). */
 export function markNimiqPayHostDocument(): void {
   if (typeof document === "undefined") return;
   if (!isNimiqPayWebViewHost()) return;
   document.documentElement.classList.add(NIMIQ_PAY_HOST_CLASS);
+  markMobilePlayHostDocument();
 }
 
 export function isNimiqPayHostDocument(): boolean {
@@ -80,13 +104,16 @@ export function isNimiqPayHostDocument(): boolean {
   return document.documentElement.classList.contains(NIMIQ_PAY_HOST_CLASS);
 }
 
-export function isNimiqPayPortraitViewport(width: number, height: number): boolean {
+export function isMobilePortraitViewport(width: number, height: number): boolean {
   if (!width || !height) return false;
-  return width / height < NIMIQ_PAY_GAME_ASPECT;
+  return width / height < MOBILE_GAME_ASPECT;
 }
 
-/** Visible viewport inside the Pay WebView (preferred over layout/frame size for orientation). */
-export function getNimiqPayViewportSize(): { width: number; height: number } {
+/** @deprecated Use `isMobilePortraitViewport`. */
+export const isNimiqPayPortraitViewport = isMobilePortraitViewport;
+
+/** Visible viewport inside mobile hosts (preferred over layout/frame size for orientation). */
+export function getMobilePlayViewportSize(): { width: number; height: number } {
   const vv = window.visualViewport;
   return {
     width: vv?.width ?? window.innerWidth,
@@ -94,20 +121,26 @@ export function getNimiqPayViewportSize(): { width: number; height: number } {
   };
 }
 
-export function isNimiqPayPortraitDocument(): boolean {
+/** @deprecated Use `getMobilePlayViewportSize`. */
+export const getNimiqPayViewportSize = getMobilePlayViewportSize;
+
+export function isMobilePortraitDocument(): boolean {
   if (typeof document === "undefined") return false;
-  return document.documentElement.classList.contains(NIMIQ_PAY_PORTRAIT_CLASS);
+  return document.documentElement.classList.contains(MOBILE_PORTRAIT_CLASS);
 }
 
+/** @deprecated Use `isMobilePortraitDocument`. */
+export const isNimiqPayPortraitDocument = isMobilePortraitDocument;
+
 /**
- * Toggles portrait/landscape Pay classes on `<html>`.
- * Returns `true` when portrait, `false` when landscape, `null` when not a Pay host.
+ * Toggles portrait/landscape classes on `<html>`.
+ * Returns `true` when portrait, `false` when landscape, `null` when not a mobile play host.
  */
-export function syncNimiqPayOrientationClasses(
+export function syncMobileOrientationClasses(
   width?: number,
   height?: number
 ): boolean | null {
-  if (!isNimiqPayHostDocument()) return null;
+  if (!isMobilePlayHostDocument()) return null;
   let w = width;
   let h = height;
   if (w == null || h == null) {
@@ -120,51 +153,58 @@ export function syncNimiqPayOrientationClasses(
       ? true
       : payEmulateForcedOrientation === "landscape"
         ? false
-        : isNimiqPayPortraitViewport(w, h);
+        : isMobilePortraitViewport(w, h);
   const root = document.documentElement;
-  root.classList.toggle(NIMIQ_PAY_PORTRAIT_CLASS, portrait);
-  root.classList.toggle(NIMIQ_PAY_LANDSCAPE_CLASS, !portrait);
+  root.classList.toggle(MOBILE_PORTRAIT_CLASS, portrait);
+  root.classList.toggle(MOBILE_LANDSCAPE_CLASS, !portrait);
   return portrait;
 }
 
-let payLayoutLifecycleBound = false;
+/** @deprecated Use `syncMobileOrientationClasses`. */
+export const syncNimiqPayOrientationClasses = syncMobileOrientationClasses;
 
-function bindNimiqPayLayoutLifecycle(): void {
-  if (payLayoutLifecycleBound || typeof window === "undefined") return;
-  payLayoutLifecycleBound = true;
+let mobilePlayLayoutLifecycleBound = false;
+
+function bindMobilePlayLayoutLifecycle(): void {
+  if (mobilePlayLayoutLifecycleBound || typeof window === "undefined") return;
+  mobilePlayLayoutLifecycleBound = true;
   window.addEventListener("pageshow", () => {
-    if (!isNimiqPayWebViewHost()) return;
-    enableNimiqPayViewportLayout();
-    scheduleNimiqPayLayoutResync();
+    if (!isMobilePlayHostDocument()) return;
+    if (isNimiqPayWebViewHost()) {
+      enableNimiqPayViewportLayout();
+    }
+    scheduleMobilePlayLayoutResync();
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible" || !isNimiqPayWebViewHost()) return;
+    if (document.visibilityState !== "visible" || !isMobilePlayHostDocument()) return;
     unlockScreenOrientation();
-    syncNimiqPayOrientationClasses();
-    requestMiniAppImmersiveLayout();
-    scheduleNimiqPayLayoutResync();
+    syncMobileOrientationClasses();
+    if (isNimiqPayWebViewHost()) {
+      requestMiniAppImmersiveLayout();
+    }
+    scheduleMobilePlayLayoutResync();
   });
   const screenOrientation = (screen as Screen & {
     orientation?: { addEventListener?: ScreenOrientation["addEventListener"] };
   }).orientation;
   screenOrientation?.addEventListener?.("change", () => {
-    if (!isNimiqPayWebViewHost()) return;
-    scheduleNimiqPayLayoutResync();
+    if (!isMobilePlayHostDocument()) return;
+    scheduleMobilePlayLayoutResync();
   });
   window.addEventListener("orientationchange", () => {
-    if (!isNimiqPayWebViewHost()) return;
-    scheduleNimiqPayLayoutResync();
+    if (!isMobilePlayHostDocument()) return;
+    scheduleMobilePlayLayoutResync();
   });
 }
 
 /**
- * Re-sync Pay orientation after cross-mini-app navigation when the WebView
+ * Re-sync orientation after cross-mini-app navigation when the WebView
  * reports layout vs visual viewport sizes out of step briefly.
  */
-export function scheduleNimiqPayLayoutResync(): void {
-  if (!isNimiqPayWebViewHost()) return;
+export function scheduleMobilePlayLayoutResync(): void {
+  if (!isMobilePlayHostDocument()) return;
   const tick = (): void => {
-    syncNimiqPayOrientationClasses();
+    syncMobileOrientationClasses();
     document.dispatchEvent(new Event("nspace-pseudo-fullscreen-change"));
   };
   tick();
@@ -174,15 +214,18 @@ export function scheduleNimiqPayLayoutResync(): void {
   window.setTimeout(tick, 400);
 }
 
+/** @deprecated Use `scheduleMobilePlayLayoutResync`. */
+export const scheduleNimiqPayLayoutResync = scheduleMobilePlayLayoutResync;
+
 /** Fill the Pay WebView visible viewport (no Fullscreen API); safe to call repeatedly. */
 export function enableNimiqPayViewportLayout(): void {
   if (!isNimiqPayWebViewHost()) return;
   markNimiqPayHostDocument();
-  bindNimiqPayLayoutLifecycle();
-  syncNimiqPayOrientationClasses();
+  bindMobilePlayLayoutLifecycle();
+  syncMobileOrientationClasses();
   requestMiniAppImmersiveLayout();
   setPseudoFullscreen(true);
-  scheduleNimiqPayLayoutResync();
+  scheduleMobilePlayLayoutResync();
 }
 
 let visualViewportCleanup: (() => void) | null = null;
@@ -193,8 +236,8 @@ function syncVisualViewportCssVars(): void {
   const root = document.documentElement;
   root.style.setProperty("--nspace-vvh", `${vv.height}px`);
   root.style.setProperty("--nspace-vv-top", `${vv.offsetTop}px`);
-  if (isNimiqPayHostDocument()) {
-    syncNimiqPayOrientationClasses(vv.width, vv.height);
+  if (isMobilePlayHostDocument()) {
+    syncMobileOrientationClasses(vv.width, vv.height);
   }
 }
 

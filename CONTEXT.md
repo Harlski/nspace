@@ -75,6 +75,23 @@ The dedicated bottom (6 o'clock) edge of the Action Wheel hexagon. Shows Close a
 level and Back inside a sub-wheel; reused rather than adding a second nav Sector.
 _Avoid_: close button, back button, hub button.
 
+**Focused Sector**:
+The single Sector whose name is currently surfaced — focused by pointer hover or keyboard on
+pointer devices, or by a first tap on touch. Sectors carry no inline text, so focusing one is
+how its name is read. On touch a second tap on the Focused Sector activates it (the Nav Sector
+is exempt: a single tap always activates Close/Back).
+_Avoid_: hovered Sector, selected slice, active wedge.
+
+**Sector Title**:
+The name of the Focused Sector, shown above the Action Wheel. It replaces the per-Sector inline
+text labels (now removed); absent when no Sector is focused.
+_Avoid_: tooltip, sector label, caption.
+
+**Wheel Title**:
+The name of the sub-wheel you are currently inside (Emote Wheel, Items Wheel, Home Wheel, Games
+Wheel, 1v1…), shown below the Nav Sector. Present only inside a sub-wheel; absent at the root.
+_Avoid_: breadcrumb, context label, menu heading.
+
 ## Rooms
 
 **Hub**:
@@ -136,6 +153,61 @@ a wallet — entered as a full player; this is a fresh full-player session, not 
 guest upgrade) and the **Nimiq Pay** mobile app (App Store / Google Play, plus a QR to
 nimpay.app). Encouragement only — closeable, returning the Guest to play as a guest.
 _Avoid_: paywall, wallet gate, sign-up modal, upsell.
+
+## Client presentation
+
+**Mobile Browser Play**:
+The default presentation for playing Nimiq Space in a mobile browser outside the Nimiq Pay
+WebView, applied from first page load — any mobile touch/coarse-pointer session regardless of
+wallet or auth path. Distinct from **Nimiq Pay host** layout, which reuses some of the same
+portrait/landscape HUD rules but is detected by the Pay WebView, not by “mobile browser” alone.
+_Avoid_: mobile web, phone browser mode.
+
+**Fallback Mobile Presentation**:
+The temporary rollback presentation for mobile browsers if **Mobile Browser Play** proves unsafe
+on a real device or browser; it preserves playability while the default mobile presentation is
+fixed.
+_Avoid_: legacy mobile mode, old landscape mode.
+
+**Portrait Play**:
+The default **Mobile Browser Play** presentation: the player arrives in portrait and the game
+fills the visible browser viewport with a true portrait canvas, without forcing immersive
+fullscreen or preserving the old 16:9 game frame.
+_Avoid_: vertical mode, phone layout.
+
+**Landscape Play**:
+The optional **Mobile Browser Play** presentation entered by physically rotating the device to
+a landscape viewport; the client may make a best-effort immersive fullscreen request but the
+game remains playable when the browser denies it.
+_Avoid_: horizontal mode, rotated layout.
+
+**Orientation-Aware Immersive Layout**:
+On **Mobile Browser Play**, immersive/fullscreen is tied to viewport orientation — off (or released)
+in **Portrait Play**, engaged (or offered) in **Landscape Play** — not locked landscape on entry.
+_Avoid_: auto-fullscreen, forced landscape.
+
+**Curated Mobile HUD**:
+The reduced-density HUD used for **Portrait Play**: play-critical controls stay available while
+secondary surfaces are collapsed behind existing entry points instead of all desktop controls
+remaining visible at once.
+_Avoid_: stripped-down UI, mobile-lite UI.
+
+**Shared Mobile Portrait Layout**:
+The common portrait presentation used by both **Portrait Play** and Nimiq Pay portrait: true
+portrait canvas, **Curated Mobile HUD**, and portrait resize behavior, with host-specific chrome
+or immersive APIs layered separately.
+_Avoid_: Pay portrait clone, separate mobile layout.
+
+**Visible Viewport Fit**:
+Mobile game presentation sizes to the currently visible browser viewport as it changes, including
+browser chrome collapse/expansion and keyboard-driven viewport changes where the platform reports
+them.
+_Avoid_: screen fit, fixed mobile height.
+
+**Mobile Gesture Vocabulary**:
+The touch interaction meanings shared by **Portrait Play** and **Landscape Play**; rotation changes
+layout and immersive/fullscreen behavior, not what taps, long-presses, pinches, or drags mean.
+_Avoid_: portrait controls, landscape controls.
 
 ## Movement
 

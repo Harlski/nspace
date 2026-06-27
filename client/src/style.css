@@ -890,14 +890,59 @@ html.nspace-pseudo-fs #app {
   pointer-events: none;
 }
 
+.player-menu__trigger-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .player-menu__trigger,
+.player-menu__name,
 .player-menu__panel {
   pointer-events: auto;
 }
 
+.player-menu__name {
+  max-width: min(40vw, 180px);
+  padding: 8px 14px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.88);
+  box-shadow:
+    0 0 0 2px rgba(56, 189, 248, 0.45),
+    0 4px 14px rgba(0, 0, 0, 0.35);
+  color: #e8eaef;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    box-shadow 0.18s ease,
+    transform 0.12s ease;
+}
+
+.player-menu__name[hidden] {
+  display: none;
+}
+
+.player-menu__name:hover {
+  box-shadow:
+    0 0 0 2px rgba(56, 189, 248, 0.75),
+    0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.player-menu--open .player-menu__name {
+  box-shadow:
+    0 0 0 2px rgba(125, 211, 252, 0.95),
+    0 6px 18px rgba(0, 0, 0, 0.42);
+}
+
 .player-menu__trigger {
-  width: 48px;
-  height: 48px;
+  width: 64px;
+  height: 64px;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -928,8 +973,8 @@ html.nspace-pseudo-fs #app {
 }
 
 .player-menu__identicon {
-  width: 44px;
-  height: 44px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -1023,11 +1068,11 @@ html.nspace-pseudo-fs #app {
   display: none !important;
 }
 
-html.nspace-nimiq-pay-host .player-menu {
+html.nspace-mobile-play-host .player-menu {
   bottom: var(--hud-nimiq-pay-bottom-inset);
 }
 
-html.nspace-nimiq-pay-landscape .player-menu {
+html.nspace-mobile-landscape .player-menu {
   right: calc(
     var(--hud-nimiq-pay-rail-width) + max(8px, env(safe-area-inset-right, 0px))
   );
@@ -1519,12 +1564,12 @@ html.nspace-nimiq-pay-landscape .player-menu {
  * Nimiq Pay WebView already owns top chrome; a spurious safe-area inset on the HUD
  * leaves a transparent band above `.hud-top-strip` where the game canvas shows through.
  */
-html.nspace-nimiq-pay-host .hud-top-strip {
+html.nspace-mobile-play-host .hud-top-strip {
   padding-top: 0;
 }
 
-html.nspace-nimiq-pay-host .hud,
-html.nspace-nimiq-pay-host .hud.hud--nimiq-pay-host {
+html.nspace-mobile-play-host .hud,
+html.nspace-mobile-play-host .hud.hud--mobile-play-host {
   --hud-nimiq-pay-bottom-inset: calc(
     8px + env(safe-area-inset-bottom, 0px) + var(--hud-build-dock-height, 0px)
   );
@@ -1532,51 +1577,51 @@ html.nspace-nimiq-pay-host .hud.hud--nimiq-pay-host {
   --hud-below-top-wrap: 44px;
 }
 
-html.nspace-nimiq-pay-landscape .hud,
-html.nspace-nimiq-pay-landscape .hud.hud--nimiq-pay-host {
+html.nspace-mobile-landscape .hud,
+html.nspace-mobile-landscape .hud.hud--mobile-play-host {
   --hud-nimiq-pay-rail-width: calc(88px + max(4px, env(safe-area-inset-right, 0px)));
   --hud-mode-sidebar-width: var(--hud-nimiq-pay-rail-width);
   --hud-build-dock-panel-max-height: min(38vh, 156px);
 }
 
-html.nspace-nimiq-pay-portrait .hud,
-html.nspace-nimiq-pay-portrait .hud.hud--nimiq-pay-host,
-html.nspace-nimiq-pay-portrait .hud.hud--nimiq-pay-portrait {
+html.nspace-mobile-portrait .hud,
+html.nspace-mobile-portrait .hud.hud--mobile-play-host,
+html.nspace-mobile-portrait .hud.hud--mobile-portrait {
   --hud-nimiq-pay-rail-width: 0px;
   --hud-mode-sidebar-width: 0px;
   --hud-build-dock-panel-max-height: min(52vh, 240px);
 }
 
-html.nspace-nimiq-pay-host .hud.hud--has-status-sub,
-html.nspace-nimiq-pay-host .hud.hud--nimiq-pay-host.hud--has-status-sub {
+html.nspace-mobile-play-host .hud.hud--has-status-sub,
+html.nspace-mobile-play-host .hud.hud--mobile-play-host.hud--has-status-sub {
   --hud-below-top-wrap: 64px;
 }
 
-html.nspace-nimiq-pay-host .game-frame {
+html.nspace-mobile-play-host .game-frame {
   overflow: hidden;
 }
 
 /* Compact top chrome — more vertical room for the 16:9 letterbox */
-html.nspace-nimiq-pay-host .hud-top-strip__main {
+html.nspace-mobile-play-host .hud-top-strip__main {
   padding: 4px 8px;
   gap: 0.45rem;
 }
 
-html.nspace-nimiq-pay-host .hud-brand {
+html.nspace-mobile-play-host .hud-brand {
   font-size: clamp(12px, 2.4vw, 16px);
 }
 
-html.nspace-nimiq-pay-host .hud-player-bar__identicon {
+html.nspace-mobile-play-host .hud-player-bar__identicon {
   width: 18px;
   height: 18px;
 }
 
-html.nspace-nimiq-pay-host .hud-player-bar__addr {
+html.nspace-mobile-play-host .hud-player-bar__addr {
   font-size: 11px;
   max-width: 7.5rem;
 }
 
-html.nspace-nimiq-pay-host .hud-top-toolbar {
+html.nspace-mobile-play-host .hud-top-toolbar {
   gap: 4px;
 }
 
@@ -1584,29 +1629,29 @@ html.nspace-nimiq-pay-host .hud-top-toolbar .hud-fs {
   display: none !important;
 }
 
-html.nspace-nimiq-pay-host .hud-player-count,
-html.nspace-nimiq-pay-host .hud-nim-balance {
+html.nspace-mobile-play-host .hud-player-count,
+html.nspace-mobile-play-host .hud-nim-balance {
   padding: 3px 8px;
   font-size: 11px;
 }
 
-html.nspace-nimiq-pay-host .hud-header-marquee-host {
+html.nspace-mobile-play-host .hud-header-marquee-host {
   display: none !important;
 }
 
-html.nspace-nimiq-pay-host .hud-status-sub {
+html.nspace-mobile-play-host .hud-status-sub {
   padding: 3px 8px 4px;
   font-size: 10.5px;
   min-height: calc(1.3em + 2px);
 }
 
-html.nspace-nimiq-pay-host .hud-status-sub--empty {
+html.nspace-mobile-play-host .hud-status-sub--empty {
   min-height: 0;
   padding: 0;
 }
 
 /* Landscape Pay: right action rail (Return Home, Build, preview) */
-html.nspace-nimiq-pay-landscape .hud-pay-right-rail {
+html.nspace-mobile-landscape .hud-pay-right-rail {
   position: absolute;
   top: var(--hud-below-top-wrap);
   right: 0;
@@ -1627,11 +1672,11 @@ html.nspace-nimiq-pay-landscape .hud-pay-right-rail {
   pointer-events: none;
 }
 
-html.nspace-nimiq-pay-landscape .hud-pay-right-rail > * {
+html.nspace-mobile-landscape .hud-pay-right-rail > * {
   pointer-events: auto;
 }
 
-html.nspace-nimiq-pay-landscape .hud-pay-right-rail > .hud-return-home {
+html.nspace-mobile-landscape .hud-pay-right-rail > .hud-return-home {
   position: relative;
   top: auto;
   right: auto;
@@ -1648,7 +1693,7 @@ html.nspace-nimiq-pay-landscape .hud-pay-right-rail > .hud-return-home {
   box-sizing: border-box;
 }
 
-html.nspace-nimiq-pay-landscape .hud-pay-right-rail > .hud-build-mode-strip {
+html.nspace-mobile-landscape .hud-pay-right-rail > .hud-build-mode-strip {
   position: relative;
   right: auto;
   left: auto;
@@ -1666,7 +1711,7 @@ html.nspace-nimiq-pay-landscape .hud-pay-right-rail > .hud-build-mode-strip {
   border-radius: 10px;
 }
 
-html.nspace-nimiq-pay-landscape
+html.nspace-mobile-landscape
   .hud-pay-right-rail
   > .hud-build-bottom-dock__preview-satellite {
   position: relative;
@@ -1678,7 +1723,7 @@ html.nspace-nimiq-pay-landscape
   min-height: 0;
 }
 
-html.nspace-nimiq-pay-landscape .hud-top {
+html.nspace-mobile-landscape .hud-top {
   top: var(--hud-below-top-wrap);
   right: var(--hud-nimiq-pay-rail-width);
   left: 0;
@@ -1686,35 +1731,35 @@ html.nspace-nimiq-pay-landscape .hud-top {
   pointer-events: none;
 }
 
-html.nspace-nimiq-pay-landscape .hud-top > .hud-top-actions {
+html.nspace-mobile-landscape .hud-top > .hud-top-actions {
   pointer-events: auto;
   margin-right: 6px;
 }
 
-html.nspace-nimiq-pay-landscape .hud-build-bottom-dock {
+html.nspace-mobile-landscape .hud-build-bottom-dock {
   right: var(--hud-nimiq-pay-rail-width);
   padding-right: max(4px, env(safe-area-inset-right, 0px));
 }
 
-html.nspace-nimiq-pay-host .hud-bottom-left {
+html.nspace-mobile-play-host .hud-bottom-left {
   bottom: var(--hud-nimiq-pay-bottom-inset);
 }
 
-html.nspace-nimiq-pay-landscape .hud-bottom-left {
+html.nspace-mobile-landscape .hud-bottom-left {
   right: var(--hud-nimiq-pay-rail-width);
 }
 
 /* Portrait Pay: full-width dock, top-right actions, two-row top strip */
-html.nspace-nimiq-pay-portrait .game-frame .letterbox {
+html.nspace-mobile-portrait .game-frame .letterbox {
   box-shadow: none;
   border-radius: 0;
 }
 
-html.nspace-nimiq-pay-portrait .hud-pay-right-rail {
+html.nspace-mobile-portrait .hud-pay-right-rail {
   display: none !important;
 }
 
-html.nspace-nimiq-pay-portrait .hud-top {
+html.nspace-mobile-portrait .hud-top {
   top: var(--hud-below-top-wrap);
   right: 0;
   left: auto;
@@ -1728,10 +1773,10 @@ html.nspace-nimiq-pay-portrait .hud-top {
   z-index: 7;
 }
 
-html.nspace-nimiq-pay-portrait .hud-top > .hud-return-home,
-html.nspace-nimiq-pay-portrait .hud-top > .hud-rooms,
-html.nspace-nimiq-pay-portrait .hud-top > .hud-build-mode-strip,
-html.nspace-nimiq-pay-portrait .hud-top > .hud-top-actions {
+html.nspace-mobile-portrait .hud-top > .hud-return-home,
+html.nspace-mobile-portrait .hud-top > .hud-rooms,
+html.nspace-mobile-portrait .hud-top > .hud-build-mode-strip,
+html.nspace-mobile-portrait .hud-top > .hud-top-actions {
   pointer-events: auto;
   position: relative;
   top: auto;
@@ -1741,8 +1786,8 @@ html.nspace-nimiq-pay-portrait .hud-top > .hud-top-actions {
   margin: 0;
 }
 
-html.nspace-nimiq-pay-portrait .hud-top > .hud-return-home,
-html.nspace-nimiq-pay-portrait .hud-top > .hud-rooms {
+html.nspace-mobile-portrait .hud-top > .hud-return-home,
+html.nspace-mobile-portrait .hud-top > .hud-rooms {
   width: auto;
   min-width: 0;
   padding: 5px 10px;
@@ -1750,11 +1795,11 @@ html.nspace-nimiq-pay-portrait .hud-top > .hud-rooms {
   font-weight: 600;
 }
 
-html.nspace-nimiq-pay-portrait .hud-top > .hud-rooms .hud-rooms__caret {
+html.nspace-mobile-portrait .hud-top > .hud-rooms .hud-rooms__caret {
   display: none;
 }
 
-html.nspace-nimiq-pay-portrait .hud-top > .hud-build-mode-strip {
+html.nspace-mobile-portrait .hud-top > .hud-build-mode-strip {
   width: 88px;
   min-width: 88px;
   max-width: 88px;
@@ -1766,31 +1811,31 @@ html.nspace-nimiq-pay-portrait .hud-top > .hud-build-mode-strip {
   border-radius: 10px;
 }
 
-html.nspace-nimiq-pay-portrait .hud-build-bottom-dock {
+html.nspace-mobile-portrait .hud-build-bottom-dock {
   left: 0;
   right: 0;
   padding-left: max(4px, env(safe-area-inset-left, 0px));
   padding-right: max(4px, env(safe-area-inset-right, 0px));
 }
 
-html.nspace-nimiq-pay-portrait .hud-bottom-left {
+html.nspace-mobile-portrait .hud-bottom-left {
   right: 0;
   left: max(6px, env(safe-area-inset-left, 0px));
 }
 
-html.nspace-nimiq-pay-portrait .hud-top-strip__main {
+html.nspace-mobile-portrait .hud-top-strip__main {
   flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
   row-gap: 0;
 }
 
-html.nspace-nimiq-pay-portrait .hud-top-strip__mid {
+html.nspace-mobile-portrait .hud-top-strip__mid {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-html.nspace-nimiq-pay-portrait .hud-top-strip .hud-top-toolbar {
+html.nspace-mobile-portrait .hud-top-strip .hud-top-toolbar {
   position: relative;
   flex: 0 0 0;
   width: 0;
@@ -1802,27 +1847,27 @@ html.nspace-nimiq-pay-portrait .hud-top-strip .hud-top-toolbar {
   gap: 0;
 }
 
-html.nspace-nimiq-pay-portrait .hud-top-strip__main > .hud-player-count,
-html.nspace-nimiq-pay-portrait .hud-top-strip__main > .hud-nim-balance {
+html.nspace-mobile-portrait .hud-top-strip__main > .hud-player-count,
+html.nspace-mobile-portrait .hud-top-strip__main > .hud-nim-balance {
   flex: 0 1 auto;
   min-width: 0;
   padding: 3px 7px;
   font-size: 10px;
 }
 
-html.nspace-nimiq-pay-portrait .hud-top-strip__main > .hud-nim-balance__value {
+html.nspace-mobile-portrait .hud-top-strip__main > .hud-nim-balance__value {
   max-width: 5.5rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-html.nspace-nimiq-pay-portrait .hud-top-strip__main > .hud-lobby {
+html.nspace-mobile-portrait .hud-top-strip__main > .hud-lobby {
   flex: 0 0 auto;
 }
 
 /* Portrait Pay: spread build dock — params (left); color wheel + preview stacked (right). */
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible {
   --hud-build-dock-float-top: calc(var(--hud-below-top-wrap, 44px) + 6px);
   --hud-build-dock-float-bottom: calc(
     env(safe-area-inset-bottom, 0px) + var(--hud-build-dock-height, 0px)
@@ -1842,11 +1887,11 @@ html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible {
   --hud-build-dock-panel-max-height: none;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__stack {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__stack {
   position: static;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__panel {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__panel {
   pointer-events: none;
   background: transparent;
   border: none;
@@ -1858,7 +1903,7 @@ html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bo
   gap: 0;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__tabs {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__tabs {
   pointer-events: auto;
   flex-wrap: wrap;
   align-items: center;
@@ -1873,7 +1918,7 @@ html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bo
   box-shadow: var(--hud-build-chrome-shadow);
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__row--picker {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__row--picker {
   flex-wrap: nowrap;
   align-items: stretch;
   gap: 0;
@@ -1881,7 +1926,7 @@ html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bo
   overflow: visible;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__tools {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__tools {
   pointer-events: auto;
   flex: 1 1 auto;
   width: 100%;
@@ -1899,7 +1944,7 @@ html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bo
   -webkit-overflow-scrolling: touch;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context:not([hidden]) {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context:not([hidden]) {
   position: fixed;
   top: auto;
   bottom: var(--hud-build-dock-float-bottom);
@@ -1924,7 +1969,7 @@ html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bo
   box-shadow: var(--hud-build-chrome-shadow);
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--floor:not([hidden]) {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--floor:not([hidden]) {
   background: transparent;
   border: none;
   box-shadow: none;
@@ -1937,7 +1982,7 @@ html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bo
   pointer-events: none;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context-color:not([hidden]) {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context-color:not([hidden]) {
   position: fixed;
   top: auto;
   bottom: calc(
@@ -1966,16 +2011,16 @@ html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bo
   box-sizing: border-box;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-color:not([hidden]) {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-color:not([hidden]) {
   pointer-events: auto;
 }
 
 /* Color column is reparented to `.hud-build-bottom-dock` in portrait; hide the empty grid slot. */
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context-grid > .hud-build-bottom-dock__context-color {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context-grid > .hud-build-bottom-dock__context-color {
   display: none !important;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context-grid {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context-grid {
   flex-direction: column;
   align-items: stretch;
   gap: 0;
@@ -1983,26 +2028,26 @@ html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bo
   overflow: visible;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context-mods {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context-mods {
   flex: 1 1 auto;
   max-height: none;
   overflow: visible;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--room-settings .hud-build-bottom-dock__context-mods {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--room-settings .hud-build-bottom-dock__context-mods {
   justify-content: flex-start;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-mods {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__context-mods {
   display: none !important;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--prefab:not([hidden]) {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--prefab:not([hidden]) {
   width: min(280px, calc(100vw - 116px));
   max-height: min(42vh, var(--hud-build-dock-context-max-height));
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__preview-satellite:not([hidden]) {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__preview-satellite:not([hidden]) {
   position: fixed;
   top: auto;
   bottom: var(--hud-build-dock-float-bottom);
@@ -2014,23 +2059,23 @@ html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bo
   pointer-events: auto;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context-color .palette-hue-ring {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context-color .palette-hue-ring {
   width: 52px;
   height: 52px;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-mode-sidebar__shape-color-row--floor {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-mode-sidebar__shape-color-row--floor {
   flex-direction: column;
   align-items: center;
   gap: 6px;
 }
 
-html.nspace-nimiq-pay-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__floor-brush-setting {
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__floor-brush-setting {
   justify-content: center;
   align-self: center;
 }
 
-html.nspace-nimiq-pay-portrait .hud-build-bottom-dock__tab {
+html.nspace-mobile-portrait .hud-build-bottom-dock__tab {
   padding: 3px 6px;
   font-size: 9px;
 }
@@ -5293,13 +5338,16 @@ button.hud-brand:focus-visible {
 
 .action-wheel__wedge {
   fill: rgba(15, 17, 23, 0.94);
-  stroke: rgba(61, 70, 90, 0.95);
-  stroke-width: 1.5;
+  /* Soft, light dividers — still reads as six Sectors without the hard borders. */
+  stroke: rgba(150, 165, 195, 0.22);
+  stroke-width: 1;
+  stroke-linejoin: round;
   transition: fill 0.12s ease;
 }
 
 .action-wheel__slice:hover .action-wheel__wedge,
-.action-wheel__slice:focus-visible .action-wheel__wedge {
+.action-wheel__slice:focus-visible .action-wheel__wedge,
+.action-wheel__slice--focused .action-wheel__wedge {
   fill: rgba(45, 53, 72, 0.96);
 }
 
@@ -5309,8 +5357,9 @@ button.hud-brand:focus-visible {
 
 .action-wheel__rim {
   fill: none;
-  stroke: rgba(150, 165, 195, 0.55);
+  stroke: rgba(150, 165, 195, 0.5);
   stroke-width: 2;
+  stroke-linejoin: round;
   pointer-events: none;
 }
 
@@ -5323,14 +5372,44 @@ button.hud-brand:focus-visible {
   user-select: none;
 }
 
-.action-wheel__label {
-  fill: rgba(230, 235, 245, 0.85);
-  font-size: 11px;
+/* Sector Title (above the hexagon) and Wheel Title (below the Nav Sector). Both are
+   small floating chips anchored to the wheel, so they ride its open/close transform. */
+.action-wheel__sector-title,
+.action-wheel__wheel-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 180px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(15, 17, 23, 0.92);
+  border: 1px solid rgba(150, 165, 195, 0.28);
+  color: rgba(235, 240, 250, 0.96);
+  font-size: 12px;
   font-weight: 600;
-  text-anchor: middle;
-  dominant-baseline: central;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
   pointer-events: none;
   user-select: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+/* The hexagon's flat top/bottom edges sit ~23px inside the 216px box, so nudge the chips
+   inward to hug the hexagon instead of floating at the box edge. */
+.action-wheel__sector-title {
+  bottom: calc(100% - 18px);
+}
+
+.action-wheel__wheel-title {
+  top: calc(100% - 18px);
+}
+
+.action-wheel__sector-title[hidden],
+.action-wheel__wheel-title[hidden] {
+  display: none !important;
 }
 
 /* Other player — context menu (fixed viewport coords from Game) */
@@ -5511,7 +5590,7 @@ button.hud-brand:focus-visible {
   z-index: 10001;
   display: flex;
   /* Desktop default: centered modal. On mobile / Nimiq Pay it becomes a bottom-anchored sheet —
-     see the `@media (max-width: 560px)` and `html.nspace-nimiq-pay-host` overrides below. */
+     see the `@media (max-width: 560px)` and `html.nspace-mobile-play-host` overrides below. */
   align-items: center;
   justify-content: center;
   padding: 20px 16px;
@@ -6542,70 +6621,64 @@ button.hud-brand:focus-visible {
   max-width: none;
 }
 
-/* Narrow / portrait viewports (e.g. the Nimiq Pay webview): reflow the same grid instead of
-   hiding it. Hiding the grid put the WebGL avatar canvas inside a `display:none` ancestor, giving
-   it zero size so the preview never rendered. Stack the preview on top with the four slots as a
-   2x2 below, keeping the single canvas visible.
+/* Narrow / portrait viewports (e.g. the Nimiq Pay webview): keep the desktop "flanking" layout
+   so the cosmetic slots sit on either side of the avatar preview, laid out as:
 
-   The breakpoint is generous (≤560px) so every portrait phone — including widths like 430px that
-   previously fell into the 3-column desktop grid, where the read-only profile's negative
-   `margin-right` pushed the left/right cosmetic columns off the dialog edge — uses this layout. */
+       C P P C
+       C P P C
+
+   A left cosmetic column (Nameplate over Aura), the square avatar preview spanning the middle
+   (2 cosmetic squares wide and tall), and a right cosmetic column (Chat Bubble over Trail).
+   Unlike the desktop grid (`minmax(0,1fr)` center, uncapped canvas) we size the centre column to
+   a fixed two-square width so the whole row stays inside the narrow dialog instead of overflowing.
+
+   The breakpoint is generous (≤560px) so every portrait phone uses this compact layout. */
 @media (max-width: 560px) {
   .wardrobe-doll__grid {
-    grid-template-columns: 1fr 1fr;
-    grid-template-areas:
-      "preview preview"
-      "left right";
+    grid-template-columns: auto auto auto;
+    grid-template-areas: none;
     gap: 0.5rem 0.6rem;
-    justify-items: center;
+    justify-content: center;
+    align-items: center;
   }
-  .wardrobe-doll__slot--center {
-    grid-area: preview;
+  /* Pin each cosmetic cell to one square (4.25rem) so a long name ellipsis-truncates instead of
+     widening its column. */
+  .wardrobe-doll__grid .wardrobe-slot-cell {
+    width: 4.25rem;
   }
-  .wardrobe-doll__col--left {
-    grid-area: left;
-  }
-  .wardrobe-doll__col--right {
-    grid-area: right;
-  }
+  /* Avatar preview = 2x2 cosmetic squares: 4.25rem + 0.6rem gap + 4.25rem = 9.1rem. */
   .wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll,
   .wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll__canvas {
-    max-width: 9rem;
+    width: 9.1rem;
+    max-width: 9.1rem;
   }
-  /* The negative right margin only makes sense for the 3-column desktop grid; in the stacked
-     reflow it would clip the right column, so cancel it here. */
+  /* The negative right margin is tuned for the wider desktop dialog; in this compact layout it
+     would clip the right column, so cancel it here. */
   .other-player-profile__wardrobe {
     margin-right: 0;
   }
 }
 
-/* Nimiq Pay webview: force the stacked reflow regardless of the reported viewport width. The
-   in-app webview can report a CSS width above the 560px breakpoint, which dropped the wardrobe
-   back to the 3-column desktop grid where the negative right margin pushed the side cosmetic
-   columns (Chat Bubble / Trail) off the dialog edge so they "weren't showing on the sides".
-   Pinning the stacked grid here guarantees all four slots stay visible under the preview. */
-html.nspace-nimiq-pay-host .wardrobe-doll__grid {
-  grid-template-columns: 1fr 1fr;
-  grid-template-areas:
-    "preview preview"
-    "left right";
+/* Nimiq Pay webview: force the compact flanking layout regardless of the reported viewport width.
+   The in-app webview can report a CSS width above the 560px breakpoint, which would otherwise drop
+   the wardrobe back to the wide desktop grid (uncapped centre) and push the side cosmetic columns
+   off the dialog edge. Pinning the two-square centre column here keeps the "C P P C" rows intact. */
+html.nspace-mobile-play-host .wardrobe-doll__grid {
+  grid-template-columns: auto auto auto;
+  grid-template-areas: none;
   gap: 0.5rem 0.6rem;
-  justify-items: center;
+  justify-content: center;
+  align-items: center;
 }
-html.nspace-nimiq-pay-host .wardrobe-doll__slot--center {
-  grid-area: preview;
+html.nspace-mobile-play-host .wardrobe-doll__grid .wardrobe-slot-cell {
+  width: 4.25rem;
 }
-html.nspace-nimiq-pay-host .wardrobe-doll__col--left {
-  grid-area: left;
+html.nspace-mobile-play-host .wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll,
+html.nspace-mobile-play-host .wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll__canvas {
+  width: 9.1rem;
+  max-width: 9.1rem;
 }
-html.nspace-nimiq-pay-host .wardrobe-doll__col--right {
-  grid-area: right;
-}
-html.nspace-nimiq-pay-host .wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll,
-html.nspace-nimiq-pay-host .wardrobe-doll__grid .wardrobe-doll__slot--center .wardrobe-doll__canvas {
-  max-width: 9rem;
-}
-html.nspace-nimiq-pay-host .other-player-profile__wardrobe {
+html.nspace-mobile-play-host .other-player-profile__wardrobe {
   margin-right: 0;
 }
 
@@ -8618,7 +8691,7 @@ html.nspace-nimiq-pay-host .other-player-profile__wardrobe {
   max-width: 100%;
 }
 
-html.nspace-nimiq-pay-portrait
+html.nspace-mobile-portrait
   .hud.hud--build-bottom-dock-visible
   .hud-build-bottom-dock__row--prefab-category
   .hud-build-bottom-dock__tools {

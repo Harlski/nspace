@@ -129,13 +129,18 @@ import { createHud } from "./ui/hud.js";
 import { chatBubbleClassForPreset } from "./cosmetics/loadoutVfx.js";
 import { isPaletteHueHexPopoverTyping } from "./ui/paletteHueHexPopover.js";
 import {
+  enableMobileBrowserPlayLayout,
+  shouldUseMobileBrowserPlay,
+  syncMobileBrowserImmersiveLayout,
+} from "./ui/mobileBrowserPlay.js";
+import {
   enableNimiqPayViewportLayout,
   initNimiqPayDevEmulation,
-  isNimiqPayPortraitDocument,
+  isMobilePortraitDocument,
   isNimiqPayWebViewHost,
   isPseudoFullscreenActive,
   requestMiniAppImmersiveLayout,
-  scheduleNimiqPayLayoutResync,
+  scheduleMobilePlayLayoutResync,
   setPseudoFullscreen,
   tryRequestFullscreen,
   unlockScreenOrientation,
@@ -424,6 +429,7 @@ function isPixelRoomId(roomId: string): boolean {
 
 function openMainMenu(): void {
   unlockScreenOrientation();
+  enableMobileBrowserPlayLayout();
   const app = document.getElementById("app");
   if (!app) return;
   const cachedEntries = listCachedSessions();
@@ -477,6 +483,7 @@ function enterGame(
   if (!app) return;
   unlockScreenOrientation();
   enableNimiqPayViewportLayout();
+  enableMobileBrowserPlayLayout();
   unmountMainMenu?.();
   unmountMainMenu = null;
   app.innerHTML = "";
@@ -687,7 +694,7 @@ function enterGame(
     });
   }
   if (isNimiqPayWebViewHost()) {
-    scheduleNimiqPayLayoutResync();
+    scheduleMobilePlayLayoutResync();
   }
   let roomTransitionProgressTimer: ReturnType<typeof setInterval> | null = null;
   function clearRoomTransitionProgressTimer(): void {
@@ -1807,12 +1814,6 @@ function enterGame(
     showGetWalletPrompt({ onWebWallet: () => openMainMenu() });
   });
   hud.onPlayerMenuLogout(() => {
-    if (selfAddress.startsWith("guest:")) {
-      clearCachedSession();
-      clearGuestInviteCookie();
-    } else {
-      removeCachedSession(selfAddress);
-    }
     disposeToMenu();
   });
   hud.onPlayerMenuLeave(() => {
@@ -1856,13 +1857,22 @@ function enterGame(
   }).orientation;
   let orientationRetryTimer: ReturnType<typeof setInterval> | null = null;
 
+  const useMobileBrowserPlay = shouldUseMobileBrowserPlay();
+  const useLegacyMobileLandscape = isCoarsePointer && !useMobileBrowserPlay;
+
   const lockLandscape = (): void => {
     if (isNimiqPayWebViewHost() || !isCoarsePointer || !screenOrientation?.lock) return;
+    if (useMobileBrowserPlay && isMobilePortraitDocument()) return;
     void screenOrientation.lock("landscape").catch(() => {});
   };
 
   const ensureGameLandscape = (): void => {
     if (isNimiqPayWebViewHost() || !isCoarsePointer || disposed) return;
+    if (useMobileBrowserPlay) {
+      syncMobileBrowserImmersiveLayout(hudRoot, app);
+      return;
+    }
+    if (!useLegacyMobileLandscape) return;
     const fullscreenEl = document.fullscreenElement;
     const isGameFullscreen =
       isPseudoFullscreenActive() ||
@@ -1884,6 +1894,7 @@ function enterGame(
 
   const startLandscapeRetries = (): void => {
     if (isNimiqPayWebViewHost() || !isCoarsePointer) return;
+    if (useMobileBrowserPlay || !useLegacyMobileLandscape) return;
     if (orientationRetryTimer) clearInterval(orientationRetryTimer);
     let attempts = 0;
     orientationRetryTimer = setInterval(() => {
@@ -2118,7 +2129,7 @@ function enterGame(
       if (isNimiqPayWebViewHost()) {
         unlockScreenOrientation();
         enableNimiqPayViewportLayout();
-        scheduleNimiqPayLayoutResync();
+        scheduleMobilePlayLayoutResync();
         return;
       }
       ensureGameLandscape();
@@ -2536,7 +2547,7 @@ function enterGame(
     const touchUi =
       typeof window !== "undefined" &&
       window.matchMedia("(pointer: coarse)").matches;
-    const payPortrait = isNimiqPayPortraitDocument();
+    const mobilePortrait = isMobilePortraitDocument();
     const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
     const isPixel = isPixelRoomId(game.getRoomId());
     const canBuild = roomAllowPlaceBlocks && !isCanvas && !isPixel;
@@ -2630,16 +2641,16 @@ function enterGame(
       const prefabHint = hud.isObjectPrefabPlaceModeActive()
         ? touchUi
           ? game.isPrefabPlacePreviewArmed()
-            ? payPortrait
+            ? mobilePortrait
               ? " Prefab: tap again or Place; Cancel clears (↺ ↻)."
               : " Prefab: tap the same spot again or Place to stamp; Cancel to clear preview (↺ ↻ rotate)."
-            : payPortrait
+            : mobilePortrait
               ? " Prefab: tap floor to preview (↺ ↻)."
               : " Prefab: tap the floor to preview placement (↺ ↻ rotate)."
           : " Prefab: pick one, hover anchor, click to place (↺ ↻ rotate)."
         : hud.isObjectPrefabSaveModeActive()
           ? touchUi
-            ? payPortrait
+            ? mobilePortrait
               ? " Prefab: drag on floor to capture."
               : " Prefab: press and drag on the floor to capture your prefab area."
             : " Prefab: click and drag on the floor to capture your prefab area."
@@ -2647,14 +2658,14 @@ function enterGame(
       const sel = game.getSelectedBlockTile();
       const selectedHint = sel
         ? touchUi
-          ? payPortrait
+          ? mobilePortrait
             ? " Selected: D delete, R rotate ramp."
             : " Selected block: D delete, R rotate ramp, Ctrl+tap selected block to stack higher."
           : " Selected block: D delete, R rotate ramp, Ctrl+click selected block to stack higher."
         : "";
       hud.setStatus(
         touchUi
-          ? payPortrait
+          ? mobilePortrait
             ? `Build — tap block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
             : `Build — tap a block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
           : `Build mode — click a block to edit, empty floor to place (B or Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
@@ -2685,11 +2696,11 @@ function enterGame(
           : "This room is view-only for building";
     const touchIdleHint =
       canBuild && canFloor
-        ? payPortrait
+        ? mobilePortrait
           ? "Build: toggle at top-right · palette along bottom"
           : "Build: edge toggle + palette along the bottom (F: floor if allowed)"
         : canBuild
-          ? payPortrait
+          ? mobilePortrait
             ? "Build: toggle at top-right · palette along bottom"
             : "Build: edge toggle + palette along the bottom"
           : desktopHint;
@@ -5932,6 +5943,7 @@ async function bootstrapJoinInvite(): Promise<boolean> {
 function main(): void {
   initNimiqPayDevEmulation();
   enableNimiqPayViewportLayout();
+  enableMobileBrowserPlayLayout();
   if (isPatchnotesPath()) {
     document.title = "Patch notes — Nimiq Space";
     const app = document.getElementById("app");
