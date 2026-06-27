@@ -343,6 +343,42 @@ A future Catalog Entry whose Preset is derived from a player-authored prefab, so
 creator through the shop. Explicitly out of v1; operator-created Catalog Entries only at launch.
 _Avoid_: UGC SKU, player shop listing.
 
+## Achievements
+
+**Achievements Window**:
+The full-window surface where a signed-in player browses their own achievements — a centered
+modal on wide viewports and a bottom sheet on narrow/portrait ones. Opens on the Summary and
+uses the Category Navigator to switch views. Distinct from the unlock toast and from the
+read-only achievement highlights shown on a player profile.
+_Avoid_: achievements panel, achievement modal, trophy window, trophy case.
+
+**Category Navigator**:
+The control inside the Achievements Window for choosing what fills the content area — the
+Summary or a single achievement Category. It is a left sidebar when the window is wide and a
+bottom drop-up list when narrow/portrait; both forms list the same entries (Summary first,
+then one per Category present in the data).
+_Avoid_: category tabs, sidebar (alone), filter, dropdown (alone).
+
+**Summary** (achievements):
+The Achievements Window's default landing view, showing Recent Achievements and the Progress
+Overview instead of a single Category's list. Always the view shown when the window opens.
+_Avoid_: overview, dashboard, home.
+
+**Recent Achievements**:
+The Summary section listing the player's most-recently-completed achievements, newest first.
+Selecting one navigates to its Category.
+_Avoid_: latest, history, feed.
+
+**Progress Overview**:
+The Summary section summarizing completion — an overall earned/total figure plus a per-Category
+earned/total breakdown. Selecting a Category here navigates to it.
+_Avoid_: stats, totals, progress bars.
+
+**Category** (achievement):
+The grouping each achievement declares (e.g. onboarding, commons build, mining). The Category
+Navigator lists one entry per Category present in the player's data, labelled for display.
+_Avoid_: section, group, type.
+
 ## Payouts
 
 **Payout Service**:

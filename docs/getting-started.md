@@ -79,6 +79,9 @@ A multiplayer isometric social space built with **Nimiq wallet** authentication,
 | Place Block | Click empty tile in build mode |
 | Edit Block | Click existing block in build mode |
 | Cancel/Close | `Esc` |
+| Character profile | `C` (toggle) |
+| Achievements | `Y` (toggle; signed-in wallet; not guests) |
+| My Rooms browser | `O` (toggle; signed-in wallet; not guests) |
 | Fullscreen | Button in top-right |
 
 ### Stream / OBS capture (optional)

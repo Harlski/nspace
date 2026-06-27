@@ -1,6 +1,7 @@
 export type PlayerMenuItemId =
   | "profile"
   | "wardrobe"
+  | "achievements"
   | "rooms"
   | "return-to-hub"
   | "logout"
@@ -22,6 +23,7 @@ type ItemDef = {
 const FULL_PLAYER_ITEMS: ItemDef[] = [
   { id: "profile", label: "Profile" },
   { id: "wardrobe", label: "Wardrobe" },
+  { id: "achievements", label: "Achievements" },
   { id: "rooms", label: "Rooms" },
   { id: "return-to-hub", label: "Return to Hub", returnToHub: true },
   { id: "logout", label: "Logout", destructive: true },
@@ -42,6 +44,8 @@ export type PlayerMenu = {
   isOpen: () => boolean;
   setGuestMode: (guest: boolean) => void;
   setReturnToHubVisible: (visible: boolean) => void;
+  /** Display name shown in the pill left of the identicon (hidden when empty). */
+  setName: (name: string) => void;
   /** Copy identicon src/hidden state from the top player bar image. */
   syncIdenticonFromBar: (barIdenticon: HTMLImageElement) => void;
   onAction: (fn: (id: PlayerMenuItemId) => void) => void;
@@ -82,11 +86,22 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
   confirmOk.type = "button";
   confirmOk.className =
     "player-menu__confirm-btn player-menu__confirm-btn--confirm";
-  confirmOk.textContent = "Log out";
+  confirmOk.textContent = "Return";
 
   confirmActions.append(confirmCancel, confirmOk);
   confirm.append(confirmMsg, confirmActions);
   panel.append(list, confirm);
+
+  const triggerRow = document.createElement("div");
+  triggerRow.className = "player-menu__trigger-row";
+
+  const namePill = document.createElement("button");
+  namePill.type = "button";
+  namePill.className = "player-menu__name";
+  namePill.setAttribute("aria-haspopup", "menu");
+  namePill.setAttribute("aria-expanded", "false");
+  namePill.setAttribute("aria-controls", "playerMenuPanel");
+  namePill.hidden = true;
 
   const trigger = document.createElement("button");
   trigger.type = "button";
@@ -105,7 +120,8 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
   triggerIdent.hidden = true;
 
   trigger.appendChild(triggerIdent);
-  root.append(panel, trigger);
+  triggerRow.append(namePill, trigger);
+  root.append(panel, triggerRow);
   parent.appendChild(root);
 
   let guestMode = false;
@@ -154,8 +170,8 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     confirmMsg.textContent =
       kind === "leave"
         ? "Leave this guest session?"
-        : "Log out of this wallet?";
-    confirmOk.textContent = kind === "leave" ? "Leave" : "Log out";
+        : "Return to the lobby?";
+    confirmOk.textContent = kind === "leave" ? "Leave" : "Return";
     list.hidden = true;
     confirm.hidden = false;
   }
@@ -169,6 +185,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
   function setOpen(next: boolean): void {
     open = next;
     trigger.setAttribute("aria-expanded", next ? "true" : "false");
+    namePill.setAttribute("aria-expanded", next ? "true" : "false");
     panel.hidden = !next;
     root.classList.toggle("player-menu--open", next);
     if (!next) hideConfirm();
@@ -220,7 +237,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     window.removeEventListener("keydown", onEscape);
   }
 
-  trigger.addEventListener("click", (e) => {
+  function toggleFromTrigger(e: Event): void {
     e.stopPropagation();
     if (open) {
       closeMenu();
@@ -229,7 +246,10 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     hideConfirm();
     renderList();
     setOpen(true);
-  });
+  }
+
+  trigger.addEventListener("click", toggleFromTrigger);
+  namePill.addEventListener("click", toggleFromTrigger);
 
   panel.addEventListener("click", (e) => e.stopPropagation());
 
@@ -264,6 +284,12 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     setReturnToHubVisible(visible: boolean) {
       returnToHubVisible = visible;
       renderList();
+    },
+    setName(name: string) {
+      const trimmed = name.trim();
+      namePill.textContent = trimmed;
+      namePill.hidden = trimmed.length === 0;
+      namePill.title = trimmed;
     },
     syncIdenticonFromBar(barIdenticon: HTMLImageElement) {
       triggerIdent.hidden = barIdenticon.hidden;

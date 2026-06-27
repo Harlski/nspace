@@ -216,12 +216,19 @@ import {
   getLoadout,
   setLoadoutSlot,
   getPublicLoadoutForWallet,
+  listOwnedDeployables,
 } from "./cosmeticStore.js";
 import type { PassiveSlot } from "./cosmeticPresets.js";
 import {
   createCosmeticUnlockPaymentIntent,
   confirmCosmeticUnlockPaymentForSku,
 } from "./cosmeticFulfill.js";
+import {
+  fireAchievementEvent,
+  getAchievementsForWallet,
+  getPublicAchievementSummary,
+  initAchievementStore,
+} from "./achievementStore.js";
 import { BILLBOARD_ADVERTS_CATALOG } from "./billboardAdvertsCatalog.js";
 import { sendTelegramPlainText } from "./telegramNotify.js";
 import {
@@ -611,6 +618,13 @@ app.get("/api/player-profile/:address", (req, res) => {
       chatBubble: loadout.presetIds.chatBubble ?? null,
       trail: loadout.presetIds.trail ?? null,
     };
+    pub.cosmeticDeployables = listOwnedDeployables(addr).map((d) => ({
+      presetId: d.presetId,
+      displayName: d.displayName,
+    }));
+    const achievementSummary = getPublicAchievementSummary(addr);
+    pub.achievementPoints = achievementSummary.totalPoints;
+    pub.achievementHighlights = achievementSummary.recentHighlights;
     res.json(pub);
   } catch (err) {
     console.error("[player-profile/get]", err);
@@ -2007,7 +2021,19 @@ app.put("/api/cosmetics/loadout", requireJwt, (req, res) => {
     res.status(400).json({ error: result.error });
     return;
   }
+  if (sku) {
+    fireAchievementEvent(wallet, "equip_cosmetic");
+  }
   res.json({ loadout: getLoadout(wallet) });
+});
+
+app.get("/api/achievements/me", requireJwt, (req, res) => {
+  const wallet = jwtAddressFromReq(req);
+  if (!wallet) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  res.json(getAchievementsForWallet(wallet));
 });
 
 app.post("/api/cosmetics/unlock-intent", requireJwt, async (req, res) => {
@@ -3273,6 +3299,7 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 
 initCampaignStore();
 initCosmeticStore();
+initAchievementStore();
 initCampaignAnalyticsStore();
 const repairedCampaignBalances = repairInflatedCampaignBalances();
 if (repairedCampaignBalances > 0) {

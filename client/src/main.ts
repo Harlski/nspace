@@ -80,6 +80,7 @@ import {
   sendBeginBlockClaim,
   sendCreateOfficialRoom,
   sendCreateRoom,
+  sendAchievementSignal,
   sendBlockClaimTick,
   sendCompleteBlockClaim,
   sendEnterPortal,
@@ -669,6 +670,9 @@ function enterGame(
     flagEmojiFor: (code) => flagEmoji(code),
     // Self clicked their profile flag chip → open the country picker.
     onEditOwnCountry: () => openCountryPickerForSelf(),
+    onAchievementUiSignal: (kind) => {
+      if (ws?.readyState === WebSocket.OPEN) sendAchievementSignal(ws, kind);
+    },
   });
   hud.setLoadingVisible(true, { blackout: true });
   // `?debug` opens the panel at load without firing onDebugPanelVisibleChange; start pings.
@@ -2114,7 +2118,7 @@ function enterGame(
     "fullscreenchange",
     () => {
       ensureGameLandscape();
-      startLandscapeRetries();
+      if (!useMobileBrowserPlay) startLandscapeRetries();
     },
     { signal }
   );
@@ -3058,7 +3062,10 @@ function enterGame(
     // worldcup: shared Action Wheel handlers (emotes + Games sub-wheel incl. 1v1 toggle).
     const buildActionWheelHandlers = () => ({
       onEmote: (emoji: string) => {
-        if (socket.readyState === WebSocket.OPEN) sendChat(socket, emoji);
+        if (socket.readyState === WebSocket.OPEN) {
+          sendAchievementSignal(socket, "send_emote");
+          sendChat(socket, emoji);
+        }
       },
       onJoinFreePlayField: () => {
         sendJoinRoom(socket, WORLDCUP_FIELD_ROOM_ID);
@@ -4011,6 +4018,16 @@ function enterGame(
   }
 
   const handleServerMessage = async (msg: ServerMessage): Promise<void> => {
+    if (msg.type === "achievementUnlocked") {
+      hud.showAchievementUnlock({
+        title: msg.title,
+        description: msg.description,
+        points: msg.points,
+        rewardDisplayName: msg.rewardDisplayName,
+        totalPoints: msg.totalPoints,
+      });
+      return;
+    }
     if (msg.type === "serverNotice") {
       if (msg.kind === "restart_pending") {
         hud.setServerRestartPendingNotice({
@@ -5572,11 +5589,33 @@ function enterGame(
         !e.altKey &&
         !e.ctrlKey &&
         !e.metaKey &&
-        (e.key === "p" || e.key === "P")
+        !e.repeat
       ) {
-        if (game.toggleFirstPersonView()) {
+        const k = e.key;
+        if (k === "p" || k === "P") {
+          if (game.toggleFirstPersonView()) {
+            e.preventDefault();
+            return;
+          }
+        }
+        if (k === "c" || k === "C") {
+          hud.toggleOwnPlayerProfile();
           e.preventDefault();
           return;
+        }
+        const isGuest = selfAddress.startsWith("guest:");
+        if (!isGuest) {
+          if (k === "y" || k === "Y") {
+            hud.toggleAchievementsPanel();
+            e.preventDefault();
+            return;
+          }
+          if (k === "o" || k === "O") {
+            if (!roomsModal.hidden) closeRoomsModal();
+            else openRoomsModal();
+            e.preventDefault();
+            return;
+          }
         }
       }
       if (e.altKey) {

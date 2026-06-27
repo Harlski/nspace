@@ -6,6 +6,7 @@ describe("playerMenuItemLabelsForMode", () => {
     expect(playerMenuItemLabelsForMode(false)).toEqual([
       "Profile",
       "Wardrobe",
+      "Achievements",
       "Rooms",
       "Return to Hub",
       "Logout",
@@ -25,6 +26,7 @@ describe("playerMenuItemLabelsForMode", () => {
     expect(playerMenuItemLabelsForMode(false, false)).toEqual([
       "Profile",
       "Wardrobe",
+      "Achievements",
       "Rooms",
       "Logout",
     ]);

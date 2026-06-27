@@ -82,6 +82,12 @@ import {
   recordCosmeticDeploy,
   validateCosmeticDeploy,
 } from "./cosmeticDeploy.js";
+import {
+  fireAchievementEvent,
+  recordBlockMined,
+  recordBlockPlaced,
+  type AchievementUnlockWire,
+} from "./achievementStore.js";
 import { getPublicLoadoutForWallet } from "./cosmeticStore.js";
 import {
   COSMETIC_GALLERY_DEFAULT_SPAWN,
@@ -1351,7 +1357,55 @@ type OutMsg =
       message?: string;
       /** Monotonic per-process; higher values supersede older notices on the client. */
       seq: number;
+    }
+  | {
+      type: "achievementUnlocked";
+      achievementId: string;
+      title: string;
+      description: string;
+      points: number;
+      rewardSku: string | null;
+      rewardDisplayName: string | null;
+      totalPoints: number;
     };
+
+function deliverAchievementUnlocks(
+  ws: WebSocket,
+  unlocks: AchievementUnlockWire[]
+): void {
+  for (const u of unlocks) {
+    wsSafeSend(ws, {
+      type: "achievementUnlocked",
+      achievementId: u.achievementId,
+      title: u.title,
+      description: u.description,
+      points: u.points,
+      rewardSku: u.rewardSku,
+      rewardDisplayName: u.rewardDisplayName,
+      totalPoints: u.totalPoints,
+    } satisfies OutMsg);
+  }
+}
+
+function achievementUnlockHandler(ws: WebSocket) {
+  return (unlocks: AchievementUnlockWire[]) =>
+    deliverAchievementUnlocks(ws, unlocks);
+}
+
+function onPlayerEnteredRoom(
+  conn: ClientConn,
+  roomId: string,
+  opts?: { isRoomChange?: boolean }
+): void {
+  if (conn.streamObserver) return;
+  const onUnlock = achievementUnlockHandler(conn.ws);
+  if (normalizeRoomId(roomId) === HUB_ROOM_ID) {
+    fireAchievementEvent(conn.player.address, "enter_commons", onUnlock);
+  }
+  if (opts?.isRoomChange) {
+    fireAchievementEvent(conn.player.address, "visit_room", onUnlock);
+  }
+}
 
 function spatialFilteredOutMsgType(type: OutMsg["type"]): boolean {
   return (
@@ -4850,6 +4904,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, targetRoomId, chatBacklog);
   sendRoomCatalog(conn.ws, address);
+  onPlayerEnteredRoom(conn, targetRoomId, { isRoomChange: true });
 
   // Notify others in new room
   broadcast(targetRoomId, { type: "playerJoined", player: playerToOutState(conn) }, address);
@@ -6616,6 +6671,7 @@ export function addClient(
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, roomId, chatBacklog);
   sendRoomCatalog(ws, address);
+  onPlayerEnteredRoom(conn, roomId);
 
   if (!streamObserver) {
     broadcast(
@@ -6935,6 +6991,20 @@ export function addClient(
       return;
     }
 
+    if (msg.type === "achievementSignal") {
+      if (conn.streamObserver) return;
+      const kind = String((msg as { kind?: unknown }).kind ?? "").trim();
+      const onUnlock = achievementUnlockHandler(ws);
+      if (kind === "open_profile") {
+        fireAchievementEvent(address, "open_profile", onUnlock);
+      } else if (kind === "open_wardrobe") {
+        fireAchievementEvent(address, "open_wardrobe", onUnlock);
+      } else if (kind === "send_emote") {
+        fireAchievementEvent(address, "send_emote", onUnlock);
+      }
+      return;
+    }
+
     if (msg.type === "createRoom") {
       const widthTiles = Number(msg.widthTiles);
       const heightTiles = Number(msg.heightTiles);
@@ -6971,6 +7041,11 @@ export function addClient(
       broadcastRoomCatalogToAll();
       const spawnX = Math.floor((created.bounds.minX + created.bounds.maxX) / 2);
       const spawnZ = Math.floor((created.bounds.minZ + created.bounds.maxZ) / 2);
+      fireAchievementEvent(
+        address,
+        "create_room",
+        achievementUnlockHandler(ws)
+      );
       teleportPlayer(conn, created.id, spawnX, spawnZ);
       return;
     }
@@ -7764,6 +7839,11 @@ export function addClient(
         rampDir: prism.ramp ? rampDir : 0,
         colorRgb,
       });
+      recordBlockPlaced(
+        address,
+        currentRoomId,
+        achievementUnlockHandler(ws)
+      );
       return;
     }
 
@@ -9828,6 +9908,7 @@ export function addClient(
           z: s.tileZ,
           amountNim: (Number(rewardLuna) / 100_000).toFixed(4),
         } satisfies OutMsg);
+      recordBlockMined(address, achievementUnlockHandler(ws));
       schedulePersistWorldState();
       return;
     }

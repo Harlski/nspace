@@ -1,4 +1,5 @@
 import type { PlayerState } from "../types.js";
+import type { CosmeticGalleryWire } from "../cosmetics/galleryTypes.js";
 import {
   clampColorRgb,
   cubeRotationForPlainCube,
@@ -281,6 +282,8 @@ export type ServerMessage =
       worldcupPrevWinnerCountry?: string | null;
       /** worldcup: live 1v1 spectate portals in this room (click to watch the Match). */
       worldcupPortals?: WorldcupPortalWire[];
+      /** Dev-only Preset Gallery (`cosmetic-gallery` / join code SPACER). */
+      cosmeticGallery?: CosmeticGalleryWire;
     }
   | {
       type: "roomBackgroundHue";
@@ -525,6 +528,16 @@ export type ServerMessage =
       type: "directInviteError";
       code: "expired" | "full" | "closed" | "not_found" | "disabled";
       message?: string;
+    }
+  | {
+      type: "achievementUnlocked";
+      achievementId: string;
+      title: string;
+      description: string;
+      points: number;
+      rewardSku: string | null;
+      rewardDisplayName: string | null;
+      totalPoints: number;
     }
   | {
       type: "serverNotice";
@@ -1342,4 +1355,12 @@ export function sendSetVoxelText(ws: WebSocket, spec: VoxelTextSpec): void {
 export function sendRemoveVoxelText(ws: WebSocket, roomId: string, id: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "removeVoxelText", roomId, id }));
+}
+
+export function sendAchievementSignal(
+  ws: WebSocket,
+  kind: "open_profile" | "open_wardrobe" | "send_emote"
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "achievementSignal", kind }));
 }

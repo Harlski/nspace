@@ -84,6 +84,7 @@ import {
   getMobilePlayViewportSize,
   isMobilePlayHostDocument,
   isMobilePortraitViewport,
+  isViewportPortrait,
   isNimiqPayWebViewHost,
   isVisualFullscreenActive,
   markMobileBrowserPlayHostDocument,
@@ -120,6 +121,7 @@ import {
 } from "./paletteHueHexPopover.js";
 import { mountHeaderMarquee } from "./headerMarquee.js";
 import { createPlayerMenu, type PlayerMenuItemId } from "./playerMenu.js";
+import { createAchievementPanel } from "../achievements/panel.js";
 
 const LS_HUD_CHAT_MINIMIZED = "nspace_hud_chat_minimized";
 
@@ -300,6 +302,10 @@ export function createHud(
         Record<"aura" | "nameplate" | "chatBubble" | "trail", string | null>
       >
     ) => void;
+    /** Client UI milestones (profile, wardrobe, emotes) — host sends WS to server. */
+    onAchievementUiSignal?: (
+      kind: "open_profile" | "open_wardrobe" | "send_emote"
+    ) => void;
   }
 ): {
   setStatus: (s: string) => void;
@@ -384,6 +390,20 @@ export function createHud(
   dismissOtherPlayerOverlays: () => void;
   /** Open the in-game profile card for the signed-in wallet (top bar identicon / address). */
   openOwnPlayerProfile: () => void;
+  /** Open or close the signed-in player's profile card (`C`). */
+  toggleOwnPlayerProfile: () => void;
+  /** Open the achievements window (signed-in players). */
+  openAchievementsPanel: () => void;
+  /** Open or close the achievements window (`Y`). */
+  toggleAchievementsPanel: () => void;
+  /** Show the accomplishment modal when the server reports an unlock. */
+  showAchievementUnlock: (payload: {
+    title: string;
+    description: string;
+    points: number;
+    rewardDisplayName: string | null;
+    totalPoints: number;
+  }) => void;
   /**
    * Set the signed-in player's chosen country (ISO alpha-2, or null to clear). Updates the
    * profile flag chip and prepends the matching Flag Emote to the player's Emote Wheel.
@@ -893,7 +913,7 @@ export function createHud(
   /** Drives the mounted wardrobe panel's view from the profile's bottom tab bar (self only). */
   let wardrobeSetView: ((next: "wardrobe" | "shop") => void) | null = null;
   /** Active profile bottom tab. */
-  let profileActiveTab: "wardrobe" | "shop" | "rooms" = "wardrobe";
+  let profileActiveTab: "wardrobe" | "shop" | "rooms" | "achievements" = "wardrobe";
 
   /** Room stats overlay; toggled from your profile identicon (hidden by default). */
   let debugPanelVisible = opts?.showDebug === true;
@@ -991,6 +1011,115 @@ export function createHud(
   restartBannerDetail.className = "hud-restart-banner__detail";
   restartBannerDetail.hidden = true;
   restartBanner.append(restartBannerLine, restartBannerDetail);
+
+  type AchievementUnlockPayload = {
+    title: string;
+    description: string;
+    points: number;
+    rewardDisplayName: string | null;
+    totalPoints: number;
+  };
+
+  const achievementUnlockModal = document.createElement("div");
+  achievementUnlockModal.className = "achievement-unlock-modal";
+  achievementUnlockModal.hidden = true;
+  achievementUnlockModal.setAttribute("aria-hidden", "true");
+  achievementUnlockModal.innerHTML = `
+    <div class="achievement-unlock-modal__backdrop" aria-hidden="true"></div>
+    <div class="achievement-unlock-modal__dialog" role="alertdialog" aria-modal="true" aria-labelledby="achievement-unlock-title">
+      <button type="button" class="achievement-unlock-modal__close" aria-label="Dismiss">
+        ${nimiqIconUseMarkup("nq-cross", { width: 14, height: 14, class: "achievement-unlock-modal__close-icon" })}
+      </button>
+      <div class="achievement-unlock-modal__badge">
+        <img class="achievement-unlock-modal__identicon" alt="" width="60" height="60" />
+      </div>
+      <div class="achievement-unlock-modal__body">
+        <p class="achievement-unlock-modal__eyebrow">Achievement unlocked!</p>
+        <h2 class="achievement-unlock-modal__title" id="achievement-unlock-title"></h2>
+        <p class="achievement-unlock-modal__desc"></p>
+        <div class="achievement-unlock-modal__reward">
+          <span class="achievement-unlock-modal__reward-main"></span>
+          <span class="achievement-unlock-modal__reward-sub"></span>
+        </div>
+      </div>
+    </div>
+  `;
+  letter.appendChild(achievementUnlockModal);
+
+  const achievementUnlockTitleEl = achievementUnlockModal.querySelector(
+    ".achievement-unlock-modal__title"
+  ) as HTMLElement;
+  const achievementUnlockDescEl = achievementUnlockModal.querySelector(
+    ".achievement-unlock-modal__desc"
+  ) as HTMLElement;
+  const achievementUnlockRewardMainEl = achievementUnlockModal.querySelector(
+    ".achievement-unlock-modal__reward-main"
+  ) as HTMLElement;
+  const achievementUnlockRewardSubEl = achievementUnlockModal.querySelector(
+    ".achievement-unlock-modal__reward-sub"
+  ) as HTMLElement;
+  const achievementUnlockCloseBtn = achievementUnlockModal.querySelector(
+    ".achievement-unlock-modal__close"
+  ) as HTMLButtonElement;
+  const achievementUnlockIdenticonEl = achievementUnlockModal.querySelector(
+    ".achievement-unlock-modal__identicon"
+  ) as HTMLImageElement;
+  const achievementUnlockBackdrop = achievementUnlockModal.querySelector(
+    ".achievement-unlock-modal__backdrop"
+  ) as HTMLElement;
+
+  const achievementUnlockQueue: AchievementUnlockPayload[] = [];
+
+  function renderAchievementUnlock(payload: AchievementUnlockPayload): void {
+    achievementUnlockTitleEl.textContent = payload.title;
+    achievementUnlockDescEl.textContent = payload.description;
+    achievementUnlockRewardMainEl.textContent = `+${payload.points} achievement points`;
+    achievementUnlockRewardSubEl.textContent = payload.rewardDisplayName
+      ? `Unlocks ${payload.rewardDisplayName}`
+      : `${payload.totalPoints} total points`;
+    const selfAddress = brandLinksPlayerAddress.replace(/\s+/g, "").trim();
+    if (selfAddress) {
+      void loadCtxIdenticon(achievementUnlockIdenticonEl, selfAddress);
+    } else {
+      achievementUnlockIdenticonEl.hidden = true;
+    }
+    achievementUnlockModal.hidden = false;
+    achievementUnlockModal.setAttribute("aria-hidden", "false");
+    achievementUnlockCloseBtn.focus({ preventScroll: true });
+  }
+
+  function advanceAchievementUnlockQueue(): void {
+    const next = achievementUnlockQueue.shift();
+    if (next) {
+      renderAchievementUnlock(next);
+      return;
+    }
+    achievementUnlockModal.hidden = true;
+    achievementUnlockModal.setAttribute("aria-hidden", "true");
+  }
+
+  function showAchievementUnlock(payload: AchievementUnlockPayload): void {
+    if (!achievementUnlockModal.hidden) {
+      achievementUnlockQueue.push(payload);
+      return;
+    }
+    renderAchievementUnlock(payload);
+  }
+
+  achievementUnlockCloseBtn.addEventListener("click", () => {
+    advanceAchievementUnlockQueue();
+  });
+  achievementUnlockBackdrop.addEventListener("click", () => {
+    advanceAchievementUnlockQueue();
+  });
+  achievementUnlockModal.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" || e.key === "Enter") {
+      e.preventDefault();
+      advanceAchievementUnlockQueue();
+    }
+  });
+
+  const achievementPanel = createAchievementPanel(letter);
 
   const headerMarqueeHost = document.createElement("div");
   headerMarqueeHost.className = "hud-header-marquee-host";
@@ -3514,6 +3643,9 @@ export function createHud(
   });
   const oppProfileMessage = document.createElement("div");
   oppProfileMessage.className = "other-player-profile__message-wrap";
+  const oppAchievements = document.createElement("div");
+  oppAchievements.className = "other-player-profile__achievements";
+  oppAchievements.hidden = true;
   const oppProfileRooms = document.createElement("div");
   oppProfileRooms.className = "other-player-profile__rooms";
   const oppProfileRoomsPanel = document.createElement("div");
@@ -3555,19 +3687,39 @@ export function createHud(
   oppShopTabBtn.className = "other-player-profile__tab";
   oppShopTabBtn.textContent = "Shop";
   oppShopTabBtn.hidden = true;
+  // Achievements is a bottom tab for both self and other profiles; the panel content lives in the
+  // scrollable area (oppAchievements) and is toggled by this tab.
+  const oppAchievementsTabBtn = document.createElement("button");
+  oppAchievementsTabBtn.type = "button";
+  oppAchievementsTabBtn.className = "other-player-profile__tab";
+  oppAchievementsTabBtn.textContent = "Achievements";
+  oppAchievementsTabBtn.setAttribute("aria-controls", "other-player-profile-achievements");
+  oppAchievementsTabBtn.setAttribute("aria-expanded", "false");
+  oppAchievementsTabBtn.hidden = true;
+  oppAchievements.id = "other-player-profile-achievements";
   const oppTabBar = document.createElement("div");
   oppTabBar.className = "other-player-profile__tabbar";
   oppTabBar.setAttribute("role", "tablist");
-  oppTabBar.append(oppWardrobeTabBtn, oppShopTabBtn, oppProfileRoomsBtn);
+  oppTabBar.append(
+    oppWardrobeTabBtn,
+    oppShopTabBtn,
+    oppAchievementsTabBtn,
+    oppProfileRoomsBtn
+  );
   oppProfileRoomsPanel.id = "other-player-profile-rooms-panel";
   oppCardBody.append(oppAddrRow, oppAdminRow, oppProfileMessage);
   oppCardMain.append(oppCardBody);
   // Scrollable middle zone between the fixed identity header (oppCardMain) and the pinned tab bar.
-  // Holds the wardrobe, the inline note, and the rooms panel; it scrolls internally when content is
-  // tall so the tabs stay pinned to the bottom of the sheet regardless of which tab is showing.
+  // Holds the wardrobe, the inline note, the achievements panel, and the rooms panel; it scrolls
+  // internally when content is tall so the tabs stay pinned to the bottom of the sheet.
   const oppContent = document.createElement("div");
   oppContent.className = "other-player-profile__content";
-  oppContent.append(oppProfileWardrobe, oppProfileNote, oppProfileRoomsPanel);
+  oppContent.append(
+    oppProfileWardrobe,
+    oppProfileNote,
+    oppAchievements,
+    oppProfileRoomsPanel
+  );
   oppCard.append(oppCardMain, oppContent, oppTabBar);
   oppDialog.appendChild(oppClose);
   oppDialog.appendChild(oppCard);
@@ -3986,12 +4138,18 @@ export function createHud(
    * panel (driven via `wardrobeSetView`); `rooms` shows the user-rooms list. Other players' cards
    * only have the rooms tab and keep their read-only wardrobe visible, so this is self-scoped.
    */
-  function setProfileTab(tab: "wardrobe" | "shop" | "rooms"): void {
+  function setProfileTab(tab: "wardrobe" | "shop" | "rooms" | "achievements"): void {
     profileActiveTab = tab;
     oppWardrobeTabBtn.classList.toggle("is-active", tab === "wardrobe");
     oppShopTabBtn.classList.toggle("is-active", tab === "shop");
+    oppAchievementsTabBtn.classList.toggle("is-active", tab === "achievements");
+    oppAchievementsTabBtn.setAttribute(
+      "aria-expanded",
+      tab === "achievements" ? "true" : "false"
+    );
     setProfileRoomsPanelOpen(tab === "rooms");
-    const showWardrobe = tab !== "rooms";
+    oppAchievements.hidden = tab !== "achievements";
+    const showWardrobe = tab === "wardrobe" || tab === "shop";
     oppProfileWardrobe.hidden = !showWardrobe || !wardrobeSetView;
     if (showWardrobe && wardrobeSetView) {
       wardrobeSetView(tab === "shop" ? "shop" : "wardrobe");
@@ -4282,6 +4440,11 @@ export function createHud(
     oppProfileRooms.replaceChildren();
     setProfileRoomsPanelOpen(false);
     oppProfileRoomsBtn.hidden = true;
+    oppAchievements.replaceChildren();
+    oppAchievements.hidden = true;
+    oppAchievementsTabBtn.hidden = true;
+    oppAchievementsTabBtn.classList.remove("is-active");
+    oppAchievementsTabBtn.setAttribute("aria-expanded", "false");
     oppProfileWardrobe.replaceChildren();
     oppProfileWardrobe.hidden = true;
     clearProfileMessageNote();
@@ -4473,6 +4636,48 @@ export function createHud(
     }
   }
 
+  // Populates the Achievements tab content (points + recent highlights). Visibility is owned by the
+  // bottom tab bar (setProfileTab / the achievements tab toggle), not by this renderer.
+  function renderProfileAchievements(
+    kind: "self" | "other",
+    points: number,
+    highlights: Array<{ title: string; points: number }>
+  ): void {
+    oppAchievements.replaceChildren();
+    const head = document.createElement("p");
+    head.className = "other-player-profile__achievements-head";
+    head.textContent = `${points} achievement point${points === 1 ? "" : "s"}`;
+    oppAchievements.appendChild(head);
+    if (highlights.length > 0) {
+      const list = document.createElement("ul");
+      list.className = "other-player-profile__achievements-list";
+      for (const h of highlights) {
+        const li = document.createElement("li");
+        li.textContent = `${h.title} (+${h.points} AP)`;
+        list.appendChild(li);
+      }
+      oppAchievements.appendChild(list);
+    } else {
+      const empty = document.createElement("p");
+      empty.className = "other-player-profile__achievements-empty";
+      empty.textContent =
+        kind === "self"
+          ? "No achievements unlocked yet — start exploring!"
+          : "No achievements unlocked yet.";
+      oppAchievements.appendChild(empty);
+    }
+    if (kind === "self") {
+      const viewAll = document.createElement("button");
+      viewAll.type = "button";
+      viewAll.className = "other-player-profile__achievements-view-all";
+      viewAll.textContent = "View all progress";
+      viewAll.addEventListener("click", () => {
+        achievementPanel.open();
+      });
+      oppAchievements.appendChild(viewAll);
+    }
+  }
+
   async function showPlayerProfileView(
     address: string,
     _displayName: string,
@@ -4494,6 +4699,12 @@ export function createHud(
     oppShopTabBtn.hidden = kind !== "self";
     oppWardrobeTabBtn.classList.toggle("is-active", kind === "self");
     oppShopTabBtn.classList.remove("is-active");
+    // Achievements tab is available on both self and other profiles; start collapsed.
+    oppAchievementsTabBtn.hidden = false;
+    oppAchievementsTabBtn.classList.remove("is-active");
+    oppAchievementsTabBtn.setAttribute("aria-expanded", "false");
+    oppAchievements.hidden = true;
+    oppAchievements.replaceChildren();
     // Show the chip immediately for self (from known state); hide for others until the
     // profile fetch returns their country below.
     renderProfileFlag(kind, kind === "self" ? selfCountryCode : null);
@@ -4565,6 +4776,13 @@ export function createHud(
           isPublic?: unknown;
           playerCount?: unknown;
         }>;
+        achievementPoints?: number;
+        achievementHighlights?: Array<{
+          achievementId?: string;
+          title?: string;
+          points?: number;
+          completedAt?: string;
+        }>;
       };
       if (profileOpenCompact !== openFor) return;
       if (typeof j.effectiveDisplayName === "string" && j.effectiveDisplayName.trim()) {
@@ -4622,6 +4840,22 @@ export function createHud(
       const msg = typeof j.message === "string" ? j.message : "";
       profileMessageLastSaved = msg;
       renderProfileMessageDisplay(kind, msg);
+      const achPoints =
+        typeof j.achievementPoints === "number" && Number.isFinite(j.achievementPoints)
+          ? Math.max(0, Math.floor(j.achievementPoints))
+          : 0;
+      const achHighlights = Array.isArray(j.achievementHighlights)
+        ? j.achievementHighlights
+            .map((h) => ({
+              title: String(h.title ?? "").trim(),
+              points:
+                typeof h.points === "number" && Number.isFinite(h.points)
+                  ? Math.max(0, Math.floor(h.points))
+                  : 0,
+            }))
+            .filter((h) => h.title)
+        : [];
+      renderProfileAchievements(kind, achPoints, achHighlights);
       const rooms = Array.isArray(j.rooms)
         ? j.rooms
             .map((room) => {
@@ -4742,6 +4976,20 @@ export function createHud(
     ev.preventDefault();
     ev.stopPropagation();
     setProfileTab("shop");
+  });
+  oppAchievementsTabBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (profileMessageKindOpen === "self") {
+      // Tab behavior: toggle between the achievements panel and the wardrobe content.
+      setProfileTab(profileActiveTab === "achievements" ? "wardrobe" : "achievements");
+    } else {
+      // Other players' cards keep their read-only wardrobe visible; this just toggles the panel.
+      const show = oppAchievements.hidden;
+      oppAchievements.hidden = !show;
+      oppAchievementsTabBtn.classList.toggle("is-active", show);
+      oppAchievementsTabBtn.setAttribute("aria-expanded", show ? "true" : "false");
+    }
   });
   oppProfileRoomsBtn.addEventListener("click", (ev) => {
     ev.preventDefault();
@@ -9981,8 +10229,29 @@ export function createHud(
     const compact = brandLinksPlayerAddress.trim();
     if (!compact) return;
     closeOtherPlayerUiOverlays();
+    opts?.onAchievementUiSignal?.("open_profile");
     const label = playerBarDisplayName.trim() || walletDisplayName(compact);
     void showPlayerProfileView(compact, label, "self");
+  }
+
+  function isOwnPlayerProfileOpen(): boolean {
+    return !otherPlayerProfile.hidden && profileMessageKindOpen === "self";
+  }
+
+  function toggleOwnPlayerProfileFromBar(): void {
+    if (isOwnPlayerProfileOpen()) {
+      closeOtherPlayerProfile();
+      return;
+    }
+    openOwnPlayerProfileFromBar();
+  }
+
+  function toggleAchievementsPanelOpen(): void {
+    if (achievementPanel.isOpen()) {
+      achievementPanel.close();
+      return;
+    }
+    achievementPanel.open();
   }
 
   playerBar.addEventListener("click", openOwnPlayerProfileFromBar);
@@ -9999,8 +10268,13 @@ export function createHud(
         openOwnPlayerProfileFromBar();
         break;
       case "wardrobe":
+        opts?.onAchievementUiSignal?.("open_wardrobe");
         openOwnPlayerProfileFromBar();
         setProfileTab("wardrobe");
+        break;
+      case "achievements":
+        openOwnPlayerProfileFromBar();
+        setProfileTab("achievements");
         break;
       case "rooms":
         roomsOpenHandler();
@@ -11206,7 +11480,7 @@ export function createHud(
     if (!isMobilePlayHostDocument()) return;
     const { width: vw, height: vh } = getMobilePlayViewportSize();
     syncMobileOrientationClasses(vw, vh);
-    const next: MobilePlayLayoutMode = isMobilePortraitViewport(vw, vh)
+    const next: MobilePlayLayoutMode = isViewportPortrait(vw, vh)
       ? "portrait"
       : "landscape";
     if (mobilePlayLayoutMode !== next) {
@@ -12841,6 +13115,16 @@ export function createHud(
     openOwnPlayerProfile() {
       openOwnPlayerProfileFromBar();
     },
+    toggleOwnPlayerProfile() {
+      toggleOwnPlayerProfileFromBar();
+    },
+    openAchievementsPanel() {
+      achievementPanel.open();
+    },
+    toggleAchievementsPanel() {
+      toggleAchievementsPanel();
+    },
+    showAchievementUnlock,
     setSelfCountry(code: string | null) {
       const next =
         typeof code === "string" && code.trim()
