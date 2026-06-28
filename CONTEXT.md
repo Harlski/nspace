@@ -14,7 +14,7 @@ _Avoid_: radial menu, donut, self-menu, emote menu, pie menu.
 
 **Player Menu**:
 The persistent bottom-right circular identicon button that opens player-level navigation
-and account options, such as Profile, Wardrobe, Rooms, Return to Hub, and Logout. Distinct
+and account options, such as Wardrobe, Shop, Rooms, Return to Hub, and Logout. Distinct
 from the Action Wheel: it is for navigating the app/session, not performing in-world
 self-actions.
 _Avoid_: character window, account menu, navigation menu.
@@ -252,13 +252,11 @@ on a chosen wallet’s avatar (identicon, nameplate, etc.). The preview wallet d
 signed-in admin; any `NQ…` address may be entered. The target player need not be online.
 _Avoid_: try-on, fitting room, mannequin.
 
-**Preset Gallery**:
-A development-only in-world showroom for developer-defined Presets — one display per Preset
-in a line, with floor plaques and slot-appropriate demos (name label, chat bubble sample,
-trail pacing, deployable floor VFX). Join via dev room code **SPACER** (`cosmetic-gallery`);
-not listed in the public room browser. Distinct from the player **Wardrobe** shop and from
-operator **Catalog Preview**; a future in-world purchase surface may reuse the same room.
-_Avoid_: cosmetic shop room, mannequin room, SKU gallery.
+**The Shaper**:
+The player-facing in-world showroom for cosmetics: players can visit it to see Presets staged
+in space and try cosmetics on before buying or equipping them. Distinct from the **Wardrobe**
+shop shelf and from operator **Catalog Preview**.
+_Avoid_: preset gallery, mannequin room, SKU gallery.
 
 **Draft** (Catalog Entry):
 A Catalog Entry visible only in admin — not offered in the player shop and not payable via
@@ -348,9 +346,20 @@ _Avoid_: UGC SKU, player shop listing.
 **Achievements Window**:
 The full-window surface where a signed-in player browses their own achievements — a centered
 modal on wide viewports and a bottom sheet on narrow/portrait ones. Opens on the Summary and
-uses the Category Navigator to switch views. Distinct from the unlock toast and from the
-read-only achievement highlights shown on a player profile.
+uses the Category Navigator to switch views. Distinct from the **Achievement Unlock Banner**
+and from the read-only achievement highlights shown on a player profile.
 _Avoid_: achievements panel, achievement modal, trophy window, trophy case.
+
+**Achievement Unlock Banner**:
+The non-blocking in-game notification when the player earns an achievement. Slides in below the
+top header on desktop and landscape; on portrait mobile it sits near the bottom of the viewport
+for thumb reach. No dimmed backdrop. Tap opens the Achievements Window; multiple unlocks queue.
+_Avoid_: unlock toast, achievement toast, popup.
+
+**Achievement Unlock Modal** *(reserved)*:
+A future blocking dialog reserved for unlocks that grant a major achievement-only cosmetic
+reward SKU. Not used for routine unlocks — those use the Achievement Unlock Banner.
+_Avoid_: unlock popup (ambiguous with the Banner).
 
 **Category Navigator**:
 The control inside the Achievements Window for choosing what fills the content area — the

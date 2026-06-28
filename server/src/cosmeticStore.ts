@@ -19,7 +19,7 @@ export type ChangelogAction =
   | "published"
   | "archived"
   | "granted";
-export type EntitlementSource = "purchase" | "grant";
+export type EntitlementSource = "purchase" | "grant" | "achievement";
 
 export type CatalogEntryPublic = {
   cosmeticSku: string;
@@ -251,10 +251,97 @@ export function listPublishedShop(): CatalogEntryPublic[] {
   const rows = requireDb()
     .prepare(
       `SELECT * FROM cosmetic_catalog WHERE status = 'published'
+       AND LOWER(collection) != 'achievements'
        ORDER BY collection COLLATE NOCASE, sort_order, display_name`
     )
     .all() as CatalogRow[];
   return rows.map(rowToPublic);
+}
+
+/** FNV-1a 32-bit hash — small, dependency-free, stable across runs. */
+function hashStringToUint32(input: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/**
+ * Deterministically pick up to `count` entries from `entries` for a given `dayKey`
+ * (e.g. `2026-06-29`). Pure: the same pool + day key always yields the same ordered
+ * subset, while different day keys shuffle differently. Used for the global daily
+ * featured shop shelf so every player sees the same items on a given UTC day.
+ */
+export function selectDailyFeatured<T extends { cosmeticSku: string }>(
+  entries: readonly T[],
+  dayKey: string,
+  count: number
+): T[] {
+  if (count <= 0 || entries.length === 0) return [];
+  const ranked = [...entries]
+    .map((entry) => ({
+      entry,
+      rank: hashStringToUint32(`${dayKey}:${entry.cosmeticSku}`),
+    }))
+    .sort(
+      (a, b) =>
+        a.rank - b.rank || a.entry.cosmeticSku.localeCompare(b.entry.cosmeticSku)
+    );
+  return ranked.slice(0, count).map((r) => r.entry);
+}
+
+/** UTC day key (`YYYY-MM-DD`) for the global daily featured shelf. */
+export function utcDayKey(at: Date = new Date()): string {
+  return at.toISOString().slice(0, 10);
+}
+
+/**
+ * Global daily featured shelf: up to `count` Published, shop-eligible Catalog Entries,
+ * identical for every player on a given UTC day, annotated with per-wallet `owned`.
+ */
+export function listDailyFeaturedShop(
+  wallet: string,
+  count = 5,
+  dayKey: string = utcDayKey()
+): Array<CatalogEntryPublic & { owned: boolean }> {
+  const featured = selectDailyFeatured(listPublishedShop(), dayKey, count);
+  const ownedSkus = new Set(listEntitlements(wallet).map((e) => e.cosmeticSku));
+  return featured.map((entry) => ({
+    ...entry,
+    owned: ownedSkus.has(entry.cosmeticSku),
+  }));
+}
+
+/** Shop rows for wardrobe UI: purchasable catalog plus owned achievement (and other non-shop) passives. */
+export function listWardrobeShop(
+  wallet: string
+): Array<CatalogEntryPublic & { owned: boolean }> {
+  const ownedSkus = new Set(listEntitlements(wallet).map((e) => e.cosmeticSku));
+  const bySku = new Map<string, CatalogEntryPublic & { owned: boolean }>();
+
+  for (const entry of listPublishedShop()) {
+    bySku.set(entry.cosmeticSku, {
+      ...entry,
+      owned: ownedSkus.has(entry.cosmeticSku),
+    });
+  }
+
+  for (const sku of ownedSkus) {
+    if (bySku.has(sku)) continue;
+    const entry = getCatalogEntry(sku);
+    if (!entry || entry.status !== "published") continue;
+    if (!isPassiveSlot(entry.slot)) continue;
+    bySku.set(sku, { ...entry, owned: true });
+  }
+
+  return [...bySku.values()].sort(
+    (a, b) =>
+      a.collection.localeCompare(b.collection, undefined, { sensitivity: "base" }) ||
+      a.sortOrder - b.sortOrder ||
+      a.displayName.localeCompare(b.displayName)
+  );
 }
 
 export function getCatalogChangelog(
@@ -643,9 +730,16 @@ export function validateUnlockIntent(
 ):
   | { ok: true; entry: CatalogEntryPublic; amountLuna: bigint }
   | { ok: false; error: string } {
+  const skuNorm = normalizeSku(cosmeticSku);
+  if (skuNorm.startsWith("ach-")) {
+    return { ok: false, error: "achievement_only" };
+  }
   const entry = getCatalogEntry(cosmeticSku);
   if (!entry || entry.status !== "published") {
     return { ok: false, error: "not_published" };
+  }
+  if (entry.collection.trim().toLowerCase() === "achievements") {
+    return { ok: false, error: "achievement_only" };
   }
   if (hasEntitlement(wallet, entry.cosmeticSku)) {
     return { ok: false, error: "already_owned" };

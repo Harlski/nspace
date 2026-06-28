@@ -1200,6 +1200,10 @@ type OutMsg =
       reason: "not_found";
     }
   | {
+      type: "shaperReturnFailed";
+      reason: "not_in_shaper";
+    }
+  | {
       type: "roomCatalog";
       rooms: Array<{
         id: string;
@@ -1417,6 +1421,45 @@ function spatialFilteredOutMsgType(type: OutMsg["type"]): boolean {
 }
 
 const rooms = new Map<string, Map<string, ClientConn>>();
+
+/** Server-authoritative Shaper return origin (room + tile when they entered The Shaper). */
+const SHAPER_RETURN_TTL_MS = 30 * 60 * 1000;
+type ShaperReturnOrigin = { roomId: string; x: number; z: number; ts: number };
+const shaperReturnOrigins = new Map<string, ShaperReturnOrigin>();
+
+function rememberShaperReturnOrigin(
+  address: string,
+  fromRoomId: string,
+  x: number,
+  z: number
+): void {
+  if (isCosmeticGalleryRoom(fromRoomId)) return;
+  shaperReturnOrigins.set(address, {
+    roomId: normalizeRoomId(fromRoomId),
+    x,
+    z,
+    ts: Date.now(),
+  });
+}
+
+function consumeShaperReturnOrigin(address: string): ShaperReturnOrigin | null {
+  const stored = shaperReturnOrigins.get(address);
+  shaperReturnOrigins.delete(address);
+  if (!stored) return null;
+  if (Date.now() - stored.ts > SHAPER_RETURN_TTL_MS) return null;
+  return stored;
+}
+
+function isValidShaperReturnRoom(roomId: string): boolean {
+  const n = normalizeRoomId(roomId);
+  return (
+    roomId.trim() !== "" &&
+    hasRoom(roomId) &&
+    !worldcupIsMatchPitch(n) &&
+    !isInviteLobbyRoomId(n) &&
+    !isCosmeticGalleryRoom(roomId)
+  );
+}
 
 function humanCompactAddressesInRoom(roomId: string): Set<string> {
   const r = rooms.get(normalizeRoomId(roomId));
@@ -2811,6 +2854,38 @@ function resolveDefaultSpawnForPlayerRoom(roomId: string): {
     0;
   const rng = mulberry32(seed);
   return pickRandomWalkableTile(n, rng);
+}
+
+/**
+ * Resolve where a player lands when returning to `targetRoomId` (e.g. leaving The Shaper).
+ * The caller's `(hintX, hintZ)` is an untrusted approximate position: it is used only if it
+ * snaps to a walkable tile, otherwise we fall back to the player's saved spawn, the room's
+ * default spawn, and finally the room center.
+ */
+function resolveReturnSpawn(
+  targetRoomId: string,
+  address: string,
+  hintX: number,
+  hintZ: number
+): { x: number; z: number } {
+  const n = normalizeRoomId(targetRoomId);
+  if (Number.isFinite(hintX) && Number.isFinite(hintZ)) {
+    const t = snapToTile(hintX, hintZ);
+    if (isWalkableForRoom(n, t.x, t.z)) return { x: t.x, z: t.z };
+  }
+  const saved = spawnMap(n).get(address);
+  if (saved) {
+    const t = snapToTile(saved.x, saved.z);
+    if (isWalkableForRoom(n, t.x, t.z)) return { x: t.x, z: t.z };
+  }
+  const def = resolveDefaultSpawnForPlayerRoom(n);
+  if (def) return def;
+  const b = getRoomBaseBounds(n);
+  const c = snapToTile(
+    Math.floor((b.minX + b.maxX) / 2),
+    Math.floor((b.minZ + b.maxZ) / 2)
+  );
+  return { x: c.x, z: c.z };
 }
 
 function joinSpawnBroadcastPayload(roomId: string): {
@@ -4745,6 +4820,13 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   }
 
   const nTarget = normalizeRoomId(targetRoomId);
+  if (
+    isCosmeticGalleryRoom(nTarget) &&
+    currentRoomId !== null &&
+    !isCosmeticGalleryRoom(normalizeRoomId(currentRoomId))
+  ) {
+    rememberShaperReturnOrigin(address, currentRoomId, conn.player.x, conn.player.z);
+  }
   if (isInviteLobbyRoomId(nTarget)) {
     ensurePlaySpaceLayout(nTarget);
   }
@@ -7532,6 +7614,43 @@ export function addClient(
         }
       }
       teleportPlayer(conn, targetRoomId, spawnX, spawnZ);
+      return;
+    }
+
+    if (msg.type === "returnFromShaper") {
+      if (conn.streamObserver) return;
+      if (address.startsWith("guest:")) return;
+      // Constrained leave path: only while inside The Shaper, and only to the room/tile the
+      // server recorded when they entered (not client-supplied coordinates — those would be a
+      // generic teleport API). Hub fallback when origin is missing, expired, or no longer valid.
+      let currentRoomId: string | null = null;
+      for (const [rid, room] of rooms) {
+        if (room.has(address)) {
+          currentRoomId = rid;
+          break;
+        }
+      }
+      if (currentRoomId === null || !isCosmeticGalleryRoom(currentRoomId)) {
+        wsSafeSend(conn.ws, { type: "shaperReturnFailed", reason: "not_in_shaper" });
+        return;
+      }
+      if (conn.matchId) {
+        worldcupHandlePlayerDeparture(address);
+        conn.matchId = null;
+      }
+      conn.spectatingMatchId = null;
+
+      const stored = consumeShaperReturnOrigin(address);
+      let returnRoomId = CHAMBER_ROOM_ID;
+      let hintX: number = CHAMBER_DEFAULT_SPAWN.x;
+      let hintZ: number = CHAMBER_DEFAULT_SPAWN.z;
+      if (stored && isValidShaperReturnRoom(stored.roomId)) {
+        returnRoomId = stored.roomId;
+        hintX = stored.x;
+        hintZ = stored.z;
+      }
+      const spawn = resolveReturnSpawn(returnRoomId, address, hintX, hintZ);
+      teleportPlayer(conn, returnRoomId, spawn.x, spawn.z);
       return;
     }
 

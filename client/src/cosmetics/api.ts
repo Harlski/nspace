@@ -4,7 +4,7 @@ import { loadCachedSession } from "../auth/session.js";
 export type WardrobeEntitlement = {
   cosmeticSku: string;
   grantedAt: string;
-  source: "purchase" | "grant";
+  source: "purchase" | "grant" | "achievement";
 };
 
 export type WardrobeLoadout = {
@@ -29,6 +29,8 @@ export type WardrobeResponse = {
   entitlements: WardrobeEntitlement[];
   loadout: WardrobeLoadout;
   shop: ShopEntry[];
+  /** Global daily featured shelf (up to 5), identical for everyone on a given UTC day. */
+  featured: ShopEntry[];
 };
 
 function sessionToken(): string | null {

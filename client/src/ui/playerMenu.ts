@@ -1,8 +1,10 @@
 export type PlayerMenuItemId =
   | "profile"
   | "wardrobe"
+  | "shop"
   | "achievements"
   | "rooms"
+  | "return-from-shaper"
   | "return-to-hub"
   | "logout"
   | "get-wallet"
@@ -18,11 +20,14 @@ type ItemDef = {
   destructive?: boolean;
   /** Hidden while already in the Hub (chamber id). */
   returnToHub?: boolean;
+  /** Only shown while the player is inside The Shaper. */
+  shaperOnly?: boolean;
 };
 
 const FULL_PLAYER_ITEMS: ItemDef[] = [
-  { id: "profile", label: "Profile" },
+  { id: "return-from-shaper", label: "Leave the Shaper", shaperOnly: true },
   { id: "wardrobe", label: "Wardrobe" },
+  { id: "shop", label: "Shop" },
   { id: "achievements", label: "Achievements" },
   { id: "rooms", label: "Rooms" },
   { id: "return-to-hub", label: "Return to Hub", returnToHub: true },
@@ -44,6 +49,8 @@ export type PlayerMenu = {
   isOpen: () => boolean;
   setGuestMode: (guest: boolean) => void;
   setReturnToHubVisible: (visible: boolean) => void;
+  /** Toggle the in-Shaper "Leave the Shaper" entry (full players only). */
+  setInShaper: (inShaper: boolean) => void;
   /** Display name shown in the pill left of the identicon (hidden when empty). */
   setName: (name: string) => void;
   /** Copy identicon src/hidden state from the top player bar image. */
@@ -126,6 +133,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
 
   let guestMode = false;
   let returnToHubVisible = true;
+  let inShaper = false;
   let open = false;
   let confirmKind: PlayerMenuConfirmKind | null = null;
   let actionHandler: (id: PlayerMenuItemId) => void = () => {};
@@ -136,6 +144,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     const base = guestMode ? GUEST_ITEMS : FULL_PLAYER_ITEMS;
     return base.filter((item) => {
       if (item.returnToHub && !returnToHubVisible) return false;
+      if (item.shaperOnly && !inShaper) return false;
       return true;
     });
   }
@@ -285,6 +294,10 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
       returnToHubVisible = visible;
       renderList();
     },
+    setInShaper(next: boolean) {
+      inShaper = next;
+      renderList();
+    },
     setName(name: string) {
       const trimmed = name.trim();
       namePill.textContent = trimmed;
@@ -312,12 +325,14 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
 /** Items shown for the current mode (test helper). */
 export function playerMenuItemLabelsForMode(
   guest: boolean,
-  returnToHubVisible = true
+  returnToHubVisible = true,
+  inShaper = false
 ): string[] {
   const base = guest ? GUEST_ITEMS : FULL_PLAYER_ITEMS;
   return base
     .filter((item) => {
       if (item.returnToHub && !returnToHubVisible) return false;
+      if (item.shaperOnly && !inShaper) return false;
       return true;
     })
     .map((item) => item.label);

@@ -117,6 +117,7 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 - From repo root: `npm install`, then `npm run dev` — runs Vite (default [http://127.0.0.1:5173](http://127.0.0.1:5173)) and the server with `tsx watch`; Vite proxies `/api`, `/ws`, and server-rendered main-site HTML (`/analytics`, `/advertise`, `/advertise/how-it-works`, `/admin`, `/payouts`, …) to `3001`.
 - Optional payment intent sidecar: `npm run dev:payment-intent` (requires `PAYMENT_INTENT_*` and `NIM_NETWORK`; see [docker-deployment.md](docker-deployment.md)).
 - [client/.env.development](../client/.env.development) can enable dev login and admin UI; match `DEV_AUTH_BYPASS` on the server for dev login.
+- **The Shaper** (in-world cosmetic showroom): join room code **SPACER** to open `cosmetic-gallery` (all Presets in a line; not in the public room list). Player-facing and reachable in all environments by default; set `SHAPER_ENABLED=0` to hide it while unfinished. Reachable in-session from **Player Menu → Shop → Go to The Shaper**; leaving returns the player to the room (and approximate tile) they came from.
 - Production: `npm run build` (client + server), then `npm run start -w server` with a strong `JWT_SECRET` and **no** `DEV_AUTH_BYPASS`.
 
 ## Testing changes

@@ -388,6 +388,7 @@ export type ServerMessage =
       obstacleCount?: number;
     }
   | { type: "joinRoomFailed"; roomId: string; reason: "not_found" }
+  | { type: "shaperReturnFailed"; reason: "not_in_shaper" }
   | {
       type: "roomActionResult";
       action: "deleteRoom" | "restoreRoom";
@@ -769,6 +770,15 @@ export function sendListRooms(ws: WebSocket): void {
 export function sendJoinRoom(ws: WebSocket, roomId: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "joinRoom", roomId }));
+}
+
+/**
+ * Leave The Shaper. The server uses the origin it recorded when the player entered (not any
+ * client-supplied room/coordinates), re-validates room access, and clamps to a walkable tile.
+ */
+export function sendReturnFromShaper(ws: WebSocket): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "returnFromShaper" }));
 }
 
 export function sendCreateRoom(

@@ -10,7 +10,10 @@ import {
   saveCachedSession,
 } from "./auth/session.js";
 import { CHAMBER_DEFAULT_SPAWN, ROOM_ID, VIEW_FRUSTUM_SIZE } from "./game/constants.js";
-import { COSMETIC_SHOP_JOIN_CODE } from "./cosmetics/galleryTypes.js";
+import {
+  COSMETIC_SHOP_JOIN_CODE,
+  isCosmeticShopRoomId,
+} from "./cosmetics/galleryTypes.js";
 import { StreamDirector } from "./stream/streamDirector.js";
 import { mountStreamPanDebugPanel } from "./stream/streamPanDebug.js";
 import {
@@ -86,6 +89,7 @@ import {
   sendEnterPortal,
   sendDeleteRoom,
   sendJoinRoom,
+  sendReturnFromShaper,
   sendListRooms,
   sendRestoreRoom,
   sendUpdateRoom,
@@ -148,6 +152,8 @@ import {
   waitForNimiqPayWebViewHost,
 } from "./ui/pseudoFullscreen.js";
 import { installInputShell } from "./ui/inputShell.js";
+import { showLeaveGameConfirm } from "./ui/leaveGameConfirm.js";
+import { createOverlayBackStack } from "./ui/overlayBackStack.js";
 import { formatWalletAddressConnectAs } from "./formatWalletAddress.js";
 import { mountPatchnotesPage } from "./patchnotes/mountPatchnotesPage.js";
 import { runUsernamePromptGate } from "./auth/usernamePromptGate.js";
@@ -637,8 +643,14 @@ function enterGame(
   }
 
   const sessionNimiqPay = nimiqPay === true;
+  const overlayBack = createOverlayBackStack({
+    onEmptyBack: isNimiqPayWebViewHost()
+      ? () => showLeaveGameConfirm()
+      : undefined,
+  });
   const hud = createHud(hudRoot, {
     showDebug: showDebugHud,
+    overlayBack,
     getGameAuthToken: () => token,
     isGameAdmin: () => isAdmin(address),
     didSessionUseNimiqPay: () => sessionNimiqPay,
@@ -707,8 +719,78 @@ function enterGame(
       roomTransitionProgressTimer = null;
     }
   }
+  /**
+   * Shaper Return: the room (and approximate tile) the player was in just before entering The
+   * Shaper, so "Leave the Shaper" can send them back where they came from. Persisted in
+   * sessionStorage (survives reloads within the browser session) and expires after 30 minutes.
+   * It is only a UX hint — the server re-validates room access and walkability on use.
+   */
+  const SHAPER_RETURN_KEY = "nspace.shaperReturn";
+  const SHAPER_RETURN_TTL_MS = 30 * 60 * 1000;
+  type ShaperReturnTarget = { roomId: string; x: number; z: number; ts: number };
+
+  function readShaperReturnTarget(): ShaperReturnTarget | null {
+    try {
+      const raw = sessionStorage.getItem(SHAPER_RETURN_KEY);
+      if (!raw) return null;
+      const t = JSON.parse(raw) as Partial<ShaperReturnTarget>;
+      if (
+        typeof t.roomId !== "string" ||
+        typeof t.x !== "number" ||
+        typeof t.z !== "number" ||
+        typeof t.ts !== "number"
+      ) {
+        return null;
+      }
+      if (Date.now() - t.ts > SHAPER_RETURN_TTL_MS) {
+        sessionStorage.removeItem(SHAPER_RETURN_KEY);
+        return null;
+      }
+      return { roomId: t.roomId, x: t.x, z: t.z, ts: t.ts };
+    } catch {
+      return null;
+    }
+  }
+
+  function clearShaperReturnTarget(): void {
+    try {
+      sessionStorage.removeItem(SHAPER_RETURN_KEY);
+    } catch {
+      /* storage optional */
+    }
+  }
+
+  /** Snapshot the current room + position as a Shaper return target (skips the Shaper itself). */
+  function rememberRoomBeforeShaper(): void {
+    const roomId = game.getRoomId();
+    if (!roomId || isCosmeticShopRoomId(roomId)) return;
+    const pos = game.getSelfPosition();
+    if (!pos) return;
+    try {
+      sessionStorage.setItem(
+        SHAPER_RETURN_KEY,
+        JSON.stringify({ roomId, x: pos.x, z: pos.z, ts: Date.now() })
+      );
+    } catch {
+      /* storage optional */
+    }
+  }
+
+  function targetsTheShaper(roomId: string): boolean {
+    const n = normalizeRoomId(roomId);
+    return (
+      isCosmeticShopRoomId(n) ||
+      n === normalizeRoomId(COSMETIC_SHOP_JOIN_CODE)
+    );
+  }
+
   /** Black loading screen + progress immediately on room change (before server welcome). */
   function beginRoomTransition(roomId: string, labelOverride?: string): void {
+    // Capture where we are leaving from whenever we are about to enter The Shaper, so the
+    // return target is recorded for *every* navigation path into it (Shop button, room code, …).
+    if (targetsTheShaper(roomId)) {
+      rememberRoomBeforeShaper();
+    }
     clearRoomTransitionProgressTimer();
     hud.setLoadingLabel(labelOverride ?? loadingLabelForTargetRoom(roomId));
     hud.setLoadingProgress("indeterminate");
@@ -1848,7 +1930,7 @@ function enterGame(
     },
   });
 
-  const uninstallShell = installInputShell(hudRoot);
+  const uninstallShell = installInputShell(hudRoot, { overlayBack });
 
   const isCoarsePointer =
     typeof window !== "undefined" &&
@@ -1976,7 +2058,7 @@ function enterGame(
     },
     onVisitCosmeticShop: () => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      if (normalizeRoomId(game.getRoomId()) === normalizeRoomId(COSMETIC_SHOP_JOIN_CODE)) {
+      if (isCosmeticShopRoomId(game.getRoomId())) {
         return;
       }
       pendingProfileJoinRoomId = COSMETIC_SHOP_JOIN_CODE;
@@ -4072,6 +4154,13 @@ function enterGame(
       }
       return;
     }
+    if (msg.type === "shaperReturnFailed") {
+      clearRoomTransitionProgressTimer();
+      hud.setLoadingProgress(null);
+      hud.setLoadingVisible(false, { skipMinWait: true });
+      hud.appendChat("System", "Could not leave The Shaper right now.");
+      return;
+    }
     if (msg.type === "roomJoinSpawn") {
       const nr = normalizeRoomId(msg.roomId);
       if (nr === normalizeRoomId(game.getRoomId())) {
@@ -4179,6 +4268,11 @@ function enterGame(
       // belongs inside a Match Pitch, so hide it whenever we land anywhere else.
       worldcupCurrentRoomId = normalizeRoomId(msg.roomId);
       worldcupSelfChallengeOpen = !!msg.self.challengeOpen;
+      // Shaper chrome (in-world "Leave the Shaper" button + Player Menu entry) only inside it.
+      hud.setInShaper(isCosmeticShopRoomId(msg.roomId));
+      if (!isCosmeticShopRoomId(msg.roomId)) {
+        clearShaperReturnTarget();
+      }
       if (isInviteLobbyRoomId(worldcupCurrentRoomId)) {
         directInviteActive = true;
         // The share button persists across the play space; the panel itself follows the
@@ -5287,6 +5381,12 @@ function enterGame(
       x: CHAMBER_DEFAULT_SPAWN.x,
       z: CHAMBER_DEFAULT_SPAWN.z,
     });
+  });
+  hud.onLeaveShaper(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const target = readShaperReturnTarget();
+    beginRoomTransition(target?.roomId ?? CHAMBER_ROOM_ID, "Returning…");
+    sendReturnFromShaper(ws);
   });
   hud.setFeedbackHandlers({
     createTicket: async (kind, message, opts) => {

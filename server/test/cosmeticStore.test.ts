@@ -28,7 +28,7 @@ test("create draft catalog entry and list in admin", async () => {
     const created = createCatalogEntry(
       {
         cosmeticSku: "aura-blue-v1",
-        presetId: "aura-glow-blue",
+        presetId: "aura-cyan",
         displayName: "Blue Glow",
         description: "A calm blue aura.",
         collection: "Starter",
@@ -41,7 +41,7 @@ test("create draft catalog entry and list in admin", async () => {
     if (!created.ok) return;
     assert.equal(created.entry.status, "draft");
     assert.equal(created.entry.slot, "aura");
-    assert.equal(created.entry.presetId, "aura-glow-blue");
+    assert.equal(created.entry.presetId, "aura-cyan");
 
     const all = listAdminCatalog();
     assert.equal(all.length, 1);
@@ -59,7 +59,7 @@ test("published shop excludes draft and archived entries", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "draft-item",
-        presetId: "aura-glow-blue",
+        presetId: "aura-cyan",
         displayName: "Draft",
         description: "",
         collection: "A",
@@ -71,7 +71,7 @@ test("published shop excludes draft and archived entries", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "live-item",
-        presetId: "aura-glow-gold",
+        presetId: "aura-gold",
         displayName: "Gold",
         description: "",
         collection: "A",
@@ -107,7 +107,7 @@ test("slug uniqueness enforced", async () => {
     const first = createCatalogEntry(
       {
         cosmeticSku: "unique-sku",
-        presetId: "aura-glow-blue",
+        presetId: "aura-cyan",
         displayName: "One",
         description: "",
         collection: "X",
@@ -120,7 +120,7 @@ test("slug uniqueness enforced", async () => {
     const dup = createCatalogEntry(
       {
         cosmeticSku: "unique-sku",
-        presetId: "aura-glow-gold",
+        presetId: "aura-gold",
         displayName: "Two",
         description: "",
         collection: "X",
@@ -146,7 +146,7 @@ test("grant entitlement and loadout equip one per passive slot", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "aura-a",
-        presetId: "aura-glow-blue",
+        presetId: "aura-cyan",
         displayName: "A",
         description: "",
         collection: "C",
@@ -158,7 +158,7 @@ test("grant entitlement and loadout equip one per passive slot", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "aura-b",
-        presetId: "aura-glow-gold",
+        presetId: "aura-gold",
         displayName: "B",
         description: "",
         collection: "C",
@@ -289,7 +289,7 @@ test("validate unlock intent rejects draft archived and owned", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "draft-sku",
-        presetId: "aura-glow-blue",
+        presetId: "aura-cyan",
         displayName: "D",
         description: "",
         collection: "X",
@@ -305,7 +305,7 @@ test("validate unlock intent rejects draft archived and owned", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "pub-sku",
-        presetId: "aura-glow-gold",
+        presetId: "aura-gold",
         displayName: "P",
         description: "",
         collection: "X",
@@ -421,4 +421,75 @@ test("changelog records create publish archive grant", async () => {
     assert.ok(actions.includes("granted"));
     assert.ok(actions.includes("archived"));
   });
+});
+
+test("wardrobe shop includes owned achievement passives excluded from purchasable shop", async () => {
+  await withCosmeticStore(async ({
+    createCatalogEntry,
+    publishCatalogEntry,
+    grantEntitlement,
+    listPublishedShop,
+    listWardrobeShop,
+  }) => {
+    createCatalogEntry(
+      {
+        cosmeticSku: "ach-trail-commons-starter",
+        presetId: "trail-sparkle",
+        displayName: "Commons Spark Trail",
+        description: "Unlocked by placing your first block in the Commons.",
+        collection: "Achievements",
+        sortOrder: 1,
+        priceLuna: 0n,
+      },
+      ACTOR
+    );
+    publishCatalogEntry("ach-trail-commons-starter", ACTOR);
+    grantEntitlement(WALLET, "ach-trail-commons-starter", ACTOR, "achievement");
+
+    assert.equal(
+      listPublishedShop().some((s) => s.cosmeticSku === "ach-trail-commons-starter"),
+      false
+    );
+    const wardrobe = listWardrobeShop(WALLET);
+    const trail = wardrobe.find((s) => s.cosmeticSku === "ach-trail-commons-starter");
+    assert.ok(trail);
+    assert.equal(trail?.slot, "trail");
+    assert.equal(trail?.owned, true);
+  });
+});
+
+test("daily featured selection is deterministic per day and bounded by count", async () => {
+  const { selectDailyFeatured } = await import("../src/cosmeticStore.js");
+  const pool = ["a", "b", "c", "d", "e", "f", "g"].map((cosmeticSku) => ({
+    cosmeticSku,
+  }));
+
+  const monday = selectDailyFeatured(pool, "2026-06-29", 5);
+  assert.equal(monday.length, 5);
+  // Same day key => identical selection and order.
+  assert.deepEqual(
+    selectDailyFeatured(pool, "2026-06-29", 5).map((e) => e.cosmeticSku),
+    monday.map((e) => e.cosmeticSku)
+  );
+  // No duplicates in a selection.
+  assert.equal(new Set(monday.map((e) => e.cosmeticSku)).size, monday.length);
+
+  // A different day key generally yields a different selection from the same pool.
+  const tuesday = selectDailyFeatured(pool, "2026-06-30", 5);
+  assert.notDeepEqual(
+    tuesday.map((e) => e.cosmeticSku),
+    monday.map((e) => e.cosmeticSku)
+  );
+});
+
+test("daily featured returns all entries when pool is smaller than count", async () => {
+  const { selectDailyFeatured } = await import("../src/cosmeticStore.js");
+  const pool = ["x", "y", "z"].map((cosmeticSku) => ({ cosmeticSku }));
+  const picked = selectDailyFeatured(pool, "2026-06-29", 5);
+  assert.equal(picked.length, 3);
+  assert.deepEqual(
+    [...picked.map((e) => e.cosmeticSku)].sort(),
+    ["x", "y", "z"]
+  );
+  assert.deepEqual(selectDailyFeatured([], "2026-06-29", 5), []);
 });

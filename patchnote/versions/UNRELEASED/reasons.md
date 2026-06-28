@@ -17,8 +17,16 @@ Paper-doll Wardrobe UX (phase 3b) — self profile equip/shop UI, Wardrobe Previ
 ### Repo / docs
 
 - `docs/prd/cosmetic-shop.md` — Wardrobe UX section locked (variant B paper doll).
-- `CONTEXT.md` — **Wardrobe Preview** glossary entry; **Player Menu**, **Hub**, **Commons**, **Return to Hub**, **Avatar Frame** glossary entries.
+- `CONTEXT.md` — **Wardrobe Preview** glossary entry; **Player Menu**, **Hub**, **Commons**, **Return to Hub**, **Avatar Frame** glossary entries; **Focused Sector**, **Sector Title**, **Wheel Title** glossary entries (Action Wheel refinement).
+- `docs/adr/0002-action-wheel-glyph-only-focus-titles.md` — ADR for glyph-only Sectors + focus-revealed titles + touch two-tap.
 - `docs/features-checklist.md` — Wardrobe bullet updated.
+
+### Client (Action Wheel refinement)
+
+- `client/src/ui/actionWheelGeometry.ts` — `hexSegmentPath` / `hexPolygonPath` take an optional `cornerRadius` (and `hexSegmentPath` a separate `innerCornerRadius`); new `roundedPolyPath` softens corners with seamless quadratic fillets and accepts per-corner radii (radius 0 keeps the old sharp output). Adjacent Sectors round their shared radial corner identically, so the rounded hexagon tiles with no gaps. The inner ring (Avatar Frame) uses a tighter radius than the outer silhouette.
+- `client/src/ui/actionWheelGeometry.test.ts` — fillet count, no-arc, and seamless-shared-corner tests.
+- `client/src/ui/hud.ts` — Action Wheel now glyph-only (in-wedge text labels removed); **Sector Title** chip above the hexagon shows the **Focused Sector**'s name (hover/keyboard, or first tap on touch); **Wheel Title** chip below the Nav Sector names the current sub-wheel (root = none). Touch is tap-to-reveal then tap-to-activate; the Nav Sector (`nav` flag on Close/Back) is exempt (single tap). Wedges/rim drawn with `ACTION_WHEEL_CORNER` rounding.
+- `client/src/style.css` — softer/lighter Sector dividers + rounded line joins; `--focused` highlight; `.action-wheel__sector-title` / `.action-wheel__wheel-title` chips; removed unused `.action-wheel__label`.
 
 ### Client
 
@@ -64,3 +72,31 @@ Paper-doll Wardrobe UX (phase 3b) — self profile equip/shop UI, Wardrobe Previ
 ### Deploy / ops
 
 - _(none in this change set)_
+
+### Achievements v1
+
+- `server/src/achievementDefinitions.ts` — code registry (onboarding + Commons build + mining ladders); seeded `ach-*` reward SKUs.
+- `server/src/achievementStore.ts` — campaign SQLite counters/completions; idempotent unlock; `grantEntitlement` source `achievement`.
+- `server/src/cosmeticStore.ts` — `EntitlementSource` `achievement`; shop excludes **Achievements** collection; `validateUnlockIntent` rejects `ach-*`.
+- `server/src/rooms.ts` — gameplay hooks + WS `achievementUnlocked`; inbound `achievementSignal`.
+- `server/src/index.ts` — `GET /api/achievements/me`; profile summary fields; loadout equip event; `initAchievementStore`.
+- `client/src/achievements/` — API + achievements panel UI.
+- `client/src/ui/playerMenu.ts`, `client/src/ui/hud.ts`, `client/src/main.ts`, `client/src/net/ws.ts` — Player Menu entry, profile AP/highlights, unlock toast, WS wiring.
+- `server/test/achievementStore.test.ts` — counter, reward grant, public summary tests.
+- `docs/features-checklist.md` — Achievements section.
+
+### Player Menu Shop + The Shaper return
+
+- `client/src/ui/playerMenu.ts` — full-player menu drops **Profile**, adds **Shop**; new `shaperOnly` **Leave the Shaper** entry + `setInShaper`; `playerMenuItemLabelsForMode` gains an `inShaper` arg.
+- `client/src/cosmetics/wardrobePanel.ts` — Shop tab is now a daily featured shelf (Buy via `createUnlockIntent`/`syncUnlockPayment`, Equip for owned passives, Owned + "use from Action Wheel → Items" for deployables) plus a **Go to The Shaper** link; removed the link-only placeholder.
+- `client/src/cosmetics/api.ts` — `WardrobeResponse.featured`.
+- `client/src/cosmetics/galleryTypes.ts` — `COSMETIC_SHOP_ROOM_ID` + `isCosmeticShopRoomId`.
+- `server/src/cosmeticStore.ts` — pure `selectDailyFeatured` (FNV-1a day-seeded), `utcDayKey`, `listDailyFeaturedShop`.
+- `server/src/index.ts` — `GET /api/cosmetics/wardrobe` returns `featured`.
+- `server/src/cosmeticGallery.ts` — `isCosmeticGalleryEnabled` now driven by `SHAPER_ENABLED` (default on), making **The Shaper** player-facing in all environments.
+- `client/src/ui/hud.ts` — Player Menu `shop` / `return-from-shaper` actions; `setInShaper` toggles an in-world **Leave the Shaper** button; `onLeaveShaper` handler.
+- `client/src/main.ts` — sessionStorage Shaper return target (room + approximate tile, 30-min TTL) captured on every entry for loading UX; `onLeaveShaper` sends parameterless `returnFromShaper`; `shaperReturnFailed` dismisses loading overlay; `setInShaper` on welcome.
+- `client/src/net/ws.ts` — `sendReturnFromShaper` (no client coords).
+- `server/src/rooms.ts` — server-side `shaperReturnOrigins` recorded on Shaper entry; `returnFromShaper` consumes that origin only (not client-supplied room/coords), with `resolveReturnSpawn` walkability clamp + Hub fallback; `shaperReturnFailed` when not in Shaper.
+- `server/.env.example`, `docs/process.md`, `docs/features-checklist.md`, `CONTEXT.md` — `SHAPER_ENABLED`, The Shaper as player-facing, Player Menu wording.
+- `server/test/cosmeticStore.test.ts`, `server/test/cosmeticGallery.test.ts`, `client/src/ui/playerMenu.test.ts` — daily featured selection, Shaper enablement, menu item shape.

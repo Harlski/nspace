@@ -92,6 +92,7 @@ import {
   syncMobileOrientationClasses,
 } from "./pseudoFullscreen.js";
 import { shouldUseMobileBrowserPlay } from "./mobileBrowserPlay.js";
+import type { OverlayBackStack } from "./overlayBackStack.js";
 import {
   createObjectPrefabAuthoringUi,
   nimToLunaString,
@@ -265,6 +266,8 @@ export function createHud(
   root: HTMLElement,
   opts?: {
     showDebug?: boolean;
+    /** Hardware back / history stack for dismissible overlays (profile, etc.). */
+    overlayBack?: OverlayBackStack;
     /** Fires synchronously before opening the wallet URL in a new tab (e.g. notify server). */
     onNimRecipientDeepLinkOpen?: (url: string) => void;
     /** Popup blocked or `window.open` returned null. */
@@ -396,7 +399,7 @@ export function createHud(
   openAchievementsPanel: () => void;
   /** Open or close the achievements window (`Y`). */
   toggleAchievementsPanel: () => void;
-  /** Show the accomplishment modal when the server reports an unlock. */
+  /** Show the non-blocking unlock banner when the server reports an unlock. */
   showAchievementUnlock: (payload: {
     title: string;
     description: string;
@@ -410,6 +413,10 @@ export function createHud(
    */
   setSelfCountry: (code: string | null) => void;
   onReturnHome: (fn: () => void) => void;
+  /** In-world "Leave the Shaper" button + Player Menu return action. */
+  onLeaveShaper: (fn: () => void) => void;
+  /** Toggle Shaper-only chrome (the leave button + Player Menu entry). */
+  setInShaper: (inShaper: boolean) => void;
   onPortalEnter: (fn: () => void) => void;
   isTeleporterModeActive: () => boolean;
   /** worldcup: build-dock "Ball" prop is the active placement tool (seasonal soccer). */
@@ -1020,106 +1027,152 @@ export function createHud(
     totalPoints: number;
   };
 
-  const achievementUnlockModal = document.createElement("div");
-  achievementUnlockModal.className = "achievement-unlock-modal";
-  achievementUnlockModal.hidden = true;
-  achievementUnlockModal.setAttribute("aria-hidden", "true");
-  achievementUnlockModal.innerHTML = `
-    <div class="achievement-unlock-modal__backdrop" aria-hidden="true"></div>
-    <div class="achievement-unlock-modal__dialog" role="alertdialog" aria-modal="true" aria-labelledby="achievement-unlock-title">
-      <button type="button" class="achievement-unlock-modal__close" aria-label="Dismiss">
-        ${nimiqIconUseMarkup("nq-cross", { width: 14, height: 14, class: "achievement-unlock-modal__close-icon" })}
-      </button>
-      <div class="achievement-unlock-modal__badge">
-        <img class="achievement-unlock-modal__identicon" alt="" width="60" height="60" />
-      </div>
-      <div class="achievement-unlock-modal__body">
-        <p class="achievement-unlock-modal__eyebrow">Achievement unlocked!</p>
-        <h2 class="achievement-unlock-modal__title" id="achievement-unlock-title"></h2>
-        <p class="achievement-unlock-modal__desc"></p>
-        <div class="achievement-unlock-modal__reward">
-          <span class="achievement-unlock-modal__reward-main"></span>
-          <span class="achievement-unlock-modal__reward-sub"></span>
-        </div>
-      </div>
-    </div>
-  `;
-  letter.appendChild(achievementUnlockModal);
+  const ACHIEVEMENT_UNLOCK_AUTO_DISMISS_MS = 5200;
+  const achievementUnlockDebugEnabled =
+    import.meta.env.DEV ||
+    new URLSearchParams(window.location.search).has("achievementUnlockDebug");
 
-  const achievementUnlockTitleEl = achievementUnlockModal.querySelector(
-    ".achievement-unlock-modal__title"
-  ) as HTMLElement;
-  const achievementUnlockDescEl = achievementUnlockModal.querySelector(
-    ".achievement-unlock-modal__desc"
-  ) as HTMLElement;
-  const achievementUnlockRewardMainEl = achievementUnlockModal.querySelector(
-    ".achievement-unlock-modal__reward-main"
-  ) as HTMLElement;
-  const achievementUnlockRewardSubEl = achievementUnlockModal.querySelector(
-    ".achievement-unlock-modal__reward-sub"
-  ) as HTMLElement;
-  const achievementUnlockCloseBtn = achievementUnlockModal.querySelector(
-    ".achievement-unlock-modal__close"
+  const achievementUnlockBanner = document.createElement("div");
+  achievementUnlockBanner.className = "achievement-unlock-banner";
+  achievementUnlockBanner.hidden = true;
+  achievementUnlockBanner.setAttribute("aria-hidden", "true");
+  achievementUnlockBanner.innerHTML = `
+    <button type="button" class="achievement-unlock-banner__card">
+      <span class="achievement-unlock-banner__badge" aria-hidden="true">
+        <img class="achievement-unlock-banner__identicon" alt="" width="40" height="40" />
+      </span>
+      <span class="achievement-unlock-banner__copy">
+        <span class="achievement-unlock-banner__eyebrow">Achievement unlocked</span>
+        <span class="achievement-unlock-banner__title"></span>
+        <span class="achievement-unlock-banner__meta"></span>
+      </span>
+      <span class="achievement-unlock-banner__dismiss" aria-hidden="true">
+        ${nimiqIconUseMarkup("nq-cross", { width: 12, height: 12, class: "achievement-unlock-banner__dismiss-icon" })}
+      </span>
+    </button>
+  `;
+  letter.appendChild(achievementUnlockBanner);
+
+  const achievementUnlockCardBtn = achievementUnlockBanner.querySelector(
+    ".achievement-unlock-banner__card"
   ) as HTMLButtonElement;
-  const achievementUnlockIdenticonEl = achievementUnlockModal.querySelector(
-    ".achievement-unlock-modal__identicon"
-  ) as HTMLImageElement;
-  const achievementUnlockBackdrop = achievementUnlockModal.querySelector(
-    ".achievement-unlock-modal__backdrop"
+  const achievementUnlockTitleEl = achievementUnlockBanner.querySelector(
+    ".achievement-unlock-banner__title"
   ) as HTMLElement;
+  const achievementUnlockMetaEl = achievementUnlockBanner.querySelector(
+    ".achievement-unlock-banner__meta"
+  ) as HTMLElement;
+  const achievementUnlockIdenticonEl = achievementUnlockBanner.querySelector(
+    ".achievement-unlock-banner__identicon"
+  ) as HTMLImageElement;
 
   const achievementUnlockQueue: AchievementUnlockPayload[] = [];
+  let achievementUnlockDismissTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearAchievementUnlockDismissTimer(): void {
+    if (achievementUnlockDismissTimer != null) {
+      clearTimeout(achievementUnlockDismissTimer);
+      achievementUnlockDismissTimer = null;
+    }
+  }
+
+  function dismissVisibleAchievementUnlock(): void {
+    clearAchievementUnlockDismissTimer();
+    achievementUnlockBanner.classList.remove("achievement-unlock-banner--visible");
+    achievementUnlockBanner.hidden = true;
+    achievementUnlockBanner.setAttribute("aria-hidden", "true");
+  }
+
+  function advanceAchievementUnlockQueue(): void {
+    dismissVisibleAchievementUnlock();
+    const next = achievementUnlockQueue.shift();
+    if (next) {
+      renderAchievementUnlock(next);
+    }
+  }
+
+  function scheduleAchievementUnlockDismiss(): void {
+    clearAchievementUnlockDismissTimer();
+    achievementUnlockDismissTimer = setTimeout(() => {
+      achievementUnlockDismissTimer = null;
+      advanceAchievementUnlockQueue();
+    }, ACHIEVEMENT_UNLOCK_AUTO_DISMISS_MS);
+  }
 
   function renderAchievementUnlock(payload: AchievementUnlockPayload): void {
     achievementUnlockTitleEl.textContent = payload.title;
-    achievementUnlockDescEl.textContent = payload.description;
-    achievementUnlockRewardMainEl.textContent = `+${payload.points} achievement points`;
-    achievementUnlockRewardSubEl.textContent = payload.rewardDisplayName
-      ? `Unlocks ${payload.rewardDisplayName}`
-      : `${payload.totalPoints} total points`;
+    const rewardLine = payload.rewardDisplayName
+      ? ` · Unlocks ${payload.rewardDisplayName}`
+      : "";
+    achievementUnlockMetaEl.textContent = `+${payload.points} AP${rewardLine} · ${payload.totalPoints} total`;
     const selfAddress = brandLinksPlayerAddress.replace(/\s+/g, "").trim();
     if (selfAddress) {
+      achievementUnlockIdenticonEl.hidden = false;
       void loadCtxIdenticon(achievementUnlockIdenticonEl, selfAddress);
     } else {
       achievementUnlockIdenticonEl.hidden = true;
     }
-    achievementUnlockModal.hidden = false;
-    achievementUnlockModal.setAttribute("aria-hidden", "false");
-    achievementUnlockCloseBtn.focus({ preventScroll: true });
-  }
-
-  function advanceAchievementUnlockQueue(): void {
-    const next = achievementUnlockQueue.shift();
-    if (next) {
-      renderAchievementUnlock(next);
-      return;
-    }
-    achievementUnlockModal.hidden = true;
-    achievementUnlockModal.setAttribute("aria-hidden", "true");
+    achievementUnlockBanner.hidden = false;
+    achievementUnlockBanner.setAttribute("aria-hidden", "false");
+    requestAnimationFrame(() => {
+      achievementUnlockBanner.classList.add("achievement-unlock-banner--visible");
+    });
+    scheduleAchievementUnlockDismiss();
   }
 
   function showAchievementUnlock(payload: AchievementUnlockPayload): void {
-    if (!achievementUnlockModal.hidden) {
+    if (!achievementUnlockBanner.hidden) {
       achievementUnlockQueue.push(payload);
       return;
     }
     renderAchievementUnlock(payload);
   }
 
-  achievementUnlockCloseBtn.addEventListener("click", () => {
-    advanceAchievementUnlockQueue();
-  });
-  achievementUnlockBackdrop.addEventListener("click", () => {
-    advanceAchievementUnlockQueue();
-  });
-  achievementUnlockModal.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" || e.key === "Enter") {
-      e.preventDefault();
-      advanceAchievementUnlockQueue();
-    }
-  });
+  if (achievementUnlockDebugEnabled) {
+    const achievementUnlockDebugBtn = document.createElement("button");
+    achievementUnlockDebugBtn.type = "button";
+    achievementUnlockDebugBtn.className = "achievement-unlock-debug-btn";
+    achievementUnlockDebugBtn.textContent = "Test achievement unlock";
+    achievementUnlockDebugBtn.title =
+      "Spawn a fake unlock banner (?achievementUnlockDebug=1 in prod builds)";
+    const fakeUnlockSamples: AchievementUnlockPayload[] = [
+      {
+        title: "Commons Contributor",
+        description: "Place your first block in the Commons.",
+        points: 15,
+        rewardDisplayName: "Commons Spark Trail",
+        totalPoints: 42,
+      },
+      {
+        title: "First Victory",
+        description: "Win your first World Cup Match.",
+        points: 15,
+        rewardDisplayName: null,
+        totalPoints: 57,
+      },
+      {
+        title: "Chatterbox I",
+        description: "Send 100 in-game chat messages.",
+        points: 10,
+        rewardDisplayName: null,
+        totalPoints: 67,
+      },
+    ];
+    let fakeUnlockIdx = 0;
+    achievementUnlockDebugBtn.addEventListener("click", () => {
+      showAchievementUnlock(
+        fakeUnlockSamples[fakeUnlockIdx++ % fakeUnlockSamples.length]!
+      );
+    });
+    letter.appendChild(achievementUnlockDebugBtn);
+  }
 
   const achievementPanel = createAchievementPanel(letter);
+
+  achievementUnlockCardBtn.addEventListener("click", () => {
+    achievementPanel.open();
+    advanceAchievementUnlockQueue();
+  });
 
   const headerMarqueeHost = document.createElement("div");
   headerMarqueeHost.className = "hud-header-marquee-host";
@@ -2208,6 +2261,13 @@ export function createHud(
   returnHomeBtn.className = "hud-return-home";
   returnHomeBtn.textContent = "Return to Hub";
   returnHomeBtn.hidden = true;
+  // In-world affordance for leaving The Shaper (shown only while inside it); pairs with the
+  // Player Menu "Leave the Shaper" entry so players always have a way back to where they were.
+  const leaveShaperBtn = document.createElement("button");
+  leaveShaperBtn.type = "button";
+  leaveShaperBtn.className = "hud-leave-shaper nq-button-pill light-blue";
+  leaveShaperBtn.textContent = "Leave the Shaper";
+  leaveShaperBtn.hidden = true;
   const portalEnterBtn = document.createElement("button");
   portalEnterBtn.type = "button";
   portalEnterBtn.className = "hud-portal-enter nq-button-pill light-blue";
@@ -2647,6 +2707,7 @@ export function createHud(
   // Keep signboard reading in the same top-right action stack as object edit.
   topActions.appendChild(signboardTooltip);
   topBar.appendChild(returnHomeBtn);
+  topBar.appendChild(leaveShaperBtn);
   topBar.appendChild(topActions);
   ui.appendChild(topBar);
   ui.appendChild(buildModeStrip);
@@ -4418,7 +4479,10 @@ export function createHud(
     })();
   });
 
-  function closeOtherPlayerProfile(): void {
+  function closeOtherPlayerProfile(fromHistory = false): void {
+    if (!fromHistory && opts?.overlayBack?.isOpen("profile")) {
+      opts.overlayBack.dismiss("profile");
+    }
     hideProfileRoomJoinConfirm();
     setProfileNimiqPayTipVisible(false);
     setProfileAliasTipVisible(false);
@@ -4582,6 +4646,25 @@ export function createHud(
   }
 
   let profileEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
+
+  /** One dismiss layer for Escape and hardware back (deepest first). Return true if handled in-place. */
+  function handleProfileDismissLayer(): boolean {
+    if (!profileRoomConfirm.hidden && profileRoomJoinPending) {
+      hideProfileRoomJoinConfirm();
+      return true;
+    }
+    if (profileMessageEditor) {
+      cancelSelfProfileMessageEdit();
+      return true;
+    }
+    if (profileUsernameEditing) {
+      oppUsernameInput.value = profileUsernameEditBaseline;
+      endUsernameEditVisual();
+      return true;
+    }
+    return false;
+  }
+
   function detachProfileEscape(): void {
     if (!profileEscapeHandler) return;
     window.removeEventListener("keydown", profileEscapeHandler);
@@ -4591,15 +4674,8 @@ export function createHud(
     if (profileEscapeHandler) return;
     profileEscapeHandler = (e: KeyboardEvent): void => {
       if (e.key !== "Escape") return;
-      if (profileMessageEditor) {
+      if (handleProfileDismissLayer()) {
         e.preventDefault();
-        cancelSelfProfileMessageEdit();
-        return;
-      }
-      if (profileUsernameEditing) {
-        e.preventDefault();
-        oppUsernameInput.value = profileUsernameEditBaseline;
-        endUsernameEditVisual();
         return;
       }
       closeOtherPlayerProfile();
@@ -4748,6 +4824,11 @@ export function createHud(
     otherPlayerProfile.hidden = false;
     otherPlayerProfile.setAttribute("aria-hidden", "false");
     attachProfileEscape();
+    opts?.overlayBack?.push("profile", () => {
+      if (handleProfileDismissLayer()) return true;
+      closeOtherPlayerProfile(true);
+      return false;
+    });
     oppClose.focus({ preventScroll: true });
 
     const openFor = compact;
@@ -10272,6 +10353,14 @@ export function createHud(
         openOwnPlayerProfileFromBar();
         setProfileTab("wardrobe");
         break;
+      case "shop":
+        opts?.onAchievementUiSignal?.("open_wardrobe");
+        openOwnPlayerProfileFromBar();
+        setProfileTab("shop");
+        break;
+      case "return-from-shaper":
+        leaveShaperHandler();
+        break;
       case "achievements":
         openOwnPlayerProfileFromBar();
         setProfileTab("achievements");
@@ -11282,6 +11371,7 @@ export function createHud(
   let fsHandler = (): void => {};
   let reconnectHandler = (): void => {};
   let returnHomeHandler = (): void => {};
+  let leaveShaperHandler = (): void => {};
   let portalEnterHandler = (): void => {};
   let lobbyHandler = (): void => {};
   let roomsOpenHandler = (): void => {};
@@ -11327,6 +11417,7 @@ export function createHud(
   roomsBtn.addEventListener("click", () => roomsOpenHandler());
   reconnectBtn.addEventListener("click", () => reconnectHandler());
   returnHomeBtn.addEventListener("click", () => returnHomeHandler());
+  leaveShaperBtn.addEventListener("click", () => leaveShaperHandler());
   portalEnterBtn.addEventListener("click", () => portalEnterHandler());
   lobbyBtn.addEventListener("click", () => openLobbyConfirm());
   buildToggleBtn.addEventListener("click", () => {
@@ -11375,6 +11466,7 @@ export function createHud(
     const h = topWrap.offsetHeight;
     if (h > 0) {
       ui.style.setProperty("--hud-below-top-wrap", `${h}px`);
+      letter.style.setProperty("--hud-below-top-wrap", `${h}px`);
     }
   }
 
@@ -13139,6 +13231,13 @@ export function createHud(
     },
     onReturnHome(fn: () => void) {
       returnHomeHandler = fn;
+    },
+    onLeaveShaper(fn: () => void) {
+      leaveShaperHandler = fn;
+    },
+    setInShaper(inShaper: boolean) {
+      leaveShaperBtn.hidden = !inShaper;
+      playerMenu.setInShaper(inShaper);
     },
     onPortalEnter(fn: () => void) {
       portalEnterHandler = fn;

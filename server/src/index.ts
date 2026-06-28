@@ -212,6 +212,8 @@ import {
   archiveCatalogEntry,
   grantEntitlement,
   listPublishedShop,
+  listWardrobeShop,
+  listDailyFeaturedShop,
   listEntitlements,
   getLoadout,
   setLoadoutSlot,
@@ -224,6 +226,7 @@ import {
   confirmCosmeticUnlockPaymentForSku,
 } from "./cosmeticFulfill.js";
 import {
+  ensureAchievementRewardEntitlements,
   fireAchievementEvent,
   getAchievementsForWallet,
   getPublicAchievementSummary,
@@ -1987,15 +1990,12 @@ app.get("/api/cosmetics/wardrobe", requireJwt, (req, res) => {
     res.status(401).json({ error: "unauthorized" });
     return;
   }
-  const ownedSkus = new Set(listEntitlements(wallet).map((e) => e.cosmeticSku));
-  const shop = listPublishedShop().map((e) => ({
-    ...e,
-    owned: ownedSkus.has(e.cosmeticSku),
-  }));
+  ensureAchievementRewardEntitlements(wallet);
   res.json({
     entitlements: listEntitlements(wallet),
     loadout: getLoadout(wallet),
-    shop,
+    shop: listWardrobeShop(wallet),
+    featured: listDailyFeaturedShop(wallet),
   });
 });
 
