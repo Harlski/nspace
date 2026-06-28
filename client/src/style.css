@@ -1109,6 +1109,54 @@ html.nspace-pseudo-fs #app {
     0 6px 18px rgba(0, 0, 0, 0.42);
 }
 
+.build-quick-control {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.88);
+  box-shadow:
+    0 0 0 2px rgba(100, 116, 139, 0.45),
+    0 4px 14px rgba(0, 0, 0, 0.35);
+  color: #e2e8f0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  transition:
+    box-shadow 0.18s ease,
+    transform 0.12s ease,
+    background 0.18s ease;
+}
+
+.build-quick-control[hidden] {
+  display: none !important;
+}
+
+.build-quick-control:hover {
+  box-shadow:
+    0 0 0 2px rgba(148, 163, 184, 0.75),
+    0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.build-quick-control--active,
+.build-quick-control[aria-pressed="true"] {
+  background: rgba(14, 116, 144, 0.88);
+  box-shadow:
+    0 0 0 2px rgba(125, 211, 252, 0.95),
+    0 6px 18px rgba(0, 0, 0, 0.42);
+}
+
+.build-quick-control__icon {
+  display: block;
+}
+
+html.nspace-mobile-play-host .build-quick-control {
+  touch-action: manipulation;
+}
+
 .telescope-control__icon {
   display: block;
 }
@@ -5248,6 +5296,11 @@ button.hud-brand:focus-visible {
 .hud-leave-shaper {
   margin-left: 8px;
   pointer-events: auto;
+}
+
+/* Author `display` on .nq-button-pill beats UA `[hidden]`. */
+.hud-leave-shaper[hidden] {
+  display: none !important;
 }
 
 .hud-portal-enter {

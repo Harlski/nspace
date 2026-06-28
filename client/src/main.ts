@@ -5345,6 +5345,7 @@ function enterGame(
           }
           hud.setLoadingVisible(false, { skipMinWait: true });
           hud.setReconnectOffer(true);
+          hud.setInShaper(false);
           hud.setStatus(
             restartDrop
               ? "Server restart — tap Reconnect or wait a moment"

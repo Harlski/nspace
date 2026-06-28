@@ -1128,9 +1128,7 @@ export function createHud(
   }
 
   function showAchievementUnlock(payload: AchievementUnlockPayload): void {
-    if (achievementPanel.isOpen()) {
-      achievementPanel.applyUnlock(payload);
-    }
+    achievementPanel.applyUnlock(payload);
     if (!achievementUnlockBanner.hidden) {
       achievementUnlockQueue.push(payload);
       return;
@@ -2702,6 +2700,7 @@ export function createHud(
   function applyRoomEditCaps(): void {
     const showRail = roomAllowPlaceBlocks || roomAllowExtraFloor;
     buildModeStrip.hidden = !showRail;
+    buildQuickBtn.hidden = !showRail || buildQuickGuestMode;
     buildEditOptObjects.disabled = !roomAllowPlaceBlocks;
     buildEditOptRoom.disabled = !roomAllowExtraFloor;
     if (roomAllowPlaceBlocks && !roomAllowExtraFloor) {
@@ -8190,6 +8189,26 @@ export function createHud(
 
   const playerMenu = createPlayerMenu(ui);
   const telescopeControl = createTelescopeControl(playerMenu.root);
+
+  const buildQuickBtn = document.createElement("button");
+  buildQuickBtn.type = "button";
+  buildQuickBtn.className = "build-quick-control";
+  buildQuickBtn.hidden = true;
+  buildQuickBtn.setAttribute("aria-pressed", "false");
+  buildQuickBtn.setAttribute("aria-label", "Build");
+  buildQuickBtn.title = "Build. Turn on to edit; turn off to move. Shortcut: B.";
+  buildQuickBtn.innerHTML = HUD_MODE_ICON_BUILD.replace(
+    "hud-mode-icon",
+    "build-quick-control__icon"
+  );
+  const playerMenuTriggerRow = playerMenu.trigger.parentElement;
+  if (playerMenuTriggerRow) {
+    playerMenu.root.insertBefore(buildQuickBtn, playerMenuTriggerRow);
+  } else {
+    playerMenu.root.appendChild(buildQuickBtn);
+  }
+  let buildQuickGuestMode = false;
+
   let playerMenuLogoutHandler = (): void => {};
   let playerMenuLeaveHandler = (): void => {};
   playerMenu.root.addEventListener(
@@ -11434,7 +11453,13 @@ export function createHud(
   leaveShaperBtn.addEventListener("click", () => leaveShaperHandler());
   portalEnterBtn.addEventListener("click", () => portalEnterHandler());
   lobbyBtn.addEventListener("click", () => openLobbyConfirm());
-  buildToggleBtn.addEventListener("click", () => {
+  buildToggleBtn.addEventListener("click", () => onBuildToolbarToggle());
+  buildQuickBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onBuildToolbarToggle();
+  });
+
+  function onBuildToolbarToggle(): void {
     const editOn = buildToggleBtn.getAttribute("aria-pressed") === "true";
     if (editOn) {
       playModeHandler("walk");
@@ -11454,7 +11479,7 @@ export function createHud(
       setBuildEditKindOverlayOpen(false);
       playModeHandler("floor");
     }
-  });
+  }
 
   function onBuildEditKindChanged(): void {
     if (buildToggleBtn.getAttribute("aria-pressed") !== "true") return;
@@ -13274,6 +13299,8 @@ export function createHud(
     setGuestToolbarMode(isGuest: boolean) {
       roomsBtn.hidden = isGuest;
       getWalletBtn.hidden = !isGuest;
+      buildQuickGuestMode = isGuest;
+      applyRoomEditCaps();
       playerMenu.setGuestMode(isGuest);
       telescopeControl.setGuestMode(isGuest);
       if (mobilePlayHost) syncMobilePlayLayoutMode();
@@ -13455,6 +13482,8 @@ export function createHud(
         editOn
       );
       buildToggleBtn.setAttribute("aria-pressed", editOn ? "true" : "false");
+      buildQuickBtn.setAttribute("aria-pressed", editOn ? "true" : "false");
+      buildQuickBtn.classList.toggle("build-quick-control--active", editOn);
       if (mode === "walk") {
         resetBuildEditScopeToObjects();
       } else if (mode === "floor") {
