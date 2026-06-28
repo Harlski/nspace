@@ -122,6 +122,7 @@ import {
 } from "./paletteHueHexPopover.js";
 import { mountHeaderMarquee } from "./headerMarquee.js";
 import { createPlayerMenu, type PlayerMenuItemId } from "./playerMenu.js";
+import { createTelescopeControl } from "./telescopeControl.js";
 import { createAchievementPanel } from "../achievements/panel.js";
 
 const LS_HUD_CHAT_MINIMIZED = "nspace_hud_chat_minimized";
@@ -401,12 +402,17 @@ export function createHud(
   toggleAchievementsPanel: () => void;
   /** Show the non-blocking unlock banner when the server reports an unlock. */
   showAchievementUnlock: (payload: {
+    achievementId: string;
     title: string;
     description: string;
     points: number;
     rewardDisplayName: string | null;
     totalPoints: number;
   }) => void;
+  /** Show the Telescope hold-to-zoom control (full players who earned the capstone). */
+  setTelescopeUnlocked: (unlocked: boolean) => void;
+  onTelescopeHoldStart: (fn: () => void) => void;
+  onTelescopeHoldEnd: (fn: () => void) => void;
   /**
    * Set the signed-in player's chosen country (ISO alpha-2, or null to clear). Updates the
    * profile flag chip and prepends the matching Flag Emote to the player's Emote Wheel.
@@ -1020,6 +1026,7 @@ export function createHud(
   restartBanner.append(restartBannerLine, restartBannerDetail);
 
   type AchievementUnlockPayload = {
+    achievementId: string;
     title: string;
     description: string;
     points: number;
@@ -1121,6 +1128,9 @@ export function createHud(
   }
 
   function showAchievementUnlock(payload: AchievementUnlockPayload): void {
+    if (achievementPanel.isOpen()) {
+      achievementPanel.applyUnlock(payload);
+    }
     if (!achievementUnlockBanner.hidden) {
       achievementUnlockQueue.push(payload);
       return;
@@ -1137,6 +1147,7 @@ export function createHud(
       "Spawn a fake unlock banner (?achievementUnlockDebug=1 in prod builds)";
     const fakeUnlockSamples: AchievementUnlockPayload[] = [
       {
+        achievementId: "debug-commons-contributor",
         title: "Commons Contributor",
         description: "Place your first block in the Commons.",
         points: 15,
@@ -1144,6 +1155,7 @@ export function createHud(
         totalPoints: 42,
       },
       {
+        achievementId: "debug-first-victory",
         title: "First Victory",
         description: "Win your first World Cup Match.",
         points: 15,
@@ -1151,6 +1163,7 @@ export function createHud(
         totalPoints: 57,
       },
       {
+        achievementId: "debug-chatterbox-i",
         title: "Chatterbox I",
         description: "Send 100 in-game chat messages.",
         points: 10,
@@ -8176,6 +8189,7 @@ export function createHud(
   ui.appendChild(buildBottomDock);
 
   const playerMenu = createPlayerMenu(ui);
+  const telescopeControl = createTelescopeControl(playerMenu.root);
   let playerMenuLogoutHandler = (): void => {};
   let playerMenuLeaveHandler = (): void => {};
   playerMenu.root.addEventListener(
@@ -13214,9 +13228,18 @@ export function createHud(
       achievementPanel.open();
     },
     toggleAchievementsPanel() {
-      toggleAchievementsPanel();
+      toggleAchievementsPanelOpen();
     },
     showAchievementUnlock,
+    setTelescopeUnlocked(unlocked: boolean) {
+      telescopeControl.setUnlocked(unlocked);
+    },
+    onTelescopeHoldStart(fn: () => void) {
+      telescopeControl.onHoldStart(fn);
+    },
+    onTelescopeHoldEnd(fn: () => void) {
+      telescopeControl.onHoldEnd(fn);
+    },
     setSelfCountry(code: string | null) {
       const next =
         typeof code === "string" && code.trim()
@@ -13252,6 +13275,7 @@ export function createHud(
       roomsBtn.hidden = isGuest;
       getWalletBtn.hidden = !isGuest;
       playerMenu.setGuestMode(isGuest);
+      telescopeControl.setGuestMode(isGuest);
       if (mobilePlayHost) syncMobilePlayLayoutMode();
     },
     onGetWalletOpen(fn: () => void) {

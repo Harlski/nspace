@@ -1,6 +1,25 @@
 import * as THREE from "three";
 import type { PlayerState } from "../types.js";
-import { syncCosmeticLoadoutVfx, spawnDeployableVfx, nameplateColorForPreset } from "../cosmetics/loadoutVfx.js";
+import {
+  syncCosmeticLoadoutVfx,
+  spawnDeployableVfx,
+  attachPersistentDeployableVfx,
+  nameplateColorForPreset,
+  tickCosmeticTrailForAvatar,
+  tickCosmeticTrailSpawn,
+  cosmeticTrailPresetForGroup,
+  tickCosmeticPreviewMotion,
+  buildStaticPreviewTrail,
+  orientStaticPreviewTrail,
+  updateCosmeticAuraForGroup,
+  updateCosmeticTrailPuffsForGroup,
+  disposeCosmeticTrailPuffs,
+  type PersistentDeployableFx,
+} from "../cosmetics/loadoutVfx.js";
+import type {
+  CosmeticGalleryShowcaseWire,
+  CosmeticGalleryWire,
+} from "../cosmetics/galleryTypes.js";
 import type {
   BillboardState,
   ObstacleProps,
@@ -366,12 +385,42 @@ type InspectorTilePreviewPort = {
   lastSig: string;
 };
 
+type WardrobeAvatarPreviewPort = {
+  canvas: HTMLCanvasElement;
+  renderer: THREE.WebGLRenderer;
+  scene: THREE.Scene;
+  camera: THREE.OrthographicCamera;
+  rootGroup: THREE.Group;
+  avatarGroup: THREE.Group;
+  floorGeo: THREE.PlaneGeometry;
+  resizeObserver: ResizeObserver;
+  wallet: string;
+  displayName: string;
+  cameraOrbitYawRad: number;
+  rafId: number | null;
+  previewPhaseStart: number;
+  deployableFx: PersistentDeployableFx | null;
+  cosmetics: {
+    aura: string | null;
+    nameplate: string | null;
+    chatBubble: string | null;
+    trail: string | null;
+    deployable: string | null;
+  };
+};
+
 /** Ortho half-extent (vertical, world units); larger = smaller subject in frame. */
 const INSPECTOR_PREVIEW_HALF_V = 1.02;
 /** Light neutral backdrop; slightly cool so gold / yellow blocks stay visible. */
 const INSPECTOR_TILE_PREVIEW_BG = 0xd6dbe5;
 /** Slightly shrink the tile + block together vs full-size preview. */
 const INSPECTOR_PREVIEW_SCENE_SCALE = 0.72;
+/** Profile Wardrobe — isometric avatar on a floor tile (matches `/advertise` preview). */
+const WARDROBE_PREVIEW_BG = 0x0f1419;
+const WARDROBE_PREVIEW_FRUSTUM_HALF_V = 1.05;
+const WARDROBE_PREVIEW_CAMERA_OFFSET = 18;
+const WARDROBE_PREVIEW_SCENE_YAW = Math.PI / 2;
+const WARDROBE_PREVIEW_LOOK_AT_Y = 0.55;
 /** Billboard object-preview plane is 40% smaller than full-size dock bake. */
 const INSPECTOR_BILLBOARD_PREVIEW_SCALE = 0.6;
 /** Extra shrink for Buildings-tab billboard tool thumbnail (128px bake). */
@@ -457,6 +506,8 @@ const NAME_LABEL_PILL_AWAY = "rgba(0,0,0,0.36)";
 const CHAT_BUBBLE_FONT =
   '500 17px system-ui, "Segoe UI", sans-serif';
 const NAME_LABEL_MAX_PX = 280;
+/** Canvas supersampling for name pills so text stays crisp when scaled up (e.g. wardrobe preview). */
+const NAME_LABEL_RASTER = 2;
 /** On-screen height (px) for the name pill; scales with ortho zoom so text stays readable. */
 const NAME_LABEL_SCREEN_HEIGHT_PX = 24;
 /** Smaller name pills in stream cinema (top-down overview). */
@@ -585,8 +636,10 @@ function createNameLabelSprite(
     tw = ctx.measureText(text).width;
   }
   const w = Math.ceil(Math.max(36, padX + tw + padX));
-  canvas.width = w;
-  canvas.height = h;
+  const r = NAME_LABEL_RASTER;
+  canvas.width = Math.ceil(w * r);
+  canvas.height = Math.ceil(h * r);
+  ctx.setTransform(r, 0, 0, r, 0, 0);
   ctx.font = labelFont;
   ctx.textBaseline = "middle";
   ctx.fillStyle = away ? NAME_LABEL_PILL_AWAY : NAME_LABEL_PILL_ACTIVE;
@@ -602,6 +655,8 @@ function createNameLabelSprite(
   ctx.fillStyle = away ? NAME_LABEL_TEXT_AWAY : NAME_LABEL_TEXT_ACTIVE;
   ctx.fillText(text, padX, h / 2 + 0.5);
   const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
   tex.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({
@@ -659,7 +714,11 @@ function wrapChatLines(
 
 function createChatBubbleSprite(
   text: string,
-  opts?: { emojiOnly?: boolean; flagCode?: string | null }
+  opts?: {
+    emojiOnly?: boolean;
+    flagCode?: string | null;
+    bubblePreset?: string | null;
+  }
 ): {
   sprite: THREE.Sprite;
   texture: THREE.CanvasTexture;
@@ -667,6 +726,13 @@ function createChatBubbleSprite(
   height: number;
 } {
   const emojiOnly = opts?.emojiOnly ?? false;
+  const bubblePreset = opts?.bubblePreset ?? null;
+  const bubbleStyle =
+    bubblePreset === "bubble-rounded-pastel"
+      ? "pastel"
+      : bubblePreset === "bubble-sharp-dark"
+        ? "dark"
+        : "default";
   // A sole flag (the Flag Emote) renders as a Twemoji image — Windows has no flag glyphs.
   const flagCode = opts?.flagCode ?? null;
   const raster = emojiOnly
@@ -674,7 +740,7 @@ function createChatBubbleSprite(
     : CHAT_BUBBLE_RASTER_NORMAL;
   const padX = 5;
   const padY = 4;
-  const radius = 10;
+  const radius = bubbleStyle === "dark" ? 4 : bubbleStyle === "pastel" ? 14 : 10;
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { alpha: true })!;
   ctx.font = CHAT_BUBBLE_FONT;
@@ -707,14 +773,27 @@ function createChatBubbleSprite(
   ctx.fill();
 
   const gradient = ctx.createLinearGradient(0, 0, 0, h);
-  gradient.addColorStop(0, "rgba(255, 255, 255, 0.98)");
-  gradient.addColorStop(1, "rgba(248, 250, 252, 0.98)");
+  if (bubbleStyle === "dark") {
+    gradient.addColorStop(0, "rgba(30, 36, 50, 0.96)");
+    gradient.addColorStop(1, "rgba(15, 18, 28, 0.98)");
+  } else if (bubbleStyle === "pastel") {
+    gradient.addColorStop(0, "rgba(255, 235, 245, 0.98)");
+    gradient.addColorStop(1, "rgba(255, 210, 230, 0.98)");
+  } else {
+    gradient.addColorStop(0, "rgba(255, 255, 255, 0.98)");
+    gradient.addColorStop(1, "rgba(248, 250, 252, 0.98)");
+  }
   ctx.fillStyle = gradient;
   ctx.beginPath();
   ctx.roundRect(0, 0, w, h, radius);
   ctx.fill();
 
-  ctx.strokeStyle = "rgba(203, 213, 225, 0.8)";
+  ctx.strokeStyle =
+    bubbleStyle === "dark"
+      ? "rgba(71, 85, 105, 0.9)"
+      : bubbleStyle === "pastel"
+        ? "rgba(244, 114, 182, 0.55)"
+        : "rgba(203, 213, 225, 0.8)";
   ctx.lineWidth = hair;
   ctx.beginPath();
   ctx.roundRect(0, 0, w, h, radius);
@@ -725,7 +804,7 @@ function createChatBubbleSprite(
   ctx.shadowBlur = 2 / raster;
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = 1 / raster;
-  ctx.fillStyle = "#1e293b";
+  ctx.fillStyle = bubbleStyle === "dark" ? "#e2e8f0" : "#1e293b";
   if (!flagCode) {
     lines.forEach((ln, i) => {
       const cy = padY + i * lineH + lineH / 2;
@@ -1168,6 +1247,50 @@ export class Game {
   /** Last server horizontal velocity (world units/s) for local dead reckoning. */
   private selfServerVx = 0;
   private selfServerVz = 0;
+  /** Client-only wardrobe shop try-on overrides (not persisted until equip/buy). */
+  private selfCosmeticPreview: {
+    aura?: string | null;
+    nameplate?: string | null;
+    chatBubble?: string | null;
+    trail?: string | null;
+  } = {};
+  /**
+   * Preset Gallery try-on. Separate from `selfCosmeticPreview` (the wardrobe's ephemeral
+   * preview channel) so that world interactions which clear the wardrobe preview — e.g.
+   * tapping/right-clicking the ground to move opens a context menu that dismisses any open
+   * profile and fires `onRevertAllPreview` — can't wipe a gallery try-on. This channel only
+   * clears when the player leaves the gallery room.
+   */
+  private galleryTryOnSlots: {
+    aura?: string | null;
+    nameplate?: string | null;
+    chatBubble?: string | null;
+    trail?: string | null;
+  } = {};
+  private readonly cosmeticGalleryEntries: Array<{
+    showcase: CosmeticGalleryShowcaseWire;
+    group: THREE.Group | null;
+    plaque: THREE.Sprite;
+    plaqueMat: THREE.SpriteMaterial;
+    plaqueTex: THREE.CanvasTexture;
+    chatBubble?: {
+      sprite: THREE.Sprite;
+      mat: THREE.SpriteMaterial;
+      tex: THREE.CanvasTexture;
+      width: number;
+      height: number;
+    };
+    player: PlayerState;
+    deployableFx: PersistentDeployableFx | null;
+    /** +1 / −1 while pacing a trail lane along +Z. */
+    galleryLaneDir?: 1 | -1;
+  }> = [];
+  /** Nearest gallery showcase for the local player (Preset Gallery try-on). */
+  private galleryNearestShowcase: CosmeticGalleryShowcaseWire | null = null;
+  private galleryTryOnUi: HTMLElement | null = null;
+  private galleryTryOnDeployablePreset: string | null = null;
+  private galleryTryOnDeployableFx: PersistentDeployableFx | null = null;
+  private selfPlayerSnapshot: PlayerState | null = null;
   private readonly selfExtrapGoal = new THREE.Vector3();
   private readonly others = new Map<string, THREE.Group>();
   private readonly chatBubbleByAddress = new Map<string, ChatBubbleEntry>();
@@ -1259,6 +1382,8 @@ export class Game {
   private ro: ResizeObserver;
   private tileHighlight: THREE.Mesh;
   private readonly tileHighlightMat: THREE.MeshBasicMaterial;
+  private readonly defaultTileHoverOutline: THREE.Mesh;
+  private readonly defaultTileHoverOutlineMat: THREE.MeshBasicMaterial;
   private tileClickHandler:
     | ((x: number, z: number, layer?: 0 | 1) => void)
     | null = null;
@@ -1407,6 +1532,7 @@ export class Game {
   /** Off-main-scene 1×1 tile + block mesh for build bar / object panel. */
   private inspectorPlacementPort: InspectorTilePreviewPort | null = null;
   private inspectorSelectionPort: InspectorTilePreviewPort | null = null;
+  private wardrobeAvatarPreviewPort: WardrobeAvatarPreviewPort | null = null;
   private inspectorPlacementPreviewKind:
     | "block"
     | "teleporter"
@@ -1597,6 +1723,10 @@ export class Game {
   private mapOverviewUnlocked = false;
   private zoomLocked = false;
   private zoomLockedFrustum: number | null = null;
+  private telescopeCapabilityUnlocked = false;
+  private telescopeHoldRestoreFrustum: number | null = null;
+  private telescopeHoldSavedMapOverview = false;
+  private telescopeHoldActive = false;
   private readonly fogOfWar: FogOfWarPass;
   /** Extra highlight on solid block tops when hovering in walk mode. */
   private readonly blockTopHighlight: THREE.Mesh;
@@ -2009,6 +2139,40 @@ export class Game {
     this.tileHighlight.position.set(0, 0.02, 0);
     this.tileHighlight.visible = false;
     this.scene.add(this.tileHighlight);
+
+    this.defaultTileHoverOutlineMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+    });
+    // White square "frame" outline for the default hover. Border thickness is a single
+    // tunable knob: oversized for now so it's clearly visible; scale down later.
+    const hoverOutlineOuterHalf = 0.5;
+    const hoverOutlineThickness = 0.045;
+    const hoverOutlineInnerHalf = hoverOutlineOuterHalf - hoverOutlineThickness;
+    const hoverOutlineShape = new THREE.Shape();
+    hoverOutlineShape.moveTo(-hoverOutlineOuterHalf, -hoverOutlineOuterHalf);
+    hoverOutlineShape.lineTo(hoverOutlineOuterHalf, -hoverOutlineOuterHalf);
+    hoverOutlineShape.lineTo(hoverOutlineOuterHalf, hoverOutlineOuterHalf);
+    hoverOutlineShape.lineTo(-hoverOutlineOuterHalf, hoverOutlineOuterHalf);
+    hoverOutlineShape.lineTo(-hoverOutlineOuterHalf, -hoverOutlineOuterHalf);
+    const hoverOutlineHole = new THREE.Path();
+    hoverOutlineHole.moveTo(-hoverOutlineInnerHalf, -hoverOutlineInnerHalf);
+    hoverOutlineHole.lineTo(-hoverOutlineInnerHalf, hoverOutlineInnerHalf);
+    hoverOutlineHole.lineTo(hoverOutlineInnerHalf, hoverOutlineInnerHalf);
+    hoverOutlineHole.lineTo(hoverOutlineInnerHalf, -hoverOutlineInnerHalf);
+    hoverOutlineHole.lineTo(-hoverOutlineInnerHalf, -hoverOutlineInnerHalf);
+    hoverOutlineShape.holes.push(hoverOutlineHole);
+    this.defaultTileHoverOutline = new THREE.Mesh(
+      new THREE.ShapeGeometry(hoverOutlineShape),
+      this.defaultTileHoverOutlineMat
+    );
+    this.defaultTileHoverOutline.rotation.x = -Math.PI / 2;
+    this.defaultTileHoverOutline.visible = false;
+    this.defaultTileHoverOutline.frustumCulled = false;
+    this.defaultTileHoverOutline.renderOrder = 2;
+    this.scene.add(this.defaultTileHoverOutline);
 
     const topHiMat = new THREE.MeshBasicMaterial({
       color: 0x2dd4bf,
@@ -2498,6 +2662,7 @@ export class Game {
     this.roomEntrySpawnPickHandler = null;
     this.hideTrailImmediate();
     this.beginPathFadeOut();
+    this.clearCosmeticGallery();
     if (!roomUsesSpatialInterest(msg.roomBounds)) {
       this.syncWalkableFloorMeshes();
     }
@@ -2672,6 +2837,45 @@ export class Game {
     this.lastViewInterestSig = "";
     this.maybeReportViewInterest();
     this.requestRender();
+  }
+
+  /** Achievement-gated Telescope hold-to-zoom (see `setTelescopeUnlocked`). */
+  setTelescopeUnlocked(unlocked: boolean): void {
+    this.telescopeCapabilityUnlocked = unlocked;
+  }
+
+  /** Hold-to-zoom-out (Telescope): temporarily widen map overview while held. */
+  beginTelescopeHold(): void {
+    if (
+      this.zoomLocked ||
+      this.streamPresentationActive ||
+      !this.telescopeCapabilityUnlocked ||
+      this.telescopeHoldActive
+    ) {
+      return;
+    }
+    this.telescopeHoldActive = true;
+    this.telescopeHoldRestoreFrustum = this.frustumSize;
+    this.telescopeHoldSavedMapOverview = this.mapOverviewUnlocked;
+    if (!this.mapOverviewUnlocked) {
+      this.setMapOverviewUnlocked(true);
+    }
+    this.animateZoomFrustumTo(this.effectiveZoomMax(), 280);
+  }
+
+  endTelescopeHold(): void {
+    if (!this.telescopeHoldActive) return;
+    this.telescopeHoldActive = false;
+    const restore = this.telescopeHoldRestoreFrustum;
+    const hadOverview = this.telescopeHoldSavedMapOverview;
+    this.telescopeHoldRestoreFrustum = null;
+    this.telescopeHoldSavedMapOverview = false;
+    if (!hadOverview) {
+      this.setMapOverviewUnlocked(false);
+    }
+    if (restore != null && !this.zoomLocked && !this.streamPresentationActive) {
+      this.animateZoomFrustumTo(restore, 220);
+    }
   }
 
   private syncRoomZoomMaxFromBounds(bounds: RoomBounds): void {
@@ -3590,11 +3794,10 @@ export class Game {
     const tw = entry.texWidth;
     const th = entry.texHeight;
     
-    // Calculate world scale to maintain consistent screen height (scales with zoom like name tags)
-    const basePlain = Math.max(
-      CHAT_BUBBLE_MIN_HEIGHT_PX,
-      th * 0.5
-    );
+    // Render the bubble at its natural logical height so each text line keeps a constant,
+    // readable on-screen size no matter how many lines wrap. (Using `th * 0.5` made multi-line
+    // messages add only half a line of height each, shrinking the text until it was unreadable.)
+    const basePlain = Math.max(CHAT_BUBBLE_MIN_HEIGHT_PX, th);
     const targetScreenHeight = entry.emojiOnly
       ? basePlain * CHAT_BUBBLE_EMOJI_SCREEN_SCALE
       : basePlain;
@@ -8007,6 +8210,7 @@ export class Game {
   }
 
   private syncHighlightColor(): void {
+    this.defaultTileHoverOutline.visible = false;
     if (this.repositionFrom) {
       this.tileHighlightMat.color.setHex(0xc084fc);
       return;
@@ -8028,6 +8232,16 @@ export class Game {
       !this.hasAnyBlockAtTile(x, z) &&
       !this.hubNoBuildTile(x, z)
     );
+  }
+
+  private showDefaultTileHoverOutline(x: number, z: number, y = 0.026): void {
+    this.tileHighlight.visible = false;
+    this.defaultTileHoverOutline.position.set(x, y, z);
+    this.defaultTileHoverOutline.visible = true;
+  }
+
+  private hideDefaultTileHoverOutline(): void {
+    this.defaultTileHoverOutline.visible = false;
   }
 
   /** Cursor tile while choosing a teleporter exit on the map (build dock coords pick). */
@@ -9781,11 +9995,13 @@ export class Game {
 
     if (!this.shouldShowPointerTileHover()) {
       if (this.teleporterDestPickHandler) {
+        this.hideDefaultTileHoverOutline();
         this.syncTeleporterDestPickHover(e.clientX, e.clientY);
         this.signboardHoverHandler?.(null);
         return;
       }
       this.tileHighlight.visible = false;
+      this.hideDefaultTileHoverOutline();
       this.blockTopHighlight.visible = false;
       this.clearFloorHoverVisuals();
       // Touch devices do not use hover targeting; keep any tapped signboard tooltip
@@ -9796,11 +10012,13 @@ export class Game {
       return;
     }
     if (this.floorExpandMode) {
+      this.hideDefaultTileHoverOutline();
       this.syncFloorExpandTileHover(e.clientX, e.clientY);
       this.signboardHoverHandler?.(null);
       return;
     }
     if (this.buildMode) {
+      this.hideDefaultTileHoverOutline();
       if (this.teleporterDestPickHandler) {
         this.syncTeleporterDestPickHover(e.clientX, e.clientY);
         this.signboardHoverHandler?.(null);
@@ -9890,8 +10108,7 @@ export class Game {
         const [bx, bz, byRaw] = blockHit.split(",").map(Number);
         const by = Number.isFinite(byRaw) ? Math.floor(byRaw ?? 0) : 0;
         const h = this.obstacleHeight(meta);
-        this.tileHighlight.position.set(bx!, 0.02, bz!);
-        this.tileHighlight.visible = true;
+        this.showDefaultTileHoverOutline(bx!, bz!);
         this.blockTopHighlight.position.set(
           bx!,
           by * BLOCK_SIZE + h * this.blockVisualScale + 0.03,
@@ -9912,6 +10129,7 @@ export class Game {
     const p = this.pickWalkableTile(e.clientX, e.clientY);
     if (!p) {
       this.tileHighlight.visible = false;
+      this.hideDefaultTileHoverOutline();
       this.signboardHoverHandler?.(null);
       return;
     }
@@ -9925,8 +10143,7 @@ export class Game {
       this.signboardHoverHandler?.(null);
     }
     
-    this.tileHighlight.position.set(p.x, 0.02, p.y);
-    this.tileHighlight.visible = true;
+    this.showDefaultTileHoverOutline(p.x, p.y);
   };
 
   private onPointerDown = (e: PointerEvent): void => {
@@ -10608,6 +10825,8 @@ export class Game {
     this.teleporterDraftDestHighlightMat.dispose();
     this.roomEntrySpawnRing.geometry.dispose();
     this.roomEntrySpawnRingMat.dispose();
+    this.defaultTileHoverOutline.geometry.dispose();
+    this.defaultTileHoverOutlineMat.dispose();
     this.tileHighlightMat.dispose();
     this.blockTopHighlight.geometry.dispose();
     (this.blockTopHighlight.material as THREE.Material).dispose();
@@ -12324,6 +12543,7 @@ export class Game {
       seen.add(p.address);
       const py = Number.isFinite(p.y) ? p.y : 0;
       if (p.address === this.selfAddress) {
+        this.selfPlayerSnapshot = p;
         if (this.selfMesh) {
           if (!this.selfTargetPos) {
             this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
@@ -12356,12 +12576,12 @@ export class Game {
             this.cameraFollowReady = true;
             visualChanged = true;
           }
-          this.syncAvatarNameLabelFromState(this.selfMesh, p);
+          this.syncAvatarNameLabelFromState(this.selfMesh, this.withSelfCosmeticPreview(p));
           this.syncTypingIndicatorForGroup(this.selfMesh, p);
           this.syncWorldcupChallengeBubble(this.selfMesh, p);
           syncCosmeticLoadoutVfx(
             this.selfMesh,
-            p,
+            this.withSelfCosmeticPreview(p),
             this.playerMovedRecently(p.address, p.x, p.z)
           );
         }
@@ -13278,6 +13498,8 @@ export class Game {
     if (this.worldcupGoalArrow && this.worldcupGoalArrow.update(dt)) {
       visualActive = true;
     }
+    if (this.updateCosmeticGallery(dt)) visualActive = true;
+    if (this.updateAvatarCosmeticTrails(renderNow)) visualActive = true;
 
     const orbitWasActive = this.cameraOrbitEase !== null;
     this.updateCameraOrbitEase();
@@ -13576,6 +13798,72 @@ export class Game {
   }
 
   /** Shows a short-lived speech bubble above the player (used for chat). */
+  setSelfCosmeticPreviewSlot(
+    slot: "aura" | "nameplate" | "chatBubble" | "trail",
+    presetId: string | null
+  ): void {
+    if (slot === "aura") this.selfCosmeticPreview.aura = presetId;
+    else if (slot === "nameplate") this.selfCosmeticPreview.nameplate = presetId;
+    else if (slot === "chatBubble") this.selfCosmeticPreview.chatBubble = presetId;
+    else this.selfCosmeticPreview.trail = presetId;
+  }
+
+  revertSelfCosmeticPreviewSlot(
+    slot: "aura" | "nameplate" | "chatBubble" | "trail"
+  ): void {
+    if (slot === "aura") delete this.selfCosmeticPreview.aura;
+    else if (slot === "nameplate") delete this.selfCosmeticPreview.nameplate;
+    else if (slot === "chatBubble") delete this.selfCosmeticPreview.chatBubble;
+    else delete this.selfCosmeticPreview.trail;
+  }
+
+  clearSelfCosmeticPreview(): void {
+    this.selfCosmeticPreview = {};
+  }
+
+  refreshSelfCosmeticsFromState(p: PlayerState): void {
+    if (!this.selfMesh) return;
+    const effective = this.withSelfCosmeticPreview(p);
+    this.syncAvatarNameLabelFromState(this.selfMesh, effective);
+    syncCosmeticLoadoutVfx(
+      this.selfMesh,
+      effective,
+      this.playerMovedRecently(p.address, p.x, p.z)
+    );
+    this.markSceneMutation("cosmeticPreview");
+  }
+
+  private withSelfCosmeticPreview(p: PlayerState): PlayerState {
+    const out = { ...p };
+    // Wardrobe preview first, then the persistent gallery try-on wins (it survives world
+    // interactions that clear the wardrobe preview).
+    if (this.selfCosmeticPreview.aura !== undefined) {
+      out.cosmeticAura = this.selfCosmeticPreview.aura;
+    }
+    if (this.selfCosmeticPreview.nameplate !== undefined) {
+      out.cosmeticNameplate = this.selfCosmeticPreview.nameplate;
+    }
+    if (this.selfCosmeticPreview.chatBubble !== undefined) {
+      out.cosmeticChatBubble = this.selfCosmeticPreview.chatBubble;
+    }
+    if (this.selfCosmeticPreview.trail !== undefined) {
+      out.cosmeticTrail = this.selfCosmeticPreview.trail;
+    }
+    if (this.galleryTryOnSlots.aura !== undefined) {
+      out.cosmeticAura = this.galleryTryOnSlots.aura;
+    }
+    if (this.galleryTryOnSlots.nameplate !== undefined) {
+      out.cosmeticNameplate = this.galleryTryOnSlots.nameplate;
+    }
+    if (this.galleryTryOnSlots.chatBubble !== undefined) {
+      out.cosmeticChatBubble = this.galleryTryOnSlots.chatBubble;
+    }
+    if (this.galleryTryOnSlots.trail !== undefined) {
+      out.cosmeticTrail = this.galleryTryOnSlots.trail;
+    }
+    return out;
+  }
+
   showChatBubble(
     fromAddress: string,
     text: string,
@@ -13609,9 +13897,12 @@ export class Game {
     // as a Twemoji image; otherwise fall back to the usual emoji-only heuristic.
     const flagCode = soleFlagCode(text);
     const emojiOnly = flagCode ? true : isEmojiOnlyBubbleText(text);
+    const bubblePreset =
+      (g.userData.cosmeticChatBubble as string | null | undefined) ?? null;
     const { sprite, texture, width, height } = createChatBubbleSprite(text, {
       emojiOnly,
       flagCode,
+      bubblePreset,
     });
     const mat = sprite.material as THREE.SpriteMaterial;
     
@@ -14179,6 +14470,7 @@ export class Game {
     if (addr) this.removeChatBubbleEntry(addr);
     if (addr) this.removeTypingIndicator(addr);
     if (addr) this.removeWorldcupChallengeBubble(addr);
+    disposeCosmeticTrailPuffs(g);
     g.traverse((child: THREE.Object3D) => {
       if (child instanceof THREE.Mesh) {
         const mat = child.material as THREE.MeshStandardMaterial;
@@ -15302,5 +15594,766 @@ export class Game {
         mat.emissiveIntensity = doorIntensity;
       }
     }
+  }
+
+  private applyWardrobePreviewFrustum(
+    camera: THREE.OrthographicCamera,
+    rw: number,
+    rh: number
+  ): void {
+    const asp = Math.max(0.2, rw / Math.max(1, rh));
+    const halfV = WARDROBE_PREVIEW_FRUSTUM_HALF_V;
+    const halfH = halfV * asp;
+    camera.left = -halfH;
+    camera.right = halfH;
+    camera.top = halfV;
+    camera.bottom = -halfV;
+    camera.updateProjectionMatrix();
+  }
+
+  private syncWardrobePreviewNameLabelScale(g: THREE.Group): void {
+    const port = this.wardrobeAvatarPreviewPort;
+    const nameSprite = g.userData.nameSprite as THREE.Sprite | undefined;
+    if (!port || !nameSprite) return;
+    const tw = nameSprite.userData.nameLabelTexW as number | undefined;
+    const th = nameSprite.userData.nameLabelTexH as number | undefined;
+    if (!tw || !th) return;
+    nameSprite.visible = true;
+    const rh = Math.max(1, port.canvas.clientHeight);
+    const worldPerPx = (WARDROBE_PREVIEW_FRUSTUM_HALF_V * 2) / rh;
+    let worldH = worldPerPx * NAME_LABEL_SCREEN_HEIGHT_PX;
+    let worldW = worldH * (tw / th);
+    const maxW = worldPerPx * NAME_LABEL_MAX_PX;
+    if (worldW > maxW) {
+      const s = maxW / worldW;
+      worldW *= s;
+      worldH *= s;
+    }
+    nameSprite.scale.set(worldW, worldH, 1);
+    this.updateAvatarNameLabelHeight(g);
+  }
+
+  private disposeWardrobeAvatarPreviewPort(): void {
+    const port = this.wardrobeAvatarPreviewPort;
+    if (!port) return;
+    if (port.rafId != null) {
+      cancelAnimationFrame(port.rafId);
+      port.rafId = null;
+    }
+    port.deployableFx?.dispose();
+    port.deployableFx = null;
+    port.resizeObserver.disconnect();
+    disposeCosmeticTrailPuffs(port.avatarGroup);
+    this.disposeAvatarGroup(port.avatarGroup);
+    port.floorGeo.dispose();
+    port.renderer.dispose();
+    if (typeof port.renderer.forceContextLoss === "function") {
+      port.renderer.forceContextLoss();
+    }
+    this.wardrobeAvatarPreviewPort = null;
+  }
+
+  private applyWardrobePreviewCameraPose(port: WardrobeAvatarPreviewPort): void {
+    const lookAt = new THREE.Vector3(0, WARDROBE_PREVIEW_LOOK_AT_Y, 0);
+    const offset = new THREE.Vector3(
+      WARDROBE_PREVIEW_CAMERA_OFFSET,
+      WARDROBE_PREVIEW_CAMERA_OFFSET,
+      WARDROBE_PREVIEW_CAMERA_OFFSET
+    );
+    offset.applyAxisAngle(this.worldUp, port.cameraOrbitYawRad);
+    port.camera.up.copy(this.worldUp);
+    port.camera.position.set(lookAt.x + offset.x, lookAt.y + offset.y, lookAt.z + offset.z);
+    port.camera.lookAt(lookAt);
+    // Keep the persistent trail stub trailing away from the viewer at every camera corner.
+    orientStaticPreviewTrail(port.avatarGroup, port.cameraOrbitYawRad);
+  }
+
+  private stopWardrobePreviewAnimationLoop(): void {
+    const port = this.wardrobeAvatarPreviewPort;
+    if (!port || port.rafId == null) return;
+    cancelAnimationFrame(port.rafId);
+    port.rafId = null;
+  }
+
+  private startWardrobePreviewAnimationLoop(): void {
+    const port = this.wardrobeAvatarPreviewPort;
+    if (!port || port.rafId != null) return;
+    const tick = (): void => {
+      if (this.wardrobeAvatarPreviewPort !== port) return;
+      port.rafId = requestAnimationFrame(tick);
+      const now = performance.now();
+      const phase = (now - port.previewPhaseStart) * 0.0012;
+      let dirty = tickCosmeticPreviewMotion(port.scene, port.avatarGroup, now, phase);
+      if (dirty) this.renderWardrobeAvatarPreview();
+    };
+    port.rafId = requestAnimationFrame(tick);
+  }
+
+  private renderWardrobeAvatarPreview(): void {
+    const port = this.wardrobeAvatarPreviewPort;
+    if (!port) return;
+    const rw = Math.max(1, port.canvas.clientWidth);
+    const rh = Math.max(1, port.canvas.clientHeight);
+    if (rw < 2 || rh < 2) return;
+    this.applyWardrobePreviewFrustum(port.camera, rw, rh);
+    this.applyWardrobePreviewCameraPose(port);
+    port.renderer.setSize(rw, rh, false);
+    this.syncWardrobePreviewNameLabelScale(port.avatarGroup);
+    port.renderer.render(port.scene, port.camera);
+  }
+
+  private applyWardrobePreviewCosmeticsToAvatar(): void {
+    const port = this.wardrobeAvatarPreviewPort;
+    if (!port) return;
+    const p: PlayerState = {
+      address: port.wallet,
+      displayName: port.displayName,
+      x: 0,
+      y: 0,
+      z: 0,
+      vx: 0,
+      vz: 0,
+      cosmeticAura: port.cosmetics.aura,
+      cosmeticNameplate: port.cosmetics.nameplate,
+      cosmeticChatBubble: port.cosmetics.chatBubble,
+      cosmeticTrail: port.cosmetics.trail,
+    };
+    this.syncAvatarNameLabelFromState(port.avatarGroup, p);
+    syncCosmeticLoadoutVfx(port.avatarGroup, p, Boolean(port.cosmetics.trail));
+    // Static preview: lay a fixed, persistent trail stub behind the avatar instead of
+    // emitting moving marks (the avatar no longer drifts).
+    buildStaticPreviewTrail(port.avatarGroup, port.cosmetics.trail);
+    this.renderWardrobeAvatarPreview();
+    this.startWardrobePreviewAnimationLoop();
+  }
+
+  /**
+   * Isolated WebGL view for profile Wardrobe — avatar standing on a walkable tile.
+   * Pass `null` to release GPU resources.
+   */
+  bindWardrobeAvatarPreviewCanvas(
+    canvas: HTMLCanvasElement | null,
+    wallet?: string,
+    displayName?: string
+  ): void {
+    this.disposeWardrobeAvatarPreviewPort();
+    if (!canvas) return;
+
+    const w = String(wallet ?? "").trim();
+    const label = String(displayName ?? "").trim() || (w ? walletDisplayName(w) : "Player");
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: false,
+      powerPreference: "low-power",
+    });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.NoToneMapping;
+    // Match device pixel ratio so the identicon and name label stay crisp on high-DPR / mobile
+    // screens (e.g. the Nimiq Pay webview); without this the backing store is 1x and upscaled.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(WARDROBE_PREVIEW_BG);
+
+    const amb = new THREE.AmbientLight(0xffffff, 0.62);
+    scene.add(amb);
+    const dir = new THREE.DirectionalLight(0xfff8f0, 0.72);
+    dir.position.set(8, 20, 10);
+    scene.add(dir);
+
+    const rootGroup = new THREE.Group();
+    rootGroup.rotation.y = WARDROBE_PREVIEW_SCENE_YAW;
+    scene.add(rootGroup);
+
+    const floorGeo = new THREE.PlaneGeometry(this.floorTileQuadSize, this.floorTileQuadSize);
+    const floorMat = new THREE.MeshBasicMaterial({ color: 0x3d5a4c });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = WALKABLE_FLOOR_TOP_Y;
+    rootGroup.add(floor);
+
+    const avatarGroup = w ? this.makeAvatar(w, label) : new THREE.Group();
+    rootGroup.add(avatarGroup);
+
+    const lookAt = new THREE.Vector3(0, WARDROBE_PREVIEW_LOOK_AT_Y, 0);
+    const cw = Math.max(1, canvas.clientWidth);
+    const ch = Math.max(1, canvas.clientHeight);
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 2000);
+    this.applyWardrobePreviewFrustum(camera, cw, ch);
+    camera.up.set(0, 1, 0);
+    camera.position.set(
+      lookAt.x + WARDROBE_PREVIEW_CAMERA_OFFSET,
+      lookAt.y + WARDROBE_PREVIEW_CAMERA_OFFSET,
+      lookAt.z + WARDROBE_PREVIEW_CAMERA_OFFSET
+    );
+    camera.lookAt(lookAt);
+
+    const port: WardrobeAvatarPreviewPort = {
+      canvas,
+      renderer,
+      scene,
+      camera,
+      rootGroup,
+      avatarGroup,
+      floorGeo,
+      resizeObserver: new ResizeObserver(() => this.renderWardrobeAvatarPreview()),
+      wallet: w,
+      displayName: label,
+      cameraOrbitYawRad: 0,
+      rafId: null,
+      previewPhaseStart: performance.now(),
+      deployableFx: null,
+      cosmetics: {
+        aura: null,
+        nameplate: null,
+        chatBubble: null,
+        trail: null,
+        deployable: null,
+      },
+    };
+    this.wardrobeAvatarPreviewPort = port;
+    this.applyWardrobePreviewCameraPose(port);
+    port.resizeObserver.observe(canvas);
+    this.renderWardrobeAvatarPreview();
+    let repoll = 0;
+    const repollRender = (): void => {
+      if (this.wardrobeAvatarPreviewPort?.canvas !== canvas) return;
+      this.renderWardrobeAvatarPreview();
+      if (++repoll < 15) requestAnimationFrame(repollRender);
+    };
+    requestAnimationFrame(repollRender);
+    if (canvas.getBoundingClientRect().width < 2) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => this.renderWardrobeAvatarPreview());
+      });
+    }
+  }
+
+  /** Updates passive cosmetic presets on the profile Wardrobe preview canvas. */
+  updateWardrobeAvatarPreviewCosmetics(presets: {
+    aura?: string | null;
+    nameplate?: string | null;
+    chatBubble?: string | null;
+    trail?: string | null;
+    deployable?: string | null;
+  }): void {
+    const port = this.wardrobeAvatarPreviewPort;
+    if (!port) return;
+    if (presets.aura !== undefined) port.cosmetics.aura = presets.aura;
+    if (presets.nameplate !== undefined) port.cosmetics.nameplate = presets.nameplate;
+    if (presets.chatBubble !== undefined) port.cosmetics.chatBubble = presets.chatBubble;
+    if (presets.trail !== undefined) port.cosmetics.trail = presets.trail;
+    if (presets.deployable !== undefined) {
+      port.cosmetics.deployable = presets.deployable;
+      port.deployableFx?.dispose();
+      port.deployableFx = null;
+      if (presets.deployable) {
+        port.deployableFx = attachPersistentDeployableVfx(
+          port.scene,
+          presets.deployable,
+          port.avatarGroup.position.x,
+          port.avatarGroup.position.z + 0.45
+        );
+      }
+    }
+    this.applyWardrobePreviewCosmeticsToAvatar();
+  }
+
+  /** Admin / wardrobe — snap isometric preview to one of four corner yaws (0–3). */
+  setWardrobeAvatarPreviewCameraCorner(cornerIndex: number): void {
+    const port = this.wardrobeAvatarPreviewPort;
+    if (!port) return;
+    const k = ((Math.floor(cornerIndex) % 4) + 4) % 4;
+    port.cameraOrbitYawRad = k * (Math.PI / 2);
+    this.renderWardrobeAvatarPreview();
+  }
+
+  /** Replay deployable burst VFX at the preview avatar's feet. */
+  pulseWardrobeAvatarPreviewDeployable(): void {
+    const port = this.wardrobeAvatarPreviewPort;
+    if (!port?.cosmetics.deployable) return;
+    port.deployableFx?.dispose();
+    port.deployableFx = attachPersistentDeployableVfx(
+      port.scene,
+      port.cosmetics.deployable,
+      port.avatarGroup.position.x,
+      port.avatarGroup.position.z + 0.45
+    );
+    this.renderWardrobeAvatarPreview();
+  }
+
+  /** Dev-only Preset Gallery (`cosmetic-gallery` / join code SPACER). */
+  setCosmeticGallery(payload: CosmeticGalleryWire | null | undefined): void {
+    this.clearCosmeticGallery();
+    const showcases = payload?.showcases;
+    if (!showcases?.length) return;
+    for (const showcase of showcases) {
+      const plaque = this.makeGalleryFloorPlaque(showcase.label);
+      const plaqueX = showcase.tryOnX ?? showcase.x;
+      const plaqueZ = showcase.tryOnZ ?? showcase.z + 0.85;
+      plaque.position.set(plaqueX, 0.12, plaqueZ);
+      this.scene.add(plaque);
+
+      if (showcase.kind === "floor") {
+        this.cosmeticGalleryEntries.push({
+          showcase,
+          group: null,
+          plaque,
+          plaqueMat: plaque.material as THREE.SpriteMaterial,
+          plaqueTex: (plaque.material as THREE.SpriteMaterial).map as THREE.CanvasTexture,
+          player: {
+            address: showcase.fakeAddress,
+            displayName: "",
+            x: showcase.x,
+            y: 0,
+            z: showcase.z,
+            vx: 0,
+            vz: 0,
+          },
+          deployableFx: attachPersistentDeployableVfx(
+            this.scene,
+            showcase.presetId,
+            showcase.x,
+            showcase.z
+          ),
+        });
+        continue;
+      }
+
+      const g = this.makeAvatar(showcase.fakeAddress, "");
+      g.userData.galleryShowcase = true;
+      g.position.set(showcase.x, 0, showcase.z);
+      this.scene.add(g);
+      this.markSceneMutation("cosmeticGallery:add");
+
+      const player: PlayerState = {
+        address: showcase.fakeAddress,
+        displayName: "",
+        x: showcase.x,
+        y: 0,
+        z: showcase.z,
+        vx: 0,
+        vz: 0,
+        cosmeticAura: showcase.slot === "aura" ? showcase.presetId : null,
+        cosmeticNameplate:
+          showcase.slot === "nameplate" ? showcase.presetId : null,
+        cosmeticChatBubble:
+          showcase.slot === "chatBubble" ? showcase.presetId : null,
+        cosmeticTrail: showcase.slot === "trail" ? showcase.presetId : null,
+      };
+
+      if (showcase.slot === "chatBubble") {
+        const nameSprite = g.userData.nameSprite as THREE.Sprite | undefined;
+        const nameTex = g.userData.nameTexture as THREE.CanvasTexture | undefined;
+        if (nameSprite) {
+          g.remove(nameSprite);
+          const sm = nameSprite.material as THREE.SpriteMaterial;
+          sm.map = null;
+          sm.dispose();
+        }
+        if (nameTex) nameTex.dispose();
+        delete g.userData.nameSprite;
+        delete g.userData.nameTexture;
+        delete g.userData.nameLabelSyncState;
+        const { sprite, texture, width, height } = createChatBubbleSprite("Hello!", {
+          bubblePreset: showcase.presetId,
+        });
+        g.add(sprite);
+        const chatBubble = {
+          sprite,
+          mat: sprite.material as THREE.SpriteMaterial,
+          tex: texture,
+          width,
+          height,
+        };
+        this.layoutGalleryChatBubble(g, chatBubble);
+        this.cosmeticGalleryEntries.push({
+          showcase,
+          group: g,
+          plaque,
+          plaqueMat: plaque.material as THREE.SpriteMaterial,
+          plaqueTex: (plaque.material as THREE.SpriteMaterial)
+            .map as THREE.CanvasTexture,
+          chatBubble,
+          player,
+          deployableFx: null,
+        });
+      } else if (showcase.slot === "nameplate") {
+        this.replaceAvatarNameLabel(g, showcase.label, false, showcase.presetId);
+        this.layoutGalleryHeadLabel(g);
+        this.cosmeticGalleryEntries.push({
+          showcase,
+          group: g,
+          plaque,
+          plaqueMat: plaque.material as THREE.SpriteMaterial,
+          plaqueTex: (plaque.material as THREE.SpriteMaterial)
+            .map as THREE.CanvasTexture,
+          player,
+          deployableFx: null,
+        });
+      } else {
+        this.replaceAvatarNameLabel(g, showcase.label, false, null);
+        this.layoutGalleryHeadLabel(g);
+        this.cosmeticGalleryEntries.push({
+          showcase,
+          group: g,
+          plaque,
+          plaqueMat: plaque.material as THREE.SpriteMaterial,
+          plaqueTex: (plaque.material as THREE.SpriteMaterial)
+            .map as THREE.CanvasTexture,
+          player,
+          deployableFx: null,
+        });
+      }
+
+      const entry = this.cosmeticGalleryEntries[this.cosmeticGalleryEntries.length - 1]!;
+      if (entry.group) {
+        syncCosmeticLoadoutVfx(
+          entry.group,
+          entry.player,
+          showcase.slot === "trail"
+        );
+      }
+    }
+    this.ensureGalleryTryOnUi();
+    this.requestRender(400);
+  }
+
+  private static readonly GALLERY_TRY_ON_RADIUS = 2.35;
+
+  private ensureGalleryTryOnUi(): void {
+    if (this.galleryTryOnUi) return;
+    const host = this.canvasHost.parentElement ?? this.canvasHost;
+    const wrap = document.createElement("div");
+    wrap.className = "cosmetic-gallery-tryon";
+    wrap.hidden = true;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cosmetic-gallery-tryon__btn";
+    btn.addEventListener("click", () => {
+      if (this.galleryNearestShowcase) {
+        this.tryOnGalleryShowcase(this.galleryNearestShowcase);
+      }
+    });
+    wrap.append(btn);
+    host.appendChild(wrap);
+    this.galleryTryOnUi = wrap;
+  }
+
+  private removeGalleryTryOnUi(): void {
+    this.galleryTryOnUi?.remove();
+    this.galleryTryOnUi = null;
+  }
+
+  private isGalleryShowcaseWorn(showcase: CosmeticGalleryShowcaseWire): boolean {
+    if (showcase.slot === "deployable") {
+      return this.galleryTryOnDeployablePreset === showcase.presetId;
+    }
+    if (showcase.slot === "aura") {
+      return this.galleryTryOnSlots.aura === showcase.presetId;
+    }
+    if (showcase.slot === "nameplate") {
+      return this.galleryTryOnSlots.nameplate === showcase.presetId;
+    }
+    if (showcase.slot === "chatBubble") {
+      return this.galleryTryOnSlots.chatBubble === showcase.presetId;
+    }
+    return this.galleryTryOnSlots.trail === showcase.presetId;
+  }
+
+  tryOnGalleryShowcase(showcase: CosmeticGalleryShowcaseWire): void {
+    if (showcase.slot === "deployable") {
+      this.galleryTryOnDeployablePreset = showcase.presetId;
+      this.refreshGalleryTryOnDeployableFx();
+    } else {
+      this.galleryTryOnSlots[showcase.slot] = showcase.presetId;
+      if (showcase.slot === "chatBubble" && this.selfAddress) {
+        this.showChatBubble(this.selfAddress, "Hello!");
+      }
+    }
+    if (this.selfPlayerSnapshot) {
+      this.refreshSelfCosmeticsFromState(this.selfPlayerSnapshot);
+    }
+    this.showSelfPlayerActionMessage(`Trying on ${showcase.label}`);
+    this.updateGalleryTryOnUi();
+    this.requestRender();
+  }
+
+  private refreshGalleryTryOnDeployableFx(): void {
+    this.galleryTryOnDeployableFx?.dispose();
+    this.galleryTryOnDeployableFx = null;
+    if (!this.galleryTryOnDeployablePreset || !this.selfMesh) return;
+    this.galleryTryOnDeployableFx = attachPersistentDeployableVfx(
+      this.scene,
+      this.galleryTryOnDeployablePreset,
+      this.selfMesh.position.x,
+      this.selfMesh.position.z
+    );
+  }
+
+  private updateGalleryTryOnProximity(): void {
+    if (!this.cosmeticGalleryEntries.length || !this.selfMesh) {
+      this.galleryNearestShowcase = null;
+      this.updateGalleryTryOnUi();
+      return;
+    }
+    const sx = this.selfMesh.position.x;
+    const sz = this.selfMesh.position.z;
+    let best: CosmeticGalleryShowcaseWire | null = null;
+    let bestDist = Game.GALLERY_TRY_ON_RADIUS;
+    for (const entry of this.cosmeticGalleryEntries) {
+      const tx = entry.showcase.tryOnX ?? entry.showcase.x;
+      const tz = entry.showcase.tryOnZ ?? entry.showcase.z;
+      const d = Math.hypot(sx - tx, sz - tz);
+      if (d < bestDist) {
+        bestDist = d;
+        best = entry.showcase;
+      }
+    }
+    this.galleryNearestShowcase = best;
+    this.updateGalleryTryOnUi();
+  }
+
+  private updateGalleryTryOnUi(): void {
+    if (!this.galleryTryOnUi) return;
+    const showcase = this.galleryNearestShowcase;
+    if (!showcase) {
+      this.galleryTryOnUi.hidden = true;
+      return;
+    }
+    const btn = this.galleryTryOnUi.querySelector(
+      ".cosmetic-gallery-tryon__btn"
+    ) as HTMLButtonElement | null;
+    if (!btn) return;
+    const worn = this.isGalleryShowcaseWorn(showcase);
+    btn.textContent = worn ? `Wearing: ${showcase.label}` : `Try it on: ${showcase.label}`;
+    btn.classList.toggle("cosmetic-gallery-tryon__btn--active", worn);
+    this.galleryTryOnUi.hidden = false;
+  }
+
+  private clearGalleryTryOnState(): void {
+    this.galleryNearestShowcase = null;
+    this.galleryTryOnDeployablePreset = null;
+    this.galleryTryOnDeployableFx?.dispose();
+    this.galleryTryOnDeployableFx = null;
+    this.galleryTryOnSlots = {};
+    this.removeGalleryTryOnUi();
+    if (this.selfPlayerSnapshot) {
+      this.refreshSelfCosmeticsFromState(this.selfPlayerSnapshot);
+    }
+  }
+
+  private clearCosmeticGallery(): void {
+    this.clearGalleryTryOnState();
+    if (this.cosmeticGalleryEntries.length === 0) return;
+    for (const entry of this.cosmeticGalleryEntries) {
+      entry.plaque.removeFromParent();
+      entry.plaqueMat.map = null;
+      entry.plaqueMat.dispose();
+      entry.plaqueTex.dispose();
+      entry.deployableFx?.dispose();
+      if (entry.chatBubble) {
+        entry.chatBubble.sprite.removeFromParent();
+        entry.chatBubble.mat.map = null;
+        entry.chatBubble.mat.dispose();
+        entry.chatBubble.tex.dispose();
+      }
+      if (entry.group) {
+        disposeCosmeticTrailPuffs(entry.group);
+        this.disposeAvatarGroup(entry.group);
+        this.scene.remove(entry.group);
+      }
+    }
+    this.cosmeticGalleryEntries.length = 0;
+    this.markSceneMutation("cosmeticGallery:clear");
+  }
+
+  private updateAvatarCosmeticTrails(now: number): boolean {
+    let active = false;
+    if (this.selfMesh) {
+      const g = this.selfMesh;
+      // Movement-gated for the local player everywhere (gallery included): standing still
+      // emits nothing, so trails only appear on tiles you actually walk over.
+      tickCosmeticTrailForAvatar(
+        this.scene,
+        g,
+        g.position.x,
+        g.position.y,
+        g.position.z,
+        now
+      );
+      if (updateCosmeticTrailPuffsForGroup(g, now, g.position.x, g.position.z)) active = true;
+      if (updateCosmeticAuraForGroup(g, now)) active = true;
+    }
+    for (const g of this.others.values()) {
+      tickCosmeticTrailForAvatar(
+        this.scene,
+        g,
+        g.position.x,
+        g.position.y,
+        g.position.z,
+        now
+      );
+      if (updateCosmeticTrailPuffsForGroup(g, now, g.position.x, g.position.z)) active = true;
+      if (updateCosmeticAuraForGroup(g, now)) active = true;
+    }
+    return active;
+  }
+
+  private makeGalleryFloorPlaque(label: string): THREE.Sprite {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+    const font = "600 22px 'Muli', sans-serif";
+    ctx.font = font;
+    const text =
+      label.length > 28 ? `${label.slice(0, 26)}…` : label;
+    const padX = 10;
+    const w = Math.ceil(ctx.measureText(text).width + padX * 2);
+    const h = 30;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.font = font;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(12, 16, 24, 0.82)";
+    ctx.beginPath();
+    ctx.roundRect(0, 0, w, h, 6);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.45)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = "#e2e8f0";
+    ctx.fillText(text, w / 2, h / 2 + 0.5);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.renderOrder = 998;
+    // Fixed world HEIGHT (not width) so the plaque text stays the same size regardless of how
+    // long the preset name is; width follows the texture aspect ratio.
+    const worldH = 0.34;
+    sprite.scale.set(worldH * (w / h), worldH, 1);
+    return sprite;
+  }
+
+  /**
+   * Size a gallery mannequin's head label to a constant on-screen height regardless of text
+   * length (unlike {@link syncNameLabelScaleAndPosition}, which shrinks height to fit width and
+   * makes long preset names hard to read). Position sits just below the identicon like a real
+   * nameplate.
+   */
+  private layoutGalleryHeadLabel(g: THREE.Group): void {
+    const nameSprite = g.userData.nameSprite as THREE.Sprite | undefined;
+    if (!nameSprite) return;
+    const tw = nameSprite.userData.nameLabelTexW as number | undefined;
+    const th = nameSprite.userData.nameLabelTexH as number | undefined;
+    if (!tw || !th) return;
+    nameSprite.visible = true;
+    const worldH = this.pixelToWorldY(NAME_LABEL_SCREEN_HEIGHT_PX);
+    const worldW = worldH * (tw / th);
+    nameSprite.scale.set(worldW, worldH, 1);
+    const gapWorld = this.pixelToWorldY(NAME_GAP_BELOW_IDENTICON_PX);
+    nameSprite.position.y = -gapWorld - worldH / 2;
+  }
+
+  /**
+   * Size the gallery chat-bubble demo with the same screen-relative scaling real chat bubbles
+   * use ({@link syncChatBubbleScaleAndPosition}), so it matches in-game bubbles and the nameplate
+   * demo rather than a fixed world size that looks oversized when zoomed in.
+   */
+  private layoutGalleryChatBubble(
+    g: THREE.Group,
+    chatBubble: {
+      sprite: THREE.Sprite;
+      width: number;
+      height: number;
+    }
+  ): void {
+    const tw = chatBubble.width;
+    const th = chatBubble.height;
+    const targetScreenHeight = Math.max(CHAT_BUBBLE_MIN_HEIGHT_PX, th);
+    const worldH = this.pixelToWorldY(targetScreenHeight);
+    let worldW = worldH * (tw / th);
+    const maxW = this.pixelToWorldX(CHAT_MAX_WIDTH_SCREEN_PX);
+    if (worldW > maxW) worldW = maxW;
+    chatBubble.sprite.scale.set(worldW, worldH, 1);
+    const avatarTop = this.avatarIdenticonWorldDiameter();
+    chatBubble.sprite.position.set(0, avatarTop + 0.12 + worldH / 2, 0);
+    chatBubble.sprite.renderOrder = 1000;
+  }
+
+  private updateCosmeticGallery(dt: number): boolean {
+    if (this.cosmeticGalleryEntries.length === 0) return false;
+    const now = performance.now();
+    let active = false;
+    this.updateGalleryTryOnProximity();
+    if (this.galleryTryOnDeployableFx?.root && this.selfMesh) {
+      this.galleryTryOnDeployableFx.root.position.set(
+        this.selfMesh.position.x,
+        0,
+        this.selfMesh.position.z
+      );
+      this.galleryTryOnDeployableFx.root.rotation.y = now * 0.00035;
+      active = true;
+    }
+    for (const entry of this.cosmeticGalleryEntries) {
+      if (entry.showcase.kind === "floor") {
+        if (entry.deployableFx?.root) {
+          entry.deployableFx.root.rotation.y = now * 0.00035;
+          active = true;
+        }
+        continue;
+      }
+      const g = entry.group;
+      if (!g) continue;
+      if (updateCosmeticAuraForGroup(g, now)) active = true;
+      const pace = entry.showcase.trailPaceTiles;
+      if (pace && pace > 0) {
+        if (entry.galleryLaneDir === undefined) entry.galleryLaneDir = 1;
+        const zMin = entry.showcase.z;
+        const zMax = entry.showcase.z + pace;
+        let nz = g.position.z + entry.galleryLaneDir * SERVER_PLAYER_MOVE_SPEED * dt;
+        if (nz >= zMax) {
+          nz = zMax;
+          entry.galleryLaneDir = -1;
+        } else if (nz <= zMin) {
+          nz = zMin;
+          entry.galleryLaneDir = 1;
+        }
+        g.position.x = entry.showcase.x;
+        g.position.z = nz;
+        entry.player.x = g.position.x;
+        entry.player.z = g.position.z;
+        active = true;
+        syncCosmeticLoadoutVfx(g, entry.player, true);
+        const trailPreset = cosmeticTrailPresetForGroup(g);
+        if (trailPreset) {
+          tickCosmeticTrailForAvatar(
+            this.scene,
+            g,
+            g.position.x,
+            g.position.y,
+            g.position.z,
+            now
+          );
+          if (updateCosmeticTrailPuffsForGroup(g, now, g.position.x, g.position.z)) active = true;
+        }
+      }
+      // Keep labels at a constant on-screen size at any zoom (gallery groups are not in
+      // `this.others`, so they miss the normal name-label refresh and would otherwise freeze
+      // at whatever scale the zoom happened to be when the room loaded).
+      if (g.userData.nameSprite) this.layoutGalleryHeadLabel(g);
+      if (entry.chatBubble) {
+        this.layoutGalleryChatBubble(g, entry.chatBubble);
+      }
+    }
+    return active;
   }
 }

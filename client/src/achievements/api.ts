@@ -20,6 +20,7 @@ export type AchievementProgress = {
 export type AchievementMeResponse = {
   totalPoints: number;
   achievements: AchievementProgress[];
+  telescopeUnlocked?: boolean;
 };
 
 export type AchievementHighlight = {

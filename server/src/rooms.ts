@@ -83,6 +83,7 @@ import {
   validateCosmeticDeploy,
 } from "./cosmeticDeploy.js";
 import {
+  ensureOnboardingCompleteAchievements,
   fireAchievementEvent,
   recordBlockMined,
   recordBlockPlaced,
@@ -6754,6 +6755,10 @@ export function addClient(
   logChatBacklogDelivered(conn.sessionId, address, roomId, chatBacklog);
   sendRoomCatalog(ws, address);
   onPlayerEnteredRoom(conn, roomId);
+  ensureOnboardingCompleteAchievements(
+    address,
+    achievementUnlockHandler(conn.ws)
+  );
 
   if (!streamObserver) {
     broadcast(

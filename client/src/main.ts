@@ -131,6 +131,8 @@ import {
 import { installAdminOverlay } from "./ui/adminOverlay.js";
 import { nimToLunaString } from "./ui/objectPrefabAuthoring.js";
 import { createHud } from "./ui/hud.js";
+import { fetchMyAchievements } from "./achievements/api.js";
+import { TELESCOPE_ACHIEVEMENT_ID } from "./telescope/constants.js";
 import { chatBubbleClassForPreset } from "./cosmetics/loadoutVfx.js";
 import { isPaletteHueHexPopoverTyping } from "./ui/paletteHueHexPopover.js";
 import {
@@ -808,6 +810,19 @@ function enterGame(
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
   game.setMapOverviewUnlocked(isAdmin(address));
+  hud.onTelescopeHoldStart(() => {
+    game.beginTelescopeHold();
+  });
+  hud.onTelescopeHoldEnd(() => {
+    game.endTelescopeHold();
+  });
+  async function syncTelescopeUnlockFromAchievements(): Promise<void> {
+    const payload = await fetchMyAchievements();
+    const unlocked = payload?.telescopeUnlocked === true;
+    game.setTelescopeUnlocked(unlocked);
+    hud.setTelescopeUnlocked(unlocked);
+  }
+  void syncTelescopeUnlockFromAchievements();
   // worldcup: mount corner-docked worldcup HUD inside the letterbox (the rendered game area)
   // so it stays within game bounds instead of spilling into the black letterbox bars.
   const worldcupHudParent =
@@ -4102,12 +4117,17 @@ function enterGame(
   const handleServerMessage = async (msg: ServerMessage): Promise<void> => {
     if (msg.type === "achievementUnlocked") {
       hud.showAchievementUnlock({
+        achievementId: msg.achievementId,
         title: msg.title,
         description: msg.description,
         points: msg.points,
         rewardDisplayName: msg.rewardDisplayName,
         totalPoints: msg.totalPoints,
       });
+      if (msg.achievementId === TELESCOPE_ACHIEVEMENT_ID) {
+        game.setTelescopeUnlocked(true);
+        hud.setTelescopeUnlocked(true);
+      }
       return;
     }
     if (msg.type === "serverNotice") {

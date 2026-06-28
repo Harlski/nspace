@@ -9,18 +9,56 @@ import {
   type AchievementDefinition,
   type AchievementEventKey,
   getAchievementDefinition,
+  isWorldCupAchievementCounter,
+  isWorldCupAchievementEvent,
   listAchievementsForCounter,
   listAchievementsForEvent,
 } from "./achievementDefinitions.js";
 import {
+  evaluateMatchAchievementsForParticipant,
+  type MatchEndParticipantInput,
+  type MatchWinReason,
+  type MatchParticipantResult,
+} from "./matchAchievementEvaluator.js";
+import {
+  countOnboardingPrerequisitesComplete,
+  getTelescopeAchievementDefinition,
+  isAllOnboardingPrerequisitesComplete,
+  listOnboardingPrerequisiteDefinitions,
+  TELESCOPE_ACHIEVEMENT_ID,
+} from "./onboardingComplete.js";
+import {
   createCatalogEntry,
   getCatalogEntry,
   grantEntitlement,
+  hasEntitlement,
   initCosmeticStore,
   publishCatalogEntry,
 } from "./cosmeticStore.js";
 
 const ACHIEVEMENT_ACTOR = "NQ07 ACHIEV0000000000000000000000001";
+
+function envInt(name: string, dflt: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw.trim() === "") return dflt;
+  const n = Math.floor(Number(raw.trim()));
+  return Number.isFinite(n) && n >= 0 ? n : dflt;
+}
+
+/** Operator-configured top login-streak tier (Time of Kaan). Default 60 UTC days. */
+export function getAchievementLoginStreakTopThreshold(): number {
+  return Math.max(1, envInt("ACHIEVEMENT_LOGIN_STREAK_TOP", 60));
+}
+
+/** Reads env at call time so tests and operators can gate World Cup achievement progress. */
+function isWorldCupAchievementProgressEnabled(): boolean {
+  const raw = process.env.WORLDCUP_ENABLED;
+  if (raw === undefined || raw === null || raw.trim() === "") return true;
+  const v = raw.trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "off" || v === "no");
+}
+
+export type { MatchEndParticipantInput, MatchParticipantResult, MatchWinReason };
 
 export type AchievementUnlockWire = {
   achievementId: string;
@@ -58,6 +96,7 @@ export type AchievementHighlightPublic = {
 export type AchievementMePayload = {
   totalPoints: number;
   achievements: AchievementProgressPublic[];
+  telescopeUnlocked: boolean;
 };
 
 export type AchievementPublicSummary = {
@@ -89,6 +128,9 @@ function requireDb(): Database.Database {
 
 function counterThreshold(def: AchievementDefinition): number {
   if (def.criteria.type === "counter") return def.criteria.threshold;
+  if (def.criteria.type === "onboarding_complete") {
+    return listOnboardingPrerequisiteDefinitions().length;
+  }
   return 1;
 }
 
@@ -170,9 +212,27 @@ function insertCompletion(
       def.rewardSku ?? null
     );
   if (def.rewardSku) {
+    seedAchievementRewardCatalog();
     grantEntitlement(w, def.rewardSku, ACHIEVEMENT_ACTOR, "achievement");
   }
   return true;
+}
+
+/** Backfill reward entitlements for completed achievements (e.g. catalog seeded after unlock). */
+export function ensureAchievementRewardEntitlements(wallet: string): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  seedAchievementRewardCatalog();
+  const rows = requireDb()
+    .prepare(
+      `SELECT DISTINCT reward_sku AS reward_sku FROM achievement_completions
+       WHERE wallet = ? AND reward_sku IS NOT NULL AND reward_sku != ''`
+    )
+    .all(w) as Array<{ reward_sku: string }>;
+  for (const row of rows) {
+    if (hasEntitlement(w, row.reward_sku)) continue;
+    grantEntitlement(w, row.reward_sku, ACHIEVEMENT_ACTOR, "achievement");
+  }
 }
 
 function totalPointsForWallet(wallet: string): number {
@@ -184,6 +244,44 @@ function totalPointsForWallet(wallet: string): number {
     )
     .get(w) as { total: number };
   return row?.total ?? 0;
+}
+
+function listCompletedAchievementIds(wallet: string): Set<string> {
+  const w = normalizeWallet(wallet);
+  const rows = requireDb()
+    .prepare(
+      `SELECT achievement_id FROM achievement_completions WHERE wallet = ?`
+    )
+    .all(w) as Array<{ achievement_id: string }>;
+  return new Set(rows.map((r) => r.achievement_id));
+}
+
+function evaluateOnboardingCompleteAchievements(
+  wallet: string,
+  unlocks: AchievementUnlockWire[]
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const def = getTelescopeAchievementDefinition();
+  if (!def) return;
+  const w = normalizeWallet(wallet);
+  if (hasCompletion(w, def.id)) return;
+  const completed = listCompletedAchievementIds(w);
+  if (!isAllOnboardingPrerequisitesComplete(completed)) return;
+  completeAchievement(w, def, unlocks);
+}
+
+export function ensureOnboardingCompleteAchievements(
+  wallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  const unlocks: AchievementUnlockWire[] = [];
+  evaluateOnboardingCompleteAchievements(wallet, unlocks);
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function isTelescopeUnlockedForWallet(wallet: string): boolean {
+  if (!isAchievementEligibleWallet(wallet)) return false;
+  return hasCompletion(normalizeWallet(wallet), TELESCOPE_ACHIEVEMENT_ID);
 }
 
 function completeAchievement(
@@ -202,6 +300,7 @@ function completeAchievement(
     rewardDisplayName: rewardDisplayName(def.rewardSku),
     totalPoints,
   });
+  evaluateOnboardingCompleteAchievements(wallet, unlocks);
 }
 
 function evaluateCounterAchievements(
@@ -216,6 +315,79 @@ function evaluateCounterAchievements(
     if (value >= def.criteria.threshold) {
       completeAchievement(wallet, def, unlocks);
     }
+  }
+}
+
+function fireEventCollecting(
+  wallet: string,
+  event: AchievementEventKey,
+  unlocks: AchievementUnlockWire[]
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  if (!isWorldCupAchievementProgressEnabled() && isWorldCupAchievementEvent(event)) return;
+  const w = normalizeWallet(wallet);
+  for (const def of listAchievementsForEvent(event)) {
+    if (hasCompletion(w, def.id)) continue;
+    completeAchievement(w, def, unlocks);
+  }
+}
+
+function bumpCounterCollecting(
+  wallet: string,
+  counter: AchievementCounterKey,
+  delta: number,
+  unlocks: AchievementUnlockWire[]
+): void {
+  if (!isAchievementEligibleWallet(wallet) || delta <= 0) return;
+  if (!isWorldCupAchievementProgressEnabled() && isWorldCupAchievementCounter(counter)) return;
+  const w = normalizeWallet(wallet);
+  const next = getCounterValue(w, counter) + delta;
+  setCounterValue(w, counter, next);
+  evaluateCounterAchievements(w, counter, unlocks);
+}
+
+function setCounterCollecting(
+  wallet: string,
+  counter: AchievementCounterKey,
+  value: number,
+  unlocks: AchievementUnlockWire[]
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  if (!isWorldCupAchievementProgressEnabled() && isWorldCupAchievementCounter(counter)) return;
+  const w = normalizeWallet(wallet);
+  setCounterValue(w, counter, Math.max(0, Math.floor(value)));
+  evaluateCounterAchievements(w, counter, unlocks);
+}
+
+function applyMatchEndParticipant(
+  input: MatchEndParticipantInput,
+  unlocks: AchievementUnlockWire[]
+): void {
+  if (!isAchievementEligibleWallet(input.wallet)) return;
+  const { wallet, ...participant } = input;
+  const effect = evaluateMatchAchievementsForParticipant(participant);
+  bumpCounterCollecting(
+    wallet,
+    "matches_played",
+    effect.matchesPlayedDelta,
+    unlocks
+  );
+  if (effect.matchesWonDelta > 0) {
+    bumpCounterCollecting(
+      wallet,
+      "matches_won",
+      effect.matchesWonDelta,
+      unlocks
+    );
+  }
+  setCounterCollecting(
+    wallet,
+    "match_win_streak",
+    effect.newWinStreak,
+    unlocks
+  );
+  for (const event of effect.events) {
+    fireEventCollecting(wallet, event, unlocks);
   }
 }
 
@@ -275,12 +447,8 @@ export function bumpAchievementCounter(
   delta: number,
   onUnlock?: AchievementUnlockCallback
 ): void {
-  if (!isAchievementEligibleWallet(wallet) || delta <= 0) return;
-  const w = normalizeWallet(wallet);
-  const next = getCounterValue(w, counter) + delta;
-  setCounterValue(w, counter, next);
   const unlocks: AchievementUnlockWire[] = [];
-  evaluateCounterAchievements(w, counter, unlocks);
+  bumpCounterCollecting(wallet, counter, delta, unlocks);
   if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
 }
 
@@ -289,12 +457,70 @@ export function fireAchievementEvent(
   event: AchievementEventKey,
   onUnlock?: AchievementUnlockCallback
 ): void {
-  if (!isAchievementEligibleWallet(wallet)) return;
-  const w = normalizeWallet(wallet);
   const unlocks: AchievementUnlockWire[] = [];
-  for (const def of listAchievementsForEvent(event)) {
-    if (hasCompletion(w, def.id)) continue;
-    completeAchievement(w, def, unlocks);
+  fireEventCollecting(wallet, event, unlocks);
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+/** Increment streak on win; reset to zero on loss or draw. */
+export function setMatchWinStreak(
+  wallet: string,
+  won: boolean,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isWorldCupAchievementProgressEnabled() || !isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  const next = won ? getCounterValue(w, "match_win_streak") + 1 : 0;
+  const unlocks: AchievementUnlockWire[] = [];
+  setCounterCollecting(w, "match_win_streak", next, unlocks);
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordMatchEnd(
+  sideA: MatchEndParticipantInput,
+  sideB: MatchEndParticipantInput,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isWorldCupAchievementProgressEnabled()) return;
+  const unlocks: AchievementUnlockWire[] = [];
+  applyMatchEndParticipant(sideA, unlocks);
+  applyMatchEndParticipant(sideB, unlocks);
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordFieldGoalScored(
+  wallet: string,
+  opts: { contested?: boolean; solo?: boolean } = {},
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isWorldCupAchievementProgressEnabled() || !isAchievementEligibleWallet(wallet)) return;
+  const unlocks: AchievementUnlockWire[] = [];
+  bumpCounterCollecting(wallet, "field_goals_scored", 1, unlocks);
+  fireEventCollecting(wallet, "field_goal_scored", unlocks);
+  if (opts.contested) fireEventCollecting(wallet, "field_goal_contested", unlocks);
+  if (opts.solo) fireEventCollecting(wallet, "field_goal_solo", unlocks);
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordChatMessageSent(
+  wallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  bumpAchievementCounter(wallet, "chat_messages_sent", 1, onUnlock);
+}
+
+export function evaluateLoginStreakAchievements(
+  wallet: string,
+  streakDays: number,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const days = Math.max(0, Math.floor(streakDays));
+  const unlocks: AchievementUnlockWire[] = [];
+  if (days >= 7) fireEventCollecting(wallet, "login_streak_7", unlocks);
+  if (days >= 30) fireEventCollecting(wallet, "login_streak_30", unlocks);
+  if (days >= getAchievementLoginStreakTopThreshold()) {
+    fireEventCollecting(wallet, "login_streak_top", unlocks);
   }
   if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
 }
@@ -327,8 +553,20 @@ function buildProgressRow(
 ): AchievementProgressPublic {
   const counterKey = counterKeyForDef(def);
   const threshold = counterThreshold(def);
-  const progress =
-    counterKey != null ? Math.min(threshold, getCounterValue(wallet, counterKey)) : completedAtMs != null ? 1 : 0;
+  let progress =
+    counterKey != null
+      ? Math.min(threshold, getCounterValue(wallet, counterKey))
+      : completedAtMs != null
+        ? 1
+        : 0;
+  if (def.criteria.type === "onboarding_complete") {
+    progress =
+      completedAtMs != null
+        ? threshold
+        : countOnboardingPrerequisitesComplete(
+            listCompletedAchievementIds(wallet)
+          );
+  }
   return {
     achievementId: def.id,
     title: def.title,
@@ -353,7 +591,8 @@ export function getAchievementsForWallet(
   wallet: string
 ): AchievementMePayload {
   const w = normalizeWallet(wallet);
-  if (!w) return { totalPoints: 0, achievements: [] };
+  if (!w) return { totalPoints: 0, achievements: [], telescopeUnlocked: false };
+  evaluateOnboardingCompleteAchievements(w, []);
   const completionRows = requireDb()
     .prepare(
       `SELECT achievement_id, completed_at_ms FROM achievement_completions
@@ -369,6 +608,7 @@ export function getAchievementsForWallet(
   return {
     totalPoints: totalPointsForWallet(w),
     achievements,
+    telescopeUnlocked: isTelescopeUnlockedForWallet(w),
   };
 }
 
