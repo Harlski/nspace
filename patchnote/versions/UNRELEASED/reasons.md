@@ -17,7 +17,7 @@ Paper-doll Wardrobe UX (phase 3b) — self profile equip/shop UI, Wardrobe Previ
 ### Repo / docs
 
 - `docs/prd/cosmetic-shop.md` — Wardrobe UX section locked (variant B paper doll).
-- `CONTEXT.md` — **Wardrobe Preview** glossary entry; **Player Menu**, **Hub**, **Commons**, **Return to Hub**, **Avatar Frame** glossary entries; **Focused Sector**, **Sector Title**, **Wheel Title** glossary entries (Action Wheel refinement).
+- `CONTEXT.md` — **Wardrobe Preview** glossary entry; **Wardrobe Preview Backdrop** glossary entry; **Player Menu**, **Hub**, **Commons**, **Return to Hub**, **Avatar Frame** glossary entries; **Focused Sector**, **Sector Title**, **Wheel Title** glossary entries (Action Wheel refinement).
 - `docs/adr/0002-action-wheel-glyph-only-focus-titles.md` — ADR for glyph-only Sectors + focus-revealed titles + touch two-tap.
 - `docs/features-checklist.md` — Wardrobe bullet updated.
 
@@ -33,7 +33,8 @@ Paper-doll Wardrobe UX (phase 3b) — self profile equip/shop UI, Wardrobe Previ
 - `client/src/cosmetics/wardrobePanel.ts` — paper-doll Wardrobe + Shop tabs; slot dropdowns; `mountWardrobeReadOnly`.
 - `client/src/cosmetics/presetSwatch.ts` — swatch classes + doll VFX CSS hooks.
 - `client/src/cosmetics/loadoutVfx.ts` — stash bubble preset on group userData.
-- `client/src/game/Game.ts` — `bindWardrobeAvatarPreviewCanvas` / `updateWardrobeAvatarPreviewCosmetics` (isometric tile + avatar WebGL, same idiom as `/advertise` preview).
+- `client/src/game/wardrobePreviewBackdrop.ts` / `wardrobePreviewBackdrop.test.ts` — **Wardrobe Preview Backdrop**: snapshot room sky + 3×3 floor patch (void = water) around viewer tile at open; spawn fallback.
+- `client/src/game/Game.ts` — `bindWardrobeAvatarPreviewCanvas` / `updateWardrobeAvatarPreviewCosmetics` (isometric tile + avatar WebGL, same idiom as `/advertise` preview); preview uses backdrop module above.
 - `client/src/ui/hud.ts` — mount new wardrobe; revert preview on profile close; **Player Menu** (`createPlayerMenu`), logout/leave handlers, Action Wheel mutual close, identicon sync from player bar.
 - `client/src/ui/playerMenu.ts` — bottom-right identicon trigger + vertical popover list + inline logout/leave confirm.
 - `client/src/ui/playerMenu.test.ts` — guest/full item label tests.

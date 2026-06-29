@@ -79,7 +79,12 @@ const DEFAULT_ZOOM_MAX = 13.44;
 const STREAM_CAMERA_HEIGHT = 100;
 /** Top-down stream overview: identicon footprint spans this many floor tiles (1 tile at spotlight zoom). */
 const STREAM_TOPDOWN_AVATAR_TILE_SPAN = 3;
-import { identiconDataUrl, loadIdenticonTexture } from "./identiconTexture.js";
+import {
+  identiconDataUrl,
+  isCachedIdenticonTexture,
+  loadIdenticonTexture,
+  peekIdenticonTexture,
+} from "./identiconTexture.js";
 import {
   createBillboardRoot,
   disposeBillboardRoot,
@@ -96,6 +101,13 @@ import {
   type DesignSnapshotV1,
 } from "./designFootprint.js";
 import { prefabPlaceSnapshotMatchesDesign, prefabPlaceMeshTemplateSignature, shouldApplyPrefabPlaceSnapshot } from "./prefabPlacePreview.js";
+import {
+  buildWardrobePreviewFloorPatch,
+  getRoomDefaultSpawnTile,
+  resolveWardrobePreviewAnchorTile,
+  TERRAIN_WATER_COLOR,
+  type WardrobePreviewFloorContext,
+} from "./wardrobePreviewBackdrop.js";
 import { BILLBOARD_VERTICAL_PLACEMENT_TEMP_DISABLED } from "./billboardPlacementFlags.js";
 import { pickBillboardVisitOnFootprintTile } from "./billboardVisitProximity.js";
 import { billboardSlideshowPhaseIndex } from "./billboardSlideshowPhase.js";
@@ -140,6 +152,7 @@ import {
   type RoomBounds,
   CHAMBER_MAX_ZOOM_FRUSTUM,
   CHAMBER_ROOM_ID,
+  HUB_MAX_ZOOM_FRUSTUM,
   HUB_ROOM_ID,
   CANVAS_ROOM_ID,
   PIXEL_ROOM_ID,
@@ -150,6 +163,15 @@ import {
   normalizeRoomId,
   registerClientRoomBounds,
 } from "./roomLayouts.js";
+import {
+  effectiveZoomMax as computeEffectiveZoomMax,
+  normalZoomMax as computeNormalZoomMax,
+  roomSupportsTelescopeBoost,
+  telescopeHoldTargetFrustum as computeTelescopeHoldTargetFrustum,
+  type ZoomLimitContext,
+} from "./zoomLimits.js";
+import { isMobilePortraitDocument } from "../ui/pseudoFullscreen.js";
+import { TELESCOPE_HOLD_ZOOM_MS } from "../telescope/constants.js";
 import {
   DEFAULT_INTEREST_HALF_TILES,
   INTEREST_CHUNK_TILES,
@@ -385,6 +407,12 @@ type InspectorTilePreviewPort = {
   lastSig: string;
 };
 
+type WardrobePreviewFloorTile = {
+  mesh: THREE.Mesh;
+  geo: THREE.PlaneGeometry;
+  mat: THREE.MeshBasicMaterial;
+};
+
 type WardrobeAvatarPreviewPort = {
   canvas: HTMLCanvasElement;
   renderer: THREE.WebGLRenderer;
@@ -392,7 +420,7 @@ type WardrobeAvatarPreviewPort = {
   camera: THREE.OrthographicCamera;
   rootGroup: THREE.Group;
   avatarGroup: THREE.Group;
-  floorGeo: THREE.PlaneGeometry;
+  floorTiles: WardrobePreviewFloorTile[];
   resizeObserver: ResizeObserver;
   wallet: string;
   displayName: string;
@@ -421,6 +449,8 @@ const WARDROBE_PREVIEW_FRUSTUM_HALF_V = 1.05;
 const WARDROBE_PREVIEW_CAMERA_OFFSET = 18;
 const WARDROBE_PREVIEW_SCENE_YAW = Math.PI / 2;
 const WARDROBE_PREVIEW_LOOK_AT_Y = 0.55;
+const WARDROBE_PREVIEW_CHAT_BUBBLE_KEY = "wardrobePreviewChatBubble";
+const WARDROBE_PREVIEW_CHAT_BUBBLE_PRESET_KEY = "wardrobePreviewChatBubblePreset";
 /** Billboard object-preview plane is 40% smaller than full-size dock bake. */
 const INSPECTOR_BILLBOARD_PREVIEW_SCALE = 0.6;
 /** Extra shrink for Buildings-tab billboard tool thumbnail (128px bake). */
@@ -1727,6 +1757,7 @@ export class Game {
   private telescopeHoldRestoreFrustum: number | null = null;
   private telescopeHoldSavedMapOverview = false;
   private telescopeHoldActive = false;
+  private telescopeReturnAnimPending = false;
   private readonly fogOfWar: FogOfWarPass;
   /** Extra highlight on solid block tops when hovering in walk mode. */
   private readonly blockTopHighlight: THREE.Mesh;
@@ -2797,8 +2828,12 @@ export class Game {
    * isometric diamond fits even when the camera follows a spawn near one edge.
    */
   private static zoomMaxForRoomBounds(bounds: RoomBounds, roomId?: string): number {
-    if (roomId && normalizeRoomId(roomId) === CHAMBER_ROOM_ID) {
+    const id = roomId ? normalizeRoomId(roomId) : "";
+    if (id === CHAMBER_ROOM_ID) {
       return CHAMBER_MAX_ZOOM_FRUSTUM;
+    }
+    if (id === HUB_ROOM_ID) {
+      return HUB_MAX_ZOOM_FRUSTUM;
     }
     const w = bounds.maxX - bounds.minX + 1;
     const h = bounds.maxZ - bounds.minZ + 1;
@@ -2811,28 +2846,45 @@ export class Game {
     return Math.max(DEFAULT_ZOOM_MAX, diagZoom, axisZoom * 1.85);
   }
 
+  private zoomLimitContext(telescopeHoldActive = this.telescopeHoldActive): ZoomLimitContext {
+    return {
+      zoomMax: this.zoomMax,
+      roomZoomMax: this.roomZoomMax,
+      roomId: this.roomId,
+      roomBounds: this.roomBounds,
+      mapOverviewUnlocked: this.mapOverviewUnlocked,
+      streamPresentationActive: this.streamPresentationActive,
+      telescopeHoldActive,
+      mobilePortrait: isMobilePortraitDocument(),
+    };
+  }
+
+  /** Max zoom-out without Telescope (room caps beat persisted zoomMax). */
+  private normalZoomMax(): number {
+    return computeNormalZoomMax(this.zoomLimitContext(false));
+  }
+
+  /** Frustum to animate toward while Telescope is held (null = no extra zoom in this room). */
+  private telescopeHoldTargetFrustum(): number | null {
+    return computeTelescopeHoldTargetFrustum(this.zoomLimitContext(false));
+  }
+
   private effectiveZoomMax(): number {
-    let max = Math.max(this.zoomMax, this.roomZoomMax);
-    if (
-      !this.mapOverviewUnlocked &&
-      !this.streamPresentationActive &&
-      roomUsesSpatialInterest(this.roomBounds)
-    ) {
-      max = Math.min(max, NON_ADMIN_MAX_ZOOM_FRUSTUM);
-    }
-    return max;
+    return computeEffectiveZoomMax(this.zoomLimitContext());
   }
 
   /** When false, large-room zoom-out and tile subscriptions stay near the player. */
   setMapOverviewUnlocked(unlocked: boolean): void {
     if (unlocked === this.mapOverviewUnlocked) return;
     this.mapOverviewUnlocked = unlocked;
-    this.frustumSize = Game.clampZoom(
-      this.frustumSize,
-      this.zoomMin,
-      this.effectiveZoomMax(),
-      VIEW_FRUSTUM_SIZE
-    );
+    if (!this.telescopeHoldActive) {
+      this.frustumSize = Game.clampZoom(
+        this.frustumSize,
+        this.zoomMin,
+        this.effectiveZoomMax(),
+        VIEW_FRUSTUM_SIZE
+      );
+    }
     this.applyOrthographicFrustum();
     this.lastViewInterestSig = "";
     this.maybeReportViewInterest();
@@ -2854,13 +2906,23 @@ export class Game {
     ) {
       return;
     }
+    const target = this.telescopeHoldTargetFrustum();
+    if (target == null || !roomSupportsTelescopeBoost(this.zoomLimitContext(false))) {
+      return;
+    }
     this.telescopeHoldActive = true;
-    this.telescopeHoldRestoreFrustum = this.frustumSize;
-    this.telescopeHoldSavedMapOverview = this.mapOverviewUnlocked;
-    if (!this.mapOverviewUnlocked) {
+    this.telescopeReturnAnimPending = false;
+    if (this.telescopeHoldRestoreFrustum === null) {
+      this.telescopeHoldRestoreFrustum = this.frustumSize;
+      this.telescopeHoldSavedMapOverview = this.mapOverviewUnlocked;
+    }
+    if (
+      !this.mapOverviewUnlocked &&
+      roomUsesSpatialInterest(this.roomBounds)
+    ) {
       this.setMapOverviewUnlocked(true);
     }
-    this.animateZoomFrustumTo(this.effectiveZoomMax(), 280);
+    this.animateZoomFrustumTo(target, TELESCOPE_HOLD_ZOOM_MS);
   }
 
   endTelescopeHold(): void {
@@ -2868,24 +2930,39 @@ export class Game {
     this.telescopeHoldActive = false;
     const restore = this.telescopeHoldRestoreFrustum;
     const hadOverview = this.telescopeHoldSavedMapOverview;
-    this.telescopeHoldRestoreFrustum = null;
-    this.telescopeHoldSavedMapOverview = false;
     if (!hadOverview) {
       this.setMapOverviewUnlocked(false);
     }
-    if (restore != null && !this.zoomLocked && !this.streamPresentationActive) {
-      this.animateZoomFrustumTo(restore, 220);
+    if (restore == null || this.zoomLocked || this.streamPresentationActive) {
+      this.telescopeHoldRestoreFrustum = null;
+      this.telescopeReturnAnimPending = false;
+      this.zoomFrustumAnim = null;
+      return;
+    }
+    this.telescopeReturnAnimPending = true;
+    this.animateZoomFrustumTo(restore, TELESCOPE_HOLD_ZOOM_MS);
+  }
+
+  private finishTelescopeReturnZoomAnim(): void {
+    if (!this.telescopeReturnAnimPending || this.telescopeHoldActive) return;
+    this.telescopeReturnAnimPending = false;
+    this.telescopeHoldRestoreFrustum = null;
+    this.telescopeHoldSavedMapOverview = false;
+    if (!this.zoomLocked && !this.streamPresentationActive) {
+      localStorage.setItem(LS_ZOOM_FRUSTUM, String(this.frustumSize));
     }
   }
 
   private syncRoomZoomMaxFromBounds(bounds: RoomBounds): void {
     this.roomZoomMax = Game.zoomMaxForRoomBounds(bounds, this.roomId);
-    this.frustumSize = Game.clampZoom(
-      this.frustumSize,
-      this.zoomMin,
-      this.effectiveZoomMax(),
-      VIEW_FRUSTUM_SIZE
-    );
+    if (!this.telescopeHoldActive) {
+      this.frustumSize = Game.clampZoom(
+        this.frustumSize,
+        this.zoomMin,
+        this.effectiveZoomMax(),
+        VIEW_FRUSTUM_SIZE
+      );
+    }
     if (this.streamPresentationActive) {
       this.resize();
     } else {
@@ -3302,7 +3379,10 @@ export class Game {
   }
 
   animateZoomFrustumTo(target: number, durationMs: number): void {
-    const to = Game.clampZoom(target, this.zoomMin, this.effectiveZoomMax(), VIEW_FRUSTUM_SIZE);
+    const max = this.telescopeHoldActive
+      ? Math.max(this.effectiveZoomMax(), target)
+      : this.effectiveZoomMax();
+    const to = Game.clampZoom(target, this.zoomMin, max, VIEW_FRUSTUM_SIZE);
     if (durationMs <= 0) {
       this.zoomFrustumAnim = null;
       this.frustumSize = to;
@@ -3310,6 +3390,7 @@ export class Game {
       this.refreshAllNameLabelScales();
       this.refreshChatBubbleVerticalPositions();
       this.refreshAllTypingIndicatorLayouts();
+      this.finishTelescopeReturnZoomAnim();
       this.requestRender();
       return;
     }
@@ -3319,7 +3400,7 @@ export class Game {
       startedAtMs: performance.now(),
       durationMs,
     };
-    this.requestRender();
+    this.requestRender(durationMs);
   }
 
   listFollowablePlayers(): Array<{
@@ -4415,8 +4496,121 @@ export class Game {
     this.releaseTouchPointerId(e.pointerId);
   };
 
+  /**
+   * Nimiq Pay / mobile HUD: lifts off the canvas often miss `pointerup` on the canvas while
+   * the window still sees the release. Drop stale capture/walk state so the next touch is not
+   * retargeted to the canvas under an open HUD overlay (e.g. Action Wheel).
+   */
+  private releaseStaleTouchGestureAfterOffCanvasPointerUp(
+    pointerId: number
+  ): void {
+    if (this.pendingPrimaryWalk?.pointerId === pointerId) {
+      this.clearPendingPrimaryWalk();
+    }
+    if (this.pendingBuildPlace?.pointerId === pointerId) {
+      this.clearPendingBuildPlace();
+    }
+    if (this.selfEmojiTouchSession?.pointerId === pointerId) {
+      this.clearSelfEmojiTouchSession();
+    }
+    if (this.otherProfileTouchSession?.pointerId === pointerId) {
+      this.clearOtherProfileTouchSession();
+    }
+    if (this.rightOrbitDrag?.pointerId === pointerId) {
+      try {
+        if (this.renderer.domElement.hasPointerCapture?.(pointerId)) {
+          this.renderer.domElement.releasePointerCapture(pointerId);
+        }
+      } catch {
+        /* ignore */
+      }
+      this.rightOrbitDrag = null;
+      this.renderer.domElement.style.cursor = "pointer";
+    }
+    if (this.prefabBboxDrag?.pointerId === pointerId) {
+      this.prefabBboxDrag = null;
+      try {
+        if (this.renderer.domElement.hasPointerCapture?.(pointerId)) {
+          this.renderer.domElement.releasePointerCapture(pointerId);
+        }
+      } catch {
+        /* ignore */
+      }
+      this.clearPrefabSaveCapturePreview();
+    }
+  }
+
+  /** Opening a HUD overlay (Action Wheel, etc.) — cancel in-flight canvas gestures. */
+  interruptHudOverlayGestures(): void {
+    this.endWorldcupStick();
+    this.clearPendingPrimaryWalk();
+    this.clearPendingBuildPlace();
+    this.clearSelfEmojiTouchSession();
+    this.clearOtherProfileTouchSession();
+    if (this.rightOrbitDrag) {
+      const id = this.rightOrbitDrag.pointerId;
+      try {
+        if (this.renderer.domElement.hasPointerCapture?.(id)) {
+          this.renderer.domElement.releasePointerCapture(id);
+        }
+      } catch {
+        /* ignore */
+      }
+      this.rightOrbitDrag = null;
+      this.renderer.domElement.style.cursor = "pointer";
+    }
+    if (this.prefabBboxDrag) {
+      const id = this.prefabBboxDrag.pointerId;
+      this.prefabBboxDrag = null;
+      try {
+        if (this.renderer.domElement.hasPointerCapture?.(id)) {
+          this.renderer.domElement.releasePointerCapture(id);
+        }
+      } catch {
+        /* ignore */
+      }
+      this.clearPrefabSaveCapturePreview();
+    }
+  }
+
+  /** Pay touch debug / recovery — drop pinch, twist, and stick tracking too. */
+  forceReleaseAllTouchGestures(): void {
+    this.interruptHudOverlayGestures();
+    this.flushTouchPointerGestureState();
+  }
+
+  /** Snapshot for on-screen Pay touch debug (`?payDebug=1`). */
+  getTouchDebugState(): {
+    touchPointerCount: number;
+    pendingWalk: boolean;
+    pendingWalkPointerId: number | null;
+    worldcupStick: boolean;
+    canvasCapturePointerIds: number[];
+  } {
+    const canvas = this.renderer.domElement;
+    const canvasCapturePointerIds: number[] = [];
+    for (let id = 0; id < 32; id++) {
+      try {
+        if (canvas.hasPointerCapture?.(id)) canvasCapturePointerIds.push(id);
+      } catch {
+        /* ignore */
+      }
+    }
+    return {
+      touchPointerCount: this.touchPointers.size,
+      pendingWalk: this.pendingPrimaryWalk !== null,
+      pendingWalkPointerId: this.pendingPrimaryWalk?.pointerId ?? null,
+      worldcupStick: this.worldcupStick !== null,
+      canvasCapturePointerIds,
+    };
+  }
+
   private readonly onWindowTouchPointerEnd = (e: PointerEvent): void => {
     if (e.pointerType !== "touch") return;
+    const canvas = this.renderer.domElement;
+    if (!(e.target instanceof Node) || !canvas.contains(e.target)) {
+      this.releaseStaleTouchGestureAfterOffCanvasPointerUp(e.pointerId);
+    }
     // worldcup: Pay WebView / HUD lifts often miss canvas pointerup; stop the stick here too.
     if (this.worldcupStick?.pointerId === e.pointerId) {
       this.endWorldcupStick();
@@ -13685,7 +13879,10 @@ export class Game {
       this.refreshAllNameLabelScales();
       this.refreshChatBubbleVerticalPositions();
       this.refreshAllTypingIndicatorLayouts();
-      if (t >= 1) this.zoomFrustumAnim = null;
+      if (t >= 1) {
+        this.zoomFrustumAnim = null;
+        this.finishTelescopeReturnZoomAnim();
+      }
       this.requestRender();
     }
     if (this.lookAtAnim) {
@@ -14474,13 +14671,13 @@ export class Game {
     g.traverse((child: THREE.Object3D) => {
       if (child instanceof THREE.Mesh) {
         const mat = child.material as THREE.MeshStandardMaterial;
-        if (mat.map) mat.map.dispose();
+        if (mat.map && !isCachedIdenticonTexture(mat.map)) mat.map.dispose();
         child.geometry.dispose();
         mat.dispose();
       }
       if (child instanceof THREE.Sprite) {
         const sm = child.material as THREE.SpriteMaterial;
-        if (sm.map) sm.map.dispose();
+        if (sm.map && !isCachedIdenticonTexture(sm.map)) sm.map.dispose();
         sm.dispose();
       }
     });
@@ -14511,19 +14708,29 @@ export class Game {
     g.userData.identiconMesh = body;
     g.add(body);
 
-    void loadIdenticonTexture(address)
-      .then((tex) => {
-        if (g.userData["address"] !== address) {
-          tex.dispose();
-          return;
-        }
-        mat.map = tex;
-        mat.color.setHex(0xffffff);
-        mat.needsUpdate = true;
-      })
-      .catch(() => {
-        /* Invalid / non-wallet ids (e.g. server NPCs) keep the placeholder material. */
-      });
+    const applyIdenticonTexture = (tex: THREE.CanvasTexture): void => {
+      if (g.userData["address"] !== address) return;
+      mat.map = tex;
+      mat.color.setHex(0xffffff);
+      mat.needsUpdate = true;
+      if (this.wardrobeAvatarPreviewPort?.avatarGroup === g) {
+        this.renderWardrobeAvatarPreview();
+      }
+    };
+
+    const cached = peekIdenticonTexture(address);
+    if (cached) {
+      applyIdenticonTexture(cached);
+    } else {
+      void loadIdenticonTexture(address)
+        .then((tex) => {
+          if (g.userData["address"] !== address) return;
+          applyIdenticonTexture(tex);
+        })
+        .catch(() => {
+          /* Invalid / non-wallet ids (e.g. server NPCs) keep the placeholder material. */
+        });
+    }
 
     const label = displayName || walletDisplayName(address);
     const { sprite: nameSprite, texture: nameTex } = createNameLabelSprite(
@@ -15631,6 +15838,73 @@ export class Game {
     }
     nameSprite.scale.set(worldW, worldH, 1);
     this.updateAvatarNameLabelHeight(g);
+    this.layoutWardrobePreviewChatBubble(g);
+  }
+
+  private disposeWardrobePreviewChatBubble(g: THREE.Group): void {
+    const entry = g.userData[WARDROBE_PREVIEW_CHAT_BUBBLE_KEY] as
+      | {
+          sprite: THREE.Sprite;
+          tex: THREE.CanvasTexture;
+        }
+      | undefined;
+    if (!entry) return;
+    g.remove(entry.sprite);
+    entry.sprite.material.dispose();
+    entry.tex.dispose();
+    delete g.userData[WARDROBE_PREVIEW_CHAT_BUBBLE_KEY];
+    delete g.userData[WARDROBE_PREVIEW_CHAT_BUBBLE_PRESET_KEY];
+  }
+
+  private syncWardrobePreviewChatBubble(
+    g: THREE.Group,
+    presetId: string | null | undefined
+  ): void {
+    const next = presetId ?? null;
+    const prev = g.userData[WARDROBE_PREVIEW_CHAT_BUBBLE_PRESET_KEY] as
+      | string
+      | null
+      | undefined;
+    if (prev === next && g.userData[WARDROBE_PREVIEW_CHAT_BUBBLE_KEY]) return;
+    g.userData[WARDROBE_PREVIEW_CHAT_BUBBLE_PRESET_KEY] = next;
+    this.disposeWardrobePreviewChatBubble(g);
+    if (!next) return;
+    const { sprite, texture, width, height } = createChatBubbleSprite("Hello!", {
+      bubblePreset: next,
+    });
+    sprite.userData[SKIP_BLOCK_PICK_AND_BOUNDS] = true;
+    sprite.raycast = (_raycaster: THREE.Raycaster, _intersects: THREE.Intersection[]) => {};
+    g.add(sprite);
+    g.userData[WARDROBE_PREVIEW_CHAT_BUBBLE_KEY] = {
+      sprite,
+      tex: texture,
+      width,
+      height,
+    };
+    this.layoutWardrobePreviewChatBubble(g);
+  }
+
+  private layoutWardrobePreviewChatBubble(g: THREE.Group): void {
+    const port = this.wardrobeAvatarPreviewPort;
+    const entry = g.userData[WARDROBE_PREVIEW_CHAT_BUBBLE_KEY] as
+      | {
+          sprite: THREE.Sprite;
+          width: number;
+          height: number;
+        }
+      | undefined;
+    if (!port || !entry) return;
+    const rh = Math.max(1, port.canvas.clientHeight);
+    const worldPerPx = (WARDROBE_PREVIEW_FRUSTUM_HALF_V * 2) / rh;
+    const targetScreenHeight = Math.max(CHAT_BUBBLE_MIN_HEIGHT_PX, entry.height);
+    let worldH = worldPerPx * targetScreenHeight;
+    let worldW = worldH * (entry.width / entry.height);
+    const maxW = worldPerPx * CHAT_MAX_WIDTH_SCREEN_PX;
+    if (worldW > maxW) worldW = maxW;
+    entry.sprite.scale.set(worldW, worldH, 1);
+    const avatarTop = this.avatarIdenticonWorldDiameter();
+    entry.sprite.position.set(0, avatarTop + worldPerPx * 2 + worldH / 2, 0);
+    entry.sprite.renderOrder = 1000;
   }
 
   private disposeWardrobeAvatarPreviewPort(): void {
@@ -15643,14 +15917,65 @@ export class Game {
     port.deployableFx?.dispose();
     port.deployableFx = null;
     port.resizeObserver.disconnect();
+    this.disposeWardrobePreviewChatBubble(port.avatarGroup);
     disposeCosmeticTrailPuffs(port.avatarGroup);
     this.disposeAvatarGroup(port.avatarGroup);
-    port.floorGeo.dispose();
+    for (const tile of port.floorTiles) {
+      port.rootGroup.remove(tile.mesh);
+      tile.geo.dispose();
+      tile.mat.dispose();
+    }
     port.renderer.dispose();
     if (typeof port.renderer.forceContextLoss === "function") {
       port.renderer.forceContextLoss();
     }
     this.wardrobeAvatarPreviewPort = null;
+  }
+
+  private wardrobePreviewFloorContext(): WardrobePreviewFloorContext {
+    return {
+      roomId: this.roomId,
+      extraFloorKeys: this.extraFloorKeys,
+      extraFloorColorByKey: this.extraFloorColorByKey,
+      baseFloorColorByKey: this.baseFloorColorByKey,
+      removedBaseFloorKeys: this.removedBaseFloorKeys,
+      doorTileKeys: this.doorTileKeys,
+    };
+  }
+
+  private snapshotWardrobePreviewSkyRgb(): number {
+    const bg = this.scene.background;
+    if (bg instanceof THREE.Color) return bg.getHex();
+    return TERRAIN_WATER_COLOR;
+  }
+
+  private buildWardrobePreviewFloorTiles(rootGroup: THREE.Group): WardrobePreviewFloorTile[] {
+    const selfPos = this.getSelfPosition();
+    const anchor = resolveWardrobePreviewAnchorTile(
+      selfPos ? { x: selfPos.x, z: selfPos.z } : null,
+      getRoomDefaultSpawnTile(this.roomId)
+    );
+    const patch = buildWardrobePreviewFloorPatch(
+      anchor.x,
+      anchor.z,
+      this.wardrobePreviewFloorContext()
+    );
+    const q = this.floorTileQuadSize;
+    const tiles: WardrobePreviewFloorTile[] = [];
+    for (const cell of patch) {
+      const geo = new THREE.PlaneGeometry(q, q);
+      const mat = new THREE.MeshBasicMaterial({ color: cell.colorRgb });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(
+        cell.localX * q,
+        WALKABLE_FLOOR_TOP_Y,
+        cell.localZ * q
+      );
+      rootGroup.add(mesh);
+      tiles.push({ mesh, geo, mat });
+    }
+    return tiles;
   }
 
   private applyWardrobePreviewCameraPose(port: WardrobeAvatarPreviewPort): void {
@@ -15720,6 +16045,10 @@ export class Game {
     };
     this.syncAvatarNameLabelFromState(port.avatarGroup, p);
     syncCosmeticLoadoutVfx(port.avatarGroup, p, Boolean(port.cosmetics.trail));
+    this.syncWardrobePreviewChatBubble(
+      port.avatarGroup,
+      port.cosmetics.chatBubble
+    );
     // Static preview: lay a fixed, persistent trail stub behind the avatar instead of
     // emitting moving marks (the avatar no longer drifts).
     buildStaticPreviewTrail(port.avatarGroup, port.cosmetics.trail);
@@ -15728,8 +16057,8 @@ export class Game {
   }
 
   /**
-   * Isolated WebGL view for profile Wardrobe — avatar standing on a walkable tile.
-   * Pass `null` to release GPU resources.
+   * Isolated WebGL view for profile Wardrobe — avatar on a snapshot of the viewer's current
+   * room (sky tint + 3×3 floor patch). Pass `null` to release GPU resources.
    */
   bindWardrobeAvatarPreviewCanvas(
     canvas: HTMLCanvasElement | null,
@@ -15755,7 +16084,7 @@ export class Game {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(WARDROBE_PREVIEW_BG);
+    scene.background = new THREE.Color(this.snapshotWardrobePreviewSkyRgb());
 
     const amb = new THREE.AmbientLight(0xffffff, 0.62);
     scene.add(amb);
@@ -15767,12 +16096,7 @@ export class Game {
     rootGroup.rotation.y = WARDROBE_PREVIEW_SCENE_YAW;
     scene.add(rootGroup);
 
-    const floorGeo = new THREE.PlaneGeometry(this.floorTileQuadSize, this.floorTileQuadSize);
-    const floorMat = new THREE.MeshBasicMaterial({ color: 0x3d5a4c });
-    const floor = new THREE.Mesh(floorGeo, floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = WALKABLE_FLOOR_TOP_Y;
-    rootGroup.add(floor);
+    const floorTiles = this.buildWardrobePreviewFloorTiles(rootGroup);
 
     const avatarGroup = w ? this.makeAvatar(w, label) : new THREE.Group();
     rootGroup.add(avatarGroup);
@@ -15797,7 +16121,7 @@ export class Game {
       camera,
       rootGroup,
       avatarGroup,
-      floorGeo,
+      floorTiles,
       resizeObserver: new ResizeObserver(() => this.renderWardrobeAvatarPreview()),
       wallet: w,
       displayName: label,

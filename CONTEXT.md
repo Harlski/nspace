@@ -10,7 +10,8 @@ seasonal soccer feature keeps its own glossary in [worldcup/CONTEXT.md](worldcup
 The hexagonal menu that opens around your own avatar when you right-click (desktop) or
 long-press (touch) yourself. The single entry point for self-actions. Its root level
 offers Sectors; drilling into one opens a sub-wheel.
-_Avoid_: radial menu, donut, self-menu, emote menu, pie menu.
+_Avoid_: radial menu, donut, self-menu, emote menu, pie menu, context menu,
+shortcut menu.
 
 **Player Menu**:
 The persistent bottom-right circular identicon button that opens player-level navigation
@@ -209,6 +210,12 @@ The touch interaction meanings shared by **Portrait Play** and **Landscape Play*
 layout and immersive/fullscreen behavior, not what taps, long-presses, pinches, or drags mean.
 _Avoid_: portrait controls, landscape controls.
 
+**Telescope**:
+The achievement-gated temporary zoom-out the player holds to see more of the room; releasing
+returns to the prior view. On desktop letterbox, **Shift** or the magnifying-glass control beside
+**Player Menu**; on mobile-play layouts, hold the magnifying-glass control only.
+_Avoid_: zoom mode, map overview toggle, binoculars.
+
 ## Movement
 
 **Touch Joystick**:
@@ -320,6 +327,16 @@ before **Loadout** is saved — driven from the Wardrobe or Shop UI, not persist
 Distinct from operator **Catalog Preview** (any wallet, admin-only).
 _Avoid_: try-on, fitting room, mannequin.
 
+**Wardrobe Preview Backdrop**:
+The read-only miniature of the viewer's current **Room** behind the avatar in **Wardrobe
+Preview** — the room's sky tint plus a 3×3 symmetric floor patch sampled around the tile the
+viewer is standing on when the preview opens (non-walkable cells in the patch render as void).
+Captured once per open; not a separate saved setting and not live-synced while the panel stays
+open. Shown for both the signed-in player's Wardrobe and read-only views of other players
+(their avatar, your room as the stage), including the Shop mini preview doll. When the
+viewer's floor tile is not yet known, the patch anchors on the room **Spawn** instead.
+_Avoid_: studio backdrop, profile background, preview wallpaper.
+
 **Deployable**:
 A cosmetic whose Slot is deployable — owned like any Entitlement, **used** from the Action
 Wheel by arming it and tapping a walkable tile. Server enforces cooldown, duration, and
@@ -387,6 +404,26 @@ _Avoid_: stats, totals, progress bars.
 The grouping each achievement declares (e.g. onboarding, commons build, mining). The Category
 Navigator lists one entry per Category present in the player's data, labelled for display.
 _Avoid_: section, group, type.
+
+**Category Group** (achievement):
+An optional display-only label that clusters related Categories in the Category Navigator (e.g.
+**Minigames** groups Football Match and Football Free Play). Not stored on player progress;
+achievements still declare a single leaf Category.
+_Avoid_: parent category, section header (alone), nested category.
+
+**Football** (achievement grouping):
+The player-facing name for World Cup football minigame achievements in the **Category
+Navigator** (under **Minigames**). Leaf categories use plain labels such as **Football Match**
+and **Football Free Play** (no em dash). In-world feature copy may still say **World Cup**
+where that is the established feature name.
+_Avoid_: World Cup (as navigator group label), Soccer.
+
+**Feedback** (achievement):
+Recognition for submitting product feedback (bug, feature, or suggestion ticket). Chat
+**reports** (`source: "report"`) do not count. v1: one achievement on the player's first
+eligible ticket only. Lives in the **Social** achievement Category (not a separate navigator
+entry).
+_Avoid_: report, player report, moderation ticket.
 
 ## Payouts
 
