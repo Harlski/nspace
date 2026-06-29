@@ -1,4 +1,4 @@
-/** Code-defined cosmetic presets (v1 — not admin-authored). */
+/** Code-defined cosmetic presets — v2 prefabs register here after visual quality gate. */
 
 export type CosmeticSlot =
   | "aura"
@@ -30,34 +30,26 @@ export const DEPLOY_PARAM_LIMITS = {
   deployRange: { min: 1, max: 5 },
 } as const;
 
-const PRESETS: ReadonlyArray<CosmeticPreset> = [
-  { presetId: "aura-glow-blue", label: "Blue Glow Aura", slot: "aura" },
-  { presetId: "aura-glow-gold", label: "Gold Glow Aura", slot: "aura" },
+/** Fixtures for automated tests only (`COSMETIC_STORE_TEST_PRESETS=1`). */
+const TEST_FIXTURE_PRESETS: ReadonlyArray<CosmeticPreset> = [
+  { presetId: "test-aura", label: "Test Aura", slot: "aura" },
+  { presetId: "test-aura-gold", label: "Test Gold Aura", slot: "aura" },
   {
-    presetId: "nameplate-frame-simple",
-    label: "Simple Frame Nameplate",
+    presetId: "test-nameplate",
+    label: "Test Nameplate",
     slot: "nameplate",
   },
   {
-    presetId: "nameplate-frame-neon",
-    label: "Neon Frame Nameplate",
-    slot: "nameplate",
-  },
-  {
-    presetId: "bubble-rounded-pastel",
-    label: "Pastel Rounded Bubble",
+    presetId: "test-bubble",
+    label: "Test Bubble",
     slot: "chatBubble",
   },
+  { presetId: "test-trail", label: "Test Trail", slot: "trail" },
+  { presetId: "test-trail-alt", label: "Test Trail Alt", slot: "trail" },
+  { presetId: "test-trail-smoke", label: "Test Smoke Trail", slot: "trail" },
   {
-    presetId: "bubble-sharp-dark",
-    label: "Dark Sharp Bubble",
-    slot: "chatBubble",
-  },
-  { presetId: "trail-sparkle", label: "Sparkle Trail", slot: "trail" },
-  { presetId: "trail-smoke", label: "Smoke Trail", slot: "trail" },
-  {
-    presetId: "deployable-confetti-burst",
-    label: "Confetti Burst",
+    presetId: "test-deployable",
+    label: "Test Deployable",
     slot: "deployable",
     deployDefaults: {
       cooldownSec: 30,
@@ -68,15 +60,24 @@ const PRESETS: ReadonlyArray<CosmeticPreset> = [
   },
 ];
 
+const PRODUCTION_PRESETS: ReadonlyArray<CosmeticPreset> = [];
+
+function activePresets(): ReadonlyArray<CosmeticPreset> {
+  if (process.env.COSMETIC_STORE_TEST_PRESETS === "1") {
+    return TEST_FIXTURE_PRESETS;
+  }
+  return PRODUCTION_PRESETS;
+}
+
 export function listCosmeticPresets(): ReadonlyArray<CosmeticPreset> {
-  return PRESETS;
+  return activePresets();
 }
 
 export function getCosmeticPreset(
   presetId: string
 ): CosmeticPreset | undefined {
   const id = String(presetId ?? "").trim();
-  return PRESETS.find((p) => p.presetId === id);
+  return activePresets().find((p) => p.presetId === id);
 }
 
 export function isPassiveSlot(slot: CosmeticSlot): slot is PassiveSlot {

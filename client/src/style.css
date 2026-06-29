@@ -732,6 +732,42 @@ body {
   -ms-user-select: none;
 }
 
+/* Default UA focus ring reads as a harsh light 1px outline on dark panels (e.g. after
+   programmatic .focus()). Per-control :focus-visible rules below keep keyboard cues. */
+#app button:focus:not(:focus-visible),
+#app summary:focus:not(:focus-visible),
+#app [role="button"]:focus:not(:focus-visible),
+#app [role="tab"]:focus:not(:focus-visible),
+#app a:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Icon dismiss controls — no focus chrome (Escape / backdrop dismiss). */
+.rooms-modal__close,
+.brand-links-overlay__close,
+.signboard-tooltip__close,
+.other-player-profile__close,
+.gate-acl-dialog__close,
+.prefab-publish-overlay__close,
+.direct-invite-lobby__close,
+.join-gate__close,
+.achievement-panel__close {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.rooms-modal__close:focus,
+.brand-links-overlay__close:focus,
+.signboard-tooltip__close:focus,
+.other-player-profile__close:focus,
+.gate-acl-dialog__close:focus,
+.prefab-publish-overlay__close:focus,
+.direct-invite-lobby__close:focus,
+.join-gate__close:focus,
+.achievement-panel__close:focus {
+  outline: none;
+  box-shadow: none;
+}
+
 #app {
   height: 100%;
 }
@@ -898,7 +934,9 @@ html.nspace-pseudo-fs #app {
 
 .player-menu__trigger,
 .player-menu__name,
-.player-menu__panel {
+.player-menu__panel,
+.telescope-control,
+.build-quick-control {
   pointer-events: auto;
 }
 
@@ -1151,6 +1189,33 @@ html.nspace-pseudo-fs #app {
 
 .build-quick-control__icon {
   display: block;
+  width: 12px;
+  height: 12px;
+}
+
+html:not(.nspace-mobile-play-host) .build-quick-control {
+  touch-action: manipulation;
+}
+
+/* Desktop letterbox: build toggle lives above Player Menu — hide the legacy bottom-right strip. */
+html:not(.nspace-mobile-play-host) .hud-build-mode-strip {
+  display: none !important;
+}
+
+/* Desktop letterbox: slightly roomier Player Menu cluster (+4px trigger). */
+html:not(.nspace-mobile-play-host) .player-menu {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+html:not(.nspace-mobile-play-host) .player-menu__trigger {
+  width: 68px;
+  height: 68px;
+}
+
+html:not(.nspace-mobile-play-host) .player-menu__identicon {
+  width: 64px;
+  height: 64px;
 }
 
 html.nspace-mobile-play-host .build-quick-control {
@@ -1166,7 +1231,21 @@ html.nspace-mobile-play-host .telescope-control {
 }
 
 html.nspace-mobile-play-host .player-menu {
+  position: fixed;
+  z-index: 12;
   bottom: var(--hud-nimiq-pay-bottom-inset);
+}
+
+html.nspace-mobile-play-host .player-menu__trigger,
+html.nspace-mobile-play-host .player-menu__name {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+}
+
+html.nspace-mobile-play-host .other-player-profile__copy-address,
+html.nspace-mobile-play-host .brand-links-overlay__address-copy {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
 }
 
 html.nspace-mobile-landscape .player-menu {
@@ -1426,6 +1505,13 @@ html.nspace-mobile-landscape .player-menu {
   --hud-mode-sidebar-width: 0px;
   /* Bottom build palette height; updated from JS when the dock is visible */
   --hud-build-dock-height: 0px;
+  /* Gap between HUD overlays and the bottom chat / build band (achievements rail, etc.) */
+  --hud-bottom-band-gap: 8px;
+  /* Inset from letterbox bottom to clear bottom band + gap; measured in JS when possible */
+  --hud-above-bottom-band: calc(
+    10px + env(safe-area-inset-bottom, 0px) + var(--hud-build-dock-height, 0px) + 120px +
+      var(--hud-bottom-band-gap, 8px)
+  );
   /* Cap build menu growth; extra placement controls scroll in context mods */
   --hud-build-dock-panel-max-height: min(40vh, 164px);
 }
@@ -5387,6 +5473,20 @@ button.hud-brand:focus-visible {
 }
 
 /* Quick emoji — right-click self (desktop) or long-press own avatar (touch) */
+/* Pay WebView: tap-outside catcher on body (above #app fixed z-index 5). */
+.action-wheel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10065;
+  pointer-events: auto;
+  touch-action: manipulation;
+  background: transparent;
+}
+
+.action-wheel-backdrop[hidden] {
+  display: none !important;
+}
+
 /* Action Wheel — radial self-menu centred on the avatar (the transparent Hub frames it). */
 .action-wheel {
   position: absolute;
@@ -5403,6 +5503,13 @@ button.hud-brand:focus-visible {
 .action-wheel.action-wheel--open {
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
+  /* Above achievement unlock banner (10060) and other HUD overlays in Pay. */
+  z-index: 10070;
+}
+
+.action-wheel.action-wheel--portaled {
+  position: fixed;
+  z-index: 10070;
 }
 
 .action-wheel[hidden] {
@@ -5717,9 +5824,7 @@ button.hud-brand:focus-visible {
   margin: 0;
   padding: 0;
   border: none;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: transparent;
   cursor: pointer;
 }
 
@@ -5782,8 +5887,8 @@ button.hud-brand:focus-visible {
 .other-player-profile.is-sheet:not(.sign-read-overlay) {
   align-items: flex-end;
   padding: 0;
-  /* Reserve a little headroom at the top so a sliver of dimmed backdrop shows above a tall sheet. */
   padding-top: max(24px, env(safe-area-inset-top, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* Bottom-anchored sheet: docks flush to the viewport bottom, rounds only its top corners, and lets
@@ -5895,7 +6000,7 @@ button.hud-brand:focus-visible {
    blurred game), so nothing/no panel sits behind them. The bar breaks out of the dialog's bottom
    padding with negative margins; each tab has only bottom-rounded corners and an opaque fill so the
    game doesn't show through, and the active one drops its top border to read as merged ("open")
-   with the modal above. Sheet mode (mobile / Nimiq Pay) re-docks these inside the panel below. */
+   with the modal above. Sheet mode (mobile / Nimiq Pay) docks the bar inside the panel bottom. */
 .other-player-profile__tabbar {
   display: flex;
   flex-direction: row;
@@ -5953,32 +6058,52 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
-/* Sheet mode: the tabs dock inside the panel as a flush bottom zone (there's nothing below to hang
-   over). They go transparent so they blend into the sheet rather than reading as filled boxes, and
-   drop the hanging drop-shadow. */
+/* Other-player profiles: Achievements + User Rooms only — centered pair, not stretched. */
+.other-player-profile__tabbar--other {
+  justify-content: center;
+}
+
+.other-player-profile__tabbar--other .other-player-profile__tab {
+  flex: 0 1 9.5rem;
+  max-width: 11rem;
+}
+
+/* Sheet mode: tabs are pinned to the bottom edge of the sheet (inside the panel — not hanging over
+   the backdrop like desktop). Same folder-tab chrome; active tab merges upward into the content. */
 .other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__tabbar {
   margin: 0;
-  gap: 6px;
+  gap: 8px;
   flex: 0 0 auto;
   justify-content: center;
-  padding: 0 10px max(8px, env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+  padding: 8px 12px max(8px, env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(61, 70, 90, 0.9);
+  background: #14171f;
 }
 
 .other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__tab {
   flex: 1 1 0;
-  max-width: 220px;
-  height: 38px;
-  padding: 0 12px;
-  background: transparent;
+  min-width: 0;
+  max-width: none;
+  height: 36px;
+  padding: 0 6px;
+  font-size: 11px;
   box-shadow: none;
 }
 
-.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__tab:hover {
-  background: rgba(255, 255, 255, 0.04);
+.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__tab.is-active {
+  margin-top: -1px;
 }
 
-.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__tab.is-active {
-  background: rgba(56, 189, 248, 0.1);
+.other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__tabbar--other {
+  justify-content: center;
+}
+
+.other-player-profile.is-sheet:not(.sign-read-overlay)
+  .other-player-profile__tabbar--other
+  .other-player-profile__tab {
+  flex: 0 1 9.5rem;
+  max-width: 11rem;
 }
 
 .other-player-profile__card-body {
@@ -6631,8 +6756,40 @@ button.hud-brand:focus-visible {
   font-size: 9px;
 }
 
-.other-player-profile__wardrobe .wardrobe-slot__label {
-  font-size: 8px;
+.wardrobe-slot-tip-host {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.wardrobe-slot-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  box-sizing: border-box;
+  max-width: 12rem;
+  padding: 0.28rem 0.45rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(12, 14, 20, 0.96);
+  color: #e2e8f0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+}
+
+.wardrobe-slot-tip.is-visible {
+  opacity: 1;
+  visibility: visible;
 }
 
 .wardrobe-panel__tabs {
@@ -6663,6 +6820,27 @@ button.hud-brand:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+}
+
+.wardrobe-doll__deployable-row {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.wardrobe-slot-cell--deployable {
+  max-width: 8rem;
+}
+
+.wardrobe-shop__desc--achievements {
+  margin-top: 0.35rem;
+}
+
+.wardrobe-shop__subheading {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: rgba(226, 232, 240, 0.95);
 }
 
 .wardrobe-doll__grid {
@@ -6894,13 +7072,14 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   appearance: none;
   display: inline-flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.2rem;
+  align-items: stretch;
+  justify-content: stretch;
+  gap: 0;
   box-sizing: border-box;
   width: 4.25rem;
   aspect-ratio: 1;
-  padding: 0.3rem 0.35rem;
+  padding: 0;
+  overflow: hidden;
   border: 1px solid rgba(120, 53, 15, 0.55);
   border-radius: 8px;
   background:
@@ -6917,7 +7096,11 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
 
 .wardrobe-slot--readonly {
   cursor: default;
-  pointer-events: none;
+}
+
+.wardrobe-slot--readonly:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.75);
+  outline-offset: 2px;
 }
 
 .wardrobe-slot--equipped {
@@ -6931,21 +7114,106 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   border-color: rgba(96, 165, 250, 0.85);
 }
 
-.wardrobe-slot__label {
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 9px;
-  color: #94a3b8;
+.wardrobe-slot > .wardrobe-swatch {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  border: none;
+  border-radius: inherit;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.wardrobe-slot > .wardrobe-swatch--nameplate-simple {
+  background: rgba(12, 16, 24, 0.98);
+  border: 2px solid #c8d4e4;
+  box-shadow:
+    inset 0 0 0 5px rgba(12, 16, 24, 1),
+    inset 0 0 0 7px rgba(200, 212, 228, 0.85);
+}
+
+.wardrobe-slot > .wardrobe-swatch--nameplate-neon {
+  background: rgba(12, 16, 24, 0.98);
+  border: 2px solid #00ffcc;
+  box-shadow:
+    inset 0 0 0 5px rgba(12, 16, 24, 1),
+    inset 0 0 0 7px rgba(0, 255, 204, 0.9),
+    0 0 10px rgba(0, 255, 204, 0.35);
+}
+
+.wardrobe-slot > .wardrobe-swatch--aura-cyan,
+.wardrobe-slot > .wardrobe-swatch--aura-gold,
+.wardrobe-slot > .wardrobe-swatch--aura-rose,
+.wardrobe-slot > .wardrobe-swatch--aura-violet,
+.wardrobe-slot > .wardrobe-swatch--aura-lime {
+  background: radial-gradient(circle at 50% 55%, rgba(15, 23, 42, 0.15) 0%, rgba(15, 23, 42, 0.92) 72%);
+  box-shadow:
+    inset 0 0 0 3px currentColor,
+    0 0 14px color-mix(in srgb, currentColor 55%, transparent);
+}
+
+.wardrobe-slot > .wardrobe-swatch--aura-cyan {
+  color: #44d4ff;
+}
+
+.wardrobe-slot > .wardrobe-swatch--aura-gold {
+  color: #ffcc44;
+}
+
+.wardrobe-slot > .wardrobe-swatch--aura-rose {
+  color: #ff6699;
+}
+
+.wardrobe-slot > .wardrobe-swatch--aura-violet {
+  color: #aa77ff;
+}
+
+.wardrobe-slot > .wardrobe-swatch--aura-lime {
+  color: #88ee55;
+}
+
+.wardrobe-slot > .wardrobe-swatch--bubble-pastel,
+.wardrobe-slot > .wardrobe-swatch--bubble-dark {
+  background: rgba(12, 16, 24, 0.98);
+}
+
+.wardrobe-slot > .wardrobe-swatch--bubble-pastel::after,
+.wardrobe-slot > .wardrobe-swatch--bubble-dark::after {
+  content: "";
+  position: absolute;
+  right: 10%;
+  bottom: 12%;
+  width: 46%;
+  height: 34%;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 7px 7px 7px 2px;
+}
+
+.wardrobe-slot > .wardrobe-swatch--bubble-pastel::after {
+  background: rgba(255, 210, 230, 0.92);
+  border-color: rgba(255, 180, 210, 0.65);
+}
+
+.wardrobe-slot > .wardrobe-swatch--bubble-dark::after {
+  background: rgba(20, 24, 36, 0.96);
+  border-color: rgba(100, 116, 139, 0.75);
+  border-radius: 3px;
 }
 
 .wardrobe-swatch {
   display: inline-block;
+  position: relative;
   width: 1.25rem;
   height: 1.25rem;
   border-radius: 4px;
   border: 1px solid rgba(51, 65, 85, 0.85);
   background: rgba(30, 41, 59, 0.95);
   flex-shrink: 0;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .wardrobe-swatch--empty {
@@ -7077,6 +7345,136 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   margin-bottom: 0.45rem;
 }
 
+.wardrobe-dropdown__list {
+  display: flex;
+  flex-direction: column;
+}
+
+.wardrobe-dropdown__pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(51, 65, 85, 0.45);
+}
+
+.wardrobe-dropdown__pager-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.65rem;
+  height: 1.65rem;
+  padding: 0 0.35rem;
+  border: 1px solid rgba(100, 116, 139, 0.55);
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.85);
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.wardrobe-dropdown__pager-btn:hover:not(:disabled) {
+  border-color: rgba(56, 189, 248, 0.55);
+  color: #fff;
+}
+
+.wardrobe-dropdown__pager-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.wardrobe-dropdown__pager-label {
+  min-width: 3.2rem;
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch {
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 5px;
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--nameplate-simple {
+  background: rgba(12, 16, 24, 0.98);
+  border: 2px solid #c8d4e4;
+  box-shadow: inset 0 0 0 3px rgba(12, 16, 24, 1), inset 0 0 0 4px rgba(200, 212, 228, 0.85);
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--nameplate-neon {
+  background: rgba(12, 16, 24, 0.98);
+  border: 2px solid #00ffcc;
+  box-shadow:
+    inset 0 0 0 3px rgba(12, 16, 24, 1),
+    inset 0 0 0 4px rgba(0, 255, 204, 0.9),
+    0 0 6px rgba(0, 255, 204, 0.35);
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--aura-cyan,
+.wardrobe-dropdown__row .wardrobe-swatch--aura-gold,
+.wardrobe-dropdown__row .wardrobe-swatch--aura-rose,
+.wardrobe-dropdown__row .wardrobe-swatch--aura-violet,
+.wardrobe-dropdown__row .wardrobe-swatch--aura-lime {
+  background: radial-gradient(circle at 50% 55%, rgba(15, 23, 42, 0.2) 0%, rgba(15, 23, 42, 0.95) 75%);
+  box-shadow: inset 0 0 0 2px currentColor, 0 0 8px color-mix(in srgb, currentColor 50%, transparent);
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--aura-cyan {
+  color: #44d4ff;
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--aura-gold {
+  color: #ffcc44;
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--aura-rose {
+  color: #ff6699;
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--aura-violet {
+  color: #aa77ff;
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--aura-lime {
+  color: #88ee55;
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--bubble-pastel,
+.wardrobe-dropdown__row .wardrobe-swatch--bubble-dark {
+  background: rgba(12, 16, 24, 0.98);
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--bubble-pastel::after,
+.wardrobe-dropdown__row .wardrobe-swatch--bubble-dark::after {
+  content: "";
+  position: absolute;
+  right: 8%;
+  bottom: 10%;
+  width: 52%;
+  height: 38%;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 5px 5px 5px 1px;
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--bubble-pastel::after {
+  background: rgba(255, 210, 230, 0.92);
+  border-color: rgba(255, 180, 210, 0.65);
+}
+
+.wardrobe-dropdown__row .wardrobe-swatch--bubble-dark::after {
+  background: rgba(20, 24, 36, 0.96);
+  border-color: rgba(100, 116, 139, 0.75);
+  border-radius: 2px;
+}
+
 .wardrobe-dropdown__row {
   appearance: none;
   display: flex;
@@ -7134,22 +7532,122 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   margin-bottom: 0.45rem;
 }
 
-.wardrobe-shop__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
-  gap: 0.45rem;
-  margin-bottom: 0.65rem;
-}
-
-.wardrobe-shop__card {
+.wardrobe-shop__list {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.45rem;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.wardrobe-shop__row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.wardrobe-shop__row-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0.4rem 0.5rem;
   border: 1px solid rgba(71, 85, 105, 0.55);
-  border-radius: 8px;
+  border-radius: 6px;
   background: rgba(15, 23, 42, 0.88);
+}
+
+.wardrobe-shop__row.is-previewing .wardrobe-shop__row-card {
+  border-color: rgba(56, 189, 248, 0.55);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+}
+
+.wardrobe-shop__row-label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.wardrobe-shop__row-name {
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wardrobe-shop__row-sep {
+  color: rgba(100, 116, 139, 0.85);
   font-size: 11px;
+  flex-shrink: 0;
+}
+
+.wardrobe-shop__row-slot {
+  color: #94a3b8;
+  font-size: 11px;
+  font-style: italic;
+  flex-shrink: 0;
+}
+
+.wardrobe-shop__row-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.wardrobe-shop__row-actions {
+  display: grid;
+  grid-template-columns: 3.55rem 3.55rem;
+  gap: 0.25rem;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.wardrobe-shop__row-action-col {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.65rem;
+}
+
+.wardrobe-shop__row-action-col--preview:empty,
+.wardrobe-shop__row-action-col--primary:empty {
+  min-height: 1.65rem;
+}
+
+.wardrobe-shop__row-price {
+  font-size: 10px;
+  font-weight: 600;
+  color: #cbd5e1;
+  white-space: nowrap;
+}
+
+.wardrobe-shop__row-owned {
+  margin: 0;
+}
+
+.wardrobe-shop__row-hint {
+  max-width: 5.5rem;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.wardrobe-shop__row-btn {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.22rem 0.35rem;
+  font-size: 10px;
+  min-height: 1.65rem;
+  line-height: 1.1;
 }
 
 .wardrobe-shop__desc {
@@ -7157,13 +7655,6 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   color: #94a3b8;
   font-size: 10px;
   line-height: 1.35;
-}
-
-.wardrobe-shop__card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  margin-top: 0.2rem;
 }
 
 .wardrobe-shop--link {
@@ -8332,6 +8823,27 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
+}
+
+.hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__stack {
+  animation: hud-build-bottom-dock-rise 0.26s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+@keyframes hud-build-bottom-dock-rise {
+  from {
+    transform: translateY(100%);
+    opacity: 0.92;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__stack {
+    animation: none;
+  }
 }
 
 .hud-build-bottom-dock__preview-satellite {
@@ -15545,7 +16057,48 @@ a.main-menu__version:focus-visible {
   border-color: rgba(99, 102, 241, 0.5);
 }
 
-.achievement-unlock-banner {
+.achievement-unlock-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    ellipse 240% 200% at 50% 48%,
+    rgba(255, 255, 255, 0.92) 0%,
+    rgba(255, 253, 250, 0.78) 38%,
+    rgba(255, 250, 238, 0.48) 58%,
+    rgba(255, 244, 210, 0.28) 74%,
+    rgba(253, 224, 71, 0.14) 88%,
+    transparent 100%
+  );
+}
+
+.achievement-unlock-flash--active {
+  animation: achievement-unlock-screen-flash 0.62s ease-out forwards;
+}
+
+@keyframes achievement-unlock-screen-flash {
+  0% {
+    opacity: 0.58;
+  }
+  18% {
+    opacity: 0.42;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .achievement-unlock-flash,
+  .achievement-unlock-flash--active {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+.achievement-unlock-stack {
   position: absolute;
   left: 50%;
   top: calc(var(--hud-below-top-wrap, 52px) + var(--achievement-unlock-banner-gap, 8px));
@@ -15554,24 +16107,80 @@ a.main-menu__version:focus-visible {
   transform: translateX(-50%) translateY(-8px);
   opacity: 0;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   transition:
     opacity 0.22s ease,
     transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.05);
 }
 
-/* Nimiq Pay / mobile play — extra breathing room below compact top chrome */
-html.nspace-mobile-play-host .achievement-unlock-banner {
-  --achievement-unlock-banner-gap: 18px;
-}
-
-html.nspace-mobile-play-host .letterbox:has(.hud--has-status-sub) .achievement-unlock-banner {
-  --achievement-unlock-banner-gap: 22px;
-}
-
-.achievement-unlock-banner--visible {
+.achievement-unlock-stack--visible {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
   pointer-events: auto;
+}
+
+.achievement-unlock-stack[hidden] {
+  display: none !important;
+}
+
+.achievement-unlock-banner {
+  position: relative;
+  width: 100%;
+  border-radius: 15px;
+  padding: 1px;
+  overflow: hidden;
+}
+
+/* Rotating 1px accent ring — visible only while the toast is shown */
+.achievement-unlock-banner--visible::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 0;
+  width: 220%;
+  aspect-ratio: 1;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 250deg,
+    rgba(250, 204, 21, 0.15) 265deg,
+    rgba(251, 191, 36, 0.95) 285deg,
+    rgba(253, 224, 71, 1) 305deg,
+    rgba(74, 222, 128, 0.85) 325deg,
+    rgba(250, 204, 21, 0.15) 340deg,
+    transparent 360deg
+  );
+  transform: translate(-50%, -50%);
+  animation: achievement-unlock-banner-glow-orbit 2.8s linear infinite;
+}
+
+@keyframes achievement-unlock-banner-glow-orbit {
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .achievement-unlock-banner--visible::before {
+    content: none;
+  }
+
+  .achievement-unlock-banner__card {
+    border: 1px solid rgba(250, 204, 21, 0.45);
+  }
+}
+
+/* Nimiq Pay / mobile play — extra breathing room below compact top chrome */
+html.nspace-mobile-play-host .achievement-unlock-stack {
+  --achievement-unlock-banner-gap: 18px;
+}
+
+html.nspace-mobile-play-host .letterbox:has(.hud--has-status-sub) .achievement-unlock-stack {
+  --achievement-unlock-banner-gap: 22px;
 }
 
 .achievement-unlock-banner[hidden] {
@@ -15579,6 +16188,8 @@ html.nspace-mobile-play-host .letterbox:has(.hud--has-status-sub) .achievement-u
 }
 
 .achievement-unlock-banner__card {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
@@ -15587,7 +16198,7 @@ html.nspace-mobile-play-host .letterbox:has(.hud--has-status-sub) .achievement-u
   margin: 0;
   padding: 0.55rem 0.65rem;
   border-radius: 14px;
-  border: 1px solid rgba(250, 204, 21, 0.35);
+  border: none;
   background: linear-gradient(160deg, rgba(28, 34, 56, 0.98), rgba(17, 21, 38, 0.98));
   box-shadow:
     0 16px 40px rgba(0, 0, 0, 0.45),
@@ -15599,7 +16210,10 @@ html.nspace-mobile-play-host .letterbox:has(.hud--has-status-sub) .achievement-u
 }
 
 .achievement-unlock-banner__card:hover {
-  border-color: rgba(250, 204, 21, 0.5);
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 18px rgba(250, 204, 21, 0.12);
 }
 
 .achievement-unlock-banner__card:focus-visible {
@@ -15611,11 +16225,6 @@ html.nspace-mobile-play-host .letterbox:has(.hud--has-status-sub) .achievement-u
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 35%, rgba(250, 204, 21, 0.28), rgba(217, 119, 6, 0.14));
-  border: 1px solid rgba(250, 204, 21, 0.45);
   flex-shrink: 0;
 }
 
@@ -15678,13 +16287,133 @@ html.nspace-mobile-play-host .letterbox:has(.hud--has-status-sub) .achievement-u
   flex-shrink: 0;
 }
 
-html.nspace-mobile-portrait .achievement-unlock-banner {
+.achievement-reward-unlock-toast {
+  position: relative;
+  width: min(88%, 360px);
+  align-self: center;
+  border-radius: 11px;
+  padding: 1px;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+  pointer-events: none;
+  transition:
+    opacity 0.2s ease,
+    transform 0.24s cubic-bezier(0.2, 0.9, 0.3, 1.05);
+}
+
+.achievement-reward-unlock-toast--visible::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 0;
+  width: 220%;
+  aspect-ratio: 1;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 250deg,
+    rgba(74, 222, 128, 0.15) 265deg,
+    rgba(74, 222, 128, 0.95) 285deg,
+    rgba(134, 239, 172, 1) 305deg,
+    rgba(45, 212, 191, 0.85) 325deg,
+    rgba(74, 222, 128, 0.15) 340deg,
+    transparent 360deg
+  );
+  transform: translate(-50%, -50%);
+  animation: achievement-reward-unlock-glow-flash 0.95s ease-out forwards;
+}
+
+@keyframes achievement-reward-unlock-glow-flash {
+  0% {
+    transform: translate(-50%, -50%) rotate(0deg);
+    opacity: 1;
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(360deg);
+    opacity: 0;
+  }
+}
+
+.achievement-reward-unlock-toast--visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.achievement-reward-unlock-toast[hidden] {
+  display: none !important;
+}
+
+.achievement-reward-unlock-toast__card {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(160deg, rgba(18, 32, 28, 0.98), rgba(12, 20, 18, 0.98));
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  text-align: center;
+}
+
+.achievement-reward-unlock-toast__eyebrow {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #4ade80;
+}
+
+.achievement-reward-unlock-toast__name {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #ecfdf5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .achievement-reward-unlock-toast {
+    transition: none;
+  }
+
+  .achievement-reward-unlock-toast--visible::before {
+    content: none;
+  }
+
+  .achievement-reward-unlock-toast__card {
+    border: 1px solid rgba(74, 222, 128, 0.45);
+  }
+}
+
+html.nspace-mobile-portrait .achievement-unlock-stack {
   top: auto;
   bottom: 12px;
   transform: translateX(-50%) translateY(8px);
 }
 
-html.nspace-mobile-portrait .achievement-unlock-banner--visible {
+html.nspace-mobile-portrait .achievement-unlock-stack--visible {
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Nimiq Pay — unlock toast below compact top chrome (not bottom of letterbox) */
+html.nspace-nimiq-pay-host .achievement-unlock-stack {
+  top: calc(var(--hud-below-top-wrap, 44px) + var(--achievement-unlock-banner-gap, 18px));
+  bottom: auto;
+  transform: translateX(-50%) translateY(-8px);
+}
+
+html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   transform: translateX(-50%) translateY(0);
 }
 
@@ -15723,8 +16452,13 @@ html.nspace-mobile-play-host .achievement-unlock-debug-btn {
   pointer-events: none;
 }
 
-/* Desktop / 16:9 letterbox: left rail over the game (no dimmed backdrop). */
+/* Desktop / 16:9 letterbox: left rail in the HUD band (no dimmed backdrop). */
 .achievement-panel:not(.achievement-panel--sheet) {
+  inset: auto;
+  top: var(--hud-below-top-wrap);
+  bottom: var(--hud-above-bottom-band);
+  left: 0;
+  right: 0;
   align-items: stretch;
   justify-content: flex-start;
   padding: 0;
@@ -15779,6 +16513,24 @@ html.nspace-mobile-play-host .achievement-unlock-debug-btn {
   border-radius: 0 14px 14px 0;
   border-left: none;
   box-shadow: 4px 0 32px rgba(0, 0, 0, 0.4);
+  animation: achievement-panel-rail-slide-in 0.26s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+@keyframes achievement-panel-rail-slide-in {
+  from {
+    transform: translateX(-100%);
+    opacity: 0.92;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .achievement-panel:not(.achievement-panel--sheet) .achievement-panel__dialog {
+    animation: none;
+  }
 }
 
 .achievement-panel--sheet .achievement-panel__dialog {
@@ -15820,6 +16572,8 @@ html.nspace-mobile-play-host .achievement-unlock-debug-btn {
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .achievement-panel__header {
@@ -15923,6 +16677,29 @@ html.nspace-mobile-play-host .achievement-unlock-debug-btn {
   border-left-color: #4ade80;
   background: rgba(74, 222, 128, 0.08);
   color: #f8fafc;
+}
+
+.achievement-panel__nav-group {
+  list-style: none;
+  margin: 0.65rem 0 0.15rem;
+  padding: 0 0.75rem;
+}
+
+.achievement-panel__nav-group:first-child {
+  margin-top: 0;
+}
+
+.achievement-panel__nav-group-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.achievement-panel__nav-btn--nested {
+  padding-left: 1.1rem;
 }
 
 .achievement-panel__nav-label {
@@ -16335,10 +17112,48 @@ html.nspace-mobile-play-host .achievement-unlock-debug-btn {
 }
 
 .other-player-profile__achievements-list {
-  margin: 0.35rem 0 0;
-  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.45rem 0 0;
+  padding: 0;
+}
+
+.other-player-profile__achievement-row {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.other-player-profile__achievement-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.88);
+}
+
+.other-player-profile__achievement-title {
+  min-width: 0;
+  flex: 1 1 auto;
   font-size: 12px;
-  color: #cbd5e1;
+  font-weight: 600;
+  color: #e2e8f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.other-player-profile__achievement-points {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fde68a;
+  white-space: nowrap;
 }
 
 .other-player-profile__achievements-empty {
@@ -16348,18 +17163,139 @@ html.nspace-mobile-play-host .achievement-unlock-debug-btn {
 }
 
 .other-player-profile__achievements-view-all {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
   margin-top: 0.6rem;
-  padding: 0.4rem 0.75rem;
+  padding: 0.45rem 0.75rem;
   border: 1px solid rgba(250, 204, 21, 0.4);
-  border-radius: 8px;
+  border-radius: 6px;
   background: rgba(250, 204, 21, 0.1);
   color: #fde68a;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease;
+  text-align: center;
 }
 
 .other-player-profile__achievements-view-all:hover {
   background: rgba(250, 204, 21, 0.18);
+}
+
+/* Nimiq Pay on-screen touch debug (?payDebug=1 or localStorage nspace.payDebug=1) */
+.pay-touch-debug {
+  position: fixed;
+  left: max(6px, env(safe-area-inset-left, 0px));
+  top: max(6px, env(safe-area-inset-top, 0px));
+  bottom: auto;
+  z-index: 2147483000;
+  width: min(96vw, 420px);
+  max-height: min(42vh, 320px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(250, 204, 21, 0.55);
+  background: rgba(8, 10, 16, 0.94);
+  color: #e2e8f0;
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+  font-size: 10px;
+  line-height: 1.35;
+  pointer-events: auto;
+  touch-action: manipulation;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+
+.pay-touch-debug--minimized {
+  width: auto;
+  max-width: min(96vw, 320px);
+  max-height: none;
+  padding: 6px 8px;
+  gap: 4px;
+}
+
+.pay-touch-debug__head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pay-touch-debug__head {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fde68a;
+}
+
+.pay-touch-debug--minimized .pay-touch-debug__head {
+  font-size: 10px;
+}
+
+.pay-touch-debug__min {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(30, 41, 59, 0.95);
+  color: #f8fafc;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pay-touch-debug--minimized .pay-touch-debug__log,
+.pay-touch-debug--minimized .pay-touch-debug__btn--expanded-only {
+  display: none !important;
+}
+
+.pay-touch-debug--minimized .pay-touch-debug__actions {
+  flex-wrap: nowrap;
+}
+
+.pay-touch-debug--minimized .pay-touch-debug__btn {
+  min-width: 0;
+  flex: 1 1 0;
+  padding: 8px 6px;
+}
+
+.pay-touch-debug__log {
+  flex: 1 1 auto;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+}
+
+.pay-touch-debug__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pay-touch-debug__btn {
+  flex: 1 1 auto;
+  min-width: 4.5rem;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(30, 41, 59, 0.95);
+  color: #f8fafc;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pay-touch-debug__btn--warn {
+  border-color: rgba(251, 191, 36, 0.65);
+  background: rgba(120, 53, 15, 0.85);
+  color: #fef3c7;
 }

@@ -10,13 +10,17 @@ async function withCosmeticStore(
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nspace-cosmetic-"));
   const sqlitePath = path.join(dir, "campaigns.sqlite");
   process.env.CAMPAIGN_STORE_SQLITE_PATH = sqlitePath;
+  process.env.COSMETIC_STORE_TEST_PRESETS = "1";
   const mod = await import("../src/cosmeticStore.js");
+  mod._resetCosmeticStoreForTests();
   mod.initCosmeticStore();
   try {
     await fn(mod);
   } finally {
+    mod._resetCosmeticStoreForTests();
     fs.rmSync(dir, { recursive: true, force: true });
     delete process.env.CAMPAIGN_STORE_SQLITE_PATH;
+    delete process.env.COSMETIC_STORE_TEST_PRESETS;
   }
 }
 
@@ -28,7 +32,7 @@ test("create draft catalog entry and list in admin", async () => {
     const created = createCatalogEntry(
       {
         cosmeticSku: "aura-blue-v1",
-        presetId: "aura-cyan",
+        presetId: "test-aura",
         displayName: "Blue Glow",
         description: "A calm blue aura.",
         collection: "Starter",
@@ -41,7 +45,7 @@ test("create draft catalog entry and list in admin", async () => {
     if (!created.ok) return;
     assert.equal(created.entry.status, "draft");
     assert.equal(created.entry.slot, "aura");
-    assert.equal(created.entry.presetId, "aura-cyan");
+    assert.equal(created.entry.presetId, "test-aura");
 
     const all = listAdminCatalog();
     assert.equal(all.length, 1);
@@ -59,7 +63,7 @@ test("published shop excludes draft and archived entries", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "draft-item",
-        presetId: "aura-cyan",
+        presetId: "test-aura",
         displayName: "Draft",
         description: "",
         collection: "A",
@@ -71,7 +75,7 @@ test("published shop excludes draft and archived entries", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "live-item",
-        presetId: "aura-gold",
+        presetId: "test-aura-gold",
         displayName: "Gold",
         description: "",
         collection: "A",
@@ -84,7 +88,7 @@ test("published shop excludes draft and archived entries", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "old-item",
-        presetId: "trail-sparkle",
+        presetId: "test-trail",
         displayName: "Old",
         description: "",
         collection: "B",
@@ -107,7 +111,7 @@ test("slug uniqueness enforced", async () => {
     const first = createCatalogEntry(
       {
         cosmeticSku: "unique-sku",
-        presetId: "aura-cyan",
+        presetId: "test-aura",
         displayName: "One",
         description: "",
         collection: "X",
@@ -120,7 +124,7 @@ test("slug uniqueness enforced", async () => {
     const dup = createCatalogEntry(
       {
         cosmeticSku: "unique-sku",
-        presetId: "aura-gold",
+        presetId: "test-aura-gold",
         displayName: "Two",
         description: "",
         collection: "X",
@@ -146,7 +150,7 @@ test("grant entitlement and loadout equip one per passive slot", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "aura-a",
-        presetId: "aura-cyan",
+        presetId: "test-aura",
         displayName: "A",
         description: "",
         collection: "C",
@@ -158,7 +162,7 @@ test("grant entitlement and loadout equip one per passive slot", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "aura-b",
-        presetId: "aura-gold",
+        presetId: "test-aura-gold",
         displayName: "B",
         description: "",
         collection: "C",
@@ -201,7 +205,7 @@ test("loadout rejects unowned or wrong slot", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "trail-only",
-        presetId: "trail-sparkle",
+        presetId: "test-trail",
         displayName: "Trail",
         description: "",
         collection: "C",
@@ -219,7 +223,7 @@ test("loadout rejects unowned or wrong slot", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "bubble-one",
-        presetId: "bubble-rounded-pastel",
+        presetId: "test-bubble",
         displayName: "Bubble",
         description: "",
         collection: "C",
@@ -249,7 +253,7 @@ test("purchase grant is idempotent", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "buy-me",
-        presetId: "nameplate-frame-simple",
+        presetId: "test-nameplate",
         displayName: "Plate",
         description: "",
         collection: "Shop",
@@ -289,7 +293,7 @@ test("validate unlock intent rejects draft archived and owned", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "draft-sku",
-        presetId: "aura-cyan",
+        presetId: "test-aura",
         displayName: "D",
         description: "",
         collection: "X",
@@ -305,7 +309,7 @@ test("validate unlock intent rejects draft archived and owned", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "pub-sku",
-        presetId: "aura-gold",
+        presetId: "test-aura-gold",
         displayName: "P",
         description: "",
         collection: "X",
@@ -326,7 +330,7 @@ test("validate unlock intent rejects draft archived and owned", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "arch-sku",
-        presetId: "trail-smoke",
+        presetId: "test-trail-smoke",
         displayName: "A",
         description: "",
         collection: "X",
@@ -352,7 +356,7 @@ test("deploy rules use preset defaults and entry overrides with ceilings", async
     createCatalogEntry(
       {
         cosmeticSku: "confetti",
-        presetId: "deployable-confetti-burst",
+        presetId: "test-deployable",
         displayName: "Confetti",
         description: "",
         collection: "Fun",
@@ -401,7 +405,7 @@ test("changelog records create publish archive grant", async () => {
     createCatalogEntry(
       {
         cosmeticSku: "log-sku",
-        presetId: "bubble-sharp-dark",
+        presetId: "test-bubble",
         displayName: "Bubble",
         description: "Hi",
         collection: "Log",
@@ -423,6 +427,146 @@ test("changelog records create publish archive grant", async () => {
   });
 });
 
+test("fresh store starts empty after cosmetics v2 hard reset", async () => {
+  await withCosmeticStore(async ({
+    listAdminCatalog,
+    listEntitlements,
+    listPublishedShop,
+    getLoadout,
+  }) => {
+    assert.equal(listAdminCatalog().length, 0);
+    assert.equal(listEntitlements(WALLET).length, 0);
+    assert.equal(listPublishedShop().length, 0);
+    const loadout = getLoadout(WALLET);
+    assert.equal(loadout.auraSku, null);
+    assert.equal(loadout.trailSku, null);
+  });
+});
+
+test("cosmetics v2 hard reset clears legacy rows once and is idempotent", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nspace-cosmetic-migrate-"));
+  const sqlitePath = path.join(dir, "campaigns.sqlite");
+  process.env.CAMPAIGN_STORE_SQLITE_PATH = sqlitePath;
+  process.env.COSMETIC_STORE_TEST_PRESETS = "1";
+  try {
+    const { _resetCosmeticStoreForTests, runCosmeticsV2HardResetIfNeeded, initCosmeticStore } =
+      await import("../src/cosmeticStore.js");
+    _resetCosmeticStoreForTests();
+    const { initCampaignStore, getCampaignDatabase } = await import(
+      "../src/campaignStore.js"
+    );
+    initCampaignStore();
+    const db = getCampaignDatabase();
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS cosmetic_catalog (
+        cosmetic_sku TEXT PRIMARY KEY,
+        preset_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        collection TEXT NOT NULL DEFAULT '',
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        price_luna TEXT NOT NULL,
+        cooldown_sec INTEGER,
+        duration_sec INTEGER,
+        room_cap INTEGER,
+        deploy_range INTEGER,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS cosmetic_entitlements (
+        wallet TEXT NOT NULL,
+        cosmetic_sku TEXT NOT NULL,
+        granted_at_ms INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        intent_id TEXT,
+        tx_hash TEXT,
+        PRIMARY KEY (wallet, cosmetic_sku)
+      );
+      CREATE TABLE IF NOT EXISTS cosmetic_loadouts (
+        wallet TEXT PRIMARY KEY,
+        aura_sku TEXT,
+        nameplate_sku TEXT,
+        chat_bubble_sku TEXT,
+        trail_sku TEXT
+      );
+      CREATE TABLE IF NOT EXISTS cosmetic_changelog (
+        id TEXT PRIMARY KEY,
+        cosmetic_sku TEXT NOT NULL,
+        at_ms INTEGER NOT NULL,
+        actor_wallet TEXT NOT NULL,
+        action TEXT NOT NULL,
+        before_json TEXT,
+        after_json TEXT
+      );
+    `);
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO cosmetic_catalog
+        (cosmetic_sku, preset_id, status, display_name, description, collection,
+         sort_order, price_luna, created_at_ms, updated_at_ms)
+       VALUES (?, ?, 'published', ?, '', 'Legacy', 0, '100000', ?, ?)`
+    ).run("legacy-aura", "legacy-preset", "Legacy Aura", now, now);
+    db.prepare(
+      `INSERT INTO cosmetic_entitlements
+        (wallet, cosmetic_sku, granted_at_ms, source, intent_id, tx_hash)
+       VALUES (?, ?, ?, 'purchase', NULL, NULL)`
+    ).run(WALLET, "legacy-aura", now);
+    db.prepare(
+      `INSERT INTO cosmetic_loadouts (wallet, aura_sku) VALUES (?, ?)`
+    ).run(WALLET, "legacy-aura");
+
+    runCosmeticsV2HardResetIfNeeded();
+    assert.equal(
+      (db.prepare(`SELECT COUNT(*) AS c FROM cosmetic_catalog`).get() as { c: number }).c,
+      0
+    );
+    assert.equal(
+      (db.prepare(`SELECT COUNT(*) AS c FROM cosmetic_entitlements`).get() as { c: number })
+        .c,
+      0
+    );
+    assert.equal(
+      (db.prepare(`SELECT COUNT(*) AS c FROM cosmetic_loadouts`).get() as { c: number }).c,
+      0
+    );
+
+    initCosmeticStore();
+    const { createCatalogEntry, publishCatalogEntry, setLoadoutSlot } = await import(
+      "../src/cosmeticStore.js"
+    );
+    createCatalogEntry(
+      {
+        cosmeticSku: "post-reset",
+        presetId: "test-aura",
+        displayName: "Post reset",
+        description: "",
+        collection: "Shop",
+        sortOrder: 0,
+        priceLuna: 1n,
+      },
+      ACTOR
+    );
+    publishCatalogEntry("post-reset", ACTOR);
+
+    runCosmeticsV2HardResetIfNeeded();
+    assert.equal(
+      (db.prepare(`SELECT COUNT(*) AS c FROM cosmetic_catalog`).get() as { c: number }).c,
+      1
+    );
+
+    const unowned = setLoadoutSlot(WALLET, "aura", "legacy-aura");
+    assert.equal(unowned.ok, false);
+    if (!unowned.ok) assert.equal(unowned.error, "not_found");
+  } finally {
+    const { _resetCosmeticStoreForTests } = await import("../src/cosmeticStore.js");
+    _resetCosmeticStoreForTests();
+    fs.rmSync(dir, { recursive: true, force: true });
+    delete process.env.CAMPAIGN_STORE_SQLITE_PATH;
+    delete process.env.COSMETIC_STORE_TEST_PRESETS;
+  }
+});
+
 test("wardrobe shop includes owned achievement passives excluded from purchasable shop", async () => {
   await withCosmeticStore(async ({
     createCatalogEntry,
@@ -434,7 +578,7 @@ test("wardrobe shop includes owned achievement passives excluded from purchasabl
     createCatalogEntry(
       {
         cosmeticSku: "ach-trail-commons-starter",
-        presetId: "trail-sparkle",
+        presetId: "test-trail",
         displayName: "Commons Spark Trail",
         description: "Unlocked by placing your first block in the Commons.",
         collection: "Achievements",
@@ -456,6 +600,66 @@ test("wardrobe shop includes owned achievement passives excluded from purchasabl
     assert.equal(trail?.slot, "trail");
     assert.equal(trail?.owned, true);
   });
+});
+
+test("ensureDevWalletAllCosmeticEntitlements seeds catalog and grants dev login wallet", async () => {
+  const prevNode = process.env.NODE_ENV;
+  const prevDev = process.env.DEV_AUTH_BYPASS;
+  process.env.NODE_ENV = "development";
+  process.env.DEV_AUTH_BYPASS = "1";
+  try {
+    const { listCosmeticPresets } = await import("../src/cosmeticPresets.js");
+    await withCosmeticStore(
+      async ({
+        DEV_LOGIN_WALLET,
+        ensureDevWalletAllCosmeticEntitlements,
+        isDevLoginWallet,
+        listAdminCatalog,
+        listEntitlements,
+      }) => {
+        assert.equal(
+          isDevLoginWallet("NQ07 DEV0000000000000000000000000000000000"),
+          true
+        );
+        ensureDevWalletAllCosmeticEntitlements(DEV_LOGIN_WALLET);
+        const catalog = listAdminCatalog();
+        assert.ok(catalog.length >= listCosmeticPresets().length);
+        const owned = listEntitlements(DEV_LOGIN_WALLET);
+        assert.equal(owned.length, catalog.length);
+      }
+    );
+  } finally {
+    if (prevNode === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNode;
+    if (prevDev === undefined) delete process.env.DEV_AUTH_BYPASS;
+    else process.env.DEV_AUTH_BYPASS = prevDev;
+  }
+});
+
+test("ensureDevWalletAllCosmeticEntitlements is a no-op without dev bypass", async () => {
+  const prevNode = process.env.NODE_ENV;
+  const prevDev = process.env.DEV_AUTH_BYPASS;
+  process.env.NODE_ENV = "development";
+  process.env.DEV_AUTH_BYPASS = "0";
+  try {
+    await withCosmeticStore(
+      async ({
+        DEV_LOGIN_WALLET,
+        ensureDevWalletAllCosmeticEntitlements,
+        listAdminCatalog,
+        listEntitlements,
+      }) => {
+        ensureDevWalletAllCosmeticEntitlements(DEV_LOGIN_WALLET);
+        assert.equal(listAdminCatalog().length, 0);
+        assert.equal(listEntitlements(DEV_LOGIN_WALLET).length, 0);
+      }
+    );
+  } finally {
+    if (prevNode === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNode;
+    if (prevDev === undefined) delete process.env.DEV_AUTH_BYPASS;
+    else process.env.DEV_AUTH_BYPASS = prevDev;
+  }
 });
 
 test("daily featured selection is deterministic per day and bounded by count", async () => {

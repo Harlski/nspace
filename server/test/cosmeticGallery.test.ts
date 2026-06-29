@@ -48,34 +48,13 @@ describe("cosmeticGallery", () => {
 
   it("builds one showcase per preset", () => {
     const { showcases } = buildCosmeticGalleryPayload();
-    assert.ok(showcases.length > 0);
-    const trail = showcases.find((s) => s.slot === "trail");
-    assert.equal(trail?.trailPaceTiles, 10);
-    assert.ok(trail?.tryOnZ !== undefined);
-    const deployable = showcases.find((s) => s.slot === "deployable");
-    assert.equal(deployable?.kind, "floor");
-    for (const s of showcases) {
-      assert.match(s.fakeAddress, /^NQ/);
-      assert.ok(s.label.length > 0);
-    }
+    assert.equal(showcases.length, 0);
   });
 
-  it("lays trail presets in parallel lanes along map length with try-on pads south", () => {
+  it("lays trail presets in parallel lanes when any exist", () => {
     const { showcases } = buildCosmeticGalleryPayload();
     const trails = showcases.filter((s) => s.slot === "trail");
-    assert.ok(trails.length >= 5);
-    const trailStartZs = [...new Set(trails.map((s) => s.z))];
-    assert.equal(trailStartZs.length, 1);
-    assert.equal(trailStartZs[0], -14);
-    const laneXs = trails.map((s) => s.x).sort((a, b) => a - b);
-    for (let i = 1; i < laneXs.length; i++) {
-      assert.ok(laneXs[i]! - laneXs[i - 1]! <= 2.21);
-    }
-    for (const t of trails) {
-      assert.equal(t.tryOnZ, t.z - 2.2);
-      assert.equal(t.tryOnX, t.x);
-      assert.equal(t.trailPaceTiles, 10);
-    }
+    assert.equal(trails.length, 0);
   });
 
   it("recognizes gallery room id", () => {
@@ -84,9 +63,9 @@ describe("cosmeticGallery", () => {
   });
 
   it("uses deterministic fake addresses per preset", () => {
-    const a = galleryFakeAddress("trail-sparkle", 0);
-    const b = galleryFakeAddress("trail-sparkle", 0);
-    const c = galleryFakeAddress("aura-cyan", 1);
+    const a = galleryFakeAddress("test-trail", 0);
+    const b = galleryFakeAddress("test-trail", 0);
+    const c = galleryFakeAddress("test-aura", 1);
     assert.equal(a, b);
     assert.notEqual(a, c);
   });

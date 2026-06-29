@@ -11,9 +11,11 @@ export type AchievementCategory =
   | "onboarding"
   | "commons_build"
   | "mining"
-  | "worldcup_match"
-  | "worldcup_field"
+  | "football_match"
+  | "football_free_play"
   | "social";
+
+export type AchievementCategoryGroup = "minigames";
 
 export type AchievementCounterKey =
   | "blocks_placed"
@@ -52,7 +54,8 @@ export type AchievementEventKey =
   | "flag_emote_sent"
   | "login_streak_7"
   | "login_streak_30"
-  | "login_streak_top";
+  | "login_streak_top"
+  | "feedback_submitted";
 
 /** World Cup seasonal counters — progress pauses when WORLDCUP_ENABLED is off. */
 export const WORLDCUP_ACHIEVEMENT_COUNTERS: ReadonlySet<AchievementCounterKey> =
@@ -101,6 +104,8 @@ export type AchievementDefinition = {
   title: string;
   description: string;
   category: AchievementCategory;
+  /** Optional display-only navigator grouping (e.g. minigames). */
+  categoryGroup?: AchievementCategoryGroup;
   points: number;
   sortOrder: number;
   criteria: AchievementCriteria;
@@ -108,36 +113,14 @@ export type AchievementDefinition = {
   rewardSku?: string;
 };
 
-export const ACHIEVEMENT_REWARD_CATALOG = [
-  {
-    cosmeticSku: "ach-trail-commons-starter",
-    presetId: "trail-sparkle",
-    displayName: "Commons Spark Trail",
-    description: "Unlocked by placing your first block in the Commons.",
-    sortOrder: 1,
-  },
-  {
-    cosmeticSku: "ach-trail-commons-builder",
-    presetId: "trail-linger-cyan",
-    displayName: "Commons Builder Trail",
-    description: "Unlocked by placing 100 blocks in the Commons.",
-    sortOrder: 2,
-  },
-  {
-    cosmeticSku: "ach-trail-miner",
-    presetId: "trail-linger-gold",
-    displayName: "Miner Trail",
-    description: "Unlocked by mining 100 claimable blocks.",
-    sortOrder: 3,
-  },
-  {
-    cosmeticSku: "ach-trail-match-centurion",
-    presetId: "trail-linger-gold",
-    displayName: "Centurion Trail",
-    description: "Unlocked by winning 100 World Cup Matches.",
-    sortOrder: 4,
-  },
-] as const;
+/** v2 achievement reward SKUs — seeded in later slices after prefab review. */
+export const ACHIEVEMENT_REWARD_CATALOG: ReadonlyArray<{
+  cosmeticSku: string;
+  presetId: string;
+  displayName: string;
+  description: string;
+  sortOrder: number;
+}> = [];
 
 export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
@@ -349,7 +332,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-first-win",
     title: "First Victory",
     description: "Win your first World Cup Match.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 15,
     sortOrder: 1000,
     criteria: { type: "event", event: "match_won" },
@@ -358,7 +342,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-first-loss",
     title: "Good Sport",
     description: "Lose your first World Cup Match.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 10,
     sortOrder: 1010,
     criteria: { type: "event", event: "match_lost" },
@@ -367,7 +352,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-first-draw",
     title: "Hard Fought",
     description: "Draw your first World Cup Match.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 10,
     sortOrder: 1020,
     criteria: { type: "event", event: "match_draw" },
@@ -376,7 +362,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-challenge-raised",
     title: "Throw Down",
     description: "Raise your first Challenge.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 5,
     sortOrder: 1030,
     criteria: { type: "event", event: "challenge_raised" },
@@ -385,7 +372,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-challenge-accepted",
     title: "Game On",
     description: "Accept someone else's Challenge.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 5,
     sortOrder: 1040,
     criteria: { type: "event", event: "challenge_accepted" },
@@ -394,7 +382,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-golden-goal",
     title: "Golden Moment",
     description: "Win a Match via Golden Goal.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 20,
     sortOrder: 1050,
     criteria: { type: "event", event: "golden_goal_win" },
@@ -403,7 +392,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-walkover",
     title: "Walkover",
     description: "Win because your opponent left the Match.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 5,
     sortOrder: 1060,
     criteria: { type: "event", event: "opponent_left_win" },
@@ -412,7 +402,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-goals-headshot",
     title: "Headshot",
     description: "Score one goal in a single Match.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 10,
     sortOrder: 1070,
     criteria: { type: "event", event: "match_goals_peak_1" },
@@ -421,7 +412,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-goals-double",
     title: "Double Kill",
     description: "Score two goals in a single Match.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 15,
     sortOrder: 1080,
     criteria: { type: "event", event: "match_goals_peak_2" },
@@ -430,7 +422,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-goals-hattrick",
     title: "Three of a Kind",
     description: "Score three goals in a single Match.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 20,
     sortOrder: 1090,
     criteria: { type: "event", event: "match_goals_peak_3" },
@@ -439,7 +432,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-goals-five",
     title: "Why Not Make It Six?",
     description: "Score five goals in a single Match.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 30,
     sortOrder: 1100,
     criteria: { type: "event", event: "match_goals_peak_5" },
@@ -448,7 +442,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-goals-ten",
     title: "Probably Cheating or Lag",
     description: "Score ten or more goals in a single Match.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 50,
     sortOrder: 1110,
     criteria: { type: "event", event: "match_goals_peak_10" },
@@ -457,7 +452,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-wins-1",
     title: "Match Winner",
     description: "Win 1 World Cup Match.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 10,
     sortOrder: 1120,
     criteria: { type: "counter", counter: "matches_won", threshold: 1 },
@@ -466,7 +462,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-wins-10",
     title: "Match Winner X",
     description: "Win 10 World Cup Matches.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 25,
     sortOrder: 1130,
     criteria: { type: "counter", counter: "matches_won", threshold: 10 },
@@ -475,7 +472,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-wins-50",
     title: "Match Winner L",
     description: "Win 50 World Cup Matches.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 50,
     sortOrder: 1140,
     criteria: { type: "counter", counter: "matches_won", threshold: 50 },
@@ -484,7 +482,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-wins-100",
     title: "Match Winner C",
     description: "Win 100 World Cup Matches.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 75,
     sortOrder: 1150,
     criteria: { type: "counter", counter: "matches_won", threshold: 100 },
@@ -494,7 +493,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-wins-1000",
     title: "Match Winner M",
     description: "Win 1000 World Cup Matches.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 100,
     sortOrder: 1160,
     criteria: { type: "counter", counter: "matches_won", threshold: 1000 },
@@ -503,7 +503,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-played-10",
     title: "Regular",
     description: "Complete 10 World Cup Matches.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 20,
     sortOrder: 1170,
     criteria: { type: "counter", counter: "matches_played", threshold: 10 },
@@ -512,7 +513,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-streak-3",
     title: "On a Roll",
     description: "Win 3 World Cup Matches in a row.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 15,
     sortOrder: 1180,
     criteria: { type: "counter", counter: "match_win_streak", threshold: 3 },
@@ -521,7 +523,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-streak-5",
     title: "Unstoppable",
     description: "Win 5 World Cup Matches in a row.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 25,
     sortOrder: 1190,
     criteria: { type: "counter", counter: "match_win_streak", threshold: 5 },
@@ -530,7 +533,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-streak-10",
     title: "Probably Cheating or Lag",
     description: "Win 10 World Cup Matches in a row.",
-    category: "worldcup_match",
+    category: "football_match",
+    categoryGroup: "minigames",
     points: 50,
     sortOrder: 1200,
     criteria: { type: "counter", counter: "match_win_streak", threshold: 10 },
@@ -539,7 +543,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "field-first-goal",
     title: "Field Goal",
     description: "Score your first credited goal on the Free Play Field.",
-    category: "worldcup_field",
+    category: "football_free_play",
+    categoryGroup: "minigames",
     points: 10,
     sortOrder: 2000,
     criteria: { type: "event", event: "field_goal_scored" },
@@ -548,7 +553,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "field-goals-10",
     title: "Field Striker I",
     description: "Score 10 credited goals on the Free Play Field.",
-    category: "worldcup_field",
+    category: "football_free_play",
+    categoryGroup: "minigames",
     points: 20,
     sortOrder: 2010,
     criteria: {
@@ -561,7 +567,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "field-goals-50",
     title: "Field Striker II",
     description: "Score 50 credited goals on the Free Play Field.",
-    category: "worldcup_field",
+    category: "football_free_play",
+    categoryGroup: "minigames",
     points: 40,
     sortOrder: 2020,
     criteria: {
@@ -574,7 +581,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "field-goals-100",
     title: "Field Striker III",
     description: "Score 100 credited goals on the Free Play Field.",
-    category: "worldcup_field",
+    category: "football_free_play",
+    categoryGroup: "minigames",
     points: 60,
     sortOrder: 2030,
     criteria: {
@@ -587,7 +595,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "field-contested",
     title: "Crowd Pleaser",
     description: "Score your first Contested goal on the Free Play Field.",
-    category: "worldcup_field",
+    category: "football_free_play",
+    categoryGroup: "minigames",
     points: 15,
     sortOrder: 2040,
     criteria: { type: "event", event: "field_goal_contested" },
@@ -596,7 +605,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "field-solo",
     title: "Practice Makes Perfect",
     description: "Score your first Solo Goal on the Free Play Field.",
-    category: "worldcup_field",
+    category: "football_free_play",
+    categoryGroup: "minigames",
     points: 10,
     sortOrder: 2050,
     criteria: { type: "event", event: "field_goal_solo" },
@@ -605,7 +615,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "field-country",
     title: "Fly the Flag",
     description: "Pick a country in the Country Picker.",
-    category: "worldcup_field",
+    category: "football_free_play",
+    categoryGroup: "minigames",
     points: 5,
     sortOrder: 2060,
     criteria: { type: "event", event: "country_picked" },
@@ -614,10 +625,20 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "field-flag-emote",
     title: "Represent",
     description: "Send your Flag Emote.",
-    category: "worldcup_field",
+    category: "football_free_play",
+    categoryGroup: "minigames",
     points: 5,
     sortOrder: 2070,
     criteria: { type: "event", event: "flag_emote_sent" },
+  },
+  {
+    id: "social-feedback-first",
+    title: "Voice Heard",
+    description: "Submit your first feedback ticket.",
+    category: "social",
+    points: 5,
+    sortOrder: 2990,
+    criteria: { type: "event", event: "feedback_submitted" },
   },
   {
     id: "social-login-7",

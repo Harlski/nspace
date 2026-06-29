@@ -55,7 +55,7 @@ test("counter increments unlock threshold achievements idempotently", async () =
   });
 });
 
-test("commons placement counter and reward grant", async () => {
+test("commons placement counter completes without cosmetic grant before v2 catalog", async () => {
   const wallet = "NQ07 TEST000000000000000000000000000002";
   await withAchievementStore(async ({
     recordBlockPlaced,
@@ -68,17 +68,12 @@ test("commons placement counter and reward grant", async () => {
       (a) => a.achievementId === "commons-first-block"
     );
     assert.equal(firstCommons?.completed, true);
-    assert.equal(firstCommons?.rewardPresetId, "trail-sparkle");
-    const owned = listEntitlements(wallet);
-    assert.ok(
-      owned.some(
-        (e) => e.cosmeticSku === "ach-trail-commons-starter" && e.source === "achievement"
-      )
-    );
+    assert.equal(firstCommons?.rewardPresetId, null);
+    assert.equal(listEntitlements(wallet).length, 0);
   });
 });
 
-test("ensureAchievementRewardEntitlements backfills missing reward grants", async () => {
+test("ensureAchievementRewardEntitlements is a no-op without reward catalog entries", async () => {
   const wallet = "NQ07TEST000000000000000000000000000004";
   await withAchievementStore(async ({
     ensureAchievementRewardEntitlements,
@@ -96,12 +91,7 @@ test("ensureAchievementRewardEntitlements backfills missing reward grants", asyn
 
     ensureAchievementRewardEntitlements(wallet);
 
-    const owned = listEntitlements(wallet);
-    assert.ok(
-      owned.some(
-        (e) => e.cosmeticSku === "ach-trail-commons-starter" && e.source === "achievement"
-      )
-    );
+    assert.equal(listEntitlements(wallet).length, 0);
     assert.equal(
       getAchievementsForWallet(wallet).achievements.find(
         (a) => a.achievementId === "commons-first-block"
@@ -211,6 +201,39 @@ test("chat message counter unlocks chatterbox tiers", async () => {
     );
     assert.equal(row?.completed, true);
     assert.equal(row?.progress, 100);
+  });
+});
+
+test("feedback submitted event unlocks voice heard once", async () => {
+  const wallet = "NQ07 TEST000000000000000000000000000013";
+  await withAchievementStore(async ({
+    fireAchievementEvent,
+    getAchievementsForWallet,
+  }) => {
+    const unlocks: Array<{ achievementId: string }> = [];
+    fireAchievementEvent(wallet, "feedback_submitted", (u) => unlocks.push(...u));
+    assert.ok(unlocks.some((u) => u.achievementId === "social-feedback-first"));
+    const row = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "social-feedback-first"
+    );
+    assert.equal(row?.completed, true);
+    assert.equal(row?.category, "social");
+    assert.equal(row?.categoryGroup, null);
+
+    const again: Array<{ achievementId: string }> = [];
+    fireAchievementEvent(wallet, "feedback_submitted", (u) => again.push(...u));
+    assert.equal(again.length, 0);
+  });
+});
+
+test("football achievements expose minigames category group", async () => {
+  const wallet = "NQ07 TEST000000000000000000000000000014";
+  await withAchievementStore(async ({ getAchievementsForWallet }) => {
+    const match = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "match-first-win"
+    );
+    assert.equal(match?.category, "football_match");
+    assert.equal(match?.categoryGroup, "minigames");
   });
 });
 

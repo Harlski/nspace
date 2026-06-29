@@ -172,6 +172,14 @@ export function initCampaignStore(): void {
 
 let db: Database.Database | null = null;
 
+/** Test-only: close SQLite handle so the next init uses CAMPAIGN_STORE_SQLITE_PATH. */
+export function _resetCampaignStoreForTests(): void {
+  if (db) {
+    db.close();
+    db = null;
+  }
+}
+
 function formatCampaignTxNimLabel(amountLuna: bigint): string {
   const whole = amountLuna / LUNA_PER_NIM;
   const frac = amountLuna % LUNA_PER_NIM;

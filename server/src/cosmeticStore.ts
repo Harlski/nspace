@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
-import { initCampaignStore, getCampaignDatabase } from "./campaignStore.js";
+import { initCampaignStore, getCampaignDatabase, _resetCampaignStoreForTests } from "./campaignStore.js";
 import {
   clampDeployParam,
   getCosmeticPreset,
@@ -95,16 +95,84 @@ function normalizeSku(v: string): string {
 
 let cosmeticTablesReady = false;
 
+const COSMETICS_V2_HARD_RESET_KEY = "cosmetics_v2_hard_reset_v1";
+
 function requireDb(): Database.Database {
   initCosmeticStore();
   return getCampaignDatabase();
 }
 
+function ensureCosmeticMetaTable(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS cosmetic_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+}
+
+/** One-time v2 hard reset: wipe player cosmetic data and v1 catalog rows. Idempotent. */
+export function runCosmeticsV2HardResetIfNeeded(): void {
+  initCampaignStore();
+  const database = getCampaignDatabase();
+  ensureCosmeticMetaTable(database);
+  const done = database
+    .prepare(`SELECT 1 FROM cosmetic_meta WHERE key = ?`)
+    .get(COSMETICS_V2_HARD_RESET_KEY);
+  if (done) return;
+
+  const countEntitlements = (
+    database.prepare(`SELECT COUNT(*) AS c FROM cosmetic_entitlements`).get() as {
+      c: number;
+    }
+  ).c;
+  const countLoadouts = (
+    database.prepare(`SELECT COUNT(*) AS c FROM cosmetic_loadouts`).get() as {
+      c: number;
+    }
+  ).c;
+  const countCatalog = (
+    database.prepare(`SELECT COUNT(*) AS c FROM cosmetic_catalog`).get() as {
+      c: number;
+    }
+  ).c;
+  const countChangelog = (
+    database.prepare(`SELECT COUNT(*) AS c FROM cosmetic_changelog`).get() as {
+      c: number;
+    }
+  ).c;
+
+  database.exec(`
+    DELETE FROM cosmetic_entitlements;
+    DELETE FROM cosmetic_loadouts;
+    DELETE FROM cosmetic_catalog;
+    DELETE FROM cosmetic_changelog;
+  `);
+
+  const marker = {
+    at: new Date().toISOString(),
+    cleared: {
+      entitlements: countEntitlements,
+      loadouts: countLoadouts,
+      catalog: countCatalog,
+      changelog: countChangelog,
+    },
+  };
+  database
+    .prepare(`INSERT INTO cosmetic_meta (key, value) VALUES (?, ?)`)
+    .run(COSMETICS_V2_HARD_RESET_KEY, JSON.stringify(marker));
+
+  console.log(
+    "[cosmetic-store] cosmetics v2 hard reset applied",
+    JSON.stringify(marker)
+  );
+}
+
 export function initCosmeticStore(): void {
   initCampaignStore();
-  if (cosmeticTablesReady) return;
   const database = getCampaignDatabase();
-  database.exec(`
+  if (!cosmeticTablesReady) {
+    database.exec(`
     CREATE TABLE IF NOT EXISTS cosmetic_catalog (
       cosmetic_sku TEXT PRIMARY KEY,
       preset_id TEXT NOT NULL,
@@ -158,7 +226,15 @@ export function initCosmeticStore(): void {
       trail_sku TEXT
     );
   `);
-  cosmeticTablesReady = true;
+    cosmeticTablesReady = true;
+  }
+  runCosmeticsV2HardResetIfNeeded();
+}
+
+/** Test-only: reset module singletons so each temp SQLite file is isolated. */
+export function _resetCosmeticStoreForTests(): void {
+  cosmeticTablesReady = false;
+  _resetCampaignStoreForTests();
 }
 
 function rowToPublic(row: CatalogRow): CatalogEntryPublic {
@@ -868,4 +944,62 @@ export function listOwnedDeployables(
     if (rules) out.push({ ...entry, deployRules: rules });
   }
   return out;
+}
+
+/** Main-menu dev login wallet (compact; input may include spaces). */
+export const DEV_LOGIN_WALLET = "NQ07DEV0000000000000000000000000000000000";
+
+function isDevCosmeticUnlockEnabled(): boolean {
+  return (
+    process.env.NODE_ENV === "development" &&
+    process.env.DEV_AUTH_BYPASS === "1"
+  );
+}
+
+export function isDevLoginWallet(wallet: string): boolean {
+  return normalizeWallet(wallet) === DEV_LOGIN_WALLET;
+}
+
+function seedDevCosmeticCatalog(): void {
+  const existingPresetIds = new Set(
+    (
+      requireDb()
+        .prepare(`SELECT DISTINCT preset_id AS preset_id FROM cosmetic_catalog`)
+        .all() as Array<{ preset_id: string }>
+    ).map((row) => row.preset_id)
+  );
+  let sortOrder = 1000;
+  for (const preset of listCosmeticPresets()) {
+    if (existingPresetIds.has(preset.presetId)) continue;
+    const sku = `dev-${preset.presetId}`;
+    const created = createCatalogEntry(
+      {
+        cosmeticSku: sku,
+        presetId: preset.presetId,
+        displayName: preset.label,
+        description: "Dev catalog seed.",
+        collection: "Dev",
+        sortOrder: sortOrder++,
+        priceLuna: 0n,
+        cooldownSec: preset.deployDefaults?.cooldownSec,
+        durationSec: preset.deployDefaults?.durationSec,
+        roomCap: preset.deployDefaults?.roomCap,
+        deployRange: preset.deployDefaults?.deployRange,
+      },
+      DEV_LOGIN_WALLET
+    );
+    if (created.ok) {
+      publishCatalogEntry(sku, DEV_LOGIN_WALLET);
+    }
+  }
+}
+
+/** Dev bypass only: ensure catalog coverage and grant every Catalog Entry to the dev login wallet. */
+export function ensureDevWalletAllCosmeticEntitlements(wallet: string): void {
+  if (!isDevCosmeticUnlockEnabled()) return;
+  if (!isDevLoginWallet(wallet)) return;
+  seedDevCosmeticCatalog();
+  for (const entry of listAdminCatalog()) {
+    grantEntitlement(wallet, entry.cosmeticSku, DEV_LOGIN_WALLET, "grant");
+  }
 }
