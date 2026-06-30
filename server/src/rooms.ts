@@ -84,11 +84,20 @@ import {
 } from "./cosmeticDeploy.js";
 import {
   ensureOnboardingCompleteAchievements,
+  evaluateLoginStreakAchievements,
   fireAchievementEvent,
+  getAchievementCounterValue,
   recordBlockMined,
   recordBlockPlaced,
+  recordChatMessageSent,
+  recordDistinctTileWalked,
+  recordFieldGoalScored,
+  recordMatchEnd,
+  recordPixelPainted,
   type AchievementUnlockWire,
+  type MatchEndParticipantInput,
 } from "./achievementStore.js";
+import { achievementCelebrationCount } from "./achievementCelebration.js";
 import { getPublicLoadoutForWallet } from "./cosmeticStore.js";
 import {
   COSMETIC_GALLERY_DEFAULT_SPAWN,
@@ -189,9 +198,12 @@ import {
   DIRECT_INVITE_ENABLED,
   buildInviteStateWire,
   closeInvite,
+  generateGuestId,
   getInviteBySlug,
   getParticipant,
+  getParticipantByWallet,
   isInviteLobbyRoomId,
+  joinInviteAsWallet,
   markGuestJoinedLobby,
   markHostJoinedLobby,
   markHostLeftLobby,
@@ -1372,6 +1384,10 @@ type OutMsg =
       rewardSku: string | null;
       rewardDisplayName: string | null;
       totalPoints: number;
+    }
+  | {
+      type: "achievementCelebration";
+      address: string;
     };
 
 function deliverAchievementUnlocks(
@@ -1392,9 +1408,72 @@ function deliverAchievementUnlocks(
   }
 }
 
+function broadcastAchievementCelebrations(
+  roomId: string,
+  address: string,
+  unlockCount: number
+): void {
+  const n = achievementCelebrationCount(unlockCount);
+  for (let i = 0; i < n; i++) {
+    broadcast(roomId, { type: "achievementCelebration", address });
+  }
+}
+
+function findClientConnByWs(
+  ws: WebSocket
+): { roomId: string; conn: ClientConn } | null {
+  for (const [roomId, room] of rooms) {
+    for (const conn of room.values()) {
+      if (conn.ws === ws) return { roomId, conn };
+    }
+  }
+  return null;
+}
+
+function deliverAchievementUnlocksWithCelebration(
+  unlocks: AchievementUnlockWire[],
+  ctx: { ws: WebSocket; address: string; roomId: string } | null,
+  wsFallback?: WebSocket
+): void {
+  if (unlocks.length === 0) return;
+  const ws = ctx?.ws ?? wsFallback;
+  if (!ws) return;
+  deliverAchievementUnlocks(ws, unlocks);
+  if (ctx) {
+    broadcastAchievementCelebrations(ctx.roomId, ctx.address, unlocks.length);
+  }
+}
+
 function achievementUnlockHandler(ws: WebSocket) {
-  return (unlocks: AchievementUnlockWire[]) =>
-    deliverAchievementUnlocks(ws, unlocks);
+  return (unlocks: AchievementUnlockWire[]) => {
+    const found = findClientConnByWs(ws);
+    deliverAchievementUnlocksWithCelebration(
+      unlocks,
+      found
+        ? { ws, address: found.conn.address, roomId: found.roomId }
+        : null,
+      ws
+    );
+  };
+}
+
+function achievementUnlockHandlerForAddress(address: string) {
+  const compact = compactAddress(address);
+  return (unlocks: AchievementUnlockWire[]) => {
+    if (unlocks.length === 0) return;
+    for (const [roomId, room] of rooms) {
+      for (const conn of room.values()) {
+        if (compactAddress(conn.address) === compact) {
+          deliverAchievementUnlocksWithCelebration(unlocks, {
+            ws: conn.ws,
+            address: conn.address,
+            roomId,
+          });
+          return;
+        }
+      }
+    }
+  };
 }
 
 function onPlayerEnteredRoom(
@@ -1404,6 +1483,7 @@ function onPlayerEnteredRoom(
 ): void {
   if (conn.streamObserver) return;
   const onUnlock = achievementUnlockHandler(conn.ws);
+  evaluateLoginStreakAchievements(conn.player.address, onUnlock);
   if (normalizeRoomId(roomId) === HUB_ROOM_ID) {
     fireAchievementEvent(conn.player.address, "enter_commons", onUnlock);
   }
@@ -5235,6 +5315,20 @@ function handleWorldcupGoal(
   if (scorerAddress && rewardDecision) {
     sendGoalRewardOutcomeToScorer(roomId, scorerAddress, rewardDecision);
   }
+  if (
+    scorerAddress &&
+    normalizeRoomId(roomId) === WORLDCUP_FIELD_ROOM_ID
+  ) {
+    const distinct = worldcupDistinctPlayersInRoom(roomId);
+    recordFieldGoalScored(
+      scorerAddress,
+      {
+        contested: distinct >= WORLDCUP_GOAL_REWARD.minPlayers,
+        solo: distinct === 1,
+      },
+      achievementUnlockHandlerForAddress(scorerAddress)
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -5275,6 +5369,8 @@ interface WorldcupMatchRuntime {
   endedAtMs: number | null;
   /** Throttle live `matchState` broadcasts. */
   lastBroadcastMs: number;
+  /** True when the Match ended because of a goal during Golden Goal. */
+  endedByGoldenGoal?: boolean;
   /**
    * While > now, the Match is in a post-goal kickoff freeze: both players are reset to their
    * spawns, movement is rejected, and the Match clock is paused. 0 = live play.
@@ -5325,9 +5421,48 @@ function broadcastWorldcupMatchState(
   });
 }
 
+function worldcupMatchEndParticipantInput(
+  m: WorldcupMatchRuntime,
+  side: WorldcupMatchSide
+): MatchEndParticipantInput {
+  const wallet = side === "a" ? m.a : m.b;
+  const goalsScored = side === "a" ? m.state.scoreA : m.state.scoreB;
+  const priorWinStreak = getAchievementCounterValue(wallet, "match_win_streak");
+  const outcome = m.state.outcome;
+  if (!outcome || outcome.result === "draw") {
+    return { wallet, result: "draw", goalsScored, priorWinStreak };
+  }
+  if (outcome.winner === side) {
+    return {
+      wallet,
+      result: "win",
+      winReason: outcome.reason,
+      goalsScored,
+      priorWinStreak,
+      goldenGoalWin: Boolean(m.endedByGoldenGoal && outcome.reason === "score"),
+    };
+  }
+  return {
+    wallet,
+    result: "loss",
+    goalsScored,
+    priorWinStreak,
+  };
+}
+
+function worldcupRecordMatchAchievements(m: WorldcupMatchRuntime): void {
+  if (!WORLDCUP_ENABLED || m.state.outcome == null) return;
+  recordMatchEnd(
+    worldcupMatchEndParticipantInput(m, "a"),
+    worldcupMatchEndParticipantInput(m, "b"),
+    (wallet, unlocks) => achievementUnlockHandlerForAddress(wallet)(unlocks)
+  );
+}
+
 function worldcupOnMatchEnded(m: WorldcupMatchRuntime, now: number): void {
   if (m.endedAtMs !== null) return;
   m.endedAtMs = now;
+  worldcupRecordMatchAchievements(m);
   // Freeze participants on the pitch until teardown (same gate as post-goal kickoff freeze).
   m.kickoffUntilMs = now + WORLDCUP_MATCH.resultLingerMs;
   // Pull the spectate portal immediately so onlookers can't drop into a finished Match.
@@ -5428,11 +5563,15 @@ function worldcupHandleMatchGoal(pitchRoomId: string, goalId: string): void {
   // Ignore goals during the post-goal kickoff freeze (players are frozen, ball just reset).
   if (m.kickoffUntilMs > Date.now()) return;
   if (goalId !== "west" && goalId !== "east") return;
+  const wasGolden = m.state.phase === "golden";
   const side = worldcupScoringSideForGoal(goalId);
   m.state = worldcupReduceMatch(m.state, { type: "goal", side }, WORLDCUP_MATCH_CFG);
   const now = Date.now();
   broadcastWorldcupMatchState(m, true, now);
   const matchEnded = m.state.phase === "ended";
+  if (matchEnded && wasGolden && m.state.outcome?.result === "win") {
+    m.endedByGoldenGoal = true;
+  }
   // If this goal didn't end the Match, reset both players to their kickoff spots and freeze
   // them for a short countdown before play resumes.
   const kickoffMs = matchEnded ? 0 : WORLDCUP_MATCH.goalResetMs;
@@ -5631,22 +5770,14 @@ function worldcupStartMatch(
 
   const origins = new Map<string, { roomId: string; x: number; z: number; y: number }>();
   for (const c of [challenger, accepter]) {
-    const isGuest = c.address.startsWith("guest:");
-    const returnRoomId = isGuest ? CHAMBER_ROOM_ID : portalRoomId;
-    const saved = spawnMap(returnRoomId).get(c.address);
+    // Play Space guests must return to the space they came from, not the public chamber.
+    const saved = spawnMap(portalRoomId).get(c.address);
     if (saved) {
       origins.set(compactAddress(c.address), {
-        roomId: returnRoomId,
+        roomId: portalRoomId,
         x: saved.x,
         z: saved.z,
         y: typeof saved.y === "number" ? saved.y : 0,
-      });
-    } else if (isGuest) {
-      origins.set(compactAddress(c.address), {
-        roomId: CHAMBER_ROOM_ID,
-        x: CHAMBER_DEFAULT_SPAWN.x,
-        z: CHAMBER_DEFAULT_SPAWN.z,
-        y: 0,
       });
     } else {
       origins.set(compactAddress(c.address), {
@@ -5736,6 +5867,32 @@ function worldcupHandlePlayerDeparture(address: string): void {
   if (m.state.phase === "ended") worldcupOnMatchEnded(m, now);
 }
 
+/** Open Play Space lobbies are ephemeral — not in `hasRoom` / the dynamic registry. */
+function directInviteLobbyIsLive(inv: DirectInviteRecord): boolean {
+  return inv.phase === "open";
+}
+
+function worldcupReturnRoomReachable(roomId: string): boolean {
+  if (hasRoom(roomId)) return true;
+  if (!isInviteLobbyRoomId(roomId)) return false;
+  const slug = roomId.slice("invite-lobby-".length);
+  const inv = getInviteBySlug(slug);
+  return inv?.phase === "open" && inv.lobbyRoomId === roomId;
+}
+
+function playSpaceMayEnter(
+  inv: DirectInviteRecord,
+  targetRoomId: string,
+  address: string
+): boolean {
+  if (inv.phase !== "open" || inv.lobbyRoomId !== targetRoomId) return false;
+  if (inv.hostWallet === address) return true;
+  if (address.startsWith("guest:")) {
+    return !!getParticipant(inv, address.slice("guest:".length));
+  }
+  return !!getParticipantByWallet(inv, address);
+}
+
 /** Return one entrant to where they came from (if still connected) and clear their Match flag. */
 function worldcupReturnEntrant(m: WorldcupMatchRuntime, compact: string): void {
   for (const conn of roomOf(m.pitchRoomId).values()) {
@@ -5746,15 +5903,21 @@ function worldcupReturnEntrant(m: WorldcupMatchRuntime, compact: string): void {
     // guests confined and re-registers them so the roster overlay refreshes.
     if (conn.directInviteSlug) {
       const inv = getInviteBySlug(conn.directInviteSlug);
-      if (inv && inv.phase === "open" && hasRoom(inv.lobbyRoomId)) {
+      if (inv && directInviteLobbyIsLive(inv)) {
         teleportPlayer(conn, inv.lobbyRoomId, conn.player.x, conn.player.z);
         directInviteOnLobbyConnect(conn, inv.lobbyRoomId, conn.address);
         return;
       }
     }
     const origin = m.origins.get(compact);
-    if (origin && hasRoom(origin.roomId)) {
+    if (origin && worldcupReturnRoomReachable(origin.roomId)) {
       teleportPlayer(conn, origin.roomId, origin.x, origin.z);
+      if (isInviteLobbyRoomId(origin.roomId)) {
+        directInviteOnLobbyConnect(conn, origin.roomId, conn.address);
+      }
+    } else if (conn.address.startsWith("guest:")) {
+      const g = snapToTile(CHAMBER_DEFAULT_SPAWN.x, CHAMBER_DEFAULT_SPAWN.z);
+      teleportPlayer(conn, CHAMBER_ROOM_ID, g.x, g.z);
     } else {
       teleportPlayer(conn, HUB_ROOM_ID, HUB_MAZE_EXIT_SPAWN.x, HUB_MAZE_EXIT_SPAWN.z);
     }
@@ -5984,7 +6147,18 @@ function directInviteOnLobbyConnect(
     conn.directInviteSlug = slug;
     markGuestJoinedLobby(slug, gid);
   } else {
-    return;
+    const participant = getParticipantByWallet(invite, address);
+    if (!participant) {
+      conn.directInviteSlug = null;
+      wsSafeSend(conn.ws, {
+        type: "directInviteError",
+        code: "full",
+        message: "This play space is full.",
+      } satisfies OutMsg);
+      return;
+    }
+    conn.directInviteSlug = slug;
+    markGuestJoinedLobby(slug, participant.guestId);
   }
   const updated = getInviteBySlug(slug);
   if (updated) broadcastDirectInviteState(updated);
@@ -6120,6 +6294,14 @@ export function startRoomTick(): void {
           placed
         );
         if (result.changed) changed = true;
+        if (result.arrivedTiles.length > 0) {
+          recordDistinctTileWalked(
+            c.address,
+            roomId,
+            result.arrivedTiles,
+            achievementUnlockHandlerForAddress(c.address)
+          );
+        }
         if (DEBUG_MOVEMENT && result.arrivedTiles.length > 0) {
           const next = c.pathQueue[0];
           logMovementDebug("tick:tileCrossing", {
@@ -6882,6 +7064,11 @@ export function addClient(
         if (conn.challengeOpen) return;
         conn.challengeOpen = true;
         conn.challengeRaisedAtMs = Date.now();
+        fireAchievementEvent(
+          address,
+          "challenge_raised",
+          achievementUnlockHandler(ws)
+        );
       } else {
         if (!conn.challengeOpen) return;
         conn.challengeOpen = false;
@@ -6915,6 +7102,11 @@ export function addClient(
         return;
       }
       worldcupBeginMatch(challenger, conn, currentRoomId);
+      fireAchievementEvent(
+        address,
+        "challenge_accepted",
+        achievementUnlockHandler(ws)
+      );
       return;
     }
 
@@ -6988,7 +7180,15 @@ export function addClient(
         .trim()
         .toUpperCase();
       if (!worldcupIsValidCountryCode(code)) return;
+      const hadCountry = worldcupGetPlayerCountry(address) != null;
       worldcupSetCountry(address, code, conn.player.displayName);
+      if (!hadCountry) {
+        fireAchievementEvent(
+          address,
+          "country_picked",
+          achievementUnlockHandler(ws)
+        );
+      }
       wsSafeSend(ws, {
         type: "worldcupLeaderboard",
         roomId: currentRoomId,
@@ -7088,6 +7288,8 @@ export function addClient(
         fireAchievementEvent(address, "open_wardrobe", onUnlock);
       } else if (kind === "send_emote") {
         fireAchievementEvent(address, "send_emote", onUnlock);
+      } else if (kind === "flag_emote") {
+        fireAchievementEvent(address, "flag_emote_sent", onUnlock);
       }
       return;
     }
@@ -7574,21 +7776,32 @@ export function addClient(
       const inviteLobby = isInviteLobbyRoomId(targetRoomId);
       if (inviteLobby) {
         const slug = targetRoomId.slice("invite-lobby-".length);
-        const inv = getInviteBySlug(slug);
-        const mayEnter =
-          inv &&
-          inv.phase === "open" &&
-          inv.lobbyRoomId === targetRoomId &&
-          (inv.hostWallet === address ||
-            (address.startsWith("guest:") &&
-              getParticipant(inv, address.slice("guest:".length))));
-        if (!mayEnter) {
+        let inv = getInviteBySlug(slug);
+        if (!inv || inv.phase !== "open" || inv.lobbyRoomId !== targetRoomId) {
           wsSafeSend(ws, {
             type: "joinRoomFailed",
             roomId: targetRoomId,
             reason: "not_found",
           } satisfies OutMsg);
           return;
+        }
+        if (!playSpaceMayEnter(inv, targetRoomId, address)) {
+          const joined = joinInviteAsWallet(
+            slug,
+            generateGuestId(),
+            address,
+            getEffectivePlayerDisplayName(compactAddress(address))
+          );
+          if (!joined.ok) {
+            wsSafeSend(ws, {
+              type: "joinRoomFailed",
+              roomId: targetRoomId,
+              reason: "not_found",
+            } satisfies OutMsg);
+            return;
+          }
+          inv = joined.invite;
+          broadcastDirectInviteState(inv);
         }
       } else if (!hasRoom(targetRoomId)) {
         wsSafeSend(ws, {
@@ -9441,6 +9654,7 @@ export function addClient(
       const extraAdds: { x: number; z: number; colorRgb: number }[] = [];
       const baseAdds: { x: number; z: number; colorRgb: number }[] = [];
       const restoredBase: string[] = [];
+      let pixelsPainted = 0;
 
       for (const tile of tiles) {
         if (!withinFloorActionRange(conn.player, tile.x, tile.z)) continue;
@@ -9494,6 +9708,7 @@ export function addClient(
             if (isPixelRoom(currentRoomId)) {
               logPixelPaint(outcome.x, outcome.z, outcome.colorRgb, address);
               invalidatePixelBoardPngCache();
+              pixelsPainted += 1;
             }
             break;
           case "place_extra":
@@ -9518,6 +9733,14 @@ export function addClient(
         baseAdds.length > 0 ||
         restoredBase.length > 0;
       if (!changed) return;
+
+      if (pixelsPainted > 0) {
+        recordPixelPainted(
+          address,
+          pixelsPainted,
+          achievementUnlockHandler(ws)
+        );
+      }
 
       if (restoredBase.length > 0) {
         broadcast(currentRoomId, {
@@ -9616,6 +9839,7 @@ export function addClient(
     }
 
     if (msg.type === "chat") {
+      if (msg.bubbleOnly) return;
       const now = Date.now();
       if (now - conn.lastChatAt < RATE_CHAT_MS) return;
       conn.lastChatAt = now;
@@ -9654,6 +9878,7 @@ export function addClient(
           ? { textOriginal: censored.original }
           : {}),
       });
+      recordChatMessageSent(address, achievementUnlockHandler(ws));
       return;
     }
 

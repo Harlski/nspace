@@ -28,6 +28,20 @@ import type {
 import { remotePlayerIsNpc } from "../remotePlayerNpc.js";
 import { walletDisplayName } from "../walletDisplayName.js";
 import {
+  ACHIEVEMENT_CELEBRATION_DURATION_MS,
+  ACHIEVEMENT_TROPHY_SCREEN_HEIGHT_PX,
+} from "../achievements/celebrationPolicy.js";
+import {
+  nextCelebrationDelayMs,
+} from "../achievements/celebrationStagger.js";
+import {
+  disposeAchievementCelebrationSprite,
+  loadAchievementTrophyTexture,
+  spawnAchievementCelebrationSprite,
+  updateAchievementCelebrationSprite,
+  type AchievementCelebrationSprite,
+} from "../achievements/achievementCelebrationVfx.js";
+import {
   FOG_INNER_RADIUS,
   FOG_OUTER_RADIUS,
   ROOM_ID,
@@ -103,8 +117,11 @@ import {
 import { prefabPlaceSnapshotMatchesDesign, prefabPlaceMeshTemplateSignature, shouldApplyPrefabPlaceSnapshot } from "./prefabPlacePreview.js";
 import {
   buildWardrobePreviewFloorPatch,
+  collectWardrobePreviewBlocksInPatch,
   getRoomDefaultSpawnTile,
   resolveWardrobePreviewAnchorTile,
+  shouldRenderWardrobePreviewBlock,
+  snapWardrobePreviewCameraOrbitYaw,
   TERRAIN_WATER_COLOR,
   type WardrobePreviewFloorContext,
 } from "./wardrobePreviewBackdrop.js";
@@ -421,6 +438,7 @@ type WardrobeAvatarPreviewPort = {
   rootGroup: THREE.Group;
   avatarGroup: THREE.Group;
   floorTiles: WardrobePreviewFloorTile[];
+  blockGroups: THREE.Group[];
   resizeObserver: ResizeObserver;
   wallet: string;
   displayName: string;
@@ -447,7 +465,6 @@ const INSPECTOR_PREVIEW_SCENE_SCALE = 0.72;
 const WARDROBE_PREVIEW_BG = 0x0f1419;
 const WARDROBE_PREVIEW_FRUSTUM_HALF_V = 1.05;
 const WARDROBE_PREVIEW_CAMERA_OFFSET = 18;
-const WARDROBE_PREVIEW_SCENE_YAW = Math.PI / 2;
 const WARDROBE_PREVIEW_LOOK_AT_Y = 0.55;
 const WARDROBE_PREVIEW_CHAT_BUBBLE_KEY = "wardrobePreviewChatBubble";
 const WARDROBE_PREVIEW_CHAT_BUBBLE_PRESET_KEY = "wardrobePreviewChatBubblePreset";
@@ -1359,6 +1376,15 @@ export class Game {
   // worldcup: floating "open to 1v1" Challenge badge above players who raised one.
   private readonly worldcupChallengeBubbles = new Map<string, THREE.Sprite>();
   private worldcupChallengeBubbleTex: THREE.CanvasTexture | null = null;
+  /** Achievement Unlock Celebration: active trophy pops above avatars. */
+  private readonly achievementCelebrationSprites: AchievementCelebrationSprite[] =
+    [];
+  private achievementCelebrationNextId = 0;
+  private readonly achievementCelebrationPlayAt = new Map<string, number>();
+  private readonly achievementCelebrationStaggerTimers = new Set<
+    ReturnType<typeof setTimeout>
+  >();
+  private achievementTrophyTexture: THREE.CanvasTexture | null = null;
   /** worldcup: live 1v1 spectate portals in the current room (matchId = pitch room id). */
   private readonly worldcupPortals = new Map<
     string,
@@ -2447,6 +2473,11 @@ export class Game {
     this.rebuildDoorKeys();
     this.syncWalkableFloorMeshes();
     this.syncVoxelWordSign();
+    void loadAchievementTrophyTexture()
+      .then((tex) => {
+        this.achievementTrophyTexture = tex;
+      })
+      .catch(() => {});
   }
 
   private rebuildDoorKeys(): void {
@@ -3093,6 +3124,7 @@ export class Game {
       for (const addr of [...this.typingIndicatorByAddress.keys()]) {
         this.removeTypingIndicator(addr);
       }
+      this.clearAchievementCelebrations();
     }
     this.requestRender();
   }
@@ -13709,7 +13741,8 @@ export class Game {
       this.pathPreviewGoal !== null ||
       this.pathFadingOut ||
       this.trailFadingOut ||
-      this.floatingTexts.size > 0;
+      this.floatingTexts.size > 0 ||
+      this.achievementCelebrationSprites.length > 0;
     this.updatePathFade(dt);
 
     const px = this.selfMesh
@@ -13722,6 +13755,7 @@ export class Game {
 
     if (!this.streamBubblesHidden) {
       this.updateChatBubbles();
+      this.updateAchievementCelebrations(renderNow);
     }
     this.updateTypingIndicatorAnimation();
     this.updateFloatingTexts();
@@ -14059,6 +14093,24 @@ export class Game {
       out.cosmeticTrail = this.galleryTryOnSlots.trail;
     }
     return out;
+  }
+
+  /** Room-scoped Achievement Unlock Celebration (trophy pop above an avatar). */
+  showAchievementCelebration(address: string): void {
+    if (this.streamBubblesHidden) return;
+    const trimmed = address.trim();
+    if (!trimmed) return;
+    const now = performance.now();
+    const delay = nextCelebrationDelayMs(
+      this.achievementCelebrationPlayAt,
+      trimmed,
+      now
+    );
+    const timer = setTimeout(() => {
+      this.achievementCelebrationStaggerTimers.delete(timer);
+      void this.spawnAchievementCelebration(trimmed);
+    }, delay);
+    this.achievementCelebrationStaggerTimers.add(timer);
   }
 
   showChatBubble(
@@ -14509,6 +14561,86 @@ export class Game {
   }
 
   // ---- worldcup: floating 1v1 Challenge badge (shared texture, one sprite per player) ----
+
+  private clearAchievementCelebrations(): void {
+    for (const timer of this.achievementCelebrationStaggerTimers) {
+      clearTimeout(timer);
+    }
+    this.achievementCelebrationStaggerTimers.clear();
+    this.achievementCelebrationPlayAt.clear();
+    for (const entry of this.achievementCelebrationSprites) {
+      disposeAchievementCelebrationSprite(entry, this.achievementTrophyTexture);
+    }
+    this.achievementCelebrationSprites.length = 0;
+  }
+
+  private avatarGroupForAddress(address: string): THREE.Group | null {
+    if (address && this.selfAddress === address) return this.selfMesh;
+    return this.others.get(address) ?? null;
+  }
+
+  private achievementCelebrationBaseY(): number {
+    const worldH = this.pixelToWorldY(ACHIEVEMENT_TROPHY_SCREEN_HEIGHT_PX);
+    const avatarTop = this.avatarIdenticonWorldDiameter();
+    const gapAbove = this.pixelToWorldY(4);
+    return avatarTop + gapAbove + worldH * 0.5;
+  }
+
+  private async spawnAchievementCelebration(address: string): Promise<void> {
+    if (this.streamBubblesHidden) return;
+    const g = this.avatarGroupForAddress(address);
+    if (!g) return;
+    try {
+      const tex = await loadAchievementTrophyTexture();
+      if (this.streamBubblesHidden) return;
+      const gAfter = this.avatarGroupForAddress(address);
+      if (!gAfter) return;
+      this.achievementTrophyTexture = tex;
+      const worldH = this.pixelToWorldY(ACHIEVEMENT_TROPHY_SCREEN_HEIGHT_PX);
+      const baseY = this.achievementCelebrationBaseY();
+      const entry = spawnAchievementCelebrationSprite(
+        tex,
+        worldH,
+        worldH,
+        baseY,
+        address,
+        ++this.achievementCelebrationNextId,
+        performance.now()
+      );
+      gAfter.add(entry.sprite);
+      this.achievementCelebrationSprites.push(entry);
+      this.requestRender(ACHIEVEMENT_CELEBRATION_DURATION_MS + 100);
+    } catch {
+      /* ignore missing trophy asset */
+    }
+  }
+
+  private updateAchievementCelebrations(now: number): void {
+    if (this.achievementCelebrationSprites.length === 0) return;
+    let active = false;
+    for (let i = this.achievementCelebrationSprites.length - 1; i >= 0; i--) {
+      const entry = this.achievementCelebrationSprites[i]!;
+      const g = this.avatarGroupForAddress(entry.address);
+      if (!g || entry.sprite.parent !== g) {
+        disposeAchievementCelebrationSprite(
+          entry,
+          this.achievementTrophyTexture
+        );
+        this.achievementCelebrationSprites.splice(i, 1);
+        continue;
+      }
+      if (updateAchievementCelebrationSprite(entry, now)) {
+        active = true;
+      } else {
+        disposeAchievementCelebrationSprite(
+          entry,
+          this.achievementTrophyTexture
+        );
+        this.achievementCelebrationSprites.splice(i, 1);
+      }
+    }
+    if (active) this.requestRender(50);
+  }
 
   private worldcupChallengeBubbleTexture(): THREE.CanvasTexture {
     if (this.worldcupChallengeBubbleTex) return this.worldcupChallengeBubbleTex;
@@ -15925,6 +16057,10 @@ export class Game {
       tile.geo.dispose();
       tile.mat.dispose();
     }
+    for (const g of port.blockGroups) {
+      port.rootGroup.remove(g);
+      disposePlacedBlockGroupContents(g);
+    }
     port.renderer.dispose();
     if (typeof port.renderer.forceContextLoss === "function") {
       port.renderer.forceContextLoss();
@@ -15949,16 +16085,24 @@ export class Game {
     return TERRAIN_WATER_COLOR;
   }
 
-  private buildWardrobePreviewFloorTiles(rootGroup: THREE.Group): WardrobePreviewFloorTile[] {
+  private resolveWardrobePreviewAnchor(): { x: number; z: number } {
     const selfPos = this.getSelfPosition();
-    const anchor = resolveWardrobePreviewAnchorTile(
+    return resolveWardrobePreviewAnchorTile(
       selfPos ? { x: selfPos.x, z: selfPos.z } : null,
       getRoomDefaultSpawnTile(this.roomId)
     );
+  }
+
+  private buildWardrobePreviewFloorTiles(
+    rootGroup: THREE.Group,
+    anchor: { x: number; z: number },
+    cameraOrbitYawRad: number
+  ): WardrobePreviewFloorTile[] {
     const patch = buildWardrobePreviewFloorPatch(
       anchor.x,
       anchor.z,
-      this.wardrobePreviewFloorContext()
+      this.wardrobePreviewFloorContext(),
+      cameraOrbitYawRad
     );
     const q = this.floorTileQuadSize;
     const tiles: WardrobePreviewFloorTile[] = [];
@@ -15968,14 +16112,94 @@ export class Game {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.set(
-        cell.localX * q,
+        (cell.worldX - anchor.x) * q,
         WALKABLE_FLOOR_TOP_Y,
-        cell.localZ * q
+        (cell.worldZ - anchor.z) * q
       );
       rootGroup.add(mesh);
       tiles.push({ mesh, geo, mat });
     }
     return tiles;
+  }
+
+  private disposeWardrobePreviewBackdropMeshes(port: WardrobeAvatarPreviewPort): void {
+    for (const tile of port.floorTiles) {
+      port.rootGroup.remove(tile.mesh);
+      tile.geo.dispose();
+      tile.mat.dispose();
+    }
+    for (const g of port.blockGroups) {
+      port.rootGroup.remove(g);
+      disposePlacedBlockGroupContents(g);
+    }
+  }
+
+  private rebuildWardrobePreviewBackdrop(port: WardrobeAvatarPreviewPort): void {
+    this.disposeWardrobePreviewBackdropMeshes(port);
+    const previewAnchor = this.resolveWardrobePreviewAnchor();
+    port.floorTiles = this.buildWardrobePreviewFloorTiles(
+      port.rootGroup,
+      previewAnchor,
+      port.cameraOrbitYawRad
+    );
+    port.blockGroups = this.buildWardrobePreviewBlockGroups(
+      port.rootGroup,
+      previewAnchor,
+      port.cameraOrbitYawRad
+    );
+  }
+
+  private buildWardrobePreviewBlockGroups(
+    rootGroup: THREE.Group,
+    anchor: { x: number; z: number },
+    cameraOrbitYawRad: number
+  ): THREE.Group[] {
+    const candidates = collectWardrobePreviewBlocksInPatch(
+      anchor.x,
+      anchor.z,
+      this.placedObjects.keys(),
+      cameraOrbitYawRad
+    );
+    const q = this.floorTileQuadSize;
+    const vis = this.blockVisualScale;
+    const groups: THREE.Group[] = [];
+    for (const c of candidates) {
+      if (
+        !shouldRenderWardrobePreviewBlock({
+          worldDx: c.worldX - anchor.x,
+          worldDz: c.worldZ - anchor.z,
+          cameraOrbitYawRad,
+        })
+      ) {
+        continue;
+      }
+      if (this.billboardFootprintFloorKeys.has(tileKey(c.worldX, c.worldZ))) {
+        continue;
+      }
+      const metaRaw = this.placedObjects.get(c.blockKey);
+      if (!metaRaw) continue;
+      const meta = this.gateRepositionPlacedRenderMeta(
+        c.worldX,
+        c.worldZ,
+        c.yLevel,
+        metaRaw
+      );
+      const h = this.obstacleHeight(meta);
+      const g = this.makeBlockMesh(meta, {
+        tileX: c.worldX,
+        tileZ: c.worldZ,
+        floorLayer: c.yLevel,
+        inspectorPreview: true,
+      });
+      g.position.set(
+        (c.worldX - anchor.x) * q,
+        c.yLevel * BLOCK_SIZE + (h * vis) / 2,
+        (c.worldZ - anchor.z) * q
+      );
+      rootGroup.add(g);
+      groups.push(g);
+    }
+    return groups;
   }
 
   private applyWardrobePreviewCameraPose(port: WardrobeAvatarPreviewPort): void {
@@ -16058,7 +16282,7 @@ export class Game {
 
   /**
    * Isolated WebGL view for profile Wardrobe — avatar on a snapshot of the viewer's current
-   * room (sky tint + 3×3 floor patch). Pass `null` to release GPU resources.
+   * room (sky tint + 4×4 floor patch). Pass `null` to release GPU resources.
    */
   bindWardrobeAvatarPreviewCanvas(
     canvas: HTMLCanvasElement | null,
@@ -16093,10 +16317,22 @@ export class Game {
     scene.add(dir);
 
     const rootGroup = new THREE.Group();
-    rootGroup.rotation.y = WARDROBE_PREVIEW_SCENE_YAW;
     scene.add(rootGroup);
 
-    const floorTiles = this.buildWardrobePreviewFloorTiles(rootGroup);
+    const previewAnchor = this.resolveWardrobePreviewAnchor();
+    const cameraOrbitYawRad = snapWardrobePreviewCameraOrbitYaw(
+      this.cameraOrbitYawRad
+    );
+    const floorTiles = this.buildWardrobePreviewFloorTiles(
+      rootGroup,
+      previewAnchor,
+      cameraOrbitYawRad
+    );
+    const blockGroups = this.buildWardrobePreviewBlockGroups(
+      rootGroup,
+      previewAnchor,
+      cameraOrbitYawRad
+    );
 
     const avatarGroup = w ? this.makeAvatar(w, label) : new THREE.Group();
     rootGroup.add(avatarGroup);
@@ -16122,10 +16358,11 @@ export class Game {
       rootGroup,
       avatarGroup,
       floorTiles,
+      blockGroups,
       resizeObserver: new ResizeObserver(() => this.renderWardrobeAvatarPreview()),
       wallet: w,
       displayName: label,
-      cameraOrbitYawRad: 0,
+      cameraOrbitYawRad,
       rafId: null,
       previewPhaseStart: performance.now(),
       deployableFx: null,
@@ -16191,6 +16428,7 @@ export class Game {
     if (!port) return;
     const k = ((Math.floor(cornerIndex) % 4) + 4) % 4;
     port.cameraOrbitYawRad = k * (Math.PI / 2);
+    this.rebuildWardrobePreviewBackdrop(port);
     this.renderWardrobeAvatarPreview();
   }
 

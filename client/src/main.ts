@@ -14,6 +14,7 @@ import {
   COSMETIC_SHOP_JOIN_CODE,
   isCosmeticShopRoomId,
 } from "./cosmetics/galleryTypes.js";
+import { isShopPubliclyOpen } from "./cosmetics/shopAccess.js";
 import { StreamDirector } from "./stream/streamDirector.js";
 import { mountStreamPanDebugPanel } from "./stream/streamPanDebug.js";
 import {
@@ -60,6 +61,7 @@ import { WorldcupBallEdgeMarker } from "./worldcup/ballEdgeMarker.js";
 // Country picker + flag emoji are reused for the profile flag / Flag Emote. They are pure UI
 // (no season gate), so they are imported unconditionally even when the World Cup is off.
 import { flagEmoji } from "./worldcup/countries.js";
+import { soleFlagCode } from "./ui/flags.js";
 import { showCountryPickerModal } from "./worldcup/countryPickerModal.js";
 import { isOrthogonallyAdjacentToFloorTile, snapFloorTile } from "./game/grid.js";
 import { remotePlayerIsNpc } from "./remotePlayerNpc.js";
@@ -2132,6 +2134,7 @@ function enterGame(
       });
     },
     onVisitCosmeticShop: () => {
+      if (!isShopPubliclyOpen()) return;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (isCosmeticShopRoomId(game.getRoomId())) {
         return;
@@ -3221,6 +3224,9 @@ function enterGame(
       onEmote: (emoji: string) => {
         if (socket.readyState === WebSocket.OPEN) {
           sendAchievementSignal(socket, "send_emote");
+          if (soleFlagCode(emoji)) {
+            sendAchievementSignal(socket, "flag_emote");
+          }
           sendChat(socket, emoji);
         }
       },
@@ -4184,6 +4190,10 @@ function enterGame(
         game.setTelescopeUnlocked(true);
         hud.setTelescopeUnlocked(true);
       }
+      return;
+    }
+    if (msg.type === "achievementCelebration") {
+      game.showAchievementCelebration(msg.address);
       return;
     }
     if (msg.type === "serverNotice") {

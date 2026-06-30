@@ -541,6 +541,10 @@ export type ServerMessage =
       totalPoints: number;
     }
   | {
+      type: "achievementCelebration";
+      address: string;
+    }
+  | {
       type: "serverNotice";
       kind: "restart_pending";
       etaSeconds: number;
@@ -1369,7 +1373,7 @@ export function sendRemoveVoxelText(ws: WebSocket, roomId: string, id: string): 
 
 export function sendAchievementSignal(
   ws: WebSocket,
-  kind: "open_profile" | "open_wardrobe" | "send_emote"
+  kind: "open_profile" | "open_wardrobe" | "send_emote" | "flag_emote"
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "achievementSignal", kind }));

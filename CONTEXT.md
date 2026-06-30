@@ -329,13 +329,37 @@ _Avoid_: try-on, fitting room, mannequin.
 
 **Wardrobe Preview Backdrop**:
 The read-only miniature of the viewer's current **Room** behind the avatar in **Wardrobe
-Preview** — the room's sky tint plus a 3×3 symmetric floor patch sampled around the tile the
-viewer is standing on when the preview opens (non-walkable cells in the patch render as void).
-Captured once per open; not a separate saved setting and not live-synced while the panel stays
-open. Shown for both the signed-in player's Wardrobe and read-only views of other players
-(their avatar, your room as the stage), including the Shop mini preview doll. When the
-viewer's floor tile is not yet known, the patch anchors on the room **Spawn** instead.
+Preview** — the room's sky tint plus a 4×4 floor patch sampled around the tile the
+viewer is standing on when the preview opens (avatar at row 3 / column 2 of the grid,
+two rows behind and one toward the isometric camera; non-walkable cells in the patch
+render as void). The patch is oriented to the viewer's current in-world isometric camera
+corner, snapped to the nearest 90° view at open — "behind" and "toward camera" follow that
+view, not a fixed default angle. Captured once per open; not a separate saved setting and not
+live-synced while the panel stays open. Shown for both the signed-in player's Wardrobe and read-only
+views of other players (their avatar, your room as the stage), including the Shop mini
+preview doll. When the viewer's floor tile is not yet known, the patch anchors on the room
+**Spawn** instead.
 _Avoid_: studio backdrop, profile background, preview wallpaper.
+
+**Style Line**:
+A family of Presets that share one visual identity in the Wardrobe — one row in a Slot
+dropdown (e.g. Spark Path, Sigil, Magic Ring). A Style Line has one or more **Style
+Variants**; the player picks a variant inside a **Variant Picker** when the line has more
+than one.
+_Avoid_: cosmetic family, preset group, style bundle.
+
+**Style Variant**:
+One unlockable choice within a **Style Line** — a colour for Spark Path, a sigil shape for
+Sigil, and so on. Each Style Variant maps to exactly one **Preset** and one **Cosmetic SKU**;
+**Entitlements** and **Loadout** remain per SKU.
+_Avoid_: colourway, skin, sub-preset.
+
+**Variant Picker**:
+The drill-in sub-view in **Wardrobe** where the player chooses a **Style Variant** from a
+swatch grid after selecting a multi-variant **Style Line**. Locked variants show a padlock
+and an unlock hint; selecting any variant updates **Wardrobe Preview**. At most one Variant
+Picker open at a time within the open Slot dropdown.
+_Avoid_: colour picker (too narrow — sigils pick shapes), style submenu.
 
 **Deployable**:
 A cosmetic whose Slot is deployable — owned like any Entitlement, **used** from the Action
@@ -361,10 +385,12 @@ _Avoid_: UGC SKU, player shop listing.
 ## Achievements
 
 **Achievements Window**:
-The full-window surface where a signed-in player browses their own achievements — a centered
-modal on wide viewports and a bottom sheet on narrow/portrait ones. Opens on the Summary and
-uses the Category Navigator to switch views. Distinct from the **Achievement Unlock Banner**
-and from the read-only achievement highlights shown on a player profile.
+The surface where a signed-in player browses their own achievements. On wide desktop viewports
+it is a left-edge rail inset within the HUD band — below the top chrome, above the bottom
+chat or build dock with a small gap — so chat stays visible and usable beside it. On narrow
+or portrait viewports it is a bottom sheet. Opens on the Summary and uses the Category
+Navigator to switch views. Distinct from the **Achievement Unlock Banner** and from the
+read-only achievement highlights shown on a player profile.
 _Avoid_: achievements panel, achievement modal, trophy window, trophy case.
 
 **Achievement Unlock Banner**:
@@ -377,6 +403,18 @@ _Avoid_: unlock toast, achievement toast, popup.
 A future blocking dialog reserved for unlocks that grant a major achievement-only cosmetic
 reward SKU. Not used for routine unlocks — those use the Achievement Unlock Banner.
 _Avoid_: unlock popup (ambiguous with the Banner).
+
+**Achievement Unlock Celebration**:
+The brief in-world social signal when a player earns an achievement — a trophy springs in
+above their avatar, visible to everyone in the same room at unlock time (not retroactive on
+room enter). Generic trophy only; achievement title and points stay in the earner's
+**Achievement Unlock Banner**. Multiple unlocks in one burst play staggered Celebrations (one
+trophy per unlock, capped so overhead stays readable); the Banner still queues every unlock.
+Silent fetch-time unlocks (self-healing streak catch-up) do not fire a Celebration — same rule
+as the Banner. Hidden in stream cinema view (same overhead-clutter rule as chat bubbles).
+Distinct from the Banner (private HUD) and from profile achievement highlights
+(persistent, read-only).
+_Avoid_: unlock toast, achievement pop, trophy bubble (alone).
 
 **Category Navigator**:
 The control inside the Achievements Window for choosing what fills the content area — the
@@ -424,6 +462,36 @@ Recognition for submitting product feedback (bug, feature, or suggestion ticket)
 eligible ticket only. Lives in the **Social** achievement Category (not a separate navigator
 entry).
 _Avoid_: report, player report, moderation ticket.
+
+**Login Streak** (achievement progress):
+The player's **current** count of consecutive UTC calendar days with at least one sign-in,
+as tracked by the login-streak ledger. Drives progress display and unlock evaluation for the
+three Social login-streak achievements (**Week Warrior**, **Monthly Devotee**, **Time of
+Kaan**). All three rows show the same live streak numerator capped at each row's target
+denominator (e.g. day 3 → `3 / 7`, `3 / 30`, `3 / 60`). Resets when the streak breaks.
+Criteria use a dedicated **`login_streak`** type (threshold per achievement), not a binary
+**event** type. Unlock evaluation walks those definitions (retired: `login_streak_7` /
+`login_streak_30` / `login_streak_top` event keys). Evaluation runs **on login** (after the
+streak ledger updates) and **on achievements fetch** (self-healing when the panel loads).
+Fetch-time unlocks are **silent** — they update **Complete** state only; **Achievement Unlock
+Banners** fire on login evaluation, not when the panel refetches. Once earned, a login-streak
+tier stays **Complete** permanently even if the live streak later breaks.
+_Avoid_: lifetime best streak, binary 0/1 progress, legacy login-streak event keys.
+
+**Week Warrior** (achievement):
+Social achievement for logging in on **7** consecutive UTC calendar days.
+_Avoid_: login streak 7, daily login bronze.
+
+**Monthly Devotee** (achievement):
+Social achievement for logging in on **30** consecutive UTC calendar days.
+_Avoid_: login streak 30, daily login silver.
+
+**Time of Kaan** (achievement):
+Top-tier Social login-streak achievement at an operator-configured threshold (default **60**
+consecutive UTC calendar days). Description copy names that threshold explicitly (same pattern
+as **Week Warrior** and **Monthly Devotee**); the server supplies **N** so description and
+progress denominator stay aligned when operators change `ACHIEVEMENT_LOGIN_STREAK_TOP`.
+_Avoid_: Time of Khan, login streak top, daily login gold, vague "milestone" copy without **N**.
 
 ## Payouts
 
