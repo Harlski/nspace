@@ -60,7 +60,18 @@ const TEST_FIXTURE_PRESETS: ReadonlyArray<CosmeticPreset> = [
   },
 ];
 
-const PRODUCTION_PRESETS: ReadonlyArray<CosmeticPreset> = [];
+const PRODUCTION_PRESETS: ReadonlyArray<CosmeticPreset> = [
+  {
+    presetId: "trail-ref-spark-path",
+    label: "Spark Path (reference)",
+    slot: "trail",
+  },
+  {
+    presetId: "aura-ref-magic-ring",
+    label: "Magic Ring (reference)",
+    slot: "aura",
+  },
+];
 
 function activePresets(): ReadonlyArray<CosmeticPreset> {
   if (process.env.COSMETIC_STORE_TEST_PRESETS === "1") {

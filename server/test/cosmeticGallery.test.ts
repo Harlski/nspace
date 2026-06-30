@@ -48,13 +48,16 @@ describe("cosmeticGallery", () => {
 
   it("builds one showcase per preset", () => {
     const { showcases } = buildCosmeticGalleryPayload();
-    assert.equal(showcases.length, 0);
+    assert.equal(showcases.length, 2);
+    assert.ok(showcases.some((s) => s.presetId === "trail-ref-spark-path"));
+    assert.ok(showcases.some((s) => s.presetId === "aura-ref-magic-ring"));
   });
 
   it("lays trail presets in parallel lanes when any exist", () => {
     const { showcases } = buildCosmeticGalleryPayload();
     const trails = showcases.filter((s) => s.slot === "trail");
-    assert.equal(trails.length, 0);
+    assert.equal(trails.length, 1);
+    assert.equal(trails[0]!.trailPaceTiles, 10);
   });
 
   it("recognizes gallery room id", () => {

@@ -1,36 +1,38 @@
-/** Shared cosmetic palette + per-slot preset definitions (v2 prefabs register here). */
+/** Legacy re-exports — v1 maps removed; use cosmeticPrefabRegistry instead. */
 
-/** The five signature cosmetic colours, reused across trails and auras. */
-export const COSMETIC_PALETTE = {
-  cyan: 0x44d4ff,
-  gold: 0xffcc44,
-  rose: 0xff6699,
-  violet: 0xaa77ff,
-  lime: 0x88ee55,
-} as const;
+export {
+  cosmeticPrefabTint as auraColorForPreset,
+  getCosmeticPrefabDef,
+  isTrailPrefabDef,
+  TRAIL_REF_SPARK_PATH,
+  AURA_REF_MAGIC_RING,
+} from "./cosmeticPrefabRegistry.js";
+
+import { getCosmeticPrefabDef, isTrailPrefabDef } from "./cosmeticPrefabRegistry.js";
 
 export type TrailPresetDef = {
   color: number;
-  /** Floor splat only — no head-mounted particles. */
   groundLinger: boolean;
   additive: boolean;
 };
 
-/** v2 trail prefabs register here after visual quality gate. */
+/** @deprecated Empty — v1 presets removed. */
 export const TRAIL_LINGER_PRESETS: Record<string, TrailPresetDef> = {};
 
-/** v2 aura prefabs register here after visual quality gate. */
+/** @deprecated Empty — v1 presets removed. */
 export const AURA_PRESETS: Record<string, number> = {};
 
 export function trailPresetDef(presetId: string): TrailPresetDef | null {
-  return TRAIL_LINGER_PRESETS[presetId] ?? null;
+  const def = getCosmeticPrefabDef(presetId);
+  if (!def || !isTrailPrefabDef(def)) return null;
+  return {
+    color: def.ground.sprite.tint ?? 0xffffff,
+    groundLinger: true,
+    additive: Boolean(def.ground.glow),
+  };
 }
 
 export function isGroundLingerTrail(presetId: string): boolean {
-  return trailPresetDef(presetId)?.groundLinger === true;
-}
-
-export function auraColorForPreset(presetId: string | null | undefined): number | null {
-  if (!presetId) return null;
-  return AURA_PRESETS[presetId] ?? null;
+  const def = getCosmeticPrefabDef(presetId);
+  return Boolean(def && isTrailPrefabDef(def));
 }

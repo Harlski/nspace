@@ -7293,6 +7293,31 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   background: radial-gradient(circle, #88ee55 35%, rgba(136, 238, 85, 0.15) 75%);
 }
 
+.wardrobe-swatch--trail-ref-spark-path {
+  background: radial-gradient(circle, #ffcc44 35%, rgba(255, 238, 136, 0.2) 75%);
+}
+
+.wardrobe-swatch--aura-ref-magic-ring {
+  box-shadow: 0 0 0 2px #aa77ff inset, 0 0 12px rgba(170, 119, 255, 0.45);
+}
+
+.wardrobe-doll__vfx--trail-ref-spark-path::before {
+  content: "";
+  position: absolute;
+  inset: 18% 8% 8% 8%;
+  background: radial-gradient(circle at 50% 80%, rgba(255, 204, 68, 0.55), transparent 70%);
+  pointer-events: none;
+}
+
+.wardrobe-doll__vfx--aura-ref-magic-ring::after {
+  content: "";
+  position: absolute;
+  inset: 28% 12% 4% 12%;
+  border-radius: 50%;
+  box-shadow: 0 0 18px rgba(170, 119, 255, 0.55);
+  pointer-events: none;
+}
+
 .wardrobe-doll__vfx--trail-linger-cyan::before,
 .wardrobe-doll__vfx--trail-linger-gold::before,
 .wardrobe-doll__vfx--trail-linger-rose::before,

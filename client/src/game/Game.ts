@@ -16508,7 +16508,7 @@ export class Game {
         g.position.z,
         now
       );
-      if (updateCosmeticTrailPuffsForGroup(g, now, g.position.x, g.position.z)) active = true;
+      if (updateCosmeticTrailPuffsForGroup(g, now)) active = true;
       if (updateCosmeticAuraForGroup(g, now)) active = true;
     }
     for (const g of this.others.values()) {
@@ -16520,7 +16520,7 @@ export class Game {
         g.position.z,
         now
       );
-      if (updateCosmeticTrailPuffsForGroup(g, now, g.position.x, g.position.z)) active = true;
+      if (updateCosmeticTrailPuffsForGroup(g, now)) active = true;
       if (updateCosmeticAuraForGroup(g, now)) active = true;
     }
     return active;
@@ -16667,7 +16667,7 @@ export class Game {
             g.position.z,
             now
           );
-          if (updateCosmeticTrailPuffsForGroup(g, now, g.position.x, g.position.z)) active = true;
+          if (updateCosmeticTrailPuffsForGroup(g, now)) active = true;
         }
       }
       // Keep labels at a constant on-screen size at any zoom (gallery groups are not in
