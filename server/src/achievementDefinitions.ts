@@ -58,7 +58,11 @@ export type AchievementEventKey =
   | "field_goal_solo"
   | "country_picked"
   | "flag_emote_sent"
-  | "feedback_submitted";
+  | "feedback_submitted"
+  | "prefab_author"
+  | "signpost_scribe"
+  | "gatekeeper"
+  | "trust_circle";
 
 /** World Cup seasonal counters — progress pauses when WORLDCUP_ENABLED is off. */
 export const WORLDCUP_ACHIEVEMENT_COUNTERS: ReadonlySet<AchievementCounterKey> =
@@ -112,7 +116,9 @@ export type AchievementCriteria =
       resetOn: string;
     }
   | { type: "ap_threshold"; threshold: number }
-  | { type: "category_complete"; category: AchievementCategory };
+  | { type: "category_complete"; category: AchievementCategory }
+  | { type: "room_maker_deluxe" }
+  | { type: "rainbow_floor" };
 
 /** Top-tier login-streak achievement — threshold resolved from env at runtime. */
 export const SOCIAL_LOGIN_TOP_ACHIEVEMENT_ID = "social-login-top";
@@ -125,6 +131,9 @@ export const MARATHON_I_ACHIEVEMENT_ID = "exploration-marathon-1";
 export const MARATHON_II_ACHIEVEMENT_ID = "exploration-marathon-2";
 export const MARATHON_III_ACHIEVEMENT_ID = "exploration-marathon-3";
 export const GRAND_TOUR_ACHIEVEMENT_ID = "exploration-grand-tour";
+
+export const ROOM_MAKER_DELUXE_ACHIEVEMENT_ID = "worldcraft-room-maker-deluxe";
+export const RAINBOW_FLOOR_ACHIEVEMENT_ID = "worldcraft-rainbow-floor";
 
 export type AchievementDefinition = {
   id: string;
@@ -939,6 +948,141 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
       seenPrefix: "outfield:",
       threshold: 50,
     },
+  },
+  {
+    id: "worldcraft-palette-painter-1",
+    title: "Palette Painter I",
+    description: "Recolor 50 distinct floor tiles outside the Pixel room.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 25,
+    sortOrder: 5000,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "recolor:",
+      threshold: 50,
+    },
+  },
+  {
+    id: "worldcraft-palette-painter-2",
+    title: "Palette Painter II",
+    description: "Recolor 200 distinct floor tiles outside the Pixel room.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 50,
+    sortOrder: 5010,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "recolor:",
+      threshold: 200,
+    },
+  },
+  {
+    id: RAINBOW_FLOOR_ACHIEVEMENT_ID,
+    title: "Rainbow Floor",
+    description:
+      "Use 12 distinct hues on floor tiles in one editable room.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 40,
+    sortOrder: 5020,
+    criteria: { type: "rainbow_floor" },
+  },
+  {
+    id: "worldcraft-architect-toolkit",
+    title: "Architect's Toolkit",
+    description:
+      "Place at least one cube, hex, pyramid, sphere, and ramp block.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 35,
+    sortOrder: 5030,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "shape:",
+      threshold: 5,
+    },
+  },
+  {
+    id: "worldcraft-prefab-author",
+    title: "Prefab Author",
+    description: "Publish your first public object prefab.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 30,
+    sortOrder: 5040,
+    criteria: { type: "event", event: "prefab_author" },
+  },
+  {
+    id: "worldcraft-prefab-curator",
+    title: "Prefab Curator",
+    description:
+      "Have 5 public prefabs each placed at least once by another player.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 75,
+    sortOrder: 5050,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "prefab-adoption:",
+      threshold: 5,
+    },
+  },
+  {
+    id: "worldcraft-signpost-scribe",
+    title: "Signpost Scribe",
+    description: "Place a signpost with a message of at least 40 characters.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 20,
+    sortOrder: 5060,
+    criteria: { type: "event", event: "signpost_scribe" },
+  },
+  {
+    id: "worldcraft-signpost-reader",
+    title: "Signpost Reader",
+    description: "Open 10 distinct signposts authored by other players.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 30,
+    sortOrder: 5070,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "signpost-read:",
+      threshold: 10,
+    },
+  },
+  {
+    id: "worldcraft-gatekeeper",
+    title: "Gatekeeper",
+    description: "Open a gate you do not own in the Hub.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 15,
+    sortOrder: 5080,
+    criteria: { type: "event", event: "gatekeeper" },
+  },
+  {
+    id: "worldcraft-trust-circle",
+    title: "Trust Circle",
+    description:
+      "Walk through someone else's gate while you are on their access list.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 25,
+    sortOrder: 5090,
+    criteria: { type: "event", event: "trust_circle" },
+  },
+  {
+    id: ROOM_MAKER_DELUXE_ACHIEVEMENT_ID,
+    title: "Room Maker Deluxe",
+    description:
+      "Create a room and furnish it with 25 blocks, a join spawn, and 5 recolored floor tiles.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 50,
+    sortOrder: 5100,
+    criteria: { type: "room_maker_deluxe" },
   },
 ];
 

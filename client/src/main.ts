@@ -730,8 +730,13 @@ function enterGame(
     flagEmojiFor: (code) => flagEmoji(code),
     // Self clicked their profile flag chip → open the country picker.
     onEditOwnCountry: () => openCountryPickerForSelf(),
-    onAchievementUiSignal: (kind) => {
-      if (ws?.readyState === WebSocket.OPEN) sendAchievementSignal(ws, kind);
+    onAchievementUiSignal: (kind, detail) => {
+      if (ws?.readyState !== WebSocket.OPEN) return;
+      if (kind === "open_signboard") {
+        if (detail) sendAchievementSignal(ws, kind, detail);
+        return;
+      }
+      sendAchievementSignal(ws, kind);
     },
   });
   hud.setLoadingVisible(true, { blackout: true });

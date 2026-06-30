@@ -94,10 +94,21 @@ import {
   recordExplorationDoorFromSpawn,
   recordExplorationRoomEntry,
   recordFieldGoalScored,
+  recordFloorRecolored,
+  recordGatekeeperOpen,
   recordMatchEnd,
   recordOutfieldTilesWalked,
+  recordOwnedRoomBlockPlaced,
   recordPixelPainted,
+  recordPrefabPublished,
+  recordPrefabStampedByOther,
+  recordRoomCreatedForDeluxe,
+  recordRoomJoinSpawnForDeluxe,
+  recordSignboardOpened,
+  recordSignpostPlaced,
+  recordTerrainShapePlaced,
   recordTeleporterWarp,
+  recordTrustCircleWalk,
   tickExplorationDailyRollover,
   type AchievementUnlockWire,
   type MatchEndParticipantInput,
@@ -928,6 +939,33 @@ function canEditRoomContent(roomId: string, address: string): boolean {
 
 function isPixelRoom(roomId: string): boolean {
   return normalizeRoomId(roomId) === PIXEL_ROOM_ID;
+}
+
+function isWalletOwnedRoomOwner(roomId: string, address: string): boolean {
+  const id = normalizeRoomId(roomId);
+  if (!isPlayerCreatedRoom(id)) return false;
+  const owner = getDynamicRoomOwnerAddress(id);
+  if (!owner) return false;
+  return compactAddress(address) === owner;
+}
+
+function trackFloorRecolorAchievement(
+  wallet: string,
+  roomId: string,
+  x: number,
+  z: number,
+  colorRgb: number,
+  ws: WebSocket
+): void {
+  recordFloorRecolored(
+    wallet,
+    roomId,
+    x,
+    z,
+    colorRgb,
+    achievementUnlockHandler(ws),
+    { ownedRoomDeluxe: isWalletOwnedRoomOwner(roomId, wallet) }
+  );
 }
 
 function roomAllowsFakePlayers(roomId: string): boolean {
@@ -7345,6 +7383,25 @@ export function addClient(
         fireAchievementEvent(address, "send_emote", onUnlock);
       } else if (kind === "flag_emote") {
         fireAchievementEvent(address, "flag_emote_sent", onUnlock);
+      } else if (kind === "open_signboard") {
+        const signboardId = String(
+          (msg as { signboardId?: unknown }).signboardId ?? ""
+        ).trim();
+        const authorAddress = String(
+          (msg as { authorAddress?: unknown }).authorAddress ?? ""
+        ).trim();
+        if (!signboardId || !authorAddress) return;
+        const signboard = getSignboardById(signboardId);
+        if (!signboard) return;
+        if (compactAddress(signboard.createdBy) !== compactAddress(authorAddress)) {
+          return;
+        }
+        recordSignboardOpened(
+          address,
+          signboard.id,
+          signboard.createdBy,
+          onUnlock
+        );
       }
       return;
     }
@@ -7388,6 +7445,11 @@ export function addClient(
       fireAchievementEvent(
         address,
         "create_room",
+        achievementUnlockHandler(ws)
+      );
+      recordRoomCreatedForDeluxe(
+        address,
+        created.id,
         achievementUnlockHandler(ws)
       );
       teleportPlayer(conn, created.id, spawnX, spawnZ);
@@ -7693,6 +7755,13 @@ export function addClient(
           z: p.z,
           customized: p.customized,
         });
+        if (patch.joinSpawn !== null && isWalletOwnedRoomOwner(nR, address)) {
+          recordRoomJoinSpawnForDeluxe(
+            address,
+            nR,
+            achievementUnlockHandler(ws)
+          );
+        }
       }
       if (patch.deployablesAllowed !== undefined) {
         broadcast(nR, {
@@ -8239,11 +8308,28 @@ export function addClient(
         rampDir: prism.ramp ? rampDir : 0,
         colorRgb,
       });
+      recordTerrainShapePlaced(
+        address,
+        {
+          hex: prism.hex,
+          pyramid: prism.pyramid,
+          sphere: prism.sphere,
+          ramp: prism.ramp,
+        },
+        achievementUnlockHandler(ws)
+      );
       recordBlockPlaced(
         address,
         currentRoomId,
         achievementUnlockHandler(ws)
       );
+      if (isWalletOwnedRoomOwner(currentRoomId, address)) {
+        recordOwnedRoomBlockPlaced(
+          address,
+          currentRoomId,
+          achievementUnlockHandler(ws)
+        );
+      }
       return;
     }
 
@@ -8305,6 +8391,12 @@ export function addClient(
         footprintW: result.design.footprintW,
         footprintD: result.design.footprintD,
       });
+      recordPrefabPublished(
+        address,
+        result.design.visibility,
+        result.design.kind,
+        achievementUnlockHandler(ws)
+      );
       wsSafeSend(ws, {
         type: "designPublished",
         design: designToWire(result.design),
@@ -8436,6 +8528,15 @@ export function addClient(
         anchorZ,
         obstacleCount: add.length,
       });
+      recordPrefabStampedByOther(
+        plan.design.creatorWallet,
+        address,
+        plan.design.id,
+        plan.design.visibility,
+        (wallet, unlocks) => {
+          achievementUnlockHandlerForAddress(wallet)(unlocks);
+        }
+      );
       wsSafeSend(ws, {
         type: "designStampResult",
         ok: true,
@@ -8580,6 +8681,12 @@ export function addClient(
 
       if (!exitWalkable || !frontWalkable) {
         applyGateOpenForTile(currentRoomId, k, v, who, now);
+        recordGatekeeperOpen(
+          address,
+          gNorm.adminAddress,
+          inHub,
+          achievementUnlockHandler(ws)
+        );
         wsSafeSend(ws, {
           type: "gateWalkBlocked",
           x: gx,
@@ -8590,6 +8697,13 @@ export function addClient(
       }
 
       applyGateOpenForTile(currentRoomId, k, v, who, now);
+
+      recordGatekeeperOpen(
+        address,
+        gNorm.adminAddress,
+        inHub,
+        achievementUnlockHandler(ws)
+      );
 
       const p = conn.player;
       const moverCtx: PathfindMoverContext = { address: who, nowMs: now };
@@ -8649,6 +8763,16 @@ export function addClient(
         conn.pathQueue = [];
       } else {
         conn.pathQueue = full.slice(1);
+        const onAcl = gNorm.authorizedAddresses.some(
+          (a) => compactAddress(a) === whoC
+        );
+        recordTrustCircleWalk(
+          address,
+          gNorm.adminAddress,
+          onAcl,
+          inHub,
+          achievementUnlockHandler(ws)
+        );
       }
       pendingTickStateBroadcast.add(currentRoomId);
       logGameplayEvent(conn.sessionId, address, currentRoomId, "open_gate", {
@@ -9754,6 +9878,14 @@ export function addClient(
               "recolor_extra_floor",
               { x: outcome.x, z: outcome.z }
             );
+            trackFloorRecolorAchievement(
+              address,
+              currentRoomId,
+              outcome.x,
+              outcome.z,
+              outcome.colorRgb,
+              ws
+            );
             break;
           case "recolor_base":
             baseAdds.push({
@@ -9772,6 +9904,15 @@ export function addClient(
               logPixelPaint(outcome.x, outcome.z, outcome.colorRgb, address);
               invalidatePixelBoardPngCache();
               pixelsPainted += 1;
+            } else {
+              trackFloorRecolorAchievement(
+                address,
+                currentRoomId,
+                outcome.x,
+                outcome.z,
+                outcome.colorRgb,
+                ws
+              );
             }
             break;
           case "place_extra":
@@ -9786,6 +9927,14 @@ export function addClient(
               currentRoomId,
               "place_extra_floor",
               { x: outcome.x, z: outcome.z }
+            );
+            trackFloorRecolorAchievement(
+              address,
+              currentRoomId,
+              outcome.x,
+              outcome.z,
+              outcome.colorRgb,
+              ws
             );
             break;
         }
@@ -10369,6 +10518,7 @@ export function addClient(
       
       // Create the signboard
       const signboard = createSignboard(currentRoomId, tile.x, tile.z, message, address);
+      recordSignpostPlaced(address, message, achievementUnlockHandler(ws));
       
       // Place a passable half-height block as the signboard visual
       placed.set(k, {

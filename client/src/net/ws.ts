@@ -1373,8 +1373,35 @@ export function sendRemoveVoxelText(ws: WebSocket, roomId: string, id: string): 
 
 export function sendAchievementSignal(
   ws: WebSocket,
-  kind: "open_profile" | "open_wardrobe" | "send_emote" | "flag_emote"
+  kind: "open_profile" | "open_wardrobe" | "send_emote" | "flag_emote",
+): void;
+export function sendAchievementSignal(
+  ws: WebSocket,
+  kind: "open_signboard",
+  detail: { signboardId: string; authorAddress: string }
+): void;
+export function sendAchievementSignal(
+  ws: WebSocket,
+  kind:
+    | "open_profile"
+    | "open_wardrobe"
+    | "send_emote"
+    | "flag_emote"
+    | "open_signboard",
+  detail?: { signboardId: string; authorAddress: string }
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
+  if (kind === "open_signboard") {
+    if (!detail?.signboardId || !detail.authorAddress) return;
+    ws.send(
+      JSON.stringify({
+        type: "achievementSignal",
+        kind,
+        signboardId: detail.signboardId,
+        authorAddress: detail.authorAddress,
+      })
+    );
+    return;
+  }
   ws.send(JSON.stringify({ type: "achievementSignal", kind }));
 }

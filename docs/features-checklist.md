@@ -167,11 +167,17 @@ Gated behind **`WORLDCUP_ENABLED`** (server) / **`VITE_WORLDCUP_ENABLED`** (clie
 - [x] **Achievement registry** (code-defined) — onboarding, Commons build ladders, mining ladders; achievement points per milestone ([`server/src/achievementDefinitions.ts`](../server/src/achievementDefinitions.ts))
 - [x] **Progress store** (campaign SQLite) — per-wallet counters + completions; idempotent unlock + cosmetic grant via `EntitlementSource` `achievement` ([`server/src/achievementStore.ts`](../server/src/achievementStore.ts))
 - [x] **Dedicated reward SKUs** — `ach-*` trails in **Achievements** collection; excluded from shop purchase (`achievement_only`)
-- [x] Server hooks — block place/mine, room enter/visit/create, loadout equip, client `achievementSignal` (profile, wardrobe, emote)
+- [x] Server hooks — block place/mine, room enter/visit/create, loadout equip, client `achievementSignal` (profile, wardrobe, emote, signboard read)
 - [x] APIs — `GET /api/achievements/me`; profile public fields `achievementPoints`, `achievementHighlights` on `GET /api/player-profile/:address`
 - [x] WS — server→client `achievementUnlocked`; room broadcast `achievementCelebration` (trophy pop above earner); client→server `achievementSignal`
 - [x] Client — **Achievements Window** with Category Navigator (sidebar on desktop, bottom drop-up on portrait), Summary view (recent + progress overview), per-category lists, reward swatches; opens via Player Menu or `Y`; profile AP + recent highlights, unlock toast; **Achievement Unlock Celebration** (in-world trophy spring above avatar, visible to room)
 - [x] Tests — [`server/test/achievementStore.test.ts`](../server/test/achievementStore.test.ts)
+
+## Achievements v3 (exploration & worldcraft)
+
+- [x] **Exploration category** — Marathon I–III, Room Tourist, Grand Tour, Door Crasher, Teleporter Tourist, Outfield Explorer ([`server/src/explorationAchievementEvaluator.ts`](../server/src/explorationAchievementEvaluator.ts))
+- [x] **Worldcraft category** — Palette Painter, Rainbow Floor, Architect's Toolkit, Prefab Author/Curator, Signpost Scribe/Reader, Gatekeeper, Trust Circle, Room Maker Deluxe ([`server/src/worldcraftAchievementEvaluator.ts`](../server/src/worldcraftAchievementEvaluator.ts))
+- [x] Server hooks — floor recolor, terrain shapes, prefab publish/stamp, signpost place, gate open/ACL walk, furnished-room composite; `achievementSignal` `open_signboard` validated against signboard catalog
 
 ## Client-only / polish
 

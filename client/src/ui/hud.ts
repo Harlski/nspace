@@ -307,9 +307,15 @@ export function createHud(
         Record<"aura" | "nameplate" | "chatBubble" | "trail", string | null>
       >
     ) => void;
-    /** Client UI milestones (profile, wardrobe, emotes) — host sends WS to server. */
+    /** Client UI milestones (profile, wardrobe, emotes, sign read) — host sends WS to server. */
     onAchievementUiSignal?: (
-      kind: "open_profile" | "open_wardrobe" | "send_emote"
+      kind:
+        | "open_profile"
+        | "open_wardrobe"
+        | "send_emote"
+        | "flag_emote"
+        | "open_signboard",
+      detail?: { signboardId: string; authorAddress: string }
     ) => void;
   }
 ): {
@@ -9364,6 +9370,12 @@ export function createHud(
     signReadFooterEl.hidden = !isOwner;
     signReadOverlay.hidden = false;
     signReadOverlay.setAttribute("aria-hidden", "false");
+    if (!isOwner) {
+      opts?.onAchievementUiSignal?.("open_signboard", {
+        signboardId: signboard.id,
+        authorAddress: signboard.createdBy,
+      });
+    }
     void loadCtxIdenticon(signReadIdenticonEl, compact);
     void resolveSignAuthorProfile(compact).then((profile) => {
       if (signReadOpenSignboard?.id !== signboard.id) return;

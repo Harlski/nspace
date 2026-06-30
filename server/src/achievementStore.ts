@@ -16,6 +16,8 @@ import {
   listAchievementsForEvent,
   listDailySetAchievements,
   listLoginStreakAchievements,
+  RAINBOW_FLOOR_ACHIEVEMENT_ID,
+  ROOM_MAKER_DELUXE_ACHIEVEMENT_ID,
   SOCIAL_LOGIN_TOP_ACHIEVEMENT_ID,
   SUNNY_SIDE_UP_ACHIEVEMENT_ID,
 } from "./achievementDefinitions.js";
@@ -44,6 +46,29 @@ import {
   TELEPORTER_DEST_SEEN_PREFIX,
 } from "./explorationAchievementEvaluator.js";
 import {
+  FLOOR_RECOLOR_SEEN_PREFIX,
+  floorRecolorSeenKey,
+  formatRoomDeluxeProgress,
+  hueBucketFromColorRgb,
+  isPalettePainterEligibleRoom,
+  isRoomDeluxeComplete,
+  parseRoomDeluxeProgress,
+  PREFAB_ADOPTION_SEEN_PREFIX,
+  prefabAdoptionSeenKey,
+  RAINBOW_FLOOR_HUE_THRESHOLD,
+  RAINBOW_HUE_SEEN_PREFIX,
+  rainbowHueSeenKey,
+  roomDeluxeMetRequirements,
+  roomDeluxeStateKey,
+  ROOM_DELUXE_LIFETIME_DAY,
+  ROOM_DELUXE_REQUIREMENT_COUNT,
+  shapeSeenKey,
+  SIGNPOST_READ_SEEN_PREFIX,
+  signpostReadSeenKey,
+  terrainShapeKindFromPrism,
+  type RoomDeluxeProgress,
+} from "./worldcraftAchievementEvaluator.js";
+import {
   countOnboardingPrerequisitesComplete,
   getTelescopeAchievementDefinition,
   isAllOnboardingPrerequisitesComplete,
@@ -60,6 +85,7 @@ import {
   _resetCosmeticStoreForTests,
 } from "./cosmeticStore.js";
 import { getLoginStreakDaysForWallet, utcCalendarDay } from "./loginStreakStore.js";
+import { normalizeRoomId } from "./roomLayouts.js";
 
 let lastExplorationUtcDay: string | null = null;
 
@@ -214,6 +240,12 @@ function counterThreshold(def: AchievementDefinition): number {
   if (def.criteria.type === "ap_threshold") {
     return def.criteria.threshold;
   }
+  if (def.criteria.type === "room_maker_deluxe") {
+    return ROOM_DELUXE_REQUIREMENT_COUNT;
+  }
+  if (def.criteria.type === "rainbow_floor") {
+    return RAINBOW_FLOOR_HUE_THRESHOLD;
+  }
   return 1;
 }
 
@@ -242,6 +274,131 @@ function getCounterValue(wallet: string, counter: AchievementCounterKey): number
     )
     .get(w, counter) as { value: number } | undefined;
   return row?.value ?? 0;
+}
+
+function listSeenKeysWithPrefix(wallet: string, prefix: string): string[] {
+  const w = normalizeWallet(wallet);
+  const rows = requireDb()
+    .prepare(
+      `SELECT seen_key FROM achievement_seen
+       WHERE wallet = ? AND seen_key LIKE ? || '%'`
+    )
+    .all(w, prefix) as Array<{ seen_key: string }>;
+  return rows.map((r) => r.seen_key);
+}
+
+function maxRainbowHueProgress(wallet: string): number {
+  const counts = new Map<string, number>();
+  for (const key of listSeenKeysWithPrefix(wallet, RAINBOW_HUE_SEEN_PREFIX)) {
+    const rest = key.slice(RAINBOW_HUE_SEEN_PREFIX.length);
+    const colon = rest.lastIndexOf(":");
+    if (colon <= 0) continue;
+    const roomId = rest.slice(0, colon);
+    counts.set(roomId, (counts.get(roomId) ?? 0) + 1);
+  }
+  let max = 0;
+  for (const count of counts.values()) {
+    if (count > max) max = count;
+  }
+  return max;
+}
+
+function maxRoomDeluxeProgress(wallet: string): number {
+  const w = normalizeWallet(wallet);
+  const rows = requireDb()
+    .prepare(
+      `SELECT value FROM achievement_daily_state
+       WHERE wallet = ? AND utc_day = ? AND state_key LIKE ? || '%'`
+    )
+    .all(w, ROOM_DELUXE_LIFETIME_DAY, "room_deluxe:") as Array<{ value: string }>;
+  let max = 0;
+  for (const row of rows) {
+    const met = roomDeluxeMetRequirements(parseRoomDeluxeProgress(row.value));
+    if (met > max) max = met;
+  }
+  return max;
+}
+
+function getRoomDeluxeProgress(
+  wallet: string,
+  roomId: string
+): RoomDeluxeProgress {
+  return parseRoomDeluxeProgress(
+    getAchievementDailyState(
+      wallet,
+      ROOM_DELUXE_LIFETIME_DAY,
+      roomDeluxeStateKey(roomId)
+    )
+  );
+}
+
+function setRoomDeluxeProgress(
+  wallet: string,
+  roomId: string,
+  progress: RoomDeluxeProgress
+): void {
+  setAchievementDailyState(
+    wallet,
+    ROOM_DELUXE_LIFETIME_DAY,
+    roomDeluxeStateKey(roomId),
+    formatRoomDeluxeProgress(progress)
+  );
+}
+
+function evaluateRainbowFloorAchievements(
+  wallet: string,
+  roomId: string,
+  unlocks: AchievementUnlockWire[]
+): void {
+  const def = getAchievementDefinition(RAINBOW_FLOOR_ACHIEVEMENT_ID);
+  if (!def || def.criteria.type !== "rainbow_floor") return;
+  if (hasCompletion(wallet, def.id)) return;
+  const prefix = `${RAINBOW_HUE_SEEN_PREFIX}${normalizeRoomId(roomId).trim().toLowerCase()}:`;
+  const count = listSeenKeysWithPrefix(wallet, prefix).length;
+  if (count >= RAINBOW_FLOOR_HUE_THRESHOLD) {
+    completeAchievement(wallet, def, unlocks);
+  }
+}
+
+function evaluateRoomMakerDeluxeAchievements(
+  wallet: string,
+  unlocks: AchievementUnlockWire[]
+): void {
+  const def = getAchievementDefinition(ROOM_MAKER_DELUXE_ACHIEVEMENT_ID);
+  if (!def || def.criteria.type !== "room_maker_deluxe") return;
+  if (hasCompletion(wallet, def.id)) return;
+  const rows = requireDb()
+    .prepare(
+      `SELECT value FROM achievement_daily_state
+       WHERE wallet = ? AND utc_day = ? AND state_key LIKE ? || '%'`
+    )
+    .all(
+      normalizeWallet(wallet),
+      ROOM_DELUXE_LIFETIME_DAY,
+      "room_deluxe:"
+    ) as Array<{ value: string }>;
+  for (const row of rows) {
+    if (isRoomDeluxeComplete(parseRoomDeluxeProgress(row.value))) {
+      completeAchievement(wallet, def, unlocks);
+      return;
+    }
+  }
+}
+
+function touchRoomDeluxeProgress(
+  wallet: string,
+  roomId: string,
+  mutate: (progress: RoomDeluxeProgress) => void,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  const progress = getRoomDeluxeProgress(w, roomId);
+  mutate(progress);
+  setRoomDeluxeProgress(w, roomId, progress);
+  const unlocks: AchievementUnlockWire[] = [];
+  evaluateRoomMakerDeluxeAchievements(w, unlocks);
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
 }
 
 function countSeenKeysWithPrefix(wallet: string, prefix: string): number {
@@ -934,6 +1091,202 @@ export function recordOutfieldTilesWalked(
   return inserted;
 }
 
+export function recordFloorRecolored(
+  wallet: string,
+  roomId: string,
+  x: number,
+  z: number,
+  colorRgb: number,
+  onUnlock?: AchievementUnlockCallback,
+  opts?: { ownedRoomDeluxe?: boolean }
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  const unlocks: AchievementUnlockWire[] = [];
+  let newDistinctRecolor = false;
+  if (isPalettePainterEligibleRoom(roomId)) {
+    const recolorKey = floorRecolorSeenKey(roomId, x, z);
+    if (recordAchievementSeen(w, recolorKey)) {
+      newDistinctRecolor = true;
+      evaluateDedupePrefixAchievements(w, FLOOR_RECOLOR_SEEN_PREFIX, unlocks);
+    }
+  }
+  const hueBucket = hueBucketFromColorRgb(colorRgb);
+  if (hueBucket >= 0) {
+    const hueKey = rainbowHueSeenKey(roomId, hueBucket);
+    if (recordAchievementSeen(w, hueKey)) {
+      evaluateRainbowFloorAchievements(
+        w,
+        roomId,
+        unlocks
+      );
+    }
+  }
+  if (opts?.ownedRoomDeluxe && newDistinctRecolor) {
+    const progress = getRoomDeluxeProgress(w, roomId);
+    progress.recolors += 1;
+    setRoomDeluxeProgress(w, roomId, progress);
+    evaluateRoomMakerDeluxeAchievements(w, unlocks);
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordTerrainShapePlaced(
+  wallet: string,
+  shape: {
+    hex: boolean;
+    pyramid: boolean;
+    sphere: boolean;
+    ramp: boolean;
+  },
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  const unlocks: AchievementUnlockWire[] = [];
+  const kind = terrainShapeKindFromPrism(shape);
+  if (recordAchievementSeen(w, shapeSeenKey(kind))) {
+    evaluateDedupePrefixAchievements(w, "shape:", unlocks);
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordPrefabPublished(
+  wallet: string,
+  visibility: "private" | "public",
+  kind: "object" | "room",
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  if (visibility !== "public" || kind !== "object") return;
+  fireAchievementEvent(wallet, "prefab_author", onUnlock);
+}
+
+export function recordPrefabStampedByOther(
+  creatorWallet: string,
+  stamperWallet: string,
+  designId: string,
+  visibility: "private" | "public",
+  onUnlock?: AchievementUnlockForWalletCallback
+): void {
+  if (visibility !== "public") return;
+  if (!isAchievementEligibleWallet(creatorWallet)) return;
+  const creator = normalizeWallet(creatorWallet);
+  const stamper = normalizeWallet(stamperWallet);
+  if (!stamper || creator === stamper) return;
+  const unlocks: AchievementUnlockWire[] = [];
+  if (recordAchievementSeen(creator, prefabAdoptionSeenKey(designId))) {
+    evaluateDedupePrefixAchievements(
+      creator,
+      PREFAB_ADOPTION_SEEN_PREFIX,
+      unlocks
+    );
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(creator, unlocks);
+}
+
+export function recordSignpostPlaced(
+  wallet: string,
+  message: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  if (String(message ?? "").trim().length < 40) return;
+  fireAchievementEvent(wallet, "signpost_scribe", onUnlock);
+}
+
+export function recordSignboardOpened(
+  wallet: string,
+  signboardId: string,
+  authorWallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  const author = normalizeWallet(authorWallet);
+  if (!author || w === author) return;
+  const unlocks: AchievementUnlockWire[] = [];
+  const key = signpostReadSeenKey(signboardId);
+  if (recordAchievementSeen(w, key)) {
+    evaluateDedupePrefixAchievements(w, SIGNPOST_READ_SEEN_PREFIX, unlocks);
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordGatekeeperOpen(
+  wallet: string,
+  gateOwnerWallet: string,
+  inHub: boolean,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet) || !inHub) return;
+  const w = normalizeWallet(wallet);
+  const owner = normalizeWallet(gateOwnerWallet);
+  if (!owner || w === owner) return;
+  fireAchievementEvent(w, "gatekeeper", onUnlock);
+}
+
+export function recordTrustCircleWalk(
+  wallet: string,
+  gateOwnerWallet: string,
+  onAcl: boolean,
+  inHub: boolean,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet) || inHub || !onAcl) return;
+  const w = normalizeWallet(wallet);
+  const owner = normalizeWallet(gateOwnerWallet);
+  if (!owner || w === owner) return;
+  fireAchievementEvent(w, "trust_circle", onUnlock);
+}
+
+export function recordRoomCreatedForDeluxe(
+  wallet: string,
+  roomId: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  touchRoomDeluxeProgress(
+    wallet,
+    roomId,
+    (progress) => {
+      progress.created = true;
+    },
+    onUnlock
+  );
+}
+
+export function recordRoomJoinSpawnForDeluxe(
+  wallet: string,
+  roomId: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  touchRoomDeluxeProgress(
+    wallet,
+    roomId,
+    (progress) => {
+      progress.spawn = true;
+    },
+    onUnlock
+  );
+}
+
+export function recordOwnedRoomBlockPlaced(
+  wallet: string,
+  roomId: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  touchRoomDeluxeProgress(
+    wallet,
+    roomId,
+    (progress) => {
+      if (progress.blocks < Number.MAX_SAFE_INTEGER) {
+        progress.blocks += 1;
+      }
+    },
+    onUnlock
+  );
+}
+
 /** Re-evaluate Grand Tour on UTC midnight for online players (daily row resets by day key). */
 export function tickExplorationDailyRollover(
   nowMs: number,
@@ -1014,6 +1367,16 @@ function buildProgressRow(
       completedAtMs != null
         ? threshold
         : Math.min(threshold, totalPointsForWallet(wallet));
+  } else if (def.criteria.type === "rainbow_floor") {
+    progress =
+      completedAtMs != null
+        ? threshold
+        : Math.min(threshold, maxRainbowHueProgress(wallet));
+  } else if (def.criteria.type === "room_maker_deluxe") {
+    progress =
+      completedAtMs != null
+        ? threshold
+        : Math.min(threshold, maxRoomDeluxeProgress(wallet));
   }
   return {
     achievementId: def.id,

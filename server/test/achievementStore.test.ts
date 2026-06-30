@@ -747,3 +747,99 @@ test("Outfield Explorer counts margin tiles on the field only", async () => {
     );
   });
 });
+
+test("worldcraft floor recolor dedupes palette painter and excludes pixel", async () => {
+  await withAchievementStore(async ({
+    recordFloorRecolored,
+    getAchievementsForWallet,
+  }) => {
+    recordFloorRecolored(WALLET, "hub", 1, 2, 0xff0000);
+    recordFloorRecolored(WALLET, "hub", 1, 2, 0x00ff00);
+    recordFloorRecolored(WALLET, "pixel", 3, 4, 0x0000ff);
+    const palette = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "worldcraft-palette-painter-1"
+    );
+    assert.equal(palette?.progress, 1);
+    assert.equal(palette?.threshold, 50);
+  });
+});
+
+test("worldcraft architect toolkit unlocks after five distinct shapes", async () => {
+  await withAchievementStore(async ({
+    recordTerrainShapePlaced,
+    getAchievementsForWallet,
+  }) => {
+    const shapes = [
+      { hex: false, pyramid: false, sphere: false, ramp: false },
+      { hex: true, pyramid: false, sphere: false, ramp: false },
+      { hex: false, pyramid: true, sphere: false, ramp: false },
+      { hex: false, pyramid: false, sphere: true, ramp: false },
+      { hex: false, pyramid: false, sphere: false, ramp: true },
+    ] as const;
+    const unlocks: Array<{ achievementId: string }> = [];
+    for (const shape of shapes) {
+      recordTerrainShapePlaced(WALLET, shape, (u) => unlocks.push(...u));
+    }
+    assert.ok(unlocks.some((u) => u.achievementId === "worldcraft-architect-toolkit"));
+    const row = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "worldcraft-architect-toolkit"
+    );
+    assert.equal(row?.completed, true);
+  });
+});
+
+test("worldcraft room maker deluxe composite unlocks once furnished", async () => {
+  await withAchievementStore(async ({
+    recordRoomCreatedForDeluxe,
+    recordOwnedRoomBlockPlaced,
+    recordRoomJoinSpawnForDeluxe,
+    recordFloorRecolored,
+    getAchievementsForWallet,
+  }) => {
+    const roomId = "my-test-room";
+    const unlocks: Array<{ achievementId: string }> = [];
+    recordRoomCreatedForDeluxe(WALLET, roomId, (u) => unlocks.push(...u));
+    recordRoomJoinSpawnForDeluxe(WALLET, roomId, (u) => unlocks.push(...u));
+    for (let i = 0; i < 25; i += 1) {
+      recordOwnedRoomBlockPlaced(WALLET, roomId, (u) => unlocks.push(...u));
+    }
+    for (let i = 0; i < 5; i += 1) {
+      recordFloorRecolored(
+        WALLET,
+        roomId,
+        i,
+        0,
+        0xff0000 + (i << 8),
+        (u) => unlocks.push(...u),
+        { ownedRoomDeluxe: true }
+      );
+    }
+    assert.ok(
+      unlocks.some((u) => u.achievementId === "worldcraft-room-maker-deluxe")
+    );
+    const deluxe = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "worldcraft-room-maker-deluxe"
+    );
+    assert.equal(deluxe?.completed, true);
+    assert.equal(deluxe?.progress, 4);
+    assert.equal(deluxe?.threshold, 4);
+  });
+});
+
+test("worldcraft signpost reader dedupes by signboard id", async () => {
+  await withAchievementStore(async ({
+    recordSignboardOpened,
+    getAchievementsForWallet,
+  }) => {
+    const author = "NQ07 OTHER000000000000000000000000002";
+    for (let i = 0; i < 10; i += 1) {
+      recordSignboardOpened(WALLET, `sign-${i}`, author);
+    }
+    recordSignboardOpened(WALLET, "sign-0", author);
+    const reader = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "worldcraft-signpost-reader"
+    );
+    assert.equal(reader?.completed, true);
+    assert.equal(reader?.progress, 10);
+  });
+});

@@ -33,7 +33,7 @@ Paper-doll Wardrobe UX (phase 3b) — self profile equip/shop UI, Wardrobe Previ
 - `client/src/cosmetics/wardrobePanel.ts` — paper-doll Wardrobe + Shop tabs; slot dropdowns; `mountWardrobeReadOnly`.
 - `client/src/cosmetics/presetSwatch.ts` — swatch classes + doll VFX CSS hooks.
 - `client/src/cosmetics/loadoutVfx.ts` — stash bubble preset on group userData.
-- `client/src/game/wardrobePreviewBackdrop.ts` / `wardrobePreviewBackdrop.test.ts` — **Wardrobe Preview Backdrop**: snapshot room sky + 3×3 floor patch (void = water) around viewer tile at open; spawn fallback.
+- `client/src/game/wardrobePreviewBackdrop.ts` / `wardrobePreviewBackdrop.test.ts` — **Wardrobe Preview Backdrop**: snapshot room sky + 4×4 floor patch (void = water); spawn fallback; stacked blocks at every Y level except camera-side occluders and the avatar tile; preview camera stays at the original tight zoom (not widened for patch size).
 - `client/src/game/Game.ts` — `bindWardrobeAvatarPreviewCanvas` / `updateWardrobeAvatarPreviewCosmetics` (isometric tile + avatar WebGL, same idiom as `/advertise` preview); preview uses backdrop module above.
 - `client/src/ui/hud.ts` — mount new wardrobe; revert preview on profile close; **Player Menu** (`createPlayerMenu`), logout/leave handlers, Action Wheel mutual close, identicon sync from player bar.
 - `client/src/ui/playerMenu.ts` — bottom-right identicon trigger + vertical popover list + inline logout/leave confirm.
@@ -85,6 +85,17 @@ Paper-doll Wardrobe UX (phase 3b) — self profile equip/shop UI, Wardrobe Previ
 - `client/src/ui/playerMenu.ts`, `client/src/ui/hud.ts`, `client/src/main.ts`, `client/src/net/ws.ts` — Player Menu entry, profile AP/highlights, unlock toast, WS wiring.
 - `server/test/achievementStore.test.ts` — counter, reward grant, public summary tests.
 - `docs/features-checklist.md` — Achievements section.
+
+### Achievements v3 — worldcraft (slice 2)
+
+- `server/src/worldcraftAchievementEvaluator.ts` — pure rules for palette eligibility, hue buckets, shape keys, room-maker-deluxe progress.
+- `server/src/achievementDefinitions.ts` — `worldcraft` category (10 achievements).
+- `server/src/achievementStore.ts` — floor recolor, shapes, prefab, signpost, gate, room deluxe record APIs.
+- `server/src/rooms.ts` — production hooks; `achievementSignal` `open_signboard` with server signboard lookup.
+- `client/src/achievements/panelData.ts` — Worldcraft navigator label.
+- `client/src/net/ws.ts`, `client/src/ui/hud.ts`, `client/src/main.ts` — Signpost Reader client signal on modal open.
+- `server/test/worldcraftAchievementEvaluator.test.ts`, `server/test/achievementStore.test.ts` — worldcraft unit/store tests.
+- `docs/features-checklist.md` — v3 exploration/worldcraft section.
 
 ### Player Menu Shop + The Shaper return
 
