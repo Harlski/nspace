@@ -6,6 +6,7 @@ export type AchievementProgress = {
   title: string;
   description: string;
   category: string;
+  categoryGroup?: string | null;
   points: number;
   completed: boolean;
   completedAt: string | null;
@@ -40,12 +41,45 @@ export type AchievementUnlockMessage = {
   totalPoints: number;
 };
 
-export async function fetchMyAchievements(): Promise<AchievementMeResponse | null> {
+const ACHIEVEMENTS_SESSION_CACHE_MS = 60_000;
+
+let achievementsFetchInflight: Promise<AchievementMeResponse | null> | null =
+  null;
+let achievementsSessionCache: AchievementMeResponse | null = null;
+let achievementsSessionCachedAt = 0;
+
+/** Clears the in-memory achievements snapshot (call after unlocks). */
+export function invalidateAchievementsCache(): void {
+  achievementsSessionCache = null;
+  achievementsSessionCachedAt = 0;
+}
+
+export async function fetchMyAchievements(opts?: {
+  force?: boolean;
+}): Promise<AchievementMeResponse | null> {
   const token = loadCachedSession()?.token ?? null;
   if (!token) return null;
-  const r = await fetch(apiUrl("/api/achievements/me"), {
-    headers: { authorization: `Bearer ${token}` },
+  const force = opts?.force === true;
+  const now = Date.now();
+  if (
+    !force &&
+    achievementsSessionCache &&
+    now - achievementsSessionCachedAt < ACHIEVEMENTS_SESSION_CACHE_MS
+  ) {
+    return achievementsSessionCache;
+  }
+  if (achievementsFetchInflight) return achievementsFetchInflight;
+  achievementsFetchInflight = (async () => {
+    const r = await fetch(apiUrl("/api/achievements/me"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) return null;
+    const payload = (await r.json()) as AchievementMeResponse;
+    achievementsSessionCache = payload;
+    achievementsSessionCachedAt = Date.now();
+    return payload;
+  })().finally(() => {
+    achievementsFetchInflight = null;
   });
-  if (!r.ok) return null;
-  return (await r.json()) as AchievementMeResponse;
+  return achievementsFetchInflight;
 }

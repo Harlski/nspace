@@ -8,9 +8,10 @@ import {
 } from "./api.js";
 import { loadCachedSession } from "../auth/session.js";
 import {
+  createPresetSwatch,
+  createUnavailableSwatch,
   loadoutSkuKey,
   PASSIVE_SLOTS,
-  presetSwatchClass,
   SLOT_LABELS,
   type PassiveSlotId,
 } from "./presetSwatch.js";
@@ -19,6 +20,17 @@ import {
   createWardrobeSlotTooltip,
   slotAriaLabel,
 } from "./wardrobeSlotTip.js";
+import {
+  isGroupedStyleSlot,
+  isMultiVariantStyleLine,
+  listStyleLinesForSlot,
+  representativePresetForStyleLine,
+  resolveStyleLineVariants,
+  styleLineById,
+  WARDROBE_VARIANT_UNLOCK_HINT,
+  type ResolvedStyleVariant,
+  type StyleLineDef,
+} from "./wardrobeStyleLines.js";
 
 function isPassiveSlotId(slot: string): slot is PassiveSlotId {
   return (PASSIVE_SLOTS as readonly string[]).includes(slot);
@@ -36,10 +48,9 @@ function shopSlotLabel(slot: string): string {
   return slot;
 }
 
-const SLOT_COMING_SOON: ReadonlySet<PassiveSlotId | "deployable"> = new Set([
+const SLOT_COMING_SOON = new Set<PassiveSlotId>([
   "nameplate",
   "chatBubble",
-  "deployable",
 ]);
 
 export const WARDROBE_SLOT_EMPTY_COPY = "Nothing to unlock yet";
@@ -47,19 +58,27 @@ export const WARDROBE_SLOT_EMPTY_COPY = "Nothing to unlock yet";
 export const SHOP_ACHIEVEMENTS_ONLY_COPY =
   "Earn cosmetics through Achievements — more styles coming soon.";
 
-export function wardrobeSlotStatusLabel(input: {
+export type WardrobeSlotStatusInput = {
   slot: PassiveSlotId | "deployable";
   presetName: string;
   ownedSelectableCount: number;
   ownedDeployableCount?: number;
-}): string {
+};
+
+export function wardrobeSlotShowsEmptyIcon(input: WardrobeSlotStatusInput): boolean {
+  if (input.presetName !== "None") return false;
+  if (input.slot === "deployable") {
+    return (input.ownedDeployableCount ?? 0) === 0;
+  }
+  return SLOT_COMING_SOON.has(input.slot) && input.ownedSelectableCount === 0;
+}
+
+export function wardrobeSlotStatusLabel(input: WardrobeSlotStatusInput): string {
   if (input.presetName !== "None") return input.presetName;
+  if (wardrobeSlotShowsEmptyIcon(input)) return "None";
   if (input.slot === "deployable") {
     const count = input.ownedDeployableCount ?? 0;
-    return count > 0 ? `${count} owned` : WARDROBE_SLOT_EMPTY_COPY;
-  }
-  if (SLOT_COMING_SOON.has(input.slot) && input.ownedSelectableCount === 0) {
-    return WARDROBE_SLOT_EMPTY_COPY;
+    return count > 0 ? `${count} owned` : "";
   }
   return "None";
 }
@@ -97,12 +116,77 @@ type SlotRow = {
 
 const OWNED_COSMETICS_PAGE_SIZE = 5;
 
+function appendWardrobeSkeletonSlot(host: HTMLElement, label: string): void {
+  const cell = document.createElement("div");
+  cell.className = "wardrobe-slot-cell wardrobe-slot-cell--skeleton";
+  const tipHost = document.createElement("div");
+  tipHost.className = "wardrobe-slot-tip-host";
+  const chip = document.createElement("span");
+  chip.className = "wardrobe-slot wardrobe-slot--skeleton";
+  chip.setAttribute("aria-hidden", "true");
+  const swatch = document.createElement("span");
+  swatch.className = "wardrobe-swatch wardrobe-swatch--skeleton";
+  chip.appendChild(swatch);
+  tipHost.appendChild(chip);
+  const name = document.createElement("span");
+  name.className = "wardrobe-slot__name wardrobe-slot__name--skeleton";
+  name.textContent = label;
+  cell.append(tipHost, name);
+  host.appendChild(cell);
+}
+
+function buildWardrobeLayoutSkeleton(): HTMLElement {
+  const layout = document.createElement("div");
+  layout.className = "wardrobe-layout wardrobe-layout--skeleton";
+
+  const grid = document.createElement("div");
+  grid.className = "wardrobe-doll__grid";
+  const colLeft = document.createElement("div");
+  colLeft.className = "wardrobe-doll__col wardrobe-doll__col--left";
+  const center = document.createElement("div");
+  center.className = "wardrobe-doll__slot wardrobe-doll__slot--center";
+  const colRight = document.createElement("div");
+  colRight.className = "wardrobe-doll__col wardrobe-doll__col--right";
+
+  appendWardrobeSkeletonSlot(colLeft, SLOT_LABELS.nameplate);
+  appendWardrobeSkeletonSlot(colLeft, SLOT_LABELS.aura);
+
+  const dollWrapSkeleton = document.createElement("div");
+  dollWrapSkeleton.className = "wardrobe-doll wardrobe-doll--interactive wardrobe-doll--skeleton";
+  const canvasSkeleton = document.createElement("div");
+  canvasSkeleton.className = "wardrobe-doll__canvas wardrobe-doll__canvas--skeleton";
+  canvasSkeleton.setAttribute("aria-label", "Avatar preview loading");
+  dollWrapSkeleton.appendChild(canvasSkeleton);
+  center.appendChild(dollWrapSkeleton);
+
+  appendWardrobeSkeletonSlot(colRight, SLOT_LABELS.chatBubble);
+  appendWardrobeSkeletonSlot(colRight, SLOT_LABELS.trail);
+  grid.append(colLeft, center, colRight);
+  layout.appendChild(grid);
+
+  const deployableRow = document.createElement("div");
+  deployableRow.className = "wardrobe-doll__deployable-row";
+  appendWardrobeSkeletonSlot(deployableRow, "Deployable");
+  layout.appendChild(deployableRow);
+  return layout;
+}
+
+/** Reserve profile / panel space before wardrobe data and WebGL preview are ready. */
+export function mountWardrobePanelSkeleton(container: HTMLElement): void {
+  container.classList.add("wardrobe-panel");
+  container.replaceChildren();
+  const body = document.createElement("div");
+  body.className = "wardrobe-panel__body";
+  body.appendChild(buildWardrobeLayoutSkeleton());
+  container.appendChild(body);
+}
+
 export function mountWardrobePanel(
   container: HTMLElement,
   walletAddress: string,
   opts: PreviewHandlers = {}
 ): {
-  refresh: () => Promise<void>;
+  refresh: (opts?: { force?: boolean }) => Promise<void>;
   revertAllPreview: () => void;
   disposePreviewCanvas: () => void;
   setView: (next: "wardrobe" | "shop") => void;
@@ -133,7 +217,10 @@ export function mountWardrobePanel(
   let openSlot: PassiveSlotId | null = null;
   /** Per-slot preview override; missing key = use saved loadout. */
   const slotPreview = new Map<PassiveSlotId, string | null>();
-  let selectedRowSku: string | null = null;
+  /** Preset highlighted in the open slot dropdown (owned or locked preview). */
+  let selectedPreviewPresetId: string | null = null;
+  /** Style Line drill-in when the open slot uses grouped rows. */
+  let openStyleLineId: string | null = null;
   /** Featured shop card selected for Wardrobe Preview on the mini doll. */
   let selectedShopSku: string | null = null;
   let slotDropdownPage = 0;
@@ -193,9 +280,42 @@ export function mountWardrobePanel(
   function revertAllPreview(): void {
     for (const slot of [...slotPreview.keys()]) revertSlotPreview(slot);
     slotPreview.clear();
-    selectedRowSku = null;
+    selectedPreviewPresetId = null;
+    openStyleLineId = null;
     selectedShopSku = null;
     syncPreviewWebGl();
+  }
+
+  function ownedSkuSet(): Set<string> {
+    return new Set((data?.entitlements ?? []).map((e) => e.cosmeticSku));
+  }
+
+  function shopEntriesForSlot(slot: PassiveSlotId): ShopEntry[] {
+    return (data?.shop ?? []).filter((s) => s.slot === slot);
+  }
+
+  function skuForPreview(slot: PassiveSlotId, presetId: string | null): string | null {
+    if (!presetId || !data) return null;
+    const entry = data.shop.find((s) => s.slot === slot && s.presetId === presetId);
+    if (!entry) return null;
+    return ownedSkuSet().has(entry.cosmeticSku) ? entry.cosmeticSku : null;
+  }
+
+  function selectPreview(slot: PassiveSlotId, presetId: string | null): void {
+    selectedPreviewPresetId = presetId;
+    setSlotPreview(slot, presetId);
+  }
+
+  function syncEquipButton(dropdown: HTMLElement, slot: PassiveSlotId): void {
+    const equipBtn = dropdown.querySelector<HTMLButtonElement>(
+      ".wardrobe-dropdown__actions .wardrobe-panel__btn--accent"
+    );
+    if (!equipBtn) return;
+    if (selectedPreviewPresetId === null) {
+      equipBtn.disabled = false;
+      return;
+    }
+    equipBtn.disabled = skuForPreview(slot, selectedPreviewPresetId) === null;
   }
 
   function setSlotPreview(slot: PassiveSlotId, presetId: string | null): void {
@@ -207,7 +327,8 @@ export function mountWardrobePanel(
   function closeDropdown(revertUncommitted = true): void {
     if (openSlot && revertUncommitted) revertSlotPreview(openSlot);
     openSlot = null;
-    selectedRowSku = null;
+    selectedPreviewPresetId = null;
+    openStyleLineId = null;
     slotDropdownPage = 0;
   }
 
@@ -226,8 +347,9 @@ export function mountWardrobePanel(
   }
 
   function pageIndexForSelectedOwnedRow(slot: PassiveSlotId): number {
-    if (!selectedRowSku) return 0;
-    const idx = ownedRowsForSlot(slot).findIndex((r) => r.cosmeticSku === selectedRowSku);
+    const sku = skuForPreview(slot, selectedPreviewPresetId);
+    if (!sku) return 0;
+    const idx = ownedRowsForSlot(slot).findIndex((r) => r.cosmeticSku === sku);
     if (idx < 0) return 0;
     return Math.floor(idx / OWNED_COSMETICS_PAGE_SIZE);
   }
@@ -242,49 +364,198 @@ export function mountWardrobePanel(
   function appendSlotDropdownRow(
     dropdown: HTMLElement,
     slot: PassiveSlotId,
-    row: SlotRow
+    row: SlotRow,
+    opts?: { selected?: boolean }
   ): void {
     const rowEl = document.createElement("button");
     rowEl.type = "button";
     rowEl.className = "wardrobe-dropdown__row";
-    if (row.cosmeticSku === selectedRowSku) rowEl.classList.add("is-selected");
-    const swatch = document.createElement("span");
-    swatch.className = row.presetId
-      ? presetSwatchClass(row.presetId, slot)
-      : "wardrobe-swatch wardrobe-swatch--empty";
-    swatch.setAttribute("aria-hidden", "true");
+    const selected =
+      opts?.selected ??
+      (row.presetId === null
+        ? selectedPreviewPresetId === null
+        : row.presetId === selectedPreviewPresetId);
+    if (selected) rowEl.classList.add("is-selected");
+    const swatch = createPresetSwatch(row.presetId, slot);
     const text = document.createElement("span");
     text.className = "wardrobe-dropdown__row-text";
     text.textContent = row.displayName;
     rowEl.append(swatch, text);
     rowEl.onclick = () => {
-      selectedRowSku = row.cosmeticSku;
-      setSlotPreview(slot, row.presetId);
+      selectPreview(slot, row.presetId);
       dropdown.querySelectorAll(".wardrobe-dropdown__row").forEach((el) => {
         el.classList.toggle("is-selected", el === rowEl);
       });
+      syncEquipButton(dropdown, slot);
     };
     rowEl.dataset.sku = row.cosmeticSku ?? "";
-    dropdown.appendChild(rowEl);
+    dropdown.querySelector(".wardrobe-dropdown__body")?.appendChild(rowEl);
   }
 
-  function refreshSlotDropdownOwnedPage(dropdown: HTMLElement, slot: PassiveSlotId): void {
-    dropdown.querySelector(".wardrobe-dropdown__list")?.remove();
-    dropdown.querySelector(".wardrobe-dropdown__pager")?.remove();
-
-    const owned = ownedRowsForSlot(slot);
-    const pageCount = ownedCosmeticsPageCount(slot);
-    const page = ownedCosmeticsPageIndex(slot);
-
-    const list = document.createElement("div");
-    list.className = "wardrobe-dropdown__list";
-    for (const row of ownedRowsForPage(slot)) {
-      appendSlotDropdownRow(list, slot, row);
+  function appendStyleLineRow(
+    dropdown: HTMLElement,
+    slot: PassiveSlotId,
+    line: StyleLineDef,
+    variants: ResolvedStyleVariant[]
+  ): void {
+    const rowEl = document.createElement("button");
+    rowEl.type = "button";
+    rowEl.className = "wardrobe-dropdown__row wardrobe-dropdown__row--style-line";
+    if (isMultiVariantStyleLine(line)) rowEl.classList.add("wardrobe-dropdown__row--has-picker");
+    const activeInLine =
+      selectedPreviewPresetId !== null &&
+      line.variants.some((v) => v.presetId === selectedPreviewPresetId);
+    if (activeInLine) rowEl.classList.add("is-selected");
+    const repPreset = representativePresetForStyleLine(
+      line,
+      variants,
+      selectedPreviewPresetId
+    );
+    const swatch = createPresetSwatch(repPreset, slot);
+    const text = document.createElement("span");
+    text.className = "wardrobe-dropdown__row-text";
+    text.textContent = line.label;
+    rowEl.append(swatch, text);
+    if (isMultiVariantStyleLine(line)) {
+      const chevron = document.createElement("span");
+      chevron.className = "wardrobe-dropdown__row-chevron";
+      chevron.setAttribute("aria-hidden", "true");
+      chevron.textContent = "›";
+      rowEl.appendChild(chevron);
     }
-    dropdown.appendChild(list);
+    rowEl.onclick = () => {
+      if (isMultiVariantStyleLine(line)) {
+        openStyleLineId = line.id;
+        refreshSlotDropdownBody(dropdown, slot);
+        return;
+      }
+      const only = variants[0];
+      if (!only) return;
+      selectPreview(slot, only.presetId);
+      dropdown
+        .querySelectorAll(".wardrobe-dropdown__row--style-line")
+        .forEach((el) => {
+          el.classList.toggle("is-selected", el === rowEl);
+        });
+      syncEquipButton(dropdown, slot);
+    };
+    dropdown.querySelector(".wardrobe-dropdown__body")?.appendChild(rowEl);
+  }
 
+  function variantPickerCaption(variant: ResolvedStyleVariant): string {
+    if (variant.owned) return variant.variantLabel;
+    return `${variant.variantLabel} · ${WARDROBE_VARIANT_UNLOCK_HINT}`;
+  }
+
+  function renderVariantPicker(
+    host: HTMLElement,
+    dropdown: HTMLElement,
+    slot: PassiveSlotId,
+    line: StyleLineDef,
+    variants: ResolvedStyleVariant[]
+  ): void {
+    host.className = "wardrobe-dropdown__body wardrobe-variant-picker";
+    const backBtn = document.createElement("button");
+    backBtn.type = "button";
+    backBtn.className = "wardrobe-variant-picker__back";
+    backBtn.textContent = "← Back";
+    backBtn.setAttribute("aria-label", `Back to ${SLOT_LABELS[slot]} styles`);
+    backBtn.onclick = () => {
+      openStyleLineId = null;
+      refreshSlotDropdownBody(dropdown, slot);
+    };
+
+    const title = document.createElement("div");
+    title.className = "wardrobe-variant-picker__title";
+    title.textContent = `${line.variantPickerTitle} — ${line.label}`;
+
+    const grid = document.createElement("div");
+    grid.className = "wardrobe-variant-picker__grid";
+    grid.setAttribute("role", "listbox");
+    grid.setAttribute("aria-label", line.variantPickerTitle);
+
+    let captionVariant =
+      variants.find((v) => v.presetId === selectedPreviewPresetId) ??
+      variants.find((v) => v.owned) ??
+      variants[0];
+
+    for (const variant of variants) {
+      const tile = document.createElement("button");
+      tile.type = "button";
+      tile.className = "wardrobe-variant-tile";
+      tile.setAttribute("role", "option");
+      tile.title = variant.displayName;
+      if (variant.presetId === selectedPreviewPresetId) {
+        tile.classList.add("is-selected");
+      }
+      if (!variant.owned) tile.classList.add("wardrobe-variant-tile--locked");
+      const swatch = createPresetSwatch(variant.presetId, slot, {
+        locked: !variant.owned,
+      });
+      tile.appendChild(swatch);
+      tile.onclick = () => {
+        selectPreview(slot, variant.presetId);
+        captionVariant = variant;
+        grid.querySelectorAll(".wardrobe-variant-tile").forEach((el) => {
+          el.classList.toggle("is-selected", el === tile);
+        });
+        caption.textContent = variantPickerCaption(variant);
+        syncEquipButton(dropdown, slot);
+      };
+      grid.appendChild(tile);
+    }
+
+    const caption = document.createElement("p");
+    caption.className = "wardrobe-variant-picker__caption";
+    caption.textContent = captionVariant
+      ? variantPickerCaption(captionVariant)
+      : "";
+
+    host.append(backBtn, title, grid, caption);
+  }
+
+  function renderStyleLineList(
+    host: HTMLElement,
+    dropdown: HTMLElement,
+    slot: PassiveSlotId
+  ): void {
+    host.className = "wardrobe-dropdown__body wardrobe-dropdown__list";
+    const noneRow: SlotRow = {
+      cosmeticSku: null,
+      presetId: null,
+      displayName: "None (unequip)",
+      owned: true,
+    };
+    appendSlotDropdownRow(dropdown, slot, noneRow);
+    const ownedSkus = ownedSkuSet();
+    const shop = shopEntriesForSlot(slot);
+    for (const line of listStyleLinesForSlot(slot)) {
+      appendStyleLineRow(
+        dropdown,
+        slot,
+        line,
+        resolveStyleLineVariants(line, shop, ownedSkus)
+      );
+    }
+  }
+
+  function renderFlatOwnedList(host: HTMLElement, dropdown: HTMLElement, slot: PassiveSlotId): void {
+    host.className = "wardrobe-dropdown__body wardrobe-dropdown__list";
+    const rows = rowsForSlot(slot);
+    if (rows[0]) appendSlotDropdownRow(dropdown, slot, rows[0]);
+    for (const row of ownedRowsForPage(slot)) {
+      appendSlotDropdownRow(dropdown, slot, row);
+    }
+  }
+
+  function refreshSlotDropdownPager(dropdown: HTMLElement, slot: PassiveSlotId): void {
+    dropdown.querySelector(".wardrobe-dropdown__pager")?.remove();
+    if (isGroupedStyleSlot(slot)) return;
+
+    const pageCount = ownedCosmeticsPageCount(slot);
     if (pageCount <= 1) return;
 
+    const page = ownedCosmeticsPageIndex(slot);
     const pager = document.createElement("div");
     pager.className = "wardrobe-dropdown__pager";
     const prevBtn = document.createElement("button");
@@ -307,17 +578,44 @@ export function mountWardrobePanel(
       ev.stopPropagation();
       if (slotDropdownPage <= 0) return;
       slotDropdownPage -= 1;
-      refreshSlotDropdownOwnedPage(dropdown, slot);
+      refreshSlotDropdownBody(dropdown, slot);
     };
     nextBtn.onclick = (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
       if (slotDropdownPage >= pageCount - 1) return;
       slotDropdownPage += 1;
-      refreshSlotDropdownOwnedPage(dropdown, slot);
+      refreshSlotDropdownBody(dropdown, slot);
     };
     pager.append(prevBtn, label, nextBtn);
     dropdown.appendChild(pager);
+  }
+
+  function refreshSlotDropdownBody(dropdown: HTMLElement, slot: PassiveSlotId): void {
+    dropdown.querySelector(".wardrobe-dropdown__body")?.remove();
+    dropdown.querySelector(".wardrobe-dropdown__pager")?.remove();
+
+    const bodyHost = document.createElement("div");
+    dropdown.appendChild(bodyHost);
+
+    if (isGroupedStyleSlot(slot)) {
+      const line = openStyleLineId ? styleLineById(openStyleLineId) : null;
+      if (line && line.slot === slot) {
+        renderVariantPicker(
+          bodyHost,
+          dropdown,
+          slot,
+          line,
+          resolveStyleLineVariants(line, shopEntriesForSlot(slot), ownedSkuSet())
+        );
+      } else {
+        renderStyleLineList(bodyHost, dropdown, slot);
+      }
+    } else {
+      renderFlatOwnedList(bodyHost, dropdown, slot);
+      refreshSlotDropdownPager(dropdown, slot);
+    }
+    syncEquipButton(dropdown, slot);
   }
 
   function rowsForSlot(slot: PassiveSlotId): SlotRow[] {
@@ -408,12 +706,18 @@ export function mountWardrobePanel(
     ).length;
   }
 
-  function slotStatusLabel(slot: PassiveSlotId, presetName: string): string {
-    return wardrobeSlotStatusLabel({
-      slot,
-      presetName,
-      ownedSelectableCount: Math.max(0, rowsForSlot(slot).length - 1),
-    });
+  function fillSlotNameLabel(el: HTMLSpanElement, input: WardrobeSlotStatusInput): string {
+    const label = wardrobeSlotStatusLabel(input);
+    if (wardrobeSlotShowsEmptyIcon(input)) {
+      el.className = "wardrobe-slot__name";
+      el.setAttribute("aria-label", WARDROBE_SLOT_EMPTY_COPY);
+      el.textContent = "None";
+      return "None";
+    }
+    el.className = "wardrobe-slot__name";
+    el.removeAttribute("aria-label");
+    el.textContent = label;
+    return label || "None";
   }
 
   function renderSlotButton(slot: PassiveSlotId, host: HTMLElement): void {
@@ -422,21 +726,26 @@ export function mountWardrobePanel(
     const equippedSku = data.loadout[skuKey];
     const preset = effectivePreset(slot);
     const presetName = cosmeticNameForPreset(slot, preset);
-    const statusLabel = slotStatusLabel(slot, presetName);
+    const statusInput: WardrobeSlotStatusInput = {
+      slot,
+      presetName,
+      ownedSelectableCount: Math.max(0, rowsForSlot(slot).length - 1),
+    };
+    const ariaStatus = wardrobeSlotShowsEmptyIcon(statusInput)
+      ? WARDROBE_SLOT_EMPTY_COPY
+      : wardrobeSlotStatusLabel(statusInput) || "None";
     const tipHost = document.createElement("div");
     tipHost.className = "wardrobe-slot-tip-host";
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "wardrobe-slot";
     btn.dataset.slot = slot;
-    btn.setAttribute("aria-label", slotAriaLabel(SLOT_LABELS[slot], statusLabel));
+    btn.setAttribute("aria-label", slotAriaLabel(SLOT_LABELS[slot], ariaStatus));
     if (equippedSku) btn.classList.add("wardrobe-slot--equipped");
     if (openSlot === slot) btn.classList.add("wardrobe-slot--open");
-    const swatch = document.createElement("span");
-    swatch.className = preset
-      ? presetSwatchClass(preset, slot)
-      : "wardrobe-swatch wardrobe-swatch--empty";
-    swatch.setAttribute("aria-hidden", "true");
+    const swatch = wardrobeSlotShowsEmptyIcon(statusInput)
+      ? createUnavailableSwatch()
+      : createPresetSwatch(preset, slot);
     btn.appendChild(swatch);
     tipHost.append(btn, createWardrobeSlotTooltip(SLOT_LABELS[slot]));
     bindWardrobeSlotTooltip(tipHost, btn, { editable: true });
@@ -449,13 +758,13 @@ export function mountWardrobePanel(
       const prev = openSlot;
       if (prev) revertSlotPreview(prev);
       openSlot = slot;
-      selectedRowSku = data!.loadout[loadoutSkuKey(slot)];
+      openStyleLineId = null;
+      selectedPreviewPresetId = effectivePreset(slot);
       slotDropdownPage = pageIndexForSelectedOwnedRow(slot);
       render();
     };
     const name = document.createElement("span");
-    name.className = "wardrobe-slot__name";
-    name.textContent = statusLabel;
+    fillSlotNameLabel(name, statusInput);
     const cell = document.createElement("div");
     cell.className = "wardrobe-slot-cell";
     cell.append(tipHost, name);
@@ -464,29 +773,31 @@ export function mountWardrobePanel(
 
   function renderDeployableSlot(host: HTMLElement): void {
     const count = ownedDeployableCount();
-    const status = wardrobeSlotStatusLabel({
+    const statusInput: WardrobeSlotStatusInput = {
       slot: "deployable",
       presetName: "None",
       ownedSelectableCount: 0,
       ownedDeployableCount: count,
-    });
+    };
+    const ariaStatus = wardrobeSlotShowsEmptyIcon(statusInput)
+      ? WARDROBE_SLOT_EMPTY_COPY
+      : wardrobeSlotStatusLabel(statusInput) || "None";
     const tipHost = document.createElement("div");
     tipHost.className = "wardrobe-slot-tip-host";
     const chip = document.createElement("span");
     chip.className = `wardrobe-slot wardrobe-slot--readonly${
       count > 0 ? " wardrobe-slot--equipped" : ""
     }`;
-    chip.setAttribute("aria-label", slotAriaLabel("Deployable", status));
+    chip.setAttribute("aria-label", slotAriaLabel("Deployable", ariaStatus));
     chip.tabIndex = 0;
-    const swatch = document.createElement("span");
-    swatch.className = "wardrobe-swatch wardrobe-swatch--empty";
-    swatch.setAttribute("aria-hidden", "true");
+    const swatch = wardrobeSlotShowsEmptyIcon(statusInput)
+      ? createUnavailableSwatch()
+      : createPresetSwatch(null);
     chip.appendChild(swatch);
     tipHost.append(chip, createWardrobeSlotTooltip("Deployable"));
     bindWardrobeSlotTooltip(tipHost, chip);
     const name = document.createElement("span");
-    name.className = "wardrobe-slot__name";
-    name.textContent = status;
+    fillSlotNameLabel(name, statusInput);
     const cell = document.createElement("div");
     cell.className = "wardrobe-slot-cell wardrobe-slot-cell--deployable";
     cell.append(tipHost, name);
@@ -515,21 +826,38 @@ export function mountWardrobePanel(
       render();
     };
     equipBtn.onclick = () => {
-      const row = rowsForSlot(slot).find((r) => r.cosmeticSku === selectedRowSku);
-      const sku = row?.cosmeticSku ?? null;
+      const sku = skuForPreview(slot, selectedPreviewPresetId);
       void equipSku(slot, sku).then(() => {
-        selectedRowSku = sku;
+        selectedPreviewPresetId = sku ? selectedPreviewPresetId : null;
+        openStyleLineId = null;
         render();
       });
     };
     actions.append(equipBtn, cancelBtn);
     dropdown.appendChild(actions);
 
-    const rows = rowsForSlot(slot);
-    if (rows[0]) appendSlotDropdownRow(dropdown, slot, rows[0]);
-    refreshSlotDropdownOwnedPage(dropdown, slot);
+    refreshSlotDropdownBody(dropdown, slot);
 
     anchorHost.appendChild(dropdown);
+  }
+
+  function renderWardrobeSkeleton(): void {
+    body.replaceChildren();
+    body.appendChild(buildWardrobeLayoutSkeleton());
+  }
+
+  function renderShopSkeleton(): void {
+    body.replaceChildren();
+    const layout = document.createElement("div");
+    layout.className = "wardrobe-shop wardrobe-shop--skeleton";
+    const heading = document.createElement("h3");
+    heading.className = "wardrobe-shop__heading";
+    heading.textContent = "Shop";
+    const block = document.createElement("div");
+    block.className = "wardrobe-shop__skeleton-block";
+    block.setAttribute("aria-hidden", "true");
+    layout.append(heading, block);
+    body.appendChild(layout);
   }
 
   function renderWardrobeTab(): void {
@@ -781,8 +1109,14 @@ export function mountWardrobePanel(
 
   function render(): void {
     note.hidden = true;
-    if (view === "wardrobe") renderWardrobeTab();
-    else renderShopTab();
+    if (view === "wardrobe") {
+      if (!data) renderWardrobeSkeleton();
+      else renderWardrobeTab();
+    } else if (!data) {
+      renderShopSkeleton();
+    } else {
+      renderShopTab();
+    }
   }
 
   function setView(next: "wardrobe" | "shop"): void {
@@ -799,14 +1133,14 @@ export function mountWardrobePanel(
     return JSON.stringify(next);
   }
 
-  async function refresh(): Promise<void> {
+  async function refresh(opts?: { force?: boolean }): Promise<void> {
     const token = loadCachedSession()?.token;
     if (!token) {
       showNote("Sign in with your wallet to use Wardrobe.");
       return;
     }
     note.hidden = true;
-    const next = await fetchWardrobe();
+    const next = await fetchWardrobe({ force: opts?.force });
     if (data && wardrobeDataFingerprint(data) === wardrobeDataFingerprint(next)) {
       return;
     }
@@ -816,11 +1150,8 @@ export function mountWardrobePanel(
 
   if (opts.initialData) {
     data = opts.initialData;
-    render();
-    void refresh();
-  } else {
-    void refresh();
   }
+  render();
   return {
     refresh,
     revertAllPreview,
@@ -875,11 +1206,7 @@ export function mountWardrobeReadOnly(
     }`;
     chip.setAttribute("aria-label", slotAriaLabel(SLOT_LABELS[slot], presetName));
     chip.tabIndex = 0;
-    const swatch = document.createElement("span");
-    swatch.className = preset
-      ? presetSwatchClass(preset, slot)
-      : "wardrobe-swatch wardrobe-swatch--empty";
-    swatch.setAttribute("aria-hidden", "true");
+    const swatch = createPresetSwatch(preset, slot);
     chip.appendChild(swatch);
     tipHost.append(chip, createWardrobeSlotTooltip(SLOT_LABELS[slot]));
     bindWardrobeSlotTooltip(tipHost, chip);

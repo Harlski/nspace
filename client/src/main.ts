@@ -131,7 +131,8 @@ import {
 import { installAdminOverlay } from "./ui/adminOverlay.js";
 import { nimToLunaString } from "./ui/objectPrefabAuthoring.js";
 import { createHud } from "./ui/hud.js";
-import { fetchMyAchievements } from "./achievements/api.js";
+import { invalidateWardrobeCache } from "./cosmetics/api.js";
+import { fetchMyAchievements, invalidateAchievementsCache } from "./achievements/api.js";
 import { TELESCOPE_ACHIEVEMENT_ID } from "./telescope/constants.js";
 import { chatBubbleClassForPreset } from "./cosmetics/loadoutVfx.js";
 import { isPaletteHueHexPopoverTyping } from "./ui/paletteHueHexPopover.js";
@@ -154,6 +155,12 @@ import {
   waitForNimiqPayWebViewHost,
 } from "./ui/pseudoFullscreen.js";
 import { installInputShell } from "./ui/inputShell.js";
+import {
+  defaultForceUnfreezeExtras,
+  installPayTouchDebug,
+  isPayTouchDebugEnabled,
+  type PayTouchDebugHooks,
+} from "./ui/payTouchDebug.js";
 import { showLeaveGameConfirm } from "./ui/leaveGameConfirm.js";
 import { createOverlayBackStack } from "./ui/overlayBackStack.js";
 import { formatWalletAddressConnectAs } from "./formatWalletAddress.js";
@@ -352,6 +359,30 @@ function canModifyBillboardAsViewer(
 /** Lobby reconnect list: cap rows (`saveCachedSession` keeps newest first). */
 const MAIN_MENU_MAX_CACHED_ACCOUNTS = 4;
 
+let payTouchDebugCleanup: (() => void) | null = null;
+let payTouchDebugHooks: PayTouchDebugHooks = {
+  getSnapshot: () => ({
+    game: null,
+    actionWheelOpen: null,
+    route: typeof location !== "undefined" ? location.pathname : "",
+    pseudoFs: isPseudoFullscreenActive(),
+    payHost: isNimiqPayWebViewHost(),
+  }),
+  onForceUnfreeze: () => {
+    defaultForceUnfreezeExtras();
+  },
+};
+
+function syncPayTouchDebugInstall(): void {
+  if (!isPayTouchDebugEnabled()) {
+    payTouchDebugCleanup?.();
+    payTouchDebugCleanup = null;
+    return;
+  }
+  if (payTouchDebugCleanup) return;
+  payTouchDebugCleanup = installPayTouchDebug(payTouchDebugHooks);
+}
+
 let unmountMainMenu: (() => void) | null = null;
 let selfAddress = "";
 
@@ -439,6 +470,19 @@ function isPixelRoomId(roomId: string): boolean {
 function openMainMenu(): void {
   unlockScreenOrientation();
   enableMobileBrowserPlayLayout();
+  payTouchDebugHooks = {
+    getSnapshot: () => ({
+      game: null,
+      actionWheelOpen: null,
+      route: location.pathname,
+      pseudoFs: isPseudoFullscreenActive(),
+      payHost: isNimiqPayWebViewHost(),
+    }),
+    onForceUnfreeze: () => {
+      defaultForceUnfreezeExtras();
+    },
+  };
+  syncPayTouchDebugInstall();
   const app = document.getElementById("app");
   if (!app) return;
   const cachedEntries = listCachedSessions();
@@ -809,6 +853,22 @@ function enterGame(
   hud.setBrandLinksPlayerAddress(address);
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
+
+  payTouchDebugHooks = {
+    getSnapshot: () => ({
+      game: game.getTouchDebugState(),
+      actionWheelOpen: hud.isActionWheelOpen(),
+      route: location.pathname,
+      pseudoFs: isPseudoFullscreenActive(),
+      payHost: isNimiqPayWebViewHost(),
+    }),
+    onForceUnfreeze: () => {
+      game.forceReleaseAllTouchGestures();
+      hud.hideActionWheel();
+      defaultForceUnfreezeExtras();
+    },
+  };
+  syncPayTouchDebugInstall();
   game.setMapOverviewUnlocked(isAdmin(address));
   hud.onTelescopeHoldStart(() => {
     game.beginTelescopeHold();
@@ -3233,7 +3293,10 @@ function enterGame(
       },
     });
 
-    game.setSelfQuickEmojiOpener(() => {
+    function openSelfActionWheel(): void {
+      // Pay WebView: a canvas tap-to-dismiss can leave pointer capture on the canvas when
+      // the finger lifts on HUD chrome — flush before showing the wheel again.
+      game.interruptHudOverlayGestures();
       // Centred on the avatar body (lower than the old head-height strip) so the
       // transparent Hub frames the player inside the Action Wheel ring.
       const a = game.getSelfScreenPosition(0.45);
@@ -3241,7 +3304,9 @@ function enterGame(
       const pos = game.getSelfPosition();
       const openedFloor = pos ? snapFloorTile(pos.x, pos.z) : null;
       hud.showActionWheel(a.x, a.y, buildActionWheelHandlers(), openedFloor);
-    });
+    }
+    game.setSelfQuickEmojiOpener(openSelfActionWheel);
+    hud.onPlayerMenuLongPress(openSelfActionWheel);
     game.setOtherPlayerContextOpener((pick) => {
       const acceptOpts = {
         onAcceptChallenge: (addr: string) => {
@@ -3257,18 +3322,7 @@ function enterGame(
           ? {
               ...acceptOpts,
               emoteRowFirst: true,
-              onEmote: () => {
-                const a = game.getSelfScreenPosition(0.45);
-                if (!a) return;
-                const pos = game.getSelfPosition();
-                const openedFloor = pos ? snapFloorTile(pos.x, pos.z) : null;
-                hud.showActionWheel(
-                  a.x,
-                  a.y,
-                  buildActionWheelHandlers(),
-                  openedFloor
-                );
-              },
+              onEmote: () => openSelfActionWheel(),
             }
           : acceptOpts
       );
@@ -4116,6 +4170,8 @@ function enterGame(
 
   const handleServerMessage = async (msg: ServerMessage): Promise<void> => {
     if (msg.type === "achievementUnlocked") {
+      invalidateAchievementsCache();
+      if (msg.rewardSku) invalidateWardrobeCache();
       hud.showAchievementUnlock({
         achievementId: msg.achievementId,
         title: msg.title,
@@ -6104,6 +6160,7 @@ function main(): void {
   initNimiqPayDevEmulation();
   enableNimiqPayViewportLayout();
   enableMobileBrowserPlayLayout();
+  syncPayTouchDebugInstall();
   if (isPatchnotesPath()) {
     document.title = "Patch notes — Nimiq Space";
     const app = document.getElementById("app");

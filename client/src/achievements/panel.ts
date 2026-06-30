@@ -1,9 +1,8 @@
-import { fetchMyAchievements, type AchievementProgress } from "./api.js";
-import { presetSwatchClass } from "../cosmetics/presetSwatch.js";
+import { fetchMyAchievements, type AchievementProgress, type AchievementUnlockMessage } from "./api.js";
+import { hydratePresetSwatches, presetSwatchMarkup } from "../cosmetics/presetSwatch.js";
 import {
   SUMMARY_VIEW_ID,
   achievementsForCategory,
-  navEntries,
   orderedCategories,
   overallProgress,
   progressPercent,
@@ -11,6 +10,10 @@ import {
   type AchievementViewId,
   viewTitle,
   categoryProgress,
+  isAchievementVisibleInView,
+  syncDerivedAchievementProgress,
+  navRows,
+  type AchievementNavRow,
 } from "./panelData.js";
 
 function esc(s: string): string {
@@ -36,7 +39,7 @@ function renderIconHtml(a: AchievementProgress): string {
   const parts: string[] = ['<div class="achievement-panel__icon">'];
   if (a.rewardPresetId) {
     parts.push(
-      `<span class="${esc(presetSwatchClass(a.rewardPresetId, "trail"))} achievement-panel__reward-swatch" aria-hidden="true"></span>`
+      presetSwatchMarkup(a.rewardPresetId, "trail", "achievement-panel__reward-swatch")
     );
   }
   if (a.completed) {
@@ -75,9 +78,9 @@ function renderAchievementRow(
       : "";
   const tag = opts?.clickable ? "button" : "div";
   const typeAttr = opts?.clickable ? ' type="button"' : "";
-  const dataAttr = opts?.clickable
-    ? ` data-achievement-category="${esc(a.category)}"`
-    : "";
+  const dataAttr = ` data-achievement-id="${esc(a.achievementId)}"${
+    opts?.clickable ? ` data-achievement-category="${esc(a.category)}"` : ""
+  }`;
   const rowClass = `achievement-panel__row${a.completed ? " achievement-panel__row--done" : ""}${opts?.clickable ? " achievement-panel__row--clickable" : ""}`;
   const inner = `<${tag} class="${rowClass}"${typeAttr}${dataAttr}>
     ${renderIconHtml(a)}
@@ -106,6 +109,8 @@ export type AchievementPanel = {
   open: () => void;
   close: () => void;
   isOpen: () => boolean;
+  /** Merge a server unlock into the open panel and highlight the matching row. */
+  applyUnlock: (unlock: AchievementUnlockMessage) => void;
 };
 
 export function createAchievementPanel(parent: HTMLElement): AchievementPanel {
@@ -161,9 +166,12 @@ export function createAchievementPanel(parent: HTMLElement): AchievementPanel {
 
   let openState = false;
   let loadGen = 0;
+  let refreshGen = 0;
   let achievements: AchievementProgress[] = [];
   let viewId: AchievementViewId = SUMMARY_VIEW_ID;
   let dropupOpen = false;
+  /** Unlocks waiting for a glow until their row appears in the active view. */
+  const pendingUnlockHighlights = new Set<string>();
 
   const sheetMql = window.matchMedia("(max-width: 560px)");
   const applySheetMode = (): void => {
@@ -180,6 +188,41 @@ export function createAchievementPanel(parent: HTMLElement): AchievementPanel {
     dropupMenu.hidden = !next;
     dropupTrigger.setAttribute("aria-expanded", next ? "true" : "false");
     root.classList.toggle("achievement-panel--dropup-open", next);
+  }
+
+  function isAchievementVisibleInCurrentView(achievementId: string): boolean {
+    return isAchievementVisibleInView(achievements, viewId, achievementId);
+  }
+
+  function highlightUnlockedRow(achievementId: string): boolean {
+    const row = contentEl.querySelector<HTMLElement>(
+      `[data-achievement-id="${CSS.escape(achievementId)}"]`
+    );
+    if (!row) return false;
+    requestAnimationFrame(() => {
+      row.classList.remove("achievement-panel__row--just-unlocked");
+      // Force reflow so repeated unlocks retrigger the animation.
+      void row.offsetWidth;
+      row.classList.add("achievement-panel__row--just-unlocked");
+      row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      row.addEventListener(
+        "animationend",
+        () => {
+          row.classList.remove("achievement-panel__row--just-unlocked");
+        },
+        { once: true }
+      );
+    });
+    return true;
+  }
+
+  function flushPendingUnlockHighlights(): void {
+    for (const id of [...pendingUnlockHighlights]) {
+      if (!isAchievementVisibleInCurrentView(id)) continue;
+      if (highlightUnlockedRow(id)) {
+        pendingUnlockHighlights.delete(id);
+      }
+    }
   }
 
   function selectView(next: AchievementViewId): void {
@@ -238,28 +281,29 @@ export function createAchievementPanel(parent: HTMLElement): AchievementPanel {
     </div>`;
   }
 
-  function renderNavButton(entry: {
-    id: AchievementViewId;
-    label: string;
-    earned: number;
-    total: number;
-  }): string {
-    const active = entry.id === viewId;
-    return `<li><button type="button" class="achievement-panel__nav-btn${active ? " is-active" : ""}" data-achievement-view="${esc(entry.id)}" role="option" aria-selected="${active}">
-      <span class="achievement-panel__nav-label">${esc(entry.label)}</span>
-      <span class="achievement-panel__nav-count">${entry.earned} / ${entry.total}</span>
+  function renderNavRow(row: AchievementNavRow): string {
+    if (row.kind === "group-header") {
+      return `<li class="achievement-panel__nav-group"><span class="achievement-panel__nav-group-label">${esc(row.label)}</span></li>`;
+    }
+    const active = row.id === viewId;
+    const nested = row.nested ? " achievement-panel__nav-btn--nested" : "";
+    return `<li><button type="button" class="achievement-panel__nav-btn${nested}${active ? " is-active" : ""}" data-achievement-view="${esc(row.id)}" role="option" aria-selected="${active}">
+      <span class="achievement-panel__nav-label">${esc(row.label)}</span>
+      <span class="achievement-panel__nav-count">${row.earned} / ${row.total}</span>
     </button></li>`;
   }
 
   function render(): void {
-    const entries = navEntries(achievements);
-    navSidebar.innerHTML = entries.map(renderNavButton).join("");
+    const rows = navRows(achievements);
+    navSidebar.innerHTML = rows.map(renderNavRow).join("");
     dropupTrigger.textContent = viewTitle(viewId);
-    dropupMenu.innerHTML = entries.map(renderNavButton).join("");
+    dropupMenu.innerHTML = rows.map(renderNavRow).join("");
     contentEl.innerHTML =
       viewId === SUMMARY_VIEW_ID
         ? renderSummary()
         : renderCategory(viewId);
+    hydratePresetSwatches(contentEl);
+    flushPendingUnlockHighlights();
   }
 
   function bindContentEvents(): void {
@@ -304,6 +348,47 @@ export function createAchievementPanel(parent: HTMLElement): AchievementPanel {
     }
     close();
   });
+
+  function mergeUnlockOptimistic(unlock: AchievementUnlockMessage): void {
+    pointsEl.textContent = `${unlock.totalPoints.toLocaleString()} achievement points`;
+    const idx = achievements.findIndex(
+      (a) => a.achievementId === unlock.achievementId
+    );
+    if (idx >= 0) {
+      const prev = achievements[idx]!;
+      achievements[idx] = {
+        ...prev,
+        title: unlock.title,
+        description: unlock.description,
+        points: unlock.points,
+        completed: true,
+        completedAt: new Date().toISOString(),
+        progress: prev.threshold,
+        rewardDisplayName:
+          unlock.rewardDisplayName ?? prev.rewardDisplayName,
+      };
+    }
+    achievements = syncDerivedAchievementProgress(achievements);
+  }
+
+  async function refreshAchievementsWhileOpen(): Promise<void> {
+    if (!openState) return;
+    const gen = ++refreshGen;
+    const payload = await fetchMyAchievements({ force: true });
+    if (!openState || gen !== refreshGen) return;
+    if (!payload) return;
+    achievements = payload.achievements;
+    pointsEl.textContent = `${payload.totalPoints.toLocaleString()} achievement points`;
+    render();
+  }
+
+  function applyUnlock(unlock: AchievementUnlockMessage): void {
+    pendingUnlockHighlights.add(unlock.achievementId);
+    if (!openState) return;
+    mergeUnlockOptimistic(unlock);
+    render();
+    void refreshAchievementsWhileOpen();
+  }
 
   function close(): void {
     openState = false;
@@ -353,6 +438,7 @@ export function createAchievementPanel(parent: HTMLElement): AchievementPanel {
     root,
     close,
     isOpen: () => openState,
+    applyUnlock,
     open: () => {
       void open();
     },

@@ -23,7 +23,7 @@ Local issue tracker for work **after** the gameplay-loop blocker ships to produc
 | 03 | [issues/03-1v1-goal-freeze-pay.md](issues/03-1v1-goal-freeze-pay.md) | bug | `done` | 1v1 scorer stuck until opponent scores (Pay suspected) |
 | 04 | [issues/04-off-screen-ball-indicator.md](issues/04-off-screen-ball-indicator.md) | enhancement | `done` | Ball Edge Marker when ball is off-screen (World Cup) |
 | 05 | [issues/05-guest-invite-system.md](issues/05-guest-invite-system.md) | enhancement | `done` | Direct Invite PRD — [worldcup/PRD-direct-invite.md](../../worldcup/PRD-direct-invite.md) |
-| 06 | [issues/06-uncap-free-play-nim.md](issues/06-uncap-free-play-nim.md) | enhancement | `needs-triage` | Remove or raise Free Play Field NIM earning caps |
+| 07 | [issues/07-profile-wardrobe-achievements-toggle-perf.md](issues/07-profile-wardrobe-achievements-toggle-perf.md) | bug | `done` | Profile/wardrobe/achievements toggle spam — server hits + WebGL preview leak |
 
 ## Pick up work
 

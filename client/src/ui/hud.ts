@@ -83,8 +83,7 @@ import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 import {
   getMobilePlayViewportSize,
   isMobilePlayHostDocument,
-  isMobilePortraitViewport,
-  isViewportPortrait,
+  isMobilePlayLayoutPortrait,
   isNimiqPayWebViewHost,
   isVisualFullscreenActive,
   markMobileBrowserPlayHostDocument,
@@ -124,6 +123,8 @@ import { mountHeaderMarquee } from "./headerMarquee.js";
 import { createPlayerMenu, type PlayerMenuItemId } from "./playerMenu.js";
 import { createTelescopeControl } from "./telescopeControl.js";
 import { createAchievementPanel } from "../achievements/panel.js";
+import type { WardrobeResponse } from "../cosmetics/api.js";
+import { bindCopyToClipboardControl } from "../util/copyText.js";
 
 const LS_HUD_CHAT_MINIMIZED = "nspace_hud_chat_minimized";
 
@@ -400,6 +401,8 @@ export function createHud(
   openAchievementsPanel: () => void;
   /** Open or close the achievements window (`Y`). */
   toggleAchievementsPanel: () => void;
+  /** Long-press on the bottom-right Player Menu opens the avatar-centred Action Wheel. */
+  onPlayerMenuLongPress: (fn: () => void) => void;
   /** Show the non-blocking unlock banner when the server reports an unlock. */
   showAchievementUnlock: (payload: {
     achievementId: string;
@@ -927,6 +930,53 @@ export function createHud(
   let wardrobeSetView: ((next: "wardrobe" | "shop") => void) | null = null;
   /** Active profile bottom tab. */
   let profileActiveTab: "wardrobe" | "shop" | "rooms" | "achievements" = "wardrobe";
+  /** Read-only cosmetics doll mounted for the open other-player profile. */
+  let otherProfileWardrobeMounted = false;
+  type ProfileFetchPayload = {
+    message?: string;
+    effectiveDisplayName?: string;
+    recentAliases?: string[];
+    customUsername?: string | null;
+    usernameLockedUntil?: number | null;
+    usernameSetBanned?: boolean;
+    subjectUsernameBanned?: boolean;
+    subjectChannelMuted?: boolean;
+    usernameSelfServiceEnabled?: boolean;
+    country?: string | null;
+    rooms?: Array<{
+      id?: unknown;
+      displayName?: unknown;
+      isPublic?: unknown;
+      playerCount?: unknown;
+    }>;
+    achievementPoints?: number;
+    achievementHighlights?: Array<{
+      achievementId?: string;
+      title?: string;
+      points?: number;
+      completedAt?: string;
+    }>;
+    cosmeticLoadout?: Record<string, string | null>;
+    cosmeticDeployables?: Array<{ presetId: string; displayName: string }>;
+  };
+  type ProfileViewCacheEntry = {
+    fingerprint: string;
+    payload: ProfileFetchPayload;
+    fetchedAt: number;
+  };
+  /** Skip profile refetch while reopening the same card within this window. */
+  const PROFILE_FETCH_CACHE_MS = 60_000;
+  type SelfWardrobeMount = {
+    address: string;
+    refresh: (opts?: { force?: boolean }) => Promise<void>;
+    revertAllPreview: () => void;
+    disposePreviewCanvas: () => void;
+    setView: (next: "wardrobe" | "shop") => void;
+    getData: () => WardrobeResponse | null;
+  };
+  const profileViewCache = new Map<string, ProfileViewCacheEntry>();
+  let selfWardrobeMount: SelfWardrobeMount | null = null;
+  let cachedSelfWardrobe: WardrobeResponse | null = null;
 
   /** Room stats overlay; toggled from your profile identicon (hidden by default). */
   let debugPanelVisible = opts?.showDebug === true;
@@ -962,6 +1012,11 @@ export function createHud(
   const canvasHost = document.createElement("div");
   canvasHost.className = "canvas-host";
   letter.appendChild(canvasHost);
+
+  const achievementUnlockFlash = document.createElement("div");
+  achievementUnlockFlash.className = "achievement-unlock-flash";
+  achievementUnlockFlash.setAttribute("aria-hidden", "true");
+  letter.appendChild(achievementUnlockFlash);
 
   const streamBroadcastOverlay = document.createElement("div");
   streamBroadcastOverlay.className = "stream-broadcast-overlay";
@@ -1039,6 +1094,11 @@ export function createHud(
     import.meta.env.DEV ||
     new URLSearchParams(window.location.search).has("achievementUnlockDebug");
 
+  const achievementUnlockStack = document.createElement("div");
+  achievementUnlockStack.className = "achievement-unlock-stack";
+  achievementUnlockStack.hidden = true;
+  achievementUnlockStack.setAttribute("aria-hidden", "true");
+
   const achievementUnlockBanner = document.createElement("div");
   achievementUnlockBanner.className = "achievement-unlock-banner";
   achievementUnlockBanner.hidden = true;
@@ -1058,7 +1118,21 @@ export function createHud(
       </span>
     </button>
   `;
-  letter.appendChild(achievementUnlockBanner);
+
+  const achievementRewardUnlockToast = document.createElement("div");
+  achievementRewardUnlockToast.className = "achievement-reward-unlock-toast";
+  achievementRewardUnlockToast.hidden = true;
+  achievementRewardUnlockToast.setAttribute("role", "status");
+  achievementRewardUnlockToast.setAttribute("aria-live", "polite");
+  achievementRewardUnlockToast.innerHTML = `
+    <div class="achievement-reward-unlock-toast__card">
+      <span class="achievement-reward-unlock-toast__eyebrow">Cosmetic unlocked</span>
+      <span class="achievement-reward-unlock-toast__name"></span>
+    </div>
+  `;
+
+  achievementUnlockStack.append(achievementUnlockBanner, achievementRewardUnlockToast);
+  letter.appendChild(achievementUnlockStack);
 
   const achievementUnlockCardBtn = achievementUnlockBanner.querySelector(
     ".achievement-unlock-banner__card"
@@ -1072,9 +1146,20 @@ export function createHud(
   const achievementUnlockIdenticonEl = achievementUnlockBanner.querySelector(
     ".achievement-unlock-banner__identicon"
   ) as HTMLImageElement;
+  const achievementRewardUnlockNameEl = achievementRewardUnlockToast.querySelector(
+    ".achievement-reward-unlock-toast__name"
+  ) as HTMLElement;
 
   const achievementUnlockQueue: AchievementUnlockPayload[] = [];
   let achievementUnlockDismissTimer: ReturnType<typeof setTimeout> | null = null;
+  let achievementRewardUnlockRevealTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearAchievementRewardUnlockRevealTimer(): void {
+    if (achievementRewardUnlockRevealTimer != null) {
+      clearTimeout(achievementRewardUnlockRevealTimer);
+      achievementRewardUnlockRevealTimer = null;
+    }
+  }
 
   function clearAchievementUnlockDismissTimer(): void {
     if (achievementUnlockDismissTimer != null) {
@@ -1085,9 +1170,16 @@ export function createHud(
 
   function dismissVisibleAchievementUnlock(): void {
     clearAchievementUnlockDismissTimer();
+    clearAchievementRewardUnlockRevealTimer();
+    achievementUnlockStack.classList.remove("achievement-unlock-stack--visible");
     achievementUnlockBanner.classList.remove("achievement-unlock-banner--visible");
+    achievementRewardUnlockToast.classList.remove(
+      "achievement-reward-unlock-toast--visible"
+    );
+    achievementUnlockStack.hidden = true;
     achievementUnlockBanner.hidden = true;
-    achievementUnlockBanner.setAttribute("aria-hidden", "true");
+    achievementRewardUnlockToast.hidden = true;
+    achievementUnlockStack.setAttribute("aria-hidden", "true");
   }
 
   function advanceAchievementUnlockQueue(): void {
@@ -1106,12 +1198,22 @@ export function createHud(
     }, ACHIEVEMENT_UNLOCK_AUTO_DISMISS_MS);
   }
 
+  function triggerAchievementUnlockFlash(): void {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    achievementUnlockFlash.classList.remove("achievement-unlock-flash--active");
+    void achievementUnlockFlash.offsetWidth;
+    achievementUnlockFlash.classList.add("achievement-unlock-flash--active");
+  }
+
+  achievementUnlockFlash.addEventListener("animationend", (event) => {
+    if (event.target !== achievementUnlockFlash) return;
+    achievementUnlockFlash.classList.remove("achievement-unlock-flash--active");
+  });
+
   function renderAchievementUnlock(payload: AchievementUnlockPayload): void {
+    triggerAchievementUnlockFlash();
     achievementUnlockTitleEl.textContent = payload.title;
-    const rewardLine = payload.rewardDisplayName
-      ? ` · Unlocks ${payload.rewardDisplayName}`
-      : "";
-    achievementUnlockMetaEl.textContent = `+${payload.points} AP${rewardLine} · ${payload.totalPoints} total`;
+    achievementUnlockMetaEl.textContent = `+${payload.points} AP · ${payload.totalPoints} total`;
     const selfAddress = brandLinksPlayerAddress.replace(/\s+/g, "").trim();
     if (selfAddress) {
       achievementUnlockIdenticonEl.hidden = false;
@@ -1119,17 +1221,41 @@ export function createHud(
     } else {
       achievementUnlockIdenticonEl.hidden = true;
     }
+
+    const rewardName = payload.rewardDisplayName?.trim() ?? "";
+    const hasReward = rewardName.length > 0;
+    if (hasReward) {
+      achievementRewardUnlockNameEl.textContent = rewardName;
+      achievementRewardUnlockToast.hidden = false;
+    } else {
+      achievementRewardUnlockToast.hidden = true;
+      achievementRewardUnlockToast.classList.remove(
+        "achievement-reward-unlock-toast--visible"
+      );
+    }
+
+    achievementUnlockStack.hidden = false;
     achievementUnlockBanner.hidden = false;
-    achievementUnlockBanner.setAttribute("aria-hidden", "false");
+    achievementUnlockStack.setAttribute("aria-hidden", "false");
     requestAnimationFrame(() => {
+      achievementUnlockStack.classList.add("achievement-unlock-stack--visible");
       achievementUnlockBanner.classList.add("achievement-unlock-banner--visible");
+      if (hasReward) {
+        clearAchievementRewardUnlockRevealTimer();
+        achievementRewardUnlockRevealTimer = setTimeout(() => {
+          achievementRewardUnlockRevealTimer = null;
+          achievementRewardUnlockToast.classList.add(
+            "achievement-reward-unlock-toast--visible"
+          );
+        }, 180);
+      }
     });
     scheduleAchievementUnlockDismiss();
   }
 
   function showAchievementUnlock(payload: AchievementUnlockPayload): void {
     achievementPanel.applyUnlock(payload);
-    if (!achievementUnlockBanner.hidden) {
+    if (!achievementUnlockStack.hidden) {
       achievementUnlockQueue.push(payload);
       return;
     }
@@ -2853,12 +2979,78 @@ export function createHud(
   );
   letter.appendChild(actionWheel);
 
+  /** Pay WebView: full-screen tap catcher on `body` (above `#app` z-index 5). */
+  const actionWheelBackdrop = document.createElement("div");
+  actionWheelBackdrop.className = "action-wheel-backdrop";
+  actionWheelBackdrop.hidden = true;
+  actionWheelBackdrop.setAttribute("aria-hidden", "true");
+  let actionWheelPortaled = false;
+
+  const positionActionWheel = (anchorX: number, anchorY: number): void => {
+    if (actionWheelPortaled) {
+      const lr = letter.getBoundingClientRect();
+      actionWheel.classList.add("action-wheel--portaled");
+      actionWheel.style.left = `${lr.left + anchorX}px`;
+      actionWheel.style.top = `${lr.top + anchorY}px`;
+    } else {
+      actionWheel.classList.remove("action-wheel--portaled");
+      actionWheel.style.left = `${anchorX}px`;
+      actionWheel.style.top = `${anchorY}px`;
+    }
+  };
+
+  const portalActionWheelOpen = (): void => {
+    if (!isNimiqPayWebViewHost()) return;
+    actionWheelPortaled = true;
+    actionWheelBackdrop.hidden = false;
+    if (!actionWheelBackdrop.isConnected) {
+      document.body.appendChild(actionWheelBackdrop);
+    }
+    document.body.appendChild(actionWheel);
+  };
+
+  const unportalActionWheel = (): void => {
+    if (!actionWheelPortaled) return;
+    actionWheelPortaled = false;
+    actionWheelBackdrop.hidden = true;
+    actionWheel.classList.remove("action-wheel--portaled");
+    letter.appendChild(actionWheel);
+  };
+
+  const syncActionWheelCanvasBlock = (): void => {
+    canvasHost.style.pointerEvents = actionWheel.hidden ? "" : "none";
+  };
+
+  const onActionWheelBackdropDismiss = (): void => {
+    if (actionWheel.hidden) return;
+    if (performance.now() < actionWheelDismissGraceUntil) return;
+    closeActionWheel();
+  };
+  actionWheelBackdrop.addEventListener(
+    "pointerdown",
+    (e) => {
+      e.stopPropagation();
+      onActionWheelBackdropDismiss();
+    },
+    { capture: true }
+  );
+  actionWheelBackdrop.addEventListener(
+    "touchstart",
+    (e) => {
+      e.stopPropagation();
+      onActionWheelBackdropDismiss();
+    },
+    { capture: true, passive: true }
+  );
+
   // The Focused Sector: the Sector whose name is currently shown (hover/keyboard, or a
   // first tap on touch). Tracked so a second touch tap on the same Sector activates it.
   let actionWheelFocusedIndex: number | null = null;
   let actionWheelFocusedGroup: SVGGElement | null = null;
   // Last pointer that touched the wheel — touch needs tap-to-reveal then tap-to-activate.
   let actionWheelLastPointerTouch = false;
+  /** Pay WebView: slice activated via pointerup/cancel — swallow duplicate click. */
+  let actionWheelTouchSliceHandled = false;
   const setSectorTitle = (text: string): void => {
     const t = text.trim();
     actionWheelSectorTitle.textContent = t;
@@ -2931,9 +3123,18 @@ export function createHud(
   let deployableArmSku: string | null = null;
   let actionWheelOpenedFloor: FloorTile | null = null;
   let actionWheelOutsideBound = false;
+  /** Ignore dismiss taps briefly after open (Pay WebView can redispatch pointerdown). */
+  let actionWheelDismissGraceUntil = 0;
 
   const onActionWheelOutsidePointerDown = (e: PointerEvent): void => {
     if (actionWheel.hidden) return;
+    if (performance.now() < actionWheelDismissGraceUntil) return;
+    if (actionWheel.contains(e.target as Node)) return;
+    closeActionWheel();
+  };
+  const onActionWheelOutsidePointerCancel = (e: PointerEvent): void => {
+    if (actionWheel.hidden) return;
+    if (performance.now() < actionWheelDismissGraceUntil) return;
     if (actionWheel.contains(e.target as Node)) return;
     closeActionWheel();
   };
@@ -2946,6 +3147,9 @@ export function createHud(
     window.addEventListener("pointerdown", onActionWheelOutsidePointerDown, {
       capture: true,
     });
+    window.addEventListener("pointercancel", onActionWheelOutsidePointerCancel, {
+      capture: true,
+    });
     window.addEventListener("keydown", onActionWheelEscape);
   }
   function unbindActionWheelOutside(): void {
@@ -2954,11 +3158,18 @@ export function createHud(
     window.removeEventListener("pointerdown", onActionWheelOutsidePointerDown, {
       capture: true,
     });
+    window.removeEventListener(
+      "pointercancel",
+      onActionWheelOutsidePointerCancel,
+      { capture: true }
+    );
     window.removeEventListener("keydown", onActionWheelEscape);
   }
   function closeActionWheel(): void {
     actionWheel.hidden = true;
     actionWheel.classList.remove("action-wheel--open");
+    unportalActionWheel();
+    syncActionWheelCanvasBlock();
     clearActionWheelFocus();
     actionWheelLevel = "root";
     actionWheelNav = [];
@@ -3350,8 +3561,55 @@ export function createHud(
         const activate = slice.activate;
         const index = i;
         const isNav = slice.nav === true;
+        const runSliceActivate = (): void => {
+          if (actionWheelLastPointerTouch && !isNav) {
+            if (actionWheelFocusedIndex === index) {
+              activate();
+            } else {
+              focusActionWheelSector(index, group, slice.label);
+            }
+            return;
+          }
+          activate();
+        };
+        let touchPointerId: number | null = null;
+        const finishTouchSlice = (ev: PointerEvent): void => {
+          if (ev.pointerType !== "touch") return;
+          if (touchPointerId !== ev.pointerId) return;
+          touchPointerId = null;
+          ev.stopPropagation();
+          actionWheelTouchSliceHandled = true;
+          window.setTimeout(() => {
+            actionWheelTouchSliceHandled = false;
+          }, 450);
+          runSliceActivate();
+        };
+        group.addEventListener(
+          "pointerdown",
+          (ev) => {
+            if (ev.pointerType !== "touch") return;
+            touchPointerId = ev.pointerId;
+            actionWheelLastPointerTouch = true;
+            ev.stopPropagation();
+            // Pay WebView often skips pointerup on SVG — nav (Close/Back) on touch start.
+            if (isNav) {
+              actionWheelTouchSliceHandled = true;
+              window.setTimeout(() => {
+                actionWheelTouchSliceHandled = false;
+              }, 450);
+              activate();
+            }
+          },
+          { capture: true }
+        );
+        group.addEventListener("pointerup", finishTouchSlice);
+        group.addEventListener("pointercancel", finishTouchSlice);
         group.addEventListener("click", (ev) => {
           ev.stopPropagation();
+          if (actionWheelTouchSliceHandled) {
+            ev.preventDefault();
+            return;
+          }
           // Touch: the Nav Sector is exempt (single tap closes/backs); every other
           // Sector takes one tap to focus (reveal its name) and a second to activate.
           if (actionWheelLastPointerTouch && !isNav) {
@@ -3440,9 +3698,8 @@ export function createHud(
   otherPlayerProfile.hidden = true;
   otherPlayerProfile.setAttribute("aria-hidden", "true");
   // Bottom-sheet vs centered modal: on narrow viewports OR the Nimiq Pay host the profile becomes a
-  // bottom-anchored sheet (tabs docked inside, panel flush to the screen bottom); on desktop it is a
-  // centered modal whose tabs hang off the bottom edge. Toggling a single `is-sheet` class keeps the
-  // CSS DRY instead of duplicating every rule across a media query and the host selector.
+  // bottom-anchored sheet with tabs pinned inside the panel bottom; on desktop it is a centered modal
+  // whose tabs hang off the bottom edge over the backdrop.
   const profileSheetMql = window.matchMedia("(max-width: 560px)");
   const applyProfileSheetMode = (): void => {
     const sheet =
@@ -4207,12 +4464,13 @@ export function createHud(
   }
 
   /**
-   * Switches the profile's bottom tab bar (self profile). `wardrobe`/`shop` show the cosmetics
-   * panel (driven via `wardrobeSetView`); `rooms` shows the user-rooms list. Other players' cards
-   * only have the rooms tab and keep their read-only wardrobe visible, so this is self-scoped.
+   * Switches the profile bottom tab bar. Self: wardrobe/shop/rooms/achievements (cosmetics via
+   * `wardrobeSetView`). Other: achievements and rooms are exclusive; the read-only preview doll
+   * stays visible whenever it was mounted.
    */
   function setProfileTab(tab: "wardrobe" | "shop" | "rooms" | "achievements"): void {
     profileActiveTab = tab;
+    const isSelf = profileMessageKindOpen === "self";
     oppWardrobeTabBtn.classList.toggle("is-active", tab === "wardrobe");
     oppShopTabBtn.classList.toggle("is-active", tab === "shop");
     oppAchievementsTabBtn.classList.toggle("is-active", tab === "achievements");
@@ -4222,9 +4480,10 @@ export function createHud(
     );
     setProfileRoomsPanelOpen(tab === "rooms");
     oppAchievements.hidden = tab !== "achievements";
-    const showWardrobe = tab === "wardrobe" || tab === "shop";
-    oppProfileWardrobe.hidden = !showWardrobe || !wardrobeSetView;
-    if (showWardrobe && wardrobeSetView) {
+    const showSelfWardrobe = isSelf && (tab === "wardrobe" || tab === "shop");
+    const showOtherWardrobe = !isSelf && otherProfileWardrobeMounted;
+    oppProfileWardrobe.hidden = !(showSelfWardrobe || showOtherWardrobe);
+    if (showSelfWardrobe && wardrobeSetView) {
       wardrobeSetView(tab === "shop" ? "shop" : "wardrobe");
     }
   }
@@ -4354,6 +4613,9 @@ export function createHud(
       profileMessageLastSaved = String(j.message ?? "");
       clearProfileMessageNote();
       renderProfileMessageDisplay("self", profileMessageLastSaved);
+      patchProfileViewCache("self", walletKeyForProfile(brandLinksPlayerAddress), {
+        message: profileMessageLastSaved,
+      });
     } catch {
       oppProfileNote.textContent = "Network error.";
       oppProfileNote.hidden = false;
@@ -4412,12 +4674,21 @@ export function createHud(
       const compact = profileOpenCompact;
       if (compact) {
         oppWalletShortEl.textContent = walletDisplayName(compact);
-        oppCopyAddressBtn.hidden = !profileUsernameSavedCustom;
+        oppCopyAddressBtn.hidden = false;
       }
       const until = Number(oppUsernameInput.dataset.lockedUntil);
       oppUsernameInput.readOnly =
         Number.isFinite(until) && until > Date.now();
       updateProfileNameHitInteractivity("self");
+      patchProfileViewCache("self", walletKeyForProfile(brandLinksPlayerAddress), {
+        customUsername: profileUsernameSavedCustom,
+        effectiveDisplayName:
+          typeof j.effectiveDisplayName === "string"
+            ? j.effectiveDisplayName.trim()
+            : oppDisplayNameEl.textContent.trim(),
+        usernameLockedUntil:
+          typeof j.usernameLockedUntil === "number" ? j.usernameLockedUntil : null,
+      });
       return true;
     } catch {
       oppProfileNote.textContent = "Network.";
@@ -4499,13 +4770,21 @@ export function createHud(
     setProfileNimiqPayTipVisible(false);
     setProfileAliasTipVisible(false);
     detachProfileEscape();
+    const wasSelf = profileMessageKindOpen === "self";
     profileOpenCompact = "";
     profileMessageKindOpen = null;
     wardrobeRevertAllPreview?.();
     wardrobeRevertAllPreview = null;
-    wardrobeDisposePreview?.();
-    wardrobeDisposePreview = null;
-    wardrobeSetView = null;
+    if (wasSelf && selfWardrobeMount) {
+      selfWardrobeMount.disposePreviewCanvas();
+      wardrobeSetView = null;
+      oppProfileWardrobe.hidden = true;
+    } else {
+      wardrobeDisposePreview?.();
+      wardrobeDisposePreview = null;
+      wardrobeSetView = null;
+      oppProfileWardrobe.replaceChildren();
+    }
     cosmeticHandlers.onRevertAllPreview?.();
     if (profileMessageEditor && profileDescEditBlurHandler) {
       profileMessageEditor.removeEventListener("blur", profileDescEditBlurHandler);
@@ -4521,7 +4800,8 @@ export function createHud(
     oppAchievementsTabBtn.hidden = true;
     oppAchievementsTabBtn.classList.remove("is-active");
     oppAchievementsTabBtn.setAttribute("aria-expanded", "false");
-    oppProfileWardrobe.replaceChildren();
+    oppTabBar.classList.remove("other-player-profile__tabbar--other");
+    otherProfileWardrobeMounted = false;
     oppProfileWardrobe.hidden = true;
     clearProfileMessageNote();
     oppSendNim.hidden = true;
@@ -4736,13 +5016,27 @@ export function createHud(
     head.className = "other-player-profile__achievements-head";
     head.textContent = `${points} achievement point${points === 1 ? "" : "s"}`;
     oppAchievements.appendChild(head);
-    if (highlights.length > 0) {
-      const list = document.createElement("ul");
+    const recent = highlights.slice(0, 3);
+    if (recent.length > 0) {
+      const list = document.createElement("div");
       list.className = "other-player-profile__achievements-list";
-      for (const h of highlights) {
-        const li = document.createElement("li");
-        li.textContent = `${h.title} (+${h.points} AP)`;
-        list.appendChild(li);
+      list.setAttribute("role", "list");
+      list.setAttribute("aria-label", "Recent achievements");
+      for (const h of recent) {
+        const row = document.createElement("div");
+        row.className = "other-player-profile__achievement-row";
+        row.setAttribute("role", "listitem");
+        const card = document.createElement("div");
+        card.className = "other-player-profile__achievement-card";
+        const title = document.createElement("span");
+        title.className = "other-player-profile__achievement-title";
+        title.textContent = h.title;
+        const pts = document.createElement("span");
+        pts.className = "other-player-profile__achievement-points";
+        pts.textContent = `+${h.points} AP`;
+        card.append(title, pts);
+        row.appendChild(card);
+        list.appendChild(row);
       }
       oppAchievements.appendChild(list);
     } else {
@@ -4758,12 +5052,241 @@ export function createHud(
       const viewAll = document.createElement("button");
       viewAll.type = "button";
       viewAll.className = "other-player-profile__achievements-view-all";
-      viewAll.textContent = "View all progress";
+      viewAll.textContent = "View All Achievements";
       viewAll.addEventListener("click", () => {
         achievementPanel.open();
       });
       oppAchievements.appendChild(viewAll);
     }
+  }
+
+  function profileViewCacheKey(kind: "self" | "other", compact: string): string {
+    return `${kind}:${compact}`;
+  }
+
+  function profilePayloadFingerprint(j: ProfileFetchPayload): string {
+    return JSON.stringify(j);
+  }
+
+  function syncSelfWardrobeCacheFromMount(): void {
+    if (!selfWardrobeMount) return;
+    cachedSelfWardrobe = selfWardrobeMount.getData();
+  }
+
+  function tearDownSelfWardrobeMount(): void {
+    if (!selfWardrobeMount) return;
+    selfWardrobeMount.disposePreviewCanvas();
+    selfWardrobeMount = null;
+    oppProfileWardrobe.replaceChildren();
+  }
+
+  function wireSelfWardrobeHandlers(mounted: SelfWardrobeMount): void {
+    wardrobeRevertAllPreview = () => mounted.revertAllPreview();
+    wardrobeSetView = (next) => mounted.setView(next);
+    wardrobeDisposePreview = null;
+  }
+
+  function patchProfileViewCache(
+    kind: "self" | "other",
+    compact: string,
+    patch: Partial<ProfileFetchPayload>
+  ): void {
+    const key = profileViewCacheKey(kind, compact);
+    const entry = profileViewCache.get(key);
+    if (!entry) return;
+    entry.payload = { ...entry.payload, ...patch };
+    entry.fingerprint = profilePayloadFingerprint(entry.payload);
+  }
+
+  async function attachSelfWardrobePanel(
+    openFor: string,
+    tab: typeof profileActiveTab
+  ): Promise<void> {
+    if (
+      selfWardrobeMount?.address === openFor &&
+      oppProfileWardrobe.firstElementChild != null
+    ) {
+      wireSelfWardrobeHandlers(selfWardrobeMount);
+      oppProfileWardrobe.hidden = false;
+      if (!selfWardrobeMount.getData()) {
+        void selfWardrobeMount.refresh().then(syncSelfWardrobeCacheFromMount);
+      }
+      setProfileTab(tab === "rooms" ? "rooms" : tab);
+      return;
+    }
+    tearDownSelfWardrobeMount();
+    oppProfileWardrobe.hidden = false;
+    const { mountWardrobePanel } = await import("../cosmetics/wardrobePanel.js");
+    const mounted = mountWardrobePanel(oppProfileWardrobe, openFor, {
+      hideTabs: true,
+      initialData: cachedSelfWardrobe ?? undefined,
+      onLoadoutChanged: () => {
+        cosmeticHandlers.onLoadoutChanged?.();
+        void mounted.refresh({ force: true }).then(syncSelfWardrobeCacheFromMount);
+      },
+      onPreviewSlot: (slot, presetId) =>
+        cosmeticHandlers.onPreviewSlot?.(slot, presetId),
+      onPreviewCanvas: (canvas, wallet) =>
+        cosmeticHandlers.onPreviewCanvas?.(canvas, wallet),
+      onPreviewCosmeticsChange: (presets) =>
+        cosmeticHandlers.onPreviewCosmeticsChange?.(presets),
+      onVisitCosmeticShop: () => {
+        closeOtherPlayerProfile();
+        cosmeticHandlers.onVisitCosmeticShop?.();
+      },
+    });
+    selfWardrobeMount = { address: openFor, ...mounted };
+    wireSelfWardrobeHandlers(selfWardrobeMount);
+    void mounted.refresh().then(syncSelfWardrobeCacheFromMount);
+    setProfileTab(tab === "rooms" ? "rooms" : tab);
+  }
+
+  async function applyProfilePayloadFromFetch(
+    openFor: string,
+    compact: string,
+    kind: "self" | "other",
+    j: ProfileFetchPayload,
+    tabAfter: typeof profileActiveTab
+  ): Promise<void> {
+    if (typeof j.effectiveDisplayName === "string" && j.effectiveDisplayName.trim()) {
+      oppDisplayNameEl.textContent = j.effectiveDisplayName.trim();
+    }
+    const aliases = Array.isArray(j.recentAliases)
+      ? j.recentAliases.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+    oppAliasTip.textContent =
+      aliases.length > 0 ? `Previously known as\n${aliases.join("\n")}` : "";
+    oppAliasHost.hidden = aliases.length === 0;
+    const profileCountry =
+      typeof j.country === "string" && j.country.trim()
+        ? j.country.trim().toUpperCase()
+        : null;
+    if (kind === "self") selfCountryCode = profileCountry;
+    renderProfileFlag(kind, profileCountry);
+    const adminOther = kind === "other" && opts?.isGameAdmin?.() === true;
+    oppAdminRow.hidden = !adminOther;
+    if (adminOther) {
+      const banned = j.subjectUsernameBanned === true;
+      const muted = j.subjectChannelMuted === true;
+      syncAdminActions(banned, muted);
+    }
+    profileUsernameSavedCustom = j.customUsername?.trim() ?? "";
+    const hasCustom = Boolean(profileUsernameSavedCustom);
+    if (compact) {
+      oppWalletShortEl.textContent = walletDisplayName(compact);
+      oppCopyAddressBtn.hidden = false;
+    }
+    if (kind === "self") {
+      oppUsernameInput.value = profileUsernameSavedCustom;
+      const bannedSelf = j.usernameSetBanned === true;
+      const until = j.usernameLockedUntil ?? 0;
+      const allowByPolicy =
+        j.usernameSelfServiceEnabled === true ||
+        opts?.isGameAdmin?.() === true ||
+        !hasCustom;
+      oppUsernameInput.readOnly =
+        !allowByPolicy ||
+        bannedSelf ||
+        (typeof until === "number" && until > Date.now());
+      if (typeof until === "number" && until > 0) {
+        oppUsernameInput.dataset.lockedUntil = String(until);
+      } else {
+        delete oppUsernameInput.dataset.lockedUntil;
+      }
+      updateProfileNameHitInteractivity("self");
+    } else {
+      oppUsernameInput.value = "";
+      oppUsernameInput.readOnly = false;
+      updateProfileNameHitInteractivity("other");
+    }
+    const msg = typeof j.message === "string" ? j.message : "";
+    profileMessageLastSaved = msg;
+    renderProfileMessageDisplay(kind, msg);
+    const achPoints =
+      typeof j.achievementPoints === "number" && Number.isFinite(j.achievementPoints)
+        ? Math.max(0, Math.floor(j.achievementPoints))
+        : 0;
+    const achHighlights = Array.isArray(j.achievementHighlights)
+      ? j.achievementHighlights
+          .map((h) => ({
+            title: String(h.title ?? "").trim(),
+            points:
+              typeof h.points === "number" && Number.isFinite(h.points)
+                ? Math.max(0, Math.floor(h.points))
+                : 0,
+          }))
+          .filter((h) => h.title)
+      : [];
+    renderProfileAchievements(kind, achPoints, achHighlights);
+    const rooms = Array.isArray(j.rooms)
+      ? j.rooms
+          .map((room) => {
+            const id = String(room.id ?? "").trim();
+            const displayName = String(room.displayName ?? "").trim();
+            const rawPub = room.isPublic;
+            const isPublicKnown = typeof rawPub === "boolean";
+            const isPublic = isPublicKnown
+              ? rawPub
+              : kind === "self" || adminOther
+                ? true
+                : false;
+            const playerCount =
+              typeof room.playerCount === "number" &&
+              Number.isFinite(room.playerCount)
+                ? Math.max(0, Math.floor(room.playerCount))
+                : 0;
+            return { id, displayName, isPublic, playerCount };
+          })
+          .filter((room) => room.id)
+          .filter((room) => {
+            if (kind === "self" || adminOther) return true;
+            return room.isPublic === true;
+          })
+      : [];
+    rooms.sort(
+      (a, b) =>
+        b.playerCount - a.playerCount ||
+        a.displayName.localeCompare(b.displayName) ||
+        a.id.localeCompare(b.id)
+    );
+    renderProfileRooms(kind, rooms.slice(0, 3));
+    if (kind === "self") {
+      await attachSelfWardrobePanel(openFor, tabAfter);
+      return;
+    }
+    tearDownSelfWardrobeMount();
+    otherProfileWardrobeMounted = false;
+    const loadout = j.cosmeticLoadout;
+    const deployables = j.cosmeticDeployables ?? [];
+    if (loadout || deployables.length > 0) {
+      const { mountWardrobeReadOnly } = await import("../cosmetics/wardrobePanel.js");
+      oppProfileWardrobe.replaceChildren();
+      const readonlyMounted = mountWardrobeReadOnly(
+        oppProfileWardrobe,
+        openFor,
+        {
+          aura: loadout?.aura ?? null,
+          nameplate: loadout?.nameplate ?? null,
+          chatBubble: loadout?.chatBubble ?? null,
+          trail: loadout?.trail ?? null,
+        },
+        deployables,
+        {
+          onPreviewCanvas: (canvas, wallet) =>
+            cosmeticHandlers.onPreviewCanvas?.(canvas, wallet),
+          onPreviewCosmeticsChange: (presets) =>
+            cosmeticHandlers.onPreviewCosmeticsChange?.(presets),
+        }
+      );
+      wardrobeDisposePreview = () => readonlyMounted.disposePreviewCanvas();
+      otherProfileWardrobeMounted = true;
+    } else {
+      oppProfileWardrobe.replaceChildren();
+    }
+    if (oppProfileRoomsBtn.hidden && profileActiveTab === "rooms") {
+      profileActiveTab = "achievements";
+    }
+    setProfileTab(profileActiveTab);
   }
 
   async function showPlayerProfileView(
@@ -4773,33 +5296,38 @@ export function createHud(
   ): Promise<void> {
     const compact = walletKeyForProfile(address);
     if (!compact) return;
+    void import("../game/identiconTexture.js").then(({ warmIdenticonCache }) =>
+      warmIdenticonCache(compact)
+    );
+    const openFor = compact;
+    const cacheKey = profileViewCacheKey(kind, compact);
+    const cachedEntry = profileViewCache.get(cacheKey);
+
     profileOpenCompact = compact;
     profileMessageKindOpen = kind;
-    profileMessageLastSaved = "";
+    otherProfileWardrobeMounted = false;
     clearProfileMessageNote();
     setProfileNimiqPayTipVisible(false);
     setProfileAliasTipVisible(false);
     endUsernameEditVisual();
-    // Bottom tab bar: self gets Wardrobe + Shop + User Rooms; others only get User Rooms.
     wardrobeSetView = null;
-    profileActiveTab = kind === "self" ? "wardrobe" : "rooms";
+    if (kind === "other") profileActiveTab = "rooms";
+    else if (!cachedEntry) profileActiveTab = "wardrobe";
+    oppTabBar.classList.toggle("other-player-profile__tabbar--other", kind === "other");
     oppWardrobeTabBtn.hidden = kind !== "self";
     oppShopTabBtn.hidden = kind !== "self";
     oppWardrobeTabBtn.classList.toggle("is-active", kind === "self");
     oppShopTabBtn.classList.remove("is-active");
-    // Achievements tab is available on both self and other profiles; start collapsed.
     oppAchievementsTabBtn.hidden = false;
     oppAchievementsTabBtn.classList.remove("is-active");
     oppAchievementsTabBtn.setAttribute("aria-expanded", "false");
     oppAchievements.hidden = true;
     oppAchievements.replaceChildren();
-    // Show the chip immediately for self (from known state); hide for others until the
-    // profile fetch returns their country below.
     renderProfileFlag(kind, kind === "self" ? selfCountryCode : null);
     oppDisplayNameEl.textContent =
       _displayName.trim() || walletDisplayName(compact);
     oppCopyAddressBtn.hidden = true;
-    profileUsernameSavedCustom = "";
+    if (!cachedEntry) profileUsernameSavedCustom = "";
     const showNimiqPayBadge =
       kind === "self"
         ? opts?.didSessionUseNimiqPay?.() === true
@@ -4810,31 +5338,48 @@ export function createHud(
     }
     profileDescEditBlurHandler = null;
     profileMessageEditor = null;
-    oppProfileMessage.replaceChildren();
     oppProfileRooms.replaceChildren();
     setProfileRoomsPanelOpen(false);
     oppProfileRoomsBtn.hidden = true;
-    const loading = document.createElement("div");
-    loading.className =
-      "other-player-profile__message-text other-player-profile__message-text--loading";
-    loading.textContent = "Loading…";
-    oppProfileMessage.appendChild(loading);
+
+    if (cachedEntry) {
+      await applyProfilePayloadFromFetch(
+        openFor,
+        compact,
+        kind,
+        cachedEntry.payload,
+        profileActiveTab
+      );
+    } else {
+      profileMessageLastSaved = "";
+      oppProfileMessage.replaceChildren();
+      const loading = document.createElement("div");
+      loading.className =
+        "other-player-profile__message-text other-player-profile__message-text--loading";
+      loading.textContent = "Loading…";
+      oppProfileMessage.appendChild(loading);
+    }
 
     oppCopyAddressBtn.title = compact;
     oppCopyAddressBtn.dataset.fullAddress = compact;
     if (kind === "self") {
-      // Your own profile has no Send NIM action (Feedback moved to the brand modal; Open Wallet,
-      // redundant with that modal, was removed).
       oppSendNim.hidden = true;
     } else {
       oppSendNim.hidden = false;
       oppSendNim.textContent = "Send NIM";
       oppSendNim.dataset.walletUrl = nimiqWalletRecipientDeepLink(compact);
     }
-    // The profile identicon was removed from the layout; no avatar image to populate here.
     applyProfileSheetMode();
     otherPlayerProfile.hidden = false;
     otherPlayerProfile.setAttribute("aria-hidden", "false");
+    if (kind === "self" && (profileActiveTab === "wardrobe" || profileActiveTab === "shop")) {
+      oppProfileWardrobe.hidden = false;
+      void import("../cosmetics/wardrobePanel.js").then(({ mountWardrobePanelSkeleton }) => {
+        if (profileOpenCompact !== openFor || profileMessageKindOpen !== "self") return;
+        if (selfWardrobeMount?.address === openFor && oppProfileWardrobe.firstElementChild) return;
+        mountWardrobePanelSkeleton(oppProfileWardrobe);
+      });
+    }
     attachProfileEscape();
     opts?.overlayBack?.push("profile", () => {
       if (handleProfileDismissLayer()) return true;
@@ -4843,202 +5388,44 @@ export function createHud(
     });
     oppClose.focus({ preventScroll: true });
 
-    const openFor = compact;
     const tok = opts?.getGameAuthToken?.() ?? null;
     const headers: Record<string, string> = {};
     if (tok) headers.authorization = `Bearer ${tok}`;
+    const profileCacheFresh =
+      cachedEntry != null &&
+      Date.now() - cachedEntry.fetchedAt < PROFILE_FETCH_CACHE_MS;
+    if (profileCacheFresh) return;
     try {
       const r = await fetch(
         `/api/player-profile/${encodeURIComponent(openFor)}`,
         { headers }
       );
-      const j = (await r.json().catch(() => ({}))) as {
-        message?: string;
-        effectiveDisplayName?: string;
-        recentAliases?: string[];
-        customUsername?: string | null;
-        usernameLockedUntil?: number | null;
-        usernameSetBanned?: boolean;
-        subjectUsernameBanned?: boolean;
-        subjectChannelMuted?: boolean;
-        usernameSelfServiceEnabled?: boolean;
-        country?: string | null;
-        rooms?: Array<{
-          id?: unknown;
-          displayName?: unknown;
-          isPublic?: unknown;
-          playerCount?: unknown;
-        }>;
-        achievementPoints?: number;
-        achievementHighlights?: Array<{
-          achievementId?: string;
-          title?: string;
-          points?: number;
-          completedAt?: string;
-        }>;
-      };
+      const j = (await r.json().catch(() => ({}))) as ProfileFetchPayload;
       if (profileOpenCompact !== openFor) return;
-      if (typeof j.effectiveDisplayName === "string" && j.effectiveDisplayName.trim()) {
-        oppDisplayNameEl.textContent = j.effectiveDisplayName.trim();
-      }
-      const aliases = Array.isArray(j.recentAliases)
-        ? j.recentAliases.map((x) => String(x).trim()).filter(Boolean)
-        : [];
-      oppAliasTip.textContent =
-        aliases.length > 0 ? `Previously known as\n${aliases.join("\n")}` : "";
-      oppAliasHost.hidden = aliases.length === 0;
-      const profileCountry =
-        typeof j.country === "string" && j.country.trim()
-          ? j.country.trim().toUpperCase()
-          : null;
-      if (kind === "self") selfCountryCode = profileCountry;
-      renderProfileFlag(kind, profileCountry);
-      const adminOther =
-        kind === "other" && opts?.isGameAdmin?.() === true;
-      oppAdminRow.hidden = !adminOther;
-      if (adminOther) {
-        const banned = j.subjectUsernameBanned === true;
-        const muted = j.subjectChannelMuted === true;
-        syncAdminActions(banned, muted);
-      }
-      profileUsernameSavedCustom = j.customUsername?.trim() ?? "";
-      const hasCustom = Boolean(profileUsernameSavedCustom);
-      if (compact) {
-        oppWalletShortEl.textContent = walletDisplayName(compact);
-        oppCopyAddressBtn.hidden = !hasCustom;
-      }
-      if (kind === "self") {
-        oppUsernameInput.value = profileUsernameSavedCustom;
-        const bannedSelf = j.usernameSetBanned === true;
-        const until = j.usernameLockedUntil ?? 0;
-        const allowByPolicy =
-          j.usernameSelfServiceEnabled === true ||
-          opts?.isGameAdmin?.() === true ||
-          !hasCustom;
-        oppUsernameInput.readOnly =
-          !allowByPolicy ||
-          bannedSelf ||
-          (typeof until === "number" && until > Date.now());
-        if (typeof until === "number" && until > 0) {
-          oppUsernameInput.dataset.lockedUntil = String(until);
-        } else {
-          delete oppUsernameInput.dataset.lockedUntil;
-        }
-        updateProfileNameHitInteractivity("self");
-      } else {
-        oppUsernameInput.value = "";
-        oppUsernameInput.readOnly = false;
-        updateProfileNameHitInteractivity("other");
-      }
-      const msg = typeof j.message === "string" ? j.message : "";
-      profileMessageLastSaved = msg;
-      renderProfileMessageDisplay(kind, msg);
-      const achPoints =
-        typeof j.achievementPoints === "number" && Number.isFinite(j.achievementPoints)
-          ? Math.max(0, Math.floor(j.achievementPoints))
-          : 0;
-      const achHighlights = Array.isArray(j.achievementHighlights)
-        ? j.achievementHighlights
-            .map((h) => ({
-              title: String(h.title ?? "").trim(),
-              points:
-                typeof h.points === "number" && Number.isFinite(h.points)
-                  ? Math.max(0, Math.floor(h.points))
-                  : 0,
-            }))
-            .filter((h) => h.title)
-        : [];
-      renderProfileAchievements(kind, achPoints, achHighlights);
-      const rooms = Array.isArray(j.rooms)
-        ? j.rooms
-            .map((room) => {
-              const id = String(room.id ?? "").trim();
-              const displayName = String(room.displayName ?? "").trim();
-              const rawPub = room.isPublic;
-              const isPublicKnown = typeof rawPub === "boolean";
-              const isPublic =
-                isPublicKnown
-                  ? rawPub
-                  : kind === "self" || adminOther
-                    ? true
-                    : false;
-              const playerCount =
-                typeof room.playerCount === "number" &&
-                Number.isFinite(room.playerCount)
-                  ? Math.max(0, Math.floor(room.playerCount))
-                  : 0;
-              return { id, displayName, isPublic, playerCount };
-            })
-            .filter((room) => room.id)
-            .filter((room) => {
-              if (kind === "self" || adminOther) return true;
-              return room.isPublic === true;
-            })
-        : [];
-      rooms.sort(
-        (a, b) =>
-          b.playerCount - a.playerCount ||
-          a.displayName.localeCompare(b.displayName) ||
-          a.id.localeCompare(b.id)
-      );
-      renderProfileRooms(kind, rooms.slice(0, 3));
-      if (kind === "self") {
-        oppProfileWardrobe.hidden = false;
-        const { mountWardrobePanel } = await import("../cosmetics/wardrobePanel.js");
-        const mounted = mountWardrobePanel(oppProfileWardrobe, openFor, {
-          hideTabs: true,
-          onLoadoutChanged: () => cosmeticHandlers.onLoadoutChanged?.(),
-          onPreviewSlot: (slot, presetId) =>
-            cosmeticHandlers.onPreviewSlot?.(slot, presetId),
-          onPreviewCanvas: (canvas, wallet) =>
-            cosmeticHandlers.onPreviewCanvas?.(canvas, wallet),
-          onPreviewCosmeticsChange: (presets) =>
-            cosmeticHandlers.onPreviewCosmeticsChange?.(presets),
-          onVisitCosmeticShop: () => {
-            closeOtherPlayerProfile();
-            cosmeticHandlers.onVisitCosmeticShop?.();
-          },
+      const fingerprint = profilePayloadFingerprint(j);
+      if (cachedEntry?.fingerprint === fingerprint) {
+        profileViewCache.set(cacheKey, {
+          fingerprint,
+          payload: j,
+          fetchedAt: Date.now(),
         });
-        wardrobeRevertAllPreview = () => mounted.revertAllPreview();
-        wardrobeDisposePreview = () => mounted.disposePreviewCanvas();
-        wardrobeSetView = (next) => mounted.setView(next);
-        // Restore the active tab (defaults to Wardrobe) now that the panel can switch views.
-        setProfileTab(profileActiveTab === "rooms" ? "rooms" : profileActiveTab);
-      } else {
-        oppProfileWardrobe.hidden = true;
-        oppProfileWardrobe.replaceChildren();
-        const loadout = (j as {
-          cosmeticLoadout?: Record<string, string | null>;
-          cosmeticDeployables?: Array<{ presetId: string; displayName: string }>;
-        }).cosmeticLoadout;
-        const deployables =
-          (j as { cosmeticDeployables?: Array<{ presetId: string; displayName: string }> })
-            .cosmeticDeployables ?? [];
-        if (loadout || deployables.length > 0) {
-          const { mountWardrobeReadOnly } = await import("../cosmetics/wardrobePanel.js");
-          const readonlyMounted = mountWardrobeReadOnly(
-            oppProfileWardrobe,
-            openFor,
-            {
-              aura: loadout?.aura ?? null,
-              nameplate: loadout?.nameplate ?? null,
-              chatBubble: loadout?.chatBubble ?? null,
-              trail: loadout?.trail ?? null,
-            },
-            deployables,
-            {
-              onPreviewCanvas: (canvas, wallet) =>
-            cosmeticHandlers.onPreviewCanvas?.(canvas, wallet),
-              onPreviewCosmeticsChange: (presets) =>
-                cosmeticHandlers.onPreviewCosmeticsChange?.(presets),
-            }
-          );
-          wardrobeDisposePreview = () => readonlyMounted.disposePreviewCanvas();
-          oppProfileWardrobe.hidden = false;
-        }
+        return;
       }
+      profileViewCache.set(cacheKey, {
+        fingerprint,
+        payload: j,
+        fetchedAt: Date.now(),
+      });
+      await applyProfilePayloadFromFetch(
+        openFor,
+        compact,
+        kind,
+        j,
+        profileActiveTab
+      );
     } catch {
       if (profileOpenCompact !== openFor) return;
+      if (cachedEntry) return;
       profileMessageLastSaved = "";
       oppProfileRooms.replaceChildren();
       if (kind === "self") {
@@ -5074,25 +5461,18 @@ export function createHud(
     ev.preventDefault();
     ev.stopPropagation();
     if (profileMessageKindOpen === "self") {
-      // Tab behavior: toggle between the achievements panel and the wardrobe content.
       setProfileTab(profileActiveTab === "achievements" ? "wardrobe" : "achievements");
     } else {
-      // Other players' cards keep their read-only wardrobe visible; this just toggles the panel.
-      const show = oppAchievements.hidden;
-      oppAchievements.hidden = !show;
-      oppAchievementsTabBtn.classList.toggle("is-active", show);
-      oppAchievementsTabBtn.setAttribute("aria-expanded", show ? "true" : "false");
+      setProfileTab("achievements");
     }
   });
   oppProfileRoomsBtn.addEventListener("click", (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
     if (profileMessageKindOpen === "self") {
-      // Tab behavior: toggle between the rooms list and the wardrobe content.
       setProfileTab(profileActiveTab === "rooms" ? "wardrobe" : "rooms");
     } else {
-      // Other players' cards keep their read-only wardrobe visible; this just toggles the panel.
-      setProfileRoomsPanelOpen(oppProfileRoomsPanel.hidden);
+      setProfileTab("rooms");
     }
   });
   oppSendNim.addEventListener("click", (ev) => {
@@ -5104,15 +5484,10 @@ export function createHud(
     const opened = window.open(url, "_blank", "noopener,noreferrer");
     if (!opened) opts?.onNimRecipientDeepLinkPopupBlocked?.();
   });
-  oppCopyAddressBtn.addEventListener("click", (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    const full = oppCopyAddressBtn.dataset.fullAddress?.trim() ?? "";
-    if (!full) return;
-    void navigator.clipboard.writeText(full).catch(() => {
-      /* idiomatic silent copy; no toast */
-    });
-  });
+  bindCopyToClipboardControl(
+    oppCopyAddressBtn,
+    () => oppCopyAddressBtn.dataset.fullAddress ?? ""
+  );
 
   otherPlayerCtxViewBtn.addEventListener("click", () => {
     const addr = otherPlayerCtxViewBtn.dataset.address ?? "";
@@ -5121,15 +5496,9 @@ export function createHud(
     if (addr) void showPlayerProfileView(addr, disp, "other");
   });
 
-  otherPlayerCtxCopyAddressBtn.addEventListener("click", () => {
-    /* Single source of truth: the address stamped on the View row when the menu opened. */
-    const addr = (otherPlayerCtxViewBtn.dataset.address ?? "").trim();
+  bindCopyToClipboardControl(otherPlayerCtxCopyAddressBtn, () => {
     closeOtherPlayerContextMenu();
-    if (!addr) return;
-    /* Idiomatic silent copy, matches `oppCopyAddressBtn` pattern. */
-    void navigator.clipboard?.writeText(addr).catch(() => {
-      /* ignore */
-    });
+    return (otherPlayerCtxViewBtn.dataset.address ?? "").trim();
   });
 
   // worldcup: accept the target's open 1v1 Challenge (address stamped on the View row).
@@ -5206,6 +5575,7 @@ export function createHud(
     if (Date.now() - lastChatLineAt >= CHAT_LOG_IDLE_MS) {
       chatPanel.classList.add("chat-panel--log-collapsed");
     }
+    requestAnimationFrame(() => syncHudAboveBottomBand());
   }
 
   function armChatLogIdleCollapse(): void {
@@ -5225,6 +5595,7 @@ export function createHud(
       chatLogLeaveTimer = null;
     }
     chatPanel.classList.remove("chat-panel--log-collapsed");
+    requestAnimationFrame(() => syncHudAboveBottomBand());
   }
 
   function onChatPointerLeave(): void {
@@ -7900,6 +8271,7 @@ export function createHud(
       ui.style.removeProperty("--hud-build-dock-preview-height");
       ui.style.removeProperty("--hud-build-dock-color-stack-height");
       ui.style.removeProperty("--hud-build-dock-preview-color-gap");
+      syncHudAboveBottomBand();
       return;
     }
     updateBuildBottomDockToolsRowHeight();
@@ -7919,6 +8291,7 @@ export function createHud(
       `${panelH + satelliteH}px`
     );
     syncBuildDockSpreadFloatVars();
+    syncHudAboveBottomBand();
   }
 
   function syncBuildBottomDockVisibility(): void {
@@ -7933,7 +8306,7 @@ export function createHud(
     syncBuildDockFromToolSelect();
     syncBuildDockDeselectChrome();
     updateBuildBottomDockInset();
-    requestAnimationFrame(() => syncHudBelowTopWrap());
+    requestAnimationFrame(() => syncHudLayoutInsets());
   }
 
   const buildBottomDockResizeRo = new ResizeObserver(() => {
@@ -8211,6 +8584,7 @@ export function createHud(
 
   let playerMenuLogoutHandler = (): void => {};
   let playerMenuLeaveHandler = (): void => {};
+  let playerMenuLongPressHandler = (): void => {};
   playerMenu.root.addEventListener(
     "click",
     () => {
@@ -10416,6 +10790,7 @@ export function createHud(
     if (kind === "logout") playerMenuLogoutHandler();
     else playerMenuLeaveHandler();
   });
+  playerMenu.onLongPress(() => playerMenuLongPressHandler());
 
   function syncTopBarPlayerIdentity(): void {
     const raw = brandLinksPlayerAddress.trim();
@@ -10452,6 +10827,9 @@ export function createHud(
     playerBarIdenticon.removeAttribute("src");
     playerBarIdenticon.dataset.address = compact;
     playerMenu.syncIdenticonFromBar(playerBarIdenticon);
+    void import("../game/identiconTexture.js").then(({ warmIdenticonCache }) =>
+      warmIdenticonCache(compact)
+    );
     playerBar.classList.add("hud-player-bar--interactive");
     playerBar.tabIndex = 0;
     playerBar.setAttribute("role", "button");
@@ -10643,19 +11021,18 @@ export function createHud(
   }
 
   if (brandLinksAddressCopyBtn) {
-    brandLinksAddressCopyBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const full = brandLinksPlayerAddress.replace(/\s+/g, "").trim();
-      if (!full) return;
-      void (async (): Promise<void> => {
-        try {
-          await navigator.clipboard.writeText(full);
+    bindCopyToClipboardControl(
+      brandLinksAddressCopyBtn,
+      () => brandLinksPlayerAddress.replace(/\s+/g, "").trim(),
+      {
+        onCopied: () => {
           if (brandLinksCopyFeedback) {
             brandLinksCopyFeedback.textContent = "✓ Copied to clipboard";
             brandLinksCopyFeedback.hidden = false;
           }
-          if (brandLinksCopyFeedbackTimer) clearTimeout(brandLinksCopyFeedbackTimer);
+          if (brandLinksCopyFeedbackTimer) {
+            clearTimeout(brandLinksCopyFeedbackTimer);
+          }
           brandLinksCopyFeedbackTimer = setTimeout(() => {
             if (brandLinksCopyFeedback) {
               brandLinksCopyFeedback.hidden = true;
@@ -10663,11 +11040,9 @@ export function createHud(
             }
             brandLinksCopyFeedbackTimer = null;
           }, 2200);
-        } catch {
-          /* ignore */
-        }
-      })();
-    });
+        },
+      }
+    );
   }
 
   if (brandLinksWalletImg) {
@@ -11509,6 +11884,42 @@ export function createHud(
     }
   }
 
+  /** Bottom inset for overlays that sit above the chat stack or build dock (achievements rail). */
+  function syncHudAboveBottomBand(): void {
+    const letterRect = letter.getBoundingClientRect();
+    if (letterRect.height <= 0) return;
+
+    let bandTop = letterRect.bottom;
+    if (
+      ui.classList.contains("hud--build-bottom-dock-visible") &&
+      !buildBottomDock.hidden
+    ) {
+      const dockRect = buildBottomDock.getBoundingClientRect();
+      if (dockRect.height > 0) {
+        bandTop = dockRect.top;
+      }
+    } else {
+      const stackRect = bottomLeftStack.getBoundingClientRect();
+      if (stackRect.height > 0) {
+        bandTop = stackRect.top;
+      }
+    }
+
+    const gapPx = Number.parseFloat(
+      getComputedStyle(ui).getPropertyValue("--hud-bottom-band-gap")
+    );
+    const gap = Number.isFinite(gapPx) ? gapPx : 8;
+    const inset = Math.max(0, Math.ceil(letterRect.bottom - bandTop + gap));
+    const value = `${inset}px`;
+    ui.style.setProperty("--hud-above-bottom-band", value);
+    letter.style.setProperty("--hud-above-bottom-band", value);
+  }
+
+  function syncHudLayoutInsets(): void {
+    syncHudBelowTopWrap();
+    syncHudAboveBottomBand();
+  }
+
   function mountPayPreviewSatellite(mode: MobilePlayLayoutMode): void {
     if (mode === "landscape" && payRightRail) {
       if (buildBottomDockPreviewSatellite.parentElement !== payRightRail) {
@@ -11611,22 +12022,23 @@ export function createHud(
     if (!isMobilePlayHostDocument()) return;
     const { width: vw, height: vh } = getMobilePlayViewportSize();
     syncMobileOrientationClasses(vw, vh);
-    const next: MobilePlayLayoutMode = isViewportPortrait(vw, vh)
+    const next: MobilePlayLayoutMode = isMobilePlayLayoutPortrait(vw, vh)
       ? "portrait"
       : "landscape";
     if (mobilePlayLayoutMode !== next) {
       mobilePlayLayoutMode = next;
+      playerMenu.close();
       ui.classList.toggle("hud--mobile-portrait", next === "portrait");
       ui.classList.toggle("hud--mobile-landscape", next === "landscape");
       mountPayActionChrome(next);
     }
     mountPayPortraitTopChrome(next === "portrait");
-    const fw = frame.clientWidth;
-    const fh = frame.clientHeight;
+    const fw = frame.clientWidth || vw;
+    const fh = frame.clientHeight || vh;
     if (fw && fh) {
       layoutLetterbox(frame, letter, streamCinemaFillViewport, mobilePlayLayoutMode);
       updateBuildBottomDockInset();
-      syncHudBelowTopWrap();
+      syncHudLayoutInsets();
     }
   }
 
@@ -11639,7 +12051,7 @@ export function createHud(
       syncMobilePlayLayoutMode();
     } else {
       layoutLetterbox(frame, letter, streamCinemaFillViewport, null);
-      syncHudBelowTopWrap();
+      syncHudLayoutInsets();
     }
     layoutBarAdvancedPopover();
     layoutObjectPanelSatellites();
@@ -11648,17 +12060,18 @@ export function createHud(
   ro.observe(topWrap);
   ro.observe(buildModeStrip);
   ro.observe(buildBottomDock);
+  ro.observe(bottomLeftStack);
 
   if (mobilePlayHost) {
     layoutLetterbox(frame, letter, streamCinemaFillViewport, mobilePlayLayoutMode);
   } else {
     layoutLetterbox(frame, letter, streamCinemaFillViewport, null);
   }
-  syncHudBelowTopWrap();
+  syncHudLayoutInsets();
   requestAnimationFrame(() => {
-    syncHudBelowTopWrap();
+    syncHudLayoutInsets();
     requestAnimationFrame(() => {
-      syncHudBelowTopWrap();
+      syncHudLayoutInsets();
     });
   });
 
@@ -12832,7 +13245,7 @@ export function createHud(
     if (performance.now() >= restartPendingEndMono) {
       stopRestartBannerTick();
       restartBanner.hidden = true;
-      syncHudBelowTopWrap();
+      syncHudLayoutInsets();
     }
   }
 
@@ -13017,7 +13430,7 @@ export function createHud(
       statusSub.textContent = t;
       statusSub.classList.toggle("hud-status-sub--empty", !t);
       ui.classList.toggle("hud--has-status-sub", !!t);
-      syncHudBelowTopWrap();
+      syncHudLayoutInsets();
     },
     resetRoomChatDom() {
       worldChatLog.replaceChildren();
@@ -13134,6 +13547,7 @@ export function createHud(
       closeOtherPlayerUiOverlays();
       closeActionWheel();
       playerMenu.close();
+      playerMenu.abortLongPressGesture();
       actionWheelOpenedFloor = openedAtFloor;
       actionWheelEmoteHandler = handlers.onEmote;
       actionWheelJoinFieldHandler = handlers.onJoinFreePlayField;
@@ -13149,9 +13563,12 @@ export function createHud(
       actionWheelLevel = "root";
       actionWheelNav = [];
       actionWheelEmotePage = 0;
-      actionWheel.style.left = `${anchorX}px`;
-      actionWheel.style.top = `${anchorY}px`;
+      positionActionWheel(anchorX, anchorY);
       actionWheel.hidden = false;
+      syncActionWheelCanvasBlock();
+      portalActionWheelOpen();
+      positionActionWheel(anchorX, anchorY);
+      actionWheelDismissGraceUntil = performance.now() + 500;
       renderActionWheel();
       requestAnimationFrame(() => {
         actionWheel.classList.add("action-wheel--open");
@@ -13182,8 +13599,7 @@ export function createHud(
         Number.isFinite(x) &&
         Number.isFinite(y)
       ) {
-        actionWheel.style.left = `${x}px`;
-        actionWheel.style.top = `${y}px`;
+        positionActionWheel(x, y);
       }
     },
     isActionWheelOpen() {
@@ -13254,6 +13670,9 @@ export function createHud(
     },
     toggleAchievementsPanel() {
       toggleAchievementsPanelOpen();
+    },
+    onPlayerMenuLongPress(fn: () => void) {
+      playerMenuLongPressHandler = fn;
     },
     showAchievementUnlock,
     setTelescopeUnlocked(unlocked: boolean) {
@@ -15081,7 +15500,7 @@ export function createHud(
       stopRestartBannerTick();
       syncRestartBannerVisual();
       restartBannerTick = setInterval(syncRestartBannerVisual, 400);
-      syncHudBelowTopWrap();
+      syncHudLayoutInsets();
     },
     consumeRestartDisconnectForStatus() {
       if (!restartDisconnectExpectActive) return false;
@@ -15325,7 +15744,7 @@ function layoutLetterbox(
   let h: number;
   if (payMode === "landscape") {
     h = fh;
-    w = fh * targetAspect;
+    w = Math.min(fh * targetAspect, fw);
   } else if (viewAspect > targetAspect) {
     h = fh;
     w = fh * targetAspect;

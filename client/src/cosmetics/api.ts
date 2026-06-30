@@ -44,12 +44,45 @@ async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   return j;
 }
 
-export async function fetchWardrobe(): Promise<WardrobeResponse> {
+const WARDROBE_SESSION_CACHE_MS = 60_000;
+
+let wardrobeFetchInflight: Promise<WardrobeResponse> | null = null;
+let wardrobeSessionCache: WardrobeResponse | null = null;
+let wardrobeSessionCachedAt = 0;
+
+/** Clears the in-memory wardrobe snapshot (call after loadout or entitlement changes). */
+export function invalidateWardrobeCache(): void {
+  wardrobeSessionCache = null;
+  wardrobeSessionCachedAt = 0;
+}
+
+export async function fetchWardrobe(opts?: {
+  force?: boolean;
+}): Promise<WardrobeResponse> {
   const token = sessionToken();
   if (!token) throw new Error("not_signed_in");
-  return apiJson<WardrobeResponse>("/api/cosmetics/wardrobe", {
+  const force = opts?.force === true;
+  const now = Date.now();
+  if (
+    !force &&
+    wardrobeSessionCache &&
+    now - wardrobeSessionCachedAt < WARDROBE_SESSION_CACHE_MS
+  ) {
+    return wardrobeSessionCache;
+  }
+  if (wardrobeFetchInflight) return wardrobeFetchInflight;
+  wardrobeFetchInflight = apiJson<WardrobeResponse>("/api/cosmetics/wardrobe", {
     headers: { authorization: `Bearer ${token}` },
-  });
+  })
+    .then((data) => {
+      wardrobeSessionCache = data;
+      wardrobeSessionCachedAt = Date.now();
+      return data;
+    })
+    .finally(() => {
+      wardrobeFetchInflight = null;
+    });
+  return wardrobeFetchInflight;
 }
 
 export async function updateLoadoutSlot(
@@ -58,7 +91,7 @@ export async function updateLoadoutSlot(
 ): Promise<{ loadout: WardrobeLoadout }> {
   const token = sessionToken();
   if (!token) throw new Error("not_signed_in");
-  return apiJson("/api/cosmetics/loadout", {
+  const result = await apiJson<{ loadout: WardrobeLoadout }>("/api/cosmetics/loadout", {
     method: "PUT",
     headers: {
       authorization: `Bearer ${token}`,
@@ -66,6 +99,8 @@ export async function updateLoadoutSlot(
     },
     body: JSON.stringify({ slot, cosmeticSku }),
   });
+  invalidateWardrobeCache();
+  return result;
 }
 
 export async function createUnlockIntent(
@@ -89,12 +124,17 @@ export async function syncUnlockPayment(
 ): Promise<{ ok: boolean; granted?: boolean }> {
   const token = sessionToken();
   if (!token) throw new Error("not_signed_in");
-  return apiJson("/api/cosmetics/unlock-sync", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ intentId, cosmeticSku }),
-  });
+  const result = await apiJson<{ ok: boolean; granted?: boolean }>(
+    "/api/cosmetics/unlock-sync",
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ intentId, cosmeticSku }),
+    }
+  );
+  if (result.granted) invalidateWardrobeCache();
+  return result;
 }
