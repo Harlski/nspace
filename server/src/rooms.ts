@@ -91,9 +91,14 @@ import {
   recordBlockPlaced,
   recordChatMessageSent,
   recordDistinctTileWalked,
+  recordExplorationDoorFromSpawn,
+  recordExplorationRoomEntry,
   recordFieldGoalScored,
   recordMatchEnd,
+  recordOutfieldTilesWalked,
   recordPixelPainted,
+  recordTeleporterWarp,
+  tickExplorationDailyRollover,
   type AchievementUnlockWire,
   type MatchEndParticipantInput,
 } from "./achievementStore.js";
@@ -1479,13 +1484,28 @@ function achievementUnlockHandlerForAddress(address: string) {
 function onPlayerEnteredRoom(
   conn: ClientConn,
   roomId: string,
-  opts?: { isRoomChange?: boolean }
+  opts?: {
+    isRoomChange?: boolean;
+    spawnHint?: { x: number; z: number };
+    /** True when spawn came from an explicit door transition (not resume reconnect). */
+    doorSpawn?: boolean;
+  }
 ): void {
   if (conn.streamObserver) return;
   const onUnlock = achievementUnlockHandler(conn.ws);
   evaluateLoginStreakAchievements(conn.player.address, onUnlock);
   if (normalizeRoomId(roomId) === HUB_ROOM_ID) {
     fireAchievementEvent(conn.player.address, "enter_commons", onUnlock);
+  }
+  recordExplorationRoomEntry(conn.player.address, roomId, onUnlock);
+  if (opts?.doorSpawn && opts.spawnHint) {
+    recordExplorationDoorFromSpawn(
+      conn.player.address,
+      roomId,
+      opts.spawnHint.x,
+      opts.spawnHint.z,
+      onUnlock
+    );
   }
   if (opts?.isRoomChange) {
     fireAchievementEvent(conn.player.address, "visit_room", onUnlock);
@@ -5067,7 +5087,11 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, targetRoomId, chatBacklog);
   sendRoomCatalog(conn.ws, address);
-  onPlayerEnteredRoom(conn, targetRoomId, { isRoomChange: true });
+  onPlayerEnteredRoom(conn, targetRoomId, {
+    isRoomChange: true,
+    spawnHint: { x, z },
+    doorSpawn: true,
+  });
 
   // Notify others in new room
   broadcast(targetRoomId, { type: "playerJoined", player: playerToOutState(conn) }, address);
@@ -6272,6 +6296,24 @@ export function startRoomTick(): void {
     // worldcup: daily UTC scoreboard reset (broadcasts cleared tally + new champion flag)
     worldcupCheckDailyReset(now);
 
+    tickExplorationDailyRollover(
+      now,
+      () => {
+        const explorationOnline: Array<{ wallet: string; roomId: string }> =
+          [];
+        for (const [roomId, room] of rooms) {
+          for (const c of room.values()) {
+            if (c.streamObserver) continue;
+            explorationOnline.push({ wallet: c.address, roomId });
+          }
+        }
+        return explorationOnline;
+      },
+      (wallet, unlocks) => {
+        achievementUnlockHandlerForAddress(wallet)(unlocks);
+      }
+    );
+
     // Check canvas timer
     checkCanvasTimer();
     
@@ -6301,6 +6343,14 @@ export function startRoomTick(): void {
             result.arrivedTiles,
             achievementUnlockHandlerForAddress(c.address)
           );
+          if (normalizeRoomId(roomId) === WORLDCUP_FIELD_ROOM_ID) {
+            recordOutfieldTilesWalked(
+              c.address,
+              roomId,
+              result.arrivedTiles,
+              achievementUnlockHandlerForAddress(c.address)
+            );
+          }
         }
         if (DEBUG_MOVEMENT && result.arrivedTiles.length > 0) {
           const next = c.pathQueue[0];
@@ -6594,6 +6644,8 @@ export function addClient(
     streamObserver?: boolean;
     guestDisplayName?: string;
     guestId?: string;
+    /** Credit Door Crasher when spawn came from explicit door URL params. */
+    explorationDoorSpawn?: boolean;
   }
 ): void {
   const streamObserver = sessionFlags?.streamObserver === true;
@@ -6936,7 +6988,10 @@ export function addClient(
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, roomId, chatBacklog);
   sendRoomCatalog(ws, address);
-  onPlayerEnteredRoom(conn, roomId);
+  onPlayerEnteredRoom(conn, roomId, {
+    spawnHint: spawnHintForPlacement,
+    doorSpawn: sessionFlags?.explorationDoorSpawn === true,
+  });
   ensureOnboardingCompleteAchievements(
     address,
     achievementUnlockHandler(conn.ws)
@@ -8055,6 +8110,14 @@ export function addClient(
           return;
         }
         if ("targetRoomId" in t) {
+          recordTeleporterWarp(
+            address,
+            currentRoomId,
+            here.x,
+            here.z,
+            normalizeRoomId(t.targetRoomId),
+            achievementUnlockHandler(ws)
+          );
           teleportPlayer(conn, normalizeRoomId(t.targetRoomId), t.targetX, t.targetZ);
         }
         return;

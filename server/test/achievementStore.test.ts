@@ -12,14 +12,35 @@ async function withAchievementStore(
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nspace-ach-"));
   const sqlitePath = path.join(dir, "campaigns.sqlite");
   process.env.CAMPAIGN_STORE_SQLITE_PATH = sqlitePath;
+  process.env.LOGIN_STREAK_STORE_FILE = path.join(dir, "login-streaks.json");
   const mod = await import("../src/achievementStore.js");
   mod.initAchievementStore();
   try {
     await fn(mod);
   } finally {
+    mod._resetAchievementStoreForTests();
     fs.rmSync(dir, { recursive: true, force: true });
     delete process.env.CAMPAIGN_STORE_SQLITE_PATH;
+    delete process.env.LOGIN_STREAK_STORE_FILE;
   }
+}
+
+function seedLoginStreak(wallet: string, streakDays: number): void {
+  const file = process.env.LOGIN_STREAK_STORE_FILE;
+  if (!file) throw new Error("LOGIN_STREAK_STORE_FILE not set");
+  const normalized = wallet.replace(/\s+/g, "").toUpperCase();
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      streaks: {
+        [normalized]: {
+          streakDays,
+          lastLoginDayUtc: "2026-06-30",
+          updatedAt: Date.now(),
+        },
+      },
+    })
+  );
 }
 
 const WALLET = "NQ07 TEST000000000000000000000000000001";
@@ -175,13 +196,30 @@ test("match win streak increments on win and resets on loss or draw", async () =
         goalsScored: 0,
         priorWinStreak: 0,
       },
-      (u) => unlocks.push(...u)
+      ( _wallet, u) => unlocks.push(...u)
     );
     assert.equal(streakProgress(), 0);
     assert.ok(unlocks.some((u) => u.achievementId === "match-first-draw"));
 
     setMatchWinStreak(WALLET, false);
     assert.equal(streakProgress(), 0);
+  });
+});
+
+test("first chat message unlocks hello world", async () => {
+  const wallet = "NQ07 TEST000000000000000000000000000018";
+  await withAchievementStore(async ({
+    recordChatMessageSent,
+    getAchievementsForWallet,
+  }) => {
+    const unlocks: Array<{ achievementId: string }> = [];
+    recordChatMessageSent(wallet, (u) => unlocks.push(...u));
+    assert.ok(unlocks.some((u) => u.achievementId === "social-chatter-first"));
+    const row = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "social-chatter-first"
+    );
+    assert.equal(row?.completed, true);
+    assert.equal(row?.title, "Hello World");
   });
 });
 
@@ -244,19 +282,68 @@ test("login streak top tier respects ACHIEVEMENT_LOGIN_STREAK_TOP", async () => 
     evaluateLoginStreakAchievements,
     getAchievementsForWallet,
   }) => {
-    evaluateLoginStreakAchievements(wallet, 11);
-    assert.equal(
-      getAchievementsForWallet(wallet).achievements.find(
-        (a) => a.achievementId === "social-login-top"
-      )?.completed,
-      false
+    seedLoginStreak(wallet, 11);
+    evaluateLoginStreakAchievements(wallet);
+    const at11 = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "social-login-top"
     );
+    assert.equal(at11?.completed, false);
+    assert.equal(at11?.progress, 11);
+    assert.equal(at11?.threshold, 12);
+    assert.match(at11?.description ?? "", /12 consecutive UTC calendar days/);
 
     const unlocks: Array<{ achievementId: string }> = [];
-    evaluateLoginStreakAchievements(wallet, 12, (u) => unlocks.push(...u));
+    seedLoginStreak(wallet, 12);
+    evaluateLoginStreakAchievements(wallet, (u) => unlocks.push(...u));
     assert.ok(unlocks.some((u) => u.achievementId === "social-login-top"));
   });
   delete process.env.ACHIEVEMENT_LOGIN_STREAK_TOP;
+});
+
+test("login streak achievements show live streak progress on all tiers", async () => {
+  const wallet = "NQ07 TEST000000000000000000000000000013";
+  await withAchievementStore(async ({ getAchievementsForWallet }) => {
+    seedLoginStreak(wallet, 3);
+    const rows = getAchievementsForWallet(wallet).achievements;
+    const week = rows.find((a) => a.achievementId === "social-login-7");
+    const month = rows.find((a) => a.achievementId === "social-login-30");
+    const top = rows.find((a) => a.achievementId === "social-login-top");
+    assert.equal(week?.progress, 3);
+    assert.equal(week?.threshold, 7);
+    assert.equal(month?.progress, 3);
+    assert.equal(month?.threshold, 30);
+    assert.equal(top?.progress, 3);
+    assert.equal(top?.threshold, 60);
+  });
+});
+
+test("earned login streak achievements stay complete when streak drops", async () => {
+  const wallet = "NQ07 TEST000000000000000000000000000015";
+  await withAchievementStore(async ({
+    evaluateLoginStreakAchievements,
+    getAchievementsForWallet,
+  }) => {
+    seedLoginStreak(wallet, 7);
+    evaluateLoginStreakAchievements(wallet);
+    seedLoginStreak(wallet, 2);
+    const rows = getAchievementsForWallet(wallet).achievements;
+    const week = rows.find((a) => a.achievementId === "social-login-7");
+    const month = rows.find((a) => a.achievementId === "social-login-30");
+    assert.equal(week?.completed, true);
+    assert.equal(month?.progress, 2);
+    assert.equal(month?.threshold, 30);
+  });
+});
+
+test("getAchievementsForWallet silently completes missed login streak tiers", async () => {
+  const wallet = "NQ07 TEST000000000000000000000000000016";
+  await withAchievementStore(async ({ getAchievementsForWallet }) => {
+    seedLoginStreak(wallet, 7);
+    const week = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "social-login-7"
+    );
+    assert.equal(week?.completed, true);
+  });
 });
 
 test("world cup gating skips progress but preserves completions", async () => {
@@ -366,5 +453,297 @@ test("telescope stays locked until every getting started achievement is done", a
     assert.equal(telescope?.completed, false);
     assert.equal(payload.telescopeUnlocked, false);
     assert.ok((telescope?.progress ?? 0) < (telescope?.threshold ?? 1));
+  });
+});
+
+test("pixel paint counter unlocks pixel room tiers", async () => {
+  const wallet = "NQ07 TEST000000000000000000000000000015";
+  await withAchievementStore(async ({
+    recordPixelPainted,
+    getAchievementsForWallet,
+  }) => {
+    recordPixelPainted(wallet, 1);
+    const afterFirst = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "pixel-we-made-this"
+    );
+    assert.equal(afterFirst?.completed, true);
+
+    recordPixelPainted(wallet, 63);
+    const after64 = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "pixel-64bit"
+    );
+    assert.equal(after64?.completed, true);
+    assert.equal(after64?.progress, 64);
+  });
+});
+
+test("sunny side up respects ACHIEVEMENT_SUNNY_BUILD_COUNT", async () => {
+  process.env.ACHIEVEMENT_SUNNY_BUILD_COUNT = "5000";
+  const wallet = "NQ07 TEST000000000000000000000000000016";
+  await withAchievementStore(async ({
+    bumpAchievementCounter,
+    getAchievementsForWallet,
+  }) => {
+    const row = () =>
+      getAchievementsForWallet(wallet).achievements.find(
+        (a) => a.achievementId === "build-sunny-side-up"
+      );
+    bumpAchievementCounter(wallet, "blocks_placed", 4999);
+    assert.equal(row()?.completed, false);
+    assert.equal(row()?.threshold, 5000);
+    bumpAchievementCounter(wallet, "blocks_placed", 1);
+    assert.equal(row()?.completed, true);
+  });
+});
+
+test("field goal scored records contested and solo events", async () => {
+  const wallet = "NQ07 TEST000000000000000000000000000017";
+  await withAchievementStore(async ({
+    recordFieldGoalScored,
+    getAchievementsForWallet,
+  }) => {
+    recordFieldGoalScored(wallet, { solo: true });
+    const solo = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "field-solo"
+    );
+    assert.equal(solo?.completed, true);
+
+    recordFieldGoalScored(wallet, { contested: true });
+    const contested = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "field-contested"
+    );
+    assert.equal(contested?.completed, true);
+    const goals = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "field-goals-10"
+    );
+    assert.equal(goals?.progress, 2);
+  });
+});
+
+test("match streak five is titled Unstoppaball", async () => {
+  await withAchievementStore(async ({ getAchievementsForWallet }) => {
+    const row = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "match-streak-5"
+    );
+    assert.equal(row?.title, "Unstoppaball");
+    assert.match(row?.description ?? "", /1v1/);
+  });
+});
+
+test("achievement_seen and achievement_daily_state tables exist on init", async () => {
+  await withAchievementStore(async ({
+    initAchievementStore,
+    recordAchievementSeen,
+    setAchievementDailyState,
+    getAchievementDailyState,
+  }) => {
+    initAchievementStore();
+    assert.equal(recordAchievementSeen(WALLET, "tile:hub:0,0"), true);
+    assert.equal(recordAchievementSeen(WALLET, "tile:hub:0,0"), false);
+    setAchievementDailyState(WALLET, "2026-07-01", "grand_tour", "hub");
+    assert.equal(
+      getAchievementDailyState(WALLET, "2026-07-01", "grand_tour"),
+      "hub"
+    );
+  });
+});
+
+test("recordDistinctTileWalked dedupes tiles and rejects ineligible rooms", async () => {
+  await withAchievementStore(async ({
+    recordDistinctTileWalked,
+    countAchievementSeenWithPrefix,
+    getAchievementsForWallet,
+  }) => {
+    const inserted = recordDistinctTileWalked(WALLET, "hub", [
+      { x: 1, z: 2 },
+      { x: 1, z: 2 },
+      { x: 3, z: 4 },
+    ]);
+    assert.equal(inserted, 2);
+    assert.equal(
+      recordDistinctTileWalked(WALLET, "hub", [{ x: 1, z: 2 }]),
+      0
+    );
+    assert.equal(countAchievementSeenWithPrefix(WALLET, "tile:"), 2);
+
+    assert.equal(
+      recordDistinctTileWalked(WALLET, "field", [{ x: 0, z: 0 }]),
+      0
+    );
+    assert.equal(
+      recordDistinctTileWalked(WALLET, "cosmetic-gallery", [{ x: 0, z: 0 }]),
+      0
+    );
+    assert.equal(
+      recordDistinctTileWalked(WALLET, "canvas", [{ x: 0, z: 0 }]),
+      0
+    );
+
+    const marathon = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "exploration-marathon-1"
+    );
+    assert.equal(marathon?.progress, 2);
+    assert.equal(marathon?.threshold, 1000);
+    assert.equal(marathon?.completed, false);
+  });
+});
+
+test("Marathon I unlocks at 1000 distinct tiles", async () => {
+  await withAchievementStore(async ({
+    recordDistinctTileWalked,
+    getAchievementsForWallet,
+  }) => {
+    const unlocks: Array<{ achievementId: string }> = [];
+    for (let i = 0; i < 1000; i += 1) {
+      recordDistinctTileWalked(
+        WALLET,
+        "hub",
+        [{ x: i, z: 0 }],
+        (u) => {
+          unlocks.push(...u);
+        }
+      );
+    }
+    assert.ok(unlocks.some((u) => u.achievementId === "exploration-marathon-1"));
+    const marathon = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "exploration-marathon-1"
+    );
+    assert.equal(marathon?.completed, true);
+    assert.equal(marathon?.progress, 1000);
+    assert.equal(marathon?.threshold, 1000);
+  });
+});
+
+test("Room Tourist dedupes Play Space slugs and counts unique rooms", async () => {
+  await withAchievementStore(async ({
+    recordExplorationRoomEntry,
+    getAchievementsForWallet,
+  }) => {
+    const rooms = [
+      "chamber",
+      "hub",
+      "pixel",
+      "field",
+      "invite-lobby-ABC123",
+      "invite-lobby-abc123",
+    ];
+    for (const room of rooms) {
+      recordExplorationRoomEntry(WALLET, room);
+    }
+    const tourist = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "exploration-room-tourist-1"
+    );
+    assert.equal(tourist?.progress, 5);
+    assert.equal(tourist?.threshold, 5);
+    assert.equal(tourist?.completed, true);
+  });
+});
+
+test("Grand Tour completes within one UTC day without revoking on rollover", async () => {
+  await withAchievementStore(async ({
+    recordExplorationRoomEntry,
+    getAchievementsForWallet,
+    tickExplorationDailyRollover,
+  }) => {
+    const utcDay = "2026-07-01";
+    const stops = ["chamber", "hub", "pixel", "field", "cosmetic-gallery"];
+    const unlocks: Array<{ achievementId: string }> = [];
+    for (const room of stops) {
+      recordExplorationRoomEntry(
+        WALLET,
+        room,
+        (u) => {
+          unlocks.push(...u);
+        },
+        utcDay
+      );
+    }
+    assert.ok(unlocks.some((u) => u.achievementId === "exploration-grand-tour"));
+    const grand = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "exploration-grand-tour"
+    );
+    assert.equal(grand?.completed, true);
+
+    tickExplorationDailyRollover(
+      Date.UTC(2026, 6, 2, 0, 0, 1),
+      () => [{ wallet: WALLET, roomId: "chamber" }]
+    );
+    const afterRollover = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "exploration-grand-tour"
+    );
+    assert.equal(afterRollover?.completed, true);
+    assert.equal(afterRollover?.progress, 5);
+  });
+});
+
+test("Door Crasher and Teleporter Tourist dedupe stable keys", async () => {
+  await withAchievementStore(async ({
+    recordExplorationDoorUsed,
+    recordTeleporterWarp,
+    getAchievementsForWallet,
+  }) => {
+    recordExplorationDoorUsed(WALLET, "door:hub:12,0→chamber");
+    recordExplorationDoorUsed(WALLET, "door:hub:12,0→chamber");
+    recordTeleporterWarp(WALLET, "hub", 1, 2, "my-room");
+    recordTeleporterWarp(WALLET, "hub", 1, 2, "my-room");
+    recordTeleporterWarp(WALLET, "hub", 3, 4, "other-room");
+
+    const door = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "exploration-door-crasher"
+    );
+    assert.equal(door?.progress, 3);
+
+    const tp = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "exploration-teleporter-tourist"
+    );
+    assert.equal(tp?.progress, 2);
+    assert.equal(tp?.threshold, 3);
+  });
+});
+
+test("recordExplorationDoorFromSpawn credits built-in hub→chamber door", async () => {
+  await withAchievementStore(async ({
+    recordExplorationDoorFromSpawn,
+    countAchievementSeenWithPrefix,
+  }) => {
+    recordExplorationDoorFromSpawn(WALLET, "chamber", -5, 0);
+    assert.equal(countAchievementSeenWithPrefix(WALLET, "door:"), 1);
+  });
+});
+
+test("Outfield Explorer counts margin tiles on the field only", async () => {
+  await withAchievementStore(async ({
+    recordOutfieldTilesWalked,
+    getAchievementsForWallet,
+  }) => {
+    const outfieldTiles: Array<{ x: number; z: number }> = [];
+    for (let z = -8; z <= 8; z += 1) {
+      outfieldTiles.push({ x: -11, z }, { x: 11, z });
+    }
+    for (let x = -10; x <= 10; x += 1) {
+      outfieldTiles.push({ x, z: -8 }, { x, z: 8 });
+    }
+    const unlocks: Array<{ achievementId: string }> = [];
+    for (const tile of outfieldTiles.slice(0, 50)) {
+      recordOutfieldTilesWalked(
+        WALLET,
+        "field",
+        [tile],
+        (u) => {
+          unlocks.push(...u);
+        }
+      );
+    }
+    assert.ok(
+      unlocks.some((u) => u.achievementId === "exploration-outfield-explorer")
+    );
+    const pitchTile = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "exploration-outfield-explorer"
+    );
+    assert.equal(pitchTile?.completed, true);
+    assert.equal(
+      recordOutfieldTilesWalked(WALLET, "field", [{ x: 0, z: 0 }]),
+      0
+    );
   });
 });

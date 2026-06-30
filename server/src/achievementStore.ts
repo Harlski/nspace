@@ -12,7 +12,12 @@ import {
   isWorldCupAchievementCounter,
   isWorldCupAchievementEvent,
   listAchievementsForCounter,
+  listAchievementsForDedupePrefix,
   listAchievementsForEvent,
+  listDailySetAchievements,
+  listLoginStreakAchievements,
+  SOCIAL_LOGIN_TOP_ACHIEVEMENT_ID,
+  SUNNY_SIDE_UP_ACHIEVEMENT_ID,
 } from "./achievementDefinitions.js";
 import {
   evaluateMatchAchievementsForParticipant,
@@ -20,6 +25,24 @@ import {
   type MatchWinReason,
   type MatchParticipantResult,
 } from "./matchAchievementEvaluator.js";
+import {
+  computeDistinctTileCredits,
+  computeOutfieldTileCredits,
+  countGrandTourProgress,
+  EXPLORATION_DOOR_SEEN_PREFIX,
+  EXPLORATION_ROOM_SEEN_PREFIX,
+  formatGrandTourVisitedKeys,
+  grandTourKeyForRoom,
+  GRAND_TOUR_DAILY_STATE_KEY,
+  MARATHON_TILE_SEEN_PREFIX,
+  OUTFIELD_TILE_SEEN_PREFIX,
+  parseGrandTourVisitedKeys,
+  resolveBuiltinDoorSeenKeyFromSpawn,
+  explorationRoomSeenKey,
+  teleporterDestinationSeenKey,
+  teleporterPortalDoorSeenKey,
+  TELEPORTER_DEST_SEEN_PREFIX,
+} from "./explorationAchievementEvaluator.js";
 import {
   countOnboardingPrerequisitesComplete,
   getTelescopeAchievementDefinition,
@@ -34,7 +57,11 @@ import {
   hasEntitlement,
   initCosmeticStore,
   publishCatalogEntry,
+  _resetCosmeticStoreForTests,
 } from "./cosmeticStore.js";
+import { getLoginStreakDaysForWallet, utcCalendarDay } from "./loginStreakStore.js";
+
+let lastExplorationUtcDay: string | null = null;
 
 const ACHIEVEMENT_ACTOR = "NQ07 ACHIEV0000000000000000000000001";
 
@@ -48,6 +75,11 @@ function envInt(name: string, dflt: number): number {
 /** Operator-configured top login-streak tier (Time of Kaan). Default 60 UTC days. */
 export function getAchievementLoginStreakTopThreshold(): number {
   return Math.max(1, envInt("ACHIEVEMENT_LOGIN_STREAK_TOP", 60));
+}
+
+/** Sunny Side Up build milestone threshold (placeholder until v1.2 audit). Default 5000 blocks. */
+export function getAchievementSunnyBuildThreshold(): number {
+  return Math.max(1, envInt("ACHIEVEMENT_SUNNY_BUILD_COUNT", 5000));
 }
 
 /** Reads env at call time so tests and operators can gate World Cup achievement progress. */
@@ -75,6 +107,7 @@ export type AchievementProgressPublic = {
   title: string;
   description: string;
   category: string;
+  categoryGroup: string | null;
   points: number;
   completed: boolean;
   completedAt: string | null;
@@ -108,6 +141,11 @@ export type AchievementUnlockCallback = (
   unlocks: AchievementUnlockWire[]
 ) => void;
 
+export type AchievementUnlockForWalletCallback = (
+  wallet: string,
+  unlocks: AchievementUnlockWire[]
+) => void;
+
 let achievementTablesReady = false;
 
 function normalizeWallet(v: string): string {
@@ -126,10 +164,55 @@ function requireDb(): Database.Database {
   return getCampaignDatabase();
 }
 
-function counterThreshold(def: AchievementDefinition): number {
+function loginStreakThresholdForDef(def: AchievementDefinition): number {
+  if (def.criteria.type !== "login_streak") return 1;
+  if (def.id === SOCIAL_LOGIN_TOP_ACHIEVEMENT_ID) {
+    return getAchievementLoginStreakTopThreshold();
+  }
+  return def.criteria.threshold;
+}
+
+function sunnyBuildThresholdForDef(def: AchievementDefinition): number {
+  if (def.id === SUNNY_SIDE_UP_ACHIEVEMENT_ID) {
+    return getAchievementSunnyBuildThreshold();
+  }
   if (def.criteria.type === "counter") return def.criteria.threshold;
+  return 1;
+}
+
+function achievementPublicDescription(def: AchievementDefinition): string {
+  if (def.criteria.type === "login_streak" && def.id === SOCIAL_LOGIN_TOP_ACHIEVEMENT_ID) {
+    const n = getAchievementLoginStreakTopThreshold();
+    return `Log in on ${n} consecutive UTC calendar days.`;
+  }
+  if (def.id === SUNNY_SIDE_UP_ACHIEVEMENT_ID) {
+    const n = getAchievementSunnyBuildThreshold();
+    return `Place ${n} blocks.`;
+  }
+  return def.description;
+}
+
+function counterThreshold(def: AchievementDefinition): number {
+  if (def.criteria.type === "counter") {
+    return sunnyBuildThresholdForDef(def);
+  }
+  if (def.criteria.type === "login_streak") {
+    return loginStreakThresholdForDef(def);
+  }
   if (def.criteria.type === "onboarding_complete") {
     return listOnboardingPrerequisiteDefinitions().length;
+  }
+  if (def.criteria.type === "dedupe_count") {
+    return def.criteria.threshold;
+  }
+  if (def.criteria.type === "daily_set") {
+    return def.criteria.requiredKeys.length;
+  }
+  if (def.criteria.type === "streak_counter") {
+    return def.criteria.threshold;
+  }
+  if (def.criteria.type === "ap_threshold") {
+    return def.criteria.threshold;
   }
   return 1;
 }
@@ -159,6 +242,87 @@ function getCounterValue(wallet: string, counter: AchievementCounterKey): number
     )
     .get(w, counter) as { value: number } | undefined;
   return row?.value ?? 0;
+}
+
+function countSeenKeysWithPrefix(wallet: string, prefix: string): number {
+  const w = normalizeWallet(wallet);
+  const row = requireDb()
+    .prepare(
+      `SELECT COUNT(*) AS count FROM achievement_seen
+       WHERE wallet = ? AND seen_key LIKE ? || '%'`
+    )
+    .get(w, prefix) as { count: number };
+  return row?.count ?? 0;
+}
+
+function hasSeenKey(wallet: string, seenKey: string): boolean {
+  const w = normalizeWallet(wallet);
+  const row = requireDb()
+    .prepare(
+      `SELECT 1 FROM achievement_seen WHERE wallet = ? AND seen_key = ?`
+    )
+    .get(w, seenKey);
+  return row != null;
+}
+
+/** Idempotent lifetime dedupe insert; returns true when newly recorded. */
+export function recordAchievementSeen(
+  wallet: string,
+  seenKey: string
+): boolean {
+  if (!isAchievementEligibleWallet(wallet)) return false;
+  const w = normalizeWallet(wallet);
+  const key = String(seenKey ?? "").trim();
+  if (!key) return false;
+  const result = requireDb()
+    .prepare(
+      `INSERT OR IGNORE INTO achievement_seen (wallet, seen_key, first_seen_ms)
+       VALUES (?, ?, ?)`
+    )
+    .run(w, key, Date.now());
+  return result.changes > 0;
+}
+
+export function countAchievementSeenWithPrefix(
+  wallet: string,
+  prefix: string
+): number {
+  if (!isAchievementEligibleWallet(wallet)) return 0;
+  return countSeenKeysWithPrefix(normalizeWallet(wallet), prefix);
+}
+
+export function getAchievementDailyState(
+  wallet: string,
+  utcDay: string,
+  stateKey: string
+): string | null {
+  if (!isAchievementEligibleWallet(wallet)) return null;
+  const w = normalizeWallet(wallet);
+  const row = requireDb()
+    .prepare(
+      `SELECT value FROM achievement_daily_state
+       WHERE wallet = ? AND utc_day = ? AND state_key = ?`
+    )
+    .get(w, utcDay, stateKey) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function setAchievementDailyState(
+  wallet: string,
+  utcDay: string,
+  stateKey: string,
+  value: string
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  requireDb()
+    .prepare(
+      `INSERT INTO achievement_daily_state (wallet, utc_day, state_key, value)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(wallet, utc_day, state_key) DO UPDATE SET
+         value = excluded.value`
+    )
+    .run(w, utcDay, stateKey, value);
 }
 
 function setCounterValue(
@@ -294,7 +458,7 @@ function completeAchievement(
   unlocks.push({
     achievementId: def.id,
     title: def.title,
-    description: def.description,
+    description: achievementPublicDescription(def),
     points: def.points,
     rewardSku: def.rewardSku ?? null,
     rewardDisplayName: rewardDisplayName(def.rewardSku),
@@ -312,7 +476,37 @@ function evaluateCounterAchievements(
   for (const def of listAchievementsForCounter(counter)) {
     if (def.criteria.type !== "counter") continue;
     if (hasCompletion(wallet, def.id)) continue;
-    if (value >= def.criteria.threshold) {
+    if (value >= sunnyBuildThresholdForDef(def)) {
+      completeAchievement(wallet, def, unlocks);
+    }
+  }
+}
+
+function evaluateDedupePrefixAchievements(
+  wallet: string,
+  seenPrefix: string,
+  unlocks: AchievementUnlockWire[]
+): void {
+  const count = countSeenKeysWithPrefix(wallet, seenPrefix);
+  for (const def of listAchievementsForDedupePrefix(seenPrefix)) {
+    if (def.criteria.type !== "dedupe_count") continue;
+    if (hasCompletion(wallet, def.id)) continue;
+    if (count >= def.criteria.threshold) {
+      completeAchievement(wallet, def, unlocks);
+    }
+  }
+}
+
+function evaluateDailySetAchievements(
+  wallet: string,
+  visited: ReadonlySet<string>,
+  unlocks: AchievementUnlockWire[]
+): void {
+  for (const def of listDailySetAchievements()) {
+    if (def.criteria.type !== "daily_set") continue;
+    if (hasCompletion(wallet, def.id)) continue;
+    const required = def.criteria.requiredKeys;
+    if (required.every((key) => visited.has(key))) {
       completeAchievement(wallet, def, unlocks);
     }
   }
@@ -436,9 +630,31 @@ export function initAchievementStore(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_achievement_completions_wallet_time
       ON achievement_completions (wallet, completed_at_ms DESC);
+    CREATE TABLE IF NOT EXISTS achievement_seen (
+      wallet TEXT NOT NULL,
+      seen_key TEXT NOT NULL,
+      first_seen_ms INTEGER NOT NULL,
+      PRIMARY KEY (wallet, seen_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_achievement_seen_wallet_prefix
+      ON achievement_seen (wallet, seen_key);
+    CREATE TABLE IF NOT EXISTS achievement_daily_state (
+      wallet TEXT NOT NULL,
+      utc_day TEXT NOT NULL,
+      state_key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      PRIMARY KEY (wallet, utc_day, state_key)
+    );
   `);
   achievementTablesReady = true;
   seedAchievementRewardCatalog();
+}
+
+/** Test-only: reset module singletons so each temp SQLite file is isolated. */
+export function _resetAchievementStoreForTests(): void {
+  achievementTablesReady = false;
+  lastExplorationUtcDay = null;
+  _resetCosmeticStoreForTests();
 }
 
 export function bumpAchievementCounter(
@@ -479,13 +695,16 @@ export function setMatchWinStreak(
 export function recordMatchEnd(
   sideA: MatchEndParticipantInput,
   sideB: MatchEndParticipantInput,
-  onUnlock?: AchievementUnlockCallback
+  onUnlock?: AchievementUnlockForWalletCallback
 ): void {
   if (!isWorldCupAchievementProgressEnabled()) return;
-  const unlocks: AchievementUnlockWire[] = [];
-  applyMatchEndParticipant(sideA, unlocks);
-  applyMatchEndParticipant(sideB, unlocks);
-  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+  const unlocksA: AchievementUnlockWire[] = [];
+  const unlocksB: AchievementUnlockWire[] = [];
+  applyMatchEndParticipant(sideA, unlocksA);
+  applyMatchEndParticipant(sideB, unlocksB);
+  if (!onUnlock) return;
+  if (unlocksA.length > 0) onUnlock(sideA.wallet, unlocksA);
+  if (unlocksB.length > 0) onUnlock(sideB.wallet, unlocksB);
 }
 
 export function recordFieldGoalScored(
@@ -511,18 +730,29 @@ export function recordChatMessageSent(
 
 export function evaluateLoginStreakAchievements(
   wallet: string,
-  streakDays: number,
   onUnlock?: AchievementUnlockCallback
 ): void {
   if (!isAchievementEligibleWallet(wallet)) return;
-  const days = Math.max(0, Math.floor(streakDays));
+  const w = normalizeWallet(wallet);
+  const days = getLoginStreakDaysForWallet(w);
   const unlocks: AchievementUnlockWire[] = [];
-  if (days >= 7) fireEventCollecting(wallet, "login_streak_7", unlocks);
-  if (days >= 30) fireEventCollecting(wallet, "login_streak_30", unlocks);
-  if (days >= getAchievementLoginStreakTopThreshold()) {
-    fireEventCollecting(wallet, "login_streak_top", unlocks);
-  }
+  evaluateLoginStreakAchievementsCollecting(w, days, unlocks);
   if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+function evaluateLoginStreakAchievementsCollecting(
+  wallet: string,
+  streakDays: number,
+  unlocks: AchievementUnlockWire[]
+): void {
+  const days = Math.max(0, Math.floor(streakDays));
+  for (const def of listLoginStreakAchievements()) {
+    if (def.criteria.type !== "login_streak") continue;
+    if (hasCompletion(wallet, def.id)) continue;
+    if (days >= loginStreakThresholdForDef(def)) {
+      completeAchievement(wallet, def, unlocks);
+    }
+  }
 }
 
 export function recordBlockPlaced(
@@ -546,6 +776,194 @@ export function recordBlockMined(
   bumpAchievementCounter(wallet, "blocks_mined", 1, onUnlock);
 }
 
+export function recordPixelPainted(
+  wallet: string,
+  count: number,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (count <= 0) return;
+  bumpAchievementCounter(wallet, "pixels_painted", count, onUnlock);
+}
+
+export function recordDistinctTileWalked(
+  wallet: string,
+  roomId: string,
+  pathTiles: ReadonlyArray<{ x: number; z: number }>,
+  onUnlock?: AchievementUnlockCallback
+): number {
+  if (!isAchievementEligibleWallet(wallet) || pathTiles.length === 0) return 0;
+  const w = normalizeWallet(wallet);
+  const seenInBatch = new Set<string>();
+  const isAlreadySeen = (seenKey: string) =>
+    seenInBatch.has(seenKey) || hasSeenKey(w, seenKey);
+  const credits = computeDistinctTileCredits(roomId, pathTiles, isAlreadySeen);
+  if (credits.length === 0) return 0;
+  const unlocks: AchievementUnlockWire[] = [];
+  let inserted = 0;
+  for (const seenKey of credits) {
+    if (recordAchievementSeen(w, seenKey)) {
+      seenInBatch.add(seenKey);
+      inserted += 1;
+    }
+  }
+  if (inserted > 0) {
+    evaluateDedupePrefixAchievements(w, MARATHON_TILE_SEEN_PREFIX, unlocks);
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+  return inserted;
+}
+
+export function recordExplorationRoomEntry(
+  wallet: string,
+  roomId: string,
+  onUnlock?: AchievementUnlockCallback,
+  utcDay: string = utcCalendarDay()
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  const unlocks: AchievementUnlockWire[] = [];
+  const roomSeenKey = explorationRoomSeenKey(roomId);
+  if (recordAchievementSeen(w, roomSeenKey)) {
+    evaluateDedupePrefixAchievements(w, EXPLORATION_ROOM_SEEN_PREFIX, unlocks);
+  }
+  const tourKey = grandTourKeyForRoom(roomId);
+  if (tourKey) {
+    const visited = parseGrandTourVisitedKeys(
+      getAchievementDailyState(w, utcDay, GRAND_TOUR_DAILY_STATE_KEY)
+    );
+    if (!visited.has(tourKey)) {
+      visited.add(tourKey);
+      setAchievementDailyState(
+        w,
+        utcDay,
+        GRAND_TOUR_DAILY_STATE_KEY,
+        formatGrandTourVisitedKeys(visited)
+      );
+      evaluateDailySetAchievements(w, visited, unlocks);
+    }
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordExplorationDoorFromSpawn(
+  wallet: string,
+  targetRoomId: string,
+  spawnX: number,
+  spawnZ: number,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  const doorKey = resolveBuiltinDoorSeenKeyFromSpawn(
+    targetRoomId,
+    spawnX,
+    spawnZ
+  );
+  if (!doorKey) return;
+  recordExplorationDoorUsed(wallet, doorKey, onUnlock);
+}
+
+export function recordExplorationDoorUsed(
+  wallet: string,
+  doorSeenKey: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  const unlocks: AchievementUnlockWire[] = [];
+  if (recordAchievementSeen(w, doorSeenKey)) {
+    evaluateDedupePrefixAchievements(w, EXPLORATION_DOOR_SEEN_PREFIX, unlocks);
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordTeleporterWarp(
+  wallet: string,
+  fromRoomId: string,
+  fromX: number,
+  fromZ: number,
+  toRoomId: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  const unlocks: AchievementUnlockWire[] = [];
+  const doorKey = teleporterPortalDoorSeenKey(
+    fromRoomId,
+    fromX,
+    fromZ,
+    toRoomId
+  );
+  const destKey = teleporterDestinationSeenKey(toRoomId);
+  let doorInserted = false;
+  let destInserted = false;
+  if (recordAchievementSeen(w, doorKey)) doorInserted = true;
+  if (recordAchievementSeen(w, destKey)) destInserted = true;
+  if (doorInserted) {
+    evaluateDedupePrefixAchievements(w, EXPLORATION_DOOR_SEEN_PREFIX, unlocks);
+  }
+  if (destInserted) {
+    evaluateDedupePrefixAchievements(w, TELEPORTER_DEST_SEEN_PREFIX, unlocks);
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordOutfieldTilesWalked(
+  wallet: string,
+  roomId: string,
+  pathTiles: ReadonlyArray<{ x: number; z: number }>,
+  onUnlock?: AchievementUnlockCallback
+): number {
+  if (!isAchievementEligibleWallet(wallet) || pathTiles.length === 0) return 0;
+  const w = normalizeWallet(wallet);
+  const seenInBatch = new Set<string>();
+  const isAlreadySeen = (seenKey: string) =>
+    seenInBatch.has(seenKey) || hasSeenKey(w, seenKey);
+  const credits = computeOutfieldTileCredits(roomId, pathTiles, isAlreadySeen);
+  if (credits.length === 0) return 0;
+  const unlocks: AchievementUnlockWire[] = [];
+  let inserted = 0;
+  for (const seenKey of credits) {
+    if (recordAchievementSeen(w, seenKey)) {
+      seenInBatch.add(seenKey);
+      inserted += 1;
+    }
+  }
+  if (inserted > 0) {
+    evaluateDedupePrefixAchievements(w, OUTFIELD_TILE_SEEN_PREFIX, unlocks);
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+  return inserted;
+}
+
+/** Re-evaluate Grand Tour on UTC midnight for online players (daily row resets by day key). */
+export function tickExplorationDailyRollover(
+  nowMs: number,
+  collectOnline: () => ReadonlyArray<{ wallet: string; roomId: string }>,
+  onUnlock?: (wallet: string, unlocks: AchievementUnlockWire[]) => void
+): void {
+  const today = utcCalendarDay(new Date(nowMs));
+  if (lastExplorationUtcDay === null) {
+    lastExplorationUtcDay = today;
+    return;
+  }
+  if (lastExplorationUtcDay === today) return;
+  lastExplorationUtcDay = today;
+  for (const entry of collectOnline()) {
+    recordExplorationRoomEntry(
+      entry.wallet,
+      entry.roomId,
+      onUnlock ? (unlocks) => onUnlock(entry.wallet, unlocks) : undefined,
+      today
+    );
+  }
+}
+
+export function getAchievementCounterValue(
+  wallet: string,
+  counter: AchievementCounterKey
+): number {
+  return getCounterValue(normalizeWallet(wallet), counter);
+}
+
 function buildProgressRow(
   wallet: string,
   def: AchievementDefinition,
@@ -566,12 +984,43 @@ function buildProgressRow(
         : countOnboardingPrerequisitesComplete(
             listCompletedAchievementIds(wallet)
           );
+  } else if (def.criteria.type === "login_streak") {
+    progress =
+      completedAtMs != null
+        ? threshold
+        : Math.min(threshold, getLoginStreakDaysForWallet(wallet));
+  } else if (def.criteria.type === "dedupe_count") {
+    progress =
+      completedAtMs != null
+        ? threshold
+        : Math.min(
+            threshold,
+            countSeenKeysWithPrefix(wallet, def.criteria.seenPrefix)
+          );
+  } else if (def.criteria.type === "daily_set") {
+    const visited = parseGrandTourVisitedKeys(
+      getAchievementDailyState(
+        wallet,
+        utcCalendarDay(),
+        GRAND_TOUR_DAILY_STATE_KEY
+      )
+    );
+    progress =
+      completedAtMs != null
+        ? threshold
+        : Math.min(threshold, countGrandTourProgress(visited));
+  } else if (def.criteria.type === "ap_threshold") {
+    progress =
+      completedAtMs != null
+        ? threshold
+        : Math.min(threshold, totalPointsForWallet(wallet));
   }
   return {
     achievementId: def.id,
     title: def.title,
-    description: def.description,
+    description: achievementPublicDescription(def),
     category: def.category,
+    categoryGroup: def.categoryGroup ?? null,
     points: def.points,
     completed: completedAtMs != null,
     completedAt:
@@ -593,6 +1042,11 @@ export function getAchievementsForWallet(
   const w = normalizeWallet(wallet);
   if (!w) return { totalPoints: 0, achievements: [], telescopeUnlocked: false };
   evaluateOnboardingCompleteAchievements(w, []);
+  evaluateLoginStreakAchievementsCollecting(
+    w,
+    getLoginStreakDaysForWallet(w),
+    []
+  );
   const completionRows = requireDb()
     .prepare(
       `SELECT achievement_id, completed_at_ms FROM achievement_completions

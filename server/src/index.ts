@@ -219,7 +219,9 @@ import {
   setLoadoutSlot,
   getPublicLoadoutForWallet,
   listOwnedDeployables,
+  ensureDevWalletAllCosmeticEntitlements,
 } from "./cosmeticStore.js";
+import { isShopPubliclyOpen } from "./shopAccess.js";
 import type { PassiveSlot } from "./cosmeticPresets.js";
 import {
   createCosmeticUnlockPaymentIntent,
@@ -227,6 +229,7 @@ import {
 } from "./cosmeticFulfill.js";
 import {
   ensureAchievementRewardEntitlements,
+  evaluateLoginStreakAchievements,
   fireAchievementEvent,
   getAchievementsForWallet,
   getPublicAchievementSummary,
@@ -625,7 +628,7 @@ app.get("/api/player-profile/:address", (req, res) => {
       presetId: d.presetId,
       displayName: d.displayName,
     }));
-    const achievementSummary = getPublicAchievementSummary(addr);
+    const achievementSummary = getPublicAchievementSummary(addr, 3);
     pub.achievementPoints = achievementSummary.totalPoints;
     pub.achievementHighlights = achievementSummary.recentHighlights;
     res.json(pub);
@@ -1991,11 +1994,12 @@ app.get("/api/cosmetics/wardrobe", requireJwt, (req, res) => {
     return;
   }
   ensureAchievementRewardEntitlements(wallet);
+  ensureDevWalletAllCosmeticEntitlements(wallet);
   res.json({
     entitlements: listEntitlements(wallet),
     loadout: getLoadout(wallet),
-    shop: listWardrobeShop(wallet),
-    featured: listDailyFeaturedShop(wallet),
+    shop: isShopPubliclyOpen() ? listWardrobeShop(wallet) : [],
+    featured: isShopPubliclyOpen() ? listDailyFeaturedShop(wallet) : [],
   });
 });
 
@@ -2726,6 +2730,9 @@ app.post("/api/feedback", requireJwt, async (req, res) => {
     "[feedback] ticket created",
     JSON.stringify({ address, ticketId: ticket.id, kind: ticket.kind })
   );
+  if (source !== "report") {
+    fireAchievementEvent(address, "feedback_submitted");
+  }
   res.json({ ok: true, ticketId: ticket.id, ticket: ticketToPlayerSummary(ticket) });
 });
 
@@ -3265,9 +3272,11 @@ app.post("/api/auth/verify", async (req, res) => {
   const token = signSession(sessionAddress, jwtSecret, { nimiqPay });
   try {
     recordLoginStreakForWallet(normalizeWalletId(sessionAddress));
+    evaluateLoginStreakAchievements(normAddr);
   } catch (e) {
     console.error("[login-streak]", e);
   }
+  ensureDevWalletAllCosmeticEntitlements(sessionAddress);
   const usernamePrompt = getUsernamePromptStatus(normAddr);
   res.json({
     token,
@@ -3349,11 +3358,13 @@ wss.on("connection", (ws, req) => {
   const sz = url.searchParams.get("sz");
   const resumeSession = url.searchParams.get("resume") === "1";
   let spawnHint: { x: number; z: number } | undefined;
+  let explorationDoorSpawn = false;
   if (sx !== null && sz !== null) {
     const x = Number(sx);
     const z = Number(sz);
     if (Number.isFinite(x) && Number.isFinite(z)) {
       spawnHint = { x, z };
+      explorationDoorSpawn = !resumeSession;
     }
   }
   const streamRequested = url.searchParams.get("stream") === "1";
@@ -3369,6 +3380,7 @@ wss.on("connection", (ws, req) => {
     const resolved = resolveResumeLogin(address);
     roomId = resolved.roomId;
     spawnHint = { x: resolved.spawn.x, z: resolved.spawn.z };
+    explorationDoorSpawn = false;
   }
   // Guest confinement: a guest may only ever connect into their own Play Space. Any other
   // requested/resumed room is forced back to it; a guest with no invite slug is rejected.
@@ -3390,6 +3402,7 @@ wss.on("connection", (ws, req) => {
     streamObserver: streamRequested,
     guestDisplayName,
     guestId,
+    explorationDoorSpawn,
   });
   void sendTelegramConnectNotice(address, roomId);
 });

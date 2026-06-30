@@ -11,16 +11,22 @@ export type AchievementCategory =
   | "onboarding"
   | "commons_build"
   | "mining"
+  | "pixel"
   | "football_match"
   | "football_free_play"
-  | "social";
+  | "social"
+  | "exploration"
+  | "worldcraft"
+  | "play_space"
+  | "meta";
 
-export type AchievementCategoryGroup = "minigames";
+export type AchievementCategoryGroup = "minigames" | "building";
 
 export type AchievementCounterKey =
   | "blocks_placed"
   | "blocks_placed_commons"
   | "blocks_mined"
+  | "pixels_painted"
   | "matches_won"
   | "matches_played"
   | "match_win_streak"
@@ -52,9 +58,6 @@ export type AchievementEventKey =
   | "field_goal_solo"
   | "country_picked"
   | "flag_emote_sent"
-  | "login_streak_7"
-  | "login_streak_30"
-  | "login_streak_top"
   | "feedback_submitted";
 
 /** World Cup seasonal counters — progress pauses when WORLDCUP_ENABLED is off. */
@@ -97,7 +100,31 @@ export type AchievementCriteria =
       roomScope?: "any" | "commons";
     }
   | { type: "event"; event: AchievementEventKey }
-  | { type: "onboarding_complete" };
+  | { type: "login_streak"; threshold: number }
+  | { type: "onboarding_complete" }
+  | { type: "dedupe_count"; seenPrefix: string; threshold: number }
+  | { type: "daily_set"; requiredKeys: string[]; utcDayScope: true }
+  | { type: "composite"; requirements: AchievementCriteria[] }
+  | {
+      type: "streak_counter";
+      counter: AchievementCounterKey;
+      threshold: number;
+      resetOn: string;
+    }
+  | { type: "ap_threshold"; threshold: number }
+  | { type: "category_complete"; category: AchievementCategory };
+
+/** Top-tier login-streak achievement — threshold resolved from env at runtime. */
+export const SOCIAL_LOGIN_TOP_ACHIEVEMENT_ID = "social-login-top";
+
+/** Sunny Side Up build milestone — threshold resolved from env at runtime (placeholder v1). */
+export const SUNNY_SIDE_UP_ACHIEVEMENT_ID = "build-sunny-side-up";
+
+/** Marathon I — distinct grid tiles walked (lifetime dedupe). */
+export const MARATHON_I_ACHIEVEMENT_ID = "exploration-marathon-1";
+export const MARATHON_II_ACHIEVEMENT_ID = "exploration-marathon-2";
+export const MARATHON_III_ACHIEVEMENT_ID = "exploration-marathon-3";
+export const GRAND_TOUR_ACHIEVEMENT_ID = "exploration-grand-tour";
 
 export type AchievementDefinition = {
   id: string;
@@ -224,6 +251,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     title: "Commons Contributor",
     description: "Place your first block in the Commons.",
     category: "commons_build",
+    categoryGroup: "building",
     points: 15,
     sortOrder: 95,
     criteria: {
@@ -239,6 +267,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     title: "Commons Builder I",
     description: "Place 10 blocks in the Commons.",
     category: "commons_build",
+    categoryGroup: "building",
     points: 25,
     sortOrder: 100,
     criteria: {
@@ -253,6 +282,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     title: "Commons Builder II",
     description: "Place 100 blocks in the Commons.",
     category: "commons_build",
+    categoryGroup: "building",
     points: 50,
     sortOrder: 110,
     criteria: {
@@ -268,6 +298,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     title: "Commons Builder III",
     description: "Place 250 blocks in the Commons.",
     category: "commons_build",
+    categoryGroup: "building",
     points: 75,
     sortOrder: 120,
     criteria: {
@@ -282,6 +313,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     title: "Commons Builder IV",
     description: "Place 500 blocks in the Commons.",
     category: "commons_build",
+    categoryGroup: "building",
     points: 100,
     sortOrder: 130,
     criteria: {
@@ -327,6 +359,63 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 100,
     sortOrder: 230,
     criteria: { type: "counter", counter: "blocks_mined", threshold: 500 },
+  },
+  {
+    id: SUNNY_SIDE_UP_ACHIEVEMENT_ID,
+    title: "Sunny Side Up",
+    description: "Place 5000 blocks.",
+    category: "commons_build",
+    categoryGroup: "building",
+    points: 100,
+    sortOrder: 140,
+    criteria: {
+      type: "counter",
+      counter: "blocks_placed",
+      threshold: 5000,
+      roomScope: "any",
+    },
+  },
+  {
+    id: "pixel-we-made-this",
+    title: "We made this",
+    description: "Paint your first pixel on the Pixel room board.",
+    category: "pixel",
+    categoryGroup: "building",
+    points: 10,
+    sortOrder: 150,
+    criteria: {
+      type: "counter",
+      counter: "pixels_painted",
+      threshold: 1,
+    },
+  },
+  {
+    id: "pixel-64bit",
+    title: "64bit",
+    description: "Paint 64 pixels on the Pixel room board.",
+    category: "pixel",
+    categoryGroup: "building",
+    points: 15,
+    sortOrder: 160,
+    criteria: {
+      type: "counter",
+      counter: "pixels_painted",
+      threshold: 64,
+    },
+  },
+  {
+    id: "pixel-i-made-this",
+    title: "I made this",
+    description: "Paint 1000 pixels on the Pixel room board.",
+    category: "pixel",
+    categoryGroup: "building",
+    points: 50,
+    sortOrder: 170,
+    criteria: {
+      type: "counter",
+      counter: "pixels_painted",
+      threshold: 1000,
+    },
   },
   {
     id: "match-first-win",
@@ -451,7 +540,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
     id: "match-wins-1",
     title: "Match Winner",
-    description: "Win 1 World Cup Match.",
+    description: "Win 1 1v1 match.",
     category: "football_match",
     categoryGroup: "minigames",
     points: 10,
@@ -461,7 +550,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
     id: "match-wins-10",
     title: "Match Winner X",
-    description: "Win 10 World Cup Matches.",
+    description: "Win 10 1v1 matches.",
     category: "football_match",
     categoryGroup: "minigames",
     points: 25,
@@ -471,7 +560,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
     id: "match-wins-50",
     title: "Match Winner L",
-    description: "Win 50 World Cup Matches.",
+    description: "Win 50 1v1 matches.",
     category: "football_match",
     categoryGroup: "minigames",
     points: 50,
@@ -481,7 +570,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
     id: "match-wins-100",
     title: "Match Winner C",
-    description: "Win 100 World Cup Matches.",
+    description: "Win 100 1v1 matches.",
     category: "football_match",
     categoryGroup: "minigames",
     points: 75,
@@ -492,7 +581,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
     id: "match-wins-1000",
     title: "Match Winner M",
-    description: "Win 1000 World Cup Matches.",
+    description: "Win 1000 1v1 matches.",
     category: "football_match",
     categoryGroup: "minigames",
     points: 100,
@@ -502,7 +591,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
     id: "match-played-10",
     title: "Regular",
-    description: "Complete 10 World Cup Matches.",
+    description: "Complete 10 1v1 matches.",
     category: "football_match",
     categoryGroup: "minigames",
     points: 20,
@@ -512,7 +601,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
     id: "match-streak-3",
     title: "On a Roll",
-    description: "Win 3 World Cup Matches in a row.",
+    description: "Win 3 1v1 matches in a row.",
     category: "football_match",
     categoryGroup: "minigames",
     points: 15,
@@ -521,8 +610,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   },
   {
     id: "match-streak-5",
-    title: "Unstoppable",
-    description: "Win 5 World Cup Matches in a row.",
+    title: "Unstoppaball",
+    description: "Win 5 1v1 matches in a row.",
     category: "football_match",
     categoryGroup: "minigames",
     points: 25,
@@ -532,7 +621,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
     id: "match-streak-10",
     title: "Probably Cheating or Lag",
-    description: "Win 10 World Cup Matches in a row.",
+    description: "Win 10 1v1 matches in a row.",
     category: "football_match",
     categoryGroup: "minigames",
     points: 50,
@@ -647,7 +736,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     category: "social",
     points: 15,
     sortOrder: 3000,
-    criteria: { type: "event", event: "login_streak_7" },
+    criteria: { type: "login_streak", threshold: 7 },
   },
   {
     id: "social-login-30",
@@ -656,16 +745,29 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     category: "social",
     points: 40,
     sortOrder: 3010,
-    criteria: { type: "event", event: "login_streak_30" },
+    criteria: { type: "login_streak", threshold: 30 },
   },
   {
-    id: "social-login-top",
+    id: SOCIAL_LOGIN_TOP_ACHIEVEMENT_ID,
     title: "Time of Kaan",
-    description: "Reach the top login-streak milestone.",
+    description: "Log in on 60 consecutive UTC calendar days.",
     category: "social",
     points: 100,
     sortOrder: 3020,
-    criteria: { type: "event", event: "login_streak_top" },
+    criteria: { type: "login_streak", threshold: 60 },
+  },
+  {
+    id: "social-chatter-first",
+    title: "Hello World",
+    description: "Send your first in-game chat message.",
+    category: "social",
+    points: 5,
+    sortOrder: 3025,
+    criteria: {
+      type: "counter",
+      counter: "chat_messages_sent",
+      threshold: 1,
+    },
   },
   {
     id: "social-chatter-100",
@@ -706,6 +808,138 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
       threshold: 1000,
     },
   },
+  {
+    id: MARATHON_I_ACHIEVEMENT_ID,
+    title: "Marathon I",
+    description: "Walk 1,000 distinct tiles in grid rooms.",
+    category: "exploration",
+    points: 25,
+    sortOrder: 4000,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "tile:",
+      threshold: 1000,
+    },
+  },
+  {
+    id: MARATHON_II_ACHIEVEMENT_ID,
+    title: "Marathon II",
+    description: "Walk 10,000 distinct tiles in grid rooms.",
+    category: "exploration",
+    points: 50,
+    sortOrder: 4010,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "tile:",
+      threshold: 10_000,
+    },
+  },
+  {
+    id: MARATHON_III_ACHIEVEMENT_ID,
+    title: "Marathon III",
+    description: "Walk 100,000 distinct tiles in grid rooms.",
+    category: "exploration",
+    points: 100,
+    sortOrder: 4020,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "tile:",
+      threshold: 100_000,
+    },
+  },
+  {
+    id: "exploration-room-tourist-1",
+    title: "Room Tourist I",
+    description: "Enter 5 unique rooms.",
+    category: "exploration",
+    points: 25,
+    sortOrder: 4030,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "room:",
+      threshold: 5,
+    },
+  },
+  {
+    id: "exploration-room-tourist-2",
+    title: "Room Tourist II",
+    description: "Enter 15 unique rooms.",
+    category: "exploration",
+    points: 50,
+    sortOrder: 4040,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "room:",
+      threshold: 15,
+    },
+  },
+  {
+    id: "exploration-room-tourist-3",
+    title: "Room Tourist III",
+    description: "Enter 30 unique rooms.",
+    category: "exploration",
+    points: 100,
+    sortOrder: 4050,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "room:",
+      threshold: 30,
+    },
+  },
+  {
+    id: GRAND_TOUR_ACHIEVEMENT_ID,
+    title: "Grand Tour",
+    description:
+      "Visit the Hub, Commons, Pixel, Free Play Field, and The Shaper in one UTC day.",
+    category: "exploration",
+    points: 75,
+    sortOrder: 4060,
+    criteria: {
+      type: "daily_set",
+      requiredKeys: ["chamber", "hub", "pixel", "field", "cosmetic-gallery"],
+      utcDayScope: true,
+    },
+  },
+  {
+    id: "exploration-door-crasher",
+    title: "Door Crasher",
+    description: "Use 10 different doors and teleporter portals.",
+    category: "exploration",
+    points: 40,
+    sortOrder: 4070,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "door:",
+      threshold: 10,
+    },
+  },
+  {
+    id: "exploration-teleporter-tourist",
+    title: "Teleporter Tourist",
+    description: "Ride a teleporter to 3 different destination rooms.",
+    category: "exploration",
+    points: 30,
+    sortOrder: 4080,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "teleporter-dest:",
+      threshold: 3,
+    },
+  },
+  {
+    id: "exploration-outfield-explorer",
+    title: "Outfield Explorer",
+    description:
+      "Stand on 50 distinct outfield margin tiles on the Free Play Field.",
+    category: "exploration",
+    points: 40,
+    sortOrder: 4090,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "outfield:",
+      threshold: 50,
+    },
+  },
 ];
 
 const definitionById = new Map(
@@ -717,6 +951,9 @@ const definitionsByCounter = new Map<
   AchievementCounterKey,
   AchievementDefinition[]
 >();
+const definitionsByDedupePrefix = new Map<string, AchievementDefinition[]>();
+const dailySetAchievements: AchievementDefinition[] = [];
+const loginStreakAchievements: AchievementDefinition[] = [];
 
 for (const def of ACHIEVEMENT_DEFINITIONS) {
   if (def.criteria.type === "event") {
@@ -727,7 +964,19 @@ for (const def of ACHIEVEMENT_DEFINITIONS) {
     const list = definitionsByCounter.get(def.criteria.counter) ?? [];
     list.push(def);
     definitionsByCounter.set(def.criteria.counter, list);
+  } else if (def.criteria.type === "login_streak") {
+    loginStreakAchievements.push(def);
+  } else if (def.criteria.type === "dedupe_count") {
+    const list = definitionsByDedupePrefix.get(def.criteria.seenPrefix) ?? [];
+    list.push(def);
+    definitionsByDedupePrefix.set(def.criteria.seenPrefix, list);
+  } else if (def.criteria.type === "daily_set") {
+    dailySetAchievements.push(def);
   }
+}
+
+export function listDailySetAchievements(): ReadonlyArray<AchievementDefinition> {
+  return dailySetAchievements;
 }
 
 export function getAchievementDefinition(
@@ -746,6 +995,16 @@ export function listAchievementsForCounter(
   counter: AchievementCounterKey
 ): ReadonlyArray<AchievementDefinition> {
   return definitionsByCounter.get(counter) ?? [];
+}
+
+export function listLoginStreakAchievements(): ReadonlyArray<AchievementDefinition> {
+  return loginStreakAchievements;
+}
+
+export function listAchievementsForDedupePrefix(
+  seenPrefix: string
+): ReadonlyArray<AchievementDefinition> {
+  return definitionsByDedupePrefix.get(seenPrefix) ?? [];
 }
 
 export function isAchievementOnlySku(sku: string): boolean {
