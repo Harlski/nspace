@@ -237,6 +237,10 @@ import {
   initAchievementStore,
 } from "./achievementStore.js";
 import { BILLBOARD_ADVERTS_CATALOG } from "./billboardAdvertsCatalog.js";
+import {
+  maybeSendConnectNotice,
+  markWalletConnectNoticePending,
+} from "./connectNotice.js";
 import { sendTelegramPlainText } from "./telegramNotify.js";
 import {
   addAdminFeedbackMessage,
@@ -802,13 +806,6 @@ async function sendTelegramFeedback(text: string): Promise<boolean> {
     console.error("[feedback] Telegram fetch error:", err);
     return false;
   }
-}
-
-async function sendTelegramConnectNotice(address: string, roomId: string): Promise<void> {
-  await sendTelegramPlainText(
-    `NSpace connect\nWallet: ${address}\nRoom: ${roomId}\nAt: ${new Date().toISOString()}`,
-    "connect"
-  );
 }
 
 function notifyUsernameSet(wallet: string, username: string): void {
@@ -3297,6 +3294,7 @@ app.post("/api/auth/verify", async (req, res) => {
   }
   ensureDevWalletAllCosmeticEntitlements(sessionAddress);
   const usernamePrompt = getUsernamePromptStatus(normAddr);
+  markWalletConnectNoticePending(normAddr, { nimiqPay });
   res.json({
     token,
     address: sessionAddress,
@@ -3423,7 +3421,15 @@ wss.on("connection", (ws, req) => {
     guestId,
     explorationDoorSpawn,
   });
-  void sendTelegramConnectNotice(address, roomId);
+  void maybeSendConnectNotice(
+    {
+      address,
+      roomId,
+      guestDisplayName,
+      guestInviteSlug,
+    },
+    PUBLIC_BASE_URL
+  );
 });
 
 const clientDist = path.join(__dirname, "../../client/dist");

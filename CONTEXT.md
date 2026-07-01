@@ -111,6 +111,12 @@ _Avoid_: go home, return home, go to chamber.
 
 ## Sessions
 
+**Connect Notice**:
+An optional operator Telegram ping when a player **signs in** (fresh wallet auth or guest
+invite claim) and enters the world. Not sent on mid-session reconnects, tab returns, door
+crossings, or idle hub returns.
+_Avoid_: door alarm, connect ping, login webhook.
+
 **Guest**:
 A player holding an ephemeral session without a connected Nimiq wallet. They receive a
 server-assigned display name (a fun nickname, editable at entry) and can participate in

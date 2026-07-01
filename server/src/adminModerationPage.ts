@@ -64,6 +64,15 @@ export function adminModerationPageHtml(): string {
   var selected = null;
   var filterText = "";
 
+  function readWalletFromQuery() {
+    try {
+      var p = new URLSearchParams(location.search);
+      return normWallet(p.get("wallet") || "");
+    } catch (e) {
+      return "";
+    }
+  }
+
   function readFilterInput() {
     var el = document.getElementById("walletFilter");
     if (el) filterText = String(el.value || "");
@@ -178,8 +187,12 @@ export function adminModerationPageHtml(): string {
     }
     el.hidden = false;
     var addr = selected;
+    var inList = snapshot.usernameBans.some(function (r) { return normWallet(r.address) === addr; }) ||
+      snapshot.channelMutes.some(function (r) { return normWallet(r.address) === addr; }) ||
+      snapshot.miningRestrictions.some(function (r) { return normWallet(r.address) === addr; });
     el.innerHTML =
       "<h3>" + escHtml(addr) + "</h3>" +
+      (inList ? "" : "<p class='hint'>No active sanctions on record — actions below still apply.</p>") +
       "<div class='mod-actions'>" +
       "<button type='button' data-act='clear_username'>Clear username</button>" +
       (isBanned(addr, "username")
@@ -268,6 +281,9 @@ export function adminModerationPageHtml(): string {
         selected = tr.getAttribute("data-addr");
         renderDetail();
       });
+      if (selected && tr.getAttribute("data-addr") === selected) {
+        tr.classList.add("is-selected");
+      }
     });
     renderDetail();
   }
@@ -291,6 +307,11 @@ export function adminModerationPageHtml(): string {
     if (!token) {
       document.getElementById("panel").innerHTML = authGateHtml();
       return;
+    }
+    var qWallet = readWalletFromQuery();
+    if (qWallet) {
+      selected = qWallet;
+      filterText = qWallet;
     }
     await loadSnapshot();
   }

@@ -7,9 +7,11 @@ import { nimiqIdenticonDataUrl } from "./nimiqIdenticonServer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const LOG_DIR = process.env.EVENT_LOG_DIR
-  ? path.resolve(process.env.EVENT_LOG_DIR)
-  : path.join(__dirname, "..", "data", "events");
+function getLogDir(): string {
+  return process.env.EVENT_LOG_DIR
+    ? path.resolve(process.env.EVENT_LOG_DIR)
+    : path.join(__dirname, "..", "data", "events");
+}
 
 export type EventRecord = {
   ts: number;
@@ -221,7 +223,7 @@ export type EventLogAnalyticsSnapshot = {
 };
 
 function ensureLogDir(): void {
-  fs.mkdirSync(LOG_DIR, { recursive: true });
+  fs.mkdirSync(getLogDir(), { recursive: true });
 }
 
 function todayFile(): string {
@@ -229,7 +231,7 @@ function todayFile(): string {
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   const day = String(d.getUTCDate()).padStart(2, "0");
-  return path.join(LOG_DIR, `events-${y}-${m}-${day}.jsonl`);
+  return path.join(getLogDir(), `events-${y}-${m}-${day}.jsonl`);
 }
 
 function appendRecord(rec: EventRecord): void {
@@ -294,12 +296,12 @@ export function logGameplayEvent(
 }
 
 function listEventFiles(maxDays: number): string[] {
-  if (!fs.existsSync(LOG_DIR)) return [];
+  if (!fs.existsSync(getLogDir())) return [];
   const files = fs
-    .readdirSync(LOG_DIR)
+    .readdirSync(getLogDir())
     .filter((f) => f.startsWith("events-") && f.endsWith(".jsonl"));
   files.sort();
-  return files.slice(-Math.max(1, maxDays)).map((f) => path.join(LOG_DIR, f));
+  return files.slice(-Math.max(1, maxDays)).map((f) => path.join(getLogDir(), f));
 }
 
 function parseLines(filePath: string): EventRecord[] {
@@ -1246,6 +1248,142 @@ export async function getEventLogAnalyticsSnapshot(
     nimPayouts,
     daily: dailyRows,
   };
+}
+
+export type ConnectNoticeVisitStats = {
+  nimEarnedLabel: string;
+  activeMs: number;
+};
+
+export type ConnectNoticePlayerStats = {
+  lastVisit: ConnectNoticeVisitStats | null;
+  today: ConnectNoticeVisitStats;
+};
+
+function nimEarnedLabelFromLuna(total: bigint): string {
+  const raw = formatLunaToNim(total.toString());
+  if (!raw) return "0 NIM";
+  const trimmed = raw.replace(/0+$/, "").replace(/\.$/, "") || "0";
+  return `${trimmed} NIM`;
+}
+
+function utcDayStartMs(nowMs: number): number {
+  const d = new Date(nowMs);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/** Previous ended session + today (UTC) NIM/active totals for Connect Notice copy. */
+export function getConnectNoticeStatsForAddress(
+  address: string,
+  nowMs: number = Date.now()
+): ConnectNoticePlayerStats {
+  const addr = address.trim();
+  const emptyToday: ConnectNoticeVisitStats = {
+    nimEarnedLabel: "0 NIM",
+    activeMs: 0,
+  };
+  if (!addr) {
+    return { lastVisit: null, today: emptyToday };
+  }
+
+  const dayStart = utcDayStartMs(nowMs);
+  const dayEnd = dayStart + 86_400_000;
+
+  type SessionAcc = {
+    startedAt: number;
+    endedAt: number | null;
+    lastActivityTs: number;
+    activeMs: number;
+    nimLuna: bigint;
+  };
+  const sessions = new Map<string, SessionAcc>();
+  let todayNimLuna = 0n;
+  let todayActiveMs = 0;
+
+  for (const fp of listEventFiles(3)) {
+    for (const rec of parseLines(fp)) {
+      if (rec.sessionId && sessions.has(rec.sessionId)) {
+        const live = sessions.get(rec.sessionId)!;
+        if (live.endedAt == null && kindContributesToActivePlay(rec.kind)) {
+          const gap = rec.ts - live.lastActivityTs;
+          if (gap >= 0) {
+            live.activeMs += Math.min(gap, ANALYTICS_ACTIVE_PLAY_IDLE_CAP_MS);
+          }
+          live.lastActivityTs = rec.ts;
+        }
+      }
+
+      if (rec.address !== addr) continue;
+
+      if (rec.kind === ANALYTICS_EVENT_KINDS.sessionStart) {
+        sessions.set(rec.sessionId, {
+          startedAt: rec.ts,
+          endedAt: null,
+          lastActivityTs: rec.ts,
+          activeMs: 0,
+          nimLuna: 0n,
+        });
+        continue;
+      }
+
+      if (rec.kind === ANALYTICS_EVENT_KINDS.sessionEnd) {
+        const cur = sessions.get(rec.sessionId);
+        if (cur) {
+          const gap = rec.ts - cur.lastActivityTs;
+          if (gap >= 0) {
+            cur.activeMs += Math.min(gap, ANALYTICS_ACTIVE_PLAY_IDLE_CAP_MS);
+          }
+          cur.endedAt = rec.ts;
+          cur.lastActivityTs = rec.ts;
+        }
+        continue;
+      }
+
+      if (rec.kind === ANALYTICS_EVENT_KINDS.nimPayoutSent) {
+        const p = rec.payload ?? {};
+        const amountLuna =
+          typeof p.amountLuna === "string" && /^\d+$/.test(p.amountLuna)
+            ? BigInt(p.amountLuna)
+            : 0n;
+        const sentAt =
+          typeof p.sentAt === "number" && Number.isFinite(p.sentAt) ? p.sentAt : rec.ts;
+        if (sentAt >= dayStart && sentAt < dayEnd) {
+          todayNimLuna += amountLuna;
+        }
+        const cur = sessions.get(rec.sessionId);
+        if (cur) cur.nimLuna += amountLuna;
+      }
+    }
+  }
+
+  let lastEnded: SessionAcc | null = null;
+  let lastEndedAt = -1;
+  for (const s of sessions.values()) {
+    if (s.startedAt >= dayStart && s.startedAt < dayEnd && s.endedAt != null) {
+      const wall = Math.max(0, s.endedAt - s.startedAt);
+      todayActiveMs += Math.min(s.activeMs, wall);
+    }
+    if (s.endedAt != null && s.endedAt > lastEndedAt) {
+      lastEndedAt = s.endedAt;
+      lastEnded = s;
+    }
+  }
+
+  const today: ConnectNoticeVisitStats = {
+    nimEarnedLabel: nimEarnedLabelFromLuna(todayNimLuna),
+    activeMs: todayActiveMs,
+  };
+
+  let lastVisit: ConnectNoticeVisitStats | null = null;
+  if (lastEnded?.endedAt != null) {
+    const wall = Math.max(0, lastEnded.endedAt - lastEnded.startedAt);
+    lastVisit = {
+      nimEarnedLabel: nimEarnedLabelFromLuna(lastEnded.nimLuna),
+      activeMs: Math.min(lastEnded.activeMs, wall),
+    };
+  }
+
+  return { lastVisit, today };
 }
 
 /** No-op for sync-per-line writer; hook for future buffering. */

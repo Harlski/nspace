@@ -1098,6 +1098,8 @@ type OutMsg =
       allowRoomJoinSpawnEdit?: boolean;
       /** Dynamic rooms: deployable cosmetics allowed (default true). */
       roomDeployablesAllowed?: boolean;
+      /** When set, this wallet cannot earn NIM from block claims (guest or mining restriction). */
+      blockClaimDeniedReason?: string;
       /** Dynamic rooms: owner may toggle deployables via `updateRoom`. */
       allowRoomDeployablesEdit?: boolean;
       /** Recent room chat (non-bubble); same order as live `chat` messages. */
@@ -3845,14 +3847,41 @@ export function getRoomFloorColorMapForThumbnail(roomIdRaw: string): {
   };
 }
 
-function countOnlineRealPlayers(): number {
+export function countOnlineRealPlayers(): number {
   let total = 0;
   for (const room of rooms.values()) {
     for (const c of room.values()) {
+      if (c.streamObserver) continue;
       if (!c.displayName.startsWith("[NPC] ")) total += 1;
     }
   }
   return total;
+}
+
+/** Display labels for other real players currently in the room (excludes self, NPCs, stream observers). */
+export function getCoPresencePlayerLabelsInRoom(
+  roomIdRaw: string,
+  exceptAddress: string,
+  limit = 8
+): string[] {
+  const roomId = normalizeRoomId(roomIdRaw);
+  const r = rooms.get(roomId);
+  if (!r) return [];
+  const except = exceptAddress.trim().toUpperCase();
+  const out: string[] = [];
+  for (const c of r.values()) {
+    if (c.streamObserver) continue;
+    if (c.displayName.startsWith("[NPC] ")) continue;
+    const addrKey =
+      c.address.startsWith("guest:") ? c.address : c.address.trim().toUpperCase();
+    const exceptKey =
+      exceptAddress.startsWith("guest:") ? exceptAddress : except;
+    if (addrKey === exceptKey) continue;
+    const label = c.displayName.trim() || walletDisplayName(c.address);
+    out.push(label);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 function broadcastOnlineCount(): void {
@@ -5192,6 +5221,10 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       roomBackgroundHueDeg: welcomeBgState.hueDeg,
       roomBackgroundNeutral: welcomeBgState.neutral,
       ...joinSpawnWelcomeExtras(targetRoomId, address),
+      ...( (): { blockClaimDeniedReason?: string } => {
+        const r = blockClaimAccessDeniedReason(address);
+        return r ? { blockClaimDeniedReason: r } : {};
+      })(),
       chatBacklog,
       // worldcup: include any balls in this room
       balls:
@@ -7187,6 +7220,10 @@ export function addClient(
       roomBackgroundHueDeg: joinWelcomeBgState.hueDeg,
       roomBackgroundNeutral: joinWelcomeBgState.neutral,
       ...joinSpawnWelcomeExtras(roomId, address),
+      ...( (): { blockClaimDeniedReason?: string } => {
+        const r = blockClaimAccessDeniedReason(address);
+        return r ? { blockClaimDeniedReason: r } : {};
+      })(),
       chatBacklog,
       // worldcup: include any balls in this room
       balls:

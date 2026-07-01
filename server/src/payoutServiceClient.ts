@@ -388,3 +388,78 @@ export async function triggerEndOfDayFlushViaService(): Promise<
   const r = await payoutFetch("/v1/flush", { method: "POST", body: "{}" });
   return parseServiceJson(r, parseFlushResult);
 }
+
+export type PayoutSentHistoryRow = {
+  sentAt: number;
+  enqueuedAt: number;
+  recipient: string;
+  amountLuna: string;
+  txHash: string;
+  claimId: string;
+  roomId: string;
+  tileKey: string;
+  jobId?: string;
+  state?: string;
+  manualBulk?: boolean;
+  bulkTotalLuna?: string;
+};
+
+function parseSentHistoryRows(json: unknown): PayoutSentHistoryRow[] | null {
+  if (!json || typeof json !== "object") return null;
+  const rows = (json as Record<string, unknown>).rows;
+  if (!Array.isArray(rows)) return null;
+  const out: PayoutSentHistoryRow[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    if (
+      typeof o.sentAt !== "number" ||
+      typeof o.enqueuedAt !== "number" ||
+      typeof o.recipient !== "string" ||
+      typeof o.amountLuna !== "string" ||
+      !/^\d+$/.test(o.amountLuna) ||
+      typeof o.txHash !== "string" ||
+      !o.txHash ||
+      typeof o.claimId !== "string" ||
+      !o.claimId ||
+      typeof o.roomId !== "string" ||
+      typeof o.tileKey !== "string"
+    ) {
+      continue;
+    }
+    out.push({
+      sentAt: o.sentAt,
+      enqueuedAt: o.enqueuedAt,
+      recipient: o.recipient,
+      amountLuna: o.amountLuna,
+      txHash: o.txHash,
+      claimId: o.claimId,
+      roomId: o.roomId,
+      tileKey: o.tileKey,
+      jobId: typeof o.jobId === "string" ? o.jobId : undefined,
+      state: typeof o.state === "string" ? o.state : undefined,
+      manualBulk: o.manualBulk === true,
+      bulkTotalLuna:
+        typeof o.bulkTotalLuna === "string" ? o.bulkTotalLuna : undefined,
+    });
+  }
+  return out;
+}
+
+export async function fetchSentHistoryFromService(opts?: {
+  sinceMs?: number;
+  limit?: number;
+}): Promise<
+  ServiceResult<PayoutSentHistoryRow[]>
+> {
+  const sinceMs = Math.max(0, Math.floor(opts?.sinceMs ?? 0));
+  const limit = Math.min(5000, Math.max(1, Math.floor(opts?.limit ?? 500)));
+  const params = new URLSearchParams({
+    since: String(sinceMs),
+    limit: String(limit),
+  });
+  const r = await payoutFetch(`/v1/sent-history?${params.toString()}`, {
+    method: "GET",
+  });
+  return parseServiceJson(r, parseSentHistoryRows);
+}

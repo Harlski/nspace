@@ -284,6 +284,8 @@ export type ServerMessage =
       worldcupPortals?: WorldcupPortalWire[];
       /** Dev-only Preset Gallery (`cosmetic-gallery` / join code SPACER). */
       cosmeticGallery?: CosmeticGalleryWire;
+      /** When set, this wallet cannot earn NIM from block claims (guest or mining restriction). */
+      blockClaimDeniedReason?: string;
     }
   | {
       type: "roomBackgroundHue";

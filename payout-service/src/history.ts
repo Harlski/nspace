@@ -29,6 +29,12 @@ export type SentHistoryDiskLine = {
   amountLuna: string;
   txHash: string;
   claimId: string;
+  roomId?: string;
+  tileKey?: string;
+  jobId?: string;
+  state?: string;
+  manualBulk?: boolean;
+  bulkTotalLuna?: string;
 };
 
 export type SentHistoryMerged = {
@@ -211,9 +217,18 @@ function readRecipientSentHistoryLines(
 }
 
 export function appendSentHistoryLine(
-  job: SnapshotJob,
+  job: SnapshotJob & {
+    roomId?: string;
+    tileKey?: string;
+    id?: string;
+  },
   txHash: string,
-  sentAt: number
+  sentAt: number,
+  extras?: {
+    state?: string;
+    manualBulk?: boolean;
+    bulkTotalLuna?: string;
+  }
 ): void {
   try {
     ensureDataDir();
@@ -224,6 +239,12 @@ export function appendSentHistoryLine(
       amountLuna: job.amountLuna.toString(),
       txHash,
       claimId: job.claimId,
+      roomId: typeof job.roomId === "string" ? job.roomId : undefined,
+      tileKey: typeof job.tileKey === "string" ? job.tileKey : undefined,
+      jobId: typeof job.id === "string" ? job.id : undefined,
+      state: extras?.state,
+      manualBulk: extras?.manualBulk,
+      bulkTotalLuna: extras?.bulkTotalLuna,
     };
     fs.appendFileSync(sentHistoryFile, `${JSON.stringify(line)}\n`, "utf8");
     appendRecipientSentHistoryLine(
@@ -560,6 +581,48 @@ export function getPendingPayoutQueueTotals(pendingJobs: SnapshotJob[]): {
     totalLuna: totalLuna.toString(),
     totalNim: formatLunaAsNim4(totalLuna),
   };
+}
+
+export type SentHistoryApiRow = {
+  sentAt: number;
+  enqueuedAt: number;
+  recipient: string;
+  amountLuna: string;
+  txHash: string;
+  claimId: string;
+  roomId: string;
+  tileKey: string;
+  jobId?: string;
+  state?: string;
+  manualBulk?: boolean;
+  bulkTotalLuna?: string;
+};
+
+/** Recent successful sends for game-server analytics backfill (newest last within batch). */
+export function listSentHistorySince(
+  sinceMs: number,
+  limit: number
+): SentHistoryApiRow[] {
+  const cap = Math.min(5000, Math.max(1, limit));
+  const fromDisk = readSentHistoryFromDisk(500_000);
+  const filtered = fromDisk
+    .filter((row) => row.sentAt >= sinceMs)
+    .sort((a, b) => a.sentAt - b.sentAt)
+    .slice(0, cap);
+  return filtered.map((row) => ({
+    sentAt: row.sentAt,
+    enqueuedAt: row.enqueuedAt,
+    recipient: row.recipient,
+    amountLuna: row.amountLuna,
+    txHash: row.txHash,
+    claimId: row.claimId,
+    roomId: typeof row.roomId === "string" && row.roomId ? row.roomId : "unknown",
+    tileKey: typeof row.tileKey === "string" && row.tileKey ? row.tileKey : "unknown",
+    jobId: row.jobId,
+    state: row.state,
+    manualBulk: row.manualBulk,
+    bulkTotalLuna: row.bulkTotalLuna,
+  }));
 }
 
 export { LUNA_PER_NIM };

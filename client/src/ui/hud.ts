@@ -276,7 +276,8 @@ export function createHud(
     onNimRecipientDeepLinkPopupBlocked?: () => void;
     /** Bearer JWT for the signed-in player (e.g. saving public profile message). */
     getGameAuthToken?: () => string | null;
-    /** Same wallet list as server `ADMIN_ADDRESSES`; in-game profile moderation. */
+    /** Self profile flags refreshed (mining restriction, etc.). */
+    onSelfProfileFlags?: (flags: { miningBanned?: boolean }) => void;
     isGameAdmin?: () => boolean;
     /** True when this game session was authenticated via Nimiq Pay (server verify), not `window.nimiqPay`. */
     didSessionUseNimiqPay?: () => boolean;
@@ -883,7 +884,14 @@ export function createHud(
   setLoadingProgress: (state: null | "indeterminate" | number) => void;
   /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
   setNimClaimProgress: (
-    state: null | { progress: number; adjacent: boolean },
+    state: null | {
+      progress: number;
+      adjacent: boolean;
+      /** Overrides default move/hold hints (e.g. mining restriction). */
+      hint?: string;
+      /** Hides the progress track; hint-only mode. */
+      denied?: boolean;
+    },
     opts?: { fadeOutMs?: number }
   ) => void;
   /** Show or hide the in-game Reconnect control (e.g. after WebSocket loss). */
@@ -4745,6 +4753,41 @@ export function createHud(
     })();
   });
 
+  /** Set after `createPlayerMenu`; used to float the menu above the profile sheet. */
+  let playerMenuLayer: ReturnType<typeof createPlayerMenu> | null = null;
+
+  function playerMenuHitTest(clientX: number, clientY: number): boolean {
+    const root = playerMenuLayer?.root;
+    if (!root || root.hidden) return false;
+    const rect = root.getBoundingClientRect();
+    return (
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom
+    );
+  }
+
+  function syncSelfProfileOpenHudClass(): void {
+    const selfProfileOpen =
+      !otherPlayerProfile.hidden && profileMessageKindOpen === "self";
+    ui.classList.toggle("hud--self-profile-open", selfProfileOpen);
+    const menu = playerMenuLayer;
+    if (!menu) return;
+    const root = menu.root;
+    if (selfProfileOpen) {
+      if (root.parentElement !== letter) {
+        root.classList.add("player-menu--elevated");
+        letter.appendChild(root);
+      }
+      return;
+    }
+    if (root.parentElement === letter) {
+      root.classList.remove("player-menu--elevated");
+      ui.appendChild(root);
+    }
+  }
+
   function closeOtherPlayerProfile(fromHistory = false): void {
     if (!fromHistory && opts?.overlayBack?.isOpen("profile")) {
       opts.overlayBack.dismiss("profile");
@@ -4808,6 +4851,7 @@ export function createHud(
     oppNimiqPayHost.hidden = true;
     delete oppCopyAddressBtn.dataset.fullAddress;
     oppCopyAddressBtn.removeAttribute("title");
+    syncSelfProfileOpenHudClass();
   }
 
   function resetOtherPlayerContextMenuVisual(): void {
@@ -5178,11 +5222,7 @@ export function createHud(
         delete oppUsernameInput.dataset.lockedUntil;
       }
       updateProfileNameHitInteractivity("self");
-      if (j.miningBanned === true) {
-        oppProfileNote.textContent =
-          "Mining is restricted on this account.";
-        oppProfileNote.hidden = false;
-      }
+      opts?.onSelfProfileFlags?.({ miningBanned: j.miningBanned === true });
     } else {
       oppUsernameInput.value = "";
       oppUsernameInput.readOnly = false;
@@ -5281,7 +5321,8 @@ export function createHud(
   async function showPlayerProfileView(
     address: string,
     _displayName: string,
-    kind: "self" | "other"
+    kind: "self" | "other",
+    initialTab?: typeof profileActiveTab
   ): Promise<void> {
     const compact = walletKeyForProfile(address);
     if (!compact) return;
@@ -5301,12 +5342,19 @@ export function createHud(
     endUsernameEditVisual();
     wardrobeSetView = null;
     if (kind === "other") profileActiveTab = "rooms";
+    else if (initialTab !== undefined) profileActiveTab = initialTab;
     else if (!cachedEntry) profileActiveTab = "wardrobe";
     oppTabBar.classList.toggle("other-player-profile__tabbar--other", kind === "other");
     oppWardrobeTabBtn.hidden = kind !== "self";
     oppShopTabBtn.hidden = kind !== "self";
-    oppWardrobeTabBtn.classList.toggle("is-active", kind === "self");
-    oppShopTabBtn.classList.remove("is-active");
+    oppWardrobeTabBtn.classList.toggle(
+      "is-active",
+      kind === "self" && profileActiveTab === "wardrobe"
+    );
+    oppShopTabBtn.classList.toggle(
+      "is-active",
+      kind === "self" && profileActiveTab === "shop"
+    );
     oppAchievementsTabBtn.hidden = false;
     oppAchievementsTabBtn.classList.remove("is-active");
     oppAchievementsTabBtn.setAttribute("aria-expanded", "false");
@@ -5361,6 +5409,7 @@ export function createHud(
     applyProfileSheetMode();
     otherPlayerProfile.hidden = false;
     otherPlayerProfile.setAttribute("aria-hidden", "false");
+    syncSelfProfileOpenHudClass();
     if (kind === "self" && (profileActiveTab === "wardrobe" || profileActiveTab === "shop")) {
       oppProfileWardrobe.hidden = false;
       void import("../cosmetics/wardrobePanel.js").then(({ mountWardrobePanelSkeleton }) => {
@@ -5433,7 +5482,13 @@ export function createHud(
   oppClose.addEventListener("click", () => {
     closeOtherPlayerProfile();
   });
-  oppBackdrop.addEventListener("click", () => {
+  oppBackdrop.addEventListener("click", (e) => {
+    if (
+      profileMessageKindOpen === "self" &&
+      playerMenuHitTest(e.clientX, e.clientY)
+    ) {
+      return;
+    }
     closeOtherPlayerProfile();
   });
   oppWardrobeTabBtn.addEventListener("click", (ev) => {
@@ -8550,6 +8605,7 @@ export function createHud(
   ui.appendChild(buildBottomDock);
 
   const playerMenu = createPlayerMenu(ui);
+  playerMenuLayer = playerMenu;
   const telescopeControl = createTelescopeControl(playerMenu.root);
 
   const buildQuickBtn = document.createElement("button");
@@ -10708,13 +10764,21 @@ export function createHud(
     return name !== playerBarWalletShort(compact);
   }
 
-  function openOwnPlayerProfileFromBar(): void {
+  function openOwnPlayerProfileFromBar(
+    initialTab?: typeof profileActiveTab
+  ): void {
     const compact = brandLinksPlayerAddress.trim();
     if (!compact) return;
+    if (isOwnPlayerProfileOpen()) {
+      if (initialTab !== undefined) {
+        setProfileTab(initialTab);
+      }
+      return;
+    }
     closeOtherPlayerUiOverlays();
     opts?.onAchievementUiSignal?.("open_profile");
     const label = playerBarDisplayName.trim() || walletDisplayName(compact);
-    void showPlayerProfileView(compact, label, "self");
+    void showPlayerProfileView(compact, label, "self", initialTab);
   }
 
   function isOwnPlayerProfileOpen(): boolean {
@@ -10752,20 +10816,21 @@ export function createHud(
         break;
       case "wardrobe":
         opts?.onAchievementUiSignal?.("open_wardrobe");
-        openOwnPlayerProfileFromBar();
-        setProfileTab("wardrobe");
+        if (isOwnPlayerProfileOpen() && profileActiveTab === "wardrobe") {
+          closeOtherPlayerProfile();
+          break;
+        }
+        openOwnPlayerProfileFromBar("wardrobe");
         break;
       case "shop":
         opts?.onAchievementUiSignal?.("open_wardrobe");
-        openOwnPlayerProfileFromBar();
-        setProfileTab("shop");
+        openOwnPlayerProfileFromBar("shop");
         break;
       case "return-from-shaper":
         leaveShaperHandler();
         break;
       case "achievements":
-        openOwnPlayerProfileFromBar();
-        setProfileTab("achievements");
+        achievementPanel.open();
         break;
       case "rooms":
         roomsOpenHandler();
@@ -15506,7 +15571,12 @@ export function createHud(
       reconnectHandler = fn;
     },
     setNimClaimProgress(
-      state: null | { progress: number; adjacent: boolean },
+      state: null | {
+        progress: number;
+        adjacent: boolean;
+        hint?: string;
+        denied?: boolean;
+      },
       opts?: { fadeOutMs?: number }
     ) {
       if (nimClaimFadeTimer !== null) {
@@ -15524,25 +15594,38 @@ export function createHud(
           nimClaimBar.classList.add("nim-claim-bar--fading");
           nimClaimFadeTimer = window.setTimeout(() => {
             nimClaimFadeTimer = null;
-            nimClaimBar.classList.remove("nim-claim-bar--fading", "nim-claim-bar--adjacent");
+            nimClaimBar.classList.remove(
+              "nim-claim-bar--fading",
+              "nim-claim-bar--adjacent",
+              "nim-claim-bar--denied"
+            );
             nimClaimBar.hidden = true;
           }, fadeMs);
           return;
         }
-        nimClaimBar.classList.remove("nim-claim-bar--fading", "nim-claim-bar--adjacent");
+        nimClaimBar.classList.remove(
+          "nim-claim-bar--fading",
+          "nim-claim-bar--adjacent",
+          "nim-claim-bar--denied"
+        );
         nimClaimBar.hidden = true;
         return;
       }
       nimClaimBar.classList.remove("nim-claim-bar--fading");
       nimClaimBar.hidden = false;
+      const denied = state.denied === true || Boolean(state.hint?.trim());
+      nimClaimBar.classList.toggle("nim-claim-bar--denied", denied);
       const p = Math.max(0, Math.min(1, state.progress));
       if (nimClaimFill) {
-        nimClaimFill.style.width = `${(p * 100).toFixed(2)}%`;
+        nimClaimFill.style.width = denied ? "0%" : `${(p * 100).toFixed(2)}%`;
       }
       if (nimClaimHint) {
-        nimClaimHint.textContent = state.adjacent
-          ? "Hold position beside the block…"
-          : "Move to a tile directly beside the block (edge, not corner).";
+        const customHint = state.hint?.trim();
+        nimClaimHint.textContent =
+          customHint ??
+          (state.adjacent
+            ? "Hold position beside the block…"
+            : "Move to a tile directly beside the block (edge, not corner).");
       }
       nimClaimBar.classList.toggle("nim-claim-bar--adjacent", state.adjacent);
     },

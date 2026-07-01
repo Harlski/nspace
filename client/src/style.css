@@ -927,6 +927,15 @@ html.nspace-pseudo-fs #app {
   pointer-events: none;
 }
 
+.letterbox > .player-menu.player-menu--elevated {
+  z-index: 10002;
+}
+
+/* Legacy hook when Player Menu stays inside `.hud` (fallback). */
+.hud.hud--self-profile-open .player-menu {
+  z-index: 10002;
+}
+
 .player-menu__trigger-row {
   display: flex;
   align-items: center;
@@ -12357,6 +12366,15 @@ html.nspace-mobile-portrait
   font-size: 12px;
   line-height: 1.35;
   color: rgba(248, 250, 252, 0.82);
+}
+
+.nim-claim-bar--denied .nim-claim-bar__track {
+  display: none;
+}
+
+.nim-claim-bar--denied .nim-claim-bar__hint {
+  margin-top: 0;
+  color: rgba(252, 211, 77, 0.92);
 }
 
 .canvas-countdown {

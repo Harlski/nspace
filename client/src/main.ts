@@ -730,6 +730,15 @@ function enterGame(
     flagEmojiFor: (code) => flagEmoji(code),
     // Self clicked their profile flag chip → open the country picker.
     onEditOwnCountry: () => openCountryPickerForSelf(),
+    onSelfProfileFlags: ({ miningBanned }) => {
+      if (miningBanned) {
+        selfBlockClaimDeniedReason = NIM_CLAIM_MSG_MINING_RESTRICTED;
+      } else if (
+        selfBlockClaimDeniedReason === NIM_CLAIM_MSG_MINING_RESTRICTED
+      ) {
+        selfBlockClaimDeniedReason = null;
+      }
+    },
     onAchievementUiSignal: (kind, detail) => {
       if (ws?.readyState !== WebSocket.OPEN) return;
       if (kind === "open_signboard") {
@@ -2230,6 +2239,34 @@ function enterGame(
   const NIM_CLAIM_COMPLETE_SLACK_MS = 550;
   /** Hide the NIM reward hint if the player stays away from the block this long. */
   const NIM_CLAIM_AWAY_DISMISS_MS = 4500;
+  const NIM_CLAIM_MSG_MINING_RESTRICTED =
+    "Mining is restricted on this account.";
+  const NIM_CLAIM_MSG_GUEST = "Connect a wallet to earn NIM from mining.";
+  /** From welcome / profile / server claim denial; blocks beginBlockClaim on client. */
+  let selfBlockClaimDeniedReason: string | null = null;
+
+  function isBlockClaimDenialReason(reason: string | null | undefined): boolean {
+    return (
+      reason === NIM_CLAIM_MSG_MINING_RESTRICTED ||
+      reason === NIM_CLAIM_MSG_GUEST
+    );
+  }
+
+  function nimClaimProgressFromAdjacent(
+    adjacent: boolean,
+    progress = 0
+  ): {
+    progress: number;
+    adjacent: boolean;
+    hint?: string;
+    denied?: boolean;
+  } {
+    const denied = selfBlockClaimDeniedReason;
+    if (denied) {
+      return { progress: 0, adjacent, hint: denied, denied: true };
+    }
+    return { progress, adjacent };
+  }
 
   let disposed = false;
   let rafId = 0;
@@ -3569,7 +3606,7 @@ function enterGame(
       };
       cancelActiveNimClaim = cancelThisClaim;
 
-      hud.setNimClaimProgress({ progress: 0, adjacent: false });
+      hud.setNimClaimProgress(nimClaimProgressFromAdjacent(false));
 
       const tick = (): void => {
         if (cancelled) return;
@@ -3585,7 +3622,7 @@ function enterGame(
           isOrthogonallyAdjacentToFloorTile(pos.x, pos.z, x, z)
         );
 
-        if (adjacent) {
+        if (adjacent && !selfBlockClaimDeniedReason) {
           notAdjacentSince = null;
           if (!beginSent && socket.readyState === WebSocket.OPEN) {
             const claimIntent = game.takeBlockClaimBeginIntent();
@@ -3602,9 +3639,11 @@ function enterGame(
             sendBlockClaimTick(socket, cid);
             lastTickSent = now;
           }
+        } else if (adjacent) {
+          notAdjacentSince = null;
         }
 
-        if (ref.claimId) {
+        if (ref.claimId && !selfBlockClaimDeniedReason) {
           if (adjacent) {
             if (ref.rewardHoldSince === null) {
               ref.rewardHoldSince = now;
@@ -3616,11 +3655,15 @@ function enterGame(
 
         const holdMs = ref.holdMs;
         let progress = 0;
-        if (ref.claimId && ref.rewardHoldSince !== null) {
+        if (
+          ref.claimId &&
+          ref.rewardHoldSince !== null &&
+          !selfBlockClaimDeniedReason
+        ) {
           progress = Math.min(1, (now - ref.rewardHoldSince) / holdMs);
         }
 
-        hud.setNimClaimProgress({ progress, adjacent });
+        hud.setNimClaimProgress(nimClaimProgressFromAdjacent(adjacent, progress));
 
         if (!adjacent) {
           if (notAdjacentSince === null) {
@@ -4309,6 +4352,14 @@ function enterGame(
     }
     if (msg.type === "welcome") {
       clearWelcomeDeadlineTimer();
+      const welcomeDenied =
+        typeof msg.blockClaimDeniedReason === "string"
+          ? msg.blockClaimDeniedReason.trim()
+          : "";
+      selfBlockClaimDeniedReason =
+        welcomeDenied && isBlockClaimDenialReason(welcomeDenied)
+          ? welcomeDenied
+          : null;
       // worldcup: any room change clears a stale post-goal movement freeze.
       game.setWorldcupMoveLocked(false);
       if (pendingCreateRoomAwaiting) {
@@ -5033,6 +5084,32 @@ function enterGame(
       return;
     }
     if (msg.type === "blockClaimResult") {
+      if (!msg.ok && msg.reason && isBlockClaimDenialReason(msg.reason)) {
+        selfBlockClaimDeniedReason = msg.reason;
+        let adjacent = false;
+        if (nimClaimUiRef) {
+          const pos = game.getSelfPosition();
+          adjacent = !!(
+            pos &&
+            isOrthogonallyAdjacentToFloorTile(
+              pos.x,
+              pos.z,
+              nimClaimUiRef.blockX,
+              nimClaimUiRef.blockZ
+            )
+          );
+          nimClaimUiRef.claimId = null;
+          nimClaimUiRef.rewardHoldSince = null;
+          nimClaimUiRef.completeSent = false;
+        }
+        hud.setNimClaimProgress({
+          progress: 0,
+          adjacent,
+          hint: msg.reason,
+          denied: true,
+        });
+        return;
+      }
       if (msg.ok) {
         const bx = Number(msg.x);
         const bz = Number(msg.z);

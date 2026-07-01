@@ -12,6 +12,8 @@ export type AppConfig = {
   host: string;
   port: number;
   apiSecret: string;
+  /** Base URL of the game server for analytics event callbacks (optional). */
+  gameServerInternalUrl: string | null;
   dataDir: string;
   nimNetwork: string;
   defaultTxMessage: string;
@@ -35,6 +37,11 @@ export function loadConfig(): AppConfig {
     ? path.resolve(process.env.NIM_PAYOUT_DATA_DIR)
     : path.join(__configDir, "..", "data");
 
+  const gameServerRaw = String(process.env.GAME_SERVER_INTERNAL_URL ?? "").trim();
+  const gameServerInternalUrl = gameServerRaw
+    ? gameServerRaw.replace(/\/+$/, "")
+    : null;
+
   return {
     host: String(process.env.HOST ?? "127.0.0.1").trim() || "127.0.0.1",
     port,
@@ -42,6 +49,7 @@ export function loadConfig(): AppConfig {
       "PAYOUT_SERVICE_API_SECRET",
       process.env.PAYOUT_SERVICE_API_SECRET
     ),
+    gameServerInternalUrl,
     dataDir,
     nimNetwork: String(process.env.NIM_NETWORK ?? "testalbatross").toLowerCase(),
     defaultTxMessage: String(

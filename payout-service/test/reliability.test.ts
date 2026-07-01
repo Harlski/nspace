@@ -26,6 +26,7 @@ function testCfg(
     host: "127.0.0.1",
     port: 0,
     apiSecret: "unit-test-secret",
+    gameServerInternalUrl: null,
     dataDir,
     nimNetwork: "testalbatross",
     defaultTxMessage: "test payout",

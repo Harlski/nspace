@@ -22,6 +22,8 @@ import {
   getWalletBalanceLuna,
   initBalanceCache,
 } from "./balance.js";
+import { initAnalyticsCallback } from "./analyticsCallback.js";
+import { listSentHistorySince } from "./history.js";
 
 export type CreatePayoutAppOptions = {
   cfg?: AppConfig;
@@ -35,6 +37,7 @@ export function createPayoutApp(opts: CreatePayoutAppOptions = {}) {
     opts.chainClient ?? createNimiqChainClient(cfg.defaultTxMessage);
   initPayoutQueue(cfg, chainClient);
   initBalanceCache(chainClient, cfg.balanceCacheMs);
+  initAnalyticsCallback(cfg);
   if (opts.startProcessor !== false) {
     startPayoutProcessor(cfg.processIntervalMs);
   }
@@ -145,6 +148,16 @@ export function createPayoutApp(opts: CreatePayoutAppOptions = {}) {
       console.error("[payout-service] flush", err);
       res.status(500).json({ error: "internal" });
     }
+  });
+
+  app.get("/v1/sent-history", auth, (req, res) => {
+    const sinceRaw = Number(req.query.since ?? 0);
+    const limitRaw = Number(req.query.limit ?? 500);
+    const sinceMs =
+      Number.isFinite(sinceRaw) && sinceRaw >= 0 ? Math.floor(sinceRaw) : 0;
+    const limit =
+      Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : 500;
+    res.json({ rows: listSentHistorySince(sinceMs, limit) });
   });
 
   return { app, cfg, chainClient };

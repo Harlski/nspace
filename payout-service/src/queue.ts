@@ -20,6 +20,10 @@ import {
   type PublicPendingPayoutSummary,
   type WalletPendingPayoutDetail,
 } from "./history.js";
+import {
+  notifyPayoutDeadLetterAnalytics,
+  notifyPayoutSentAnalytics,
+} from "./analyticsCallback.js";
 
 export type PayIntentBody = {
   claimId: string;
@@ -262,7 +266,13 @@ async function processOne(job: PayoutJob, now: number = Date.now()): Promise<voi
     job.sentAt = Date.now();
     job.txHash = txHash;
     job.status = "completed";
-    appendSentHistoryLine(job, txHash, job.sentAt);
+    appendSentHistoryLine(job, txHash, job.sentAt, { state: String(state) });
+    notifyPayoutSentAnalytics({
+      job,
+      txHash,
+      sentAt: job.sentAt,
+      state: String(state),
+    });
     adjustBalanceCacheAfterPayout(job.amountLuna);
     console.log(
       `[payout-service] Sent ${txHash} state=${state} claim=${job.claimId.slice(0, 10)}…`
@@ -291,6 +301,7 @@ function maybeDeadLetter(job: PayoutJob, error: string): void {
     error
   );
   appendDeadLetterAudit(job, error);
+  notifyPayoutDeadLetterAnalytics({ job, error });
   jobs.splice(jobs.indexOf(job), 1);
 }
 
@@ -479,7 +490,19 @@ export async function manualBulkPayoutPendingForRecipient(
     for (let i = jobs.length - 1; i >= 0; i--) {
       if (idSet.has(jobs[i]!.id)) {
         const job = jobs[i]!;
-        appendSentHistoryLine(job, txHash, sentAt);
+        appendSentHistoryLine(job, txHash, sentAt, {
+          state: String(state),
+          manualBulk: true,
+          bulkTotalLuna: totalLuna.toString(),
+        });
+        notifyPayoutSentAnalytics({
+          job,
+          txHash,
+          sentAt,
+          state: String(state),
+          manualBulk: true,
+          bulkTotalLuna: totalLuna.toString(),
+        });
         jobs.splice(i, 1);
       }
     }
