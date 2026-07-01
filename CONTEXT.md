@@ -495,6 +495,24 @@ as **Week Warrior** and **Monthly Devotee**); the server supplies **N** so descr
 progress denominator stay aligned when operators change `ACHIEVEMENT_LOGIN_STREAK_TOP`.
 _Avoid_: Time of Khan, login streak top, daily login gold, vague "milestone" copy without **N**.
 
+## Moderation
+
+**Mining Restriction**:
+An admin-imposed sanction on a wallet that blocks claimable-block mining (starting and
+completing a NIM block claim). Distinct from channel mute and username-set ban; toggled from
+another player's profile by a game admin or from `/admin/moderation`. May carry an optional
+operator note (not shown to the player).
+_Avoid_: mining ban (use Restriction for the canonical sanction name), claim ban, payout block.
+
+**Username-set ban**:
+An admin-imposed sanction that prevents a wallet from setting or changing its custom username
+and skips the login username prompt.
+_Avoid_: name ban (ambiguous with profanity filter).
+
+**Channel mute**:
+An admin-imposed sanction that blocks a wallet from sending chat messages.
+_Avoid_: chat ban, silence.
+
 ## Payouts
 
 **Payout Service**:

@@ -192,6 +192,10 @@ import {
 } from "./playerProfileStore.js";
 import { isChannelMuted } from "./moderationStore.js";
 import {
+  blockClaimAccessDeniedReason,
+  BLOCK_CLAIM_MSG_GUEST,
+} from "./blockClaimAccess.js";
+import {
   claimTile,
   getClaimsInBounds,
   loadCanvasClaims,
@@ -10290,6 +10294,18 @@ export function addClient(
     if (msg.type === "beginBlockClaim") {
       const now = Date.now();
       trimSpentBlockClaimIds(now);
+
+      const claimDenied = blockClaimAccessDeniedReason(address);
+      if (claimDenied) {
+        wsSafeSend(ws, {
+            type: "blockClaimResult",
+            ok: false,
+            recoverable: claimDenied !== BLOCK_CLAIM_MSG_GUEST,
+            reason: claimDenied,
+          } satisfies OutMsg);
+        return;
+      }
+
       if (now - conn.lastBlockClaimBeginAt < RATE_BEGIN_BLOCK_CLAIM_MS) {
         wsSafeSend(ws, {
             type: "blockClaimResult",
@@ -10496,6 +10512,17 @@ export function addClient(
     if (msg.type === "completeBlockClaim") {
       const claimId = String(msg.claimId ?? "");
       const now = Date.now();
+
+      const claimDenied = blockClaimAccessDeniedReason(address);
+      if (claimDenied) {
+        wsSafeSend(ws, {
+            type: "blockClaimResult",
+            ok: false,
+            recoverable: claimDenied !== BLOCK_CLAIM_MSG_GUEST,
+            reason: claimDenied,
+          } satisfies OutMsg);
+        return;
+      }
 
       if (now - conn.lastBlockClaimCompleteAttemptAt < RATE_COMPLETE_BLOCK_CLAIM_MS) {
         wsSafeSend(ws, {

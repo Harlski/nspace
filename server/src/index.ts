@@ -125,6 +125,7 @@ import { adminSettingsPageHtml } from "./adminSettingsPage.js";
 import { adminHeaderPageHtml } from "./adminHeaderPage.js";
 import { adminFeedbackPageHtml } from "./adminFeedbackPage.js";
 import { adminChatPageHtml } from "./adminChatPage.js";
+import { adminModerationPageHtml } from "./adminModerationPage.js";
 import { adminCampaignPageHtml } from "./adminCampaignPage.js";
 import { adminCosmeticsPageHtml } from "./adminCosmeticsPage.js";
 import { advertisePageHtml } from "./advertisePage.js";
@@ -304,9 +305,11 @@ import {
 } from "./playerProfileStore.js";
 import {
   isChannelMuted,
+  isMiningBanned,
   isUsernameSetBanned,
   listModerationSnapshot,
   setChannelMuted,
+  setMiningBanned,
   setUsernameSetBanned,
 } from "./moderationStore.js";
 import { listRoomsOwnedBy } from "./roomRegistry.js";
@@ -592,10 +595,12 @@ app.get("/api/player-profile/:address", (req, res) => {
         if (sub === addr) {
           pub.usernameSetBanned = isUsernameSetBanned(addr);
           pub.channelMuted = isChannelMuted(addr);
+          pub.miningBanned = isMiningBanned(addr);
           canSeePrivateRooms = true;
         } else if (isAdmin(sub)) {
           pub.subjectUsernameBanned = isUsernameSetBanned(addr);
           pub.subjectChannelMuted = isChannelMuted(addr);
+          pub.subjectMiningBanned = isMiningBanned(addr);
           canSeePrivateRooms = true;
         }
       } catch {
@@ -1252,6 +1257,10 @@ app.get("/admin/rooms", (_req, res) => {
 
 app.get("/admin/chat", (_req, res) => {
   res.type("html").send(adminChatPageHtml());
+});
+
+app.get("/admin/moderation", (_req, res) => {
+  res.type("html").send(adminModerationPageHtml());
 });
 
 function parseAdminChatTs(raw: unknown): number | undefined {
@@ -2992,6 +3001,16 @@ app.post("/api/admin/moderation", requireSystemAdminWallet, (req, res) => {
       res.json({ ok: true });
       return;
     }
+    if (action === "mining_ban") {
+      setMiningBanned(
+        target,
+        body?.banned === true,
+        actor,
+        typeof body?.note === "string" ? body.note : undefined
+      );
+      res.json({ ok: true });
+      return;
+    }
     if (action === "set_username") {
       const uname = String(body?.username ?? "");
       const result = adminSetUsernameOnTarget(target, uname);
@@ -3027,7 +3046,7 @@ app.get("/api/admin/bans", requireSystemAdminWallet, (_req, res) => {
   res.json(listModerationSnapshot());
 });
 
-app.get("/admin/bans", requireSystemAdminWallet, (_req, res) => {
+app.get("/api/admin/moderation", requireSystemAdminWallet, (_req, res) => {
   res.json(listModerationSnapshot());
 });
 

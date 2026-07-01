@@ -10,6 +10,7 @@ export type MainSiteHeaderPage =
   | "cosmetics"
   | "rooms"
   | "chat"
+  | "moderation"
   | "advertise";
 
 export type MainSiteNavAuthStatus = {
@@ -55,6 +56,7 @@ const MAIN_SITE_NAV_GROUPS: MainSiteNavGroup[] = [
       { page: "cosmetics", href: "/admin/cosmetics", label: "Cosmetics", authKey: "cosmetics" },
       { page: "rooms", href: "/admin/rooms", label: "Rooms", authKey: "rooms" },
       { page: "chat", href: "/admin/chat", label: "Chat", authKey: "chat" },
+      { page: "moderation", href: "/admin/moderation", label: "Moderation", authKey: "moderation" },
     ],
   },
 ];
@@ -77,7 +79,7 @@ export function isMainSiteNavItemVisible(
   if (authKey === "advertise") return status.signedIn;
   if (authKey === "analytics") return status.analyticsAuthorized;
   if (authKey === "admin") return status.analyticsManager;
-  if (authKey === "system" || authKey === "settings" || authKey === "header" || authKey === "feedback" || authKey === "campaign" || authKey === "cosmetics" || authKey === "rooms" || authKey === "chat") {
+  if (authKey === "system" || authKey === "settings" || authKey === "header" || authKey === "feedback" || authKey === "campaign" || authKey === "cosmetics" || authKey === "rooms" || authKey === "chat" || authKey === "moderation") {
     return status.systemAdmin;
   }
   return false;
@@ -294,7 +296,10 @@ export function mainSiteNavRuntimeScript(): string {
           (nav === "header" && status.systemAdmin) ||
           (nav === "feedback" && status.systemAdmin) ||
           (nav === "campaign" && status.systemAdmin) ||
-          (nav === "rooms" && status.systemAdmin)
+          (nav === "cosmetics" && status.systemAdmin) ||
+          (nav === "rooms" && status.systemAdmin) ||
+          (nav === "chat" && status.systemAdmin) ||
+          (nav === "moderation" && status.systemAdmin)
         );
       }
       function applyNav(status) {

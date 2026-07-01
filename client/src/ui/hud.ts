@@ -945,8 +945,11 @@ export function createHud(
     customUsername?: string | null;
     usernameLockedUntil?: number | null;
     usernameSetBanned?: boolean;
+    channelMuted?: boolean;
+    miningBanned?: boolean;
     subjectUsernameBanned?: boolean;
     subjectChannelMuted?: boolean;
+    subjectMiningBanned?: boolean;
     usernameSelfServiceEnabled?: boolean;
     country?: string | null;
     rooms?: Array<{
@@ -3906,7 +3909,11 @@ export function createHud(
     );
     return true;
   }
-  function syncAdminActions(banned: boolean, muted: boolean): void {
+  function syncAdminActions(
+    banned: boolean,
+    muted: boolean,
+    miningBanned: boolean
+  ): void {
     oppAdminActions.replaceChildren();
     const placeholder = document.createElement("option");
     placeholder.value = "";
@@ -3916,6 +3923,10 @@ export function createHud(
       ["clear_username", "Clear"],
       [banned ? "allow_name" : "ban_name", banned ? "Allow name" : "Ban name"],
       [muted ? "unmute" : "mute", muted ? "Unmute" : "Mute"],
+      [
+        miningBanned ? "allow_mining" : "ban_mining",
+        miningBanned ? "Allow mining" : "Ban mining",
+      ],
     ] as const;
     for (const [value, label] of actions) {
       const opt = document.createElement("option");
@@ -3933,6 +3944,15 @@ export function createHud(
     else if (v === "allow_name") void adminModerationPost("username_ban", { banned: false });
     else if (v === "mute") void adminModerationPost("channel_mute", { muted: true });
     else if (v === "unmute") void adminModerationPost("channel_mute", { muted: false });
+    else if (v === "ban_mining") {
+      const note = window.prompt("Optional note (admins only):", "");
+      if (note === null) return;
+      const extra: Record<string, unknown> = { banned: true };
+      if (note.trim()) extra.note = note.trim();
+      void adminModerationPost("mining_ban", extra);
+    } else if (v === "allow_mining") {
+      void adminModerationPost("mining_ban", { banned: false });
+    }
   });
   const oppProfileMessage = document.createElement("div");
   oppProfileMessage.className = "other-player-profile__message-wrap";
@@ -5131,7 +5151,8 @@ export function createHud(
     if (adminOther) {
       const banned = j.subjectUsernameBanned === true;
       const muted = j.subjectChannelMuted === true;
-      syncAdminActions(banned, muted);
+      const miningBanned = j.subjectMiningBanned === true;
+      syncAdminActions(banned, muted, miningBanned);
     }
     profileUsernameSavedCustom = j.customUsername?.trim() ?? "";
     const hasCustom = Boolean(profileUsernameSavedCustom);
@@ -5157,6 +5178,11 @@ export function createHud(
         delete oppUsernameInput.dataset.lockedUntil;
       }
       updateProfileNameHitInteractivity("self");
+      if (j.miningBanned === true) {
+        oppProfileNote.textContent =
+          "Mining is restricted on this account.";
+        oppProfileNote.hidden = false;
+      }
     } else {
       oppUsernameInput.value = "";
       oppUsernameInput.readOnly = false;
