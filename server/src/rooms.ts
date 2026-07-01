@@ -89,16 +89,21 @@ import {
   getAchievementCounterValue,
   recordBlockMined,
   recordBlockPlaced,
+  recordBillboardDwellMs,
   recordChatMessageSent,
   recordDistinctTileWalked,
   recordExplorationDoorFromSpawn,
   recordExplorationRoomEntry,
+  recordFieldGoalPayout,
   recordFieldGoalScored,
   recordFloorRecolored,
   recordGatekeeperOpen,
+  recordImpatientMiner,
   recordMatchEnd,
+  recordMineCooldownAttempt,
   recordOutfieldTilesWalked,
   recordOwnedRoomBlockPlaced,
+  recordPixelPaintAchievements,
   recordPixelPainted,
   recordPrefabPublished,
   recordPrefabStampedByOther,
@@ -342,6 +347,7 @@ import {
 } from "./billboardAdvertsCatalog.js";
 import { compileRotationSet } from "./rotationSetCompile.js";
 import { getRotationSetById } from "./rotationSetStore.js";
+import { isWithinBillboardProximity } from "./miningPixelAchievementEvaluator.js";
 import {
   getVoxelTextsForRoom,
   loadVoxelTexts,
@@ -2107,6 +2113,70 @@ interface BlockClaimSession {
   accumAdjacentMs: number;
   /** Last wall-clock sample for contiguous adjacent-time accumulation (0 = none). */
   lastSampleAt: number;
+  /** Client path that started the claim (`direct_adjacent_click`, etc.). */
+  claimIntent?: string;
+}
+
+/** Pixel room: last painter wallet per floor tile key (`x,z`). */
+const pixelTilePainters = new Map<string, Map<string, string>>();
+
+function pixelTilePainterMap(roomId: string): Map<string, string> {
+  const id = normalizeRoomId(roomId);
+  let map = pixelTilePainters.get(id);
+  if (!map) {
+    map = new Map();
+    pixelTilePainters.set(id, map);
+  }
+  return map;
+}
+
+function otherPresentWalletsInRoom(
+  room: Map<string, ClientConn>,
+  excludeAddress: string
+): Set<string> {
+  const exclude = compactAddress(excludeAddress);
+  const out = new Set<string>();
+  for (const c of room.values()) {
+    if (c.streamObserver) continue;
+    const w = compactAddress(c.address);
+    if (!w || w === exclude) continue;
+    out.add(w);
+  }
+  return out;
+}
+
+function tickBillboardAudienceDwell(
+  roomId: string,
+  room: Map<string, ClientConn>,
+  deltaMs: number
+): void {
+  if (deltaMs <= 0) return;
+  if (countRealPlayersInRoom(roomId) < 2) return;
+  const billboards = getBillboardsForRoom(roomId).filter(isManagedCampaignBillboard);
+  if (billboards.length === 0) return;
+  for (const c of room.values()) {
+    if (c.streamObserver) continue;
+    const stand = snapToTile(c.player.x, c.player.z);
+    let nearLive = false;
+    for (const bb of billboards) {
+      if (
+        isWithinBillboardProximity(
+          stand.x,
+          stand.z,
+          footprintTileCoords(bb)
+        )
+      ) {
+        nearLive = true;
+        break;
+      }
+    }
+    if (!nearLive) continue;
+    recordBillboardDwellMs(
+      c.address,
+      deltaMs,
+      achievementUnlockHandlerForAddress(c.address)
+    );
+  }
 }
 
 const blockClaimSessions = new Map<string, BlockClaimSession>();
@@ -5334,6 +5404,10 @@ function sendGoalRewardOutcomeToScorer(
       reason: "ok",
       amountNim: formatGoalRewardNim(decision.amountLuna),
     };
+    recordFieldGoalPayout(
+      scorerAddress,
+      achievementUnlockHandlerForAddress(scorerAddress)
+    );
   } else if (decision.reason === "wallet_cap") {
     payload = { type: "goalRewardOutcome", roomId, reason: "wallet_cap" };
   } else if (decision.reason === "budget_exhausted") {
@@ -6364,6 +6438,7 @@ export function startRoomTick(): void {
       let changed = false;
       const placed = placedMap(roomId);
       if (tickExpiredGatesForRoom(roomId, now)) changed = true;
+      tickBillboardAudienceDwell(roomId, room, TICK_MS);
       const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
       for (const c of room.values()) {
         const result = advanceAlongPathHuman(
@@ -7402,6 +7477,8 @@ export function addClient(
           signboard.createdBy,
           onUnlock
         );
+      } else if (kind === "mine_cooldown_attempt") {
+        recordMineCooldownAttempt(address, onUnlock);
       }
       return;
     }
@@ -9901,6 +9978,17 @@ export function addClient(
               { x: outcome.x, z: outcome.z, colorRgb: outcome.colorRgb }
             );
             if (isPixelRoom(currentRoomId)) {
+              const painters = pixelTilePainterMap(currentRoomId);
+              recordPixelPaintAchievements(
+                address,
+                outcome.x,
+                outcome.z,
+                outcome.colorRgb,
+                painters,
+                otherPresentWalletsInRoom(room, address),
+                achievementUnlockHandler(ws)
+              );
+              painters.set(tileKey(outcome.x, outcome.z), compactAddress(address));
               logPixelPaint(outcome.x, outcome.z, outcome.colorRgb, address);
               invalidatePixelBoardPngCache();
               pixelsPainted += 1;
@@ -10170,6 +10258,7 @@ export function addClient(
         return;
       }
       if (!props.active) {
+        recordMineCooldownAttempt(address, achievementUnlockHandler(ws));
         wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
@@ -10225,6 +10314,7 @@ export function addClient(
         holdMsRequired: holdMs,
         accumAdjacentMs: 0,
         lastSampleAt: 0,
+        ...(claimIntent ? { claimIntent } : {}),
       });
       blockClaimReservation.set(rk, {
         claimId,
@@ -10470,6 +10560,9 @@ export function addClient(
           amountNim: (Number(rewardLuna) / 100_000).toFixed(4),
         } satisfies OutMsg);
       recordBlockMined(address, achievementUnlockHandler(ws));
+      if (s.claimIntent === "direct_adjacent_click") {
+        recordImpatientMiner(address, achievementUnlockHandler(ws));
+      }
       schedulePersistWorldState();
       return;
     }

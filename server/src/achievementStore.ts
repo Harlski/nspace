@@ -14,6 +14,7 @@ import {
   listAchievementsForCounter,
   listAchievementsForDedupePrefix,
   listAchievementsForEvent,
+  listAchievementsForStreakCounter,
   listDailySetAchievements,
   listLoginStreakAchievements,
   RAINBOW_FLOOR_ACHIEVEMENT_ID,
@@ -69,6 +70,14 @@ import {
   type RoomDeluxeProgress,
 } from "./worldcraftAchievementEvaluator.js";
 import {
+  isPixelCollaboratorPaint,
+  monochromeHueKey,
+  parseMonochromeHueKey,
+  PIXEL_CORNER_SEEN_PREFIX,
+  pixelCornerIdForTile,
+  pixelCornerSeenKey,
+} from "./miningPixelAchievementEvaluator.js";
+import {
   countOnboardingPrerequisitesComplete,
   getTelescopeAchievementDefinition,
   isAllOnboardingPrerequisitesComplete,
@@ -88,6 +97,10 @@ import { getLoginStreakDaysForWallet, utcCalendarDay } from "./loginStreakStore.
 import { normalizeRoomId } from "./roomLayouts.js";
 
 let lastExplorationUtcDay: string | null = null;
+
+/** Lifetime daily-state bucket for monochrome streak hue tracking. */
+export const PIXEL_MONOCHROME_HUE_STATE_KEY = "pixel_mono_hue";
+export const PIXEL_MONOCHROME_LIFETIME_DAY = "lifetime";
 
 const ACHIEVEMENT_ACTOR = "NQ07 ACHIEV0000000000000000000000001";
 
@@ -639,6 +652,46 @@ function evaluateCounterAchievements(
   }
 }
 
+function evaluateStreakCounterAchievements(
+  wallet: string,
+  counter: AchievementCounterKey,
+  unlocks: AchievementUnlockWire[]
+): void {
+  const value = getCounterValue(wallet, counter);
+  for (const def of listAchievementsForStreakCounter(counter)) {
+    if (def.criteria.type !== "streak_counter") continue;
+    if (hasCompletion(wallet, def.id)) continue;
+    if (value >= def.criteria.threshold) {
+      completeAchievement(wallet, def, unlocks);
+    }
+  }
+}
+
+function bumpStreakCounterCollecting(
+  wallet: string,
+  counter: AchievementCounterKey,
+  delta: number,
+  unlocks: AchievementUnlockWire[]
+): void {
+  if (!isAchievementEligibleWallet(wallet) || delta <= 0) return;
+  const w = normalizeWallet(wallet);
+  const next = getCounterValue(w, counter) + delta;
+  setCounterValue(w, counter, next);
+  evaluateStreakCounterAchievements(w, counter, unlocks);
+}
+
+function resetStreakCounterCollecting(
+  wallet: string,
+  counter: AchievementCounterKey,
+  value: number,
+  unlocks: AchievementUnlockWire[]
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  setCounterValue(w, counter, Math.max(0, Math.floor(value)));
+  evaluateStreakCounterAchievements(w, counter, unlocks);
+}
+
 function evaluateDedupePrefixAchievements(
   wallet: string,
   seenPrefix: string,
@@ -940,6 +993,110 @@ export function recordPixelPainted(
 ): void {
   if (count <= 0) return;
   bumpAchievementCounter(wallet, "pixels_painted", count, onUnlock);
+}
+
+export function recordImpatientMiner(
+  wallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  fireAchievementEvent(wallet, "impatient_miner", onUnlock);
+}
+
+export function recordMineCooldownAttempt(
+  wallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  bumpAchievementCounter(wallet, "mine_cooldown_attempts", 1, onUnlock);
+}
+
+export function recordFieldGoalPayout(
+  wallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  fireAchievementEvent(wallet, "paid_in_full", onUnlock);
+}
+
+export function recordBillboardDwellMs(
+  wallet: string,
+  deltaMs: number,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (deltaMs <= 0) return;
+  bumpAchievementCounter(wallet, "billboard_dwell_ms", deltaMs, onUnlock);
+}
+
+export function recordPixelCornerPainted(
+  wallet: string,
+  x: number,
+  z: number,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const cornerId = pixelCornerIdForTile(x, z);
+  if (!cornerId) return;
+  const w = normalizeWallet(wallet);
+  const unlocks: AchievementUnlockWire[] = [];
+  const seenKey = pixelCornerSeenKey(cornerId);
+  if (recordAchievementSeen(w, seenKey)) {
+    evaluateDedupePrefixAchievements(w, PIXEL_CORNER_SEEN_PREFIX, unlocks);
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordPixelCollaboratorPaint(
+  wallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  fireAchievementEvent(wallet, "pixel_collaborator", onUnlock);
+}
+
+export function recordPixelMonochromePaint(
+  wallet: string,
+  colorRgb: number,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  const hueKey = monochromeHueKey(colorRgb);
+  const storedHue = parseMonochromeHueKey(
+    getAchievementDailyState(
+      w,
+      PIXEL_MONOCHROME_LIFETIME_DAY,
+      PIXEL_MONOCHROME_HUE_STATE_KEY
+    )
+  );
+  const unlocks: AchievementUnlockWire[] = [];
+  if (storedHue === null || storedHue !== parseMonochromeHueKey(hueKey)) {
+    setAchievementDailyState(
+      w,
+      PIXEL_MONOCHROME_LIFETIME_DAY,
+      PIXEL_MONOCHROME_HUE_STATE_KEY,
+      hueKey
+    );
+    resetStreakCounterCollecting(w, "pixel_monochrome_streak", 1, unlocks);
+  } else {
+    bumpStreakCounterCollecting(w, "pixel_monochrome_streak", 1, unlocks);
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordPixelPaintAchievements(
+  wallet: string,
+  x: number,
+  z: number,
+  colorRgb: number,
+  tilePainters: ReadonlyMap<string, string>,
+  otherPresentWallets: ReadonlySet<string>,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  recordPixelCornerPainted(wallet, x, z, onUnlock);
+  if (
+    isPixelCollaboratorPaint(wallet, x, z, tilePainters, otherPresentWallets)
+  ) {
+    recordPixelCollaboratorPaint(wallet, onUnlock);
+  }
+  recordPixelMonochromePaint(wallet, colorRgb, onUnlock);
 }
 
 export function recordDistinctTileWalked(
@@ -1377,6 +1534,14 @@ function buildProgressRow(
       completedAtMs != null
         ? threshold
         : Math.min(threshold, maxRoomDeluxeProgress(wallet));
+  } else if (def.criteria.type === "streak_counter") {
+    progress =
+      completedAtMs != null
+        ? threshold
+        : Math.min(
+            threshold,
+            getCounterValue(wallet, def.criteria.counter)
+          );
   }
   return {
     achievementId: def.id,

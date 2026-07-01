@@ -3525,6 +3525,12 @@ function enterGame(
       sendPlaceBlock(socket, x, z, game.getPlacementBlockStyle());
     });
     
+    game.setMineCooldownAttemptHandler(() => {
+      if (socket.readyState === WebSocket.OPEN) {
+        sendAchievementSignal(socket, "mine_cooldown_attempt");
+      }
+    });
+
     game.setClaimBlockHandler((x, z, y) => {
       cancelActiveNimClaim?.();
       cancelActiveNimClaim = null;

@@ -843,3 +843,135 @@ test("worldcraft signpost reader dedupes by signboard id", async () => {
     assert.equal(reader?.progress, 10);
   });
 });
+
+test("Impatient Miner fires once on direct adjacent claim intent", async () => {
+  await withAchievementStore(async ({
+    recordImpatientMiner,
+    getAchievementsForWallet,
+  }) => {
+    recordImpatientMiner(WALLET);
+    recordImpatientMiner(WALLET);
+    const row = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "mining-impatient-miner"
+    );
+    assert.equal(row?.completed, true);
+  });
+});
+
+test("Dry Spell completes at 10 cooldown attempts", async () => {
+  await withAchievementStore(async ({
+    recordMineCooldownAttempt,
+    getAchievementsForWallet,
+  }) => {
+    for (let i = 0; i < 10; i += 1) {
+      recordMineCooldownAttempt(WALLET);
+    }
+    const row = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "mining-dry-spell"
+    );
+    assert.equal(row?.completed, true);
+    assert.equal(row?.progress, 10);
+  });
+});
+
+test("Paid in Full is a one-time field payout badge", async () => {
+  await withAchievementStore(async ({
+    recordFieldGoalPayout,
+    getAchievementsForWallet,
+  }) => {
+    recordFieldGoalPayout(WALLET);
+    recordFieldGoalPayout(WALLET);
+    const row = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "mining-paid-in-full"
+    );
+    assert.equal(row?.completed, true);
+  });
+});
+
+test("Billboard Audience accrues dwell milliseconds toward 60s", async () => {
+  await withAchievementStore(async ({
+    recordBillboardDwellMs,
+    getAchievementsForWallet,
+  }) => {
+    recordBillboardDwellMs(WALLET, 30_000);
+    const mid = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "mining-billboard-audience"
+    );
+    assert.equal(mid?.progress, 30_000);
+    assert.equal(mid?.threshold, 60_000);
+    recordBillboardDwellMs(WALLET, 30_000);
+    const done = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "mining-billboard-audience"
+    );
+    assert.equal(done?.completed, true);
+  });
+});
+
+test("Corner to Corner tracks four pixel corner regions", async () => {
+  await withAchievementStore(async ({
+    recordPixelCornerPainted,
+    getAchievementsForWallet,
+  }) => {
+    recordPixelCornerPainted(WALLET, -250, -250);
+    recordPixelCornerPainted(WALLET, 249, -250);
+    recordPixelCornerPainted(WALLET, -250, 249);
+    recordPixelCornerPainted(WALLET, 249, 249);
+    recordPixelCornerPainted(WALLET, 0, 0);
+    const row = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "pixel-corner-to-corner"
+    );
+    assert.equal(row?.completed, true);
+    assert.equal(row?.progress, 4);
+  });
+});
+
+test("Monochrome Discipline streak resets on hue change and completes at 64", async () => {
+  await withAchievementStore(async ({
+    recordPixelMonochromePaint,
+    getAchievementsForWallet,
+  }) => {
+    for (let i = 0; i < 32; i += 1) {
+      recordPixelMonochromePaint(WALLET, 0xff0000);
+    }
+    const mid = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "pixel-monochrome-discipline"
+    );
+    assert.equal(mid?.progress, 32);
+    recordPixelMonochromePaint(WALLET, 0x00ff00);
+    const reset = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "pixel-monochrome-discipline"
+    );
+    assert.equal(reset?.progress, 1);
+    for (let i = 0; i < 63; i += 1) {
+      recordPixelMonochromePaint(WALLET, 0x00ff00);
+    }
+    const done = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "pixel-monochrome-discipline"
+    );
+    assert.equal(done?.completed, true);
+  });
+});
+
+test("Pixel collaborator fires when adjacent foreign paint and co-presence", async () => {
+  await withAchievementStore(async ({
+    recordPixelPaintAchievements,
+    getAchievementsForWallet,
+  }) => {
+    const painters = new Map<string, string>([
+      ["1,0", "NQ07 OTHER000000000000000000000000002"],
+    ]);
+    const present = new Set(["NQ07 OTHER000000000000000000000000002"]);
+    recordPixelPaintAchievements(
+      WALLET,
+      0,
+      0,
+      0xff0000,
+      painters,
+      present
+    );
+    const row = getAchievementsForWallet(WALLET).achievements.find(
+      (a) => a.achievementId === "pixel-collaborator"
+    );
+    assert.equal(row?.completed, true);
+  });
+});

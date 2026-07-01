@@ -1451,6 +1451,7 @@ export class Game {
     null;
   private claimBlockHandler: ((x: number, z: number, y: number) => void) | null =
     null;
+  private mineCooldownAttemptHandler: (() => void) | null = null;
   /**
    * Optional analytics slug for the next `beginBlockClaim` (set by {@link performClaimBlockAtWorld},
    * consumed in the client claim tick when `sendBeginBlockClaim` runs).
@@ -4787,6 +4788,10 @@ export class Game {
     handler: ((x: number, z: number, y: number) => void) | null
   ): void {
     this.claimBlockHandler = handler;
+  }
+
+  setMineCooldownAttemptHandler(handler: (() => void) | null): void {
+    this.mineCooldownAttemptHandler = handler;
   }
 
   setGateDoubleOpenHandler(
@@ -10870,6 +10875,7 @@ export class Game {
         if (bm.claimable && !bm.passable) {
           if (!bm.active) {
             this.showSelfPlayerActionMessage("There's no NIM left here :(");
+            this.mineCooldownAttemptHandler?.();
             return;
           }
           if (this.claimBlockHandler) {

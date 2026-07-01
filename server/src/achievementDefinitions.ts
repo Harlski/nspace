@@ -26,7 +26,10 @@ export type AchievementCounterKey =
   | "blocks_placed"
   | "blocks_placed_commons"
   | "blocks_mined"
+  | "mine_cooldown_attempts"
+  | "billboard_dwell_ms"
   | "pixels_painted"
+  | "pixel_monochrome_streak"
   | "matches_won"
   | "matches_played"
   | "match_win_streak"
@@ -59,6 +62,9 @@ export type AchievementEventKey =
   | "country_picked"
   | "flag_emote_sent"
   | "feedback_submitted"
+  | "impatient_miner"
+  | "paid_in_full"
+  | "pixel_collaborator"
   | "prefab_author"
   | "signpost_scribe"
   | "gatekeeper"
@@ -370,6 +376,52 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     criteria: { type: "counter", counter: "blocks_mined", threshold: 500 },
   },
   {
+    id: "mining-impatient-miner",
+    title: "Impatient Miner",
+    description: "Direct-click an adjacent claimable block to mine it.",
+    category: "mining",
+    points: 10,
+    sortOrder: 240,
+    criteria: { type: "event", event: "impatient_miner" },
+  },
+  {
+    id: "mining-dry-spell",
+    title: "Dry Spell",
+    description:
+      "Try to mine a block on cooldown and see “There's no NIM left here :(” 10 times.",
+    category: "mining",
+    points: 15,
+    sortOrder: 250,
+    criteria: {
+      type: "counter",
+      counter: "mine_cooldown_attempts",
+      threshold: 10,
+    },
+  },
+  {
+    id: "mining-paid-in-full",
+    title: "Paid in Full",
+    description: "Receive at least 1 NIM from a Free Play Field goal payout.",
+    category: "mining",
+    points: 20,
+    sortOrder: 260,
+    criteria: { type: "event", event: "paid_in_full" },
+  },
+  {
+    id: "mining-billboard-audience",
+    title: "Billboard Audience",
+    description:
+      "Spend 60 seconds near a live campaign billboard while at least two players are in the room.",
+    category: "mining",
+    points: 25,
+    sortOrder: 270,
+    criteria: {
+      type: "counter",
+      counter: "billboard_dwell_ms",
+      threshold: 60_000,
+    },
+  },
+  {
     id: SUNNY_SIDE_UP_ACHIEVEMENT_ID,
     title: "Sunny Side Up",
     description: "Place 5000 blocks.",
@@ -424,6 +476,47 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
       type: "counter",
       counter: "pixels_painted",
       threshold: 1000,
+    },
+  },
+  {
+    id: "pixel-corner-to-corner",
+    title: "Corner to Corner",
+    description: "Paint tiles in all four corners of the Pixel room board.",
+    category: "pixel",
+    categoryGroup: "building",
+    points: 40,
+    sortOrder: 180,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "pixel-corner:",
+      threshold: 4,
+    },
+  },
+  {
+    id: "pixel-collaborator",
+    title: "Collaborator",
+    description:
+      "Paint a tile next to another player's pixel while they are in the Pixel room.",
+    category: "pixel",
+    categoryGroup: "building",
+    points: 25,
+    sortOrder: 190,
+    criteria: { type: "event", event: "pixel_collaborator" },
+  },
+  {
+    id: "pixel-monochrome-discipline",
+    title: "Monochrome Discipline",
+    description:
+      "Paint 64 pixels in a row using the same hue without changing color mid-run.",
+    category: "pixel",
+    categoryGroup: "building",
+    points: 35,
+    sortOrder: 200,
+    criteria: {
+      type: "streak_counter",
+      counter: "pixel_monochrome_streak",
+      threshold: 64,
+      resetOn: "hue_change",
     },
   },
   {
@@ -1096,6 +1189,10 @@ const definitionsByCounter = new Map<
   AchievementDefinition[]
 >();
 const definitionsByDedupePrefix = new Map<string, AchievementDefinition[]>();
+const definitionsByStreakCounter = new Map<
+  AchievementCounterKey,
+  AchievementDefinition[]
+>();
 const dailySetAchievements: AchievementDefinition[] = [];
 const loginStreakAchievements: AchievementDefinition[] = [];
 
@@ -1116,6 +1213,10 @@ for (const def of ACHIEVEMENT_DEFINITIONS) {
     definitionsByDedupePrefix.set(def.criteria.seenPrefix, list);
   } else if (def.criteria.type === "daily_set") {
     dailySetAchievements.push(def);
+  } else if (def.criteria.type === "streak_counter") {
+    const list = definitionsByStreakCounter.get(def.criteria.counter) ?? [];
+    list.push(def);
+    definitionsByStreakCounter.set(def.criteria.counter, list);
   }
 }
 
@@ -1149,6 +1250,12 @@ export function listAchievementsForDedupePrefix(
   seenPrefix: string
 ): ReadonlyArray<AchievementDefinition> {
   return definitionsByDedupePrefix.get(seenPrefix) ?? [];
+}
+
+export function listAchievementsForStreakCounter(
+  counter: AchievementCounterKey
+): ReadonlyArray<AchievementDefinition> {
+  return definitionsByStreakCounter.get(counter) ?? [];
 }
 
 export function isAchievementOnlySku(sku: string): boolean {
