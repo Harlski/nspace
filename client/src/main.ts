@@ -518,7 +518,7 @@ function openMainMenu(): void {
       saveCachedSession(token, address, nimiqPay);
       const ok = await runUsernamePromptGate(token, address, usernamePrompt);
       if (!ok) return;
-      enterGame(token, address, nimiqPay);
+      enterGame(token, address, nimiqPay, { freshSignIn: true });
     },
     onLogout: (address) => {
       if (address) removeCachedSession(address);
@@ -532,7 +532,7 @@ function enterGame(
   token: string,
   address: string,
   nimiqPay?: boolean,
-  opts?: { initialRoomId?: string; inviteLinkSlug?: string }
+  opts?: { initialRoomId?: string; inviteLinkSlug?: string; freshSignIn?: boolean }
 ): void {
   const app = document.getElementById("app");
   if (!app) return;
@@ -5417,17 +5417,20 @@ function enterGame(
   };
 
   let loadingBlackoutReveal = false;
+  let freshSignInWsPending = opts?.freshSignIn === true;
 
   const connectToRoom = (
     room: string,
     spawn?: { x: number; z: number },
-    opts?: { resume?: boolean; blackout?: boolean }
+    connectOpts?: { resume?: boolean; blackout?: boolean }
   ): void => {
+    const signIn = freshSignInWsPending;
+    if (freshSignInWsPending) freshSignInWsPending = false;
     connectGen += 1;
     const myGen = connectGen;
     clearWelcomeDeadlineTimer();
-    if (opts?.resume) {
-      loadingBlackoutReveal = opts.blackout === true;
+    if (connectOpts?.resume) {
+      loadingBlackoutReveal = connectOpts.blackout === true;
       clearRoomTransitionProgressTimer();
       if (loadingBlackoutReveal) {
         hud.setLoadingVisible(true, { blackout: true });
@@ -5509,12 +5512,13 @@ function enterGame(
           hud.setPerfHudLatencyMs(null);
         },
         {
-          ...(opts?.resume
+          ...(connectOpts?.resume
             ? { resume: true }
             : spawn
               ? { spawnX: spawn.x, spawnZ: spawn.z }
               : {}),
           stream: streamMode,
+          signIn,
         }
       );
       wireWsHandlers(ws);
@@ -6233,6 +6237,7 @@ async function bootstrapJoinInvite(): Promise<boolean> {
     enterGame(result.token, result.address, result.nimiqPay, {
       initialRoomId: result.lobbyRoomId,
       inviteLinkSlug: slug,
+      freshSignIn: true,
     });
     return true;
   } catch (e) {

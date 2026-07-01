@@ -165,3 +165,34 @@ test("guest pending refreshes on markGuestConnectNoticePending", () => {
 test("connect notice dedupe window constant is 15 minutes", () => {
   assert.equal(CONNECT_NOTICE_DEDUPE_MS, 15 * 60_000);
 });
+
+test("signIn WS param synthesizes wallet pending without auth mark", async () => {
+  resetConnectNoticeStateForTests();
+  const sent: string[] = [];
+  const original = globalThis.fetch;
+  process.env.TELEGRAM_BOT_TOKEN = "test-token";
+  process.env.TELEGRAM_CHAT_ID = "1";
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+    if (body.text) sent.push(body.text);
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+  const { maybeSendConnectNotice } = await import("../src/connectNotice.js");
+  try {
+    await maybeSendConnectNotice(
+      {
+        address: "NQABAAAAAAAAAAAAAAAAAAAAAAAAAA04",
+        roomId: "hub",
+        signInRequested: true,
+      },
+      "https://nimiq.space"
+    );
+    assert.equal(sent.length, 1);
+    assert.match(sent[0]!, /^NSpace connect\n/);
+  } finally {
+    globalThis.fetch = original;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.TELEGRAM_CHAT_ID;
+    resetConnectNoticeStateForTests();
+  }
+});

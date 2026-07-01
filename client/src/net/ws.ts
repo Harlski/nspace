@@ -561,6 +561,8 @@ export type ConnectGameWsOptions = {
   stream?: boolean;
   /** Restore last room + tile when disconnect was within server grace window. */
   resume?: boolean;
+  /** Fresh sign-in entry (first WS after wallet auth or guest invite — not reconnect). */
+  signIn?: boolean;
 };
 
 export function connectGameWs(
@@ -586,6 +588,9 @@ export function connectGameWs(
   }
   if (opts?.stream) {
     q.set("stream", "1");
+  }
+  if (opts?.signIn) {
+    q.set("signIn", "1");
   }
   let originBase: string;
   try {

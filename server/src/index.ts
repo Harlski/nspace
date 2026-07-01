@@ -3427,6 +3427,8 @@ wss.on("connection", (ws, req) => {
       roomId,
       guestDisplayName,
       guestInviteSlug,
+      signInRequested: url.searchParams.get("signIn") === "1",
+      nimiqPay: sessionNimiqPay,
     },
     PUBLIC_BASE_URL
   );

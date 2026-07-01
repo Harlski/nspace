@@ -17,9 +17,14 @@ import {
 } from "./rooms.js";
 import { sendTelegramPlainText } from "./telegramNotify.js";
 
-export const CONNECT_NOTICE_WALLET_PENDING_TTL_MS = 60_000;
+/** Wallet auth → first WS may include username prompt; keep pending long enough to survive it. */
+export const CONNECT_NOTICE_WALLET_PENDING_TTL_MS = 5 * 60_000;
 export const CONNECT_NOTICE_GUEST_PENDING_TTL_MS = 5 * 60_000;
 export const CONNECT_NOTICE_DEDUPE_MS = 15 * 60_000;
+
+function logConnectNotice(event: string, detail: Record<string, unknown>): void {
+  console.log(`[connect] ${event}`, JSON.stringify(detail));
+}
 
 export type PendingWalletConnectNotice = {
   kind: "wallet";
@@ -282,20 +287,74 @@ export type ConnectNoticeWsContext = {
   roomId: string;
   guestDisplayName?: string;
   guestInviteSlug?: string;
+  /** First game WS after fresh wallet login or guest invite entry (not reconnect/resume). */
+  signInRequested?: boolean;
+  nimiqPay?: boolean;
 };
+
+function resolveConnectNoticePending(
+  ctx: ConnectNoticeWsContext,
+  nowMs: number
+): PendingConnectNotice | null {
+  const fromAuth = consumePendingConnectNotice(ctx.address, nowMs);
+  if (fromAuth) return fromAuth;
+  if (!ctx.signInRequested) return null;
+
+  if (ctx.address.startsWith("guest:")) {
+    const slug = (ctx.guestInviteSlug ?? "").trim();
+    if (!slug) return null;
+    const invite = getInviteBySlug(slug);
+    if (!invite) return null;
+    return {
+      kind: "guest",
+      guestAddress: ctx.address.trim(),
+      hostWallet: walletKey(invite.hostWallet),
+      inviteSlug: slug,
+      markedAt: nowMs,
+    };
+  }
+
+  const wallet = walletKey(ctx.address);
+  if (!wallet) return null;
+  return {
+    kind: "wallet",
+    address: wallet,
+    nimiqPay: ctx.nimiqPay === true,
+    markedAt: nowMs,
+  };
+}
 
 export async function maybeSendConnectNotice(
   ctx: ConnectNoticeWsContext,
   publicBaseUrl: string
 ): Promise<void> {
   const nowMs = Date.now();
-  const pending = consumePendingConnectNotice(ctx.address, nowMs);
-  if (!pending) return;
-  if (shouldSkipDedupe(pending, nowMs)) return;
+  const pending = resolveConnectNoticePending(ctx, nowMs);
+  if (!pending) {
+    logConnectNotice("skip", {
+      reason: "no_trigger",
+      address: ctx.address.slice(0, 16),
+      signInRequested: ctx.signInRequested === true,
+    });
+    return;
+  }
+  if (shouldSkipDedupe(pending, nowMs)) {
+    logConnectNotice("skip", {
+      reason: "dedupe",
+      address: ctx.address.slice(0, 16),
+      kind: pending.kind,
+    });
+    return;
+  }
 
   if (pending.kind === "guest") {
     const invite = getInviteBySlug(pending.inviteSlug);
     if (!invite || invite.hostWallet !== pending.hostWallet) {
+      logConnectNotice("skip", {
+        reason: "guest_invite_invalid",
+        guest: pending.guestAddress.slice(0, 20),
+        slug: pending.inviteSlug,
+      });
       return;
     }
   }
@@ -307,6 +366,20 @@ export async function maybeSendConnectNotice(
     publicBaseUrl,
     nowMs,
   });
-  recordConnectNoticeSent(pending, nowMs);
-  await sendTelegramPlainText(text, "connect");
+  const sent = await sendTelegramPlainText(text, "connect");
+  if (sent) {
+    recordConnectNoticeSent(pending, nowMs);
+    logConnectNotice("sent", {
+      kind: pending.kind,
+      address: ctx.address.slice(0, 16),
+      roomId: ctx.roomId,
+      bytes: text.length,
+    });
+  } else {
+    logConnectNotice("skip", {
+      reason: "telegram_failed",
+      kind: pending.kind,
+      address: ctx.address.slice(0, 16),
+    });
+  }
 }

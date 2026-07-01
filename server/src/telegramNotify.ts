@@ -1,13 +1,25 @@
 function telegramEnvTrim(key: string): string {
-  return String(process.env[key] ?? "").trim();
+  let v = String(process.env[key] ?? "").trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  return v;
 }
 
-const TELEGRAM_BOT_TOKEN = telegramEnvTrim("TELEGRAM_BOT_TOKEN");
-const TELEGRAM_CHAT_ID = telegramEnvTrim("TELEGRAM_CHAT_ID");
+function telegramBotToken(): string {
+  return telegramEnvTrim("TELEGRAM_BOT_TOKEN");
+}
+
+function telegramDefaultChatId(): string {
+  return telegramEnvTrim("TELEGRAM_CHAT_ID");
+}
 
 /** True when a bot token and a default chat id are both configured. */
 export function isTelegramConfigured(): boolean {
-  return Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID);
+  return Boolean(telegramBotToken() && telegramDefaultChatId());
 }
 
 /**
@@ -20,13 +32,20 @@ export async function sendTelegramPlainText(
   text: string,
   logTag: string,
   chatIdOverride?: string
-): Promise<void> {
-  const chatId = (chatIdOverride ?? "").trim() || TELEGRAM_CHAT_ID;
-  if (!TELEGRAM_BOT_TOKEN || !chatId) return;
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+): Promise<boolean> {
+  const token = telegramBotToken();
+  const chatId = (chatIdOverride ?? "").trim() || telegramDefaultChatId();
+  if (!token || !chatId) {
+    console.warn(
+      `[${logTag}] Telegram env missing:`,
+      JSON.stringify({ hasToken: Boolean(token), hasChatId: Boolean(chatId) })
+    );
+    return false;
+  }
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
   try {
     const chatIdPayload = /^-?\d+$/.test(chatId) ? Number(chatId) : chatId;
-    await fetch(url, {
+    const resp = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -35,7 +54,21 @@ export async function sendTelegramPlainText(
         disable_web_page_preview: true,
       }),
     });
+    const bodyText = await resp.text();
+    if (!resp.ok) {
+      console.error(
+        `[${logTag}] Telegram response error:`,
+        JSON.stringify({
+          ok: resp.ok,
+          status: resp.status,
+          body: bodyText.slice(0, 400),
+        })
+      );
+      return false;
+    }
+    return true;
   } catch (err) {
     console.error(`[${logTag}] Telegram notify failed:`, err);
+    return false;
   }
 }
