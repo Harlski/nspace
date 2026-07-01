@@ -99,6 +99,7 @@ import {
   recordFloorRecolored,
   recordGatekeeperOpen,
   recordImpatientMiner,
+  recordMatchChallengeStarted,
   recordMatchEnd,
   recordMineCooldownAttempt,
   recordOutfieldTilesWalked,
@@ -118,6 +119,10 @@ import {
   type AchievementUnlockWire,
   type MatchEndParticipantInput,
 } from "./achievementStore.js";
+import {
+  isRushHourFieldGoal,
+  isUnderdogCountryAtGoalTime,
+} from "./fieldGoalAchievementEvaluator.js";
 import { achievementCelebrationCount } from "./achievementCelebration.js";
 import { getPublicLoadoutForWallet } from "./cosmeticStore.js";
 import {
@@ -5430,6 +5435,10 @@ function handleWorldcupGoal(
 ): void {
   let country: string | null = null;
   let scorerName: string | null = null;
+  const topBeforeGoal =
+    scorerAddress && normalizeRoomId(roomId) === WORLDCUP_FIELD_ROOM_ID
+      ? worldcupGetTopCountries(8)
+      : [];
   if (scorerAddress) {
     const compact = compactAddress(scorerAddress);
     scorerName = getEffectivePlayerDisplayName(compact);
@@ -5456,11 +5465,14 @@ function handleWorldcupGoal(
     normalizeRoomId(roomId) === WORLDCUP_FIELD_ROOM_ID
   ) {
     const distinct = worldcupDistinctPlayersInRoom(roomId);
+    const contested = distinct >= WORLDCUP_GOAL_REWARD.minPlayers;
     recordFieldGoalScored(
       scorerAddress,
       {
-        contested: distinct >= WORLDCUP_GOAL_REWARD.minPlayers,
+        contested,
         solo: distinct === 1,
+        rushHour: contested && isRushHourFieldGoal(distinct),
+        underdog: isUnderdogCountryAtGoalTime(country, topBeforeGoal),
       },
       achievementUnlockHandlerForAddress(scorerAddress)
     );
@@ -5507,6 +5519,16 @@ interface WorldcupMatchRuntime {
   lastBroadcastMs: number;
   /** True when the Match ended because of a goal during Golden Goal. */
   endedByGoldenGoal?: boolean;
+  /** Elapsed golden-phase ms when a golden goal ended the Match. */
+  goldenElapsedMsAtWin?: number;
+  /** True once regulation ended tied and golden phase began. */
+  enteredGoldenPhase?: boolean;
+  /** Largest goal deficit faced by each side during the Match. */
+  maxDeficitA?: number;
+  maxDeficitB?: number;
+  /** True when a side scored at least one own goal. */
+  ownGoalByA?: boolean;
+  ownGoalByB?: boolean;
   /**
    * While > now, the Match is in a post-goal kickoff freeze: both players are reset to their
    * spawns, movement is rejected, and the Match clock is paused. 0 = live play.
@@ -5557,32 +5579,90 @@ function broadcastWorldcupMatchState(
   });
 }
 
+function worldcupSideForWallet(
+  m: WorldcupMatchRuntime,
+  wallet: string
+): WorldcupMatchSide | null {
+  const compact = compactAddress(wallet);
+  if (compact === m.a) return "a";
+  if (compact === m.b) return "b";
+  return null;
+}
+
+function worldcupOwnGoalSideForGoal(
+  m: WorldcupMatchRuntime,
+  scoringSide: WorldcupMatchSide,
+  lastKickerAddress: string | null
+): WorldcupMatchSide | null {
+  if (!lastKickerAddress) return null;
+  const kickerSide = worldcupSideForWallet(m, lastKickerAddress);
+  if (!kickerSide || kickerSide === scoringSide) return null;
+  return kickerSide;
+}
+
+function worldcupUpdateMatchTracking(
+  m: WorldcupMatchRuntime,
+  ownGoalSide: WorldcupMatchSide | null
+): void {
+  if (m.state.phase === "golden" || (m.state.goldenElapsedMs ?? 0) > 0) {
+    m.enteredGoldenPhase = true;
+  }
+  m.maxDeficitA = Math.max(
+    m.maxDeficitA ?? 0,
+    Math.max(0, m.state.scoreB - m.state.scoreA)
+  );
+  m.maxDeficitB = Math.max(
+    m.maxDeficitB ?? 0,
+    Math.max(0, m.state.scoreA - m.state.scoreB)
+  );
+  if (ownGoalSide === "a") m.ownGoalByA = true;
+  if (ownGoalSide === "b") m.ownGoalByB = true;
+}
+
 function worldcupMatchEndParticipantInput(
   m: WorldcupMatchRuntime,
   side: WorldcupMatchSide
 ): MatchEndParticipantInput {
   const wallet = side === "a" ? m.a : m.b;
   const goalsScored = side === "a" ? m.state.scoreA : m.state.scoreB;
+  const goalsConceded = side === "a" ? m.state.scoreB : m.state.scoreA;
   const priorWinStreak = getAchievementCounterValue(wallet, "match_win_streak");
+  const maxTrailingDeficit =
+    side === "a" ? (m.maxDeficitA ?? 0) : (m.maxDeficitB ?? 0);
+  const scoredOwnGoal =
+    side === "a" ? Boolean(m.ownGoalByA) : Boolean(m.ownGoalByB);
   const outcome = m.state.outcome;
+  const shared = {
+    wallet,
+    goalsScored,
+    goalsConceded,
+    maxTrailingDeficit,
+    priorWinStreak,
+    enteredGoldenPhase: Boolean(m.enteredGoldenPhase),
+    scoredOwnGoal,
+    goldenElapsedMsAtWin:
+      m.endedByGoldenGoal &&
+      outcome?.result === "win" &&
+      outcome.winner === side
+        ? m.goldenElapsedMsAtWin
+        : undefined,
+  };
   if (!outcome || outcome.result === "draw") {
-    return { wallet, result: "draw", goalsScored, priorWinStreak };
+    return { ...shared, result: "draw" };
   }
   if (outcome.winner === side) {
     return {
-      wallet,
+      ...shared,
       result: "win",
       winReason: outcome.reason,
-      goalsScored,
-      priorWinStreak,
       goldenGoalWin: Boolean(m.endedByGoldenGoal && outcome.reason === "score"),
     };
   }
   return {
-    wallet,
+    ...shared,
     result: "loss",
-    goalsScored,
-    priorWinStreak,
+    winReason:
+      outcome.reason === "opponent_left" ? "opponent_left" : undefined,
   };
 }
 
@@ -5693,7 +5773,11 @@ function worldcupSpectatorSeat(index: number): { x: number; z: number } {
 }
 
 /** A goal in a Match Pitch: which net was scored decides the side (own goals count). */
-function worldcupHandleMatchGoal(pitchRoomId: string, goalId: string): void {
+function worldcupHandleMatchGoal(
+  pitchRoomId: string,
+  goalId: string,
+  lastKickerAddress: string | null = null
+): void {
   const m = worldcupMatches.get(normalizeRoomId(pitchRoomId));
   if (!m || m.state.phase === "ended") return;
   // Ignore goals during the post-goal kickoff freeze (players are frozen, ball just reset).
@@ -5701,12 +5785,15 @@ function worldcupHandleMatchGoal(pitchRoomId: string, goalId: string): void {
   if (goalId !== "west" && goalId !== "east") return;
   const wasGolden = m.state.phase === "golden";
   const side = worldcupScoringSideForGoal(goalId);
+  const ownGoalSide = worldcupOwnGoalSideForGoal(m, side, lastKickerAddress);
   m.state = worldcupReduceMatch(m.state, { type: "goal", side }, WORLDCUP_MATCH_CFG);
+  worldcupUpdateMatchTracking(m, ownGoalSide);
   const now = Date.now();
   broadcastWorldcupMatchState(m, true, now);
   const matchEnded = m.state.phase === "ended";
   if (matchEnded && wasGolden && m.state.outcome?.result === "win") {
     m.endedByGoldenGoal = true;
+    m.goldenElapsedMsAtWin = m.state.goldenElapsedMs;
   }
   // If this goal didn't end the Match, reset both players to their kickoff spots and freeze
   // them for a short countdown before play resumes.
@@ -5975,6 +6062,11 @@ function worldcupStartMatch(
   // Spawn the "{identicon} vs {identicon}" spectate portal where the match was started from.
   worldcupBroadcastPortal(runtime);
   broadcastWorldcupMatchState(runtime, true, now);
+  recordMatchChallengeStarted(
+    challenger.address,
+    accepter.address,
+    (wallet, unlocks) => achievementUnlockHandlerForAddress(wallet)(unlocks)
+  );
 }
 
 /** Find the live (non-ended) Match a wallet is playing in, if any. */
@@ -6102,6 +6194,7 @@ function worldcupTickMatches(now: number): void {
       const dtMs = Math.max(0, now - m.lastTickMs);
       m.lastTickMs = now;
       m.state = worldcupReduceMatch(m.state, { type: "tick", dtMs }, WORLDCUP_MATCH_CFG);
+      if (m.state.phase === "golden") m.enteredGoldenPhase = true;
       broadcastWorldcupMatchState(m, false, now);
       if (m.state.phase === "ended") worldcupOnMatchEnded(m, now);
     } else if (
@@ -6677,7 +6770,8 @@ export function startRoomTick(): void {
           onGoal: isFieldRoom
             ? (_ball, goalId, scorer) => handleWorldcupGoal(roomId, goalId, scorer)
             : isMatchPitch
-              ? (_ball, goalId) => worldcupHandleMatchGoal(nRoom, goalId)
+              ? (ball, goalId) =>
+                  worldcupHandleMatchGoal(nRoom, goalId, ball.lastKickerAddress)
               : undefined,
           colliders: goalieColliders,
           broadcastBallState: (balls) =>

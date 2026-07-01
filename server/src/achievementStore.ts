@@ -47,6 +47,9 @@ import {
   TELEPORTER_DEST_SEEN_PREFIX,
 } from "./explorationAchievementEvaluator.js";
 import {
+  computeFieldGoalDailyStreakUpdate,
+} from "./fieldGoalAchievementEvaluator.js";
+import {
   FLOOR_RECOLOR_SEEN_PREFIX,
   floorRecolorSeenKey,
   formatRoomDeluxeProgress,
@@ -101,6 +104,13 @@ let lastExplorationUtcDay: string | null = null;
 /** Lifetime daily-state bucket for monochrome streak hue tracking. */
 export const PIXEL_MONOCHROME_HUE_STATE_KEY = "pixel_mono_hue";
 export const PIXEL_MONOCHROME_LIFETIME_DAY = "lifetime";
+export const ACHIEVEMENT_LIFETIME_DAY = "lifetime";
+export const FIELD_GOAL_LAST_SCORED_DAY_KEY = "field_goal_last_scored_day";
+export const HANDSHAKE_CHALLENGER_VS_PREFIX = "handshake_challenger_vs:";
+
+export function handshakeChallengerVsKey(opponentWallet: string): string {
+  return `${HANDSHAKE_CHALLENGER_VS_PREFIX}${normalizeWallet(opponentWallet)}`;
+}
 
 const ACHIEVEMENT_ACTOR = "NQ07 ACHIEV0000000000000000000000001";
 
@@ -919,16 +929,78 @@ export function recordMatchEnd(
 
 export function recordFieldGoalScored(
   wallet: string,
-  opts: { contested?: boolean; solo?: boolean } = {},
+  opts: {
+    contested?: boolean;
+    solo?: boolean;
+    rushHour?: boolean;
+    underdog?: boolean;
+    utcDay?: string;
+  } = {},
   onUnlock?: AchievementUnlockCallback
 ): void {
   if (!isWorldCupAchievementProgressEnabled() || !isAchievementEligibleWallet(wallet)) return;
   const unlocks: AchievementUnlockWire[] = [];
-  bumpCounterCollecting(wallet, "field_goals_scored", 1, unlocks);
-  fireEventCollecting(wallet, "field_goal_scored", unlocks);
-  if (opts.contested) fireEventCollecting(wallet, "field_goal_contested", unlocks);
-  if (opts.solo) fireEventCollecting(wallet, "field_goal_solo", unlocks);
+  const w = normalizeWallet(wallet);
+  bumpCounterCollecting(w, "field_goals_scored", 1, unlocks);
+  fireEventCollecting(w, "field_goal_scored", unlocks);
+  if (opts.contested) fireEventCollecting(w, "field_goal_contested", unlocks);
+  if (opts.solo) fireEventCollecting(w, "field_goal_solo", unlocks);
+  if (opts.rushHour) fireEventCollecting(w, "field_goal_rush_hour", unlocks);
+  if (opts.underdog) fireEventCollecting(w, "field_underdog_country", unlocks);
+
+  const today = opts.utcDay ?? utcCalendarDay();
+  const lastScoredDay = getAchievementDailyState(
+    w,
+    ACHIEVEMENT_LIFETIME_DAY,
+    FIELD_GOAL_LAST_SCORED_DAY_KEY
+  );
+  const streakUpdate = computeFieldGoalDailyStreakUpdate(
+    getCounterValue(w, "field_goal_daily_streak"),
+    lastScoredDay,
+    today
+  );
+  if (streakUpdate.firstScoreToday) {
+    setAchievementDailyState(
+      w,
+      ACHIEVEMENT_LIFETIME_DAY,
+      FIELD_GOAL_LAST_SCORED_DAY_KEY,
+      today
+    );
+    setCounterCollecting(w, "field_goal_daily_streak", streakUpdate.streak, unlocks);
+  }
+
   if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+/** Track mutual same-day rivalry when a Match begins (challenger vs accepter). */
+export function recordMatchChallengeStarted(
+  challengerWallet: string,
+  accepterWallet: string,
+  onUnlock?: AchievementUnlockForWalletCallback
+): void {
+  if (!isWorldCupAchievementProgressEnabled()) return;
+  if (
+    !isAchievementEligibleWallet(challengerWallet) ||
+    !isAchievementEligibleWallet(accepterWallet)
+  ) {
+    return;
+  }
+  const challenger = normalizeWallet(challengerWallet);
+  const accepter = normalizeWallet(accepterWallet);
+  const utcDay = utcCalendarDay();
+  const unlocks: AchievementUnlockWire[] = [];
+  if (
+    getAchievementDailyState(accepter, utcDay, handshakeChallengerVsKey(challenger))
+  ) {
+    fireEventCollecting(accepter, "handshake_rival", unlocks);
+  }
+  setAchievementDailyState(
+    challenger,
+    utcDay,
+    handshakeChallengerVsKey(accepter),
+    "1"
+  );
+  if (unlocks.length > 0 && onUnlock) onUnlock(accepter, unlocks);
 }
 
 export function recordChatMessageSent(

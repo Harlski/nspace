@@ -18,7 +18,8 @@ export type AchievementCategory =
   | "exploration"
   | "worldcraft"
   | "play_space"
-  | "meta";
+  | "meta"
+  | "misc";
 
 export type AchievementCategoryGroup = "minigames" | "building";
 
@@ -34,6 +35,7 @@ export type AchievementCounterKey =
   | "matches_played"
   | "match_win_streak"
   | "field_goals_scored"
+  | "field_goal_daily_streak"
   | "chat_messages_sent";
 
 export type AchievementEventKey =
@@ -51,6 +53,14 @@ export type AchievementEventKey =
   | "challenge_accepted"
   | "golden_goal_win"
   | "opponent_left_win"
+  | "match_clean_sheet"
+  | "match_comeback_win"
+  | "golden_patience_win"
+  | "match_full_time"
+  | "match_own_goal_win"
+  | "handshake_rival"
+  | "field_goal_rush_hour"
+  | "field_underdog_country"
   | "match_goals_peak_1"
   | "match_goals_peak_2"
   | "match_goals_peak_3"
@@ -77,6 +87,7 @@ export const WORLDCUP_ACHIEVEMENT_COUNTERS: ReadonlySet<AchievementCounterKey> =
     "matches_played",
     "match_win_streak",
     "field_goals_scored",
+    "field_goal_daily_streak",
   ]);
 
 /** World Cup seasonal one-time events — not fired when WORLDCUP_ENABLED is off. */
@@ -89,6 +100,14 @@ export const WORLDCUP_ACHIEVEMENT_EVENTS: ReadonlySet<AchievementEventKey> =
     "challenge_accepted",
     "golden_goal_win",
     "opponent_left_win",
+    "match_clean_sheet",
+    "match_comeback_win",
+    "golden_patience_win",
+    "match_full_time",
+    "match_own_goal_win",
+    "handshake_rival",
+    "field_goal_rush_hour",
+    "field_underdog_country",
     "match_goals_peak_1",
     "match_goals_peak_2",
     "match_goals_peak_3",
@@ -396,29 +415,6 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
       type: "counter",
       counter: "mine_cooldown_attempts",
       threshold: 10,
-    },
-  },
-  {
-    id: "mining-paid-in-full",
-    title: "Paid in Full",
-    description: "Receive at least 1 NIM from a Free Play Field goal payout.",
-    category: "mining",
-    points: 20,
-    sortOrder: 260,
-    criteria: { type: "event", event: "paid_in_full" },
-  },
-  {
-    id: "mining-billboard-audience",
-    title: "Billboard Audience",
-    description:
-      "Spend 60 seconds near a live campaign billboard while at least two players are in the room.",
-    category: "mining",
-    points: 25,
-    sortOrder: 270,
-    criteria: {
-      type: "counter",
-      counter: "billboard_dwell_ms",
-      threshold: 60_000,
     },
   },
   {
@@ -731,6 +727,69 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     criteria: { type: "counter", counter: "match_win_streak", threshold: 10 },
   },
   {
+    id: "match-clean-sheet",
+    title: "Clean Sheet",
+    description: "Win a World Cup Match without conceding a goal.",
+    category: "football_match",
+    categoryGroup: "minigames",
+    points: 25,
+    sortOrder: 1210,
+    criteria: { type: "event", event: "match_clean_sheet" },
+  },
+  {
+    id: "match-comeback-kid",
+    title: "Comeback Kid",
+    description: "Win a Match after trailing by at least two goals.",
+    category: "football_match",
+    categoryGroup: "minigames",
+    points: 30,
+    sortOrder: 1220,
+    criteria: { type: "event", event: "match_comeback_win" },
+  },
+  {
+    id: "match-golden-patience",
+    title: "Golden Patience",
+    description:
+      "Win via Golden Goal after regulation ended tied — not in the first golden minute.",
+    category: "football_match",
+    categoryGroup: "minigames",
+    points: 25,
+    sortOrder: 1230,
+    criteria: { type: "event", event: "golden_patience_win" },
+  },
+  {
+    id: "match-handshake-rival",
+    title: "Handshake Rival",
+    description:
+      "Accept a Challenge from someone you already challenged earlier the same UTC day.",
+    category: "football_match",
+    categoryGroup: "minigames",
+    points: 15,
+    sortOrder: 1240,
+    criteria: { type: "event", event: "handshake_rival" },
+  },
+  {
+    id: "match-full-time",
+    title: "Full Time",
+    description:
+      "Complete a Match through regulation and golden time without a walkover.",
+    category: "football_match",
+    categoryGroup: "minigames",
+    points: 10,
+    sortOrder: 1250,
+    criteria: { type: "event", event: "match_full_time" },
+  },
+  {
+    id: "match-own-goal-hero",
+    title: "Own Goal Hero",
+    description: "Score an own goal in a Match you still win.",
+    category: "football_match",
+    categoryGroup: "minigames",
+    points: 20,
+    sortOrder: 1260,
+    criteria: { type: "event", event: "match_own_goal_win" },
+  },
+  {
     id: "field-first-goal",
     title: "Field Goal",
     description: "Score your first credited goal on the Free Play Field.",
@@ -823,6 +882,52 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     criteria: { type: "event", event: "flag_emote_sent" },
   },
   {
+    id: "field-rush-hour",
+    title: "Rush Hour",
+    description:
+      "Score a Contested Free Play Field goal with at least four players on the pitch.",
+    category: "football_free_play",
+    categoryGroup: "minigames",
+    points: 25,
+    sortOrder: 2075,
+    criteria: { type: "event", event: "field_goal_rush_hour" },
+  },
+  {
+    id: "field-daily-streak",
+    title: "Daily Streak",
+    description: "Score on three consecutive UTC calendar days on the Free Play Field.",
+    category: "football_free_play",
+    categoryGroup: "minigames",
+    points: 20,
+    sortOrder: 2078,
+    criteria: {
+      type: "counter",
+      counter: "field_goal_daily_streak",
+      threshold: 3,
+    },
+  },
+  {
+    id: "field-underdog-country",
+    title: "Underdog Country",
+    description:
+      "Score for a country outside today's top three on the leaderboard.",
+    category: "football_free_play",
+    categoryGroup: "minigames",
+    points: 15,
+    sortOrder: 2079,
+    criteria: { type: "event", event: "field_underdog_country" },
+  },
+  {
+    id: "mining-paid-in-full",
+    title: "Paid in Full",
+    description: "Receive at least 1 NIM from a Free Play Field goal payout.",
+    category: "football_free_play",
+    categoryGroup: "minigames",
+    points: 20,
+    sortOrder: 2080,
+    criteria: { type: "event", event: "paid_in_full" },
+  },
+  {
     id: "social-feedback-first",
     title: "Voice Heard",
     description: "Submit your first feedback ticket.",
@@ -908,6 +1013,20 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
       type: "counter",
       counter: "chat_messages_sent",
       threshold: 1000,
+    },
+  },
+  {
+    id: "mining-billboard-audience",
+    title: "Billboard Audience",
+    description:
+      "Spend 60 seconds near a live campaign billboard while at least two players are in the room.",
+    category: "misc",
+    points: 25,
+    sortOrder: 3100,
+    criteria: {
+      type: "counter",
+      counter: "billboard_dwell_ms",
+      threshold: 60_000,
     },
   },
   {

@@ -179,6 +179,12 @@ Gated behind **`WORLDCUP_ENABLED`** (server) / **`VITE_WORLDCUP_ENABLED`** (clie
 - [x] **Worldcraft category** — Palette Painter, Rainbow Floor, Architect's Toolkit, Prefab Author/Curator, Signpost Scribe/Reader, Gatekeeper, Trust Circle, Room Maker Deluxe ([`server/src/worldcraftAchievementEvaluator.ts`](../server/src/worldcraftAchievementEvaluator.ts))
 - [x] Server hooks — floor recolor, terrain shapes, prefab publish/stamp, signpost place, gate open/ACL walk, furnished-room composite; `achievementSignal` `open_signboard` validated against signboard catalog
 
+## Achievements v3 (World Cup extensions)
+
+- [x] **Match extensions** — Clean Sheet, Comeback Kid, Golden Patience, Handshake Rival, Full Time, Own Goal Hero ([`server/src/matchAchievementEvaluator.ts`](../server/src/matchAchievementEvaluator.ts))
+- [x] **Free Play Field extensions** — Rush Hour (≥4 players), Daily Streak (3 UTC days), Underdog Country ([`server/src/fieldGoalAchievementEvaluator.ts`](../server/src/fieldGoalAchievementEvaluator.ts))
+- [x] Server hooks — match runtime tracks max deficit, own goals, golden phase; field goal leaderboard snapshot at credit time; mutual same-day challenge pairs via `achievement_daily_state`
+
 ## Client-only / polish
 
 - [x] Identicon texture on spheres; fallback if load fails (e.g. NPC addresses)

@@ -975,3 +975,97 @@ test("Pixel collaborator fires when adjacent foreign paint and co-presence", asy
     assert.equal(row?.completed, true);
   });
 });
+
+test("recordMatchEnd unlocks v3 match extension achievements", async () => {
+  const winner = "NQ07 WINNER000000000000000000000000001";
+  const loser = "NQ07 LOSER000000000000000000000000002";
+  await withAchievementStore(async ({
+    recordMatchEnd,
+    getAchievementsForWallet,
+  }) => {
+    recordMatchEnd(
+      {
+        wallet: winner,
+        result: "win",
+        winReason: "score",
+        goalsScored: 3,
+        goalsConceded: 0,
+        maxTrailingDeficit: 2,
+        priorWinStreak: 0,
+        enteredGoldenPhase: true,
+        goldenGoalWin: true,
+        goldenElapsedMsAtWin: 60_000,
+        scoredOwnGoal: true,
+      },
+      {
+        wallet: loser,
+        result: "loss",
+        goalsScored: 1,
+        goalsConceded: 3,
+        maxTrailingDeficit: 2,
+        priorWinStreak: 0,
+        enteredGoldenPhase: true,
+      }
+    );
+    const w = getAchievementsForWallet(winner).achievements;
+    assert.ok(w.find((a) => a.achievementId === "match-clean-sheet")?.completed);
+    assert.ok(w.find((a) => a.achievementId === "match-comeback-kid")?.completed);
+    assert.ok(w.find((a) => a.achievementId === "match-golden-patience")?.completed);
+    assert.ok(w.find((a) => a.achievementId === "match-own-goal-hero")?.completed);
+    assert.ok(w.find((a) => a.achievementId === "match-full-time")?.completed);
+    const l = getAchievementsForWallet(loser).achievements;
+    assert.ok(l.find((a) => a.achievementId === "match-full-time")?.completed);
+  });
+});
+
+test("recordMatchChallengeStarted unlocks handshake rival on mutual same-day rivalry", async () => {
+  const a = "NQ07 CHALL000000000000000000000000001";
+  const b = "NQ07 ACCEPT000000000000000000000000002";
+  await withAchievementStore(async ({
+    recordMatchChallengeStarted,
+    getAchievementsForWallet,
+  }) => {
+    recordMatchChallengeStarted(a, b);
+    assert.equal(
+      getAchievementsForWallet(b).achievements.find(
+        (row) => row.achievementId === "match-handshake-rival"
+      )?.completed,
+      false
+    );
+    recordMatchChallengeStarted(b, a);
+    assert.equal(
+      getAchievementsForWallet(a).achievements.find(
+        (row) => row.achievementId === "match-handshake-rival"
+      )?.completed,
+      true
+    );
+  });
+});
+
+test("field goal extensions unlock rush hour, underdog, and daily streak", async () => {
+  const wallet = "NQ07 FIELD000000000000000000000000003";
+  await withAchievementStore(async ({
+    recordFieldGoalScored,
+    getAchievementsForWallet,
+  }) => {
+    recordFieldGoalScored(
+      wallet,
+      { rushHour: true, underdog: true, utcDay: "2026-07-01" }
+    );
+    const day1 = getAchievementsForWallet(wallet).achievements;
+    assert.ok(day1.find((a) => a.achievementId === "field-rush-hour")?.completed);
+    assert.ok(
+      day1.find((a) => a.achievementId === "field-underdog-country")?.completed
+    );
+    const streak1 = day1.find((a) => a.achievementId === "field-daily-streak");
+    assert.equal(streak1?.progress, 1);
+
+    recordFieldGoalScored(wallet, { utcDay: "2026-07-02" });
+    recordFieldGoalScored(wallet, { utcDay: "2026-07-03" });
+    const streak3 = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "field-daily-streak"
+    );
+    assert.equal(streak3?.completed, true);
+    assert.equal(streak3?.progress, 3);
+  });
+});
