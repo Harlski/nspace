@@ -1,9 +1,9 @@
 /**
- * World Cup soccer — pure 1v1 Match state machine (FEATURE-FLAGGED, DEPRECATABLE).
+ * World Cup soccer - pure 1v1 Match state machine (FEATURE-FLAGGED, DEPRECATABLE).
  *
  * A reducer `(state, event) -> state` over `goal | tick | playerLeft`, owning the
  * regulation timer, Golden Goal sudden-death (capped, then Draw), the score, and the
- * terminal outcome. It is pure — no rooms, sockets, timers, or disk — so it is fully
+ * terminal outcome. It is pure - no rooms, sockets, timers, or disk - so it is fully
  * unit-tested. `rooms.ts` owns the I/O around it (ephemeral room create/teardown,
  * teleport, broadcast).
  *

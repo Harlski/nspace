@@ -1,5 +1,5 @@
 /**
- * World Cup soccer feature — server config (FEATURE-FLAGGED, DEPRECATABLE).
+ * World Cup soccer feature - server config (FEATURE-FLAGGED, DEPRECATABLE).
  *
  * Everything for the seasonal soccer kickaround lives under `server/src/worldcup/`
  * and `client/src/worldcup/`. To deprecate after the tournament: set
@@ -78,7 +78,7 @@ export const FIELD_HUB_DOOR = {
  * Goals are defined by their end-line band. The goal LINE sits at the pitch end
  * (`west`: `minX - 0.5`; `east`: `maxX + 0.5`) and the mouth spans `minZ-0.5 .. maxZ+0.5`
  * between the posts. A goal counts only once the ball center crosses that line within the
- * mouth — not merely entering the band in front of it (see `detectGoal`). The end-line wall
+ * mouth - not merely entering the band in front of it (see `detectGoal`). The end-line wall
  * has an opening at the mouth so the ball can pass through into the net box.
  */
 export type GoalZone = {
@@ -136,7 +136,7 @@ export const BALL_STATE_BROADCAST_MIN_MS = 90;
 export const MAX_PLACED_BALLS_PER_ROOM = 3;
 
 // ---------------------------------------------------------------------------
-// Goalies (PRD: World Cup — 1v1 Matches, Goalies, Spectating & Goal Rewards)
+// Goalies (PRD: World Cup - 1v1 Matches, Goalies, Spectating & Goal Rewards)
 // ---------------------------------------------------------------------------
 
 /**
@@ -230,7 +230,7 @@ export function isMatchPitchRoomId(roomId: string | null | undefined): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Goal rewards (Free Play Field only; see ADR 0002 — unlimited caps by default)
+// Goal rewards (Free Play Field only; see ADR 0002 - unlimited caps by default)
 // ---------------------------------------------------------------------------
 
 /** Luna in 1 NIM (1 NIM = 100000 luna). Mirrors the payout sender's LUNA_PER_NIM. */

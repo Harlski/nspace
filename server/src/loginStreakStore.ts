@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const STORE_FILE = process.env.LOGIN_STREAK_STORE_FILE
-  ? path.resolve(process.env.LOGIN_STREAK_STORE_FILE)
-  : path.join(__dirname, "..", "data", "login-streaks.json");
+function storeFilePath(): string {
+  return process.env.LOGIN_STREAK_STORE_FILE
+    ? path.resolve(process.env.LOGIN_STREAK_STORE_FILE)
+    : path.join(__dirname, "..", "data", "login-streaks.json");
+}
 
 type Row = {
   lastLoginDayUtc: string;
@@ -17,14 +19,15 @@ type Row = {
 type StoreFile = { streaks: Record<string, Row> };
 
 function ensureDir(): void {
-  const dir = path.dirname(STORE_FILE);
+  const dir = path.dirname(storeFilePath());
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
 function readStore(): StoreFile {
-  if (!fs.existsSync(STORE_FILE)) return { streaks: {} };
+  const storeFile = storeFilePath();
+  if (!fs.existsSync(storeFile)) return { streaks: {} };
   try {
-    const raw = fs.readFileSync(STORE_FILE, "utf8");
+    const raw = fs.readFileSync(storeFile, "utf8");
     const j = JSON.parse(raw) as unknown;
     if (!j || typeof j !== "object") return { streaks: {} };
     const o = j as Record<string, unknown>;
@@ -38,9 +41,10 @@ function readStore(): StoreFile {
 
 function writeStore(data: StoreFile): void {
   ensureDir();
-  const tmp = `${STORE_FILE}.tmp`;
+  const storeFile = storeFilePath();
+  const tmp = `${storeFile}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(data, null, 0), "utf8");
-  fs.renameSync(tmp, STORE_FILE);
+  fs.renameSync(tmp, storeFile);
 }
 
 /** `YYYY-MM-DD` in UTC for the given instant. */
@@ -139,4 +143,17 @@ export function getTopLoginStreaks(limit: number): LoginStreakRow[] {
     if (deduped.length >= cap) break;
   }
   return deduped;
+}
+
+/** Current login streak length for a wallet (0 when unknown or never logged in). */
+export function getLoginStreakDaysForWallet(normalizedAddress: string): number {
+  const addr = String(normalizedAddress || "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toUpperCase();
+  if (!addr || addr.length < 4) return 0;
+  const { streaks } = readStore();
+  const cur = streaks[addr];
+  if (!cur || typeof cur.streakDays !== "number" || cur.streakDays < 1) return 0;
+  return cur.streakDays;
 }

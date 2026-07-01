@@ -172,7 +172,7 @@ export type BallWire = {
   vz: number;
 };
 
-/** worldcup: a 1v1 spectate portal in a room — "{identicon} vs {identicon}", click to watch. */
+/** worldcup: a 1v1 spectate portal in a room - "{identicon} vs {identicon}", click to watch. */
 export type WorldcupPortalWire = {
   /** Spectate key = the pitch room id to drop into. */
   matchId: string;
@@ -251,7 +251,7 @@ export type ServerMessage =
       allowPlaceBlocks?: boolean;
       allowPublishDesign?: boolean;
       allowExtraFloor?: boolean;
-      /** Cinema `?stream=1` — observer session, not shown as a player. */
+      /** Cinema `?stream=1` - observer session, not shown as a player. */
       streamObserver?: boolean;
       /** Dynamic rooms: this player may send `updateRoom` background hue patches. */
       allowRoomBackgroundHueEdit?: boolean;
@@ -435,12 +435,12 @@ export type ServerMessage =
       topCountries: Array<{ code: string; goals: number }>;
     }
   // worldcup: per-scorer NIM reward outcome for a Free Play Field goal (only the scorer
-  // receives this — the reward cap/budget is personal, not public).
+  // receives this - the reward cap/budget is personal, not public).
   | {
       type: "goalRewardOutcome";
       roomId: string;
       reason: "ok" | "wallet_cap" | "budget_exhausted";
-      /** Set only when `reason === "ok"` — the NIM credited, e.g. "0.25". */
+      /** Set only when `reason === "ok"` - the NIM credited, e.g. "0.25". */
       amountNim?: string;
     }
   // worldcup: pre-teleport handshake countdown shown in the origin room
@@ -491,7 +491,7 @@ export type ServerMessage =
       /** ms before entrants are returned home (Match Result Overlay countdown). */
       resultLingerMs: number;
     }
-  // worldcup: a goal in a 1v1 Match — flash "GOAL!" + (optionally) run the kickoff countdown
+  // worldcup: a goal in a 1v1 Match - flash "GOAL!" + (optionally) run the kickoff countdown
   | {
       type: "matchGoal";
       roomId: string;
@@ -555,7 +555,7 @@ export type ServerMessage =
 export type ConnectGameWsOptions = {
   spawnX?: number;
   spawnZ?: number;
-  /** Cinema observer — server omits player from room presence. */
+  /** Cinema observer - server omits player from room presence. */
   stream?: boolean;
   /** Restore last room + tile when disconnect was within server grace window. */
   resume?: boolean;

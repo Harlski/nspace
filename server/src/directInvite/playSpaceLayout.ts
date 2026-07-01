@@ -64,7 +64,7 @@ function block(spec: PlaySpaceBlockSpec): PlaySpaceBlockSpec {
   return spec;
 }
 
-/** Asymmetric sculpture garden — pyramids, orbs, hex totems, ramp bridges. */
+/** Asymmetric sculpture garden - pyramids, orbs, hex totems, ramp bridges. */
 function buildWildBlocks(): PlaySpaceBlockSpec[] {
   const out: PlaySpaceBlockSpec[] = [];
 
@@ -129,7 +129,7 @@ function buildWildBlocks(): PlaySpaceBlockSpec[] {
     );
   }
 
-  // Stepping-stone path (walkable half-slabs) — spiral toward center
+  // Stepping-stone path (walkable half-slabs) - spiral toward center
   for (const [x, z] of [
     [-6, 4],
     [-5, 3],
@@ -177,7 +177,7 @@ function buildWildBlocks(): PlaySpaceBlockSpec[] {
     );
   }
 
-  // Center dance floor — low, walkable, hot pink
+  // Center dance floor - low, walkable, hot pink
   out.push(
     block({
       x: 0,
@@ -224,7 +224,7 @@ function buildWildBlocks(): PlaySpaceBlockSpec[] {
 
 export const PLAY_SPACE_BLOCKS: readonly PlaySpaceBlockSpec[] = buildWildBlocks();
 
-/** Full-floor neon checkerboard — every tile painted. */
+/** Full-floor neon checkerboard - every tile painted. */
 export const PLAY_SPACE_FLOOR_TINTS: readonly PlaySpaceFloorTint[] = (() => {
   const out: PlaySpaceFloorTint[] = [];
   for (let x = PLAY_SPACE_BOUNDS.minX; x <= PLAY_SPACE_BOUNDS.maxX; x++) {
@@ -243,5 +243,5 @@ export const PLAY_SPACE_FLOOR_TINTS: readonly PlaySpaceFloorTint[] = (() => {
   return out;
 })();
 
-/** Deep violet sky — lets the floor pop. */
+/** Deep violet sky - lets the floor pop. */
 export const PLAY_SPACE_BACKGROUND_HUE_DEG = 285;

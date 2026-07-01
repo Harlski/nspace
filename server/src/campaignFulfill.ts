@@ -82,7 +82,7 @@ export async function createCampaignPaymentIntent(
 
 function notifyAdminCampaignPendingApproval(campaign: CampaignPublic): void {
   const lines = [
-    "Billboard campaign — payment received",
+    "Billboard campaign - payment received",
     `Project: ${campaign.projectName}`,
     `Owner: ${campaign.ownerWallet}`,
     `Campaign: ${campaign.id}`,
@@ -260,7 +260,7 @@ export async function syncCampaignPaymentStatus(
   return { ok: true, campaign: pendingApproval };
 }
 
-/** Admin approves a funded campaign — eligible for rotation sets (no auto placement). */
+/** Admin approves a funded campaign - eligible for rotation sets (no auto placement). */
 export async function approveCampaignForInGame(
   campaignId: string
 ): Promise<

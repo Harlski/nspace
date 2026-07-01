@@ -1,4 +1,4 @@
-/** Code-defined achievements (v1 — not admin-editable). */
+/** Code-defined achievements (v1 - not admin-editable). */
 
 import { HUB_ROOM_ID } from "./roomLayouts.js";
 
@@ -80,7 +80,7 @@ export type AchievementEventKey =
   | "gatekeeper"
   | "trust_circle";
 
-/** World Cup seasonal counters — progress pauses when WORLDCUP_ENABLED is off. */
+/** World Cup seasonal counters - progress pauses when WORLDCUP_ENABLED is off. */
 export const WORLDCUP_ACHIEVEMENT_COUNTERS: ReadonlySet<AchievementCounterKey> =
   new Set([
     "matches_won",
@@ -90,7 +90,7 @@ export const WORLDCUP_ACHIEVEMENT_COUNTERS: ReadonlySet<AchievementCounterKey> =
     "field_goal_daily_streak",
   ]);
 
-/** World Cup seasonal one-time events — not fired when WORLDCUP_ENABLED is off. */
+/** World Cup seasonal one-time events - not fired when WORLDCUP_ENABLED is off. */
 export const WORLDCUP_ACHIEVEMENT_EVENTS: ReadonlySet<AchievementEventKey> =
   new Set([
     "match_won",
@@ -145,13 +145,13 @@ export type AchievementCriteria =
   | { type: "room_maker_deluxe" }
   | { type: "rainbow_floor" };
 
-/** Top-tier login-streak achievement — threshold resolved from env at runtime. */
+/** Top-tier login-streak achievement - threshold resolved from env at runtime. */
 export const SOCIAL_LOGIN_TOP_ACHIEVEMENT_ID = "social-login-top";
 
-/** Sunny Side Up build milestone — threshold resolved from env at runtime (placeholder v1). */
+/** Sunny Side Up build milestone - threshold resolved from env at runtime (placeholder v1). */
 export const SUNNY_SIDE_UP_ACHIEVEMENT_ID = "build-sunny-side-up";
 
-/** Marathon I — distinct grid tiles walked (lifetime dedupe). */
+/** Marathon I - distinct grid tiles walked (lifetime dedupe). */
 export const MARATHON_I_ACHIEVEMENT_ID = "exploration-marathon-1";
 export const MARATHON_II_ACHIEVEMENT_ID = "exploration-marathon-2";
 export const MARATHON_III_ACHIEVEMENT_ID = "exploration-marathon-3";
@@ -174,14 +174,120 @@ export type AchievementDefinition = {
   rewardSku?: string;
 };
 
-/** v2 achievement reward SKUs — seeded in later slices after prefab review. */
+/** Achievement-exclusive cosmetics - reference Style Line variants (shop uses distinct SKUs later). */
 export const ACHIEVEMENT_REWARD_CATALOG: ReadonlyArray<{
   cosmeticSku: string;
   presetId: string;
   displayName: string;
   description: string;
   sortOrder: number;
-}> = [];
+}> = [
+  {
+    cosmeticSku: "ach-trail-spark-cyan",
+    presetId: "trail-ref-spark-cyan",
+    displayName: "Spark Path: Cyan",
+    description: "Unlocked by Commons Builder II.",
+    sortOrder: 10,
+  },
+  {
+    cosmeticSku: "ach-trail-spark-gold",
+    presetId: "trail-ref-spark-path",
+    displayName: "Spark Path: Gold",
+    description: "Unlocked by Commons Builder III.",
+    sortOrder: 20,
+  },
+  {
+    cosmeticSku: "ach-trail-spark-violet",
+    presetId: "trail-ref-spark-violet",
+    displayName: "Spark Path: Violet",
+    description: "Unlocked by Commons Builder IV.",
+    sortOrder: 30,
+  },
+  {
+    cosmeticSku: "ach-trail-spark-lime",
+    presetId: "trail-ref-spark-lime",
+    displayName: "Spark Path: Lime",
+    description: "Unlocked by Miner II.",
+    sortOrder: 40,
+  },
+  {
+    cosmeticSku: "ach-trail-spark-rose",
+    presetId: "trail-ref-spark-rose",
+    displayName: "Spark Path: Rose",
+    description: "Unlocked by Pixel Painter.",
+    sortOrder: 50,
+  },
+  {
+    cosmeticSku: "ach-aura-magic-ring",
+    presetId: "aura-ref-magic-ring",
+    displayName: "Magic Ring",
+    description: "Unlocked by Miner IV.",
+    sortOrder: 60,
+  },
+  {
+    cosmeticSku: "ach-aura-sigil-magic-01",
+    presetId: "aura-ref-sigil-magic-01",
+    displayName: "Sigil: Magic 01",
+    description: "Unlocked by First Victory.",
+    sortOrder: 70,
+  },
+  {
+    cosmeticSku: "ach-aura-sigil-magic-02",
+    presetId: "aura-ref-sigil-magic-02",
+    displayName: "Sigil: Magic 02",
+    description: "Unlocked by Match Winner.",
+    sortOrder: 80,
+  },
+  {
+    cosmeticSku: "ach-aura-sigil-magic-03",
+    presetId: "aura-ref-sigil-magic-03",
+    displayName: "Sigil: Magic 03",
+    description: "Unlocked by Throw Down.",
+    sortOrder: 90,
+  },
+  {
+    cosmeticSku: "ach-aura-sigil-magic-04",
+    presetId: "aura-ref-sigil-magic-04",
+    displayName: "Sigil: Magic 04",
+    description: "Unlocked by Game On.",
+    sortOrder: 100,
+  },
+  {
+    cosmeticSku: "ach-aura-sigil-magic-05",
+    presetId: "aura-ref-sigil-magic-05",
+    displayName: "Sigil: Magic 05",
+    description: "Unlocked by Golden Moment.",
+    sortOrder: 110,
+  },
+  {
+    cosmeticSku: "ach-aura-sigil-twirl-01",
+    presetId: "aura-ref-sigil-twirl-01",
+    displayName: "Sigil: Twirl 01",
+    description: "Unlocked by Clean Sheet.",
+    sortOrder: 120,
+  },
+  {
+    cosmeticSku: "ach-aura-sigil-twirl-02",
+    presetId: "aura-ref-sigil-twirl-02",
+    displayName: "Sigil: Twirl 02",
+    description: "Unlocked by On a Roll.",
+    sortOrder: 130,
+  },
+  {
+    cosmeticSku: "ach-aura-sigil-twirl-03",
+    presetId: "aura-ref-sigil-twirl-03",
+    displayName: "Sigil: Twirl 03",
+    description: "Unlocked by Regular.",
+    sortOrder: 140,
+  },
+];
+
+/** Capstone cosmetic unlocks - reserved for Achievement Unlock Modal when wired on client. */
+export const ACHIEVEMENT_COSMETIC_CAPSTONE_IDS: ReadonlySet<string> = new Set([
+  "mine-500",
+  "match-golden-goal",
+  "match-clean-sheet",
+]);
 
 export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
@@ -294,7 +400,6 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
       threshold: 1,
       roomScope: "commons",
     },
-    rewardSku: "ach-trail-commons-starter",
   },
   {
     id: "commons-place-10",
@@ -325,7 +430,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
       threshold: 100,
       roomScope: "commons",
     },
-    rewardSku: "ach-trail-commons-builder",
+    rewardSku: "ach-trail-spark-cyan",
   },
   {
     id: "commons-place-250",
@@ -341,6 +446,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
       threshold: 250,
       roomScope: "commons",
     },
+    rewardSku: "ach-trail-spark-gold",
   },
   {
     id: "commons-place-500",
@@ -356,6 +462,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
       threshold: 500,
       roomScope: "commons",
     },
+    rewardSku: "ach-trail-spark-violet",
   },
   {
     id: "mine-10",
@@ -374,7 +481,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 50,
     sortOrder: 210,
     criteria: { type: "counter", counter: "blocks_mined", threshold: 100 },
-    rewardSku: "ach-trail-miner",
+    rewardSku: "ach-trail-spark-lime",
   },
   {
     id: "mine-250",
@@ -393,6 +500,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 100,
     sortOrder: 230,
     criteria: { type: "counter", counter: "blocks_mined", threshold: 500 },
+    rewardSku: "ach-aura-magic-ring",
   },
   {
     id: "mining-impatient-miner",
@@ -420,7 +528,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
     id: SUNNY_SIDE_UP_ACHIEVEMENT_ID,
     title: "Sunny Side Up",
-    description: "Place 5000 blocks.",
+    description: "Place 7119 blocks.",
     category: "commons_build",
     categoryGroup: "building",
     points: 100,
@@ -428,7 +536,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     criteria: {
       type: "counter",
       counter: "blocks_placed",
-      threshold: 5000,
+      threshold: 7119,
       roomScope: "any",
     },
   },
@@ -459,6 +567,21 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
       counter: "pixels_painted",
       threshold: 64,
     },
+  },
+  {
+    id: "pixel-500",
+    title: "Pixel Painter",
+    description: "Paint 500 pixels on the Pixel room board.",
+    category: "pixel",
+    categoryGroup: "building",
+    points: 35,
+    sortOrder: 165,
+    criteria: {
+      type: "counter",
+      counter: "pixels_painted",
+      threshold: 500,
+    },
+    rewardSku: "ach-trail-spark-rose",
   },
   {
     id: "pixel-i-made-this",
@@ -524,6 +647,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 15,
     sortOrder: 1000,
     criteria: { type: "event", event: "match_won" },
+    rewardSku: "ach-aura-sigil-magic-01",
   },
   {
     id: "match-first-loss",
@@ -554,6 +678,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 5,
     sortOrder: 1030,
     criteria: { type: "event", event: "challenge_raised" },
+    rewardSku: "ach-aura-sigil-magic-03",
   },
   {
     id: "match-challenge-accepted",
@@ -564,6 +689,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 5,
     sortOrder: 1040,
     criteria: { type: "event", event: "challenge_accepted" },
+    rewardSku: "ach-aura-sigil-magic-04",
   },
   {
     id: "match-golden-goal",
@@ -574,6 +700,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 20,
     sortOrder: 1050,
     criteria: { type: "event", event: "golden_goal_win" },
+    rewardSku: "ach-aura-sigil-magic-05",
   },
   {
     id: "match-walkover",
@@ -644,6 +771,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 10,
     sortOrder: 1120,
     criteria: { type: "counter", counter: "matches_won", threshold: 1 },
+    rewardSku: "ach-aura-sigil-magic-02",
   },
   {
     id: "match-wins-10",
@@ -674,7 +802,6 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 75,
     sortOrder: 1150,
     criteria: { type: "counter", counter: "matches_won", threshold: 100 },
-    rewardSku: "ach-trail-match-centurion",
   },
   {
     id: "match-wins-1000",
@@ -695,6 +822,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 20,
     sortOrder: 1170,
     criteria: { type: "counter", counter: "matches_played", threshold: 10 },
+    rewardSku: "ach-aura-sigil-twirl-03",
   },
   {
     id: "match-streak-3",
@@ -705,6 +833,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 15,
     sortOrder: 1180,
     criteria: { type: "counter", counter: "match_win_streak", threshold: 3 },
+    rewardSku: "ach-aura-sigil-twirl-02",
   },
   {
     id: "match-streak-5",
@@ -735,6 +864,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 25,
     sortOrder: 1210,
     criteria: { type: "event", event: "match_clean_sheet" },
+    rewardSku: "ach-aura-sigil-twirl-01",
   },
   {
     id: "match-comeback-kid",
@@ -750,7 +880,7 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     id: "match-golden-patience",
     title: "Golden Patience",
     description:
-      "Win via Golden Goal after regulation ended tied — not in the first golden minute.",
+      "Win via Golden Goal after regulation ended tied - not in the first golden minute.",
     category: "football_match",
     categoryGroup: "minigames",
     points: 25,
@@ -957,11 +1087,11 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   {
     id: SOCIAL_LOGIN_TOP_ACHIEVEMENT_ID,
     title: "Time of Kaan",
-    description: "Log in on 60 consecutive UTC calendar days.",
+    description: "Log in on 54 consecutive UTC calendar days.",
     category: "social",
     points: 100,
     sortOrder: 3020,
-    criteria: { type: "login_streak", threshold: 60 },
+    criteria: { type: "login_streak", threshold: 54 },
   },
   {
     id: "social-chatter-first",

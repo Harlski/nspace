@@ -1,26 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
-  SHOP_ACHIEVEMENTS_ONLY_COPY,
   WARDROBE_SLOT_EMPTY_COPY,
+  wardrobeSlotShowsEmptyIcon,
   wardrobeSlotStatusLabel,
 } from "./wardrobePanel.js";
 
 describe("wardrobe v2 empty copy", () => {
-  it("shows coming-soon copy for passive slots without owned items", () => {
-    expect(
-      wardrobeSlotStatusLabel({
-        slot: "nameplate",
-        presetName: "None",
-        ownedSelectableCount: 0,
-      })
-    ).toBe(WARDROBE_SLOT_EMPTY_COPY);
-    expect(
-      wardrobeSlotStatusLabel({
-        slot: "chatBubble",
-        presetName: "None",
-        ownedSelectableCount: 0,
-      })
-    ).toBe(WARDROBE_SLOT_EMPTY_COPY);
+  it("uses the unavailable icon state instead of coming-soon copy", () => {
+    const input = {
+      slot: "nameplate" as const,
+      presetName: "None",
+      ownedSelectableCount: 0,
+    };
+    expect(wardrobeSlotShowsEmptyIcon(input)).toBe(true);
+    expect(wardrobeSlotStatusLabel(input)).toBe("None");
   });
 
   it("keeps None for aura and trail without owned items", () => {
@@ -35,13 +28,13 @@ describe("wardrobe v2 empty copy", () => {
 
   it("describes deployable ownership", () => {
     expect(
-      wardrobeSlotStatusLabel({
+      wardrobeSlotShowsEmptyIcon({
         slot: "deployable",
         presetName: "None",
         ownedSelectableCount: 0,
         ownedDeployableCount: 0,
       })
-    ).toBe(WARDROBE_SLOT_EMPTY_COPY);
+    ).toBe(true);
     expect(
       wardrobeSlotStatusLabel({
         slot: "deployable",
@@ -52,7 +45,7 @@ describe("wardrobe v2 empty copy", () => {
     ).toBe("2 owned");
   });
 
-  it("uses achievements-only shop messaging", () => {
-    expect(SHOP_ACHIEVEMENTS_ONLY_COPY).toMatch(/Achievements/i);
+  it("preserves screen-reader copy for unavailable slots", () => {
+    expect(WARDROBE_SLOT_EMPTY_COPY).toMatch(/unlock/i);
   });
 });

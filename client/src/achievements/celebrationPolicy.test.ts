@@ -14,6 +14,12 @@ describe("celebrationSpringYOffset", () => {
     expect(celebrationSpringYOffset(0)).toBe(0);
     expect(celebrationSpringYOffset(0.1)).toBeGreaterThan(0);
   });
+
+  it("hovers during the hold phase", () => {
+    const mid = celebrationSpringYOffset(0.4);
+    const later = celebrationSpringYOffset(0.55);
+    expect(mid).not.toBeCloseTo(later, 5);
+  });
 });
 
 describe("celebrationPopScale", () => {
@@ -25,9 +31,10 @@ describe("celebrationPopScale", () => {
 });
 
 describe("celebrationOpacity", () => {
-  it("fades out near the end of the lifetime", () => {
+  it("holds full opacity then fades near the end", () => {
     expect(celebrationOpacity(0.5)).toBe(1);
-    expect(celebrationOpacity(0.9)).toBeLessThan(1);
+    expect(celebrationOpacity(0.84)).toBe(1);
+    expect(celebrationOpacity(0.92)).toBeLessThan(1);
     expect(celebrationOpacity(1)).toBe(0);
   });
 });

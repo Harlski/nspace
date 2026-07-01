@@ -61,7 +61,7 @@ function vCross(a: Vec3, b: Vec3): Vec3 {
   ];
 }
 
-/** The 12 icosahedron vertices, normalized — these are the centers of the 12 black pentagons
+/** The 12 icosahedron vertices, normalized - these are the centers of the 12 black pentagons
  * on a truncated-icosahedron (classic Telstar) ball. */
 function icosahedronVertices(): Vec3[] {
   const g = (1 + Math.sqrt(5)) / 2; // golden ratio
@@ -84,7 +84,7 @@ function icosahedronVertices(): Vec3[] {
 
 /**
  * Classic black-pentagon-on-white ball, rendered per-texel on the equirectangular map so the
- * pentagons stay identical everywhere — including at the poles, which previously collapsed into
+ * pentagons stay identical everywhere - including at the poles, which previously collapsed into
  * a solid black circle. For each texel we reconstruct its 3D direction on the sphere (matching
  * Three.js `SphereGeometry` UVs), find the nearest of the 12 pentagon centers, and run a regular
  * pentagon test in that center's tangent plane (one edge facing each neighbor). Because the test
@@ -319,7 +319,7 @@ export function makeNetTexture(): THREE.CanvasTexture {
 }
 
 /** Shared net material (transparent). The texture is a module singleton, so disposing the
- * material on room change does not free it — avoids per-entry texture leaks. */
+ * material on room change does not free it - avoids per-entry texture leaks. */
 function makeNetMaterial(): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({
     map: makeNetTexture(),

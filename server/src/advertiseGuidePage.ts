@@ -6,14 +6,14 @@ import {
 } from "./analyticsTopbar.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 
-/** Public how-to for paid billboard campaigns — `/advertise/how-it-works`. */
+/** Public how-to for paid billboard campaigns - `/advertise/how-it-works`. */
 export function advertiseGuidePageHtml(): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>How advertising works — Nimiq Space</title>
+  <title>How advertising works - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -165,7 +165,7 @@ export function advertiseGuidePageHtml(): string {
         <h3>Fund with NIM</h3>
         <p>
           Click <strong>Fund</strong>, enter any amount, and pay with your wallet (Nimiq Pay or Hub).
-          There is no fixed minimum — more NIM buys more on-screen time. At the default rate,
+          There is no fixed minimum - more NIM buys more on-screen time. At the default rate,
           <strong>400 NIM ≈ 24 hours</strong> of full-audience display while players are watching.
         </p>
       </li>
@@ -196,7 +196,7 @@ export function advertiseGuidePageHtml(): string {
       <li>
         <h3>Balance drains from real views</h3>
         <p>
-          Your prepaid balance goes down only for verified on-screen time — not idle calendar days.
+          Your prepaid balance goes down only for verified on-screen time - not idle calendar days.
           The <strong>Existing</strong> tab shows time left, NIM remaining, audience stats, and
           transaction history. When balance reaches zero, the campaign ends and is taken off billboards.
         </p>
@@ -211,7 +211,7 @@ export function advertiseGuidePageHtml(): string {
     </ol>
     <p class="adv-guide-note">
       <strong>Live vs Not Live:</strong> <strong>Live</strong> means your advert is on billboards in the
-      game right now. <strong>Not Live</strong> means approved but not yet visible to players — your
+      game right now. <strong>Not Live</strong> means approved but not yet visible to players - your
       balance is safe until it goes live.
     </p>
   </div>
@@ -243,7 +243,7 @@ export function advertiseGuidePageHtml(): string {
       <li>
         <h3>Can I change on-screen duration?</h3>
         <p>
-          Yes — on the <strong>Existing</strong> tab you can update slide dwell (10 / 30 / 45 s) after
+          Yes - on the <strong>Existing</strong> tab you can update slide dwell (10 / 30 / 45 s) after
           funding. Longer dwell means each time your slide is shown costs more prepaid time when players watch.
         </p>
       </li>

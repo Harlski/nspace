@@ -1,13 +1,13 @@
 /**
- * World Cup soccer — pure Goalie behaviour (FEATURE-FLAGGED, DEPRECATABLE).
+ * World Cup soccer - pure Goalie behaviour (FEATURE-FLAGGED, DEPRECATABLE).
  *
  * A Goalie patrols the line just in front of a goal mouth, tracking the ball laterally
  * (along z) with a reaction lag and a capped move-speed. Two behaviour models share this
  * tracking; `rooms.ts` selects one at runtime via `WORLDCUP_GOALIE_MODE`:
  *
- *  - `kicker`  — the keeper is injected into the proximity-kick path as an extra "player"
+ *  - `kicker`  - the keeper is injected into the proximity-kick path as an extra "player"
  *                so the existing kick clears the ball; this module just gives its position.
- *  - `blocker` — the keeper is a `CircleCollider` the ball reflects off inside `stepBall`.
+ *  - `blocker` - the keeper is a `CircleCollider` the ball reflects off inside `stepBall`.
  *
  * Pure (no I/O): the lateral target tracks the ball, bounded by the goal-line limits and
  * the max move-speed, so it is unit-tested directly. Goal attribution treats a goalie
@@ -38,7 +38,7 @@ export interface GoalieState {
   trackedZ: number;
 }
 
-/** The fixed x the keeper patrols on — the pitch-facing edge of the goal mouth. */
+/** The fixed x the keeper patrols on - the pitch-facing edge of the goal mouth. */
 export function goalieLineX(goal: GoalZone): number {
   return goal.id === "west" ? goal.maxX : goal.minX;
 }

@@ -243,7 +243,7 @@ async function processOne(job: PayoutJob, now: number = Date.now()): Promise<voi
     job.nextRetryAt = now + backoffMs(job.attempts);
     job.attempts += 1;
     saveQueue();
-    console.warn("[payout-service] Signer not configured — will retry later");
+    console.warn("[payout-service] Signer not configured - will retry later");
     maybeDeadLetter(job, job.lastError);
     return;
   }
@@ -525,7 +525,7 @@ export async function flushAllPendingPayoutsNow(): Promise<FlushAllPendingPayout
   if (!chainClient?.isSignerConfigured()) {
     result.skippedNotConfigured = true;
     console.warn(
-      "[payout-service] Daily flush skipped — payout signer not configured"
+      "[payout-service] Daily flush skipped - payout signer not configured"
     );
     return result;
   }

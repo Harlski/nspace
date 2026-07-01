@@ -107,7 +107,7 @@ function parsePiErrorMessage(json: unknown, fallback: string): string {
     /* plain text */
   }
   if (t.includes("not implemented yet")) {
-    return "payment_intent_feature_stale — rebuild payment-intent Docker image (docker compose build payment-intent)";
+    return "payment_intent_feature_stale - rebuild payment-intent Docker image (docker compose build payment-intent)";
   }
   return t.slice(0, 240);
 }

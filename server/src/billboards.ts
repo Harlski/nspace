@@ -1,5 +1,5 @@
 /**
- * Billboards — multi-tile floor markers + image plane metadata (JSON on disk).
+ * Billboards - multi-tile floor markers + image plane metadata (JSON on disk).
  */
 import fs from "node:fs";
 import path from "node:path";

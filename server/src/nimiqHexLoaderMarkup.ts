@@ -1,6 +1,6 @@
 /**
  * Keep in sync with `client/src/ui/nimiqHexLoader.ts`.
- * Nimiq Keyguard loader — https://github.com/nimiq/keyguard (MIT).
+ * Nimiq Keyguard loader - https://github.com/nimiq/keyguard (MIT).
  */
 export function nimiqHexLoaderSvg(classNames: string): string {
   const cls = classNames.trim().replace(/\s+/g, " ");

@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — per-room ball registry + persistence of player-placed balls.
+ * World Cup soccer - per-room ball registry + persistence of player-placed balls.
  *
  * The field room's ball is config-defined and re-created at spawn on load (not
  * persisted). Player-placed balls (M3) persist their *definition* (spawn + creator) to

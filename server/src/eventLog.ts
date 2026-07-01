@@ -732,7 +732,7 @@ export function listRecentManualBulkAggregatesFromEventLog(
       txHash: v.txHash,
       totalLuna,
       jobsCleared: v.jobs,
-      state: v.state || "—",
+      state: v.state || "-",
     });
   }
   out.sort((a, b) => b.sentAt - a.sentAt);
@@ -1250,5 +1250,5 @@ export async function getEventLogAnalyticsSnapshot(
 
 /** No-op for sync-per-line writer; hook for future buffering. */
 export function flushEventLogSync(): void {
-  /* sync append — nothing to flush */
+  /* sync append - nothing to flush */
 }

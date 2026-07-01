@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-/** Monorepo release label, e.g. `v0.3.4` — set in `vite.config.ts`. */
+/** Monorepo release label, e.g. `v0.3.4` - set in `vite.config.ts`. */
 declare const __NSPACE_APP_VERSION__: string;
 
 /** Seeded by Nimiq Pay before mini-app scripts run ([docs](https://nimiq.dev/mini-apps/)). */
@@ -17,12 +17,14 @@ interface ImportMetaEnv {
   readonly VITE_DEV_AUTH_BYPASS?: string;
   /** Set to "true" to show the Admin panel (random layout, zoom limits). */
   readonly VITE_ADMIN_ENABLED?: string;
-  /** e.g. https://api.example.com — optional split-host deploy */
+  /** e.g. https://api.example.com - optional split-host deploy */
   readonly VITE_API_BASE_URL?: string;
-  /** WebSocket origin e.g. wss://api.example.com — optional; defaults to page origin */
+  /** WebSocket origin e.g. wss://api.example.com - optional; defaults to page origin */
   readonly VITE_WS_BASE_URL?: string;
   /** Set to "0" to roll back to legacy forced-landscape mobile browser presentation. */
   readonly VITE_MOBILE_BROWSER_PLAY?: string;
+  /** Set to "1" to show the player Shop tab, featured shelf, and The Shaper navigation. */
+  readonly VITE_SHOP_ENABLED?: string;
 }
 
 interface ImportMeta {

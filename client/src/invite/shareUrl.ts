@@ -1,6 +1,6 @@
 import { isLocalDevPageOrigin } from "../net/apiBase.js";
 
-/** Join link for QR / copy — LAN dev uses the page origin; localhost desktop uses server URL (LAN IP). */
+/** Join link for QR / copy - LAN dev uses the page origin; localhost desktop uses server URL (LAN IP). */
 export function resolvePlaySpaceShareUrl(serverShareUrl: string, slug: string): string {
   if (typeof location === "undefined") return serverShareUrl;
   const trimmedSlug = slug.trim();

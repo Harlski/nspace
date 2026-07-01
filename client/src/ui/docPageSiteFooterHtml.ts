@@ -7,7 +7,7 @@ function navLink(slug: DocPageFooterCurrent, label: string, href: string, curren
   }" href="${href}"${active ? ' aria-current="page"' : ""}>${label}</a>`;
 }
 
-/** Footer: Terms · Privacy · Patch notes + contact — used on `/tacs`, `/privacy`, `/patchnotes`. */
+/** Footer: Terms · Privacy · Patch notes + contact - used on `/tacs`, `/privacy`, `/patchnotes`. */
 export function siteDocFooterHtml(current?: DocPageFooterCurrent): string {
   const t = navLink("tacs", "Terms", "/tacs", current);
   const p = navLink("privacy", "Privacy", "/privacy", current);

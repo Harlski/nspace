@@ -1,7 +1,7 @@
 /**
  * HTTP API origin. Empty string = same origin (Vite dev proxy / Vercel `/api` rewrite).
  * Set `VITE_API_BASE_URL` when the SPA is hosted separately from the API **and**
- * does not proxy `/api/*` (unusual for nimiq.space — leave unset on Vercel).
+ * does not proxy `/api/*` (unusual for nimiq.space - leave unset on Vercel).
  *
  * On known SPA hosts (`nimiq.space`), HTTP always uses same-origin so `/api/*` rewrites
  * apply and browser requests avoid cross-origin CORS (502 upstream errors otherwise
@@ -56,7 +56,7 @@ function isLocalHostname(hostname: string): boolean {
   return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
 }
 
-/** RFC1918 / link-local IPv4 — typical Vite LAN dev URLs (`http://192.168.x.x:5173`). */
+/** RFC1918 / link-local IPv4 - typical Vite LAN dev URLs (`http://192.168.x.x:5173`). */
 export function isPrivateNetworkHostname(hostname: string): boolean {
   const h = hostname.trim().toLowerCase();
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
@@ -71,7 +71,7 @@ export function isPrivateNetworkHostname(hostname: string): boolean {
   return false;
 }
 
-/** Localhost or LAN dev host — WebSocket scheme follows the page (`ws` on http, `wss` on https). */
+/** Localhost or LAN dev host - WebSocket scheme follows the page (`ws` on http, `wss` on https). */
 function isLocalDevHostname(hostname: string): boolean {
   return isLocalHostname(hostname) || isPrivateNetworkHostname(hostname);
 }
@@ -110,7 +110,7 @@ export function resolveWsApiOrigin(): string {
   return DEFAULT_PROD_API_ORIGIN;
 }
 
-/** WebSocket origin — `wss://` on HTTPS pages and non-local API hosts. */
+/** WebSocket origin - `wss://` on HTTPS pages and non-local API hosts. */
 export function resolveWebSocketOrigin(): string {
   const u = new URL(resolveWsApiOrigin());
   const pageHttps =

@@ -9,7 +9,7 @@ import {
   BILLBOARD_HORIZONTAL_WIDTH_TILES,
 } from "./billboards.js";
 
-/** Zoom — wide enough for billboard + standing identicon. */
+/** Zoom - wide enough for billboard + standing identicon. */
 const PREVIEW_FRUSTUM_SIZE = 5.35;
 
 /** Rotate the miniature scene counter-clockwise (viewed from above). */
@@ -28,7 +28,7 @@ const PREVIEW_STAND_Z = 1.35;
 const PREVIEW_CAMERA_OFFSET = 18;
 
 /**
- * Inline ES module for `/advertise` — mini Three.js scene matching in-game orthographic view.
+ * Inline ES module for `/advertise` - mini Three.js scene matching in-game orthographic view.
  * Loaded via import map (Three 0.174, same as client).
  */
 export function advertiseBillboardPreviewModuleScript(): string {
@@ -472,7 +472,7 @@ AdvertBillboardPreview.prototype.setImageUrl = function (url) {
     undefined,
     function () {
       if (gen !== self._imageLoadGen) return;
-      self._setWarn("Could not load image — check the URL is public HTTPS");
+      self._setWarn("Could not load image - check the URL is public HTTPS");
       self._render();
     }
   );

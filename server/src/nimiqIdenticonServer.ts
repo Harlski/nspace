@@ -100,7 +100,7 @@ function toNimiqUserFriendlyForIdenticon(addr: string): string {
   return chunks.join(" ");
 }
 
-/** SVG as `data:image/svg+xml;base64,...` — matches Nimiq wallet / in-game identicons. */
+/** SVG as `data:image/svg+xml;base64,...` - matches Nimiq wallet / in-game identicons. */
 export async function nimiqIdenticonDataUrl(address: string): Promise<string> {
   return IdenticonsClass.toDataUrl(toNimiqUserFriendlyForIdenticon(address));
 }

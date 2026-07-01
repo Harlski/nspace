@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — pure ground-only 2D ball physics (no I/O, unit-tested).
+ * World Cup soccer - pure ground-only 2D ball physics (no I/O, unit-tested).
  *
  * World units == tiles. Tile centers sit at integer indices; a tile spans
  * [c-0.5, c+0.5]. Room walls therefore sit at `bounds.min-0.5` and `bounds.max+0.5`.
@@ -285,7 +285,7 @@ export function kickFromPlayer(
 
 /**
  * Return the id of the goal the ball has scored in, else null. The ball must have crossed
- * the goal LINE (the pitch end) within the mouth — being merely in front of the goal does
+ * the goal LINE (the pitch end) within the mouth - being merely in front of the goal does
  * not count. The end-line wall opening (see `stepBall`) is what lets the ball get there.
  */
 export function detectGoal(

@@ -13,7 +13,7 @@ export function adminChatPageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Chat — Admin — Nimiq Space</title>
+  <title>Chat - Admin - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -286,7 +286,7 @@ export function adminChatPageHtml(): string {
     return api("/api/admin/chat?" + q).then(function (out) {
       if (out.status === 401) { void load(); return; }
       if (out.status === 403) {
-        setStatus("Forbidden — server admin wallet only.", true);
+        setStatus("Forbidden - server admin wallet only.", true);
         return;
       }
       if (out.status !== 200) throw new Error(String(out.status));

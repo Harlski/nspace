@@ -11,6 +11,7 @@ import {
   type DeployDefaults,
   type PassiveSlot,
 } from "./cosmeticPresets.js";
+import { isShopPubliclyOpen } from "./shopAccess.js";
 
 export type CatalogStatus = "draft" | "published" | "archived";
 export type ChangelogAction =
@@ -334,7 +335,19 @@ export function listPublishedShop(): CatalogEntryPublic[] {
   return rows.map(rowToPublic);
 }
 
-/** FNV-1a 32-bit hash — small, dependency-free, stable across runs. */
+/** Published achievement reward catalog — always visible in Wardrobe, never purchasable. */
+export function listPublishedAchievementRewards(): CatalogEntryPublic[] {
+  const rows = requireDb()
+    .prepare(
+      `SELECT * FROM cosmetic_catalog WHERE status = 'published'
+       AND LOWER(collection) = 'achievements'
+       ORDER BY sort_order, display_name`
+    )
+    .all() as CatalogRow[];
+  return rows.map(rowToPublic);
+}
+
+/** FNV-1a 32-bit hash - small, dependency-free, stable across runs. */
 function hashStringToUint32(input: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
@@ -398,6 +411,13 @@ export function listWardrobeShop(
   const bySku = new Map<string, CatalogEntryPublic & { owned: boolean }>();
 
   for (const entry of listPublishedShop()) {
+    bySku.set(entry.cosmeticSku, {
+      ...entry,
+      owned: ownedSkus.has(entry.cosmeticSku),
+    });
+  }
+
+  for (const entry of listPublishedAchievementRewards()) {
     bySku.set(entry.cosmeticSku, {
       ...entry,
       owned: ownedSkus.has(entry.cosmeticSku),
@@ -806,6 +826,9 @@ export function validateUnlockIntent(
 ):
   | { ok: true; entry: CatalogEntryPublic; amountLuna: bigint }
   | { ok: false; error: string } {
+  if (!isShopPubliclyOpen()) {
+    return { ok: false, error: "shop_closed" };
+  }
   const skuNorm = normalizeSku(cosmeticSku);
   if (skuNorm.startsWith("ach-")) {
     return { ok: false, error: "achievement_only" };

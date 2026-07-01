@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — per-room ball simulation step, called from the authoritative
+ * World Cup soccer - per-room ball simulation step, called from the authoritative
  * room tick. Owns its own broadcast-throttle state so the hook in `rooms.ts` stays a
  * single call. No client "kick" intent exists: kicks are derived from player positions
  * the server already has.

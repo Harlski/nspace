@@ -12,6 +12,11 @@ describe("sanitizeRoomsJoinCodeInput", () => {
     expect(sanitizeRoomsJoinCodeInput(" AB12CD ")).toBe("AB12CD");
   });
 
+  it("uppercases partial six-character codes while typing", () => {
+    expect(sanitizeRoomsJoinCodeInput("xpa")).toBe("XPA");
+    expect(sanitizeRoomsJoinCodeInput("xpa6ac")).toBe("XPA6AC");
+  });
+
   it("preserves mixed case for legacy eight-character Play Space slugs", () => {
     expect(sanitizeRoomsJoinCodeInput("Y1dojIyh")).toBe("Y1dojIyh");
   });

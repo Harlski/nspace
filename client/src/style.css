@@ -1,4 +1,4 @@
-/* Rooms browser — full overlay from HUD "Rooms" button */
+/* Rooms browser - full overlay from HUD "Rooms" button */
 .rooms-modal {
   position: fixed;
   inset: 0;
@@ -455,6 +455,7 @@
   font-family: ui-monospace, monospace;
   font-size: 15px;
   letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .rooms-modal__create-launch {
@@ -742,7 +743,7 @@ body {
   outline: none;
 }
 
-/* Icon dismiss controls — no focus chrome (Escape / backdrop dismiss). */
+/* Icon dismiss controls - no focus chrome (Escape / backdrop dismiss). */
 .rooms-modal__close,
 .brand-links-overlay__close,
 .signboard-tooltip__close,
@@ -911,7 +912,7 @@ html.nspace-pseudo-fs #app {
   background: rgba(14, 116, 144, 0.58);
 }
 
-/* Player Menu — bottom-right identicon launcher (navigation/account). */
+/* Player Menu - bottom-right identicon launcher (navigation/account). */
 .player-menu {
   position: absolute;
   right: max(10px, env(safe-area-inset-right, 0px));
@@ -1197,7 +1198,7 @@ html:not(.nspace-mobile-play-host) .build-quick-control {
   touch-action: manipulation;
 }
 
-/* Desktop letterbox: build toggle lives above Player Menu — hide the legacy bottom-right strip. */
+/* Desktop letterbox: build toggle lives above Player Menu - hide the legacy bottom-right strip. */
 html:not(.nspace-mobile-play-host) .hud-build-mode-strip {
   display: none !important;
 }
@@ -1784,7 +1785,7 @@ html.nspace-mobile-play-host .game-frame {
   overflow: hidden;
 }
 
-/* Compact top chrome — more vertical room for the 16:9 letterbox */
+/* Compact top chrome - more vertical room for the 16:9 letterbox */
 html.nspace-mobile-play-host .hud-top-strip__main {
   padding: 4px 8px;
   gap: 0.45rem;
@@ -2049,7 +2050,7 @@ html.nspace-mobile-portrait .hud-top-strip__main > .hud-lobby {
   flex: 0 0 auto;
 }
 
-/* Portrait Pay: spread build dock — params (left); color wheel + preview stacked (right). */
+/* Portrait Pay: spread build dock - params (left); color wheel + preview stacked (right). */
 html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible {
   --hud-build-dock-float-top: calc(var(--hud-below-top-wrap, 44px) + 6px);
   --hud-build-dock-float-bottom: calc(
@@ -2351,7 +2352,7 @@ button.hud-brand:focus-visible {
   border-radius: 4px;
 }
 
-/* In-game “Nimiq Space” — links + wallet (centered over letterbox) */
+/* In-game “Nimiq Space” - links + wallet (centered over letterbox) */
 .brand-links-overlay {
   position: fixed;
   inset: 0;
@@ -2626,7 +2627,7 @@ button.hud-brand:focus-visible {
   min-height: 1.3em;
 }
 
-/* Only the QR module is visible; no dim sheet — body stays tappable to return */
+/* Only the QR module is visible; no dim sheet - body stays tappable to return */
 .brand-links-overlay__qr-view {
   position: absolute;
   inset: 0;
@@ -2688,7 +2689,7 @@ button.hud-brand:focus-visible {
   pointer-events: auto;
 }
 
-/* Wallet identicon + short address — locked immediately right of “Nimiq Space” */
+/* Wallet identicon + short address - locked immediately right of “Nimiq Space” */
 .hud-player-bar {
   display: inline-flex;
   flex-direction: row;
@@ -2816,7 +2817,7 @@ button.hud-brand:focus-visible {
   }
 }
 
-/* Narrow touch: keep ONE row — shrink mid, let toolbar take remaining width and scroll horizontally */
+/* Narrow touch: keep ONE row - shrink mid, let toolbar take remaining width and scroll horizontally */
 @media (pointer: coarse) and (max-width: 960px) {
   .hud-top-strip__main {
     flex-wrap: nowrap;
@@ -3120,7 +3121,7 @@ button.hud-brand:focus-visible {
   cursor: help;
 }
 
-/* Signpost overlay — top sheet (~half viewport) so mobile keyboard leaves actions visible */
+/* Signpost overlay - top sheet (~half viewport) so mobile keyboard leaves actions visible */
 .signpost-overlay {
   position: fixed;
   inset: 0;
@@ -3270,7 +3271,7 @@ button.hud-brand:focus-visible {
   background: #2563eb;
 }
 
-/* Billboard placement — compact centered dialog (rooms-style, not full-width sheet) */
+/* Billboard placement - compact centered dialog (rooms-style, not full-width sheet) */
 .billboard-modal {
   position: fixed;
   inset: 0;
@@ -3742,7 +3743,7 @@ button.hud-brand:focus-visible {
   background: #2563eb;
 }
 
-/* Block / Signpost / Teleporter — text-only */
+/* Block / Signpost / Teleporter - text-only */
 .build-block-bar__tool-row {
   display: flex;
   flex-direction: row;
@@ -3803,7 +3804,7 @@ button.hud-brand:focus-visible {
   align-items: flex-end;
 }
 
-/* Fullscreen + Lobby — inside .hud-top-strip (top black bar), right-aligned */
+/* Fullscreen + Lobby - inside .hud-top-strip (top black bar), right-aligned */
 .hud-top-toolbar {
   display: flex;
   flex-direction: row;
@@ -4155,7 +4156,7 @@ button.hud-brand:focus-visible {
   gap: 0;
 }
 
-/* Right rail removed — keep file section marker for BEM below */
+/* Right rail removed - keep file section marker for BEM below */
 .hud-mode-sidebar__tabs {
   display: flex;
   flex-direction: column;
@@ -4423,7 +4424,7 @@ button.hud-brand:focus-visible {
   white-space: nowrap;
 }
 
-/* Shape picker — fixed popover left of mode rail (position from JS). */
+/* Shape picker - fixed popover left of mode rail (position from JS). */
 .build-block-bar-shape-popover {
   position: fixed;
   z-index: 22;
@@ -4524,7 +4525,7 @@ button.hud-brand:focus-visible {
   width: 100%;
 }
 
-/* `[hidden]` alone loses to `display:flex` above — keep unused preview slot out of layout. */
+/* `[hidden]` alone loses to `display:flex` above - keep unused preview slot out of layout. */
 .hud-mode-sidebar__block-preview-slot[hidden] {
   display: none !important;
 }
@@ -4786,7 +4787,7 @@ button.hud-brand:focus-visible {
   display: none;
 }
 
-/* Feedback — Nimiq pill in mode rail header */
+/* Feedback - Nimiq pill in mode rail header */
 .hud-mode-feedback.nq-button-pill {
   box-sizing: border-box;
   min-height: 0;
@@ -4806,7 +4807,7 @@ button.hud-brand:focus-visible {
   filter: brightness(1.06);
 }
 
-/* Feedback — centered modal (~75% width); same chrome as signpost overlay dialog. */
+/* Feedback - centered modal (~75% width); same chrome as signpost overlay dialog. */
 .signpost-overlay.feedback-overlay {
   position: absolute;
   inset: 0;
@@ -5225,7 +5226,7 @@ button.hud-brand:focus-visible {
   }
 }
 
-/* Sign read modal — profile card layout; lighter scrim so the world stays visible. */
+/* Sign read modal - profile card layout; lighter scrim so the world stays visible. */
 .sign-read-overlay.other-player-profile {
   position: fixed;
   inset: 0;
@@ -5424,7 +5425,7 @@ button.hud-brand:focus-visible {
 }
 
 /*
- * In-game HUD Nimiq pills — compact sizing. Vite production splits CSS: `@nimiq/style`
+ * In-game HUD Nimiq pills - compact sizing. Vite production splits CSS: `@nimiq/style`
  * often lands in a later `<link>` than `style.css`, so bare `.nq-button-pill` rem
  * height/line-height (3.375rem) wins over single-class HUD overrides. `#app` + both
  * classes beats `.nq-button-pill` regardless of chunk order.
@@ -5472,7 +5473,7 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
-/* Quick emoji — right-click self (desktop) or long-press own avatar (touch) */
+/* Quick emoji - right-click self (desktop) or long-press own avatar (touch) */
 /* Pay WebView: tap-outside catcher on body (above #app fixed z-index 5). */
 .action-wheel-backdrop {
   position: fixed;
@@ -5487,7 +5488,7 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
-/* Action Wheel — radial self-menu centred on the avatar (the transparent Hub frames it). */
+/* Action Wheel - radial self-menu centred on the avatar (the transparent Hub frames it). */
 .action-wheel {
   position: absolute;
   z-index: 8;
@@ -5552,7 +5553,7 @@ button.hud-brand:focus-visible {
 
 .action-wheel__wedge {
   fill: rgba(15, 17, 23, 0.94);
-  /* Soft, light dividers — still reads as six Sectors without the hard borders. */
+  /* Soft, light dividers - still reads as six Sectors without the hard borders. */
   stroke: rgba(150, 165, 195, 0.22);
   stroke-width: 1;
   stroke-linejoin: round;
@@ -5626,7 +5627,7 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
-/* Other player — context menu (fixed viewport coords from Game) */
+/* Other player - context menu (fixed viewport coords from Game) */
 .other-player-ctx {
   position: fixed;
   z-index: 10002;
@@ -5803,7 +5804,7 @@ button.hud-brand:focus-visible {
   inset: 0;
   z-index: 10001;
   display: flex;
-  /* Desktop default: centered modal. On mobile / Nimiq Pay it becomes a bottom-anchored sheet —
+  /* Desktop default: centered modal. On mobile / Nimiq Pay it becomes a bottom-anchored sheet -
      see the `@media (max-width: 560px)` and `html.nspace-mobile-play-host` overrides below. */
   align-items: center;
   justify-content: center;
@@ -5996,7 +5997,7 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
-/* Bottom tab bar — DESKTOP default: the tabs hang off the bottom edge of the modal (over the
+/* Bottom tab bar - DESKTOP default: the tabs hang off the bottom edge of the modal (over the
    blurred game), so nothing/no panel sits behind them. The bar breaks out of the dialog's bottom
    padding with negative margins; each tab has only bottom-rounded corners and an opaque fill so the
    game doesn't show through, and the active one drops its top border to read as merged ("open")
@@ -6058,7 +6059,7 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
-/* Other-player profiles: Achievements + User Rooms only — centered pair, not stretched. */
+/* Other-player profiles: Achievements + User Rooms only - centered pair, not stretched. */
 .other-player-profile__tabbar--other {
   justify-content: center;
 }
@@ -6068,7 +6069,7 @@ button.hud-brand:focus-visible {
   max-width: 11rem;
 }
 
-/* Sheet mode: tabs are pinned to the bottom edge of the sheet (inside the panel — not hanging over
+/* Sheet mode: tabs are pinned to the bottom edge of the sheet (inside the panel - not hanging over
    the backdrop like desktop). Same folder-tab chrome; active tab merges upward into the content. */
 .other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__tabbar {
   margin: 0;
@@ -6440,7 +6441,7 @@ button.hud-brand:focus-visible {
   fill: currentColor;
 }
 
-/* Nimiq Pay mini-app: white FM mark, no chip — inline after the address (NQ…{icon}) */
+/* Nimiq Pay mini-app: white FM mark, no chip - inline after the address (NQ…{icon}) */
 .other-player-profile__nimiq-pay-inline {
   position: relative;
   display: inline-flex;
@@ -6458,7 +6459,7 @@ button.hud-brand:focus-visible {
   align-self: center;
 }
 
-/* Author `display` wins over the `hidden` attribute’s UA style — must re-hide when JS sets `hidden`. */
+/* Author `display` wins over the `hidden` attribute’s UA style - must re-hide when JS sets `hidden`. */
 .other-player-profile__nimiq-pay-inline[hidden] {
   display: none !important;
 }
@@ -6737,7 +6738,7 @@ button.hud-brand:focus-visible {
 }
 
 /* Sheet mode gives the content zone symmetric padding, so the reclaim hack would clip the right
-   column — cancel it. */
+   column - cancel it. */
 .other-player-profile.is-sheet:not(.sign-read-overlay) .other-player-profile__wardrobe {
   margin-right: 0;
 }
@@ -7216,6 +7217,139 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   box-sizing: border-box;
 }
 
+.wardrobe-swatch--sprite {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  padding: 1px;
+  background: rgba(12, 16, 24, 0.98) !important;
+  box-shadow: inset 0 0 0 1px rgba(51, 65, 85, 0.85) !important;
+}
+
+.wardrobe-swatch--sprite.is-loading .wardrobe-swatch__sprite {
+  opacity: 0;
+}
+
+.wardrobe-swatch__loader {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(148, 163, 184, 0.9);
+  pointer-events: none;
+}
+
+.wardrobe-swatch--sprite:not(.is-loading) .wardrobe-swatch__loader {
+  display: none;
+}
+
+.wardrobe-swatch__hex-loader {
+  display: block;
+  width: 1rem;
+  height: 0.88rem;
+}
+
+.wardrobe-swatch__hex-loader .big-hex {
+  stroke-dashoffset: -40.5;
+  animation: loading-big-hex 4s cubic-bezier(0.76, 0.29, 0.29, 0.76) infinite;
+}
+
+.wardrobe-swatch__hex-loader .small-hex {
+  stroke-dashoffset: 13;
+  animation: loading-small-hex 4s cubic-bezier(0.76, 0.29, 0.29, 0.76) infinite;
+}
+
+.wardrobe-swatch__sprite {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.wardrobe-swatch--unavailable {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(30, 41, 59, 0.95);
+}
+
+.wardrobe-slot__unavailable-icon {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+
+.wardrobe-slot__unavailable-icon-img {
+  display: block;
+  width: 62%;
+  height: 62%;
+  object-fit: contain;
+  opacity: 0.72;
+  filter: brightness(0) invert(0.72);
+}
+
+.wardrobe-slot__name--unavailable {
+  display: grid;
+  place-items: center;
+  min-height: 1rem;
+}
+
+.wardrobe-layout--skeleton {
+  pointer-events: none;
+}
+
+.wardrobe-slot--skeleton,
+.wardrobe-swatch--skeleton,
+.wardrobe-doll__canvas--skeleton,
+.wardrobe-shop__skeleton-block {
+  background: rgba(30, 41, 59, 0.72);
+  border-radius: 6px;
+}
+
+.wardrobe-slot--skeleton {
+  border: 1px solid rgba(51, 65, 85, 0.65);
+}
+
+.wardrobe-swatch--skeleton {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.wardrobe-slot__name--skeleton {
+  color: rgba(100, 116, 139, 0.55);
+}
+
+.wardrobe-doll--skeleton {
+  opacity: 0.85;
+}
+
+.wardrobe-doll__canvas--skeleton {
+  width: 168px;
+  height: 168px;
+  max-width: 100%;
+}
+
+.other-player-profile__wardrobe .wardrobe-doll__canvas--skeleton {
+  width: 100%;
+  max-width: 7.5rem;
+  aspect-ratio: 1;
+  height: auto;
+}
+
+.wardrobe-shop--skeleton .wardrobe-shop__skeleton-block {
+  min-height: 7rem;
+  margin-top: 0.75rem;
+}
+
+.achievement-panel__reward-swatch.wardrobe-swatch--sprite .wardrobe-swatch__sprite {
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.25));
+}
+
 .wardrobe-swatch--empty {
   background: repeating-linear-gradient(
     -45deg,
@@ -7293,8 +7427,24 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   background: radial-gradient(circle, #88ee55 35%, rgba(136, 238, 85, 0.15) 75%);
 }
 
-.wardrobe-swatch--trail-ref-spark-path {
+.wardrobe-swatch--trail-ref-spark-path:not(.wardrobe-swatch--sprite) {
   background: radial-gradient(circle, #ffcc44 35%, rgba(255, 238, 136, 0.2) 75%);
+}
+
+.wardrobe-swatch--trail-ref-spark-cyan:not(.wardrobe-swatch--sprite) {
+  background: radial-gradient(circle, #44d4ff 35%, rgba(68, 212, 255, 0.2) 75%);
+}
+
+.wardrobe-swatch--trail-ref-spark-rose:not(.wardrobe-swatch--sprite) {
+  background: radial-gradient(circle, #ff6699 35%, rgba(255, 102, 153, 0.2) 75%);
+}
+
+.wardrobe-swatch--trail-ref-spark-violet:not(.wardrobe-swatch--sprite) {
+  background: radial-gradient(circle, #aa77ff 35%, rgba(170, 119, 255, 0.2) 75%);
+}
+
+.wardrobe-swatch--trail-ref-spark-lime:not(.wardrobe-swatch--sprite) {
+  background: radial-gradient(circle, #88ee55 35%, rgba(136, 238, 85, 0.2) 75%);
 }
 
 .wardrobe-swatch--aura-ref-magic-ring {
@@ -7309,12 +7459,44 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   pointer-events: none;
 }
 
+.wardrobe-doll__vfx--trail-ref-spark-cyan::before {
+  content: "";
+  position: absolute;
+  inset: 18% 8% 8% 8%;
+  background: radial-gradient(circle at 50% 80%, rgba(68, 212, 255, 0.55), transparent 70%);
+  pointer-events: none;
+}
+
+.wardrobe-doll__vfx--trail-ref-spark-rose::before {
+  content: "";
+  position: absolute;
+  inset: 18% 8% 8% 8%;
+  background: radial-gradient(circle at 50% 80%, rgba(255, 102, 153, 0.55), transparent 70%);
+  pointer-events: none;
+}
+
+.wardrobe-doll__vfx--trail-ref-spark-violet::before {
+  content: "";
+  position: absolute;
+  inset: 18% 8% 8% 8%;
+  background: radial-gradient(circle at 50% 80%, rgba(170, 119, 255, 0.55), transparent 70%);
+  pointer-events: none;
+}
+
+.wardrobe-doll__vfx--trail-ref-spark-lime::before {
+  content: "";
+  position: absolute;
+  inset: 18% 8% 8% 8%;
+  background: radial-gradient(circle at 50% 80%, rgba(136, 238, 85, 0.55), transparent 70%);
+  pointer-events: none;
+}
+
 .wardrobe-doll__vfx--aura-ref-magic-ring::after {
   content: "";
   position: absolute;
-  inset: 28% 12% 4% 12%;
+  inset: 22% 6% 2% 6%;
   border-radius: 50%;
-  box-shadow: 0 0 18px rgba(170, 119, 255, 0.55);
+  box-shadow: 0 0 28px rgba(170, 119, 255, 0.75), 0 0 48px rgba(200, 160, 255, 0.45);
   pointer-events: none;
 }
 
@@ -7368,6 +7550,11 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   flex-wrap: wrap;
   gap: 0.35rem;
   margin-bottom: 0.45rem;
+}
+
+.wardrobe-dropdown__actions .wardrobe-panel__btn--accent:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .wardrobe-dropdown__list {
@@ -7524,6 +7711,113 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
 .wardrobe-dropdown__row-text {
   flex: 1;
   min-width: 0;
+}
+
+.wardrobe-dropdown__row--style-line {
+  gap: 0.35rem;
+}
+
+.wardrobe-dropdown__row-chevron {
+  flex-shrink: 0;
+  color: #94a3b8;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.wardrobe-variant-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.wardrobe-variant-picker__back {
+  appearance: none;
+  align-self: flex-start;
+  padding: 0.15rem 0.35rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #94a3b8;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wardrobe-variant-picker__back:hover {
+  color: #e2e8f0;
+  background: rgba(51, 65, 85, 0.45);
+}
+
+.wardrobe-variant-picker__title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.wardrobe-variant-picker__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2.35rem, 1fr));
+  gap: 0.35rem;
+}
+
+.wardrobe-variant-tile {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  padding: 0.2rem;
+  border: 1px solid rgba(51, 65, 85, 0.75);
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.65);
+  cursor: pointer;
+}
+
+.wardrobe-variant-tile:hover {
+  border-color: rgba(148, 163, 184, 0.65);
+}
+
+.wardrobe-variant-tile.is-selected {
+  border-color: rgba(234, 88, 12, 0.85);
+  box-shadow: 0 0 0 1px rgba(234, 88, 12, 0.35);
+}
+
+.wardrobe-variant-tile--locked {
+  opacity: 0.92;
+}
+
+.wardrobe-variant-tile .wardrobe-swatch {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.wardrobe-variant-tile__lock {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.wardrobe-variant-tile__lock-img {
+  width: 46%;
+  height: 46%;
+  object-fit: contain;
+  filter: brightness(0) invert(0.85);
+  opacity: 0.92;
+}
+
+.wardrobe-variant-picker__caption {
+  margin: 0;
+  min-height: 1rem;
+  font-size: 11px;
+  font-weight: 600;
+  color: #cbd5e1;
+  text-align: center;
 }
 
 .wardrobe-dropdown__price {
@@ -7697,6 +7991,14 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   color: #e2e8f0;
 }
 
+.wardrobe-shop__coming-soon {
+  margin: 0.35rem 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+}
+
 .wardrobe-shop__go {
   align-self: center;
   min-width: 9rem;
@@ -7806,7 +8108,7 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   color: #94a3b8;
 }
 
-/* Preset Gallery (SPACER) — try-on prompt when standing near a showcase */
+/* Preset Gallery (SPACER) - try-on prompt when standing near a showcase */
 .cosmetic-gallery-tryon {
   position: absolute;
   left: 50%;
@@ -10370,7 +10672,7 @@ html.nspace-mobile-portrait
   overflow: visible;
 }
 
-/* Build bar lives inside `.hud-mode-sidebar__build-mount` — not fixed over the canvas */
+/* Build bar lives inside `.hud-mode-sidebar__build-mount` - not fixed over the canvas */
 .hud-mode-sidebar__build-mount .build-block-bar.build-block-bar--rail {
   position: relative !important;
   right: auto !important;
@@ -10409,7 +10711,7 @@ html.nspace-mobile-portrait
   box-sizing: border-box;
 }
 
-/* Tile inspector — placement rail + selected-block editor */
+/* Tile inspector - placement rail + selected-block editor */
 .tile-inspector {
   display: flex;
   flex-direction: column;
@@ -10575,7 +10877,7 @@ html.nspace-mobile-portrait
   color: #cbd5e1;
 }
 
-/* Author `display: grid` beats UA `[hidden]` — dock param rows rely on `.hidden`. */
+/* Author `display: grid` beats UA `[hidden]` - dock param rows rely on `.hidden`. */
 .tile-inspector__param[hidden] {
   display: none !important;
 }
@@ -10691,7 +10993,7 @@ html.nspace-mobile-portrait
   min-height: 0;
 }
 
-/* Sibling of .build-block-bar — fixed layer above the bar (position set in JS) */
+/* Sibling of .build-block-bar - fixed layer above the bar (position set in JS) */
 .build-block-bar-advanced {
   position: fixed;
   z-index: 20;
@@ -10744,7 +11046,7 @@ html.nspace-mobile-portrait
   font-size: 8px;
 }
 
-/* Object editor advanced — fixed popover (position from JS), separate from main panel */
+/* Object editor advanced - fixed popover (position from JS), separate from main panel */
 .build-object-panel-advanced {
   position: fixed;
   z-index: 52;
@@ -10762,7 +11064,7 @@ html.nspace-mobile-portrait
   display: none !important;
 }
 
-/* Floating block selection card — below shape/advanced popovers (z-index). */
+/* Floating block selection card - below shape/advanced popovers (z-index). */
 .build-object-panel-context {
   position: fixed;
   z-index: 24;
@@ -10924,7 +11226,7 @@ html.nspace-mobile-portrait
   padding-right: 0;
 }
 
-/* Billboard: __actions flex-grow makes each <button> fill half the row — clicks land on “empty” pill space. */
+/* Billboard: __actions flex-grow makes each <button> fill half the row - clicks land on “empty” pill space. */
 .build-object-panel-context--billboard .build-object-panel-context__actions {
   justify-content: flex-start;
 }
@@ -10937,7 +11239,7 @@ html.nspace-mobile-portrait
   padding-right: 12px;
 }
 
-/* Author `display: inline-flex` on Advanced… otherwise beats UA `[hidden]` — leaves a dead flex slot. */
+/* Author `display: inline-flex` on Advanced… otherwise beats UA `[hidden]` - leaves a dead flex slot. */
 .build-object-panel-context--billboard .build-block-bar__advanced-toggle[hidden] {
   display: none !important;
 }
@@ -11739,7 +12041,7 @@ html.nspace-mobile-portrait
   gap: 6px;
 }
 
-/* Gate tool strip: rows live outside Advanced popover — need explicit flex */
+/* Gate tool strip: rows live outside Advanced popover - need explicit flex */
 #build-block-bar-gate .build-block-bar__gate-tool-row {
   display: flex;
   flex-direction: column;
@@ -12130,7 +12432,7 @@ html.nspace-mobile-portrait
   color: #e8eaef;
 }
 
-/* Minimized: only the restore control is visible — stretch for an easier tap target */
+/* Minimized: only the restore control is visible - stretch for an easier tap target */
 .chat-row:has(.chat-input[hidden]) .chat-row__restore {
   flex: 1;
 }
@@ -12394,7 +12696,7 @@ html.nspace-mobile-portrait
   color: #f87171;
 }
 
-/* —— Main menu / lobby (tokens aligned with mainSiteClient.css) —— */
+/* -- Main menu / lobby (tokens aligned with mainSiteClient.css) -- */
 .main-menu {
   /* Mirror static site shell */
   --menu-bg: #0f1419;
@@ -12442,7 +12744,7 @@ html.nspace-mobile-portrait
     linear-gradient(180deg, var(--menu-bg-mid) 0%, var(--menu-bg) 42%, #0a0e14 100%);
 }
 
-/* Tactical grid — low contrast, strongest at periphery */
+/* Tactical grid - low contrast, strongest at periphery */
 .main-menu__backdrop::after {
   content: "";
   position: absolute;
@@ -12463,7 +12765,7 @@ html.nspace-mobile-portrait
   text-align: center;
 }
 
-/* Game-style login panel — same gradient language as .ms-site-header */
+/* Game-style login panel - same gradient language as .ms-site-header */
 .main-menu__card {
   position: relative;
   text-align: center;
@@ -12702,7 +13004,7 @@ a.main-menu__version:focus-visible {
   justify-content: center;
 }
 
-/* Official Nimiq outline mono hex (`nimiq-icons` / Iconify `logos-nimiq-hexagon-outline-mono`) + plus — tile size matches identicon row. */
+/* Official Nimiq outline mono hex (`nimiq-icons` / Iconify `logos-nimiq-hexagon-outline-mono`) + plus - tile size matches identicon row. */
 .main-menu__cached-add-hex {
   display: flex;
   align-items: center;
@@ -12745,7 +13047,7 @@ a.main-menu__version:focus-visible {
   height: auto;
 }
 
-/* Wallet row: Nimiq `@nimiq/identicons` via `toDataUrl()` — one SVG data URL in `<img>` (see identiconTexture.ts). */
+/* Wallet row: Nimiq `@nimiq/identicons` via `toDataUrl()` - one SVG data URL in `<img>` (see identiconTexture.ts). */
 .main-menu__cached-avatar {
   display: block;
   margin: 0;
@@ -12929,7 +13231,7 @@ a.main-menu__version:focus-visible {
   margin-left: auto;
 }
 
-/* Same footprint as `.main-menu__nq-btn--pill` — solid pills, Forget left / Payouts+Enter right. */
+/* Same footprint as `.main-menu__nq-btn--pill` - solid pills, Forget left / Payouts+Enter right. */
 .main-menu__actions-account__pill {
   box-sizing: border-box;
   display: inline-flex;
@@ -13008,7 +13310,7 @@ a.main-menu__version:focus-visible {
   cursor: not-allowed;
 }
 
-/* Tap saved account: Nimiq Style — primary identicon control */
+/* Tap saved account: Nimiq Style - primary identicon control */
 .main-menu__identicon-btn {
   display: block;
   width: 56px;
@@ -13059,7 +13361,7 @@ a.main-menu__version:focus-visible {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
 }
 
-/* Nimiq Style buttons — https://nimiq.github.io/nimiq-style/demo.html (root 16px; Mulish for labels) */
+/* Nimiq Style buttons - https://nimiq.github.io/nimiq-style/demo.html (root 16px; Mulish for labels) */
 .main-menu .nq-button.main-menu__nq-btn,
 .main-menu .nq-button-s.main-menu__nq-btn {
   width: 100%;
@@ -13096,7 +13398,7 @@ a.main-menu__version:focus-visible {
   letter-spacing: normal;
 }
 
-/* Primary / dev login — match social pill size (not full Nimiq demo height). */
+/* Primary / dev login - match social pill size (not full Nimiq demo height). */
 .main-menu__actions .nq-button.main-menu__nq-btn.main-menu__nq-btn--pill {
   width: auto;
   max-width: min(100%, 14rem);
@@ -13171,7 +13473,7 @@ a.main-menu__version:focus-visible {
   margin-block: 0;
 }
 
-/* `display: flex` alone overrides the HTML `hidden` attribute in some cascade orders — keep [hidden] authoritative. */
+/* `display: flex` alone overrides the HTML `hidden` attribute in some cascade orders - keep [hidden] authoritative. */
 .main-menu__terms-privacy[hidden] {
   display: none !important;
 }
@@ -13521,7 +13823,7 @@ a.main-menu__version:focus-visible {
   line-height: 1.4;
 }
 
-/* —— Patch notes (`/patchnotes`) — same menu shell; version + tier dropdowns, one release body —— */
+/* -- Patch notes (`/patchnotes`) - same menu shell; version + tier dropdowns, one release body -- */
 .patchnotes-page .main-menu__card-inner {
   text-align: left;
 }
@@ -14773,7 +15075,7 @@ a.main-menu__version:focus-visible {
   border-color: rgba(255, 220, 120, 0.85);
   background: rgba(255, 220, 120, 0.15);
 }
-/* Prefab save — compact centered dialog (profile-menu style) */
+/* Prefab save - compact centered dialog (profile-menu style) */
 .prefab-publish-overlay {
   position: fixed;
   inset: 0;
@@ -15074,7 +15376,7 @@ a.main-menu__version:focus-visible {
   cursor: not-allowed;
 }
 
-/* Prefab library overlay — choose dock strip favorites */
+/* Prefab library overlay - choose dock strip favorites */
 .prefab-picker-overlay {
   align-items: center;
   justify-content: center;
@@ -16159,7 +16461,7 @@ a.main-menu__version:focus-visible {
   overflow: hidden;
 }
 
-/* Rotating 1px accent ring — visible only while the toast is shown */
+/* Rotating 1px accent ring - visible only while the toast is shown */
 .achievement-unlock-banner--visible::before {
   content: "";
   position: absolute;
@@ -16199,7 +16501,7 @@ a.main-menu__version:focus-visible {
   }
 }
 
-/* Nimiq Pay / mobile play — extra breathing room below compact top chrome */
+/* Nimiq Pay / mobile play - extra breathing room below compact top chrome */
 html.nspace-mobile-play-host .achievement-unlock-stack {
   --achievement-unlock-banner-gap: 18px;
 }
@@ -16431,7 +16733,7 @@ html.nspace-mobile-portrait .achievement-unlock-stack--visible {
   transform: translateX(-50%) translateY(0);
 }
 
-/* Nimiq Pay — unlock toast below compact top chrome (not bottom of letterbox) */
+/* Nimiq Pay - unlock toast below compact top chrome (not bottom of letterbox) */
 html.nspace-nimiq-pay-host .achievement-unlock-stack {
   top: calc(var(--hud-below-top-wrap, 44px) + var(--achievement-unlock-banner-gap, 18px));
   bottom: auto;
@@ -16440,30 +16742,6 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack {
 
 html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   transform: translateX(-50%) translateY(0);
-}
-
-.achievement-unlock-debug-btn {
-  position: absolute;
-  left: 8px;
-  bottom: 48px;
-  z-index: 10059;
-  padding: 0.35rem 0.55rem;
-  border-radius: 8px;
-  border: 1px dashed rgba(250, 204, 21, 0.45);
-  background: rgba(15, 17, 23, 0.92);
-  color: #fde68a;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-html.nspace-mobile-play-host .achievement-unlock-debug-btn {
-  bottom: calc(64px + env(safe-area-inset-bottom, 0px));
-}
-
-.achievement-unlock-debug-btn:hover {
-  border-color: rgba(250, 204, 21, 0.7);
-  color: #fff;
 }
 
 .achievement-panel {

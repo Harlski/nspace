@@ -3,7 +3,7 @@ export type DirectInviteActivity = "worldcup-match";
 
 /**
  * Play Space lifecycle. Unlike the old 1:1 staging lobby, a Play Space is just "alive"
- * (`open`) until it empties or its TTL lapses — there is no host-driven start/cancel that
+ * (`open`) until it empties or its TTL lapses - there is no host-driven start/cancel that
  * ends it for everyone.
  */
 export type InvitePhase = "open" | "closed" | "expired";

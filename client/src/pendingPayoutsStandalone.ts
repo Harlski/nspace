@@ -64,7 +64,7 @@ function nimTxHexForUrl(txHash: string): string {
 
 function explorerCell(txHash: string): string {
   const hex = nimTxHexForUrl(txHash);
-  if (!hex) return esc(String(txHash || "—"));
+  if (!hex) return esc(String(txHash || "-"));
   return `<a class="ms-link-expl" rel="noopener noreferrer" target="_blank" href="https://nimiq.watch/#${hex}">Watch</a> · <a class="ms-link-expl" rel="noopener noreferrer" target="_blank" href="https://www.nimiqhub.com/tx/${hex}">Hub</a>`;
 }
 
@@ -179,7 +179,7 @@ async function load(): Promise<void> {
     if (r.status === 401) {
       await renderMainSiteTopbar("payouts", { onLoginClick: () => void runLogin() });
       await refreshMainSiteNavFromSession();
-      statusEl.textContent = "Session expired — sign in again from the menu.";
+      statusEl.textContent = "Session expired - sign in again from the menu.";
       return;
     }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);

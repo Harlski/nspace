@@ -768,7 +768,7 @@ export function listExpiredCampaigns(): CampaignPublic[] {
   return rows.map(rowToPublic);
 }
 
-/** Draft or abandoned payment — never reached pending approval. */
+/** Draft or abandoned payment - never reached pending approval. */
 export function listUnfundedCampaigns(): CampaignPublic[] {
   const rows = requireDb()
     .prepare(
@@ -914,7 +914,7 @@ export function grantCampaignAdminCredit(
   return getCampaignById(campaignId);
 }
 
-/** @deprecated use approveCampaign — kept for migration references */
+/** @deprecated use approveCampaign - kept for migration references */
 export function activateCampaign(
   id: string,
   patch: {

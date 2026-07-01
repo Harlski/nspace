@@ -11,7 +11,11 @@ export {
 } from "./playSpaceLayout.js";
 export { registerDirectInviteRoutes } from "./httpHandlers.js";
 export type { DirectInviteHttpDeps } from "./httpHandlers.js";
-export { sanitizeGuestNickname, getParticipant } from "./reducer.js";
+export {
+  sanitizeGuestNickname,
+  getParticipant,
+  getParticipantByWallet,
+} from "./reducer.js";
 export {
   claimInvite,
   closeInvite,
@@ -24,6 +28,7 @@ export {
   markHostLeftLobby,
   removeInviteParticipant,
   expireInvitePastTtl,
+  generateGuestId,
   joinInviteAsWallet,
   listOpenInvites,
   tickInvites,

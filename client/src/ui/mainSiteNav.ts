@@ -51,7 +51,7 @@ const MAIN_SITE_NAV_GROUPS: MainSiteNavGroup[] = [
       { page: "header", href: "/admin/header", label: "Header", authKey: "header" },
       { page: "feedback", href: "/admin/feedback", label: "Feedback", authKey: "feedback" },
       { page: "campaign", href: "/admin/campaign", label: "Campaigns", authKey: "campaign" },
-      { page: "cosmetics", href: "/admin/cosmetics", label: "Cosmetics", authKey: "campaign" },
+      { page: "cosmetics", href: "/admin/cosmetics", label: "Cosmetics", authKey: "cosmetics" },
       { page: "rooms", href: "/admin/rooms", label: "Rooms", authKey: "rooms" },
     ],
   },

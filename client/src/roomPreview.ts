@@ -101,7 +101,7 @@ async function main(): Promise<void> {
 
   hideStatus();
   if (snapshot.spatial) {
-    setNote("Large room — floor detail is simplified in this preview.");
+    setNote("Large room - floor detail is simplified in this preview.");
   }
 
   let last = performance.now();

@@ -1,7 +1,7 @@
 /**
  * Campaign funding: pay for **seconds your slide is on screen in front of players**.
  *
- * Dwell (10 / 30 / 45 s) is free to choose — same per-minute rate for all tiers.
+ * Dwell (10 / 30 / 45 s) is free to choose - same per-minute rate for all tiers.
  * Balance drains by display time when players can see the billboard:
  *   drainLuna = lunaPerSecond × secondsOnScreen × audienceFactor
  *
@@ -82,7 +82,7 @@ export function lunaDrainForSlideDisplay(dwellSec: number): bigint {
 
 /**
  * Estimated **on-screen** minutes from prepaid balance (full audience).
- * Independent of dwell — longer dwell burns more per rotation when players watch.
+ * Independent of dwell - longer dwell burns more per rotation when players watch.
  */
 export function estimateVisibilityMinutesFromFund(fundNim: number): number {
   if (!Number.isFinite(fundNim) || fundNim <= 0) return 0;

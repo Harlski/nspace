@@ -776,7 +776,7 @@ function enterGame(
    * Shaper Return: the room (and approximate tile) the player was in just before entering The
    * Shaper, so "Leave the Shaper" can send them back where they came from. Persisted in
    * sessionStorage (survives reloads within the browser session) and expires after 30 minutes.
-   * It is only a UX hint — the server re-validates room access and walkability on use.
+   * It is only a UX hint - the server re-validates room access and walkability on use.
    */
   const SHAPER_RETURN_KEY = "nspace.shaperReturn";
   const SHAPER_RETURN_TTL_MS = 30 * 60 * 1000;
@@ -1146,7 +1146,7 @@ function enterGame(
     return compactWallet(r.ownerAddress) === compactWallet(address);
   }
 
-  /** Hub + owned rooms for players; full catalog (incl. private) for admins — teleporter room picker. */
+  /** Hub + owned rooms for players; full catalog (incl. private) for admins - teleporter room picker. */
   function teleporterDestinationRoomOptions(): TeleporterDestinationRoomRow[] {
     const nHub = normalizeRoomId(HUB_ROOM_ID);
     const rowFromKnown = (r: KnownRoomRow): TeleporterDestinationRoomRow => ({
@@ -1912,7 +1912,7 @@ function enterGame(
     } else {
       const official = document.createElement("span");
       official.className = "rooms-modal__cell--owner-official";
-      official.textContent = "—";
+      official.textContent = "-";
       ownerCell.appendChild(official);
     }
     const playersCell = document.createElement("div");
@@ -2785,11 +2785,11 @@ function enterGame(
       hud.setStatus(
         touchUi
           ? isPixel
-            ? `Paint — tap tiles to recolor (F or Build off when done)${entryPickHint}`
-            : `Floor — tap tiles next to walkable space (F or Build off when done)${entryPickHint}`
+            ? `Paint - tap tiles to recolor (F or Build off when done)${entryPickHint}`
+            : `Floor - tap tiles next to walkable space (F or Build off when done)${entryPickHint}`
           : isPixel
-            ? `Paint — left-click tiles to recolor (F to exit).${entryPickHint}`
-            : `Expand floor — left-click to add a tile; right-click to remove (F to exit).${entryPickHint}`
+            ? `Paint - left-click tiles to recolor (F to exit).${entryPickHint}`
+            : `Expand floor - left-click to add a tile; right-click to remove (F to exit).${entryPickHint}`
       );
       hud.setBuildBlockBarState({
         visible: false,
@@ -2835,9 +2835,9 @@ function enterGame(
       hud.setStatus(
         touchUi
           ? mobilePortrait
-            ? `Build — tap block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
-            : `Build — tap a block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
-          : `Build mode — click a block to edit, empty floor to place (B or Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
+            ? `Build - tap block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
+            : `Build - tap a block to edit, empty tile to place (Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
+          : `Build mode - click a block to edit, empty floor to place (B or Build off to exit)${tpHint}${gateHint}${prefabHint}${selectedHint}`
       );
       hud.setBuildBlockBarState({
         visible: true,
@@ -3253,7 +3253,7 @@ function enterGame(
           if (lastDirectInviteState) {
             openDirectInviteSharePanel();
           } else if (socket.readyState === WebSocket.OPEN) {
-            // State wire missed — same-room join re-registers with the server.
+            // State wire missed - same-room join re-registers with the server.
             sendJoinRoom(socket, worldcupCurrentRoomId);
           }
           return;
@@ -3287,7 +3287,7 @@ function enterGame(
             hud.setStatus(
               code === "challenge_open"
                 ? "Cancel your open Challenge before opening a play space."
-                : "Could not open play space — try again."
+                : "Could not open play space - try again."
             );
           }
         })();
@@ -3306,7 +3306,7 @@ function enterGame(
 
     function openSelfActionWheel(): void {
       // Pay WebView: a canvas tap-to-dismiss can leave pointer capture on the canvas when
-      // the finger lifts on HUD chrome — flush before showing the wheel again.
+      // the finger lifts on HUD chrome - flush before showing the wheel again.
       game.interruptHudOverlayGestures();
       // Centred on the avatar body (lower than the old head-height strip) so the
       // transparent Hub frames the player inside the Action Wheel ring.
@@ -4731,7 +4731,7 @@ function enterGame(
           y: py,
           // Each `stateDelta` entry is a complete per-player snapshot, but the server omits
           // these presence/ephemeral flags when false/absent. Derive them from the delta
-          // (not the stale `prev`) so a cleared state can't leak forward — e.g. a finished
+          // (not the stale `prev`) so a cleared state can't leak forward - e.g. a finished
           // 1v1 Challenge still offering "Accept 1v1" in the right-click menu.
           nimSendAway: p.nimSendAway,
           chatTyping: p.chatTyping,
@@ -4890,7 +4890,7 @@ function enterGame(
       updateWorldcupPitchControls();
       return;
     }
-    // worldcup: a goal in the 1v1 Match — erupt the crowd, flash the goal banner, and (if play
+    // worldcup: a goal in the 1v1 Match - erupt the crowd, flash the goal banner, and (if play
     // continues) run the kickoff countdown while both players are frozen at their spawns.
     if (msg.type === "matchGoal") {
       game.worldcupCrowdCheer(1);
@@ -4907,7 +4907,7 @@ function enterGame(
       );
       return;
     }
-    // worldcup: 1v1 Match finished — Match Result Overlay + movement frozen until return home.
+    // worldcup: 1v1 Match finished - Match Result Overlay + movement frozen until return home.
     if (msg.type === "matchEnded") {
       game.worldcupCrowdCheer(1);
       game.setWorldcupMoveLocked(true);
@@ -4952,12 +4952,12 @@ function enterGame(
         } else if (msg.reason === "wallet_cap") {
           worldcupScoreboard.flashReward(
             "capped",
-            "Daily NIM cap reached — keep scoring for fun!"
+            "Daily NIM cap reached - keep scoring for fun!"
           );
         } else if (msg.reason === "budget_exhausted") {
           worldcupScoreboard.flashReward(
             "capped",
-            "Today's NIM rewards are all claimed — back tomorrow!"
+            "Today's NIM rewards are all claimed - back tomorrow!"
           );
         }
       }
@@ -5234,7 +5234,7 @@ function enterGame(
     if (msg.type === "error") {
       // worldcup: the spectate portal is at capacity.
       if (msg.code === "spectate_full") {
-        hud.appendChat("System", "This match's stands are full — try again shortly.");
+        hud.appendChat("System", "This match's stands are full - try again shortly.");
       }
       // Handle canvas cooldown error
       if (msg.code === "CANVAS_COOLDOWN") {
@@ -5393,7 +5393,7 @@ function enterGame(
             redirectGuestToWalletOnboarding(
               ev.code === 4003
                 ? "Your guest session is no longer valid."
-                : "This play space has closed — sign in with a wallet or get Nimiq Pay to keep exploring."
+                : "This play space has closed - sign in with a wallet or get Nimiq Pay to keep exploring."
             );
             return;
           }
@@ -5409,7 +5409,7 @@ function enterGame(
             hud.setLoadingVisible(false, { skipMinWait: true });
             hud.setReconnectOffer(false);
             hud.setStatus(
-              "Stream view is restricted — sign in with an authorized stream wallet, or remove ?stream=1 from the URL."
+              "Stream view is restricted - sign in with an authorized stream wallet, or remove ?stream=1 from the URL."
             );
             perfPingSentAt.clear();
             hud.setPerfHudLatencyMs(null);
@@ -5425,8 +5425,8 @@ function enterGame(
           hud.setInShaper(false);
           hud.setStatus(
             restartDrop
-              ? "Server restart — tap Reconnect or wait a moment"
-              : "Disconnected — tap Reconnect or reload"
+              ? "Server restart - tap Reconnect or wait a moment"
+              : "Disconnected - tap Reconnect or reload"
           );
           perfPingSentAt.clear();
           hud.setPerfHudLatencyMs(null);
@@ -5447,7 +5447,7 @@ function enterGame(
         hud.setLoadingVisible(false, { skipMinWait: true });
         hud.setReconnectOffer(true);
         hud.setStatus(
-          "No response from server — tap Reconnect, or start the game server if it stopped"
+          "No response from server - tap Reconnect, or start the game server if it stopped"
         );
       }, 35_000);
     });
@@ -5461,7 +5461,7 @@ function enterGame(
         z: CHAMBER_DEFAULT_SPAWN.z,
       });
       hud.setStatus(
-        "Returned to the Hub after 15 minutes inactive — explore again anytime"
+        "Returned to the Hub after 15 minutes inactive - explore again anytime"
       );
     });
   }
@@ -6073,9 +6073,9 @@ function enterGame(
       const pos = d.selfPosition;
       const posStr = pos
         ? `${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}`
-        : "—";
+        : "-";
       const wsLabel = (() => {
-        if (!ws) return "—";
+        if (!ws) return "-";
         switch (ws.readyState) {
           case WebSocket.CONNECTING:
             return "connecting";
@@ -6162,7 +6162,7 @@ async function bootstrapJoinInvite(): Promise<boolean> {
     const code = e instanceof Error ? e.message : "join_failed";
     const message =
       code === "expired"
-        ? "This invite has expired — ask the host for a new link."
+        ? "This invite has expired - ask the host for a new link."
         : code === "full"
           ? "This play space is full."
           : code === "closed"
@@ -6183,7 +6183,7 @@ function main(): void {
   enableMobileBrowserPlayLayout();
   syncPayTouchDebugInstall();
   if (isPatchnotesPath()) {
-    document.title = "Patch notes — Nimiq Space";
+    document.title = "Patch notes - Nimiq Space";
     const app = document.getElementById("app");
     if (app) mountPatchnotesPage(app);
     return;

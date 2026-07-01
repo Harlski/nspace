@@ -1,5 +1,5 @@
 /**
- * Signboard management — admin-placed signs with messages that appear on hover/click
+ * Signboard management - admin-placed signs with messages that appear on hover/click
  * Data persists to disk as JSON
  */
 import fs from "node:fs";

@@ -1,16 +1,16 @@
 ---
 title: Cosmetic Shop — catalog, entitlements, Wardrobe & Deployables
 status: ready-for-agent
-glossary: CONTEXT.md (Cosmetics, Items Sector, Items Wheel)
-depends_on_grill: CONTEXT.md § Cosmetics (grill-with-docs session)
+glossary: CONTEXT.md (Cosmetics, Wardrobe, Wardrobe Preview, Items Sector, Items Wheel)
+depends_on_grill: CONTEXT.md § Cosmetics; Wardrobe UX grill session (2026-06)
 ---
 
 # Cosmetic Shop — catalog, entitlements, Wardrobe & Deployables
 
 > Vocabulary follows [CONTEXT.md](../../CONTEXT.md): **Catalog Entry**, **Preset**,
 > **Cosmetic SKU**, **Slot**, **Entitlement**, **Loadout**, **Wardrobe**, **Deployable**,
-> **Cosmetic Unlock**, **Grant**, **Catalog Changelog**, **Catalog Preview**, **Items Sector**,
-> **Items Wheel**, **Deployables Allowed**, **Cosmetic Store**.
+> **Cosmetic Unlock**, **Grant**, **Catalog Changelog**, **Catalog Preview**, **Wardrobe Preview**,
+> **Items Sector**, **Items Wheel**, **Deployables Allowed**, **Cosmetic Store**.
 
 ## Problem Statement
 
@@ -35,8 +35,8 @@ existing campaign database on the game server):
   Changelog** on each edit screen. Operators may **Grant** Entitlements without payment.
 - Players buy **Published** entries once with NIM via **Cosmetic Unlock** (Payment Intent
   Service, price locked at intent create).
-- Players manage owned items in **Wardrobe** (profile): equip **Loadout** passives (one per
-  **Slot**), browse shop by **Collection**.
+- Players manage owned items in **Wardrobe** (profile): a paper-doll equip UI for **Loadout**
+  passives (one per **Slot**), plus a **Shop** tab to browse by **Collection**.
 - Players **use** **Deployables** from a new **Items Sector** on the **Action Wheel** (arm →
   tap walkable tile); server validates rules from the Catalog Entry. Room owners may disable
   deployables per room (**Deployables Allowed**, default on).
@@ -79,7 +79,7 @@ Visual rendering stays client-side per Preset; v1 is metadata-only in admin (no 
 21. As a signed-in player with a wallet, I want to open the **shop** from **Wardrobe** on my profile, so that I can browse cosmetics without leaving the social flow.
 22. As a player, I want the shop to show only **Published** Catalog Entries grouped by **Collection** (case-insensitive), so that the catalog is readable and hides Draft/Archived items.
 23. As a player, I want to see price in NIM and a short description for each listing, so that I can decide before paying.
-24. As a player, I want to preview how a shop item would look on **my** avatar before purchase (Wardrobe shop preview), so that I do not buy blind.
+24. As a player, I want **Wardrobe Preview** on shop listings before purchase, so that I do not buy blind.
 25. As a player, I want to buy a cosmetic with a **one-off NIM payment** (Cosmetic Unlock), so that I own it permanently without subscriptions or repurchase.
 26. As a player, I want a successful payment to grant an **Entitlement** immediately, so that the item appears in Wardrobe right away.
 27. As a player, I want checkout to use the same Hub / Nimiq Pay flow as other in-app NIM payments, so that the experience is familiar.
@@ -90,43 +90,178 @@ Visual rendering stays client-side per Preset; v1 is metadata-only in admin (no 
 
 ### Player — Wardrobe & Loadout
 
-32. As a player, I want **Wardrobe** on my profile to list all Entitlements I own, so that I can see my collection.
-33. As a player, I want to **equip** passive cosmetics (aura, nameplate, chat bubble, trail) from Wardrobe, so that others see my chosen style in rooms.
-34. As a player, I want at most **one equipped item per Slot**, equipping a new one to replace the previous in that Slot, so that visuals stay readable.
-35. As a player, I want equipping to be free and instant after I own the Entitlement, so that Loadout changes do not cost NIM.
-36. As a player, I want to **unequip** a Slot (clear Loadout for that Slot), so that I can return to default appearance.
-37. As a player, I want my Loadout persisted server-side across sessions, so that I do not re-equip every login.
-38. As a player in a room, I want to see other players’ equipped passive cosmetics (auras, nameplates, bubble skins on their messages, trails), so that cosmetics are social signals.
-39. As a player viewing another player’s profile, I want to see their equipped Loadout where appropriate, so that I can appreciate their style (exact UI scope: equipped passives visible; owned-unEquipped list remains self-only).
+32. As a player, I want **Wardrobe** on my profile to show my passive **Slots** in a paper-doll layout (identicon center, aura / nameplate / chat bubble / trail around it), so that equipping feels like a character sheet rather than a flat list.
+33. As a player, I want each **Slot** to open a dropdown listing owned **Entitlements** for that **Slot** plus **Published** shop listings I do not own, so that I can equip or shop in one place.
+34. As a player, I want to **select** a row in a slot dropdown to **Wardrobe Preview** it on the center identicon (live passive VFX) before committing, then press **Equip** to save **Loadout**, so that I do not equip by accident while browsing.
+35. As a player, I want **Unequip** available per **Slot** (clear **Loadout** for that **Slot**), so that I can return to default appearance.
+36. As a player, I want at most **one equipped item per Slot**, equipping a new one to replace the previous in that Slot, so that visuals stay readable.
+37. As a player, I want equipping to be free and instant after I own the **Entitlement**, so that **Loadout** changes do not cost NIM.
+38. As a player, I want my **Loadout** persisted server-side across sessions, so that I do not re-equip every login.
+39. As a player, I want only **one slot dropdown open at a time**; opening another closes the previous and reverts its uncommitted **Wardrobe Preview**, so that the panel stays focused.
+40. As a player, I want closing my profile to revert any uncommitted **Wardrobe Preview** without a prompt, so that **Loadout** in the room always matches what I equipped.
+41. As a player in a room, I want to see other players’ equipped passive cosmetics (auras, nameplates, bubble skins on their messages, trails), so that cosmetics are social signals.
+42. As a player viewing another player’s profile, I want a read-only paper doll (equipped passives + deployables they own shown in an **Items** strip), so that I see their style without their full owned list.
+
+### Player — Shop (Wardrobe tab)
+
+43. As a signed-in player, I want a **Shop** tab on my profile alongside **Wardrobe**, grouped by **Collection**, with a compact identicon preview above the grid, so that I can discover cosmetics by collection while still seeing **Wardrobe Preview** on my avatar.
+44. As a player, I want shop rows to support **Wardrobe Preview**, **Buy** (when not owned), and **Equip** (when owned), consistent with slot dropdowns, so that behavior is predictable across tabs.
+45. As a player, I want row thumbnails to use **Preset** swatches in v1 (with optional live thumb on focus later), so that dropdowns stay fast on mobile.
 
 ### Player — Deployables & Action Wheel
 
-40. As a player who owns Deployables, I want an **Items Sector** on the root **Action Wheel**, so that using a deployable is a deliberate in-world action separate from emotes.
-41. As a player, I want the **Items Wheel** to list only Deployables I own, with cooldown indication when I cannot reuse one yet, so that I know what is available.
-42. As a player, I want selecting a Deployable to **arm** deployment (clear cursor/hover state), then tap a **walkable floor tile** in range to fire it, so that the interaction matches “use item on tile.”
-43. As a player, I want the effect to appear for everyone in the room for the configured **duration**, so that deployables are shared spectacle.
-44. As a player, I want the server to enforce **cooldown**, **room cap**, **range**, and **Deployables Allowed** on the room, so that spam and griefing are bounded.
-45. As a player, I want a clear system or HUD message when deployment fails (cooldown, cap, room disabled, out of range, not walkable), so that I understand why nothing happened.
-46. As a player, I want Deployables I own to appear in Wardrobe for ownership context but not as Loadout equips, so that passive vs active cosmetics stay mentally separate.
+46. As a player who owns **Deployables**, I want an **Items** strip below the paper doll listing owned deployables (view-only; “use from Action Wheel”), so that passives and deployables stay mentally separate.
+47. As a player who owns Deployables, I want an **Items Sector** on the root **Action Wheel**, so that using a deployable is a deliberate in-world action separate from emotes.
+48. As a player, I want the **Items Wheel** to list only Deployables I own, with cooldown indication when I cannot reuse one yet, so that I know what is available.
+49. As a player, I want selecting a Deployable to **arm** deployment (clear cursor/hover state), then tap a **walkable floor tile** in range to fire it, so that the interaction matches “use item on tile.”
+50. As a player, I want the effect to appear for everyone in the room for the configured **duration**, so that deployables are shared spectacle.
+51. As a player, I want the server to enforce **cooldown**, **room cap**, **range**, and **Deployables Allowed** on the room, so that spam and griefing are bounded.
+52. As a player, I want a clear system or HUD message when deployment fails (cooldown, cap, room disabled, out of range, not walkable), so that I understand why nothing happened.
 
 ### Room owner
 
-47. As a room owner, I want a **Deployables Allowed** toggle in **Room settings** (default on), so that I can disable tile effects in rooms where they would clutter builds or events.
-48. As a room owner, I want Loadout passives to still work when deployables are disabled, so that personal expression remains while room effects are off.
-49. As a room owner, I want the setting persisted on the room and enforced by the server, so that clients cannot bypass it.
+53. As a room owner, I want a **Deployables Allowed** toggle in **Room settings** (default on), so that I can disable tile effects in rooms where they would clutter builds or events.
+54. As a room owner, I want Loadout passives to still work when deployables are disabled, so that personal expression remains while room effects are off.
+55. As a room owner, I want the setting persisted on the room and enforced by the server, so that clients cannot bypass it.
 
 ### Developer / payment integration
 
-50. As a developer, I want Cosmetic Unlocks to use the **Payment Intent Service** with feature kind **`nspace.cosmetic.unlock`** and payload `{ cosmeticSku }`, so that incoming NIM verification stays centralized.
-51. As a developer, I want the game server to grant Entitlements idempotently when an intent confirms, so that duplicate verify calls do not double-grant.
-52. As a developer, I want intent creation to reject Draft/Archived SKUs and already-owned SKUs, so that invalid checkout fails early.
-53. As a developer, I want a public read API for the Published catalog and authenticated APIs for Wardrobe (owned + Loadout), so that client and admin stay in sync with the Cosmetic Store.
+56. As a developer, I want Cosmetic Unlocks to use the **Payment Intent Service** with feature kind **`nspace.cosmetic.unlock`** and payload `{ cosmeticSku }`, so that incoming NIM verification stays centralized.
+57. As a developer, I want the game server to grant Entitlements idempotently when an intent confirms, so that duplicate verify calls do not double-grant.
+58. As a developer, I want intent creation to reject Draft/Archived SKUs and already-owned SKUs, so that invalid checkout fails early.
+59. As a developer, I want a public read API for the Published catalog and authenticated APIs for Wardrobe (owned + Loadout), so that client and admin stay in sync with the Cosmetic Store.
 
 ### Regression / platform
 
-54. As a developer shipping **`/admin/cosmetics`**, I want Vercel rewrites added for both root and client `vercel.json` in the same change, so that split SPA hosting does not 404 the new admin route.
-55. As a player, I want cosmetic VFX to use **client-only visuals** on avatars (decorative, no block pick hijacking), consistent with existing identicon/nameplate/chat bubble conventions, so that cosmetics do not break build or profile interactions.
-56. As an operator, I want the Cosmetic Store in the **same SQLite file** as the campaign store, so that backup and ops match existing advertise DB practices.
+60. As a developer shipping **`/admin/cosmetics`**, I want Vercel rewrites added for both root and client `vercel.json` in the same change, so that split SPA hosting does not 404 the new admin route.
+61. As a player, I want cosmetic VFX to use **client-only visuals** on avatars (decorative, no block pick hijacking), consistent with existing identicon/nameplate/chat bubble conventions, so that cosmetics do not break build or profile interactions.
+62. As an operator, I want the Cosmetic Store in the **same SQLite file** as the campaign store, so that backup and ops match existing advertise DB practices.
+63. As a developer, I want the Wardrobe paper-doll UI to use **WoW-inspired chrome** (ornate slot frames, equipped-state emphasis) with CSS hooks reserved for future **rarity** tiers, so that quality tiers can ship without a layout rewrite.
+
+## Wardrobe UX — paper-doll equip menu
+
+> **Status:** Spec locked (grill session). Replaces the v1 flat Owned/Shop list UI in
+> `client/src/cosmetics/wardrobePanel.ts` when implemented. Visual mockups: Cursor canvas
+> `wardrobe-equip-style-picker` (variant **B** selected).
+
+### Scope
+
+- **Self profile only** (top-bar identicon / in-game profile overlay). Replaces the passive
+  equip + shop experience; profile message, rooms, moderation, and NIM send stay as today.
+- **Other players’ profiles:** read-only paper doll (equipped passives) + read-only **Items**
+  strip (deployables they own). No dropdowns, shop, or owned-unEquipped lists.
+
+### Tabs
+
+| Tab | Purpose |
+|-----|---------|
+| **Wardrobe** | Paper doll + passive **Slot** ring + **Items** strip (deployables). Primary equip surface. |
+| **Shop** | **Collection** grid + compact identicon **Wardrobe Preview** (mini doll). Discovery and purchase. |
+
+The old **Owned** list tab is removed; ownership is expressed through per-**Slot** dropdowns
+and the **Items** strip.
+
+### Visual treatment (variant B)
+
+- **WoW-inspired chrome:** ornate slot frames, corner accents, equipped-slot border emphasis,
+  RPG-style panel framing. Palette stays Nimiq Space (dark panels, orange accent) — not a
+  literal Blizzard asset clone.
+- **Rarity (v1):** no catalog field or tier colors. Slot and row chrome use a single neutral
+  “quality” frame; CSS/design tokens reserved so operator-set rarity (future) can swap border
+  glow per tier without changing layout.
+
+### Wardrobe tab — layout
+
+**Desktop (wide):** WoW-analog slot positions around center identicon + live passive VFX:
+
+```
+        [ Nameplate ]
+[ Aura ]  (identicon)  [ Chat bubble ]
+        [ Trail     ]
+─────────────────────────
+      Items (deployables strip)
+```
+
+**Narrow (mobile / Nimiq Pay):** identicon + VFX centered on top; four **Slots** in a 2×2
+grid below; slot dropdown **full width** under the grid. **Items** strip at bottom. (Shop tab
+always uses grid + mini doll — no slot ring on narrow.)
+
+**Center preview:** player identicon with **live passive VFX** (`loadoutVfx`) reflecting
+current **Wardrobe Preview** state for all **Slots** (merged with saved **Loadout** for
+slots without a pending preview).
+
+### Slot dropdown (one open at a time)
+
+Opening a **Slot** shows a dropdown anchored to that slot button:
+
+1. **Owned** rows for that **Slot** (from **Entitlements**), including **Unequip** / empty.
+2. Divider.
+3. **Published** shop rows for that **Slot** not yet owned (price, **Buy**).
+
+Each row includes a small square thumbnail:
+
+- **v1:** static **Preset** swatch (slot-specific: aura color ring, nameplate border chip,
+  bubble shape, trail dot, deployable icon).
+- **Later:** optional live identicon thumb on hovered/focused row only (one WebGL thumb at a
+  time).
+
+**Interaction:**
+
+| Action | Effect |
+|--------|--------|
+| Select row | **Wardrobe Preview** only — updates center (and mini doll on Shop tab if linked). |
+| **Equip** | `PUT /api/cosmetics/loadout` for that **Slot**; persists **Loadout**. |
+| **Cancel** | Revert preview for that **Slot** to last saved **Loadout**. |
+| **Buy** | **Cosmetic Unlock** flow (Hub / Nimiq Pay); on grant, row moves to owned. |
+| Open another **Slot** | Close current dropdown; **revert** uncommitted preview for the closed slot. |
+| Close profile | Revert all uncommitted **Wardrobe Preview** silently (no prompt). |
+
+Only one dropdown open at a time.
+
+### Items strip (deployables)
+
+Below the paper doll on **Wardrobe** tab:
+
+- Horizontal row of owned **Deployable** **Entitlements** (swatch squares).
+- No **Loadout** equip; tooltip/copy: use from **Action Wheel → Items Sector**.
+- Same **B** chrome as slot buttons; rarity hooks apply when tiers exist.
+
+### Shop tab
+
+- **Top:** compact identicon + live VFX (**mini doll**) — same **Wardrobe Preview** state as
+  Wardrobe tab.
+- **Below:** scrollable **Collection** grid (Published **Catalog Entries** only).
+- Each card: swatch, name, description, price, **Wardrobe Preview**, **Buy** or **Equip**.
+- Selecting preview on a card updates the **Slot** implied by the entry’s **Preset** on the
+  mini doll (same select-then-**Equip** / **Buy** rules as slot dropdowns).
+
+### Client modules (when implemented)
+
+- Replace / supersede `wardrobePanel.ts` with paper-doll component(s) mounted from
+  `client/src/ui/hud.ts` self-profile path (`oppProfileWardrobe`).
+- Reuse existing APIs: `fetchWardrobe`, `updateLoadoutSlot`, unlock intent + sync.
+- Reuse `Game.setSelfCosmeticPreviewSlot` / `clearSelfCosmeticPreview` /
+  `refreshSelfCosmeticsFromState` for **Wardrobe Preview** until equip commits.
+- Decorative children: existing `skipBlockPickAndBounds` convention unchanged.
+
+### Supersedes (prior v1 list UI)
+
+The following shipped list-based Wardrobe behavior is **deprecated by this spec** when the
+paper doll ships:
+
+- Separate **Owned** tab with flat equip rows.
+- **Try on** / **Clear preview** on Shop tab without slot context.
+- Shop-only preview that does not share the paper-doll preview model.
+
+### Player — shop & purchase (unchanged intent)
+
+Stories 21–31 (shop access, collection grouping, purchase, price lock, guest gating) remain;
+UI moves into slot dropdowns + **Shop** tab per above.
+
+### Player — Wardrobe & Loadout (legacy numbering)
+
+_The following original stories are superseded by 32–45 above: flat owned list (32), generic
+equip from list (33–37), other-profile chips-only (39), deployables in list without strip (46)._
 
 ## Implementation Decisions
 
@@ -222,7 +357,8 @@ Extend **`GET /api/player-profile/:address`** or **`welcome`** payload with publ
 ### Client
 
 - **Preset renderer**: map `presetId` + Slot to client VFX (start with a small shipped set, e.g. 2–3 presets per Slot including one deployable demo).
-- **Wardrobe UI** on own profile: owned list, equip controls, shop tab with collection grouping and purchase flow (reuse payment UX patterns from advertise).
+- **Wardrobe UI** on own profile: paper-doll equip menu per **Wardrobe UX** section (variant **B** chrome, slot dropdowns, **Wardrobe Preview**, **Shop** tab with mini doll + collection grid). Supersedes list-based `wardrobePanel.ts` when shipped.
+- **Other-player profile**: read-only paper doll + **Items** strip (no shop/dropdowns).
 - **Action Wheel**: new **Items Sector** → **Items Wheel**; arm state; tile pick defers to existing walkable pick path with armed overlay.
 - Render passives on remote avatars from Loadout in player state; chat bubble skin when creating bubble for sender; trail on movement tick.
 - Decorative avatar children: mark `skipBlockPickAndBounds` per existing convention.
@@ -295,13 +431,15 @@ Recommend **`presetId` immutable** after Catalog Entry create (if wrong Preset c
 
 1. Cosmetic Store schema + preset registry + admin CRUD/changelog/grant + Catalog Preview shell
 2. Payment Intent `nspace.cosmetic.unlock` + Entitlement on fulfill
-3. Wardrobe + public shop APIs + profile UI + purchase flow
+3. Wardrobe + public shop APIs + list-based profile UI + purchase flow *(shipped baseline)*
+3b. **Paper-doll Wardrobe UX** — replace list UI per **Wardrobe UX** section; variant **B** chrome; mobile layouts
 4. Loadout sync on welcome + client passive rendering (minimum one Preset per passive Slot)
 5. Items Sector + deploy intent + room **Deployables Allowed** + one demo Deployable Preset
 
 ### Future (post-v1)
 
 - **Creator Catalog Entry** with moderation and prefab-derived Presets
+- **Cosmetic rarity** — optional tier on **Catalog Entry** (operator-set); colored slot/row chrome using v1 CSS hooks
 - Seasonal catalog operations (bulk Archive, collection landing pages)
 - Entitlement revoke for abuse (needs policy)
 

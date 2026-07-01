@@ -1,5 +1,5 @@
 /**
- * World Cup soccer feature — client config (FEATURE-FLAGGED, DEPRECATABLE).
+ * World Cup soccer feature - client config (FEATURE-FLAGGED, DEPRECATABLE).
  *
  * Client-only UI gating (the build-dock Ball prop, scoreboard auto-show). Ball
  * rendering itself runs whenever the server sends `ballState`, so most behavior is
@@ -37,7 +37,7 @@ export function isFieldLikeRoomId(roomId: string | null | undefined): boolean {
   return roomId === FIELD_ROOM_ID || isMatchPitchRoomId(roomId);
 }
 
-/** Soccer pitch bounds — must match server `FIELD_BOUNDS`. */
+/** Soccer pitch bounds - must match server `FIELD_BOUNDS`. */
 export const FIELD_BOUNDS = { minX: -10, maxX: 10, minZ: -7, maxZ: 7 } as const;
 
 /**
@@ -47,7 +47,7 @@ export const FIELD_BOUNDS = { minX: -10, maxX: 10, minZ: -7, maxZ: 7 } as const;
  */
 export const FIELD_OUTFIELD_MARGIN = 1.0;
 
-/** Hub west-edge door to the field — must match server `HUB_FIELD_DOOR`. */
+/** Hub west-edge door to the field - must match server `HUB_FIELD_DOOR`. */
 export const HUB_FIELD_DOOR = {
   x: -12,
   z: 6,
@@ -56,7 +56,7 @@ export const HUB_FIELD_DOOR = {
   spawnZ: 6,
 } as const;
 
-/** Field west-edge door back to the hub — must match server `FIELD_HUB_DOOR`. */
+/** Field west-edge door back to the hub - must match server `FIELD_HUB_DOOR`. */
 export const FIELD_HUB_DOOR = {
   x: -10,
   z: 6,
@@ -65,7 +65,7 @@ export const FIELD_HUB_DOOR = {
   spawnZ: 6,
 } as const;
 
-/** Goal mouths (tile rects) — must match server `FIELD_GOALS`. Used for rendering posts. */
+/** Goal mouths (tile rects) - must match server `FIELD_GOALS`. Used for rendering posts. */
 export const FIELD_GOALS = [
   { id: "west", minX: -10, maxX: -9, minZ: -2, maxZ: 2 },
   { id: "east", minX: 9, maxX: 10, minZ: -2, maxZ: 2 },

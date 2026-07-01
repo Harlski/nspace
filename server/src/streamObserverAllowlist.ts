@@ -1,7 +1,7 @@
 import { getAdminRuntimeSettings } from "./adminRuntimeSettingsStore.js";
 import { compactWalletKey, parseWalletAddressList } from "./walletAddresses.js";
 
-/** Lazy — env is read after `dotenv.config()` in `index.ts`. */
+/** Lazy - env is read after `dotenv.config()` in `index.ts`. */
 let streamObserverKeysCache: Set<string> | null = null;
 
 export function invalidateStreamObserverAllowlistCache(): void {

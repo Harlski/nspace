@@ -1,4 +1,4 @@
-/** Per-room rectangular base floor — must match `server/src/roomLayouts.ts`. */
+/** Per-room rectangular base floor - must match `server/src/roomLayouts.ts`. */
 // worldcup: seasonal soccer field room (feature-flagged, deletable)
 import {
   WORLDCUP_ENABLED as WORLDCUP_ENABLED_CLIENT,
@@ -22,7 +22,7 @@ export const CANVAS_ROOM_ID = "canvas";
 export const PIXEL_ROOM_ID = "pixel";
 
 /**
- * Hub center 4×4 tiles (inclusive) — no blocks (must match server `roomLayouts`).
+ * Hub center 4×4 tiles (inclusive) - no blocks (must match server `roomLayouts`).
  */
 export function isHubSpawnSafeZone(x: number, z: number): boolean {
   return x >= -2 && x <= 1 && z >= -2 && z <= 1;
@@ -35,6 +35,19 @@ const HUB_BOUNDS: RoomBounds = {
   maxZ: 12,
 };
 
+/** Max orthographic vertical extent when zoomed out in hub/commons (25×25). At 4:3, width ≈ 24. */
+export const HUB_MAX_ZOOM_FRUSTUM = 18;
+/** +100% zoom-out vs normal room cap while Telescope is held. */
+export const TELESCOPE_ZOOM_MULTIPLIER = 2;
+/** Telescope hold-to-zoom in hub/commons and chamber (default spawn). */
+export const HUB_TELESCOPE_ZOOM_FRUSTUM =
+  HUB_MAX_ZOOM_FRUSTUM * TELESCOPE_ZOOM_MULTIPLIER;
+/** Portrait Pay / mobile: same +100% multiplier as landscape. */
+export const TELESCOPE_PORTRAIT_ZOOM_MULTIPLIER = TELESCOPE_ZOOM_MULTIPLIER;
+export const HUB_TELESCOPE_ZOOM_FRUSTUM_PORTRAIT = HUB_TELESCOPE_ZOOM_FRUSTUM;
+/** Same hold ceiling as hub - chamber normal cap is {@link CHAMBER_MAX_ZOOM_FRUSTUM}. */
+export const CHAMBER_TELESCOPE_ZOOM_FRUSTUM = HUB_TELESCOPE_ZOOM_FRUSTUM;
+
 const CHAMBER_BOUNDS: RoomBounds = {
   minX: -6,
   maxX: 6,
@@ -44,8 +57,10 @@ const CHAMBER_BOUNDS: RoomBounds = {
 
 /** Max orthographic half-height when zoomed out in the chamber (world units). */
 export const CHAMBER_MAX_ZOOM_FRUSTUM = 18.9;
+export const CHAMBER_TELESCOPE_ZOOM_FRUSTUM_PORTRAIT =
+  CHAMBER_MAX_ZOOM_FRUSTUM * TELESCOPE_PORTRAIT_ZOOM_MULTIPLIER;
 
-/** Must match server `CHAMBER_DEFAULT_SPAWN` — session start / re-login arrival tile. */
+/** Must match server `CHAMBER_DEFAULT_SPAWN` - session start / re-login arrival tile. */
 export const CHAMBER_DEFAULT_SPAWN = { x: -5, z: 0 } as const;
 
 const CANVAS_BOUNDS: RoomBounds = {
@@ -55,7 +70,7 @@ const CANVAS_BOUNDS: RoomBounds = {
   maxZ: 15,
 };
 
-/** 500×500 floor canvas — full global grid (−250…249); stream pans across regions at partial zoom. */
+/** 500×500 floor canvas - full global grid (−250…249); stream pans across regions at partial zoom. */
 const PIXEL_BOUNDS: RoomBounds = {
   minX: -250,
   maxX: 249,

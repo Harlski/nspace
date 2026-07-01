@@ -195,7 +195,7 @@ test("admin feedback reward enqueues via gateway outbox in service mode", (t) =>
       amountLuna,
       roomId: "feedback",
       tileKey: "admin-reward",
-      txMessage: "Nimiq Space — thank you for integrated feedback",
+      txMessage: "Nimiq Space - thank you for integrated feedback",
     });
 
     const pending = listUndeliveredOutboxForTests();

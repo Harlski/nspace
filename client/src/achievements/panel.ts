@@ -1,5 +1,6 @@
 import { fetchMyAchievements, type AchievementProgress, type AchievementUnlockMessage } from "./api.js";
 import { hydratePresetSwatches, presetSwatchMarkup } from "../cosmetics/presetSwatch.js";
+import type { OverlayBackStack } from "../ui/overlayBackStack.js";
 import {
   SUMMARY_VIEW_ID,
   achievementsForCategory,
@@ -113,7 +114,10 @@ export type AchievementPanel = {
   applyUnlock: (unlock: AchievementUnlockMessage) => void;
 };
 
-export function createAchievementPanel(parent: HTMLElement): AchievementPanel {
+export function createAchievementPanel(
+  parent: HTMLElement,
+  opts?: { overlayBack?: OverlayBackStack }
+): AchievementPanel {
   const root = document.createElement("div");
   root.className = "achievement-panel";
   root.hidden = true;
@@ -390,14 +394,33 @@ export function createAchievementPanel(parent: HTMLElement): AchievementPanel {
     void refreshAchievementsWhileOpen();
   }
 
-  function close(): void {
+  function handleDismissLayer(): boolean {
+    if (dropupOpen) {
+      setDropupOpen(false);
+      return true;
+    }
+    return false;
+  }
+
+  function close(fromHistory = false): void {
+    if (!openState) return;
     openState = false;
     setDropupOpen(false);
     root.hidden = true;
     root.setAttribute("aria-hidden", "true");
+    if (!fromHistory && opts?.overlayBack?.isOpen("achievements")) {
+      opts.overlayBack.dismiss("achievements");
+    }
   }
 
   async function open(): Promise<void> {
+    if (!openState) {
+      opts?.overlayBack?.push("achievements", () => {
+        if (handleDismissLayer()) return true;
+        close(true);
+        return false;
+      });
+    }
     openState = true;
     viewId = SUMMARY_VIEW_ID;
     root.hidden = false;

@@ -14,7 +14,7 @@ import { apiUrl } from "../net/apiBase.js";
 import { TELEGRAM_URL, X_URL } from "../socialLinks.js";
 import { nimiqLogosHexOutlineMonoPlusMarkup } from "./nimiqIcons.js";
 
-/** Session replay UI only on loopback — not on public deployments (e.g. Vercel). */
+/** Session replay UI only on loopback - not on public deployments (e.g. Vercel). */
 function isReplayMenuHost(): boolean {
   if (typeof location === "undefined") return false;
   const h = location.hostname;
@@ -92,7 +92,7 @@ function formatRelativeExpiry(expiresAtMs: number | null): string {
 }
 
 function summarizePayload(kind: string, p?: Record<string, unknown>): string {
-  if (!p) return "—";
+  if (!p) return "-";
   switch (kind) {
     case "chat":
       return JSON.stringify(String(p.text ?? "")).slice(0, 80);
@@ -396,7 +396,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   cachedWrap.hidden = cachedSessions.length === 0;
   walletHintEl.hidden = cachedSessions.length > 0;
 
-  /** Present when cached sessions exist — Nimiq-sign-in (+ hex) beside identicons only. */
+  /** Present when cached sessions exist - Nimiq-sign-in (+ hex) beside identicons only. */
   let cachedAddWalletBtn: HTMLButtonElement | null = null;
 
   const perAccountButtons = new Set<HTMLButtonElement>();
@@ -416,7 +416,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   const actionsForgetBtn = root.querySelector("#main-menu-actions-forget") as HTMLButtonElement;
 
   let selectedCachedSession: CachedSessionMenuEntry | null = null;
-  /** User clicked Re-login on an expired cached session — swap expiry copy for terms. */
+  /** User clicked Re-login on an expired cached session - swap expiry copy for terms. */
   let expiredReloginTermsPrompt = false;
 
   const shouldShowExpiredAccountTerms = (): boolean =>
@@ -468,7 +468,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       btn?.setAttribute("aria-expanded", open ? "true" : "false");
     }
     const hasCache = cachedSessions.length > 0;
-    /* No stacked panes needed — account markup must not reserve row height. */
+    /* No stacked panes needed - account markup must not reserve row height. */
     actionsAccountEl.hidden = !hasCache;
     if (!hasCache) {
       actionsDefaultEl.classList.remove("main-menu__actions-pane--hidden");
@@ -517,7 +517,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   };
 
   /**
-   * Local ack hides the terms row; hex / dev still need an explicit tick — show the row again for this mount.
+   * Local ack hides the terms row; hex / dev still need an explicit tick - show the row again for this mount.
    */
   const revealTermsRowIfWalletConsentSuppressedByAck = (): boolean => {
     if (!termsPrivacyRow.hidden || !hasTermsPrivacyAckCachedLocally()) return false;
@@ -557,7 +557,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
       avatarBtn.setAttribute("aria-controls", "main-menu-actions-account");
       avatarBtn.setAttribute(
         "aria-label",
-        `Account ${formatWalletAddressGap4(entry.address)} — show account actions`
+        `Account ${formatWalletAddressGap4(entry.address)} - show account actions`
       );
       avatarBtn.title = entry.address;
 
@@ -602,7 +602,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     addBtn.className = "main-menu__cached-add-hex";
     addBtn.setAttribute(
       "aria-label",
-      "Add another Nimiq wallet account — sign in to link it"
+      "Add another Nimiq wallet account - sign in to link it"
     );
     addBtn.innerHTML = nimiqLogosHexOutlineMonoPlusMarkup();
     addWrap.appendChild(addBtn);
@@ -830,7 +830,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     replayPlayerSelect.innerHTML = "";
     const opt0 = document.createElement("option");
     opt0.value = "";
-    opt0.textContent = "— select —";
+    opt0.textContent = "- select -";
     replayPlayerSelect.appendChild(opt0);
     for (const p of players) {
       const o = document.createElement("option");
@@ -905,7 +905,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
               `/api/replay/session/${encodeURIComponent(s.sessionId)}/events?days=14`
             );
             const events = ev.events ?? [];
-            replayEventsTitle.textContent = `Actions (${events.length}) — ${s.sessionId.slice(0, 12)}…`;
+            replayEventsTitle.textContent = `Actions (${events.length}) - ${s.sessionId.slice(0, 12)}…`;
             const lines: string[] = [];
             for (const e of events) {
               if (e.kind === "session_start" || e.kind === "session_end") {

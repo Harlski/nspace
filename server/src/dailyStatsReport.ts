@@ -162,7 +162,7 @@ export function formatDailyStatsMessage(
     `- Total paid out: ${trimNim(agg.payoutNimTotal)} NIM`,
   ];
   if (pending && pending.jobCount > 0) {
-    const note = pending.willFlush ? " — paying out now" : " — still queued";
+    const note = pending.willFlush ? " - paying out now" : " - still queued";
     lines.push(
       `- Pending in queue: ${trimNim(lunaToNim(pending.luna))} NIM (${
         pending.jobCount

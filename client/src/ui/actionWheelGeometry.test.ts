@@ -61,7 +61,7 @@ describe("hexSegmentPath", () => {
   it("is a closed straight-edged trapezoid (4 corners, no arcs)", () => {
     const path = hexSegmentPath(0, 0, 100, 48, 90);
     expect(path.trim().endsWith("Z")).toBe(true);
-    expect(path).not.toContain("A"); // straight chords only — no arcs
+    expect(path).not.toContain("A"); // straight chords only - no arcs
     // M + three L commands = four corners
     expect((path.match(/L/g) ?? []).length).toBe(3);
   });
@@ -74,12 +74,53 @@ describe("hexSegmentPath", () => {
     expect(o1.y).toBeGreaterThan(0); // below centre (y grows downward)
     expect(path.startsWith(`M ${Number(o1.x.toFixed(3))} ${Number(o1.y.toFixed(3))}`)).toBe(true);
   });
+
+  it("softens the four corners with quadratic fillets when given a radius", () => {
+    const path = hexSegmentPath(0, 0, 100, 48, 90, 12);
+    expect((path.match(/Q/g) ?? []).length).toBe(4); // one fillet per corner
+    expect(path).not.toContain("A"); // beziers, not arcs
+    expect(path.trim().endsWith("Z")).toBe(true);
+  });
+
+  it("rounds outer and inner corners independently", () => {
+    // Outer rounded, inner sharp -> only the two outer corners get fillets.
+    const path = hexSegmentPath(0, 0, 100, 48, 90, 12, 0);
+    expect((path.match(/Q/g) ?? []).length).toBe(2);
+    // Both rings rounded but by different radii -> all four corners filleted.
+    const both = hexSegmentPath(0, 0, 100, 48, 90, 13, 6);
+    expect((both.match(/Q/g) ?? []).length).toBe(4);
+  });
+
+  it("rounds a shared radial corner identically for adjacent Sectors (seamless tiling)", () => {
+    // Sectors at 90° and 150° share the outer/inner vertices on the 120° radial edge.
+    const left = hexSegmentPath(0, 0, 100, 48, 90, 12);
+    const right = hexSegmentPath(0, 0, 100, 48, 150, 12);
+    // The fillet truncation point on the shared radial edge sits 12px from the shared
+    // outer vertex toward the inner vertex; both Sectors must land on the same point.
+    const outer = polarToXy(0, 0, 100, 120);
+    const inner = polarToXy(0, 0, 48, 120);
+    const len = Math.hypot(inner.x - outer.x, inner.y - outer.y);
+    const shared = {
+      x: outer.x + ((inner.x - outer.x) / len) * 12,
+      y: outer.y + ((inner.y - outer.y) / len) * 12,
+    };
+    const token = `${Number(shared.x.toFixed(3))} ${Number(shared.y.toFixed(3))}`;
+    expect(left).toContain(token);
+    expect(right).toContain(token);
+  });
 });
 
 describe("hexPolygonPath", () => {
   it("is a closed six-corner outline", () => {
     const path = hexPolygonPath(0, 0, 48);
     expect((path.match(/L/g) ?? []).length).toBe(5); // M + 5 L = six vertices
+    expect(path.trim().endsWith("Z")).toBe(true);
+  });
+
+  it("rounds all six corners when given a radius", () => {
+    const path = hexPolygonPath(0, 0, 48, 10);
+    expect((path.match(/Q/g) ?? []).length).toBe(6);
+    expect(path).not.toContain("A");
     expect(path.trim().endsWith("Z")).toBe(true);
   });
 });

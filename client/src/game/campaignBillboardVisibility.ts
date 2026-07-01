@@ -39,7 +39,7 @@ function distanceTiles(
 
 /**
  * Campaign ids currently on screen for this player (within radius, active slide).
- * Returns a set — multiple billboards showing the same campaign count once per tick.
+ * Returns a set - multiple billboards showing the same campaign count once per tick.
  */
 export function visibleCampaignIdsNearPlayer(
   billboards: Iterable<BillboardState>,

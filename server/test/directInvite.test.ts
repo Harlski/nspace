@@ -5,6 +5,7 @@ import {
   evaluateRedeem,
   evaluatePeek,
   getParticipant,
+  getParticipantByWallet,
   reduceInvite,
   sanitizeGuestNickname,
 } from "../src/directInvite/reducer.js";
@@ -218,4 +219,5 @@ test("joinInviteAsWallet claims, links wallet, and sets display name", () => {
   const p = getParticipant(joined.invite, "guest-a")!;
   assert.equal(p.wallet, "NQGuestWallet");
   assert.equal(p.displayName, "Player One");
+  assert.equal(getParticipantByWallet(joined.invite, "NQGuestWallet")?.guestId, "guest-a");
 });

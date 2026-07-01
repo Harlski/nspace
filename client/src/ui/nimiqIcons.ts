@@ -14,7 +14,7 @@ const LOGOS_NIMIQ_HEX_OUTLINE_MONO_ID = "logos-nimiq-hexagon-outline-mono" as co
 
 /**
  * Outline mono Nimiq hex from `nimiq-icons` (same asset as
- * [Nimiq Icons explorer — logos-nimiq-hexagon-outline-mono](https://onmax.github.io/nimiq-ui/nimiq-icons/explorer?icon=nimiq%3Alogos-nimiq-hexagon-outline-mono)),
+ * [Nimiq Icons explorer - logos-nimiq-hexagon-outline-mono](https://onmax.github.io/nimiq-ui/nimiq-icons/explorer?icon=nimiq%3Alogos-nimiq-hexagon-outline-mono)),
  * with a centered plus sign overlay for “add wallet”.
  */
 export function nimiqLogosHexOutlineMonoPlusMarkup(opts?: { graphicClass?: string }): string {

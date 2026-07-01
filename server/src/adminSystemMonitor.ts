@@ -12,7 +12,7 @@ const LOG_LINE_MAX = 480;
 
 /**
  * Fine-grained event-loop stall detector. A timer scheduled every `STALL_PROBE_MS` that
- * fires late by more than `STALL_LOG_MS` means the loop was blocked — useful to correlate
+ * fires late by more than `STALL_LOG_MS` means the loop was blocked - useful to correlate
  * timestamped stalls with `[nim-payout]` / `[nim-mutex]` lines in docker logs. The 5s
  * `monitorEventLoopDelay` sampler above only reports aggregates to `/admin/system`; this
  * prints the *moment* a stall happened to the console. `EVENT_LOOP_STALL_LOG_MS=0` disables.

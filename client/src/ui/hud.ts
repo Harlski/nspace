@@ -293,7 +293,7 @@ export function createHud(
     flagEmojiFor?: (code: string) => string;
     /** Self clicked the profile flag chip → open the country picker (host owns the modal). */
     onEditOwnCountry?: () => void;
-    /** After Wardrobe equip/unequip — host may refresh local loadout preview. */
+    /** After Wardrobe equip/unequip - host may refresh local loadout preview. */
     onCosmeticLoadoutChanged?: () => void;
     /** Preview a slot on the local avatar (client-only); undefined reverts that slot. */
     onCosmeticPreviewSlot?: (
@@ -307,7 +307,7 @@ export function createHud(
         Record<"aura" | "nameplate" | "chatBubble" | "trail", string | null>
       >
     ) => void;
-    /** Client UI milestones (profile, wardrobe, emotes, sign read) — host sends WS to server. */
+    /** Client UI milestones (profile, wardrobe, emotes, sign read) - host sends WS to server. */
     onAchievementUiSignal?: (
       kind:
         | "open_profile"
@@ -363,9 +363,9 @@ export function createHud(
       challengeAvailable?: boolean;
       /** directInvite: the player is already in a Play Space (Invite re-opens its share). */
       directInviteActive?: boolean;
-      /** Guest session — trim the wheel (confined to the Play Space). */
+      /** Guest session - trim the wheel (confined to the Play Space). */
       isGuest?: boolean;
-      /** worldcup enabled — show game / 1v1 entries. */
+      /** worldcup enabled - show game / 1v1 entries. */
       gamesAvailable?: boolean;
     },
     /** Snapped floor tile when opened; wheel closes after the player walks to another tile. */
@@ -1096,9 +1096,6 @@ export function createHud(
   };
 
   const ACHIEVEMENT_UNLOCK_AUTO_DISMISS_MS = 5200;
-  const achievementUnlockDebugEnabled =
-    import.meta.env.DEV ||
-    new URLSearchParams(window.location.search).has("achievementUnlockDebug");
 
   const achievementUnlockStack = document.createElement("div");
   achievementUnlockStack.className = "achievement-unlock-stack";
@@ -1268,49 +1265,9 @@ export function createHud(
     renderAchievementUnlock(payload);
   }
 
-  if (achievementUnlockDebugEnabled) {
-    const achievementUnlockDebugBtn = document.createElement("button");
-    achievementUnlockDebugBtn.type = "button";
-    achievementUnlockDebugBtn.className = "achievement-unlock-debug-btn";
-    achievementUnlockDebugBtn.textContent = "Test achievement unlock";
-    achievementUnlockDebugBtn.title =
-      "Spawn a fake unlock banner (?achievementUnlockDebug=1 in prod builds)";
-    const fakeUnlockSamples: AchievementUnlockPayload[] = [
-      {
-        achievementId: "debug-commons-contributor",
-        title: "Commons Contributor",
-        description: "Place your first block in the Commons.",
-        points: 15,
-        rewardDisplayName: "Commons Spark Trail",
-        totalPoints: 42,
-      },
-      {
-        achievementId: "debug-first-victory",
-        title: "First Victory",
-        description: "Win your first World Cup Match.",
-        points: 15,
-        rewardDisplayName: null,
-        totalPoints: 57,
-      },
-      {
-        achievementId: "debug-chatterbox-i",
-        title: "Chatterbox I",
-        description: "Send 100 in-game chat messages.",
-        points: 10,
-        rewardDisplayName: null,
-        totalPoints: 67,
-      },
-    ];
-    let fakeUnlockIdx = 0;
-    achievementUnlockDebugBtn.addEventListener("click", () => {
-      showAchievementUnlock(
-        fakeUnlockSamples[fakeUnlockIdx++ % fakeUnlockSamples.length]!
-      );
-    });
-    letter.appendChild(achievementUnlockDebugBtn);
-  }
-
-  const achievementPanel = createAchievementPanel(letter);
+  const achievementPanel = createAchievementPanel(letter, {
+    overlayBack: opts?.overlayBack,
+  });
 
   achievementUnlockCardBtn.addEventListener("click", () => {
     achievementPanel.open();
@@ -1587,7 +1544,7 @@ export function createHud(
   let getWalletOpenHandler = (): void => {};
   getWalletBtn.addEventListener("click", () => getWalletOpenHandler());
 
-  // Persistent Play Space share button — visible to every occupant (host + guests) while in
+  // Persistent Play Space share button - visible to every occupant (host + guests) while in
   // a private Play Space; re-opens the room-code + QR share panel after it's dismissed.
   const playSpaceShareBtn = document.createElement("button");
   playSpaceShareBtn.type = "button";
@@ -1799,7 +1756,7 @@ export function createHud(
     }
 
     const fmt = (v: number | null): string =>
-      v === null || !Number.isFinite(v) ? "—" : `${Math.round(v)}`;
+      v === null || !Number.isFinite(v) ? "-" : `${Math.round(v)}`;
     ctx.fillStyle = "rgba(226, 232, 240, 0.92)";
     ctx.font = "11px ui-monospace, Menlo, Monaco, Consolas, monospace";
     ctx.fillText(
@@ -1850,7 +1807,7 @@ export function createHud(
   perfHud.className = "hud-perf-hud";
   perfHud.hidden = true;
   perfHud.setAttribute("aria-hidden", "true");
-  perfHud.innerHTML = `<span class="hud-perf-hud__fps">—</span><span class="hud-perf-hud__sep"> · </span><span class="hud-perf-hud__ms">—</span>`;
+  perfHud.innerHTML = `<span class="hud-perf-hud__fps">-</span><span class="hud-perf-hud__sep"> · </span><span class="hud-perf-hud__ms">-</span>`;
   const perfHudFpsEl = perfHud.querySelector(
     ".hud-perf-hud__fps"
   ) as HTMLSpanElement | null;
@@ -1869,8 +1826,8 @@ export function createHud(
     perfHud.setAttribute("aria-hidden", on ? "false" : "true");
     if (!on) {
       perfHudLastNow = 0;
-      if (perfHudFpsEl) perfHudFpsEl.textContent = "—";
-      if (perfHudMsEl) perfHudMsEl.textContent = "—";
+      if (perfHudFpsEl) perfHudFpsEl.textContent = "-";
+      if (perfHudMsEl) perfHudMsEl.textContent = "-";
     }
     opts?.onPerfHudEnabledChange?.(on);
   }
@@ -2861,9 +2818,9 @@ export function createHud(
   letter.appendChild(portalEnterBtn);
 
   /*
-   * Action Wheel — the hexagonal self-menu (see CONTEXT.md). Right-click / long-press
+   * Action Wheel - the hexagonal self-menu (see CONTEXT.md). Right-click / long-press
    * your own avatar opens a flat-top hexagon centred on you: six fixed Sectors, one per
-   * edge. The bottom Sector is the Nav Sector — Close (root) / Back (sub-wheel); the rest
+   * edge. The bottom Sector is the Nav Sector - Close (root) / Back (sub-wheel); the rest
    * hold actions (Emotes upper-left, Games upper-right) with unused edges drawn as dim,
    * non-interactive reserved Sectors so the hexagon always reads whole. The transparent
    * hexagonal Hub in the middle frames your avatar. Drawn as inline SVG polygon paths so
@@ -2964,7 +2921,7 @@ export function createHud(
   actionWheel.hidden = true;
   actionWheel.setAttribute("role", "menu");
   actionWheel.setAttribute("aria-label", "Player action wheel");
-  // Sector Title: the focused Sector's name, floated above the hexagon. Decorative —
+  // Sector Title: the focused Sector's name, floated above the hexagon. Decorative -
   // each Sector already carries its own aria-label, so this is hidden from a11y.
   const actionWheelSectorTitle = document.createElement("div");
   actionWheelSectorTitle.className = "action-wheel__sector-title";
@@ -3053,9 +3010,9 @@ export function createHud(
   // first tap on touch). Tracked so a second touch tap on the same Sector activates it.
   let actionWheelFocusedIndex: number | null = null;
   let actionWheelFocusedGroup: SVGGElement | null = null;
-  // Last pointer that touched the wheel — touch needs tap-to-reveal then tap-to-activate.
+  // Last pointer that touched the wheel - touch needs tap-to-reveal then tap-to-activate.
   let actionWheelLastPointerTouch = false;
-  /** Pay WebView: slice activated via pointerup/cancel — swallow duplicate click. */
+  /** Pay WebView: slice activated via pointerup/cancel - swallow duplicate click. */
   let actionWheelTouchSliceHandled = false;
   const setSectorTitle = (text: string): void => {
     const t = text.trim();
@@ -3120,7 +3077,7 @@ export function createHud(
   let actionWheelChallengeActive = false;
   let actionWheelChallengeAvailable = false;
   let actionWheelDirectInviteActive = false;
-  // Guests are confined to their Play Space — their wheel is trimmed accordingly.
+  // Guests are confined to their Play Space - their wheel is trimmed accordingly.
   let actionWheelIsGuest = false;
   // Whether game/1v1 entries should appear at all (worldcup enabled).
   let actionWheelGamesAvailable = false;
@@ -3301,7 +3258,7 @@ export function createHud(
       );
       if (deploySlices.length === 0) {
         deploySlices.push({
-          glyph: "—",
+          glyph: "-",
           label: "None",
           ariaLabel: "No deployables owned",
           disabled: true,
@@ -3416,7 +3373,7 @@ export function createHud(
     const home: ActionWheelSlice = {
       glyph: "🏠",
       label: "Home",
-      ariaLabel: "Home — rooms and your private room",
+      ariaLabel: "Home - rooms and your private room",
       activate: () => pushActionWheelLevel("home"),
     };
     const games: ActionWheelSlice = {
@@ -3481,11 +3438,11 @@ export function createHud(
       const group = document.createElementNS(SVG_NS, "g");
       group.setAttribute("class", "action-wheel__slice");
       if (slice.reserved) {
-        // A blank edge that only completes the hexagon frame — hide it from the menu.
+        // A blank edge that only completes the hexagon frame - hide it from the menu.
         group.classList.add("action-wheel__slice--reserved");
         group.setAttribute("aria-hidden", "true");
       } else {
-        // Keep the menuitem role on disabled slices too (WAI-ARIA) — only drop them
+        // Keep the menuitem role on disabled slices too (WAI-ARIA) - only drop them
         // from the tab order and mark them aria-disabled.
         group.setAttribute("role", "menuitem");
         if (slice.disabled) {
@@ -3514,7 +3471,7 @@ export function createHud(
       group.appendChild(path);
 
       if (!slice.reserved) {
-        // Sectors are glyph-only now — the name is surfaced as the Sector Title on focus.
+        // Sectors are glyph-only now - the name is surfaced as the Sector Title on focus.
         const center = polarToXy(0, 0, ACTION_WHEEL_R_LABEL, sector.midDeg);
         // A flag glyph (e.g. the Flag Emote) renders as a Twemoji image since Windows has no
         // flag font glyphs; everything else stays as an SVG text emoji.
@@ -3597,7 +3554,7 @@ export function createHud(
             touchPointerId = ev.pointerId;
             actionWheelLastPointerTouch = true;
             ev.stopPropagation();
-            // Pay WebView often skips pointerup on SVG — nav (Close/Back) on touch start.
+            // Pay WebView often skips pointerup on SVG - nav (Close/Back) on touch start.
             if (isNav) {
               actionWheelTouchSliceHandled = true;
               window.setTimeout(() => {
@@ -4531,7 +4488,7 @@ export function createHud(
       const pub = room.isPublic === true;
       row.setAttribute(
         "aria-label",
-        `Join ${disp} — ${n} ${n === 1 ? "player" : "players"}${pub ? "" : ", private"}`
+        `Join ${disp} - ${n} ${n === 1 ? "player" : "players"}${pub ? "" : ", private"}`
       );
       const name = document.createElement("span");
       name.className = "other-player-profile__room-name";
@@ -5050,7 +5007,7 @@ export function createHud(
       empty.className = "other-player-profile__achievements-empty";
       empty.textContent =
         kind === "self"
-          ? "No achievements unlocked yet — start exploring!"
+          ? "No achievements unlocked yet - start exploring!"
           : "No achievements unlocked yet.";
       oppAchievements.appendChild(empty);
     }
@@ -7291,7 +7248,7 @@ export function createHud(
     }
   }
 
-  /** Terrain tab + block tool — used when closing build so reopening does not stay on Prefab. */
+  /** Terrain tab + block tool - used when closing build so reopening does not stay on Prefab. */
   function resetBuildDockCategoryToTerrain(): void {
     buildDockCategory = "terrain";
     for (const [c, b] of buildDockTabByCategory) {
@@ -7313,7 +7270,7 @@ export function createHud(
     }
   }
 
-  /** Objects scope + Floor tab — used when closing build or opening it fresh. */
+  /** Objects scope + Floor tab - used when closing build or opening it fresh. */
   function resetBuildEditScopeToObjects(): void {
     buildEditKindSelect.value = "objects";
     syncBuildEditKindTriggerFromSelect();
@@ -7528,7 +7485,7 @@ export function createHud(
     buildBottomDockToolsEmpty.textContent = allowSave
       ? designs.length === 0
         ? "Open Library to choose prefabs for the build menu."
-        : "No prefabs yet — use Create to capture one."
+        : "No prefabs yet - use Create to capture one."
       : designs.length === 0
         ? "Open Library to choose prefabs for the build menu."
         : "No prefabs yet.";
@@ -8053,7 +8010,7 @@ export function createHud(
       });
       buildBottomDockTools.appendChild(card);
     }
-    // worldcup: seasonal "Ball" prop — isolated standalone placement mode (not part
+    // worldcup: seasonal "Ball" prop - isolated standalone placement mode (not part
     // of the core tool union, so it can be deleted with the rest of worldcup/).
     if (WORLDCUP_ENABLED_CLIENT && buildDockCategory === "props") {
       const ballCard = document.createElement("button");
@@ -8706,7 +8663,7 @@ export function createHud(
     });
     buildDockCubeRotTriggerLabel.textContent = `${cubeRotStepLabel(rot.cubeRotX)}, ${cubeRotStepLabel(rot.cubeRotY)}, ${cubeRotStepLabel(rot.cubeRotZ)}`;
     if (buildDockCubeRotTrigger) {
-      buildDockCubeRotTrigger.title = `Rotation — X ${cubeRotStepLabel(rot.cubeRotX)}, Y ${cubeRotStepLabel(rot.cubeRotY)}, Z ${cubeRotStepLabel(rot.cubeRotZ)}`;
+      buildDockCubeRotTrigger.title = `Rotation - X ${cubeRotStepLabel(rot.cubeRotX)}, Y ${cubeRotStepLabel(rot.cubeRotY)}, Z ${cubeRotStepLabel(rot.cubeRotZ)}`;
     }
   }
 
@@ -8759,7 +8716,7 @@ export function createHud(
       emitPanelProps();
       return;
     }
-    /* Like color preview: update game + 3D only — avoid syncBuildHud resetting steppers. */
+    /* Like color preview: update game + 3D only - avoid syncBuildHud resetting steppers. */
     inspectorPreviewGameRef?.setPlacementBlockStyle(rot);
   }
 
@@ -10309,7 +10266,7 @@ export function createHud(
 
   function syncFeedbackUnreadBadge(hasUnread: boolean): void {
     feedbackHasUnread = hasUnread;
-    const label = hasUnread ? "Feedback — new reply" : "Feedback";
+    const label = hasUnread ? "Feedback - new reply" : "Feedback";
     if (brandLinksFeedbackBtn) {
       brandLinksFeedbackBtn.classList.toggle(
         "brand-links-overlay__feedback--unread",
@@ -11560,7 +11517,7 @@ export function createHud(
     }
   }
 
-  /** Update bar hue UI only (no `placementStyleHandler` — avoids syncBuildHud ↔ setBuildBlockBarState loop). */
+  /** Update bar hue UI only (no `placementStyleHandler` - avoids syncBuildHud ↔ setBuildBlockBarState loop). */
   function syncPlacementColorRgbUi(rgb: number): void {
     placementColorRgb = clampColorRgb(rgb);
     lastHueDeg = blockColorRgbToHueDeg(placementColorRgb);
@@ -11568,7 +11525,7 @@ export function createHud(
     barHueCore.style.background = cssHex(placementColorRgb);
   }
 
-  /** Live hex typing: UI + 3D preview only (no `syncBuildHud` — same idea as `previewPanelColorRgb`). */
+  /** Live hex typing: UI + 3D preview only (no `syncBuildHud` - same idea as `previewPanelColorRgb`). */
   function previewPlacementColorRgb(rgb: number): void {
     syncPlacementColorRgbUi(rgb);
     inspectorPreviewGameRef?.setPlacementBlockStyle({
@@ -12202,7 +12159,7 @@ export function createHud(
       panelTeleporterLeadEl.innerHTML = pending
         ? "Choose a destination room. For <strong>This room</strong>, tap the coords and pick the exit tile on the map."
         : isBidirectionalPair
-          ? "Linked in this room — tap coords to change the exit, then confirm."
+          ? "Linked in this room - tap coords to change the exit, then confirm."
           : "Choose a room and destination tile, then confirm.";
     }
   }
@@ -15627,7 +15584,7 @@ export function createHud(
         const addr = signboard.createdBy.replace(/\s+/g, "").trim().toUpperCase();
         const formatted =
           addr.length >= 8 ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : addr;
-        signboardTooltipAuthorEl.textContent = `— ${formatted}`;
+        signboardTooltipAuthorEl.textContent = `- ${formatted}`;
         signboardTooltipAuthorEl.title = addr;
       }
       if (signboardTooltipIdenticonEl) {
@@ -15658,7 +15615,7 @@ export function createHud(
     setPerfHudLatencyMs(ms: number | null) {
       if (!perfHudMsEl) return;
       perfHudMsEl.textContent =
-        ms === null || !Number.isFinite(ms) ? "—" : `${Math.round(ms)} ms`;
+        ms === null || !Number.isFinite(ms) ? "-" : `${Math.round(ms)} ms`;
     },
     bindTileInspectorPreviewGame,
     configureCosmeticHandlers(handlers) {

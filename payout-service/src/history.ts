@@ -313,7 +313,7 @@ function historyRowsFromMerged(source: SentHistoryMerged[]): PublicPayoutHistory
     amountNim:
       r.amountLuna && /^\d+$/.test(r.amountLuna)
         ? formatLunaAsNim4(BigInt(r.amountLuna))
-        : "—",
+        : "-",
     txHash: r.txHash,
   }));
 }

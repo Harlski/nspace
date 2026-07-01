@@ -76,25 +76,34 @@ test("counter increments unlock threshold achievements idempotently", async () =
   });
 });
 
-test("commons placement counter completes without cosmetic grant before v2 catalog", async () => {
+test("commons placement grants spark cyan at Builder II without earlier tier cosmetics", async () => {
   const wallet = "NQ07 TEST000000000000000000000000000002";
   await withAchievementStore(async ({
     recordBlockPlaced,
     getAchievementsForWallet,
   }) => {
     const { listEntitlements } = await import("../src/cosmeticStore.js");
-    recordBlockPlaced(wallet, "hub");
+    for (let i = 0; i < 100; i += 1) {
+      recordBlockPlaced(wallet, "hub");
+    }
     const payload = getAchievementsForWallet(wallet);
-    const firstCommons = payload.achievements.find(
-      (a) => a.achievementId === "commons-first-block"
+    const builderI = payload.achievements.find(
+      (a) => a.achievementId === "commons-place-10"
     );
-    assert.equal(firstCommons?.completed, true);
-    assert.equal(firstCommons?.rewardPresetId, null);
-    assert.equal(listEntitlements(wallet).length, 0);
+    assert.equal(builderI?.completed, true);
+    assert.equal(builderI?.rewardPresetId, null);
+    const builderII = payload.achievements.find(
+      (a) => a.achievementId === "commons-place-100"
+    );
+    assert.equal(builderII?.completed, true);
+    assert.equal(builderII?.rewardPresetId, "trail-ref-spark-cyan");
+    const owned = listEntitlements(wallet);
+    assert.equal(owned.length, 1);
+    assert.equal(owned[0]?.cosmeticSku, "ach-trail-spark-cyan");
   });
 });
 
-test("ensureAchievementRewardEntitlements is a no-op without reward catalog entries", async () => {
+test("ensureAchievementRewardEntitlements backfills from completed achievement ids", async () => {
   const wallet = "NQ07TEST000000000000000000000000000004";
   await withAchievementStore(async ({
     ensureAchievementRewardEntitlements,
@@ -108,16 +117,50 @@ test("ensureAchievementRewardEntitlements is a no-op without reward catalog entr
       `INSERT INTO achievement_completions
         (wallet, achievement_id, completed_at_ms, points_awarded, reward_sku)
        VALUES (?, ?, ?, ?, ?)`
-    ).run(wallet, "commons-first-block", now, 15, "ach-trail-commons-starter");
+    ).run(wallet, "commons-place-250", now, 75, null);
 
     ensureAchievementRewardEntitlements(wallet);
 
-    assert.equal(listEntitlements(wallet).length, 0);
+    const owned = listEntitlements(wallet);
+    assert.equal(owned.length, 1);
+    assert.equal(owned[0]?.cosmeticSku, "ach-trail-spark-gold");
     assert.equal(
       getAchievementsForWallet(wallet).achievements.find(
-        (a) => a.achievementId === "commons-first-block"
-      )?.completed,
-      true
+        (a) => a.achievementId === "commons-place-250"
+      )?.rewardPresetId,
+      "trail-ref-spark-path"
+    );
+  });
+});
+
+test("achievement reward catalog seeds one SKU per mapped reward", async () => {
+  await withAchievementStore(async () => {
+    const {
+      ACHIEVEMENT_DEFINITIONS,
+      ACHIEVEMENT_REWARD_CATALOG,
+    } = await import("../src/achievementDefinitions.js");
+    const { listAdminCatalog, listWardrobeShop } = await import(
+      "../src/cosmeticStore.js"
+    );
+    const catalogSkus = new Set(
+      ACHIEVEMENT_REWARD_CATALOG.map((r) => r.cosmeticSku)
+    );
+    const rewardSkus = ACHIEVEMENT_DEFINITIONS.flatMap((d) =>
+      d.rewardSku ? [d.rewardSku] : []
+    );
+    assert.equal(rewardSkus.length, catalogSkus.size);
+    for (const sku of rewardSkus) {
+      assert.ok(catalogSkus.has(sku), `missing catalog entry for ${sku}`);
+    }
+    const admin = listAdminCatalog().filter(
+      (e) => e.collection === "Achievements"
+    );
+    assert.equal(admin.length, ACHIEVEMENT_REWARD_CATALOG.length);
+
+    const wardrobeShop = listWardrobeShop(WALLET);
+    assert.equal(wardrobeShop.length, ACHIEVEMENT_REWARD_CATALOG.length);
+    assert.ok(
+      wardrobeShop.every((e) => e.collection === "Achievements" && !e.owned)
     );
   });
 });
@@ -313,7 +356,7 @@ test("login streak achievements show live streak progress on all tiers", async (
     assert.equal(month?.progress, 3);
     assert.equal(month?.threshold, 30);
     assert.equal(top?.progress, 3);
-    assert.equal(top?.threshold, 60);
+    assert.equal(top?.threshold, 54);
   });
 });
 

@@ -81,7 +81,7 @@ function installDevApiProxyErrorHandler(proxy: EventEmitter): void {
   });
 }
 
-/** Vite logs a warn + often a separate error stack for the same transient failure — soften both. */
+/** Vite logs a warn + often a separate error stack for the same transient failure - soften both. */
 function shouldMuteViteProxyNoise(msg: string): boolean {
   const s = msg.toLowerCase();
   if (s.includes("http proxy error") || s.includes("ws proxy error")) return true;
@@ -166,7 +166,7 @@ function patchnotesSpaFallbackPlugin(): Plugin {
 
 export default defineConfig({
   plugins: [patchnotesSpaFallbackPlugin()],
-  /** Shown on the wallet login / main menu — matches monorepo root `package.json` `version`. */
+  /** Shown on the wallet login / main menu - matches monorepo root `package.json` `version`. */
   define: {
     __NSPACE_APP_VERSION__: JSON.stringify(appDisplayVersion),
   },
@@ -179,8 +179,15 @@ export default defineConfig({
         analytics: resolve(__dirname, "analytics.html"),
         admin: resolve(__dirname, "admin.html"),
         roomPreview: resolve(__dirname, "roomPreview.html"),
+        adminCosmeticPreview: resolve(__dirname, "adminCosmeticPreview.html"),
         tacs: resolve(__dirname, "tacs.html"),
         privacy: resolve(__dirname, "privacy.html"),
+      },
+      output: {
+        entryFileNames: (chunk) =>
+          chunk.name === "adminCosmeticPreview"
+            ? "assets/admin-cosmetic-preview.js"
+            : "assets/[name]-[hash].js",
       },
     },
   },

@@ -473,7 +473,7 @@ export function mainSiteAuthTopbarRuntimeScript(currentPage: MainSiteHeaderPage)
             "</span>";
         }
         var btnTitle = sessionExpired
-          ? "Session expired — sign in again (" + esc(signed) + ")"
+          ? "Session expired - sign in again (" + esc(signed) + ")"
           : "Signed in as " + esc(signed);
         var acctSection =
           "<div class='auth-user-menu-section'><button type='button' id='authChangeAccountToggle' class='auth-user-menu-row'>Change account</button><div id='authAccountPicker' class='auth-user-submenu' style='display:none' role='group' aria-label='Choose wallet'></div></div>";

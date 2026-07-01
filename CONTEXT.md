@@ -405,9 +405,11 @@ reward SKU. Not used for routine unlocks — those use the Achievement Unlock Ba
 _Avoid_: unlock popup (ambiguous with the Banner).
 
 **Achievement Unlock Celebration**:
-The brief in-world social signal when a player earns an achievement — a trophy springs in
-above their avatar, visible to everyone in the same room at unlock time (not retroactive on
-room enter). Generic trophy only; achievement title and points stay in the earner's
+The brief in-world social signal when a player earns an achievement — the Nimiq starburst
+icon with a static soft gold glow springs in above their avatar and hovers gently for eight
+seconds, visible to everyone in the same room at unlock time (not retroactive on room enter). Keeps a constant on-screen size while
+zooming, like chat bubbles and name labels. (not retroactive on
+room enter). Generic starburst icon only; achievement title and points stay in the earner's
 **Achievement Unlock Banner**. Multiple unlocks in one burst play staggered Celebrations (one
 trophy per unlock, capped so overhead stays readable); the Banner still queues every unlock.
 Silent fetch-time unlocks (self-healing streak catch-up) do not fire a Celebration — same rule

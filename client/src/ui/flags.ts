@@ -62,7 +62,7 @@ export function createFlagImg(
 
 /**
  * Append `text` to `parent`, replacing any flag emoji with `<img>` flags and keeping the rest as
- * plain text nodes (XSS-safe — never uses innerHTML). Non-flag emoji are left as text (they
+ * plain text nodes (XSS-safe - never uses innerHTML). Non-flag emoji are left as text (they
  * render fine on Windows). Use for chat lines / labels that may contain a flag.
  */
 export function appendTextWithFlags(

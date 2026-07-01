@@ -370,7 +370,7 @@ if (!JWT_SECRET || JWT_SECRET === "dev-insecure-change-me") {
       "[FATAL] JWT_SECRET must be a strong random secret in production (not empty, not dev-insecure-change-me).\n" +
         "If you copied server/.env.example, replace JWT_SECRET=dev-insecure-change-me with a new value, e.g.:\n" +
         "  openssl rand -base64 32\n" +
-        "Docker Compose loads server/.env via env_file — fix that file on the host, then recreate the container.\n" +
+        "Docker Compose loads server/.env via env_file - fix that file on the host, then recreate the container.\n" +
         "Check logs: docker logs --tail 80 <container_name>"
     );
     process.exit(1);
@@ -391,7 +391,7 @@ const DEV_AUTH_BYPASS =
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 const jsonBody = express.json({ limit: "64kb" });
-/** Binary image upload — skip JSON parser (base64 JSON was slow/hung on large bodies). */
+/** Binary image upload - skip JSON parser (base64 JSON was slow/hung on large bodies). */
 const campaignImageUploadRaw = express.raw({
   limit: CAMPAIGN_IMAGE_UPLOAD_MAX_BYTES,
   type: (req) => isCampaignImageUploadContentType(String(req.headers["content-type"] ?? "")),
@@ -638,7 +638,7 @@ app.get("/api/player-profile/:address", (req, res) => {
   }
 });
 
-/** In-game profile description — max length matches client two-line sample string. */
+/** In-game profile description - max length matches client two-line sample string. */
 const PROFILE_MESSAGE_MAX_LEN =
   "THISISONETHISITHISISONETHISITHISISONETHISITHISISONETHISITHISISO".length;
 
@@ -1998,7 +1998,7 @@ app.get("/api/cosmetics/wardrobe", requireJwt, (req, res) => {
   res.json({
     entitlements: listEntitlements(wallet),
     loadout: getLoadout(wallet),
-    shop: isShopPubliclyOpen() ? listWardrobeShop(wallet) : [],
+    shop: listWardrobeShop(wallet),
     featured: isShopPubliclyOpen() ? listDailyFeaturedShop(wallet) : [],
   });
 });
@@ -2899,12 +2899,12 @@ app.post("/api/admin/feedback/:id/reward", requireSystemAdminWallet, (req, res) 
     amountLuna,
     roomId: "feedback",
     tileKey: "admin-reward",
-    txMessage: "Nimiq Space — thank you for integrated feedback",
+    txMessage: "Nimiq Space - thank you for integrated feedback",
   });
   res.json({ ok: true, ticket: ticketToPlayerDetail(marked.ticket) });
 });
 
-/** Body: `{ "message": "…" }` — only the JWT wallet (`sub`) may update; max length enforced server-side. */
+/** Body: `{ "message": "…" }` - only the JWT wallet (`sub`) may update; max length enforced server-side. */
 app.put("/api/player-profile/message", requireJwt, (req, res) => {
   const sub = jwtAddressFromReq(req);
   const signer = normalizeWalletId(sub ?? "");
@@ -3033,7 +3033,7 @@ app.get("/admin/bans", requireSystemAdminWallet, (_req, res) => {
 
 /**
  * Schedule a graceful process exit after `etaSeconds` and warn all game WebSockets.
- * Body: `{ "etaSeconds": number, "message"?: string }` — `etaSeconds` in **[5, 7200]**.
+ * Body: `{ "etaSeconds": number, "message"?: string }` - `etaSeconds` in **[5, 7200]**.
  * Re-posting replaces the previous schedule. Used by admin JWT and by the optional deploy hook.
  */
 let announceRestartTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3454,7 +3454,7 @@ function shutdown(signal: string): void {
     clearTimeout(announceRestartTimer);
     announceRestartTimer = null;
   }
-  console.log(`\n${signal} — flushing world state…`);
+  console.log(`\n${signal} - flushing world state…`);
   flushPersistWorldStateSync();
   flushEventLogSync();
   flushCanvasClaimsSync();
@@ -3479,10 +3479,10 @@ server.listen(PORT, HOST, () => {
       chatIdMasked: maskSecret(TELEGRAM_CHAT_ID),
     })
   );
-  if (DEV_AUTH_BYPASS) console.warn("DEV_AUTH_BYPASS enabled — not for production");
+  if (DEV_AUTH_BYPASS) console.warn("DEV_AUTH_BYPASS enabled - not for production");
   if (!streamObserverAllowlistConfigured()) {
     console.warn(
-      "[stream] No stream observer wallets configured — set `/admin/settings` or STREAM_OBSERVER_ADDRESSES; ?stream=1 is disabled"
+      "[stream] No stream observer wallets configured - set `/admin/settings` or STREAM_OBSERVER_ADDRESSES; ?stream=1 is disabled"
     );
   }
 });

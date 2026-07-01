@@ -137,7 +137,7 @@ export async function probePaymentIntentService(
       ok: false,
       latencyMs: 0,
       error:
-        "PAYMENT_INTENT_SERVICE_URL uses port 3091 (payout sidecar). Payment-intent listens on 3090 — set http://payment-intent:3090 (Docker) or http://127.0.0.1:3090 (host).",
+        "PAYMENT_INTENT_SERVICE_URL uses port 3091 (payout sidecar). Payment-intent listens on 3090 - set http://payment-intent:3090 (Docker) or http://127.0.0.1:3090 (host).",
     };
     const api: PaymentIntentApiProbe = { attempted: false };
     return {

@@ -130,7 +130,7 @@ test("a quiet day does not blank the previous champion flag", () => {
   recordGoal("NQ G1", "a"); // DE 1
   rolloverIfNeeded(Date.now() + 24 * 60 * 60 * 1000); // archive DE day
   assert.equal(getPreviousDayWinner()?.country, "DE");
-  // Another empty day rolls over with no goals — champion stays DE.
+  // Another empty day rolls over with no goals - champion stays DE.
   rolloverIfNeeded(Date.now() + 48 * 60 * 60 * 1000);
   assert.equal(getPreviousDayWinner()?.country, "DE");
 });

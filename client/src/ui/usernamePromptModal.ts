@@ -5,7 +5,7 @@ import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 const USERNAME_PROMPT_LOAD_MS = 500;
 
 export type UsernamePromptModalOptions = {
-  /** Signed-in wallet — shows Nimiq identicon when set. */
+  /** Signed-in wallet - shows Nimiq identicon when set. */
   walletAddress?: string;
   deferralsRemaining: number;
   mustSetUsername: boolean;
@@ -14,7 +14,7 @@ export type UsernamePromptModalOptions = {
 };
 
 const ERROR_LABEL: Record<string, string> = {
-  username_taken: "That username is already taken — try another.",
+  username_taken: "That username is already taken - try another.",
   invalid_username: "Use letters and numbers only (1–12 characters).",
   username_profanity: "That username is not allowed.",
   username_restricted: "That username is reserved.",
@@ -22,7 +22,7 @@ const ERROR_LABEL: Record<string, string> = {
   username_self_service_disabled: "Username changes are disabled.",
   username_cooldown: "Wait 24 hours before changing again.",
   username_prompt_required: "Choose a username to continue.",
-  network: "Network error — try again.",
+  network: "Network error - try again.",
 };
 
 function errorLabel(code: string): string {

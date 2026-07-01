@@ -140,6 +140,85 @@ describe("achievement panel data", () => {
     ]);
   });
 
+  it("keeps one building header when worldcraft sort order is after other categories", () => {
+    const rows: AchievementProgress[] = [
+      ach({
+        achievementId: "commons",
+        category: "commons_build",
+        categoryGroup: "building",
+        sortOrder: 100,
+      }),
+      ach({
+        achievementId: "pixel",
+        category: "pixel",
+        categoryGroup: "building",
+        sortOrder: 150,
+      }),
+      ach({
+        achievementId: "mine",
+        category: "mining",
+        sortOrder: 200,
+      }),
+      ach({
+        achievementId: "social",
+        category: "social",
+        sortOrder: 3000,
+      }),
+      ach({
+        achievementId: "worldcraft-palette-painter-1",
+        category: "worldcraft",
+        categoryGroup: "building",
+        sortOrder: 5000,
+      }),
+    ];
+    expect(navRows(rows)).toEqual([
+      { kind: "entry", id: SUMMARY_VIEW_ID, label: "Summary", earned: 0, total: 5 },
+      {
+        kind: "group-header",
+        groupId: "building",
+        label: "Building",
+      },
+      {
+        kind: "entry",
+        id: "commons_build",
+        label: "Commons",
+        earned: 0,
+        total: 1,
+        nested: true,
+      },
+      {
+        kind: "entry",
+        id: "pixel",
+        label: "Pixel",
+        earned: 0,
+        total: 1,
+        nested: true,
+      },
+      {
+        kind: "entry",
+        id: "worldcraft",
+        label: "Worldcraft",
+        earned: 0,
+        total: 1,
+        nested: true,
+      },
+      {
+        kind: "entry",
+        id: "mining",
+        label: "Mining",
+        earned: 0,
+        total: 1,
+      },
+      {
+        kind: "entry",
+        id: "social",
+        label: "Social",
+        earned: 0,
+        total: 1,
+      },
+    ]);
+  });
+
   it("groups minigames football categories under a header in nav rows", () => {
     const rows: AchievementProgress[] = [
       ach({
@@ -238,6 +317,27 @@ describe("achievement panel data", () => {
         earned: 0,
         total: 1,
         nested: true,
+      },
+    ]);
+  });
+
+  it("labels misc category for Achievements Window navigator", () => {
+    expect(categoryLabel("misc")).toBe("Misc");
+    const rows: AchievementProgress[] = [
+      ach({
+        achievementId: "mining-billboard-audience",
+        category: "misc",
+        sortOrder: 3100,
+      }),
+    ];
+    expect(navRows(rows)).toEqual([
+      { kind: "entry", id: SUMMARY_VIEW_ID, label: "Summary", earned: 0, total: 1 },
+      {
+        kind: "entry",
+        id: "misc",
+        label: "Misc",
+        earned: 0,
+        total: 1,
       },
     ]);
   });

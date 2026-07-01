@@ -38,7 +38,7 @@ export const HUB_COMPETITION_BILLBOARD_SLOTS: ReadonlyArray<{
 
 export const COMPETITION_BILLBOARD_ROOM_ID = HUB_ROOM_ID;
 
-/** Shared Hub rotation — all approved campaigns in this mode loop together. */
+/** Shared Hub rotation - all approved campaigns in this mode loop together. */
 export const CAMPAIGN_PLACEMENT_ACTIVE_CAROUSEL = "active_carousel" as const;
 
 /** Future: lock one empty in-world billboard to a single campaign until funding ends. */
@@ -130,7 +130,7 @@ export function campaignMinimumFundLuna(): bigint {
   return 1n;
 }
 
-/** Legacy fixed slot price — prefer user-chosen fund + visibility economics. */
+/** Legacy fixed slot price - prefer user-chosen fund + visibility economics. */
 export function billboardSlotPriceLuna(): bigint {
   const raw = process.env.BILLBOARD_SLOT_NIM_LUNA?.trim();
   if (raw && /^\d+$/.test(raw)) return BigInt(raw);

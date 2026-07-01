@@ -12,7 +12,7 @@ import { advertiseBillboardPreviewModuleScript } from "./advertiseBillboardPrevi
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
 
-/** HTML shell for `/advertise` — mini-app billboard campaign dashboard. */
+/** HTML shell for `/advertise` - mini-app billboard campaign dashboard. */
 export function advertisePageHtml(): string {
   const previewAspectRatio = billboardFaceAspectRatio(PAID_BILLBOARD_ORIENTATION);
   const previewModule = advertiseBillboardPreviewModuleScript();
@@ -22,7 +22,7 @@ export function advertisePageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Advertise — Nimiq Space</title>
+  <title>Advertise - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -439,7 +439,7 @@ export function advertisePageHtml(): string {
 <body class="ms-site adv-page">
   ${analyticsTopbarHtml("advertise")}
   <h1 class="ms-doc-title" id="advDocTitle">Advertise</h1>
-  <p class="adv-guide-link"><a href="/advertise/how-it-works">How advertising works</a> — steps from campaign to in-game billboard.</p>
+  <p class="adv-guide-link"><a href="/advertise/how-it-works">How advertising works</a> - steps from campaign to in-game billboard.</p>
   <div id="panel" class="ms-panel">Loading…</div>
   <div id="advFundOverlay" class="adv-fund-overlay" hidden>
     <div class="adv-fund-popover" role="dialog" aria-labelledby="advFundTitle">
@@ -771,13 +771,13 @@ export function advertisePageHtml(): string {
       return hr > 0 ? days + " d " + hr + " h" : days + " d";
     }
     function formatAnalyticsLastSeen(iso) {
-      if (!iso) return "—";
+      if (!iso) return "-";
       try {
         var d = new Date(iso);
-        if (isNaN(d.getTime())) return "—";
+        if (isNaN(d.getTime())) return "-";
         return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
       } catch (e) {
-        return "—";
+        return "-";
       }
     }
     function renderCampaignAudienceStats(c) {
@@ -1251,13 +1251,13 @@ export function advertisePageHtml(): string {
         return '<p class="adv-notice">Waiting for payment. Use <strong>Retry payment</strong> to open your wallet again. If the quote expired, retry creates a new one.</p>';
       }
       if (c.status === "pending_approval") {
-        return '<p class="adv-notice">Pending Approval — your campaign is in the admin review queue.</p>';
+        return '<p class="adv-notice">Pending Approval - your campaign is in the admin review queue.</p>';
       }
       if (c.status === "approved") {
         if (c.inRotationSet) {
           return '<p class="adv-notice">Your advert is <strong>live on billboards</strong> in Nimiq Space. Use <strong>Add funds</strong> to top up prepaid balance without going offline.</p>';
         }
-        return '<p class="adv-notice">Approved — your advert will appear on billboards once placement is complete. Use <strong>Add funds</strong> to increase prepaid balance.</p>';
+        return '<p class="adv-notice">Approved - your advert will appear on billboards once placement is complete. Use <strong>Add funds</strong> to increase prepaid balance.</p>';
       }
       if (c.status === "rejected") {
         return '<p class="adv-notice">Rejected. Contact support if you believe this was a mistake.</p>';
@@ -1356,7 +1356,7 @@ export function advertisePageHtml(): string {
         if (fundOpen) {
           setFundPaymentUi(
             "success",
-            "Payment received — pending admin approval."
+            "Payment received - pending admin approval."
           );
           advFundSuccessCloseTimer = setTimeout(function () {
             advFundSuccessCloseTimer = null;
@@ -1370,7 +1370,7 @@ export function advertisePageHtml(): string {
       if (body.topUpApplied && campaign && campaign.status === "approved") {
         stopPaymentSyncPoll();
         if (fundOpen) {
-          setFundPaymentUi("success", "Payment received — balance updated.");
+          setFundPaymentUi("success", "Payment received - balance updated.");
           advFundSuccessCloseTimer = setTimeout(function () {
             advFundSuccessCloseTimer = null;
             closeFundPopover();
@@ -1435,7 +1435,7 @@ export function advertisePageHtml(): string {
           if (fundOverlayOpenForCampaign(campaignId)) {
             setFundPaymentUi(
               "error",
-              "Still confirming on chain. You can close this — we will update your campaign when payment lands."
+              "Still confirming on chain. You can close this - we will update your campaign when payment lands."
             );
           }
           return;

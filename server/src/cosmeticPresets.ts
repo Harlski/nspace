@@ -1,4 +1,4 @@
-/** Code-defined cosmetic presets — v2 prefabs register here after visual quality gate. */
+/** Code-defined cosmetic presets - v2 prefabs register here after visual quality gate. */
 
 export type CosmeticSlot =
   | "aura"
@@ -61,16 +61,20 @@ const TEST_FIXTURE_PRESETS: ReadonlyArray<CosmeticPreset> = [
 ];
 
 const PRODUCTION_PRESETS: ReadonlyArray<CosmeticPreset> = [
-  {
-    presetId: "trail-ref-spark-path",
-    label: "Spark Path (reference)",
-    slot: "trail",
-  },
-  {
-    presetId: "aura-ref-magic-ring",
-    label: "Magic Ring (reference)",
-    slot: "aura",
-  },
+  { presetId: "trail-ref-spark-path", label: "Spark Path (reference)", slot: "trail" },
+  { presetId: "trail-ref-spark-cyan", label: "Spark Path: Cyan", slot: "trail" },
+  { presetId: "trail-ref-spark-rose", label: "Spark Path: Rose", slot: "trail" },
+  { presetId: "trail-ref-spark-violet", label: "Spark Path: Violet", slot: "trail" },
+  { presetId: "trail-ref-spark-lime", label: "Spark Path: Lime", slot: "trail" },
+  { presetId: "aura-ref-magic-ring", label: "Magic Ring (reference)", slot: "aura" },
+  { presetId: "aura-ref-sigil-magic-01", label: "Sigil: Magic 01", slot: "aura" },
+  { presetId: "aura-ref-sigil-magic-02", label: "Sigil: Magic 02", slot: "aura" },
+  { presetId: "aura-ref-sigil-magic-03", label: "Sigil: Magic 03", slot: "aura" },
+  { presetId: "aura-ref-sigil-magic-04", label: "Sigil: Magic 04", slot: "aura" },
+  { presetId: "aura-ref-sigil-magic-05", label: "Sigil: Magic 05", slot: "aura" },
+  { presetId: "aura-ref-sigil-twirl-01", label: "Sigil: Twirl 01", slot: "aura" },
+  { presetId: "aura-ref-sigil-twirl-02", label: "Sigil: Twirl 02", slot: "aura" },
+  { presetId: "aura-ref-sigil-twirl-03", label: "Sigil: Twirl 03", slot: "aura" },
 ];
 
 function activePresets(): ReadonlyArray<CosmeticPreset> {

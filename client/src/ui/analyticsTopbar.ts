@@ -249,7 +249,7 @@ export async function renderMainSiteTopbar(
         }${alertSvg}</span>`
       : "";
   const btnTitle = sessionExpired
-    ? `Session expired — sign in again (${esc(signed)})`
+    ? `Session expired - sign in again (${esc(signed)})`
     : `Signed in as ${esc(signed)}`;
 
   authUserEl.innerHTML =

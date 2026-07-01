@@ -3,7 +3,7 @@ import { getRoomBaseBounds, PIXEL_ROOM_ID } from "./roomLayouts.js";
 /** Lifetime dedupe keys for Pixel corner regions (`pixel-corner:nw`, …). */
 export const PIXEL_CORNER_SEEN_PREFIX = "pixel-corner:";
 
-/** Default corner band width — matches default `PLACE_RADIUS_BLOCKS`. */
+/** Default corner band width - matches default `PLACE_RADIUS_BLOCKS`. */
 export const PIXEL_CORNER_BAND_TILES = 9;
 
 export const BILLBOARD_AUDIENCE_PROXIMITY_BLOCKS = 7;

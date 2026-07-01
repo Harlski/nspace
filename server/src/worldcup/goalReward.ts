@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — Free Play Field goal rewards (FEATURE-FLAGGED, DEPRECATABLE).
+ * World Cup soccer - Free Play Field goal rewards (FEATURE-FLAGGED, DEPRECATABLE).
  *
  * Scoring in the Free Play Field queues a small NIM payout to the credited scorer, wrapped
  * in env-tunable guards (see worldcup/adr/0002). Matches never pay.
@@ -10,7 +10,7 @@
  * the field `onGoal` hook and, when `pay` is true, enqueues the payout.
  *
  * Persistence is a small, deletable JSON (`worldcup-goal-rewards.json`), reset on UTC-day
- * rollover. This is seasonal, transitional data — acceptable per THE-LARGER-SYSTEM.
+ * rollover. This is seasonal, transitional data - acceptable per THE-LARGER-SYSTEM.
  */
 import { randomInt } from "node:crypto";
 import fs from "node:fs";
@@ -135,7 +135,7 @@ export function pickGoalRewardLuna(
  * Pure reward decision. Order of guards: a goal must have a real credited scorer, be
  * under the per-wallet daily cap (when configured), and fit inside the remaining global
  * budget (when configured). Solo goals pay half the drawn amount. Goals that fail any
- * guard still count for the leaderboard upstream — only the payout stops.
+ * guard still count for the leaderboard upstream - only the payout stops.
  */
 export function evaluateGoalReward(
   input: GoalRewardInput,
@@ -242,7 +242,7 @@ export function saveGoalRewards(): void {
 
 /**
  * Stateful entry point for `rooms.ts`: roll the day if needed, read the live counters, run
- * the pure evaluator, and — when it decides to pay — commit the wallet count + budget spend
+ * the pure evaluator, and - when it decides to pay - commit the wallet count + budget spend
  * before returning. Idempotency past commit is the payout queue's job (claimId dedupe).
  */
 export function decideAndCommitGoalReward(

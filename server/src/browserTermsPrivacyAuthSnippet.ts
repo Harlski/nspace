@@ -2,7 +2,7 @@ import { TERMS_PRIVACY_DOCS_VERSION as DocsVer } from "./termsPrivacyVersion.js"
 
 /**
  * Inlined into server-rendered main-site HTML (analytics, payouts admin HTML, etc.) for wallets
- * that sign in via Hub without the bundled TS client — same `/api/auth/verify` acknowledgement contract.
+ * that sign in via Hub without the bundled TS client - same `/api/auth/verify` acknowledgement contract.
  *
  * Implemented as concatenation so this file parses cleanly under `tsc` (no `{` ambiguity in nested templates).
  */

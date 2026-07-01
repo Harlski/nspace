@@ -13,7 +13,7 @@ export function adminFeedbackPageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Feedback — Admin — Nimiq Space</title>
+  <title>Feedback - Admin - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -142,7 +142,7 @@ export function adminFeedbackPageHtml(): string {
     }
     function walletCell(wallet) {
       var w = String(wallet || "").trim();
-      if (!w) return "—";
+      if (!w) return "-";
       return (
         '<span class="fb-wallet">' + identImg(w, 22) +
         '<span class="fb-wallet__text">' + escHtml(walletShort(w)) + "</span></span>"
@@ -192,7 +192,7 @@ export function adminFeedbackPageHtml(): string {
         .replace(/"/g, "&quot;");
     }
     function fmtTime(ms) {
-      if (!ms) return "—";
+      if (!ms) return "-";
       try { return new Date(ms).toISOString().replace("T", " ").slice(0, 19) + " UTC"; }
       catch { return String(ms); }
     }

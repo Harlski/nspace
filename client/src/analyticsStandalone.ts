@@ -109,7 +109,7 @@ function esc(s: unknown): string {
 }
 
 function fmtUtc(ts: number): string {
-  if (!Number.isFinite(ts)) return "—";
+  if (!Number.isFinite(ts)) return "-";
   const d = new Date(ts);
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -120,7 +120,7 @@ function fmtUtc(ts: number): string {
 }
 
 function fmtMs(ms: number | null): string {
-  if (!Number.isFinite(ms) || !ms || ms <= 0) return "—";
+  if (!Number.isFinite(ms) || !ms || ms <= 0) return "-";
   const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -417,7 +417,7 @@ async function load(): Promise<void> {
       .slice(0, 60)
       .map(
         (p) =>
-          `<tr><td>${esc(fmtUtc(p.sentAt))}</td><td>${esc(String(p.recipient).slice(0, 14))}…</td><td class='right'>${esc(p.amountNim || "—")}</td></tr>`
+          `<tr><td>${esc(fmtUtc(p.sentAt))}</td><td>${esc(String(p.recipient).slice(0, 14))}…</td><td class='right'>${esc(p.amountNim || "-")}</td></tr>`
       )
       .join("") +
     "</tbody></table>";

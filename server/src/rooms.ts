@@ -83,6 +83,7 @@ import {
   validateCosmeticDeploy,
 } from "./cosmeticDeploy.js";
 import {
+  ensureAchievementRewardEntitlements,
   ensureOnboardingCompleteAchievements,
   evaluateLoginStreakAchievements,
   fireAchievementEvent,
@@ -204,7 +205,7 @@ import {
   PIXEL_ROOM_ID,
   PIXEL_DEFAULT_SPAWN,
 } from "./roomLayouts.js";
-// worldcup: seasonal soccer (feature-flagged, deletable — grep "worldcup")
+// worldcup: seasonal soccer (feature-flagged, deletable - grep "worldcup")
 import {
   WORLDCUP_ENABLED,
   FIELD_ROOM_ID as WORLDCUP_FIELD_ROOM_ID,
@@ -675,7 +676,7 @@ const MAX_OWNED_ROOMS_PER_PLAYER = ((): number => {
 
 /** Server-authoritative NIM / claimable-block flow (see beginBlockClaim / blockClaimTick / completeBlockClaim). */
 const BLOCK_CLAIM_HOLD_MS = 3000;
-/** `beginBlockClaim.claimIntent` values from the world context menu Mine action — longer required adjacent hold. */
+/** `beginBlockClaim.claimIntent` values from the world context menu Mine action - longer required adjacent hold. */
 const BLOCK_CLAIM_CONTEXT_MENU_MINE_INTENTS = new Set([
   "world_ctx_adjacent",
   "world_ctx_auto_walk",
@@ -689,7 +690,7 @@ const CLAIM_ACCUM_DT_CAP_MS = 480;
 
 /**
  * When > 0, `completeBlockClaim` uses any in-memory payout balance cache (`peek…`) for the
- * funds gate if it shows enough for the minimum reward — **without** an age check — so the
+ * funds gate if it shows enough for the minimum reward - **without** an age check - so the
  * claim path does not await Nimiq behind in-flight payouts. Payout jobs still send on-chain
  * asynchronously; a stale-high cache is rare for a dedicated hot wallet. Set `0` to always
  * `await getPayoutWalletBalanceLuna()` on each complete (blocks on the Nimiq mutex).
@@ -871,7 +872,7 @@ interface ClientConn {
   viewInterest: ViewInterestRect;
   /** Chunk keys (`cx,cz`) currently loaded for this client. */
   subscribedChunks: Set<string>;
-  /** `?stream=1` cinema view — receives room sync but is not a visible participant. */
+  /** `?stream=1` cinema view - receives room sync but is not a visible participant. */
   streamObserver?: boolean;
 }
 
@@ -983,7 +984,7 @@ function roomAllowsFakePlayers(roomId: string): boolean {
   if (isCosmeticGalleryRoom(roomId)) return false;
   if (isInviteLobbyRoomId(roomId)) return false;
   if (isPixelRoom(roomId)) return false;
-  // worldcup: keep the pitch clear of wandering NPCs — the crowd lives in the
+  // worldcup: keep the pitch clear of wandering NPCs - the crowd lives in the
   // (client-only) stands instead, so the field is reserved for real players.
   if (WORLDCUP_ENABLED && normalizeRoomId(roomId) === WORLDCUP_FIELD_ROOM_ID) {
     return false;
@@ -1079,7 +1080,7 @@ type OutMsg =
       allowPublishDesign?: boolean;
       /** Client may show floor-expand mode only when true; server still enforces. */
       allowExtraFloor: boolean;
-      /** Cinema `?stream=1` session — observer only, not listed as a player. */
+      /** Cinema `?stream=1` session - observer only, not listed as a player. */
       streamObserver?: boolean;
       /** Dynamic rooms: this player may PATCH `backgroundHueDeg` (sidebar hue ring). */
       allowRoomBackgroundHueEdit?: boolean;
@@ -1314,13 +1315,13 @@ type OutMsg =
       topCountries: Array<{ code: string; goals: number }>;
     }
   // worldcup: per-scorer NIM reward outcome for a Free Play Field goal (sent only to the
-  // scorer, never broadcast — the reward cap/budget is personal, not public).
+  // scorer, never broadcast - the reward cap/budget is personal, not public).
   | {
       type: "goalRewardOutcome";
       roomId: string;
       /** `ok` = NIM credited; `wallet_cap`/`budget_exhausted` = no NIM this time. */
       reason: "ok" | "wallet_cap" | "budget_exhausted";
-      /** Set only when `reason === "ok"` — the NIM credited, e.g. "0.25". */
+      /** Set only when `reason === "ok"` - the NIM credited, e.g. "0.25". */
       amountNim?: string;
     }
   // worldcup: spawn / remove a 1v1 spectate portal in a room (room-scoped)
@@ -1371,7 +1372,7 @@ type OutMsg =
       /** ms before entrants are returned home (drives the Match Result Overlay countdown). */
       resultLingerMs: number;
     }
-  // worldcup: a goal was scored in a 1v1 Match — announce it + drive the kickoff reset countdown
+  // worldcup: a goal was scored in a 1v1 Match - announce it + drive the kickoff reset countdown
   | {
       type: "matchGoal";
       roomId: string;
@@ -1541,6 +1542,7 @@ function onPlayerEnteredRoom(
   }
 ): void {
   if (conn.streamObserver) return;
+  ensureAchievementRewardEntitlements(conn.player.address);
   const onUnlock = achievementUnlockHandler(conn.ws);
   evaluateLoginStreakAchievements(conn.player.address, onUnlock);
   if (normalizeRoomId(roomId) === HUB_ROOM_ID) {
@@ -1713,7 +1715,7 @@ function migratePixelRoomToNeutralBaseFloor(): void {
   console.log("[pixel] cleared floor color map for neutral implicit default");
 }
 
-/** Drop persisted neutral-gray entries — only non-default paints are stored. */
+/** Drop persisted neutral-gray entries - only non-default paints are stored. */
 function migratePixelRoomToImplicitDefaultFloor(): void {
   if (hasPixelImplicitFloorMigration()) return;
   const id = normalizeRoomId(PIXEL_ROOM_ID);
@@ -1733,7 +1735,7 @@ function migratePixelRoomToImplicitDefaultFloor(): void {
   markPixelImplicitFloorMigration();
   if (removed > 0) schedulePersistWorldState();
   console.log(
-    `[pixel] implicit default floor — removed ${removed} redundant entries, ${colors.size} painted tiles kept`
+    `[pixel] implicit default floor - removed ${removed} redundant entries, ${colors.size} painted tiles kept`
   );
 }
 
@@ -1766,7 +1768,7 @@ function migratePixelRoomCheckerboardFloor(): void {
   if (removed > 0) schedulePersistWorldState();
   invalidatePixelBoardPngCache();
   console.log(
-    `[pixel] checkerboard implicit floor — removed ${removed} redundant entries`
+    `[pixel] checkerboard implicit floor - removed ${removed} redundant entries`
   );
 }
 
@@ -4687,7 +4689,7 @@ function tickExpiredGatesForRoom(roomId: string, now: number): boolean {
   return true;
 }
 
-/** Set `gateOpen`, broadcast obstacle delta, persist — shared by successful opens and blocked swing UX. */
+/** Set `gateOpen`, broadcast obstacle delta, persist - shared by successful opens and blocked swing UX. */
 function applyGateOpenForTile(
   roomId: string,
   tileKey: string,
@@ -5087,7 +5089,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   }
 
   // worldcup: a Challenge is room-scoped (accepted in the same room it was raised in), so a
-  // real room change clears it — otherwise the flag follows the player and shows a stale
+  // real room change clears it - otherwise the flag follows the player and shows a stale
   // "Accept 1v1" option in a room (e.g. a field) where no Challenge actually exists.
   if (conn.challengeOpen) {
     conn.challengeOpen = false;
@@ -5254,7 +5256,7 @@ const worldcupGoalies = new Map<
   string,
   Map<WorldcupGoalZone["id"], WorldcupGoalieState>
 >();
-/** Throttle Goalie position broadcasts (slow movers — no need for every 50ms tick). */
+/** Throttle Goalie position broadcasts (slow movers - no need for every 50ms tick). */
 const worldcupGoalieBroadcastAt = new Map<string, number>();
 const WORLDCUP_GOALIE_BROADCAST_MIN_MS = 100;
 
@@ -5330,7 +5332,7 @@ function worldcupStepGoaliesForRoom(
   return { wire, kickers, colliders };
 }
 
-/** Distinct real (non-observer) players currently in a room — Solo vs Contested rate input. */
+/** Distinct real (non-observer) players currently in a room - Solo vs Contested rate input. */
 function worldcupDistinctPlayersInRoom(roomId: string): number {
   const seen = new Set<string>();
   for (const c of roomOf(roomId).values()) {
@@ -5343,7 +5345,7 @@ function worldcupDistinctPlayersInRoom(roomId: string): number {
 /**
  * worldcup: a Free Play Field goal queues a small NIM payout to the credited scorer,
  * wrapped in env-tunable guards (see worldcup/adr/0002). Matches never call this. Goals
- * that fail a guard still count for the leaderboard — only the payout stops.
+ * that fail a guard still count for the leaderboard - only the payout stops.
  */
 function maybeQueueGoalReward(
   roomId: string,
@@ -5392,7 +5394,7 @@ function formatGoalRewardNim(luna: bigint): string {
 }
 
 /**
- * worldcup: tell the scorer (and only the scorer) how their Free Play goal was rewarded —
+ * worldcup: tell the scorer (and only the scorer) how their Free Play goal was rewarded -
  * either the NIM they earned, or that they've hit their personal daily cap / the pool is
  * spent. Other reasons (no credited kicker) stay silent.
  */
@@ -5483,7 +5485,7 @@ function handleWorldcupGoal(
 // worldcup: 1v1 Matches (ephemeral Match Pitches; see worldcup/adr/0001)
 // ---------------------------------------------------------------------------
 
-/** worldcup: a 1v1 spectate portal in a room — "{identicon} vs {identicon}", click to watch. */
+/** worldcup: a 1v1 spectate portal in a room - "{identicon} vs {identicon}", click to watch. */
 interface WorldcupPortalWire {
   /** Spectate key = the pitch room id to drop into. */
   matchId: string;
@@ -5699,7 +5701,7 @@ function worldcupOnMatchEnded(m: WorldcupMatchRuntime, now: number): void {
 }
 
 // ---------------------------------------------------------------------------
-// worldcup: Spectating — a "{identicon} vs {identicon}" portal in the origin room that
+// worldcup: Spectating - a "{identicon} vs {identicon}" portal in the origin room that
 // onlookers click to drop into the stands and watch (PRD spectating; issue 80).
 // ---------------------------------------------------------------------------
 
@@ -6095,7 +6097,7 @@ function worldcupHandlePlayerDeparture(address: string): void {
   if (m.state.phase === "ended") worldcupOnMatchEnded(m, now);
 }
 
-/** Open Play Space lobbies are ephemeral — not in `hasRoom` / the dynamic registry. */
+/** Open Play Space lobbies are ephemeral - not in `hasRoom` / the dynamic registry. */
 function directInviteLobbyIsLive(inv: DirectInviteRecord): boolean {
   return inv.phase === "open";
 }
@@ -6127,7 +6129,7 @@ function worldcupReturnEntrant(m: WorldcupMatchRuntime, compact: string): void {
     if (compactAddress(conn.address) !== compact) continue;
     conn.matchId = null;
     conn.spectatingMatchId = null;
-    // Play Space members (players AND spectators) always return to their space — this keeps
+    // Play Space members (players AND spectators) always return to their space - this keeps
     // guests confined and re-registers them so the roster overlay refreshes.
     if (conn.directInviteSlug) {
       const inv = getInviteBySlug(conn.directInviteSlug);
@@ -6331,7 +6333,7 @@ export function directInviteOnCreated(invite: DirectInviteRecord): void {
     host.challengeRaisedAtMs = 0;
   }
   // Snapshot where the host stood so leave/expiry can return them precisely. The client
-  // joins the lobby over the existing WebSocket (`joinRoom`) — do not teleport here or a
+  // joins the lobby over the existing WebSocket (`joinRoom`) - do not teleport here or a
   // follow-up `connectToRoom` disconnect would tear the space down before they land.
   spawnMap(invite.hostOriginRoomId).set(invite.hostWallet, {
     x: host.player.x,
@@ -6397,7 +6399,7 @@ function directInviteSweepExpired(now: number): void {
   if (!DIRECT_INVITE_ENABLED) return;
   for (const invite of listOpenInvites()) {
     if (now < invite.expiresAtMs) continue;
-    // Active spaces keep their join code until close/teardown — not the creation TTL.
+    // Active spaces keep their join code until close/teardown - not the creation TTL.
     if (invite.participants.length > 0) continue;
     if (directInviteConnectedCount(invite.slug) > 0) continue;
     if (rooms.has(invite.lobbyRoomId)) continue;
@@ -6455,7 +6457,7 @@ function directInviteOnDisconnect(conn: ClientConn): void {
   directInviteMaybeTeardown(slug);
 }
 
-// worldcup: at UTC midnight the daily tally resets — push the cleared scoreboard and the
+// worldcup: at UTC midnight the daily tally resets - push the cleared scoreboard and the
 // new champion flag to everyone on the pitch so the crowd starts celebrating yesterday's
 // winner. Cheap to call every tick; only does work at the day boundary.
 function worldcupCheckDailyReset(nowMs: number): void {
@@ -6581,7 +6583,7 @@ export function startRoomTick(): void {
           });
         }
         // worldcup: on the pitch (field or Match Pitch), free movement rests at the exact
-        // float point — skip the grid drift-snap that would pull players to a tile center.
+        // float point - skip the grid drift-snap that would pull players to a tile center.
         const isFieldFreeMove = worldcupIsFieldLikeRoom(roomId);
         if (c.pathQueue.length === 0 && !isFieldFreeMove) {
           const moverCtx: PathfindMoverContext = {
@@ -7413,7 +7415,7 @@ export function addClient(
       const m = worldcupMatches.get(matchId);
       if (!m || m.state.phase === "ended") return;
       if (worldcupSpectatorCount(m) >= WORLDCUP_MATCH.spectatorCap) {
-        // Portal is full — tell this onlooker (and refresh the portal's full state).
+        // Portal is full - tell this onlooker (and refresh the portal's full state).
         wsSafeSend(ws, { type: "error", code: "spectate_full" } satisfies OutMsg);
         worldcupBroadcastPortal(m);
         return;
@@ -8061,7 +8063,7 @@ export function addClient(
       // worldcup: Match Pitches are server-managed and never directly joinable.
       if (worldcupIsMatchPitch(normalizeRoomId(targetRoomId))) return;
       // worldcup: navigating to another room mid-Match forfeits to the opponent (same as
-      // pressing Leave), then proceeds to the requested room — e.g. leaving a 1v1 to go
+      // pressing Leave), then proceeds to the requested room - e.g. leaving a 1v1 to go
       // straight to the Free Play Field. A Spectator simply stops watching.
       if (conn.matchId) {
         worldcupHandlePlayerDeparture(address);
@@ -8134,7 +8136,7 @@ export function addClient(
       if (conn.streamObserver) return;
       if (address.startsWith("guest:")) return;
       // Constrained leave path: only while inside The Shaper, and only to the room/tile the
-      // server recorded when they entered (not client-supplied coordinates — those would be a
+      // server recorded when they entered (not client-supplied coordinates - those would be a
       // generic teleport API). Hub fallback when origin is missing, expired, or no longer valid.
       let currentRoomId: string | null = null;
       for (const [rid, room] of rooms) {
@@ -8178,7 +8180,7 @@ export function addClient(
       }
       // A "stop" intent (e.g. releasing the touch joystick) clears the path immediately and is
       // never rate-limited, so the player halts the instant the finger lifts instead of gliding
-      // on toward the last (far) joystick target — which the 120ms move rate limit would drop.
+      // on toward the last (far) joystick target - which the 120ms move rate limit would drop.
       if (msg.stop === true) {
         if (conn.pathQueue.length > 0) {
           conn.pathQueue = [];
@@ -8207,7 +8209,7 @@ export function addClient(
       const moveRateMs = fieldFreeMove ? RATE_MOVE_TO_FIELD_MS : RATE_MOVE_TO_MS;
       if (now - conn.lastMoveToAt < moveRateMs) return;
       conn.lastMoveToAt = now;
-      // worldcup: the soccer pitch uses free (any-direction) movement — go in a straight
+      // worldcup: the soccer pitch uses free (any-direction) movement - go in a straight
       // line to the exact clicked float point (no tile snap, no grid pathfinding) so the
       // ball can be kicked at any angle. The pitch is an open rectangle with no obstacles,
       // so a clamped straight line is always safe; walls clamp in advanceAlongPathHuman.
@@ -11478,7 +11480,7 @@ export function addClient(
     if (WORLDCUP_ENABLED && conn.pendingMatchId) {
       worldcupAbortPending(address);
     }
-    // worldcup: a Spectator disconnecting frees a stand slot — refresh the portal's full state.
+    // worldcup: a Spectator disconnecting frees a stand slot - refresh the portal's full state.
     if (WORLDCUP_ENABLED && conn.spectatingMatchId) {
       const sm = worldcupMatches.get(conn.spectatingMatchId);
       conn.spectatingMatchId = null;

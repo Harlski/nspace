@@ -184,7 +184,7 @@ export function analyticsPublicPageHtml(): string {
         .replace(/'/g, "&#39;");
     }
     function fmtUtc(ts) {
-      if (!Number.isFinite(ts)) return "—";
+      if (!Number.isFinite(ts)) return "-";
       var d = new Date(ts);
       var y = d.getUTCFullYear();
       var m = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -194,7 +194,7 @@ export function analyticsPublicPageHtml(): string {
       return y + "-" + m + "-" + day + " " + h + ":" + min + " UTC";
     }
     function fmtMdHm(ts) {
-      if (!Number.isFinite(ts)) return "—";
+      if (!Number.isFinite(ts)) return "-";
       var d = new Date(ts);
       var m = String(d.getUTCMonth() + 1).padStart(2, "0");
       var day = String(d.getUTCDate()).padStart(2, "0");
@@ -203,7 +203,7 @@ export function analyticsPublicPageHtml(): string {
       return m + "-" + day + " " + h + ":" + min;
     }
     function fmtMs(ms) {
-      if (!Number.isFinite(ms) || ms <= 0) return "—";
+      if (!Number.isFinite(ms) || ms <= 0) return "-";
       var s = Math.floor(ms / 1000);
       var h = Math.floor(s / 3600);
       var m = Math.floor((s % 3600) / 60);
@@ -1323,7 +1323,7 @@ export function analyticsPublicPageHtml(): string {
             });
             html += "<tr><td colspan='3'><table><thead><tr><th>When</th><th class='right'>NIM</th></tr></thead><tbody>";
             rows.forEach(function (p) {
-              html += "<tr><td>" + esc(fmtMdHm(p.sentAt)) + "</td><td class='right'>" + esc(p.amountNim || "—") + "</td></tr>";
+              html += "<tr><td>" + esc(fmtMdHm(p.sentAt)) + "</td><td class='right'>" + esc(p.amountNim || "-") + "</td></tr>";
             });
             html += "</tbody></table></td></tr>";
           }
@@ -1343,7 +1343,7 @@ export function analyticsPublicPageHtml(): string {
         });
       }
 
-      /** Payout chart rows (hour or day slots), optionally scoped to focused wallet — shared by payout bars + recent stacked chart. */
+      /** Payout chart rows (hour or day slots), optionally scoped to focused wallet - shared by payout bars + recent stacked chart. */
       function payoutRowsDisplayed() {
         return payoutChartRows.map(function (row, slot) {
           if (!focusedWallet) {
@@ -1546,7 +1546,7 @@ export function analyticsPublicPageHtml(): string {
           .slice()
           .sort(function (a, c) { return c.sentAt - a.sentAt; })
           .forEach(function (p) {
-            html += "<tr><td>" + esc(fmtMdHm(p.sentAt)) + "</td><td>" + walletChip(identByWallet[p.recipient] || "", p.recipient) + "</td><td class='right'>" + esc(p.amountNim || "—") + "</td></tr>";
+            html += "<tr><td>" + esc(fmtMdHm(p.sentAt)) + "</td><td>" + walletChip(identByWallet[p.recipient] || "", p.recipient) + "</td><td class='right'>" + esc(p.amountNim || "-") + "</td></tr>";
           });
         html += "</tbody></table>";
         if (b.rows.length < b.count) {
@@ -1813,7 +1813,7 @@ export function analyticsPublicPageHtml(): string {
               "</td><td>" +
               esc(r.roomId) +
               "</td><td class='right'>" +
-              esc(String(r.sessionCount != null ? r.sessionCount : "—")) +
+              esc(String(r.sessionCount != null ? r.sessionCount : "-")) +
               "</td><td class='right'>" +
               esc(fmtMs(r.activeDurationMs)) +
               "</td><td class='right'>" +

@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — attacking-goal indicator (CLIENT-ONLY, FEATURE-FLAGGED, DEPRECATABLE).
+ * World Cup soccer - attacking-goal indicator (CLIENT-ONLY, FEATURE-FLAGGED, DEPRECATABLE).
  *
  * A single bobbing, slowly-spinning downward arrow that hovers above the goal the local
  * Match player is attacking, so they always know which net to shoot at. Cosmetic (no picking

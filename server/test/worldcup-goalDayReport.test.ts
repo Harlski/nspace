@@ -35,9 +35,9 @@ test("builds a recap with total, top teams, MVP, and scorers", () => {
   assert.match(msg!, /Goals scored: 3/);
   assert.match(msg!, /Top teams/);
   // Brazil leads the podium with the gold medal.
-  assert.match(msg!, /🥇 🇧🇷 BR — 2 goals/);
+  assert.match(msg!, /🥇 🇧🇷 BR - 2 goals/);
   // MVP is the top scorer (Pelé, 2 goals).
-  assert.match(msg!, /MVP: 🇧🇷 Pelé — 2 goals/);
+  assert.match(msg!, /MVP: 🇧🇷 Pelé - 2 goals/);
   assert.match(msg!, /Top scorers/);
 });
 
@@ -47,5 +47,5 @@ test("falls back to a short wallet when a scorer has no name or country", () => 
   const msg = buildWorldcupGoalDayMessage(utcDayKey());
   assert.ok(msg);
   assert.match(msg!, /Goals scored: 1/);
-  assert.match(msg!, /MVP: NQXXXX…XXXX — 1 goal/);
+  assert.match(msg!, /MVP: NQXXXX…XXXX - 1 goal/);
 });

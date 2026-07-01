@@ -109,6 +109,26 @@ export function isMobilePortraitViewport(width: number, height: number): boolean
   return width / height < MOBILE_GAME_ASPECT;
 }
 
+/**
+ * Portrait vs landscape for Pay / mobile-play HUD layout.
+ * Uses measured viewport aspect - not `matchMedia(orientation)` - so letterbox math
+ * does not run landscape sizing on portrait dimensions mid-rotation.
+ */
+export function isMobilePlayLayoutPortrait(width: number, height: number): boolean {
+  if (payEmulateForcedOrientation === "portrait") return true;
+  if (payEmulateForcedOrientation === "landscape") return false;
+  return isMobilePortraitViewport(width, height);
+}
+
+/** Portrait when the platform reports it, otherwise infer from viewport aspect. */
+export function isViewportPortrait(width: number, height: number): boolean {
+  if (typeof window !== "undefined") {
+    if (window.matchMedia("(orientation: portrait)").matches) return true;
+    if (window.matchMedia("(orientation: landscape)").matches) return false;
+  }
+  return isMobilePortraitViewport(width, height);
+}
+
 /** @deprecated Use `isMobilePortraitViewport`. */
 export const isNimiqPayPortraitViewport = isMobilePortraitViewport;
 
@@ -153,7 +173,9 @@ export function syncMobileOrientationClasses(
       ? true
       : payEmulateForcedOrientation === "landscape"
         ? false
-        : isMobilePortraitViewport(w, h);
+        : isMobilePlayHostDocument()
+          ? isMobilePlayLayoutPortrait(w, h)
+          : isViewportPortrait(w, h);
   const root = document.documentElement;
   root.classList.toggle(MOBILE_PORTRAIT_CLASS, portrait);
   root.classList.toggle(MOBILE_LANDSCAPE_CLASS, !portrait);

@@ -8,7 +8,7 @@ import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
 
 /**
- * `GET /payouts` — queue overview (main-site shell).
+ * `GET /payouts` - queue overview (main-site shell).
  * Data from `GET /api/nim/payouts` (summary without auth; wallet-scoped with JWT).
  */
 export function pendingPayoutsPublicPageHtml(): string {
@@ -18,7 +18,7 @@ export function pendingPayoutsPublicPageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Payout queue — Nimiq Space</title>
+  <title>Payout queue - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -120,7 +120,7 @@ export function pendingPayoutsPublicPageHtml(): string {
     }
     function explorerCell(txHash) {
       var hex = nimTxHexForUrl(txHash);
-      if (!hex) return esc(String(txHash || "—"));
+      if (!hex) return esc(String(txHash || "-"));
       return (
         "<a class='ms-link-expl' rel='noopener noreferrer' target='_blank' href='https://nimiq.watch/#" +
         hex +

@@ -1,5 +1,5 @@
 /**
- * Dev-only Preset Gallery room — one showcase per Preset, join code SPACER.
+ * Dev-only Preset Gallery room - one showcase per Preset, join code SPACER.
  * See CONTEXT.md (Preset Gallery).
  */
 import {
@@ -8,6 +8,7 @@ import {
   type CosmeticSlot,
 } from "./cosmeticPresets.js";
 import { normalizeJoinCode } from "./joinCode.js";
+import { isShopPubliclyOpen } from "./shopAccess.js";
 
 export const COSMETIC_GALLERY_ROOM_ID = "cosmetic-gallery";
 export const COSMETIC_GALLERY_JOIN_CODE = "SPACER";
@@ -71,7 +72,7 @@ export function isCosmeticGalleryRoom(roomId: string): boolean {
 }
 
 export function resolveCosmeticGalleryJoinCode(raw: string): string | null {
-  if (!isCosmeticGalleryEnabled()) return null;
+  if (!isCosmeticGalleryEnabled() || !isShopPubliclyOpen()) return null;
   if (normalizeJoinCode(raw) !== COSMETIC_GALLERY_JOIN_CODE) return null;
   return COSMETIC_GALLERY_ROOM_ID;
 }

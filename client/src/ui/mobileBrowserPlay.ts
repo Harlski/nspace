@@ -1,7 +1,9 @@
 import {
+  getMobilePlayViewportSize,
   isMobilePlayHostDocument,
   isMobilePortraitDocument,
   isNimiqPayWebViewHost,
+  isViewportPortrait,
   markMobileBrowserPlayHostDocument,
   scheduleMobilePlayLayoutResync,
   setPseudoFullscreen,
@@ -43,18 +45,35 @@ function lockLandscapeBestEffort(): void {
   void orientation.lock("landscape").catch(() => {});
 }
 
-function isAppFullscreenElement(
-  fullscreenEl: Element,
-  preferred: HTMLElement,
-  appEl: HTMLElement | null
-): boolean {
-  return (
-    fullscreenEl === preferred ||
-    fullscreenEl === appEl ||
-    fullscreenEl === document.documentElement ||
-    fullscreenEl === document.body ||
-    (!!appEl && appEl.contains(fullscreenEl))
-  );
+function readPortraitNow(): boolean {
+  const { width, height } = getMobilePlayViewportSize();
+  return isViewportPortrait(width, height);
+}
+
+function applyMobileBrowserImmersivePolicy(
+  preferredFullscreenEl: HTMLElement
+): void {
+  if (!shouldUseMobileBrowserPlay()) return;
+
+  setPseudoFullscreen(true);
+  syncMobileOrientationClasses();
+  const portrait = isMobilePortraitDocument() || readPortraitNow();
+
+  if (portrait) {
+    unlockScreenOrientation();
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    }
+    scheduleMobilePlayLayoutResync();
+    return;
+  }
+
+  if (document.fullscreenElement) return;
+
+  void tryRequestFullscreen(preferredFullscreenEl).then((entered) => {
+    if (entered) lockLandscapeBestEffort();
+    else lockLandscapeBestEffort();
+  });
 }
 
 /**
@@ -63,26 +82,17 @@ function isAppFullscreenElement(
  */
 export function syncMobileBrowserImmersiveLayout(
   preferredFullscreenEl: HTMLElement,
-  appEl: HTMLElement | null
+  _appEl: HTMLElement | null
 ): void {
   if (!shouldUseMobileBrowserPlay()) return;
 
-  setPseudoFullscreen(true);
-  syncMobileOrientationClasses();
+  const run = (): void => applyMobileBrowserImmersivePolicy(preferredFullscreenEl);
 
-  if (isMobilePortraitDocument()) {
-    unlockScreenOrientation();
-    const fsEl = document.fullscreenElement;
-    if (fsEl && isAppFullscreenElement(fsEl, preferredFullscreenEl, appEl)) {
-      void document.exitFullscreen().catch(() => {});
-    }
-    return;
-  }
-
-  void tryRequestFullscreen(preferredFullscreenEl).then((entered) => {
-    if (entered) lockLandscapeBestEffort();
-    else lockLandscapeBestEffort();
-  });
+  run();
+  requestAnimationFrame(run);
+  requestAnimationFrame(() => requestAnimationFrame(run));
+  window.setTimeout(run, 100);
+  window.setTimeout(run, 300);
 }
 
 let mobileBrowserLayoutLifecycleBound = false;
@@ -93,7 +103,6 @@ function bindMobileBrowserLayoutLifecycle(): void {
 
   const onOrientationChange = (): void => {
     if (!isMobilePlayHostDocument() || isNimiqPayWebViewHost()) return;
-    scheduleMobilePlayLayoutResync();
     const app = document.getElementById("app");
     syncMobileBrowserImmersiveLayout(app ?? document.documentElement, app);
   };
@@ -108,6 +117,7 @@ function bindMobileBrowserLayoutLifecycle(): void {
   }).orientation;
   screenOrientation?.addEventListener?.("change", onOrientationChange);
   window.addEventListener("orientationchange", onOrientationChange);
+  window.visualViewport?.addEventListener("resize", onOrientationChange);
 }
 
 /** From first page load on coarse-pointer mobile browsers (not Nimiq Pay). */

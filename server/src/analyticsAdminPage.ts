@@ -14,7 +14,7 @@ export function analyticsAdminPageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Admin — Nimiq Space</title>
+  <title>Admin - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -257,7 +257,7 @@ export function analyticsAdminPageHtml(): string {
       if (a === "not_on_allowlist") {
         return "Wallet not on analytics allowlist.";
       }
-      return "Anonymous visit (legacy beacon — reason not recorded).";
+      return "Anonymous visit (legacy beacon - reason not recorded).";
     }
     function parseJwtSub(token) {
       try {
@@ -605,7 +605,7 @@ export function analyticsAdminPageHtml(): string {
             var pct = Math.max(3, Math.round((v / maxV) * 100));
             return (
               "<div class='col' title='" +
-              esc(r.dayUtc + " UTC — " + v + " view" + (v === 1 ? "" : "s")) +
+              esc(r.dayUtc + " UTC - " + v + " view" + (v === 1 ? "" : "s")) +
               "'><div class='in' style='height:" +
               pct +
               "%'></div></div>"
@@ -655,7 +655,7 @@ export function analyticsAdminPageHtml(): string {
         function histTableBody() {
           return hist
             .map(function (r) {
-              var t = r.time != null ? String(r.time).replace("T", " ").slice(0, 19) : "—";
+              var t = r.time != null ? String(r.time).replace("T", " ").slice(0, 19) : "-";
               var w = r.walletId != null ? String(r.walletId) : "";
               var ident = r.identicon ? String(r.identicon) : "";
               var img = ident
@@ -668,7 +668,7 @@ export function analyticsAdminPageHtml(): string {
                   "' target='_blank' rel='noopener noreferrer'>" +
                   esc(tx.slice(0, 10)) +
                   "…</a>"
-                : "—";
+                : "-";
               return (
                 "<tr><td>" +
                 img +
@@ -677,7 +677,7 @@ export function analyticsAdminPageHtml(): string {
                 "</td><td class='mono'>" +
                 esc(walletGrouped(w)) +
                 "</td><td class='mono'>" +
-                esc(String(r.amountNim != null ? r.amountNim : "—")) +
+                esc(String(r.amountNim != null ? r.amountNim : "-")) +
                 "</td><td>" +
                 txCell +
                 "</td></tr>"
@@ -693,7 +693,7 @@ export function analyticsAdminPageHtml(): string {
             .map(function (row) {
               var w = row.walletId != null ? String(row.walletId) : "";
               var jc = row.jobCount != null ? String(row.jobCount) : "0";
-              var nim = row.amountNim != null ? String(row.amountNim) : "—";
+              var nim = row.amountNim != null ? String(row.amountNim) : "-";
               return (
                 "<tr><td class='mono'>" +
                 esc(walletGrouped(w)) +
@@ -736,11 +736,11 @@ export function analyticsAdminPageHtml(): string {
         var mbBody = mb.length
           ? mb
               .map(function (row) {
-                var t = row.time != null ? String(row.time).replace("T", " ").slice(0, 19) : "—";
+                var t = row.time != null ? String(row.time).replace("T", " ").slice(0, 19) : "-";
                 var w = row.walletId != null ? String(row.walletId) : "";
-                var nim = row.amountNim != null ? String(row.amountNim) : "—";
+                var nim = row.amountNim != null ? String(row.amountNim) : "-";
                 var jc = row.jobsCleared != null ? String(row.jobsCleared) : "0";
-                var st = row.state != null ? String(row.state) : "—";
+                var st = row.state != null ? String(row.state) : "-";
                 var tx = row.txHash != null ? String(row.txHash).trim() : "";
                 var txLower = tx.toLowerCase();
                 var txCell =
@@ -750,7 +750,7 @@ export function analyticsAdminPageHtml(): string {
                       "' target='_blank' rel='noopener noreferrer'>Watch</a> · <a class='ms-link-expl mono' href='https://www.nimiqhub.com/tx/" +
                       esc(txLower) +
                       "' target='_blank' rel='noopener noreferrer'>Hub</a>"
-                    : "—";
+                    : "-";
                 var memoFull = row.txMessage != null ? String(row.txMessage) : "";
                 var memoDisp = memoFull.length > 56 ? memoFull.slice(0, 54) + "…" : memoFull;
                 return (
@@ -833,7 +833,7 @@ export function analyticsAdminPageHtml(): string {
                 esc(w) +
                 "' title='Copy full wallet address' aria-label='Copy full wallet address'>Copy</span>" +
                 "</div></div>"
-              : "<span class='admin-pv-anon' aria-hidden='true'>—</span><span class='admin-pv-anon-hint'>" +
+              : "<span class='admin-pv-anon' aria-hidden='true'>-</span><span class='admin-pv-anon-hint'>" +
                 esc(adminPvAnonHint(r.anonReason)) +
                 "</span>";
             return "<tr><td class='mono'>" + fmtPageViewUtc(r.t) + "</td><td>" + wCell + "</td></tr>";
@@ -967,7 +967,7 @@ export function analyticsAdminPageHtml(): string {
           btn.addEventListener("click", function () {
             var w = String(btn.getAttribute("data-manual-payout") || "");
             if (!w) return;
-            var nim = String(btn.getAttribute("data-manual-payout-nim") || "—");
+            var nim = String(btn.getAttribute("data-manual-payout-nim") || "-");
             var jc = String(btn.getAttribute("data-manual-payout-jobs") || "0");
             openAdminManualPayoutModal(w, nim, jc, async function () {
               btn.disabled = true;
@@ -986,7 +986,7 @@ export function analyticsAdminPageHtml(): string {
                 if (!r.ok) {
                   var errCode = String(j.error || "payout_failed");
                   if (errCode === "wallet_payout_race_retry") {
-                    errCode = "Queue changed — wait a moment and try again.";
+                    errCode = "Queue changed - wait a moment and try again.";
                   }
                   throw new Error(errCode);
                 }

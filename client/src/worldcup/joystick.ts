@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — floating on-screen touch joystick VISUAL (CLIENT-ONLY, FEATURE-FLAGGED).
+ * World Cup soccer - floating on-screen touch joystick VISUAL (CLIENT-ONLY, FEATURE-FLAGGED).
  *
  * A left-thumb virtual stick for moving on the pitch from a touch device / Nimiq Pay mini-app,
  * where precise tap-to-move is fiddly. Pitch Movement Mode (Tap vs Joystick) is chosen via the

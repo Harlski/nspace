@@ -216,7 +216,7 @@ export function createDirectInviteLobbyOverlay(
       overlay.hidden = false;
       errEl.hidden = true;
       if (state.occupancy > 1) {
-        statusEl.textContent = `${state.occupancy}/${state.capacity} in the space — enter the room code or scan the QR code to join.`;
+        statusEl.textContent = `${state.occupancy}/${state.capacity} in the space - enter the room code or scan the QR code to join.`;
       } else {
         statusEl.textContent =
           "Enter the room code or scan the QR code to join.";

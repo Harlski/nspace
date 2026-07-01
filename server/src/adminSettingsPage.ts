@@ -13,7 +13,7 @@ export function adminSettingsPageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Settings — Admin — Nimiq Space</title>
+  <title>Settings - Admin - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -76,7 +76,7 @@ export function adminSettingsPageHtml(): string {
           body: JSON.stringify(body),
         });
         if (pr.status === 400) {
-          msgEl.textContent = "Invalid Nimiq address — check format (with or without spaces).";
+          msgEl.textContent = "Invalid Nimiq address - check format (with or without spaces).";
           msgEl.className = "err";
           msgEl.hidden = false;
           return false;
@@ -142,7 +142,7 @@ export function adminSettingsPageHtml(): string {
           "</div></div>" +
           "<div class='set-panel'>" +
           "<h2>Stream cinema wallet</h2>" +
-          "<p class='set-hint'>Wallets allowed to connect with <code>?stream=1</code> (OBS / broadcast observer). Comma-separated for multiple bots. Spaces optional — grouped or compact both work.</p>" +
+          "<p class='set-hint'>Wallets allowed to connect with <code>?stream=1</code> (OBS / broadcast observer). Comma-separated for multiple bots. Spaces optional - grouped or compact both work.</p>" +
           "<textarea class='set-text' id='stream-wallets' rows='2' placeholder='NQXX XXXX XXXX …'>" +
           escHtml(streamAddrs) +
           "</textarea>" +

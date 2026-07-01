@@ -129,7 +129,7 @@ async function load(): Promise<void> {
         const v = Number(r.views || 0);
         const pct = Math.max(3, Math.round((v / maxV) * 100));
         return (
-          `<div class='col' title='${esc(r.dayUtc + " UTC — " + v + " view" + (v === 1 ? "" : "s"))}'>` +
+          `<div class='col' title='${esc(r.dayUtc + " UTC - " + v + " view" + (v === 1 ? "" : "s"))}'>` +
           `<div class='in' style='height:${pct}%'></div></div>`
         );
       })
@@ -175,7 +175,7 @@ async function load(): Promise<void> {
             : "";
         const wCell = w
           ? `<div class='admin-pv-walletcell'><div class='admin-pv-walletline'><span class='mono'>${esc(walletGrouped(w))}</span><span class='admin-pv-copy' role='button' tabindex='0' data-copy='${esc(w)}' title='Copy wallet address' aria-label='Copy wallet address'>Copy</span></div>${identBlock}</div>`
-          : "<span class='admin-pv-anon'>—</span><span class='admin-pv-anon-hint'>not signed in, expired session, or wallet not on analytics allowlist</span>";
+          : "<span class='admin-pv-anon'>-</span><span class='admin-pv-anon-hint'>not signed in, expired session, or wallet not on analytics allowlist</span>";
         return `<tr><td class='mono'>${fmtPageViewUtc(r.t)}</td><td>${wCell}</td></tr>`;
       })
       .join("");

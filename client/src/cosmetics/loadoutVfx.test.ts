@@ -13,7 +13,11 @@ import {
 } from "./cosmeticPrefabFactory.js";
 import {
   AURA_REF_MAGIC_RING,
+  cosmeticPresetPreviewSpriteFile,
+  cosmeticPresetPreviewSpriteUrl,
+  cosmeticPresetPreviewTint,
   getCosmeticPrefabDef,
+  TRAIL_REF_SPARK_CYAN,
   TRAIL_REF_SPARK_PATH,
 } from "./cosmeticPrefabRegistry.js";
 
@@ -24,11 +28,27 @@ afterEach(() => {
 describe("cosmetic prefab registry", () => {
   it("resolves reference trail and aura defs", () => {
     expect(getCosmeticPrefabDef(TRAIL_REF_SPARK_PATH.presetId)?.slot).toBe("trail");
+    expect(getCosmeticPrefabDef(TRAIL_REF_SPARK_CYAN.presetId)?.slot).toBe("trail");
     expect(getCosmeticPrefabDef(AURA_REF_MAGIC_RING.presetId)?.slot).toBe("aura");
+    expect(getCosmeticPrefabDef("aura-ref-sigil-magic-01")?.slot).toBe("aura");
+    expect(getCosmeticPrefabDef("aura-ref-sigil-twirl-03")?.slot).toBe("aura");
   });
 
   it("returns null for unknown presetId", () => {
     expect(getCosmeticPrefabDef("trail-does-not-exist")).toBeNull();
+  });
+
+  it("resolves Kenney sprite URLs for trail and aura swatches", () => {
+    expect(cosmeticPresetPreviewSpriteFile(TRAIL_REF_SPARK_CYAN.presetId)).toBe("spark_01.png");
+    expect(cosmeticPresetPreviewSpriteUrl(TRAIL_REF_SPARK_CYAN.presetId)).toBe(
+      "/assets/particles/kenney/spark_01.png"
+    );
+    expect(cosmeticPresetPreviewTint(TRAIL_REF_SPARK_CYAN.presetId)).toBe(0xaaeeff);
+    expect(cosmeticPresetPreviewSpriteFile(AURA_REF_MAGIC_RING.presetId)).toBe("magic_01.png");
+    expect(cosmeticPresetPreviewTint(AURA_REF_MAGIC_RING.presetId)).toBe(0xbb88ff);
+    expect(cosmeticPresetPreviewSpriteUrl("aura-ref-sigil-twirl-02")).toBe(
+      "/assets/particles/kenney/twirl_02.png"
+    );
   });
 });
 

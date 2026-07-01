@@ -78,7 +78,7 @@ export const CANVAS_ROOM_ID = "canvas";
 export const PIXEL_ROOM_ID = "pixel";
 
 /**
- * Hub center 4×4 tiles (inclusive indices) — no blocks may be placed here.
+ * Hub center 4×4 tiles (inclusive indices) - no blocks may be placed here.
  * Centered on spawn (0,0): x,z ∈ [-2, 1].
  */
 export function isHubSpawnSafeZone(x: number, z: number): boolean {
@@ -109,7 +109,7 @@ const CANVAS_BOUNDS: RoomBounds = {
   maxZ: 15,
 };
 
-/** 500×500 floor canvas — full global grid (−250…249); stream pans across regions at partial zoom. */
+/** 500×500 floor canvas - full global grid (−250…249); stream pans across regions at partial zoom. */
 const PIXEL_BOUNDS: RoomBounds = {
   minX: -250,
   maxX: 249,

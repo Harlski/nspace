@@ -158,7 +158,7 @@ export function evaluateRedeem(
   if (!invite) return { ok: false, code: "not_found" };
   if (invite.phase === "closed") return { ok: false, code: "closed" };
   if (invite.phase === "expired") return { ok: false, code: "expired" };
-  // Open Play Spaces stay joinable until explicitly closed — TTL is only a backstop for
+  // Open Play Spaces stay joinable until explicitly closed - TTL is only a backstop for
   // abandoned creates (see directInviteSweepExpired), not a cap on active sessions.
   // An already-claimed guest may always reclaim their own slot.
   if (guestId && invite.participants.some((p) => p.guestId === guestId)) {
@@ -188,4 +188,21 @@ export function getParticipant(
   guestId: string
 ): InviteParticipant | null {
   return invite.participants.find((p) => p.guestId === guestId) ?? null;
+}
+
+function compactWallet(addr: string): string {
+  return String(addr).replace(/\s+/g, "").toUpperCase();
+}
+
+/** Participant who joined via wallet upgrade (Rooms code / join-wallet). */
+export function getParticipantByWallet(
+  invite: DirectInviteRecord,
+  wallet: string
+): InviteParticipant | null {
+  const key = compactWallet(wallet);
+  return (
+    invite.participants.find(
+      (p) => p.wallet && compactWallet(p.wallet) === key
+    ) ?? null
+  );
 }

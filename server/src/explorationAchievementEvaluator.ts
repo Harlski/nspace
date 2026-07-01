@@ -16,7 +16,7 @@ import {
   isMatchPitchRoomId,
 } from "./worldcup/config.js";
 
-/** Marathon Option A — grid-pathfinding rooms only; excludes field-like and maze rooms. */
+/** Marathon Option A - grid-pathfinding rooms only; excludes field-like and maze rooms. */
 export function isMarathonTileEligibleRoom(roomId: string): boolean {
   const id = normalizeRoomId(roomId).trim().toLowerCase();
   if (id === CANVAS_ROOM_ID) return false;

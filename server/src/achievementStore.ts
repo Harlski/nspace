@@ -121,14 +121,14 @@ function envInt(name: string, dflt: number): number {
   return Number.isFinite(n) && n >= 0 ? n : dflt;
 }
 
-/** Operator-configured top login-streak tier (Time of Kaan). Default 60 UTC days. */
+/** Operator-configured top login-streak tier (Time of Kaan). Default 54 UTC days. */
 export function getAchievementLoginStreakTopThreshold(): number {
-  return Math.max(1, envInt("ACHIEVEMENT_LOGIN_STREAK_TOP", 60));
+  return Math.max(1, envInt("ACHIEVEMENT_LOGIN_STREAK_TOP", 54));
 }
 
-/** Sunny Side Up build milestone threshold (placeholder until v1.2 audit). Default 5000 blocks. */
+/** Sunny Side Up build milestone threshold. Default 7119 blocks. */
 export function getAchievementSunnyBuildThreshold(): number {
-  return Math.max(1, envInt("ACHIEVEMENT_SUNNY_BUILD_COUNT", 5000));
+  return Math.max(1, envInt("ACHIEVEMENT_SUNNY_BUILD_COUNT", 7119));
 }
 
 /** Reads env at call time so tests and operators can gate World Cup achievement progress. */
@@ -567,6 +567,13 @@ export function ensureAchievementRewardEntitlements(wallet: string): void {
   if (!isAchievementEligibleWallet(wallet)) return;
   const w = normalizeWallet(wallet);
   seedAchievementRewardCatalog();
+  const completedIds = listCompletedAchievementIds(w);
+  for (const def of ACHIEVEMENT_DEFINITIONS) {
+    if (!def.rewardSku || !completedIds.has(def.id)) continue;
+    if (hasEntitlement(w, def.rewardSku)) continue;
+    grantEntitlement(w, def.rewardSku, ACHIEVEMENT_ACTOR, "achievement");
+  }
+  // Legacy rows may still reference old SKUs that remain in catalog.
   const rows = requireDb()
     .prepare(
       `SELECT DISTINCT reward_sku AS reward_sku FROM achievement_completions
@@ -574,6 +581,7 @@ export function ensureAchievementRewardEntitlements(wallet: string): void {
     )
     .all(w) as Array<{ reward_sku: string }>;
   for (const row of rows) {
+    if (!getCatalogEntry(row.reward_sku)) continue;
     if (hasEntitlement(w, row.reward_sku)) continue;
     grantEntitlement(w, row.reward_sku, ACHIEVEMENT_ACTOR, "achievement");
   }
@@ -1641,6 +1649,7 @@ export function getAchievementsForWallet(
 ): AchievementMePayload {
   const w = normalizeWallet(wallet);
   if (!w) return { totalPoints: 0, achievements: [], telescopeUnlocked: false };
+  ensureAchievementRewardEntitlements(w);
   evaluateOnboardingCompleteAchievements(w, []);
   evaluateLoginStreakAchievementsCollecting(
     w,

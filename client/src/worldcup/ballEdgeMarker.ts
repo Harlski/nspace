@@ -1,9 +1,9 @@
 /**
- * World Cup soccer — Ball Edge Marker HUD (CLIENT-ONLY, FEATURE-FLAGGED, DEPRECATABLE).
+ * World Cup soccer - Ball Edge Marker HUD (CLIENT-ONLY, FEATURE-FLAGGED, DEPRECATABLE).
  *
  * A screen-edge chevron pointing toward the ball when it is off the letterboxed game
  * viewport. Opacity scales with how far past the edge the ball sits. Active players on
- * the Free Play Field or a Match Pitch only — never Spectators. To deprecate, delete this
+ * the Free Play Field or a Match Pitch only - never Spectators. To deprecate, delete this
  * file and the `worldcup`-tagged hooks in `main.ts` / `Game.ts`.
  */
 import {

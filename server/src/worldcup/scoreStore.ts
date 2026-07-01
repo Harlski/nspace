@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — country + player goal tally (single JSON store, deletable).
+ * World Cup soccer - country + player goal tally (single JSON store, deletable).
  *
  * Scoring is bucketed per **UTC day**: the live scoreboard/leaderboard shows *today's*
  * goals and resets at 00:00 UTC. Completed days are archived under `history` (kept for
@@ -12,7 +12,7 @@
  * to the country chosen first (same day). A player's chosen country (their identity) is
  * persistent and survives the daily reset; only the goal counts reset.
  *
- * This is small, seasonal, transitional data — JSON-on-disk is acceptable per
+ * This is small, seasonal, transitional data - JSON-on-disk is acceptable per
  * THE-LARGER-SYSTEM (Player-adjacent persistence).
  */
 import fs from "node:fs";
@@ -394,7 +394,7 @@ export function getTopPlayers(limit = 20): PlayerRow[] {
     .slice(0, Math.max(1, limit));
 }
 
-/** Most recent completed day that had a winner — the country the crowd celebrates. */
+/** Most recent completed day that had a winner - the country the crowd celebrates. */
 export function getPreviousDayWinner(): PrevWinner | null {
   rolloverIfNeeded();
   return data.prevWinner ? { ...data.prevWinner } : null;

@@ -6,7 +6,7 @@ const FACE_HEIGHT_TILES = 3;
 /**
  * Push the plane slightly along its **world-space** −normal so it sits off the floor /
  * footprint consistently for every yaw. Must be applied to the group (or derived from
- * yaw), not `mesh.position.z` — parent-space mesh position does not rotate with
+ * yaw), not `mesh.position.z` - parent-space mesh position does not rotate with
  * `mesh.rotation.y`, so a local Z offset would stay world-fixed and break alignment.
  */
 function billboardPlaneNormalInset(blockSize: number): number {

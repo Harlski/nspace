@@ -1,7 +1,7 @@
 /**
  * Pure geometry + paging helpers for the Action Wheel (the hexagonal self-menu).
  *
- * No DOM here — just the math the HUD component needs, so it can be unit tested in
+ * No DOM here - just the math the HUD component needs, so it can be unit tested in
  * isolation. Angles are in degrees on the SVG convention: 0° = +x (right), increasing
  * clockwise, so 90° = bottom (where the Nav Sector lives), 270° = top. The wheel is a
  * flat-top hexagon (flat top & bottom edges, points to the left/right): its six edges
@@ -55,6 +55,62 @@ export function polarToXy(
 
 const f = (n: number): string => Number(n.toFixed(3)).toString();
 
+type Pt = { x: number; y: number };
+
+/**
+ * Closed SVG path through `points` with each corner softened by a quadratic-bezier
+ * fillet. `cornerRadius` is either one radius for every corner or a per-corner array
+ * (index-aligned to `points`); a corner with radius `<= 0` stays a sharp vertex. When
+ * every corner is sharp it degenerates to a straight `M … L … Z` polygon - byte-for-byte
+ * the old output, so callers that pass no radius are unchanged.
+ *
+ * Because each fillet truncates its two edges symmetrically and curves through the
+ * original vertex, two shapes that share an edge (adjacent Sectors share a radial edge)
+ * round that shared corner identically - the rounded frame tiles seamlessly with no gaps.
+ */
+function roundedPolyPath(points: Pt[], cornerRadius: number | number[]): string {
+  const n = points.length;
+  if (n < 3) return "";
+  const radii =
+    typeof cornerRadius === "number"
+      ? points.map(() => cornerRadius)
+      : points.map((_, i) => cornerRadius[i] ?? 0);
+  if (radii.every((r) => r <= 0)) {
+    return `M ${points.map((p) => `${f(p.x)} ${f(p.y)}`).join(" L ")} Z`;
+  }
+  const cmds: string[] = [];
+  let started = false;
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n]!;
+    const curr = points[i]!;
+    const next = points[(i + 1) % n]!;
+    const want = radii[i] ?? 0;
+    if (want <= 0) {
+      cmds.push(`${started ? "L" : "M"} ${f(curr.x)} ${f(curr.y)}`);
+      started = true;
+      continue;
+    }
+    const dPrev = Math.hypot(prev.x - curr.x, prev.y - curr.y);
+    const dNext = Math.hypot(next.x - curr.x, next.y - curr.y);
+    const r = Math.min(want, dPrev / 2, dNext / 2);
+    const start = {
+      x: curr.x + ((prev.x - curr.x) / dPrev) * r,
+      y: curr.y + ((prev.y - curr.y) / dPrev) * r,
+    };
+    const end = {
+      x: curr.x + ((next.x - curr.x) / dNext) * r,
+      y: curr.y + ((next.y - curr.y) / dNext) * r,
+    };
+    cmds.push(
+      `${started ? "L" : "M"} ${f(start.x)} ${f(start.y)}`,
+      `Q ${f(curr.x)} ${f(curr.y)} ${f(end.x)} ${f(end.y)}`
+    );
+    started = true;
+  }
+  cmds.push("Z");
+  return cmds.join(" ");
+}
+
 /**
  * Distance from the centre to an edge midpoint (the apothem) of a regular hexagon
  * with circumradius `r`. Useful for placing glyphs in the middle of a segment.
@@ -67,42 +123,52 @@ export function hexApothem(r: number): number {
  * SVG path for one trapezoidal hexagon Sector centred at `midDeg`, between the inner
  * and outer hexagon rings (circumradii `rInner`/`rOuter`). A Sector spans exactly one
  * hexagon edge (±30° from its centre), so both its outer and inner boundaries are
- * straight chords — tiling six of them yields a crisp hexagonal frame, not a circle.
+ * straight chords - tiling six of them yields a crisp hexagonal frame, not a circle.
+ *
+ * Pass `cornerRadius > 0` to soften the two outer corners with seamless quadratic
+ * fillets; `innerCornerRadius` (defaults to `cornerRadius`) controls the two inner
+ * corners separately so the inner ring can curve less than the outer. The default 0
+ * keeps the original sharp trapezoid.
  */
 export function hexSegmentPath(
   cx: number,
   cy: number,
   rOuter: number,
   rInner: number,
-  midDeg: number
+  midDeg: number,
+  cornerRadius = 0,
+  innerCornerRadius = cornerRadius
 ): string {
   const a = midDeg - 30;
   const b = midDeg + 30;
-  const o1 = polarToXy(cx, cy, rOuter, a);
-  const o2 = polarToXy(cx, cy, rOuter, b);
-  const i2 = polarToXy(cx, cy, rInner, b);
-  const i1 = polarToXy(cx, cy, rInner, a);
-  return [
-    `M ${f(o1.x)} ${f(o1.y)}`,
-    `L ${f(o2.x)} ${f(o2.y)}`,
-    `L ${f(i2.x)} ${f(i2.y)}`,
-    `L ${f(i1.x)} ${f(i1.y)}`,
-    "Z",
-  ].join(" ");
+  return roundedPolyPath(
+    [
+      polarToXy(cx, cy, rOuter, a),
+      polarToXy(cx, cy, rOuter, b),
+      polarToXy(cx, cy, rInner, b),
+      polarToXy(cx, cy, rInner, a),
+    ],
+    // Points are ordered outer-a, outer-b, inner-b, inner-a.
+    [cornerRadius, cornerRadius, innerCornerRadius, innerCornerRadius]
+  );
 }
 
 /**
  * Closed SVG path for a regular hexagon outline of circumradius `r`, oriented to match
  * the Sectors (vertices at 0°, 60°, …, 300°; flat top & bottom edges). Used for the rim
- * around the Hub.
+ * around the Hub. Pass `cornerRadius > 0` to round the six corners to match the Sectors.
  */
-export function hexPolygonPath(cx: number, cy: number, r: number): string {
-  const pts: string[] = [];
+export function hexPolygonPath(
+  cx: number,
+  cy: number,
+  r: number,
+  cornerRadius = 0
+): string {
+  const pts: Pt[] = [];
   for (let i = 0; i < 6; i++) {
-    const p = polarToXy(cx, cy, r, i * 60);
-    pts.push(`${f(p.x)} ${f(p.y)}`);
+    pts.push(polarToXy(cx, cy, r, i * 60));
   }
-  return `M ${pts.join(" L ")} Z`;
+  return roundedPolyPath(pts, cornerRadius);
 }
 
 /** Number of pages needed to show `total` emotes at `perPage` each (min 1). */

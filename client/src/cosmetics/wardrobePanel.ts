@@ -31,6 +31,11 @@ import {
   type ResolvedStyleVariant,
   type StyleLineDef,
 } from "./wardrobeStyleLines.js";
+import {
+  isShopPubliclyOpen,
+  SHOP_COMING_SOON_BODY,
+  SHOP_COMING_SOON_HEADING,
+} from "./shopAccess.js";
 
 function isPassiveSlotId(slot: string): slot is PassiveSlotId {
   return (PASSIVE_SLOTS as readonly string[]).includes(slot);
@@ -56,7 +61,7 @@ const SLOT_COMING_SOON = new Set<PassiveSlotId>([
 export const WARDROBE_SLOT_EMPTY_COPY = "Nothing to unlock yet";
 
 export const SHOP_ACHIEVEMENTS_ONLY_COPY =
-  "Earn cosmetics through Achievements — more styles coming soon.";
+  "Earn cosmetics through Achievements - more styles coming soon.";
 
 export type WardrobeSlotStatusInput = {
   slot: PassiveSlotId | "deployable";
@@ -227,7 +232,7 @@ export function mountWardrobePanel(
   let previewCanvas: HTMLCanvasElement | null = null;
   // The avatar preview is an expensive WebGL canvas. We keep the SAME element across wardrobe
   // re-renders (e.g. opening/closing a slot dropdown) so its renderer/scene is never torn down
-  // and rebuilt — re-parenting a canvas in the DOM preserves its WebGL context, so there is no
+  // and rebuilt - re-parenting a canvas in the DOM preserves its WebGL context, so there is no
   // visible re-render flicker. It is only disposed when leaving the Wardrobe tab or unmounting.
   let dollWrap: HTMLDivElement | null = null;
 
@@ -467,7 +472,7 @@ export function mountWardrobePanel(
 
     const title = document.createElement("div");
     title.className = "wardrobe-variant-picker__title";
-    title.textContent = `${line.variantPickerTitle} — ${line.label}`;
+    title.textContent = `${line.variantPickerTitle}: ${line.label}`;
 
     const grid = document.createElement("div");
     grid.className = "wardrobe-variant-picker__grid";
@@ -862,7 +867,7 @@ export function mountWardrobePanel(
 
   function renderWardrobeTab(): void {
     if (!data) return;
-    // NB: do NOT dispose the preview canvas here — `renderDollPreview` reuses it so re-renders
+    // NB: do NOT dispose the preview canvas here - `renderDollPreview` reuses it so re-renders
     // (slot dropdown open/close, equip refresh) don't tear down and rebuild the WebGL avatar.
     body.replaceChildren();
     const layout = document.createElement("div");
@@ -1027,7 +1032,7 @@ export function mountWardrobePanel(
     name.textContent = entry.displayName;
     const sep = document.createElement("span");
     sep.className = "wardrobe-shop__row-sep";
-    sep.textContent = "—";
+    sep.textContent = "-";
     sep.setAttribute("aria-hidden", "true");
     const slot = document.createElement("em");
     slot.className = "wardrobe-shop__row-slot";
@@ -1065,6 +1070,19 @@ export function mountWardrobePanel(
     heading.className = "wardrobe-shop__heading";
     heading.textContent = "Shop";
     layout.appendChild(heading);
+
+    if (!isShopPubliclyOpen()) {
+      const soon = document.createElement("p");
+      soon.className = "wardrobe-shop__coming-soon";
+      soon.textContent = SHOP_COMING_SOON_HEADING;
+      layout.appendChild(soon);
+      const detail = document.createElement("p");
+      detail.className = "wardrobe-shop__desc wardrobe-shop__desc--achievements";
+      detail.textContent = SHOP_COMING_SOON_BODY;
+      layout.appendChild(detail);
+      body.appendChild(layout);
+      return;
+    }
 
     const intro = document.createElement("p");
     intro.className = "wardrobe-shop__desc wardrobe-shop__desc--achievements";

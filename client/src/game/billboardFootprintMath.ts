@@ -1,5 +1,5 @@
 /**
- * Floor footprint for billboards — matches Three.js `mesh.rotation.y = yaw * π/2`
+ * Floor footprint for billboards - matches Three.js `mesh.rotation.y = yaw * π/2`
  * applied to the plane width axis (local +X / face width).
  */
 

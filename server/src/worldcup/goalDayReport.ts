@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — end-of-day goal recap for the Telegram report (FEATURE-FLAGGED).
+ * World Cup soccer - end-of-day goal recap for the Telegram report (FEATURE-FLAGGED).
  *
  * Builds the optional *second* message the daily stats reporter sends: how many goals were
  * scored that UTC day, the top teams (countries) on the podium, the day's MVP (top scorer),
@@ -65,17 +65,17 @@ export function buildWorldcupGoalDayMessage(
   if (report.countries.length > 0) {
     lines.push("", "Top teams");
     for (const [i, c] of report.countries.slice(0, 3).entries()) {
-      lines.push(`${rankPrefix(i)} ${flagEmoji(c.code)} ${c.code} — ${goalsWord(c.goals)}`);
+      lines.push(`${rankPrefix(i)} ${flagEmoji(c.code)} ${c.code} - ${goalsWord(c.goals)}`);
     }
   }
 
   if (report.players.length > 0) {
     const mvp = report.players[0]!;
-    lines.push("", `MVP: ${playerLabel(mvp)} — ${goalsWord(mvp.goals)}`);
+    lines.push("", `MVP: ${playerLabel(mvp)} - ${goalsWord(mvp.goals)}`);
     if (report.players.length > 1) {
       lines.push("", "Top scorers");
       for (const [i, p] of report.players.slice(0, 5).entries()) {
-        lines.push(`${rankPrefix(i)} ${playerLabel(p)} — ${goalsWord(p.goals)}`);
+        lines.push(`${rankPrefix(i)} ${playerLabel(p)} - ${goalsWord(p.goals)}`);
       }
     }
   }

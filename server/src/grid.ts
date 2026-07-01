@@ -752,7 +752,7 @@ function canEnterRampFrom(
 /**
  * From a ramp cell (layer 0), only step to the **low-side** floor neighbor, or onto an
  * adjacent ramp (same entry rules as {@link canEnterRampFrom}). Sideways / high-side
- * floor steps were graph-legal but collide with the solid the ramp faces — e.g. reversing
+ * floor steps were graph-legal but collide with the solid the ramp faces - e.g. reversing
  * mid-descent could route into the block behind the slope and soft-lock movement.
  */
 function canLeaveRampToFloorNeighbor(

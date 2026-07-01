@@ -13,7 +13,7 @@ export function adminSystemPageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>System — Admin — Nimiq Space</title>
+  <title>System - Admin - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -108,19 +108,19 @@ export function adminSystemPageHtml(): string {
     }
     function num(v, d) {
       var n = Number(v);
-      if (!Number.isFinite(n)) return "—";
+      if (!Number.isFinite(n)) return "-";
       return n.toFixed(d);
     }
     function utcTime(t) {
       try {
         return new Date(t).toISOString().slice(11, 19) + "Z";
       } catch {
-        return "—";
+        return "-";
       }
     }
     function barChartHtml(points, key, colorClass) {
       if (!points || !points.length) {
-        return "<p class='sys-hint'>No samples yet — charts fill every 5s while this page is open.</p>";
+        return "<p class='sys-hint'>No samples yet - charts fill every 5s while this page is open.</p>";
       }
       var vals = points.map(function (p) { return Number(p[key]) || 0; });
       var vmax = Math.max.apply(null, vals.concat([1]));
@@ -171,7 +171,7 @@ export function adminSystemPageHtml(): string {
               esc(utcTime(row.t)) +
               "</time><span class='mono'>" +
               esc(lv) +
-              "</span> — " +
+              "</span> - " +
               esc(String(row.msg || "")) +
               "</div>"
             );
@@ -211,21 +211,21 @@ export function adminSystemPageHtml(): string {
           "</code>.</p>";
       } else if (api.attempted && api.ok) {
         apiLine =
-          "<p class='sys-hint'><strong>Authenticated API</strong> — OK in " +
+          "<p class='sys-hint'><strong>Authenticated API</strong> - OK in " +
           esc(String(api.latencyMs)) +
           " ms" +
           (opts.apiOkSuffix ? " " + opts.apiOkSuffix : "") +
           ".</p>";
       } else if (api.attempted) {
         apiLine =
-          "<p class='sys-hint err'><strong>Authenticated API</strong> — " +
+          "<p class='sys-hint err'><strong>Authenticated API</strong> - " +
           esc(String(api.error || "failed")) +
           "</p>";
       }
       var logsBlock = "";
       if (tone !== "ok" && snap.logsHint) {
         logsBlock =
-          "<p class='sys-hint sys-logs-hint'><strong>Host logs</strong> — run on the VPS: <code class='mono'>" +
+          "<p class='sys-hint sys-logs-hint'><strong>Host logs</strong> - run on the VPS: <code class='mono'>" +
           esc(String(snap.logsHint)) +
           "</code></p>";
       }
@@ -249,16 +249,16 @@ export function adminSystemPageHtml(): string {
         esc(healthLabel) +
         "</div></div>" +
         "<div class='sys-card'><label>HTTP status</label><div class='val'>" +
-        esc(String(hst.statusCode != null ? hst.statusCode : "—")) +
+        esc(String(hst.statusCode != null ? hst.statusCode : "-")) +
         "</div></div>" +
         "<div class='sys-card'><label>Latency</label><div class='val'>" +
-        esc(String(hst.latencyMs != null ? hst.latencyMs : "—")) +
+        esc(String(hst.latencyMs != null ? hst.latencyMs : "-")) +
         " ms</div></div>" +
         "<div class='sys-card'><label>Service id</label><div class='val' style='font-size:0.78rem'>" +
-        esc(String(hst.service || "—")) +
+        esc(String(hst.service || "-")) +
         "</div></div></div>" +
         (hst.error && !hst.ok
-          ? "<p class='sys-hint err'><strong>Health detail</strong> — " +
+          ? "<p class='sys-hint err'><strong>Health detail</strong> - " +
             esc(String(hst.error)) +
             "</p>"
           : "") +
@@ -365,7 +365,7 @@ export function adminSystemPageHtml(): string {
           apiPath: "GET /v1/pending/totals",
         });
         var p = j.process || {};
-        var uptimeStr = "—";
+        var uptimeStr = "-";
         if (j.uptimeSec != null && Number.isFinite(Number(j.uptimeSec))) {
           var sec = Math.floor(Number(j.uptimeSec));
           uptimeStr = Math.floor(sec / 60) + "m " + (sec % 60) + "s";
@@ -387,10 +387,10 @@ export function adminSystemPageHtml(): string {
           num(p.heapUsedMiB, 1) +
           " MiB</div></div>" +
           "<div class='sys-card'><label>Node</label><div class='val' style='font-size:0.82rem'>" +
-          esc(String(p.node || "—")) +
+          esc(String(p.node || "-")) +
           "</div></div>" +
           "<div class='sys-card'><label>PID</label><div class='val'>" +
-          esc(String(p.pid != null ? p.pid : "—")) +
+          esc(String(p.pid != null ? p.pid : "-")) +
           "</div></div>" +
           "</div>" +
           "<div class='sys-section'><h2>Event loop delay (max per " +

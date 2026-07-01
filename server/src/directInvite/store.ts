@@ -175,7 +175,7 @@ export function removeInviteParticipant(
   return dispatch(slug, { type: "removeParticipant", guestId });
 }
 
-/** Close (tear down) a Play Space — call once it has fully emptied. */
+/** Close (tear down) a Play Space - call once it has fully emptied. */
 export function closeInvite(slug: string): DirectInviteRecord | null {
   const invite = getInviteBySlug(slug);
   if (!invite) return null;

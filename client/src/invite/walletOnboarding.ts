@@ -107,7 +107,7 @@ export function showGetWalletPrompt(opts: { onWebWallet: () => void }): void {
   const wrap = mountJoinGateShell(
     walletOnboardingCardInnerHtml({
       title: "Get a Nimiq wallet",
-      hint: "Play as a guest today — or sign in with a wallet to explore all of Nimiq Space.",
+      hint: "Play as a guest today - or sign in with a wallet to explore all of Nimiq Space.",
       showClose: true,
     }),
     "join-gate--overlay"

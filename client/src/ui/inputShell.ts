@@ -1,23 +1,14 @@
+import type { OverlayBackStack } from "./overlayBackStack.js";
+
 /**
  * Best-effort game shell: reduce accidental browser back/forward, backspace navigation,
  * middle-click autoscroll, and context menu on the game surface.
  */
-export function installInputShell(gameSurface: HTMLElement): () => void {
-  const historyTrap = (): void => {
-    try {
-      history.pushState({ nspace: 1 }, "", location.href);
-    } catch {
-      /* ignore */
-    }
-  };
-  historyTrap();
-
-  const onPopState = (e: PopStateEvent): void => {
-    if ((e.state as { nspace?: number } | null)?.nspace !== 1) {
-      historyTrap();
-    }
-  };
-  window.addEventListener("popstate", onPopState);
+export function installInputShell(
+  gameSurface: HTMLElement,
+  opts?: { overlayBack?: OverlayBackStack }
+): () => void {
+  const uninstallOverlayBack = opts?.overlayBack?.install();
 
   const editable = (el: EventTarget | null): boolean => {
     if (!el || !(el instanceof HTMLElement)) return false;
@@ -56,7 +47,7 @@ export function installInputShell(gameSurface: HTMLElement): () => void {
   gameSurface.addEventListener("contextmenu", onContextMenu);
 
   return () => {
-    window.removeEventListener("popstate", onPopState);
+    uninstallOverlayBack?.();
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("auxclick", onAuxClick, true);
     window.removeEventListener("pointerdown", onPointerDown, true);

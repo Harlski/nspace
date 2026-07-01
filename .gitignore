@@ -39,6 +39,7 @@ docs/backup/
 docs/brainstorm/
 docs/planning/
 docs/toremove/
+docs/prd/
 # Local-only notes (incident log, scratch); only docs/toremove/README.md is tracked — see that file
 docs/toremove/*
 !docs/toremove/README.md

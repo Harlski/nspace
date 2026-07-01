@@ -18,7 +18,7 @@ export type CosmeticGalleryShowcaseWire = {
   kind: "mannequin" | "floor";
   /** Trail mannequins pace this many tiles along +X and back. */
   trailPaceTiles?: number;
-  /** Stand here (south of the mannequin) to try on — gallery room only. */
+  /** Stand here (south of the mannequin) to try on - gallery room only. */
   tryOnX?: number;
   tryOnZ?: number;
 };

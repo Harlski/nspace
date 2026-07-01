@@ -30,7 +30,7 @@ export const PIXEL_CHECKER_DARK_RGB = 0xbcbcbc;
 export const PIXEL_SPAWN_SQUARE_COLOR_RGB = 0x000000;
 /** Half-size in tiles: spawn pad is `(2 × half + 1)²` centered on origin. */
 export const PIXEL_SPAWN_SQUARE_HALF = 16;
-/** @deprecated Legacy central disc color — cleaned up by checkerboard migration. */
+/** @deprecated Legacy central disc color - cleaned up by checkerboard migration. */
 export const DEFAULT_PIXEL_CENTRAL_DARK_COLOR_RGB = 0x2a2a2a;
 /** @deprecated Legacy central disc radius. */
 export const PIXEL_CENTRAL_DARK_RADIUS = 16;

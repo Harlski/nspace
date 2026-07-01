@@ -3,7 +3,7 @@ import {
   type AchievementDefinition,
 } from "./achievementDefinitions.js";
 
-/** Capstone Getting started achievement — unlocks the in-world Telescope control. */
+/** Capstone Getting started achievement - unlocks the in-world Telescope control. */
 export const TELESCOPE_ACHIEVEMENT_ID = "telescope";
 
 export function listOnboardingPrerequisiteDefinitions(): ReadonlyArray<AchievementDefinition> {

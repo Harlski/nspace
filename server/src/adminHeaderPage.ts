@@ -10,7 +10,7 @@ import {
 } from "./headerMarqueeSettingsStore.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 
-/** HTML shell for `/admin/header` — in-game header marquee (login streaks + optional news). */
+/** HTML shell for `/admin/header` - in-game header marquee (login streaks + optional news). */
 export function adminHeaderPageHtml(): string {
   const maxLine = HEADER_MARQUEE_NEWS_MAX_LEN;
   const maxLines = HEADER_MARQUEE_MAX_MESSAGES;
@@ -19,7 +19,7 @@ export function adminHeaderPageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Header banner — Admin — Nimiq Space</title>
+  <title>Header banner - Admin - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -124,7 +124,7 @@ export function adminHeaderPageHtml(): string {
           "' style='width:5rem'/>" +
           "</div>" +
           "<p class='set-hint'>Streak advances to the next line after <strong>one full horizontal scroll</strong> of the leaderboard (not on a fixed clock). The streak timeout is a safety net if the browser never reports that loop (min 55s client-side).</p>" +
-          "<label class='set-hint' for='news-body' style='display:block;margin-top:0.65rem'>Announcements — one per line (max " +
+          "<label class='set-hint' for='news-body' style='display:block;margin-top:0.65rem'>Announcements - one per line (max " +
           LINES_MAX +
           " lines, " +
           LINE_MAX +

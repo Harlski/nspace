@@ -210,7 +210,7 @@ function attachStreakTickerScroll(
     }
     void track.offsetWidth;
 
-    /** `scrollWidth` grows when identicons decode — must not measure only before images load. */
+    /** `scrollWidth` grows when identicons decode - must not measure only before images load. */
     const naturalHalf = track.scrollWidth / 2;
     const viewW = wrap.clientWidth;
     const pad = Math.max(0, Math.ceil(viewW - naturalHalf));

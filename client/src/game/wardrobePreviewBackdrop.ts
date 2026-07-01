@@ -16,13 +16,98 @@ import {
   PIXEL_ROOM_ID,
 } from "./roomLayouts.js";
 
-/** Void (non-walkable) — matches `Game.ts` terrain water tone. */
+/** Void (non-walkable) - matches `Game.ts` terrain water tone. */
 export const TERRAIN_WATER_COLOR = 0xa8d8ea;
 export const TERRAIN_TILE_CORE_COLOR = 0x2d3340;
 export const TERRAIN_TILE_EXTRA_COLOR = 0x3d5a4a;
 export const TERRAIN_TILE_DOOR_COLOR = 0x06b6d4;
 
 const CANVAS_DEFAULT_SPAWN = { x: 0, z: 14 } as const;
+
+/** Matches `Game.ts` wardrobe preview isometric camera offset. */
+export const WARDROBE_PREVIEW_CAMERA_OFFSET = 18;
+
+/**
+ * Inclusive view-local bounds for the preview patch. Avatar stands at (0, 0)
+ * - the O in this grid (camera looks bottom-left → top-right; extra rows behind):
+ *
+ *     X X X X X   view Z = −3
+ *     X X X X X   view Z = −2
+ *     X X X X X   view Z = −1
+ *     X O X X X   view Z =  0
+ *     X X X X X   view Z = +1
+ *
+ * view X runs −2 … +2 on each row.
+ */
+export const WARDROBE_PREVIEW_PATCH_X_MIN = -2;
+export const WARDROBE_PREVIEW_PATCH_X_MAX = 2;
+export const WARDROBE_PREVIEW_PATCH_Z_MIN = -3;
+export const WARDROBE_PREVIEW_PATCH_Z_MAX = 1;
+
+export function isInWardrobePreviewPatch(localX: number, localZ: number): boolean {
+  return (
+    localX >= WARDROBE_PREVIEW_PATCH_X_MIN &&
+    localX <= WARDROBE_PREVIEW_PATCH_X_MAX &&
+    localZ >= WARDROBE_PREVIEW_PATCH_Z_MIN &&
+    localZ <= WARDROBE_PREVIEW_PATCH_Z_MAX
+  );
+}
+
+/** Snap orbit yaw to the nearest isometric corner (0, π/2, π, 3π/2). */
+export function snapWardrobePreviewCameraOrbitYaw(yawRad: number): number {
+  const twoPi = Math.PI * 2;
+  const step = Math.PI / 2;
+  const yn = ((yawRad % twoPi) + twoPi) % twoPi;
+  let k = Math.round(yn / step);
+  k = ((k % 4) + 4) % 4;
+  return k * step;
+}
+
+function roundWardrobePreviewPatchTile(n: number): number {
+  if (Math.abs(n) < 1e-9) return 0;
+  return Math.round(n);
+}
+
+/** View-local patch tile → world XZ offset from anchor (integer tiles). */
+export function rotateWardrobePreviewViewOffsetToWorld(
+  viewX: number,
+  viewZ: number,
+  cameraOrbitYawRad: number
+): { dx: number; dz: number } {
+  const cos = Math.cos(cameraOrbitYawRad);
+  const sin = Math.sin(cameraOrbitYawRad);
+  const wx = viewX * cos + viewZ * sin;
+  const wz = -viewX * sin + viewZ * cos;
+  return {
+    dx: roundWardrobePreviewPatchTile(wx),
+    dz: roundWardrobePreviewPatchTile(wz),
+  };
+}
+
+/** World XZ offset from anchor → view-local patch tile (integer tiles). */
+export function rotateWardrobePreviewWorldOffsetToView(
+  dx: number,
+  dz: number,
+  cameraOrbitYawRad: number
+): { viewX: number; viewZ: number } {
+  const cos = Math.cos(cameraOrbitYawRad);
+  const sin = Math.sin(cameraOrbitYawRad);
+  const vx = dx * cos - dz * sin;
+  const vz = dx * sin + dz * cos;
+  return {
+    viewX: roundWardrobePreviewPatchTile(vx),
+    viewZ: roundWardrobePreviewPatchTile(vz),
+  };
+}
+
+export type WardrobePreviewBlockCandidate = {
+  localX: number;
+  localZ: number;
+  worldX: number;
+  worldZ: number;
+  yLevel: number;
+  blockKey: string;
+};
 
 export type WardrobePreviewFloorContext = {
   roomId: string;
@@ -152,15 +237,21 @@ function resolveFloorCellColor(
   };
 }
 
-/** Symmetric 3×3 patch with the anchor tile at local (0, 0). */
+/** 4×4 patch with the anchor tile at view-local (0, 0). */
 export function buildWardrobePreviewFloorPatch(
   anchorX: number,
   anchorZ: number,
-  floorCtx: WardrobePreviewFloorContext
+  floorCtx: WardrobePreviewFloorContext,
+  cameraOrbitYawRad = 0
 ): WardrobePreviewFloorCell[] {
   const cells: WardrobePreviewFloorCell[] = [];
-  for (let dz = -1; dz <= 1; dz++) {
-    for (let dx = -1; dx <= 1; dx++) {
+  for (let viewZ = WARDROBE_PREVIEW_PATCH_Z_MIN; viewZ <= WARDROBE_PREVIEW_PATCH_Z_MAX; viewZ++) {
+    for (let viewX = WARDROBE_PREVIEW_PATCH_X_MIN; viewX <= WARDROBE_PREVIEW_PATCH_X_MAX; viewX++) {
+      const { dx, dz } = rotateWardrobePreviewViewOffsetToWorld(
+        viewX,
+        viewZ,
+        cameraOrbitYawRad
+      );
       const worldX = anchorX + dx;
       const worldZ = anchorZ + dz;
       const { walkable, colorRgb } = resolveFloorCellColor(
@@ -169,8 +260,8 @@ export function buildWardrobePreviewFloorPatch(
         floorCtx
       );
       cells.push({
-        localX: dx,
-        localZ: dz,
+        localX: viewX,
+        localZ: viewZ,
         worldX,
         worldZ,
         walkable,
@@ -179,4 +270,77 @@ export function buildWardrobePreviewFloorPatch(
     }
   }
   return cells;
+}
+
+export function parsePlacedBlockKey(
+  key: string
+): { worldX: number; worldZ: number; yLevel: number } | null {
+  const parts = key.split(",").map(Number);
+  if (parts.length < 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) {
+    return null;
+  }
+  return {
+    worldX: parts[0]!,
+    worldZ: parts[1]!,
+    yLevel: Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0,
+  };
+}
+
+/** Blocks in the 4×4 patch around the anchor tile (every stack level). */
+export function collectWardrobePreviewBlocksInPatch(
+  anchorX: number,
+  anchorZ: number,
+  placedKeys: Iterable<string>,
+  cameraOrbitYawRad = 0
+): WardrobePreviewBlockCandidate[] {
+  const blocks: WardrobePreviewBlockCandidate[] = [];
+  for (const blockKeyStr of placedKeys) {
+    const parsed = parsePlacedBlockKey(blockKeyStr);
+    if (!parsed) continue;
+    const dx = parsed.worldX - anchorX;
+    const dz = parsed.worldZ - anchorZ;
+    const { viewX, viewZ } = rotateWardrobePreviewWorldOffsetToView(
+      dx,
+      dz,
+      cameraOrbitYawRad
+    );
+    if (!isInWardrobePreviewPatch(viewX, viewZ)) continue;
+    blocks.push({
+      localX: viewX,
+      localZ: viewZ,
+      worldX: parsed.worldX,
+      worldZ: parsed.worldZ,
+      yLevel: parsed.yLevel,
+      blockKey: blockKeyStr,
+    });
+  }
+  return blocks;
+}
+
+/**
+ * True when a block sits between the isometric camera and the avatar (or on the
+ * avatar tile) and would hide the doll. Uses world XZ offset from the anchor tile.
+ */
+export function wardrobePreviewBlockOccludesAvatar(opts: {
+  worldDx: number;
+  worldDz: number;
+  cameraOrbitYawRad?: number;
+}): boolean {
+  if (opts.worldDx === 0 && opts.worldDz === 0) return true;
+
+  const cameraOrbitYawRad = opts.cameraOrbitYawRad ?? 0;
+  const cosCam = Math.cos(cameraOrbitYawRad);
+  const sinCam = Math.sin(cameraOrbitYawRad);
+  const offX = WARDROBE_PREVIEW_CAMERA_OFFSET * (cosCam + sinCam);
+  const offZ = WARDROBE_PREVIEW_CAMERA_OFFSET * (-sinCam + cosCam);
+
+  return opts.worldDx * offX + opts.worldDz * offZ > 0.05;
+}
+
+export function shouldRenderWardrobePreviewBlock(opts: {
+  worldDx: number;
+  worldDz: number;
+  cameraOrbitYawRad?: number;
+}): boolean {
+  return !wardrobePreviewBlockOccludesAvatar(opts);
 }

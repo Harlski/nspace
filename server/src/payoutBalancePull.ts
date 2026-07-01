@@ -1,6 +1,6 @@
 /**
  * Locally cached payout-wallet balance pulled from the Payout Service.
- * Claim fund-gating reads this cache synchronously — no network on the hot path.
+ * Claim fund-gating reads this cache synchronously - no network on the hot path.
  */
 import {
   fetchBalanceFromService,

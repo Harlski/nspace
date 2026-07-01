@@ -12,7 +12,7 @@ export function formatWalletAddressGap4(address: string): string {
   return `${c.slice(0, 4)} … ${c.slice(-4)}`;
 }
 
-/** First 4 + last 4 concatenated, e.g. NQ97ABCD — for “Connect as …”. */
+/** First 4 + last 4 concatenated, e.g. NQ97ABCD - for “Connect as …”. */
 export function formatWalletAddressConnectAs(address: string): string {
   const t = address.trim();
   if (t.length <= 8) return t;

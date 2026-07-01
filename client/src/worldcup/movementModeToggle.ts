@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — Pitch Movement Mode toggle (CLIENT-ONLY, FEATURE-FLAGGED).
+ * World Cup soccer - Pitch Movement Mode toggle (CLIENT-ONLY, FEATURE-FLAGGED).
  *
  * Small experimental control for touch / Nimiq Pay hosts on the Free Play Field or a Match
  * Pitch (active players only). Switches Pitch Movement Mode between Tap and Joystick; choice

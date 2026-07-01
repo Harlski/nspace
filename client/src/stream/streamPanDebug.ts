@@ -10,10 +10,10 @@ type SliderDef = {
 
 const SLIDERS: SliderDef[] = [
   { key: "speed", label: "Pan speed (world u/s)", min: 1, max: 40, step: 0.5 },
-  { key: "marginNorth", label: "Y inset — top (−Z)", min: 0, max: 200, step: 1 },
-  { key: "marginSouth", label: "Y inset — bottom (+Z)", min: 0, max: 200, step: 1 },
-  { key: "marginWest", label: "X inset — left (−X)", min: 0, max: 200, step: 1 },
-  { key: "marginEast", label: "X inset — right (+X)", min: 0, max: 200, step: 1 },
+  { key: "marginNorth", label: "Y inset - top (−Z)", min: 0, max: 200, step: 1 },
+  { key: "marginSouth", label: "Y inset - bottom (+Z)", min: 0, max: 200, step: 1 },
+  { key: "marginWest", label: "X inset - left (−X)", min: 0, max: 200, step: 1 },
+  { key: "marginEast", label: "X inset - right (+X)", min: 0, max: 200, step: 1 },
 ];
 
 export function mountStreamPanDebugPanel(
@@ -24,7 +24,7 @@ export function mountStreamPanDebugPanel(
   panel.className = "stream-pan-debug";
   panel.innerHTML = `
     <div class="stream-pan-debug__title">Stream pan tune</div>
-    <div class="stream-pan-debug__hint">?streamDebug=1 — adjust X/Y insets (world tiles) and pan speed while watching the live readout.</div>
+    <div class="stream-pan-debug__hint">?streamDebug=1 - adjust X/Y insets (world tiles) and pan speed while watching the live readout.</div>
     <div class="stream-pan-debug__sliders"></div>
     <pre class="stream-pan-debug__readout" aria-live="polite"></pre>
     <button type="button" class="stream-pan-debug__copy">Copy tune JSON</button>

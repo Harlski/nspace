@@ -4,7 +4,35 @@ import {
   isMobileBrowserPlayFallbackActive,
   shouldUseMobileBrowserPlay,
 } from "./mobileBrowserPlay.js";
-import { isMobilePortraitViewport } from "./pseudoFullscreen.js";
+import { isMobilePortraitViewport, isViewportPortrait } from "./pseudoFullscreen.js";
+
+describe("isViewportPortrait", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("prefers matchMedia orientation when available", () => {
+    vi.stubGlobal("window", {
+      matchMedia: (q: string) => ({
+        matches: q.includes("portrait"),
+      }),
+      innerWidth: 844,
+      innerHeight: 390,
+      visualViewport: null,
+    });
+    expect(isViewportPortrait(844, 390)).toBe(true);
+  });
+
+  it("falls back to aspect ratio when orientation media query is unknown", () => {
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: false }),
+      innerWidth: 390,
+      innerHeight: 844,
+      visualViewport: null,
+    });
+    expect(isViewportPortrait(390, 844)).toBe(true);
+  });
+});
 
 describe("isMobilePortraitViewport", () => {
   it("treats narrower-than-16:9 viewports as portrait", () => {

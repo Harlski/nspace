@@ -1,5 +1,5 @@
 /**
- * Ball Edge Marker geometry — pure screen-space placement math (CLIENT-ONLY,
+ * Ball Edge Marker geometry - pure screen-space placement math (CLIENT-ONLY,
  * FEATURE-FLAGGED, DEPRECATABLE). Used by [ballEdgeMarker.ts](./ballEdgeMarker.ts).
  */
 /** Screen-space ball centre + projected radius (canvas-local pixels). */

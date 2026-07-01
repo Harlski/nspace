@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — 1v1 Match HUD (CLIENT-ONLY, FEATURE-FLAGGED, DEPRECATABLE).
+ * World Cup soccer - 1v1 Match HUD (CLIENT-ONLY, FEATURE-FLAGGED, DEPRECATABLE).
  *
  * A flat bar pinned directly under the top HUD chrome (so it never overlaps the brand row):
  *
@@ -324,7 +324,7 @@ export class WorldcupMatchHud {
     }
     if (outcome.reason === "opponent_left") {
       return {
-        text: won ? "You win — opponent left" : "You lost — opponent left",
+        text: won ? "You win - opponent left" : "You lost - opponent left",
         color: won ? "#5fe08a" : "#ff8a8a",
       };
     }
@@ -412,7 +412,7 @@ export class WorldcupMatchHud {
   /**
    * Flash a "GOAL!" banner with the scoring side's flag + new score. When `kickoffMs > 0` it then
    * counts down "Kickoff in N" (movement is frozen server-side for that window); otherwise it just
-   * lingers briefly (the goal that ended the Match — `showResult` follows).
+   * lingers briefly (the goal that ended the Match - `showResult` follows).
    */
   flashGoal(
     side: "a" | "b",

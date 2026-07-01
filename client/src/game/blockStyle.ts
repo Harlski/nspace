@@ -1,4 +1,4 @@
-/** Legacy preset table — migration only; new blocks use `colorRgb` from the hue ring. */
+/** Legacy preset table - migration only; new blocks use `colorRgb` from the hue ring. */
 const LEGACY_BLOCK_COLOR_PALETTE: readonly number[] = [
   0x5b6b8c,
   0xc94c4c,
@@ -160,7 +160,7 @@ export function blockColorRgbToHueDeg(rgb: number): number {
   return Math.round((h / 6) * 360) % 360;
 }
 
-/** Room sky tint HSL — matches `Game.setRoomSceneBackground` (not block ring S/L). */
+/** Room sky tint HSL - matches `Game.setRoomSceneBackground` (not block ring S/L). */
 export const ROOM_SCENE_BG_HSL_S = 0.42;
 export const ROOM_SCENE_BG_HSL_L = 0.11;
 

@@ -15,6 +15,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
   social: "Social",
   exploration: "Exploration",
   worldcraft: "Worldcraft",
+  misc: "Misc",
 };
 
 export const CATEGORY_GROUP_LABELS: Record<string, string> = {
@@ -70,6 +71,58 @@ function categoryGroupForCategory(
   return row?.categoryGroup ?? null;
 }
 
+function categoryMinSortOrder(
+  achievements: AchievementProgress[],
+  category: string
+): number {
+  let min = Number.POSITIVE_INFINITY;
+  for (const a of achievements) {
+    if (a.category !== category) continue;
+    if (a.sortOrder < min) min = a.sortOrder;
+  }
+  return Number.isFinite(min) ? min : 0;
+}
+
+type NavBlock =
+  | { kind: "category"; category: string; sortOrder: number }
+  | { kind: "group"; groupId: string; categories: string[]; sortOrder: number };
+
+function navBlocks(achievements: AchievementProgress[]): NavBlock[] {
+  const grouped = new Map<string, string[]>();
+  const blocks: NavBlock[] = [];
+
+  for (const category of orderedCategories(achievements)) {
+    const group = categoryGroupForCategory(achievements, category);
+    if (group) {
+      const list = grouped.get(group) ?? [];
+      list.push(category);
+      grouped.set(group, list);
+      continue;
+    }
+    blocks.push({
+      kind: "category",
+      category,
+      sortOrder: categoryMinSortOrder(achievements, category),
+    });
+  }
+
+  for (const [groupId, categories] of grouped) {
+    blocks.push({
+      kind: "group",
+      groupId,
+      categories,
+      sortOrder: Math.min(
+        ...categories.map((category) =>
+          categoryMinSortOrder(achievements, category)
+        )
+      ),
+    });
+  }
+
+  blocks.sort((a, b) => a.sortOrder - b.sortOrder);
+  return blocks;
+}
+
 export type AchievementNavEntry = {
   id: AchievementViewId;
   label: string;
@@ -93,36 +146,33 @@ export function navRows(achievements: AchievementProgress[]): AchievementNavRow[
     total: summary.total,
   });
 
-  let currentGroup: string | null = null;
-  for (const cat of orderedCategories(achievements)) {
-    const group = categoryGroupForCategory(achievements, cat);
-    if (group) {
-      if (group !== currentGroup) {
-        rows.push({
-          kind: "group-header",
-          groupId: group,
-          label: CATEGORY_GROUP_LABELS[group] ?? group,
-        });
-        currentGroup = group;
-      }
-      const progress = categoryProgress(achievements, cat);
+  for (const block of navBlocks(achievements)) {
+    if (block.kind === "category") {
+      const progress = categoryProgress(achievements, block.category);
       rows.push({
         kind: "entry",
-        id: cat,
-        label: categoryLabel(cat),
+        id: block.category,
+        label: categoryLabel(block.category),
+        earned: progress.earned,
+        total: progress.total,
+      });
+      continue;
+    }
+
+    rows.push({
+      kind: "group-header",
+      groupId: block.groupId,
+      label: CATEGORY_GROUP_LABELS[block.groupId] ?? block.groupId,
+    });
+    for (const category of block.categories) {
+      const progress = categoryProgress(achievements, category);
+      rows.push({
+        kind: "entry",
+        id: category,
+        label: categoryLabel(category),
         earned: progress.earned,
         total: progress.total,
         nested: true,
-      });
-    } else {
-      currentGroup = null;
-      const progress = categoryProgress(achievements, cat);
-      rows.push({
-        kind: "entry",
-        id: cat,
-        label: categoryLabel(cat),
-        earned: progress.earned,
-        total: progress.total,
       });
     }
   }

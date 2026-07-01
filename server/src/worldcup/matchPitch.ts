@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — pure 1v1 Match Pitch geometry helpers (FEATURE-FLAGGED, DEPRECATABLE).
+ * World Cup soccer - pure 1v1 Match Pitch geometry helpers (FEATURE-FLAGGED, DEPRECATABLE).
  *
  * A Match Pitch reuses the Free Play Field bounds/goals. Side `"a"` (the challenger) defends
  * the WEST goal and attacks EAST; side `"b"` (the accepter) defends EAST and attacks WEST.

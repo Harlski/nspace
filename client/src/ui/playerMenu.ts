@@ -12,6 +12,9 @@ export type PlayerMenuItemId =
 
 export type PlayerMenuConfirmKind = "logout" | "leave";
 
+const PLAYER_MENU_LONG_PRESS_MS = 480;
+const PLAYER_MENU_LONG_PRESS_MOVE_PX = 14;
+
 type ItemDef = {
   id: PlayerMenuItemId;
   label: string;
@@ -57,6 +60,8 @@ export type PlayerMenu = {
   syncIdenticonFromBar: (barIdenticon: HTMLImageElement) => void;
   onAction: (fn: (id: PlayerMenuItemId) => void) => void;
   onConfirm: (fn: (kind: PlayerMenuConfirmKind) => void) => void;
+  /** Long-press on the identicon/name pill; used to open the avatar-centred Action Wheel. */
+  onLongPress: (fn: () => void) => void;
 };
 
 export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
@@ -138,7 +143,19 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
   let confirmKind: PlayerMenuConfirmKind | null = null;
   let actionHandler: (id: PlayerMenuItemId) => void = () => {};
   let confirmHandler: (kind: PlayerMenuConfirmKind) => void = () => {};
+  let longPressHandler: () => void = () => {};
   let outsideBound = false;
+  let suppressNextClick = false;
+  let longPressSession:
+    | {
+        pointerId: number;
+        captureEl: HTMLButtonElement;
+        startX: number;
+        startY: number;
+        fired: boolean;
+        timer: ReturnType<typeof setTimeout>;
+      }
+    | null = null;
 
   function visibleItems(): ItemDef[] {
     const base = guestMode ? GUEST_ITEMS : FULL_PLAYER_ITEMS;
@@ -257,8 +274,130 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     setOpen(true);
   }
 
+  let windowLongPressListenersBound = false;
+
+  function releaseLongPressCapture(): void {
+    if (!longPressSession) return;
+    try {
+      longPressSession.captureEl.releasePointerCapture(longPressSession.pointerId);
+    } catch {
+      /* pointer capture is best-effort */
+    }
+  }
+
+  function unbindWindowLongPressListeners(): void {
+    if (!windowLongPressListenersBound) return;
+    windowLongPressListenersBound = false;
+    window.removeEventListener("pointerup", onWindowLongPressPointerEnd, true);
+    window.removeEventListener("pointercancel", onWindowLongPressPointerEnd, true);
+  }
+
+  function onWindowLongPressPointerEnd(e: PointerEvent): void {
+    if (!longPressSession || longPressSession.pointerId !== e.pointerId) return;
+    finishLongPressSession();
+  }
+
+  function bindWindowLongPressListeners(): void {
+    if (windowLongPressListenersBound) return;
+    windowLongPressListenersBound = true;
+    window.addEventListener("pointerup", onWindowLongPressPointerEnd, true);
+    window.addEventListener("pointercancel", onWindowLongPressPointerEnd, true);
+  }
+
+  function clearLongPressSession(): void {
+    if (!longPressSession) return;
+    clearTimeout(longPressSession.timer);
+    releaseLongPressCapture();
+    longPressSession = null;
+    unbindWindowLongPressListeners();
+  }
+
+  /** End the active long-press gesture; keep suppressNextClick when the timer already fired. */
+  function finishLongPressSession(): void {
+    const hadFired = longPressSession?.fired === true;
+    clearLongPressSession();
+    // Pay WebView often skips the synthetic click after a long press; do not leave
+    // suppressNextClick stuck across the next gesture.
+    if (hadFired) {
+      window.setTimeout(() => {
+        suppressNextClick = false;
+      }, 400);
+    }
+  }
+
+  function bindLongPress(el: HTMLButtonElement): void {
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || longPressSession) return;
+      longPressSession = {
+        pointerId: e.pointerId,
+        captureEl: el,
+        startX: e.clientX,
+        startY: e.clientY,
+        fired: false,
+        timer: setTimeout(() => {
+          if (!longPressSession || longPressSession.pointerId !== e.pointerId) return;
+          longPressSession.fired = true;
+          suppressNextClick = true;
+          // Release capture so the Action Wheel (and the rest of the HUD) can receive
+          // the finger still held after the long-press threshold.
+          releaseLongPressCapture();
+          closeMenu();
+          longPressHandler();
+          // Pay WebView often never delivers pointerup for the long-press gesture - end
+          // the session now so the next open/close cycle is not blocked.
+          finishLongPressSession();
+        }, PLAYER_MENU_LONG_PRESS_MS),
+      };
+      bindWindowLongPressListeners();
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        /* pointer capture is best-effort */
+      }
+    });
+
+    el.addEventListener("pointermove", (e) => {
+      if (!longPressSession || longPressSession.pointerId !== e.pointerId) return;
+      if (longPressSession.fired) return;
+      const dx = e.clientX - longPressSession.startX;
+      const dy = e.clientY - longPressSession.startY;
+      if (Math.hypot(dx, dy) > PLAYER_MENU_LONG_PRESS_MOVE_PX) {
+        clearLongPressSession();
+      }
+    });
+
+    el.addEventListener("pointerup", (e) => {
+      if (!longPressSession || longPressSession.pointerId !== e.pointerId) return;
+      finishLongPressSession();
+    });
+
+    el.addEventListener("pointercancel", (e) => {
+      if (!longPressSession || longPressSession.pointerId !== e.pointerId) return;
+      finishLongPressSession();
+    });
+
+    el.addEventListener("lostpointercapture", () => {
+      if (!longPressSession) return;
+      finishLongPressSession();
+    });
+  }
+
+  root.addEventListener(
+    "click",
+    (e) => {
+      if (!suppressNextClick) return;
+      suppressNextClick = false;
+      longPressSession = null;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    },
+    { capture: true }
+  );
+
   trigger.addEventListener("click", toggleFromTrigger);
   namePill.addEventListener("click", toggleFromTrigger);
+  bindLongPress(trigger);
+  bindLongPress(namePill);
 
   panel.addEventListener("click", (e) => e.stopPropagation());
 
@@ -285,6 +424,8 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
       setOpen(true);
     },
     close: closeMenu,
+    /** Drop an in-flight long-press gesture (e.g. before opening the Action Wheel). */
+    abortLongPressGesture: finishLongPressSession,
     isOpen: () => open,
     setGuestMode(guest: boolean) {
       guestMode = guest;
@@ -318,6 +459,9 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     },
     onConfirm(fn: (kind: PlayerMenuConfirmKind) => void) {
       confirmHandler = fn;
+    },
+    onLongPress(fn: () => void) {
+      longPressHandler = fn;
     },
   };
 }

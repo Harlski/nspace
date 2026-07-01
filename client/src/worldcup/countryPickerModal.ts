@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — searchable country picker (seasonal, deletable).
+ * World Cup soccer - searchable country picker (seasonal, deletable).
  *
  * Reuses the blocking-overlay pattern of `usernamePromptModal` but is fully
  * self-contained (inline styles) so it can be removed with the rest of `worldcup/`.

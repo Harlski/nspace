@@ -51,7 +51,7 @@ function validCachedSessions() {
 function peekErrorMessage(peek: PeekInviteResponse): string {
   switch (peek.error) {
     case "expired":
-      return "This invite has expired — ask the host for a new link.";
+      return "This invite has expired - ask the host for a new link.";
     case "full":
       return "This play space is full.";
     case "closed":
@@ -135,7 +135,7 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
       showErr(
         e instanceof Error && e.message === "full"
           ? "This play space is full."
-          : "Could not join — try again."
+          : "Could not join - try again."
       );
       setBusy(false);
     }
@@ -201,7 +201,7 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
         showErr(
           e instanceof Error && e.message === "invalid_nickname"
             ? "Please choose a nickname (2–24 characters)."
-            : "Could not join — try again."
+            : "Could not join - try again."
         );
         setBusy(false);
       }
@@ -225,7 +225,7 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
       showErr(
         e instanceof Error && e.message === "full"
           ? "This play space is full."
-          : "Could not join — try again."
+          : "Could not join - try again."
       );
       setBusy(false);
     }
@@ -268,7 +268,7 @@ export function mountJoinGate(app: HTMLElement, slug: string): () => Promise<Joi
     addBtn.type = "button";
     addBtn.className = "join-gate__account-row join-gate__account-row--add";
     addBtn.setAttribute("role", "listitem");
-    addBtn.setAttribute("aria-label", "Add account — sign in with wallet");
+    addBtn.setAttribute("aria-label", "Add account - sign in with wallet");
     addBtn.innerHTML = `<span class="join-gate__add-icon">${nimiqLogosHexOutlineMonoPlusMarkup()}</span><span>Add account</span>`;
     addBtn.addEventListener("click", () => void runWalletSignIn());
     listEl.appendChild(addBtn);

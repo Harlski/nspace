@@ -1,17 +1,21 @@
 import * as THREE from "three";
 import {
+  auraOrbitDefs,
   getCosmeticPrefabDef,
   isAuraPrefabDef,
   isTrailPrefabDef,
   type AuraOrbitDef,
   type AuraPrefabDef,
   type AuraRippleDef,
+  type AuraTwirlDef,
   type KenneySpriteRef,
   type TrailPrefabDef,
 } from "./cosmeticPrefabRegistry.js";
 
 export const SKIP_BLOCK_PICK = "skipBlockPickAndBounds";
 export const TRAIL_RENDER_ORDER = 1;
+/** Identicon sprites draw at renderOrder 2 - aura always sits beneath the player. */
+export const AURA_RENDER_ORDER = 1;
 
 const AURA_KEY = "cosmeticAuraMesh";
 const AURA_PRESET_KEY = "cosmeticAuraPreset";
@@ -36,11 +40,14 @@ export type CosmeticTrailPuff = {
 type AuraSparkSeed = { ang: number; rad: number; ySeed: number; speed: number };
 
 const textureCache = new Map<string, THREE.Texture>();
+let softSplatTexture: THREE.DataTexture | null = null;
 
-/** Test seam — clears Kenney texture cache between vitest cases. */
+/** Test seam - clears Kenney texture cache between vitest cases. */
 export function resetCosmeticPrefabTexturesForTests(): void {
   for (const tex of textureCache.values()) tex.dispose();
   textureCache.clear();
+  softSplatTexture?.dispose();
+  softSplatTexture = null;
 }
 
 function markMaterial<M extends THREE.Material>(mat: M, baseOpacity: number): M {
@@ -54,9 +61,81 @@ function resolveKenneyTexture(file: string): THREE.Texture {
   if (!tex) {
     tex = new THREE.TextureLoader().load(key);
     tex.colorSpace = THREE.SRGBColorSpace;
+    tex.premultiplyAlpha = false;
     textureCache.set(key, tex);
   }
   return tex;
+}
+
+/** Floor-aligned aura billboard - additive; depthTest so blocks occlude the effect. */
+function auraBillboardMaterial(ref: KenneySpriteRef): THREE.MeshBasicMaterial {
+  const opacity = ref.opacity ?? 0.35;
+  return markMaterial(
+    new THREE.MeshBasicMaterial({
+      map: resolveKenneyTexture(ref.file),
+      color: ref.tint ?? 0xffffff,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      depthTest: true,
+      side: THREE.FrontSide,
+      blending: THREE.AdditiveBlending,
+      alphaTest: 0.04,
+      toneMapped: false,
+    }),
+    opacity
+  );
+}
+
+/** Smooth Gaussian blob so overlapping floor marks smear into one ribbon (no hard quads). */
+function softSplatMap(): THREE.DataTexture {
+  if (softSplatTexture) return softSplatTexture;
+  const size = 128;
+  const data = new Uint8Array(size * size * 4);
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+  const radius = size / 2;
+  const sigma = 0.36;
+  const twoSigmaSq = 2 * sigma * sigma;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const nx = (x - cx) / radius;
+      const ny = (y - cy) / radius;
+      const r = Math.sqrt(nx * nx + ny * ny);
+      let a = Math.exp(-(r * r) / twoSigmaSq);
+      const edge = 1 - Math.min(1, r);
+      a *= edge * edge;
+      const i = (y * size + x) * 4;
+      data[i] = 255;
+      data[i + 1] = 255;
+      data[i + 2] = 255;
+      data[i + 3] = Math.round(Math.max(0, Math.min(1, a)) * 255);
+    }
+  }
+  softSplatTexture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  softSplatTexture.needsUpdate = true;
+  return softSplatTexture;
+}
+
+function splatMaterial(
+  tint: number,
+  opacity: number,
+  additive: boolean
+): THREE.MeshBasicMaterial {
+  return markMaterial(
+    new THREE.MeshBasicMaterial({
+      map: softSplatMap(),
+      color: tint,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      depthTest: true,
+      side: THREE.DoubleSide,
+      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      toneMapped: false,
+    }),
+    opacity
+  );
 }
 
 function spriteMaterial(
@@ -64,6 +143,7 @@ function spriteMaterial(
   opts?: { depthTest?: boolean }
 ): THREE.MeshBasicMaterial {
   const opacity = ref.opacity ?? 0.5;
+  const additive = ref.additive === true;
   return markMaterial(
     new THREE.MeshBasicMaterial({
       map: resolveKenneyTexture(ref.file),
@@ -73,7 +153,9 @@ function spriteMaterial(
       depthWrite: false,
       depthTest: opts?.depthTest ?? true,
       side: THREE.DoubleSide,
-      blending: ref.additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      /** Drop dark PNG fringe texels so square quads don't read as black diamonds. */
+      alphaTest: additive ? 0.04 : 0.02,
       toneMapped: false,
     }),
     opacity
@@ -99,20 +181,39 @@ function spawnGroundDecal(
   const group = new THREE.Group();
   group.userData[SKIP_BLOCK_PICK] = true;
   group.position.set(x, y + def.groundY, z);
-  group.rotation.y = Math.random() * Math.PI;
+  group.scale.setScalar(0.9 + Math.random() * 0.2);
 
   const materials: THREE.Material[] = [];
-  const size = def.ground.sprite.size ?? def.groundSize;
-  const coreMat = spriteMaterial(def.ground.sprite);
-  const core = new THREE.Mesh(new THREE.PlaneGeometry(size, size), coreMat);
-  core.rotation.x = -Math.PI / 2;
-  core.renderOrder = TRAIL_RENDER_ORDER;
-  core.userData[SKIP_BLOCK_PICK] = true;
-  group.add(core);
-  materials.push(coreMat);
+  const splat = def.ground.splat;
+  const sprite = def.ground.sprite;
+  const size = splat?.size ?? sprite?.size ?? def.groundSize;
+  let baseOpacity = 0.5;
+
+  if (splat) {
+    baseOpacity = splat.opacity ?? 0.42;
+    const coreMat = splatMaterial(splat.tint, baseOpacity, false);
+    const core = new THREE.Mesh(new THREE.PlaneGeometry(size, size), coreMat);
+    core.rotation.x = -Math.PI / 2;
+    core.renderOrder = TRAIL_RENDER_ORDER;
+    core.userData[SKIP_BLOCK_PICK] = true;
+    group.add(core);
+    materials.push(coreMat);
+  } else if (sprite) {
+    group.rotation.y = Math.random() * Math.PI * 2;
+    baseOpacity = sprite.opacity ?? 0.5;
+    const coreMat = spriteMaterial(sprite);
+    const core = new THREE.Mesh(new THREE.PlaneGeometry(size, size), coreMat);
+    core.rotation.x = -Math.PI / 2;
+    core.renderOrder = TRAIL_RENDER_ORDER;
+    core.userData[SKIP_BLOCK_PICK] = true;
+    group.add(core);
+    materials.push(coreMat);
+  }
 
   const glowRef = def.ground.glow;
   if (glowRef) {
+    const glowWrap = new THREE.Group();
+    glowWrap.rotation.y = Math.random() * Math.PI * 2;
     const glowSize = size * (glowRef.scale ?? 1.2);
     const glowMat = spriteMaterial({ ...glowRef, additive: true });
     const glow = new THREE.Mesh(new THREE.PlaneGeometry(glowSize, glowSize), glowMat);
@@ -120,7 +221,8 @@ function spawnGroundDecal(
     glow.position.y = 0.006;
     glow.renderOrder = TRAIL_RENDER_ORDER;
     glow.userData[SKIP_BLOCK_PICK] = true;
-    group.add(glow);
+    glowWrap.add(glow);
+    group.add(glowWrap);
     materials.push(glowMat);
   }
 
@@ -130,7 +232,7 @@ function spawnGroundDecal(
     materials,
     bornAt: now,
     ttl: def.groundTtlMs,
-    baseOpacity: def.ground.sprite.opacity ?? 0.5,
+    baseOpacity,
     kind: "ground",
   });
 }
@@ -252,14 +354,7 @@ export function tickCosmeticTrailSpawn(
   const alwaysSpawn = opts?.forceSpawn === true;
   if (!alwaysSpawn && def.movementGated && !moving) return;
 
-  const puffs = trailPuffs(group);
-  const last = (group.userData[TRAIL_LAST_SPAWN_KEY] as number | undefined) ?? 0;
-  const interval =
-    opts?.spawnIntervalMs ??
-    (alwaysSpawn ? def.gallerySpawnIntervalMs ?? def.spawnIntervalMs : def.spawnIntervalMs);
-  if (now - last < interval) return;
-  group.userData[TRAIL_LAST_SPAWN_KEY] = now;
-  layGroundRibbon(scene, group, def, x, y, z, puffs, now);
+  layGroundRibbon(scene, group, def, x, y, z, trailPuffs(group), now);
 }
 
 export function tickCosmeticTrailForAvatar(
@@ -303,7 +398,7 @@ function addRipples(aura: THREE.Group, ripples: AuraRippleDef): void {
       transparent: true,
       opacity: 0,
       depthWrite: false,
-      depthTest: false,
+      depthTest: true,
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
       toneMapped: false,
@@ -318,7 +413,24 @@ function addRipples(aura: THREE.Group, ripples: AuraRippleDef): void {
   }
 }
 
-function addOrbitSparks(aura: THREE.Group, orbit: AuraOrbitDef): void {
+function orbitSparkMaterial(orbit: AuraOrbitDef): THREE.PointsMaterial {
+  return new THREE.PointsMaterial({
+    map: resolveKenneyTexture(orbit.sprite.file),
+    color: orbit.sprite.tint ?? 0xffffff,
+    size: orbit.sprite.size ?? 0.22,
+    sizeAttenuation: true,
+    transparent: true,
+    opacity: orbit.sprite.opacity ?? 0.9,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+    alphaTest: 0.04,
+    toneMapped: false,
+  });
+}
+
+function addOrbitSparks(aura: THREE.Group, orbit: AuraOrbitDef, layerIndex: number): void {
+  const speedMul = orbit.speedMul ?? 1;
   const positions = new Float32Array(orbit.count * 3);
   const seeds: AuraSparkSeed[] = [];
   for (let i = 0; i < orbit.count; i++) {
@@ -328,7 +440,7 @@ function addOrbitSparks(aura: THREE.Group, orbit: AuraOrbitDef): void {
       ang,
       rad,
       ySeed: Math.random() * Math.PI * 2,
-      speed: 0.8 + Math.random() * 0.5,
+      speed: (0.8 + Math.random() * 0.5) * speedMul,
     });
     positions[i * 3] = Math.cos(ang) * rad;
     positions[i * 3 + 1] = 0.3;
@@ -336,23 +448,40 @@ function addOrbitSparks(aura: THREE.Group, orbit: AuraOrbitDef): void {
   }
   const sparkGeo = new THREE.BufferGeometry();
   sparkGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  const sparkMat = new THREE.PointsMaterial({
-    map: resolveKenneyTexture(orbit.sprite.file),
-    color: orbit.sprite.tint ?? 0xffffff,
-    size: orbit.sprite.size ?? 0.22,
-    sizeAttenuation: true,
-    transparent: true,
-    opacity: orbit.sprite.opacity ?? 0.9,
-    depthWrite: false,
-    depthTest: false,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-  });
-  const sparks = new THREE.Points(sparkGeo, sparkMat);
-  sparks.name = "auraSparks";
+  const sparks = new THREE.Points(sparkGeo, orbitSparkMaterial(orbit));
+  sparks.name = `auraOrbit${layerIndex}`;
+  sparks.renderOrder = AURA_RENDER_ORDER;
   sparks.userData[SKIP_BLOCK_PICK] = true;
   sparks.userData.sparkSeeds = seeds;
   aura.add(sparks);
+}
+
+function addFloorDisc(
+  parent: THREE.Group,
+  name: string,
+  radius: number,
+  makeMaterial: () => THREE.MeshBasicMaterial,
+  y: number,
+  segments = 48
+): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.CircleGeometry(radius, segments), makeMaterial());
+  mesh.name = name;
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = y;
+  mesh.renderOrder = AURA_RENDER_ORDER;
+  mesh.userData[SKIP_BLOCK_PICK] = true;
+  parent.add(mesh);
+  return mesh;
+}
+
+function addTwirlLayer(aura: THREE.Group, twirl: AuraTwirlDef): void {
+  const size = twirl.size ?? 1.3;
+  const spin = new THREE.Group();
+  spin.name = "auraTwirlSpin";
+  spin.userData[SKIP_BLOCK_PICK] = true;
+  spin.userData.spinHz = twirl.spinHz;
+  addFloorDisc(spin, "auraTwirl", size * 0.5, () => auraBillboardMaterial(twirl), 0.018);
+  aura.add(spin);
 }
 
 function ensureAura(group: THREE.Group, presetId: string | null | undefined): void {
@@ -375,30 +504,68 @@ function ensureAura(group: THREE.Group, presetId: string | null | undefined): vo
   group.userData[AURA_PRESET_KEY] = presetId;
 
   const glowSize = def.glow.size ?? 1.9;
-  const glowMat = spriteMaterial(def.glow, { depthTest: false });
-  const glow = new THREE.Mesh(new THREE.PlaneGeometry(glowSize, glowSize), glowMat);
-  glow.name = "auraGlow";
-  glow.rotation.x = -Math.PI / 2;
-  glow.userData[SKIP_BLOCK_PICK] = true;
-  aura.add(glow);
+  const makeGlowMaterial = (): THREE.MeshBasicMaterial =>
+    def.glow.softSplat || !def.glow.file
+      ? splatMaterial(def.glow.tint, def.glow.opacity ?? 0.36, true)
+      : auraBillboardMaterial({
+          file: def.glow.file,
+          tint: def.glow.tint,
+          opacity: def.glow.opacity,
+          additive: true,
+        });
+  addFloorDisc(aura, "auraGlow", glowSize * 0.5, makeGlowMaterial, 0);
 
-  if (def.frameCycle) {
-    const cycleSize = def.frameCycle.sprites[0]?.size ?? glowSize * 0.6;
-    const frameMat = spriteMaterial(def.frameCycle.sprites[0]!, { depthTest: false });
-    const frame = new THREE.Mesh(new THREE.PlaneGeometry(cycleSize, cycleSize), frameMat);
-    frame.name = "auraFrameCycle";
-    frame.rotation.x = -Math.PI / 2;
-    frame.position.y = 0.012;
-    frame.userData[SKIP_BLOCK_PICK] = true;
-    frame.userData.frameSprites = def.frameCycle.sprites;
-    frame.userData.framePeriodMs = def.frameCycle.periodMs;
-    aura.add(frame);
-  }
-
+  if (def.twirl) addTwirlLayer(aura, def.twirl);
   if (def.ripples) addRipples(aura, def.ripples);
-  if (def.orbit) addOrbitSparks(aura, def.orbit);
+  auraOrbitDefs(def).forEach((orbit, i) => addOrbitSparks(aura, orbit, i));
 
   group.add(aura);
+}
+
+function pulseFloorDisc(
+  aura: THREE.Group,
+  meshName: string,
+  baseOpacity: number,
+  pulse: number,
+  scalePulse: number
+): void {
+  const mesh = aura.getObjectByName(meshName) as THREE.Mesh | undefined;
+  if (!mesh) return;
+  mesh.scale.set(scalePulse, scalePulse, 1);
+  const mat = mesh.material as THREE.MeshBasicMaterial;
+  const base = (mat.userData[MAT_BASE_OPACITY_KEY] as number) ?? baseOpacity;
+  mat.opacity = base * pulse;
+}
+
+function updateAuraOrbitSparks(aura: THREE.Group, t: number): void {
+  for (const child of aura.children) {
+    const seeds = child.userData.sparkSeeds as AuraSparkSeed[] | undefined;
+    if (!seeds?.length || !(child instanceof THREE.Points)) continue;
+    const attr = child.geometry.getAttribute("position") as THREE.BufferAttribute;
+    for (let i = 0; i < seeds.length; i++) {
+      const s = seeds[i]!;
+      const a = s.ang + t * s.speed;
+      const y = 0.34 + 0.24 * Math.sin(t * 2.2 + s.ySeed);
+      attr.setXYZ(i, Math.cos(a) * s.rad, y, Math.sin(a) * s.rad);
+    }
+    attr.needsUpdate = true;
+  }
+}
+
+function updateTwirlSigil(aura: THREE.Group, twirl: AuraTwirlDef, t: number): void {
+  const spin = aura.getObjectByName("auraTwirlSpin") as THREE.Group | undefined;
+  const mesh = aura.getObjectByName("auraTwirl") as THREE.Mesh | undefined;
+  if (!spin || !mesh) return;
+  const spinHz = (spin.userData.spinHz as number) ?? twirl.spinHz;
+  spin.rotation.y = t * spinHz * Math.PI * 2;
+  const pulseHz = twirl.pulseHz ?? 0.55;
+  const pulseScaleAmt = twirl.pulseScale ?? 0.2;
+  const breathe = 0.5 + 0.5 * Math.sin(t * pulseHz * Math.PI * 2);
+  const scale = 1 + pulseScaleAmt * (breathe * 2 - 1);
+  spin.scale.set(scale, scale, scale);
+  const mat = mesh.material as THREE.MeshBasicMaterial;
+  const base = (mat.userData[MAT_BASE_OPACITY_KEY] as number) ?? twirl.opacity ?? 0.7;
+  mat.opacity = base * (0.84 + 0.16 * breathe);
 }
 
 export function updateCosmeticAuraForGroup(group: THREE.Group, now: number): boolean {
@@ -410,29 +577,11 @@ export function updateCosmeticAuraForGroup(group: THREE.Group, now: number): boo
 
   const t = now * 0.001;
   const pulseHz = def.glow.pulseHz ?? 2.1;
+  const pulse = 0.78 + 0.22 * (0.5 + 0.5 * Math.sin(t * pulseHz));
+  const scalePulse = 1 + 0.14 * Math.sin(t * pulseHz);
+  pulseFloorDisc(aura, "auraGlow", def.glow.opacity ?? 0.4, pulse, scalePulse);
 
-  const glow = aura.getObjectByName("auraGlow") as THREE.Mesh | undefined;
-  if (glow) {
-    const mat = glow.material as THREE.MeshBasicMaterial;
-    const base = (mat.userData[MAT_BASE_OPACITY_KEY] as number) ?? def.glow.opacity ?? 0.4;
-    const pulse = 0.5 + 0.5 * Math.sin(t * pulseHz);
-    mat.opacity = base * (0.65 + 0.35 * pulse);
-    const s = 1 + 0.07 * Math.sin(t * pulseHz);
-    glow.scale.set(s, s, 1);
-  }
-
-  const frame = aura.getObjectByName("auraFrameCycle") as THREE.Mesh | undefined;
-  if (frame && def.frameCycle) {
-    const sprites = frame.userData.frameSprites as KenneySpriteRef[];
-    const periodMs = frame.userData.framePeriodMs as number;
-    const idx = Math.floor((now / periodMs) % sprites.length);
-    const ref = sprites[idx]!;
-    const mat = frame.material as THREE.MeshBasicMaterial;
-    mat.map = resolveKenneyTexture(ref.file);
-    mat.color.setHex(ref.tint ?? 0xffffff);
-    mat.opacity = ref.opacity ?? 0.35;
-    mat.needsUpdate = true;
-  }
+  if (def.twirl) updateTwirlSigil(aura, def.twirl, t);
 
   if (def.ripples) {
     for (const child of aura.children) {
@@ -449,20 +598,7 @@ export function updateCosmeticAuraForGroup(group: THREE.Group, now: number): boo
     }
   }
 
-  const sparks = aura.getObjectByName("auraSparks") as THREE.Points | undefined;
-  if (sparks && def.orbit) {
-    const seeds = sparks.userData.sparkSeeds as AuraSparkSeed[] | undefined;
-    const attr = sparks.geometry.getAttribute("position") as THREE.BufferAttribute;
-    if (seeds) {
-      for (let i = 0; i < seeds.length; i++) {
-        const s = seeds[i]!;
-        const a = s.ang + t * s.speed;
-        const y = 0.28 + 0.16 * Math.sin(t * 2.2 + s.ySeed);
-        attr.setXYZ(i, Math.cos(a) * s.rad, y, Math.sin(a) * s.rad);
-      }
-      attr.needsUpdate = true;
-    }
-  }
+  updateAuraOrbitSparks(aura, t);
 
   return true;
 }
@@ -519,24 +655,42 @@ export function buildStaticPreviewTrail(
   stub.name = PREVIEW_TRAIL_STUB_NAME;
   stub.userData[SKIP_BLOCK_PICK] = true;
   const count = Math.max(1, Math.round(PREVIEW_TRAIL_LENGTH / PREVIEW_TRAIL_STEP));
-  const size = def.ground.sprite.size ?? def.groundSize;
+  const splat = def.ground.splat;
+  const sprite = def.ground.sprite;
+  const size = splat?.size ?? sprite?.size ?? def.groundSize;
 
   for (let i = 0; i < count; i++) {
     const f = count === 1 ? 0 : i / (count - 1);
     const taper = 1 - f;
     const dist = 0.3 + i * PREVIEW_TRAIL_STEP;
 
-    const coreMat = spriteMaterial({
-      ...def.ground.sprite,
-      opacity: (def.ground.sprite.opacity ?? 0.5) * taper,
-    });
-    const core = new THREE.Mesh(new THREE.PlaneGeometry(size, size), coreMat);
-    core.rotation.x = -Math.PI / 2;
-    core.position.set(0, def.groundY, -dist);
-    core.userData[SKIP_BLOCK_PICK] = true;
-    stub.add(core);
+    if (splat) {
+      const coreMat = splatMaterial(splat.tint, (splat.opacity ?? 0.42) * taper, false);
+      const core = new THREE.Mesh(new THREE.PlaneGeometry(size, size), coreMat);
+      core.rotation.x = -Math.PI / 2;
+      core.position.set(0, def.groundY, -dist);
+      core.userData[SKIP_BLOCK_PICK] = true;
+      stub.add(core);
+    } else if (sprite) {
+      const mark = new THREE.Group();
+      mark.rotation.y = ((i * 0.53 + 0.17) % 1) * Math.PI * 2;
+      mark.position.set(0, 0, -dist);
+      const coreMat = spriteMaterial({
+        ...sprite,
+        opacity: (sprite.opacity ?? 0.5) * taper,
+      });
+      const core = new THREE.Mesh(new THREE.PlaneGeometry(size, size), coreMat);
+      core.rotation.x = -Math.PI / 2;
+      core.position.y = def.groundY;
+      core.userData[SKIP_BLOCK_PICK] = true;
+      mark.add(core);
+      stub.add(mark);
+    }
 
     if (def.ground.glow) {
+      const glowWrap = new THREE.Group();
+      glowWrap.rotation.y = ((i * 0.7 + 0.31) % 1) * Math.PI * 2;
+      glowWrap.position.set(0, 0, -dist);
       const glowSize = size * (def.ground.glow.scale ?? 1.2);
       const glowMat = spriteMaterial({
         ...def.ground.glow,
@@ -545,9 +699,10 @@ export function buildStaticPreviewTrail(
       });
       const glow = new THREE.Mesh(new THREE.PlaneGeometry(glowSize, glowSize), glowMat);
       glow.rotation.x = -Math.PI / 2;
-      glow.position.set(0, def.groundY + 0.006, -dist);
+      glow.position.y = def.groundY + 0.006;
       glow.userData[SKIP_BLOCK_PICK] = true;
-      stub.add(glow);
+      glowWrap.add(glow);
+      stub.add(glowWrap);
     }
   }
 

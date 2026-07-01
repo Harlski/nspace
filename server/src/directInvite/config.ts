@@ -16,7 +16,7 @@ function envInt(name: string, dflt: number): number {
 import { JOIN_CODE_CHARS, JOIN_CODE_LENGTH, isJoinCode, isLegacyPlaySpaceSlug } from "../joinCode.js";
 import { WORLDCUP_ENABLED } from "../worldcup/config.js";
 
-/** Master switch — follows WORLDCUP_ENABLED unless overridden. */
+/** Master switch - follows WORLDCUP_ENABLED unless overridden. */
 export const DIRECT_INVITE_ENABLED = envFlag(
   "DIRECT_INVITE_ENABLED",
   WORLDCUP_ENABLED

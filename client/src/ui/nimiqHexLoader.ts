@@ -1,6 +1,6 @@
 /**
  * Nimiq Keyguard opening loader (paired stroked hexagons with dash animation).
- * Source: https://github.com/nimiq/keyguard — `src/common.css`, request `index.html` (MIT).
+ * Source: https://github.com/nimiq/keyguard - `src/common.css`, request `index.html` (MIT).
  */
 export function nimiqHexLoaderSvg(classNames: string): string {
   const cls = classNames.trim().replace(/\s+/g, " ");

@@ -1,5 +1,5 @@
 /**
- * Canvas room tile claims — track which player identicon owns each tile.
+ * Canvas room tile claims - track which player identicon owns each tile.
  * Data persists to disk as JSON.
  */
 import fs from "node:fs";

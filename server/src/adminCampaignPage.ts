@@ -7,7 +7,7 @@ import {
 import { advertiseBillboardPreviewModuleScript } from "./advertiseBillboardPreviewScript.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 
-/** HTML shell for `/admin/campaign` — pending approvals + rotation set CRUD. */
+/** HTML shell for `/admin/campaign` - pending approvals + rotation set CRUD. */
 export function adminCampaignPageHtml(): string {
   const previewModule = advertiseBillboardPreviewModuleScript();
   return `<!DOCTYPE html>
@@ -15,7 +15,7 @@ export function adminCampaignPageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Campaigns — Admin — Nimiq Space</title>
+  <title>Campaigns - Admin - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -250,7 +250,7 @@ export function adminCampaignPageHtml(): string {
 
     function ownerCell(campaign) {
       var w = String((campaign && campaign.ownerWallet) || "").trim();
-      if (!w) return "—";
+      if (!w) return "-";
       return (
         '<span class="cp-owner">' +
         '<img class="cp-owner__ident" data-cp-wallet="' +
@@ -500,7 +500,7 @@ export function adminCampaignPageHtml(): string {
           "<td>" + esc(campaignStatusLabel(c)) + "</td>" +
           '<td class="cp-fund-cell">' + esc(c.totalFundedNimLabel || "0") + " NIM</td>" +
           '<td class="cp-fund-cell">' + esc(c.remainingNimLabel || formatFundNim(c.balanceLuna)) + "</td>" +
-          "<td>" + esc(c.updatedAt || "—") + "</td></tr>";
+          "<td>" + esc(c.updatedAt || "-") + "</td></tr>";
       }
       return html;
     }
@@ -515,7 +515,7 @@ export function adminCampaignPageHtml(): string {
         return "0 NIM";
       }
       var n = Number(balanceLuna);
-      if (!Number.isFinite(n) || n < 0) return "—";
+      if (!Number.isFinite(n) || n < 0) return "-";
       return String(n / 100000) + " NIM";
     }
 
@@ -540,13 +540,13 @@ export function adminCampaignPageHtml(): string {
     }
 
     function formatAnalyticsLastSeen(iso) {
-      if (!iso) return "—";
+      if (!iso) return "-";
       try {
         var d = new Date(iso);
-        if (isNaN(d.getTime())) return "—";
+        if (isNaN(d.getTime())) return "-";
         return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
       } catch (e) {
-        return "—";
+        return "-";
       }
     }
 
@@ -791,11 +791,11 @@ export function adminCampaignPageHtml(): string {
               '" target="_blank" rel="noopener noreferrer" class="mono ms-link-expl">' +
               esc(phUrl) +
               "</a>"
-            : "—") +
+            : "-") +
           "</span></div>" +
           '<div class="cp-preview-detail">' +
           '<span class="cp-preview-detail__label">Current Fund Amount:</span> ' +
-          '<span class="cp-preview-detail__value cp-preview-detail__value--fund">—</span></div>'
+          '<span class="cp-preview-detail__value cp-preview-detail__value--fund">-</span></div>'
         );
       }
       var campaign = payload.campaign;
@@ -848,7 +848,7 @@ export function adminCampaignPageHtml(): string {
             '" target="_blank" rel="noopener noreferrer" class="mono ms-link-expl">' +
             esc(url) +
             "</a>"
-          : "—") +
+          : "-") +
         "</span></div>" +
         fundHtml +
         renderCampaignPrepaidHtml(campaign) +
@@ -1152,7 +1152,7 @@ export function adminCampaignPageHtml(): string {
       html += '<div class="cp-panel"><h2>Approved campaigns (' + approved.length + ")</h2>";
       html += '<p class="cp-stat-note">Audience stats and balance drain use the same live-view rules (14 blocks, tab-visible, not AFK). Used balance reflects drained prepaid NIM.</p>';
       if (!approved.length) {
-        html += '<p class="cp-lead">None yet — approve funded campaigns on the Pending tab.</p>';
+        html += '<p class="cp-lead">None yet - approve funded campaigns on the Pending tab.</p>';
       } else {
         html += '<table class="cp-table"><thead><tr><th>Project</th><th>Owner</th><th>Viewers</th><th>Link visits</th><th>Total funded</th><th>Used</th><th>Remaining</th><th>Time left</th><th>Live</th></tr></thead><tbody>';
         for (var ai = 0; ai < approved.length; ai++) {
@@ -1166,7 +1166,7 @@ export function adminCampaignPageHtml(): string {
               ? "~" + prepaid.remainingOnScreenLabel
               : prepaid.isExpired || a.status === "expired"
                 ? "Used up"
-                : "—";
+                : "-";
           html += '<tr class="cp-row-selectable' + asel + '" data-preview-campaign="' + esc(a.id) + '">' +
             "<td>" + esc(a.projectName) + "</td><td>" + ownerCell(a) + "</td>" +
             "<td>" + esc(String(analytics.uniqueViewers || 0)) + "</td>" +

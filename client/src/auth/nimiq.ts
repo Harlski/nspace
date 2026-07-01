@@ -151,7 +151,7 @@ export type VerifyAuthResponse = {
 /** Optional fields on `POST /api/auth/verify` in addition to the signed Nimiq payload. */
 export type VerifyAuthBody = LoginSignPayload & {
   acceptedTermsPrivacyVersion?: string;
-  /** Deprecated — server still honours this field. Prefer `acceptedTermsPrivacyVersion`. */
+  /** Deprecated - server still honours this field. Prefer `acceptedTermsPrivacyVersion`. */
   acceptedLegalVersion?: string;
 };
 

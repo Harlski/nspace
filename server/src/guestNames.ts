@@ -1,7 +1,7 @@
 /**
  * Display names for server-driven NPCs (`FAKE_PLAYER_COUNT`).
- * Public figures / historical names only — not live users.
- * Shown in-game as `formatNpcDisplayName(name)` — e.g. `[NPC] Marie Curie`.
+ * Public figures / historical names only - not live users.
+ * Shown in-game as `formatNpcDisplayName(name)` - e.g. `[NPC] Marie Curie`.
  */
 /** Prefix for fake wanderer display names (human-readable, not wallet addresses). */
 export const NPC_DISPLAY_PREFIX = "[NPC] ";

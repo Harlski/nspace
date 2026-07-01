@@ -29,16 +29,18 @@ import { remotePlayerIsNpc } from "../remotePlayerNpc.js";
 import { walletDisplayName } from "../walletDisplayName.js";
 import {
   ACHIEVEMENT_CELEBRATION_DURATION_MS,
-  ACHIEVEMENT_TROPHY_SCREEN_HEIGHT_PX,
+  ACHIEVEMENT_CELEBRATION_ICON_SCREEN_HEIGHT_PX,
 } from "../achievements/celebrationPolicy.js";
 import {
   nextCelebrationDelayMs,
 } from "../achievements/celebrationStagger.js";
 import {
   disposeAchievementCelebrationSprite,
-  loadAchievementTrophyTexture,
+  ensureAchievementCelebrationTexture,
+  getAchievementCelebrationTexture,
   spawnAchievementCelebrationSprite,
   updateAchievementCelebrationSprite,
+  type AchievementCelebrationLayout,
   type AchievementCelebrationSprite,
 } from "../achievements/achievementCelebrationVfx.js";
 import {
@@ -239,7 +241,7 @@ const SELF_EXTRAP_GOAL_ALONG_BUFFER = 0.12;
  */
 const SELF_EXTRAP_MAX_OFFSET_XZ = 0.22;
 /**
- * worldcup: pitch free-move needs a larger cap — state broadcasts ~120ms apart at MOVE_SPEED 5
+ * worldcup: pitch free-move needs a larger cap - state broadcasts ~120ms apart at MOVE_SPEED 5
  * (~0.6u/step) and grid path-preview safeguards do not apply on the open field.
  */
 const SELF_EXTRAP_MAX_OFFSET_XZ_FIELD = 0.72;
@@ -374,9 +376,9 @@ function disposeWalkableFloorMeshMaterials(mesh: THREE.Mesh): void {
   }
 }
 
-/** Void (non-walkable) — water/sky tint; walkable tiles use dark gray palette below. */
+/** Void (non-walkable) - water/sky tint; walkable tiles use dark gray palette below. */
 const TERRAIN_WATER_COLOR = 0xa8d8ea;
-/** Core room / expanded floor / door — black–gray tones (not grass). */
+/** Core room / expanded floor / door - black–gray tones (not grass). */
 const TERRAIN_TILE_CORE_COLOR = 0x2d3340;
 /** Pixel room implicit base tint when a tile has no explicit `baseFloorColor` entry. */
 import { pixelImplicitFloorColorRgb } from "./pixelFloorColors.js";
@@ -461,7 +463,7 @@ const INSPECTOR_PREVIEW_HALF_V = 1.02;
 const INSPECTOR_TILE_PREVIEW_BG = 0xd6dbe5;
 /** Slightly shrink the tile + block together vs full-size preview. */
 const INSPECTOR_PREVIEW_SCENE_SCALE = 0.72;
-/** Profile Wardrobe — isometric avatar on a floor tile (matches `/advertise` preview). */
+/** Profile Wardrobe - isometric avatar on a floor tile (matches `/advertise` preview). */
 const WARDROBE_PREVIEW_BG = 0x0f1419;
 const WARDROBE_PREVIEW_FRUSTUM_HALF_V = 1.05;
 const WARDROBE_PREVIEW_CAMERA_OFFSET = 18;
@@ -535,7 +537,7 @@ const PATH_LINE_OPACITY_FULL = 0.95;
 const PATH_FADE_DURATION_SEC = 0.22;
 
 /**
- * Identicon billboard (2D sprite); half-height in world units — bottom at y=0, center at this value.
+ * Identicon billboard (2D sprite); half-height in world units - bottom at y=0, center at this value.
  * Diameter = 2 × this (matches former sphere footprint).
  */
 const AVATAR_SPHERE_RADIUS = 0.4;
@@ -721,7 +723,7 @@ function createNameLabelSprite(
    * `docs/THE-LARGER-SYSTEM.md`, decorative children must not steal raycasts from the geometry
    * they sit above. Without this, the sprite (drawn with `depthTest: false` and high `renderOrder`)
    * wins avatar / right-click picks whenever a player's name plate visually overlaps the target
-   * underneath — most painfully on touch (`pickClosestAvatarGroupAt` in `onPointerDown`) where a
+   * underneath - most painfully on touch (`pickClosestAvatarGroupAt` in `onPointerDown`) where a
    * tap meant for a block under another player's nameplate opens the player profile instead.
    * Suppressing the sprite raycast lets the ray continue to the body mesh (avatar still pickable
    * when the body itself is on the ray) or to the next pick step (block / floor).
@@ -780,7 +782,7 @@ function createChatBubbleSprite(
       : bubblePreset === "bubble-sharp-dark"
         ? "dark"
         : "default";
-  // A sole flag (the Flag Emote) renders as a Twemoji image — Windows has no flag glyphs.
+  // A sole flag (the Flag Emote) renders as a Twemoji image - Windows has no flag glyphs.
   const flagCode = opts?.flagCode ?? null;
   const raster = emojiOnly
     ? CHAT_BUBBLE_RASTER_EMOJI
@@ -892,7 +894,7 @@ function createChatBubbleSprite(
   return { sprite, texture: tex, width: w, height: h };
 }
 
-/** Placeholder isometric block (cube) — one tile footprint, sits on floor. */
+/** Placeholder isometric block (cube) - one tile footprint, sits on floor. */
 const BLOCK_SIZE = 0.82;
 
 const plainCubeInstanceGeometryCache = new Map<string, THREE.BoxGeometry>();
@@ -904,7 +906,7 @@ function plainCubeObstacleHeight(meta: BlockStyleProps): number {
   return BLOCK_SIZE;
 }
 
-/** Opaque plain cubes without overlays — safe to batch into InstancedMesh. */
+/** Opaque plain cubes without overlays - safe to batch into InstancedMesh. */
 function canUsePlainCubeInstancing(meta: BlockStyleProps): boolean {
   if (meta.gate) return false;
   if (!isPlainCubeTerrain(normalizeBlockPrismParts(meta))) return false;
@@ -1062,7 +1064,7 @@ function makeMineableSparklePoints(hVis: number, vis: number): THREE.Points {
   const minSpan = Math.min(BLOCK_SIZE * vis, hVis);
   const pointWorldSize = minSpan * 0.03;
   const mat = new THREE.PointsMaterial({
-    /** No `map` — small hardware squares (crisp, pixel-ish when zoomed in). */
+    /** No `map` - small hardware squares (crisp, pixel-ish when zoomed in). */
     color: 0xfffff8,
     size: pointWorldSize,
     sizeAttenuation: true,
@@ -1303,9 +1305,9 @@ export class Game {
   } = {};
   /**
    * Preset Gallery try-on. Separate from `selfCosmeticPreview` (the wardrobe's ephemeral
-   * preview channel) so that world interactions which clear the wardrobe preview — e.g.
+   * preview channel) so that world interactions which clear the wardrobe preview - e.g.
    * tapping/right-clicking the ground to move opens a context menu that dismisses any open
-   * profile and fires `onRevertAllPreview` — can't wipe a gallery try-on. This channel only
+   * profile and fires `onRevertAllPreview` - can't wipe a gallery try-on. This channel only
    * clears when the player leaves the gallery room.
    */
   private galleryTryOnSlots: {
@@ -1384,7 +1386,7 @@ export class Game {
   private readonly achievementCelebrationStaggerTimers = new Set<
     ReturnType<typeof setTimeout>
   >();
-  private achievementTrophyTexture: THREE.CanvasTexture | null = null;
+  private achievementCelebrationTexture: THREE.CanvasTexture | null = null;
   /** worldcup: live 1v1 spectate portals in the current room (matchId = pitch room id). */
   private readonly worldcupPortals = new Map<
     string,
@@ -1404,7 +1406,7 @@ export class Game {
   /** worldcup: Tap (tap-to-walk) vs Joystick (drag stick only) on the pitch. */
   private worldcupPitchMovementMode: "tap" | "joystick" = "tap";
   /**
-   * worldcup: while true (post-goal kickoff countdown) the local player is frozen — tap-to-move and
+   * worldcup: while true (post-goal kickoff countdown) the local player is frozen - tap-to-move and
    * the joystick are suppressed. The server also rejects moves, this just keeps the UI honest.
    */
   private worldcupMoveLocked = false;
@@ -1459,7 +1461,7 @@ export class Game {
   private blockClaimBeginIntent: string | null = null;
   /**
    * Walk mode: when the player reaches a gate tile orthogonally (after walk or already there),
-   * run open / denied feedback — used for double-click on a gate and **Open gate** from the
+   * run open / denied feedback - used for double-click on a gate and **Open gate** from the
    * context menu (see {@link queueWalkToGateThenInteract}).
    */
   private gateDoubleOpenHandler:
@@ -1499,7 +1501,7 @@ export class Game {
     z: number;
     customized: boolean;
   } | null = null;
-  /** Cinema `?stream=1` — no avatar, no movement or floor edits. */
+  /** Cinema `?stream=1` - no avatar, no movement or floor edits. */
   private streamObserverMode = false;
   private readonly extraFloorKeys = new Set<string>();
   /** Top color per extra floor tile (`tileKey` → 0xRRGGBB). */
@@ -1540,7 +1542,7 @@ export class Game {
     WALKABLE_FLOOR_TILE_THICKNESS,
     1
   );
-  /** Top-only footprint for instanced visuals — avoids vertical box faces at tile seams. */
+  /** Top-only footprint for instanced visuals - avoids vertical box faces at tile seams. */
   private readonly walkableFloorTileTopGeom = new THREE.PlaneGeometry(1, 1);
   private floorTileQuadSize = DEFAULT_FLOOR_TILE_QUAD;
   /** Uniform scale on block/ramp/hex geometry only; bottoms stay on layer planes. */
@@ -1821,7 +1823,7 @@ export class Game {
   } | null = null;
   /**
    * While repositioning a gate, the placed mesh at the source tile keeps this exit (world coords)
-   * so panel/server preview updates do not rotate the solid block — only the transparent ghost does.
+   * so panel/server preview updates do not rotate the solid block - only the transparent ghost does.
    */
   private repositionGatePlacedVisualFreeze: { exitX: number; exitZ: number } | null =
     null;
@@ -1909,7 +1911,7 @@ export class Game {
       ) => void)
     | null = null;
 
-  /** Right-click / long-press walkable floor or mineable block (walk mode) — HUD world context menu. */
+  /** Right-click / long-press walkable floor or mineable block (walk mode) - HUD world context menu. */
   private worldTileContextOpener:
     | ((p: {
         clientX: number;
@@ -1927,7 +1929,7 @@ export class Game {
       }) => void)
     | null = null;
 
-  /** Right-click / long-press other human (non-NPC) avatar — HUD context menu. */
+  /** Right-click / long-press other human (non-NPC) avatar - HUD context menu. */
   private otherPlayerContextOpener:
     | ((p: {
         targets: Array<{
@@ -1992,14 +1994,14 @@ export class Game {
     | null = null;
   /** Floor `tileKey` for the signboard under the cursor (HUD hover); drives hint opacity. */
   private signboardHoverFloorKey: string | null = null;
-  /** Last signboard id sent to the hover handler — skips redundant HUD updates on pointermove. */
+  /** Last signboard id sent to the hover handler - skips redundant HUD updates on pointermove. */
   private signboardHoverActiveId: string | null = null;
 
   private billboardSyncGen = 0;
   private readonly billboardRoots = new Map<string, THREE.Group>();
   private readonly billboardSpecs = new Map<string, BillboardState>();
   /**
-   * Floor (y=0) tile keys `x,z` under a billboard footprint — server stores passable
+   * Floor (y=0) tile keys `x,z` under a billboard footprint - server stores passable
    * half-height markers for walkability; we skip drawing them so only the plane shows.
    */
   private readonly billboardFootprintFloorKeys = new Set<string>();
@@ -2102,7 +2104,7 @@ export class Game {
   private prefabPlaceArmedAnchor: { x: number; z: number } | null = null;
   private prefabPlacePreviewChangeHandler: (() => void) | null = null;
   /**
-   * Floor `x,z` keys under the active prefab-place footprint — hide existing placed
+   * Floor `x,z` keys under the active prefab-place footprint - hide existing placed
    * blocks there so the solid preview shows the stamped result.
    */
   private readonly prefabPlaceSuppressFloorKeys = new Set<string>();
@@ -2474,11 +2476,9 @@ export class Game {
     this.rebuildDoorKeys();
     this.syncWalkableFloorMeshes();
     this.syncVoxelWordSign();
-    void loadAchievementTrophyTexture()
-      .then((tex) => {
-        this.achievementTrophyTexture = tex;
-      })
-      .catch(() => {});
+    void ensureAchievementCelebrationTexture().then((tex) => {
+      this.achievementCelebrationTexture = tex;
+    });
   }
 
   private rebuildDoorKeys(): void {
@@ -3157,7 +3157,7 @@ export class Game {
     };
   }
 
-  /** Stream overview zoom — slightly inset on large rooms so pan can sweep edge-to-edge. */
+  /** Stream overview zoom - slightly inset on large rooms so pan can sweep edge-to-edge. */
   getStreamOverviewFrustumSize(): number {
     const max = this.effectiveZoomMax();
     if (!this.streamPresentationActive) return max;
@@ -3849,7 +3849,7 @@ export class Game {
       nameSprite.visible = false;
       return;
     }
-    // worldcup: keep the soccer pitch uncluttered — NPCs wear no nametag here.
+    // worldcup: keep the soccer pitch uncluttered - NPCs wear no nametag here.
     if (this.isWorldcupFreeMoveRoom()) {
       const address = String(g.userData.address ?? "");
       const displayName = String(g.userData.displayName ?? "");
@@ -3901,6 +3901,7 @@ export class Game {
       // Update scale and position based on current zoom
       this.syncChatBubbleScaleAndPosition(entry);
     }
+    this.refreshAchievementCelebrationLayouts();
   }
 
   /** Keeps chat bubbles near constant on-screen size at any orthographic zoom (like name labels). */
@@ -3938,7 +3939,7 @@ export class Game {
     entry.sprite.position.y = avatarTop + gapAboveAvatar + ch / 2;
   }
 
-  /** Large rooms need an asymmetric ortho frustum when zoomed out — symmetric half-extent clips the south diamond tip. */
+  /** Large rooms need an asymmetric ortho frustum when zoomed out - symmetric half-extent clips the south diamond tip. */
   private roomNeedsFrustumFit(): boolean {
     const b = this.roomBounds;
     const w = b.maxX - b.minX + 1;
@@ -3955,7 +3956,7 @@ export class Game {
     halfHeight: number
   ): { left: number; right: number; top: number; bottom: number } | null {
     if (!this.roomNeedsFrustumFit()) return null;
-    // Non-admins in spatial rooms (e.g. Pixel): keep the capped zoom — do not widen projection to the full grid.
+    // Non-admins in spatial rooms (e.g. Pixel): keep the capped zoom - do not widen projection to the full grid.
     if (
       !this.mapOverviewUnlocked &&
       roomUsesSpatialInterest(this.roomBounds)
@@ -4289,7 +4290,7 @@ export class Game {
   }
 
   /**
-   * Gate / walkable tile / mineable / avatar menus — opened on **right-button pointerup**
+   * Gate / walkable tile / mineable / avatar menus - opened on **right-button pointerup**
    * so the pick matches the release position (after right-drag orbit without movement,
    * `suppressAvatarContextMenuFromRightOrbit` skips opening here; `contextmenu` still clears it).
    */
@@ -4573,7 +4574,7 @@ export class Game {
     }
   }
 
-  /** Opening a HUD overlay (Action Wheel, etc.) — cancel in-flight canvas gestures. */
+  /** Opening a HUD overlay (Action Wheel, etc.) - cancel in-flight canvas gestures. */
   interruptHudOverlayGestures(): void {
     this.endWorldcupStick();
     this.clearPendingPrimaryWalk();
@@ -4606,7 +4607,7 @@ export class Game {
     }
   }
 
-  /** Pay touch debug / recovery — drop pinch, twist, and stick tracking too. */
+  /** Pay touch debug / recovery - drop pinch, twist, and stick tracking too. */
   forceReleaseAllTouchGestures(): void {
     this.interruptHudOverlayGestures();
     this.flushTouchPointerGestureState();
@@ -4803,7 +4804,7 @@ export class Game {
 
   /**
    * Walk to a cardinal neighbor of the gate (if needed), then run
-   * {@link setGateDoubleOpenHandler} once the local player is in range — same checks as
+   * {@link setGateDoubleOpenHandler} once the local player is in range - same checks as
    * double-click open (ACL, admin, `sendOpenGate`).
    * @returns false if nothing was started (caller may fall back to normal walk).
    */
@@ -5494,8 +5495,8 @@ export class Game {
   }
 
   /**
-   * Floor anchor for prefab stamp preview. Uses the y=0 plane only — not block mesh
-   * raycasts — so hiding blocks inside the preview footprint cannot shift the anchor
+   * Floor anchor for prefab stamp preview. Uses the y=0 plane only - not block mesh
+   * raycasts - so hiding blocks inside the preview footprint cannot shift the anchor
    * (which would flicker as picks alternate with suppression).
    */
   private resolvePrefabPlaceAnchorFromPick(
@@ -6964,7 +6965,7 @@ export class Game {
     this.setRoomSceneBackground({ hueDeg, neutral: null });
   }
 
-  /** Welcome batch — one floor mesh pass for large spatial rooms (e.g. Pixel). */
+  /** Welcome batch - one floor mesh pass for large spatial rooms (e.g. Pixel). */
   applyWelcomeFloorPayload(opts: {
     extraFloorTiles?: readonly { x: number; z: number; colorRgb?: number }[];
     baseFloorColorTiles?: readonly { x: number; z: number; colorRgb?: number }[];
@@ -7498,7 +7499,7 @@ export class Game {
     let showUnavailableOnCanvas = false;
     let nextPollAt = Date.now() + POLL_MS;
 
-    /** Timers must not run heavy chart work in the same turn as gameplay RAF — defer to idle. */
+    /** Timers must not run heavy chart work in the same turn as gameplay RAF - defer to idle. */
     const scheduleRedrawChartCanvas = (): void => {
       const run = (): void => {
         redrawChartCanvas();
@@ -9141,7 +9142,7 @@ export class Game {
 
   /**
    * Resolve a deferred-walk destination from a screen point (same rules as executing a walk).
-   * Active claimable (minable) blocks return null — mining starts via primary click on the
+   * Active claimable (minable) blocks return null - mining starts via primary click on the
    * block or the world context menu, not via this walk goal.
    */
   private resolveWalkNavigationGoalAt(
@@ -9504,7 +9505,7 @@ export class Game {
     if (this.streamObserverMode) return;
     if (!this.selfMesh || !this.tileClickHandler) return;
     this.pathPreviewGoal = null;
-    // worldcup: free (any-direction) movement on the pitch — straight line to a float point.
+    // worldcup: free (any-direction) movement on the pitch - straight line to a float point.
     if (this.tryFieldFreeWalkAt(clientX, clientY)) return;
     const goal = this.resolveWalkNavigationGoalAt(clientX, clientY);
     if (!goal) {
@@ -9715,7 +9716,7 @@ export class Game {
 
   /**
    * worldcup: stop joystick movement. Sends a dedicated stop intent (not a `moveTo` to the current
-   * spot) so it is never swallowed by the server's move rate limit — the player halts the instant
+   * spot) so it is never swallowed by the server's move rate limit - the player halts the instant
    * the finger lifts instead of gliding on toward the last far joystick target.
    */
   worldcupJoystickStop(): void {
@@ -9732,7 +9733,7 @@ export class Game {
     }
   }
 
-  /** worldcup: walkable extent on the pitch — base field bounds widened by the outfield margin. */
+  /** worldcup: walkable extent on the pitch - base field bounds widened by the outfield margin. */
   private worldcupFieldMoveBounds(): {
     minX: number;
     maxX: number;
@@ -9764,7 +9765,7 @@ export class Game {
     const hit = this.pickFloorRaw(clientX, clientY);
     if (!hit) return false;
     // Clicks outside the pitch clamp to the outfield wall (true bounds + outfield margin), not the
-    // touchline — so a tap toward / onto the stands walks you all the way to the wall in line with
+    // touchline - so a tap toward / onto the stands walks you all the way to the wall in line with
     // where you tapped, letting you get fully behind a ball pinned against a wall by mouse/tap (the
     // joystick already reached this margin). The ball's own collision walls stay at the true bounds.
     const b = this.worldcupFieldMoveBounds();
@@ -9786,7 +9787,7 @@ export class Game {
 
   /**
    * When the player double-clicks the same gate mesh (primary, low movement), walks to the
-   * gate if needed and invokes {@link gateDoubleOpenHandler} once in range — returns true so
+   * gate if needed and invokes {@link gateDoubleOpenHandler} once in range - returns true so
    * the default deferred walk is skipped.
    */
   private tryGateDoubleOpenAt(clientX: number, clientY: number): boolean {
@@ -9853,7 +9854,7 @@ export class Game {
     return true;
   }
 
-  /** Tile hover uses pointer move; touch-first devices get bogus post-touch “mouse” moves — skip hover. */
+  /** Tile hover uses pointer move; touch-first devices get bogus post-touch “mouse” moves - skip hover. */
   private static canShowPointerHoverTiles(): boolean {
     if (typeof window === "undefined") return true;
     return (
@@ -9884,7 +9885,7 @@ export class Game {
 
   /**
    * Infinite line vs y=0 plane. `Ray.intersectPlane` rejects t&lt;0, which breaks orthographic
-   * picking when the intersection lies behind the ray origin — use full line intersection.
+   * picking when the intersection lies behind the ray origin - use full line intersection.
    */
   /** Tile under cursor: `x` = column (world X), `y` = row (world Z). */
   private pickFloor(clientX: number, clientY: number): FloorTile | null {
@@ -10062,7 +10063,7 @@ export class Game {
     }
     this.lastPointerClientPixels.x = e.clientX;
     this.lastPointerClientPixels.y = e.clientY;
-    // worldcup: floating joystick owns its finger — steer with it, ignore any other.
+    // worldcup: floating joystick owns its finger - steer with it, ignore any other.
     if (this.worldcupStick) {
       if (e.pointerId === this.worldcupStick.pointerId) {
         this.updateWorldcupStick(e.clientX, e.clientY);
@@ -10843,7 +10844,7 @@ export class Game {
 
     // worldcup: on the pitch, defer to pointerup like elsewhere but accept ANY ground hit (not just
     // walkable grid tiles), so tap/click-to-move and the floating joystick all work from wherever the
-    // pointer goes down — including over the stands / outfield margin behind the goals. This must run
+    // pointer goes down - including over the stands / outfield margin behind the goals. This must run
     // for mouse as well as touch: the generic walk path below uses `pickWalkableTile`, which returns
     // nothing for an off-pitch click (the stands), so a mouse click there would otherwise be dropped.
     if (
@@ -12615,7 +12616,7 @@ export class Game {
       tileX?: number;
       tileZ?: number;
       floorLayer?: number;
-      /** Isolated dock / inspector GL canvas — no mineable sparkle shell. */
+      /** Isolated dock / inspector GL canvas - no mineable sparkle shell. */
       inspectorPreview?: boolean;
     }
   ): THREE.Group {
@@ -12963,7 +12964,7 @@ export class Game {
 
   /**
    * A Goalie object: a billboarded "house keeper" identicon (one fixed face for every keeper)
-   * with a persistent bright keeper ring at its feet, so it reads as a defender — never a player.
+   * with a persistent bright keeper ring at its feet, so it reads as a defender - never a player.
    */
   private makeWorldcupGoalieObject(): THREE.Group {
     const group = new THREE.Group();
@@ -13219,7 +13220,7 @@ export class Game {
     return !this.worldcupMatchParticipants.has(Game.normAddr(addr));
   }
 
-  /** worldcup: seat a Spectator avatar on the front row of the nearest stand (visual only — the
+  /** worldcup: seat a Spectator avatar on the front row of the nearest stand (visual only - the
    *  server keeps them at the touchline and excluded from the ball). */
   private worldcupSeatSpectator(g: THREE.Group, addr: string): void {
     if (!this.worldcupIsSpectatorAddr(addr)) return;
@@ -13279,7 +13280,7 @@ export class Game {
 
   /**
    * worldcup: when the local player stands on a spectate portal's footprint tile, return its
-   * match id (and capacity flag) so the host can raise the "Watch" intent pill — mirroring
+   * match id (and capacity flag) so the host can raise the "Watch" intent pill - mirroring
    * how `getStandingDoor` drives the door Enter pill. No teleport-on-click anymore.
    */
   getStandingSpectatePortal(): { matchId: string; full: boolean } | null {
@@ -13437,7 +13438,7 @@ export class Game {
     ctx.font = "700 26px system-ui, sans-serif";
     ctx.fillText("vs", w / 2, cy);
 
-    // Flags under each identicon (Twemoji images — Windows has no flag glyphs).
+    // Flags under each identicon (Twemoji images - Windows has no flag glyphs).
     const drawBillboardFlag = async (
       code: string | null,
       x: number
@@ -14104,17 +14105,13 @@ export class Game {
   /** Room-scoped Achievement Unlock Celebration (trophy pop above an avatar). */
   showAchievementCelebration(address: string): void {
     if (this.streamBubblesHidden) return;
-    const trimmed = address.trim();
-    if (!trimmed) return;
+    const key = this.compactWalletKey(address);
+    if (!key) return;
     const now = performance.now();
-    const delay = nextCelebrationDelayMs(
-      this.achievementCelebrationPlayAt,
-      trimmed,
-      now
-    );
+    const delay = nextCelebrationDelayMs(this.achievementCelebrationPlayAt, key, now);
     const timer = setTimeout(() => {
       this.achievementCelebrationStaggerTimers.delete(timer);
-      void this.spawnAchievementCelebration(trimmed);
+      this.spawnAchievementCelebration(key);
     }, delay);
     this.achievementCelebrationStaggerTimers.add(timer);
   }
@@ -14575,50 +14572,72 @@ export class Game {
     this.achievementCelebrationStaggerTimers.clear();
     this.achievementCelebrationPlayAt.clear();
     for (const entry of this.achievementCelebrationSprites) {
-      disposeAchievementCelebrationSprite(entry, this.achievementTrophyTexture);
+      disposeAchievementCelebrationSprite(entry, this.achievementCelebrationTexture);
     }
     this.achievementCelebrationSprites.length = 0;
   }
 
-  private avatarGroupForAddress(address: string): THREE.Group | null {
-    if (address && this.selfAddress === address) return this.selfMesh;
-    return this.others.get(address) ?? null;
+  private compactWalletKey(address: string): string {
+    return address.replace(/\s+/g, "").trim().toUpperCase();
   }
 
-  private achievementCelebrationBaseY(): number {
-    const worldH = this.pixelToWorldY(ACHIEVEMENT_TROPHY_SCREEN_HEIGHT_PX);
+  private avatarGroupForAddress(address: string): THREE.Group | null {
+    const key = this.compactWalletKey(address);
+    if (!key) return null;
+    if (this.selfMesh && this.compactWalletKey(this.selfAddress) === key) {
+      return this.selfMesh;
+    }
+    for (const [addr, g] of this.others) {
+      if (this.compactWalletKey(addr) === key) return g;
+    }
+    return null;
+  }
+
+  private achievementCelebrationLayout(): AchievementCelebrationLayout {
+    const worldSize = this.pixelToWorldY(
+      ACHIEVEMENT_CELEBRATION_ICON_SCREEN_HEIGHT_PX
+    );
     const avatarTop = this.avatarIdenticonWorldDiameter();
     const gapAbove = this.pixelToWorldY(4);
-    return avatarTop + gapAbove + worldH * 0.5;
+    const baseY = avatarTop + gapAbove + worldSize * 0.5;
+    return { worldSize, baseY };
   }
 
-  private async spawnAchievementCelebration(address: string): Promise<void> {
-    if (this.streamBubblesHidden) return;
-    const g = this.avatarGroupForAddress(address);
-    if (!g) return;
-    try {
-      const tex = await loadAchievementTrophyTexture();
-      if (this.streamBubblesHidden) return;
-      const gAfter = this.avatarGroupForAddress(address);
-      if (!gAfter) return;
-      this.achievementTrophyTexture = tex;
-      const worldH = this.pixelToWorldY(ACHIEVEMENT_TROPHY_SCREEN_HEIGHT_PX);
-      const baseY = this.achievementCelebrationBaseY();
-      const entry = spawnAchievementCelebrationSprite(
-        tex,
-        worldH,
-        worldH,
-        baseY,
-        address,
-        ++this.achievementCelebrationNextId,
-        performance.now()
-      );
-      gAfter.add(entry.sprite);
-      this.achievementCelebrationSprites.push(entry);
-      this.requestRender(ACHIEVEMENT_CELEBRATION_DURATION_MS + 100);
-    } catch {
-      /* ignore missing trophy asset */
+  private refreshAchievementCelebrationLayouts(now = performance.now()): void {
+    if (this.achievementCelebrationSprites.length === 0) return;
+    const layout = this.achievementCelebrationLayout();
+    for (const entry of this.achievementCelebrationSprites) {
+      updateAchievementCelebrationSprite(entry, now, layout);
     }
+  }
+
+  private spawnAchievementCelebration(addressKey: string): void {
+    if (this.streamBubblesHidden) return;
+    const g = this.avatarGroupForAddress(addressKey);
+    if (!g) return;
+    const tex =
+      this.achievementCelebrationTexture ?? getAchievementCelebrationTexture();
+    if (!tex) {
+      void ensureAchievementCelebrationTexture().then((loaded) => {
+        this.achievementCelebrationTexture = loaded;
+        this.spawnAchievementCelebration(addressKey);
+      });
+      return;
+    }
+    this.achievementCelebrationTexture = tex;
+    const layout = this.achievementCelebrationLayout();
+    const now = performance.now();
+    const entry = spawnAchievementCelebrationSprite(
+      tex,
+      layout,
+      addressKey,
+      ++this.achievementCelebrationNextId,
+      now
+    );
+    g.add(entry.sprite);
+    this.achievementCelebrationSprites.push(entry);
+    updateAchievementCelebrationSprite(entry, now, layout);
+    this.requestRender(ACHIEVEMENT_CELEBRATION_DURATION_MS + 100);
   }
 
   private updateAchievementCelebrations(now: number): void {
@@ -14630,17 +14649,21 @@ export class Game {
       if (!g || entry.sprite.parent !== g) {
         disposeAchievementCelebrationSprite(
           entry,
-          this.achievementTrophyTexture
+          this.achievementCelebrationTexture
         );
         this.achievementCelebrationSprites.splice(i, 1);
         continue;
       }
-      if (updateAchievementCelebrationSprite(entry, now)) {
+      if (updateAchievementCelebrationSprite(
+        entry,
+        now,
+        this.achievementCelebrationLayout()
+      )) {
         active = true;
       } else {
         disposeAchievementCelebrationSprite(
           entry,
-          this.achievementTrophyTexture
+          this.achievementCelebrationTexture
         );
         this.achievementCelebrationSprites.splice(i, 1);
       }
@@ -14694,7 +14717,7 @@ export class Game {
     if (!sprite) return;
     sprite.removeFromParent();
     const sm = sprite.material as THREE.SpriteMaterial;
-    // The badge texture is shared across players + reused — never dispose it here.
+    // The badge texture is shared across players + reused - never dispose it here.
     sm.map = null;
     sm.dispose();
     this.worldcupChallengeBubbles.delete(addr);
@@ -16287,7 +16310,7 @@ export class Game {
   }
 
   /**
-   * Isolated WebGL view for profile Wardrobe — avatar on a snapshot of the viewer's current
+   * Isolated WebGL view for profile Wardrobe - avatar on a snapshot of the viewer's current
    * room (sky tint + 4×4 floor patch). Pass `null` to release GPU resources.
    */
   bindWardrobeAvatarPreviewCanvas(
@@ -16428,7 +16451,7 @@ export class Game {
     this.applyWardrobePreviewCosmeticsToAvatar();
   }
 
-  /** Admin / wardrobe — snap isometric preview to one of four corner yaws (0–3). */
+  /** Admin / wardrobe - snap isometric preview to one of four corner yaws (0–3). */
   setWardrobeAvatarPreviewCameraCorner(cornerIndex: number): void {
     const port = this.wardrobeAvatarPreviewPort;
     if (!port) return;

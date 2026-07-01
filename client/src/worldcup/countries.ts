@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — ISO 3166-1 alpha-2 country list (seasonal, deletable).
+ * World Cup soccer - ISO 3166-1 alpha-2 country list (seasonal, deletable).
  *
  * Flag emoji are derived from the code via Unicode regional-indicator letters, so we only
  * store code + name. `flagEmoji` falls back to a generic marker on platforms that do not

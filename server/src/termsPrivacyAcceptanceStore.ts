@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const DATA_DIR = path.join(__dirname, "..", "data");
 const DEFAULT_STORE_PATH = path.join(DATA_DIR, "terms-privacy-acceptance.json");
-/** Legacy filename on existing deployments — merged read until operators migrate solely to the primary file. */
+/** Legacy filename on existing deployments - merged read until operators migrate solely to the primary file. */
 const LEGACY_STORE_PATH = path.join(DATA_DIR, "legal-consent.json");
 
 function resolveStorePath(): string {

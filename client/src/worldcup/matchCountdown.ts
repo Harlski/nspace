@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — pre-teleport kickoff countdown overlay (CLIENT-ONLY, FEATURE-FLAGGED).
+ * World Cup soccer - pre-teleport kickoff countdown overlay (CLIENT-ONLY, FEATURE-FLAGGED).
  *
  * Shown in the origin room for a few seconds after a Challenge is accepted: a "{you} vs
  * {opponent}" line (identicons + flags) and a "Match starting in N…" counter, while both

@@ -19,7 +19,7 @@ export function adminRoomsPageHtml(): string {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Rooms — Nimiq Space</title>
+  <title>Rooms - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -350,7 +350,7 @@ export function adminRoomsPageHtml(): string {
       var opts = "<option value=''>Choose a room…</option>" + rooms.map(function (r) {
         var selected = r.id === templateCreatePickId ? " selected" : "";
         return "<option value='" + esc(r.id) + "'" + selected + ">" +
-          esc(r.displayName) + " (" + esc(r.id) + ") — " + esc(roomCategoryLabel(r)) + "</option>";
+          esc(r.displayName) + " (" + esc(r.id) + ") - " + esc(roomCategoryLabel(r)) + "</option>";
       }).join("");
       return "<select data-new-source aria-label='Source room'>" + opts + "</select>";
     }
@@ -539,7 +539,7 @@ export function adminRoomsPageHtml(): string {
       backdrop.className = "preview-backdrop";
       backdrop.innerHTML =
         "<div class='preview-dialog'><div class='preview-head'><h3>" + esc(room ? room.displayName : id) +
-        " — 3D preview</h3><button class='preview-close' data-preview-close>Close</button></div>" +
+        " - 3D preview</h3><button class='preview-close' data-preview-close>Close</button></div>" +
         "<iframe class='preview-frame' src='/roomPreview.html?room=" + encodeURIComponent(id) + "' title='Room preview'></iframe></div>";
       document.body.appendChild(backdrop);
       function close() { backdrop.remove(); document.removeEventListener("keydown", onEsc); }

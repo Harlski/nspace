@@ -16,7 +16,7 @@ export type StreamFollowBarState = {
 
 export type StreamDirectorOptions = {
   game: Game;
-  /** Stream bot wallet — excluded from random spotlight picks. */
+  /** Stream bot wallet - excluded from random spotlight picks. */
   selfAddress: string;
   /** Slow top-down pan between spotlights; set false for `?noScroll=1`. */
   panOverview?: boolean;

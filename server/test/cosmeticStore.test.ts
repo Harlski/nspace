@@ -283,6 +283,9 @@ test("purchase grant is idempotent", async () => {
 });
 
 test("validate unlock intent rejects draft archived and owned", async () => {
+  const prevShopEnabled = process.env.SHOP_ENABLED;
+  process.env.SHOP_ENABLED = "1";
+  try {
   await withCosmeticStore(async ({
     createCatalogEntry,
     publishCatalogEntry,
@@ -345,6 +348,10 @@ test("validate unlock intent rejects draft archived and owned", async () => {
     assert.equal(v.ok, false);
     if (!v.ok) assert.equal(v.error, "not_published");
   });
+  } finally {
+    if (prevShopEnabled === undefined) delete process.env.SHOP_ENABLED;
+    else process.env.SHOP_ENABLED = prevShopEnabled;
+  }
 });
 
 test("deploy rules use preset defaults and entry overrides with ceilings", async () => {
@@ -577,25 +584,25 @@ test("wardrobe shop includes owned achievement passives excluded from purchasabl
   }) => {
     createCatalogEntry(
       {
-        cosmeticSku: "ach-trail-commons-starter",
+        cosmeticSku: "ach-trail-spark-cyan",
         presetId: "test-trail",
-        displayName: "Commons Spark Trail",
-        description: "Unlocked by placing your first block in the Commons.",
+        displayName: "Spark Path: Cyan",
+        description: "Unlocked by Commons Builder I.",
         collection: "Achievements",
         sortOrder: 1,
         priceLuna: 0n,
       },
       ACTOR
     );
-    publishCatalogEntry("ach-trail-commons-starter", ACTOR);
-    grantEntitlement(WALLET, "ach-trail-commons-starter", ACTOR, "achievement");
+    publishCatalogEntry("ach-trail-spark-cyan", ACTOR);
+    grantEntitlement(WALLET, "ach-trail-spark-cyan", ACTOR, "achievement");
 
     assert.equal(
-      listPublishedShop().some((s) => s.cosmeticSku === "ach-trail-commons-starter"),
+      listPublishedShop().some((s) => s.cosmeticSku === "ach-trail-spark-cyan"),
       false
     );
     const wardrobe = listWardrobeShop(WALLET);
-    const trail = wardrobe.find((s) => s.cosmeticSku === "ach-trail-commons-starter");
+    const trail = wardrobe.find((s) => s.cosmeticSku === "ach-trail-spark-cyan");
     assert.ok(trail);
     assert.equal(trail?.slot, "trail");
     assert.equal(trail?.owned, true);

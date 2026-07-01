@@ -147,7 +147,7 @@ const ROOMS_DIR = path.join(DATA_DIR, "rooms");
 const SPAWNS_DIR = path.join(DATA_DIR, "spawns");
 /** One-time marker: Pixel room base floor reset from random seed to neutral gray. */
 const PIXEL_NEUTRAL_FLOOR_FLAG = path.join(DATA_DIR, ".pixel-neutral-floor-v1");
-/** One-time marker: drop explicit neutral entries — implicit default on client. */
+/** One-time marker: drop explicit neutral entries - implicit default on client. */
 const PIXEL_IMPLICIT_FLOOR_FLAG = path.join(DATA_DIR, ".pixel-implicit-floor-v2");
 /** One-time marker: checkerboard implicit floor + spawn square (drop redundant paints). */
 const PIXEL_CHECKERBOARD_FLOOR_FLAG = path.join(DATA_DIR, ".pixel-checkerboard-v3");

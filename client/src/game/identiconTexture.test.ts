@@ -32,4 +32,13 @@ describe("identiconDataUrl", () => {
       );
     expect(norm(u1)).toBe(norm(u2));
   });
+
+  it("reuses resolved data URLs for the same address", async () => {
+    const addr = "NQ1000000000000000000000000000000000000";
+    const [u1, u2] = await Promise.all([
+      identiconDataUrl(addr),
+      identiconDataUrl(addr),
+    ]);
+    expect(u1).toBe(u2);
+  });
 });

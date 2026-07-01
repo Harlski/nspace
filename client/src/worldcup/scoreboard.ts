@@ -1,5 +1,5 @@
 /**
- * World Cup soccer — in-room scoreboard HUD (seasonal, deletable).
+ * World Cup soccer - in-room scoreboard HUD (seasonal, deletable).
  *
  * A small fixed panel listing the leading countries, plus a flag button that opens the
  * country picker. Shown only in the field room. Fully self-contained (inline styles).
@@ -215,7 +215,7 @@ export class WorldcupScoreboard {
     this.listEl.textContent = "";
     if (this.topCountries.length === 0) {
       const empty = document.createElement("div");
-      empty.textContent = "No goals yet — be the first!";
+      empty.textContent = "No goals yet - be the first!";
       empty.style.cssText = "font-size:0.8rem;opacity:0.65;";
       this.listEl.appendChild(empty);
       return;
@@ -249,7 +249,7 @@ export class WorldcupScoreboard {
   flashGoal(scorerName: string | null, country: string | null): void {
     const banner = document.createElement("div");
     const flagImg = country ? createFlagImg(country) : null;
-    const who = scorerName ? ` — ${scorerName}` : "";
+    const who = scorerName ? ` - ${scorerName}` : "";
     banner.appendChild(document.createTextNode("⚽ GOAL!"));
     if (flagImg) {
       banner.appendChild(document.createTextNode(" "));
@@ -272,7 +272,7 @@ export class WorldcupScoreboard {
   }
 
   /**
-   * Personal NIM-reward note shown just under the GOAL banner — only to the player who scored.
+   * Personal NIM-reward note shown just under the GOAL banner - only to the player who scored.
    * `earned` (green) confirms NIM credited; `capped` (amber) explains why none was paid (daily
    * cap reached / pool spent for today). Local to the scorer; never shown to other players.
    */

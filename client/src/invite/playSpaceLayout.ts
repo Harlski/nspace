@@ -13,10 +13,10 @@ export const INVITE_LOBBY_PREFIX = "invite-lobby-";
 /** Shared join code length for wallet rooms and Play Spaces (must match server/src/joinCode.ts). */
 export const JOIN_CODE_LENGTH = 6;
 
-/** @deprecated Use JOIN_CODE_LENGTH — kept for call-site clarity. */
+/** @deprecated Use JOIN_CODE_LENGTH - kept for call-site clarity. */
 export const PLAY_SPACE_SLUG_LENGTH = JOIN_CODE_LENGTH;
 
-/** @deprecated Use JOIN_CODE_LENGTH — kept for call-site clarity. */
+/** @deprecated Use JOIN_CODE_LENGTH - kept for call-site clarity. */
 export const WALLET_ROOM_CODE_LENGTH = JOIN_CODE_LENGTH;
 
 /** Play Space slugs minted before unification (mixed case, 8 chars). */
@@ -72,7 +72,14 @@ export function joinCodeMatchesRoom(pending: string, roomId: string): boolean {
  */
 export function sanitizeRoomsJoinCodeInput(value: string): string {
   const cleaned = value.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32);
-  if (isJoinCodeInput(cleaned)) return cleaned.toUpperCase();
+  if (isLegacyPlaySpaceSlugInput(cleaned)) return cleaned;
+  if (
+    cleaned.length > 0 &&
+    cleaned.length <= JOIN_CODE_LENGTH &&
+    /^[A-Za-z0-9]+$/.test(cleaned)
+  ) {
+    return cleaned.toUpperCase();
+  }
   return cleaned;
 }
 
