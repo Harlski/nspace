@@ -78,7 +78,10 @@ export type AchievementEventKey =
   | "prefab_author"
   | "signpost_scribe"
   | "gatekeeper"
-  | "trust_circle";
+  | "trust_circle"
+  | "beat_the_creator"
+  | "feedback_reply_seen"
+  | "teleporter_activated";
 
 /** World Cup seasonal counters - progress pauses when WORLDCUP_ENABLED is off. */
 export const WORLDCUP_ACHIEVEMENT_COUNTERS: ReadonlySet<AchievementCounterKey> =
@@ -118,6 +121,7 @@ export const WORLDCUP_ACHIEVEMENT_EVENTS: ReadonlySet<AchievementEventKey> =
     "field_goal_solo",
     "country_picked",
     "flag_emote_sent",
+    "beat_the_creator",
   ]);
 
 export type AchievementCriteria =
@@ -143,6 +147,7 @@ export type AchievementCriteria =
   | { type: "ap_threshold"; threshold: number }
   | { type: "category_complete"; category: AchievementCategory }
   | { type: "room_maker_deluxe" }
+  | { type: "owned_room_furnisher" }
   | { type: "rainbow_floor" };
 
 /** Top-tier login-streak achievement - threshold resolved from env at runtime. */
@@ -159,6 +164,16 @@ export const GRAND_TOUR_ACHIEVEMENT_ID = "exploration-grand-tour";
 
 export const ROOM_MAKER_DELUXE_ACHIEVEMENT_ID = "worldcraft-room-maker-deluxe";
 export const RAINBOW_FLOOR_ACHIEVEMENT_ID = "worldcraft-rainbow-floor";
+export const ROOM_FURNISHER_ACHIEVEMENT_ID = "worldcraft-room-furnisher";
+export const TELEPORTER_ENGINEER_ACHIEVEMENT_ID = "worldcraft-teleporter-engineer";
+export const BEAT_THE_CREATOR_ACHIEVEMENT_ID = "match-beat-the-creator";
+export const THEY_HEARD_YOU_ACHIEVEMENT_ID = "social-they-heard-you";
+export const POINT_HUNTER_I_ACHIEVEMENT_ID = "meta-point-hunter-1";
+export const POINT_HUNTER_II_ACHIEVEMENT_ID = "meta-point-hunter-2";
+
+/** Wallet address for Beat the Creator (win a Match against this player). */
+export const BEAT_THE_CREATOR_WALLET =
+  "NQ974M1T4TGDVC7FLHLQY2DY425N5CVHM02Y";
 
 export type AchievementDefinition = {
   id: string;
@@ -1426,6 +1441,65 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     sortOrder: 5100,
     criteria: { type: "room_maker_deluxe" },
   },
+  {
+    id: TELEPORTER_ENGINEER_ACHIEVEMENT_ID,
+    title: "Teleporter Engineer",
+    description:
+      "Place a teleporter and set its destination so it is ready to use.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 30,
+    sortOrder: 5110,
+    criteria: { type: "event", event: "teleporter_activated" },
+  },
+  {
+    id: ROOM_FURNISHER_ACHIEVEMENT_ID,
+    title: "Room Furnisher",
+    description:
+      "Place 150 blocks in a room you own using at least 10 different colors.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 60,
+    sortOrder: 5120,
+    criteria: { type: "owned_room_furnisher" },
+  },
+  {
+    id: BEAT_THE_CREATOR_ACHIEVEMENT_ID,
+    title: "Beat the Creator",
+    description: "Win a World Cup Match against the creator.",
+    category: "football_match",
+    categoryGroup: "minigames",
+    points: 50,
+    sortOrder: 1270,
+    criteria: { type: "event", event: "beat_the_creator" },
+  },
+  {
+    id: THEY_HEARD_YOU_ACHIEVEMENT_ID,
+    title: "They Heard You",
+    description: "Read an admin reply on one of your feedback tickets.",
+    category: "social",
+    points: 15,
+    sortOrder: 2985,
+    criteria: { type: "event", event: "feedback_reply_seen" },
+  },
+  {
+    id: POINT_HUNTER_I_ACHIEVEMENT_ID,
+    title: "Point Hunter I",
+    description: "Earn 500 achievement points.",
+    category: "meta",
+    points: 25,
+    sortOrder: 6000,
+    criteria: { type: "ap_threshold", threshold: 500 },
+  },
+  {
+    id: POINT_HUNTER_II_ACHIEVEMENT_ID,
+    title: "Point Hunter II",
+    description: "Earn 1000 achievement points.",
+    category: "meta",
+    points: 50,
+    sortOrder: 6010,
+    criteria: { type: "ap_threshold", threshold: 1000 },
+  },
 ];
 
 const definitionById = new Map(
@@ -1444,6 +1518,7 @@ const definitionsByStreakCounter = new Map<
 >();
 const dailySetAchievements: AchievementDefinition[] = [];
 const loginStreakAchievements: AchievementDefinition[] = [];
+const apThresholdAchievements: AchievementDefinition[] = [];
 
 for (const def of ACHIEVEMENT_DEFINITIONS) {
   if (def.criteria.type === "event") {
@@ -1456,6 +1531,8 @@ for (const def of ACHIEVEMENT_DEFINITIONS) {
     definitionsByCounter.set(def.criteria.counter, list);
   } else if (def.criteria.type === "login_streak") {
     loginStreakAchievements.push(def);
+  } else if (def.criteria.type === "ap_threshold") {
+    apThresholdAchievements.push(def);
   } else if (def.criteria.type === "dedupe_count") {
     const list = definitionsByDedupePrefix.get(def.criteria.seenPrefix) ?? [];
     list.push(def);
@@ -1493,6 +1570,10 @@ export function listAchievementsForCounter(
 
 export function listLoginStreakAchievements(): ReadonlyArray<AchievementDefinition> {
   return loginStreakAchievements;
+}
+
+export function listApThresholdAchievements(): ReadonlyArray<AchievementDefinition> {
+  return apThresholdAchievements;
 }
 
 export function listAchievementsForDedupePrefix(

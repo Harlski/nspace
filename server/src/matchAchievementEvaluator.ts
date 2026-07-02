@@ -1,4 +1,5 @@
 import type { AchievementEventKey } from "./achievementDefinitions.js";
+import { BEAT_THE_CREATOR_WALLET } from "./achievementDefinitions.js";
 
 export type MatchParticipantResult = "win" | "loss" | "draw";
 
@@ -24,6 +25,8 @@ export type MatchAchievementParticipantInput = {
   enteredGoldenPhase?: boolean;
   /** True when this side scored at least one own goal during the Match. */
   scoredOwnGoal?: boolean;
+  /** Opponent wallet (normalized comparison left to evaluator). */
+  opponentWallet?: string;
 };
 
 export type MatchEndParticipantInput = MatchAchievementParticipantInput & {
@@ -113,6 +116,15 @@ export function evaluateMatchAchievementsForParticipant(
     events.push("match_won");
     if (input.goldenGoalWin) events.push("golden_goal_win");
     if (input.winReason === "opponent_left") events.push("opponent_left_win");
+    const opponent = String(input.opponentWallet ?? "")
+      .replace(/\s+/g, "")
+      .toUpperCase();
+    if (
+      opponent &&
+      opponent === BEAT_THE_CREATOR_WALLET.replace(/\s+/g, "").toUpperCase()
+    ) {
+      events.push("beat_the_creator");
+    }
     appendMatchExtensionEvents(input, events);
     return {
       matchesPlayedDelta: 1,

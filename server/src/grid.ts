@@ -708,6 +708,47 @@ export function canPlaceTeleporterFoot(
   return true;
 }
 
+export function teleporterInColumn(
+  placed: ReadonlyMap<string, TerrainProps>,
+  x: number,
+  z: number
+): boolean {
+  const prefix = `${x},${z},`;
+  for (const [key, props] of placed) {
+    if (key.startsWith(prefix) && props.teleporter) return true;
+  }
+  return false;
+}
+
+/**
+ * Player teleporters: floor (y=0) or one block up (y=1) only; never on y=2 or atop another teleporter.
+ */
+export function canPlaceTeleporterAt(
+  roomId: string,
+  x: number,
+  z: number,
+  yLevel: number,
+  placed: ReadonlyMap<string, TerrainProps>,
+  extraWalkable: ExtraWalkableRef,
+  baseRemoved?: ReadonlySet<string> | null
+): boolean {
+  if (yLevel > 1) return false;
+  if (teleporterInColumn(placed, x, z)) return false;
+  if (yLevel === 0) {
+    return canPlaceTeleporterFoot(
+      roomId,
+      x,
+      z,
+      placed,
+      extraWalkable,
+      baseRemoved
+    );
+  }
+  const below = placed.get(`${x},${z},0`);
+  if (!below || below.teleporter) return false;
+  return true;
+}
+
 const RAMP_NEIGHBOR: readonly [number, number][] = [
   [1, 0],
   [0, 1],

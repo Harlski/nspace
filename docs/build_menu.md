@@ -14,7 +14,7 @@ Reference for the **in-game build palette** shown along the bottom of the screen
 |------|----------------|---------------|
 | **Walk** | Build tab off | Dock hidden |
 | **Build → Objects** | Build on, scope **Objects** | Full dock: category tabs, tool strip, placement context |
-| **Build → Room** | Build on, scope **Room** | **Floor** / **Room settings** tabs; Floor tool strip + **floor tile hue ring** in `build-dock-context`; **Room settings** tab shows sky background in `build-dock-context` (swatch + popover wheel) |
+| **Build → Room** | Build on, scope **Room** | **Floor** / **Room settings** tabs; Floor tool strip + **floor tile hue ring** in `build-dock-context`; **Room settings** tab shows sky background in `build-dock-context` (swatch + popover wheel) and **Guest entry** (**Set spawner**, **Use room center**) below **Room BG Color** |
 
 Toggle: **Build** tab on the mode strip (`#hud-mode-tab-build`). Scope: **Objects / Room** (`.hud-build-bottom-dock__edit-kind-select` on desktop; on coarse-pointer mobile, `#hud-build-edit-kind-trigger` opens a fixed overlay list `#hud-build-edit-kind-popover` instead of the native select sheet).
 
@@ -95,7 +95,7 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
 |--------------|---------------------|------|
 | `build-dock-context` | `.hud-build-bottom-dock__context` | White sub-panel beside tool strip |
 | `build-dock-context-grid` | `.hud-build-bottom-dock__context-grid` | Mods column + color column |
-| `build-dock-context-mods` | `.hud-build-bottom-dock__context-mods` | Placement controls (height, **hex thickness**, **sphere size**, pyramid base, gate direction, billboard view…); **Room settings** (`.hud-build-bottom-dock__room-settings`, Room BG swatch + hue wheel) when Room scope + **Room settings** tab |
+| `build-dock-context-mods` | `.hud-build-bottom-dock__context-mods` | Placement controls (height, **hex thickness**, **sphere size**, pyramid base, gate direction, billboard view…); **Room settings** (`.hud-build-bottom-dock__room-settings`, Room BG swatch + hue wheel, **Guest entry** spawner) when Room scope + **Room settings** tab |
 | `build-dock-context-room-settings` | `.hud-build-bottom-dock__context--room-settings` | Modifier on context panel: room BG only, color column hidden |
 | `build-dock-context-floor` | `.hud-build-bottom-dock__context--floor` | Modifier on context panel: **Floor** tab — hue ring only (mods column hidden) |
 | `build-dock-context-color` | `.hud-build-bottom-dock__context-color` | Hue ring + hue dock stack |

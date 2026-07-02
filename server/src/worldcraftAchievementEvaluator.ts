@@ -13,6 +13,16 @@ export const ROOM_DELUXE_BLOCK_THRESHOLD = 25;
 export const ROOM_DELUXE_RECOLOR_THRESHOLD = 5;
 export const ROOM_DELUXE_REQUIREMENT_COUNT = 4;
 
+export const ROOM_FURNISHER_STATE_PREFIX = "room_furnisher:";
+export const ROOM_FURNISHER_BLOCK_THRESHOLD = 150;
+export const ROOM_FURNISHER_UNIQUE_HUE_THRESHOLD = 10;
+
+export type RoomFurnisherProgress = {
+  blocks: number;
+  /** Distinct non-neutral hue buckets (0-11) used on placed blocks in this room. */
+  hueBuckets: number[];
+};
+
 export type TerrainShapeKind = "cube" | "hex" | "pyramid" | "sphere" | "ramp";
 
 export type RoomDeluxeProgress = {
@@ -122,6 +132,55 @@ export function roomDeluxeMetRequirements(progress: RoomDeluxeProgress): number 
 
 export function isRoomDeluxeComplete(progress: RoomDeluxeProgress): boolean {
   return roomDeluxeMetRequirements(progress) >= ROOM_DELUXE_REQUIREMENT_COUNT;
+}
+
+export function roomFurnisherStateKey(roomId: string): string {
+  return `${ROOM_FURNISHER_STATE_PREFIX}${normalizeRoomId(roomId).trim().toLowerCase()}`;
+}
+
+export function parseRoomFurnisherProgress(
+  value: string | null | undefined
+): RoomFurnisherProgress {
+  if (!value) {
+    return { blocks: 0, hueBuckets: [] };
+  }
+  try {
+    const o = JSON.parse(value) as Partial<RoomFurnisherProgress>;
+    const hueBuckets = Array.isArray(o.hueBuckets)
+      ? [...new Set(o.hueBuckets.map((h) => Math.floor(Number(h))).filter((h) => h >= 0 && h <= 11))]
+      : [];
+    return {
+      blocks: Math.max(0, Math.floor(Number(o.blocks ?? 0))),
+      hueBuckets,
+    };
+  } catch {
+    return { blocks: 0, hueBuckets: [] };
+  }
+}
+
+export function formatRoomFurnisherProgress(progress: RoomFurnisherProgress): string {
+  return JSON.stringify(progress);
+}
+
+export function roomFurnisherMetRequirements(progress: RoomFurnisherProgress): number {
+  let count = 0;
+  if (progress.blocks >= ROOM_FURNISHER_BLOCK_THRESHOLD) count += 1;
+  if (progress.hueBuckets.length >= ROOM_FURNISHER_UNIQUE_HUE_THRESHOLD) count += 1;
+  return count;
+}
+
+export function isRoomFurnisherComplete(progress: RoomFurnisherProgress): boolean {
+  return roomFurnisherMetRequirements(progress) >= 2;
+}
+
+export function recordRoomFurnisherHueBucket(
+  progress: RoomFurnisherProgress,
+  hueBucket: number
+): boolean {
+  if (hueBucket < 0 || hueBucket > 11) return false;
+  if (progress.hueBuckets.includes(hueBucket)) return false;
+  progress.hueBuckets.push(hueBucket);
+  return true;
 }
 
 export function countRainbowHuesForRoom(

@@ -22,6 +22,8 @@ export const DEFAULT_BLOCK_COLOR_RGB = 0x5b6b8c;
 export const DEFAULT_GATE_BLOCK_COLOR_RGB = 0x795548;
 /** Canvas exit portal / teleporter slab (legacy `colorId` 4). */
 export const BLOCK_COLOR_EXIT_PORTAL_RGB = 0xffc107;
+/** Default player teleporter pillar tint (near-white). */
+export const TELEPORTER_DEFAULT_PILLAR_COLOR_RGB = 0xf8fafc;
 
 export function clampColorRgb(v: number): number {
   const n = Math.floor(Number(v));
@@ -99,6 +101,26 @@ export function resolveBlockColorRgb(props: {
     return clampColorRgb(Number(raw));
   }
   return legacyPaletteRgb(props.colorId ?? 0);
+}
+
+/** Pillar tint for player teleporters (ignores legacy exit-portal palette defaults). */
+export function resolveTeleporterPillarColorRgb(props: {
+  teleporter?: unknown;
+  colorRgb?: number;
+  colorId?: number;
+}): number {
+  if (!props.teleporter) {
+    return resolveBlockColorRgb(props);
+  }
+  const raw = props.colorRgb;
+  if (raw !== undefined && Number.isFinite(Number(raw))) {
+    const c = clampColorRgb(Number(raw));
+    if (c === BLOCK_COLOR_EXIT_PORTAL_RGB) {
+      return TELEPORTER_DEFAULT_PILLAR_COLOR_RGB;
+    }
+    return c;
+  }
+  return TELEPORTER_DEFAULT_PILLAR_COLOR_RGB;
 }
 
 /** @deprecated Use {@link resolveBlockColorRgb}. */

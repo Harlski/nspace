@@ -20,7 +20,8 @@ import { sendTelegramPlainText } from "./telegramNotify.js";
 /** Wallet auth → first WS may include username prompt; keep pending long enough to survive it. */
 export const CONNECT_NOTICE_WALLET_PENDING_TTL_MS = 5 * 60_000;
 export const CONNECT_NOTICE_GUEST_PENDING_TTL_MS = 5 * 60_000;
-export const CONNECT_NOTICE_DEDUPE_MS = 15 * 60_000;
+/** Suppress duplicate pings when the same wallet reconnects within this window. */
+export const CONNECT_NOTICE_DEDUPE_MS = 60_000;
 
 function logConnectNotice(event: string, detail: Record<string, unknown>): void {
   console.log(`[connect] ${event}`, JSON.stringify(detail));
@@ -182,11 +183,21 @@ function formatVisitStatsLine(label: string, stats: { nimEarnedLabel: string; ac
   return `${label}: ${stats.nimEarnedLabel}, ${formatActiveDuration(stats.activeMs)} active`;
 }
 
-function playerIdentityLine(address: string, nimiqPay: boolean): string {
-  const display = getEffectivePlayerDisplayName(address);
+function playerIdentityLine(
+  address: string,
+  nimiqPay: boolean,
+  displayNameOverride?: string
+): string {
   const shorthand = walletDisplayName(address);
+  const display =
+    displayNameOverride?.trim() ||
+    getEffectivePlayerDisplayName(address) ||
+    shorthand;
   const paySuffix = nimiqPay ? " · Nimiq Pay" : "";
-  return `Player: ${display} (${shorthand})${paySuffix}`;
+  if (display !== shorthand) {
+    return `Player: ${display} (${shorthand})${paySuffix}`;
+  }
+  return `Player: ${shorthand}${paySuffix}`;
 }
 
 function moderationFlagsLine(wallet: string): string | null {
@@ -212,6 +223,8 @@ export function buildConnectNoticeMessage(input: {
   pending: PendingConnectNotice;
   roomId: string;
   guestDisplayName?: string;
+  /** Live in-game label when available (custom username or guest nickname). */
+  displayName?: string;
   publicBaseUrl: string;
   nowMs?: number;
   stats?: ConnectNoticePlayerStats;
@@ -253,7 +266,13 @@ export function buildConnectNoticeMessage(input: {
     lines.push(`Play Space host: ${hostDisplay} (${hostShorthand})`);
   } else {
     lines.push("NSpace connect");
-    lines.push(playerIdentityLine(input.pending.address, input.pending.nimiqPay));
+    lines.push(
+      playerIdentityLine(
+        input.pending.address,
+        input.pending.nimiqPay,
+        input.displayName
+      )
+    );
   }
 
   lines.push(`Room: ${roomLabel} | Room: ${roomCount} | Online: ${onlineCount}`);
@@ -287,18 +306,18 @@ export type ConnectNoticeWsContext = {
   roomId: string;
   guestDisplayName?: string;
   guestInviteSlug?: string;
-  /** First game WS after fresh wallet login or guest invite entry (not reconnect/resume). */
-  signInRequested?: boolean;
+  /** Live in-game label when available (custom username or guest nickname). */
+  displayName?: string;
   nimiqPay?: boolean;
+  /** Cinema / stream observer connections are omitted from Connect Notices. */
+  streamObserver?: boolean;
 };
 
 function resolveConnectNoticePending(
   ctx: ConnectNoticeWsContext,
   nowMs: number
 ): PendingConnectNotice | null {
-  const fromAuth = consumePendingConnectNotice(ctx.address, nowMs);
-  if (fromAuth) return fromAuth;
-  if (!ctx.signInRequested) return null;
+  if (ctx.streamObserver) return null;
 
   if (ctx.address.startsWith("guest:")) {
     const slug = (ctx.guestInviteSlug ?? "").trim();
@@ -316,10 +335,13 @@ function resolveConnectNoticePending(
 
   const wallet = walletKey(ctx.address);
   if (!wallet) return null;
+  const fromAuth = consumePendingConnectNotice(ctx.address, nowMs);
   return {
     kind: "wallet",
     address: wallet,
-    nimiqPay: ctx.nimiqPay === true,
+    nimiqPay: fromAuth?.kind === "wallet" && fromAuth.nimiqPay
+      ? true
+      : ctx.nimiqPay === true,
     markedAt: nowMs,
   };
 }
@@ -332,9 +354,8 @@ export async function maybeSendConnectNotice(
   const pending = resolveConnectNoticePending(ctx, nowMs);
   if (!pending) {
     logConnectNotice("skip", {
-      reason: "no_trigger",
+      reason: ctx.streamObserver ? "stream_observer" : "invalid_subject",
       address: ctx.address.slice(0, 16),
-      signInRequested: ctx.signInRequested === true,
     });
     return;
   }
@@ -363,6 +384,7 @@ export async function maybeSendConnectNotice(
     pending,
     roomId: ctx.roomId,
     guestDisplayName: ctx.guestDisplayName,
+    displayName: ctx.displayName,
     publicBaseUrl,
     nowMs,
   });

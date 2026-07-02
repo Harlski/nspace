@@ -158,3 +158,17 @@ test("own goal hero fires only for winners who scored an own goal", () => {
   });
   assert.ok(!loser.events.includes("match_own_goal_win"));
 });
+
+test("beat the creator fires when winning against the creator wallet", () => {
+  const beat = evaluateMatchAchievementsForParticipant({
+    ...baseWin,
+    opponentWallet: "NQ974M1T4TGDVC7FLHLQY2DY425N5CVHM02Y",
+  });
+  assert.ok(beat.events.includes("beat_the_creator"));
+
+  const other = evaluateMatchAchievementsForParticipant({
+    ...baseWin,
+    opponentWallet: "NQ07 SOMEONE00000000000000000000001",
+  });
+  assert.ok(!other.events.includes("beat_the_creator"));
+});

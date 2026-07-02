@@ -22,6 +22,7 @@ import {
   BLOCK_COLOR_EXIT_PORTAL_RGB,
   cubeRotationForPlainCube,
   resolveBlockColorRgb,
+  resolveTeleporterPillarColorRgb,
 } from "./game/blockStyle.js";
 import {
   canOpenGateAs,
@@ -2765,6 +2766,7 @@ function enterGame(
 
     if (!canBuild && game.getBuildMode()) {
       game.setBuildMode(false);
+      game.setTeleporterPlacementPreviewActive(false);
       editingTile = null;
       hud.hideObjectEditPanel();
       game.clearSelectedBlock();
@@ -2806,8 +2808,8 @@ function enterGame(
     if (game.getFloorExpandMode() && canFloor) {
       const entryPickHint = hud.isRoomEntrySpawnPickArmed()
         ? touchUi
-          ? " Guest entry: tap a walkable tile (or turn off “Pick tile” in the sidebar)."
-          : " Guest entry: click a walkable floor tile, or turn off “Pick tile on map…” in the sidebar."
+          ? " Guest entry: tap a walkable tile (or turn off Set spawner in Room settings)."
+          : " Guest entry: click a walkable floor tile, or turn off Set spawner in Room settings."
         : "";
       hud.setStatus(
         touchUi
@@ -2828,6 +2830,7 @@ function enterGame(
     }
     if (game.getBuildMode() && canBuild) {
       game.setBillboardPlacementPreviewActive(hud.isBillboardModeActive());
+      game.setTeleporterPlacementPreviewActive(hud.isTeleporterModeActive());
       const tpHint = hud.isTeleporterModeActive()
         ? " Teleporter: click an empty floor tile to place, then tap Set to choose a destination."
         : "";
@@ -2976,6 +2979,7 @@ function enterGame(
 
   hud.onBuildToolSelect((tool) => {
     game.setBillboardPlacementPreviewActive(tool === "billboard");
+    game.setTeleporterPlacementPreviewActive(tool === "teleporter");
     syncObjectPrefabModes(tool);
     if (tool === "billboard") {
       const d = game.getBillboardPlacementDraft();
@@ -3365,6 +3369,9 @@ function enterGame(
           : acceptOpts
       );
     });
+    game.setChallengeAcceptHandler((addr: string) => {
+      if (socket.readyState === WebSocket.OPEN) sendAcceptChallenge(socket, addr);
+    });
 
     game.setGateContextOpener((pick) => {
       const parts = pick.blockKey.split(",").map(Number);
@@ -3503,7 +3510,12 @@ function enterGame(
       }
       if (hud.isTeleporterModeActive()) {
         pendingTeleporterAutoSelect = { x, z };
-        sendPlacePendingTeleporter(socket, x, z);
+        sendPlacePendingTeleporter(
+          socket,
+          x,
+          z,
+          game.getPlacementBlockStyle().colorRgb
+        );
         return;
       }
       if (hud.isGateModeActive()) {
@@ -3905,6 +3917,19 @@ function enterGame(
             destZ,
             currentRoomId: normalizeRoomId(game.getRoomId()),
             roomOptions: teleporterDestinationRoomOptions(),
+            colorRgb: resolveTeleporterPillarColorRgb(m),
+            onRecolor: (colorRgb) => {
+              sendSetObstacleProps(
+                socket,
+                x,
+                z,
+                y,
+                placedMetaToPanelObstacleProps(x, z, y, {
+                  ...m,
+                  colorRgb,
+                })
+              );
+            },
             onOpenDestinationPicker: () => {
               void openTeleporterDestinationPickerForEdit(x, z, y, {
                 pending,
@@ -3956,6 +3981,16 @@ function enterGame(
             game.clearSelectedBlock();
             syncBuildHud();
           },
+        });
+        hud.onTeleporterSetClick(() => {
+          void openTeleporterDestinationPickerForEdit(x, z, y, {
+            pending,
+            isBidirectionalPair,
+            destRoomId,
+            destX,
+            destZ,
+            currentRoomId: normalizeRoomId(game.getRoomId()),
+          });
         });
         syncBuildHud();
         return;
@@ -4148,7 +4183,7 @@ function enterGame(
       currentRoomId: string;
     }
   ): Promise<void> {
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const { openTeleporterDestinationPicker, TELEPORTER_PAIR_ROOM_VALUE } =
       await import("./ui/teleporterDestPreview.js");
     const { resolveApiBaseUrl } = await import("./net/apiBase.js");
@@ -4171,15 +4206,15 @@ function enterGame(
     const dx = Math.floor(result.x);
     const dz = Math.floor(result.z);
     if (result.roomId === TELEPORTER_PAIR_ROOM_VALUE) {
-      sendPlaceTeleporterBidirectionalPair(socket, srcX, srcZ, srcY, dx, dz);
+      sendPlaceTeleporterBidirectionalPair(ws, srcX, srcZ, srcY, dx, dz);
       return;
     }
     const rid = normalizeRoomId(result.roomId);
     if (rid === HUB_ROOM_ID) {
-      sendConfigureTeleporter(socket, srcX, srcZ, srcY, HUB_ROOM_ID, 0, 0);
+      sendConfigureTeleporter(ws, srcX, srcZ, srcY, HUB_ROOM_ID, 0, 0);
       return;
     }
-    sendConfigureTeleporter(socket, srcX, srcZ, srcY, rid, dx, dz);
+    sendConfigureTeleporter(ws, srcX, srcZ, srcY, rid, dx, dz);
   }
 
   function syncPortalEnterButton(): void {
@@ -4200,11 +4235,15 @@ function enterGame(
     const standingTp = game.getStandingTeleporter();
     if (standingTp) {
       portalAction = { kind: "teleporter" };
+      const hereRoom = normalizeRoomId(game.getRoomId());
+      const destRoom = normalizeRoomId(standingTp.targetRoomId);
       hud.setPortalEnterLabel(
-        formatTeleporterPortalLabel(
-          standingTp.targetRoomId,
-          standingTp.targetRoomDisplayName
-        )
+        destRoom === hereRoom
+          ? "Enter"
+          : formatTeleporterPortalLabel(
+              standingTp.targetRoomId,
+              standingTp.targetRoomDisplayName
+            )
       );
       if (!portalEnterVisible) {
         portalEnterVisible = true;
@@ -5187,7 +5226,9 @@ function enterGame(
         Number.isFinite(bx) &&
         Number.isFinite(bz)
       ) {
-        game.showFloatingText(bx, bz, "Nothing here :(");
+        game.showFloatingText(bx, bz, "Nothing here :(", "#ffffff", {
+          plainEmphasis: true,
+        });
       }
       cancelActiveNimClaim?.();
       nimClaimUiRef = null;
@@ -5761,6 +5802,18 @@ function enterGame(
       }
     },
   });
+  function triggerVisibleIntentPills(): boolean {
+    if (game.getBuildMode() && hud.getTeleporterConfigureTile()) {
+      hud.triggerTeleporterDestinationOpen();
+      return true;
+    }
+    if (portalEnterVisible && portalAction) {
+      hud.triggerPortalEnter();
+      return true;
+    }
+    return false;
+  }
+
   hud.onPortalEnter(() => {
     if (portalAction?.kind === "door") {
       const d = game.getStandingDoor();
@@ -5820,6 +5873,16 @@ function enterGame(
       (portalAction?.kind === "canvas-exit" || portalAction?.kind === "teleporter") &&
       ws
     ) {
+      if (portalAction.kind === "teleporter") {
+        const tp = game.getStandingTeleporter();
+        if (tp) {
+          const hereRoom = normalizeRoomId(game.getRoomId());
+          const destRoom = normalizeRoomId(tp.targetRoomId);
+          if (destRoom !== hereRoom) {
+            beginRoomTransition(tp.targetRoomId);
+          }
+        }
+      }
       sendEnterPortal(ws);
     }
   });
@@ -5941,6 +6004,12 @@ function enterGame(
           hud.toggleOwnPlayerProfile();
           e.preventDefault();
           return;
+        }
+        if ((k === " " || k === "Spacebar") && !isCoarsePointer) {
+          if (triggerVisibleIntentPills()) {
+            e.preventDefault();
+            return;
+          }
         }
         const isGuest = selfAddress.startsWith("guest:");
         if (!isGuest) {

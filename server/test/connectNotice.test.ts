@@ -25,7 +25,7 @@ test("connect notice pending is consumed once on WS connect", () => {
   assert.equal(consumePendingConnectNotice("NQABAAAAAAAAAAAAAAAAAAAAAAAAAA01"), null);
 });
 
-test("connect notice dedupes within 15 minutes", () => {
+test("connect notice dedupes within one minute", () => {
   resetConnectNoticeStateForTests();
   const now = Date.now();
   const notice = {
@@ -35,7 +35,7 @@ test("connect notice dedupes within 15 minutes", () => {
     markedAt: now,
   };
   recordConnectNoticeSent(notice, now);
-  assert.equal(isConnectNoticeDedupeActive(notice, now + 60_000), true);
+  assert.equal(isConnectNoticeDedupeActive(notice, now + 30_000), true);
   assert.equal(isConnectNoticeDedupeActive(notice, now + CONNECT_NOTICE_DEDUPE_MS + 1), false);
 });
 
@@ -49,6 +49,7 @@ test("buildConnectNoticeMessage includes identity, counts, stats, and moderation
       markedAt: Date.now(),
     },
     roomId: "hub",
+    displayName: "The Creator",
     publicBaseUrl: "https://nimiq.space",
     nowMs: Date.parse("2026-07-01T12:00:00.000Z"),
     stats: {
@@ -58,12 +59,33 @@ test("buildConnectNoticeMessage includes identity, counts, stats, and moderation
     coPresenceNames: ["Bob"],
   });
   assert.match(text, /^NSpace connect\n/);
-  assert.match(text, /Player: .+ \(NQABAA03\) · Nimiq Pay/);
+  assert.match(text, /Player: The Creator \(NQABAA03\) · Nimiq Pay/);
   assert.match(text, /Room: hub \| Room: \d+ \| Online: \d+/);
   assert.match(text, /Last visit: 1\.5 NIM, 18m active/);
   assert.match(text, /Today: 3 NIM, 42m active/);
   assert.match(text, /Also in room: Bob/);
   assert.match(text, /Moderation: https:\/\/nimiq\.space\/admin\/moderation\?wallet=NQAB/);
+});
+
+test("buildConnectNoticeMessage omits redundant wallet when no custom name", () => {
+  resetConnectNoticeStateForTests();
+  const text = buildConnectNoticeMessage({
+    pending: {
+      kind: "wallet",
+      address: "NQABAAAAAAAAAAAAAAAAAAAAAAAAAA03",
+      nimiqPay: false,
+      markedAt: Date.now(),
+    },
+    roomId: "hub",
+    publicBaseUrl: "https://nimiq.space",
+    nowMs: Date.parse("2026-07-01T12:00:00.000Z"),
+    stats: {
+      lastVisit: null,
+      today: { nimEarnedLabel: "0 NIM", activeMs: 0 },
+    },
+  });
+  assert.match(text, /Player: NQABAA03\n/);
+  assert.doesNotMatch(text, /Player: NQABAA03 \(NQABAA03\)/);
 });
 
 test("getConnectNoticeStatsForAddress aggregates last visit and today UTC", () => {
@@ -162,11 +184,11 @@ test("guest pending refreshes on markGuestConnectNoticePending", () => {
   assert.equal(first?.kind, "guest");
 });
 
-test("connect notice dedupe window constant is 15 minutes", () => {
-  assert.equal(CONNECT_NOTICE_DEDUPE_MS, 15 * 60_000);
+test("connect notice dedupe window constant is one minute", () => {
+  assert.equal(CONNECT_NOTICE_DEDUPE_MS, 60_000);
 });
 
-test("signIn WS param synthesizes wallet pending without auth mark", async () => {
+test("maybeSendConnectNotice fires on every wallet connect", async () => {
   resetConnectNoticeStateForTests();
   const sent: string[] = [];
   const original = globalThis.fetch;
@@ -183,12 +205,43 @@ test("signIn WS param synthesizes wallet pending without auth mark", async () =>
       {
         address: "NQABAAAAAAAAAAAAAAAAAAAAAAAAAA04",
         roomId: "hub",
-        signInRequested: true,
+        displayName: "Alice",
       },
       "https://nimiq.space"
     );
     assert.equal(sent.length, 1);
     assert.match(sent[0]!, /^NSpace connect\n/);
+    assert.match(sent[0]!, /Player: Alice \(NQABAA04\)/);
+  } finally {
+    globalThis.fetch = original;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.TELEGRAM_CHAT_ID;
+    resetConnectNoticeStateForTests();
+  }
+});
+
+test("maybeSendConnectNotice skips stream observers", async () => {
+  resetConnectNoticeStateForTests();
+  const sent: string[] = [];
+  const original = globalThis.fetch;
+  process.env.TELEGRAM_BOT_TOKEN = "test-token";
+  process.env.TELEGRAM_CHAT_ID = "1";
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+    if (body.text) sent.push(body.text);
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+  const { maybeSendConnectNotice } = await import("../src/connectNotice.js");
+  try {
+    await maybeSendConnectNotice(
+      {
+        address: "NQABAAAAAAAAAAAAAAAAAAAAAAAAAA05",
+        roomId: "hub",
+        streamObserver: true,
+      },
+      "https://nimiq.space"
+    );
+    assert.equal(sent.length, 0);
   } finally {
     globalThis.fetch = original;
     delete process.env.TELEGRAM_BOT_TOKEN;

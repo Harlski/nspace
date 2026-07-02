@@ -659,10 +659,15 @@ export function sendEnterPortal(ws: WebSocket): void {
 export function sendPlacePendingTeleporter(
   ws: WebSocket,
   x: number,
-  z: number
+  z: number,
+  colorRgb?: number
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: "placePendingTeleporter", x, z }));
+  const body: Record<string, unknown> = { type: "placePendingTeleporter", x, z };
+  if (colorRgb !== undefined) {
+    body.colorRgb = resolveBlockColorRgb({ colorRgb });
+  }
+  ws.send(JSON.stringify(body));
 }
 
 export function sendPlacePendingGate(

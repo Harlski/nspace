@@ -17,7 +17,9 @@ import {
   listAchievementsForStreakCounter,
   listDailySetAchievements,
   listLoginStreakAchievements,
+  listApThresholdAchievements,
   RAINBOW_FLOOR_ACHIEVEMENT_ID,
+  ROOM_FURNISHER_ACHIEVEMENT_ID,
   ROOM_MAKER_DELUXE_ACHIEVEMENT_ID,
   SOCIAL_LOGIN_TOP_ACHIEVEMENT_ID,
   SUNNY_SIDE_UP_ACHIEVEMENT_ID,
@@ -53,17 +55,23 @@ import {
   FLOOR_RECOLOR_SEEN_PREFIX,
   floorRecolorSeenKey,
   formatRoomDeluxeProgress,
+  formatRoomFurnisherProgress,
   hueBucketFromColorRgb,
   isPalettePainterEligibleRoom,
   isRoomDeluxeComplete,
+  isRoomFurnisherComplete,
   parseRoomDeluxeProgress,
+  parseRoomFurnisherProgress,
   PREFAB_ADOPTION_SEEN_PREFIX,
   prefabAdoptionSeenKey,
   RAINBOW_FLOOR_HUE_THRESHOLD,
   RAINBOW_HUE_SEEN_PREFIX,
   rainbowHueSeenKey,
+  recordRoomFurnisherHueBucket,
   roomDeluxeMetRequirements,
   roomDeluxeStateKey,
+  roomFurnisherMetRequirements,
+  roomFurnisherStateKey,
   ROOM_DELUXE_LIFETIME_DAY,
   ROOM_DELUXE_REQUIREMENT_COUNT,
   shapeSeenKey,
@@ -266,6 +274,9 @@ function counterThreshold(def: AchievementDefinition): number {
   if (def.criteria.type === "room_maker_deluxe") {
     return ROOM_DELUXE_REQUIREMENT_COUNT;
   }
+  if (def.criteria.type === "owned_room_furnisher") {
+    return 2;
+  }
   if (def.criteria.type === "rainbow_floor") {
     return RAINBOW_FLOOR_HUE_THRESHOLD;
   }
@@ -380,6 +391,84 @@ function evaluateRainbowFloorAchievements(
   const count = listSeenKeysWithPrefix(wallet, prefix).length;
   if (count >= RAINBOW_FLOOR_HUE_THRESHOLD) {
     completeAchievement(wallet, def, unlocks);
+  }
+}
+
+function maxRoomFurnisherProgress(wallet: string): number {
+  const w = normalizeWallet(wallet);
+  const rows = requireDb()
+    .prepare(
+      `SELECT value FROM achievement_daily_state
+       WHERE wallet = ? AND utc_day = ? AND state_key LIKE ? || '%'`
+    )
+    .all(w, ROOM_DELUXE_LIFETIME_DAY, "room_furnisher:") as Array<{ value: string }>;
+  let max = 0;
+  for (const row of rows) {
+    const met = roomFurnisherMetRequirements(parseRoomFurnisherProgress(row.value));
+    if (met > max) max = met;
+  }
+  return max;
+}
+
+function getRoomFurnisherProgress(
+  wallet: string,
+  roomId: string
+): ReturnType<typeof parseRoomFurnisherProgress> {
+  return parseRoomFurnisherProgress(
+    getAchievementDailyState(
+      wallet,
+      ROOM_DELUXE_LIFETIME_DAY,
+      roomFurnisherStateKey(roomId)
+    )
+  );
+}
+
+function setRoomFurnisherProgress(
+  wallet: string,
+  roomId: string,
+  progress: ReturnType<typeof parseRoomFurnisherProgress>
+): void {
+  setAchievementDailyState(
+    wallet,
+    ROOM_DELUXE_LIFETIME_DAY,
+    roomFurnisherStateKey(roomId),
+    formatRoomFurnisherProgress(progress)
+  );
+}
+
+function evaluateRoomFurnisherAchievements(
+  wallet: string,
+  unlocks: AchievementUnlockWire[]
+): void {
+  const def = getAchievementDefinition(ROOM_FURNISHER_ACHIEVEMENT_ID);
+  if (!def || def.criteria.type !== "owned_room_furnisher") return;
+  if (hasCompletion(wallet, def.id)) return;
+  const w = normalizeWallet(wallet);
+  const rows = requireDb()
+    .prepare(
+      `SELECT value FROM achievement_daily_state
+       WHERE wallet = ? AND utc_day = ? AND state_key LIKE ? || '%'`
+    )
+    .all(w, ROOM_DELUXE_LIFETIME_DAY, "room_furnisher:") as Array<{ value: string }>;
+  for (const row of rows) {
+    if (isRoomFurnisherComplete(parseRoomFurnisherProgress(row.value))) {
+      completeAchievement(wallet, def, unlocks);
+      return;
+    }
+  }
+}
+
+function evaluateApThresholdAchievements(
+  wallet: string,
+  unlocks: AchievementUnlockWire[]
+): void {
+  const total = totalPointsForWallet(wallet);
+  for (const def of listApThresholdAchievements()) {
+    if (def.criteria.type !== "ap_threshold") continue;
+    if (hasCompletion(wallet, def.id)) continue;
+    if (total >= def.criteria.threshold) {
+      completeAchievement(wallet, def, unlocks);
+    }
   }
 }
 
@@ -653,6 +742,7 @@ function completeAchievement(
     totalPoints,
   });
   evaluateOnboardingCompleteAchievements(wallet, unlocks);
+  evaluateApThresholdAchievements(wallet, unlocks);
 }
 
 function evaluateCounterAchievements(
@@ -1510,10 +1600,13 @@ export function recordRoomJoinSpawnForDeluxe(
 export function recordOwnedRoomBlockPlaced(
   wallet: string,
   roomId: string,
+  colorRgb: number,
   onUnlock?: AchievementUnlockCallback
 ): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
   touchRoomDeluxeProgress(
-    wallet,
+    w,
     roomId,
     (progress) => {
       if (progress.blocks < Number.MAX_SAFE_INTEGER) {
@@ -1522,6 +1615,22 @@ export function recordOwnedRoomBlockPlaced(
     },
     onUnlock
   );
+  const furnisher = getRoomFurnisherProgress(w, roomId);
+  if (furnisher.blocks < Number.MAX_SAFE_INTEGER) {
+    furnisher.blocks += 1;
+  }
+  recordRoomFurnisherHueBucket(furnisher, hueBucketFromColorRgb(colorRgb));
+  setRoomFurnisherProgress(w, roomId, furnisher);
+  const unlocks: AchievementUnlockWire[] = [];
+  evaluateRoomFurnisherAchievements(w, unlocks);
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordTeleporterActivated(
+  wallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  fireAchievementEvent(wallet, "teleporter_activated", onUnlock);
 }
 
 /** Re-evaluate Grand Tour on UTC midnight for online players (daily row resets by day key). */
@@ -1614,6 +1723,11 @@ function buildProgressRow(
       completedAtMs != null
         ? threshold
         : Math.min(threshold, maxRoomDeluxeProgress(wallet));
+  } else if (def.criteria.type === "owned_room_furnisher") {
+    progress =
+      completedAtMs != null
+        ? threshold
+        : Math.min(threshold, maxRoomFurnisherProgress(wallet));
   } else if (def.criteria.type === "streak_counter") {
     progress =
       completedAtMs != null
@@ -1656,6 +1770,7 @@ export function getAchievementsForWallet(
     getLoginStreakDaysForWallet(w),
     []
   );
+  evaluateApThresholdAchievements(w, []);
   const completionRows = requireDb()
     .prepare(
       `SELECT achievement_id, completed_at_ms FROM achievement_completions

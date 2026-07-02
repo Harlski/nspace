@@ -8,6 +8,7 @@ import {
 } from "./teleporterLanding.js";
 import {
   blockKey,
+  canPlaceTeleporterAt,
   canPlaceTeleporterFoot,
   floorWalkableTerrain,
   floorWalkableTerrainForMover,
@@ -389,8 +390,10 @@ import {
   DEFAULT_EXTRA_FLOOR_COLOR_RGB,
   DEFAULT_GATE_BLOCK_COLOR_RGB,
   DEFAULT_PIXEL_CENTRAL_DARK_COLOR_RGB,
+  TELEPORTER_DEFAULT_PILLAR_COLOR_RGB,
   pixelImplicitFloorColorRgb,
   resolveBlockColorRgb,
+  resolveTeleporterPillarColorRgb,
   resolveExtraFloorColorRgb,
 } from "./blockColors.js";
 
@@ -4239,15 +4242,30 @@ const TELEPORTER_VISUAL: PlacedProps = {
   half: false,
   ramp: false,
   rampDir: 0,
-  colorRgb: BLOCK_COLOR_EXIT_PORTAL_RGB,
+  colorRgb: TELEPORTER_DEFAULT_PILLAR_COLOR_RGB,
   locked: true,
 };
+
+function teleporterPlacedProps(
+  teleporter: NonNullable<PlacedProps["teleporter"]>,
+  colorRgb?: number
+): PlacedProps {
+  return {
+    ...TELEPORTER_VISUAL,
+    colorRgb:
+      colorRgb !== undefined
+        ? clampColorRgb(colorRgb)
+        : TELEPORTER_DEFAULT_PILLAR_COLOR_RGB,
+    teleporter,
+  };
+}
 
 function placePendingTeleporterAt(
   conn: ClientConn,
   roomId: string,
   x: number,
-  z: number
+  z: number,
+  colorRgb?: number
 ): boolean {
   const address = conn.address;
   if (isInviteLobbyRoomId(normalizeRoomId(roomId))) return false;
@@ -4257,22 +4275,15 @@ function placePendingTeleporterAt(
 
   const placed = placedMap(roomId);
   const extra = extraFloorMap(roomId);
+  const br = baseRemovedReadonly(roomId);
   const yLevel = nextOpenStackLevel(placed, x, z);
   if (yLevel === null) return false;
-  const k = blockKey(x, z, yLevel);
   if (
-    yLevel === 0 &&
-    !canPlaceTeleporterFoot(
-      roomId,
-      x,
-      z,
-      placed,
-      extra,
-      baseRemovedReadonly(roomId)
-    )
-  )
+    !canPlaceTeleporterAt(roomId, x, z, yLevel, placed, extra, br)
+  ) {
     return false;
-  if (yLevel > 0 && !getPlacedAtLevel(placed, x, z, yLevel - 1)) return false;
+  }
+  const k = blockKey(x, z, yLevel);
   if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(x, z)) return false;
   if (yLevel === 0 && getSignboardAt(roomId, x, z)) return false;
   for (const [rid, r] of rooms) {
@@ -4284,10 +4295,12 @@ function placePendingTeleporterAt(
     }
   }
 
-  placed.set(k, {
-    ...TELEPORTER_VISUAL,
-    teleporter: { pending: true },
-  });
+  const pillarColor = clampColorRgb(
+    colorRgb !== undefined && Number.isFinite(colorRgb)
+      ? Number(colorRgb)
+      : TELEPORTER_DEFAULT_PILLAR_COLOR_RGB
+  );
+  placed.set(k, teleporterPlacedProps({ pending: true }, pillarColor));
   const nRoom = normalizeRoomId(roomId);
   const d = obstacleTileFromPlaced(nRoom, k);
   if (d) {
@@ -4346,9 +4359,19 @@ function teleporterMoveTargetValid(
   const placed = placedMap(roomId);
   const atDest = getPlacedAtLevel(placed, toX, toZ, toY);
   if (atDest && !vacatingKeys.has(atDest.key)) return false;
-  if (toY !== 0) {
-    const below = getPlacedAtLevel(placed, toX, toZ, toY - 1);
-    if (!below) return false;
+  if (toY > 1) return false;
+  const prefix = `${toX},${toZ},`;
+  for (const [key, props] of placed) {
+    if (!key.startsWith(prefix)) continue;
+    if (vacatingKeys.has(key)) continue;
+    if (props.teleporter) return false;
+  }
+  if (toY === 1) {
+    const belowKey = blockKey(toX, toZ, 0);
+    const below = placed.get(belowKey);
+    if (!below || (below.teleporter && !vacatingKeys.has(belowKey))) return false;
+  } else if (toY !== 0) {
+    return false;
   }
   if (!isWalkableForRoom(roomId, toX, toZ)) return false;
   if (
@@ -4364,8 +4387,8 @@ function teleporterMoveTargetValid(
   return true;
 }
 
-/** Move a linked same-room teleporter pair by the same floor delta; rejects if either end cannot move. */
-function moveLinkedTeleporterPairAt(
+/** Move one end of a linked same-room teleporter pair; the peer tile stays put. */
+function movePairedTeleporterEndpointAt(
   conn: ClientConn,
   roomId: string,
   room: Map<string, ClientConn>,
@@ -4396,61 +4419,52 @@ function moveLinkedTeleporterPairAt(
   const peerCoords = parsePlacedKey(peerKey);
   if (!peerCoords) return false;
 
-  const dx = toX - fromX;
-  const dz = toZ - fromZ;
-  const peerToX = peerCoords.x + dx;
-  const peerToZ = peerCoords.z + dz;
-  const peerTy = peerCoords.y;
-
   const destKey = blockKey(toX, toZ, toY);
-  const peerDestKey = blockKey(peerToX, peerToZ, peerTy);
-  if (destKey === peerKey && peerDestKey === fk) {
-    return false;
-  }
+  if (destKey === fk || destKey === fromClientKey) return false;
 
-  const ignoreKeys = new Set([fk, fromClientKey, peerKey]);
+  const ignoreKeys = new Set([fk, fromClientKey]);
   if (
-    !teleporterMoveTargetValid(roomId, room, toX, toZ, toY, ignoreKeys) ||
-    !teleporterMoveTargetValid(
-      roomId,
-      room,
-      peerToX,
-      peerToZ,
-      peerTy,
-      ignoreKeys
-    )
+    !teleporterMoveTargetValid(roomId, room, toX, toZ, toY, ignoreKeys)
   ) {
     return false;
   }
 
+  const nRoom = normalizeRoomId(roomId);
+  const roomDisplay = roomCatalogDisplayNameForTeleporter(roomId);
+
   placed.delete(fk);
   if (fromClientKey !== fk) placed.delete(fromClientKey);
-  placed.delete(peerKey);
 
-  placed.set(destKey, {
-    ...TELEPORTER_VISUAL,
-    teleporter: {
-      targetRoomId: normalizeRoomId(roomId),
-      targetX: peerToX,
-      targetZ: peerToZ,
-      targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(roomId),
-      pairedPeerKey: peerDestKey,
-    },
-  });
-  placed.set(peerDestKey, {
-    ...TELEPORTER_VISUAL,
-    teleporter: {
-      targetRoomId: normalizeRoomId(roomId),
-      targetX: toX,
-      targetZ: toZ,
-      targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(roomId),
-      pairedPeerKey: destKey,
-    },
-  });
+  placed.set(
+    destKey,
+    teleporterPlacedProps(
+      {
+        targetRoomId: nRoom,
+        targetX: peerCoords.x,
+        targetZ: peerCoords.z,
+        targetRoomDisplayName: roomDisplay,
+        pairedPeerKey: peerKey,
+      },
+      resolveBlockColorRgb(props)
+    )
+  );
+  placed.set(
+    peerKey,
+    teleporterPlacedProps(
+      {
+        targetRoomId: nRoom,
+        targetX: toX,
+        targetZ: toZ,
+        targetRoomDisplayName: roomDisplay,
+        pairedPeerKey: destKey,
+      },
+      resolveBlockColorRgb(peerProps)
+    )
+  );
 
   const add: ObstacleTile[] = [];
   const dSrc = obstacleTileFromPlaced(roomId, destKey);
-  const dPeer = obstacleTileFromPlaced(roomId, peerDestKey);
+  const dPeer = obstacleTileFromPlaced(roomId, peerKey);
   if (dSrc) add.push(dSrc);
   if (dPeer) add.push(dPeer);
   const remove = [
@@ -4459,7 +4473,6 @@ function moveLinkedTeleporterPairAt(
       ...(fromClientKey !== fk
         ? obstacleRemovalKeysForPlacedKey(fromClientKey)
         : []),
-      ...obstacleRemovalKeysForPlacedKey(peerKey),
     ]),
   ];
   broadcast(roomId, {
@@ -4476,11 +4489,10 @@ function moveLinkedTeleporterPairAt(
     toX,
     toZ,
     toY,
-    pairedMove: true,
-    peerFromX: peerCoords.x,
-    peerFromZ: peerCoords.z,
-    peerToX,
-    peerToZ,
+    pairedEndpointMove: true,
+    peerKey,
+    peerX: peerCoords.x,
+    peerZ: peerCoords.z,
   });
   return true;
 }
@@ -4576,15 +4588,18 @@ function configureTeleporterDestination(
     }
   }
 
-  srcPlaced.set(canonicalSrc, {
-    ...TELEPORTER_VISUAL,
-    teleporter: {
-      targetRoomId: nDest,
-      targetX: warpX,
-      targetZ: warpZ,
-      targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(nDest),
-    },
-  });
+  srcPlaced.set(
+    canonicalSrc,
+    teleporterPlacedProps(
+      {
+        targetRoomId: nDest,
+        targetX: warpX,
+        targetZ: warpZ,
+        targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(nDest),
+      },
+      resolveBlockColorRgb(srcResolved.props)
+    )
+  );
 
   const d1 = obstacleTileFromPlaced(nSrc, canonicalSrc);
   if (d1) {
@@ -4656,13 +4671,9 @@ function placeBidirectionalTeleporterPairAt(
   const dt = snapToTile(destX, destZ);
   const destY = nextOpenStackLevel(placed, dt.x, dt.z);
   if (destY === null) return false;
-  if (
-    destY === 0 &&
-    !canPlaceTeleporterFoot(roomId, dt.x, dt.z, placed, extra, br)
-  ) {
+  if (!canPlaceTeleporterAt(roomId, dt.x, dt.z, destY, placed, extra, br)) {
     return false;
   }
-  if (destY > 0 && !getPlacedAtLevel(placed, dt.x, dt.z, destY - 1)) return false;
   if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(dt.x, dt.z)) return false;
   if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(st.x, st.z)) return false;
 
@@ -4685,27 +4696,34 @@ function placeBidirectionalTeleporterPairAt(
     }
   }
 
-  placed.set(destKey, {
-    ...TELEPORTER_VISUAL,
-    teleporter: {
-      targetRoomId: nRoom,
-      targetX: st.x,
-      targetZ: st.z,
-      targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(nRoom),
-      pairedPeerKey: canonicalSrc,
-    },
-  });
+  const srcColor = resolveBlockColorRgb(srcResolved.props);
+  placed.set(
+    destKey,
+    teleporterPlacedProps(
+      {
+        targetRoomId: nRoom,
+        targetX: st.x,
+        targetZ: st.z,
+        targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(nRoom),
+        pairedPeerKey: canonicalSrc,
+      },
+      srcColor
+    )
+  );
 
-  placed.set(canonicalSrc, {
-    ...TELEPORTER_VISUAL,
-    teleporter: {
-      targetRoomId: nRoom,
-      targetX: dt.x,
-      targetZ: dt.z,
-      targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(nRoom),
-      pairedPeerKey: destKey,
-    },
-  });
+  placed.set(
+    canonicalSrc,
+    teleporterPlacedProps(
+      {
+        targetRoomId: nRoom,
+        targetX: dt.x,
+        targetZ: dt.z,
+        targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(nRoom),
+        pairedPeerKey: destKey,
+      },
+      srcColor
+    )
+  );
 
   const dSrc = obstacleTileFromPlaced(nRoom, canonicalSrc);
   const dDest = obstacleTileFromPlaced(nRoom, destKey);
@@ -8972,13 +8990,19 @@ export function addClient(
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
-      const ok = placePendingTeleporterAt(conn, currentRoomId, tile.x, tile.z);
+      const ok = placePendingTeleporterAt(
+        conn,
+        currentRoomId,
+        tile.x,
+        tile.z,
+        colorRgbFromWire(msg)
+      );
       if (!ok) {
         wsSafeSend(ws, {
             type: "chat",
             from: "System",
             fromAddress: "",
-            text: "Could not place teleporter. Use an empty walkable floor tile within build range (not canvas).",
+            text: "Could not place teleporter. Use an empty walkable floor tile or one block up (not two), within build range, and not on another teleporter.",
             at: now,
           } satisfies OutMsg);
       }
@@ -9474,6 +9498,29 @@ export function addClient(
       
       // Check if object is locked and user is not admin
       if (existing.locked && !isAdmin(address)) {
+        if (existing.teleporter) {
+          const nextColor = colorRgbFromWire(msg);
+          if (nextColor === resolveTeleporterPillarColorRgb(existing)) return;
+          placed.set(canonicalKey, { ...existing, colorRgb: nextColor });
+          const deltaTile = obstacleTileFromPlaced(currentRoomId, canonicalKey);
+          if (deltaTile) {
+            broadcast(currentRoomId, {
+              type: "obstaclesDelta",
+              roomId: currentRoomId,
+              add: [deltaTile],
+              remove: storageKey !== canonicalKey ? [storageKey] : [],
+            });
+          }
+          schedulePersistWorldState();
+          logGameplayEvent(
+            conn.sessionId,
+            address,
+            currentRoomId,
+            "set_teleporter_color",
+            { x: tile.x, z: tile.z, y: ty, colorRgb: nextColor }
+          );
+          return;
+        }
         wsSafeSend(ws, { type: "error", code: "object_locked" });
         return;
       }
@@ -10166,7 +10213,7 @@ export function addClient(
           typeof tp.pairedPeerKey === "string" &&
           tp.pairedPeerKey
         ) {
-          const movedPair = moveLinkedTeleporterPairAt(
+          const movedEndpoint = movePairedTeleporterEndpointAt(
             conn,
             currentRoomId,
             room,
@@ -10180,7 +10227,7 @@ export function addClient(
             fromClientKey,
             props
           );
-          if (movedPair) return;
+          if (movedEndpoint) return;
           return;
         }
       }

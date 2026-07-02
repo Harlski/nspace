@@ -15,6 +15,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
   social: "Social",
   exploration: "Exploration",
   worldcraft: "Worldcraft",
+  meta: "Meta",
   misc: "Misc",
 };
 

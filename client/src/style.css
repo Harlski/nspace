@@ -5419,8 +5419,8 @@ button.hud-brand:focus-visible {
 
 .hud-teleporter-set {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  left: 0;
+  top: 0;
   transform: translate(-50%, -115%);
   z-index: 7;
   pointer-events: auto;
@@ -5447,7 +5447,9 @@ button.hud-brand:focus-visible {
 #app .nq-button-s::before,
 #app .nq-button-s::after,
 #app .nq-button::before,
-#app .nq-button::after {
+#app .nq-button::after,
+.hud-teleporter-set.nq-button-pill::before,
+.hud-teleporter-set.nq-button-pill::after {
   pointer-events: none;
 }
 
@@ -9790,6 +9792,35 @@ html.nspace-mobile-portrait
 
 .hud-build-bottom-dock__context-mods > .hud-build-bottom-dock__room-settings .hud-build-bottom-dock__room-setting-label {
   color: var(--hud-build-chrome-text-muted);
+}
+
+.hud-build-bottom-dock__room-entry-spawn {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding-top: 10px;
+  margin-top: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  pointer-events: auto;
+  max-width: none;
+}
+
+.hud-build-bottom-dock__room-entry-spawn[hidden] {
+  display: none !important;
+}
+
+.hud-build-bottom-dock__room-entry-spawn .hud-mode-sidebar__room-entry-spawn-head {
+  text-align: left;
+}
+
+.hud-build-bottom-dock__room-entry-spawn .hud-mode-sidebar__room-entry-spawn-hint {
+  text-align: left;
+}
+
+.hud-build-bottom-dock__room-entry-spawn .tile-inspector__reset-btn {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .hud-build-bottom-dock__room-setting {

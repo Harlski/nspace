@@ -236,6 +236,10 @@ export function feedbackTicketHasUnread(t: FeedbackTicketRow): boolean {
   return false;
 }
 
+export function feedbackTicketHasAdminReply(t: FeedbackTicketRow): boolean {
+  return t.messages.some((m) => m.isAdmin);
+}
+
 export function countUnreadFeedbackForWallet(wallet: string): number {
   return listFeedbackTicketsForWallet(wallet).filter(feedbackTicketHasUnread).length;
 }

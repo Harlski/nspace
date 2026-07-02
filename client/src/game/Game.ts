@@ -219,6 +219,8 @@ import {
   hueDegToBlockColorRgb,
   normalizeBlockPrismParts,
   resolveBlockColorRgb,
+  resolveTeleporterPillarColorRgb,
+  TELEPORTER_DEFAULT_PILLAR_COLOR_RGB,
 } from "./blockStyle.js";
 import nimiqIconsData from "nimiq-icons/icons.json";
 
@@ -1150,10 +1152,22 @@ const FLOATING_SPRING_DURATION_MS = 2600;
 const SELF_PLAYER_ACTION_FLOAT_KEY = "__self_player_action__";
 /** Mining reward floater stays 1s longer than generic floaters (TODO). */
 const FLOATING_REWARD_MINING_DURATION_MS = 3000;
-const FLOATING_REWARD_MINING_FONT = "bold 64px 'Muli', sans-serif";
+/** On-brand NIM mark beside full-precision mining amounts (zoomed in). */
+const NIM_REWARD_LOGO_SRC = "/branding/nimiq-nim-logo.svg";
+const FLOATING_REWARD_MINING_FONT =
+  "500 64px 'Fira Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
 const FLOATING_REWARD_MINING_LOGO_H = 72;
 const FLOATING_REWARD_MINING_GAP = 14;
 const FLOATING_REWARD_MINING_CANVAS_H = 120;
+/** Screen-fixed floater heights (world scale via {@link Game.pixelToWorldY}). */
+const FLOATING_REWARD_PLAIN_SCREEN_HEIGHT_PX = 28;
+/** Slightly larger plain floaters (e.g. inactive mineable block feedback). */
+const FLOATING_REWARD_PLAIN_EMPHASIS_SCREEN_HEIGHT_PX = 34;
+const FLOATING_REWARD_PLAIN_FONT = "bold 32px 'Muli', sans-serif";
+const FLOATING_REWARD_PLAIN_EMPHASIS_FONT = "bold 38px 'Muli', sans-serif";
+const FLOATING_REWARD_MINING_SCREEN_HEIGHT_PX = 36;
+/** Zoomed-out mining rewards: larger digits, two decimals, no logo. */
+const FLOATING_REWARD_MINING_COMPACT_SCREEN_HEIGHT_PX = 40;
 const FLOATING_REWARD_TEXT_SHADOW_BLUR = 10;
 const FLOATING_REWARD_TEXT_SHADOW_OFFSET_X = 4;
 const FLOATING_REWARD_TEXT_SHADOW_OFFSET_Y = 5;
@@ -1226,6 +1240,139 @@ function drawImageWithWhiteOutline(
   ctx.drawImage(img, x, y, w, h);
   ctx.restore();
 }
+
+/** Decimal amount from a mining floater string such as `+1.0000 NIM`. */
+function parseMiningRewardAmount(text: string): string | null {
+  const trimmed = text.trim().replace(/\s*NIM\s*$/i, "").trim();
+  const m = trimmed.match(/^\+(\d+\.\d+)$/);
+  return m ? m[1]! : null;
+}
+
+function rasterPlainFloatingCanvas(
+  label: string,
+  color: string,
+  emphasis = false
+): { canvas: HTMLCanvasElement; screenHeightPx: number } {
+  const font = emphasis
+    ? FLOATING_REWARD_PLAIN_EMPHASIS_FONT
+    : FLOATING_REWARD_PLAIN_FONT;
+  const screenHeightPx = emphasis
+    ? FLOATING_REWARD_PLAIN_EMPHASIS_SCREEN_HEIGHT_PX
+    : FLOATING_REWARD_PLAIN_SCREEN_HEIGHT_PX;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  ctx.font = font;
+  const metrics = ctx.measureText(label);
+  const padX =
+    40 +
+    FLOATING_REWARD_TEXT_OUTLINE_PX * 2 +
+    FLOATING_REWARD_TEXT_SHADOW_PAD * 2;
+  const w = Math.ceil(metrics.width + padX);
+  const h = emphasis ? 84 : 72;
+  canvas.width = w;
+  canvas.height = h;
+  ctx.font = font;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "center";
+  fillTextWithWhiteOutline(ctx, label, w / 2, h / 2, color);
+  return { canvas, screenHeightPx };
+}
+
+function formatMiningRewardLabel(amount: string, compact: boolean): string {
+  if (!compact) return `+${amount}`;
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return `+${amount}`;
+  return `+${n.toFixed(2)}`;
+}
+
+function rasterMiningRewardFloatingCanvas(
+  amount: string,
+  color: string,
+  compact: boolean,
+  logo: CanvasImageSource | null
+): { canvas: HTMLCanvasElement; screenHeightPx: number } {
+  const screenHeightPx = compact
+    ? FLOATING_REWARD_MINING_COMPACT_SCREEN_HEIGHT_PX
+    : FLOATING_REWARD_MINING_SCREEN_HEIGHT_PX;
+  const label = formatMiningRewardLabel(amount, compact);
+  const font = FLOATING_REWARD_MINING_FONT;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  ctx.font = font;
+  const tw = ctx.measureText(label).width;
+  const logoH = FLOATING_REWARD_MINING_LOGO_H;
+  const gap = FLOATING_REWARD_MINING_GAP;
+  let logoW = 0;
+  if (!compact && logo) {
+    const img = logo as HTMLImageElement;
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      logoW = (img.naturalWidth / img.naturalHeight) * logoH;
+    }
+  }
+  const padX =
+    36 +
+    FLOATING_REWARD_MINING_TEXT_OUTLINE_PX * 2 +
+    FLOATING_REWARD_TEXT_SHADOW_PAD * 2;
+  const innerW = tw + (logoW > 0 ? gap + logoW : 0);
+  const w = Math.ceil(innerW + padX);
+  const h = FLOATING_REWARD_MINING_CANVAS_H;
+  canvas.width = w;
+  canvas.height = h;
+
+  ctx.font = font;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  const cx = (w - innerW) / 2;
+  const midY = h / 2;
+
+  fillTextWithWhiteOutline(
+    ctx,
+    label,
+    cx,
+    midY,
+    color,
+    FLOATING_REWARD_MINING_TEXT_OUTLINE_PX
+  );
+
+  if (logoW > 0 && logo) {
+    const lx = cx + tw + gap;
+    const ly = midY - logoH / 2;
+    try {
+      drawImageWithWhiteOutline(
+        ctx,
+        logo,
+        lx,
+        ly,
+        logoW,
+        logoH,
+        FLOATING_REWARD_MINING_LOGO_OUTLINE_PX
+      );
+    } catch {
+      /* ignore draw errors */
+    }
+  }
+
+  return { canvas, screenHeightPx };
+}
+
+type FloatingTextEntry = {
+  sprite: THREE.Sprite;
+  material: THREE.SpriteMaterial;
+  texture: THREE.CanvasTexture;
+  startedAt: number;
+  startY: number;
+  durationMs: number;
+  verticalMotion: "classic" | "spring";
+  texWidth: number;
+  texHeight: number;
+  screenHeightPx: number;
+  /** Zoom-adaptive mining reward; re-rasterized when crossing compact threshold. */
+  miningReward?: {
+    amount: string;
+    color: string;
+    compact: boolean;
+  };
+};
 
 function findPrefixTerrainRemoved(
   oldPath: { x: number; z: number; layer: 0 | 1 }[],
@@ -1344,20 +1491,7 @@ export class Game {
   private readonly others = new Map<string, THREE.Group>();
   private readonly chatBubbleByAddress = new Map<string, ChatBubbleEntry>();
   private readonly typingIndicatorByAddress = new Map<string, TypingIndicatorEntry>();
-  private readonly floatingTexts = new Map<
-    string,
-    {
-      sprite: THREE.Sprite;
-      material: THREE.SpriteMaterial;
-      texture: THREE.CanvasTexture;
-      startedAt: number;
-      startY: number;
-      /** Total visible lifetime in ms (mining rewards use longer). */
-      durationMs: number;
-      /** `classic` = legacy ease-up + fade; `spring` = half-rise then damped settle. */
-      verticalMotion: "classic" | "spring";
-    }
-  >();
+  private readonly floatingTexts = new Map<string, FloatingTextEntry>();
   private readonly targetPos = new Map<string, THREE.Vector3>();
   // worldcup: seasonal soccer ball meshes + interpolation targets + goal frames
   private readonly worldcupBalls = new Map<string, THREE.Mesh>();
@@ -1378,6 +1512,9 @@ export class Game {
   // worldcup: floating "open to 1v1" Challenge badge above players who raised one.
   private readonly worldcupChallengeBubbles = new Map<string, THREE.Sprite>();
   private worldcupChallengeBubbleTex: THREE.CanvasTexture | null = null;
+  private worldcupChallengeBubbleAcceptTex: THREE.CanvasTexture | null = null;
+  /** Left-click / tap the accept tick to start a 1v1 without opening the player menu. */
+  private challengeAcceptHandler: ((targetAddress: string) => void) | null = null;
   /** Achievement Unlock Celebration: active trophy pops above avatars. */
   private readonly achievementCelebrationSprites: AchievementCelebrationSprite[] =
     [];
@@ -1387,6 +1524,12 @@ export class Game {
     ReturnType<typeof setTimeout>
   >();
   private achievementCelebrationTexture: THREE.CanvasTexture | null = null;
+  /** Cached `/branding/nimiq-nim-logo.svg` for mining reward floaters. */
+  private nimRewardLogo: HTMLImageElement | null = null;
+  private nimRewardLogoLoading = false;
+  private readonly nimRewardLogoWaiters: Array<
+    (img: HTMLImageElement | null) => void
+  > = [];
   /** worldcup: live 1v1 spectate portals in the current room (matchId = pitch room id). */
   private readonly worldcupPortals = new Map<
     string,
@@ -1585,6 +1728,8 @@ export class Game {
     z: number;
     y: number;
   } | null = null;
+  /** Live pillar tint while the teleporter hue ring is dragged (before server echo). */
+  private teleporterSelectionPreviewColorRgb: number | null = null;
   /** Tile coords for selection preview (gates need true tile for exit alignment). */
   private inspectorSelectionTileRef: { x: number; z: number; y: number } | null =
     null;
@@ -2011,6 +2156,10 @@ export class Game {
   private readonly billboardTimers = new Map<string, number>();
   /** Billboard tool: show footprint + ghost before modal. */
   private billboardPlacementPreview = false;
+  /** Teleporter tool: dim portal pillar instead of block mesh. */
+  private teleporterPlacementPreviewActive = false;
+  private teleporterPreviewPillarMesh: THREE.Mesh | null = null;
+  private teleporterPreviewPillarSig = "";
   private billboardPlacementDraft: {
     orientation: "horizontal" | "vertical";
     yawSteps: number;
@@ -2575,6 +2724,18 @@ export class Game {
       }
     }
     return this.getWorldScreenPosition(tileX, wy, tileZ);
+  }
+
+  /** Viewport coordinates for HUD pills anchored to a floor tile (e.g. teleporter Set). */
+  getTileViewportPosition(
+    tileX: number,
+    tileZ: number,
+    yOffset = 1.15
+  ): { x: number; y: number } | null {
+    const local = this.getTileScreenPosition(tileX, tileZ, yOffset);
+    if (!local) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    return { x: rect.left + local.x, y: rect.top + local.y };
   }
 
   /** Canvas-local screen position of the primary World Cup ball (id `"field"` when present). */
@@ -3423,6 +3584,7 @@ export class Game {
       this.applyOrthographicFrustum();
       this.applyIdenticonTransformToAllAvatars();
       this.refreshChatBubbleVerticalPositions();
+      this.refreshWorldcupChallengeBubbleLayouts();
       this.refreshAllTypingIndicatorLayouts();
       this.requestRender();
       return;
@@ -3447,6 +3609,7 @@ export class Game {
       this.applyOrthographicFrustum();
       this.refreshAllNameLabelScales();
       this.refreshChatBubbleVerticalPositions();
+      this.refreshWorldcupChallengeBubbleLayouts();
       this.refreshAllTypingIndicatorLayouts();
       this.finishTelescopeReturnZoomAnim();
       this.requestRender();
@@ -3905,6 +4068,101 @@ export class Game {
   private refreshAllNameLabelScales(): void {
     if (this.selfMesh) this.syncNameLabelScaleAndPosition(this.selfMesh);
     for (const [, g] of this.others) this.syncNameLabelScaleAndPosition(g);
+    this.refreshFloatingTextScales();
+  }
+
+  /** Zoomed out: two-decimal amount only; zoomed in: four decimals + NIM logo. */
+  private miningRewardUsesCompactLayout(): boolean {
+    return (
+      this.frustumSize >= (this.zoomMin + this.effectiveZoomMax()) * 0.5
+    );
+  }
+
+  private loadNimRewardLogo(
+    cb: (img: HTMLImageElement | null) => void
+  ): void {
+    if (
+      this.nimRewardLogo?.complete &&
+      this.nimRewardLogo.naturalWidth > 0
+    ) {
+      cb(this.nimRewardLogo);
+      return;
+    }
+    this.nimRewardLogoWaiters.push(cb);
+    if (this.nimRewardLogoLoading) return;
+    this.nimRewardLogoLoading = true;
+    const logo = new Image();
+    logo.crossOrigin = "anonymous";
+    logo.decoding = "async";
+    logo.src = NIM_REWARD_LOGO_SRC;
+    logo.addEventListener(
+      "load",
+      () => {
+        this.nimRewardLogo = logo;
+        this.nimRewardLogoLoading = false;
+        const waiters = this.nimRewardLogoWaiters.splice(0);
+        for (const w of waiters) w(logo);
+      },
+      { once: true }
+    );
+    logo.addEventListener(
+      "error",
+      () => {
+        this.nimRewardLogoLoading = false;
+        const waiters = this.nimRewardLogoWaiters.splice(0);
+        for (const w of waiters) w(null);
+      },
+      { once: true }
+    );
+  }
+
+  private syncFloatingTextScale(entry: FloatingTextEntry): void {
+    const worldH = this.pixelToWorldY(entry.screenHeightPx);
+    const worldW = worldH * (entry.texWidth / entry.texHeight);
+    entry.sprite.scale.set(worldW, worldH, 1);
+  }
+
+  private refreshFloatingTextScales(): void {
+    const compact = this.miningRewardUsesCompactLayout();
+    for (const [key, entry] of this.floatingTexts) {
+      const mr = entry.miningReward;
+      if (mr && mr.compact !== compact) {
+        mr.compact = compact;
+        this.rerasterizeMiningRewardEntry(key, entry);
+        continue;
+      }
+      this.syncFloatingTextScale(entry);
+    }
+  }
+
+  private rerasterizeMiningRewardEntry(
+    key: string,
+    entry: FloatingTextEntry
+  ): void {
+    const mr = entry.miningReward;
+    if (!mr) return;
+    const finish = (logo: HTMLImageSource | null): void => {
+      const still = this.floatingTexts.get(key);
+      if (!still || still !== entry || !still.miningReward) return;
+      const { canvas, screenHeightPx } = rasterMiningRewardFloatingCanvas(
+        mr.amount,
+        mr.color,
+        mr.compact,
+        mr.compact ? null : logo
+      );
+      still.texture.image = canvas;
+      still.texture.needsUpdate = true;
+      still.texWidth = canvas.width;
+      still.texHeight = canvas.height;
+      still.screenHeightPx = screenHeightPx;
+      this.syncFloatingTextScale(still);
+      this.requestRender(250);
+    };
+    if (mr.compact) {
+      finish(null);
+      return;
+    }
+    this.loadNimRewardLogo((logo) => finish(logo));
   }
 
   private updateAvatarNameLabelHeight(g: THREE.Group): void {
@@ -3927,6 +4185,7 @@ export class Game {
       this.syncChatBubbleScaleAndPosition(entry);
     }
     this.refreshAchievementCelebrationLayouts();
+    this.refreshWorldcupChallengeBubbleLayouts();
   }
 
   /** Keeps chat bubbles near constant on-screen size at any orthographic zoom (like name labels). */
@@ -3962,6 +4221,20 @@ export class Game {
     const ch = worldH;
     const gapAboveAvatar = 0.12;
     entry.sprite.position.y = avatarTop + gapAboveAvatar + ch / 2;
+  }
+
+  /** Keeps 1v1 Challenge badges near constant on-screen size at any orthographic zoom (like chat bubbles). */
+  private refreshWorldcupChallengeBubbleLayouts(): void {
+    for (const [addr, bubble] of this.worldcupChallengeBubbles) {
+      const g =
+        this.compactWalletKey(addr) === this.compactWalletKey(this.selfAddress)
+          ? this.selfMesh
+          : this.others.get(addr) ?? null;
+      if (!g || bubble.parent !== g) continue;
+      const withAccept =
+        typeof bubble.userData["challengeAcceptAddress"] === "string";
+      this.layoutWorldcupChallengeBubbleSprites(bubble, withAccept);
+    }
   }
 
   /** Large rooms need an asymmetric ortho frustum when zoomed out - symmetric half-extent clips the south diamond tip. */
@@ -5019,6 +5292,11 @@ export class Game {
   ): void {
     this.otherPlayerContextOpener = handler;
     if (!handler) this.clearOtherProfileTouchSession();
+  }
+
+  /** Left-click the green tick on another player's open 1v1 Challenge badge. */
+  setChallengeAcceptHandler(handler: ((targetAddress: string) => void) | null): void {
+    this.challengeAcceptHandler = handler;
   }
 
   setGateContextOpener(
@@ -6615,10 +6893,7 @@ export class Game {
     let size: THREE.Vector3;
     const center = new THREE.Vector3();
     if (!g) {
-      if (
-        !meta ||
-        !this.plainCubeInstancedTileKeys.has(this.selectedBlockKey)
-      ) {
+      if (!meta) {
         this.selectionOutline.visible = false;
         this.refreshTeleporterLinkHighlight();
         return;
@@ -6627,11 +6902,22 @@ export class Game {
       const wx = parts[0]!;
       const wz = parts[1]!;
       const wyLevel = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
-      const h = this.obstacleHeight(meta);
-      center.set(wx, wyLevel * BLOCK_SIZE + (h * vis) / 2, wz);
-      const foot = BLOCK_SIZE * vis;
-      const sy = h * vis + padding;
-      size = new THREE.Vector3(foot + padding, sy, foot + padding);
+      if (this.plainCubeInstancedTileKeys.has(this.selectedBlockKey)) {
+        const h = this.obstacleHeight(meta);
+        center.set(wx, wyLevel * BLOCK_SIZE + (h * vis) / 2, wz);
+        const foot = BLOCK_SIZE * vis;
+        const sy = h * vis + padding;
+        size = new THREE.Vector3(foot + padding, sy, foot + padding);
+      } else if (meta.teleporter) {
+        const pillarH = TERRAIN_TILE_DOOR_MARKER_HEIGHT + 0.01;
+        center.set(wx, wyLevel * BLOCK_SIZE + pillarH / 2, wz);
+        const foot = BLOCK_SIZE * vis;
+        size = new THREE.Vector3(foot + padding, pillarH + padding, foot + padding);
+      } else {
+        this.selectionOutline.visible = false;
+        this.refreshTeleporterLinkHighlight();
+        return;
+      }
     } else if (meta?.pyramid) {
       const h = this.obstacleHeight(meta);
       center.copy(g.position);
@@ -6797,6 +7083,13 @@ export class Game {
     if (!active) {
       this.clearBillboardFootprintPreviewTiles();
       this.removeBillboardInteractGhost();
+    }
+  }
+
+  setTeleporterPlacementPreviewActive(active: boolean): void {
+    this.teleporterPlacementPreviewActive = active;
+    if (!active) {
+      this.clearTeleporterPlacementPreview();
     }
   }
 
@@ -8671,6 +8964,32 @@ export class Game {
     return false;
   }
 
+  /** Lowest stacked teleporter on a floor tile (pending portals have no block pick mesh). */
+  private getTeleporterBlockKeyAtTile(x: number, z: number): string | null {
+    for (let y = 0; y <= 2; y++) {
+      const k = `${x},${z},${y}`;
+      if (this.placedObjects.get(k)?.teleporter) return k;
+    }
+    return null;
+  }
+
+  private canPlaceTeleporterAtTile(x: number, z: number, yLevel: number): boolean {
+    if (yLevel > 1) return false;
+    if (this.getTeleporterBlockKeyAtTile(x, z)) return false;
+    if (this.hubNoBuildTile(x, z)) return false;
+    if (!this.tileWalkable({ x, y: z })) return false;
+    if (yLevel === 0) {
+      const prefix = `${x},${z},`;
+      for (const k of this.placedObjects.keys()) {
+        if (k.startsWith(prefix)) return false;
+      }
+      return true;
+    }
+    const below = this.placedObjects.get(`${x},${z},0`);
+    if (!below || below.teleporter) return false;
+    return true;
+  }
+
   private nextOpenLevelAt(x: number, z: number): number | null {
     const used = new Set<number>();
     const prefix = `${x},${z},`;
@@ -8760,7 +9079,14 @@ export class Game {
     const dx = here.x - dest.x;
     const dz = here.y - dest.y;
     if (Math.hypot(dx, dz) > this.placeRadiusBlocks + 1e-6) return null;
-    if (this.nextOpenLevelAt(dest.x, dest.y) === null) return null;
+    const yOpen = this.nextOpenLevelAt(dest.x, dest.y);
+    if (yOpen === null) return null;
+    if (
+      this.teleporterPlacementPreviewActive &&
+      !this.canPlaceTeleporterAtTile(dest.x, dest.y, yOpen)
+    ) {
+      return null;
+    }
     if (this.hubNoBuildTile(dest.x, dest.y)) return null;
     if (here.x === dest.x && here.y === dest.y) return null;
     return { x: dest.x, z: dest.y };
@@ -8822,6 +9148,7 @@ export class Game {
   private clearPlacementPreview(): void {
     this.placementPreviewAnchor = null;
     this.placementPreviewStyleSig = "";
+    this.clearTeleporterPlacementPreview();
     if (this.placementPreviewGroup) {
       this.scene.remove(this.placementPreviewGroup);
       this.placementPreviewGroup.traverse((child: THREE.Object3D) => {
@@ -9190,7 +9517,67 @@ export class Game {
     this.clearRepositionObstacleGhost();
   }
 
+  private clearTeleporterPlacementPreview(): void {
+    this.teleporterPreviewPillarSig = "";
+    if (this.teleporterPreviewPillarMesh) {
+      this.scene.remove(this.teleporterPreviewPillarMesh);
+      this.teleporterPreviewPillarMesh.geometry.dispose();
+      (this.teleporterPreviewPillarMesh.material as THREE.Material).dispose();
+      this.teleporterPreviewPillarMesh = null;
+    }
+  }
+
+  private syncTeleporterPlacementPreviewAt(
+    wx: number,
+    wz: number,
+    wyLevel: number
+  ): void {
+    if (this.placementPreviewGroup) {
+      this.scene.remove(this.placementPreviewGroup);
+      this.placementPreviewGroup.traverse((child: THREE.Object3D) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          (child.material as THREE.Material).dispose();
+        }
+      });
+      this.placementPreviewGroup = null;
+      this.placementPreviewStyleSig = "";
+    }
+    const valid = this.canPlaceTeleporterAtTile(wx, wz, wyLevel);
+    if (!valid) {
+      if (this.teleporterPreviewPillarMesh) {
+        this.teleporterPreviewPillarMesh.visible = false;
+      }
+      this.placementPreviewAnchor = null;
+      return;
+    }
+    const colorRgb = this.placementColorRgb;
+    const sig = `tp|${colorRgb}|${this.blockVisualScale}`;
+    if (!this.teleporterPreviewPillarMesh || this.teleporterPreviewPillarSig !== sig) {
+      this.clearTeleporterPlacementPreview();
+      this.teleporterPreviewPillarSig = sig;
+      this.teleporterPreviewPillarMesh = this.createPortalPillarMesh(wx, wz, {
+        dim: true,
+        pillarColorRgb: colorRgb,
+      });
+      this.scene.add(this.teleporterPreviewPillarMesh);
+    } else {
+      this.teleporterPreviewPillarMesh.position.set(
+        wx,
+        0.01 + TERRAIN_TILE_DOOR_MARKER_HEIGHT / 2,
+        wz
+      );
+      this.teleporterPreviewPillarMesh.visible = true;
+    }
+    this.placementPreviewAnchor = { x: wx, z: wz, y: wyLevel };
+  }
+
   private syncPlacementPreviewAt(wx: number, wz: number, wyLevel: number): void {
+    if (this.teleporterPlacementPreviewActive) {
+      this.syncTeleporterPlacementPreviewAt(wx, wz, wyLevel);
+      return;
+    }
+    this.clearTeleporterPlacementPreview();
     const meta = this.placementPreviewMetaForNewBlock();
     const sig = this.placementPreviewStyleSignature(meta);
     const h = this.obstacleHeight(meta);
@@ -10174,6 +10561,39 @@ export class Game {
     return out;
   }
 
+  /** worldcup: address of the player whose Challenge accept tick was hit, if any. */
+  private pickChallengeAcceptAt(clientX: number, clientY: number): string | null {
+    if (this.worldcupChallengeBubbles.size === 0) return null;
+    this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    const { tickCx, tickCy, tickR, w, h } = Game.CHALLENGE_BUBBLE_ACCEPT_CANVAS;
+    const hitSlopPx = 10;
+    let best: { addr: string; dist: number } | null = null;
+    const wp = new THREE.Vector3();
+    for (const [addr, bubble] of this.worldcupChallengeBubbles) {
+      const acceptAddr = bubble.userData["challengeAcceptAddress"];
+      if (typeof acceptAddr !== "string" || !acceptAddr.trim()) continue;
+      bubble.updateWorldMatrix(true, false);
+      bubble.getWorldPosition(wp);
+      const local = this.getWorldScreenPosition(wp.x, wp.y, wp.z);
+      if (!local) continue;
+      const cx = rect.left + local.x;
+      const cy = rect.top + local.y;
+      const screenH = (bubble.scale.y / this.frustumSize) * rect.height;
+      const screenW = (bubble.scale.x / this.frustumSize) * rect.height;
+      const tickScreenX = cx + (tickCx / w - 0.5) * screenW;
+      const tickScreenY = cy + (tickCy / h - 0.5) * screenH;
+      const tickScreenR = (tickR / h) * screenH + hitSlopPx;
+      const dist = Math.hypot(clientX - tickScreenX, clientY - tickScreenY);
+      if (dist <= tickScreenR && (!best || dist < best.dist)) {
+        best = { addr: acceptAddr, dist };
+      }
+    }
+    return best?.addr ?? null;
+  }
+
   private pickBlockKey(clientX: number, clientY: number): string | null {
     if (!this.updateNdc(clientX, clientY)) return null;
     this.camera.updateMatrixWorld();
@@ -10577,6 +10997,20 @@ export class Game {
     if (!this.selfMesh) return;
 
     if (
+      e.button === 0 &&
+      this.challengeAcceptHandler &&
+      WORLDCUP_ENABLED_CLIENT
+    ) {
+      const acceptAddr = this.pickChallengeAcceptAt(e.clientX, e.clientY);
+      if (acceptAddr) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.challengeAcceptHandler(acceptAddr);
+        return;
+      }
+    }
+
+    if (
       e.pointerType === "touch" &&
       !this.teleporterDestPickHandler &&
       !this.repositionFrom
@@ -10966,6 +11400,17 @@ export class Game {
       
       const placeT = this.tryBuildPlacementFloorTile(e.clientX, e.clientY);
       if (!placeT) return;
+      const teleporterKey = this.getTeleporterBlockKeyAtTile(
+        placeT.x,
+        placeT.z
+      );
+      if (teleporterKey) {
+        const [tx, tz, tyRaw] = teleporterKey.split(",").map(Number);
+        const ty = Number.isFinite(tyRaw) ? Math.floor(tyRaw ?? 0) : 0;
+        this.setSelectedBlockKey(teleporterKey);
+        this.obstacleSelectHandler?.(tx!, tz!, ty);
+        return;
+      }
       const yOpen = this.nextOpenLevelAt(placeT.x, placeT.z);
       if (yOpen === null) return;
       if (e.pointerType === "touch") {
@@ -11151,6 +11596,7 @@ export class Game {
     this.clearOtherProfileTouchSession();
     this.selfQuickEmojiOpener = null;
     this.otherPlayerContextOpener = null;
+    this.challengeAcceptHandler = null;
     this.worldTileContextOpener = null;
     this.gateDoubleOpenHandler = null;
     if (this.selfMesh) {
@@ -11533,9 +11979,13 @@ export class Game {
   private createPortalPillarMesh(
     wx: number,
     wz: number,
-    opts?: { dim?: boolean }
+    opts?: { dim?: boolean; pillarColorRgb?: number }
   ): THREE.Mesh {
     const dim = opts?.dim ?? false;
+    const pillarRgb =
+      opts?.pillarColorRgb !== undefined
+        ? resolveBlockColorRgb({ colorRgb: opts.pillarColorRgb })
+        : TERRAIN_TILE_DOOR_MARKER_COLOR;
     const markerGeom = new THREE.BoxGeometry(
       TERRAIN_TILE_DOOR_MARKER_SIZE,
       TERRAIN_TILE_DOOR_MARKER_HEIGHT,
@@ -11546,7 +11996,7 @@ export class Game {
       depthWrite: false,
       uniforms: {
         uColor: {
-          value: new THREE.Color(TERRAIN_TILE_DOOR_MARKER_COLOR),
+          value: new THREE.Color(pillarRgb),
         },
         uHeight: { value: TERRAIN_TILE_DOOR_MARKER_HEIGHT },
         uAlphaBottom: {
@@ -11615,30 +12065,43 @@ export class Game {
   }
 
   private syncTeleporterMarkers(): void {
-    const want = new Map<string, boolean>();
+    const want = new Map<string, { dim: boolean; colorRgb: number }>();
     for (const [k, meta] of this.placedObjects) {
       const tp = meta.teleporter;
+      const colorRgb = resolveTeleporterPillarColorRgb(meta);
       if (this.isActiveTeleporterPortal(tp)) {
-        want.set(k, false);
+        want.set(k, { dim: false, colorRgb });
       } else if (this.isPendingTeleporterPortal(tp)) {
-        want.set(k, true);
+        want.set(k, { dim: true, colorRgb });
       }
     }
-    for (const [k, dim] of want) {
+    for (const [k, spec] of want) {
       const parts = k.split(",").map(Number);
       const wx = parts[0]!;
       const wz = parts[1]!;
       const existing = this.teleporterMarkerMeshes.get(k);
       const existingDim = existing?.userData["tpDim"] === true;
-      if (existing && existingDim === dim) continue;
+      const existingColor = existing?.userData["tpColorRgb"] as number | undefined;
+      if (
+        existing &&
+        existingDim === spec.dim &&
+        existingColor === spec.colorRgb
+      ) {
+        continue;
+      }
       if (existing) {
         this.scene.remove(existing);
         existing.geometry.dispose();
         (existing.material as THREE.Material).dispose();
         this.teleporterMarkerMeshes.delete(k);
       }
-      const m = this.createPortalPillarMesh(wx, wz, { dim });
-      m.userData.tpDim = dim;
+      const m = this.createPortalPillarMesh(wx, wz, {
+        dim: spec.dim,
+        pillarColorRgb: spec.colorRgb,
+      });
+      m.userData.tpDim = spec.dim;
+      m.userData.tpColorRgb = spec.colorRgb;
+      m.userData["tileKey"] = k;
       this.scene.add(m);
       this.teleporterMarkerMeshes.set(k, m);
     }
@@ -11652,7 +12115,7 @@ export class Game {
     }
     const sig = [...want.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, dim]) => `${k}:${dim ? "p" : "a"}`)
+      .map(([k, spec]) => `${k}:${spec.dim ? "p" : "a"}:${spec.colorRgb}`)
       .join("|");
     if (sig !== this.teleporterPortalFloorSig) {
       this.teleporterPortalFloorSig = sig;
@@ -11914,6 +12377,9 @@ export class Game {
       this.blockPickRootsBuf.push(g);
     }
     for (const m of this.plainCubeInstancedMeshes) {
+      this.blockPickRootsBuf.push(m);
+    }
+    for (const m of this.teleporterMarkerMeshes.values()) {
       this.blockPickRootsBuf.push(m);
     }
     return this.blockPickRootsBuf;
@@ -12602,7 +13068,7 @@ export class Game {
         }
         continue;
       }
-      if (this.isPendingTeleporterPortal(metaRaw.teleporter)) {
+      if (metaRaw.teleporter) {
         if (g) {
           this.scene.remove(g);
           disposePlacedBlockGroupContents(g);
@@ -14111,6 +14577,7 @@ export class Game {
       this.applyOrthographicFrustum();
       this.refreshAllNameLabelScales();
       this.refreshChatBubbleVerticalPositions();
+      this.refreshWorldcupChallengeBubbleLayouts();
       this.refreshAllTypingIndicatorLayouts();
       if (t >= 1) {
         this.zoomFrustumAnim = null;
@@ -14143,6 +14610,7 @@ export class Game {
       this.applyOrthographicFrustum();
       this.applyIdenticonTransformToAllAvatars();
       this.refreshChatBubbleVerticalPositions();
+      this.refreshWorldcupChallengeBubbleLayouts();
       this.refreshAllTypingIndicatorLayouts();
       if (t >= 1) this.streamCameraPoseAnim = null;
       this.requestRender();
@@ -14376,11 +14844,14 @@ export class Game {
     z: number,
     canvas: HTMLCanvasElement,
     durationMs: number,
-    motion: "classic" | "spring"
+    motion: "classic" | "spring",
+    screenHeightPx: number,
+    miningReward?: FloatingTextEntry["miningReward"]
   ): void {
     const w = canvas.width;
     const h = canvas.height;
     const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
     texture.needsUpdate = true;
 
     const material = new THREE.SpriteMaterial({
@@ -14397,12 +14868,7 @@ export class Game {
     const startY = blockHeight + 0.5;
     sprite.position.set(x, startY, z);
 
-    const scale = 1.5;
-    sprite.scale.set(scale, scale * (h / w), 1);
-
-    this.scene.add(sprite);
-
-    this.floatingTexts.set(mapKey, {
+    const entry: FloatingTextEntry = {
       sprite,
       material,
       texture,
@@ -14410,7 +14876,16 @@ export class Game {
       startY,
       durationMs,
       verticalMotion: motion,
-    });
+      texWidth: w,
+      texHeight: h,
+      screenHeightPx,
+      miningReward,
+    };
+    this.syncFloatingTextScale(entry);
+
+    this.scene.add(sprite);
+
+    this.floatingTexts.set(mapKey, entry);
   }
 
   /** Plain floating label (no NIM logo); `mapKey` must be unique unless intentionally replacing a slot. */
@@ -14420,29 +14895,27 @@ export class Game {
     z: number,
     label: string,
     color: string,
-    verticalMotion: "classic" | "spring"
+    verticalMotion: "classic" | "spring",
+    emphasis = false
   ): void {
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d")!;
-    ctx.font = "bold 32px 'Muli', sans-serif";
-    const metrics = ctx.measureText(label);
-    const padX =
-      40 +
-      FLOATING_REWARD_TEXT_OUTLINE_PX * 2 +
-      FLOATING_REWARD_TEXT_SHADOW_PAD * 2;
-    const w = Math.ceil(metrics.width + padX);
-    const h = 72;
-    canvas.width = w;
-    canvas.height = h;
-    ctx.font = "bold 32px 'Muli', sans-serif";
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
-    fillTextWithWhiteOutline(ctx, label, w / 2, h / 2, color);
+    const { canvas, screenHeightPx } = rasterPlainFloatingCanvas(
+      label,
+      color,
+      emphasis
+    );
     const dur =
       verticalMotion === "spring"
         ? FLOATING_SPRING_DURATION_MS
         : FLOATING_REWARD_DEFAULT_DURATION_MS;
-    this.addFloatingTextFromCanvas(mapKey, x, z, canvas, dur, verticalMotion);
+    this.addFloatingTextFromCanvas(
+      mapKey,
+      x,
+      z,
+      canvas,
+      dur,
+      verticalMotion,
+      screenHeightPx
+    );
   }
 
   private removeFloatingTextEntry(key: string): void {
@@ -14505,8 +14978,8 @@ export class Game {
   }
 
   /**
-   * Shows a floating text popup at a world position (e.g., "+1 NIM" or "+0.48" + NIM logo).
-   * `nimLogo` uses `/branding/nimiq-nim-logo.svg`.
+   * Shows a floating text popup at a world position (e.g., "+1.0000" + NIM logo on mine).
+   * Mining rewards (`nimLogo`) use Fira Mono, screen-fixed scale, and zoom-adaptive layout.
    */
   showFloatingText(
     x: number,
@@ -14517,37 +14990,38 @@ export class Game {
       nimLogo?: boolean;
       /** Default: spring for plain text, classic when `nimLogo` is true. */
       verticalMotion?: "classic" | "spring";
+      /** Slightly larger plain label (screen-fixed). */
+      plainEmphasis?: boolean;
     }
   ): void {
     const key = `${x},${z},${Date.now()}`;
     const nimLogo = Boolean(opts?.nimLogo);
+    const plainEmphasis = Boolean(opts?.plainEmphasis);
     const verticalMotion =
       opts?.verticalMotion ?? (nimLogo ? "classic" : "spring");
-    const label =
-      nimLogo ? text.replace(/\s*NIM\s*$/i, "").trim() : text;
 
     const drawPlain = (): void => {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d")!;
-      ctx.font = "bold 32px 'Muli', sans-serif";
-      const metrics = ctx.measureText(label);
-      const padX =
-        40 +
-        FLOATING_REWARD_TEXT_OUTLINE_PX * 2 +
-        FLOATING_REWARD_TEXT_SHADOW_PAD * 2;
-      const w = Math.ceil(metrics.width + padX);
-      const h = 72;
-      canvas.width = w;
-      canvas.height = h;
-      ctx.font = "bold 32px 'Muli', sans-serif";
-      ctx.textBaseline = "middle";
-      ctx.textAlign = "center";
-      fillTextWithWhiteOutline(ctx, label, w / 2, h / 2, color);
+      const label = nimLogo
+        ? text.replace(/\s*NIM\s*$/i, "").trim()
+        : text;
+      const { canvas, screenHeightPx } = rasterPlainFloatingCanvas(
+        label,
+        color,
+        plainEmphasis
+      );
       const dur =
         verticalMotion === "spring"
           ? FLOATING_SPRING_DURATION_MS
           : FLOATING_REWARD_DEFAULT_DURATION_MS;
-      this.addFloatingTextFromCanvas(key, x, z, canvas, dur, verticalMotion);
+      this.addFloatingTextFromCanvas(
+        key,
+        x,
+        z,
+        canvas,
+        dur,
+        verticalMotion,
+        screenHeightPx
+      );
     };
 
     if (!nimLogo) {
@@ -14555,95 +15029,36 @@ export class Game {
       return;
     }
 
-    const logo = new Image();
-    logo.crossOrigin = "anonymous";
-    logo.decoding = "async";
-    logo.src = "/branding/nimiq-nim-logo.svg";
-
-    const drawWithLogo = (): void => {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d")!;
-      const font = FLOATING_REWARD_MINING_FONT;
-      ctx.font = font;
-      const tw = ctx.measureText(label).width;
-      const logoH = FLOATING_REWARD_MINING_LOGO_H;
-      const gap = FLOATING_REWARD_MINING_GAP;
-      let logoW = 0;
-      if (logo.naturalWidth > 0 && logo.naturalHeight > 0) {
-        logoW = (logo.naturalWidth / logo.naturalHeight) * logoH;
-      }
-      const padX =
-        36 +
-        FLOATING_REWARD_MINING_TEXT_OUTLINE_PX * 2 +
-        FLOATING_REWARD_TEXT_SHADOW_PAD * 2;
-      const innerW = tw + (logoW > 0 ? gap + logoW : 0);
-      const w = Math.ceil(innerW + padX);
-      const h = FLOATING_REWARD_MINING_CANVAS_H;
-      canvas.width = w;
-      canvas.height = h;
-
-      ctx.font = font;
-      ctx.textBaseline = "middle";
-      ctx.textAlign = "left";
-      const cx = (w - innerW) / 2;
-      const midY = h / 2;
-
-      fillTextWithWhiteOutline(
-        ctx,
-        label,
-        cx,
-        midY,
-        color,
-        FLOATING_REWARD_MINING_TEXT_OUTLINE_PX
-      );
-
-      if (logoW > 0) {
-        const lx = cx + tw + gap;
-        const ly = midY - logoH / 2;
-        try {
-          drawImageWithWhiteOutline(
-            ctx,
-            logo,
-            lx,
-            ly,
-            logoW,
-            logoH,
-            FLOATING_REWARD_MINING_LOGO_OUTLINE_PX
-          );
-        } catch {
-          /* ignore draw errors */
-        }
-      }
-
-      this.addFloatingTextFromCanvas(
-        key,
-        x,
-        z,
-        canvas,
-        FLOATING_REWARD_MINING_DURATION_MS,
-        verticalMotion
-      );
-    };
-
-    if (logo.complete && logo.naturalWidth > 0) {
-      drawWithLogo();
+    const amount = parseMiningRewardAmount(text);
+    if (!amount) {
+      drawPlain();
       return;
     }
 
-    logo.addEventListener(
-      "load",
-      () => {
-        drawWithLogo();
-      },
-      { once: true }
-    );
-    logo.addEventListener(
-      "error",
-      () => {
-        drawPlain();
-      },
-      { once: true }
-    );
+    const compact = this.miningRewardUsesCompactLayout();
+    const spawnMining = (): void => {
+      this.loadNimRewardLogo((logo) => {
+        const { canvas, screenHeightPx } = rasterMiningRewardFloatingCanvas(
+          amount,
+          color,
+          compact,
+          compact ? null : logo
+        );
+        this.addFloatingTextFromCanvas(
+          key,
+          x,
+          z,
+          canvas,
+          FLOATING_REWARD_MINING_DURATION_MS,
+          verticalMotion,
+          screenHeightPx,
+          { amount, color, compact }
+        );
+        this.requestRender(250);
+      });
+    };
+
+    spawnMining();
   }
 
   private updateFloatingTexts(): void {
@@ -14863,10 +15278,46 @@ export class Game {
     if (active) this.requestRender(50);
   }
 
+  private static readonly CHALLENGE_BUBBLE_CANVAS = { w: 256, h: 96 } as const;
+  /** On-screen height for Challenge badges (matches chat-bubble zoom compensation). */
+  private static readonly CHALLENGE_BUBBLE_SCREEN_HEIGHT_PX = 34;
+  /** Wider badge with the accept tick drawn inside, to the right of the label. */
+  private static readonly CHALLENGE_BUBBLE_ACCEPT_CANVAS = {
+    w: 340,
+    h: 96,
+    tickCx: 286,
+    tickCy: 41,
+    tickR: 26,
+  } as const;
+
+  private drawWorldcupChallengeAcceptTick(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    r: number
+  ): void {
+    ctx.fillStyle = "#22c55e";
+    ctx.strokeStyle = "#14532d";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = Math.max(6, Math.round(r * 0.32));
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.62, cy + r * 0.06);
+    ctx.lineTo(cx - r * 0.12, cy + r * 0.58);
+    ctx.lineTo(cx + r * 0.78, cy - r * 0.52);
+    ctx.stroke();
+  }
+
   private worldcupChallengeBubbleTexture(): THREE.CanvasTexture {
     if (this.worldcupChallengeBubbleTex) return this.worldcupChallengeBubbleTex;
-    const w = 256;
-    const h = 96;
+    const w = Game.CHALLENGE_BUBBLE_CANVAS.w;
+    const h = Game.CHALLENGE_BUBBLE_CANVAS.h;
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
@@ -14904,6 +15355,46 @@ export class Game {
     return tex;
   }
 
+  private worldcupChallengeBubbleAcceptTexture(): THREE.CanvasTexture {
+    if (this.worldcupChallengeBubbleAcceptTex) return this.worldcupChallengeBubbleAcceptTex;
+    const { w, h, tickCx, tickCy, tickR } = Game.CHALLENGE_BUBBLE_ACCEPT_CANVAS;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+    const r = 22;
+    ctx.fillStyle = "rgba(20,22,30,0.92)";
+    ctx.strokeStyle = "#18e0ff";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(r + 3, 6);
+    ctx.arcTo(w - 3, 6, w - 3, h - 16, r);
+    ctx.arcTo(w - 3, h - 16, 3, h - 16, r);
+    ctx.arcTo(3, h - 16, 3, 6, r);
+    ctx.arcTo(3, 6, w - 3, 6, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "rgba(20,22,30,0.92)";
+    ctx.beginPath();
+    ctx.moveTo(w / 2 - 12, h - 17);
+    ctx.lineTo(w / 2 + 12, h - 17);
+    ctx.lineTo(w / 2, h - 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#eaf6ff";
+    ctx.font = "bold 44px system-ui, 'Segoe UI Emoji', sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("\u26BD 1v1?", 22, (h - 14) / 2 + 4);
+    this.drawWorldcupChallengeAcceptTick(ctx, tickCx, tickCy, tickR);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    this.worldcupChallengeBubbleAcceptTex = tex;
+    return tex;
+  }
+
   private removeWorldcupChallengeBubble(addr: string): void {
     const sprite = this.worldcupChallengeBubbles.get(addr);
     if (!sprite) return;
@@ -14912,7 +15403,23 @@ export class Game {
     // The badge texture is shared across players + reused - never dispose it here.
     sm.map = null;
     sm.dispose();
+    delete sprite.userData["challengeAcceptAddress"];
     this.worldcupChallengeBubbles.delete(addr);
+  }
+
+  private layoutWorldcupChallengeBubbleSprites(
+    bubble: THREE.Sprite,
+    withAccept: boolean
+  ): void {
+    const canvas = withAccept
+      ? Game.CHALLENGE_BUBBLE_ACCEPT_CANVAS
+      : Game.CHALLENGE_BUBBLE_CANVAS;
+    const worldH = this.pixelToWorldY(Game.CHALLENGE_BUBBLE_SCREEN_HEIGHT_PX);
+    const mainW = worldH * (canvas.w / canvas.h);
+    bubble.scale.set(mainW, worldH, 1);
+    const avatarTop = this.avatarIdenticonWorldDiameter();
+    const centerY = avatarTop + this.pixelToWorldY(30) + worldH * 0.5;
+    bubble.position.set(0, centerY, 0);
   }
 
   private syncWorldcupChallengeBubble(g: THREE.Group, p: PlayerState): void {
@@ -14924,9 +15431,14 @@ export class Game {
       return;
     }
     let sprite = this.worldcupChallengeBubbles.get(addr);
+    const isSelf =
+      this.compactWalletKey(addr) === this.compactWalletKey(this.selfAddress);
+    const withAccept = !isSelf;
     if (!sprite) {
       const mat = new THREE.SpriteMaterial({
-        map: this.worldcupChallengeBubbleTexture(),
+        map: withAccept
+          ? this.worldcupChallengeBubbleAcceptTexture()
+          : this.worldcupChallengeBubbleTexture(),
         transparent: true,
         depthWrite: false,
         depthTest: false,
@@ -14938,10 +15450,12 @@ export class Game {
       g.add(sprite);
       this.worldcupChallengeBubbles.set(addr, sprite);
     }
-    const worldH = this.pixelToWorldY(34);
-    sprite.scale.set(worldH * (256 / 96), worldH, 1);
-    const avatarTop = this.avatarIdenticonWorldDiameter();
-    sprite.position.set(0, avatarTop + this.pixelToWorldY(30) + worldH * 0.5, 0);
+    if (withAccept) {
+      sprite.userData["challengeAcceptAddress"] = addr;
+    } else {
+      delete sprite.userData["challengeAcceptAddress"];
+    }
+    this.layoutWorldcupChallengeBubbleSprites(sprite, withAccept);
   }
 
   private refreshAllTypingIndicatorLayouts(): void {
@@ -15310,7 +15824,7 @@ export class Game {
           ? this.getPlacedAt(tRef.x, tRef.z, tRef.y)
           : null;
       const blockSig = placed
-        ? this.inspectorTilePreviewSignature(placed)
+        ? `${this.inspectorTilePreviewSignature(placed)}|${resolveTeleporterPillarColorRgb(placed)}|${this.teleporterSelectionPreviewColorRgb ?? ""}`
         : "none";
       const sig = `tp_sel|${pending ? "off" : "on"}|${
         tRef !== null ? `${tRef.x},${tRef.z},${tRef.y}|` : ""
@@ -15320,7 +15834,17 @@ export class Game {
         this.resetInspectorPreviewBlockSlot(port);
         this.applyInspectorPreviewFloorPortalGlow(port, !pending);
         port.blockSlot.position.set(0, 0, 0);
-        port.blockSlot.add(this.createPortalPillarMesh(0, 0, { dim: pending }));
+        const pillarColor =
+          this.teleporterSelectionPreviewColorRgb ??
+          (placed
+            ? resolveTeleporterPillarColorRgb(placed)
+            : TELEPORTER_DEFAULT_PILLAR_COLOR_RGB);
+        port.blockSlot.add(
+          this.createPortalPillarMesh(0, 0, {
+            dim: pending,
+            pillarColorRgb: pillarColor,
+          })
+        );
       }
       const r = port.canvas.getBoundingClientRect();
       if (r.width < 2 || r.height < 2) return;
@@ -16076,6 +16600,7 @@ export class Game {
       this.inspectorSelectionBillboardId = null;
       this.inspectorSelectionTeleporterPending = false;
       this.inspectorSelectionTeleporterTileRef = null;
+      this.teleporterSelectionPreviewColorRgb = null;
       this.inspectorSelectionObstacle = null;
       this.inspectorSelectionTileRef = null;
     } else {
@@ -16093,6 +16618,34 @@ export class Game {
         z: opts.tileZ,
         y: opts.tileY,
       };
+    }
+    if (this.inspectorSelectionPort) {
+      this.inspectorSelectionPort.lastSig = "";
+    }
+    this.renderInspectorTilePreview("selection");
+  }
+
+  /** Live pillar recolor while the teleporter hue ring is adjusted. */
+  previewTeleporterPillarColorAt(
+    tileX: number,
+    tileZ: number,
+    tileY: number,
+    colorRgb: number
+  ): void {
+    const rgb = resolveTeleporterPillarColorRgb({
+      teleporter: {},
+      colorRgb,
+    });
+    this.teleporterSelectionPreviewColorRgb = rgb;
+    const k = `${tileX},${tileZ},${tileY}`;
+    const marker = this.teleporterMarkerMeshes.get(k);
+    if (marker) {
+      const mat = marker.material as THREE.ShaderMaterial;
+      if (mat.uniforms?.uColor?.value instanceof THREE.Color) {
+        mat.uniforms.uColor.value.setHex(rgb);
+      }
+      marker.userData.tpColorRgb = rgb;
+      this.requestRender(120);
     }
     if (this.inspectorSelectionPort) {
       this.inspectorSelectionPort.lastSig = "";

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { hueBucketFromColorRgb } from "../src/worldcraftAchievementEvaluator.js";
 
 async function withAchievementStore(
   fn: (mod: typeof import("../src/achievementStore.js")) => void | Promise<void>
@@ -844,7 +845,7 @@ test("worldcraft room maker deluxe composite unlocks once furnished", async () =
     recordRoomCreatedForDeluxe(WALLET, roomId, (u) => unlocks.push(...u));
     recordRoomJoinSpawnForDeluxe(WALLET, roomId, (u) => unlocks.push(...u));
     for (let i = 0; i < 25; i += 1) {
-      recordOwnedRoomBlockPlaced(WALLET, roomId, (u) => unlocks.push(...u));
+      recordOwnedRoomBlockPlaced(WALLET, roomId, 0xff0000, (u) => unlocks.push(...u));
     }
     for (let i = 0; i < 5; i += 1) {
       recordFloorRecolored(
@@ -1110,5 +1111,78 @@ test("field goal extensions unlock rush hour, underdog, and daily streak", async
     );
     assert.equal(streak3?.completed, true);
     assert.equal(streak3?.progress, 3);
+  });
+});
+
+test("ap threshold milestones unlock at 500 and 1000 points", async () => {
+  await withAchievementStore(async ({
+    bumpAchievementCounter,
+    getAchievementsForWallet,
+  }) => {
+    bumpAchievementCounter(WALLET, "blocks_mined", 500);
+    bumpAchievementCounter(WALLET, "chat_messages_sent", 1000);
+    bumpAchievementCounter(WALLET, "blocks_placed_commons", 500);
+    const payload = getAchievementsForWallet(WALLET);
+    assert.ok(payload.totalPoints >= 500);
+    const hunter1 = payload.achievements.find(
+      (a) => a.achievementId === "meta-point-hunter-1"
+    );
+    assert.equal(hunter1?.completed, true);
+    if (payload.totalPoints >= 1000) {
+      const hunter2 = payload.achievements.find(
+        (a) => a.achievementId === "meta-point-hunter-2"
+      );
+      assert.equal(hunter2?.completed, true);
+    }
+  });
+});
+
+test("room furnisher unlocks at 150 owned-room blocks with 10 colors", async () => {
+  await withAchievementStore(async ({
+    recordOwnedRoomBlockPlaced,
+    getAchievementsForWallet,
+    fireAchievementEvent,
+  }) => {
+    const roomId = "furnisher-room";
+    const hues: number[] = [];
+    for (let candidate = 0x000001; candidate <= 0xffffff && hues.length < 10; candidate += 9973) {
+      const bucket = hueBucketFromColorRgb(candidate);
+      if (bucket < 0) continue;
+      if (hues.some((h) => hueBucketFromColorRgb(h) === bucket)) continue;
+      hues.push(candidate);
+    }
+    assert.equal(hues.length, 10);
+    const unlocks: Array<{ achievementId: string }> = [];
+    for (let i = 0; i < 150; i += 1) {
+      recordOwnedRoomBlockPlaced(
+        WALLET,
+        roomId,
+        hues[i % hues.length]!,
+        (u) => unlocks.push(...u)
+      );
+    }
+    assert.ok(unlocks.some((u) => u.achievementId === "worldcraft-room-furnisher"));
+    fireAchievementEvent(WALLET, "teleporter_activated");
+    assert.equal(
+      getAchievementsForWallet(WALLET).achievements.find(
+        (a) => a.achievementId === "worldcraft-teleporter-engineer"
+      )?.completed,
+      true
+    );
+  });
+});
+
+test("feedback reply seen fires once when opening ticket with admin message", async () => {
+  await withAchievementStore(async ({ fireAchievementEvent, getAchievementsForWallet }) => {
+    fireAchievementEvent(WALLET, "feedback_reply_seen");
+    const second: Array<{ achievementId: string }> = [];
+    fireAchievementEvent(WALLET, "feedback_reply_seen", (u) => second.push(...u));
+    assert.equal(second.length, 0);
+    assert.equal(
+      getAchievementsForWallet(WALLET).achievements.find(
+        (a) => a.achievementId === "social-they-heard-you"
+      )?.completed,
+      true
+    );
   });
 });

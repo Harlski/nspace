@@ -100,7 +100,7 @@ Update this subsection when dock tabs, preview ownership, Objects/Room placement
 
 ### Teleporters: Landing Hint + cross-room preview
 
-**Today:** A teleporter stores a **Landing Hint** (preferred floor tile in the destination room), not a guaranteed arrival coordinate. The server **configures permissively** (in-bounds walkable hint) and **resolves at warp** (legal feet landing, else owner **Join Spawn**, else room default). Cross-room authoring uses a **room preview overlay** fed by `GET /api/rooms/:id/layout` for wallets with edit rights on that room—not the live map in the source room. Same-room **linked pairs** move **atomically** when repositioned. Hub destinations remain fixed spawn with no tile picker.
+**Today:** A teleporter stores a **Landing Hint** (preferred floor tile in the destination room), not a guaranteed arrival coordinate. The server **configures permissively** (in-bounds walkable hint) and **resolves at warp** (legal feet landing, else owner **Join Spawn**, else room default). Cross-room authoring uses a **room preview overlay** fed by `GET /api/rooms/:id/layout` for wallets with edit rights on that room—not the live map in the source room. Same-room **linked pairs** move **one end at a time** when repositioned; the peer tile stays put and its warp target updates. Hub destinations remain fixed spawn with no tile picker.
 
 **Norm:** Do not require empty destination tiles at configure time or per-player saved spawn as teleporter fallback. Do not gate destination configuration on build radius in the source room.
 

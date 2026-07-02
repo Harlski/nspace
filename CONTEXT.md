@@ -124,6 +124,13 @@ The room owner's configured guest entry tile for a custom Room (Room settings); 
 when a Teleporter Landing Hint is no longer legal.
 _Avoid_: spawn point, entry tile, door spawn.
 
+**Enter**:
+The walk-mode action on the proximity **Enter** pill when standing on a door, configured
+Teleporter, or other walk-on portal offer; warps or opens the associated destination flow.
+Cross-room Teleporters label the pill **Enter {Room name}**; same-room links and in-room
+warps use plain **Enter** only.
+_Avoid_: portal button, warp button.
+
 **Set**:
 The build-mode action to configure a pending or unsaved Teleporter - choose destination Room
 and Landing Hint. Distinct from **Enter**, which warps through a configured Teleporter.

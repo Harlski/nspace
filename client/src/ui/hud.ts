@@ -13,6 +13,8 @@ import {
   isPlainCubeTerrain,
   normalizeBlockPrismParts,
   resolveBlockColorRgb,
+  resolveTeleporterPillarColorRgb,
+  TELEPORTER_DEFAULT_PILLAR_COLOR_RGB,
   roomBgColorFromRgb,
   roomBgHueDegToRgb,
   ROOM_BG_NEUTRAL_RGB,
@@ -349,6 +351,7 @@ export function createHud(
   setTeleporterSetVisible: (visible: boolean) => void;
   setTeleporterSetScreenPosition: (x: number, y: number) => void;
   onTeleporterSetClick: (fn: (() => void) | null) => void;
+  triggerTeleporterDestinationOpen: () => void;
   getTeleporterConfigureTile: () => { x: number; z: number; y: number } | null;
   onTeleporterDestinationSummaryClick: (fn: (() => void) | null) => void;
   /** Action Wheel: radial self-menu around the player (right-click / long-press self). */
@@ -440,6 +443,7 @@ export function createHud(
   /** Toggle Shaper-only chrome (the leave button + Player Menu entry). */
   setInShaper: (inShaper: boolean) => void;
   onPortalEnter: (fn: () => void) => void;
+  triggerPortalEnter: () => void;
   isTeleporterModeActive: () => boolean;
   /** worldcup: build-dock "Ball" prop is the active placement tool (seasonal soccer). */
   isWorldcupBallModeActive: () => boolean;
@@ -624,6 +628,8 @@ export function createHud(
               isBuiltin: boolean;
             }>;
             onOpenDestinationPicker: () => void;
+            onRecolor?: (colorRgb: number) => void;
+            colorRgb: number;
             onCommitDestination: (
               destRoomId: string,
               destX: number,
@@ -2636,8 +2642,12 @@ export function createHud(
   roomEntrySpawnPickBtn.type = "button";
   roomEntrySpawnPickBtn.className = "tile-inspector__reset-btn";
   roomEntrySpawnPickBtn.id = "hud-room-entry-spawn-pick";
-  roomEntrySpawnPickBtn.textContent = "Pick tile on map…";
+  roomEntrySpawnPickBtn.textContent = "Set spawner";
   roomEntrySpawnPickBtn.setAttribute("aria-pressed", "false");
+  roomEntrySpawnPickBtn.setAttribute(
+    "aria-label",
+    "Pick guest entry tile on the map"
+  );
   const roomEntrySpawnCenterBtn = document.createElement("button");
   roomEntrySpawnCenterBtn.type = "button";
   roomEntrySpawnCenterBtn.className = "tile-inspector__reset-btn";
@@ -2658,9 +2668,9 @@ export function createHud(
   roomEntrySpawnPanel.appendChild(roomEntrySpawnPickBtn);
   roomEntrySpawnPanel.appendChild(roomEntrySpawnCenterBtn);
   roomEntrySpawnPanel.appendChild(roomDeployablesRow);
-  hueDock.appendChild(roomEntrySpawnPanel);
 
   let roomEntrySpawnPickArmed = false;
+  let roomEntrySpawnSettingsAllowed = false;
   let roomEntrySpawnPickStateHandler: ((armed: boolean) => void) | null = null;
   let roomEntrySpawnUseCenterHandler: (() => void) | null = null;
   let roomDeployablesChangeHandler: ((allowed: boolean) => void) | null = null;
@@ -6868,6 +6878,8 @@ export function createHud(
     buildDockRoomBgSwatch
   );
   buildDockRoomSettingsPanel.appendChild(buildDockRoomBgSettingRow);
+  roomEntrySpawnPanel.classList.add("hud-build-bottom-dock__room-entry-spawn");
+  buildDockRoomSettingsPanel.appendChild(roomEntrySpawnPanel);
 
   const buildBottomDockContext = document.createElement("aside");
   buildBottomDockContext.className = "hud-build-bottom-dock__context";
@@ -8553,19 +8565,23 @@ export function createHud(
     }
     const settingsTab = buildDockRoomCategory === "roomSettings";
     const floorTab = buildDockRoomCategory === "floor";
+    const roomSettingsVisible =
+      settingsTab &&
+      (roomBgSettingsAllowed || roomEntrySpawnSettingsAllowed);
     buildBottomDockTools.hidden = settingsTab;
-    buildDockRoomSettingsPanel.hidden =
-      !settingsTab || !roomBgSettingsAllowed;
+    buildDockRoomSettingsPanel.hidden = !roomSettingsVisible;
+    buildDockRoomBgSettingRow.hidden = !roomBgSettingsAllowed;
+    roomEntrySpawnPanel.hidden = !roomEntrySpawnSettingsAllowed;
     buildDockRoomBgSwatch.disabled = !roomBgSettingsAllowed;
     buildBottomDockContext.classList.toggle(
       "hud-build-bottom-dock__context--room-settings",
-      settingsTab && roomBgSettingsAllowed
+      roomSettingsVisible
     );
     buildBottomDockContext.classList.toggle(
       "hud-build-bottom-dock__context--floor",
       floorTab
     );
-    if (settingsTab && roomBgSettingsAllowed) {
+    if (roomSettingsVisible) {
       buildBottomDockContext.hidden = false;
       buildDockContextColor.hidden = true;
       buildDockContextTop.hidden = true;
@@ -9124,7 +9140,7 @@ export function createHud(
     buildModeStrip.classList.toggle(
       "hud-build-mode-strip--interactive",
       !roomBgHuePanel.hidden ||
-        !roomEntrySpawnPanel.hidden ||
+        roomEntrySpawnSettingsAllowed ||
         !buildBlockBar.hidden ||
         objectPanel !== null
     );
@@ -9147,11 +9163,9 @@ export function createHud(
         (buildBottomDock.hidden && buildBlockBar.hidden);
     }
     const panelHueDocked =
-      panelShapeColorRow !== null && !panelShapeColorRow.hidden;
-    hueDock.hidden =
-      roomEntrySpawnPanel.hidden &&
-      barShapeColorRow.hidden &&
-      !panelHueDocked;
+      (panelShapeColorRow !== null && !panelShapeColorRow.hidden) ||
+      teleporterSelectionDockActive;
+    hueDock.hidden = barShapeColorRow.hidden && !panelHueDocked;
     syncBlockPreviewDockSlots();
     syncPlacementInspectorPreviewGame();
     syncBuildBottomDockVisibility();
@@ -9184,6 +9198,9 @@ export function createHud(
     gateModeActive = tool === "gate";
     billboardModeActive = tool === "billboard";
     prefabToolActive = tool === "prefab";
+    if (tool === "teleporter") {
+      applyPlacementColorRgb(TELEPORTER_DEFAULT_PILLAR_COLOR_RGB);
+    }
     // worldcup: selecting any core build tool clears soccer-ball placement mode
     worldcupBallModeActive = false;
     objectPrefabAuthoring.setPrefabToolActive(tool === "prefab");
@@ -11573,7 +11590,43 @@ export function createHud(
   }
 
   function isBuildObjectColorEditActive(): boolean {
-    return panelShapeColorRow !== null && !panelShapeColorRow.hidden;
+    return (
+      (panelShapeColorRow !== null && !panelShapeColorRow.hidden) ||
+      teleporterSelectionDockActive
+    );
+  }
+
+  function isTeleporterSelectionColorEditActive(): boolean {
+    return teleporterSelectionDockActive;
+  }
+
+  function syncTeleporterSelectionHueUi(colorRgb: number): void {
+    panelSelectedColorRgb = clampColorRgb(colorRgb);
+    const deg = blockColorRgbToHueDeg(panelSelectedColorRgb);
+    lastHueDeg = deg;
+    panelLastHueDeg = deg;
+    barHueRing.setAttribute("aria-valuenow", String(deg));
+    barHueCore.style.background = cssHex(panelSelectedColorRgb);
+    if (panelHueRing && panelHueCore) {
+      panelHueRing.setAttribute("aria-valuenow", String(deg));
+      panelHueCore.style.background = cssHex(panelSelectedColorRgb);
+    }
+  }
+
+  function previewTeleporterSelectionColorRgb(rgb: number): void {
+    syncTeleporterSelectionHueUi(rgb);
+    if (!teleporterSelectionDockActive) return;
+    inspectorPreviewGameRef?.previewTeleporterPillarColorAt(
+      panelTeleporterTileX,
+      panelTeleporterTileZ,
+      panelTeleporterTileY,
+      panelSelectedColorRgb
+    );
+  }
+
+  function applyTeleporterSelectionColorRgb(rgb: number): void {
+    previewTeleporterSelectionColorRgb(rgb);
+    panelOnPropsChange?.({ colorRgb: panelSelectedColorRgb });
   }
 
   function getActiveBlockColorRgb(): number {
@@ -11583,7 +11636,9 @@ export function createHud(
   }
 
   function previewActiveBlockColorRgb(rgb: number): void {
-    if (isBuildObjectColorEditActive()) {
+    if (isTeleporterSelectionColorEditActive()) {
+      previewTeleporterSelectionColorRgb(rgb);
+    } else if (isBuildObjectColorEditActive()) {
       previewPanelColorRgb(rgb);
     } else {
       previewPlacementColorRgb(rgb);
@@ -11592,7 +11647,9 @@ export function createHud(
 
   /** Selected tile → `setObstacleProps`; otherwise new-placement color. */
   function commitActiveBlockColorRgb(rgb: number): void {
-    if (isBuildObjectColorEditActive()) {
+    if (isTeleporterSelectionColorEditActive()) {
+      applyTeleporterSelectionColorRgb(rgb);
+    } else if (isBuildObjectColorEditActive()) {
       applyPanelColorRgb(rgb);
     } else {
       applyPlacementColorRgb(rgb);
@@ -11623,7 +11680,18 @@ export function createHud(
   function applyHueDegrees(hueDeg: number): void {
     const h = ((hueDeg % 360) + 360) % 360;
     lastHueDeg = Math.round(h);
-    applyPlacementColorRgb(hueDegToBlockColorRgb(h));
+    const rgb = hueDegToBlockColorRgb(h);
+    if (isTeleporterSelectionColorEditActive()) {
+      applyTeleporterSelectionColorRgb(rgb);
+    } else if (
+      panelShapeColorRow !== null &&
+      !panelShapeColorRow.hidden &&
+      panelHueRing
+    ) {
+      applyPanelHueDegrees(hueDeg);
+    } else {
+      applyPlacementColorRgb(rgb);
+    }
   }
 
   attachPaletteHueRingPointerHandlers(barHueRingWrap, barHueRing, (hue) => {
@@ -11878,7 +11946,11 @@ export function createHud(
   returnHomeBtn.addEventListener("click", () => returnHomeHandler());
   leaveShaperBtn.addEventListener("click", () => leaveShaperHandler());
   portalEnterBtn.addEventListener("click", () => portalEnterHandler());
-  teleporterSetBtn.addEventListener("click", () => teleporterSetClickHandler?.());
+  teleporterSetBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    triggerTeleporterDestinationOpen();
+  });
   lobbyBtn.addEventListener("click", () => openLobbyConfirm());
   buildToggleBtn.addEventListener("click", () => onBuildToolbarToggle());
   buildQuickBtn.addEventListener("click", (e) => {
@@ -12215,6 +12287,16 @@ export function createHud(
   let panelTeleporterCommittedZ = 0;
   let teleporterOpenDestinationPicker: (() => void) | null = null;
   let teleporterSetClickHandler: (() => void) | null = null;
+  let teleporterSetLastOpenAt = 0;
+
+  function triggerTeleporterDestinationOpen(): void {
+    const opener = teleporterSetClickHandler ?? teleporterOpenDestinationPicker;
+    if (!opener) return;
+    const now = Date.now();
+    if (now - teleporterSetLastOpenAt < 350) return;
+    teleporterSetLastOpenAt = now;
+    opener();
+  }
   let teleporterSummaryClickHandler: (() => void) | null = null;
   let teleporterPanelEnsureRowForId: ((id: string) => void) | null = null;
   let panelTeleporterStatusEl: HTMLElement | null = null;
@@ -12598,7 +12680,8 @@ export function createHud(
       if (
         (objectPanel && objectPanel.contains(t)) ||
         objectPanelContextPopover.contains(t) ||
-        objectPanelAdvancedPopover.contains(t)
+        objectPanelAdvancedPopover.contains(t) ||
+        teleporterSetBtn.contains(t)
       ) {
         return;
       }
@@ -13530,6 +13613,9 @@ export function createHud(
     onTeleporterSetClick(fn: (() => void) | null) {
       teleporterSetClickHandler = fn;
     },
+    triggerTeleporterDestinationOpen() {
+      triggerTeleporterDestinationOpen();
+    },
     getTeleporterConfigureTile() {
       if (!teleporterSelectionDockActive) return null;
       return {
@@ -13724,6 +13810,9 @@ export function createHud(
     onPortalEnter(fn: () => void) {
       portalEnterHandler = fn;
     },
+    triggerPortalEnter() {
+      portalEnterHandler();
+    },
     onReturnToLobby(fn: () => void) {
       lobbyHandler = fn;
     },
@@ -13842,7 +13931,9 @@ export function createHud(
       syncHueDockVisibility();
     },
     setRoomEntrySpawnPanelVisible(visible: boolean) {
+      roomEntrySpawnSettingsAllowed = visible;
       roomEntrySpawnPanel.hidden = !visible;
+      syncBuildDockRoomCategoryChrome();
       syncModeSidebarBodyInteractive();
       syncHueDockVisibility();
     },
@@ -14021,10 +14112,21 @@ export function createHud(
         }
 
         teleporterOpenDestinationPicker = te.onOpenDestinationPicker;
-        teleporterSetClickHandler = () => teleporterOpenDestinationPicker?.();
+        const openPicker = te.onOpenDestinationPicker;
+        teleporterSetClickHandler = () => {
+          openPicker();
+        };
+
+        panelSelectedColorRgb = clampColorRgb(te.colorRgb);
+        panelOnPropsChange = (p) => {
+          if (p.colorRgb !== undefined) {
+            te.onRecolor?.(p.colorRgb);
+          }
+        };
+        syncTeleporterSelectionHueUi(te.colorRgb);
 
         const onSummaryClick = (): void => {
-          teleporterOpenDestinationPicker?.();
+          triggerTeleporterDestinationOpen();
         };
         panelTeleporterSummaryBtn?.addEventListener("click", onSummaryClick);
 
@@ -15611,6 +15713,7 @@ export function createHud(
       document.removeEventListener("click", closeHudTooltips);
       document.removeEventListener("pointerdown", closeHudAdvancedPopoversOnOutside);
       hideObjectEditPanel();
+      teleporterSetBtn.remove();
       hideLobbyConfirm();
       if (nimClaimFadeTimer !== null) {
         clearTimeout(nimClaimFadeTimer);

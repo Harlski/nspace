@@ -238,6 +238,7 @@ async function runTeleporterDestinationPicker(
     stopPreviewLoop();
     game?.dispose();
     game = null;
+    hostEl.replaceChildren();
   };
 
   const cleanup = (): void => {
@@ -304,6 +305,8 @@ async function runTeleporterDestinationPicker(
 
     const rid = layoutRoomId(selectedRoomId, opts.currentRoomId);
     if (!rid) {
+      disposePreviewGame();
+      canvasWrap.hidden = false;
       statusEl.hidden = false;
       statusEl.textContent = "Choose a destination room.";
       return;
@@ -378,7 +381,12 @@ async function runTeleporterDestinationPicker(
     if (isHubSelection(selectedRoomId, opts.hubRoomId)) {
       hasPick = false;
     } else if (selectedRoomId === TELEPORTER_PAIR_ROOM_VALUE) {
-      hasPick = Number.isFinite(opts.initialX) && Number.isFinite(opts.initialZ);
+      pickedX = Math.floor(opts.initialX);
+      pickedZ = Math.floor(opts.initialZ);
+      hasPick =
+        Number.isFinite(opts.initialX) && Number.isFinite(opts.initialZ);
+    } else {
+      hasPick = false;
     }
     void loadLayoutForSelection();
   });
