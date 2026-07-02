@@ -98,6 +98,16 @@ Update this subsection if preview ownership, materials, or which interactions re
 
 Update this subsection when dock tabs, preview ownership, Objects/Room placement, or scope-reset behavior changes materially.
 
+### Teleporters: Landing Hint + cross-room preview
+
+**Today:** A teleporter stores a **Landing Hint** (preferred floor tile in the destination room), not a guaranteed arrival coordinate. The server **configures permissively** (in-bounds walkable hint) and **resolves at warp** (legal feet landing, else owner **Join Spawn**, else room default). Cross-room authoring uses a **room preview overlay** fed by `GET /api/rooms/:id/layout` for wallets with edit rights on that room—not the live map in the source room. Same-room **linked pairs** move **atomically** when repositioned. Hub destinations remain fixed spawn with no tile picker.
+
+**Norm:** Do not require empty destination tiles at configure time or per-player saved spawn as teleporter fallback. Do not gate destination configuration on build radius in the source room.
+
+**Forward constraint:** New teleporter UX should reuse the preview overlay and layout snapshot API unless there is an explicit reason to split another surface.
+
+See [docs/adr/0004-teleporter-landing-hint-with-join-spawn-fallback.md](adr/0004-teleporter-landing-hint-with-join-spawn-fallback.md) and [CONTEXT.md](../CONTEXT.md) (**Teleporter**, **Teleporter Landing Hint**, **Join Spawn**).
+
 ### Release line: patch notes + semver on merge
 
 **Intent:** One clear moment ties **shipping semver** (root `package.json`) to **frozen patch notes**, so `main` always carries a coherent “what we just released” **folder and version labels** without hand-renaming drift.

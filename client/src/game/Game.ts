@@ -1578,7 +1578,7 @@ export class Game {
   private inspectorSelectionSpecialDockKind: "teleporter" | "billboard" | null =
     null;
   private inspectorSelectionBillboardId: string | null = null;
-  /** `false` = configured / active (portal pillar); `true` = pending / inactive block. */
+  /** `false` = configured / active (portal pillar); `true` = pending / dim pillar. */
   private inspectorSelectionTeleporterPending = false;
   private inspectorSelectionTeleporterTileRef: {
     x: number;
@@ -2539,17 +2539,42 @@ export class Game {
     yOffset = 1.05
   ): { x: number; y: number } | null {
     if (!this.selfMesh) return null;
-    const world = new THREE.Vector3(
+    return this.getWorldScreenPosition(
       this.selfMesh.position.x,
       this.selfMesh.position.y + yOffset,
       this.selfMesh.position.z
     );
+  }
+
+  /** Canvas-local screen position for a world point (e.g. teleporter Set pill anchor). */
+  getWorldScreenPosition(
+    wx: number,
+    wy: number,
+    wz: number
+  ): { x: number; y: number } | null {
+    const world = new THREE.Vector3(wx, wy, wz);
     const projected = world.project(this.camera);
     const rect = this.renderer.domElement.getBoundingClientRect();
     const sx = ((projected.x + 1) * 0.5) * rect.width;
     const sy = ((1 - projected.y) * 0.5) * rect.height;
     if (!Number.isFinite(sx) || !Number.isFinite(sy)) return null;
     return { x: sx, y: sy };
+  }
+
+  getTileScreenPosition(
+    tileX: number,
+    tileZ: number,
+    yOffset = 1.15
+  ): { x: number; y: number } | null {
+    let wy = yOffset;
+    for (let y = 0; y <= 2; y++) {
+      const meta = this.getPlacedAt(tileX, tileZ, y);
+      if (meta) {
+        wy = y * BLOCK_SIZE + this.obstacleHeight(meta) * this.blockVisualScale + yOffset;
+        break;
+      }
+    }
+    return this.getWorldScreenPosition(tileX, wy, tileZ);
   }
 
   /** Canvas-local screen position of the primary World Cup ball (id `"field"` when present). */
@@ -4778,6 +4803,130 @@ export class Game {
       this.tileHighlight.visible = false;
     }
     this.refreshTeleporterLinkHighlight();
+    this.requestRender(120);
+  }
+
+  /** Offscreen room preview: pick a walkable floor tile from screen coordinates. */
+  pickWalkableFloorAtScreen(
+    clientX: number,
+    clientY: number
+  ): { x: number; z: number } | null {
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest || !this.tileWalkable(dest)) return null;
+    return { x: dest.x, z: dest.y };
+  }
+
+  /** Offscreen room preview: show selected Landing Hint without build mode. */
+  setPreviewLandingHintHighlight(
+    dest: { x: number; z: number } | null
+  ): void {
+    if (!dest) {
+      this.teleporterDraftDestHighlight.visible = false;
+    } else {
+      this.teleporterDraftDestHighlight.position.set(
+        Math.floor(dest.x),
+        0.026,
+        Math.floor(dest.z)
+      );
+      this.teleporterDraftDestHighlight.visible = true;
+    }
+    this.requestRender(120);
+  }
+
+  /** Offscreen room preview: mark the room Join Spawn fallback tile. */
+  setPreviewJoinSpawnMarker(
+    tile: { x: number; z: number; customized?: boolean } | null
+  ): void {
+    const ring = this.roomEntrySpawnRing;
+    if (!tile) {
+      ring.visible = false;
+      this.requestRender(120);
+      return;
+    }
+    ring.position.set(tile.x, 0.042, tile.z);
+    ring.scale.set(1, 1, 1);
+    this.roomEntrySpawnRingMat.color.setHex(
+      tile.customized ? 0x2dd4bf : 0x6ee7b7
+    );
+    this.roomEntrySpawnRingMat.opacity = 0.85;
+    ring.visible = true;
+    this.requestRender(120);
+  }
+
+  applyRoomLayoutSnapshot(snapshot: {
+    roomId: string;
+    roomBounds: {
+      minX: number;
+      maxX: number;
+      minZ: number;
+      maxZ: number;
+    };
+    doors?: Array<{
+      x: number;
+      z: number;
+      targetRoomId: string;
+      spawnX: number;
+      spawnZ: number;
+    }>;
+    placeRadiusBlocks?: number;
+    roomBackgroundHueDeg?: number | null;
+    roomBackgroundNeutral?: boolean | null;
+    extraFloorTiles?: Array<{ x: number; z: number; colorRgb: number }>;
+    baseFloorColorTiles?: Array<{ x: number; z: number; colorRgb: number }>;
+    removedBaseFloorTiles?: Array<{ x: number; z: number; colorRgb: number }>;
+    obstacles?: Parameters<Game["setObstacles"]>[0];
+    signboards?: Parameters<Game["setSignboards"]>[0];
+    billboards?: Parameters<Game["setBillboards"]>[0];
+    voxelTexts?: Parameters<Game["setVoxelTextsForRoom"]>[1];
+    joinSpawn?: { x: number; z: number; customized: boolean };
+  }): void {
+    this.setMapOverviewUnlocked(true);
+    this.applyRoomFromWelcome({
+      roomId: snapshot.roomId,
+      roomBounds: snapshot.roomBounds,
+      doors: snapshot.doors ?? [],
+      placeRadiusBlocks: Number.isFinite(snapshot.placeRadiusBlocks)
+        ? Number(snapshot.placeRadiusBlocks)
+        : 5,
+    });
+    this.setRoomSceneBackground({
+      hueDeg: snapshot.roomBackgroundHueDeg ?? null,
+      neutral: snapshot.roomBackgroundNeutral ?? null,
+    });
+    const b = snapshot.roomBounds;
+    const centerX = Math.round((b.minX + b.maxX) / 2);
+    const centerZ = Math.round((b.minZ + b.maxZ) / 2);
+    this.applyWelcomeFloorPayload({
+      extraFloorTiles: snapshot.extraFloorTiles ?? [],
+      baseFloorColorTiles: snapshot.baseFloorColorTiles ?? [],
+      removedBaseFloorTiles: snapshot.removedBaseFloorTiles ?? [],
+      spawnX: centerX,
+      spawnZ: centerZ,
+    });
+    this.setObstacles(snapshot.obstacles ?? []);
+    this.setSignboards(snapshot.signboards ?? []);
+    this.setBillboards(snapshot.billboards ?? []);
+    this.setVoxelTextsForRoom(snapshot.roomId, snapshot.voxelTexts ?? []);
+    if (snapshot.joinSpawn) {
+      this.setPreviewJoinSpawnMarker(snapshot.joinSpawn);
+    }
+    this.fitPreviewCameraToRoom();
+    this.resize();
+  }
+
+  /** Frame the full room in offscreen layout preview (teleporter destination picker). */
+  fitPreviewCameraToRoom(): void {
+    const b = this.roomBounds;
+    const cx = (b.minX + b.maxX + 1) * 0.5;
+    const cz = (b.minZ + b.maxZ + 1) * 0.5;
+    this.frustumSize = Game.clampZoom(
+      this.roomZoomMax,
+      this.zoomMin,
+      this.roomZoomMax,
+      this.roomZoomMax
+    );
+    this.setCameraLookAtTarget(cx, 0, cz, { instant: true });
+    this.applyOrthographicFrustum();
     this.requestRender(120);
   }
 
@@ -11380,8 +11529,13 @@ export class Game {
     return true;
   }
 
-  /** Shared vertical pillar (white gradient) used for door portals and active teleporter tiles. */
-  private createPortalPillarMesh(wx: number, wz: number): THREE.Mesh {
+  /** Shared vertical pillar (white gradient) used for door portals and teleporter tiles. */
+  private createPortalPillarMesh(
+    wx: number,
+    wz: number,
+    opts?: { dim?: boolean }
+  ): THREE.Mesh {
+    const dim = opts?.dim ?? false;
     const markerGeom = new THREE.BoxGeometry(
       TERRAIN_TILE_DOOR_MARKER_SIZE,
       TERRAIN_TILE_DOOR_MARKER_HEIGHT,
@@ -11395,8 +11549,16 @@ export class Game {
           value: new THREE.Color(TERRAIN_TILE_DOOR_MARKER_COLOR),
         },
         uHeight: { value: TERRAIN_TILE_DOOR_MARKER_HEIGHT },
-        uAlphaBottom: { value: TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM },
-        uAlphaTop: { value: TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP },
+        uAlphaBottom: {
+          value: dim
+            ? TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM * 0.35
+            : TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM,
+        },
+        uAlphaTop: {
+          value: dim
+            ? TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP * 0.45
+            : TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP,
+        },
       },
       vertexShader: `
         varying float vGradient;
@@ -11446,18 +11608,37 @@ export class Game {
     return Boolean(tp && "targetRoomId" in tp);
   }
 
+  private isPendingTeleporterPortal(
+    tp: BlockStyleProps["teleporter"] | undefined
+  ): boolean {
+    return Boolean(tp && "pending" in tp && tp.pending);
+  }
+
   private syncTeleporterMarkers(): void {
-    const want = new Set<string>();
+    const want = new Map<string, boolean>();
     for (const [k, meta] of this.placedObjects) {
-      if (!this.isActiveTeleporterPortal(meta.teleporter)) continue;
-      want.add(k);
+      const tp = meta.teleporter;
+      if (this.isActiveTeleporterPortal(tp)) {
+        want.set(k, false);
+      } else if (this.isPendingTeleporterPortal(tp)) {
+        want.set(k, true);
+      }
     }
-    for (const k of want) {
-      if (this.teleporterMarkerMeshes.has(k)) continue;
+    for (const [k, dim] of want) {
       const parts = k.split(",").map(Number);
       const wx = parts[0]!;
       const wz = parts[1]!;
-      const m = this.createPortalPillarMesh(wx, wz);
+      const existing = this.teleporterMarkerMeshes.get(k);
+      const existingDim = existing?.userData["tpDim"] === true;
+      if (existing && existingDim === dim) continue;
+      if (existing) {
+        this.scene.remove(existing);
+        existing.geometry.dispose();
+        (existing.material as THREE.Material).dispose();
+        this.teleporterMarkerMeshes.delete(k);
+      }
+      const m = this.createPortalPillarMesh(wx, wz, { dim });
+      m.userData.tpDim = dim;
       this.scene.add(m);
       this.teleporterMarkerMeshes.set(k, m);
     }
@@ -11469,7 +11650,10 @@ export class Game {
         this.teleporterMarkerMeshes.delete(k);
       }
     }
-    const sig = [...want].sort().join("|");
+    const sig = [...want.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, dim]) => `${k}:${dim ? "p" : "a"}`)
+      .join("|");
     if (sig !== this.teleporterPortalFloorSig) {
       this.teleporterPortalFloorSig = sig;
       this.syncWalkableFloorMeshes();
@@ -12411,6 +12595,14 @@ export class Game {
         continue;
       }
       if (this.prefabPlaceSuppressFloorKeys.has(`${wx},${wz}`)) {
+        if (g) {
+          this.scene.remove(g);
+          disposePlacedBlockGroupContents(g);
+          this.blockMeshes.delete(k);
+        }
+        continue;
+      }
+      if (this.isPendingTeleporterPortal(metaRaw.teleporter)) {
         if (g) {
           this.scene.remove(g);
           disposePlacedBlockGroupContents(g);
@@ -15127,23 +15319,8 @@ export class Game {
         port.lastSig = sig;
         this.resetInspectorPreviewBlockSlot(port);
         this.applyInspectorPreviewFloorPortalGlow(port, !pending);
-        if (pending && placed) {
-          const h = this.obstacleHeight(placed);
-          const vis = this.blockVisualScale;
-          const yWorld = (h * vis) / 2;
-          port.blockSlot.position.set(0, yWorld, 0);
-          port.blockSlot.add(
-            this.makeBlockMesh(placed, {
-              ghost: false,
-              tileX: tRef?.x,
-              tileZ: tRef?.z,
-              inspectorPreview: true,
-            })
-          );
-        } else {
-          port.blockSlot.position.set(0, 0, 0);
-          port.blockSlot.add(this.createPortalPillarMesh(0, 0));
-        }
+        port.blockSlot.position.set(0, 0, 0);
+        port.blockSlot.add(this.createPortalPillarMesh(0, 0, { dim: pending }));
       }
       const r = port.canvas.getBoundingClientRect();
       if (r.width < 2 || r.height < 2) return;
@@ -15488,7 +15665,7 @@ export class Game {
     port.floor.visible = tool !== "billboard";
     if (tool === "teleporter") {
       port.blockSlot.position.set(0, 0, 0);
-      port.blockSlot.add(this.createPortalPillarMesh(0, 0));
+      port.blockSlot.add(this.createPortalPillarMesh(0, 0, { dim: true }));
       return;
     }
     if (tool === "gate") {
@@ -15884,7 +16061,7 @@ export class Game {
 
   /**
    * Selection-slot preview while the teleporter destination panel is open (no block props).
-   * Pending teleporters show the inactive block; configured ones show the portal pillar.
+   * Pending teleporters show a dim portal pillar; configured ones show the full pillar.
    */
   syncInspectorSelectionTeleporterPreview(
     opts: {

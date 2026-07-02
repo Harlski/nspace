@@ -345,6 +345,12 @@ export function createHud(
   setPortalEnterScreenPosition: (x: number, y: number) => void;
   /** Same pill as portal Enter; use for “Visit …” on billboard tiles. */
   setPortalEnterLabel: (text: string) => void;
+  /** Build-mode configure pill anchored on the selected teleporter tile. */
+  setTeleporterSetVisible: (visible: boolean) => void;
+  setTeleporterSetScreenPosition: (x: number, y: number) => void;
+  onTeleporterSetClick: (fn: (() => void) | null) => void;
+  getTeleporterConfigureTile: () => { x: number; z: number; y: number } | null;
+  onTeleporterDestinationSummaryClick: (fn: (() => void) | null) => void;
   /** Action Wheel: radial self-menu around the player (right-click / long-press self). */
   showActionWheel: (
     anchorX: number,
@@ -617,8 +623,7 @@ export function createHud(
               isOfficial: boolean;
               isBuiltin: boolean;
             }>;
-            onPickTileInCurrentRoom: () => void;
-            onPickCancel: () => void;
+            onOpenDestinationPicker: () => void;
             onCommitDestination: (
               destRoomId: string,
               destX: number,
@@ -2384,6 +2389,12 @@ export function createHud(
   portalEnterBtn.className = "hud-portal-enter nq-button-pill light-blue";
   portalEnterBtn.textContent = "Enter";
   portalEnterBtn.hidden = true;
+  const teleporterSetBtn = document.createElement("button");
+  teleporterSetBtn.type = "button";
+  teleporterSetBtn.className = "hud-teleporter-set nq-button-pill light-blue";
+  teleporterSetBtn.textContent = "Set";
+  teleporterSetBtn.hidden = true;
+  teleporterSetBtn.setAttribute("aria-label", "Set teleporter destination");
   const topActions = document.createElement("div");
   topActions.className = "hud-top-actions";
 
@@ -2827,6 +2838,7 @@ export function createHud(
     ui.appendChild(payRightRail);
   }
   letter.appendChild(portalEnterBtn);
+  letter.appendChild(teleporterSetBtn);
 
   /*
    * Action Wheel - the hexagonal self-menu (see CONTEXT.md). Right-click / long-press
@@ -3910,6 +3922,7 @@ export function createHud(
       oppProfileNote.hidden = false;
       return false;
     }
+    invalidateProfileViewCache(target);
     void showPlayerProfileView(
       target,
       oppDisplayNameEl.textContent || walletDisplayName(target),
@@ -5113,6 +5126,11 @@ export function createHud(
     wardrobeDisposePreview = null;
   }
 
+  function invalidateProfileViewCache(compact: string): void {
+    profileViewCache.delete(profileViewCacheKey("self", compact));
+    profileViewCache.delete(profileViewCacheKey("other", compact));
+  }
+
   function patchProfileViewCache(
     kind: "self" | "other",
     compact: string,
@@ -5959,39 +5977,12 @@ export function createHud(
       <input type="checkbox" class="build-block-bar__ramp" tabindex="-1" aria-hidden="true" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />
       <div class="build-block-bar__teleporter" id="build-block-bar-teleporter" hidden>
         <div id="tile-inspector-teleporter-dock" class="tile-inspector-tp-dock" hidden>
-          <div class="tile-inspector-tp-dock__main-row">
-            <div class="tile-inspector-tp-dock__field">
-            <select
-              id="dock-tp-dest-room-select"
-              class="tile-inspector-tp-dock__room-select"
-              aria-label="Destination room"
-            ></select>
-            </div>
-            <div id="dock-tp-actions" class="tile-inspector-tp-dock__actions" hidden>
-              <button
-                type="button"
-                id="dock-tp-confirm"
-                class="tile-inspector-tp-dock__action tile-inspector-tp-dock__action--confirm"
-                aria-label="Save destination"
-                hidden
-              >${nimiqIconUseMarkup("nq-checkmark-small", { width: 12, height: 12, class: "tile-inspector-tp-dock__action-icon" })}</button>
-              <button
-                type="button"
-                id="dock-tp-cancel"
-                class="tile-inspector-tp-dock__action tile-inspector-tp-dock__action--cancel"
-                aria-label="Cancel changes"
-                hidden
-              >${nimiqIconUseMarkup("nq-cross", { width: 12, height: 12, class: "tile-inspector-tp-dock__action-icon" })}</button>
-            </div>
-          </div>
-          <div id="dock-tp-coords-section" class="tile-inspector-tp-dock__coords-section" hidden>
-            <button
-              type="button"
-              id="dock-tp-coords"
-              class="tile-inspector-tp-dock__coords-value"
-              aria-label="Pick destination tile on the map"
-            >(0, 0)</button>
-          </div>
+          <button
+            type="button"
+            id="dock-tp-summary"
+            class="tile-inspector-tp-dock__summary"
+            aria-label="Set teleporter destination"
+          >Not set</button>
         </div>
       </div>
     </div>
@@ -11887,6 +11878,7 @@ export function createHud(
   returnHomeBtn.addEventListener("click", () => returnHomeHandler());
   leaveShaperBtn.addEventListener("click", () => leaveShaperHandler());
   portalEnterBtn.addEventListener("click", () => portalEnterHandler());
+  teleporterSetBtn.addEventListener("click", () => teleporterSetClickHandler?.());
   lobbyBtn.addEventListener("click", () => openLobbyConfirm());
   buildToggleBtn.addEventListener("click", () => onBuildToolbarToggle());
   buildQuickBtn.addEventListener("click", (e) => {
@@ -12213,21 +12205,43 @@ export function createHud(
   let panelTeleporterDestX = 0;
   let panelTeleporterDestZ = 0;
   let panelTeleporterCurrentRoomId = "";
-  let panelTeleporterCoordsSection: HTMLElement | null = null;
-  let panelTeleporterCoordsBtn: HTMLButtonElement | null = null;
-  let panelTeleporterConfirmBtn: HTMLButtonElement | null = null;
-  let panelTeleporterCancelBtn: HTMLButtonElement | null = null;
+  let panelTeleporterDraftRoom = "";
+  let panelTeleporterSummaryBtn: HTMLButtonElement | null = null;
+  let panelTeleporterTileX = 0;
+  let panelTeleporterTileZ = 0;
+  let panelTeleporterTileY = 0;
   let panelTeleporterCommittedRoom = "";
   let panelTeleporterCommittedX = 0;
   let panelTeleporterCommittedZ = 0;
-  let applyTeleporterHubUi: (() => void) | null = null;
-  let teleporterPanelSyncRoomTrigger: (() => void) | null = null;
+  let teleporterOpenDestinationPicker: (() => void) | null = null;
+  let teleporterSetClickHandler: (() => void) | null = null;
+  let teleporterSummaryClickHandler: (() => void) | null = null;
   let teleporterPanelEnsureRowForId: ((id: string) => void) | null = null;
-  let teleporterPanelRenderPickerList: (() => void) | null = null;
   let panelTeleporterStatusEl: HTMLElement | null = null;
   let panelTeleporterLeadEl: HTMLElement | null = null;
   let panelTeleporterEditPending = false;
   let panelTeleporterEditBidirectional = false;
+
+  function teleporterDestinationSummaryLabel(): string {
+    if (panelTeleporterEditPending) return "Not set";
+    const room = panelTeleporterDraftRoom || panelTeleporterCommittedRoom;
+    if (!room) return "Not set";
+    if (room === TELEPORTER_THIS_ROOM_VALUE) {
+      return `→ This room (${panelTeleporterDestX}, ${panelTeleporterDestZ})`;
+    }
+    if (normalizeRoomId(room) === HUB_ROOM_ID) return "→ Hub";
+    const row = panelTeleporterRoomRows?.find(
+      (r) => normalizeRoomId(r.id) === normalizeRoomId(room)
+    );
+    const name = row?.displayName ?? room;
+    return `→ ${name} (${panelTeleporterDestX}, ${panelTeleporterDestZ})`;
+  }
+
+  function syncTeleporterDockSummary(): void {
+    if (panelTeleporterSummaryBtn) {
+      panelTeleporterSummaryBtn.textContent = teleporterDestinationSummaryLabel();
+    }
+  }
 
   function syncTeleporterSelectionChrome(
     pending: boolean,
@@ -12248,103 +12262,23 @@ export function createHud(
     }
     if (panelTeleporterLeadEl) {
       panelTeleporterLeadEl.innerHTML = pending
-        ? "Choose a destination room. For <strong>This room</strong>, tap the coords and pick the exit tile on the map."
+        ? "Tap <strong>Set</strong> on the teleporter or the summary below to choose a destination room and landing tile."
         : isBidirectionalPair
-          ? "Linked in this room - tap coords to change the exit, then confirm."
-          : "Choose a room and destination tile, then confirm.";
+          ? "Tap <strong>Set</strong> to change the linked exit tile in this room."
+          : "Tap <strong>Set</strong> to change the destination room or landing tile.";
     }
+    syncTeleporterDockSummary();
   }
 
-  function syncTeleporterCoordsButton(): void {
-    if (panelTeleporterCoordsBtn) {
-      panelTeleporterCoordsBtn.textContent = `(${panelTeleporterDestX}, ${panelTeleporterDestZ})`;
-    }
-  }
-
-  function teleporterDockDraftRoom(): string {
-    const dockSel = buildBlockBar.querySelector(
-      "#dock-tp-dest-room-select"
-    ) as HTMLSelectElement | null;
-    return dockSel?.value ?? "";
-  }
-
-  function teleporterDockIsDirty(): boolean {
-    return (
-      teleporterDockDraftRoom() !== panelTeleporterCommittedRoom ||
-      panelTeleporterDestX !== panelTeleporterCommittedX ||
-      panelTeleporterDestZ !== panelTeleporterCommittedZ
-    );
-  }
-
-  function teleporterDraftDestMapHighlightAllowed(): boolean {
-    if (
-      !objectPanelContextPopover.classList.contains(
-        "build-object-panel-context--teleporter"
-      )
-    ) {
-      return false;
-    }
-    const dockSel = buildBlockBar.querySelector(
-      "#dock-tp-dest-room-select"
-    ) as HTMLSelectElement | null;
-    const roomVal = dockSel?.value ?? "";
-    if (roomVal === HUB_ROOM_ID) return false;
-    const here = normalizeRoomId(panelTeleporterCurrentRoomId);
-    if (roomVal === TELEPORTER_THIS_ROOM_VALUE) return true;
-    return normalizeRoomId(roomVal) === here;
-  }
-
-  function syncTeleporterDraftDestMapHighlight(): void {
-    const g = inspectorPreviewGameRef;
-    if (!g) return;
-    if (g.isTeleporterDestPickActive()) {
-      g.setTeleporterDestinationDraftHighlight(null);
-      return;
-    }
-    if (!teleporterSelectionDockActive || !teleporterDraftDestMapHighlightAllowed()) {
-      g.setTeleporterDestinationDraftHighlight(null);
-      return;
-    }
-    if (!teleporterDockIsDirty()) {
-      g.setTeleporterDestinationDraftHighlight(null);
-      return;
-    }
-    g.setTeleporterDestinationDraftHighlight({
-      x: panelTeleporterDestX,
-      z: panelTeleporterDestZ,
-    });
+  function teleporterDraftRoomId(): string {
+    return panelTeleporterDraftRoom || panelTeleporterCommittedRoom;
   }
 
   function syncTeleporterCommittedFromDraft(): void {
-    panelTeleporterCommittedRoom = teleporterDockDraftRoom();
+    panelTeleporterCommittedRoom = teleporterDraftRoomId();
     panelTeleporterCommittedX = panelTeleporterDestX;
     panelTeleporterCommittedZ = panelTeleporterDestZ;
-    syncTeleporterDockActions();
-  }
-
-  function syncTeleporterDockActions(): void {
-    const dirty = teleporterDockIsDirty();
-    if (panelTeleporterConfirmBtn) {
-      panelTeleporterConfirmBtn.hidden = !dirty;
-    }
-    if (panelTeleporterCancelBtn) {
-      panelTeleporterCancelBtn.hidden = !dirty;
-    }
-    syncTeleporterDraftDestMapHighlight();
-  }
-
-  function revertTeleporterDraftToCommitted(): void {
-    panelTeleporterDestX = panelTeleporterCommittedX;
-    panelTeleporterDestZ = panelTeleporterCommittedZ;
-    const dockSel = buildBlockBar.querySelector(
-      "#dock-tp-dest-room-select"
-    ) as HTMLSelectElement | null;
-    if (dockSel && panelTeleporterCommittedRoom) {
-      dockSel.value = panelTeleporterCommittedRoom;
-    }
-    syncTeleporterCoordsButton();
-    syncTeleporterDockActions();
-    applyTeleporterHubUi?.();
+    syncTeleporterDockSummary();
   }
 
   function hideGateAclEditor(): void {
@@ -13185,20 +13119,20 @@ export function createHud(
     panelTeleporterRoomPicker = null;
     panelTeleporterRoomPickerDocDown = null;
     panelTeleporterRoomPickerKeydown = null;
-    panelTeleporterCoordsSection = null;
-    panelTeleporterCoordsBtn = null;
-    panelTeleporterConfirmBtn = null;
-    panelTeleporterCancelBtn = null;
+    panelTeleporterSummaryBtn = null;
+    panelTeleporterTileX = 0;
+    panelTeleporterTileZ = 0;
+    panelTeleporterTileY = 0;
+    panelTeleporterDraftRoom = "";
     panelTeleporterCurrentRoomId = "";
     panelTeleporterCommittedRoom = "";
     panelTeleporterCommittedX = 0;
     panelTeleporterCommittedZ = 0;
     panelTeleporterDestX = 0;
     panelTeleporterDestZ = 0;
-    applyTeleporterHubUi = null;
-    teleporterPanelSyncRoomTrigger = null;
+    teleporterOpenDestinationPicker = null;
+    teleporterSetClickHandler = null;
     teleporterPanelEnsureRowForId = null;
-    teleporterPanelRenderPickerList = null;
     panelTeleporterStatusEl = null;
     panelTeleporterLeadEl = null;
     panelTeleporterEditPending = false;
@@ -13585,6 +13519,27 @@ export function createHud(
     },
     setPortalEnterLabel(text: string) {
       portalEnterBtn.textContent = text;
+    },
+    setTeleporterSetVisible(visible: boolean) {
+      teleporterSetBtn.hidden = !visible;
+    },
+    setTeleporterSetScreenPosition(x: number, y: number) {
+      teleporterSetBtn.style.left = `${x}px`;
+      teleporterSetBtn.style.top = `${y}px`;
+    },
+    onTeleporterSetClick(fn: (() => void) | null) {
+      teleporterSetClickHandler = fn;
+    },
+    getTeleporterConfigureTile() {
+      if (!teleporterSelectionDockActive) return null;
+      return {
+        x: panelTeleporterTileX,
+        z: panelTeleporterTileZ,
+        y: panelTeleporterTileY,
+      };
+    },
+    onTeleporterDestinationSummaryClick(fn: (() => void) | null) {
+      teleporterSummaryClickHandler = fn;
     },
     showActionWheel(
       anchorX: number,
@@ -14021,32 +13976,13 @@ export function createHud(
           ".build-object-panel-context__tp-lead"
         ) as HTMLElement | null;
         syncTeleporterSelectionChrome(te.pending, te.isBidirectionalPair);
-        const dockRoot = teleporterSection?.querySelector(
-          "#tile-inspector-teleporter-dock"
-        ) as HTMLElement | null;
-        const dockSel = dockRoot?.querySelector(
-          "#dock-tp-dest-room-select"
-        ) as HTMLSelectElement | null;
-        const dockCoordsSection = dockRoot?.querySelector(
-          "#dock-tp-coords-section"
-        ) as HTMLElement | null;
-        const dockCoordsBtn = dockRoot?.querySelector(
-          "#dock-tp-coords"
-        ) as HTMLButtonElement | null;
-        const dockActions = dockRoot?.querySelector(
-          "#dock-tp-actions"
-        ) as HTMLElement | null;
-        const dockConfirm = dockRoot?.querySelector(
-          "#dock-tp-confirm"
-        ) as HTMLButtonElement | null;
-        const dockCancel = dockRoot?.querySelector(
-          "#dock-tp-cancel"
-        ) as HTMLButtonElement | null;
-        panelTeleporterCoordsSection = dockCoordsSection;
-        panelTeleporterCoordsBtn = dockCoordsBtn;
-        panelTeleporterConfirmBtn = dockConfirm;
-        panelTeleporterCancelBtn = dockCancel;
+        panelTeleporterTileX = opts.x;
+        panelTeleporterTileZ = opts.z;
+        panelTeleporterTileY = te.y;
         panelTeleporterCurrentRoomId = normalizeRoomId(te.currentRoomId);
+        panelTeleporterSummaryBtn = teleporterSection?.querySelector(
+          "#dock-tp-summary"
+        ) as HTMLButtonElement | null;
 
         const ensureTeleporterRowForId = (destId: string): void => {
           if (!panelTeleporterRoomRows) return;
@@ -14072,124 +14008,35 @@ export function createHud(
         if (panelTeleporterSelectedRoomId) {
           ensureTeleporterRowForId(panelTeleporterSelectedRoomId);
         }
-        panelTeleporterRoomNameEl = null;
-        panelTeleporterRoomPicker = null;
-        panelTeleporterRoomPickerDocDown = null;
-        panelTeleporterRoomPickerKeydown = null;
-        teleporterPanelSyncRoomTrigger = null;
         teleporterPanelEnsureRowForId = ensureTeleporterRowForId;
-        teleporterPanelRenderPickerList = null;
-
-        if (dockSel) {
-          dockSel.replaceChildren();
-          const optPair = document.createElement("option");
-          optPair.value = TELEPORTER_THIS_ROOM_VALUE;
-          optPair.textContent = "This room";
-          dockSel.appendChild(optPair);
-          for (const row of panelTeleporterRoomRows) {
-            const rid = normalizeRoomId(row.id);
-            const o = document.createElement("option");
-            o.value = rid;
-            o.textContent = row.displayName;
-            dockSel.appendChild(o);
-          }
-          if (te.pending || te.isBidirectionalPair) {
-            dockSel.value = TELEPORTER_THIS_ROOM_VALUE;
-          } else if (panelTeleporterSelectedRoomId) {
-            const match = [...dockSel.options].find(
-              (op) =>
-                normalizeRoomId(op.value) === panelTeleporterSelectedRoomId
-            );
-            dockSel.value = match
-              ? match.value
-              : panelTeleporterSelectedRoomId;
-          }
-        }
 
         panelTeleporterDestX = te.destX;
         panelTeleporterDestZ = te.destZ;
-        syncTeleporterCoordsButton();
+        if (te.pending || te.isBidirectionalPair) {
+          panelTeleporterDraftRoom = TELEPORTER_THIS_ROOM_VALUE;
+        } else if (panelTeleporterSelectedRoomId) {
+          panelTeleporterDraftRoom = panelTeleporterSelectedRoomId;
+        } else {
+          panelTeleporterDraftRoom = TELEPORTER_THIS_ROOM_VALUE;
+        }
 
-        const teleporterDestIsThisRoom = (): boolean =>
-          dockSel?.value === TELEPORTER_THIS_ROOM_VALUE;
+        teleporterOpenDestinationPicker = te.onOpenDestinationPicker;
+        teleporterSetClickHandler = () => teleporterOpenDestinationPicker?.();
 
-        const syncDockTeleporterUi = (): void => {
-          const pair = teleporterDestIsThisRoom();
-          const roomId = dockSel ? normalizeRoomId(dockSel.value) : "";
-          const here = normalizeRoomId(te.currentRoomId);
-          const isHub = roomId === HUB_ROOM_ID;
-          const canPickOnMap = pair || (roomId === here && !isHub);
-
-          const dirty = teleporterDockIsDirty();
-          if (dockCoordsSection) {
-            dockCoordsSection.hidden = !canPickOnMap && !dirty;
-          }
-          if (dockCoordsBtn) {
-            dockCoordsBtn.hidden = !canPickOnMap;
-            dockCoordsBtn.setAttribute(
-              "aria-label",
-              "Pick destination tile on the map"
-            );
-          }
-          if (dockActions) {
-            dockActions.hidden = !dirty;
-          }
-          syncTeleporterCoordsButton();
-          syncTeleporterDockActions();
+        const onSummaryClick = (): void => {
+          teleporterOpenDestinationPicker?.();
         };
-        applyTeleporterHubUi = syncDockTeleporterUi;
-
-        const onDockTpChange = (): void => {
-          te.onPickCancel();
-          syncDockTeleporterUi();
-        };
-        dockSel?.addEventListener("change", onDockTpChange);
-
-        const onDockCoordsClick = (): void => {
-          const pair = teleporterDestIsThisRoom();
-          const roomId = dockSel ? normalizeRoomId(dockSel.value) : "";
-          const here = normalizeRoomId(te.currentRoomId);
-          const isHub = roomId === HUB_ROOM_ID;
-          const canPickOnMap = pair || (roomId === here && !isHub);
-          if (!canPickOnMap) return;
-          te.onPickTileInCurrentRoom();
-          syncTeleporterDraftDestMapHighlight();
-        };
-
-        const onDockConfirmClick = (): void => {
-          const room = dockSel?.value ?? "";
-          if (!room) return;
-          if (room === HUB_ROOM_ID) {
-            te.onCommitDestination(HUB_ROOM_ID, 0, 0);
-          } else {
-            te.onCommitDestination(
-              room,
-              Math.floor(panelTeleporterDestX),
-              Math.floor(panelTeleporterDestZ)
-            );
-          }
-        };
-
-        const onDockCancelClick = (): void => {
-          te.onPickCancel();
-          revertTeleporterDraftToCommitted();
-        };
+        panelTeleporterSummaryBtn?.addEventListener("click", onSummaryClick);
 
         teleporterPanelCleanup = () => {
-          dockSel?.removeEventListener("change", onDockTpChange);
-          dockCoordsBtn?.removeEventListener("click", onDockCoordsClick);
-          dockConfirm?.removeEventListener("click", onDockConfirmClick);
-          dockCancel?.removeEventListener("click", onDockCancelClick);
-          te.onPickCancel();
+          panelTeleporterSummaryBtn?.removeEventListener("click", onSummaryClick);
+          teleporterOpenDestinationPicker = null;
         };
-        dockCoordsBtn?.addEventListener("click", onDockCoordsClick);
-        dockConfirm?.addEventListener("click", onDockConfirmClick);
-        dockCancel?.addEventListener("click", onDockCancelClick);
 
         teleporterSelectionDockActive = true;
         syncTeleporterDockSectionVisibility();
-        syncDockTeleporterUi();
         syncTeleporterCommittedFromDraft();
+        syncTeleporterDockSummary();
 
         objectPanelContextPopover.hidden = false;
         objectPanelContextPopover
@@ -14690,34 +14537,18 @@ export function createHud(
       destX: number;
       destZ: number;
     }) {
-      const n = normalizeRoomId(p.destRoomId);
-      panelTeleporterSelectedRoomId = n;
+      const raw = p.destRoomId.trim();
+      if (raw === TELEPORTER_THIS_ROOM_VALUE) {
+        panelTeleporterDraftRoom = TELEPORTER_THIS_ROOM_VALUE;
+      } else {
+        const n = normalizeRoomId(raw);
+        panelTeleporterSelectedRoomId = n;
+        panelTeleporterDraftRoom = n;
+        teleporterPanelEnsureRowForId?.(n);
+      }
       panelTeleporterDestX = Math.floor(p.destX);
       panelTeleporterDestZ = Math.floor(p.destZ);
-      teleporterPanelEnsureRowForId?.(n);
-      const dockSel = buildBlockBar.querySelector(
-        "#dock-tp-dest-room-select"
-      ) as HTMLSelectElement | null;
-      if (dockSel) {
-        const here = normalizeRoomId(panelTeleporterCurrentRoomId);
-        const draftRoom = teleporterDockDraftRoom();
-        if (
-          draftRoom === TELEPORTER_THIS_ROOM_VALUE &&
-          n === here
-        ) {
-          dockSel.value = TELEPORTER_THIS_ROOM_VALUE;
-        } else if (panelTeleporterEditBidirectional && n === here) {
-          dockSel.value = TELEPORTER_THIS_ROOM_VALUE;
-        } else {
-          const match = [...dockSel.options].find(
-            (op) => normalizeRoomId(op.value) === n
-          );
-          if (match) dockSel.value = match.value;
-          else dockSel.value = n || dockSel.value;
-        }
-      }
-      syncTeleporterCoordsButton();
-      applyTeleporterHubUi?.();
+      syncTeleporterDockSummary();
     },
     setObjectPanelProps(p: ObstacleProps) {
       applyObjectPanelPropsFromServer(p);
@@ -14737,7 +14568,7 @@ export function createHud(
         tileZ: opts.z,
         tileY: opts.y,
       });
-      applyTeleporterHubUi?.();
+      syncTeleporterDockSummary();
     },
     ackTeleporterDestinationBaseline() {
       syncTeleporterCommittedFromDraft();

@@ -1,6 +1,12 @@
 import { randomBytes, randomInt } from "node:crypto";
 import type { WebSocket } from "ws";
 import {
+  isValidTeleporterLandingHint,
+  resolveTeleporterLanding,
+  parsePlacedKey,
+  type TeleporterLandingContext,
+} from "./teleporterLanding.js";
+import {
   blockKey,
   canPlaceTeleporterFoot,
   floorWalkableTerrain,
@@ -113,6 +119,7 @@ import {
   recordRoomJoinSpawnForDeluxe,
   recordSignboardOpened,
   recordSignpostPlaced,
+  recordTeleporterActivated,
   recordTerrainShapePlaced,
   recordTeleporterWarp,
   recordTrustCircleWalk,
@@ -996,7 +1003,7 @@ function roomAllowsFakePlayers(roomId: string): boolean {
   return true;
 }
 
-function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
+export function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
   if (isCosmeticGalleryRoom(roomId)) return false;
   if (isInviteLobbyRoomId(roomId)) return canEditRoomContent(roomId, address);
   if (isPixelRoom(roomId)) return false;
@@ -3110,6 +3117,38 @@ function resolveReturnSpawn(
   return { x: c.x, z: c.z };
 }
 
+function teleporterLandingContext(): TeleporterLandingContext {
+  return {
+    normalizeRoomId,
+    hubRoomId: HUB_ROOM_ID,
+    getRoomBounds: getRoomBaseBounds,
+    isWalkableForRoom,
+    floorWalkableAt: (roomId, x, z) =>
+      floorWalkableTerrain(
+        x,
+        z,
+        placedMap(roomId),
+        extraFloorMap(roomId),
+        roomId,
+        baseRemovedReadonly(roomId)
+      ),
+    resolveDefaultSpawnForPlayerRoom,
+  };
+}
+
+function resolveTeleporterLandingInRoom(
+  targetRoomId: string,
+  hintX: number,
+  hintZ: number
+): { x: number; z: number } {
+  return resolveTeleporterLanding(
+    targetRoomId,
+    hintX,
+    hintZ,
+    teleporterLandingContext()
+  );
+}
+
 function joinSpawnBroadcastPayload(roomId: string): {
   x: number;
   z: number;
@@ -3759,6 +3798,7 @@ export type RoomLayoutSnapshot = {
   voxelTexts: ReturnType<typeof getVoxelTextsForRoom>;
   roomBackgroundHueDeg: number | null;
   roomBackgroundNeutral: RoomBackgroundNeutral | null;
+  joinSpawn: { x: number; z: number; customized: boolean };
 };
 
 /**
@@ -3811,6 +3851,7 @@ export function getRoomLayoutSnapshot(roomIdRaw: string): RoomLayoutSnapshot | n
     voxelTexts: getVoxelTextsForRoom(roomId),
     roomBackgroundHueDeg: bgState.hueDeg,
     roomBackgroundNeutral: bgState.neutral,
+    joinSpawn: joinSpawnBroadcastPayload(roomId),
   };
 }
 
@@ -4294,6 +4335,156 @@ function deleteTeleporterPeerIfLinked(
   return rem;
 }
 
+function teleporterMoveTargetValid(
+  roomId: string,
+  room: Map<string, ClientConn>,
+  toX: number,
+  toZ: number,
+  toY: number,
+  vacatingKeys: ReadonlySet<string>
+): boolean {
+  const placed = placedMap(roomId);
+  const atDest = getPlacedAtLevel(placed, toX, toZ, toY);
+  if (atDest && !vacatingKeys.has(atDest.key)) return false;
+  if (toY !== 0) {
+    const below = getPlacedAtLevel(placed, toX, toZ, toY - 1);
+    if (!below) return false;
+  }
+  if (!isWalkableForRoom(roomId, toX, toZ)) return false;
+  if (
+    normalizeRoomId(roomId) === HUB_ROOM_ID &&
+    isHubSpawnSafeZone(toX, toZ)
+  ) {
+    return false;
+  }
+  for (const c of room.values()) {
+    const st = snapToTile(c.player.x, c.player.z);
+    if (st.x === toX && st.z === toZ) return false;
+  }
+  return true;
+}
+
+/** Move a linked same-room teleporter pair by the same floor delta; rejects if either end cannot move. */
+function moveLinkedTeleporterPairAt(
+  conn: ClientConn,
+  roomId: string,
+  room: Map<string, ClientConn>,
+  fromX: number,
+  fromZ: number,
+  fromY: number,
+  toX: number,
+  toZ: number,
+  toY: number,
+  fk: string,
+  fromClientKey: string,
+  props: PlacedProps
+): boolean {
+  const tp = props.teleporter;
+  if (
+    !tp ||
+    !("pairedPeerKey" in tp) ||
+    typeof tp.pairedPeerKey !== "string" ||
+    !tp.pairedPeerKey
+  ) {
+    return false;
+  }
+  const placed = placedMap(roomId);
+  const peerKey = tp.pairedPeerKey;
+  const peerProps = placed.get(peerKey);
+  if (!peerProps?.teleporter) return false;
+
+  const peerCoords = parsePlacedKey(peerKey);
+  if (!peerCoords) return false;
+
+  const dx = toX - fromX;
+  const dz = toZ - fromZ;
+  const peerToX = peerCoords.x + dx;
+  const peerToZ = peerCoords.z + dz;
+  const peerTy = peerCoords.y;
+
+  const destKey = blockKey(toX, toZ, toY);
+  const peerDestKey = blockKey(peerToX, peerToZ, peerTy);
+  if (destKey === peerKey && peerDestKey === fk) {
+    return false;
+  }
+
+  const ignoreKeys = new Set([fk, fromClientKey, peerKey]);
+  if (
+    !teleporterMoveTargetValid(roomId, room, toX, toZ, toY, ignoreKeys) ||
+    !teleporterMoveTargetValid(
+      roomId,
+      room,
+      peerToX,
+      peerToZ,
+      peerTy,
+      ignoreKeys
+    )
+  ) {
+    return false;
+  }
+
+  placed.delete(fk);
+  if (fromClientKey !== fk) placed.delete(fromClientKey);
+  placed.delete(peerKey);
+
+  placed.set(destKey, {
+    ...TELEPORTER_VISUAL,
+    teleporter: {
+      targetRoomId: normalizeRoomId(roomId),
+      targetX: peerToX,
+      targetZ: peerToZ,
+      targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(roomId),
+      pairedPeerKey: peerDestKey,
+    },
+  });
+  placed.set(peerDestKey, {
+    ...TELEPORTER_VISUAL,
+    teleporter: {
+      targetRoomId: normalizeRoomId(roomId),
+      targetX: toX,
+      targetZ: toZ,
+      targetRoomDisplayName: roomCatalogDisplayNameForTeleporter(roomId),
+      pairedPeerKey: destKey,
+    },
+  });
+
+  const add: ObstacleTile[] = [];
+  const dSrc = obstacleTileFromPlaced(roomId, destKey);
+  const dPeer = obstacleTileFromPlaced(roomId, peerDestKey);
+  if (dSrc) add.push(dSrc);
+  if (dPeer) add.push(dPeer);
+  const remove = [
+    ...new Set([
+      ...obstacleRemovalKeysForPlacedKey(fk),
+      ...(fromClientKey !== fk
+        ? obstacleRemovalKeysForPlacedKey(fromClientKey)
+        : []),
+      ...obstacleRemovalKeysForPlacedKey(peerKey),
+    ]),
+  ];
+  broadcast(roomId, {
+    type: "obstaclesDelta",
+    roomId: normalizeRoomId(roomId),
+    add,
+    remove,
+  });
+  schedulePersistWorldState();
+  logGameplayEvent(conn.sessionId, conn.address, roomId, "move_obstacle", {
+    fromX,
+    fromZ,
+    fromY,
+    toX,
+    toZ,
+    toY,
+    pairedMove: true,
+    peerFromX: peerCoords.x,
+    peerFromZ: peerCoords.z,
+    peerToX,
+    peerToZ,
+  });
+  return true;
+}
+
 /** One-way teleporter: only the source tile is placed; destination is where the player warps. */
 function configureTeleporterDestination(
   conn: ClientConn,
@@ -4319,8 +4510,6 @@ function configureTeleporterDestination(
   if (!hasRoom(destRoomId)) return false;
 
   const srcPlaced = placedMap(srcRoomId);
-  const destPlaced = placedMap(destRoomId);
-  const destExtra = extraFloorMap(destRoomId);
 
   const srcResolved = getPlacedAtLevel(srcPlaced, srcX, srcZ, srcY);
   if (!srcResolved?.props.teleporter) return false;
@@ -4357,19 +4546,18 @@ function configureTeleporterDestination(
     warpZ = 0;
   }
 
-  /* Hub destination is always (0,0); skip empty-floor check used for other rooms. */
+  /* Hub destination is always (0,0); landing hint must be in bounds and walkable. */
   if (nDest !== HUB_ROOM_ID) {
     if (
-      !canPlaceTeleporterFoot(
+      !isValidTeleporterLandingHint(
         destRoomId,
         warpX,
         warpZ,
-        destPlaced,
-        destExtra,
-        baseRemovedReadonly(destRoomId)
+        teleporterLandingContext()
       )
-    )
+    ) {
       return false;
+    }
   }
 
   if (normalizeRoomId(srcRoomId) === HUB_ROOM_ID && isHubSpawnSafeZone(srcX, srcZ)) return false;
@@ -4378,16 +4566,11 @@ function configureTeleporterDestination(
     return false;
   }
 
-  if (getSignboardAt(destRoomId, warpX, warpZ)) return false;
-
   for (const [rid, r] of rooms) {
     for (const c of r.values()) {
       if (c.address === address) continue;
       const st = snapToTile(c.player.x, c.player.z);
       if (normalizeRoomId(rid) === normalizeRoomId(srcRoomId) && st.x === srcX && st.z === srcZ) {
-        return false;
-      }
-      if (normalizeRoomId(rid) === normalizeRoomId(destRoomId) && st.x === warpX && st.z === warpZ) {
         return false;
       }
     }
@@ -5687,7 +5870,11 @@ function worldcupMatchEndParticipantInput(
         : undefined,
   };
   if (!outcome || outcome.result === "draw") {
-    return { ...shared, result: "draw" };
+    return {
+      ...shared,
+      result: "draw",
+      opponentWallet: side === "a" ? m.b : m.a,
+    };
   }
   if (outcome.winner === side) {
     return {
@@ -5695,6 +5882,7 @@ function worldcupMatchEndParticipantInput(
       result: "win",
       winReason: outcome.reason,
       goldenGoalWin: Boolean(m.endedByGoldenGoal && outcome.reason === "score"),
+      opponentWallet: side === "a" ? m.b : m.a,
     };
   }
   return {
@@ -5702,6 +5890,7 @@ function worldcupMatchEndParticipantInput(
     result: "loss",
     winReason:
       outcome.reason === "opponent_left" ? "opponent_left" : undefined,
+    opponentWallet: side === "a" ? m.b : m.a,
   };
 }
 
@@ -8401,7 +8590,17 @@ export function addClient(
             normalizeRoomId(t.targetRoomId),
             achievementUnlockHandler(ws)
           );
-          teleportPlayer(conn, normalizeRoomId(t.targetRoomId), t.targetX, t.targetZ);
+          const landing = resolveTeleporterLandingInRoom(
+            normalizeRoomId(t.targetRoomId),
+            t.targetX,
+            t.targetZ
+          );
+          teleportPlayer(
+            conn,
+            normalizeRoomId(t.targetRoomId),
+            landing.x,
+            landing.z
+          );
         }
         return;
       }
@@ -8541,6 +8740,7 @@ export function addClient(
         recordOwnedRoomBlockPlaced(
           address,
           currentRoomId,
+          colorRgb,
           achievementUnlockHandler(ws)
         );
       }
@@ -9140,7 +9340,6 @@ export function addClient(
       const tile = snapToTile(tx, tz);
       const dt = snapToTile(destX, destZ);
       if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
-      if (!withinBlockActionRange(conn.player, dt.x, dt.z)) return;
       const placed = placedMap(currentRoomId);
       const srcEntry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
       if (!srcEntry?.props.teleporter) return;
@@ -9160,9 +9359,11 @@ export function addClient(
             type: "chat",
             from: "System",
             fromAddress: "",
-            text: "Could not set teleporter destination. Check room id, empty walkable tile at X/Z, and that you can edit that room.",
+            text: "Could not set teleporter destination. Check room id, walkable tile in bounds, and that you can edit that room.",
             at: now,
           } satisfies OutMsg);
+      } else {
+        recordTeleporterActivated(address, achievementUnlockHandler(ws));
       }
       return;
     }
@@ -9202,6 +9403,8 @@ export function addClient(
           text: "Could not place linked teleporter. Use a different empty walkable floor tile in this room (not on a player).",
           at: now,
         } satisfies OutMsg);
+      } else {
+        recordTeleporterActivated(address, achievementUnlockHandler(ws));
       }
       return;
     }
@@ -9953,6 +10156,33 @@ export function addClient(
       if (props.locked && !isAdmin(address) && !props.teleporter) {
         wsSafeSend(ws, { type: "error", code: "object_locked" });
         return;
+      }
+
+      if (props.teleporter) {
+        const tp = props.teleporter;
+        if (
+          tp &&
+          "pairedPeerKey" in tp &&
+          typeof tp.pairedPeerKey === "string" &&
+          tp.pairedPeerKey
+        ) {
+          const movedPair = moveLinkedTeleporterPairAt(
+            conn,
+            currentRoomId,
+            room,
+            from.x,
+            from.z,
+            fy,
+            to.x,
+            to.z,
+            ty,
+            fk,
+            fromClientKey,
+            props
+          );
+          if (movedPair) return;
+          return;
+        }
       }
 
       if (isOccupiedAtLevel(placed, to.x, to.z, ty)) return;

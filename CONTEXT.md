@@ -109,6 +109,31 @@ A navigation action that teleports the player back to the Hub default spawn whil
 signed in.
 _Avoid_: go home, return home, go to chamber.
 
+**Teleporter**:
+A placed passable obstacle that warps a standing player to another Room at a preferred
+floor tile.
+_Avoid_: portal, warp pad, exit portal.
+
+**Teleporter Landing Hint**:
+The floor `(X, Z)` stored on a Teleporter as the preferred arrival tile in the destination
+Room; not a guarantee if that tile becomes unwalkable later.
+_Avoid_: destination, exit tile, warp target.
+
+**Join Spawn**:
+The room owner's configured guest entry tile for a custom Room (Room settings); the fallback
+when a Teleporter Landing Hint is no longer legal.
+_Avoid_: spawn point, entry tile, door spawn.
+
+**Set**:
+The build-mode action to configure a pending or unsaved Teleporter - choose destination Room
+and Landing Hint. Distinct from **Enter**, which warps through a configured Teleporter.
+_Avoid_: configure button, SET link, coords pick.
+
+**Teleporter Destination Picker**:
+The editor dialog for **Set** - room chooser plus floor layout to pick a Landing Hint (or Hub
+confirmation with no tile pick). Same flow for the current Room and other Rooms.
+_Avoid_: dest preview modal, teleport menu, coords dialog.
+
 ## Sessions
 
 **Connect Notice**:

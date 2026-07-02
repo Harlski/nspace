@@ -25,6 +25,7 @@ import {
   adminRandomExtraFloorLayout,
   broadcastRestartPendingNotice,
   broadcastRoomCatalogRefresh,
+  canPlaceBlocksInRoom,
   directInviteOnCreated,
   getHostDisplayNameForInvite,
   getLiveRealPlayerCountInRoom,
@@ -253,6 +254,7 @@ import {
   FEEDBACK_REWARD_MAX_LUNA,
   FEEDBACK_REWARD_MIN_LUNA,
   getFeedbackTicketAdmin,
+  feedbackTicketHasAdminReply,
   getFeedbackTicketForWallet,
   listFeedbackTicketsAdmin,
   listFeedbackTicketsForWallet,
@@ -2512,6 +2514,33 @@ app.get("/api/admin/rooms", requireSystemAdminWallet, (_req, res) => {
   res.json({ rooms: [...active, ...deleted] });
 });
 
+/** Room layout for editors (teleporter destination preview, etc.). */
+app.get("/api/rooms/:id/layout", (req, res) => {
+  const t = bearerToken(req);
+  if (!t) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  let address: string;
+  try {
+    address = verifySession(t, jwtSecret).sub;
+  } catch {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const roomId = normalizeRoomId(String(req.params.id ?? ""));
+  const snapshot = getRoomLayoutSnapshot(roomId);
+  if (!snapshot) {
+    res.status(404).json({ error: "room_not_found" });
+    return;
+  }
+  if (!canPlaceBlocksInRoom(roomId, address)) {
+    res.status(403).json({ error: "forbidden" });
+    return;
+  }
+  res.json(snapshot);
+});
+
 /** Full layout snapshot for the interactive 3D preview. */
 app.get("/api/admin/rooms/:id/layout", requireSystemAdminWallet, (req, res) => {
   const snapshot = getRoomLayoutSnapshot(String(req.params.id ?? ""));
@@ -2762,12 +2791,17 @@ app.get("/api/feedback/:id", requireJwt, (req, res) => {
     res.status(401).json({ error: "unauthorized" });
     return;
   }
-  const ticket = getFeedbackTicketForWallet(address, String(req.params.id ?? ""), {
+  const ticketId = String(req.params.id ?? "");
+  const beforeRead = getFeedbackTicketForWallet(address, ticketId);
+  const ticket = getFeedbackTicketForWallet(address, ticketId, {
     markRead: true,
   });
   if (!ticket) {
     res.status(404).json({ error: "not_found" });
     return;
+  }
+  if (beforeRead && feedbackTicketHasAdminReply(beforeRead)) {
+    fireAchievementEvent(address, "feedback_reply_seen");
   }
   res.json({ ticket: ticketToPlayerDetail(ticket) });
 });
@@ -3421,13 +3455,17 @@ wss.on("connection", (ws, req) => {
     guestId,
     explorationDoorSpawn,
   });
+  const normAddr = normalizeWalletId(address);
+  const connectDisplayName =
+    guestDisplayName?.trim() || getEffectivePlayerDisplayName(normAddr);
   void maybeSendConnectNotice(
     {
       address,
       roomId,
       guestDisplayName,
       guestInviteSlug,
-      signInRequested: url.searchParams.get("signIn") === "1",
+      displayName: connectDisplayName || undefined,
+      streamObserver: streamRequested,
       nimiqPay: sessionNimiqPay,
     },
     PUBLIC_BASE_URL

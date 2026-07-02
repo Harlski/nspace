@@ -5417,6 +5417,24 @@ button.hud-brand:focus-visible {
   background: rgba(14, 116, 144, 0.5);
 }
 
+.hud-teleporter-set {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -115%);
+  z-index: 7;
+  pointer-events: auto;
+  min-height: 0;
+  height: auto;
+  padding: 4px 12px;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.hud-teleporter-set:hover {
+  background: rgba(14, 116, 144, 0.5);
+}
+
 /*
  * Nimiq Style (@nimiq/style): .nq-button-pill and .nq-button-s set ::before to
  * `left/top/right/bottom: -1.5rem` and ::after to `-5px` for a larger touch target.
@@ -5441,6 +5459,7 @@ button.hud-brand:focus-visible {
  */
 #app .hud-reconnect-btn.nq-button-pill,
 #app .hud-portal-enter.nq-button-pill,
+#app .hud-teleporter-set.nq-button-pill,
 #app .hud-mode-feedback.nq-button-pill {
   box-sizing: border-box;
   min-height: 0;
@@ -5457,6 +5476,11 @@ button.hud-brand:focus-visible {
 }
 
 #app .hud-portal-enter.nq-button-pill {
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+#app .hud-teleporter-set.nq-button-pill {
   padding: 4px 12px;
   font-size: 13px;
 }
@@ -5479,6 +5503,10 @@ button.hud-brand:focus-visible {
 
 /* Keep portal CTA hidden until standing on an enterable tile/door. */
 .hud-portal-enter[hidden] {
+  display: none !important;
+}
+
+.hud-teleporter-set[hidden] {
   display: none !important;
 }
 
@@ -8940,39 +8968,31 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   color: rgba(226, 232, 240, 0.92);
 }
 
-.hud-build-bottom-dock__context-mods .tile-inspector-tp-dock__coords-section {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.hud-build-bottom-dock__context-mods .tile-inspector-tp-dock__coords-value {
+.hud-build-bottom-dock__context-mods .tile-inspector-tp-dock__summary {
   margin: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  color: #38bdf8;
-  font-size: 9px;
-  font-weight: 700;
+  padding: 4px 8px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 6px;
+  background: rgba(14, 116, 144, 0.18);
+  color: #7dd3fc;
+  font-size: 10px;
+  font-weight: 600;
   font-family: inherit;
   font-variant-numeric: tabular-nums;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  text-align: left;
   cursor: pointer;
+  width: 100%;
   -webkit-tap-highlight-color: transparent;
 }
 
-.hud-build-bottom-dock__context-mods .tile-inspector-tp-dock__coords-value:hover {
-  color: #7dd3fc;
+.hud-build-bottom-dock__context-mods .tile-inspector-tp-dock__summary:hover {
+  background: rgba(14, 116, 144, 0.32);
+  color: #bae6fd;
 }
 
-.hud-build-bottom-dock__context-mods .tile-inspector-tp-dock__coords-value:focus {
+.hud-build-bottom-dock__context-mods .tile-inspector-tp-dock__summary:focus {
   outline: 2px solid rgba(56, 189, 248, 0.45);
   outline-offset: 2px;
-  border-radius: 2px;
 }
 
 .hud-build-bottom-dock__context-mods .tile-inspector-tp-dock__actions {
@@ -16447,7 +16467,7 @@ a.main-menu__version:focus-visible {
   position: absolute;
   left: 50%;
   top: calc(var(--hud-below-top-wrap, 52px) + var(--achievement-unlock-banner-gap, 8px));
-  z-index: 10060;
+  z-index: 12100;
   width: min(92%, 420px);
   transform: translateX(-50%) translateY(-8px);
   opacity: 0;
@@ -17619,4 +17639,143 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   border-color: rgba(251, 191, 36, 0.65);
   background: rgba(120, 53, 15, 0.85);
   color: #fef3c7;
+}
+
+.teleporter-dest-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  background: rgba(6, 9, 14, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+.teleporter-dest-preview-dialog {
+  width: min(720px, 100%);
+  max-height: min(92vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: #131b27;
+  border: 1px solid #2a394f;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  padding: 14px 16px 16px;
+  color: #e4eaf2;
+}
+.teleporter-dest-preview-dialog__head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  align-items: start;
+}
+.teleporter-dest-preview-dialog__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+.teleporter-dest-preview-dialog__room {
+  margin: 0;
+  grid-column: 1 / -1;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+.teleporter-dest-preview-dialog__close {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.teleporter-dest-preview-dialog__room-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 0;
+}
+
+.teleporter-dest-preview-dialog__room-label-text {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.teleporter-dest-preview-dialog__room-select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #2a394f;
+  background: #0f1623;
+  color: #e4eaf2;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.teleporter-dest-preview-dialog__hub-note {
+  margin: 8px 0 0;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.teleporter-dest-preview-dialog__hint,
+.teleporter-dest-preview-dialog__coords {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  color: #b6c2d1;
+}
+.teleporter-dest-preview-dialog__canvas-wrap {
+  position: relative;
+  margin-top: 10px;
+  flex: 1;
+  min-height: 280px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #243044;
+  background: #0b1018;
+}
+.teleporter-dest-preview-dialog__host {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: min(52vh, 420px);
+}
+.teleporter-dest-preview-dialog__status:not([hidden]) {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  background: rgba(11, 16, 24, 0.72);
+  color: #cbd5e1;
+}
+.teleporter-dest-preview-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.teleporter-dest-preview-dialog__btn {
+  border-radius: 8px;
+  border: 1px solid #334155;
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.teleporter-dest-preview-dialog__btn--secondary {
+  background: transparent;
+  color: #cbd5e1;
+}
+.teleporter-dest-preview-dialog__btn--primary {
+  background: #2563eb;
+  border-color: #3b82f6;
+  color: #f8fafc;
+}
+.teleporter-dest-preview-dialog__btn--primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }

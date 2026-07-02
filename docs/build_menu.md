@@ -112,6 +112,8 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
 - Gate opening: `#build-block-bar-gate` (gate tool)
 - Teleporter placeholder: `#build-block-bar-teleporter`
 
+**Teleporter destination (build mode):** Pending teleporters show a **Set** pill on the selected tile (separate from **Enter**). Tapping **Set** or the dock **summary** opens the **Teleporter Destination Picker** ([teleporterDestPreview.ts](../client/src/ui/teleporterDestPreview.ts)): room `<select>` (switch maps), layout preview for any room including **this room**, tile click for the **Landing Hint**, and **Hub** confirmation without a tile pick. Backed by `GET /api/rooms/:id/layout` (session auth; editor must `canPlaceBlocksInRoom`). Pending tiles use a **dim portal pillar** instead of the orange hex slab. Warp still falls back to **Join Spawn** when the hint is illegal (see [docs/adr/0004-teleporter-landing-hint-with-join-spawn-fallback.md](adr/0004-teleporter-landing-hint-with-join-spawn-fallback.md)).
+
 ### Color (hue ring)
 
 | Reference ID | Module / class | Role |

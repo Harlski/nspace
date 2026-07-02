@@ -63,7 +63,7 @@ import { WorldcupBallEdgeMarker } from "./worldcup/ballEdgeMarker.js";
 import { flagEmoji } from "./worldcup/countries.js";
 import { soleFlagCode } from "./ui/flags.js";
 import { showCountryPickerModal } from "./worldcup/countryPickerModal.js";
-import { isOrthogonallyAdjacentToFloorTile, snapFloorTile } from "./game/grid.js";
+import { isOrthogonallyAdjacentToFloorTile, snapFloorTile, blockKey } from "./game/grid.js";
 import { remotePlayerIsNpc } from "./remotePlayerNpc.js";
 import {
   HUB_ROOM_ID,
@@ -319,7 +319,9 @@ function teleporterPanelRefreshFromPlaced(
   });
   if (!pending && "targetRoomId" in tp) {
     hud.setTeleporterEditFields({
-      destRoomId: tp.targetRoomId,
+      destRoomId: isBidirectionalPair
+        ? "__THIS_ROOM_PAIR__"
+        : tp.targetRoomId,
       destX: tp.targetX,
       destZ: tp.targetZ,
     });
@@ -2199,7 +2201,9 @@ function enterGame(
     | null
     | undefined = undefined;
   let editingTile: { x: number; z: number; y: number } | null = null;
+  let obstacleSelectAt: ((x: number, z: number, y: number) => void) | null = null;
   let portalEnterVisible = false;
+  let pendingTeleporterAutoSelect: { x: number; z: number } | null = null;
   let portalAction:
     | { kind: "door" }
     | { kind: "canvas-exit" }
@@ -2799,20 +2803,6 @@ function enterGame(
       hud.setPlayModeState(playModeFromGame());
       return;
     }
-    if (game.isTeleporterDestPickActive()) {
-      hud.setStatus(
-        touchUi
-          ? "Tap an empty walkable floor tile for destination (Esc to cancel)"
-          : "Click an empty walkable floor tile for destination (Esc to cancel)"
-      );
-      hud.setBuildBlockBarState({
-        visible: false,
-        ...barStyle,
-        placementAdmin: isAdmin(selfAddress),
-      });
-      hud.setPlayModeState(playModeFromGame());
-      return;
-    }
     if (game.getFloorExpandMode() && canFloor) {
       const entryPickHint = hud.isRoomEntrySpawnPickArmed()
         ? touchUi
@@ -2839,7 +2829,7 @@ function enterGame(
     if (game.getBuildMode() && canBuild) {
       game.setBillboardPlacementPreviewActive(hud.isBillboardModeActive());
       const tpHint = hud.isTeleporterModeActive()
-        ? " Teleporter: click an empty floor tile to place."
+        ? " Teleporter: click an empty floor tile to place, then tap Set to choose a destination."
         : "";
       const gateHint = hud.isGateModeActive()
         ? " Gate: green/red on neighbors show clearance; click an empty floor tile."
@@ -3512,6 +3502,7 @@ function enterGame(
         return;
       }
       if (hud.isTeleporterModeActive()) {
+        pendingTeleporterAutoSelect = { x, z };
         sendPlacePendingTeleporter(socket, x, z);
         return;
       }
@@ -3821,7 +3812,7 @@ function enterGame(
         });
       }
     });
-    game.setObstacleSelectHandler((x, z, y) => {
+    function handleObstacleSelect(x: number, z: number, y: number): void {
       const selectedBb = game.getSelectedBillboardId();
       if (selectedBb) {
         const spec = game.getBillboardState(selectedBb);
@@ -3896,7 +3887,9 @@ function enterGame(
         let destX = 0;
         let destZ = 0;
         if (!pending && "targetRoomId" in tp) {
-          destRoomId = tp.targetRoomId;
+          destRoomId = isBidirectionalPair
+            ? "__THIS_ROOM_PAIR__"
+            : tp.targetRoomId;
           destX = tp.targetX;
           destZ = tp.targetZ;
         }
@@ -3912,24 +3905,15 @@ function enterGame(
             destZ,
             currentRoomId: normalizeRoomId(game.getRoomId()),
             roomOptions: teleporterDestinationRoomOptions(),
-            onPickTileInCurrentRoom: () => {
-              game.setTeleporterDestPickHandler((px, pz) => {
-                const here = normalizeRoomId(game.getRoomId());
-                const tx = Math.floor(px);
-                const tz = Math.floor(pz);
-                game.setTeleporterDestPickHandler(null);
-                hud.setTeleporterEditFields({
-                  destRoomId: here,
-                  destX: tx,
-                  destZ: tz,
-                });
-                game.setTeleporterDestinationDraftHighlight({ x: tx, z: tz });
-                syncBuildHud();
+            onOpenDestinationPicker: () => {
+              void openTeleporterDestinationPickerForEdit(x, z, y, {
+                pending,
+                isBidirectionalPair,
+                destRoomId,
+                destX,
+                destZ,
+                currentRoomId: normalizeRoomId(game.getRoomId()),
               });
-              syncBuildHud();
-            },
-            onPickCancel: () => {
-              game.setTeleporterDestPickHandler(null);
             },
             onCommitDestination: (destRoomId, dx, dz) => {
               const destX = Math.floor(dx);
@@ -3954,7 +3938,6 @@ function enterGame(
             },
           },
           onRemove: () => {
-            game.setTeleporterDestPickHandler(null);
             sendRemoveObstacleAt(socket, x, z, y);
             editingTile = null;
             hud.hideObjectEditPanel();
@@ -3962,14 +3945,12 @@ function enterGame(
             syncBuildHud();
           },
           onMove: () => {
-            game.setTeleporterDestPickHandler(null);
             game.beginReposition(x, z, y);
             editingTile = null;
             hud.hideObjectEditPanel();
             syncBuildHud();
           },
           onClose: () => {
-            game.setTeleporterDestPickHandler(null);
             editingTile = null;
             hud.hideObjectEditPanel();
             game.clearSelectedBlock();
@@ -4072,7 +4053,9 @@ function enterGame(
         },
       });
       syncBuildHud();
-    });
+    }
+    game.setObstacleSelectHandler(handleObstacleSelect);
+    obstacleSelectAt = handleObstacleSelect;
   };
 
   function isExitPortalTile(meta: {
@@ -4133,6 +4116,70 @@ function enterGame(
     const short =
       name.length > maxName ? `${name.slice(0, maxName - 1)}…` : name;
     return `Enter ${short}`;
+  }
+
+  function syncTeleporterSetButton(): void {
+    if (!game.getBuildMode()) {
+      hud.setTeleporterSetVisible(false);
+      return;
+    }
+    const tile = hud.getTeleporterConfigureTile();
+    if (!tile) {
+      hud.setTeleporterSetVisible(false);
+      return;
+    }
+    const anchor = game.getTileScreenPosition(tile.x, tile.z);
+    if (anchor) {
+      hud.setTeleporterSetScreenPosition(anchor.x, anchor.y);
+    }
+    hud.setTeleporterSetVisible(true);
+  }
+
+  async function openTeleporterDestinationPickerForEdit(
+    srcX: number,
+    srcZ: number,
+    srcY: number,
+    ctx: {
+      pending: boolean;
+      isBidirectionalPair: boolean;
+      destRoomId: string;
+      destX: number;
+      destZ: number;
+      currentRoomId: string;
+    }
+  ): Promise<void> {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const { openTeleporterDestinationPicker, TELEPORTER_PAIR_ROOM_VALUE } =
+      await import("./ui/teleporterDestPreview.js");
+    const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+    let initialRoomId = ctx.destRoomId;
+    if (ctx.pending || ctx.isBidirectionalPair) {
+      initialRoomId = TELEPORTER_PAIR_ROOM_VALUE;
+    }
+    const result = await openTeleporterDestinationPicker({
+      rooms: teleporterDestinationRoomOptions(),
+      hubRoomId: HUB_ROOM_ID,
+      currentRoomId: ctx.currentRoomId,
+      initialRoomId,
+      initialX: ctx.destX,
+      initialZ: ctx.destZ,
+      lockToPairOnly: ctx.isBidirectionalPair,
+      token,
+      apiBase: resolveApiBaseUrl(),
+    });
+    if (!result.ok) return;
+    const dx = Math.floor(result.x);
+    const dz = Math.floor(result.z);
+    if (result.roomId === TELEPORTER_PAIR_ROOM_VALUE) {
+      sendPlaceTeleporterBidirectionalPair(socket, srcX, srcZ, srcY, dx, dz);
+      return;
+    }
+    const rid = normalizeRoomId(result.roomId);
+    if (rid === HUB_ROOM_ID) {
+      sendConfigureTeleporter(socket, srcX, srcZ, srcY, HUB_ROOM_ID, 0, 0);
+      return;
+    }
+    sendConfigureTeleporter(socket, srcX, srcZ, srcY, rid, dx, dz);
   }
 
   function syncPortalEnterButton(): void {
@@ -5181,6 +5228,19 @@ function enterGame(
     }
     if (msg.type === "obstaclesDelta") {
       game.applyObstaclesDelta(msg.add, msg.remove);
+      if (pendingTeleporterAutoSelect && msg.add?.length) {
+        const want = pendingTeleporterAutoSelect;
+        for (const t of msg.add) {
+          if (t.x !== want.x || t.z !== want.z) continue;
+          const tp = t.teleporter;
+          if (!tp || !("pending" in tp) || !tp.pending) continue;
+          pendingTeleporterAutoSelect = null;
+          const ty = Math.max(0, Math.min(2, Math.floor(t.y ?? 0)));
+          game.setSelectedBlockKey(blockKey(t.x, t.z, ty));
+          obstacleSelectAt?.(t.x, t.z, ty);
+          break;
+        }
+      }
       if (editingTile) {
         const m = game.getPlacedAt(editingTile.x, editingTile.z, editingTile.y);
         if (!m) {
@@ -5986,11 +6046,6 @@ function enterGame(
       }
       if (e.key === "Escape") {
         if (document.activeElement === chatInput) return;
-        if (game.isTeleporterDestPickActive()) {
-          game.setTeleporterDestPickHandler(null);
-          syncBuildHud();
-          return;
-        }
         if (game.isRepositioning()) {
           game.cancelReposition();
           syncBuildHud();
@@ -6121,6 +6176,7 @@ function enterGame(
     last = now;
     game.tick(dt);
     syncPortalEnterButton();
+    syncTeleporterSetButton();
     if (worldcupBallEdgeMarker) {
       if (
         worldcupIsFieldLikeRoomId(worldcupCurrentRoomId) &&
