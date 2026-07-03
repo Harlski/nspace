@@ -1704,7 +1704,7 @@ function enterGame(
     } else if (tab === "mine") {
       roomsModalList.setAttribute("aria-label", "My rooms");
     } else if (tab === "popular") {
-      roomsModalList.setAttribute("aria-label", "Popular rooms");
+      roomsModalList.setAttribute("aria-label", "Public rooms");
     } else if (tab === "deleted") {
       roomsModalList.setAttribute("aria-label", "Deleted rooms");
     } else {
@@ -1997,7 +1997,7 @@ function enterGame(
       if (roomsCatalogTab === "mine") return viewerOwnsRoom(r);
       if (roomsCatalogTab === "popular") {
         if (r.isBuiltin || r.isOfficial) return false;
-        return r.isPublic && r.thumbsUpCount >= 1;
+        return r.isPublic;
       }
       if (roomsCatalogTab === "admin") {
         if (!isAdmin(address)) return false;
@@ -2051,7 +2051,7 @@ function enterGame(
         roomsCatalogTab === "mine"
           ? "No rooms yet. Create one from the button below."
           : roomsCatalogTab === "popular"
-            ? "No popular rooms yet."
+            ? "No public rooms yet."
             : roomsCatalogTab === "admin"
               ? "No other players' private rooms."
               : roomsCatalogTab === "deleted"
