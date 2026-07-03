@@ -25,7 +25,6 @@ import {
   adminRandomExtraFloorLayout,
   broadcastRestartPendingNotice,
   broadcastRoomCatalogRefresh,
-  canPlaceBlocksInRoom,
   canTeleporterDestinationRoom,
   directInviteOnCreated,
   getHostDisplayNameForInvite,
