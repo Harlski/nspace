@@ -91,6 +91,10 @@ const LS_FLOOR_TILE_QUAD = "nspace_floor_tile_quad";
 const LS_BLOCK_VISUAL_SCALE = "nspace_block_visual_scale";
 const DEFAULT_ZOOM_MIN = 6.5;
 const DEFAULT_ZOOM_MAX = 13.44;
+/** Rooms catalog preview: fixed Hub (25x25) framing regardless of room size. */
+const LAYOUT_PREVIEW_HUB_TILES = 25;
+/** Baked catalog preview pan/zoom (view-space Y, zoom scale Z). */
+const LAYOUT_PREVIEW_DEFAULT_TUNE = { x: 0, y: 1.5, z: 0.3 };
 /** Ortho stream camera sits above look-at; height only matters for near/far clipping. */
 const STREAM_CAMERA_HEIGHT = 100;
 /** Top-down stream overview: identicon footprint spans this many floor tiles (1 tile at spotlight zoom). */
@@ -222,6 +226,10 @@ import {
   resolveTeleporterPillarColorRgb,
   TELEPORTER_DEFAULT_PILLAR_COLOR_RGB,
 } from "./blockStyle.js";
+import {
+  drawNqHexagonWithWhiteOutline,
+  nqHexagonLogoWidthForHeight,
+} from "../ui/nimiqIcons.js";
 import nimiqIconsData from "nimiq-icons/icons.json";
 
 const LERP = 12;
@@ -1141,10 +1149,7 @@ function disposePlacedBlockGroupContents(g: THREE.Object3D): void {
  * Otherwise null (new click or path jumped).
  */
 const FLOATING_REWARD_TEXT_OUTLINE_PX = 10;
-/** Thicker stroke when mining reward uses 2× font (`nimLogo`). */
-const FLOATING_REWARD_MINING_TEXT_OUTLINE_PX = 18;
 const FLOATING_REWARD_LOGO_OUTLINE_PX = 3;
-const FLOATING_REWARD_MINING_LOGO_OUTLINE_PX = 6;
 const FLOATING_REWARD_DEFAULT_DURATION_MS = 2000;
 /** Plain floaters (spring motion): extra time for damped settle before fade-out. */
 const FLOATING_SPRING_DURATION_MS = 2600;
@@ -1152,13 +1157,12 @@ const FLOATING_SPRING_DURATION_MS = 2600;
 const SELF_PLAYER_ACTION_FLOAT_KEY = "__self_player_action__";
 /** Mining reward floater stays 1s longer than generic floaters (TODO). */
 const FLOATING_REWARD_MINING_DURATION_MS = 3000;
-/** On-brand NIM mark beside full-precision mining amounts (zoomed in). */
-const NIM_REWARD_LOGO_SRC = "/branding/nimiq-nim-logo.svg";
+/** Mining payout label + `nq-hexagon` tint. */
+const MINING_REWARD_FLOAT_COLOR = "#ffe30a";
 const FLOATING_REWARD_MINING_FONT =
-  "500 64px 'Fira Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
-const FLOATING_REWARD_MINING_LOGO_H = 72;
-const FLOATING_REWARD_MINING_GAP = 14;
-const FLOATING_REWARD_MINING_CANVAS_H = 120;
+  'bold 40px "Muli", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif';
+const FLOATING_REWARD_MINING_GAP = 8;
+const FLOATING_REWARD_MINING_CANVAS_H = 88;
 /** Screen-fixed floater heights (world scale via {@link Game.pixelToWorldY}). */
 const FLOATING_REWARD_PLAIN_SCREEN_HEIGHT_PX = 28;
 /** Slightly larger plain floaters (e.g. inactive mineable block feedback). */
@@ -1166,8 +1170,6 @@ const FLOATING_REWARD_PLAIN_EMPHASIS_SCREEN_HEIGHT_PX = 34;
 const FLOATING_REWARD_PLAIN_FONT = "bold 32px 'Muli', sans-serif";
 const FLOATING_REWARD_PLAIN_EMPHASIS_FONT = "bold 38px 'Muli', sans-serif";
 const FLOATING_REWARD_MINING_SCREEN_HEIGHT_PX = 36;
-/** Zoomed-out mining rewards: larger digits, two decimals, no logo. */
-const FLOATING_REWARD_MINING_COMPACT_SCREEN_HEIGHT_PX = 40;
 const FLOATING_REWARD_TEXT_SHADOW_BLUR = 10;
 const FLOATING_REWARD_TEXT_SHADOW_OFFSET_X = 4;
 const FLOATING_REWARD_TEXT_SHADOW_OFFSET_Y = 5;
@@ -1211,36 +1213,6 @@ function fillTextWithWhiteOutline(
   ctx.restore();
 }
 
-/** White silhouette ring behind the colored logo (canvas has no stroke for drawImage). */
-function drawImageWithWhiteOutline(
-  ctx: CanvasRenderingContext2D,
-  img: CanvasImageSource,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  outlinePx: number
-): void {
-  const corners: [number, number][] = [
-    [-outlinePx, 0],
-    [outlinePx, 0],
-    [0, -outlinePx],
-    [0, outlinePx],
-    [-outlinePx, -outlinePx],
-    [outlinePx, -outlinePx],
-    [-outlinePx, outlinePx],
-    [outlinePx, outlinePx],
-  ];
-  ctx.save();
-  ctx.filter = "brightness(0) invert(1)";
-  for (const [ox, oy] of corners) {
-    ctx.drawImage(img, x + ox, y + oy, w, h);
-  }
-  ctx.filter = "none";
-  ctx.drawImage(img, x, y, w, h);
-  ctx.restore();
-}
-
 /** Decimal amount from a mining floater string such as `+1.0000 NIM`. */
 function parseMiningRewardAmount(text: string): string | null {
   const trimmed = text.trim().replace(/\s*NIM\s*$/i, "").trim();
@@ -1278,42 +1250,39 @@ function rasterPlainFloatingCanvas(
   return { canvas, screenHeightPx };
 }
 
-function formatMiningRewardLabel(amount: string, compact: boolean): string {
-  if (!compact) return `+${amount}`;
+function formatMiningRewardLabel(amount: string): string {
   const n = Number(amount);
-  if (!Number.isFinite(n)) return `+${amount}`;
-  return `+${n.toFixed(2)}`;
+  if (!Number.isFinite(n)) return `${amount}NIM`;
+  return `${n.toFixed(2)}NIM`;
+}
+
+function miningRewardTextHeightPx(ctx: CanvasRenderingContext2D, label: string): number {
+  const m = ctx.measureText(label);
+  const fromMetrics = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
+  if (fromMetrics > 0) return fromMetrics;
+  return 40;
 }
 
 function rasterMiningRewardFloatingCanvas(
   amount: string,
-  color: string,
-  compact: boolean,
-  logo: CanvasImageSource | null
+  color: string
 ): { canvas: HTMLCanvasElement; screenHeightPx: number } {
-  const screenHeightPx = compact
-    ? FLOATING_REWARD_MINING_COMPACT_SCREEN_HEIGHT_PX
-    : FLOATING_REWARD_MINING_SCREEN_HEIGHT_PX;
-  const label = formatMiningRewardLabel(amount, compact);
+  const label = formatMiningRewardLabel(amount);
   const font = FLOATING_REWARD_MINING_FONT;
+  const screenHeightPx = FLOATING_REWARD_MINING_SCREEN_HEIGHT_PX;
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
   ctx.font = font;
   const tw = ctx.measureText(label).width;
-  const logoH = FLOATING_REWARD_MINING_LOGO_H;
+  const textH = miningRewardTextHeightPx(ctx, label);
   const gap = FLOATING_REWARD_MINING_GAP;
-  let logoW = 0;
-  if (!compact && logo) {
-    const img = logo as HTMLImageElement;
-    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-      logoW = (img.naturalWidth / img.naturalHeight) * logoH;
-    }
-  }
+  const logoH = textH;
+  const logoW = nqHexagonLogoWidthForHeight(logoH);
   const padX =
     36 +
-    FLOATING_REWARD_MINING_TEXT_OUTLINE_PX * 2 +
+    FLOATING_REWARD_TEXT_OUTLINE_PX * 2 +
     FLOATING_REWARD_TEXT_SHADOW_PAD * 2;
-  const innerW = tw + (logoW > 0 ? gap + logoW : 0);
+  const innerW = logoW + gap + tw;
   const w = Math.ceil(innerW + padX);
   const h = FLOATING_REWARD_MINING_CANVAS_H;
   canvas.width = w;
@@ -1324,33 +1293,20 @@ function rasterMiningRewardFloatingCanvas(
   ctx.textAlign = "left";
   const cx = (w - innerW) / 2;
   const midY = h / 2;
+  const lx = cx;
+  const ly = midY - logoH / 2;
 
-  fillTextWithWhiteOutline(
+  drawNqHexagonWithWhiteOutline(
     ctx,
-    label,
-    cx,
-    midY,
+    lx,
+    ly,
+    logoW,
+    logoH,
     color,
-    FLOATING_REWARD_MINING_TEXT_OUTLINE_PX
+    FLOATING_REWARD_LOGO_OUTLINE_PX
   );
 
-  if (logoW > 0 && logo) {
-    const lx = cx + tw + gap;
-    const ly = midY - logoH / 2;
-    try {
-      drawImageWithWhiteOutline(
-        ctx,
-        logo,
-        lx,
-        ly,
-        logoW,
-        logoH,
-        FLOATING_REWARD_MINING_LOGO_OUTLINE_PX
-      );
-    } catch {
-      /* ignore draw errors */
-    }
-  }
+  fillTextWithWhiteOutline(ctx, label, cx + logoW + gap, midY, color);
 
   return { canvas, screenHeightPx };
 }
@@ -1366,11 +1322,12 @@ type FloatingTextEntry = {
   texWidth: number;
   texHeight: number;
   screenHeightPx: number;
-  /** Zoom-adaptive mining reward; re-rasterized when crossing compact threshold. */
+  /** When set, sprite is parented to the avatar group and rises above the identicon. */
+  avatarGroup?: THREE.Group;
+  /** Zoom-adaptive mining reward; re-rasterized when color changes. */
   miningReward?: {
     amount: string;
     color: string;
-    compact: boolean;
   };
 };
 
@@ -1524,12 +1481,6 @@ export class Game {
     ReturnType<typeof setTimeout>
   >();
   private achievementCelebrationTexture: THREE.CanvasTexture | null = null;
-  /** Cached `/branding/nimiq-nim-logo.svg` for mining reward floaters. */
-  private nimRewardLogo: HTMLImageElement | null = null;
-  private nimRewardLogoLoading = false;
-  private readonly nimRewardLogoWaiters: Array<
-    (img: HTMLImageElement | null) => void
-  > = [];
   /** worldcup: live 1v1 spectate portals in the current room (matchId = pitch room id). */
   private readonly worldcupPortals = new Map<
     string,
@@ -1594,6 +1545,12 @@ export class Game {
   /** When set, next empty floor click in build mode sets teleporter destination X/Z. */
   private teleporterDestPickHandler: ((x: number, z: number) => void) | null =
     null;
+  /** Readonly room layout preview (catalog / teleporter picker) - centered symmetric frustum. */
+  private roomLayoutPreviewActive = false;
+  /** Rooms catalog modal only: Hub-scale crop, baked tune, no pointer interaction. */
+  private catalogPreviewActive = false;
+  /** Dev tune: view-space frustum pan (x/y) and zoom scale (z). */
+  private layoutPreviewTune = { ...LAYOUT_PREVIEW_DEFAULT_TUNE };
   private claimBlockHandler: ((x: number, z: number, y: number) => void) | null =
     null;
   private mineCooldownAttemptHandler: (() => void) | null = null;
@@ -4071,98 +4028,27 @@ export class Game {
     this.refreshFloatingTextScales();
   }
 
-  /** Zoomed out: two-decimal amount only; zoomed in: four decimals + NIM logo. */
-  private miningRewardUsesCompactLayout(): boolean {
-    return (
-      this.frustumSize >= (this.zoomMin + this.effectiveZoomMax()) * 0.5
-    );
-  }
-
-  private loadNimRewardLogo(
-    cb: (img: HTMLImageElement | null) => void
-  ): void {
-    if (
-      this.nimRewardLogo?.complete &&
-      this.nimRewardLogo.naturalWidth > 0
-    ) {
-      cb(this.nimRewardLogo);
-      return;
-    }
-    this.nimRewardLogoWaiters.push(cb);
-    if (this.nimRewardLogoLoading) return;
-    this.nimRewardLogoLoading = true;
-    const logo = new Image();
-    logo.crossOrigin = "anonymous";
-    logo.decoding = "async";
-    logo.src = NIM_REWARD_LOGO_SRC;
-    logo.addEventListener(
-      "load",
-      () => {
-        this.nimRewardLogo = logo;
-        this.nimRewardLogoLoading = false;
-        const waiters = this.nimRewardLogoWaiters.splice(0);
-        for (const w of waiters) w(logo);
-      },
-      { once: true }
-    );
-    logo.addEventListener(
-      "error",
-      () => {
-        this.nimRewardLogoLoading = false;
-        const waiters = this.nimRewardLogoWaiters.splice(0);
-        for (const w of waiters) w(null);
-      },
-      { once: true }
-    );
-  }
-
   private syncFloatingTextScale(entry: FloatingTextEntry): void {
     const worldH = this.pixelToWorldY(entry.screenHeightPx);
     const worldW = worldH * (entry.texWidth / entry.texHeight);
     entry.sprite.scale.set(worldW, worldH, 1);
   }
 
-  private refreshFloatingTextScales(): void {
-    const compact = this.miningRewardUsesCompactLayout();
-    for (const [key, entry] of this.floatingTexts) {
-      const mr = entry.miningReward;
-      if (mr && mr.compact !== compact) {
-        mr.compact = compact;
-        this.rerasterizeMiningRewardEntry(key, entry);
-        continue;
-      }
-      this.syncFloatingTextScale(entry);
-    }
+  /** Avatar-local Y for mining reward floaters (above identicon, screen-fixed height). */
+  private syncAvatarAttachedFloatingTextPosition(entry: FloatingTextEntry): void {
+    const worldH = entry.sprite.scale.y;
+    const avatarTop = this.avatarIdenticonWorldDiameter();
+    const gapAbove = this.pixelToWorldY(8);
+    entry.sprite.position.set(0, avatarTop + gapAbove + worldH * 0.5, 0);
   }
 
-  private rerasterizeMiningRewardEntry(
-    key: string,
-    entry: FloatingTextEntry
-  ): void {
-    const mr = entry.miningReward;
-    if (!mr) return;
-    const finish = (logo: HTMLImageSource | null): void => {
-      const still = this.floatingTexts.get(key);
-      if (!still || still !== entry || !still.miningReward) return;
-      const { canvas, screenHeightPx } = rasterMiningRewardFloatingCanvas(
-        mr.amount,
-        mr.color,
-        mr.compact,
-        mr.compact ? null : logo
-      );
-      still.texture.image = canvas;
-      still.texture.needsUpdate = true;
-      still.texWidth = canvas.width;
-      still.texHeight = canvas.height;
-      still.screenHeightPx = screenHeightPx;
-      this.syncFloatingTextScale(still);
-      this.requestRender(250);
-    };
-    if (mr.compact) {
-      finish(null);
-      return;
+  private refreshFloatingTextScales(): void {
+    for (const [, entry] of this.floatingTexts) {
+      this.syncFloatingTextScale(entry);
+      if (entry.avatarGroup) {
+        this.syncAvatarAttachedFloatingTextPosition(entry);
+      }
     }
-    this.loadNimRewardLogo((logo) => finish(logo));
   }
 
   private updateAvatarNameLabelHeight(g: THREE.Group): void {
@@ -4235,6 +4121,117 @@ export class Game {
         typeof bubble.userData["challengeAcceptAddress"] === "string";
       this.layoutWorldcupChallengeBubbleSprites(bubble, withAccept);
     }
+  }
+
+  /**
+   * Catalog / teleporter layout previews: fit the room diamond in view with its projected
+   * bounds centered (gameplay uses asymmetric expansion via {@link tryExpandFrustumForRoomGround}).
+   */
+  private layoutPreviewRoomSamples(
+    b: RoomBounds
+  ): {
+    cx: number;
+    cz: number;
+    samples: Array<[number, number]>;
+  } {
+    const hx = 0.5;
+    const hz = 0.5;
+    const cx = (b.minX + b.maxX) * 0.5;
+    const cz = (b.minZ + b.maxZ) * 0.5;
+    return {
+      cx,
+      cz,
+      samples: [
+        [b.minX - hx, b.minZ - hz],
+        [b.maxX + hx, b.minZ - hz],
+        [b.minX - hx, b.maxZ + hz],
+        [b.maxX + hx, b.maxZ + hz],
+        [cx, b.minZ - hz],
+        [cx, b.maxZ + hz],
+        [b.minX - hx, cz],
+        [b.maxX + hx, cz],
+      ],
+    };
+  }
+
+  /** Rooms catalog: always frame a Hub-sized (25x25) window centered on the room. */
+  private layoutPreviewHubSamples(b: RoomBounds): Array<[number, number]> {
+    const roomCx = (b.minX + b.maxX + 1) * 0.5;
+    const roomCz = (b.minZ + b.maxZ + 1) * 0.5;
+    const half = LAYOUT_PREVIEW_HUB_TILES * 0.5;
+    const vMinX = roomCx - half;
+    const vMaxX = roomCx + half - 1;
+    const vMinZ = roomCz - half;
+    const vMaxZ = roomCz + half - 1;
+    const cx = (vMinX + vMaxX) * 0.5;
+    const cz = (vMinZ + vMaxZ) * 0.5;
+    const hx = 0.5;
+    const hz = 0.5;
+    return [
+      [vMinX - hx, vMinZ - hz],
+      [vMaxX + hx, vMinZ - hz],
+      [vMinX - hx, vMaxZ + hz],
+      [vMaxX + hx, vMaxZ + hz],
+      [cx, vMinZ - hz],
+      [cx, vMaxZ + hz],
+      [vMinX - hx, cz],
+      [vMaxX + hx, cz],
+    ];
+  }
+
+  private applyLayoutPreviewFrustum(): void {
+    const w = this.canvasHost.clientWidth;
+    const h = this.canvasHost.clientHeight;
+    if (w < 1 || h < 1) return;
+    const aspect = w / h;
+
+    this.applyCameraPose();
+    this.camera.updateMatrixWorld(true);
+    const inv = this.camera.matrixWorldInverse;
+    const p = this.frustumFitScratch;
+    const b = this.roomBounds;
+    const margin = 3;
+    const samples = this.catalogPreviewActive
+      ? this.layoutPreviewHubSamples(b)
+      : this.layoutPreviewRoomSamples(b).samples;
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const [wx, wz] of samples) {
+      p.set(wx, 0, wz);
+      p.applyMatrix4(inv);
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+
+    minX -= margin;
+    maxX += margin;
+    minY -= margin;
+    maxY += margin;
+
+    const tune = this.layoutPreviewTune;
+    const centerX = (minX + maxX) * 0.5 + tune.x;
+    const centerY = (minY + maxY) * 0.5 + tune.y;
+    let halfW = (maxX - minX) * 0.5;
+    let halfH = (maxY - minY) * 0.5;
+    if (halfW / halfH < aspect) {
+      halfW = halfH * aspect;
+    } else {
+      halfH = halfW / aspect;
+    }
+    const zoom = Math.max(0.15, tune.z);
+    halfW *= zoom;
+    halfH *= zoom;
+
+    this.camera.left = centerX - halfW;
+    this.camera.right = centerX + halfW;
+    this.camera.top = centerY + halfH;
+    this.camera.bottom = centerY - halfH;
+    this.camera.updateProjectionMatrix();
   }
 
   /** Large rooms need an asymmetric ortho frustum when zoomed out - symmetric half-extent clips the south diamond tip. */
@@ -4564,6 +4561,10 @@ export class Game {
   }
 
   private applyOrthographicFrustum(): void {
+    if (this.roomLayoutPreviewActive) {
+      this.applyLayoutPreviewFrustum();
+      return;
+    }
     const w = this.canvasHost.clientWidth;
     const h = this.canvasHost.clientHeight;
     const aspect = w > 0 && h > 0 ? w / h : 16 / 9;
@@ -4682,6 +4683,7 @@ export class Game {
   };
 
   private readonly onWheel = (e: WheelEvent): void => {
+    if (this.catalogPreviewActive) return;
     e.preventDefault();
     if (this.zoomLocked || this.streamPresentationActive) return;
     const scale = Math.exp(-e.deltaY * 0.0015);
@@ -5126,7 +5128,8 @@ export class Game {
     this.requestRender(120);
   }
 
-  applyRoomLayoutSnapshot(snapshot: {
+  applyRoomLayoutSnapshot(
+    snapshot: {
     roomId: string;
     roomBounds: {
       minX: number;
@@ -5152,7 +5155,16 @@ export class Game {
     billboards?: Parameters<Game["setBillboards"]>[0];
     voxelTexts?: Parameters<Game["setVoxelTextsForRoom"]>[1];
     joinSpawn?: { x: number; z: number; customized: boolean };
-  }): void {
+  },
+    opts?: { catalogPreview?: boolean }
+  ): void {
+    this.roomLayoutPreviewActive = true;
+    this.catalogPreviewActive = opts?.catalogPreview === true;
+    if (this.catalogPreviewActive) {
+      this.renderer.domElement.style.cursor = "default";
+      this.renderer.domElement.style.pointerEvents = "none";
+      this.canvasHost.style.pointerEvents = "none";
+    }
     this.setMapOverviewUnlocked(true);
     this.applyRoomFromWelcome({
       roomId: snapshot.roomId,
@@ -5192,14 +5204,8 @@ export class Game {
     const b = this.roomBounds;
     const cx = (b.minX + b.maxX + 1) * 0.5;
     const cz = (b.minZ + b.maxZ + 1) * 0.5;
-    this.frustumSize = Game.clampZoom(
-      this.roomZoomMax,
-      this.zoomMin,
-      this.roomZoomMax,
-      this.roomZoomMax
-    );
     this.setCameraLookAtTarget(cx, 0, cz, { instant: true });
-    this.applyOrthographicFrustum();
+    this.applyLayoutPreviewFrustum();
     this.requestRender(120);
   }
 
@@ -10615,6 +10621,7 @@ export class Game {
   }
 
   private onPointerMove = (e: PointerEvent): void => {
+    if (this.catalogPreviewActive) return;
     this.requestRender(120);
     if (
       this.rightOrbitDrag &&
@@ -10948,6 +10955,7 @@ export class Game {
   };
 
   private onPointerDown = (e: PointerEvent): void => {
+    if (this.catalogPreviewActive) return;
     this.requestRender(250);
     if (e.button === 2 && Game.canUseRightDragCameraOrbit(e)) {
       this.suppressAvatarContextMenuFromRightOrbit = false;
@@ -14846,7 +14854,8 @@ export class Game {
     durationMs: number,
     motion: "classic" | "spring",
     screenHeightPx: number,
-    miningReward?: FloatingTextEntry["miningReward"]
+    miningReward?: FloatingTextEntry["miningReward"],
+    avatarGroup?: THREE.Group | null
   ): void {
     const w = canvas.width;
     const h = canvas.height;
@@ -14866,7 +14875,11 @@ export class Game {
 
     const blockHeight = 1.0;
     const startY = blockHeight + 0.5;
-    sprite.position.set(x, startY, z);
+    if (avatarGroup) {
+      avatarGroup.add(sprite);
+    } else {
+      sprite.position.set(x, startY, z);
+    }
 
     const entry: FloatingTextEntry = {
       sprite,
@@ -14879,11 +14892,18 @@ export class Game {
       texWidth: w,
       texHeight: h,
       screenHeightPx,
+      avatarGroup: avatarGroup ?? undefined,
       miningReward,
     };
     this.syncFloatingTextScale(entry);
+    if (avatarGroup) {
+      this.syncAvatarAttachedFloatingTextPosition(entry);
+      entry.startY = entry.sprite.position.y;
+    }
 
-    this.scene.add(sprite);
+    if (!avatarGroup) {
+      this.scene.add(sprite);
+    }
 
     this.floatingTexts.set(mapKey, entry);
   }
@@ -14978,14 +14998,14 @@ export class Game {
   }
 
   /**
-   * Shows a floating text popup at a world position (e.g., "+1.0000" + NIM logo on mine).
+   * Shows a floating text popup at a world position (e.g., NIM logo + `1.23NIM` on mine).
    * Mining rewards (`nimLogo`) use Fira Mono, screen-fixed scale, and zoom-adaptive layout.
    */
   showFloatingText(
     x: number,
     z: number,
     text: string,
-    color = "#ffc107",
+    color = MINING_REWARD_FLOAT_COLOR,
     opts?: {
       nimLogo?: boolean;
       /** Default: spring for plain text, classic when `nimLogo` is true. */
@@ -15035,30 +15055,54 @@ export class Game {
       return;
     }
 
-    const compact = this.miningRewardUsesCompactLayout();
     const spawnMining = (): void => {
-      this.loadNimRewardLogo((logo) => {
-        const { canvas, screenHeightPx } = rasterMiningRewardFloatingCanvas(
-          amount,
-          color,
-          compact,
-          compact ? null : logo
-        );
-        this.addFloatingTextFromCanvas(
-          key,
-          x,
-          z,
-          canvas,
-          FLOATING_REWARD_MINING_DURATION_MS,
-          verticalMotion,
-          screenHeightPx,
-          { amount, color, compact }
-        );
-        this.requestRender(250);
-      });
+      const { canvas, screenHeightPx } = rasterMiningRewardFloatingCanvas(
+        amount,
+        color
+      );
+      this.addFloatingTextFromCanvas(
+        key,
+        x,
+        z,
+        canvas,
+        FLOATING_REWARD_MINING_DURATION_MS,
+        verticalMotion,
+        screenHeightPx,
+        { amount, color }
+      );
+      this.requestRender(250);
     };
 
     spawnMining();
+  }
+
+  /**
+   * Mining payout floater above the local player's avatar (NIM logo + two-decimal amount).
+   */
+  showSelfPlayerMiningReward(
+    amount: string,
+    color = MINING_REWARD_FLOAT_COLOR
+  ): void {
+    if (!this.selfMesh) return;
+    const trimmed = amount.trim();
+    if (!/^\d+\.\d+$/.test(trimmed)) return;
+    const key = `__self_mining_reward__${Date.now()}`;
+    const { canvas, screenHeightPx } = rasterMiningRewardFloatingCanvas(
+      trimmed,
+      color
+    );
+    this.addFloatingTextFromCanvas(
+      key,
+      0,
+      0,
+      canvas,
+      FLOATING_REWARD_MINING_DURATION_MS,
+      "classic",
+      screenHeightPx,
+      { amount: trimmed, color },
+      this.selfMesh
+    );
+    this.requestRender(250);
   }
 
   private updateFloatingTexts(): void {

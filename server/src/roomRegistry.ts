@@ -879,3 +879,14 @@ export function restoreDynamicRoom(
   persistRoomsFile();
   return { ok: true };
 }
+
+/** Migration helper: force a dynamic room private without an actor check. */
+export function forceDynamicRoomPrivate(roomId: string): boolean {
+  const id = normalizeRoomIdRaw(roomId);
+  const entry = dynamicRooms.get(id);
+  if (!entry || entry.deletedAt || !entry.isPublic) return false;
+  entry.isPublic = false;
+  dynamicRooms.set(id, entry);
+  persistRoomsFile();
+  return true;
+}

@@ -60,3 +60,52 @@ export function nimiqIconUseMarkup(
   const cls = ["nq-icon", opts?.class].filter(Boolean).join(" ");
   return `<svg class="${cls}" width="${w}" height="${h}" aria-hidden="true"><use href="${NIMIQ_ICON_SPRITE}#${symbolId}"/></svg>`;
 }
+
+/** Canvas raster of `{@link NIMIQ_ICON_SPRITE}#nq-hexagon` (viewBox 0 0 27 24). */
+const NQ_HEXAGON_VB_W = 27;
+const NQ_HEXAGON_VB_H = 24;
+const NQ_HEXAGON_PATH_D =
+  "M26.6991 10.875L21.0741 1.125C20.6691 0.4275 19.9266 0 19.1241 0H7.87414C7.07164 0 6.32914 0.4275 5.92789 1.125L0.302891 10.875C-0.0983594 11.5725 -0.0983594 12.4275 0.302891 13.125L5.92789 22.875C6.32914 23.5725 7.07164 24 7.87414 24H19.1241C19.9266 24 20.6691 23.5725 21.0704 22.875L26.6954 13.125C27.1004 12.4275 27.1004 11.5725 26.6991 10.875Z";
+
+export function nqHexagonLogoWidthForHeight(heightPx: number): number {
+  return heightPx * (NQ_HEXAGON_VB_W / NQ_HEXAGON_VB_H);
+}
+
+/** White silhouette ring + fill, matching mining-reward text outline style. */
+export function drawNqHexagonWithWhiteOutline(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  fillColor: string,
+  outlinePx: number
+): void {
+  const path = new Path2D(NQ_HEXAGON_PATH_D);
+  const corners: [number, number][] = [
+    [-outlinePx, 0],
+    [outlinePx, 0],
+    [0, -outlinePx],
+    [0, outlinePx],
+    [-outlinePx, -outlinePx],
+    [outlinePx, -outlinePx],
+    [-outlinePx, outlinePx],
+    [outlinePx, outlinePx],
+  ];
+  const sx = width / NQ_HEXAGON_VB_W;
+  const sy = height / NQ_HEXAGON_VB_H;
+  ctx.save();
+  for (const [ox, oy] of corners) {
+    ctx.save();
+    ctx.translate(x + ox, y + oy);
+    ctx.scale(sx, sy);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill(path);
+    ctx.restore();
+  }
+  ctx.translate(x, y);
+  ctx.scale(sx, sy);
+  ctx.fillStyle = fillColor;
+  ctx.fill(path);
+  ctx.restore();
+}

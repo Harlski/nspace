@@ -905,8 +905,8 @@ export function createHud(
     },
     opts?: { fadeOutMs?: number }
   ) => void;
-  /** Show or hide the in-game Reconnect control (e.g. after WebSocket loss). */
-  setReconnectOffer: (visible: boolean) => void;
+  /** Show or hide the centered disconnect modal (e.g. after WebSocket loss). */
+  setReconnectOffer: (visible: boolean, opts?: { label?: string }) => void;
   /** Operator-scheduled maintenance: orange countdown strip + friendlier disconnect copy. */
   setServerRestartPendingNotice: (p: {
     etaSeconds: number;
@@ -916,6 +916,8 @@ export function createHud(
   /** If a restart notice was shown, next disconnect status line uses maintenance wording once. */
   consumeRestartDisconnectForStatus: () => boolean;
   onReconnect: (fn: () => void) => void;
+  /** Disconnect modal: return to login / main menu. */
+  onDisconnectExit: (fn: () => void) => void;
   /** Wire WebGL 1×1 tile previews; call after `new Game()` with the same instance (or `null` on teardown). */
   bindTileInspectorPreviewGame: (game: Game | null) => void;
   configureCosmeticHandlers: (handlers: {
@@ -1351,14 +1353,6 @@ export function createHud(
 
   const topStripMid = document.createElement("div");
   topStripMid.className = "hud-top-strip__mid";
-  const reconnectBtn = document.createElement("button");
-  reconnectBtn.type = "button";
-  reconnectBtn.className = "hud-reconnect-btn nq-button-pill light-blue";
-  reconnectBtn.textContent = "Reconnect";
-  reconnectBtn.hidden = true;
-  reconnectBtn.setAttribute("aria-label", "Reconnect to server");
-  reconnectBtn.title = "Try connecting again without leaving the game";
-  topStripMid.appendChild(reconnectBtn);
 
   const statusSub = document.createElement("div");
   statusSub.className = "hud-status-sub hud-status-sub--empty";
@@ -2344,6 +2338,60 @@ export function createHud(
     ".loading-overlay__progress-fill"
   ) as HTMLElement | null;
   letter.appendChild(loadingOverlay);
+
+  const disconnectModal = document.createElement("div");
+  disconnectModal.className = "hud-disconnect-modal";
+  disconnectModal.hidden = true;
+  disconnectModal.setAttribute("aria-hidden", "true");
+  const disconnectBackdrop = document.createElement("div");
+  disconnectBackdrop.className = "hud-disconnect-modal__backdrop";
+  disconnectBackdrop.setAttribute("aria-hidden", "true");
+  const disconnectDialog = document.createElement("div");
+  disconnectDialog.className = "hud-disconnect-modal__dialog";
+  disconnectDialog.setAttribute("role", "dialog");
+  disconnectDialog.setAttribute("aria-modal", "true");
+  disconnectDialog.setAttribute("aria-labelledby", "hud-disconnect-label");
+  disconnectDialog.innerHTML = `
+    ${nimiqHexLoaderSvg("hud-disconnect-modal__spinner")}
+    <p class="hud-disconnect-modal__line" id="hud-disconnect-label">Disconnected.</p>
+    <div class="hud-disconnect-modal__actions">
+      <button type="button" class="hud-disconnect-modal__reconnect nq-button-pill light-blue">Reconnect?</button>
+      <button type="button" class="hud-disconnect-modal__exit nq-button-pill">Exit</button>
+    </div>
+    <div class="hud-disconnect-modal__social">
+      <a class="main-menu__social-tile" href="${TELEGRAM_URL}" target="_blank" rel="noopener noreferrer">
+        <img class="main-menu__social-icon" src="${telegramIconUrl}" alt="" width="22" height="22" aria-hidden="true" />
+        <span class="main-menu__social-label">Telegram</span>
+      </a>
+      <a class="main-menu__social-tile" href="${X_URL}" target="_blank" rel="noopener noreferrer">
+        <img class="main-menu__social-icon" src="${xIconUrl}" alt="" width="22" height="22" aria-hidden="true" />
+        <span class="main-menu__social-label">X (Twitter)</span>
+      </a>
+    </div>
+  `;
+  const disconnectLabel = disconnectDialog.querySelector(
+    "#hud-disconnect-label"
+  ) as HTMLParagraphElement | null;
+  const disconnectReconnectBtn = disconnectDialog.querySelector(
+    ".hud-disconnect-modal__reconnect"
+  ) as HTMLButtonElement | null;
+  const disconnectExitBtn = disconnectDialog.querySelector(
+    ".hud-disconnect-modal__exit"
+  ) as HTMLButtonElement | null;
+  if (disconnectReconnectBtn) {
+    disconnectReconnectBtn.setAttribute("aria-label", "Reconnect to server");
+  }
+  if (disconnectExitBtn) {
+    disconnectExitBtn.setAttribute("aria-label", "Exit to login screen");
+  }
+  disconnectModal.appendChild(disconnectBackdrop);
+  disconnectModal.appendChild(disconnectDialog);
+  letter.appendChild(disconnectModal);
+
+  function formatDisconnectLabel(label: string): string {
+    const trimmed = label.trim() || "Disconnected";
+    return trimmed.endsWith(".") ? trimmed : `${trimmed}.`;
+  }
 
   const LOADING_MIN_MS = 2000;
   const LOADING_FADE_FALLBACK_MS = 550;
@@ -11897,6 +11945,7 @@ export function createHud(
 
   let fsHandler = (): void => {};
   let reconnectHandler = (): void => {};
+  let disconnectExitHandler = (): void => {};
   let returnHomeHandler = (): void => {};
   let leaveShaperHandler = (): void => {};
   let portalEnterHandler = (): void => {};
@@ -11942,7 +11991,8 @@ export function createHud(
 
   fsBtn.addEventListener("click", () => fsHandler());
   roomsBtn.addEventListener("click", () => roomsOpenHandler());
-  reconnectBtn.addEventListener("click", () => reconnectHandler());
+  disconnectReconnectBtn?.addEventListener("click", () => reconnectHandler());
+  disconnectExitBtn?.addEventListener("click", () => disconnectExitHandler());
   returnHomeBtn.addEventListener("click", () => returnHomeHandler());
   leaveShaperBtn.addEventListener("click", () => leaveShaperHandler());
   portalEnterBtn.addEventListener("click", () => portalEnterHandler());
@@ -15466,8 +15516,16 @@ export function createHud(
       playerBarDisplayName = String(displayName ?? "").trim();
       syncTopBarPlayerIdentity();
     },
-    setReconnectOffer(visible: boolean) {
-      reconnectBtn.hidden = !visible;
+    setReconnectOffer(visible: boolean, opts?: { label?: string }) {
+      if (visible) {
+        const label = formatDisconnectLabel(opts?.label ?? "Disconnected");
+        if (disconnectLabel) disconnectLabel.textContent = label;
+        disconnectModal.hidden = false;
+        disconnectModal.setAttribute("aria-hidden", "false");
+      } else {
+        disconnectModal.hidden = true;
+        disconnectModal.setAttribute("aria-hidden", "true");
+      }
     },
     setServerRestartPendingNotice(p: {
       etaSeconds: number;
@@ -15502,6 +15560,9 @@ export function createHud(
     },
     onReconnect(fn: () => void) {
       reconnectHandler = fn;
+    },
+    onDisconnectExit(fn: () => void) {
+      disconnectExitHandler = fn;
     },
     setNimClaimProgress(
       state: null | {

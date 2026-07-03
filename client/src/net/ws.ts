@@ -218,6 +218,10 @@ export type RoomCatalogEntry = {
   backgroundHueDeg?: number | null;
   /** Dynamic rooms: solid neutral sky; null/omitted = use hue or default water. */
   backgroundNeutral?: RoomBackgroundNeutral | null;
+  /** Placed builds toward the public visibility gate. */
+  buildScore: number;
+  thumbsUpCount: number;
+  viewerThumbedUp: boolean;
 };
 
 export type ServerMessage =
@@ -399,6 +403,14 @@ export type ServerMessage =
       reason?: string;
     }
   | { type: "roomCatalog"; rooms: RoomCatalogEntry[] }
+  | {
+      type: "roomThumbsUpResult";
+      roomId: string;
+      ok: boolean;
+      thumbsUpCount?: number;
+      viewerThumbedUp?: boolean;
+      reason?: string;
+    }
   | {
       type: "blockClaimOffered";
       claimId: string;
@@ -867,6 +879,11 @@ export function sendDeleteRoom(ws: WebSocket, roomId: string): void {
 export function sendRestoreRoom(ws: WebSocket, roomId: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "restoreRoom", roomId }));
+}
+
+export function sendThumbRoom(ws: WebSocket, roomId: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "thumbRoom", roomId }));
 }
 
 export type DesignWire = {

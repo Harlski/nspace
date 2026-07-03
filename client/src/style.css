@@ -1,14 +1,368 @@
-/* Rooms browser - full overlay from HUD "Rooms" button */
+/* Rooms browser - overlay inside letterbox (not viewport-fixed) */
 .rooms-modal {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 120;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px 16px;
+  box-sizing: border-box;
   background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+
+.rooms-modal__dialog--catalog {
+  width: min(920px, 100%);
+  height: min(100%, 720px);
+  max-height: min(100%, 720px);
+}
+
+.rooms-modal__catalog-stack {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.rooms-modal__catalog-preview-pane {
+  flex: 0 0 min(480px, 50%);
+  align-self: stretch;
+  min-height: 0;
+  max-width: min(480px, 50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+.rooms-modal__catalog-list-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rooms-modal__catalog-list-pane .rooms-modal__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-bottom: 0;
+}
+
+.rooms-modal__preview-head {
+  flex-shrink: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.rooms-modal__preview-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.rooms-modal__preview-meta {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: rgba(226, 232, 240, 0.65);
+}
+
+.rooms-modal__preview-meta-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.rooms-modal__preview-meta-icon {
+  display: block;
+  width: 11px;
+  height: 11px;
+  fill: currentColor;
+}
+
+/* Pressable likes counter inside the meta line (public rooms you don't own). */
+button.rooms-modal__preview-like {
+  appearance: none;
+  border: 1px solid transparent;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 1px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button.rooms-modal__preview-like:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.rooms-modal__preview-like.is-active {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(96, 165, 250, 0.45);
+}
+
+/* Fills the preview pane below the head; the preview renderer fits the room
+   to whatever aspect ratio results, so no fixed aspect on desktop. */
+.rooms-modal__preview-canvas-wrap {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  align-self: stretch;
+  background: #0f1623;
+  cursor: default;
+}
+
+.rooms-modal__preview-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  cursor: default;
+}
+
+.rooms-modal__preview-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.7);
+  pointer-events: none;
+}
+
+.rooms-modal__preview-status[hidden] {
+  display: none !important;
+}
+
+.rooms-modal__list--pick {
+  gap: 2px;
+}
+
+.rooms-modal__pick-row {
+  list-style: none;
+}
+
+.rooms-modal__pick-btn {
+  width: 100%;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  min-height: 0;
+}
+
+.rooms-modal__pick-row--selected .rooms-modal__pick-btn {
+  border-color: rgba(96, 165, 250, 0.55);
+  background: rgba(59, 130, 246, 0.18);
+}
+
+.rooms-modal__pick-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f8fafc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rooms-modal__pick-meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: rgba(226, 232, 240, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 52%;
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  .rooms-modal {
+    inset: auto;
+    top: var(--hud-below-top-wrap, calc(52px + env(safe-area-inset-top, 0px)));
+    bottom: var(
+      --hud-above-bottom-band,
+      calc(10px + env(safe-area-inset-bottom, 0px) + var(--hud-build-dock-height, 0px) + 120px)
+    );
+    left: 0;
+    right: 0;
+    padding: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .rooms-modal__dialog--catalog {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    border-top: none;
+  }
+
+  .rooms-modal__body {
+    padding: 8px 10px 10px;
+    min-height: 0;
+  }
+
+  .rooms-modal__dialog--catalog .rooms-modal__list-view {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 720px) and (orientation: portrait),
+  (pointer: coarse) and (orientation: portrait) {
+  .rooms-modal__dialog--catalog .rooms-modal__catalog-stack {
+    flex-direction: column;
+  }
+
+  .rooms-modal__catalog-preview-pane {
+    width: 100%;
+    max-width: none;
+    flex: 0 0 auto;
+  }
+
+  .rooms-modal__catalog-list-pane {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .rooms-modal__preview-canvas-wrap {
+    /* Fixed banner height so the room list below keeps room to scroll;
+       a full-width square would swallow the whole stack on phones. */
+    flex: 0 0 auto;
+    align-self: stretch;
+    width: 100%;
+    height: clamp(140px, 24vh, 260px);
+    max-height: none;
+  }
+
+  .rooms-modal__pick-meta {
+    max-width: 46%;
+  }
+}
+
+/* Mobile landscape: preview flush left, list fills remainder (within letterbox).
+   The modal covers the chat band down to the screen edge - vertical space is
+   scarce, and the reclaimed height goes to the room preview. */
+html.nspace-mobile-landscape .rooms-modal {
+  bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html.nspace-mobile-landscape .rooms-modal__body {
+  padding: 6px 8px 8px 6px;
+}
+
+html.nspace-mobile-landscape .rooms-modal__dialog--catalog .rooms-modal__catalog-stack {
+  flex-direction: row;
+  gap: 6px;
+}
+
+html.nspace-mobile-landscape .rooms-modal__preview-head {
+  padding: 6px 8px;
+}
+
+/* Landscape: name and counts share one line to save header height. */
+html.nspace-mobile-landscape .rooms-modal__preview-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+html.nspace-mobile-landscape .rooms-modal__preview-title {
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.nspace-mobile-landscape .rooms-modal__preview-meta {
+  font-size: 10px;
+  margin: 0;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+html.nspace-mobile-landscape .rooms-modal__list-footer {
+  padding-top: 6px;
+  padding-bottom: 2px;
+}
+
+html.nspace-mobile-landscape .rooms-modal__catalog-tabs {
+  padding-top: 6px;
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .rooms-modal__body {
+    padding: 6px 8px 8px 6px;
+  }
+
+  .rooms-modal__dialog--catalog .rooms-modal__catalog-stack {
+    flex-direction: row;
+    gap: 6px;
+  }
+
+  .rooms-modal__preview-head {
+    padding: 6px 8px;
+  }
+
+  .rooms-modal__preview-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .rooms-modal__preview-title {
+    font-size: 13px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .rooms-modal__preview-meta {
+    font-size: 10px;
+    margin: 0;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
 }
 
 /* Create-room form opens above the main Rooms modal */
@@ -93,9 +447,24 @@
 
 .rooms-modal__catalog-tabs {
   flex-shrink: 0;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 0;
+  padding-top: 10px;
+  padding-bottom: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: none;
   background: rgba(10, 14, 24, 0.98);
+}
+
+.rooms-modal__list-footer {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  padding-bottom: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  column-gap: 10px;
 }
 
 .rooms-modal__catalog-tabs .rooms-modal__tabs {
@@ -111,21 +480,17 @@
   padding-bottom: 8px;
 }
 
-.rooms-modal__list-footer {
-  flex-shrink: 0;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  column-gap: 10px;
-}
-
 .rooms-modal__list-footer-start {
   justify-self: start;
   display: flex;
   flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.rooms-modal__list-footer-end {
+  justify-self: end;
+  display: flex;
   gap: 8px;
   align-items: center;
 }
@@ -643,14 +1008,14 @@
 }
 
 @media (max-width: 480px), (orientation: portrait) {
-  .rooms-modal {
+  .rooms-modal:not(:has(.rooms-modal__dialog--catalog)) {
     padding: max(10px, env(safe-area-inset-top, 0px)) 10px
       max(10px, env(safe-area-inset-bottom, 0px));
     align-items: center;
     justify-content: center;
   }
 
-  .rooms-modal__dialog {
+  .rooms-modal:not(:has(.rooms-modal__dialog--catalog)) .rooms-modal__dialog {
     width: 100%;
     max-width: min(560px, 100%);
     height: auto;
@@ -659,7 +1024,9 @@
     border: 1px solid rgba(255, 255, 255, 0.14);
   }
 
-  .rooms-modal__list-view {
+  /* Non-catalog dialogs only: the catalog list-view must keep flex: 1 so the
+     room list keeps its height below the preview in portrait. */
+  .rooms-modal:not(:has(.rooms-modal__dialog--catalog)) .rooms-modal__list-view {
     flex: 0 1 auto;
   }
 
@@ -910,6 +1277,109 @@ html.nspace-pseudo-fs #app {
 
 .hud-lobby-confirm__btn--confirm:hover {
   background: rgba(14, 116, 144, 0.58);
+}
+
+/* Disconnect modal - centered on letterbox after WebSocket loss */
+.hud-disconnect-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.hud-disconnect-modal[hidden] {
+  display: none !important;
+}
+
+.hud-disconnect-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.hud-disconnect-modal__dialog {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: min(300px, calc(100% - 32px));
+  padding: 22px 24px 20px;
+  border-radius: 12px;
+  background: rgba(15, 17, 23, 0.97);
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+.hud-disconnect-modal__spinner {
+  display: block;
+  width: 54px;
+  height: 48px;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.hud-disconnect-modal__spinner .big-hex {
+  stroke-dashoffset: -40.5;
+  animation: loading-big-hex 4s cubic-bezier(0.76, 0.29, 0.29, 0.76) infinite;
+}
+
+.hud-disconnect-modal__spinner .small-hex {
+  stroke-dashoffset: 13;
+  animation: loading-small-hex 4s cubic-bezier(0.76, 0.29, 0.29, 0.76) infinite;
+}
+
+.hud-disconnect-modal__line {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #e8eaef;
+  text-align: center;
+}
+
+.hud-disconnect-modal__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.hud-disconnect-modal__reconnect,
+.hud-disconnect-modal__exit {
+  width: 100%;
+  min-height: 0;
+  height: auto;
+  padding: 4px 12px;
+  font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.hud-disconnect-modal__reconnect:hover {
+  background: rgba(14, 116, 144, 0.5);
+}
+
+.hud-disconnect-modal__exit:hover {
+  background: rgba(61, 70, 90, 0.55);
+}
+
+.hud-disconnect-modal__social {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  width: 100%;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(61, 70, 90, 0.45);
 }
 
 /* Player Menu - bottom-right identicon launcher (navigation/account). */
@@ -2686,7 +3156,7 @@ button.hud-brand:focus-visible {
   font-weight: 700;
 }
 
-/* Fills space between player bar and toolbar; Reconnect aligns to the right edge of this region */
+/* Fills space between player bar and toolbar on narrow layouts. */
 .hud-top-strip__mid {
   flex: 1 1 auto;
   min-width: 0;
@@ -2777,19 +3247,6 @@ button.hud-brand:focus-visible {
 .hud-player-bar.hud-player-bar--interactive:focus-visible {
   outline: 2px solid rgba(56, 189, 248, 0.55);
   outline-offset: 2px;
-}
-
-.hud-reconnect-btn {
-  flex-shrink: 0;
-}
-
-.hud-reconnect-btn:active {
-  transform: translateY(1px);
-}
-
-/* Nimiq button classes set display, so preserve hidden semantics explicitly. */
-.hud-reconnect-btn[hidden] {
-  display: none !important;
 }
 
 .hud-top-strip .hud-top-toolbar {
@@ -5459,10 +5916,11 @@ button.hud-brand:focus-visible {
  * height/line-height (3.375rem) wins over single-class HUD overrides. `#app` + both
  * classes beats `.nq-button-pill` regardless of chunk order.
  */
-#app .hud-reconnect-btn.nq-button-pill,
 #app .hud-portal-enter.nq-button-pill,
 #app .hud-teleporter-set.nq-button-pill,
-#app .hud-mode-feedback.nq-button-pill {
+#app .hud-mode-feedback.nq-button-pill,
+#app .hud-disconnect-modal__reconnect.nq-button-pill,
+#app .hud-disconnect-modal__exit.nq-button-pill {
   box-sizing: border-box;
   min-height: 0;
   height: auto;
@@ -5471,18 +5929,18 @@ button.hud-brand:focus-visible {
   flex-shrink: 0;
 }
 
-#app .hud-reconnect-btn.nq-button-pill {
-  padding: 4px 10px;
-  font-size: 11px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-}
-
 #app .hud-portal-enter.nq-button-pill {
   padding: 4px 12px;
   font-size: 13px;
 }
 
 #app .hud-teleporter-set.nq-button-pill {
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+#app .hud-disconnect-modal__reconnect.nq-button-pill,
+#app .hud-disconnect-modal__exit.nq-button-pill {
   padding: 4px 12px;
   font-size: 13px;
 }
@@ -17805,8 +18263,4 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   background: #2563eb;
   border-color: #3b82f6;
   color: #f8fafc;
-}
-.teleporter-dest-preview-dialog__btn--primary:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }

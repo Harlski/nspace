@@ -32,6 +32,7 @@ import {
   getRoomFloorColorMapForThumbnail,
   getRoomLayoutSnapshot,
   getWalletCurrentRoomId,
+  canPreviewRoomLayout,
   resolveResumeLogin,
   setDirectInvitePublicBaseUrl,
   snapshotChatHistoryForWallet,
@@ -61,6 +62,8 @@ import {
 } from "./dailyStatsReport.js";
 import { flushCanvasClaimsSync } from "./canvasCanvas.js";
 import { flushSignboardsSync } from "./signboards.js";
+import { flushRoomThumbsUpSync } from "./roomThumbsUp.js";
+import { flushPublicDemotionNoticesSync } from "./roomPublicDemotion.js";
 import {
   designToWire,
   flushDesignsSync,
@@ -2541,6 +2544,33 @@ app.get("/api/rooms/:id/layout", (req, res) => {
   res.json(snapshot);
 });
 
+/** Read-only room layout for the Rooms browser preview (public or owner/admin). */
+app.get("/api/rooms/:id/preview", (req, res) => {
+  const t = bearerToken(req);
+  if (!t) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  let address: string;
+  try {
+    address = verifySession(t, jwtSecret).sub;
+  } catch {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const roomId = normalizeRoomId(String(req.params.id ?? ""));
+  const snapshot = getRoomLayoutSnapshot(roomId);
+  if (!snapshot) {
+    res.status(404).json({ error: "room_not_found" });
+    return;
+  }
+  if (!canPreviewRoomLayout(roomId, address)) {
+    res.status(403).json({ error: "forbidden" });
+    return;
+  }
+  res.json(snapshot);
+});
+
 /** Full layout snapshot for the interactive 3D preview. */
 app.get("/api/admin/rooms/:id/layout", requireSystemAdminWallet, (req, res) => {
   const snapshot = getRoomLayoutSnapshot(String(req.params.id ?? ""));
@@ -3527,6 +3557,8 @@ function shutdown(signal: string): void {
   flushDesignsSync();
   flushBillboardsSync();
   flushVoxelTextsSync();
+  flushRoomThumbsUpSync();
+  flushPublicDemotionNoticesSync();
   process.exit(0);
 }
 

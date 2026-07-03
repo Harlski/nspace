@@ -95,6 +95,7 @@ import {
   sendReturnFromShaper,
   sendListRooms,
   sendRestoreRoom,
+  sendThumbRoom,
   sendUpdateRoom,
   sendMoveObstacle,
   sendMoveTo,
@@ -170,7 +171,7 @@ import { formatWalletAddressConnectAs } from "./formatWalletAddress.js";
 import { mountPatchnotesPage } from "./patchnotes/mountPatchnotesPage.js";
 import { runUsernamePromptGate } from "./auth/usernamePromptGate.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
-import { nimiqIconUseMarkup } from "./ui/nimiqIcons.js";
+import { nimiqIconUseMarkup, nimiqIconifyMarkup } from "./ui/nimiqIcons.js";
 import {
   createDirectInvite,
   isInviteLobbyRoomId,
@@ -187,6 +188,7 @@ import {
   sanitizeRoomsJoinCodeInput,
 } from "./invite/playSpaceLayout.js";
 import { mountJoinGate } from "./invite/joinGate.js";
+import { mountRoomCatalogPreview } from "./ui/roomCatalogPreview.js";
 import { showGetWalletPrompt } from "./invite/getWalletPrompt.js";
 import {
   clearGuestInviteCookie,
@@ -1105,6 +1107,9 @@ function enterGame(
     canRestore: boolean;
     backgroundHueDeg: number | null;
     backgroundNeutral: RoomBackgroundNeutral | null;
+    buildScore: number;
+    thumbsUpCount: number;
+    viewerThumbedUp: boolean;
   };
   type TeleporterDestinationRoomRow = {
     id: string;
@@ -1115,10 +1120,63 @@ function enterGame(
     isBuiltin: boolean;
   };
   let knownRooms: KnownRoomRow[] = [];
-  let roomsCatalogTab: "official" | "user" | "admin" | "deleted" = "official";
-  /** Client-side page index for the User rooms catalog (4 rooms per page). */
-  let roomsUserCatalogPage = 0;
-  const USER_ROOMS_PAGE_SIZE = 4;
+  let roomsCatalogTab: "official" | "mine" | "popular" | "admin" | "deleted" =
+    "official";
+  let roomsSelectedId: string | null = null;
+  const MIN_BUILDS_FOR_PUBLIC = 50;
+  const PUBLIC_BUILD_GATE_CREATE_HINT = "You must build in this room first.";
+
+  function publicBuildGateHint(score: number): string {
+    return `Public rooms require ${MIN_BUILDS_FOR_PUBLIC} builds (${Math.max(0, score)}/${MIN_BUILDS_FOR_PUBLIC}).`;
+  }
+
+  function roomExemptFromPublicGate(room: KnownRoomRow): boolean {
+    return room.isBuiltin || room.isOfficial;
+  }
+
+  function canRoomGoPublic(room: KnownRoomRow): boolean {
+    return roomExemptFromPublicGate(room) || room.buildScore >= MIN_BUILDS_FOR_PUBLIC;
+  }
+
+  function syncRoomsPublicCheckbox(room: KnownRoomRow | undefined): void {
+    if (!room) return;
+    const exempt = roomExemptFromPublicGate(room);
+    roomsEditPublicInput.disabled = exempt;
+    const hint = roomsEditPublicGateHint;
+    if (exempt) {
+      hint.hidden = true;
+      hint.textContent = "";
+      return;
+    }
+    hint.hidden = true;
+    hint.textContent = publicBuildGateHint(room.buildScore);
+  }
+
+  function onEditPublicCheckboxAttempt(): void {
+    const room = roomsEditingRoomId
+      ? knownRooms.find(
+          (x) => normalizeRoomId(x.id) === normalizeRoomId(roomsEditingRoomId!)
+        )
+      : undefined;
+    if (!room || roomExemptFromPublicGate(room)) return;
+    if (roomsEditPublicInput.checked && !canRoomGoPublic(room)) {
+      roomsEditPublicInput.checked = false;
+      roomsEditPublicGateHint.textContent = publicBuildGateHint(room.buildScore);
+      roomsEditPublicGateHint.hidden = false;
+      return;
+    }
+    roomsEditPublicGateHint.hidden = true;
+  }
+
+  function onCreatePublicCheckboxAttempt(): void {
+    if (!roomsCreatePublicInput.checked) {
+      roomsCreatePublicGateHint.hidden = true;
+      return;
+    }
+    roomsCreatePublicInput.checked = false;
+    roomsCreatePublicGateHint.textContent = PUBLIC_BUILD_GATE_CREATE_HINT;
+    roomsCreatePublicGateHint.hidden = false;
+  }
 
   function compactWallet(a: string): string {
     return a.replace(/\s+/g, "").toUpperCase();
@@ -1223,21 +1281,36 @@ function enterGame(
   roomsModal.hidden = true;
   roomsModal.setAttribute("role", "presentation");
   roomsModal.innerHTML = `
-    <div class="rooms-modal__dialog" role="dialog" aria-modal="true" aria-label="Browse and join rooms">
+    <div class="rooms-modal__dialog rooms-modal__dialog--catalog" role="dialog" aria-modal="true" aria-label="Browse and join rooms">
       <div class="rooms-modal__body">
         <div id="rooms-view-list" class="rooms-modal__list-view">
-          <div class="rooms-modal__catalog-tabs">
-            <div class="rooms-modal__tabs" role="tablist" aria-label="Room categories">
-              <button type="button" class="rooms-modal__tab rooms-modal__tab--active" id="rooms-tab-official" role="tab" aria-selected="true">Official rooms</button>
-              <button type="button" class="rooms-modal__tab" id="rooms-tab-user" role="tab" aria-selected="false">User rooms</button>
-              <button type="button" class="rooms-modal__tab" id="rooms-tab-admin" role="tab" aria-selected="false" hidden>Hidden</button>
-              <button type="button" class="rooms-modal__tab" id="rooms-tab-deleted" role="tab" aria-selected="false" hidden>Deleted</button>
+          <p id="rooms-modal-current-line" class="rooms-modal__current-line" aria-live="polite"></p>
+          <div class="rooms-modal__catalog-stack">
+            <div class="rooms-modal__catalog-preview-pane">
+              <div class="rooms-modal__preview-head">
+                <div class="rooms-modal__preview-title-wrap">
+                  <h3 class="rooms-modal__preview-title" id="rooms-preview-title">Select a room</h3>
+                  <p class="rooms-modal__preview-meta" id="rooms-preview-meta" aria-live="polite"></p>
+                </div>
+              </div>
+              <div class="rooms-modal__preview-canvas-wrap">
+                <div class="rooms-modal__preview-host" id="rooms-preview-host"></div>
+                <p class="rooms-modal__preview-status" id="rooms-preview-status">Select a room to preview.</p>
+              </div>
+            </div>
+            <div class="rooms-modal__catalog-list-pane">
+              <ul class="rooms-modal__list rooms-modal__list--pick" id="rooms-modal-list" role="listbox" aria-label="Official rooms"></ul>
             </div>
           </div>
-            <div class="rooms-modal__list-view-scroll">
-            <p class="rooms-modal__section-title" id="rooms-list-heading">Official rooms</p>
-            <p id="rooms-modal-current-line" class="rooms-modal__current-line" aria-live="polite"></p>
-            <ul class="rooms-modal__list rooms-modal__list--rows rooms-modal__list--catalog" id="rooms-modal-list"></ul>
+          <div class="rooms-modal__list-footer">
+            <div class="rooms-modal__list-footer-start">
+              <button type="button" class="rooms-modal__btn" id="rooms-open-join" aria-expanded="false" aria-controls="rooms-join-panel">Join with code</button>
+              <button type="button" class="rooms-modal__btn rooms-modal__create-launch" id="rooms-open-create">Create a room</button>
+            </div>
+            <div class="rooms-modal__list-footer-end">
+              <button type="button" class="rooms-modal__btn" id="rooms-preview-edit" hidden>Edit</button>
+              <button type="button" class="rooms-modal__btn rooms-modal__btn--primary" id="rooms-preview-join" disabled>Join</button>
+            </div>
           </div>
           <div class="rooms-modal__join-code-block" id="rooms-join-panel" hidden>
             <p class="rooms-modal__section-title">Join with code</p>
@@ -1248,15 +1321,13 @@ function enterGame(
             </div>
             <p class="rooms-modal__hint" id="rooms-join-hint" hidden></p>
           </div>
-          <div class="rooms-modal__list-footer">
-            <div class="rooms-modal__list-footer-start">
-              <button type="button" class="rooms-modal__btn" id="rooms-open-join" aria-expanded="false" aria-controls="rooms-join-panel">Join Room</button>
-              <button type="button" class="rooms-modal__btn rooms-modal__btn--primary rooms-modal__create-launch" id="rooms-open-create">Create a room</button>
-            </div>
-            <div id="rooms-user-pagination" class="rooms-modal__user-pagination" hidden>
-              <button type="button" class="rooms-modal__btn rooms-modal__btn--compact" id="rooms-user-page-prev">Previous</button>
-              <span class="rooms-modal__user-page-label" id="rooms-user-page-label" aria-live="polite"></span>
-              <button type="button" class="rooms-modal__btn rooms-modal__btn--compact" id="rooms-user-page-next">Next</button>
+          <div class="rooms-modal__catalog-tabs">
+            <div class="rooms-modal__tabs" role="tablist" aria-label="Room categories">
+              <button type="button" class="rooms-modal__tab rooms-modal__tab--active" id="rooms-tab-official" role="tab" aria-selected="true">Official</button>
+              <button type="button" class="rooms-modal__tab" id="rooms-tab-mine" role="tab" aria-selected="false">My Rooms</button>
+              <button type="button" class="rooms-modal__tab" id="rooms-tab-popular" role="tab" aria-selected="false">Popular</button>
+              <button type="button" class="rooms-modal__tab" id="rooms-tab-admin" role="tab" aria-selected="false" hidden>Hidden</button>
+              <button type="button" class="rooms-modal__tab" id="rooms-tab-deleted" role="tab" aria-selected="false" hidden>Deleted</button>
             </div>
           </div>
         </div>
@@ -1273,6 +1344,7 @@ function enterGame(
               <input type="checkbox" id="rooms-edit-public" />
               <span>Show in public room list</span>
             </label>
+            <p class="rooms-modal__hint" id="rooms-edit-public-gate-hint" hidden></p>
           </div>
           <div id="rooms-edit-delete-block" class="rooms-modal__edit-delete" hidden>
             <p class="rooms-modal__fineprint" id="rooms-edit-delete-msg"></p>
@@ -1295,7 +1367,8 @@ function enterGame(
       </div>
     </div>
   `;
-  hudRoot.appendChild(roomsModal);
+  const letterboxEl = hudRoot.querySelector(".letterbox") as HTMLElement;
+  letterboxEl.appendChild(roomsModal);
 
   const roomsCreateModal = document.createElement("div");
   roomsCreateModal.className = "rooms-modal rooms-create-modal";
@@ -1319,9 +1392,10 @@ function enterGame(
           <input class="rooms-modal__input rooms-modal__input--w" id="rooms-create-h" type="number" min="5" max="30" value="16" />
         </div>
         <label class="rooms-modal__check">
-          <input type="checkbox" id="rooms-create-public" checked />
+          <input type="checkbox" id="rooms-create-public" />
           <span>Show in public room list</span>
         </label>
+        <p class="rooms-modal__hint" id="rooms-create-public-gate-hint" hidden></p>
         <div id="rooms-create-official-row" class="rooms-modal__create-official-row" hidden>
           <label class="rooms-modal__check">
             <input type="checkbox" id="rooms-create-official" />
@@ -1335,30 +1409,24 @@ function enterGame(
       </div>
     </div>
   `;
-  hudRoot.appendChild(roomsCreateModal);
+  letterboxEl.appendChild(roomsCreateModal);
 
   const roomsModalList = roomsModal.querySelector("#rooms-modal-list") as HTMLUListElement;
   const roomsModalCurrentLine = roomsModal.querySelector(
     "#rooms-modal-current-line"
   ) as HTMLParagraphElement;
-  const roomsListHeading = roomsModal.querySelector("#rooms-list-heading") as HTMLElement;
   const roomsTabOfficialBtn = roomsModal.querySelector("#rooms-tab-official") as HTMLButtonElement;
-  const roomsTabUserBtn = roomsModal.querySelector("#rooms-tab-user") as HTMLButtonElement;
+  const roomsTabMineBtn = roomsModal.querySelector("#rooms-tab-mine") as HTMLButtonElement;
+  const roomsTabPopularBtn = roomsModal.querySelector("#rooms-tab-popular") as HTMLButtonElement;
   const roomsTabAdminBtn = roomsModal.querySelector("#rooms-tab-admin") as HTMLButtonElement;
   const roomsTabDeletedBtn = roomsModal.querySelector("#rooms-tab-deleted") as HTMLButtonElement;
   const roomsViewList = roomsModal.querySelector("#rooms-view-list") as HTMLElement;
-  const roomsUserPagination = roomsModal.querySelector(
-    "#rooms-user-pagination"
-  ) as HTMLDivElement;
-  const roomsUserPagePrev = roomsModal.querySelector(
-    "#rooms-user-page-prev"
-  ) as HTMLButtonElement;
-  const roomsUserPageNext = roomsModal.querySelector(
-    "#rooms-user-page-next"
-  ) as HTMLButtonElement;
-  const roomsUserPageLabel = roomsModal.querySelector(
-    "#rooms-user-page-label"
-  ) as HTMLSpanElement;
+  const roomsPreviewTitle = roomsModal.querySelector("#rooms-preview-title") as HTMLElement;
+  const roomsPreviewMeta = roomsModal.querySelector("#rooms-preview-meta") as HTMLElement;
+  const roomsPreviewEditBtn = roomsModal.querySelector("#rooms-preview-edit") as HTMLButtonElement;
+  const roomsPreviewJoinBtn = roomsModal.querySelector("#rooms-preview-join") as HTMLButtonElement;
+  const roomsPreviewHost = roomsModal.querySelector("#rooms-preview-host") as HTMLElement;
+  const roomsPreviewStatus = roomsModal.querySelector("#rooms-preview-status") as HTMLParagraphElement;
   const roomsViewEdit = roomsModal.querySelector("#rooms-view-edit") as HTMLElement;
   const roomsJoinCodeInput = roomsModal.querySelector("#rooms-join-code") as HTMLInputElement;
   const roomsJoinSubmitBtn = roomsModal.querySelector("#rooms-join-submit") as HTMLButtonElement;
@@ -1385,6 +1453,9 @@ function enterGame(
   const roomsCreatePublicInput = roomsCreateModal.querySelector(
     "#rooms-create-public"
   ) as HTMLInputElement;
+  const roomsCreatePublicGateHint = roomsCreateModal.querySelector(
+    "#rooms-create-public-gate-hint"
+  ) as HTMLParagraphElement;
   const roomsCreateOfficialRow = roomsCreateModal.querySelector(
     "#rooms-create-official-row"
   ) as HTMLDivElement;
@@ -1402,6 +1473,9 @@ function enterGame(
   const roomsEditNameInput = roomsModal.querySelector("#rooms-edit-name") as HTMLInputElement;
   const roomsEditPublicRow = roomsModal.querySelector("#rooms-edit-public-row") as HTMLElement;
   const roomsEditPublicInput = roomsModal.querySelector("#rooms-edit-public") as HTMLInputElement;
+  const roomsEditPublicGateHint = roomsModal.querySelector(
+    "#rooms-edit-public-gate-hint"
+  ) as HTMLParagraphElement;
   const roomsEditSaveBtn = roomsModal.querySelector("#rooms-edit-save") as HTMLButtonElement;
   const roomsEditDeleteBtn = roomsModal.querySelector("#rooms-edit-delete") as HTMLButtonElement;
   const roomsEditHint = roomsModal.querySelector("#rooms-edit-hint") as HTMLParagraphElement;
@@ -1415,6 +1489,9 @@ function enterGame(
   let roomsEscHandler: ((e: KeyboardEvent) => void) | null = null;
   let roomsViewState: "list" | "edit" = "list";
   let roomsEditingRoomId: string | null = null;
+  let roomsCatalogPreview: ReturnType<typeof mountRoomCatalogPreview> | null = null;
+  let roomsCatalogPreviewMount: Promise<void> | null = null;
+  let pendingPreviewRoomId: string | null = null;
   /** Set when joining via the code field; cleared on result or modal/ws reset. */
   let pendingModalJoinRoomId: string | null = null;
   /** Set when joining from a player profile room row; cleared on result. */
@@ -1475,13 +1552,114 @@ function enterGame(
     roomsCreateNameInput.value = "";
     roomsCreateWInput.value = "16";
     roomsCreateHInput.value = "16";
-    roomsCreatePublicInput.checked = true;
+    roomsCreatePublicInput.checked = false;
+    roomsCreatePublicGateHint.hidden = true;
+    roomsCreatePublicGateHint.textContent = "";
     roomsCreateOfficialInput.checked = false;
     roomsCreateOfficialRow.hidden = !isAdmin(address);
     roomsCreateHint.hidden = true;
     roomsCreateHint.textContent = "";
     roomsCreateSubmitBtn.disabled = false;
     roomsCreateModal.hidden = false;
+  }
+
+  function ensureRoomsCatalogPreview(): void {
+    const flushPendingPreview = (): void => {
+      if (!roomsCatalogPreview) return;
+      const id = pendingPreviewRoomId ?? roomsSelectedId;
+      roomsCatalogPreview.selectRoom(id);
+    };
+
+    if (roomsCatalogPreview) {
+      flushPendingPreview();
+      return;
+    }
+    if (roomsCatalogPreviewMount) return;
+    roomsCatalogPreviewMount = (async (): Promise<void> => {
+      const { resolveApiBaseUrl } = await import("./net/apiBase.js");
+      roomsCatalogPreview = mountRoomCatalogPreview(
+        roomsPreviewHost,
+        roomsPreviewStatus,
+        { apiBase: resolveApiBaseUrl() || "", token }
+      );
+      roomsCatalogPreviewMount = null;
+      flushPendingPreview();
+    })();
+  }
+
+  function disposeRoomsCatalogPreview(): void {
+    roomsCatalogPreview?.dispose();
+    roomsCatalogPreview = null;
+    roomsCatalogPreviewMount = null;
+    pendingPreviewRoomId = null;
+  }
+
+  function updateRoomsPreviewPane(room: KnownRoomRow | null): void {
+    if (!room) {
+      roomsPreviewTitle.textContent = "Select a room";
+      roomsPreviewMeta.textContent = "";
+      roomsPreviewJoinBtn.disabled = true;
+      roomsPreviewEditBtn.hidden = true;
+      pendingPreviewRoomId = null;
+      roomsCatalogPreview?.selectRoom(null);
+      return;
+    }
+    roomsPreviewTitle.textContent = room.displayName;
+    const n = Math.max(0, Math.floor(room.playerCount));
+    const statInner = (
+      count: number,
+      iconId: string,
+      iconSize: { width: number; height: number }
+    ): string =>
+      `${count}${nimiqIconifyMarkup(iconId, {
+        class: "rooms-modal__preview-meta-icon",
+        ...iconSize,
+      })}`;
+    const parts: string[] = [
+      `<span class="rooms-modal__preview-meta-stat" role="img" aria-label="${n} player${
+        n === 1 ? "" : "s"
+      }">${statInner(n, "person-1", { width: 11, height: 12 })}</span>`,
+    ];
+    if (!room.isPublic) parts.unshift("Private");
+    if (room.isPublic) {
+      const canThumb = !room.isDeleted && !viewerOwnsRoom(room);
+      const likeInner = statInner(room.thumbsUpCount, "thumbs-up", {
+        width: 12,
+        height: 12,
+      });
+      parts.push(
+        canThumb
+          ? `<button type="button" class="rooms-modal__preview-meta-stat rooms-modal__preview-like${
+              room.viewerThumbedUp ? " is-active" : ""
+            }" data-room-like aria-pressed="${
+              room.viewerThumbedUp ? "true" : "false"
+            }" aria-label="${room.thumbsUpCount} thumbs up - toggle yours">${likeInner}</button>`
+          : `<span class="rooms-modal__preview-meta-stat" role="img" aria-label="${room.thumbsUpCount} thumbs up">${likeInner}</span>`
+      );
+    }
+    if (viewerOwnsRoom(room) && !roomExemptFromPublicGate(room)) {
+      parts.push(escapeHtml(publicBuildGateHint(room.buildScore)));
+    }
+    roomsPreviewMeta.innerHTML = parts.join(" · ");
+    const currentId = normalizeRoomId(game.getRoomId());
+    roomsPreviewJoinBtn.disabled =
+      normalizeRoomId(room.id) === currentId || room.isDeleted;
+    roomsPreviewEditBtn.hidden = !room.canEdit;
+    ensureRoomsCatalogPreview();
+    pendingPreviewRoomId = normalizeRoomId(room.id);
+    if (roomsCatalogPreview) {
+      roomsCatalogPreview.selectRoom(pendingPreviewRoomId);
+    }
+  }
+
+  function selectRoomsCatalogRow(roomId: string | null): void {
+    roomsSelectedId = roomId;
+    const room = roomId
+      ? knownRooms.find((r) => normalizeRoomId(r.id) === normalizeRoomId(roomId)) ??
+        null
+      : null;
+    renderRoomsModalList();
+    updateRoomsPreviewPane(room);
   }
 
   function closeRoomsModal(opts?: { keepJoinPending?: boolean }): void {
@@ -1491,6 +1669,8 @@ function enterGame(
     setRoomsJoinPanelOpen(false);
     showRoomsView("list");
     roomsEditingRoomId = null;
+    roomsSelectedId = null;
+    disposeRoomsCatalogPreview();
     resetEditDeleteUi();
     if (!opts?.keepJoinPending) {
       clearRoomsJoinProgress();
@@ -1504,40 +1684,44 @@ function enterGame(
   roomsTabAdminBtn.hidden = !isAdmin(address);
   roomsTabDeletedBtn.hidden = !isAdmin(address);
 
-  function applyRoomsTabUi(tab: "official" | "user" | "admin" | "deleted"): void {
+  function applyRoomsTabUi(tab: "official" | "mine" | "popular" | "admin" | "deleted"): void {
     if ((tab === "admin" || tab === "deleted") && !isAdmin(address)) {
       tab = "official";
     }
     roomsCatalogTab = tab;
     roomsTabOfficialBtn.classList.toggle("rooms-modal__tab--active", tab === "official");
-    roomsTabUserBtn.classList.toggle("rooms-modal__tab--active", tab === "user");
+    roomsTabMineBtn.classList.toggle("rooms-modal__tab--active", tab === "mine");
+    roomsTabPopularBtn.classList.toggle("rooms-modal__tab--active", tab === "popular");
     roomsTabAdminBtn.classList.toggle("rooms-modal__tab--active", tab === "admin");
     roomsTabDeletedBtn.classList.toggle("rooms-modal__tab--active", tab === "deleted");
     roomsTabOfficialBtn.setAttribute("aria-selected", tab === "official" ? "true" : "false");
-    roomsTabUserBtn.setAttribute("aria-selected", tab === "user" ? "true" : "false");
+    roomsTabMineBtn.setAttribute("aria-selected", tab === "mine" ? "true" : "false");
+    roomsTabPopularBtn.setAttribute("aria-selected", tab === "popular" ? "true" : "false");
     roomsTabAdminBtn.setAttribute("aria-selected", tab === "admin" ? "true" : "false");
     roomsTabDeletedBtn.setAttribute("aria-selected", tab === "deleted" ? "true" : "false");
     if (tab === "official") {
-      roomsListHeading.textContent = "Official rooms";
-    } else if (tab === "user") {
-      roomsListHeading.textContent = "User rooms";
+      roomsModalList.setAttribute("aria-label", "Official rooms");
+    } else if (tab === "mine") {
+      roomsModalList.setAttribute("aria-label", "My rooms");
+    } else if (tab === "popular") {
+      roomsModalList.setAttribute("aria-label", "Popular rooms");
     } else if (tab === "deleted") {
-      roomsListHeading.textContent = "Deleted rooms";
+      roomsModalList.setAttribute("aria-label", "Deleted rooms");
     } else {
-      roomsListHeading.textContent = "Hidden rooms (other players' private)";
+      roomsModalList.setAttribute("aria-label", "Hidden private rooms");
     }
   }
 
-  function setRoomsCatalogTab(tab: "official" | "user" | "admin" | "deleted"): void {
-    if (tab === "user" && roomsCatalogTab !== "user") {
-      roomsUserCatalogPage = 0;
-    }
+  function setRoomsCatalogTab(tab: "official" | "mine" | "popular" | "admin" | "deleted"): void {
     applyRoomsTabUi(tab);
+    roomsSelectedId = null;
     renderRoomsModalList();
+    updateRoomsPreviewPane(null);
   }
 
   roomsTabOfficialBtn.addEventListener("click", () => setRoomsCatalogTab("official"));
-  roomsTabUserBtn.addEventListener("click", () => setRoomsCatalogTab("user"));
+  roomsTabMineBtn.addEventListener("click", () => setRoomsCatalogTab("mine"));
+  roomsTabPopularBtn.addEventListener("click", () => setRoomsCatalogTab("popular"));
   roomsTabAdminBtn.addEventListener("click", () => setRoomsCatalogTab("admin"));
   roomsTabDeletedBtn.addEventListener("click", () => setRoomsCatalogTab("deleted"));
 
@@ -1570,11 +1754,18 @@ function enterGame(
     clearRoomsJoinProgress();
     roomsModal.hidden = false;
     showRoomsView("list");
-    applyRoomsTabUi("official");
+    applyRoomsTabUi(roomsCatalogTab);
+    ensureRoomsCatalogPreview();
     if (ws && ws.readyState === WebSocket.OPEN) {
       sendListRooms(ws);
     }
     renderRoomsModalList();
+    const selected = roomsSelectedId
+      ? knownRooms.find(
+          (r) => normalizeRoomId(r.id) === normalizeRoomId(roomsSelectedId!)
+        ) ?? null
+      : null;
+    updateRoomsPreviewPane(selected);
     roomsEscHandler = (e: KeyboardEvent): void => {
       if (e.key !== "Escape") return;
       e.preventDefault();
@@ -1604,6 +1795,7 @@ function enterGame(
     roomsEditNameInput.value = room.displayName;
     roomsEditPublicRow.hidden = false;
     roomsEditPublicInput.checked = room.isPublic;
+    syncRoomsPublicCheckbox(room);
     const canDelete = Boolean(room.canDelete && !room.isBuiltin);
     roomsEditDeleteBtn.hidden = !canDelete;
     if (canDelete) {
@@ -1624,19 +1816,32 @@ function enterGame(
     showRoomsView("edit");
   }
 
-  roomsModal.addEventListener("click", (e) => {
-    if (e.target === roomsModal) closeRoomsModal();
+  roomsPreviewJoinBtn.addEventListener("click", () => {
+    if (!roomsSelectedId || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const room = knownRooms.find(
+      (r) => normalizeRoomId(r.id) === normalizeRoomId(roomsSelectedId!)
+    );
+    if (!room || room.isDeleted) return;
+    if (normalizeRoomId(game.getRoomId()) === normalizeRoomId(room.id)) return;
+    beginRoomTransition(room.id);
+    sendJoinRoom(ws, room.id);
+    closeRoomsModal();
   });
 
-  roomsUserPagePrev.addEventListener("click", () => {
-    if (roomsUserCatalogPage > 0) {
-      roomsUserCatalogPage -= 1;
-      renderRoomsModalList();
-    }
+  roomsPreviewEditBtn.addEventListener("click", () => {
+    if (!roomsSelectedId) return;
+    openEditRoom(roomsSelectedId);
   });
-  roomsUserPageNext.addEventListener("click", () => {
-    roomsUserCatalogPage += 1;
-    renderRoomsModalList();
+
+  /* The likes chip is re-rendered with the meta line, so delegate from the container. */
+  roomsPreviewMeta.addEventListener("click", (e) => {
+    const chip = (e.target as HTMLElement).closest("[data-room-like]");
+    if (!chip || !roomsSelectedId || !ws || ws.readyState !== WebSocket.OPEN) return;
+    sendThumbRoom(ws, roomsSelectedId);
+  });
+
+  roomsModal.addEventListener("click", (e) => {
+    if (e.target === roomsModal) closeRoomsModal();
   });
 
   roomsJoinCodeInput.addEventListener("input", () => {
@@ -1733,6 +1938,9 @@ function enterGame(
     showRoomsView("list");
   });
 
+  roomsCreatePublicInput.addEventListener("change", onCreatePublicCheckboxAttempt);
+  roomsEditPublicInput.addEventListener("change", onEditPublicCheckboxAttempt);
+
   roomsEditSaveBtn.addEventListener("click", () => {
     roomsEditHint.hidden = true;
     roomsEditHint.textContent = "";
@@ -1786,9 +1994,10 @@ function enterGame(
       }
       if (r.isDeleted) return false;
       if (roomsCatalogTab === "official") return r.isBuiltin || r.isOfficial;
-      if (roomsCatalogTab === "user") {
+      if (roomsCatalogTab === "mine") return viewerOwnsRoom(r);
+      if (roomsCatalogTab === "popular") {
         if (r.isBuiltin || r.isOfficial) return false;
-        return r.isPublic || viewerOwnsRoom(r);
+        return r.isPublic && r.thumbsUpCount >= 1;
       }
       if (roomsCatalogTab === "admin") {
         if (!isAdmin(address)) return false;
@@ -1797,6 +2006,7 @@ function enterGame(
       }
       return false;
     });
+
     const officialBuiltinOrder = ["hub", "canvas", "chamber"];
     if (roomsCatalogTab === "official") {
       filtered.sort((a, b) => {
@@ -1813,8 +2023,17 @@ function enterGame(
         if (c !== 0) return c;
         return a.id.localeCompare(b.id);
       });
-    } else if (roomsCatalogTab === "user") {
+    } else if (roomsCatalogTab === "mine") {
       filtered.sort((a, b) => {
+        if (a.isPublic !== b.isPublic) return a.isPublic ? -1 : 1;
+        const c = safeRoomNameCompare(a.displayName, b.displayName);
+        if (c !== 0) return c;
+        return a.id.localeCompare(b.id);
+      });
+    } else if (roomsCatalogTab === "popular") {
+      filtered.sort((a, b) => {
+        const td = b.thumbsUpCount - a.thumbsUpCount;
+        if (td !== 0) return td;
         const pc =
           Math.max(0, Math.floor(b.playerCount)) -
           Math.max(0, Math.floor(a.playerCount));
@@ -1825,161 +2044,60 @@ function enterGame(
       });
     }
 
-    if (roomsCatalogTab === "user" && filtered.length > 0) {
-      const totalPages = Math.ceil(filtered.length / USER_ROOMS_PAGE_SIZE);
-      if (roomsUserCatalogPage >= totalPages) roomsUserCatalogPage = totalPages - 1;
-      if (roomsUserCatalogPage < 0) roomsUserCatalogPage = 0;
-    }
-
-    roomsUserPagination.hidden = true;
-    if (roomsCatalogTab === "user" && filtered.length > USER_ROOMS_PAGE_SIZE) {
-      const totalPages = Math.ceil(filtered.length / USER_ROOMS_PAGE_SIZE);
-      roomsUserPagination.hidden = false;
-      roomsUserPageLabel.textContent = `${roomsUserCatalogPage + 1} / ${totalPages}`;
-      roomsUserPagePrev.disabled = roomsUserCatalogPage <= 0;
-      roomsUserPageNext.disabled = roomsUserCatalogPage >= totalPages - 1;
-    }
-
-    const roomsToShow =
-      roomsCatalogTab === "user"
-        ? filtered.slice(
-            roomsUserCatalogPage * USER_ROOMS_PAGE_SIZE,
-            roomsUserCatalogPage * USER_ROOMS_PAGE_SIZE + USER_ROOMS_PAGE_SIZE
-          )
-        : filtered;
-
     if (filtered.length === 0) {
       const empty = document.createElement("li");
       empty.className = "rooms-modal__empty";
       empty.textContent =
-        roomsCatalogTab === "user"
-          ? "No user rooms in this list yet. Create one from the button below."
-          : roomsCatalogTab === "admin"
-            ? "No other players' private rooms."
-            : roomsCatalogTab === "deleted"
-              ? "No deleted rooms."
-              : "No rooms to show.";
+        roomsCatalogTab === "mine"
+          ? "No rooms yet. Create one from the button below."
+          : roomsCatalogTab === "popular"
+            ? "No popular rooms yet."
+            : roomsCatalogTab === "admin"
+              ? "No other players' private rooms."
+              : roomsCatalogTab === "deleted"
+                ? "No deleted rooms."
+                : "No rooms to show.";
       roomsModalList.appendChild(empty);
       return;
     }
-    for (const room of roomsToShow) {
-      appendRoomCatalogRow(roomsModalList, room, {
-        showJoinButton: true,
-      });
+
+    for (const room of filtered) {
+      appendRoomCatalogPickRow(roomsModalList, room);
     }
   }
 
-  function appendRoomCatalogRow(
+  function appendRoomCatalogPickRow(
     ul: HTMLUListElement,
-    room: KnownRoomRow,
-    opts: { showJoinButton: boolean }
+    room: KnownRoomRow
   ): void {
-    const { showJoinButton } = opts;
     const li = document.createElement("li");
-    li.className = "rooms-modal__row rooms-modal__row--line";
-    const nameCell = document.createElement("div");
-    nameCell.className = "rooms-modal__cell rooms-modal__cell--name";
-    if (room.isDeleted) {
-      const prefix = document.createElement("span");
-      prefix.className = "rooms-modal__badge rooms-modal__badge--deleted";
-      prefix.textContent = "[D]";
-      nameCell.appendChild(prefix);
-      nameCell.appendChild(document.createTextNode(" "));
-    }
+    const selected =
+      roomsSelectedId !== null &&
+      normalizeRoomId(room.id) === normalizeRoomId(roomsSelectedId);
+    li.className = `rooms-modal__pick-row${selected ? " rooms-modal__pick-row--selected" : ""}`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "rooms-modal__pick-btn";
+    btn.setAttribute("role", "option");
+    btn.setAttribute("aria-selected", selected ? "true" : "false");
     const nameEl = document.createElement("span");
-    nameEl.className = "rooms-modal__cell-name-text";
+    nameEl.className = "rooms-modal__pick-name";
     nameEl.textContent = room.displayName;
-    nameCell.appendChild(nameEl);
-    if (!room.isDeleted && !room.isPublic) {
-      const badge = document.createElement("span");
-      badge.className = "rooms-modal__badge rooms-modal__badge--private";
-      badge.textContent = "Pvt";
-      nameCell.appendChild(badge);
+    const meta = document.createElement("span");
+    meta.className = "rooms-modal__pick-meta";
+    const bits: string[] = [];
+    if (!room.isPublic) bits.push("Private");
+    if (viewerOwnsRoom(room) && !roomExemptFromPublicGate(room)) {
+      bits.push(`${room.buildScore}/${MIN_BUILDS_FOR_PUBLIC}`);
     }
-    const ownerCell = document.createElement("div");
-    ownerCell.className = "rooms-modal__cell rooms-modal__cell--owner";
-    if (room.ownerAddress) {
-      const addr = room.ownerAddress.trim();
-      const img = document.createElement("img");
-      img.className = "rooms-modal__owner-ident rooms-modal__owner-ident--sm";
-      img.alt = "";
-      img.width = 24;
-      img.height = 24;
-      img.dataset.address = addr;
-      const label = document.createElement("span");
-      label.className = "rooms-modal__owner-label";
-      label.textContent = formatWalletAddressConnectAs(addr);
-      ownerCell.appendChild(img);
-      ownerCell.appendChild(label);
-      void (async (): Promise<void> => {
-        try {
-          const { identiconDataUrl } = await import("./game/identiconTexture.js");
-          const url = await identiconDataUrl(addr);
-          if (img.dataset.address !== addr) return;
-          img.src = url;
-        } catch {
-          img.hidden = true;
-        }
-      })();
-    } else {
-      const official = document.createElement("span");
-      official.className = "rooms-modal__cell--owner-official";
-      official.textContent = "-";
-      ownerCell.appendChild(official);
+    bits.push(`${Math.max(0, Math.floor(room.playerCount))} players`);
+    if (room.isPublic && room.thumbsUpCount > 0) {
+      bits.push(`👍 ${room.thumbsUpCount}`);
     }
-    const playersCell = document.createElement("div");
-    playersCell.className = "rooms-modal__cell rooms-modal__cell--players";
-    const n = room.playerCount;
-    playersCell.textContent = String(n);
-    playersCell.title = `${n} player${n === 1 ? "" : "s"} in room`;
-    const actions = document.createElement("div");
-    actions.className = "rooms-modal__cell rooms-modal__cell--actions";
-    if (room.isDeleted && room.canRestore) {
-      const restoreBtn = document.createElement("button");
-      restoreBtn.type = "button";
-      restoreBtn.className =
-        "rooms-modal__btn rooms-modal__btn--compact rooms-modal__btn--restore";
-      restoreBtn.textContent = "Restore";
-      restoreBtn.addEventListener("click", () => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        sendRestoreRoom(ws, room.id);
-      });
-      actions.appendChild(restoreBtn);
-    } else if (showJoinButton) {
-      const join = document.createElement("button");
-      join.type = "button";
-      join.className = "rooms-modal__join rooms-modal__join--inline";
-      join.textContent = "Join";
-      join.addEventListener("click", () => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        if (normalizeRoomId(game.getRoomId()) === normalizeRoomId(room.id)) return;
-        beginRoomTransition(room.id);
-        sendJoinRoom(ws, room.id);
-        closeRoomsModal();
-      });
-      actions.appendChild(join);
-      if (room.canEdit) {
-        const editBtn = document.createElement("button");
-        editBtn.type = "button";
-        editBtn.className = "rooms-modal__btn rooms-modal__btn--compact";
-        editBtn.textContent = "Edit";
-        editBtn.addEventListener("click", () => openEditRoom(room.id));
-        actions.appendChild(editBtn);
-      }
-    } else {
-      if (room.canEdit) {
-        const editBtn = document.createElement("button");
-        editBtn.type = "button";
-        editBtn.className = "rooms-modal__btn rooms-modal__btn--compact";
-        editBtn.textContent = "Edit";
-        editBtn.addEventListener("click", () => openEditRoom(room.id));
-        actions.appendChild(editBtn);
-      }
-    }
-    li.appendChild(nameCell);
-    li.appendChild(ownerCell);
-    li.appendChild(playersCell);
-    li.appendChild(actions);
+    meta.textContent = bits.join(" · ");
+    btn.append(nameEl, meta);
+    btn.addEventListener("click", () => selectRoomsCatalogRow(room.id));
+    li.appendChild(btn);
     ul.appendChild(li);
   }
 
@@ -4794,6 +4912,16 @@ function enterGame(
               r.backgroundNeutral === "gray"
                 ? r.backgroundNeutral
                 : null,
+            buildScore:
+              typeof r.buildScore === "number" && Number.isFinite(r.buildScore)
+                ? Math.max(0, Math.floor(r.buildScore))
+                : 0,
+            thumbsUpCount:
+              typeof r.thumbsUpCount === "number" &&
+              Number.isFinite(r.thumbsUpCount)
+                ? Math.max(0, Math.floor(r.thumbsUpCount))
+                : 0,
+            viewerThumbedUp: r.viewerThumbedUp === true,
           };
         })
         .sort((a, b) => {
@@ -4804,6 +4932,44 @@ function enterGame(
       syncRoomSidePanels();
       if (!roomsModal.hidden) {
         renderRoomsModalList();
+        if (roomsSelectedId) {
+          const selected =
+            knownRooms.find(
+              (r) => normalizeRoomId(r.id) === normalizeRoomId(roomsSelectedId!)
+            ) ?? null;
+          updateRoomsPreviewPane(selected);
+        }
+      }
+      return;
+    }
+    if (msg.type === "roomThumbsUpResult") {
+      if (!msg.ok && msg.reason) {
+        hud.appendChat("System", msg.reason);
+        return;
+      }
+      if (msg.ok && msg.roomId) {
+        const rid = normalizeRoomId(String(msg.roomId));
+        knownRooms = knownRooms.map((r) =>
+          normalizeRoomId(r.id) === rid
+            ? {
+                ...r,
+                thumbsUpCount:
+                  typeof msg.thumbsUpCount === "number"
+                    ? Math.max(0, Math.floor(msg.thumbsUpCount))
+                    : r.thumbsUpCount,
+                viewerThumbedUp: msg.viewerThumbedUp === true,
+              }
+            : r
+        );
+        if (
+          roomsSelectedId &&
+          normalizeRoomId(roomsSelectedId) === rid &&
+          !roomsModal.hidden
+        ) {
+          const selected = knownRooms.find((r) => normalizeRoomId(r.id) === rid);
+          if (selected) updateRoomsPreviewPane(selected);
+          renderRoomsModalList();
+        }
       }
       return;
     }
@@ -5197,17 +5363,11 @@ function enterGame(
         return;
       }
       if (msg.ok) {
-        const bx = Number(msg.x);
-        const bz = Number(msg.z);
         const reward = msg.amountNim && /^\d+\.\d{4}$/.test(msg.amountNim)
           ? msg.amountNim
           : "1.0000";
         cancelActiveNimClaim?.();
-        if (Number.isFinite(bx) && Number.isFinite(bz)) {
-          game.showFloatingText(bx, bz, `+${reward} NIM`, "#ffc107", {
-            nimLogo: true,
-          });
-        }
+        game.showSelfPlayerMiningReward(reward);
         return;
       }
       if (msg.recoverable) {
@@ -5602,13 +5762,11 @@ function enterGame(
             worldcupMatchEnterTimer = null;
           }
           hud.setLoadingVisible(false, { skipMinWait: true });
-          hud.setReconnectOffer(true);
+          hud.setReconnectOffer(true, {
+            label: restartDrop ? "Server restart" : "Disconnected",
+          });
           hud.setInShaper(false);
-          hud.setStatus(
-            restartDrop
-              ? "Server restart - tap Reconnect or wait a moment"
-              : "Disconnected - tap Reconnect or reload"
-          );
+          hud.setStatus("");
           perfPingSentAt.clear();
           hud.setPerfHudLatencyMs(null);
         },
@@ -5627,10 +5785,8 @@ function enterGame(
         welcomeDeadlineTimer = null;
         if (disposed || myGen !== connectGen) return;
         hud.setLoadingVisible(false, { skipMinWait: true });
-        hud.setReconnectOffer(true);
-        hud.setStatus(
-          "No response from server - tap Reconnect, or start the game server if it stopped"
-        );
+        hud.setReconnectOffer(true, { label: "No response" });
+        hud.setStatus("");
       }, 35_000);
     });
   };
@@ -5896,6 +6052,10 @@ function enterGame(
     hud.setReconnectOffer(false);
     hud.setStatus("Connecting…");
     connectToRoom(CHAMBER_ROOM_ID, undefined, { resume: true });
+  });
+
+  hud.onDisconnectExit(() => {
+    disposeToMenu();
   });
 
   if (streamMode) {

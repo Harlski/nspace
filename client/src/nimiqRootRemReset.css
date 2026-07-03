@@ -14,7 +14,7 @@
  * their own `color` in `style.css` so they no longer depend on this reset surviving every load order.
  *
  * In-game Nimiq pills (`.nq-button-pill`, etc.) are constrained by `#app … .nq-button-pill` rules in
- * `style.css` (e.g. `.hud-portal-enter`, `.hud-reconnect-btn`, `.main-menu .nq-button-s…`). Do not scope this
+ * `style.css` (e.g. `.hud-portal-enter`, `.hud-disconnect-modal__reconnect`, `.main-menu .nq-button-s…`). Do not scope this
  * reset to `:has(.main-menu)` - that leaves `html` at 8px in-world and shrinks every other HUD `rem`.
  */
 html,

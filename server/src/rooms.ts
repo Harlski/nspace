@@ -82,8 +82,26 @@ import {
   softDeleteDynamicRoom,
   updateDynamicRoomMetadata,
   getDynamicRoomDeployablesAllowed,
+  forceDynamicRoomPrivate,
   type RoomBackgroundNeutral,
 } from "./roomRegistry.js";
+import {
+  canEnablePublicVisibility,
+  MIN_BUILDS_FOR_PUBLIC,
+  publicBuildGateMessage,
+  publicBuildGateCreateMessage,
+} from "./roomBuildScore.js";
+import {
+  getRoomThumbsUpCount,
+  loadRoomThumbsUp,
+  toggleRoomThumbsUp,
+  viewerHasRoomThumbedUp,
+} from "./roomThumbsUp.js";
+import {
+  consumePublicDemotionNotices,
+  loadPublicDemotionNoticesStore,
+  runRoomPublicBuildGateMigration,
+} from "./roomPublicDemotion.js";
 import {
   deployRejectMessage,
   recordCosmeticDeploy,
@@ -1306,7 +1324,19 @@ type OutMsg =
         canDelete?: boolean;
         canRestore?: boolean;
         backgroundHueDeg?: number | null;
+        backgroundNeutral?: RoomBackgroundNeutral | null;
+        buildScore: number;
+        thumbsUpCount: number;
+        viewerThumbedUp: boolean;
       }>;
+    }
+  | {
+      type: "roomThumbsUpResult";
+      roomId: string;
+      ok: boolean;
+      thumbsUpCount?: number;
+      viewerThumbedUp?: boolean;
+      reason?: string;
     }
   | {
       type: "roomActionResult";
@@ -1576,6 +1606,15 @@ function onPlayerEnteredRoom(
   }
   if (opts?.isRoomChange) {
     fireAchievementEvent(conn.player.address, "visit_room", onUnlock);
+  }
+  for (const notice of consumePublicDemotionNotices(conn.player.address)) {
+    wsSafeSend(conn.ws, {
+      type: "chat",
+      from: "System",
+      fromAddress: "SYSTEM",
+      text: `Your room ${notice.displayName} was set to private until it has ${MIN_BUILDS_FOR_PUBLIC} builds (currently ${notice.score}).`,
+      at: Date.now(),
+    } satisfies OutMsg);
   }
 }
 
@@ -2687,6 +2726,77 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
   return out;
 }
 
+export { MIN_BUILDS_FOR_PUBLIC } from "./roomBuildScore.js";
+
+function roomExemptFromPublicBuildGate(roomId: string): boolean {
+  if (isBuiltinRoomId(roomId)) return true;
+  const def = listRoomDefinitions().find(
+    (d) => d.id === normalizeRoomId(roomId)
+  );
+  return def?.isOfficial === true;
+}
+
+export function getRoomBuildScore(roomIdRaw: string): number {
+  const roomId = normalizeRoomId(roomIdRaw);
+  let score = 0;
+  const placed = roomPlaced.get(roomId);
+  if (placed) score += placed.size;
+  score += getSignboardsForRoom(roomId).length;
+  score += getBillboardsForRoom(roomId).length;
+  score += getVoxelTextsForRoom(roomId).length;
+  const extra = roomExtraFloor.get(roomId);
+  if (extra) score += extra.size;
+  const baseColors = roomBaseFloorColors.get(roomId);
+  if (baseColors) score += baseColors.size;
+  return score;
+}
+
+export function canPreviewRoomLayout(
+  roomIdRaw: string,
+  viewerAddress: string
+): boolean {
+  const roomId = normalizeRoomId(roomIdRaw);
+  const def =
+    listRoomDefinitions().find((d) => d.id === roomId) ??
+    listDeletedRoomDefinitions().find((d) => d.id === roomId);
+  if (!def) return false;
+  if (def.isPublic) return true;
+  if (isAdmin(viewerAddress)) return true;
+  if (!def.ownerAddress) return false;
+  return compactAddress(def.ownerAddress) === compactAddress(viewerAddress);
+}
+
+function rejectPublicVisibilityIfBelowGate(
+  roomId: string,
+  wantPublic: boolean
+): { ok: true } | { ok: false; reason: string } {
+  if (!wantPublic) return { ok: true };
+  if (roomExemptFromPublicBuildGate(roomId)) return { ok: true };
+  const score = getRoomBuildScore(roomId);
+  if (canEnablePublicVisibility(score, false)) return { ok: true };
+  return { ok: false, reason: publicBuildGateMessage(score) };
+}
+
+function roomCatalogSocialFields(
+  roomId: string,
+  viewerCompact: string,
+  ownerAddress: string | null,
+  isPublic: boolean
+): {
+  buildScore: number;
+  thumbsUpCount: number;
+  viewerThumbedUp: boolean;
+} {
+  const buildScore = getRoomBuildScore(roomId);
+  const thumbsUpCount = isPublic ? getRoomThumbsUpCount(roomId) : 0;
+  const ownerC = ownerAddress ? compactAddress(ownerAddress) : "";
+  const viewerThumbedUp =
+    isPublic &&
+    ownerC !== viewerCompact &&
+    viewerHasRoomThumbedUp(roomId, viewerCompact);
+  return { buildScore, thumbsUpCount, viewerThumbedUp };
+}
+
 function extraFloorMap(roomId: string): Map<string, number> {
   let s = roomExtraFloor.get(roomId);
   if (!s) {
@@ -3675,6 +3785,9 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
     canRestore?: boolean;
     backgroundHueDeg?: number | null;
     backgroundNeutral?: RoomBackgroundNeutral | null;
+    buildScore: number;
+    thumbsUpCount: number;
+    viewerThumbedUp: boolean;
   }> = [];
   for (const d of defs) {
     if (d.isBuiltin) {
@@ -3682,6 +3795,7 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
         continue;
       }
       const builtinBg = getBuiltinRoomBackgroundState(d.id);
+      const social = roomCatalogSocialFields(d.id, viewer, null, d.isPublic);
       catalogRooms.push({
         id: d.id,
         displayName: d.displayName,
@@ -3696,6 +3810,7 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
         canRestore: false,
         backgroundHueDeg: builtinBg.hueDeg,
         backgroundNeutral: builtinBg.neutral,
+        ...social,
       });
       continue;
     }
@@ -3709,6 +3824,12 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
     const canDelete =
       admin ||
       (!!d.ownerAddress && compactAddress(d.ownerAddress) === viewer);
+    const social = roomCatalogSocialFields(
+      d.id,
+      viewer,
+      d.ownerAddress,
+      d.isPublic
+    );
     catalogRooms.push({
       id: d.id,
       displayName: d.displayName,
@@ -3725,10 +3846,17 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
         d.backgroundHueDeg === undefined ? null : d.backgroundHueDeg,
       backgroundNeutral:
         d.backgroundNeutral === undefined ? null : d.backgroundNeutral,
+      ...social,
     });
   }
   if (admin) {
     for (const d of listDeletedRoomDefinitions()) {
+      const social = roomCatalogSocialFields(
+        d.id,
+        viewer,
+        d.ownerAddress,
+        d.isPublic
+      );
       catalogRooms.push({
         id: d.id,
         displayName: d.displayName,
@@ -3745,6 +3873,7 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
           d.backgroundHueDeg === undefined ? null : d.backgroundHueDeg,
         backgroundNeutral:
           d.backgroundNeutral === undefined ? null : d.backgroundNeutral,
+        ...social,
       });
     }
   }
@@ -6732,6 +6861,24 @@ export function startRoomTick(): void {
   loadDesigns();
   loadVoxelTexts();
   loadMazeRecords();
+  loadRoomThumbsUp();
+  loadPublicDemotionNoticesStore();
+  const demoted = runRoomPublicBuildGateMigration(
+    listRoomDefinitions()
+      .filter((d) => !d.isBuiltin && !!d.ownerAddress)
+      .map((d) => ({
+        id: d.id,
+        displayName: d.displayName,
+        ownerAddress: d.ownerAddress!,
+        isOfficial: Boolean(d.isOfficial),
+        isPublic: d.isPublic,
+      })),
+    getRoomBuildScore,
+    forceDynamicRoomPrivate
+  );
+  if (demoted > 0) {
+    broadcastRoomCatalogRefresh();
+  }
   // worldcup: restore player-placed balls + the season tally + goal-reward counters
   if (WORLDCUP_ENABLED) {
     loadWorldcupBalls();
@@ -7549,6 +7696,51 @@ export function addClient(
       return;
     }
 
+    if (msg.type === "thumbRoom") {
+      const roomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
+      const def = listRoomDefinitions().find((d) => d.id === roomId);
+      if (!def) {
+        wsSafeSend(ws, {
+          type: "roomThumbsUpResult",
+          roomId,
+          ok: false,
+          reason: "Room not found.",
+        } satisfies OutMsg);
+        return;
+      }
+      if (!def.isPublic) {
+        wsSafeSend(ws, {
+          type: "roomThumbsUpResult",
+          roomId,
+          ok: false,
+          reason: "Only public rooms can be thumbs up'd.",
+        } satisfies OutMsg);
+        return;
+      }
+      const ownerC = def.ownerAddress
+        ? compactAddress(def.ownerAddress)
+        : null;
+      const toggled = toggleRoomThumbsUp(roomId, address, ownerC);
+      if (!toggled.ok) {
+        wsSafeSend(ws, {
+          type: "roomThumbsUpResult",
+          roomId,
+          ok: false,
+          reason: toggled.reason,
+        } satisfies OutMsg);
+        return;
+      }
+      wsSafeSend(ws, {
+        type: "roomThumbsUpResult",
+        roomId,
+        ok: true,
+        thumbsUpCount: toggled.thumbsUpCount,
+        viewerThumbedUp: toggled.viewerThumbedUp,
+      } satisfies OutMsg);
+      broadcastRoomCatalogToAll();
+      return;
+    }
+
     if (msg.type === "nimSendIntent") {
       conn.nimSendIntent = Boolean(msg.active);
       broadcastRoomStateFull(currentRoomId);
@@ -7841,7 +8033,17 @@ export function addClient(
           } satisfies OutMsg);
         return;
       }
-      const isPublic = msg.isPublic === false ? false : true;
+      let isPublic = msg.isPublic === true;
+      if (isPublic) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "SYSTEM",
+          text: publicBuildGateCreateMessage(),
+          at: Date.now(),
+        } satisfies OutMsg);
+        isPublic = false;
+      }
       const created = createRoomWithSize(
         widthTiles,
         heightTiles,
@@ -8042,6 +8244,19 @@ export function addClient(
       }
       if (msg.isPublic !== undefined) {
         patch.isPublic = Boolean(msg.isPublic);
+      }
+      if (patch.isPublic === true) {
+        const gate = rejectPublicVisibilityIfBelowGate(roomId, true);
+        if (!gate.ok) {
+          wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "SYSTEM",
+            text: gate.reason,
+            at: Date.now(),
+          } satisfies OutMsg);
+          return;
+        }
       }
       if (msg.backgroundHueDeg !== undefined) {
         const norm = normalizeBackgroundHuePatch(
