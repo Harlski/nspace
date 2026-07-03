@@ -1033,6 +1033,23 @@ export function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
   return canEditRoomContent(roomId, address);
 }
 
+/** Teleporter destination rooms: editors' rooms, plus Free Play Field for admins. */
+export function canTeleporterDestinationRoom(
+  roomId: string,
+  address: string
+): boolean {
+  const id = normalizeRoomId(roomId);
+  if (
+    WORLDCUP_ENABLED &&
+    id === WORLDCUP_FIELD_ROOM_ID &&
+    isAdmin(address) &&
+    hasRoom(id)
+  ) {
+    return true;
+  }
+  return canPlaceBlocksInRoom(roomId, address);
+}
+
 function canRecolorFloorInRoom(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
   if (isCosmeticGalleryRoom(id)) return false;
@@ -4639,7 +4656,7 @@ function configureTeleporterDestination(
 ): boolean {
   const address = conn.address;
   if (!canPlaceBlocksInRoom(srcRoomId, address)) return false;
-  if (!canPlaceBlocksInRoom(destRoomId, address)) return false;
+  if (!canTeleporterDestinationRoom(destRoomId, address)) return false;
   if (
     normalizeRoomId(srcRoomId) === CANVAS_ROOM_ID ||
     normalizeRoomId(destRoomId) === CANVAS_ROOM_ID ||

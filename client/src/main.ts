@@ -1120,7 +1120,7 @@ function enterGame(
     isBuiltin: boolean;
   };
   let knownRooms: KnownRoomRow[] = [];
-  let roomsCatalogTab: "official" | "mine" | "popular" | "admin" | "deleted" =
+  let roomsCatalogTab: "official" | "mine" | "public" | "admin" | "deleted" =
     "official";
   let roomsSelectedId: string | null = null;
   const MIN_BUILDS_FOR_PUBLIC = 50;
@@ -1233,6 +1233,25 @@ function enterGame(
         if (r.isDeleted) continue;
         out.push(rowFromKnown(r));
       }
+      if (WORLDCUP_ENABLED_CLIENT) {
+        const nField = normalizeRoomId(WORLDCUP_FIELD_ROOM_ID);
+        if (!out.some((r) => normalizeRoomId(r.id) === nField)) {
+          const fieldRow = knownRooms.find(
+            (r) => normalizeRoomId(r.id) === nField
+          );
+          out.push({
+            id: nField,
+            displayName: normalizeRoomCatalogDisplayName(
+              fieldRow?.displayName,
+              "Free Play Field"
+            ),
+            isPublic: fieldRow?.isPublic ?? true,
+            playerCount: fieldRow?.playerCount ?? 0,
+            isOfficial: fieldRow?.isOfficial ?? false,
+            isBuiltin: fieldRow?.isBuiltin ?? true,
+          });
+        }
+      }
       out.sort((a, b) => {
         if (a.id === nHub) return -1;
         if (b.id === nHub) return 1;
@@ -1325,7 +1344,7 @@ function enterGame(
             <div class="rooms-modal__tabs" role="tablist" aria-label="Room categories">
               <button type="button" class="rooms-modal__tab rooms-modal__tab--active" id="rooms-tab-official" role="tab" aria-selected="true">Official</button>
               <button type="button" class="rooms-modal__tab" id="rooms-tab-mine" role="tab" aria-selected="false">My Rooms</button>
-              <button type="button" class="rooms-modal__tab" id="rooms-tab-popular" role="tab" aria-selected="false">Popular</button>
+              <button type="button" class="rooms-modal__tab" id="rooms-tab-public" role="tab" aria-selected="false">Public</button>
               <button type="button" class="rooms-modal__tab" id="rooms-tab-admin" role="tab" aria-selected="false" hidden>Hidden</button>
               <button type="button" class="rooms-modal__tab" id="rooms-tab-deleted" role="tab" aria-selected="false" hidden>Deleted</button>
             </div>
@@ -1417,7 +1436,7 @@ function enterGame(
   ) as HTMLParagraphElement;
   const roomsTabOfficialBtn = roomsModal.querySelector("#rooms-tab-official") as HTMLButtonElement;
   const roomsTabMineBtn = roomsModal.querySelector("#rooms-tab-mine") as HTMLButtonElement;
-  const roomsTabPopularBtn = roomsModal.querySelector("#rooms-tab-popular") as HTMLButtonElement;
+  const roomsTabPublicBtn = roomsModal.querySelector("#rooms-tab-public") as HTMLButtonElement;
   const roomsTabAdminBtn = roomsModal.querySelector("#rooms-tab-admin") as HTMLButtonElement;
   const roomsTabDeletedBtn = roomsModal.querySelector("#rooms-tab-deleted") as HTMLButtonElement;
   const roomsViewList = roomsModal.querySelector("#rooms-view-list") as HTMLElement;
@@ -1684,26 +1703,26 @@ function enterGame(
   roomsTabAdminBtn.hidden = !isAdmin(address);
   roomsTabDeletedBtn.hidden = !isAdmin(address);
 
-  function applyRoomsTabUi(tab: "official" | "mine" | "popular" | "admin" | "deleted"): void {
+  function applyRoomsTabUi(tab: "official" | "mine" | "public" | "admin" | "deleted"): void {
     if ((tab === "admin" || tab === "deleted") && !isAdmin(address)) {
       tab = "official";
     }
     roomsCatalogTab = tab;
     roomsTabOfficialBtn.classList.toggle("rooms-modal__tab--active", tab === "official");
     roomsTabMineBtn.classList.toggle("rooms-modal__tab--active", tab === "mine");
-    roomsTabPopularBtn.classList.toggle("rooms-modal__tab--active", tab === "popular");
+    roomsTabPublicBtn.classList.toggle("rooms-modal__tab--active", tab === "public");
     roomsTabAdminBtn.classList.toggle("rooms-modal__tab--active", tab === "admin");
     roomsTabDeletedBtn.classList.toggle("rooms-modal__tab--active", tab === "deleted");
     roomsTabOfficialBtn.setAttribute("aria-selected", tab === "official" ? "true" : "false");
     roomsTabMineBtn.setAttribute("aria-selected", tab === "mine" ? "true" : "false");
-    roomsTabPopularBtn.setAttribute("aria-selected", tab === "popular" ? "true" : "false");
+    roomsTabPublicBtn.setAttribute("aria-selected", tab === "public" ? "true" : "false");
     roomsTabAdminBtn.setAttribute("aria-selected", tab === "admin" ? "true" : "false");
     roomsTabDeletedBtn.setAttribute("aria-selected", tab === "deleted" ? "true" : "false");
     if (tab === "official") {
       roomsModalList.setAttribute("aria-label", "Official rooms");
     } else if (tab === "mine") {
       roomsModalList.setAttribute("aria-label", "My rooms");
-    } else if (tab === "popular") {
+    } else if (tab === "public") {
       roomsModalList.setAttribute("aria-label", "Public rooms");
     } else if (tab === "deleted") {
       roomsModalList.setAttribute("aria-label", "Deleted rooms");
@@ -1712,7 +1731,7 @@ function enterGame(
     }
   }
 
-  function setRoomsCatalogTab(tab: "official" | "mine" | "popular" | "admin" | "deleted"): void {
+  function setRoomsCatalogTab(tab: "official" | "mine" | "public" | "admin" | "deleted"): void {
     applyRoomsTabUi(tab);
     roomsSelectedId = null;
     renderRoomsModalList();
@@ -1721,7 +1740,7 @@ function enterGame(
 
   roomsTabOfficialBtn.addEventListener("click", () => setRoomsCatalogTab("official"));
   roomsTabMineBtn.addEventListener("click", () => setRoomsCatalogTab("mine"));
-  roomsTabPopularBtn.addEventListener("click", () => setRoomsCatalogTab("popular"));
+  roomsTabPublicBtn.addEventListener("click", () => setRoomsCatalogTab("public"));
   roomsTabAdminBtn.addEventListener("click", () => setRoomsCatalogTab("admin"));
   roomsTabDeletedBtn.addEventListener("click", () => setRoomsCatalogTab("deleted"));
 
@@ -1995,7 +2014,7 @@ function enterGame(
       if (r.isDeleted) return false;
       if (roomsCatalogTab === "official") return r.isBuiltin || r.isOfficial;
       if (roomsCatalogTab === "mine") return viewerOwnsRoom(r);
-      if (roomsCatalogTab === "popular") {
+      if (roomsCatalogTab === "public") {
         if (r.isBuiltin || r.isOfficial) return false;
         return r.isPublic;
       }
@@ -2030,7 +2049,7 @@ function enterGame(
         if (c !== 0) return c;
         return a.id.localeCompare(b.id);
       });
-    } else if (roomsCatalogTab === "popular") {
+    } else if (roomsCatalogTab === "public") {
       filtered.sort((a, b) => {
         const td = b.thumbsUpCount - a.thumbsUpCount;
         if (td !== 0) return td;
@@ -2050,7 +2069,7 @@ function enterGame(
       empty.textContent =
         roomsCatalogTab === "mine"
           ? "No rooms yet. Create one from the button below."
-          : roomsCatalogTab === "popular"
+          : roomsCatalogTab === "public"
             ? "No public rooms yet."
             : roomsCatalogTab === "admin"
               ? "No other players' private rooms."

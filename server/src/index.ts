@@ -26,6 +26,7 @@ import {
   broadcastRestartPendingNotice,
   broadcastRoomCatalogRefresh,
   canPlaceBlocksInRoom,
+  canTeleporterDestinationRoom,
   directInviteOnCreated,
   getHostDisplayNameForInvite,
   getLiveRealPlayerCountInRoom,
@@ -2537,7 +2538,7 @@ app.get("/api/rooms/:id/layout", (req, res) => {
     res.status(404).json({ error: "room_not_found" });
     return;
   }
-  if (!canPlaceBlocksInRoom(roomId, address)) {
+  if (!canTeleporterDestinationRoom(roomId, address)) {
     res.status(403).json({ error: "forbidden" });
     return;
   }
