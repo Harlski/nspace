@@ -1590,6 +1590,7 @@ export function advertisePageHtml(): string {
         payMsg.indexOf("cannot be funded") !== -1 ||
         payMsg.indexOf("valid fund amount") !== -1 ||
         payMsg.indexOf("Enter a fund amount") !== -1 ||
+        payMsg.indexOf("verification code was missing") !== -1 ||
         payMsg.indexOf("Could not create payment intent") !== -1
       );
     }
@@ -1888,6 +1889,9 @@ export function advertisePageHtml(): string {
       if (msg === "invalid_amount" || msg.indexOf("invalid_amount:") === 0) {
         return "Payment amount is missing or invalid. Check the amount field and try again.";
       }
+      if (msg === "missing_memo" || msg.indexOf("missing_memo") !== -1) {
+        return "Payment could not be prepared: the verification code was missing, so we did not send anything. Refresh the page and try again.";
+      }
       if (msg === "missing_recipient") {
         return "Payment recipient is not configured on the server. Pay manually using the details below.";
       }
@@ -2066,8 +2070,11 @@ export function advertisePageHtml(): string {
         recipient: recipient,
         value: Math.floor(amountLuna),
       };
+      // The intent memo is what the backend matches on-chain. Refuse to open a
+      // checkout without it - a memo-less payment cannot be auto-verified.
       var memo = String(intent.memo || "").trim();
-      if (memo) opts.extraData = memo;
+      if (!memo) throw new Error("missing_memo");
+      opts.extraData = memo;
       return opts;
     }
     async function createIntentForFund(campaignId, amountNim) {
@@ -2130,10 +2137,11 @@ export function advertisePageHtml(): string {
         : paymentRecipientCompact(intent, meta);
       if (!recipient) throw new Error("missing_recipient");
       var tx = { recipient: recipient, value: Math.floor(value) };
+      // The intent memo is what the backend matches on-chain. Refuse to send
+      // without it - a memo-less payment cannot be auto-verified.
       var memo = String(intent.memo || "").trim();
-      if (memo) {
-        tx.data = opts.dataHex ? utf8ToHex(memo) : memo;
-      }
+      if (!memo) throw new Error("missing_memo");
+      tx.data = opts.dataHex ? utf8ToHex(memo) : memo;
       return tx;
     }
     function extractThrownMessage(err) {
@@ -2180,10 +2188,26 @@ export function advertisePageHtml(): string {
         if (isProviderErrorResponse(result)) {
           lastMsg = providerErrorText(result);
           var lower = lastMsg.toLowerCase();
-          if (lower.indexOf("invalid_amount") === -1 && lower.indexOf("invalid amount") === -1) {
-            break;
+          // An error response means nothing was sent, so it is safe to fall
+          // through to the next attempt. Retry on recipient-format ("invalid
+          // amount") and data/memo-format complaints so the hex-encoded memo
+          // variant is reachable; but never re-prompt after a user abort.
+          var isUserAbort =
+            lower.indexOf("cancel") !== -1 ||
+            lower.indexOf("abort") !== -1 ||
+            lower.indexOf("denied") !== -1 ||
+            lower.indexOf("reject") !== -1 ||
+            lower.indexOf("dismiss") !== -1 ||
+            lower.indexOf("closed") !== -1;
+          var isRetryable =
+            lower.indexOf("invalid_amount") !== -1 ||
+            lower.indexOf("invalid amount") !== -1 ||
+            lower.indexOf("data") !== -1 ||
+            lower.indexOf("hex") !== -1;
+          if (!isUserAbort && isRetryable) {
+            continue;
           }
-          continue;
+          break;
         }
         if (result && typeof result === "object" && result.error) {
           lastMsg = providerErrorText(result);

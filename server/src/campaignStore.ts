@@ -861,13 +861,42 @@ export function adminUpdateCampaignFields(
   return getCampaignById(campaignId);
 }
 
-const ADMIN_CREDIT_CAMPAIGN_STATUSES: CampaignStatus[] = [
+/**
+ * Already-funded campaigns: admin credit tops up prepaid balance without
+ * changing the lifecycle position (an `expired` one reactivates to `approved`).
+ */
+const ADMIN_CREDIT_FUNDED_STATUSES: CampaignStatus[] = [
   "pending_approval",
   "approved",
   "expired",
 ];
 
-/** Grants prepaid bonus balance; records a synthetic admin-credit ledger row. */
+/**
+ * Unfunded campaigns that never verified on-chain (e.g. a real payment that
+ * landed without the intent memo, so it could not be auto-matched). Admin
+ * credit acts as the funding event and routes them into the approval queue.
+ */
+const ADMIN_CREDIT_UNFUNDED_STATUSES: CampaignStatus[] = [
+  "draft",
+  "pending_payment",
+];
+
+const ADMIN_CREDIT_CAMPAIGN_STATUSES: CampaignStatus[] = [
+  ...ADMIN_CREDIT_UNFUNDED_STATUSES,
+  ...ADMIN_CREDIT_FUNDED_STATUSES,
+];
+
+/**
+ * Grants prepaid balance and records a synthetic admin-credit ledger row.
+ *
+ * - Funded campaigns (`pending_approval`/`approved`/`expired`) keep their
+ *   original on-chain `tx_hash` and lifecycle position.
+ * - Unfunded campaigns (`draft`/`pending_payment`) are treated as newly funded:
+ *   they move to `pending_approval`, adopt the synthetic hash as their
+ *   `tx_hash` (so they can later be approved), and drop any stale intent. This
+ *   is the manual rescue path for a paid advert whose payment could not be
+ *   verified (missing/dropped transaction message).
+ */
 export function grantCampaignAdminCredit(
   id: string,
   amountLuna: bigint
@@ -889,20 +918,35 @@ export function grantCampaignAdminCredit(
     balance = 0n;
   }
   const newBalance = balance + amountLuna;
-  const newStatus = row.status === "expired" ? "approved" : row.status;
   const now = Date.now();
   const txHash = `admin-credit:${randomUUID()}`;
 
-  const info = requireDb()
-    .prepare(
-      `UPDATE campaigns SET
-        balance_luna = ?,
-        status = ?,
-        updated_at_ms = ?
-       WHERE id = ? AND status IN ('pending_approval', 'approved', 'expired')`
-    )
-    .run(newBalance.toString(), newStatus, now, campaignId);
-  if (info.changes === 0) return null;
+  if (ADMIN_CREDIT_UNFUNDED_STATUSES.includes(row.status)) {
+    const info = requireDb()
+      .prepare(
+        `UPDATE campaigns SET
+          balance_luna = ?,
+          status = 'pending_approval',
+          tx_hash = ?,
+          intent_id = NULL,
+          updated_at_ms = ?
+         WHERE id = ? AND status IN ('draft', 'pending_payment')`
+      )
+      .run(newBalance.toString(), txHash, now, campaignId);
+    if (info.changes === 0) return null;
+  } else {
+    const newStatus = row.status === "expired" ? "approved" : row.status;
+    const info = requireDb()
+      .prepare(
+        `UPDATE campaigns SET
+          balance_luna = ?,
+          status = ?,
+          updated_at_ms = ?
+         WHERE id = ? AND status IN ('pending_approval', 'approved', 'expired')`
+      )
+      .run(newBalance.toString(), newStatus, now, campaignId);
+    if (info.changes === 0) return null;
+  }
 
   recordCampaignFundingTransaction({
     campaignId,

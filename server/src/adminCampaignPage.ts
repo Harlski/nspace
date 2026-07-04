@@ -629,17 +629,32 @@ export function adminCampaignPageHtml(): string {
         '<button type="button" class="cp-btn cp-btn--accent" id="cpAdminSaveBtn">Save details</button>' +
         "</div>" +
         '<div id="cpAdminSaveMsg" class="cp-msg" hidden></div>';
-      if (
+      var isUnfunded = status === "draft" || status === "pending_payment";
+      var isFunded =
         status === "approved" ||
         status === "expired" ||
-        status === "pending_approval"
-      ) {
+        status === "pending_approval";
+      if (isUnfunded || isFunded) {
+        var creditLabel = isUnfunded
+          ? "Credit prepaid balance (NIM)"
+          : "Bonus credit (NIM)";
+        var creditBtnLabel = isUnfunded
+          ? "Credit and queue for approval"
+          : "Add bonus credit";
+        var creditHint = isUnfunded
+          ? '<p class="cp-preview-caption">Rescue path for a paid advert that could not be auto-verified (e.g. the transaction message was missing). Crediting funds the advert and moves it to Pending approval.</p>'
+          : "";
         html +=
           '<div class="cp-admin-tools__credit">' +
-          '<div class="cp-field"><label for="cpAdminCreditNim">Bonus credit (NIM)</label>' +
+          '<div class="cp-field"><label for="cpAdminCreditNim">' +
+          creditLabel +
+          "</label>" +
           '<input id="cpAdminCreditNim" type="text" inputmode="decimal" autocomplete="off" placeholder="10"/></div>' +
+          creditHint +
           '<div class="cp-admin-tools__actions">' +
-          '<button type="button" class="cp-btn" id="cpAdminCreditBtn">Add bonus credit</button>' +
+          '<button type="button" class="cp-btn" id="cpAdminCreditBtn">' +
+          creditBtnLabel +
+          "</button>" +
           "</div>" +
           '<div id="cpAdminCreditMsg" class="cp-msg" hidden></div>' +
           "</div>";
@@ -753,7 +768,14 @@ export function adminCampaignPageHtml(): string {
               amountEl.value = "";
               if (msgEl) {
                 msgEl.className = "cp-msg";
-                msgEl.textContent = "Bonus credit added.";
+                var creditedStatus =
+                  r.body && r.body.campaign
+                    ? String(r.body.campaign.status || "")
+                    : "";
+                msgEl.textContent =
+                  creditedStatus === "pending_approval"
+                    ? "Credited. Advert moved to Pending approval."
+                    : "Credit added.";
                 msgEl.hidden = false;
               }
               return load();
