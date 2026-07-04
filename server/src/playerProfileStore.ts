@@ -94,6 +94,23 @@ export function listKnownPlayerUsernames(): Array<{
   return out;
 }
 
+/**
+ * Resolve a custom username to its owning wallet (case-insensitive). Returns the
+ * normalized wallet address, or null when no wallet has claimed that username.
+ * Custom usernames are globally unique, so at most one match exists. Used by the
+ * whisper `/w name` command, which only targets players with a custom username.
+ */
+export function findWalletByCustomUsername(name: string): string | null {
+  const wanted = String(name ?? "").trim().toLowerCase();
+  if (!wanted) return null;
+  const store = readStore();
+  for (const [addr, row] of Object.entries(store.profiles)) {
+    const c = row?.customUsername?.trim();
+    if (c && c.toLowerCase() === wanted) return addr.trim().toUpperCase();
+  }
+  return null;
+}
+
 export function getPlayerProfileMessage(normalizedAddress: string): string {
   const key = normalizedAddress.trim().toUpperCase();
   if (!key) return "";

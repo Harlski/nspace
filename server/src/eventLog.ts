@@ -45,6 +45,8 @@ export const ANALYTICS_EVENT_KINDS = {
   nimPayoutDeadLetter: "nim_payout_dead_letter",
   placeBlock: "place_block",
   chat: "chat",
+  /** Private 1:1 whisper (logged for moderation; never broadcast). */
+  whisper: "whisper",
   /** Player received room chat backlog lines on welcome. */
   chatBacklogDelivered: "chat_backlog_delivered",
 } as const;

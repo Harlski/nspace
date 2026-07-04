@@ -74,6 +74,15 @@ import {
 } from "../formatWalletAddress.js";
 import { walletDisplayName } from "../walletDisplayName.js";
 import {
+  rankWhisperCandidates,
+  cycleWhisperDestination,
+  findExactWhisperCandidate,
+  compactWhisperAddress,
+  WHISPER_PICKER_DEFAULT_LIMIT,
+  type WhisperCandidate,
+} from "./whisperRecipients.js";
+import { remotePlayerIsNpc } from "../remotePlayerNpc.js";
+import {
   NIMIQ_WALLET_URL,
   TELEGRAM_URL,
   X_URL,
@@ -334,6 +343,27 @@ export function createHud(
       /** When true, skip rapid duplicate suppression for system lines (backlog replay). */
       skipSystemDedup?: boolean;
     }
+  ) => void;
+  /**
+   * Render a private whisper inline in the world chat lane (distinct styling, no 3D bubble).
+   * `direction: "in"` shows "Name whispers:"; `direction: "out"` shows "To Name:".
+   */
+  appendWhisper: (opts: {
+    direction: "in" | "out";
+    partnerAddress: string;
+    partnerName: string;
+    text: string;
+  }) => void;
+  /** Active sticky whisper target (chip) that plain chat-input messages are sent to, or null. */
+  getWhisperTarget: () => { address: string; name: string } | null;
+  /** Clear the active whisper target chip (back to public chat). */
+  clearWhisperTarget: () => void;
+  /**
+   * Supplies the current room roster + self address to the whisper recipient typeahead
+   * (the `/w` picker and `/r` fallback). Recent whisper partners are tracked internally.
+   */
+  setWhisperRosterProvider: (
+    fn: () => { players: readonly PlayerState[]; selfAddress: string }
   ) => void;
   /** Clears world + system chat panels; call before applying server `chatBacklog` on `welcome`. */
   resetRoomChatDom: () => void;
@@ -875,7 +905,15 @@ export function createHud(
   setCanvasTimer: (timeRemaining: number) => void;
   setCanvasCountdown: (text: string | null, msRemaining?: number) => void;
   setPlayerCount: (count: number, roomCount?: number) => void;
-  showPlayerJoinedToast: (address: string) => void;
+  /** Push a transient enter/left line into the presence feed above the chat. */
+  showPresenceEvent: (
+    kind: "enter" | "left",
+    info: { address: string; displayName?: string }
+  ) => void;
+  /** Wipe all presence-feed lines (e.g. on room switch). */
+  clearPresenceFeed: () => void;
+  /** Open another player's profile overlay by wallet address (from outside the HUD). */
+  openPlayerProfile: (address: string, displayName?: string) => void;
   /** Wire feedback ticket APIs (create, list, thread, reply). */
   setFeedbackHandlers: (handlers: FeedbackHandlers) => void;
   /** Current room id for chat-report context (updated on welcome). */
@@ -1528,28 +1566,6 @@ export function createHud(
     }
   }
 
-  const playerJoinToast = document.createElement("div");
-  playerJoinToast.className = "hud-player-join-toast";
-  playerJoinToast.hidden = true;
-  playerJoinToast.innerHTML = `
-    <img class="hud-player-join-toast__identicon" alt="" width="18" height="18" hidden />
-    <span class="hud-player-join-toast__text"></span>
-  `;
-  const playerJoinToastText = playerJoinToast.querySelector(
-    ".hud-player-join-toast__text"
-  ) as HTMLElement | null;
-  const playerJoinToastIdenticon = playerJoinToast.querySelector(
-    ".hud-player-join-toast__identicon"
-  ) as HTMLImageElement | null;
-  let playerJoinToastTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const roomsBtn = document.createElement("button");
-  roomsBtn.type = "button";
-  roomsBtn.className = "hud-rooms";
-  roomsBtn.innerHTML = `<span class="hud-rooms__inner"><span class="hud-rooms__text">Rooms</span>${nimiqIconUseMarkup("nq-caret-right-small", { width: 10, height: 10, class: "hud-rooms__caret" })}</span>`;
-  roomsBtn.setAttribute("aria-label", "Rooms");
-  roomsBtn.title = "Browse, join, or create rooms.";
-
   const getWalletBtn = document.createElement("button");
   getWalletBtn.type = "button";
   getWalletBtn.className = "hud-rooms hud-get-wallet";
@@ -1619,8 +1635,6 @@ export function createHud(
   window.addEventListener("resize", repositionOpenHudStatTips);
   HUD_STAT_TIP_VIEWPORT_MQ.addEventListener("change", repositionOpenHudStatTips);
   
-  topToolbar.appendChild(playerJoinToast);
-
   const translateClipboardHintToast = document.createElement("div");
   translateClipboardHintToast.className =
     "hud-player-join-toast hud-translate-clipboard-hint";
@@ -1654,7 +1668,6 @@ export function createHud(
     return coarse || mobileUa;
   }
 
-  topToolbar.appendChild(roomsBtn);
   topToolbar.appendChild(getWalletBtn);
   topToolbar.appendChild(playSpaceShareBtn);
   topToolbar.appendChild(playerCount);
@@ -3715,6 +3728,14 @@ export function createHud(
   otherPlayerCtxViewCol.appendChild(otherPlayerCtxViewLabel);
   otherPlayerCtxViewBtn.append(otherPlayerCtxIdent, otherPlayerCtxViewCol);
   otherPlayerCtxSingle.appendChild(otherPlayerCtxViewBtn);
+  // Whisper: opens a private 1:1 conversation with this player (WoW-style). Targets the
+  // exact wallet, so it works even for players without a unique custom username.
+  const otherPlayerCtxWhisperBtn = document.createElement("button");
+  otherPlayerCtxWhisperBtn.type = "button";
+  otherPlayerCtxWhisperBtn.className = "other-player-ctx__item";
+  otherPlayerCtxWhisperBtn.setAttribute("role", "menuitem");
+  otherPlayerCtxWhisperBtn.textContent = "Whisper";
+  otherPlayerCtxSingle.appendChild(otherPlayerCtxWhisperBtn);
   /*
    * Copy wallet sits next to View profile so the most common identity actions are one
    * click away; the wallet copy on the profile card is otherwise two clicks away. Idiomatic
@@ -4168,6 +4189,8 @@ export function createHud(
     displayName: string;
     profileIsSelf: boolean;
     translateText: string;
+    /** Set when the right-clicked line is a whisper: "in" = received, "out" = sent. */
+    isWhisper?: "in" | "out";
   };
 
   function googleTranslateUrlForText(message: string): string {
@@ -4208,6 +4231,16 @@ export function createHud(
               "other"
             );
           }
+        },
+      });
+    }
+    if (payload.fromAddress && !payload.profileIsSelf) {
+      items.push({
+        id: "whisper",
+        // "Reply" reads better on a received whisper; "Whisper" on a public line.
+        label: payload.isWhisper === "in" ? "Reply" : "Whisper",
+        onSelect: () => {
+          beginWhisperTo(payload.fromAddress, payload.displayName);
         },
       });
     }
@@ -5616,6 +5649,13 @@ export function createHud(
     if (addr) void showPlayerProfileView(addr, disp, "other");
   });
 
+  otherPlayerCtxWhisperBtn.addEventListener("click", () => {
+    const addr = otherPlayerCtxViewBtn.dataset.address ?? "";
+    const disp = otherPlayerCtxViewBtn.dataset.displayName ?? "";
+    closeOtherPlayerContextMenu();
+    if (addr) beginWhisperTo(addr, disp);
+  });
+
   bindCopyToClipboardControl(otherPlayerCtxCopyAddressBtn, () => {
     closeOtherPlayerContextMenu();
     return (otherPlayerCtxViewBtn.dataset.address ?? "").trim();
@@ -5746,11 +5786,15 @@ export function createHud(
     const fromAddress = (line.dataset.chatFromAddress ?? "").trim();
     const displayName = (line.dataset.chatDisplayName ?? "").trim();
     const profileIsSelf = line.dataset.chatProfileSelf === "1";
+    const whisperDir = line.dataset.chatWhisper;
+    const isWhisper =
+      whisperDir === "in" ? "in" : whisperDir === "out" ? "out" : undefined;
     openChatLineContextMenu(e.clientX, e.clientY, {
       fromAddress,
       displayName,
       profileIsSelf,
       translateText,
+      isWhisper,
     });
   }
 
@@ -5762,7 +5806,9 @@ export function createHud(
     const isWorld = tab === "world";
     worldTabBtn.classList.toggle("chat-tabs__btn--active", isWorld);
     systemTabBtn.classList.toggle("chat-tabs__btn--active", !isWorld);
-    if (!isWorld) {
+    if (isWorld) {
+      worldTabBtn.classList.remove("chat-tabs__btn--has-unread");
+    } else {
       systemTabBtn.classList.remove("chat-tabs__btn--has-unread");
     }
     worldChatLog.hidden = !isWorld;
@@ -5798,17 +5844,396 @@ export function createHud(
 
   const chatRow = document.createElement("div");
   chatRow.className = "chat-row";
+  // The chat "field" is one unified box. A WoW-style destination label sits at the left and is
+  // authoritative for where the message goes: "Say:" (public) or "{name}:" (private whisper).
+  // Tab / Shift+Tab cycle the label through Say + recent whisper partners; tapping it opens the
+  // recipient picker (which includes a "Say (public)" entry). No pill, no × button.
+  const chatField = document.createElement("div");
+  chatField.className = "chat-field";
+  const chatDestLabel = document.createElement("button");
+  chatDestLabel.type = "button";
+  chatDestLabel.className = "chat-dest-label chat-dest-label--say";
+  chatDestLabel.textContent = "Say:";
+  chatDestLabel.setAttribute("aria-label", "Change chat destination (currently the room)");
+  chatDestLabel.title = "Change destination (Tab to cycle)";
+  chatField.appendChild(chatDestLabel);
   const chatInput = document.createElement("input");
   chatInput.type = "text";
   chatInput.className = "chat-input";
-  chatInput.placeholder =
-    typeof window !== "undefined" &&
-    window.matchMedia("(pointer: coarse)").matches
-      ? "Message…"
-      : "Message… (Enter to send)";
+  const defaultChatPlaceholder = "Message…";
+  chatInput.placeholder = defaultChatPlaceholder;
   chatInput.autocomplete = "off";
   chatInput.maxLength = 256;
-  chatRow.appendChild(chatInput);
+  chatField.appendChild(chatInput);
+  // Recipient typeahead dropdown; opens above the field via /w, /r, or tapping the label.
+  const whisperPicker = document.createElement("div");
+  whisperPicker.className = "whisper-picker";
+  whisperPicker.setAttribute("role", "listbox");
+  whisperPicker.setAttribute("aria-label", "Chat destinations");
+  whisperPicker.hidden = true;
+  chatField.appendChild(whisperPicker);
+  chatRow.appendChild(chatField);
+
+  // Destination: null = "Say" (public room); otherwise the whisper target.
+  let whisperTarget: { address: string; name: string } | null = null;
+  // Recent whisper partners (most-recent first): the Tab ring + the /r fallback + picker seed.
+  const recentWhisperPartners: WhisperCandidate[] = [];
+  let whisperRosterProvider:
+    | (() => { players: readonly PlayerState[]; selfAddress: string })
+    | null = null;
+  type WhisperPickerRow =
+    | { kind: "say" }
+    | { kind: "candidate"; candidate: WhisperCandidate };
+  let whisperPickerOpen = false;
+  // "command" = opened by typing /w or /r (input is the query, commit clears it);
+  // "tap" = opened by tapping the label (input holds the in-progress message, preserved).
+  let whisperPickerMode: "command" | "tap" = "command";
+  let whisperPickerRows: WhisperPickerRow[] = [];
+  let whisperPickerActive = -1;
+
+  /** Paint the WoW-style destination label + placeholder from the current target. */
+  function applyDestLabelUi(): void {
+    if (whisperTarget) {
+      chatDestLabel.textContent = `${whisperTarget.name}:`;
+      chatDestLabel.classList.add("chat-dest-label--whisper");
+      chatDestLabel.classList.remove("chat-dest-label--say");
+      chatDestLabel.setAttribute(
+        "aria-label",
+        `Change chat destination (currently whispering ${whisperTarget.name})`
+      );
+    } else {
+      chatDestLabel.textContent = "Say:";
+      chatDestLabel.classList.add("chat-dest-label--say");
+      chatDestLabel.classList.remove("chat-dest-label--whisper");
+      chatDestLabel.setAttribute(
+        "aria-label",
+        "Change chat destination (currently the room)"
+      );
+    }
+    chatInput.placeholder = defaultChatPlaceholder;
+  }
+
+  /** Set the destination without recording it (used by Tab cycling, which must not reorder). */
+  function applyDestination(next: { address: string; name: string } | null): void {
+    whisperTarget = next;
+    closeWhisperPicker();
+    applyDestLabelUi();
+  }
+
+  /** Remember a whisper counterpart so the Tab ring, /r, and picker can reach them again. */
+  function recordWhisperPartner(address: string, name: string): void {
+    const key = compactWhisperAddress(address);
+    if (!key) return;
+    const label = name.trim() || walletDisplayName(key);
+    const existing = recentWhisperPartners.findIndex((c) => c.address === key);
+    if (existing >= 0) recentWhisperPartners.splice(existing, 1);
+    recentWhisperPartners.unshift({ address: key, name: label });
+    if (recentWhisperPartners.length > 24) recentWhisperPartners.length = 24;
+  }
+
+  /** Set (and remember) a whisper target from an explicit user selection. */
+  function setWhisperTarget(next: { address: string; name: string }): void {
+    recordWhisperPartner(next.address, next.name);
+    applyDestination(next);
+  }
+
+  function computeWhisperCandidates(query: string): WhisperCandidate[] {
+    const provided = whisperRosterProvider?.() ?? {
+      players: [] as readonly PlayerState[],
+      selfAddress: "",
+    };
+    const roomPlayers: WhisperCandidate[] = provided.players
+      // NPCs aren't real wallets and can't receive whispers - keep them out of suggestions.
+      .filter((p) => !remotePlayerIsNpc(p.address, p.displayName))
+      .map((p) => {
+        const key = compactWhisperAddress(p.address);
+        return {
+          address: key,
+          name: p.displayName.trim() || walletDisplayName(key),
+        };
+      });
+    return rankWhisperCandidates(query, {
+      roomPlayers,
+      recentPartners: recentWhisperPartners,
+      selfAddress: provided.selfAddress,
+      limit: WHISPER_PICKER_DEFAULT_LIMIT,
+    });
+  }
+
+  function closeWhisperPicker(): void {
+    if (!whisperPickerOpen) return;
+    whisperPickerOpen = false;
+    whisperPickerRows = [];
+    whisperPickerActive = -1;
+    whisperPicker.hidden = true;
+    whisperPicker.replaceChildren();
+  }
+
+  function setWhisperPickerActive(index: number): void {
+    whisperPickerActive = index;
+    const rows = whisperPicker.querySelectorAll<HTMLElement>(
+      ".whisper-picker__option"
+    );
+    rows.forEach((row, idx) => {
+      const active = idx === index;
+      row.setAttribute("aria-selected", active ? "true" : "false");
+      row.classList.toggle("whisper-picker__option--active", active);
+      if (active) row.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function moveWhisperPickerActive(delta: number): void {
+    const n = whisperPickerRows.length;
+    if (n === 0) return;
+    const next = (((whisperPickerActive + delta) % n) + n) % n;
+    setWhisperPickerActive(next);
+  }
+
+  function renderWhisperPicker(): void {
+    whisperPicker.replaceChildren();
+    if (whisperPickerRows.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "whisper-picker__empty";
+      empty.textContent = "No matching players";
+      whisperPicker.appendChild(empty);
+      return;
+    }
+    const pendingIdenticons: Array<{ el: HTMLImageElement; address: string }> =
+      [];
+    whisperPickerRows.forEach((rowData, i) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "whisper-picker__option";
+      row.setAttribute("role", "option");
+      row.dataset.index = String(i);
+      const active = i === whisperPickerActive;
+      row.setAttribute("aria-selected", active ? "true" : "false");
+      if (active) row.classList.add("whisper-picker__option--active");
+      if (rowData.kind === "say") {
+        row.classList.add("whisper-picker__option--say");
+        const icon = document.createElement("span");
+        icon.className = "whisper-picker__say-icon";
+        icon.setAttribute("aria-hidden", "true");
+        const name = document.createElement("span");
+        name.className = "whisper-picker__name";
+        name.textContent = "Say (public)";
+        row.append(icon, name);
+      } else {
+        const c = rowData.candidate;
+        const img = document.createElement("img");
+        img.className = "whisper-picker__ident";
+        img.alt = "";
+        img.width = 22;
+        img.height = 22;
+        pendingIdenticons.push({ el: img, address: c.address });
+        const name = document.createElement("span");
+        name.className = "whisper-picker__name";
+        name.textContent = c.name;
+        row.append(img, name);
+      }
+      // mousedown fires before the input's blur, so prevent default to keep focus.
+      row.addEventListener("mousedown", (ev) => ev.preventDefault());
+      row.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        commitWhisperRow(i);
+      });
+      row.addEventListener("mouseenter", () => setWhisperPickerActive(i));
+      whisperPicker.appendChild(row);
+    });
+    void import("../game/identiconTexture.js").then(({ identiconDataUrl }) => {
+      for (const { el, address } of pendingIdenticons) {
+        void identiconDataUrl(address).then((url) => {
+          if (el.isConnected) el.src = url;
+        });
+      }
+    });
+  }
+
+  function openWhisperPicker(query: string, mode: "command" | "tap"): void {
+    whisperPickerMode = mode;
+    const candidates = computeWhisperCandidates(query);
+    const rows: WhisperPickerRow[] = [];
+    // A pinned "Say (public)" row lets you return to the room; only when not name-filtering.
+    if (query.trim() === "") rows.push({ kind: "say" });
+    for (const c of candidates) rows.push({ kind: "candidate", candidate: c });
+    whisperPickerRows = rows;
+    // Prefer highlighting the first real person; fall back to the Say row.
+    const firstCandidate = rows.findIndex((r) => r.kind === "candidate");
+    whisperPickerActive =
+      firstCandidate >= 0 ? firstCandidate : rows.length > 0 ? 0 : -1;
+    whisperPickerOpen = true;
+    whisperPicker.hidden = false;
+    renderWhisperPicker();
+  }
+
+  function commitWhisperRow(index: number): void {
+    const rowData = whisperPickerRows[index];
+    if (!rowData) return;
+    // A command-mode picker consumed a "/w …" or "/r …" string, so clear it; a tap-mode
+    // picker was opened over an in-progress message, so keep what the player typed.
+    if (whisperPickerMode === "command") chatInput.value = "";
+    if (rowData.kind === "say") applyDestination(null);
+    else setWhisperTarget(rowData.candidate);
+    chatInput.focus();
+  }
+
+  /** Tab / Shift+Tab: cycle the label through Say + recent partners (picker closed). */
+  function cycleDestination(delta: number): void {
+    const next = cycleWhisperDestination(whisperTarget, recentWhisperPartners, delta);
+    applyDestination(next ? { ...next } : null);
+    chatInput.focus();
+  }
+
+  /**
+   * React to chat-input edits. From the public "Say" channel, "/w " opens the recipient
+   * picker (filtering as you type) and "/r " targets your last partner (or opens the picker
+   * when there is none). While a whisper target is active the field is plain message text;
+   * change destination via Tab, the label, or right-click instead.
+   */
+  function onWhisperComposerInput(): void {
+    // Typing dismisses a tap-mode menu and resumes composing to the current destination.
+    if (whisperPickerOpen && whisperPickerMode === "tap") {
+      closeWhisperPicker();
+      return;
+    }
+    if (whisperTarget) {
+      if (whisperPickerOpen) closeWhisperPicker();
+      return;
+    }
+    const value = chatInput.value;
+    // "/w username <space>…": a space after the username means it's complete, so lock it in
+    // as the recipient (resolve to a known player, else send by name) and treat the rest as
+    // the message. This is the WoW "/w name message" fast path.
+    const wmDone = value.match(
+      /^\/(?:w|whisper|tell)\b[ \t]+(\S+)[ \t]+([\s\S]*)$/i
+    );
+    if (wmDone) {
+      const uname = wmDone[1] ?? "";
+      const rest = wmDone[2] ?? "";
+      const exact = findExactWhisperCandidate(
+        uname,
+        computeWhisperCandidates(uname)
+      );
+      // No roster match -> keep the intent as a name-based target; the server resolves it
+      // (custom username / display name) and reports back if that player isn't reachable.
+      setWhisperTarget(exact ?? { address: "", name: uname });
+      chatInput.value = rest;
+      try {
+        const end = chatInput.value.length;
+        chatInput.setSelectionRange(end, end);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const wm = value.match(/^\/(?:w|whisper|tell)\b[ \t]+([\s\S]*)$/i);
+    if (wm) {
+      openWhisperPicker((wm[1] ?? "").replace(/^\s+/, ""), "command");
+      return;
+    }
+    const rm = value.match(/^\/(?:r|reply)\b[ \t]+([\s\S]*)$/i);
+    if (rm) {
+      const rest = rm[1] ?? "";
+      const last = recentWhisperPartners[0] ?? null;
+      if (last) {
+        setWhisperTarget({ ...last });
+        chatInput.value = rest;
+        try {
+          const end = chatInput.value.length;
+          chatInput.setSelectionRange(end, end);
+        } catch {
+          /* ignore */
+        }
+      } else {
+        openWhisperPicker(rest.trim(), "command");
+      }
+      return;
+    }
+    closeWhisperPicker();
+  }
+  /** Enter whisper mode for a player (from a right-click "Whisper"/"Reply" action). */
+  function beginWhisperTo(address: string, displayName: string): void {
+    const compact = String(address).replace(/\s+/g, "").trim();
+    if (!compact) return;
+    const label = displayName.trim() || walletDisplayName(compact);
+    setWhisperTarget({ address: compact, name: label });
+    if (chatMinimized) setChatMinimizedState(false, true);
+    setChatTab("world");
+    chatInput.focus();
+  }
+  /** Visual-only unread cue for an incoming whisper the player may not be looking at. */
+  function notifyWhisperUnread(): void {
+    if (chatMinimized) {
+      chatRestoreBtn.classList.add("chat-row__restore--has-unread");
+      return;
+    }
+    if (activeChatTab !== "world") {
+      worldTabBtn.classList.add("chat-tabs__btn--has-unread");
+    }
+  }
+  // Tapping the label toggles the destination picker (with a "Say (public)" entry).
+  chatDestLabel.addEventListener("mousedown", (ev) => ev.preventDefault());
+  chatDestLabel.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (whisperPickerOpen) {
+      closeWhisperPicker();
+    } else {
+      openWhisperPicker("", "tap");
+    }
+    chatInput.focus();
+  });
+  chatInput.addEventListener("input", onWhisperComposerInput);
+  chatInput.addEventListener("keydown", (ev) => {
+    if (whisperPickerOpen) {
+      if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        moveWhisperPickerActive(1);
+        return;
+      }
+      if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        moveWhisperPickerActive(-1);
+        return;
+      }
+      if (ev.key === "Enter" || ev.key === "Tab") {
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        if (whisperPickerActive >= 0) commitWhisperRow(whisperPickerActive);
+        else closeWhisperPicker();
+        return;
+      }
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        closeWhisperPicker();
+        return;
+      }
+      return;
+    }
+    // Picker closed: Tab / Shift+Tab cycle the destination (keeps focus + typed text).
+    if (ev.key === "Tab") {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      cycleDestination(ev.shiftKey ? -1 : 1);
+      return;
+    }
+    if (ev.key === "Escape" && whisperTarget) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      applyDestination(null);
+      return;
+    }
+    // Backspace on an empty field snaps back to Say (token-style), like Slack/Discord.
+    if (ev.key === "Backspace" && whisperTarget && chatInput.value === "") {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      applyDestination(null);
+    }
+  });
 
   const chatMinimizeBtn = document.createElement("button");
   chatMinimizeBtn.type = "button";
@@ -5830,9 +6255,14 @@ export function createHud(
   function applyChatMinimizedUi(min: boolean): void {
     chatMinimized = min;
     chatPanel.hidden = min;
+    chatField.hidden = min;
     chatInput.hidden = min;
     chatMinimizeBtn.hidden = min;
     chatRestoreBtn.hidden = !min;
+    if (min) closeWhisperPicker();
+    if (!min) {
+      chatRestoreBtn.classList.remove("chat-row__restore--has-unread");
+    }
     if (min && document.activeElement === chatInput) {
       chatInput.blur();
     }
@@ -6077,11 +6507,104 @@ export function createHud(
     barAdvancedPopover.querySelectorAll(".tile-inspector__shape-btn")
   ) as HTMLButtonElement[];
 
+  // Transient "kill feed" of players entering/leaving the current room. Lines
+  // fade in above the chat, dwell briefly, then fade out and remove themselves.
+  const presenceFeed = document.createElement("div");
+  presenceFeed.className = "hud-presence-feed";
+  presenceFeed.setAttribute("aria-live", "polite");
+  const PRESENCE_FEED_MAX = 4;
+  const PRESENCE_FEED_DWELL_MS = 4000;
+  const PRESENCE_FEED_FADE_MS = 400;
+  const presenceFeedTimers = new Set<ReturnType<typeof setTimeout>>();
+
+  function presenceCompactAddress(address: string): string {
+    const normalized = address.replace(/\s+/g, "");
+    return normalized.length > 8
+      ? `${normalized.slice(0, 4)}${normalized.slice(-4)}`
+      : normalized;
+  }
+
+  function removePresenceLine(line: HTMLElement): void {
+    if (!line.isConnected) return;
+    line.classList.add("hud-presence-feed__line--leaving");
+    const fade = setTimeout(() => {
+      presenceFeedTimers.delete(fade);
+      line.remove();
+    }, PRESENCE_FEED_FADE_MS);
+    presenceFeedTimers.add(fade);
+  }
+
+  function pushPresenceEvent(
+    kind: "enter" | "left",
+    info: { address: string; displayName?: string }
+  ): void {
+    const label =
+      info.displayName && info.displayName.trim()
+        ? info.displayName.trim()
+        : presenceCompactAddress(info.address);
+
+    const line = document.createElement("div");
+    line.className = `hud-presence-feed__line hud-presence-feed__line--${kind}`;
+
+    const identicon = document.createElement("img");
+    identicon.className = "hud-presence-feed__identicon";
+    identicon.width = 18;
+    identicon.height = 18;
+    identicon.alt = "";
+    identicon.dataset.address = info.address;
+    void (async () => {
+      try {
+        const { identiconDataUrl } = await import("../game/identiconTexture.js");
+        const url = await identiconDataUrl(info.address);
+        if (identicon.dataset.address === info.address) identicon.src = url;
+      } catch {
+        identicon.hidden = true;
+      }
+    })();
+
+    const arrow = document.createElement("span");
+    arrow.className = "hud-presence-feed__arrow";
+    arrow.setAttribute("aria-hidden", "true");
+    arrow.textContent = kind === "enter" ? "\u2192" : "\u2190";
+
+    const text = document.createElement("span");
+    text.className = "hud-presence-feed__text";
+    const name = document.createElement("span");
+    name.className = "hud-presence-feed__name";
+    name.textContent = label;
+    const verb = document.createElement("span");
+    verb.className = "hud-presence-feed__verb";
+    verb.textContent = kind === "enter" ? " entered" : " left";
+    text.append(name, verb);
+
+    line.append(identicon, arrow, text);
+    presenceFeed.appendChild(line);
+
+    while (presenceFeed.childElementCount > PRESENCE_FEED_MAX) {
+      const oldest = presenceFeed.firstElementChild;
+      if (!oldest) break;
+      oldest.remove();
+    }
+
+    const dwell = setTimeout(() => {
+      presenceFeedTimers.delete(dwell);
+      removePresenceLine(line);
+    }, PRESENCE_FEED_DWELL_MS);
+    presenceFeedTimers.add(dwell);
+  }
+
+  function clearPresenceFeedNow(): void {
+    for (const timer of presenceFeedTimers) clearTimeout(timer);
+    presenceFeedTimers.clear();
+    presenceFeed.replaceChildren();
+  }
+
   const bottomLeftStack = document.createElement("div");
   bottomLeftStack.className = "hud-bottom-left";
-  /* column-reverse: bottom = chat input, then chat log + tabs */
+  /* column-reverse: bottom = chat input, then chat log + tabs, then presence feed on top */
   bottomLeftStack.appendChild(chatRow);
   bottomLeftStack.appendChild(chatPanel);
+  bottomLeftStack.appendChild(presenceFeed);
   ui.appendChild(bottomLeftStack);
   ui.appendChild(barAdvancedPopover);
 
@@ -11990,7 +12513,6 @@ export function createHud(
   });
 
   fsBtn.addEventListener("click", () => fsHandler());
-  roomsBtn.addEventListener("click", () => roomsOpenHandler());
   disconnectReconnectBtn?.addEventListener("click", () => reconnectHandler());
   disconnectExitBtn?.addEventListener("click", () => disconnectExitHandler());
   returnHomeBtn.addEventListener("click", () => returnHomeHandler());
@@ -12147,21 +12669,23 @@ export function createHud(
     mountPayPreviewSatellite(mode);
   }
 
-  /** Portrait Pay: Rooms (or Get a wallet for guests) under Return Home. */
+  /** Portrait Pay: Get a wallet button (guests only) under Return Home. */
   function mountPayPortraitTopChrome(portrait: boolean): void {
     if (!mobilePlayHost) return;
 
     const toolbarStats: HTMLElement[] = [playerCount, nimBalance, lobbyBtn];
-    const roomsSlotBtn = getWalletBtn.hidden ? roomsBtn : getWalletBtn;
+    const roomsSlotBtn = getWalletBtn;
 
     if (portrait) {
-      const roomsAnchor = topBar.contains(buildModeStrip)
-        ? buildModeStrip
-        : topActions;
-      if (roomsSlotBtn.parentElement !== topBar) {
-        topBar.insertBefore(roomsSlotBtn, roomsAnchor);
-      } else if (roomsSlotBtn.nextElementSibling !== roomsAnchor) {
-        topBar.insertBefore(roomsSlotBtn, roomsAnchor);
+      if (!getWalletBtn.hidden) {
+        const roomsAnchor = topBar.contains(buildModeStrip)
+          ? buildModeStrip
+          : topActions;
+        if (roomsSlotBtn.parentElement !== topBar) {
+          topBar.insertBefore(roomsSlotBtn, roomsAnchor);
+        } else if (roomsSlotBtn.nextElementSibling !== roomsAnchor) {
+          topBar.insertBefore(roomsSlotBtn, roomsAnchor);
+        }
       }
 
       let after: HTMLElement = topStripMid;
@@ -12177,7 +12701,7 @@ export function createHud(
     }
 
     if (roomsSlotBtn.parentElement === topBar || playerCount.parentElement === topStripMain) {
-      for (const el of [roomsBtn, getWalletBtn, ...toolbarStats, fsBtn]) {
+      for (const el of [getWalletBtn, ...toolbarStats, fsBtn]) {
         topToolbar.appendChild(el);
       }
     }
@@ -13560,7 +14084,13 @@ export function createHud(
       syncHudLayoutInsets();
     },
     resetRoomChatDom() {
-      worldChatLog.replaceChildren();
+      // Whispers are private, cross-room conversations - let them linger through a room
+      // change instead of being wiped. Public/room lines and system lines are room-scoped,
+      // so clear those; new room backlog appends after the preserved whispers.
+      const keptWhispers = Array.from(
+        worldChatLog.querySelectorAll(".chat-line--whisper")
+      );
+      worldChatLog.replaceChildren(...keptWhispers);
       systemChatLog.replaceChildren();
       lastSystemChatAtByText.clear();
     },
@@ -13630,6 +14160,51 @@ export function createHud(
       chatPanel.classList.remove("chat-panel--log-collapsed");
       clearChatLogCollapseTimers();
       armChatLogIdleCollapse();
+    },
+    appendWhisper(opts) {
+      const { direction, partnerAddress, partnerName, text } = opts;
+      const compact = String(partnerAddress).replace(/\s+/g, "").trim();
+      const name = partnerName.trim() || walletDisplayName(compact);
+      // Remember this counterpart so the /w typeahead and /r fallback can reach them.
+      recordWhisperPartner(compact, name);
+      const line = document.createElement("div");
+      line.className = "chat-line chat-line--whisper";
+      line.classList.add(
+        direction === "in" ? "chat-line--whisper-in" : "chat-line--whisper-out"
+      );
+      const prefix = document.createElement("span");
+      prefix.className = "chat-line__prefix";
+      prefix.textContent =
+        direction === "in" ? `${name} whispers: ` : `To ${name}: `;
+      const body = document.createElement("span");
+      body.className = "chat-line__body";
+      appendTextWithFlags(body, text);
+      line.append(prefix, body);
+      line.dataset.chatTranslateText = text;
+      line.dataset.chatDisplayName = name;
+      if (compact) line.dataset.chatFromAddress = compact;
+      // Flags the chat-line context menu so it offers "Reply" and (for received whispers)
+      // keeps "Report Message" available.
+      line.dataset.chatWhisper = direction;
+      worldChatLog.appendChild(line);
+      const maxWorld = 200;
+      while (worldChatLog.childElementCount > maxWorld) {
+        worldChatLog.removeChild(worldChatLog.firstElementChild!);
+      }
+      worldChatLog.scrollTop = worldChatLog.scrollHeight;
+      lastChatLineAt = Date.now();
+      chatPanel.classList.remove("chat-panel--log-collapsed");
+      clearChatLogCollapseTimers();
+      armChatLogIdleCollapse();
+      if (direction === "in") notifyWhisperUnread();
+    },
+    getWhisperTarget: () =>
+      whisperTarget ? { ...whisperTarget } : null,
+    clearWhisperTarget() {
+      applyDestination(null);
+    },
+    setWhisperRosterProvider(fn) {
+      whisperRosterProvider = fn;
     },
     getChatInput: () => chatInput,
     isChatMinimized: () => chatMinimized,
@@ -13870,7 +14445,6 @@ export function createHud(
       roomsOpenHandler = fn;
     },
     setGuestToolbarMode(isGuest: boolean) {
-      roomsBtn.hidden = isGuest;
       getWalletBtn.hidden = !isGuest;
       buildQuickGuestMode = isGuest;
       applyRoomEditCaps();
@@ -15454,40 +16028,23 @@ export function createHud(
       );
       repositionOpenHudStatTips();
     },
-    showPlayerJoinedToast(address: string) {
-      const normalized = address.replace(/\s+/g, "");
-      const compact =
-        normalized.length > 8
-          ? `${normalized.slice(0, 4)}${normalized.slice(-4)}`
-          : normalized;
-      if (playerJoinToastText) {
-        playerJoinToastText.textContent = `${compact} has entered the space`;
+    showPresenceEvent(
+      kind: "enter" | "left",
+      info: { address: string; displayName?: string }
+    ) {
+      pushPresenceEvent(kind, info);
+    },
+    clearPresenceFeed() {
+      clearPresenceFeedNow();
+    },
+    openPlayerProfile(address: string, displayName?: string) {
+      const compact = walletKeyForProfile(address);
+      const self = walletKeyForProfile(brandLinksPlayerAddress);
+      if (compact && self && compact === self) {
+        openOwnPlayerProfileFromBar();
+        return;
       }
-      if (playerJoinToastIdenticon) {
-        playerJoinToastIdenticon.hidden = false;
-        playerJoinToastIdenticon.removeAttribute("src");
-        playerJoinToastIdenticon.dataset.address = address;
-        void (async () => {
-          try {
-            const { identiconDataUrl } = await import("../game/identiconTexture.js");
-            const url = await identiconDataUrl(address);
-            if (playerJoinToastIdenticon.dataset.address !== address) return;
-            playerJoinToastIdenticon.src = url;
-          } catch {
-            if (playerJoinToastIdenticon.dataset.address === address) {
-              playerJoinToastIdenticon.hidden = true;
-            }
-          }
-        })();
-      }
-      playerJoinToast.hidden = false;
-      playerJoinToast.classList.add("hud-player-join-toast--visible");
-      if (playerJoinToastTimer) clearTimeout(playerJoinToastTimer);
-      playerJoinToastTimer = setTimeout(() => {
-        playerJoinToast.classList.remove("hud-player-join-toast--visible");
-        playerJoinToast.hidden = true;
-        playerJoinToastTimer = null;
-      }, 2600);
+      void showPlayerProfileView(address, displayName ?? "", "other");
     },
     setFeedbackHandlers(handlers: FeedbackHandlers) {
       feedbackHandlers = handlers;
@@ -15758,14 +16315,11 @@ export function createHud(
       hideBrandLinksOverlay();
       hideFeedbackOverlay();
       hideSignReadModal();
-      if (playerJoinToastTimer) {
-        clearTimeout(playerJoinToastTimer);
-        playerJoinToastTimer = null;
-      }
       if (translateClipboardHintTimer) {
         clearTimeout(translateClipboardHintTimer);
         translateClipboardHintTimer = null;
       }
+      clearPresenceFeedNow();
       clearChatLogCollapseTimers();
       chatHoverZone.removeEventListener("pointerenter", onChatPointerEnter);
       chatHoverZone.removeEventListener("pointerleave", onChatPointerLeave);

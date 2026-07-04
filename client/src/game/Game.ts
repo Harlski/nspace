@@ -11716,7 +11716,17 @@ export class Game {
     for (const k of [...this.floatingTexts.keys()]) {
       this.removeFloatingTextEntry(k);
     }
+    // Release the underlying WebGL context, not just the renderer's GPU
+    // resources. renderer.dispose() alone leaves the context alive until GC,
+    // so short-lived Game instances (e.g. one per room-catalog preview) pile
+    // up contexts and the browser evicts the oldest live one - which is the
+    // real game canvas, turning it permanently black. forceContextLoss()
+    // frees the context immediately. Also detach the canvas so it can be GC'd.
     this.renderer.dispose();
+    if (typeof this.renderer.forceContextLoss === "function") {
+      this.renderer.forceContextLoss();
+    }
+    this.renderer.domElement.remove();
   }
 
   private pathLineMat(): THREE.LineBasicMaterial {
@@ -15688,6 +15698,11 @@ export class Game {
     port.resizeObserver.disconnect();
     this.resetInspectorPreviewBlockSlot(port);
     port.renderer.dispose();
+    // Release the WebGL context (not just GPU resources) so rebinding preview
+    // canvases does not leak contexts toward the browser's per-page limit.
+    if (typeof port.renderer.forceContextLoss === "function") {
+      port.renderer.forceContextLoss();
+    }
     port.scene.clear();
   }
 

@@ -215,6 +215,7 @@ import { walletDisplayName } from "./walletDisplayName.js";
 import {
   getEffectivePlayerDisplayName,
   getRecentAliases,
+  findWalletByCustomUsername,
 } from "./playerProfileStore.js";
 import { isChannelMuted } from "./moderationStore.js";
 import {
@@ -877,6 +878,8 @@ interface ClientConn {
   lastPlaceAt: number;
   lastPublishDesignAt?: number;
   lastDesignStampAt?: number;
+  /** Whisper: normalized wallet of the last person this connection whispered with (send or receive); target for `/r`. */
+  lastWhisperPartner?: string;
   player: PlayerState;
   pathQueue: { x: number; z: number; layer: 0 | 1 }[];
   /** Single active claim session id for this connection (enforces one claim at a time). */
@@ -1274,6 +1277,19 @@ type OutMsg =
       text: string;
       at: number;
       bubbleOnly?: boolean; // If true, only show as bubble, not in chat log
+    }
+  /**
+   * Private whisper (WoW-style). Never broadcast: delivered only to the recipient
+   * (`direction: "in"`, partner = sender) and echoed to the sender (`direction: "out"`,
+   * partner = recipient). No 3D bubble.
+   */
+  | {
+      type: "whisper";
+      direction: "in" | "out";
+      partnerAddress: string;
+      partnerName: string;
+      text: string;
+      at: number;
     }
   /** Opening player only: gate swung visually but they cannot walk onto exit/front (or no path). */
   | { type: "gateWalkBlocked"; x: number; z: number; y: number }
@@ -5771,6 +5787,9 @@ function maybeQueueGoalReward(
   return decision;
 }
 
+/** Minimum payout that unlocks the "98% is good enough" badge: 0.98 NIM. */
+const PAID_IN_FULL_MIN_LUNA = (LUNA_PER_NIM * 98n) / 100n;
+
 /** Format a luna reward as a compact NIM string (e.g. 25000 → "0.25", 100000 → "1"). */
 function formatGoalRewardNim(luna: bigint): string {
   const nim = Number(luna) / Number(LUNA_PER_NIM);
@@ -5795,10 +5814,13 @@ function sendGoalRewardOutcomeToScorer(
       reason: "ok",
       amountNim: formatGoalRewardNim(decision.amountLuna),
     };
-    recordFieldGoalPayout(
-      scorerAddress,
-      achievementUnlockHandlerForAddress(scorerAddress)
-    );
+    // "98% is good enough": only unlock when the payout is at least 0.98 NIM.
+    if (decision.amountLuna >= PAID_IN_FULL_MIN_LUNA) {
+      recordFieldGoalPayout(
+        scorerAddress,
+        achievementUnlockHandlerForAddress(scorerAddress)
+      );
+    }
   } else if (decision.reason === "wallet_cap") {
     payload = { type: "goalRewardOutcome", roomId, reason: "wallet_cap" };
   } else if (decision.reason === "budget_exhausted") {
@@ -6632,9 +6654,21 @@ export function getWalletCurrentRoomId(wallet: string): string | null {
 }
 
 function findConnByWallet(wallet: string): ClientConn | null {
+  // Fast path: callers that pass the stored connection key (the user-friendly JWT `sub`,
+  // spaces included) match a room key directly.
   const roomId = findPlayerRoom(wallet);
-  if (!roomId) return null;
-  return rooms.get(roomId)?.get(wallet) ?? null;
+  if (roomId) return rooms.get(roomId)?.get(wallet) ?? null;
+  // Fallback: some callers resolve targets into the compact form (no spaces, uppercase) -
+  // e.g. whisper targets via `compactAddress`, `findWalletByCustomUsername`, or a stored
+  // `lastWhisperPartner`. Connections are keyed by the spaced address, so match on the
+  // compacted form to bridge the two normalizations instead of failing to find an online player.
+  const target = compactAddress(wallet);
+  for (const room of rooms.values()) {
+    for (const conn of room.values()) {
+      if (compactAddress(conn.address) === target) return conn;
+    }
+  }
+  return null;
 }
 
 function directInviteShareUrl(slug: string): string {
@@ -10825,6 +10859,122 @@ export function addClient(
           : {}),
       });
       recordChatMessageSent(address, achievementUnlockHandler(ws));
+      return;
+    }
+
+    if (msg.type === "whisper") {
+      const now = Date.now();
+      // Whispers share the public-chat rate limit so they cannot be used to bypass it.
+      if (now - conn.lastChatAt < RATE_CHAT_MS) return;
+      conn.lastChatAt = now;
+      // Guests have no durable wallet identity, so they cannot whisper or be whispered.
+      if (address.startsWith("guest:")) {
+        wsSafeSend(ws, { type: "error", code: "whisper_guest" } satisfies OutMsg);
+        return;
+      }
+      if (isChannelMuted(compactAddress(address))) {
+        wsSafeSend(ws, { type: "error", code: "channel_muted" } satisfies OutMsg);
+        return;
+      }
+      let text = String(msg.text ?? "").slice(0, CHAT_MAX);
+      text = text.replace(/[\u0000-\u001F\u007F]/g, "").trim();
+      if (!text) return;
+
+      // Resolve the target wallet: explicit reply target, explicit address (right-click),
+      // or a custom username (`/w name` only resolves globally-unique custom usernames).
+      let targetAddress: string | null = null;
+      const wReply = (msg as { reply?: unknown }).reply === true;
+      const wToAddress = (msg as { toAddress?: unknown }).toAddress;
+      const wToName = (msg as { toName?: unknown }).toName;
+      if (wReply) {
+        targetAddress = conn.lastWhisperPartner ?? null;
+        if (!targetAddress) {
+          wsSafeSend(ws, {
+            type: "error",
+            code: "whisper_no_reply_target",
+          } satisfies OutMsg);
+          return;
+        }
+      } else if (typeof wToAddress === "string" && wToAddress.trim()) {
+        targetAddress = compactAddress(wToAddress);
+      } else if (typeof wToName === "string" && wToName.trim()) {
+        targetAddress = findWalletByCustomUsername(wToName);
+        if (!targetAddress) {
+          wsSafeSend(ws, {
+            type: "error",
+            code: "whisper_no_target",
+          } satisfies OutMsg);
+          return;
+        }
+      }
+      if (!targetAddress) return;
+
+      if (targetAddress === compactAddress(address)) {
+        wsSafeSend(ws, { type: "error", code: "whisper_self" } satisfies OutMsg);
+        return;
+      }
+      // Online-only, wallet players only: the target must be currently connected.
+      const targetConn = targetAddress.startsWith("guest:")
+        ? null
+        : findConnByWallet(targetAddress);
+      if (!targetConn) {
+        wsSafeSend(ws, { type: "error", code: "whisper_offline" } satisfies OutMsg);
+        return;
+      }
+
+      const censored = censorChat(text);
+      if (isEmptyAfterCensor(censored.censored)) {
+        wsSafeSend(ws, {
+          type: "error",
+          code: "chat_blocked_profanity",
+        } satisfies OutMsg);
+        return;
+      }
+      text = censored.censored;
+
+      const senderAddress = compactAddress(address);
+      const senderName = conn.displayName;
+      const recipientName = targetConn.displayName;
+
+      // Track partners on both sides so `/r` can reply in either direction.
+      conn.lastWhisperPartner = targetAddress;
+      targetConn.lastWhisperPartner = senderAddress;
+
+      // Recipient sees an incoming whisper (partner = sender).
+      wsSafeSend(targetConn.ws, {
+        type: "whisper",
+        direction: "in",
+        partnerAddress: senderAddress,
+        partnerName: senderName,
+        text,
+        at: now,
+      } satisfies OutMsg);
+      // Sender sees an echo of what they sent (partner = recipient).
+      wsSafeSend(ws, {
+        type: "whisper",
+        direction: "out",
+        partnerAddress: targetAddress,
+        partnerName: recipientName,
+        text,
+        at: now,
+      } satisfies OutMsg);
+
+      logGameplayEvent(
+        conn.sessionId,
+        senderAddress,
+        currentRoomId,
+        ANALYTICS_EVENT_KINDS.whisper,
+        {
+          text,
+          at: now,
+          fromName: senderName,
+          toAddress: targetAddress,
+          toName: recipientName,
+          ...(censored.wasFiltered && censored.original
+            ? { textOriginal: censored.original }
+            : {}),
+        }
+      );
       return;
     }
 

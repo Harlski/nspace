@@ -90,6 +90,22 @@ export function analyticsTopbarCss(): string {
       fill: currentColor;
       display: block;
     }
+    .ms-site-footer {
+      margin-top: 2.75rem;
+      padding-top: 1.15rem;
+      border-top: 1px solid var(--ms-border-soft, #2a394f);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.6rem;
+      text-align: center;
+    }
+    .ms-site-footer__note {
+      margin: 0;
+      font-size: 0.72rem;
+      color: var(--ms-muted, #6b7d95);
+      letter-spacing: 0.03em;
+    }
     .auth-user { position: relative; z-index: 5; }
     .auth-user-btn { display: inline-flex; align-items: center; gap: 0.45rem; min-height: 2.1rem; background: rgba(22, 29, 42, 0.92); color: #d9e3f1; border: 1px solid #2f3d53; border-radius: 999px; padding: 0.18rem 0.48rem 0.18rem 0.24rem; cursor: pointer; }
     .auth-user-btn:hover { border-color: var(--ms-accent-hover-border, #4d83d0); }
@@ -142,6 +158,27 @@ export function analyticsTopbarCss(): string {
   `;
 }
 
+/** X + Telegram links and the "Nimiq Space 2026" note; footer for every main-site page. */
+export function mainSiteFooterInnerHtml(): string {
+  return `
+    <footer class="ms-site-footer">
+      <div class="main-site-social" aria-label="Social links">
+        <a class="main-site-social__link" href="https://x.com/nimiqspace" target="_blank" rel="noopener noreferrer" aria-label="Nimiq Space on X">
+          <svg class="main-site-social__icon" viewBox="0 0 1200 1227" aria-hidden="true" focusable="false"><path d="M714.15 519.295 1160.89 0h-105.86L667.142 450.883 357.328 0H0l468.485 681.802L0 1226.37h105.866l409.627-476.155 327.179 476.155H1200L714.15 519.295Zm-145.016 168.51-47.468-67.894L144.011 79.694h162.604l304.797 436.03 47.468 67.894 396.2 566.682H892.476L569.134 687.805Z"/></svg>
+        </a>
+        <a class="main-site-social__link" href="https://t.me/nimiqspace" target="_blank" rel="noopener noreferrer" aria-label="Nimiq Space on Telegram">
+          <svg class="main-site-social__icon" viewBox="0 0 240.1 240.1" aria-hidden="true" focusable="false"><path d="M54.3 118.8c35-15.2 58.3-25.3 70-30.2 33.3-13.9 40.3-16.3 44.8-16.4 1 0 3.2.2 4.7 1.4 1.2 1 1.5 2.3 1.7 3.3s.4 3.1.2 4.7c-1.8 19-9.6 65.1-13.6 86.3-1.7 9-5 12-8.2 12.3-7 .6-12.3-4.6-19-9-10.6-6.9-16.5-11.2-26.8-18-11.9-7.8-4.2-12.1 2.6-19.1 1.8-1.8 32.5-29.8 33.1-32.3.1-.3.1-1.5-.6-2.1-.7-.6-1.7-.4-2.5-.2-1.1.2-17.9 11.4-50.6 33.5-4.8 3.3-9.1 4.9-13 4.8-4.3-.1-12.5-2.4-18.7-4.4-7.5-2.4-13.5-3.7-13-7.9.3-2.2 3.3-4.4 8.9-6.7Z"/></svg>
+        </a>
+      </div>
+      <p class="ms-site-footer__note">Nimiq Space 2026</p>
+    </footer>`;
+}
+
+/** Footer authored at the top of the body inside a <template>; a small script appends it to <body>. */
+function mainSiteFooterTemplateHtml(): string {
+  return `<template id="msSiteFooterTpl">${mainSiteFooterInnerHtml()}</template>`;
+}
+
 export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics"): string {
   return `
   <header class="ms-site-header">
@@ -155,14 +192,6 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
         </nav>
       </div>
       <div class="analytics-topbar">
-        <div class="main-site-social" aria-label="Social links">
-          <a class="main-site-social__link" href="https://x.com/nimiqspace" target="_blank" rel="noopener noreferrer" aria-label="Nimiq Space on X">
-            <svg class="main-site-social__icon" viewBox="0 0 1200 1227" aria-hidden="true" focusable="false"><path d="M714.15 519.295 1160.89 0h-105.86L667.142 450.883 357.328 0H0l468.485 681.802L0 1226.37h105.866l409.627-476.155 327.179 476.155H1200L714.15 519.295Zm-145.016 168.51-47.468-67.894L144.011 79.694h162.604l304.797 436.03 47.468 67.894 396.2 566.682H892.476L569.134 687.805Z"/></svg>
-          </a>
-          <a class="main-site-social__link" href="https://t.me/nimiqspace" target="_blank" rel="noopener noreferrer" aria-label="Nimiq Space on Telegram">
-            <svg class="main-site-social__icon" viewBox="0 0 240.1 240.1" aria-hidden="true" focusable="false"><path d="M54.3 118.8c35-15.2 58.3-25.3 70-30.2 33.3-13.9 40.3-16.3 44.8-16.4 1 0 3.2.2 4.7 1.4 1.2 1 1.5 2.3 1.7 3.3s.4 3.1.2 4.7c-1.8 19-9.6 65.1-13.6 86.3-1.7 9-5 12-8.2 12.3-7 .6-12.3-4.6-19-9-10.6-6.9-16.5-11.2-26.8-18-11.9-7.8-4.2-12.1 2.6-19.1 1.8-1.8 32.5-29.8 33.1-32.3.1-.3.1-1.5-.6-2.1-.7-.6-1.7-.4-2.5-.2-1.1.2-17.9 11.4-50.6 33.5-4.8 3.3-9.1 4.9-13 4.8-4.3-.1-12.5-2.4-18.7-4.4-7.5-2.4-13.5-3.7-13-7.9.3-2.2 3.3-4.4 8.9-6.7Z"/></svg>
-          </a>
-        </div>
         <div id="authUser" class="auth-user" style="display:none"></div>
       </div>
     </div>
@@ -235,6 +264,21 @@ export function analyticsTopbarHtml(currentPage: MainSiteHeaderPage = "analytics
         window.__nsBindMainSiteNavDropdown();
       }
       refreshNavFromSession();
+    })();
+  </script>
+  ${mainSiteFooterTemplateHtml()}
+  <script>
+    (function () {
+      function mountFooter() {
+        var tpl = document.getElementById("msSiteFooterTpl");
+        if (!tpl || !tpl.content || document.querySelector(".ms-site-footer")) return;
+        document.body.appendChild(tpl.content.cloneNode(true));
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", mountFooter);
+      } else {
+        mountFooter();
+      }
     })();
   </script>
   `;

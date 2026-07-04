@@ -77,6 +77,7 @@ import {
 import {
   connectGameWs,
   sendChat,
+  sendWhisper,
   sendSetCountry,
   sendPlaceBall,
   sendChatTyping,
@@ -1303,7 +1304,10 @@ function enterGame(
     <div class="rooms-modal__dialog rooms-modal__dialog--catalog" role="dialog" aria-modal="true" aria-label="Browse and join rooms">
       <div class="rooms-modal__body">
         <div id="rooms-view-list" class="rooms-modal__list-view">
-          <p id="rooms-modal-current-line" class="rooms-modal__current-line" aria-live="polite"></p>
+          <div class="rooms-modal__catalog-head">
+            <p id="rooms-modal-current-line" class="rooms-modal__current-line" aria-live="polite"></p>
+            <button type="button" class="rooms-modal__close rooms-modal__close--inline" id="rooms-close" aria-label="Close">${nimiqIconUseMarkup("nq-close", { width: 20, height: 20, class: "rooms-modal__close-icon" })}</button>
+          </div>
           <div class="rooms-modal__catalog-stack">
             <div class="rooms-modal__catalog-preview-pane">
               <div class="rooms-modal__preview-head">
@@ -1311,6 +1315,9 @@ function enterGame(
                   <h3 class="rooms-modal__preview-title" id="rooms-preview-title">Select a room</h3>
                   <p class="rooms-modal__preview-meta" id="rooms-preview-meta" aria-live="polite"></p>
                 </div>
+                <button type="button" class="rooms-modal__preview-owner" id="rooms-preview-owner" hidden aria-label="View room owner's profile" title="View room owner's profile">
+                  <img class="rooms-modal__preview-owner-ident" alt="" width="30" height="30" />
+                </button>
               </div>
               <div class="rooms-modal__preview-canvas-wrap">
                 <div class="rooms-modal__preview-host" id="rooms-preview-host"></div>
@@ -1440,8 +1447,13 @@ function enterGame(
   const roomsTabAdminBtn = roomsModal.querySelector("#rooms-tab-admin") as HTMLButtonElement;
   const roomsTabDeletedBtn = roomsModal.querySelector("#rooms-tab-deleted") as HTMLButtonElement;
   const roomsViewList = roomsModal.querySelector("#rooms-view-list") as HTMLElement;
+  const roomsCloseBtn = roomsModal.querySelector("#rooms-close") as HTMLButtonElement;
   const roomsPreviewTitle = roomsModal.querySelector("#rooms-preview-title") as HTMLElement;
   const roomsPreviewMeta = roomsModal.querySelector("#rooms-preview-meta") as HTMLElement;
+  const roomsPreviewOwnerBtn = roomsModal.querySelector("#rooms-preview-owner") as HTMLButtonElement;
+  const roomsPreviewOwnerIdent = roomsModal.querySelector(
+    ".rooms-modal__preview-owner-ident"
+  ) as HTMLImageElement;
   const roomsPreviewEditBtn = roomsModal.querySelector("#rooms-preview-edit") as HTMLButtonElement;
   const roomsPreviewJoinBtn = roomsModal.querySelector("#rooms-preview-join") as HTMLButtonElement;
   const roomsPreviewHost = roomsModal.querySelector("#rooms-preview-host") as HTMLElement;
@@ -1613,17 +1625,49 @@ function enterGame(
     pendingPreviewRoomId = null;
   }
 
+  function setRoomsPreviewOwner(ownerAddress: string | null): void {
+    if (!ownerAddress) {
+      roomsPreviewOwnerBtn.hidden = true;
+      delete roomsPreviewOwnerBtn.dataset.ownerAddress;
+      roomsPreviewOwnerIdent.removeAttribute("src");
+      delete roomsPreviewOwnerIdent.dataset.address;
+      return;
+    }
+    roomsPreviewOwnerBtn.hidden = false;
+    roomsPreviewOwnerBtn.dataset.ownerAddress = ownerAddress;
+    roomsPreviewOwnerIdent.dataset.address = ownerAddress;
+    roomsPreviewOwnerIdent.removeAttribute("src");
+    void import("./game/identiconTexture.js").then(async ({ identiconDataUrl }) => {
+      try {
+        const url = await identiconDataUrl(ownerAddress);
+        if (roomsPreviewOwnerIdent.dataset.address === ownerAddress) {
+          roomsPreviewOwnerIdent.src = url;
+        }
+      } catch {
+        /* leave the placeholder circle if the identicon fails to render */
+      }
+    });
+  }
+
+  roomsPreviewOwnerBtn.addEventListener("click", () => {
+    const owner = roomsPreviewOwnerBtn.dataset.ownerAddress;
+    if (!owner) return;
+    hud.openPlayerProfile(owner);
+  });
+
   function updateRoomsPreviewPane(room: KnownRoomRow | null): void {
     if (!room) {
       roomsPreviewTitle.textContent = "Select a room";
       roomsPreviewMeta.textContent = "";
       roomsPreviewJoinBtn.disabled = true;
       roomsPreviewEditBtn.hidden = true;
+      setRoomsPreviewOwner(null);
       pendingPreviewRoomId = null;
       roomsCatalogPreview?.selectRoom(null);
       return;
     }
     roomsPreviewTitle.textContent = room.displayName;
+    setRoomsPreviewOwner(room.ownerAddress);
     const n = Math.max(0, Math.floor(room.playerCount));
     const statInner = (
       count: number,
@@ -1656,9 +1700,6 @@ function enterGame(
           : `<span class="rooms-modal__preview-meta-stat" role="img" aria-label="${room.thumbsUpCount} thumbs up">${likeInner}</span>`
       );
     }
-    if (viewerOwnsRoom(room) && !roomExemptFromPublicGate(room)) {
-      parts.push(escapeHtml(publicBuildGateHint(room.buildScore)));
-    }
     roomsPreviewMeta.innerHTML = parts.join(" · ");
     const currentId = normalizeRoomId(game.getRoomId());
     roomsPreviewJoinBtn.disabled =
@@ -1681,10 +1722,16 @@ function enterGame(
     updateRoomsPreviewPane(room);
   }
 
-  function closeRoomsModal(opts?: { keepJoinPending?: boolean }): void {
+  function closeRoomsModal(opts?: {
+    keepJoinPending?: boolean;
+    fromHistory?: boolean;
+  }): void {
     closeRoomsCreateModal();
     if (roomsModal.hidden) return;
     roomsModal.hidden = true;
+    if (!opts?.fromHistory && overlayBack.isOpen("rooms")) {
+      overlayBack.dismiss("rooms");
+    }
     setRoomsJoinPanelOpen(false);
     showRoomsView("list");
     roomsEditingRoomId = null;
@@ -1800,6 +1847,21 @@ function enterGame(
       closeRoomsModal();
     };
     document.addEventListener("keydown", roomsEscHandler);
+    // Mobile / browser back button: mirror the Escape hierarchy so back steps
+    // out of the create form or edit view before closing the whole modal.
+    overlayBack.push("rooms", () => {
+      if (!roomsCreateModal.hidden) {
+        closeRoomsCreateModal();
+        return true;
+      }
+      if (roomsViewState === "edit") {
+        showRoomsView("list");
+        roomsEditingRoomId = null;
+        return true;
+      }
+      closeRoomsModal({ fromHistory: true });
+      return false;
+    });
   }
 
   function openEditRoom(roomId: string): void {
@@ -1858,6 +1920,8 @@ function enterGame(
     if (!chip || !roomsSelectedId || !ws || ws.readyState !== WebSocket.OPEN) return;
     sendThumbRoom(ws, roomsSelectedId);
   });
+
+  roomsCloseBtn.addEventListener("click", () => closeRoomsModal());
 
   roomsModal.addEventListener("click", (e) => {
     if (e.target === roomsModal) closeRoomsModal();
@@ -2106,9 +2170,6 @@ function enterGame(
     meta.className = "rooms-modal__pick-meta";
     const bits: string[] = [];
     if (!room.isPublic) bits.push("Private");
-    if (viewerOwnsRoom(room) && !roomExemptFromPublicGate(room)) {
-      bits.push(`${room.buildScore}/${MIN_BUILDS_FOR_PUBLIC}`);
-    }
     bits.push(`${Math.max(0, Math.floor(room.playerCount))} players`);
     if (room.isPublic && room.thumbsUpCount > 0) {
       bits.push(`👍 ${room.thumbsUpCount}`);
@@ -4610,6 +4671,7 @@ function enterGame(
       try {
       clearRoomTransitionProgressTimer();
       hud.resetRoomChatDom();
+      hud.clearPresenceFeed();
       hud.setReconnectOffer(false);
       hud.setFeedbackReportRoomId(msg.roomId);
       bumpRoomLoadProgress(0.12);
@@ -5006,7 +5068,10 @@ function enterGame(
         msg.player.address !== selfAddress &&
         !msg.player.displayName.startsWith("[NPC] ")
       ) {
-        hud.showPlayerJoinedToast(msg.player.address);
+        hud.showPresenceEvent("enter", {
+          address: msg.player.address,
+          displayName: msg.player.displayName,
+        });
       }
       game.syncState(lastPlayers);
       syncPlayerCountHud();
@@ -5014,6 +5079,17 @@ function enterGame(
       return;
     }
     if (msg.type === "playerLeft") {
+      const leaving = lastPlayers.find((p) => p.address === msg.address);
+      if (
+        leaving &&
+        leaving.address !== selfAddress &&
+        !leaving.displayName.startsWith("[NPC] ")
+      ) {
+        hud.showPresenceEvent("left", {
+          address: leaving.address,
+          displayName: leaving.displayName,
+        });
+      }
       lastPlayers = lastPlayers.filter((p) => p.address !== msg.address);
       game.syncState(lastPlayers);
       refreshWorldcupCrowdRoster();
@@ -5337,6 +5413,16 @@ function enterGame(
           cosmeticBubbleClass: chatBubbleClassForPreset(sender?.cosmeticChatBubble),
         });
       }
+      return;
+    }
+    if (msg.type === "whisper") {
+      // Private, inline only: no 3D bubble, never broadcast.
+      hud.appendWhisper({
+        direction: msg.direction,
+        partnerAddress: msg.partnerAddress,
+        partnerName: msg.partnerName,
+        text: msg.text,
+      });
       return;
     }
     if (msg.type === "blockClaimOffered") {
@@ -5680,6 +5766,24 @@ function enterGame(
       }
       if (msg.code === "chat_blocked_profanity") {
         hud.appendChat("System", "Message blocked (inappropriate language).");
+      }
+      if (msg.code === "whisper_offline") {
+        hud.appendChat("System", "That player is not online.");
+      }
+      if (msg.code === "whisper_no_target") {
+        hud.appendChat(
+          "System",
+          "No player with that name is online. Right-click a player to whisper them."
+        );
+      }
+      if (msg.code === "whisper_no_reply_target") {
+        hud.appendChat("System", "You have no one to reply to yet.");
+      }
+      if (msg.code === "whisper_self") {
+        hud.appendChat("System", "You can't whisper yourself.");
+      }
+      if (msg.code === "whisper_guest") {
+        hud.appendChat("System", "Sign in with a wallet to send whispers.");
       }
     }
     if (msg.type === "signboards") {
@@ -6094,17 +6198,44 @@ function enterGame(
   syncBuildHud();
 
   chatInput = hud.getChatInput();
+  // Feed the whisper recipient typeahead with the players you can currently see; recent
+  // whisper partners are tracked inside the HUD. Picks resolve by address.
+  hud.setWhisperRosterProvider(() => ({
+    players: lastPlayers,
+    selfAddress,
+  }));
   chatInput.addEventListener("keydown", (e) => {
     e.stopPropagation();
   });
 
+  // Whisper entry now lives in the HUD chat field: "/w" opens a recipient typeahead and
+  // "/r " targets your last partner, both committing to a sticky "To X:" pill (see hud.ts).
+  // Here we only send: to the active whisper target when one is set, else public chat. When
+  // the picker is open it consumes Enter (stopImmediatePropagation) so this never fires.
   chatInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       notifyChatNotTyping();
       const t = chatInput!.value.trim();
       chatInput!.value = "";
-      if (t) ws && sendChat(ws, t);
-      chatInput!.blur();
+      if (t && ws) {
+        const target = hud.getWhisperTarget();
+        if (target) {
+          // Roster picks carry an address; a typed "/w name " with no roster match carries
+          // only a name, which the server resolves (custom username / display name).
+          if (target.address) {
+            sendWhisper(ws, { toAddress: target.address }, t);
+          } else {
+            sendWhisper(ws, { toName: target.name }, t);
+          }
+        } else {
+          sendChat(ws, t);
+        }
+      }
+      // Keep focus while a sticky whisper target is active so conversations flow;
+      // otherwise close the composer as before.
+      if (!hud.getWhisperTarget()) {
+        chatInput!.blur();
+      }
       e.preventDefault();
     }
   });

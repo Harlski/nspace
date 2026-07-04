@@ -245,29 +245,17 @@ export function pendingPayoutsPublicPageHtml(): string {
         startPayoutSigningDotsIn(wrap);
       }
       try {
-        var HubMod = await import("https://esm.sh/@nimiq/hub-api");
-        var HubApi = HubMod.default;
-        var hub = new HubApi("https://hub.nimiq.com");
         var extraTpAck = undefined;
         var verified = null;
-        var lastSigned = null;
+        var lastPayload = null;
         retryTpAck: while (true) {
           var nonceResp = await fetch("/api/auth/nonce");
           if (!nonceResp.ok) throw new Error("nonce_failed");
           var nonceJson = await nonceResp.json();
           var nonce = String(nonceJson.nonce || "");
           var message = "Login:v1:" + nonce;
-          lastSigned = await hub.signMessage({ appName: "Nimiq Space payouts", message: message });
-          var verifyPayload = window.nspaceTermsPrivacyVerifyPayload(
-            {
-              nonce: nonce,
-              message: message,
-              signer: lastSigned.signer,
-              signerPublicKey: toB64(lastSigned.signerPublicKey),
-              signature: toB64(lastSigned.signature),
-            },
-            extraTpAck
-          );
+          lastPayload = await window.__nsMainSiteSignLoginPayload(nonce, message);
+          var verifyPayload = window.nspaceTermsPrivacyVerifyPayload(lastPayload, extraTpAck);
           var verifyResp = await window.nspacePostAuthVerify(verifyPayload);
           if (verifyResp.ok) {
             window.nspaceTermsPrivacyPersistLocal();
@@ -289,7 +277,7 @@ export function pendingPayoutsPublicPageHtml(): string {
         }
         var token = String(verified.token || "");
         if (!token) throw new Error("missing_token");
-        var addr = String(verified.address || (lastSigned && lastSigned.signer) || "");
+        var addr = String(verified.address || (lastPayload && lastPayload.signer) || "");
         if (addr) sessionStorage.setItem(AUTH_ADDR_KEY, addr);
         writeAuthToken(token);
         stopPayoutSigningDots();

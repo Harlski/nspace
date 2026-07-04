@@ -96,6 +96,10 @@ function summarizePayload(kind: string, p?: Record<string, unknown>): string {
   switch (kind) {
     case "chat":
       return JSON.stringify(String(p.text ?? "")).slice(0, 80);
+    case "whisper":
+      return `→ ${String(p.toName ?? p.toAddress ?? "?")}: ${JSON.stringify(
+        String(p.text ?? "")
+      ).slice(0, 60)}`;
     case "move_to":
       return `→ (${p.toX},${p.toZ}) layer ${p.goalLayer ?? 0}`;
     case "place_block":

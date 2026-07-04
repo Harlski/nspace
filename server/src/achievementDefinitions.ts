@@ -1064,8 +1064,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
   },
   {
     id: "mining-paid-in-full",
-    title: "Paid in Full",
-    description: "Receive at least 1 NIM from a Free Play Field goal payout.",
+    title: "98% is good enough",
+    description: "Receive at least 0.98 NIM from a Free Play Field goal payout.",
     category: "football_free_play",
     categoryGroup: "minigames",
     points: 20,

@@ -160,94 +160,55 @@ export function mainSiteAuthTopbarRuntimeScript(currentPage: MainSiteHeaderPage)
       function isProviderErrorResponse(x) {
         return !!(x && typeof x === "object" && x.error && typeof x.error.message === "string");
       }
-      async function nimiqPayWalletLogin() {
-        var nimiq = await waitForNimiqProvider(15000);
-        var extraTpAck = undefined;
-        var verified = null;
-        retryTpAck: while (true) {
-          var nonceResp = await fetch("/api/auth/nonce");
-          if (!nonceResp.ok) throw new Error("nonce_failed");
-          var nonceJson = await nonceResp.json();
-          var nonce = String(nonceJson.nonce || "");
-          var message = "Login:v1:" + nonce;
+      /**
+       * Sign the login challenge, choosing Nimiq Pay (mini-app provider) when the host
+       * injected \`window.nimiqPay\`, otherwise Nimiq Hub. Shared by the topbar and every
+       * server-rendered main-site page so sign-in is identical on \`/\`, \`/payouts\`,
+       * \`/analytics\`, and the admin pages. Returns the base \`/api/auth/verify\` payload.
+       */
+      async function signMainSiteLoginPayload(nonce, message) {
+        if (window.nimiqPay != null) {
+          var nimiq = await waitForNimiqProvider(15000);
           var signed = await nimiq.sign(message);
           if (isProviderErrorResponse(signed)) {
             throw new Error(String(signed.error.message || "nimiq_pay_sign_failed"));
           }
-          var pubBytes = coerceSignBytes(signed.publicKey);
-          var sigBytes = coerceSignBytes(signed.signature);
-          var verifyPayload = window.nspaceTermsPrivacyVerifyPayload(
-            {
-              nonce: nonce,
-              message: message,
-              signer: "",
-              signerPublicKey: toB64(pubBytes),
-              signature: toB64(sigBytes),
-              nimiqPayClient: true,
-            },
-            extraTpAck
-          );
-          var verifyResp = await window.nspacePostAuthVerify(verifyPayload);
-          if (verifyResp.ok) {
-            window.nspaceTermsPrivacyPersistLocal();
-            verified = await verifyResp.json();
-            break retryTpAck;
-          }
-          var errBody = await verifyResp.json().catch(function () {
-            return {};
-          });
-          if (
-            verifyResp.status === 403 &&
-            (errBody.error === "terms_privacy_ack_required" || errBody.error === "legal_consent_required")
-          ) {
-            await window.nspaceShowTermsPrivacyAckBarrier();
-            extraTpAck = window.NSPACE_TERMS_PRIVACY_DOCS_VERSION;
-            continue;
-          }
-          throw new Error(String(errBody.error || "verify_failed"));
+          return {
+            nonce: nonce,
+            message: message,
+            signer: "",
+            signerPublicKey: toB64(coerceSignBytes(signed.publicKey)),
+            signature: toB64(coerceSignBytes(signed.signature)),
+            nimiqPayClient: true,
+          };
         }
-        var token = String(verified.token || "");
-        var address = String(verified.address || "");
-        if (!token) throw new Error("missing_token");
-        if (typeof window.__nsSaveMainSiteAuth === "function") {
-          window.__nsSaveMainSiteAuth(token, address);
-        } else {
-          for (var k = 0; k < AUTH_KEYS.length; k++) {
-            sessionStorage.setItem(AUTH_KEYS[k], token);
-          }
-          if (address) sessionStorage.setItem(AUTH_ADDR_KEY, address);
-        }
-        window.location.reload();
+        var HubMod = await import("https://esm.sh/@nimiq/hub-api@1.13.0");
+        var HubApi = HubMod.default;
+        var hub = new HubApi("https://hub.nimiq.com");
+        var hubSigned = await hub.signMessage({ appName: HUB_APP_NAME, message: message });
+        var base = {
+          nonce: nonce,
+          message: message,
+          signerPublicKey: toB64(hubSigned.signerPublicKey),
+          signature: toB64(hubSigned.signature),
+        };
+        if (hubSigned.signer) base.signer = hubSigned.signer;
+        return base;
       }
+      window.__nsMainSiteSignLoginPayload = signMainSiteLoginPayload;
       async function defaultWalletLogin() {
         try {
-          if (window.nimiqPay != null) {
-            await nimiqPayWalletLogin();
-            return;
-          }
-          var HubMod = await import("https://esm.sh/@nimiq/hub-api@1.13.0");
-          var HubApi = HubMod.default;
-          var hub = new HubApi("https://hub.nimiq.com");
           var extraTpAck = undefined;
           var verified = null;
-          var lastSigned = null;
+          var lastPayload = null;
           retryTpAck: while (true) {
             var nonceResp = await fetch("/api/auth/nonce");
             if (!nonceResp.ok) throw new Error("nonce_failed");
             var nonceJson = await nonceResp.json();
             var nonce = String(nonceJson.nonce || "");
             var message = "Login:v1:" + nonce;
-            lastSigned = await hub.signMessage({ appName: HUB_APP_NAME, message: message });
-            var verifyPayload = window.nspaceTermsPrivacyVerifyPayload(
-              {
-                nonce: nonce,
-                message: message,
-                signer: lastSigned.signer,
-                signerPublicKey: toB64(lastSigned.signerPublicKey),
-                signature: toB64(lastSigned.signature),
-              },
-              extraTpAck
-            );
+            lastPayload = await signMainSiteLoginPayload(nonce, message);
+            var verifyPayload = window.nspaceTermsPrivacyVerifyPayload(lastPayload, extraTpAck);
             var verifyResp = await window.nspacePostAuthVerify(verifyPayload);
             if (verifyResp.ok) {
               window.nspaceTermsPrivacyPersistLocal();
@@ -268,7 +229,7 @@ export function mainSiteAuthTopbarRuntimeScript(currentPage: MainSiteHeaderPage)
             throw new Error(String(errBody.error || "verify_failed"));
           }
           var token = String(verified.token || "");
-          var address = String(verified.address || (lastSigned && lastSigned.signer) || "");
+          var address = String(verified.address || (lastPayload && lastPayload.signer) || "");
           if (!token) throw new Error("missing_token");
           if (typeof window.__nsSaveMainSiteAuth === "function") {
             window.__nsSaveMainSiteAuth(token, address);

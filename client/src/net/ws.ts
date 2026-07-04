@@ -382,6 +382,19 @@ export type ServerMessage =
       at: number;
       bubbleOnly?: boolean;
     }
+  | {
+      /**
+       * Private whisper (WoW-style), never broadcast. `direction: "in"` = received
+       * (partner is the sender); `direction: "out"` = echo of a whisper you sent
+       * (partner is the recipient).
+       */
+      type: "whisper";
+      direction: "in" | "out";
+      partnerAddress: string;
+      partnerName: string;
+      text: string;
+      at: number;
+    }
   | { type: "gateWalkBlocked"; x: number; z: number; y: number }
   | { type: "error"; code: string }
   | { type: "designPublished"; design: DesignWire }
@@ -1330,6 +1343,32 @@ export function sendCampaignLinkClick(
 export function sendChat(ws: WebSocket, text: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "chat", text }));
+}
+
+/**
+ * Send a private whisper. Provide exactly one target:
+ * - `toAddress` (right-click / active whisper chip, works for any wallet player),
+ * - `toName` (typed `/w name`, resolves only globally-unique custom usernames), or
+ * - `reply: true` (typed `/r`, targets the server-tracked last whisper partner).
+ * The server validates the target, echoes the sent message back, and never broadcasts.
+ */
+export function sendWhisper(
+  ws: WebSocket,
+  target: { toAddress?: string; toName?: string; reply?: boolean },
+  text: string
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const body: Record<string, unknown> = { type: "whisper", text };
+  if (target.reply) {
+    body.reply = true;
+  } else if (target.toAddress) {
+    body.toAddress = target.toAddress;
+  } else if (target.toName) {
+    body.toName = target.toName;
+  } else {
+    return;
+  }
+  ws.send(JSON.stringify(body));
 }
 
 /** worldcup: set/change the player's country (ISO 3166-1 alpha-2). */

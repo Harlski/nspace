@@ -918,7 +918,7 @@ test("Dry Spell completes at 10 cooldown attempts", async () => {
   });
 });
 
-test("Paid in Full is a one-time field payout badge", async () => {
+test("98% is good enough is a one-time field payout badge", async () => {
   await withAchievementStore(async ({
     recordFieldGoalPayout,
     getAchievementsForWallet,

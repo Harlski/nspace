@@ -22,6 +22,7 @@ This document describes **main-site** pages: HTML served from the game API host 
 | Tokens + layout + tables + buttons + auth gate utilities | `server/src/mainSiteShell.ts` → `mainSiteShellCss()` | `client/src/mainSiteClient.css` (keep in sync when tokens change) |
 | Nimiq Style fonts (Muli + Fira Mono) | `server/src/mainSiteTypography.ts` | Same `@import` + stacks in `mainSiteClient.css` |
 | Brand row + `#authUser` | `server/src/analyticsTopbar.ts` + `server/src/mainSiteNav.ts` + `server/src/mainSiteAuthTopbar.ts` | `renderMainSiteTopbar()` in `client/src/ui/analyticsTopbar.ts` |
+| Footer (X + Telegram + "Nimiq Space 2026") | `server/src/analyticsTopbar.ts` → `mainSiteFooterInnerHtml()`, injected on every page by `analyticsTopbarHtml()` | static `<footer class="ms-site-footer">` in `client/*.html`; CSS in `client/src/mainSiteClient.css` |
 | Wallet “Signing in…” UI (spinner + cycling dots) | Inline markup + interval in server page scripts | `client/src/ui/walletSigningUi.ts` (`walletSigningMarkup`, `animateSigningDots`, `isSigningUserCancelledError`) |
 
 ---
@@ -32,7 +33,7 @@ This document describes **main-site** pages: HTML served from the game API host 
 
 Use when the user has a valid session (or the page is public and needs no wallet).
 
-1. **Top:** `${analyticsTopbarHtml("…")}` or equivalent — brand + grouped **nav dropdown** + `#authUser` (shared script fills Sign In / wallet menu on every route). Nav links are permission-gated; empty groups hide automatically. Categories: **Site** (Payouts, Advertise) and **Admin** (Admin, Analytics, System, Settings, Header, Feedback). Pages with custom sign-in UX may set `window.__nsMainSiteLoginClick`; otherwise the topbar runs the default Hub login for that route.
+1. **Top:** `${analyticsTopbarHtml("…")}` or equivalent — brand + grouped **nav dropdown** + `#authUser` (shared script fills Sign In / wallet menu on every route). Nav links are permission-gated; empty groups hide automatically. Categories: **Site** (Payouts, Advertise) and **Admin** (Admin, Analytics, System, Settings, Header, Feedback). Pages with custom sign-in UX may set `window.__nsMainSiteLoginClick` (to show an in-body signing spinner/gate); otherwise the topbar runs the default login for that route. **Signing itself must always go through `window.__nsMainSiteSignLoginPayload(nonce, message)`** (exposed by `mainSiteAuthTopbar.ts`) so every route picks the same signer: **Nimiq Pay** when the mini-app injected `window.nimiqPay`, otherwise **Nimiq Hub**. Do **not** import `@nimiq/hub-api` directly in a page login handler - that bypasses Nimiq Pay and is exactly the inconsistency this helper removes.
 2. **Document title (optional but typical):** a single `<h1 class="ms-doc-title" id="…">Page name</h1>` for the **topic** of the route (e.g. “Payout queue”, “Admin”). Do **not** repeat the NIMIQ SPACE wordmark here.
 3. **Auxiliary line (optional):** `<p class="ms-status …">` for loading / generated-at meta — keep short.
 4. **Content:** panels (`ms-panel`), tables under `.ms-site`, toolbars (`ms-toolbar`), etc.
@@ -109,9 +110,20 @@ Use one **canonical user string** (exact copy) whenever the JWT is valid but the
 
 ## Wallet sign-in UX
 
-- While the Hub is open, show **`walletSigningMarkup()`** (client) or the same HTML in inline scripts: spinner + **“Signing in”** + live dots (`.` → `..` → `…` → `.`).
+- All routes sign via **`window.__nsMainSiteSignLoginPayload(nonce, message)`**: inside Nimiq Pay it uses the injected provider (`window.nimiq.sign`, empty `signer`, `nimiqPayClient: true`); everywhere else it opens Nimiq Hub. This matches the main-game SPA (`client/src/auth/nimiq.ts`), so a player inside Nimiq Pay gets the Pay sign-in intent on `/`, `/payouts`, `/analytics`, and the admin pages alike.
+- While the Hub (or Pay) prompt is open, show **`walletSigningMarkup()`** (client) or the same HTML in inline scripts: spinner + **“Signing in”** + live dots (`.` → `..` → `…` → `.`).
 - **Hub cancel / closed connection:** do not show raw hub errors. Show **`You must be signed in.`** in a **standalone** `ms-auth-gate` (or reload to unsigned layout).
 - **Other failures:** short copy such as **“Sign-in could not be completed.”** without a `Login failed:` prefix.
+
+---
+
+## Footer
+
+Every main-site page ends with a shared footer: the **X** and **Telegram** icon links (previously in the topbar, top-right) plus a muted **"Nimiq Space 2026"** note, centered under a top border (`.ms-site-footer` / `.ms-site-footer__note`).
+
+- **Server pages:** `analyticsTopbarHtml()` emits the footer inside a `<template id="msSiteFooterTpl">` at the top of the body and a tiny script appends it to `document.body` on `DOMContentLoaded`, so every current and future route that uses the topbar gets the same footer with no per-page markup. Edit the markup once in `mainSiteFooterInnerHtml()`.
+- **Client static pages** (`payouts.html`, `admin.html`, `analytics.html`): the same `<footer class="ms-site-footer">` is authored directly before `</body>`; styles come from `client/src/mainSiteClient.css`.
+- Do **not** put the social links back in the topbar header - they live in the footer now.
 
 ---
 

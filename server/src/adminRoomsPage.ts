@@ -153,22 +153,16 @@ export function adminRoomsPageHtml(): string {
       stopSigningDots();
       if (panel) { panel.innerHTML = walletSigningMarkup(); startSigningDots(panel); }
       try {
-        var HubMod = await import("https://esm.sh/@nimiq/hub-api");
-        var HubApi = HubMod.default;
-        var hub = new HubApi("https://hub.nimiq.com");
         var extraTpAck = undefined;
         var verified = null;
-        var lastSigned = null;
+        var lastPayload = null;
         while (true) {
           var nonceResp = await fetch("/api/auth/nonce");
           if (!nonceResp.ok) throw new Error("nonce_failed");
           var nonce = String((await nonceResp.json()).nonce || "");
           var message = "Login:v1:" + nonce;
-          lastSigned = await hub.signMessage({ appName: "nspace rooms admin", message: message });
-          var verifyPayload = window.nspaceTermsPrivacyVerifyPayload({
-            nonce: nonce, message: message, signer: lastSigned.signer,
-            signerPublicKey: toB64(lastSigned.signerPublicKey), signature: toB64(lastSigned.signature),
-          }, extraTpAck);
+          lastPayload = await window.__nsMainSiteSignLoginPayload(nonce, message);
+          var verifyPayload = window.nspaceTermsPrivacyVerifyPayload(lastPayload, extraTpAck);
           var verifyResp = await window.nspacePostAuthVerify(verifyPayload);
           if (verifyResp.ok) { window.nspaceTermsPrivacyPersistLocal(); verified = await verifyResp.json(); break; }
           var errBody = await verifyResp.json().catch(function () { return {}; });
@@ -180,7 +174,7 @@ export function adminRoomsPageHtml(): string {
           throw new Error(String(errBody.error || "verify_failed"));
         }
         var token = String(verified.token || "");
-        var address = String(verified.address || (lastSigned && lastSigned.signer) || "");
+        var address = String(verified.address || (lastPayload && lastPayload.signer) || "");
         if (!token) throw new Error("missing_token");
         if (address) sessionStorage.setItem(AUTH_ADDR_KEY, address);
         writeAuthToken(token);
