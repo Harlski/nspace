@@ -331,6 +331,15 @@ export type ServerMessage =
       startAtMs: number;
       speed: number;
     }
+  | {
+      type: "moveAbort";
+      address: string;
+      x: number;
+      z: number;
+      y: number;
+      vx: number;
+      vz: number;
+    }
   | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | {

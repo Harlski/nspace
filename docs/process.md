@@ -77,7 +77,7 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 | `WS_METRICS_INTERVAL_MS` | server | Optional — flush WebSocket byte/send counts by message `type` every N ms (stdout + admin System log); `0` or unset = off. See [brainstorm/movement-move-order-broadcast/baseline-metrics.md](brainstorm/movement-move-order-broadcast/baseline-metrics.md) |
 | `STATE_BROADCAST_MIN_MS` | server | Min interval between tick `state` / `stateDelta` broadcasts (default **120** ms) |
 | `STATE_BROADCAST_DELTA` | server | Set `0` to always send full `state` on ticks (debug) |
-| `MOVE_ORDER_BROADCAST` | server | Set `1` to dual-send **`moveOrder`** on validated grid path walks (path + server-owned `startAtMs` / `speed`); default off. Client plays remote avatars from the order while **`stateDelta` still flows** |
+| `MOVE_ORDER_BROADCAST` | server | Set `1` to dual-send **`moveOrder`** on validated walks (grid pathfinding and worldcup pitch free-move) and **`moveAbort`** when a path is cut short; path + server-owned `startAtMs` / `speed`. Default off. Client plays remote avatars from the order while **`stateDelta` still flows** |
 | `PAYMENT_INTENT_API_SECRET` | payment-intent-service | Required when running the sidecar; `Authorization: Bearer …` on `/v1/*` |
 | `PAYMENT_INTENT_RECIPIENT_ADDRESS` | payment-intent-service | Hot wallet (incoming NIM) user-friendly address |
 | `PAYMENT_INTENT_SQLITE_PATH` | payment-intent-service | SQLite path (default `./data/payment-intents.sqlite`; Docker compose uses `/data/payment-intents.sqlite`) |

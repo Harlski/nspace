@@ -177,6 +177,10 @@ import {
   type MoveOrderWire,
 } from "./moveOrderPlayback.js";
 import {
+  applyRemoteMoveAbort,
+  type RemoteMoveAbortWire,
+} from "./moveAbortPlayback.js";
+import {
   type RoomBounds,
   CHAMBER_MAX_ZOOM_FRUSTUM,
   CHAMBER_ROOM_ID,
@@ -13459,7 +13463,6 @@ export class Game {
   /** Server-authoritative path intent for a remote avatar (`moveOrder` dual-send tracer). */
   applyMoveOrder(msg: MoveOrderWire): void {
     if (msg.address === this.selfAddress) return;
-    if (this.isWorldcupFreeMoveRoom()) return;
     const t = this.targetPos.get(msg.address);
     const g = this.others.get(msg.address);
     const startY = t?.y ?? g?.position.y ?? 0;
@@ -13472,13 +13475,45 @@ export class Game {
     this.requestRender(400);
   }
 
+  /** Drop remote path playback and snap to authoritative pose (`moveAbort`). */
+  applyMoveAbort(msg: RemoteMoveAbortWire): void {
+    applyRemoteMoveAbort({
+      msg,
+      selfAddress: this.selfAddress,
+      remoteMoveOrders: this.remoteMoveOrders,
+      targetPos: this.targetPos.get(msg.address),
+      avatarGroup: this.others.get(msg.address),
+    });
+    this.requestRender(400);
+  }
+
+  /** Walk clamp bounds for remote moveOrder playback (matches server path stepping). */
+  private pathMoveBoundsForPlayback(): {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  } {
+    if (this.isWorldcupFreeMoveRoom()) {
+      const m = WORLDCUP_FIELD_OUTFIELD_MARGIN;
+      const b = this.roomBounds;
+      return {
+        minX: b.minX - m,
+        maxX: b.maxX + m,
+        minZ: b.minZ - m,
+        maxZ: b.maxZ + m,
+      };
+    }
+    return walkBoundsForRoom(this.roomBounds, this.extraFloorKeys);
+  }
+
   private refreshRemoteMoveOrderTarget(
     address: string,
     nowMs = Date.now()
   ): void {
     const order = this.remoteMoveOrders.get(address);
     if (!order) return;
-    const bounds = walkBoundsForRoom(this.roomBounds, this.extraFloorKeys);
+    const bounds = this.pathMoveBoundsForPlayback();
     const { pose, pathRemaining } = remotePoseFromMoveOrder({
       order,
       startY: order.startY,

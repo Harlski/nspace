@@ -48,15 +48,27 @@ describe("remotePoseFromMoveOrder", () => {
   });
 
   it("reports playback active until the path queue is drained", () => {
-    const order: MoveOrderWire = {
-      address: "NQ97 TEST",
-      path: [{ x: 3, z: 0, layer: 0 }],
-      startX: 0,
-      startZ: 0,
-      startAtMs: 0,
-      speed: 5,
-    };
     expect(moveOrderPlaybackActive(1)).toBe(true);
     expect(moveOrderPlaybackActive(0)).toBe(false);
+  });
+
+  it("walks a single straight-line pitch waypoint", () => {
+    const order: MoveOrderWire = {
+      address: "NQ97 TEST",
+      path: [{ x: 8, z: 3, layer: 0 }],
+      startX: 0,
+      startZ: 0,
+      startAtMs: 2_000_000,
+      speed: 5,
+    };
+    const mid = remotePoseFromMoveOrder({
+      order,
+      startY: 0,
+      nowMs: order.startAtMs + 800,
+      bounds: OPEN_BOUNDS,
+      placed: EMPTY_PLACED,
+    });
+    assert.ok(mid.pathRemaining === 1);
+    assert.ok(Math.hypot(mid.pose.x, mid.pose.z) > 3);
   });
 });

@@ -5147,6 +5147,10 @@ function enterGame(
       game.applyMoveOrder(msg);
       return;
     }
+    if (msg.type === "moveAbort") {
+      game.applyMoveAbort(msg);
+      return;
+    }
     if (msg.type === "onlineCount") {
       totalOnlinePlayers = Math.max(0, Math.floor(msg.count));
       syncPlayerCountHud();

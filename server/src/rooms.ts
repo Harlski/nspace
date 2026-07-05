@@ -400,6 +400,10 @@ import {
   utf8ByteLengthOfWsData,
 } from "./gameWsMetrics.js";
 import {
+  buildMoveAbortFromPlayer,
+  shouldEmitMoveAbort,
+} from "./moveAbortBroadcast.js";
+import {
   MOVE_ORDER_BROADCAST,
   buildMoveOrderOutMsg,
   shouldEmitMoveOrder,
@@ -1211,6 +1215,15 @@ type OutMsg =
       startZ: number;
       startAtMs: number;
       speed: number;
+    }
+  | {
+      type: "moveAbort";
+      address: string;
+      x: number;
+      z: number;
+      y: number;
+      vx: number;
+      vz: number;
     }
   | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
@@ -4267,7 +4280,6 @@ function maybeBroadcastMoveOrder(
   if (
     !shouldEmitMoveOrder({
       enabled: MOVE_ORDER_BROADCAST,
-      fieldFreeMove: worldcupIsFieldLikeRoom(roomId),
       pathQueueLength: conn.pathQueue.length,
     })
   ) {
@@ -4283,6 +4295,37 @@ function maybeBroadcastMoveOrder(
       startAtMs,
     })
   );
+}
+
+function maybeBroadcastMoveAbort(
+  roomId: string,
+  address: string,
+  conn: ClientConn,
+  args: { hadPathQueue: boolean; poseCorrection?: boolean }
+): void {
+  if (
+    !shouldEmitMoveAbort({
+      enabled: MOVE_ORDER_BROADCAST,
+      hadPathQueue: args.hadPathQueue,
+      poseCorrection: args.poseCorrection,
+    })
+  ) {
+    return;
+  }
+  broadcast(
+    roomId,
+    buildMoveAbortFromPlayer({ address, player: conn.player })
+  );
+}
+
+function clearConnPathQueue(
+  roomId: string,
+  address: string,
+  conn: ClientConn
+): void {
+  const hadPathQueue = conn.pathQueue.length > 0;
+  conn.pathQueue = [];
+  maybeBroadcastMoveAbort(roomId, address, conn, { hadPathQueue });
 }
 
 function advanceAlongPathHuman(
@@ -5467,10 +5510,15 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     currentRoomId !== null &&
     normalizeRoomId(currentRoomId) === nTarget
   ) {
+    const hadPathQueue = conn.pathQueue.length > 0;
     conn.player.x = x;
     conn.player.z = z;
     conn.player.y = 0;
     conn.pathQueue = [];
+    maybeBroadcastMoveAbort(currentRoomId, address, conn, {
+      hadPathQueue,
+      poseCorrection: true,
+    });
     broadcastRoomStateFull(currentRoomId);
     if (isInviteLobbyRoomId(nTarget)) {
       directInviteOnLobbyConnect(conn, nTarget, address);
@@ -5481,6 +5529,10 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   if (currentRoomId !== null) {
     const room = rooms.get(currentRoomId);
     if (room) {
+      maybeBroadcastMoveAbort(currentRoomId, address, conn, {
+        hadPathQueue: conn.pathQueue.length > 0,
+        poseCorrection: true,
+      });
       room.delete(address);
       broadcast(currentRoomId, { type: "playerLeft", address }, address);
     }
@@ -6245,7 +6297,12 @@ function worldcupKickoffReset(m: WorldcupMatchRuntime, now: number): void {
     conn.player.y = 0;
     conn.player.vx = 0;
     conn.player.vz = 0;
+    const hadPathQueue = conn.pathQueue.length > 0;
     conn.pathQueue = [];
+    maybeBroadcastMoveAbort(m.pitchRoomId, conn.address, conn, {
+      hadPathQueue,
+      poseCorrection: true,
+    });
   }
   // Fresh centre ball + recentred keepers for the restart.
   worldcupSpawnMatchBall(m.pitchRoomId);
@@ -8699,7 +8756,7 @@ export function addClient(
       // on toward the last (far) joystick target - which the 120ms move rate limit would drop.
       if (msg.stop === true) {
         if (conn.pathQueue.length > 0) {
-          conn.pathQueue = [];
+          clearConnPathQueue(currentRoomId, address, conn);
           pendingTickStateBroadcast.add(currentRoomId);
         }
         return;
@@ -8743,6 +8800,7 @@ export function addClient(
           toZ: fz,
           goalLayer: 0,
         });
+        maybeBroadcastMoveOrder(currentRoomId, address, conn, now);
         return;
       }
       const dest = snapToTile(tx, tz);
@@ -8761,7 +8819,12 @@ export function addClient(
       );
       if (!startNode) {
         snapPlayerToTerrainGrid(p, placed, currentRoomId, moverCtx);
+        const hadPathQueue = conn.pathQueue.length > 0;
         conn.pathQueue = [];
+        maybeBroadcastMoveAbort(currentRoomId, address, conn, {
+          hadPathQueue,
+          poseCorrection: true,
+        });
         pendingTickStateBroadcast.add(currentRoomId);
         return;
       }
@@ -8804,7 +8867,12 @@ export function addClient(
             goalLayer,
           });
           snapPlayerToTerrainGrid(p, placed, currentRoomId, moverCtx);
+          const hadPathQueue = conn.pathQueue.length > 0;
           conn.pathQueue = [];
+          maybeBroadcastMoveAbort(currentRoomId, address, conn, {
+            hadPathQueue,
+            poseCorrection: true,
+          });
           pendingTickStateBroadcast.add(currentRoomId);
           return;
         }
@@ -9394,12 +9462,14 @@ export function addClient(
           inHub,
           achievementUnlockHandler(ws)
         );
+        clearConnPathQueue(currentRoomId, address, conn);
         wsSafeSend(ws, {
           type: "gateWalkBlocked",
           x: gx,
           z: gz,
           y: gy,
         } satisfies OutMsg);
+        pendingTickStateBroadcast.add(currentRoomId);
         return;
       }
 
@@ -9458,16 +9528,18 @@ export function addClient(
         moverCtx
       );
       if (!full || full.length < 1) {
+        clearConnPathQueue(currentRoomId, address, conn);
         wsSafeSend(ws, {
           type: "gateWalkBlocked",
           x: gx,
           z: gz,
           y: gy,
         } satisfies OutMsg);
+        pendingTickStateBroadcast.add(currentRoomId);
         return;
       }
       if (full.length < 2) {
-        conn.pathQueue = [];
+        clearConnPathQueue(currentRoomId, address, conn);
       } else {
         conn.pathQueue = full.slice(1);
         const onAcl = gNorm.authorizedAddresses.some(
@@ -9480,6 +9552,7 @@ export function addClient(
           inHub,
           achievementUnlockHandler(ws)
         );
+        maybeBroadcastMoveOrder(currentRoomId, address, conn, now);
       }
       pendingTickStateBroadcast.add(currentRoomId);
       logGameplayEvent(conn.sessionId, address, currentRoomId, "open_gate", {

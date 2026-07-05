@@ -5,19 +5,24 @@ import {
   shouldEmitMoveOrder,
 } from "../src/moveOrderBroadcast.js";
 
-test("shouldEmitMoveOrder requires flag, path queue, and non free-move room", () => {
+test("shouldEmitMoveOrder requires flag and a non-empty path queue", () => {
   assert.equal(
     shouldEmitMoveOrder({
       enabled: true,
-      fieldFreeMove: false,
       pathQueueLength: 3,
     }),
     true
   );
   assert.equal(
     shouldEmitMoveOrder({
+      enabled: true,
+      pathQueueLength: 1,
+    }),
+    true
+  );
+  assert.equal(
+    shouldEmitMoveOrder({
       enabled: false,
-      fieldFreeMove: false,
       pathQueueLength: 3,
     }),
     false
@@ -25,15 +30,6 @@ test("shouldEmitMoveOrder requires flag, path queue, and non free-move room", ()
   assert.equal(
     shouldEmitMoveOrder({
       enabled: true,
-      fieldFreeMove: true,
-      pathQueueLength: 3,
-    }),
-    false
-  );
-  assert.equal(
-    shouldEmitMoveOrder({
-      enabled: true,
-      fieldFreeMove: false,
       pathQueueLength: 0,
     }),
     false

@@ -3,7 +3,7 @@ import {
   type PathWaypoint,
 } from "./pathPosition.js";
 
-/** Set `MOVE_ORDER_BROADCAST=1` to emit `moveOrder` on validated path walks (dual-send rollout). */
+/** Set `MOVE_ORDER_BROADCAST=1` to emit `moveOrder` on path walks (grid + pitch free-move). */
 export const MOVE_ORDER_BROADCAST =
   process.env.MOVE_ORDER_BROADCAST === "1";
 
@@ -19,12 +19,9 @@ export type MoveOrderOutMsg = {
 
 export function shouldEmitMoveOrder(args: {
   enabled: boolean;
-  fieldFreeMove: boolean;
   pathQueueLength: number;
 }): boolean {
-  return (
-    args.enabled && !args.fieldFreeMove && args.pathQueueLength > 0
-  );
+  return args.enabled && args.pathQueueLength > 0;
 }
 
 export function buildMoveOrderOutMsg(args: {
