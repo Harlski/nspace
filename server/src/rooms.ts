@@ -410,6 +410,13 @@ import {
 } from "./moveOrderBroadcast.js";
 import { stepHumanAlongPath } from "./pathPosition.js";
 import {
+  ANALYTIC_PATH_SKIP_STEPPING,
+  gameplayPoseFromConn,
+  snapshotPathMoveBegin,
+  tickAnalyticPathHuman,
+  type ConnPathMoveState,
+} from "./playerPathPose.js";
+import {
   BLOCK_COLOR_BILLBOARD_SLAB_RGB,
   BLOCK_COLOR_EXIT_PORTAL_RGB,
   BLOCK_COLOR_MAZE_RGB,
@@ -892,6 +899,8 @@ interface ClientConn {
   lastWhisperPartner?: string;
   player: PlayerState;
   pathQueue: { x: number; z: number; layer: 0 | 1 }[];
+  /** Immutable path start for analytic pose (move-order rollout). */
+  pathMove: ConnPathMoveState | null;
   /** Single active claim session id for this connection (enforces one claim at a time). */
   pendingBlockClaimId: string | null;
   lastBlockClaimBeginAt: number;
@@ -922,7 +931,7 @@ interface ClientConn {
 }
 
 function withinBlockActionRange(
-  player: PlayerState,
+  player: { x: number; z: number },
   tileX: number,
   tileZ: number
 ): boolean {
@@ -932,9 +941,52 @@ function withinBlockActionRange(
   return Math.hypot(dx, dz) <= PLACE_RADIUS_BLOCKS + 1e-6;
 }
 
+/** Analytic pose at `nowMs` for gameplay authority while a path walk is in flight. */
+function playerPoseNow(
+  conn: ClientConn,
+  nowMs: number,
+  roomId: string,
+  placed: ReadonlyMap<string, PlacedProps>
+): { x: number; y: number; z: number; vx: number; vz: number } {
+  return gameplayPoseFromConn({
+    player: conn.player,
+    pathQueue: conn.pathQueue,
+    pathMove: conn.pathMove,
+    nowMs,
+    bounds: worldcupMoveClampBounds(roomId),
+    waypointY: (layer, gx, gz) => waypointY(layer, gx, gz, placed),
+  });
+}
+
+function withinBlockActionRangeNow(
+  conn: ClientConn,
+  roomId: string,
+  tileX: number,
+  tileZ: number,
+  nowMs: number = Date.now()
+): boolean {
+  return withinBlockActionRange(
+    playerPoseNow(conn, nowMs, roomId, placedMap(roomId)),
+    tileX,
+    tileZ
+  );
+}
+
+function beginConnPathMove(conn: ClientConn, startAtMs: number): void {
+  conn.pathMove = snapshotPathMoveBegin({
+    player: conn.player,
+    pathQueue: conn.pathQueue,
+    startAtMs,
+  });
+}
+
+function clearConnPathMove(conn: ClientConn): void {
+  conn.pathMove = null;
+}
+
 /** Floor recolor: axis-aligned square from the player's tile (±R tiles on X and Z). */
 function withinFloorActionRange(
-  player: PlayerState,
+  player: { x: number; z: number },
   tileX: number,
   tileZ: number
 ): boolean {
@@ -944,6 +996,31 @@ function withinFloorActionRange(
     Math.abs(tileX - stand.x) <= PLACE_RADIUS_BLOCKS &&
     Math.abs(tileZ - stand.z) <= PLACE_RADIUS_BLOCKS
   );
+}
+
+function withinFloorActionRangeNow(
+  conn: ClientConn,
+  roomId: string,
+  tileX: number,
+  tileZ: number,
+  nowMs: number = Date.now()
+): boolean {
+  return withinFloorActionRange(
+    playerPoseNow(conn, nowMs, roomId, placedMap(roomId)),
+    tileX,
+    tileZ
+  );
+}
+
+function isOrthogonallyAdjacentToTileNow(
+  conn: ClientConn,
+  roomId: string,
+  tileX: number,
+  tileZ: number,
+  nowMs: number = Date.now()
+): boolean {
+  const pose = playerPoseNow(conn, nowMs, roomId, placedMap(roomId));
+  return isOrthogonallyAdjacentToTile(pose.x, pose.z, tileX, tileZ);
 }
 
 function clamp(v: number, a: number, b: number): number {
@@ -4325,6 +4402,7 @@ function clearConnPathQueue(
 ): void {
   const hadPathQueue = conn.pathQueue.length > 0;
   conn.pathQueue = [];
+  clearConnPathMove(conn);
   maybeBroadcastMoveAbort(roomId, address, conn, { hadPathQueue });
 }
 
@@ -5515,6 +5593,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     conn.player.z = z;
     conn.player.y = 0;
     conn.pathQueue = [];
+    clearConnPathMove(conn);
     maybeBroadcastMoveAbort(currentRoomId, address, conn, {
       hadPathQueue,
       poseCorrection: true,
@@ -5550,6 +5629,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   conn.player.z = z;
   conn.player.y = 0;
   conn.pathQueue = [];
+  clearConnPathMove(conn);
   initClientViewInterest(conn, x, z);
 
   let targetRoom = rooms.get(targetRoomId);
@@ -6299,6 +6379,7 @@ function worldcupKickoffReset(m: WorldcupMatchRuntime, now: number): void {
     conn.player.vz = 0;
     const hadPathQueue = conn.pathQueue.length > 0;
     conn.pathQueue = [];
+    clearConnPathMove(conn);
     maybeBroadcastMoveAbort(m.pitchRoomId, conn.address, conn, {
       hadPathQueue,
       poseCorrection: true,
@@ -7037,13 +7118,44 @@ export function startRoomTick(): void {
       tickBillboardAudienceDwell(roomId, room, TICK_MS);
       const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
       for (const c of room.values()) {
-        const result = advanceAlongPathHuman(
-          roomId,
-          c.player,
-          c.pathQueue,
-          dt,
-          placed
-        );
+        const isFieldFreeMove = worldcupIsFieldLikeRoom(roomId);
+        const skipStepping =
+          ANALYTIC_PATH_SKIP_STEPPING &&
+          c.pathQueue.length > 0 &&
+          c.pathMove &&
+          !isFieldFreeMove;
+        let result: {
+          changed: boolean;
+          arrivedTiles: Array<{ x: number; z: number }>;
+        };
+        if (skipStepping) {
+          const tickResult = tickAnalyticPathHuman({
+            player: c.player,
+            pathQueue: c.pathQueue,
+            pathMove: c.pathMove!,
+            nowMs: now,
+            bounds: worldcupMoveClampBounds(roomId),
+            waypointY: (layer, gx, gz) => waypointY(layer, gx, gz, placed),
+          });
+          if (c.pathQueue.length === 0) {
+            clearConnPathMove(c);
+          }
+          result = {
+            changed: tickResult.changed,
+            arrivedTiles: tickResult.newArrivedTiles,
+          };
+        } else {
+          result = advanceAlongPathHuman(
+            roomId,
+            c.player,
+            c.pathQueue,
+            dt,
+            placed
+          );
+          if (c.pathQueue.length === 0) {
+            clearConnPathMove(c);
+          }
+        }
         if (result.changed) changed = true;
         if (result.arrivedTiles.length > 0) {
           recordDistinctTileWalked(
@@ -7085,7 +7197,6 @@ export function startRoomTick(): void {
         }
         // worldcup: on the pitch (field or Match Pitch), free movement rests at the exact
         // float point - skip the grid drift-snap that would pull players to a tile center.
-        const isFieldFreeMove = worldcupIsFieldLikeRoom(roomId);
         if (c.pathQueue.length === 0 && !isFieldFreeMove) {
           const moverCtx: PathfindMoverContext = {
             address: compactAddress(c.address),
@@ -7226,11 +7337,12 @@ export function startRoomTick(): void {
         for (const c of room.values()) {
           if (c.streamObserver) continue;
           if (c.spectatingMatchId) continue; // worldcup: Spectators can't touch the ball
+          const pose = playerPoseNow(c, now, roomId, placed);
           ballPlayers.push({
-            x: c.player.x,
-            z: c.player.z,
-            vx: c.player.vx,
-            vz: c.player.vz,
+            x: pose.x,
+            z: pose.z,
+            vx: pose.vx,
+            vz: pose.vz,
             address: c.address,
           });
         }
@@ -7551,6 +7663,7 @@ export function addClient(
     lastPlaceAt: 0,
     player,
     pathQueue: [],
+    pathMove: null,
     pendingBlockClaimId: null,
     lastBlockClaimBeginAt: 0,
     lastBlockClaimTickAt: 0,
@@ -8527,7 +8640,14 @@ export function addClient(
       const tx = Math.floor(Number((msg as { x?: unknown }).x));
       const tz = Math.floor(Number((msg as { z?: unknown }).z));
       if (!cosmeticSku || !Number.isFinite(tx) || !Number.isFinite(tz)) return;
-      const playerTile = snapToTile(conn.player.x, conn.player.z);
+      const deployNow = Date.now();
+      const deployPose = playerPoseNow(
+        conn,
+        deployNow,
+        deployRoomId,
+        placedMap(deployRoomId)
+      );
+      const playerTile = snapToTile(deployPose.x, deployPose.z);
       const validated = validateCosmeticDeploy({
         wallet: address,
         roomId: deployRoomId,
@@ -8793,6 +8913,7 @@ export function addClient(
         const from = { x: conn.player.x, z: conn.player.z };
         conn.player.y = 0;
         conn.pathQueue = [{ x: fx, z: fz, layer: 0 }];
+        beginConnPathMove(conn, now);
         logGameplayEvent(conn.sessionId, address, currentRoomId, "move_to", {
           fromX: from.x,
           fromZ: from.z,
@@ -8821,6 +8942,7 @@ export function addClient(
         snapPlayerToTerrainGrid(p, placed, currentRoomId, moverCtx);
         const hadPathQueue = conn.pathQueue.length > 0;
         conn.pathQueue = [];
+        clearConnPathMove(conn);
         maybeBroadcastMoveAbort(currentRoomId, address, conn, {
           hadPathQueue,
           poseCorrection: true,
@@ -8869,6 +8991,7 @@ export function addClient(
           snapPlayerToTerrainGrid(p, placed, currentRoomId, moverCtx);
           const hadPathQueue = conn.pathQueue.length > 0;
           conn.pathQueue = [];
+          clearConnPathMove(conn);
           maybeBroadcastMoveAbort(currentRoomId, address, conn, {
             hadPathQueue,
             poseCorrection: true,
@@ -8908,6 +9031,7 @@ export function addClient(
         });
         conn.pathQueue = full.slice(1);
       }
+      beginConnPathMove(conn, now);
       logGameplayEvent(conn.sessionId, address, currentRoomId, "move_to", {
         fromX: startNode.x,
         fromZ: startNode.z,
@@ -8922,8 +9046,11 @@ export function addClient(
     if (msg.type === "enterPortal") {
       // Guests are confined to their Play Space; teleporters are off-limits to them.
       if (address.startsWith("guest:")) return;
-      const here = snapToTile(conn.player.x, conn.player.z);
-      const tileProps = getTopPlacedAtTile(placedMap(currentRoomId), here.x, here.z)?.props;
+      const portalNow = Date.now();
+      const portalPlaced = placedMap(currentRoomId);
+      const portalPose = playerPoseNow(conn, portalNow, currentRoomId, portalPlaced);
+      const here = snapToTile(portalPose.x, portalPose.z);
+      const tileProps = getTopPlacedAtTile(portalPlaced, here.x, here.z)?.props;
       if (tileProps?.teleporter) {
         const t = tileProps.teleporter;
         if ("pending" in t && t.pending) {
@@ -8980,7 +9107,7 @@ export function addClient(
       const tz = Number(msg.z);
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
       if (!isWalkableForRoom(currentRoomId, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
       const yLevel = nextOpenStackLevel(placed, tile.x, tile.z);
@@ -9237,7 +9364,7 @@ export function addClient(
       const anchorZ = Number(msg.anchorZ);
       const yawSteps = Math.floor(Number(msg.yawSteps ?? 0));
       if (!designId || !Number.isFinite(anchorX) || !Number.isFinite(anchorZ)) return;
-      if (!withinBlockActionRange(conn.player, anchorX, anchorZ)) {
+      if (!withinBlockActionRangeNow(conn, currentRoomId, anchorX, anchorZ)) {
         wsSafeSend(ws, {
           type: "designStampResult",
           ok: false,
@@ -9326,7 +9453,7 @@ export function addClient(
       const tz = Number(msg.z);
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
       const ok = placePendingTeleporterAt(
         conn,
         currentRoomId,
@@ -9363,7 +9490,7 @@ export function addClient(
       });
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
       const ok = placePendingGateAt(
         conn,
         currentRoomId,
@@ -9393,8 +9520,8 @@ export function addClient(
       const gz = Math.round(Number(msg.z));
       const gy = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
       if (!Number.isFinite(gx) || !Number.isFinite(gz)) return;
-      if (!withinBlockActionRange(conn.player, gx, gz)) return;
-      if (!isOrthogonallyAdjacentToTile(conn.player.x, conn.player.z, gx, gz)) {
+      if (!withinBlockActionRangeNow(conn, currentRoomId, gx, gz, now)) return;
+      if (!isOrthogonallyAdjacentToTileNow(conn, currentRoomId, gx, gz, now)) {
         wsSafeSend(ws, {
           type: "chat",
           from: "System",
@@ -9483,10 +9610,11 @@ export function addClient(
       );
 
       const p = conn.player;
+      const gatePose = playerPoseNow(conn, now, currentRoomId, placed);
       const moverCtx: PathfindMoverContext = { address: who, nowMs: now };
       const startNode = resolvePathfindStartNode(
         currentRoomId,
-        p,
+        { ...p, x: gatePose.x, y: gatePose.y, z: gatePose.z },
         placed,
         moverCtx
       );
@@ -9508,7 +9636,7 @@ export function addClient(
         }
         return;
       }
-      const ps = snapToTile(p.x, p.z);
+      const ps = snapToTile(gatePose.x, gatePose.z);
       const onBack = ps.x === ex && ps.z === ez;
       const onFront = ps.x === frontX && ps.z === frontZ;
       const goalX = onBack && !onFront ? frontX : ex;
@@ -9542,6 +9670,7 @@ export function addClient(
         clearConnPathQueue(currentRoomId, address, conn);
       } else {
         conn.pathQueue = full.slice(1);
+        beginConnPathMove(conn, now);
         const onAcl = gNorm.authorizedAddresses.some(
           (a) => compactAddress(a) === whoC
         );
@@ -9577,7 +9706,7 @@ export function addClient(
       const ty = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
       const entry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
       if (!entry?.props.gate) return;
@@ -9705,7 +9834,7 @@ export function addClient(
       }
       const tile = snapToTile(tx, tz);
       const dt = snapToTile(destX, destZ);
-      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
       const srcEntry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
       if (!srcEntry?.props.teleporter) return;
@@ -9750,8 +9879,8 @@ export function addClient(
       if (!Number.isFinite(destX) || !Number.isFinite(destZ)) return;
       const tile = snapToTile(tx, tz);
       const dt = snapToTile(destX, destZ);
-      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
-      if (!withinBlockActionRange(conn.player, dt.x, dt.z)) return;
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
+      if (!withinBlockActionRangeNow(conn, currentRoomId, dt.x, dt.z)) return;
       const ok = placeBidirectionalTeleporterPairAt(
         conn,
         currentRoomId,
@@ -9803,7 +9932,7 @@ export function addClient(
       
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
       const entry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
       if (!entry) return;
@@ -10072,7 +10201,7 @@ export function addClient(
       const ty = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) return;
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
       const placed = placedMap(currentRoomId);
       const entry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
       if (!entry) return;
@@ -10255,7 +10384,7 @@ export function addClient(
             wsSafeSend(ws, { type: "error", code: "billboard_forbidden" });
             return;
           }
-          if (!withinBlockActionRange(conn.player, from.x, from.z)) return;
+          if (!withinBlockActionRangeNow(conn, currentRoomId, from.x, from.z)) return;
           const newYaw = Math.max(
             0,
             Math.min(3, Math.floor(Number(msg.yawSteps)))
@@ -10292,7 +10421,7 @@ export function addClient(
             return;
           }
           for (const { x: px, z: pz } of newTiles) {
-            if (!withinBlockActionRange(conn.player, px, pz)) {
+            if (!withinBlockActionRangeNow(conn, currentRoomId, px, pz)) {
               wsSafeSend(ws, {
                 type: "chat",
                 from: "System",
@@ -10385,8 +10514,8 @@ export function addClient(
         return;
       }
       if (
-        !withinBlockActionRange(conn.player, from.x, from.z) ||
-        !withinBlockActionRange(conn.player, to.x, to.z)
+        !withinBlockActionRangeNow(conn, currentRoomId, from.x, from.z) ||
+        !withinBlockActionRangeNow(conn, currentRoomId, to.x, to.z)
       ) {
         return;
       }
@@ -10438,7 +10567,7 @@ export function addClient(
         );
 
         for (const { x: px, z: pz } of newFootTiles) {
-          if (!withinBlockActionRange(conn.player, px, pz)) {
+          if (!withinBlockActionRangeNow(conn, currentRoomId, px, pz)) {
             wsSafeSend(ws, {
               type: "chat",
               from: "System",
@@ -10677,7 +10806,7 @@ export function addClient(
       let pixelsPainted = 0;
 
       for (const tile of tiles) {
-        if (!withinFloorActionRange(conn.player, tile.x, tile.z)) continue;
+        if (!withinFloorActionRangeNow(conn, currentRoomId, tile.x, tile.z)) continue;
         const outcome = applyPlaceExtraFloorAtTile(
           currentRoomId,
           room,
@@ -10839,7 +10968,7 @@ export function addClient(
       const tz = Number(msg.z);
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      if (!withinFloorActionRange(conn.player, tile.x, tile.z)) return;
+      if (!withinFloorActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
       const k = tileKey(tile.x, tile.z);
       const ex = extraFloorMap(currentRoomId);
       if (ex.has(k)) {
@@ -11102,11 +11231,12 @@ export function addClient(
       const tile = snapToTile(tx, tz);
 
       if (
-        !isOrthogonallyAdjacentToTile(
-          conn.player.x,
-          conn.player.z,
+        !isOrthogonallyAdjacentToTileNow(
+          conn,
+          currentRoomId,
           tile.x,
-          tile.z
+          tile.z,
+          now
         )
       ) {
         wsSafeSend(ws, {
@@ -11253,11 +11383,12 @@ export function addClient(
         return;
       }
 
-      const adjacent = isOrthogonallyAdjacentToTile(
-        conn.player.x,
-        conn.player.z,
+      const adjacent = isOrthogonallyAdjacentToTileNow(
+        conn,
+        currentRoomId,
         s.tileX,
-        s.tileZ
+        s.tileZ,
+        now
       );
       if (!adjacent) {
         s.accumAdjacentMs = 0;
@@ -11357,11 +11488,12 @@ export function addClient(
       }
 
       if (
-        !isOrthogonallyAdjacentToTile(
-          conn.player.x,
-          conn.player.z,
+        !isOrthogonallyAdjacentToTileNow(
+          conn,
+          currentRoomId,
           s.tileX,
-          s.tileZ
+          s.tileZ,
+          now
         )
       ) {
         wsSafeSend(ws, {
@@ -11482,7 +11614,7 @@ export function addClient(
       const k = tileKey(tile.x, tile.z);
       
       // Check if within build range
-      if (!withinBlockActionRange(conn.player, tile.x, tile.z)) {
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) {
         wsSafeSend(ws, {
           type: "chat",
           from: "System",
@@ -11684,7 +11816,7 @@ export function addClient(
       }
       const placed = placedMap(currentRoomId);
       for (const { x: fx, z: fz } of footTiles) {
-        if (!withinBlockActionRange(conn.player, fx, fz)) {
+        if (!withinBlockActionRangeNow(conn, currentRoomId, fx, fz)) {
           wsSafeSend(ws, {
             type: "chat",
             from: "System",
@@ -11932,7 +12064,7 @@ export function addClient(
 
       if (sameFootprint) {
         for (const { x: px, z: pz } of newTiles) {
-          if (!withinBlockActionRange(conn.player, px, pz)) {
+          if (!withinBlockActionRangeNow(conn, currentRoomId, px, pz)) {
             wsSafeSend(ws, {
               type: "chat",
               from: "System",
@@ -12004,7 +12136,7 @@ export function addClient(
         return;
       }
       for (const { x: px, z: pz } of newTiles) {
-        if (!withinBlockActionRange(conn.player, px, pz)) {
+        if (!withinBlockActionRangeNow(conn, currentRoomId, px, pz)) {
           wsSafeSend(ws, {
             type: "chat",
             from: "System",

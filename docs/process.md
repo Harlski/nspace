@@ -78,6 +78,7 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 | `STATE_BROADCAST_MIN_MS` | server | Min interval between tick `state` / `stateDelta` broadcasts (default **120** ms) |
 | `STATE_BROADCAST_DELTA` | server | Set `0` to always send full `state` on ticks (debug) |
 | `MOVE_ORDER_BROADCAST` | server | Set `1` to dual-send **`moveOrder`** on validated walks (grid pathfinding and worldcup pitch free-move) and **`moveAbort`** when a path is cut short; path + server-owned `startAtMs` / `speed`. Default off. Client plays remote avatars from the order while **`stateDelta` still flows** |
+| `ANALYTIC_PATH_SKIP_STEPPING` | server | Set `1` to skip per-tick `advanceAlongPathHuman` for grid path walkers and resolve pose via `playerPathPose` instead (ball kicks, claim range, achievements, etc.). Also enabled when `MOVE_ORDER_BROADCAST=1`. World Cup pitch free-move and NPC fakes stay stepped. Default off unless move-order broadcast is on |
 | `PAYMENT_INTENT_API_SECRET` | payment-intent-service | Required when running the sidecar; `Authorization: Bearer …` on `/v1/*` |
 | `PAYMENT_INTENT_RECIPIENT_ADDRESS` | payment-intent-service | Hot wallet (incoming NIM) user-friendly address |
 | `PAYMENT_INTENT_SQLITE_PATH` | payment-intent-service | SQLite path (default `./data/payment-intents.sqlite`; Docker compose uses `/data/payment-intents.sqlite`) |
