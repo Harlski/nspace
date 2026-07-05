@@ -404,6 +404,10 @@ import {
   shouldEmitMoveAbort,
 } from "./moveAbortBroadcast.js";
 import {
+  CUT_MOVEMENT_STREAM,
+  shouldIncludeInTickStateDelta,
+} from "./cutMovementStream.js";
+import {
   MOVE_ORDER_BROADCAST,
   buildMoveOrderOutMsg,
   shouldEmitMoveOrder,
@@ -584,11 +588,31 @@ function broadcastTickStateIfAllowed(
   const changed: PlayerState[] = [];
   if (!sendFull && prev) {
     const prevByAddr = new Map(prev.map((p) => [p.address, p]));
+    const connByAddr = new Map(
+      [...room.values()].map((c) => [c.address, c] as const)
+    );
+    const isFieldFreeMove = worldcupIsFieldLikeRoom(roomId);
+    let suppressedMovementOnly = false;
     for (const p of full) {
       const o = prevByAddr.get(p.address);
-      if (!o || !tickPlayerStatesEqual(o, p)) changed.push(clonePlayerState(p));
+      if (!o) {
+        changed.push(clonePlayerState(p));
+        continue;
+      }
+      if (tickPlayerStatesEqual(o, p)) continue;
+      const conn = connByAddr.get(p.address);
+      const decision = shouldIncludeInTickStateDelta({
+        enabled: CUT_MOVEMENT_STREAM,
+        pathQueueLength: conn?.pathQueue.length ?? 0,
+        isFieldFreeMove,
+        prev: o,
+        next: p,
+      });
+      if (decision.suppressedMovementOnly) suppressedMovementOnly = true;
+      if (decision.include) changed.push(clonePlayerState(p));
     }
     if (changed.length === 0) {
+      if (suppressedMovementOnly) replaceTickBroadcastBaseline(roomId);
       lastTickStateBroadcastAt.set(roomId, now);
       pendingTickStateBroadcast.delete(roomId);
       return;
