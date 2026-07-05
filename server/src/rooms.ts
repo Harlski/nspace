@@ -399,6 +399,11 @@ import {
   recordGameWsOutbound,
   utf8ByteLengthOfWsData,
 } from "./gameWsMetrics.js";
+import {
+  MOVE_ORDER_BROADCAST,
+  buildMoveOrderOutMsg,
+  shouldEmitMoveOrder,
+} from "./moveOrderBroadcast.js";
 import { stepHumanAlongPath } from "./pathPosition.js";
 import {
   BLOCK_COLOR_BILLBOARD_SLAB_RGB,
@@ -1198,6 +1203,15 @@ type OutMsg =
   | { type: "state"; players: PlayerState[] }
   /** Tick path only: subset of players that changed since last tick snapshot. */
   | { type: "stateDelta"; players: PlayerState[] }
+  | {
+      type: "moveOrder";
+      address: string;
+      path: { x: number; z: number; layer: 0 | 1 }[];
+      startX: number;
+      startZ: number;
+      startAtMs: number;
+      speed: number;
+    }
   | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | {
@@ -4242,6 +4256,33 @@ function formatTerrainPathWaypoint(w: { x: number; z: number; layer: 0 | 1 }): s
 function logMovementDebug(phase: string, data: Record<string, unknown>): void {
   if (!DEBUG_MOVEMENT) return;
   console.log(`[movement] ${phase}`, data);
+}
+
+function maybeBroadcastMoveOrder(
+  roomId: string,
+  address: string,
+  conn: ClientConn,
+  startAtMs: number
+): void {
+  if (
+    !shouldEmitMoveOrder({
+      enabled: MOVE_ORDER_BROADCAST,
+      fieldFreeMove: worldcupIsFieldLikeRoom(roomId),
+      pathQueueLength: conn.pathQueue.length,
+    })
+  ) {
+    return;
+  }
+  broadcast(
+    roomId,
+    buildMoveOrderOutMsg({
+      address,
+      pathQueue: conn.pathQueue,
+      startX: conn.player.x,
+      startZ: conn.player.z,
+      startAtMs,
+    })
+  );
 }
 
 function advanceAlongPathHuman(
@@ -8806,6 +8847,7 @@ export function addClient(
         toZ: dest.z,
         goalLayer,
       });
+      maybeBroadcastMoveOrder(currentRoomId, address, conn, now);
       return;
     }
 

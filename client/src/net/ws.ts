@@ -322,6 +322,15 @@ export type ServerMessage =
   | { type: "playerLeft"; address: string }
   | { type: "state"; players: PlayerState[] }
   | { type: "stateDelta"; players: PlayerState[] }
+  | {
+      type: "moveOrder";
+      address: string;
+      path: Array<{ x: number; z: number; layer: 0 | 1 }>;
+      startX: number;
+      startZ: number;
+      startAtMs: number;
+      speed: number;
+    }
   | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | {

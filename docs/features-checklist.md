@@ -46,6 +46,7 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 - [x] `moveTo` — server pathfinding over walkable tiles, obstacles blocking non-passable cells
 - [x] Path queue + movement tick (`MOVE_SPEED`, arrival epsilon)
 - [x] Walk bounds expanded when extra floor exists (see `walkBounds` in rooms)
+- [x] **`moveOrder` dual-send tracer** (optional) — when **`MOVE_ORDER_BROADCAST=1`**, server broadcasts one path intent per validated grid walk; client animates **remote** avatars from the order while **`stateDelta` still flows** (worldcup free-move rooms excluded). Rollout slice: [brainstorm/movement-move-order-broadcast/issues/02-move-order-tracer.md](brainstorm/movement-move-order-broadcast/issues/02-move-order-tracer.md) ([server/src/moveOrderBroadcast.ts](../server/src/moveOrderBroadcast.ts), [client/src/game/moveOrderPlayback.ts](../client/src/game/moveOrderPlayback.ts))
 
 ## Building — blocks / obstacles
 

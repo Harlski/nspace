@@ -5143,6 +5143,10 @@ function enterGame(
       refreshWorldcupCrowdRoster();
       return;
     }
+    if (msg.type === "moveOrder") {
+      game.applyMoveOrder(msg);
+      return;
+    }
     if (msg.type === "onlineCount") {
       totalOnlinePlayers = Math.max(0, Math.floor(msg.count));
       syncPlayerCountHud();

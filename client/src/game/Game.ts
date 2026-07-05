@@ -172,6 +172,11 @@ import {
   isOrthogonallyAdjacentToFloorTile,
 } from "./grid.js";
 import {
+  moveOrderPlaybackActive,
+  remotePoseFromMoveOrder,
+  type MoveOrderWire,
+} from "./moveOrderPlayback.js";
+import {
   type RoomBounds,
   CHAMBER_MAX_ZOOM_FRUSTUM,
   CHAMBER_ROOM_ID,
@@ -1450,6 +1455,11 @@ export class Game {
   private readonly typingIndicatorByAddress = new Map<string, TypingIndicatorEntry>();
   private readonly floatingTexts = new Map<string, FloatingTextEntry>();
   private readonly targetPos = new Map<string, THREE.Vector3>();
+  /** Remote avatar path playback from server `moveOrder` (dual-send tracer). */
+  private readonly remoteMoveOrders = new Map<
+    string,
+    MoveOrderWire & { startY: number }
+  >();
   // worldcup: seasonal soccer ball meshes + interpolation targets + goal frames
   private readonly worldcupBalls = new Map<string, THREE.Mesh>();
   private readonly worldcupBallTargets = new Map<
@@ -11619,6 +11629,7 @@ export class Game {
     }
     this.others.clear();
     this.targetPos.clear();
+    this.remoteMoveOrders.clear();
     for (const [, mesh] of this.canvasIdenticonMeshes) {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
@@ -13445,6 +13456,45 @@ export class Game {
     return dist > 0.05 && now - prev.t < 500;
   }
 
+  /** Server-authoritative path intent for a remote avatar (`moveOrder` dual-send tracer). */
+  applyMoveOrder(msg: MoveOrderWire): void {
+    if (msg.address === this.selfAddress) return;
+    if (this.isWorldcupFreeMoveRoom()) return;
+    const t = this.targetPos.get(msg.address);
+    const g = this.others.get(msg.address);
+    const startY = t?.y ?? g?.position.y ?? 0;
+    this.remoteMoveOrders.set(msg.address, {
+      ...msg,
+      startY,
+      path: msg.path.map((w) => ({ ...w })),
+    });
+    this.refreshRemoteMoveOrderTarget(msg.address);
+    this.requestRender(400);
+  }
+
+  private refreshRemoteMoveOrderTarget(
+    address: string,
+    nowMs = Date.now()
+  ): void {
+    const order = this.remoteMoveOrders.get(address);
+    if (!order) return;
+    const bounds = walkBoundsForRoom(this.roomBounds, this.extraFloorKeys);
+    const { pose, pathRemaining } = remotePoseFromMoveOrder({
+      order,
+      startY: order.startY,
+      nowMs,
+      bounds,
+      placed: this.placedObjects,
+    });
+    if (!moveOrderPlaybackActive(pathRemaining)) {
+      this.remoteMoveOrders.delete(address);
+    }
+    const t = this.targetPos.get(address);
+    if (t) {
+      t.set(pose.x, pose.y, pose.z);
+    }
+  }
+
   syncState(players: PlayerState[]): void {
     let visualChanged = false;
     const seen = new Set<string>();
@@ -13508,11 +13558,13 @@ export class Game {
       }
       const t = this.targetPos.get(p.address);
       if (t) {
-        visualChanged =
-          visualChanged ||
-          Math.hypot(t.x - p.x, t.z - p.z) > 0.001 ||
-          Math.abs(t.y - py) > 0.001;
-        t.set(p.x, py, p.z);
+        if (!this.remoteMoveOrders.has(p.address)) {
+          visualChanged =
+            visualChanged ||
+            Math.hypot(t.x - p.x, t.z - p.z) > 0.001 ||
+            Math.abs(t.y - py) > 0.001;
+          t.set(p.x, py, p.z);
+        }
       }
       this.syncAvatarNameLabelFromState(g, p);
       this.syncTypingIndicatorForGroup(g, p);
@@ -13528,6 +13580,7 @@ export class Game {
         }
         this.others.delete(addr);
         this.targetPos.delete(addr);
+        this.remoteMoveOrders.delete(addr);
         visualChanged = true;
       }
     }
@@ -14377,6 +14430,10 @@ export class Game {
     }
 
     this.maybeFirePendingGateAdjacentInteract();
+
+    for (const addr of this.remoteMoveOrders.keys()) {
+      this.refreshRemoteMoveOrderTarget(addr);
+    }
 
     for (const [addr, g] of this.others) {
       const t = this.targetPos.get(addr);
