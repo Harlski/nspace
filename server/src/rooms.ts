@@ -399,6 +399,7 @@ import {
   recordGameWsOutbound,
   utf8ByteLengthOfWsData,
 } from "./gameWsMetrics.js";
+import { stepHumanAlongPath } from "./pathPosition.js";
 import {
   BLOCK_COLOR_BILLBOARD_SLAB_RGB,
   BLOCK_COLOR_EXIT_PORTAL_RGB,
@@ -4250,55 +4251,15 @@ function advanceAlongPathHuman(
   dt: number,
   placed: ReadonlyMap<string, PlacedProps>
 ): { changed: boolean; arrivedTiles: Array<{ x: number; z: number }> } {
-  let changedThis = false;
-  const arrivedTiles: Array<{ x: number; z: number }> = [];
-  while (true) {
-    if (pathQueue.length === 0) {
-      p.vx = 0;
-      p.vz = 0;
-      break;
-    }
-    const goal = pathQueue[0]!;
-    const gy = waypointY(goal.layer, goal.x, goal.z, placed);
-    const dx = goal.x - p.x;
-    const dy = gy - p.y;
-    const dz = goal.z - p.z;
-    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (dist < ARRIVE_EPS) {
-      const prevTile = snapToTile(p.x, p.z);
-      p.x = goal.x;
-      p.z = goal.z;
-      p.y = gy;
-      p.vx = 0;
-      p.vz = 0;
-      pathQueue.shift();
-      changedThis = true;
-      const newTile = snapToTile(p.x, p.z);
-      if (prevTile.x !== newTile.x || prevTile.z !== newTile.z) {
-        arrivedTiles.push({ x: newTile.x, z: newTile.z });
-      }
-      continue;
-    }
-    const step = MOVE_SPEED * dt;
-    const t = Math.min(1, step / dist);
-    const wb = worldcupMoveClampBounds(roomId);
-    const prevTile = snapToTile(p.x, p.z);
-    const nx = clamp(p.x + dx * t, wb.minX, wb.maxX);
-    const ny = p.y + dy * t;
-    const nz = clamp(p.z + dz * t, wb.minZ, wb.maxZ);
-    p.vx = (dx / dist) * MOVE_SPEED;
-    p.vz = (dz / dist) * MOVE_SPEED;
-    p.x = nx;
-    p.y = ny;
-    p.z = nz;
-    changedThis = true;
-    const newTile = snapToTile(p.x, p.z);
-    if (prevTile.x !== newTile.x || prevTile.z !== newTile.z) {
-      arrivedTiles.push({ x: newTile.x, z: newTile.z });
-    }
-    break;
-  }
-  return { changed: changedThis, arrivedTiles };
+  return stepHumanAlongPath({
+    pose: p,
+    pathQueue,
+    dt,
+    speed: MOVE_SPEED,
+    bounds: worldcupMoveClampBounds(roomId),
+    waypointY: (layer, gx, gz) => waypointY(layer, gx, gz, placed),
+    arriveEps: ARRIVE_EPS,
+  });
 }
 
 function applyCosmeticLoadoutToPlayer(player: PlayerState): void {
