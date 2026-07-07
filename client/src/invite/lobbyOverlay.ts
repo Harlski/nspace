@@ -1,6 +1,7 @@
+import xIconUrl from "../assets/social/x.svg?url";
 import { nimiqIconUseMarkup } from "../ui/nimiqIcons.js";
 import { copyTextToClipboard } from "../util/copyText.js";
-import { resolvePlaySpaceShareUrl } from "./shareUrl.js";
+import { buildPlaySpaceXShareUrl, resolvePlaySpaceShareUrl } from "./shareUrl.js";
 
 export type DirectInviteLobbyState = {
   slug: string;
@@ -84,6 +85,10 @@ export function createDirectInviteLobbyOverlay(
           <div class="direct-invite-lobby__qr"></div>
         </div>
       </div>
+      <div class="direct-invite-lobby__share-row">
+        <button type="button" class="direct-invite-lobby__share-btn direct-invite-lobby__share-copy" aria-label="Copy join link to clipboard">${COPY_ICON}<span>Copy link</span></button>
+        <button type="button" class="direct-invite-lobby__share-btn direct-invite-lobby__share-x" aria-label="Share join link on X"><img class="direct-invite-lobby__share-x-icon" src="${xIconUrl}" alt="" width="16" height="16" aria-hidden="true" /><span>Share on X</span></button>
+      </div>
       <div class="direct-invite-lobby__footer">
         <button type="button" class="direct-invite-lobby__dismiss">Close</button>
         <button type="button" class="direct-invite-lobby__leave">Leave play space</button>
@@ -104,6 +109,10 @@ export function createDirectInviteLobbyOverlay(
   const copyLinkBtn = panel.querySelector<HTMLButtonElement>(
     ".direct-invite-lobby__copy-link"
   )!;
+  const shareCopyBtn = panel.querySelector<HTMLButtonElement>(
+    ".direct-invite-lobby__share-copy"
+  )!;
+  const shareXBtn = panel.querySelector<HTMLButtonElement>(".direct-invite-lobby__share-x")!;
   const qrHost = panel.querySelector<HTMLElement>(".direct-invite-lobby__qr")!;
   const leaveBtn = panel.querySelector<HTMLButtonElement>(".direct-invite-lobby__leave")!;
   const dismissBtn = panel.querySelector<HTMLButtonElement>(".direct-invite-lobby__dismiss")!;
@@ -173,6 +182,23 @@ export function createDirectInviteLobbyOverlay(
       }
       flashCopyLabel(copyCodeBtn, ok);
     })();
+  });
+
+  shareCopyBtn.addEventListener("click", () => {
+    void (async () => {
+      const ok = await copyTextToClipboard(lastShareUrl);
+      if (!ok && lastShareUrl) {
+        urlEl.focus();
+        urlEl.select();
+      }
+      if (ok) handlers.onCopyUrl?.(lastShareUrl);
+      flashCopyLabel(shareCopyBtn, ok);
+    })();
+  });
+
+  shareXBtn.addEventListener("click", () => {
+    if (!lastShareUrl) return;
+    window.open(buildPlaySpaceXShareUrl(lastShareUrl), "_blank", "noopener,noreferrer");
   });
 
   const dismiss = (): void => handlers.onClose?.();

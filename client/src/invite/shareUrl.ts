@@ -16,3 +16,14 @@ function isLoopbackHostname(hostname: string): boolean {
   const h = hostname.trim().toLowerCase();
   return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
 }
+
+/** X (Twitter) compose intent for sharing a Play Space join link. */
+export function buildPlaySpaceXShareUrl(shareUrl: string): string {
+  const url = shareUrl.trim();
+  if (!url) return "https://x.com/intent/tweet";
+  const params = new URLSearchParams({
+    text: "Join my private play space on Nimiq Space!",
+    url,
+  });
+  return `https://x.com/intent/tweet?${params.toString()}`;
+}

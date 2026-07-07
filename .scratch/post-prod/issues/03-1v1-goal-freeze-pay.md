@@ -67,12 +67,12 @@ In the **World Cup 1v1 Match Pitch**, after **scoring a goal**, the scoring play
 
 **Acceptance criteria:**
 
-- [ ] Score a goal in 1v1; after kickoff countdown, **scorer** can move without waiting for opponent goal
-- [ ] Opponent can also move after same kickoff window
-- [ ] Multiple consecutive goals do not leave either player permanently locked
-- [ ] Match-ending goal still transitions to result flow (no spurious unlock mid-teardown)
+- [x] Score a goal in 1v1; after kickoff countdown, **scorer** can move without waiting for opponent goal
+- [x] Opponent can also move after same kickoff window
+- [x] Multiple consecutive goals do not leave either player permanently locked
+- [x] Match-ending goal still transitions to result flow (no spurious unlock mid-teardown)
 - [ ] Verified on Nimiq Pay mini-app; note whether desktop reproduces
-- [ ] `npm run build` and relevant server worldcup match tests pass
+- [x] `npm run build` and relevant server worldcup match tests pass
 
 **Out of scope:**
 

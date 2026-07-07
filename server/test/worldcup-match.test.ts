@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   initMatchState,
+  kickoffRemainingMs,
   matchTimeRemainingMs,
   reduceMatch,
   type MatchConfig,
@@ -130,4 +131,12 @@ test("matchTimeRemainingMs reports regulation then golden, 0 once ended", () => 
     { type: "tick", dtMs: 180_000 },
   ]);
   assert.equal(matchTimeRemainingMs(ended, CFG), 0);
+});
+
+test("kickoffRemainingMs counts down during post-goal freeze and clears at zero", () => {
+  const until = 10_000;
+  assert.equal(kickoffRemainingMs(until, 7_000), 3_000);
+  assert.equal(kickoffRemainingMs(until, 10_000), 0);
+  assert.equal(kickoffRemainingMs(until, 12_000), 0);
+  assert.equal(kickoffRemainingMs(0, 5_000), 0);
 });

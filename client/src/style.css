@@ -1578,12 +1578,12 @@ html.nspace-pseudo-fs #app {
 .player-menu__item {
   width: 100%;
   box-sizing: border-box;
-  padding: 9px 12px;
+  padding: 6px 10px;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: #e8eaef;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   text-align: left;
   cursor: pointer;
@@ -1600,6 +1600,22 @@ html.nspace-pseudo-fs #app {
 
 .player-menu__item--destructive:hover {
   background: rgba(127, 29, 29, 0.35);
+}
+
+.player-menu__item--unread {
+  position: relative;
+}
+
+.player-menu__item--unread::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(15, 17, 23, 0.97);
 }
 
 .player-menu__confirm-msg {
@@ -10397,15 +10413,102 @@ html.nspace-mobile-portrait
 }
 
 .hud-mode-sidebar__shape-color-row--floor {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.hud-build-bottom-dock__floor-color-picker {
+  display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
+}
+
+.hud-build-bottom-dock__floor-color-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.hud-build-bottom-dock__floor-color-meta[hidden] {
+  display: none !important;
+}
+
+.hud-build-bottom-dock__floor-eyedropper-btn {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border-radius: 5px;
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  background: rgba(30, 36, 51, 0.92);
+  color: #c8ceda;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.hud-build-bottom-dock__floor-eyedropper-btn:hover {
+  background-color: rgba(45, 52, 70, 0.95);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #e8eaef;
+}
+
+.hud-build-bottom-dock__floor-eyedropper-btn:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.45);
+  outline-offset: 1px;
+}
+
+.hud-build-bottom-dock__floor-eyedropper-btn--active {
+  border-color: rgba(96, 165, 250, 0.75);
+  background: rgba(37, 99, 235, 0.28);
+  color: #dbeafe;
+}
+
+.hud-build-bottom-dock__floor-eyedropper-icon {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+
+.hud-build-bottom-dock__floor-hex-label {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 1px 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #b8c0d0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  cursor: pointer;
+  text-transform: lowercase;
+}
+
+.hud-build-bottom-dock__floor-hex-label:hover {
+  color: #e8eaef;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.hud-build-bottom-dock__floor-hex-label:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.45);
+  outline-offset: 1px;
 }
 
 .hud-build-bottom-dock__context--floor .hud-build-bottom-dock__floor-brush-setting {
   margin: 0;
-  align-self: stretch;
-  justify-content: flex-end;
+  align-self: center;
+  justify-content: flex-start;
 }
 
 .hud-build-bottom-dock__context-mods > .hud-build-bottom-dock__room-settings .hud-build-bottom-dock__room-setting-label {
@@ -11075,7 +11178,7 @@ html.nspace-mobile-portrait
   flex: 0 0 auto;
   min-height: 0;
   width: auto;
-  gap: 0;
+  gap: 10px;
   justify-content: flex-end;
   align-items: center;
 }
@@ -16757,9 +16860,6 @@ a.main-menu__version:focus-visible {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: clamp(4px, 0.8dvh, 8px);
-  border-radius: 12px;
-  background: #fff;
   line-height: 0;
 }
 
@@ -16786,12 +16886,59 @@ a.main-menu__version:focus-visible {
   font-size: clamp(11px, 1.4dvh + 0.25rem, 13px);
 }
 
+.direct-invite-lobby__share-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(6px, 1.2dvh, 10px);
+  margin-top: clamp(10px, 2dvh, 20px);
+}
+
+.direct-invite-lobby__share-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 2.75rem;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #1e293b;
+  color: #f8fafc;
+  padding: 0 clamp(10px, 2vw, 14px);
+  font-size: clamp(0.75rem, 1.6dvh + 0.3rem, 0.875rem);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.direct-invite-lobby__share-btn:hover {
+  background: #334155;
+  border-color: #475569;
+}
+
+.direct-invite-lobby__share-copy {
+  background: #2563eb;
+  border-color: #3b82f6;
+}
+
+.direct-invite-lobby__share-copy:hover {
+  background: #1d4ed8;
+  border-color: #2563eb;
+}
+
+.direct-invite-lobby__share-x-icon {
+  display: block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+}
+
 .direct-invite-lobby__footer {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: clamp(6px, 1.2dvh, 10px);
-  margin-top: clamp(10px, 2dvh, 20px);
+  margin-top: clamp(8px, 1.5dvh, 14px);
 }
 
 .direct-invite-lobby__dismiss {
@@ -16836,6 +16983,10 @@ a.main-menu__version:focus-visible {
 
   .direct-invite-lobby__copy-btn {
     padding: 0 10px;
+  }
+
+  .direct-invite-lobby__share-row {
+    grid-template-columns: 1fr;
   }
 }
 

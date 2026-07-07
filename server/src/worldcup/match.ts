@@ -144,6 +144,11 @@ export function reduceMatch(
   }
 }
 
+/** Remaining ms in a post-goal kickoff freeze (0 when movement is allowed). */
+export function kickoffRemainingMs(kickoffUntilMs: number, nowMs: number): number {
+  return kickoffUntilMs > nowMs ? Math.max(0, kickoffUntilMs - nowMs) : 0;
+}
+
 /** Remaining ms in the current phase (regulation, then golden). 0 once ended. */
 export function matchTimeRemainingMs(
   state: MatchState,

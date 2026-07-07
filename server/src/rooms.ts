@@ -245,6 +245,7 @@ import {
   FIELD_GOALS as WORLDCUP_FIELD_GOALS,
   GOALIE as WORLDCUP_GOALIE,
   GOALIE_SENTINEL_ADDRESS as WORLDCUP_GOALIE_SENTINEL,
+  GOALIE_STATE_BROADCAST_MIN_MS as WORLDCUP_GOALIE_STATE_BROADCAST_MIN_MS,
   GOAL_REWARD as WORLDCUP_GOAL_REWARD,
   MATCH as WORLDCUP_MATCH,
   WORLDCUP_GOALIE_MODE,
@@ -5759,6 +5760,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       ...cosmeticGalleryWelcomeExtras(targetRoomId),
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, targetRoomId, chatBacklog);
+  worldcupSendGoalieStateToConn(conn, targetRoomId);
   sendRoomCatalog(conn.ws, address);
   onPlayerEnteredRoom(conn, targetRoomId, {
     isRoomChange: true,
@@ -5814,9 +5816,67 @@ const worldcupGoalies = new Map<
   string,
   Map<WorldcupGoalZone["id"], WorldcupGoalieState>
 >();
-/** Throttle Goalie position broadcasts (slow movers - no need for every 50ms tick). */
+/** Throttle Goalie position broadcasts (slow movers - skip when idle). */
 const worldcupGoalieBroadcastAt = new Map<string, number>();
-const WORLDCUP_GOALIE_BROADCAST_MIN_MS = 100;
+const worldcupGoalieLastWire = new Map<string, WorldcupGoalieWire[]>();
+
+function worldcupGoalieWireSnapshot(
+  roomId: string,
+  goals: readonly WorldcupGoalZone[]
+): WorldcupGoalieWire[] {
+  const states = worldcupGoalieMapForRoom(roomId);
+  const wire: WorldcupGoalieWire[] = [];
+  for (const goal of goals) {
+    const state = states.get(goal.id) ?? worldcupInitGoalieState(goal);
+    wire.push({
+      id: goal.id,
+      x: worldcupGoalieLineX(goal),
+      z: Math.round(state.z * 1000) / 1000,
+    });
+  }
+  return wire;
+}
+
+function worldcupGoalieWireChanged(
+  prev: WorldcupGoalieWire[] | undefined,
+  next: WorldcupGoalieWire[]
+): boolean {
+  if (!prev || prev.length !== next.length) return true;
+  for (let i = 0; i < next.length; i++) {
+    const p = prev[i]!;
+    const n = next[i]!;
+    if (p.id !== n.id || Math.abs(p.z - n.z) > 1e-4) return true;
+  }
+  return false;
+}
+
+function worldcupSendGoalieStateToConn(
+  conn: ClientConn,
+  roomId: string
+): void {
+  if (!WORLDCUP_ENABLED || !worldcupIsFieldLikeRoom(roomId)) return;
+  const goalies = worldcupGoalieWireSnapshot(roomId, WORLDCUP_FIELD_GOALS);
+  wsSafeSend(conn.ws, {
+    type: "goalieState",
+    roomId,
+    goalies,
+  } satisfies OutMsg);
+}
+
+function worldcupMaybeBroadcastGoalieState(
+  roomId: string,
+  wire: WorldcupGoalieWire[],
+  now: number
+): void {
+  const nRoom = normalizeRoomId(roomId);
+  const prev = worldcupGoalieLastWire.get(nRoom);
+  if (!worldcupGoalieWireChanged(prev, wire)) return;
+  const last = worldcupGoalieBroadcastAt.get(nRoom) ?? 0;
+  if (now - last < WORLDCUP_GOALIE_STATE_BROADCAST_MIN_MS) return;
+  broadcast(roomId, { type: "goalieState", roomId, goalies: wire });
+  worldcupGoalieBroadcastAt.set(nRoom, now);
+  worldcupGoalieLastWire.set(nRoom, wire.map((g) => ({ ...g })));
+}
 
 /** worldcup: lightweight Goalie position for the client (alongside the ball-state stream). */
 type WorldcupGoalieWire = { id: WorldcupGoalZone["id"]; x: number; z: number };
@@ -6412,6 +6472,7 @@ function worldcupKickoffReset(m: WorldcupMatchRuntime, now: number): void {
   // Fresh centre ball + recentred keepers for the restart.
   worldcupSpawnMatchBall(m.pitchRoomId);
   worldcupGoalies.delete(m.pitchRoomId);
+  worldcupGoalieLastWire.delete(m.pitchRoomId);
   broadcastRoomStateFull(m.pitchRoomId);
 }
 
@@ -6622,6 +6683,7 @@ function worldcupStartMatch(
   // Fresh kickoff ball + clean keeper state for the new pitch.
   worldcupSpawnMatchBall(pitchRoomId);
   worldcupGoalies.delete(pitchRoomId);
+  worldcupGoalieLastWire.delete(pitchRoomId);
 
   // Both leave any open Challenge and are flagged as in-Match.
   for (const c of [challenger, accepter]) {
@@ -6751,6 +6813,7 @@ function worldcupTeardownMatch(m: WorldcupMatchRuntime): void {
   worldcupForgetRoomBallBroadcast(m.pitchRoomId);
   worldcupGoalies.delete(m.pitchRoomId);
   worldcupGoalieBroadcastAt.delete(m.pitchRoomId);
+  worldcupGoalieLastWire.delete(m.pitchRoomId);
   worldcupMatches.delete(m.pitchRoomId);
   const room = rooms.get(m.pitchRoomId);
   if (room && room.size === 0) rooms.delete(m.pitchRoomId);
@@ -7387,11 +7450,7 @@ export function startRoomTick(): void {
           const g = worldcupStepGoaliesForRoom(roomId, WORLDCUP_FIELD_GOALS);
           if (g.kickers.length > 0) ballPlayers.push(...g.kickers);
           if (g.colliders.length > 0) goalieColliders = g.colliders;
-          const lastG = worldcupGoalieBroadcastAt.get(nRoom) ?? 0;
-          if (now - lastG >= WORLDCUP_GOALIE_BROADCAST_MIN_MS) {
-            broadcast(roomId, { type: "goalieState", roomId, goalies: g.wire });
-            worldcupGoalieBroadcastAt.set(nRoom, now);
-          }
+          worldcupMaybeBroadcastGoalieState(roomId, g.wire, now);
         }
         worldcupTickRoomBalls({
           roomId,
@@ -7838,6 +7897,7 @@ export function addClient(
       ...cosmeticGalleryWelcomeExtras(roomId),
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, roomId, chatBacklog);
+  worldcupSendGoalieStateToConn(conn, roomId);
   sendRoomCatalog(ws, address);
   onPlayerEnteredRoom(conn, roomId, {
     spawnHint: spawnHintForPlacement,

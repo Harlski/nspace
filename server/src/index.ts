@@ -121,6 +121,12 @@ import {
 } from "./payoutGateway.js";
 import { startPayoutOutboxDeliveryLoop } from "./payoutOutbox.js";
 import { startPayoutBalancePullLoop } from "./payoutBalancePull.js";
+import {
+  handlePayoutAnalyticsEventPost,
+  initPayoutAnalyticsBridgeForRuntime,
+  requirePayoutServiceBearer,
+  startPayoutAnalyticsBackfillSync,
+} from "./payoutAnalyticsBridge.js";
 import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
 import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
 import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
@@ -887,6 +893,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
     );
   });
 }
+
+/** Payout-service → event log bridge for `/analytics` (bearer: `PAYOUT_SERVICE_API_SECRET`). */
+app.post(
+  "/internal/v1/payout-analytics-events",
+  requirePayoutServiceBearer,
+  handlePayoutAnalyticsEventPost
+);
 
 app.get("/api/nim/payout-balance", async (_req, res) => {
   if (!isPayoutSenderConfigured()) {
@@ -3410,6 +3423,8 @@ startAdminSystemMonitor();
 startGameWsMetricsFlushTimer();
 startPayoutOutboxDeliveryLoop();
 startPayoutBalancePullLoop();
+initPayoutAnalyticsBridgeForRuntime();
+startPayoutAnalyticsBackfillSync();
 startDailyStatsScheduler();
 
 wss.on("connection", (ws, req) => {

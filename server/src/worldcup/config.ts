@@ -132,6 +132,12 @@ export const LAST_KICKER_WINDOW_MS = 12_000;
 /** Min interval between `ballState` broadcasts per room (ms). */
 export const BALL_STATE_BROADCAST_MIN_MS = 90;
 
+/** Min interval between `goalieState` broadcasts when positions changed (ms). */
+export const GOALIE_STATE_BROADCAST_MIN_MS = Math.max(
+  50,
+  envInt("WORLDCUP_GOALIE_BROADCAST_MIN_MS", 250)
+);
+
 /** Max player-placed balls per room (the field's built-in ball is separate). */
 export const MAX_PLACED_BALLS_PER_ROOM = 3;
 

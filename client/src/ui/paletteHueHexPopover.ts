@@ -290,6 +290,59 @@ export function openPaletteHueHexPopover(opts: {
   window.addEventListener("keydown", escapeListener);
 }
 
+/** Click a control to enter a custom `#RRGGBB` color (popover anchored to `anchor`). */
+export function attachPaletteHueHexTrigger(opts: {
+  anchor: HTMLElement;
+  getRgb: () => number;
+  onRgbPreview: (rgb: number) => void;
+  onRgbCommit: (rgb: number) => void;
+  guard?: () => boolean;
+  triggerTitle?: string;
+  triggerAriaLabel?: string;
+  triggerClass?: string;
+}): void {
+  const { anchor } = opts;
+  if (opts.triggerClass) anchor.classList.add(opts.triggerClass);
+  if (opts.triggerTitle) anchor.title = opts.triggerTitle;
+  anchor.setAttribute(
+    "aria-label",
+    opts.triggerAriaLabel ?? "Custom hex color"
+  );
+  anchor.setAttribute("aria-haspopup", "dialog");
+  anchor.setAttribute("aria-expanded", "false");
+
+  const open = (): void => {
+    if (opts.guard?.() === false) return;
+    if (isPaletteHueHexPopoverOpen() && openAnchor === anchor) {
+      closePaletteHueHexPopover();
+      return;
+    }
+    closePaletteHueHexPopover();
+    openPaletteHueHexPopover({
+      anchor,
+      core: anchor,
+      getRgb: opts.getRgb,
+      onRgbPreview: opts.onRgbPreview,
+      onRgbCommit: opts.onRgbCommit,
+    });
+  };
+
+  anchor.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+  });
+  anchor.addEventListener("click", (e) => {
+    e.stopPropagation();
+    open();
+  });
+  anchor.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      e.stopPropagation();
+      open();
+    }
+  });
+}
+
 /** Click the hue ring center to enter a custom `#RRGGBB` color. */
 export function attachPaletteHueRingHexPopover(opts: {
   wrap: HTMLElement;

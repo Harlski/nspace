@@ -4,6 +4,7 @@ export type PlayerMenuItemId =
   | "shop"
   | "achievements"
   | "rooms"
+  | "feedback"
   | "return-from-shaper"
   | "return-to-hub"
   | "logout"
@@ -33,6 +34,7 @@ const FULL_PLAYER_ITEMS: ItemDef[] = [
   { id: "shop", label: "Shop" },
   { id: "achievements", label: "Achievements" },
   { id: "rooms", label: "Rooms" },
+  { id: "feedback", label: "Feedback" },
   { id: "return-to-hub", label: "Return to Hub", returnToHub: true },
   { id: "logout", label: "Logout", destructive: true },
 ];
@@ -58,6 +60,8 @@ export type PlayerMenu = {
   setName: (name: string) => void;
   /** Copy identicon src/hidden state from the top player bar image. */
   syncIdenticonFromBar: (barIdenticon: HTMLImageElement) => void;
+  /** Unread admin reply dot on the Feedback menu row. */
+  setFeedbackUnread: (hasUnread: boolean) => void;
   onAction: (fn: (id: PlayerMenuItemId) => void) => void;
   onConfirm: (fn: (kind: PlayerMenuConfirmKind) => void) => void;
   /** Long-press on the identicon/name pill; used to open the avatar-centred Action Wheel. */
@@ -139,6 +143,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
   let guestMode = false;
   let returnToHubVisible = true;
   let inShaper = false;
+  let feedbackUnread = false;
   let open = false;
   let confirmKind: PlayerMenuConfirmKind | null = null;
   let actionHandler: (id: PlayerMenuItemId) => void = () => {};
@@ -177,6 +182,11 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
       btn.textContent = item.label;
       if (item.destructive) {
         btn.classList.add("player-menu__item--destructive");
+      }
+      if (item.id === "feedback" && feedbackUnread) {
+        btn.classList.add("player-menu__item--unread");
+        btn.setAttribute("aria-label", "Feedback - new reply");
+        btn.title = "Feedback - new reply";
       }
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -453,6 +463,10 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
       } else {
         triggerIdent.removeAttribute("src");
       }
+    },
+    setFeedbackUnread(hasUnread: boolean) {
+      feedbackUnread = hasUnread;
+      renderList();
     },
     onAction(fn: (id: PlayerMenuItemId) => void) {
       actionHandler = fn;

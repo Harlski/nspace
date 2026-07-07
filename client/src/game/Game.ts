@@ -1464,6 +1464,8 @@ export class Game {
     string,
     MoveOrderWire & { startY: number }
   >();
+  /** Local grid-path walk while tick stateDelta omits pose (move-order rollout). */
+  private selfMoveOrder: (MoveOrderWire & { startY: number }) | null = null;
   // worldcup: seasonal soccer ball meshes + interpolation targets + goal frames
   private readonly worldcupBalls = new Map<string, THREE.Mesh>();
   private readonly worldcupBallTargets = new Map<
@@ -1679,6 +1681,11 @@ export class Game {
   private floorPlacementColorRgb = TERRAIN_TILE_EXTRA_COLOR;
   /** N×N floor paintbrush size (1 = single tile). */
   private floorBrushSize: FloorBrushSize = 1;
+  /** Alt-held or eyedropper button: sample floor color instead of painting. */
+  private floorEyedropperActive = false;
+  private floorEyedropperHoverHandler: ((rgb: number | null) => void) | null =
+    null;
+  private floorEyedropperSampleHandler: ((rgb: number) => void) | null = null;
   private placementPyramidBaseScale = 1;
   private placementHexRadiusScale = 1;
   private placementSphereRadiusScale = 1;
@@ -7357,6 +7364,7 @@ export class Game {
       this.roomEntrySpawnPickHandler = null;
       this.clearFloorBrushPreviewTiles();
       this.clearFloorHoverVisuals();
+      this.setFloorEyedropperActive(false);
     }
     this.syncHighlightColor();
     this.syncPlacementRangeHints();
@@ -7386,6 +7394,98 @@ export class Game {
 
   getFloorBrushSize(): FloorBrushSize {
     return this.floorBrushSize;
+  }
+
+  setFloorEyedropperActive(active: boolean): void {
+    if (this.floorEyedropperActive === active) return;
+    this.floorEyedropperActive = active;
+    if (!active) {
+      this.floorEyedropperHoverHandler?.(null);
+      this.clearFloorBrushPreviewTiles();
+      this.clearFloorHoverVisuals();
+    }
+    this.syncFloorEyedropperCanvasCursor(null);
+    this.requestRender(80);
+  }
+
+  getFloorEyedropperActive(): boolean {
+    return this.floorEyedropperActive;
+  }
+
+  setFloorEyedropperHoverHandler(
+    fn: ((rgb: number | null) => void) | null
+  ): void {
+    this.floorEyedropperHoverHandler = fn;
+  }
+
+  setFloorEyedropperSampleHandler(fn: ((rgb: number) => void) | null): void {
+    this.floorEyedropperSampleHandler = fn;
+  }
+
+  /** Stored paint color for a floor tile (ignores door/portal glow). */
+  getLogicalFloorPaintColorAt(x: number, z: number): number | null {
+    if (!this.isFloorEyedropperSampleTarget(x, z)) return null;
+    const k = tileKey(x, z);
+    const isExtra = !isBaseTile(x, z, this.roomId);
+    if (isExtra) {
+      return this.extraFloorColorByKey.get(k) ?? TERRAIN_TILE_EXTRA_COLOR;
+    }
+    return (
+      this.baseFloorColorByKey.get(k) ??
+      this.implicitBaseFloorColorRgb(x, z) ??
+      TERRAIN_TILE_CORE_COLOR
+    );
+  }
+
+  private isFloorEyedropperSampleTarget(x: number, z: number): boolean {
+    if (this.isFloorRecolorTarget(x, z)) return true;
+    const k = tileKey(x, z);
+    if (this.extraFloorKeys.has(k)) return true;
+    return this.tileWalkable({ x, y: z });
+  }
+
+  private syncFloorEyedropperCanvasCursor(
+    sampleable: boolean | null
+  ): void {
+    if (!this.floorExpandMode || !this.floorEyedropperActive) {
+      this.renderer.domElement.style.cursor = "pointer";
+      return;
+    }
+    if (sampleable === null) {
+      this.renderer.domElement.style.cursor = "crosshair";
+      return;
+    }
+    this.renderer.domElement.style.cursor = sampleable
+      ? "crosshair"
+      : "not-allowed";
+  }
+
+  private syncFloorEyedropperHover(clientX: number, clientY: number): void {
+    this.tileHighlight.visible = false;
+    this.clearFloorBrushPreviewTiles();
+    this.clearFloorHoverVisuals();
+    const t = this.pickFloor(clientX, clientY);
+    if (!t) {
+      this.syncFloorEyedropperCanvasCursor(false);
+      this.floorEyedropperHoverHandler?.(null);
+      return;
+    }
+    const rgb = this.getLogicalFloorPaintColorAt(t.x, t.y);
+    this.syncFloorEyedropperCanvasCursor(rgb !== null);
+    this.floorEyedropperHoverHandler?.(rgb);
+  }
+
+  private tryFloorEyedropperSampleAt(clientX: number, clientY: number): boolean {
+    if (!this.floorEyedropperActive || this.roomEntrySpawnPickHandler) {
+      return false;
+    }
+    const dest = this.pickFloor(clientX, clientY);
+    if (!dest) return true;
+    const rgb = this.getLogicalFloorPaintColorAt(dest.x, dest.y);
+    if (rgb === null) return true;
+    this.setFloorPlacementColorRgb(rgb);
+    this.floorEyedropperSampleHandler?.(rgb);
+    return true;
   }
 
   /**
@@ -10010,6 +10110,13 @@ export class Game {
   }
 
   private syncFloorExpandTileHover(clientX: number, clientY: number): void {
+    if (
+      this.floorEyedropperActive &&
+      !this.roomEntrySpawnPickHandler
+    ) {
+      this.syncFloorEyedropperHover(clientX, clientY);
+      return;
+    }
     const t = this.pickFloor(clientX, clientY);
     if (!t) {
       this.tileHighlight.visible = false;
@@ -11212,6 +11319,9 @@ export class Game {
         fn(dest.x, dest.y);
         return;
       }
+      if (this.tryFloorEyedropperSampleAt(e.clientX, e.clientY)) {
+        return;
+      }
       if (Game.isDesktopFinePointer()) {
         this.tryPlaceFloorTileAt(dest.x, dest.y);
       } else {
@@ -11634,6 +11744,7 @@ export class Game {
     this.others.clear();
     this.targetPos.clear();
     this.remoteMoveOrders.clear();
+    this.selfMoveOrder = null;
     for (const [, mesh] of this.canvasIdenticonMeshes) {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
@@ -13462,7 +13573,20 @@ export class Game {
 
   /** Server-authoritative path intent for a remote avatar (`moveOrder` dual-send tracer). */
   applyMoveOrder(msg: MoveOrderWire): void {
-    if (msg.address === this.selfAddress) return;
+    if (msg.address === this.selfAddress) {
+      // Pitch free-move still receives movement stateDelta; grid walks rely on moveOrder.
+      if (this.isWorldcupFreeMoveRoom()) return;
+      const startY =
+        this.selfTargetPos?.y ?? this.selfMesh?.position.y ?? 0;
+      this.selfMoveOrder = {
+        ...msg,
+        startY,
+        path: msg.path.map((w) => ({ ...w })),
+      };
+      this.refreshSelfMoveOrderTarget();
+      this.requestRender(400);
+      return;
+    }
     const t = this.targetPos.get(msg.address);
     const g = this.others.get(msg.address);
     const startY = t?.y ?? g?.position.y ?? 0;
@@ -13477,6 +13601,21 @@ export class Game {
 
   /** Drop remote path playback and snap to authoritative pose (`moveAbort`). */
   applyMoveAbort(msg: RemoteMoveAbortWire): void {
+    if (msg.address === this.selfAddress) {
+      if (!this.isWorldcupFreeMoveRoom()) {
+        this.selfMoveOrder = null;
+        const py = Number.isFinite(msg.y) ? msg.y : 0;
+        if (this.selfTargetPos) {
+          this.selfTargetPos.set(msg.x, py, msg.z);
+        }
+        this.selfMesh?.position.set(msg.x, py, msg.z);
+        this.selfServerVx = msg.vx;
+        this.selfServerVz = msg.vz;
+        this.selfLastServerRecvMs = performance.now();
+      }
+      this.requestRender(400);
+      return;
+    }
     applyRemoteMoveAbort({
       msg,
       selfAddress: this.selfAddress,
@@ -13530,6 +13669,30 @@ export class Game {
     }
   }
 
+  private refreshSelfMoveOrderTarget(nowMs = Date.now()): void {
+    const order = this.selfMoveOrder;
+    if (!order) return;
+    const bounds = this.pathMoveBoundsForPlayback();
+    const { pose, pathRemaining } = remotePoseFromMoveOrder({
+      order,
+      startY: order.startY,
+      nowMs,
+      bounds,
+      placed: this.placedObjects,
+    });
+    if (!moveOrderPlaybackActive(pathRemaining)) {
+      this.selfMoveOrder = null;
+    }
+    if (!this.selfTargetPos) {
+      this.selfTargetPos = new THREE.Vector3(pose.x, pose.y, pose.z);
+    } else {
+      this.selfTargetPos.set(pose.x, pose.y, pose.z);
+    }
+    this.selfServerVx = pose.vx;
+    this.selfServerVz = pose.vz;
+    this.selfLastServerRecvMs = performance.now();
+  }
+
   syncState(players: PlayerState[]): void {
     let visualChanged = false;
     const seen = new Set<string>();
@@ -13543,7 +13706,7 @@ export class Game {
             this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
             this.selfMesh.position.set(p.x, py, p.z);
             visualChanged = true;
-          } else {
+          } else if (!this.selfMoveOrder) {
             visualChanged =
               visualChanged ||
               Math.hypot(this.selfTargetPos.x - p.x, this.selfTargetPos.z - p.z) > 0.001 ||
@@ -13551,24 +13714,24 @@ export class Game {
               Math.abs(this.selfServerVx - p.vx) > 0.001 ||
               Math.abs(this.selfServerVz - p.vz) > 0.001;
             this.selfTargetPos.set(p.x, py, p.z);
-          }
-          this.selfLastServerRecvMs = performance.now();
-          this.selfServerVx = p.vx;
-          this.selfServerVz = p.vz;
-          const ox = this.selfMesh.position.x;
-          const oy = this.selfMesh.position.y;
-          const oz = this.selfMesh.position.z;
-          const jumped =
-            Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5;
-          if (jumped) {
-            this.selfMesh.position.set(p.x, py, p.z);
-            visualChanged = true;
-          }
-          if (!this.cameraFollowReady || jumped) {
-            this.cameraLookAt.set(p.x, py, p.z);
-            this.applyCameraPose();
-            this.cameraFollowReady = true;
-            visualChanged = true;
+            this.selfLastServerRecvMs = performance.now();
+            this.selfServerVx = p.vx;
+            this.selfServerVz = p.vz;
+            const ox = this.selfMesh.position.x;
+            const oy = this.selfMesh.position.y;
+            const oz = this.selfMesh.position.z;
+            const jumped =
+              Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5;
+            if (jumped) {
+              this.selfMesh.position.set(p.x, py, p.z);
+              visualChanged = true;
+            }
+            if (!this.cameraFollowReady || jumped) {
+              this.cameraLookAt.set(p.x, py, p.z);
+              this.applyCameraPose();
+              this.cameraFollowReady = true;
+              visualChanged = true;
+            }
           }
           this.syncAvatarNameLabelFromState(this.selfMesh, this.withSelfCosmeticPreview(p));
           this.syncTypingIndicatorForGroup(this.selfMesh, p);
@@ -13576,7 +13739,11 @@ export class Game {
           syncCosmeticLoadoutVfx(
             this.selfMesh,
             this.withSelfCosmeticPreview(p),
-            this.playerMovedRecently(p.address, p.x, p.z)
+            this.playerMovedRecently(
+              p.address,
+              this.selfMoveOrder ? this.selfTargetPos!.x : p.x,
+              this.selfMoveOrder ? this.selfTargetPos!.z : p.z
+            )
           );
         }
         continue;
@@ -14391,6 +14558,9 @@ export class Game {
     this.updateVoxelTextTween();
 
     if (this.selfMesh && this.selfTargetPos) {
+      if (this.selfMoveOrder) {
+        this.refreshSelfMoveOrderTarget();
+      }
       const t = this.selfTargetPos;
       const mx = this.selfMesh.position.x;
       const my = this.selfMesh.position.y;
@@ -15786,6 +15956,21 @@ export class Game {
     port.lastSig = "";
   }
 
+  /** Swap a preview canvas for a fresh element so a new WebGL context can bind. */
+  private recycleInspectorPreviewCanvas(
+    canvas: HTMLCanvasElement
+  ): HTMLCanvasElement {
+    const fresh = document.createElement("canvas");
+    if (canvas.id) fresh.id = canvas.id;
+    fresh.className = canvas.className;
+    fresh.width = canvas.width;
+    fresh.height = canvas.height;
+    const ariaHidden = canvas.getAttribute("aria-hidden");
+    if (ariaHidden != null) fresh.setAttribute("aria-hidden", ariaHidden);
+    canvas.replaceWith(fresh);
+    return fresh;
+  }
+
   private disposeInspectorTilePreviewPort(port: InspectorTilePreviewPort): void {
     port.resizeObserver.disconnect();
     this.resetInspectorPreviewBlockSlot(port);
@@ -15796,6 +15981,9 @@ export class Game {
       port.renderer.forceContextLoss();
     }
     port.scene.clear();
+    // forceContextLoss leaves the canvas unusable until it is replaced; the slot
+    // stays in the dock so the next bind must get a fresh surface.
+    this.recycleInspectorPreviewCanvas(port.canvas);
   }
 
   private inspectorTilePreviewSignature(meta: BlockStyleProps): string {

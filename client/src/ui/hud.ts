@@ -9,6 +9,7 @@ import {
   clampPyramidBaseScale,
   clampSphereRadiusScale,
   DEFAULT_BLOCK_COLOR_RGB,
+  formatColorRgbHex,
   hueDegToBlockColorRgb,
   isPlainCubeTerrain,
   normalizeBlockPrismParts,
@@ -128,7 +129,9 @@ import {
 } from "./paletteHueRing.js";
 import {
   attachPaletteHueRingHexPopover,
+  attachPaletteHueHexTrigger,
   closePaletteHueHexPopover,
+  isPaletteHueHexPopoverTyping,
 } from "./paletteHueHexPopover.js";
 import { mountHeaderMarquee } from "./headerMarquee.js";
 import { createPlayerMenu, type PlayerMenuItemId } from "./playerMenu.js";
@@ -6221,10 +6224,14 @@ export function createHud(
       cycleDestination(ev.shiftKey ? -1 : 1);
       return;
     }
-    if (ev.key === "Escape" && whisperTarget) {
+    if (ev.key === "Escape") {
       ev.preventDefault();
       ev.stopImmediatePropagation();
-      applyDestination(null);
+      if (whisperTarget) {
+        applyDestination(null);
+      } else {
+        chatInput.blur();
+      }
       return;
     }
     // Backspace on an empty field snaps back to Say (token-style), like Slack/Discord.
@@ -6636,7 +6643,33 @@ export function createHud(
   const floorHueRingWrap = floorHueRingParts.wrap;
   const floorHueRing = floorHueRingParts.ring;
   const floorHueCore = floorHueRingParts.core;
-  floorShapeColorRow.appendChild(floorHueRingWrap);
+
+  const floorColorPickerColumn = document.createElement("div");
+  floorColorPickerColumn.className =
+    "hud-build-bottom-dock__floor-color-picker";
+  floorColorPickerColumn.appendChild(floorHueRingWrap);
+
+  const floorColorMetaRow = document.createElement("div");
+  floorColorMetaRow.className = "hud-build-bottom-dock__floor-color-meta";
+  floorColorMetaRow.hidden = true;
+
+  const floorEyedropperBtn = document.createElement("button");
+  floorEyedropperBtn.type = "button";
+  floorEyedropperBtn.className =
+    "hud-build-bottom-dock__floor-eyedropper-btn";
+  floorEyedropperBtn.setAttribute("aria-label", "Pick floor color");
+  floorEyedropperBtn.title = "Pick color from floor (hold Alt)";
+  floorEyedropperBtn.setAttribute("aria-pressed", "false");
+  floorEyedropperBtn.innerHTML = `<svg class="hud-build-bottom-dock__floor-eyedropper-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 21v-6l8.5-8.5a2.12 2.12 0 0 1 3 3L10 18H7zm2-4h1l7.5-7.5-1-1L9 16v1zm9.5-11a2.12 2.12 0 0 1 0 3L18 4.5 16.5 3l1.5-1.5a2.12 2.12 0 0 1 3 0z"/></svg>`;
+
+  const floorHexLabel = document.createElement("button");
+  floorHexLabel.type = "button";
+  floorHexLabel.className = "hud-build-bottom-dock__floor-hex-label";
+  floorHexLabel.setAttribute("aria-label", "Custom floor hex color");
+  floorHexLabel.title = "Custom floor hex color";
+
+  floorColorMetaRow.append(floorEyedropperBtn, floorHexLabel);
+  floorColorPickerColumn.appendChild(floorColorMetaRow);
 
   const buildDockFloorBrushSettingRow = document.createElement("div");
   buildDockFloorBrushSettingRow.className =
@@ -6659,7 +6692,10 @@ export function createHud(
     floorBrushSizeLabel,
     floorBrushSizeSelect
   );
-  floorShapeColorRow.appendChild(buildDockFloorBrushSettingRow);
+  floorShapeColorRow.append(
+    buildDockFloorBrushSettingRow,
+    floorColorPickerColumn
+  );
 
   const hueDockBlockPreview = document.createElement("div");
   hueDockBlockPreview.className = "hud-mode-sidebar__block-preview-dock";
@@ -9116,6 +9152,10 @@ export function createHud(
       !isBuildObjectSelectionActive();
     floorShapeColorRow.hidden = !floorTabActive;
     buildDockFloorBrushSettingRow.hidden = !floorPaintActive;
+    floorColorMetaRow.hidden = !floorPaintActive;
+    if (!floorPaintActive) {
+      exitFloorEyedropperMode();
+    }
   }
 
   function syncBuildDockRoomCategoryChrome(): void {
@@ -10937,6 +10977,7 @@ export function createHud(
       brandLinksFeedbackBtn.title = label;
     }
     playerBar.classList.toggle("hud-player-bar--feedback-unread", hasUnread);
+    playerMenu.setFeedbackUnread(hasUnread);
     if (brandLinksPlayerAddress.trim()) {
       playerBar.setAttribute("aria-label", playerBarAriaLabel(hasUnread));
     }
@@ -11413,6 +11454,9 @@ export function createHud(
         break;
       case "rooms":
         roomsOpenHandler();
+        break;
+      case "feedback":
+        showFeedbackOverlay();
         break;
       case "return-to-hub":
         returnHomeHandler();
@@ -12282,14 +12326,130 @@ export function createHud(
 
   let floorColorRgb = FLOOR_TILE_DEFAULT_COLOR_RGB;
   let floorLastHueDeg = blockColorRgbToHueDeg(FLOOR_TILE_DEFAULT_COLOR_RGB);
+  let floorEyedropperAltHeld = false;
+  let floorEyedropperButtonActive = false;
   floorHueCore.style.background = cssHex(floorColorRgb);
+  floorHexLabel.textContent = formatColorRgbHex(floorColorRgb);
 
   function syncFloorColorRgbUi(rgb: number): void {
     floorColorRgb = clampColorRgb(rgb);
     floorLastHueDeg = blockColorRgbToHueDeg(floorColorRgb);
     floorHueRing.setAttribute("aria-valuenow", String(floorLastHueDeg));
     floorHueCore.style.background = cssHex(floorColorRgb);
+    floorHexLabel.textContent = formatColorRgbHex(floorColorRgb);
     floorPlacementColorHandler?.(floorColorRgb);
+  }
+
+  function syncFloorEyedropperPreviewUi(rgb: number): void {
+    floorHueRing.setAttribute(
+      "aria-valuenow",
+      String(blockColorRgbToHueDeg(rgb))
+    );
+    floorHueCore.style.background = cssHex(rgb);
+    floorHexLabel.textContent = formatColorRgbHex(rgb);
+  }
+
+  function revertFloorEyedropperPreview(): void {
+    floorHueRing.setAttribute("aria-valuenow", String(floorLastHueDeg));
+    floorHueCore.style.background = cssHex(floorColorRgb);
+    floorHexLabel.textContent = formatColorRgbHex(floorColorRgb);
+  }
+
+  function syncFloorEyedropperMode(): void {
+    const active = floorEyedropperAltHeld || floorEyedropperButtonActive;
+    inspectorPreviewGameRef?.setFloorEyedropperActive(active);
+    floorEyedropperBtn.setAttribute(
+      "aria-pressed",
+      floorEyedropperButtonActive ? "true" : "false"
+    );
+    floorEyedropperBtn.classList.toggle(
+      "hud-build-bottom-dock__floor-eyedropper-btn--active",
+      floorEyedropperButtonActive
+    );
+    if (!active) {
+      revertFloorEyedropperPreview();
+    }
+  }
+
+  function exitFloorEyedropperMode(): void {
+    floorEyedropperAltHeld = false;
+    floorEyedropperButtonActive = false;
+    syncFloorEyedropperMode();
+  }
+
+  function onFloorEyedropperSampled(rgb: number): void {
+    syncFloorColorRgbUi(rgb);
+    if (floorEyedropperButtonActive) {
+      floorEyedropperButtonActive = false;
+      syncFloorEyedropperMode();
+    }
+  }
+
+  function floorEyedropperKeyboardAllowed(): boolean {
+    if (!inspectorPreviewGameRef?.getFloorExpandMode()) return false;
+    if (buildDockFloorBrushSettingRow.hidden) return false;
+    const ae = document.activeElement;
+    const tag = ae?.tagName ?? "";
+    if (
+      tag === "INPUT" ||
+      tag === "TEXTAREA" ||
+      tag === "SELECT" ||
+      (ae instanceof HTMLElement && ae.isContentEditable)
+    ) {
+      return false;
+    }
+    if (isPaletteHueHexPopoverTyping()) return false;
+    return true;
+  }
+
+  function onFloorEyedropperKeydown(e: KeyboardEvent): void {
+    if (e.key === "Escape" && floorEyedropperButtonActive) {
+      floorEyedropperButtonActive = false;
+      syncFloorEyedropperMode();
+      e.preventDefault();
+      return;
+    }
+    if (e.key !== "Alt" || e.repeat) return;
+    if (!floorEyedropperKeyboardAllowed()) return;
+    floorEyedropperAltHeld = true;
+    syncFloorEyedropperMode();
+    e.preventDefault();
+  }
+
+  function onFloorEyedropperKeyup(e: KeyboardEvent): void {
+    if (e.key !== "Alt") return;
+    if (!floorEyedropperAltHeld) return;
+    floorEyedropperAltHeld = false;
+    syncFloorEyedropperMode();
+  }
+
+  window.addEventListener("keydown", onFloorEyedropperKeydown);
+  window.addEventListener("keyup", onFloorEyedropperKeyup);
+  window.addEventListener("blur", () => {
+    if (!floorEyedropperAltHeld) return;
+    floorEyedropperAltHeld = false;
+    syncFloorEyedropperMode();
+  });
+
+  floorEyedropperBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (buildDockFloorBrushSettingRow.hidden) return;
+    floorEyedropperButtonActive = !floorEyedropperButtonActive;
+    syncFloorEyedropperMode();
+  });
+
+  function bindFloorEyedropperGameHandlers(game: Game | null): void {
+    game?.setFloorEyedropperHoverHandler((rgb) => {
+      if (rgb === null) {
+        revertFloorEyedropperPreview();
+      } else {
+        syncFloorEyedropperPreviewUi(rgb);
+      }
+    });
+    game?.setFloorEyedropperSampleHandler(onFloorEyedropperSampled);
+    if (!game) {
+      exitFloorEyedropperMode();
+    }
   }
 
   function applyFloorHueDegrees(hueDeg: number): void {
@@ -12316,6 +12476,15 @@ export function createHud(
   attachPaletteHueRingHexPopover({
     wrap: floorHueRingWrap,
     core: floorHueCore,
+    getRgb: () => floorColorRgb,
+    onRgbPreview: syncFloorColorRgbUi,
+    onRgbCommit: syncFloorColorRgbUi,
+    guard: () => !floorShapeColorRow.hidden,
+    triggerTitle: "Custom floor hex color",
+    triggerAriaLabel: "Custom floor hex color",
+  });
+  attachPaletteHueHexTrigger({
+    anchor: floorHexLabel,
     getRgb: () => floorColorRgb,
     onRgbPreview: syncFloorColorRgbUi,
     onRgbCommit: syncFloorColorRgbUi,
@@ -13848,8 +14017,12 @@ export function createHud(
     dockThumbGlBindGen += 1;
     const prev = inspectorPreviewGameRef;
     inspectorPreviewGameRef = game;
+    bindFloorEyedropperGameHandlers(game);
     const unbindDock = (g: Game): void => {
       g.clearDockStripThumbnailCache();
+      g.setFloorEyedropperHoverHandler(null);
+      g.setFloorEyedropperSampleHandler(null);
+      g.setFloorEyedropperActive(false);
     };
     if (prev && prev !== game) {
       prev.bindInspectorTilePreviewCanvas("placement", null);

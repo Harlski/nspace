@@ -8,6 +8,7 @@ describe("playerMenuItemLabelsForMode", () => {
       "Shop",
       "Achievements",
       "Rooms",
+      "Feedback",
       "Return to Hub",
       "Logout",
     ]);
@@ -28,6 +29,7 @@ describe("playerMenuItemLabelsForMode", () => {
       "Shop",
       "Achievements",
       "Rooms",
+      "Feedback",
       "Logout",
     ]);
   });
@@ -39,6 +41,7 @@ describe("playerMenuItemLabelsForMode", () => {
       "Shop",
       "Achievements",
       "Rooms",
+      "Feedback",
       "Return to Hub",
       "Logout",
     ]);
