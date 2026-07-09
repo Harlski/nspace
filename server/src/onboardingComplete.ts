@@ -6,9 +6,17 @@ import {
 /** Capstone Getting started achievement - unlocks the in-world Telescope control. */
 export const TELESCOPE_ACHIEVEMENT_ID = "telescope";
 
+/** Onboarding achievements that complement but do not gate the Telescope capstone. */
+export const TELESCOPE_EXCLUDED_ONBOARDING_IDS = new Set([
+  TELESCOPE_ACHIEVEMENT_ID,
+  "first-nim",
+]);
+
 export function listOnboardingPrerequisiteDefinitions(): ReadonlyArray<AchievementDefinition> {
   return ACHIEVEMENT_DEFINITIONS.filter(
-    (d) => d.category === "onboarding" && d.id !== TELESCOPE_ACHIEVEMENT_ID
+    (d) =>
+      d.category === "onboarding" &&
+      !TELESCOPE_EXCLUDED_ONBOARDING_IDS.has(d.id)
   );
 }
 

@@ -141,7 +141,8 @@ export type MainMenuOptions = {
     token: string,
     address: string,
     nimiqPay?: boolean,
-    usernamePrompt?: UsernamePromptStatus
+    usernamePrompt?: UsernamePromptStatus,
+    needsTutorial?: boolean
   ) => void | Promise<void>;
   onLogout: (address?: string) => void;
 };
@@ -688,7 +689,8 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         verified.token,
         verified.address,
         verified.nimiqPay,
-        verified.usernamePrompt
+        verified.usernamePrompt,
+        verified.tutorial?.needsTutorial
       );
     } finally {
       if (root.isConnected) setBusy(false);
@@ -774,7 +776,8 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         verified.token,
         verified.address,
         verified.nimiqPay,
-        verified.usernamePrompt
+        verified.usernamePrompt,
+        verified.tutorial?.needsTutorial
       );
     } catch (e) {
       showErr(e instanceof Error ? e.message : "dev_login_failed");

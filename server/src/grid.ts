@@ -268,6 +268,8 @@ export type TerrainProps = {
       };
   // Experimental: Claimable/minable blocks
   claimable?: boolean;
+  /** Tutorial layout marker for per-wallet assigned faucet slots. */
+  tutorialMineSlot?: boolean;
   active?: boolean;
   cooldownMs?: number; // Cooldown period in milliseconds
   lastClaimedAt?: number; // Timestamp of last claim

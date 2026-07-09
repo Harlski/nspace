@@ -26,6 +26,11 @@ import {
 import { isInviteLobbyRoomId as isDirectInviteLobbyId } from "./directInvite/config.js";
 import { PLAY_SPACE_BOUNDS } from "./directInvite/playSpaceLayout.js";
 import {
+  TUTORIAL_ROOM_ID,
+  TUTORIAL_STAGING_ROOM_ID,
+} from "./tutorial/roomIds.js";
+import { TUTORIAL_DEFAULT_BOUNDS } from "./tutorialTemplate/bootstrapShell.js";
+import {
   COSMETIC_GALLERY_BOUNDS,
   isCosmeticGalleryRoom,
 } from "./cosmeticGallery.js";
@@ -192,6 +197,8 @@ const BUILTIN_ROOM_IDS = new Set([
   CHAMBER_ROOM_ID,
   CANVAS_ROOM_ID,
   PIXEL_ROOM_ID,
+  TUTORIAL_ROOM_ID,
+  TUTORIAL_STAGING_ROOM_ID,
 ]);
 loadRoomRegistry(BUILTIN_ROOM_IDS);
 
@@ -212,6 +219,9 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
       return CANVAS_BOUNDS;
     case PIXEL_ROOM_ID:
       return PIXEL_BOUNDS;
+    case TUTORIAL_ROOM_ID:
+    case TUTORIAL_STAGING_ROOM_ID:
+      return { ...TUTORIAL_DEFAULT_BOUNDS };
     default:
       if (isCosmeticGalleryRoom(id)) {
         return { ...COSMETIC_GALLERY_BOUNDS };

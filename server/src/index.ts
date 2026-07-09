@@ -16,6 +16,10 @@ import {
 } from "./adminChatLog.js";
 import { registerDirectInviteRoutes } from "./directInvite/httpHandlers.js";
 import { registerPlaySpaceTemplateAdminRoutes } from "./playSpaceTemplate/routes.js";
+import { registerTutorialTemplateAdminRoutes } from "./tutorialTemplate/routes.js";
+import { registerTutorialRoutes } from "./tutorial/routes.js";
+import { initTutorialTemplateStore } from "./tutorialTemplate/store.js";
+import { computeNeedsTutorial } from "./tutorialSessionService.js";
 import {
   isInviteLobbyRoomId,
   makeInviteLobbyRoomId,
@@ -322,6 +326,7 @@ import {
   isChannelMuted,
   isMiningBanned,
   isUsernameSetBanned,
+  listMiningBannedWalletKeys,
   listModerationSnapshot,
   setChannelMuted,
   setMiningBanned,
@@ -899,6 +904,15 @@ app.post(
   "/internal/v1/payout-analytics-events",
   requirePayoutServiceBearer,
   handlePayoutAnalyticsEventPost
+);
+
+/** Payout-service sync: wallets with an active mining restriction (block-claim payouts held). */
+app.get(
+  "/internal/v1/mining-banned-wallets",
+  requirePayoutServiceBearer,
+  (_req, res) => {
+    res.json({ wallets: listMiningBannedWalletKeys() });
+  }
 );
 
 app.get("/api/nim/payout-balance", async (_req, res) => {
@@ -3377,6 +3391,9 @@ app.post("/api/auth/verify", async (req, res) => {
     address: sessionAddress,
     nimiqPay,
     usernamePrompt,
+    tutorial: nimiqPay
+      ? { needsTutorial: computeNeedsTutorial(true, normAddr) }
+      : undefined,
   });
 });
 
@@ -3395,6 +3412,8 @@ registerDirectInviteRoutes(app, {
   onInviteCreated: directInviteOnCreated,
 });
 registerPlaySpaceTemplateAdminRoutes(app, requireSystemAdminWallet);
+registerTutorialTemplateAdminRoutes(app, requireSystemAdminWallet);
+registerTutorialRoutes(app, requireJwt, jwtAddressFromReq);
 
 const server = createServer(app);
 
@@ -3403,6 +3422,7 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 initCampaignStore();
 initCosmeticStore();
 initAchievementStore();
+initTutorialTemplateStore();
 initCampaignAnalyticsStore();
 const repairedCampaignBalances = repairInflatedCampaignBalances();
 if (repairedCampaignBalances > 0) {

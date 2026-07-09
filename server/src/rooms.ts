@@ -283,6 +283,28 @@ import {
   type BuildShell,
 } from "./playSpaceTemplate/index.js";
 import {
+  applyDefaultTutorialTemplateToRuntimeShell,
+  initTutorialTemplateStore,
+} from "./tutorialTemplate/store.js";
+import {
+  TUTORIAL_ROOM_ID,
+  isTutorialRuntimeRoomId,
+  isTutorialStagingRoomId,
+  isTutorialBuilderWallet,
+} from "./tutorial/config.js";
+import {
+  buildTutorialWelcomeForConn,
+  teleporterMayTargetTutorialRoom,
+  tutorialBypassBalancePeek,
+  tutorialGateMayOpen,
+  tutorialJoinRoomAllowed,
+  tutorialLessonSuppressesChat,
+  tutorialMaybeCompleteOnHubEntry,
+  tutorialRoomHiddenFromCatalog,
+  tutorialTryFinalizeMineClaim,
+} from "./tutorial/roomsIntegration.js";
+import type { TutorialWelcome } from "./tutorialSessionService.js";
+import {
   PLAY_SPACE_BACKGROUND_HUE_DEG,
   PLAY_SPACE_SPAWN,
 } from "./directInvite/playSpaceLayout.js";
@@ -865,6 +887,7 @@ export type ObstacleTile = {
   locked?: boolean;
   // Experimental: Claimable/minable blocks
   claimable?: boolean;
+  tutorialMineSlot?: boolean;
   active?: boolean;
   cooldownMs?: number;
   lastClaimedAt?: number;
@@ -953,6 +976,12 @@ interface ClientConn {
   subscribedChunks: Set<string>;
   /** `?stream=1` cinema view - receives room sync but is not a visible participant. */
   streamObserver?: boolean;
+  /** Nimiq Pay mini-app session (first-contact tutorial routing). */
+  sessionNimiqPay?: boolean;
+  /** Suppress chat/emotes during tutorial lesson mode. */
+  tutorialSuppressSocial?: boolean;
+  /** Entered tutorial room via teleporter (sandbox revisit). */
+  tutorialViaTeleporter?: boolean;
 }
 
 function withinBlockActionRange(
@@ -1154,6 +1183,9 @@ export function canTeleporterDestinationRoom(
   address: string
 ): boolean {
   const id = normalizeRoomId(roomId);
+  if (isTutorialRuntimeRoomId(id)) {
+    return teleporterMayTargetTutorialRoom(id, isAdmin(address));
+  }
   if (
     WORLDCUP_ENABLED &&
     id === WORLDCUP_FIELD_ROOM_ID &&
@@ -1260,6 +1292,8 @@ type OutMsg =
       roomDeployablesAllowed?: boolean;
       /** When set, this wallet cannot earn NIM from block claims (guest or mining restriction). */
       blockClaimDeniedReason?: string;
+      /** Nimiq Pay first-contact tutorial state (lesson or sandbox). */
+      tutorial?: TutorialWelcome;
       /** Dynamic rooms: owner may toggle deployables via `updateRoom`. */
       allowRoomDeployablesEdit?: boolean;
       /** Recent room chat (non-bubble); same order as live `chat` messages. */
@@ -1462,7 +1496,7 @@ type OutMsg =
   | {
       type: "joinRoomFailed";
       roomId: string;
-      reason: "not_found";
+      reason: "not_found" | "forbidden";
     }
   | {
       type: "shaperReturnFailed";
@@ -1921,6 +1955,23 @@ registerWorldStateRefs(
   normalizeRoomId
 );
 initPlaySpaceTemplateStore();
+initTutorialTemplateStore();
+
+function tutorialWelcomeForAddress(
+  address: string,
+  roomId: string,
+  nimiqPay: boolean,
+  viaTeleporter?: boolean
+): TutorialWelcome | undefined {
+  ensureTutorialRoomLayout(roomId);
+  return buildTutorialWelcomeForConn({
+    wallet: address,
+    roomId,
+    sessionNimiqPay: nimiqPay,
+    viaTeleporter,
+    listMineSlots: () => listTutorialMineSlotTileKeys(roomId),
+  });
+}
 
 /** One-time: replace Pixel random-color seed with uniform neutral gray; then fill gaps. */
 function migratePixelRoomToNeutralBaseFloor(): void {
@@ -2213,6 +2264,80 @@ function clearPlaySpaceLayout(roomId: string): void {
   roomExtraFloor.delete(roomId);
   roomBaseFloorRemoved.delete(roomId);
   lastSpawnByRoom.delete(roomId);
+}
+
+const tutorialLayoutSeeded = new Set<string>();
+
+function listTutorialMineSlotTileKeys(roomId: string): string[] {
+  const placed = roomPlaced.get(roomId);
+  if (!placed) return [];
+  const out: string[] = [];
+  for (const [k, v] of placed) {
+    if (v.tutorialMineSlot) out.push(k);
+  }
+  return out;
+}
+
+/** Apply the published Tutorial Template to runtime / staging rooms once each. */
+function ensureTutorialRoomLayout(roomId: string): void {
+  const id = normalizeRoomId(roomId);
+  if (!isTutorialRuntimeRoomId(id) && !isTutorialStagingRoomId(id)) return;
+  if (tutorialLayoutSeeded.has(id)) return;
+  tutorialLayoutSeeded.add(id);
+  const shell = applyDefaultTutorialTemplateToRuntimeShell();
+  registerPlaySpaceRoomRuntime(id, {
+    bounds: shell.bounds,
+    backgroundHueDeg: shell.backgroundHueDeg,
+    backgroundNeutral: shell.backgroundNeutral,
+    joinSpawn: shell.joinSpawn,
+  });
+  applyBuildShell(shell, {
+    clearGeometry: () => {
+      roomPlaced.delete(id);
+      roomBaseFloorColors.delete(id);
+      roomExtraFloor.delete(id);
+      roomBaseFloorRemoved.delete(id);
+    },
+    setObstacle: (tile, props) => {
+      placedMap(id).set(tile, { ...props, locked: false });
+    },
+    setExtraFloor: (x, z, colorRgb) => {
+      extraFloorMap(id).set(tileKey(x, z), colorRgb);
+    },
+    setBaseFloorColor: (x, z, colorRgb) => {
+      baseFloorColorMap(id).set(tileKey(x, z), colorRgb);
+    },
+    addRemovedBaseFloor: (key) => {
+      baseFloorRemovedEnsure(id).add(key);
+    },
+  });
+}
+
+export function refreshTutorialRuntimeLayoutFromTemplate(): void {
+  tutorialLayoutSeeded.delete(TUTORIAL_ROOM_ID);
+  clearPlaySpaceRoomRuntime(TUTORIAL_ROOM_ID);
+  roomPlaced.delete(TUTORIAL_ROOM_ID);
+  roomBaseFloorColors.delete(TUTORIAL_ROOM_ID);
+  roomExtraFloor.delete(TUTORIAL_ROOM_ID);
+  roomBaseFloorRemoved.delete(TUTORIAL_ROOM_ID);
+  ensureTutorialRoomLayout(TUTORIAL_ROOM_ID);
+}
+
+/** Build Shell snapshot for admin Tutorial Template authoring (staging room only). */
+export function extractBuildShellForTutorialTemplate(
+  roomIdRaw: string
+): BuildShell | null {
+  const roomId = normalizeRoomId(roomIdRaw);
+  if (!isTutorialStagingRoomId(roomId)) return null;
+  ensureTutorialRoomLayout(roomId);
+  const snap = getRoomLayoutSnapshot(roomId);
+  if (!snap || snap.spatial) return null;
+  const custom = getPlaySpaceRoomRuntime(roomId)?.joinSpawn ?? null;
+  const joinSpawn = custom ?? {
+    x: Math.floor((snap.roomBounds.minX + snap.roomBounds.maxX) / 2),
+    z: Math.floor((snap.roomBounds.minZ + snap.roomBounds.maxZ) / 2),
+  };
+  return buildShellFromLayoutSnapshot(snap, joinSpawn);
 }
 
 /** Build Shell snapshot for admin Play Space Template authoring. */
@@ -2824,6 +2949,7 @@ function obstacleTileFromPlaced(roomId: string, tileKeyStr: string): ObstacleTil
     locked: v.locked ?? false,
     // Experimental: claimable blocks
     claimable: v.claimable,
+    tutorialMineSlot: v.tutorialMineSlot,
     active: v.active,
     cooldownMs: v.cooldownMs,
     lastClaimedAt: v.lastClaimedAt,
@@ -2876,6 +3002,7 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       locked: v.locked ?? false,
       // Experimental: claimable blocks
       claimable: v.claimable,
+    tutorialMineSlot: v.tutorialMineSlot,
       active: v.active,
       cooldownMs: v.cooldownMs,
       lastClaimedAt: v.lastClaimedAt,
@@ -3953,6 +4080,7 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
     viewerThumbedUp: boolean;
   }> = [];
   for (const d of defs) {
+    if (tutorialRoomHiddenFromCatalog(d.id)) continue;
     if (d.isBuiltin) {
       if (!d.isPublic && !admin) {
         continue;
@@ -5578,6 +5706,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       break;
     }
   }
+  const fromRoomId = currentRoomId;
 
   const nTarget = normalizeRoomId(targetRoomId);
   if (
@@ -5774,6 +5903,13 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   if (isInviteLobbyRoomId(nTarget)) {
     directInviteOnLobbyConnect(conn, nTarget, address);
   }
+
+  tutorialMaybeCompleteOnHubEntry({
+    fromRoomId,
+    toRoomId: targetRoomId,
+    wallet: address,
+    onUnlock: achievementUnlockHandler(conn.ws),
+  });
 }
 
 // worldcup: who may drop a kickable ball in a room (builders; never the pitch/canvas/pixel).
@@ -7601,6 +7737,9 @@ export function addClient(
   if (isInviteLobbyRoomId(normalizeRoomId(roomId))) {
     ensurePlaySpaceLayout(roomId);
   }
+  if (isTutorialRuntimeRoomId(roomId) || isTutorialStagingRoomId(roomId)) {
+    ensureTutorialRoomLayout(roomId);
+  }
   const room = roomOf(roomId);
   const compactSelf = compactAddress(address);
   const displayName =
@@ -7700,6 +7839,22 @@ export function addClient(
         resolvedSpawnTile = true;
       }
     }
+  } else if (
+    isTutorialRuntimeRoomId(roomId) ||
+    isTutorialStagingRoomId(roomId)
+  ) {
+    if (!applySpawnHint()) {
+      const ps = getPlaySpaceRoomRuntime(roomId)?.joinSpawn;
+      if (ps) {
+        const t = snapToTile(ps.x, ps.z);
+        if (isWalkableForRoom(roomId, t.x, t.z)) {
+          player.x = t.x;
+          player.z = t.z;
+          placedSpawn = true;
+          resolvedSpawnTile = true;
+        }
+      }
+    }
   } else if (applySpawnHint()) {
     /* explicit spawn hint for this room */
   }
@@ -7767,6 +7922,7 @@ export function addClient(
     },
     subscribedChunks: new Set<string>(),
     ...(streamObserver ? { streamObserver: true } : {}),
+    ...(sessionFlags?.nimiqPay ? { sessionNimiqPay: true } : {}),
   };
   initClientViewInterest(conn, player.x, player.z);
 
@@ -7846,6 +8002,12 @@ export function addClient(
     ? welcomeSpatialLists(roomId, conn)
     : null;
   const chatBacklog = chatBacklogSnapshotForWelcome(roomId, Date.now());
+  const tutorialWelcome = tutorialWelcomeForAddress(
+    address,
+    roomId,
+    sessionFlags?.nimiqPay === true
+  );
+  conn.tutorialSuppressSocial = tutorialLessonSuppressesChat(roomId, tutorialWelcome);
 
   wsSafeSend(ws, {
       type: "welcome",
@@ -7895,6 +8057,7 @@ export function addClient(
         ? worldcupPortalsForRoom(roomId)
         : undefined,
       ...cosmeticGalleryWelcomeExtras(roomId),
+      ...(tutorialWelcome ? { tutorial: tutorialWelcome } : {}),
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, roomId, chatBacklog);
   worldcupSendGoalieStateToConn(conn, roomId);
@@ -8837,6 +9000,28 @@ export function addClient(
         return;
       }
       const targetRoomId = resolveJoinRoomTarget(String(msg.roomId ?? ""));
+      ensureTutorialRoomLayout(targetRoomId);
+      {
+        const tutorialJoin = tutorialJoinRoomAllowed({
+          targetRoomId,
+          wallet: address,
+          sessionNimiqPay: conn.sessionNimiqPay === true,
+          isAdminOrBuilder:
+            isAdmin(address) || isTutorialBuilderWallet(address),
+          viaTeleporter: conn.tutorialViaTeleporter === true,
+        });
+        if (!tutorialJoin.ok) {
+          wsSafeSend(ws, {
+            type: "joinRoomFailed",
+            roomId: targetRoomId,
+            reason:
+              tutorialJoin.reason === "tutorial_complete_use_teleporter"
+                ? "forbidden"
+                : "not_found",
+          } satisfies OutMsg);
+          return;
+        }
+      }
       // worldcup: Match Pitches are server-managed and never directly joinable.
       if (worldcupIsMatchPitch(normalizeRoomId(targetRoomId))) return;
       // worldcup: navigating to another room mid-Match forfeits to the opponent (same as
@@ -9160,6 +9345,9 @@ export function addClient(
             normalizeRoomId(t.targetRoomId),
             t.targetX,
             t.targetZ
+          );
+          conn.tutorialViaTeleporter = isTutorialRuntimeRoomId(
+            normalizeRoomId(t.targetRoomId)
           );
           teleportPlayer(
             conn,
@@ -9623,7 +9811,9 @@ export function addClient(
       if (!gNorm) return;
       const whoC = compactAddress(address);
       const inHub = normalizeRoomId(currentRoomId) === HUB_ROOM_ID;
+      const inTutorial = isTutorialRuntimeRoomId(currentRoomId);
       const authOk =
+        (inTutorial && tutorialGateMayOpen(address)) ||
         inHub ||
         isAdmin(address) ||
         gNorm.authorizedAddresses.some((a) => compactAddress(a) === whoC);
@@ -11109,6 +11299,7 @@ export function addClient(
 
     if (msg.type === "chat") {
       if (msg.bubbleOnly) return;
+      if (conn.tutorialSuppressSocial) return;
       const now = Date.now();
       if (now - conn.lastChatAt < RATE_CHAT_MS) return;
       conn.lastChatAt = now;
@@ -11626,6 +11817,81 @@ export function addClient(
       }
 
       let payoutHasFunds = false;
+      const tutorialMine =
+        props.tutorialMineSlot === true &&
+        (isTutorialRuntimeRoomId(currentRoomId) ||
+          isTutorialStagingRoomId(currentRoomId));
+      if (tutorialMine) {
+        const tw = tutorialWelcomeForAddress(
+          address,
+          currentRoomId,
+          conn.sessionNimiqPay === true,
+          conn.tutorialViaTeleporter
+        );
+        const tutorialClaim = tutorialTryFinalizeMineClaim({
+          roomId: currentRoomId,
+          wallet: address,
+          tileKey: k,
+          props,
+          sandboxMode: tw?.mode === "sandbox",
+          listMineSlots: () => listTutorialMineSlotTileKeys(currentRoomId),
+        });
+        if (!tutorialClaim.ok) {
+          releaseBlockClaimSession(claimId);
+          const reason =
+            tutorialClaim.reason === "wrong_slot"
+              ? "This block is not assigned to you."
+              : tutorialClaim.reason === "already_claimed"
+                ? "You already mined your tutorial block."
+                : "This block is not available.";
+          wsSafeSend(ws, {
+            type: "blockClaimResult",
+            ok: false,
+            reason,
+            x: s.tileX,
+            z: s.tileZ,
+          } satisfies OutMsg);
+          return;
+        }
+        noteSpentBlockClaimId(tutorialClaim.claimId, now);
+        releaseBlockClaimSession(claimId);
+        props.active = false;
+        props.lastClaimedAt = now;
+        props.claimedBy = address;
+        const tile = obstacleTileFromPlaced(currentRoomId, k);
+        if (tile) {
+          broadcast(currentRoomId, {
+            type: "obstaclesDelta",
+            roomId: currentRoomId,
+            add: [tile],
+            remove: [],
+          });
+        }
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "claim_block", {
+          x: s.tileX,
+          z: s.tileZ,
+          y: s.tileY,
+          claimId: tutorialClaim.claimId,
+          amountLuna: tutorialClaim.rewardLuna.toString(),
+          tutorial: true,
+        });
+        enqueueBlockClaimPayIntent({
+          claimId: tutorialClaim.claimId,
+          recipientAddress: address,
+          amountLuna: tutorialClaim.rewardLuna,
+          roomId: currentRoomId,
+          tileKey: k,
+        });
+        wsSafeSend(ws, {
+          type: "blockClaimResult",
+          ok: true,
+          x: s.tileX,
+          z: s.tileZ,
+          amountNim: (Number(tutorialClaim.rewardLuna) / 100_000).toFixed(4),
+        } satisfies OutMsg);
+        schedulePersistWorldState();
+        return;
+      }
       if (isPayoutSenderConfigured()) {
         try {
           const peek = peekPayoutBalanceCacheLuna();
@@ -11638,6 +11904,9 @@ export function addClient(
         } catch (err) {
           console.error("[claimBlock] Failed to check payout wallet balance:", err);
         }
+      }
+      if (!payoutHasFunds && tutorialBypassBalancePeek(currentRoomId, address)) {
+        payoutHasFunds = true;
       }
       if (!payoutHasFunds) {
         releaseBlockClaimSession(claimId);

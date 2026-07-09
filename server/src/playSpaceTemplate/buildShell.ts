@@ -58,6 +58,7 @@ export type LayoutSnapshotForBuildShell = {
     teleporter?: TerrainProps["teleporter"];
     gate?: TerrainProps["gate"];
     claimable?: boolean;
+    tutorialMineSlot?: boolean;
   }>;
   extraFloorTiles: Array<{ x: number; z: number; colorRgb?: number }>;
   baseFloorColorTiles: Array<{ x: number; z: number; colorRgb?: number }>;
@@ -137,6 +138,7 @@ export function buildShellFromLayoutSnapshot(
       teleporter: o.teleporter,
       gate: o.gate,
       claimable: o.claimable,
+      tutorialMineSlot: o.tutorialMineSlot,
     };
     const props = sanitizeObstaclePropsForExport(raw);
     if (!props) continue;

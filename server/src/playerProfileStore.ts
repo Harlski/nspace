@@ -15,6 +15,22 @@ export const USERNAME_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 export const USERNAME_PROMPT_MAX_DEFERRALS = 5;
 export { USERNAME_MAX_LEN, USERNAME_MIN_LEN } from "./usernamePolicy.js";
 
+export type TutorialLastStep = "mine" | "pay" | "exit";
+
+export type TutorialSession = {
+  mineSlotTile?: string;
+  mineCompletedAt?: number;
+  doorPaidAt?: number;
+  gateUnstuckAt?: number;
+  lastStep?: TutorialLastStep;
+};
+
+export type TutorialProfileRow = {
+  tutorialCompletedAt?: number;
+  tutorialAbandonedAt?: number;
+  tutorialSession?: TutorialSession;
+};
+
 type Row = {
   message: string;
   updatedAt: number;
@@ -23,6 +39,9 @@ type Row = {
   /** Times the player chose "Not now" on the login username prompt (max {@link USERNAME_PROMPT_MAX_DEFERRALS}). */
   usernamePromptDeferCount?: number;
   recentAliases?: string[];
+  tutorialCompletedAt?: number;
+  tutorialAbandonedAt?: number;
+  tutorialSession?: TutorialSession;
 };
 
 type StoreFile = { profiles: Record<string, Row> };
@@ -77,7 +96,94 @@ function rowEnsure(base: Partial<Row> | undefined): Row {
     recentAliases: Array.isArray(base?.recentAliases)
       ? base.recentAliases.map((x) => String(x)).filter(Boolean)
       : [],
+    tutorialCompletedAt:
+      typeof base?.tutorialCompletedAt === "number" &&
+      Number.isFinite(base.tutorialCompletedAt)
+        ? base.tutorialCompletedAt
+        : undefined,
+    tutorialAbandonedAt:
+      typeof base?.tutorialAbandonedAt === "number" &&
+      Number.isFinite(base.tutorialAbandonedAt)
+        ? base.tutorialAbandonedAt
+        : undefined,
+    tutorialSession: sanitizeTutorialSession(base?.tutorialSession),
   };
+}
+
+function sanitizeTutorialSession(raw: unknown): TutorialSession | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as TutorialSession;
+  const out: TutorialSession = {};
+  if (typeof o.mineSlotTile === "string" && o.mineSlotTile.trim()) {
+    out.mineSlotTile = o.mineSlotTile.trim();
+  }
+  if (typeof o.mineCompletedAt === "number" && Number.isFinite(o.mineCompletedAt)) {
+    out.mineCompletedAt = o.mineCompletedAt;
+  }
+  if (typeof o.doorPaidAt === "number" && Number.isFinite(o.doorPaidAt)) {
+    out.doorPaidAt = o.doorPaidAt;
+  }
+  if (typeof o.gateUnstuckAt === "number" && Number.isFinite(o.gateUnstuckAt)) {
+    out.gateUnstuckAt = o.gateUnstuckAt;
+  }
+  if (o.lastStep === "mine" || o.lastStep === "pay" || o.lastStep === "exit") {
+    out.lastStep = o.lastStep;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function tutorialWalletKey(normalizedAddress: string): string {
+  return String(normalizedAddress ?? "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+export function getTutorialProfileRow(normalizedAddress: string): TutorialProfileRow {
+  const key = tutorialWalletKey(normalizedAddress);
+  if (!key) return {};
+  const r = getRow(key);
+  return {
+    tutorialCompletedAt: r.tutorialCompletedAt,
+    tutorialAbandonedAt: r.tutorialAbandonedAt,
+    tutorialSession: r.tutorialSession,
+  };
+}
+
+export function patchTutorialProfileRow(
+  normalizedAddress: string,
+  patch: Partial<TutorialProfileRow>
+): void {
+  const key = tutorialWalletKey(normalizedAddress);
+  if (!key) return;
+  const data = readStore();
+  const prev = rowEnsure(data.profiles[key]);
+  data.profiles[key] = {
+    ...prev,
+    ...(patch.tutorialCompletedAt !== undefined
+      ? { tutorialCompletedAt: patch.tutorialCompletedAt }
+      : {}),
+    ...(patch.tutorialAbandonedAt !== undefined
+      ? { tutorialAbandonedAt: patch.tutorialAbandonedAt }
+      : {}),
+    ...(patch.tutorialSession !== undefined
+      ? { tutorialSession: patch.tutorialSession }
+      : {}),
+  };
+  writeStore(data);
+}
+
+/** Mine slots assigned to other wallets (for collision-free assignment). */
+export function listTutorialMineSlotAssignments(excludeWallet: string): string[] {
+  const exclude = tutorialWalletKey(excludeWallet);
+  const out: string[] = [];
+  const store = readStore();
+  for (const [addr, row] of Object.entries(store.profiles)) {
+    if (addr === exclude) continue;
+    const slot = row?.tutorialSession?.mineSlotTile;
+    if (slot) out.push(slot);
+  }
+  return out;
 }
 
 /** All wallets that have set a custom username, with that username. */

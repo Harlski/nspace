@@ -290,6 +290,21 @@ export type ServerMessage =
       cosmeticGallery?: CosmeticGalleryWire;
       /** When set, this wallet cannot earn NIM from block claims (guest or mining restriction). */
       blockClaimDeniedReason?: string;
+      /** Nimiq Pay first-contact tutorial (lesson or sandbox). */
+      tutorial?: {
+        needsTutorial: boolean;
+        completedAt?: number;
+        mode: "lesson" | "sandbox";
+        session?: {
+          mineSlotTile?: string;
+          mineCompletedAt?: number;
+          doorPaidAt?: number;
+          gateUnstuckAt?: number;
+          lastStep?: "mine" | "pay" | "exit";
+        };
+        mineTile?: string;
+        lessonMode?: boolean;
+      };
     }
   | {
       type: "roomBackgroundHue";

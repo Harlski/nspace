@@ -75,6 +75,19 @@ import {
   normalizeRoomId,
 } from "./game/roomLayouts.js";
 import {
+  TUTORIAL_ROOM_ID,
+  TutorialEscapeTimer,
+  fetchTutorialDoorQuote,
+  postTutorialAbandon,
+  postTutorialDoorSent,
+  postTutorialUnstick,
+  sendTutorialDoorPayment,
+  shouldShowFinishTutorialMenu,
+  tutorialSuppressesSocial,
+  type TutorialWelcome,
+} from "./tutorial/flow.js";
+import { apiUrl } from "./net/apiBase.js";
+import {
   connectGameWs,
   sendChat,
   sendWhisper,
@@ -520,11 +533,18 @@ function openMainMenu(): void {
       if (!ok) return;
       enterGame(c.token, c.address, np);
     },
-    onLoggedIn: async (token, address, nimiqPay, usernamePrompt) => {
+    onLoggedIn: async (token, address, nimiqPay, usernamePrompt, needsTutorial) => {
       saveCachedSession(token, address, nimiqPay);
-      const ok = await runUsernamePromptGate(token, address, usernamePrompt);
-      if (!ok) return;
-      enterGame(token, address, nimiqPay, { freshSignIn: true });
+      const deferUsernameForTutorial = nimiqPay === true;
+      if (!deferUsernameForTutorial) {
+        const ok = await runUsernamePromptGate(token, address, usernamePrompt);
+        if (!ok) return;
+      }
+      enterGame(token, address, nimiqPay, {
+        freshSignIn: true,
+        deferUsernameForTutorial,
+        needsTutorial: needsTutorial === true,
+      });
     },
     onLogout: (address) => {
       if (address) removeCachedSession(address);
@@ -538,7 +558,13 @@ function enterGame(
   token: string,
   address: string,
   nimiqPay?: boolean,
-  opts?: { initialRoomId?: string; inviteLinkSlug?: string; freshSignIn?: boolean }
+  opts?: {
+    initialRoomId?: string;
+    inviteLinkSlug?: string;
+    freshSignIn?: boolean;
+    deferUsernameForTutorial?: boolean;
+    needsTutorial?: boolean;
+  }
 ): void {
   const app = document.getElementById("app");
   if (!app) return;
@@ -1047,7 +1073,55 @@ function enterGame(
     const roomParam = query.get("room")?.trim();
     if (roomParam) return normalizeRoomId(roomParam);
     if (streamMode) return PIXEL_ROOM_ID;
+    if (sessionNimiqPay && opts?.needsTutorial === true) return TUTORIAL_ROOM_ID;
     return ROOM_ID;
+  }
+
+  let tutorialWelcome: TutorialWelcome | undefined;
+  let tutorialSocialSuppressed = false;
+  let deferUsernameForTutorial = opts?.deferUsernameForTutorial === true;
+  const tutorialEscape = new TutorialEscapeTimer({
+    onEscapeCountdown: (sec) => {
+      hud.setStatus(`Pay is taking a while… ${sec}s`);
+    },
+    onEscapeFire: () => {
+      void (async () => {
+        await postTutorialUnstick(token, apiUrl("/api/tutorial/unstick"));
+        await postTutorialAbandon(token, apiUrl("/api/tutorial/abandon"));
+        hud.setStatus(
+          "Tutorial is broken. Bet you have never heard that before :sweatsmile:."
+        );
+        connectToRoom(CHAMBER_ROOM_ID, undefined, { resume: false });
+      })();
+    },
+  });
+
+  async function runTutorialDoorPayFlow(): Promise<boolean> {
+    if (!tutorialWelcome?.lessonMode || tutorialWelcome.session?.doorPaidAt) {
+      return true;
+    }
+    const quote = await fetchTutorialDoorQuote(
+      token,
+      apiUrl("/api/tutorial/door-quote")
+    );
+    if (!quote) {
+      hud.setStatus("Tutorial payment is not configured on this server.");
+      return false;
+    }
+    const paid = await sendTutorialDoorPayment({ quote, escape: tutorialEscape });
+    if (!paid.ok) {
+      if (!paid.cancelled) hud.setStatus("Pay failed - try again.");
+      return false;
+    }
+    const ack = await postTutorialDoorSent(token, apiUrl("/api/tutorial/door-sent"));
+    if (ack) {
+      tutorialWelcome = {
+        ...tutorialWelcome,
+        session: { ...tutorialWelcome.session, doorPaidAt: Date.now(), lastStep: "exit" },
+      };
+      hud.setStatus("Gate unlocked - walk through to finish.");
+    }
+    return ack;
   }
 
   function applyStreamPresentation(): void {
@@ -2426,6 +2500,71 @@ function enterGame(
       welcomeDeadlineTimer = null;
     }
   };
+  /** Silent auto-reconnect after unexpected WebSocket loss (before the disconnect modal). */
+  const AUTO_RECONNECT_GIVE_UP_MS = 10_000;
+  const AUTO_RECONNECT_RETRY_MS = 1500;
+  const AUTO_RECONNECT_SILENT_WELCOME_MS = 2500;
+  let autoReconnectActive = false;
+  let autoReconnectModalLabel = "Disconnected";
+  let autoReconnectGiveUpTimer: ReturnType<typeof setTimeout> | null = null;
+  let autoReconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set when the user clicks Reconnect? so a failed attempt shows the modal, not another auto loop. */
+  let manualReconnectAttempt = false;
+  const stopAutoReconnect = (): void => {
+    autoReconnectActive = false;
+    if (autoReconnectGiveUpTimer !== null) {
+      clearTimeout(autoReconnectGiveUpTimer);
+      autoReconnectGiveUpTimer = null;
+    }
+    if (autoReconnectRetryTimer !== null) {
+      clearTimeout(autoReconnectRetryTimer);
+      autoReconnectRetryTimer = null;
+    }
+  };
+  const abortInFlightConnect = (): void => {
+    connectGen += 1;
+    clearWelcomeDeadlineTimer();
+    if (
+      ws &&
+      (ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING)
+    ) {
+      ws.close();
+    }
+    ws = null;
+  };
+  const showReconnectModalAfterGiveUp = (): void => {
+    const label = autoReconnectModalLabel;
+    stopAutoReconnect();
+    abortInFlightConnect();
+    hud.setLoadingVisible(false, { skipMinWait: true });
+    hud.setReconnectOffer(true, { label });
+    hud.setStatus("");
+  };
+  const attemptSilentReconnect = (): void => {
+    if (!autoReconnectActive || disposed) return;
+    connectToRoom(CHAMBER_ROOM_ID, undefined, { resume: true, silent: true });
+  };
+  const onAutoReconnectAttemptFailed = (): void => {
+    if (!autoReconnectActive || disposed) return;
+    if (autoReconnectRetryTimer !== null) return;
+    autoReconnectRetryTimer = setTimeout(() => {
+      autoReconnectRetryTimer = null;
+      attemptSilentReconnect();
+    }, AUTO_RECONNECT_RETRY_MS);
+  };
+  const startAutoReconnect = (modalLabel: string): void => {
+    stopAutoReconnect();
+    autoReconnectActive = true;
+    autoReconnectModalLabel = modalLabel;
+    hud.setReconnectOffer(false);
+    hud.setStatus("Attempting to reconnect…");
+    autoReconnectGiveUpTimer = setTimeout(() => {
+      autoReconnectGiveUpTimer = null;
+      showReconnectModalAfterGiveUp();
+    }, AUTO_RECONNECT_GIVE_UP_MS);
+    attemptSilentReconnect();
+  };
   let cancelActiveNimClaim: (() => void) | null = null;
   /** Active claimable-block UI session (aligned with server begin → complete flow). */
   let nimClaimUiRef: {
@@ -2563,6 +2702,7 @@ function enterGame(
   );
 
   function cleanupResources(): void {
+    stopAutoReconnect();
     clearWelcomeDeadlineTimer();
     setPseudoFullscreen(false);
     notifyChatNotTyping();
@@ -3456,6 +3596,7 @@ function enterGame(
     // worldcup: shared Action Wheel handlers (emotes + Games sub-wheel incl. 1v1 toggle).
     const buildActionWheelHandlers = () => ({
       onEmote: (emoji: string) => {
+        if (tutorialSocialSuppressed) return;
         if (socket.readyState === WebSocket.OPEN) {
           sendAchievementSignal(socket, "send_emote");
           if (soleFlagCode(emoji)) {
@@ -3631,6 +3772,13 @@ function enterGame(
     game.setGateDoubleOpenHandler((bx, bz, by) => {
       const meta = game.getPlacedAt(bx, bz, by);
       if (!meta?.gate) return;
+      if (
+        tutorialWelcome?.lessonMode &&
+        !tutorialWelcome.session?.doorPaidAt
+      ) {
+        void runTutorialDoorPayFlow();
+        return;
+      }
       if (
         !canOpenGateAs(address, meta.gate, game.getRoomId()) &&
         !isAdmin(address)
@@ -4636,6 +4784,42 @@ function enterGame(
     }
     if (msg.type === "welcome") {
       clearWelcomeDeadlineTimer();
+      if (msg.tutorial) {
+        tutorialWelcome = msg.tutorial;
+        tutorialSocialSuppressed = tutorialSuppressesSocial(msg.tutorial);
+        playerMenu.setFinishTutorialVisible(
+          shouldShowFinishTutorialMenu(sessionNimiqPay, msg.tutorial)
+        );
+        if (
+          msg.tutorial.lessonMode &&
+          normalizeRoomId(msg.roomId) === TUTORIAL_ROOM_ID &&
+          opts?.freshSignIn
+        ) {
+          hud.setStatus("Signed in with your Nimiq wallet");
+        }
+      } else {
+        tutorialWelcome = undefined;
+        tutorialSocialSuppressed = false;
+        hud.setFinishTutorialVisible(false);
+      }
+      if (
+        deferUsernameForTutorial &&
+        normalizeRoomId(msg.roomId) === CHAMBER_ROOM_ID &&
+        tutorialWelcome?.needsTutorial === false
+      ) {
+        deferUsernameForTutorial = false;
+        void runUsernamePromptGate(token, address).then((ok) => {
+          if (!ok) return;
+        });
+        if (tutorialWelcome?.completedAt) {
+          hud.setStatus("Welcome to the Hub");
+        }
+      }
+      if (autoReconnectActive) {
+        stopAutoReconnect();
+        hud.setStatus("");
+      }
+      manualReconnectAttempt = false;
       const welcomeDenied =
         typeof msg.blockClaimDeniedReason === "string"
           ? msg.blockClaimDeniedReason.trim()
@@ -5481,6 +5665,12 @@ function enterGame(
           : "1.0000";
         cancelActiveNimClaim?.();
         game.showSelfPlayerMiningReward(reward);
+        if (
+          normalizeRoomId(game.getRoomId()) === TUTORIAL_ROOM_ID &&
+          tutorialWelcome?.lessonMode
+        ) {
+          hud.setStatus("Received NIM. Double-click the exit gate to send 0.01 NIM back.");
+        }
         return;
       }
       if (msg.recoverable) {
@@ -5814,7 +6004,7 @@ function enterGame(
   const connectToRoom = (
     room: string,
     spawn?: { x: number; z: number },
-    connectOpts?: { resume?: boolean; blackout?: boolean }
+    connectOpts?: { resume?: boolean; blackout?: boolean; silent?: boolean }
   ): void => {
     const signIn = freshSignInWsPending;
     if (freshSignInWsPending) freshSignInWsPending = false;
@@ -5824,7 +6014,9 @@ function enterGame(
     if (connectOpts?.resume) {
       loadingBlackoutReveal = connectOpts.blackout === true;
       clearRoomTransitionProgressTimer();
-      if (loadingBlackoutReveal) {
+      if (connectOpts.silent) {
+        // Status line only; skip loading overlay fade during reconnect.
+      } else if (loadingBlackoutReveal) {
         hud.setLoadingVisible(true, { blackout: true });
       } else {
         hud.setLoadingLabel("Loading…");
@@ -5893,13 +6085,21 @@ function enterGame(
             worldcupMatchEnterTimer = null;
           }
           hud.setLoadingVisible(false, { skipMinWait: true });
-          hud.setReconnectOffer(true, {
-            label: restartDrop ? "Server restart" : "Disconnected",
-          });
           hud.setInShaper(false);
-          hud.setStatus("");
           perfPingSentAt.clear();
           hud.setPerfHudLatencyMs(null);
+          const modalLabel = restartDrop ? "Server restart" : "Disconnected";
+          if (manualReconnectAttempt) {
+            manualReconnectAttempt = false;
+            hud.setReconnectOffer(true, { label: modalLabel });
+            hud.setStatus("");
+            return;
+          }
+          if (autoReconnectActive) {
+            onAutoReconnectAttemptFailed();
+            return;
+          }
+          startAutoReconnect(modalLabel);
         },
         {
           ...(connectOpts?.resume
@@ -5912,13 +6112,28 @@ function enterGame(
         }
       );
       wireWsHandlers(ws);
+      const welcomeDeadlineMs =
+        connectOpts?.silent === true && autoReconnectActive
+          ? AUTO_RECONNECT_SILENT_WELCOME_MS
+          : 35_000;
       welcomeDeadlineTimer = setTimeout(() => {
         welcomeDeadlineTimer = null;
         if (disposed || myGen !== connectGen) return;
+        if (connectOpts?.silent === true && autoReconnectActive) {
+          if (
+            ws &&
+            (ws.readyState === WebSocket.OPEN ||
+              ws.readyState === WebSocket.CONNECTING)
+          ) {
+            ws.close();
+          }
+          return;
+        }
+        manualReconnectAttempt = false;
         hud.setLoadingVisible(false, { skipMinWait: true });
         hud.setReconnectOffer(true, { label: "No response" });
         hud.setStatus("");
-      }, 35_000);
+      }, welcomeDeadlineMs);
     });
   };
 
@@ -5948,6 +6163,9 @@ function enterGame(
       x: CHAMBER_DEFAULT_SPAWN.x,
       z: CHAMBER_DEFAULT_SPAWN.z,
     });
+  });
+  hud.onFinishTutorial(() => {
+    connectToRoom(TUTORIAL_ROOM_ID, undefined, { resume: false });
   });
   hud.onLeaveShaper(() => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -6180,9 +6398,11 @@ function enterGame(
 
   hud.onReconnect(() => {
     if (disposed) return;
+    stopAutoReconnect();
+    manualReconnectAttempt = true;
     hud.setReconnectOffer(false);
     hud.setStatus("Connecting…");
-    connectToRoom(CHAMBER_ROOM_ID, undefined, { resume: true });
+    connectToRoom(CHAMBER_ROOM_ID, undefined, { resume: true, silent: true });
   });
 
   hud.onDisconnectExit(() => {
@@ -6196,9 +6416,10 @@ function enterGame(
     });
   } else {
     const initialRoomId = resolveInitialRoomId();
-    // Entering a Play Space must honor the explicit room (no resume → chamber fallback).
+    const useTutorialEntry =
+      sessionNimiqPay && opts?.needsTutorial === true && !streamMode;
     connectToRoom(initialRoomId, undefined, {
-      resume: !isInviteLobbyRoomId(initialRoomId),
+      resume: !useTutorialEntry && !isInviteLobbyRoomId(initialRoomId),
       blackout: true,
     });
   }
@@ -6226,6 +6447,7 @@ function enterGame(
       const t = chatInput!.value.trim();
       chatInput!.value = "";
       if (t && ws) {
+        if (tutorialSocialSuppressed) return;
         const target = hud.getWhisperTarget();
         if (target) {
           // Roster picks carry an address; a typed "/w name " with no roster match carries

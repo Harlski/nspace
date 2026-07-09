@@ -471,6 +471,8 @@ export function createHud(
    */
   setSelfCountry: (code: string | null) => void;
   onReturnHome: (fn: () => void) => void;
+  onFinishTutorial: (fn: () => void) => void;
+  setFinishTutorialVisible: (visible: boolean) => void;
   /** In-world "Leave the Shaper" button + Player Menu return action. */
   onLeaveShaper: (fn: () => void) => void;
   /** Toggle Shaper-only chrome (the leave button + Player Menu entry). */
@@ -11461,6 +11463,9 @@ export function createHud(
       case "return-to-hub":
         returnHomeHandler();
         break;
+      case "finish-tutorial":
+        finishTutorialHandler();
+        break;
       case "get-wallet":
         getWalletOpenHandler();
         break;
@@ -12639,6 +12644,7 @@ export function createHud(
   let reconnectHandler = (): void => {};
   let disconnectExitHandler = (): void => {};
   let returnHomeHandler = (): void => {};
+  let finishTutorialHandler = (): void => {};
   let leaveShaperHandler = (): void => {};
   let portalEnterHandler = (): void => {};
   let lobbyHandler = (): void => {};
@@ -14597,6 +14603,12 @@ export function createHud(
     },
     onReturnHome(fn: () => void) {
       returnHomeHandler = fn;
+    },
+    onFinishTutorial(fn: () => void) {
+      finishTutorialHandler = fn;
+    },
+    setFinishTutorialVisible(visible: boolean) {
+      playerMenu.setFinishTutorialVisible(visible);
     },
     onLeaveShaper(fn: () => void) {
       leaveShaperHandler = fn;

@@ -146,6 +146,7 @@ export type VerifyAuthResponse = {
   /** Server-derived: true when login used the Nimiq Pay signing path (empty `signer` on verify). */
   nimiqPay?: boolean;
   usernamePrompt?: UsernamePromptStatus;
+  tutorial?: { needsTutorial: boolean };
 };
 
 /** Optional fields on `POST /api/auth/verify` in addition to the signed Nimiq payload. */

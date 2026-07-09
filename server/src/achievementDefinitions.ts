@@ -81,7 +81,8 @@ export type AchievementEventKey =
   | "trust_circle"
   | "beat_the_creator"
   | "feedback_reply_seen"
-  | "teleporter_activated";
+  | "teleporter_activated"
+  | "tutorial_first_nim";
 
 /** World Cup seasonal counters - progress pauses when WORLDCUP_ENABLED is off. */
 export const WORLDCUP_ACHIEVEMENT_COUNTERS: ReadonlySet<AchievementCounterKey> =
@@ -390,6 +391,15 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 15,
     sortOrder: 90,
     criteria: { type: "event", event: "create_room" },
+  },
+  {
+    id: "first-nim",
+    title: "First NIM",
+    description: "Complete the Nimiq Pay first-contact tutorial.",
+    category: "onboarding",
+    points: 15,
+    sortOrder: 92,
+    criteria: { type: "event", event: "tutorial_first_nim" },
   },
   {
     id: "telescope",
