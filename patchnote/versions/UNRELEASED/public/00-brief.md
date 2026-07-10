@@ -6,3 +6,5 @@
 ---
 
 _(Draft — not published.)_
+
+Tutorial room is now a portrait path: mine south, pay in the middle, exit north.

@@ -6,3 +6,5 @@
 ---
 
 _(Draft — not published.)_
+
+- [CHANGE] The Nimiq Pay tutorial room is now a tall portrait path: mine at the south end, pay gate in the middle, exit toward the north.

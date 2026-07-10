@@ -6,3 +6,5 @@
 ---
 
 _(Draft — not published.)_
+
+- [CHANGE] `buildDefaultTutorialBootstrapShell` / `TUTORIAL_DEFAULT_BOUNDS` — portrait 7×15 Tutorial Path per ADR 0006; covered by `server/test/tutorialBootstrapShell.test.ts`.

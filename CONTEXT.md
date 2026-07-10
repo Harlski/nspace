@@ -109,6 +109,54 @@ A navigation action that teleports the player back to the Hub default spawn whil
 signed in.
 _Avoid_: go home, return home, go to chamber.
 
+**Tutorial Room**:
+The shared runtime room where Nimiq Pay first-contact learners receive and send 0.01 NIM before
+entering the Hub. Concurrent players share the space; each wallet gets its own mine slot and gate
+state.
+_Avoid_: tutorial instance, lesson room, onboarding room.
+
+**Tutorial Path**:
+The south-to-north walkable progression through the Tutorial Room — Mine band, Pay gate, then Exit —
+authored in portrait proportions for Portrait Play rather than as a square plaza.
+_Avoid_: tutorial corridor, lesson route, onboarding path.
+
+**Tutorial Staging**:
+The admin/builder authoring room for Tutorial Template layout before publish to the live Tutorial
+Room.
+_Avoid_: tutorial editor, draft tutorial.
+
+**Tutorial Template**:
+The versioned layout record (Build Shell + metadata) that seeds the Tutorial Room, mirroring Play
+Space Template authoring.
+_Avoid_: tutorial map file, lesson JSON.
+
+**Tutorial Mine Slot**:
+A marked mineable block in the Tutorial Template assigned to one wallet for the faucet payout
+during lesson mode.
+_Avoid_: tutorial block, lesson mine.
+
+**Tutorial Pay Ack**:
+Optimistic gate unlock when Nimiq Pay reports send success for the door quote; no on-chain verify
+on the critical path for v1.
+_Avoid_: door payment confirmation, pay verify.
+
+**Tutorial Escape**:
+Client timer while a Pay send promise is pending; after a silent wait and visible countdown,
+unsticks the gate server-side and teleports to the Hub without completing the lesson.
+_Avoid_: pay timeout, stuck handler.
+
+**Tutorial Sandbox**:
+Post-complete revisit of the Tutorial Room via admin-placed Teleporter only - walk the layout with
+normal chat/emotes, no faucet, door payment, or guided overlays.
+_Avoid_: tutorial replay, practice mode.
+
+**Tutorial Step Coach**:
+The persistent lesson-mode strip (Mine → Pay → Exit plus a one-line next hint) that walks a
+first-contact learner through the Tutorial Room. Wrong-slot mine feedback is a redirect into this
+coach, not a permission lecture. Hidden after Hub completion, Tutorial Escape, and in Tutorial
+Sandbox.
+_Avoid_: tutorial progress bar, quest tracker, onboarding wizard.
+
 **Teleporter**:
 A placed passable obstacle that warps a standing player to another Room at a preferred
 floor tile.

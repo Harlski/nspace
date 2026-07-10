@@ -16,7 +16,7 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Repo / docs
 
-- _(none yet)_
+- ADR [0006-tutorial-room-portrait-path.md](../../../docs/adr/0006-tutorial-room-portrait-path.md): Tutorial Room authored as south→north portrait **Tutorial Path**; glossary term in `CONTEXT.md`.
 
 ### Client
 
@@ -24,7 +24,7 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Server
 
-- _(none in this change set)_
+- `tutorialTemplate/bootstrapShell.ts`: default Tutorial Template is 7×15 portrait corridor (Mine alcove south, pay gate mid-north, exit north); path floor strip; existing block shapes only. Fresh empty template stores pick this up; existing published templates need staging republish / resync.
 
 ### payment-intent-service
 
@@ -32,4 +32,4 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Deploy / ops
 
-- _(none in this change set)_
+- Existing deploys with a persisted Tutorial Template keep the old square layout until operators republish from Tutorial Staging (or clear the template store so bootstrap recreates the default).
