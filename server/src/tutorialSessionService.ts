@@ -16,6 +16,7 @@ import {
   type TutorialSession,
 } from "./playerProfileStore.js";
 import { LUNA_PER_NIM } from "./payoutGateway.js";
+import { recordUnlockPadGrant } from "./unlockPad/index.js";
 
 export type { TutorialLastStep, TutorialSession };
 
@@ -235,6 +236,21 @@ export function ackTutorialDoorSent(
     });
   }
   return { ok: true, idempotent };
+}
+
+/** Grant Unlock Pad walkability for the tutorial Pay pad (optimistic / escape). */
+export function grantTutorialUnlockPad(
+  wallet: string,
+  roomId: string,
+  instanceId: string,
+  nowMs = Date.now()
+): void {
+  recordUnlockPadGrant({
+    wallet,
+    roomId,
+    instanceId,
+    nowMs,
+  });
 }
 
 export function unstickTutorialGate(

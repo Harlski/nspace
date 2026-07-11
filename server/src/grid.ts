@@ -4,6 +4,7 @@ import {
   HUB_ROOM_ID,
   normalizeRoomId,
 } from "./roomLayouts.js";
+import { isUnlockPadPassableForMover } from "./unlockPad/index.js";
 
 /** Integer tile indices on the floor plane: x = column (world X), y = row (world Z). */
 export type FloorTile = { x: number; y: number };
@@ -286,6 +287,17 @@ export type TerrainProps = {
     authorizedAddresses?: string[];
     exitX: number;
     exitZ: number;
+  };
+  /**
+   * Unlock Pad: solid until the wallet has a durable grant for `instanceId`, then walkable for
+   * that wallet only. See docs/adr/0007-unlock-pad.md.
+   */
+  unlockPad?: {
+    amountLuna: string;
+    recipient: string;
+    buttonLabel: string;
+    proofMode: "optimistic" | "payment_intent";
+    instanceId: string;
   };
   /** Ephemeral: gate passage for {@link TerrainProps.gateOpen.openedBy} until `untilMs`. */
   gateOpen?: {
@@ -690,6 +702,7 @@ export function floorWalkableTerrainForMover(
   if (!p) return true;
   if (p.passable || p.ramp) return true;
   if (isGatePassableForMover(p, moverAddress, nowMs, roomId)) return true;
+  if (isUnlockPadPassableForMover(p, roomId, moverAddress)) return true;
   return false;
 }
 

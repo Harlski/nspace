@@ -81,8 +81,15 @@ import {
   postTutorialAbandon,
   postTutorialDoorSent,
   postTutorialUnstick,
+  parseTutorialMineTileCoords,
   sendTutorialDoorPayment,
+  shouldOfferTutorialUnlockGate,
   shouldShowFinishTutorialMenu,
+  shouldShowTutorialMineHighlight,
+  deriveTutorialCoachState,
+  TUTORIAL_UNLOCK_GATE_LABEL,
+  TUTORIAL_WRONG_SLOT_REASON,
+  TUTORIAL_ALREADY_CLAIMED_REASON,
   tutorialSuppressesSocial,
   type TutorialWelcome,
 } from "./tutorial/flow.js";
@@ -1079,7 +1086,28 @@ function enterGame(
 
   let tutorialWelcome: TutorialWelcome | undefined;
   let tutorialSocialSuppressed = false;
+  let pendingTutorialHubWelcome = false;
   let deferUsernameForTutorial = opts?.deferUsernameForTutorial === true;
+
+  function syncTutorialMineHighlight(): void {
+    if (!shouldShowTutorialMineHighlight(tutorialWelcome)) {
+      game.setTutorialMineHighlight(null);
+      return;
+    }
+    game.setTutorialMineHighlight(
+      parseTutorialMineTileCoords(tutorialWelcome?.mineTile)
+    );
+  }
+
+  function syncTutorialStepCoach(roomId?: string | null): void {
+    hud.setTutorialStepCoach(
+      deriveTutorialCoachState(
+        tutorialWelcome,
+        roomId ?? game.getRoomId()
+      )
+    );
+  }
+
   const tutorialEscape = new TutorialEscapeTimer({
     onEscapeCountdown: (sec) => {
       hud.setStatus(`Pay is taking a while… ${sec}s`);
@@ -1091,37 +1119,53 @@ function enterGame(
         hud.setStatus(
           "Tutorial is broken. Bet you have never heard that before :sweatsmile:."
         );
+        tutorialWelcome = undefined;
+        syncTutorialStepCoach();
         connectToRoom(CHAMBER_ROOM_ID, undefined, { resume: false });
       })();
     },
   });
 
+  let tutorialDoorPayInFlight = false;
+
   async function runTutorialDoorPayFlow(): Promise<boolean> {
     if (!tutorialWelcome?.lessonMode || tutorialWelcome.session?.doorPaidAt) {
       return true;
     }
-    const quote = await fetchTutorialDoorQuote(
-      token,
-      apiUrl("/api/tutorial/door-quote")
-    );
-    if (!quote) {
-      hud.setStatus("Tutorial payment is not configured on this server.");
-      return false;
+    if (tutorialDoorPayInFlight) return false;
+    tutorialDoorPayInFlight = true;
+    try {
+      const quote = await fetchTutorialDoorQuote(
+        token,
+        apiUrl("/api/tutorial/door-quote")
+      );
+      if (!quote) {
+        hud.setStatus("Tutorial payment is not configured on this server.");
+        return false;
+      }
+      const paid = await sendTutorialDoorPayment({ quote, escape: tutorialEscape });
+      if (!paid.ok) {
+        if (!paid.cancelled) hud.setStatus("Pay failed - try again.");
+        return false;
+      }
+      const sent = await postTutorialDoorSent(token, apiUrl("/api/tutorial/door-sent"));
+      if (sent.ok) {
+        tutorialWelcome = {
+          ...tutorialWelcome,
+          session: { ...tutorialWelcome.session, doorPaidAt: Date.now(), lastStep: "exit" },
+        };
+        if (sent.hubExitDoor) game.upsertDoor(sent.hubExitDoor);
+        const pad = game.getAdjacentLockedUnlockPad();
+        if (pad) game.markUnlockPadUnlocked(pad.instanceId);
+        // Bootstrap tutorial pad id (also granted server-side).
+        game.markUnlockPadUnlocked("tutorial-path-unlock-pad-v1");
+        hud.setStatus("Path unlocked - walk through to the Hub exit.");
+        syncTutorialStepCoach();
+      }
+      return sent.ok;
+    } finally {
+      tutorialDoorPayInFlight = false;
     }
-    const paid = await sendTutorialDoorPayment({ quote, escape: tutorialEscape });
-    if (!paid.ok) {
-      if (!paid.cancelled) hud.setStatus("Pay failed - try again.");
-      return false;
-    }
-    const ack = await postTutorialDoorSent(token, apiUrl("/api/tutorial/door-sent"));
-    if (ack) {
-      tutorialWelcome = {
-        ...tutorialWelcome,
-        session: { ...tutorialWelcome.session, doorPaidAt: Date.now(), lastStep: "exit" },
-      };
-      hud.setStatus("Gate unlocked - walk through to finish.");
-    }
-    return ack;
   }
 
   function applyStreamPresentation(): void {
@@ -1326,6 +1370,23 @@ function enterGame(
             isBuiltin: fieldRow?.isBuiltin ?? true,
           });
         }
+      }
+      const nTutorial = normalizeRoomId(TUTORIAL_ROOM_ID);
+      if (!out.some((r) => normalizeRoomId(r.id) === nTutorial)) {
+        const tutorialRow = knownRooms.find(
+          (r) => normalizeRoomId(r.id) === nTutorial
+        );
+        out.push({
+          id: nTutorial,
+          displayName: normalizeRoomCatalogDisplayName(
+            tutorialRow?.displayName,
+            "Tutorial Room"
+          ),
+          isPublic: tutorialRow?.isPublic ?? false,
+          playerCount: tutorialRow?.playerCount ?? 0,
+          isOfficial: tutorialRow?.isOfficial ?? false,
+          isBuiltin: tutorialRow?.isBuiltin ?? true,
+        });
       }
       out.sort((a, b) => {
         if (a.id === nHub) return -1;
@@ -2145,6 +2206,7 @@ function enterGame(
     }
 
     const filtered = knownRooms.filter((r) => {
+      if (normalizeRoomId(r.id) === TUTORIAL_ROOM_ID) return false;
       if (normalizeRoomId(r.id) === currentId) return false;
       if (roomsCatalogTab === "deleted") {
         return isAdmin(address) && r.isDeleted;
@@ -2479,6 +2541,12 @@ function enterGame(
   let pendingTeleporterAutoSelect: { x: number; z: number } | null = null;
   let portalAction:
     | { kind: "door" }
+    | { kind: "tutorial-unlock-gate" }
+    | {
+        kind: "unlock-pad";
+        instanceId: string;
+        proofMode: "optimistic" | "payment_intent";
+      }
     | { kind: "canvas-exit" }
     | { kind: "teleporter" }
     | { kind: "spectate"; matchId: string; full: boolean }
@@ -4564,14 +4632,73 @@ function enterGame(
   }
 
   function syncPortalEnterButton(): void {
+    const unlockPad = game.getAdjacentLockedUnlockPad();
+    const standingDoor = game.getStandingDoor();
+    if (standingDoor) {
+      const anchor = game.getSelfScreenPosition(1.15);
+      if (anchor) {
+        hud.setPortalEnterScreenPosition(anchor.x, anchor.y);
+      }
+      portalAction = { kind: "door" };
+      hud.setPortalEnterLabel("Enter");
+      if (!portalEnterVisible) {
+        portalEnterVisible = true;
+        hud.setPortalEnterVisible(true);
+      }
+      return;
+    }
+    if (
+      unlockPad &&
+      shouldOfferTutorialUnlockGate(tutorialWelcome)
+    ) {
+      const anchor = game.getTileScreenPosition(unlockPad.x, unlockPad.z);
+      if (anchor) {
+        hud.setPortalEnterScreenPosition(anchor.x, anchor.y - 36);
+      }
+      portalAction = {
+        kind: "unlock-pad",
+        instanceId: unlockPad.instanceId,
+        proofMode: unlockPad.proofMode,
+      };
+      hud.setPortalEnterLabel(unlockPad.buttonLabel || TUTORIAL_UNLOCK_GATE_LABEL);
+      if (!portalEnterVisible) {
+        portalEnterVisible = true;
+        hud.setPortalEnterVisible(true);
+      }
+      return;
+    }
+    if (
+      unlockPad &&
+      unlockPad.proofMode === "payment_intent" &&
+      !shouldOfferTutorialUnlockGate(tutorialWelcome)
+    ) {
+      // Non-tutorial payment_intent pads: show whenever adjacent and locked.
+      const anchor = game.getTileScreenPosition(unlockPad.x, unlockPad.z);
+      if (anchor) {
+        hud.setPortalEnterScreenPosition(anchor.x, anchor.y - 36);
+      }
+      portalAction = {
+        kind: "unlock-pad",
+        instanceId: unlockPad.instanceId,
+        proofMode: unlockPad.proofMode,
+      };
+      hud.setPortalEnterLabel(unlockPad.buttonLabel || TUTORIAL_UNLOCK_GATE_LABEL);
+      if (!portalEnterVisible) {
+        portalEnterVisible = true;
+        hud.setPortalEnterVisible(true);
+      }
+      return;
+    }
     const anchor = game.getSelfScreenPosition(1.15);
     if (anchor) {
       hud.setPortalEnterScreenPosition(anchor.x, anchor.y);
     }
-    const standingDoor = game.getStandingDoor();
-    if (standingDoor) {
-      portalAction = { kind: "door" };
-      hud.setPortalEnterLabel("Enter");
+    if (
+      shouldOfferTutorialUnlockGate(tutorialWelcome) &&
+      game.getStandingTutorialGateApproach()
+    ) {
+      portalAction = { kind: "tutorial-unlock-gate" };
+      hud.setPortalEnterLabel(TUTORIAL_UNLOCK_GATE_LABEL);
       if (!portalEnterVisible) {
         portalEnterVisible = true;
         hud.setPortalEnterVisible(true);
@@ -4787,7 +4914,7 @@ function enterGame(
       if (msg.tutorial) {
         tutorialWelcome = msg.tutorial;
         tutorialSocialSuppressed = tutorialSuppressesSocial(msg.tutorial);
-        playerMenu.setFinishTutorialVisible(
+        hud.setFinishTutorialVisible(
           shouldShowFinishTutorialMenu(sessionNimiqPay, msg.tutorial)
         );
         if (
@@ -4795,12 +4922,24 @@ function enterGame(
           normalizeRoomId(msg.roomId) === TUTORIAL_ROOM_ID &&
           opts?.freshSignIn
         ) {
-          hud.setStatus("Signed in with your Nimiq wallet");
+          hud.showBriefToast("Signed in with your Nimiq wallet", {
+            address: msg.self.address,
+          });
+        }
+        syncTutorialMineHighlight();
+        syncTutorialStepCoach(msg.roomId);
+        if (
+          typeof msg.tutorial.session?.doorPaidAt === "number" ||
+          typeof msg.tutorial.session?.gateUnstuckAt === "number"
+        ) {
+          game.markUnlockPadUnlocked("tutorial-path-unlock-pad-v1");
         }
       } else {
         tutorialWelcome = undefined;
         tutorialSocialSuppressed = false;
         hud.setFinishTutorialVisible(false);
+        game.setTutorialMineHighlight(null);
+        syncTutorialStepCoach(msg.roomId);
       }
       if (
         deferUsernameForTutorial &&
@@ -4812,7 +4951,10 @@ function enterGame(
           if (!ok) return;
         });
         if (tutorialWelcome?.completedAt) {
-          hud.setStatus("Welcome to the Hub");
+          hud.showBriefToast("Welcome to the Hub");
+        } else if (pendingTutorialHubWelcome) {
+          pendingTutorialHubWelcome = false;
+          hud.showBriefToast("Welcome to the Hub");
         }
       }
       if (autoReconnectActive) {
@@ -5633,6 +5775,22 @@ function enterGame(
       return;
     }
     if (msg.type === "blockClaimResult") {
+      if (!msg.ok && msg.reason === TUTORIAL_WRONG_SLOT_REASON) {
+        cancelActiveNimClaim?.();
+        nimClaimUiRef = null;
+        hud.setNimClaimProgress(null);
+        hud.showBriefToast(TUTORIAL_WRONG_SLOT_REASON);
+        hud.pulseTutorialStepCoach("mine");
+        return;
+      }
+      if (!msg.ok && msg.reason === TUTORIAL_ALREADY_CLAIMED_REASON) {
+        cancelActiveNimClaim?.();
+        nimClaimUiRef = null;
+        hud.setNimClaimProgress(null);
+        game.showSelfPlayerActionMessage(TUTORIAL_ALREADY_CLAIMED_REASON);
+        hud.pulseTutorialStepCoach("pay");
+        return;
+      }
       if (!msg.ok && msg.reason && isBlockClaimDenialReason(msg.reason)) {
         selfBlockClaimDeniedReason = msg.reason;
         let adjacent = false;
@@ -5669,7 +5827,21 @@ function enterGame(
           normalizeRoomId(game.getRoomId()) === TUTORIAL_ROOM_ID &&
           tutorialWelcome?.lessonMode
         ) {
-          hud.setStatus("Received NIM. Double-click the exit gate to send 0.01 NIM back.");
+          if (tutorialWelcome.session) {
+            tutorialWelcome = {
+              ...tutorialWelcome,
+              session: {
+                ...tutorialWelcome.session,
+                mineCompletedAt: Date.now(),
+                lastStep: "pay",
+              },
+            };
+          }
+          game.setTutorialMineHighlight(null);
+          hud.setStatus(
+            "Received NIM. Stand beside the Unlock Pad and tap Unlock Pad."
+          );
+          syncTutorialStepCoach();
         }
         return;
       }
@@ -6151,6 +6323,15 @@ function enterGame(
   }
 
   game.setRoomChangeHandler((targetRoomId, spawnX, spawnZ) => {
+    const fromTutorial =
+      normalizeRoomId(game.getRoomId()) === TUTORIAL_ROOM_ID &&
+      tutorialWelcome?.lessonMode === true &&
+      typeof tutorialWelcome.session?.doorPaidAt === "number";
+    const toHub = normalizeRoomId(targetRoomId) === CHAMBER_ROOM_ID;
+    if (fromTutorial && toHub) {
+      pendingTutorialHubWelcome = true;
+      beginRoomTransition(CHAMBER_ROOM_ID, "Welcome to the Hub…");
+    }
     connectToRoom(targetRoomId, { x: spawnX, z: spawnZ });
   });
 
@@ -6324,6 +6505,22 @@ function enterGame(
       const d = game.getStandingDoor();
       if (d) beginRoomTransition(d.targetRoomId);
       void game.triggerStandingDoorTransition();
+      return;
+    }
+    if (portalAction?.kind === "tutorial-unlock-gate") {
+      void runTutorialDoorPayFlow();
+      return;
+    }
+    if (portalAction?.kind === "unlock-pad") {
+      const { instanceId, proofMode } = portalAction;
+      if (proofMode === "optimistic" || shouldOfferTutorialUnlockGate(tutorialWelcome)) {
+        void (async () => {
+          const ok = await runTutorialDoorPayFlow();
+          if (ok) game.markUnlockPadUnlocked(instanceId);
+        })();
+        return;
+      }
+      hud.setStatus("Payment Intent unlock for this pad is not available yet.");
       return;
     }
     if (portalAction?.kind === "billboard") {

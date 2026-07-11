@@ -1,3 +1,5 @@
+import { gateApproachTile } from "../game/gateAuth.js";
+
 /** Client-side Nimiq Pay first-contact tutorial helpers. */
 
 export const TUTORIAL_ROOM_ID = "tutorial";
@@ -28,6 +30,104 @@ export type TutorialDoorQuote = {
   recipient: string;
   memo: string;
 };
+
+export type TutorialHubExitDoor = {
+  x: number;
+  z: number;
+  targetRoomId: string;
+  spawnX: number;
+  spawnZ: number;
+};
+
+export function parseTutorialMineTileCoords(
+  mineTile?: string
+): { x: number; z: number } | null {
+  if (!mineTile?.trim()) return null;
+  const parts = mineTile.split(",").map(Number);
+  if (
+    parts.length < 2 ||
+    !Number.isFinite(parts[0]) ||
+    !Number.isFinite(parts[1])
+  ) {
+    return null;
+  }
+  return { x: Math.floor(parts[0]!), z: Math.floor(parts[1]!) };
+}
+
+export function shouldShowTutorialMineHighlight(
+  welcome: TutorialWelcome | undefined
+): boolean {
+  if (!welcome?.lessonMode || !welcome.mineTile) return false;
+  if (typeof welcome.session?.mineCompletedAt === "number") return false;
+  return true;
+}
+
+export type TutorialCoachStep = "mine" | "pay" | "exit";
+
+export const TUTORIAL_WRONG_SLOT_REASON =
+  "Click and hold your glowing block.";
+
+export const TUTORIAL_ALREADY_CLAIMED_REASON =
+  "You already mined your tutorial block.";
+
+export const TUTORIAL_COACH_HINTS: Record<TutorialCoachStep, string> = {
+  mine: "Click and hold your glowing block to receive NIM.",
+  pay: "Stand beside the Unlock Pad and tap Unlock Pad.",
+  exit: "Walk through the open gate to the Hub.",
+};
+
+export type TutorialCoachState = {
+  visible: boolean;
+  current: TutorialCoachStep;
+  completed: TutorialCoachStep[];
+  hint: string;
+};
+
+/** Lesson-mode chrome only in the Tutorial Room; hidden in sandbox and after completion. */
+export function shouldShowTutorialStepCoach(
+  welcome: TutorialWelcome | undefined,
+  roomId?: string | null
+): boolean {
+  if (!welcome?.lessonMode) return false;
+  if (welcome.mode === "sandbox") return false;
+  if (typeof welcome.completedAt === "number") return false;
+  const rid = String(roomId ?? "").trim().toLowerCase();
+  if (rid !== TUTORIAL_ROOM_ID) return false;
+  return true;
+}
+
+/**
+ * Derive Tutorial Step Coach from welcome/session timestamps.
+ * Escape (`gateUnstuckAt`) counts as completing Pay so the coach can advance to Exit.
+ * Only visible while the player is in the Tutorial Room.
+ */
+export function deriveTutorialCoachState(
+  welcome: TutorialWelcome | undefined,
+  roomId?: string | null
+): TutorialCoachState | null {
+  if (!shouldShowTutorialStepCoach(welcome, roomId)) return null;
+
+  const session = welcome?.session;
+  const mineDone = typeof session?.mineCompletedAt === "number";
+  const payDone =
+    typeof session?.doorPaidAt === "number" ||
+    typeof session?.gateUnstuckAt === "number";
+
+  const completed: TutorialCoachStep[] = [];
+  if (mineDone) completed.push("mine");
+  if (payDone) completed.push("pay");
+
+  let current: TutorialCoachStep = "mine";
+  if (mineDone && !payDone) current = "pay";
+  else if (mineDone && payDone) current = "exit";
+
+  return {
+    visible: true,
+    current,
+    completed,
+    hint: TUTORIAL_COACH_HINTS[current],
+  };
+}
 
 export type TutorialFlowCallbacks = {
   onEscapeCountdown?: (secondsLeft: number) => void;
@@ -88,12 +188,16 @@ export async function fetchTutorialDoorQuote(
 export async function postTutorialDoorSent(
   token: string,
   apiBase: string
-): Promise<boolean> {
+): Promise<{ ok: true; hubExitDoor?: TutorialHubExitDoor } | { ok: false }> {
   const res = await fetch(`${apiBase}/api/tutorial/door-sent`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.ok;
+  if (!res.ok) return { ok: false };
+  const body = (await res.json()) as {
+    hubExitDoor?: TutorialHubExitDoor;
+  };
+  return { ok: true, hubExitDoor: body.hubExitDoor };
 }
 
 export async function postTutorialUnstick(
@@ -159,4 +263,45 @@ export function shouldShowFinishTutorialMenu(
     welcome?.needsTutorial === true &&
     typeof welcome.completedAt !== "number"
   );
+}
+
+/** Label for the above-head intent pill when standing at the tutorial gate. */
+export const TUTORIAL_UNLOCK_GATE_LABEL = "Unlock Pad";
+
+/**
+ * Lesson Pay step: mine done, door not yet paid / unstuck.
+ * Used to show the Unlock Gate intent pill in front of the gate.
+ */
+export function shouldOfferTutorialUnlockGate(
+  welcome: TutorialWelcome | undefined
+): boolean {
+  if (!welcome?.lessonMode) return false;
+  if (welcome.mode === "sandbox") return false;
+  if (typeof welcome.session?.mineCompletedAt !== "number") return false;
+  if (typeof welcome.session?.doorPaidAt === "number") return false;
+  if (typeof welcome.session?.gateUnstuckAt === "number") return false;
+  return true;
+}
+
+/** Floor tile on the approach side of a gate (opposite the exit neighbor). */
+export function tutorialGateApproachTile(
+  gateX: number,
+  gateZ: number,
+  exitX: number,
+  exitZ: number
+): { x: number; z: number } {
+  return gateApproachTile(gateX, gateZ, exitX, exitZ);
+}
+
+export function isStandingOnTutorialGateApproach(
+  selfTile: { x: number; z: number },
+  gate: { gateX: number; gateZ: number; exitX: number; exitZ: number }
+): boolean {
+  const approach = tutorialGateApproachTile(
+    gate.gateX,
+    gate.gateZ,
+    gate.exitX,
+    gate.exitZ
+  );
+  return selfTile.x === approach.x && selfTile.z === approach.z;
 }

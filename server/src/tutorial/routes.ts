@@ -4,11 +4,13 @@ import {
   abandonTutorial,
   getTutorialDoorQuote,
   ackTutorialDoorSent,
+  grantTutorialUnlockPad,
   unstickTutorialGate,
 } from "../tutorialSessionService.js";
-import { refreshTutorialRuntimeLayoutFromTemplate } from "../rooms.js";
+import { refreshTutorialRuntimeLayoutFromTemplate, tutorialHubExitDoorForWallet } from "../rooms.js";
 import { isAdmin } from "../config.js";
-import { isTutorialFeatureEnabled } from "./config.js";
+import { isTutorialFeatureEnabled, TUTORIAL_ROOM_ID } from "./config.js";
+import { TUTORIAL_PATH_UNLOCK_PAD_INSTANCE_ID } from "../tutorialTemplate/bootstrapShell.js";
 
 type JwtResolver = (req: Request) => string | null;
 
@@ -58,7 +60,17 @@ export function registerTutorialRoutes(
       res.status(400).json({ error: result.error });
       return;
     }
-    res.json({ ok: true, idempotent: result.idempotent });
+    grantTutorialUnlockPad(
+      signer,
+      TUTORIAL_ROOM_ID,
+      TUTORIAL_PATH_UNLOCK_PAD_INSTANCE_ID
+    );
+    const hubExitDoor = tutorialHubExitDoorForWallet(signer);
+    res.json({
+      ok: true,
+      idempotent: result.idempotent,
+      ...(hubExitDoor ? { hubExitDoor } : {}),
+    });
   });
 
   app.post("/api/tutorial/unstick", requireJwt, (req, res) => {
@@ -72,6 +84,11 @@ export function registerTutorialRoutes(
       return;
     }
     unstickTutorialGate(signer);
+    grantTutorialUnlockPad(
+      signer,
+      TUTORIAL_ROOM_ID,
+      TUTORIAL_PATH_UNLOCK_PAD_INSTANCE_ID
+    );
     res.json({ ok: true });
   });
 

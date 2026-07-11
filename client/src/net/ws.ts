@@ -55,6 +55,19 @@ export type ObstacleTile = {
     openedBy: string;
     untilMs: number;
   };
+  unlockPad?: {
+    amountLuna: string;
+    recipient: string;
+    buttonLabel: string;
+    proofMode: "optimistic" | "payment_intent";
+    instanceId: string;
+  };
+  claimable?: boolean;
+  tutorialMineSlot?: boolean;
+  active?: boolean;
+  cooldownMs?: number;
+  lastClaimedAt?: number;
+  claimedBy?: string;
 };
 
 export type ObstacleProps = {

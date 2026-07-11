@@ -31,31 +31,32 @@ test("Tutorial Path join spawn sits in the south band on a clear tile", () => {
   assert.equal(blocked, false);
 });
 
-test("Tutorial Path places three mine slots south of the pay gate", () => {
+test("Tutorial Path places three mine slots south of the Unlock Pad", () => {
   const shell = buildDefaultTutorialBootstrapShell();
   const mines = shell.obstacles.filter((o) => o.props.tutorialMineSlot === true);
   assert.equal(mines.length, 3);
-  const gate = shell.obstacles.find((o) => o.props.gate);
-  assert.ok(gate);
-  const gateZ = parseTile(gate.tile).z;
+  const pad = shell.obstacles.find((o) => o.props.unlockPad);
+  assert.ok(pad);
+  const padZ = parseTile(pad.tile).z;
   for (const m of mines) {
     assert.ok(m.props.claimable === true);
     assert.ok(m.props.pyramid === true);
-    assert.ok(parseTile(m.tile).z < gateZ);
+    assert.ok(parseTile(m.tile).z < padZ);
   }
 });
 
-test("Tutorial Path gate exit lands north of the pay gate", () => {
+test("Tutorial Path Unlock Pad sits at mid depth with clear tile north for Hub exit", () => {
   const shell = buildDefaultTutorialBootstrapShell();
-  const gate = shell.obstacles.find((o) => o.props.gate);
-  assert.ok(gate?.props.gate);
-  const gateTile = parseTile(gate.tile);
-  const { exitX, exitZ } = gate.props.gate;
-  assert.ok(exitZ > gateTile.z);
-  assert.equal(exitX, gateTile.x);
+  const pad = shell.obstacles.find((o) => o.props.unlockPad);
+  assert.ok(pad?.props.unlockPad);
+  assert.equal(pad.props.unlockPad.proofMode, "optimistic");
+  const midZ = Math.floor((shell.bounds.minZ + shell.bounds.maxZ) / 2);
+  const padTile = parseTile(pad.tile);
+  assert.equal(padTile.z, midZ);
+  const exitZ = padTile.z + 1;
   const blocked = shell.obstacles.some((o) => {
     const t = parseTile(o.tile);
-    return t.x === exitX && t.z === exitZ && t.y === 0 && !o.props.passable;
+    return t.x === padTile.x && t.z === exitZ && t.y === 0 && !o.props.passable;
   });
   assert.equal(blocked, false);
 });
@@ -78,10 +79,11 @@ test("Tutorial Path paints a center floor strip from spawn toward exit", () => {
     (t) => t.x === shell.joinSpawn!.x && t.z === shell.joinSpawn!.z
   );
   assert.ok(spawnTint);
-  const gate = shell.obstacles.find((o) => o.props.gate);
-  assert.ok(gate?.props.gate);
+  const pad = shell.obstacles.find((o) => o.props.unlockPad);
+  assert.ok(pad);
+  const padTile = parseTile(pad.tile);
   const exitTint = shell.extraFloor.some(
-    (t) => t.x === gate.props.gate!.exitX && t.z === gate.props.gate!.exitZ
+    (t) => t.x === padTile.x && t.z === padTile.z + 1
   );
   assert.ok(exitTint);
 });
@@ -100,13 +102,4 @@ test("Tutorial Path leaves side lanes past the mine band so learners can walk no
     });
     assert.equal(blocked, false, `lane ${x},${mineZ} should be clear`);
   }
-});
-
-test("Tutorial Path pay gate sits at mid depth with exit immediately north", () => {
-  const shell = buildDefaultTutorialBootstrapShell();
-  const gate = shell.obstacles.find((o) => o.props.gate);
-  assert.ok(gate?.props.gate);
-  const midZ = Math.floor((shell.bounds.minZ + shell.bounds.maxZ) / 2);
-  assert.equal(parseTile(gate.tile).z, midZ);
-  assert.equal(gate.props.gate.exitZ, midZ + 1);
 });

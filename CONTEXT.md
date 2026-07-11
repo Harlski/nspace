@@ -111,13 +111,14 @@ _Avoid_: go home, return home, go to chamber.
 
 **Tutorial Room**:
 The shared runtime room where Nimiq Pay first-contact learners receive and send 0.01 NIM before
-entering the Hub. Concurrent players share the space; each wallet gets its own mine slot and gate
-state.
+entering the Hub. Concurrent players share the space; each wallet gets its own mine slot and
+Unlock Pad state.
 _Avoid_: tutorial instance, lesson room, onboarding room.
 
 **Tutorial Path**:
-The south-to-north walkable progression through the Tutorial Room — Mine band, Pay gate, then Exit —
-authored in portrait proportions for Portrait Play rather than as a square plaza.
+The south-to-north walkable progression through the Tutorial Room — Mine band, Pay via Unlock
+Pad, then Exit — authored in portrait proportions for Portrait Play rather than as a square
+plaza.
 _Avoid_: tutorial corridor, lesson route, onboarding path.
 
 **Tutorial Staging**:
@@ -136,13 +137,14 @@ during lesson mode.
 _Avoid_: tutorial block, lesson mine.
 
 **Tutorial Pay Ack**:
-Optimistic gate unlock when Nimiq Pay reports send success for the door quote; no on-chain verify
-on the critical path for v1.
+Optimistic Unlock Pad unlock when Nimiq Pay reports send success for the door quote; no on-chain
+verify on the critical path for v1 tutorial.
 _Avoid_: door payment confirmation, pay verify.
 
 **Tutorial Escape**:
 Client timer while a Pay send promise is pending; after a silent wait and visible countdown,
-unsticks the gate server-side and teleports to the Hub without completing the lesson.
+unsticks the learner's Unlock Pad server-side and teleports to the Hub without completing the
+lesson.
 _Avoid_: pay timeout, stuck handler.
 
 **Tutorial Sandbox**:
@@ -161,6 +163,11 @@ _Avoid_: tutorial progress bar, quest tracker, onboarding wizard.
 A placed passable obstacle that warps a standing player to another Room at a preferred
 floor tile.
 _Avoid_: portal, warp pad, exit portal.
+
+**Unlock Pad**:
+A placed obstacle that is solid until a wallet unlocks it by payment, then walkable for that
+wallet only.
+_Avoid_: toll pad, paid crossing, pass pad, unlock tile, paid gate.
 
 **Teleporter Landing Hint**:
 The floor `(X, Z)` stored on a Teleporter as the preferred arrival tile in the destination

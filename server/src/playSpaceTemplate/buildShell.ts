@@ -57,6 +57,7 @@ export type LayoutSnapshotForBuildShell = {
     locked?: boolean;
     teleporter?: TerrainProps["teleporter"];
     gate?: TerrainProps["gate"];
+    unlockPad?: TerrainProps["unlockPad"];
     claimable?: boolean;
     tutorialMineSlot?: boolean;
   }>;
@@ -114,7 +115,8 @@ export function buildShellFromLegacyPlaySpaceLayout(): BuildShell {
 
 export function buildShellFromLayoutSnapshot(
   snap: LayoutSnapshotForBuildShell,
-  joinSpawn: { x: number; z: number } | null
+  joinSpawn: { x: number; z: number } | null,
+  opts?: { keepSpecials?: boolean }
 ): BuildShell {
   const obstacles: BuildShellObstacle[] = [];
   for (const o of snap.obstacles) {
@@ -137,9 +139,17 @@ export function buildShellFromLayoutSnapshot(
       locked: o.locked ?? false,
       teleporter: o.teleporter,
       gate: o.gate,
+      unlockPad: o.unlockPad,
       claimable: o.claimable,
       tutorialMineSlot: o.tutorialMineSlot,
     };
+    if (opts?.keepSpecials) {
+      obstacles.push({
+        tile: blockKey(o.x, o.z, o.y),
+        props: { ...raw, locked: false },
+      });
+      continue;
+    }
     const props = sanitizeObstaclePropsForExport(raw);
     if (!props) continue;
     obstacles.push({

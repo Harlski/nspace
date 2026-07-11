@@ -4,11 +4,9 @@ import { blockKey } from "../grid.js";
 import type { TerrainProps } from "../grid.js";
 import { TUTORIAL_ROOM_ID, TUTORIAL_STAGING_ROOM_ID } from "../tutorial/roomIds.js";
 
-/**
- * Portrait Tutorial Path footprint (7 wide × 15 deep).
- * Learners walk south → north: Mine → Pay gate → Exit.
- * @see docs/adr/0006-tutorial-room-portrait-path.md
- */
+/** Stable Unlock Pad instance id for the default Tutorial Path Pay band. */
+export const TUTORIAL_PATH_UNLOCK_PAD_INSTANCE_ID =
+  "tutorial-path-unlock-pad-v1" as const;
 export const TUTORIAL_DEFAULT_BOUNDS = {
   minX: -3,
   maxX: 3,
@@ -108,7 +106,7 @@ function buildTutorialPathObstacles(): BuildShellObstacle[] {
   out.push(obstacle(-2, 3, 0, baseProps({ colorRgb: COLOR.half, half: true })));
   out.push(obstacle(2, 4, 0, baseProps({ colorRgb: COLOR.half, half: true })));
 
-  // Pay choke at mid Z: solid cubes with a center gate; exit lands north.
+  // Pay band: side walls + Unlock Pad (replaces Gate). Hub exit door appears north when unlocked.
   for (const x of [-2, -1, 1, 2] as const) {
     out.push(obstacle(x, GATE_Z, 0, baseProps({ colorRgb: COLOR.wall })));
   }
@@ -119,11 +117,12 @@ function buildTutorialPathObstacles(): BuildShellObstacle[] {
       0,
       baseProps({
         colorRgb: COLOR.gate,
-        gate: {
-          adminAddress: "SYSTEM",
-          authorizedAddresses: ["SYSTEM"],
-          exitX: EXIT.x,
-          exitZ: EXIT.z,
+        unlockPad: {
+          amountLuna: "1000000",
+          recipient: "SYSTEM",
+          buttonLabel: "Unlock Pad",
+          proofMode: "optimistic",
+          instanceId: TUTORIAL_PATH_UNLOCK_PAD_INSTANCE_ID,
         },
       })
     )

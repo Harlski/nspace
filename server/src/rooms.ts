@@ -291,9 +291,12 @@ import {
   isTutorialRuntimeRoomId,
   isTutorialStagingRoomId,
   isTutorialBuilderWallet,
+  canEditTutorialRoomContent,
 } from "./tutorial/config.js";
 import {
   buildTutorialWelcomeForConn,
+  doorsForWelcomeWithTutorialExit,
+  findTutorialHubExitDoor,
   teleporterMayTargetTutorialRoom,
   tutorialBypassBalancePeek,
   tutorialGateMayOpen,
@@ -912,6 +915,13 @@ export type ObstacleTile = {
     openedBy: string;
     untilMs: number;
   };
+  unlockPad?: {
+    amountLuna: string;
+    recipient: string;
+    buttonLabel: string;
+    proofMode: "optimistic" | "payment_intent";
+    instanceId: string;
+  };
 };
 
 type PlacedProps = TerrainProps;
@@ -1107,11 +1117,15 @@ function canPlaceMineableBlocks(address: string): boolean {
  * - Wallet-created rooms: owner, admin, or a wallet on the room's builder allowlist.
  * - Official rooms (no owner): admin or a wallet on the builder allowlist.
  * - Hub and other built-ins: anyone may edit (subject to hub safe zone, etc.).
+ * - Tutorial Room / Tutorial Staging: admins and tutorial builder allowlist only.
  */
 function canEditRoomContent(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
   if (isInviteLobbyRoomId(id)) return true;
   if (id === CANVAS_ROOM_ID) return false;
+  if (isTutorialRuntimeRoomId(id) || isTutorialStagingRoomId(id)) {
+    return canEditTutorialRoomContent(address);
+  }
   if (id === CHAMBER_ROOM_ID) {
     return isAdmin(address) || isBuiltinRoomBuilder(id, address);
   }
@@ -2278,6 +2292,30 @@ function listTutorialMineSlotTileKeys(roomId: string): string[] {
   return out;
 }
 
+/** Hub exit door tile for a wallet that has unlocked the tutorial gate (Pay ack or unstick). */
+export function tutorialHubExitDoorForWallet(wallet: string) {
+  return findTutorialHubExitDoor({
+    roomId: TUTORIAL_ROOM_ID,
+    wallet,
+    placed: placedMap(TUTORIAL_ROOM_ID),
+  });
+}
+
+function welcomeDoorsForRoom(roomId: string, wallet: string) {
+  return doorsForWelcomeWithTutorialExit(
+    roomId,
+    wallet,
+    getDoorsForRoom(roomId),
+    placedMap(roomId)
+  ).map((d) => ({
+    x: d.x,
+    z: d.z,
+    targetRoomId: normalizeRoomId(d.targetRoomId),
+    spawnX: d.spawnX,
+    spawnZ: d.spawnZ,
+  }));
+}
+
 /** Apply the published Tutorial Template to runtime / staging rooms once each. */
 function ensureTutorialRoomLayout(roomId: string): void {
   const id = normalizeRoomId(roomId);
@@ -2337,7 +2375,7 @@ export function extractBuildShellForTutorialTemplate(
     x: Math.floor((snap.roomBounds.minX + snap.roomBounds.maxX) / 2),
     z: Math.floor((snap.roomBounds.minZ + snap.roomBounds.maxZ) / 2),
   };
-  return buildShellFromLayoutSnapshot(snap, joinSpawn);
+  return buildShellFromLayoutSnapshot(snap, joinSpawn, { keepSpecials: true });
 }
 
 /** Build Shell snapshot for admin Play Space Template authoring. */
@@ -2958,6 +2996,18 @@ function obstacleTileFromPlaced(roomId: string, tileKeyStr: string): ObstacleTil
     teleporter: v.teleporter,
     gate: v.gate ? gateWirePayload(v.gate) : undefined,
     gateOpen: v.gateOpen,
+    unlockPad: v.unlockPad
+      ? {
+          amountLuna: String(v.unlockPad.amountLuna),
+          recipient: String(v.unlockPad.recipient),
+          buttonLabel: String(v.unlockPad.buttonLabel ?? "Unlock"),
+          proofMode:
+            v.unlockPad.proofMode === "optimistic"
+              ? "optimistic"
+              : "payment_intent",
+          instanceId: String(v.unlockPad.instanceId),
+        }
+      : undefined,
   };
 }
 
@@ -3011,6 +3061,18 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       teleporter: v.teleporter,
       gate: v.gate ? gateWirePayload(v.gate) : undefined,
       gateOpen: v.gateOpen,
+      unlockPad: v.unlockPad
+        ? {
+            amountLuna: String(v.unlockPad.amountLuna),
+            recipient: String(v.unlockPad.recipient),
+            buttonLabel: String(v.unlockPad.buttonLabel ?? "Unlock"),
+            proofMode:
+              v.unlockPad.proofMode === "optimistic"
+                ? "optimistic"
+                : "payment_intent",
+            instanceId: String(v.unlockPad.instanceId),
+          }
+        : undefined,
     });
   }
   return out;
@@ -4080,7 +4142,9 @@ function roomCatalogMessage(forAddress: string): Extract<OutMsg, { type: "roomCa
     viewerThumbedUp: boolean;
   }> = [];
   for (const d of defs) {
-    if (tutorialRoomHiddenFromCatalog(d.id)) continue;
+    if (tutorialRoomHiddenFromCatalog(d.id)) {
+      if (!admin || !isTutorialRuntimeRoomId(d.id)) continue;
+    }
     if (d.isBuiltin) {
       if (!d.isPublic && !admin) {
         continue;
@@ -5799,13 +5863,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     .filter((c) => c.address !== address)
     .map(playerToOutState);
   const rb = getRoomBaseBounds(targetRoomId);
-  const doors = getDoorsForRoom(targetRoomId).map((d) => ({
-    x: d.x,
-    z: d.z,
-    targetRoomId: normalizeRoomId(d.targetRoomId),
-    spawnX: d.spawnX,
-    spawnZ: d.spawnZ,
-  }));
+  const doors = welcomeDoorsForRoom(targetRoomId, address);
   
   const signboards = getSignboardsForRoom(targetRoomId).map((s) => ({
     id: s.id,
@@ -7935,13 +7993,7 @@ export function addClient(
   const selfOut = playerToOutState(conn);
 
   const rb = getRoomBaseBounds(roomId);
-  const doors = getDoorsForRoom(roomId).map((d) => ({
-    x: d.x,
-    z: d.z,
-    targetRoomId: normalizeRoomId(d.targetRoomId),
-    spawnX: d.spawnX,
-    spawnZ: d.spawnZ,
-  }));
+  const doors = welcomeDoorsForRoom(roomId, address);
 
   const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
   const allowPlaceBlocks =
@@ -11840,7 +11892,7 @@ export function addClient(
           releaseBlockClaimSession(claimId);
           const reason =
             tutorialClaim.reason === "wrong_slot"
-              ? "This block is not assigned to you."
+              ? "Click and hold your glowing block."
               : tutorialClaim.reason === "already_claimed"
                 ? "You already mined your tutorial block."
                 : "This block is not available.";

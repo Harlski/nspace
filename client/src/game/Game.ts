@@ -49,6 +49,7 @@ import {
   ROOM_ID,
   VIEW_FRUSTUM_SIZE,
 } from "./constants.js";
+import { gateApproachTile } from "./gateAuth.js";
 import { FogOfWarPass } from "./fogOfWar.js";
 // worldcup: seasonal soccer rendering (feature-flagged, deletable)
 import type { BallWire, WorldcupPortalWire } from "../net/ws.js";
@@ -928,6 +929,7 @@ function plainCubeObstacleHeight(meta: BlockStyleProps): number {
 /** Opaque plain cubes without overlays - safe to batch into InstancedMesh. */
 function canUsePlainCubeInstancing(meta: BlockStyleProps): boolean {
   if (meta.gate) return false;
+  if (meta.unlockPad) return false;
   if (!isPlainCubeTerrain(normalizeBlockPrismParts(meta))) return false;
   if (meta.passable) return false;
   if (meta.claimable) return false;
@@ -1401,6 +1403,8 @@ export class Game {
   private readonly ndc = new THREE.Vector2();
   private readonly hit = new THREE.Vector3();
   private selfAddress = "";
+  /** Unlock Pad instance ids the local player has unlocked (client prediction + pathfinding). */
+  private unlockedPadInstanceIds = new Set<string>();
   private selfMesh: THREE.Group | null = null;
   /** Authoritative position from server; selfMesh lerps toward extrapolated goal each frame. */
   private selfTargetPos: THREE.Vector3 | null = null;
@@ -1617,6 +1621,11 @@ export class Game {
     z: number;
     customized: boolean;
   } | null = null;
+  private readonly roomEntrySpawnRing: THREE.Mesh;
+  private readonly roomEntrySpawnRingMat: THREE.MeshBasicMaterial;
+  private readonly tutorialMineHighlightRing: THREE.Mesh;
+  private readonly tutorialMineHighlightRingMat: THREE.MeshBasicMaterial;
+  private tutorialMineHighlightTile: { x: number; z: number } | null = null;
   /** Cinema `?stream=1` - no avatar, no movement or floor edits. */
   private streamObserverMode = false;
   private readonly extraFloorKeys = new Set<string>();
@@ -2567,6 +2576,21 @@ export class Game {
     this.roomEntrySpawnRing.visible = false;
     this.scene.add(this.roomEntrySpawnRing);
 
+    this.tutorialMineHighlightRingMat = new THREE.MeshBasicMaterial({
+      color: 0xfbbf24,
+      transparent: true,
+      opacity: 0.88,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.tutorialMineHighlightRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.28, 0.48, 48),
+      this.tutorialMineHighlightRingMat
+    );
+    this.tutorialMineHighlightRing.rotation.x = -Math.PI / 2;
+    this.tutorialMineHighlightRing.visible = false;
+    this.scene.add(this.tutorialMineHighlightRing);
+
     const fogInner = Game.readFogNumber(LS_FOG_INNER, FOG_INNER_RADIUS);
     const fogOuter = Game.readFogNumber(LS_FOG_OUTER, FOG_OUTER_RADIUS);
     const fogR = Game.normalizeFogRadii(fogInner, fogOuter);
@@ -2886,6 +2910,8 @@ export class Game {
     this.teleporterEditDestDraft = null;
     this.roomJoinSpawnTile = null;
     this.roomEntrySpawnRing.visible = false;
+    this.tutorialMineHighlightTile = null;
+    this.tutorialMineHighlightRing.visible = false;
     this.roomEntrySpawnPickHandler = null;
     this.hideTrailImmediate();
     this.beginPathFadeOut();
@@ -2944,6 +2970,25 @@ export class Game {
     );
     this.roomEntrySpawnRingMat.opacity =
       0.72 + 0.2 * Math.sin(phaseSec * 2.2);
+    ring.visible = true;
+  }
+
+  private syncTutorialMineHighlight(phaseSec: number): void {
+    const ring = this.tutorialMineHighlightRing;
+    const tile = this.tutorialMineHighlightTile;
+    if (!tile) {
+      ring.visible = false;
+      return;
+    }
+    ring.position.set(
+      tile.x,
+      0.05 + 0.014 * Math.sin(phaseSec * 3.4),
+      tile.z
+    );
+    const pulse = 1 + 0.08 * Math.sin(phaseSec * 2.6);
+    ring.scale.set(pulse, pulse, 1);
+    this.tutorialMineHighlightRingMat.opacity =
+      0.62 + 0.28 * Math.sin(phaseSec * 2.1);
     ring.visible = true;
   }
 
@@ -5149,6 +5194,41 @@ export class Game {
     this.requestRender(120);
   }
 
+  /** Lesson-mode highlight on the wallet's assigned Tutorial Mine Slot. */
+  setTutorialMineHighlight(tile: { x: number; z: number } | null): void {
+    this.tutorialMineHighlightTile = tile
+      ? { x: Math.floor(tile.x), z: Math.floor(tile.z) }
+      : null;
+    if (!tile) {
+      this.tutorialMineHighlightRing.visible = false;
+    }
+    this.syncTutorialMineHighlight(performance.now() * 0.001);
+    this.requestRender(120);
+  }
+
+  upsertDoor(d: {
+    x: number;
+    z: number;
+    targetRoomId: string;
+    spawnX: number;
+    spawnZ: number;
+  }): void {
+    const xi = Math.floor(d.x);
+    const zi = Math.floor(d.z);
+    const idx = this.doors.findIndex((row) => row.x === xi && row.z === zi);
+    const next = {
+      x: xi,
+      z: zi,
+      targetRoomId: d.targetRoomId,
+      spawnX: d.spawnX,
+      spawnZ: d.spawnZ,
+    };
+    if (idx >= 0) this.doors[idx] = next;
+    else this.doors.push(next);
+    this.rebuildDoorKeys();
+    this.requestRender(120);
+  }
+
   applyRoomLayoutSnapshot(
     snapshot: {
     roomId: string;
@@ -5531,6 +5611,35 @@ export class Game {
       targetZ: tpd.targetZ,
       ...(snap ? { targetRoomDisplayName: snap } : {}),
     };
+  }
+
+  /**
+   * Gate the local player is standing in front of (approach tile opposite exit).
+   * Used for the tutorial Unlock Gate intent pill.
+   */
+  getStandingTutorialGateApproach(): {
+    x: number;
+    z: number;
+    y: number;
+  } | null {
+    if (!this.selfMesh) return null;
+    const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    for (const [k, meta] of this.placedObjects) {
+      const g = meta.gate;
+      if (!g) continue;
+      const parts = k.split(",").map(Number);
+      if (parts.length < 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) {
+        continue;
+      }
+      const gx = Math.floor(parts[0]!);
+      const gz = Math.floor(parts[1]!);
+      const gy = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
+      const approach = gateApproachTile(gx, gz, g.exitX, g.exitZ);
+      if (approach.x === here.x && approach.z === here.y) {
+        return { x: gx, z: gz, y: gy };
+      }
+    }
+    return null;
   }
 
   getPlacementBlockStyle(): {
@@ -8506,6 +8615,13 @@ export class Game {
         exitZ: number;
       };
       gateOpen?: { openedBy: string; untilMs: number };
+      unlockPad?: {
+        amountLuna: string;
+        recipient: string;
+        buttonLabel: string;
+        proofMode: "optimistic" | "payment_intent";
+        instanceId: string;
+      };
       signboardId?: string;
     }[]
   ): void {
@@ -8570,6 +8686,7 @@ export class Game {
         teleporter: t.teleporter,
         gate: t.gate,
         gateOpen: t.gateOpen,
+        unlockPad: t.unlockPad,
       });
       if (y === 0 && !t.passable && !prism.ramp) {
         this.blockingTileKeys.add(tileKey(t.x, t.z));
@@ -8629,6 +8746,13 @@ export class Game {
         exitZ: number;
       };
       gateOpen?: { openedBy: string; untilMs: number };
+      unlockPad?: {
+        amountLuna: string;
+        recipient: string;
+        buttonLabel: string;
+        proofMode: "optimistic" | "payment_intent";
+        instanceId: string;
+      };
       signboardId?: string;
     }[],
     remove: readonly string[]
@@ -8716,6 +8840,7 @@ export class Game {
         teleporter: t.teleporter,
         gate: t.gate,
         gateOpen: t.gateOpen,
+        unlockPad: t.unlockPad,
       });
 
       if (y === 0 && !t.passable && !prism.ramp) {
@@ -9942,6 +10067,7 @@ export class Game {
       ? {
           address: this.selfAddress.replace(/\s+/g, "").toUpperCase(),
           nowMs: Date.now(),
+          unlockedPadInstanceIds: this.unlockedPadInstanceIds,
         }
       : null;
     const startLayer = inferStartLayerClient(
@@ -11663,6 +11789,7 @@ export class Game {
     this.clearSelfEmojiTouchSession();
     this.clearOtherProfileTouchSession();
     this.selfAddress = address;
+    if (!address.trim()) this.unlockedPadInstanceIds.clear();
     this.cameraFollowReady = false;
     this.selfTargetPos = null;
     if (this.selfMesh) {
@@ -11677,6 +11804,58 @@ export class Game {
     const g = this.makeAvatar(address, label);
     this.selfMesh = g;
     this.scene.add(g);
+  }
+
+  markUnlockPadUnlocked(instanceId: string): void {
+    const id = instanceId.trim();
+    if (id) this.unlockedPadInstanceIds.add(id);
+  }
+
+  hasUnlockPadUnlocked(instanceId: string): boolean {
+    return this.unlockedPadInstanceIds.has(instanceId.trim());
+  }
+
+  getUnlockedPadInstanceIds(): ReadonlySet<string> {
+    return this.unlockedPadInstanceIds;
+  }
+
+  /**
+   * Unlock Pad the local player is orthogonally adjacent to and has not unlocked.
+   */
+  getAdjacentLockedUnlockPad(): {
+    x: number;
+    z: number;
+    y: number;
+    buttonLabel: string;
+    instanceId: string;
+    proofMode: "optimistic" | "payment_intent";
+  } | null {
+    if (!this.selfMesh) return null;
+    const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    const neighbors: [number, number][] = [
+      [here.x + 1, here.y],
+      [here.x - 1, here.y],
+      [here.x, here.y + 1],
+      [here.x, here.y - 1],
+    ];
+    for (const [x, z] of neighbors) {
+      for (const y of [0, 1, 2]) {
+        const meta = this.placedObjects.get(blockKey(x, z, y));
+        const pad = meta?.unlockPad;
+        if (!pad?.instanceId) continue;
+        if (this.unlockedPadInstanceIds.has(pad.instanceId)) continue;
+        return {
+          x,
+          z,
+          y,
+          buttonLabel: pad.buttonLabel || "Unlock",
+          instanceId: pad.instanceId,
+          proofMode:
+            pad.proofMode === "optimistic" ? "optimistic" : "payment_intent",
+        };
+      }
+    }
+    return null;
   }
 
   dispose(): void {
@@ -11787,6 +11966,8 @@ export class Game {
     this.teleporterDraftDestHighlightMat.dispose();
     this.roomEntrySpawnRing.geometry.dispose();
     this.roomEntrySpawnRingMat.dispose();
+    this.tutorialMineHighlightRing.geometry.dispose();
+    this.tutorialMineHighlightRingMat.dispose();
     this.defaultTileHoverOutline.geometry.dispose();
     this.defaultTileHoverOutlineMat.dispose();
     this.tileHighlightMat.dispose();
@@ -12002,6 +12183,7 @@ export class Game {
       ? {
           address: this.selfAddress.replace(/\s+/g, "").toUpperCase(),
           nowMs: Date.now(),
+          unlockedPadInstanceIds: this.unlockedPadInstanceIds,
         }
       : null;
     if (here.x === goal.ft.x && here.y === goal.ft.y) {
@@ -14705,10 +14887,12 @@ export class Game {
     this.updateTypingIndicatorAnimation();
     this.updateFloatingTexts();
     this.syncRoomEntrySpawnMarker(renderNow * 0.001);
+    this.syncTutorialMineHighlight(renderNow * 0.001);
 
     const hasMineableSparkles = this.updateMineableBlockSparkles();
     const hasSignpostHintMotion = this.updateSignpostHintSprites();
-    if (visualActive || hasMineableSparkles || hasSignpostHintMotion) {
+    const hasTutorialMineHighlight = this.tutorialMineHighlightTile !== null;
+    if (visualActive || hasMineableSparkles || hasSignpostHintMotion || hasTutorialMineHighlight) {
       this.requestRender(250);
     }
     if (visualActive) {

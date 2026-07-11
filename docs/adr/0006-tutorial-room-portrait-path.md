@@ -3,7 +3,7 @@
 The **Tutorial Room** is a first-contact lesson for **Portrait Play** / Nimiq Pay, not a
 square social plaza. We author it as a **Tutorial Path**: a portrait-proportioned corridor
 (about **7 wide × 15 deep**) that learners walk **south → north** through three bands —
-**Mine**, **Pay** (gate), **Exit** — matching the **Tutorial Step Coach** order.
+**Mine**, **Pay** (**Unlock Pad**), **Exit** — matching the **Tutorial Step Coach** order.
 
 We chose this over a square room or a southwest→northeast diagonal because a linear
 south→north path reads clearly on a phone, keeps concurrent learners from scattering, and

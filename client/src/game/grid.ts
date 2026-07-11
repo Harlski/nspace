@@ -304,6 +304,13 @@ export type TerrainProps = {
     openedBy: string;
     untilMs: number;
   };
+  unlockPad?: {
+    amountLuna: string;
+    recipient: string;
+    buttonLabel: string;
+    proofMode: "optimistic" | "payment_intent";
+    instanceId: string;
+  };
 };
 
 export function normalizeWalletKey(addr: string): string {
@@ -387,7 +394,20 @@ function inWorldTileBounds(x: number, z: number): boolean {
 /**
  * Same logic as server `inferTerrainStartLayer` (see server `grid.ts`).
  */
-export type PathfindMoverContext = { address: string; nowMs: number };
+export type PathfindMoverContext = {
+  address: string;
+  nowMs: number;
+  unlockedPadInstanceIds?: ReadonlySet<string>;
+};
+
+export function isUnlockPadPassableForMover(
+  p: TerrainProps | undefined,
+  unlockedPadInstanceIds: ReadonlySet<string> | null | undefined
+): boolean {
+  const id = p?.unlockPad?.instanceId?.trim();
+  if (!id || !unlockedPadInstanceIds) return false;
+  return unlockedPadInstanceIds.has(id);
+}
 
 export function inferTerrainStartLayer(
   wx: number,
@@ -409,6 +429,12 @@ export function inferTerrainStartLayer(
         moverCtx.nowMs,
         roomId
       )
+    ) {
+      return 0;
+    }
+    if (
+      moverCtx &&
+      isUnlockPadPassableForMover(propHere, moverCtx.unlockedPadInstanceIds)
     ) {
       return 0;
     }
@@ -539,13 +565,15 @@ export function floorWalkableTerrainForMover(
   roomId: string,
   baseRemoved: ReadonlySet<string> | null | undefined,
   moverAddress: string | null,
-  nowMs: number
+  nowMs: number,
+  unlockedPadInstanceIds?: ReadonlySet<string> | null
 ): boolean {
   if (!isWalkableTile(x, z, extraWalkable, roomId, baseRemoved)) return false;
   const p = placed.get(tileKey(x, z)) ?? placed.get(blockKey(x, z, 0));
   if (!p) return true;
   if (p.passable || p.ramp) return true;
   if (isGatePassableForMover(p, moverAddress, nowMs, roomId)) return true;
+  if (isUnlockPadPassableForMover(p, unlockedPadInstanceIds)) return true;
   return false;
 }
 
@@ -662,7 +690,8 @@ export function pathfindTerrain(
           roomId,
           baseRemoved ?? null,
           moverCtx.address,
-          moverCtx.nowMs
+          moverCtx.nowMs,
+          moverCtx.unlockedPadInstanceIds
         )
       : floorWalkableTerrain(
           x,

@@ -7,4 +7,6 @@
 
 _(Draft — not published.)_
 
-- [CHANGE] The Nimiq Pay tutorial room is now a tall portrait path: mine at the south end, pay gate in the middle, exit toward the north.
+- [CHANGE] The Nimiq Pay tutorial room is now a tall portrait path: mine at the south end, Unlock Pad in the middle, exit toward the north.
+- [FIX] After mining in the tutorial, stand beside the Unlock Pad to get an Unlock Pad button above the tile (opens Nimiq Pay).
+

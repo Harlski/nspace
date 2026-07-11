@@ -21,12 +21,81 @@ import {
   isTutorialStagingRoomId,
   TUTORIAL_ROOM_ID,
 } from "./config.js";
-import { CHAMBER_ROOM_ID } from "../roomLayouts.js";
+import {
+  CHAMBER_DEFAULT_SPAWN,
+  CHAMBER_ROOM_ID,
+  type DoorDef,
+} from "../roomLayouts.js";
 import { fireAchievementEvent } from "../achievementStore.js";
 import { getTutorialProfileRow } from "../playerProfileStore.js";
 
 export function tutorialRoomHiddenFromCatalog(roomId: string): boolean {
   return isTutorialRoomHiddenFromCatalog(roomId);
+}
+
+/** Virtual Hub exit door north of the Unlock Pad once Pay ack / escape unlocks it. */
+export function findTutorialHubExitDoor(opts: {
+  roomId: string;
+  wallet: string;
+  placed: ReadonlyMap<
+    string,
+    {
+      gate?: { exitX: number; exitZ: number };
+      unlockPad?: { instanceId?: string };
+    }
+  >;
+}): DoorDef | null {
+  if (!isTutorialRuntimeRoomId(opts.roomId)) return null;
+  if (!isTutorialGatePassableForWallet(opts.wallet)) return null;
+  for (const [k, v] of opts.placed) {
+    if (v.unlockPad) {
+      const parts = k.split(",").map(Number);
+      if (
+        parts.length < 2 ||
+        !Number.isFinite(parts[0]) ||
+        !Number.isFinite(parts[1])
+      ) {
+        continue;
+      }
+      const x = Math.floor(parts[0]!);
+      const z = Math.floor(parts[1]!);
+      return {
+        x,
+        z: z + 1,
+        targetRoomId: CHAMBER_ROOM_ID,
+        spawnX: CHAMBER_DEFAULT_SPAWN.x,
+        spawnZ: CHAMBER_DEFAULT_SPAWN.z,
+      };
+    }
+  }
+  for (const v of opts.placed.values()) {
+    if (!v.gate) continue;
+    return {
+      x: v.gate.exitX,
+      z: v.gate.exitZ,
+      targetRoomId: CHAMBER_ROOM_ID,
+      spawnX: CHAMBER_DEFAULT_SPAWN.x,
+      spawnZ: CHAMBER_DEFAULT_SPAWN.z,
+    };
+  }
+  return null;
+}
+
+export function doorsForWelcomeWithTutorialExit(
+  roomId: string,
+  wallet: string,
+  baseDoors: readonly DoorDef[],
+  placed: ReadonlyMap<string, { gate?: { exitX: number; exitZ: number } }>
+): DoorDef[] {
+  const doors = [...baseDoors];
+  const exit = findTutorialHubExitDoor({ roomId, wallet, placed });
+  if (
+    exit &&
+    !doors.some((d) => d.x === exit.x && d.z === exit.z)
+  ) {
+    doors.push(exit);
+  }
+  return doors;
 }
 
 export function buildTutorialWelcomeForConn(opts: {
@@ -154,7 +223,7 @@ export function teleporterMayTargetTutorialRoom(
   setterIsAdmin: boolean
 ): boolean {
   if (!isTutorialRuntimeRoomId(destRoomId)) return true;
-  return setterIsAdmin;
+  return setterIsAdmin && isTutorialFeatureEnabled();
 }
 
 export { computeNeedsTutorial };

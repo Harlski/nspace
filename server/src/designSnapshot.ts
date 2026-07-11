@@ -61,6 +61,7 @@ export function sanitizeObstaclePropsForExport(
 ): TerrainProps | null {
   if (props.teleporter) return null;
   if (props.gate) return null;
+  if (props.unlockPad) return null;
   if (props.claimable) return null;
   const out: TerrainProps = {
     passable: props.passable,

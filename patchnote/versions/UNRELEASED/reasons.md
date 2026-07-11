@@ -24,7 +24,9 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Server
 
-- `tutorialTemplate/bootstrapShell.ts`: default Tutorial Template is 7×15 portrait corridor (Mine alcove south, pay gate mid-north, exit north); path floor strip; existing block shapes only. Fresh empty template stores pick this up; existing published templates need staging republish / resync.
+- `tutorialTemplate/bootstrapShell.ts`: default Tutorial Template is 7×15 portrait corridor (Mine alcove south, Unlock Pad mid, exit north); path floor strip; existing block shapes only. Fresh empty template stores pick this up; existing published templates need staging republish / resync.
+- Unlock Pad domain module (`server/src/unlockPad/`): per-wallet grants, walkability; tutorial Pay uses Unlock Pad + optimistic door-sent grant; world-anchored Unlock control when adjacent.
+- `client/src/main.ts`: portal Enter handler runs `runTutorialDoorPayFlow` for unlock-pad / tutorial-unlock-gate.
 
 ### payment-intent-service
 

@@ -276,6 +276,13 @@ export type BlockStyleProps = {
     openedBy: string;
     untilMs: number;
   };
+  unlockPad?: {
+    amountLuna: string;
+    recipient: string;
+    buttonLabel: string;
+    proofMode: "optimistic" | "payment_intent";
+    instanceId: string;
+  };
   claimable?: boolean;
   active?: boolean;
   cooldownMs?: number;
