@@ -132,6 +132,8 @@ import {
   sendUpdateBillboard,
   sendPlacePendingTeleporter,
   sendPlacePendingGate,
+  sendPlaceUnlockPad,
+  sendSetUnlockPadConfig,
   sendOpenGate,
   sendConfigureTeleporter,
   sendPlaceTeleporterBidirectionalPair,
@@ -1165,6 +1167,89 @@ function enterGame(
       return sent.ok;
     } finally {
       tutorialDoorPayInFlight = false;
+    }
+  }
+
+  let unlockPadPayInFlight = false;
+  async function runUnlockPadPaymentIntentFlow(instanceId: string): Promise<void> {
+    if (unlockPadPayInFlight) return;
+    unlockPadPayInFlight = true;
+    try {
+      const { createUnlockPadIntent, syncUnlockPadPayment } = await import(
+        "./unlockPad/api.js"
+      );
+      const roomId = game.getRoomId();
+      hud.setStatus("Creating payment…");
+      let created;
+      try {
+        created = await createUnlockPadIntent(roomId, instanceId);
+      } catch (e) {
+        const err = String((e as Error)?.message ?? e);
+        if (err === "already_unlocked") {
+          game.markUnlockPadUnlocked(instanceId);
+          hud.setStatus("Already unlocked.");
+          return;
+        }
+        if (err === "payment_intent_not_configured") {
+          hud.setStatus("Payment Intent service is not configured on this server.");
+          return;
+        }
+        hud.setStatus(`Could not start unlock payment (${err}).`);
+        return;
+      }
+      const pay = window.nimiqPay;
+      if (pay?.sendBasicTransactionWithData) {
+        try {
+          await pay.sendBasicTransactionWithData({
+            recipient: created.intent.recipient,
+            value: BigInt(created.intent.amountLuna),
+            data: created.intent.memo,
+          });
+        } catch (e) {
+          const msg = String(e ?? "");
+          const cancelled =
+            msg.toLowerCase().includes("cancel") ||
+            msg.toLowerCase().includes("reject");
+          if (!cancelled) hud.setStatus("Pay failed - try Unlock again.");
+          return;
+        }
+      } else {
+        hud.setStatus(
+          `Send ${created.intent.amountNimLabel} NIM. Memo: ${created.intent.memo}. Waiting…`
+        );
+        try {
+          await navigator.clipboard.writeText(created.intent.memo);
+        } catch {
+          /* ignore */
+        }
+      }
+      hud.setStatus("Confirming payment…");
+      for (let i = 0; i < 24; i++) {
+        try {
+          const synced = await syncUnlockPadPayment(
+            created.intent.intentId,
+            roomId,
+            instanceId
+          );
+          if (synced.ok) {
+            game.markUnlockPadUnlocked(instanceId);
+            hud.setStatus("Path unlocked.");
+            return;
+          }
+        } catch (e) {
+          const err = String((e as Error)?.message ?? e);
+          if (err === "payment_pending" || err.includes("pending")) {
+            await new Promise((r) => setTimeout(r, 1500));
+            continue;
+          }
+          hud.setStatus(`Unlock sync failed (${err}). Tap Unlock to retry.`);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      hud.setStatus("Payment still confirming - tap Unlock to retry.");
+    } finally {
+      unlockPadPayInFlight = false;
     }
   }
 
@@ -3335,7 +3420,14 @@ function enterGame(
   }
 
   function syncObjectPrefabModes(
-    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab"
+    tool:
+      | "block"
+      | "signpost"
+      | "teleporter"
+      | "billboard"
+      | "gate"
+      | "unlock-pad"
+      | "prefab"
   ): void {
     prefabUi.setAllowPublish(welcomeAllowPublishDesign);
     const canUse =
@@ -3944,6 +4036,11 @@ function enterGame(
         );
         return;
       }
+      if (hud.isUnlockPadModeActive()) {
+        const st = game.getPlacementBlockStyle();
+        sendPlaceUnlockPad(socket, x, z, { colorRgb: st.colorRgb });
+        return;
+      }
       // Don't place blocks if in signpost mode
       if (hud.isSignpostModeActive()) {
         // Validate placement is within build radius
@@ -4440,6 +4537,28 @@ function enterGame(
         isAdmin: isAdmin(selfAddress),
         ...(m.claimable
           ? { claimable: true, active: m.active !== false }
+          : {}),
+        ...(m.unlockPad && isAdmin(selfAddress)
+          ? {
+              unlockPad: {
+                amountLuna: String(m.unlockPad.amountLuna ?? ""),
+                recipient: String(m.unlockPad.recipient ?? ""),
+                buttonLabel: String(m.unlockPad.buttonLabel ?? "Unlock"),
+                proofMode:
+                  m.unlockPad.proofMode === "optimistic"
+                    ? ("optimistic" as const)
+                    : ("payment_intent" as const),
+                instanceId: String(m.unlockPad.instanceId ?? ""),
+              },
+              onUnlockPadConfigChange: (cfg: {
+                amountLuna: string;
+                recipient: string;
+                buttonLabel: string;
+                proofMode: "optimistic" | "payment_intent";
+              }) => {
+                sendSetUnlockPadConfig(socket, x, z, y, cfg);
+              },
+            }
           : {}),
         ...(gateWire
           ? {
@@ -5184,6 +5303,7 @@ function enterGame(
       });
       bumpRoomLoadProgress(0.62);
       game.setObstacles(msg.obstacles);
+      game.setUnlockedPadInstanceIds(msg.unlockedPadInstanceIds ?? []);
       game.setSignboards(msg.signboards);
       game.setBillboards(msg.billboards ?? []);
       game.setVoxelTextsForRoom(msg.roomId, msg.voxelTexts ?? []);
@@ -6520,7 +6640,7 @@ function enterGame(
         })();
         return;
       }
-      hud.setStatus("Payment Intent unlock for this pad is not available yet.");
+      void runUnlockPadPaymentIntentFlow(instanceId);
       return;
     }
     if (portalAction?.kind === "billboard") {

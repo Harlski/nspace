@@ -308,6 +308,14 @@ import {
 } from "./tutorial/roomsIntegration.js";
 import type { TutorialWelcome } from "./tutorialSessionService.js";
 import {
+  defaultUnlockPadConfig,
+  forgetUnlockPadInstance,
+  listUnlockPadInstanceIdsForWallet,
+  normalizeUnlockPadConfig,
+  type UnlockPadConfig,
+} from "./unlockPad/index.js";
+import { setUnlockPadLookup } from "./unlockPad/fulfill.js";
+import {
   PLAY_SPACE_BACKGROUND_HUE_DEG,
   PLAY_SPACE_SPAWN,
 } from "./directInvite/playSpaceLayout.js";
@@ -1308,6 +1316,8 @@ type OutMsg =
       blockClaimDeniedReason?: string;
       /** Nimiq Pay first-contact tutorial state (lesson or sandbox). */
       tutorial?: TutorialWelcome;
+      /** Unlock Pad instance ids this wallet has already unlocked in this room. */
+      unlockedPadInstanceIds?: string[];
       /** Dynamic rooms: owner may toggle deployables via `updateRoom`. */
       allowRoomDeployablesEdit?: boolean;
       /** Recent room chat (non-bubble); same order as live `chat` messages. */
@@ -1970,6 +1980,17 @@ registerWorldStateRefs(
 );
 initPlaySpaceTemplateStore();
 initTutorialTemplateStore();
+
+setUnlockPadLookup((roomId, instanceId) => {
+  const placed = roomPlaced.get(normalizeRoomId(roomId));
+  if (!placed) return null;
+  const want = instanceId.trim();
+  for (const v of placed.values()) {
+    const cfg = v.unlockPad ? normalizeUnlockPadConfig(v.unlockPad) : null;
+    if (cfg && cfg.instanceId === want) return cfg;
+  }
+  return null;
+});
 
 function tutorialWelcomeForAddress(
   address: string,
@@ -5403,6 +5424,81 @@ function placePendingGateAt(
   return true;
 }
 
+function placeUnlockPadAt(
+  conn: ClientConn,
+  roomId: string,
+  x: number,
+  z: number,
+  colorRgb: number,
+  configOverrides?: Partial<UnlockPadConfig>
+): boolean {
+  const address = conn.address;
+  if (!isAdmin(address)) return false;
+  if (isInviteLobbyRoomId(normalizeRoomId(roomId))) return false;
+  if (!canPlaceBlocksInRoom(roomId, address)) return false;
+  if (normalizeRoomId(roomId) === CANVAS_ROOM_ID) return false;
+  if (!hasRoom(roomId)) return false;
+
+  const placed = placedMap(roomId);
+  const extra = extraFloorMap(roomId);
+  const br = baseRemovedReadonly(roomId);
+
+  const yLevel = nextOpenStackLevel(placed, x, z);
+  if (yLevel !== 0) return false;
+  if (!canPlaceTeleporterFoot(roomId, x, z, placed, extra, br)) return false;
+
+  for (const c of rooms.get(normalizeRoomId(roomId))?.values() ?? []) {
+    const st = snapToTile(c.player.x, c.player.z);
+    if (st.x === x && st.z === z) return false;
+  }
+
+  const unlockPad = defaultUnlockPadConfig({
+    ...configOverrides,
+    proofMode: isTutorialRuntimeRoomId(roomId)
+      ? "optimistic"
+      : (configOverrides?.proofMode ?? "payment_intent"),
+  });
+  const normalized = normalizeUnlockPadConfig(unlockPad);
+  if (!normalized) return false;
+
+  const k = blockKey(x, z, 0);
+  placed.set(k, {
+    passable: false,
+    half: false,
+    quarter: false,
+    hex: false,
+    pyramid: false,
+    pyramidBaseScale: 1,
+    hexRadiusScale: 1,
+    sphere: false,
+    sphereRadiusScale: 1,
+    ramp: false,
+    rampDir: 0,
+    colorRgb: clampColorRgb(colorRgb),
+    locked: false,
+    unlockPad: normalized,
+  });
+  const nRoom = normalizeRoomId(roomId);
+  const dTile = obstacleTileFromPlaced(nRoom, k);
+  if (dTile) {
+    broadcast(nRoom, {
+      type: "obstaclesDelta",
+      roomId: nRoom,
+      add: [dTile],
+      remove: [],
+    });
+  }
+  schedulePersistWorldState();
+  logGameplayEvent(conn.sessionId, address, nRoom, "place_unlock_pad", {
+    x,
+    z,
+    instanceId: normalized.instanceId,
+    proofMode: normalized.proofMode,
+    amountLuna: normalized.amountLuna,
+  });
+  return true;
+}
+
 function tickExpiredGatesForRoom(roomId: string, now: number): boolean {
   const placed = roomPlaced.get(roomId);
   if (!placed) return false;
@@ -5945,6 +6041,10 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
         ? worldcupPortalsForRoom(targetRoomId)
         : undefined,
       ...cosmeticGalleryWelcomeExtras(targetRoomId),
+      unlockedPadInstanceIds: listUnlockPadInstanceIdsForWallet(
+        address,
+        targetRoomId
+      ),
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, targetRoomId, chatBacklog);
   worldcupSendGoalieStateToConn(conn, targetRoomId);
@@ -8110,6 +8210,7 @@ export function addClient(
         : undefined,
       ...cosmeticGalleryWelcomeExtras(roomId),
       ...(tutorialWelcome ? { tutorial: tutorialWelcome } : {}),
+      unlockedPadInstanceIds: listUnlockPadInstanceIdsForWallet(address, roomId),
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, roomId, chatBacklog);
   worldcupSendGoalieStateToConn(conn, roomId);
@@ -9838,6 +9939,129 @@ export function addClient(
       return;
     }
 
+    if (msg.type === "placeUnlockPad") {
+      if (!isAdmin(address) || !canPlaceBlocksInRoom(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const tile = snapToTile(tx, tz);
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
+      const padColor = colorRgbFromWire({
+        colorRgb: msg.colorRgb,
+        colorId: msg.colorId ?? 7,
+      });
+      const overrides: Partial<UnlockPadConfig> = {};
+      if (msg.amountLuna !== undefined) {
+        overrides.amountLuna = String(msg.amountLuna);
+      }
+      if (msg.recipient !== undefined) {
+        overrides.recipient = String(msg.recipient);
+      }
+      if (msg.buttonLabel !== undefined) {
+        overrides.buttonLabel = String(msg.buttonLabel);
+      }
+      if (
+        msg.proofMode === "optimistic" ||
+        msg.proofMode === "payment_intent"
+      ) {
+        overrides.proofMode = msg.proofMode;
+      }
+      const ok = placeUnlockPadAt(
+        conn,
+        currentRoomId,
+        tile.x,
+        tile.z,
+        padColor,
+        overrides
+      );
+      if (!ok) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "",
+          text: "Could not place Unlock Pad. Admins only; use an empty floor tile on layer 0 within build range.",
+          at: now,
+        } satisfies OutMsg);
+      }
+      return;
+    }
+
+    if (msg.type === "setUnlockPadConfig") {
+      if (!isAdmin(address) || !canPlaceBlocksInRoom(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      const ty = Math.max(0, Math.min(2, Math.floor(Number(msg.y ?? 0))));
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const tile = snapToTile(tx, tz);
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
+      const placed = placedMap(currentRoomId);
+      const entry = getPlacedAtLevel(placed, tile.x, tile.z, ty);
+      if (!entry?.props.unlockPad) return;
+      const prev = normalizeUnlockPadConfig(entry.props.unlockPad);
+      if (!prev) return;
+      const nextRaw = {
+        amountLuna:
+          msg.amountLuna !== undefined ? String(msg.amountLuna) : prev.amountLuna,
+        recipient:
+          msg.recipient !== undefined ? String(msg.recipient) : prev.recipient,
+        buttonLabel:
+          msg.buttonLabel !== undefined
+            ? String(msg.buttonLabel)
+            : prev.buttonLabel,
+        proofMode:
+          msg.proofMode === "optimistic" || msg.proofMode === "payment_intent"
+            ? msg.proofMode
+            : prev.proofMode,
+        instanceId: prev.instanceId,
+      };
+      if (isTutorialRuntimeRoomId(currentRoomId)) {
+        nextRaw.proofMode = "optimistic";
+      } else {
+        nextRaw.proofMode = "payment_intent";
+      }
+      const next = normalizeUnlockPadConfig(nextRaw);
+      if (!next) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "",
+          text: "Invalid Unlock Pad settings (amount, recipient, label, or proof mode).",
+          at: now,
+        } satisfies OutMsg);
+        return;
+      }
+      placed.set(entry.key, { ...entry.props, unlockPad: next });
+      const deltaTile = obstacleTileFromPlaced(currentRoomId, entry.key);
+      if (deltaTile) {
+        broadcast(currentRoomId, {
+          type: "obstaclesDelta",
+          roomId: currentRoomId,
+          add: [deltaTile],
+          remove: [],
+        });
+      }
+      schedulePersistWorldState();
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "set_unlock_pad", {
+        x: tile.x,
+        z: tile.z,
+        y: ty,
+        instanceId: next.instanceId,
+        proofMode: next.proofMode,
+        amountLuna: next.amountLuna,
+      });
+      return;
+    }
+
     if (msg.type === "openGate") {
       const now = Date.now();
       const gx = Math.round(Number(msg.x));
@@ -10486,6 +10710,7 @@ export function addClient(
         ...claimFields,
         ...(existing.gate ? { gate: existing.gate } : {}),
         ...(existing.gateOpen ? { gateOpen: existing.gateOpen } : {}),
+        ...(existing.unlockPad ? { unlockPad: existing.unlockPad } : {}),
       });
       const deltaTile = obstacleTileFromPlaced(currentRoomId, canonicalKey);
       if (deltaTile) {
@@ -10631,7 +10856,8 @@ export function addClient(
         deleteSignboard(signboard.id);
         signboardDeleted = true;
       }
-      
+
+      forgetUnlockPadInstance(currentRoomId, props);
       placed.delete(k);
       broadcast(currentRoomId, {
         type: "obstaclesDelta",

@@ -24,6 +24,10 @@ import {
 // worldcup: seasonal soccer build-dock "Ball" prop (feature-flagged, deletable)
 import { WORLDCUP_ENABLED as WORLDCUP_ENABLED_CLIENT } from "../worldcup/config.js";
 import type { Game } from "../game/Game.js";
+import type {
+  TutorialCoachState,
+  TutorialCoachStep,
+} from "../tutorial/flow.js";
 import {
   appendTextWithFlags,
   codeFromFlagEmoji,
@@ -473,6 +477,11 @@ export function createHud(
   onReturnHome: (fn: () => void) => void;
   onFinishTutorial: (fn: () => void) => void;
   setFinishTutorialVisible: (visible: boolean) => void;
+  /** Non-blocking top toast with optional wallet identicon (tutorial sign-in, Hub welcome). */
+  showBriefToast: (text: string, opts?: { address?: string }) => void;
+  /** Lesson-mode Tutorial Step Coach under the top HUD strip. */
+  setTutorialStepCoach: (state: TutorialCoachState | null) => void;
+  pulseTutorialStepCoach: (step: TutorialCoachStep) => void;
   /** In-world "Leave the Shaper" button + Player Menu return action. */
   onLeaveShaper: (fn: () => void) => void;
   /** Toggle Shaper-only chrome (the leave button + Player Menu entry). */
@@ -484,12 +493,14 @@ export function createHud(
   isWorldcupBallModeActive: () => boolean;
   onBuildToolSelect: (
     fn: (
-      tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab"
+      tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab"
     ) => void
   ) => void;
   deactivateTeleporterMode: () => void;
   isGateModeActive: () => boolean;
   deactivateGateMode: () => void;
+  isUnlockPadModeActive: () => boolean;
+  deactivateUnlockPadMode: () => void;
   setRoomEntrySpawnPanelVisible: (visible: boolean) => void;
   onRoomEntrySpawnPickState: (fn: ((armed: boolean) => void) | null) => void;
   onRoomEntrySpawnUseCenter: (fn: (() => void) | null) => void;
@@ -635,6 +646,19 @@ export function createHud(
           gateExitDir?: number;
           /** Gate owner or room admin: opens ACL modal. */
           onEditGateAcl?: () => void;
+          unlockPad?: {
+            amountLuna: string;
+            recipient: string;
+            buttonLabel: string;
+            proofMode: "optimistic" | "payment_intent";
+            instanceId: string;
+          };
+          onUnlockPadConfigChange?: (cfg: {
+            amountLuna: string;
+            recipient: string;
+            buttonLabel: string;
+            proofMode: "optimistic" | "payment_intent";
+          }) => void;
           onPropsChange: (p: ObstacleProps) => void;
           onRemove: () => void;
           onMove: () => void;
@@ -1663,6 +1687,39 @@ export function createHud(
     }, 4000);
   }
 
+  const briefToast = document.createElement("div");
+  briefToast.className =
+    "hud-player-join-toast hud-translate-clipboard-hint hud-brief-toast";
+  briefToast.hidden = true;
+  briefToast.setAttribute("role", "status");
+  briefToast.setAttribute("aria-live", "polite");
+  const briefToastIdenticon = document.createElement("img");
+  briefToastIdenticon.className = "hud-player-join-toast__identicon";
+  briefToastIdenticon.alt = "";
+  briefToastIdenticon.hidden = true;
+  const briefToastText = document.createElement("span");
+  briefToast.append(briefToastIdenticon, briefToastText);
+  let briefToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function showBriefToast(text: string, opts?: { address?: string }): void {
+    briefToastText.textContent = text;
+    const addr = opts?.address?.replace(/\s+/g, "").trim();
+    if (addr) {
+      briefToastIdenticon.hidden = false;
+      void loadCtxIdenticon(briefToastIdenticon, addr);
+    } else {
+      briefToastIdenticon.hidden = true;
+    }
+    briefToast.hidden = false;
+    briefToast.classList.add("hud-player-join-toast--visible");
+    if (briefToastTimer) clearTimeout(briefToastTimer);
+    briefToastTimer = setTimeout(() => {
+      briefToast.classList.remove("hud-player-join-toast--visible");
+      briefToast.hidden = true;
+      briefToastTimer = null;
+    }, 4200);
+  }
+
   function prefersTranslateClipboardAssist(): boolean {
     const coarse =
       typeof window.matchMedia === "function" &&
@@ -2317,8 +2374,34 @@ export function createHud(
   topWrap.appendChild(restartBanner);
   topWrap.appendChild(topStrip);
   topWrap.appendChild(statusSub);
+
+  const tutorialStepCoach = document.createElement("div");
+  tutorialStepCoach.className = "tutorial-step-coach";
+  tutorialStepCoach.hidden = true;
+  tutorialStepCoach.setAttribute("role", "status");
+  tutorialStepCoach.setAttribute("aria-live", "polite");
+  tutorialStepCoach.innerHTML = `
+    <div class="tutorial-step-coach__steps" aria-hidden="true">
+      <span class="tutorial-step-coach__step" data-step="mine"><span class="tutorial-step-coach__num">1</span> Mine</span>
+      <span class="tutorial-step-coach__sep" aria-hidden="true">·</span>
+      <span class="tutorial-step-coach__step" data-step="pay"><span class="tutorial-step-coach__num">2</span> Pay</span>
+      <span class="tutorial-step-coach__sep" aria-hidden="true">·</span>
+      <span class="tutorial-step-coach__step" data-step="exit"><span class="tutorial-step-coach__num">3</span> Exit</span>
+    </div>
+    <div class="tutorial-step-coach__hint"></div>
+  `;
+  const tutorialStepCoachHint = tutorialStepCoach.querySelector(
+    ".tutorial-step-coach__hint"
+  ) as HTMLElement;
+  const tutorialStepCoachSteps = Array.from(
+    tutorialStepCoach.querySelectorAll(".tutorial-step-coach__step")
+  ) as HTMLElement[];
+  let tutorialStepCoachPulseTimer: ReturnType<typeof setTimeout> | null = null;
+  topWrap.appendChild(tutorialStepCoach);
+
   ui.appendChild(topWrap);
   ui.appendChild(translateClipboardHintToast);
+  ui.appendChild(briefToast);
   ui.appendChild(leftStack);
   ui.appendChild(perfHud);
   letter.appendChild(signpostOverlay);
@@ -6372,6 +6455,7 @@ export function createHud(
             <option value="billboard">Billboard</option>
             <option value="teleporter">Teleporter</option>
             <option value="gate">Gate</option>
+            <option value="unlock-pad">Unlock Pad</option>
             <option value="prefab">Prefab</option>
           </select>
         </div>
@@ -6740,6 +6824,7 @@ export function createHud(
   /** Hoisted for dock param sync during bar init (`syncBarShapeButtons` → `buildDockBlockSelectionParamsActive`). */
   let panelOnPropsChange: ((p: ObstacleProps) => void) | null = null;
   let panelObjectEditGate = false;
+  let panelObjectEditUnlockPad = false;
   let panelPyramidCb: HTMLInputElement | null = null;
   let panelRampCb: HTMLInputElement | null = null;
   /** Block color ring docked in `.hud-mode-sidebar__hue-dock` while editing a placed tile. */
@@ -6908,7 +6993,7 @@ export function createHud(
 
   /** A plain, editable block is selected (so its gold/mineable state can be toggled). */
   function buildDockClaimSelectionApplicable(): boolean {
-    return buildDockPassableToggleApplicable() && !panelObjectEditGate;
+    return buildDockPassableToggleApplicable() && !panelObjectEditGate && !panelObjectEditUnlockPad;
   }
 
   function buildDockWalkThroughIconMarkup(passable: boolean): string {
@@ -7060,7 +7145,7 @@ export function createHud(
   ) as HTMLElement | null;
   let buildToolChangeHandler:
     | ((
-        tool: "block" | "signpost" | "teleporter" | "billboard" | "gate"
+        tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad"
       ) => void)
     | null = null;
 
@@ -7119,6 +7204,7 @@ export function createHud(
       !signpostModeActive &&
       !teleporterModeActive &&
       !gateModeActive &&
+      !unlockPadModeActive &&
       !billboardModeActive &&
       !prefabToolActive &&
       tileInspectorToolSelect.value === "block";
@@ -7229,6 +7315,8 @@ export function createHud(
   let teleporterModeActive = false;
   /** Gate tool: solid block with authorized opener and exit neighbor. */
   let gateModeActive = false;
+  /** Unlock Pad tool: solid block with payment unlock config (admin-only). */
+  let unlockPadModeActive = false;
   let billboardModeActive = false;
   // worldcup: standalone "place a soccer ball" mode (isolated from the core tool union)
   let worldcupBallModeActive = false;
@@ -7249,6 +7337,7 @@ export function createHud(
     if (
       !teleporterModeActive &&
       !gateModeActive &&
+      !unlockPadModeActive &&
       !billboardModeActive &&
       !signpostModeActive
     ) {
@@ -7259,6 +7348,8 @@ export function createHud(
       g.setPlacementInspectorPreviewKind("teleporter");
     } else if (gateModeActive) {
       g.setPlacementInspectorPreviewKind("gate");
+    } else if (unlockPadModeActive) {
+      g.setPlacementInspectorPreviewKind("unlock-pad");
     } else if (billboardModeActive) {
       g.setPlacementInspectorPreviewKind("billboard");
     } else {
@@ -7281,11 +7372,11 @@ export function createHud(
   };
   const BUILD_DOCK_TOOLS: Record<
     BuildDockCategoryId,
-    Array<"block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab">
+    Array<"block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab">
   > = {
     terrain: ["block"],
     props: ["signpost"],
-    buildings: ["teleporter", "gate", "billboard"],
+    buildings: ["teleporter", "gate", "unlock-pad", "billboard"],
     prefab: [],
   };
   let buildDockCategory: BuildDockCategoryId = "terrain";
@@ -7373,6 +7464,7 @@ export function createHud(
         | "teleporter"
         | "billboard"
         | "gate"
+        | "unlock-pad"
         | "prefab";
       if (tools.length > 0 && !tools.includes(curTool)) {
         const first = tools[0]!;
@@ -7531,6 +7623,7 @@ export function createHud(
       return "Billboard";
     }
     if (panelObjectEditGate) return "Gate";
+    if (panelObjectEditUnlockPad) return "Unlock Pad";
     const live = buildLivePanelObstacleProps();
     if (live) {
       return dockTerrainShapeLabel(
@@ -8041,12 +8134,13 @@ export function createHud(
   }
 
   function toolLabelDock(
-    t: "block" | "signpost" | "teleporter" | "billboard" | "gate"
+    t: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab"
   ): string {
     if (t === "block") return "Cube";
     if (t === "signpost") return "Signpost";
     if (t === "teleporter") return "Teleporter";
     if (t === "gate") return "Gate";
+    if (t === "unlock-pad") return "Unlock Pad";
     if (t === "prefab") return "Prefab";
     return "Billboard";
   }
@@ -8059,6 +8153,7 @@ export function createHud(
       | "teleporter"
       | "billboard"
       | "gate"
+      | "unlock-pad"
       | "prefab";
     if (buildDockCategory === "terrain" && tool === "block") {
       return `Place: ${dockTerrainShapeLabel(dockTerrainShapeActiveIdResolved())}`;
@@ -8072,7 +8167,7 @@ export function createHud(
   }
 
   function categoryForToolDock(
-    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab"
+    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab"
   ): BuildDockCategoryId {
     if (tool === "prefab") return "prefab";
     for (const c of BUILD_DOCK_CATEGORY_ORDER) {
@@ -8361,6 +8456,7 @@ export function createHud(
     if (
       !panelOnPropsChange ||
       panelObjectEditGate ||
+      panelObjectEditUnlockPad ||
       !objectPanel?.querySelector("#tile-inspector-selection") ||
       !panelHexCb ||
       !panelPyramidCb ||
@@ -8519,7 +8615,7 @@ export function createHud(
     }
 
     const list = BUILD_DOCK_TOOLS[buildDockCategory].filter((tid) => {
-      if (tid === "billboard") return admin;
+      if (tid === "billboard" || tid === "unlock-pad") return admin;
       return true;
     });
     const cur = tileInspectorToolSelect.value as
@@ -8528,6 +8624,7 @@ export function createHud(
       | "teleporter"
       | "billboard"
       | "gate"
+      | "unlock-pad"
       | "prefab";
     const terrainBlockOnly =
       buildDockCategory === "terrain" &&
@@ -8655,6 +8752,7 @@ export function createHud(
       const isDockPreviewTool =
         tid === "teleporter" ||
         tid === "gate" ||
+        tid === "unlock-pad" ||
         tid === "billboard" ||
         tid === "signpost";
       if (isDockPreviewTool) {
@@ -8684,7 +8782,9 @@ export function createHud(
                 ? "◇"
                 : tid === "gate"
                   ? "⌂"
-                  : tid === "prefab"
+                  : tid === "unlock-pad"
+                    ? "▣"
+                    : tid === "prefab"
                     ? "⊞"
                     : "▤";
         card.appendChild(mini);
@@ -8750,12 +8850,13 @@ export function createHud(
       });
       buildBottomDockTools.appendChild(ballCard);
     }
-    type DockThumbTool = "teleporter" | "gate" | "billboard" | "signpost";
+    type DockThumbTool = "teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost";
     const thumbRows: { tid: DockThumbTool; img: HTMLImageElement }[] = [];
     for (const tid of list) {
       if (
         tid !== "teleporter" &&
         tid !== "gate" &&
+        tid !== "unlock-pad" &&
         tid !== "billboard" &&
         tid !== "signpost"
       ) {
@@ -8802,6 +8903,7 @@ export function createHud(
       | "teleporter"
       | "billboard"
       | "gate"
+      | "unlock-pad"
       | "prefab";
     buildDockCategory = categoryForToolDock(tool);
     for (const [c, b] of buildDockTabByCategory) {
@@ -9594,13 +9696,14 @@ export function createHud(
       signpostModeActive ||
       teleporterModeActive ||
       gateModeActive ||
+      unlockPadModeActive ||
       billboardModeActive ||
       prefabToolActive
     ) {
       return false;
     }
     if (!objectPanel) return true;
-    if (panelObjectEditGate) return false;
+    if (panelObjectEditGate || panelObjectEditUnlockPad) return false;
     if (
       objectPanelContextPopover.classList.contains(
         "build-object-panel-context--teleporter"
@@ -9651,6 +9754,7 @@ export function createHud(
       signpostModeActive ||
       teleporterModeActive ||
       gateModeActive ||
+      unlockPadModeActive ||
       billboardModeActive;
     const blockParams = buildDockContextBlockParamsAllowed();
     const { pyramid, hex, sphere, ramp } = buildDockContextShapeState();
@@ -9797,7 +9901,7 @@ export function createHud(
   let signpostPlaceHandler: ((x: number, z: number, message: string) => void) | null = null;
 
   function activateBuildTool(
-    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab"
+    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab"
   ): void {
     const toolChanging = tileInspectorToolSelect.value !== tool;
     if (toolChanging && isBuildObjectSelectionActive()) {
@@ -9809,6 +9913,7 @@ export function createHud(
     signpostModeActive = tool === "signpost";
     teleporterModeActive = tool === "teleporter";
     gateModeActive = tool === "gate";
+    unlockPadModeActive = tool === "unlock-pad";
     billboardModeActive = tool === "billboard";
     prefabToolActive = tool === "prefab";
     if (tool === "teleporter") {
@@ -9829,6 +9934,7 @@ export function createHud(
         signpostModeActive ||
           teleporterModeActive ||
           gateModeActive ||
+          unlockPadModeActive ||
           billboardModeActive ||
           prefabToolActive
       );
@@ -11821,13 +11927,15 @@ export function createHud(
 
   tileInspectorToolSelect.addEventListener("change", () => {
     const raw = tileInspectorToolSelect.value;
-    const tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "prefab" =
+    const tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab" =
       raw === "signpost"
         ? "signpost"
         : raw === "teleporter"
           ? "teleporter"
           : raw === "gate"
             ? "gate"
+            : raw === "unlock-pad"
+              ? "unlock-pad"
             : raw === "billboard"
               ? "billboard"
               : raw === "prefab"
@@ -12198,6 +12306,7 @@ export function createHud(
         signpostModeActive ||
           teleporterModeActive ||
           gateModeActive ||
+          unlockPadModeActive ||
           billboardModeActive ||
           prefabToolActive
       );
@@ -12986,6 +13095,25 @@ export function createHud(
   let panelGateAclSummaryEl: HTMLElement | null = null;
   let panelGateAclBtn: HTMLButtonElement | null = null;
   let panelOnEditGateAcl: (() => void) | null = null;
+  let panelOnUnlockPadConfigChange:
+    | ((cfg: {
+        amountLuna: string;
+        recipient: string;
+        buttonLabel: string;
+        proofMode: "optimistic" | "payment_intent";
+      }) => void)
+    | null = null;
+  let panelUnlockPadAmount = "";
+  let panelUnlockPadRecipient = "";
+  let panelUnlockPadButtonLabel = "";
+  let panelUnlockPadProofMode: "optimistic" | "payment_intent" = "payment_intent";
+  let panelUnlockPadInstanceId = "";
+  let panelUnlockPadEditBlock: HTMLElement | null = null;
+  let panelUnlockPadAmountInput: HTMLInputElement | null = null;
+  let panelUnlockPadRecipientInput: HTMLInputElement | null = null;
+  let panelUnlockPadButtonLabelInput: HTMLInputElement | null = null;
+  let panelUnlockPadProofModeSelect: HTMLSelectElement | null = null;
+  let panelUnlockPadApplyBtn: HTMLButtonElement | null = null;
   let gateAclBackdrop: HTMLDivElement | null = null;
   let gateAclKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   let panelContextHeightRow: HTMLElement | null = null;
@@ -13494,7 +13622,7 @@ export function createHud(
   }
 
   function syncPanelShapeButtons(): void {
-    if (panelObjectEditGate) {
+    if (panelObjectEditGate || panelObjectEditUnlockPad) {
       refreshPanelWireframe();
       return;
     }
@@ -13532,6 +13660,7 @@ export function createHud(
     if (
       !panelOnPropsChange ||
       panelObjectEditGate ||
+      panelObjectEditUnlockPad ||
       !objectPanel?.querySelector("#tile-inspector-selection") ||
       !panelHexCb ||
       !panelPyramidCb ||
@@ -13676,6 +13805,31 @@ export function createHud(
     return 0;
   }
 
+  function emitUnlockPadConfig(): void {
+    if (!panelOnUnlockPadConfigChange) return;
+    panelOnUnlockPadConfigChange({
+      amountLuna: panelUnlockPadAmount.trim(),
+      recipient: panelUnlockPadRecipient.trim(),
+      buttonLabel: panelUnlockPadButtonLabel.trim(),
+      proofMode: panelUnlockPadProofMode,
+    });
+  }
+
+  function syncUnlockPadPanelInputsFromState(): void {
+    if (panelUnlockPadAmountInput) {
+      panelUnlockPadAmountInput.value = panelUnlockPadAmount;
+    }
+    if (panelUnlockPadRecipientInput) {
+      panelUnlockPadRecipientInput.value = panelUnlockPadRecipient;
+    }
+    if (panelUnlockPadButtonLabelInput) {
+      panelUnlockPadButtonLabelInput.value = panelUnlockPadButtonLabel;
+    }
+    if (panelUnlockPadProofModeSelect) {
+      panelUnlockPadProofModeSelect.value = panelUnlockPadProofMode;
+    }
+  }
+
   function buildLivePanelObstacleProps(): ObstacleProps | null {
     if (
       !panelCollisionToggle ||
@@ -13716,6 +13870,36 @@ export function createHud(
           exitZ: ez,
         },
         gateExitDir: Math.max(0, Math.min(3, Math.floor(panelGateExitDir))),
+        editorTileX: panelObjectTileX,
+        editorTileY: panelObjectTileY,
+        editorTileZ: panelObjectTileZ,
+      };
+    }
+    if (panelObjectEditUnlockPad) {
+      return {
+        passable: false,
+        quarter: false,
+        half: false,
+        hex: false,
+        pyramid: false,
+        pyramidBaseScale: 1,
+        hexRadiusScale: 1,
+        sphere: false,
+        sphereRadiusScale: 1,
+        ramp: false,
+        rampDir: 0,
+        cubeRotX: 0,
+        cubeRotY: 0,
+        cubeRotZ: 0,
+        colorRgb: panelSelectedColorRgb,
+        locked: getPanelLocked(),
+        unlockPad: {
+          amountLuna: panelUnlockPadAmount,
+          recipient: panelUnlockPadRecipient,
+          buttonLabel: panelUnlockPadButtonLabel,
+          proofMode: panelUnlockPadProofMode,
+          instanceId: panelUnlockPadInstanceId,
+        },
         editorTileX: panelObjectTileX,
         editorTileY: panelObjectTileY,
         editorTileZ: panelObjectTileZ,
@@ -13999,11 +14183,19 @@ export function createHud(
     panelRampRotCCW = null;
     panelRampRotCW = null;
     panelObjectEditGate = false;
+    panelObjectEditUnlockPad = false;
     panelGateEditBlock = null;
     panelGateAclBar = null;
     panelGateAclSummaryEl = null;
     panelGateAclBtn = null;
     panelOnEditGateAcl = null;
+    panelOnUnlockPadConfigChange = null;
+    panelUnlockPadEditBlock = null;
+    panelUnlockPadAmountInput = null;
+    panelUnlockPadRecipientInput = null;
+    panelUnlockPadButtonLabelInput = null;
+    panelUnlockPadProofModeSelect = null;
+    panelUnlockPadApplyBtn = null;
     billboardSelectionEditHandler = null;
     syncBuildDockContextParams();
     panelContextHeightRow = null;
@@ -14153,9 +14345,52 @@ export function createHud(
       inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(p);
       return;
     }
+    if (p.unlockPad) {
+      panelClaimable = false;
+      panelClaimableActive = false;
+      panelObjectEditUnlockPad = true;
+      panelUnlockPadAmount = String(p.unlockPad.amountLuna ?? "");
+      panelUnlockPadRecipient = String(p.unlockPad.recipient ?? "");
+      panelUnlockPadButtonLabel = String(p.unlockPad.buttonLabel ?? "");
+      panelUnlockPadProofMode =
+        p.unlockPad.proofMode === "optimistic" ? "optimistic" : "payment_intent";
+      panelUnlockPadInstanceId = String(p.unlockPad.instanceId ?? "");
+      if (p.editorTileX !== undefined && p.editorTileZ !== undefined) {
+        panelObjectTileX = p.editorTileX;
+        panelObjectTileY = p.editorTileY ?? 0;
+        panelObjectTileZ = p.editorTileZ;
+      }
+      panelRampDir = Math.max(0, Math.min(3, Math.floor(p.rampDir)));
+      panelLockedState = p.locked || false;
+      syncPanelLockToggle(panelLockedState);
+      panelSelectedColorRgb = resolveBlockColorRgb(p);
+      syncPanelHueVisualFromColorRgb(panelSelectedColorRgb);
+      if (panelUnlockPadEditBlock) panelUnlockPadEditBlock.hidden = false;
+      if (panelGateEditBlock) panelGateEditBlock.hidden = true;
+      if (panelGateAclBar) panelGateAclBar.hidden = true;
+      if (panelContextHeightRow) panelContextHeightRow.hidden = true;
+      const panelAdvShapeSectionUp = objectPanelAdvancedPopover.querySelector(
+        "#panel-adv-shape-section"
+      ) as HTMLElement | null;
+      if (panelAdvShapeSectionUp) panelAdvShapeSectionUp.hidden = true;
+      if (panelCollisionToggle) {
+        panelCollisionToggle.hidden = true;
+        syncPanelCollisionToggle(false);
+      }
+      if (panelTileInspectorResetBtn) {
+        panelTileInspectorResetBtn.hidden = true;
+      }
+      if (rampDirRow) rampDirRow.hidden = true;
+      syncUnlockPadPanelInputsFromState();
+      syncPanelShapeButtons();
+      inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(p);
+      return;
+    }
     panelObjectEditGate = false;
+    panelObjectEditUnlockPad = false;
     if (panelGateEditBlock) panelGateEditBlock.hidden = true;
     if (panelGateAclBar) panelGateAclBar.hidden = true;
+    if (panelUnlockPadEditBlock) panelUnlockPadEditBlock.hidden = true;
     if (panelContextHeightRow) panelContextHeightRow.hidden = false;
     const panelAdvShapeSection = objectPanelAdvancedPopover.querySelector(
       "#panel-adv-shape-section"
@@ -14609,6 +14844,55 @@ export function createHud(
     },
     setFinishTutorialVisible(visible: boolean) {
       playerMenu.setFinishTutorialVisible(visible);
+    },
+    showBriefToast,
+    setTutorialStepCoach(state: TutorialCoachState | null) {
+      if (!state?.visible) {
+        tutorialStepCoach.hidden = true;
+        tutorialStepCoach.classList.remove("tutorial-step-coach--pulse");
+        if (tutorialStepCoachPulseTimer !== null) {
+          clearTimeout(tutorialStepCoachPulseTimer);
+          tutorialStepCoachPulseTimer = null;
+        }
+        requestAnimationFrame(() => syncHudBelowTopWrap());
+        return;
+      }
+      tutorialStepCoach.hidden = false;
+      tutorialStepCoachHint.textContent = state.hint;
+      const completed = new Set(state.completed);
+      for (const el of tutorialStepCoachSteps) {
+        const step = el.dataset.step as TutorialCoachStep | undefined;
+        if (!step) continue;
+        el.classList.toggle(
+          "tutorial-step-coach__step--current",
+          step === state.current
+        );
+        el.classList.toggle(
+          "tutorial-step-coach__step--done",
+          completed.has(step)
+        );
+      }
+      requestAnimationFrame(() => syncHudBelowTopWrap());
+    },
+    pulseTutorialStepCoach(step: TutorialCoachStep) {
+      if (tutorialStepCoach.hidden) return;
+      for (const el of tutorialStepCoachSteps) {
+        el.classList.toggle(
+          "tutorial-step-coach__step--pulse",
+          el.dataset.step === step
+        );
+      }
+      tutorialStepCoach.classList.add("tutorial-step-coach--pulse");
+      if (tutorialStepCoachPulseTimer !== null) {
+        clearTimeout(tutorialStepCoachPulseTimer);
+      }
+      tutorialStepCoachPulseTimer = setTimeout(() => {
+        tutorialStepCoach.classList.remove("tutorial-step-coach--pulse");
+        for (const el of tutorialStepCoachSteps) {
+          el.classList.remove("tutorial-step-coach__step--pulse");
+        }
+        tutorialStepCoachPulseTimer = null;
+      }, 900);
     },
     onLeaveShaper(fn: () => void) {
       leaveShaperHandler = fn;
@@ -15072,7 +15356,9 @@ export function createHud(
       );
       panelOnPropsChange = opts.onPropsChange;
       const gateEdit = opts.gate !== undefined;
+      const unlockPadEdit = opts.unlockPad !== undefined;
       panelObjectEditGate = gateEdit;
+      panelObjectEditUnlockPad = unlockPadEdit;
       if (gateEdit) {
         panelGateAdminAddress = normalizeWalletKey(opts.gate!.adminAddress);
         panelGateAuthorizedAddresses = opts.gate!.authorizedAddresses.map((a) =>
@@ -15093,8 +15379,31 @@ export function createHud(
             ? Math.max(0, Math.min(3, Math.floor(opts.gateExitDir)))
             : gateExitDirFromTile(opts.x, opts.z, opts.gate!);
         panelRampDir = Math.max(0, Math.min(3, Math.floor(opts.rampDir)));
+      } else if (unlockPadEdit) {
+        panelOnEditGateAcl = null;
+        panelOnUnlockPadConfigChange =
+          "onUnlockPadConfigChange" in opts &&
+          typeof opts.onUnlockPadConfigChange === "function"
+            ? opts.onUnlockPadConfigChange
+            : null;
+        panelUnlockPadAmount = String(opts.unlockPad!.amountLuna ?? "");
+        panelUnlockPadRecipient = String(opts.unlockPad!.recipient ?? "");
+        panelUnlockPadButtonLabel = String(opts.unlockPad!.buttonLabel ?? "");
+        panelUnlockPadProofMode =
+          opts.unlockPad!.proofMode === "optimistic"
+            ? "optimistic"
+            : "payment_intent";
+        panelUnlockPadInstanceId = String(opts.unlockPad!.instanceId ?? "");
+        panelObjectTileX = opts.x;
+        panelObjectTileZ = opts.z;
+        panelObjectTileY = Math.max(
+          0,
+          Math.min(2, Math.floor(Number(opts.y ?? 0)))
+        );
+        panelRampDir = Math.max(0, Math.min(3, Math.floor(opts.rampDir)));
       } else {
         panelOnEditGateAcl = null;
+        panelOnUnlockPadConfigChange = null;
         panelObjectTileX = opts.x;
         panelObjectTileZ = opts.z;
         panelObjectTileY = Math.max(
@@ -15102,6 +15411,7 @@ export function createHud(
           Math.min(2, Math.floor(Number(opts.y ?? 0)))
         );
       }
+      const specialBlockEdit = gateEdit || unlockPadEdit;
       panelSelectedColorRgb = resolveBlockColorRgb(opts);
       panelClaimable = Boolean(opts.claimable);
       panelClaimableActive = panelClaimable && opts.active !== false;
@@ -15157,6 +15467,28 @@ export function createHud(
               <button type="button" class="build-object-panel__btn build-object-panel__btn--secondary" id="panel-gate-acl-open">Permissions</button>
             </div>
           </div>
+          <div class="build-object-panel-context__unlock-pad-edit-block" id="panel-unlock-pad-edit-block" hidden>
+            <label class="build-object-panel-context__unlock-pad-field">
+              <span class="build-object-panel-context__unlock-pad-label">Amount (luna)</span>
+              <input type="text" id="panel-unlock-pad-amount" class="build-object-panel-context__unlock-pad-input" autocomplete="off" />
+            </label>
+            <label class="build-object-panel-context__unlock-pad-field">
+              <span class="build-object-panel-context__unlock-pad-label">Recipient</span>
+              <input type="text" id="panel-unlock-pad-recipient" class="build-object-panel-context__unlock-pad-input" autocomplete="off" />
+            </label>
+            <label class="build-object-panel-context__unlock-pad-field">
+              <span class="build-object-panel-context__unlock-pad-label">Button label</span>
+              <input type="text" id="panel-unlock-pad-button-label" class="build-object-panel-context__unlock-pad-input" autocomplete="off" />
+            </label>
+            <label class="build-object-panel-context__unlock-pad-field">
+              <span class="build-object-panel-context__unlock-pad-label">Proof mode</span>
+              <select id="panel-unlock-pad-proof-mode" class="build-object-panel-context__unlock-pad-select">
+                <option value="payment_intent">Payment intent</option>
+                <option value="optimistic">Optimistic</option>
+              </select>
+            </label>
+            <button type="button" class="build-object-panel__btn build-object-panel__btn--secondary" id="panel-unlock-pad-apply">Apply</button>
+          </div>
           <div class="build-object-panel-context__advanced build-object-panel-context__advanced--row">
             <button type="button" class="build-object-panel__advanced-toggle build-block-bar__advanced-toggle tile-inspector__advanced-link" aria-expanded="false" aria-controls="build-object-panel-advanced">Advanced…</button>
           </div>
@@ -15179,7 +15511,9 @@ export function createHud(
         ariaLabel: "Block color",
         title: gateEdit
           ? "Gate color. Drag the ring for hue. Click the center for a custom hex code."
-          : "Drag the ring for hue. Click the center for a custom hex code.",
+          : unlockPadEdit
+            ? "Unlock Pad color. Drag the ring for hue. Click the center for a custom hex code."
+            : "Drag the ring for hue. Click the center for a custom hex code.",
       });
       panelDockHueWrap = panelHueRingParts.wrap;
       panelShapeColorRow.appendChild(panelDockHueWrap);
@@ -15196,7 +15530,7 @@ export function createHud(
         "#panel-adv-shape-section"
       ) as HTMLElement | null;
       if (panelAdvShapeSection) {
-        panelAdvShapeSection.hidden = gateEdit;
+        panelAdvShapeSection.hidden = specialBlockEdit;
       }
       panelCollisionToggle = objectPanelAdvancedPopover.querySelector(
         "#panel-adv-collision-toggle"
@@ -15250,6 +15584,24 @@ export function createHud(
       panelGateAclBtn = objectPanelContextPopover.querySelector(
         "#panel-gate-acl-open"
       ) as HTMLButtonElement | null;
+      panelUnlockPadEditBlock = objectPanelContextPopover.querySelector(
+        "#panel-unlock-pad-edit-block"
+      ) as HTMLElement | null;
+      panelUnlockPadAmountInput = objectPanelContextPopover.querySelector(
+        "#panel-unlock-pad-amount"
+      ) as HTMLInputElement | null;
+      panelUnlockPadRecipientInput = objectPanelContextPopover.querySelector(
+        "#panel-unlock-pad-recipient"
+      ) as HTMLInputElement | null;
+      panelUnlockPadButtonLabelInput = objectPanelContextPopover.querySelector(
+        "#panel-unlock-pad-button-label"
+      ) as HTMLInputElement | null;
+      panelUnlockPadProofModeSelect = objectPanelContextPopover.querySelector(
+        "#panel-unlock-pad-proof-mode"
+      ) as HTMLSelectElement | null;
+      panelUnlockPadApplyBtn = objectPanelContextPopover.querySelector(
+        "#panel-unlock-pad-apply"
+      ) as HTMLButtonElement | null;
       if (gateEdit) {
         if (panelContextHeightRow) panelContextHeightRow.hidden = true;
         if (panelGateEditBlock) panelGateEditBlock.hidden = false;
@@ -15265,9 +15617,49 @@ export function createHud(
           panelGateAclBtn.onclick = panelOnEditGateAcl ?? null;
         }
         if (rampDirRow) rampDirRow.hidden = true;
+      } else if (unlockPadEdit) {
+        if (panelContextHeightRow) panelContextHeightRow.hidden = true;
+        if (panelUnlockPadEditBlock) panelUnlockPadEditBlock.hidden = false;
+        if (panelGateEditBlock) panelGateEditBlock.hidden = true;
+        if (panelGateAclBar) panelGateAclBar.hidden = true;
+        if (rampDirRow) rampDirRow.hidden = true;
+        syncUnlockPadPanelInputsFromState();
+        const onUnlockPadFieldChange = (): void => {
+          panelUnlockPadAmount = panelUnlockPadAmountInput?.value ?? "";
+          panelUnlockPadRecipient = panelUnlockPadRecipientInput?.value ?? "";
+          panelUnlockPadButtonLabel =
+            panelUnlockPadButtonLabelInput?.value ?? "";
+          const rawProof = panelUnlockPadProofModeSelect?.value ?? "";
+          panelUnlockPadProofMode =
+            rawProof === "optimistic" ? "optimistic" : "payment_intent";
+        };
+        const onUnlockPadCommit = (): void => {
+          onUnlockPadFieldChange();
+          emitUnlockPadConfig();
+          refreshPanelWireframe();
+        };
+        panelUnlockPadAmountInput?.addEventListener("input", onUnlockPadFieldChange);
+        panelUnlockPadRecipientInput?.addEventListener("input", onUnlockPadFieldChange);
+        panelUnlockPadButtonLabelInput?.addEventListener(
+          "input",
+          onUnlockPadFieldChange
+        );
+        panelUnlockPadProofModeSelect?.addEventListener(
+          "change",
+          onUnlockPadCommit
+        );
+        for (const el of [
+          panelUnlockPadAmountInput,
+          panelUnlockPadRecipientInput,
+          panelUnlockPadButtonLabelInput,
+        ]) {
+          el?.addEventListener("blur", onUnlockPadCommit);
+        }
+        panelUnlockPadApplyBtn?.addEventListener("click", onUnlockPadCommit);
       } else {
         if (panelGateEditBlock) panelGateEditBlock.hidden = true;
         if (panelGateAclBar) panelGateAclBar.hidden = true;
+        if (panelUnlockPadEditBlock) panelUnlockPadEditBlock.hidden = true;
       }
       panelHeightBtns = [];
       panelShapeBtns = Array.from(
@@ -15300,14 +15692,14 @@ export function createHud(
       panelTileInspectorResetBtn = objectPanel.querySelector(
         "#panel-tile-inspector-reset"
       ) as HTMLButtonElement;
-      if (gateEdit) {
+      if (specialBlockEdit) {
         panelTileInspectorResetBtn.hidden = true;
       }
       panelPyramidBaseRow = null;
       panelPyramidBaseInput = null;
       panelPyramidBaseVal = null;
-      syncPanelCollisionToggle(gateEdit ? false : opts.passable);
-      if (gateEdit && panelCollisionToggle) {
+      syncPanelCollisionToggle(specialBlockEdit ? false : opts.passable);
+      if (specialBlockEdit && panelCollisionToggle) {
         panelCollisionToggle.hidden = true;
       }
       panelLockedState = opts.locked || false;
@@ -15315,14 +15707,14 @@ export function createHud(
       if (lockOptionBlock) {
         lockOptionBlock.hidden = !opts.isAdmin;
       }
-      if (!gateEdit) {
+      if (!specialBlockEdit) {
         syncPanelHeightButtons(opts.quarter, opts.quarter ? false : opts.half);
       }
       panelHexCb.checked = opts.ramp ? false : opts.hex;
       panelPyramidCb.checked = opts.ramp ? false : opts.pyramid;
       panelSphereCb.checked = opts.ramp ? false : opts.sphere;
       panelRampCb.checked = opts.ramp;
-      rampDirRow.hidden = !opts.ramp || gateEdit;
+      rampDirRow.hidden = !opts.ramp || specialBlockEdit;
       syncPanelPyramidBaseSliderFromScale(opts.pyramidBaseScale ?? 1);
       syncTileInspectorHexWidthSliderFromScale(opts.hexRadiusScale ?? 1);
       syncTileInspectorSphereSizeSliderFromScale(opts.sphereRadiusScale ?? 1);
@@ -15532,11 +15924,22 @@ export function createHud(
         const bbOpt = tileInspectorToolSelect?.querySelector(
           "option[value=\"billboard\"]"
         ) as HTMLOptionElement | null;
+        const upOpt = tileInspectorToolSelect?.querySelector(
+          "option[value=\"unlock-pad\"]"
+        ) as HTMLOptionElement | null;
         if (bbOpt) {
           const admin = state.placementAdmin === true;
           bbOpt.hidden = !admin;
           bbOpt.disabled = !admin;
           if (!admin && billboardModeActive) {
+            activateBuildTool("block");
+          }
+        }
+        if (upOpt) {
+          const admin = state.placementAdmin === true;
+          upOpt.hidden = !admin;
+          upOpt.disabled = !admin;
+          if (!admin && unlockPadModeActive) {
             activateBuildTool("block");
           }
         }
@@ -15623,6 +16026,9 @@ export function createHud(
     isGateModeActive(): boolean {
       return gateModeActive;
     },
+    isUnlockPadModeActive(): boolean {
+      return unlockPadModeActive;
+    },
     showGateContextMenu(
       clientX: number,
       clientY: number,
@@ -15697,7 +16103,7 @@ export function createHud(
     },
     onBuildToolSelect(
       fn: (
-        tool: "block" | "signpost" | "teleporter" | "billboard" | "gate"
+        tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab"
       ) => void
     ) {
       buildToolChangeHandler = fn;
@@ -15706,6 +16112,9 @@ export function createHud(
       activateBuildTool("block");
     },
     deactivateGateMode() {
+      activateBuildTool("block");
+    },
+    deactivateUnlockPadMode() {
       activateBuildTool("block");
     },
     deactivateSignpostMode() {

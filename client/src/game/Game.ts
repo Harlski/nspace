@@ -1728,12 +1728,13 @@ export class Game {
     | "block"
     | "teleporter"
     | "gate"
+    | "unlock-pad"
     | "billboard"
     | "signpost" = "block";
   /** Off-DOM inspector-style port used only to bake dock `<img>` thumbnails. */
   private dockStripBakePort: InspectorTilePreviewPort | null = null;
   private readonly dockStripThumbByTool = new Map<
-    "teleporter" | "gate" | "billboard" | "signpost",
+    "teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost",
     { sig: string; dataUrl: string }
   >();
   private readonly dockStripThumbByTerrainShape = new Map<
@@ -11808,7 +11809,27 @@ export class Game {
 
   markUnlockPadUnlocked(instanceId: string): void {
     const id = instanceId.trim();
-    if (id) this.unlockedPadInstanceIds.add(id);
+    if (!id) return;
+    const wasNew = !this.unlockedPadInstanceIds.has(id);
+    this.unlockedPadInstanceIds.add(id);
+    if (wasNew) this.syncUnlockPadMeshesForInstance(id);
+  }
+
+  setUnlockedPadInstanceIds(ids: readonly string[]): void {
+    this.unlockedPadInstanceIds.clear();
+    for (const raw of ids) {
+      const id = String(raw ?? "").trim();
+      if (id) this.unlockedPadInstanceIds.add(id);
+    }
+    this.syncBlockMeshes();
+  }
+
+  private syncUnlockPadMeshesForInstance(instanceId: string): void {
+    const keys = new Set<string>();
+    for (const [k, meta] of this.placedObjects) {
+      if (meta.unlockPad?.instanceId === instanceId) keys.add(k);
+    }
+    if (keys.size) this.syncBlockMeshesForKeys(keys);
   }
 
   hasUnlockPadUnlocked(instanceId: string): boolean {
@@ -13457,6 +13478,11 @@ export class Game {
         JSON.stringify(prev.teleporter) === JSON.stringify(meta.teleporter) &&
         JSON.stringify(prev.gate) === JSON.stringify(meta.gate) &&
         JSON.stringify(prev.gateOpen) === JSON.stringify(meta.gateOpen) &&
+        JSON.stringify(prev.unlockPad) === JSON.stringify(meta.unlockPad) &&
+        (prev.unlockPad?.instanceId
+          ? this.unlockedPadInstanceIds.has(prev.unlockPad.instanceId) ===
+            Boolean(g?.userData["unlockPadUnlocked"])
+          : true) &&
         (prev.signboardId ?? "") === (meta.signboardId ?? "");
       if (unchanged) {
         continue;
@@ -13474,6 +13500,10 @@ export class Game {
       g.userData.tileKey = k;
       g.userData.blockMeta = { ...meta };
       g.userData.blockRenderScale = vis;
+      g.userData.unlockPadUnlocked = Boolean(
+        meta.unlockPad?.instanceId &&
+          this.unlockedPadInstanceIds.has(meta.unlockPad.instanceId)
+      );
       g.position.set(wx, wyLevel * BLOCK_SIZE + (h * vis) / 2, wz);
       this.scene.add(g);
       this.blockMeshes.set(k, g);
@@ -13492,6 +13522,12 @@ export class Game {
   }
 
   private obstacleHeight(meta: BlockStyleProps): number {
+    if (
+      meta.unlockPad?.instanceId &&
+      this.unlockedPadInstanceIds.has(meta.unlockPad.instanceId)
+    ) {
+      return BLOCK_SIZE * 0.12;
+    }
     if (meta.quarter) return BLOCK_SIZE * 0.25;
     if (meta.half) return BLOCK_SIZE * 0.5;
     return BLOCK_SIZE;
@@ -13613,6 +13649,9 @@ export class Game {
       }
       return this.makeGateBlockGroup(meta, ghost, 0, 0);
     }
+    const unlockedPad =
+      Boolean(meta.unlockPad?.instanceId) &&
+      this.unlockedPadInstanceIds.has(meta.unlockPad!.instanceId);
     const h = this.obstacleHeight(meta);
     const vis = this.blockVisualScale;
     const hVis = h * vis;
@@ -13632,31 +13671,34 @@ export class Game {
         // Inactive claimable block: dark color
         base = 0x1a1a1a; // Very dark gray
       }
+    } else if (unlockedPad) {
+      // Distinct passable plate for unlockers (others still see the solid pad).
+      base = 0xc4a574;
     } else {
       base = resolveBlockColorRgb(meta);
     }
     
     const mat = new THREE.MeshStandardMaterial({
       color: base,
-      roughness: PLACED_COLOR_SURFACE_ROUGHNESS,
-      metalness: PLACED_COLOR_SURFACE_METALNESS,
-      transparent: ghost || meta.passable,
-      opacity: ghost ? 0.42 : meta.passable ? 0.45 : 1,
-      depthWrite: ghost ? false : !meta.passable,
-      emissive: meta.claimable && meta.active ? 0xffc107 : 0x000000,
-      emissiveIntensity: meta.claimable && meta.active ? 0.28 : 0,
+      roughness: unlockedPad ? 0.72 : PLACED_COLOR_SURFACE_ROUGHNESS,
+      metalness: unlockedPad ? 0.08 : PLACED_COLOR_SURFACE_METALNESS,
+      transparent: ghost || meta.passable || unlockedPad,
+      opacity: ghost ? 0.42 : unlockedPad ? 0.92 : meta.passable ? 0.45 : 1,
+      depthWrite: ghost ? false : unlockedPad ? true : !meta.passable,
+      emissive: meta.claimable && meta.active ? 0xffc107 : unlockedPad ? 0x3d2e1a : 0x000000,
+      emissiveIntensity: meta.claimable && meta.active ? 0.28 : unlockedPad ? 0.12 : 0,
     });
-    if (!ghost && floorLayer > 0 && !meta.passable) {
+    if (!ghost && floorLayer > 0 && !meta.passable && !unlockedPad) {
       applyUpperStackLayerDepthBias(mat, floorLayer);
     }
-    if (meta.ramp) {
+    if (meta.ramp && !unlockedPad) {
       const geom = this.makeRampGeometry(h, meta.rampDir, vis);
       const mesh = new THREE.Mesh(geom, mat);
       mesh.position.y = -hVis / 2;
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       g.add(mesh);
-    } else if (meta.sphere) {
+    } else if (meta.sphere && !unlockedPad) {
       const radiusScale = clampSphereRadiusScale(meta.sphereRadiusScale ?? 1);
       const r = BLOCK_SIZE * 0.5 * 0.94 * vis * radiusScale;
       const geom = new THREE.SphereGeometry(r, 20, 16);
@@ -13664,7 +13706,7 @@ export class Game {
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       g.add(mesh);
-    } else if (meta.pyramid) {
+    } else if (meta.pyramid && !unlockedPad) {
       const scale = meta.pyramidBaseScale ?? 1;
       const rBase = BLOCK_SIZE * 0.5 * 0.94 * vis * scale;
       const geom = new THREE.ConeGeometry(rBase, hVis, 4, 1);
@@ -13673,7 +13715,7 @@ export class Game {
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       g.add(mesh);
-    } else if (meta.hex) {
+    } else if (meta.hex && !unlockedPad) {
       const radiusScale = clampHexRadiusScale(meta.hexRadiusScale ?? 1);
       const r = BLOCK_SIZE * 0.5 * 0.94 * vis * radiusScale;
       const geom = new THREE.CylinderGeometry(r, r, hVis, 6);
@@ -13683,27 +13725,43 @@ export class Game {
       mesh.receiveShadow = false;
       g.add(mesh);
     } else {
-      const geom = new THREE.BoxGeometry(
-        BLOCK_SIZE * vis,
-        hVis,
-        BLOCK_SIZE * vis
-      );
+      const footprint = unlockedPad ? BLOCK_SIZE * vis * 0.96 : BLOCK_SIZE * vis;
+      const geom = new THREE.BoxGeometry(footprint, hVis, footprint);
       const mesh = new THREE.Mesh(geom, mat);
-      applyPlainCubeMeshRotation(
-        mesh.rotation,
-        cubeRotationForPlainCube(
-          {
-            hex: meta.hex,
-            pyramid: meta.pyramid,
-            sphere: meta.sphere,
-            ramp: meta.ramp,
-          },
-          meta
-        )
-      );
+      if (!unlockedPad) {
+        applyPlainCubeMeshRotation(
+          mesh.rotation,
+          cubeRotationForPlainCube(
+            {
+              hex: meta.hex,
+              pyramid: meta.pyramid,
+              sphere: meta.sphere,
+              ramp: meta.ramp,
+            },
+            meta
+          )
+        );
+      }
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       g.add(mesh);
+      if (unlockedPad && !ghost) {
+        const rimMat = new THREE.MeshStandardMaterial({
+          color: 0x8a6a3e,
+          roughness: 0.55,
+          metalness: 0.2,
+          transparent: true,
+          opacity: 0.85,
+        });
+        const rim = new THREE.Mesh(
+          new THREE.BoxGeometry(BLOCK_SIZE * vis * 1.02, hVis * 0.35, BLOCK_SIZE * vis * 1.02),
+          rimMat
+        );
+        rim.position.y = -hVis * 0.2;
+        rim.castShadow = false;
+        rim.receiveShadow = false;
+        g.add(rim);
+      }
     }
     if (meta.claimable && meta.active && !ghost && !opts?.inspectorPreview) {
       const sparkles = makeMineableSparklePoints(hVis, vis);
@@ -16511,6 +16569,9 @@ export class Game {
               ...(this.inspectorSelectionObstacle.gate
                 ? { gate: this.inspectorSelectionObstacle.gate }
                 : {}),
+              ...(this.inspectorSelectionObstacle.unlockPad
+                ? { unlockPad: this.inspectorSelectionObstacle.unlockPad }
+                : {}),
             } as BlockStyleProps);
     if (!meta) {
       this.resetInspectorPreviewBlockSlot(port);
@@ -16553,12 +16614,15 @@ export class Game {
   }
 
   private dockStripToolThumbnailSignature(
-    tool: "teleporter" | "gate" | "billboard" | "signpost"
+    tool: "teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost"
   ): string {
     const lay = `${this.blockVisualScale}|${this.floorTileQuadSize}`;
     if (tool === "teleporter") return `tp|${lay}`;
     if (tool === "gate") {
       return `gate|${this.placementRampDir & 3}|${this.placementColorRgb}|${lay}`;
+    }
+    if (tool === "unlock-pad") {
+      return `unlock-pad|${this.placementColorRgb}|${lay}`;
     }
     if (tool === "billboard") {
       const b = this.billboardPlacementDraft;
@@ -16707,7 +16771,7 @@ export class Game {
 
   private renderDockStripToolIntoBakePort(
     port: InspectorTilePreviewPort,
-    tool: "teleporter" | "gate" | "billboard" | "signpost"
+    tool: "teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost"
   ): void {
     port.floor.visible = tool !== "billboard";
     if (tool === "teleporter") {
@@ -16740,6 +16804,40 @@ export class Game {
           authorizedAddresses: [],
           exitX: dx,
           exitZ: dz,
+        },
+      };
+      const h = this.obstacleHeight(meta);
+      const vis = this.blockVisualScale;
+      port.blockSlot.position.set(0, (h * vis) / 2, 0);
+      port.blockSlot.add(
+        this.makeBlockMesh(meta, {
+          ghost: false,
+          tileX: 0,
+          tileZ: 0,
+          inspectorPreview: true,
+        })
+      );
+      return;
+    }
+    if (tool === "unlock-pad") {
+      const meta: BlockStyleProps = {
+        passable: false,
+        half: false,
+        quarter: false,
+        hex: false,
+        pyramid: false,
+        pyramidBaseScale: 1,
+        hexRadiusScale: 1,
+        sphere: false,
+        ramp: false,
+        rampDir: 0,
+        colorRgb: this.placementColorRgb,
+        unlockPad: {
+          amountLuna: "100000",
+          recipient: "",
+          buttonLabel: "Unlock",
+          proofMode: "payment_intent",
+          instanceId: "__preview__",
         },
       };
       const h = this.obstacleHeight(meta);
@@ -16789,7 +16887,7 @@ export class Game {
    * placement inspector block-only; the call must exist so HUD never throws.
    */
   setPlacementInspectorPreviewKind(
-    kind: "block" | "teleporter" | "gate" | "billboard" | "signpost"
+    kind: "block" | "teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost"
   ): void {
     if (this.inspectorPlacementPreviewKind === kind) return;
     this.inspectorPlacementPreviewKind = kind;
@@ -16881,7 +16979,7 @@ export class Game {
   }
 
   getDockStripThumbnailDataUrls(
-    tools: readonly ("teleporter" | "gate" | "billboard" | "signpost")[]
+    tools: readonly ("teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost")[]
   ): Map<string, string> {
     const out = new Map<string, string>();
     const port = this.getOrCreateDockStripBakePort();
@@ -16962,6 +17060,7 @@ export class Game {
     this.getDockStripThumbnailDataUrls([
       "teleporter",
       "gate",
+      "unlock-pad",
       "billboard",
       "signpost",
     ]);

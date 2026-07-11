@@ -100,6 +100,37 @@ const cosmeticUnlockHandler: PaymentFeatureHandler = {
   },
 };
 
+/** Paid Unlock Pad crossing (fulfilled by game server after verify). */
+const unlockPadHandler: PaymentFeatureHandler = {
+  kind: "nspace.unlock_pad",
+  validatePayload(payload) {
+    if (payload !== null && typeof payload !== "object") {
+      throw new Error("featurePayload must be an object or null");
+    }
+    const o = (payload ?? {}) as Record<string, unknown>;
+    const roomId = String(o.roomId ?? "").trim();
+    const instanceId = String(o.instanceId ?? "").trim();
+    if (!roomId) throw new Error("featurePayload.roomId is required");
+    if (!instanceId) throw new Error("featurePayload.instanceId is required");
+    const amountLuna = o["amountLuna"];
+    if (amountLuna === undefined || amountLuna === null) {
+      throw new Error("featurePayload.amountLuna is required for unlock pad");
+    }
+    readBigIntLuna(amountLuna, "amountLuna");
+  },
+  quote(input: FeatureQuoteInput) {
+    const o = (input.featurePayload ?? {}) as Record<string, unknown>;
+    const amountLuna = readBigIntLuna(o["amountLuna"], "amountLuna");
+    if (amountLuna < 1n) throw new Error("amountLuna must be >= 1");
+    const roomId = String(o.roomId ?? "").trim();
+    const instanceId = String(o.instanceId ?? "").trim();
+    return {
+      amountLuna,
+      quoteMetadata: { roomId, instanceId, tier: "unlock_pad" },
+    };
+  },
+};
+
 function notImplemented(kind: string): PaymentFeatureHandler {
   return {
     kind,
@@ -116,6 +147,7 @@ export function registerBuiltinFeatureHandlers(): void {
   registerFeatureHandler(notImplemented("nspace.username.exclusive"));
   registerFeatureHandler(billboardSlotHandler);
   registerFeatureHandler(cosmeticUnlockHandler);
+  registerFeatureHandler(unlockPadHandler);
   registerFeatureHandler(notImplemented("nspace.teleporter.purchase"));
   registerFeatureHandler(notImplemented("nspace.land.grant"));
 }

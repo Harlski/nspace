@@ -9,8 +9,10 @@ process.env.UNLOCK_PAD_GRANT_STORE_FILE = path.join(tmpDir, "grants.json");
 
 const {
   clearUnlockPadGrantsForInstance,
+  forgetUnlockPadInstance,
   hasUnlockPadGrant,
   isUnlockPadPassableForMover,
+  listUnlockPadInstanceIdsForWallet,
   normalizeUnlockPadConfig,
   recordUnlockPadGrant,
 } = await import("../src/unlockPad/index.js");
@@ -128,4 +130,33 @@ test("clearing grants for an instance revokes walkability", () => {
   assert.equal(isUnlockPadPassableForMover(props, "hub", "NQW"), true);
   clearUnlockPadGrantsForInstance("hub", instanceId);
   assert.equal(isUnlockPadPassableForMover(props, "hub", "NQW"), false);
+});
+
+test("forgetUnlockPadInstance clears grants when a pad is deleted", () => {
+  const instanceId = "pad-deleted";
+  const props = {
+    passable: false,
+    unlockPad: normalizeUnlockPadConfig({
+      amountLuna: "1",
+      recipient: "NQ01",
+      buttonLabel: "Unlock",
+      proofMode: "payment_intent",
+      instanceId,
+    })!,
+  };
+  recordUnlockPadGrant({
+    wallet: "NQWALLET",
+    roomId: "commons",
+    instanceId,
+  });
+  assert.equal(
+    listUnlockPadInstanceIdsForWallet("NQWALLET", "commons").includes(instanceId),
+    true
+  );
+  forgetUnlockPadInstance("commons", props);
+  assert.equal(isUnlockPadPassableForMover(props, "commons", "NQWALLET"), false);
+  assert.equal(
+    listUnlockPadInstanceIdsForWallet("NQWALLET", "commons").includes(instanceId),
+    false
+  );
 });

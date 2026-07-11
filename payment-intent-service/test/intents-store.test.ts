@@ -52,3 +52,18 @@ test("idempotency returns same intent when still pending", async () => {
   });
   assert.equal(a.intentId, b.intentId);
 });
+
+test("createIntent for unlock pad quotes amount from payload", async () => {
+  const store = new IntentStore(":memory:");
+  const pub = await createIntent(store, testCfg, {
+    featureKind: "nspace.unlock_pad",
+    payerWallet: testRecipient,
+    featurePayload: {
+      roomId: "hub",
+      instanceId: "pad-1",
+      amountLuna: "250000",
+    },
+  });
+  assert.equal(pub.featureKind, "nspace.unlock_pad");
+  assert.equal(pub.amountLuna, "250000");
+});

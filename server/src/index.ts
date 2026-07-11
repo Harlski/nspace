@@ -243,6 +243,10 @@ import {
   confirmCosmeticUnlockPaymentForSku,
 } from "./cosmeticFulfill.js";
 import {
+  confirmUnlockPadPayment,
+  createUnlockPadPaymentIntent,
+} from "./unlockPad/fulfill.js";
+import {
   ensureAchievementRewardEntitlements,
   evaluateLoginStreakAchievements,
   fireAchievementEvent,
@@ -2126,6 +2130,67 @@ app.post("/api/cosmetics/unlock-sync", requireJwt, async (req, res) => {
     res.json(result);
   } catch (e) {
     console.error("[api/cosmetics/unlock-sync]", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.post("/api/unlock-pad/intent", requireJwt, async (req, res) => {
+  const wallet = jwtAddressFromReq(req);
+  if (!wallet) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const body = (req.body ?? {}) as { roomId?: string; instanceId?: string };
+  try {
+    const result = await createUnlockPadPaymentIntent(
+      wallet,
+      String(body.roomId ?? ""),
+      String(body.instanceId ?? "")
+    );
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    const luna = BigInt(result.intent.amountLuna);
+    res.json({
+      config: result.config,
+      intent: {
+        ...result.intent,
+        amountNimLabel: formatLunaAsNimLabel(luna),
+      },
+    });
+  } catch (e) {
+    console.error("[api/unlock-pad/intent]", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.post("/api/unlock-pad/sync", requireJwt, async (req, res) => {
+  const wallet = jwtAddressFromReq(req);
+  if (!wallet) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const body = (req.body ?? {}) as {
+    intentId?: string;
+    roomId?: string;
+    instanceId?: string;
+  };
+  try {
+    const result = await confirmUnlockPadPayment(
+      wallet,
+      String(body.intentId ?? ""),
+      String(body.roomId ?? ""),
+      String(body.instanceId ?? "")
+    );
+    if (!result.ok) {
+      const status = result.pending ? 202 : 400;
+      res.status(status).json({ error: result.error, pending: result.pending });
+      return;
+    }
+    res.json(result);
+  } catch (e) {
+    console.error("[api/unlock-pad/sync]", e);
     res.status(500).json({ error: "internal" });
   }
 });

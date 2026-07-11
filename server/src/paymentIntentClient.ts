@@ -179,6 +179,40 @@ export async function createCosmeticUnlockIntent(opts: {
   return { ok: true, intent };
 }
 
+export async function createUnlockPadIntent(opts: {
+  payerWallet: string;
+  roomId: string;
+  instanceId: string;
+  amountLuna: bigint;
+  idempotencyKey?: string;
+}): Promise<
+  | { ok: true; intent: PublicPaymentIntent }
+  | { ok: false; error: string; status?: number }
+> {
+  const r = await piFetch("/v1/intents", {
+    method: "POST",
+    body: JSON.stringify({
+      featureKind: "nspace.unlock_pad",
+      payerWallet: opts.payerWallet,
+      featurePayload: {
+        roomId: opts.roomId,
+        instanceId: opts.instanceId,
+        amountLuna: opts.amountLuna.toString(),
+      },
+      idempotencyKey: opts.idempotencyKey,
+    }),
+  });
+  const intent = parseIntentPayload(r.json);
+  if (!r.ok || !intent) {
+    return {
+      ok: false,
+      error: parsePiErrorMessage(r.json, r.text || `HTTP ${r.status}`),
+      status: r.status || undefined,
+    };
+  }
+  return { ok: true, intent };
+}
+
 export async function getPaymentIntent(
   intentId: string
 ): Promise<

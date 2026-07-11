@@ -98,6 +98,14 @@ export type ObstacleProps = {
   };
   /** Gate only: cardinal exit index 0–3 (+X,+Z,−X,−Z from gate tile). */
   gateExitDir?: number;
+  /** Placed unlock pad: payment config edited via object panel. */
+  unlockPad?: {
+    amountLuna: string;
+    recipient: string;
+    buttonLabel: string;
+    proofMode: "optimistic" | "payment_intent";
+    instanceId: string;
+  };
   /** Client-only: tile being edited (inspector preview). Not sent on the wire. */
   editorTileX?: number;
   editorTileY?: number;
@@ -303,6 +311,8 @@ export type ServerMessage =
       cosmeticGallery?: CosmeticGalleryWire;
       /** When set, this wallet cannot earn NIM from block claims (guest or mining restriction). */
       blockClaimDeniedReason?: string;
+      /** Unlock Pad instance ids already unlocked for this wallet in this room. */
+      unlockedPadInstanceIds?: string[];
       /** Nimiq Pay first-contact tutorial (lesson or sandbox). */
       tutorial?: {
         needsTutorial: boolean;
@@ -765,6 +775,56 @@ export function sendPlacePendingGate(
       exitDir: Math.max(0, Math.min(3, Math.floor(exitDir))),
       faceDir: Math.max(0, Math.min(3, Math.floor(faceDir))),
       colorRgb: gateRgb,
+    })
+  );
+}
+
+export function sendPlaceUnlockPad(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  opts?: {
+    colorRgb?: number;
+    amountLuna?: string;
+    recipient?: string;
+    buttonLabel?: string;
+    proofMode?: "optimistic" | "payment_intent";
+  }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const body: Record<string, unknown> = {
+    type: "placeUnlockPad",
+    x,
+    z,
+  };
+  if (opts?.colorRgb !== undefined) body.colorRgb = opts.colorRgb;
+  if (opts?.amountLuna !== undefined) body.amountLuna = opts.amountLuna;
+  if (opts?.recipient !== undefined) body.recipient = opts.recipient;
+  if (opts?.buttonLabel !== undefined) body.buttonLabel = opts.buttonLabel;
+  if (opts?.proofMode !== undefined) body.proofMode = opts.proofMode;
+  ws.send(JSON.stringify(body));
+}
+
+export function sendSetUnlockPadConfig(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  y: number,
+  config: {
+    amountLuna?: string;
+    recipient?: string;
+    buttonLabel?: string;
+    proofMode?: "optimistic" | "payment_intent";
+  }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "setUnlockPadConfig",
+      x,
+      z,
+      y: Math.max(0, Math.min(2, Math.floor(y))),
+      ...config,
     })
   );
 }

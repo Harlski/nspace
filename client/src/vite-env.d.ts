@@ -6,6 +6,11 @@ declare const __NSPACE_APP_VERSION__: string;
 /** Seeded by Nimiq Pay before mini-app scripts run ([docs](https://nimiq.dev/mini-apps/)). */
 interface NimiqPayHostContext {
   readonly language?: string;
+  sendBasicTransactionWithData?: (opts: {
+    recipient: string;
+    value: bigint;
+    data: string;
+  }) => Promise<unknown>;
 }
 
 interface Window {

@@ -61,10 +61,15 @@ export function isUnlockPadTerrain(
 export {
   clearUnlockPadGrantsForInstance,
   hasUnlockPadGrant,
+  listUnlockPadInstanceIdsForWallet,
   recordUnlockPadGrant,
 } from "./grantStore.js";
 
-import { hasUnlockPadGrant } from "./grantStore.js";
+import {
+  clearUnlockPadGrantsForInstance,
+  hasUnlockPadGrant,
+} from "./grantStore.js";
+import { randomUUID } from "node:crypto";
 
 /** True when this Unlock Pad is walkable for the mover (has a durable grant). */
 export function isUnlockPadPassableForMover(
@@ -76,4 +81,40 @@ export function isUnlockPadPassableForMover(
   const cfg = p?.unlockPad ? normalizeUnlockPadConfig(p.unlockPad) : null;
   if (!cfg) return false;
   return hasUnlockPadGrant(moverAddress, roomId, cfg.instanceId);
+}
+
+/** Drop all grants for a removed pad instance (call when the obstacle is deleted). */
+export function forgetUnlockPadInstance(
+  roomId: string,
+  p: UnlockPadTerrain | null | undefined
+): void {
+  const cfg = p?.unlockPad ? normalizeUnlockPadConfig(p.unlockPad) : null;
+  if (!cfg) return;
+  clearUnlockPadGrantsForInstance(roomId, cfg.instanceId);
+}
+
+export function newUnlockPadInstanceId(): string {
+  return randomUUID();
+}
+
+export function defaultUnlockPadConfig(opts?: {
+  amountLuna?: string;
+  recipient?: string;
+  buttonLabel?: string;
+  proofMode?: UnlockPadProofMode;
+}): UnlockPadConfig {
+  const amountLuna = String(opts?.amountLuna ?? "100000").trim();
+  const recipient = normalizeWalletKey(
+    opts?.recipient ??
+      process.env.PAYMENT_INTENT_RECIPIENT_ADDRESS ??
+      process.env.TUTORIAL_DOOR_RECIPIENT ??
+      ""
+  );
+  return {
+    amountLuna: /^\d+$/.test(amountLuna) && amountLuna !== "0" ? amountLuna : "100000",
+    recipient: recipient || "SYSTEM",
+    buttonLabel: String(opts?.buttonLabel ?? "Unlock").trim().slice(0, BUTTON_LABEL_MAX) || "Unlock",
+    proofMode: opts?.proofMode === "optimistic" ? "optimistic" : "payment_intent",
+    instanceId: newUnlockPadInstanceId(),
+  };
 }

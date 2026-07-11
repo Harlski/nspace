@@ -20,17 +20,17 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Client
 
-- _(none in this change set)_
+- Unlock Pad: distinct unlocked plate mesh for grant holders; Payment Intent unlock flow (`/api/unlock-pad/*`); admin build-dock Unlock Pad tool + object-panel config; `welcome.unlockedPadInstanceIds` restores grants on reconnect.
 
 ### Server
 
 - `tutorialTemplate/bootstrapShell.ts`: default Tutorial Template is 7×15 portrait corridor (Mine alcove south, Unlock Pad mid, exit north); path floor strip; existing block shapes only. Fresh empty template stores pick this up; existing published templates need staging republish / resync.
-- Unlock Pad domain module (`server/src/unlockPad/`): per-wallet grants, walkability; tutorial Pay uses Unlock Pad + optimistic door-sent grant; world-anchored Unlock control when adjacent.
+- Unlock Pad domain module (`server/src/unlockPad/`): per-wallet grants, walkability; tutorial Pay uses Unlock Pad + optimistic door-sent grant; world-anchored Unlock control when adjacent; `forgetUnlockPadInstance` on `removeObstacle`; Payment Intent fulfill (`nspace.unlock_pad`); admin `placeUnlockPad` / `setUnlockPadConfig`.
 - `client/src/main.ts`: portal Enter handler runs `runTutorialDoorPayFlow` for unlock-pad / tutorial-unlock-gate.
 
 ### payment-intent-service
 
-- _(none in this change set)_
+- Feature kind `nspace.unlock_pad` quotes amount from payload (`roomId`, `instanceId`, `amountLuna`).
 
 ### Deploy / ops
 

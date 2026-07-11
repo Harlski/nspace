@@ -18,6 +18,7 @@ export type BuildDockContextTool =
   | "teleporter"
   | "billboard"
   | "gate"
+  | "unlock-pad"
   | "prefab";
 
 export function buildDockContextParamVisible(

@@ -103,3 +103,22 @@ export function clearUnlockPadGrantsForInstance(
   }
   if (changed) writeStore(data);
 }
+
+/** Instance ids this wallet has unlocked in a room (for welcome / reconnect). */
+export function listUnlockPadInstanceIdsForWallet(
+  wallet: string,
+  roomId: string
+): string[] {
+  const w = normalizeWalletKey(wallet);
+  const rid = roomId.trim().toLowerCase();
+  if (!w || !rid) return [];
+  const prefix = `${w}|${rid}|`;
+  const out: string[] = [];
+  for (const k of Object.keys(readStore().grants)) {
+    if (k.startsWith(prefix)) {
+      const instanceId = k.slice(prefix.length);
+      if (instanceId) out.push(instanceId);
+    }
+  }
+  return out;
+}
