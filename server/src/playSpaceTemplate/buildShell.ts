@@ -21,6 +21,13 @@ export type BuildShellObstacle = {
 
 export type BuildShellFloorTint = { x: number; z: number; colorRgb: number };
 
+export type BuildShellAttentionMarker = {
+  x: number;
+  z: number;
+  hoverHeight: number;
+  colorRgb: number;
+};
+
 export type BuildShell = {
   version: typeof BUILD_SHELL_VERSION;
   bounds: RoomBounds;
@@ -31,6 +38,8 @@ export type BuildShell = {
   backgroundHueDeg: number | null;
   backgroundNeutral: RoomBackgroundNeutral | null;
   joinSpawn: { x: number; z: number } | null;
+  /** Parallel tile-keyed Attention Markers (ADR 0009). */
+  attentionMarkers?: BuildShellAttentionMarker[];
 };
 
 export type LayoutSnapshotForBuildShell = {
@@ -66,6 +75,7 @@ export type LayoutSnapshotForBuildShell = {
   removedBaseFloorTiles: Array<{ x: number; z: number }>;
   roomBackgroundHueDeg: number | null;
   roomBackgroundNeutral: RoomBackgroundNeutral | null;
+  attentionMarkers?: BuildShellAttentionMarker[];
 };
 
 function specToTerrainProps(spec: PlaySpaceBlockSpec, locked: boolean): TerrainProps {
@@ -157,6 +167,21 @@ export function buildShellFromLayoutSnapshot(
       props: { ...props, locked: false },
     });
   }
+  const attentionMarkers = (snap.attentionMarkers ?? [])
+    .filter(
+      (m) =>
+        Number.isFinite(m.x) &&
+        Number.isFinite(m.z) &&
+        Number.isFinite(m.hoverHeight) &&
+        Number.isFinite(m.colorRgb)
+    )
+    .map((m) => ({
+      x: Math.floor(m.x),
+      z: Math.floor(m.z),
+      hoverHeight: Math.max(0, Math.min(3, Math.floor(m.hoverHeight))),
+      colorRgb: Math.max(0, Math.min(0xffffff, Math.floor(m.colorRgb))) >>> 0,
+    }));
+
   return {
     version: BUILD_SHELL_VERSION,
     bounds: { ...snap.roomBounds },
@@ -179,6 +204,7 @@ export function buildShellFromLayoutSnapshot(
     backgroundHueDeg: snap.roomBackgroundHueDeg,
     backgroundNeutral: snap.roomBackgroundNeutral,
     joinSpawn,
+    ...(attentionMarkers.length > 0 ? { attentionMarkers } : {}),
   };
 }
 
@@ -188,6 +214,7 @@ export type BuildShellRoomWriter = {
   setExtraFloor: (x: number, z: number, colorRgb: number) => void;
   setBaseFloorColor: (x: number, z: number, colorRgb: number) => void;
   addRemovedBaseFloor: (tileKey: string) => void;
+  setAttentionMarkers?: (markers: BuildShellAttentionMarker[]) => void;
 };
 
 export function applyBuildShell(shell: BuildShell, writer: BuildShellRoomWriter): void {
@@ -204,6 +231,7 @@ export function applyBuildShell(shell: BuildShell, writer: BuildShellRoomWriter)
   for (const key of shell.removedBaseFloor) {
     writer.addRemovedBaseFloor(key);
   }
+  writer.setAttentionMarkers?.(shell.attentionMarkers ?? []);
 }
 
 /** Join spawn tile must not be blocked by a non-passable floor obstacle. */

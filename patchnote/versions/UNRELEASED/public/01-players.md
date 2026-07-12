@@ -11,4 +11,5 @@ _(Draft — not published.)_
 - [FIX] After mining in the tutorial, stand beside the Unlock Pad to get an Unlock Pad button above the tile (opens Nimiq Pay).
 - [CHANGE] After you unlock a pad, it becomes a low passable plate for you (others still see the locked block).
 - [CHANGE] Paid Unlock Pads outside the tutorial use on-chain Payment Intent verify; admins can place and configure them in build mode.
+- [NEW] Admins can place Attention Markers (glowing floating V) over mine blocks, Unlock Pads, or empty tiles to mark where to look or act.
 

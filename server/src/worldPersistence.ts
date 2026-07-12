@@ -10,6 +10,12 @@ import {
   clampColorRgb,
   DEFAULT_EXTRA_FLOOR_COLOR_RGB,
 } from "./blockColors.js";
+import {
+  getAttentionMarkerStore,
+  listRoomAttentionMarkers,
+  replaceRoomAttentionMarkers,
+  type AttentionMarker,
+} from "./attentionMarker/index.js";
 
 export type ExtraFloorColorMap = Map<string, number>;
 
@@ -177,6 +183,7 @@ type PersistedRoomGeometry = {
   extraFloor: PersistedExtraFloorEntry[];
   baseFloorColors?: PersistedExtraFloorEntry[];
   removedBaseFloor?: string[];
+  attentionMarkers?: AttentionMarker[];
 };
 
 type PersistedRoomSpawns = {
@@ -335,6 +342,7 @@ function loadSplitWorldState(
           roomId,
           new Set<string>(raw.removedBaseFloor ?? [])
         );
+        replaceRoomAttentionMarkers(roomId, raw.attentionMarkers ?? []);
       } catch (e) {
         console.error(`[world] failed to load room file ${filePath}`, e);
       }
@@ -494,6 +502,7 @@ function persistWorldStateNow(): void {
   for (const k of roomBaseFloorColors.keys()) roomIds.add(k);
   for (const k of roomBaseFloorRemoved.keys()) roomIds.add(k);
   for (const k of lastSpawnByRoom.keys()) roomIds.add(k);
+  for (const k of getAttentionMarkerStore().keys()) roomIds.add(k);
 
   ensureSplitDirs();
   const geometryRoomIds = new Set<string>();
@@ -507,6 +516,7 @@ function persistWorldStateNow(): void {
     const baseColors = roomBaseFloorColors.get(roomId);
     const rb = roomBaseFloorRemoved.get(roomId);
     const spawns = lastSpawnByRoom.get(roomId);
+    const attentionMarkers = listRoomAttentionMarkers(normalizedRoomId);
     const obstacles: PersistedRoom["obstacles"] = [];
     if (placed) {
       for (const [tile, props] of placed) {
@@ -531,6 +541,7 @@ function persistWorldStateNow(): void {
       extraFloor.length === 0 &&
       baseFloorColors.length === 0 &&
       removedBaseFloor.length === 0 &&
+      attentionMarkers.length === 0 &&
       Object.keys(spawnObj).length === 0
     ) {
       const normalized = normalizeRoomId(roomId);
@@ -545,7 +556,8 @@ function persistWorldStateNow(): void {
       obstacles.length > 0 ||
       extraFloor.length > 0 ||
       baseFloorColors.length > 0 ||
-      removedBaseFloor.length > 0
+      removedBaseFloor.length > 0 ||
+      attentionMarkers.length > 0
     ) {
       geometryRoomIds.add(normalizedRoomId);
       const payload: PersistedRoomGeometry = {
@@ -555,6 +567,7 @@ function persistWorldStateNow(): void {
         extraFloor,
         ...(baseFloorColors.length > 0 ? { baseFloorColors } : {}),
         ...(removedBaseFloor.length > 0 ? { removedBaseFloor } : {}),
+        ...(attentionMarkers.length > 0 ? { attentionMarkers } : {}),
       };
       writeJsonAtomically(roomFilePath(normalizedRoomId), payload);
     } else {

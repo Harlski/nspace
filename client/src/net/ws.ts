@@ -268,6 +268,12 @@ export type ServerMessage =
         createdBy: string;
         createdAt: number;
       }>;
+      attentionMarkers?: Array<{
+        x: number;
+        z: number;
+        hoverHeight: number;
+        colorRgb: number;
+      }>;
       billboards?: BillboardState[];
       voxelTexts?: VoxelTextSpec[];
       /** Real players online across all rooms (NPCs excluded). */
@@ -422,6 +428,16 @@ export type ServerMessage =
         message: string;
         createdBy: string;
         createdAt: number;
+      }>;
+    }
+  | {
+      type: "attentionMarkers";
+      roomId: string;
+      attentionMarkers: Array<{
+        x: number;
+        z: number;
+        hoverHeight: number;
+        colorRgb: number;
       }>;
     }
   | {
@@ -803,6 +819,68 @@ export function sendPlaceUnlockPad(
   if (opts?.buttonLabel !== undefined) body.buttonLabel = opts.buttonLabel;
   if (opts?.proofMode !== undefined) body.proofMode = opts.proofMode;
   ws.send(JSON.stringify(body));
+}
+
+export function sendPlaceAttentionMarker(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  opts?: { colorRgb?: number; hoverHeight?: number }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const body: Record<string, unknown> = {
+    type: "placeAttentionMarker",
+    x,
+    z,
+  };
+  if (opts?.colorRgb !== undefined) body.colorRgb = opts.colorRgb;
+  if (opts?.hoverHeight !== undefined) body.hoverHeight = opts.hoverHeight;
+  ws.send(JSON.stringify(body));
+}
+
+export function sendSetAttentionMarkerProps(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  props: { colorRgb?: number; hoverHeight?: number }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "setAttentionMarkerProps",
+      x,
+      z,
+      ...props,
+    })
+  );
+}
+
+export function sendMoveAttentionMarker(
+  ws: WebSocket,
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "moveAttentionMarker",
+      fromX,
+      fromZ,
+      toX,
+      toZ,
+    })
+  );
+}
+
+export function sendRemoveAttentionMarker(
+  ws: WebSocket,
+  x: number,
+  z: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "removeAttentionMarker", x, z }));
 }
 
 export function sendSetUnlockPadConfig(

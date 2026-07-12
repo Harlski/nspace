@@ -10,7 +10,9 @@ export type BuildDockContextParamId =
   | "hex-width"
   | "sphere-size"
   | "cube-rotation"
-  | "billboard-edit";
+  | "billboard-edit"
+  | "unlock-pad-config"
+  | "attention-marker-hover";
 
 export type BuildDockContextTool =
   | "block"
@@ -19,6 +21,7 @@ export type BuildDockContextTool =
   | "billboard"
   | "gate"
   | "unlock-pad"
+  | "attention-marker"
   | "prefab";
 
 export function buildDockContextParamVisible(
@@ -37,10 +40,20 @@ export function buildDockContextParamVisible(
     blockParams?: boolean;
     /** Placed billboard selected in build mode (Edit opens billboard modal). */
     billboardSelectionEdit?: boolean;
+    /** Unlock Pad tool active or a placed Unlock Pad selected for edit. */
+    unlockPadConfig?: boolean;
+    /** Attention Marker tool or selected marker. */
+    attentionMarkerHover?: boolean;
   }
 ): boolean {
   if (param === "billboard-edit") {
     return ctx.billboardSelectionEdit === true;
+  }
+  if (param === "unlock-pad-config") {
+    return ctx.unlockPadConfig === true;
+  }
+  if (param === "attention-marker-hover") {
+    return ctx.attentionMarkerHover === true;
   }
   if (ctx.minimalInspector) return false;
   if (ctx.blockParams === false) return false;

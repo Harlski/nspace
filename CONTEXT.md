@@ -169,6 +169,27 @@ A placed obstacle that is solid until a wallet unlocks it by payment, then walka
 wallet only.
 _Avoid_: toll pad, paid crossing, pass pad, unlock tile, paid gate.
 
+**Unlock Pad Settings**:
+The admin dialog for configuring an Unlock Pad's price (NIM), recipient, button label, and
+proof mode. Opened from the build dock via summary + Edit; Save commits, Cancel discards.
+Color stays in the dock. Distinct from the world-anchored Unlock control players use to pay.
+_Avoid_: unlock pad popover, unlock pad parameters form, pad config drawer.
+
+**Attention Marker**:
+A placeable, purely visual cue anchored to a floor tile — at most one per tile — that may
+share the tile with a block, Unlock Pad, Gate, or empty floor. It draws the eye to where the
+player should notice or act; it is never itself the thing they interact with. The glyph is a
+fixed V with a continuous gentle hover bounce; authors set **Hover Height** and tint (default
+white, glow matches). It is first-class room layout content (included in the Build Shell),
+stays visible in build mode, and can be repositioned. Admin-only in v1.
+_Avoid_: waypoint, beacon, hint, callout, marker alone, V (as the feature name).
+
+**Hover Height**:
+The Attention Marker's visual lift above the top of its tile's current co-occupant (or the
+floor if empty) — discrete steps `0..3`, default `1`. The baseline live-follows co-occupant
+changes. Display only; it is not an obstacle stack level.
+_Avoid_: layer, stack y, height (alone — that is the terrain block param).
+
 **Teleporter Landing Hint**:
 The floor `(X, Z)` stored on a Teleporter as the preferred arrival tile in the destination
 Room; not a guarantee if that tile becomes unwalkable later.

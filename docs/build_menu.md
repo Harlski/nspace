@@ -71,7 +71,7 @@ Use **Reference ID** in feedback (e.g. “increase `build-dock-context-mods` scr
 |-----------|----------------------|----------------|
 | **Terrain** | `terrain` | Cube + shape variants (see below) |
 | **Props** | `props` | Signpost |
-| **Buildings** | `buildings` | Teleporter, Gate, Billboard (billboard may require admin) |
+| **Buildings** | `buildings` | Teleporter, Gate, Unlock Pad, Attention Marker, Billboard (billboard / unlock pad / attention marker may require admin) |
 
 Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
 
@@ -95,7 +95,7 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
 |--------------|---------------------|------|
 | `build-dock-context` | `.hud-build-bottom-dock__context` | White sub-panel beside tool strip |
 | `build-dock-context-grid` | `.hud-build-bottom-dock__context-grid` | Mods column + color column |
-| `build-dock-context-mods` | `.hud-build-bottom-dock__context-mods` | Placement controls (height, **hex thickness**, **sphere size**, pyramid base, gate direction, billboard view…); **Room settings** (`.hud-build-bottom-dock__room-settings`, Room BG swatch + hue wheel, **Guest entry** spawner) when Room scope + **Room settings** tab |
+| `build-dock-context-mods` | `.hud-build-bottom-dock__context-mods` | Placement controls (height, **hex thickness**, **sphere size**, pyramid base, gate direction, billboard view, **Unlock Pad** summary + Edit…); **Room settings** (`.hud-build-bottom-dock__room-settings`, Room BG swatch + hue wheel, **Guest entry** spawner) when Room scope + **Room settings** tab |
 | `build-dock-context-room-settings` | `.hud-build-bottom-dock__context--room-settings` | Modifier on context panel: room BG only, color column hidden |
 | `build-dock-context-floor` | `.hud-build-bottom-dock__context--floor` | Modifier on context panel: **Floor** tab — hue ring only (mods column hidden) |
 | `build-dock-context-color` | `.hud-build-bottom-dock__context-color` | Hue ring + hue dock stack |
@@ -110,6 +110,7 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
 - Size (sphere): `#tile-inspector-sphere-size-row` (`data-build-dock-param="sphere-size"`, sphere shape only)
 - Base (pyramid): `#tile-inspector-pyramid-base-row` / `#tile-inspector-pyramid-base` (`data-build-dock-param="pyramid-base"`, pyramid shape only)
 - Gate opening: `#build-block-bar-gate` (gate tool)
+- Unlock Pad: `data-build-dock-param="unlock-pad-config"` summary + Edit → **Unlock Pad Settings** modal (`.unlock-pad-settings-modal`)
 - Teleporter placeholder: `#build-block-bar-teleporter`
 
 **Teleporter destination (build mode):** Pending teleporters show a **Set** pill on the selected tile (separate from **Enter**). Tapping **Set** or the dock **summary** opens the **Teleporter Destination Picker** ([teleporterDestPreview.ts](../client/src/ui/teleporterDestPreview.ts)): room `<select>` (switch maps), layout preview for any room including **this room**, tile click for the **Landing Hint**, and **Hub** confirmation without a tile pick. Backed by `GET /api/rooms/:id/layout` (session auth; editor must `canPlaceBlocksInRoom`). Pending tiles use a **dim portal pillar** instead of the orange hex slab. Warp still falls back to **Join Spawn** when the hint is illegal (see [docs/adr/0004-teleporter-landing-hint-with-join-spawn-fallback.md](adr/0004-teleporter-landing-hint-with-join-spawn-fallback.md)).

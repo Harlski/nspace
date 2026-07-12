@@ -316,6 +316,15 @@ import {
 } from "./unlockPad/index.js";
 import { setUnlockPadLookup } from "./unlockPad/fulfill.js";
 import {
+  clearRoomAttentionMarkersGlobal,
+  listRoomAttentionMarkers,
+  moveRoomAttentionMarker,
+  removeRoomAttentionMarker,
+  replaceRoomAttentionMarkers,
+  upsertRoomAttentionMarker,
+  type AttentionMarker,
+} from "./attentionMarker/index.js";
+import {
   PLAY_SPACE_BACKGROUND_HUE_DEG,
   PLAY_SPACE_SPAWN,
 } from "./directInvite/playSpaceLayout.js";
@@ -1267,6 +1276,7 @@ type OutMsg =
         createdBy: string;
         createdAt: number;
       }>;
+      attentionMarkers?: AttentionMarker[];
       billboards: Array<{
         id: string;
         anchorX: number;
@@ -1430,6 +1440,11 @@ type OutMsg =
         createdBy: string;
         createdAt: number;
       }>;
+    }
+  | {
+      type: "attentionMarkers";
+      roomId: string;
+      attentionMarkers: AttentionMarker[];
     }
   | {
       type: "billboards";
@@ -2273,6 +2288,7 @@ function ensurePlaySpaceLayout(roomId: string): void {
       roomBaseFloorColors.delete(roomId);
       roomExtraFloor.delete(roomId);
       roomBaseFloorRemoved.delete(roomId);
+      clearRoomAttentionMarkersGlobal(roomId);
     },
     setObstacle: (tile, props) => {
       placedMap(roomId).set(tile, { ...props, locked: false });
@@ -2286,6 +2302,9 @@ function ensurePlaySpaceLayout(roomId: string): void {
     addRemovedBaseFloor: (key) => {
       baseFloorRemovedEnsure(roomId).add(key);
     },
+    setAttentionMarkers: (markers) => {
+      replaceRoomAttentionMarkers(roomId, markers);
+    },
   });
 }
 
@@ -2298,6 +2317,7 @@ function clearPlaySpaceLayout(roomId: string): void {
   roomBaseFloorColors.delete(roomId);
   roomExtraFloor.delete(roomId);
   roomBaseFloorRemoved.delete(roomId);
+  clearRoomAttentionMarkersGlobal(roomId);
   lastSpawnByRoom.delete(roomId);
 }
 
@@ -2350,12 +2370,19 @@ function ensureTutorialRoomLayout(roomId: string): void {
     backgroundNeutral: shell.backgroundNeutral,
     joinSpawn: shell.joinSpawn,
   });
+  // Keep persisted live/staging edits across process restart. Only seed when empty.
+  const hasGeometry =
+    (roomPlaced.get(id)?.size ?? 0) > 0 ||
+    (roomExtraFloor.get(id)?.size ?? 0) > 0 ||
+    (roomBaseFloorColors.get(id)?.size ?? 0) > 0;
+  if (hasGeometry) return;
   applyBuildShell(shell, {
     clearGeometry: () => {
       roomPlaced.delete(id);
       roomBaseFloorColors.delete(id);
       roomExtraFloor.delete(id);
       roomBaseFloorRemoved.delete(id);
+      clearRoomAttentionMarkersGlobal(id);
     },
     setObstacle: (tile, props) => {
       placedMap(id).set(tile, { ...props, locked: false });
@@ -2369,7 +2396,35 @@ function ensureTutorialRoomLayout(roomId: string): void {
     addRemovedBaseFloor: (key) => {
       baseFloorRemovedEnsure(id).add(key);
     },
+    setAttentionMarkers: (markers) => {
+      replaceRoomAttentionMarkers(id, markers);
+    },
   });
+}
+
+/** Push full Tutorial Room geometry to everyone currently in the room. */
+function broadcastTutorialRoomLayout(roomId: string): void {
+  const id = normalizeRoomId(roomId);
+  broadcast(id, {
+    type: "obstacles",
+    roomId: id,
+    tiles: obstaclesToList(id),
+  });
+  broadcast(id, {
+    type: "extraFloor",
+    roomId: id,
+    tiles: extraFloorToList(id),
+  });
+  broadcastAttentionMarkers(id);
+  const baseColors = baseFloorColorToList(id);
+  if (baseColors.length > 0) {
+    broadcast(id, {
+      type: "baseFloorColorDelta",
+      roomId: id,
+      add: baseColors,
+      remove: [],
+    });
+  }
 }
 
 export function refreshTutorialRuntimeLayoutFromTemplate(): void {
@@ -2379,7 +2434,18 @@ export function refreshTutorialRuntimeLayoutFromTemplate(): void {
   roomBaseFloorColors.delete(TUTORIAL_ROOM_ID);
   roomExtraFloor.delete(TUTORIAL_ROOM_ID);
   roomBaseFloorRemoved.delete(TUTORIAL_ROOM_ID);
+  clearRoomAttentionMarkersGlobal(TUTORIAL_ROOM_ID);
   ensureTutorialRoomLayout(TUTORIAL_ROOM_ID);
+  broadcastTutorialRoomLayout(TUTORIAL_ROOM_ID);
+}
+
+function broadcastAttentionMarkers(roomId: string): void {
+  const id = normalizeRoomId(roomId);
+  broadcast(id, {
+    type: "attentionMarkers",
+    roomId: id,
+    attentionMarkers: listRoomAttentionMarkers(id),
+  });
 }
 
 /** Build Shell snapshot for admin Tutorial Template authoring (staging room only). */
@@ -4302,6 +4368,7 @@ export type RoomLayoutSnapshot = {
     createdBy: string;
     createdAt: number;
   }>;
+  attentionMarkers: AttentionMarker[];
   billboards: ReturnType<typeof billboardToWire>[];
   voxelTexts: ReturnType<typeof getVoxelTextsForRoom>;
   roomBackgroundHueDeg: number | null;
@@ -4355,6 +4422,7 @@ export function getRoomLayoutSnapshot(roomIdRaw: string): RoomLayoutSnapshot | n
     baseFloorColorTiles: spatial ? [] : baseFloorColorToList(roomId),
     removedBaseFloorTiles: spatial ? [] : removedBaseFloorToList(roomId),
     signboards,
+    attentionMarkers: listRoomAttentionMarkers(roomId),
     billboards: getBillboardsForRoom(roomId).map(billboardToWire),
     voxelTexts: getVoxelTextsForRoom(roomId),
     roomBackgroundHueDeg: bgState.hueDeg,
@@ -5993,6 +6061,16 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     ? welcomeSpatialLists(targetRoomId, conn)
     : null;
   const chatBacklog = chatBacklogSnapshotForWelcome(targetRoomId, Date.now());
+  const tutorialWelcome = tutorialWelcomeForAddress(
+    address,
+    targetRoomId,
+    conn.sessionNimiqPay === true,
+    conn.tutorialViaTeleporter === true
+  );
+  conn.tutorialSuppressSocial = tutorialLessonSuppressesChat(
+    targetRoomId,
+    tutorialWelcome
+  );
 
   wsSafeSend(conn.ws, {
       type: "welcome",
@@ -6016,6 +6094,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
         : removedBaseFloorToList(targetRoomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
+      attentionMarkers: listRoomAttentionMarkers(targetRoomId),
       billboards: billboardsWire,
       voxelTexts: getVoxelTextsForRoom(targetRoomId),
       onlinePlayerCount: countOnlineRealPlayers(),
@@ -6045,6 +6124,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
         address,
         targetRoomId
       ),
+      ...(tutorialWelcome ? { tutorial: tutorialWelcome } : {}),
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, targetRoomId, chatBacklog);
   worldcupSendGoalieStateToConn(conn, targetRoomId);
@@ -8157,7 +8237,8 @@ export function addClient(
   const tutorialWelcome = tutorialWelcomeForAddress(
     address,
     roomId,
-    sessionFlags?.nimiqPay === true
+    sessionFlags?.nimiqPay === true,
+    conn.tutorialViaTeleporter === true
   );
   conn.tutorialSuppressSocial = tutorialLessonSuppressesChat(roomId, tutorialWelcome);
 
@@ -8183,6 +8264,7 @@ export function addClient(
         : removedBaseFloorToList(roomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
+      attentionMarkers: listRoomAttentionMarkers(roomId),
       billboards: joinBillboardsWire,
       voxelTexts: getVoxelTextsForRoom(roomId),
       onlinePlayerCount: countOnlineRealPlayers(),
@@ -9987,7 +10069,136 @@ export function addClient(
           text: "Could not place Unlock Pad. Admins only; use an empty floor tile on layer 0 within build range.",
           at: now,
         } satisfies OutMsg);
+      } else if (isTutorialStagingRoomId(currentRoomId)) {
+        wsSafeSend(ws, {
+          type: "chat",
+          from: "System",
+          fromAddress: "",
+          text: "Placed in Tutorial Staging. Learners in the Tutorial Room will not see this until you sync the Tutorial Template and reload runtime (/api/admin/tutorial/reload-runtime).",
+          at: now,
+        } satisfies OutMsg);
       }
+      return;
+    }
+
+    if (msg.type === "placeAttentionMarker") {
+      if (!isAdmin(address) || !canPlaceBlocksInRoom(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const tile = snapToTile(tx, tz);
+      if (!withinBlockActionRangeNow(conn, currentRoomId, tile.x, tile.z)) return;
+      if (isInviteLobbyRoomId(normalizeRoomId(currentRoomId))) return;
+      if (normalizeRoomId(currentRoomId) === CANVAS_ROOM_ID) return;
+      const colorRgb =
+        msg.colorRgb !== undefined || msg.colorId !== undefined
+          ? colorRgbFromWire({
+              colorRgb: msg.colorRgb,
+              colorId: msg.colorId ?? 7,
+            })
+          : 0xffffff;
+      const marker = upsertRoomAttentionMarker(currentRoomId, {
+        x: tile.x,
+        z: tile.z,
+        hoverHeight: msg.hoverHeight,
+        colorRgb,
+      });
+      if (!marker) return;
+      schedulePersistWorldState();
+      broadcastAttentionMarkers(currentRoomId);
+      return;
+    }
+
+    if (msg.type === "setAttentionMarkerProps") {
+      if (!isAdmin(address) || !canPlaceBlocksInRoom(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const tile = snapToTile(tx, tz);
+      const existing = listRoomAttentionMarkers(currentRoomId).find(
+        (m) => m.x === tile.x && m.z === tile.z
+      );
+      if (!existing) return;
+      const colorRgb =
+        msg.colorRgb !== undefined || msg.colorId !== undefined
+          ? colorRgbFromWire({
+              colorRgb: msg.colorRgb,
+              colorId: msg.colorId ?? 7,
+            })
+          : existing.colorRgb;
+      const hoverHeight =
+        msg.hoverHeight !== undefined ? msg.hoverHeight : existing.hoverHeight;
+      const marker = upsertRoomAttentionMarker(currentRoomId, {
+        x: tile.x,
+        z: tile.z,
+        hoverHeight,
+        colorRgb,
+      });
+      if (!marker) return;
+      schedulePersistWorldState();
+      broadcastAttentionMarkers(currentRoomId);
+      return;
+    }
+
+    if (msg.type === "moveAttentionMarker") {
+      if (!isAdmin(address) || !canPlaceBlocksInRoom(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const fx = Number(msg.fromX);
+      const fz = Number(msg.fromZ);
+      const tx = Number(msg.toX);
+      const tz = Number(msg.toZ);
+      if (
+        !Number.isFinite(fx) ||
+        !Number.isFinite(fz) ||
+        !Number.isFinite(tx) ||
+        !Number.isFinite(tz)
+      ) {
+        return;
+      }
+      const from = snapToTile(fx, fz);
+      const to = snapToTile(tx, tz);
+      if (!withinBlockActionRangeNow(conn, currentRoomId, to.x, to.z)) return;
+      const moved = moveRoomAttentionMarker(
+        currentRoomId,
+        from.x,
+        from.z,
+        to.x,
+        to.z
+      );
+      if (!moved) return;
+      schedulePersistWorldState();
+      broadcastAttentionMarkers(currentRoomId);
+      return;
+    }
+
+    if (msg.type === "removeAttentionMarker") {
+      if (!isAdmin(address) || !canPlaceBlocksInRoom(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const tile = snapToTile(tx, tz);
+      if (!removeRoomAttentionMarker(currentRoomId, tile.x, tile.z)) return;
+      schedulePersistWorldState();
+      broadcastAttentionMarkers(currentRoomId);
       return;
     }
 

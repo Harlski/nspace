@@ -28,6 +28,11 @@ import type {
   TutorialCoachState,
   TutorialCoachStep,
 } from "../tutorial/flow.js";
+import { TUTORIAL_ROOM_ID } from "../tutorial/flow.js";
+import {
+  formatLunaAsNimLabel,
+  nimAmountToLuna,
+} from "../unlockPad/nimLuna.js";
 import {
   appendTextWithFlags,
   codeFromFlagEmoji,
@@ -477,6 +482,8 @@ export function createHud(
   onReturnHome: (fn: () => void) => void;
   onFinishTutorial: (fn: () => void) => void;
   setFinishTutorialVisible: (visible: boolean) => void;
+  onResetTutorial: (fn: () => void) => void;
+  setResetTutorialVisible: (visible: boolean) => void;
   /** Non-blocking top toast with optional wallet identicon (tutorial sign-in, Hub welcome). */
   showBriefToast: (text: string, opts?: { address?: string }) => void;
   /** Lesson-mode Tutorial Step Coach under the top HUD strip. */
@@ -493,7 +500,7 @@ export function createHud(
   isWorldcupBallModeActive: () => boolean;
   onBuildToolSelect: (
     fn: (
-      tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab"
+      tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab"
     ) => void
   ) => void;
   deactivateTeleporterMode: () => void;
@@ -501,6 +508,18 @@ export function createHud(
   deactivateGateMode: () => void;
   isUnlockPadModeActive: () => boolean;
   deactivateUnlockPadMode: () => void;
+  isAttentionMarkerModeActive: () => boolean;
+  deactivateAttentionMarkerMode: () => void;
+  getAttentionMarkerHoverHeight: () => number;
+  setAttentionMarkerHoverHeight: (h: number) => void;
+  /** Current room id for Unlock Pad Settings (proof mode lock in Tutorial Room). */
+  setUnlockPadSettingsRoomId: (roomId: string) => void;
+  getUnlockPadPlacementConfig: () => {
+    amountLuna: string;
+    recipient: string;
+    buttonLabel: string;
+    proofMode: "optimistic" | "payment_intent";
+  };
   setRoomEntrySpawnPanelVisible: (visible: boolean) => void;
   onRoomEntrySpawnPickState: (fn: ((armed: boolean) => void) | null) => void;
   onRoomEntrySpawnUseCenter: (fn: (() => void) | null) => void;
@@ -2407,6 +2426,73 @@ export function createHud(
   letter.appendChild(signpostOverlay);
   letter.appendChild(signReadOverlay);
   letter.appendChild(billboardOverlay);
+
+  const unlockPadSettingsOverlay = document.createElement("div");
+  unlockPadSettingsOverlay.className = "billboard-modal unlock-pad-settings-modal";
+  unlockPadSettingsOverlay.hidden = true;
+  unlockPadSettingsOverlay.innerHTML = `
+    <div class="billboard-modal__dialog unlock-pad-settings-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="unlock-pad-settings-title">
+      <div class="billboard-modal__header">
+        <h2 id="unlock-pad-settings-title" class="billboard-modal__title">Unlock Pad Settings</h2>
+        <div class="billboard-modal__header-actions">
+          <button type="button" class="billboard-modal__btn billboard-modal__btn--ghost" id="unlock-pad-settings-cancel">Cancel</button>
+          <button type="button" class="billboard-modal__btn billboard-modal__btn--primary" id="unlock-pad-settings-save">Save</button>
+        </div>
+      </div>
+      <div class="billboard-modal__body">
+        <div class="billboard-modal__field">
+          <label class="billboard-modal__label" for="unlock-pad-settings-amount">Amount (NIM)</label>
+          <input type="text" id="unlock-pad-settings-amount" class="billboard-modal__input" inputmode="decimal" autocomplete="off" />
+          <p class="billboard-modal__hint">Stored as luna on the server. Example: 0.01</p>
+        </div>
+        <div class="billboard-modal__field">
+          <label class="billboard-modal__label" for="unlock-pad-settings-recipient">Recipient (optional — server default if blank)</label>
+          <input type="text" id="unlock-pad-settings-recipient" class="billboard-modal__input" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="billboard-modal__field">
+          <label class="billboard-modal__label" for="unlock-pad-settings-button-label">Button label</label>
+          <input type="text" id="unlock-pad-settings-button-label" class="billboard-modal__input" autocomplete="off" maxlength="48" />
+        </div>
+        <div class="billboard-modal__field" id="unlock-pad-settings-proof-field">
+          <label class="billboard-modal__label" for="unlock-pad-settings-proof-mode">Proof mode</label>
+          <select id="unlock-pad-settings-proof-mode" class="billboard-modal__select">
+            <option value="payment_intent">Payment intent</option>
+            <option value="optimistic">Optimistic</option>
+          </select>
+          <p class="billboard-modal__hint" id="unlock-pad-settings-proof-hint" hidden>Optimistic — tutorial (forced in this room).</p>
+        </div>
+        <p class="billboard-modal__hint unlock-pad-settings-modal__error" id="unlock-pad-settings-error" hidden></p>
+      </div>
+    </div>
+  `;
+  letter.appendChild(unlockPadSettingsOverlay);
+  const unlockPadSettingsAmountInput = unlockPadSettingsOverlay.querySelector(
+    "#unlock-pad-settings-amount"
+  ) as HTMLInputElement;
+  const unlockPadSettingsRecipientInput = unlockPadSettingsOverlay.querySelector(
+    "#unlock-pad-settings-recipient"
+  ) as HTMLInputElement;
+  const unlockPadSettingsButtonLabelInput =
+    unlockPadSettingsOverlay.querySelector(
+      "#unlock-pad-settings-button-label"
+    ) as HTMLInputElement;
+  const unlockPadSettingsProofModeSelect =
+    unlockPadSettingsOverlay.querySelector(
+      "#unlock-pad-settings-proof-mode"
+    ) as HTMLSelectElement;
+  const unlockPadSettingsProofHint = unlockPadSettingsOverlay.querySelector(
+    "#unlock-pad-settings-proof-hint"
+  ) as HTMLElement;
+  const unlockPadSettingsError = unlockPadSettingsOverlay.querySelector(
+    "#unlock-pad-settings-error"
+  ) as HTMLElement;
+  const unlockPadSettingsCancelBtn = unlockPadSettingsOverlay.querySelector(
+    "#unlock-pad-settings-cancel"
+  ) as HTMLButtonElement;
+  const unlockPadSettingsSaveBtn = unlockPadSettingsOverlay.querySelector(
+    "#unlock-pad-settings-save"
+  ) as HTMLButtonElement;
+
   letter.appendChild(externalVisitConfirmOverlay);
   letter.appendChild(feedbackOverlay);
   letter.appendChild(brandLinksOverlay);
@@ -6456,6 +6542,7 @@ export function createHud(
             <option value="teleporter">Teleporter</option>
             <option value="gate">Gate</option>
             <option value="unlock-pad">Unlock Pad</option>
+            <option value="attention-marker">Attention Marker</option>
             <option value="prefab">Prefab</option>
           </select>
         </div>
@@ -6548,6 +6635,62 @@ export function createHud(
                 id="build-dock-billboard-edit"
                 class="tile-inspector__param-step hud-build-bottom-dock__step hud-build-bottom-dock__step--text"
               >Edit</button>
+            </div>
+          </div>
+          <div
+            class="tile-inspector__param tile-inspector__param--unlock-pad"
+            data-build-dock-param="unlock-pad-config"
+            hidden
+          >
+            <span class="tile-inspector__param-label">Unlock Pad</span>
+            <div class="tile-inspector__unlock-pad-summary-row">
+              <button
+                type="button"
+                id="build-dock-unlock-pad-summary"
+                class="tile-inspector__unlock-pad-summary"
+                title="Edit Unlock Pad settings"
+              >1 NIM · Unlock</button>
+              <button
+                type="button"
+                id="build-dock-unlock-pad-edit"
+                class="tile-inspector__param-step hud-build-bottom-dock__step hud-build-bottom-dock__step--text tile-inspector__unlock-pad-edit"
+              >Edit</button>
+            </div>
+          </div>
+          <div
+            class="tile-inspector__param"
+            data-build-dock-param="attention-marker-hover"
+            hidden
+          >
+            <label class="tile-inspector__param-label" for="tile-inspector-attention-hover"
+              >Hover Height</label
+            >
+            <div class="tile-inspector__param-stepper">
+              <button
+                type="button"
+                class="tile-inspector__param-step hud-build-bottom-dock__step"
+                data-attention-hover-delta="-1"
+                aria-label="Lower hover height"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                id="tile-inspector-attention-hover"
+                class="tile-inspector__param-input"
+                min="0"
+                max="3"
+                step="1"
+                value="1"
+              />
+              <button
+                type="button"
+                class="tile-inspector__param-step hud-build-bottom-dock__step"
+                data-attention-hover-delta="1"
+                aria-label="Raise hover height"
+              >
+                +
+              </button>
             </div>
           </div>
         </div>
@@ -7145,7 +7288,15 @@ export function createHud(
   ) as HTMLElement | null;
   let buildToolChangeHandler:
     | ((
-        tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad"
+        tool:
+          | "block"
+          | "signpost"
+          | "teleporter"
+          | "billboard"
+          | "gate"
+          | "unlock-pad"
+          | "attention-marker"
+          | "prefab"
       ) => void)
     | null = null;
 
@@ -7271,6 +7422,21 @@ export function createHud(
   const buildDockBillboardEditBtn = buildBlockBar.querySelector(
     "#build-dock-billboard-edit"
   ) as HTMLButtonElement | null;
+  const buildDockUnlockPadSummaryEl = buildBlockBar.querySelector(
+    "#build-dock-unlock-pad-summary"
+  ) as HTMLElement | null;
+  const buildDockUnlockPadEditBtn = buildBlockBar.querySelector(
+    "#build-dock-unlock-pad-edit"
+  ) as HTMLButtonElement | null;
+  const tileInspectorAttentionHoverInput = buildBlockBar.querySelector(
+    "#tile-inspector-attention-hover"
+  ) as HTMLInputElement | null;
+  let unlockPadDraftAmountLuna = "100000";
+  let unlockPadDraftRecipient = "";
+  let unlockPadDraftButtonLabel = "Unlock";
+  let unlockPadDraftProofMode: "optimistic" | "payment_intent" =
+    "payment_intent";
+  let unlockPadSettingsRoomId = "";
   let signpostModeActive = false;
   let prefabToolActive = false;
   let prefabPlaceRotateHandler: ((delta: -1 | 1) => void) | null = null;
@@ -7317,6 +7483,9 @@ export function createHud(
   let gateModeActive = false;
   /** Unlock Pad tool: solid block with payment unlock config (admin-only). */
   let unlockPadModeActive = false;
+  /** Attention Marker tool: co-occupying visual cue (admin-only). */
+  let attentionMarkerModeActive = false;
+  let attentionMarkerHoverHeight = 1;
   let billboardModeActive = false;
   // worldcup: standalone "place a soccer ball" mode (isolated from the core tool union)
   let worldcupBallModeActive = false;
@@ -7338,6 +7507,7 @@ export function createHud(
       !teleporterModeActive &&
       !gateModeActive &&
       !unlockPadModeActive &&
+      !attentionMarkerModeActive &&
       !billboardModeActive &&
       !signpostModeActive
     ) {
@@ -7350,6 +7520,8 @@ export function createHud(
       g.setPlacementInspectorPreviewKind("gate");
     } else if (unlockPadModeActive) {
       g.setPlacementInspectorPreviewKind("unlock-pad");
+    } else if (attentionMarkerModeActive) {
+      g.setPlacementInspectorPreviewKind("block");
     } else if (billboardModeActive) {
       g.setPlacementInspectorPreviewKind("billboard");
     } else {
@@ -7372,11 +7544,11 @@ export function createHud(
   };
   const BUILD_DOCK_TOOLS: Record<
     BuildDockCategoryId,
-    Array<"block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab">
+    Array<"block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab">
   > = {
     terrain: ["block"],
     props: ["signpost"],
-    buildings: ["teleporter", "gate", "unlock-pad", "billboard"],
+    buildings: ["teleporter", "gate", "unlock-pad", "attention-marker", "billboard"],
     prefab: [],
   };
   let buildDockCategory: BuildDockCategoryId = "terrain";
@@ -8134,13 +8306,14 @@ export function createHud(
   }
 
   function toolLabelDock(
-    t: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab"
+    t: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab"
   ): string {
     if (t === "block") return "Cube";
     if (t === "signpost") return "Signpost";
     if (t === "teleporter") return "Teleporter";
     if (t === "gate") return "Gate";
     if (t === "unlock-pad") return "Unlock Pad";
+    if (t === "attention-marker") return "Attention Marker";
     if (t === "prefab") return "Prefab";
     return "Billboard";
   }
@@ -8154,6 +8327,7 @@ export function createHud(
       | "billboard"
       | "gate"
       | "unlock-pad"
+      | "attention-marker"
       | "prefab";
     if (buildDockCategory === "terrain" && tool === "block") {
       return `Place: ${dockTerrainShapeLabel(dockTerrainShapeActiveIdResolved())}`;
@@ -8167,7 +8341,7 @@ export function createHud(
   }
 
   function categoryForToolDock(
-    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab"
+    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab"
   ): BuildDockCategoryId {
     if (tool === "prefab") return "prefab";
     for (const c of BUILD_DOCK_CATEGORY_ORDER) {
@@ -8615,7 +8789,7 @@ export function createHud(
     }
 
     const list = BUILD_DOCK_TOOLS[buildDockCategory].filter((tid) => {
-      if (tid === "billboard" || tid === "unlock-pad") return admin;
+      if (tid === "billboard" || tid === "unlock-pad" || tid === "attention-marker") return admin;
       return true;
     });
     const cur = tileInspectorToolSelect.value as
@@ -8625,6 +8799,7 @@ export function createHud(
       | "billboard"
       | "gate"
       | "unlock-pad"
+      | "attention-marker"
       | "prefab";
     const terrainBlockOnly =
       buildDockCategory === "terrain" &&
@@ -9740,6 +9915,8 @@ export function createHud(
         "sphere-size",
         "cube-rotation",
         "billboard-edit",
+        "unlock-pad-config",
+        "attention-marker-hover",
       ] as const) {
         const row = tileInspectorRoot.querySelector(
           `[data-build-dock-param="${id}"]`
@@ -9755,11 +9932,14 @@ export function createHud(
       teleporterModeActive ||
       gateModeActive ||
       unlockPadModeActive ||
+      attentionMarkerModeActive ||
       billboardModeActive;
     const blockParams = buildDockContextBlockParamsAllowed();
     const { pyramid, hex, sphere, ramp } = buildDockContextShapeState();
     const plainCube = !hex && !pyramid && !sphere && !ramp;
     const billboardSelectionEdit = buildDockBillboardSelectionEditActive();
+    const unlockPadConfig = unlockPadModeActive || panelObjectEditUnlockPad;
+    const attentionMarkerHover = attentionMarkerModeActive;
     const ctx = {
       tool,
       pyramid,
@@ -9770,6 +9950,8 @@ export function createHud(
       minimalInspector,
       blockParams,
       billboardSelectionEdit,
+      unlockPadConfig,
+      attentionMarkerHover,
     };
     for (const id of [
       "height",
@@ -9778,6 +9960,8 @@ export function createHud(
       "sphere-size",
       "cube-rotation",
       "billboard-edit",
+      "unlock-pad-config",
+      "attention-marker-hover",
     ] as const) {
       const row = tileInspectorRoot.querySelector(
         `[data-build-dock-param="${id}"]`
@@ -9786,6 +9970,12 @@ export function createHud(
     }
     if (!buildDockContextParamVisible("cube-rotation", ctx)) {
       setBuildDockCubeRotPopoverOpen(false);
+    }
+    if (unlockPadConfig) {
+      syncUnlockPadDockSummary();
+    }
+    if (attentionMarkerHover && tileInspectorAttentionHoverInput) {
+      tileInspectorAttentionHoverInput.value = String(attentionMarkerHoverHeight);
     }
   }
 
@@ -9901,7 +10091,7 @@ export function createHud(
   let signpostPlaceHandler: ((x: number, z: number, message: string) => void) | null = null;
 
   function activateBuildTool(
-    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab"
+    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab"
   ): void {
     const toolChanging = tileInspectorToolSelect.value !== tool;
     if (toolChanging && isBuildObjectSelectionActive()) {
@@ -9914,10 +10104,14 @@ export function createHud(
     teleporterModeActive = tool === "teleporter";
     gateModeActive = tool === "gate";
     unlockPadModeActive = tool === "unlock-pad";
+    attentionMarkerModeActive = tool === "attention-marker";
     billboardModeActive = tool === "billboard";
     prefabToolActive = tool === "prefab";
     if (tool === "teleporter") {
       applyPlacementColorRgb(TELEPORTER_DEFAULT_PILLAR_COLOR_RGB);
+    }
+    if (tool === "attention-marker") {
+      applyPlacementColorRgb(0xffffff);
     }
     // worldcup: selecting any core build tool clears soccer-ball placement mode
     worldcupBallModeActive = false;
@@ -9935,6 +10129,7 @@ export function createHud(
           teleporterModeActive ||
           gateModeActive ||
           unlockPadModeActive ||
+          attentionMarkerModeActive ||
           billboardModeActive ||
           prefabToolActive
       );
@@ -9945,6 +10140,9 @@ export function createHud(
     syncBuildDockFromToolSelect();
     syncBuildDockContextParams();
     syncBuildDockRotateChrome();
+    inspectorPreviewGameRef?.setAttentionMarkerToolActive(
+      attentionMarkerModeActive
+    );
   }
 
   // Signpost textarea character counter
@@ -11572,6 +11770,9 @@ export function createHud(
       case "finish-tutorial":
         finishTutorialHandler();
         break;
+      case "reset-tutorial":
+        resetTutorialHandler();
+        break;
       case "get-wallet":
         getWalletOpenHandler();
         break;
@@ -12127,6 +12328,28 @@ export function createHud(
       Math.floor(Number(tileInspectorHeightInput.value)) + 1
     );
   });
+
+  const applyAttentionHoverHeight = (raw: number) => {
+    const v = Math.max(0, Math.min(3, Math.floor(raw)));
+    attentionMarkerHoverHeight = v;
+    if (tileInspectorAttentionHoverInput) {
+      tileInspectorAttentionHoverInput.value = String(v);
+    }
+  };
+  tileInspectorAttentionHoverInput?.addEventListener("change", () => {
+    applyAttentionHoverHeight(Number(tileInspectorAttentionHoverInput.value));
+  });
+  for (const btn of buildBlockBar.querySelectorAll(
+    "[data-attention-hover-delta]"
+  )) {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const d = Number((btn as HTMLElement).dataset.attentionHoverDelta ?? 0);
+      applyAttentionHoverHeight(attentionMarkerHoverHeight + d);
+    });
+  }
+
   buildDockBillboardEditBtn?.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -12754,6 +12977,7 @@ export function createHud(
   let disconnectExitHandler = (): void => {};
   let returnHomeHandler = (): void => {};
   let finishTutorialHandler = (): void => {};
+  let resetTutorialHandler = (): void => {};
   let leaveShaperHandler = (): void => {};
   let portalEnterHandler = (): void => {};
   let lobbyHandler = (): void => {};
@@ -13809,11 +14033,163 @@ export function createHud(
     if (!panelOnUnlockPadConfigChange) return;
     panelOnUnlockPadConfigChange({
       amountLuna: panelUnlockPadAmount.trim(),
-      recipient: panelUnlockPadRecipient.trim(),
+      // Empty UI means server default; store uses SYSTEM as the placeholder key.
+      recipient: panelUnlockPadRecipient.trim() || "SYSTEM",
       buttonLabel: panelUnlockPadButtonLabel.trim(),
       proofMode: panelUnlockPadProofMode,
     });
   }
+
+  function unlockPadSettingsForcedOptimistic(): boolean {
+    return (
+      normalizeRoomId(unlockPadSettingsRoomId) ===
+      normalizeRoomId(TUTORIAL_ROOM_ID)
+    );
+  }
+
+  function syncUnlockPadDockSummary(): void {
+    if (!buildDockUnlockPadSummaryEl) return;
+    const nim =
+      formatLunaAsNimLabel(unlockPadDraftAmountLuna) ||
+      unlockPadDraftAmountLuna ||
+      "?";
+    const label = unlockPadDraftButtonLabel.trim() || "Unlock";
+    // Keep dock copy short so Edit stays visible beside the color wheel.
+    const parts = [`${nim} NIM`, label];
+    const proof = unlockPadSettingsForcedOptimistic()
+      ? "Optimistic"
+      : unlockPadDraftProofMode === "optimistic"
+        ? "Optimistic"
+        : "Pay intent";
+    parts.push(proof);
+    buildDockUnlockPadSummaryEl.textContent = parts.join(" · ");
+  }
+
+  function applyUnlockPadDraftToPanelState(): void {
+    panelUnlockPadAmount = unlockPadDraftAmountLuna;
+    panelUnlockPadRecipient = unlockPadDraftRecipient;
+    panelUnlockPadButtonLabel = unlockPadDraftButtonLabel || "Unlock";
+    panelUnlockPadProofMode = unlockPadSettingsForcedOptimistic()
+      ? "optimistic"
+      : unlockPadDraftProofMode;
+  }
+
+  function setUnlockPadDraftFromConfig(cfg: {
+    amountLuna?: string;
+    recipient?: string;
+    buttonLabel?: string;
+    proofMode?: "optimistic" | "payment_intent";
+  }): void {
+    if (cfg.amountLuna !== undefined) {
+      unlockPadDraftAmountLuna = String(cfg.amountLuna);
+    }
+    if (cfg.recipient !== undefined) {
+      const r = String(cfg.recipient).trim();
+      unlockPadDraftRecipient =
+        r.toUpperCase() === "SYSTEM" ? "" : r;
+    }
+    if (cfg.buttonLabel !== undefined) {
+      unlockPadDraftButtonLabel = String(cfg.buttonLabel);
+    }
+    if (cfg.proofMode !== undefined) {
+      unlockPadDraftProofMode =
+        cfg.proofMode === "optimistic" ? "optimistic" : "payment_intent";
+    }
+    if (unlockPadSettingsForcedOptimistic()) {
+      unlockPadDraftProofMode = "optimistic";
+    }
+    applyUnlockPadDraftToPanelState();
+    syncUnlockPadPanelInputsFromState();
+    syncUnlockPadDockSummary();
+  }
+
+  function closeUnlockPadSettingsModal(): void {
+    unlockPadSettingsOverlay.hidden = true;
+    unlockPadSettingsError.hidden = true;
+    unlockPadSettingsError.textContent = "";
+  }
+
+  function openUnlockPadSettingsModal(): void {
+    const forced = unlockPadSettingsForcedOptimistic();
+    unlockPadSettingsAmountInput.value =
+      formatLunaAsNimLabel(unlockPadDraftAmountLuna) || "1";
+    unlockPadSettingsRecipientInput.value = unlockPadDraftRecipient;
+    unlockPadSettingsButtonLabelInput.value =
+      unlockPadDraftButtonLabel || "Unlock";
+    unlockPadSettingsProofModeSelect.value = forced
+      ? "optimistic"
+      : unlockPadDraftProofMode;
+    unlockPadSettingsProofModeSelect.disabled = forced;
+    unlockPadSettingsProofModeSelect.hidden = forced;
+    unlockPadSettingsProofHint.hidden = !forced;
+    const proofLabel = unlockPadSettingsOverlay.querySelector(
+      'label[for="unlock-pad-settings-proof-mode"]'
+    ) as HTMLElement | null;
+    if (proofLabel) proofLabel.hidden = forced;
+    unlockPadSettingsError.hidden = true;
+    unlockPadSettingsError.textContent = "";
+    unlockPadSettingsOverlay.hidden = false;
+    requestAnimationFrame(() => unlockPadSettingsAmountInput.focus());
+  }
+
+  function saveUnlockPadSettingsModal(): void {
+    const luna = nimAmountToLuna(unlockPadSettingsAmountInput.value);
+    if (luna === null) {
+      unlockPadSettingsError.hidden = false;
+      unlockPadSettingsError.textContent =
+        "Enter a valid NIM amount greater than zero (e.g. 0.01).";
+      unlockPadSettingsAmountInput.focus();
+      return;
+    }
+    const buttonLabel =
+      unlockPadSettingsButtonLabelInput.value.trim() || "Unlock";
+    const recipient = unlockPadSettingsRecipientInput.value.trim();
+    const forced = unlockPadSettingsForcedOptimistic();
+    const proofMode: "optimistic" | "payment_intent" = forced
+      ? "optimistic"
+      : unlockPadSettingsProofModeSelect.value === "optimistic"
+        ? "optimistic"
+        : "payment_intent";
+    unlockPadDraftAmountLuna = luna.toString();
+    unlockPadDraftRecipient = recipient;
+    unlockPadDraftButtonLabel = buttonLabel.slice(0, 48);
+    unlockPadDraftProofMode = proofMode;
+    applyUnlockPadDraftToPanelState();
+    syncUnlockPadPanelInputsFromState();
+    syncUnlockPadDockSummary();
+    if (panelObjectEditUnlockPad) {
+      emitUnlockPadConfig();
+    }
+    closeUnlockPadSettingsModal();
+  }
+
+  buildDockUnlockPadEditBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openUnlockPadSettingsModal();
+  });
+  buildDockUnlockPadSummaryEl?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openUnlockPadSettingsModal();
+  });
+  unlockPadSettingsCancelBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    closeUnlockPadSettingsModal();
+  });
+  unlockPadSettingsSaveBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    saveUnlockPadSettingsModal();
+  });
+  unlockPadSettingsOverlay.addEventListener("click", (e) => {
+    if (e.target === unlockPadSettingsOverlay) closeUnlockPadSettingsModal();
+  });
+  unlockPadSettingsOverlay.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeUnlockPadSettingsModal();
+    }
+  });
 
   function syncUnlockPadPanelInputsFromState(): void {
     if (panelUnlockPadAmountInput) {
@@ -14349,11 +14725,15 @@ export function createHud(
       panelClaimable = false;
       panelClaimableActive = false;
       panelObjectEditUnlockPad = true;
-      panelUnlockPadAmount = String(p.unlockPad.amountLuna ?? "");
-      panelUnlockPadRecipient = String(p.unlockPad.recipient ?? "");
-      panelUnlockPadButtonLabel = String(p.unlockPad.buttonLabel ?? "");
-      panelUnlockPadProofMode =
-        p.unlockPad.proofMode === "optimistic" ? "optimistic" : "payment_intent";
+      setUnlockPadDraftFromConfig({
+        amountLuna: String(p.unlockPad.amountLuna ?? ""),
+        recipient: String(p.unlockPad.recipient ?? ""),
+        buttonLabel: String(p.unlockPad.buttonLabel ?? ""),
+        proofMode:
+          p.unlockPad.proofMode === "optimistic"
+            ? "optimistic"
+            : "payment_intent",
+      });
       panelUnlockPadInstanceId = String(p.unlockPad.instanceId ?? "");
       if (p.editorTileX !== undefined && p.editorTileZ !== undefined) {
         panelObjectTileX = p.editorTileX;
@@ -14365,7 +14745,8 @@ export function createHud(
       syncPanelLockToggle(panelLockedState);
       panelSelectedColorRgb = resolveBlockColorRgb(p);
       syncPanelHueVisualFromColorRgb(panelSelectedColorRgb);
-      if (panelUnlockPadEditBlock) panelUnlockPadEditBlock.hidden = false;
+      // Config fields live in the build dock Parameters column.
+      if (panelUnlockPadEditBlock) panelUnlockPadEditBlock.hidden = true;
       if (panelGateEditBlock) panelGateEditBlock.hidden = true;
       if (panelGateAclBar) panelGateAclBar.hidden = true;
       if (panelContextHeightRow) panelContextHeightRow.hidden = true;
@@ -14381,9 +14762,9 @@ export function createHud(
         panelTileInspectorResetBtn.hidden = true;
       }
       if (rampDirRow) rampDirRow.hidden = true;
-      syncUnlockPadPanelInputsFromState();
       syncPanelShapeButtons();
       inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(p);
+      syncBuildDockContextParams();
       return;
     }
     panelObjectEditGate = false;
@@ -14844,6 +15225,12 @@ export function createHud(
     },
     setFinishTutorialVisible(visible: boolean) {
       playerMenu.setFinishTutorialVisible(visible);
+    },
+    onResetTutorial(fn: () => void) {
+      resetTutorialHandler = fn;
+    },
+    setResetTutorialVisible(visible: boolean) {
+      playerMenu.setResetTutorialVisible(visible);
     },
     showBriefToast,
     setTutorialStepCoach(state: TutorialCoachState | null) {
@@ -15386,13 +15773,15 @@ export function createHud(
           typeof opts.onUnlockPadConfigChange === "function"
             ? opts.onUnlockPadConfigChange
             : null;
-        panelUnlockPadAmount = String(opts.unlockPad!.amountLuna ?? "");
-        panelUnlockPadRecipient = String(opts.unlockPad!.recipient ?? "");
-        panelUnlockPadButtonLabel = String(opts.unlockPad!.buttonLabel ?? "");
-        panelUnlockPadProofMode =
-          opts.unlockPad!.proofMode === "optimistic"
-            ? "optimistic"
-            : "payment_intent";
+        setUnlockPadDraftFromConfig({
+          amountLuna: String(opts.unlockPad!.amountLuna ?? ""),
+          recipient: String(opts.unlockPad!.recipient ?? ""),
+          buttonLabel: String(opts.unlockPad!.buttonLabel ?? "Unlock"),
+          proofMode:
+            opts.unlockPad!.proofMode === "optimistic"
+              ? "optimistic"
+              : "payment_intent",
+        });
         panelUnlockPadInstanceId = String(opts.unlockPad!.instanceId ?? "");
         panelObjectTileX = opts.x;
         panelObjectTileZ = opts.z;
@@ -15619,43 +16008,11 @@ export function createHud(
         if (rampDirRow) rampDirRow.hidden = true;
       } else if (unlockPadEdit) {
         if (panelContextHeightRow) panelContextHeightRow.hidden = true;
-        if (panelUnlockPadEditBlock) panelUnlockPadEditBlock.hidden = false;
+        // Amount / recipient / label / proof live in the dock Parameters column.
+        if (panelUnlockPadEditBlock) panelUnlockPadEditBlock.hidden = true;
         if (panelGateEditBlock) panelGateEditBlock.hidden = true;
         if (panelGateAclBar) panelGateAclBar.hidden = true;
         if (rampDirRow) rampDirRow.hidden = true;
-        syncUnlockPadPanelInputsFromState();
-        const onUnlockPadFieldChange = (): void => {
-          panelUnlockPadAmount = panelUnlockPadAmountInput?.value ?? "";
-          panelUnlockPadRecipient = panelUnlockPadRecipientInput?.value ?? "";
-          panelUnlockPadButtonLabel =
-            panelUnlockPadButtonLabelInput?.value ?? "";
-          const rawProof = panelUnlockPadProofModeSelect?.value ?? "";
-          panelUnlockPadProofMode =
-            rawProof === "optimistic" ? "optimistic" : "payment_intent";
-        };
-        const onUnlockPadCommit = (): void => {
-          onUnlockPadFieldChange();
-          emitUnlockPadConfig();
-          refreshPanelWireframe();
-        };
-        panelUnlockPadAmountInput?.addEventListener("input", onUnlockPadFieldChange);
-        panelUnlockPadRecipientInput?.addEventListener("input", onUnlockPadFieldChange);
-        panelUnlockPadButtonLabelInput?.addEventListener(
-          "input",
-          onUnlockPadFieldChange
-        );
-        panelUnlockPadProofModeSelect?.addEventListener(
-          "change",
-          onUnlockPadCommit
-        );
-        for (const el of [
-          panelUnlockPadAmountInput,
-          panelUnlockPadRecipientInput,
-          panelUnlockPadButtonLabelInput,
-        ]) {
-          el?.addEventListener("blur", onUnlockPadCommit);
-        }
-        panelUnlockPadApplyBtn?.addEventListener("click", onUnlockPadCommit);
       } else {
         if (panelGateEditBlock) panelGateEditBlock.hidden = true;
         if (panelGateAclBar) panelGateAclBar.hidden = true;
@@ -16029,6 +16386,49 @@ export function createHud(
     isUnlockPadModeActive(): boolean {
       return unlockPadModeActive;
     },
+    deactivateUnlockPadMode() {
+      if (!unlockPadModeActive) return;
+      unlockPadModeActive = false;
+      activateBuildTool("block");
+    },
+    isAttentionMarkerModeActive(): boolean {
+      return attentionMarkerModeActive;
+    },
+    deactivateAttentionMarkerMode() {
+      if (!attentionMarkerModeActive) return;
+      attentionMarkerModeActive = false;
+      activateBuildTool("block");
+    },
+    getAttentionMarkerHoverHeight(): number {
+      return attentionMarkerHoverHeight;
+    },
+    setAttentionMarkerHoverHeight(h: number) {
+      attentionMarkerHoverHeight = Math.max(0, Math.min(3, Math.floor(h)));
+      if (tileInspectorAttentionHoverInput) {
+        tileInspectorAttentionHoverInput.value = String(
+          attentionMarkerHoverHeight
+        );
+      }
+    },
+    setUnlockPadSettingsRoomId(roomId: string) {
+      unlockPadSettingsRoomId = String(roomId ?? "");
+      if (unlockPadSettingsForcedOptimistic()) {
+        unlockPadDraftProofMode = "optimistic";
+        applyUnlockPadDraftToPanelState();
+      }
+      syncUnlockPadDockSummary();
+    },
+    getUnlockPadPlacementConfig() {
+      if (unlockPadSettingsForcedOptimistic()) {
+        unlockPadDraftProofMode = "optimistic";
+      }
+      return {
+        amountLuna: unlockPadDraftAmountLuna.trim() || "100000",
+        recipient: unlockPadDraftRecipient.trim(),
+        buttonLabel: unlockPadDraftButtonLabel.trim() || "Unlock",
+        proofMode: unlockPadDraftProofMode,
+      };
+    },
     showGateContextMenu(
       clientX: number,
       clientY: number,
@@ -16103,7 +16503,7 @@ export function createHud(
     },
     onBuildToolSelect(
       fn: (
-        tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab"
+        tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab"
       ) => void
     ) {
       buildToolChangeHandler = fn;

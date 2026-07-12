@@ -50,6 +50,13 @@ import {
   VIEW_FRUSTUM_SIZE,
 } from "./constants.js";
 import { gateApproachTile } from "./gateAuth.js";
+import {
+  attentionMarkerBounceOffset,
+  attentionMarkerHoverLift,
+  makeAttentionMarkerGroup,
+  tintAttentionMarkerGroup,
+  type AttentionMarkerWire,
+} from "./attentionMarkerVisual.js";
 import { FogOfWarPass } from "./fogOfWar.js";
 // worldcup: seasonal soccer rendering (feature-flagged, deletable)
 import type { BallWire, WorldcupPortalWire } from "../net/ws.js";
@@ -2115,6 +2122,13 @@ export class Game {
       createdAt: number;
     }
   >();
+  /** Floor tile key → Attention Marker wire + mesh. */
+  private readonly attentionMarkers = new Map<
+    string,
+    { data: AttentionMarkerWire; group: THREE.Group; baseY: number }
+  >();
+  /** When true, build picks prefer Attention Markers over co-occupants. */
+  private attentionMarkerToolActive = false;
   private signboardHoverHandler:
     | ((signboard: {
         id: string;
@@ -5254,6 +5268,7 @@ export class Game {
     removedBaseFloorTiles?: Array<{ x: number; z: number; colorRgb: number }>;
     obstacles?: Parameters<Game["setObstacles"]>[0];
     signboards?: Parameters<Game["setSignboards"]>[0];
+    attentionMarkers?: AttentionMarkerWire[];
     billboards?: Parameters<Game["setBillboards"]>[0];
     voxelTexts?: Parameters<Game["setVoxelTextsForRoom"]>[1];
     joinSpawn?: { x: number; z: number; customized: boolean };
@@ -5292,6 +5307,7 @@ export class Game {
     });
     this.setObstacles(snapshot.obstacles ?? []);
     this.setSignboards(snapshot.signboards ?? []);
+    this.setAttentionMarkers(snapshot.attentionMarkers ?? []);
     this.setBillboards(snapshot.billboards ?? []);
     this.setVoxelTextsForRoom(snapshot.roomId, snapshot.voxelTexts ?? []);
     if (snapshot.joinSpawn) {
@@ -5638,6 +5654,33 @@ export class Game {
       const approach = gateApproachTile(gx, gz, g.exitX, g.exitZ);
       if (approach.x === here.x && approach.z === here.y) {
         return { x: gx, z: gz, y: gy };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Gate the local player is orthogonally adjacent to (any side).
+   * Used so tutorial Pay still offers Unlock when standing beside a leftover Gate.
+   */
+  getAdjacentGate(): {
+    x: number;
+    z: number;
+    y: number;
+  } | null {
+    if (!this.selfMesh) return null;
+    const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    const neighbors: [number, number][] = [
+      [here.x + 1, here.y],
+      [here.x - 1, here.y],
+      [here.x, here.y + 1],
+      [here.x, here.y - 1],
+    ];
+    for (const [x, z] of neighbors) {
+      for (const y of [0, 1, 2]) {
+        const meta = this.placedObjects.get(blockKey(x, z, y));
+        if (!meta?.gate) continue;
+        return { x, z, y };
       }
     }
     return null;
@@ -7911,6 +7954,92 @@ export class Game {
       this.signboardHoverActiveId = null;
       this.signboardHoverFloorKey = null;
       this.signboardHoverHandler(null);
+    }
+  }
+
+  setAttentionMarkerToolActive(active: boolean): void {
+    this.attentionMarkerToolActive = active;
+  }
+
+  isAttentionMarkerToolActive(): boolean {
+    return this.attentionMarkerToolActive;
+  }
+
+  getAttentionMarkerAt(x: number, z: number): AttentionMarkerWire | null {
+    return this.attentionMarkers.get(tileKey(x, z))?.data ?? null;
+  }
+
+  listAttentionMarkers(): AttentionMarkerWire[] {
+    return [...this.attentionMarkers.values()].map((e) => ({ ...e.data }));
+  }
+
+  setAttentionMarkers(markers: readonly AttentionMarkerWire[]): void {
+    const nextKeys = new Set(
+      markers.map((m) => tileKey(Math.floor(m.x), Math.floor(m.z)))
+    );
+    for (const [k, entry] of this.attentionMarkers) {
+      if (nextKeys.has(k)) continue;
+      this.scene.remove(entry.group);
+      entry.group.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          const mat = obj.material;
+          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+          else mat.dispose();
+        }
+      });
+      this.attentionMarkers.delete(k);
+    }
+    for (const raw of markers) {
+      const x = Math.floor(raw.x);
+      const z = Math.floor(raw.z);
+      const k = tileKey(x, z);
+      const data: AttentionMarkerWire = {
+        x,
+        z,
+        hoverHeight: Math.max(0, Math.min(3, Math.floor(raw.hoverHeight ?? 1))),
+        colorRgb: (raw.colorRgb >>> 0) & 0xffffff,
+      };
+      const existing = this.attentionMarkers.get(k);
+      if (existing) {
+        existing.data = data;
+        tintAttentionMarkerGroup(existing.group, data.colorRgb);
+        existing.baseY = this.attentionMarkerBaselineY(x, z);
+        continue;
+      }
+      const group = makeAttentionMarkerGroup(data.colorRgb);
+      const baseY = this.attentionMarkerBaselineY(x, z);
+      group.position.set(x, baseY + attentionMarkerHoverLift(data.hoverHeight), z);
+      this.scene.add(group);
+      this.attentionMarkers.set(k, { data, group, baseY });
+    }
+  }
+
+  private attentionMarkerBaselineY(x: number, z: number): number {
+    let top = 0;
+    for (let y = 0; y <= 2; y++) {
+      const meta = this.getPlacedAt(x, z, y);
+      if (!meta) continue;
+      top = Math.max(
+        top,
+        y * BLOCK_SIZE + this.obstacleHeight(meta) * this.blockVisualScale
+      );
+    }
+    return top;
+  }
+
+  private updateAttentionMarkerMotion(): void {
+    const t = this.doorPulseTime;
+    for (const entry of this.attentionMarkers.values()) {
+      const baseY = this.attentionMarkerBaselineY(entry.data.x, entry.data.z);
+      entry.baseY = baseY;
+      const lift = attentionMarkerHoverLift(entry.data.hoverHeight);
+      const bounce = attentionMarkerBounceOffset(t);
+      entry.group.position.set(
+        entry.data.x,
+        baseY + lift + bounce,
+        entry.data.z
+      );
     }
   }
 
@@ -14796,6 +14925,7 @@ export class Game {
     this.doorPulseTime += dt;
     this.mineableSparkleAnimTime += dt;
     this.updateVoxelTextTween();
+    this.updateAttentionMarkerMotion();
 
     if (this.selfMesh && this.selfTargetPos) {
       if (this.selfMoveOrder) {

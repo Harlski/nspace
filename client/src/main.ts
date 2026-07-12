@@ -80,12 +80,14 @@ import {
   fetchTutorialDoorQuote,
   postTutorialAbandon,
   postTutorialDoorSent,
+  postTutorialResetProgress,
   postTutorialUnstick,
   parseTutorialMineTileCoords,
   sendTutorialDoorPayment,
   shouldOfferTutorialUnlockGate,
   shouldShowFinishTutorialMenu,
   shouldShowTutorialMineHighlight,
+  shouldShowTutorialResetMenu,
   deriveTutorialCoachState,
   TUTORIAL_UNLOCK_GATE_LABEL,
   TUTORIAL_WRONG_SLOT_REASON,
@@ -134,6 +136,7 @@ import {
   sendPlacePendingGate,
   sendPlaceUnlockPad,
   sendSetUnlockPadConfig,
+  sendPlaceAttentionMarker,
   sendOpenGate,
   sendConfigureTeleporter,
   sendPlaceTeleporterBidirectionalPair,
@@ -313,6 +316,32 @@ function placedMetaToPanelObstacleProps(
         exitZ: gw.exitZ,
       },
       gateExitDir: gateExitDirFromNeighbor(x, z, gw),
+    };
+  }
+  if (m.unlockPad) {
+    return {
+      ...base,
+      passable: false,
+      half: false,
+      quarter: false,
+      hex: false,
+      pyramid: false,
+      pyramidBaseScale: 1,
+      hexRadiusScale: 1,
+      sphere: false,
+      sphereRadiusScale: 1,
+      ramp: false,
+      rampDir: 0,
+      unlockPad: {
+        amountLuna: String(m.unlockPad.amountLuna ?? ""),
+        recipient: String(m.unlockPad.recipient ?? ""),
+        buttonLabel: String(m.unlockPad.buttonLabel ?? "Unlock"),
+        proofMode:
+          m.unlockPad.proofMode === "optimistic"
+            ? ("optimistic" as const)
+            : ("payment_intent" as const),
+        instanceId: String(m.unlockPad.instanceId ?? ""),
+      },
     };
   }
   return base;
@@ -1110,6 +1139,17 @@ function enterGame(
     );
   }
 
+  function syncTutorialResetMenu(roomId?: string | null): void {
+    const rid = normalizeRoomId(roomId ?? game.getRoomId());
+    hud.setResetTutorialVisible(
+      shouldShowTutorialResetMenu(
+        rid === TUTORIAL_ROOM_ID,
+        isAdmin(address),
+        DEV_CLIENT_BYPASS
+      )
+    );
+  }
+
   const tutorialEscape = new TutorialEscapeTimer({
     onEscapeCountdown: (sec) => {
       hud.setStatus(`Pay is taking a while… ${sec}s`);
@@ -1147,8 +1187,17 @@ function enterGame(
       }
       const paid = await sendTutorialDoorPayment({ quote, escape: tutorialEscape });
       if (!paid.ok) {
-        if (!paid.cancelled) hud.setStatus("Pay failed - try again.");
+        if (!paid.cancelled) {
+          hud.setStatus(
+            paid.reason === "pay_unavailable"
+              ? "Open Nimiq Pay to complete this step."
+              : "Pay failed - try again."
+          );
+        }
         return false;
+      }
+      if (paid.simulated) {
+        hud.showBriefToast("Dev: simulated tutorial Pay");
       }
       const sent = await postTutorialDoorSent(token, apiUrl("/api/tutorial/door-sent"));
       if (sent.ok) {
@@ -1192,6 +1241,12 @@ function enterGame(
         }
         if (err === "payment_intent_not_configured") {
           hud.setStatus("Payment Intent service is not configured on this server.");
+          return;
+        }
+        if (/Unknown featureKind/i.test(err)) {
+          hud.setStatus(
+            "Could not start unlock payment (Payment Intent service is outdated - rebuild the payment-intent container)."
+          );
           return;
         }
         hud.setStatus(`Could not start unlock payment (${err}).`);
@@ -3427,6 +3482,7 @@ function enterGame(
       | "billboard"
       | "gate"
       | "unlock-pad"
+      | "attention-marker"
       | "prefab"
   ): void {
     prefabUi.setAllowPublish(welcomeAllowPublishDesign);
@@ -4038,7 +4094,22 @@ function enterGame(
       }
       if (hud.isUnlockPadModeActive()) {
         const st = game.getPlacementBlockStyle();
-        sendPlaceUnlockPad(socket, x, z, { colorRgb: st.colorRgb });
+        const pad = hud.getUnlockPadPlacementConfig();
+        sendPlaceUnlockPad(socket, x, z, {
+          colorRgb: st.colorRgb,
+          amountLuna: pad.amountLuna,
+          ...(pad.recipient ? { recipient: pad.recipient } : {}),
+          buttonLabel: pad.buttonLabel,
+          proofMode: pad.proofMode,
+        });
+        return;
+      }
+      if (hud.isAttentionMarkerModeActive()) {
+        const st = game.getPlacementBlockStyle();
+        sendPlaceAttentionMarker(socket, x, z, {
+          colorRgb: st.colorRgb,
+          hoverHeight: hud.getAttentionMarkerHoverHeight(),
+        });
         return;
       }
       // Don't place blocks if in signpost mode
@@ -4750,6 +4821,17 @@ function enterGame(
     sendConfigureTeleporter(ws, srcX, srcZ, srcY, rid, dx, dz);
   }
 
+  function clampPortalPillPosition(x: number, y: number): { x: number; y: number } {
+    const host = document.querySelector(".letterbox") as HTMLElement | null;
+    const w = host?.clientWidth ?? 800;
+    const h = host?.clientHeight ?? 600;
+    const m = 56;
+    return {
+      x: Math.max(m, Math.min(w - m, x)),
+      y: Math.max(m, Math.min(h - m, y)),
+    };
+  }
+
   function syncPortalEnterButton(): void {
     const unlockPad = game.getAdjacentLockedUnlockPad();
     const standingDoor = game.getStandingDoor();
@@ -4766,13 +4848,15 @@ function enterGame(
       }
       return;
     }
+    const offerTutorialUnlock = shouldOfferTutorialUnlockGate(tutorialWelcome);
     if (
       unlockPad &&
-      shouldOfferTutorialUnlockGate(tutorialWelcome)
+      (offerTutorialUnlock || unlockPad.proofMode === "payment_intent")
     ) {
-      const anchor = game.getTileScreenPosition(unlockPad.x, unlockPad.z);
-      if (anchor) {
-        hud.setPortalEnterScreenPosition(anchor.x, anchor.y - 36);
+      const raw = game.getTileScreenPosition(unlockPad.x, unlockPad.z);
+      if (raw) {
+        const clamped = clampPortalPillPosition(raw.x, raw.y - 36);
+        hud.setPortalEnterScreenPosition(clamped.x, clamped.y);
       }
       portalAction = {
         kind: "unlock-pad",
@@ -4786,43 +4870,29 @@ function enterGame(
       }
       return;
     }
-    if (
-      unlockPad &&
-      unlockPad.proofMode === "payment_intent" &&
-      !shouldOfferTutorialUnlockGate(tutorialWelcome)
-    ) {
-      // Non-tutorial payment_intent pads: show whenever adjacent and locked.
-      const anchor = game.getTileScreenPosition(unlockPad.x, unlockPad.z);
-      if (anchor) {
-        hud.setPortalEnterScreenPosition(anchor.x, anchor.y - 36);
+    if (offerTutorialUnlock) {
+      const gate =
+        game.getStandingTutorialGateApproach() ?? game.getAdjacentGate();
+      if (gate) {
+        const raw =
+          game.getTileScreenPosition(gate.x, gate.z) ??
+          game.getSelfScreenPosition(1.15);
+        if (raw) {
+          const clamped = clampPortalPillPosition(raw.x, raw.y - 36);
+          hud.setPortalEnterScreenPosition(clamped.x, clamped.y);
+        }
+        portalAction = { kind: "tutorial-unlock-gate" };
+        hud.setPortalEnterLabel(TUTORIAL_UNLOCK_GATE_LABEL);
+        if (!portalEnterVisible) {
+          portalEnterVisible = true;
+          hud.setPortalEnterVisible(true);
+        }
+        return;
       }
-      portalAction = {
-        kind: "unlock-pad",
-        instanceId: unlockPad.instanceId,
-        proofMode: unlockPad.proofMode,
-      };
-      hud.setPortalEnterLabel(unlockPad.buttonLabel || TUTORIAL_UNLOCK_GATE_LABEL);
-      if (!portalEnterVisible) {
-        portalEnterVisible = true;
-        hud.setPortalEnterVisible(true);
-      }
-      return;
     }
     const anchor = game.getSelfScreenPosition(1.15);
     if (anchor) {
       hud.setPortalEnterScreenPosition(anchor.x, anchor.y);
-    }
-    if (
-      shouldOfferTutorialUnlockGate(tutorialWelcome) &&
-      game.getStandingTutorialGateApproach()
-    ) {
-      portalAction = { kind: "tutorial-unlock-gate" };
-      hud.setPortalEnterLabel(TUTORIAL_UNLOCK_GATE_LABEL);
-      if (!portalEnterVisible) {
-        portalEnterVisible = true;
-        hud.setPortalEnterVisible(true);
-      }
-      return;
     }
     const standingTp = game.getStandingTeleporter();
     if (standingTp) {
@@ -5047,6 +5117,7 @@ function enterGame(
         }
         syncTutorialMineHighlight();
         syncTutorialStepCoach(msg.roomId);
+        syncTutorialResetMenu(msg.roomId);
         if (
           typeof msg.tutorial.session?.doorPaidAt === "number" ||
           typeof msg.tutorial.session?.gateUnstuckAt === "number"
@@ -5059,6 +5130,7 @@ function enterGame(
         hud.setFinishTutorialVisible(false);
         game.setTutorialMineHighlight(null);
         syncTutorialStepCoach(msg.roomId);
+        syncTutorialResetMenu(msg.roomId);
       }
       if (
         deferUsernameForTutorial &&
@@ -5119,6 +5191,7 @@ function enterGame(
       hud.clearPresenceFeed();
       hud.setReconnectOffer(false);
       hud.setFeedbackReportRoomId(msg.roomId);
+      hud.setUnlockPadSettingsRoomId(msg.roomId);
       bumpRoomLoadProgress(0.12);
       
       game.applyRoomFromWelcome({
@@ -5305,6 +5378,7 @@ function enterGame(
       game.setObstacles(msg.obstacles);
       game.setUnlockedPadInstanceIds(msg.unlockedPadInstanceIds ?? []);
       game.setSignboards(msg.signboards);
+      game.setAttentionMarkers(msg.attentionMarkers ?? []);
       game.setBillboards(msg.billboards ?? []);
       game.setVoxelTextsForRoom(msg.roomId, msg.voxelTexts ?? []);
       // worldcup: render any balls present in this room
@@ -5947,16 +6021,14 @@ function enterGame(
           normalizeRoomId(game.getRoomId()) === TUTORIAL_ROOM_ID &&
           tutorialWelcome?.lessonMode
         ) {
-          if (tutorialWelcome.session) {
-            tutorialWelcome = {
-              ...tutorialWelcome,
-              session: {
-                ...tutorialWelcome.session,
-                mineCompletedAt: Date.now(),
-                lastStep: "pay",
-              },
-            };
-          }
+          tutorialWelcome = {
+            ...tutorialWelcome,
+            session: {
+              ...(tutorialWelcome.session ?? {}),
+              mineCompletedAt: Date.now(),
+              lastStep: "pay",
+            },
+          };
           game.setTutorialMineHighlight(null);
           hud.setStatus(
             "Received NIM. Stand beside the Unlock Pad and tap Unlock Pad."
@@ -5994,6 +6066,12 @@ function enterGame(
       return;
     }
     if (msg.type === "obstacles") {
+      if (
+        msg.roomId !== undefined &&
+        normalizeRoomId(msg.roomId) !== normalizeRoomId(game.getRoomId())
+      ) {
+        return;
+      }
       game.setObstacles(msg.tiles);
       if (editingTile) {
         const m = game.getPlacedAt(editingTile.x, editingTile.z, editingTile.y);
@@ -6023,6 +6101,12 @@ function enterGame(
       syncBuildHud();
     }
     if (msg.type === "obstaclesDelta") {
+      if (
+        msg.roomId !== undefined &&
+        normalizeRoomId(msg.roomId) !== normalizeRoomId(game.getRoomId())
+      ) {
+        return;
+      }
       game.applyObstaclesDelta(msg.add, msg.remove);
       if (pendingTeleporterAutoSelect && msg.add?.length) {
         const want = pendingTeleporterAutoSelect;
@@ -6065,6 +6149,12 @@ function enterGame(
       syncBuildHud();
     }
     if (msg.type === "extraFloor") {
+      if (
+        msg.roomId !== undefined &&
+        normalizeRoomId(msg.roomId) !== normalizeRoomId(game.getRoomId())
+      ) {
+        return;
+      }
       game.setExtraFloorTiles(msg.tiles);
       syncBuildHud();
     }
@@ -6281,6 +6371,9 @@ function enterGame(
       hud.syncSignReadFromSignboards(msg.signboards);
       hud.syncSignboardTooltipFromSignboards(msg.signboards);
     }
+    if (msg.type === "attentionMarkers") {
+      game.setAttentionMarkers(msg.attentionMarkers);
+    }
     if (msg.type === "billboards") {
       game.setBillboards(msg.billboards, { refreshRotationContent: false });
     }
@@ -6467,6 +6560,24 @@ function enterGame(
   });
   hud.onFinishTutorial(() => {
     connectToRoom(TUTORIAL_ROOM_ID, undefined, { resume: false });
+  });
+  hud.onResetTutorial(() => {
+    void (async () => {
+      const ok = await postTutorialResetProgress(
+        token,
+        apiUrl("/api/tutorial/reset-progress")
+      );
+      if (!ok) {
+        hud.setStatus("Could not reset tutorial - try again.");
+        return;
+      }
+      tutorialWelcome = undefined;
+      game.setUnlockedPadInstanceIds([]);
+      game.setTutorialMineHighlight(null);
+      syncTutorialStepCoach();
+      hud.setStatus("Tutorial reset - back to Mine.");
+      connectToRoom(TUTORIAL_ROOM_ID, undefined, { resume: false });
+    })();
   });
   hud.onLeaveShaper(() => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
