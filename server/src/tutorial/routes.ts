@@ -5,12 +5,17 @@ import {
   getTutorialDoorQuote,
   ackTutorialDoorSent,
   grantTutorialUnlockPad,
+  resetTutorialProgress,
   unstickTutorialGate,
 } from "../tutorialSessionService.js";
-import { refreshTutorialRuntimeLayoutFromTemplate, tutorialHubExitDoorForWallet } from "../rooms.js";
+import {
+  clearSpentTutorialMineClaimsForWallet,
+  refreshTutorialRuntimeLayoutFromTemplate,
+} from "../rooms.js";
 import { isAdmin } from "../config.js";
 import { isTutorialFeatureEnabled, TUTORIAL_ROOM_ID } from "./config.js";
 import { TUTORIAL_PATH_UNLOCK_PAD_INSTANCE_ID } from "../tutorialTemplate/bootstrapShell.js";
+import { reseedDefaultTutorialTemplateFromBootstrap } from "../tutorialTemplate/store.js";
 
 type JwtResolver = (req: Request) => string | null;
 
@@ -65,11 +70,9 @@ export function registerTutorialRoutes(
       TUTORIAL_ROOM_ID,
       TUTORIAL_PATH_UNLOCK_PAD_INSTANCE_ID
     );
-    const hubExitDoor = tutorialHubExitDoorForWallet(signer);
     res.json({
       ok: true,
       idempotent: result.idempotent,
-      ...(hubExitDoor ? { hubExitDoor } : {}),
     });
   });
 
@@ -106,6 +109,26 @@ export function registerTutorialRoutes(
     res.json({ ok: true });
   });
 
+  app.post("/api/tutorial/reset-progress", requireJwt, (req, res) => {
+    if (!isTutorialFeatureEnabled()) {
+      tutorialDisabled(req, res);
+      return;
+    }
+    const signer = normalizeWalletId(jwtAddressFromReq(req) ?? "");
+    if (!signer) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    // Own wallet only (jwtAddressFromReq): clears session so the learner can restart at Mine.
+    const result = resetTutorialProgress(signer);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    clearSpentTutorialMineClaimsForWallet(signer);
+    res.json({ ok: true });
+  });
+
   app.post(
     "/api/admin/tutorial/reload-runtime",
     requireJwt,
@@ -117,6 +140,34 @@ export function registerTutorialRoutes(
       }
       refreshTutorialRuntimeLayoutFromTemplate();
       res.json({ ok: true });
+    }
+  );
+
+  /**
+   * Admin: copy code bootstrap into the default Tutorial Template, then reload
+   * the live Tutorial Room. Prefer this over hand-editing tutorial-templates.json.
+   */
+  app.post(
+    "/api/admin/tutorial/reseed-bootstrap",
+    requireJwt,
+    (req, res) => {
+      const signer = normalizeWalletId(jwtAddressFromReq(req) ?? "");
+      if (!signer || !isAdmin(signer)) {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+      if (!isTutorialFeatureEnabled()) {
+        tutorialDisabled(req, res);
+        return;
+      }
+      const result = reseedDefaultTutorialTemplateFromBootstrap();
+      refreshTutorialRuntimeLayoutFromTemplate();
+      res.json({
+        ok: true,
+        templateId: result.template.id,
+        created: result.created,
+        runtimeReloaded: true,
+      });
     }
   );
 }

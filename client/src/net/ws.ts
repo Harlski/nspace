@@ -295,7 +295,7 @@ export type ServerMessage =
       roomBackgroundNeutral?: RoomBackgroundNeutral | null;
       /** Dynamic rooms: default visitor spawn tile (custom or geometric center). */
       roomJoinSpawn?: { x: number; z: number; customized: boolean };
-      /** Dynamic rooms: client may send `updateRoom` with `joinSpawn`. */
+      /** Wallet rooms + Tutorial Room: client may send `updateRoom` with `joinSpawn`. */
       allowRoomJoinSpawnEdit?: boolean;
       roomDeployablesAllowed?: boolean;
       allowRoomDeployablesEdit?: boolean;
@@ -526,6 +526,8 @@ export type ServerMessage =
       x?: number;
       z?: number;
       amountNim?: string;
+      /** Tutorial Room: mine completed Step 1 - advance Step Coach to Pay. */
+      tutorialMineComplete?: boolean;
     }
   | { type: "clientPong"; id: number }
   // worldcup: dynamic ball positions (throttled) + goal celebration

@@ -5,12 +5,18 @@ import {
   TUTORIAL_ESCAPE_MS,
   TUTORIAL_WRONG_SLOT_REASON,
   TUTORIAL_ALREADY_CLAIMED_REASON,
+  canSimulateTutorialDoorPayment,
   deriveTutorialCoachState,
   isStandingOnTutorialGateApproach,
   parseTutorialMineTileCoords,
+  sendTutorialDoorPayment,
   shouldOfferTutorialUnlockGate,
   shouldShowFinishTutorialMenu,
+  resolveTutorialAttentionTarget,
+  resolveTutorialAttentionTargets,
+  withTutorialMineCompleted,
   shouldShowTutorialMineHighlight,
+  shouldShowTutorialResetMenu,
   shouldShowTutorialStepCoach,
   tutorialGateApproachTile,
   tutorialSuppressesSocial,
@@ -121,8 +127,38 @@ describe("tutorial menu and lesson flags", () => {
   });
 });
 
+describe("withTutorialMineCompleted", () => {
+  it("advances sandbox welcome to Pay and restores lessonMode after Reset", () => {
+    const next = withTutorialMineCompleted(
+      {
+        needsTutorial: false,
+        mode: "sandbox",
+        lessonMode: false,
+      },
+      42
+    );
+    expect(next.session).toEqual({ mineCompletedAt: 42, lastStep: "pay" });
+    expect(next.mode).toBe("lesson");
+    expect(next.lessonMode).toBe(true);
+    expect(
+      deriveTutorialCoachState(next, "tutorial")?.current
+    ).toBe("pay");
+    expect(shouldOfferTutorialUnlockGate(next)).toBe(true);
+  });
+
+  it("is a no-op when mine is already complete in lesson mode", () => {
+    const welcome = {
+      needsTutorial: true,
+      mode: "lesson" as const,
+      lessonMode: true,
+      session: { mineCompletedAt: 1, lastStep: "pay" as const },
+    };
+    expect(withTutorialMineCompleted(welcome, 99)).toBe(welcome);
+  });
+});
+
 describe("Tutorial Step Coach", () => {
-  it("hides coach in sandbox and after completion", () => {
+  it("shows coach in sandbox and after completion while in Tutorial Room", () => {
     expect(
       shouldShowTutorialStepCoach(
         {
@@ -132,7 +168,7 @@ describe("Tutorial Step Coach", () => {
         },
         "tutorial"
       )
-    ).toBe(false);
+    ).toBe(true);
     expect(
       shouldShowTutorialStepCoach(
         {
@@ -143,7 +179,20 @@ describe("Tutorial Step Coach", () => {
         },
         "tutorial"
       )
-    ).toBe(false);
+    ).toBe(true);
+    const done = deriveTutorialCoachState(
+      {
+        needsTutorial: false,
+        mode: "sandbox",
+        lessonMode: false,
+        completedAt: 1,
+        session: { mineCompletedAt: 1, doorPaidAt: 2 },
+      },
+      "tutorial"
+    );
+    expect(done?.current).toBe("exit");
+    expect(done?.completed).toEqual(["mine", "pay", "exit"]);
+    expect(done?.hint).toMatch(/complete/i);
     expect(deriveTutorialCoachState(undefined, "tutorial")).toBeNull();
   });
 
@@ -159,6 +208,20 @@ describe("Tutorial Step Coach", () => {
     expect(shouldShowTutorialStepCoach(lesson, "tutorial")).toBe(true);
   });
 
+  it("shows mid-lesson progress after sandbox teleporter revisit", () => {
+    const state = deriveTutorialCoachState(
+      {
+        needsTutorial: true,
+        mode: "sandbox",
+        lessonMode: false,
+        session: { mineCompletedAt: 1 },
+      },
+      "tutorial"
+    );
+    expect(state?.current).toBe("pay");
+    expect(state?.completed).toEqual(["mine"]);
+  });
+
   it("starts on Mine with mine hint", () => {
     const state = deriveTutorialCoachState(
       {
@@ -172,7 +235,7 @@ describe("Tutorial Step Coach", () => {
       visible: true,
       current: "mine",
       completed: [],
-      hint: "Click and hold your glowing block to receive NIM.",
+      hint: "Click and hold a glowing gold block to receive NIM.",
     });
   });
 
@@ -205,7 +268,9 @@ describe("Tutorial Step Coach", () => {
     );
     expect(state?.current).toBe("exit");
     expect(state?.completed).toEqual(["mine", "pay"]);
-    expect(state?.hint).toBe("Walk through the open gate to the Hub.");
+    expect(state?.hint).toBe(
+      "Walk through the open pad and Enter the Exit Teleporter."
+    );
   });
 
   it("treats Tutorial Escape as completing Pay", () => {
@@ -235,8 +300,102 @@ describe("Tutorial Step Coach", () => {
   });
 });
 
+describe("resolveTutorialAttentionTargets", () => {
+  const layout = {
+    mineTiles: [
+      { x: -1, z: -5 },
+      { x: 0, z: -5 },
+      { x: 1, z: -5 },
+    ],
+    unlockPadTiles: [
+      { x: 0, z: 0 },
+      { x: 1, z: 0 },
+    ],
+    exitTile: { x: 0, z: 1 },
+  };
+
+  it("marks every gold mine on Mine", () => {
+    expect(
+      resolveTutorialAttentionTargets(
+        {
+          needsTutorial: true,
+          mode: "lesson",
+          lessonMode: true,
+          mineTile: "0,-5,0",
+        },
+        "tutorial",
+        layout
+      )
+    ).toEqual([
+      { x: -1, z: -5 },
+      { x: 0, z: -5 },
+      { x: 1, z: -5 },
+    ]);
+  });
+
+  it("marks every Unlock Pad on Pay", () => {
+    expect(
+      resolveTutorialAttentionTargets(
+        {
+          needsTutorial: true,
+          mode: "lesson",
+          lessonMode: true,
+          session: { mineCompletedAt: 1 },
+        },
+        "tutorial",
+        layout
+      )
+    ).toEqual([
+      { x: 0, z: 0 },
+      { x: 1, z: 0 },
+    ]);
+  });
+
+  it("points at the Hub exit on Exit", () => {
+    expect(
+      resolveTutorialAttentionTargets(
+        {
+          needsTutorial: true,
+          mode: "lesson",
+          lessonMode: true,
+          session: { mineCompletedAt: 1, doorPaidAt: 2 },
+        },
+        "tutorial",
+        layout
+      )
+    ).toEqual([{ x: 0, z: 1 }]);
+  });
+
+  it("hides after lesson completion and outside Tutorial Room", () => {
+    expect(
+      resolveTutorialAttentionTargets(
+        {
+          needsTutorial: false,
+          mode: "sandbox",
+          lessonMode: false,
+          completedAt: 1,
+          session: { mineCompletedAt: 1, doorPaidAt: 2 },
+        },
+        "tutorial",
+        layout
+      )
+    ).toEqual([]);
+    expect(
+      resolveTutorialAttentionTargets(
+        {
+          needsTutorial: true,
+          mode: "lesson",
+          lessonMode: true,
+        },
+        "hub",
+        layout
+      )
+    ).toEqual([]);
+  });
+});
+
 describe("Tutorial Unlock Gate offer", () => {
-  it("offers Unlock Gate only after mine and before pay/escape", () => {
+  it("offers Unlock Gate after mine and before pay/escape (incl. post-Reset sandbox)", () => {
     expect(
       shouldOfferTutorialUnlockGate({
         needsTutorial: true,
@@ -261,11 +420,21 @@ describe("Tutorial Unlock Gate offer", () => {
         session: { mineCompletedAt: 1, doorPaidAt: 2 },
       })
     ).toBe(false);
+    // After Reset, welcome can arrive as sandbox; still offer Unlock while teaching.
     expect(
       shouldOfferTutorialUnlockGate({
         needsTutorial: true,
         mode: "sandbox",
         lessonMode: false,
+        session: { mineCompletedAt: 1 },
+      })
+    ).toBe(true);
+    expect(
+      shouldOfferTutorialUnlockGate({
+        needsTutorial: false,
+        mode: "sandbox",
+        lessonMode: false,
+        completedAt: 9,
         session: { mineCompletedAt: 1 },
       })
     ).toBe(false);
@@ -289,5 +458,51 @@ describe("Tutorial Unlock Gate offer", () => {
         { gateX: 0, gateZ: 0, exitX: 0, exitZ: 1 }
       )
     ).toBe(false);
+  });
+});
+
+describe("Tutorial reset menu", () => {
+  it("shows Start over / Reset tutorial only while in the Tutorial Room", () => {
+    expect(shouldShowTutorialResetMenu(true)).toBe(true);
+    expect(shouldShowTutorialResetMenu(false)).toBe(false);
+  });
+});
+
+describe("sendTutorialDoorPayment", () => {
+  afterEach(() => {
+    delete (window as { nimiqPay?: unknown }).nimiqPay;
+  });
+
+  it("simulates Pay when host send API is missing in DEV", async () => {
+    expect(canSimulateTutorialDoorPayment()).toBe(true);
+    delete (window as { nimiqPay?: unknown }).nimiqPay;
+    const escape = new TutorialEscapeTimer({});
+    const result = await sendTutorialDoorPayment({
+      quote: {
+        amountLuna: "1000",
+        amountNim: "0.0100",
+        recipient: "NQ32 FRGN PDKF RC4Y CKLV 4K3F PKL1 UBAU 7U71",
+        memo: "tutorial-door:test",
+      },
+      escape,
+    });
+    expect(result).toEqual({ ok: true, simulated: true });
+  });
+
+  it("uses real Pay send when available", async () => {
+    const send = vi.fn(async () => undefined);
+    window.nimiqPay = { sendBasicTransactionWithData: send };
+    const escape = new TutorialEscapeTimer({});
+    const result = await sendTutorialDoorPayment({
+      quote: {
+        amountLuna: "1000",
+        amountNim: "0.0100",
+        recipient: "NQ32 FRGN PDKF RC4Y CKLV 4K3F PKL1 UBAU 7U71",
+        memo: "tutorial-door:test",
+      },
+      escape,
+    });
+    expect(result).toEqual({ ok: true });
+    expect(send).toHaveBeenCalledOnce();
   });
 });

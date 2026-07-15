@@ -45,7 +45,7 @@ test("Tutorial Path places three mine slots south of the Unlock Pad", () => {
   }
 });
 
-test("Tutorial Path Unlock Pad sits at mid depth with clear tile north for Hub exit", () => {
+test("Tutorial Path Unlock Pad sits at mid depth with Exit Teleporter one step north to Hub", () => {
   const shell = buildDefaultTutorialBootstrapShell();
   const pad = shell.obstacles.find((o) => o.props.unlockPad);
   assert.ok(pad?.props.unlockPad);
@@ -53,12 +53,21 @@ test("Tutorial Path Unlock Pad sits at mid depth with clear tile north for Hub e
   const midZ = Math.floor((shell.bounds.minZ + shell.bounds.maxZ) / 2);
   const padTile = parseTile(pad.tile);
   assert.equal(padTile.z, midZ);
-  const exitZ = padTile.z + 1;
-  const blocked = shell.obstacles.some((o) => {
+  const exit = shell.obstacles.find((o) => {
     const t = parseTile(o.tile);
-    return t.x === padTile.x && t.z === exitZ && t.y === 0 && !o.props.passable;
+    return (
+      t.x === padTile.x &&
+      t.z === padTile.z + 1 &&
+      t.y === 0 &&
+      o.props.teleporter &&
+      !("pending" in o.props.teleporter)
+    );
   });
-  assert.equal(blocked, false);
+  assert.ok(exit, "Exit Teleporter must sit one tile north of the Unlock Pad");
+  assert.equal(exit.props.passable, true);
+  const tp = exit.props.teleporter;
+  assert.ok(tp && !("pending" in tp));
+  assert.equal(tp.targetRoomId, "chamber");
 });
 
 test("Tutorial Path obstacles stay inside portrait bounds", () => {
@@ -101,5 +110,24 @@ test("Tutorial Path leaves side lanes past the mine band so learners can walk no
       return t.x === x && t.z === mineZ && t.y === 0 && !o.props.passable;
     });
     assert.equal(blocked, false, `lane ${x},${mineZ} should be clear`);
+  }
+});
+
+test("Tutorial Path Alcove Garden seeds grass base floor and side pines", () => {
+  const shell = buildDefaultTutorialBootstrapShell();
+  const b = shell.bounds;
+  const expectedTiles = (b.maxX - b.minX + 1) * (b.maxZ - b.minZ + 1);
+  assert.equal(shell.baseFloorColors.length, expectedTiles);
+  assert.ok(shell.baseFloorColors.every((t) => t.colorRgb === 0x2f6b3a));
+
+  const pines = shell.obstacles.filter(
+    (o) => o.props.pyramid === true && o.props.tutorialMineSlot !== true
+  );
+  // Six pines × two canopy pyramids (trunks are cubes).
+  assert.equal(pines.length, 12);
+  for (const p of pines) {
+    const t = parseTile(p.tile);
+    assert.ok(t.x === -2 || t.x === 2, p.tile);
+    assert.notEqual(t.z, -5, "pine must not sit on mine row side lane");
   }
 });

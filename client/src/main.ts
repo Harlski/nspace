@@ -83,13 +83,14 @@ import {
   postTutorialResetProgress,
   postTutorialUnstick,
   parseTutorialMineTileCoords,
-  resolveTutorialAttentionTarget,
+  resolveTutorialAttentionTargets,
   sendTutorialDoorPayment,
   shouldOfferTutorialUnlockGate,
   shouldShowFinishTutorialMenu,
   shouldShowTutorialMineHighlight,
   shouldShowTutorialResetMenu,
   deriveTutorialCoachState,
+  withTutorialMineCompleted,
   TUTORIAL_UNLOCK_GATE_LABEL,
   TUTORIAL_WRONG_SLOT_REASON,
   TUTORIAL_ALREADY_CLAIMED_REASON,
@@ -1138,13 +1139,12 @@ function enterGame(
 
   function syncTutorialAttentionCue(roomId?: string | null): void {
     const rid = roomId ?? game.getRoomId();
-    const unlockPadTile = game.findFirstUnlockPadTile();
-    const target = resolveTutorialAttentionTarget(tutorialWelcome, rid, {
-      mineTile: parseTutorialMineTileCoords(tutorialWelcome?.mineTile),
-      unlockPadTile,
+    const targets = resolveTutorialAttentionTargets(tutorialWelcome, rid, {
+      mineTiles: game.listClaimableGoldTiles(),
+      unlockPadTiles: game.listUnlockPadTiles(),
       exitTile: game.findTutorialHubExitTile(),
     });
-    game.setTutorialAttentionCue(target);
+    game.setTutorialAttentionCues(targets);
   }
 
   function syncTutorialStepCoach(roomId?: string | null): void {
@@ -1175,7 +1175,7 @@ function enterGame(
           "Tutorial is broken. Bet you have never heard that before :sweatsmile:."
         );
         tutorialWelcome = undefined;
-        game.setTutorialAttentionCue(null);
+        game.setTutorialAttentionCues([]);
         syncTutorialStepCoach();
         connectToRoom(CHAMBER_ROOM_ID, undefined, { resume: false });
       })();
@@ -1185,8 +1185,14 @@ function enterGame(
   let tutorialDoorPayInFlight = false;
 
   async function runTutorialDoorPayFlow(): Promise<boolean> {
-    if (!tutorialWelcome?.lessonMode || tutorialWelcome.session?.doorPaidAt) {
-      return true;
+    if (!shouldOfferTutorialUnlockGate(tutorialWelcome)) {
+      // Already past Pay (paid, escape, or complete) - treat as success.
+      // Still on Mine or no welcome - do not unlock yet.
+      return (
+        typeof tutorialWelcome?.session?.doorPaidAt === "number" ||
+        typeof tutorialWelcome?.session?.gateUnstuckAt === "number" ||
+        typeof tutorialWelcome?.completedAt === "number"
+      );
     }
     if (tutorialDoorPayInFlight) return false;
     tutorialDoorPayInFlight = true;
@@ -1219,12 +1225,11 @@ function enterGame(
           ...tutorialWelcome,
           session: { ...tutorialWelcome.session, doorPaidAt: Date.now(), lastStep: "exit" },
         };
-        if (sent.hubExitDoor) game.upsertDoor(sent.hubExitDoor);
         const pad = game.getAdjacentLockedUnlockPad();
         if (pad) game.markUnlockPadUnlocked(pad.instanceId);
         // Bootstrap tutorial pad id (also granted server-side).
         game.markUnlockPadUnlocked("tutorial-path-unlock-pad-v1");
-        hud.setStatus("Path unlocked - walk through to the Hub exit.");
+        hud.setStatus("Path unlocked - walk north and Enter the Exit Teleporter.");
         syncTutorialStepCoach();
         syncTutorialAttentionCue();
       }
@@ -4036,10 +4041,7 @@ function enterGame(
     game.setGateDoubleOpenHandler((bx, bz, by) => {
       const meta = game.getPlacedAt(bx, bz, by);
       if (!meta?.gate) return;
-      if (
-        tutorialWelcome?.lessonMode &&
-        !tutorialWelcome.session?.doorPaidAt
-      ) {
+      if (shouldOfferTutorialUnlockGate(tutorialWelcome)) {
         void runTutorialDoorPayFlow();
         return;
       }
@@ -5227,7 +5229,7 @@ function enterGame(
         tutorialSocialSuppressed = false;
         hud.setFinishTutorialVisible(false);
         game.setTutorialMineHighlight(null);
-        game.setTutorialAttentionCue(null);
+        game.setTutorialAttentionCues([]);
         syncTutorialStepCoach(msg.roomId);
         syncTutorialResetMenu(msg.roomId);
       }
@@ -5481,6 +5483,7 @@ function enterGame(
       game.setAttentionMarkers(msg.attentionMarkers ?? []);
       game.setBillboards(msg.billboards ?? []);
       game.setVoxelTextsForRoom(msg.roomId, msg.voxelTexts ?? []);
+      syncTutorialAttentionCue(msg.roomId);
       // worldcup: render any balls present in this room
       game.applyWorldcupBalls(msg.balls ?? []);
       // Self country is sent in every room (not just the field) so the profile flag chip and
@@ -6117,18 +6120,22 @@ function enterGame(
           : "1.0000";
         cancelActiveNimClaim?.();
         game.showSelfPlayerMiningReward(reward);
+        const inTutorial =
+          normalizeRoomId(game.getRoomId()) === TUTORIAL_ROOM_ID;
+        // Advance Step Coach on any successful tutorial mine (lesson or sandbox).
+        // After Reset, welcome may be sandbox / missing lessonMode; server also sets
+        // tutorialMineComplete so a lost welcome still advances.
         if (
-          normalizeRoomId(game.getRoomId()) === TUTORIAL_ROOM_ID &&
-          tutorialWelcome?.lessonMode
+          inTutorial &&
+          (tutorialWelcome || msg.tutorialMineComplete === true)
         ) {
-          tutorialWelcome = {
-            ...tutorialWelcome,
-            session: {
-              ...(tutorialWelcome.session ?? {}),
-              mineCompletedAt: Date.now(),
-              lastStep: "pay",
-            },
-          };
+          tutorialWelcome = withTutorialMineCompleted(
+            tutorialWelcome ?? {
+              needsTutorial: true,
+              mode: "lesson",
+              lessonMode: true,
+            }
+          );
           game.setTutorialMineHighlight(null);
           hud.setStatus(
             "Received NIM. Stand beside the Unlock Pad and tap Unlock Pad."
@@ -6174,6 +6181,7 @@ function enterGame(
         return;
       }
       game.setObstacles(msg.tiles);
+      syncTutorialAttentionCue();
       if (editingTile) {
         const m = game.getPlacedAt(editingTile.x, editingTile.z, editingTile.y);
         if (!m) {
@@ -6209,6 +6217,7 @@ function enterGame(
         return;
       }
       game.applyObstaclesDelta(msg.add, msg.remove);
+      syncTutorialAttentionCue();
       if (pendingTeleporterAutoSelect && msg.add?.length) {
         const want = pendingTeleporterAutoSelect;
         for (const t of msg.add) {
@@ -6681,7 +6690,7 @@ function enterGame(
       tutorialWelcome = undefined;
       game.setUnlockedPadInstanceIds([]);
       game.setTutorialMineHighlight(null);
-      game.setTutorialAttentionCue(null);
+      game.setTutorialAttentionCues([]);
       syncTutorialStepCoach();
       hud.setStatus("Tutorial reset - back to Mine.");
       connectToRoom(TUTORIAL_ROOM_ID, undefined, { resume: false });

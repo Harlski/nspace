@@ -6,7 +6,9 @@ import { after, before, test } from "node:test";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nspace-tutorial-"));
 const storeFile = path.join(dir, "player-profiles.json");
+const adminSettingsFile = path.join(dir, "admin-runtime-settings.json");
 process.env.PLAYER_PROFILE_STORE_FILE = storeFile;
+process.env.ADMIN_RUNTIME_SETTINGS_FILE = adminSettingsFile;
 process.env.TUTORIAL_ENABLED = "1";
 
 before(async () => {
@@ -16,6 +18,7 @@ before(async () => {
 after(() => {
   fs.rmSync(dir, { recursive: true, force: true });
   delete process.env.PLAYER_PROFILE_STORE_FILE;
+  delete process.env.ADMIN_RUNTIME_SETTINGS_FILE;
   delete process.env.TUTORIAL_ENABLED;
   delete process.env.TUTORIAL_DOOR_AMOUNT_LUNA;
   delete process.env.TUTORIAL_DOOR_RECIPIENT;
@@ -160,4 +163,166 @@ test("door-quote returns configured amount and memo", async () => {
   assert.equal(quote.amountNim, "0.0100");
   assert.ok(quote.recipient.length > 0);
   assert.match(quote.memo, /tutorial-door:/);
+});
+
+test("door-quote falls back to advertise fund recipient when TUTORIAL_DOOR_RECIPIENT unset", async () => {
+  delete process.env.TUTORIAL_DOOR_RECIPIENT;
+  delete process.env.ADVERTISE_FUND_RECIPIENT_ADDRESS;
+  const { getTutorialDoorQuote } = await import("../src/tutorialSessionService.js");
+  const wallet = "NQ07 PAY000000000000000000000000000072";
+  const quote = getTutorialDoorQuote(wallet);
+  assert.ok(quote);
+  assert.match(quote.recipient, /^NQ32\s/);
+  assert.match(quote.memo, /tutorial-door:/);
+});
+
+test("tutorial mine claim accepts any claimable gold on step 1 including sandbox", async () => {
+  const { tutorialTryFinalizeMineClaim } = await import(
+    "../src/tutorial/roomsIntegration.js"
+  );
+  const { TUTORIAL_ROOM_ID } = await import("../src/tutorial/config.js");
+  const wallet = "NQ07 PAY000000000000000000000000000091";
+
+  const props = {
+    passable: false,
+    half: false,
+    quarter: false,
+    hex: false,
+    pyramid: true,
+    sphere: false,
+    ramp: false,
+    rampDir: 0,
+    colorRgb: 0xf59e0b,
+    claimable: true,
+    active: true,
+  };
+
+  const first = tutorialTryFinalizeMineClaim({
+    roomId: TUTORIAL_ROOM_ID,
+    wallet,
+    tileKey: "1,-5,0",
+    props,
+    sandboxMode: false,
+    listMineSlots: () => ["0,-5,0", "1,-5,0"],
+  });
+  assert.equal(first.ok, true);
+  if (first.ok) assert.ok(first.rewardLuna > 0n);
+
+  const again = tutorialTryFinalizeMineClaim({
+    roomId: TUTORIAL_ROOM_ID,
+    wallet,
+    tileKey: "0,-5,0",
+    props,
+    sandboxMode: false,
+    listMineSlots: () => ["0,-5,0"],
+  });
+  assert.deepEqual(again, { ok: false, reason: "already_claimed" });
+
+  const sandboxWallet = "NQ07 PAY000000000000000000000000000092";
+  const sandbox = tutorialTryFinalizeMineClaim({
+    roomId: TUTORIAL_ROOM_ID,
+    wallet: sandboxWallet,
+    tileKey: "-1,-5,0",
+    props,
+    sandboxMode: true,
+    listMineSlots: () => [],
+  });
+  assert.equal(sandbox.ok, true);
+  if (sandbox.ok) assert.equal(sandbox.rewardLuna, 0n);
+});
+
+test("resetTutorialProgress clears session and completion", async () => {
+  const {
+    completeTutorial,
+    markTutorialMineComplete,
+    resetTutorialProgress,
+    getTutorialDoorQuote,
+  } = await import("../src/tutorialSessionService.js");
+  const { getTutorialProfileRow } = await import("../src/playerProfileStore.js");
+  const wallet = "NQ07 PAY000000000000000000000000000088";
+  markTutorialMineComplete(wallet, 1000);
+  completeTutorial(wallet, 2000);
+  const before = getTutorialProfileRow(wallet);
+  assert.equal(typeof before.tutorialCompletedAt, "number");
+  assert.equal(typeof before.tutorialSession?.mineCompletedAt, "number");
+  const result = resetTutorialProgress(wallet);
+  assert.equal(result.ok, true);
+  const after = getTutorialProfileRow(wallet);
+  assert.equal(after.tutorialCompletedAt, undefined);
+  assert.equal(after.tutorialSession, undefined);
+  assert.equal(after.tutorialAbandonedAt, undefined);
+  // quote still available after reset
+  process.env.TUTORIAL_DOOR_RECIPIENT = "NQ07 TEST000000000000000000000000000099";
+  assert.ok(getTutorialDoorQuote(wallet));
+});
+
+test("tutorial welcome does not inject a virtual Hub exit door (Exit Teleporter is authored)", async () => {
+  const { findTutorialHubExitDoor, doorsForWelcomeWithTutorialExit } =
+    await import("../src/tutorial/roomsIntegration.js");
+  const { ackTutorialDoorSent } = await import(
+    "../src/tutorialSessionService.js"
+  );
+  const { TUTORIAL_ROOM_ID } = await import("../src/tutorial/config.js");
+  const wallet = "NQ07 PAY000000000000000000000000000081";
+  const placed = new Map([
+    [
+      "0,0,0",
+      {
+        unlockPad: { instanceId: "tutorial-path-unlock-pad-v1" },
+      },
+    ],
+  ]);
+
+  ackTutorialDoorSent(wallet, 9_000);
+  assert.equal(
+    findTutorialHubExitDoor({
+      roomId: TUTORIAL_ROOM_ID,
+      wallet,
+      placed,
+    }),
+    null
+  );
+  assert.deepEqual(
+    doorsForWelcomeWithTutorialExit(TUTORIAL_ROOM_ID, wallet, [], placed),
+    []
+  );
+});
+
+test("admin runtime toggle disables tutorial when env allows", async () => {
+  const { patchAdminRuntimeSettings } = await import(
+    "../src/adminRuntimeSettingsStore.js"
+  );
+  const {
+    isTutorialFeatureEnabled,
+    isTutorialEnvEnabled,
+  } = await import("../src/tutorial/config.js");
+
+  assert.equal(isTutorialEnvEnabled(), true);
+  assert.equal(isTutorialFeatureEnabled(), true);
+
+  patchAdminRuntimeSettings({ tutorialEnabled: false });
+  assert.equal(isTutorialFeatureEnabled(), false);
+
+  patchAdminRuntimeSettings({ tutorialEnabled: true });
+  assert.equal(isTutorialFeatureEnabled(), true);
+});
+
+test("tutorial room build is limited to admins and builder allowlist", async () => {
+  process.env.TUTORIAL_BUILDER_ALLOWLIST =
+    "NQ07 BUILD0000000000000000000000000001";
+  const { canEditTutorialRoomContent } = await import("../src/tutorial/config.js");
+  const learner = "NQ07 PAY000000000000000000000000000099";
+  const builder = "NQ07 BUILD0000000000000000000000000001";
+
+  assert.equal(canEditTutorialRoomContent(learner), false);
+  assert.equal(canEditTutorialRoomContent(builder), true);
+
+  delete process.env.TUTORIAL_BUILDER_ALLOWLIST;
+});
+
+test("tutorial room appears in room definitions when feature enabled", async () => {
+  const { listRoomDefinitions } = await import("../src/roomLayouts.js");
+  const { TUTORIAL_ROOM_ID } = await import("../src/tutorial/config.js");
+  const ids = listRoomDefinitions().map((d) => d.id.trim().toLowerCase());
+  assert.ok(ids.includes(TUTORIAL_ROOM_ID));
 });

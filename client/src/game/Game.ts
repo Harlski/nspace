@@ -63,7 +63,9 @@ import {
 import {
   createNoWalkFloorCueResources,
   disposeNoWalkFloorCueResources,
+  makeEphemeralNoWalkFloorCueGroup,
   makeNoWalkFloorCueGroup,
+  NO_WALK_FLOOR_CUE_Y,
   type NoWalkFloorCueResources,
 } from "./noWalkFloorCue.js";
 import { FogOfWarPass } from "./fogOfWar.js";
@@ -179,6 +181,7 @@ import {
   inferStartLayerClient,
   isBaseTile,
   isGatePassableForMover,
+  isUnlockPadPassableForMover,
   isWalkableTile,
   type PathfindMoverContext,
   pathfindTerrain,
@@ -1654,8 +1657,7 @@ export class Game {
    * Client-local Attention Marker for the current Tutorial Step Coach target
    * (not in the shared `attentionMarkers` layer — per-wallet mine slots).
    */
-  private tutorialAttentionCueGroup: THREE.Group | null = null;
-  private tutorialAttentionCueTile: { x: number; z: number } | null = null;
+  private tutorialAttentionCueGroups = new Map<string, THREE.Group>();
   private static readonly TUTORIAL_ATTENTION_CUE_COLOR = 0xfbbf24;
   private static readonly TUTORIAL_ATTENTION_CUE_HOVER = 1;
   /** Cinema `?stream=1` - no avatar, no movement or floor edits. */
@@ -1794,7 +1796,10 @@ export class Game {
     string,
     { sig: string; dataUrl: string }
   >();
-  private dockStripThumbFloor: { sig: string; dataUrl: string } | null = null;
+  private readonly dockStripThumbRoomFloorTools = new Map<
+    "floor" | "noWalk" | "spawn",
+    { sig: string; dataUrl: string }
+  >();
   /** Subset of tile keys that block pathfinding (not passable). */
   private readonly blockingTileKeys = new Set<string>();
   private readonly blockMeshes = new Map<string, THREE.Group>();
@@ -5302,6 +5307,13 @@ export class Game {
 
   /** First Unlock Pad tile in the current room (Tutorial Path pay target). */
   findFirstUnlockPadTile(): { x: number; z: number } | null {
+    return this.listUnlockPadTiles()[0] ?? null;
+  }
+
+  /** Every Unlock Pad tile in the current room (floor of each instance). */
+  listUnlockPadTiles(): { x: number; z: number }[] {
+    const out: { x: number; z: number }[] = [];
+    const seen = new Set<string>();
     for (const [k, meta] of this.placedObjects) {
       if (!meta.unlockPad?.instanceId) continue;
       const parts = k.split(",").map(Number);
@@ -5312,18 +5324,61 @@ export class Game {
       ) {
         continue;
       }
-      return { x: Math.floor(parts[0]!), z: Math.floor(parts[1]!) };
+      const x = Math.floor(parts[0]!);
+      const z = Math.floor(parts[1]!);
+      const key = `${x},${z}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ x, z });
     }
-    return null;
+    out.sort((a, b) => a.z - b.z || a.x - b.x);
+    return out;
+  }
+
+  /** Every gold (claimable) block tile in the current room. */
+  listClaimableGoldTiles(): { x: number; z: number }[] {
+    const out: { x: number; z: number }[] = [];
+    const seen = new Set<string>();
+    for (const [k, meta] of this.placedObjects) {
+      if (!meta.claimable) continue;
+      const parts = k.split(",").map(Number);
+      if (
+        parts.length < 2 ||
+        !Number.isFinite(parts[0]) ||
+        !Number.isFinite(parts[1])
+      ) {
+        continue;
+      }
+      const x = Math.floor(parts[0]!);
+      const z = Math.floor(parts[1]!);
+      const key = `${x},${z}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ x, z });
+    }
+    out.sort((a, b) => a.z - b.z || a.x - b.x);
+    return out;
   }
 
   /**
-   * Hub exit tile for the Tutorial Path: one step north of the Unlock Pad,
-   * else a door targeting the Hub, else legacy gate exit.
+   * Tutorial Path Exit Teleporter tile (authored Hub warps), else legacy Hub door /
+   * gate exit fallbacks.
    */
   findTutorialHubExitTile(): { x: number; z: number } | null {
-    const pad = this.findFirstUnlockPadTile();
-    if (pad) return { x: pad.x, z: pad.z + 1 };
+    for (const [k, meta] of this.placedObjects) {
+      const tp = meta.teleporter;
+      if (!tp || "pending" in tp) continue;
+      if (normalizeRoomId(tp.targetRoomId) !== CHAMBER_ROOM_ID) continue;
+      const parts = k.split(",").map(Number);
+      if (
+        parts.length < 2 ||
+        !Number.isFinite(parts[0]) ||
+        !Number.isFinite(parts[1])
+      ) {
+        continue;
+      }
+      return { x: Math.floor(parts[0]!), z: Math.floor(parts[1]!) };
+    }
     for (const d of this.doors) {
       if (normalizeRoomId(d.targetRoomId) === CHAMBER_ROOM_ID) {
         return { x: Math.floor(d.x), z: Math.floor(d.z) };
@@ -5340,43 +5395,19 @@ export class Game {
   }
 
   /**
-   * Local Attention Marker over the current tutorial coach target.
+   * Local Attention Markers over the current tutorial coach targets.
    * Cleared on room change; not synced via the shared Attention Marker store.
    */
-  setTutorialAttentionCue(tile: { x: number; z: number } | null): void {
-    if (!tile) {
-      this.clearTutorialAttentionCue();
-      this.requestRender(120);
-      return;
+  setTutorialAttentionCues(tiles: readonly { x: number; z: number }[]): void {
+    const nextKeys = new Set<string>();
+    for (const t of tiles) {
+      const x = Math.floor(t.x);
+      const z = Math.floor(t.z);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+      nextKeys.add(`${x},${z}`);
     }
-    const x = Math.floor(tile.x);
-    const z = Math.floor(tile.z);
-    const same =
-      this.tutorialAttentionCueTile?.x === x &&
-      this.tutorialAttentionCueTile?.z === z &&
-      this.tutorialAttentionCueGroup !== null;
-    if (same) {
-      this.syncTutorialAttentionCuePose();
-      this.requestRender(120);
-      return;
-    }
-    this.clearTutorialAttentionCue();
-    const group = makeAttentionMarkerGroup(
-      Game.TUTORIAL_ATTENTION_CUE_COLOR
-    );
-    group.name = "tutorialAttentionCue";
-    group.userData.tutorialAttentionCue = true;
-    group.scale.setScalar(1);
-    this.tutorialAttentionCueGroup = group;
-    this.tutorialAttentionCueTile = { x, z };
-    this.scene.add(group);
-    this.syncTutorialAttentionCuePose();
-    this.requestRender(120);
-  }
-
-  private clearTutorialAttentionCue(): void {
-    const group = this.tutorialAttentionCueGroup;
-    if (group) {
+    for (const [k, group] of this.tutorialAttentionCueGroups) {
+      if (nextKeys.has(k)) continue;
       this.scene.remove(group);
       group.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
@@ -5386,19 +5417,44 @@ export class Game {
           else mat.dispose();
         }
       });
+      this.tutorialAttentionCueGroups.delete(k);
     }
-    this.tutorialAttentionCueGroup = null;
-    this.tutorialAttentionCueTile = null;
+    for (const key of nextKeys) {
+      if (this.tutorialAttentionCueGroups.has(key)) continue;
+      const group = makeAttentionMarkerGroup(
+        Game.TUTORIAL_ATTENTION_CUE_COLOR
+      );
+      group.name = "tutorialAttentionCue";
+      group.userData.tutorialAttentionCue = true;
+      group.userData.tutorialAttentionCueKey = key;
+      group.scale.setScalar(1);
+      this.tutorialAttentionCueGroups.set(key, group);
+      this.scene.add(group);
+    }
+    this.syncTutorialAttentionCuePose();
+    this.requestRender(120);
+  }
+
+  /** @deprecated Prefer {@link setTutorialAttentionCues}. */
+  setTutorialAttentionCue(tile: { x: number; z: number } | null): void {
+    this.setTutorialAttentionCues(tile ? [tile] : []);
+  }
+
+  private clearTutorialAttentionCue(): void {
+    this.setTutorialAttentionCues([]);
   }
 
   private syncTutorialAttentionCuePose(): void {
-    const group = this.tutorialAttentionCueGroup;
-    const tile = this.tutorialAttentionCueTile;
-    if (!group || !tile) return;
-    const baseY = this.attentionMarkerBaselineY(tile.x, tile.z);
     const lift = attentionMarkerHoverLift(Game.TUTORIAL_ATTENTION_CUE_HOVER);
     const bounce = attentionMarkerBounceOffset(this.doorPulseTime);
-    group.position.set(tile.x, baseY + lift + bounce, tile.z);
+    for (const [key, group] of this.tutorialAttentionCueGroups) {
+      const [xs, zs] = key.split(",");
+      const x = Number(xs);
+      const z = Number(zs);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+      const baseY = this.attentionMarkerBaselineY(x, z);
+      group.position.set(x, baseY + lift + bounce, z);
+    }
   }
 
   upsertDoor(d: {
@@ -8470,7 +8526,7 @@ export class Game {
         this.scene.add(group);
         this.noWalkFloorCueMeshes.set(k, group);
       }
-      group.position.set(x, 0.048, z);
+      group.position.set(x, NO_WALK_FLOOR_CUE_Y, z);
       group.visible = true;
     }
     this.requestRender();
@@ -10657,7 +10713,7 @@ export class Game {
       const k = tileKey(dest.x, dest.y);
       if (
         this.blockingTileKeys.has(k) &&
-        !this.selfGatePassFloorTile(dest.x, dest.y)
+        !this.selfPassableBlockingFloorTile(dest.x, dest.y)
       ) {
         return null;
       }
@@ -10678,6 +10734,13 @@ export class Game {
           if (bm.gate) {
             return null;
           }
+          // Unlocked Unlock Pad is a floor crossing (layer 0), not rooftop stance.
+          if (
+            bm.unlockPad?.instanceId &&
+            this.unlockedPadInstanceIds.has(bm.unlockPad.instanceId)
+          ) {
+            return { ft: { x: bx, y: bz }, layer: 0 };
+          }
           return { ft: { x: bx, y: bz }, layer: 1 };
         }
       }
@@ -10693,7 +10756,7 @@ export class Game {
     const k = tileKey(dest.x, dest.y);
     if (
       this.blockingTileKeys.has(k) &&
-      !this.selfGatePassFloorTile(dest.x, dest.y)
+      !this.selfPassableBlockingFloorTile(dest.x, dest.y)
     ) {
       return null;
     }
@@ -10715,7 +10778,10 @@ export class Game {
           const t: FloorTile = { x: tx, y: tz };
           if (!this.tileWalkable(t)) continue;
           const k = tileKey(tx, tz);
-          if (this.blockingTileKeys.has(k) && !this.selfGatePassFloorTile(tx, tz)) {
+          if (
+            this.blockingTileKeys.has(k) &&
+            !this.selfPassableBlockingFloorTile(tx, tz)
+          ) {
             continue;
           }
           const d = Math.hypot(tx - wx, tz - wz);
@@ -10730,27 +10796,40 @@ export class Game {
     return null;
   }
 
-  /** True when this tile is a gate the local player may walk while it is open for them. */
-  private selfGatePassFloorTile(tx: number, tz: number): boolean {
+  /**
+   * True when a normally solid floor obstacle is open for the local player
+   * (open gate or granted Unlock Pad).
+   */
+  private selfPassableBlockingFloorTile(tx: number, tz: number): boolean {
     const meta =
       this.placedObjects.get(blockKey(tx, tz, 0)) ??
       this.placedObjects.get(tileKey(tx, tz));
     if (!meta || !this.selfAddress) return false;
-    return isGatePassableForMover(
-      meta,
-      this.selfAddress.replace(/\s+/g, "").toUpperCase(),
-      Date.now(),
-      this.roomId
-    );
+    if (
+      isGatePassableForMover(
+        meta,
+        this.selfAddress.replace(/\s+/g, "").toUpperCase(),
+        Date.now(),
+        this.roomId
+      )
+    ) {
+      return true;
+    }
+    return isUnlockPadPassableForMover(meta, this.unlockedPadInstanceIds);
   }
 
-  /** Floor tile the local player can path onto (walkable base/extra + gate blocking rules). */
+  /** @deprecated Prefer {@link selfPassableBlockingFloorTile}. */
+  private selfGatePassFloorTile(tx: number, tz: number): boolean {
+    return this.selfPassableBlockingFloorTile(tx, tz);
+  }
+
+  /** Floor tile the local player can path onto (walkable base/extra + open gate / Unlock Pad). */
   private floorTileNavigableForWalk(ft: FloorTile): boolean {
     if (!this.tileWalkable(ft)) return false;
     const k = tileKey(ft.x, ft.y);
     if (
       this.blockingTileKeys.has(k) &&
-      !this.selfGatePassFloorTile(ft.x, ft.y)
+      !this.selfPassableBlockingFloorTile(ft.x, ft.y)
     ) {
       return false;
     }
@@ -12410,7 +12489,12 @@ export class Game {
           const distance = Math.hypot(dx, dz);
           if (distance > this.placeRadiusBlocks + 1e-6) {
             const k = tileKey(dest.x, dest.y);
-            if (this.blockingTileKeys.has(k)) return;
+            if (
+              this.blockingTileKeys.has(k) &&
+              !this.selfPassableBlockingFloorTile(dest.x, dest.y)
+            ) {
+              return;
+            }
             if (!this.tileClickHandler) return;
             this.pendingPrimaryWalk = {
               pointerId: e.pointerId,
@@ -12478,7 +12562,12 @@ export class Game {
       if (distance > this.placeRadiusBlocks + 1e-6) {
         // Outside build radius - trigger walking instead of placing (on pointerup)
         const k = tileKey(dest.x, dest.y);
-        if (this.blockingTileKeys.has(k)) return;
+        if (
+          this.blockingTileKeys.has(k) &&
+          !this.selfPassableBlockingFloorTile(dest.x, dest.y)
+        ) {
+          return;
+        }
         if (!this.tileClickHandler) return;
         this.pendingPrimaryWalk = {
           pointerId: e.pointerId,
@@ -12609,7 +12698,12 @@ export class Game {
     if (!dest) return;
     if (!this.tileClickHandler) return;
     const k = tileKey(dest.x, dest.y);
-    if (this.blockingTileKeys.has(k)) return;
+    if (
+      this.blockingTileKeys.has(k) &&
+      !this.selfPassableBlockingFloorTile(dest.x, dest.y)
+    ) {
+      return;
+    }
     this.pendingPrimaryWalk = {
       pointerId: e.pointerId,
       startX: e.clientX,
@@ -15800,7 +15894,7 @@ export class Game {
     const hasMineableSparkles = this.updateMineableBlockSparkles();
     const hasSignpostHintMotion = this.updateSignpostHintSprites();
     const hasTutorialMineHighlight = this.tutorialMineHighlightTile !== null;
-    const hasTutorialAttentionCue = this.tutorialAttentionCueTile !== null;
+    const hasTutorialAttentionCue = this.tutorialAttentionCueGroups.size > 0;
     if (
       visualActive ||
       hasMineableSparkles ||
@@ -15809,6 +15903,9 @@ export class Game {
       hasTutorialAttentionCue
     ) {
       this.requestRender(250);
+    }
+    if (hasTutorialAttentionCue) {
+      this.syncTutorialAttentionCuePose();
     }
     if (visualActive) {
       this.animateDoorTiles();
@@ -17997,25 +18094,70 @@ export class Game {
   }
 
   getFloorDockThumbnailDataUrl(): string {
-    const sig = `floor|${this.floorTileQuadSize}`;
-    if (this.dockStripThumbFloor?.sig === sig) {
-      return this.dockStripThumbFloor.dataUrl;
+    return this.getRoomFloorToolDockThumbnailDataUrl("floor");
+  }
+
+  /**
+   * WebGL bake for Floor-tab tool cards: plain floor, floor + No-Walk cue, or floor + Join Spawn ring.
+   */
+  getRoomFloorToolDockThumbnailDataUrl(
+    tool: "floor" | "noWalk" | "spawn"
+  ): string {
+    const sig = `${tool}|v2|${this.floorTileQuadSize}`;
+    const cached = this.dockStripThumbRoomFloorTools.get(tool);
+    if (cached?.sig === sig) {
+      return cached.dataUrl;
     }
     const port = this.getOrCreateDockStripBakePort();
     this.clearDockStripBakeBlockSlot(port);
     port.floor.visible = true;
     applyWalkableFloorTileMaterials(port.floor, false, true);
+    if (tool === "noWalk") {
+      this.attachDockStripNoWalkFloorOverlay(port);
+    } else if (tool === "spawn") {
+      this.attachDockStripJoinSpawnRingOverlay(port);
+    }
     this.finishDockStripBakeRender(port);
     const dataUrl = port.canvas.toDataURL("image/png");
-    this.dockStripThumbFloor = { sig, dataUrl };
+    this.dockStripThumbRoomFloorTools.set(tool, { sig, dataUrl });
     return dataUrl;
+  }
+
+  /** Ephemeral No-Walk Floor Cue on the bake floor (owned by `blockSlot`, disposed on clear). */
+  private attachDockStripNoWalkFloorOverlay(
+    port: InspectorTilePreviewPort
+  ): void {
+    const group = makeEphemeralNoWalkFloorCueGroup();
+    group.name = "dockStripNoWalkCue";
+    group.position.set(0, NO_WALK_FLOOR_CUE_Y, 0);
+    port.blockSlot.add(group);
+  }
+
+  /** Ephemeral Join Spawn ring matching `roomEntrySpawnRing` in floor mode. */
+  private attachDockStripJoinSpawnRingOverlay(
+    port: InspectorTilePreviewPort
+  ): void {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.22, 0.42, 48),
+      new THREE.MeshBasicMaterial({
+        color: 0x2dd4bf,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.05;
+    ring.renderOrder = 6;
+    port.blockSlot.add(ring);
   }
 
   clearDockStripThumbnailCache(): void {
     this.dockStripThumbByTool.clear();
     this.dockStripThumbByTerrainShape.clear();
     this.dockStripThumbByPrefabDesign.clear();
-    this.dockStripThumbFloor = null;
+    this.dockStripThumbRoomFloorTools.clear();
     this.disposeDockStripBakePort();
   }
 
@@ -18035,7 +18177,9 @@ export class Game {
       "sphere",
       "ramp",
     ]);
-    this.getFloorDockThumbnailDataUrl();
+    this.getRoomFloorToolDockThumbnailDataUrl("floor");
+    this.getRoomFloorToolDockThumbnailDataUrl("noWalk");
+    this.getRoomFloorToolDockThumbnailDataUrl("spawn");
   }
 
   /** First-person toggle (not wired in this build). */

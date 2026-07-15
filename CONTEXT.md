@@ -112,14 +112,21 @@ _Avoid_: go home, return home, go to chamber.
 **Tutorial Room**:
 The shared runtime room where Nimiq Pay first-contact learners receive and send 0.01 NIM before
 entering the Hub. Concurrent players share the space; each wallet gets its own mine slot and
-Unlock Pad state.
+Unlock Pad state. Lesson complete is Entering the path's **Exit Teleporter** to the Hub — not
+Pay ack alone.
 _Avoid_: tutorial instance, lesson room, onboarding room.
 
 **Tutorial Path**:
-The south-to-north walkable progression through the Tutorial Room — Mine band, Pay via Unlock
-Pad, then Exit — authored in portrait proportions for Portrait Play rather than as a square
-plaza.
+The south-to-north walkable progression through the Tutorial Room — Mine band, then Pay via
+Unlock Pad with **Unlock Aftermath** = walkable crossing, then Exit via a separate preplaced
+Teleporter further north along the corridor to the Hub (**Exit Teleporter**). Unlock does not
+place or swap a Teleporter onto the pad tile.
 _Avoid_: tutorial corridor, lesson route, onboarding path.
+
+**Exit Teleporter**:
+On the Tutorial Path, the authored Teleporter north of the Unlock Pad that sends the learner
+to the Hub. Lesson complete is Entering this Teleporter (not Pay ack, not the Unlock Pad tile).
+_Avoid_: tutorial exit door, north Hub door, pad teleporter.
 
 **Tutorial Staging**:
 The admin/builder authoring room for Tutorial Template layout before publish to the live Tutorial
@@ -138,13 +145,15 @@ _Avoid_: tutorial block, lesson mine.
 
 **Tutorial Pay Ack**:
 Optimistic Unlock Pad unlock when Nimiq Pay reports send success for the door quote; no on-chain
-verify on the critical path for v1 tutorial.
+verify on the critical path for v1 tutorial. Grants Unlock Aftermath = crossing for that wallet
+on the Tutorial Path pad; does not by itself complete the lesson.
 _Avoid_: door payment confirmation, pay verify.
 
 **Tutorial Escape**:
 Client timer while a Pay send promise is pending; after a silent wait and visible countdown,
-unsticks the learner's Unlock Pad server-side and teleports to the Hub without completing the
-lesson.
+grants the learner's Unlock Pad unlock without marking the lesson complete, and forces them
+to the Hub. Distinct from voluntarily Entering the path's Exit Teleporter (that path can
+complete the lesson).
 _Avoid_: pay timeout, stuck handler.
 
 **Tutorial Sandbox**:
@@ -153,10 +162,13 @@ normal chat/emotes, no faucet, door payment, or guided overlays.
 _Avoid_: tutorial replay, practice mode.
 
 **Tutorial Step Coach**:
-The persistent lesson-mode strip (Mine → Pay → Exit plus a one-line next hint) that walks a
-first-contact learner through the Tutorial Room. Wrong-slot mine feedback is a redirect into this
-coach, not a permission lecture. Hidden after Hub completion, Tutorial Escape, and in Tutorial
-Sandbox.
+The persistent lesson strip (Mine → Pay → Exit plus a one-line next hint) that walks a
+first-contact learner through the Tutorial Room. Exit means walk the unlocked crossing and
+Enter the path's **Exit Teleporter** to the Hub. Client-local Attention Marker cues follow
+the coach: all gold mines on Mine, all Unlock Pads on Pay, the Exit Teleporter on Exit.
+Wrong-slot mine feedback is a redirect into this coach, not a permission lecture. Visible in
+the Tutorial Room for lesson and Tutorial Sandbox revisits; Escape still counts as completing
+Pay so the coach can show Exit.
 _Avoid_: tutorial progress bar, quest tracker, onboarding wizard.
 
 **Teleporter**:
@@ -165,24 +177,49 @@ floor tile.
 _Avoid_: portal, warp pad, exit portal.
 
 **Unlock Pad**:
-A placed obstacle that is solid until a wallet unlocks it by payment, then walkable for that
-wallet only.
-_Avoid_: toll pad, paid crossing, pass pad, unlock tile, paid gate.
+A placed obstacle that is solid until a wallet unlocks it by payment — a metaphorical gate
+that locks a path or section of a room. After unlock, that wallet may walk the pad tile
+(**Unlock Aftermath** = crossing). It does not become a Teleporter; exits stay separate
+placed Teleporters beyond the pad. Unlock is recorded as an **Unlock Pad Grant** for that
+wallet and pad instance.
+_Avoid_: toll pad, paid crossing, pass pad, unlock tile, paid gate, unlock gate,
+Teleporter Aftermath.
+
+**Unlock Pad Grant**:
+Durable proof that a wallet has unlocked a specific Unlock Pad instance in a room. While the
+grant exists, that wallet walks the pad's crossing; other wallets remain locked until they
+have their own grant. Survives leave/rejoin; cleared by Tutorial Reset (for that wallet in
+Tutorial Room) or when the pad/room is removed.
+_Avoid_: unlock ticket, pad pass, unlock session.
+
+**Unlock Aftermath**:
+The post-unlock state of an Unlock Pad for a wallet that has unlocked it: the pad tile is a
+walkable crossing for that wallet. Other wallets still see the locked pad until they unlock.
+_Avoid_: unlock mode, after-unlock behavior, pad outcome, unlock result, Teleporter Aftermath.
 
 **Unlock Pad Settings**:
 The admin dialog for configuring an Unlock Pad's price (NIM), recipient, button label, and
 proof mode. Opened from the build dock via summary + Edit; Save commits, Cancel discards.
-Color stays in the dock. Distinct from the world-anchored Unlock control players use to pay.
+Color stays in the dock. Distinct from the world-anchored orange Unlock control players use
+to pay.
 _Avoid_: unlock pad popover, unlock pad parameters form, pad config drawer.
 
 **Attention Marker**:
 A placeable, purely visual cue anchored to a floor tile — at most one per tile — that may
 share the tile with a block, Unlock Pad, Gate, or empty floor. It draws the eye to where the
 player should notice or act; it is never itself the thing they interact with. The glyph is a
-fixed V with a continuous gentle hover bounce; authors set **Hover Height** and tint (default
+fixed V with a continuous gentle hover bounce; authors set **Hover Height**, **Size**, and tint (default
 white, glow matches). It is first-class room layout content (included in the Build Shell),
-stays visible in build mode, and can be repositioned. Admin-only in v1.
+stays visible in build mode, and can be repositioned. Admin-only in v1. In build mode, with
+the Attention Marker tool active, each marked floor tile shows a **selectability cue** so
+authors can tell which tiles are pickable as Attention Markers (co-occupant pick otherwise).
 _Avoid_: waypoint, beacon, hint, callout, marker alone, V (as the feature name).
+
+**Attention Marker Selectability Cue**:
+A build-only floor tint under tiles that already hold an Attention Marker, shown only while
+the Attention Marker tool is active, so authors know those markers are the current pick
+target. Distinct from the marker's own tint and from walk-mode chrome.
+_Avoid_: selection outline (alone), placement ghost, marker glow.
 
 **No-Walk Floor**:
 A floor-layer flag on a tile that still looks like ordinary floor but forbids walking onto
@@ -202,6 +239,12 @@ floor if empty) — discrete steps `0..3`, default `1`. The baseline live-follow
 changes. Display only; it is not an obstacle stack level.
 _Avoid_: layer, stack y, height (alone — that is the terrain block param).
 
+**Size** (Attention Marker):
+Uniform scale of the Attention Marker glyph as a percent of the default, discrete steps
+`20%..100%` in increments of `10%`, default `100%`. Display only; does not change tile
+footprint or pick bounds.
+_Avoid_: scale (alone), zoom, font size.
+
 **Teleporter Landing Hint**:
 The floor `(X, Z)` stored on a Teleporter as the preferred arrival tile in the destination
 Room; not a guarantee if that tile becomes unwalkable later.
@@ -216,7 +259,8 @@ _Avoid_: spawn point, entry tile, door spawn.
 The walk-mode action on the proximity **Enter** pill when standing on a door, configured
 Teleporter, or other walk-on portal offer; warps or opens the associated destination flow.
 Cross-room Teleporters label the pill **Enter {Room name}**; same-room links and in-room
-warps use plain **Enter** only.
+warps use plain **Enter** only. The locked Unlock control on an Unlock Pad stays a separate
+orange affordance (not Enter); an unlocked Unlock Pad is walked through, not Entered.
 _Avoid_: portal button, warp button.
 
 **Set**:

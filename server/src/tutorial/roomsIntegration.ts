@@ -2,7 +2,6 @@ import type { TerrainProps } from "../grid.js";
 import {
   ackTutorialDoorSent,
   buildTutorialWelcomePayload,
-  canClaimTutorialMineSlot,
   completeTutorial,
   computeNeedsTutorial,
   evaluateTutorialRoomJoin,
@@ -22,7 +21,6 @@ import {
   TUTORIAL_ROOM_ID,
 } from "./config.js";
 import {
-  CHAMBER_DEFAULT_SPAWN,
   CHAMBER_ROOM_ID,
   type DoorDef,
 } from "../roomLayouts.js";
@@ -33,8 +31,11 @@ export function tutorialRoomHiddenFromCatalog(roomId: string): boolean {
   return isTutorialRoomHiddenFromCatalog(roomId);
 }
 
-/** Virtual Hub exit door north of the Unlock Pad once Pay ack / escape unlocks it. */
-export function findTutorialHubExitDoor(opts: {
+/**
+ * Deprecated under ADR 0012: Tutorial Path Exit is an authored Exit Teleporter,
+ * not a virtual Hub door north of the Unlock Pad. Kept as a no-op so callers compile.
+ */
+export function findTutorialHubExitDoor(_opts: {
   roomId: string;
   wallet: string;
   placed: ReadonlyMap<
@@ -45,57 +46,16 @@ export function findTutorialHubExitDoor(opts: {
     }
   >;
 }): DoorDef | null {
-  if (!isTutorialRuntimeRoomId(opts.roomId)) return null;
-  if (!isTutorialGatePassableForWallet(opts.wallet)) return null;
-  for (const [k, v] of opts.placed) {
-    if (v.unlockPad) {
-      const parts = k.split(",").map(Number);
-      if (
-        parts.length < 2 ||
-        !Number.isFinite(parts[0]) ||
-        !Number.isFinite(parts[1])
-      ) {
-        continue;
-      }
-      const x = Math.floor(parts[0]!);
-      const z = Math.floor(parts[1]!);
-      return {
-        x,
-        z: z + 1,
-        targetRoomId: CHAMBER_ROOM_ID,
-        spawnX: CHAMBER_DEFAULT_SPAWN.x,
-        spawnZ: CHAMBER_DEFAULT_SPAWN.z,
-      };
-    }
-  }
-  for (const v of opts.placed.values()) {
-    if (!v.gate) continue;
-    return {
-      x: v.gate.exitX,
-      z: v.gate.exitZ,
-      targetRoomId: CHAMBER_ROOM_ID,
-      spawnX: CHAMBER_DEFAULT_SPAWN.x,
-      spawnZ: CHAMBER_DEFAULT_SPAWN.z,
-    };
-  }
   return null;
 }
 
 export function doorsForWelcomeWithTutorialExit(
-  roomId: string,
-  wallet: string,
+  _roomId: string,
+  _wallet: string,
   baseDoors: readonly DoorDef[],
-  placed: ReadonlyMap<string, { gate?: { exitX: number; exitZ: number } }>
+  _placed: ReadonlyMap<string, { gate?: { exitX: number; exitZ: number } }>
 ): DoorDef[] {
-  const doors = [...baseDoors];
-  const exit = findTutorialHubExitDoor({ roomId, wallet, placed });
-  if (
-    exit &&
-    !doors.some((d) => d.x === exit.x && d.z === exit.z)
-  ) {
-    doors.push(exit);
-  }
-  return doors;
+  return [...baseDoors];
 }
 
 export function buildTutorialWelcomeForConn(opts: {
@@ -148,20 +108,22 @@ export function tutorialTryFinalizeMineClaim(opts: {
   if (isTutorialStagingRoomId(opts.roomId)) {
     return { ok: false, reason: "staging_no_payout" };
   }
-  if (opts.sandboxMode) return { ok: false, reason: "sandbox" };
-  if (!opts.props.tutorialMineSlot) return { ok: false, reason: "not_tutorial_slot" };
-  const slots = opts.listMineSlots();
-  if (!canClaimTutorialMineSlot(opts.wallet, opts.tileKey, opts.roomId, slots)) {
-    return { ok: false, reason: "wrong_slot" };
+  // Any active claimable (gold) block counts for Step 1 — not only `tutorialMineSlot`.
+  if (!opts.props.claimable || opts.props.active === false) {
+    return { ok: false, reason: "not_claimable" };
   }
   if (isTutorialMineAlreadyClaimed(opts.wallet)) {
     return { ok: false, reason: "already_claimed" };
   }
   markTutorialMineComplete(opts.wallet);
+  // Sandbox revisits: practice mine with no faucet payout.
+  const rewardLuna = opts.sandboxMode ? 0n : getTutorialFaucetRewardLuna();
+  // Unique claim id per mine so Reset + remine can enqueue a fresh faucet payout.
+  const claimId = `${tutorialFaucetClaimId(opts.wallet)}-${Date.now()}`;
   return {
     ok: true,
-    claimId: tutorialFaucetClaimId(opts.wallet),
-    rewardLuna: getTutorialFaucetRewardLuna(),
+    claimId,
+    rewardLuna,
   };
 }
 
