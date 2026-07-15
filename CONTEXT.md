@@ -184,6 +184,18 @@ white, glow matches). It is first-class room layout content (included in the Bui
 stays visible in build mode, and can be repositioned. Admin-only in v1.
 _Avoid_: waypoint, beacon, hint, callout, marker alone, V (as the feature name).
 
+**No-Walk Floor**:
+A floor-layer flag on a tile that still looks like ordinary floor but forbids walking onto
+it. Authors paint and erase it with a No-Walk brush in floor build mode; while that mode is
+open, marked tiles show red X chrome; walk mode hides the chrome. Distinct from removing the
+base floor (a hole) and from placing a solid block.
+_Avoid_: invisible wall, walk ban, soft block, blocked floor, unwalkable paint (as the feature name).
+
+**No-Walk Floor Cue**:
+Build-only red X (or red-tint + X) drawn on each No-Walk Floor tile while floor build mode is
+open, so authors can see soft-blocked regions. Never shown in walk mode or non-floor build modes.
+_Avoid_: prohibition overlay, no-walk selection outline.
+
 **Hover Height**:
 The Attention Marker's visual lift above the top of its tile's current co-occupant (or the
 floor if empty) — discrete steps `0..3`, default `1`. The baseline live-follows co-occupant

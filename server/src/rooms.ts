@@ -11850,12 +11850,21 @@ export function addClient(
           if (st.x === tile.x && st.z === tile.z) return;
         }
         ex.delete(k);
+        const clearedNoWalk = removeRoomNoWalkFloor(currentRoomId, tile.x, tile.z);
         broadcast(currentRoomId, {
           type: "extraFloorDelta",
           roomId: currentRoomId,
           add: [],
           remove: [k],
         });
+        if (clearedNoWalk) {
+          broadcast(currentRoomId, {
+            type: "noWalkFloorDelta",
+            roomId: currentRoomId,
+            add: [],
+            remove: [k],
+          });
+        }
         schedulePersistWorldState();
         logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_extra_floor", {
           x: tile.x,

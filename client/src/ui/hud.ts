@@ -801,7 +801,7 @@ export function createHud(
   onFloorPlacementColor: (fn: (colorRgb: number) => void) => void;
   /** N×N floor paintbrush size (1 or 2). */
   onFloorBrushSize: (fn: (size: 1 | 2) => void) => void;
-  /** Floor dock: No-Walk Floor brush (paint/clear soft-blocked tiles). */
+  /** Floor dock: No-Walk Floor brush (paint/clear No-Walk Floor tiles). */
   onNoWalkFloorBrush: (fn: (active: boolean) => void) => void;
   setBuildBlockBarState: (state: BuildBlockBarState) => void;
   /** Switch Objects-scope dock category (Terrain / Props / Buildings / Prefab). */
@@ -7001,7 +7001,7 @@ export function createHud(
   floorNoWalkBrushBtn.textContent = "No-Walk Floor";
   floorNoWalkBrushBtn.setAttribute("aria-label", "No-Walk Floor brush");
   floorNoWalkBrushBtn.title =
-    "Paint soft-blocked floor (left click). Right click clears.";
+    "Paint No-Walk Floor (left click). Right click clears.";
   floorNoWalkBrushBtn.setAttribute("aria-pressed", "false");
   buildDockFloorBrushSettingRow.appendChild(floorNoWalkBrushBtn);
 

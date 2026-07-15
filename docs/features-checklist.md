@@ -75,7 +75,7 @@ Inventory of major areas as implemented in the repo. Use checkboxes for tracking
 
 - [x] `placeExtraFloor` / `removeExtraFloor` (rules: connectivity, not on core base removal incorrectly); **`colorRgb`** per tile from floor hue ring (persisted; legacy tiles default to extra-floor green); **left-click recolor** on existing core or extra floor (including under placed blocks); load merges **`world-state.json`** extra floor when split `data/rooms/*.json` omits tiles
 - [x] Floor expand mode (`F`) on client
-- [x] **No-Walk Floor** — parallel tile-keyed soft-block layer (mesh/color unchanged; pathfinding and walk intents reject); Floor dock **No-Walk Floor** brush (LMB paint / RMB clear, shared 1×1 / 2×2 size); **No-Walk Floor Cue** (red tint + X) only while floor mode is open; Build Shell + room persistence; Hub admins only; never Pixel / Canvas / World Cup pitches ([docs/adr/0011-no-walk-floor-layer.md](adr/0011-no-walk-floor-layer.md), [server/src/noWalkFloor/](../server/src/noWalkFloor/))
+- [x] **No-Walk Floor** — parallel tile-keyed walkability layer (mesh/color unchanged; pathfinding and walk intents reject); Floor dock **No-Walk Floor** brush (LMB paint / RMB clear, shared 1×1 / 2×2 size); **No-Walk Floor Cue** (red tint + X) only while floor mode is open; Build Shell + room persistence; Hub admins only; never Pixel / Canvas / World Cup pitches ([docs/adr/0011-no-walk-floor-layer.md](adr/0011-no-walk-floor-layer.md), [server/src/noWalkFloor/](../server/src/noWalkFloor/))
 - [x] `POST /api/admin/random-layout` — random extra-tile growth (no auth in current server; see [server/src/index.ts](../server/src/index.ts))
 
 ## Replay / telemetry
