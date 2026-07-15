@@ -16,6 +16,11 @@ import {
   replaceRoomAttentionMarkers,
   type AttentionMarker,
 } from "./attentionMarker/index.js";
+import {
+  getNoWalkFloorStore,
+  listRoomNoWalkFloorKeys,
+  replaceRoomNoWalkFloor,
+} from "./noWalkFloor/index.js";
 
 export type ExtraFloorColorMap = Map<string, number>;
 
@@ -184,6 +189,8 @@ type PersistedRoomGeometry = {
   baseFloorColors?: PersistedExtraFloorEntry[];
   removedBaseFloor?: string[];
   attentionMarkers?: AttentionMarker[];
+  /** Soft-blocked floor tile keys `"x,z"` (ADR 0011). */
+  noWalkFloor?: string[];
 };
 
 type PersistedRoomSpawns = {
@@ -343,6 +350,7 @@ function loadSplitWorldState(
           new Set<string>(raw.removedBaseFloor ?? [])
         );
         replaceRoomAttentionMarkers(roomId, raw.attentionMarkers ?? []);
+        replaceRoomNoWalkFloor(roomId, raw.noWalkFloor ?? []);
       } catch (e) {
         console.error(`[world] failed to load room file ${filePath}`, e);
       }
@@ -503,6 +511,7 @@ function persistWorldStateNow(): void {
   for (const k of roomBaseFloorRemoved.keys()) roomIds.add(k);
   for (const k of lastSpawnByRoom.keys()) roomIds.add(k);
   for (const k of getAttentionMarkerStore().keys()) roomIds.add(k);
+  for (const k of getNoWalkFloorStore().keys()) roomIds.add(k);
 
   ensureSplitDirs();
   const geometryRoomIds = new Set<string>();
@@ -517,6 +526,7 @@ function persistWorldStateNow(): void {
     const rb = roomBaseFloorRemoved.get(roomId);
     const spawns = lastSpawnByRoom.get(roomId);
     const attentionMarkers = listRoomAttentionMarkers(normalizedRoomId);
+    const noWalkFloor = listRoomNoWalkFloorKeys(normalizedRoomId);
     const obstacles: PersistedRoom["obstacles"] = [];
     if (placed) {
       for (const [tile, props] of placed) {
@@ -542,6 +552,7 @@ function persistWorldStateNow(): void {
       baseFloorColors.length === 0 &&
       removedBaseFloor.length === 0 &&
       attentionMarkers.length === 0 &&
+      noWalkFloor.length === 0 &&
       Object.keys(spawnObj).length === 0
     ) {
       const normalized = normalizeRoomId(roomId);
@@ -557,7 +568,8 @@ function persistWorldStateNow(): void {
       extraFloor.length > 0 ||
       baseFloorColors.length > 0 ||
       removedBaseFloor.length > 0 ||
-      attentionMarkers.length > 0
+      attentionMarkers.length > 0 ||
+      noWalkFloor.length > 0
     ) {
       geometryRoomIds.add(normalizedRoomId);
       const payload: PersistedRoomGeometry = {
@@ -568,6 +580,7 @@ function persistWorldStateNow(): void {
         ...(baseFloorColors.length > 0 ? { baseFloorColors } : {}),
         ...(removedBaseFloor.length > 0 ? { removedBaseFloor } : {}),
         ...(attentionMarkers.length > 0 ? { attentionMarkers } : {}),
+        ...(noWalkFloor.length > 0 ? { noWalkFloor } : {}),
       };
       writeJsonAtomically(roomFilePath(normalizedRoomId), payload);
     } else {

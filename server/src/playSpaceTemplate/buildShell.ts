@@ -25,6 +25,7 @@ export type BuildShellAttentionMarker = {
   x: number;
   z: number;
   hoverHeight: number;
+  sizePercent: number;
   colorRgb: number;
 };
 
@@ -40,6 +41,8 @@ export type BuildShell = {
   joinSpawn: { x: number; z: number } | null;
   /** Parallel tile-keyed Attention Markers (ADR 0009). */
   attentionMarkers?: BuildShellAttentionMarker[];
+  /** Soft-blocked floor tiles as `"x,z"` keys (ADR 0011). */
+  noWalkFloor?: string[];
 };
 
 export type LayoutSnapshotForBuildShell = {
@@ -76,6 +79,8 @@ export type LayoutSnapshotForBuildShell = {
   roomBackgroundHueDeg: number | null;
   roomBackgroundNeutral: RoomBackgroundNeutral | null;
   attentionMarkers?: BuildShellAttentionMarker[];
+  /** Soft-blocked floor tiles (ADR 0011). */
+  noWalkFloorTiles?: Array<{ x: number; z: number }>;
 };
 
 function specToTerrainProps(spec: PlaySpaceBlockSpec, locked: boolean): TerrainProps {
@@ -175,12 +180,24 @@ export function buildShellFromLayoutSnapshot(
         Number.isFinite(m.hoverHeight) &&
         Number.isFinite(m.colorRgb)
     )
-    .map((m) => ({
-      x: Math.floor(m.x),
-      z: Math.floor(m.z),
-      hoverHeight: Math.max(0, Math.min(3, Math.floor(m.hoverHeight))),
-      colorRgb: Math.max(0, Math.min(0xffffff, Math.floor(m.colorRgb))) >>> 0,
-    }));
+    .map((m) => {
+      const sizeRaw =
+        typeof (m as { sizePercent?: unknown }).sizePercent === "number"
+          ? Number((m as { sizePercent: number }).sizePercent)
+          : 100;
+      const sizeStepped = Math.round(sizeRaw / 10) * 10;
+      return {
+        x: Math.floor(m.x),
+        z: Math.floor(m.z),
+        hoverHeight: Math.max(0, Math.min(3, Math.floor(m.hoverHeight))),
+        sizePercent: Math.max(20, Math.min(100, sizeStepped)),
+        colorRgb: Math.max(0, Math.min(0xffffff, Math.floor(m.colorRgb))) >>> 0,
+      };
+    });
+
+  const noWalkFloor = (snap.noWalkFloorTiles ?? [])
+    .filter((t) => Number.isFinite(t.x) && Number.isFinite(t.z))
+    .map((t) => `${Math.floor(t.x)},${Math.floor(t.z)}`);
 
   return {
     version: BUILD_SHELL_VERSION,
@@ -205,6 +222,7 @@ export function buildShellFromLayoutSnapshot(
     backgroundNeutral: snap.roomBackgroundNeutral,
     joinSpawn,
     ...(attentionMarkers.length > 0 ? { attentionMarkers } : {}),
+    ...(noWalkFloor.length > 0 ? { noWalkFloor } : {}),
   };
 }
 
@@ -215,6 +233,7 @@ export type BuildShellRoomWriter = {
   setBaseFloorColor: (x: number, z: number, colorRgb: number) => void;
   addRemovedBaseFloor: (tileKey: string) => void;
   setAttentionMarkers?: (markers: BuildShellAttentionMarker[]) => void;
+  setNoWalkFloor?: (keys: string[]) => void;
 };
 
 export function applyBuildShell(shell: BuildShell, writer: BuildShellRoomWriter): void {
@@ -232,6 +251,7 @@ export function applyBuildShell(shell: BuildShell, writer: BuildShellRoomWriter)
     writer.addRemovedBaseFloor(key);
   }
   writer.setAttentionMarkers?.(shell.attentionMarkers ?? []);
+  writer.setNoWalkFloor?.(shell.noWalkFloor ?? []);
 }
 
 /** Join spawn tile must not be blocked by a non-passable floor obstacle. */

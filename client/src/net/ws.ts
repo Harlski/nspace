@@ -259,6 +259,8 @@ export type ServerMessage =
       extraFloorTiles: ExtraFloorTile[];
       baseFloorColorTiles?: ExtraFloorTile[];
       removedBaseFloorTiles?: ExtraFloorTile[];
+      /** Soft-blocked floor tiles (No-Walk Floor); mesh stays, walk rejects (ADR 0011). */
+      noWalkFloorTiles?: ExtraFloorTile[];
       canvasClaims?: Array<{ x: number; z: number; address: string }>;
       signboards: Array<{
         id: string;
@@ -272,6 +274,7 @@ export type ServerMessage =
         x: number;
         z: number;
         hoverHeight: number;
+        sizePercent?: number;
         colorRgb: number;
       }>;
       billboards?: BillboardState[];
@@ -415,6 +418,14 @@ export type ServerMessage =
       add: string[];
       remove: string[];
     }
+  | {
+      type: "noWalkFloorDelta";
+      roomId: string;
+      /** Tile keys ("x,z") marked No-Walk Floor. */
+      add: string[];
+      /** Tile keys ("x,z") cleared of No-Walk Floor. */
+      remove: string[];
+    }
   | { type: "canvasClaim"; x: number; z: number; address: string }
   | { type: "canvasTimer"; timeRemaining: number }
   | { type: "canvasCountdown"; text: string; msRemaining: number }
@@ -437,6 +448,7 @@ export type ServerMessage =
         x: number;
         z: number;
         hoverHeight: number;
+        sizePercent?: number;
         colorRgb: number;
       }>;
     }
@@ -825,7 +837,7 @@ export function sendPlaceAttentionMarker(
   ws: WebSocket,
   x: number,
   z: number,
-  opts?: { colorRgb?: number; hoverHeight?: number }
+  opts?: { colorRgb?: number; hoverHeight?: number; sizePercent?: number }
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   const body: Record<string, unknown> = {
@@ -835,6 +847,7 @@ export function sendPlaceAttentionMarker(
   };
   if (opts?.colorRgb !== undefined) body.colorRgb = opts.colorRgb;
   if (opts?.hoverHeight !== undefined) body.hoverHeight = opts.hoverHeight;
+  if (opts?.sizePercent !== undefined) body.sizePercent = opts.sizePercent;
   ws.send(JSON.stringify(body));
 }
 
@@ -842,7 +855,7 @@ export function sendSetAttentionMarkerProps(
   ws: WebSocket,
   x: number,
   z: number,
-  props: { colorRgb?: number; hoverHeight?: number }
+  props: { colorRgb?: number; hoverHeight?: number; sizePercent?: number }
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(
@@ -1434,6 +1447,38 @@ export function sendPlaceExtraFloor(
 export function sendRemoveExtraFloor(ws: WebSocket, x: number, z: number): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "removeExtraFloor", x, z }));
+}
+
+export function sendPaintNoWalkFloor(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  brushSize?: 1 | 2
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const payload: Record<string, unknown> = {
+    type: "paintNoWalkFloor",
+    x,
+    z,
+  };
+  if (brushSize && brushSize > 1) payload.brushSize = brushSize;
+  ws.send(JSON.stringify(payload));
+}
+
+export function sendClearNoWalkFloor(
+  ws: WebSocket,
+  x: number,
+  z: number,
+  brushSize?: 1 | 2
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const payload: Record<string, unknown> = {
+    type: "clearNoWalkFloor",
+    x,
+    z,
+  };
+  if (brushSize && brushSize > 1) payload.brushSize = brushSize;
+  ws.send(JSON.stringify(payload));
 }
 
 export function sendMoveObstacle(

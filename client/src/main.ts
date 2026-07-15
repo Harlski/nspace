@@ -83,6 +83,7 @@ import {
   postTutorialResetProgress,
   postTutorialUnstick,
   parseTutorialMineTileCoords,
+  resolveTutorialAttentionTarget,
   sendTutorialDoorPayment,
   shouldOfferTutorialUnlockGate,
   shouldShowFinishTutorialMenu,
@@ -137,11 +138,16 @@ import {
   sendPlaceUnlockPad,
   sendSetUnlockPadConfig,
   sendPlaceAttentionMarker,
+  sendSetAttentionMarkerProps,
+  sendMoveAttentionMarker,
+  sendRemoveAttentionMarker,
   sendOpenGate,
   sendConfigureTeleporter,
   sendPlaceTeleporterBidirectionalPair,
   sendPlaceExtraFloor,
   sendRemoveExtraFloor,
+  sendPaintNoWalkFloor,
+  sendClearNoWalkFloor,
   sendRemoveObstacleAt,
   sendRemoveVoxelText,
   sendSetVoxelText,
@@ -1130,6 +1136,17 @@ function enterGame(
     );
   }
 
+  function syncTutorialAttentionCue(roomId?: string | null): void {
+    const rid = roomId ?? game.getRoomId();
+    const unlockPadTile = game.findFirstUnlockPadTile();
+    const target = resolveTutorialAttentionTarget(tutorialWelcome, rid, {
+      mineTile: parseTutorialMineTileCoords(tutorialWelcome?.mineTile),
+      unlockPadTile,
+      exitTile: game.findTutorialHubExitTile(),
+    });
+    game.setTutorialAttentionCue(target);
+  }
+
   function syncTutorialStepCoach(roomId?: string | null): void {
     hud.setTutorialStepCoach(
       deriveTutorialCoachState(
@@ -1142,11 +1159,7 @@ function enterGame(
   function syncTutorialResetMenu(roomId?: string | null): void {
     const rid = normalizeRoomId(roomId ?? game.getRoomId());
     hud.setResetTutorialVisible(
-      shouldShowTutorialResetMenu(
-        rid === TUTORIAL_ROOM_ID,
-        isAdmin(address),
-        DEV_CLIENT_BYPASS
-      )
+      shouldShowTutorialResetMenu(rid === TUTORIAL_ROOM_ID)
     );
   }
 
@@ -1162,6 +1175,7 @@ function enterGame(
           "Tutorial is broken. Bet you have never heard that before :sweatsmile:."
         );
         tutorialWelcome = undefined;
+        game.setTutorialAttentionCue(null);
         syncTutorialStepCoach();
         connectToRoom(CHAMBER_ROOM_ID, undefined, { resume: false });
       })();
@@ -1212,6 +1226,7 @@ function enterGame(
         game.markUnlockPadUnlocked("tutorial-path-unlock-pad-v1");
         hud.setStatus("Path unlocked - walk through to the Hub exit.");
         syncTutorialStepCoach();
+        syncTutorialAttentionCue();
       }
       return sent.ok;
     } finally {
@@ -3098,6 +3113,15 @@ function enterGame(
 
   function removeSelectedPlacedObject(): void {
     if (!ws) return;
+    const am = game.getSelectedAttentionMarker();
+    if (am) {
+      sendRemoveAttentionMarker(ws, am.x, am.z);
+      editingTile = null;
+      hud.hideObjectEditPanel();
+      game.clearSelectedAttentionMarker();
+      syncBuildHud();
+      return;
+    }
     const sel = game.getSelectedBlockTile();
     const t = sel ?? editingTile;
     if (!t) return;
@@ -3752,13 +3776,37 @@ function enterGame(
 
   hud.onBuildPlacementStyle((patch) => {
     game.setPlacementBlockStyle(patch);
+    const am = game.getSelectedAttentionMarker();
+    if (
+      am &&
+      ws &&
+      ws.readyState === WebSocket.OPEN &&
+      patch.colorRgb !== undefined
+    ) {
+      sendSetAttentionMarkerProps(ws, am.x, am.z, {
+        colorRgb: patch.colorRgb,
+      });
+    }
     syncBuildHud();
+  });
+  hud.onAttentionMarkerHoverHeightChange((h) => {
+    const am = game.getSelectedAttentionMarker();
+    if (!am || !ws || ws.readyState !== WebSocket.OPEN) return;
+    sendSetAttentionMarkerProps(ws, am.x, am.z, { hoverHeight: h });
+  });
+  hud.onAttentionMarkerSizePercentChange((p) => {
+    const am = game.getSelectedAttentionMarker();
+    if (!am || !ws || ws.readyState !== WebSocket.OPEN) return;
+    sendSetAttentionMarkerProps(ws, am.x, am.z, { sizePercent: p });
   });
   hud.onFloorPlacementColor((rgb) => {
     game.setFloorPlacementColorRgb(rgb);
   });
   hud.onFloorBrushSize((size) => {
     game.setFloorBrushSize(size);
+  });
+  hud.onNoWalkFloorBrush((active) => {
+    game.setNoWalkFloorBrushActive(active);
   });
 
   const wireWsHandlers = (socket: WebSocket): void => {
@@ -4109,6 +4157,7 @@ function enterGame(
         sendPlaceAttentionMarker(socket, x, z, {
           colorRgb: st.colorRgb,
           hoverHeight: hud.getAttentionMarkerHoverHeight(),
+          sizePercent: hud.getAttentionMarkerSizePercent(),
         });
         return;
       }
@@ -4277,6 +4326,10 @@ function enterGame(
     });
     
     game.setMoveBlockHandler((fromX, fromZ, toX, toZ) => {
+      if (game.isRepositioningAttentionMarker()) {
+        sendMoveAttentionMarker(socket, fromX, fromZ, toX, toZ);
+        return;
+      }
       if (game.getRepositioningBillboardId()) {
         const toY = game.getNextOpenStackLevelAt(toX, toZ);
         if (toY === null || toY !== 0) return;
@@ -4305,6 +4358,14 @@ function enterGame(
     game.setRemoveExtraFloorHandler((x, z) => {
       if (streamMode) return;
       sendRemoveExtraFloor(socket, x, z);
+    });
+    game.setPaintNoWalkFloorHandler((x, z, brushSize) => {
+      if (streamMode) return;
+      sendPaintNoWalkFloor(socket, x, z, brushSize);
+    });
+    game.setClearNoWalkFloorHandler((x, z, brushSize) => {
+      if (streamMode) return;
+      sendClearNoWalkFloor(socket, x, z, brushSize);
     });
     hud.onSignpostPlace((x, z, message) => {
       socket.send(JSON.stringify({
@@ -4695,6 +4756,42 @@ function enterGame(
     }
     game.setObstacleSelectHandler(handleObstacleSelect);
     obstacleSelectAt = handleObstacleSelect;
+    game.setAttentionMarkerSelectHandler((x, z) => {
+      const m = game.getAttentionMarkerAt(x, z);
+      if (!m) return;
+      editingTile = { x, z, y: 0 };
+      hud.setAttentionMarkerHoverHeight(m.hoverHeight);
+      hud.setAttentionMarkerSizePercent(m.sizePercent ?? 100);
+      hud.showObjectEditPanel({
+        x,
+        z,
+        attentionMarkerSelection: {
+          hoverHeight: m.hoverHeight,
+          sizePercent: m.sizePercent ?? 100,
+          colorRgb: m.colorRgb,
+          onMove: () => {
+            hud.hideObjectEditPanel();
+            editingTile = null;
+            game.beginAttentionMarkerReposition(x, z);
+            syncBuildHud();
+          },
+          onRemove: () => {
+            sendRemoveAttentionMarker(socket, x, z);
+            editingTile = null;
+            hud.hideObjectEditPanel();
+            game.clearSelectedAttentionMarker();
+            syncBuildHud();
+          },
+          onClose: () => {
+            editingTile = null;
+            hud.hideObjectEditPanel();
+            game.clearSelectedAttentionMarker();
+            syncBuildHud();
+          },
+        },
+      });
+      syncBuildHud();
+    });
   };
 
   function isExitPortalTile(meta: {
@@ -5116,6 +5213,7 @@ function enterGame(
           });
         }
         syncTutorialMineHighlight();
+        syncTutorialAttentionCue(msg.roomId);
         syncTutorialStepCoach(msg.roomId);
         syncTutorialResetMenu(msg.roomId);
         if (
@@ -5129,6 +5227,7 @@ function enterGame(
         tutorialSocialSuppressed = false;
         hud.setFinishTutorialVisible(false);
         game.setTutorialMineHighlight(null);
+        game.setTutorialAttentionCue(null);
         syncTutorialStepCoach(msg.roomId);
         syncTutorialResetMenu(msg.roomId);
       }
@@ -5371,6 +5470,7 @@ function enterGame(
         extraFloorTiles: msg.extraFloorTiles,
         baseFloorColorTiles: msg.baseFloorColorTiles ?? [],
         removedBaseFloorTiles: msg.removedBaseFloorTiles ?? [],
+        noWalkFloorTiles: msg.noWalkFloorTiles ?? [],
         spawnX: msg.self.x,
         spawnZ: msg.self.z,
       });
@@ -6034,6 +6134,7 @@ function enterGame(
             "Received NIM. Stand beside the Unlock Pad and tap Unlock Pad."
           );
           syncTutorialStepCoach();
+          syncTutorialAttentionCue();
         }
         return;
       }
@@ -6171,6 +6272,12 @@ function enterGame(
     if (msg.type === "removedBaseFloorDelta") {
       if (normalizeRoomId(msg.roomId) === normalizeRoomId(game.getRoomId())) {
         game.applyRemovedBaseFloorDelta(msg.add, msg.remove);
+      }
+      syncBuildHud();
+    }
+    if (msg.type === "noWalkFloorDelta") {
+      if (normalizeRoomId(msg.roomId) === normalizeRoomId(game.getRoomId())) {
+        game.applyNoWalkFloorDelta(msg.add, msg.remove);
       }
       syncBuildHud();
     }
@@ -6574,6 +6681,7 @@ function enterGame(
       tutorialWelcome = undefined;
       game.setUnlockedPadInstanceIds([]);
       game.setTutorialMineHighlight(null);
+      game.setTutorialAttentionCue(null);
       syncTutorialStepCoach();
       hud.setStatus("Tutorial reset - back to Mine.");
       connectToRoom(TUTORIAL_ROOM_ID, undefined, { resume: false });
@@ -7140,6 +7248,25 @@ function enterGame(
           syncObjectPrefabModes("prefab");
         }
         syncBuildHud();
+      }
+      if (
+        (game.getBuildMode() || game.getFloorExpandMode()) &&
+        !inFormField &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        (e.key === "1" || e.key === "2" || e.key === "3" || e.key === "4")
+      ) {
+        const byKey = {
+          "1": "terrain",
+          "2": "props",
+          "3": "buildings",
+          "4": "prefab",
+        } as const;
+        if (hud.selectBuildDockCategory(byKey[e.key])) {
+          e.preventDefault();
+        }
+        return;
       }
       if (game.getBuildMode() && !inFormField) {
         const k = e.key;

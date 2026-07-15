@@ -59,7 +59,7 @@ Use **Reference ID** in feedback (e.g. “increase `build-dock-context-mods` scr
 | `build-dock-panel-selection` | `.hud-build-bottom-dock__panel--selection` | Modifier while a map object is selected |
 | `build-dock-deselect` | `.hud-build-bottom-dock__deselect` | White circle **×** on the **Selected** GL preview (top-right of thumbnail); clears selection (`onObjectSelectionDismiss`) |
 | `build-dock-tabs` | `.hud-build-bottom-dock__tabs` | Tab row + edit-scope select |
-| `build-dock-category-tabs` | `.hud-build-bottom-dock__category-tabs` | **Terrain / Props / Buildings** |
+| `build-dock-category-tabs` | `.hud-build-bottom-dock__category-tabs` | **Terrain / Props / Buildings / Prefab** (keys **1–4** while build menu open) |
 | `build-dock-edit-scope` | `.hud-build-bottom-dock__edit-scope` | **Objects / Room** picker; **rotate** (ramps or plain **cube Y** via ↺ ↻ / **R**; **Rot X/Y/Z** steppers in context column) and **delete** (`nq-cross`, selected object) beside it |
 | `build-dock-selection-delete` | `.hud-build-bottom-dock__rotate--delete` | Deletes the selected placed object (same as **D** on desktop) |
 | `build-dock-picker-row` | `.hud-build-bottom-dock__row--picker` | Tool strip + context grid |
@@ -67,13 +67,14 @@ Use **Reference ID** in feedback (e.g. “increase `build-dock-context-mods` scr
 
 ### Category tabs → tools
 
-| Tab label | `BuildDockCategoryId` | Tools in strip |
-|-----------|----------------------|----------------|
-| **Terrain** | `terrain` | Cube + shape variants (see below) |
-| **Props** | `props` | Signpost |
-| **Buildings** | `buildings` | Teleporter, Gate, Unlock Pad, Attention Marker, Billboard (billboard / unlock pad / attention marker may require admin) |
+| Tab label | `BuildDockCategoryId` | Hotkey | Tools in strip |
+|-----------|----------------------|--------|----------------|
+| **Terrain** | `terrain` | `1` | Cube + shape variants (see below) |
+| **Props** | `props` | `2` | Signpost |
+| **Buildings** | `buildings` | `3` | Teleporter, Gate, Unlock Pad, Attention Marker, Billboard (billboard / unlock pad / attention marker may require admin) |
+| **Prefab** | `prefab` | `4` | Prefab picker |
 
-Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
+Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`. While the build dock is open (Objects scope), `1`–`4` call `selectBuildDockCategory` (also switches from Room scope to Objects when needed).
 
 ### Tool strip (placement list)
 
@@ -122,6 +123,7 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`.
 | `palette-hue-ring` | `createPaletteHueRing()` in [`paletteHueRing.ts`](../client/src/ui/paletteHueRing.ts) | Shared circular hue control; **center click** opens custom `#RRGGBB` popover ([`paletteHueHexPopover.ts`](../client/src/ui/paletteHueHexPopover.ts)) |
 | `build-dock-placement-hue-row` | `.hud-mode-sidebar__shape-color-row--placement` | Ring while **placing** next object |
 | `build-dock-floor-hue-row` | `.hud-mode-sidebar__shape-color-row--floor` | Ring on **Floor** tab (Room scope); tints **hover preview**; **left-click** places new tiles or **recolors** existing core/extra floor (`colorRgb` on `placeExtraFloor`), including tiles with blocks on top |
+| `build-dock-floor-no-walk` | `.hud-build-bottom-dock__floor-no-walk-btn` | Floor dock **No-Walk Floor** brush toggle; when active, LMB / RMB paint or clear soft-blocked tiles (`paintNoWalkFloor` / `clearNoWalkFloor`) instead of recolor; shared Size `1×1` / `2×2`; marked tiles show **No-Walk Floor Cue** (red tint + X) only while floor mode is open ([ADR 0011](adr/0011-no-walk-floor-layer.md)) |
 | `build-dock-selection-hue-row` | `.hud-mode-sidebar__shape-color-row--selection` | Ring while **editing** selected tile |
 | `hue-dock` | `.hud-mode-sidebar__hue-dock` | Stack under color column (room sky, guest entry, selection ring) |
 
@@ -188,6 +190,7 @@ flowchart LR
 
 | Function / handler | File | Purpose |
 |--------------------|------|---------|
+| `selectBuildDockCategory(cat)` | `hud.ts` | Objects category tab (also keys **1–4** from `main.ts`) |
 | `syncBuildBottomDockVisibility()` | `hud.ts` | Show/hide dock in build/floor |
 | `syncBuildDockToolStrip()` | `hud.ts` | Rebuild tool cards + thumbnails |
 | `syncBuildDockFromToolSelect()` | `hud.ts` | Sync labels, category highlight, strip |

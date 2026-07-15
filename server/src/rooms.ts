@@ -325,6 +325,16 @@ import {
   type AttentionMarker,
 } from "./attentionMarker/index.js";
 import {
+  addRoomNoWalkFloor,
+  clearRoomNoWalkFloorGlobal,
+  listRoomNoWalkFloor,
+  listRoomNoWalkFloorKeys,
+  noWalkFloorReadonly,
+  removeRoomNoWalkFloor,
+  replaceRoomNoWalkFloor,
+} from "./noWalkFloor/index.js";
+import { canPaintNoWalkFloor } from "./noWalkFloor/policy.js";
+import {
   PLAY_SPACE_BACKGROUND_HUE_DEG,
   PLAY_SPACE_SPAWN,
 } from "./directInvite/playSpaceLayout.js";
@@ -1239,6 +1249,30 @@ function canRecolorFloorInRoom(roomId: string, address: string): boolean {
   return canEditRoomContent(roomId, address);
 }
 
+/** No-Walk Floor paint/erase ACL (ADR 0011): Hub admins only; never Pixel/Canvas/World Cup. */
+function canPaintNoWalkFloorInRoom(roomId: string, address: string): boolean {
+  const id = normalizeRoomId(roomId);
+  return canPaintNoWalkFloor({
+    isAdmin: isAdmin(address),
+    canEditContent: canEditRoomContent(id, address),
+    isHub: id === HUB_ROOM_ID,
+    isPixel: id === PIXEL_ROOM_ID,
+    isCanvas: id === CANVAS_ROOM_ID,
+    isWorldCupField: worldcupIsFieldLikeRoom(id),
+    isCosmeticGallery: isCosmeticGalleryRoom(id),
+  });
+}
+
+/** Floor mesh still present (not a removed-base hole); independent of No-Walk walkability. */
+function tileHasFloorMesh(roomId: string, x: number, z: number): boolean {
+  const k = tileKey(x, z);
+  if (isPlayerCreatedRoom(roomId) && roomBaseFloorRemoved.get(roomId)?.has(k)) {
+    return false;
+  }
+  if (isBaseTile(x, z, roomId)) return true;
+  return extraFloorMap(roomId).has(k);
+}
+
 /** Same rooms where the wallet may place blocks (Hub, owned wallet room, etc.). */
 function canPublishDesign(roomId: string, address: string): boolean {
   return canPlaceBlocksInRoom(roomId, address);
@@ -1267,6 +1301,8 @@ type OutMsg =
       baseFloorColorTiles?: ExtraFloorTile[];
       /** Base tiles removed in custom rooms (same shape as extra floor coords). */
       removedBaseFloorTiles?: ExtraFloorTile[];
+      /** Soft-blocked floor tiles (ADR 0011); mesh stays, walk rejects. */
+      noWalkFloorTiles?: ExtraFloorTile[];
       canvasClaims?: Array<{ x: number; z: number; address: string }>;
       signboards: Array<{
         id: string;
@@ -1425,6 +1461,14 @@ type OutMsg =
       /** Tile keys added to the "removed base" set (floor hole). */
       add: string[];
       /** Tile keys removed from the set (restore base floor). */
+      remove: string[];
+    }
+  | {
+      type: "noWalkFloorDelta";
+      roomId: string;
+      /** Tile keys newly marked No-Walk. */
+      add: string[];
+      /** Tile keys cleared of No-Walk. */
       remove: string[];
     }
   | { type: "canvasClaim"; x: number; z: number; address: string }
@@ -1859,7 +1903,8 @@ function spatialFilteredOutMsgType(type: OutMsg["type"]): boolean {
     type === "obstaclesDelta" ||
     type === "baseFloorColorDelta" ||
     type === "extraFloorDelta" ||
-    type === "removedBaseFloorDelta"
+    type === "removedBaseFloorDelta" ||
+    type === "noWalkFloorDelta"
   );
 }
 
@@ -2289,6 +2334,7 @@ function ensurePlaySpaceLayout(roomId: string): void {
       roomExtraFloor.delete(roomId);
       roomBaseFloorRemoved.delete(roomId);
       clearRoomAttentionMarkersGlobal(roomId);
+      clearRoomNoWalkFloorGlobal(roomId);
     },
     setObstacle: (tile, props) => {
       placedMap(roomId).set(tile, { ...props, locked: false });
@@ -2305,6 +2351,9 @@ function ensurePlaySpaceLayout(roomId: string): void {
     setAttentionMarkers: (markers) => {
       replaceRoomAttentionMarkers(roomId, markers);
     },
+    setNoWalkFloor: (keys) => {
+      replaceRoomNoWalkFloor(roomId, keys);
+    },
   });
 }
 
@@ -2318,6 +2367,7 @@ function clearPlaySpaceLayout(roomId: string): void {
   roomExtraFloor.delete(roomId);
   roomBaseFloorRemoved.delete(roomId);
   clearRoomAttentionMarkersGlobal(roomId);
+  clearRoomNoWalkFloorGlobal(roomId);
   lastSpawnByRoom.delete(roomId);
 }
 
@@ -2383,6 +2433,7 @@ function ensureTutorialRoomLayout(roomId: string): void {
       roomExtraFloor.delete(id);
       roomBaseFloorRemoved.delete(id);
       clearRoomAttentionMarkersGlobal(id);
+      clearRoomNoWalkFloorGlobal(id);
     },
     setObstacle: (tile, props) => {
       placedMap(id).set(tile, { ...props, locked: false });
@@ -2398,6 +2449,9 @@ function ensureTutorialRoomLayout(roomId: string): void {
     },
     setAttentionMarkers: (markers) => {
       replaceRoomAttentionMarkers(id, markers);
+    },
+    setNoWalkFloor: (keys) => {
+      replaceRoomNoWalkFloor(id, keys);
     },
   });
 }
@@ -2416,6 +2470,12 @@ function broadcastTutorialRoomLayout(roomId: string): void {
     tiles: extraFloorToList(id),
   });
   broadcastAttentionMarkers(id);
+  broadcast(id, {
+    type: "noWalkFloorDelta",
+    roomId: id,
+    add: listRoomNoWalkFloorKeys(id),
+    remove: [],
+  });
   const baseColors = baseFloorColorToList(id);
   if (baseColors.length > 0) {
     broadcast(id, {
@@ -2435,6 +2495,7 @@ export function refreshTutorialRuntimeLayoutFromTemplate(): void {
   roomExtraFloor.delete(TUTORIAL_ROOM_ID);
   roomBaseFloorRemoved.delete(TUTORIAL_ROOM_ID);
   clearRoomAttentionMarkersGlobal(TUTORIAL_ROOM_ID);
+  clearRoomNoWalkFloorGlobal(TUTORIAL_ROOM_ID);
   ensureTutorialRoomLayout(TUTORIAL_ROOM_ID);
   broadcastTutorialRoomLayout(TUTORIAL_ROOM_ID);
 }
@@ -2865,6 +2926,7 @@ function resolveNearestTerrainNode(
 ): { x: number; z: number; layer: 0 | 1 } | null {
   const extra = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
+  const nw = noWalkReadonly(roomId);
   const center = snapToTile(px, pz);
   let bestD = Number.POSITIVE_INFINITY;
   let best: { x: number; z: number; layer: 0 | 1 } | null = null;
@@ -2878,9 +2940,10 @@ function resolveNearestTerrainNode(
           roomId,
           br,
           moverCtx.address,
-          moverCtx.nowMs
+          moverCtx.nowMs,
+          nw
         )
-      : floorWalkableTerrain(x, z, placed, extra, roomId, br);
+      : floorWalkableTerrain(x, z, placed, extra, roomId, br, nw);
   for (let dz = -1; dz <= 1; dz++) {
     for (let dx = -1; dx <= 1; dx++) {
       const x = center.x + dx;
@@ -2918,6 +2981,7 @@ function resolvePathfindStartNode(
 ): { x: number; z: number; layer: 0 | 1 } | null {
   const extra = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
+  const nw = noWalkReadonly(roomId);
   const t = snapToTile(p.x, p.z);
   const layer = inferStartLayer(p, placed, moverCtx, roomId);
   const floorOk =
@@ -2931,9 +2995,10 @@ function resolvePathfindStartNode(
           roomId,
           br,
           moverCtx.address,
-          moverCtx.nowMs
+          moverCtx.nowMs,
+          nw
         )
-      : floorWalkableTerrain(t.x, t.z, placed, extra, roomId, br));
+      : floorWalkableTerrain(t.x, t.z, placed, extra, roomId, br, nw));
   const ok =
     floorOk || (layer === 1 && level1SurfaceOpen(placed, t.x, t.z));
   if (ok) return { x: t.x, z: t.z, layer };
@@ -3023,7 +3088,8 @@ function findRecoveryTerrainPath(
       extra,
       roomId,
       baseRemovedReadonly(roomId),
-      moverCtx ?? undefined
+      moverCtx ?? undefined,
+      noWalkReadonly(roomId)
     );
     if (full && full.length > 0) {
       return {
@@ -3340,6 +3406,10 @@ function baseRemovedReadonly(
   return s;
 }
 
+function noWalkReadonly(roomId: string): ReadonlySet<string> | null {
+  return noWalkFloorReadonly(roomId);
+}
+
 function removedBaseFloorToList(roomId: string): ExtraFloorTile[] {
   const s = roomBaseFloorRemoved.get(roomId);
   if (!s) return [];
@@ -3450,7 +3520,8 @@ function isWalkableForRoom(roomId: string, x: number, z: number): boolean {
     z,
     extraFloorMap(roomId),
     roomId,
-    baseRemovedReadonly(roomId)
+    baseRemovedReadonly(roomId),
+    noWalkReadonly(roomId)
   );
 }
 
@@ -3459,10 +3530,11 @@ function canPlaceExtraFloor(roomId: string, x: number, z: number): boolean {
   if (isPlayerCreatedRoom(roomId)) return false;
   const ex = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
+  const nw = noWalkReadonly(roomId);
   if (ex.has(tileKey(x, z))) return false;
   if (isBaseTile(x, z, roomId)) return false;
   for (const [dx, dz] of ADJ_DIRS) {
-    if (isWalkableTile(x + dx, z + dz, ex, roomId, br)) return true;
+    if (isWalkableTile(x + dx, z + dz, ex, roomId, br, nw)) return true;
   }
   return false;
 }
@@ -3682,7 +3754,8 @@ function teleporterLandingContext(): TeleporterLandingContext {
         placedMap(roomId),
         extraFloorMap(roomId),
         roomId,
-        baseRemovedReadonly(roomId)
+        baseRemovedReadonly(roomId),
+        noWalkReadonly(roomId)
       ),
     resolveDefaultSpawnForPlayerRoom,
   };
@@ -3951,6 +4024,17 @@ function sendInterestChunkLoad(
       remove: [],
     });
   }
+  const addNoWalk = listRoomNoWalkFloor(roomId).filter((t) =>
+    tileInInterestChunks(t.x, t.z, chunks)
+  );
+  if (addNoWalk.length > 0) {
+    wsSafeSend(conn.ws, {
+      type: "noWalkFloorDelta",
+      roomId,
+      add: addNoWalk.map((t) => tileKey(t.x, t.z)),
+      remove: [],
+    });
+  }
 }
 
 function sendInterestChunkUnload(
@@ -4003,6 +4087,18 @@ function sendInterestChunkUnload(
       remove: remRemoved,
     });
   }
+  const noWalkSet = noWalkFloorReadonly(roomId);
+  const remNoWalk = noWalkSet
+    ? tileKeysInChunks(noWalkSet, chunks)
+    : [];
+  if (remNoWalk.length > 0) {
+    wsSafeSend(conn.ws, {
+      type: "noWalkFloorDelta",
+      roomId,
+      add: [],
+      remove: remNoWalk,
+    });
+  }
 }
 
 function updateClientViewInterest(
@@ -4044,6 +4140,7 @@ function welcomeSpatialLists(
   extraFloorTiles: ExtraFloorTile[];
   baseFloorColorTiles: ExtraFloorTile[];
   removedBaseFloorTiles: ExtraFloorTile[];
+  noWalkFloorTiles: ExtraFloorTile[];
 } {
   const chunks = conn.subscribedChunks;
   return {
@@ -4051,6 +4148,9 @@ function welcomeSpatialLists(
     extraFloorTiles: extraFloorInChunks(roomId, chunks),
     baseFloorColorTiles: baseFloorColorInChunks(roomId, chunks),
     removedBaseFloorTiles: removedBaseFloorInChunks(roomId, chunks),
+    noWalkFloorTiles: listRoomNoWalkFloor(roomId).filter((t) =>
+      tileInInterestChunks(t.x, t.z, chunks)
+    ),
   };
 }
 
@@ -4360,6 +4460,8 @@ export type RoomLayoutSnapshot = {
   extraFloorTiles: ExtraFloorTile[];
   baseFloorColorTiles: ExtraFloorTile[];
   removedBaseFloorTiles: ExtraFloorTile[];
+  /** Soft-blocked floor (ADR 0011). */
+  noWalkFloorTiles: ExtraFloorTile[];
   signboards: Array<{
     id: string;
     x: number;
@@ -4421,6 +4523,7 @@ export function getRoomLayoutSnapshot(roomIdRaw: string): RoomLayoutSnapshot | n
     extraFloorTiles: spatial ? [] : extraFloorToList(roomId),
     baseFloorColorTiles: spatial ? [] : baseFloorColorToList(roomId),
     removedBaseFloorTiles: spatial ? [] : removedBaseFloorToList(roomId),
+    noWalkFloorTiles: spatial ? [] : listRoomNoWalkFloor(roomId),
     signboards,
     attentionMarkers: listRoomAttentionMarkers(roomId),
     billboards: getBillboardsForRoom(roomId).map(billboardToWire),
@@ -4867,10 +4970,11 @@ function placePendingTeleporterAt(
   const placed = placedMap(roomId);
   const extra = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
+  const nw = noWalkReadonly(roomId);
   const yLevel = nextOpenStackLevel(placed, x, z);
   if (yLevel === null) return false;
   if (
-    !canPlaceTeleporterAt(roomId, x, z, yLevel, placed, extra, br)
+    !canPlaceTeleporterAt(roomId, x, z, yLevel, placed, extra, br, nw)
   ) {
     return false;
   }
@@ -5231,6 +5335,7 @@ function placeBidirectionalTeleporterPairAt(
   const placed = placedMap(roomId);
   const extra = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
+  const nw = noWalkReadonly(roomId);
   const nRoom = normalizeRoomId(roomId);
 
   const srcResolved = getPlacedAtLevel(placed, srcX, srcZ, srcY);
@@ -5262,7 +5367,7 @@ function placeBidirectionalTeleporterPairAt(
   const dt = snapToTile(destX, destZ);
   const destY = nextOpenStackLevel(placed, dt.x, dt.z);
   if (destY === null) return false;
-  if (!canPlaceTeleporterAt(roomId, dt.x, dt.z, destY, placed, extra, br)) {
+  if (!canPlaceTeleporterAt(roomId, dt.x, dt.z, destY, placed, extra, br, nw)) {
     return false;
   }
   if (normalizeRoomId(roomId) === HUB_ROOM_ID && isHubSpawnSafeZone(dt.x, dt.z)) return false;
@@ -5421,11 +5526,12 @@ function placePendingGateAt(
   const placed = placedMap(roomId);
   const extra = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
+  const nw = noWalkReadonly(roomId);
 
   const yLevel = nextOpenStackLevel(placed, x, z);
   if (yLevel !== 0) return false;
 
-  if (!canPlaceTeleporterFoot(roomId, x, z, placed, extra, br)) return false;
+  if (!canPlaceTeleporterFoot(roomId, x, z, placed, extra, br, nw)) return false;
 
   const dirIdx = Math.max(0, Math.min(3, Math.floor(exitDir)));
   /** Swing variant removed from UX; hinge direction is derived from exit side on the client. */
@@ -5510,10 +5616,11 @@ function placeUnlockPadAt(
   const placed = placedMap(roomId);
   const extra = extraFloorMap(roomId);
   const br = baseRemovedReadonly(roomId);
+  const nw = noWalkReadonly(roomId);
 
   const yLevel = nextOpenStackLevel(placed, x, z);
   if (yLevel !== 0) return false;
-  if (!canPlaceTeleporterFoot(roomId, x, z, placed, extra, br)) return false;
+  if (!canPlaceTeleporterFoot(roomId, x, z, placed, extra, br, nw)) return false;
 
   for (const c of rooms.get(normalizeRoomId(roomId))?.values() ?? []) {
     const st = snapToTile(c.player.x, c.player.z);
@@ -6092,6 +6199,9 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       removedBaseFloorTiles: teleportSpatialWelcome
         ? teleportSpatialWelcome.removedBaseFloorTiles
         : removedBaseFloorToList(targetRoomId),
+      noWalkFloorTiles: teleportSpatialWelcome
+        ? teleportSpatialWelcome.noWalkFloorTiles
+        : listRoomNoWalkFloor(targetRoomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
       attentionMarkers: listRoomAttentionMarkers(targetRoomId),
@@ -7775,7 +7885,8 @@ export function startRoomTick(): void {
                   blocked,
                   extra,
                   roomId,
-                  baseRemovedReadonly(roomId)
+                  baseRemovedReadonly(roomId),
+                  noWalkReadonly(roomId)
                 );
                 if (full && full.length > 1) {
                   bot.pathQueue = full.slice(1, 1 + FAKE_PATH_MAX_STEPS);
@@ -8262,6 +8373,9 @@ export function addClient(
       removedBaseFloorTiles: spatialWelcome
         ? spatialWelcome.removedBaseFloorTiles
         : removedBaseFloorToList(roomId),
+      noWalkFloorTiles: spatialWelcome
+        ? spatialWelcome.noWalkFloorTiles
+        : listRoomNoWalkFloor(roomId),
       canvasClaims: isCanvas ? getClaimsInBounds(rb.minX, rb.maxX, rb.minZ, rb.maxZ) : undefined,
       signboards,
       attentionMarkers: listRoomAttentionMarkers(roomId),
@@ -9468,7 +9582,8 @@ export function addClient(
         extra,
         currentRoomId,
         baseRemovedReadonly(currentRoomId),
-        moverCtx
+        moverCtx,
+        noWalkReadonly(currentRoomId)
       );
       if (!full || full.length === 0) {
         const prevWorld = { x: p.x, y: p.y, z: p.z };
@@ -10106,6 +10221,7 @@ export function addClient(
         x: tile.x,
         z: tile.z,
         hoverHeight: msg.hoverHeight,
+        sizePercent: msg.sizePercent,
         colorRgb,
       });
       if (!marker) return;
@@ -10138,10 +10254,13 @@ export function addClient(
           : existing.colorRgb;
       const hoverHeight =
         msg.hoverHeight !== undefined ? msg.hoverHeight : existing.hoverHeight;
+      const sizePercent =
+        msg.sizePercent !== undefined ? msg.sizePercent : existing.sizePercent;
       const marker = upsertRoomAttentionMarker(currentRoomId, {
         x: tile.x,
         z: tile.z,
         hoverHeight,
+        sizePercent,
         colorRgb,
       });
       if (!marker) return;
@@ -10324,22 +10443,9 @@ export function addClient(
       if (Math.abs(frontX - gx) + Math.abs(frontZ - gz) !== 1) return;
       const extra = extraFloorMap(currentRoomId);
       const br = baseRemovedReadonly(currentRoomId);
-      const exitWalkable = floorWalkableTerrain(
-        ex,
-        ez,
-        placed,
-        extra,
-        currentRoomId,
-        br
-      );
-      const frontWalkable = floorWalkableTerrain(
-        frontX,
-        frontZ,
-        placed,
-        extra,
-        currentRoomId,
-        br
-      );
+      const nw = noWalkReadonly(currentRoomId);
+      const exitWalkable = floorWalkableTerrain(ex, ez, placed, extra, currentRoomId, br, nw);
+      const frontWalkable = floorWalkableTerrain(frontX, frontZ, placed, extra, currentRoomId, br, nw);
       const who = compactAddress(address);
 
       if (!exitWalkable || !frontWalkable) {
@@ -10414,7 +10520,8 @@ export function addClient(
         extra,
         currentRoomId,
         br,
-        moverCtx
+        moverCtx,
+        nw
       );
       if (!full || full.length < 1) {
         clearConnPathQueue(currentRoomId, address, conn);
@@ -11770,12 +11877,21 @@ export function addClient(
         }
         rm.add(k);
         baseFloorColorMap(currentRoomId).delete(k);
+        const clearedNoWalk = removeRoomNoWalkFloor(currentRoomId, tile.x, tile.z);
         broadcast(currentRoomId, {
           type: "removedBaseFloorDelta",
           roomId: currentRoomId,
           add: [k],
           remove: [],
         });
+        if (clearedNoWalk) {
+          broadcast(currentRoomId, {
+            type: "noWalkFloorDelta",
+            roomId: currentRoomId,
+            add: [],
+            remove: [k],
+          });
+        }
         schedulePersistWorldState();
         logGameplayEvent(conn.sessionId, address, currentRoomId, "remove_base_floor", {
           x: tile.x,
@@ -11783,6 +11899,56 @@ export function addClient(
         });
         return;
       }
+      return;
+    }
+
+    if (msg.type === "paintNoWalkFloor" || msg.type === "clearNoWalkFloor") {
+      if (!canPaintNoWalkFloorInRoom(currentRoomId, address)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const anchor = snapToTile(tx, tz);
+      const brushSize = parseFloorBrushSize(
+        (msg as { brushSize?: unknown }).brushSize
+      );
+      const tiles =
+        brushSize === 1
+          ? [anchor]
+          : floorBrushTiles(anchor.x, anchor.z, brushSize);
+      const paint = msg.type === "paintNoWalkFloor";
+      const add: string[] = [];
+      const remove: string[] = [];
+      for (const tile of tiles) {
+        if (!withinFloorActionRangeNow(conn, currentRoomId, tile.x, tile.z)) continue;
+        if (!tileHasFloorMesh(currentRoomId, tile.x, tile.z)) continue;
+        if (paint) {
+          if (addRoomNoWalkFloor(currentRoomId, tile.x, tile.z)) {
+            add.push(tileKey(tile.x, tile.z));
+          }
+        } else if (removeRoomNoWalkFloor(currentRoomId, tile.x, tile.z)) {
+          remove.push(tileKey(tile.x, tile.z));
+        }
+      }
+      if (add.length === 0 && remove.length === 0) return;
+      broadcast(currentRoomId, {
+        type: "noWalkFloorDelta",
+        roomId: currentRoomId,
+        add,
+        remove,
+      });
+      schedulePersistWorldState();
+      logGameplayEvent(
+        conn.sessionId,
+        address,
+        currentRoomId,
+        paint ? "paint_no_walk_floor" : "clear_no_walk_floor",
+        { addCount: add.length, removeCount: remove.length }
+      );
       return;
     }
 

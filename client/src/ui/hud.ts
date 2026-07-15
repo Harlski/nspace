@@ -512,6 +512,10 @@ export function createHud(
   deactivateAttentionMarkerMode: () => void;
   getAttentionMarkerHoverHeight: () => number;
   setAttentionMarkerHoverHeight: (h: number) => void;
+  onAttentionMarkerHoverHeightChange: (fn: ((h: number) => void) | null) => void;
+  getAttentionMarkerSizePercent: () => number;
+  setAttentionMarkerSizePercent: (p: number) => void;
+  onAttentionMarkerSizePercentChange: (fn: ((p: number) => void) | null) => void;
   /** Current room id for Unlock Pad Settings (proof mode lock in Tutorial Room). */
   setUnlockPadSettingsRoomId: (roomId: string) => void;
   getUnlockPadPlacementConfig: () => {
@@ -731,6 +735,18 @@ export function createHud(
             onClose: () => void;
           };
         }
+      | {
+          x: number;
+          z: number;
+          attentionMarkerSelection: {
+            hoverHeight: number;
+            sizePercent: number;
+            colorRgb: number;
+            onMove: () => void;
+            onRemove: () => void;
+            onClose: () => void;
+          };
+        }
   ) => void;
   hideObjectEditPanel: () => void;
   /** True while a placed object / billboard is selected in build mode. */
@@ -785,7 +801,13 @@ export function createHud(
   onFloorPlacementColor: (fn: (colorRgb: number) => void) => void;
   /** N×N floor paintbrush size (1 or 2). */
   onFloorBrushSize: (fn: (size: 1 | 2) => void) => void;
+  /** Floor dock: No-Walk Floor brush (paint/clear soft-blocked tiles). */
+  onNoWalkFloorBrush: (fn: (active: boolean) => void) => void;
   setBuildBlockBarState: (state: BuildBlockBarState) => void;
+  /** Switch Objects-scope dock category (Terrain / Props / Buildings / Prefab). */
+  selectBuildDockCategory: (
+    cat: "terrain" | "props" | "buildings" | "prefab"
+  ) => boolean;
   refreshBuildDockToolStrip: () => void;
   refreshPrefabAuthoringChrome: () => void;
   setPrefabSnapshotForThumb: (
@@ -2400,12 +2422,17 @@ export function createHud(
   tutorialStepCoach.setAttribute("role", "status");
   tutorialStepCoach.setAttribute("aria-live", "polite");
   tutorialStepCoach.innerHTML = `
-    <div class="tutorial-step-coach__steps" aria-hidden="true">
-      <span class="tutorial-step-coach__step" data-step="mine"><span class="tutorial-step-coach__num">1</span> Mine</span>
-      <span class="tutorial-step-coach__sep" aria-hidden="true">·</span>
-      <span class="tutorial-step-coach__step" data-step="pay"><span class="tutorial-step-coach__num">2</span> Pay</span>
-      <span class="tutorial-step-coach__sep" aria-hidden="true">·</span>
-      <span class="tutorial-step-coach__step" data-step="exit"><span class="tutorial-step-coach__num">3</span> Exit</span>
+    <div class="tutorial-step-coach__row">
+      <div class="tutorial-step-coach__steps" aria-hidden="true">
+        <span class="tutorial-step-coach__step" data-step="mine"><span class="tutorial-step-coach__num">1</span> Mine</span>
+        <span class="tutorial-step-coach__sep" aria-hidden="true">·</span>
+        <span class="tutorial-step-coach__step" data-step="pay"><span class="tutorial-step-coach__num">2</span> Pay</span>
+        <span class="tutorial-step-coach__sep" aria-hidden="true">·</span>
+        <span class="tutorial-step-coach__step" data-step="exit"><span class="tutorial-step-coach__num">3</span> Exit</span>
+      </div>
+      <button type="button" class="tutorial-step-coach__reset" hidden>
+        Start over
+      </button>
     </div>
     <div class="tutorial-step-coach__hint"></div>
   `;
@@ -2415,6 +2442,15 @@ export function createHud(
   const tutorialStepCoachSteps = Array.from(
     tutorialStepCoach.querySelectorAll(".tutorial-step-coach__step")
   ) as HTMLElement[];
+  const tutorialStepCoachResetBtn = tutorialStepCoach.querySelector(
+    ".tutorial-step-coach__reset"
+  ) as HTMLButtonElement;
+  tutorialStepCoachResetBtn.title = "Reset tutorial progress to Mine";
+  tutorialStepCoachResetBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resetTutorialHandler();
+  });
   let tutorialStepCoachPulseTimer: ReturnType<typeof setTimeout> | null = null;
   topWrap.appendChild(tutorialStepCoach);
 
@@ -6658,40 +6694,76 @@ export function createHud(
             </div>
           </div>
           <div
-            class="tile-inspector__param"
+            class="tile-inspector__param tile-inspector__param--stepper"
             data-build-dock-param="attention-marker-hover"
             hidden
           >
-            <label class="tile-inspector__param-label" for="tile-inspector-attention-hover"
-              >Hover Height</label
-            >
+            <span class="tile-inspector__param-label">Hover Height</span>
             <div class="tile-inspector__param-stepper">
               <button
                 type="button"
                 class="tile-inspector__param-step hud-build-bottom-dock__step"
-                data-attention-hover-delta="-1"
+                id="tile-inspector-attention-hover-dec"
                 aria-label="Lower hover height"
               >
                 −
               </button>
-              <input
-                type="number"
-                id="tile-inspector-attention-hover"
-                class="tile-inspector__param-input"
-                min="0"
-                max="3"
-                step="1"
-                value="1"
-              />
               <button
                 type="button"
                 class="tile-inspector__param-step hud-build-bottom-dock__step"
-                data-attention-hover-delta="1"
+                id="tile-inspector-attention-hover-inc"
                 aria-label="Raise hover height"
               >
                 +
               </button>
+              <span
+                class="tile-inspector__param-step-value"
+                id="tile-inspector-attention-hover-val"
+                >1</span
+              >
             </div>
+            <input
+              type="hidden"
+              id="tile-inspector-attention-hover"
+              value="1"
+              aria-valuetext="1"
+            />
+          </div>
+          <div
+            class="tile-inspector__param tile-inspector__param--stepper"
+            data-build-dock-param="attention-marker-size"
+            hidden
+          >
+            <span class="tile-inspector__param-label">Size</span>
+            <div class="tile-inspector__param-stepper">
+              <button
+                type="button"
+                class="tile-inspector__param-step hud-build-bottom-dock__step"
+                id="tile-inspector-attention-size-dec"
+                aria-label="Decrease attention marker size"
+              >
+                −
+              </button>
+              <button
+                type="button"
+                class="tile-inspector__param-step hud-build-bottom-dock__step"
+                id="tile-inspector-attention-size-inc"
+                aria-label="Increase attention marker size"
+              >
+                +
+              </button>
+              <span
+                class="tile-inspector__param-step-value"
+                id="tile-inspector-attention-size-val"
+                >100%</span
+              >
+            </div>
+            <input
+              type="hidden"
+              id="tile-inspector-attention-size"
+              value="100"
+              aria-valuetext="100%"
+            />
           </div>
         </div>
       </div>
@@ -6921,6 +6993,18 @@ export function createHud(
     floorBrushSizeLabel,
     floorBrushSizeSelect
   );
+
+  const floorNoWalkBrushBtn = document.createElement("button");
+  floorNoWalkBrushBtn.type = "button";
+  floorNoWalkBrushBtn.className =
+    "hud-build-bottom-dock__floor-no-walk-btn";
+  floorNoWalkBrushBtn.textContent = "No-Walk Floor";
+  floorNoWalkBrushBtn.setAttribute("aria-label", "No-Walk Floor brush");
+  floorNoWalkBrushBtn.title =
+    "Paint soft-blocked floor (left click). Right click clears.";
+  floorNoWalkBrushBtn.setAttribute("aria-pressed", "false");
+  buildDockFloorBrushSettingRow.appendChild(floorNoWalkBrushBtn);
+
   floorShapeColorRow.append(
     buildDockFloorBrushSettingRow,
     floorColorPickerColumn
@@ -6968,6 +7052,7 @@ export function createHud(
   let panelOnPropsChange: ((p: ObstacleProps) => void) | null = null;
   let panelObjectEditGate = false;
   let panelObjectEditUnlockPad = false;
+  let panelObjectEditAttentionMarker = false;
   let panelPyramidCb: HTMLInputElement | null = null;
   let panelRampCb: HTMLInputElement | null = null;
   /** Block color ring docked in `.hud-mode-sidebar__hue-dock` while editing a placed tile. */
@@ -6975,9 +7060,10 @@ export function createHud(
   /** Row: hue ring while editing a placed block (shape controls live in Advanced). */
   let panelShapeColorRow: HTMLElement | null = null;
 
-  /** GL selection slot (blocks, teleporters, billboards). */
+  /** GL selection slot (blocks, teleporters, billboards, Attention Markers). */
   function buildDockSelectionPreviewActive(): boolean {
     if (objectPanel === null) return false;
+    if (panelObjectEditAttentionMarker) return true;
     if (objectPanel.querySelector("#tile-inspector-selection") !== null) {
       return true;
     }
@@ -7431,6 +7517,27 @@ export function createHud(
   const tileInspectorAttentionHoverInput = buildBlockBar.querySelector(
     "#tile-inspector-attention-hover"
   ) as HTMLInputElement | null;
+  const tileInspectorAttentionHoverVal = buildBlockBar.querySelector(
+    "#tile-inspector-attention-hover-val"
+  ) as HTMLElement | null;
+  const tileInspectorAttentionHoverDec = buildBlockBar.querySelector(
+    "#tile-inspector-attention-hover-dec"
+  ) as HTMLButtonElement | null;
+  const tileInspectorAttentionHoverInc = buildBlockBar.querySelector(
+    "#tile-inspector-attention-hover-inc"
+  ) as HTMLButtonElement | null;
+  const tileInspectorAttentionSizeInput = buildBlockBar.querySelector(
+    "#tile-inspector-attention-size"
+  ) as HTMLInputElement | null;
+  const tileInspectorAttentionSizeVal = buildBlockBar.querySelector(
+    "#tile-inspector-attention-size-val"
+  ) as HTMLElement | null;
+  const tileInspectorAttentionSizeDec = buildBlockBar.querySelector(
+    "#tile-inspector-attention-size-dec"
+  ) as HTMLButtonElement | null;
+  const tileInspectorAttentionSizeInc = buildBlockBar.querySelector(
+    "#tile-inspector-attention-size-inc"
+  ) as HTMLButtonElement | null;
   let unlockPadDraftAmountLuna = "100000";
   let unlockPadDraftRecipient = "";
   let unlockPadDraftButtonLabel = "Unlock";
@@ -7486,6 +7593,9 @@ export function createHud(
   /** Attention Marker tool: co-occupying visual cue (admin-only). */
   let attentionMarkerModeActive = false;
   let attentionMarkerHoverHeight = 1;
+  let attentionMarkerHoverHeightHandler: ((h: number) => void) | null = null;
+  let attentionMarkerSizePercent = 100;
+  let attentionMarkerSizePercentHandler: ((p: number) => void) | null = null;
   let billboardModeActive = false;
   // worldcup: standalone "place a soccer ball" mode (isolated from the core tool union)
   let worldcupBallModeActive = false;
@@ -7521,7 +7631,7 @@ export function createHud(
     } else if (unlockPadModeActive) {
       g.setPlacementInspectorPreviewKind("unlock-pad");
     } else if (attentionMarkerModeActive) {
-      g.setPlacementInspectorPreviewKind("block");
+      g.setPlacementInspectorPreviewKind("attention-marker");
     } else if (billboardModeActive) {
       g.setPlacementInspectorPreviewKind("billboard");
     } else {
@@ -7599,6 +7709,56 @@ export function createHud(
     BuildDockCategoryId,
     HTMLButtonElement
   >();
+  /** Objects-scope category tabs: Terrain / Props / Buildings / Prefab (keys 1–4 while dock open). */
+  function applyBuildDockCategory(cat: BuildDockCategoryId): boolean {
+    if (buildBottomDock.hidden || !roomAllowPlaceBlocks) return false;
+    if (buildEditKindSelect.value !== "objects") {
+      buildEditKindSelect.value = "objects";
+      syncBuildEditKindTriggerFromSelect();
+      onBuildEditKindChanged();
+    }
+    buildDockCategory = cat;
+    for (const [c, b] of buildDockTabByCategory) {
+      const on = c === cat;
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      b.classList.toggle("hud-build-bottom-dock__tab--active", on);
+    }
+    if (cat === "prefab") {
+      if (tileInspectorToolSelect.value !== "prefab") {
+        tileInspectorToolSelect.value = "prefab";
+        tileInspectorToolSelect.dispatchEvent(
+          new Event("change", { bubbles: true })
+        );
+      } else {
+        syncBuildDockToolStrip();
+        syncBuildDockContextParams();
+      }
+      return true;
+    }
+    const tools = BUILD_DOCK_TOOLS[cat];
+    const curTool = tileInspectorToolSelect.value as
+      | "block"
+      | "signpost"
+      | "teleporter"
+      | "billboard"
+      | "gate"
+      | "unlock-pad"
+      | "attention-marker"
+      | "prefab";
+    if (
+      tools.length > 0 &&
+      !tools.includes(curTool as (typeof tools)[number])
+    ) {
+      const first = tools[0]!;
+      tileInspectorToolSelect.value = first;
+      tileInspectorToolSelect.dispatchEvent(
+        new Event("change", { bubbles: true })
+      );
+    } else {
+      syncBuildDockToolStrip();
+    }
+    return true;
+  }
   for (const cat of BUILD_DOCK_CATEGORY_ORDER) {
     const tab = document.createElement("button");
     tab.type = "button";
@@ -7606,47 +7766,15 @@ export function createHud(
     tab.setAttribute("role", "tab");
     tab.dataset.category = cat;
     tab.textContent = BUILD_DOCK_CATEGORY_LABEL[cat].toUpperCase();
+    const hotkey = String(BUILD_DOCK_CATEGORY_ORDER.indexOf(cat) + 1);
+    tab.title = `${BUILD_DOCK_CATEGORY_LABEL[cat]} (${hotkey})`;
+    tab.setAttribute("aria-keyshortcuts", hotkey);
     tab.setAttribute("aria-selected", cat === buildDockCategory ? "true" : "false");
     if (cat === buildDockCategory) {
       tab.classList.add("hud-build-bottom-dock__tab--active");
     }
     tab.addEventListener("click", () => {
-      buildDockCategory = cat;
-      for (const [c, b] of buildDockTabByCategory) {
-        const on = c === cat;
-        b.setAttribute("aria-selected", on ? "true" : "false");
-        b.classList.toggle("hud-build-bottom-dock__tab--active", on);
-      }
-      if (cat === "prefab") {
-        if (tileInspectorToolSelect.value !== "prefab") {
-          tileInspectorToolSelect.value = "prefab";
-          tileInspectorToolSelect.dispatchEvent(
-            new Event("change", { bubbles: true })
-          );
-        } else {
-          syncBuildDockToolStrip();
-          syncBuildDockContextParams();
-        }
-        return;
-      }
-      const tools = BUILD_DOCK_TOOLS[cat];
-      const curTool = tileInspectorToolSelect.value as
-        | "block"
-        | "signpost"
-        | "teleporter"
-        | "billboard"
-        | "gate"
-        | "unlock-pad"
-        | "prefab";
-      if (tools.length > 0 && !tools.includes(curTool)) {
-        const first = tools[0]!;
-        tileInspectorToolSelect.value = first;
-        tileInspectorToolSelect.dispatchEvent(
-          new Event("change", { bubbles: true })
-        );
-      } else {
-        syncBuildDockToolStrip();
-      }
+      applyBuildDockCategory(cat);
     });
     buildDockTabByCategory.set(cat, tab);
     buildBottomDockCategoryTabs.appendChild(tab);
@@ -7796,6 +7924,7 @@ export function createHud(
     }
     if (panelObjectEditGate) return "Gate";
     if (panelObjectEditUnlockPad) return "Unlock Pad";
+    if (panelObjectEditAttentionMarker) return "Attention Marker";
     const live = buildLivePanelObstacleProps();
     if (live) {
       return dockTerrainShapeLabel(
@@ -8929,7 +9058,8 @@ export function createHud(
         tid === "gate" ||
         tid === "unlock-pad" ||
         tid === "billboard" ||
-        tid === "signpost";
+        tid === "signpost" ||
+        tid === "attention-marker";
       if (isDockPreviewTool) {
         const wrap = document.createElement("span");
         wrap.className = "hud-build-bottom-dock__tool-card-preview-wrap";
@@ -8948,20 +9078,7 @@ export function createHud(
         const mini = document.createElement("span");
         mini.className = "hud-build-bottom-dock__tool-card-icon";
         mini.setAttribute("aria-hidden", "true");
-        mini.textContent =
-          tid === "block"
-            ? "▣"
-            : tid === "signpost"
-              ? "⚑"
-              : tid === "teleporter"
-                ? "◇"
-                : tid === "gate"
-                  ? "⌂"
-                  : tid === "unlock-pad"
-                    ? "▣"
-                    : tid === "prefab"
-                    ? "⊞"
-                    : "▤";
+        mini.textContent = tid === "prefab" ? "⊞" : "▤";
         card.appendChild(mini);
       }
       const lab = document.createElement("span");
@@ -9025,7 +9142,13 @@ export function createHud(
       });
       buildBottomDockTools.appendChild(ballCard);
     }
-    type DockThumbTool = "teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost";
+    type DockThumbTool =
+      | "teleporter"
+      | "gate"
+      | "unlock-pad"
+      | "billboard"
+      | "signpost"
+      | "attention-marker";
     const thumbRows: { tid: DockThumbTool; img: HTMLImageElement }[] = [];
     for (const tid of list) {
       if (
@@ -9033,7 +9156,8 @@ export function createHud(
         tid !== "gate" &&
         tid !== "unlock-pad" &&
         tid !== "billboard" &&
-        tid !== "signpost"
+        tid !== "signpost" &&
+        tid !== "attention-marker"
       ) {
         continue;
       }
@@ -9079,6 +9203,7 @@ export function createHud(
       | "billboard"
       | "gate"
       | "unlock-pad"
+      | "attention-marker"
       | "prefab";
     buildDockCategory = categoryForToolDock(tool);
     for (const [c, b] of buildDockTabByCategory) {
@@ -9434,6 +9559,7 @@ export function createHud(
     floorColorMetaRow.hidden = !floorPaintActive;
     if (!floorPaintActive) {
       exitFloorEyedropperMode();
+      exitNoWalkFloorBrushMode();
     }
   }
 
@@ -9917,6 +10043,7 @@ export function createHud(
         "billboard-edit",
         "unlock-pad-config",
         "attention-marker-hover",
+        "attention-marker-size",
       ] as const) {
         const row = tileInspectorRoot.querySelector(
           `[data-build-dock-param="${id}"]`
@@ -9939,7 +10066,8 @@ export function createHud(
     const plainCube = !hex && !pyramid && !sphere && !ramp;
     const billboardSelectionEdit = buildDockBillboardSelectionEditActive();
     const unlockPadConfig = unlockPadModeActive || panelObjectEditUnlockPad;
-    const attentionMarkerHover = attentionMarkerModeActive;
+    const attentionMarkerHover =
+      attentionMarkerModeActive || panelObjectEditAttentionMarker;
     const ctx = {
       tool,
       pyramid,
@@ -9962,6 +10090,7 @@ export function createHud(
       "billboard-edit",
       "unlock-pad-config",
       "attention-marker-hover",
+      "attention-marker-size",
     ] as const) {
       const row = tileInspectorRoot.querySelector(
         `[data-build-dock-param="${id}"]`
@@ -9974,8 +10103,29 @@ export function createHud(
     if (unlockPadConfig) {
       syncUnlockPadDockSummary();
     }
-    if (attentionMarkerHover && tileInspectorAttentionHoverInput) {
-      tileInspectorAttentionHoverInput.value = String(attentionMarkerHoverHeight);
+    if (attentionMarkerHover) {
+      if (tileInspectorAttentionHoverInput) {
+        tileInspectorAttentionHoverInput.value = String(attentionMarkerHoverHeight);
+        tileInspectorAttentionHoverInput.setAttribute(
+          "aria-valuetext",
+          String(attentionMarkerHoverHeight)
+        );
+      }
+      if (tileInspectorAttentionHoverVal) {
+        tileInspectorAttentionHoverVal.textContent = String(
+          attentionMarkerHoverHeight
+        );
+      }
+      if (tileInspectorAttentionSizeInput) {
+        tileInspectorAttentionSizeInput.value = String(attentionMarkerSizePercent);
+        tileInspectorAttentionSizeInput.setAttribute(
+          "aria-valuetext",
+          `${attentionMarkerSizePercent}%`
+        );
+      }
+      if (tileInspectorAttentionSizeVal) {
+        tileInspectorAttentionSizeVal.textContent = `${attentionMarkerSizePercent}%`;
+      }
     }
   }
 
@@ -12128,7 +12278,15 @@ export function createHud(
 
   tileInspectorToolSelect.addEventListener("change", () => {
     const raw = tileInspectorToolSelect.value;
-    const tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "prefab" =
+    const tool:
+      | "block"
+      | "signpost"
+      | "teleporter"
+      | "billboard"
+      | "gate"
+      | "unlock-pad"
+      | "attention-marker"
+      | "prefab" =
       raw === "signpost"
         ? "signpost"
         : raw === "teleporter"
@@ -12137,6 +12295,8 @@ export function createHud(
             ? "gate"
             : raw === "unlock-pad"
               ? "unlock-pad"
+              : raw === "attention-marker"
+                ? "attention-marker"
             : raw === "billboard"
               ? "billboard"
               : raw === "prefab"
@@ -12167,6 +12327,8 @@ export function createHud(
   let floorPlacementColorHandler: ((colorRgb: number) => void) | null = null;
   let floorBrushSizeHandler: ((size: 1 | 2) => void) | null = null;
   let floorBrushSize: 1 | 2 = 1;
+  let noWalkFloorBrushHandler: ((active: boolean) => void) | null = null;
+  let noWalkFloorBrushActive = false;
 
   function syncTileInspectorHeightLabel(): void {
     if (!tileInspectorHeightInput || !tileInspectorHeightVal) return;
@@ -12334,21 +12496,72 @@ export function createHud(
     attentionMarkerHoverHeight = v;
     if (tileInspectorAttentionHoverInput) {
       tileInspectorAttentionHoverInput.value = String(v);
+      tileInspectorAttentionHoverInput.setAttribute("aria-valuetext", String(v));
     }
-  };
-  tileInspectorAttentionHoverInput?.addEventListener("change", () => {
-    applyAttentionHoverHeight(Number(tileInspectorAttentionHoverInput.value));
-  });
-  for (const btn of buildBlockBar.querySelectorAll(
-    "[data-attention-hover-delta]"
-  )) {
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const d = Number((btn as HTMLElement).dataset.attentionHoverDelta ?? 0);
-      applyAttentionHoverHeight(attentionMarkerHoverHeight + d);
+    if (tileInspectorAttentionHoverVal) {
+      tileInspectorAttentionHoverVal.textContent = String(v);
+    }
+    const colorRgb =
+      inspectorPreviewGameRef?.getPlacementBlockStyle().colorRgb ??
+      placementColorRgb;
+    inspectorPreviewGameRef?.setAttentionMarkerInspectorPreview({
+      hoverHeight: v,
+      sizePercent: attentionMarkerSizePercent,
+      colorRgb,
     });
-  }
+    attentionMarkerHoverHeightHandler?.(v);
+  };
+  const applyAttentionSizePercent = (raw: number) => {
+    const stepped = Math.round(raw / 10) * 10;
+    const v = Math.max(20, Math.min(100, stepped));
+    attentionMarkerSizePercent = v;
+    if (tileInspectorAttentionSizeInput) {
+      tileInspectorAttentionSizeInput.value = String(v);
+      tileInspectorAttentionSizeInput.setAttribute("aria-valuetext", `${v}%`);
+    }
+    if (tileInspectorAttentionSizeVal) {
+      tileInspectorAttentionSizeVal.textContent = `${v}%`;
+    }
+    const colorRgb =
+      inspectorPreviewGameRef?.getPlacementBlockStyle().colorRgb ??
+      placementColorRgb;
+    inspectorPreviewGameRef?.setAttentionMarkerInspectorPreview({
+      hoverHeight: attentionMarkerHoverHeight,
+      sizePercent: v,
+      colorRgb,
+    });
+    attentionMarkerSizePercentHandler?.(v);
+  };
+  tileInspectorAttentionHoverDec?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    applyAttentionHoverHeight(
+      Math.floor(Number(tileInspectorAttentionHoverInput?.value ?? attentionMarkerHoverHeight)) -
+        1
+    );
+  });
+  tileInspectorAttentionHoverInc?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    applyAttentionHoverHeight(
+      Math.floor(Number(tileInspectorAttentionHoverInput?.value ?? attentionMarkerHoverHeight)) +
+        1
+    );
+  });
+  tileInspectorAttentionSizeDec?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    applyAttentionSizePercent(
+      Number(tileInspectorAttentionSizeInput?.value ?? attentionMarkerSizePercent) - 10
+    );
+  });
+  tileInspectorAttentionSizeInc?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    applyAttentionSizePercent(
+      Number(tileInspectorAttentionSizeInput?.value ?? attentionMarkerSizePercent) + 10
+    );
+  });
 
   buildDockBillboardEditBtn?.addEventListener("click", (e) => {
     e.preventDefault();
@@ -12694,6 +12907,14 @@ export function createHud(
 
   function syncFloorEyedropperMode(): void {
     const active = floorEyedropperAltHeld || floorEyedropperButtonActive;
+    if (active && noWalkFloorBrushActive) {
+      noWalkFloorBrushActive = false;
+      floorNoWalkBrushBtn.setAttribute("aria-pressed", "false");
+      floorNoWalkBrushBtn.classList.remove(
+        "hud-build-bottom-dock__floor-no-walk-btn--active"
+      );
+      noWalkFloorBrushHandler?.(false);
+    }
     inspectorPreviewGameRef?.setFloorEyedropperActive(active);
     floorEyedropperBtn.setAttribute(
       "aria-pressed",
@@ -12712,6 +12933,33 @@ export function createHud(
     floorEyedropperAltHeld = false;
     floorEyedropperButtonActive = false;
     syncFloorEyedropperMode();
+  }
+
+  function syncNoWalkFloorBrushUi(): void {
+    floorNoWalkBrushBtn.setAttribute(
+      "aria-pressed",
+      noWalkFloorBrushActive ? "true" : "false"
+    );
+    floorNoWalkBrushBtn.classList.toggle(
+      "hud-build-bottom-dock__floor-no-walk-btn--active",
+      noWalkFloorBrushActive
+    );
+    noWalkFloorBrushHandler?.(noWalkFloorBrushActive);
+  }
+
+  function exitNoWalkFloorBrushMode(): void {
+    if (!noWalkFloorBrushActive) return;
+    noWalkFloorBrushActive = false;
+    syncNoWalkFloorBrushUi();
+  }
+
+  function setNoWalkFloorBrushActiveUi(active: boolean): void {
+    if (noWalkFloorBrushActive === active) return;
+    noWalkFloorBrushActive = active;
+    if (active) {
+      exitFloorEyedropperMode();
+    }
+    syncNoWalkFloorBrushUi();
   }
 
   function onFloorEyedropperSampled(rgb: number): void {
@@ -12772,7 +13020,16 @@ export function createHud(
     e.stopPropagation();
     if (buildDockFloorBrushSettingRow.hidden) return;
     floorEyedropperButtonActive = !floorEyedropperButtonActive;
+    if (floorEyedropperButtonActive) {
+      exitNoWalkFloorBrushMode();
+    }
     syncFloorEyedropperMode();
+  });
+
+  floorNoWalkBrushBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (buildDockFloorBrushSettingRow.hidden) return;
+    setNoWalkFloorBrushActiveUi(!noWalkFloorBrushActive);
   });
 
   function bindFloorEyedropperGameHandlers(game: Game | null): void {
@@ -14484,6 +14741,7 @@ export function createHud(
     inspectorPreviewGameRef?.bindInspectorTilePreviewCanvas("selection", null);
     inspectorPreviewGameRef?.syncInspectorSelectionTeleporterPreview(null);
     inspectorPreviewGameRef?.syncInspectorSelectionBillboardPreview(null);
+    inspectorPreviewGameRef?.syncInspectorSelectionAttentionMarkerPreview(null);
     inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(null);
     inspectorPreviewGameRef?.setTeleporterDestinationDraftHighlight(null);
     if (panelPyramidBaseCommitTimer !== null) {
@@ -14560,6 +14818,7 @@ export function createHud(
     panelRampRotCW = null;
     panelObjectEditGate = false;
     panelObjectEditUnlockPad = false;
+    panelObjectEditAttentionMarker = false;
     panelGateEditBlock = null;
     panelGateAclBar = null;
     panelGateAclSummaryEl = null;
@@ -15231,6 +15490,8 @@ export function createHud(
     },
     setResetTutorialVisible(visible: boolean) {
       playerMenu.setResetTutorialVisible(visible);
+      tutorialStepCoachResetBtn.hidden = !visible;
+      requestAnimationFrame(() => syncHudBelowTopWrap());
     },
     showBriefToast,
     setTutorialStepCoach(state: TutorialCoachState | null) {
@@ -15737,6 +15998,81 @@ export function createHud(
         });
         return;
       }
+      if ("attentionMarkerSelection" in opts) {
+        const am = opts.attentionMarkerSelection;
+        panelOnPropsChange = null;
+        billboardSelectionEditHandler = null;
+        panelObjectEditAttentionMarker = true;
+        attentionMarkerHoverHeight = Math.max(
+          0,
+          Math.min(3, Math.floor(am.hoverHeight))
+        );
+        attentionMarkerSizePercent = Math.max(
+          20,
+          Math.min(100, Math.round(Number(am.sizePercent ?? 100) / 10) * 10)
+        );
+        applyPlacementColorRgb(am.colorRgb);
+        objectPanel = document.createElement("div");
+        objectPanel.className =
+          "build-object-panel build-object-panel--teleporter";
+        objectPanel.hidden = true;
+        objectPanel.innerHTML = `<div class="build-object-panel__surface" aria-hidden="true"></div>`;
+        modeSidebarBuildMount.appendChild(objectPanel);
+
+        objectPanelContextPopover.classList.remove(
+          "build-object-panel-context--teleporter",
+          "build-object-panel-context--billboard",
+          "build-object-panel-context--billboard-readonly"
+        );
+        const dismissMarkup = `${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}`;
+        objectPanelContextPopover.innerHTML = `
+          <div class="build-object-panel-context__inner">
+            <div class="build-object-panel-context__height-row">
+              <div class="build-object-panel-context__height-main">
+                <span class="build-object-panel-context__title-text">Attention Marker</span>
+                <span class="build-object-panel-context__tp-coords">(${opts.x}, ${opts.z})</span>
+              </div>
+              <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close attention marker menu">${dismissMarkup}</button>
+            </div>
+            <div class="build-object-panel-context__actions">
+              <button type="button" class="build-object-panel__btn build-object-panel__move nq-button-pill light-blue">Move</button>
+              <button type="button" class="build-object-panel__btn build-object-panel__remove nq-button-pill">Delete</button>
+            </div>
+          </div>`;
+        objectPanelContextPopover.hidden = false;
+        objectPanelContextPopover
+          .querySelector(".build-object-panel__move")
+          ?.addEventListener("click", () => am.onMove());
+        objectPanelContextPopover
+          .querySelector(".build-object-panel__remove")
+          ?.addEventListener("click", () => am.onRemove());
+        objectPanelContextPopover
+          .querySelector(".build-object-panel-context__dismiss")
+          ?.addEventListener("click", () => am.onClose());
+        syncBlockPreviewDockSlots();
+        inspectorPreviewGameRef?.bindInspectorTilePreviewCanvas(
+          "selection",
+          hueDockBlockPreview.querySelector(
+            "#panel-tile-inspector-preview-canvas"
+          ) as HTMLCanvasElement | null
+        );
+        inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(null);
+        inspectorPreviewGameRef?.syncInspectorSelectionTeleporterPreview(null);
+        inspectorPreviewGameRef?.syncInspectorSelectionBillboardPreview(null);
+        inspectorPreviewGameRef?.syncInspectorSelectionAttentionMarkerPreview({
+          hoverHeight: am.hoverHeight,
+          sizePercent: am.sizePercent,
+          colorRgb: am.colorRgb,
+        });
+        syncHueDockVisibility();
+        syncBuildDockSelectionChrome();
+        syncBuildDockContextParams();
+        requestAnimationFrame(() => {
+          layoutObjectPanelSatellites();
+          requestAnimationFrame(() => layoutObjectPanelSatellites());
+        });
+        return;
+      }
       billboardSelectionEditHandler = null;
       objectPanelContextPopover.classList.remove(
         "build-object-panel-context--billboard"
@@ -15746,6 +16082,7 @@ export function createHud(
       const unlockPadEdit = opts.unlockPad !== undefined;
       panelObjectEditGate = gateEdit;
       panelObjectEditUnlockPad = unlockPadEdit;
+      panelObjectEditAttentionMarker = false;
       if (gateEdit) {
         panelGateAdminAddress = normalizeWalletKey(opts.gate!.adminAddress);
         panelGateAuthorizedAddresses = opts.gate!.authorizedAddresses.map((a) =>
@@ -16247,6 +16584,13 @@ export function createHud(
       floorBrushSizeHandler = fn;
       fn(floorBrushSize);
     },
+    onNoWalkFloorBrush(fn) {
+      noWalkFloorBrushHandler = fn;
+      fn(noWalkFloorBrushActive);
+    },
+    selectBuildDockCategory(cat) {
+      return applyBuildDockCategory(cat);
+    },
     refreshBuildDockToolStrip() {
       syncBuildDockToolStrip();
     },
@@ -16408,7 +16752,41 @@ export function createHud(
         tileInspectorAttentionHoverInput.value = String(
           attentionMarkerHoverHeight
         );
+        tileInspectorAttentionHoverInput.setAttribute(
+          "aria-valuetext",
+          String(attentionMarkerHoverHeight)
+        );
       }
+      if (tileInspectorAttentionHoverVal) {
+        tileInspectorAttentionHoverVal.textContent = String(
+          attentionMarkerHoverHeight
+        );
+      }
+    },
+    onAttentionMarkerHoverHeightChange(fn: ((h: number) => void) | null) {
+      attentionMarkerHoverHeightHandler = fn;
+    },
+    getAttentionMarkerSizePercent(): number {
+      return attentionMarkerSizePercent;
+    },
+    setAttentionMarkerSizePercent(p: number) {
+      const stepped = Math.round(p / 10) * 10;
+      attentionMarkerSizePercent = Math.max(20, Math.min(100, stepped));
+      if (tileInspectorAttentionSizeInput) {
+        tileInspectorAttentionSizeInput.value = String(
+          attentionMarkerSizePercent
+        );
+        tileInspectorAttentionSizeInput.setAttribute(
+          "aria-valuetext",
+          `${attentionMarkerSizePercent}%`
+        );
+      }
+      if (tileInspectorAttentionSizeVal) {
+        tileInspectorAttentionSizeVal.textContent = `${attentionMarkerSizePercent}%`;
+      }
+    },
+    onAttentionMarkerSizePercentChange(fn: ((p: number) => void) | null) {
+      attentionMarkerSizePercentHandler = fn;
     },
     setUnlockPadSettingsRoomId(roomId: string) {
       unlockPadSettingsRoomId = String(roomId ?? "");

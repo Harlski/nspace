@@ -53,10 +53,19 @@ import { gateApproachTile } from "./gateAuth.js";
 import {
   attentionMarkerBounceOffset,
   attentionMarkerHoverLift,
+  attentionMarkerPreviewContrastRgb,
+  attentionMarkerScaleFromPercent,
+  clampAttentionMarkerSizePercent,
   makeAttentionMarkerGroup,
   tintAttentionMarkerGroup,
   type AttentionMarkerWire,
 } from "./attentionMarkerVisual.js";
+import {
+  createNoWalkFloorCueResources,
+  disposeNoWalkFloorCueResources,
+  makeNoWalkFloorCueGroup,
+  type NoWalkFloorCueResources,
+} from "./noWalkFloorCue.js";
 import { FogOfWarPass } from "./fogOfWar.js";
 // worldcup: seasonal soccer rendering (feature-flagged, deletable)
 import type { BallWire, WorldcupPortalWire } from "../net/ws.js";
@@ -1612,6 +1621,12 @@ export class Game {
   private placeExtraFloorHandler:
     | ((x: number, z: number, colorRgb: number, brushSize?: FloorBrushSize) => void)
     | null = null;
+  private paintNoWalkFloorHandler:
+    | ((x: number, z: number, brushSize?: FloorBrushSize) => void)
+    | null = null;
+  private clearNoWalkFloorHandler:
+    | ((x: number, z: number, brushSize?: FloorBrushSize) => void)
+    | null = null;
   /**
    * When set, the next successful walkable floor pointer-up in floor-expand mode
    * invokes this with tile coords then clears (room entry spawn pick).
@@ -1622,6 +1637,8 @@ export class Game {
   private buildMode = false;
   /** Place walkable tiles outside the core room (toggle with F). */
   private floorExpandMode = false;
+  /** Floor dock: paint/clear No-Walk Floor instead of floor color (ADR 0011). */
+  private noWalkFloorBrushActive = false;
   private roomDeployablesAllowed = true;
   private roomJoinSpawnTile: {
     x: number;
@@ -1633,6 +1650,14 @@ export class Game {
   private readonly tutorialMineHighlightRing: THREE.Mesh;
   private readonly tutorialMineHighlightRingMat: THREE.MeshBasicMaterial;
   private tutorialMineHighlightTile: { x: number; z: number } | null = null;
+  /**
+   * Client-local Attention Marker for the current Tutorial Step Coach target
+   * (not in the shared `attentionMarkers` layer — per-wallet mine slots).
+   */
+  private tutorialAttentionCueGroup: THREE.Group | null = null;
+  private tutorialAttentionCueTile: { x: number; z: number } | null = null;
+  private static readonly TUTORIAL_ATTENTION_CUE_COLOR = 0xfbbf24;
+  private static readonly TUTORIAL_ATTENTION_CUE_HOVER = 1;
   /** Cinema `?stream=1` - no avatar, no movement or floor edits. */
   private streamObserverMode = false;
   private readonly extraFloorKeys = new Set<string>();
@@ -1642,6 +1667,8 @@ export class Game {
   private readonly baseFloorColorByKey = new Map<string, number>();
   /** Base tiles carved out in custom rooms (server-synced). */
   private readonly removedBaseFloorKeys = new Set<string>();
+  /** Soft-blocked floor tiles — mesh stays, walk rejects (ADR 0011). */
+  private readonly noWalkFloorKeys = new Set<string>();
   /** Mining/claiming state for experimental claimable blocks */
   private miningState: {
     blockX: number;
@@ -1709,12 +1736,21 @@ export class Game {
   /** Live props for the object-edit tile inspector 3D preview (null = panel closed). */
   private inspectorSelectionObstacle: ObstacleProps | null = null;
   /**
-   * When set, the selection-slot canvas shows a teleporter pillar instead of block props
-   * (placed teleporter editor has no `ObstacleProps` / `#tile-inspector-selection`).
+   * When set, the selection-slot canvas shows a teleporter pillar / billboard / Attention Marker
+   * instead of block props (those editors have no `#tile-inspector-selection`).
    */
-  private inspectorSelectionSpecialDockKind: "teleporter" | "billboard" | null =
-    null;
+  private inspectorSelectionSpecialDockKind:
+    | "teleporter"
+    | "billboard"
+    | "attention-marker"
+    | null = null;
   private inspectorSelectionBillboardId: string | null = null;
+  /** Selection / placement preview for Attention Marker (V glyph). */
+  private inspectorAttentionMarkerPreview: {
+    hoverHeight: number;
+    sizePercent: number;
+    colorRgb: number;
+  } | null = null;
   /** `false` = configured / active (portal pillar); `true` = pending / dim pillar. */
   private inspectorSelectionTeleporterPending = false;
   private inspectorSelectionTeleporterTileRef: {
@@ -1737,11 +1773,17 @@ export class Game {
     | "gate"
     | "unlock-pad"
     | "billboard"
-    | "signpost" = "block";
+    | "signpost"
+    | "attention-marker" = "block";
   /** Off-DOM inspector-style port used only to bake dock `<img>` thumbnails. */
   private dockStripBakePort: InspectorTilePreviewPort | null = null;
   private readonly dockStripThumbByTool = new Map<
-    "teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost",
+    | "teleporter"
+    | "gate"
+    | "unlock-pad"
+    | "billboard"
+    | "signpost"
+    | "attention-marker",
     { sig: string; dataUrl: string }
   >();
   private readonly dockStripThumbByTerrainShape = new Map<
@@ -2127,8 +2169,28 @@ export class Game {
     string,
     { data: AttentionMarkerWire; group: THREE.Group; baseY: number }
   >();
+  /**
+   * Soft floor planes under marked tiles while the Attention Marker tool is active
+   * (Attention Marker Selectability Cue).
+   */
+  private readonly attentionMarkerPickCueMeshes = new Map<string, THREE.Mesh>();
+  private attentionMarkerPickCueGeom: THREE.PlaneGeometry | null = null;
+  private attentionMarkerPickCueMat: THREE.MeshBasicMaterial | null = null;
+  private attentionMarkerPickCueSelectedMat: THREE.MeshBasicMaterial | null =
+    null;
+  /**
+   * Red tint + X under No-Walk Floor tiles while floor expand mode is active
+   * (No-Walk Floor Cue).
+   */
+  private readonly noWalkFloorCueMeshes = new Map<string, THREE.Group>();
+  private noWalkFloorCueRes: NoWalkFloorCueResources | null = null;
   /** When true, build picks prefer Attention Markers over co-occupants. */
   private attentionMarkerToolActive = false;
+  private selectedAttentionMarkerKey: string | null = null;
+  /** When set, reposition commits move the Attention Marker instead of an obstacle. */
+  private repositionAttentionMarker = false;
+  private attentionMarkerSelectHandler: ((x: number, z: number) => void) | null =
+    null;
   private signboardHoverHandler:
     | ((signboard: {
         id: string;
@@ -2440,6 +2502,20 @@ export class Game {
       opacity: 0.3,
       depthWrite: false,
     });
+    this.attentionMarkerPickCueGeom = new THREE.PlaneGeometry(0.92, 0.92);
+    this.attentionMarkerPickCueMat = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+    });
+    this.attentionMarkerPickCueSelectedMat = new THREE.MeshBasicMaterial({
+      color: 0x7dd3fc,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+    });
+    this.noWalkFloorCueRes = createNoWalkFloorCueResources();
 
     this.billboardFootprintPreviewGeom = new THREE.PlaneGeometry(0.92, 0.92);
     this.billboardFootprintPreviewValidMat = new THREE.MeshBasicMaterial({
@@ -2898,6 +2974,8 @@ export class Game {
     this.extraFloorColorByKey.clear();
     this.baseFloorColorByKey.clear();
     this.removedBaseFloorKeys.clear();
+    this.noWalkFloorKeys.clear();
+    this.clearNoWalkFloorCues();
 
     // Clear block meshes from scene
     for (const [, mesh] of this.blockMeshes) {
@@ -2927,6 +3005,7 @@ export class Game {
     this.roomEntrySpawnRing.visible = false;
     this.tutorialMineHighlightTile = null;
     this.tutorialMineHighlightRing.visible = false;
+    this.clearTutorialAttentionCue();
     this.roomEntrySpawnPickHandler = null;
     this.hideTrailImmediate();
     this.beginPathFadeOut();
@@ -5221,6 +5300,107 @@ export class Game {
     this.requestRender(120);
   }
 
+  /** First Unlock Pad tile in the current room (Tutorial Path pay target). */
+  findFirstUnlockPadTile(): { x: number; z: number } | null {
+    for (const [k, meta] of this.placedObjects) {
+      if (!meta.unlockPad?.instanceId) continue;
+      const parts = k.split(",").map(Number);
+      if (
+        parts.length < 2 ||
+        !Number.isFinite(parts[0]) ||
+        !Number.isFinite(parts[1])
+      ) {
+        continue;
+      }
+      return { x: Math.floor(parts[0]!), z: Math.floor(parts[1]!) };
+    }
+    return null;
+  }
+
+  /**
+   * Hub exit tile for the Tutorial Path: one step north of the Unlock Pad,
+   * else a door targeting the Hub, else legacy gate exit.
+   */
+  findTutorialHubExitTile(): { x: number; z: number } | null {
+    const pad = this.findFirstUnlockPadTile();
+    if (pad) return { x: pad.x, z: pad.z + 1 };
+    for (const d of this.doors) {
+      if (normalizeRoomId(d.targetRoomId) === CHAMBER_ROOM_ID) {
+        return { x: Math.floor(d.x), z: Math.floor(d.z) };
+      }
+    }
+    for (const meta of this.placedObjects.values()) {
+      if (!meta.gate) continue;
+      return {
+        x: Math.floor(meta.gate.exitX),
+        z: Math.floor(meta.gate.exitZ),
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Local Attention Marker over the current tutorial coach target.
+   * Cleared on room change; not synced via the shared Attention Marker store.
+   */
+  setTutorialAttentionCue(tile: { x: number; z: number } | null): void {
+    if (!tile) {
+      this.clearTutorialAttentionCue();
+      this.requestRender(120);
+      return;
+    }
+    const x = Math.floor(tile.x);
+    const z = Math.floor(tile.z);
+    const same =
+      this.tutorialAttentionCueTile?.x === x &&
+      this.tutorialAttentionCueTile?.z === z &&
+      this.tutorialAttentionCueGroup !== null;
+    if (same) {
+      this.syncTutorialAttentionCuePose();
+      this.requestRender(120);
+      return;
+    }
+    this.clearTutorialAttentionCue();
+    const group = makeAttentionMarkerGroup(
+      Game.TUTORIAL_ATTENTION_CUE_COLOR
+    );
+    group.name = "tutorialAttentionCue";
+    group.userData.tutorialAttentionCue = true;
+    group.scale.setScalar(1);
+    this.tutorialAttentionCueGroup = group;
+    this.tutorialAttentionCueTile = { x, z };
+    this.scene.add(group);
+    this.syncTutorialAttentionCuePose();
+    this.requestRender(120);
+  }
+
+  private clearTutorialAttentionCue(): void {
+    const group = this.tutorialAttentionCueGroup;
+    if (group) {
+      this.scene.remove(group);
+      group.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          const mat = obj.material;
+          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+          else mat.dispose();
+        }
+      });
+    }
+    this.tutorialAttentionCueGroup = null;
+    this.tutorialAttentionCueTile = null;
+  }
+
+  private syncTutorialAttentionCuePose(): void {
+    const group = this.tutorialAttentionCueGroup;
+    const tile = this.tutorialAttentionCueTile;
+    if (!group || !tile) return;
+    const baseY = this.attentionMarkerBaselineY(tile.x, tile.z);
+    const lift = attentionMarkerHoverLift(Game.TUTORIAL_ATTENTION_CUE_HOVER);
+    const bounce = attentionMarkerBounceOffset(this.doorPulseTime);
+    group.position.set(tile.x, baseY + lift + bounce, tile.z);
+  }
+
   upsertDoor(d: {
     x: number;
     z: number;
@@ -5593,6 +5773,18 @@ export class Game {
     this.removeExtraFloorHandler = handler;
   }
 
+  setPaintNoWalkFloorHandler(
+    handler: ((x: number, z: number, brushSize?: FloorBrushSize) => void) | null
+  ): void {
+    this.paintNoWalkFloorHandler = handler;
+  }
+
+  setClearNoWalkFloorHandler(
+    handler: ((x: number, z: number, brushSize?: FloorBrushSize) => void) | null
+  ): void {
+    this.clearNoWalkFloorHandler = handler;
+  }
+
   getPlacedAt(x: number, z: number, y = 0): BlockStyleProps | null {
     return (
       this.placedObjects.get(blockKey(x, z, y)) ??
@@ -5814,6 +6006,20 @@ export class Game {
       if (this.inspectorPlacementPort) {
         this.inspectorPlacementPort.lastSig = "";
       }
+      if (
+        this.inspectorPlacementPreviewKind === "attention-marker" ||
+        this.inspectorSelectionSpecialDockKind === "attention-marker"
+      ) {
+        const prev = this.inspectorAttentionMarkerPreview;
+        this.inspectorAttentionMarkerPreview = {
+          hoverHeight: prev?.hoverHeight ?? 1,
+          sizePercent: prev?.sizePercent ?? 100,
+          colorRgb: this.placementColorRgb,
+        };
+        if (this.inspectorSelectionPort) {
+          this.inspectorSelectionPort.lastSig = "";
+        }
+      }
     }
     const prism = normalizeBlockPrismParts({
       hex: this.placementHex,
@@ -5865,10 +6071,14 @@ export class Game {
       this.syncPlacementPreviewAt(anchor.x, anchor.z, anchor.y);
     }
     this.renderInspectorTilePreview("placement");
+    if (this.inspectorSelectionSpecialDockKind === "attention-marker") {
+      this.renderInspectorTilePreview("selection");
+    }
   }
 
   setSelectedBlockKey(key: string | null): void {
     this.selectedBillboardId = null;
+    this.clearSelectedAttentionMarker();
     if (this.selectedBlockKey === key) return;
     this.selectedBlockKey = key;
     this.refreshSelectionOutline();
@@ -5877,6 +6087,7 @@ export class Game {
   clearSelectedBlock(): void {
     this.selectedBlockKey = null;
     this.selectedBillboardId = null;
+    this.clearSelectedAttentionMarker();
     this.teleporterEditDestDraft = null;
     this.refreshSelectionOutline();
   }
@@ -5905,6 +6116,7 @@ export class Game {
 
   private selectBillboard(id: string): void {
     this.selectedBlockKey = null;
+    this.clearSelectedAttentionMarker();
     this.selectedBillboardId = id;
     this.refreshSelectionOutline();
   }
@@ -6670,7 +6882,7 @@ export class Game {
     for (let i = 0; i < tiles.length; i++) {
       const m = this.floorBrushPreviewMeshes[i]!;
       const t = tiles[i]!;
-      const valid = this.canPaintFloorTileAt(t.x, t.z);
+      const valid = this.canFloorBrushTargetAt(t.x, t.z);
       m.material = valid
         ? this.floorBrushPreviewValidMat
         : this.floorBrushPreviewInvalidMat;
@@ -6770,7 +6982,8 @@ export class Game {
           this.roomId,
           this.removedBaseFloorKeys.size > 0
             ? this.removedBaseFloorKeys
-            : undefined
+            : undefined,
+          this.noWalkFloorArg()
         )
       ) {
         return false;
@@ -6784,7 +6997,8 @@ export class Game {
           this.roomId,
           this.removedBaseFloorKeys.size > 0
             ? this.removedBaseFloorKeys
-            : undefined
+            : undefined,
+          this.noWalkFloorArg()
         )
       ) {
         return false;
@@ -7038,6 +7252,40 @@ export class Game {
       this.refreshTeleporterLinkHighlight();
       return;
     }
+    if (this.selectedAttentionMarkerKey) {
+      const entry = this.attentionMarkers.get(this.selectedAttentionMarkerKey);
+      if (!entry) {
+        this.selectionOutline.visible = false;
+        this.refreshTeleporterLinkHighlight();
+        return;
+      }
+      const padding = 0.08;
+      const scale = attentionMarkerScaleFromPercent(entry.data.sizePercent);
+      const lift = attentionMarkerHoverLift(entry.data.hoverHeight);
+      const foot = BLOCK_SIZE * this.blockVisualScale * Math.max(0.35, scale);
+      const height = lift + 1.05 * scale;
+      const center = new THREE.Vector3(
+        entry.data.x,
+        entry.baseY + height / 2,
+        entry.data.z
+      );
+      const size = new THREE.Vector3(
+        foot + padding,
+        height + padding,
+        foot + padding
+      );
+      const boxGeo = new THREE.BoxGeometry(size.x, size.y, size.z);
+      const edges = new THREE.EdgesGeometry(boxGeo);
+      boxGeo.dispose();
+      const prev = this.selectionOutline.geometry;
+      this.selectionOutline.geometry = edges;
+      prev.dispose();
+      this.selectionOutline.position.copy(center);
+      this.selectionOutline.rotation.set(0, 0, 0);
+      this.selectionOutline.visible = true;
+      this.refreshTeleporterLinkHighlight();
+      return;
+    }
     if (this.selectedBillboardId) {
       const root = this.billboardRoots.get(this.selectedBillboardId);
       const mesh = root?.userData["billboardMesh"] as THREE.Mesh | undefined;
@@ -7196,6 +7444,7 @@ export class Game {
   beginReposition(x: number, z: number, yLevel = 0): void {
     this.clearPlacementPreview();
     this.clearRepositionBillboardVisualState();
+    this.repositionAttentionMarker = false;
     this.repositionFrom = { x, y: z };
     const yb = Math.max(0, Math.min(2, Math.floor(yLevel)));
     this.repositionSourceYLevel = yb;
@@ -7236,6 +7485,7 @@ export class Game {
   cancelReposition(): void {
     this.clearRepositionBillboardVisualState();
     this.repositionFrom = null;
+    this.repositionAttentionMarker = false;
     this.repositionGateHint = null;
     this.repositionGatePlacedVisualFreeze = null;
     this.clearPlacementPreview();
@@ -7441,6 +7691,7 @@ export class Game {
     this.buildMode = on;
     if (on) {
       this.floorExpandMode = false;
+      this.noWalkFloorBrushActive = false;
       this.pendingGateAdjacentInteract = null;
     }
     if (!on) {
@@ -7454,6 +7705,8 @@ export class Game {
       this.clearSelectedBlock();
       this.clearObjectPrefabToolVisuals();
     }
+    this.syncAttentionMarkerPickCues();
+    this.syncNoWalkFloorCues();
     this.syncHighlightColor();
     this.refreshSelectionOutline();
     this.syncPlacementRangeHints();
@@ -7518,10 +7771,12 @@ export class Game {
       this.clearFloorBrushPreviewTiles();
       this.clearFloorHoverVisuals();
       this.setFloorEyedropperActive(false);
+      this.setNoWalkFloorBrushActive(false);
     }
     this.syncHighlightColor();
     this.syncPlacementRangeHints();
     this.syncRoomEntrySpawnMarker(performance.now() * 0.001);
+    this.syncNoWalkFloorCues();
     this.requestRender();
   }
 
@@ -7529,10 +7784,33 @@ export class Game {
     return this.floorExpandMode;
   }
 
+  setNoWalkFloorBrushActive(active: boolean): void {
+    if (this.noWalkFloorBrushActive === active) return;
+    this.noWalkFloorBrushActive = active;
+    if (active) {
+      this.setFloorEyedropperActive(false);
+      this.floorBrushPreviewValidMat.color.setHex(0xef4444);
+      this.floorHoverPreviewMat.color.setHex(0xef4444);
+    } else {
+      this.floorBrushPreviewValidMat.color.setHex(this.floorPlacementColorRgb);
+      this.floorHoverPreviewMat.color.setHex(this.floorPlacementColorRgb);
+    }
+    if (this.floorHoverPreviewTiles.length > 0) {
+      this.syncFloorHoverColorPreview(this.floorHoverPreviewTiles);
+    }
+    this.requestRender(80);
+  }
+
+  getNoWalkFloorBrushActive(): boolean {
+    return this.noWalkFloorBrushActive;
+  }
+
   setFloorPlacementColorRgb(rgb: number): void {
     this.floorPlacementColorRgb = clampColorRgb(rgb);
-    this.floorBrushPreviewValidMat.color.setHex(this.floorPlacementColorRgb);
-    this.floorHoverPreviewMat.color.setHex(this.floorPlacementColorRgb);
+    if (!this.noWalkFloorBrushActive) {
+      this.floorBrushPreviewValidMat.color.setHex(this.floorPlacementColorRgb);
+      this.floorHoverPreviewMat.color.setHex(this.floorPlacementColorRgb);
+    }
     if (this.floorHoverPreviewTiles.length > 0) {
       this.syncFloorHoverColorPreview(this.floorHoverPreviewTiles);
     }
@@ -7685,6 +7963,7 @@ export class Game {
     extraFloorTiles?: readonly { x: number; z: number; colorRgb?: number }[];
     baseFloorColorTiles?: readonly { x: number; z: number; colorRgb?: number }[];
     removedBaseFloorTiles?: readonly { x: number; z: number }[];
+    noWalkFloorTiles?: readonly { x: number; z: number }[];
     spawnX: number;
     spawnZ: number;
   }): void {
@@ -7712,6 +7991,10 @@ export class Game {
     for (const t of opts.removedBaseFloorTiles ?? []) {
       this.removedBaseFloorKeys.add(tileKey(t.x, t.z));
     }
+    this.noWalkFloorKeys.clear();
+    for (const t of opts.noWalkFloorTiles ?? []) {
+      this.noWalkFloorKeys.add(tileKey(t.x, t.z));
+    }
     if (roomUsesSpatialInterest(this.roomBounds)) {
       const chunkKeys = interestChunksFromRect({
         centerX: opts.spawnX,
@@ -7725,6 +8008,7 @@ export class Game {
     }
     this.refreshPathLine();
     this.syncPlacementRangeHints();
+    this.syncNoWalkFloorCues();
   }
 
   setExtraFloorTiles(
@@ -7785,6 +8069,7 @@ export class Game {
     ]);
     this.refreshPathLine();
     this.syncPlacementRangeHints();
+    this.syncNoWalkFloorCues();
   }
 
   /** Custom tint on core/base walkable floor (server-synced). */
@@ -7863,10 +8148,34 @@ export class Game {
     for (const k of add) {
       this.removedBaseFloorKeys.add(k);
       this.baseFloorColorByKey.delete(k);
+      this.noWalkFloorKeys.delete(k);
     }
     this.syncWalkableFloorTiles([...effectiveRemove, ...add]);
     this.refreshPathLine();
     this.syncPlacementRangeHints();
+    this.syncNoWalkFloorCues();
+  }
+
+  setNoWalkFloorTiles(tiles: readonly { x: number; z: number }[]): void {
+    this.noWalkFloorKeys.clear();
+    for (const t of tiles) {
+      this.noWalkFloorKeys.add(tileKey(t.x, t.z));
+    }
+    this.refreshPathLine();
+    this.syncNoWalkFloorCues();
+  }
+
+  /** Incremental No-Walk Floor update (server-synced). Floor mesh/color unchanged. */
+  applyNoWalkFloorDelta(add: readonly string[], remove: readonly string[]): void {
+    const effectiveRemove = this.spatialStreamRetainLoaded() ? [] : remove;
+    for (const k of effectiveRemove) {
+      this.noWalkFloorKeys.delete(k);
+    }
+    for (const k of add) {
+      this.noWalkFloorKeys.add(k);
+    }
+    this.refreshPathLine();
+    this.syncNoWalkFloorCues();
   }
 
   /** Initialize canvas claims from welcome message */
@@ -7959,10 +8268,66 @@ export class Game {
 
   setAttentionMarkerToolActive(active: boolean): void {
     this.attentionMarkerToolActive = active;
+    if (!active) this.clearSelectedAttentionMarker();
+    this.syncAttentionMarkerPickCues();
   }
 
   isAttentionMarkerToolActive(): boolean {
     return this.attentionMarkerToolActive;
+  }
+
+  setAttentionMarkerSelectHandler(
+    handler: ((x: number, z: number) => void) | null
+  ): void {
+    this.attentionMarkerSelectHandler = handler;
+  }
+
+  getSelectedAttentionMarker(): AttentionMarkerWire | null {
+    if (!this.selectedAttentionMarkerKey) return null;
+    return this.attentionMarkers.get(this.selectedAttentionMarkerKey)?.data ?? null;
+  }
+
+  clearSelectedAttentionMarker(): void {
+    if (!this.selectedAttentionMarkerKey) return;
+    const prev = this.attentionMarkers.get(this.selectedAttentionMarkerKey);
+    if (prev) this.setAttentionMarkerGroupSelected(prev.group, false);
+    this.selectedAttentionMarkerKey = null;
+    this.refreshSelectionOutline();
+    this.syncAttentionMarkerPickCues();
+  }
+
+  selectAttentionMarker(x: number, z: number): boolean {
+    const k = tileKey(Math.floor(x), Math.floor(z));
+    const entry = this.attentionMarkers.get(k);
+    if (!entry) return false;
+    this.selectedBlockKey = null;
+    this.selectedBillboardId = null;
+    this.teleporterEditDestDraft = null;
+    if (this.selectedAttentionMarkerKey && this.selectedAttentionMarkerKey !== k) {
+      const prev = this.attentionMarkers.get(this.selectedAttentionMarkerKey);
+      if (prev) this.setAttentionMarkerGroupSelected(prev.group, false);
+    }
+    this.selectedAttentionMarkerKey = k;
+    this.setAttentionMarkerGroupSelected(entry.group, true);
+    this.refreshSelectionOutline();
+    this.syncAttentionMarkerPickCues();
+    return true;
+  }
+
+  private setAttentionMarkerGroupSelected(
+    group: THREE.Group,
+    selected: boolean
+  ): void {
+    group.traverse((obj: THREE.Object3D) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const m = obj.material;
+      if (Array.isArray(m)) return;
+      if (m instanceof THREE.MeshStandardMaterial) {
+        m.emissiveIntensity = selected ? 1.35 : 0.85;
+      } else if (m instanceof THREE.MeshBasicMaterial) {
+        m.opacity = selected ? 0.45 : 0.28;
+      }
+    });
   }
 
   getAttentionMarkerAt(x: number, z: number): AttentionMarkerWire | null {
@@ -7974,6 +8339,7 @@ export class Game {
   }
 
   setAttentionMarkers(markers: readonly AttentionMarkerWire[]): void {
+    const selectedKey = this.selectedAttentionMarkerKey;
     const nextKeys = new Set(
       markers.map((m) => tileKey(Math.floor(m.x), Math.floor(m.z)))
     );
@@ -7998,21 +8364,175 @@ export class Game {
         x,
         z,
         hoverHeight: Math.max(0, Math.min(3, Math.floor(raw.hoverHeight ?? 1))),
+        sizePercent: clampAttentionMarkerSizePercent(
+          raw.sizePercent ?? 100
+        ),
         colorRgb: (raw.colorRgb >>> 0) & 0xffffff,
       };
       const existing = this.attentionMarkers.get(k);
       if (existing) {
         existing.data = data;
         tintAttentionMarkerGroup(existing.group, data.colorRgb);
+        const scale = attentionMarkerScaleFromPercent(data.sizePercent);
+        existing.group.scale.setScalar(scale);
         existing.baseY = this.attentionMarkerBaselineY(x, z);
+        this.setAttentionMarkerGroupSelected(
+          existing.group,
+          selectedKey === k
+        );
         continue;
       }
       const group = makeAttentionMarkerGroup(data.colorRgb);
+      group.scale.setScalar(attentionMarkerScaleFromPercent(data.sizePercent));
       const baseY = this.attentionMarkerBaselineY(x, z);
       group.position.set(x, baseY + attentionMarkerHoverLift(data.hoverHeight), z);
       this.scene.add(group);
       this.attentionMarkers.set(k, { data, group, baseY });
+      if (selectedKey === k) {
+        this.setAttentionMarkerGroupSelected(group, true);
+      }
     }
+    if (selectedKey && !this.attentionMarkers.has(selectedKey)) {
+      this.selectedAttentionMarkerKey = null;
+    }
+    this.syncAttentionMarkerPickCues();
+  }
+
+  /** Soft floor tints under marked tiles while the Attention Marker tool is active. */
+  private syncAttentionMarkerPickCues(): void {
+    if (
+      !this.buildMode ||
+      !this.attentionMarkerToolActive ||
+      !this.attentionMarkerPickCueGeom ||
+      !this.attentionMarkerPickCueMat ||
+      !this.attentionMarkerPickCueSelectedMat
+    ) {
+      this.clearAttentionMarkerPickCues();
+      return;
+    }
+    const nextKeys = new Set(this.attentionMarkers.keys());
+    for (const [k, mesh] of this.attentionMarkerPickCueMeshes) {
+      if (nextKeys.has(k)) continue;
+      this.scene.remove(mesh);
+      this.attentionMarkerPickCueMeshes.delete(k);
+    }
+    for (const [k, entry] of this.attentionMarkers) {
+      let mesh = this.attentionMarkerPickCueMeshes.get(k);
+      if (!mesh) {
+        mesh = new THREE.Mesh(
+          this.attentionMarkerPickCueGeom,
+          this.attentionMarkerPickCueMat
+        );
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.renderOrder = 5;
+        mesh.userData.skipBlockPickAndBounds = true;
+        this.scene.add(mesh);
+        this.attentionMarkerPickCueMeshes.set(k, mesh);
+      }
+      const selected = k === this.selectedAttentionMarkerKey;
+      mesh.material = selected
+        ? this.attentionMarkerPickCueSelectedMat
+        : this.attentionMarkerPickCueMat;
+      mesh.position.set(entry.data.x, 0.046, entry.data.z);
+      mesh.visible = true;
+    }
+    this.requestRender();
+  }
+
+  private clearAttentionMarkerPickCues(): void {
+    for (const [, mesh] of this.attentionMarkerPickCueMeshes) {
+      this.scene.remove(mesh);
+    }
+    this.attentionMarkerPickCueMeshes.clear();
+  }
+
+  /** Red X cues on No-Walk tiles while floor expand mode is open. */
+  private syncNoWalkFloorCues(): void {
+    if (!this.floorExpandMode || !this.noWalkFloorCueRes) {
+      this.clearNoWalkFloorCues();
+      return;
+    }
+    const nextKeys = new Set<string>();
+    for (const k of this.noWalkFloorKeys) {
+      if (this.shouldShowWalkableFloorAtKey(k)) nextKeys.add(k);
+    }
+    for (const [k, group] of this.noWalkFloorCueMeshes) {
+      if (nextKeys.has(k)) continue;
+      this.scene.remove(group);
+      this.noWalkFloorCueMeshes.delete(k);
+    }
+    for (const k of nextKeys) {
+      const [x, z] = k.split(",").map(Number);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+      let group = this.noWalkFloorCueMeshes.get(k);
+      if (!group) {
+        group = makeNoWalkFloorCueGroup(this.noWalkFloorCueRes);
+        this.scene.add(group);
+        this.noWalkFloorCueMeshes.set(k, group);
+      }
+      group.position.set(x, 0.048, z);
+      group.visible = true;
+    }
+    this.requestRender();
+  }
+
+  private clearNoWalkFloorCues(): void {
+    for (const [, group] of this.noWalkFloorCueMeshes) {
+      this.scene.remove(group);
+    }
+    this.noWalkFloorCueMeshes.clear();
+  }
+
+  /**
+   * Tile under the pointer that already has an Attention Marker.
+   * Prefer floor pick so tall markers stay selectable without hitting the mesh.
+   */
+  private pickAttentionMarkerTile(
+    clientX: number,
+    clientY: number
+  ): { x: number; z: number } | null {
+    const placeT = this.tryBuildPlacementFloorTile(clientX, clientY);
+    if (placeT) {
+      const k = tileKey(placeT.x, placeT.z);
+      if (this.attentionMarkers.has(k)) {
+        return { x: placeT.x, z: placeT.z };
+      }
+    }
+    const blockHit = this.pickBlockKey(clientX, clientY);
+    if (blockHit) {
+      const [bx, bz] = blockHit.split(",").map(Number);
+      if (Number.isFinite(bx) && Number.isFinite(bz)) {
+        const k = tileKey(bx!, bz!);
+        if (this.attentionMarkers.has(k)) {
+          return { x: bx!, z: bz! };
+        }
+      }
+    }
+    const floor = this.pickFloor(clientX, clientY);
+    if (floor) {
+      const k = tileKey(floor.x, floor.y);
+      if (this.attentionMarkers.has(k)) {
+        return { x: floor.x, z: floor.y };
+      }
+    }
+    return null;
+  }
+
+  isRepositioningAttentionMarker(): boolean {
+    return this.repositionAttentionMarker && this.repositionFrom !== null;
+  }
+
+  beginAttentionMarkerReposition(x: number, z: number): void {
+    this.clearPlacementPreview();
+    this.clearRepositionBillboardVisualState();
+    this.repositionFrom = { x, y: z };
+    this.repositionSourceYLevel = 0;
+    this.repositionGateHint = null;
+    this.repositionGatePlacedVisualFreeze = null;
+    this.repositionBillboardId = null;
+    this.repositionAttentionMarker = true;
+    this.selectAttentionMarker(x, z);
+    this.syncHighlightColor();
   }
 
   private attentionMarkerBaselineY(x: number, z: number): number {
@@ -8041,6 +8561,7 @@ export class Game {
         entry.data.z
       );
     }
+    this.syncTutorialAttentionCuePose();
   }
 
   setSignboardHoverHandler(
@@ -9007,8 +9528,12 @@ export class Game {
   private syncFloorHoverColorPreview(
     tiles: readonly { x: number; z: number }[]
   ): void {
-    this.floorHoverPreviewMat.color.setHex(this.floorPlacementColorRgb);
-    const validTiles = tiles.filter((t) => this.canPaintFloorTileAt(t.x, t.z));
+    this.floorHoverPreviewMat.color.setHex(
+      this.noWalkFloorBrushActive
+        ? 0xef4444
+        : this.floorPlacementColorRgb
+    );
+    const validTiles = tiles.filter((t) => this.canFloorBrushTargetAt(t.x, t.z));
     this.floorHoverPreviewTiles = validTiles.map((t) => ({ x: t.x, z: t.z }));
     while (this.floorHoverPreviewMeshes.length < validTiles.length) {
       const m = new THREE.Mesh(
@@ -9094,7 +9619,9 @@ export class Game {
     const validSegs: number[] = [];
     const invalidSegs: number[] = [];
     for (const t of tiles) {
-      const target = this.canPaintFloorTileAt(t.x, t.z) ? validSegs : invalidSegs;
+      const target = this.canFloorBrushTargetAt(t.x, t.z)
+        ? validSegs
+        : invalidSegs;
       this.pushTileSquareOutlineSegments(target, t.x, t.z, y);
     }
     if (validSegs.length > 0) {
@@ -9236,7 +9763,10 @@ export class Game {
               this.placedObjects,
               this.extraFloorKeys,
               this.roomId,
-              this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined
+              this.removedBaseFloorKeys.size > 0
+                ? this.removedBaseFloorKeys
+                : undefined,
+              this.noWalkFloorArg()
             )
           ) {
             continue;
@@ -9320,8 +9850,14 @@ export class Game {
       ft.y,
       this.extraFloorKeys,
       this.roomId,
-      this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined
+      this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined,
+      this.noWalkFloorArg()
     );
+  }
+
+  /** Trailing optional set for walk helpers; avoid allocating when empty. */
+  private noWalkFloorArg(): ReadonlySet<string> | undefined {
+    return this.noWalkFloorKeys.size > 0 ? this.noWalkFloorKeys : undefined;
   }
 
   /** Hub center safe zone: no new blocks or reposition targets. */
@@ -9757,6 +10293,7 @@ export class Game {
       extraWalkable: this.extraFloorKeys,
       baseRemoved:
         this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined,
+      noWalkFloor: this.noWalkFloorArg(),
       signboardOnGateTile: this.signboards.has(tileKey(p.gx, p.gz)),
       playerOnTile: (x, z) => {
         if (x === p.ex && z === p.ez) {
@@ -9952,6 +10489,10 @@ export class Game {
       this.syncTeleporterPlacementPreviewAt(wx, wz, wyLevel);
       return;
     }
+    if (this.attentionMarkerToolActive) {
+      this.syncAttentionMarkerPlacementPreviewAt(wx, wz);
+      return;
+    }
     this.clearTeleporterPlacementPreview();
     const meta = this.placementPreviewMetaForNewBlock();
     const sig = this.placementPreviewStyleSignature(meta);
@@ -9978,6 +10519,44 @@ export class Game {
       this.scene.add(this.placementPreviewGroup);
     }
     this.placementPreviewAnchor = { x: wx, z: wz, y: wyLevel };
+    this.placementPreviewGroup!.position.set(wx, yWorld, wz);
+    this.placementPreviewGroup!.visible = true;
+  }
+
+  private syncAttentionMarkerPlacementPreviewAt(wx: number, wz: number): void {
+    this.clearTeleporterPlacementPreview();
+    const hoverHeight =
+      this.inspectorAttentionMarkerPreview?.hoverHeight ?? 1;
+    const sizePercent =
+      this.inspectorAttentionMarkerPreview?.sizePercent ?? 100;
+    const colorRgb =
+      this.inspectorAttentionMarkerPreview?.colorRgb ?? this.placementColorRgb;
+    const sig = `am|${colorRgb}|${hoverHeight}|${sizePercent}`;
+    const baseY = this.attentionMarkerBaselineY(wx, wz);
+    const yWorld = baseY + attentionMarkerHoverLift(hoverHeight);
+    if (!this.placementPreviewGroup || this.placementPreviewStyleSig !== sig) {
+      if (this.placementPreviewGroup) {
+        this.scene.remove(this.placementPreviewGroup);
+        this.placementPreviewGroup.traverse((child: THREE.Object3D) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            const mat = child.material;
+            if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+            else mat.dispose();
+          }
+        });
+        this.placementPreviewGroup = null;
+      }
+      this.placementPreviewStyleSig = sig;
+      this.placementPreviewGroup = makeAttentionMarkerGroup(colorRgb, {
+        ghost: true,
+      });
+      this.placementPreviewGroup.scale.setScalar(
+        attentionMarkerScaleFromPercent(sizePercent)
+      );
+      this.scene.add(this.placementPreviewGroup);
+    }
+    this.placementPreviewAnchor = { x: wx, z: wz, y: 0 };
     this.placementPreviewGroup!.position.set(wx, yWorld, wz);
     this.placementPreviewGroup!.visible = true;
   }
@@ -10222,7 +10801,8 @@ export class Game {
         this.extraFloorKeys,
         this.roomId,
         this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined,
-        moverCtx ?? undefined
+        moverCtx ?? undefined,
+        this.noWalkFloorArg()
       );
       if (!remaining || remaining.length < 2) continue;
       const len = remaining.length;
@@ -10303,7 +10883,11 @@ export class Game {
   }
 
   private tryRemoveFloorTileAt(x: number, z: number): boolean {
-    if (!this.floorExpandMode || !this.removeExtraFloorHandler) return false;
+    if (!this.floorExpandMode) return false;
+    if (this.noWalkFloorBrushActive) {
+      return this.tryClearNoWalkFloorAt(x, z);
+    }
+    if (!this.removeExtraFloorHandler) return false;
     if (!this.tileWithinPlaceRadius(x, z)) return false;
     const k = tileKey(x, z);
     if (this.extraFloorKeys.has(k) && !isBaseTile(x, z, this.roomId)) {
@@ -10333,6 +10917,14 @@ export class Game {
     return this.tileWithinPlaceRadius(x, z);
   }
 
+  /** Hover / brush preview validity for the active floor tool (color vs No-Walk). */
+  private canFloorBrushTargetAt(x: number, z: number): boolean {
+    if (this.noWalkFloorBrushActive) {
+      return this.canPaintNoWalkFloorAt(x, z);
+    }
+    return this.canPaintFloorTileAt(x, z);
+  }
+
   private floorTilePaintable(x: number, z: number): boolean {
     const k = tileKey(x, z);
 
@@ -10350,8 +10942,40 @@ export class Game {
     return true;
   }
 
+  private canPaintNoWalkFloorAt(x: number, z: number): boolean {
+    if (!this.floorExpandMode || !this.noWalkFloorBrushActive) return false;
+    if (this.roomEntrySpawnPickHandler) return false;
+    if (!this.tileWithinPlaceRadius(x, z)) return false;
+    return this.shouldShowWalkableFloorAtKey(tileKey(x, z));
+  }
+
+  private tryPaintNoWalkFloorAt(x: number, z: number): boolean {
+    if (!this.paintNoWalkFloorHandler) return false;
+    const tiles = floorBrushTiles(x, z, this.floorBrushSize);
+    const hasValid = tiles.some((t) => this.canPaintNoWalkFloorAt(t.x, t.z));
+    if (!hasValid) return false;
+    this.paintNoWalkFloorHandler(x, z, this.floorBrushSize);
+    return true;
+  }
+
+  private tryClearNoWalkFloorAt(x: number, z: number): boolean {
+    if (!this.clearNoWalkFloorHandler) return false;
+    if (!this.tileWithinPlaceRadius(x, z)) return false;
+    const tiles = floorBrushTiles(x, z, this.floorBrushSize);
+    const hasMarked = tiles.some((t) =>
+      this.noWalkFloorKeys.has(tileKey(t.x, t.z))
+    );
+    if (!hasMarked) return false;
+    this.clearNoWalkFloorHandler(x, z, this.floorBrushSize);
+    return true;
+  }
+
   private tryPlaceFloorTileAt(x: number, z: number): boolean {
-    if (!this.floorExpandMode || !this.placeExtraFloorHandler) return false;
+    if (!this.floorExpandMode) return false;
+    if (this.noWalkFloorBrushActive) {
+      return this.tryPaintNoWalkFloorAt(x, z);
+    }
+    if (!this.placeExtraFloorHandler) return false;
     if (this.streamObserverMode) return false;
     const tiles = floorBrushTiles(x, z, this.floorBrushSize);
     const hasValid = tiles.some((t) => this.canPaintFloorTileAt(t.x, t.z));
@@ -10401,6 +11025,11 @@ export class Game {
 
   /** Touch / coarse pointer: same tile toggles place vs remove. */
   private tryFloorExpandToggleAt(x: number, z: number): void {
+    if (this.noWalkFloorBrushActive) {
+      if (this.tryClearNoWalkFloorAt(x, z)) return;
+      this.tryPaintNoWalkFloorAt(x, z);
+      return;
+    }
     if (this.tryRemoveFloorTileAt(x, z)) return;
     this.tryPlaceFloorTileAt(x, z);
   }
@@ -11105,12 +11734,17 @@ export class Game {
       const t = this.tryBuildPlacementFloorTile(e.clientX, e.clientY);
       let placeForHints: { x: number; z: number } | null = null;
       if (t && !this.billboardPlacementPreview) {
-        const yLevel = this.nextOpenLevelAt(t.x, t.z);
-        if (yLevel !== null) {
-          this.syncPlacementPreviewAt(t.x, t.z, yLevel);
+        if (this.attentionMarkerToolActive) {
+          this.syncPlacementPreviewAt(t.x, t.z, 0);
           placeForHints = t;
         } else {
-          this.clearPlacementPreview();
+          const yLevel = this.nextOpenLevelAt(t.x, t.z);
+          if (yLevel !== null) {
+            this.syncPlacementPreviewAt(t.x, t.z, yLevel);
+            placeForHints = t;
+          } else {
+            this.clearPlacementPreview();
+          }
         }
       } else if (!t) {
         this.clearPlacementPreview();
@@ -11236,6 +11870,35 @@ export class Game {
       if (this.objectPrefabSaveActive && !this.prefabBboxDrag) {
         this.clearGateNeighborFloorHints();
         this.syncPrefabSaveHoverAt(e.clientX, e.clientY);
+        this.signboardHoverHandler?.(null);
+        return;
+      }
+      if (this.attentionMarkerToolActive) {
+        this.clearGateNeighborFloorHints();
+        this.blockTopHighlight.visible = false;
+        let tile: { x: number; z: number } | null =
+          this.tryBuildPlacementFloorTile(e.clientX, e.clientY);
+        if (!tile) {
+          const blockHit = this.pickBlockKey(e.clientX, e.clientY);
+          if (blockHit) {
+            const [bx, bz] = blockHit.split(",").map(Number);
+            if (Number.isFinite(bx) && Number.isFinite(bz)) {
+              tile = { x: bx!, z: bz! };
+            }
+          }
+        }
+        if (!tile) {
+          const floor = this.pickFloor(e.clientX, e.clientY);
+          if (floor) tile = { x: floor.x, z: floor.y };
+        }
+        if (tile && !this.hubNoBuildTile(tile.x, tile.z)) {
+          this.syncPlacementPreviewAt(tile.x, tile.z, 0);
+          this.tileHighlight.position.set(tile.x, 0.02, tile.z);
+          this.tileHighlight.visible = true;
+        } else {
+          this.clearPlacementPreview();
+          this.tileHighlight.visible = false;
+        }
         this.signboardHoverHandler?.(null);
         return;
       }
@@ -11708,7 +12371,10 @@ export class Game {
                 if (here.x === t.x && here.y === t.z) return;
               }
             }
-          } else if (this.hasAnyBlockAtTile(dest.x, dest.y)) {
+          } else if (
+            !this.repositionAttentionMarker &&
+            this.hasAnyBlockAtTile(dest.x, dest.y)
+          ) {
             return;
           }
           this.moveBlockHandler(from.x, from.y, dest.x, dest.y);
@@ -11725,6 +12391,48 @@ export class Game {
           this.obstacleSelectHandler?.(spec.anchorX, spec.anchorZ, 0);
           return;
         }
+      }
+
+      if (this.attentionMarkerToolActive) {
+        const markerTile = this.pickAttentionMarkerTile(e.clientX, e.clientY);
+        if (markerTile) {
+          this.clearPlacementPreview();
+          this.selectAttentionMarker(markerTile.x, markerTile.z);
+          this.attentionMarkerSelectHandler?.(markerTile.x, markerTile.z);
+          return;
+        }
+        // Tool active: do not select co-occupant blocks; place (or walk) instead.
+        const here = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+        const dest = this.pickFloor(e.clientX, e.clientY);
+        if (dest) {
+          const dx = here.x - dest.x;
+          const dz = here.y - dest.y;
+          const distance = Math.hypot(dx, dz);
+          if (distance > this.placeRadiusBlocks + 1e-6) {
+            const k = tileKey(dest.x, dest.y);
+            if (this.blockingTileKeys.has(k)) return;
+            if (!this.tileClickHandler) return;
+            this.pendingPrimaryWalk = {
+              pointerId: e.pointerId,
+              startX: e.clientX,
+              startY: e.clientY,
+            };
+            try {
+              this.renderer.domElement.setPointerCapture(e.pointerId);
+            } catch {
+              /* ignore */
+            }
+            this.previewWalkNavigationAt(e.clientX, e.clientY);
+            return;
+          }
+        }
+        const placeT = this.tryBuildPlacementFloorTile(e.clientX, e.clientY);
+        if (!placeT) return;
+        if (this.hubNoBuildTile(placeT.x, placeT.z)) return;
+        this.clearPlacementPreview();
+        const placeFn = this.placeBlockHandler;
+        if (placeFn) placeFn(placeT.x, placeT.z);
+        return;
       }
 
       const blockHit = this.pickBlockKey(e.clientX, e.clientY);
@@ -12012,6 +12720,16 @@ export class Game {
     this.endWorldcupStick();
     this.clearPendingBuildPlace();
     this.clearPlacementPreview();
+    this.clearAttentionMarkerPickCues();
+    this.attentionMarkerPickCueGeom?.dispose();
+    this.attentionMarkerPickCueMat?.dispose();
+    this.attentionMarkerPickCueSelectedMat?.dispose();
+    this.attentionMarkerPickCueGeom = null;
+    this.attentionMarkerPickCueMat = null;
+    this.attentionMarkerPickCueSelectedMat = null;
+    this.clearNoWalkFloorCues();
+    disposeNoWalkFloorCueResources(this.noWalkFloorCueRes);
+    this.noWalkFloorCueRes = null;
     this.clearPendingPrimaryWalk();
     this.pendingGateAdjacentInteract = null;
     if (this.rightOrbitDrag) {
@@ -12118,6 +12836,7 @@ export class Game {
     this.roomEntrySpawnRingMat.dispose();
     this.tutorialMineHighlightRing.geometry.dispose();
     this.tutorialMineHighlightRingMat.dispose();
+    this.clearTutorialAttentionCue();
     this.defaultTileHoverOutline.geometry.dispose();
     this.defaultTileHoverOutlineMat.dispose();
     this.tileHighlightMat.dispose();
@@ -12376,7 +13095,8 @@ export class Game {
       this.extraFloorKeys,
       this.roomId,
       this.removedBaseFloorKeys.size > 0 ? this.removedBaseFloorKeys : undefined,
-      moverCtx ?? undefined
+      moverCtx ?? undefined,
+      this.noWalkFloorArg()
     );
     if (!remaining || remaining.length < 2) {
       if (this.pathPreviewGoal) {
@@ -15080,7 +15800,14 @@ export class Game {
     const hasMineableSparkles = this.updateMineableBlockSparkles();
     const hasSignpostHintMotion = this.updateSignpostHintSprites();
     const hasTutorialMineHighlight = this.tutorialMineHighlightTile !== null;
-    if (visualActive || hasMineableSparkles || hasSignpostHintMotion || hasTutorialMineHighlight) {
+    const hasTutorialAttentionCue = this.tutorialAttentionCueTile !== null;
+    if (
+      visualActive ||
+      hasMineableSparkles ||
+      hasSignpostHintMotion ||
+      hasTutorialMineHighlight ||
+      hasTutorialAttentionCue
+    ) {
       this.requestRender(250);
     }
     if (visualActive) {
@@ -16609,6 +17336,36 @@ export class Game {
       return;
     }
     if (
+      slot === "selection" &&
+      this.inspectorSelectionSpecialDockKind === "attention-marker"
+    ) {
+      const am = this.inspectorAttentionMarkerPreview;
+      const colorRgb = am?.colorRgb ?? this.placementColorRgb;
+      const hoverHeight = am?.hoverHeight ?? 1;
+      const sizePercent = am?.sizePercent ?? 100;
+      const sig = `am_sel|${hoverHeight}|${sizePercent}|${colorRgb}|${this.floorTileQuadSize}`;
+      if (port.lastSig !== sig) {
+        port.lastSig = sig;
+        this.resetInspectorPreviewBlockSlot(port);
+        this.applyInspectorPreviewFloorPortalGlow(port, false);
+        this.mountInspectorAttentionMarkerPreview(
+          port,
+          colorRgb,
+          hoverHeight,
+          sizePercent
+        );
+      }
+      const rAm = port.canvas.getBoundingClientRect();
+      if (rAm.width < 2 || rAm.height < 2) return;
+      const rwAm = Math.max(1, Math.floor(rAm.width));
+      const rhAm = Math.max(1, Math.floor(rAm.height));
+      port.renderer.setSize(rwAm, rhAm, false);
+      port.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.applyInspectorPreviewFrustum(port.camera, rwAm, rhAm);
+      port.renderer.render(port.scene, port.camera);
+      return;
+    }
+    if (
       slot === "placement" &&
       this.inspectorPlacementPreviewKind === "billboard"
     ) {
@@ -16743,8 +17500,31 @@ export class Game {
     port.renderer.render(port.scene, port.camera);
   }
 
+  private mountInspectorAttentionMarkerPreview(
+    port: InspectorTilePreviewPort,
+    colorRgb: number,
+    hoverHeight: number,
+    sizePercent = 100
+  ): void {
+    port.floor.visible = true;
+    port.blockSlot.position.set(0, 0, 0);
+    const group = makeAttentionMarkerGroup(
+      attentionMarkerPreviewContrastRgb(colorRgb)
+    );
+    group.position.set(0, attentionMarkerHoverLift(hoverHeight), 0);
+    // Fit the tall V into the inspector frame, then apply Size percent.
+    group.scale.setScalar(0.85 * attentionMarkerScaleFromPercent(sizePercent));
+    port.blockSlot.add(group);
+  }
+
   private dockStripToolThumbnailSignature(
-    tool: "teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost"
+    tool:
+      | "teleporter"
+      | "gate"
+      | "unlock-pad"
+      | "billboard"
+      | "signpost"
+      | "attention-marker"
   ): string {
     const lay = `${this.blockVisualScale}|${this.floorTileQuadSize}`;
     if (tool === "teleporter") return `tp|${lay}`;
@@ -16757,6 +17537,9 @@ export class Game {
     if (tool === "billboard") {
       const b = this.billboardPlacementDraft;
       return `bb|${b.orientation}|${b.yawSteps}|${DOCK_STRIP_BILLBOARD_THUMB_SCALE}|${lay}`;
+    }
+    if (tool === "attention-marker") {
+      return `am|${this.placementColorRgb}|${lay}`;
     }
     return `sp|${this.placementPreviewStyleSignature(this.placementPreviewMetaForNewBlock())}|${lay}`;
   }
@@ -16901,9 +17684,25 @@ export class Game {
 
   private renderDockStripToolIntoBakePort(
     port: InspectorTilePreviewPort,
-    tool: "teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost"
+    tool:
+      | "teleporter"
+      | "gate"
+      | "unlock-pad"
+      | "billboard"
+      | "signpost"
+      | "attention-marker"
   ): void {
     port.floor.visible = tool !== "billboard";
+    if (tool === "attention-marker") {
+      this.mountInspectorAttentionMarkerPreview(
+        port,
+        this.inspectorAttentionMarkerPreview?.colorRgb ??
+          this.placementColorRgb,
+        this.inspectorAttentionMarkerPreview?.hoverHeight ?? 1,
+        this.inspectorAttentionMarkerPreview?.sizePercent ?? 100
+      );
+      return;
+    }
     if (tool === "teleporter") {
       port.blockSlot.position.set(0, 0, 0);
       port.blockSlot.add(this.createPortalPillarMesh(0, 0, { dim: true }));
@@ -17017,10 +17816,37 @@ export class Game {
    * placement inspector block-only; the call must exist so HUD never throws.
    */
   setPlacementInspectorPreviewKind(
-    kind: "block" | "teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost"
+    kind:
+      | "block"
+      | "teleporter"
+      | "gate"
+      | "unlock-pad"
+      | "billboard"
+      | "signpost"
+      | "attention-marker"
   ): void {
-    if (this.inspectorPlacementPreviewKind === kind) return;
+    if (this.inspectorPlacementPreviewKind === kind) {
+      if (kind === "attention-marker" && this.inspectorPlacementPort) {
+        this.inspectorAttentionMarkerPreview = {
+          hoverHeight: this.inspectorAttentionMarkerPreview?.hoverHeight ?? 1,
+          sizePercent: this.inspectorAttentionMarkerPreview?.sizePercent ?? 100,
+          colorRgb: this.placementColorRgb,
+        };
+        this.inspectorPlacementPort.lastSig = "";
+        this.renderInspectorTilePreview("placement");
+      }
+      return;
+    }
     this.inspectorPlacementPreviewKind = kind;
+    if (kind === "attention-marker") {
+      this.inspectorAttentionMarkerPreview = {
+        hoverHeight: this.inspectorAttentionMarkerPreview?.hoverHeight ?? 1,
+        sizePercent: this.inspectorAttentionMarkerPreview?.sizePercent ?? 100,
+        colorRgb: this.placementColorRgb,
+      };
+    } else if (this.inspectorSelectionSpecialDockKind !== "attention-marker") {
+      this.inspectorAttentionMarkerPreview = null;
+    }
     if (this.inspectorPlacementPort) {
       this.inspectorPlacementPort.lastSig = "";
       this.renderInspectorTilePreview("placement");
@@ -17109,7 +17935,14 @@ export class Game {
   }
 
   getDockStripThumbnailDataUrls(
-    tools: readonly ("teleporter" | "gate" | "unlock-pad" | "billboard" | "signpost")[]
+    tools: readonly (
+      | "teleporter"
+      | "gate"
+      | "unlock-pad"
+      | "billboard"
+      | "signpost"
+      | "attention-marker"
+    )[]
   ): Map<string, string> {
     const out = new Map<string, string>();
     const port = this.getOrCreateDockStripBakePort();
@@ -17193,6 +18026,7 @@ export class Game {
       "unlock-pad",
       "billboard",
       "signpost",
+      "attention-marker",
     ]);
     this.getTerrainDockShapeThumbnailDataUrls([
       "cube",
@@ -17308,6 +18142,7 @@ export class Game {
   syncInspectorSelectionTilePreview(props: ObstacleProps | null): void {
     this.inspectorSelectionSpecialDockKind = null;
     this.inspectorSelectionBillboardId = null;
+    this.inspectorAttentionMarkerPreview = null;
     this.inspectorSelectionTeleporterPending = false;
     this.inspectorSelectionTeleporterTileRef = null;
     this.inspectorSelectionObstacle = props;
@@ -17416,6 +18251,7 @@ export class Game {
       const spec = this.billboardSpecs.get(billboardId);
       this.inspectorSelectionSpecialDockKind = "billboard";
       this.inspectorSelectionBillboardId = billboardId;
+      this.inspectorAttentionMarkerPreview = null;
       this.inspectorSelectionTeleporterPending = false;
       this.inspectorSelectionTeleporterTileRef = null;
       this.inspectorSelectionObstacle = null;
@@ -17429,6 +18265,74 @@ export class Game {
     this.renderInspectorTilePreview("selection");
     if (billboardId === null && this.inspectorPlacementPort) {
       this.inspectorPlacementPort.lastSig = "";
+      this.renderInspectorTilePreview("placement");
+    }
+  }
+
+  /** Selection-slot preview for a placed Attention Marker (V glyph). */
+  syncInspectorSelectionAttentionMarkerPreview(
+    opts: {
+      hoverHeight: number;
+      sizePercent: number;
+      colorRgb: number;
+    } | null
+  ): void {
+    if (opts === null) {
+      if (this.inspectorSelectionSpecialDockKind === "attention-marker") {
+        this.inspectorSelectionSpecialDockKind = null;
+        this.inspectorAttentionMarkerPreview = null;
+        this.inspectorSelectionObstacle = null;
+        this.inspectorSelectionTileRef = null;
+      }
+    } else {
+      this.inspectorSelectionSpecialDockKind = "attention-marker";
+      this.inspectorSelectionBillboardId = null;
+      this.inspectorSelectionTeleporterPending = false;
+      this.inspectorSelectionTeleporterTileRef = null;
+      this.inspectorSelectionObstacle = null;
+      this.inspectorAttentionMarkerPreview = {
+        hoverHeight: Math.max(0, Math.min(3, Math.floor(opts.hoverHeight))),
+        sizePercent: clampAttentionMarkerSizePercent(opts.sizePercent),
+        colorRgb: (opts.colorRgb >>> 0) & 0xffffff,
+      };
+    }
+    if (this.inspectorSelectionPort) {
+      this.inspectorSelectionPort.lastSig = "";
+    }
+    this.renderInspectorTilePreview("selection");
+  }
+
+  /** Live update for Attention Marker placement/selection dock preview. */
+  setAttentionMarkerInspectorPreview(
+    opts: {
+      hoverHeight: number;
+      sizePercent: number;
+      colorRgb: number;
+    } | null
+  ): void {
+    if (opts === null) {
+      if (this.inspectorPlacementPreviewKind === "attention-marker") {
+        this.inspectorAttentionMarkerPreview = {
+          hoverHeight: 1,
+          sizePercent: 100,
+          colorRgb: this.placementColorRgb,
+        };
+      } else if (this.inspectorSelectionSpecialDockKind !== "attention-marker") {
+        this.inspectorAttentionMarkerPreview = null;
+      }
+    } else {
+      this.inspectorAttentionMarkerPreview = {
+        hoverHeight: Math.max(0, Math.min(3, Math.floor(opts.hoverHeight))),
+        sizePercent: clampAttentionMarkerSizePercent(opts.sizePercent),
+        colorRgb: (opts.colorRgb >>> 0) & 0xffffff,
+      };
+    }
+    if (this.inspectorSelectionPort) this.inspectorSelectionPort.lastSig = "";
+    if (this.inspectorPlacementPort) this.inspectorPlacementPort.lastSig = "";
+    if (this.inspectorSelectionSpecialDockKind === "attention-marker") {
+      this.renderInspectorTilePreview("selection");
+    }
+    if (this.inspectorPlacementPreviewKind === "attention-marker") {
       this.renderInspectorTilePreview("placement");
     }
   }

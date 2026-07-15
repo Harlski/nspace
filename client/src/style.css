@@ -1875,6 +1875,14 @@ html.nspace-mobile-landscape .player-menu {
   display: none !important;
 }
 
+.tutorial-step-coach__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem 0.65rem;
+}
+
 .tutorial-step-coach__steps {
   display: flex;
   flex-wrap: wrap;
@@ -1886,6 +1894,39 @@ html.nspace-mobile-landscape .player-menu {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: rgba(236, 242, 255, 0.55);
+}
+
+.tutorial-step-coach__reset {
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  margin: 0;
+  padding: 0.2rem 0.7rem;
+  min-height: 1.7rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  color: rgba(245, 248, 255, 0.92);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.tutorial-step-coach__reset:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.tutorial-step-coach__reset:focus-visible {
+  outline: 2px solid rgba(252, 211, 77, 0.75);
+  outline-offset: 2px;
+}
+
+.tutorial-step-coach__reset[hidden] {
+  display: none !important;
 }
 
 .tutorial-step-coach__sep {
@@ -1971,6 +2012,12 @@ html.nspace-mobile-landscape .player-menu {
   .tutorial-step-coach__steps {
     font-size: 0.64rem;
     gap: 0.28rem;
+  }
+
+  .tutorial-step-coach__reset {
+    font-size: 0.62rem;
+    min-height: 1.55rem;
+    padding: 0.16rem 0.58rem;
   }
 
   .tutorial-step-coach__hint {
@@ -6160,8 +6207,8 @@ button.hud-brand:focus-visible {
 
 .hud-portal-enter {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  left: 0;
+  top: 0;
   transform: translate(-50%, -115%);
   z-index: 7;
   pointer-events: auto;
@@ -9664,6 +9711,61 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   margin-bottom: 0;
 }
 
+.hud-build-bottom-dock__context-mods > #tile-inspector-placement .tile-inspector__param--unlock-pad {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+}
+
+.tile-inspector__unlock-pad-summary-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+
+.tile-inspector__unlock-pad-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  opacity: 0.92;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tile-inspector__unlock-pad-summary:hover,
+.tile-inspector__unlock-pad-summary:focus-visible {
+  opacity: 1;
+  text-decoration: underline;
+  outline: none;
+}
+
+.tile-inspector__unlock-pad-edit {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+}
+
+.unlock-pad-settings-modal__error {
+  color: #f87171 !important;
+  margin-top: 4px;
+}
+
 .hud-build-bottom-dock__context-mods .tile-inspector-tp-dock {
   display: flex;
   flex-direction: column;
@@ -10595,6 +10697,44 @@ html.nspace-mobile-portrait
   border-color: rgba(96, 165, 250, 0.75);
   background: rgba(37, 99, 235, 0.28);
   color: #dbeafe;
+}
+
+.hud-build-bottom-dock__floor-no-walk-btn {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 0 0 6px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(61, 70, 90, 0.9);
+  background: rgba(30, 36, 51, 0.92);
+  color: #c8ceda;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.hud-build-bottom-dock__floor-no-walk-btn:hover {
+  background-color: rgba(45, 52, 70, 0.95);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #e8eaef;
+}
+
+.hud-build-bottom-dock__floor-no-walk-btn:focus-visible {
+  outline: 2px solid rgba(239, 68, 68, 0.45);
+  outline-offset: 1px;
+}
+
+.hud-build-bottom-dock__floor-no-walk-btn--active {
+  border-color: rgba(239, 68, 68, 0.65);
+  background: rgba(239, 68, 68, 0.2);
+  color: #fecaca;
 }
 
 .hud-build-bottom-dock__floor-eyedropper-icon {
@@ -15715,6 +15855,44 @@ a.main-menu__version:focus-visible {
   100% {
     transform: translateX(320%);
   }
+}
+
+/* Unlock Pad property editor (object panel) */
+.build-object-panel-context__unlock-pad-edit-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.build-object-panel-context__unlock-pad-edit-block[hidden] {
+  display: none;
+}
+.build-object-panel-context__unlock-pad-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.build-object-panel-context__unlock-pad-label {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
+.build-object-panel-context__unlock-pad-input,
+.build-object-panel-context__unlock-pad-select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.28);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+.build-object-panel-context__unlock-pad-edit-block .build-object-panel__btn {
+  align-self: flex-start;
+  margin-top: 2px;
 }
 
 /* Gate access list (object panel + standalone modal) */
