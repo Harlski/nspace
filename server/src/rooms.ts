@@ -12680,13 +12680,9 @@ export function addClient(
       }
 
       let payoutHasFunds = false;
-      const tutorialMineRoom =
-        isTutorialRuntimeRoomId(currentRoomId) ||
-        isTutorialStagingRoomId(currentRoomId);
       const tutorialMine =
-        tutorialMineRoom &&
-        props.claimable === true &&
-        props.active !== false;
+        (isTutorialRuntimeRoomId(currentRoomId) ||
+          isTutorialStagingRoomId(currentRoomId));
       if (tutorialMine) {
         const tw = tutorialWelcomeForAddress(
           address,
