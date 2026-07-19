@@ -35,6 +35,8 @@ async function withStubService(
     balanceCacheMs: 60_000,
     maxBackoffMs: 3_600_000,
     deadLetterAfterAttempts: 80,
+    autoBulkAfterMs: 0,
+    autoBulkCheckIntervalMs: 300_000,
   };
   const { app } = createPayoutApp({
     cfg,

@@ -24,6 +24,8 @@ function testCfg(dataDir: string): AppConfig {
     balanceCacheMs: 20_000,
     maxBackoffMs: 3_600_000,
     deadLetterAfterAttempts: 80,
+    autoBulkAfterMs: 0,
+    autoBulkCheckIntervalMs: 300_000,
   };
 }
 

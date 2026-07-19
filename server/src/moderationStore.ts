@@ -88,6 +88,11 @@ export function isMiningBanned(normalizedAddress: string): boolean {
   return Boolean(readStore().miningBanned[k]);
 }
 
+/** Normalized wallet keys with an active mining restriction (for payout sidecar sync). */
+export function listMiningBannedWalletKeys(): string[] {
+  return Object.keys(readStore().miningBanned);
+}
+
 export function setUsernameSetBanned(
   target: string,
   banned: boolean,

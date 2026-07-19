@@ -142,6 +142,11 @@ import {
   closePaletteHueHexPopover,
   isPaletteHueHexPopoverTyping,
 } from "./paletteHueHexPopover.js";
+import {
+  attachPaletteSvPickerHandlers,
+  createPaletteSvPicker,
+  setPaletteSvPickerRgb,
+} from "./paletteSvPicker.js";
 import { mountHeaderMarquee } from "./headerMarquee.js";
 import { createPlayerMenu, type PlayerMenuItemId } from "./playerMenu.js";
 import { createTelescopeControl } from "./telescopeControl.js";
@@ -6930,25 +6935,22 @@ export function createHud(
   const barHueCore = barHueRingParts.core;
   barShapeColorRow.appendChild(barHueRingWrap);
 
-  /** Extra floor tile top color today (`Game.ts` `TERRAIN_TILE_EXTRA_COLOR`); wheel only for now. */
+  /** Extra floor tile top color today (`Game.ts` `TERRAIN_TILE_EXTRA_COLOR`). */
   const FLOOR_TILE_DEFAULT_COLOR_RGB = 0x3d5a4a;
   const floorShapeColorRow = document.createElement("div");
   floorShapeColorRow.className =
     "hud-mode-sidebar__shape-color-row hud-mode-sidebar__shape-color-row--floor";
   floorShapeColorRow.hidden = true;
-  const floorHueRingParts = createPaletteHueRing({
+  const floorSvPickerParts = createPaletteSvPicker({
     ariaLabel: "Floor tile color",
-    title: "Drag the ring for hue. Click the center for a custom hex code.",
-    ariaValueNow: blockColorRgbToHueDeg(FLOOR_TILE_DEFAULT_COLOR_RGB),
+    title:
+      "Drag the square for light/dark and intensity; hue strip for color. Use hex below for exact values.",
   });
-  const floorHueRingWrap = floorHueRingParts.wrap;
-  const floorHueRing = floorHueRingParts.ring;
-  const floorHueCore = floorHueRingParts.core;
 
   const floorColorPickerColumn = document.createElement("div");
   floorColorPickerColumn.className =
     "hud-build-bottom-dock__floor-color-picker";
-  floorColorPickerColumn.appendChild(floorHueRingWrap);
+  floorColorPickerColumn.appendChild(floorSvPickerParts.wrap);
 
   const floorColorMetaRow = document.createElement("div");
   floorColorMetaRow.className = "hud-build-bottom-dock__floor-color-meta";
@@ -6994,19 +6996,19 @@ export function createHud(
     floorBrushSizeSelect
   );
 
-  const floorNoWalkBrushBtn = document.createElement("button");
-  floorNoWalkBrushBtn.type = "button";
-  floorNoWalkBrushBtn.className =
-    "hud-build-bottom-dock__floor-no-walk-btn";
-  floorNoWalkBrushBtn.textContent = "No-Walk Floor";
-  floorNoWalkBrushBtn.setAttribute("aria-label", "No-Walk Floor brush");
-  floorNoWalkBrushBtn.title =
-    "Paint No-Walk Floor (left click). Right click clears.";
-  floorNoWalkBrushBtn.setAttribute("aria-pressed", "false");
-  buildDockFloorBrushSettingRow.appendChild(floorNoWalkBrushBtn);
+  /** Shown in Floor tab context when the Spawn card is selected (Join Spawn). */
+  const roomFloorSpawnActions = document.createElement("div");
+  roomFloorSpawnActions.className =
+    "hud-build-bottom-dock__room-setting hud-build-bottom-dock__floor-spawn-actions";
+  roomFloorSpawnActions.hidden = true;
+  const roomFloorSpawnHint = document.createElement("span");
+  roomFloorSpawnHint.className = "hud-build-bottom-dock__room-setting-label";
+  roomFloorSpawnHint.textContent = "Click a walkable tile";
+  roomFloorSpawnActions.append(roomFloorSpawnHint);
 
   floorShapeColorRow.append(
     buildDockFloorBrushSettingRow,
+    roomFloorSpawnActions,
     floorColorPickerColumn
   );
 
@@ -7879,8 +7881,11 @@ export function createHud(
     buildDockRoomBgSwatch
   );
   buildDockRoomSettingsPanel.appendChild(buildDockRoomBgSettingRow);
-  roomEntrySpawnPanel.classList.add("hud-build-bottom-dock__room-entry-spawn");
-  buildDockRoomSettingsPanel.appendChild(roomEntrySpawnPanel);
+  // Join Spawn lives on Floor → SPAWN; keep deployables here for wallet rooms.
+  roomDeployablesRow.classList.add(
+    "hud-build-bottom-dock__room-deployables"
+  );
+  buildDockRoomSettingsPanel.appendChild(roomDeployablesRow);
 
   const buildBottomDockContext = document.createElement("aside");
   buildBottomDockContext.className = "hud-build-bottom-dock__context";
@@ -8448,7 +8453,14 @@ export function createHud(
   }
 
   function buildDockPlacementPlaceLabel(): string {
-    if (buildDockRoomEditActive()) return "Edit: Room";
+    if (buildDockRoomEditActive()) {
+      if (buildDockRoomCategory === "floor") {
+        if (roomFloorTool === "noWalk") return "Paint: No-Walk Floor";
+        if (roomFloorTool === "spawn") return "Set: Join Spawn";
+        return "Paint: Floor";
+      }
+      return "Edit: Room";
+    }
     const tool = tileInspectorToolSelect.value as
       | "block"
       | "signpost"
@@ -8790,6 +8802,62 @@ export function createHud(
     );
   }
 
+  type RoomFloorToolId = "floor" | "noWalk" | "spawn";
+  let roomFloorTool: RoomFloorToolId = "floor";
+
+  function selectRoomFloorTool(tool: RoomFloorToolId): void {
+    if (tool === "spawn" && !roomEntrySpawnSettingsAllowed) {
+      return;
+    }
+    roomFloorTool = tool;
+    if (buildToggleBtn.getAttribute("aria-pressed") !== "true") return;
+    if (!buildDockRoomEditActive()) {
+      buildEditKindSelect.value = "room";
+      syncBuildEditKindTriggerFromSelect();
+      onBuildEditKindChanged();
+    }
+    if (buildDockRoomCategory !== "floor") {
+      buildDockRoomCategory = "floor";
+      for (const [c, b] of buildDockRoomTabByCategory) {
+        const on = c === "floor";
+        b.setAttribute("aria-selected", on ? "true" : "false");
+        b.classList.toggle("hud-build-bottom-dock__tab--active", on);
+      }
+      setBuildDockRoomBgPopoverOpen(false);
+      syncBuildDockRoomCategoryChrome();
+    }
+    if (tool === "noWalk") {
+      clearRoomEntrySpawnPickUi();
+      setNoWalkFloorBrushActiveUi(true);
+    } else if (tool === "spawn") {
+      exitNoWalkFloorBrushMode();
+      if (!roomEntrySpawnPickArmed) {
+        roomEntrySpawnPickArmed = true;
+        roomEntrySpawnPickBtn.setAttribute("aria-pressed", "true");
+        roomEntrySpawnPickStateHandler?.(true);
+      }
+    } else {
+      exitNoWalkFloorBrushMode();
+      clearRoomEntrySpawnPickUi();
+    }
+    syncBuildDockRoomFloorStripActive();
+    syncBuildDockFloorHueRowVisibility();
+    syncBuildDockPlaceLabel();
+  }
+
+  function syncBuildDockRoomFloorStripActive(): void {
+    for (const node of buildBottomDockTools.querySelectorAll(
+      ".hud-build-bottom-dock__room-floor-card"
+    )) {
+      const card = node as HTMLButtonElement;
+      const id = card.dataset.roomFloorTool as RoomFloorToolId | undefined;
+      if (!id) continue;
+      const on = id === roomFloorTool;
+      card.classList.toggle("hud-build-bottom-dock__tool-card--active", on);
+      card.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  }
+
   function syncBuildDockRoomFloorStrip(): void {
     dockThumbGlBindGen += 1;
     if (dockThumbApplyTimeout !== null) {
@@ -8810,48 +8878,114 @@ export function createHud(
       inDock: false,
       compactDockChrome: false,
     });
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className =
-      "hud-build-bottom-dock__tool-card hud-build-bottom-dock__tool-card--active hud-build-bottom-dock__room-floor-card";
-    card.dataset.roomFloor = "1";
-    card.setAttribute("aria-pressed", "true");
-    card.setAttribute("aria-label", "Floor");
-    const wrap = document.createElement("span");
-    wrap.className = "hud-build-bottom-dock__tool-card-preview-wrap";
-    const img = document.createElement("img");
-    img.className = "hud-build-bottom-dock__tool-card-thumb";
-    img.width = 128;
-    img.height = 128;
-    img.decoding = "async";
-    img.alt = "";
-    img.draggable = false;
-    img.dataset.dockRoomFloorPreview = "1";
-    img.setAttribute("aria-hidden", "true");
-    wrap.appendChild(img);
-    card.appendChild(wrap);
-    const lab = document.createElement("span");
-    lab.className = "hud-build-bottom-dock__tool-card-label";
-    lab.textContent = "FLOOR";
-    card.appendChild(lab);
-    card.addEventListener("click", () => {
-      if (buildToggleBtn.getAttribute("aria-pressed") !== "true") return;
-      if (!buildDockRoomEditActive()) {
-        buildEditKindSelect.value = "room";
-        syncBuildEditKindTriggerFromSelect();
-        onBuildEditKindChanged();
+    if (roomFloorTool === "spawn" && !roomEntrySpawnSettingsAllowed) {
+      roomFloorTool = "floor";
+      exitNoWalkFloorBrushMode();
+      clearRoomEntrySpawnPickUi();
+    }
+
+    const tools: Array<{
+      id: RoomFloorToolId;
+      label: string;
+      aria: string;
+      title: string;
+      disabled?: boolean;
+    }> = [
+      {
+        id: "floor",
+        label: "FLOOR",
+        aria: "Floor",
+        title: "Paint and recolor floor",
+      },
+      {
+        id: "noWalk",
+        label: "NO-WALK",
+        aria: "No-Walk Floor",
+        title: "Paint No-Walk Floor (left click). Right click clears.",
+      },
+      {
+        id: "spawn",
+        label: "SPAWN",
+        aria: "Join Spawn",
+        title: roomEntrySpawnSettingsAllowed
+          ? "Set guest entry (Join Spawn) on a walkable tile"
+          : "Join Spawn can only be set in rooms you own or co-build",
+        disabled: !roomEntrySpawnSettingsAllowed,
+      },
+    ];
+
+    const thumbImgs: Array<{
+      id: RoomFloorToolId;
+      img: HTMLImageElement;
+    }> = [];
+    for (const tool of tools) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className =
+        "hud-build-bottom-dock__tool-card hud-build-bottom-dock__room-floor-card";
+      if (tool.id === roomFloorTool) {
+        card.classList.add("hud-build-bottom-dock__tool-card--active");
       }
-    });
-    buildBottomDockTools.appendChild(card);
+      if (tool.disabled) {
+        card.classList.add("hud-build-bottom-dock__tool-card--disabled");
+        card.disabled = true;
+      }
+      card.dataset.roomFloorTool = tool.id;
+      card.setAttribute(
+        "aria-pressed",
+        tool.id === roomFloorTool ? "true" : "false"
+      );
+      card.setAttribute("aria-label", tool.aria);
+      card.title = tool.title;
+      const wrap = document.createElement("span");
+      wrap.className = "hud-build-bottom-dock__tool-card-preview-wrap";
+      const img = document.createElement("img");
+      img.className = "hud-build-bottom-dock__tool-card-thumb";
+      img.width = 128;
+      img.height = 128;
+      img.decoding = "async";
+      img.alt = "";
+      img.draggable = false;
+      img.dataset.dockRoomFloorPreview = tool.id;
+      img.setAttribute("aria-hidden", "true");
+      wrap.appendChild(img);
+      thumbImgs.push({ id: tool.id, img });
+      card.appendChild(wrap);
+      const lab = document.createElement("span");
+      lab.className = "hud-build-bottom-dock__tool-card-label";
+      lab.textContent = tool.label;
+      card.appendChild(lab);
+      card.addEventListener("click", () => {
+        selectRoomFloorTool(tool.id);
+      });
+      buildBottomDockTools.appendChild(card);
+    }
+
+    if (roomFloorTool === "noWalk") {
+      setNoWalkFloorBrushActiveUi(true);
+    } else if (roomFloorTool === "spawn") {
+      exitNoWalkFloorBrushMode();
+    } else {
+      exitNoWalkFloorBrushMode();
+      clearRoomEntrySpawnPickUi();
+    }
+    syncBuildDockFloorHueRowVisibility();
+    syncBuildDockPlaceLabel();
+
     const g = inspectorPreviewGameRef;
-    if (!g) return;
+    if (!g || thumbImgs.length === 0) return;
     const pass = dockThumbGlBindGen;
     dockThumbApplyTimeout = window.setTimeout(() => {
       dockThumbApplyTimeout = null;
       if (pass !== dockThumbGlBindGen || !inspectorPreviewGameRef) return;
       requestAnimationFrame(() => {
         if (pass !== dockThumbGlBindGen || !inspectorPreviewGameRef) return;
-        img.src = inspectorPreviewGameRef.getFloorDockThumbnailDataUrl();
+        for (const row of thumbImgs) {
+          row.img.src =
+            inspectorPreviewGameRef.getRoomFloorToolDockThumbnailDataUrl(
+              row.id
+            );
+        }
       });
     }, 64);
   }
@@ -9550,16 +9684,31 @@ export function createHud(
   function syncBuildDockFloorHueRowVisibility(): void {
     const floorTabActive =
       buildDockRoomEditActive() && buildDockRoomCategory === "floor";
-    const floorPaintActive =
+    const floorExpandOn =
       floorTabActive &&
       inspectorPreviewGameRef?.getFloorExpandMode() === true &&
       !isBuildObjectSelectionActive();
+    const colorPaintActive = floorExpandOn && roomFloorTool === "floor";
+    const brushSizeActive =
+      floorExpandOn &&
+      (roomFloorTool === "floor" || roomFloorTool === "noWalk");
+    const spawnToolActive =
+      floorExpandOn &&
+      roomFloorTool === "spawn" &&
+      roomEntrySpawnSettingsAllowed;
     floorShapeColorRow.hidden = !floorTabActive;
-    buildDockFloorBrushSettingRow.hidden = !floorPaintActive;
-    floorColorMetaRow.hidden = !floorPaintActive;
-    if (!floorPaintActive) {
+    buildDockFloorBrushSettingRow.hidden = !brushSizeActive;
+    floorColorPickerColumn.hidden = !colorPaintActive;
+    floorColorMetaRow.hidden = !colorPaintActive;
+    roomFloorSpawnActions.hidden = !spawnToolActive;
+    if (!colorPaintActive) {
       exitFloorEyedropperMode();
+    }
+    if (!floorExpandOn || roomFloorTool !== "noWalk") {
       exitNoWalkFloorBrushMode();
+    }
+    if (floorExpandOn && roomFloorTool === "noWalk" && !noWalkFloorBrushActive) {
+      setNoWalkFloorBrushActiveUi(true);
     }
   }
 
@@ -9583,11 +9732,10 @@ export function createHud(
     const floorTab = buildDockRoomCategory === "floor";
     const roomSettingsVisible =
       settingsTab &&
-      (roomBgSettingsAllowed || roomEntrySpawnSettingsAllowed);
+      (roomBgSettingsAllowed || roomDeployablesRow.hidden === false);
     buildBottomDockTools.hidden = settingsTab;
     buildDockRoomSettingsPanel.hidden = !roomSettingsVisible;
     buildDockRoomBgSettingRow.hidden = !roomBgSettingsAllowed;
-    roomEntrySpawnPanel.hidden = !roomEntrySpawnSettingsAllowed;
     buildDockRoomBgSwatch.disabled = !roomBgSettingsAllowed;
     buildBottomDockContext.classList.toggle(
       "hud-build-bottom-dock__context--room-settings",
@@ -12875,45 +13023,57 @@ export function createHud(
   });
 
   let floorColorRgb = FLOOR_TILE_DEFAULT_COLOR_RGB;
-  let floorLastHueDeg = blockColorRgbToHueDeg(FLOOR_TILE_DEFAULT_COLOR_RGB);
   let floorEyedropperAltHeld = false;
   let floorEyedropperButtonActive = false;
-  floorHueCore.style.background = cssHex(floorColorRgb);
-  floorHexLabel.textContent = formatColorRgbHex(floorColorRgb);
+
+  let floorSvPickerCtl!: ReturnType<typeof attachPaletteSvPickerHandlers>;
+
+  function paintFloorColorChrome(rgb: number, syncPicker: boolean): void {
+    floorColorRgb = clampColorRgb(rgb);
+    if (syncPicker) {
+      const hsv = setPaletteSvPickerRgb(floorSvPickerParts, floorColorRgb);
+      floorSvPickerCtl.setHsv(hsv, false);
+    }
+    floorHexLabel.textContent = formatColorRgbHex(floorColorRgb);
+  }
 
   function syncFloorColorRgbUi(rgb: number): void {
-    floorColorRgb = clampColorRgb(rgb);
-    floorLastHueDeg = blockColorRgbToHueDeg(floorColorRgb);
-    floorHueRing.setAttribute("aria-valuenow", String(floorLastHueDeg));
-    floorHueCore.style.background = cssHex(floorColorRgb);
-    floorHexLabel.textContent = formatColorRgbHex(floorColorRgb);
+    paintFloorColorChrome(rgb, true);
     floorPlacementColorHandler?.(floorColorRgb);
   }
 
+  floorSvPickerCtl = attachPaletteSvPickerHandlers(
+    floorSvPickerParts,
+    (rgb) => {
+      paintFloorColorChrome(rgb, false);
+      floorPlacementColorHandler?.(floorColorRgb);
+    },
+    {
+      guard: () => !floorShapeColorRow.hidden,
+    }
+  );
+  paintFloorColorChrome(floorColorRgb, true);
+
   function syncFloorEyedropperPreviewUi(rgb: number): void {
-    floorHueRing.setAttribute(
-      "aria-valuenow",
-      String(blockColorRgbToHueDeg(rgb))
-    );
-    floorHueCore.style.background = cssHex(rgb);
+    setPaletteSvPickerRgb(floorSvPickerParts, rgb);
     floorHexLabel.textContent = formatColorRgbHex(rgb);
   }
 
   function revertFloorEyedropperPreview(): void {
-    floorHueRing.setAttribute("aria-valuenow", String(floorLastHueDeg));
-    floorHueCore.style.background = cssHex(floorColorRgb);
-    floorHexLabel.textContent = formatColorRgbHex(floorColorRgb);
+    paintFloorColorChrome(floorColorRgb, true);
   }
 
   function syncFloorEyedropperMode(): void {
     const active = floorEyedropperAltHeld || floorEyedropperButtonActive;
     if (active && noWalkFloorBrushActive) {
       noWalkFloorBrushActive = false;
-      floorNoWalkBrushBtn.setAttribute("aria-pressed", "false");
-      floorNoWalkBrushBtn.classList.remove(
-        "hud-build-bottom-dock__floor-no-walk-btn--active"
-      );
       noWalkFloorBrushHandler?.(false);
+      if (roomFloorTool === "noWalk") {
+        roomFloorTool = "floor";
+        syncBuildDockRoomFloorStripActive();
+        syncBuildDockFloorHueRowVisibility();
+        syncBuildDockPlaceLabel();
+      }
     }
     inspectorPreviewGameRef?.setFloorEyedropperActive(active);
     floorEyedropperBtn.setAttribute(
@@ -12936,14 +13096,6 @@ export function createHud(
   }
 
   function syncNoWalkFloorBrushUi(): void {
-    floorNoWalkBrushBtn.setAttribute(
-      "aria-pressed",
-      noWalkFloorBrushActive ? "true" : "false"
-    );
-    floorNoWalkBrushBtn.classList.toggle(
-      "hud-build-bottom-dock__floor-no-walk-btn--active",
-      noWalkFloorBrushActive
-    );
     noWalkFloorBrushHandler?.(noWalkFloorBrushActive);
   }
 
@@ -13022,14 +13174,14 @@ export function createHud(
     floorEyedropperButtonActive = !floorEyedropperButtonActive;
     if (floorEyedropperButtonActive) {
       exitNoWalkFloorBrushMode();
+      if (roomFloorTool === "noWalk") {
+        roomFloorTool = "floor";
+        syncBuildDockRoomFloorStripActive();
+        syncBuildDockFloorHueRowVisibility();
+        syncBuildDockPlaceLabel();
+      }
     }
     syncFloorEyedropperMode();
-  });
-
-  floorNoWalkBrushBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (buildDockFloorBrushSettingRow.hidden) return;
-    setNoWalkFloorBrushActiveUi(!noWalkFloorBrushActive);
   });
 
   function bindFloorEyedropperGameHandlers(game: Game | null): void {
@@ -13046,37 +13198,6 @@ export function createHud(
     }
   }
 
-  function applyFloorHueDegrees(hueDeg: number): void {
-    const h = ((hueDeg % 360) + 360) % 360;
-    floorLastHueDeg = Math.round(h);
-    syncFloorColorRgbUi(hueDegToBlockColorRgb(h));
-  }
-
-  attachPaletteHueRingPointerHandlers(
-    floorHueRingWrap,
-    floorHueRing,
-    (hue) => {
-      applyFloorHueDegrees(hue);
-    },
-    {
-      guard: () => !floorShapeColorRow.hidden,
-    }
-  );
-  attachPaletteHueRingArrowKeys(
-    floorHueRing,
-    () => floorLastHueDeg,
-    applyFloorHueDegrees
-  );
-  attachPaletteHueRingHexPopover({
-    wrap: floorHueRingWrap,
-    core: floorHueCore,
-    getRgb: () => floorColorRgb,
-    onRgbPreview: syncFloorColorRgbUi,
-    onRgbCommit: syncFloorColorRgbUi,
-    guard: () => !floorShapeColorRow.hidden,
-    triggerTitle: "Custom floor hex color",
-    triggerAriaLabel: "Custom floor hex color",
-  });
   attachPaletteHueHexTrigger({
     anchor: floorHexLabel,
     getRgb: () => floorColorRgb,
@@ -15673,8 +15794,16 @@ export function createHud(
     },
     setRoomEntrySpawnPanelVisible(visible: boolean) {
       roomEntrySpawnSettingsAllowed = visible;
-      roomEntrySpawnPanel.hidden = !visible;
+      // Guest entry UI was removed from Room settings; Floor → SPAWN remains.
+      roomEntrySpawnPanel.hidden = true;
+      if (!visible && roomFloorTool === "spawn") {
+        roomFloorTool = "floor";
+        clearRoomEntrySpawnPickUi();
+      }
       syncBuildDockRoomCategoryChrome();
+      if (buildDockRoomEditActive() && buildDockRoomCategory === "floor") {
+        syncBuildDockToolStrip();
+      }
       syncModeSidebarBodyInteractive();
       syncHueDockVisibility();
     },
@@ -16890,9 +17019,6 @@ export function createHud(
       activateBuildTool("block");
     },
     deactivateGateMode() {
-      activateBuildTool("block");
-    },
-    deactivateUnlockPadMode() {
       activateBuildTool("block");
     },
     deactivateSignpostMode() {

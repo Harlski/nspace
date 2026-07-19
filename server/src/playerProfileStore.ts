@@ -173,6 +173,20 @@ export function patchTutorialProfileRow(
   writeStore(data);
 }
 
+/** Wipe tutorial session / completion so the learner restarts at Mine (stage 1). */
+export function clearTutorialProgress(normalizedAddress: string): void {
+  const key = tutorialWalletKey(normalizedAddress);
+  if (!key) return;
+  const data = readStore();
+  const prev = rowEnsure(data.profiles[key]);
+  const next: Row = { ...prev };
+  delete next.tutorialCompletedAt;
+  delete next.tutorialAbandonedAt;
+  delete next.tutorialSession;
+  data.profiles[key] = next;
+  writeStore(data);
+}
+
 /** Mine slots assigned to other wallets (for collision-free assignment). */
 export function listTutorialMineSlotAssignments(excludeWallet: string): string[] {
   const exclude = tutorialWalletKey(excludeWallet);

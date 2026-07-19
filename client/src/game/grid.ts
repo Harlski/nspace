@@ -380,8 +380,9 @@ export function level1SurfaceOpen(
 ): boolean {
   const base = floorLevelTerrain(placed, x, z);
   if (!isSolidTerrain(base)) return false;
-  /** Gates are passages, not standable platforms; matches server (see `server/src/grid.ts`). */
+  /** Gates / Unlock Pads are passages, not standable platforms; matches server. */
   if (base.gate) return false;
+  if (base.unlockPad) return false;
   return !hasStackBlockAtLevel(placed, x, z, 1);
 }
 
@@ -446,6 +447,7 @@ export function inferTerrainStartLayer(
       return 0;
     }
     if (propHere.gate) return 0;
+    if (propHere.unlockPad) return 0;
     const h = terrainObstacleHeight(propHere);
     if (wy >= h - STAND_ON_TOP_BELOW) return 1;
     return 0;

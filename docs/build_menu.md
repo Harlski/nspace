@@ -14,7 +14,7 @@ Reference for the **in-game build palette** shown along the bottom of the screen
 |------|----------------|---------------|
 | **Walk** | Build tab off | Dock hidden |
 | **Build → Objects** | Build on, scope **Objects** | Full dock: category tabs, tool strip, placement context |
-| **Build → Room** | Build on, scope **Room** | **Floor** / **Room settings** tabs; Floor tool strip + **floor tile hue ring** in `build-dock-context`; **Room settings** tab shows sky background in `build-dock-context` (swatch + popover wheel) and **Guest entry** (**Set spawner**, **Use room center**) below **Room BG Color** |
+| **Build → Room** | Build on, scope **Room** | **Floor** / **Room settings** tabs; Floor tool strip (**FLOOR** / **NO-WALK** / **SPAWN** cards) + floor context (SV color picker or Join Spawn actions); **Room settings** tab shows sky background in `build-dock-context` (swatch + popover wheel) and (wallet rooms) deployables allow |
 
 Toggle: **Build** tab on the mode strip (`#hud-mode-tab-build`). Scope: **Objects / Room** (`.hud-build-bottom-dock__edit-kind-select` on desktop; on coarse-pointer mobile, `#hud-build-edit-kind-trigger` opens a fixed overlay list `#hud-build-edit-kind-popover` instead of the native select sheet).
 
@@ -98,7 +98,7 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`. While th
 | `build-dock-context-grid` | `.hud-build-bottom-dock__context-grid` | Mods column + color column |
 | `build-dock-context-mods` | `.hud-build-bottom-dock__context-mods` | Placement controls (height, **hex thickness**, **sphere size**, pyramid base, gate direction, billboard view, **Unlock Pad** summary + Edit…); **Room settings** (`.hud-build-bottom-dock__room-settings`, Room BG swatch + hue wheel, **Guest entry** spawner) when Room scope + **Room settings** tab |
 | `build-dock-context-room-settings` | `.hud-build-bottom-dock__context--room-settings` | Modifier on context panel: room BG only, color column hidden |
-| `build-dock-context-floor` | `.hud-build-bottom-dock__context--floor` | Modifier on context panel: **Floor** tab — hue ring only (mods column hidden) |
+| `build-dock-context-floor` | `.hud-build-bottom-dock__context--floor` | Modifier on context panel: **Floor** tab — SV color picker (mods column hidden) |
 | `build-dock-context-color` | `.hud-build-bottom-dock__context-color` | Hue ring + hue dock stack |
 | `build-dock-place-label` | `#hud-build-dock-place` | “Place: Cube/Hex/Pyramid…” (terrain shape) or tool name / “Edit: Room” |
 | `build-dock-advanced-link` | `#hud-build-dock-advanced` | “More options…” → placement Advanced popover |
@@ -116,14 +116,16 @@ Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`. While th
 
 **Teleporter destination (build mode):** Pending teleporters show a **Set** pill on the selected tile (separate from **Enter**). Tapping **Set** or the dock **summary** opens the **Teleporter Destination Picker** ([teleporterDestPreview.ts](../client/src/ui/teleporterDestPreview.ts)): room `<select>` (switch maps), layout preview for any room including **this room**, tile click for the **Landing Hint**, and **Hub** confirmation without a tile pick. Backed by `GET /api/rooms/:id/layout` (session auth; editor must `canPlaceBlocksInRoom`). Pending tiles use a **dim portal pillar** instead of the orange hex slab. Warp still falls back to **Join Spawn** when the hint is illegal (see [docs/adr/0004-teleporter-landing-hint-with-join-spawn-fallback.md](adr/0004-teleporter-landing-hint-with-join-spawn-fallback.md)).
 
-### Color (hue ring)
+### Color (hue ring + floor SV picker)
 
 | Reference ID | Module / class | Role |
 |--------------|----------------|------|
-| `palette-hue-ring` | `createPaletteHueRing()` in [`paletteHueRing.ts`](../client/src/ui/paletteHueRing.ts) | Shared circular hue control; **center click** opens custom `#RRGGBB` popover ([`paletteHueHexPopover.ts`](../client/src/ui/paletteHueHexPopover.ts)) |
+| `palette-hue-ring` | `createPaletteHueRing()` in [`paletteHueRing.ts`](../client/src/ui/paletteHueRing.ts) | Shared circular hue control for **objects / room sky**; **center click** opens custom `#RRGGBB` popover ([`paletteHueHexPopover.ts`](../client/src/ui/paletteHueHexPopover.ts)) |
+| `palette-sv-picker` | `createPaletteSvPicker()` in [`paletteSvPicker.ts`](../client/src/ui/paletteSvPicker.ts) | Rectangular **SV field + vertical hue strip** for **floor tile** color; sized to the **tool-card canvas** height so the dock does not grow |
 | `build-dock-placement-hue-row` | `.hud-mode-sidebar__shape-color-row--placement` | Ring while **placing** next object |
-| `build-dock-floor-hue-row` | `.hud-mode-sidebar__shape-color-row--floor` | Ring on **Floor** tab (Room scope); tints **hover preview**; **left-click** places new tiles or **recolors** existing core/extra floor (`colorRgb` on `placeExtraFloor`), including tiles with blocks on top |
-| `build-dock-floor-no-walk` | `.hud-build-bottom-dock__floor-no-walk-btn` | Floor dock **No-Walk Floor** brush toggle; when active, LMB / RMB paint or clear soft-blocked tiles (`paintNoWalkFloor` / `clearNoWalkFloor`) instead of recolor; shared Size `1×1` / `2×2`; marked tiles show **No-Walk Floor Cue** (red tint + X) only while floor mode is open ([ADR 0011](adr/0011-no-walk-floor-layer.md)) |
+| `build-dock-floor-hue-row` | `.hud-mode-sidebar__shape-color-row--floor` | SV picker on **Floor** tab (Room scope); tints **hover preview**; **left-click** places new tiles or **recolors** existing core/extra floor (`colorRgb` on `placeExtraFloor`), including tiles with blocks on top |
+| `build-dock-floor-no-walk` | Floor tool card **NO-WALK** (WebGL thumb: floor + red-X cue) | Selects **No-Walk Floor** paint (LMB paint / RMB clear; shared Size `1×1` / `2×2`); cue while floor mode is open ([ADR 0011](adr/0011-no-walk-floor-layer.md)) |
+| `build-dock-floor-spawn` | Floor tool card **SPAWN** (WebGL thumb: Join Spawn ring) | Sets **Join Spawn** by clicking a walkable tile; Floor context shows a short hint only (no Use room center in the dock — clear-to-center stays on guest-entry chrome where present); always shown, disabled when Join Spawn edit is not allowed (wallet rooms: owners/builders; **Tutorial Room** / staging: tutorial builders) |
 | `build-dock-selection-hue-row` | `.hud-mode-sidebar__shape-color-row--selection` | Ring while **editing** selected tile |
 | `hue-dock` | `.hud-mode-sidebar__hue-dock` | Stack under color column (room sky, guest entry, selection ring) |
 

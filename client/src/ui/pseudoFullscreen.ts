@@ -21,6 +21,13 @@ export function initNimiqPayDevEmulation(): void {
   if (window.nimiqPay == null) {
     window.nimiqPay = {};
   }
+  // Optimistic tutorial Pay + Unlock Pad flows need a send stub outside the real mini-app.
+  if (typeof window.nimiqPay.sendBasicTransactionWithData !== "function") {
+    window.nimiqPay = {
+      ...window.nimiqPay,
+      sendBasicTransactionWithData: async () => ({ simulated: true }),
+    };
+  }
 }
 
 /** True when Nimiq Pay injected the host context (same signal as mini-app auth). */

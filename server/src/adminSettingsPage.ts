@@ -126,6 +126,9 @@ export function adminSettingsPageHtml(): string {
         var streamAddrs = String(j.streamObserverAddresses || "");
         var envStream = Boolean(j.streamObserverEnvConfigured);
         var streamActive = Boolean(j.streamObserverAllowlistConfigured);
+        var tutorialOn = Boolean(j.tutorialEnabled);
+        var tutorialEnvOn = j.tutorialEnvEnabled !== false;
+        var tutorialActive = tutorialOn && tutorialEnvOn;
         panel.innerHTML =
           "<div class='set-panel'>" +
           "<h2>Usernames</h2>" +
@@ -157,6 +160,31 @@ export function adminSettingsPageHtml(): string {
           "<div class='set-actions'>" +
           "<button type='button' id='save-stream-btn'>Save</button>" +
           "<span id='save-stream-msg' class='ok' hidden></span>" +
+          "</div></div>" +
+          "<div class='set-panel'>" +
+          "<h2>Nimiq Pay tutorial</h2>" +
+          "<div class='set-row'>" +
+          "<input type='checkbox' id='tutorial-enabled' " +
+          (tutorialOn ? "checked " : "") +
+          (tutorialEnvOn ? "" : "disabled ") +
+          "/>" +
+          "<label for='tutorial-enabled'>Enable first-contact tutorial for Nimiq Pay mini-app sign-ins (Tutorial Room, mine + door lesson).</label>" +
+          "</div>" +
+          (tutorialEnvOn
+            ? "<p class='set-hint'>When off, Pay players skip the lesson and enter the Hub. Admins can still reach Tutorial Room via teleporter / staging. When on, new and incomplete Pay wallets enter Tutorial Room on sign-in.</p>"
+            : "<p class='set-hint'>Off by default. Set deploy env <code>TUTORIAL_ENABLED=1</code> to allow this toggle (unset or <code>0</code> keeps the learner flow disabled).</p>") +
+          "<p class='set-hint'>" +
+          (tutorialActive
+            ? "Tutorial is <strong>live</strong> for new and incomplete Pay sessions."
+            : tutorialEnvOn
+              ? "Tutorial is <strong>off</strong> (Pay players go straight to the Hub)."
+              : "Tutorial is <strong>off</strong> (env not enabled).") +
+          "</p>" +
+          "<div class='set-actions'>" +
+          "<button type='button' id='save-tutorial-btn'" +
+          (tutorialEnvOn ? "" : " disabled") +
+          ">Save</button>" +
+          "<span id='save-tutorial-msg' class='ok' hidden></span>" +
           "</div></div>";
         var saveUsernameBtn = document.getElementById("save-username-btn");
         var cb = document.getElementById("self-username");
@@ -190,6 +218,18 @@ export function adminSettingsPageHtml(): string {
                 streamInput.value = String(jj.streamObserverAddresses || "");
               }
             }
+          });
+        }
+        var saveTutorialBtn = document.getElementById("save-tutorial-btn");
+        var tutorialCb = document.getElementById("tutorial-enabled");
+        var tutorialMsg = document.getElementById("save-tutorial-msg");
+        if (saveTutorialBtn && tutorialCb && tutorialMsg) {
+          saveTutorialBtn.addEventListener("click", function () {
+            saveSettings(
+              token,
+              { tutorialEnabled: tutorialCb.checked },
+              tutorialMsg
+            );
           });
         }
       } catch (e) {

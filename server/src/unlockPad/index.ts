@@ -60,6 +60,7 @@ export function isUnlockPadTerrain(
 
 export {
   clearUnlockPadGrantsForInstance,
+  clearUnlockPadGrantsForWalletInRoom,
   hasUnlockPadGrant,
   listUnlockPadInstanceIdsForWallet,
   recordUnlockPadGrant,

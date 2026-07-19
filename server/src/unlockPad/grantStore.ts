@@ -104,6 +104,26 @@ export function clearUnlockPadGrantsForInstance(
   if (changed) writeStore(data);
 }
 
+/** Drop every Unlock Pad grant for this wallet in a room (tutorial reset). */
+export function clearUnlockPadGrantsForWalletInRoom(
+  wallet: string,
+  roomId: string
+): void {
+  const w = normalizeWalletKey(wallet);
+  const rid = roomId.trim().toLowerCase();
+  if (!w || !rid) return;
+  const prefix = `${w}|${rid}|`;
+  const data = readStore();
+  let changed = false;
+  for (const k of Object.keys(data.grants)) {
+    if (k.startsWith(prefix)) {
+      delete data.grants[k];
+      changed = true;
+    }
+  }
+  if (changed) writeStore(data);
+}
+
 /** Instance ids this wallet has unlocked in a room (for welcome / reconnect). */
 export function listUnlockPadInstanceIdsForWallet(
   wallet: string,

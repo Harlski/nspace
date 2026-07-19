@@ -1156,10 +1156,16 @@ function enterGame(
     );
   }
 
+  let tutorialFeatureEnabled = false;
+
   function syncTutorialResetMenu(roomId?: string | null): void {
     const rid = normalizeRoomId(roomId ?? game.getRoomId());
     hud.setResetTutorialVisible(
-      shouldShowTutorialResetMenu(rid === TUTORIAL_ROOM_ID)
+      shouldShowTutorialResetMenu({
+        inTutorialRoom: rid === TUTORIAL_ROOM_ID,
+        isAdmin: isAdmin(address),
+        tutorialFeatureEnabled,
+      })
     );
   }
 
@@ -1272,31 +1278,24 @@ function enterGame(
         hud.setStatus(`Could not start unlock payment (${err}).`);
         return;
       }
-      const pay = window.nimiqPay;
-      if (pay?.sendBasicTransactionWithData) {
-        try {
-          await pay.sendBasicTransactionWithData({
-            recipient: created.intent.recipient,
-            value: BigInt(created.intent.amountLuna),
-            data: created.intent.memo,
-          });
-        } catch (e) {
-          const msg = String(e ?? "");
-          const cancelled =
-            msg.toLowerCase().includes("cancel") ||
-            msg.toLowerCase().includes("reject");
-          if (!cancelled) hud.setStatus("Pay failed - try Unlock again.");
+      const { sendUnlockPadPaymentIntent, isUnlockPadPaymentUserCancel } =
+        await import("./unlockPad/pay.js");
+      try {
+        hud.setStatus(
+          window.nimiqPay?.sendBasicTransactionWithData
+            ? "Opening wallet…"
+            : "Opening Nimiq Hub…"
+        );
+        await sendUnlockPadPaymentIntent(created.intent);
+      } catch (e) {
+        if (isUnlockPadPaymentUserCancel(e)) return;
+        const err = String((e as Error)?.message ?? e);
+        if (err === "missing_memo" || err === "missing_recipient" || err === "invalid_amount") {
+          hud.setStatus("Could not open unlock payment (invalid intent).");
           return;
         }
-      } else {
-        hud.setStatus(
-          `Send ${created.intent.amountNimLabel} NIM. Memo: ${created.intent.memo}. Waiting…`
-        );
-        try {
-          await navigator.clipboard.writeText(created.intent.memo);
-        } catch {
-          /* ignore */
-        }
+        hud.setStatus("Pay failed - try Unlock again.");
+        return;
       }
       hud.setStatus("Confirming payment…");
       for (let i = 0; i < 24; i++) {
@@ -5199,6 +5198,7 @@ function enterGame(
     }
     if (msg.type === "welcome") {
       clearWelcomeDeadlineTimer();
+      tutorialFeatureEnabled = msg.tutorialEnabled === true;
       if (msg.tutorial) {
         tutorialWelcome = msg.tutorial;
         tutorialSocialSuppressed = tutorialSuppressesSocial(msg.tutorial);

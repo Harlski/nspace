@@ -55,3 +55,24 @@ test("attention-marker-hover shows when attentionMarkerHover is set", () => {
     true
   );
 });
+
+test("attention-marker-size shows with the same attentionMarkerHover flag", () => {
+  assert.equal(
+    buildDockContextParamVisible("attention-marker-size", {
+      ...base,
+      tool: "attention-marker",
+      minimalInspector: true,
+      attentionMarkerHover: true,
+    }),
+    true
+  );
+  assert.equal(
+    buildDockContextParamVisible("attention-marker-size", {
+      ...base,
+      tool: "attention-marker",
+      minimalInspector: true,
+      attentionMarkerHover: false,
+    }),
+    false
+  );
+});

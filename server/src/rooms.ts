@@ -62,6 +62,8 @@ import {
   registerPlaySpaceRoomRuntime,
   clearPlaySpaceRoomRuntime,
   getPlaySpaceRoomRuntime,
+  setPlaySpaceJoinSpawn,
+  setPlaySpaceBackground,
   type RoomBounds,
 } from "./roomLayouts.js";
 import {
@@ -285,9 +287,12 @@ import {
 import {
   applyDefaultTutorialTemplateToRuntimeShell,
   initTutorialTemplateStore,
+  patchDefaultTutorialTemplateJoinSpawn,
+  patchDefaultTutorialTemplateBackground,
 } from "./tutorialTemplate/store.js";
 import {
   TUTORIAL_ROOM_ID,
+  isTutorialFeatureEnabled,
   isTutorialRuntimeRoomId,
   isTutorialStagingRoomId,
   isTutorialBuilderWallet,
@@ -1362,6 +1367,8 @@ type OutMsg =
       blockClaimDeniedReason?: string;
       /** Nimiq Pay first-contact tutorial state (lesson or sandbox). */
       tutorial?: TutorialWelcome;
+      /** Learner tutorial flow live (env + admin toggle). */
+      tutorialEnabled?: boolean;
       /** Unlock Pad instance ids this wallet has already unlocked in this room. */
       unlockedPadInstanceIds?: string[];
       /** Dynamic rooms: owner may toggle deployables via `updateRoom`. */
@@ -1575,6 +1582,8 @@ type OutMsg =
       x?: number;
       z?: number;
       amountNim?: string;
+      /** Tutorial Room: mine completed Step 1 - client advances Step Coach to Pay. */
+      tutorialMineComplete?: boolean;
     }
   | {
       type: "joinRoomFailed";
@@ -2065,6 +2074,7 @@ function tutorialWelcomeForAddress(
     sessionNimiqPay: nimiqPay,
     viaTeleporter,
     listMineSlots: () => listTutorialMineSlotTileKeys(roomId),
+    isAdmin: isAdmin(address),
   });
 }
 
@@ -2769,6 +2779,21 @@ function releaseBlockClaimSession(claimId: string): void {
 function noteSpentBlockClaimId(claimId: string, now: number): void {
   spentBlockClaimIds.set(claimId, now);
   trimSpentBlockClaimIds(now);
+}
+
+/** Drop spent tutorial faucet claim ids so Reset tutorial can remine with payout. */
+export function clearSpentTutorialMineClaimsForWallet(wallet: string): void {
+  const key = String(wallet ?? "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toUpperCase();
+  if (!key) return;
+  const prefix = `tutorial-mine-${key}`;
+  for (const id of [...spentBlockClaimIds.keys()]) {
+    if (id === prefix || id.startsWith(`${prefix}-`)) {
+      spentBlockClaimIds.delete(id);
+    }
+  }
 }
 
 function randomClaimRewardLuna(): bigint {
@@ -3783,12 +3808,18 @@ function joinSpawnBroadcastPayload(roomId: string): {
   const b = getRoomBaseBounds(n);
   const cx = Math.floor((b.minX + b.maxX) / 2);
   const cz = Math.floor((b.minZ + b.maxZ) / 2);
-  const custom = getDynamicRoomJoinSpawn(n);
-  if (custom) {
-    const s = snapToTile(custom.x, custom.z);
+  const cSnap = snapToTile(cx, cz);
+  const customDyn = getDynamicRoomJoinSpawn(n);
+  if (customDyn) {
+    const s = snapToTile(customDyn.x, customDyn.z);
     return { x: s.x, z: s.z, customized: true };
   }
-  const cSnap = snapToTile(cx, cz);
+  const ps = getPlaySpaceRoomRuntime(n)?.joinSpawn;
+  if (ps) {
+    const s = snapToTile(ps.x, ps.z);
+    const customized = s.x !== cSnap.x || s.z !== cSnap.z;
+    return { x: s.x, z: s.z, customized };
+  }
   return { x: cSnap.x, z: cSnap.z, customized: false };
 }
 
@@ -3802,6 +3833,12 @@ function joinSpawnWelcomeExtras(
   allowRoomDeployablesEdit?: boolean;
 } {
   const n = normalizeRoomId(roomId);
+  if (isTutorialRuntimeRoomId(n) || isTutorialStagingRoomId(n)) {
+    return {
+      roomJoinSpawn: joinSpawnBroadcastPayload(n),
+      allowRoomJoinSpawnEdit: canEditTutorialRoomContent(address),
+    };
+  }
   if (!isPlayerCreatedRoom(n)) return {};
   const owner = getDynamicRoomOwnerAddress(n);
   const actor = compactAddress(address);
@@ -4500,9 +4537,14 @@ export function getRoomLayoutSnapshot(roomIdRaw: string): RoomLayoutSnapshot | n
     spawnZ: d.spawnZ,
   }));
   const spatial = roomUsesSpatialInterest(rb);
-  const bgState = isPlayerCreatedRoom(roomId)
-    ? getDynamicRoomBackgroundState(roomId)
-    : getBuiltinRoomBackgroundState(roomId);
+  const bgState =
+    isInviteLobbyRoomId(roomId) ||
+    isTutorialRuntimeRoomId(roomId) ||
+    isTutorialStagingRoomId(roomId)
+      ? playSpaceBackgroundState(roomId)
+      : isPlayerCreatedRoom(roomId)
+        ? getDynamicRoomBackgroundState(roomId)
+        : getBuiltinRoomBackgroundState(roomId);
   const signboards = getSignboardsForRoom(roomId).map((s) => ({
     id: s.id,
     x: s.x,
@@ -6150,18 +6192,25 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   const allowPlaceBlocks = canPlaceBlocksInRoom(targetRoomId, address);
   const allowFloorRecolor = canRecolorFloorInRoom(targetRoomId, address);
   const nWelcomeRoom = normalizeRoomId(targetRoomId);
-  const welcomeBgState = isInviteLobbyRoomId(nWelcomeRoom)
-    ? playSpaceBackgroundState(nWelcomeRoom)
-    : isPlayerCreatedRoom(nWelcomeRoom)
-    ? getDynamicRoomBackgroundState(nWelcomeRoom)
-    : getBuiltinRoomBackgroundState(nWelcomeRoom);
-  const allowRoomBackgroundHueEdit = isPlayerCreatedRoom(nWelcomeRoom)
-    ? allowActorRoomBackgroundHueEdit(
-        nWelcomeRoom,
-        compactAddress(conn.address),
-        isAdmin(conn.address)
-      )
-    : false;
+  const welcomeBgState =
+    isInviteLobbyRoomId(nWelcomeRoom) ||
+    isTutorialRuntimeRoomId(nWelcomeRoom) ||
+    isTutorialStagingRoomId(nWelcomeRoom)
+      ? playSpaceBackgroundState(nWelcomeRoom)
+      : isPlayerCreatedRoom(nWelcomeRoom)
+        ? getDynamicRoomBackgroundState(nWelcomeRoom)
+        : getBuiltinRoomBackgroundState(nWelcomeRoom);
+  const allowRoomBackgroundHueEdit =
+    isTutorialRuntimeRoomId(nWelcomeRoom) ||
+    isTutorialStagingRoomId(nWelcomeRoom)
+      ? canEditTutorialRoomContent(conn.address)
+      : isPlayerCreatedRoom(nWelcomeRoom)
+        ? allowActorRoomBackgroundHueEdit(
+            nWelcomeRoom,
+            compactAddress(conn.address),
+            isAdmin(conn.address)
+          )
+        : false;
 
   const allowPublishDesign = canPublishDesign(targetRoomId, address);
   const teleportSpatialWelcome = roomUsesSpatialInterest(rb)
@@ -6234,6 +6283,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
         address,
         targetRoomId
       ),
+      tutorialEnabled: isTutorialFeatureEnabled(),
       ...(tutorialWelcome ? { tutorial: tutorialWelcome } : {}),
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, targetRoomId, chatBacklog);
@@ -8292,18 +8342,24 @@ export function addClient(
   const allowFloorRecolor =
     !streamObserver && canRecolorFloorInRoom(roomId, address);
   const nJoinRoom = normalizeRoomId(roomId);
-  const joinWelcomeBgState = isInviteLobbyRoomId(nJoinRoom)
-    ? playSpaceBackgroundState(nJoinRoom)
-    : isPlayerCreatedRoom(nJoinRoom)
-    ? getDynamicRoomBackgroundState(nJoinRoom)
-    : getBuiltinRoomBackgroundState(nJoinRoom);
-  const joinAllowRoomBackgroundHueEdit = isPlayerCreatedRoom(nJoinRoom)
-    ? allowActorRoomBackgroundHueEdit(
-        nJoinRoom,
-        compactAddress(address),
-        isAdmin(address)
-      )
-    : false;
+  const joinWelcomeBgState =
+    isInviteLobbyRoomId(nJoinRoom) ||
+    isTutorialRuntimeRoomId(nJoinRoom) ||
+    isTutorialStagingRoomId(nJoinRoom)
+      ? playSpaceBackgroundState(nJoinRoom)
+      : isPlayerCreatedRoom(nJoinRoom)
+        ? getDynamicRoomBackgroundState(nJoinRoom)
+        : getBuiltinRoomBackgroundState(nJoinRoom);
+  const joinAllowRoomBackgroundHueEdit =
+    isTutorialRuntimeRoomId(nJoinRoom) || isTutorialStagingRoomId(nJoinRoom)
+      ? canEditTutorialRoomContent(address)
+      : isPlayerCreatedRoom(nJoinRoom)
+        ? allowActorRoomBackgroundHueEdit(
+            nJoinRoom,
+            compactAddress(address),
+            isAdmin(address)
+          )
+        : false;
 
   // Always send a canvas timer snapshot on join:
   // - active round: real remaining time
@@ -8405,6 +8461,7 @@ export function addClient(
         ? worldcupPortalsForRoom(roomId)
         : undefined,
       ...cosmeticGalleryWelcomeExtras(roomId),
+      tutorialEnabled: isTutorialFeatureEnabled(),
       ...(tutorialWelcome ? { tutorial: tutorialWelcome } : {}),
       unlockedPadInstanceIds: listUnlockPadInstanceIdsForWallet(address, roomId),
     } satisfies OutMsg);
@@ -8953,6 +9010,148 @@ export function addClient(
 
     if (msg.type === "updateRoom") {
       const roomId = normalizeJoinRoomId(String(msg.roomId ?? ""));
+      const rawJoinSpawnEarly = (msg as { joinSpawn?: unknown }).joinSpawn;
+      const hasTutorialBgPatch =
+        msg.backgroundHueDeg !== undefined ||
+        msg.backgroundNeutral !== undefined;
+      if (
+        (isTutorialRuntimeRoomId(roomId) || isTutorialStagingRoomId(roomId)) &&
+        (rawJoinSpawnEarly !== undefined || hasTutorialBgPatch)
+      ) {
+        if (!canEditTutorialRoomContent(address)) {
+          wsSafeSend(ws, {
+            type: "chat",
+            from: "System",
+            fromAddress: "SYSTEM",
+            text: "You cannot edit Tutorial Room settings.",
+            at: Date.now(),
+          } satisfies OutMsg);
+          return;
+        }
+        ensureTutorialRoomLayout(roomId);
+
+        if (rawJoinSpawnEarly !== undefined) {
+          let nextJoin: { x: number; z: number } | null;
+          if (rawJoinSpawnEarly === null) {
+            nextJoin = null;
+          } else if (rawJoinSpawnEarly && typeof rawJoinSpawnEarly === "object") {
+            const ox = Number((rawJoinSpawnEarly as { x?: unknown }).x);
+            const oz = Number((rawJoinSpawnEarly as { z?: unknown }).z);
+            if (!Number.isFinite(ox) || !Number.isFinite(oz)) {
+              wsSafeSend(ws, {
+                type: "chat",
+                from: "System",
+                fromAddress: "SYSTEM",
+                text: "Entry spawn needs numeric x and z.",
+                at: Date.now(),
+              } satisfies OutMsg);
+              return;
+            }
+            const st = snapToTile(ox, oz);
+            if (!isWalkableForRoom(roomId, st.x, st.z)) {
+              wsSafeSend(ws, {
+                type: "chat",
+                from: "System",
+                fromAddress: "SYSTEM",
+                text: "Entry spawn must be a walkable floor tile.",
+                at: Date.now(),
+              } satisfies OutMsg);
+              return;
+            }
+            nextJoin = { x: st.x, z: st.z };
+          } else {
+            wsSafeSend(ws, {
+              type: "chat",
+              from: "System",
+              fromAddress: "SYSTEM",
+              text: "joinSpawn must be null or { x, z }.",
+              at: Date.now(),
+            } satisfies OutMsg);
+            return;
+          }
+          if (!setPlaySpaceJoinSpawn(roomId, nextJoin)) {
+            wsSafeSend(ws, {
+              type: "chat",
+              from: "System",
+              fromAddress: "SYSTEM",
+              text: "Tutorial Room Join Spawn is not ready yet.",
+              at: Date.now(),
+            } satisfies OutMsg);
+            return;
+          }
+          if (isTutorialRuntimeRoomId(roomId)) {
+            patchDefaultTutorialTemplateJoinSpawn(nextJoin);
+          }
+          const p = joinSpawnBroadcastPayload(roomId);
+          broadcast(roomId, {
+            type: "roomJoinSpawn",
+            roomId,
+            x: p.x,
+            z: p.z,
+            customized: p.customized,
+          });
+        }
+
+        if (hasTutorialBgPatch) {
+          const bgPatch: {
+            hueDeg?: number | null;
+            neutral?: RoomBackgroundNeutral | null;
+          } = {};
+          if (msg.backgroundHueDeg !== undefined) {
+            const norm = normalizeBackgroundHuePatch(
+              (msg as { backgroundHueDeg?: unknown }).backgroundHueDeg
+            );
+            if (!norm.ok) {
+              wsSafeSend(ws, {
+                type: "chat",
+                from: "System",
+                fromAddress: "SYSTEM",
+                text: norm.reason,
+                at: Date.now(),
+              } satisfies OutMsg);
+              return;
+            }
+            bgPatch.hueDeg = norm.hue;
+          }
+          if (msg.backgroundNeutral !== undefined) {
+            const nn = normalizeBackgroundNeutralPatch(
+              (msg as { backgroundNeutral?: unknown }).backgroundNeutral
+            );
+            if (!nn.ok) {
+              wsSafeSend(ws, {
+                type: "chat",
+                from: "System",
+                fromAddress: "SYSTEM",
+                text: nn.reason,
+                at: Date.now(),
+              } satisfies OutMsg);
+              return;
+            }
+            bgPatch.neutral = nn.neutral;
+          }
+          if (!setPlaySpaceBackground(roomId, bgPatch)) {
+            wsSafeSend(ws, {
+              type: "chat",
+              from: "System",
+              fromAddress: "SYSTEM",
+              text: "Tutorial Room background is not ready yet.",
+              at: Date.now(),
+            } satisfies OutMsg);
+            return;
+          }
+          if (isTutorialRuntimeRoomId(roomId)) {
+            patchDefaultTutorialTemplateBackground(bgPatch);
+          }
+          const st = playSpaceBackgroundState(roomId);
+          broadcast(roomId, {
+            type: "roomBackgroundHue",
+            roomId,
+            hueDeg: st.hueDeg,
+            neutral: st.neutral,
+          });
+        }
+        return;
+      }
       if (isBuiltinRoomId(roomId)) {
         if (!isAdmin(address)) {
           wsSafeSend(ws, {
@@ -12481,10 +12680,13 @@ export function addClient(
       }
 
       let payoutHasFunds = false;
+      const tutorialMineRoom =
+        isTutorialRuntimeRoomId(currentRoomId) ||
+        isTutorialStagingRoomId(currentRoomId);
       const tutorialMine =
-        props.tutorialMineSlot === true &&
-        (isTutorialRuntimeRoomId(currentRoomId) ||
-          isTutorialStagingRoomId(currentRoomId));
+        tutorialMineRoom &&
+        props.claimable === true &&
+        props.active !== false;
       if (tutorialMine) {
         const tw = tutorialWelcomeForAddress(
           address,
@@ -12507,7 +12709,9 @@ export function addClient(
               ? "Click and hold your glowing block."
               : tutorialClaim.reason === "already_claimed"
                 ? "You already mined your tutorial block."
-                : "This block is not available.";
+                : tutorialClaim.reason === "sandbox"
+                  ? "This block is not available."
+                  : "This block is not available.";
           wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,
@@ -12539,19 +12743,22 @@ export function addClient(
           amountLuna: tutorialClaim.rewardLuna.toString(),
           tutorial: true,
         });
-        enqueueBlockClaimPayIntent({
-          claimId: tutorialClaim.claimId,
-          recipientAddress: address,
-          amountLuna: tutorialClaim.rewardLuna,
-          roomId: currentRoomId,
-          tileKey: k,
-        });
+        if (tutorialClaim.rewardLuna > 0n) {
+          enqueueBlockClaimPayIntent({
+            claimId: tutorialClaim.claimId,
+            recipientAddress: address,
+            amountLuna: tutorialClaim.rewardLuna,
+            roomId: currentRoomId,
+            tileKey: k,
+          });
+        }
         wsSafeSend(ws, {
           type: "blockClaimResult",
           ok: true,
           x: s.tileX,
           z: s.tileZ,
           amountNim: (Number(tutorialClaim.rewardLuna) / 100_000).toFixed(4),
+          tutorialMineComplete: true,
         } satisfies OutMsg);
         schedulePersistWorldState();
         return;

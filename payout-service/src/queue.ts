@@ -24,6 +24,10 @@ import {
   notifyPayoutDeadLetterAnalytics,
   notifyPayoutSentAnalytics,
 } from "./analyticsCallback.js";
+import {
+  isMiningPayoutHeldForBannedWallet,
+  refreshMiningBannedWallets,
+} from "./miningBanGate.js";
 
 export type PayIntentBody = {
   claimId: string;
@@ -57,7 +61,9 @@ type SerializedJob = Omit<PayoutJob, "amountLuna"> & { amountLuna: string };
 
 const jobs: PayoutJob[] = [];
 let processorTimer: ReturnType<typeof setTimeout> | null = null;
+let autoBulkTimer: ReturnType<typeof setInterval> | null = null;
 let processing = false;
+let autoBulkRunning = false;
 let processorEnabled = false;
 let chainClient: ChainClient | null = null;
 let queueFile = "";
@@ -66,6 +72,8 @@ let deadLetterFile = "";
 const acceptedClaimIds = new Set<string>();
 let maxBackoffMs = 3_600_000;
 let deadLetterAfterAttempts = 80;
+let autoBulkAfterMs = 0;
+let autoBulkCheckIntervalMs = 300_000;
 
 function ensureDataDir(): void {
   fs.mkdirSync(path.dirname(queueFile), { recursive: true });
@@ -187,6 +195,8 @@ export function initPayoutQueue(cfg: AppConfig, client: ChainClient): void {
   deadLetterFile = path.join(cfg.dataDir, "nim-payout-dead-letter.jsonl");
   maxBackoffMs = cfg.maxBackoffMs;
   deadLetterAfterAttempts = cfg.deadLetterAfterAttempts;
+  autoBulkAfterMs = cfg.autoBulkAfterMs;
+  autoBulkCheckIntervalMs = cfg.autoBulkCheckIntervalMs;
   chainClient = client;
   initHistoryPaths(cfg);
   loadAcceptedClaimIds();
@@ -208,12 +218,27 @@ export function startPayoutProcessor(intervalMs: number): void {
     processorTimer = setTimeout(run, intervalMs);
   };
   processorTimer = setTimeout(run, intervalMs);
+
+  if (autoBulkAfterMs > 0 && !autoBulkTimer) {
+    autoBulkTimer = setInterval(() => {
+      void maybeAutoBulkStalePending(Date.now()).catch((e) => {
+        console.error("[payout-service] Auto bulk scan error:", e);
+      });
+    }, autoBulkCheckIntervalMs);
+    console.log(
+      `[payout-service] Auto bulk payout enabled after ${autoBulkAfterMs}ms (check every ${autoBulkCheckIntervalMs}ms)`
+    );
+  }
 }
 
 export function stopPayoutProcessorForTests(): void {
   if (processorTimer) {
     clearTimeout(processorTimer);
     processorTimer = null;
+  }
+  if (autoBulkTimer) {
+    clearInterval(autoBulkTimer);
+    autoBulkTimer = null;
   }
   processorEnabled = false;
 }
@@ -231,7 +256,10 @@ function pickOldestReadyJob(candidates: PayoutJob[]): PayoutJob | undefined {
 
 function findNextReadyJob(now: number = Date.now()): PayoutJob | undefined {
   const ready = jobs.filter(
-    (j) => j.status === "pending" && j.nextRetryAt <= now
+    (j) =>
+      j.status === "pending" &&
+      j.nextRetryAt <= now &&
+      !isMiningPayoutHeldForBannedWallet(j.recipientAddress, j.tileKey)
   );
   return pickOldestReadyJob(ready);
 }
@@ -241,6 +269,12 @@ async function processOne(job: PayoutJob, now: number = Date.now()): Promise<voi
   if (!client) return;
 
   if (job.nextRetryAt > now) return;
+
+  if (
+    isMiningPayoutHeldForBannedWallet(job.recipientAddress, job.tileKey)
+  ) {
+    return;
+  }
 
   if (!client.isSignerConfigured()) {
     job.lastError = "signer not configured";
@@ -309,6 +343,7 @@ async function tick(now: number = Date.now()): Promise<void> {
   if (processing) return;
   processing = true;
   try {
+    await refreshMiningBannedWallets();
     const next = findNextReadyJob(now);
     if (next) await processOne(next, now);
   } finally {
@@ -404,6 +439,7 @@ export function resetQueueForTests(): void {
   jobs.length = 0;
   acceptedClaimIds.clear();
   processing = false;
+  autoBulkRunning = false;
   processorEnabled = false;
   stopPayoutProcessorForTests();
 }
@@ -453,7 +489,10 @@ export async function manualBulkPayoutPendingForRecipient(
   if (!target) throw new Error("invalid_recipient");
 
   const pendingFor = jobs.filter(
-    (j) => j.status === "pending" && normalizeNimWalletId(j.recipientAddress) === target
+    (j) =>
+      j.status === "pending" &&
+      normalizeNimWalletId(j.recipientAddress) === target &&
+      !isMiningPayoutHeldForBannedWallet(j.recipientAddress, j.tileKey)
   );
   if (pendingFor.length === 0) {
     throw new Error("no_pending_jobs");
@@ -592,5 +631,70 @@ export async function flushAllPendingPayoutsNow(): Promise<FlushAllPendingPayout
       failures: result.failures.length,
     })
   );
+  return result;
+}
+
+function recipientsWithStalePending(now: number): string[] {
+  if (autoBulkAfterMs <= 0) return [];
+  const cutoff = now - autoBulkAfterMs;
+  const byRecipient = new Map<string, { oldest: number; address: string }>();
+  for (const j of jobs) {
+    if (j.status !== "pending") continue;
+    if (isMiningPayoutHeldForBannedWallet(j.recipientAddress, j.tileKey)) {
+      continue;
+    }
+    const k = normalizeNimWalletId(j.recipientAddress);
+    if (!k) continue;
+    const prev = byRecipient.get(k);
+    const oldest = prev ? Math.min(prev.oldest, j.createdAt) : j.createdAt;
+    byRecipient.set(k, {
+      oldest,
+      address: j.recipientAddress.trim(),
+    });
+  }
+  const out: string[] = [];
+  for (const row of byRecipient.values()) {
+    if (row.oldest <= cutoff) out.push(row.address);
+  }
+  return out;
+}
+
+/** Bulk-settle recipients whose oldest pending job has waited at least `autoBulkAfterMs`. */
+export async function maybeAutoBulkStalePending(
+  now: number = Date.now()
+): Promise<{ recipientsPaid: number; jobsCleared: number }> {
+  const result = { recipientsPaid: 0, jobsCleared: 0 };
+  if (autoBulkAfterMs <= 0 || autoBulkRunning || processing) return result;
+  if (!chainClient?.isSignerConfigured()) return result;
+
+  const recipients = recipientsWithStalePending(now);
+  if (recipients.length === 0) return result;
+
+  autoBulkRunning = true;
+  try {
+    for (const recipient of recipients) {
+      try {
+        const r = await manualBulkPayoutPendingForRecipient(recipient);
+        result.recipientsPaid += 1;
+        result.jobsCleared += r.jobsCleared;
+        console.log(
+          `[payout-service] Auto bulk payout (${autoBulkAfterMs}ms age) ${recipient.slice(0, 12)}…`,
+          JSON.stringify({
+            jobsCleared: r.jobsCleared,
+            totalLuna: r.totalLuna,
+            txHash: r.txHash.slice(0, 16) + "…",
+          })
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg === "no_pending_jobs" || msg === "wallet_payout_race_retry") continue;
+        console.warn(
+          `[payout-service] Auto bulk payout failed for ${recipient.slice(0, 12)}…: ${msg}`
+        );
+      }
+    }
+  } finally {
+    autoBulkRunning = false;
+  }
   return result;
 }

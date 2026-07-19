@@ -10730,16 +10730,15 @@ export class Game {
         if (!bm.passable && !bm.ramp) {
           const [bx, bz] = blockForWalk.split(",").map(Number);
           if (bx === undefined || bz === undefined) return null;
-          /** Gates: movement only from double-click → {@link queueWalkToGateThenInteract}, not single-click walk. */
+          /** Gates / Unlock Pads: not rooftop platforms. Unlocked pad is a floor crossing. */
           if (bm.gate) {
             return null;
           }
-          // Unlocked Unlock Pad is a floor crossing (layer 0), not rooftop stance.
-          if (
-            bm.unlockPad?.instanceId &&
-            this.unlockedPadInstanceIds.has(bm.unlockPad.instanceId)
-          ) {
-            return { ft: { x: bx, y: bz }, layer: 0 };
+          if (bm.unlockPad?.instanceId) {
+            if (this.unlockedPadInstanceIds.has(bm.unlockPad.instanceId)) {
+              return { ft: { x: bx, y: bz }, layer: 0 };
+            }
+            return null;
           }
           return { ft: { x: bx, y: bz }, layer: 1 };
         }
@@ -14625,8 +14624,9 @@ export class Game {
       color: base,
       roughness: unlockedPad ? 0.72 : PLACED_COLOR_SURFACE_ROUGHNESS,
       metalness: unlockedPad ? 0.08 : PLACED_COLOR_SURFACE_METALNESS,
-      transparent: ghost || meta.passable || unlockedPad,
-      opacity: ghost ? 0.42 : unlockedPad ? 0.92 : meta.passable ? 0.45 : 1,
+      // Unlocked pad must stay opaque: transparent plates sort after avatars and draw over feet.
+      transparent: ghost || (meta.passable && !unlockedPad),
+      opacity: ghost ? 0.42 : meta.passable && !unlockedPad ? 0.45 : 1,
       depthWrite: ghost ? false : unlockedPad ? true : !meta.passable,
       emissive: meta.claimable && meta.active ? 0xffc107 : unlockedPad ? 0x3d2e1a : 0x000000,
       emissiveIntensity: meta.claimable && meta.active ? 0.28 : unlockedPad ? 0.12 : 0,
@@ -14693,8 +14693,8 @@ export class Game {
           color: 0x8a6a3e,
           roughness: 0.55,
           metalness: 0.2,
-          transparent: true,
-          opacity: 0.85,
+          transparent: false,
+          depthWrite: true,
         });
         const rim = new THREE.Mesh(
           new THREE.BoxGeometry(BLOCK_SIZE * vis * 1.02, hVis * 0.35, BLOCK_SIZE * vis * 1.02),

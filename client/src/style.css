@@ -10648,16 +10648,117 @@ html.nspace-mobile-portrait
 
 .hud-build-bottom-dock__floor-color-picker {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 6px;
+  /* Cap to tool-card canvas height so the dock tools row sets dock height. */
+  max-height: 60px;
+}
+
+.hud-build-bottom-dock__floor-color-picker[hidden] {
+  display: none !important;
+}
+
+/* Rectangular SV + hue strip (floor tile colors; Option A). Sized to tool-card canvas. */
+.palette-sv-picker {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 60px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.palette-sv-picker__sv {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-sizing: border-box;
+  cursor: crosshair;
+  touch-action: none;
+  /* Pure hue base; white → transparent left-to-right, black → transparent bottom-to-top. */
+  background:
+    linear-gradient(to top, #000, transparent),
+    linear-gradient(to right, #fff, transparent),
+    hsl(var(--palette-sv-hue, 0), 100%, 50%);
+}
+
+.palette-sv-picker__sv-cursor {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 1px 4px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  box-sizing: border-box;
+  background: var(--palette-sv-selected, transparent);
+}
+
+.palette-sv-picker__hue {
+  position: relative;
+  width: 12px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-sizing: border-box;
+  cursor: crosshair;
+  touch-action: none;
+  background: linear-gradient(
+    to bottom,
+    hsl(0, 100%, 50%),
+    hsl(60, 100%, 50%),
+    hsl(120, 100%, 50%),
+    hsl(180, 100%, 50%),
+    hsl(240, 100%, 50%),
+    hsl(300, 100%, 50%),
+    hsl(360, 100%, 50%)
+  );
+}
+
+.palette-sv-picker__hue-cursor {
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  height: 8px;
+  border-radius: 3px;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  transform: translateY(-50%);
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .palette-sv-picker {
+  height: 56px;
+}
+
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .palette-sv-picker__sv {
+  width: 56px;
+  height: 56px;
+}
+
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .palette-sv-picker__hue {
+  width: 11px;
+}
+
+html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-bottom-dock__floor-color-picker {
+  max-height: 56px;
 }
 
 .hud-build-bottom-dock__floor-color-meta {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: center;
   gap: 4px;
+  min-width: 0;
 }
 
 .hud-build-bottom-dock__floor-color-meta[hidden] {
@@ -10697,6 +10798,36 @@ html.nspace-mobile-portrait
   border-color: rgba(96, 165, 250, 0.75);
   background: rgba(37, 99, 235, 0.28);
   color: #dbeafe;
+}
+
+.hud-build-bottom-dock__floor-spawn-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0;
+  margin: 0 8px 0 0;
+}
+
+/* `display: flex` above beats UA `[hidden]` — same pattern as other HUD chrome. */
+.hud-build-bottom-dock__floor-spawn-actions[hidden] {
+  display: none !important;
+}
+
+.hud-build-bottom-dock__tool-card--disabled,
+.hud-build-bottom-dock__tool-card:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: grayscale(0.35);
+}
+
+.hud-build-bottom-dock__tool-card-icon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 72px;
+  max-height: 72px;
+  margin: 0 auto;
 }
 
 .hud-build-bottom-dock__floor-no-walk-btn {
@@ -10817,6 +10948,14 @@ html.nspace-mobile-portrait
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.hud-build-bottom-dock__room-setting[hidden] {
+  display: none !important;
+}
+
+.hud-build-bottom-dock__room-deployables {
+  margin-top: 4px;
 }
 
 .hud-build-bottom-dock__room-setting-label {

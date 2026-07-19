@@ -409,9 +409,17 @@ export function shouldOfferTutorialUnlockGate(
 /**
  * Show Reset tutorial / Start over while in the Tutorial Room.
  * Player Menu row and Tutorial Step Coach button share this gate.
+ * When the learner flow is off, only admins (who may still enter via teleporter).
+ * Admins keep access after completion so they can re-test the lesson.
  */
-export function shouldShowTutorialResetMenu(inTutorialRoom: boolean): boolean {
-  return inTutorialRoom;
+export function shouldShowTutorialResetMenu(opts: {
+  inTutorialRoom: boolean;
+  isAdmin: boolean;
+  tutorialFeatureEnabled: boolean;
+}): boolean {
+  if (!opts.inTutorialRoom) return false;
+  if (opts.isAdmin) return true;
+  return opts.tutorialFeatureEnabled;
 }
 
 /** Floor tile on the approach side of a gate (opposite the exit neighbor). */

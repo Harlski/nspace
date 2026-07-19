@@ -9,6 +9,10 @@ import {
   peekPulledBalanceCacheLuna,
 } from "./payoutBalancePull.js";
 import {
+  enrichPendingPayoutSnapshotWithLabels,
+  enrichWalletPendingDetailWithLabels,
+} from "./payoutDisplayLabels.js";
+import {
   fetchPendingQueueTotalsFromService,
   fetchPendingSnapshotFromService,
   fetchPublicPendingSummaryFromService,
@@ -104,28 +108,76 @@ async function serviceOrThrow<T>(
   return result.data;
 }
 
+const PAYOUT_SERVICE_OFF_MESSAGE = "Payout service not configured on this server.";
+
+const EMPTY_PUBLIC_PENDING_SUMMARY: PublicPendingPayoutSummary = {
+  mode: "summary",
+  pendingTotal: 0,
+  processedToday: 0,
+  allSent: true,
+  message: PAYOUT_SERVICE_OFF_MESSAGE,
+};
+
+const EMPTY_PUBLIC_PENDING_SNAPSHOT: PublicPendingPayoutSnapshot = {
+  allSent: true,
+  pendingTotal: 0,
+  message: PAYOUT_SERVICE_OFF_MESSAGE,
+  rows: [],
+  historyRows: [],
+};
+
+function emptyWalletPendingDetail(): WalletPendingPayoutDetail {
+  return {
+    ...EMPTY_PUBLIC_PENDING_SNAPSHOT,
+    mode: "wallet",
+    processedToday: 0,
+  };
+}
+
 export async function getPendingQueueTotals(): Promise<PendingPayoutQueueTotals> {
+  if (!isPayoutServiceClientConfigured()) {
+    return {
+      jobCount: 0,
+      recipientCount: 0,
+      totalLuna: "0",
+      totalNim: "0.0000",
+    };
+  }
   return serviceOrThrow(await fetchPendingQueueTotalsFromService());
 }
 
 export async function getPublicPendingSummary(): Promise<PublicPendingPayoutSummary> {
+  if (!isPayoutServiceClientConfigured()) {
+    return EMPTY_PUBLIC_PENDING_SUMMARY;
+  }
   return serviceOrThrow(await fetchPublicPendingSummaryFromService());
 }
 
 export async function getPublicPendingAdminPanelSnapshot(): Promise<PublicPendingPayoutSnapshot> {
-  return serviceOrThrow(
+  if (!isPayoutServiceClientConfigured()) {
+    return EMPTY_PUBLIC_PENDING_SNAPSHOT;
+  }
+  const snap = await serviceOrThrow(
     await fetchPendingSnapshotFromService({ adminPanel: true })
   );
+  return enrichPendingPayoutSnapshotWithLabels(snap);
 }
 
 export async function getPublicPendingSnapshot(): Promise<PublicPendingPayoutSnapshot> {
+  if (!isPayoutServiceClientConfigured()) {
+    return EMPTY_PUBLIC_PENDING_SNAPSHOT;
+  }
   const snap = await serviceOrThrow(await fetchPendingSnapshotFromService());
-  return enrichSnapshotWithIdenticons(snap);
+  const withIcons = await enrichSnapshotWithIdenticons(snap);
+  return enrichPendingPayoutSnapshotWithLabels(withIcons);
 }
 
 export async function getPendingSnapshotForWallet(
   walletId: string
 ): Promise<WalletPendingPayoutDetail> {
+  if (!isPayoutServiceClientConfigured()) {
+    return emptyWalletPendingDetail();
+  }
   const result = await fetchPendingSnapshotFromService({ wallet: walletId });
   if (!result.ok) throw new Error(result.error);
   const snap = result.data;
@@ -133,7 +185,11 @@ export async function getPendingSnapshotForWallet(
     throw new Error("invalid_response");
   }
   const enriched = await enrichSnapshotWithIdenticons(snap);
-  return { ...enriched, mode: "wallet", processedToday: snap.processedToday };
+  return enrichWalletPendingDetailWithLabels({
+    ...enriched,
+    mode: "wallet",
+    processedToday: snap.processedToday,
+  });
 }
 
 /** Admin "Payout in full" for one recipient. */

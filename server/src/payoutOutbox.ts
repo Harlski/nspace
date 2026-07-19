@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendAdminSystemLog } from "./adminSystemMonitor.js";
+import { shouldHoldMiningPayoutForBannedWallet } from "./payoutMiningGate.js";
 import type { PayIntent } from "./payoutServiceClient.js";
 import {
   deliverPayIntentToService,
@@ -144,6 +145,14 @@ export async function drainOutboxOnce(
       (r) => !deliveredClaimIds.has(r.claimId)
     );
     for (const record of pending) {
+      if (
+        shouldHoldMiningPayoutForBannedWallet(
+          record.recipientAddress,
+          record.tileKey
+        )
+      ) {
+        continue;
+      }
       const payload: PayIntentPayload = {
         claimId: record.claimId,
         recipientAddress: record.recipientAddress,

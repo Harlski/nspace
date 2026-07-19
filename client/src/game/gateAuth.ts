@@ -43,6 +43,19 @@ export function normalizeClientGate(g: GateAccessWire): {
   };
 }
 
+/** Floor tile on the approach side of a gate (opposite the exit neighbor). */
+export function gateApproachTile(
+  gateX: number,
+  gateZ: number,
+  exitX: number,
+  exitZ: number
+): { x: number; z: number } {
+  return {
+    x: gateX - (exitX - gateX),
+    z: gateZ - (exitZ - gateZ),
+  };
+}
+
 export function canOpenGateAs(
   selfAddress: string,
   gate: BlockStyleProps["gate"] | undefined,

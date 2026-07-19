@@ -4,6 +4,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { nimiqIdenticonDataUrl } from "./nimiqIdenticonServer.js";
+import { playerWalletLabel } from "./playerWalletLabel.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -99,6 +100,7 @@ export type LoginDayBucket = {
 export type SessionTimelineRow = {
   sessionId: string;
   address: string;
+  displayName: string;
   roomId: string;
   startedAt: number;
   endedAt: number | null;
@@ -109,6 +111,7 @@ export type SessionTimelineRow = {
 
 export type PlayTimeByRoomRow = {
   address: string;
+  displayName: string;
   roomId: string;
   identicon: string;
   activeDurationMs: number;
@@ -119,6 +122,7 @@ export type PlayTimeByRoomRow = {
 export type NimTimelineRow = {
   sentAt: number;
   recipient: string;
+  displayName: string;
   txHash: string;
   claimId: string;
   amountLuna: string | null;
@@ -129,7 +133,10 @@ export type NimTimelineRow = {
 
 export type DailyAnalyticsRow = {
   dayUtc: string;
+  /** Wallets with any gameplay event that UTC day (inflated vs login uniques). */
   activePlayers: number;
+  /** Distinct wallets with at least one session_start that UTC day. */
+  uniquePlayers: number;
   sessionStarts: number;
   sessionEnds: number;
   claimBlocks: number;
@@ -143,12 +150,14 @@ export type DailyAnalyticsRow = {
 export type AnalyticsUserCountRow = {
   walletId: string;
   identicon: string;
+  displayName: string;
   count: number;
 };
 
 export type AnalyticsUniqueVisitorRow = {
   walletId: string;
   identicon: string;
+  displayName: string;
   sessionStarts: number;
   sessionEnds: number;
   totalPayoutLuna: string;
@@ -163,6 +172,7 @@ export type PayoutHourBucket = {
   users: {
     walletId: string;
     identicon: string;
+    displayName: string;
     payouts: number;
     totalLuna: string;
     totalNim: string;
@@ -177,6 +187,7 @@ export type PayoutDayBucket = {
   users: {
     walletId: string;
     identicon: string;
+    displayName: string;
     payouts: number;
     totalLuna: string;
     totalNim: string;
@@ -766,6 +777,14 @@ export async function getEventLogAnalyticsSnapshot(
     filterFromMs ?? undefined,
     filterToMs ?? undefined
   );
+  /** Wallets with session_start before the filtered window (for first-time login detection). */
+  const seenBeforeWindow = new Set<string>();
+  if (filterFromMs != null) {
+    await forEachRecentEvent(scanDays, (rec) => {
+      if (rec.kind !== ANALYTICS_EVENT_KINDS.sessionStart || !rec.address) return;
+      if (rec.ts < filterFromMs) seenBeforeWindow.add(rec.address);
+    });
+  }
   function inTimeWindow(ts: number): boolean {
     if (filterFromMs != null && ts < filterFromMs) return false;
     if (filterToMs != null && ts > filterToMs) return false;
@@ -904,18 +923,20 @@ export async function getEventLogAnalyticsSnapshot(
     }
     if (rec.kind === ANALYTICS_EVENT_KINDS.sessionStart) {
       const h = new Date(rec.ts).getUTCHours();
+      let uset = uniqueByDay.get(day);
+      if (!uset) {
+        uset = new Set();
+        uniqueByDay.set(day, uset);
+      }
+      uset.add(rec.address);
+      const isFirstEver =
+        !seenBeforeWindow.has(rec.address) && !firstSeenSessionStart.has(rec.address);
       if (useDayCharts) {
         startsByDay.set(day, (startsByDay.get(day) ?? 0) + 1);
-        let uset = uniqueByDay.get(day);
-        if (!uset) {
-          uset = new Set();
-          uniqueByDay.set(day, uset);
-        }
-        uset.add(rec.address);
         const sm = startByDayUser.get(day) ?? new Map<string, number>();
         sm.set(rec.address, (sm.get(rec.address) ?? 0) + 1);
         startByDayUser.set(day, sm);
-        if (!firstSeenSessionStart.has(rec.address)) {
+        if (isFirstEver) {
           firstStartsByDay.set(day, (firstStartsByDay.get(day) ?? 0) + 1);
           const fm = firstByDayUser.get(day) ?? new Map<string, number>();
           fm.set(rec.address, (fm.get(rec.address) ?? 0) + 1);
@@ -925,12 +946,12 @@ export async function getEventLogAnalyticsSnapshot(
         startsByHour[h] += 1;
         uniqueByHour[h].add(rec.address);
         startByHourUser[h].set(rec.address, (startByHourUser[h].get(rec.address) ?? 0) + 1);
-        if (!firstSeenSessionStart.has(rec.address)) {
+        if (isFirstEver) {
           firstStartsByHour[h] += 1;
           firstByHourUser[h].set(rec.address, (firstByHourUser[h].get(rec.address) ?? 0) + 1);
         }
       }
-      if (!firstSeenSessionStart.has(rec.address)) {
+      if (isFirstEver) {
         firstSeenSessionStart.add(rec.address);
       }
       ds.sessionStarts += 1;
@@ -1011,6 +1032,7 @@ export async function getEventLogAnalyticsSnapshot(
       payouts.push({
         sentAt,
         recipient: rec.address,
+        displayName: playerWalletLabel(rec.address),
         txHash,
         claimId: typeof payload.claimId === "string" ? payload.claimId : "",
         amountLuna,
@@ -1053,6 +1075,7 @@ export async function getEventLogAnalyticsSnapshot(
       rows.map(async ([walletId, count]) => ({
         walletId,
         identicon: await identiconFor(walletId),
+        displayName: playerWalletLabel(walletId),
         count,
       }))
     );
@@ -1067,6 +1090,7 @@ export async function getEventLogAnalyticsSnapshot(
       return {
         sessionId,
         address: v.address,
+        displayName: playerWalletLabel(v.address),
         roomId: v.roomId,
         startedAt: v.startedAt,
         endedAt: v.endedAt,
@@ -1104,6 +1128,7 @@ export async function getEventLogAnalyticsSnapshot(
       .slice(0, Math.max(1, sessionLimit))
       .map(async (r) => ({
         address: r.address,
+        displayName: playerWalletLabel(r.address),
         roomId: r.roomId,
         identicon: await identiconFor(r.address),
         activeDurationMs: r.activeMs,
@@ -1145,6 +1170,7 @@ export async function getEventLogAnalyticsSnapshot(
         users.map(async ([walletId, v]) => ({
           walletId,
           identicon: await identiconFor(walletId),
+          displayName: playerWalletLabel(walletId),
           payouts: v.payouts,
           totalLuna: v.totalLuna.toString(),
           totalNim: formatLunaToNim(v.totalLuna.toString()) ?? "0.00000",
@@ -1187,6 +1213,7 @@ export async function getEventLogAnalyticsSnapshot(
           dayUsers.map(async ([walletId, v]) => ({
             walletId,
             identicon: await identiconFor(walletId),
+            displayName: playerWalletLabel(walletId),
             payouts: v.payouts,
             totalLuna: v.totalLuna.toString(),
             totalNim: formatLunaToNim(v.totalLuna.toString()) ?? "0.00000",
@@ -1203,6 +1230,7 @@ export async function getEventLogAnalyticsSnapshot(
     visitorRows.map(async ([walletId, row]) => ({
       walletId,
       identicon: await identiconFor(walletId),
+      displayName: playerWalletLabel(walletId),
       sessionStarts: row.sessionStarts,
       sessionEnds: row.sessionEnds,
       totalPayoutLuna: row.totalPayoutLuna.toString(),
@@ -1215,6 +1243,7 @@ export async function getEventLogAnalyticsSnapshot(
     .map(([dayUtc, row]) => ({
       dayUtc,
       activePlayers: row.active.size,
+      uniquePlayers: uniqueByDay.get(dayUtc)?.size ?? 0,
       sessionStarts: row.sessionStarts,
       sessionEnds: row.sessionEnds,
       claimBlocks: row.claimBlocks,

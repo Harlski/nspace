@@ -43,6 +43,8 @@ test("block claim flows outbox → payout service → exactly one fake send", as
     balanceCacheMs: 20_000,
     maxBackoffMs: 3_600_000,
     deadLetterAfterAttempts: 80,
+    autoBulkAfterMs: 0,
+    autoBulkCheckIntervalMs: 300_000,
   };
   const { app } = createPayoutApp({
     cfg,
@@ -112,6 +114,8 @@ test("outbox redelivery after lost ack still yields one chain send", async (t) =
     balanceCacheMs: 20_000,
     maxBackoffMs: 3_600_000,
     deadLetterAfterAttempts: 80,
+    autoBulkAfterMs: 0,
+    autoBulkCheckIntervalMs: 300_000,
   };
   const { app } = createPayoutApp({
     cfg,

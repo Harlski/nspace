@@ -18,8 +18,10 @@ import { registerDirectInviteRoutes } from "./directInvite/httpHandlers.js";
 import { registerPlaySpaceTemplateAdminRoutes } from "./playSpaceTemplate/routes.js";
 import { registerTutorialTemplateAdminRoutes } from "./tutorialTemplate/routes.js";
 import { registerTutorialRoutes } from "./tutorial/routes.js";
+import { isTutorialEnvEnabled, TUTORIAL_ROOM_ID } from "./tutorial/config.js";
 import { initTutorialTemplateStore } from "./tutorialTemplate/store.js";
 import { computeNeedsTutorial } from "./tutorialSessionService.js";
+import { resolveInitialRoomForPaySession } from "./tutorial/roomsIntegration.js";
 import {
   isInviteLobbyRoomId,
   makeInviteLobbyRoomId,
@@ -112,17 +114,15 @@ import {
 } from "./termsPrivacyAcceptanceStore.js";
 import { TERMS_PRIVACY_DOCS_VERSION } from "./termsPrivacyVersion.js";
 import {
-  getPayoutWalletBalanceLuna,
   getPendingSnapshotForWallet,
   getPublicPendingAdminPanelSnapshot,
   getPublicPendingSnapshot,
   getPublicPendingSummary,
   triggerManualBulkPayout,
-  isPayoutSenderConfigured,
-  peekPayoutBalanceCacheLuna,
   enqueuePayIntent,
   LUNA_PER_NIM,
 } from "./payoutGateway.js";
+import { resolvePayoutBalanceApi } from "./payoutBalanceApi.js";
 import { startPayoutOutboxDeliveryLoop } from "./payoutOutbox.js";
 import { startPayoutBalancePullLoop } from "./payoutBalancePull.js";
 import {
@@ -874,34 +874,10 @@ app.get("/pixels.png", (req, res) => {
   }
 });
 
-const NIM_BALANCE_API_TIMEOUT_MS = Math.max(
-  3000,
-  Number(process.env.NIM_BALANCE_API_TIMEOUT_MS ?? 28_000)
-);
-
-/** When live balance read times out, still return 200 if cache is at most this old (ms). */
-const NIM_BALANCE_API_STALE_MAX_MS = Math.max(
-  0,
-  Number(process.env.NIM_BALANCE_API_STALE_MAX_MS ?? 300_000)
-);
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${ms}ms`));
-    }, ms);
-    promise.then(
-      (v) => {
-        clearTimeout(t);
-        resolve(v);
-      },
-      (e) => {
-        clearTimeout(t);
-        reject(e);
-      }
-    );
-  });
-}
+app.get("/api/nim/payout-balance", async (_req, res) => {
+  const result = await resolvePayoutBalanceApi();
+  res.status(result.status).json(result.body);
+});
 
 /** Payout-service → event log bridge for `/analytics` (bearer: `PAYOUT_SERVICE_API_SECRET`). */
 app.post(
@@ -918,48 +894,6 @@ app.get(
     res.json({ wallets: listMiningBannedWalletKeys() });
   }
 );
-
-app.get("/api/nim/payout-balance", async (_req, res) => {
-  if (!isPayoutSenderConfigured()) {
-    res.json({ configured: false, hasNim: false, balanceNim: "0.0000" });
-    return;
-  }
-  try {
-    const luna = await withTimeout(
-      getPayoutWalletBalanceLuna(),
-      NIM_BALANCE_API_TIMEOUT_MS,
-      "getPayoutWalletBalanceLuna"
-    );
-    const balanceNim = (Number(luna) / 100_000).toFixed(4);
-    res.json({
-      configured: true,
-      hasNim: luna > 0n,
-      balanceNim,
-    });
-  } catch (err) {
-    console.error("[nim/payout-balance]", err);
-    if (NIM_BALANCE_API_STALE_MAX_MS > 0) {
-      const peek = peekPayoutBalanceCacheLuna();
-      const age = peek ? Date.now() - peek.cachedAtMs : Infinity;
-      if (peek && age <= NIM_BALANCE_API_STALE_MAX_MS) {
-        const balanceNim = (Number(peek.luna) / 100_000).toFixed(4);
-        res.json({
-          configured: true,
-          hasNim: peek.luna > 0n,
-          balanceNim,
-          stale: true as const,
-        });
-        return;
-      }
-    }
-    res.status(503).json({
-      error: "nim_unavailable",
-      configured: true,
-      hasNim: false,
-      balanceNim: "0.0000",
-    });
-  }
-});
 
 /**
  * Pending payout data.
@@ -2344,6 +2278,7 @@ app.get("/api/admin/settings", requireSystemAdminWallet, (_req, res) => {
     ...getAdminRuntimeSettings(),
     streamObserverEnvConfigured: streamObserverEnvConfigured(),
     streamObserverAllowlistConfigured: streamObserverAllowlistConfigured(),
+    tutorialEnvEnabled: isTutorialEnvEnabled(),
   });
 });
 
@@ -2352,6 +2287,7 @@ app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
   const patch: {
     playerUsernameSelfServiceEnabled?: boolean;
     streamObserverAddresses?: string;
+    tutorialEnabled?: boolean;
   } = {};
   if (
     body &&
@@ -2370,6 +2306,9 @@ app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
       return;
     }
   }
+  if (body && Object.prototype.hasOwnProperty.call(body, "tutorialEnabled")) {
+    patch.tutorialEnabled = body.tutorialEnabled === true;
+  }
   const next =
     Object.keys(patch).length > 0
       ? patchAdminRuntimeSettings(patch)
@@ -2378,6 +2317,7 @@ app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
     ...next,
     streamObserverEnvConfigured: streamObserverEnvConfigured(),
     streamObserverAllowlistConfigured: streamObserverAllowlistConfigured(),
+    tutorialEnvEnabled: isTutorialEnvEnabled(),
   });
 });
 
@@ -3576,6 +3516,28 @@ wss.on("connection", (ws, req) => {
     if (normalizeRoomId(roomId) !== allowedLobby) {
       roomId = allowedLobby;
       spawnHint = undefined;
+    }
+  }
+  // Incomplete Pay learners: force Tutorial Room (covers cached Enter / resume that skipped client needsTutorial).
+  if (
+    sessionNimiqPay &&
+    !streamRequested &&
+    guestId === undefined &&
+    !targetIsPlaySpace
+  ) {
+    const beforeForce = normalizeRoomId(roomId);
+    const forced = resolveInitialRoomForPaySession({
+      wallet: address,
+      sessionNimiqPay: true,
+      requestedRoomId: roomId,
+    });
+    roomId = forced;
+    if (
+      normalizeRoomId(forced) === TUTORIAL_ROOM_ID &&
+      beforeForce !== TUTORIAL_ROOM_ID
+    ) {
+      spawnHint = undefined;
+      explorationDoorSpawn = false;
     }
   }
   addClient(roomId, ws, address, spawnHint, {

@@ -136,39 +136,40 @@ export function pendingPayoutsPublicPageHtml(): string {
       if (c.length <= 8) return c;
       return c.slice(0, 4) + c.slice(-4);
     }
-    function walletCell(identicon, walletId) {
+    function walletCell(identicon, walletId, displayName) {
       var full = String(walletId || "");
+      var name = displayName != null && String(displayName).trim() ? String(displayName).trim() : "";
+      var label = name || walletIdShort(full);
       var img = identicon
         ? "<img class='ident' src='" + esc(identicon) + "' alt='' width='28' height='28'/>"
         : "";
-      var short = esc(walletIdShort(full));
       var titleAttr = full ? " title='" + esc(full) + "'" : "";
       return (
-        "<td class='mono'><span class='ms-wallet-row'>" +
+        "<td><span class='ms-wallet-row'>" +
         img +
         "<span" +
         titleAttr +
         ">" +
-        short +
+        esc(label) +
         "</span></span></td>"
       );
     }
     function tablePending(rows) {
       var html =
         "<h2 class='ms-section-title'>Pending</h2>" +
-        "<table><thead><tr><th>Time (UTC)</th><th>Wallet</th><th class='amt'>NIM</th></tr></thead><tbody>";
+        "<table><thead><tr><th>Time (UTC)</th><th>User</th><th class='amt'>NIM</th></tr></thead><tbody>";
       for (var i = 0; i < rows.length; i++) {
         var row = rows[i];
         var t = esc(fmtUtcShort(row.time || ""));
         var a = esc(row.amountNim || "");
-        html += "<tr><td class='mono'>" + t + "</td>" + walletCell(row.identicon, row.walletId) + "<td class='mono amt'>" + a + "</td></tr>";
+        html += "<tr><td class='mono'>" + t + "</td>" + walletCell(row.identicon, row.walletId, row.displayName) + "<td class='mono amt'>" + a + "</td></tr>";
       }
       return html + "</tbody></table>";
     }
     function tableHistory(rows) {
       var html =
         "<h2 class='ms-section-title'>Recent sent (last 5)</h2>" +
-        "<table><thead><tr><th>Sent (UTC)</th><th>Wallet</th><th class='amt'>NIM</th><th>Tx</th></tr></thead><tbody>";
+        "<table><thead><tr><th>Sent (UTC)</th><th>User</th><th class='amt'>NIM</th><th>Tx</th></tr></thead><tbody>";
       for (var j = 0; j < rows.length; j++) {
         var row = rows[j];
         var t = esc(fmtUtcShort(row.time || ""));
@@ -177,7 +178,7 @@ export function pendingPayoutsPublicPageHtml(): string {
           "<tr><td class='mono'>" +
           t +
           "</td>" +
-          walletCell(row.identicon, row.walletId) +
+          walletCell(row.identicon, row.walletId, row.displayName) +
           "<td class='mono amt'>" +
           a +
           "</td><td class='mono'>" +

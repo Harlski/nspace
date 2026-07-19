@@ -64,14 +64,18 @@ export function buildTutorialWelcomeForConn(opts: {
   sessionNimiqPay: boolean;
   viaTeleporter?: boolean;
   listMineSlots: () => string[];
+  /** When the learner flow is off, admins still get tutorial welcome for Reset / coach. */
+  isAdmin?: boolean;
 }): TutorialWelcome | undefined {
-  if (!isTutorialFeatureEnabled()) return undefined;
+  const featureOn = isTutorialFeatureEnabled();
+  if (!featureOn && !opts.isAdmin) return undefined;
   return buildTutorialWelcomePayload({
     wallet: opts.wallet,
     roomId: opts.roomId,
     sessionNimiqPay: opts.sessionNimiqPay,
     viaTeleporter: opts.viaTeleporter,
     availableMineSlots: opts.listMineSlots(),
+    allowWhenFeatureOff: !featureOn && opts.isAdmin === true,
   });
 }
 
@@ -185,7 +189,8 @@ export function teleporterMayTargetTutorialRoom(
   setterIsAdmin: boolean
 ): boolean {
   if (!isTutorialRuntimeRoomId(destRoomId)) return true;
-  return setterIsAdmin && isTutorialFeatureEnabled();
+  // Admins may point teleporters at Tutorial Room even when the learner flow is off.
+  return setterIsAdmin;
 }
 
 export { computeNeedsTutorial };

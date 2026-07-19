@@ -17,11 +17,17 @@ export type AdminRuntimeSettings = {
   playerUsernameSelfServiceEnabled: boolean;
   /** Comma-separated Nimiq wallets allowed for cinema `?stream=1` (merged with `STREAM_OBSERVER_ADDRESSES` env). */
   streamObserverAddresses: string;
+  /**
+   * Nimiq Pay first-contact tutorial. Off by default; also requires env
+   * `TUTORIAL_ENABLED=1` (env unset/0 hard-disables regardless of this flag).
+   */
+  tutorialEnabled: boolean;
 };
 
 const DEFAULTS: AdminRuntimeSettings = {
   playerUsernameSelfServiceEnabled: true,
   streamObserverAddresses: "",
+  tutorialEnabled: false,
 };
 
 type StoreFile = { settings: AdminRuntimeSettings };
@@ -50,6 +56,9 @@ function readStore(): StoreFile {
       typeof (s as AdminRuntimeSettings).streamObserverAddresses === "string"
         ? (s as AdminRuntimeSettings).streamObserverAddresses
         : DEFAULTS.streamObserverAddresses;
+    merged.tutorialEnabled = Boolean(
+      (s as AdminRuntimeSettings).tutorialEnabled ?? DEFAULTS.tutorialEnabled
+    );
     return { settings: merged };
   } catch {
     return { settings: { ...DEFAULTS } };
@@ -80,6 +89,9 @@ export function patchAdminRuntimeSettings(
   }
   if (patch.streamObserverAddresses !== undefined) {
     next.streamObserverAddresses = patch.streamObserverAddresses;
+  }
+  if (patch.tutorialEnabled !== undefined) {
+    next.tutorialEnabled = Boolean(patch.tutorialEnabled);
   }
   writeStore({ settings: next });
   if (patch.streamObserverAddresses !== undefined) {

@@ -8,6 +8,8 @@ export type AttentionMarker = {
   z: number;
   /** Visual lift steps above co-occupant top (or floor). */
   hoverHeight: number;
+  /** Uniform visual scale as percent of full size (20..100, step 10). */
+  sizePercent: number;
   /** Body + glow tint 0xRRGGBB. */
   colorRgb: number;
 };
@@ -17,6 +19,10 @@ export type AttentionMarkerStore = Map<string, Map<string, AttentionMarker>>;
 
 export const ATTENTION_MARKER_HOVER_HEIGHT_DEFAULT = 1;
 export const ATTENTION_MARKER_HOVER_HEIGHT_MAX = 3;
+export const ATTENTION_MARKER_SIZE_PERCENT_DEFAULT = 100;
+export const ATTENTION_MARKER_SIZE_PERCENT_MIN = 20;
+export const ATTENTION_MARKER_SIZE_PERCENT_MAX = 100;
+export const ATTENTION_MARKER_SIZE_PERCENT_STEP = 10;
 export const ATTENTION_MARKER_COLOR_DEFAULT = 0xffffff;
 
 export function createAttentionMarkerStore(): AttentionMarkerStore {
@@ -32,6 +38,17 @@ function clampHoverHeight(n: number): number {
   return Math.max(
     0,
     Math.min(ATTENTION_MARKER_HOVER_HEIGHT_MAX, Math.floor(n))
+  );
+}
+
+export function clampAttentionMarkerSizePercent(n: number): number {
+  if (!Number.isFinite(n)) return ATTENTION_MARKER_SIZE_PERCENT_DEFAULT;
+  const stepped =
+    Math.round(n / ATTENTION_MARKER_SIZE_PERCENT_STEP) *
+    ATTENTION_MARKER_SIZE_PERCENT_STEP;
+  return Math.max(
+    ATTENTION_MARKER_SIZE_PERCENT_MIN,
+    Math.min(ATTENTION_MARKER_SIZE_PERCENT_MAX, stepped)
   );
 }
 
@@ -54,11 +71,15 @@ export function normalizeAttentionMarker(
     o.hoverHeight === undefined
       ? ATTENTION_MARKER_HOVER_HEIGHT_DEFAULT
       : clampHoverHeight(Number(o.hoverHeight));
+  const sizePercent =
+    o.sizePercent === undefined
+      ? ATTENTION_MARKER_SIZE_PERCENT_DEFAULT
+      : clampAttentionMarkerSizePercent(Number(o.sizePercent));
   const colorRgb =
     o.colorRgb === undefined
       ? ATTENTION_MARKER_COLOR_DEFAULT
       : clampColorRgb(Number(o.colorRgb));
-  return { x: xi, z: zi, hoverHeight, colorRgb };
+  return { x: xi, z: zi, hoverHeight, sizePercent, colorRgb };
 }
 
 function roomMap(
@@ -113,6 +134,7 @@ export function moveAttentionMarker(
     x: toX,
     z: toZ,
     hoverHeight: prev.hoverHeight,
+    sizePercent: prev.sizePercent,
     colorRgb: prev.colorRgb,
   });
   if (!dest) return null;

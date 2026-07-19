@@ -62,9 +62,23 @@ A multiplayer isometric social space built with **Nimiq wallet** authentication,
    npm run dev
    ```
    
-   This runs both the client (Vite) and server concurrently. Open [http://localhost:5173](http://localhost:5173) in your browser.
+   This runs the **client** (Vite), **game server**, and **payout service** together. Open [http://localhost:5173](http://localhost:5173) in your browser.
+   
+   For client + server only (no payout sidecar): `npm run dev:game`.
 
-5. **Login**
+5. **Payout wallet (mining balance in the HUD)**
+   
+   The top-bar NIM balance reads the payout hot wallet via the sidecar. Local `npm run dev` sets `NIM_PAYOUT_DEV_FAKE_BALANCE=1` so if the sidecar cannot sync chain consensus yet, the HUD still shows a **fake** balance (default 100 NIM) and mining claims stay fund-gated as if funded. Live balance wins whenever the sidecar responds. Incoming payment verification is unchanged.
+   
+   If you turn the fake off and see **"No more NIM to earn :("**, check:
+   
+   1. **Payout service running** — included in `npm run dev` (port `3091`).
+   2. **Matching secrets** — `PAYOUT_SERVICE_API_SECRET` in `server/.env` must match `payout-service/.env` (see `.env.example` files; dev default: `dev-insecure-local-payout-secret`).
+   3. **Funded signer** — set `NIM_PAYOUT_PRIVATE_KEY` in `payout-service/.env` to a **testnet** wallet with NIM. Generate one: `server/scripts/generate-nimiq-wallet.sh` (or paste an existing testalbatross key).
+   
+   First run auto-creates `payout-service/.env` from `.env.example` if missing. Restart `npm run dev` after editing env files.
+
+6. **Login**
    
    Click **"Dev login"** to enter without a wallet. For production, use **"Connect wallet"** with the Nimiq Hub.
 

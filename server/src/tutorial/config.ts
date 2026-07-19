@@ -1,7 +1,13 @@
 import { isAdmin } from "../config.js";
+import { getAdminRuntimeSettings } from "../adminRuntimeSettingsStore.js";
 import { TUTORIAL_ROOM_ID, TUTORIAL_STAGING_ROOM_ID } from "./roomIds.js";
 
 export { TUTORIAL_ROOM_ID, TUTORIAL_STAGING_ROOM_ID };
+
+/** Same built-in default as `advertiseConfig.ADVERTISE_FUND_RECIPIENT_ADDRESS` (do not import that module — it depends on roomLayouts, which depends on this file). */
+const DEFAULT_DOOR_RECIPIENT =
+  "NQ32 FRGN PDKF RC4Y CKLV 4K3F PKL1 UBAU 7U71";
+
 
 const DEFAULT_FAUCET_LUNA = 1_000n;
 const DEFAULT_DOOR_LUNA = 1_000n;
@@ -34,8 +40,14 @@ function parseWalletAllowlist(raw: string | undefined): Set<string> {
   return out;
 }
 
+/** Off unless `TUTORIAL_ENABLED` is explicitly 1/true (also requires admin runtime toggle). */
+export function isTutorialEnvEnabled(): boolean {
+  return parseBoolEnv(process.env.TUTORIAL_ENABLED, false);
+}
+
 export function isTutorialFeatureEnabled(): boolean {
-  return parseBoolEnv(process.env.TUTORIAL_ENABLED, true);
+  if (!isTutorialEnvEnabled()) return false;
+  return getAdminRuntimeSettings().tutorialEnabled;
 }
 
 export function getTutorialBuilderAllowlist(): Set<string> {
@@ -52,6 +64,11 @@ export function isTutorialBuilderWallet(address: string): boolean {
   return getTutorialBuilderAllowlist().has(c);
 }
 
+/** Admins and `TUTORIAL_BUILDER_ALLOWLIST` wallets may edit tutorial room layouts. */
+export function canEditTutorialRoomContent(address: string): boolean {
+  return isTutorialBuilderWallet(address);
+}
+
 export function getTutorialFaucetAmountLuna(): bigint {
   return parseBigIntEnv(process.env.TUTORIAL_FAUCET_AMOUNT_LUNA, DEFAULT_FAUCET_LUNA);
 }
@@ -65,7 +82,7 @@ export function getTutorialDoorRecipientAddress(): string {
   if (fromEnv) return fromEnv;
   const adv = process.env.ADVERTISE_FUND_RECIPIENT_ADDRESS?.trim();
   if (adv) return adv;
-  return "";
+  return DEFAULT_DOOR_RECIPIENT;
 }
 
 export function isTutorialRoomId(roomId: string): boolean {

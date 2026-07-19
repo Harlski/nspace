@@ -34,9 +34,21 @@ export function isPayoutServiceClientConfigured(): boolean {
   return getPayoutServiceBaseUrl() != null && apiSecret() != null;
 }
 
+/** Default fetch budget for quick payout-service reads (balance, snapshots). */
+const PAYOUT_FETCH_DEFAULT_TIMEOUT_MS = 12_000;
+
+/** On-chain send + inclusion poll can exceed the default; match sidecar confirm budget. */
+export function payoutSendFetchTimeoutMs(): number {
+  const confirmMs = Number(process.env.NIM_TX_CONFIRM_TIMEOUT_MS ?? 120_000);
+  const safeConfirm =
+    Number.isFinite(confirmMs) && confirmMs > 0 ? confirmMs : 120_000;
+  return Math.max(PAYOUT_FETCH_DEFAULT_TIMEOUT_MS, safeConfirm + 15_000);
+}
+
 async function payoutFetch(
   path: string,
-  init: RequestInit
+  init: RequestInit,
+  opts?: { timeoutMs?: number }
 ): Promise<{ ok: boolean; status: number; json: unknown | null; text: string }> {
   const base = getPayoutServiceBaseUrl();
   const secret = apiSecret();
@@ -49,6 +61,7 @@ async function payoutFetch(
     };
   }
   const url = `${normalizePayoutServiceBaseUrl(base)}${path}`;
+  const timeoutMs = opts?.timeoutMs ?? PAYOUT_FETCH_DEFAULT_TIMEOUT_MS;
   try {
     const res = await fetch(url, {
       ...init,
@@ -57,7 +70,7 @@ async function payoutFetch(
         "content-type": "application/json",
         ...(init.headers as Record<string, string> | undefined),
       },
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
     let json: unknown | null = null;
@@ -147,6 +160,8 @@ export type PublicPendingPayoutRow = {
   time: string;
   identicon: string;
   walletId: string;
+  /** Custom username or wallet shorthand when enriched by the game server. */
+  displayName?: string;
   amountNim: string;
 };
 
@@ -154,12 +169,14 @@ export type PublicPayoutHistoryRow = {
   time: string;
   identicon: string;
   walletId: string;
+  displayName?: string;
   amountNim: string;
   txHash: string;
 };
 
 export type PendingByRecipientSummaryRow = {
   walletId: string;
+  displayName?: string;
   jobCount: number;
   amountLuna: string;
   amountNim: string;
@@ -168,6 +185,7 @@ export type PendingByRecipientSummaryRow = {
 export type ManualBulkPayoutHistoryRow = {
   time: string;
   walletId: string;
+  displayName?: string;
   amountNim: string;
   jobsCleared: number;
   state: string;
@@ -375,17 +393,25 @@ export async function triggerManualBulkPayoutViaService(
 ): Promise<
   ServiceResult<{ txHash: string; jobsCleared: number; totalLuna: string }>
 > {
-  const r = await payoutFetch("/v1/manual-bulk-payout", {
-    method: "POST",
-    body: JSON.stringify({ recipient }),
-  });
+  const r = await payoutFetch(
+    "/v1/manual-bulk-payout",
+    {
+      method: "POST",
+      body: JSON.stringify({ recipient }),
+    },
+    { timeoutMs: payoutSendFetchTimeoutMs() }
+  );
   return parseServiceJson(r, parseManualBulkResult);
 }
 
 export async function triggerEndOfDayFlushViaService(): Promise<
   ServiceResult<FlushAllPendingPayoutsResult>
 > {
-  const r = await payoutFetch("/v1/flush", { method: "POST", body: "{}" });
+  const r = await payoutFetch(
+    "/v1/flush",
+    { method: "POST", body: "{}" },
+    { timeoutMs: payoutSendFetchTimeoutMs() }
+  );
   return parseServiceJson(r, parseFlushResult);
 }
 

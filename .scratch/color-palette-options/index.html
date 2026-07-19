@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Color palette options — Nimiq Space</title>
+  <style>
+    :root {
+      --hud-bg: rgba(30, 36, 51, 0.96);
+      --hud-border: rgba(61, 70, 90, 0.85);
+      --hud-text: #e8eaef;
+      --hud-dim: #94a3b8;
+      --hud-blur: blur(12px);
+      --hud-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+      --accent: rgba(56, 189, 248, 0.9);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: var(--hud-text);
+      background:
+        radial-gradient(ellipse 80% 50% at 50% 20%, rgba(56, 120, 180, 0.18), transparent 55%),
+        radial-gradient(ellipse 60% 40% at 70% 80%, rgba(180, 100, 40, 0.12), transparent 50%),
+        linear-gradient(165deg, #0b0e14 0%, #151a24 45%, #0e1219 100%);
+      padding: 28px 24px 48px;
+    }
+
+    .page-head {
+      max-width: 1180px;
+      margin: 0 auto 28px;
+    }
+    .page-head h1 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+    .page-head p {
+      margin: 0;
+      max-width: 62ch;
+      color: var(--hud-dim);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .grid {
+      max-width: 1180px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    .option {
+      border: 1px solid var(--hud-border);
+      background: var(--hud-bg);
+      backdrop-filter: var(--hud-blur);
+      -webkit-backdrop-filter: var(--hud-blur);
+      border-radius: 12px;
+      box-shadow: var(--hud-shadow);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .option__meta {
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid rgba(61, 70, 90, 0.55);
+    }
+    .option__tag {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #38bdf8;
+      margin-bottom: 6px;
+    }
+    .option__title {
+      margin: 0 0 4px;
+      font-size: 16px;
+      font-weight: 650;
+    }
+    .option__desc {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--hud-dim);
+    }
+    .option__stage {
+      padding: 20px 16px 18px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 280px;
+      background:
+        repeating-linear-gradient(
+          -30deg,
+          transparent,
+          transparent 10px,
+          rgba(255, 255, 255, 0.015) 10px,
+          rgba(255, 255, 255, 0.015) 11px
+        );
+    }
+
+    /* Shared picker chrome */
+    .picker {
+      width: 232px;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid var(--hud-border);
+      background: rgba(15, 23, 42, 0.72);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .picker--wide { width: 260px; }
+    .picker__footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .swatch {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 2px solid rgba(15, 23, 42, 0.7);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+      flex-shrink: 0;
+    }
+    .hex {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      border-radius: 6px;
+      border: 1px solid var(--hud-border);
+      background: rgba(15, 23, 42, 0.65);
+      overflow: hidden;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+    }
+    .hex span {
+      padding: 6px 0 6px 8px;
+      color: var(--hud-dim);
+      user-select: none;
+    }
+    .hex input {
+      border: 0;
+      background: transparent;
+      color: var(--hud-text);
+      padding: 6px 8px 6px 0;
+      width: 100%;
+      outline: none;
+      font: inherit;
+    }
+    .cursor {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid #fff;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 1px 4px rgba(0, 0, 0, 0.4);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .hue-cursor {
+      position: absolute;
+      width: 100%;
+      height: 10px;
+      left: 0;
+      border-radius: 3px;
+      border: 2px solid #fff;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+      transform: translateY(-50%);
+      pointer-events: none;
+      box-sizing: border-box;
+    }
+    .hue-cursor--h {
+      width: 10px;
+      height: 100%;
+      top: 0;
+      left: auto;
+      transform: translateX(-50%);
+    }
+    .label-xs {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--hud-dim);
+    }
+
+    /* A: SV square + vertical hue */
+    .a-row {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+    }
+    .sv {
+      position: relative;
+      flex: 1;
+      aspect-ratio: 1;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: crosshair;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .sv::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to right, #fff, transparent);
+    }
+    .sv::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, #000, transparent);
+    }
+    .hue-v {
+      position: relative;
+      width: 18px;
+      flex-shrink: 0;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: linear-gradient(
+        to bottom,
+        hsl(0, 100%, 50%),
+        hsl(60, 100%, 50%),
+        hsl(120, 100%, 50%),
+        hsl(180, 100%, 50%),
+        hsl(240, 100%, 50%),
+        hsl(300, 100%, 50%),
+        hsl(360, 100%, 50%)
+      );
+      cursor: crosshair;
+    }
+
+    /* B: Hue×Sat plane + lightness bar */
+    .hs {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1.35;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background:
+        linear-gradient(to bottom, transparent, #fff),
+        linear-gradient(
+          to right,
+          hsl(0, 100%, 50%),
+          hsl(60, 100%, 50%),
+          hsl(120, 100%, 50%),
+          hsl(180, 100%, 50%),
+          hsl(240, 100%, 50%),
+          hsl(300, 100%, 50%),
+          hsl(360, 100%, 50%)
+        );
+      cursor: crosshair;
+    }
+    .light-bar {
+      position: relative;
+      height: 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: linear-gradient(to right, #0a0a0a, #c44, #fff);
+      cursor: crosshair;
+    }
+    .light-bar .hue-cursor--h {
+      height: calc(100% + 4px);
+      top: -2px;
+      width: 10px;
+    }
+
+    /* C: Compact dock strip */
+    .dock-mock {
+      width: min(340px, 100%);
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--hud-border);
+      background: rgba(15, 23, 42, 0.85);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .dock-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dock-chip {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      border: 2px solid rgba(15, 23, 42, 0.7);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+      flex-shrink: 0;
+    }
+    .hue-h {
+      position: relative;
+      flex: 1;
+      height: 18px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: linear-gradient(
+        to right,
+        hsl(0, 100%, 50%),
+        hsl(60, 100%, 50%),
+        hsl(120, 100%, 50%),
+        hsl(180, 100%, 50%),
+        hsl(240, 100%, 50%),
+        hsl(300, 100%, 50%),
+        hsl(360, 100%, 50%)
+      );
+      cursor: crosshair;
+    }
+    .c-sv {
+      position: relative;
+      width: 100%;
+      height: 96px;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      cursor: crosshair;
+    }
+    .c-sv::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to right, #fff, transparent);
+    }
+    .c-sv::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, #000, transparent);
+    }
+
+    /* D: Stacked HSL sliders */
+    .slider-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .slider-row {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 8px;
+      align-items: center;
+    }
+    .track {
+      position: relative;
+      height: 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      cursor: crosshair;
+    }
+    .track--hue {
+      background: linear-gradient(
+        to right,
+        hsl(0, 100%, 50%),
+        hsl(60, 100%, 50%),
+        hsl(120, 100%, 50%),
+        hsl(180, 100%, 50%),
+        hsl(240, 100%, 50%),
+        hsl(300, 100%, 50%),
+        hsl(360, 100%, 50%)
+      );
+    }
+    .track--sat {
+      background: linear-gradient(to right, #808080, #e24);
+    }
+    .track--lit {
+      background: linear-gradient(to right, #111, #e24, #fff);
+    }
+    .preview-big {
+      height: 48px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+    }
+
+    /* Current (reference) */
+    .current-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      width: 100%;
+    }
+    .ring {
+      position: relative;
+      width: 72px;
+      height: 72px;
+    }
+    .ring__band {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: conic-gradient(
+        from 0deg,
+        hsl(0, 100%, 52%),
+        hsl(60, 100%, 52%),
+        hsl(120, 100%, 52%),
+        hsl(180, 100%, 52%),
+        hsl(240, 100%, 52%),
+        hsl(300, 100%, 52%),
+        hsl(360, 100%, 52%)
+      );
+      -webkit-mask: radial-gradient(farthest-side, transparent 44%, #000 44%);
+      mask: radial-gradient(farthest-side, transparent 44%, #000 44%);
+    }
+    .ring__core {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 46%;
+      height: 46%;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      border: 2px solid rgba(15, 23, 42, 0.7);
+      background: #e24;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+    }
+    .limitation {
+      font-size: 11px;
+      color: #f87171;
+      text-align: center;
+      max-width: 220px;
+      line-height: 1.35;
+    }
+
+    .note {
+      max-width: 1180px;
+      margin: 22px auto 0;
+      font-size: 12px;
+      color: var(--hud-dim);
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <header class="page-head">
+    <h1>Build color picker — design options</h1>
+    <p>
+      Today’s hue ring only gives fully saturated mid-tones. Below are four rectangular
+      full-spectrum layouts (light ↔ dark of every hue) styled for the existing frosted HUD.
+      Pick a direction; interaction details can be grilled next.
+    </p>
+  </header>
+
+  <div class="grid">
+    <!-- Current -->
+    <article class="option" id="opt-current">
+      <div class="option__meta">
+        <div class="option__tag">Reference · current</div>
+        <h2 class="option__title">Hue ring (fixed S / L)</h2>
+        <p class="option__desc">Circular hue only. Center shows selection; hex popover for escape hatch. No pastel or dark variants without typing hex.</p>
+      </div>
+      <div class="option__stage">
+        <div class="current-wrap">
+          <div class="picker" style="align-items:center; width:180px;">
+            <div class="ring" aria-hidden="true">
+              <div class="ring__band"></div>
+              <div class="ring__core"></div>
+            </div>
+            <p class="limitation">Missing: pale / dark versions of each color</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- A -->
+    <article class="option" id="opt-a">
+      <div class="option__meta">
+        <div class="option__tag">Option A · recommended default</div>
+        <h2 class="option__title">Saturation–Value square + hue strip</h2>
+        <p class="option__desc">Industry standard (Figma / Photoshop). X = white→hue, Y = black→bright. Separate hue rainbow. Fast light/dark for any color.</p>
+      </div>
+      <div class="option__stage">
+        <div class="picker" data-picker="a">
+          <div class="a-row">
+            <div class="sv" style="background: hsl(8, 100%, 50%);" data-sv>
+              <div class="cursor" style="left: 78%; top: 32%;"></div>
+            </div>
+            <div class="hue-v" data-hue>
+              <div class="hue-cursor" style="top: 6%;"></div>
+            </div>
+          </div>
+          <div class="picker__footer">
+            <div class="swatch" data-swatch style="background:#e8574a;"></div>
+            <label class="hex"><span>#</span><input data-hex value="E8574A" maxlength="6" spellcheck="false" /></label>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- B -->
+    <article class="option" id="opt-b">
+      <div class="option__meta">
+        <div class="option__tag">Option B</div>
+        <h2 class="option__title">Hue–Saturation plane + lightness bar</h2>
+        <p class="option__desc">Full rainbow as a rectangle (hue × how washed-out). Lightness is its own bar — clearer “make it darker / lighter” than folding light into the square.</p>
+      </div>
+      <div class="option__stage">
+        <div class="picker picker--wide" data-picker="b">
+          <div class="hs" data-hs>
+            <div class="cursor" style="left: 8%; top: 28%;"></div>
+          </div>
+          <div>
+            <div class="label-xs" style="margin-bottom:4px;">Lightness</div>
+            <div class="light-bar" data-light>
+              <div class="hue-cursor hue-cursor--h" style="left: 58%;"></div>
+            </div>
+          </div>
+          <div class="picker__footer">
+            <div class="swatch" data-swatch style="background:#e8574a;"></div>
+            <label class="hex"><span>#</span><input data-hex value="E8574A" maxlength="6" spellcheck="false" /></label>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- C -->
+    <article class="option" id="opt-c">
+      <div class="option__meta">
+        <div class="option__tag">Option C · dock-first</div>
+        <h2 class="option__title">Hue rail + wide SV band</h2>
+        <p class="option__desc">Fits the bottom build dock: thin hue spectrum beside the swatch, taller SV rectangle below. Same math as A, layout tuned for landscape HUD chrome.</p>
+      </div>
+      <div class="option__stage">
+        <div class="dock-mock" data-picker="c">
+          <div class="dock-row">
+            <div class="dock-chip" data-swatch style="background:#e8574a;"></div>
+            <div class="hue-h" data-hue>
+              <div class="hue-cursor hue-cursor--h" style="left: 6%;"></div>
+            </div>
+          </div>
+          <div class="c-sv" style="background: hsl(8, 100%, 50%);" data-sv>
+            <div class="cursor" style="left: 78%; top: 32%;"></div>
+          </div>
+          <div class="picker__footer" style="padding:0;">
+            <label class="hex" style="flex:1;"><span>#</span><input data-hex value="E8574A" maxlength="6" spellcheck="false" /></label>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- D -->
+    <article class="option" id="opt-d">
+      <div class="option__meta">
+        <div class="option__tag">Option D · precise</div>
+        <h2 class="option__title">Stacked H / S / L sliders</h2>
+        <p class="option__desc">Three 1D bars. Easiest to nudge lightness alone; denser mentally, less “browse the spectrum.” Good if players often refine rather than explore.</p>
+      </div>
+      <div class="option__stage">
+        <div class="picker" data-picker="d">
+          <div class="preview-big" data-swatch style="background:#e8574a;"></div>
+          <div class="slider-stack">
+            <div class="slider-row">
+              <span class="label-xs">Hue</span>
+              <div class="track track--hue" data-hue>
+                <div class="hue-cursor hue-cursor--h" style="left: 6%;"></div>
+              </div>
+            </div>
+            <div class="slider-row">
+              <span class="label-xs">Sat</span>
+              <div class="track track--sat" data-sat>
+                <div class="hue-cursor hue-cursor--h" style="left: 88%;"></div>
+              </div>
+            </div>
+            <div class="slider-row">
+              <span class="label-xs">Lit</span>
+              <div class="track track--lit" data-lit>
+                <div class="hue-cursor hue-cursor--h" style="left: 52%;"></div>
+              </div>
+            </div>
+          </div>
+          <div class="picker__footer">
+            <label class="hex" style="flex:1;"><span>#</span><input data-hex value="E8574A" maxlength="6" spellcheck="false" /></label>
+          </div>
+        </div>
+      </div>
+    </article>
+  </div>
+
+  <p class="note">
+    Prototypes only — not wired into the game. Thumb positions are illustrative; drag works for live feel where noted in script.
+  </p>
+
+  <script>
+    function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+    function hslToHex(h, s, l) {
+      h = ((h % 360) + 360) % 360;
+      s = clamp(s, 0, 1); l = clamp(l, 0, 1);
+      const c = (1 - Math.abs(2 * l - 1)) * s;
+      const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+      const m = l - c / 2;
+      let r = 0, g = 0, b = 0;
+      if (h < 60) { r = c; g = x; }
+      else if (h < 120) { r = x; g = c; }
+      else if (h < 180) { g = c; b = x; }
+      else if (h < 240) { g = x; b = c; }
+      else if (h < 300) { r = x; b = c; }
+      else { r = c; b = x; }
+      const to = (v) => Math.round((v + m) * 255).toString(16).padStart(2, "0").toUpperCase();
+      return to(r) + to(g) + to(b);
+    }
+    function hsvToHex(h, s, v) {
+      h = ((h % 360) + 360) % 360;
+      s = clamp(s, 0, 1); v = clamp(v, 0, 1);
+      const c = v * s;
+      const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+      const m = v - c;
+      let r = 0, g = 0, b = 0;
+      if (h < 60) { r = c; g = x; }
+      else if (h < 120) { r = x; g = c; }
+      else if (h < 180) { g = c; b = x; }
+      else if (h < 240) { g = x; b = c; }
+      else if (h < 300) { r = x; b = c; }
+      else { r = c; b = x; }
+      const to = (n) => Math.round((n + m) * 255).toString(16).padStart(2, "0").toUpperCase();
+      return to(r) + to(g) + to(b);
+    }
+
+    function bindPointer(el, onNorm) {
+      const go = (ev) => {
+        const r = el.getBoundingClientRect();
+        onNorm(clamp((ev.clientX - r.left) / r.width, 0, 1), clamp((ev.clientY - r.top) / r.height, 0, 1), ev);
+      };
+      el.addEventListener("pointerdown", (e) => { el.setPointerCapture(e.pointerId); go(e); });
+      el.addEventListener("pointermove", (e) => { if (el.hasPointerCapture(e.pointerId)) go(e); });
+    }
+
+    // A
+    (() => {
+      const root = document.querySelector('[data-picker="a"]');
+      const sv = root.querySelector("[data-sv]");
+      const hue = root.querySelector("[data-hue]");
+      const cursor = sv.querySelector(".cursor");
+      const hueCur = hue.querySelector(".hue-cursor");
+      const swatch = root.querySelector("[data-swatch]");
+      const hex = root.querySelector("[data-hex]");
+      let H = 8, S = 0.78, V = 0.68;
+      const paint = () => {
+        sv.style.background = `hsl(${H}, 100%, 50%)`;
+        cursor.style.left = `${S * 100}%`;
+        cursor.style.top = `${(1 - V) * 100}%`;
+        hueCur.style.top = `${(H / 360) * 100}%`;
+        const hx = hsvToHex(H, S, V);
+        swatch.style.background = `#${hx}`;
+        hex.value = hx;
+      };
+      bindPointer(sv, (x, y) => { S = x; V = 1 - y; paint(); });
+      bindPointer(hue, (_x, y) => { H = y * 360; paint(); });
+      paint();
+    })();
+
+    // B
+    (() => {
+      const root = document.querySelector('[data-picker="b"]');
+      const hs = root.querySelector("[data-hs]");
+      const light = root.querySelector("[data-light]");
+      const cursor = hs.querySelector(".cursor");
+      const litCur = light.querySelector(".hue-cursor");
+      const swatch = root.querySelector("[data-swatch]");
+      const hex = root.querySelector("[data-hex]");
+      let H = 8, S = 0.72, L = 0.58;
+      const paint = () => {
+        cursor.style.left = `${(H / 360) * 100}%`;
+        cursor.style.top = `${(1 - S) * 100}%`;
+        litCur.style.left = `${L * 100}%`;
+        light.style.background = `linear-gradient(to right, #0a0a0a, hsl(${H}, ${S * 100}%, 50%), #fff)`;
+        const hx = hslToHex(H, S, L);
+        swatch.style.background = `#${hx}`;
+        hex.value = hx;
+      };
+      bindPointer(hs, (x, y) => { H = x * 360; S = 1 - y; paint(); });
+      bindPointer(light, (x) => { L = x; paint(); });
+      paint();
+    })();
+
+    // C
+    (() => {
+      const root = document.querySelector('[data-picker="c"]');
+      const sv = root.querySelector("[data-sv]");
+      const hue = root.querySelector("[data-hue]");
+      const cursor = sv.querySelector(".cursor");
+      const hueCur = hue.querySelector(".hue-cursor");
+      const swatch = root.querySelector("[data-swatch]");
+      const hex = root.querySelector("[data-hex]");
+      let H = 8, S = 0.78, V = 0.68;
+      const paint = () => {
+        sv.style.background = `hsl(${H}, 100%, 50%)`;
+        cursor.style.left = `${S * 100}%`;
+        cursor.style.top = `${(1 - V) * 100}%`;
+        hueCur.style.left = `${(H / 360) * 100}%`;
+        const hx = hsvToHex(H, S, V);
+        swatch.style.background = `#${hx}`;
+        hex.value = hx;
+      };
+      bindPointer(sv, (x, y) => { S = x; V = 1 - y; paint(); });
+      bindPointer(hue, (x) => { H = x * 360; paint(); });
+      paint();
+    })();
+
+    // D
+    (() => {
+      const root = document.querySelector('[data-picker="d"]');
+      const hue = root.querySelector("[data-hue]");
+      const sat = root.querySelector("[data-sat]");
+      const lit = root.querySelector("[data-lit]");
+      const swatch = root.querySelector("[data-swatch]");
+      const hex = root.querySelector("[data-hex]");
+      let H = 8, S = 0.88, L = 0.52;
+      const paint = () => {
+        hue.querySelector(".hue-cursor").style.left = `${(H / 360) * 100}%`;
+        sat.querySelector(".hue-cursor").style.left = `${S * 100}%`;
+        lit.querySelector(".hue-cursor").style.left = `${L * 100}%`;
+        sat.style.background = `linear-gradient(to right, hsl(${H},0%,${L*100}%), hsl(${H},100%,${L*100}%))`;
+        lit.style.background = `linear-gradient(to right, #000, hsl(${H},${S*100}%,50%), #fff)`;
+        const hx = hslToHex(H, S, L);
+        swatch.style.background = `#${hx}`;
+        hex.value = hx;
+      };
+      bindPointer(hue, (x) => { H = x * 360; paint(); });
+      bindPointer(sat, (x) => { S = x; paint(); });
+      bindPointer(lit, (x) => { L = x; paint(); });
+      paint();
+    })();
+  </script>
+</body>
+</html>

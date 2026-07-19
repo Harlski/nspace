@@ -48,6 +48,7 @@ type PayoutRow = {
 type DailyRow = {
   dayUtc: string;
   activePlayers: number;
+  uniquePlayers?: number;
   sessionStarts: number;
   claimBlocks: number;
   payoutsSent: number;
@@ -141,6 +142,21 @@ function copyWallet(walletId: string): void {
 
 function walletChip(identicon: string, walletId: string): string {
   return `<span class="wallet-chip" title="${esc(walletShort(walletId))}" data-wallet="${esc(walletId)}"><img class="ident" src="${esc(identicon || "")}" alt="wallet"/></span>`;
+}
+
+function userLabel(walletId: string, displayName?: string | null): string {
+  const name = displayName != null ? String(displayName).trim() : "";
+  if (name) return name;
+  return walletShort(walletId);
+}
+
+function userChip(
+  identicon: string,
+  walletId: string,
+  displayName?: string | null
+): string {
+  const label = userLabel(walletId, displayName);
+  return `<span class="user-chip" title="${esc(walletId)}" data-wallet="${esc(walletId)}">${walletChip(identicon, walletId)}<span>${esc(label)}</span></span>`;
 }
 
 function attachCopyHandlers(root: Element | null): void {
@@ -339,14 +355,14 @@ async function load(): Promise<void> {
           .slice(0, 8)
           .map(
             (u) =>
-              `<div class="user-row">${walletChip(u.identicon, u.walletId)}<span>${esc(walletShort(u.walletId))}</span><span>${u.count} in</span></div>`
+              `<div class="user-row">${userChip(u.identicon, u.walletId, u.displayName)}<span>${u.count} in</span></div>`
           )
           .join("");
         const ends = row.endUsers
           .slice(0, 8)
           .map(
             (u) =>
-              `<div class="user-row">${walletChip(u.identicon, u.walletId)}<span>${esc(walletShort(u.walletId))}</span><span>${u.count} out</span></div>`
+              `<div class="user-row">${userChip(u.identicon, u.walletId, u.displayName)}<span>${u.count} out</span></div>`
           )
           .join("");
         const fs = Number(row.firstStarts || 0);
@@ -388,7 +404,7 @@ async function load(): Promise<void> {
           .slice(0, 10)
           .map(
             (u) =>
-              `<div class="user-row">${walletChip(u.identicon, u.walletId)}<span>${esc(walletShort(u.walletId))}</span><span>${esc(u.totalNim)} NIM</span></div>`
+              `<div class="user-row">${userChip(u.identicon, u.walletId, u.displayName)}<span>${esc(u.totalNim)} NIM</span></div>`
           )
           .join("");
         payoutHoverEl.innerHTML = `<div><strong>${String(hour).padStart(2, "0")}:00 UTC</strong> · ${esc(row.totalNim)} NIM · ${row.payouts} payouts</div><div style="margin-top:0.35rem">${users || "<div>No payouts</div>"}</div>`;
@@ -406,7 +422,7 @@ async function load(): Promise<void> {
       .slice(0, 120)
       .map(
         (v) =>
-          `<div class="user-row">${walletChip(v.identicon, v.walletId)}<span>${esc(walletShort(v.walletId))}</span><span>${v.sessionStarts} in / ${v.sessionEnds} out · ${esc(v.totalPayoutNim)} NIM</span></div>`
+          `<div class="user-row">${userChip(v.identicon, v.walletId, v.displayName)}<span>${v.sessionStarts} in / ${v.sessionEnds} out · ${esc(v.totalPayoutNim)} NIM</span></div>`
       )
       .join("");
   attachCopyHandlers(visitorsEl);
@@ -417,7 +433,7 @@ async function load(): Promise<void> {
       .slice(0, 60)
       .map(
         (p) =>
-          `<tr><td>${esc(fmtUtc(p.sentAt))}</td><td>${esc(String(p.recipient).slice(0, 14))}…</td><td class='right'>${esc(p.amountNim || "-")}</td></tr>`
+          `<tr><td>${esc(fmtUtc(p.sentAt))}</td><td>${userChip("", p.recipient, p.displayName)}</td><td class='right'>${esc(p.amountNim || "-")}</td></tr>`
       )
       .join("") +
     "</tbody></table>";
@@ -428,7 +444,7 @@ async function load(): Promise<void> {
       .slice(0, 30)
       .map(
         (d) =>
-          `<tr><td>${esc(d.dayUtc)}</td><td class='right'>${d.activePlayers}</td><td class='right'>${d.payoutsSent}</td><td class='right'>${Number(d.placeBlocks) || 0}</td><td class='right'>${Number(d.chats) || 0}</td></tr>`
+          `<tr><td>${esc(d.dayUtc)}</td><td class='right'>${d.uniquePlayers != null ? d.uniquePlayers : d.activePlayers}</td><td class='right'>${d.payoutsSent}</td><td class='right'>${Number(d.placeBlocks) || 0}</td><td class='right'>${Number(d.chats) || 0}</td></tr>`
       )
       .join("") +
     "</tbody></table>";
@@ -444,7 +460,7 @@ async function load(): Promise<void> {
         .slice(0, 80)
         .map(
           (r) =>
-            `<tr><td>${walletChip(r.identicon, r.address)}<span class="mono">${esc(walletShort(r.address))}</span></td><td>${esc(r.roomId)}</td><td class='right'>${r.sessionCount}</td><td class='right'>${esc(fmtMs(r.activeDurationMs))}</td><td class='right'>${esc(fmtMs(r.wallDurationMs))}</td></tr>`
+            `<tr><td>${userChip(r.identicon, r.address, r.displayName)}</td><td>${esc(r.roomId)}</td><td class='right'>${r.sessionCount}</td><td class='right'>${esc(fmtMs(r.activeDurationMs))}</td><td class='right'>${esc(fmtMs(r.wallDurationMs))}</td></tr>`
         )
         .join("") +
       "</tbody></table>";
@@ -458,7 +474,7 @@ async function load(): Promise<void> {
             s.activeDurationMs != null && Number.isFinite(Number(s.activeDurationMs))
               ? Number(s.activeDurationMs)
               : s.durationMs;
-          return `<tr><td>${esc(fmtUtc(s.startedAt))}</td><td>${esc(String(s.address).slice(0, 14))}…</td><td>${esc(s.roomId)}</td><td class='right'>${esc(fmtMs(active))}</td></tr>`;
+          return `<tr><td>${esc(fmtUtc(s.startedAt))}</td><td>${userChip("", s.address, s.displayName)}</td><td>${esc(s.roomId)}</td><td class='right'>${esc(fmtMs(active))}</td></tr>`;
         })
         .join("") +
       "</tbody></table>";

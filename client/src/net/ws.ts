@@ -337,6 +337,8 @@ export type ServerMessage =
         mineTile?: string;
         lessonMode?: boolean;
       };
+      /** Learner tutorial flow live (env + admin toggle). */
+      tutorialEnabled?: boolean;
     }
   | {
       type: "roomBackgroundHue";

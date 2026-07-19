@@ -29,6 +29,7 @@ import {
   TUTORIAL_ROOM_ID,
   TUTORIAL_STAGING_ROOM_ID,
 } from "./tutorial/roomIds.js";
+import { isTutorialFeatureEnabled } from "./tutorial/config.js";
 import { TUTORIAL_DEFAULT_BOUNDS } from "./tutorialTemplate/bootstrapShell.js";
 import {
   COSMETIC_GALLERY_BOUNDS,
@@ -72,6 +73,47 @@ export function clearPlaySpaceRoomRuntime(roomId: string): void {
 
 export function getPlaySpaceRoomRuntime(roomId: string): PlaySpaceRoomRuntime | null {
   return playSpaceRuntimeByRoomId.get(roomId.trim()) ?? null;
+}
+
+/** Update Join Spawn for a play-space-style room (tutorial, invite lobby). */
+export function setPlaySpaceJoinSpawn(
+  roomId: string,
+  joinSpawn: { x: number; z: number } | null
+): boolean {
+  const id = roomId.trim();
+  const runtime = playSpaceRuntimeByRoomId.get(id);
+  if (!runtime) return false;
+  runtime.joinSpawn =
+    joinSpawn == null
+      ? null
+      : { x: Math.floor(joinSpawn.x), z: Math.floor(joinSpawn.z) };
+  return true;
+}
+
+/** Update ambient sky for a play-space-style room (tutorial, invite lobby). */
+export function setPlaySpaceBackground(
+  roomId: string,
+  state: {
+    hueDeg?: number | null;
+    neutral?: RoomBackgroundNeutral | null;
+  }
+): boolean {
+  const id = roomId.trim();
+  const runtime = playSpaceRuntimeByRoomId.get(id);
+  if (!runtime) return false;
+  if (state.hueDeg !== undefined) {
+    runtime.backgroundHueDeg = state.hueDeg;
+    if (state.hueDeg !== null) {
+      runtime.backgroundNeutral = null;
+    }
+  }
+  if (state.neutral !== undefined) {
+    runtime.backgroundNeutral = state.neutral;
+    if (state.neutral !== null) {
+      runtime.backgroundHueDeg = null;
+    }
+  }
+  return true;
 }
 
 export const HUB_ROOM_ID = "hub";
@@ -356,6 +398,18 @@ export function listRoomDefinitions(): RoomDefinition[] {
               "Free Play Field"
             ),
             isPublic: getBuiltinRoomIsPublic(WORLDCUP_FIELD_ROOM_ID),
+            isBuiltin: true as const,
+          },
+        ]
+      : []),
+    ...(isTutorialFeatureEnabled()
+      ? [
+          {
+            id: TUTORIAL_ROOM_ID,
+            bounds: { ...TUTORIAL_DEFAULT_BOUNDS },
+            ownerAddress: null,
+            displayName: getBuiltinRoomDisplayName(TUTORIAL_ROOM_ID, "Tutorial Room"),
+            isPublic: false,
             isBuiltin: true as const,
           },
         ]

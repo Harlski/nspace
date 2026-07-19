@@ -8,6 +8,7 @@ import {
   buildDefaultTutorialBootstrapShell,
   isValidTutorialTemplateSourceRoom,
 } from "./bootstrapShell.js";
+import type { RoomBackgroundNeutral } from "../roomRegistry.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.WORLD_STATE_DIR
@@ -177,9 +178,72 @@ export function resyncTutorialTemplate(
   return { ok: true, template: t };
 }
 
+/**
+ * Replace the default Tutorial Template shell with the code bootstrap
+ * (Alcove Garden / current `buildDefaultTutorialBootstrapShell`).
+ * Creates a default template when the store has none.
+ */
+export function reseedDefaultTutorialTemplateFromBootstrap(
+  nowMs = Date.now()
+): { ok: true; template: TutorialTemplateRecord; created: boolean } {
+  const hadAny = templatesById.size > 0;
+  bootstrapDefaultTutorialTemplateIfEmpty(nowMs);
+  const d = getDefaultTutorialTemplate();
+  if (!d) {
+    throw new Error("No default tutorial template after bootstrap.");
+  }
+  const created = !hadAny;
+  d.buildShell = buildDefaultTutorialBootstrapShell();
+  d.description = "Alcove Garden Tutorial Path (bootstrap).";
+  d.updatedAtMs = nowMs;
+  d.lastSyncedAtMs = nowMs;
+  persistTemplatesFile();
+  return { ok: true, template: d, created };
+}
+
 export function applyDefaultTutorialTemplateToRuntimeShell(): BuildShell {
   const d = getDefaultTutorialTemplate();
   return d?.buildShell ?? buildDefaultTutorialBootstrapShell();
+}
+
+/** Persist Join Spawn on the published default template (live Tutorial Room edits). */
+export function patchDefaultTutorialTemplateJoinSpawn(
+  joinSpawn: { x: number; z: number } | null
+): { ok: true } | { ok: false; reason: string } {
+  const d = getDefaultTutorialTemplate();
+  if (!d) return { ok: false, reason: "No default tutorial template." };
+  d.buildShell = {
+    ...d.buildShell,
+    joinSpawn:
+      joinSpawn == null
+        ? null
+        : { x: Math.floor(joinSpawn.x), z: Math.floor(joinSpawn.z) },
+  };
+  d.updatedAtMs = Date.now();
+  persistTemplatesFile();
+  return { ok: true };
+}
+
+/** Persist sky on the published default template (live Tutorial Room edits). */
+export function patchDefaultTutorialTemplateBackground(state: {
+  hueDeg?: number | null;
+  neutral?: RoomBackgroundNeutral | null;
+}): { ok: true } | { ok: false; reason: string } {
+  const d = getDefaultTutorialTemplate();
+  if (!d) return { ok: false, reason: "No default tutorial template." };
+  const next = { ...d.buildShell };
+  if (state.hueDeg !== undefined) {
+    next.backgroundHueDeg = state.hueDeg;
+    if (state.hueDeg !== null) next.backgroundNeutral = null;
+  }
+  if (state.neutral !== undefined) {
+    next.backgroundNeutral = state.neutral;
+    if (state.neutral !== null) next.backgroundHueDeg = null;
+  }
+  d.buildShell = next;
+  d.updatedAtMs = Date.now();
+  persistTemplatesFile();
+  return { ok: true };
 }
 
 export function wireTutorialTemplateForTests(template: TutorialTemplateRecord): void {

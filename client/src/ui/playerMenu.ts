@@ -6,6 +6,7 @@ export type PlayerMenuItemId =
   | "rooms"
   | "feedback"
   | "finish-tutorial"
+  | "reset-tutorial"
   | "return-from-shaper"
   | "return-to-hub"
   | "logout"
@@ -29,10 +30,13 @@ type ItemDef = {
   shaperOnly?: boolean;
   /** Hidden unless incomplete Nimiq Pay tutorial. */
   finishTutorial?: boolean;
+  /** Reset tutorial progress to Mine (also Start over on coach). */
+  resetTutorial?: boolean;
 };
 
 const FULL_PLAYER_ITEMS: ItemDef[] = [
   { id: "finish-tutorial", label: "Finish tutorial", finishTutorial: true },
+  { id: "reset-tutorial", label: "Reset tutorial", resetTutorial: true },
   { id: "return-from-shaper", label: "Leave the Shaper", shaperOnly: true },
   { id: "wardrobe", label: "Wardrobe" },
   { id: "shop", label: "Shop" },
@@ -62,6 +66,8 @@ export type PlayerMenu = {
   setInShaper: (inShaper: boolean) => void;
   /** Toggle Finish tutorial (Nimiq Pay incomplete lesson). */
   setFinishTutorialVisible: (visible: boolean) => void;
+  /** Toggle Reset tutorial / Start over while in the Tutorial Room. */
+  setResetTutorialVisible: (visible: boolean) => void;
   /** Display name shown in the pill left of the identicon (hidden when empty). */
   setName: (name: string) => void;
   /** Copy identicon src/hidden state from the top player bar image. */
@@ -150,6 +156,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
   let returnToHubVisible = true;
   let inShaper = false;
   let finishTutorialVisible = false;
+  let resetTutorialVisible = false;
   let feedbackUnread = false;
   let open = false;
   let confirmKind: PlayerMenuConfirmKind | null = null;
@@ -175,6 +182,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
       if (item.returnToHub && !returnToHubVisible) return false;
       if (item.shaperOnly && !inShaper) return false;
       if (item.finishTutorial && !finishTutorialVisible) return false;
+      if (item.resetTutorial && !resetTutorialVisible) return false;
       return true;
     });
   }
@@ -461,6 +469,10 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
       finishTutorialVisible = visible;
       renderList();
     },
+    setResetTutorialVisible(visible: boolean) {
+      resetTutorialVisible = visible;
+      renderList();
+    },
     setName(name: string) {
       const trimmed = name.trim();
       namePill.textContent = trimmed;
@@ -497,7 +509,8 @@ export function playerMenuItemLabelsForMode(
   guest: boolean,
   returnToHubVisible = true,
   inShaper = false,
-  finishTutorialVisible = false
+  finishTutorialVisible = false,
+  resetTutorialVisible = false
 ): string[] {
   const base = guest ? GUEST_ITEMS : FULL_PLAYER_ITEMS;
   return base
@@ -505,6 +518,7 @@ export function playerMenuItemLabelsForMode(
       if (item.returnToHub && !returnToHubVisible) return false;
       if (item.shaperOnly && !inShaper) return false;
       if (item.finishTutorial && !finishTutorialVisible) return false;
+      if (item.resetTutorial && !resetTutorialVisible) return false;
       return true;
     })
     .map((item) => item.label);

@@ -1,7 +1,10 @@
 import type { Request, Response } from "express";
 
 import { hasRoom, normalizeRoomId } from "../roomLayouts.js";
-import { extractBuildShellForTutorialTemplate } from "../rooms.js";
+import {
+  extractBuildShellForTutorialTemplate,
+  refreshTutorialRuntimeLayoutFromTemplate,
+} from "../rooms.js";
 import { TUTORIAL_STAGING_ROOM_ID } from "../tutorial/config.js";
 import {
   createTutorialTemplate,
@@ -91,7 +94,16 @@ export function registerTutorialTemplateAdminRoutes(
         res.status(400).json({ error: "sync_failed", message: synced.reason });
         return;
       }
-      res.json({ template: templateWire(synced.template) });
+      // Default template sync pushes into the live Tutorial Room for connected learners.
+      let runtimeReloaded = false;
+      if (synced.template.isDefault) {
+        refreshTutorialRuntimeLayoutFromTemplate();
+        runtimeReloaded = true;
+      }
+      res.json({
+        template: templateWire(synced.template),
+        runtimeReloaded,
+      });
     }
   );
 

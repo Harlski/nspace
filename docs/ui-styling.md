@@ -2,6 +2,22 @@
 
 Use this when adding HUD, overlays, modals, or in-game chrome so new work matches existing patterns and player expectations.
 
+**Scope:** in-game SPA chrome only. Main-site pages use [main-site-design.md](main-site-design.md).
+
+## Nimiq UI Kit (reference)
+
+For **new** in-game buttons, inputs, notices, and similar controls, treat the **Nimiq UI Kit** as the authoritative design-system reference:
+
+- Live demo: https://nimiqtoolbox.github.io/nimiq-ui-kit/
+- Repo: https://github.com/NimiqToolbox/nimiq-ui-kit
+- Agent text dump (prefer for lookup without a browser): https://github.com/NimiqToolbox/nimiq-ui-kit/blob/main/llms-full.txt
+
+**How to use it**
+
+- **Reference-first:** match control anatomy (hierarchy, labels, icons, states, spacing rhythm) from the kit. Do **not** add `@nimiq/vue-components` to the game HUD (vanilla TS/DOM).
+- **Immersion wins:** keep the dark frosted HUD surfaces below. Do not paste kit marketing-page / light-product chrome onto the world overlay.
+- **Reuse what we already ship:** when an existing `@nimiq/style` class fits (`nq-button-pill`, `nq-button-s`, etc.), prefer it over inventing a parallel control.
+
 ## Immersion and interaction
 
 - **No accidental text selection** on menus, HUD labels, pill buttons, and overlay actions. Use `user-select: none` and `-webkit-user-select: none` on those surfaces (and on the menu container) so long-press / drag does not highlight label text.
@@ -29,6 +45,7 @@ Use this when adding HUD, overlays, modals, or in-game chrome so new work matche
 
 ## Buttons and controls
 
+- Prefer kit patterns for **new** controls (see Nimiq UI Kit above), adapted to the frosted HUD surfaces.
 - **Icon buttons** (fullscreen, lobby): bordered `1px solid #3d465a`, `border-radius: 6px`, compact hit targets; preserve **44px minimum** touch targets where feasible (see mode segment buttons).
 - **Pills** (`nq-button-pill`): Match Nimiq pill usage from `@nimiq/style` where applicable; keep padding readable on mobile.
 
@@ -38,4 +55,4 @@ Use this when adding HUD, overlays, modals, or in-game chrome so new work matche
 - HUD structure: `client/src/ui/hud.ts`.
 - Letterbox / scaling: `layoutLetterbox` and `.game-frame` / `.letterbox` in the same stylesheet.
 
-When in doubt, **match an existing component** in `style.css` rather than inventing a new visual system.
+When in doubt, **match an existing component** in `style.css` rather than inventing a new visual system; when inventing, check the UI Kit first.

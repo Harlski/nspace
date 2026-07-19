@@ -9,6 +9,7 @@ import {
   TUTORIAL_STAGING_ROOM_ID,
 } from "./tutorial/config.js";
 import {
+  clearTutorialProgress,
   getTutorialProfileRow,
   listTutorialMineSlotAssignments,
   patchTutorialProfileRow,
@@ -16,7 +17,10 @@ import {
   type TutorialSession,
 } from "./playerProfileStore.js";
 import { LUNA_PER_NIM } from "./payoutGateway.js";
-import { recordUnlockPadGrant } from "./unlockPad/index.js";
+import {
+  clearUnlockPadGrantsForWalletInRoom,
+  recordUnlockPadGrant,
+} from "./unlockPad/index.js";
 
 export type { TutorialLastStep, TutorialSession };
 
@@ -93,8 +97,10 @@ export function buildTutorialWelcomePayload(opts: {
   sessionNimiqPay: boolean;
   viaTeleporter?: boolean;
   availableMineSlots?: readonly string[];
+  /** Admin preview while learner flow is off (Reset tutorial / coach in Tutorial Room). */
+  allowWhenFeatureOff?: boolean;
 }): TutorialWelcome | undefined {
-  if (!isTutorialFeatureEnabled()) return undefined;
+  if (!isTutorialFeatureEnabled() && !opts.allowWhenFeatureOff) return undefined;
   if (!isTutorialRuntimeRoomId(opts.roomId) && !computeNeedsTutorial(opts.sessionNimiqPay, opts.wallet)) {
     return undefined;
   }
@@ -174,6 +180,11 @@ export function canClaimTutorialMineSlot(
   availableSlots: readonly string[]
 ): boolean {
   if (isTutorialStagingRoomId(roomId)) return false;
+  // Step 1: any Tutorial Mine Slot (or listed gold mine) is claimable.
+  if (availableSlots.length > 0) {
+    return availableSlots.includes(tileKey);
+  }
+  // Fallback: keep assigned-slot check if no slot list was provided.
   const assigned = ensureTutorialMineSlot(wallet, availableSlots);
   return assigned === tileKey;
 }
@@ -273,6 +284,17 @@ export function abandonTutorial(wallet: string, nowMs = Date.now()): void {
   patchTutorialProfileRow(key, { tutorialAbandonedAt: nowMs });
 }
 
+/** Testing / admin: clear lesson progress so the wallet restarts at Mine. */
+export function resetTutorialProgress(
+  wallet: string
+): { ok: true } | { ok: false; error: string } {
+  const key = normalizeWallet(wallet);
+  if (!key) return { ok: false, error: "invalid_address" };
+  clearTutorialProgress(key);
+  clearUnlockPadGrantsForWalletInRoom(key, TUTORIAL_ROOM_ID);
+  return { ok: true };
+}
+
 export function isTutorialGatePassableForWallet(wallet: string): boolean {
   const row = getTutorialProfileRow(normalizeWallet(wallet));
   const s = row.tutorialSession;
@@ -317,7 +339,12 @@ export function evaluateTutorialRoomJoin(opts: {
   if (id !== TUTORIAL_ROOM_ID && id !== TUTORIAL_STAGING_ROOM_ID) {
     return { ok: true };
   }
-  if (!isTutorialFeatureEnabled()) return { ok: false, reason: "not_found" };
+  // Feature off: learners stay in Hub; admins/builders may still enter (teleporter, staging).
+  if (!isTutorialFeatureEnabled()) {
+    return opts.isAdminOrBuilder
+      ? { ok: true }
+      : { ok: false, reason: "not_found" };
+  }
   if (id === TUTORIAL_STAGING_ROOM_ID) {
     return opts.isAdminOrBuilder ? { ok: true } : { ok: false, reason: "forbidden" };
   }

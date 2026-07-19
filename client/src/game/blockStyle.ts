@@ -166,20 +166,64 @@ export function hueDegToBlockColorRgb(hueDeg: number): number {
   return (r << 16) | (g << 8) | b;
 }
 
-export function blockColorRgbToHueDeg(rgb: number): number {
+/** HSV for rectangular spectrum pickers (`h` degrees 0–360, `s`/`v` 0–1). */
+export type BlockColorHsv = { h: number; s: number; v: number };
+
+export function rgbToHsv(rgb: number): BlockColorHsv {
   const c = clampColorRgb(rgb);
   const r = ((c >> 16) & 0xff) / 255;
   const g = ((c >> 8) & 0xff) / 255;
   const b = (c & 0xff) / 255;
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
-  if (max === min) return 0;
   const d = max - min;
   let h = 0;
-  if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
-  else if (max === g) h = (b - r) / d + 2;
-  else h = (r - g) / d + 4;
-  return Math.round((h / 6) * 360) % 360;
+  if (d > 0) {
+    if (max === r) h = (((g - b) / d) % 6) * 60;
+    else if (max === g) h = ((b - r) / d + 2) * 60;
+    else h = ((r - g) / d + 4) * 60;
+  }
+  if (h < 0) h += 360;
+  const s = max <= 0 ? 0 : d / max;
+  return { h, s, v: max };
+}
+
+export function hsvToRgbNumber(h: number, s: number, v: number): number {
+  const hh = ((h % 360) + 360) % 360;
+  const ss = Math.max(0, Math.min(1, s));
+  const vv = Math.max(0, Math.min(1, v));
+  const c = vv * ss;
+  const x = c * (1 - Math.abs(((hh / 60) % 2) - 1));
+  const m = vv - c;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hh < 60) {
+    r = c;
+    g = x;
+  } else if (hh < 120) {
+    r = x;
+    g = c;
+  } else if (hh < 180) {
+    g = c;
+    b = x;
+  } else if (hh < 240) {
+    g = x;
+    b = c;
+  } else if (hh < 300) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+  const toByte = (n: number): number =>
+    Math.round(Math.min(255, Math.max(0, (n + m) * 255)));
+  return (toByte(r) << 16) | (toByte(g) << 8) | toByte(b);
+}
+
+export function blockColorRgbToHueDeg(rgb: number): number {
+  return Math.round(rgbToHsv(rgb).h) % 360;
 }
 
 /** Room sky tint HSL - matches `Game.setRoomSceneBackground` (not block ring S/L). */

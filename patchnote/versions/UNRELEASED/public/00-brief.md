@@ -8,3 +8,4 @@
 _(Draft — not published.)_
 
 Tutorial room is now a portrait path: mine south, pay in the middle, exit north.
+Unlock Pads: pay with Nimiq Hub when you are not in Nimiq Pay.

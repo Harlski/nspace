@@ -82,6 +82,16 @@ export function analyticsPublicPageHtml(): string {
     .user-row { display: grid; grid-template-columns: 24px 1fr auto; gap: 0.45rem; align-items: center; margin-bottom: 0.28rem; }
     .ident { width: 24px; height: 24px; border-radius: 4px; }
     .users-list { max-height: 280px; overflow: auto; }
+    .overview-panel { margin-bottom: 0.85rem; }
+    .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.55rem; }
+    .overview-stat { background: #131b27; border: 1px solid #2a394f; border-radius: 8px; padding: 0.45rem 0.55rem; }
+    .overview-stat .label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8b9cb3; margin-bottom: 0.15rem; }
+    .overview-stat .value { font-size: 1.15rem; font-weight: 600; color: #e8f0fc; font-variant-numeric: tabular-nums; }
+    .overview-stat .sub { font-size: 0.72rem; color: #91a2b9; margin-top: 0.1rem; }
+    .compact-table-wrap { max-height: 320px; overflow: auto; margin-top: 0.25rem; }
+    .show-more-btn { margin-top: 0.35rem; background: transparent; color: #8b9cb3; border: 1px solid #324258; border-radius: 5px; padding: 0.2rem 0.5rem; cursor: pointer; font: inherit; font-size: 0.76rem; }
+    .show-more-btn:hover { color: #dce4ee; border-color: #5aa0ff; }
+    .panel--wide { grid-column: 1 / -1; }
     .wallet-chip { display: inline-flex; align-items: center; cursor: pointer; }
     .wallet-chip .ident { width: 22px; height: 22px; border-radius: 4px; }
     .hintline { color: #91a2b9; font-size: 0.78rem; margin-top: 0.4rem; }
@@ -137,6 +147,10 @@ export function analyticsPublicPageHtml(): string {
       <button type="button" class="tf-preset" data-tfp="yesterday" title="Previous UTC day">Yesterday</button>
     </div>
   </section>
+  <section id="overviewPanel" class="panel overview-panel mono" style="display:none">
+    <h2>Overview</h2>
+    <div id="overviewStats" class="overview-grid"></div>
+  </section>
   <div id="analyticsGrid" class="grid" style="display:none">
     <section class="panel">
       <h2>Login / Logout by UTC hour</h2>
@@ -151,8 +165,9 @@ export function analyticsPublicPageHtml(): string {
     </section>
     <section class="panel">
       <h2>Unique visitors</h2>
+      <div id="visitorsSummary" class="hintline" style="margin-bottom:0.45rem"></div>
       <div id="visitorsChart"></div>
-      <div id="visitorsHover" class="hover-card mono">Hover a bar: each color is a distinct wallet; bar height is unique players with any login or logout that hour (not multiple logins per user).</div>
+      <div id="visitorsHover" class="hover-card mono">Hover a bar: bar height is distinct wallets with a login that hour/day. Colors show top wallets by activity (detail list capped at 20 per direction).</div>
       <div id="visitorsPinned" class="mono users-list" style="margin-top:0.6rem"></div>
     </section>
     <section class="panel">
@@ -165,7 +180,13 @@ export function analyticsPublicPageHtml(): string {
       <h2>Daily totals</h2>
       <div id="dailyChart" class="daily-chart-wrap mono"></div>
       <div id="daily" class="mono"></div>
-      <p class="hintline">Oldest day left · each line scaled to its own max.</p>
+      <p class="hintline">Oldest day left · each line scaled to its own max. Unique = distinct login wallets per day.</p>
+    </section>
+    <section class="panel panel--wide">
+      <h2>Engagement</h2>
+      <div id="engagementSummary" class="overview-grid" style="margin-bottom:0.55rem"></div>
+      <div id="engagementDaily" class="mono"></div>
+      <p class="hintline">Claims vs logins and payout failures by UTC day.</p>
     </section>
     <section class="panel">
       <h2>Active play time</h2>
@@ -289,6 +310,26 @@ export function analyticsPublicPageHtml(): string {
       var abbr = walletShort(walletId);
       return "<span class='wallet-chip' title='" + esc(abbr) + "' data-wallet='" + esc(walletId) + "'><img class='ident' src='" + esc(identicon || "") + "' alt='wallet'/></span>";
     }
+    function userLabel(walletId, displayName) {
+      var name = displayName != null && String(displayName).trim() ? String(displayName).trim() : "";
+      if (name) return name;
+      return walletShort(walletId);
+    }
+    function userChip(identicon, walletId, displayName) {
+      var full = String(walletId || "");
+      var label = userLabel(full, displayName);
+      return (
+        "<span class='user-chip' title='" +
+        esc(full) +
+        "' data-wallet='" +
+        esc(full) +
+        "'>" +
+        walletChip(identicon, full) +
+        "<span>" +
+        esc(label) +
+        "</span></span>"
+      );
+    }
     function attachCopyHandlers(root) {
       if (!root) return;
       root.querySelectorAll("[data-wallet]").forEach(function (el) {
@@ -308,6 +349,37 @@ export function analyticsPublicPageHtml(): string {
           }
         });
       });
+      root.querySelectorAll(".show-more-btn").forEach(function (btn) {
+        if (btn.dataset.expandBound === "1") return;
+        btn.dataset.expandBound = "1";
+        btn.addEventListener("click", function () {
+          var wrap = btn.closest(".compact-table-wrap");
+          if (!wrap) return;
+          wrap.querySelectorAll(".compact-hidden").forEach(function (tr) {
+            tr.style.display = "";
+            tr.classList.remove("compact-hidden");
+          });
+          btn.remove();
+        });
+      });
+    }
+    var COMPACT_ROW_LIMIT = 12;
+    function compactTableHtml(theadHtml, trHtmlList, limit) {
+      limit = limit == null ? COMPACT_ROW_LIMIT : limit;
+      if (!trHtmlList.length) return "";
+      var html = "<div class='compact-table-wrap'><table>" + theadHtml + "<tbody>";
+      trHtmlList.forEach(function (tr, i) {
+        if (i < limit) html += tr;
+        else html += tr.replace("<tr>", "<tr class='compact-hidden' style='display:none'>");
+      });
+      html += "</tbody></table>";
+      var hidden = trHtmlList.length - limit;
+      if (hidden > 0) {
+        html +=
+          "<button type='button' class='show-more-btn'>Show " + hidden + " more</button>";
+      }
+      html += "</div>";
+      return html;
     }
     var USER_STACK_COLORS = ["#5aa0ff", "#a855f7", "#34d399", "#fbbf24", "#f472b6", "#38bdf8", "#fb923c", "#c084fc", "#4ade80", "#f87171"];
     function tweenChartBars(root) {
@@ -406,8 +478,10 @@ export function analyticsPublicPageHtml(): string {
       beaconAnalyticsPageView();
       var authGateEl = document.getElementById("authGate");
       var gridEl = document.getElementById("analyticsGrid");
+      var overviewEl = document.getElementById("overviewPanel");
       function setAuthedVisible(visible) {
         if (gridEl) gridEl.style.display = visible ? "grid" : "none";
+        if (overviewEl) overviewEl.style.display = visible ? "block" : "none";
       }
       function parseJwtSub(token) {
         try {
@@ -1131,7 +1205,7 @@ export function analyticsPublicPageHtml(): string {
             };
             b.users[u.walletId].outCount += Number(u.count || 0);
           });
-          b.unique = Object.keys(b.users).length;
+          b.unique = Number(row.uniquePlayers || 0);
         }
       }
 
@@ -1224,9 +1298,9 @@ export function analyticsPublicPageHtml(): string {
               .map(function (u) {
                 return (
                   "<div class='user-row'>" +
-                  walletChip(u.identicon, u.walletId) +
+                  userChip(u.identicon, u.walletId, u.displayName) +
                   "<span>" +
-                  esc(walletShort(u.walletId)) +
+                  esc(userLabel(u.walletId, u.displayName)) +
                   "</span><span>" +
                   u.inCount +
                   "/" +
@@ -1298,7 +1372,7 @@ export function analyticsPublicPageHtml(): string {
         var html = "<div style='margin-bottom:0.4rem'>" + head + " · " + esc(row.totalNim) + " NIM · " + row.payouts + " payouts</div>";
         html += "<table><thead><tr><th>User</th><th class='right'>Payouts</th><th class='right'>Total NIM</th></tr></thead><tbody>";
         users.forEach(function (u) {
-          html += "<tr><td>" + walletChip(u.identicon, u.walletId) + "</td><td class='right'>" + u.payouts + "</td><td class='right clickable-nim' data-hour-expand='" + selectedPayoutHour + "' data-wallet-expand='" + esc(u.walletId) + "'>" + esc(u.totalNim) + "</td></tr>";
+          html += "<tr><td>" + userChip(u.identicon, u.walletId, u.displayName) + "</td><td class='right'>" + u.payouts + "</td><td class='right clickable-nim' data-hour-expand='" + selectedPayoutHour + "' data-wallet-expand='" + esc(u.walletId) + "'>" + esc(u.totalNim) + "</td></tr>";
           var key = selectedPayoutHour + "::" + u.walletId;
           if (expandedUserByHour[key]) {
             var rows = (data.nimPayouts || []).filter(function (p) {
@@ -1407,9 +1481,9 @@ export function analyticsPublicPageHtml(): string {
               .map(function (u) {
                 return (
                   "<div class='user-row'>" +
-                  walletChip(u.identicon, u.walletId) +
+                  userChip(u.identicon, u.walletId, u.displayName) +
                   "<span>" +
-                  esc(walletShort(u.walletId)) +
+                  esc(userLabel(u.walletId, u.displayName)) +
                   "</span><span>" +
                   esc(u.totalNim) +
                   " NIM</span></div>"
@@ -1523,7 +1597,7 @@ export function analyticsPublicPageHtml(): string {
         var html = "<div style='margin-bottom:0.4rem'>" + rpHead + " · " + b.totalNim.toFixed(5) + " NIM · " + b.count + " payouts</div>";
         html += "<table><thead><tr><th>User</th><th class='right'>Payouts</th><th class='right'>NIM</th></tr></thead><tbody>";
         users.forEach(function (u) {
-          html += "<tr><td>" + walletChip(u.identicon, u.walletId) + "</td><td class='right'>" + u.count + "</td><td class='right'>" + u.nim.toFixed(5) + "</td></tr>";
+          html += "<tr><td>" + userChip(u.identicon, u.walletId, u.displayName) + "</td><td class='right'>" + u.count + "</td><td class='right'>" + u.nim.toFixed(5) + "</td></tr>";
         });
         html += "</tbody></table>";
         html += "<table><thead><tr><th>When</th><th>User</th><th class='right'>NIM</th></tr></thead><tbody>";
@@ -1531,7 +1605,7 @@ export function analyticsPublicPageHtml(): string {
           .slice()
           .sort(function (a, c) { return c.sentAt - a.sentAt; })
           .forEach(function (p) {
-            html += "<tr><td>" + esc(fmtMdHm(p.sentAt)) + "</td><td>" + walletChip(identByWallet[p.recipient] || "", p.recipient) + "</td><td class='right'>" + esc(p.amountNim || "-") + "</td></tr>";
+            html += "<tr><td>" + esc(fmtMdHm(p.sentAt)) + "</td><td>" + userChip(identByWallet[p.recipient] || "", p.recipient, p.displayName) + "</td><td class='right'>" + esc(p.amountNim || "-") + "</td></tr>";
           });
         html += "</tbody></table>";
         if (b.rows.length < b.count) {
@@ -1599,7 +1673,7 @@ export function analyticsPublicPageHtml(): string {
                   var pct = Math.max(0.35, (u.nim / total) * 100);
                   var label = u.isOther
                     ? String(usersArr.length - maxSegs) + " others · " + u.nim.toFixed(5) + " NIM"
-                    : walletShort(u.walletId) + " · " + u.nim.toFixed(5) + " NIM (" + u.count + ")";
+                    : userLabel(u.walletId, u.displayName) + " · " + u.nim.toFixed(5) + " NIM (" + u.count + ")";
                   var c = u.isOther ? "#5c6575" : USER_STACK_COLORS[i % USER_STACK_COLORS.length];
                   inner +=
                     "<div class='stack-seg' style='height:3%;background:" +
@@ -1650,9 +1724,9 @@ export function analyticsPublicPageHtml(): string {
               .map(function (u) {
                 return (
                   "<div class='user-row'>" +
-                  walletChip(u.identicon, u.walletId) +
+                  userChip(u.identicon, u.walletId, u.displayName) +
                   "<span>" +
-                  esc(walletShort(u.walletId)) +
+                  esc(userLabel(u.walletId, u.displayName)) +
                   "</span><span>" +
                   u.nim.toFixed(5) +
                   " NIM · " +
@@ -1789,23 +1863,24 @@ export function analyticsPublicPageHtml(): string {
             " wallet/room" +
             (globalRows.length === 1 ? "" : "s") +
             "</div>";
-          htmlG +=
-            "<table><thead><tr><th>User</th><th>Room</th><th class='right'>Sessions</th><th class='right'>Active</th><th class='right'>Wall</th></tr></thead><tbody>";
-          globalRows.forEach(function (r) {
-            htmlG +=
-              "<tr><td>" +
-              walletChip(r.identicon || identByWallet[r.address] || "", r.address) +
-              "</td><td>" +
-              esc(r.roomId) +
-              "</td><td class='right'>" +
-              esc(String(r.sessionCount != null ? r.sessionCount : "-")) +
-              "</td><td class='right'>" +
-              esc(fmtMs(r.activeDurationMs)) +
-              "</td><td class='right'>" +
-              esc(fmtMs(r.wallDurationMs)) +
-              "</td></tr>";
-          });
-          htmlG += "</tbody></table>";
+          htmlG += compactTableHtml(
+            "<thead><tr><th>User</th><th>Room</th><th class='right'>Sessions</th><th class='right'>Active</th><th class='right'>Wall</th></tr></thead>",
+            globalRows.map(function (r) {
+              return (
+                "<tr><td>" +
+                userChip(r.identicon || identByWallet[r.address] || "", r.address, r.displayName) +
+                "</td><td>" +
+                esc(r.roomId) +
+                "</td><td class='right'>" +
+                esc(String(r.sessionCount != null ? r.sessionCount : "-")) +
+                "</td><td class='right'>" +
+                esc(fmtMs(r.activeDurationMs)) +
+                "</td><td class='right'>" +
+                esc(fmtMs(r.wallDurationMs)) +
+                "</td></tr>"
+              );
+            })
+          );
           el.innerHTML = htmlG;
           attachCopyHandlers(el);
           return;
@@ -1841,37 +1916,40 @@ export function analyticsPublicPageHtml(): string {
           " session" +
           (b.rows.length === 1 ? "" : "s") +
           " started</div>";
-        html += "<table><thead><tr><th>User</th><th class='right'>Sessions</th><th class='right'>Active</th></tr></thead><tbody>";
-        users.forEach(function (u) {
-          html +=
-            "<tr><td>" +
-            walletChip(u.identicon, u.walletId) +
-            "</td><td class='right'>" +
-            u.sessions +
-            "</td><td class='right'>" +
-            fmtMs(u.totalMs) +
-            "</td></tr>";
-        });
-        html += "</tbody></table>";
+        html += compactTableHtml(
+          "<thead><tr><th>User</th><th class='right'>Sessions</th><th class='right'>Active</th></tr></thead>",
+          users.map(function (u) {
+            return (
+              "<tr><td>" +
+              userChip(u.identicon, u.walletId, u.displayName) +
+              "</td><td class='right'>" +
+              u.sessions +
+              "</td><td class='right'>" +
+              fmtMs(u.totalMs) +
+              "</td></tr>"
+            );
+          })
+        );
         html +=
           "<div style='margin-top:0.55rem;margin-bottom:0.25rem' class='hintline'>By room (same wallet in multiple rooms appears once per room)</div>";
-        html +=
-          "<table><thead><tr><th>User</th><th>Room</th><th class='right'>Sessions</th><th class='right'>Active</th><th class='right'>Wall</th></tr></thead><tbody>";
-        roomRows.forEach(function (r) {
-          html +=
-            "<tr><td>" +
-            walletChip(r.identicon || identByWallet[r.address] || "", r.address) +
-            "</td><td>" +
-            esc(r.roomId) +
-            "</td><td class='right'>" +
-            r.sessionCount +
-            "</td><td class='right'>" +
-            fmtMs(r.activeDurationMs) +
-            "</td><td class='right'>" +
-            fmtMs(r.wallDurationMs) +
-            "</td></tr>";
-        });
-        html += "</tbody></table>";
+        html += compactTableHtml(
+          "<thead><tr><th>User</th><th>Room</th><th class='right'>Sessions</th><th class='right'>Active</th><th class='right'>Wall</th></tr></thead>",
+          roomRows.map(function (r) {
+            return (
+              "<tr><td>" +
+              walletChip(r.identicon || identByWallet[r.address] || "", r.address) +
+              "</td><td>" +
+              esc(r.roomId) +
+              "</td><td class='right'>" +
+              r.sessionCount +
+              "</td><td class='right'>" +
+              fmtMs(r.activeDurationMs) +
+              "</td><td class='right'>" +
+              fmtMs(r.wallDurationMs) +
+              "</td></tr>"
+            );
+          })
+        );
         el.innerHTML = html;
         attachCopyHandlers(el);
       }
@@ -1980,11 +2058,28 @@ export function analyticsPublicPageHtml(): string {
           " first-ever sign-in" +
           (firstStarts === 1 ? "" : "s") +
           "</div>";
-        html += "<table><thead><tr><th>User</th><th class='right'>In/Out</th></tr></thead><tbody>";
-        users.forEach(function (u) {
-          html += "<tr><td>" + walletChip(u.identicon, u.walletId) + "</td><td class='right'>" + u.inCount + "/" + u.outCount + "</td></tr>";
-        });
-        html += "</tbody></table>";
+        html += compactTableHtml(
+          "<thead><tr><th>User</th><th class='right'>In/Out</th></tr></thead>",
+          users.map(function (u) {
+            return (
+              "<tr><td>" +
+              userChip(u.identicon, u.walletId, u.displayName) +
+              "</td><td class='right'>" +
+              u.inCount +
+              "/" +
+              u.outCount +
+              "</td></tr>"
+            );
+          })
+        );
+        if (users.length < b.unique) {
+          html +=
+            "<p class='hintline' style='margin-top:0.35rem'>Showing top " +
+            users.length +
+            " wallets by activity; " +
+            b.unique +
+            " unique total (server caps detail lists at 20 per direction).</p>";
+        }
         el.innerHTML = html;
         attachCopyHandlers(el);
       }
@@ -2049,7 +2144,7 @@ export function analyticsPublicPageHtml(): string {
                   var pct = Math.max(0.35, (u.stackW / hourTotal) * 100);
                   var label = u.isOther
                     ? String(usersArr.length - maxSegs) + " other wallets"
-                    : walletShort(u.walletId) +
+                    : userLabel(u.walletId, u.displayName) +
                       " · " +
                       u.inCount +
                       " in / " +
@@ -2149,9 +2244,119 @@ export function analyticsPublicPageHtml(): string {
         });
       }
 
+      function renderOverview() {
+        var el = document.getElementById("overviewStats");
+        if (!el) return;
+        var totalLogins = 0;
+        var totalLogouts = 0;
+        loginChartRows.forEach(function (r) {
+          totalLogins += Number(r.starts || 0);
+          totalLogouts += Number(r.ends || 0);
+        });
+        var totalNim = 0;
+        payoutChartRows.forEach(function (r) {
+          totalNim += Number(String(r.totalNim || "0").replace(/,/g, "")) || 0;
+        });
+        var totalActiveMs = 0;
+        (data.playTimeByRoom || []).forEach(function (r) {
+          totalActiveMs += Number(r.activeDurationMs || 0);
+        });
+        var stats = [
+          { label: "Unique visitors", value: String(data.uniqueVisitors || 0), sub: "distinct login wallets" },
+          { label: "First-time sign-ins", value: String(data.firstTimeLogins || 0), sub: "new in log history" },
+          { label: "Logins", value: String(totalLogins), sub: "session_start events" },
+          { label: "Logouts", value: String(totalLogouts), sub: "session_end events" },
+          { label: "NIM paid out", value: totalNim.toFixed(3), sub: "in selected range" },
+          { label: "Active play", value: fmtMs(totalActiveMs), sub: "ended sessions, AFK capped" },
+        ];
+        el.innerHTML = stats
+          .map(function (s) {
+            return (
+              "<div class='overview-stat'><div class='label'>" +
+              esc(s.label) +
+              "</div><div class='value'>" +
+              esc(s.value) +
+              "</div><div class='sub'>" +
+              esc(s.sub) +
+              "</div></div>"
+            );
+          })
+          .join("");
+        var vs = document.getElementById("visitorsSummary");
+        if (vs) {
+          vs.textContent =
+            (data.uniqueVisitors || 0) +
+            " unique visitors in range · " +
+            (data.firstTimeLogins || 0) +
+            " first-time sign-ins";
+        }
+      }
+
+      function renderEngagement() {
+        var sumEl = document.getElementById("engagementSummary");
+        var dailyEl = document.getElementById("engagementDaily");
+        if (!sumEl || !dailyEl) return;
+        var rows = Array.isArray(data.daily) ? data.daily.slice(0, 30) : [];
+        var claims = 0;
+        var logins = 0;
+        var deadLetters = 0;
+        var blocks = 0;
+        var chats = 0;
+        rows.forEach(function (d) {
+          claims += Number(d.claimBlocks || 0);
+          logins += Number(d.sessionStarts || 0);
+          deadLetters += Number(d.deadLetters || 0);
+          blocks += Number(d.placeBlocks || 0);
+          chats += Number(d.chats || 0);
+        });
+        var claimRate = logins > 0 ? ((claims / logins) * 100).toFixed(1) + "%" : "-";
+        sumEl.innerHTML = [
+          { label: "Block claims", value: String(claims), sub: claimRate + " of logins" },
+          { label: "Blocks placed", value: String(blocks), sub: "place_block events" },
+          { label: "Chats", value: String(chats), sub: "public chat messages" },
+          { label: "Payout failures", value: String(deadLetters), sub: "dead-letter events" },
+        ]
+          .map(function (s) {
+            return (
+              "<div class='overview-stat'><div class='label'>" +
+              esc(s.label) +
+              "</div><div class='value'>" +
+              esc(s.value) +
+              "</div><div class='sub'>" +
+              esc(s.sub) +
+              "</div></div>"
+            );
+          })
+          .join("");
+        dailyEl.innerHTML = compactTableHtml(
+          "<thead><tr><th>Day</th><th class='right'>Logins</th><th class='right'>Claims</th><th class='right'>Blocks</th><th class='right'>Chats</th><th class='right'>Dead letters</th></tr></thead>",
+          rows.map(function (d) {
+            return (
+              "<tr><td>" +
+              esc(d.dayUtc) +
+              "</td><td class='right'>" +
+              (d.sessionStarts || 0) +
+              "</td><td class='right'>" +
+              (d.claimBlocks || 0) +
+              "</td><td class='right'>" +
+              (d.placeBlocks || 0) +
+              "</td><td class='right'>" +
+              (d.chats || 0) +
+              "</td><td class='right'>" +
+              (d.deadLetters || 0) +
+              "</td></tr>"
+            );
+          }),
+          7
+        );
+        attachCopyHandlers(dailyEl);
+      }
+
       function renderAll() {
         refreshVisitorsByHour();
         rebuildRecentPayoutBuckets();
+        renderOverview();
+        renderEngagement();
         renderFocusUserBanner();
         renderLogin();
         renderPayoutHours();
@@ -2171,14 +2376,17 @@ export function analyticsPublicPageHtml(): string {
 
       renderAll();
 
-      var dailyHtml =
-        "<table><thead><tr><th>Day</th><th class='right'>Players</th><th class='right'>Payouts</th><th class='right'>Place blocks</th><th class='right'>Chats</th></tr></thead><tbody>" +
-        data.daily.slice(0, 30).map(function (d) {
+      var dailyRows = (data.daily || []).slice(0, 30);
+      var dailyHtml = compactTableHtml(
+        "<thead><tr><th>Day</th><th class='right'>Unique</th><th class='right'>Logins</th><th class='right'>Payouts</th><th class='right'>Blocks</th><th class='right'>Chats</th></tr></thead>",
+        dailyRows.map(function (d) {
           return (
             "<tr><td>" +
             esc(d.dayUtc) +
             "</td><td class='right'>" +
-            d.activePlayers +
+            (d.uniquePlayers != null ? d.uniquePlayers : d.activePlayers) +
+            "</td><td class='right'>" +
+            (d.sessionStarts || 0) +
             "</td><td class='right'>" +
             d.payoutsSent +
             "</td><td class='right'>" +
@@ -2187,9 +2395,11 @@ export function analyticsPublicPageHtml(): string {
             d.chats +
             "</td></tr>"
           );
-        }).join("") +
-        "</tbody></table>";
+        }),
+        7
+      );
       document.getElementById("daily").innerHTML = dailyHtml;
+      attachCopyHandlers(document.getElementById("daily"));
 
       (function renderDailyChart() {
         var chartRoot = document.getElementById("dailyChart");
@@ -2218,9 +2428,10 @@ export function analyticsPublicPageHtml(): string {
           return padT + ch - (v / m) * ch;
         }
         var specs = [
-          { label: "Players", color: "#5aa0ff", pick: function (d) { return Number(d.activePlayers) || 0; } },
+          { label: "Unique", color: "#5aa0ff", pick: function (d) { return Number(d.uniquePlayers != null ? d.uniquePlayers : d.activePlayers) || 0; } },
+          { label: "Logins", color: "#a855f7", pick: function (d) { return Number(d.sessionStarts) || 0; } },
           { label: "Payouts", color: "#fbbf24", pick: function (d) { return Number(d.payoutsSent) || 0; } },
-          { label: "Place blocks", color: "#38bdf8", pick: function (d) { return Number(d.placeBlocks) || 0; } },
+          { label: "Blocks", color: "#38bdf8", pick: function (d) { return Number(d.placeBlocks) || 0; } },
           { label: "Chats", color: "#fb923c", pick: function (d) { return Number(d.chats) || 0; } },
         ];
         var lines = specs.map(function (sp) {

@@ -11,6 +11,7 @@ import {
   drainQueueForTests,
   enqueuePayIntent,
   listPendingJobsForTests,
+  maybeAutoBulkStalePending,
   resetQueueForTests,
   runProcessorTickForTests,
   stopPayoutProcessorForTests,
@@ -34,6 +35,8 @@ function testCfg(
     balanceCacheMs: 20_000,
     maxBackoffMs: 60_000,
     deadLetterAfterAttempts: 3,
+    autoBulkAfterMs: 0,
+    autoBulkCheckIntervalMs: 300_000,
     ...overrides,
   };
 }
@@ -153,4 +156,50 @@ test("duplicate enqueue by claimId never double-sends under retry", { concurrenc
 
   assert.equal(fake.sends.length, 1);
   assert.equal(fake.sends[0]?.claimId, "dedupe-claim");
+});
+
+test("auto bulk combines pending jobs after age threshold", { concurrency: false }, async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-reliability-autobulk-"));
+  t.after(() => {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  resetQueueForTests();
+  const fake = createFakeChainClient();
+  const ageMs = 60_000;
+  createPayoutApp({
+    cfg: testCfg(dataDir, { autoBulkAfterMs: ageMs }),
+    chainClient: fake,
+    startProcessor: false,
+  });
+
+  const now = Date.now();
+  enqueuePayIntent({
+    claimId: "stale-a",
+    recipientAddress: testRecipient,
+    roomId: "canvas",
+    tileKey: "1,1,0",
+  });
+  enqueuePayIntent({
+    claimId: "stale-b",
+    recipientAddress: testRecipient,
+    roomId: "canvas",
+    tileKey: "2,2,0",
+  });
+  for (const j of listPendingJobsForTests()) {
+    j.createdAt = now - ageMs - 1_000;
+  }
+
+  const freshOnly = await maybeAutoBulkStalePending(now - ageMs + 5_000);
+  assert.equal(freshOnly.recipientsPaid, 0);
+  assert.equal(fake.sends.length, 0);
+
+  const paid = await maybeAutoBulkStalePending(now);
+  assert.equal(paid.recipientsPaid, 1);
+  assert.equal(paid.jobsCleared, 2);
+  assert.equal(fake.sends.length, 1);
+  assert.equal(fake.sends[0]?.amountLuna, 200_000n);
+  assert.equal(listPendingJobsForTests().length, 0);
+
+  stopPayoutProcessorForTests();
 });

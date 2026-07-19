@@ -13,6 +13,11 @@ process.env.TUTORIAL_ENABLED = "1";
 
 before(async () => {
   await import("../src/playerProfileStore.js");
+  const { patchAdminRuntimeSettings } = await import(
+    "../src/adminRuntimeSettingsStore.js"
+  );
+  // Store DEFAULTS.tutorialEnabled is false; suite exercises the learner flow when on.
+  patchAdminRuntimeSettings({ tutorialEnabled: true });
 });
 
 after(() => {
@@ -298,6 +303,7 @@ test("admin runtime toggle disables tutorial when env allows", async () => {
   } = await import("../src/tutorial/config.js");
 
   assert.equal(isTutorialEnvEnabled(), true);
+  patchAdminRuntimeSettings({ tutorialEnabled: true });
   assert.equal(isTutorialFeatureEnabled(), true);
 
   patchAdminRuntimeSettings({ tutorialEnabled: false });
@@ -305,6 +311,148 @@ test("admin runtime toggle disables tutorial when env allows", async () => {
 
   patchAdminRuntimeSettings({ tutorialEnabled: true });
   assert.equal(isTutorialFeatureEnabled(), true);
+});
+
+test("tutorial env defaults off when TUTORIAL_ENABLED unset", async () => {
+  const prev = process.env.TUTORIAL_ENABLED;
+  delete process.env.TUTORIAL_ENABLED;
+  const { isTutorialEnvEnabled } = await import("../src/tutorial/config.js");
+  assert.equal(isTutorialEnvEnabled(), false);
+  process.env.TUTORIAL_ENABLED = prev ?? "1";
+});
+
+test("admins may join Tutorial Room when feature is off", async () => {
+  const { patchAdminRuntimeSettings } = await import(
+    "../src/adminRuntimeSettingsStore.js"
+  );
+  const { evaluateTutorialRoomJoin } = await import(
+    "../src/tutorialSessionService.js"
+  );
+  const { TUTORIAL_ROOM_ID } = await import("../src/tutorial/config.js");
+  const { teleporterMayTargetTutorialRoom } = await import(
+    "../src/tutorial/roomsIntegration.js"
+  );
+
+  patchAdminRuntimeSettings({ tutorialEnabled: false });
+  const learner = evaluateTutorialRoomJoin({
+    targetRoomId: TUTORIAL_ROOM_ID,
+    wallet: "NQ07 PAY000000000000000000000000000071",
+    sessionNimiqPay: true,
+    isAdminOrBuilder: false,
+  });
+  assert.deepEqual(learner, { ok: false, reason: "not_found" });
+
+  const admin = evaluateTutorialRoomJoin({
+    targetRoomId: TUTORIAL_ROOM_ID,
+    wallet: "NQ07 ADM000000000000000000000000000001",
+    sessionNimiqPay: false,
+    isAdminOrBuilder: true,
+  });
+  assert.deepEqual(admin, { ok: true });
+  assert.equal(teleporterMayTargetTutorialRoom(TUTORIAL_ROOM_ID, true), true);
+  assert.equal(teleporterMayTargetTutorialRoom(TUTORIAL_ROOM_ID, false), false);
+
+  patchAdminRuntimeSettings({ tutorialEnabled: true });
+});
+
+test("admin gets tutorial welcome when feature is off; reset clears completion", async () => {
+  const { patchAdminRuntimeSettings } = await import(
+    "../src/adminRuntimeSettingsStore.js"
+  );
+  const {
+    buildTutorialWelcomePayload,
+    completeTutorial,
+    resetTutorialProgress,
+    getTutorialCompletedAt,
+  } = await import("../src/tutorialSessionService.js");
+  const { buildTutorialWelcomeForConn } = await import(
+    "../src/tutorial/roomsIntegration.js"
+  );
+  const { TUTORIAL_ROOM_ID } = await import("../src/tutorial/config.js");
+  const adminWallet = "NQ07 ADM000000000000000000000000000002";
+
+  patchAdminRuntimeSettings({ tutorialEnabled: false });
+  assert.equal(
+    buildTutorialWelcomeForConn({
+      wallet: adminWallet,
+      roomId: TUTORIAL_ROOM_ID,
+      sessionNimiqPay: false,
+      viaTeleporter: true,
+      listMineSlots: () => ["0,0"],
+      isAdmin: false,
+    }),
+    undefined
+  );
+  const welcome = buildTutorialWelcomeForConn({
+    wallet: adminWallet,
+    roomId: TUTORIAL_ROOM_ID,
+    sessionNimiqPay: false,
+    viaTeleporter: true,
+    listMineSlots: () => ["0,0"],
+    isAdmin: true,
+  });
+  assert.ok(welcome);
+
+  completeTutorial(adminWallet, 3_000);
+  assert.ok(typeof getTutorialCompletedAt(adminWallet) === "number");
+  assert.deepEqual(resetTutorialProgress(adminWallet), { ok: true });
+  assert.equal(getTutorialCompletedAt(adminWallet), undefined);
+  assert.ok(
+    buildTutorialWelcomePayload({
+      wallet: adminWallet,
+      roomId: TUTORIAL_ROOM_ID,
+      sessionNimiqPay: false,
+      viaTeleporter: true,
+      availableMineSlots: ["0,0"],
+      allowWhenFeatureOff: true,
+    })
+  );
+
+  patchAdminRuntimeSettings({ tutorialEnabled: true });
+});
+
+test("resolveInitialRoomForPaySession sends incomplete Pay wallets to tutorial", async () => {
+  const { resolveInitialRoomForPaySession } = await import(
+    "../src/tutorial/roomsIntegration.js"
+  );
+  const { TUTORIAL_ROOM_ID } = await import("../src/tutorial/config.js");
+  const { patchAdminRuntimeSettings } = await import(
+    "../src/adminRuntimeSettingsStore.js"
+  );
+  const { completeTutorial } = await import("../src/tutorialSessionService.js");
+
+  patchAdminRuntimeSettings({ tutorialEnabled: true });
+  const incomplete = "NQ07 PAY000000000000000000000000000081";
+  assert.equal(
+    resolveInitialRoomForPaySession({
+      wallet: incomplete,
+      sessionNimiqPay: true,
+      requestedRoomId: "chamber",
+    }),
+    TUTORIAL_ROOM_ID
+  );
+
+  completeTutorial(incomplete, 9_000);
+  assert.equal(
+    resolveInitialRoomForPaySession({
+      wallet: incomplete,
+      sessionNimiqPay: true,
+      requestedRoomId: "chamber",
+    }),
+    "chamber"
+  );
+
+  patchAdminRuntimeSettings({ tutorialEnabled: false });
+  const other = "NQ07 PAY000000000000000000000000000082";
+  assert.equal(
+    resolveInitialRoomForPaySession({
+      wallet: other,
+      sessionNimiqPay: true,
+      requestedRoomId: "chamber",
+    }),
+    "chamber"
+  );
+  patchAdminRuntimeSettings({ tutorialEnabled: true });
 });
 
 test("tutorial room build is limited to admins and builder allowlist", async () => {

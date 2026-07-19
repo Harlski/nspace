@@ -4,6 +4,7 @@ import {
   floorWalkableTerrain,
   floorWalkableTerrainForMover,
   isUnlockPadPassableForMover,
+  level1SurfaceOpen,
   type TerrainProps,
 } from "./grid.js";
 import { HUB_ROOM_ID } from "./roomLayouts.js";
@@ -55,5 +56,10 @@ describe("Unlock Pad walk grants", () => {
         null
       )
     ).toBe(true);
+  });
+
+  it("does not treat Unlock Pad as a standable rooftop", () => {
+    const placed = new Map<string, TerrainProps>([["0,0", padProps()]]);
+    expect(level1SurfaceOpen(placed, 0, 0)).toBe(false);
   });
 });

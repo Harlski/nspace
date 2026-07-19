@@ -462,9 +462,45 @@ describe("Tutorial Unlock Gate offer", () => {
 });
 
 describe("Tutorial reset menu", () => {
-  it("shows Start over / Reset tutorial only while in the Tutorial Room", () => {
-    expect(shouldShowTutorialResetMenu(true)).toBe(true);
-    expect(shouldShowTutorialResetMenu(false)).toBe(false);
+  it("shows for learners only when the feature is on and they are in Tutorial Room", () => {
+    expect(
+      shouldShowTutorialResetMenu({
+        inTutorialRoom: true,
+        isAdmin: false,
+        tutorialFeatureEnabled: true,
+      })
+    ).toBe(true);
+    expect(
+      shouldShowTutorialResetMenu({
+        inTutorialRoom: true,
+        isAdmin: false,
+        tutorialFeatureEnabled: false,
+      })
+    ).toBe(false);
+    expect(
+      shouldShowTutorialResetMenu({
+        inTutorialRoom: false,
+        isAdmin: false,
+        tutorialFeatureEnabled: true,
+      })
+    ).toBe(false);
+  });
+
+  it("shows for admins in Tutorial Room even when the feature is off", () => {
+    expect(
+      shouldShowTutorialResetMenu({
+        inTutorialRoom: true,
+        isAdmin: true,
+        tutorialFeatureEnabled: false,
+      })
+    ).toBe(true);
+    expect(
+      shouldShowTutorialResetMenu({
+        inTutorialRoom: false,
+        isAdmin: true,
+        tutorialFeatureEnabled: false,
+      })
+    ).toBe(false);
   });
 });
 

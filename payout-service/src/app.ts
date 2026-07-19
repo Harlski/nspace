@@ -23,6 +23,7 @@ import {
   initBalanceCache,
 } from "./balance.js";
 import { initAnalyticsCallback } from "./analyticsCallback.js";
+import { initMiningBanGate } from "./miningBanGate.js";
 import { listSentHistorySince } from "./history.js";
 
 export type CreatePayoutAppOptions = {
@@ -38,6 +39,7 @@ export function createPayoutApp(opts: CreatePayoutAppOptions = {}) {
   initPayoutQueue(cfg, chainClient);
   initBalanceCache(chainClient, cfg.balanceCacheMs);
   initAnalyticsCallback(cfg);
+  initMiningBanGate(cfg);
   if (opts.startProcessor !== false) {
     startPayoutProcessor(cfg.processIntervalMs);
   }

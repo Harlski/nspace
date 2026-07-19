@@ -246,6 +246,23 @@ export function analyticsAdminPageHtml(): string {
       if (c.length <= 8) return c;
       return c.slice(0, 4) + c.slice(-4);
     }
+    function playerLabel(walletId, displayName) {
+      var name = displayName != null && String(displayName).trim() ? String(displayName).trim() : "";
+      if (name) return name;
+      return walletConnectAs(walletId);
+    }
+    function playerCell(walletId, displayName, identicon) {
+      var w = String(walletId || "");
+      var label = playerLabel(w, displayName);
+      var sub = label !== walletConnectAs(w) ? walletConnectAs(w) : "";
+      var img = identicon
+        ? "<img class='ident' src='" + esc(identicon) + "' alt='' width='22' height='22'/>"
+        : "";
+      var subHtml = sub
+        ? " <span class='mono admin-payout-wallet-sub' title='" + esc(w) + "'>" + esc(sub) + "</span>"
+        : "";
+      return img + "<span title='" + esc(w) + "'>" + esc(label) + "</span>" + subHtml;
+    }
     function adminPvAnonHint(anonReason) {
       var a = String(anonReason || "legacy");
       if (a === "no_token") {
@@ -478,9 +495,9 @@ export function analyticsAdminPageHtml(): string {
           m.remove();
         }
       }
-      function openAdminManualPayoutModal(wallet, amountNim, jobCount, onSend) {
+      function openAdminManualPayoutModal(wallet, amountNim, jobCount, displayLabel, onSend) {
         closeAdminManualPayoutModal();
-        var addrShort = walletConnectAs(wallet);
+        var addrShort = displayLabel || walletConnectAs(wallet);
         var backdrop = document.createElement("div");
         backdrop.id = "adminManualPayoutModal";
         backdrop.className = "admin-payout-confirm-backdrop";
@@ -636,16 +653,13 @@ export function analyticsAdminPageHtml(): string {
         var allSent = Boolean(p.allSent);
         var msg = p.message != null ? String(p.message) : "";
         var histThead =
-          "<thead><tr><th></th><th>Sent (UTC)</th><th>Wallet</th><th>NIM</th><th>Tx</th></tr></thead>";
+          "<thead><tr><th></th><th>Sent (UTC)</th><th>User</th><th>NIM</th><th>Tx</th></tr></thead>";
         function histTableBody() {
           return hist
             .map(function (r) {
               var t = r.time != null ? String(r.time).replace("T", " ").slice(0, 19) : "-";
               var w = r.walletId != null ? String(r.walletId) : "";
               var ident = r.identicon ? String(r.identicon) : "";
-              var img = ident
-                ? "<img class='ident' src='" + esc(ident) + "' alt='' width='22' height='22'/>"
-                : "";
               var tx = r.txHash != null ? String(r.txHash) : "";
               var txCell = tx
                 ? "<a class='ms-link-expl mono' href='https://nimiq.watch/#" +
@@ -655,12 +669,10 @@ export function analyticsAdminPageHtml(): string {
                   "…</a>"
                 : "-";
               return (
-                "<tr><td>" +
-                img +
-                "</td><td class='mono'>" +
+                "<tr><td></td><td class='mono'>" +
                 esc(t) +
-                "</td><td class='mono'>" +
-                esc(walletGrouped(w)) +
+                "</td><td>" +
+                playerCell(w, r.displayName, ident) +
                 "</td><td class='mono'>" +
                 esc(String(r.amountNim != null ? r.amountNim : "-")) +
                 "</td><td>" +
@@ -673,15 +685,15 @@ export function analyticsAdminPageHtml(): string {
         var summaryBlock = "";
         if (byRec.length) {
           var sumThead =
-            "<thead><tr><th>Wallet</th><th>Jobs</th><th>Total NIM</th><th></th></tr></thead>";
+            "<thead><tr><th>User</th><th>Jobs</th><th>Total NIM</th><th></th></tr></thead>";
           var sumBody = byRec
             .map(function (row) {
               var w = row.walletId != null ? String(row.walletId) : "";
               var jc = row.jobCount != null ? String(row.jobCount) : "0";
               var nim = row.amountNim != null ? String(row.amountNim) : "-";
               return (
-                "<tr><td class='mono'>" +
-                esc(walletGrouped(w)) +
+                "<tr><td>" +
+                playerCell(w, row.displayName, "") +
                 "</td><td class='mono'>" +
                 esc(jc) +
                 "</td><td class='mono'>" +
@@ -693,6 +705,8 @@ export function analyticsAdminPageHtml(): string {
                 esc(nim) +
                 "' data-manual-payout-jobs='" +
                 esc(jc) +
+                "' data-manual-payout-label='" +
+                esc(playerLabel(w, row.displayName)) +
                 "'>Payout in full</button>" +
                 "</td></tr>"
               );
@@ -717,7 +731,7 @@ export function analyticsAdminPageHtml(): string {
           : "";
         var mb = Array.isArray(p.manualBulkHistory) ? p.manualBulkHistory : [];
         var mbThead =
-          "<thead><tr><th>Sent (UTC)</th><th>Wallet</th><th>Total NIM</th><th>Jobs</th><th>State</th><th>Tx</th><th>On-chain message</th></tr></thead>";
+          "<thead><tr><th>Sent (UTC)</th><th>User</th><th>Total NIM</th><th>Jobs</th><th>State</th><th>Tx</th><th>On-chain message</th></tr></thead>";
         var mbBody = mb.length
           ? mb
               .map(function (row) {
@@ -741,8 +755,8 @@ export function analyticsAdminPageHtml(): string {
                 return (
                   "<tr><td class='mono'>" +
                   esc(t) +
-                  "</td><td class='mono'>" +
-                  esc(walletGrouped(w)) +
+                  "</td><td>" +
+                  playerCell(w, row.displayName, "") +
                   "</td><td class='mono'>" +
                   esc(nim) +
                   "</td><td class='mono'>" +
@@ -783,7 +797,7 @@ export function analyticsAdminPageHtml(): string {
         return (
           "<section id='admin-quick-payout' class='admin-payout-section'>" +
           "<div class='admin-payout-head'><strong>Quick payout</strong>" +
-          "<span class='admin-payout-note'>combines queued pending jobs per wallet</span></div>" +
+          "<span class='admin-payout-note'>combines queued pending jobs per wallet · auto bulk after 8h</span></div>" +
           pendingLine +
           summaryBlock +
           histBlock +
@@ -954,7 +968,8 @@ export function analyticsAdminPageHtml(): string {
             if (!w) return;
             var nim = String(btn.getAttribute("data-manual-payout-nim") || "-");
             var jc = String(btn.getAttribute("data-manual-payout-jobs") || "0");
-            openAdminManualPayoutModal(w, nim, jc, async function () {
+            var label = String(btn.getAttribute("data-manual-payout-label") || "");
+            openAdminManualPayoutModal(w, nim, jc, label, async function () {
               btn.disabled = true;
               try {
                 var r = await fetch("/api/nim/manual-bulk-payout", {
@@ -972,6 +987,13 @@ export function analyticsAdminPageHtml(): string {
                   var errCode = String(j.error || "payout_failed");
                   if (errCode === "wallet_payout_race_retry") {
                     errCode = "Queue changed - wait a moment and try again.";
+                  } else if (
+                    errCode.indexOf("timeout") !== -1 ||
+                    errCode.indexOf("Timeout") !== -1 ||
+                    errCode.indexOf("aborted") !== -1
+                  ) {
+                    errCode =
+                      "Payout timed out waiting for the sidecar. The send may still complete - refresh the queue in a minute.";
                   }
                   throw new Error(errCode);
                 }

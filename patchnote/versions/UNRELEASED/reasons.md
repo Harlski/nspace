@@ -21,6 +21,7 @@ _Add a one-line roll-up here when the buffer gets long._
 ### Client
 
 - Unlock Pad: distinct unlocked plate mesh for grant holders; Payment Intent unlock flow (`/api/unlock-pad/*`); admin build-dock Unlock Pad tool + object-panel config; `welcome.unlockedPadInstanceIds` restores grants on reconnect.
+- Unlock Pad Payment Intent: non–Nimiq Pay clients open Hub `checkout` with intent memo as `extraData` (`client/src/unlockPad/pay.ts`); Pay still uses `sendBasicTransactionWithData`.
 - Attention Marker: admin Buildings tool; glowing bouncing V; Hover Height + hue; `setAttentionMarkers` / `attentionMarkers` WS sync; client baseline follows co-occupant top.
 
 ### Server

@@ -4,9 +4,10 @@ status: ready-for-agent
 glossary: CONTEXT.md
 adrs:
   - docs/adr/0007-unlock-pad.md
+  - docs/adr/0008-unlock-pad-settings-dialog.md
   - docs/adr/0005-tutorial-first-contact.md
   - docs/adr/0006-tutorial-room-portrait-path.md
-depends_on_grill: CONTEXT.md (Unlock Pad, Tutorial Path, Tutorial Pay Ack, Tutorial Escape)
+depends_on_grill: CONTEXT.md (Unlock Pad, Unlock Pad Settings, Tutorial Path, Tutorial Pay Ack, Tutorial Escape)
 ---
 
 # Unlock Pad
@@ -73,8 +74,8 @@ Escape** unsticks the learner’s pad unlock if Pay hangs.
 ### Player — Unlock Pad outside tutorial
 
 11. As a player next to an admin-placed Unlock Pad with proof mode payment_intent, I want
-    tapping Unlock to create a Payment Intent and open Pay with the memo, so that unlock is
-    real on-chain spend.
+    tapping Unlock to create a Payment Intent and open **Nimiq Pay** (mini-app) or **Nimiq Hub**
+    checkout (browser) with the memo, so that unlock is real on-chain spend.
 12. As a player who completed Payment Intent verify for a pad, I want that pad walkable for my
     wallet forever on that instance, so that reconnect does not charge me again.
 13. As a player who has not unlocked a pad, I want pathfinding and walking to treat it as solid,
@@ -93,7 +94,8 @@ Escape** unsticks the learner’s pad unlock if Pay hangs.
 18. As a game admin in build mode, I want to place an Unlock Pad like other special blocks, so
     that I can author paid crossings without code changes.
 19. As a game admin, I want to set amount (NIM), recipient wallet, button label, and proof mode
-    on the pad, so that each crossing can be priced and labeled for its context.
+    via **Unlock Pad Settings** (dock summary + Edit → Save/Cancel dialog), so that each
+    crossing can be priced and labeled without using the cramped Parameters column.
 20. As a game admin, I want tutorial template pads to force or default to optimistic proof, so
     that first-contact cannot accidentally require Payment Intent.
 21. As a game admin, I want non-admins unable to place or edit Unlock Pad props, so that paid

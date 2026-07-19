@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const __configDir = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__configDir, "../../.env") });
-dotenv.config({ path: path.join(__configDir, "../.env") });
+dotenv.config({ path: path.join(__configDir, "../.env"), override: true });
 
 export const LUNA_PER_NIM = 100_000n;
 
@@ -21,6 +21,10 @@ export type AppConfig = {
   balanceCacheMs: number;
   maxBackoffMs: number;
   deadLetterAfterAttempts: number;
+  /** Bulk-combine pending jobs per recipient when oldest job age reaches this (0 = off). */
+  autoBulkAfterMs: number;
+  /** How often to scan for stale pending jobs eligible for auto bulk (ms). */
+  autoBulkCheckIntervalMs: number;
 };
 
 function req(name: string, v: string | undefined): string {
@@ -70,6 +74,14 @@ export function loadConfig(): AppConfig {
     deadLetterAfterAttempts: Math.max(
       1,
       Number(process.env.NIM_PAYOUT_DEAD_LETTER_ATTEMPTS ?? 80)
+    ),
+    autoBulkAfterMs: Math.max(
+      0,
+      Number(process.env.NIM_PAYOUT_AUTO_BULK_AFTER_MS ?? 28_800_000)
+    ),
+    autoBulkCheckIntervalMs: Math.max(
+      60_000,
+      Number(process.env.NIM_PAYOUT_AUTO_BULK_CHECK_MS ?? 300_000)
     ),
   };
 }

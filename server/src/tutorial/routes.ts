@@ -27,19 +27,24 @@ function tutorialDisabled(_req: Request, res: Response): void {
   res.status(404).json({ error: "tutorial_disabled" });
 }
 
+/** Learners while feature on; admins anytime (teleporter QA while feature off). */
+function allowTutorialLearnerApi(signer: string): boolean {
+  return isTutorialFeatureEnabled() || isAdmin(signer);
+}
+
 export function registerTutorialRoutes(
   app: Express,
   requireJwt: (req: Request, res: Response, next: NextFunction) => void,
   jwtAddressFromReq: JwtResolver
 ): void {
   app.get("/api/tutorial/door-quote", requireJwt, (req, res) => {
-    if (!isTutorialFeatureEnabled()) {
-      tutorialDisabled(req, res);
-      return;
-    }
     const signer = normalizeWalletId(jwtAddressFromReq(req) ?? "");
     if (!signer) {
       res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    if (!allowTutorialLearnerApi(signer)) {
+      tutorialDisabled(req, res);
       return;
     }
     const quote = getTutorialDoorQuote(signer);
@@ -51,13 +56,13 @@ export function registerTutorialRoutes(
   });
 
   app.post("/api/tutorial/door-sent", requireJwt, (req, res) => {
-    if (!isTutorialFeatureEnabled()) {
-      tutorialDisabled(req, res);
-      return;
-    }
     const signer = normalizeWalletId(jwtAddressFromReq(req) ?? "");
     if (!signer) {
       res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    if (!allowTutorialLearnerApi(signer)) {
+      tutorialDisabled(req, res);
       return;
     }
     const result = ackTutorialDoorSent(signer);
@@ -77,13 +82,13 @@ export function registerTutorialRoutes(
   });
 
   app.post("/api/tutorial/unstick", requireJwt, (req, res) => {
-    if (!isTutorialFeatureEnabled()) {
-      tutorialDisabled(req, res);
-      return;
-    }
     const signer = normalizeWalletId(jwtAddressFromReq(req) ?? "");
     if (!signer) {
       res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    if (!allowTutorialLearnerApi(signer)) {
+      tutorialDisabled(req, res);
       return;
     }
     unstickTutorialGate(signer);
@@ -96,13 +101,13 @@ export function registerTutorialRoutes(
   });
 
   app.post("/api/tutorial/abandon", requireJwt, (req, res) => {
-    if (!isTutorialFeatureEnabled()) {
-      tutorialDisabled(req, res);
-      return;
-    }
     const signer = normalizeWalletId(jwtAddressFromReq(req) ?? "");
     if (!signer) {
       res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    if (!allowTutorialLearnerApi(signer)) {
+      tutorialDisabled(req, res);
       return;
     }
     abandonTutorial(signer);
@@ -110,13 +115,13 @@ export function registerTutorialRoutes(
   });
 
   app.post("/api/tutorial/reset-progress", requireJwt, (req, res) => {
-    if (!isTutorialFeatureEnabled()) {
-      tutorialDisabled(req, res);
-      return;
-    }
     const signer = normalizeWalletId(jwtAddressFromReq(req) ?? "");
     if (!signer) {
       res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    if (!allowTutorialLearnerApi(signer)) {
+      tutorialDisabled(req, res);
       return;
     }
     // Own wallet only (jwtAddressFromReq): clears session so the learner can restart at Mine.

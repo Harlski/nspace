@@ -56,6 +56,30 @@ test("normalizeUnlockPadConfig rejects missing instance or amount", () => {
   );
 });
 
+test("Unlock Pad is never a level-1 standable surface", async () => {
+  const { level1SurfaceOpen } = await import("../src/grid.js");
+  const pad = {
+    passable: false,
+    half: false,
+    quarter: false,
+    hex: false,
+    pyramid: false,
+    sphere: false,
+    ramp: false,
+    rampDir: 0,
+    colorRgb: 0x22c55e,
+    unlockPad: normalizeUnlockPadConfig({
+      amountLuna: "1000",
+      recipient: "SYSTEM",
+      buttonLabel: "Unlock",
+      proofMode: "optimistic",
+      instanceId: "pad-surface",
+    })!,
+  };
+  const placed = new Map([["0,0,0", pad]]);
+  assert.equal(level1SurfaceOpen(placed, 0, 0), false);
+});
+
 test("locked Unlock Pad is not passable without a grant", () => {
   const props = {
     passable: false,

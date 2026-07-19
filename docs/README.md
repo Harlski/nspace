@@ -24,7 +24,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 
 | Document | Contents |
 |----------|----------|
-| [ui-styling.md](ui-styling.md) | HUD, overlays, tokens, layout conventions |
+| [ui-styling.md](ui-styling.md) | In-game HUD chrome; Nimiq UI Kit as control reference; immersion-first surfaces |
 | [tile.md](tile.md) | Grid, camera, and **current** floor/block mesh sizes (per-tile floor color + instanced top quads) |
 | [NIMIQDESIGN.md](NIMIQDESIGN.md) | How `@nimiq/identicons` is wired for avatars (client + server) |
 

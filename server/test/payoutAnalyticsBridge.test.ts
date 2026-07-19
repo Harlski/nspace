@@ -190,6 +190,8 @@ test("backfill reads sent history from payout service", async (t) => {
     balanceCacheMs: 20_000,
     maxBackoffMs: 3_600_000,
     deadLetterAfterAttempts: 80,
+    autoBulkAfterMs: 0,
+    autoBulkCheckIntervalMs: 300_000,
   };
   initHistoryPaths(cfg);
   appendSentHistoryLine(

@@ -12,7 +12,8 @@ export type BuildDockContextParamId =
   | "cube-rotation"
   | "billboard-edit"
   | "unlock-pad-config"
-  | "attention-marker-hover";
+  | "attention-marker-hover"
+  | "attention-marker-size";
 
 export type BuildDockContextTool =
   | "block"
@@ -52,7 +53,7 @@ export function buildDockContextParamVisible(
   if (param === "unlock-pad-config") {
     return ctx.unlockPadConfig === true;
   }
-  if (param === "attention-marker-hover") {
+  if (param === "attention-marker-hover" || param === "attention-marker-size") {
     return ctx.attentionMarkerHover === true;
   }
   if (ctx.minimalInspector) return false;
