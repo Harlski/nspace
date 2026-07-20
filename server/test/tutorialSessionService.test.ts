@@ -468,9 +468,16 @@ test("tutorial room build is limited to admins and builder allowlist", async () 
   delete process.env.TUTORIAL_BUILDER_ALLOWLIST;
 });
 
-test("tutorial room appears in room definitions when feature enabled", async () => {
+test("tutorial room appears in room definitions (even when learner flow is off)", async () => {
   const { listRoomDefinitions } = await import("../src/roomLayouts.js");
-  const { TUTORIAL_ROOM_ID } = await import("../src/tutorial/config.js");
+  const { TUTORIAL_ROOM_ID, TUTORIAL_STAGING_ROOM_ID } = await import(
+    "../src/tutorial/config.js"
+  );
+  const { patchAdminRuntimeSettings } = await import(
+    "../src/adminRuntimeSettingsStore.js"
+  );
+  patchAdminRuntimeSettings({ tutorialEnabled: false });
   const ids = listRoomDefinitions().map((d) => d.id.trim().toLowerCase());
   assert.ok(ids.includes(TUTORIAL_ROOM_ID));
+  assert.ok(ids.includes(TUTORIAL_STAGING_ROOM_ID));
 });

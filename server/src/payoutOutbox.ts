@@ -12,16 +12,25 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const OUTBOX_DIR = process.env.PAYOUT_OUTBOX_DIR
-  ? path.resolve(process.env.PAYOUT_OUTBOX_DIR)
-  : path.join(__dirname, "..", "data", "payout-outbox");
+function outboxDir(): string {
+  return process.env.PAYOUT_OUTBOX_DIR
+    ? path.resolve(process.env.PAYOUT_OUTBOX_DIR)
+    : path.join(__dirname, "..", "data", "payout-outbox");
+}
 
-const OUTBOX_FILE = path.join(OUTBOX_DIR, "outbox.jsonl");
-const DELIVERED_FILE = path.join(OUTBOX_DIR, "delivered-claim-ids.json");
+function outboxFile(): string {
+  return path.join(outboxDir(), "outbox.jsonl");
+}
+
+function deliveredFile(): string {
+  return path.join(outboxDir(), "delivered-claim-ids.json");
+}
 
 type OutboxRecord = PayIntent & { enqueuedAt: number };
 
 const deliveredClaimIds = new Set<string>();
+/** Undelivered intents kept in memory so the 2s loop does not re-parse the JSONL every tick. */
+let pendingRecords: OutboxRecord[] = [];
 let deliveryTimer: ReturnType<typeof setTimeout> | null = null;
 let deliveryLoopActive = false;
 let delivering = false;
@@ -32,15 +41,22 @@ const DELIVERY_INTERVAL_MS = Math.max(
   Number(process.env.PAYOUT_OUTBOX_DELIVERY_INTERVAL_MS ?? 2000)
 );
 
+/** Log when a sync outbox parse exceeds this (ms); 0 disables. */
+const OUTBOX_PARSE_WARN_MS = Math.max(
+  0,
+  Number(process.env.PAYOUT_OUTBOX_PARSE_WARN_MS ?? 50)
+);
+
 function ensureOutboxDir(): void {
-  fs.mkdirSync(OUTBOX_DIR, { recursive: true });
+  fs.mkdirSync(outboxDir(), { recursive: true });
 }
 
 function loadDeliveredClaimIds(): void {
   deliveredClaimIds.clear();
   try {
-    if (!fs.existsSync(DELIVERED_FILE)) return;
-    const raw = fs.readFileSync(DELIVERED_FILE, "utf8");
+    const deliveredPath = deliveredFile();
+    if (!fs.existsSync(deliveredPath)) return;
+    const raw = fs.readFileSync(deliveredPath, "utf8");
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return;
     for (const id of parsed) {
@@ -57,43 +73,67 @@ function persistDeliveredClaimIds(): void {
   try {
     ensureOutboxDir();
     const payload = JSON.stringify([...deliveredClaimIds]);
-    const tmp = `${DELIVERED_FILE}.${process.pid}.tmp`;
+    const dest = deliveredFile();
+    const tmp = `${dest}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, payload, "utf8");
-    fs.renameSync(tmp, DELIVERED_FILE);
+    fs.renameSync(tmp, dest);
   } catch (e) {
     console.error("[payout-outbox] Failed to persist delivered claim ids:", e);
   }
 }
 
+function recordToLine(record: OutboxRecord): string {
+  return JSON.stringify({
+    ...record,
+    amountLuna: record.amountLuna?.toString(),
+  });
+}
+
+function parseOutboxLine(line: string): OutboxRecord | null {
+  try {
+    const o = JSON.parse(line) as OutboxRecord & { amountLuna?: string };
+    if (typeof o.claimId !== "string" || !o.claimId.trim()) return null;
+    if (typeof o.recipientAddress !== "string") return null;
+    if (typeof o.roomId !== "string") return null;
+    if (typeof o.tileKey !== "string") return null;
+    return {
+      claimId: o.claimId,
+      recipientAddress: o.recipientAddress,
+      amountLuna:
+        o.amountLuna !== undefined
+          ? typeof o.amountLuna === "bigint"
+            ? o.amountLuna
+            : BigInt(String(o.amountLuna))
+          : undefined,
+      roomId: o.roomId,
+      tileKey: o.tileKey,
+      txMessage: o.txMessage,
+      enqueuedAt: typeof o.enqueuedAt === "number" ? o.enqueuedAt : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function readOutboxRecords(): OutboxRecord[] {
   try {
-    if (!fs.existsSync(OUTBOX_FILE)) return [];
-    const raw = fs.readFileSync(OUTBOX_FILE, "utf8");
-    const lines = raw.split("\n").filter((l) => l.trim());
+    const filePath = outboxFile();
+    if (!fs.existsSync(filePath)) return [];
+    const t0 = OUTBOX_PARSE_WARN_MS > 0 ? Date.now() : 0;
+    const raw = fs.readFileSync(filePath, "utf8");
     const out: OutboxRecord[] = [];
-    for (const line of lines) {
-      try {
-        const o = JSON.parse(line) as OutboxRecord & { amountLuna?: string };
-        if (typeof o.claimId !== "string" || !o.claimId.trim()) continue;
-        if (typeof o.recipientAddress !== "string") continue;
-        if (typeof o.roomId !== "string") continue;
-        if (typeof o.tileKey !== "string") continue;
-        out.push({
-          claimId: o.claimId,
-          recipientAddress: o.recipientAddress,
-          amountLuna:
-            o.amountLuna !== undefined
-              ? typeof o.amountLuna === "bigint"
-                ? o.amountLuna
-                : BigInt(String(o.amountLuna))
-              : undefined,
-          roomId: o.roomId,
-          tileKey: o.tileKey,
-          txMessage: o.txMessage,
-          enqueuedAt: typeof o.enqueuedAt === "number" ? o.enqueuedAt : 0,
-        });
-      } catch {
-        /* skip bad line */
+    for (const line of raw.split("\n")) {
+      const t = line.trim();
+      if (!t) continue;
+      const rec = parseOutboxLine(t);
+      if (rec) out.push(rec);
+    }
+    if (OUTBOX_PARSE_WARN_MS > 0) {
+      const ms = Date.now() - t0;
+      if (ms >= OUTBOX_PARSE_WARN_MS) {
+        const msg = `[payout-outbox] Slow outbox parse ${ms} ms (${out.length} lines, ${raw.length} bytes)`;
+        console.warn(msg);
+        appendAdminSystemLog("warn", msg);
       }
     }
     return out;
@@ -102,8 +142,38 @@ function readOutboxRecords(): OutboxRecord[] {
   }
 }
 
+/** Rewrite JSONL to only undelivered records (drops delivered history that blocked the event loop). */
+function writePendingOutboxFile(records: OutboxRecord[]): void {
+  ensureOutboxDir();
+  const dest = outboxFile();
+  const tmp = `${dest}.${process.pid}.tmp`;
+  const body =
+    records.length === 0
+      ? ""
+      : `${records.map((r) => recordToLine(r)).join("\n")}\n`;
+  fs.writeFileSync(tmp, body, "utf8");
+  fs.renameSync(tmp, dest);
+}
+
+/**
+ * Load JSONL into {@link pendingRecords}, compacting delivered lines off disk.
+ * Safe to call on startup and after test reloads.
+ */
+function reloadPendingFromDisk(): void {
+  const all = readOutboxRecords();
+  const pending = all.filter((r) => !deliveredClaimIds.has(r.claimId));
+  pendingRecords = pending;
+  if (pending.length !== all.length) {
+    writePendingOutboxFile(pending);
+    console.log(
+      `[payout-outbox] Compacted outbox.jsonl: ${all.length} → ${pending.length} undelivered`
+    );
+  }
+}
+
 function outboxHasClaimId(claimId: string): boolean {
   if (deliveredClaimIds.has(claimId)) return true;
+  if (pendingRecords.some((r) => r.claimId === claimId)) return true;
   return readOutboxRecords().some((r) => r.claimId === claimId);
 }
 
@@ -121,11 +191,8 @@ export function appendPayIntentToOutbox(intent: PayIntent): void {
     ...intent,
     enqueuedAt: Date.now(),
   };
-  const line = JSON.stringify({
-    ...record,
-    amountLuna: record.amountLuna?.toString(),
-  });
-  fs.appendFileSync(OUTBOX_FILE, `${line}\n`, "utf8");
+  pendingRecords.push(record);
+  fs.appendFileSync(outboxFile(), `${recordToLine(record)}\n`, "utf8");
   console.log(
     `[payout-outbox] Appended claim=${intent.claimId.slice(0, 10)}…`
   );
@@ -141,10 +208,15 @@ export async function drainOutboxOnce(
   delivering = true;
   const send = customDeliverer ?? deliverer;
   try {
-    const pending = readOutboxRecords().filter(
-      (r) => !deliveredClaimIds.has(r.claimId)
-    );
-    for (const record of pending) {
+    // Work from the in-memory pending list (startup / append keep it in sync).
+    const snapshot = pendingRecords.slice();
+    let deliveredAny = false;
+    for (const record of snapshot) {
+      if (deliveredClaimIds.has(record.claimId)) {
+        pendingRecords = pendingRecords.filter((r) => r.claimId !== record.claimId);
+        deliveredAny = true;
+        continue;
+      }
       if (
         shouldHoldMiningPayoutForBannedWallet(
           record.recipientAddress,
@@ -170,9 +242,14 @@ export async function drainOutboxOnce(
       }
       deliveredClaimIds.add(record.claimId);
       persistDeliveredClaimIds();
+      pendingRecords = pendingRecords.filter((r) => r.claimId !== record.claimId);
+      deliveredAny = true;
       console.log(
         `[payout-outbox] Delivered claim=${record.claimId.slice(0, 10)}…`
       );
+    }
+    if (deliveredAny) {
+      writePendingOutboxFile(pendingRecords);
     }
   } finally {
     delivering = false;
@@ -181,6 +258,7 @@ export async function drainOutboxOnce(
 
 export function startPayoutOutboxDeliveryLoop(): void {
   loadDeliveredClaimIds();
+  reloadPendingFromDisk();
   deliveryLoopActive = true;
   if (deliveryTimer) return;
   const run = async (): Promise<void> => {
@@ -213,11 +291,14 @@ export function resetOutboxForTests(opts?: {
 }): void {
   stopPayoutOutboxDeliveryLoopForTests();
   deliveredClaimIds.clear();
+  pendingRecords = [];
   delivering = false;
   deliverer = opts?.deliverer ?? deliverPayIntentToService;
   try {
-    if (fs.existsSync(OUTBOX_FILE)) fs.unlinkSync(OUTBOX_FILE);
-    if (fs.existsSync(DELIVERED_FILE)) fs.unlinkSync(DELIVERED_FILE);
+    const ob = outboxFile();
+    const df = deliveredFile();
+    if (fs.existsSync(ob)) fs.unlinkSync(ob);
+    if (fs.existsSync(df)) fs.unlinkSync(df);
   } catch {
     /* ignore */
   }
@@ -228,10 +309,11 @@ export function initOutboxForTests(opts?: {
 }): void {
   resetOutboxForTests(opts);
   loadDeliveredClaimIds();
+  reloadPendingFromDisk();
 }
 
 export function listUndeliveredOutboxForTests(): OutboxRecord[] {
-  return readOutboxRecords().filter((r) => !deliveredClaimIds.has(r.claimId));
+  return pendingRecords.slice();
 }
 
 export function isClaimDeliveredForTests(claimId: string): boolean {
@@ -240,14 +322,27 @@ export function isClaimDeliveredForTests(claimId: string): boolean {
 
 export function reloadOutboxFromDiskForTests(): void {
   loadDeliveredClaimIds();
+  reloadPendingFromDisk();
 }
 
 /** Simulates a crash after service accepted but before delivered-ids were persisted. */
 export function clearDeliveredClaimIdsForTests(): void {
   deliveredClaimIds.clear();
   try {
-    if (fs.existsSync(DELIVERED_FILE)) fs.unlinkSync(DELIVERED_FILE);
+    const df = deliveredFile();
+    if (fs.existsSync(df)) fs.unlinkSync(df);
   } catch {
     /* ignore */
+  }
+}
+
+/** Bytes on disk for `outbox.jsonl` (0 if missing). */
+export function outboxFileSizeForTests(): number {
+  try {
+    const ob = outboxFile();
+    if (!fs.existsSync(ob)) return 0;
+    return fs.statSync(ob).size;
+  } catch {
+    return 0;
   }
 }

@@ -4523,6 +4523,9 @@ export type RoomLayoutSnapshot = {
  */
 export function getRoomLayoutSnapshot(roomIdRaw: string): RoomLayoutSnapshot | null {
   const roomId = normalizeRoomId(roomIdRaw);
+  if (isTutorialRuntimeRoomId(roomId) || isTutorialStagingRoomId(roomId)) {
+    ensureTutorialRoomLayout(roomId);
+  }
   const defs = listRoomDefinitions();
   const def =
     defs.find((d) => d.id === roomId) ??

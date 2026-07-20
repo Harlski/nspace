@@ -25,11 +25,7 @@ import {
 } from "./worldcup/config.js";
 import { isInviteLobbyRoomId as isDirectInviteLobbyId } from "./directInvite/config.js";
 import { PLAY_SPACE_BOUNDS } from "./directInvite/playSpaceLayout.js";
-import {
-  TUTORIAL_ROOM_ID,
-  TUTORIAL_STAGING_ROOM_ID,
-} from "./tutorial/roomIds.js";
-import { isTutorialFeatureEnabled } from "./tutorial/config.js";
+import { TUTORIAL_ROOM_ID, TUTORIAL_STAGING_ROOM_ID } from "./tutorial/roomIds.js";
 import { TUTORIAL_DEFAULT_BOUNDS } from "./tutorialTemplate/bootstrapShell.js";
 import {
   COSMETIC_GALLERY_BOUNDS,
@@ -402,18 +398,28 @@ export function listRoomDefinitions(): RoomDefinition[] {
           },
         ]
       : []),
-    ...(isTutorialFeatureEnabled()
-      ? [
-          {
-            id: TUTORIAL_ROOM_ID,
-            bounds: { ...TUTORIAL_DEFAULT_BOUNDS },
-            ownerAddress: null,
-            displayName: getBuiltinRoomDisplayName(TUTORIAL_ROOM_ID, "Tutorial Room"),
-            isPublic: false,
-            isBuiltin: true as const,
-          },
-        ]
-      : []),
+    // Always list Tutorial / Tutorial Staging so layout + admin teleporter preview work
+    // even when the learner flow is off (TUTORIAL_ENABLED / admin toggle). Catalog UIs
+    // still hide these rooms; forcing incomplete Pay wallets remains feature-gated.
+    {
+      id: TUTORIAL_ROOM_ID,
+      bounds: { ...TUTORIAL_DEFAULT_BOUNDS },
+      ownerAddress: null,
+      displayName: getBuiltinRoomDisplayName(TUTORIAL_ROOM_ID, "Tutorial Room"),
+      isPublic: false,
+      isBuiltin: true as const,
+    },
+    {
+      id: TUTORIAL_STAGING_ROOM_ID,
+      bounds: { ...TUTORIAL_DEFAULT_BOUNDS },
+      ownerAddress: null,
+      displayName: getBuiltinRoomDisplayName(
+        TUTORIAL_STAGING_ROOM_ID,
+        "Tutorial Staging"
+      ),
+      isPublic: false,
+      isBuiltin: true as const,
+    },
     ...listDynamicRooms().map((r) => ({
       id: r.id,
       bounds: r.bounds,

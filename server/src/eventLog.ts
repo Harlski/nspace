@@ -754,7 +754,79 @@ export function listRecentManualBulkAggregatesFromEventLog(
   return out.slice(0, Math.max(0, limit));
 }
 
+/** In-memory TTL cache for `/api/analytics/overview` snapshots (JSONL scan is expensive). */
+const analyticsOverviewCache = new Map<
+  string,
+  { expiresAt: number; value: EventLogAnalyticsSnapshot }
+>();
+const analyticsOverviewInflight = new Map<string, Promise<EventLogAnalyticsSnapshot>>();
+
+function analyticsOverviewCacheTtlMs(): number {
+  const raw = Number(process.env.ANALYTICS_OVERVIEW_CACHE_TTL_MS);
+  if (Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
+  return 120_000;
+}
+
+function analyticsOverviewCacheKey(
+  maxDays: number,
+  sessionLimit: number,
+  payoutLimit: number,
+  timeWindow?: AnalyticsTimeWindow
+): string {
+  const fromTs = timeWindow?.fromTs ?? null;
+  const toTs = timeWindow?.toTs ?? null;
+  // Rolling windows share one key per UTC day; TTL refreshes within the day.
+  const rollDay =
+    fromTs == null && toTs == null ? utcDayKey(Date.now()) : null;
+  return JSON.stringify({
+    maxDays,
+    sessionLimit,
+    payoutLimit,
+    fromTs,
+    toTs,
+    rollDay,
+  });
+}
+
+/** Test helper: drop overview snapshot cache. */
+export function clearAnalyticsOverviewCache(): void {
+  analyticsOverviewCache.clear();
+  analyticsOverviewInflight.clear();
+}
+
 export async function getEventLogAnalyticsSnapshot(
+  maxDays: number,
+  sessionLimit: number,
+  payoutLimit: number,
+  timeWindow?: AnalyticsTimeWindow
+): Promise<EventLogAnalyticsSnapshot> {
+  const ttlMs = analyticsOverviewCacheTtlMs();
+  if (ttlMs <= 0) {
+    return buildEventLogAnalyticsSnapshot(maxDays, sessionLimit, payoutLimit, timeWindow);
+  }
+
+  const key = analyticsOverviewCacheKey(maxDays, sessionLimit, payoutLimit, timeWindow);
+  const hit = analyticsOverviewCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) {
+    return structuredClone(hit.value);
+  }
+
+  let pending = analyticsOverviewInflight.get(key);
+  if (!pending) {
+    pending = buildEventLogAnalyticsSnapshot(maxDays, sessionLimit, payoutLimit, timeWindow)
+      .then((value) => {
+        analyticsOverviewCache.set(key, { expiresAt: Date.now() + ttlMs, value });
+        return value;
+      })
+      .finally(() => {
+        analyticsOverviewInflight.delete(key);
+      });
+    analyticsOverviewInflight.set(key, pending);
+  }
+  return structuredClone(await pending);
+}
+
+async function buildEventLogAnalyticsSnapshot(
   maxDays: number,
   sessionLimit: number,
   payoutLimit: number,
@@ -779,12 +851,6 @@ export async function getEventLogAnalyticsSnapshot(
   );
   /** Wallets with session_start before the filtered window (for first-time login detection). */
   const seenBeforeWindow = new Set<string>();
-  if (filterFromMs != null) {
-    await forEachRecentEvent(scanDays, (rec) => {
-      if (rec.kind !== ANALYTICS_EVENT_KINDS.sessionStart || !rec.address) return;
-      if (rec.ts < filterFromMs) seenBeforeWindow.add(rec.address);
-    });
-  }
   function inTimeWindow(ts: number): boolean {
     if (filterFromMs != null && ts < filterFromMs) return false;
     if (filterToMs != null && ts > filterToMs) return false;
@@ -907,6 +973,15 @@ export async function getEventLogAnalyticsSnapshot(
   }
 
   await forEachRecentEvent(scanDays, (rec) => {
+    // Single pass: collect pre-window session_starts for first-time detection, then filter.
+    if (
+      filterFromMs != null &&
+      rec.kind === ANALYTICS_EVENT_KINDS.sessionStart &&
+      rec.address &&
+      rec.ts < filterFromMs
+    ) {
+      seenBeforeWindow.add(rec.address);
+    }
     if (!inTimeWindow(analyticsWindowTs(rec))) return;
     const day = utcDayKey(rec.ts);
     const ds = dayState(day);

@@ -73,6 +73,15 @@ docker compose logs payout --tail 50
 docker compose logs nspace --tail 100 | grep -E 'payout-outbox|payout-service|\[event-loop\]'
 ```
 
+If you see regular `[event-loop] stall ~400–500 ms` every ~2.5s while idle, check whether `data/payout-outbox/outbox.jsonl` has grown large (delivered lines used to accumulate forever and were re-parsed every `PAYOUT_OUTBOX_DELIVERY_INTERVAL_MS`). Current builds compact delivered history on startup and after each successful drain; confirm with:
+
+```bash
+ls -lah data/payout-outbox/outbox.jsonl
+wc -l data/payout-outbox/outbox.jsonl
+```
+
+After deploy/restart you should see a one-shot `[payout-outbox] Compacted outbox.jsonl: N → M undelivered` log if history was bloated, then stall spam should stop.
+
 ### Functional smoke
 
 - Complete a block claim (or trigger a test reward) — Pay-Intent appears in Outbox, sidecar logs `[payout-service] Sent …`.

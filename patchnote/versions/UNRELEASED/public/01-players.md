@@ -6,11 +6,3 @@
 ---
 
 _(Draft — not published.)_
-
-- [CHANGE] The Nimiq Pay tutorial room is now a tall portrait path: mine at the south end, Unlock Pad in the middle, exit toward the north.
-- [FIX] After mining in the tutorial, stand beside the Unlock Pad to get an Unlock Pad button above the tile (opens Nimiq Pay).
-- [CHANGE] After you unlock a pad, it becomes a low passable plate for you (others still see the locked block).
-- [CHANGE] Paid Unlock Pads outside the tutorial use on-chain Payment Intent verify; admins can place and configure them in build mode.
-- [NEW] Unlock Pads outside Nimiq Pay open Nimiq Hub checkout for payment (no more copy-memo fallback).
-- [NEW] Admins can place Attention Markers (glowing floating V) over mine blocks, Unlock Pads, or empty tiles to mark where to look or act.
-

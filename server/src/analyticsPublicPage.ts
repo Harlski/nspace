@@ -167,7 +167,7 @@ export function analyticsPublicPageHtml(): string {
       <h2>Unique visitors</h2>
       <div id="visitorsSummary" class="hintline" style="margin-bottom:0.45rem"></div>
       <div id="visitorsChart"></div>
-      <div id="visitorsHover" class="hover-card mono">Hover a bar: bar height is distinct wallets with a login that hour/day. Colors show top wallets by activity (detail list capped at 20 per direction).</div>
+      <div id="visitorsHover" class="hover-card mono">Hover a bar: bar height is distinct wallets with a login that hour/day. Colors show top wallets by activity; remaining uniques (beyond the 20/direction detail list) fold into the grey "other" segment.</div>
       <div id="visitorsPinned" class="mono users-list" style="margin-top:0.6rem"></div>
     </section>
     <section class="panel">
@@ -2127,12 +2127,15 @@ export function analyticsPublicPageHtml(): string {
                 .sort(function (a, c) {
                   return c.ev - a.ev;
                 });
+              // Keep in sync with buildUniqueVisitorBarSegments (analyticsVisitorStack.ts):
+              // detail lists are capped (~20/dir), so listed wallets can be < uniqueTotal.
               var segs = [];
               var otherW = 0;
               usersArr.forEach(function (u, idx) {
                 if (idx < maxSegs) segs.push(u);
                 else otherW += 1;
               });
+              otherW += Math.max(0, hourTotal - usersArr.length);
               if (otherW > 0) {
                 segs.push({ walletId: "", identicon: "", inCount: 0, outCount: 0, stackW: otherW, ev: 0, isOther: true });
               }
@@ -2143,7 +2146,7 @@ export function analyticsPublicPageHtml(): string {
                 segs.forEach(function (u, i) {
                   var pct = Math.max(0.35, (u.stackW / hourTotal) * 100);
                   var label = u.isOther
-                    ? String(usersArr.length - maxSegs) + " other wallets"
+                    ? String(u.stackW) + " other wallet" + (u.stackW === 1 ? "" : "s")
                     : userLabel(u.walletId, u.displayName) +
                       " · " +
                       u.inCount +

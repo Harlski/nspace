@@ -76,6 +76,7 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 | `VITE_API_BASE_URL` | client | API origin when SPA and API differ. Prefer full URL (`https://api.example.com`). Host-only (`api.example.com`) is normalized to `https://…` so it is not treated as a path on the SPA host. |
 | `VITE_WS_BASE_URL` | client | Optional WebSocket origin (`wss://…` or host-only); otherwise derived from resolved API base or page |
 | `EVENT_LOG_DIR` | server | Directory for append-only JSONL replay logs (`events-*.jsonl`); default `server/data/events` |
+| `ANALYTICS_OVERVIEW_CACHE_TTL_MS` | server | In-memory TTL for `GET /api/analytics/overview` snapshots (default **120000** = 2 min). Avoids re-scanning JSONL on every range change / refresh. Set **`0`** to disable. Concurrent identical requests share one in-flight build. |
 | `PIXEL_PAINT_LOG_FILE` | server | Append-only Pixel room paint history for timelapse (`paint` + one-time `baseline` records); default `server/data/pixel/paint-log.jsonl` |
 | `PLACE_RADIUS_BLOCKS` | server | Max horizontal distance for block place/edit/move actions (default `9`) |
 | `WS_METRICS_INTERVAL_MS` | server | Optional — flush WebSocket byte/send counts by message `type` every N ms (stdout + admin System log); `0` or unset = off. See [brainstorm/movement-move-order-broadcast/baseline-metrics.md](brainstorm/movement-move-order-broadcast/baseline-metrics.md) |

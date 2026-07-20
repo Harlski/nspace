@@ -9,6 +9,7 @@ import {
   initOutboxForTests,
   isClaimDeliveredForTests,
   listUndeliveredOutboxForTests,
+  outboxFileSizeForTests,
   reloadOutboxFromDiskForTests,
   clearDeliveredClaimIdsForTests,
 } from "../src/payoutOutbox.js";
@@ -19,7 +20,8 @@ const testIntent = {
   recipientAddress: "NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y",
   amountLuna: 50_000n,
   roomId: "canvas",
-  tileKey: "2,3,0",
+  // Non-grid tileKey so local mining-ban state cannot hold these test intents.
+  tileKey: "test:outbox",
 };
 
 test("outbox persists until acknowledged and redelivers on failure", async (t) => {
@@ -109,4 +111,56 @@ test("outbox delivers after service outage and game-server restart", async (t) =
   await drainOutboxOnce();
   assert.equal(isClaimDeliveredForTests(testIntent.claimId), true);
   assert.equal(listUndeliveredOutboxForTests().length, 0);
+});
+
+test("compacts delivered history out of outbox.jsonl so idle drains stay cheap", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-outbox-compact-"));
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  process.env.PAYOUT_OUTBOX_DIR = dir;
+
+  const deliverer: PayIntentDeliverer = async () => ({ ok: true });
+  initOutboxForTests({ deliverer });
+
+  // Simulate a never-compacted production file: many already-delivered lines still on disk.
+  const outboxPath = path.join(dir, "outbox.jsonl");
+  const deliveredPath = path.join(dir, "delivered-claim-ids.json");
+  const deliveredIds: string[] = [];
+  const lines: string[] = [];
+  for (let i = 0; i < 5000; i++) {
+    const claimId = `hist-claim-${i}`;
+    deliveredIds.push(claimId);
+    lines.push(
+      JSON.stringify({
+        claimId,
+        recipientAddress: testIntent.recipientAddress,
+        amountLuna: "1000",
+        roomId: "hub",
+        tileKey: "test:hist",
+        enqueuedAt: Date.now(),
+      })
+    );
+  }
+  fs.writeFileSync(outboxPath, lines.join("\n") + "\n", "utf8");
+  fs.writeFileSync(deliveredPath, JSON.stringify(deliveredIds), "utf8");
+  const bloatedBytes = fs.statSync(outboxPath).size;
+  assert.ok(bloatedBytes > 100_000, `expected bloated fixture, got ${bloatedBytes}`);
+
+  // Startup / reload must compact delivered history off disk.
+  reloadOutboxFromDiskForTests();
+  assert.equal(listUndeliveredOutboxForTests().length, 0);
+  assert.ok(
+    outboxFileSizeForTests() < 100,
+    `outbox.jsonl should be empty after compact, got ${outboxFileSizeForTests()} bytes (was ${bloatedBytes})`
+  );
+
+  appendPayIntentToOutbox({ ...testIntent, claimId: "fresh-claim" });
+  await drainOutboxOnce();
+  assert.equal(isClaimDeliveredForTests("fresh-claim"), true);
+  assert.equal(listUndeliveredOutboxForTests().length, 0);
+  assert.ok(
+    outboxFileSizeForTests() < 100,
+    "successful delivery must rewrite outbox without the delivered line"
+  );
 });
