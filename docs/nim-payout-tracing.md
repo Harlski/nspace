@@ -44,12 +44,21 @@ After cutover, payout WASM work runs in the sidecar — **not** on the game-serv
 
 | Log | Source | Meaning |
 |-----|--------|---------|
-| `[event-loop] stall <ms> ending at <ISO>` | `server/src/adminSystemMonitor.ts` | Node event loop blocked on **nspace**. Should **not** correlate with payout sends after cutover. |
+| `[event-loop] stall <ms> ending at <ISO> (<gc summary>)` | `server/src/adminSystemMonitor.ts` | Node event loop blocked on **nspace**. Should **not** correlate with payout sends after cutover. |
 | `[payout-service] Sent …` | `payout-service` container | On-chain send completed in the sidecar. |
 
 ```bash
 EVENT_LOOP_STALL_LOG_MS=50    # log event-loop stalls >= 50 ms (0 disables)
 ```
+
+### GC attribution on stall lines
+
+Each stall line ends with a garbage-collection summary for the blocked window, so you can tell **at a glance** whether the stall was V8 collecting or application code:
+
+- `gc 0 ms` — no GC in the window; the stall is **application code** (persistence writes, tick loop, a periodic job). Add per-operation timing to the suspect next.
+- `gc 812 ms in window: 2 major, 5 minor` — the window was dominated by **garbage collection**; tune heap size / allocation rate rather than chasing a specific handler.
+
+The summary uses a `PerformanceObserver` on GC events (no `--expose-gc` flag needed) and the `performance.now()` timeline, so it costs nothing when idle and stays accurate under load.
 
 On the **client**, the debug stats panel (click your own identicon) shows a **server round-trip-time graph** — periodic spikes during payouts should flatten after cutover.
 

@@ -88,6 +88,10 @@ export function analyticsPublicPageHtml(): string {
     .overview-stat .label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8b9cb3; margin-bottom: 0.15rem; }
     .overview-stat .value { font-size: 1.15rem; font-weight: 600; color: #e8f0fc; font-variant-numeric: tabular-nums; }
     .overview-stat .sub { font-size: 0.72rem; color: #91a2b9; margin-top: 0.1rem; }
+    .flag-stat-img { width: 1.35rem; height: 1rem; object-fit: cover; border-radius: 2px; vertical-align: middle; background: #202a3a; }
+    .flag-row { display: grid; grid-template-columns: 1.6rem minmax(2.5rem, auto) 1fr auto; gap: 0.45rem; align-items: center; margin: 0.28rem 0; font-size: 0.82rem; }
+    .flag-row .code { color: #c8d4e4; font-variant-numeric: tabular-nums; min-width: 1.6rem; }
+    .flag-row .share { color: #91a2b9; font-variant-numeric: tabular-nums; min-width: 3.2rem; text-align: right; }
     .compact-table-wrap { max-height: 320px; overflow: auto; margin-top: 0.25rem; }
     .show-more-btn { margin-top: 0.35rem; background: transparent; color: #8b9cb3; border: 1px solid #324258; border-radius: 5px; padding: 0.2rem 0.5rem; cursor: pointer; font: inherit; font-size: 0.76rem; }
     .show-more-btn:hover { color: #dce4ee; border-color: #5aa0ff; }
@@ -150,6 +154,18 @@ export function analyticsPublicPageHtml(): string {
   <section id="overviewPanel" class="panel overview-panel mono" style="display:none">
     <h2>Overview</h2>
     <div id="overviewStats" class="overview-grid"></div>
+  </section>
+  <section id="chosenFlagsPanel" class="panel overview-panel mono" style="display:none">
+    <h2>Chosen flags</h2>
+    <div id="chosenFlagsSummary" class="overview-grid" style="margin-bottom:0.55rem"></div>
+    <div id="chosenFlagsList"></div>
+    <p class="hintline">Current Country on unique visitors in range — chosen flag, not proven location. Shares are of unique visitors.</p>
+  </section>
+  <section id="nimiqPayPanel" class="panel overview-panel mono" style="display:none">
+    <h2>Nimiq Pay</h2>
+    <div id="nimiqPaySummary" class="overview-grid" style="margin-bottom:0.55rem"></div>
+    <div id="nimiqPayDaily" class="mono"></div>
+    <p class="hintline">Activity = wallets with ≥1 Pay-tagged session in range. First-time = first-ever session in logs was Pay and fell in this range. Returning = Pay activity wallets also seen before the range. NIM is payouts to the activity cohort.</p>
   </section>
   <div id="analyticsGrid" class="grid" style="display:none">
     <section class="panel">
@@ -479,9 +495,13 @@ export function analyticsPublicPageHtml(): string {
       var authGateEl = document.getElementById("authGate");
       var gridEl = document.getElementById("analyticsGrid");
       var overviewEl = document.getElementById("overviewPanel");
+      var chosenFlagsEl = document.getElementById("chosenFlagsPanel");
+      var nimiqPayEl = document.getElementById("nimiqPayPanel");
       function setAuthedVisible(visible) {
         if (gridEl) gridEl.style.display = visible ? "grid" : "none";
         if (overviewEl) overviewEl.style.display = visible ? "block" : "none";
+        if (chosenFlagsEl) chosenFlagsEl.style.display = visible ? "block" : "none";
+        if (nimiqPayEl) nimiqPayEl.style.display = visible ? "block" : "none";
       }
       function parseJwtSub(token) {
         try {
@@ -2295,6 +2315,158 @@ export function analyticsPublicPageHtml(): string {
         }
       }
 
+      function renderChosenFlags() {
+        var sumEl = document.getElementById("chosenFlagsSummary");
+        var listEl = document.getElementById("chosenFlagsList");
+        if (!sumEl || !listEl) return;
+        var cf = data.chosenFlags || {};
+        var unique = Number(cf.uniqueVisitors != null ? cf.uniqueVisitors : data.uniqueVisitors) || 0;
+        var withFlag = Number(cf.withFlag) || 0;
+        var withoutFlag = Number(cf.withoutFlag != null ? cf.withoutFlag : Math.max(0, unique - withFlag)) || 0;
+        var pickRate = unique > 0 ? ((withFlag / unique) * 100).toFixed(1) + "%" : "-";
+        sumEl.innerHTML = [
+          { label: "With a flag", value: String(withFlag), sub: pickRate + " of unique visitors" },
+          { label: "No flag", value: String(withoutFlag), sub: "unset Country" },
+          { label: "Distinct flags", value: String((cf.byCountry || []).length), sub: "countries chosen" },
+        ]
+          .map(function (s) {
+            return (
+              "<div class='overview-stat'><div class='label'>" +
+              esc(s.label) +
+              "</div><div class='value'>" +
+              esc(s.value) +
+              "</div><div class='sub'>" +
+              esc(s.sub) +
+              "</div></div>"
+            );
+          })
+          .join("");
+        var rows = Array.isArray(cf.byCountry) ? cf.byCountry : [];
+        if (!rows.length) {
+          listEl.innerHTML = "<p class='status' style='margin:0.35rem 0 0'>No chosen flags among unique visitors in this window.</p>";
+          return;
+        }
+        var maxCount = 1;
+        rows.forEach(function (r) {
+          var c = Number(r.count) || 0;
+          if (c > maxCount) maxCount = c;
+        });
+        var rowHtml = rows.map(function (r) {
+          var code = String(r.code || "").toUpperCase();
+          var count = Number(r.count) || 0;
+          var share = unique > 0 ? ((count / unique) * 100).toFixed(1) + "%" : "-";
+          var barPct = Math.max(2, Math.round((count / maxCount) * 100));
+          var img =
+            /^[A-Z]{2}$/.test(code)
+              ? "<img class='flag-stat-img' src='/flags/" +
+                esc(code.toLowerCase()) +
+                ".svg' alt='' width='22' height='16' loading='lazy'/>"
+              : "<span class='flag-stat-img' aria-hidden='true'></span>";
+          return (
+            "<div class='flag-row'>" +
+            img +
+            "<span class='code'>" +
+            esc(code) +
+            "</span>" +
+            "<div class='barWrap' title='" +
+            esc(code) +
+            ": " +
+            count +
+            " (" +
+            share +
+            ")'><div class='bar' style='width:" +
+            barPct +
+            "%'></div></div>" +
+            "<span class='share'>" +
+            count +
+            " · " +
+            share +
+            "</span></div>"
+          );
+        });
+        var limit = COMPACT_ROW_LIMIT;
+        var html = "<div class='compact-table-wrap'>";
+        rowHtml.forEach(function (h, i) {
+          if (i < limit) html += h;
+          else html += "<div class='compact-hidden' style='display:none'>" + h + "</div>";
+        });
+        var hidden = rowHtml.length - limit;
+        if (hidden > 0) {
+          html +=
+            "<button type='button' class='show-more-btn'>Show " + hidden + " more</button>";
+        }
+        html += "</div>";
+        listEl.innerHTML = html;
+        attachCopyHandlers(listEl);
+      }
+
+      function renderNimiqPay() {
+        var sumEl = document.getElementById("nimiqPaySummary");
+        var dailyEl = document.getElementById("nimiqPayDaily");
+        if (!sumEl || !dailyEl) return;
+        var np = data.nimiqPay || {};
+        var uniqueAll = Number(data.uniqueVisitors) || 0;
+        var payUnique = Number(np.uniqueVisitors) || 0;
+        var otherUnique = Number(np.otherUniqueVisitors != null ? np.otherUniqueVisitors : Math.max(0, uniqueAll - payUnique)) || 0;
+        var firstTime = Number(np.firstTime) || 0;
+        var returning = Number(np.returning) || 0;
+        var payShare = uniqueAll > 0 ? ((payUnique / uniqueAll) * 100).toFixed(1) + "%" : "-";
+        var payNim = String(np.payoutNimToPayVisitors || "0");
+        sumEl.innerHTML = [
+          { label: "Pay unique (DAU-style)", value: String(payUnique), sub: payShare + " of unique visitors" },
+          { label: "Pay first-time", value: String(firstTime), sub: "first-ever session was Pay" },
+          { label: "Pay returning", value: String(returning), sub: "Pay in range, seen before" },
+          { label: "Other unique", value: String(otherUnique), sub: "no Pay session in range" },
+          { label: "Pay session starts", value: String(Number(np.sessionStarts) || 0), sub: "includes reconnects" },
+          { label: "Pay active play", value: fmtMs(Number(np.activePlayMs) || 0), sub: "ended Pay sessions, AFK capped" },
+          { label: "NIM to Pay cohort", value: payNim, sub: "payouts to Pay unique wallets" },
+        ]
+          .map(function (s) {
+            return (
+              "<div class='overview-stat'><div class='label'>" +
+              esc(s.label) +
+              "</div><div class='value'>" +
+              esc(s.value) +
+              "</div><div class='sub'>" +
+              esc(s.sub) +
+              "</div></div>"
+            );
+          })
+          .join("");
+        var rows = Array.isArray(np.byDay) ? np.byDay.slice() : [];
+        if (!rows.length) {
+          dailyEl.innerHTML = "<p class='status' style='margin:0.35rem 0 0'>No Nimiq Pay sessions in this window.</p>";
+          return;
+        }
+        var uniqueByDay = {};
+        (data.daily || []).forEach(function (d) {
+          uniqueByDay[d.dayUtc] = Number(d.uniquePlayers) || 0;
+        });
+        dailyEl.innerHTML = compactTableHtml(
+          "<thead><tr><th>Day</th><th class='right'>Pay unique</th><th class='right'>Pay FTU</th><th class='right'>Share of day</th></tr></thead>",
+          rows.map(function (r) {
+            var dayUnique = uniqueByDay[r.dayUtc] || 0;
+            var share =
+              dayUnique > 0
+                ? (((Number(r.uniquePay) || 0) / dayUnique) * 100).toFixed(1) + "%"
+                : "-";
+            return (
+              "<tr><td>" +
+              esc(r.dayUtc) +
+              "</td><td class='right'>" +
+              (r.uniquePay || 0) +
+              "</td><td class='right'>" +
+              (r.firstTimePay || 0) +
+              "</td><td class='right'>" +
+              share +
+              "</td></tr>"
+            );
+          }),
+          14
+        );
+        attachCopyHandlers(dailyEl);
+      }
+
       function renderEngagement() {
         var sumEl = document.getElementById("engagementSummary");
         var dailyEl = document.getElementById("engagementDaily");
@@ -2359,6 +2531,8 @@ export function analyticsPublicPageHtml(): string {
         refreshVisitorsByHour();
         rebuildRecentPayoutBuckets();
         renderOverview();
+        renderChosenFlags();
+        renderNimiqPay();
         renderEngagement();
         renderFocusUserBanner();
         renderLogin();

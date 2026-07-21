@@ -3,7 +3,12 @@
  * and a small ring buffer of lines (WS metrics + periodic samples).
  */
 
-import { monitorEventLoopDelay } from "node:perf_hooks";
+import {
+  monitorEventLoopDelay,
+  PerformanceObserver,
+  performance,
+  constants as perfConstants,
+} from "node:perf_hooks";
 
 const SAMPLE_MS = 5000;
 const SERIES_CAP = 120;
@@ -21,6 +26,63 @@ const STALL_PROBE_MS = 250;
 const STALL_LOG_MS = Math.max(0, Number(process.env.EVENT_LOOP_STALL_LOG_MS ?? 50));
 
 let stallTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * GC attribution for stalls. A `PerformanceObserver` on GC events lets each stall line
+ * report how much of the blocked window V8 spent collecting - the cheapest way to decide
+ * whether a stall is garbage collection (tune heap/allocation) or application code (add
+ * per-op timing to the suspect job). Entries live on the `performance.now()` timeline, so
+ * the stall probe tracks its window on that same clock. No `--expose-gc` needed.
+ */
+type GcEvent = { end: number; duration: number; kind: number };
+const gcRing: GcEvent[] = [];
+const GC_RING_MAX_AGE_MS = 30_000;
+let gcObserver: PerformanceObserver | null = null;
+
+function gcKindLabel(kind: number): string {
+  switch (kind) {
+    case perfConstants.NODE_PERFORMANCE_GC_MAJOR:
+      return "major";
+    case perfConstants.NODE_PERFORMANCE_GC_MINOR:
+      return "minor";
+    case perfConstants.NODE_PERFORMANCE_GC_INCREMENTAL:
+      return "incremental";
+    case perfConstants.NODE_PERFORMANCE_GC_WEAKCB:
+      return "weakcb";
+    default:
+      return "gc";
+  }
+}
+
+/** Move any queued GC entries into the ring and prune stale ones. */
+function drainGcEntries(): void {
+  if (!gcObserver) return;
+  const nowPerf = performance.now();
+  for (const e of gcObserver.takeRecords()) {
+    const kind = (e as unknown as { detail?: { kind?: number } }).detail?.kind ?? 0;
+    gcRing.push({ end: e.startTime + e.duration, duration: e.duration, kind });
+  }
+  const cutoff = nowPerf - GC_RING_MAX_AGE_MS;
+  let drop = 0;
+  while (drop < gcRing.length && gcRing[drop].end < cutoff) drop++;
+  if (drop > 0) gcRing.splice(0, drop);
+}
+
+/** Summarise GC that finished within [windowStartPerf, windowEndPerf]. */
+function gcSummaryForWindow(windowStartPerf: number, windowEndPerf: number): string {
+  let totalMs = 0;
+  const counts = new Map<number, number>();
+  for (const g of gcRing) {
+    if (g.end < windowStartPerf || g.end > windowEndPerf) continue;
+    totalMs += g.duration;
+    counts.set(g.kind, (counts.get(g.kind) ?? 0) + 1);
+  }
+  if (counts.size === 0) return "gc 0 ms";
+  const parts = [...counts.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([kind, n]) => `${n} ${gcKindLabel(kind)}`);
+  return `gc ${Math.round(totalMs)} ms in window: ${parts.join(", ")}`;
+}
 
 export type AdminSystemLogLevel = "info" | "warn" | "error";
 
@@ -116,17 +178,33 @@ export function getAdminSystemSnapshot(): {
   };
 }
 
+function startGcObserver(): void {
+  if (gcObserver) return;
+  try {
+    gcObserver = new PerformanceObserver(() => drainGcEntries());
+    gcObserver.observe({ entryTypes: ["gc"], buffered: false });
+  } catch {
+    gcObserver = null;
+    appendAdminSystemLog("warn", "[system] GC observer unavailable; stall lines omit GC attribution");
+  }
+}
+
 function startEventLoopStallProbe(): void {
   if (stallTimer || STALL_LOG_MS <= 0) return;
   let expected = Date.now() + STALL_PROBE_MS;
+  let lastTickPerf = performance.now();
   const tick = (): void => {
     const now = Date.now();
+    const nowPerf = performance.now();
     const lateMs = now - expected;
     if (lateMs >= STALL_LOG_MS) {
-      const msg = `[event-loop] stall ${lateMs} ms ending at ${new Date(now).toISOString()}`;
+      drainGcEntries();
+      const gcSummary = gcSummaryForWindow(lastTickPerf, nowPerf);
+      const msg = `[event-loop] stall ${lateMs} ms ending at ${new Date(now).toISOString()} (${gcSummary})`;
       console.warn(msg);
       appendAdminSystemLog("warn", msg);
     }
+    lastTickPerf = nowPerf;
     expected = Date.now() + STALL_PROBE_MS;
     stallTimer = setTimeout(tick, STALL_PROBE_MS);
     if (typeof stallTimer.unref === "function") stallTimer.unref();
@@ -150,5 +228,6 @@ export function startAdminSystemMonitor(): void {
   sampleTimer = setInterval(sampleOnce, SAMPLE_MS);
   if (typeof sampleTimer.unref === "function") sampleTimer.unref();
   sampleOnce();
+  startGcObserver();
   startEventLoopStallProbe();
 }

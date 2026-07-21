@@ -3,8 +3,17 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
+import {
+  aggregateChosenFlags,
+  type ChosenFlagsStats,
+} from "./analyticsChosenFlags.js";
+import {
+  finalizeNimiqPayAnalytics,
+  type NimiqPayAnalytics,
+} from "./analyticsNimiqPay.js";
 import { nimiqIdenticonDataUrl } from "./nimiqIdenticonServer.js";
 import { playerWalletLabel } from "./playerWalletLabel.js";
+import { getPlayerCountry } from "./worldcup/scoreStore.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -223,6 +232,16 @@ export type EventLogAnalyticsSnapshot = {
   firstTimeLogins: number;
   uniqueVisitors: number;
   visitors: AnalyticsUniqueVisitorRow[];
+  /**
+   * Distribution of **current** chosen Country among `uniqueVisitors` wallets
+   * (profile flag / Flag Emote identity — not location, not emote usage).
+   */
+  chosenFlags: ChosenFlagsStats;
+  /**
+   * Nimiq Pay cohort in the window: activity (Pay-tagged sessions) and acquisition
+   * (first-ever session was Pay). See {@link NimiqPayAnalytics}.
+   */
+  nimiqPay: NimiqPayAnalytics;
   loginByHourUtc: LoginHourBucket[];
   payoutByHourUtc: PayoutHourBucket[];
   /** Populated when `chartGranularity` is `day` (e.g. month view). */
@@ -903,8 +922,14 @@ async function buildEventLogAnalyticsSnapshot(
       endedAt: number | null;
       lastActivityTs: number;
       activeMs: number;
+      nimiqPay: boolean;
     }
   >();
+  const payVisitors = new Set<string>();
+  const payFirstTime = new Set<string>();
+  let paySessionStarts = 0;
+  const payUniqueByDay = new Map<string, Set<string>>();
+  const payFirstByDay = new Map<string, Set<string>>();
   const payouts: NimTimelineRow[] = [];
   const startByHourUser = Array.from({ length: 24 }, () => new Map<string, number>());
   const endByHourUser = Array.from({ length: 24 }, () => new Map<string, number>());
@@ -1006,6 +1031,18 @@ async function buildEventLogAnalyticsSnapshot(
       uset.add(rec.address);
       const isFirstEver =
         !seenBeforeWindow.has(rec.address) && !firstSeenSessionStart.has(rec.address);
+      const isPay =
+        (rec.payload as { nimiqPay?: unknown } | undefined)?.nimiqPay === true;
+      if (isPay) {
+        paySessionStarts += 1;
+        payVisitors.add(rec.address);
+        let payDay = payUniqueByDay.get(day);
+        if (!payDay) {
+          payDay = new Set();
+          payUniqueByDay.set(day, payDay);
+        }
+        payDay.add(rec.address);
+      }
       if (useDayCharts) {
         startsByDay.set(day, (startsByDay.get(day) ?? 0) + 1);
         const sm = startByDayUser.get(day) ?? new Map<string, number>();
@@ -1028,6 +1065,15 @@ async function buildEventLogAnalyticsSnapshot(
       }
       if (isFirstEver) {
         firstSeenSessionStart.add(rec.address);
+        if (isPay) {
+          payFirstTime.add(rec.address);
+          let payFirstDay = payFirstByDay.get(day);
+          if (!payFirstDay) {
+            payFirstDay = new Set();
+            payFirstByDay.set(day, payFirstDay);
+          }
+          payFirstDay.add(rec.address);
+        }
       }
       ds.sessionStarts += 1;
       visitorState(rec.address).sessionStarts += 1;
@@ -1038,6 +1084,7 @@ async function buildEventLogAnalyticsSnapshot(
         endedAt: null,
         lastActivityTs: rec.ts,
         activeMs: 0,
+        nimiqPay: isPay,
       });
       return;
     }
@@ -1071,6 +1118,7 @@ async function buildEventLogAnalyticsSnapshot(
           endedAt: rec.ts,
           lastActivityTs: startedAt,
           activeMs: Math.min(wall, ANALYTICS_ACTIVE_PLAY_IDLE_CAP_MS),
+          nimiqPay: false,
         });
       }
       return;
@@ -1180,10 +1228,12 @@ async function buildEventLogAnalyticsSnapshot(
     string,
     { address: string; roomId: string; activeMs: number; wallMs: number; sessionCount: number }
   >();
+  let payActivePlayMs = 0;
   for (const v of bySession.values()) {
     if (!v.endedAt) continue;
     const wallMs = Math.max(0, v.endedAt - v.startedAt);
     const activeMs = Math.min(v.activeMs, wallMs);
+    if (v.nimiqPay) payActivePlayMs += activeMs;
     const key = `${v.address}\t${v.roomId}`;
     const cur = roomAgg.get(key) ?? {
       address: v.address,
@@ -1345,6 +1395,21 @@ async function buildEventLogAnalyticsSnapshot(
     firstTimeLogins: firstSeenSessionStart.size,
     uniqueVisitors: visitors.size,
     visitors: visitorOut,
+    chosenFlags: aggregateChosenFlags(visitors.keys(), getPlayerCountry),
+    nimiqPay: finalizeNimiqPayAnalytics({
+      windowUniqueVisitors: visitors.size,
+      payVisitors,
+      payFirstTime,
+      seenBeforeWindow,
+      paySessionStarts,
+      payActivePlayMs,
+      visitorPayoutLuna: new Map(
+        [...visitors.entries()].map(([w, row]) => [w, row.totalPayoutLuna])
+      ),
+      payUniqueByDay,
+      payFirstByDay,
+      formatLunaToNim,
+    }),
     loginByHourUtc,
     payoutByHourUtc,
     loginByDayUtc,

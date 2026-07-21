@@ -40,6 +40,14 @@ describe("getEventLogAnalyticsSnapshot cache", () => {
     const a = await getEventLogAnalyticsSnapshot(7, 50, 50);
     const generatedAt = a.generatedAt;
     assert.ok(a.uniqueVisitors >= 1);
+    assert.ok(a.chosenFlags);
+    assert.equal(a.chosenFlags.uniqueVisitors, a.uniqueVisitors);
+    assert.equal(typeof a.chosenFlags.withFlag, "number");
+    assert.ok(Array.isArray(a.chosenFlags.byCountry));
+    assert.ok(a.nimiqPay);
+    assert.equal(typeof a.nimiqPay.uniqueVisitors, "number");
+    assert.equal(typeof a.nimiqPay.firstTime, "number");
+    assert.ok(Array.isArray(a.nimiqPay.byDay));
 
     // Append another start; cache should still return the prior snapshot.
     beginSession("NQTESTADDR2XXXXXXXXXXXXXXXXXXXXX", "hub");

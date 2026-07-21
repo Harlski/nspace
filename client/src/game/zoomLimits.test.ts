@@ -33,6 +33,16 @@ describe("hub zoom limits", () => {
     expect(normalZoomMax({ ...base, telescopeHoldActive: false })).toBe(18);
   });
 
+  it("lets admin map-overview unlock bypass the hub frustum cap", () => {
+    expect(
+      normalZoomMax({
+        ...base,
+        mapOverviewUnlocked: true,
+        telescopeHoldActive: false,
+      })
+    ).toBe(24);
+  });
+
   it("raises effective max to telescope frustum while held", () => {
     expect(
       effectiveZoomMax({ ...base, telescopeHoldActive: true })

@@ -56,8 +56,12 @@ export type ZoomLimitContext = {
 /** Max zoom-out without Telescope (room caps beat persisted zoomMax). */
 export function normalZoomMax(ctx: ZoomLimitContext): number {
   let max = Math.max(ctx.zoomMax, ctx.roomZoomMax);
-  const cap = roomFrustumCap(ctx.roomId);
-  if (cap != null) max = Math.min(max, cap);
+  // Hub/chamber hard caps apply to players; admins (map overview unlocked) keep their
+  // custom Max frustum from the admin camera panel.
+  if (!ctx.mapOverviewUnlocked) {
+    const cap = roomFrustumCap(ctx.roomId);
+    if (cap != null) max = Math.min(max, cap);
+  }
   if (
     !ctx.mapOverviewUnlocked &&
     !ctx.streamPresentationActive &&
