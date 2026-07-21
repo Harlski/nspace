@@ -25,6 +25,12 @@ export type AppConfig = {
   autoBulkAfterMs: number;
   /** How often to scan for stale pending jobs eligible for auto bulk (ms). */
   autoBulkCheckIntervalMs: number;
+  /** How often to reconcile broadcast-but-unconfirmed payouts against the chain (0 = off). */
+  reconcileIntervalMs: number;
+  /** How long a broadcast payout may stay unconfirmed before it is escalated to
+   *  manual review instead of being re-queued (guards against double-paying a tx
+   *  the node has merely pruned from its lookup index). */
+  unconfirmedReviewMs: number;
 };
 
 function req(name: string, v: string | undefined): string {
@@ -82,6 +88,14 @@ export function loadConfig(): AppConfig {
     autoBulkCheckIntervalMs: Math.max(
       60_000,
       Number(process.env.NIM_PAYOUT_AUTO_BULK_CHECK_MS ?? 300_000)
+    ),
+    reconcileIntervalMs: Math.max(
+      0,
+      Number(process.env.NIM_PAYOUT_RECONCILE_INTERVAL_MS ?? 60_000)
+    ),
+    unconfirmedReviewMs: Math.max(
+      600_000,
+      Number(process.env.NIM_PAYOUT_UNCONFIRMED_REVIEW_MS ?? 10_800_000)
     ),
   };
 }

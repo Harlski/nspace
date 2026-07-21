@@ -245,6 +245,27 @@ export function adminRoomsPageHtml(): string {
         "<div class='room-builder-results' data-builder-results hidden></div></div></div>";
     }
 
+    // Ownership transfer is only meaningful for player rooms (built-in and
+    // official rooms have no per-wallet owner).
+    function ownerTransferHtml(room) {
+      if (room.isBuiltin || room.isOfficial) return "";
+      var current = room.ownerAddress
+        ? "<span class='builder-label' title='" + esc(room.ownerAddress) + "'>" + esc(builderLabel(room.ownerAddress)) +
+          "<span class='mono'>" + esc(walletShort(room.ownerAddress)) + "</span></span>"
+        : "<span class='builder-label'>No owner</span>";
+      var pending = "";
+      if (room.pendingOwnerAddress) {
+        pending = "<div class='room-builder-item'><span class='builder-label' title='" + esc(room.pendingOwnerAddress) + "'>New owner: " +
+          esc(builderLabel(room.pendingOwnerAddress)) + "<span class='mono'>" + esc(walletShort(room.pendingOwnerAddress)) + "</span></span>" +
+          "<button class='btn btn--ghost' data-owner-clear>Undo</button></div>";
+      }
+      return "<div class='room-builders'><label>Owner (transfer)</label>" +
+        "<div class='room-builder-list'><div class='room-builder-item'>" + current + "</div>" + pending + "</div>" +
+        "<div class='room-builder-add room-builder-combo'>" +
+        "<input type='text' data-owner-search placeholder='Transfer to user by name or NQ…' autocomplete='off'/>" +
+        "<div class='room-builder-results' data-owner-results hidden></div></div></div>";
+    }
+
     function cardHtml(room) {
       var tags = categoryTag(room) +
         (room.isPublic ? "" : "<span class='room-tag room-tag--hidden'>Hidden</span>") +
@@ -268,6 +289,7 @@ export function adminRoomsPageHtml(): string {
             "<option value='white'" + (neutralSel === "white" ? " selected" : "") + ">White</option>" +
           "</select>" +
         "</div></div>" +
+        ownerTransferHtml(room) +
         builderListHtml(room) +
         "<div class='room-row'><button class='btn' data-save>Save changes</button><span class='room-card-status' data-card-status></span></div>" +
         "</div>";
@@ -560,6 +582,10 @@ export function adminRoomsPageHtml(): string {
         if (room.backgroundNeutral !== neutral) patch.backgroundNeutral = neutral;
       }
       if (room.builderEditable) patch.builderAddresses = (room.builderAddresses || []).slice();
+      if (!room.isBuiltin && !room.isOfficial && room.pendingOwnerAddress) {
+        var curOwner = walletCompact(room.ownerAddress || "");
+        if (room.pendingOwnerAddress !== curOwner) patch.ownerAddress = room.pendingOwnerAddress;
+      }
       return patch;
     }
 
@@ -652,6 +678,76 @@ export function adminRoomsPageHtml(): string {
       });
     }
 
+    function ownerMatches(room, query) {
+      var cur = walletCompact(room.ownerAddress || "");
+      var q = String(query || "").trim().toLowerCase();
+      var qCompact = walletCompact(query);
+      var out = [];
+      for (var i = 0; i < usersData.length && out.length < 40; i++) {
+        var u = usersData[i];
+        if (u.wallet === cur) continue;
+        if (q) {
+          var nameHit = u.username && u.username.toLowerCase().indexOf(q) !== -1;
+          var walletHit = u.wallet.indexOf(qCompact) !== -1;
+          if (!nameHit && !walletHit) continue;
+        }
+        out.push(u);
+      }
+      return out;
+    }
+
+    function bindOwnerCombo(card, room, statusEl) {
+      var searchInput = card.querySelector("[data-owner-search]");
+      var resultsEl = card.querySelector("[data-owner-results]");
+      if (!searchInput || !resultsEl) return;
+
+      function setOwner(w) {
+        var c = walletCompact(w);
+        if (!/^NQ[0-9A-Z]{34}$/.test(c)) { statusEl.className = "room-card-status err"; statusEl.textContent = "Invalid NQ address."; return; }
+        if (c === walletCompact(room.ownerAddress || "")) { statusEl.className = "room-card-status err"; statusEl.textContent = "That wallet already owns this room."; return; }
+        room.pendingOwnerAddress = c;
+        rerender();
+      }
+
+      function renderResults() {
+        var matches = ownerMatches(room, searchInput.value);
+        var raw = walletCompact(searchInput.value);
+        var html = matches.map(function (u) {
+          var name = u.username || walletLabelShort(u.wallet);
+          return "<div class='room-builder-result' data-owner-pick='" + esc(u.wallet) + "'>" +
+            "<span class='builder-name'>" + esc(name) + "</span>" +
+            "<span class='builder-addr mono'>" + esc(walletShort(u.wallet)) + "</span></div>";
+        }).join("");
+        if (!html) {
+          if (/^NQ[0-9A-Z]{34}$/.test(raw)) {
+            html = "<div class='room-builder-result' data-owner-pick='" + esc(raw) + "'>" +
+              "<span class='builder-name'>Transfer to this wallet</span>" +
+              "<span class='builder-addr mono'>" + esc(walletShort(raw)) + "</span></div>";
+          } else {
+            html = "<div class='room-builder-empty'>No matching users.</div>";
+          }
+        }
+        resultsEl.innerHTML = html;
+        resultsEl.hidden = false;
+        resultsEl.querySelectorAll("[data-owner-pick]").forEach(function (el) {
+          el.addEventListener("mousedown", function (e) { e.preventDefault(); setOwner(el.getAttribute("data-owner-pick")); });
+        });
+      }
+
+      searchInput.addEventListener("focus", renderResults);
+      searchInput.addEventListener("input", renderResults);
+      searchInput.addEventListener("blur", function () { setTimeout(function () { resultsEl.hidden = true; }, 150); });
+      searchInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          var first = resultsEl.querySelector("[data-owner-pick]");
+          if (first) setOwner(first.getAttribute("data-owner-pick"));
+        } else if (e.key === "Escape") {
+          resultsEl.hidden = true;
+        }
+      });
+    }
+
     function bindCard(card) {
       var id = card.getAttribute("data-room-id");
       var room = roomsData.find(function (r) { return r.id === id; });
@@ -660,6 +756,9 @@ export function adminRoomsPageHtml(): string {
       var saveBtn = card.querySelector("[data-save]");
       if (saveBtn) saveBtn.addEventListener("click", function () { void saveRoom(card, room, statusEl); });
       bindBuilderCombo(card, room, statusEl);
+      bindOwnerCombo(card, room, statusEl);
+      var ownerClearBtn = card.querySelector("[data-owner-clear]");
+      if (ownerClearBtn) ownerClearBtn.addEventListener("click", function () { room.pendingOwnerAddress = ""; rerender(); });
       card.querySelectorAll("[data-builder-remove]").forEach(function (btn) {
         btn.addEventListener("click", function () {
           var w = btn.getAttribute("data-builder-remove");

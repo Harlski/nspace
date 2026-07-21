@@ -100,6 +100,7 @@ import {
   normalizeBackgroundHuePatch,
   normalizeBackgroundNeutralPatch,
   normalizeBuilderAddressesPatch,
+  normalizeOwnerAddressPatch,
   updateDynamicRoomMetadata,
 } from "./roomRegistry.js";
 import {
@@ -2674,6 +2675,7 @@ app.put("/api/admin/rooms/:id", requireSystemAdminWallet, (req, res) => {
     backgroundNeutral?: "black" | "white" | "gray" | null;
     joinSpawn?: { x: number; z: number } | null;
     builderAddresses?: string[];
+    ownerAddress?: string;
   } = {};
 
   if (body.displayName !== undefined) {
@@ -2720,12 +2722,26 @@ app.put("/api/admin/rooms/:id", requireSystemAdminWallet, (req, res) => {
     }
     patch.builderAddresses = builders.builders;
   }
+  if (body.ownerAddress !== undefined) {
+    const owner = normalizeOwnerAddressPatch(body.ownerAddress);
+    if (!owner.ok) {
+      res.status(400).json({ error: owner.reason });
+      return;
+    }
+    patch.ownerAddress = owner.owner;
+  }
 
   if (isBuiltinRoomId(roomId)) {
     if (patch.joinSpawn !== undefined) {
       res
         .status(400)
         .json({ error: "Built-in rooms do not support a custom join spawn." });
+      return;
+    }
+    if (patch.ownerAddress !== undefined) {
+      res
+        .status(400)
+        .json({ error: "Built-in rooms cannot have an owner." });
       return;
     }
     const out = patchBuiltinRoomSettings(roomId, {

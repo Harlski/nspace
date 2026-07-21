@@ -34,6 +34,8 @@ function testCfg(dataDir: string): AppConfig {
     deadLetterAfterAttempts: 80,
     autoBulkAfterMs: 0,
     autoBulkCheckIntervalMs: 300_000,
+    reconcileIntervalMs: 0,
+    unconfirmedReviewMs: 10_800_000,
   };
 }
 

@@ -123,6 +123,20 @@ export function normalizeNimWalletId(w: string): string {
   return String(w || "").replace(/\s+/g, "").toUpperCase();
 }
 
+/**
+ * Canonical, consistently spaced user-friendly form of a Nimiq address, so the
+ * same wallet cannot appear under both spaced and unspaced variants in the queue.
+ * Well-formed addresses become "NQxx xxxx …" (groups of four); anything that does
+ * not look like a Nimiq address is passed through trimmed and unchanged.
+ */
+export function canonicalizeNimAddress(w: string): string {
+  const normalized = normalizeNimWalletId(w);
+  if (/^NQ[0-9]{2}[A-Z0-9]{32}$/.test(normalized)) {
+    return normalized.replace(/.{4}/g, "$& ").trim();
+  }
+  return String(w || "").trim();
+}
+
 export function formatLunaAsNim4(luna: bigint): string {
   return (Number(luna) / 100_000).toFixed(4);
 }

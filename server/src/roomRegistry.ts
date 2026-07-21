@@ -152,6 +152,20 @@ export function sanitizeBuilderAddresses(list: unknown): string[] {
   return out;
 }
 
+/** Validate a single wallet address for an ownership transfer (compact NQ). */
+export function normalizeOwnerAddressPatch(
+  v: unknown
+): { ok: true; owner: string } | { ok: false; reason: string } {
+  const c = normalizeBuilderAddress(v);
+  if (!c) {
+    return {
+      ok: false,
+      reason: `Invalid new owner wallet address: ${String(v).slice(0, 48)}`,
+    };
+  }
+  return { ok: true, owner: c };
+}
+
 export function normalizeBuilderAddressesPatch(
   v: unknown
 ): { ok: true; builders: string[] } | { ok: false; reason: string } {
@@ -729,6 +743,8 @@ export function updateDynamicRoomMetadata(
     joinSpawn?: { x: number; z: number } | null;
     /** Replace the room's builder allowlist (admin-only). */
     builderAddresses?: string[];
+    /** Transfer ownership to another wallet (compact NQ; admin-only). */
+    ownerAddress?: string;
     deployablesAllowed?: boolean;
   },
   actorCompact: string,
@@ -741,6 +757,7 @@ export function updateDynamicRoomMetadata(
     patch.backgroundNeutral === undefined &&
     patch.joinSpawn === undefined &&
     patch.builderAddresses === undefined &&
+    patch.ownerAddress === undefined &&
     patch.deployablesAllowed === undefined
   ) {
     return { ok: false, reason: "Nothing to update." };
@@ -765,6 +782,17 @@ export function updateDynamicRoomMetadata(
       reason: "Only admins can manage this room's builder allowlist.",
     };
   }
+  if (patch.ownerAddress !== undefined) {
+    if (!isAdminUser) {
+      return { ok: false, reason: "Only admins can transfer room ownership." };
+    }
+    if (entry.isOfficial) {
+      return {
+        ok: false,
+        reason: "Official rooms have no owner; ownership transfer is not supported.",
+      };
+    }
+  }
   if (
     (patch.backgroundHueDeg !== undefined ||
       patch.backgroundNeutral !== undefined) &&
@@ -777,7 +805,9 @@ export function updateDynamicRoomMetadata(
     };
   }
   if (!entry.ownerAddress) {
-    if (!isAdminUser || !entry.isOfficial) {
+    const adminOfficialEdit = isAdminUser && entry.isOfficial;
+    const adminOwnerAssign = isAdminUser && patch.ownerAddress !== undefined;
+    if (!adminOfficialEdit && !adminOwnerAssign) {
       return { ok: false, reason: "Cannot edit this room." };
     }
   } else {
@@ -821,6 +851,9 @@ export function updateDynamicRoomMetadata(
   }
   if (patch.builderAddresses !== undefined) {
     entry.builderAddresses = sanitizeBuilderAddresses(patch.builderAddresses);
+  }
+  if (patch.ownerAddress !== undefined) {
+    entry.ownerAddress = compactAddress(patch.ownerAddress);
   }
   if (patch.deployablesAllowed !== undefined) {
     entry.deployablesAllowed = patch.deployablesAllowed !== false;
