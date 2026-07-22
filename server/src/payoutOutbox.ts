@@ -22,8 +22,14 @@ function outboxFile(): string {
   return path.join(outboxDir(), "outbox.jsonl");
 }
 
-function deliveredFile(): string {
+/** Legacy full-array file (rewrote multi-MB on every claim — caused event-loop stalls). */
+function deliveredLegacyFile(): string {
   return path.join(outboxDir(), "delivered-claim-ids.json");
+}
+
+/** Append-only one claim id per line. */
+function deliveredJsonlFile(): string {
+  return path.join(outboxDir(), "delivered-claim-ids.jsonl");
 }
 
 type OutboxRecord = PayIntent & { enqueuedAt: number };
@@ -51,34 +57,66 @@ function ensureOutboxDir(): void {
   fs.mkdirSync(outboxDir(), { recursive: true });
 }
 
+function rewriteDeliveredJsonlFromSet(): void {
+  const dest = deliveredJsonlFile();
+  const tmp = `${dest}.${process.pid}.tmp`;
+  const body =
+    deliveredClaimIds.size === 0
+      ? ""
+      : `${[...deliveredClaimIds].join("\n")}\n`;
+  fs.writeFileSync(tmp, body, "utf8");
+  fs.renameSync(tmp, dest);
+}
+
+function loadIdsFromJsonl(filePath: string, into: Set<string>): void {
+  if (!fs.existsSync(filePath)) return;
+  const raw = fs.readFileSync(filePath, "utf8");
+  for (const line of raw.split("\n")) {
+    const id = line.trim();
+    if (id) into.add(id);
+  }
+}
+
+function loadIdsFromLegacyJsonArray(filePath: string, into: Set<string>): void {
+  if (!fs.existsSync(filePath)) return;
+  const raw = fs.readFileSync(filePath, "utf8");
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) return;
+  for (const id of parsed) {
+    if (typeof id === "string" && id.trim()) {
+      into.add(id.trim());
+    }
+  }
+}
+
 function loadDeliveredClaimIds(): void {
   deliveredClaimIds.clear();
   try {
-    const deliveredPath = deliveredFile();
-    if (!fs.existsSync(deliveredPath)) return;
-    const raw = fs.readFileSync(deliveredPath, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return;
-    for (const id of parsed) {
-      if (typeof id === "string" && id.trim()) {
-        deliveredClaimIds.add(id.trim());
-      }
+    ensureOutboxDir();
+    const jsonlPath = deliveredJsonlFile();
+    const legacyPath = deliveredLegacyFile();
+    loadIdsFromJsonl(jsonlPath, deliveredClaimIds);
+    if (fs.existsSync(legacyPath)) {
+      loadIdsFromLegacyJsonArray(legacyPath, deliveredClaimIds);
+      rewriteDeliveredJsonlFromSet();
+      const bak = `${legacyPath}.pre-jsonl.bak`;
+      fs.renameSync(legacyPath, bak);
+      console.log(
+        `[payout-outbox] Migrated delivered-claim-ids.json → .jsonl (${deliveredClaimIds.size} ids); legacy at ${path.basename(bak)}`
+      );
     }
   } catch (e) {
     console.error("[payout-outbox] Failed to load delivered claim ids:", e);
   }
 }
 
-function persistDeliveredClaimIds(): void {
+/** Append a single id — never rewrite the full set (was multi-MB sync I/O per claim). */
+function appendDeliveredClaimId(claimId: string): void {
   try {
     ensureOutboxDir();
-    const payload = JSON.stringify([...deliveredClaimIds]);
-    const dest = deliveredFile();
-    const tmp = `${dest}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, payload, "utf8");
-    fs.renameSync(tmp, dest);
+    fs.appendFileSync(deliveredJsonlFile(), `${claimId}\n`, "utf8");
   } catch (e) {
-    console.error("[payout-outbox] Failed to persist delivered claim ids:", e);
+    console.error("[payout-outbox] Failed to append delivered claim id:", e);
   }
 }
 
@@ -241,7 +279,7 @@ export async function drainOutboxOnce(
         continue;
       }
       deliveredClaimIds.add(record.claimId);
-      persistDeliveredClaimIds();
+      appendDeliveredClaimId(record.claimId);
       pendingRecords = pendingRecords.filter((r) => r.claimId !== record.claimId);
       deliveredAny = true;
       console.log(
@@ -296,9 +334,12 @@ export function resetOutboxForTests(opts?: {
   deliverer = opts?.deliverer ?? deliverPayIntentToService;
   try {
     const ob = outboxFile();
-    const df = deliveredFile();
-    if (fs.existsSync(ob)) fs.unlinkSync(ob);
-    if (fs.existsSync(df)) fs.unlinkSync(df);
+    const jsonl = deliveredJsonlFile();
+    const legacy = deliveredLegacyFile();
+    const bak = `${legacy}.pre-jsonl.bak`;
+    for (const f of [ob, jsonl, legacy, bak]) {
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
   } catch {
     /* ignore */
   }
@@ -329,8 +370,13 @@ export function reloadOutboxFromDiskForTests(): void {
 export function clearDeliveredClaimIdsForTests(): void {
   deliveredClaimIds.clear();
   try {
-    const df = deliveredFile();
-    if (fs.existsSync(df)) fs.unlinkSync(df);
+    for (const f of [
+      deliveredJsonlFile(),
+      deliveredLegacyFile(),
+      `${deliveredLegacyFile()}.pre-jsonl.bak`,
+    ]) {
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
   } catch {
     /* ignore */
   }

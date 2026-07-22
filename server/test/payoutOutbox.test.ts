@@ -164,3 +164,59 @@ test("compacts delivered history out of outbox.jsonl so idle drains stay cheap",
     "successful delivery must rewrite outbox without the delivered line"
   );
 });
+
+test("delivered claim ids append one line each (no full-array rewrite)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-outbox-append-ids-"));
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  process.env.PAYOUT_OUTBOX_DIR = dir;
+
+  initOutboxForTests({
+    deliverer: async () => ({ ok: true }),
+  });
+
+  const jsonlPath = path.join(dir, "delivered-claim-ids.jsonl");
+  const legacyPath = path.join(dir, "delivered-claim-ids.json");
+
+  for (let i = 0; i < 40; i++) {
+    appendPayIntentToOutbox({ ...testIntent, claimId: `append-claim-${i}` });
+    await drainOutboxOnce();
+  }
+
+  assert.equal(fs.existsSync(jsonlPath), true);
+  assert.equal(fs.existsSync(legacyPath), false);
+  const bytes = fs.statSync(jsonlPath).size;
+  // 40 short ids + newlines should stay well under a full JSON rewrite of a large set.
+  assert.ok(bytes < 2_000, `expected small append-only file, got ${bytes} bytes`);
+  const lines = fs.readFileSync(jsonlPath, "utf8").trim().split("\n");
+  assert.equal(lines.length, 40);
+
+  reloadOutboxFromDiskForTests();
+  assert.equal(isClaimDeliveredForTests("append-claim-0"), true);
+  assert.equal(isClaimDeliveredForTests("append-claim-39"), true);
+});
+
+test("migrates legacy delivered-claim-ids.json to jsonl once", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-outbox-migrate-ids-"));
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  process.env.PAYOUT_OUTBOX_DIR = dir;
+
+  initOutboxForTests({
+    deliverer: async () => ({ ok: true }),
+  });
+
+  const legacyPath = path.join(dir, "delivered-claim-ids.json");
+  const jsonlPath = path.join(dir, "delivered-claim-ids.jsonl");
+  const bakPath = `${legacyPath}.pre-jsonl.bak`;
+  fs.writeFileSync(legacyPath, JSON.stringify(["legacy-a", "legacy-b"]), "utf8");
+  reloadOutboxFromDiskForTests();
+
+  assert.equal(isClaimDeliveredForTests("legacy-a"), true);
+  assert.equal(isClaimDeliveredForTests("legacy-b"), true);
+  assert.equal(fs.existsSync(jsonlPath), true);
+  assert.equal(fs.existsSync(legacyPath), false);
+  assert.equal(fs.existsSync(bakPath), true);
+});

@@ -205,3 +205,65 @@ test("auto bulk combines pending jobs after age threshold", { concurrency: false
 
   stopPayoutProcessorForTests();
 });
+
+test("accepted claim ids append one line each (no full-array rewrite)", { concurrency: false }, async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-reliability-append-ids-"));
+  t.after(() => {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  resetQueueForTests();
+  const fake = createFakeChainClient();
+  createPayoutApp({ cfg: testCfg(dataDir), chainClient: fake, startProcessor: false });
+
+  for (let i = 0; i < 40; i++) {
+    enqueuePayIntent({
+      claimId: `append-accepted-${i}`,
+      recipientAddress: testRecipient,
+      roomId: "canvas",
+      tileKey: `${i},${i},0`,
+    });
+  }
+
+  const jsonlPath = path.join(dataDir, "accepted-claim-ids.jsonl");
+  const legacyPath = path.join(dataDir, "accepted-claim-ids.json");
+  assert.equal(fs.existsSync(jsonlPath), true);
+  assert.equal(fs.existsSync(legacyPath), false);
+  const bytes = fs.statSync(jsonlPath).size;
+  assert.ok(bytes < 2_000, `expected small append-only file, got ${bytes} bytes`);
+  const lines = fs.readFileSync(jsonlPath, "utf8").trim().split("\n");
+  assert.equal(lines.length, 40);
+
+  stopPayoutProcessorForTests();
+});
+
+test("migrates legacy accepted-claim-ids.json to jsonl once", { concurrency: false }, async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-reliability-migrate-ids-"));
+  t.after(() => {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  fs.mkdirSync(dataDir, { recursive: true });
+  const legacyPath = path.join(dataDir, "accepted-claim-ids.json");
+  const jsonlPath = path.join(dataDir, "accepted-claim-ids.jsonl");
+  const bakPath = `${legacyPath}.pre-jsonl.bak`;
+  fs.writeFileSync(legacyPath, JSON.stringify(["legacy-accepted-a"]), "utf8");
+
+  resetQueueForTests();
+  const fake = createFakeChainClient();
+  createPayoutApp({ cfg: testCfg(dataDir), chainClient: fake, startProcessor: false });
+
+  assert.equal(fs.existsSync(jsonlPath), true);
+  assert.equal(fs.existsSync(legacyPath), false);
+  assert.equal(fs.existsSync(bakPath), true);
+
+  const dup = enqueuePayIntent({
+    claimId: "legacy-accepted-a",
+    recipientAddress: testRecipient,
+    roomId: "canvas",
+    tileKey: "9,9,0",
+  });
+  assert.equal(dup.duplicate, true);
+
+  stopPayoutProcessorForTests();
+});

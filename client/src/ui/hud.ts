@@ -491,6 +491,11 @@ export function createHud(
   setResetTutorialVisible: (visible: boolean) => void;
   /** Non-blocking top toast with optional wallet identicon (tutorial sign-in, Hub welcome). */
   showBriefToast: (text: string, opts?: { address?: string }) => void;
+  /**
+   * Full-letterbox cinematic title (tutorial step beats).
+   * Queues if one is already playing; pointer-events none.
+   */
+  showTutorialCinematic: (title: string) => void;
   /** Lesson-mode Tutorial Step Coach under the top HUD strip. */
   setTutorialStepCoach: (state: TutorialCoachState | null) => void;
   pulseTutorialStepCoach: (step: TutorialCoachStep) => void;
@@ -955,6 +960,8 @@ export function createHud(
   ) => void;
   /** Reusable “navigate away” confirm (billboard visits, mini-apps, external links). */
   showNavigateAwayConfirm: (p: import("./navigateAwayConfirm.js").NavigateAwayConfirmRequest) => void;
+  /** Reusable yes/no confirm dialog; resolves true when confirmed, false otherwise. */
+  showConfirm: (p: import("./confirmDialog.js").ConfirmRequest) => Promise<boolean>;
   /** @deprecated Use {@link showNavigateAwayConfirm} with `kind: "external"`. */
   showBillboardExternalVisitConfirm: (p: {
     url: string;
@@ -2282,6 +2289,23 @@ export function createHud(
     </div>
   `;
 
+  const confirmDialogOverlay = document.createElement("div");
+  confirmDialogOverlay.className = "external-visit-confirm confirm-dialog";
+  confirmDialogOverlay.hidden = true;
+  confirmDialogOverlay.setAttribute("aria-hidden", "true");
+  confirmDialogOverlay.innerHTML = `
+    <div class="external-visit-confirm__backdrop" aria-hidden="true"></div>
+    <div class="external-visit-confirm__dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
+      <h2 id="confirm-dialog-title" class="external-visit-confirm__title"></h2>
+      <p class="external-visit-confirm__lead" id="confirm-dialog-message"></p>
+      <p class="external-visit-confirm__url" id="confirm-dialog-detail" hidden></p>
+      <div class="external-visit-confirm__actions">
+        <button type="button" class="external-visit-confirm__btn external-visit-confirm__btn--cancel">Cancel</button>
+        <button type="button" class="external-visit-confirm__btn external-visit-confirm__btn--confirm">Confirm</button>
+      </div>
+    </div>
+  `;
+
   const FEEDBACK_MESSAGE_MAX = 700;
   const FEEDBACK_REPORT_REASON_MAX = 400;
   const feedbackOverlay = document.createElement("div");
@@ -2427,17 +2451,25 @@ export function createHud(
   tutorialStepCoach.setAttribute("role", "status");
   tutorialStepCoach.setAttribute("aria-live", "polite");
   tutorialStepCoach.innerHTML = `
-    <div class="tutorial-step-coach__row">
-      <div class="tutorial-step-coach__steps" aria-hidden="true">
-        <span class="tutorial-step-coach__step" data-step="mine"><span class="tutorial-step-coach__num">1</span> Mine</span>
-        <span class="tutorial-step-coach__sep" aria-hidden="true">·</span>
-        <span class="tutorial-step-coach__step" data-step="pay"><span class="tutorial-step-coach__num">2</span> Pay</span>
-        <span class="tutorial-step-coach__sep" aria-hidden="true">·</span>
-        <span class="tutorial-step-coach__step" data-step="exit"><span class="tutorial-step-coach__num">3</span> Exit</span>
+    <div class="tutorial-step-coach__track" aria-hidden="true">
+      <div class="tutorial-step-coach__step" data-step="mine">
+        <span class="tutorial-step-coach__label">Mine</span>
+        <span class="tutorial-step-coach__node"></span>
       </div>
-      <button type="button" class="tutorial-step-coach__reset" hidden>
-        Start over
-      </button>
+      <div class="tutorial-step-coach__connector" data-after="mine">
+        <span class="tutorial-step-coach__connector-fill"></span>
+      </div>
+      <div class="tutorial-step-coach__step" data-step="pay">
+        <span class="tutorial-step-coach__label">Pay</span>
+        <span class="tutorial-step-coach__node"></span>
+      </div>
+      <div class="tutorial-step-coach__connector" data-after="pay">
+        <span class="tutorial-step-coach__connector-fill"></span>
+      </div>
+      <div class="tutorial-step-coach__step" data-step="exit">
+        <span class="tutorial-step-coach__label">Exit</span>
+        <span class="tutorial-step-coach__node"></span>
+      </div>
     </div>
     <div class="tutorial-step-coach__hint"></div>
   `;
@@ -2447,17 +2479,91 @@ export function createHud(
   const tutorialStepCoachSteps = Array.from(
     tutorialStepCoach.querySelectorAll(".tutorial-step-coach__step")
   ) as HTMLElement[];
-  const tutorialStepCoachResetBtn = tutorialStepCoach.querySelector(
-    ".tutorial-step-coach__reset"
-  ) as HTMLButtonElement;
-  tutorialStepCoachResetBtn.title = "Reset tutorial progress to Mine";
-  tutorialStepCoachResetBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    resetTutorialHandler();
-  });
+  const tutorialStepCoachConnectors = Array.from(
+    tutorialStepCoach.querySelectorAll(".tutorial-step-coach__connector")
+  ) as HTMLElement[];
+  /** Escape + tint action words that match the intent pill (e.g. Unlock). */
+  function formatTutorialCoachHint(hint: string): string {
+    const escaped = String(hint ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    return escaped.replace(
+      /\bUnlock\b/g,
+      '<span class="tutorial-step-coach__hint-em">Unlock</span>'
+    );
+  }
   let tutorialStepCoachPulseTimer: ReturnType<typeof setTimeout> | null = null;
   topWrap.appendChild(tutorialStepCoach);
+
+  const tutorialCinematic = document.createElement("div");
+  tutorialCinematic.className = "tutorial-cinematic";
+  tutorialCinematic.hidden = true;
+  tutorialCinematic.setAttribute("aria-live", "polite");
+  tutorialCinematic.setAttribute("role", "status");
+  tutorialCinematic.innerHTML = `
+    <div class="tutorial-cinematic__veil" aria-hidden="true"></div>
+    <p class="tutorial-cinematic__title"></p>
+  `;
+  const tutorialCinematicTitle = tutorialCinematic.querySelector(
+    ".tutorial-cinematic__title"
+  ) as HTMLElement;
+  letter.appendChild(tutorialCinematic);
+
+  const tutorialCinematicQueue: string[] = [];
+  let tutorialCinematicPlaying = false;
+  let tutorialCinematicHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function formatTutorialCinematicTitle(title: string): string {
+    const escaped = String(title ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    // Brand split for the Hub welcome beat.
+    if (/\bNimiq Space\b/.test(escaped)) {
+      return escaped.replace(
+        /\bNimiq Space\b/g,
+        '<span class="tutorial-cinematic__brand"><span class="tutorial-cinematic__brand-nimiq">Nimiq</span> <span class="tutorial-cinematic__brand-space">Space</span></span>'
+      );
+    }
+    // Accent the NIM token name in earn/spend beats.
+    return escaped.replace(
+      /\bNIM\b/g,
+      '<span class="tutorial-cinematic__nim">NIM</span>'
+    );
+  }
+
+  function playNextTutorialCinematic(): void {
+    if (tutorialCinematicPlaying) return;
+    const next = tutorialCinematicQueue.shift();
+    if (!next) return;
+    tutorialCinematicPlaying = true;
+    tutorialCinematicTitle.innerHTML = formatTutorialCinematicTitle(next);
+    tutorialCinematic.hidden = false;
+    // Force reflow so the enter class animates even on back-to-back shows.
+    void tutorialCinematic.offsetWidth;
+    tutorialCinematic.classList.add("tutorial-cinematic--visible");
+    if (tutorialCinematicHideTimer !== null) {
+      clearTimeout(tutorialCinematicHideTimer);
+    }
+    tutorialCinematicHideTimer = setTimeout(() => {
+      tutorialCinematic.classList.remove("tutorial-cinematic--visible");
+      tutorialCinematicHideTimer = setTimeout(() => {
+        tutorialCinematic.hidden = true;
+        tutorialCinematicTitle.innerHTML = "";
+        tutorialCinematicPlaying = false;
+        tutorialCinematicHideTimer = null;
+        playNextTutorialCinematic();
+      }, 700);
+    }, 2800);
+  }
+
+  function showTutorialCinematic(title: string): void {
+    const text = String(title ?? "").trim();
+    if (!text) return;
+    tutorialCinematicQueue.push(text);
+    playNextTutorialCinematic();
+  }
 
   ui.appendChild(topWrap);
   ui.appendChild(translateClipboardHintToast);
@@ -2535,6 +2641,7 @@ export function createHud(
   ) as HTMLButtonElement;
 
   letter.appendChild(externalVisitConfirmOverlay);
+  letter.appendChild(confirmDialogOverlay);
   letter.appendChild(feedbackOverlay);
   letter.appendChild(brandLinksOverlay);
 
@@ -11414,6 +11521,89 @@ export function createHud(
     pending?.onConfirm();
   });
 
+  const confirmDialogBackdrop = confirmDialogOverlay.querySelector(
+    ".external-visit-confirm__backdrop"
+  ) as HTMLElement | null;
+  const confirmDialogTitleEl = confirmDialogOverlay.querySelector(
+    "#confirm-dialog-title"
+  ) as HTMLElement | null;
+  const confirmDialogMessageEl = confirmDialogOverlay.querySelector(
+    "#confirm-dialog-message"
+  ) as HTMLElement | null;
+  const confirmDialogDetailEl = confirmDialogOverlay.querySelector(
+    "#confirm-dialog-detail"
+  ) as HTMLElement | null;
+  const confirmDialogCancelBtn = confirmDialogOverlay.querySelector(
+    ".external-visit-confirm__btn--cancel"
+  ) as HTMLButtonElement | null;
+  const confirmDialogConfirmBtn = confirmDialogOverlay.querySelector(
+    ".external-visit-confirm__btn--confirm"
+  ) as HTMLButtonElement | null;
+
+  let confirmDialogResolve: ((confirmed: boolean) => void) | null = null;
+  let confirmDialogEsc: ((e: KeyboardEvent) => void) | null = null;
+
+  function settleConfirmDialog(confirmed: boolean): void {
+    const resolve = confirmDialogResolve;
+    confirmDialogResolve = null;
+    confirmDialogOverlay.hidden = true;
+    confirmDialogOverlay.setAttribute("aria-hidden", "true");
+    if (confirmDialogEsc) {
+      window.removeEventListener("keydown", confirmDialogEsc);
+      confirmDialogEsc = null;
+    }
+    resolve?.(confirmed);
+  }
+
+  function presentConfirmDialog(
+    p: import("./confirmDialog.js").ConfirmRequest
+  ): Promise<boolean> {
+    // Only one confirm dialog at a time; cancel any prior pending one.
+    settleConfirmDialog(false);
+    if (confirmDialogTitleEl) confirmDialogTitleEl.textContent = p.title;
+    if (confirmDialogMessageEl) confirmDialogMessageEl.textContent = p.message;
+    if (confirmDialogDetailEl) {
+      const detail = String(p.detail ?? "").trim();
+      confirmDialogDetailEl.textContent = detail;
+      confirmDialogDetailEl.hidden = detail.length === 0;
+    }
+    if (confirmDialogConfirmBtn) {
+      confirmDialogConfirmBtn.textContent = p.confirmLabel ?? "Confirm";
+    }
+    if (confirmDialogCancelBtn) {
+      confirmDialogCancelBtn.textContent = p.cancelLabel ?? "Cancel";
+    }
+    confirmDialogOverlay.hidden = false;
+    confirmDialogOverlay.setAttribute("aria-hidden", "false");
+    confirmDialogEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        settleConfirmDialog(false);
+      }
+    };
+    window.addEventListener("keydown", confirmDialogEsc);
+    confirmDialogConfirmBtn?.focus();
+    return new Promise<boolean>((resolve) => {
+      confirmDialogResolve = resolve;
+    });
+  }
+
+  confirmDialogBackdrop?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    settleConfirmDialog(false);
+  });
+  confirmDialogCancelBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    settleConfirmDialog(false);
+  });
+  confirmDialogConfirmBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    settleConfirmDialog(true);
+  });
+
   const feedbackBackdropEl = feedbackOverlay.querySelector(
     ".feedback-overlay__backdrop"
   ) as HTMLElement | null;
@@ -15611,10 +15801,9 @@ export function createHud(
     },
     setResetTutorialVisible(visible: boolean) {
       playerMenu.setResetTutorialVisible(visible);
-      tutorialStepCoachResetBtn.hidden = !visible;
-      requestAnimationFrame(() => syncHudBelowTopWrap());
     },
     showBriefToast,
+    showTutorialCinematic,
     setTutorialStepCoach(state: TutorialCoachState | null) {
       if (!state?.visible) {
         tutorialStepCoach.hidden = true;
@@ -15627,18 +15816,23 @@ export function createHud(
         return;
       }
       tutorialStepCoach.hidden = false;
-      tutorialStepCoachHint.textContent = state.hint;
+      tutorialStepCoachHint.innerHTML = formatTutorialCoachHint(state.hint);
       const completed = new Set(state.completed);
       for (const el of tutorialStepCoachSteps) {
         const step = el.dataset.step as TutorialCoachStep | undefined;
         if (!step) continue;
+        const isDone = completed.has(step);
+        el.classList.toggle("tutorial-step-coach__step--done", isDone);
         el.classList.toggle(
           "tutorial-step-coach__step--current",
-          step === state.current
+          !isDone && step === state.current
         );
+      }
+      for (const el of tutorialStepCoachConnectors) {
+        const after = el.dataset.after as TutorialCoachStep | undefined;
         el.classList.toggle(
-          "tutorial-step-coach__step--done",
-          completed.has(step)
+          "tutorial-step-coach__connector--filled",
+          Boolean(after && completed.has(after))
         );
       }
       requestAnimationFrame(() => syncHudBelowTopWrap());
@@ -17277,6 +17471,11 @@ export function createHud(
     },
     showNavigateAwayConfirm(p: NavigateAwayConfirmRequest): void {
       presentNavigateAwayConfirm(p);
+    },
+    showConfirm(
+      p: import("./confirmDialog.js").ConfirmRequest
+    ): Promise<boolean> {
+      return presentConfirmDialog(p);
     },
     showBillboardExternalVisitConfirm(p: {
       url: string;

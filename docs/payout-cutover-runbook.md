@@ -18,7 +18,7 @@ Hard, **single-release** cutover from in-process Nimiq payouts in the game serve
 | In-process payout worker blocks event loop | Game server enqueues to Outbox; sidecar sends |
 | `docker compose --profile payout up` | `payout` starts **by default** with `docker compose up` |
 
-On-disk payout file **names and JSON shapes are unchanged** — this is a directory hand-over, not a data transform.
+On-disk payout file **names and JSON shapes are unchanged** for queue/history — this is a directory hand-over, not a data transform. Claim-id dedupe files later moved from full JSON arrays to append-only `.jsonl` (see [nim-payout-tracing.md](nim-payout-tracing.md)); startup migrates legacy `*-claim-ids.json` once.
 
 ## Cutover steps (production)
 
@@ -38,7 +38,7 @@ On-disk payout file **names and JSON shapes are unchanged** — this is a direct
    ```bash
    mkdir -p data/payout-service
    # From default in-process location (host ./data → /app/server/data in container):
-   for f in nim-payout-pending.json nim-payout-sent.jsonl nim-payout-manual-bulk.jsonl nim-payout-dead-letter.jsonl accepted-claim-ids.json; do
+   for f in nim-payout-pending.json nim-payout-sent.jsonl nim-payout-manual-bulk.jsonl nim-payout-dead-letter.jsonl accepted-claim-ids.json accepted-claim-ids.jsonl; do
      [ -f "data/$f" ] && mv "data/$f" "data/payout-service/"
    done
    [ -d data/nim-payout-recipient-sent ] && mv data/nim-payout-recipient-sent data/payout-service/

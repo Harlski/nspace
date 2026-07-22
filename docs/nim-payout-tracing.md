@@ -77,11 +77,24 @@ Payout WASM work runs in the sidecar - **not** on the game-server event loop.
 
 | Log | Source | Meaning |
 |-----|--------|---------|
-| `[event-loop] stall <ms> ms ending at <ISO> (<gc summary>)` | `server/src/adminSystemMonitor.ts` | Node event loop blocked on **nspace**. Should **not** correlate with payout sends after cutover. |
+| `[event-loop] stall <ms> ms ending at <ISO> (<gc summary>)` | `server/src/adminSystemMonitor.ts` | Node event loop blocked on **nspace**. Should **not** correlate with on-chain sends after cutover. |
 | `[payout-service] Sent …` | `payout-service` container | On-chain send completed in the sidecar. |
+| `[payout-outbox] Migrated delivered-claim-ids.json → .jsonl (N ids)` | game server startup | One-shot migration from full JSON array to append-only JSONL. |
+| `[payout-service] Migrated accepted-claim-ids.json → .jsonl (N ids)` | payout startup | Same for the sidecar dedupe set. |
+
+**Claim-id dedupe I/O:** `delivered-claim-ids.jsonl` (game outbox) and `accepted-claim-ids.jsonl` (payout service) append **one line per new claim**. Legacy `*.json` arrays are loaded once, rewritten to JSONL, and renamed to `*.json.pre-jsonl.bak`. Rewriting the full JSON array on every claim previously caused multi-MB sync writes and frequent `[event-loop] stall` lines under mining load.
 
 ```bash
 EVENT_LOOP_STALL_LOG_MS=50    # log event-loop stalls >= 50 ms (0 disables)
+```
+
+After deploy, confirm migration logs once, then:
+
+```bash
+ls -lh data/payout-outbox/delivered-claim-ids.*
+ls -lh data/payout-service/accepted-claim-ids.*
+# new claims should only grow the .jsonl by ~tens of bytes each
+docker compose logs nspace --since 5m 2>&1 | grep -c '\[event-loop\]'
 ```
 
 ## Related code
@@ -90,7 +103,8 @@ EVENT_LOOP_STALL_LOG_MS=50    # log event-loop stalls >= 50 ms (0 disables)
 |------|----------|
 | Chain send + confirmation + reconciliation helpers | `payout-service/src/chain/nimiqClient.ts` |
 | Broadcast-safety contract | `payout-service/src/chain/types.ts` |
-| Queue, confirmation reconciliation, bulk send | `payout-service/src/queue.ts` |
+| Queue, confirmation reconciliation, bulk send, accepted-ids | `payout-service/src/queue.ts` |
+| Game-server outbox + delivered-ids | `server/src/payoutOutbox.ts` |
 | Offline reconciliation tool | `payout-service/src/scripts/reconcileOnchain.ts` |
 | Claim balance gate (cached pull) | `server/src/rooms.ts`, `server/src/payoutBalancePull.ts` |
 | Env examples | `payout-service/.env.example`, `server/.env.example` |

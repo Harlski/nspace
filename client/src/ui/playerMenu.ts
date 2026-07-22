@@ -30,7 +30,7 @@ type ItemDef = {
   shaperOnly?: boolean;
   /** Hidden unless incomplete Nimiq Pay tutorial. */
   finishTutorial?: boolean;
-  /** Reset tutorial progress to Mine (also Start over on coach). */
+  /** Reset tutorial progress to Mine (Player Menu / testing). */
   resetTutorial?: boolean;
 };
 
@@ -66,7 +66,7 @@ export type PlayerMenu = {
   setInShaper: (inShaper: boolean) => void;
   /** Toggle Finish tutorial (Nimiq Pay incomplete lesson). */
   setFinishTutorialVisible: (visible: boolean) => void;
-  /** Toggle Reset tutorial / Start over while in the Tutorial Room. */
+  /** Toggle Reset tutorial while in the Tutorial Room. */
   setResetTutorialVisible: (visible: boolean) => void;
   /** Display name shown in the pill left of the identicon (hidden when empty). */
   setName: (name: string) => void;

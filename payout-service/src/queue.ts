@@ -84,6 +84,8 @@ let processorEnabled = false;
 let chainClient: ChainClient | null = null;
 let queueFile = "";
 let acceptedClaimIdsFile = "";
+/** Append-only companion; legacy full-array JSON is migrated once at load. */
+let acceptedClaimIdsJsonlFile = "";
 let deadLetterFile = "";
 let needsReviewFile = "";
 const acceptedClaimIds = new Set<string>();
@@ -98,39 +100,63 @@ function ensureDataDir(): void {
   fs.mkdirSync(path.dirname(queueFile), { recursive: true });
 }
 
+function rewriteAcceptedClaimIdsJsonlFromSet(): void {
+  const dest = acceptedClaimIdsJsonlFile;
+  const tmp = `${dest}.${process.pid}.tmp`;
+  const body =
+    acceptedClaimIds.size === 0
+      ? ""
+      : `${[...acceptedClaimIds].join("\n")}\n`;
+  fs.writeFileSync(tmp, body, "utf8");
+  fs.renameSync(tmp, dest);
+}
+
 function loadAcceptedClaimIds(): void {
   acceptedClaimIds.clear();
   try {
-    if (!fs.existsSync(acceptedClaimIdsFile)) return;
-    const raw = fs.readFileSync(acceptedClaimIdsFile, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return;
-    for (const id of parsed) {
-      if (typeof id === "string" && id.trim()) {
-        acceptedClaimIds.add(id.trim());
+    if (acceptedClaimIdsJsonlFile && fs.existsSync(acceptedClaimIdsJsonlFile)) {
+      const raw = fs.readFileSync(acceptedClaimIdsJsonlFile, "utf8");
+      for (const line of raw.split("\n")) {
+        const id = line.trim();
+        if (id) acceptedClaimIds.add(id);
       }
+    }
+    if (acceptedClaimIdsFile && fs.existsSync(acceptedClaimIdsFile)) {
+      const raw = fs.readFileSync(acceptedClaimIdsFile, "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        for (const id of parsed) {
+          if (typeof id === "string" && id.trim()) {
+            acceptedClaimIds.add(id.trim());
+          }
+        }
+      }
+      rewriteAcceptedClaimIdsJsonlFromSet();
+      const bak = `${acceptedClaimIdsFile}.pre-jsonl.bak`;
+      fs.renameSync(acceptedClaimIdsFile, bak);
+      console.log(
+        `[payout-service] Migrated accepted-claim-ids.json → .jsonl (${acceptedClaimIds.size} ids); legacy at ${path.basename(bak)}`
+      );
     }
   } catch (e) {
     console.error("[payout-service] Failed to load accepted claim ids:", e);
   }
 }
 
-function persistAcceptedClaimIds(): void {
+/** Append a single id — never rewrite the full set (was multi-MB sync I/O per claim). */
+function appendAcceptedClaimId(claimId: string): void {
   try {
     ensureDataDir();
-    const payload = JSON.stringify([...acceptedClaimIds]);
-    const tmp = `${acceptedClaimIdsFile}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, payload, "utf8");
-    fs.renameSync(tmp, acceptedClaimIdsFile);
+    fs.appendFileSync(acceptedClaimIdsJsonlFile, `${claimId}\n`, "utf8");
   } catch (e) {
-    console.error("[payout-service] Failed to persist accepted claim ids:", e);
+    console.error("[payout-service] Failed to append accepted claim id:", e);
   }
 }
 
 function rememberAcceptedClaimId(claimId: string): void {
   if (acceptedClaimIds.has(claimId)) return;
   acceptedClaimIds.add(claimId);
-  persistAcceptedClaimIds();
+  appendAcceptedClaimId(claimId);
 }
 
 function backoffMs(attempts: number): number {
@@ -241,6 +267,7 @@ export function saveQueue(): void {
 export function initPayoutQueue(cfg: AppConfig, client: ChainClient): void {
   queueFile = path.join(cfg.dataDir, "nim-payout-pending.json");
   acceptedClaimIdsFile = path.join(cfg.dataDir, "accepted-claim-ids.json");
+  acceptedClaimIdsJsonlFile = path.join(cfg.dataDir, "accepted-claim-ids.jsonl");
   deadLetterFile = path.join(cfg.dataDir, "nim-payout-dead-letter.jsonl");
   needsReviewFile = path.join(cfg.dataDir, "nim-payout-needs-review.jsonl");
   maxBackoffMs = cfg.maxBackoffMs;

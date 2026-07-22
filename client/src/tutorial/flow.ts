@@ -132,9 +132,17 @@ export const TUTORIAL_ALREADY_CLAIMED_REASON =
 
 export const TUTORIAL_COACH_HINTS: Record<TutorialCoachStep, string> = {
   mine: "Click and hold a glowing gold block to receive NIM.",
-  pay: "Stand beside the Unlock Pad and tap Unlock Pad.",
+  pay: "Stand beside the Unlock Pad and tap Unlock.",
   exit: "Walk through the open pad and Enter the Exit Teleporter.",
 };
+
+/** Full-screen cinematic titles fired once when each tutorial step completes. */
+export const TUTORIAL_CINEMATIC_TITLES = {
+  mine: "You just earned NIM",
+  pay: "You just spent NIM",
+  /** Hub arrival after Exit; brand “Nimiq” is tinted in the HUD renderer. */
+  exit: "Welcome to Nimiq Space",
+} as const;
 
 export type TutorialCoachState = {
   visible: boolean;
@@ -337,7 +345,42 @@ export function canSimulateTutorialDoorPayment(): boolean {
   return import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
 }
 
-/** Nimiq Pay send with optional escape timer while promise is pending. */
+const HUB_URL = import.meta.env.VITE_HUB_URL || "https://hub.nimiq.com";
+
+/** Hub checkout request for a tutorial door quote (Pay-less desktop path). */
+function buildTutorialDoorHubCheckoutRequest(quote: TutorialDoorQuote): {
+  appName: string;
+  recipient: string;
+  value: number;
+  extraData: string;
+} {
+  const luna = Number(quote.amountLuna);
+  if (!Number.isFinite(luna) || luna < 1) throw new Error("invalid_amount");
+  return {
+    appName: "Nimiq Space",
+    recipient: quote.recipient,
+    value: Math.floor(luna),
+    extraData: quote.memo,
+  };
+}
+
+function isTutorialPayUserCancel(err: unknown): boolean {
+  const msg = String(err ?? "").toLowerCase();
+  return (
+    msg.includes("cancel") ||
+    msg.includes("abort") ||
+    msg.includes("denied") ||
+    msg.includes("reject") ||
+    msg.includes("dismiss") ||
+    msg.includes("closed")
+  );
+}
+
+/**
+ * Send the tutorial door payment while arming the escape timer.
+ * Nimiq Pay host when injected (mini-app), else Nimiq Hub checkout (desktop /
+ * Hub login). Only local DEV without a Pay host simulates an optimistic send.
+ */
 export async function sendTutorialDoorPayment(opts: {
   quote: TutorialDoorQuote;
   escape: TutorialEscapeTimer;
@@ -346,29 +389,29 @@ export async function sendTutorialDoorPayment(opts: {
   | { ok: false; cancelled: boolean; reason?: "pay_unavailable" }
 > {
   const pay = window.nimiqPay;
-  if (!pay?.sendBasicTransactionWithData) {
-    // Desktop / Hub login has no Pay host - simulate optimistic send in local DEV only.
-    if (canSimulateTutorialDoorPayment()) {
-      return { ok: true, simulated: true };
-    }
-    return { ok: false, cancelled: false, reason: "pay_unavailable" };
+  const hasPayHost = Boolean(pay?.sendBasicTransactionWithData);
+  if (!hasPayHost && canSimulateTutorialDoorPayment()) {
+    // Local DEV without a Pay host - simulate optimistic send.
+    return { ok: true, simulated: true };
   }
   opts.escape.arm();
   try {
-    await pay.sendBasicTransactionWithData({
-      recipient: opts.quote.recipient,
-      value: BigInt(opts.quote.amountLuna),
-      data: opts.quote.memo,
-    });
+    if (pay?.sendBasicTransactionWithData) {
+      await pay.sendBasicTransactionWithData({
+        recipient: opts.quote.recipient,
+        value: BigInt(opts.quote.amountLuna),
+        data: opts.quote.memo,
+      });
+    } else {
+      const { default: HubApi } = await import("@nimiq/hub-api");
+      const hub = new HubApi(HUB_URL);
+      await hub.checkout(buildTutorialDoorHubCheckoutRequest(opts.quote));
+    }
     opts.escape.disarm();
     return { ok: true };
   } catch (e) {
     opts.escape.disarm();
-    const msg = String(e ?? "");
-    const cancelled =
-      msg.toLowerCase().includes("cancel") ||
-      msg.toLowerCase().includes("reject");
-    return { ok: false, cancelled };
+    return { ok: false, cancelled: isTutorialPayUserCancel(e) };
   }
 }
 
@@ -388,7 +431,7 @@ export function shouldShowFinishTutorialMenu(
 }
 
 /** Label for the above-head intent pill when standing at the tutorial gate. */
-export const TUTORIAL_UNLOCK_GATE_LABEL = "Unlock Pad";
+export const TUTORIAL_UNLOCK_GATE_LABEL = "Unlock";
 
 /**
  * Tutorial Pay step: mine done, door not yet paid / unstuck, lesson incomplete.
@@ -407,8 +450,8 @@ export function shouldOfferTutorialUnlockGate(
 }
 
 /**
- * Show Reset tutorial / Start over while in the Tutorial Room.
- * Player Menu row and Tutorial Step Coach button share this gate.
+ * Show Reset tutorial while in the Tutorial Room.
+ * Player Menu only (coach strip has no Start over).
  * When the learner flow is off, only admins (who may still enter via teleporter).
  * Admins keep access after completion so they can re-test the lesson.
  */

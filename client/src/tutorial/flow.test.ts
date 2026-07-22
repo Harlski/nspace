@@ -252,7 +252,7 @@ describe("Tutorial Step Coach", () => {
     expect(state?.current).toBe("pay");
     expect(state?.completed).toEqual(["mine"]);
     expect(state?.hint).toBe(
-      "Stand beside the Unlock Pad and tap Unlock Pad."
+      "Stand beside the Unlock Pad and tap Unlock."
     );
   });
 

@@ -91,6 +91,7 @@ import {
   shouldShowTutorialResetMenu,
   deriveTutorialCoachState,
   withTutorialMineCompleted,
+  TUTORIAL_CINEMATIC_TITLES,
   TUTORIAL_UNLOCK_GATE_LABEL,
   TUTORIAL_WRONG_SLOT_REASON,
   TUTORIAL_ALREADY_CLAIMED_REASON,
@@ -1127,6 +1128,24 @@ function enterGame(
   let pendingTutorialHubWelcome = false;
   let deferUsernameForTutorial = opts?.deferUsernameForTutorial === true;
 
+  /** Mark Hub arrival for the Exit cinematic (door or Exit Teleporter). */
+  function maybeArmTutorialHubWelcome(targetRoomId: string): boolean {
+    const fromTutorial =
+      normalizeRoomId(game.getRoomId()) === TUTORIAL_ROOM_ID &&
+      tutorialWelcome?.lessonMode === true &&
+      typeof tutorialWelcome.session?.doorPaidAt === "number";
+    const toHub = normalizeRoomId(targetRoomId) === CHAMBER_ROOM_ID;
+    if (!fromTutorial || !toHub) return false;
+    pendingTutorialHubWelcome = true;
+    return true;
+  }
+
+  function flushTutorialHubWelcomeCinematic(): void {
+    if (!pendingTutorialHubWelcome) return;
+    pendingTutorialHubWelcome = false;
+    hud.showTutorialCinematic(TUTORIAL_CINEMATIC_TITLES.exit);
+  }
+
   function syncTutorialMineHighlight(): void {
     if (!shouldShowTutorialMineHighlight(tutorialWelcome)) {
       game.setTutorialMineHighlight(null);
@@ -1211,6 +1230,17 @@ function enterGame(
         hud.setStatus("Tutorial payment is not configured on this server.");
         return false;
       }
+      const confirmed = await hud.showConfirm({
+        title: "Unlock this pad?",
+        message: `Send ${quote.amountNim} NIM to unlock the pad and continue.`,
+        detail: `To ${quote.recipient}`,
+        confirmLabel: "Pay & unlock",
+        cancelLabel: "Not now",
+      });
+      if (!confirmed) {
+        hud.setStatus("Unlock cancelled - tap Unlock when you are ready.");
+        return false;
+      }
       const paid = await sendTutorialDoorPayment({ quote, escape: tutorialEscape });
       if (!paid.ok) {
         if (!paid.cancelled) {
@@ -1238,6 +1268,8 @@ function enterGame(
         hud.setStatus("Path unlocked - walk north and Enter the Exit Teleporter.");
         syncTutorialStepCoach();
         syncTutorialAttentionCue();
+        hud.showTutorialCinematic(TUTORIAL_CINEMATIC_TITLES.pay);
+        hud.pulseTutorialStepCoach("pay");
       }
       return sent.ok;
     } finally {
@@ -5242,12 +5274,6 @@ function enterGame(
         void runUsernamePromptGate(token, address).then((ok) => {
           if (!ok) return;
         });
-        if (tutorialWelcome?.completedAt) {
-          hud.showBriefToast("Welcome to the Hub");
-        } else if (pendingTutorialHubWelcome) {
-          pendingTutorialHubWelcome = false;
-          hud.showBriefToast("Welcome to the Hub");
-        }
       }
       if (autoReconnectActive) {
         stopAutoReconnect();
@@ -5537,6 +5563,10 @@ function enterGame(
       hud.setLoadingVisible(false, {
         skipMinWait: loadingBlackoutReveal,
       });
+      // After the load veil clears so the Exit cinematic is not spent under black.
+      if (normalizeRoomId(msg.roomId) === CHAMBER_ROOM_ID) {
+        flushTutorialHubWelcomeCinematic();
+      }
       syncBuildHud();
       applyStreamPresentation();
       ensureNimWalletPollStarted();
@@ -6129,6 +6159,8 @@ function enterGame(
           inTutorial &&
           (tutorialWelcome || msg.tutorialMineComplete === true)
         ) {
+          const hadMine =
+            typeof tutorialWelcome?.session?.mineCompletedAt === "number";
           tutorialWelcome = withTutorialMineCompleted(
             tutorialWelcome ?? {
               needsTutorial: true,
@@ -6138,10 +6170,14 @@ function enterGame(
           );
           game.setTutorialMineHighlight(null);
           hud.setStatus(
-            "Received NIM. Stand beside the Unlock Pad and tap Unlock Pad."
+            "Received NIM. Stand beside the Unlock Pad and tap Unlock."
           );
           syncTutorialStepCoach();
           syncTutorialAttentionCue();
+          if (!hadMine) {
+            hud.showTutorialCinematic(TUTORIAL_CINEMATIC_TITLES.mine);
+            hud.pulseTutorialStepCoach("mine");
+          }
         }
         return;
       }
@@ -6652,13 +6688,7 @@ function enterGame(
   }
 
   game.setRoomChangeHandler((targetRoomId, spawnX, spawnZ) => {
-    const fromTutorial =
-      normalizeRoomId(game.getRoomId()) === TUTORIAL_ROOM_ID &&
-      tutorialWelcome?.lessonMode === true &&
-      typeof tutorialWelcome.session?.doorPaidAt === "number";
-    const toHub = normalizeRoomId(targetRoomId) === CHAMBER_ROOM_ID;
-    if (fromTutorial && toHub) {
-      pendingTutorialHubWelcome = true;
+    if (maybeArmTutorialHubWelcome(targetRoomId)) {
       beginRoomTransition(CHAMBER_ROOM_ID, "Welcome to the Hub…");
     }
     connectToRoom(targetRoomId, { x: spawnX, z: spawnZ });
@@ -6928,8 +6958,12 @@ function enterGame(
         if (tp) {
           const hereRoom = normalizeRoomId(game.getRoomId());
           const destRoom = normalizeRoomId(tp.targetRoomId);
+          const hubWelcome = maybeArmTutorialHubWelcome(tp.targetRoomId);
           if (destRoom !== hereRoom) {
-            beginRoomTransition(tp.targetRoomId);
+            beginRoomTransition(
+              tp.targetRoomId,
+              hubWelcome ? "Welcome to the Hub…" : undefined
+            );
           }
         }
       }
