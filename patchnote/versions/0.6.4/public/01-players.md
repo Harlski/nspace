@@ -10,4 +10,5 @@
 - [FIX] Tutorial **Unlock** now opens Nimiq Hub to pay on desktop when you are not in the Nimiq Pay app.
 - [NEW] Before paying to unlock, a confirmation popup shows how much NIM you are about to send.
 - [CHANGE] The tutorial control now reads **Unlock** (was “Unlock Pad”). Reset for testing stays in the player menu.
+- [FIX] If Unlock pay is slow, you now have about **two minutes** before the tutorial unsticks you (was about ten seconds).
 - [PERF] Occasional lag spikes while people are mining / claiming blocks should be much rarer.

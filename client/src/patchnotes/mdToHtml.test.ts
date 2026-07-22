@@ -51,6 +51,13 @@ describe("compareSemverDesc", () => {
     expect(compareSemverDesc("0.3.3", "0.3.4")).toBeGreaterThan(0);
     expect(compareSemverDesc("0.3.4", "0.3.4")).toBe(0);
   });
+
+  it("orders letter appends after the bare patch (newest first)", () => {
+    expect(compareSemverDesc("0.6.4a", "0.6.4")).toBeLessThan(0);
+    expect(compareSemverDesc("0.6.4", "0.6.4a")).toBeGreaterThan(0);
+    expect(compareSemverDesc("0.6.4b", "0.6.4a")).toBeLessThan(0);
+    expect(compareSemverDesc("0.6.5", "0.6.4a")).toBeLessThan(0);
+  });
 });
 
 describe("PATCHNOTE_TIER_ORDER", () => {

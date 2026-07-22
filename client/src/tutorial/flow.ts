@@ -5,9 +5,9 @@ import { gateApproachTile } from "../game/gateAuth.js";
 export const TUTORIAL_ROOM_ID = "tutorial";
 
 export const TUTORIAL_ESCAPE_MS =
-  Number(import.meta.env.VITE_TUTORIAL_ESCAPE_MS) || 10_000;
+  Number(import.meta.env.VITE_TUTORIAL_ESCAPE_MS) || 120_000;
 export const TUTORIAL_ESCAPE_COUNTDOWN_MS =
-  Number(import.meta.env.VITE_TUTORIAL_ESCAPE_COUNTDOWN_MS) || 5_000;
+  Number(import.meta.env.VITE_TUTORIAL_ESCAPE_COUNTDOWN_MS) || 10_000;
 
 export type TutorialWelcome = {
   needsTutorial: boolean;

@@ -29,27 +29,41 @@ export type PatchnoteRelease = {
   tiers: PatchnoteTier[];
 };
 
-function semverParts(v: string): [number, number, number] | null {
-  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(v);
+function semverParts(
+  v: string
+): { major: number; minor: number; patch: number; suffix: string } | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)([a-z]+)?$/i.exec(v);
   if (!m) return null;
-  return [Number(m[1]), Number(m[2]), Number(m[3])];
+  return {
+    major: Number(m[1]),
+    minor: Number(m[2]),
+    patch: Number(m[3]),
+    suffix: (m[4] ?? "").toLowerCase(),
+  };
 }
 
-/** Sort highest release first (only `x.y.z` folders). */
+/**
+ * Sort highest release first.
+ * Supports frozen folders `x.y.z` and letter appends `x.y.z` + suffix (e.g. `0.6.4a`).
+ * Same numeric triple: longer / later suffix sorts first (`0.6.4b` > `0.6.4a` > `0.6.4`).
+ */
 export function compareSemverDesc(a: string, b: string): number {
   const pa = semverParts(a);
   const pb = semverParts(b);
   if (pa && pb) {
-    for (let i = 0; i < 3; i++) {
-      if (pa[i] !== pb[i]) return pb[i]! - pa[i]!;
-    }
-    return 0;
+    if (pa.major !== pb.major) return pb.major - pa.major;
+    if (pa.minor !== pb.minor) return pb.minor - pa.minor;
+    if (pa.patch !== pb.patch) return pb.patch - pa.patch;
+    if (pa.suffix === pb.suffix) return 0;
+    if (!pa.suffix) return 1; // bare x.y.z older than lettered append
+    if (!pb.suffix) return -1;
+    return pb.suffix.localeCompare(pa.suffix);
   }
   return b.localeCompare(a);
 }
 
 const GLOB_RE =
-  /[/\\]versions[/\\](\d+\.\d+\.\d+)[/\\]public[/\\](\d{2})-([^/\\]+)\.md$/;
+  /[/\\]versions[/\\](\d+\.\d+\.\d+[a-z]*)[/\\]public[/\\](\d{2})-([^/\\]+)\.md$/i;
 
 function parseGlobPath(path: string): { version: string; tierKey: string } | null {
   const m = GLOB_RE.exec(path.replace(/\\/g, "/"));
@@ -66,6 +80,7 @@ function isTierId(s: string): s is (typeof PATCHNOTE_TIER_ORDER)[number] {
 /**
  * Eager-bundles `patchnote/versions/<semver>/public/*.md` at build time.
  * `UNRELEASED` and non-semver folders are omitted so the lobby only lists frozen releases.
+ * Letter appends (`0.6.4a`) are included.
  */
 export function collectPatchnotesFromGlob(
   modules: Record<string, string>

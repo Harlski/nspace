@@ -5,4 +5,4 @@
 
 ---
 
-The first-contact tutorial feels sharper: a slim progress track, cinematic step titles, desktop Unlock pay via Nimiq Hub, and a confirm before you send. Mining lag spikes should be rarer too.
+The first-contact tutorial feels sharper: a slim progress track, cinematic step titles, desktop Unlock pay via Nimiq Hub, and a confirm before you send. Mining lag spikes should be rarer too. Hotfix: Unlock pay now waits up to two minutes before unsticking you.

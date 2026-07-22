@@ -302,8 +302,8 @@ Mirror Play Space Template pattern:
 | `TUTORIAL_BUILDER_ALLOWLIST` | Wallets that may edit Tutorial Staging |
 | `TUTORIAL_FAUCET_AMOUNT_LUNA` | Default 1_000_000 (0.01 NIM) |
 | `TUTORIAL_DOOR_AMOUNT_LUNA` | Default 1_000_000 |
-| `TUTORIAL_ESCAPE_MS` | Client; default 10000 |
-| `TUTORIAL_ESCAPE_COUNTDOWN_MS` | Client; default 5000 |
+| `TUTORIAL_ESCAPE_MS` | Client; default 120000 (2 min) |
+| `TUTORIAL_ESCAPE_COUNTDOWN_MS` | Client; default 10000 |
 
 ### ADR
 

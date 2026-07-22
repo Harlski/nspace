@@ -11,3 +11,4 @@
   - `[payout-service] Migrated accepted-claim-ids.json → .jsonl (N ids)`
   Legacy files become `*.json.pre-jsonl.bak` (safe to delete after you confirm migration). Live files: `data/payout-outbox/delivered-claim-ids.jsonl` and `data/payout-service/accepted-claim-ids.jsonl`.
 - [OPS] After deploy: confirm those migration log lines once; watch stall rate and `iotop` write bandwidth (see [docs/nim-payout-tracing.md](../../../../docs/nim-payout-tracing.md)).
+- [CHANGE] Default tutorial Pay escape: `VITE_TUTORIAL_ESCAPE_MS=120000` (2 min), countdown `VITE_TUTORIAL_ESCAPE_COUNTDOWN_MS=10000`. Override in the client build env if needed; see `server/.env.example`.

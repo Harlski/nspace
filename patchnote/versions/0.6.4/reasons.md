@@ -8,7 +8,7 @@
 
 ## Summary
 
-Tutorial Pay/desktop Hub + confirm + progress track + step cinematics; claim-id dedupe append-only (outbox + payout-service) to cut mining stalls.
+Tutorial Pay/desktop Hub + confirm + progress track + step cinematics; claim-id dedupe append-only (outbox + payout-service) to cut mining stalls. **Hotfix:** tutorial Pay escape default extended to 2 minutes.
 
 ---
 
@@ -25,6 +25,7 @@ Tutorial Pay/desktop Hub + confirm + progress track + step cinematics; claim-id 
 - **Tutorial gate control relabeled "Unlock" (was "Unlock Pad").** `TUTORIAL_UNLOCK_GATE_LABEL` + Step Coach / post-mine hint copy updated ([client/src/tutorial/flow.ts](../../../client/src/tutorial/flow.ts), [client/src/main.ts](../../../client/src/main.ts)).
 - **Tutorial Step Coach → compact milestone progress track.** Replaces numbered Mine · Pay · Exit chips with labeled nodes above a fillable connector line (green check / gold current ring / muted next). Connectors animate `scaleX` when a step completes (~360ms). Compact strip height; no Start over on the coach (reset stays Player Menu only). Hint tints the word Unlock. CSS in [client/src/style.css](../../../client/src/style.css); markup/wiring in [client/src/ui/hud.ts](../../../client/src/ui/hud.ts).
 - **Tutorial step cinematics.** `hud.showTutorialCinematic(title)` full-letterbox title card (veil + blur/scale-in, ~2.8s hold, queued). Fired once per step advance: Mine → “You just earned NIM”, Pay → “You just spent NIM”, Hub Exit → “Welcome to Nimiq Space” (`TUTORIAL_CINEMATIC_TITLES`). NIM / brand words tinted. Exit teleporter arms `pendingTutorialHubWelcome` (same as doors); cinematic flushes **after** the Hub load veil clears so it is not spent under black.
+- **Hotfix — Tutorial Pay escape wait extended to 2 minutes.** Default `TUTORIAL_ESCAPE_MS` / `VITE_TUTORIAL_ESCAPE_MS` is now **120000** (was 10000); countdown window default **10000** (was 5000). Still overridable via env ([client/src/tutorial/flow.ts](../../../client/src/tutorial/flow.ts)).
 
 ### Server
 
@@ -41,3 +42,4 @@ Tutorial Pay/desktop Hub + confirm + progress track + step cinematics; claim-id 
 ### Deploy / ops
 
 - After deploy, confirm migration log lines once; monitor stall rate and `iotop` write bandwidth (see [docs/nim-payout-tracing.md](../../../docs/nim-payout-tracing.md)).
+- **Hotfix:** Client builds that omit `VITE_TUTORIAL_ESCAPE_*` pick up the new 2 min / 10 s countdown defaults. Override only if you need a different escape window (`server/.env.example`).
