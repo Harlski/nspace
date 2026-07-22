@@ -1314,7 +1314,7 @@ function enterGame(
         await import("./unlockPad/pay.js");
       try {
         hud.setStatus(
-          window.nimiqPay?.sendBasicTransactionWithData
+          isNimiqPayWebViewHost()
             ? "Opening wallet…"
             : "Opening Nimiq Hub…"
         );

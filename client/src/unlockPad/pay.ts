@@ -1,5 +1,9 @@
 import HubApi from "@nimiq/hub-api";
 import type { UnlockPadIntentResponse } from "./api.js";
+import {
+  sendBasicTransactionWithDataViaPay,
+  shouldUseNimiqPaySend,
+} from "../pay/sendBasicWithData.js";
 
 const HUB_URL = import.meta.env.VITE_HUB_URL || "https://hub.nimiq.com";
 
@@ -39,18 +43,17 @@ export function isUnlockPadPaymentUserCancel(err: unknown): boolean {
 }
 
 /**
- * Send an Unlock Pad Payment Intent: Nimiq Pay when the host injects it, else Hub checkout.
- * Throws on cancel / failure; callers should treat {@link isUnlockPadPaymentUserCancel} as quiet exit.
+ * Send an Unlock Pad Payment Intent: Nimiq Pay mini-app SDK when in Pay,
+ * else Hub checkout. Never opens Hub while inside Nimiq Pay.
  */
 export async function sendUnlockPadPaymentIntent(
   intent: UnlockPadPaymentIntent
 ): Promise<void> {
-  const pay = typeof window !== "undefined" ? window.nimiqPay : undefined;
-  if (pay?.sendBasicTransactionWithData) {
-    await pay.sendBasicTransactionWithData({
+  if (shouldUseNimiqPaySend()) {
+    await sendBasicTransactionWithDataViaPay({
       recipient: intent.recipient,
-      value: BigInt(intent.amountLuna),
-      data: intent.memo,
+      amountLuna: intent.amountLuna,
+      memo: intent.memo,
     });
     return;
   }

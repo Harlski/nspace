@@ -120,11 +120,12 @@ export function registerTutorialRoutes(
       res.status(401).json({ error: "unauthorized" });
       return;
     }
-    if (!allowTutorialLearnerApi(signer)) {
-      tutorialDisabled(req, res);
+    // Admin-only: learners must not restart the lesson from the client menu/API.
+    if (!isAdmin(signer)) {
+      res.status(403).json({ error: "forbidden" });
       return;
     }
-    // Own wallet only (jwtAddressFromReq): clears session so the learner can restart at Mine.
+    // Own wallet only (jwtAddressFromReq): clears session so the admin can restart at Mine.
     const result = resetTutorialProgress(signer);
     if (!result.ok) {
       res.status(400).json({ error: result.error });

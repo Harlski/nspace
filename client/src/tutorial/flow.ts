@@ -378,8 +378,8 @@ function isTutorialPayUserCancel(err: unknown): boolean {
 
 /**
  * Send the tutorial door payment while arming the escape timer.
- * Nimiq Pay host when injected (mini-app), else Nimiq Hub checkout (desktop /
- * Hub login). Only local DEV without a Pay host simulates an optimistic send.
+ * Nimiq Pay mini-app uses `@nimiq/mini-app-sdk` (never Hub). Desktop / Hub
+ * login falls back to Hub `checkout`. Local DEV without a Pay host may simulate.
  */
 export async function sendTutorialDoorPayment(opts: {
   quote: TutorialDoorQuote;
@@ -388,19 +388,19 @@ export async function sendTutorialDoorPayment(opts: {
   | { ok: true; simulated?: boolean }
   | { ok: false; cancelled: boolean; reason?: "pay_unavailable" }
 > {
-  const pay = window.nimiqPay;
-  const hasPayHost = Boolean(pay?.sendBasicTransactionWithData);
-  if (!hasPayHost && canSimulateTutorialDoorPayment()) {
-    // Local DEV without a Pay host - simulate optimistic send.
+  const { shouldUseNimiqPaySend, sendBasicTransactionWithDataViaPay } =
+    await import("../pay/sendBasicWithData.js");
+  const usePay = shouldUseNimiqPaySend();
+  if (!usePay && canSimulateTutorialDoorPayment()) {
     return { ok: true, simulated: true };
   }
   opts.escape.arm();
   try {
-    if (pay?.sendBasicTransactionWithData) {
-      await pay.sendBasicTransactionWithData({
+    if (usePay) {
+      await sendBasicTransactionWithDataViaPay({
         recipient: opts.quote.recipient,
-        value: BigInt(opts.quote.amountLuna),
-        data: opts.quote.memo,
+        amountLuna: opts.quote.amountLuna,
+        memo: opts.quote.memo,
       });
     } else {
       const { default: HubApi } = await import("@nimiq/hub-api");
@@ -450,10 +450,8 @@ export function shouldOfferTutorialUnlockGate(
 }
 
 /**
- * Show Reset tutorial while in the Tutorial Room.
- * Player Menu only (coach strip has no Start over).
- * When the learner flow is off, only admins (who may still enter via teleporter).
- * Admins keep access after completion so they can re-test the lesson.
+ * Show Reset tutorial in the Player Menu while in the Tutorial Room.
+ * Admins only (re-test / QA). Learners cannot reset their own progress from the menu.
  */
 export function shouldShowTutorialResetMenu(opts: {
   inTutorialRoom: boolean;
@@ -461,8 +459,7 @@ export function shouldShowTutorialResetMenu(opts: {
   tutorialFeatureEnabled: boolean;
 }): boolean {
   if (!opts.inTutorialRoom) return false;
-  if (opts.isAdmin) return true;
-  return opts.tutorialFeatureEnabled;
+  return opts.isAdmin;
 }
 
 /** Floor tile on the approach side of a gate (opposite the exit neighbor). */

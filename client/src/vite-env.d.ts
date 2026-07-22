@@ -6,6 +6,10 @@ declare const __NSPACE_APP_VERSION__: string;
 /** Seeded by Nimiq Pay before mini-app scripts run ([docs](https://nimiq.dev/mini-apps/)). */
 interface NimiqPayHostContext {
   readonly language?: string;
+  /**
+   * DEV-only (`?payEmulate`): stub send. Real Pay uses `window.nimiq` via
+   * `@nimiq/mini-app-sdk` `init()`, not this host marker.
+   */
   sendBasicTransactionWithData?: (opts: {
     recipient: string;
     value: bigint;

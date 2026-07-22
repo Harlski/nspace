@@ -462,14 +462,14 @@ describe("Tutorial Unlock Gate offer", () => {
 });
 
 describe("Tutorial reset menu", () => {
-  it("shows for learners only when the feature is on and they are in Tutorial Room", () => {
+  it("hides for non-admins even when the feature is on", () => {
     expect(
       shouldShowTutorialResetMenu({
         inTutorialRoom: true,
         isAdmin: false,
         tutorialFeatureEnabled: true,
       })
-    ).toBe(true);
+    ).toBe(false);
     expect(
       shouldShowTutorialResetMenu({
         inTutorialRoom: true,
