@@ -179,7 +179,11 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
         return { ...WORLDCUP_FIELD_BOUNDS };
       }
       if (isPlaySpaceRoomId(id)) {
-        return { ...PLAY_SPACE_BOUNDS };
+        // Template-sourced Play Spaces carry welcome.roomBounds (often larger than
+        // the default PLAY_SPACE_BOUNDS). Prefer the registered size so base-grid
+        // floors from a user room template are not treated as off-map and culled.
+        const registered = clientRoomBoundsById.get(id);
+        return registered ? { ...registered } : { ...PLAY_SPACE_BOUNDS };
       }
       const b = clientRoomBoundsById.get(id);
       return b ? { ...b } : HUB_BOUNDS;

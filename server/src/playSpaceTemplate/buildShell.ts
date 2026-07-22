@@ -3,6 +3,7 @@ import type { RoomBounds } from "../roomLayouts.js";
 import type { TerrainProps } from "../grid.js";
 import { blockKey } from "../grid.js";
 import { sanitizeObstaclePropsForExport } from "../designSnapshot.js";
+import { DEFAULT_EXTRA_FLOOR_COLOR_RGB } from "../blockColors.js";
 import {
   PLAY_SPACE_BACKGROUND_HUE_DEG,
   PLAY_SPACE_BLOCKS,
@@ -204,11 +205,14 @@ export function buildShellFromLayoutSnapshot(
     bounds: { ...snap.roomBounds },
     obstacles,
     extraFloor: snap.extraFloorTiles
-      .filter((t) => typeof t.colorRgb === "number")
+      .filter((t) => Number.isFinite(t.x) && Number.isFinite(t.z))
       .map((t) => ({
-        x: t.x,
-        z: t.z,
-        colorRgb: t.colorRgb as number,
+        x: Math.floor(t.x),
+        z: Math.floor(t.z),
+        colorRgb:
+          typeof t.colorRgb === "number"
+            ? t.colorRgb
+            : DEFAULT_EXTRA_FLOOR_COLOR_RGB,
       })),
     baseFloorColors: snap.baseFloorColorTiles
       .filter((t) => typeof t.colorRgb === "number")
