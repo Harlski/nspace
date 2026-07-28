@@ -211,7 +211,7 @@ function moderationFlagsLine(wallet: string): string | null {
 
 function moderationUrl(publicBaseUrl: string, wallet: string): string {
   const base = publicBaseUrl.replace(/\/$/, "");
-  return `${base}/admin/moderation?wallet=${encodeURIComponent(walletKey(wallet))}`;
+  return `${base}/admin/user/${encodeURIComponent(walletKey(wallet))}`;
 }
 
 function formatRoomLabel(roomId: string, inviteSlug?: string): string {

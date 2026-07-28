@@ -158,7 +158,7 @@ _Avoid_: pay timeout, stuck handler.
 
 **Tutorial Sandbox**:
 Post-complete revisit of the Tutorial Room via admin-placed Teleporter only - walk the layout with
-normal chat/emotes, no faucet, door payment, or guided overlays.
+normal chat/emotes, no faucet, door unlock sign, or guided overlays.
 _Avoid_: tutorial replay, practice mode.
 
 **Tutorial Step Coach**:
@@ -670,8 +670,9 @@ _Avoid_: Time of Khan, login streak top, daily login gold, vague "milestone" cop
 **Mining Restriction**:
 An admin-imposed sanction on a wallet that blocks claimable-block mining (starting and
 completing a NIM block claim). Distinct from channel mute and username-set ban; toggled from
-another player's profile by a game admin or from `/admin/moderation`. May carry an optional
-operator note (not shown to the player).
+another player's profile by a game admin or from `/admin/user/{profile}` (and the
+`/admin/moderation` lists that link there). May carry an optional operator note (not shown to
+the player).
 _Avoid_: mining ban (use Restriction for the canonical sanction name), claim ban, payout block.
 
 **Username-set ban**:

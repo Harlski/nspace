@@ -77,14 +77,13 @@ import {
 import {
   TUTORIAL_ROOM_ID,
   TutorialEscapeTimer,
-  fetchTutorialDoorQuote,
   postTutorialAbandon,
   postTutorialDoorSent,
   postTutorialResetProgress,
   postTutorialUnstick,
   parseTutorialMineTileCoords,
   resolveTutorialAttentionTargets,
-  sendTutorialDoorPayment,
+  signTutorialDoorUnlock,
   shouldOfferTutorialUnlockGate,
   shouldShowFinishTutorialMenu,
   shouldShowTutorialMineHighlight,
@@ -92,6 +91,7 @@ import {
   deriveTutorialCoachState,
   withTutorialMineCompleted,
   TUTORIAL_CINEMATIC_TITLES,
+  TUTORIAL_DOOR_UNLOCK_MESSAGE,
   TUTORIAL_UNLOCK_GATE_LABEL,
   TUTORIAL_WRONG_SLOT_REASON,
   TUTORIAL_ALREADY_CLAIMED_REASON,
@@ -1211,7 +1211,7 @@ function enterGame(
 
   async function runTutorialDoorPayFlow(): Promise<boolean> {
     if (!shouldOfferTutorialUnlockGate(tutorialWelcome)) {
-      // Already past Pay (paid, escape, or complete) - treat as success.
+      // Already past Pay (signed/acked, escape, or complete) - treat as success.
       // Still on Mine or no welcome - do not unlock yet.
       return (
         typeof tutorialWelcome?.session?.doorPaidAt === "number" ||
@@ -1222,38 +1222,27 @@ function enterGame(
     if (tutorialDoorPayInFlight) return false;
     tutorialDoorPayInFlight = true;
     try {
-      const quote = await fetchTutorialDoorQuote(
-        token,
-        apiUrl("/api/tutorial/door-quote")
-      );
-      if (!quote) {
-        hud.setStatus("Tutorial payment is not configured on this server.");
-        return false;
-      }
       const confirmed = await hud.showConfirm({
         title: "Unlock this pad?",
-        message: `Send ${quote.amountNim} NIM to unlock the pad and continue.`,
-        detail: `To ${quote.recipient}`,
-        confirmLabel: "Pay & unlock",
+        message:
+          "In the rest of the game, unlocking costs NIM. This tutorial pad is free - sign a short message to continue.",
+        detail: TUTORIAL_DOOR_UNLOCK_MESSAGE,
+        confirmLabel: "Sign & unlock",
         cancelLabel: "Not now",
       });
       if (!confirmed) {
         hud.setStatus("Unlock cancelled - tap Unlock when you are ready.");
         return false;
       }
-      const paid = await sendTutorialDoorPayment({ quote, escape: tutorialEscape });
-      if (!paid.ok) {
-        if (!paid.cancelled) {
-          hud.setStatus(
-            paid.reason === "pay_unavailable"
-              ? "Open Nimiq Pay to complete this step."
-              : "Pay failed - try again."
-          );
+      const signed = await signTutorialDoorUnlock({ escape: tutorialEscape });
+      if (!signed.ok) {
+        if (!signed.cancelled) {
+          hud.setStatus("Sign failed - try Unlock again.");
         }
         return false;
       }
-      if (paid.simulated) {
-        hud.showBriefToast("Dev: simulated tutorial Pay");
+      if (signed.simulated) {
+        hud.showBriefToast("Dev: simulated tutorial Unlock sign");
       }
       const sent = await postTutorialDoorSent(token, apiUrl("/api/tutorial/door-sent"));
       if (sent.ok) {

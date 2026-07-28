@@ -32,6 +32,7 @@ import {
   broadcastRestartPendingNotice,
   broadcastRoomCatalogRefresh,
   canTeleporterDestinationRoom,
+  clearSpentTutorialMineClaimsForWallet,
   directInviteOnCreated,
   getHostDisplayNameForInvite,
   getLiveRealPlayerCountInRoom,
@@ -141,6 +142,7 @@ import { adminHeaderPageHtml } from "./adminHeaderPage.js";
 import { adminFeedbackPageHtml } from "./adminFeedbackPage.js";
 import { adminChatPageHtml } from "./adminChatPage.js";
 import { adminModerationPageHtml } from "./adminModerationPage.js";
+import { adminUserPageHtml } from "./adminUserPage.js";
 import { adminCampaignPageHtml } from "./adminCampaignPage.js";
 import { adminCosmeticsPageHtml } from "./adminCosmeticsPage.js";
 import { advertisePageHtml } from "./advertisePage.js";
@@ -337,6 +339,11 @@ import {
   setMiningBanned,
   setUsernameSetBanned,
 } from "./moderationStore.js";
+import {
+  adminResetPlayerTutorial,
+  lookupAdminPlayer,
+  resolveAdminPlayerTarget,
+} from "./adminPlayerOps.js";
 import { listRoomsOwnedBy } from "./roomRegistry.js";
 import { nimiqIdenticonDataUrl } from "./nimiqIdenticonServer.js";
 import { walletDisplayName } from "./walletDisplayName.js";
@@ -1229,6 +1236,10 @@ app.get("/admin/chat", (_req, res) => {
 
 app.get("/admin/moderation", (_req, res) => {
   res.type("html").send(adminModerationPageHtml());
+});
+
+app.get("/admin/user/:profile", (_req, res) => {
+  res.type("html").send(adminUserPageHtml());
 });
 
 function parseAdminChatTs(raw: unknown): number | undefined {
@@ -3088,26 +3099,42 @@ app.post("/api/admin/moderation", requireSystemAdminWallet, (req, res) => {
   const actor = normalizeWalletId(jwtAddressFromReq(req) ?? "");
   const body = req.body as Record<string, unknown> | null;
   const action = String(body?.action ?? "");
-  const target = normalizeWalletId(String(body?.target ?? ""));
-  if (!target || target.length < 4) {
-    res.status(400).json({ error: "invalid_target" });
+  const resolved = resolveAdminPlayerTarget(String(body?.target ?? ""));
+  if (!resolved.ok) {
+    res.status(400).json({ error: resolved.error });
     return;
   }
+  const target = resolved.wallet;
   try {
     if (action === "clear_username") {
       adminClearPlayerUsername(target);
       syncPlayerProfileDisplayNameForWallet(target);
-      res.json({ ok: true });
+      res.json({
+        ok: true,
+        wallet: target,
+        matchedBy: resolved.matchedBy,
+        username: resolved.username,
+      });
       return;
     }
     if (action === "username_ban") {
       setUsernameSetBanned(target, body?.banned === true, actor);
-      res.json({ ok: true });
+      res.json({
+        ok: true,
+        wallet: target,
+        matchedBy: resolved.matchedBy,
+        username: resolved.username,
+      });
       return;
     }
     if (action === "channel_mute") {
       setChannelMuted(target, body?.muted === true, actor);
-      res.json({ ok: true });
+      res.json({
+        ok: true,
+        wallet: target,
+        matchedBy: resolved.matchedBy,
+        username: resolved.username,
+      });
       return;
     }
     if (action === "mining_ban") {
@@ -3117,7 +3144,12 @@ app.post("/api/admin/moderation", requireSystemAdminWallet, (req, res) => {
         actor,
         typeof body?.note === "string" ? body.note : undefined
       );
-      res.json({ ok: true });
+      res.json({
+        ok: true,
+        wallet: target,
+        matchedBy: resolved.matchedBy,
+        username: resolved.username,
+      });
       return;
     }
     if (action === "set_username") {
@@ -3138,9 +3170,34 @@ app.post("/api/admin/moderation", requireSystemAdminWallet, (req, res) => {
       notifyUsernameSet(target, result.customUsername);
       res.json({
         ok: true,
+        wallet: target,
+        matchedBy: resolved.matchedBy,
+        username: resolved.username,
         customUsername: result.customUsername,
         effectiveDisplayName: result.effectiveDisplayName,
         usernameLockedUntil: result.usernameLockedUntil,
+      });
+      return;
+    }
+    if (action === "tutorial_reset") {
+      const reset = adminResetPlayerTutorial(
+        target,
+        {
+          currentRoomId: getWalletCurrentRoomId(target),
+          roomPlayerCount: (roomId) => getLiveRealPlayerCountInRoom(roomId),
+        }
+      );
+      if (!reset.ok) {
+        res.status(400).json({ error: reset.error });
+        return;
+      }
+      clearSpentTutorialMineClaimsForWallet(reset.wallet);
+      res.json({
+        ok: true,
+        wallet: reset.wallet,
+        matchedBy: resolved.matchedBy,
+        username: resolved.username,
+        player: reset.player,
       });
       return;
     }
@@ -3151,13 +3208,92 @@ app.post("/api/admin/moderation", requireSystemAdminWallet, (req, res) => {
   }
 });
 
+function enrichModerationSnapshotWithUsernames() {
+  const snap = listModerationSnapshot();
+  const label = (wallet: string): { username: string | null; displayName: string } => {
+    const username = playerHasCustomUsername(wallet)
+      ? getEffectivePlayerDisplayName(wallet)
+      : null;
+    return {
+      username,
+      displayName: username || walletDisplayName(wallet) || wallet,
+    };
+  };
+  return {
+    usernameBans: snap.usernameBans.map((r) => ({
+      ...r,
+      ...label(r.address),
+    })),
+    channelMutes: snap.channelMutes.map((r) => ({
+      ...r,
+      ...label(r.address),
+    })),
+    miningRestrictions: snap.miningRestrictions.map((r) => ({
+      ...r,
+      ...label(r.address),
+    })),
+  };
+}
+
 app.get("/api/admin/bans", requireSystemAdminWallet, (_req, res) => {
-  res.json(listModerationSnapshot());
+  res.json(enrichModerationSnapshotWithUsernames());
 });
 
 app.get("/api/admin/moderation", requireSystemAdminWallet, (_req, res) => {
-  res.json(listModerationSnapshot());
+  res.json(enrichModerationSnapshotWithUsernames());
 });
+
+/**
+ * Look up a player by full NQ wallet or custom username.
+ * Returns tutorial, sanctions, activity, rooms, and live presence.
+ */
+app.get("/api/admin/player", requireSystemAdminWallet, (req, res) => {
+  const q = String(req.query.q ?? req.query.target ?? "").trim();
+  const resolved = resolveAdminPlayerTarget(q);
+  if (!resolved.ok) {
+    res.status(resolved.error === "not_found" ? 404 : 400).json({ error: resolved.error });
+    return;
+  }
+  const out = lookupAdminPlayer(q, {
+    currentRoomId: getWalletCurrentRoomId(resolved.wallet),
+    roomPlayerCount: (roomId) => getLiveRealPlayerCountInRoom(roomId),
+  });
+  if (!out.ok) {
+    res.status(out.error === "not_found" ? 404 : 400).json({ error: out.error });
+    return;
+  }
+  res.json({ ok: true, player: out.player });
+});
+
+/**
+ * Reset another player's tutorial (Mine → Pay → Exit + completion wipe)
+ * so the next Nimiq Pay session needs the lesson again.
+ * Body: `{ "target": "<NQ wallet or username>" }`.
+ */
+app.post(
+  "/api/admin/player/tutorial-reset",
+  requireSystemAdminWallet,
+  (req, res) => {
+    const body = req.body as Record<string, unknown> | null;
+    const targetRaw = String(body?.target ?? "");
+    const resolved = resolveAdminPlayerTarget(targetRaw);
+    const live = resolved.ok
+      ? {
+          currentRoomId: getWalletCurrentRoomId(resolved.wallet),
+          roomPlayerCount: (roomId: string) =>
+            getLiveRealPlayerCountInRoom(roomId),
+        }
+      : undefined;
+    const out = adminResetPlayerTutorial(targetRaw, live);
+    if (!out.ok) {
+      const status = out.error === "not_found" ? 404 : 400;
+      res.status(status).json({ error: out.error });
+      return;
+    }
+    clearSpentTutorialMineClaimsForWallet(out.wallet);
+    res.json({ ok: true, wallet: out.wallet, player: out.player });
+  }
+);
 
 /**
  * Schedule a graceful process exit after `etaSeconds` and warn all game WebSockets.

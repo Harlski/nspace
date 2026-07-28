@@ -127,6 +127,29 @@ export async function signInWithWallet(nonce: string): Promise<LoginSignPayload>
   return signLoginChallenge(nonce, "nspace");
 }
 
+/**
+ * Sign an arbitrary UTF-8 message via Nimiq Pay (`nimiq.sign`) or Hub `signMessage`.
+ * Used for wallet UX that must not require a spendable balance (e.g. tutorial Unlock).
+ */
+export async function signPlainMessage(
+  message: string,
+  appName = "nspace"
+): Promise<void> {
+  const text = String(message ?? "");
+  if (!text) throw new Error("empty_message");
+  if (isNimiqPayMiniApp()) {
+    const { init } = await import("@nimiq/mini-app-sdk");
+    const nimiq = await init();
+    const raw = await nimiq.sign(text);
+    if (isProviderErrorResponse(raw)) {
+      throw new Error(String(raw.error?.message || "nimiq_pay_sign_failed"));
+    }
+    return;
+  }
+  const hubApi = new HubApi(HUB_URL);
+  await hubApi.signMessage({ appName, message: text });
+}
+
 export async function fetchNonce(): Promise<{ nonce: string; expiresAt: number }> {
   const r = await fetch(apiUrl("/api/auth/nonce"));
   if (!r.ok) throw new Error("nonce_failed");

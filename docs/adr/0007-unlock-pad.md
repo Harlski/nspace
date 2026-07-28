@@ -9,11 +9,13 @@ walkable crossing — see
 [0010-unlock-aftermath-teleporter.md](0010-unlock-aftermath-teleporter.md)’s Teleporter
 Aftermath / “pad becomes the exit” rule).
 
-**Proof is split:** the **Tutorial Room** keeps **Tutorial Pay Ack** (optimistic Nimiq Pay
-send success, no on-chain verify on the critical path) so first-contact stays fast — this
+**Proof is split:** the **Tutorial Room** keeps **Tutorial Unlock Ack** (optimistic after a
+free **message sign** in Nimiq Pay / Hub — no spend, no on-chain verify on the critical path)
+so first-contact stays fast and does not depend on faucet NIM being spendable yet — this
 revisits [0005-tutorial-first-contact.md](0005-tutorial-first-contact.md)’s “do not bolt
 Payment Intent onto the gate” rule by *replacing the Gate* with Unlock Pad while keeping
-optimistic proof for tutorial only. Elsewhere, default proof is **Payment Intent** verify.
+optimistic proof for tutorial only. Elsewhere, default proof is **Payment Intent** verify
+(real spend).
 
 In the tutorial, Unlock Pad **replaces** the Gate on the **Tutorial Path** Pay band.
 **Tutorial Escape** unsticks the learner’s pad unlock; Exit / lesson complete is decided in
@@ -21,7 +23,8 @@ In the tutorial, Unlock Pad **replaces** the Gate on the **Tutorial Path** Pay b
 
 **Considered options:** room-global unlock after anyone pays — breaks concurrent tutorial
 learners; Payment Intent for tutorial too — safer money, slower lesson; Gate + Unlock Pad
-together — two Pay metaphors; above-head pill only — weaker “locked tile” signal.
+together — two Pay metaphors; above-head pill only — weaker “locked tile” signal; tutorial
+real spend — fails when faucet balance is zero or still settling in Pay after mine.
 
-Future readers should not reintroduce a tutorial Gate for Pay, or force Payment Intent onto
-the tutorial Unlock Pad path, without revisiting this ADR.
+Future readers should not reintroduce a tutorial Gate for Pay, or force Payment Intent / a
+real NIM send onto the tutorial Unlock Pad path, without revisiting this ADR.

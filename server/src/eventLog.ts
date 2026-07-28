@@ -1424,6 +1424,9 @@ async function buildEventLogAnalyticsSnapshot(
 export type ConnectNoticeVisitStats = {
   nimEarnedLabel: string;
   activeMs: number;
+  /** Present on lastVisit when known (session wall-clock). */
+  startedAt?: number;
+  endedAt?: number;
 };
 
 export type ConnectNoticePlayerStats = {
@@ -1551,6 +1554,8 @@ export function getConnectNoticeStatsForAddress(
     lastVisit = {
       nimEarnedLabel: nimEarnedLabelFromLuna(lastEnded.nimLuna),
       activeMs: Math.min(lastEnded.activeMs, wall),
+      startedAt: lastEnded.startedAt,
+      endedAt: lastEnded.endedAt,
     };
   }
 

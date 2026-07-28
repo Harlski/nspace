@@ -21,7 +21,7 @@ export function initNimiqPayDevEmulation(): void {
   if (window.nimiqPay == null) {
     window.nimiqPay = {};
   }
-  // Optimistic tutorial Pay + Unlock Pad flows need a send stub outside the real mini-app.
+  // Unlock Pad Payment Intent flows (non-tutorial) may need a send stub outside the real mini-app.
   if (typeof window.nimiqPay.sendBasicTransactionWithData !== "function") {
     window.nimiqPay = {
       ...window.nimiqPay,

@@ -236,6 +236,25 @@ Do not overload it as a general fairness scheduler; abuse controls belong at cla
 
 Update this subsection if additional producers set `priority` or if a second priority class is needed.
 
+### Tutorial Unlock is a free message sign, not a spend
+
+**Today:** After the tutorial mine, **Unlock** on the Tutorial Path pad asks the learner to
+**sign a fixed teaching message** in Nimiq Pay or Hub (`TUTORIAL_DOOR_UNLOCK_MESSAGE`), then
+the client posts optimistic **`POST /api/tutorial/door-sent`** (same grant path as before).
+No NIM leaves the wallet. Real Unlock Pads elsewhere still require Payment Intent / spend.
+
+**Why:** New Pay wallets often have **zero spendable balance** right after mine: faucet payout
+may still be in flight, and Nimiq Pay can take a minute or more before a deposit is usable.
+A real send on the critical path stranded learners. The signed copy teaches that in-game
+unlocks normally cost NIM while keeping first contact unblocked.
+
+**Direction:** Keep tutorial Unlock free-of-spend. Do not reintroduce a door quote / checkout
+or Payment Intent on this path without revisiting ADRs 0005 and 0007. Escape remains for hung
+wallet UI.
+
+Update this subsection if Unlock ack gains signature verification on the server, or if faucet
+settlement becomes reliable enough that a real micro-send is worth teaching instead.
+
 ---
 
 ## Changelog (optional)
@@ -271,3 +290,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-07-16** — Floor tile color: rectangular SV + hue-strip picker (full spectrum light/dark); hue ring remains for objects/sky. See [reasons/reason_581734.md](reasons/reason_581734.md).
 - **2026-07-16** — Build dock: context controls must not exceed tool-card height; Floor spawn no longer shows Use room center in the dock. See [reasons/reason_628401.md](reasons/reason_628401.md).
 - **2026-07-25** — Recorded decision: tutorial faucet Pay-Intents use `priority: true` so first-contact NIM jumps the Outbox + Payout Service queue ahead of the normal FIFO backlog. See [reasons/reason_981786.md](reasons/reason_981786.md).
+- **2026-07-28** — Recorded decision: tutorial Unlock is a free wallet **message sign** (not a NIM send) so faucet settlement / zero balance cannot block the lesson; real pads stay Payment Intent. See [reasons/reason_452918.md](reasons/reason_452918.md).

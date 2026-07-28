@@ -139,10 +139,18 @@ export const TUTORIAL_COACH_HINTS: Record<TutorialCoachStep, string> = {
 /** Full-screen cinematic titles fired once when each tutorial step completes. */
 export const TUTORIAL_CINEMATIC_TITLES = {
   mine: "You just earned NIM",
-  pay: "You just spent NIM",
+  /** Tutorial Unlock is a free message sign; elsewhere gates cost NIM. */
+  pay: "Unlocks can cost NIM",
   /** Hub arrival after Exit; brand “Nimiq” is tinted in the HUD renderer. */
   exit: "Welcome to Nimiq Space",
 } as const;
+
+/**
+ * Exact UTF-8 string signed for tutorial Unlock (shown in Nimiq Pay / Hub).
+ * Teaches that real unlocks spend NIM without requiring faucet balance yet.
+ */
+export const TUTORIAL_DOOR_UNLOCK_MESSAGE =
+  "You can unlock gates like this in-game by spending NIM, this one is free";
 
 export type TutorialCoachState = {
   visible: boolean;
@@ -338,33 +346,17 @@ export async function postTutorialResetProgress(
   return res.ok;
 }
 
-/** True when local/dev may skip the real Nimiq Pay send for optimistic tutorial ack. */
-export function canSimulateTutorialDoorPayment(): boolean {
+/**
+ * True when local/dev may skip the real wallet sign for optimistic tutorial ack.
+ * Production Hub / Pay always prompts for {@link TUTORIAL_DOOR_UNLOCK_MESSAGE}.
+ */
+export function canSimulateTutorialDoorUnlock(): boolean {
   if (typeof import.meta === "undefined") return false;
   if (import.meta.env.DEV) return true;
   return import.meta.env.VITE_DEV_AUTH_BYPASS === "1";
 }
 
-const HUB_URL = import.meta.env.VITE_HUB_URL || "https://hub.nimiq.com";
-
-/** Hub checkout request for a tutorial door quote (Pay-less desktop path). */
-function buildTutorialDoorHubCheckoutRequest(quote: TutorialDoorQuote): {
-  appName: string;
-  recipient: string;
-  value: number;
-  extraData: string;
-} {
-  const luna = Number(quote.amountLuna);
-  if (!Number.isFinite(luna) || luna < 1) throw new Error("invalid_amount");
-  return {
-    appName: "Nimiq Space",
-    recipient: quote.recipient,
-    value: Math.floor(luna),
-    extraData: quote.memo,
-  };
-}
-
-function isTutorialPayUserCancel(err: unknown): boolean {
+function isTutorialUnlockUserCancel(err: unknown): boolean {
   const msg = String(err ?? "").toLowerCase();
   return (
     msg.includes("cancel") ||
@@ -377,41 +369,31 @@ function isTutorialPayUserCancel(err: unknown): boolean {
 }
 
 /**
- * Send the tutorial door payment while arming the escape timer.
- * Nimiq Pay mini-app uses `@nimiq/mini-app-sdk` (never Hub). Desktop / Hub
- * login falls back to Hub `checkout`. Local DEV without a Pay host may simulate.
+ * Tutorial Unlock proof: sign {@link TUTORIAL_DOOR_UNLOCK_MESSAGE} (no spend).
+ * Nimiq Pay uses `signPlainMessage` / mini-app `sign`; desktop / Hub login uses
+ * Hub `signMessage`. Local DEV without a Pay host may simulate.
+ * Escape timer stays armed while the wallet UI is open.
  */
-export async function sendTutorialDoorPayment(opts: {
-  quote: TutorialDoorQuote;
+export async function signTutorialDoorUnlock(opts: {
   escape: TutorialEscapeTimer;
 }): Promise<
   | { ok: true; simulated?: boolean }
-  | { ok: false; cancelled: boolean; reason?: "pay_unavailable" }
+  | { ok: false; cancelled: boolean; reason?: "sign_unavailable" }
 > {
-  const { shouldUseNimiqPaySend, sendBasicTransactionWithDataViaPay } =
-    await import("../pay/sendBasicWithData.js");
-  const usePay = shouldUseNimiqPaySend();
-  if (!usePay && canSimulateTutorialDoorPayment()) {
+  const { isNimiqPayMiniApp, signPlainMessage } = await import(
+    "../auth/nimiq.js"
+  );
+  if (!isNimiqPayMiniApp() && canSimulateTutorialDoorUnlock()) {
     return { ok: true, simulated: true };
   }
   opts.escape.arm();
   try {
-    if (usePay) {
-      await sendBasicTransactionWithDataViaPay({
-        recipient: opts.quote.recipient,
-        amountLuna: opts.quote.amountLuna,
-        memo: opts.quote.memo,
-      });
-    } else {
-      const { default: HubApi } = await import("@nimiq/hub-api");
-      const hub = new HubApi(HUB_URL);
-      await hub.checkout(buildTutorialDoorHubCheckoutRequest(opts.quote));
-    }
+    await signPlainMessage(TUTORIAL_DOOR_UNLOCK_MESSAGE, "nspace");
     opts.escape.disarm();
     return { ok: true };
   } catch (e) {
     opts.escape.disarm();
-    return { ok: false, cancelled: isTutorialPayUserCancel(e) };
+    return { ok: false, cancelled: isTutorialUnlockUserCancel(e) };
   }
 }
 

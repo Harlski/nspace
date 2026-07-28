@@ -5,11 +5,12 @@ import {
   TUTORIAL_ESCAPE_MS,
   TUTORIAL_WRONG_SLOT_REASON,
   TUTORIAL_ALREADY_CLAIMED_REASON,
-  canSimulateTutorialDoorPayment,
+  TUTORIAL_DOOR_UNLOCK_MESSAGE,
+  canSimulateTutorialDoorUnlock,
   deriveTutorialCoachState,
   isStandingOnTutorialGateApproach,
   parseTutorialMineTileCoords,
-  sendTutorialDoorPayment,
+  signTutorialDoorUnlock,
   shouldOfferTutorialUnlockGate,
   shouldShowFinishTutorialMenu,
   resolveTutorialAttentionTarget,
@@ -21,6 +22,7 @@ import {
   tutorialGateApproachTile,
   tutorialSuppressesSocial,
 } from "./flow.js";
+import * as nimiqAuth from "../auth/nimiq.js";
 
 describe("TutorialEscapeTimer", () => {
   afterEach(() => {
@@ -504,41 +506,38 @@ describe("Tutorial reset menu", () => {
   });
 });
 
-describe("sendTutorialDoorPayment", () => {
+describe("signTutorialDoorUnlock", () => {
   afterEach(() => {
     delete (window as { nimiqPay?: unknown }).nimiqPay;
+    vi.restoreAllMocks();
   });
 
-  it("simulates Pay when host send API is missing in DEV", async () => {
-    expect(canSimulateTutorialDoorPayment()).toBe(true);
+  it("simulates sign when Pay host is missing in DEV", async () => {
+    expect(canSimulateTutorialDoorUnlock()).toBe(true);
     delete (window as { nimiqPay?: unknown }).nimiqPay;
     const escape = new TutorialEscapeTimer({});
-    const result = await sendTutorialDoorPayment({
-      quote: {
-        amountLuna: "1000",
-        amountNim: "0.0100",
-        recipient: "NQ32 FRGN PDKF RC4Y CKLV 4K3F PKL1 UBAU 7U71",
-        memo: "tutorial-door:test",
-      },
-      escape,
-    });
+    const result = await signTutorialDoorUnlock({ escape });
     expect(result).toEqual({ ok: true, simulated: true });
   });
 
-  it("uses real Pay send when available", async () => {
-    const send = vi.fn(async () => undefined);
-    window.nimiqPay = { sendBasicTransactionWithData: send };
+  it("signs the tutorial unlock message when in Nimiq Pay", async () => {
+    vi.spyOn(nimiqAuth, "isNimiqPayMiniApp").mockReturnValue(true);
+    const signSpy = vi
+      .spyOn(nimiqAuth, "signPlainMessage")
+      .mockResolvedValue(undefined);
     const escape = new TutorialEscapeTimer({});
-    const result = await sendTutorialDoorPayment({
-      quote: {
-        amountLuna: "1000",
-        amountNim: "0.0100",
-        recipient: "NQ32 FRGN PDKF RC4Y CKLV 4K3F PKL1 UBAU 7U71",
-        memo: "tutorial-door:test",
-      },
-      escape,
-    });
+    const result = await signTutorialDoorUnlock({ escape });
     expect(result).toEqual({ ok: true });
-    expect(send).toHaveBeenCalledOnce();
+    expect(signSpy).toHaveBeenCalledWith(TUTORIAL_DOOR_UNLOCK_MESSAGE, "nspace");
+  });
+
+  it("treats wallet dismiss as cancelled", async () => {
+    vi.spyOn(nimiqAuth, "isNimiqPayMiniApp").mockReturnValue(true);
+    vi.spyOn(nimiqAuth, "signPlainMessage").mockRejectedValue(
+      new Error("User cancelled")
+    );
+    const escape = new TutorialEscapeTimer({});
+    const result = await signTutorialDoorUnlock({ escape });
+    expect(result).toEqual({ ok: false, cancelled: true });
   });
 });

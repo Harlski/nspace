@@ -6,7 +6,7 @@ import {
 } from "./analyticsTopbar.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 
-/** HTML shell for `/admin/moderation` (sanctions via admin moderation APIs). */
+/** HTML shell for `/admin/moderation` (sanction lists; player dossier is `/admin/user/:profile`). */
 export function adminModerationPageHtml(): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -23,29 +23,21 @@ export function adminModerationPageHtml(): string {
     .mono { font-size: 0.84rem; }
     .mod-panel { border: 1px solid #263348; border-radius: 10px; background: #0f1622; padding: 0.75rem 0.85rem; margin-bottom: 0.75rem; }
     .mod-panel h2 { margin: 0 0 0.55rem; font-size: 0.92rem; color: #c8d4e4; font-weight: 600; }
-    .mod-filters { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.65rem; align-items: center; }
-    .mod-filters input {
+    .mod-filters, .mod-lookup { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.65rem; align-items: center; }
+    .mod-filters input, .mod-lookup input {
       background: #0a1018; color: #d8e2f0; border: 1px solid #263348; border-radius: 6px;
-      padding: 0.35rem 0.5rem; font: inherit; font-size: 0.8rem; min-width: 14rem;
+      padding: 0.35rem 0.5rem; font: inherit; font-size: 0.8rem; min-width: 14rem; flex: 1;
     }
-    .mod-filters button {
+    .mod-filters button, .mod-lookup button {
       background: var(--ms-accent); color: #eef6ff; border: 1px solid var(--ms-accent-hover-border);
       border-radius: 6px; padding: 0.35rem 0.65rem; cursor: pointer; font: inherit; font-size: 0.8rem;
     }
     .mod-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
     .mod-table th, .mod-table td { text-align: left; padding: 0.35rem 0.4rem; border-bottom: 1px solid #1c2838; vertical-align: top; }
-    .mod-table tr[data-addr] { cursor: pointer; }
-    .mod-table tr[data-addr]:hover, .mod-table tr.is-selected { background: #152030; }
+    .mod-table tr[data-href] { cursor: pointer; }
+    .mod-table tr[data-href]:hover { background: #152030; }
+    .mod-name { color: #eef6ff; font-weight: 600; }
     .mod-note { color: #9fb0c7; font-size: 0.74rem; max-width: 20rem; word-break: break-word; }
-    .mod-detail { margin-top: 0.65rem; padding: 0.65rem; border: 1px solid #263348; border-radius: 8px; background: #0a1018; }
-    .mod-detail[hidden] { display: none; }
-    .mod-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
-    .mod-actions button {
-      background: #1a2738; color: #d8e2f0; border: 1px solid #334155; border-radius: 6px;
-      padding: 0.35rem 0.6rem; cursor: pointer; font: inherit; font-size: 0.78rem;
-    }
-    .mod-actions button.danger { color: #f87171; border-color: #5a2a2a; }
-    .mod-actions button.primary { background: var(--ms-accent); color: #eef6ff; border-color: var(--ms-accent-hover-border); }
     .mod-status { margin-top: 0.5rem; color: #9fb0c7; font-size: 0.78rem; min-height: 1rem; }
     .hint { color: #6b7d95; font-size: 0.76rem; line-height: 1.45; margin: 0 0 0.65rem; }
     .err { color: #f87171; }
@@ -61,21 +53,16 @@ export function adminModerationPageHtml(): string {
   var AUTH_KEYS = ["nspace_analytics_auth_token", "nspace_pending_payouts_token"];
   var token = "";
   var snapshot = { usernameBans: [], channelMutes: [], miningRestrictions: [] };
-  var selected = null;
   var filterText = "";
+  var lookupText = "";
 
-  function readWalletFromQuery() {
+  function readQueryLookup() {
     try {
       var p = new URLSearchParams(location.search);
-      return normWallet(p.get("wallet") || "");
+      return String(p.get("wallet") || p.get("q") || "").trim();
     } catch (e) {
       return "";
     }
-  }
-
-  function readFilterInput() {
-    var el = document.getElementById("walletFilter");
-    if (el) filterText = String(el.value || "");
   }
 
   function readAuthToken() {
@@ -126,31 +113,50 @@ export function adminModerationPageHtml(): string {
   }
 
   function filterQ() {
-    return String(filterText || "").replace(/\\s+/g, "").toUpperCase();
+    return String(filterText || "").trim().toLowerCase();
   }
 
-  function matchesFilter(addr) {
+  function matchesFilter(row) {
     var q = filterQ();
     if (!q) return true;
-    return normWallet(addr).indexOf(q) >= 0;
+    var addr = normWallet(row.address).toLowerCase();
+    var uname = String(row.username || "").toLowerCase();
+    var display = String(row.displayName || "").toLowerCase();
+    return addr.indexOf(q.replace(/\\s+/g, "")) >= 0 ||
+      uname.indexOf(q) >= 0 ||
+      display.indexOf(q) >= 0;
+  }
+
+  function profileHref(row) {
+    if (row.username) return "/admin/user/" + encodeURIComponent(row.username);
+    return "/admin/user/" + encodeURIComponent(normWallet(row.address));
+  }
+
+  function rowLabel(row) {
+    var name = row.displayName || row.username || row.address;
+    return (
+      "<span class='mod-name' title='" + escHtml(row.address) + "'>" +
+      escHtml(name) +
+      "</span>"
+    );
   }
 
   function rowHtml(kind, row) {
-    var addr = row.address;
+    var href = profileHref(row);
     var noteCell = kind === "mining" && row.note
       ? "<td class='mod-note'>" + escHtml(row.note) + "</td>"
       : (kind === "mining" ? "<td class='mod-note'>—</td>" : "");
     var cols = kind === "mining"
-      ? "<td>" + escHtml(addr) + "</td><td>" + fmtTime(row.at) + "</td><td>" + escHtml(row.by || "—") + "</td>" + noteCell
-      : "<td>" + escHtml(addr) + "</td><td>" + fmtTime(row.at) + "</td><td>" + escHtml(row.by || "—") + "</td>";
-    return "<tr data-addr='" + escHtml(normWallet(addr)) + "' data-kind='" + kind + "'>" + cols + "</tr>";
+      ? "<td>" + rowLabel(row) + "</td><td>" + fmtTime(row.at) + "</td><td>" + escHtml(row.by || "—") + "</td>" + noteCell
+      : "<td>" + rowLabel(row) + "</td><td>" + fmtTime(row.at) + "</td><td>" + escHtml(row.by || "—") + "</td>";
+    return "<tr data-href='" + escHtml(href) + "'>" + cols + "</tr>";
   }
 
-  function tableSection(title, kind, rows, noteHeader) {
-    var filtered = rows.filter(function (r) { return matchesFilter(r.address); });
+  function tableSection(title, kind, rows) {
+    var filtered = rows.filter(function (r) { return matchesFilter(r); });
     var head = kind === "mining"
-      ? "<tr><th>Wallet</th><th>Since (UTC)</th><th>By</th><th>Note</th></tr>"
-      : "<tr><th>Wallet</th><th>Since (UTC)</th><th>By</th></tr>";
+      ? "<tr><th>Player</th><th>Since (UTC)</th><th>By</th><th>Note</th></tr>"
+      : "<tr><th>Player</th><th>Since (UTC)</th><th>By</th></tr>";
     var body = filtered.map(function (r) { return rowHtml(kind, r); }).join("");
     if (!body) body = "<tr><td colspan='" + (kind === "mining" ? 4 : 3) + "' class='hint'>None</td></tr>";
     return (
@@ -161,131 +167,68 @@ export function adminModerationPageHtml(): string {
     );
   }
 
-  function isBanned(addr, kind) {
-    var w = normWallet(addr);
-    if (kind === "username") {
-      return snapshot.usernameBans.some(function (r) { return normWallet(r.address) === w; });
-    }
-    if (kind === "channel") {
-      return snapshot.channelMutes.some(function (r) { return normWallet(r.address) === w; });
-    }
-    return snapshot.miningRestrictions.some(function (r) { return normWallet(r.address) === w; });
-  }
-
-  function miningNote(addr) {
-    var w = normWallet(addr);
-    var row = snapshot.miningRestrictions.find(function (r) { return normWallet(r.address) === w; });
-    return row && row.note ? row.note : "";
-  }
-
-  function renderDetail() {
-    var el = document.getElementById("modDetail");
-    if (!el) return;
-    if (!selected) {
-      el.hidden = true;
-      return;
-    }
-    el.hidden = false;
-    var addr = selected;
-    var inList = snapshot.usernameBans.some(function (r) { return normWallet(r.address) === addr; }) ||
-      snapshot.channelMutes.some(function (r) { return normWallet(r.address) === addr; }) ||
-      snapshot.miningRestrictions.some(function (r) { return normWallet(r.address) === addr; });
-    el.innerHTML =
-      "<h3>" + escHtml(addr) + "</h3>" +
-      (inList ? "" : "<p class='hint'>No active sanctions on record — actions below still apply.</p>") +
-      "<div class='mod-actions'>" +
-      "<button type='button' data-act='clear_username'>Clear username</button>" +
-      (isBanned(addr, "username")
-        ? "<button type='button' data-act='allow_name'>Allow name</button>"
-        : "<button type='button' class='danger' data-act='ban_name'>Ban name</button>") +
-      (isBanned(addr, "channel")
-        ? "<button type='button' data-act='unmute'>Unmute chat</button>"
-        : "<button type='button' class='danger' data-act='mute'>Mute chat</button>") +
-      (isBanned(addr, "mining")
-        ? "<button type='button' data-act='allow_mining'>Allow mining</button>"
-        : "<button type='button' class='danger' data-act='ban_mining'>Ban mining</button>") +
-      "</div>" +
-      "<div class='mod-status' id='modStatus'></div>";
-    el.querySelectorAll("button[data-act]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        void runAction(btn.getAttribute("data-act"), addr);
-      });
-    });
-  }
-
-  async function runAction(act, target) {
-    var status = document.getElementById("modStatus");
-    if (status) status.textContent = "…";
-    var body = { action: "", target: target };
-    if (act === "clear_username") body.action = "clear_username";
-    else if (act === "ban_name") { body.action = "username_ban"; body.banned = true; }
-    else if (act === "allow_name") { body.action = "username_ban"; body.banned = false; }
-    else if (act === "mute") { body.action = "channel_mute"; body.muted = true; }
-    else if (act === "unmute") { body.action = "channel_mute"; body.muted = false; }
-    else if (act === "ban_mining") {
-      body.action = "mining_ban";
-      body.banned = true;
-      var note = window.prompt("Optional note (why this wallet is restricted):", "");
-      if (note === null) {
-        if (status) status.textContent = "Cancelled.";
-        return;
-      }
-      if (String(note).trim()) body.note = String(note).trim();
-    } else if (act === "allow_mining") {
-      body.action = "mining_ban";
-      body.banned = false;
-    } else return;
-
-    var out = await api("/api/admin/moderation", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (out.status !== 200) {
-      if (status) status.textContent = "Error " + out.status;
-      return;
-    }
-    if (status) status.textContent = "Saved.";
-    await loadSnapshot();
-    renderDetail();
-  }
-
   function render() {
     var panel = document.getElementById("panel");
     if (!panel) return;
     panel.innerHTML =
-      "<p class='hint'>Sanctions stored in moderation.json on the game server. Mining restrictions block NIM block claims; guests cannot earn NIM from mining regardless.</p>" +
+      "<p class='hint'>Players show as <strong>username</strong> (or short wallet label). Hover a name for the full NQ address. Click a row to open the player dossier (sanctions, tutorial, chat, rooms).</p>" +
+      "<div class='mod-lookup'>" +
+      "<input id='playerLookup' type='search' placeholder='Username or full NQ wallet…' autocomplete='off' value='" + escHtml(lookupText) + "' />" +
+      "<button type='button' id='modLookupBtn'>Open player</button>" +
+      "</div>" +
+      "<div id='lookupStatus' class='mod-status'></div>" +
       "<div class='mod-filters'>" +
-      "<input id='walletFilter' type='search' placeholder='Filter by wallet…' autocomplete='off' value='" + escHtml(filterText) + "' />" +
-      "<button type='button' id='modRefresh'>Refresh</button>" +
+      "<input id='walletFilter' type='search' placeholder='Filter lists by name or wallet…' autocomplete='off' value='" + escHtml(filterText) + "' />" +
+      "<button type='button' id='modRefresh'>Refresh lists</button>" +
       "</div>" +
       tableSection("Mining restrictions", "mining", snapshot.miningRestrictions || []) +
       tableSection("Username-set bans", "username", snapshot.usernameBans || []) +
-      tableSection("Channel mutes", "channel", snapshot.channelMutes || []) +
-      "<div id='modDetail' class='mod-detail' hidden></div>";
+      tableSection("Channel mutes", "channel", snapshot.channelMutes || []);
 
     document.getElementById("walletFilter")?.addEventListener("input", function (e) {
       filterText = String(e.target && e.target.value != null ? e.target.value : "");
       render();
-      renderDetail();
     });
     document.getElementById("modRefresh")?.addEventListener("click", function () {
       void loadSnapshot();
     });
-    panel.querySelectorAll("tr[data-addr]").forEach(function (tr) {
-      tr.addEventListener("click", function () {
-        panel.querySelectorAll("tr.is-selected").forEach(function (x) {
-          x.classList.remove("is-selected");
-        });
-        tr.classList.add("is-selected");
-        selected = tr.getAttribute("data-addr");
-        renderDetail();
-      });
-      if (selected && tr.getAttribute("data-addr") === selected) {
-        tr.classList.add("is-selected");
+    document.getElementById("modLookupBtn")?.addEventListener("click", function () {
+      var el = document.getElementById("playerLookup");
+      lookupText = el ? String(el.value || "") : "";
+      void openPlayer(lookupText);
+    });
+    document.getElementById("playerLookup")?.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        lookupText = String(e.target.value || "");
+        void openPlayer(lookupText);
       }
     });
-    renderDetail();
+    panel.querySelectorAll("tr[data-href]").forEach(function (tr) {
+      tr.addEventListener("click", function () {
+        var href = tr.getAttribute("data-href");
+        if (href) location.href = href;
+      });
+    });
+  }
+
+  async function openPlayer(q) {
+    var query = String(q || "").trim();
+    var statusEl = document.getElementById("lookupStatus");
+    if (!query) return;
+    if (statusEl) statusEl.textContent = "Looking up…";
+    var out = await api("/api/admin/player?q=" + encodeURIComponent(query));
+    if (out.status === 404) {
+      if (statusEl) statusEl.innerHTML = "<span class='err'>No player found.</span>";
+      return;
+    }
+    if (out.status !== 200 || !out.body || !out.body.player) {
+      if (statusEl) statusEl.innerHTML = "<span class='err'>Lookup failed (" + out.status + ").</span>";
+      return;
+    }
+    var path = out.body.player.profilePath ||
+      ("/admin/user/" + encodeURIComponent(out.body.player.username || out.body.player.wallet));
+    location.href = path;
   }
 
   async function loadSnapshot() {
@@ -308,10 +251,12 @@ export function adminModerationPageHtml(): string {
       document.getElementById("panel").innerHTML = authGateHtml();
       return;
     }
-    var qWallet = readWalletFromQuery();
-    if (qWallet) {
-      selected = qWallet;
-      filterText = qWallet;
+    var q = readQueryLookup();
+    if (q) {
+      // Legacy Connect Notice / deeplinks used ?wallet= — send them to the dossier.
+      lookupText = q;
+      await openPlayer(q);
+      return;
     }
     await loadSnapshot();
   }

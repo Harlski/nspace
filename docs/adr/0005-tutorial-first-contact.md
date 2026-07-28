@@ -5,13 +5,15 @@ First-time **Nimiq Pay** mini-app sessions route into a shared **Tutorial Room**
 room; web and Hub wallet sessions skip the lesson.
 
 **Receive** uses the normal hold-to-claim mine interaction with a fixed faucet payout (0.01
-NIM). **Send** uses Nimiq Pay with **Tutorial Pay Ack**: the pad unlocks for that wallet when
-Pay reports send success, without on-chain verification on the critical path. Tutorial Path
+NIM). **Unlock** uses a free **message sign** (not a spend): the learner signs a fixed teaching
+string in Nimiq Pay / Hub, then **Tutorial Unlock Ack** opens the pad for that wallet without
+on-chain verification on the critical path. Faucet NIM may still be settling in Pay after mine,
+so requiring a real send would strand zero-balance or “deposit pending” wallets. Tutorial Path
 Pay uses **Unlock Aftermath** = crossing; Exit is a separate authored **Exit Teleporter**
 north of the pad — see
 [0012-unlock-pad-crossing-only.md](0012-unlock-pad-crossing-only.md) (supersedes
-[0010-unlock-aftermath-teleporter.md](0010-unlock-aftermath-teleporter.md)). If Pay hangs,
-**Tutorial Escape** grants pad unlock and sends the player to the Hub without marking
+[0010-unlock-aftermath-teleporter.md](0010-unlock-aftermath-teleporter.md)). If the wallet sign
+hangs, **Tutorial Escape** grants pad unlock and sends the player to the Hub without marking
 completion.
 
 Completing the lesson means **Enter**ing the path's Exit Teleporter to the Hub, which sets
@@ -37,8 +39,9 @@ Pay crossing uses **Unlock Pad** per
 state, HTTP door APIs, and `welcome.tutorial` live in one server module (**tutorial session
 service**).
 
-Future readers should treat optimistic Pay ack as intentional for v1 tutorial speed; do not
-require Payment Intent verification on the tutorial Unlock Pad path without revisiting
+Future readers should treat optimistic Unlock ack (after message sign) as intentional for v1
+tutorial speed and faucet-settlement safety; do not require a real NIM spend or Payment Intent
+verification on the tutorial Unlock Pad path without revisiting
 [0007-unlock-pad.md](0007-unlock-pad.md). Do not put Teleporter Aftermath back on the Unlock
-Pad, or treat Pay ack as lesson complete, without revisiting
+Pad, or treat Unlock ack as lesson complete, without revisiting
 [0012-unlock-pad-crossing-only.md](0012-unlock-pad-crossing-only.md).

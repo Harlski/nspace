@@ -64,7 +64,7 @@ test("buildConnectNoticeMessage includes identity, counts, stats, and moderation
   assert.match(text, /Last visit: 1\.5 NIM, 18m active/);
   assert.match(text, /Today: 3 NIM, 42m active/);
   assert.match(text, /Also in room: Bob/);
-  assert.match(text, /Moderation: https:\/\/nimiq\.space\/admin\/moderation\?wallet=NQAB/);
+  assert.match(text, /Moderation: https:\/\/nimiq\.space\/admin\/user\/NQAB/);
 });
 
 test("buildConnectNoticeMessage omits redundant wallet when no custom name", () => {
