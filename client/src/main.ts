@@ -5560,10 +5560,10 @@ function enterGame(
       if (loadingBlackoutReveal) {
         await waitForPaintFrames(2);
       }
-      hud.setLoadingVisible(false, {
+      await hud.setLoadingVisible(false, {
         skipMinWait: loadingBlackoutReveal,
       });
-      // After the load veil clears so the Exit cinematic is not spent under black.
+      // After the load veil has fully faded so the Exit cinematic is not spent under black.
       if (normalizeRoomId(msg.roomId) === CHAMBER_ROOM_ID) {
         flushTutorialHubWelcomeCinematic();
       }

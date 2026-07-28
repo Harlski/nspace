@@ -24,6 +24,37 @@ const testIntent = {
   tileKey: "test:outbox",
 };
 
+test("outbox delivers priority intents before older normal intents", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-outbox-priority-"));
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  process.env.PAYOUT_OUTBOX_DIR = dir;
+
+  const attempts: string[] = [];
+  initOutboxForTests({
+    deliverer: async (intent) => {
+      attempts.push(intent.claimId);
+      return { ok: true };
+    },
+  });
+
+  appendPayIntentToOutbox({ ...testIntent, claimId: "normal-first" });
+  appendPayIntentToOutbox({
+    ...testIntent,
+    claimId: "priority-second",
+    priority: true,
+  });
+  appendPayIntentToOutbox({ ...testIntent, claimId: "normal-third" });
+
+  await drainOutboxOnce();
+  assert.deepEqual(attempts, [
+    "priority-second",
+    "normal-first",
+    "normal-third",
+  ]);
+});
+
 test("outbox persists until acknowledged and redelivers on failure", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-outbox-"));
   t.after(() => {

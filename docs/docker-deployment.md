@@ -110,7 +110,7 @@ Outgoing NIM rewards run in a dedicated **`payout`** container (not in the game-
 | Method | Path | Purpose |
 |--------|------|--------|
 | `GET` | `/health` | Liveness (no auth) |
-| `POST` | `/v1/pay-intents` | Enqueue Pay-Intent (idempotent by `claimId`) |
+| `POST` | `/v1/pay-intents` | Enqueue Pay-Intent (idempotent by `claimId`; optional `priority: true` for strict high lane) |
 | `GET` | `/v1/balance` | Hot-wallet balance |
 | `GET` | `/v1/pending/totals` | Pending queue totals (reporting) |
 | `GET` | `/v1/pending/summary` | Public pending summary |

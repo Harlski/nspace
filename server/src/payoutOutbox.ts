@@ -124,6 +124,7 @@ function recordToLine(record: OutboxRecord): string {
   return JSON.stringify({
     ...record,
     amountLuna: record.amountLuna?.toString(),
+    ...(record.priority === true ? { priority: true } : {}),
   });
 }
 
@@ -146,6 +147,7 @@ function parseOutboxLine(line: string): OutboxRecord | null {
       roomId: o.roomId,
       tileKey: o.tileKey,
       txMessage: o.txMessage,
+      ...(o.priority === true ? { priority: true as const } : {}),
       enqueuedAt: typeof o.enqueuedAt === "number" ? o.enqueuedAt : 0,
     };
   } catch {
@@ -246,8 +248,11 @@ export async function drainOutboxOnce(
   delivering = true;
   const send = customDeliverer ?? deliverer;
   try {
-    // Work from the in-memory pending list (startup / append keep it in sync).
-    const snapshot = pendingRecords.slice();
+    // Priority intents first (FIFO within each class), then normal append order.
+    const snapshot = [
+      ...pendingRecords.filter((r) => r.priority === true),
+      ...pendingRecords.filter((r) => r.priority !== true),
+    ];
     let deliveredAny = false;
     for (const record of snapshot) {
       if (deliveredClaimIds.has(record.claimId)) {
@@ -270,6 +275,7 @@ export async function drainOutboxOnce(
         roomId: record.roomId,
         tileKey: record.tileKey,
         txMessage: record.txMessage,
+        ...(record.priority === true ? { priority: true } : {}),
       };
       const result = await send(payload);
       if (!result.ok) {
@@ -283,7 +289,7 @@ export async function drainOutboxOnce(
       pendingRecords = pendingRecords.filter((r) => r.claimId !== record.claimId);
       deliveredAny = true;
       console.log(
-        `[payout-outbox] Delivered claim=${record.claimId.slice(0, 10)}…`
+        `[payout-outbox] Delivered claim=${record.claimId.slice(0, 10)}…${record.priority === true ? " priority" : ""}`
       );
     }
     if (deliveredAny) {

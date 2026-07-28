@@ -698,11 +698,19 @@ _Avoid_: payment service (ambiguous), payout service.
 
 **Pay-Intent**:
 A single "pay this claim N luna to this address" request produced by gameplay and handed from
-the game server to the Payout Service. Idempotent by its `claimId`.
+the game server to the Payout Service. Idempotent by its `claimId`. Optional `priority: true`
+puts it in the high lane (tutorial faucet today).
 _Avoid_: payout job (that is the Payout Service's internal queue entry), payment intent (incoming).
+
+**Priority Pay-Intent**:
+A Pay-Intent with `priority: true`. The Outbox delivers it before normal intents, and the Payout
+Service picks the oldest ready priority job before any normal job. Used for the tutorial faucet
+so first-contact NIM is not stuck behind a large mining/goal backlog. Auto-bulk skips these jobs;
+end-of-day flush and admin full payout still include them.
+_Avoid_: VIP payout, urgent flag, queue boost (prefer the boolean field name).
 
 **Outbox**:
 The game server's minimal local, durable, append-only store of Pay-Intents not yet acknowledged
 by the Payout Service. A delivery loop drains it with retries so no payout is lost across a
-service outage or a game-server restart.
+service outage or a game-server restart. Priority intents are delivered before normal ones.
 _Avoid_: queue (the durable queue lives in the Payout Service), buffer, spool.

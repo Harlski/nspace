@@ -219,6 +219,23 @@ are consolidated into a shared registry, or if free movement generalizes beyond 
 if recurring resets move off the in-process tick (e.g. to a scheduler) or grow finer than
 daily.
 
+### First-contact tutorial faucet payouts jump the outgoing queue
+
+**Today:** Outgoing NIM is processed FIFO by the **Payout Service** (one send per tick) after the
+game server's **Outbox** delivers Pay-Intents. Under a large backlog, a new Nimiq Pay learner's
+**tutorial faucet** (0.01 NIM after the tutorial mine) would wait behind thousands of mining/goal
+jobs. Pay-Intents may set optional boolean **`priority: true`**. Both the Outbox drain and
+`findNextReadyJob` select the oldest ready priority job **before** any normal job (strict
+priority; in-flight sends are not interrupted). The tutorial faucet enqueue path sets this flag;
+auto-bulk never triggers on or sweeps priority jobs (they stay on the individual path). End-of-day
+flush and admin **Payout in full** still include them. Missing/`false` defaults to normal - no
+queue migration.
+
+**Direction:** Reserve `priority` for **first-contact / must-feel-instant** outgoing rewards.
+Do not overload it as a general fairness scheduler; abuse controls belong at claim issuance.
+
+Update this subsection if additional producers set `priority` or if a second priority class is needed.
+
 ---
 
 ## Changelog (optional)
@@ -253,3 +270,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-06-22** — Goal-reward caps relaxed + Solo Goal: Free Play Field NIM pays at **full rate when Contested** (≥2 players) and **half rate for a Solo Goal** (one player); per-wallet daily cap and global daily budget default to **unlimited** (env knobs remain as emergency brakes). See [reasons/reason_391826.md](reasons/reason_391826.md).
 - **2026-07-16** — Floor tile color: rectangular SV + hue-strip picker (full spectrum light/dark); hue ring remains for objects/sky. See [reasons/reason_581734.md](reasons/reason_581734.md).
 - **2026-07-16** — Build dock: context controls must not exceed tool-card height; Floor spawn no longer shows Use room center in the dock. See [reasons/reason_628401.md](reasons/reason_628401.md).
+- **2026-07-25** — Recorded decision: tutorial faucet Pay-Intents use `priority: true` so first-contact NIM jumps the Outbox + Payout Service queue ahead of the normal FIFO backlog. See [reasons/reason_981786.md](reasons/reason_981786.md).

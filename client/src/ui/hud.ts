@@ -1008,7 +1008,7 @@ export function createHud(
   setLoadingVisible: (
     visible: boolean,
     opts?: { skipMinWait?: boolean; blackout?: boolean }
-  ) => void;
+  ) => Promise<void>;
   /** Shown under the spinner while the loading overlay is visible. */
   setLoadingLabel: (text: string) => void;
   /** Room transition progress: `indeterminate` while waiting; 0–1 while loading welcome payload. */
@@ -2733,6 +2733,8 @@ export function createHud(
   let loadingShownAt: number | null = null;
   let loadingHideWaitTimer: ReturnType<typeof setTimeout> | null = null;
   let loadingFadeUnsub: (() => void) | null = null;
+  let loadingHideResolve: (() => void) | null = null;
+  let loadingHidePromise: Promise<void> | null = null;
 
   function clearLoadingOverlayTimers(): void {
     if (loadingHideWaitTimer !== null) {
@@ -2743,6 +2745,22 @@ export function createHud(
       loadingFadeUnsub();
       loadingFadeUnsub = null;
     }
+  }
+
+  function settleLoadingHidePromise(): void {
+    if (!loadingHideResolve) return;
+    const resolve = loadingHideResolve;
+    loadingHideResolve = null;
+    loadingHidePromise = null;
+    resolve();
+  }
+
+  function armLoadingHidePromise(): Promise<void> {
+    if (loadingHidePromise) return loadingHidePromise;
+    loadingHidePromise = new Promise<void>((resolve) => {
+      loadingHideResolve = resolve;
+    });
+    return loadingHidePromise;
   }
 
   function finishLoadingOverlayDismiss(): void {
@@ -2757,6 +2775,7 @@ export function createHud(
       "loading-overlay__progress-track--indeterminate"
     );
     if (loadingProgressFill) loadingProgressFill.style.width = "0%";
+    settleLoadingHidePromise();
   }
 
   const topBar = document.createElement("div");
@@ -17599,6 +17618,7 @@ export function createHud(
     setLoadingVisible(visible: boolean, opts?: { skipMinWait?: boolean; blackout?: boolean }) {
       if (visible) {
         clearLoadingOverlayTimers();
+        settleLoadingHidePromise();
         loadingOverlay.classList.remove("loading-overlay--fade-out");
         loadingOverlay.classList.toggle(
           "loading-overlay--blackout",
@@ -17610,7 +17630,7 @@ export function createHud(
         } else if (loadingShownAt === null) {
           loadingShownAt = performance.now();
         }
-        return;
+        return Promise.resolve();
       }
 
       const skipMin = opts?.skipMinWait === true;
@@ -17618,9 +17638,10 @@ export function createHud(
         loadingOverlay.hidden &&
         !loadingOverlay.classList.contains("loading-overlay--fade-out")
       ) {
-        return;
+        return Promise.resolve();
       }
 
+      const hideDone = armLoadingHidePromise();
       clearLoadingOverlayTimers();
 
       const runFadeOut = (): void => {
@@ -17656,19 +17677,20 @@ export function createHud(
 
       if (skipMin || loadingShownAt === null) {
         runFadeOut();
-        return;
+        return hideDone;
       }
 
       const elapsed = performance.now() - loadingShownAt;
       const remaining = Math.max(0, LOADING_MIN_MS - elapsed);
       if (remaining <= 0) {
         runFadeOut();
-        return;
+        return hideDone;
       }
       loadingHideWaitTimer = setTimeout(() => {
         loadingHideWaitTimer = null;
         runFadeOut();
       }, remaining);
+      return hideDone;
     },
     setLoadingLabel(text: string) {
       if (loadingOverlayText) loadingOverlayText.textContent = text;

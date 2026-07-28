@@ -12749,6 +12749,7 @@ export function addClient(
             amountLuna: tutorialClaim.rewardLuna,
             roomId: currentRoomId,
             tileKey: k,
+            priority: true,
           });
         }
         wsSafeSend(ws, {

@@ -38,6 +38,8 @@ export type PayIntentBody = {
   roomId: string;
   tileKey: string;
   txMessage?: string;
+  /** When true, this job is selected before any normal pending job. */
+  priority?: boolean;
 };
 
 export type PayoutJobStatus =
@@ -65,6 +67,8 @@ export type PayoutJob = {
   roomId: string;
   tileKey: string;
   txMessage?: string;
+  /** Strict high lane: oldest ready priority job beats every normal job. */
+  priority?: boolean;
   /** Set when the job is broadcast as part of a combined bulk transaction, so the
    *  reconciliation pass can record it with bulk metadata on confirmation. */
   manualBulk?: boolean;
@@ -334,6 +338,10 @@ export function stopPayoutProcessorForTests(): void {
   processorEnabled = false;
 }
 
+function isPriorityJob(j: PayoutJob): boolean {
+  return j.priority === true;
+}
+
 function pickOldestReadyJob(candidates: PayoutJob[]): PayoutJob | undefined {
   if (candidates.length === 0) return undefined;
   let best = candidates[0]!;
@@ -352,6 +360,8 @@ function findNextReadyJob(now: number = Date.now()): PayoutJob | undefined {
       j.nextRetryAt <= now &&
       !isMiningPayoutHeldForBannedWallet(j.recipientAddress, j.tileKey)
   );
+  const priorityReady = ready.filter(isPriorityJob);
+  if (priorityReady.length > 0) return pickOldestReadyJob(priorityReady);
   return pickOldestReadyJob(ready);
 }
 
@@ -625,6 +635,7 @@ export function enqueuePayIntent(body: PayIntentBody): {
   }
 
   const now = Date.now();
+  const priority = body.priority === true;
   const job: PayoutJob = {
     id: randomUUID(),
     claimId,
@@ -637,12 +648,13 @@ export function enqueuePayIntent(body: PayIntentBody): {
     roomId,
     tileKey,
     txMessage: body.txMessage?.trim() || undefined,
+    ...(priority ? { priority: true } : {}),
   };
   jobs.push(job);
   rememberAcceptedClaimId(claimId);
   saveQueue();
   console.log(
-    `[payout-service] Enqueued claim=${claimId.slice(0, 10)}… → ${recipientAddress.slice(0, 12)}…`
+    `[payout-service] Enqueued claim=${claimId.slice(0, 10)}… → ${recipientAddress.slice(0, 12)}…${priority ? " priority" : ""}`
   );
   if (processorEnabled) void tick();
   return { accepted: true, claimId, duplicate: false };
@@ -733,7 +745,8 @@ export function getWalletSnapshot(walletRaw: string): WalletPendingPayoutDetail 
 }
 
 export async function manualBulkPayoutPendingForRecipient(
-  walletRaw: string
+  walletRaw: string,
+  opts?: { excludePriority?: boolean }
 ): Promise<{ txHash: string; jobsCleared: number; totalLuna: string }> {
   const client = chainClient;
   if (!client?.isSignerConfigured()) {
@@ -746,7 +759,8 @@ export async function manualBulkPayoutPendingForRecipient(
     (j) =>
       j.status === "pending" &&
       normalizeNimWalletId(j.recipientAddress) === target &&
-      !isMiningPayoutHeldForBannedWallet(j.recipientAddress, j.tileKey)
+      !isMiningPayoutHeldForBannedWallet(j.recipientAddress, j.tileKey) &&
+      !(opts?.excludePriority && isPriorityJob(j))
   );
   if (pendingFor.length === 0) {
     throw new Error("no_pending_jobs");
@@ -916,6 +930,8 @@ function recipientsWithStalePending(now: number): string[] {
   const byRecipient = new Map<string, { oldest: number; address: string }>();
   for (const j of jobs) {
     if (j.status !== "pending") continue;
+    // Priority jobs stay on the individual fast path; never trigger auto-bulk.
+    if (isPriorityJob(j)) continue;
     if (isMiningPayoutHeldForBannedWallet(j.recipientAddress, j.tileKey)) {
       continue;
     }
@@ -950,7 +966,9 @@ export async function maybeAutoBulkStalePending(
   try {
     for (const recipient of recipients) {
       try {
-        const r = await manualBulkPayoutPendingForRecipient(recipient);
+        const r = await manualBulkPayoutPendingForRecipient(recipient, {
+          excludePriority: true,
+        });
         result.recipientsPaid += 1;
         result.jobsCleared += r.jobsCleared;
         console.log(

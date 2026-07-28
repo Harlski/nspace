@@ -9,6 +9,8 @@ export type PayIntent = {
   roomId: string;
   tileKey: string;
   txMessage?: string;
+  /** When true, Outbox and Payout Service process this intent before normal jobs. */
+  priority?: boolean;
 };
 
 export type PayIntentPayload = PayIntent;
@@ -89,7 +91,7 @@ async function payoutFetch(
 export async function deliverPayIntentToService(
   intent: PayIntentPayload
 ): Promise<{ ok: true } | { ok: false; error: string; status?: number }> {
-  const body: Record<string, string> = {
+  const body: Record<string, unknown> = {
     claimId: intent.claimId,
     recipientAddress: intent.recipientAddress,
     roomId: intent.roomId,
@@ -100,6 +102,9 @@ export async function deliverPayIntentToService(
   }
   if (intent.txMessage?.trim()) {
     body.txMessage = intent.txMessage.trim();
+  }
+  if (intent.priority === true) {
+    body.priority = true;
   }
 
   const r = await payoutFetch("/v1/pay-intents", {
