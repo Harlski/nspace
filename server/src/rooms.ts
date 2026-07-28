@@ -470,6 +470,24 @@ import {
   buildMoveOrderOutMsg,
   shouldEmitMoveOrder,
 } from "./moveOrderBroadcast.js";
+import {
+  buildMovementWatchAcceptedClick,
+  buildMovementWatchActive,
+  buildMovementWatchClear,
+  buildMovementWatchRejectedClick,
+  buildMovementWatchSnapshot,
+  buildMovementWatchWalkFromConn,
+  canSubscribeMovementWatch,
+  countMovementWatchSubscribers,
+  filterMovementWatchRecipients,
+  movementWatchDestKey,
+  noteMovementWatchMarkerShown,
+  parseMovementWatchClientIntentReason,
+  shouldShowMovementWatchMarker,
+  type MovementWatchClickThrottleState,
+  type MovementWatchOutMsg,
+  type MovementWatchRejectReason,
+} from "./movementWatch.js";
 import { stepHumanAlongPath } from "./pathPosition.js";
 import {
   ANALYTIC_PATH_SKIP_STEPPING,
@@ -1024,6 +1042,10 @@ interface ClientConn {
   tutorialSuppressSocial?: boolean;
   /** Entered tutorial room via teleporter (sandbox revisit). */
   tutorialViaTeleporter?: boolean;
+  /** Admin opted into Movement Watch side channel for this connection. */
+  movementWatch?: boolean;
+  /** Throttle Click Markers emitted for this mover's intents. */
+  movementWatchThrottle: MovementWatchClickThrottleState;
 }
 
 function withinBlockActionRange(
@@ -1438,6 +1460,7 @@ type OutMsg =
       vx: number;
       vz: number;
     }
+  | MovementWatchOutMsg
   | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | {
@@ -4849,6 +4872,155 @@ function maybeBroadcastMoveAbort(
   );
 }
 
+function roomHasMovementWatchSubscribers(roomId: string): boolean {
+  return countMovementWatchSubscribers(roomOf(roomId).values()) > 0;
+}
+
+function broadcastMovementWatchActive(roomId: string): void {
+  const active = roomHasMovementWatchSubscribers(roomId);
+  broadcast(roomId, buildMovementWatchActive(active));
+}
+
+function setConnMovementWatch(
+  roomId: string,
+  conn: ClientConn,
+  enabled: boolean
+): void {
+  const was = Boolean(conn.movementWatch);
+  if (was === enabled) {
+    if (enabled) sendMovementWatchSnapshotToConn(roomId, conn);
+    return;
+  }
+  conn.movementWatch = enabled;
+  broadcastMovementWatchActive(roomId);
+  if (enabled) sendMovementWatchSnapshotToConn(roomId, conn);
+}
+
+function sendMovementWatch(roomId: string, msg: MovementWatchOutMsg): void {
+  const recipients = filterMovementWatchRecipients(roomOf(roomId).values());
+  if (recipients.length === 0) return;
+  const payload = JSON.stringify(msg);
+  recordGameWsOutbound(
+    msg.type,
+    Buffer.byteLength(payload, "utf8"),
+    recipients.length
+  );
+  for (const c of recipients) {
+    if (c.ws.readyState === 1) c.ws.send(payload);
+  }
+}
+
+function emitMovementWatchClear(roomId: string, address: string): void {
+  if (!roomHasMovementWatchSubscribers(roomId)) return;
+  sendMovementWatch(roomId, buildMovementWatchClear(address));
+}
+
+function emitMovementWatchAccepted(
+  roomId: string,
+  address: string,
+  conn: ClientConn,
+  args: {
+    x: number;
+    z: number;
+    layer: 0 | 1;
+    startAtMs: number;
+  }
+): void {
+  if (!roomHasMovementWatchSubscribers(roomId)) return;
+  const destKey = movementWatchDestKey(args.x, args.z, args.layer, "accept");
+  const showMarker = shouldShowMovementWatchMarker({
+    throttle: conn.movementWatchThrottle,
+    destKey,
+    nowMs: args.startAtMs,
+  });
+  if (showMarker) {
+    noteMovementWatchMarkerShown(
+      conn.movementWatchThrottle,
+      destKey,
+      args.startAtMs
+    );
+  }
+  sendMovementWatch(
+    roomId,
+    buildMovementWatchAcceptedClick({
+      address,
+      displayName: conn.displayName,
+      x: args.x,
+      z: args.z,
+      layer: args.layer,
+      showMarker,
+      pathQueue: conn.pathQueue,
+      startX: conn.player.x,
+      startZ: conn.player.z,
+      startAtMs: args.startAtMs,
+    })
+  );
+}
+
+function emitMovementWatchRejected(
+  roomId: string,
+  address: string,
+  conn: ClientConn,
+  args: {
+    x: number;
+    z: number;
+    layer: 0 | 1;
+    reason: MovementWatchRejectReason;
+    nowMs: number;
+  }
+): void {
+  if (!roomHasMovementWatchSubscribers(roomId)) return;
+  const destKey = movementWatchDestKey(
+    args.x,
+    args.z,
+    args.layer,
+    args.reason
+  );
+  const showMarker = shouldShowMovementWatchMarker({
+    throttle: conn.movementWatchThrottle,
+    destKey,
+    nowMs: args.nowMs,
+  });
+  if (!showMarker) return;
+  noteMovementWatchMarkerShown(
+    conn.movementWatchThrottle,
+    destKey,
+    args.nowMs
+  );
+  sendMovementWatch(
+    roomId,
+    buildMovementWatchRejectedClick({
+      address,
+      displayName: conn.displayName,
+      x: args.x,
+      z: args.z,
+      layer: args.layer,
+      reason: args.reason,
+      showMarker: true,
+    })
+  );
+}
+
+function sendMovementWatchSnapshotToConn(
+  roomId: string,
+  subscriber: ClientConn
+): void {
+  const nowMs = Date.now();
+  const walks = [];
+  for (const [addr, c] of roomOf(roomId)) {
+    const walk = buildMovementWatchWalkFromConn({
+      address: addr,
+      displayName: c.displayName,
+      player: c.player,
+      pathQueue: c.pathQueue,
+      pathMoveStartAtMs: c.pathMove?.startAtMs ?? null,
+      nowMs,
+    });
+    if (walk) walks.push(walk);
+  }
+  wsSafeSend(subscriber.ws, buildMovementWatchSnapshot({ walks }));
+}
+
 function clearConnPathQueue(
   roomId: string,
   address: string,
@@ -4858,6 +5030,7 @@ function clearConnPathQueue(
   conn.pathQueue = [];
   clearConnPathMove(conn);
   maybeBroadcastMoveAbort(roomId, address, conn, { hadPathQueue });
+  if (hadPathQueue) emitMovementWatchClear(roomId, address);
 }
 
 function advanceAlongPathHuman(
@@ -6132,6 +6305,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       hadPathQueue,
       poseCorrection: true,
     });
+    if (hadPathQueue) emitMovementWatchClear(currentRoomId, address);
     broadcastRoomStateFull(currentRoomId);
     if (isInviteLobbyRoomId(nTarget)) {
       directInviteOnLobbyConnect(conn, nTarget, address);
@@ -6142,11 +6316,16 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   if (currentRoomId !== null) {
     const room = rooms.get(currentRoomId);
     if (room) {
+      const hadPathQueue = conn.pathQueue.length > 0;
       maybeBroadcastMoveAbort(currentRoomId, address, conn, {
-        hadPathQueue: conn.pathQueue.length > 0,
+        hadPathQueue,
         poseCorrection: true,
       });
+      // Clear Watch Path / markers for this wallet in the old room.
+      emitMovementWatchClear(currentRoomId, address);
+      const wasWatching = Boolean(conn.movementWatch);
       room.delete(address);
+      if (wasWatching) broadcastMovementWatchActive(currentRoomId);
       broadcast(currentRoomId, { type: "playerLeft", address }, address);
     }
   }
@@ -6291,6 +6470,15 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, targetRoomId, chatBacklog);
   worldcupSendGoalieStateToConn(conn, targetRoomId);
+  if (conn.movementWatch) {
+    broadcastMovementWatchActive(targetRoomId);
+    sendMovementWatchSnapshotToConn(targetRoomId, conn);
+  } else {
+    wsSafeSend(
+      conn.ws,
+      buildMovementWatchActive(roomHasMovementWatchSubscribers(targetRoomId))
+    );
+  }
   sendRoomCatalog(conn.ws, address);
   onPlayerEnteredRoom(conn, targetRoomId, {
     isRoomChange: true,
@@ -7005,6 +7193,7 @@ function worldcupKickoffReset(m: WorldcupMatchRuntime, now: number): void {
       hadPathQueue,
       poseCorrection: true,
     });
+    if (hadPathQueue) emitMovementWatchClear(m.pitchRoomId, conn.address);
   }
   // Fresh centre ball + recentred keepers for the restart.
   worldcupSpawnMatchBall(m.pitchRoomId);
@@ -7743,6 +7932,7 @@ export function startRoomTick(): void {
       const isCanvas = normalizeRoomId(roomId) === CANVAS_ROOM_ID;
       for (const c of room.values()) {
         const isFieldFreeMove = worldcupIsFieldLikeRoom(roomId);
+        const hadPathBeforeTick = c.pathQueue.length > 0;
         const skipStepping =
           ANALYTIC_PATH_SKIP_STEPPING &&
           c.pathQueue.length > 0 &&
@@ -7779,6 +7969,9 @@ export function startRoomTick(): void {
           if (c.pathQueue.length === 0) {
             clearConnPathMove(c);
           }
+        }
+        if (hadPathBeforeTick && c.pathQueue.length === 0) {
+          emitMovementWatchClear(roomId, c.address);
         }
         if (result.changed) changed = true;
         if (result.arrivedTiles.length > 0) {
@@ -8323,6 +8516,7 @@ export function addClient(
       halfH: DEFAULT_INTEREST_HALF_TILES,
     },
     subscribedChunks: new Set<string>(),
+    movementWatchThrottle: { lastMarkerKey: null, lastMarkerAtMs: 0 },
     ...(streamObserver ? { streamObserver: true } : {}),
     ...(sessionFlags?.nimiqPay ? { sessionNimiqPay: true } : {}),
   };
@@ -8470,6 +8664,7 @@ export function addClient(
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, roomId, chatBacklog);
   worldcupSendGoalieStateToConn(conn, roomId);
+  wsSafeSend(ws, buildMovementWatchActive(roomHasMovementWatchSubscribers(roomId)));
   sendRoomCatalog(ws, address);
   onPlayerEnteredRoom(conn, roomId, {
     spawnHint: spawnHintForPlacement,
@@ -8526,6 +8721,52 @@ export function addClient(
       if (Number.isFinite(id)) {
         wsSafeSend(ws, { type: "clientPong", id } satisfies OutMsg);
       }
+      return;
+    }
+
+    if (msg.type === "movementWatch") {
+      const currentRoomIdEarly = findPlayerRoom(address);
+      if (!currentRoomIdEarly) return;
+      const watchConn = roomOf(currentRoomIdEarly).get(address);
+      if (!watchConn) return;
+      if (!canSubscribeMovementWatch(isAdmin(address))) {
+        wsSafeSend(ws, {
+          type: "error",
+          code: "admin_required",
+        } satisfies OutMsg);
+        return;
+      }
+      const enabled = (msg as { enabled?: unknown }).enabled === true;
+      setConnMovementWatch(currentRoomIdEarly, watchConn, enabled);
+      return;
+    }
+
+    if (msg.type === "movementWatchClickIntent") {
+      const currentRoomIdEarly = findPlayerRoom(address);
+      if (!currentRoomIdEarly) return;
+      const intentConn = roomOf(currentRoomIdEarly).get(address);
+      if (!intentConn) return;
+      if (intentConn.streamObserver) return;
+      if (!roomHasMovementWatchSubscribers(currentRoomIdEarly)) return;
+      const reason = parseMovementWatchClientIntentReason(
+        (msg as { reason?: unknown }).reason
+      );
+      if (!reason) return;
+      const tx = Number((msg as { x?: unknown }).x);
+      const tz = Number((msg as { z?: unknown }).z);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const gl = (msg as { layer?: unknown }).layer;
+      const layer: 0 | 1 = gl === 1 || gl === "1" ? 1 : 0;
+      const fieldFreeMove = worldcupIsFieldLikeRoom(currentRoomIdEarly);
+      const destX = fieldFreeMove ? tx : snapToTile(tx, tz).x;
+      const destZ = fieldFreeMove ? tz : snapToTile(tx, tz).z;
+      emitMovementWatchRejected(currentRoomIdEarly, address, intentConn, {
+        x: destX,
+        z: destZ,
+        layer,
+        reason,
+        nowMs: Date.now(),
+      });
       return;
     }
 
@@ -9720,7 +9961,19 @@ export function addClient(
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const fieldFreeMove = worldcupIsFieldLikeRoom(currentRoomId);
       const moveRateMs = fieldFreeMove ? RATE_MOVE_TO_FIELD_MS : RATE_MOVE_TO_MS;
-      if (now - conn.lastMoveToAt < moveRateMs) return;
+      const glEarly = msg.layer;
+      const goalLayerEarly: 0 | 1 =
+        glEarly === 1 || glEarly === "1" ? 1 : 0;
+      if (now - conn.lastMoveToAt < moveRateMs) {
+        emitMovementWatchRejected(currentRoomId, address, conn, {
+          x: fieldFreeMove ? tx : snapToTile(tx, tz).x,
+          z: fieldFreeMove ? tz : snapToTile(tx, tz).z,
+          layer: goalLayerEarly,
+          reason: "rate_limited",
+          nowMs: now,
+        });
+        return;
+      }
       conn.lastMoveToAt = now;
       // worldcup: the soccer pitch uses free (any-direction) movement - go in a straight
       // line to the exact clicked float point (no tile snap, no grid pathfinding) so the
@@ -9742,6 +9995,12 @@ export function addClient(
           goalLayer: 0,
         });
         maybeBroadcastMoveOrder(currentRoomId, address, conn, now);
+        emitMovementWatchAccepted(currentRoomId, address, conn, {
+          x: fx,
+          z: fz,
+          layer: 0,
+          startAtMs: now,
+        });
         return;
       }
       const dest = snapToTile(tx, tz);
@@ -9767,12 +10026,18 @@ export function addClient(
           hadPathQueue,
           poseCorrection: true,
         });
+        if (hadPathQueue) emitMovementWatchClear(currentRoomId, address);
+        emitMovementWatchRejected(currentRoomId, address, conn, {
+          x: dest.x,
+          z: dest.z,
+          layer: goalLayerEarly,
+          reason: "no_path",
+          nowMs: now,
+        });
         pendingTickStateBroadcast.add(currentRoomId);
         return;
       }
-      const gl = msg.layer;
-      const goalLayer: 0 | 1 =
-        gl === 1 || gl === "1" ? 1 : 0;
+      const goalLayer = goalLayerEarly;
       const full = pathfindTerrain(
         startNode.x,
         startNode.z,
@@ -9816,6 +10081,14 @@ export function addClient(
           maybeBroadcastMoveAbort(currentRoomId, address, conn, {
             hadPathQueue,
             poseCorrection: true,
+          });
+          if (hadPathQueue) emitMovementWatchClear(currentRoomId, address);
+          emitMovementWatchRejected(currentRoomId, address, conn, {
+            x: dest.x,
+            z: dest.z,
+            layer: goalLayer,
+            reason: "no_path",
+            nowMs: now,
           });
           pendingTickStateBroadcast.add(currentRoomId);
           return;
@@ -9861,6 +10134,12 @@ export function addClient(
         goalLayer,
       });
       maybeBroadcastMoveOrder(currentRoomId, address, conn, now);
+      emitMovementWatchAccepted(currentRoomId, address, conn, {
+        x: dest.x,
+        z: dest.z,
+        layer: goalLayer,
+        startAtMs: now,
+      });
       return;
     }
 
@@ -13663,10 +13942,13 @@ export function addClient(
         }
       }
       const room = roomOf(playerCurrentRoom);
+      const wasWatching = Boolean(conn.movementWatch);
+      conn.movementWatch = false;
       room.delete(address);
       console.log(
         `[rooms] disconnect ${address.slice(0, 12)}… room=${playerCurrentRoom}${conn.streamObserver ? " streamObserver" : ""}`
       );
+      if (wasWatching) broadcastMovementWatchActive(playerCurrentRoom);
       if (!conn.streamObserver) {
         broadcast(playerCurrentRoom, { type: "playerLeft", address });
         broadcastOnlineCount();

@@ -7,7 +7,7 @@ import { apiUrl } from "../net/apiBase.js";
 
 const DEV_ENABLED = import.meta.env.VITE_ADMIN_ENABLED === "true";
 
-type TabId = "layout" | "fog" | "camera" | "avatar" | "voxel";
+type TabId = "layout" | "fog" | "camera" | "avatar" | "voxel" | "watch";
 
 export function installAdminOverlay(
   hudRoot: HTMLElement,
@@ -15,6 +15,9 @@ export function installAdminOverlay(
   opts: {
     roomId: string;
     enabled?: boolean;
+    /** Real allowlist admin (not merely VITE_ADMIN_ENABLED). Gates Movement Watch. */
+    allowMovementWatch?: boolean;
+    onMovementWatchChange?: (enabled: boolean) => void;
     onSetVoxelText?: (spec: VoxelTextSpec) => void;
     onRemoveVoxelText?: (roomId: string, id: string) => void;
     /** Re-run build-dock thumbnail strip after inspector preview layout tweaks. */
@@ -52,6 +55,7 @@ export function installAdminOverlay(
       <button type="button" class="admin-overlay-tab" data-tab="camera" role="tab" aria-selected="false">Camera</button>
       <button type="button" class="admin-overlay-tab" data-tab="avatar" role="tab" aria-selected="false">Avatar</button>
       <button type="button" class="admin-overlay-tab" data-tab="voxel" role="tab" aria-selected="false">Voxel Text</button>
+      <button type="button" class="admin-overlay-tab" data-tab="watch" role="tab" aria-selected="false" id="admin-tab-watch" hidden>Watch</button>
     </div>
     <div class="admin-overlay-tab-panel" data-panel="layout">
       <p class="admin-overlay-hint">Random extra floor tiles (500×500 world). No auth required.</p>
@@ -188,6 +192,12 @@ export function installAdminOverlay(
       <button type="button" class="admin-overlay-btn admin-overlay-btn-secondary" id="voxel-toggle-z-tween">Toggle Z Tween</button>
       <button type="button" class="admin-overlay-btn" id="voxel-apply">Apply voxel text</button>
     </div>
+    <div class="admin-overlay-tab-panel" data-panel="watch" hidden>
+      <p class="admin-overlay-hint">Movement Watch shows players' click destinations and authoritative paths (admin-only side channel). Rejected clicks linger ~5s with a reason.</p>
+      <label class="admin-overlay-field admin-overlay-check"><input type="checkbox" id="movement-watch-enabled" />
+        <span>Enable Movement Watch</span>
+      </label>
+    </div>
     <div class="admin-overlay-status" id="admin-status"></div>
   `;
 
@@ -209,6 +219,31 @@ export function installAdminOverlay(
 
   const tabButtons = panel.querySelectorAll<HTMLButtonElement>(".admin-overlay-tab");
   const tabPanels = panel.querySelectorAll<HTMLElement>(".admin-overlay-tab-panel");
+
+  const watchTabBtn = $("admin-tab-watch") as HTMLButtonElement;
+  const movementWatchEnabled = $("movement-watch-enabled") as HTMLInputElement;
+  const allowMovementWatch = opts.allowMovementWatch === true;
+  watchTabBtn.hidden = !allowMovementWatch;
+  if (allowMovementWatch) {
+    let pref = false;
+    try {
+      pref = localStorage.getItem("NSPACE_MOVEMENT_WATCH") === "1";
+    } catch {
+      pref = false;
+    }
+    movementWatchEnabled.checked = pref;
+    if (pref) opts.onMovementWatchChange?.(true);
+    movementWatchEnabled.addEventListener("change", () => {
+      const on = movementWatchEnabled.checked;
+      try {
+        if (on) localStorage.setItem("NSPACE_MOVEMENT_WATCH", "1");
+        else localStorage.removeItem("NSPACE_MOVEMENT_WATCH");
+      } catch {
+        /* ignore */
+      }
+      opts.onMovementWatchChange?.(on);
+    });
+  }
 
   const syncZoomFields = (): void => {
     const b = game.getZoomBounds();

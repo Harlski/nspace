@@ -201,6 +201,11 @@ import {
   type RemoteMoveAbortWire,
 } from "./moveAbortPlayback.js";
 import {
+  MovementWatchView,
+  type MovementWatchClickEvent,
+  type MovementWatchWalkEvent,
+} from "./movementWatchView.js";
+import {
   type RoomBounds,
   CHAMBER_MAX_ZOOM_FRUSTUM,
   CHAMBER_ROOM_ID,
@@ -1489,6 +1494,8 @@ export class Game {
   >();
   /** Local grid-path walk while tick stateDelta omits pose (move-order rollout). */
   private selfMoveOrder: (MoveOrderWire & { startY: number }) | null = null;
+  /** Admin Movement Watch overlay (Click Markers + Watch Paths). */
+  private movementWatchView: MovementWatchView | null = null;
   // worldcup: seasonal soccer ball meshes + interpolation targets + goal frames
   private readonly worldcupBalls = new Map<string, THREE.Mesh>();
   private readonly worldcupBallTargets = new Map<
@@ -1577,6 +1584,18 @@ export class Game {
   private readonly defaultTileHoverOutlineMat: THREE.MeshBasicMaterial;
   private tileClickHandler:
     | ((x: number, z: number, layer?: 0 | 1) => void)
+    | null = null;
+  /**
+   * When Movement Watch is active in the room, report client-only clicks
+   * (unwalkable / mine) for admin Click Markers.
+   */
+  private movementWatchIntentHandler:
+    | ((args: {
+        x: number;
+        z: number;
+        layer?: 0 | 1;
+        reason: "no_path" | "mine" | "mine_empty";
+      }) => void)
     | null = null;
   /** worldcup: send an un-rate-limited stop (touch-joystick release) so the player halts at once. */
   private worldcupStopMoveHandler: (() => void) | null = null;
@@ -2613,6 +2632,10 @@ export class Game {
     this.trailLine.visible = false;
     this.trailLine.frustumCulled = false;
     this.scene.add(this.trailLine);
+
+    this.movementWatchView = new MovementWatchView(this.scene, () =>
+      this.placedObjects as ReadonlyMap<string, import("./grid.js").TerrainProps>
+    );
 
     this.selectionOutlineMat = new THREE.LineBasicMaterial({
       color: 0xffffff,
@@ -5203,6 +5226,28 @@ export class Game {
     this.tileClickHandler = handler;
   }
 
+  setMovementWatchIntentHandler(
+    handler:
+      | ((args: {
+          x: number;
+          z: number;
+          layer?: 0 | 1;
+          reason: "no_path" | "mine" | "mine_empty";
+        }) => void)
+      | null
+  ): void {
+    this.movementWatchIntentHandler = handler;
+  }
+
+  private reportMovementWatchIntent(args: {
+    x: number;
+    z: number;
+    layer?: 0 | 1;
+    reason: "no_path" | "mine" | "mine_empty";
+  }): void {
+    this.movementWatchIntentHandler?.(args);
+  }
+
   /** worldcup: handler that sends an immediate, un-rate-limited stop (joystick release). */
   setWorldcupStopMoveHandler(handler: (() => void) | null): void {
     this.worldcupStopMoveHandler = handler;
@@ -5725,6 +5770,12 @@ export class Game {
     opts?: { claimIntent?: string | null }
   ): void {
     if (!this.claimBlockHandler) return;
+    this.reportMovementWatchIntent({
+      x,
+      z,
+      layer: 0,
+      reason: "mine",
+    });
     this.blockClaimBeginIntent = Game.normalizeBlockClaimIntentSlug(
       opts?.claimIntent ?? null
     );
@@ -10938,6 +10989,12 @@ export class Game {
       if (!goal.suppressCantMoveMessage) {
         this.showSelfPlayerActionMessage("I can't move here");
       }
+      this.reportMovementWatchIntent({
+        x: goal.ft.x,
+        z: goal.ft.y,
+        layer: goal.layer,
+        reason: "no_path",
+      });
       this.pathGoal = null;
       this.refreshPathLine();
       return "failed";
@@ -12655,6 +12712,15 @@ export class Game {
           if (!bm.active) {
             this.showSelfPlayerActionMessage("There's no NIM left here :(");
             this.mineCooldownAttemptHandler?.();
+            const [ex, ez] = blockForWalk.split(",").map(Number);
+            if (Number.isFinite(ex) && Number.isFinite(ez)) {
+              this.reportMovementWatchIntent({
+                x: ex!,
+                z: ez!,
+                layer: 0,
+                reason: "mine_empty",
+              });
+            }
             return;
           }
           if (this.claimBlockHandler) {
@@ -12919,6 +12985,8 @@ export class Game {
     (this.pathLine.material as THREE.Material).dispose();
     this.trailGeom.dispose();
     (this.trailLine.material as THREE.Material).dispose();
+    this.movementWatchView?.dispose();
+    this.movementWatchView = null;
     this.selectionOutline.geometry.dispose();
     this.selectionOutlineMat.dispose();
     this.teleporterLinkHighlight.geometry.dispose();
@@ -14809,6 +14877,26 @@ export class Game {
     this.requestRender(400);
   }
 
+  setMovementWatchEnabled(on: boolean): void {
+    this.movementWatchView?.setEnabled(on);
+    this.requestRender(200);
+  }
+
+  applyMovementWatchSnapshot(walks: MovementWatchWalkEvent[]): void {
+    this.movementWatchView?.applySnapshot(walks);
+    this.requestRender(400);
+  }
+
+  applyMovementWatchClick(ev: MovementWatchClickEvent): void {
+    this.movementWatchView?.applyClick(ev);
+    this.requestRender(400);
+  }
+
+  applyMovementWatchClear(address: string): void {
+    this.movementWatchView?.clearAddress(address);
+    this.requestRender(200);
+  }
+
   /** Walk clamp bounds for remote moveOrder playback (matches server path stepping). */
   private pathMoveBoundsForPlayback(): {
     minX: number;
@@ -15873,6 +15961,7 @@ export class Game {
       this.floatingTexts.size > 0 ||
       this.achievementCelebrationSprites.length > 0;
     this.updatePathFade(dt);
+    this.movementWatchView?.update(performance.now());
 
     const px = this.selfMesh
       ? this.selfMesh.position.x

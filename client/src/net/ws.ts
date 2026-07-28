@@ -389,6 +389,39 @@ export type ServerMessage =
       vx: number;
       vz: number;
     }
+  | {
+      type: "movementWatchSnapshot";
+      walks: Array<{
+        address: string;
+        displayName: string;
+        goalX: number;
+        goalZ: number;
+        goalLayer: 0 | 1;
+        path: Array<{ x: number; z: number; layer: 0 | 1 }>;
+        startX: number;
+        startZ: number;
+        startAtMs: number;
+        speed: number;
+      }>;
+    }
+  | {
+      type: "movementWatchClick";
+      address: string;
+      displayName: string;
+      x: number;
+      z: number;
+      layer: 0 | 1;
+      accepted: boolean;
+      showMarker: boolean;
+      reason?: "rate_limited" | "no_path" | "mine" | "mine_empty";
+      path?: Array<{ x: number; z: number; layer: 0 | 1 }>;
+      startX?: number;
+      startZ?: number;
+      startAtMs?: number;
+      speed?: number;
+    }
+  | { type: "movementWatchClear"; address: string }
+  | { type: "movementWatchActive"; active: boolean }
   | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
   | {
@@ -762,6 +795,34 @@ export function sendMoveTo(
 export function sendStopMove(ws: WebSocket): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "moveTo", stop: true }));
+}
+
+/** Admin Movement Watch opt-in / opt-out (server gates with isAdmin). */
+export function sendMovementWatch(ws: WebSocket, enabled: boolean): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "movementWatch", enabled }));
+}
+
+/** Client-only click intents for Movement Watch (unwalkable / mine). Server fans to subscribers. */
+export function sendMovementWatchClickIntent(
+  ws: WebSocket,
+  args: {
+    x: number;
+    z: number;
+    layer?: 0 | 1;
+    reason: "no_path" | "mine" | "mine_empty";
+  }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "movementWatchClickIntent",
+      x: args.x,
+      z: args.z,
+      layer: args.layer ?? 0,
+      reason: args.reason,
+    })
+  );
 }
 
 export function sendEnterPortal(ws: WebSocket): void {

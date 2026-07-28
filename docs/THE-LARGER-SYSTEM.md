@@ -236,6 +236,22 @@ Do not overload it as a general fairness scheduler; abuse controls belong at cla
 
 Update this subsection if additional producers set `priority` or if a second priority class is needed.
 
+### Admin-only WebSocket side channels stay off the room stream
+
+**Today:** Room sync (`state` / `stateDelta`, optional public `moveOrder`) is shared with every
+connected client in the room. Ops tooling that needs authoritative paths, click rejects, or
+similar debug payloads must **not** enlarge that public stream. **Movement Watch** is the
+pattern: an admin **opts in** over the same game socket (`movementWatch` subscribe), the server
+gates with **`isAdmin`**, and fan-out goes only to subscribed admins
+(`movementWatchSnapshot` / `movementWatchClick` / `movementWatchClear`). See
+[docs/adr/0013-movement-watch-admin-side-channel.md](adr/0013-movement-watch-admin-side-channel.md).
+
+**Direction:** Prefer opt-in admin side channels for operator overlays; do not turn on
+room-wide path broadcasts solely to feed admin UI.
+
+Update this subsection if a second admin-only channel is added or if Movement Watch is folded
+into another transport.
+
 ### Tutorial Unlock is a free message sign, not a spend
 
 **Today:** After the tutorial mine, **Unlock** on the Tutorial Path pad asks the learner to

@@ -71,7 +71,7 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 | `PORT` | server | HTTP + WebSocket listen port (default `3001`) |
 | `FAKE_PLAYER_COUNT` | server | `0`–`32` NPC wanderers per room (default **2**; display names prefixed with `[NPC]`; set `0` to disable) |
 | `VITE_DEV_AUTH_BYPASS` | client | `1` shows Dev login |
-| `VITE_ADMIN_ENABLED` | client | `true` shows Admin overlay (layout / fog / camera / avatar / voxel; **Layout** includes build HUD **inspector preview** per-profile scale + ground-plane pan — **default** (blocks, gates, signposts, terrain thumbs), **billboard**, **teleporter** — persisted as JSON `localStorage` key `nspace_inspector_preview_layouts_v2`; legacy `nspace_inspector_preview_display_scale` / `_pan_*` migrate into **default** only) |
+| `VITE_ADMIN_ENABLED` | client | `true` shows Admin overlay (layout / fog / camera / avatar / voxel; **Layout** includes build HUD **inspector preview** per-profile scale + ground-plane pan — **default** (blocks, gates, signposts, terrain thumbs), **billboard**, **teleporter** — persisted as JSON `localStorage` key `nspace_inspector_preview_layouts_v2`; legacy `nspace_inspector_preview_display_scale` / `_pan_*` migrate into **default** only). **Watch** / Movement Watch stays hidden unless the wallet is on the admin allowlist |
 | `VITE_HUB_URL` | client | Nimiq Hub base URL (optional override) |
 | `VITE_API_BASE_URL` | client | API origin when SPA and API differ. Prefer full URL (`https://api.example.com`). Host-only (`api.example.com`) is normalized to `https://…` so it is not treated as a path on the SPA host. |
 | `VITE_WS_BASE_URL` | client | Optional WebSocket origin (`wss://…` or host-only); otherwise derived from resolved API base or page |
@@ -83,6 +83,9 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 | `STATE_BROADCAST_MIN_MS` | server | Min interval between tick `state` / `stateDelta` broadcasts (default **120** ms) |
 | `STATE_BROADCAST_DELTA` | server | Set `0` to always send full `state` on ticks (debug) |
 | `MOVE_ORDER_BROADCAST` | server | Set `1` to dual-send **`moveOrder`** on validated walks (grid pathfinding and worldcup pitch free-move) and **`moveAbort`** when a path is cut short; path + server-owned `startAtMs` / `speed`. In **click-to-walk** rooms, tick **`stateDelta` stops streaming pose for active path walkers** (observers animate from `moveOrder`; non-movement fields like typing still delta). World Cup field-like free-move keeps velocity snapshots in `stateDelta`. Default off. Client plays remote avatars from the order |
+
+**Movement Watch** (no env var): allowlist admins toggle Admin → **Watch**. Preference persists as `localStorage NSPACE_MOVEMENT_WATCH=1`. Client sends `{ type: "movementWatch", enabled }`; server replies with `movementWatchSnapshot` / live `movementWatchClick` / `movementWatchClear` only to subscribed admins. Room peers receive `movementWatchActive` and may send `movementWatchClickIntent` (`no_path` / `mine` / `mine_empty`) only while active ([docs/adr/0013-movement-watch-admin-side-channel.md](adr/0013-movement-watch-admin-side-channel.md)).
+
 | `ANALYTIC_PATH_SKIP_STEPPING` | server | Set `1` to skip per-tick `advanceAlongPathHuman` for grid path walkers and resolve pose via `playerPathPose` instead (ball kicks, claim range, achievements, etc.). Also enabled when `MOVE_ORDER_BROADCAST=1`. World Cup pitch free-move and NPC fakes stay stepped. Default off unless move-order broadcast is on |
 | `PAYMENT_INTENT_API_SECRET` | payment-intent-service | Required when running the sidecar; `Authorization: Bearer …` on `/v1/*` |
 | `PAYMENT_INTENT_RECIPIENT_ADDRESS` | payment-intent-service | Hot wallet (incoming NIM) user-friendly address |

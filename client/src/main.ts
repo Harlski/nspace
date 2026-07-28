@@ -126,6 +126,8 @@ import {
   sendMoveObstacle,
   sendMoveTo,
   sendStopMove,
+  sendMovementWatch,
+  sendMovementWatchClickIntent,
   sendDeployCosmetic,
   sendPublishDesign,
   sendDeleteDesign,
@@ -635,6 +637,10 @@ function enterGame(
   const streamNoScroll = query.has("noScroll");
 
   let ws: WebSocket | null = null;
+  /** Admin wants Movement Watch; resent on welcome / reconnect. */
+  let movementWatchWanted = false;
+  /** Server: at least one admin in this room has Movement Watch on. */
+  let movementWatchActiveInRoom = false;
   const perfPingSentAt = new Map<number, number>();
   let perfPingSeq = 0;
   let perfPingInterval: ReturnType<typeof setInterval> | null = null;
@@ -2525,6 +2531,17 @@ function enterGame(
   const adminOverlay = installAdminOverlay(hudRoot, game, {
     roomId: ROOM_ID,
     enabled: isAdmin(address),
+    allowMovementWatch: isAdmin(address),
+    onMovementWatchChange: (enabled) => {
+      movementWatchWanted = enabled;
+      game.setMovementWatchEnabled(enabled);
+      if (!enabled) {
+        // Local clear immediately; server stops fan-out on unsubscribe.
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        sendMovementWatch(ws, enabled);
+      }
+    },
     onSetVoxelText: (spec) => {
       if (!ws) return;
       sendSetVoxelText(ws, spec);
@@ -4122,6 +4139,11 @@ function enterGame(
       }
       sendMoveTo(socket, x, z, layer);
     });
+    game.setMovementWatchIntentHandler((intent) => {
+      if (!movementWatchActiveInRoom) return;
+      if (socket.readyState !== WebSocket.OPEN) return;
+      sendMovementWatchClickIntent(socket, intent);
+    });
     game.setPlaceBlockHandler((x, z) => {
       // worldcup: place a kickable soccer ball at the clicked tile (builders only).
       // Server validates room permission + walkability + per-room cap.
@@ -5279,6 +5301,10 @@ function enterGame(
           : null;
       // worldcup: any room change clears a stale post-goal movement freeze.
       game.setWorldcupMoveLocked(false);
+      if (movementWatchWanted && ws && ws.readyState === WebSocket.OPEN) {
+        game.setMovementWatchEnabled(true);
+        sendMovementWatch(ws, true);
+      }
       if (pendingCreateRoomAwaiting) {
         closeRoomsModal();
       }
@@ -5734,6 +5760,7 @@ function enterGame(
       }
       lastPlayers = lastPlayers.filter((p) => p.address !== msg.address);
       game.syncState(lastPlayers);
+      game.applyMovementWatchClear(msg.address);
       refreshWorldcupCrowdRoster();
       syncPlayerCountHud();
       return;
@@ -5791,6 +5818,22 @@ function enterGame(
     }
     if (msg.type === "moveAbort") {
       game.applyMoveAbort(msg);
+      return;
+    }
+    if (msg.type === "movementWatchSnapshot") {
+      game.applyMovementWatchSnapshot(msg.walks);
+      return;
+    }
+    if (msg.type === "movementWatchClick") {
+      game.applyMovementWatchClick(msg);
+      return;
+    }
+    if (msg.type === "movementWatchClear") {
+      game.applyMovementWatchClear(msg.address);
+      return;
+    }
+    if (msg.type === "movementWatchActive") {
+      movementWatchActiveInRoom = msg.active === true;
       return;
     }
     if (msg.type === "onlineCount") {

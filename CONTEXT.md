@@ -395,6 +395,24 @@ it materializes wherever the thumb presses down and is dragged, anchored at that
 it steers the player continuously in the pushed direction; released, it stops.
 _Avoid_: d-pad, controller, analog stick, dpad, fixed stick.
 
+**Movement Watch**:
+An admin-only overlay that shows players' click destinations and authoritative movement paths
+so operators can debug pathfinding and visually spot bot-like click patterns. Toggled from the
+Admin overlay Watch tab; not a player-facing feature. While active in a room, peers also report
+client-only clicks that never become walk intents (unwalkable goals and mine-block clicks).
+_Avoid_: move debug, path debug, admin path overlay, botting overlay.
+
+**Click Marker**:
+A short-lived marker on the tile a player targeted (accepted or rejected) while Movement Watch
+is on. Carries a light identity label (username or truncated wallet) and lingers briefly after
+the click so recent patterns stay visible.
+_Avoid_: destination pin, click indicator, goal marker.
+
+**Watch Path**:
+The polyline of a player's current remaining authoritative path, drawn for admins while
+Movement Watch is on. Distinct from the viewer's own local path-line preview.
+_Avoid_: moveOrder line, admin path line, ghost path.
+
 ## Cosmetics
 
 **Catalog Entry**:
