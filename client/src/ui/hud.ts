@@ -388,6 +388,12 @@ export function createHud(
   /** Player hid the chat via minimize; persisted in localStorage until cleared. */
   isChatMinimized: () => boolean;
   setChatMinimized: (minimized: boolean) => void;
+  /**
+   * Force-hide the entire chat row (composer + log + restore chip). Used during the
+   * Tutorial Room lesson; does not change the player's persisted minimize preference.
+   */
+  setChatHiddenForTutorial: (hidden: boolean) => void;
+  isChatHiddenForTutorial: () => boolean;
   onFullscreenToggle: (fn: () => void) => void;
   setReturnHomeVisible: (visible: boolean) => void;
   setPortalEnterVisible: (visible: boolean) => void;
@@ -6597,8 +6603,24 @@ export function createHud(
   chatRestoreBtn.hidden = true;
   chatRow.appendChild(chatRestoreBtn);
 
+  let chatHiddenForTutorial = false;
+
   function applyChatMinimizedUi(min: boolean): void {
     chatMinimized = min;
+    if (chatHiddenForTutorial) {
+      chatPanel.hidden = true;
+      chatField.hidden = true;
+      chatInput.hidden = true;
+      chatMinimizeBtn.hidden = true;
+      chatRestoreBtn.hidden = true;
+      chatRow.hidden = true;
+      closeWhisperPicker();
+      if (document.activeElement === chatInput) {
+        chatInput.blur();
+      }
+      return;
+    }
+    chatRow.hidden = false;
     chatPanel.hidden = min;
     chatField.hidden = min;
     chatInput.hidden = min;
@@ -6611,6 +6633,12 @@ export function createHud(
     if (min && document.activeElement === chatInput) {
       chatInput.blur();
     }
+  }
+
+  function setChatHiddenForTutorialState(hidden: boolean): void {
+    if (chatHiddenForTutorial === hidden) return;
+    chatHiddenForTutorial = hidden;
+    applyChatMinimizedUi(chatMinimized);
   }
 
   function setChatMinimizedState(min: boolean, persist: boolean): void {
@@ -15595,6 +15623,10 @@ export function createHud(
     setChatMinimized(minimized: boolean) {
       setChatMinimizedState(minimized, true);
     },
+    setChatHiddenForTutorial(hidden: boolean) {
+      setChatHiddenForTutorialState(hidden);
+    },
+    isChatHiddenForTutorial: () => chatHiddenForTutorial,
     onFullscreenToggle(fn: () => void) {
       fsHandler = fn;
     },

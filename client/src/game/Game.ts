@@ -12788,6 +12788,7 @@ export class Game {
     this.selfAddress = address;
     if (!address.trim()) this.unlockedPadInstanceIds.clear();
     this.cameraFollowReady = false;
+    this.cameraLookAhead.set(0, 0, 0);
     this.selfTargetPos = null;
     if (this.selfMesh) {
       this.disposeAvatarGroup(this.selfMesh);

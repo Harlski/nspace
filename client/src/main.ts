@@ -5244,7 +5244,11 @@ function enterGame(
       tutorialFeatureEnabled = msg.tutorialEnabled === true;
       if (msg.tutorial) {
         tutorialWelcome = msg.tutorial;
-        tutorialSocialSuppressed = tutorialSuppressesSocial(msg.tutorial);
+        tutorialSocialSuppressed = tutorialSuppressesSocial(
+          msg.tutorial,
+          msg.roomId
+        );
+        hud.setChatHiddenForTutorial(tutorialSocialSuppressed);
         hud.setFinishTutorialVisible(
           shouldShowFinishTutorialMenu(sessionNimiqPay, msg.tutorial)
         );
@@ -5270,6 +5274,7 @@ function enterGame(
       } else {
         tutorialWelcome = undefined;
         tutorialSocialSuppressed = false;
+        hud.setChatHiddenForTutorial(false);
         hud.setFinishTutorialVisible(false);
         game.setTutorialMineHighlight(null);
         game.setTutorialAttentionCues([]);
@@ -7257,6 +7262,7 @@ function enterGame(
         ) {
           return;
         }
+        if (hud.isChatHiddenForTutorial()) return;
         e.preventDefault();
         if (hud.isChatMinimized()) {
           hud.setChatMinimized(false);

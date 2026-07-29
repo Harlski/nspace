@@ -86,20 +86,36 @@ describe("tutorial menu and lesson flags", () => {
     ).toBe(false);
   });
 
-  it("lesson mode suppresses chat send", () => {
+  it("lesson mode suppresses social only in the Tutorial Room", () => {
     expect(
-      tutorialSuppressesSocial({
-        needsTutorial: true,
-        mode: "lesson",
-        lessonMode: true,
-      })
+      tutorialSuppressesSocial(
+        {
+          needsTutorial: true,
+          mode: "lesson",
+          lessonMode: true,
+        },
+        "tutorial"
+      )
     ).toBe(true);
     expect(
-      tutorialSuppressesSocial({
-        needsTutorial: false,
-        mode: "sandbox",
-        lessonMode: false,
-      })
+      tutorialSuppressesSocial(
+        {
+          needsTutorial: true,
+          mode: "lesson",
+          lessonMode: true,
+        },
+        "chamber"
+      )
+    ).toBe(false);
+    expect(
+      tutorialSuppressesSocial(
+        {
+          needsTutorial: false,
+          mode: "sandbox",
+          lessonMode: false,
+        },
+        "tutorial"
+      )
     ).toBe(false);
   });
 

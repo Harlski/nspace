@@ -283,7 +283,7 @@ Mirror Play Space Template pattern:
 ### Client routing and UX
 
 - Pay + `needsTutorial`: skip username gate until Hub; connect Tutorial Room with resume off
-- **Lesson mode**: guided highlights; suppress chat send and emote wheel
+- **Lesson mode**: guided highlights; hide chat HUD and suppress chat send / emote wheel (room-scoped; restored outside Tutorial Room)
 - **Tutorial Escape** timer: armed only while Pay send promise pending; 10s total, countdown
   visible last 5s; on fire → unstick + abandon + join Hub + cheeky message
 - **Player Menu**: **Finish tutorial** only when Pay + incomplete
@@ -350,7 +350,7 @@ Play Space template store tests, direct invite store tests.
 
 - Escape timer arms only during pending Pay send mock; cancels on resolve
 - Finish tutorial hidden when `tutorialCompletedAt` set
-- Lesson mode suppresses chat send (behavioral flag from welcome)
+- Lesson mode hides the chat HUD and suppresses chat send / emotes in the Tutorial Room only (`tutorialSuppressesSocial` / server `tutorialLessonSuppressesChat`)
 
 Avoid testing admin HTML directly; avoid E2E Nimiq Pay in CI (manual / payEmulate dev).
 

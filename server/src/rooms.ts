@@ -1229,6 +1229,10 @@ function roomAllowsFakePlayers(roomId: string): boolean {
   if (isCosmeticGalleryRoom(roomId)) return false;
   if (isInviteLobbyRoomId(roomId)) return false;
   if (isPixelRoom(roomId)) return false;
+  // Tutorial lesson / staging: keep the path clear for first-contact focus.
+  if (isTutorialRuntimeRoomId(roomId) || isTutorialStagingRoomId(roomId)) {
+    return false;
+  }
   // worldcup: keep the pitch clear of wandering NPCs - the crowd lives in the
   // (client-only) stands instead, so the field is reserved for real players.
   if (WORLDCUP_ENABLED && normalizeRoomId(roomId) === WORLDCUP_FIELD_ROOM_ID) {

@@ -397,8 +397,18 @@ export async function signTutorialDoorUnlock(opts: {
   }
 }
 
-export function tutorialSuppressesSocial(welcome: TutorialWelcome | undefined): boolean {
-  return welcome?.lessonMode === true;
+/**
+ * Lesson mode in the live Tutorial Room: no chat sends / emotes (client HUD also
+ * hides the composer). Matches server `tutorialLessonSuppressesChat`.
+ */
+export function tutorialSuppressesSocial(
+  welcome: TutorialWelcome | undefined,
+  roomId?: string | null
+): boolean {
+  const rid = String(roomId ?? "")
+    .trim()
+    .toLowerCase();
+  return rid === TUTORIAL_ROOM_ID && welcome?.lessonMode === true;
 }
 
 export function shouldShowFinishTutorialMenu(
