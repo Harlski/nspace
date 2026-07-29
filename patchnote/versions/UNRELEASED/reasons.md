@@ -8,7 +8,8 @@
 
 ## Summary
 
-_Add a one-line roll-up here when the buffer gets long._
+Player profiles now enrich wallet identity with verified NimConnect handles while
+keeping Nimiq Space usernames and multiplayer contracts unchanged.
 
 ---
 
@@ -20,7 +21,14 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Client
 
-- _(none in this change set)_
+- Added exact client dependency `@nimconnect/profile-client@0.5.0`.
+- Added `client/src/ui/nimconnectProfileIdentity.ts`: address-to-handle lookup,
+  safe handle validation, stale-response protection, self-profile claim link,
+  and silent fallback when the optional resolver is unavailable.
+- Mounted the compact `@handle` link under the existing Space display name in
+  `client/src/ui/hud.ts`; no `PlayerState` or WebSocket message shape changed.
+- Added focused happy-dom coverage in
+  `client/src/ui/nimconnectProfileIdentity.test.ts`.
 
 ### Server
 
