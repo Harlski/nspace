@@ -412,7 +412,7 @@ if (!JWT_SECRET || JWT_SECRET === "dev-insecure-change-me") {
   } else if (!JWT_SECRET) {
     console.error(
       "[FATAL] JWT_SECRET environment variable is required.\n" +
-      "For development, use: JWT_SECRET=dev-insecure-change-me npm run dev -w server"
+      "For development, copy server/.env.example to server/.env (includes JWT_SECRET), then npm run dev -w server"
     );
     process.exit(1);
   }

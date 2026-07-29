@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "DEV_AUTH_BYPASS=1 JWT_SECRET=dev-insecure-change-me tsx watch src/index.ts",
+    "dev": "tsx watch src/index.ts",
     "build": "tsc -b",
     "start": "node dist/index.js",
     "test": "tsx --test test/**/*.test.ts",

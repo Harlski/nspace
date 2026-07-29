@@ -1786,7 +1786,8 @@ html.nspace-mobile-play-host .telescope-control {
 html.nspace-mobile-play-host .player-menu {
   position: fixed;
   z-index: 12;
-  bottom: var(--hud-nimiq-pay-bottom-inset);
+  /* One extra trigger height above the shared bottom inset (clears home indicator + sits above chat). */
+  bottom: calc(var(--hud-nimiq-pay-bottom-inset) + 64px);
 }
 
 html.nspace-mobile-play-host .player-menu__trigger,
@@ -2579,11 +2580,21 @@ html.nspace-mobile-play-host .hud-top-strip {
   padding-top: 0;
 }
 
+/*
+ * Bottom chat + Player Menu share this inset. Pay / mobile WebViews often report
+ * `safe-area-inset-bottom: 0` even when the home indicator overlaps content, so floor
+ * the inset (~iPhone home-indicator) and still honor a larger env() when present.
+ * Defined on `html` so `.player-menu` (letterbox sibling / fixed) resolves it too.
+ */
+html.nspace-mobile-play-host {
+  --hud-nimiq-pay-bottom-inset: calc(
+    8px + max(34px, env(safe-area-inset-bottom, 0px)) +
+      var(--hud-build-dock-height, 0px)
+  );
+}
+
 html.nspace-mobile-play-host .hud,
 html.nspace-mobile-play-host .hud.hud--mobile-play-host {
-  --hud-nimiq-pay-bottom-inset: calc(
-    8px + env(safe-area-inset-bottom, 0px) + var(--hud-build-dock-height, 0px)
-  );
   --hud-above-mode-bottom: var(--hud-nimiq-pay-bottom-inset);
   --hud-below-top-wrap: 44px;
 }
@@ -2753,7 +2764,7 @@ html.nspace-mobile-landscape .hud-build-bottom-dock {
 }
 
 html.nspace-mobile-play-host .hud-bottom-left {
-  bottom: var(--hud-nimiq-pay-bottom-inset);
+  bottom: calc(var(--hud-nimiq-pay-bottom-inset) + 12px);
 }
 
 html.nspace-mobile-landscape .hud-bottom-left {

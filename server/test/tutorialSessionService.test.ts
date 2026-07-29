@@ -458,14 +458,53 @@ test("resolveInitialRoomForPaySession sends incomplete Pay wallets to tutorial",
 test("tutorial room build is limited to admins and builder allowlist", async () => {
   process.env.TUTORIAL_BUILDER_ALLOWLIST =
     "NQ07 BUILD0000000000000000000000000001";
-  const { canEditTutorialRoomContent } = await import("../src/tutorial/config.js");
+  const { canEditTutorialRoomContent, TUTORIAL_ROOM_ID } = await import(
+    "../src/tutorial/config.js"
+  );
   const learner = "NQ07 PAY000000000000000000000000000099";
   const builder = "NQ07 BUILD0000000000000000000000000001";
 
-  assert.equal(canEditTutorialRoomContent(learner), false);
-  assert.equal(canEditTutorialRoomContent(builder), true);
+  assert.equal(canEditTutorialRoomContent(learner, TUTORIAL_ROOM_ID), false);
+  assert.equal(canEditTutorialRoomContent(builder, TUTORIAL_ROOM_ID), true);
 
   delete process.env.TUTORIAL_BUILDER_ALLOWLIST;
+});
+
+test("tutorial room admin builders grant edit via builtin-room-names", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nspace-builtin-names-"));
+  const namesFile = path.join(tmp, "builtin-room-names.json");
+  const prev = process.env.BUILTIN_ROOM_NAMES_FILE;
+  process.env.BUILTIN_ROOM_NAMES_FILE = namesFile;
+
+  const {
+    patchBuiltinRoomSettings,
+    isBuiltinRoomBuilder,
+    resetBuiltinRoomNamesCacheForTests,
+  } = await import("../src/builtinRoomNames.js");
+  resetBuiltinRoomNamesCacheForTests();
+
+  const {
+    canEditTutorialRoomContent,
+    TUTORIAL_ROOM_ID,
+    TUTORIAL_STAGING_ROOM_ID,
+  } = await import("../src/tutorial/config.js");
+
+  const wallet = "NQ07ADMINBUILDER00000000000000000001";
+  const patched = patchBuiltinRoomSettings(TUTORIAL_ROOM_ID, {
+    builderAddresses: [wallet],
+  });
+  assert.equal(patched.ok, true);
+  assert.equal(isBuiltinRoomBuilder(TUTORIAL_ROOM_ID, wallet), true);
+  assert.equal(canEditTutorialRoomContent(wallet, TUTORIAL_ROOM_ID), true);
+  assert.equal(
+    canEditTutorialRoomContent(wallet, TUTORIAL_STAGING_ROOM_ID),
+    false
+  );
+
+  if (prev === undefined) delete process.env.BUILTIN_ROOM_NAMES_FILE;
+  else process.env.BUILTIN_ROOM_NAMES_FILE = prev;
+  resetBuiltinRoomNamesCacheForTests();
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test("tutorial room appears in room definitions (even when learner flow is off)", async () => {

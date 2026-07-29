@@ -11,10 +11,21 @@ const HUB_ROOM_ID = "hub";
 const CHAMBER_ROOM_ID = "chamber";
 const CANVAS_ROOM_ID = "canvas";
 const PIXEL_ROOM_ID = "pixel";
+const TUTORIAL_ROOM_ID = "tutorial";
+const TUTORIAL_STAGING_ROOM_ID = "tutorial-staging";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
-const BUILTIN_NAMES_FILE = path.join(DATA_DIR, "builtin-room-names.json");
+const DEFAULT_BUILTIN_NAMES_FILE = path.join(DATA_DIR, "builtin-room-names.json");
+
+function builtinNamesFilePath(): string {
+  return process.env.BUILTIN_ROOM_NAMES_FILE?.trim() || DEFAULT_BUILTIN_NAMES_FILE;
+}
+
+/** Test helper: drop in-memory cache so a new `BUILTIN_ROOM_NAMES_FILE` is read. */
+export function resetBuiltinRoomNamesCacheForTests(): void {
+  cache = null;
+}
 
 type FileShapeV4 = {
   version: 4;
@@ -32,12 +43,15 @@ const DEFAULTS: Record<string, string> = {
   [CHAMBER_ROOM_ID]: "Hub",
   [CANVAS_ROOM_ID]: "Canvas",
   [PIXEL_ROOM_ID]: "Pixel",
+  // Pay tutorial rooms (hidden from catalog; still admin-editable like other built-ins).
+  [TUTORIAL_ROOM_ID]: "Tutorial Room",
+  [TUTORIAL_STAGING_ROOM_ID]: "Tutorial Staging",
 };
 
 let cache: FileShapeV4 | null = null;
 
 function ensureDataDir(): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(path.dirname(builtinNamesFilePath()), { recursive: true });
 }
 
 function validateDisplayName(raw: string): string | null {
@@ -107,9 +121,10 @@ function loadFile(): FileShapeV4 {
     isPublic: {},
     ...emptyOptionalMaps(),
   };
-  if (!fs.existsSync(BUILTIN_NAMES_FILE)) return cache;
+  const file = builtinNamesFilePath();
+  if (!fs.existsSync(file)) return cache;
   try {
-    const raw = JSON.parse(fs.readFileSync(BUILTIN_NAMES_FILE, "utf8"));
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
     cache = migrateFromDisk(raw);
   } catch (e) {
     console.error("[builtin-room-names] failed to load", e);
@@ -120,7 +135,8 @@ function loadFile(): FileShapeV4 {
 function persist(): void {
   ensureDataDir();
   const data = loadFile();
-  const tmp = `${BUILTIN_NAMES_FILE}.tmp`;
+  const file = builtinNamesFilePath();
+  const tmp = `${file}.tmp`;
   fs.writeFileSync(
     tmp,
     JSON.stringify(
@@ -137,7 +153,7 @@ function persist(): void {
     ),
     "utf8"
   );
-  fs.renameSync(tmp, BUILTIN_NAMES_FILE);
+  fs.renameSync(tmp, file);
 }
 
 export function getBuiltinRoomDisplayName(

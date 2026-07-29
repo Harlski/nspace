@@ -1171,14 +1171,15 @@ function canPlaceMineableBlocks(address: string): boolean {
  * - Wallet-created rooms: owner, admin, or a wallet on the room's builder allowlist.
  * - Official rooms (no owner): admin or a wallet on the builder allowlist.
  * - Hub and other built-ins: anyone may edit (subject to hub safe zone, etc.).
- * - Tutorial Room / Tutorial Staging: admins and tutorial builder allowlist only.
+ * - Tutorial Room / Tutorial Staging: admins, `TUTORIAL_BUILDER_ALLOWLIST`, and
+ *   per-room builders from `/admin/rooms` (`builtin-room-names.json`).
  */
 function canEditRoomContent(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
   if (isInviteLobbyRoomId(id)) return true;
   if (id === CANVAS_ROOM_ID) return false;
   if (isTutorialRuntimeRoomId(id) || isTutorialStagingRoomId(id)) {
-    return canEditTutorialRoomContent(address);
+    return canEditTutorialRoomContent(address, id);
   }
   if (id === CHAMBER_ROOM_ID) {
     return isAdmin(address) || isBuiltinRoomBuilder(id, address);
@@ -3859,7 +3860,7 @@ function joinSpawnWelcomeExtras(
   if (isTutorialRuntimeRoomId(n) || isTutorialStagingRoomId(n)) {
     return {
       roomJoinSpawn: joinSpawnBroadcastPayload(n),
-      allowRoomJoinSpawnEdit: canEditTutorialRoomContent(address),
+      allowRoomJoinSpawnEdit: canEditTutorialRoomContent(address, n),
     };
   }
   if (!isPlayerCreatedRoom(n)) return {};
@@ -6385,7 +6386,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   const allowRoomBackgroundHueEdit =
     isTutorialRuntimeRoomId(nWelcomeRoom) ||
     isTutorialStagingRoomId(nWelcomeRoom)
-      ? canEditTutorialRoomContent(conn.address)
+      ? canEditTutorialRoomContent(conn.address, nWelcomeRoom)
       : isPlayerCreatedRoom(nWelcomeRoom)
         ? allowActorRoomBackgroundHueEdit(
             nWelcomeRoom,
@@ -8549,7 +8550,7 @@ export function addClient(
         : getBuiltinRoomBackgroundState(nJoinRoom);
   const joinAllowRoomBackgroundHueEdit =
     isTutorialRuntimeRoomId(nJoinRoom) || isTutorialStagingRoomId(nJoinRoom)
-      ? canEditTutorialRoomContent(address)
+      ? canEditTutorialRoomContent(address, nJoinRoom)
       : isPlayerCreatedRoom(nJoinRoom)
         ? allowActorRoomBackgroundHueEdit(
             nJoinRoom,
@@ -9262,7 +9263,7 @@ export function addClient(
         (isTutorialRuntimeRoomId(roomId) || isTutorialStagingRoomId(roomId)) &&
         (rawJoinSpawnEarly !== undefined || hasTutorialBgPatch)
       ) {
-        if (!canEditTutorialRoomContent(address)) {
+        if (!canEditTutorialRoomContent(address, roomId)) {
           wsSafeSend(ws, {
             type: "chat",
             from: "System",

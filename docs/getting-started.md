@@ -221,8 +221,7 @@ nspace/
 
 **Terminal 1 - Server:**
 ```bash
-export DEV_AUTH_BYPASS=1
-export JWT_SECRET=dev-insecure-change-me
+# Loads JWT_SECRET + DEV_AUTH_BYPASS from server/.env (copy from .env.example if missing)
 npm run dev -w server
 ```
 

@@ -1,5 +1,6 @@
 import { isAdmin } from "../config.js";
 import { getAdminRuntimeSettings } from "../adminRuntimeSettingsStore.js";
+import { isBuiltinRoomBuilder } from "../builtinRoomNames.js";
 import { TUTORIAL_ROOM_ID, TUTORIAL_STAGING_ROOM_ID } from "./roomIds.js";
 
 export { TUTORIAL_ROOM_ID, TUTORIAL_STAGING_ROOM_ID };
@@ -64,9 +65,16 @@ export function isTutorialBuilderWallet(address: string): boolean {
   return getTutorialBuilderAllowlist().has(c);
 }
 
-/** Admins and `TUTORIAL_BUILDER_ALLOWLIST` wallets may edit tutorial room layouts. */
-export function canEditTutorialRoomContent(address: string): boolean {
-  return isTutorialBuilderWallet(address);
+/**
+ * Admins, `TUTORIAL_BUILDER_ALLOWLIST` wallets, and per-room builders from
+ * `/admin/rooms` (`builtin-room-names.json`) may edit tutorial room layouts.
+ */
+export function canEditTutorialRoomContent(
+  address: string,
+  roomId: string
+): boolean {
+  if (isTutorialBuilderWallet(address)) return true;
+  return isBuiltinRoomBuilder(roomId, address);
 }
 
 export function getTutorialFaucetAmountLuna(): bigint {
