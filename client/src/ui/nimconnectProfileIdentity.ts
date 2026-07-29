@@ -21,6 +21,12 @@ function clearIdentityElement(element: HTMLAnchorElement): void {
   element.removeAttribute("aria-label");
 }
 
+function compactWalletAddress(value: unknown): string {
+  return typeof value === "string"
+    ? value.replace(/\s+/g, "").trim().toUpperCase()
+    : "";
+}
+
 export function createNimConnectProfileIdentity(
   reader: NimConnectHandleReader = createProfileClient()
 ): NimConnectProfileIdentity {
@@ -47,9 +53,16 @@ export function createNimConnectProfileIdentity(
       if (currentRequestId !== requestId) return;
 
       const handle = String(claim?.handle ?? "").trim();
-      if (handle && NIMCONNECT_HANDLE_RE.test(handle)) {
+      const claimAddress = compactWalletAddress(claim?.address);
+      const expectedAddress = compactWalletAddress(normalizedAddress);
+      if (
+        handle &&
+        NIMCONNECT_HANDLE_RE.test(handle) &&
+        claimAddress &&
+        claimAddress === expectedAddress
+      ) {
         element.textContent = `@${handle}`;
-        element.href = `${NIMCONNECT_APP_URL}/u/${encodeURIComponent(handle)}`;
+        element.href = `${NIMCONNECT_APP_URL}/#/u/${encodeURIComponent(handle)}`;
         element.setAttribute("aria-label", `Open @${handle} in NimConnect`);
         element.hidden = false;
         return;
@@ -57,7 +70,7 @@ export function createNimConnectProfileIdentity(
 
       if (!claim && isSelf) {
         element.textContent = "Claim an @handle";
-        element.href = `${NIMCONNECT_APP_URL}/`;
+        element.href = `${NIMCONNECT_APP_URL}/#/me?sheet=claim`;
         element.setAttribute("aria-label", "Claim an @handle in NimConnect");
         element.hidden = false;
       }

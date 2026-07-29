@@ -16,7 +16,10 @@ function deferred<T>(): Deferred<T> {
 
 describe("createNimConnectProfileIdentity", () => {
   it("renders a verified handle linking to its NimConnect profile", async () => {
-    const getHandleByAddress = vi.fn().mockResolvedValue({ handle: "space_owner" });
+    const getHandleByAddress = vi.fn().mockResolvedValue({
+      handle: "space_owner",
+      address: "nq11owner",
+    });
     const identity = createNimConnectProfileIdentity({ getHandleByAddress });
 
     await identity.show("NQ11 OWNER", false);
@@ -25,7 +28,7 @@ describe("createNimConnectProfileIdentity", () => {
     expect(identity.element.hidden).toBe(false);
     expect(identity.element.textContent).toBe("@space_owner");
     expect(identity.element.href).toBe(
-      "https://nimconnect.nimiqminiapps.com/u/space_owner"
+      "https://nimconnect.nimiqminiapps.com/#/u/space_owner"
     );
     expect(identity.element.target).toBe("");
     expect(identity.element.getAttribute("aria-label")).toBe(
@@ -45,7 +48,9 @@ describe("createNimConnectProfileIdentity", () => {
 
     expect(identity.element.hidden).toBe(false);
     expect(identity.element.textContent).toBe("Claim an @handle");
-    expect(identity.element.href).toBe("https://nimconnect.nimiqminiapps.com/");
+    expect(identity.element.href).toBe(
+      "https://nimconnect.nimiqminiapps.com/#/me?sheet=claim"
+    );
     expect(identity.element.getAttribute("aria-label")).toBe(
       "Claim an @handle in NimConnect"
     );
@@ -74,7 +79,10 @@ describe("createNimConnectProfileIdentity", () => {
 
   it("stays hidden when a resolver response contains an invalid handle", async () => {
     const identity = createNimConnectProfileIdentity({
-      getHandleByAddress: vi.fn().mockResolvedValue({ handle: "../not-a-handle" }),
+      getHandleByAddress: vi.fn().mockResolvedValue({
+        handle: "../not-a-handle",
+        address: "NQ45MALFORMED",
+      }),
     });
 
     await identity.show("NQ45 MALFORMED", true);
@@ -83,9 +91,34 @@ describe("createNimConnectProfileIdentity", () => {
     expect(identity.element.textContent).toBe("");
   });
 
+  it("stays hidden when a claim is missing its owner address", async () => {
+    const identity = createNimConnectProfileIdentity({
+      getHandleByAddress: vi.fn().mockResolvedValue({ handle: "unowned" }),
+    });
+
+    await identity.show("NQ46 MISSING", true);
+
+    expect(identity.element.hidden).toBe(true);
+    expect(identity.element.textContent).toBe("");
+  });
+
+  it("stays hidden when a claim belongs to a different wallet", async () => {
+    const identity = createNimConnectProfileIdentity({
+      getHandleByAddress: vi.fn().mockResolvedValue({
+        handle: "wrong_owner",
+        address: "NQ99 SOMEONEELSE",
+      }),
+    });
+
+    await identity.show("NQ47 EXPECTED", false);
+
+    expect(identity.element.hidden).toBe(true);
+    expect(identity.element.textContent).toBe("");
+  });
+
   it("ignores a late lookup after the open profile changes", async () => {
-    const first = deferred<{ handle: string } | null>();
-    const second = deferred<{ handle: string } | null>();
+    const first = deferred<{ handle: string; address: string } | null>();
+    const second = deferred<{ handle: string; address: string } | null>();
     const getHandleByAddress = vi
       .fn()
       .mockReturnValueOnce(first.promise)
@@ -94,14 +127,14 @@ describe("createNimConnectProfileIdentity", () => {
 
     const firstShow = identity.show("NQ55 FIRST", false);
     const secondShow = identity.show("NQ66 SECOND", false);
-    second.resolve({ handle: "second" });
+    second.resolve({ handle: "second", address: "NQ66SECOND" });
     await secondShow;
-    first.resolve({ handle: "first" });
+    first.resolve({ handle: "first", address: "NQ55FIRST" });
     await firstShow;
 
     expect(identity.element.textContent).toBe("@second");
     expect(identity.element.href).toBe(
-      "https://nimconnect.nimiqminiapps.com/u/second"
+      "https://nimconnect.nimiqminiapps.com/#/u/second"
     );
   });
 });
