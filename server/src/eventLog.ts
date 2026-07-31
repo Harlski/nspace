@@ -226,8 +226,10 @@ export type EventLogAnalyticsSnapshot = {
     toTs: number | null;
   };
   /**
-   * Distinct wallets whose **first-ever** `session_start` in the processed logs falls inside the
-   * current analytics window (bounded by log retention; not pre-history before logs existed).
+   * Distinct wallets whose **first-ever** `session_start` in the processed logs
+   * (report window plus first-time lookback files) falls inside the current
+   * analytics window. Bounded by retained event day-files and
+   * `ANALYTICS_FIRST_TIME_LOOKBACK_DAYS` (not infinite pre-history).
    */
   firstTimeLogins: number;
   uniqueVisitors: number;
@@ -352,20 +354,44 @@ function parseLines(filePath: string): EventRecord[] {
   return out;
 }
 
+/**
+ * Extra calendar days of event files scanned *before* the analytics window so
+ * first-time / returning detection can see prior `session_start`s.
+ * Aligns with daily-stats lookback by default; override with
+ * `ANALYTICS_FIRST_TIME_LOOKBACK_DAYS`.
+ */
+function analyticsFirstTimeLookbackDays(): number {
+  const raw = Number(process.env.ANALYTICS_FIRST_TIME_LOOKBACK_DAYS);
+  if (Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
+  const daily = Number(process.env.DAILY_STATS_LOOKBACK_DAYS);
+  if (Number.isFinite(daily) && daily >= 1) return Math.floor(daily);
+  return 400;
+}
+
+/**
+ * How many trailing day-files to open for an overview snapshot.
+ * Covers the report window plus first-time lookback so `seenBeforeWindow` is
+ * populated (otherwise Pay returning stays 0 and FTU equals Pay unique).
+ */
 function computeAnalyticsFileDays(
   maxDays: number,
   fromTs?: number,
   toTs?: number
 ): number {
-  const cap = 30;
-  const d = Math.min(cap, Math.max(1, maxDays));
-  if (fromTs == null && toTs == null) return d;
+  const windowCap = 30;
+  const windowDays = Math.min(windowCap, Math.max(1, maxDays));
+  const lookback = analyticsFirstTimeLookbackDays();
   const now = Date.now();
   const end = toTs != null ? Math.min(toTs, now) : now;
-  const start = fromTs != null ? Math.min(fromTs, end) : end - d * 86_400_000;
-  const oldest = Math.min(start, end);
-  const spanDays = Math.ceil((now - oldest) / 86_400_000) + 1;
-  return Math.min(cap, Math.max(1, Math.max(d, spanDays)));
+  const windowStart =
+    fromTs != null
+      ? Math.min(fromTs, end)
+      : end - (windowDays - 1) * 86_400_000;
+  const historyStart = windowStart - lookback * 86_400_000;
+  const spanDays = Math.ceil((now - historyStart) / 86_400_000) + 1;
+  // Cap at window + lookback so a huge clock skew cannot open unbounded files.
+  const hardCap = windowDays + lookback;
+  return Math.max(1, Math.min(hardCap, Math.max(windowDays, spanDays)));
 }
 
 async function forEachRecentEvent(
