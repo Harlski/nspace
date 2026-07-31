@@ -4,11 +4,29 @@
   <img src="docs/assets/readme-banner.png" alt="Nimiq Space - isometric shared world" width="100%" />
 </p>
 
-Open multiplayer isometric hangout for the [Nimiq](https://nimiq.com) community.
+**Nimiq Space** is an open multiplayer world for the [Nimiq](https://nimiq.com) community - a shared isometric map where wallet-signed players can see who is here right now, build together, and leave something that lasts.
 
-Walk a shared grid, chat, build, portal between rooms, and paint the canvas leaderboard. Sign in with a **Nimiq wallet** (or **dev login** locally).
+<p align="center">
+  <a href="https://nimiq.space">
+    <img src="https://img.shields.io/badge/Play_Now-nimiq.space-1a6cff?style=for-the-badge&labelColor=0b1220" alt="Play Now" />
+  </a>
+</p>
 
-**[Play live →](https://nimiq.space)** · Repo package: `nspace` · [MIT License](LICENSE)
+### Social
+
+Chat apps scatter people into language silos. Here you occupy the same space: walk the hub and Commons, chat or whisper, portal between rooms, and show up as a living presence on the map - the quiet signal that someone else who shares Nimiq is online with you.
+
+### Pixel
+
+The **Pixel** room is a persistent **500×500** collaborative floor. Paint tiles that stay for the next visitor. No blocks, just color - a living mural the community keeps returning to (also available as a live `/pixels.png` snapshot).
+
+### Play
+
+Take it to the **Play Field**: seasonal soccer with challenges, kickoff countdowns, match pitches, and spectators in the stands. Same world, different energy - drop in, compete, watch.
+
+### Build
+
+Shape rooms with blocks, floors, gates, signposts, billboards, and teleporters. What you place syncs for everyone in the room. Own a space, invite friends into a private Play Space, or leave a landmark for strangers to find later.
 
 ---
 
@@ -34,7 +52,7 @@ Top chosen countries (flag identity, not location): **TR** 11 · **CO** 10 · **
 ## About
 
 <p>
-  <img src="docs/assets/builder-identicon.svg" alt="Builder identicon" width="64" height="64" align="left" />
+  <img src="docs/assets/builder-identicon.png" alt="Builder identicon" width="72" height="72" align="left" />
 </p>
 
 **Builder** · [`NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y`](https://nimiq.space)
@@ -71,7 +89,7 @@ Enable **Dev login** on the client:
 VITE_DEV_AUTH_BYPASS=1
 ```
 
-(`server/.env` from the example already sets `DEV_AUTH_BYPASS=1` and a local `JWT_SECRET` — do not use those in production.)
+(`server/.env` from the example already sets `DEV_AUTH_BYPASS=1` and a local `JWT_SECRET` - do not use those in production.)
 
 ```bash
 npm run dev
