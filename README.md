@@ -1,78 +1,108 @@
-# Nimiq Space (`nspace`)
+# Nimiq Space
 
-**Nimiq Space** is a browser multiplayer hangout for the [Nimiq](https://nimiq.com) community: walk an isometric grid with other players, chat, build with blocks, use portals between rooms, and (in the canvas room) claim tiles on a shared leaderboard. You sign in with a **Nimiq wallet** (or a local **dev login** on your machine only).
+<p align="center">
+  <img src="docs/assets/readme-banner.png" alt="Nimiq Space - isometric shared world" width="100%" />
+</p>
 
-**Play live:** [nimiq.space](https://nimiq.space)
+Open multiplayer isometric hangout for the [Nimiq](https://nimiq.com) community.
 
-## Run locally (end to end)
+Walk a shared grid, chat, build, portal between rooms, and paint the canvas leaderboard. Sign in with a **Nimiq wallet** (or **dev login** locally).
 
-**Prerequisites:** [Node.js 20+](https://nodejs.org/) (LTS recommended) and npm.
+**[Play live →](https://nimiq.space)** · Repo package: `nspace` · [MIT License](LICENSE)
 
-1. **Clone and install**
+---
 
-   ```bash
-   git clone https://github.com/Harlski/nspace.git
-   cd nspace
-   npm install
-   ```
+### Last 30 days
 
-2. **Configure the server**
+_Snapshot from production analytics (UTC window ending 2026-07-31)._
 
-   ```bash
-   cp server/.env.example server/.env
-   ```
+| Metric | Value |
+|--------|------:|
+| Unique visitors | **253** |
+| First-time sign-ins | **141** |
+| Nimiq Pay unique | **101** (40% of visitors) |
+| Other unique (non-Pay) | **152** (60% of visitors) |
+| Pay first-time / returning | **75** / **26** |
+| Active play (AFK-capped) | **1,120h** |
+| NIM paid out | **202,630** |
+| NIM to Pay cohort | **41,672** |
 
-   The example already sets `JWT_SECRET=dev-insecure-change-me` and `DEV_AUTH_BYPASS=1` for local work. Do not use those values in production.
+Top chosen countries (flag identity, not location): **TR** 11 · **CO** 10 · **AR** 8 · **IN** 7 · **DE** / **IR** / **NL** 6 each.
 
-3. **Configure the client**
+---
 
-   Create `client/.env.development` so the UI shows **Dev login** (the server must also have `DEV_AUTH_BYPASS=1`):
+## About
 
-   ```bash
-   cat > client/.env.development <<'EOF'
-   VITE_DEV_AUTH_BYPASS=1
-   EOF
-   ```
+<p>
+  <img src="docs/assets/builder-identicon.svg" alt="Builder identicon" width="64" height="64" align="left" />
+</p>
 
-4. **Start dev**
+**Builder** · [`NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y`](https://nimiq.space)
 
-   ```bash
-   npm run dev
-   ```
+<br clear="all" />
 
-   This runs the Vite client and Express/WebSocket server together. You should see both **client** (port **5173**) and **server** (port **3001**) in the terminal.
+### Builder story
 
-5. **Open the game**
+I grew up on internet forums. The ability to communicate with others around the world over a common subject has been lost. I kind of miss this.
 
-   Visit [http://localhost:5173](http://localhost:5173), click **Dev login**, and you should land in the hub with other players (including a couple of NPC bots by default).
+Chat apps like Telegram and Discord miss the mark, as it feels impersonal. Non-English speaking users are confined to their own single-language-only channels, and there is rarely any cross communication between them.
 
-   To sign in with a real wallet instead, leave dev bypass off and use **Connect wallet** with the [Nimiq Hub](https://hub.nimiq.com).
+Nimiq Space fits a niche where users can see each other occupying a shared (Nimiq) space, indicating to others that "I'm here right now," which is encouraging for real-life asynchronous communication. Accessibility features were implemented to allow for quick translating between languages.
 
-### If something fails
+Nimiq here is the common connection. Any active users silently share this connection and can quickly socialize with others. There's a long way to go, but we've only just planted the seeds :)
+
+---
+
+## Run locally
+
+**Needs:** [Node.js 20+](https://nodejs.org/) (LTS) and npm.
+
+```bash
+git clone https://github.com/Harlski/nspace.git
+cd nspace
+npm install
+cp server/.env.example server/.env
+```
+
+Enable **Dev login** on the client:
+
+```bash
+# client/.env.development
+VITE_DEV_AUTH_BYPASS=1
+```
+
+(`server/.env` from the example already sets `DEV_AUTH_BYPASS=1` and a local `JWT_SECRET` — do not use those in production.)
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173) → **Dev login**. Client **5173**, server **3001**.
+
+Wallet sign-in: turn bypass off and use **Connect wallet** via [Nimiq Hub](https://hub.nimiq.com).
+
+### Troubleshooting
 
 | Symptom | Check |
 |---------|--------|
-| Server exits on start | `server/.env` exists and includes `JWT_SECRET` |
-| No **Dev login** button | `DEV_AUTH_BYPASS=1` in `server/.env` and `VITE_DEV_AUTH_BYPASS=1` in `client/.env.development`; restart `npm run dev` |
-| Page loads but cannot connect | Server terminal shows port **3001** listening; nothing else bound to 5173/3001 |
-| Test on phone/LAN | Use the Vite **Network** URL from the terminal; allow firewall ports **5173** and **3001** |
+| Server exits on start | `server/.env` exists with `JWT_SECRET` |
+| No Dev login button | `DEV_AUTH_BYPASS=1` + `VITE_DEV_AUTH_BYPASS=1`; restart `npm run dev` |
+| Page loads, no connect | Server listening on **3001**; ports free |
+| Phone / LAN | Vite **Network** URL; firewall **5173** + **3001** |
 
-**More detail** (controls, split terminals, production build, Docker): **[docs/getting-started.md](docs/getting-started.md)**.
+Full setup, controls, Docker: **[docs/getting-started.md](docs/getting-started.md)**.
 
-## What’s in this repo
+---
 
-| Area | Notes |
-|------|--------|
-| **`client/`** | Vite + TypeScript + Three.js — 3D view, HUD, WebSocket client |
-| **`server/`** | Express + WebSocket — room state, auth, persistence under `server/data/` |
-| **`docs/`** | Human-facing docs for setup, architecture, deploy, and styling |
+## Repo map
 
-Deeper topics (architecture, message flow, ops, styling for contributors) live under **`docs/`** — start at **[docs/README.md](docs/README.md)**.
+| Path | Role |
+|------|------|
+| `client/` | Vite · TypeScript · Three.js |
+| `server/` | Express · WebSocket · room authority |
+| `docs/` | Architecture, deploy, process |
 
-## Contributing & automation
-
-- **[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)** — branches, testing expectations, where code usually lives  
-- **[AGENTS.md](AGENTS.md)** — short map for tools/agents: key files and which doc to open next  
+Start at **[docs/README.md](docs/README.md)**. Contributing: **[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)** · agent map: **[AGENTS.md](AGENTS.md)**.
 
 ## License
 
