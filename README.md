@@ -76,4 +76,4 @@ Deeper topics (architecture, message flow, ops, styling for contributors) live u
 
 ## License
 
-[MIT](LICENSE)
+Nimiq Space is available under the [MIT License](LICENSE).
