@@ -18,6 +18,10 @@ export function installAdminOverlay(
     /** Real allowlist admin (not merely VITE_ADMIN_ENABLED). Gates Movement Watch. */
     allowMovementWatch?: boolean;
     onMovementWatchChange?: (enabled: boolean) => void;
+    /** Admin Invisibility toggle (same allowlist gate as Movement Watch). */
+    onAdminInvisibleChange?: (enabled: boolean) => void;
+    /** Initial Admin Invisibility checkbox (localStorage / session). */
+    adminInvisibleInitial?: boolean;
     onSetVoxelText?: (spec: VoxelTextSpec) => void;
     onRemoveVoxelText?: (roomId: string, id: string) => void;
     /** Re-run build-dock thumbnail strip after inspector preview layout tweaks. */
@@ -197,6 +201,10 @@ export function installAdminOverlay(
       <label class="admin-overlay-field admin-overlay-check"><input type="checkbox" id="movement-watch-enabled" />
         <span>Enable Movement Watch</span>
       </label>
+      <p class="admin-overlay-hint">Admin Invisibility omits you from non-admin presence (no join announce, avatar, or movement). Other admins still see you translucent. Observation-only while on — world edits are blocked. Chat still appears in the log without a speech bubble.</p>
+      <label class="admin-overlay-field admin-overlay-check"><input type="checkbox" id="admin-invisible-enabled" />
+        <span>Admin Invisibility</span>
+      </label>
     </div>
     <div class="admin-overlay-status" id="admin-status"></div>
   `;
@@ -222,6 +230,7 @@ export function installAdminOverlay(
 
   const watchTabBtn = $("admin-tab-watch") as HTMLButtonElement;
   const movementWatchEnabled = $("movement-watch-enabled") as HTMLInputElement;
+  const adminInvisibleEnabled = $("admin-invisible-enabled") as HTMLInputElement;
   const allowMovementWatch = opts.allowMovementWatch === true;
   watchTabBtn.hidden = !allowMovementWatch;
   if (allowMovementWatch) {
@@ -242,6 +251,27 @@ export function installAdminOverlay(
         /* ignore */
       }
       opts.onMovementWatchChange?.(on);
+    });
+
+    let invPref = opts.adminInvisibleInitial === true;
+    if (opts.adminInvisibleInitial === undefined) {
+      try {
+        invPref = localStorage.getItem("NSPACE_ADMIN_INVISIBLE") === "1";
+      } catch {
+        invPref = false;
+      }
+    }
+    adminInvisibleEnabled.checked = invPref;
+    if (invPref) opts.onAdminInvisibleChange?.(true);
+    adminInvisibleEnabled.addEventListener("change", () => {
+      const on = adminInvisibleEnabled.checked;
+      try {
+        if (on) localStorage.setItem("NSPACE_ADMIN_INVISIBLE", "1");
+        else localStorage.removeItem("NSPACE_ADMIN_INVISIBLE");
+      } catch {
+        /* ignore */
+      }
+      opts.onAdminInvisibleChange?.(on);
     });
   }
 

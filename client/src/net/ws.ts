@@ -367,8 +367,13 @@ export type ServerMessage =
       by: string;
       expiresAt: number;
     }
-  | { type: "playerJoined"; player: PlayerState }
-  | { type: "playerLeft"; address: string }
+  | { type: "playerJoined"; player: PlayerState; silent?: boolean }
+  | {
+      type: "playerLeft";
+      address: string;
+      silent?: boolean;
+      adminInvisible?: boolean;
+    }
   | { type: "state"; players: PlayerState[] }
   | { type: "stateDelta"; players: PlayerState[] }
   | {
@@ -500,6 +505,8 @@ export type ServerMessage =
       text: string;
       at: number;
       bubbleOnly?: boolean;
+      /** Admin Invisibility: chat log yes, speech bubble no. */
+      suppressBubble?: boolean;
     }
   | {
       /**
@@ -709,6 +716,8 @@ export type ConnectGameWsOptions = {
   resume?: boolean;
   /** Fresh sign-in entry (first WS after wallet auth or guest invite — not reconnect). */
   signIn?: boolean;
+  /** Admin Invisibility at connect (server requires isAdmin). */
+  adminInvisible?: boolean;
 };
 
 export function connectGameWs(
@@ -734,6 +743,9 @@ export function connectGameWs(
   }
   if (opts?.stream) {
     q.set("stream", "1");
+  }
+  if (opts?.adminInvisible) {
+    q.set("adminInvisible", "1");
   }
   if (opts?.signIn) {
     q.set("signIn", "1");
@@ -801,6 +813,12 @@ export function sendStopMove(ws: WebSocket): void {
 export function sendMovementWatch(ws: WebSocket, enabled: boolean): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "movementWatch", enabled }));
+}
+
+/** Admin Invisibility opt-in / opt-out (server gates with isAdmin). */
+export function sendAdminInvisible(ws: WebSocket, enabled: boolean): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "adminInvisible", enabled }));
 }
 
 /** Client-only click intents for Movement Watch (unwalkable / mine). Server fans to subscribers. */

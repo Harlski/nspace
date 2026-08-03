@@ -24,4 +24,6 @@ export interface PlayerState {
   cosmeticNameplate?: string | null;
   cosmeticChatBubble?: string | null;
   cosmeticTrail?: string | null;
+  /** Admin Invisibility cue for game-admin viewers (translucent + Invisible tag). */
+  adminInvisible?: boolean;
 }

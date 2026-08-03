@@ -3698,6 +3698,8 @@ wss.on("connection", (ws, req) => {
     guestDisplayName,
     guestId,
     explorationDoorSpawn,
+    adminInvisible:
+      url.searchParams.get("adminInvisible") === "1" && isAdmin(address),
   });
   const normAddr = normalizeWalletId(address);
   const connectDisplayName =

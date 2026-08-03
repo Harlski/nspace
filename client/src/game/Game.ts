@@ -17121,14 +17121,42 @@ export class Game {
     const name =
       (p.displayName && String(p.displayName).trim()) ||
       walletDisplayName(p.address);
-    const state = `${away ? 1 : 0}\0${name}\0${p.cosmeticNameplate ?? ""}`;
+    const invisible = Boolean(p.adminInvisible);
+    const labelName = invisible ? `${name} · Invisible` : name;
+    const state = `${away ? 1 : 0}\0${labelName}\0${p.cosmeticNameplate ?? ""}\0${invisible ? 1 : 0}`;
     if (g.userData.nameLabelSyncState === state) {
+      this.syncAdminInvisibleAvatarOpacity(g, invisible);
       return;
     }
     g.userData.nameLabelSyncState = state;
     g.userData.displayName = name;
-    this.replaceAvatarNameLabel(g, name, away, p.cosmeticNameplate);
+    this.replaceAvatarNameLabel(g, labelName, away, p.cosmeticNameplate);
     this.syncNameLabelScaleAndPosition(g);
+    this.syncAdminInvisibleAvatarOpacity(g, invisible);
+  }
+
+  /** Admin-only cue: translucent avatar while peer (or self) is under Admin Invisibility. */
+  private syncAdminInvisibleAvatarOpacity(
+    g: THREE.Group,
+    invisible: boolean
+  ): void {
+    const opacity = invisible ? 0.42 : 1;
+    if (g.userData.adminInvisibleOpacity === opacity) return;
+    g.userData.adminInvisibleOpacity = opacity;
+    g.traverse((child) => {
+      if (child instanceof THREE.Sprite) {
+        const sm = child.material as THREE.SpriteMaterial;
+        sm.opacity = opacity;
+        sm.transparent = true;
+      }
+      if (child instanceof THREE.Mesh) {
+        const mat = child.material as THREE.Material & { opacity?: number; transparent?: boolean };
+        if (typeof mat.opacity === "number") {
+          mat.opacity = opacity;
+          mat.transparent = true;
+        }
+      }
+    });
   }
 
   private disposeAvatarGroup(g: THREE.Group): void {

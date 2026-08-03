@@ -128,6 +128,7 @@ import {
   sendStopMove,
   sendMovementWatch,
   sendMovementWatchClickIntent,
+  sendAdminInvisible,
   sendDeployCosmetic,
   sendPublishDesign,
   sendDeleteDesign,
@@ -639,6 +640,15 @@ function enterGame(
   let ws: WebSocket | null = null;
   /** Admin wants Movement Watch; resent on welcome / reconnect. */
   let movementWatchWanted = false;
+  /** Admin Invisibility preferred; connect query + resent after welcome. */
+  let adminInvisibleWanted = false;
+  if (isAdmin(address)) {
+    try {
+      adminInvisibleWanted = localStorage.getItem("NSPACE_ADMIN_INVISIBLE") === "1";
+    } catch {
+      adminInvisibleWanted = false;
+    }
+  }
   /** Server: at least one admin in this room has Movement Watch on. */
   let movementWatchActiveInRoom = false;
   const perfPingSentAt = new Map<number, number>();
@@ -2532,6 +2542,7 @@ function enterGame(
     roomId: ROOM_ID,
     enabled: isAdmin(address),
     allowMovementWatch: isAdmin(address),
+    adminInvisibleInitial: adminInvisibleWanted,
     onMovementWatchChange: (enabled) => {
       movementWatchWanted = enabled;
       game.setMovementWatchEnabled(enabled);
@@ -2540,6 +2551,12 @@ function enterGame(
       }
       if (ws && ws.readyState === WebSocket.OPEN) {
         sendMovementWatch(ws, enabled);
+      }
+    },
+    onAdminInvisibleChange: (enabled) => {
+      adminInvisibleWanted = enabled;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        sendAdminInvisible(ws, enabled);
       }
     },
     onSetVoxelText: (spec) => {
@@ -5310,6 +5327,14 @@ function enterGame(
         game.setMovementWatchEnabled(true);
         sendMovementWatch(ws, true);
       }
+      if (
+        adminInvisibleWanted &&
+        isAdmin(address) &&
+        ws &&
+        ws.readyState === WebSocket.OPEN
+      ) {
+        sendAdminInvisible(ws, true);
+      }
       if (pendingCreateRoomAwaiting) {
         closeRoomsModal();
       }
@@ -5738,6 +5763,7 @@ function enterGame(
         },
       ];
       if (
+        !msg.silent &&
         msg.player.address !== selfAddress &&
         !msg.player.displayName.startsWith("[NPC] ")
       ) {
@@ -5754,6 +5780,7 @@ function enterGame(
     if (msg.type === "playerLeft") {
       const leaving = lastPlayers.find((p) => p.address === msg.address);
       if (
+        !msg.silent &&
         leaving &&
         leaving.address !== selfAddress &&
         !leaving.displayName.startsWith("[NPC] ")
@@ -6092,8 +6119,10 @@ function enterGame(
         roomsCreateHint.textContent = msg.text;
         roomsCreateHint.hidden = false;
       }
-      // Show chat bubble for all messages
-      game.showChatBubble(msg.fromAddress, msg.text, msg.from);
+      // Show chat bubble unless Admin Invisibility suppressBubble (log still below).
+      if (!msg.suppressBubble) {
+        game.showChatBubble(msg.fromAddress, msg.text, msg.from);
+      }
       
       // Only add to chat log if not bubble-only (NPCs use bubbleOnly)
       if (!msg.bubbleOnly) {
@@ -6683,6 +6712,7 @@ function enterGame(
               : {}),
           stream: streamMode,
           signIn,
+          adminInvisible: Boolean(adminInvisibleWanted && isAdmin(address)),
         }
       );
       wireWsHandlers(ws);

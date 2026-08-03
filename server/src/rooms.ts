@@ -488,6 +488,13 @@ import {
   type MovementWatchOutMsg,
   type MovementWatchRejectReason,
 } from "./movementWatch.js";
+import {
+  canToggleAdminInvisible,
+  playerVisibleToViewer,
+  playersVisibleToViewer,
+  shouldSuppressChatBubble,
+  worldMutationsBlockedByInvisibility,
+} from "./adminPresence.js";
 import { stepHumanAlongPath } from "./pathPosition.js";
 import {
   ANALYTIC_PATH_SKIP_STEPPING,
@@ -590,7 +597,8 @@ function tickPlayerStatesEqual(a: PlayerState, b: PlayerState): boolean {
     (a.cosmeticAura ?? null) === (b.cosmeticAura ?? null) &&
     (a.cosmeticNameplate ?? null) === (b.cosmeticNameplate ?? null) &&
     (a.cosmeticChatBubble ?? null) === (b.cosmeticChatBubble ?? null) &&
-    (a.cosmeticTrail ?? null) === (b.cosmeticTrail ?? null)
+    (a.cosmeticTrail ?? null) === (b.cosmeticTrail ?? null) &&
+    (a.adminInvisible ?? false) === (b.adminInvisible ?? false)
   );
 }
 
@@ -901,6 +909,8 @@ export interface PlayerState {
   cosmeticNameplate?: string | null;
   cosmeticChatBubble?: string | null;
   cosmeticTrail?: string | null;
+  /** Admin Invisibility: set for game-admin viewers so clients can render the Invisible cue. */
+  adminInvisible?: boolean;
 }
 
 export type ObstacleTile = {
@@ -1046,6 +1056,8 @@ interface ClientConn {
   movementWatch?: boolean;
   /** Throttle Click Markers emitted for this mover's intents. */
   movementWatchThrottle: MovementWatchClickThrottleState;
+  /** Admin Invisibility: omitted from non-admin presence while set. */
+  adminInvisible?: boolean;
 }
 
 function withinBlockActionRange(
@@ -1442,8 +1454,14 @@ type OutMsg =
       by: string;
       expiresAt: number;
     }
-  | { type: "playerJoined"; player: PlayerState }
-  | { type: "playerLeft"; address: string }
+  | { type: "playerJoined"; player: PlayerState; silent?: boolean }
+  | {
+      type: "playerLeft";
+      address: string;
+      silent?: boolean;
+      /** Set when the leaver was under Admin Invisibility (conn may already be gone). */
+      adminInvisible?: boolean;
+    }
   | { type: "state"; players: PlayerState[] }
   /** Tick path only: subset of players that changed since last tick snapshot. */
   | { type: "stateDelta"; players: PlayerState[] }
@@ -1559,6 +1577,8 @@ type OutMsg =
       text: string;
       at: number;
       bubbleOnly?: boolean; // If true, only show as bubble, not in chat log
+      /** Admin Invisibility: log yes, speech bubble no. */
+      suppressBubble?: boolean;
     }
   /**
    * Private whisper (WoW-style). Never broadcast: delivered only to the recipient
@@ -4219,6 +4239,77 @@ function welcomeSpatialLists(
   };
 }
 
+function stripAdminInvisibleFlag(p: PlayerState): PlayerState {
+  if (!p.adminInvisible) return p;
+  const { adminInvisible: _drop, ...rest } = p;
+  return rest;
+}
+
+/**
+ * Viewer-aware presence filter for Admin Invisibility. Returns null to skip send.
+ * Game admins see invisible peers (with cue flag); others omit them.
+ */
+function filterPresenceOutMsgForViewer(
+  roomId: string,
+  msg: OutMsg,
+  viewer: ClientConn
+): OutMsg | null {
+  const isGameAdmin = isAdmin(viewer.address);
+  const viewerOpts = { isGameAdmin };
+
+  if (msg.type === "state" || msg.type === "stateDelta") {
+    const filtered = playersVisibleToViewer(viewerOpts, msg.players);
+    const players = isGameAdmin
+      ? filtered
+      : filtered.map(stripAdminInvisibleFlag);
+    return { ...msg, players };
+  }
+
+  if (msg.type === "playerJoined") {
+    const subject = {
+      adminInvisible: Boolean(msg.player.adminInvisible),
+    };
+    if (!playerVisibleToViewer(viewerOpts, subject)) return null;
+    if (!isGameAdmin && msg.player.adminInvisible) {
+      return {
+        ...msg,
+        player: stripAdminInvisibleFlag(msg.player),
+      };
+    }
+    return msg;
+  }
+
+  if (msg.type === "playerLeft") {
+    const subjectConn = roomOf(roomId).get(msg.address);
+    const invisible = subjectConn
+      ? Boolean(subjectConn.adminInvisible)
+      : Boolean(msg.adminInvisible);
+    if (
+      !playerVisibleToViewer(viewerOpts, {
+        adminInvisible: invisible,
+      })
+    ) {
+      return null;
+    }
+    return msg;
+  }
+
+  if (msg.type === "moveOrder" || msg.type === "moveAbort") {
+    const subjectConn = roomOf(roomId).get(msg.address);
+    if (
+      subjectConn &&
+      !playerVisibleToViewer(viewerOpts, {
+        adminInvisible: Boolean(subjectConn.adminInvisible),
+      })
+    ) {
+      return null;
+    }
+    return msg;
+  }
+
+  return msg;
+}
+
 function broadcast(roomId: string, msg: OutMsg, except?: string): void {
   if (msg.type === "chat" && !msg.bubbleOnly) {
     appendChatBacklogLine(roomId, {
@@ -4239,9 +4330,11 @@ function broadcast(roomId: string, msg: OutMsg, except?: string): void {
       if (c.ws.readyState !== 1) continue;
       const filtered = filterSpatialOutMsgForClient(c, msg);
       if (!filtered) continue;
-      const payload = JSON.stringify(filtered);
+      const forViewer = filterPresenceOutMsgForViewer(roomId, filtered, c);
+      if (!forViewer) continue;
+      const payload = JSON.stringify(forViewer);
       recordGameWsOutbound(
-        filtered.type,
+        forViewer.type,
         Buffer.byteLength(payload, "utf8"),
         1
       );
@@ -4250,22 +4343,28 @@ function broadcast(roomId: string, msg: OutMsg, except?: string): void {
     return;
   }
   const r = roomOf(roomId);
-  const payload = JSON.stringify(msg);
   let recipients = 0;
+  const payloads: Array<{ c: ClientConn; payload: string; type: string }> = [];
   for (const [addr, c] of r) {
     if (except && addr === except) continue;
-    if (c.ws.readyState === 1) recipients += 1;
+    if (c.ws.readyState !== 1) continue;
+    const forViewer = filterPresenceOutMsgForViewer(roomId, msg, c);
+    if (!forViewer) continue;
+    const payload = JSON.stringify(forViewer);
+    payloads.push({ c, payload, type: forViewer.type });
+    recipients += 1;
   }
   if (recipients > 0) {
+    // Approximate: use first payload size × recipients (sizes may differ slightly per viewer).
+    const sample = payloads[0]!;
     recordGameWsOutbound(
-      msg.type,
-      Buffer.byteLength(payload, "utf8"),
+      sample.type,
+      Buffer.byteLength(sample.payload, "utf8"),
       recipients
     );
   }
-  for (const [addr, c] of r) {
-    if (except && addr === except) continue;
-    if (c.ws.readyState === 1) c.ws.send(payload);
+  for (const { c, payload } of payloads) {
+    c.ws.send(payload);
   }
   if (msg.type === "playerLeft") {
     pruneTickBaselinePlayer(roomId, msg.address);
@@ -4317,6 +4416,7 @@ function countRealPlayersInRoom(roomId: string): number {
   let n = 0;
   for (const c of r.values()) {
     if (c.streamObserver) continue;
+    if (c.adminInvisible) continue;
     if (!c.displayName.startsWith("[NPC] ")) n += 1;
   }
   return n;
@@ -4645,6 +4745,7 @@ export function countOnlineRealPlayers(): number {
   for (const room of rooms.values()) {
     for (const c of room.values()) {
       if (c.streamObserver) continue;
+      if (c.adminInvisible) continue;
       if (!c.displayName.startsWith("[NPC] ")) total += 1;
     }
   }
@@ -4664,6 +4765,7 @@ export function getCoPresencePlayerLabelsInRoom(
   const out: string[] = [];
   for (const c of r.values()) {
     if (c.streamObserver) continue;
+    if (c.adminInvisible) continue;
     if (c.displayName.startsWith("[NPC] ")) continue;
     const addrKey =
       c.address.startsWith("guest:") ? c.address : c.address.trim().toUpperCase();
@@ -4901,6 +5003,101 @@ function setConnMovementWatch(
   if (enabled) sendMovementWatchSnapshotToConn(roomId, conn);
 }
 
+/** Message types denied while Admin Invisible (or stream observer). */
+const ADMIN_INVISIBLE_BLOCKED_MSG_TYPES: ReadonlySet<string> = new Set([
+  "setChallenge",
+  "acceptChallenge",
+  "cancelDirectInvite",
+  "requestSpectate",
+  "placeBall",
+  "removeBall",
+  "campaignLinkClick",
+  "achievementSignal",
+  "placeBlock",
+  "publishDesign",
+  "deleteDesign",
+  "updateDesignVisibility",
+  "placeDesignInRoom",
+  "placePendingTeleporter",
+  "placePendingGate",
+  "placeUnlockPad",
+  "placeAttentionMarker",
+  "setAttentionMarkerProps",
+  "removeAttentionMarker",
+  "setUnlockPadConfig",
+  "openGate",
+  "setGateAuthorizedAddresses",
+  "configureTeleporter",
+  "placeTeleporterBidirectionalPair",
+  "setObstacleProps",
+  "removeObstacle",
+  "placeExtraFloor",
+  "removeExtraFloor",
+  "paintNoWalkFloor",
+  "clearNoWalkFloor",
+  "beginBlockClaim",
+  "blockClaimTick",
+  "completeBlockClaim",
+  "placeSignboard",
+  "placeBillboard",
+  "updateBillboard",
+  "updateSignboard",
+  "setVoxelText",
+  "removeVoxelText",
+  "removeSignboard",
+  "updateRoom",
+  "setRoomBackgroundHue",
+]);
+
+/** World edits blocked for stream cinema and Admin Invisibility (observation-only). */
+function connBlocksWorldEdit(conn: ClientConn): boolean {
+  if (conn.streamObserver) return true;
+  return worldMutationsBlockedByInvisibility(Boolean(conn.adminInvisible));
+}
+
+function setConnAdminInvisible(
+  roomId: string,
+  conn: ClientConn,
+  enabled: boolean
+): void {
+  const was = Boolean(conn.adminInvisible);
+  if (was === enabled) return;
+  conn.adminInvisible = enabled;
+  console.log(
+    `[rooms] adminInvisible ${enabled ? "on" : "off"} ${conn.address.slice(0, 12)}… room=${roomId}`
+  );
+  const player = playerToOutState(conn);
+  const room = roomOf(roomId);
+  for (const [addr, c] of room) {
+    if (addr === conn.address) continue;
+    if (c.ws.readyState !== 1) continue;
+    if (isAdmin(c.address)) {
+      wsSafeSend(c.ws, {
+        type: "stateDelta",
+        players: [player],
+      } satisfies OutMsg);
+      continue;
+    }
+    if (enabled) {
+      wsSafeSend(c.ws, {
+        type: "playerLeft",
+        address: conn.address,
+        silent: true,
+      } satisfies OutMsg);
+    } else {
+      wsSafeSend(c.ws, {
+        type: "playerJoined",
+        player: stripAdminInvisibleFlag(player),
+        silent: true,
+      } satisfies OutMsg);
+    }
+  }
+  // Keep tick baseline aligned with the flagged player state.
+  pruneTickBaselinePlayer(roomId, conn.address);
+  mergeTickBaselinePlayer(roomId, player);
+  broadcastOnlineCount();
+}
+
 function sendMovementWatch(roomId: string, msg: MovementWatchOutMsg): void {
   const recipients = filterMovementWatchRecipients(roomOf(roomId).values());
   if (recipients.length === 0) return;
@@ -5071,6 +5268,7 @@ function playerToOutState(conn: ClientConn): PlayerState {
   applyCosmeticLoadoutToPlayer(base);
   if (conn.chatTyping) base.chatTyping = true;
   if (conn.challengeOpen) base.challengeOpen = true;
+  if (conn.adminInvisible) base.adminInvisible = true;
   if (WORLDCUP_ENABLED) {
     const country = worldcupGetPlayerCountry(conn.address);
     if (country) base.worldcupCountry = country;
@@ -6331,7 +6529,15 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       const wasWatching = Boolean(conn.movementWatch);
       room.delete(address);
       if (wasWatching) broadcastMovementWatchActive(currentRoomId);
-      broadcast(currentRoomId, { type: "playerLeft", address }, address);
+      broadcast(
+        currentRoomId,
+        {
+          type: "playerLeft",
+          address,
+          ...(conn.adminInvisible ? { adminInvisible: true } : {}),
+        },
+        address
+      );
     }
   }
 
@@ -6359,9 +6565,12 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   
   // Send welcome message for new room
   const targetRoomConns = roomOf(targetRoomId);
-  const others = [...targetRoomConns.values()]
-    .filter((c) => c.address !== address)
-    .map(playerToOutState);
+  const others = playersVisibleToViewer(
+    { isGameAdmin: isAdmin(address) },
+    [...targetRoomConns.values()]
+      .filter((c) => c.address !== address)
+      .map(playerToOutState)
+  ).map((p) => (isAdmin(address) ? p : stripAdminInvisibleFlag(p)));
   const rb = getRoomBaseBounds(targetRoomId);
   const doors = welcomeDoorsForRoom(targetRoomId, address);
   
@@ -8287,6 +8496,8 @@ export function addClient(
     guestId?: string;
     /** Credit Door Crasher when spawn came from explicit door URL params. */
     explorationDoorSpawn?: boolean;
+    /** Admin Invisibility requested at connect (admin + query only). */
+    adminInvisible?: boolean;
   }
 ): void {
   const streamObserver = sessionFlags?.streamObserver === true;
@@ -8524,6 +8735,9 @@ export function addClient(
     movementWatchThrottle: { lastMarkerKey: null, lastMarkerAtMs: 0 },
     ...(streamObserver ? { streamObserver: true } : {}),
     ...(sessionFlags?.nimiqPay ? { sessionNimiqPay: true } : {}),
+    ...(sessionFlags?.adminInvisible && isAdmin(address)
+      ? { adminInvisible: true }
+      : {}),
   };
   initClientViewInterest(conn, player.x, player.z);
 
@@ -8532,7 +8746,10 @@ export function addClient(
     `[rooms] connect ${address.slice(0, 12)}… room=${roomId} name="${displayName}"${streamObserver ? " streamObserver" : ""}`
   );
 
-  const others = snapshotPlayers(roomId).filter((p) => p.address !== address);
+  const others = playersVisibleToViewer(
+    { isGameAdmin: isAdmin(address) },
+    snapshotPlayers(roomId).filter((p) => p.address !== address)
+  ).map((p) => (isAdmin(address) ? p : stripAdminInvisibleFlag(p)));
   const selfOut = playerToOutState(conn);
 
   const rb = getRoomBaseBounds(roomId);
@@ -8746,6 +8963,23 @@ export function addClient(
       return;
     }
 
+    if (msg.type === "adminInvisible") {
+      const currentRoomIdEarly = findPlayerRoom(address);
+      if (!currentRoomIdEarly) return;
+      const invConn = roomOf(currentRoomIdEarly).get(address);
+      if (!invConn) return;
+      if (!canToggleAdminInvisible(isAdmin(address))) {
+        wsSafeSend(ws, {
+          type: "error",
+          code: "admin_required",
+        } satisfies OutMsg);
+        return;
+      }
+      const enabled = (msg as { enabled?: unknown }).enabled === true;
+      setConnAdminInvisible(currentRoomIdEarly, invConn, enabled);
+      return;
+    }
+
     if (msg.type === "movementWatchClickIntent") {
       const currentRoomIdEarly = findPlayerRoom(address);
       if (!currentRoomIdEarly) return;
@@ -8816,6 +9050,14 @@ export function addClient(
       console.log(`[rooms] Player ${address} not in any room, ignoring message`);
       return;
     }
+    // Admin Invisibility is observation-only: block world-mutating intents (stream
+    // observers already share this gate via connBlocksWorldEdit).
+    if (
+      connBlocksWorldEdit(conn) &&
+      ADMIN_INVISIBLE_BLOCKED_MSG_TYPES.has(String(msg.type))
+    ) {
+      return;
+    }
     if (msg.type === "listRooms") {
       sendRoomCatalog(ws, address);
       return;
@@ -8883,7 +9125,7 @@ export function addClient(
     // worldcup: raise / cancel an open 1v1 Challenge (the donut "Open to 1v1" toggle).
     if (msg.type === "setChallenge") {
       if (!WORLDCUP_ENABLED) return;
-      if (conn.streamObserver) return;
+      if (connBlocksWorldEdit(conn)) return;
       const active = Boolean((msg as { active?: unknown }).active);
       if (active) {
         // Not inside a live Match, a Match Pitch, or a pending match. Challenges ARE allowed
@@ -8910,7 +9152,7 @@ export function addClient(
     // worldcup: accept another player's open Challenge (first-accept-wins -> start the Match).
     if (msg.type === "acceptChallenge") {
       if (!WORLDCUP_ENABLED) return;
-      if (conn.streamObserver) return;
+      if (connBlocksWorldEdit(conn)) return;
       if (conn.matchId || conn.pendingMatchId) return;
       const targetAddress = String(
         (msg as { targetAddress?: unknown }).targetAddress ?? ""
@@ -8943,7 +9185,7 @@ export function addClient(
     // this is the host path in practice; either way the sender departs their space.
     if (msg.type === "cancelDirectInvite") {
       if (!DIRECT_INVITE_ENABLED) return;
-      if (conn.streamObserver) return;
+      if (connBlocksWorldEdit(conn)) return;
       directInviteHandleLeave(conn);
       return;
     }
@@ -8971,7 +9213,7 @@ export function addClient(
     // worldcup: drop into a live Match's stands to watch it (Spectator).
     if (msg.type === "requestSpectate") {
       if (!WORLDCUP_ENABLED) return;
-      if (conn.streamObserver) return;
+      if (connBlocksWorldEdit(conn)) return;
       if (conn.matchId || conn.pendingMatchId || conn.spectatingMatchId) return;
       const matchId = normalizeRoomId(
         String((msg as { matchId?: unknown }).matchId ?? "").trim()
@@ -9036,7 +9278,7 @@ export function addClient(
     // worldcup: place a kickable ball in the current room (builders only)
     if (msg.type === "placeBall") {
       if (!WORLDCUP_ENABLED) return;
-      if (conn.streamObserver) return;
+      if (connBlocksWorldEdit(conn)) return;
       if (!canPlaceBallInRoom(currentRoomId, address)) {
         wsSafeSend(ws, { type: "error", code: "ball_place_forbidden" } satisfies OutMsg);
         return;
@@ -9065,7 +9307,7 @@ export function addClient(
     // worldcup: remove a player-placed ball (builders only)
     if (msg.type === "removeBall") {
       if (!WORLDCUP_ENABLED) return;
-      if (conn.streamObserver) return;
+      if (connBlocksWorldEdit(conn)) return;
       if (!canPlaceBallInRoom(currentRoomId, address)) return;
       const ballId = String((msg as { ballId?: unknown }).ballId ?? "").trim();
       if (!ballId) return;
@@ -9098,7 +9340,7 @@ export function addClient(
     }
 
     if (msg.type === "campaignLinkClick") {
-      if (conn.streamObserver) return;
+      if (connBlocksWorldEdit(conn)) return;
       const campaignId = String(
         (msg as { campaignId?: unknown }).campaignId ?? ""
       ).trim();
@@ -9108,7 +9350,7 @@ export function addClient(
     }
 
     if (msg.type === "achievementSignal") {
-      if (conn.streamObserver) return;
+      if (connBlocksWorldEdit(conn)) return;
       const kind = String((msg as { kind?: unknown }).kind ?? "").trim();
       const onUnlock = achievementUnlockHandler(ws);
       if (kind === "open_profile") {
@@ -10204,6 +10446,7 @@ export function addClient(
     }
 
     if (msg.type === "placeBlock") {
+      if (connBlocksWorldEdit(conn)) return;
       if (!canPlaceBlocksInRoom(currentRoomId, address)) {
         return;
       }
@@ -12133,7 +12376,7 @@ export function addClient(
     }
 
     if (msg.type === "placeExtraFloor") {
-      if (conn.streamObserver) return;
+      if (connBlocksWorldEdit(conn)) return;
       if (!canRecolorFloorInRoom(currentRoomId, address)) {
         return;
       }
@@ -12312,7 +12555,7 @@ export function addClient(
     }
 
     if (msg.type === "removeExtraFloor") {
-      if (conn.streamObserver) return;
+      if (connBlocksWorldEdit(conn)) return;
       if (isPixelRoom(currentRoomId)) return;
       if (!canRecolorFloorInRoom(currentRoomId, address)) {
         return;
@@ -12469,12 +12712,16 @@ export function addClient(
       const hadTyping = conn.chatTyping;
       conn.chatTyping = false;
       const audienceLive = liveChatAudienceInRoom(currentRoomId);
+      const suppressBubble = shouldSuppressChatBubble(
+        Boolean(conn.adminInvisible)
+      );
       broadcast(currentRoomId, {
         type: "chat",
         from: conn.displayName,
         fromAddress: address,
         text,
         at: now,
+        ...(suppressBubble ? { suppressBubble: true } : {}),
       });
       if (hadTyping) {
         broadcastRoomStateFull(currentRoomId);
@@ -13948,6 +14195,7 @@ export function addClient(
       }
       const room = roomOf(playerCurrentRoom);
       const wasWatching = Boolean(conn.movementWatch);
+      const wasInvisible = Boolean(conn.adminInvisible);
       conn.movementWatch = false;
       room.delete(address);
       console.log(
@@ -13955,7 +14203,11 @@ export function addClient(
       );
       if (wasWatching) broadcastMovementWatchActive(playerCurrentRoom);
       if (!conn.streamObserver) {
-        broadcast(playerCurrentRoom, { type: "playerLeft", address });
+        broadcast(playerCurrentRoom, {
+          type: "playerLeft",
+          address,
+          ...(wasInvisible ? { adminInvisible: true } : {}),
+        });
         broadcastOnlineCount();
       }
       if (room.size === 0) clearFakePlayers(playerCurrentRoom);

@@ -685,6 +685,35 @@ _Avoid_: Time of Khan, login streak top, daily login gold, vague "milestone" cop
 
 ## Moderation
 
+**Admin Invisibility**:
+A self-applied, session-scoped admin presence state in which the admin is omitted from
+non-admin room presence: no join announce, no avatar, no movement broadcasts, and no speech
+bubble. Observation-only while on: world-mutating actions (build, mine, gates, edits, etc.)
+are blocked until the admin toggles visible again. Toggling on or off mid-room is silent for
+non-admins (no join/leave announce). Room chat still appears in the shared chat log with the
+admin's normal name. Stays on across room changes and short reconnect resume; clears on
+logout / new auth session or explicit toggle-off. Other allowlisted admins still see them as a translucent avatar with a small
+Invisible nameplate tag. Stream cinema observers get the public (non-admin) view —
+invisible admins are omitted from the broadcast — unless that connection is also a game
+admin. No player-facing history or Telegram notice for toggles in v1. Distinct from
+Movement Watch (observation overlay) and from Channel mute (sanction on another wallet).
+_Avoid_: ghost mode (ghost is reposition-preview language), stealth, cloak, vanish.
+
+**Freeze**:
+An admin-imposed, temporary locomotion lock on another player in the room: movement intents
+are rejected until an admin unfreezes them. On apply, any in-flight path is cleared and the
+player stops on their current tile. Targets any non-self presence in the room (wallet or
+guest); cannot target another allowlisted admin or yourself. Usable while the acting admin
+is under Admin Invisibility. Intended as a brief anti-macro desync — to the frozen player,
+clicks while moving should feel like a short unresponsive hitch, with no toast, error, or
+other cue that a sanction was applied; other players see only that they stopped moving; admins see a small Frozen tag or icon
+above the target. Clears if the target leaves the room, disconnects,
+or an admin Unfreezes — not a stored cross-session sanction. Chat, emotes, mining, and
+build stay available. No player-facing history or Telegram notice in v1. Distinct from
+Channel mute, Mining Restriction, and Admin Invisibility. Not a timed auto-unlock in v1 —
+duration is however long the admin leaves it on.
+_Avoid_: stun, root, immobilize, movement ban, lockdown (too broad).
+
 **Mining Restriction**:
 An admin-imposed sanction on a wallet that blocks claimable-block mining (starting and
 completing a NIM block claim). Distinct from channel mute and username-set ban; toggled from

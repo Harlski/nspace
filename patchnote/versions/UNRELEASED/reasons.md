@@ -8,7 +8,7 @@
 
 ## Summary
 
-Bump `@nimiq/core` to **2.7.2** so light clients can establish mainnet consensus after ZKP sync was removed from seed nodes (hard fork).
+Admin Invisibility (ops observation mode) for allowlisted admins.
 
 ---
 
@@ -16,24 +16,20 @@ Bump `@nimiq/core` to **2.7.2** so light clients can establish mainnet consensus
 
 ### Repo / docs
 
-- `docs/LEARNEDLESSONS.md` — note removal of the `2.2.2` worker patch and the post-fork client requirement.
+- Glossary: **Admin Invisibility** / **Freeze** in `CONTEXT.md` (Freeze not shipped in this slice).
 
 ### Client
 
-- _(none in this change set)_
+- Admin overlay Watch tab: Admin Invisibility checkbox (`NSPACE_ADMIN_INVISIBLE`); WS connect `adminInvisible=1`; silent `playerJoined`/`playerLeft`; chat `suppressBubble`; translucent + Invisible nameplate cue for admin viewers.
 
 ### Server
 
-- `@nimiq/core` pin → **2.7.2** (workspace + root `overrides`).
+- `adminPresence` policy helpers; viewer-aware presence filter on broadcast / welcome; `{ type: "adminInvisible", enabled }`; observation-only world-edit gate while invisible.
 
 ### payment-intent-service
 
-- `@nimiq/core` pin → **2.7.2** (same pico / non-ZKP sync path as payout).
-
-### payout-service
-
-- `@nimiq/core` pin → **2.7.2**. Required so `/v1/balance` and sends can pass `waitForConsensusEstablished()` against current mainnet seeds (ZKP sync no longer offered).
+- _(none in this change set)_
 
 ### Deploy / ops
 
-- Remove `patches/@nimiq+core+2.2.2.patch` (does not apply to 2.7.2). Redeploy **payout** (and **payment-intent** if used) images after merge; game server also picks up the shared pin on rebuild.
+- _(none in this change set)_

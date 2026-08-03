@@ -189,12 +189,18 @@ export function removeCachedSession(address: string): void {
       /* ignore */
     }
   }
+  try {
+    localStorage.removeItem("NSPACE_ADMIN_INVISIBLE");
+  } catch {
+    /* ignore */
+  }
 }
 
 export function clearCachedSession(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(STORAGE_ACCOUNTS_KEY);
+    localStorage.removeItem("NSPACE_ADMIN_INVISIBLE");
   } catch {
     /* ignore */
   }
