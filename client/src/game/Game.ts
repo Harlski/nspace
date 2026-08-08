@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { PlayerState } from "../types.js";
+import { formatAvatarNameLabel } from "./avatarNameLabel.js";
 import {
   syncCosmeticLoadoutVfx,
   spawnDeployableVfx,
@@ -196,6 +197,8 @@ import {
   remotePoseFromMoveOrder,
   type MoveOrderWire,
 } from "./moveOrderPlayback.js";
+import { shouldSnapCameraOnSelfSync } from "./cameraSelfSync.js";
+import { shouldAdoptServerVelocityOnSelfSync } from "./selfServerVelocity.js";
 import {
   applyRemoteMoveAbort,
   type RemoteMoveAbortWire,
@@ -3038,6 +3041,12 @@ export class Game {
     this.hideTrailImmediate();
     this.beginPathFadeOut();
     this.clearCosmeticGallery();
+    // Drop prior-room path playback so hub sync can re-snap the camera look-at.
+    this.selfMoveOrder = null;
+    this.selfServerVx = 0;
+    this.selfServerVz = 0;
+    this.selfLastServerRecvMs = performance.now();
+    this.remoteMoveOrders.clear();
     if (!roomUsesSpatialInterest(msg.roomBounds)) {
       this.syncWalkableFloorMeshes();
     }
@@ -12790,6 +12799,11 @@ export class Game {
     this.cameraFollowReady = false;
     this.cameraLookAhead.set(0, 0, 0);
     this.selfTargetPos = null;
+    this.selfMoveOrder = null;
+    this.selfServerVx = 0;
+    this.selfServerVz = 0;
+    this.selfLastServerRecvMs = performance.now();
+    this.lookAtAnim = null;
     if (this.selfMesh) {
       this.disposeAvatarGroup(this.selfMesh);
       this.scene.remove(this.selfMesh);
@@ -13326,9 +13340,13 @@ export class Game {
 
   triggerStandingDoorTransition(): boolean {
     if (!this.roomChangeHandler) return false;
-    if (this.pathGoal !== null) return false;
     const d = this.getStandingDoor();
     if (!d) return false;
+    // Mid-step onto the door: drop the pending walk so Space / Enter can
+    // reconnect instead of no-oping while beginRoomTransition blacks the screen.
+    this.pathGoal = null;
+    this.pathPreviewGoal = null;
+    this.refreshPathLine();
     this.roomChangeHandler(d.targetRoomId, d.spawnX, d.spawnZ);
     return true;
   }
@@ -14974,36 +14992,58 @@ export class Game {
       if (p.address === this.selfAddress) {
         this.selfPlayerSnapshot = p;
         if (this.selfMesh) {
-          if (!this.selfTargetPos) {
+          const establishingSelfTarget = !this.selfTargetPos;
+          let jumped = false;
+          if (establishingSelfTarget) {
             this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
             this.selfMesh.position.set(p.x, py, p.z);
             visualChanged = true;
           } else if (!this.selfMoveOrder) {
             visualChanged =
               visualChanged ||
-              Math.hypot(this.selfTargetPos.x - p.x, this.selfTargetPos.z - p.z) > 0.001 ||
-              Math.abs(this.selfTargetPos.y - py) > 0.001 ||
+              Math.hypot(this.selfTargetPos!.x - p.x, this.selfTargetPos!.z - p.z) >
+                0.001 ||
+              Math.abs(this.selfTargetPos!.y - py) > 0.001 ||
               Math.abs(this.selfServerVx - p.vx) > 0.001 ||
               Math.abs(this.selfServerVz - p.vz) > 0.001;
-            this.selfTargetPos.set(p.x, py, p.z);
-            this.selfLastServerRecvMs = performance.now();
-            this.selfServerVx = p.vx;
-            this.selfServerVz = p.vz;
+            this.selfTargetPos!.set(p.x, py, p.z);
             const ox = this.selfMesh.position.x;
             const oy = this.selfMesh.position.y;
             const oz = this.selfMesh.position.z;
-            const jumped =
+            jumped =
               Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5;
             if (jumped) {
               this.selfMesh.position.set(p.x, py, p.z);
               visualChanged = true;
             }
-            if (!this.cameraFollowReady || jumped) {
-              this.cameraLookAt.set(p.x, py, p.z);
-              this.applyCameraPose();
-              this.cameraFollowReady = true;
-              visualChanged = true;
+          }
+          if (
+            shouldAdoptServerVelocityOnSelfSync({
+              hasSelfMoveOrder: Boolean(this.selfMoveOrder),
+            })
+          ) {
+            this.selfLastServerRecvMs = performance.now();
+            this.selfServerVx = p.vx;
+            this.selfServerVz = p.vz;
+          }
+          if (
+            shouldSnapCameraOnSelfSync({
+              establishingSelfTarget,
+              hasSelfMoveOrder: Boolean(this.selfMoveOrder),
+              cameraFollowReady: this.cameraFollowReady,
+              jumped,
+            })
+          ) {
+            // Authoritative welcome / jump wins over stale prior-room path playback.
+            if (this.selfMoveOrder) {
+              this.selfMoveOrder = null;
+              this.selfTargetPos?.set(p.x, py, p.z);
+              this.selfMesh.position.set(p.x, py, p.z);
             }
+            this.cameraLookAt.set(p.x, py, p.z);
+            this.applyCameraPose();
+            this.cameraFollowReady = true;
+            visualChanged = true;
           }
           this.syncAvatarNameLabelFromState(this.selfMesh, this.withSelfCosmeticPreview(p));
           this.syncTypingIndicatorForGroup(this.selfMesh, p);
@@ -17122,8 +17162,12 @@ export class Game {
       (p.displayName && String(p.displayName).trim()) ||
       walletDisplayName(p.address);
     const invisible = Boolean(p.adminInvisible);
-    const labelName = invisible ? `${name} · Invisible` : name;
-    const state = `${away ? 1 : 0}\0${labelName}\0${p.cosmeticNameplate ?? ""}\0${invisible ? 1 : 0}`;
+    const labelName = formatAvatarNameLabel({
+      displayName: name,
+      playerLevel: p.playerLevel,
+      adminInvisible: invisible,
+    });
+    const state = `${away ? 1 : 0}\0${labelName}\0${p.cosmeticNameplate ?? ""}\0${invisible ? 1 : 0}\0${p.playerLevel ?? ""}`;
     if (g.userData.nameLabelSyncState === state) {
       this.syncAdminInvisibleAvatarOpacity(g, invisible);
       return;

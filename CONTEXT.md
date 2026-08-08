@@ -76,6 +76,18 @@ The dedicated bottom (6 o'clock) edge of the Action Wheel hexagon. Shows Close a
 level and Back inside a sub-wheel; reused rather than adding a second nav Sector.
 _Avoid_: close button, back button, hub button.
 
+**Other Player Menu**:
+The nested drill-in menu opened by right-click (desktop) or long-press (touch) on another
+player's avatar — not yourself. The root shows their identicon and **View {username}**,
+and may add a second root row to Accept 1v1 when that player has a Challenge raised.
+Choosing View opens a header+Back panel of available actions (today: View Profile, Whisper,
+and More only when More has children). More drills to Administrative for allowlisted
+admins; Administrative drills to Freeze / Unfreeze. Empty branches are omitted (no placeholder
+Future Options). Copy Wallet is not on this menu — it lives on the profile. Distinct from
+the Action Wheel (self) and Player Menu (app/session navigation).
+_Avoid_: context menu (too easy to confuse with the Action Wheel), avatar menu, player
+actions menu, radial.
+
 **Focused Sector**:
 The single Sector whose name is currently surfaced — focused by pointer hover or keyboard on
 pointer devices, or by a first tap on touch. Sectors carry no inline text, so focusing one is
@@ -683,6 +695,26 @@ as **Week Warrior** and **Monthly Devotee**); the server supplies **N** so descr
 progress denominator stay aligned when operators change `ACHIEVEMENT_LOGIN_STREAK_TOP`.
 _Avoid_: Time of Khan, login streak top, daily login gold, vague "milestone" copy without **N**.
 
+**Achievement Points**:
+The lifetime sum of points from a player's completed achievements. The sole input to **Player
+Level**.
+_Avoid_: XP, experience, score, karma, AP (in player-facing copy).
+
+## Player Level
+
+**Player Level**:
+An integer status derived from a signed-in wallet's lifetime **Achievement Points** (one Level
+per 100 points, starting at Level 1 with 0 points). Shown next to the username under the
+character. Continues rising after the Daily Earn Allowance becomes uncapped. Guests have no
+Player Level.
+_Avoid_: rank, tier, grade, XP level, prestige.
+
+**Daily Earn Allowance**:
+The maximum gameplay NIM a wallet may receive in one UTC day from its current **Player Level**.
+Mining, Free Play goal rewards, and other gameplay earns share this allowance; tutorial faucet
+and admin grants sit outside it. From Level 11 upward there is no Level-based daily ceiling.
+_Avoid_: daily cap (alone), farm limit, payout throttle, earn tier.
+
 ## Moderation
 
 **Admin Invisibility**:
@@ -703,7 +735,9 @@ _Avoid_: ghost mode (ghost is reposition-preview language), stealth, cloak, vani
 An admin-imposed, temporary locomotion lock on another player in the room: movement intents
 are rejected until an admin unfreezes them. On apply, any in-flight path is cleared and the
 player stops on their current tile. Targets any non-self presence in the room (wallet or
-guest); cannot target another allowlisted admin or yourself. Usable while the acting admin
+guest); cannot target another allowlisted admin or yourself. In the Other Player Menu, Freeze
+appears under More → Administrative for allowlisted admins; when the target is another
+allowlisted admin, Freeze is shown disabled rather than hidden. Usable while the acting admin
 is under Admin Invisibility. Intended as a brief anti-macro desync — to the frozen player,
 clicks while moving should feel like a short unresponsive hitch, with no toast, error, or
 other cue that a sanction was applied; other players see only that they stopped moving; admins see a small Frozen tag or icon

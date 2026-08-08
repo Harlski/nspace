@@ -568,6 +568,8 @@ export type ServerMessage =
       x?: number;
       z?: number;
       amountNim?: string;
+      /** True when Daily Earn Allowance partial-filled or zeroed this claim. */
+      dailyEarnAllowanceBound?: boolean;
       /** Tutorial Room: mine completed Step 1 - advance Step Coach to Pay. */
       tutorialMineComplete?: boolean;
     }

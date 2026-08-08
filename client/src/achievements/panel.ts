@@ -6,6 +6,7 @@ import {
   achievementsForCategory,
   orderedCategories,
   overallProgress,
+  playerLevelProgress,
   progressPercent,
   recentCompletedAchievements,
   type AchievementViewId,
@@ -172,6 +173,7 @@ export function createAchievementPanel(
   let loadGen = 0;
   let refreshGen = 0;
   let achievements: AchievementProgress[] = [];
+  let totalPoints = 0;
   let viewId: AchievementViewId = SUMMARY_VIEW_ID;
   let dropupOpen = false;
   /** Unlocks waiting for a glow until their row appears in the active view. */
@@ -235,9 +237,16 @@ export function createAchievementPanel(
     render();
   }
 
+  function setPointsHeader(points: number): void {
+    totalPoints = points;
+    const level = playerLevelProgress(points).level;
+    pointsEl.textContent = `Level ${level} · ${points.toLocaleString()} achievement points`;
+  }
+
   function renderSummary(): string {
     const recent = recentCompletedAchievements(achievements);
     const overall = overallProgress(achievements);
+    const levelProg = playerLevelProgress(totalPoints);
     const recentHtml =
       recent.length > 0
         ? `<ul class="achievement-panel__list achievement-panel__list--recent">${recent
@@ -259,6 +268,16 @@ export function createAchievementPanel(
       })
       .join("");
     return `<div class="achievement-panel__view achievement-panel__view--summary">
+      <section class="achievement-panel__section">
+        <h3 class="achievement-panel__section-title">Player Level</h3>
+        <div class="achievement-panel__overview-total">
+          <div class="achievement-panel__overview-total-head">
+            <span>Level ${levelProg.level}</span>
+            <span>${levelProg.pointsIntoLevel} / ${levelProg.pointsPerLevel} achievement points to Level ${levelProg.level + 1}</span>
+          </div>
+          ${renderProgressBar(levelProg.pointsIntoLevel, levelProg.pointsPerLevel)}
+        </div>
+      </section>
       <section class="achievement-panel__section">
         <h3 class="achievement-panel__section-title">Recent achievements</h3>
         ${recentHtml}
@@ -354,7 +373,7 @@ export function createAchievementPanel(
   });
 
   function mergeUnlockOptimistic(unlock: AchievementUnlockMessage): void {
-    pointsEl.textContent = `${unlock.totalPoints.toLocaleString()} achievement points`;
+    setPointsHeader(unlock.totalPoints);
     const idx = achievements.findIndex(
       (a) => a.achievementId === unlock.achievementId
     );
@@ -382,7 +401,7 @@ export function createAchievementPanel(
     if (!openState || gen !== refreshGen) return;
     if (!payload) return;
     achievements = payload.achievements;
-    pointsEl.textContent = `${payload.totalPoints.toLocaleString()} achievement points`;
+    setPointsHeader(payload.totalPoints);
     render();
   }
 
@@ -440,7 +459,7 @@ export function createAchievementPanel(
       return;
     }
     achievements = payload.achievements;
-    pointsEl.textContent = `${payload.totalPoints.toLocaleString()} achievement points`;
+    setPointsHeader(payload.totalPoints);
     render();
     closeBtn.focus({ preventScroll: true });
   }

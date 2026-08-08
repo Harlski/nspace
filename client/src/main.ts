@@ -169,6 +169,7 @@ import {
   type RoomBackgroundNeutral,
   type ServerMessage,
 } from "./net/ws.js";
+import { mergeStateDeltaPlayer } from "./net/mergeStateDeltaPlayer.js";
 import { installAdminOverlay } from "./ui/adminOverlay.js";
 import { nimToLunaString } from "./ui/objectPrefabAuthoring.js";
 import { createHud } from "./ui/hud.js";
@@ -5814,29 +5815,7 @@ function enterGame(
     if (msg.type === "stateDelta") {
       const byAddr = new Map(lastPlayers.map((p) => [p.address, p]));
       for (const p of msg.players) {
-        const prev = byAddr.get(p.address);
-        const py = Number.isFinite(p.y) ? p.y : 0;
-        byAddr.set(p.address, {
-          ...(prev ?? {
-            address: p.address,
-            displayName: p.displayName,
-            x: p.x,
-            y: py,
-            z: p.z,
-            vx: 0,
-            vz: 0,
-          }),
-          ...p,
-          y: py,
-          // Each `stateDelta` entry is a complete per-player snapshot, but the server omits
-          // these presence/ephemeral flags when false/absent. Derive them from the delta
-          // (not the stale `prev`) so a cleared state can't leak forward - e.g. a finished
-          // 1v1 Challenge still offering "Accept 1v1" in the right-click menu.
-          nimSendAway: p.nimSendAway,
-          chatTyping: p.chatTyping,
-          challengeOpen: p.challengeOpen,
-          worldcupCountry: p.worldcupCountry,
-        });
+        byAddr.set(p.address, mergeStateDeltaPlayer(byAddr.get(p.address), p));
       }
       lastPlayers = [...byAddr.values()];
       game.syncState(lastPlayers);
@@ -6215,7 +6194,14 @@ function enterGame(
           ? msg.amountNim
           : "1.0000";
         cancelActiveNimClaim?.();
-        game.showSelfPlayerMiningReward(reward);
+        if (msg.dailyEarnAllowanceBound && Number(reward) <= 0) {
+          hud.showBriefToast("Daily earn allowance reached");
+        } else {
+          game.showSelfPlayerMiningReward(reward);
+          if (msg.dailyEarnAllowanceBound) {
+            hud.showBriefToast("Daily earn allowance reached");
+          }
+        }
         const inTutorial =
           normalizeRoomId(game.getRoomId()) === TUTORIAL_ROOM_ID;
         // Advance Step Coach on any successful tutorial mine (lesson or sandbox).

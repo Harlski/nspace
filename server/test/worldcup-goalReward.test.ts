@@ -199,3 +199,33 @@ test("UTC-day rollover resets the per-wallet and budget counters", () => {
   assert.equal(fresh.pay, true);
   assert.equal(fresh.claimId, goalRewardClaimId("NQEEEE", "2026-06-20", 0));
 });
+
+test("maxPayLuna clamps the committed payout (Daily Earn Allowance seam)", () => {
+  __resetGoalRewardsForTests(DAY);
+  const d = decideAndCommitGoalReward(
+    {
+      scorerWallet: "NQ FFFF",
+      distinctPlayersInField: 2,
+      maxPayLuna: 10_000n,
+    },
+    CFG,
+    NOON
+  );
+  assert.equal(d.pay, true);
+  assert.equal(d.amountLuna, 10_000n);
+});
+
+test("maxPayLuna of zero blocks pay without committing", () => {
+  __resetGoalRewardsForTests(DAY);
+  const d = decideAndCommitGoalReward(
+    {
+      scorerWallet: "NQ GGGG",
+      distinctPlayersInField: 2,
+      maxPayLuna: 0n,
+    },
+    CFG,
+    NOON
+  );
+  assert.equal(d.pay, false);
+  assert.equal(d.reason, "wallet_cap");
+});

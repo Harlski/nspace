@@ -8,6 +8,7 @@ import {
   navRows,
   orderedCategories,
   overallProgress,
+  playerLevelProgress,
   progressPercent,
   recentCompletedAchievements,
   isAchievementVisibleInView,
@@ -397,5 +398,28 @@ describe("achievement panel data", () => {
     const telescope = synced.find((a) => a.achievementId === "telescope");
     expect(telescope?.progress).toBe(2);
     expect(telescope?.threshold).toBe(3);
+  });
+
+  it("derives Player Level and band progress from Achievement Points", () => {
+    expect(playerLevelProgress(0)).toEqual({
+      level: 1,
+      pointsIntoLevel: 0,
+      pointsPerLevel: 100,
+    });
+    expect(playerLevelProgress(99)).toEqual({
+      level: 1,
+      pointsIntoLevel: 99,
+      pointsPerLevel: 100,
+    });
+    expect(playerLevelProgress(100)).toEqual({
+      level: 2,
+      pointsIntoLevel: 0,
+      pointsPerLevel: 100,
+    });
+    expect(playerLevelProgress(1050)).toEqual({
+      level: 11,
+      pointsIntoLevel: 50,
+      pointsPerLevel: 100,
+    });
   });
 });

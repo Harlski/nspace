@@ -179,10 +179,11 @@ Gated behind **`WORLDCUP_ENABLED`** (server) / **`VITE_WORLDCUP_ENABLED`** (clie
 - [x] **Progress store** (campaign SQLite) — per-wallet counters + completions; idempotent unlock + cosmetic grant via `EntitlementSource` `achievement` ([`server/src/achievementStore.ts`](../server/src/achievementStore.ts))
 - [x] **Dedicated reward SKUs** — `ach-*` trails in **Achievements** collection; excluded from shop purchase (`achievement_only`)
 - [x] Server hooks — block place/mine, room enter/visit/create, loadout equip, client `achievementSignal` (profile, wardrobe, emote, signboard read)
-- [x] APIs — `GET /api/achievements/me`; profile public fields `achievementPoints`, `achievementHighlights` on `GET /api/player-profile/:address`
-- [x] WS — server→client `achievementUnlocked`; room broadcast `achievementCelebration` (trophy pop above earner); client→server `achievementSignal`
-- [x] Client — **Achievements Window** with Category Navigator (sidebar on desktop, bottom drop-up on portrait), Summary view (recent + progress overview), per-category lists, reward swatches; opens via Player Menu or `Y`; profile AP + recent highlights, unlock toast; **Achievement Unlock Celebration** (in-world trophy spring above avatar, visible to room)
-- [x] Tests — [`server/test/achievementStore.test.ts`](../server/test/achievementStore.test.ts)
+- [x] APIs — `GET /api/achievements/me`; profile public fields `achievementPoints`, `playerLevel`, `achievementHighlights` on `GET /api/player-profile/:address`
+- [x] WS — server→client `achievementUnlocked`; room broadcast `achievementCelebration` (trophy pop above earner); client→server `achievementSignal`; room `PlayerState.playerLevel`; mining `blockClaimResult.dailyEarnAllowanceBound`
+- [x] Client — **Achievements Window** with Category Navigator (sidebar on desktop, bottom drop-up on portrait), Summary view (Player Level band + recent + progress overview), per-category lists, reward swatches; opens via Player Menu or `Y`; profile Level + achievement points + recent highlights, unlock toast; **Achievement Unlock Celebration** (in-world trophy spring above avatar, visible to room); nameplate `· Lv N` for wallets
+- [x] **Player Level / Daily Earn Allowance** — Level = floor(AP/100)+1; L1–L10 NIM/day table then uncapped from L11; shared UTC-day gameplay earn gate (mining, Free Play goals, maze); tutorial faucet + admin feedback bypass; ADR [`0014`](adr/0014-player-level-daily-earn-allowance.md)
+- [x] Tests — [`server/test/achievementStore.test.ts`](../server/test/achievementStore.test.ts), [`server/test/playerLevel.test.ts`](../server/test/playerLevel.test.ts), [`server/test/dailyEarnAllowance.test.ts`](../server/test/dailyEarnAllowance.test.ts)
 
 ## Achievements v3 (exploration & worldcraft)
 

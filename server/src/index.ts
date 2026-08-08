@@ -257,6 +257,7 @@ import {
   getPublicAchievementSummary,
   initAchievementStore,
 } from "./achievementStore.js";
+import { playerLevelFromPoints } from "./playerLevel.js";
 import { BILLBOARD_ADVERTS_CATALOG } from "./billboardAdvertsCatalog.js";
 import {
   maybeSendConnectNotice,
@@ -667,6 +668,7 @@ app.get("/api/player-profile/:address", (req, res) => {
     }));
     const achievementSummary = getPublicAchievementSummary(addr, 3);
     pub.achievementPoints = achievementSummary.totalPoints;
+    pub.playerLevel = playerLevelFromPoints(achievementSummary.totalPoints);
     pub.achievementHighlights = achievementSummary.recentHighlights;
     res.json(pub);
   } catch (err) {

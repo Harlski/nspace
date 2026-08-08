@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  adminInvisibleToggleRecipientAction,
   canToggleAdminInvisible,
   playerVisibleToViewer,
   playersVisibleToViewer,
@@ -46,4 +47,43 @@ test("shouldSuppressChatBubble only when invisible", () => {
 test("worldMutationsBlockedByInvisibility only when invisible", () => {
   assert.equal(worldMutationsBlockedByInvisibility(true), true);
   assert.equal(worldMutationsBlockedByInvisibility(false), false);
+});
+
+test("adminInvisibleToggleRecipientAction includes owning admin for self cue", () => {
+  assert.equal(
+    adminInvisibleToggleRecipientAction({
+      subjectAddress: "NQADMIN",
+      recipientAddress: "NQADMIN",
+      recipientIsGameAdmin: true,
+      enabled: false,
+    }),
+    "stateDelta"
+  );
+  assert.equal(
+    adminInvisibleToggleRecipientAction({
+      subjectAddress: "NQADMIN",
+      recipientAddress: "NQPLAYER",
+      recipientIsGameAdmin: false,
+      enabled: true,
+    }),
+    "playerLeft"
+  );
+  assert.equal(
+    adminInvisibleToggleRecipientAction({
+      subjectAddress: "NQADMIN",
+      recipientAddress: "NQOPS2",
+      recipientIsGameAdmin: true,
+      enabled: true,
+    }),
+    "stateDelta"
+  );
+  assert.equal(
+    adminInvisibleToggleRecipientAction({
+      subjectAddress: "NQADMIN",
+      recipientAddress: "NQPLAYER",
+      recipientIsGameAdmin: false,
+      enabled: false,
+    }),
+    "playerJoined"
+  );
 });

@@ -246,7 +246,12 @@ export function saveGoalRewards(): void {
  * before returning. Idempotency past commit is the payout queue's job (claimId dedupe).
  */
 export function decideAndCommitGoalReward(
-  args: { scorerWallet: string | null; distinctPlayersInField: number },
+  args: {
+    scorerWallet: string | null;
+    distinctPlayersInField: number;
+    /** Optional hard ceiling (e.g. remaining Daily Earn Allowance); null/omit = no extra clamp. */
+    maxPayLuna?: bigint | null;
+  },
   cfg: GoalRewardConfig,
   nowMs: number = Date.now()
 ): GoalRewardDecision {
@@ -259,6 +264,9 @@ export function decideAndCommitGoalReward(
     return { pay: false, reason: "no_scorer" };
   }
   if (cfg.dailyCapPerWallet > 0 && walletPaidCount >= cfg.dailyCapPerWallet) {
+    return { pay: false, reason: "wallet_cap" };
+  }
+  if (args.maxPayLuna !== undefined && args.maxPayLuna !== null && args.maxPayLuna <= 0n) {
     return { pay: false, reason: "wallet_cap" };
   }
   const proposedRewardLuna = pickGoalRewardLuna(cfg, budgetSpentLuna);
@@ -277,11 +285,23 @@ export function decideAndCommitGoalReward(
     cfg
   );
   if (decision.pay && wallet && decision.amountLuna !== undefined) {
+    let amountLuna = decision.amountLuna;
+    if (
+      args.maxPayLuna !== undefined &&
+      args.maxPayLuna !== null &&
+      amountLuna > args.maxPayLuna
+    ) {
+      amountLuna = args.maxPayLuna;
+    }
+    if (amountLuna <= 0n) {
+      return { pay: false, reason: "wallet_cap" };
+    }
     state.walletPaid[wallet] = walletPaidCount + 1;
     state.budgetSpentLuna = (
-      BigInt(state.budgetSpentLuna) + decision.amountLuna
+      BigInt(state.budgetSpentLuna) + amountLuna
     ).toString();
     saveGoalRewards();
+    return { ...decision, amountLuna };
   }
   return decision;
 }

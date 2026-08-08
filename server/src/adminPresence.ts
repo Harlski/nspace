@@ -43,3 +43,22 @@ export function worldMutationsBlockedByInvisibility(
 ): boolean {
   return adminInvisible;
 }
+
+/**
+ * Fan-out when an admin toggles Admin Invisibility in a room.
+ * The owning admin is included (`stateDelta`) so their local translucent cue updates.
+ */
+export function adminInvisibleToggleRecipientAction(args: {
+  subjectAddress: string;
+  recipientAddress: string;
+  recipientIsGameAdmin: boolean;
+  enabled: boolean;
+}): "stateDelta" | "playerLeft" | "playerJoined" {
+  if (
+    args.recipientAddress === args.subjectAddress ||
+    args.recipientIsGameAdmin
+  ) {
+    return "stateDelta";
+  }
+  return args.enabled ? "playerLeft" : "playerJoined";
+}

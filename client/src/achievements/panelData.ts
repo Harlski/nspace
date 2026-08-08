@@ -38,6 +38,21 @@ export function overallProgress(achievements: AchievementProgress[]): {
   };
 }
 
+/** Player Level and progress within the current 100-AP band (vanity climb continues past L11). */
+export function playerLevelProgress(totalPoints: number): {
+  level: number;
+  pointsIntoLevel: number;
+  pointsPerLevel: number;
+} {
+  const pts = Math.max(0, Math.floor(Number(totalPoints) || 0));
+  const level = Math.floor(pts / 100) + 1;
+  return {
+    level,
+    pointsIntoLevel: pts % 100,
+    pointsPerLevel: 100,
+  };
+}
+
 export function categoryProgress(
   achievements: AchievementProgress[],
   category: string

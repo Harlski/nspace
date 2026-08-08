@@ -6605,6 +6605,51 @@ button.hud-brand:focus-visible {
   display: none !important;
 }
 
+.other-player-ctx__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 4px;
+  border-bottom: 1px solid rgba(61, 70, 90, 0.85);
+}
+
+.other-player-ctx__header[hidden] {
+  display: none !important;
+}
+
+.other-player-ctx__back {
+  margin: 0;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.other-player-ctx__back:hover {
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.other-player-ctx__header-title {
+  flex: 1;
+  min-width: 0;
+  color: rgba(232, 234, 239, 0.72);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.other-player-ctx__body {
+  display: flex;
+  flex-direction: column;
+}
+
 .other-player-ctx__item {
   display: block;
   width: 100%;

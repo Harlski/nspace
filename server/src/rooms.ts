@@ -115,6 +115,7 @@ import {
   evaluateLoginStreakAchievements,
   fireAchievementEvent,
   getAchievementCounterValue,
+  isAchievementEligibleWallet,
   recordBlockMined,
   recordBlockPlaced,
   recordBillboardDwellMs,
@@ -145,6 +146,7 @@ import {
   recordTeleporterWarp,
   recordTrustCircleWalk,
   tickExplorationDailyRollover,
+  totalPointsForWallet,
   type AchievementUnlockWire,
   type MatchEndParticipantInput,
 } from "./achievementStore.js";
@@ -363,6 +365,13 @@ import {
 } from "./worldcup/goalReward.js";
 import type { GoalRewardDecision } from "./worldcup/goalReward.js";
 import {
+  enqueueGameplayPayIntent,
+  loadDailyEarnAllowance,
+  peekDailyEarnRemaining,
+  decideAndCommitGameplayEarn,
+} from "./dailyEarnAllowance.js";
+import { playerLevelFromPoints } from "./playerLevel.js";
+import {
   goalieCollider as worldcupGoalieCollider,
   goalieLineX as worldcupGoalieLineX,
   initGoalieState as worldcupInitGoalieState,
@@ -489,13 +498,20 @@ import {
   type MovementWatchRejectReason,
 } from "./movementWatch.js";
 import {
+  adminInvisibleToggleRecipientAction,
   canToggleAdminInvisible,
   playerVisibleToViewer,
   playersVisibleToViewer,
   shouldSuppressChatBubble,
   worldMutationsBlockedByInvisibility,
 } from "./adminPresence.js";
+import {
+  frozenCueVisibleToViewer,
+  mayFreezeTarget,
+  movementBlockedByFreeze,
+} from "./adminFreeze.js";
 import { stepHumanAlongPath } from "./pathPosition.js";
+import { haltPathVelocity } from "./pathHalt.js";
 import {
   ANALYTIC_PATH_SKIP_STEPPING,
   gameplayPoseFromConn,
@@ -598,7 +614,9 @@ function tickPlayerStatesEqual(a: PlayerState, b: PlayerState): boolean {
     (a.cosmeticNameplate ?? null) === (b.cosmeticNameplate ?? null) &&
     (a.cosmeticChatBubble ?? null) === (b.cosmeticChatBubble ?? null) &&
     (a.cosmeticTrail ?? null) === (b.cosmeticTrail ?? null) &&
-    (a.adminInvisible ?? false) === (b.adminInvisible ?? false)
+    (a.adminInvisible ?? false) === (b.adminInvisible ?? false) &&
+    (a.frozen ?? false) === (b.frozen ?? false) &&
+    (a.playerLevel ?? null) === (b.playerLevel ?? null)
   );
 }
 
@@ -911,6 +929,10 @@ export interface PlayerState {
   cosmeticTrail?: string | null;
   /** Admin Invisibility: set for game-admin viewers so clients can render the Invisible cue. */
   adminInvisible?: boolean;
+  /** Admin Freeze cue for game-admin viewers (Frozen tag). */
+  frozen?: boolean;
+  /** Wallet Player Level from Achievement Points; omitted for guests. */
+  playerLevel?: number;
 }
 
 export type ObstacleTile = {
@@ -1058,6 +1080,8 @@ interface ClientConn {
   movementWatchThrottle: MovementWatchClickThrottleState;
   /** Admin Invisibility: omitted from non-admin presence while set. */
   adminInvisible?: boolean;
+  /** Admin Freeze: locomotion lock until Unfreeze / leave / disconnect. */
+  frozen?: boolean;
 }
 
 function withinBlockActionRange(
@@ -1112,6 +1136,12 @@ function beginConnPathMove(conn: ClientConn, startAtMs: number): void {
 
 function clearConnPathMove(conn: ClientConn): void {
   conn.pathMove = null;
+}
+
+function haltConnPath(conn: ClientConn): void {
+  conn.pathQueue = [];
+  clearConnPathMove(conn);
+  haltPathVelocity(conn.player);
 }
 
 /** Floor recolor: axis-aligned square from the player's tile (±R tiles on X and Z). */
@@ -1630,6 +1660,8 @@ type OutMsg =
       x?: number;
       z?: number;
       amountNim?: string;
+      /** True when Daily Earn Allowance partial-filled or zeroed this claim. */
+      dailyEarnAllowanceBound?: boolean;
       /** Tutorial Room: mine completed Step 1 - client advances Step Coach to Pay. */
       tutorialMineComplete?: boolean;
     }
@@ -1879,6 +1911,18 @@ function deliverAchievementUnlocksWithCelebration(
   deliverAchievementUnlocks(ws, unlocks);
   if (ctx) {
     broadcastAchievementCelebrations(ctx.roomId, ctx.address, unlocks.length);
+    const room = roomOf(ctx.roomId);
+    const conn = room.get(ctx.address);
+    if (conn) {
+      const prevLevel = conn.player.playerLevel;
+      refreshPlayerLevelOnPlayer(conn.player);
+      if (conn.player.playerLevel !== prevLevel) {
+        broadcast(ctx.roomId, {
+          type: "stateDelta",
+          players: [playerToOutState(conn)],
+        });
+      }
+    }
   }
 }
 
@@ -2903,8 +2947,8 @@ function finalizeClaimableBlockReward(
   now: number,
   sessionId: string,
   claimId: string
-): bigint {
-  const rewardLuna = randomClaimRewardLuna();
+): { rewardLuna: bigint; allowanceBound: boolean } {
+  const proposedLuna = randomClaimRewardLuna();
   const cooldown = claimableCooldownMs(props);
   props.active = false;
   props.lastClaimedAt = now;
@@ -2926,22 +2970,27 @@ function finalizeClaimableBlockReward(
     parts.length >= 3 && Number.isFinite(parts[2])
       ? Math.max(0, Math.min(STACK_MAX_LEVEL, Math.floor(parts[2]!)))
       : 0;
+  const earn = enqueueGameplayPayIntent(
+    {
+      claimId,
+      recipientAddress: address,
+      amountLuna: proposedLuna,
+      roomId,
+      tileKey: tileKeyStr,
+    },
+    totalPointsForWallet(address),
+    now
+  );
   logGameplayEvent(sessionId, address, roomId, "claim_block", {
     x: tx,
     z: tz,
     y: ty,
     claimId,
-    amountLuna: rewardLuna.toString(),
+    amountLuna: earn.payLuna.toString(),
+    proposedAmountLuna: proposedLuna.toString(),
+    allowanceBound: earn.allowanceBound,
   });
-
-  enqueueBlockClaimPayIntent({
-    claimId,
-    recipientAddress: address,
-    amountLuna: rewardLuna,
-    roomId,
-    tileKey: tileKeyStr,
-  });
-  return rewardLuna;
+  return { rewardLuna: earn.payLuna, allowanceBound: earn.allowanceBound };
 }
 
 /** Tile keys that block floor movement (solid blocks; ramps are walkable). */
@@ -4245,6 +4294,17 @@ function stripAdminInvisibleFlag(p: PlayerState): PlayerState {
   return rest;
 }
 
+function stripFrozenFlag(p: PlayerState): PlayerState {
+  if (!p.frozen) return p;
+  const { frozen: _drop, ...rest } = p;
+  return rest;
+}
+
+/** Strip admin-only presence cues for non-admin viewers. */
+function stripAdminOnlyPresenceCues(p: PlayerState): PlayerState {
+  return stripFrozenFlag(stripAdminInvisibleFlag(p));
+}
+
 /**
  * Viewer-aware presence filter for Admin Invisibility. Returns null to skip send.
  * Game admins see invisible peers (with cue flag); others omit them.
@@ -4261,7 +4321,7 @@ function filterPresenceOutMsgForViewer(
     const filtered = playersVisibleToViewer(viewerOpts, msg.players);
     const players = isGameAdmin
       ? filtered
-      : filtered.map(stripAdminInvisibleFlag);
+      : filtered.map(stripAdminOnlyPresenceCues);
     return { ...msg, players };
   }
 
@@ -4270,11 +4330,11 @@ function filterPresenceOutMsgForViewer(
       adminInvisible: Boolean(msg.player.adminInvisible),
     };
     if (!playerVisibleToViewer(viewerOpts, subject)) return null;
-    if (!isGameAdmin && msg.player.adminInvisible) {
-      return {
-        ...msg,
-        player: stripAdminInvisibleFlag(msg.player),
-      };
+    if (!isGameAdmin) {
+      const stripped = stripAdminOnlyPresenceCues(msg.player);
+      if (stripped !== msg.player) {
+        return { ...msg, player: stripped };
+      }
     }
     return msg;
   }
@@ -5069,16 +5129,19 @@ function setConnAdminInvisible(
   const player = playerToOutState(conn);
   const room = roomOf(roomId);
   for (const [addr, c] of room) {
-    if (addr === conn.address) continue;
     if (c.ws.readyState !== 1) continue;
-    if (isAdmin(c.address)) {
+    const action = adminInvisibleToggleRecipientAction({
+      subjectAddress: conn.address,
+      recipientAddress: addr,
+      recipientIsGameAdmin: isAdmin(c.address),
+      enabled,
+    });
+    if (action === "stateDelta") {
       wsSafeSend(c.ws, {
         type: "stateDelta",
         players: [player],
       } satisfies OutMsg);
-      continue;
-    }
-    if (enabled) {
+    } else if (action === "playerLeft") {
       wsSafeSend(c.ws, {
         type: "playerLeft",
         address: conn.address,
@@ -5096,6 +5159,69 @@ function setConnAdminInvisible(
   pruneTickBaselinePlayer(roomId, conn.address);
   mergeTickBaselinePlayer(roomId, player);
   broadcastOnlineCount();
+}
+
+function broadcastFrozenStateDelta(roomId: string, subject: ClientConn): void {
+  const player = playerToOutState(subject);
+  const room = roomOf(roomId);
+  for (const c of room.values()) {
+    if (c.ws.readyState !== 1) continue;
+    const payloadPlayer = frozenCueVisibleToViewer(isAdmin(c.address))
+      ? player
+      : stripFrozenFlag(player);
+    wsSafeSend(c.ws, {
+      type: "stateDelta",
+      players: [payloadPlayer],
+    } satisfies OutMsg);
+  }
+  pruneTickBaselinePlayer(roomId, subject.address);
+  mergeTickBaselinePlayer(roomId, player);
+}
+
+/**
+ * Apply or clear Admin Freeze on a target in this room. Returns false when policy denies.
+ * Does not use observation-only / world-edit deny (usable while actor is Admin Invisible).
+ */
+function setConnFrozen(
+  roomId: string,
+  actor: ClientConn,
+  target: ClientConn,
+  enabled: boolean
+): boolean {
+  if (enabled) {
+    if (
+      !mayFreezeTarget({
+        actorIsGameAdmin: isAdmin(actor.address),
+        actorAddress: actor.address,
+        targetAddress: target.address,
+        targetIsGameAdmin: isAdmin(target.address),
+      })
+    ) {
+      return false;
+    }
+  } else if (!isAdmin(actor.address)) {
+    return false;
+  }
+  const was = Boolean(target.frozen);
+  if (was === enabled) return true;
+  target.frozen = enabled;
+  console.log(
+    `[rooms] freeze ${enabled ? "on" : "off"} target=${target.address.slice(0, 12)}… by=${actor.address.slice(0, 12)}… room=${roomId}`
+  );
+  if (enabled) {
+    clearConnPathQueue(roomId, target.address, target);
+    pendingTickStateBroadcast.add(roomId);
+  }
+  broadcastFrozenStateDelta(roomId, target);
+  return true;
+}
+
+function clearConnFrozenOnLeave(roomId: string, conn: ClientConn): void {
+  if (!conn.frozen) return;
+  conn.frozen = false;
+  console.log(
+    `[rooms] freeze cleared (leave) ${conn.address.slice(0, 12)}… room=${roomId}`
+  );
 }
 
 function sendMovementWatch(roomId: string, msg: MovementWatchOutMsg): void {
@@ -5229,8 +5355,7 @@ function clearConnPathQueue(
   conn: ClientConn
 ): void {
   const hadPathQueue = conn.pathQueue.length > 0;
-  conn.pathQueue = [];
-  clearConnPathMove(conn);
+  haltConnPath(conn);
   maybeBroadcastMoveAbort(roomId, address, conn, { hadPathQueue });
   if (hadPathQueue) emitMovementWatchClear(roomId, address);
 }
@@ -5261,14 +5386,26 @@ function applyCosmeticLoadoutToPlayer(player: PlayerState): void {
   player.cosmeticTrail = loadout.presetIds.trail ?? null;
 }
 
+function refreshPlayerLevelOnPlayer(player: PlayerState): void {
+  if (!isAchievementEligibleWallet(player.address)) {
+    delete player.playerLevel;
+    return;
+  }
+  player.playerLevel = playerLevelFromPoints(
+    totalPointsForWallet(player.address)
+  );
+}
+
 function playerToOutState(conn: ClientConn): PlayerState {
   const base = conn.nimSendIntent
     ? { ...conn.player, nimSendAway: true }
     : { ...conn.player };
   applyCosmeticLoadoutToPlayer(base);
+  refreshPlayerLevelOnPlayer(base);
   if (conn.chatTyping) base.chatTyping = true;
   if (conn.challengeOpen) base.challengeOpen = true;
   if (conn.adminInvisible) base.adminInvisible = true;
+  if (conn.frozen) base.frozen = true;
   if (WORLDCUP_ENABLED) {
     const country = worldcupGetPlayerCountry(conn.address);
     if (country) base.worldcupCountry = country;
@@ -6182,23 +6319,41 @@ function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>
     at: Date.now(),
   });
 
+  let mazePaidLuna: bigint | null = null;
   if (position === 1) {
     const mazeRewardClaimId = `maze-first-${canvasTimerEndTime}-${conn.address}`;
-    enqueuePayIntent({
-      claimId: mazeRewardClaimId,
-      recipientAddress: conn.address,
-      amountLuna: LUNA_PER_NIM,
-      roomId: CANVAS_ROOM_ID,
-      tileKey: "maze-first-place",
-      txMessage: "You won The Maze on Nimiq.Space!",
-    });
-    wsSafeSend(conn.ws, {
-      type: "chat",
-      from: "System",
-      fromAddress: "",
-      text: 'You earned 1.0000 NIM - "Reward for 1st place in The Maze Nimiq.Space"',
-      at: Date.now(),
-    });
+    const earn = enqueueGameplayPayIntent(
+      {
+        claimId: mazeRewardClaimId,
+        recipientAddress: conn.address,
+        amountLuna: LUNA_PER_NIM,
+        roomId: CANVAS_ROOM_ID,
+        tileKey: "maze-first-place",
+        txMessage: "You won The Maze on Nimiq.Space!",
+      },
+      totalPointsForWallet(conn.address)
+    );
+    mazePaidLuna = earn.payLuna;
+    if (earn.payLuna > 0n) {
+      const nim = (Number(earn.payLuna) / Number(LUNA_PER_NIM)).toFixed(4);
+      wsSafeSend(conn.ws, {
+        type: "chat",
+        from: "System",
+        fromAddress: "",
+        text: earn.allowanceBound
+          ? `You earned ${nim} NIM (daily earn allowance) - "Reward for 1st place in The Maze Nimiq.Space"`
+          : `You earned ${nim} NIM - "Reward for 1st place in The Maze Nimiq.Space"`,
+        at: Date.now(),
+      });
+    } else {
+      wsSafeSend(conn.ws, {
+        type: "chat",
+        from: "System",
+        fromAddress: "",
+        text: "Daily earn allowance reached - no NIM for this Maze win today.",
+        at: Date.now(),
+      });
+    }
   }
 
   console.log(`[canvas] Player ${displayName} finished in position ${position}`);
@@ -6207,12 +6362,13 @@ function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>
     const current = room.get(conn.address);
     if (current) {
       teleportPlayer(current, HUB_ROOM_ID, 0, 0);
-      if (position === 1) {
+      if (position === 1 && mazePaidLuna !== null && mazePaidLuna > 0n) {
+        const nim = (Number(mazePaidLuna) / Number(LUNA_PER_NIM)).toFixed(4);
         broadcast(HUB_ROOM_ID, {
           type: "chat",
           from: displayName,
           fromAddress: conn.address,
-          text: "Just won 1.0000 NIM from The Maze!",
+          text: `Just won ${nim} NIM from The Maze!`,
           at: Date.now(),
         });
       }
@@ -6502,8 +6658,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     conn.player.x = x;
     conn.player.z = z;
     conn.player.y = 0;
-    conn.pathQueue = [];
-    clearConnPathMove(conn);
+    haltConnPath(conn);
     maybeBroadcastMoveAbort(currentRoomId, address, conn, {
       hadPathQueue,
       poseCorrection: true,
@@ -6527,6 +6682,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       // Clear Watch Path / markers for this wallet in the old room.
       emitMovementWatchClear(currentRoomId, address);
       const wasWatching = Boolean(conn.movementWatch);
+      clearConnFrozenOnLeave(currentRoomId, conn);
       room.delete(address);
       if (wasWatching) broadcastMovementWatchActive(currentRoomId);
       broadcast(
@@ -6552,8 +6708,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   conn.player.x = x;
   conn.player.z = z;
   conn.player.y = 0;
-  conn.pathQueue = [];
-  clearConnPathMove(conn);
+  haltConnPath(conn);
   initClientViewInterest(conn, x, z);
 
   let targetRoom = rooms.get(targetRoomId);
@@ -6910,10 +7065,25 @@ function maybeQueueGoalReward(
   scorerAddress: string | null
 ): GoalRewardDecision | null {
   if (normalizeRoomId(roomId) !== WORLDCUP_FIELD_ROOM_ID) return null;
+  let maxPayLuna: bigint | null | undefined;
+  if (!scorerAddress) {
+    maxPayLuna = undefined;
+  } else if (!isAchievementEligibleWallet(scorerAddress)) {
+    maxPayLuna = 0n;
+  } else {
+    maxPayLuna = peekDailyEarnRemaining({
+      wallet: scorerAddress,
+      achievementPoints: totalPointsForWallet(scorerAddress),
+    }).remainingLuna;
+  }
+  if (maxPayLuna !== undefined && maxPayLuna !== null && maxPayLuna <= 0n) {
+    return { pay: false, reason: "wallet_cap" };
+  }
   const decision = worldcupDecideGoalReward(
     {
       scorerWallet: scorerAddress,
       distinctPlayersInField: worldcupDistinctPlayersInRoom(roomId),
+      maxPayLuna: maxPayLuna ?? null,
     },
     {
       minRewardLuna: WORLDCUP_GOAL_REWARD.minRewardLuna,
@@ -6931,17 +7101,28 @@ function maybeQueueGoalReward(
   ) {
     return decision;
   }
-  // Use the normalized recipient the decision built the claimId from, so the payout target
-  // and the idempotency key can never disagree.
+  // Precedence: treasury balance peek runs before claim finalize; Daily Earn Allowance
+  // clamps before WC commit (maxPayLuna) and is recorded here before enqueue.
+  const earn = decideAndCommitGameplayEarn({
+    wallet: decision.recipientWallet,
+    proposedLuna: decision.amountLuna,
+    achievementPoints: totalPointsForWallet(decision.recipientWallet),
+  });
+  if (earn.payLuna <= 0n) {
+    return { pay: false, reason: "wallet_cap" };
+  }
   enqueuePayIntent({
     claimId: decision.claimId,
     recipientAddress: decision.recipientWallet,
-    amountLuna: decision.amountLuna,
+    amountLuna: earn.payLuna,
     roomId,
     tileKey: `wc-goal-${goalId}`,
     txMessage: "Scored a goal on Nimiq Space!",
   });
-  return decision;
+  return {
+    ...decision,
+    amountLuna: earn.payLuna,
+  };
 }
 
 /** Minimum payout that unlocks the "98% is good enough" badge: 0.98 NIM. */
@@ -7398,11 +7579,8 @@ function worldcupKickoffReset(m: WorldcupMatchRuntime, now: number): void {
     conn.player.x = spawn.x;
     conn.player.z = spawn.z;
     conn.player.y = 0;
-    conn.player.vx = 0;
-    conn.player.vz = 0;
     const hadPathQueue = conn.pathQueue.length > 0;
-    conn.pathQueue = [];
-    clearConnPathMove(conn);
+    haltConnPath(conn);
     maybeBroadcastMoveAbort(m.pitchRoomId, conn.address, conn, {
       hadPathQueue,
       poseCorrection: true,
@@ -8103,6 +8281,7 @@ export function startRoomTick(): void {
     loadWorldcupScores();
     loadWorldcupGoalRewards();
   }
+  loadDailyEarnAllowance();
   tickClaimableBlockReactivations(Date.now());
   setInterval(() => {
     const now = Date.now();
@@ -8977,6 +9156,30 @@ export function addClient(
       }
       const enabled = (msg as { enabled?: unknown }).enabled === true;
       setConnAdminInvisible(currentRoomIdEarly, invConn, enabled);
+      return;
+    }
+
+    if (msg.type === "adminFreeze") {
+      const currentRoomIdEarly = findPlayerRoom(address);
+      if (!currentRoomIdEarly) return;
+      const actorConn = roomOf(currentRoomIdEarly).get(address);
+      if (!actorConn || actorConn.streamObserver) return;
+      if (!isAdmin(address)) {
+        wsSafeSend(ws, {
+          type: "error",
+          code: "admin_required",
+        } satisfies OutMsg);
+        return;
+      }
+      const targetRaw = String(
+        (msg as { address?: unknown }).address ?? ""
+      ).trim();
+      if (!targetRaw) return;
+      const targetKey = compactAddress(targetRaw);
+      const targetConn = roomOf(currentRoomIdEarly).get(targetKey);
+      if (!targetConn || targetConn.streamObserver) return;
+      const enabled = (msg as { enabled?: unknown }).enabled === true;
+      setConnFrozen(currentRoomIdEarly, actorConn, targetConn, enabled);
       return;
     }
 
@@ -10173,6 +10376,8 @@ export function addClient(
     if (msg.type === "moveTo") {
       if (conn.streamObserver) return;
       if (conn.spectatingMatchId) return; // worldcup: Spectators are fixed in the stands
+      // Admin Freeze: silent locomotion reject (no error payload / toast).
+      if (movementBlockedByFreeze(Boolean(conn.frozen))) return;
       // worldcup: during the post-goal kickoff freeze, both players are locked in place until
       // the countdown ends (the server already snapped them to their kickoff spots).
       if (conn.matchId) {
@@ -10264,11 +10469,10 @@ export function addClient(
         placed,
         moverCtx
       );
-      if (!startNode) {
+        if (!startNode) {
         snapPlayerToTerrainGrid(p, placed, currentRoomId, moverCtx);
         const hadPathQueue = conn.pathQueue.length > 0;
-        conn.pathQueue = [];
-        clearConnPathMove(conn);
+        haltConnPath(conn);
         maybeBroadcastMoveAbort(currentRoomId, address, conn, {
           hadPathQueue,
           poseCorrection: true,
@@ -10323,8 +10527,7 @@ export function addClient(
           });
           snapPlayerToTerrainGrid(p, placed, currentRoomId, moverCtx);
           const hadPathQueue = conn.pathQueue.length > 0;
-          conn.pathQueue = [];
-          clearConnPathMove(conn);
+          haltConnPath(conn);
           maybeBroadcastMoveAbort(currentRoomId, address, conn, {
             hadPathQueue,
             poseCorrection: true,
@@ -13325,7 +13528,7 @@ export function addClient(
       noteSpentBlockClaimId(claimId, now);
       releaseBlockClaimSession(claimId);
 
-      const rewardLuna = finalizeClaimableBlockReward(
+      const claim = finalizeClaimableBlockReward(
         currentRoomId,
         k,
         props,
@@ -13339,7 +13542,8 @@ export function addClient(
           ok: true,
           x: s.tileX,
           z: s.tileZ,
-          amountNim: (Number(rewardLuna) / 100_000).toFixed(4),
+          amountNim: (Number(claim.rewardLuna) / 100_000).toFixed(4),
+          dailyEarnAllowanceBound: claim.allowanceBound || undefined,
         } satisfies OutMsg);
       recordBlockMined(address, achievementUnlockHandler(ws));
       if (s.claimIntent === "direct_adjacent_click") {
@@ -14197,6 +14401,7 @@ export function addClient(
       const wasWatching = Boolean(conn.movementWatch);
       const wasInvisible = Boolean(conn.adminInvisible);
       conn.movementWatch = false;
+      clearConnFrozenOnLeave(playerCurrentRoom, conn);
       room.delete(address);
       console.log(
         `[rooms] disconnect ${address.slice(0, 12)}… room=${playerCurrentRoom}${conn.streamObserver ? " streamObserver" : ""}`

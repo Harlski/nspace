@@ -26,4 +26,6 @@ export interface PlayerState {
   cosmeticTrail?: string | null;
   /** Admin Invisibility cue for game-admin viewers (translucent + Invisible tag). */
   adminInvisible?: boolean;
+  /** Wallet Player Level from Achievement Points; omitted for guests. */
+  playerLevel?: number;
 }

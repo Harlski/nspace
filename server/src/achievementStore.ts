@@ -676,7 +676,7 @@ export function ensureAchievementRewardEntitlements(wallet: string): void {
   }
 }
 
-function totalPointsForWallet(wallet: string): number {
+export function totalPointsForWallet(wallet: string): number {
   const w = normalizeWallet(wallet);
   const row = requireDb()
     .prepare(

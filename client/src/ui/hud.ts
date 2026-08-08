@@ -100,6 +100,12 @@ import {
 } from "../socialLinks.js";
 import { nimiqIconUseMarkup, nimiqIconifyMarkup } from "./nimiqIcons.js";
 import { createWorldContextMenu, type WorldContextMenuItem } from "./worldContextMenu.js";
+import {
+  buildOtherPlayerMenuModel,
+  type OtherPlayerMenuModel,
+  type OtherPlayerMenuPanelId,
+  type OtherPlayerMenuRow,
+} from "./otherPlayerMenuModel.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
 import {
   getMobilePlayViewportSize,
@@ -451,12 +457,18 @@ export function createHud(
       displayName: string;
       /** worldcup: this player has an open 1v1 Challenge (enables the Accept row). */
       challengeOpen?: boolean;
+      /** Allowlisted game admin (disables Freeze in Administrative). */
+      targetIsGameAdmin?: boolean;
+      /** Session Freeze cue for game-admin viewers. */
+      targetFrozen?: boolean;
     }>,
     opts?: {
       emoteRowFirst?: boolean;
       onEmote?: () => void;
       /** worldcup: accept the picked player's open Challenge (starts a 1v1 Match). */
       onAcceptChallenge?: (address: string) => void;
+      /** Admin Freeze / Unfreeze (`freeze` true = apply). */
+      onFreeze?: (address: string, freeze: boolean) => void;
     }
   ) => void;
   hideOtherPlayerContextMenu: () => void;
@@ -1106,6 +1118,7 @@ export function createHud(
       playerCount?: unknown;
     }>;
     achievementPoints?: number;
+    playerLevel?: number;
     achievementHighlights?: Array<{
       achievementId?: string;
       title?: string;
@@ -4057,53 +4070,44 @@ export function createHud(
   otherPlayerCtxMulti.setAttribute("aria-label", "Players here");
   const otherPlayerCtxSingle = document.createElement("div");
   otherPlayerCtxSingle.className = "other-player-ctx__single";
-  const otherPlayerCtxViewBtn = document.createElement("button");
-  otherPlayerCtxViewBtn.type = "button";
-  otherPlayerCtxViewBtn.className =
-    "other-player-ctx__item other-player-ctx__item--row";
-  otherPlayerCtxViewBtn.setAttribute("role", "menuitem");
+  const otherPlayerCtxHeader = document.createElement("div");
+  otherPlayerCtxHeader.className = "other-player-ctx__header";
+  otherPlayerCtxHeader.hidden = true;
+  const otherPlayerCtxBackBtn = document.createElement("button");
+  otherPlayerCtxBackBtn.type = "button";
+  otherPlayerCtxBackBtn.className = "other-player-ctx__back";
+  otherPlayerCtxBackBtn.setAttribute("aria-label", "Back");
+  otherPlayerCtxBackBtn.textContent = "← Back";
+  const otherPlayerCtxHeaderTitle = document.createElement("span");
+  otherPlayerCtxHeaderTitle.className = "other-player-ctx__header-title";
+  otherPlayerCtxHeader.append(otherPlayerCtxBackBtn, otherPlayerCtxHeaderTitle);
+  const otherPlayerCtxBody = document.createElement("div");
+  otherPlayerCtxBody.className = "other-player-ctx__body";
+  otherPlayerCtxBody.setAttribute("role", "group");
+  otherPlayerCtxSingle.append(otherPlayerCtxHeader, otherPlayerCtxBody);
+  otherPlayerCtx.append(otherPlayerCtxMulti, otherPlayerCtxSingle);
+
+  type OtherPlayerCtxTarget = {
+    address: string;
+    displayName: string;
+    challengeOpen: boolean;
+    targetIsGameAdmin: boolean;
+    targetFrozen: boolean;
+  };
+  let otherPlayerCtxTarget: OtherPlayerCtxTarget | null = null;
+  let otherPlayerCtxModel: OtherPlayerMenuModel | null = null;
+  let otherPlayerCtxPanelId: OtherPlayerMenuPanelId = "root";
+  let otherPlayerAcceptChallengeHandler: ((address: string) => void) | null =
+    null;
+  let otherPlayerFreezeHandler:
+    | ((address: string, freeze: boolean) => void)
+    | null = null;
+  /** Identicon reused on the root View row. */
   const otherPlayerCtxIdent = document.createElement("img");
   otherPlayerCtxIdent.className = "other-player-ctx__ident";
   otherPlayerCtxIdent.alt = "";
   otherPlayerCtxIdent.width = 22;
   otherPlayerCtxIdent.height = 22;
-  const otherPlayerCtxViewLabel = document.createElement("span");
-  otherPlayerCtxViewLabel.className = "other-player-ctx__view-label";
-  otherPlayerCtxViewLabel.textContent = "View profile";
-  const otherPlayerCtxViewCol = document.createElement("div");
-  otherPlayerCtxViewCol.className = "other-player-ctx__view-col";
-  otherPlayerCtxViewCol.appendChild(otherPlayerCtxViewLabel);
-  otherPlayerCtxViewBtn.append(otherPlayerCtxIdent, otherPlayerCtxViewCol);
-  otherPlayerCtxSingle.appendChild(otherPlayerCtxViewBtn);
-  // Whisper: opens a private 1:1 conversation with this player (WoW-style). Targets the
-  // exact wallet, so it works even for players without a unique custom username.
-  const otherPlayerCtxWhisperBtn = document.createElement("button");
-  otherPlayerCtxWhisperBtn.type = "button";
-  otherPlayerCtxWhisperBtn.className = "other-player-ctx__item";
-  otherPlayerCtxWhisperBtn.setAttribute("role", "menuitem");
-  otherPlayerCtxWhisperBtn.textContent = "Whisper";
-  otherPlayerCtxSingle.appendChild(otherPlayerCtxWhisperBtn);
-  /*
-   * Copy wallet sits next to View profile so the most common identity actions are one
-   * click away; the wallet copy on the profile card is otherwise two clicks away. Idiomatic
-   * single verb per row per the in-world UI principle in `docs/THE-LARGER-SYSTEM.md`.
-   */
-  const otherPlayerCtxCopyAddressBtn = document.createElement("button");
-  otherPlayerCtxCopyAddressBtn.type = "button";
-  otherPlayerCtxCopyAddressBtn.className = "other-player-ctx__item";
-  otherPlayerCtxCopyAddressBtn.setAttribute("role", "menuitem");
-  otherPlayerCtxCopyAddressBtn.textContent = "Copy wallet";
-  otherPlayerCtxSingle.appendChild(otherPlayerCtxCopyAddressBtn);
-  // worldcup: accept this player's open 1v1 Challenge (only shown when they have one raised).
-  const otherPlayerCtxAcceptChallengeBtn = document.createElement("button");
-  otherPlayerCtxAcceptChallengeBtn.type = "button";
-  otherPlayerCtxAcceptChallengeBtn.className =
-    "other-player-ctx__item other-player-ctx__item--accept-1v1";
-  otherPlayerCtxAcceptChallengeBtn.setAttribute("role", "menuitem");
-  otherPlayerCtxAcceptChallengeBtn.textContent = "⚽ Accept 1v1 challenge";
-  otherPlayerCtxAcceptChallengeBtn.hidden = true;
-  otherPlayerCtxSingle.appendChild(otherPlayerCtxAcceptChallengeBtn);
-  otherPlayerCtx.append(otherPlayerCtxMulti, otherPlayerCtxSingle);
 
   const otherPlayerProfile = document.createElement("div");
   otherPlayerProfile.className = "other-player-profile";
@@ -5310,9 +5314,15 @@ export function createHud(
     otherPlayerCtxMulti.replaceChildren();
     otherPlayerCtxMulti.hidden = true;
     otherPlayerCtxSingle.hidden = false;
+    otherPlayerCtxBody.replaceChildren();
+    otherPlayerCtxHeader.hidden = true;
+    otherPlayerCtxHeaderTitle.textContent = "";
     otherPlayerCtxIdent.hidden = true;
     otherPlayerCtxIdent.removeAttribute("src");
     delete otherPlayerCtxIdent.dataset.address;
+    otherPlayerCtxTarget = null;
+    otherPlayerCtxModel = null;
+    otherPlayerCtxPanelId = "root";
   }
 
   function closeOtherPlayerContextMenu(): void {
@@ -5346,17 +5356,128 @@ export function createHud(
     }
   }
 
+  function rebuildOtherPlayerCtxModel(): void {
+    const t = otherPlayerCtxTarget;
+    if (!t) {
+      otherPlayerCtxModel = null;
+      return;
+    }
+    const username = t.displayName.trim() || walletDisplayName(t.address);
+    // Issue 02 wires admin Freeze nest; until then omit Administrative for all viewers.
+    const viewerIsGameAdmin =
+      otherPlayerFreezeHandler != null && opts?.isGameAdmin?.() === true;
+    otherPlayerCtxModel = buildOtherPlayerMenuModel({
+      username,
+      challengeOpen: t.challengeOpen,
+      viewerIsGameAdmin,
+      targetIsGameAdmin: t.targetIsGameAdmin,
+      targetFrozen: t.targetFrozen,
+    });
+  }
+
+  function activateOtherPlayerMenuRow(row: OtherPlayerMenuRow): void {
+    const t = otherPlayerCtxTarget;
+    if (!t) return;
+    if (row.disabled) return;
+    if (row.kind === "drill" && row.drillTo) {
+      otherPlayerCtxPanelId = row.drillTo;
+      renderOtherPlayerCtxPanel();
+      return;
+    }
+    const addr = t.address;
+    const disp = t.displayName;
+    switch (row.id) {
+      case "viewProfile":
+        closeOtherPlayerContextMenu();
+        if (addr) void showPlayerProfileView(addr, disp, "other");
+        break;
+      case "whisper":
+        closeOtherPlayerContextMenu();
+        if (addr) beginWhisperTo(addr, disp);
+        break;
+      case "accept1v1":
+        closeOtherPlayerContextMenu();
+        if (addr) otherPlayerAcceptChallengeHandler?.(addr);
+        break;
+      case "freeze": {
+        const freeze = !t.targetFrozen;
+        closeOtherPlayerContextMenu();
+        if (addr) otherPlayerFreezeHandler?.(addr, freeze);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  function renderOtherPlayerCtxPanel(): void {
+    const model = otherPlayerCtxModel;
+    const panel = model?.panels[otherPlayerCtxPanelId];
+    otherPlayerCtxBody.replaceChildren();
+    if (!panel) return;
+
+    const isRoot = panel.id === "root";
+    otherPlayerCtxHeader.hidden = isRoot;
+    otherPlayerCtxHeaderTitle.textContent = panel.title ?? "";
+
+    for (const row of panel.rows) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "other-player-ctx__item";
+      btn.setAttribute("role", "menuitem");
+      btn.disabled = row.disabled === true;
+      if (row.kind === "drill") {
+        btn.classList.add("other-player-ctx__item--submenu-trigger");
+      }
+      if (row.id === "accept1v1") {
+        btn.classList.add("other-player-ctx__item--accept-1v1");
+      }
+      if (row.showIdenticon && otherPlayerCtxTarget) {
+        btn.classList.add("other-player-ctx__item--row");
+        const label = document.createElement("span");
+        label.className = "other-player-ctx__view-label";
+        label.textContent = row.label;
+        const col = document.createElement("div");
+        col.className = "other-player-ctx__view-col";
+        col.appendChild(label);
+        if (otherPlayerCtxIdent.parentElement) {
+          otherPlayerCtxIdent.remove();
+        }
+        btn.append(otherPlayerCtxIdent, col);
+        void loadCtxIdenticon(otherPlayerCtxIdent, otherPlayerCtxTarget.address);
+      } else if (row.kind === "drill") {
+        btn.textContent = "";
+        btn.appendChild(document.createTextNode(row.label));
+        const chevron = document.createElement("span");
+        chevron.className = "other-player-ctx__submenu-chevron";
+        chevron.setAttribute("aria-hidden", "true");
+        chevron.textContent = "›";
+        btn.appendChild(chevron);
+      } else {
+        btn.textContent = row.label;
+      }
+      btn.addEventListener("click", () => activateOtherPlayerMenuRow(row));
+      otherPlayerCtxBody.appendChild(btn);
+    }
+  }
+
   function setSingleCtxTarget(
     address: string,
     displayName: string,
-    challengeOpen = false
+    challengeOpen = false,
+    extras?: { targetIsGameAdmin?: boolean; targetFrozen?: boolean }
   ): void {
     const compact = address.replace(/\s+/g, "").trim();
-    otherPlayerCtxViewBtn.dataset.address = compact;
-    otherPlayerCtxViewBtn.dataset.displayName = displayName;
-    // worldcup: only offer "Accept 1v1" when this player actually has a Challenge raised.
-    otherPlayerCtxAcceptChallengeBtn.hidden = !challengeOpen;
-    void loadCtxIdenticon(otherPlayerCtxIdent, compact);
+    otherPlayerCtxTarget = {
+      address: compact,
+      displayName,
+      challengeOpen,
+      targetIsGameAdmin: extras?.targetIsGameAdmin === true,
+      targetFrozen: extras?.targetFrozen === true,
+    };
+    otherPlayerCtxPanelId = "root";
+    rebuildOtherPlayerCtxModel();
+    renderOtherPlayerCtxPanel();
   }
 
   function openOtherPlayerMultiPicker(
@@ -5364,6 +5485,8 @@ export function createHud(
       address: string;
       displayName: string;
       challengeOpen?: boolean;
+      targetIsGameAdmin?: boolean;
+      targetFrozen?: boolean;
     }>,
     emote?: { onEmote: () => void }
   ): void {
@@ -5407,13 +5530,31 @@ export function createHud(
       row.addEventListener("click", () => {
         otherPlayerCtxMulti.hidden = true;
         otherPlayerCtxSingle.hidden = false;
-        setSingleCtxTarget(t.address, t.displayName, t.challengeOpen ?? false);
+        setSingleCtxTarget(t.address, t.displayName, t.challengeOpen ?? false, {
+          targetIsGameAdmin: t.targetIsGameAdmin,
+          targetFrozen: t.targetFrozen,
+        });
       });
       otherPlayerCtxMulti.appendChild(row);
     }
     otherPlayerCtxMulti.hidden = false;
     otherPlayerCtxSingle.hidden = true;
   }
+
+  otherPlayerCtxBackBtn.addEventListener("click", () => {
+    if (otherPlayerCtxPanelId === "administrative") {
+      otherPlayerCtxPanelId = "more";
+    } else if (otherPlayerCtxPanelId === "more") {
+      otherPlayerCtxPanelId = "actions";
+    } else if (otherPlayerCtxPanelId === "actions") {
+      otherPlayerCtxPanelId = "root";
+    } else {
+      return;
+    }
+    renderOtherPlayerCtxPanel();
+  });
+
+  // worldcup: accept the target's open 1v1 Challenge (wired via showOtherPlayerContextMenu).
 
   let profileEscapeHandler: ((e: KeyboardEvent) => void) | null = null;
 
@@ -5487,12 +5628,17 @@ export function createHud(
   function renderProfileAchievements(
     kind: "self" | "other",
     points: number,
-    highlights: Array<{ title: string; points: number }>
+    highlights: Array<{ title: string; points: number }>,
+    level?: number
   ): void {
     oppAchievements.replaceChildren();
     const head = document.createElement("p");
     head.className = "other-player-profile__achievements-head";
-    head.textContent = `${points} achievement point${points === 1 ? "" : "s"}`;
+    const lv =
+      typeof level === "number" && Number.isFinite(level) && level >= 1
+        ? Math.floor(level)
+        : Math.floor(Math.max(0, points) / 100) + 1;
+    head.textContent = `Level ${lv} · ${points} achievement point${points === 1 ? "" : "s"}`;
     oppAchievements.appendChild(head);
     const recent = highlights.slice(0, 3);
     if (recent.length > 0) {
@@ -5691,6 +5837,10 @@ export function createHud(
       typeof j.achievementPoints === "number" && Number.isFinite(j.achievementPoints)
         ? Math.max(0, Math.floor(j.achievementPoints))
         : 0;
+    const achLevel =
+      typeof j.playerLevel === "number" && Number.isFinite(j.playerLevel)
+        ? Math.max(1, Math.floor(j.playerLevel))
+        : undefined;
     const achHighlights = Array.isArray(j.achievementHighlights)
       ? j.achievementHighlights
           .map((h) => ({
@@ -5702,7 +5852,7 @@ export function createHud(
           }))
           .filter((h) => h.title)
       : [];
-    renderProfileAchievements(kind, achPoints, achHighlights);
+    renderProfileAchievements(kind, achPoints, achHighlights, achLevel);
     const rooms = Array.isArray(j.rooms)
       ? j.rooms
           .map((room) => {
@@ -5988,34 +6138,6 @@ export function createHud(
     oppCopyAddressBtn,
     () => oppCopyAddressBtn.dataset.fullAddress ?? ""
   );
-
-  otherPlayerCtxViewBtn.addEventListener("click", () => {
-    const addr = otherPlayerCtxViewBtn.dataset.address ?? "";
-    const disp = otherPlayerCtxViewBtn.dataset.displayName ?? "";
-    closeOtherPlayerContextMenu();
-    if (addr) void showPlayerProfileView(addr, disp, "other");
-  });
-
-  otherPlayerCtxWhisperBtn.addEventListener("click", () => {
-    const addr = otherPlayerCtxViewBtn.dataset.address ?? "";
-    const disp = otherPlayerCtxViewBtn.dataset.displayName ?? "";
-    closeOtherPlayerContextMenu();
-    if (addr) beginWhisperTo(addr, disp);
-  });
-
-  bindCopyToClipboardControl(otherPlayerCtxCopyAddressBtn, () => {
-    closeOtherPlayerContextMenu();
-    return (otherPlayerCtxViewBtn.dataset.address ?? "").trim();
-  });
-
-  // worldcup: accept the target's open 1v1 Challenge (address stamped on the View row).
-  let otherPlayerAcceptChallengeHandler: ((address: string) => void) | null =
-    null;
-  otherPlayerCtxAcceptChallengeBtn.addEventListener("click", () => {
-    const addr = (otherPlayerCtxViewBtn.dataset.address ?? "").trim();
-    closeOtherPlayerContextMenu();
-    if (addr) otherPlayerAcceptChallengeHandler?.(addr);
-  });
 
   const chatPanel = document.createElement("div");
   chatPanel.className = "chat-panel";
@@ -15754,21 +15876,25 @@ export function createHud(
         address: string;
         displayName: string;
         challengeOpen?: boolean;
+        targetIsGameAdmin?: boolean;
+        targetFrozen?: boolean;
       }>,
-      opts?: {
+      menuOpts?: {
         emoteRowFirst?: boolean;
         onEmote?: () => void;
         onAcceptChallenge?: (address: string) => void;
+        onFreeze?: (address: string, freeze: boolean) => void;
       }
     ) {
       closeActionWheel();
       worldCtx.close();
       closeOtherPlayerProfile();
       if (targets.length === 0) return;
-      otherPlayerAcceptChallengeHandler = opts?.onAcceptChallenge ?? null;
+      otherPlayerAcceptChallengeHandler = menuOpts?.onAcceptChallenge ?? null;
+      otherPlayerFreezeHandler = menuOpts?.onFreeze ?? null;
       const emoteBlock =
-        opts?.emoteRowFirst && typeof opts.onEmote === "function"
-          ? { onEmote: opts.onEmote }
+        menuOpts?.emoteRowFirst && typeof menuOpts.onEmote === "function"
+          ? { onEmote: menuOpts.onEmote }
           : undefined;
       if (emoteBlock) {
         openOtherPlayerMultiPicker(targets, emoteBlock);
@@ -15777,7 +15903,10 @@ export function createHud(
         otherPlayerCtxMulti.hidden = true;
         otherPlayerCtxSingle.hidden = false;
         const t = targets[0]!;
-        setSingleCtxTarget(t.address, t.displayName, t.challengeOpen ?? false);
+        setSingleCtxTarget(t.address, t.displayName, t.challengeOpen ?? false, {
+          targetIsGameAdmin: t.targetIsGameAdmin,
+          targetFrozen: t.targetFrozen,
+        });
       } else {
         openOtherPlayerMultiPicker(targets);
       }
