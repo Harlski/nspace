@@ -7,4 +7,7 @@
 
 _(Draft — not published.)_
 
-- [CHANGE] **`@nimiq/core` → 2.7.2** across root `overrides`, `server`, `payout-service`, and `payment-intent-service`. Required after the mainnet hard fork removed ZKP-based light sync; pico sync is what current seeds speak. Dropped `patches/@nimiq+core+2.2.2.patch`.
+- **`isMoveOrderBroadcastEnabled`** in [`server/src/moveOrderBroadcast.ts`](../../../../server/src/moveOrderBroadcast.ts):
+  enabled unless env is exactly `"0"` (was `"1"` only). Wire types unchanged (`moveOrder` /
+  `moveAbort`). Client Path Playback for self + remotes in click-to-walk rooms already
+  existed; default-on is the ops flip. Glossary: **Path Playback** in `CONTEXT.md`.

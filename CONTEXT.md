@@ -407,6 +407,12 @@ it materializes wherever the thumb presses down and is dragged, anchored at that
 it steers the player continuously in the pushed direction; released, it stops.
 _Avoid_: d-pad, controller, analog stick, dpad, fixed stick.
 
+**Path Playback**:
+Animating an avatar along a server-accepted walk path at constant walk speed, so motion looks
+continuous instead of continually correcting toward sparse pose snapshots. Used for click-to-walk
+rooms (self and others); not the soccer pitch's free-move motion.
+_Avoid_: prediction, client prediction, extrapolation, lerp (too vague), move order (wire name).
+
 **Movement Watch**:
 An admin-only overlay that shows players' click destinations and authoritative movement paths
 so operators can debug pathfinding and visually spot bot-like click patterns. Toggled from the

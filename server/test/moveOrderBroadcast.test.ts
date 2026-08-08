@@ -2,8 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildMoveOrderOutMsg,
+  isMoveOrderBroadcastEnabled,
   shouldEmitMoveOrder,
 } from "../src/moveOrderBroadcast.js";
+
+test("isMoveOrderBroadcastEnabled defaults on; only exact 0 disables", () => {
+  assert.equal(isMoveOrderBroadcastEnabled(undefined), true);
+  assert.equal(isMoveOrderBroadcastEnabled(""), true);
+  assert.equal(isMoveOrderBroadcastEnabled("1"), true);
+  assert.equal(isMoveOrderBroadcastEnabled("true"), true);
+  assert.equal(isMoveOrderBroadcastEnabled("0"), false);
+});
 
 test("shouldEmitMoveOrder requires flag and a non-empty path queue", () => {
   assert.equal(

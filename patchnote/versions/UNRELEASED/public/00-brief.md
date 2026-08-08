@@ -6,3 +6,5 @@
 ---
 
 _(Draft — not published.)_
+
+- Walking in ordinary rooms should feel smoother — less jitter between tiles.

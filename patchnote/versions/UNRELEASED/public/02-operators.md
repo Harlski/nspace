@@ -7,4 +7,8 @@
 
 _(Draft — not published.)_
 
-- **[OPS]** **Rebuild payout (+ payment-intent) after `@nimiq/core` 2.7.2** — mainnet seeds no longer offer ZKP sync; images still on **2.2.2** will hang on consensus (`/v1/balance`, sends) with `Requesting zkp` peer drops. Redeploy sidecars from this release; no new env vars. The old `patches/@nimiq+core+2.2.2.patch` is removed (not applicable to 2.7.2).
+- **[OPS]** **`MOVE_ORDER_BROADCAST` default flipped on** — Path Playback dual-send
+  (`moveOrder` / `moveAbort`, omit walker pose from tick `stateDelta` in click-to-walk rooms)
+  is now the default. Set **`MOVE_ORDER_BROADCAST=0`** on the game server to revert to the
+  old snapshot pose stream. Bare/unset env gets the new behavior (no need to set `=1`).
+  Analytic path pose skip stays tied to Path Playback being enabled.

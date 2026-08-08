@@ -3,9 +3,17 @@ import {
   type PathWaypoint,
 } from "./pathPosition.js";
 
-/** Set `MOVE_ORDER_BROADCAST=1` to emit `moveOrder` on path walks (grid + pitch free-move). */
-export const MOVE_ORDER_BROADCAST =
-  process.env.MOVE_ORDER_BROADCAST === "1";
+/**
+ * Path Playback dual-send: on by default. Set `MOVE_ORDER_BROADCAST=0` to revert to
+ * snapshot pose streaming for active path walkers (kill switch).
+ */
+export function isMoveOrderBroadcastEnabled(
+  envValue: string | undefined = process.env.MOVE_ORDER_BROADCAST
+): boolean {
+  return envValue !== "0";
+}
+
+export const MOVE_ORDER_BROADCAST = isMoveOrderBroadcastEnabled();
 
 export type MoveOrderOutMsg = {
   type: "moveOrder";
