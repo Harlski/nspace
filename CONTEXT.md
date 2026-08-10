@@ -466,10 +466,18 @@ signed-in admin; any `NQ…` address may be entered. The target player need not 
 _Avoid_: try-on, fitting room, mannequin.
 
 **The Shaper**:
-The player-facing in-world showroom for cosmetics: players can visit it to see Presets staged
-in space and try cosmetics on before buying or equipping them. Distinct from the **Wardrobe**
-shop shelf and from operator **Catalog Preview**.
+The player-facing in-world showroom for cosmetics, laid out from **Sale Displays** (not an
+auto grid of every Preset). Players visit to browse, try, and buy bound Catalog Entries.
+Distinct from the **Wardrobe** shop shelf and from operator **Catalog Preview**. Sale Displays
+may also exist outside The Shaper.
 _Avoid_: preset gallery, mannequin room, SKU gallery.
+
+**Sale Display**:
+An admin-placed in-world fixture that starts unbound and, once configured, binds to one
+**Catalog Entry**. Players interact with a bound Sale Display to try and buy that entry; admins
+place, move, and rebind it (admin placement path, not general Building). Distinct from the
+retired auto-laid Preset gallery and from operator **Catalog Preview**.
+_Avoid_: purchase item, shop pedestal, buyable tile, product placer, SKU pedestal.
 
 **Draft** (Catalog Entry):
 A Catalog Entry visible only in admin — not offered in the player shop and not payable via
