@@ -5,4 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
+- [NEW] Player profiles can now show their verified NimConnect `@handle`.

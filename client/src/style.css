@@ -7138,6 +7138,35 @@ button.hud-brand:focus-visible {
   gap: 0.35rem;
 }
 
+.other-player-profile__nimconnect-handle {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: #7dd3fc;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.25;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.other-player-profile__nimconnect-handle[hidden] {
+  display: none !important;
+}
+
+.other-player-profile__nimconnect-handle:hover {
+  color: #bae6fd;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.other-player-profile__nimconnect-handle:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid rgba(125, 211, 252, 0.72);
+  outline-offset: 2px;
+}
+
 .other-player-profile__display-name {
   font-size: 15px;
   font-weight: 700;

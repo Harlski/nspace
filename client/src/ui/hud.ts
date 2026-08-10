@@ -101,6 +101,7 @@ import {
 import { nimiqIconUseMarkup, nimiqIconifyMarkup } from "./nimiqIcons.js";
 import { createWorldContextMenu, type WorldContextMenuItem } from "./worldContextMenu.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoader.js";
+import { createNimConnectProfileIdentity } from "./nimconnectProfileIdentity.js";
 import {
   getMobilePlayViewportSize,
   isMobilePlayHostDocument,
@@ -4239,6 +4240,7 @@ export function createHud(
   });
   const oppNameBlock = document.createElement("div");
   oppNameBlock.className = "other-player-profile__name-block";
+  const oppNimConnectIdentity = createNimConnectProfileIdentity();
   // Flag chip reads inline before the username (hidden when unset on other players' cards).
   oppNamePrimaryWrap.append(
     oppFlagBtn,
@@ -4246,7 +4248,7 @@ export function createHud(
     oppUsernameInput,
     oppUsernameCommitBtn
   );
-  oppNameBlock.append(oppNamePrimaryWrap);
+  oppNameBlock.append(oppNamePrimaryWrap, oppNimConnectIdentity.element);
   const oppWalletShortEl = document.createElement("span");
   oppWalletShortEl.className = "other-player-profile__wallet-short";
   const oppAliasHost = document.createElement("div");
@@ -5250,6 +5252,7 @@ export function createHud(
     const wasSelf = profileMessageKindOpen === "self";
     profileOpenCompact = "";
     profileMessageKindOpen = null;
+    oppNimConnectIdentity.reset();
     wardrobeRevertAllPreview?.();
     wardrobeRevertAllPreview = null;
     if (wasSelf && selfWardrobeMount) {
@@ -5791,6 +5794,7 @@ export function createHud(
 
     profileOpenCompact = compact;
     profileMessageKindOpen = kind;
+    void oppNimConnectIdentity.show(openFor, kind === "self");
     otherProfileWardrobeMounted = false;
     clearProfileMessageNote();
     setProfileNimiqPayTipVisible(false);

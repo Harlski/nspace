@@ -5,4 +5,7 @@
 
 ---
 
-_(Draft — not published.)_
+- [NEW] Claimed a NimConnect handle? Your verified `@handle` now appears on
+  your Nimiq Space profile. If you have not claimed one yet, your own profile
+  links you to NimConnect to get started. Your existing Space username stays
+  unchanged.
