@@ -7,10 +7,10 @@ Placement works in The Shaper without opening general Building.
 
 **Blocked by:** 01 — Sale Display store + Published bind rules
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Admin can place an unbound Sale Display in The Shaper
-- [ ] Non-admins cannot place
-- [ ] Players never see unbound displays; admins do
-- [ ] Room occupants update without rejoin after place
-- [ ] General Building / blocks remain locked in The Shaper
+- [x] Admin can place an unbound Sale Display in The Shaper
+- [x] Non-admins cannot place
+- [x] Players never see unbound displays; admins do
+- [x] Room occupants update without rejoin after place
+- [x] General Building / blocks remain locked in The Shaper

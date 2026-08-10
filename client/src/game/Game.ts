@@ -21,6 +21,7 @@ import type {
   CosmeticGalleryShowcaseWire,
   CosmeticGalleryWire,
 } from "../cosmetics/galleryTypes.js";
+import type { SaleDisplayWire } from "../cosmetics/saleDisplayTypes.js";
 import type {
   BillboardState,
   ObstacleProps,
@@ -1478,6 +1479,11 @@ export class Game {
     /** +1 / −1 while pacing a trail lane along +Z. */
     galleryLaneDir?: 1 | -1;
   }> = [];
+  /** Admin-visible Sale Display silhouettes / bound fixtures (viewer-filtered wire). */
+  private readonly saleDisplayEntries = new Map<
+    string,
+    { wire: SaleDisplayWire; group: THREE.Group }
+  >();
   /** Nearest gallery showcase for the local player (Preset Gallery try-on). */
   private galleryNearestShowcase: CosmeticGalleryShowcaseWire | null = null;
   private galleryTryOnUi: HTMLElement | null = null;
@@ -3041,6 +3047,7 @@ export class Game {
     this.hideTrailImmediate();
     this.beginPathFadeOut();
     this.clearCosmeticGallery();
+    this.clearSaleDisplays();
     // Drop prior-room path playback so hub sync can re-snap the camera look-at.
     this.selfMoveOrder = null;
     this.selfServerVx = 0;
@@ -19165,6 +19172,76 @@ export class Game {
       port.avatarGroup.position.z + 0.45
     );
     this.renderWardrobeAvatarPreview();
+  }
+
+  /**
+   * Viewer-filtered Sale Displays. Unbound (and inactive binds) are admin-only silhouettes;
+   * bound Published entries get richer presentation in a later ticket.
+   */
+  setSaleDisplays(wires: SaleDisplayWire[] | null | undefined): void {
+    const list = wires ?? [];
+    const nextIds = new Set(list.map((w) => w.id));
+    for (const [id, entry] of this.saleDisplayEntries) {
+      if (nextIds.has(id)) continue;
+      this.scene.remove(entry.group);
+      entry.group.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          const mat = obj.material;
+          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+          else mat.dispose();
+        }
+      });
+      this.saleDisplayEntries.delete(id);
+    }
+    for (const wire of list) {
+      const existing = this.saleDisplayEntries.get(wire.id);
+      if (existing) {
+        existing.wire = wire;
+        existing.group.position.set(wire.x, 0.35, wire.z);
+        continue;
+      }
+      const group = this.makeSaleDisplaySilhouette(wire);
+      group.position.set(wire.x, 0.35, wire.z);
+      this.scene.add(group);
+      this.saleDisplayEntries.set(wire.id, { wire, group });
+    }
+    this.markSceneMutation("saleDisplays:set");
+    this.requestRender();
+  }
+
+  private clearSaleDisplays(): void {
+    if (this.saleDisplayEntries.size === 0) return;
+    for (const entry of this.saleDisplayEntries.values()) {
+      this.scene.remove(entry.group);
+      entry.group.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          const mat = obj.material;
+          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+          else mat.dispose();
+        }
+      });
+    }
+    this.saleDisplayEntries.clear();
+    this.markSceneMutation("saleDisplays:clear");
+  }
+
+  private makeSaleDisplaySilhouette(wire: SaleDisplayWire): THREE.Group {
+    const group = new THREE.Group();
+    group.userData.saleDisplayId = wire.id;
+    const mat = new THREE.MeshStandardMaterial({
+      color: wire.cosmeticSku ? 0x58c4dd : 0xffb347,
+      transparent: true,
+      opacity: wire.cosmeticSku ? 0.55 : 0.4,
+      depthWrite: false,
+    });
+    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.42, 0.18, 16), mat);
+    pedestal.position.y = 0;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.7, 10), mat);
+    pole.position.y = 0.44;
+    group.add(pedestal, pole);
+    return group;
   }
 
   /** Dev-only Preset Gallery (`cosmetic-gallery` / join code SPACER). */

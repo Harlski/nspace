@@ -445,6 +445,14 @@ import {
   type BillboardOrientation,
 } from "./billboards.js";
 import {
+  createSaleDisplay,
+  flushSaleDisplaysSync,
+  listSaleDisplaysWire,
+  loadSaleDisplays,
+  type SaleDisplayWire,
+} from "./saleDisplays.js";
+import { canPlaceSaleDisplay } from "./saleDisplays/policy.js";
+import {
   getBillboardAdvertById,
   parseBillboardAdvertIdsFromMessage,
   validateAdvertRotationVisitHttps,
@@ -1456,6 +1464,8 @@ type OutMsg =
       worldcupPortals?: WorldcupPortalWire[];
       /** Dev-only Preset Gallery (`cosmetic-gallery` / join code SPACER). */
       cosmeticGallery?: import("./cosmeticGallery.js").CosmeticGalleryWire;
+      /** Sale Displays in this room (viewer-filtered: players omit unbound). */
+      saleDisplays?: SaleDisplayWire[];
     }
   | {
       type: "roomBackgroundHue";
@@ -1572,6 +1582,11 @@ type OutMsg =
       type: "attentionMarkers";
       roomId: string;
       attentionMarkers: AttentionMarker[];
+    }
+  | {
+      type: "saleDisplays";
+      roomId: string;
+      saleDisplays: SaleDisplayWire[];
     }
   | {
       type: "billboards";
@@ -2609,6 +2624,20 @@ function broadcastAttentionMarkers(roomId: string): void {
     roomId: id,
     attentionMarkers: listRoomAttentionMarkers(id),
   });
+}
+
+/** Per-viewer Sale Display wire (admins see unbound; players do not). */
+function broadcastSaleDisplays(roomId: string): void {
+  const id = normalizeRoomId(roomId);
+  const room = roomOf(id);
+  for (const [, c] of room) {
+    if (c.ws.readyState !== 1) continue;
+    wsSafeSend(c.ws, {
+      type: "saleDisplays",
+      roomId: id,
+      saleDisplays: listSaleDisplaysWire(id, { isAdmin: isAdmin(c.address) }),
+    } satisfies OutMsg);
+  }
 }
 
 /** Build Shell snapshot for admin Tutorial Template authoring (staging room only). */
@@ -5100,6 +5129,7 @@ const ADMIN_INVISIBLE_BLOCKED_MSG_TYPES: ReadonlySet<string> = new Set([
   "completeBlockClaim",
   "placeSignboard",
   "placeBillboard",
+  "placeSaleDisplay",
   "updateBillboard",
   "updateSignboard",
   "setVoxelText",
@@ -6815,6 +6845,9 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       roomBackgroundHueDeg: welcomeBgState.hueDeg,
       roomBackgroundNeutral: welcomeBgState.neutral,
       ...joinSpawnWelcomeExtras(targetRoomId, address),
+      saleDisplays: listSaleDisplaysWire(targetRoomId, {
+        isAdmin: isAdmin(address),
+      }),
       ...( (): { blockClaimDeniedReason?: string } => {
         const r = blockClaimAccessDeniedReason(address);
         return r ? { blockClaimDeniedReason: r } : {};
@@ -8254,6 +8287,7 @@ export function startRoomTick(): void {
   loadCanvasClaims();
   loadSignboards();
   loadBillboards();
+  loadSaleDisplays();
   loadDesigns();
   loadVoxelTexts();
   loadMazeRecords();
@@ -9044,6 +9078,9 @@ export function addClient(
       roomBackgroundHueDeg: joinWelcomeBgState.hueDeg,
       roomBackgroundNeutral: joinWelcomeBgState.neutral,
       ...joinSpawnWelcomeExtras(roomId, address),
+      saleDisplays: listSaleDisplaysWire(roomId, {
+        isAdmin: isAdmin(address),
+      }),
       ...( (): { blockClaimDeniedReason?: string } => {
         const r = blockClaimAccessDeniedReason(address);
         return r ? { blockClaimDeniedReason: r } : {};
@@ -11159,6 +11196,38 @@ export function addClient(
       if (!marker) return;
       schedulePersistWorldState();
       broadcastAttentionMarkers(currentRoomId);
+      return;
+    }
+
+    if (msg.type === "placeSaleDisplay") {
+      const allowed = canPlaceSaleDisplay({
+        isAdmin: isAdmin(address),
+        isCosmeticGallery: isCosmeticGalleryRoom(currentRoomId),
+        canPlaceBlocks: canPlaceBlocksInRoom(currentRoomId, address),
+      });
+      if (!allowed) {
+        wsSafeSend(ws, { type: "error", code: "sale_display_forbidden" });
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const tx = Number(msg.x);
+      const tz = Number(msg.z);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+      const tile = snapToTile(tx, tz);
+      createSaleDisplay({
+        roomId: currentRoomId,
+        x: tile.x,
+        z: tile.z,
+        createdBy: address,
+      });
+      flushSaleDisplaysSync();
+      broadcastSaleDisplays(currentRoomId);
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "place_sale_display", {
+        x: tile.x,
+        z: tile.z,
+      });
       return;
     }
 

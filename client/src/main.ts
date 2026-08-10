@@ -143,6 +143,7 @@ import {
   sendPlaceUnlockPad,
   sendSetUnlockPadConfig,
   sendPlaceAttentionMarker,
+  sendPlaceSaleDisplay,
   sendSetAttentionMarkerProps,
   sendMoveAttentionMarker,
   sendRemoveAttentionMarker,
@@ -641,6 +642,8 @@ function enterGame(
   let ws: WebSocket | null = null;
   /** Admin wants Movement Watch; resent on welcome / reconnect. */
   let movementWatchWanted = false;
+  /** Click-to-place unbound Sale Displays (Admin overlay; works without Build HUD). */
+  let saleDisplayPlaceMode = false;
   /** Admin Invisibility preferred; connect query + resent after welcome. */
   let adminInvisibleWanted = false;
   if (isAdmin(address)) {
@@ -2560,6 +2563,9 @@ function enterGame(
         sendAdminInvisible(ws, enabled);
       }
     },
+    onSaleDisplayPlaceModeChange: (enabled) => {
+      saleDisplayPlaceMode = enabled;
+    },
     onSetVoxelText: (spec) => {
       if (!ws) return;
       sendSetVoxelText(ws, spec);
@@ -4115,6 +4121,10 @@ function enterGame(
     game.setTileClickHandler((x, z, layer = 0) => {
       if (streamMode) return;
       hud.dismissOtherPlayerOverlays();
+      if (saleDisplayPlaceMode && isAdmin(address) && socket.readyState === WebSocket.OPEN) {
+        sendPlaceSaleDisplay(socket, x, z);
+        return;
+      }
       if (hud.isDeployableArmed()) {
         const sku = hud.getArmedDeployableSku();
         if (sku && socket.readyState === WebSocket.OPEN) {
@@ -5553,6 +5563,7 @@ function enterGame(
       game.setUnlockedPadInstanceIds(msg.unlockedPadInstanceIds ?? []);
       game.setSignboards(msg.signboards);
       game.setAttentionMarkers(msg.attentionMarkers ?? []);
+      game.setSaleDisplays(msg.saleDisplays ?? []);
       game.setBillboards(msg.billboards ?? []);
       game.setVoxelTextsForRoom(msg.roomId, msg.voxelTexts ?? []);
       syncTutorialAttentionCue(msg.roomId);
@@ -6578,7 +6589,11 @@ function enterGame(
     if (msg.type === "attentionMarkers") {
       game.setAttentionMarkers(msg.attentionMarkers);
     }
-    if (msg.type === "billboards") {
+        if (msg.type === "saleDisplays") {
+      game.setSaleDisplays(msg.saleDisplays);
+      return;
+    }
+if (msg.type === "billboards") {
       game.setBillboards(msg.billboards, { refreshRotationContent: false });
     }
     if (msg.type === "voxelTexts") {

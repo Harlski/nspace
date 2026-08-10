@@ -79,6 +79,7 @@ import {
   listPublicDesigns,
 } from "./designs.js";
 import { flushBillboardsSync } from "./billboards.js";
+import { flushSaleDisplaysSync } from "./saleDisplays.js";
 import { flushVoxelTextsSync } from "./voxelTexts.js";
 import { getTopMazeRecords } from "./mazeRecords.js";
 // worldcup: seasonal soccer leaderboard API (feature-flagged, deletable)
@@ -3774,6 +3775,7 @@ function shutdown(signal: string): void {
   flushSignboardsSync();
   flushDesignsSync();
   flushBillboardsSync();
+  flushSaleDisplaysSync();
   flushVoxelTextsSync();
   flushRoomThumbsUpSync();
   flushPublicDemotionNoticesSync();

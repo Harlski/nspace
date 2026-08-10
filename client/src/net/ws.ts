@@ -1,5 +1,6 @@
 import type { PlayerState } from "../types.js";
 import type { CosmeticGalleryWire } from "../cosmetics/galleryTypes.js";
+import type { SaleDisplayWire } from "../cosmetics/saleDisplayTypes.js";
 import {
   clampColorRgb,
   cubeRotationForPlainCube,
@@ -318,6 +319,8 @@ export type ServerMessage =
       worldcupPortals?: WorldcupPortalWire[];
       /** Dev-only Preset Gallery (`cosmetic-gallery` / join code SPACER). */
       cosmeticGallery?: CosmeticGalleryWire;
+      /** Sale Displays in this room (viewer-filtered). */
+      saleDisplays?: SaleDisplayWire[];
       /** When set, this wallet cannot earn NIM from block claims (guest or mining restriction). */
       blockClaimDeniedReason?: string;
       /** Unlock Pad instance ids already unlocked for this wallet in this room. */
@@ -491,6 +494,11 @@ export type ServerMessage =
         sizePercent?: number;
         colorRgb: number;
       }>;
+    }
+  | {
+      type: "saleDisplays";
+      roomId: string;
+      saleDisplays: SaleDisplayWire[];
     }
   | {
       type: "billboards";
@@ -935,6 +943,12 @@ export function sendPlaceAttentionMarker(
   if (opts?.sizePercent !== undefined) body.sizePercent = opts.sizePercent;
   ws.send(JSON.stringify(body));
 }
+
+export function sendPlaceSaleDisplay(ws: WebSocket, x: number, z: number): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "placeSaleDisplay", x, z }));
+}
+
 
 export function sendSetAttentionMarkerProps(
   ws: WebSocket,
