@@ -1484,6 +1484,8 @@ export class Game {
     string,
     { wire: SaleDisplayWire; group: THREE.Group }
   >();
+  private saleDisplayClickHandler: ((wire: SaleDisplayWire) => void) | null =
+    null;
   /** Nearest gallery showcase for the local player (Preset Gallery try-on). */
   private galleryNearestShowcase: CosmeticGalleryShowcaseWire | null = null;
   private galleryTryOnUi: HTMLElement | null = null;
@@ -5690,6 +5692,16 @@ export class Game {
     this.obstacleSelectHandler = handler;
   }
 
+  setSaleDisplayClickHandler(
+    handler: ((wire: SaleDisplayWire) => void) | null
+  ): void {
+    this.saleDisplayClickHandler = handler;
+  }
+
+  getSaleDisplayWire(id: string): SaleDisplayWire | null {
+    return this.saleDisplayEntries.get(id)?.wire ?? null;
+  }
+
   /** `null` clears any in-progress long-press; non-null replaces the opener. */
   setSelfQuickEmojiOpener(handler: (() => void) | null): void {
     this.selfQuickEmojiOpener = handler;
@@ -7324,6 +7336,25 @@ export class Game {
       let o: THREE.Object3D | null = h.object;
       while (o) {
         const id = o.userData["billboardId"] as string | undefined;
+        if (id) return id;
+        o = o.parent;
+      }
+    }
+    return null;
+  }
+
+  private pickSaleDisplayId(clientX: number, clientY: number): string | null {
+    if (this.saleDisplayEntries.size === 0) return null;
+    if (!this.updateNdc(clientX, clientY)) return null;
+    this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    const roots = [...this.saleDisplayEntries.values()].map((e) => e.group);
+    const hits = this.raycaster.intersectObjects(roots, true);
+    for (const h of hits) {
+      let o: THREE.Object3D | null = h.object;
+      while (o) {
+        const id = o.userData["saleDisplayId"] as string | undefined;
         if (id) return id;
         o = o.parent;
       }
@@ -9397,6 +9428,7 @@ export class Game {
         instanceId: string;
       };
       signboardId?: string;
+      saleDisplayId?: string;
     }[]
   ): void {
     this.placedObjects.clear();
@@ -9461,6 +9493,10 @@ export class Game {
         gate: t.gate,
         gateOpen: t.gateOpen,
         unlockPad: t.unlockPad,
+        saleDisplayId:
+          typeof t.saleDisplayId === "string" && t.saleDisplayId.trim()
+            ? t.saleDisplayId.trim()
+            : undefined,
       });
       if (y === 0 && !t.passable && !prism.ramp) {
         this.blockingTileKeys.add(tileKey(t.x, t.z));
@@ -9528,6 +9564,7 @@ export class Game {
         instanceId: string;
       };
       signboardId?: string;
+      saleDisplayId?: string;
     }[],
     remove: readonly string[]
   ): void {
@@ -9615,6 +9652,10 @@ export class Game {
         gate: t.gate,
         gateOpen: t.gateOpen,
         unlockPad: t.unlockPad,
+        saleDisplayId:
+          typeof t.saleDisplayId === "string" && t.saleDisplayId.trim()
+            ? t.saleDisplayId.trim()
+            : undefined,
       });
 
       if (y === 0 && !t.passable && !prism.ramp) {
@@ -12534,6 +12575,15 @@ export class Game {
         }
       }
 
+      const saleDisplayHit = this.pickSaleDisplayId(e.clientX, e.clientY);
+      if (saleDisplayHit) {
+        const entry = this.saleDisplayEntries.get(saleDisplayHit);
+        if (entry && this.saleDisplayClickHandler) {
+          this.saleDisplayClickHandler(entry.wire);
+          return;
+        }
+      }
+
       const billboardHit = this.pickBillboardId(e.clientX, e.clientY);
       if (billboardHit) {
         const spec = this.billboardSpecs.get(billboardHit);
@@ -14519,7 +14569,8 @@ export class Game {
           ? this.unlockedPadInstanceIds.has(prev.unlockPad.instanceId) ===
             Boolean(g?.userData["unlockPadUnlocked"])
           : true) &&
-        (prev.signboardId ?? "") === (meta.signboardId ?? "");
+        (prev.signboardId ?? "") === (meta.signboardId ?? "") &&
+        (prev.saleDisplayId ?? "") === (meta.saleDisplayId ?? "");
       if (unchanged) {
         continue;
       }
@@ -19175,34 +19226,36 @@ export class Game {
   }
 
   /**
-   * Viewer-filtered Sale Displays. Unbound (and inactive binds) are admin-only silhouettes;
-   * bound Published entries get richer presentation in a later ticket.
+   * Viewer-filtered Sale Displays. Unbound / inactive binds are admin-only silhouettes;
+   * active binds show slot-aware mannequin or floor deployable presentation.
    */
   setSaleDisplays(wires: SaleDisplayWire[] | null | undefined): void {
     const list = wires ?? [];
     const nextIds = new Set(list.map((w) => w.id));
     for (const [id, entry] of this.saleDisplayEntries) {
       if (nextIds.has(id)) continue;
-      this.scene.remove(entry.group);
-      entry.group.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) {
-          obj.geometry.dispose();
-          const mat = obj.material;
-          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-          else mat.dispose();
-        }
-      });
+      this.disposeSaleDisplayGroup(entry.group);
       this.saleDisplayEntries.delete(id);
     }
     for (const wire of list) {
       const existing = this.saleDisplayEntries.get(wire.id);
+      const presentationKey = this.saleDisplayPresentationKey(wire);
       if (existing) {
+        const prevKey = this.saleDisplayPresentationKey(existing.wire);
         existing.wire = wire;
-        existing.group.position.set(wire.x, 0.35, wire.z);
+        if (prevKey !== presentationKey) {
+          this.disposeSaleDisplayGroup(existing.group);
+          const group = this.makeSaleDisplayGroup(wire);
+          group.position.set(wire.x, 0, wire.z);
+          this.scene.add(group);
+          existing.group = group;
+        } else {
+          existing.group.position.set(wire.x, 0, wire.z);
+        }
         continue;
       }
-      const group = this.makeSaleDisplaySilhouette(wire);
-      group.position.set(wire.x, 0.35, wire.z);
+      const group = this.makeSaleDisplayGroup(wire);
+      group.position.set(wire.x, 0, wire.z);
       this.scene.add(group);
       this.saleDisplayEntries.set(wire.id, { wire, group });
     }
@@ -19210,21 +19263,58 @@ export class Game {
     this.requestRender();
   }
 
+  private saleDisplayPresentationKey(wire: SaleDisplayWire): string {
+    return [
+      wire.x,
+      wire.z,
+      wire.cosmeticSku ?? "",
+      wire.presetId ?? "",
+      wire.kind ?? "",
+      wire.slot ?? "",
+      wire.bindInactive ? "1" : "0",
+      wire.label ?? "",
+    ].join("|");
+  }
+
+  private disposeSaleDisplayGroup(group: THREE.Group): void {
+    this.scene.remove(group);
+    group.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.geometry.dispose();
+        const mat = obj.material;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else mat.dispose();
+      }
+    });
+    const fx = group.userData.deployableFx as PersistentDeployableFx | null | undefined;
+    if (fx) {
+      fx.dispose();
+      group.userData.deployableFx = null;
+    }
+  }
+
   private clearSaleDisplays(): void {
     if (this.saleDisplayEntries.size === 0) return;
     for (const entry of this.saleDisplayEntries.values()) {
-      this.scene.remove(entry.group);
-      entry.group.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) {
-          obj.geometry.dispose();
-          const mat = obj.material;
-          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-          else mat.dispose();
-        }
-      });
+      this.disposeSaleDisplayGroup(entry.group);
     }
     this.saleDisplayEntries.clear();
     this.markSceneMutation("saleDisplays:clear");
+  }
+
+  private makeSaleDisplayGroup(wire: SaleDisplayWire): THREE.Group {
+    const activeBound =
+      Boolean(wire.presetId) &&
+      Boolean(wire.kind) &&
+      !wire.bindInactive &&
+      Boolean(wire.cosmeticSku);
+    if (!activeBound) {
+      return this.makeSaleDisplaySilhouette(wire);
+    }
+    if (wire.kind === "floor") {
+      return this.makeSaleDisplayFloor(wire);
+    }
+    return this.makeSaleDisplayMannequin(wire);
   }
 
   private makeSaleDisplaySilhouette(wire: SaleDisplayWire): THREE.Group {
@@ -19237,11 +19327,85 @@ export class Game {
       depthWrite: false,
     });
     const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.42, 0.18, 16), mat);
-    pedestal.position.y = 0;
+    pedestal.position.y = 0.09;
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.7, 10), mat);
-    pole.position.y = 0.44;
+    pole.position.y = 0.53;
     group.add(pedestal, pole);
     return group;
+  }
+
+  private makeSaleDisplayFloor(wire: SaleDisplayWire): THREE.Group {
+    const group = new THREE.Group();
+    group.userData.saleDisplayId = wire.id;
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.4, 0.45, 0.12, 16),
+      new THREE.MeshStandardMaterial({ color: 0x2a3340, roughness: 0.85 })
+    );
+    base.position.y = 0.06;
+    group.add(base);
+    if (wire.presetId) {
+      group.userData.deployableFx = attachPersistentDeployableVfx(
+        this.scene,
+        wire.presetId,
+        wire.x,
+        wire.z
+      );
+    }
+    return group;
+  }
+
+  private makeSaleDisplayMannequin(wire: SaleDisplayWire): THREE.Group {
+    const fakeAddress = `sale-display:${wire.id}`;
+    const g = this.makeAvatar(fakeAddress, "");
+    g.userData.saleDisplayId = wire.id;
+    g.userData.saleDisplayMannequin = true;
+    const player: PlayerState = {
+      address: fakeAddress,
+      displayName: "",
+      x: wire.x,
+      y: 0,
+      z: wire.z,
+      vx: 0,
+      vz: 0,
+      cosmeticAura: wire.slot === "aura" ? wire.presetId ?? null : null,
+      cosmeticNameplate: wire.slot === "nameplate" ? wire.presetId ?? null : null,
+      cosmeticChatBubble:
+        wire.slot === "chatBubble" ? wire.presetId ?? null : null,
+      cosmeticTrail: wire.slot === "trail" ? wire.presetId ?? null : null,
+    };
+    if (wire.slot === "chatBubble" && wire.presetId) {
+      const nameSprite = g.userData.nameSprite as THREE.Sprite | undefined;
+      const nameTex = g.userData.nameTexture as THREE.CanvasTexture | undefined;
+      if (nameSprite) {
+        g.remove(nameSprite);
+        const sm = nameSprite.material as THREE.SpriteMaterial;
+        sm.map = null;
+        sm.dispose();
+      }
+      if (nameTex) nameTex.dispose();
+      delete g.userData.nameSprite;
+      delete g.userData.nameTexture;
+      delete g.userData.nameLabelSyncState;
+      const { sprite, texture, width, height } = createChatBubbleSprite("Hello!", {
+        bubblePreset: wire.presetId,
+      });
+      g.add(sprite);
+      this.layoutGalleryChatBubble(g, {
+        sprite,
+        mat: sprite.material as THREE.SpriteMaterial,
+        tex: texture,
+        width,
+        height,
+      });
+    } else if (wire.slot === "nameplate" && wire.presetId) {
+      this.replaceAvatarNameLabel(g, wire.label ?? "Sale", false, wire.presetId);
+      this.layoutGalleryHeadLabel(g);
+    } else {
+      this.replaceAvatarNameLabel(g, wire.label ?? "Sale", false, null);
+      this.layoutGalleryHeadLabel(g);
+    }
+    syncCosmeticLoadoutVfx(g, player, wire.slot === "trail");
+    return g;
   }
 
   /** Dev-only Preset Gallery (`cosmetic-gallery` / join code SPACER). */

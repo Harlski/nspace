@@ -22,8 +22,6 @@ export function installAdminOverlay(
     onAdminInvisibleChange?: (enabled: boolean) => void;
     /** Initial Admin Invisibility checkbox (localStorage / session). */
     adminInvisibleInitial?: boolean;
-    /** Toggle click-to-place unbound Sale Displays (works without Build HUD). */
-    onSaleDisplayPlaceModeChange?: (enabled: boolean) => void;
     onSetVoxelText?: (spec: VoxelTextSpec) => void;
     onRemoveVoxelText?: (roomId: string, id: string) => void;
     /** Re-run build-dock thumbnail strip after inspector preview layout tweaks. */
@@ -78,10 +76,6 @@ export function installAdminOverlay(
         <span>Clear existing extra floor first</span>
       </label>
       <button type="button" class="admin-overlay-btn" id="admin-random">Random layout</button>
-      <label class="admin-overlay-field admin-overlay-check"><input type="checkbox" id="admin-sale-display-place" />
-        <span>Place Sale Display (click tile)</span>
-      </label>
-      <p class="admin-overlay-hint">Sale Displays: unbound pedestals (admin-only until bound). Works in The Shaper without Building.</p>
       <p class="admin-overlay-hint">Floor tile overlap - scale on shared 1×1 quads to hide subpixel blue seams. Persists locally.</p>
       <label class="admin-overlay-field"><span>Tile quad scale</span>
         <input type="range" class="admin-overlay-range" id="floor-tile-quad" min="1" max="1.12" step="0.001" value="1.01" />
@@ -223,11 +217,6 @@ export function installAdminOverlay(
 
   const roomInput = $("admin-room") as HTMLInputElement;
   roomInput.value = opts.roomId;
-
-  const saleDisplayPlace = $("admin-sale-display-place") as HTMLInputElement;
-  saleDisplayPlace.addEventListener("change", () => {
-    opts.onSaleDisplayPlaceModeChange?.(saleDisplayPlace.checked);
-  });
 
   const zmin = $("admin-zmin") as HTMLInputElement;
   const zmax = $("admin-zmax") as HTMLInputElement;

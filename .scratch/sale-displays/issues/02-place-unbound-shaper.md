@@ -14,3 +14,6 @@ Placement works in The Shaper without opening general Building.
 - [x] Players never see unbound displays; admins do
 - [x] Room occupants update without rejoin after place
 - [x] General Building / blocks remain locked in The Shaper
+
+**Note:** Placement UX is **Build → Buildings → Sale Display** (not Admin overlay), with a
+Shaper carve-out so the Build dock can author Sale Displays without unlocking general Building.

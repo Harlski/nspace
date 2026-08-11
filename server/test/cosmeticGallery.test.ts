@@ -4,6 +4,7 @@ import {
   buildCosmeticGalleryPayload,
   COSMETIC_GALLERY_JOIN_CODE,
   COSMETIC_GALLERY_ROOM_ID,
+  cosmeticGalleryWelcomeExtras,
   galleryFakeAddress,
   isCosmeticGalleryEnabled,
   isCosmeticGalleryRoom,
@@ -56,21 +57,14 @@ describe("cosmeticGallery", () => {
     assert.equal(resolveCosmeticGalleryJoinCode("hub"), null);
   });
 
-  it("builds one showcase per preset", () => {
-    const { showcases } = buildCosmeticGalleryPayload();
-    assert.equal(showcases.length, listCosmeticPresets().length);
-    assert.ok(showcases.some((s) => s.presetId === "trail-ref-spark-path"));
-    assert.ok(showcases.some((s) => s.presetId === "trail-ref-spark-cyan"));
-    assert.ok(showcases.some((s) => s.presetId === "aura-ref-magic-ring"));
-    assert.ok(showcases.some((s) => s.presetId === "aura-ref-sigil-magic-01"));
-    assert.ok(showcases.some((s) => s.presetId === "aura-ref-sigil-twirl-03"));
+  it("does not inject auto Preset gallery into welcome extras", () => {
+    assert.deepEqual(cosmeticGalleryWelcomeExtras(COSMETIC_GALLERY_ROOM_ID), {});
+    assert.deepEqual(cosmeticGalleryWelcomeExtras("hub"), {});
   });
 
-  it("lays trail presets in parallel lanes when any exist", () => {
+  it("keeps buildCosmeticGalleryPayload for offline layout reference only", () => {
     const { showcases } = buildCosmeticGalleryPayload();
-    const trails = showcases.filter((s) => s.slot === "trail");
-    assert.equal(trails.length, 5);
-    assert.equal(trails[0]!.trailPaceTiles, 10);
+    assert.equal(showcases.length, listCosmeticPresets().length);
   });
 
   it("recognizes gallery room id", () => {

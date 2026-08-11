@@ -528,7 +528,7 @@ export function createHud(
   isWorldcupBallModeActive: () => boolean;
   onBuildToolSelect: (
     fn: (
-      tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab"
+      tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "sale-display" | "prefab"
     ) => void
   ) => void;
   deactivateTeleporterMode: () => void;
@@ -538,6 +538,8 @@ export function createHud(
   deactivateUnlockPadMode: () => void;
   isAttentionMarkerModeActive: () => boolean;
   deactivateAttentionMarkerMode: () => void;
+  isSaleDisplayModeActive: () => boolean;
+  deactivateSaleDisplayMode: () => void;
   getAttentionMarkerHoverHeight: () => number;
   setAttentionMarkerHoverHeight: (h: number) => void;
   onAttentionMarkerHoverHeightChange: (fn: ((h: number) => void) | null) => void;
@@ -757,6 +759,17 @@ export function createHud(
             id: string;
             /** False for viewers who are not the placer and not admin (server enforces too). */
             canModify: boolean;
+            onEdit: () => void;
+            onMove: () => void;
+            onRemove: () => void;
+            onClose: () => void;
+          };
+        }
+      | {
+          x: number;
+          z: number;
+          saleDisplaySelection: {
+            id: string;
             onEdit: () => void;
             onMove: () => void;
             onRemove: () => void;
@@ -3240,17 +3253,18 @@ export function createHud(
   let roomAllowPlaceBlocks = true;
   let roomAllowExtraFloor = true;
   function applyRoomEditCaps(): void {
-    const showRail = roomAllowPlaceBlocks || roomAllowExtraFloor;
+    const objectsOk = roomAllowPlaceBlocks;
+    const showRail = objectsOk || roomAllowExtraFloor;
     buildModeStrip.hidden = !showRail;
     buildQuickBtn.hidden = !showRail || buildQuickGuestMode;
-    buildEditOptObjects.disabled = !roomAllowPlaceBlocks;
+    buildEditOptObjects.disabled = !objectsOk;
     buildEditOptRoom.disabled = !roomAllowExtraFloor;
-    if (roomAllowPlaceBlocks && !roomAllowExtraFloor) {
+    if (objectsOk && !roomAllowExtraFloor) {
       buildEditKindSelect.value = "objects";
-    } else if (!roomAllowPlaceBlocks && roomAllowExtraFloor) {
+    } else if (!objectsOk && roomAllowExtraFloor) {
       buildEditKindSelect.value = "room";
     }
-    buildEditKindOptObjectsBtn.disabled = !roomAllowPlaceBlocks;
+    buildEditKindOptObjectsBtn.disabled = !objectsOk;
     buildEditKindOptRoomBtn.disabled = !roomAllowExtraFloor;
     syncBuildEditKindTriggerFromSelect();
     buildToggleBtn.title = showRail
@@ -6860,6 +6874,7 @@ export function createHud(
             <option value="gate">Gate</option>
             <option value="unlock-pad">Unlock Pad</option>
             <option value="attention-marker">Attention Marker</option>
+            <option value="sale-display">Sale Display</option>
             <option value="prefab">Prefab</option>
           </select>
         </div>
@@ -7660,6 +7675,7 @@ export function createHud(
           | "gate"
           | "unlock-pad"
           | "attention-marker"
+          | "sale-display"
           | "prefab"
       ) => void)
     | null = null;
@@ -7870,6 +7886,8 @@ export function createHud(
   let unlockPadModeActive = false;
   /** Attention Marker tool: co-occupying visual cue (admin-only). */
   let attentionMarkerModeActive = false;
+  /** Sale Display tool: admin-only unbound pedestal place. */
+  let saleDisplayModeActive = false;
   let attentionMarkerHoverHeight = 1;
   let attentionMarkerHoverHeightHandler: ((h: number) => void) | null = null;
   let attentionMarkerSizePercent = 100;
@@ -7932,11 +7950,11 @@ export function createHud(
   };
   const BUILD_DOCK_TOOLS: Record<
     BuildDockCategoryId,
-    Array<"block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab">
+    Array<"block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "sale-display" | "prefab">
   > = {
     terrain: ["block"],
     props: ["signpost"],
-    buildings: ["teleporter", "gate", "unlock-pad", "attention-marker", "billboard"],
+    buildings: ["teleporter", "gate", "unlock-pad", "attention-marker", "billboard", "sale-display"],
     prefab: [],
   };
   let buildDockCategory: BuildDockCategoryId = "terrain";
@@ -7989,7 +8007,8 @@ export function createHud(
   >();
   /** Objects-scope category tabs: Terrain / Props / Buildings / Prefab (keys 1–4 while dock open). */
   function applyBuildDockCategory(cat: BuildDockCategoryId): boolean {
-    if (buildBottomDock.hidden || !roomAllowPlaceBlocks) return false;
+    if (buildBottomDock.hidden) return false;
+    if (!roomAllowPlaceBlocks) return false;
     if (buildEditKindSelect.value !== "objects") {
       buildEditKindSelect.value = "objects";
       syncBuildEditKindTriggerFromSelect();
@@ -8022,6 +8041,7 @@ export function createHud(
       | "gate"
       | "unlock-pad"
       | "attention-marker"
+          | "sale-display"
       | "prefab";
     if (
       tools.length > 0 &&
@@ -8716,7 +8736,7 @@ export function createHud(
   }
 
   function toolLabelDock(
-    t: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab"
+    t: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "sale-display" | "prefab"
   ): string {
     if (t === "block") return "Cube";
     if (t === "signpost") return "Signpost";
@@ -8724,6 +8744,7 @@ export function createHud(
     if (t === "gate") return "Gate";
     if (t === "unlock-pad") return "Unlock Pad";
     if (t === "attention-marker") return "Attention Marker";
+    if (t === "sale-display") return "Sale Display";
     if (t === "prefab") return "Prefab";
     return "Billboard";
   }
@@ -8745,6 +8766,7 @@ export function createHud(
       | "gate"
       | "unlock-pad"
       | "attention-marker"
+          | "sale-display"
       | "prefab";
     if (buildDockCategory === "terrain" && tool === "block") {
       return `Place: ${dockTerrainShapeLabel(dockTerrainShapeActiveIdResolved())}`;
@@ -8758,7 +8780,7 @@ export function createHud(
   }
 
   function categoryForToolDock(
-    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab"
+    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "sale-display" | "prefab"
   ): BuildDockCategoryId {
     if (tool === "prefab") return "prefab";
     for (const c of BUILD_DOCK_CATEGORY_ORDER) {
@@ -9328,7 +9350,14 @@ export function createHud(
     }
 
     const list = BUILD_DOCK_TOOLS[buildDockCategory].filter((tid) => {
-      if (tid === "billboard" || tid === "unlock-pad" || tid === "attention-marker") return admin;
+      if (
+        tid === "billboard" ||
+        tid === "unlock-pad" ||
+        tid === "attention-marker" ||
+        tid === "sale-display"
+      ) {
+        return admin;
+      }
       return true;
     });
     const cur = tileInspectorToolSelect.value as
@@ -9339,6 +9368,7 @@ export function createHud(
       | "gate"
       | "unlock-pad"
       | "attention-marker"
+          | "sale-display"
       | "prefab";
     const terrainBlockOnly =
       buildDockCategory === "terrain" &&
@@ -9614,6 +9644,7 @@ export function createHud(
       | "gate"
       | "unlock-pad"
       | "attention-marker"
+          | "sale-display"
       | "prefab";
     buildDockCategory = categoryForToolDock(tool);
     for (const [c, b] of buildDockTabByCategory) {
@@ -10665,7 +10696,7 @@ export function createHud(
   let signpostPlaceHandler: ((x: number, z: number, message: string) => void) | null = null;
 
   function activateBuildTool(
-    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab"
+    tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "sale-display" | "prefab"
   ): void {
     const toolChanging = tileInspectorToolSelect.value !== tool;
     if (toolChanging && isBuildObjectSelectionActive()) {
@@ -10679,6 +10710,7 @@ export function createHud(
     gateModeActive = tool === "gate";
     unlockPadModeActive = tool === "unlock-pad";
     attentionMarkerModeActive = tool === "attention-marker";
+    saleDisplayModeActive = tool === "sale-display";
     billboardModeActive = tool === "billboard";
     prefabToolActive = tool === "prefab";
     if (tool === "teleporter") {
@@ -10704,6 +10736,7 @@ export function createHud(
           gateModeActive ||
           unlockPadModeActive ||
           attentionMarkerModeActive ||
+          saleDisplayModeActive ||
           billboardModeActive ||
           prefabToolActive
       );
@@ -12793,6 +12826,7 @@ export function createHud(
       | "gate"
       | "unlock-pad"
       | "attention-marker"
+          | "sale-display"
       | "prefab" =
       raw === "signpost"
         ? "signpost"
@@ -12804,6 +12838,8 @@ export function createHud(
               ? "unlock-pad"
               : raw === "attention-marker"
                 ? "attention-marker"
+                : raw === "sale-display"
+                  ? "sale-display"
             : raw === "billboard"
               ? "billboard"
               : raw === "prefab"
@@ -16092,6 +16128,7 @@ export function createHud(
       roomAllowPlaceBlocks = caps.allowPlaceBlocks;
       roomAllowExtraFloor = caps.allowExtraFloor;
       applyRoomEditCaps();
+      syncBuildDockToolStrip();
       syncHueDockVisibility();
       syncBlockPreviewDockSlots();
     },
@@ -16492,6 +16529,77 @@ export function createHud(
         inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(null);
         inspectorPreviewGameRef?.syncInspectorSelectionTeleporterPreview(null);
         inspectorPreviewGameRef?.syncInspectorSelectionBillboardPreview(bs.id);
+        syncHueDockVisibility();
+        syncBuildDockSelectionChrome();
+        syncBuildDockContextParams();
+        requestAnimationFrame(() => {
+          layoutObjectPanelSatellites();
+          requestAnimationFrame(() => layoutObjectPanelSatellites());
+        });
+        return;
+      }
+      if ("saleDisplaySelection" in opts) {
+        const sd = opts.saleDisplaySelection;
+        panelOnPropsChange = null;
+        billboardSelectionEditHandler = () => sd.onEdit();
+        objectPanel = document.createElement("div");
+        objectPanel.className =
+          "build-object-panel build-object-panel--teleporter";
+        objectPanel.hidden = true;
+        objectPanel.innerHTML = `<div class="build-object-panel__surface" aria-hidden="true"></div>`;
+        modeSidebarBuildMount.appendChild(objectPanel);
+
+        objectPanelContextPopover.classList.remove(
+          "build-object-panel-context--teleporter"
+        );
+        objectPanelContextPopover.classList.add(
+          "build-object-panel-context--billboard"
+        );
+        objectPanelContextPopover.classList.remove(
+          "build-object-panel-context--billboard-readonly"
+        );
+        const dismissMarkup = `${nimiqIconUseMarkup("nq-cross", { width: 13, height: 13, class: "build-object-panel__dismiss-icon" })}`;
+        objectPanelContextPopover.innerHTML = `
+          <div class="build-object-panel-context__inner">
+            <div class="build-object-panel-context__height-row">
+              <div class="build-object-panel-context__height-main">
+                <span class="build-object-panel-context__title-text">Sale Display</span>
+                <span class="build-object-panel-context__tp-coords">(${opts.x}, ${opts.z})</span>
+              </div>
+              <button type="button" class="build-object-panel__dismiss build-object-panel-context__dismiss build-object-panel-context__dismiss--inline" aria-label="Close sale display menu">${dismissMarkup}</button>
+            </div>
+            <div class="build-object-panel-context__advanced build-object-panel-context__advanced--row">
+              <button type="button" class="build-object-panel__btn build-object-panel-context__edit-billboard nq-button-pill light-blue">Edit bind</button>
+              <button type="button" class="build-object-panel__advanced-toggle build-block-bar__advanced-toggle tile-inspector__advanced-link" hidden disabled aria-hidden="true">Advanced…</button>
+            </div>
+            <div class="build-object-panel-context__actions">
+              <button type="button" class="build-object-panel__btn build-object-panel__move nq-button-pill light-blue">Move</button>
+              <button type="button" class="build-object-panel__btn build-object-panel__remove nq-button-pill">Delete</button>
+            </div>
+          </div>`;
+        objectPanelContextPopover.hidden = false;
+        objectPanelContextPopover
+          .querySelector(".build-object-panel-context__edit-billboard")
+          ?.addEventListener("click", () => sd.onEdit());
+        objectPanelContextPopover
+          .querySelector(".build-object-panel__move")
+          ?.addEventListener("click", () => sd.onMove());
+        objectPanelContextPopover
+          .querySelector(".build-object-panel__remove")
+          ?.addEventListener("click", () => sd.onRemove());
+        objectPanelContextPopover
+          .querySelector(".build-object-panel-context__dismiss")
+          ?.addEventListener("click", () => sd.onClose());
+        syncBlockPreviewDockSlots();
+        inspectorPreviewGameRef?.bindInspectorTilePreviewCanvas(
+          "selection",
+          hueDockBlockPreview.querySelector(
+            "#panel-tile-inspector-preview-canvas"
+          ) as HTMLCanvasElement | null
+        );
+        inspectorPreviewGameRef?.syncInspectorSelectionTilePreview(null);
+        inspectorPreviewGameRef?.syncInspectorSelectionTeleporterPreview(null);
+        inspectorPreviewGameRef?.syncInspectorSelectionBillboardPreview(null);
         syncHueDockVisibility();
         syncBuildDockSelectionChrome();
         syncBuildDockContextParams();
@@ -17246,6 +17354,14 @@ export function createHud(
       attentionMarkerModeActive = false;
       activateBuildTool("block");
     },
+    isSaleDisplayModeActive(): boolean {
+      return saleDisplayModeActive;
+    },
+    deactivateSaleDisplayMode() {
+      if (!saleDisplayModeActive) return;
+      saleDisplayModeActive = false;
+      activateBuildTool("block");
+    },
     getAttentionMarkerHoverHeight(): number {
       return attentionMarkerHoverHeight;
     },
@@ -17384,7 +17500,7 @@ export function createHud(
     },
     onBuildToolSelect(
       fn: (
-        tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "prefab"
+        tool: "block" | "signpost" | "teleporter" | "billboard" | "gate" | "unlock-pad" | "attention-marker" | "sale-display" | "prefab"
       ) => void
     ) {
       buildToolChangeHandler = fn;

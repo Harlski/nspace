@@ -63,6 +63,8 @@ export type ObstacleTile = {
     proofMode: "optimistic" | "payment_intent";
     instanceId: string;
   };
+  /** Sale Display foot — exclusive tile claim. */
+  saleDisplayId?: string;
   claimable?: boolean;
   tutorialMineSlot?: boolean;
   active?: boolean;
@@ -107,6 +109,8 @@ export type ObstacleProps = {
     proofMode: "optimistic" | "payment_intent";
     instanceId: string;
   };
+  /** Sale Display foot id (select / move / remove). */
+  saleDisplayId?: string;
   /** Client-only: tile being edited (inspector preview). Not sent on the wire. */
   editorTileX?: number;
   editorTileY?: number;
@@ -947,6 +951,35 @@ export function sendPlaceAttentionMarker(
 export function sendPlaceSaleDisplay(ws: WebSocket, x: number, z: number): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "placeSaleDisplay", x, z }));
+}
+
+export function sendBindSaleDisplay(
+  ws: WebSocket,
+  id: string,
+  cosmeticSku: string
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "bindSaleDisplay", id, cosmeticSku }));
+}
+
+export function sendClearSaleDisplayBind(ws: WebSocket, id: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "clearSaleDisplayBind", id }));
+}
+
+export function sendMoveSaleDisplay(
+  ws: WebSocket,
+  id: string,
+  x: number,
+  z: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "moveSaleDisplay", id, x, z }));
+}
+
+export function sendDeleteSaleDisplay(ws: WebSocket, id: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "deleteSaleDisplay", id }));
 }
 
 

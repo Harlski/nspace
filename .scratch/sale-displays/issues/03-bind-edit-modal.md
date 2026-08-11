@@ -7,10 +7,10 @@ multiple displays.
 
 **Blocked by:** 02 — Place unbound in The Shaper (admin tab + live sync)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Edit modal lists Published, shop-listable Catalog Entries only
-- [ ] Bind / rebind / clear update player and admin views live
-- [ ] Bound display shows mannequin or floor deployable per Slot
-- [ ] Players still cannot see unbound / cleared displays
-- [ ] Duplicate binds of one Catalog Entry on multiple displays are allowed
+- [x] Edit modal lists Published, shop-listable Catalog Entries only
+- [x] Bind / rebind / clear update player and admin views live
+- [x] Bound display shows mannequin or floor deployable per Slot
+- [x] Players still cannot see unbound / cleared displays
+- [x] Duplicate binds of one Catalog Entry on multiple displays are allowed

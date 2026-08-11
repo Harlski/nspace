@@ -19,17 +19,10 @@ Parent PRD: [PRD.md](./PRD.md). ADR: [docs/adr/0015-sale-displays.md](../../docs
 |---|------|--------|------------|---------|
 | 01 | [issues/01-sale-display-store.md](issues/01-sale-display-store.md) | `done` | — | Store + Published bind + wire projection |
 | 02 | [issues/02-place-unbound-shaper.md](issues/02-place-unbound-shaper.md) | `done` | 01 | Place unbound in The Shaper + live sync |
-| 03 | [issues/03-bind-edit-modal.md](issues/03-bind-edit-modal.md) | `ready-for-agent` | 02 | Edit modal bind + slot-aware show |
-| 04 | [issues/04-try-buy-panel.md](issues/04-try-buy-panel.md) | `ready-for-agent` | 03 | Click → try + buy (Cosmetic Unlock) |
-| 05 | [issues/05-retire-auto-gallery.md](issues/05-retire-auto-gallery.md) | `ready-for-agent` | 03 | Retire auto Preset gallery |
-| 06 | [issues/06-kiosks-and-archive.md](issues/06-kiosks-and-archive.md) | `ready-for-agent` | 04 | Outside-Shaper kiosks + Archived hide |
+| 03 | [issues/03-bind-edit-modal.md](issues/03-bind-edit-modal.md) | `done` | 02 | Edit modal bind + slot-aware show |
+| 04 | [issues/04-try-buy-panel.md](issues/04-try-buy-panel.md) | `done` | 03 | Click → try + buy (Cosmetic Unlock) |
+| 05 | [issues/05-retire-auto-gallery.md](issues/05-retire-auto-gallery.md) | `done` | 03 | Retire auto Preset gallery |
+| 06 | [issues/06-kiosks-and-archive.md](issues/06-kiosks-and-archive.md) | `done` | 04 | Outside-Shaper kiosks + Archived hide |
 
-Work the frontier: start at **01**. After 03, **04** and **05** can run in parallel.
-Each `/implement` should start in a **fresh** context from the ticket file only.
-
-## Pick up work
-
-```bash
-cat .scratch/sale-displays/PRD.md
-cat .scratch/sale-displays/issues/01-sale-display-store.md
-```
+All tickets complete. Placement: **Build Menu → Buildings → Sale Display** (admin), with The
+Shaper carve-out (general Building stays locked).

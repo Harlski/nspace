@@ -475,8 +475,9 @@ _Avoid_: preset gallery, mannequin room, SKU gallery.
 **Sale Display**:
 An admin-placed in-world fixture that starts unbound and, once configured, binds to one
 **Catalog Entry**. Players interact with a bound Sale Display to try and buy that entry; admins
-place, move, and rebind it (admin placement path, not general Building). Distinct from the
-retired auto-laid Preset gallery and from operator **Catalog Preview**.
+place, select, move, and rebind it via **Build → Buildings → Sale Display** like other building
+placeables. Each display occupies one floor tile (no stacking other blocks on that column).
+Distinct from the retired auto-laid Preset gallery and from operator **Catalog Preview**.
 _Avoid_: purchase item, shop pedestal, buyable tile, product placer, SKU pedestal.
 
 **Draft** (Catalog Entry):

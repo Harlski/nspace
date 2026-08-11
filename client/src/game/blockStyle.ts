@@ -327,6 +327,8 @@ export type BlockStyleProps = {
     proofMode: "optimistic" | "payment_intent";
     instanceId: string;
   };
+  /** Sale Display foot (exclusive tile; bind state in saleDisplays store). */
+  saleDisplayId?: string;
   claimable?: boolean;
   active?: boolean;
   cooldownMs?: number;

@@ -19339,3 +19339,94 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   border-color: #3b82f6;
   color: #f8fafc;
 }
+
+/* Sale Display edit / try-buy overlays */
+.sale-display-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 10000;
+  pointer-events: auto;
+}
+.sale-display-overlay[hidden] {
+  display: none !important;
+}
+.sale-display-overlay__panel {
+  box-sizing: border-box;
+  width: min(28rem, 100%);
+  max-height: min(80vh, 40rem);
+  overflow: auto;
+  padding: 1.15rem 1.25rem 1.25rem;
+  border-radius: 12px;
+  background: #1a222c;
+  color: #eef3f7;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+.sale-display-overlay__title {
+  margin: 0 0 0.35rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+.sale-display-overlay__hint {
+  margin: 0 0 0.85rem;
+  font-size: 0.88rem;
+  opacity: 0.82;
+  line-height: 1.35;
+}
+.sale-display-overlay__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.85rem;
+  font-size: 0.85rem;
+}
+.sale-display-overlay__select {
+  width: 100%;
+  min-height: 10rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: #0f141a;
+  color: inherit;
+  padding: 0.35rem;
+}
+.sale-display-overlay__status {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+.sale-display-overlay__status--error {
+  color: #ffb4a8;
+}
+.sale-display-overlay__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.sale-display-overlay__btn {
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.5rem 0.8rem;
+  background: #58c4dd;
+  color: #0b1218;
+  font-weight: 650;
+  cursor: pointer;
+}
+.sale-display-overlay__btn--ghost {
+  background: rgba(255, 255, 255, 0.1);
+  color: #eef3f7;
+}
+.sale-display-overlay__btn--danger {
+  background: #c45b4c;
+  color: #fff;
+}
+.sale-display-overlay__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

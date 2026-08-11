@@ -445,10 +445,15 @@ import {
   type BillboardOrientation,
 } from "./billboards.js";
 import {
+  bindSaleDisplay,
+  clearSaleDisplayBind,
   createSaleDisplay,
+  deleteSaleDisplay,
   flushSaleDisplaysSync,
+  getSaleDisplayById,
   listSaleDisplaysWire,
   loadSaleDisplays,
+  moveSaleDisplay,
   type SaleDisplayWire,
 } from "./saleDisplays.js";
 import { canPlaceSaleDisplay } from "./saleDisplays/policy.js";
@@ -1012,6 +1017,11 @@ export type ObstacleTile = {
     proofMode: "optimistic" | "payment_intent";
     instanceId: string;
   };
+  /**
+   * Sale Display foot: exclusive tile claim (passable half slab). Bind state lives in
+   * the saleDisplays store; this id links the obstacle for select / move / remove.
+   */
+  saleDisplayId?: string;
 };
 
 type PlacedProps = TerrainProps;
@@ -1292,7 +1302,8 @@ function roomAllowsFakePlayers(roomId: string): boolean {
 }
 
 export function canPlaceBlocksInRoom(roomId: string, address: string): boolean {
-  if (isCosmeticGalleryRoom(roomId)) return false;
+  // The Shaper: admins get full Build (Sale Displays + terrain/props); players stay locked out.
+  if (isCosmeticGalleryRoom(roomId)) return isAdmin(address);
   if (isInviteLobbyRoomId(roomId)) return canEditRoomContent(roomId, address);
   if (isPixelRoom(roomId)) return false;
   // worldcup: keep field + 1v1 match pitches clear of placed blocks
@@ -1322,7 +1333,8 @@ export function canTeleporterDestinationRoom(
 
 function canRecolorFloorInRoom(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
-  if (isCosmeticGalleryRoom(id)) return false;
+  // The Shaper: same admin Build unlock as canPlaceBlocksInRoom.
+  if (isCosmeticGalleryRoom(id)) return isAdmin(address);
   if (isInviteLobbyRoomId(id)) return canEditRoomContent(roomId, address);
   if (id === CANVAS_ROOM_ID) return false;
   if (id === PIXEL_ROOM_ID) return true;
@@ -2759,6 +2771,8 @@ function nextOpenStackLevel(
   x: number,
   z: number
 ): number | null {
+  const at0 = getPlacedAtLevel(placed, x, z, 0);
+  if (at0?.props.saleDisplayId) return null;
   const used = new Set(stackEntriesAt(placed, x, z).map((e) => e.y));
   for (let y = 0; y <= STACK_MAX_LEVEL; y++) {
     if (!used.has(y)) return y;
@@ -3312,6 +3326,7 @@ function obstacleTileFromPlaced(roomId: string, tileKeyStr: string): ObstacleTil
           instanceId: String(v.unlockPad.instanceId),
         }
       : undefined,
+    saleDisplayId: v.saleDisplayId ? String(v.saleDisplayId) : undefined,
   };
 }
 
@@ -3377,6 +3392,7 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
             instanceId: String(v.unlockPad.instanceId),
           }
         : undefined,
+      saleDisplayId: v.saleDisplayId ? String(v.saleDisplayId) : undefined,
     });
   }
   return out;
@@ -5130,6 +5146,10 @@ const ADMIN_INVISIBLE_BLOCKED_MSG_TYPES: ReadonlySet<string> = new Set([
   "placeSignboard",
   "placeBillboard",
   "placeSaleDisplay",
+  "bindSaleDisplay",
+  "clearSaleDisplayBind",
+  "moveSaleDisplay",
+  "deleteSaleDisplay",
   "updateBillboard",
   "updateSignboard",
   "setVoxelText",
@@ -6260,6 +6280,77 @@ function placeUnlockPadAt(
     amountLuna: normalized.amountLuna,
   });
   return true;
+}
+
+const SALE_DISPLAY_FOOT_COLOR_RGB = 0x3a4554;
+
+function findSaleDisplayFootKey(
+  placed: ReadonlyMap<string, PlacedProps>,
+  saleDisplayId: string
+): string | null {
+  for (const [k, props] of placed) {
+    if (props.saleDisplayId === saleDisplayId) return k;
+  }
+  return null;
+}
+
+/** True when the column can host a new Sale Display foot (exclusive passable slab). */
+function canClaimSaleDisplayFoot(
+  roomId: string,
+  x: number,
+  z: number,
+  placed: Map<string, PlacedProps>
+): boolean {
+  if (nextOpenStackLevel(placed, x, z) !== 0) return false;
+  const extra = extraFloorMap(roomId);
+  const br = baseRemovedReadonly(roomId);
+  const nw = noWalkReadonly(roomId);
+  if (!canPlaceTeleporterFoot(roomId, x, z, placed, extra, br, nw)) return false;
+  for (const c of rooms.get(normalizeRoomId(roomId))?.values() ?? []) {
+    const st = snapToTile(c.player.x, c.player.z);
+    if (st.x === x && st.z === z) return false;
+  }
+  return true;
+}
+
+function writeSaleDisplayFoot(
+  roomId: string,
+  x: number,
+  z: number,
+  saleDisplayId: string
+): ObstacleTile | null {
+  const placed = placedMap(roomId);
+  const k = blockKey(x, z, 0);
+  placed.set(k, {
+    passable: true,
+    half: true,
+    quarter: false,
+    hex: false,
+    pyramid: false,
+    pyramidBaseScale: 1,
+    hexRadiusScale: 1,
+    sphere: false,
+    sphereRadiusScale: 1,
+    ramp: false,
+    rampDir: 0,
+    colorRgb: SALE_DISPLAY_FOOT_COLOR_RGB,
+    locked: true,
+    saleDisplayId,
+  });
+  schedulePersistWorldState();
+  return obstacleTileFromPlaced(normalizeRoomId(roomId), k);
+}
+
+function removeSaleDisplayFootById(
+  roomId: string,
+  saleDisplayId: string
+): string[] {
+  const placed = placedMap(roomId);
+  const k = findSaleDisplayFootKey(placed, saleDisplayId);
+  if (!k) return [];
+  placed.delete(k);
+  schedulePersistWorldState();
+  return [k];
 }
 
 function tickExpiredGatesForRoom(roomId: string, now: number): boolean {
@@ -11216,17 +11307,152 @@ export function addClient(
       const tz = Number(msg.z);
       if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
       const tile = snapToTile(tx, tz);
-      createSaleDisplay({
+      const placed = placedMap(currentRoomId);
+      if (!canClaimSaleDisplayFoot(currentRoomId, tile.x, tile.z, placed)) {
+        wsSafeSend(ws, { type: "error", code: "sale_display_tile_occupied" });
+        return;
+      }
+      const created = createSaleDisplay({
         roomId: currentRoomId,
         x: tile.x,
         z: tile.z,
         createdBy: address,
       });
+      const foot = writeSaleDisplayFoot(
+        currentRoomId,
+        tile.x,
+        tile.z,
+        created.id
+      );
       flushSaleDisplaysSync();
       broadcastSaleDisplays(currentRoomId);
+      if (foot) {
+        broadcast(currentRoomId, {
+          type: "obstaclesDelta",
+          roomId: currentRoomId,
+          add: [foot],
+          remove: [],
+        });
+      }
       logGameplayEvent(conn.sessionId, address, currentRoomId, "place_sale_display", {
+        id: created.id,
         x: tile.x,
         z: tile.z,
+      });
+      return;
+    }
+
+    if (
+      msg.type === "bindSaleDisplay" ||
+      msg.type === "clearSaleDisplayBind" ||
+      msg.type === "moveSaleDisplay" ||
+      msg.type === "deleteSaleDisplay"
+    ) {
+      const allowed = canPlaceSaleDisplay({
+        isAdmin: isAdmin(address),
+        isCosmeticGallery: isCosmeticGalleryRoom(currentRoomId),
+        canPlaceBlocks: canPlaceBlocksInRoom(currentRoomId, address),
+      });
+      if (!allowed) {
+        wsSafeSend(ws, { type: "error", code: "sale_display_forbidden" });
+        return;
+      }
+      const now = Date.now();
+      if (now - conn.lastPlaceAt < RATE_PLACE_MS) return;
+      conn.lastPlaceAt = now;
+      const id = String(msg.id ?? "").trim();
+      if (!id) return;
+      const existing = getSaleDisplayById(id);
+      if (!existing || existing.roomId !== currentRoomId) {
+        wsSafeSend(ws, { type: "error", code: "sale_display_not_found" });
+        return;
+      }
+
+      if (msg.type === "bindSaleDisplay") {
+        const sku = String(msg.cosmeticSku ?? "").trim();
+        const result = bindSaleDisplay(id, sku);
+        if (!result.ok) {
+          wsSafeSend(ws, { type: "error", code: `sale_display_${result.error}` });
+          return;
+        }
+        flushSaleDisplaysSync();
+        broadcastSaleDisplays(currentRoomId);
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "bind_sale_display", {
+          id,
+          cosmeticSku: result.display.cosmeticSku,
+        });
+        return;
+      }
+
+      if (msg.type === "clearSaleDisplayBind") {
+        clearSaleDisplayBind(id);
+        flushSaleDisplaysSync();
+        broadcastSaleDisplays(currentRoomId);
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "clear_sale_display_bind", {
+          id,
+        });
+        return;
+      }
+
+      if (msg.type === "moveSaleDisplay") {
+        const tx = Number(msg.x);
+        const tz = Number(msg.z);
+        if (!Number.isFinite(tx) || !Number.isFinite(tz)) return;
+        const tile = snapToTile(tx, tz);
+        if (tile.x === existing.x && tile.z === existing.z) return;
+        const placed = placedMap(currentRoomId);
+        const removedKeys = removeSaleDisplayFootById(currentRoomId, id);
+        if (!canClaimSaleDisplayFoot(currentRoomId, tile.x, tile.z, placed)) {
+          // Restore old foot on failure.
+          const restored = writeSaleDisplayFoot(
+            currentRoomId,
+            existing.x,
+            existing.z,
+            id
+          );
+          if (restored) {
+            broadcast(currentRoomId, {
+              type: "obstaclesDelta",
+              roomId: currentRoomId,
+              add: [restored],
+              remove: [],
+            });
+          }
+          wsSafeSend(ws, { type: "error", code: "sale_display_tile_occupied" });
+          return;
+        }
+        moveSaleDisplay(id, tile.x, tile.z);
+        const foot = writeSaleDisplayFoot(currentRoomId, tile.x, tile.z, id);
+        flushSaleDisplaysSync();
+        broadcastSaleDisplays(currentRoomId);
+        broadcast(currentRoomId, {
+          type: "obstaclesDelta",
+          roomId: currentRoomId,
+          add: foot ? [foot] : [],
+          remove: removedKeys,
+        });
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "move_sale_display", {
+          id,
+          x: tile.x,
+          z: tile.z,
+        });
+        return;
+      }
+
+      const removedKeys = removeSaleDisplayFootById(currentRoomId, id);
+      deleteSaleDisplay(id);
+      flushSaleDisplaysSync();
+      broadcastSaleDisplays(currentRoomId);
+      if (removedKeys.length) {
+        broadcast(currentRoomId, {
+          type: "obstaclesDelta",
+          roomId: currentRoomId,
+          add: [],
+          remove: removedKeys,
+        });
+      }
+      logGameplayEvent(conn.sessionId, address, currentRoomId, "delete_sale_display", {
+        id,
       });
       return;
     }
@@ -12030,6 +12256,9 @@ export function addClient(
         ...(existing.gate ? { gate: existing.gate } : {}),
         ...(existing.gateOpen ? { gateOpen: existing.gateOpen } : {}),
         ...(existing.unlockPad ? { unlockPad: existing.unlockPad } : {}),
+        ...(existing.saleDisplayId
+          ? { saleDisplayId: existing.saleDisplayId }
+          : {}),
       });
       const deltaTile = obstacleTileFromPlaced(currentRoomId, canonicalKey);
       if (deltaTile) {
@@ -12177,7 +12406,17 @@ export function addClient(
       }
 
       forgetUnlockPadInstance(currentRoomId, props);
+      const saleDisplayId =
+        typeof props.saleDisplayId === "string" ? props.saleDisplayId.trim() : "";
       placed.delete(k);
+      if (saleDisplayId) {
+        const sd = getSaleDisplayById(saleDisplayId);
+        if (sd && sd.roomId === currentRoomId) {
+          deleteSaleDisplay(saleDisplayId);
+          flushSaleDisplaysSync();
+          broadcastSaleDisplays(currentRoomId);
+        }
+      }
       broadcast(currentRoomId, {
         type: "obstaclesDelta",
         roomId: currentRoomId,
@@ -12626,6 +12865,19 @@ export function addClient(
             createdAt: s.createdAt,
           })),
         });
+      }
+
+      const movedSaleDisplayId =
+        typeof movedProps.saleDisplayId === "string"
+          ? movedProps.saleDisplayId.trim()
+          : "";
+      if (movedSaleDisplayId) {
+        const sd = getSaleDisplayById(movedSaleDisplayId);
+        if (sd && sd.roomId === currentRoomId) {
+          moveSaleDisplay(movedSaleDisplayId, to.x, to.z);
+          flushSaleDisplaysSync();
+          broadcastSaleDisplays(currentRoomId);
+        }
       }
 
       const deltaTile = obstacleTileFromPlaced(currentRoomId, destKey);

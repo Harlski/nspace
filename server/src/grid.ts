@@ -304,6 +304,8 @@ export type TerrainProps = {
     proofMode: "optimistic" | "payment_intent";
     instanceId: string;
   };
+  /** Sale Display foot — exclusive stack occupancy. */
+  saleDisplayId?: string;
   /** Ephemeral: gate passage for {@link TerrainProps.gateOpen.openedBy} until `untilMs`. */
   gateOpen?: {
     openedBy: string;

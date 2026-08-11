@@ -6,10 +6,10 @@ payload and “one showcase per Preset” docs/tests are removed or rewritten.
 
 **Blocked by:** 03 — Edit modal binds Published Catalog Entry + slot-aware show
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Joining The Shaper with no Sale Displays shows no auto Preset mannequin/floor grid
-- [ ] Placed bound Sale Displays remain the only cosmetic merch fixtures in The Shaper
-- [ ] Leave the Shaper / return behavior unchanged
-- [ ] Auto-layout gallery tests/docs replaced to match Sale Displays
-- [ ] No migration of old grid into Sale Displays (operators place fresh)
+- [x] Joining The Shaper with no Sale Displays shows no auto Preset mannequin/floor grid
+- [x] Placed bound Sale Displays remain the only cosmetic merch fixtures in The Shaper
+- [x] Leave the Shaper / return behavior unchanged
+- [x] Auto-layout gallery tests/docs replaced to match Sale Displays
+- [x] No migration of old grid into Sale Displays (operators place fresh)

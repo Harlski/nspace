@@ -71,7 +71,7 @@ Use **Reference ID** in feedback (e.g. “increase `build-dock-context-mods` scr
 |-----------|----------------------|--------|----------------|
 | **Terrain** | `terrain` | `1` | Cube + shape variants (see below) |
 | **Props** | `props` | `2` | Signpost |
-| **Buildings** | `buildings` | `3` | Teleporter, Gate, Unlock Pad, Attention Marker, Billboard (billboard / unlock pad / attention marker may require admin) |
+| **Buildings** | `buildings` | `3` | Teleporter, Gate, Unlock Pad, Attention Marker, Billboard, Sale Display (billboard / unlock pad / attention marker / sale display may require admin; Sale Display also places in The Shaper without opening general Building) |
 | **Prefab** | `prefab` | `4` | Prefab picker |
 
 Constants: `BUILD_DOCK_CATEGORY_ORDER`, `BUILD_DOCK_TOOLS` in `hud.ts`. While the build dock is open (Objects scope), `1`–`4` call `selectBuildDockCategory` (also switches from Room scope to Objects when needed).

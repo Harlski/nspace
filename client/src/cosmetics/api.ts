@@ -56,6 +56,18 @@ export function invalidateWardrobeCache(): void {
   wardrobeSessionCachedAt = 0;
 }
 
+/** Published shop Catalog Entries (bind picker + public shop list). No JWT. */
+export async function fetchPublishedShop(): Promise<ShopEntry[]> {
+  const data = await apiJson<{
+    collections: Array<{ name: string; items: ShopEntry[] }>;
+  }>("/api/cosmetics/shop");
+  const out: ShopEntry[] = [];
+  for (const col of data.collections ?? []) {
+    for (const item of col.items ?? []) out.push(item);
+  }
+  return out;
+}
+
 export async function fetchWardrobe(opts?: {
   force?: boolean;
 }): Promise<WardrobeResponse> {

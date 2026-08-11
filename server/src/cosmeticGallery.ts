@@ -1,6 +1,7 @@
 /**
- * Dev-only Preset Gallery room - one showcase per Preset, join code SPACER.
- * See CONTEXT.md (Preset Gallery).
+ * The Shaper room identity (join code SPACER) and retired auto Preset gallery helpers.
+ * In-world merchandising uses Sale Displays (ADR 0015); welcome no longer injects the
+ * one-showcase-per-Preset grid.
  */
 import {
   listCosmeticPresets,
@@ -149,6 +150,8 @@ export function buildCosmeticGalleryPayload(): CosmeticGalleryWire {
 export function cosmeticGalleryWelcomeExtras(
   roomId: string
 ): { cosmeticGallery?: CosmeticGalleryWire } {
-  if (!isCosmeticGalleryRoom(roomId)) return {};
-  return { cosmeticGallery: buildCosmeticGalleryPayload() };
+  // Auto Preset gallery retired (ADR 0015 / Sale Displays). The Shaper room remains;
+  // merchandising is curated Sale Displays only.
+  void roomId;
+  return {};
 }
