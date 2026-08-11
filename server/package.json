@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
-    "@nimiq/core": "2.2.2",
+    "@nimiq/core": "2.7.2",
     "@nimiq/identicons": "^1.6.2",
     "bad-words": "^4.0.0",
     "cors": "^2.8.5",

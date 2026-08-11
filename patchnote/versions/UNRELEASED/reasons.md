@@ -8,7 +8,7 @@
 
 ## Summary
 
-_Add a one-line roll-up here when the buffer gets long._
+Bump `@nimiq/core` to **2.7.2** so light clients can establish mainnet consensus after ZKP sync was removed from seed nodes (hard fork).
 
 ---
 
@@ -16,7 +16,7 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Repo / docs
 
-- _(none yet)_
+- `docs/LEARNEDLESSONS.md` — note removal of the `2.2.2` worker patch and the post-fork client requirement.
 
 ### Client
 
@@ -24,12 +24,16 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Server
 
-- _(none in this change set)_
+- `@nimiq/core` pin → **2.7.2** (workspace + root `overrides`).
 
 ### payment-intent-service
 
-- _(none in this change set)_
+- `@nimiq/core` pin → **2.7.2** (same pico / non-ZKP sync path as payout).
+
+### payout-service
+
+- `@nimiq/core` pin → **2.7.2**. Required so `/v1/balance` and sends can pass `waitForConsensusEstablished()` against current mainnet seeds (ZKP sync no longer offered).
 
 ### Deploy / ops
 
-- _(none in this change set)_
+- Remove `patches/@nimiq+core+2.2.2.patch` (does not apply to 2.7.2). Redeploy **payout** (and **payment-intent** if used) images after merge; game server also picks up the shared pin on rebuild.

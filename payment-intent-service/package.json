@@ -10,7 +10,7 @@
     "test": "tsx --test test/**/*.test.ts"
   },
   "dependencies": {
-    "@nimiq/core": "2.2.2",
+    "@nimiq/core": "2.7.2",
     "better-sqlite3": "^11.10.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
