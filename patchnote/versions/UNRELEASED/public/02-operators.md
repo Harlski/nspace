@@ -7,4 +7,4 @@
 
 _(Draft — not published.)_
 
-- _Deploy / config deltas vs previous patch-notes version._
+- **[OPS]** **Rebuild payout (+ payment-intent) after `@nimiq/core` 2.7.2** — mainnet seeds no longer offer ZKP sync; images still on **2.2.2** will hang on consensus (`/v1/balance`, sends) with `Requesting zkp` peer drops. Redeploy sidecars from this release; no new env vars. The old `patches/@nimiq+core+2.2.2.patch` is removed (not applicable to 2.7.2).

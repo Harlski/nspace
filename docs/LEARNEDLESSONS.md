@@ -28,7 +28,9 @@ Short notes on non-obvious behavior we hit in production or dev, so the next cha
 
 **Cause:** The WASM client expects a browser-like environment (IndexedDB for BLS key cache, `EventTarget`). Node `worker_threads` do not provide IndexedDB.
 
-**Fix:** Dependency `fake-indexeddb`, `patch-package` + `patches/@nimiq+core+2.2.2.patch` prepend `import 'fake-indexeddb/auto'` in `@nimiq/core/nodejs/worker.mjs` before `worker-wasm` loads. Root `postinstall` runs `node scripts/postinstall.cjs` to apply patches (see **Vercel: skip `patch-package` on deploy** below). **Commit the `patches/` directory** so installs stay reproducible.
+**Fix (historical for `@nimiq/core@2.2.2`):** Dependency `fake-indexeddb`, `patch-package` + `patches/@nimiq+core+2.2.2.patch` prepended `import 'fake-indexeddb/auto'` in `@nimiq/core/nodejs/worker.mjs` before `worker-wasm` loads. Root `postinstall` runs `node scripts/postinstall.cjs` to apply patches (see **Vercel: skip `patch-package` on deploy** below).
+
+**Current:** Production uses `@nimiq/core@2.7.2` (pico sync after the mainnet hard fork removed ZKP sync). The `2.2.2` patch file was removed with that bump; Node may still log IndexedDB / `addEventListener` warnings, but pico consensus no longer depends on ZKP. Reintroduce a version-matched `patches/@nimiq+core+<ver>.patch` if worker crashes return.
 
 ## Vercel: skip `patch-package` on deploy
 
