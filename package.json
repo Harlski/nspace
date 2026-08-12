@@ -9,7 +9,7 @@
     "payout-service"
   ],
   "overrides": {
-    "@nimiq/core": "2.7.2"
+    "@nimiq/core": "2.20.0"
   },
   "scripts": {
     "prepare-merge": "node scripts/prepare-merge.cjs",
