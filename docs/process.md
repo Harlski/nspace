@@ -77,8 +77,11 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 | `VITE_API_BASE_URL` | client | API origin when SPA and API differ. Prefer full URL (`https://api.example.com`). Host-only (`api.example.com`) is normalized to `https://…` so it is not treated as a path on the SPA host. |
 | `VITE_WS_BASE_URL` | client | Optional WebSocket origin (`wss://…` or host-only); otherwise derived from resolved API base or page |
 | `EVENT_LOG_DIR` | server | Directory for append-only JSONL replay logs (`events-*.jsonl`); default `server/data/events` |
-| `ANALYTICS_OVERVIEW_CACHE_TTL_MS` | server | In-memory TTL for `GET /api/analytics/overview` snapshots (default **120000** = 2 min). Avoids re-scanning JSONL on every range change / refresh. Set **`0`** to disable. Concurrent identical requests share one in-flight build. |
-| `ANALYTICS_FIRST_TIME_LOOKBACK_DAYS` | server | Extra calendar days of event logs scanned **before** the selected `/analytics` window so **first-time** / **Pay returning** can see prior `session_start`s. Default: `DAILY_STATS_LOOKBACK_DAYS` if set, else **400**. Set **`0`** to disable lookback (FTU ≈ unique; returning stays 0). Larger values improve accuracy but slow overview builds. |
+| `ANALYTICS_OVERVIEW_CACHE_TTL_MS` | analytics-service | In-memory TTL for overview snapshots (default **120000** = 2 min). Set **`0`** to disable. Concurrent identical requests share one in-flight build. |
+| `ANALYTICS_FIRST_TIME_LOOKBACK_DAYS` | analytics-service | Extra calendar days of Event Logs scanned **before** the selected `/analytics` window so **first-time** / **Pay returning** can see prior `session_start`s. Default: `DAILY_STATS_LOOKBACK_DAYS` if set, else **400**. |
+| `ANALYTICS_SERVICE_URL` | server | Base URL of the Analytics Service sidecar (compose default: `http://analytics:3092`; local: `http://127.0.0.1:3092`). Required for `/analytics` overview and daily-stats scans. |
+| `ANALYTICS_SERVICE_API_SECRET` | server + analytics | Shared Bearer secret for Analytics Service `/v1/*` routes |
+| `ANALYTICS_SERVICE_FETCH_TIMEOUT_MS` | server | HTTP timeout for overview / daily-stats proxy (default **180000** = 3 min) |
 | `PIXEL_PAINT_LOG_FILE` | server | Append-only Pixel room paint history for timelapse (`paint` + one-time `baseline` records); default `server/data/pixel/paint-log.jsonl` |
 | `PLACE_RADIUS_BLOCKS` | server | Max horizontal distance for block place/edit/move actions (default `9`) |
 | `WS_METRICS_INTERVAL_MS` | server | Optional — flush WebSocket byte/send counts by message `type` every N ms (stdout + admin System log); `0` or unset = off. See [brainstorm/movement-move-order-broadcast/baseline-metrics.md](brainstorm/movement-move-order-broadcast/baseline-metrics.md) |
@@ -135,7 +138,7 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 
 ## Local development
 
-- From repo root: `npm install`, then `npm run dev` — runs Vite (default [http://127.0.0.1:5173](http://127.0.0.1:5173)), the game server with `tsx watch`, and the **payout service** on `127.0.0.1:3091`. Client + server only: `npm run dev:game`. Vite proxies `/api`, `/ws`, and server-rendered main-site HTML (`/analytics`, `/advertise`, `/advertise/how-it-works`, `/admin`, `/payouts`, …) to `3001`.
+- From repo root: `npm install`, then `npm run dev` — runs Vite (default [http://127.0.0.1:5173](http://127.0.0.1:5173)), the game server with `tsx watch`, the **payout service** on `127.0.0.1:3091`, and the **Analytics Service** on `127.0.0.1:3092`. Client + server only: `npm run dev:game`. Vite proxies `/api`, `/ws`, and server-rendered main-site HTML (`/analytics`, `/advertise`, `/advertise/how-it-works`, `/admin`, `/payouts`, …) to `3001`.
 - **Local payout sidecar:** `npm run dev` starts it automatically. Ensure `PAYOUT_SERVICE_API_SECRET` in `server/.env` matches `payout-service/.env`. `NIM_PAYOUT_DEV_FAKE_BALANCE=1` is set by default so the HUD works even before Nimiq consensus; for real on-chain sends set `NIM_PAYOUT_PRIVATE_KEY` to a funded testnet wallet (see [getting-started.md](getting-started.md)).
 - Optional payment intent sidecar: `npm run dev:payment-intent` (requires `PAYMENT_INTENT_*` and `NIM_NETWORK`; see [docker-deployment.md](docker-deployment.md)).
 - [client/.env.development](../client/.env.development) can enable dev login and admin UI; match `DEV_AUTH_BYPASS` on the server for dev login.

@@ -5,6 +5,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY client/package.json client/
 COPY server/package.json server/
+COPY payment-intent-service/package.json payment-intent-service/
+COPY payout-service/package.json payout-service/
+COPY analytics-service/package.json analytics-service/
 # postinstall runs patch-package; needs these before npm ci
 COPY scripts/postinstall.cjs scripts/
 COPY patches/ patches/

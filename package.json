@@ -6,7 +6,8 @@
     "client",
     "server",
     "payment-intent-service",
-    "payout-service"
+    "payout-service",
+    "analytics-service"
   ],
   "overrides": {
     "@nimiq/core": "2.20.0"
@@ -14,13 +15,14 @@
   "scripts": {
     "prepare-merge": "node scripts/prepare-merge.cjs",
     "check-vercel-rewrites": "node scripts/check-vercel-rewrites.cjs",
-    "dev": "node scripts/ensure-payout-dev-env.cjs && concurrently -n client,server,payout -c blue,green,magenta \"npm run dev -w client\" \"npm run dev -w server\" \"npm run dev -w payout-service\"",
+    "dev": "node scripts/ensure-payout-dev-env.cjs && concurrently -n client,server,payout,analytics -c blue,green,magenta,cyan \"npm run dev -w client\" \"npm run dev -w server\" \"npm run dev -w payout-service\" \"npm run dev -w analytics-service\"",
     "dev:game": "concurrently -n client,server -c blue,green \"npm run dev -w client\" \"npm run dev -w server\"",
     "build": "npm run build -w client && npm run build -w server",
     "start": "npm run start -w server",
     "dev:payment-intent": "npm run dev -w payment-intent-service",
     "dev:payout": "npm run dev -w payout-service",
-    "test": "npm test -w payment-intent-service && npm test -w payout-service && npm test -w server",
+    "dev:analytics": "npm run dev -w analytics-service",
+    "test": "npm test -w payment-intent-service && npm test -w payout-service && npm test -w analytics-service && npm test -w server",
     "tutorial:reseed-bootstrap": "node scripts/reseed-tutorial-bootstrap.cjs",
     "tutorial:reseed-bootstrap:local": "node scripts/reseed-tutorial-bootstrap-local.cjs",
     "postinstall": "node scripts/postinstall.cjs"

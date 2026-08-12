@@ -51,13 +51,16 @@ import { startGameWsMetricsFlushTimer } from "./gameWsMetrics.js";
 import { flushPersistWorldStateSync } from "./worldPersistence.js";
 import { verifySignedMessageDeriveAddress } from "./verifyNimiq.js";
 import {
-  getEventLogAnalyticsSnapshot,
   flushEventLogSync,
   getEventsForSession,
   listRecentPlayerAddresses,
   listSessionsForPlayer,
-  type AnalyticsTimeWindow,
 } from "./eventLog.js";
+import {
+  fetchEventLogAnalyticsSnapshot,
+  isAnalyticsServiceClientConfigured,
+  type AnalyticsTimeWindow,
+} from "./analyticsServiceClient.js";
 import {
   startDailyStatsScheduler,
   buildDailyStatsReport,
@@ -306,6 +309,7 @@ import { getTopLoginStreaks, recordLoginStreakForWallet } from "./loginStreakSto
 import { getAdminSystemSnapshot, startAdminSystemMonitor } from "./adminSystemMonitor.js";
 import { probePaymentIntentService } from "./paymentIntentProbe.js";
 import { probePayoutService } from "./payoutServiceProbe.js";
+import { probeAnalyticsService } from "./analyticsServiceProbe.js";
 import { getDeployRestartHookSecret, isAdmin, isStreamObserver, streamObserverAllowlistConfigured, streamObserverEnvConfigured } from "./config.js";
 import { normalizeStreamObserverAddressesField } from "./walletAddresses.js";
 import { getPixelBoardPngCached } from "./pixelBoardImage.js";
@@ -1019,13 +1023,22 @@ app.get("/api/analytics/overview", requireAnalyticsWallet, async (req, res) => {
     return;
   }
   try {
-    const analytics = await getEventLogAnalyticsSnapshot(
+    if (!isAnalyticsServiceClientConfigured()) {
+      res.status(503).json({ error: "analytics_service_unavailable" });
+      return;
+    }
+    const analytics = await fetchEventLogAnalyticsSnapshot(
       maxDays,
       sessionLimit,
       payoutLimit,
       tw.range
     );
-    res.json(analytics);
+    if (!analytics.ok) {
+      console.error("[analytics/overview]", analytics.error);
+      res.status(503).json({ error: "analytics_service_unavailable" });
+      return;
+    }
+    res.json(analytics.value);
   } catch (err) {
     console.error("[analytics/overview]", err);
     res.status(500).json({ error: "internal" });
@@ -2260,11 +2273,12 @@ app.delete(
 app.get("/api/admin/system/snapshot", requireSystemAdminWallet, async (_req, res) => {
   try {
     const snapshot = getAdminSystemSnapshot();
-    const [paymentIntent, payoutService] = await Promise.all([
+    const [paymentIntent, payoutService, analyticsService] = await Promise.all([
       probePaymentIntentService(),
       probePayoutService(),
+      probeAnalyticsService(),
     ]);
-    res.json({ ...snapshot, paymentIntent, payoutService });
+    res.json({ ...snapshot, paymentIntent, payoutService, analyticsService });
   } catch (e) {
     console.error("[api/admin/system/snapshot]", e);
     res.status(500).json({ error: "internal" });

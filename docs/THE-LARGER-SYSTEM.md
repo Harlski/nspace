@@ -252,6 +252,22 @@ room-wide path broadcasts solely to feed admin UI.
 Update this subsection if a second admin-only channel is added or if Movement Watch is folded
 into another transport.
 
+### Event Log scans stay off the game event loop
+
+**Today:** The game **writes** the append-only Event Log. Overview snapshots and the daily-stats
+aggregate are **read scans** of those files (including a long first-time lookback). Those scans
+run in the **Analytics Service** sidecar, not on the game Node event loop. The game remains the
+public HTTP face of `/analytics` and thin-proxies the two reads. There is **no in-process
+fallback**. Play continues if the sidecar is down. A derived database is a later plan owned by
+that service, not a reason to put storage back on the play path. See
+[adr/0016-analytics-service-sidecar.md](adr/0016-analytics-service-sidecar.md).
+
+**Direction:** Keep Event Log CPU/IO off the tick. Do not reintroduce JSONL aggregation in the
+game process to “make `/analytics` work without the sidecar.”
+
+Update this subsection if the Analytics Service gains a derived store or if additional Event Log
+scans (replay, connect notice) move off the game.
+
 ### Tutorial Unlock is a free message sign, not a spend
 
 **Today:** After the tutorial mine, **Unlock** on the Tutorial Path pad asks the learner to
@@ -307,3 +323,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-07-16** — Build dock: context controls must not exceed tool-card height; Floor spawn no longer shows Use room center in the dock. See [reasons/reason_628401.md](reasons/reason_628401.md).
 - **2026-07-25** — Recorded decision: tutorial faucet Pay-Intents use `priority: true` so first-contact NIM jumps the Outbox + Payout Service queue ahead of the normal FIFO backlog. See [reasons/reason_981786.md](reasons/reason_981786.md).
 - **2026-07-28** — Recorded decision: tutorial Unlock is a free wallet **message sign** (not a NIM send) so faucet settlement / zero balance cannot block the lesson; real pads stay Payment Intent. See [reasons/reason_452918.md](reasons/reason_452918.md).
+- **2026-08-12** — Recorded decision: Event Log scans for `/analytics` overview and daily-stats run in the Analytics Service sidecar, not on the game event loop; no in-process fallback. See [reasons/reason_194837.md](reasons/reason_194837.md).

@@ -13,7 +13,7 @@ import {
   runEndOfDaySnapshotReportFlushSequence,
   type PendingPayoutSummaryForReport,
 } from "../src/dailyStatsReport.js";
-import type { DailyStatsAggregate } from "../src/eventLog.js";
+import type { DailyStatsAggregate } from "../src/analyticsServiceClient.js";
 import {
   getPendingQueueTotals,
   triggerManualBulkPayout,

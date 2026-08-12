@@ -811,3 +811,16 @@ The game server's minimal local, durable, append-only store of Pay-Intents not y
 by the Payout Service. A delivery loop drains it with retries so no payout is lost across a
 service outage or a game-server restart. Priority intents are delivered before normal ones.
 _Avoid_: queue (the durable queue lives in the Payout Service), buffer, spool.
+
+## Analytics
+
+**Event Log**:
+The append-only record of gameplay events the game writes. The Analytics Service reads it;
+the game does not scan it to serve `/analytics` or daily-stats.
+_Avoid_: analytics log, replay log, event file.
+
+**Analytics Service**:
+The dedicated sidecar that scans the Event Log and returns overview snapshots and daily-stats
+aggregates. It does not serve player HTTP, send Telegram, or flush payouts. The game stays the
+public face of `/analytics` and fails those reads if this service is down; play continues.
+_Avoid_: analytics worker, stats service, log service, event log service.

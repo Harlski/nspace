@@ -29,6 +29,10 @@ retired; try + buy via Cosmetic Unlock; kiosks outside The Shaper allowed.
 - `docs/process.md` / `docs/features-checklist.md`: `MOVE_ORDER_BROADCAST` default on
   (`=0` kill switch); Sale Displays + Shaper no longer auto Preset grid.
 - `docs/build_menu.md`: Buildings → Sale Display (admin).
+- Glossary: **Event Log** / **Analytics Service**; ADR
+  `docs/adr/0016-analytics-service-sidecar.md`.
+- `docs/process.md` / `docs/features-checklist.md` / `docs/docker-deployment.md` /
+  `docs/live-service-implementation.md`: Analytics Service sidecar (port 3092).
 
 ### Client
 
@@ -47,11 +51,22 @@ retired; try + buy via Cosmetic Unlock; kiosks outside The Shaper allowed.
 - `haltPathVelocity` / `haltConnPath`: teleport, stop, and no_path recovery clear planar velocity with the path so welcome/stateDelta cannot leave clients soft-extrapolating.
 - `playerLevel` / `dailyEarnAllowance`: Level from AP, UTC-day spent store, `enqueueGameplayPayIntent` gate for mining / Free Play goals / maze; tutorial + admin feedback bypass; private at-cap feedback.
 - Sale Displays store + wire projection; WS place/bind/clear/move/delete; `canPlaceSaleDisplay` Shaper carve-out; `cosmeticGalleryWelcomeExtras` no longer injects auto Preset gallery.
+- `GET /api/analytics/overview` and daily-stats aggregate are thin proxies to the
+  Analytics Service (503 if down). No in-process JSONL scan on the game event loop.
+- `/admin/system` probes Analytics Service `GET /health`.
 
 ### payment-intent-service
 
 - _(none in this change set)_
 
+### analytics-service
+
+- New workspace: Event Log scans for `/v1/overview` and `/v1/daily-stats-aggregate`.
+  Bearer `ANALYTICS_SERVICE_API_SECRET`. Read-only `EVENT_LOG_DIR`.
+
 ### Deploy / ops
 
 - **`MOVE_ORDER_BROADCAST`**: default on; set `=0` to kill-switch snapshot pose streaming.
+- Compose service `analytics` (default): `127.0.0.1:3092`, volume `./data/events:ro`.
+  `nspace` does not `depends_on` it. Env: `ANALYTICS_SERVICE_URL`,
+  `ANALYTICS_SERVICE_API_SECRET`. `npm run dev` starts the sidecar.

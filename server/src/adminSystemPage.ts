@@ -364,6 +364,12 @@ export function adminSystemPageHtml(): string {
           secretEnv: "PAYOUT_SERVICE_API_SECRET",
           apiPath: "GET /v1/pending/totals",
         });
+        var analyticsBlock = renderSidecarSection("Analytics service", j.analyticsService, {
+          defaultHint:
+            "Set ANALYTICS_SERVICE_URL on this server (Compose default: <code class='mono'>http://analytics:3092</code>).",
+          secretEnv: "ANALYTICS_SERVICE_API_SECRET",
+          apiPath: "GET /health",
+        });
         var p = j.process || {};
         var uptimeStr = "-";
         if (j.uptimeSec != null && Number.isFinite(Number(j.uptimeSec))) {
@@ -373,6 +379,7 @@ export function adminSystemPageHtml(): string {
         panel.innerHTML =
           piBlock +
           payoutBlock +
+          analyticsBlock +
           "<div class='sys-actions'>" +
           "<button type='button' id='sys-refresh'>Refresh now</button>" +
           "<label><input type='checkbox' id='sys-poll' checked/> Auto-refresh every 10s</label></div>" +

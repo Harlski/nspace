@@ -1,7 +1,7 @@
 import {
-  getDailyStatsAggregate,
+  fetchDailyStatsAggregate,
   type DailyStatsAggregate,
-} from "./eventLog.js";
+} from "./analyticsServiceClient.js";
 import { isTelegramConfigured, sendTelegramPlainText } from "./telegramNotify.js";
 import {
   getPendingQueueTotals,
@@ -196,11 +196,15 @@ export async function buildStatsReport(
   headerLabel: string,
   pending?: PendingPayoutSummaryForReport
 ): Promise<{ aggregate: DailyStatsAggregate; message: string }> {
-  const aggregate = await getDailyStatsAggregate(
+  const fetched = await fetchDailyStatsAggregate(
     windowStartMs,
     windowEndMs,
     lookbackDays()
   );
+  if (!fetched.ok) {
+    throw new Error(`analytics_service_unavailable: ${fetched.error}`);
+  }
+  const aggregate = fetched.value;
   const pendingInfo = pending ?? (await currentPendingSummary(false));
   return {
     aggregate,

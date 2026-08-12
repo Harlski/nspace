@@ -122,6 +122,26 @@ Outgoing NIM rewards run in a dedicated **`payout`** container (not in the game-
 
 **Production cutover** from in-process payouts: [payout-cutover-runbook.md](payout-cutover-runbook.md).
 
+### Analytics sidecar (default)
+
+Event Log scans for `/analytics` overview and the daily-stats aggregate run in a dedicated **`analytics`** container (not in the game-server process). It starts **by default** with `docker compose up`. The game container does **not** `depends_on` it: play continues if analytics is down.
+
+- **Build context:** repository root; Dockerfile [`analytics-service/Dockerfile`](../analytics-service/Dockerfile).
+- **Port:** `127.0.0.1:3092` → `3092` in the container (localhost-bound on the host).
+- **Event Log:** host `./data/events` → `/data/events` (read-only). The game still **writes** JSONL under `./data/events`.
+- **Required env:** `ANALYTICS_SERVICE_API_SECRET` (root `.env` or `server/.env` and `analytics-service/.env`). See [`analytics-service/.env.example`](../analytics-service/.env.example).
+- **Game server wiring:** `ANALYTICS_SERVICE_URL=http://analytics:3092` (default in compose) and the same `ANALYTICS_SERVICE_API_SECRET`.
+
+**HTTP API** (`/v1/*` requires `Authorization: Bearer <ANALYTICS_SERVICE_API_SECRET>`):
+
+| Method | Path | Purpose |
+|--------|------|--------|
+| `GET` | `/health` | Liveness (no auth) |
+| `GET` | `/v1/overview` | `/analytics` snapshot (`days`, `sessions`, `payouts`, optional `fromTs`/`toTs`) |
+| `GET` | `/v1/daily-stats-aggregate` | Daily-stats aggregate (`dayStartMs`, `dayEndMs`, `lookbackDays`) |
+
+**Local dev without Docker:** `npm run dev` starts the Analytics Service (or `npm run dev:analytics`). Configure `analytics-service/.env` first.
+
 ### Production Deployment
 
 **For VPS deployment:**

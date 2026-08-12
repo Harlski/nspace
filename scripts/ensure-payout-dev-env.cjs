@@ -6,10 +6,13 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 const payoutExample = path.join(root, "payout-service", ".env.example");
 const payoutEnv = path.join(root, "payout-service", ".env");
+const analyticsExample = path.join(root, "analytics-service", ".env.example");
+const analyticsEnv = path.join(root, "analytics-service", ".env");
 const serverExample = path.join(root, "server", ".env.example");
 const serverEnv = path.join(root, "server", ".env");
 
 const DEV_PAYOUT_SECRET = "dev-insecure-local-payout-secret";
+const DEV_ANALYTICS_SECRET = "dev-insecure-local-analytics-secret";
 
 function readEnvMap(filePath) {
   if (!fs.existsSync(filePath)) return new Map();
@@ -71,6 +74,11 @@ if (!fs.existsSync(payoutEnv) && fs.existsSync(payoutExample)) {
   console.log("[dev] Created payout-service/.env from .env.example");
 }
 
+if (!fs.existsSync(analyticsEnv) && fs.existsSync(analyticsExample)) {
+  fs.copyFileSync(analyticsExample, analyticsEnv);
+  console.log("[dev] Created analytics-service/.env from .env.example");
+}
+
 if (!fs.existsSync(serverEnv) && fs.existsSync(serverExample)) {
   fs.copyFileSync(serverExample, serverEnv);
   console.log("[dev] Created server/.env from .env.example");
@@ -121,11 +129,23 @@ const serverPatch = {
   PAYOUT_SERVICE_URL: "http://127.0.0.1:3091",
   PAYOUT_SERVICE_API_SECRET: DEV_PAYOUT_SECRET,
   NIM_PAYOUT_DEV_FAKE_BALANCE: "1",
+  ANALYTICS_SERVICE_URL: "http://127.0.0.1:3092",
+  ANALYTICS_SERVICE_API_SECRET: DEV_ANALYTICS_SECRET,
 };
 if (upsertEnvKeys(serverEnv, serverPatch)) {
   console.log(
-    "[dev] Ensured PAYOUT_SERVICE_* + NIM_PAYOUT_DEV_FAKE_BALANCE on server/.env"
+    "[dev] Ensured PAYOUT_SERVICE_* + ANALYTICS_SERVICE_* + NIM_PAYOUT_DEV_FAKE_BALANCE on server/.env"
   );
+}
+
+const analyticsMap = readEnvMap(analyticsEnv);
+if (
+  upsertEnvKeys(analyticsEnv, {
+    ANALYTICS_SERVICE_API_SECRET:
+      analyticsMap.get("ANALYTICS_SERVICE_API_SECRET") || DEV_ANALYTICS_SECRET,
+  })
+) {
+  console.log("[dev] Ensured ANALYTICS_SERVICE_API_SECRET on analytics-service/.env");
 }
 
 if (!legacyKey && !readEnvMap(payoutEnv).get("NIM_PAYOUT_PRIVATE_KEY")) {

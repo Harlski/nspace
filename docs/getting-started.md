@@ -76,7 +76,7 @@ A multiplayer isometric social space built with **Nimiq wallet** authentication,
    2. **Matching secrets** — `PAYOUT_SERVICE_API_SECRET` in `server/.env` must match `payout-service/.env` (see `.env.example` files; dev default: `dev-insecure-local-payout-secret`).
    3. **Funded signer** — set `NIM_PAYOUT_PRIVATE_KEY` in `payout-service/.env` to a **testnet** wallet with NIM. Generate one: `server/scripts/generate-nimiq-wallet.sh` (or paste an existing testalbatross key).
    
-   First run auto-creates `payout-service/.env` from `.env.example` if missing. Restart `npm run dev` after editing env files.
+   First run auto-creates `payout-service/.env` and `analytics-service/.env` from `.env.example` if missing. Restart `npm run dev` after editing env files. `/analytics` needs the Analytics Service on port `3092` (`ANALYTICS_SERVICE_URL` + matching `ANALYTICS_SERVICE_API_SECRET`).
 
 6. **Login**
    

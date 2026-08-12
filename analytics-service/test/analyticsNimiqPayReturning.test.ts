@@ -7,7 +7,7 @@ import { after, before, describe, it } from "node:test";
 import {
   clearAnalyticsOverviewCache,
   getEventLogAnalyticsSnapshot,
-} from "../src/eventLog.js";
+} from "../src/eventLogAnalytics.js";
 
 function utcDayFile(dir: string, dayStartMs: number): string {
   const d = new Date(dayStartMs);
@@ -26,15 +26,18 @@ describe("analytics Nimiq Pay returning (lookback before window)", () => {
   let prevLogDir: string | undefined;
   let prevTtl: string | undefined;
   let prevLookback: string | undefined;
+  let prevIdenticon: string | undefined;
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nspace-pay-returning-"));
     prevLogDir = process.env.EVENT_LOG_DIR;
     prevTtl = process.env.ANALYTICS_OVERVIEW_CACHE_TTL_MS;
     prevLookback = process.env.ANALYTICS_FIRST_TIME_LOOKBACK_DAYS;
+    prevIdenticon = process.env.ANALYTICS_IDENTICON_STUB;
     process.env.EVENT_LOG_DIR = tmpDir;
     process.env.ANALYTICS_OVERVIEW_CACHE_TTL_MS = "0";
     process.env.ANALYTICS_FIRST_TIME_LOOKBACK_DAYS = "30";
+    process.env.ANALYTICS_IDENTICON_STUB = "1";
     clearAnalyticsOverviewCache();
   });
 
@@ -46,6 +49,8 @@ describe("analytics Nimiq Pay returning (lookback before window)", () => {
     else process.env.ANALYTICS_OVERVIEW_CACHE_TTL_MS = prevTtl;
     if (prevLookback === undefined) delete process.env.ANALYTICS_FIRST_TIME_LOOKBACK_DAYS;
     else process.env.ANALYTICS_FIRST_TIME_LOOKBACK_DAYS = prevLookback;
+    if (prevIdenticon === undefined) delete process.env.ANALYTICS_IDENTICON_STUB;
+    else process.env.ANALYTICS_IDENTICON_STUB = prevIdenticon;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -57,8 +62,6 @@ describe("analytics Nimiq Pay returning (lookback before window)", () => {
       new Date(now).getUTCDate()
     );
     const dayMs = 86_400_000;
-    // 7-day rolling window starts at today-6d; prior visit 10 days ago is outside that window.
-    // Create filler day files so a naive last-7-files scan would drop the pre-window day.
     const beforeWindowStart = todayStart - 10 * dayMs;
     const inWindowStart = todayStart - 1 * dayMs;
     for (let i = 0; i <= 10; i += 1) {

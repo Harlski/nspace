@@ -45,6 +45,8 @@ services:
       PAYMENT_INTENT_API_SECRET: ${PAYMENT_INTENT_API_SECRET:-}
       PAYOUT_SERVICE_URL: ${PAYOUT_SERVICE_URL:-http://payout:3091}
       PAYOUT_SERVICE_API_SECRET: ${PAYOUT_SERVICE_API_SECRET:-}
+      ANALYTICS_SERVICE_URL: ${ANALYTICS_SERVICE_URL:-http://analytics:3092}
+      ANALYTICS_SERVICE_API_SECRET: ${ANALYTICS_SERVICE_API_SECRET:-}
       # Strip hot-wallet key if still present in shared env_file (signer lives on payout only).
       NIM_PAYOUT_PRIVATE_KEY: ""
       # JWT_SECRET should be set in ./.env and/or ./server/.env (not dev-insecure-change-me in prod)
@@ -55,6 +57,32 @@ services:
     volumes:
       # world-state.json and events-*.jsonl live under server/data in the app
       - ./data:/app/server/data
+
+  # Event Log scans for /analytics overview + daily-stats (ADR-0016). Default in production.
+  # nspace does not depends_on this: play continues if analytics is down.
+  analytics:
+    build:
+      context: .
+      dockerfile: analytics-service/Dockerfile
+    image: nspace-analytics:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3092:3092"
+    env_file:
+      - path: ./.env
+        required: false
+      - path: ./server/.env
+        required: false
+      - path: ./analytics-service/.env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3092"
+      HOST: 0.0.0.0
+      EVENT_LOG_DIR: /data/events
+      ANALYTICS_SERVICE_API_SECRET: ${ANALYTICS_SERVICE_API_SECRET:-}
+    volumes:
+      - ./data/events:/data/events:ro
 
   # Optional: incoming NIM payment intents (quotes + chain verify). Not started by default.
   # Requires PAYMENT_INTENT_* in .env — see docs/docker-deployment.md

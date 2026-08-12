@@ -152,6 +152,9 @@ NODE_ENV=production
 # PORT=3001
 # EVENT_LOG_DIR=/app/server/data/events
 # WORLD_STATE_DIR=/app/server/data
+# Analytics Service (compose service `analytics` on 127.0.0.1:3092; same secret on analytics-service/.env):
+# ANALYTICS_SERVICE_URL=http://analytics:3092
+# ANALYTICS_SERVICE_API_SECRET=use-a-long-random-secret
 ```
 
 Do **not** commit `.env`. The compose file binds `127.0.0.1:3001:3001`; put **Caddy or Nginx** in front for TLS and proxy `/`, `/api`, and **`/ws`** (WebSockets).
@@ -238,7 +241,7 @@ Each deploy creates **`/opt/nspace/backups/nspace-data-*.tar.gz`** (same `DEPLOY
 
 **After** the backup and `git reset`, the workflow runs [`scripts/migrate-payout-data-on-host.sh`](../scripts/migrate-payout-data-on-host.sh) to move any legacy `nim-payout-*` files from `data/` into `data/payout-service/` (idempotent; safe on every deploy). If host permissions block `mv` (Docker writes `data/` as root), the wrapper retries the same migration via a one-off `bash:5-alpine` container. See [payout-cutover-runbook.md](payout-cutover-runbook.md).
 
-**`/admin/system`** (system admin wallet) shows green / yellow / red status for **Payment intent** and **Payout** sidecars, probe error text, and a `docker compose logs …` hint when not fully healthy.
+**`/admin/system`** (system admin wallet) shows green / yellow / red status for **Payment intent**, **Payout**, and **Analytics** sidecars, probe error text, and a `docker compose logs …` hint when not fully healthy. Analytics health is `GET /health` only (never overview).
 
 **Disk:** Monitor free space on the VPS; old archives are not pruned automatically. Remove or rotate archives on a schedule that fits your retention policy.
 

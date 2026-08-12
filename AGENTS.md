@@ -6,7 +6,7 @@ You are working on **Nimiq Space**, an open multiplayer isometric social space f
 
 ## What this repo is
 
-- **Monorepo** (npm workspaces): **`client`** — Vite, TypeScript, Three.js; **`server`** — Express, WebSocket (`ws`), TypeScript; optional **`payment-intent-service`** — HTTP API for incoming NIM payment intents (separate Docker image from the main game server).
+- **Monorepo** (npm workspaces): **`client`** — Vite, TypeScript, Three.js; **`server`** — Express, WebSocket (`ws`), TypeScript; **`payout-service`** — outgoing NIM Pay-Intents; **`analytics-service`** — Event Log scans for `/analytics` and daily-stats (read-only JSONL); optional **`payment-intent-service`** — HTTP API for incoming NIM payment intents (separate Docker image from the main game server).
 - **Auth:** Nimiq wallet (Hub or mini-app) message signing → JWT session. Optional dev bypass for local work only.
 - **Gameplay authority** lives on the **server** (`server/src/rooms.ts`). Clients send intents over the WebSocket; the server validates, mutates room state, and broadcasts snapshots.
 
@@ -38,7 +38,8 @@ You are working on **Nimiq Space**, an open multiplayer isometric social space f
 - **API base URL resolution (split hosting):** [client/src/net/apiBase.ts](client/src/net/apiBase.ts)
 - **Wallet login:** [client/src/auth/nimiq.ts](client/src/auth/nimiq.ts), [server/src/auth.ts](server/src/auth.ts)
 - **Admin allowlist:** [server/src/config.ts](server/src/config.ts)
-- **Event / replay logging:** [server/src/eventLog.ts](server/src/eventLog.ts)
+- **Event / replay logging:** [server/src/eventLog.ts](server/src/eventLog.ts) (writes + replay); overview/daily-stats scans: [analytics-service/src/eventLogAnalytics.ts](analytics-service/src/eventLogAnalytics.ts)
+- **Analytics sidecar:** [analytics-service/src/index.ts](analytics-service/src/index.ts) — compose service `analytics` ([docker-compose.yml](docker-compose.yml)); game is a thin HTTP proxy ([server/src/analyticsServiceClient.ts](server/src/analyticsServiceClient.ts))
 - **Payment intents (optional sidecar):** [payment-intent-service/src/index.ts](payment-intent-service/src/index.ts) — quotes, SQLite ledger, Nimiq `getTransaction` verification; compose profile `payment` ([docker-compose.yml](docker-compose.yml)).
 
 ## Maintenance expectations
