@@ -129,6 +129,9 @@ export function adminSettingsPageHtml(): string {
         var tutorialOn = Boolean(j.tutorialEnabled);
         var tutorialEnvOn = j.tutorialEnvEnabled !== false;
         var tutorialActive = tutorialOn && tutorialEnvOn;
+        var shopOn = j.shopEnabled !== false;
+        var shopEnvOn = j.shopEnvEnabled !== false;
+        var shopActive = shopOn && shopEnvOn;
         panel.innerHTML =
           "<div class='set-panel'>" +
           "<h2>Usernames</h2>" +
@@ -185,6 +188,31 @@ export function adminSettingsPageHtml(): string {
           (tutorialEnvOn ? "" : " disabled") +
           ">Save</button>" +
           "<span id='save-tutorial-msg' class='ok' hidden></span>" +
+          "</div></div>" +
+          "<div class='set-panel'>" +
+          "<h2>Shop</h2>" +
+          "<div class='set-row'>" +
+          "<input type='checkbox' id='shop-enabled' " +
+          (shopOn ? "checked " : "") +
+          (shopEnvOn ? "" : "disabled ") +
+          "/>" +
+          "<label for='shop-enabled'>Open Shop (featured shelf, Cosmetic Unlock, The Shaper joins).</label>" +
+          "</div>" +
+          (shopEnvOn
+            ? "<p class='set-hint'>When off, the Shop tab shows COMING SOON and purchases / The Shaper joins are blocked. Set deploy env <code>SHOP_ENABLED=0</code> to hard-close regardless of this checkbox. <code>SHAPER_ENABLED=0</code> hides The Shaper while Shop can stay open.</p>"
+            : "<p class='set-hint'>Hard-closed by deploy env <code>SHOP_ENABLED=0</code>. Unset that (or set to anything but <code>0</code>) to allow this toggle.</p>") +
+          "<p class='set-hint'>" +
+          (shopActive
+            ? "Shop is <strong>open</strong>."
+            : shopEnvOn
+              ? "Shop is <strong>closed</strong> (admin checkbox off)."
+              : "Shop is <strong>closed</strong> (env kill switch).") +
+          "</p>" +
+          "<div class='set-actions'>" +
+          "<button type='button' id='save-shop-btn'" +
+          (shopEnvOn ? "" : " disabled") +
+          ">Save</button>" +
+          "<span id='save-shop-msg' class='ok' hidden></span>" +
           "</div></div>";
         var saveUsernameBtn = document.getElementById("save-username-btn");
         var cb = document.getElementById("self-username");
@@ -229,6 +257,18 @@ export function adminSettingsPageHtml(): string {
               token,
               { tutorialEnabled: tutorialCb.checked },
               tutorialMsg
+            );
+          });
+        }
+        var saveShopBtn = document.getElementById("save-shop-btn");
+        var shopCb = document.getElementById("shop-enabled");
+        var shopMsg = document.getElementById("save-shop-msg");
+        if (saveShopBtn && shopCb && shopMsg) {
+          saveShopBtn.addEventListener("click", function () {
+            saveSettings(
+              token,
+              { shopEnabled: shopCb.checked },
+              shopMsg
             );
           });
         }

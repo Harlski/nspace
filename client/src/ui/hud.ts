@@ -349,8 +349,15 @@ export function createHud(
         | "open_wardrobe"
         | "send_emote"
         | "flag_emote"
-        | "open_signboard",
-      detail?: { signboardId: string; authorAddress: string }
+        | "open_signboard"
+        | "view_other_profile"
+        | "open_shop"
+        | "try_sale_display",
+      detail?: {
+        signboardId?: string;
+        authorAddress?: string;
+        profileAddress?: string;
+      }
     ) => void;
   }
 ): {
@@ -1027,6 +1034,8 @@ export function createHud(
   clearPresenceFeed: () => void;
   /** Open another player's profile overlay by wallet address (from outside the HUD). */
   openPlayerProfile: (address: string, displayName?: string) => void;
+  /** Re-render Shop COMING SOON when the server Shop-open flag changes. */
+  notifyShopAccessChanged: () => void;
   /** Wire feedback ticket APIs (create, list, thread, reply). */
   setFeedbackHandlers: (handlers: FeedbackHandlers) => void;
   /** Current room id for chat-report context (updated on welcome). */
@@ -1044,6 +1053,8 @@ export function createHud(
   setLoadingLabel: (text: string) => void;
   /** Room transition progress: `indeterminate` while waiting; 0–1 while loading welcome payload. */
   setLoadingProgress: (state: null | "indeterminate" | number) => void;
+  /** Escape on a long load: Return to Hub on the loading overlay (hidden until armed). */
+  setLoadingReturnToHubVisible: (visible: boolean) => void;
   /** NIM block claim: progress 0–1 while adjacent; null hides the bar. */
   setNimClaimProgress: (
     state: null | {
@@ -1132,6 +1143,12 @@ export function createHud(
     }>;
     achievementPoints?: number;
     playerLevel?: number;
+    /** Self-only: remaining Daily Earn Allowance for this UTC day. */
+    dailyEarnAllowance?: {
+      uncapped?: boolean;
+      remainingNim?: string;
+      ceilingNim?: string;
+    };
     achievementHighlights?: Array<{
       achievementId?: string;
       title?: string;
@@ -1155,6 +1172,7 @@ export function createHud(
     disposePreviewCanvas: () => void;
     setView: (next: "wardrobe" | "shop") => void;
     getData: () => WardrobeResponse | null;
+    notifyShopAccessChanged: () => void;
   };
   const profileViewCache = new Map<string, ProfileViewCacheEntry>();
   let selfWardrobeMount: SelfWardrobeMount | null = null;
@@ -2690,6 +2708,7 @@ export function createHud(
           <div class="loading-overlay__progress-fill"></div>
         </div>
       </div>
+      <button type="button" class="loading-overlay__return-hub nq-button-pill light-blue" hidden>Return to Hub</button>
     </div>
   `;
   const loadingOverlayText = loadingOverlay.querySelector(
@@ -2704,6 +2723,12 @@ export function createHud(
   const loadingProgressFill = loadingOverlay.querySelector(
     ".loading-overlay__progress-fill"
   ) as HTMLElement | null;
+  const loadingReturnHubBtn = loadingOverlay.querySelector(
+    ".loading-overlay__return-hub"
+  ) as HTMLButtonElement | null;
+  if (loadingReturnHubBtn) {
+    loadingReturnHubBtn.setAttribute("aria-label", "Return to Hub");
+  }
   letter.appendChild(loadingOverlay);
 
   const disconnectModal = document.createElement("div");
@@ -2802,6 +2827,7 @@ export function createHud(
     );
     loadingOverlay.hidden = true;
     loadingShownAt = null;
+    if (loadingReturnHubBtn) loadingReturnHubBtn.hidden = true;
     if (loadingProgressWrap) loadingProgressWrap.hidden = true;
     loadingProgressTrack?.classList.remove(
       "loading-overlay__progress-track--indeterminate"
@@ -4929,6 +4955,7 @@ export function createHud(
    * stays visible whenever it was mounted.
    */
   function setProfileTab(tab: "wardrobe" | "shop" | "rooms" | "achievements"): void {
+    const prevTab = profileActiveTab;
     profileActiveTab = tab;
     const isSelf = profileMessageKindOpen === "self";
     oppWardrobeTabBtn.classList.toggle("is-active", tab === "wardrobe");
@@ -4945,6 +4972,9 @@ export function createHud(
     oppProfileWardrobe.hidden = !(showSelfWardrobe || showOtherWardrobe);
     if (showSelfWardrobe && wardrobeSetView) {
       wardrobeSetView(tab === "shop" ? "shop" : "wardrobe");
+    }
+    if (isSelf && tab === "shop" && prevTab !== "shop") {
+      opts?.onAchievementUiSignal?.("open_shop");
     }
   }
 
@@ -5403,7 +5433,12 @@ export function createHud(
     switch (row.id) {
       case "viewProfile":
         closeOtherPlayerContextMenu();
-        if (addr) void showPlayerProfileView(addr, disp, "other");
+        if (addr) {
+          opts?.onAchievementUiSignal?.("view_other_profile", {
+            profileAddress: addr,
+          });
+          void showPlayerProfileView(addr, disp, "other");
+        }
         break;
       case "whisper":
         closeOtherPlayerContextMenu();
@@ -5643,7 +5678,8 @@ export function createHud(
     kind: "self" | "other",
     points: number,
     highlights: Array<{ title: string; points: number }>,
-    level?: number
+    level?: number,
+    dailyEarn?: ProfileFetchPayload["dailyEarnAllowance"]
   ): void {
     oppAchievements.replaceChildren();
     const head = document.createElement("p");
@@ -5654,6 +5690,43 @@ export function createHud(
         : Math.floor(Math.max(0, points) / 100) + 1;
     head.textContent = `Level ${lv} · ${points} achievement point${points === 1 ? "" : "s"}`;
     oppAchievements.appendChild(head);
+    if (kind === "self" && dailyEarn) {
+      const wrap = document.createElement("div");
+      wrap.className = "other-player-profile__earn-allowance";
+      const label = document.createElement("p");
+      label.className = "other-player-profile__earn-allowance-label";
+      if (dailyEarn.uncapped) {
+        label.textContent = "Daily earn allowance: uncapped";
+        wrap.appendChild(label);
+      } else {
+        const remaining = String(dailyEarn.remainingNim ?? "0");
+        const ceiling = String(dailyEarn.ceilingNim ?? "0");
+        label.textContent = `${remaining} / ${ceiling} NIM remaining today`;
+        wrap.appendChild(label);
+        const track = document.createElement("div");
+        track.className = "other-player-profile__earn-allowance-track";
+        track.setAttribute("role", "progressbar");
+        const remN = Number(remaining);
+        const ceilN = Number(ceiling);
+        const pct =
+          Number.isFinite(remN) && Number.isFinite(ceilN) && ceilN > 0
+            ? Math.max(0, Math.min(100, (remN / ceilN) * 100))
+            : 0;
+        track.setAttribute("aria-valuenow", String(Math.round(pct)));
+        track.setAttribute("aria-valuemin", "0");
+        track.setAttribute("aria-valuemax", "100");
+        track.setAttribute(
+          "aria-label",
+          `Daily earn allowance remaining ${remaining} of ${ceiling} NIM`
+        );
+        const fill = document.createElement("div");
+        fill.className = "other-player-profile__earn-allowance-fill";
+        fill.style.width = `${pct}%`;
+        track.appendChild(fill);
+        wrap.appendChild(track);
+      }
+      oppAchievements.appendChild(wrap);
+    }
     const recent = highlights.slice(0, 3);
     if (recent.length > 0) {
       const list = document.createElement("div");
@@ -5866,7 +5939,13 @@ export function createHud(
           }))
           .filter((h) => h.title)
       : [];
-    renderProfileAchievements(kind, achPoints, achHighlights, achLevel);
+    renderProfileAchievements(
+      kind,
+      achPoints,
+      achHighlights,
+      achLevel,
+      kind === "self" ? j.dailyEarnAllowance : undefined
+    );
     const rooms = Array.isArray(j.rooms)
       ? j.rooms
           .map((room) => {
@@ -13797,6 +13876,7 @@ export function createHud(
   disconnectReconnectBtn?.addEventListener("click", () => reconnectHandler());
   disconnectExitBtn?.addEventListener("click", () => disconnectExitHandler());
   returnHomeBtn.addEventListener("click", () => returnHomeHandler());
+  loadingReturnHubBtn?.addEventListener("click", () => returnHomeHandler());
   leaveShaperBtn.addEventListener("click", () => leaveShaperHandler());
   portalEnterBtn.addEventListener("click", () => portalEnterHandler());
   teleporterSetBtn.addEventListener("click", (e) => {
@@ -17998,6 +18078,9 @@ export function createHud(
       const p = Math.max(0, Math.min(1, state));
       loadingProgressFill.style.width = `${(p * 100).toFixed(1)}%`;
     },
+    setLoadingReturnToHubVisible(visible: boolean) {
+      if (loadingReturnHubBtn) loadingReturnHubBtn.hidden = !visible;
+    },
     setPlayerCount(count: number, roomCount?: number) {
       const countEl = playerCount.querySelector(".hud-player-count__number");
       const tipEl = playerCount.querySelector(
@@ -18041,6 +18124,10 @@ export function createHud(
         return;
       }
       void showPlayerProfileView(address, displayName ?? "", "other");
+    },
+    notifyShopAccessChanged() {
+      selfWardrobeMount?.notifyShopAccessChanged();
+      achievementPanel.notifyShopAccessChanged();
     },
     setFeedbackHandlers(handlers: FeedbackHandlers) {
       feedbackHandlers = handlers;

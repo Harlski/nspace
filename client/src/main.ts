@@ -14,7 +14,7 @@ import {
   COSMETIC_SHOP_JOIN_CODE,
   isCosmeticShopRoomId,
 } from "./cosmetics/galleryTypes.js";
-import { isShopPubliclyOpen } from "./cosmetics/shopAccess.js";
+import { applySessionShopAccess, isShopPubliclyOpen } from "./cosmetics/shopAccess.js";
 import { StreamDirector } from "./stream/streamDirector.js";
 import { mountStreamPanDebugPanel } from "./stream/streamPanDebug.js";
 import {
@@ -33,6 +33,10 @@ import {
   consumeGameReturnResume,
   markGameReturnResume,
 } from "./game/gameReturnResume.js";
+import {
+  peekLastSessionRoomId,
+  rememberLastSessionRoomId,
+} from "./game/lastSessionRoom.js";
 import {
   miniappTargetToHttpsUrl,
   openMiniappTarget,
@@ -129,6 +133,7 @@ import {
   sendMovementWatch,
   sendMovementWatchClickIntent,
   sendAdminInvisible,
+  sendAdminFreeze,
   sendDeployCosmetic,
   sendPublishDesign,
   sendDeleteDesign,
@@ -148,6 +153,7 @@ import {
   sendClearSaleDisplayBind,
   sendMoveSaleDisplay,
   sendDeleteSaleDisplay,
+  sendSetSaleDisplayWalk,
   sendSetAttentionMarkerProps,
   sendMoveAttentionMarker,
   sendRemoveAttentionMarker,
@@ -177,8 +183,12 @@ import {
 import { mergeStateDeltaPlayer } from "./net/mergeStateDeltaPlayer.js";
 import { installAdminOverlay } from "./ui/adminOverlay.js";
 import { createSaleDisplayPanels } from "./ui/saleDisplayPanels.js";
+import type { SaleDisplayEditHandlers } from "./ui/saleDisplayPanels.js";
+import type { SaleDisplayWire } from "./cosmetics/saleDisplayTypes.js";
+import { toggleWalkPathTile } from "./cosmetics/saleDisplayWalkPath.js";
 import { nimToLunaString } from "./ui/objectPrefabAuthoring.js";
 import { createHud } from "./ui/hud.js";
+import { createLoadingFeedbackController } from "./ui/loadingFeedback.js";
 import { invalidateWardrobeCache } from "./cosmetics/api.js";
 import { fetchMyAchievements, invalidateAchievementsCache } from "./achievements/api.js";
 import { TELESCOPE_ACHIEVEMENT_ID } from "./telescope/constants.js";
@@ -649,6 +659,15 @@ function enterGame(
   let movementWatchWanted = false;
   /** Pending Sale Display move: next tile click sends moveSaleDisplay. */
   let saleDisplayMoveId: string | null = null;
+  /** Admin walk-path authoring: click tiles to append/undo; Confirm saves, Cancel/Esc discards. */
+  let saleDisplayPathPick: {
+    id: string;
+    enabled: boolean;
+    tiles: { x: number; z: number }[];
+    initialTiles: { x: number; z: number }[];
+    x: number;
+    z: number;
+  } | null = null;
   /** Admin Invisibility preferred; connect query + resent after welcome. */
   let adminInvisibleWanted = false;
   if (isAdmin(address)) {
@@ -845,13 +864,50 @@ function enterGame(
     onAchievementUiSignal: (kind, detail) => {
       if (ws?.readyState !== WebSocket.OPEN) return;
       if (kind === "open_signboard") {
-        if (detail) sendAchievementSignal(ws, kind, detail);
+        if (detail?.signboardId && detail.authorAddress) {
+          sendAchievementSignal(ws, kind, {
+            signboardId: detail.signboardId,
+            authorAddress: detail.authorAddress,
+          });
+        }
+        return;
+      }
+      if (kind === "view_other_profile") {
+        if (detail?.profileAddress) {
+          sendAchievementSignal(ws, kind, {
+            profileAddress: detail.profileAddress,
+          });
+        }
         return;
       }
       sendAchievementSignal(ws, kind);
     },
   });
+  const loadingFeedback = createLoadingFeedbackController({
+    onRevealSpinner: () => {
+      hud.setLoadingVisible(true);
+    },
+    onRevealReturnToHub: () => {
+      hud.setLoadingReturnToHubVisible(true);
+    },
+    onReset: () => {
+      hud.setLoadingReturnToHubVisible(false);
+    },
+  });
+  function hideLoadingOverlay(opts?: { skipMinWait?: boolean }): Promise<void> {
+    loadingFeedback.stop();
+    return hud.setLoadingVisible(false, opts);
+  }
+  const resumeRoomHint = peekLastSessionRoomId();
+  hud.setLoadingLabel(
+    resumeRoomHint ? loadingLabelForTargetRoom(resumeRoomHint) : "Loading…"
+  );
+  hud.setLoadingProgress("indeterminate");
   hud.setLoadingVisible(true, { blackout: true });
+  loadingFeedback.start({
+    targetRoomId: resumeRoomHint,
+    blackout: true,
+  });
   // `?debug` opens the panel at load without firing onDebugPanelVisibleChange; start pings.
   if (hud.isDebugPanelVisible()) {
     debugPanelPingActive = true;
@@ -960,6 +1016,7 @@ function enterGame(
     hud.setLoadingLabel(labelOverride ?? loadingLabelForTargetRoom(roomId));
     hud.setLoadingProgress("indeterminate");
     hud.setLoadingVisible(true);
+    loadingFeedback.start({ targetRoomId: roomId, blackout: false });
     let fake = 0.06;
     roomTransitionProgressTimer = setInterval(() => {
       fake = Math.min(0.45, fake + 0.014);
@@ -2582,87 +2639,209 @@ function enterGame(
   });
 
   const saleDisplayPanels = createSaleDisplayPanels(hudRoot);
-  game.setSaleDisplayClickHandler((wire) => {
-    if (streamMode) return;
-    const socket = ws;
-    if (isAdmin(address)) {
-      const m = game.getPlacedAt(wire.x, wire.z, 0);
-      if (m?.saleDisplayId === wire.id) {
-        game.setSelectedBlockKey(`${wire.x},${wire.z},0`);
-        editingTile = { x: wire.x, z: wire.z, y: 0 };
-        hud.showObjectEditPanel({
-          x: wire.x,
-          z: wire.z,
-          saleDisplaySelection: {
-            id: wire.id,
-            onEdit: () => {
-              hud.hideObjectEditPanel();
-              saleDisplayPanels.promptEdit(wire, {
-                onBind: (id, cosmeticSku) => {
-                  if (!socket || socket.readyState !== WebSocket.OPEN) return;
-                  sendBindSaleDisplay(socket, id, cosmeticSku);
-                },
-                onClear: (id) => {
-                  if (!socket || socket.readyState !== WebSocket.OPEN) return;
-                  sendClearSaleDisplayBind(socket, id);
-                },
-                onDelete: (id) => {
-                  if (!socket || socket.readyState !== WebSocket.OPEN) return;
-                  sendDeleteSaleDisplay(socket, id);
-                },
-                onBeginMove: () => {},
-              });
-              syncBuildHud();
-            },
-            onMove: () => {
-              hud.hideObjectEditPanel();
-              editingTile = null;
-              game.clearSelectedBlock();
-              game.beginReposition(wire.x, wire.z);
-              syncBuildHud();
-            },
-            onRemove: () => {
-              if (socket && socket.readyState === WebSocket.OPEN) {
-                sendRemoveObstacleAt(socket, wire.x, wire.z, 0);
-              }
-              editingTile = null;
-              hud.hideObjectEditPanel();
-              game.clearSelectedBlock();
-              syncBuildHud();
-            },
-            onClose: () => {
-              editingTile = null;
-              hud.hideObjectEditPanel();
-              game.clearSelectedBlock();
-              syncBuildHud();
-            },
+
+  function makeSaleDisplayEditHandlers(
+    socket: WebSocket
+  ): SaleDisplayEditHandlers {
+    return {
+      onBind: (id, cosmeticSku) => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        sendBindSaleDisplay(socket, id, cosmeticSku);
+      },
+      onClear: (id) => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        sendClearSaleDisplayBind(socket, id);
+      },
+      onDelete: (id) => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        sendDeleteSaleDisplay(socket, id);
+      },
+      onBeginMove: (id) => {
+        if (saleDisplayPathPick) {
+          cancelSaleDisplayPathPick({ reopenEdit: false });
+        }
+        saleDisplayMoveId = id;
+        saleDisplayPathPick = null;
+        syncSaleDisplayBuildFloorPick();
+        hud.setStatus("Click a tile to move the Sale Display (Esc cancels)");
+      },
+      onSetWalk: (id, walk) => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        sendSetSaleDisplayWalk(socket, id, walk);
+      },
+      onBeginSetPath: (id, draft) => {
+        saleDisplayMoveId = null;
+        saleDisplayPathPick = {
+          id,
+          enabled: draft.enabled,
+          tiles: [...draft.tiles],
+          initialTiles: draft.tiles.map((t) => ({ x: t.x, z: t.z })),
+          x: draft.x,
+          z: draft.z,
+        };
+        game.setSelectedBlockKey(`${draft.x},${draft.z},0`);
+        editingTile = { x: draft.x, z: draft.z, y: 0 };
+        showSaleDisplaySelectionPanel(draft.x, draft.z, id);
+        syncSaleDisplayBuildFloorPick();
+        saleDisplayPanels.showPathPickBar({
+          tileCount: saleDisplayPathPick.tiles.length,
+          handlers: {
+            onConfirm: () => confirmSaleDisplayPathPick(),
+            onCancel: () => cancelSaleDisplayPathPick(),
           },
         });
-        syncBuildHud();
-        return;
-      }
-      // Foot missing (legacy): bind modal only.
-      saleDisplayPanels.promptEdit(wire, {
-        onBind: (id, cosmeticSku) => {
-          if (!socket || socket.readyState !== WebSocket.OPEN) return;
-          sendBindSaleDisplay(socket, id, cosmeticSku);
+        hud.setStatus(
+          "Click tiles to set the mannequin path — Confirm to save, Cancel/Esc to discard"
+        );
+      },
+    };
+  }
+
+  function showSaleDisplaySelectionPanel(
+    x: number,
+    z: number,
+    saleDisplayId: string
+  ): void {
+    const socket = ws;
+    hud.showObjectEditPanel({
+      x,
+      z,
+      saleDisplaySelection: {
+        id: saleDisplayId,
+        onEdit: () => {
+          if (saleDisplayPathPick) cancelSaleDisplayPathPick({ reopenEdit: false });
+          const latest = game.getSaleDisplayWire(saleDisplayId);
+          if (!latest || !socket || socket.readyState !== WebSocket.OPEN) return;
+          hud.hideObjectEditPanel();
+          saleDisplayPanels.promptEdit(
+            latest,
+            makeSaleDisplayEditHandlers(socket)
+          );
+          syncBuildHud();
         },
-        onClear: (id) => {
-          if (!socket || socket.readyState !== WebSocket.OPEN) return;
-          sendClearSaleDisplayBind(socket, id);
+        onMove: () => {
+          if (saleDisplayPathPick) cancelSaleDisplayPathPick({ reopenEdit: false });
+          hud.hideObjectEditPanel();
+          editingTile = null;
+          game.clearSelectedBlock();
+          game.beginReposition(x, z);
+          syncBuildHud();
         },
-        onDelete: (id) => {
-          if (!socket || socket.readyState !== WebSocket.OPEN) return;
-          sendDeleteSaleDisplay(socket, id);
+        onRemove: () => {
+          if (saleDisplayPathPick) cancelSaleDisplayPathPick({ reopenEdit: false });
+          if (socket && socket.readyState === WebSocket.OPEN) {
+            sendRemoveObstacleAt(socket, x, z, 0);
+          }
+          editingTile = null;
+          hud.hideObjectEditPanel();
+          game.clearSelectedBlock();
+          syncBuildHud();
         },
-        onBeginMove: (id) => {
-          saleDisplayMoveId = id;
-          hud.setStatus("Click a tile to move the Sale Display (Esc cancels)");
+        onClose: () => {
+          if (saleDisplayPathPick) cancelSaleDisplayPathPick({ reopenEdit: false });
+          editingTile = null;
+          hud.hideObjectEditPanel();
+          game.clearSelectedBlock();
+          syncBuildHud();
         },
+      },
+    });
+    syncBuildHud();
+  }
+
+  function endSaleDisplayPathPickSession(opts?: {
+    reopenSelection?: boolean;
+  }): typeof saleDisplayPathPick {
+    const pick = saleDisplayPathPick;
+    saleDisplayPathPick = null;
+    saleDisplayPanels.hidePathPickBar();
+    syncSaleDisplayBuildFloorPick();
+    if (pick && opts?.reopenSelection !== false) {
+      game.setSelectedBlockKey(`${pick.x},${pick.z},0`);
+      editingTile = { x: pick.x, z: pick.z, y: 0 };
+      showSaleDisplaySelectionPanel(pick.x, pick.z, pick.id);
+    }
+    return pick;
+  }
+
+  function confirmSaleDisplayPathPick(): void {
+    const pick = endSaleDisplayPathPickSession();
+    if (!pick) return;
+    const socket = ws;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      sendSetSaleDisplayWalk(socket, pick.id, {
+        enabled: pick.enabled,
+        tiles: pick.tiles,
       });
+    }
+    hud.setStatus(
+      pick.tiles.length >= 2
+        ? `Walk path saved (${pick.tiles.length} tiles)`
+        : "Walk path saved (need ≥2 tiles to walk)"
+    );
+  }
+
+  function cancelSaleDisplayPathPick(opts?: { reopenEdit?: boolean }): void {
+    const pick = endSaleDisplayPathPickSession({
+      reopenSelection: opts?.reopenEdit !== false,
+    });
+    if (!pick) return;
+    hud.setStatus("Walk path discarded");
+  }
+
+  function refreshSaleDisplayWalkPathPreview(): void {
+    if (saleDisplayPathPick) {
+      game.setSaleDisplayWalkPathPreview(saleDisplayPathPick.tiles);
+    } else {
+      game.setSaleDisplayWalkPathPreview(null);
+    }
+  }
+
+  function applySaleDisplayPathTile(x: number, z: number): void {
+    const pick = saleDisplayPathPick;
+    if (!pick) return;
+    pick.tiles = toggleWalkPathTile(pick.tiles, x, z);
+    refreshSaleDisplayWalkPathPreview();
+    saleDisplayPanels.updatePathPickBar(pick.tiles.length);
+    hud.setStatus(
+      pick.tiles.length === 0
+        ? "Walk path cleared — click tiles to add (Confirm or Cancel)"
+        : `Walk path: ${pick.tiles.length} tile(s) — Confirm to save, Cancel/Esc to discard`
+    );
+  }
+
+  function syncSaleDisplayBuildFloorPick(): void {
+    if (!saleDisplayPathPick && !saleDisplayMoveId) {
+      game.setBuildFloorPickHandler(null);
+      refreshSaleDisplayWalkPathPreview();
       return;
     }
+    game.setBuildFloorPickHandler((x, z) => {
+      if (saleDisplayPathPick) {
+        applySaleDisplayPathTile(x, z);
+        return;
+      }
+      const moveId = saleDisplayMoveId;
+      const socket = ws;
+      if (
+        moveId &&
+        isAdmin(address) &&
+        socket &&
+        socket.readyState === WebSocket.OPEN
+      ) {
+        sendMoveSaleDisplay(socket, moveId, x, z);
+        saleDisplayMoveId = null;
+        syncSaleDisplayBuildFloorPick();
+      }
+    });
+    refreshSaleDisplayWalkPathPreview();
+  }
+
+  function openSaleDisplayBuy(wire: SaleDisplayWire): void {
     if (!wire.cosmeticSku || wire.bindInactive || !wire.presetId) return;
+    if (ws?.readyState === WebSocket.OPEN) {
+      sendAchievementSignal(ws, "try_sale_display");
+    }
     saleDisplayPanels.promptBuy(wire, {
       onPreview: (slot, presetId) => {
         if (
@@ -2674,10 +2853,69 @@ function enterGame(
           game.setSelfCosmeticPreviewSlot(slot, presetId);
         }
       },
+      onPreviewCanvas: (canvas, wallet) => {
+        if (!canvas) {
+          game.bindWardrobeAvatarPreviewCanvas(null);
+          return;
+        }
+        const selfKey = address.replace(/\s+/g, "").trim().toUpperCase();
+        const wKey = wallet.replace(/\s+/g, "").trim().toUpperCase();
+        const self = selfPlayerState();
+        game.bindWardrobeAvatarPreviewCanvas(
+          canvas,
+          wallet,
+          wKey === selfKey ? self?.displayName : undefined
+        );
+      },
+      onPreviewCosmeticsChange: (presets) => {
+        game.updateWardrobeAvatarPreviewCosmetics({
+          aura: presets.aura ?? null,
+          nameplate: presets.nameplate ?? null,
+          chatBubble: presets.chatBubble ?? null,
+          trail: presets.trail ?? null,
+        });
+      },
       onEquipped: () => {
         invalidateWardrobeCache();
       },
     });
+  }
+
+  game.setSaleDisplayClickHandler((wire) => {
+    if (streamMode) return;
+    const socket = ws;
+    if (isAdmin(address)) {
+      const m = game.getPlacedAt(wire.x, wire.z, 0);
+      if (m?.saleDisplayId === wire.id) {
+        if (saleDisplayPathPick?.id === wire.id) {
+          // Already authoring this display's path — keep selection + bar.
+          return;
+        }
+        if (saleDisplayPathPick) {
+          cancelSaleDisplayPathPick({ reopenEdit: false });
+        }
+        game.setSelectedBlockKey(`${wire.x},${wire.z},0`);
+        editingTile = { x: wire.x, z: wire.z, y: 0 };
+        showSaleDisplaySelectionPanel(wire.x, wire.z, wire.id);
+        return;
+      }
+      // Foot missing (legacy): bind modal only.
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      if (saleDisplayPathPick) {
+        cancelSaleDisplayPathPick({ reopenEdit: false });
+      }
+      saleDisplayPanels.promptEdit(
+        wire,
+        makeSaleDisplayEditHandlers(socket)
+      );
+      return;
+    }
+    if (!wire.cosmeticSku || wire.bindInactive || !wire.presetId) return;
+    if (!game.isSelfOnSaleDisplayBuyPad(wire)) {
+      hud.setStatus("Stand on the green tile in front of the display to buy");
+      return;
+    }
+    openSaleDisplayBuy(wire);
   });
 
   const uninstallShell = installInputShell(hudRoot, { overlayBack });
@@ -2871,6 +3109,7 @@ function enterGame(
       }
     | { kind: "canvas-exit" }
     | { kind: "teleporter" }
+    | { kind: "sale-display"; id: string }
     | { kind: "spectate"; matchId: string; full: boolean }
     | {
         kind: "billboard";
@@ -2927,7 +3166,7 @@ function enterGame(
     const label = autoReconnectModalLabel;
     stopAutoReconnect();
     abortInFlightConnect();
-    hud.setLoadingVisible(false, { skipMinWait: true });
+    hideLoadingOverlay({ skipMinWait: true });
     hud.setReconnectOffer(true, { label });
     hud.setStatus("");
   };
@@ -3005,6 +3244,13 @@ function enterGame(
   let idleCleanup: (() => void) | null = null;
   const ac = new AbortController();
   const { signal } = ac;
+  const persistLastSessionRoomHint = (): void => {
+    const id = game.getRoomId();
+    if (id) rememberLastSessionRoomId(id);
+  };
+  window.addEventListener("pagehide", persistLastSessionRoomHint, {
+    signal: ac.signal,
+  });
 
   let chatTypingSent = false;
   let chatTypingIdleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3107,6 +3353,7 @@ function enterGame(
     idleCleanup?.();
     idleCleanup = null;
     clearRoomTransitionProgressTimer();
+    loadingFeedback.stop();
     cancelActiveNimClaim?.();
     cancelActiveNimClaim = null;
     nimClaimUiRef = null;
@@ -3131,6 +3378,7 @@ function enterGame(
     ws = null;
     adminOverlay.destroy();
     saleDisplayPanels.destroy();
+    persistLastSessionRoomHint();
     game.dispose();
     uninstallShell();
     roomsCreateModal.remove();
@@ -3932,6 +4180,9 @@ function enterGame(
       hud.clearRoomEntrySpawnPickUi();
       game.setRoomEntrySpawnPickHandler(null);
       saleDisplayMoveId = null;
+      saleDisplayPathPick = null;
+      saleDisplayPanels.hidePathPickBar();
+      syncSaleDisplayBuildFloorPick();
     } else if (mode === "build") {
       game.setTeleporterDestPickHandler(null);
       game.setFloorExpandMode(false);
@@ -4133,16 +4384,31 @@ function enterGame(
     game.setSelfQuickEmojiOpener(openSelfActionWheel);
     hud.onPlayerMenuLongPress(openSelfActionWheel);
     game.setOtherPlayerContextOpener((pick) => {
+      const targets = pick.targets.map((t) => {
+        const key = compactWallet(t.address);
+        const live = lastPlayers.find(
+          (p) => compactWallet(p.address) === key
+        );
+        return {
+          ...t,
+          targetIsGameAdmin: isAdmin(t.address),
+          targetFrozen: Boolean(live?.frozen),
+        };
+      });
       const acceptOpts = {
         onAcceptChallenge: (addr: string) => {
           if (socket.readyState === WebSocket.OPEN)
             sendAcceptChallenge(socket, addr);
         },
+        onFreeze: (addr: string, freeze: boolean) => {
+          if (socket.readyState === WebSocket.OPEN)
+            sendAdminFreeze(socket, addr, freeze);
+        },
       };
       hud.showOtherPlayerContextMenu(
         pick.clientX,
         pick.clientY,
-        pick.targets,
+        targets,
         pick.emoteRowFirst
           ? {
               ...acceptOpts,
@@ -4235,9 +4501,14 @@ function enterGame(
     game.setTileClickHandler((x, z, layer = 0) => {
       if (streamMode) return;
       hud.dismissOtherPlayerOverlays();
+      if (saleDisplayPathPick && isAdmin(address)) {
+        applySaleDisplayPathTile(x, z);
+        return;
+      }
       if (saleDisplayMoveId && isAdmin(address) && socket.readyState === WebSocket.OPEN) {
         sendMoveSaleDisplay(socket, saleDisplayMoveId, x, z);
         saleDisplayMoveId = null;
+        syncSaleDisplayBuildFloorPick();
         return;
       }
       if (hud.isDeployableArmed()) {
@@ -4720,26 +4991,13 @@ function enterGame(
         const sdId = m.saleDisplayId;
         editingTile = { x, z, y: 0 };
         const openBind = (): void => {
-          const wire = game.getSaleDisplayWire(sdId);
-          if (!wire) return;
+          const latest = game.getSaleDisplayWire(sdId);
+          if (!latest) return;
           hud.hideObjectEditPanel();
-          saleDisplayPanels.promptEdit(wire, {
-            onBind: (id, cosmeticSku) => {
-              if (socket.readyState !== WebSocket.OPEN) return;
-              sendBindSaleDisplay(socket, id, cosmeticSku);
-            },
-            onClear: (id) => {
-              if (socket.readyState !== WebSocket.OPEN) return;
-              sendClearSaleDisplayBind(socket, id);
-            },
-            onDelete: (id) => {
-              if (socket.readyState !== WebSocket.OPEN) return;
-              sendDeleteSaleDisplay(socket, id);
-            },
-            onBeginMove: () => {
-              /* unused — Move is on the object panel */
-            },
-          });
+          saleDisplayPanels.promptEdit(
+            latest,
+            makeSaleDisplayEditHandlers(socket)
+          );
           editingTile = null;
           syncBuildHud();
         };
@@ -5260,6 +5518,18 @@ function enterGame(
       }
       return;
     }
+    if (!streamMode) {
+      const standingSale = game.getStandingSaleDisplayBuyOffer();
+      if (standingSale) {
+        portalAction = { kind: "sale-display", id: standingSale.id };
+        hud.setPortalEnterLabel("Buy");
+        if (!portalEnterVisible) {
+          portalEnterVisible = true;
+          hud.setPortalEnterVisible(true);
+        }
+        return;
+      }
+    }
     if (WORLDCUP_ENABLED_CLIENT) {
       const standingPortal = game.getStandingSpectatePortal();
       if (standingPortal) {
@@ -5355,6 +5625,14 @@ function enterGame(
       }
       return;
     }
+    if (msg.type === "shopAccess") {
+      applySessionShopAccess({
+        shopOpen: msg.shopOpen,
+        shaperReachable: msg.shaperReachable,
+      });
+      hud.notifyShopAccessChanged();
+      return;
+    }
     if (msg.type === "clientPong") {
       const t0 = perfPingSentAt.get(msg.id);
       if (t0 !== undefined) {
@@ -5368,7 +5646,7 @@ function enterGame(
     if (msg.type === "joinRoomFailed") {
       clearRoomTransitionProgressTimer();
       hud.setLoadingProgress(null);
-      hud.setLoadingVisible(false, { skipMinWait: true });
+      hideLoadingOverlay({ skipMinWait: true });
       if (
         pendingProfileJoinRoomId &&
         joinCodeMatchesRoom(pendingProfileJoinRoomId, msg.roomId)
@@ -5392,7 +5670,7 @@ function enterGame(
     if (msg.type === "shaperReturnFailed") {
       clearRoomTransitionProgressTimer();
       hud.setLoadingProgress(null);
-      hud.setLoadingVisible(false, { skipMinWait: true });
+      hideLoadingOverlay({ skipMinWait: true });
       hud.appendChat("System", "Could not leave The Shaper right now.");
       return;
     }
@@ -5447,7 +5725,15 @@ function enterGame(
     }
     if (msg.type === "welcome") {
       clearWelcomeDeadlineTimer();
+      rememberLastSessionRoomId(msg.roomId);
       tutorialFeatureEnabled = msg.tutorialEnabled === true;
+      if (msg.shopOpen !== undefined || msg.shaperReachable !== undefined) {
+        applySessionShopAccess({
+          shopOpen: msg.shopOpen,
+          shaperReachable: msg.shaperReachable,
+        });
+        hud.notifyShopAccessChanged();
+      }
       if (msg.tutorial) {
         tutorialWelcome = msg.tutorial;
         tutorialSocialSuppressed = tutorialSuppressesSocial(
@@ -5795,7 +6081,7 @@ function enterGame(
       if (loadingBlackoutReveal) {
         await waitForPaintFrames(2);
       }
-      await hud.setLoadingVisible(false, {
+      await hideLoadingOverlay({
         skipMinWait: loadingBlackoutReveal,
       });
       // After the load veil has fully faded so the Exit cinematic is not spent under black.
@@ -6766,12 +7052,13 @@ function enterGame(
     }
     if (msg.type === "attentionMarkers") {
       game.setAttentionMarkers(msg.attentionMarkers);
+      return;
     }
-        if (msg.type === "saleDisplays") {
+    if (msg.type === "saleDisplays") {
       game.setSaleDisplays(msg.saleDisplays);
       return;
     }
-if (msg.type === "billboards") {
+    if (msg.type === "billboards") {
       game.setBillboards(msg.billboards, { refreshRotationContent: false });
     }
     if (msg.type === "voxelTexts") {
@@ -6797,13 +7084,27 @@ if (msg.type === "billboards") {
       loadingBlackoutReveal = connectOpts.blackout === true;
       clearRoomTransitionProgressTimer();
       if (connectOpts.silent) {
+        loadingFeedback.stop();
         // Status line only; skip loading overlay fade during reconnect.
       } else if (loadingBlackoutReveal) {
+        const hintRoom = peekLastSessionRoomId();
+        hud.setLoadingLabel(
+          hintRoom ? loadingLabelForTargetRoom(hintRoom) : "Loading…"
+        );
+        hud.setLoadingProgress("indeterminate");
         hud.setLoadingVisible(true, { blackout: true });
+        loadingFeedback.ensureStarted({
+          targetRoomId: hintRoom,
+          blackout: true,
+        });
       } else {
         hud.setLoadingLabel("Loading…");
         hud.setLoadingProgress("indeterminate");
         hud.setLoadingVisible(true);
+        loadingFeedback.start({
+          targetRoomId: peekLastSessionRoomId(),
+          blackout: false,
+        });
       }
     } else {
       beginRoomTransition(room);
@@ -6852,7 +7153,7 @@ if (msg.type === "billboards") {
             game.setStreamPresentationActive(false);
             game.setStreamObserverMode(false);
             game.setContinuousRender(false);
-            hud.setLoadingVisible(false, { skipMinWait: true });
+            hideLoadingOverlay({ skipMinWait: true });
             hud.setReconnectOffer(false);
             hud.setStatus(
               "Stream view is restricted - sign in with an authorized stream wallet, or remove ?stream=1 from the URL."
@@ -6866,7 +7167,7 @@ if (msg.type === "billboards") {
             clearTimeout(worldcupMatchEnterTimer);
             worldcupMatchEnterTimer = null;
           }
-          hud.setLoadingVisible(false, { skipMinWait: true });
+          hideLoadingOverlay({ skipMinWait: true });
           hud.setInShaper(false);
           perfPingSentAt.clear();
           hud.setPerfHudLatencyMs(null);
@@ -6913,7 +7214,7 @@ if (msg.type === "billboards") {
           return;
         }
         manualReconnectAttempt = false;
-        hud.setLoadingVisible(false, { skipMinWait: true });
+        hideLoadingOverlay({ skipMinWait: true });
         hud.setReconnectOffer(true, { label: "No response" });
         hud.setStatus("");
       }, welcomeDeadlineMs);
@@ -7185,6 +7486,13 @@ if (msg.type === "billboards") {
           window.open(visitUrl, "_blank", "noopener,noreferrer");
         },
       });
+      return;
+    }
+    if (portalAction?.kind === "sale-display") {
+      const wire =
+        game.getSaleDisplayWire(portalAction.id) ??
+        game.getStandingSaleDisplayBuyOffer();
+      if (wire) openSaleDisplayBuy(wire);
       return;
     }
     if (portalAction?.kind === "spectate" && ws) {
@@ -7481,8 +7789,14 @@ if (msg.type === "billboards") {
       }
       if (e.key === "Escape") {
         if (document.activeElement === chatInput) return;
+        if (saleDisplayPathPick) {
+          cancelSaleDisplayPathPick();
+          syncBuildHud();
+          return;
+        }
         if (saleDisplayMoveId) {
           saleDisplayMoveId = null;
+          syncSaleDisplayBuildFloorPick();
           syncBuildHud();
           return;
         }
@@ -7549,6 +7863,9 @@ if (msg.type === "billboards") {
           game.clearSelectedBlock();
           syncObjectPrefabModes("prefab");
           saleDisplayMoveId = null;
+          saleDisplayPathPick = null;
+          saleDisplayPanels.hidePathPickBar();
+          syncSaleDisplayBuildFloorPick();
           hud.setRoomEditCaps({
             allowPlaceBlocks: roomAllowPlaceBlocks,
             allowExtraFloor: roomAllowExtraFloor,

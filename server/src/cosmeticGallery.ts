@@ -67,6 +67,11 @@ export function isCosmeticGalleryEnabled(): boolean {
   return process.env.SHAPER_ENABLED !== "0";
 }
 
+/** The Shaper join is reachable only when the room is not env-hidden and Shop is open. */
+export function isShaperReachable(): boolean {
+  return isCosmeticGalleryEnabled() && isShopPubliclyOpen();
+}
+
 export function isCosmeticGalleryRoom(roomId: string): boolean {
   if (!isCosmeticGalleryEnabled()) return false;
   return roomId.trim().toLowerCase() === COSMETIC_GALLERY_ROOM_ID;

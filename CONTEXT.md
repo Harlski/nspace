@@ -477,7 +477,9 @@ An admin-placed in-world fixture that starts unbound and, once configured, binds
 **Catalog Entry**. Players interact with a bound Sale Display to try and buy that entry; admins
 place, select, move, and rebind it via **Build → Buildings → Sale Display** like other building
 placeables. Each display occupies one floor tile (no stacking other blocks on that column).
-Distinct from the retired auto-laid Preset gallery and from operator **Catalog Preview**.
+Optional per-display mannequin walk path (`walkEnabled` + ordered `walkTiles`, ≥2 tiles);
+floor deployable binds stay put. Buy UI shows a WebGL self preview with the purchase Slot
+overridden. Distinct from the retired auto-laid Preset gallery and from operator **Catalog Preview**.
 _Avoid_: purchase item, shop pedestal, buyable tile, product placer, SKU pedestal.
 
 **Draft** (Catalog Entry):
@@ -505,7 +507,9 @@ A one-off NIM purchase that permanently grants a wallet ownership of a Cosmetic 
 through the Payment Intent Service (`nspace.cosmetic.unlock`); the game server grants the
 Entitlement after verify. The quoted price is fixed when the intent is created; verify matches
 that amount even if the catalog price changes later. If the Catalog Entry is Archived before
-payment completes, the intent fails.
+payment completes, the intent fails. Client checkout auto-opens **Nimiq Pay**
+(`sendBasicTransactionWithData`) when `shouldUseNimiqPaySend` is true, otherwise **Nimiq Hub**
+checkout — same branch as Unlock Pad. Used by Wardrobe Shop Buy and Sale Display Buy.
 _Avoid_: buy, purchase (use when speaking to players), microtransaction.
 
 **Entitlement**:
@@ -652,8 +656,16 @@ _Avoid_: latest, history, feed.
 
 **Progress Overview**:
 The Summary section summarizing completion — an overall earned/total figure plus a per-Category
-earned/total breakdown. Selecting a Category here navigates to it.
+earned/total breakdown. Incomplete **Temporarily unavailable** rows are omitted from those
+fractions; Complete still counts. Selecting a Category here navigates to it.
 _Avoid_: stats, totals, progress bars.
+
+**Temporarily unavailable**:
+An achievement Availability state: the live feature the row depends on is currently off
+(for example Shop closed). The row stays listed and is not Completable until that feature
+returns. Already Complete stays Complete. Distinct from Football seasonal pause, which does
+not use this label.
+_Avoid_: locked, hidden, disabled, coming soon, seasonal pause.
 
 **Category** (achievement):
 The grouping each achievement declares (e.g. onboarding, commons build, mining). The Category
@@ -672,6 +684,12 @@ Navigator** (under **Minigames**). Leaf categories use plain labels such as **Fo
 and **Football Free Play** (no em dash). In-world feature copy may still say **World Cup**
 where that is the established feature name.
 _Avoid_: World Cup (as navigator group label), Soccer.
+
+**Cosmetics** (achievement Category):
+The Category Navigator group for Shop, The Shaper, Sale Display, Cosmetic Unlock, and
+nameplate / chat bubble Slot equip milestones. Distinct from the cosmetics domain (Presets,
+Catalog Entries, Wardrobe).
+_Avoid_: shop (as Category), style, wardrobe (as Category).
 
 **Feedback** (achievement):
 Recognition for submitting product feedback (bug, feature, or suggestion ticket). Chat
@@ -719,9 +737,9 @@ _Avoid_: XP, experience, score, karma, AP (in player-facing copy).
 
 **Player Level**:
 An integer status derived from a signed-in wallet's lifetime **Achievement Points** (one Level
-per 100 points, starting at Level 1 with 0 points). Shown next to the username under the
-character. Continues rising after the Daily Earn Allowance becomes uncapped. Guests have no
-Player Level.
+per 100 points, starting at Level 1 with 0 points). Shown as a circled number just outside the
+username nameplate under the character. Continues rising after the Daily Earn Allowance becomes
+uncapped. Guests have no Player Level.
 _Avoid_: rank, tier, grade, XP level, prestige.
 
 **Daily Earn Allowance**:

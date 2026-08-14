@@ -535,6 +535,22 @@ export function getDynamicRoomOwnerAddress(roomId: string): string | null {
   return entry.ownerAddress;
 }
 
+/** Listing fields for Knock Knock / Open House (active dynamic rooms only). */
+export function getDynamicRoomListingMeta(roomId: string): {
+  ownerAddress: string | null;
+  isPublic: boolean;
+  isOfficial: boolean;
+} | null {
+  const id = normalizeRoomIdRaw(roomId);
+  const entry = dynamicRooms.get(id);
+  if (!entry || entry.deletedAt) return null;
+  return {
+    ownerAddress: entry.ownerAddress,
+    isPublic: entry.isPublic,
+    isOfficial: entry.isOfficial,
+  };
+}
+
 /** True if room exists in registry including soft-deleted entries. */
 export function hasDynamicRoomEntry(roomId: string): boolean {
   return dynamicRooms.has(normalizeRoomIdRaw(roomId));

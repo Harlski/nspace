@@ -18,6 +18,7 @@ export type AchievementCategory =
   | "exploration"
   | "worldcraft"
   | "play_space"
+  | "cosmetics"
   | "meta"
   | "misc";
 
@@ -82,7 +83,23 @@ export type AchievementEventKey =
   | "beat_the_creator"
   | "feedback_reply_seen"
   | "teleporter_activated"
-  | "tutorial_first_nim";
+  | "tutorial_first_nim"
+  | "knock_knock"
+  | "toll_crossed"
+  | "open_house"
+  | "room_to_room"
+  | "two_keys"
+  | "extra_hands"
+  | "between_us"
+  | "take_a_look"
+  | "private_room"
+  | "come_on_in"
+  | "window_shopper"
+  | "enter_the_shaper"
+  | "try_before_you_buy"
+  | "paid_in_style"
+  | "framed"
+  | "caption";
 
 /** World Cup seasonal counters - progress pauses when WORLDCUP_ENABLED is off. */
 export const WORLDCUP_ACHIEVEMENT_COUNTERS: ReadonlySet<AchievementCounterKey> =
@@ -146,6 +163,7 @@ export type AchievementCriteria =
       resetOn: string;
     }
   | { type: "ap_threshold"; threshold: number }
+  | { type: "player_level"; threshold: number }
   | { type: "category_complete"; category: AchievementCategory }
   | { type: "room_maker_deluxe" }
   | { type: "owned_room_furnisher" }
@@ -171,6 +189,31 @@ export const BEAT_THE_CREATOR_ACHIEVEMENT_ID = "match-beat-the-creator";
 export const THEY_HEARD_YOU_ACHIEVEMENT_ID = "social-they-heard-you";
 export const POINT_HUNTER_I_ACHIEVEMENT_ID = "meta-point-hunter-1";
 export const POINT_HUNTER_II_ACHIEVEMENT_ID = "meta-point-hunter-2";
+export const ON_THE_BOARD_ACHIEVEMENT_ID = "meta-on-the-board";
+export const DOUBLE_DIGITS_ACHIEVEMENT_ID = "meta-double-digits";
+export const ESTABLISHED_ACHIEVEMENT_ID = "meta-established";
+
+export const ACH_NAMEPLATE_FRAME_SIMPLE_SKU = "ach-nameplate-frame-simple";
+export const ACH_NAMEPLATE_FRAME_NEON_SKU = "ach-nameplate-frame-neon";
+export const ACH_BUBBLE_ROUNDED_PASTEL_SKU = "ach-bubble-rounded-pastel";
+export const ACH_BUBBLE_SHARP_DARK_SKU = "ach-bubble-sharp-dark";
+
+export const OPEN_HOUSE_ACHIEVEMENT_ID = "worldcraft-open-house";
+export const ROOM_TO_ROOM_ACHIEVEMENT_ID = "worldcraft-room-to-room";
+export const TWO_KEYS_ACHIEVEMENT_ID = "worldcraft-two-keys";
+export const EXTRA_HANDS_ACHIEVEMENT_ID = "worldcraft-extra-hands";
+export const COMPANY_ACHIEVEMENT_ID = "worldcraft-company";
+export const HOUSEWARMING_ACHIEVEMENT_ID = "worldcraft-housewarming";
+export const BETWEEN_US_ACHIEVEMENT_ID = "social-between-us";
+export const TAKE_A_LOOK_ACHIEVEMENT_ID = "social-take-a-look";
+export const PRIVATE_ROOM_ACHIEVEMENT_ID = "play-space-private-room";
+export const COME_ON_IN_ACHIEVEMENT_ID = "play-space-come-on-in";
+export const WINDOW_SHOPPER_ACHIEVEMENT_ID = "cosmetics-window-shopper";
+export const ENTER_THE_SHAPER_ACHIEVEMENT_ID = "cosmetics-enter-the-shaper";
+export const TRY_BEFORE_YOU_BUY_ACHIEVEMENT_ID = "cosmetics-try-before-you-buy";
+export const PAID_IN_STYLE_ACHIEVEMENT_ID = "cosmetics-paid-in-style";
+export const FRAMED_ACHIEVEMENT_ID = "cosmetics-framed";
+export const CAPTION_ACHIEVEMENT_ID = "cosmetics-caption";
 
 /** Wallet address for Beat the Creator (win a Match against this player). */
 export const BEAT_THE_CREATOR_WALLET =
@@ -188,6 +231,12 @@ export type AchievementDefinition = {
   criteria: AchievementCriteria;
   /** Dedicated achievement-only cosmetic SKU granted on completion. */
   rewardSku?: string;
+  /**
+   * When set, incomplete rows show Temporarily unavailable while the live
+   * feature is off (Shop closed / The Shaper hidden). Football pause does not
+   * use this.
+   */
+  featureDependency?: "shop" | "shaper";
 };
 
 /** Achievement-exclusive cosmetics - reference Style Line variants (shop uses distinct SKUs later). */
@@ -295,6 +344,34 @@ export const ACHIEVEMENT_REWARD_CATALOG: ReadonlyArray<{
     displayName: "Sigil: Twirl 03",
     description: "Unlocked by Regular.",
     sortOrder: 140,
+  },
+  {
+    cosmeticSku: "ach-nameplate-frame-simple",
+    presetId: "nameplate-frame-simple",
+    displayName: "Simple Frame Nameplate",
+    description: "Unlocked by Open House.",
+    sortOrder: 150,
+  },
+  {
+    cosmeticSku: "ach-nameplate-frame-neon",
+    presetId: "nameplate-frame-neon",
+    displayName: "Neon Frame Nameplate",
+    description: "Unlocked by Double Digits.",
+    sortOrder: 160,
+  },
+  {
+    cosmeticSku: "ach-bubble-rounded-pastel",
+    presetId: "bubble-rounded-pastel",
+    displayName: "Pastel Rounded Bubble",
+    description: "Unlocked by Between Us.",
+    sortOrder: 170,
+  },
+  {
+    cosmeticSku: "ach-bubble-sharp-dark",
+    presetId: "bubble-sharp-dark",
+    displayName: "Dark Sharp Bubble",
+    description: "Unlocked by Room to Room.",
+    sortOrder: 180,
   },
 ];
 
@@ -1132,6 +1209,25 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     },
   },
   {
+    id: BETWEEN_US_ACHIEVEMENT_ID,
+    title: "Between Us",
+    description: "Send your first Whisper.",
+    category: "social",
+    points: 15,
+    sortOrder: 3027,
+    criteria: { type: "event", event: "between_us" },
+    rewardSku: ACH_BUBBLE_ROUNDED_PASTEL_SKU,
+  },
+  {
+    id: TAKE_A_LOOK_ACHIEVEMENT_ID,
+    title: "Take a Look",
+    description: "View another player's profile from the Other Player Menu.",
+    category: "social",
+    points: 10,
+    sortOrder: 3028,
+    criteria: { type: "event", event: "take_a_look" },
+  },
+  {
     id: "social-chatter-100",
     title: "Chatterbox I",
     description: "Send 100 in-game chat messages.",
@@ -1317,6 +1413,24 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     },
   },
   {
+    id: "exploration-knock-knock",
+    title: "Knock Knock",
+    description: "Visit a public player-owned room that is not yours.",
+    category: "exploration",
+    points: 15,
+    sortOrder: 4100,
+    criteria: { type: "event", event: "knock_knock" },
+  },
+  {
+    id: "exploration-toll-crossed",
+    title: "Toll Crossed",
+    description: "Unlock an Unlock Pad outside the Tutorial Room.",
+    category: "exploration",
+    points: 15,
+    sortOrder: 4110,
+    criteria: { type: "event", event: "toll_crossed" },
+  },
+  {
     id: "worldcraft-palette-painter-1",
     title: "Palette Painter I",
     description: "Recolor 50 distinct floor tiles outside the Pixel room.",
@@ -1474,6 +1588,77 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     criteria: { type: "owned_room_furnisher" },
   },
   {
+    id: OPEN_HOUSE_ACHIEVEMENT_ID,
+    title: "Open House",
+    description: "Make a room you own public for the first time.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 25,
+    sortOrder: 5130,
+    criteria: { type: "event", event: "open_house" },
+    rewardSku: ACH_NAMEPLATE_FRAME_SIMPLE_SKU,
+  },
+  {
+    id: ROOM_TO_ROOM_ACHIEVEMENT_ID,
+    title: "Room to Room",
+    description:
+      "Set a Teleporter in a room you own to a different room you also own.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 25,
+    sortOrder: 5140,
+    criteria: { type: "event", event: "room_to_room" },
+    rewardSku: ACH_BUBBLE_SHARP_DARK_SKU,
+  },
+  {
+    id: TWO_KEYS_ACHIEVEMENT_ID,
+    title: "Two Keys",
+    description: "Own two persisted rooms.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 15,
+    sortOrder: 5150,
+    criteria: { type: "event", event: "two_keys" },
+  },
+  {
+    id: EXTRA_HANDS_ACHIEVEMENT_ID,
+    title: "Extra Hands",
+    description: "Add another wallet as a builder on a room you own.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 15,
+    sortOrder: 5160,
+    criteria: { type: "event", event: "extra_hands" },
+  },
+  {
+    id: COMPANY_ACHIEVEMENT_ID,
+    title: "Company",
+    description: "Have a unique visitor enter a public room you own.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 40,
+    sortOrder: 5170,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "public-room-visitor:",
+      threshold: 1,
+    },
+  },
+  {
+    id: HOUSEWARMING_ACHIEVEMENT_ID,
+    title: "Housewarming",
+    description: "Have three unique visitors enter a public room you own.",
+    category: "worldcraft",
+    categoryGroup: "building",
+    points: 50,
+    sortOrder: 5180,
+    criteria: {
+      type: "dedupe_count",
+      seenPrefix: "public-room-visitor:",
+      threshold: 3,
+    },
+  },
+  {
     id: BEAT_THE_CREATOR_ACHIEVEMENT_ID,
     title: "Beat the Creator",
     description: "Win a World Cup Match against the creator.",
@@ -1491,6 +1676,110 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 15,
     sortOrder: 2985,
     criteria: { type: "event", event: "feedback_reply_seen" },
+  },
+  {
+    id: PRIVATE_ROOM_ACHIEVEMENT_ID,
+    title: "Private Room",
+    description: "Open your Play Space.",
+    category: "play_space",
+    points: 10,
+    sortOrder: 3200,
+    criteria: { type: "event", event: "private_room" },
+  },
+  {
+    id: COME_ON_IN_ACHIEVEMENT_ID,
+    title: "Come On In",
+    description: "Have a Guest claim your Direct Invite and land in your Play Space.",
+    category: "play_space",
+    points: 40,
+    sortOrder: 3210,
+    criteria: { type: "event", event: "come_on_in" },
+  },
+  {
+    id: WINDOW_SHOPPER_ACHIEVEMENT_ID,
+    title: "Window Shopper",
+    description: "Open the Shop.",
+    category: "cosmetics",
+    points: 10,
+    sortOrder: 4000,
+    criteria: { type: "event", event: "window_shopper" },
+    featureDependency: "shop",
+  },
+  {
+    id: ENTER_THE_SHAPER_ACHIEVEMENT_ID,
+    title: "Enter The Shaper",
+    description: "Visit The Shaper.",
+    category: "cosmetics",
+    points: 15,
+    sortOrder: 4010,
+    criteria: { type: "event", event: "enter_the_shaper" },
+    featureDependency: "shaper",
+  },
+  {
+    id: TRY_BEFORE_YOU_BUY_ACHIEVEMENT_ID,
+    title: "Try Before You Buy",
+    description: "Try a bound Sale Display.",
+    category: "cosmetics",
+    points: 15,
+    sortOrder: 4020,
+    criteria: { type: "event", event: "try_before_you_buy" },
+    featureDependency: "shop",
+  },
+  {
+    id: PAID_IN_STYLE_ACHIEVEMENT_ID,
+    title: "Paid in Style",
+    description: "Complete a Cosmetic Unlock purchase.",
+    category: "cosmetics",
+    points: 25,
+    sortOrder: 4030,
+    criteria: { type: "event", event: "paid_in_style" },
+    featureDependency: "shop",
+  },
+  {
+    id: FRAMED_ACHIEVEMENT_ID,
+    title: "Framed",
+    description: "Equip a nameplate on your Loadout.",
+    category: "cosmetics",
+    points: 10,
+    sortOrder: 4040,
+    criteria: { type: "event", event: "framed" },
+  },
+  {
+    id: CAPTION_ACHIEVEMENT_ID,
+    title: "Caption",
+    description: "Equip a chat bubble on your Loadout.",
+    category: "cosmetics",
+    points: 10,
+    sortOrder: 4050,
+    criteria: { type: "event", event: "caption" },
+  },
+  {
+    id: ON_THE_BOARD_ACHIEVEMENT_ID,
+    title: "On the Board",
+    description: "Reach Player Level 5.",
+    category: "meta",
+    points: 25,
+    sortOrder: 5900,
+    criteria: { type: "player_level", threshold: 5 },
+  },
+  {
+    id: DOUBLE_DIGITS_ACHIEVEMENT_ID,
+    title: "Double Digits",
+    description: "Reach Player Level 10.",
+    category: "meta",
+    points: 50,
+    sortOrder: 5910,
+    criteria: { type: "player_level", threshold: 10 },
+    rewardSku: ACH_NAMEPLATE_FRAME_NEON_SKU,
+  },
+  {
+    id: ESTABLISHED_ACHIEVEMENT_ID,
+    title: "Established",
+    description: "Reach Player Level 15.",
+    category: "meta",
+    points: 75,
+    sortOrder: 5920,
+    criteria: { type: "player_level", threshold: 15 },
   },
   {
     id: POINT_HUNTER_I_ACHIEVEMENT_ID,
@@ -1529,6 +1818,7 @@ const definitionsByStreakCounter = new Map<
 const dailySetAchievements: AchievementDefinition[] = [];
 const loginStreakAchievements: AchievementDefinition[] = [];
 const apThresholdAchievements: AchievementDefinition[] = [];
+const playerLevelAchievements: AchievementDefinition[] = [];
 
 for (const def of ACHIEVEMENT_DEFINITIONS) {
   if (def.criteria.type === "event") {
@@ -1543,6 +1833,8 @@ for (const def of ACHIEVEMENT_DEFINITIONS) {
     loginStreakAchievements.push(def);
   } else if (def.criteria.type === "ap_threshold") {
     apThresholdAchievements.push(def);
+  } else if (def.criteria.type === "player_level") {
+    playerLevelAchievements.push(def);
   } else if (def.criteria.type === "dedupe_count") {
     const list = definitionsByDedupePrefix.get(def.criteria.seenPrefix) ?? [];
     list.push(def);
@@ -1584,6 +1876,10 @@ export function listLoginStreakAchievements(): ReadonlyArray<AchievementDefiniti
 
 export function listApThresholdAchievements(): ReadonlyArray<AchievementDefinition> {
   return apThresholdAchievements;
+}
+
+export function listPlayerLevelAchievements(): ReadonlyArray<AchievementDefinition> {
+  return playerLevelAchievements;
 }
 
 export function listAchievementsForDedupePrefix(

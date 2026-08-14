@@ -31,6 +31,8 @@ import {
   adminRandomExtraFloorLayout,
   broadcastRestartPendingNotice,
   broadcastRoomCatalogRefresh,
+  broadcastShopAccessState,
+  deliverAchievementUnlocksForWallet,
   canTeleporterDestinationRoom,
   clearSpentTutorialMineClaimsForWallet,
   directInviteOnCreated,
@@ -102,6 +104,7 @@ import {
 } from "./roomLayouts.js";
 import {
   getDynamicRoomBuilderAddresses,
+  getDynamicRoomOwnerAddress,
   normalizeBackgroundHuePatch,
   normalizeBackgroundNeutralPatch,
   normalizeBuilderAddressesPatch,
@@ -243,7 +246,7 @@ import {
   listOwnedDeployables,
   ensureDevWalletAllCosmeticEntitlements,
 } from "./cosmeticStore.js";
-import { isShopPubliclyOpen } from "./shopAccess.js";
+import { isShopEnvEnabled, isShopPubliclyOpen } from "./shopAccess.js";
 import type { PassiveSlot } from "./cosmeticPresets.js";
 import {
   createCosmeticUnlockPaymentIntent,
@@ -256,12 +259,19 @@ import {
 import {
   ensureAchievementRewardEntitlements,
   evaluateLoginStreakAchievements,
+  evaluatePlayerLevelAchievements,
+  evaluateOwnedRoomStateAchievements,
+  evaluateCosmeticsCatchUpAchievements,
   fireAchievementEvent,
   getAchievementsForWallet,
   getPublicAchievementSummary,
   initAchievementStore,
+  recordFramedOrCaptionFromLoadout,
+  recordPaidInStyle,
+  recordTollCrossed,
 } from "./achievementStore.js";
 import { playerLevelFromPoints } from "./playerLevel.js";
+import { peekDailyEarnRemaining } from "./dailyEarnAllowance.js";
 import { BILLBOARD_ADVERTS_CATALOG } from "./billboardAdvertsCatalog.js";
 import {
   maybeSendConnectNotice,
@@ -626,11 +636,13 @@ app.get("/api/player-profile/:address", (req, res) => {
     // and used for the player's own Flag Emote. Available regardless of the season gate.
     pub.country = getWorldcupPlayerCountry(addr);
     let canSeePrivateRooms = false;
+    let isSelfProfile = false;
     const t = bearerToken(req);
     if (t) {
       try {
         const sub = normalizeWalletId(verifySession(t, jwtSecret).sub);
         if (sub === addr) {
+          isSelfProfile = true;
           pub.usernameSetBanned = isUsernameSetBanned(addr);
           pub.channelMuted = isChannelMuted(addr);
           pub.miningBanned = isMiningBanned(addr);
@@ -675,6 +687,26 @@ app.get("/api/player-profile/:address", (req, res) => {
     pub.achievementPoints = achievementSummary.totalPoints;
     pub.playerLevel = playerLevelFromPoints(achievementSummary.totalPoints);
     pub.achievementHighlights = achievementSummary.recentHighlights;
+    // Daily Earn Allowance remaining is private to the subject wallet only.
+    if (isSelfProfile) {
+      const earn = peekDailyEarnRemaining({
+        wallet: addr,
+        achievementPoints: achievementSummary.totalPoints,
+      });
+      if (earn.ceilingLuna === null || earn.remainingLuna === null) {
+        pub.dailyEarnAllowance = { uncapped: true };
+      } else {
+        const fmt = (luna: bigint): string => {
+          const nim = Number(luna) / Number(LUNA_PER_NIM);
+          return nim.toFixed(2).replace(/\.?0+$/, "") || "0";
+        };
+        pub.dailyEarnAllowance = {
+          uncapped: false,
+          remainingNim: fmt(earn.remainingLuna),
+          ceilingNim: fmt(earn.ceilingLuna),
+        };
+      }
+    }
     res.json(pub);
   } catch (err) {
     console.error("[player-profile/get]", err);
@@ -2031,6 +2063,11 @@ app.put("/api/cosmetics/loadout", requireJwt, (req, res) => {
   }
   if (sku) {
     fireAchievementEvent(wallet, "equip_cosmetic");
+    if (slot === "nameplate" || slot === "chatBubble") {
+      recordFramedOrCaptionFromLoadout(wallet, slot, (unlocks) =>
+        deliverAchievementUnlocksForWallet(wallet, unlocks)
+      );
+    }
   }
   res.json({ loadout: getLoadout(wallet) });
 });
@@ -2088,6 +2125,11 @@ app.post("/api/cosmetics/unlock-sync", requireJwt, async (req, res) => {
       const status = result.pending ? 202 : 400;
       res.status(status).json({ error: result.error, pending: result.pending });
       return;
+    }
+    if (result.granted) {
+      recordPaidInStyle(wallet, (unlocks) =>
+        deliverAchievementUnlocksForWallet(wallet, unlocks)
+      );
     }
     res.json(result);
   } catch (e) {
@@ -2149,6 +2191,11 @@ app.post("/api/unlock-pad/sync", requireJwt, async (req, res) => {
       const status = result.pending ? 202 : 400;
       res.status(status).json({ error: result.error, pending: result.pending });
       return;
+    }
+    if (result.granted) {
+      recordTollCrossed(wallet, String(body.roomId ?? ""), (unlocks) =>
+        deliverAchievementUnlocksForWallet(wallet, unlocks)
+      );
     }
     res.json(result);
   } catch (e) {
@@ -2308,6 +2355,7 @@ app.get("/api/admin/settings", requireSystemAdminWallet, (_req, res) => {
     streamObserverEnvConfigured: streamObserverEnvConfigured(),
     streamObserverAllowlistConfigured: streamObserverAllowlistConfigured(),
     tutorialEnvEnabled: isTutorialEnvEnabled(),
+    shopEnvEnabled: isShopEnvEnabled(),
   });
 });
 
@@ -2317,6 +2365,7 @@ app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
     playerUsernameSelfServiceEnabled?: boolean;
     streamObserverAddresses?: string;
     tutorialEnabled?: boolean;
+    shopEnabled?: boolean;
   } = {};
   if (
     body &&
@@ -2338,15 +2387,22 @@ app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
   if (body && Object.prototype.hasOwnProperty.call(body, "tutorialEnabled")) {
     patch.tutorialEnabled = body.tutorialEnabled === true;
   }
+  if (body && Object.prototype.hasOwnProperty.call(body, "shopEnabled")) {
+    patch.shopEnabled = body.shopEnabled === true;
+  }
   const next =
     Object.keys(patch).length > 0
       ? patchAdminRuntimeSettings(patch)
       : getAdminRuntimeSettings();
+  if (Object.prototype.hasOwnProperty.call(patch, "shopEnabled")) {
+    broadcastShopAccessState();
+  }
   res.json({
     ...next,
     streamObserverEnvConfigured: streamObserverEnvConfigured(),
     streamObserverAllowlistConfigured: streamObserverAllowlistConfigured(),
     tutorialEnvEnabled: isTutorialEnvEnabled(),
+    shopEnvEnabled: isShopEnvEnabled(),
   });
 });
 
@@ -2788,6 +2844,17 @@ app.put("/api/admin/rooms/:id", requireSystemAdminWallet, (req, res) => {
     if (!out.ok) {
       res.status(400).json({ error: out.reason });
       return;
+    }
+    const owner = getDynamicRoomOwnerAddress(roomId);
+    if (
+      owner &&
+      (patch.builderAddresses !== undefined ||
+        patch.isPublic !== undefined ||
+        patch.ownerAddress !== undefined)
+    ) {
+      evaluateOwnedRoomStateAchievements(owner, (unlocks) =>
+        deliverAchievementUnlocksForWallet(owner, unlocks)
+      );
     }
   }
 
@@ -3554,6 +3621,9 @@ app.post("/api/auth/verify", async (req, res) => {
   try {
     recordLoginStreakForWallet(normalizeWalletId(sessionAddress));
     evaluateLoginStreakAchievements(normAddr);
+    evaluatePlayerLevelAchievements(normAddr);
+    evaluateOwnedRoomStateAchievements(normAddr);
+    evaluateCosmeticsCatchUpAchievements(normAddr);
   } catch (e) {
     console.error("[login-streak]", e);
   }

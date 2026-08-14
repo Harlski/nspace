@@ -751,6 +751,18 @@ export function listEntitlements(wallet: string): EntitlementPublic[] {
   }));
 }
 
+/** True when the wallet has at least one Cosmetics entitlement from a shop purchase. */
+export function walletHasPurchaseEntitlement(wallet: string): boolean {
+  const w = normalizeWallet(wallet);
+  if (!w) return false;
+  const row = requireDb()
+    .prepare(
+      `SELECT 1 FROM cosmetic_entitlements WHERE wallet = ? AND source = 'purchase' LIMIT 1`
+    )
+    .get(w);
+  return row != null;
+}
+
 export function grantEntitlement(
   wallet: string,
   cosmeticSku: string,

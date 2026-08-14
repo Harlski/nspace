@@ -8,9 +8,11 @@ import { normalizeStreamObserverAddressesField } from "./walletAddresses.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const STORE_FILE = process.env.ADMIN_RUNTIME_SETTINGS_FILE
-  ? path.resolve(process.env.ADMIN_RUNTIME_SETTINGS_FILE)
-  : path.join(__dirname, "..", "data", "admin-runtime-settings.json");
+function storeFilePath(): string {
+  return process.env.ADMIN_RUNTIME_SETTINGS_FILE
+    ? path.resolve(process.env.ADMIN_RUNTIME_SETTINGS_FILE)
+    : path.join(__dirname, "..", "data", "admin-runtime-settings.json");
+}
 
 export type AdminRuntimeSettings = {
   /** When true, signed-in players may set their own username. When false, only admins may assign names (moderation API or own wallet as admin). */
@@ -22,25 +24,30 @@ export type AdminRuntimeSettings = {
    * `TUTORIAL_ENABLED=1` (env unset/0 hard-disables regardless of this flag).
    */
   tutorialEnabled: boolean;
+  /**
+   * Player-facing Shop. On by default; still hard-closed when `SHOP_ENABLED=0`.
+   */
+  shopEnabled: boolean;
 };
 
 const DEFAULTS: AdminRuntimeSettings = {
   playerUsernameSelfServiceEnabled: true,
   streamObserverAddresses: "",
   tutorialEnabled: false,
+  shopEnabled: true,
 };
 
 type StoreFile = { settings: AdminRuntimeSettings };
 
 function ensureDir(): void {
-  const dir = path.dirname(STORE_FILE);
+  const dir = path.dirname(storeFilePath());
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
 function readStore(): StoreFile {
-  if (!fs.existsSync(STORE_FILE)) return { settings: { ...DEFAULTS } };
+  if (!fs.existsSync(storeFilePath())) return { settings: { ...DEFAULTS } };
   try {
-    const raw = fs.readFileSync(STORE_FILE, "utf8");
+    const raw = fs.readFileSync(storeFilePath(), "utf8");
     const j = JSON.parse(raw) as unknown;
     if (!j || typeof j !== "object") return { settings: { ...DEFAULTS } };
     const o = j as Record<string, unknown>;
@@ -59,6 +66,9 @@ function readStore(): StoreFile {
     merged.tutorialEnabled = Boolean(
       (s as AdminRuntimeSettings).tutorialEnabled ?? DEFAULTS.tutorialEnabled
     );
+    merged.shopEnabled = Boolean(
+      (s as AdminRuntimeSettings).shopEnabled ?? DEFAULTS.shopEnabled
+    );
     return { settings: merged };
   } catch {
     return { settings: { ...DEFAULTS } };
@@ -67,9 +77,10 @@ function readStore(): StoreFile {
 
 function writeStore(data: StoreFile): void {
   ensureDir();
-  const tmp = `${STORE_FILE}.tmp`;
+  const file = storeFilePath();
+  const tmp = `${file}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(data, null, 0), "utf8");
-  fs.renameSync(tmp, STORE_FILE);
+  fs.renameSync(tmp, file);
 }
 
 export function getAdminRuntimeSettings(): AdminRuntimeSettings {
@@ -92,6 +103,9 @@ export function patchAdminRuntimeSettings(
   }
   if (patch.tutorialEnabled !== undefined) {
     next.tutorialEnabled = Boolean(patch.tutorialEnabled);
+  }
+  if (patch.shopEnabled !== undefined) {
+    next.shopEnabled = Boolean(patch.shopEnabled);
   }
   writeStore({ settings: next });
   if (patch.streamObserverAddresses !== undefined) {

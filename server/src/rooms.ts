@@ -85,6 +85,7 @@ import {
   updateDynamicRoomMetadata,
   getDynamicRoomDeployablesAllowed,
   forceDynamicRoomPrivate,
+  getDynamicRoomListingMeta,
   type RoomBackgroundNeutral,
 } from "./roomRegistry.js";
 import {
@@ -145,6 +146,9 @@ import {
   recordTerrainShapePlaced,
   recordTeleporterWarp,
   recordTrustCircleWalk,
+  evaluateOwnedRoomStateAchievements,
+  recordPublicRoomVisitor,
+  recordRoomToRoom,
   tickExplorationDailyRollover,
   totalPointsForWallet,
   type AchievementUnlockWire,
@@ -154,14 +158,22 @@ import {
   isRushHourFieldGoal,
   isUnderdogCountryAtGoalTime,
 } from "./fieldGoalAchievementEvaluator.js";
+import { isKnockKnockEligibleVisit } from "./explorationAchievementEvaluator.js";
+import {
+  isBetweenUsEligibleWhisper,
+  isComeOnInHostEligible,
+  isTakeALookEligibleProfileView,
+} from "./socialPlaySpaceAchievementEvaluator.js";
 import { achievementCelebrationCount } from "./achievementCelebration.js";
 import { getPublicLoadoutForWallet } from "./cosmeticStore.js";
 import {
   COSMETIC_GALLERY_DEFAULT_SPAWN,
   cosmeticGalleryWelcomeExtras,
   isCosmeticGalleryRoom,
+  isShaperReachable,
   resolveCosmeticGalleryJoinCode,
 } from "./cosmeticGallery.js";
+import { isShopPubliclyOpen } from "./shopAccess.js";
 import {
   isJoinCode,
   isLegacyPlaySpaceSlug,
@@ -454,6 +466,7 @@ import {
   listSaleDisplaysWire,
   loadSaleDisplays,
   moveSaleDisplay,
+  setSaleDisplayWalk,
   type SaleDisplayWire,
 } from "./saleDisplays.js";
 import { canPlaceSaleDisplay } from "./saleDisplays/policy.js";
@@ -1458,6 +1471,10 @@ type OutMsg =
       tutorial?: TutorialWelcome;
       /** Learner tutorial flow live (env + admin toggle). */
       tutorialEnabled?: boolean;
+      /** Shop open for this session (env kill switch and admin checkbox). */
+      shopOpen?: boolean;
+      /** The Shaper joinable (Shop open and SHAPER_ENABLED not 0). */
+      shaperReachable?: boolean;
       /** Unlock Pad instance ids this wallet has already unlocked in this room. */
       unlockedPadInstanceIds?: string[];
       /** Dynamic rooms: owner may toggle deployables via `updateRoom`. */
@@ -1873,6 +1890,11 @@ type OutMsg =
       seq: number;
     }
   | {
+      type: "shopAccess";
+      shopOpen: boolean;
+      shaperReachable: boolean;
+    }
+  | {
       type: "achievementUnlocked";
       achievementId: string;
       title: string;
@@ -1985,6 +2007,14 @@ function achievementUnlockHandlerForAddress(address: string) {
   };
 }
 
+/** HTTP/fulfill paths that unlock achievements while a wallet is online. */
+export function deliverAchievementUnlocksForWallet(
+  wallet: string,
+  unlocks: AchievementUnlockWire[]
+): void {
+  achievementUnlockHandlerForAddress(wallet)(unlocks);
+}
+
 function onPlayerEnteredRoom(
   conn: ClientConn,
   roomId: string,
@@ -2002,6 +2032,9 @@ function onPlayerEnteredRoom(
   if (normalizeRoomId(roomId) === HUB_ROOM_ID) {
     fireAchievementEvent(conn.player.address, "enter_commons", onUnlock);
   }
+  if (isCosmeticGalleryRoom(roomId)) {
+    fireAchievementEvent(conn.player.address, "enter_the_shaper", onUnlock);
+  }
   recordExplorationRoomEntry(conn.player.address, roomId, onUnlock);
   if (opts?.doorSpawn && opts.spawnHint) {
     recordExplorationDoorFromSpawn(
@@ -2014,6 +2047,34 @@ function onPlayerEnteredRoom(
   }
   if (opts?.isRoomChange) {
     fireAchievementEvent(conn.player.address, "visit_room", onUnlock);
+  }
+  {
+    const listing = getDynamicRoomListingMeta(roomId);
+    if (
+      listing &&
+      isKnockKnockEligibleVisit({
+        roomId,
+        isPublic: listing.isPublic,
+        isBuiltin: isBuiltinRoomId(roomId),
+        isOfficial: listing.isOfficial,
+        isPlaySpace: isInviteLobbyRoomId(roomId),
+        ownerAddress: listing.ownerAddress,
+        visitorAddress: conn.player.address,
+      })
+    ) {
+      fireAchievementEvent(conn.player.address, "knock_knock", onUnlock);
+    }
+  }
+  {
+    const listing = getDynamicRoomListingMeta(roomId);
+    if (listing?.ownerAddress) {
+      recordPublicRoomVisitor(
+        listing.ownerAddress,
+        conn.player.address,
+        roomId,
+        (unlocks) => deliverAchievementUnlocksForWallet(listing.ownerAddress!, unlocks)
+      );
+    }
   }
   for (const notice of consumePublicDemotionNotices(conn.player.address)) {
     wsSafeSend(conn.ws, {
@@ -4515,6 +4576,18 @@ export function broadcastRestartPendingNotice(
   } satisfies OutMsg);
 }
 
+function shopAccessWire(): { shopOpen: boolean; shaperReachable: boolean } {
+  return {
+    shopOpen: isShopPubliclyOpen(),
+    shaperReachable: isShaperReachable(),
+  };
+}
+
+/** Live Shop / The Shaper flags after an admin runtime toggle (no reconnect). */
+export function broadcastShopAccessState(): void {
+  broadcastAll({ type: "shopAccess", ...shopAccessWire() } satisfies OutMsg);
+}
+
 function countRealPlayersInRoom(roomId: string): number {
   const r = rooms.get(roomId);
   if (!r) return 0;
@@ -5150,6 +5223,7 @@ const ADMIN_INVISIBLE_BLOCKED_MSG_TYPES: ReadonlySet<string> = new Set([
   "clearSaleDisplayBind",
   "moveSaleDisplay",
   "deleteSaleDisplay",
+  "setSaleDisplayWalk",
   "updateBillboard",
   "updateSignboard",
   "setVoxelText",
@@ -5200,7 +5274,7 @@ function setConnAdminInvisible(
     } else {
       wsSafeSend(c.ws, {
         type: "playerJoined",
-        player: stripAdminInvisibleFlag(player),
+        player: stripAdminOnlyPresenceCues(player),
         silent: true,
       } satisfies OutMsg);
     }
@@ -6846,7 +6920,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     [...targetRoomConns.values()]
       .filter((c) => c.address !== address)
       .map(playerToOutState)
-  ).map((p) => (isAdmin(address) ? p : stripAdminInvisibleFlag(p)));
+  ).map((p) => (isAdmin(address) ? p : stripAdminOnlyPresenceCues(p)));
   const rb = getRoomBaseBounds(targetRoomId);
   const doors = welcomeDoorsForRoom(targetRoomId, address);
   
@@ -6959,6 +7033,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
         targetRoomId
       ),
       tutorialEnabled: isTutorialFeatureEnabled(),
+      ...shopAccessWire(),
       ...(tutorialWelcome ? { tutorial: tutorialWelcome } : {}),
     } satisfies OutMsg);
   logChatBacklogDelivered(conn.sessionId, address, targetRoomId, chatBacklog);
@@ -8233,6 +8308,11 @@ export function directInviteOnCreated(invite: DirectInviteRecord): void {
     z: host.player.z,
     y: host.player.y,
   });
+  fireAchievementEvent(
+    invite.hostWallet,
+    "private_room",
+    achievementUnlockHandler(host.ws)
+  );
 }
 
 function directInviteOnLobbyConnect(
@@ -8268,8 +8348,22 @@ function directInviteOnLobbyConnect(
       } satisfies OutMsg);
       return;
     }
+    const alreadyJoined = getParticipant(invite, gid)?.joinedLobby === true;
     conn.directInviteSlug = slug;
     markGuestJoinedLobby(slug, gid);
+    if (
+      isComeOnInHostEligible({
+        hostWallet: invite.hostWallet,
+        guestAddress: address,
+        guestAlreadyJoinedLobby: alreadyJoined,
+      })
+    ) {
+      fireAchievementEvent(
+        invite.hostWallet,
+        "come_on_in",
+        (unlocks) => deliverAchievementUnlocksForWallet(invite.hostWallet, unlocks)
+      );
+    }
   } else {
     const participant = getParticipantByWallet(invite, address);
     if (!participant) {
@@ -9053,7 +9147,7 @@ export function addClient(
   const others = playersVisibleToViewer(
     { isGameAdmin: isAdmin(address) },
     snapshotPlayers(roomId).filter((p) => p.address !== address)
-  ).map((p) => (isAdmin(address) ? p : stripAdminInvisibleFlag(p)));
+  ).map((p) => (isAdmin(address) ? p : stripAdminOnlyPresenceCues(p)));
   const selfOut = playerToOutState(conn);
 
   const rb = getRoomBaseBounds(roomId);
@@ -9188,6 +9282,7 @@ export function addClient(
         : undefined,
       ...cosmeticGalleryWelcomeExtras(roomId),
       tutorialEnabled: isTutorialFeatureEnabled(),
+      ...shopAccessWire(),
       ...(tutorialWelcome ? { tutorial: tutorialWelcome } : {}),
       unlockedPadInstanceIds: listUnlockPadInstanceIdsForWallet(address, roomId),
     } satisfies OutMsg);
@@ -9303,9 +9398,9 @@ export function addClient(
         (msg as { address?: unknown }).address ?? ""
       ).trim();
       if (!targetRaw) return;
-      const targetKey = compactAddress(targetRaw);
-      const targetConn = roomOf(currentRoomIdEarly).get(targetKey);
+      const targetConn = findConnByWallet(targetRaw);
       if (!targetConn || targetConn.streamObserver) return;
+      if (findPlayerRoom(targetConn.address) !== currentRoomIdEarly) return;
       const enabled = (msg as { enabled?: unknown }).enabled === true;
       setConnFrozen(currentRoomIdEarly, actorConn, targetConn, enabled);
       return;
@@ -9686,6 +9781,22 @@ export function addClient(
       const onUnlock = achievementUnlockHandler(ws);
       if (kind === "open_profile") {
         fireAchievementEvent(address, "open_profile", onUnlock);
+      } else if (kind === "view_other_profile") {
+        const profileAddress = String(
+          (msg as { profileAddress?: unknown }).profileAddress ?? ""
+        ).trim();
+        if (
+          isTakeALookEligibleProfileView({
+            viewerAddress: address,
+            profileAddress,
+          })
+        ) {
+          fireAchievementEvent(address, "take_a_look", onUnlock);
+        }
+      } else if (kind === "open_shop") {
+        fireAchievementEvent(address, "window_shopper", onUnlock);
+      } else if (kind === "try_sale_display") {
+        fireAchievementEvent(address, "try_before_you_buy", onUnlock);
       } else if (kind === "open_wardrobe") {
         fireAchievementEvent(address, "open_wardrobe", onUnlock);
       } else if (kind === "send_emote") {
@@ -9771,6 +9882,10 @@ export function addClient(
       recordRoomCreatedForDeluxe(
         address,
         created.id,
+        achievementUnlockHandler(ws)
+      );
+      evaluateOwnedRoomStateAchievements(
+        address,
         achievementUnlockHandler(ws)
       );
       teleportPlayer(conn, created.id, spawnX, spawnZ);
@@ -10210,6 +10325,12 @@ export function addClient(
       }
       broadcastRoomCatalogToAll();
       const nR = normalizeRoomId(roomId);
+      if (patch.isPublic !== undefined) {
+        evaluateOwnedRoomStateAchievements(
+          address,
+          achievementUnlockHandler(ws)
+        );
+      }
       if (
         patch.backgroundHueDeg !== undefined ||
         patch.backgroundNeutral !== undefined
@@ -11346,7 +11467,8 @@ export function addClient(
       msg.type === "bindSaleDisplay" ||
       msg.type === "clearSaleDisplayBind" ||
       msg.type === "moveSaleDisplay" ||
-      msg.type === "deleteSaleDisplay"
+      msg.type === "deleteSaleDisplay" ||
+      msg.type === "setSaleDisplayWalk"
     ) {
       const allowed = canPlaceSaleDisplay({
         isAdmin: isAdmin(address),
@@ -11435,6 +11557,25 @@ export function addClient(
           id,
           x: tile.x,
           z: tile.z,
+        });
+        return;
+      }
+
+      if (msg.type === "setSaleDisplayWalk") {
+        const updated = setSaleDisplayWalk(id, {
+          enabled: msg.enabled === true,
+          tiles: msg.tiles,
+        });
+        if (!updated) {
+          wsSafeSend(ws, { type: "error", code: "sale_display_not_found" });
+          return;
+        }
+        flushSaleDisplaysSync();
+        broadcastSaleDisplays(currentRoomId);
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "set_sale_display_walk", {
+          id,
+          enabled: updated.walkEnabled,
+          tileCount: updated.walkTiles.length,
         });
         return;
       }
@@ -11954,6 +12095,12 @@ export function addClient(
           } satisfies OutMsg);
       } else {
         recordTeleporterActivated(address, achievementUnlockHandler(ws));
+        recordRoomToRoom(
+          address,
+          currentRoomId,
+          destRoomId,
+          achievementUnlockHandler(ws)
+        );
       }
       return;
     }
@@ -13376,6 +13523,18 @@ export function addClient(
             : {}),
         }
       );
+      if (
+        isBetweenUsEligibleWhisper({
+          senderAddress: senderAddress,
+          targetAddress,
+        })
+      ) {
+        fireAchievementEvent(
+          address,
+          "between_us",
+          achievementUnlockHandler(ws)
+        );
+      }
       return;
     }
 

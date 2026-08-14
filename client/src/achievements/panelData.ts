@@ -15,9 +15,29 @@ export const CATEGORY_LABELS: Record<string, string> = {
   social: "Social",
   exploration: "Exploration",
   worldcraft: "Worldcraft",
+  play_space: "Play Space",
+  cosmetics: "Cosmetics",
   meta: "Meta",
   misc: "Misc",
 };
+
+export const TEMPORARILY_UNAVAILABLE_LABEL = "Temporarily unavailable";
+
+function countsTowardProgressOverview(a: AchievementProgress): boolean {
+  if (a.completed) return true;
+  return a.availability !== "temporarily_unavailable";
+}
+
+export function overallProgress(achievements: AchievementProgress[]): {
+  earned: number;
+  total: number;
+} {
+  const rows = achievements.filter(countsTowardProgressOverview);
+  return {
+    earned: rows.filter((a) => a.completed).length,
+    total: rows.length,
+  };
+}
 
 export const CATEGORY_GROUP_LABELS: Record<string, string> = {
   building: "Building",
@@ -26,16 +46,6 @@ export const CATEGORY_GROUP_LABELS: Record<string, string> = {
 
 export function categoryLabel(category: string): string {
   return CATEGORY_LABELS[category] ?? category;
-}
-
-export function overallProgress(achievements: AchievementProgress[]): {
-  earned: number;
-  total: number;
-} {
-  return {
-    earned: achievements.filter((a) => a.completed).length,
-    total: achievements.length,
-  };
 }
 
 /** Player Level and progress within the current 100-AP band (vanity climb continues past L11). */
@@ -57,7 +67,9 @@ export function categoryProgress(
   achievements: AchievementProgress[],
   category: string
 ): { earned: number; total: number } {
-  const rows = achievements.filter((a) => a.category === category);
+  const rows = achievements
+    .filter((a) => a.category === category)
+    .filter(countsTowardProgressOverview);
   return {
     earned: rows.filter((a) => a.completed).length,
     total: rows.length,

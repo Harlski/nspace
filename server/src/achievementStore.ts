@@ -18,6 +18,7 @@ import {
   listDailySetAchievements,
   listLoginStreakAchievements,
   listApThresholdAchievements,
+  listPlayerLevelAchievements,
   RAINBOW_FLOOR_ACHIEVEMENT_ID,
   ROOM_FURNISHER_ACHIEVEMENT_ID,
   ROOM_MAKER_DELUXE_ACHIEVEMENT_ID,
@@ -47,7 +48,22 @@ import {
   teleporterDestinationSeenKey,
   teleporterPortalDoorSeenKey,
   TELEPORTER_DEST_SEEN_PREFIX,
+  isTollCrossedEligibleRoom,
 } from "./explorationAchievementEvaluator.js";
+import {
+  countsTowardTwoKeys,
+  isCompanyVisitorEligible,
+  isExtraHandsEligibleBuilderList,
+  isOpenHouseEligibleRoom,
+  isRoomToRoomEligibleLink,
+  PUBLIC_ROOM_VISITOR_SEEN_PREFIX,
+  publicRoomVisitorSeenKey,
+} from "./worldcraftRoomsAchievementEvaluator.js";
+import {
+  getDynamicRoomBuilderAddresses,
+  getDynamicRoomListingMeta,
+  listRoomsOwnedBy,
+} from "./roomRegistry.js";
 import {
   computeFieldGoalDailyStreakUpdate,
 } from "./fieldGoalAchievementEvaluator.js";
@@ -98,14 +114,23 @@ import {
 import {
   createCatalogEntry,
   getCatalogEntry,
+  getLoadout,
   grantEntitlement,
   hasEntitlement,
   initCosmeticStore,
   publishCatalogEntry,
+  walletHasPurchaseEntitlement,
   _resetCosmeticStoreForTests,
 } from "./cosmeticStore.js";
 import { getLoginStreakDaysForWallet, utcCalendarDay } from "./loginStreakStore.js";
 import { normalizeRoomId } from "./roomLayouts.js";
+import {
+  achievementAvailability,
+  shouldIgnoreAchievementProgress,
+} from "./achievementAvailability.js";
+import { isShopPubliclyOpen } from "./shopAccess.js";
+import { isShaperReachable } from "./cosmeticGallery.js";
+import { playerLevelFromPoints } from "./playerLevel.js";
 
 let lastExplorationUtcDay: string | null = null;
 
@@ -174,6 +199,7 @@ export type AchievementProgressPublic = {
   rewardDisplayName: string | null;
   rewardPresetId: string | null;
   sortOrder: number;
+  availability: "complete" | "in_progress" | "temporarily_unavailable";
 };
 
 export type AchievementHighlightPublic = {
@@ -269,6 +295,9 @@ function counterThreshold(def: AchievementDefinition): number {
     return def.criteria.threshold;
   }
   if (def.criteria.type === "ap_threshold") {
+    return def.criteria.threshold;
+  }
+  if (def.criteria.type === "player_level") {
     return def.criteria.threshold;
   }
   if (def.criteria.type === "room_maker_deluxe") {
@@ -470,6 +499,30 @@ function evaluateApThresholdAchievements(
       completeAchievement(wallet, def, unlocks);
     }
   }
+}
+
+function evaluatePlayerLevelAchievementsCollecting(
+  wallet: string,
+  unlocks: AchievementUnlockWire[]
+): void {
+  const level = playerLevelFromPoints(totalPointsForWallet(wallet));
+  for (const def of listPlayerLevelAchievements()) {
+    if (def.criteria.type !== "player_level") continue;
+    if (hasCompletion(wallet, def.id)) continue;
+    if (level >= def.criteria.threshold) {
+      completeAchievement(wallet, def, unlocks);
+    }
+  }
+}
+
+export function evaluatePlayerLevelAchievements(
+  wallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const unlocks: AchievementUnlockWire[] = [];
+  evaluatePlayerLevelAchievementsCollecting(normalizeWallet(wallet), unlocks);
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
 }
 
 function evaluateRoomMakerDeluxeAchievements(
@@ -743,6 +796,7 @@ function completeAchievement(
   });
   evaluateOnboardingCompleteAchievements(wallet, unlocks);
   evaluateApThresholdAchievements(wallet, unlocks);
+  evaluatePlayerLevelAchievementsCollecting(wallet, unlocks);
 }
 
 function evaluateCounterAchievements(
@@ -751,9 +805,19 @@ function evaluateCounterAchievements(
   unlocks: AchievementUnlockWire[]
 ): void {
   const value = getCounterValue(wallet, counter);
+  const flags = liveFeatureFlags();
   for (const def of listAchievementsForCounter(counter)) {
     if (def.criteria.type !== "counter") continue;
     if (hasCompletion(wallet, def.id)) continue;
+    if (
+      shouldIgnoreAchievementProgress({
+        completed: false,
+        featureDependency: def.featureDependency,
+        ...flags,
+      })
+    ) {
+      continue;
+    }
     if (value >= sunnyBuildThresholdForDef(def)) {
       completeAchievement(wallet, def, unlocks);
     }
@@ -830,6 +894,13 @@ function evaluateDailySetAchievements(
   }
 }
 
+function liveFeatureFlags(): { shopOpen: boolean; shaperReachable: boolean } {
+  return {
+    shopOpen: isShopPubliclyOpen(),
+    shaperReachable: isShaperReachable(),
+  };
+}
+
 function fireEventCollecting(
   wallet: string,
   event: AchievementEventKey,
@@ -838,8 +909,18 @@ function fireEventCollecting(
   if (!isAchievementEligibleWallet(wallet)) return;
   if (!isWorldCupAchievementProgressEnabled() && isWorldCupAchievementEvent(event)) return;
   const w = normalizeWallet(wallet);
+  const flags = liveFeatureFlags();
   for (const def of listAchievementsForEvent(event)) {
     if (hasCompletion(w, def.id)) continue;
+    if (
+      shouldIgnoreAchievementProgress({
+        completed: false,
+        featureDependency: def.featureDependency,
+        ...flags,
+      })
+    ) {
+      continue;
+    }
     completeAchievement(w, def, unlocks);
   }
 }
@@ -1633,6 +1714,170 @@ export function recordTeleporterActivated(
   fireAchievementEvent(wallet, "teleporter_activated", onUnlock);
 }
 
+export function recordTollCrossed(
+  wallet: string,
+  roomId: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isTollCrossedEligibleRoom(roomId)) return;
+  fireAchievementEvent(wallet, "toll_crossed", onUnlock);
+}
+
+function evaluateOwnedRoomStateAchievementsCollecting(
+  wallet: string,
+  unlocks: AchievementUnlockWire[]
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  const owned = listRoomsOwnedBy(w);
+  let publicEligible = false;
+  let twoKeysCount = 0;
+  let hasExtraHands = false;
+  for (const room of owned) {
+    const meta = getDynamicRoomListingMeta(room.id);
+    if (!meta) continue;
+    if (
+      countsTowardTwoKeys({
+        roomId: room.id,
+        isOfficial: meta.isOfficial,
+      })
+    ) {
+      twoKeysCount += 1;
+    }
+    if (
+      isOpenHouseEligibleRoom({
+        roomId: room.id,
+        isPublic: meta.isPublic,
+        isOfficial: meta.isOfficial,
+      })
+    ) {
+      publicEligible = true;
+    }
+    if (
+      isExtraHandsEligibleBuilderList({
+        ownerAddress: w,
+        builderAddresses: getDynamicRoomBuilderAddresses(room.id),
+      })
+    ) {
+      hasExtraHands = true;
+    }
+  }
+  if (publicEligible) fireEventCollecting(w, "open_house", unlocks);
+  if (twoKeysCount >= 2) fireEventCollecting(w, "two_keys", unlocks);
+  if (hasExtraHands) fireEventCollecting(w, "extra_hands", unlocks);
+}
+
+/** Silent or live catch-up from room registry (Open House, Two Keys, Extra Hands). */
+export function evaluateOwnedRoomStateAchievements(
+  wallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  const unlocks: AchievementUnlockWire[] = [];
+  evaluateOwnedRoomStateAchievementsCollecting(
+    normalizeWallet(wallet),
+    unlocks
+  );
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordRoomToRoom(
+  wallet: string,
+  sourceRoomId: string,
+  destRoomId: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const sourceMeta = getDynamicRoomListingMeta(sourceRoomId);
+  const destMeta = getDynamicRoomListingMeta(destRoomId);
+  if (
+    !isRoomToRoomEligibleLink({
+      sourceRoomId,
+      destRoomId,
+      sourceOwnerAddress: sourceMeta?.ownerAddress ?? null,
+      destOwnerAddress: destMeta?.ownerAddress ?? null,
+      actorAddress: wallet,
+    })
+  ) {
+    return;
+  }
+  fireAchievementEvent(wallet, "room_to_room", onUnlock);
+}
+
+export function recordPublicRoomVisitor(
+  ownerWallet: string,
+  visitorWallet: string,
+  roomId: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  const listing = getDynamicRoomListingMeta(roomId);
+  if (
+    !listing ||
+    !isCompanyVisitorEligible({
+      roomId,
+      isPublic: listing.isPublic,
+      isOfficial: listing.isOfficial,
+      ownerAddress: listing.ownerAddress,
+      visitorAddress: visitorWallet,
+    })
+  ) {
+    return;
+  }
+  if (!isAchievementEligibleWallet(ownerWallet)) return;
+  const w = normalizeWallet(ownerWallet);
+  const unlocks: AchievementUnlockWire[] = [];
+  if (recordAchievementSeen(w, publicRoomVisitorSeenKey(visitorWallet))) {
+    evaluateDedupePrefixAchievements(
+      w,
+      PUBLIC_ROOM_VISITOR_SEEN_PREFIX,
+      unlocks
+    );
+  }
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+function evaluateCosmeticsCatchUpCollecting(
+  wallet: string,
+  unlocks: AchievementUnlockWire[]
+): void {
+  if (!isAchievementEligibleWallet(wallet)) return;
+  const w = normalizeWallet(wallet);
+  const loadout = getLoadout(w);
+  if (loadout.nameplateSku) fireEventCollecting(w, "framed", unlocks);
+  if (loadout.chatBubbleSku) fireEventCollecting(w, "caption", unlocks);
+  if (walletHasPurchaseEntitlement(w)) {
+    fireEventCollecting(w, "paid_in_style", unlocks);
+  }
+}
+
+/** Silent catch-up for Framed, Caption, and Paid in Style. */
+export function evaluateCosmeticsCatchUpAchievements(
+  wallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  const unlocks: AchievementUnlockWire[] = [];
+  evaluateCosmeticsCatchUpCollecting(normalizeWallet(wallet), unlocks);
+  if (unlocks.length > 0 && onUnlock) onUnlock(unlocks);
+}
+
+export function recordFramedOrCaptionFromLoadout(
+  wallet: string,
+  slot: "nameplate" | "chatBubble",
+  onUnlock?: AchievementUnlockCallback
+): void {
+  if (slot === "nameplate") {
+    fireAchievementEvent(wallet, "framed", onUnlock);
+  } else {
+    fireAchievementEvent(wallet, "caption", onUnlock);
+  }
+}
+
+export function recordPaidInStyle(
+  wallet: string,
+  onUnlock?: AchievementUnlockCallback
+): void {
+  fireAchievementEvent(wallet, "paid_in_style", onUnlock);
+}
+
 /** Re-evaluate Grand Tour on UTC midnight for online players (daily row resets by day key). */
 export function tickExplorationDailyRollover(
   nowMs: number,
@@ -1713,6 +1958,11 @@ function buildProgressRow(
       completedAtMs != null
         ? threshold
         : Math.min(threshold, totalPointsForWallet(wallet));
+  } else if (def.criteria.type === "player_level") {
+    progress =
+      completedAtMs != null
+        ? threshold
+        : Math.min(threshold, playerLevelFromPoints(totalPointsForWallet(wallet)));
   } else if (def.criteria.type === "rainbow_floor") {
     progress =
       completedAtMs != null
@@ -1755,6 +2005,11 @@ function buildProgressRow(
     rewardDisplayName: rewardDisplayName(def.rewardSku),
     rewardPresetId: rewardPresetId(def.rewardSku),
     sortOrder: def.sortOrder,
+    availability: achievementAvailability({
+      completed: completedAtMs != null,
+      featureDependency: def.featureDependency,
+      ...liveFeatureFlags(),
+    }),
   };
 }
 
@@ -1771,6 +2026,9 @@ export function getAchievementsForWallet(
     []
   );
   evaluateApThresholdAchievements(w, []);
+  evaluatePlayerLevelAchievementsCollecting(w, []);
+  evaluateOwnedRoomStateAchievementsCollecting(w, []);
+  evaluateCosmeticsCatchUpCollecting(w, []);
   const completionRows = requireDb()
     .prepare(
       `SELECT achievement_id, completed_at_ms FROM achievement_completions

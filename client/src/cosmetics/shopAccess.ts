@@ -1,9 +1,44 @@
 /**
- * Player-facing cosmetic shop gate (build-time). Off unless VITE_SHOP_ENABLED=1 at build.
- * Keep in sync with server `SHOP_ENABLED` for deploy profiles that open the shop.
+ * Player-facing cosmetic shop gate. Compile-time `VITE_SHOP_ENABLED=0` still
+ * force-closes that SPA. Live sessions follow the server Shop-open flag from
+ * welcome / `shopAccess` so `/admin/settings` can close Shop without a rebuild.
  */
+
+export function shopEnabledFromEnvFlag(value: string | undefined): boolean {
+  return value !== "0";
+}
+
+let sessionShopOpen: boolean | null = null;
+let sessionShaperReachable: boolean | null = null;
+
+export function applySessionShopAccess(opts: {
+  shopOpen?: boolean;
+  shaperReachable?: boolean;
+}): void {
+  if (typeof opts.shopOpen === "boolean") {
+    sessionShopOpen = opts.shopOpen;
+  }
+  if (typeof opts.shaperReachable === "boolean") {
+    sessionShaperReachable = opts.shaperReachable;
+  }
+}
+
+/** Test hook: drop session overrides so the next assertion sees compile-time env. */
+export function resetSessionShopAccess(): void {
+  sessionShopOpen = null;
+  sessionShaperReachable = null;
+}
+
 export function isShopPubliclyOpen(): boolean {
-  return import.meta.env.VITE_SHOP_ENABLED === "1";
+  if (!shopEnabledFromEnvFlag(import.meta.env.VITE_SHOP_ENABLED)) return false;
+  if (sessionShopOpen !== null) return sessionShopOpen;
+  return true;
+}
+
+export function isShaperReachable(): boolean {
+  if (!isShopPubliclyOpen()) return false;
+  if (sessionShaperReachable !== null) return sessionShaperReachable;
+  return true;
 }
 
 export const SHOP_COMING_SOON_HEADING = "COMING SOON";

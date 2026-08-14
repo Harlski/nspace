@@ -1,11 +1,10 @@
 import {
-  createUnlockIntent,
   fetchWardrobe,
-  syncUnlockPayment,
   updateLoadoutSlot,
   type ShopEntry,
   type WardrobeResponse,
 } from "./api.js";
+import { runCosmeticUnlockCheckout } from "./unlockCheckout.js";
 import { loadCachedSession } from "../auth/session.js";
 import {
   createPresetSwatch,
@@ -53,10 +52,7 @@ function shopSlotLabel(slot: string): string {
   return slot;
 }
 
-const SLOT_COMING_SOON = new Set<PassiveSlotId>([
-  "nameplate",
-  "chatBubble",
-]);
+const SLOT_COMING_SOON = new Set<PassiveSlotId>([]);
 
 export const WARDROBE_SLOT_EMPTY_COPY = "Nothing to unlock yet";
 
@@ -196,6 +192,7 @@ export function mountWardrobePanel(
   disposePreviewCanvas: () => void;
   setView: (next: "wardrobe" | "shop") => void;
   getData: () => WardrobeResponse | null;
+  notifyShopAccessChanged: () => void;
 } {
   container.classList.add("wardrobe-panel");
   const tabs = document.createElement("div");
@@ -683,7 +680,7 @@ export function mountWardrobePanel(
     canvas.className = "wardrobe-doll__canvas";
     canvas.width = compact ? 112 : 168;
     canvas.height = compact ? 112 : 168;
-    canvas.setAttribute("aria-label", "Avatar preview on a floor tile");
+    canvas.setAttribute("aria-label", "Avatar preview — click to cycle background");
     wrap.appendChild(canvas);
     parent.appendChild(wrap);
     previewCanvas = canvas;
@@ -904,28 +901,19 @@ export function mountWardrobePanel(
       showNote("Sign in with your wallet to buy.", true);
       return;
     }
+    previewShopEntry(entry);
     const original = btn.textContent;
     try {
       btn.disabled = true;
-      const { intent } = await createUnlockIntent(entry.cosmeticSku);
-      showNote(
-        `Send ${intent.amountNimLabel} NIM in your wallet. Memo: ${intent.memo}. Waiting for confirmation…`
+      const result = await runCosmeticUnlockCheckout(entry.cosmeticSku, (msg) =>
+        showNote(msg)
       );
-      try {
-        await navigator.clipboard.writeText(intent.memo);
-      } catch {
-        /* clipboard optional */
+      if (result.ok) {
+        showNote(`Unlocked ${entry.displayName}!`);
+        await refresh();
+        return;
       }
-      for (let attempt = 0; attempt < 40; attempt++) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const synced = await syncUnlockPayment(intent.intentId, entry.cosmeticSku);
-        if (synced.granted) {
-          showNote(`Unlocked ${entry.displayName}!`);
-          await refresh();
-          return;
-        }
-      }
-      showNote("Still waiting for payment. Check back once it confirms.", true);
+      showNote(result.message, true);
     } catch (e) {
       showNote(String(e), true);
     } finally {
@@ -938,6 +926,8 @@ export function mountWardrobePanel(
     selectedShopSku = entry.cosmeticSku;
     if (isPassiveSlotId(entry.slot)) {
       setSlotPreview(entry.slot, entry.presetId);
+    } else {
+      syncPreviewWebGl();
     }
     syncShopRowPreviewHighlight();
   }
@@ -1061,7 +1051,6 @@ export function mountWardrobePanel(
   }
 
   function renderShopTab(): void {
-    disposePreviewCanvas();
     body.replaceChildren();
     const layout = document.createElement("div");
     layout.className = "wardrobe-shop";
@@ -1072,6 +1061,7 @@ export function mountWardrobePanel(
     layout.appendChild(heading);
 
     if (!isShopPubliclyOpen()) {
+      disposePreviewCanvas();
       const soon = document.createElement("p");
       soon.className = "wardrobe-shop__coming-soon";
       soon.textContent = SHOP_COMING_SOON_HEADING;
@@ -1088,6 +1078,11 @@ export function mountWardrobePanel(
     intro.className = "wardrobe-shop__desc wardrobe-shop__desc--achievements";
     intro.textContent = SHOP_ACHIEVEMENTS_ONLY_COPY;
     layout.appendChild(intro);
+
+    const dollHost = document.createElement("div");
+    dollHost.className = "wardrobe-shop__preview";
+    layout.appendChild(dollHost);
+    renderDollPreview(dollHost, true);
 
     const featured = data?.featured ?? [];
     if (featured.length === 0) {
@@ -1106,6 +1101,12 @@ export function mountWardrobePanel(
       list.setAttribute("aria-label", "Featured cosmetics");
       for (const entry of featured) list.appendChild(renderShopRow(entry));
       layout.appendChild(list);
+      if (selectedShopSku) {
+        const sel = featured.find((e) => e.cosmeticSku === selectedShopSku);
+        if (sel && isPassiveSlotId(sel.slot)) {
+          setSlotPreview(sel.slot, sel.presetId);
+        }
+      }
     }
 
     const shaper = document.createElement("div");
@@ -1113,7 +1114,7 @@ export function mountWardrobePanel(
     const shaperCopy = document.createElement("p");
     shaperCopy.className = "wardrobe-shop__desc";
     shaperCopy.textContent =
-      "Want to try a look before you buy? Visit The Shaper to preview cosmetics in-world.";
+      "Want to try a look before you buy? Preview above, or visit The Shaper in-world.";
     const goBtn = document.createElement("button");
     goBtn.type = "button";
     goBtn.className = "wardrobe-panel__btn wardrobe-panel__btn--ghost wardrobe-shop__go";
@@ -1176,6 +1177,9 @@ export function mountWardrobePanel(
     disposePreviewCanvas,
     setView,
     getData: () => data,
+    notifyShopAccessChanged: () => {
+      if (view === "shop") render();
+    },
   };
 }
 
@@ -1243,7 +1247,7 @@ export function mountWardrobeReadOnly(
   canvas.className = "wardrobe-doll__canvas";
   canvas.width = 168;
   canvas.height = 168;
-  canvas.setAttribute("aria-label", "Equipped cosmetics preview");
+  canvas.setAttribute("aria-label", "Equipped cosmetics preview — click to cycle background");
   dollWrap.appendChild(canvas);
   center.appendChild(dollWrap);
   previewCanvas = canvas;

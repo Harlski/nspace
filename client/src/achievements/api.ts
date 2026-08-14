@@ -16,6 +16,7 @@ export type AchievementProgress = {
   rewardDisplayName: string | null;
   rewardPresetId: string | null;
   sortOrder: number;
+  availability?: "complete" | "in_progress" | "temporarily_unavailable";
 };
 
 export type AchievementMeResponse = {

@@ -346,6 +346,10 @@ export type ServerMessage =
       };
       /** Learner tutorial flow live (env + admin toggle). */
       tutorialEnabled?: boolean;
+      /** Shop open for this session (env kill switch and admin checkbox). */
+      shopOpen?: boolean;
+      /** The Shaper joinable (Shop open and SHAPER_ENABLED not 0). */
+      shaperReachable?: boolean;
     }
   | {
       type: "roomBackgroundHue";
@@ -719,6 +723,11 @@ export type ServerMessage =
       etaSeconds: number;
       message?: string;
       seq: number;
+    }
+  | {
+      type: "shopAccess";
+      shopOpen: boolean;
+      shaperReachable: boolean;
     };
 
 export type ConnectGameWsOptions = {
@@ -833,6 +842,18 @@ export function sendMovementWatch(ws: WebSocket, enabled: boolean): void {
 export function sendAdminInvisible(ws: WebSocket, enabled: boolean): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "adminInvisible", enabled }));
+}
+
+/** Admin Freeze / Unfreeze another player in the room (server gates with isAdmin). */
+export function sendAdminFreeze(
+  ws: WebSocket,
+  targetAddress: string,
+  enabled: boolean
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({ type: "adminFreeze", address: targetAddress, enabled })
+  );
 }
 
 /** Client-only click intents for Movement Watch (unwalkable / mine). Server fans to subscribers. */
@@ -980,6 +1001,22 @@ export function sendMoveSaleDisplay(
 export function sendDeleteSaleDisplay(ws: WebSocket, id: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "deleteSaleDisplay", id }));
+}
+
+export function sendSetSaleDisplayWalk(
+  ws: WebSocket,
+  id: string,
+  walk: { enabled: boolean; tiles: { x: number; z: number }[] }
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "setSaleDisplayWalk",
+      id,
+      enabled: walk.enabled,
+      tiles: walk.tiles,
+    })
+  );
 }
 
 
@@ -1807,7 +1844,11 @@ export function sendAchievementSignal(
     | "open_wardrobe"
     | "send_emote"
     | "flag_emote"
-    | "mine_cooldown_attempt",
+    | "mine_cooldown_attempt"
+    | "view_other_profile"
+    | "open_shop"
+    | "try_sale_display",
+  detail?: { profileAddress?: string }
 ): void;
 export function sendAchievementSignal(
   ws: WebSocket,
@@ -1822,8 +1863,15 @@ export function sendAchievementSignal(
     | "send_emote"
     | "flag_emote"
     | "open_signboard"
-    | "mine_cooldown_attempt",
-  detail?: { signboardId: string; authorAddress: string }
+    | "mine_cooldown_attempt"
+    | "view_other_profile"
+    | "open_shop"
+    | "try_sale_display",
+  detail?: {
+    signboardId?: string;
+    authorAddress?: string;
+    profileAddress?: string;
+  }
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   if (kind === "open_signboard") {
@@ -1834,6 +1882,17 @@ export function sendAchievementSignal(
         kind,
         signboardId: detail.signboardId,
         authorAddress: detail.authorAddress,
+      })
+    );
+    return;
+  }
+  if (kind === "view_other_profile") {
+    if (!detail?.profileAddress) return;
+    ws.send(
+      JSON.stringify({
+        type: "achievementSignal",
+        kind,
+        profileAddress: detail.profileAddress,
       })
     );
     return;

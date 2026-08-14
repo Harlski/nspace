@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, afterEach, beforeEach, describe, it } from "node:test";
 import {
   buildCosmeticGalleryPayload,
   COSMETIC_GALLERY_JOIN_CODE,
@@ -8,9 +11,15 @@ import {
   galleryFakeAddress,
   isCosmeticGalleryEnabled,
   isCosmeticGalleryRoom,
+  isShaperReachable,
   resolveCosmeticGalleryJoinCode,
 } from "../src/cosmeticGallery.js";
+import { isShopPubliclyOpen } from "../src/shopAccess.js";
+import { patchAdminRuntimeSettings } from "../src/adminRuntimeSettingsStore.js";
 import { listCosmeticPresets } from "../src/cosmeticPresets.js";
+
+const adminDir = fs.mkdtempSync(path.join(os.tmpdir(), "nspace-gallery-shop-"));
+process.env.ADMIN_RUNTIME_SETTINGS_FILE = path.join(adminDir, "settings.json");
 
 describe("cosmeticGallery", () => {
   const prevShaperEnabled = process.env.SHAPER_ENABLED;
@@ -18,8 +27,10 @@ describe("cosmeticGallery", () => {
   const prevNodeEnv = process.env.NODE_ENV;
 
   beforeEach(() => {
+    process.env.ADMIN_RUNTIME_SETTINGS_FILE = path.join(adminDir, "settings.json");
     delete process.env.SHAPER_ENABLED;
     process.env.SHOP_ENABLED = "1";
+    patchAdminRuntimeSettings({ shopEnabled: true });
   });
 
   afterEach(() => {
@@ -28,6 +39,10 @@ describe("cosmeticGallery", () => {
     if (prevShopEnabled === undefined) delete process.env.SHOP_ENABLED;
     else process.env.SHOP_ENABLED = prevShopEnabled;
     process.env.NODE_ENV = prevNodeEnv;
+  });
+
+  after(() => {
+    fs.rmSync(adminDir, { recursive: true, force: true });
   });
 
   it("is enabled by default when shop is open", () => {
@@ -44,11 +59,14 @@ describe("cosmeticGallery", () => {
     process.env.SHAPER_ENABLED = "0";
     assert.equal(isCosmeticGalleryEnabled(), false);
     assert.equal(resolveCosmeticGalleryJoinCode(COSMETIC_GALLERY_JOIN_CODE), null);
+    assert.equal(isShaperReachable(), false);
+    assert.equal(isShopPubliclyOpen(), true);
   });
 
   it("blocks SPACER joins while the shop is closed", () => {
-    delete process.env.SHOP_ENABLED;
+    process.env.SHOP_ENABLED = "0";
     assert.equal(resolveCosmeticGalleryJoinCode(COSMETIC_GALLERY_JOIN_CODE), null);
+    assert.equal(isShaperReachable(), false);
   });
 
   it("maps SPACER to cosmetic-gallery", () => {

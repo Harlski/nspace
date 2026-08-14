@@ -16,6 +16,7 @@ import {
   syncDerivedAchievementProgress,
   navRows,
   type AchievementNavRow,
+  TEMPORARILY_UNAVAILABLE_LABEL,
 } from "./panelData.js";
 
 function esc(s: string): string {
@@ -73,7 +74,9 @@ function renderAchievementRow(
       : "";
   const status = a.completed
     ? `<span class="achievement-panel__status achievement-panel__status--done">Complete</span>`
-    : `<span class="achievement-panel__status">${a.progress} / ${a.threshold}</span>`;
+    : a.availability === "temporarily_unavailable"
+      ? `<span class="achievement-panel__status achievement-panel__status--unavailable">${TEMPORARILY_UNAVAILABLE_LABEL}</span>`
+      : `<span class="achievement-panel__status">${a.progress} / ${a.threshold}</span>`;
   const date =
     opts?.showDate && a.completedAt
       ? `<span class="achievement-panel__date">${esc(formatCompletedDate(a.completedAt))}</span>`
@@ -83,7 +86,11 @@ function renderAchievementRow(
   const dataAttr = ` data-achievement-id="${esc(a.achievementId)}"${
     opts?.clickable ? ` data-achievement-category="${esc(a.category)}"` : ""
   }`;
-  const rowClass = `achievement-panel__row${a.completed ? " achievement-panel__row--done" : ""}${opts?.clickable ? " achievement-panel__row--clickable" : ""}`;
+  const rowClass = `achievement-panel__row${a.completed ? " achievement-panel__row--done" : ""}${
+    !a.completed && a.availability === "temporarily_unavailable"
+      ? " achievement-panel__row--unavailable"
+      : ""
+  }${opts?.clickable ? " achievement-panel__row--clickable" : ""}`;
   const inner = `<${tag} class="${rowClass}"${typeAttr}${dataAttr}>
     ${renderIconHtml(a)}
     <div class="achievement-panel__row-body">
@@ -481,6 +488,9 @@ export function createAchievementPanel(
     close,
     isOpen: () => openState,
     applyUnlock,
+    notifyShopAccessChanged: () => {
+      void refreshAchievementsWhileOpen();
+    },
     open: () => {
       void open();
     },

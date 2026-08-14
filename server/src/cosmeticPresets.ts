@@ -75,6 +75,26 @@ const PRODUCTION_PRESETS: ReadonlyArray<CosmeticPreset> = [
   { presetId: "aura-ref-sigil-twirl-01", label: "Sigil: Twirl 01", slot: "aura" },
   { presetId: "aura-ref-sigil-twirl-02", label: "Sigil: Twirl 02", slot: "aura" },
   { presetId: "aura-ref-sigil-twirl-03", label: "Sigil: Twirl 03", slot: "aura" },
+  {
+    presetId: "nameplate-frame-simple",
+    label: "Simple Frame Nameplate",
+    slot: "nameplate",
+  },
+  {
+    presetId: "nameplate-frame-neon",
+    label: "Neon Frame Nameplate",
+    slot: "nameplate",
+  },
+  {
+    presetId: "bubble-rounded-pastel",
+    label: "Pastel Rounded Bubble",
+    slot: "chatBubble",
+  },
+  {
+    presetId: "bubble-sharp-dark",
+    label: "Dark Sharp Bubble",
+    slot: "chatBubble",
+  },
 ];
 
 function activePresets(): ReadonlyArray<CosmeticPreset> {

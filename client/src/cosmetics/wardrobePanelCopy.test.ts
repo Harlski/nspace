@@ -5,25 +5,17 @@ import {
   wardrobeSlotStatusLabel,
 } from "./wardrobePanel.js";
 
-describe("wardrobe v2 empty copy", () => {
-  it("uses the unavailable icon state instead of coming-soon copy", () => {
-    const input = {
-      slot: "nameplate" as const,
-      presetName: "None",
-      ownedSelectableCount: 0,
-    };
-    expect(wardrobeSlotShowsEmptyIcon(input)).toBe(true);
-    expect(wardrobeSlotStatusLabel(input)).toBe("None");
-  });
-
-  it("keeps None for aura and trail without owned items", () => {
-    expect(
-      wardrobeSlotStatusLabel({
-        slot: "aura",
-        presetName: "None",
+describe("wardrobe empty slot status", () => {
+  it("treats unequipped nameplate/chatBubble like aura (no coming-soon stop icon)", () => {
+    for (const slot of ["nameplate", "chatBubble", "aura", "trail"] as const) {
+      const input = {
+        slot,
+        presetName: "None" as const,
         ownedSelectableCount: 0,
-      })
-    ).toBe("None");
+      };
+      expect(wardrobeSlotShowsEmptyIcon(input)).toBe(false);
+      expect(wardrobeSlotStatusLabel(input)).toBe("None");
+    }
   });
 
   it("describes deployable ownership", () => {
@@ -45,7 +37,7 @@ describe("wardrobe v2 empty copy", () => {
     ).toBe("2 owned");
   });
 
-  it("preserves screen-reader copy for unavailable slots", () => {
+  it("keeps empty-slot screen-reader copy available for deployables", () => {
     expect(WARDROBE_SLOT_EMPTY_COPY).toMatch(/unlock/i);
   });
 });

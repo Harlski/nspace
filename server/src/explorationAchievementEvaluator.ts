@@ -15,6 +15,10 @@ import {
   FIELD_ROOM_ID,
   isMatchPitchRoomId,
 } from "./worldcup/config.js";
+import {
+  TUTORIAL_ROOM_ID,
+  TUTORIAL_STAGING_ROOM_ID,
+} from "./tutorial/roomIds.js";
 
 /** Marathon Option A - grid-pathfinding rooms only; excludes field-like and maze rooms. */
 export function isMarathonTileEligibleRoom(roomId: string): boolean {
@@ -246,4 +250,46 @@ export function computeOutfieldTileCredits(
     creditedThisPath.add(key);
   }
   return credits.slice(0, pathTiles.length);
+}
+
+function compactWallet(v: string): string {
+  return String(v || "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+/** Knock Knock: visit a public player-owned room that is not yours. */
+export function isKnockKnockEligibleVisit(opts: {
+  roomId: string;
+  isPublic: boolean;
+  isBuiltin: boolean;
+  isOfficial: boolean;
+  isPlaySpace: boolean;
+  ownerAddress: string | null;
+  visitorAddress: string;
+}): boolean {
+  if (opts.isBuiltin || opts.isOfficial || opts.isPlaySpace) return false;
+  if (!opts.isPublic) return false;
+  const owner = compactWallet(opts.ownerAddress ?? "");
+  const visitor = compactWallet(opts.visitorAddress);
+  if (!owner || !visitor) return false;
+  if (owner === visitor) return false;
+  if (visitor.startsWith("GUEST:")) return false;
+  return true;
+}
+
+/** Toll Crossed: Unlock Pad Grant outside the Tutorial Room (lesson or Sandbox). */
+export function isTollCrossedEligibleRoom(roomId: string): boolean {
+  const id = normalizeRoomId(roomId).trim().toLowerCase();
+  if (id === TUTORIAL_ROOM_ID) return false;
+  if (id === TUTORIAL_STAGING_ROOM_ID) return false;
+  return true;
+}
+
+export function isPlaySpaceRoomId(roomId: string): boolean {
+  return normalizeRoomId(roomId)
+    .trim()
+    .toLowerCase()
+    .startsWith(INVITE_LOBBY_PREFIX);
 }

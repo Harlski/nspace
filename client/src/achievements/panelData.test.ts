@@ -88,6 +88,34 @@ describe("achievement panel data", () => {
     ]);
   });
 
+  it("omits incomplete Temporarily unavailable rows from Progress Overview fractions", () => {
+    const rows: AchievementProgress[] = [
+      ach({
+        achievementId: "done",
+        completed: true,
+        completedAt: "2026-01-01T00:00:00.000Z",
+        availability: "complete",
+      }),
+      ach({
+        achievementId: "open",
+        completed: false,
+        availability: "in_progress",
+      }),
+      ach({
+        achievementId: "paused",
+        completed: false,
+        availability: "temporarily_unavailable",
+      }),
+      ach({
+        achievementId: "done-paused",
+        completed: true,
+        completedAt: "2026-01-02T00:00:00.000Z",
+        availability: "temporarily_unavailable",
+      }),
+    ];
+    expect(overallProgress(rows)).toEqual({ earned: 2, total: 3 });
+  });
+
   it("groups building categories under a header in nav rows", () => {
     const rows: AchievementProgress[] = [
       ach({
