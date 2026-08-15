@@ -479,7 +479,9 @@ place, select, move, and rebind it via **Build → Buildings → Sale Display** 
 placeables. Each display occupies one floor tile (no stacking other blocks on that column).
 Optional per-display mannequin walk path (`walkEnabled` + ordered `walkTiles`, ≥2 tiles);
 floor deployable binds stay put. Buy UI shows a WebGL self preview with the purchase Slot
-overridden. Distinct from the retired auto-laid Preset gallery and from operator **Catalog Preview**.
+overridden on a solid stock backdrop (Black / White / Dark green; click to cycle) — distinct
+from **Wardrobe Preview Backdrop**. Distinct from the retired auto-laid Preset gallery and from
+operator **Catalog Preview**.
 _Avoid_: purchase item, shop pedestal, buyable tile, product placer, SKU pedestal.
 
 **Draft** (Catalog Entry):

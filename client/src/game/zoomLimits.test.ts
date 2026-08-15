@@ -20,7 +20,7 @@ const chamberBounds = getRoomBaseBounds(CHAMBER_ROOM_ID);
 
 describe("hub zoom limits", () => {
   const base = {
-    zoomMax: 24,
+    zoomMax: 40,
     roomZoomMax: HUB_MAX_ZOOM_FRUSTUM,
     roomId: HUB_ROOM_ID,
     roomBounds: hubBounds,
@@ -29,8 +29,10 @@ describe("hub zoom limits", () => {
     mobilePortrait: false,
   };
 
-  it("caps normal hub zoom at 18 even when localStorage zoomMax is higher", () => {
-    expect(normalZoomMax({ ...base, telescopeHoldActive: false })).toBe(18);
+  it("caps normal hub zoom at HUB_MAX_ZOOM_FRUSTUM even when localStorage zoomMax is higher", () => {
+    expect(normalZoomMax({ ...base, telescopeHoldActive: false })).toBe(
+      HUB_MAX_ZOOM_FRUSTUM
+    );
   });
 
   it("lets admin map-overview unlock bypass the hub frustum cap", () => {
@@ -40,7 +42,7 @@ describe("hub zoom limits", () => {
         mapOverviewUnlocked: true,
         telescopeHoldActive: false,
       })
-    ).toBe(24);
+    ).toBe(40);
   });
 
   it("raises effective max to telescope frustum while held", () => {

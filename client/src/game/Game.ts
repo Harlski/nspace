@@ -502,7 +502,12 @@ type WardrobeAvatarPreviewPort = {
   rafId: number | null;
   previewPhaseStart: number;
   deployableFx: PersistentDeployableFx | null;
-  /** Index into {@link WARDROBE_PREVIEW_STOCK_BG_RGBS}. */
+  /**
+   * `"room"` — Wardrobe Preview Backdrop (sky + floor patch).
+   * `"stock"` — solid Black / White / Dark green (Sale Display try-on; click to cycle).
+   */
+  backdropMode: "room" | "stock";
+  /** Index into {@link WARDROBE_PREVIEW_STOCK_BG_RGBS} when `backdropMode === "stock"`. */
   stockBgIndex: number;
   onCanvasPointerDown: ((ev: PointerEvent) => void) | null;
   cosmetics: {
@@ -520,7 +525,10 @@ const INSPECTOR_PREVIEW_HALF_V = 1.02;
 const INSPECTOR_TILE_PREVIEW_BG = 0xd6dbe5;
 /** Slightly shrink the tile + block together vs full-size preview. */
 const INSPECTOR_PREVIEW_SCENE_SCALE = 0.72;
-/** Profile Wardrobe - isometric avatar on a solid stock backdrop (click canvas to cycle). */
+/**
+ * Sale Display Buy / try-on - solid stock backdrop (click canvas to cycle).
+ * Profile Wardrobe uses the room sky + floor patch instead ({@link bindWardrobeAvatarPreviewCanvas}).
+ */
 /** Black → White → Dark green (press canvas to cycle). */
 const WARDROBE_PREVIEW_STOCK_BG_RGBS = [0x000000, 0xffffff, 0x0b3d2e] as const;
 const WARDROBE_PREVIEW_FRUSTUM_HALF_V = 1.05;
@@ -1489,8 +1497,19 @@ export class Game {
   private readonly signpostHintOcclCandBuf: THREE.Object3D[] = [];
   private readonly signpostHintOcclCandSet = new Set<THREE.Object3D>();
   private readonly signpostHintGroupsBuf: THREE.Group[] = [];
+  /** When true, rebuild `signpostHintGroupsBuf` from `blockMeshes` (signpost sprites only). */
+  private signpostHintGroupsDirty = true;
   /** When true, `signpostHintOcclByTile` must be rebuilt before the next walk-mode occl pass. */
   private signpostHintOcclIndexDirty = true;
+  /** Quantized camera XZ for throttling expensive signpost occlusion raycasts. */
+  private signpostOcclCamQuantX = Number.NaN;
+  private signpostOcclCamQuantZ = Number.NaN;
+  private signpostOcclForce = true;
+  private static readonly SIGNPOST_OCCL_REQUANT_TILES = 0.45;
+  /** Skip residency recompute until the look-at moves this far (tiles). */
+  private lastResidencyCheckX = Number.NaN;
+  private lastResidencyCheckZ = Number.NaN;
+  private static readonly RESIDENCY_CHECK_MOVE_TILES = 2;
   /** Chebyshev pad (tiles) around camera→hint XZ segment for occlusion candidates. */
   private static readonly SIGNPOST_HINT_OCCL_TILE_PAD = 1;
   /**
@@ -3151,11 +3170,27 @@ export class Game {
     this.invalidateSignpostHintOcclIndex();
     this.meshResidentChunks.clear();
     this.lastMeshResidencyChunkSig = "";
+    this.lastResidencyCheckX = Number.NaN;
+    this.lastResidencyCheckZ = Number.NaN;
     this.meshBuildQueue.length = 0;
     this.meshBuildQueueSet.clear();
     this.extraFloorKeysByChunk.clear();
     this.placedObjectKeysByChunk.clear();
     this.disposePlainCubeInstancedMeshes();
+    // Floor/door visuals are residency-incremental; clearing chunk residency alone
+    // does not mark prior-room tiles as "left", so dispose them explicitly.
+    for (const [, mesh] of this.walkableFloorMeshes) {
+      this.scene.remove(mesh);
+      disposeWalkableFloorMeshMaterials(mesh);
+    }
+    this.walkableFloorMeshes.clear();
+    this.disposeWalkableFloorVisualMeshes();
+    for (const [, marker] of this.doorMarkerMeshes) {
+      this.scene.remove(marker);
+      marker.geometry.dispose();
+      (marker.material as THREE.Material).dispose();
+    }
+    this.doorMarkerMeshes.clear();
     this.clearTeleporterMarkers();
 
     // worldcup: balls + goalies are room-scoped; clear and rebuild goal frames per room
@@ -4272,6 +4307,8 @@ export class Game {
   /** Bucket non-instanced block groups by floor tile for occlusion narrowphase. */
   private invalidateSignpostHintOcclIndex(): void {
     this.signpostHintOcclIndexDirty = true;
+    this.signpostOcclForce = true;
+    this.signpostHintGroupsDirty = true;
   }
 
   private rebuildSignpostHintOcclTileIndex(): void {
@@ -4385,6 +4422,8 @@ export class Game {
     g.userData.signpostHintSprite = sprite;
     g.userData.signpostHintBaseY = baseY;
     g.add(sprite);
+    this.signpostHintGroupsDirty = true;
+    this.signpostOcclForce = true;
   }
 
   /** Keeps name tags near constant on-screen size at any orthographic zoom. */
@@ -8135,6 +8174,7 @@ export class Game {
       this.setBillboardPlacementPreviewActive(false);
       this.clearSelectedBlock();
       this.clearObjectPrefabToolVisuals();
+      this.signpostOcclForce = true;
     }
     this.syncAttentionMarkerPickCues();
     this.syncNoWalkFloorCues();
@@ -13334,6 +13374,8 @@ export class Game {
     this.invalidateSignpostHintOcclIndex();
     this.meshResidentChunks.clear();
     this.lastMeshResidencyChunkSig = "";
+    this.lastResidencyCheckX = Number.NaN;
+    this.lastResidencyCheckZ = Number.NaN;
     this.meshBuildQueue.length = 0;
     this.meshBuildQueueSet.clear();
     this.extraFloorKeysByChunk.clear();
@@ -14977,6 +15019,20 @@ export class Game {
    */
   private refreshMeshResidency(): void {
     const rect = this.getClientResidencyRect();
+    const moveThresh = Game.RESIDENCY_CHECK_MOVE_TILES;
+    if (
+      Number.isFinite(this.lastResidencyCheckX) &&
+      Number.isFinite(this.lastResidencyCheckZ)
+    ) {
+      const mdx = rect.centerX - this.lastResidencyCheckX;
+      const mdz = rect.centerZ - this.lastResidencyCheckZ;
+      if (mdx * mdx + mdz * mdz < moveThresh * moveThresh) {
+        return;
+      }
+    }
+    this.lastResidencyCheckX = rect.centerX;
+    this.lastResidencyCheckZ = rect.centerZ;
+
     const next = nextResidentChunks(this.meshResidentChunks, rect);
     const nextSig = this.chunkSetSignature(next);
     if (nextSig === this.lastMeshResidencyChunkSig) {
@@ -15002,6 +15058,7 @@ export class Game {
     }
     if (entered.size > 0 || left.size > 0) {
       this.syncResidentWalkableFloorsIncremental(entered, left);
+      this.signpostOcclForce = true;
     }
   }
 
@@ -15099,7 +15156,21 @@ export class Game {
   }
 
   private syncResidentWalkableFloors(): void {
-    if (this.meshResidentChunks.size === 0) return;
+    if (this.meshResidentChunks.size === 0) {
+      for (const [, mesh] of this.walkableFloorMeshes) {
+        this.scene.remove(mesh);
+        disposeWalkableFloorMeshMaterials(mesh);
+      }
+      this.walkableFloorMeshes.clear();
+      this.disposeWalkableFloorVisualMeshes();
+      for (const [, marker] of this.doorMarkerMeshes) {
+        this.scene.remove(marker);
+        marker.geometry.dispose();
+        (marker.material as THREE.Material).dispose();
+      }
+      this.doorMarkerMeshes.clear();
+      return;
+    }
     if (this.extraFloorKeysByChunk.size === 0 && this.extraFloorKeys.size > 0) {
       this.rebuildExtraFloorChunkIndex();
     }
@@ -15111,19 +15182,21 @@ export class Game {
 
   /**
    * Add floor tiles for `entered` chunks and drop tiles/visuals for `left`.
-   * Avoids rebuilding every resident floor batch on each camera step.
+   * Also drops any live floor tile whose chunk is no longer resident (covers
+   * room changes where `left` is empty because residency was reset).
    */
   private syncResidentWalkableFloorsIncremental(
     entered: ReadonlySet<string>,
     left: ReadonlySet<string>
   ): void {
     const b = this.roomBounds;
+    const resident = this.meshResidentChunks;
 
     for (const [k, mesh] of [...this.walkableFloorMeshes]) {
       const parts = k.split(",").map(Number);
       if (!Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) continue;
       const ck = tileChunkKey(parts[0]!, parts[1]!);
-      if (!left.has(ck)) continue;
+      if (!left.has(ck) && resident.has(ck)) continue;
       this.scene.remove(mesh);
       disposeWalkableFloorMeshMaterials(mesh);
       this.walkableFloorMeshes.delete(k);
@@ -15132,7 +15205,7 @@ export class Game {
       const parts = k.split(",").map(Number);
       if (!Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) continue;
       const ck = tileChunkKey(parts[0]!, parts[1]!);
-      if (!left.has(ck)) continue;
+      if (!left.has(ck) && resident.has(ck)) continue;
       this.scene.remove(marker);
       marker.geometry.dispose();
       (marker.material as THREE.Material).dispose();
@@ -16427,22 +16500,40 @@ export class Game {
     const docLoaded = this.signpostHintDocTexture !== null;
     const hoverFloor = this.signboardHoverFloorKey;
 
-    const hintGroups = this.signpostHintGroupsBuf;
-    hintGroups.length = 0;
-    for (const g of this.blockMeshes.values()) {
-      if (g.userData.signpostHintSprite) hintGroups.push(g);
+    if (this.signpostHintGroupsDirty) {
+      const hintGroups = this.signpostHintGroupsBuf;
+      hintGroups.length = 0;
+      for (const g of this.blockMeshes.values()) {
+        if (g.userData.signpostHintSprite) hintGroups.push(g);
+      }
+      this.signpostHintGroupsDirty = false;
     }
+    const hintGroups = this.signpostHintGroupsBuf;
     if (hintGroups.length === 0) return false;
 
     const needOccl = docLoaded && !build;
+    let recomputeOccl = false;
     if (needOccl) {
       this.rebuildSignpostHintOcclTileIndex();
       this.camera.updateMatrixWorld();
       this.camera.getWorldPosition(this.signpostHintOcclCamW);
+      const q = Game.SIGNPOST_OCCL_REQUANT_TILES;
+      const qx = Math.round(this.signpostHintOcclCamW.x / q);
+      const qz = Math.round(this.signpostHintOcclCamW.z / q);
+      recomputeOccl =
+        this.signpostOcclForce ||
+        qx !== this.signpostOcclCamQuantX ||
+        qz !== this.signpostOcclCamQuantZ;
+      if (recomputeOccl) {
+        this.signpostOcclCamQuantX = qx;
+        this.signpostOcclCamQuantZ = qz;
+        this.signpostOcclForce = false;
+      }
     }
 
     for (const g of hintGroups) {
-      const sp = g.userData.signpostHintSprite as THREE.Sprite;
+      const sp = g.userData.signpostHintSprite as THREE.Sprite | undefined;
+      if (!sp) continue;
       const mat = sp.material as THREE.SpriteMaterial;
       const baseY = g.userData.signpostHintBaseY as number;
       sp.position.y =
@@ -16463,17 +16554,23 @@ export class Game {
         let geoHidden = false;
         if (meshKey && this.isSignpostHintOccludedByStack(meshKey)) {
           geoHidden = true;
+          g.userData.signpostOcclHidden = true;
         } else if (needOccl) {
-          g.updateMatrixWorld(true);
-          sp.getWorldPosition(this.signpostHintOcclHintW);
-          const candidates = this.collectSignpostHintOcclCandidates(
-            this.signpostHintOcclHintW
-          );
-          geoHidden = this.isSignpostHintOccludedByForeground(
-            g,
-            this.signpostHintOcclHintW,
-            candidates
-          );
+          if (recomputeOccl || g.userData.signpostOcclHidden === undefined) {
+            g.updateMatrixWorld(true);
+            sp.getWorldPosition(this.signpostHintOcclHintW);
+            const candidates = this.collectSignpostHintOcclCandidates(
+              this.signpostHintOcclHintW
+            );
+            geoHidden = this.isSignpostHintOccludedByForeground(
+              g,
+              this.signpostHintOcclHintW,
+              candidates
+            );
+            g.userData.signpostOcclHidden = geoHidden;
+          } else {
+            geoHidden = Boolean(g.userData.signpostOcclHidden);
+          }
         }
         if (geoHidden) {
           mat.opacity = 0;
@@ -19424,6 +19521,8 @@ export class Game {
       port.canvas.removeEventListener("pointerdown", port.onCanvasPointerDown);
       port.onCanvasPointerDown = null;
     }
+    port.canvas.removeAttribute("title");
+    port.canvas.style.cursor = "";
     port.deployableFx?.dispose();
     port.deployableFx = null;
     port.resizeObserver.disconnect();
@@ -19663,18 +19762,22 @@ export class Game {
   }
 
   /**
-   * Isolated WebGL view for profile Wardrobe / shop buy - avatar on a solid stock
-   * backdrop (Black / White / Dark green). Click the canvas to cycle backgrounds.
+   * Isolated WebGL avatar preview for Wardrobe / Sale Display Buy.
+   * - Default (`backdrop: "room"`): Wardrobe Preview Backdrop - room sky + 4×4 floor patch.
+   * - `backdrop: "stock"`: solid Black / White / Dark green; click canvas to cycle
+   *   (Sale Display try-on / buy).
    * Pass `null` to release GPU resources.
    */
   bindWardrobeAvatarPreviewCanvas(
     canvas: HTMLCanvasElement | null,
     wallet?: string,
-    displayName?: string
+    displayName?: string,
+    opts?: { backdrop?: "room" | "stock" }
   ): void {
     this.disposeWardrobeAvatarPreviewPort();
     if (!canvas) return;
 
+    const backdropMode = opts?.backdrop === "stock" ? "stock" : "room";
     const w = String(wallet ?? "").trim();
     const label = String(displayName ?? "").trim() || (w ? walletDisplayName(w) : "Player");
 
@@ -19692,7 +19795,11 @@ export class Game {
 
     const stockBgIndex = 0;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(WARDROBE_PREVIEW_STOCK_BG_RGBS[stockBgIndex]!);
+    scene.background = new THREE.Color(
+      backdropMode === "stock"
+        ? WARDROBE_PREVIEW_STOCK_BG_RGBS[stockBgIndex]!
+        : this.snapshotWardrobePreviewSkyRgb()
+    );
 
     const amb = new THREE.AmbientLight(0xffffff, 0.62);
     scene.add(amb);
@@ -19706,6 +19813,22 @@ export class Game {
     const cameraOrbitYawRad = snapWardrobePreviewCameraOrbitYaw(
       this.cameraOrbitYawRad
     );
+
+    let floorTiles: WardrobePreviewFloorTile[] = [];
+    let blockGroups: THREE.Group[] = [];
+    if (backdropMode === "room") {
+      const previewAnchor = this.resolveWardrobePreviewAnchor();
+      floorTiles = this.buildWardrobePreviewFloorTiles(
+        rootGroup,
+        previewAnchor,
+        cameraOrbitYawRad
+      );
+      blockGroups = this.buildWardrobePreviewBlockGroups(
+        rootGroup,
+        previewAnchor,
+        cameraOrbitYawRad
+      );
+    }
 
     const avatarGroup = w ? this.makeAvatar(w, label) : new THREE.Group();
     rootGroup.add(avatarGroup);
@@ -19723,14 +19846,20 @@ export class Game {
     );
     camera.lookAt(lookAt);
 
-    const onCanvasPointerDown = (ev: PointerEvent): void => {
-      if (ev.button !== 0) return;
-      ev.preventDefault();
-      this.cycleWardrobeAvatarPreviewStockBackground();
-    };
-    canvas.addEventListener("pointerdown", onCanvasPointerDown);
-    canvas.title = "Click to cycle background (Black / White / Dark green)";
-    canvas.style.cursor = "pointer";
+    let onCanvasPointerDown: ((ev: PointerEvent) => void) | null = null;
+    if (backdropMode === "stock") {
+      onCanvasPointerDown = (ev: PointerEvent): void => {
+        if (ev.button !== 0) return;
+        ev.preventDefault();
+        this.cycleWardrobeAvatarPreviewStockBackground();
+      };
+      canvas.addEventListener("pointerdown", onCanvasPointerDown);
+      canvas.title = "Click to cycle background (Black / White / Dark green)";
+      canvas.style.cursor = "pointer";
+    } else {
+      canvas.removeAttribute("title");
+      canvas.style.cursor = "";
+    }
 
     const port: WardrobeAvatarPreviewPort = {
       canvas,
@@ -19739,8 +19868,8 @@ export class Game {
       camera,
       rootGroup,
       avatarGroup,
-      floorTiles: [],
-      blockGroups: [],
+      floorTiles,
+      blockGroups,
       resizeObserver: new ResizeObserver(() => this.renderWardrobeAvatarPreview()),
       wallet: w,
       displayName: label,
@@ -19748,6 +19877,7 @@ export class Game {
       rafId: null,
       previewPhaseStart: performance.now(),
       deployableFx: null,
+      backdropMode,
       stockBgIndex,
       onCanvasPointerDown,
       cosmetics: {
@@ -19776,10 +19906,10 @@ export class Game {
     }
   }
 
-  /** Cycle wardrobe / buy preview solid backdrop: Black → White → Dark green. */
+  /** Cycle Sale Display try-on solid backdrop: Black → White → Dark green. */
   cycleWardrobeAvatarPreviewStockBackground(): void {
     const port = this.wardrobeAvatarPreviewPort;
-    if (!port) return;
+    if (!port || port.backdropMode !== "stock") return;
     port.stockBgIndex =
       (port.stockBgIndex + 1) % WARDROBE_PREVIEW_STOCK_BG_RGBS.length;
     port.scene.background = new THREE.Color(
@@ -19824,6 +19954,9 @@ export class Game {
     if (!port) return;
     const k = ((Math.floor(cornerIndex) % 4) + 4) % 4;
     port.cameraOrbitYawRad = k * (Math.PI / 2);
+    if (port.backdropMode === "room") {
+      this.rebuildWardrobePreviewBackdrop(port);
+    }
     this.applyWardrobePreviewCameraPose(port);
     this.renderWardrobeAvatarPreview();
   }

@@ -5,6 +5,10 @@
 
 ---
 
-- [PERF] Walking in a packed Commons should hitch less; the game focuses drawing on what your camera can see and eases in nearby areas as you move.
-- [PERF] Floating signpost document icons no longer drag the whole room’s blocks through a heavy check every frame.
-- [PERF] Moving around Commons should no longer tank FPS or freeze after a few seconds of walking (residency work only when you enter new map chunks).
+- [PERF] Walking in a packed Commons should hitch less; the game draws what your camera can see and eases in nearby areas as you move.
+- [PERF] Floating signpost document icons no longer drag the whole room through a heavy check every frame.
+- [PERF] Moving around Commons should feel closer to standing still — heavy work only kicks in when the camera actually advances.
+- [UX] You can zoom out farther in Commons before hitting the normal cap (Telescope still doubles that).
+- [FIX] Leaving Commons for Hub no longer leaves the old floor layout stuck on screen.
+- [UX] Room loads (including Commons) show a percentage under the loading bar so you can tell progress is still moving.
+- [CHANGE] Wardrobe preview uses the room backdrop again; Sale Display Buy try-on keeps the solid color cycle.

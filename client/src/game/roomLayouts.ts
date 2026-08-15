@@ -35,8 +35,8 @@ const HUB_BOUNDS: RoomBounds = {
   maxZ: 12,
 };
 
-/** Max orthographic vertical extent when zoomed out in hub/commons (25×25). At 4:3, width ≈ 24. */
-export const HUB_MAX_ZOOM_FRUSTUM = 18;
+/** Max orthographic vertical extent when zoomed out in hub/commons (25×25). */
+export const HUB_MAX_ZOOM_FRUSTUM = 22.9;
 /** +100% zoom-out vs normal room cap while Telescope is held. */
 export const TELESCOPE_ZOOM_MULTIPLIER = 2;
 /** Telescope hold-to-zoom in hub/commons and chamber (default spawn). */

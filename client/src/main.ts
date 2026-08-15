@@ -1014,10 +1014,10 @@ function enterGame(
     }
     clearRoomTransitionProgressTimer();
     hud.setLoadingLabel(labelOverride ?? loadingLabelForTargetRoom(roomId));
-    hud.setLoadingProgress("indeterminate");
     hud.setLoadingVisible(true);
     loadingFeedback.start({ targetRoomId: roomId, blackout: false });
     let fake = 0.06;
+    hud.setLoadingProgress(fake);
     roomTransitionProgressTimer = setInterval(() => {
       fake = Math.min(0.45, fake + 0.014);
       hud.setLoadingProgress(fake);
@@ -2864,7 +2864,8 @@ function enterGame(
         game.bindWardrobeAvatarPreviewCanvas(
           canvas,
           wallet,
-          wKey === selfKey ? self?.displayName : undefined
+          wKey === selfKey ? self?.displayName : undefined,
+          { backdrop: "stock" }
         );
       },
       onPreviewCosmeticsChange: (presets) => {

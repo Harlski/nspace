@@ -5,6 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
-
-- _Deploy / config deltas vs previous patch-notes version._
+No deploy, env, Docker, or migration changes in this release. Client-only Commons performance and loading UX.

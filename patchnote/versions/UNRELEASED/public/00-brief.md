@@ -5,4 +5,4 @@
 
 ---
 
-- [PERF] Dense Commons should feel closer to a small room when you’re looking at a similar area of the map.
+Commons should feel smoother when you look around and walk, and room loads show a percent so you can tell they are still moving. Leaving Commons for Hub no longer leaves the old floor layout stuck on screen.

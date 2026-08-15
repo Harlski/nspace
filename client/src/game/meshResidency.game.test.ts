@@ -14,6 +14,7 @@ vi.mock("three", async (importOriginal) => {
 
 import { Game } from "./Game.js";
 import {
+  CHAMBER_ROOM_ID,
   HUB_MAX_ZOOM_FRUSTUM,
   HUB_ROOM_ID,
   getRoomBaseBounds,
@@ -71,5 +72,36 @@ describe("mesh residency in commons", () => {
     // Near tiles meshed; far chunk left as data only.
     expect(stats.liveBlockMeshCount).toBe(2);
     expect(stats.liveBlockMeshCount).toBeLessThan(stats.obstacleCount);
+  });
+
+  it("drops Commons floor meshes when entering Hub (chamber)", () => {
+    const mounted = mountGame();
+    host = mounted.host;
+    Object.defineProperty(host, "clientWidth", { configurable: true, get: () => 1280 });
+    Object.defineProperty(host, "clientHeight", { configurable: true, get: () => 720 });
+    const { game } = mounted;
+
+    game.applyRoomFromWelcome({
+      roomId: HUB_ROOM_ID,
+      roomBounds: getRoomBaseBounds(HUB_ROOM_ID),
+      doors: [],
+    });
+    game.setZoomFrustumSize(HUB_MAX_ZOOM_FRUSTUM);
+    for (let i = 0; i < 10; i++) game.tick(1 / 60);
+
+    const commonsFloors = game.getDebugStats().walkableFloorMeshCount;
+    // Commons is 25×25 in one residency chunk; all base tiles should be live.
+    expect(commonsFloors).toBe(25 * 25);
+
+    game.applyRoomFromWelcome({
+      roomId: CHAMBER_ROOM_ID,
+      roomBounds: getRoomBaseBounds(CHAMBER_ROOM_ID),
+      doors: [],
+    });
+    for (let i = 0; i < 10; i++) game.tick(1 / 60);
+
+    const hubFloors = game.getDebugStats().walkableFloorMeshCount;
+    expect(hubFloors).toBe(13 * 13);
+    expect(hubFloors).toBeLessThan(commonsFloors);
   });
 });

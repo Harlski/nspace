@@ -16203,9 +16203,14 @@ a.main-menu__version:focus-visible {
 .loading-overlay__progress {
   width: min(280px, 72vw);
   margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 
 .loading-overlay__progress-track {
+  width: 100%;
   height: 4px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
@@ -16219,6 +16224,18 @@ a.main-menu__version:focus-visible {
   border-radius: inherit;
   background: linear-gradient(90deg, #38bdf8, #818cf8);
   transition: width 0.22s ease-out;
+}
+
+.loading-overlay__progress-pct {
+  min-height: 1.1em;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.88);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .loading-overlay__progress-track--indeterminate .loading-overlay__progress-fill {

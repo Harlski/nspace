@@ -2816,9 +2816,10 @@ export function createHud(
       ${nimiqHexLoaderSvg("loading-overlay__spinner")}
       <div class="loading-overlay__text">Loading room...</div>
       <div class="loading-overlay__progress" hidden>
-        <div class="loading-overlay__progress-track">
+        <div class="loading-overlay__progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100">
           <div class="loading-overlay__progress-fill"></div>
         </div>
+        <div class="loading-overlay__progress-pct" aria-hidden="true"></div>
       </div>
       <button type="button" class="loading-overlay__return-hub nq-button-pill light-blue" hidden>Return to Hub</button>
     </div>
@@ -2834,6 +2835,9 @@ export function createHud(
   ) as HTMLElement | null;
   const loadingProgressFill = loadingOverlay.querySelector(
     ".loading-overlay__progress-fill"
+  ) as HTMLElement | null;
+  const loadingProgressPct = loadingOverlay.querySelector(
+    ".loading-overlay__progress-pct"
   ) as HTMLElement | null;
   const loadingReturnHubBtn = loadingOverlay.querySelector(
     ".loading-overlay__return-hub"
@@ -2945,6 +2949,9 @@ export function createHud(
       "loading-overlay__progress-track--indeterminate"
     );
     if (loadingProgressFill) loadingProgressFill.style.width = "0%";
+    if (loadingProgressPct) loadingProgressPct.textContent = "";
+    loadingProgressTrack?.removeAttribute("aria-valuenow");
+    loadingProgressTrack?.removeAttribute("aria-valuetext");
     settleLoadingHidePromise();
   }
 
@@ -18184,6 +18191,9 @@ export function createHud(
           "loading-overlay__progress-track--indeterminate"
         );
         loadingProgressFill.style.width = "0%";
+        if (loadingProgressPct) loadingProgressPct.textContent = "";
+        loadingProgressTrack.removeAttribute("aria-valuenow");
+        loadingProgressTrack.removeAttribute("aria-valuetext");
         return;
       }
       loadingProgressWrap.hidden = false;
@@ -18192,13 +18202,20 @@ export function createHud(
           "loading-overlay__progress-track--indeterminate"
         );
         loadingProgressFill.style.width = "";
+        if (loadingProgressPct) loadingProgressPct.textContent = "…";
+        loadingProgressTrack.removeAttribute("aria-valuenow");
+        loadingProgressTrack.setAttribute("aria-valuetext", "Loading");
         return;
       }
       loadingProgressTrack.classList.remove(
         "loading-overlay__progress-track--indeterminate"
       );
       const p = Math.max(0, Math.min(1, state));
-      loadingProgressFill.style.width = `${(p * 100).toFixed(1)}%`;
+      const pct = Math.round(p * 100);
+      loadingProgressFill.style.width = `${pct}%`;
+      if (loadingProgressPct) loadingProgressPct.textContent = `${pct}%`;
+      loadingProgressTrack.setAttribute("aria-valuenow", String(pct));
+      loadingProgressTrack.setAttribute("aria-valuetext", `${pct} percent`);
     },
     setLoadingReturnToHubVisible(visible: boolean) {
       if (loadingReturnHubBtn) loadingReturnHubBtn.hidden = !visible;
