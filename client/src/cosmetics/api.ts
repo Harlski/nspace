@@ -115,9 +115,17 @@ export async function updateLoadoutSlot(
   return result;
 }
 
+export type UnlockIntentWire = {
+  intentId: string;
+  amountLuna: string;
+  amountNimLabel: string;
+  recipient: string;
+  memo: string;
+};
+
 export async function createUnlockIntent(
   cosmeticSku: string
-): Promise<{ intent: { intentId: string; amountNimLabel: string; memo: string } }> {
+): Promise<{ intent: UnlockIntentWire }> {
   const token = sessionToken();
   if (!token) throw new Error("not_signed_in");
   return apiJson("/api/cosmetics/unlock-intent", {

@@ -6,8 +6,3 @@
 ---
 
 _(Draft — not published.)_
-
-- Click-to-walk movement in normal rooms is smoother: your avatar follows the accepted path
-  at a steady speed instead of stuttering between tile updates. Soccer pitch free-move is
-  unchanged.
-- The world should stay responsive when operators open the analytics page.

@@ -8,7 +8,9 @@ Displays via **Build → Buildings → Sale Display** like other building placea
 foot), and may use full Build in The Shaper (admin-only; players stay locked out). Unbound
 displays are admin-only; players only see bound Published entries (slot-aware mannequin or
 floor deployable) and buy via the existing Cosmetic Unlock path. Kiosks outside The Shaper
-are allowed under the same rules; Wardrobe Shop remains.
+are allowed under the same rules; Wardrobe Shop remains. Mannequin binds may optionally pace
+an admin-authored per-display walk path (≥2 tiles); the display foot and buy pad stay on the
+anchor tile.
 
 ## Considered Options
 

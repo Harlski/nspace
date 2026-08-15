@@ -69,6 +69,14 @@ export function analyticsAdminPageHtml(): string {
     .admin-payout-section { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #283244; }
     .admin-payout-head { margin-bottom: 0.35rem; color: #c8d4e4; font-size: 0.92rem; }
     .admin-payout-note { font-size: 0.76rem; color: #6b7d95; font-weight: 400; margin-left: 0.35rem; }
+    .admin-payout-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.45rem 0 0.2rem; }
+    .admin-payout-tab {
+      font-size: 0.74rem; padding: 0.28rem 0.55rem; border-radius: 5px;
+      border: 1px solid #334560; background: #182231; color: #9fb0c7; cursor: pointer;
+    }
+    .admin-payout-tab:hover { border-color: #4a6285; color: #d5e0ee; }
+    .admin-payout-tab.is-active { background: #243449; border-color: #5b7aa3; color: #e8eef7; }
+    .admin-payout-tab-panel[hidden] { display: none; }
     .admin-payout-tablewrap { margin-top: 0.35rem; max-height: min(55vh, 520px); overflow: auto; border: 1px solid #263348; border-radius: 6px; }
     .admin-payout-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
     .admin-payout-table th, .admin-payout-table td { text-align: left; padding: 0.32rem 0.45rem; border-bottom: 1px solid #263348; vertical-align: middle; }
@@ -468,6 +476,7 @@ export function analyticsAdminPageHtml(): string {
       var pageViewsByDay = [];
       var pageViewsRecent = [];
       var payoutAdmin = null;
+      var quickPayoutTab = "payable";
       async function refreshPayoutAdmin() {
         try {
           var pr = await fetch("/api/nim/payouts?adminPanel=1", {
@@ -649,7 +658,18 @@ export function analyticsAdminPageHtml(): string {
         var rows = Array.isArray(p.rows) ? p.rows : [];
         var hist = Array.isArray(p.historyRows) ? p.historyRows : [];
         var byRec = Array.isArray(p.pendingByRecipient) ? p.pendingByRecipient : [];
+        var byRecHeld = Array.isArray(p.pendingByRecipientMiningHeld)
+          ? p.pendingByRecipientMiningHeld
+          : [];
         var pendingN = Number(p.pendingTotal != null ? p.pendingTotal : rows.length) || 0;
+        var heldN =
+          Number(
+            p.miningHeldPendingTotal != null
+              ? p.miningHeldPendingTotal
+              : byRecHeld.reduce(function (n, r) {
+                  return n + (Number(r.jobCount) || 0);
+                }, 0)
+          ) || 0;
         var allSent = Boolean(p.allSent);
         var msg = p.message != null ? String(p.message) : "";
         var histThead =
@@ -682,15 +702,23 @@ export function analyticsAdminPageHtml(): string {
             })
             .join("");
         }
-        var summaryBlock = "";
-        if (byRec.length) {
-          var sumThead =
-            "<thead><tr><th>User</th><th>Jobs</th><th>Total NIM</th><th></th></tr></thead>";
-          var sumBody = byRec
+        function recipientTableBody(list, withPayoutBtn) {
+          return list
             .map(function (row) {
               var w = row.walletId != null ? String(row.walletId) : "";
               var jc = row.jobCount != null ? String(row.jobCount) : "0";
               var nim = row.amountNim != null ? String(row.amountNim) : "-";
+              var actionCell = withPayoutBtn
+                ? "<button type='button' class='admin-payout-btn' data-manual-payout='" +
+                  esc(w) +
+                  "' data-manual-payout-nim='" +
+                  esc(nim) +
+                  "' data-manual-payout-jobs='" +
+                  esc(jc) +
+                  "' data-manual-payout-label='" +
+                  esc(playerLabel(w, row.displayName)) +
+                  "'>Payout in full</button>"
+                : "<span class='admin-payout-note' style='margin:0'>Won't pay while restricted</span>";
               return (
                 "<tr><td>" +
                 playerCell(w, row.displayName, "") +
@@ -699,28 +727,68 @@ export function analyticsAdminPageHtml(): string {
                 "</td><td class='mono'>" +
                 esc(nim) +
                 "</td><td>" +
-                "<button type='button' class='admin-payout-btn' data-manual-payout='" +
-                esc(w) +
-                "' data-manual-payout-nim='" +
-                esc(nim) +
-                "' data-manual-payout-jobs='" +
-                esc(jc) +
-                "' data-manual-payout-label='" +
-                esc(playerLabel(w, row.displayName)) +
-                "'>Payout in full</button>" +
+                actionCell +
                 "</td></tr>"
               );
             })
             .join("");
-          summaryBlock =
-            "<div class='admin-payout-sub'><strong>Amount pending by recipient</strong> <span class='admin-payout-note'>(queued pending only)</span></div>" +
-            "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
-            sumThead +
-            "<tbody>" +
-            sumBody +
-            "</tbody></table></div>" +
-            "<p class='status' style='margin-top:0.35rem;font-size:0.74rem'>Payout in full sends one combined transaction and removes those pending jobs. In-flight sends are not included.</p>";
         }
+        var sumThead =
+          "<thead><tr><th>User</th><th>Jobs</th><th>Total NIM</th><th></th></tr></thead>";
+        var payableEmpty =
+          "<p class='status' style='margin-top:0.35rem;font-size:0.76rem;color:#8b9cb3'>" +
+          (allSent ? esc(msg || "No payable pending jobs.") : "No payable recipients.") +
+          "</p>";
+        var heldEmpty =
+          "<p class='status' style='margin-top:0.35rem;font-size:0.76rem;color:#8b9cb3'>No block-claim jobs held under Mining Restriction.</p>";
+        var payablePanel =
+          byRec.length > 0
+            ? "<div class='admin-payout-sub'><strong>Amount pending by recipient</strong> <span class='admin-payout-note'>(payable queued jobs)</span></div>" +
+              "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
+              sumThead +
+              "<tbody>" +
+              recipientTableBody(byRec, true) +
+              "</tbody></table></div>" +
+              "<p class='status' style='margin-top:0.35rem;font-size:0.74rem'>Payout in full sends one combined transaction and removes those pending jobs. In-flight sends are not included. Mining Restriction block-claim jobs are excluded.</p>"
+            : payableEmpty;
+        var heldPanel =
+          byRecHeld.length > 0
+            ? "<div class='admin-payout-sub'><strong>Held under Mining Restriction</strong> <span class='admin-payout-note'>(block-claim only · not sent)</span></div>" +
+              "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
+              sumThead +
+              "<tbody>" +
+              recipientTableBody(byRecHeld, false) +
+              "</tbody></table></div>" +
+              "<p class='status' style='margin-top:0.35rem;font-size:0.74rem'>These stay in the backlog until Mining Restriction is lifted. Maze and other non-mining rewards for the same wallet appear under Payable.</p>"
+            : heldEmpty;
+        var tabPayableActive = quickPayoutTab !== "held";
+        var tabsBlock =
+          "<div class='admin-payout-tabs' role='tablist' aria-label='Pending payout buckets'>" +
+          "<button type='button' role='tab' class='admin-payout-tab" +
+          (tabPayableActive ? " is-active" : "") +
+          "' data-quick-payout-tab='payable' aria-selected='" +
+          (tabPayableActive ? "true" : "false") +
+          "'>Payable (" +
+          esc(String(pendingN)) +
+          ")</button>" +
+          "<button type='button' role='tab' class='admin-payout-tab" +
+          (!tabPayableActive ? " is-active" : "") +
+          "' data-quick-payout-tab='held' aria-selected='" +
+          (!tabPayableActive ? "true" : "false") +
+          "'>Mining Restriction (" +
+          esc(String(heldN)) +
+          ")</button>" +
+          "</div>" +
+          "<div class='admin-payout-tab-panel' data-quick-payout-panel='payable'" +
+          (tabPayableActive ? "" : " hidden") +
+          ">" +
+          payablePanel +
+          "</div>" +
+          "<div class='admin-payout-tab-panel' data-quick-payout-panel='held'" +
+          (tabPayableActive ? " hidden" : "") +
+          ">" +
+          heldPanel +
+          "</div>";
         var histBlock = hist.length
           ? "<div class='admin-payout-sub'><strong>Recent completed</strong> (last 5 · newest first)</div>" +
             "<div class='admin-payout-tablewrap'><table class='admin-payout-table'>" +
@@ -789,17 +857,25 @@ export function analyticsAdminPageHtml(): string {
           "<p class='status' style='margin-top:0'>" +
           "<strong>" +
           esc(String(pendingN)) +
-          "</strong> job" +
+          "</strong> payable job" +
           (pendingN === 1 ? "" : "s") +
-          " pending" +
-          (allSent ? " · " + esc(msg || "Queue empty.") : "") +
+          (heldN > 0
+            ? " · <strong>" +
+              esc(String(heldN)) +
+              "</strong> held (Mining Restriction)"
+            : "") +
+          (allSent && pendingN === 0 && heldN === 0
+            ? " · " + esc(msg || "Queue empty.")
+            : allSent && pendingN === 0 && heldN > 0
+              ? " · " + esc(msg || "Nothing payable.")
+              : "") +
           "</p>";
         return (
           "<section id='admin-quick-payout' class='admin-payout-section'>" +
           "<div class='admin-payout-head'><strong>Quick payout</strong>" +
           "<span class='admin-payout-note'>combines queued pending jobs per wallet · auto bulk after 8h</span></div>" +
           pendingLine +
-          summaryBlock +
+          tabsBlock +
           histBlock +
           mbBlock +
           "</section>"
@@ -960,6 +1036,15 @@ export function analyticsAdminPageHtml(): string {
               e.preventDefault();
               copyWallet();
             }
+          });
+        });
+        panel.querySelectorAll("[data-quick-payout-tab]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var next = String(btn.getAttribute("data-quick-payout-tab") || "payable");
+            if (next !== "payable" && next !== "held") next = "payable";
+            if (quickPayoutTab === next) return;
+            quickPayoutTab = next;
+            render(msg, isErr);
           });
         });
         panel.querySelectorAll("[data-manual-payout]").forEach(function (btn) {

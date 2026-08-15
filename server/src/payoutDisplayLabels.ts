@@ -29,6 +29,10 @@ export function enrichPendingPayoutSnapshotWithLabels<
       ...r,
       displayName: labelWallet(r.walletId),
     })),
+    pendingByRecipientMiningHeld: snap.pendingByRecipientMiningHeld?.map((r) => ({
+      ...r,
+      displayName: labelWallet(r.walletId),
+    })),
     manualBulkHistory: snap.manualBulkHistory?.map((r) => ({
       ...r,
       displayName: labelWallet(r.walletId),

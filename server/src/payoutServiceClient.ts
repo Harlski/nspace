@@ -205,6 +205,8 @@ export type PublicPendingPayoutSnapshot = {
   rows: PublicPendingPayoutRow[];
   historyRows: PublicPayoutHistoryRow[];
   pendingByRecipient?: PendingByRecipientSummaryRow[];
+  pendingByRecipientMiningHeld?: PendingByRecipientSummaryRow[];
+  miningHeldPendingTotal?: number;
   manualBulkHistory?: ManualBulkPayoutHistoryRow[];
 };
 

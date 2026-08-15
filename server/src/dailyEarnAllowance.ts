@@ -93,23 +93,28 @@ export type GameplayEarnDecision = {
   remainingAfterLuna: bigint | null;
 };
 
-/** Remaining Daily Earn Allowance in luna (`null` = uncapped). Does not commit. */
+/** Remaining Daily Earn Allowance in luna (`null` remaining/ceiling = uncapped). Does not commit. */
 export function peekDailyEarnRemaining(args: {
   wallet: string;
   achievementPoints: number;
   nowMs?: number;
-}): { level: number; remainingLuna: bigint | null } {
+}): {
+  level: number;
+  remainingLuna: bigint | null;
+  ceilingLuna: bigint | null;
+  spentLuna: bigint;
+} {
   const nowMs = args.nowMs ?? Date.now();
   rolloverIfNeeded(nowMs);
   const wallet = normalizeWallet(args.wallet);
   const level = playerLevelFromPoints(args.achievementPoints);
   const ceilingLuna = dailyEarnAllowanceLuna(level);
-  if (ceilingLuna === null) {
-    return { level, remainingLuna: null };
-  }
   const spentLuna = BigInt(state.spentLunaByWallet[wallet] ?? "0");
+  if (ceilingLuna === null) {
+    return { level, remainingLuna: null, ceilingLuna: null, spentLuna };
+  }
   const remaining = ceilingLuna > spentLuna ? ceilingLuna - spentLuna : 0n;
-  return { level, remainingLuna: remaining };
+  return { level, remainingLuna: remaining, ceilingLuna, spentLuna };
 }
 
 /**

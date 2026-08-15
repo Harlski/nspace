@@ -21,6 +21,9 @@ export type SaleDisplay = {
   z: number;
   /** Bound Catalog Entry SKU, or null when unbound. */
   cosmeticSku: string | null;
+  /** When true and walkTiles length ≥ 2, mannequin paces the path. */
+  walkEnabled: boolean;
+  walkTiles: { x: number; z: number }[];
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -37,6 +40,8 @@ export type SaleDisplayWire = {
   kind?: "mannequin" | "floor";
   /** Admin-only: sku set but not player-visible (non-Published / non-shop). */
   bindInactive?: boolean;
+  walkEnabled?: boolean;
+  walkTiles?: { x: number; z: number }[];
 };
 
 export type BindSaleDisplayError =
@@ -44,6 +49,26 @@ export type BindSaleDisplayError =
   | "not_published"
   | "achievement_only"
   | "unknown_sku";
+
+export const SALE_DISPLAY_WALK_TILES_MAX = 16;
+
+/** Floor ints, drop non-finite, dedupe consecutive duplicates, cap length. */
+export function normalizeWalkTiles(raw: unknown): { x: number; z: number }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { x: number; z: number }[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const x = Math.floor(Number(o.x));
+    const z = Math.floor(Number(o.z));
+    if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+    const prev = out[out.length - 1];
+    if (prev && prev.x === x && prev.z === z) continue;
+    out.push({ x, z });
+    if (out.length >= SALE_DISPLAY_WALK_TILES_MAX) break;
+  }
+  return out;
+}
 
 type SaleDisplaysData = {
   saleDisplays: SaleDisplay[];
@@ -85,12 +110,16 @@ function normalizeLoaded(raw: unknown): SaleDisplay | null {
     skuRaw === null || skuRaw === undefined || skuRaw === ""
       ? null
       : String(skuRaw).trim() || null;
+  const walkEnabled = o.walkEnabled === true;
+  const walkTiles = normalizeWalkTiles(o.walkTiles);
   return {
     id,
     roomId,
     x,
     z,
     cosmeticSku,
+    walkEnabled,
+    walkTiles,
     createdBy,
     createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
     updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
@@ -157,6 +186,8 @@ export function createSaleDisplay(input: {
     x,
     z,
     cosmeticSku: null,
+    walkEnabled: false,
+    walkTiles: [],
     createdBy: String(input.createdBy ?? "").trim(),
     createdAt: now,
     updatedAt: now,
@@ -237,6 +268,21 @@ export function clearSaleDisplayBind(id: string): SaleDisplay | null {
   return d;
 }
 
+export function setSaleDisplayWalk(
+  id: string,
+  input: { enabled: boolean; tiles?: unknown }
+): SaleDisplay | null {
+  const d = getSaleDisplayById(id);
+  if (!d) return null;
+  d.walkEnabled = input.enabled === true;
+  if (input.tiles !== undefined) {
+    d.walkTiles = normalizeWalkTiles(input.tiles);
+  }
+  d.updatedAt = Date.now();
+  dirty = true;
+  return d;
+}
+
 function showcaseKindForSlot(slot: CosmeticSlot): "mannequin" | "floor" {
   return slot === "deployable" ? "floor" : "mannequin";
 }
@@ -259,11 +305,36 @@ function resolveActiveBind(cosmeticSku: string): {
   };
 }
 
+function attachWalkWire(
+  wire: SaleDisplayWire,
+  display: SaleDisplay,
+  viewer: { isAdmin: boolean },
+  kind: "mannequin" | "floor" | undefined
+): SaleDisplayWire {
+  const canWalk =
+    kind === "mannequin" &&
+    display.walkEnabled &&
+    display.walkTiles.length >= 2;
+  if (viewer.isAdmin) {
+    return {
+      ...wire,
+      walkEnabled: display.walkEnabled,
+      walkTiles: display.walkTiles,
+    };
+  }
+  if (!canWalk) return wire;
+  return {
+    ...wire,
+    walkEnabled: true,
+    walkTiles: display.walkTiles,
+  };
+}
+
 export function saleDisplayToWire(
   display: SaleDisplay,
   viewer: { isAdmin: boolean }
 ): SaleDisplayWire | null {
-  const base = {
+  const base: SaleDisplayWire = {
     id: display.id,
     x: display.x,
     z: display.z,
@@ -272,25 +343,35 @@ export function saleDisplayToWire(
 
   if (!display.cosmeticSku) {
     if (!viewer.isAdmin) return null;
-    return base;
+    return attachWalkWire(base, display, viewer, undefined);
   }
 
   const active = resolveActiveBind(display.cosmeticSku);
   if (active) {
-    return {
-      ...base,
-      presetId: active.presetId,
-      label: active.label,
-      slot: active.slot,
-      kind: active.kind,
-    };
+    return attachWalkWire(
+      {
+        ...base,
+        presetId: active.presetId,
+        label: active.label,
+        slot: active.slot,
+        kind: active.kind,
+      },
+      display,
+      viewer,
+      active.kind
+    );
   }
 
   if (!viewer.isAdmin) return null;
-  return {
-    ...base,
-    bindInactive: true,
-  };
+  return attachWalkWire(
+    {
+      ...base,
+      bindInactive: true,
+    },
+    display,
+    viewer,
+    undefined
+  );
 }
 
 export function listSaleDisplaysWire(

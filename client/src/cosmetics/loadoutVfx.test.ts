@@ -11,6 +11,7 @@ import {
   updateCosmeticTrailPuffs,
   updateCosmeticTrailPuffsForGroup,
 } from "./cosmeticPrefabFactory.js";
+import { nameplateColorForPreset, chatBubbleClassForPreset } from "./loadoutVfx.js";
 import {
   AURA_REF_MAGIC_RING,
   cosmeticPresetPreviewSpriteFile,
@@ -38,6 +39,11 @@ describe("cosmetic prefab registry", () => {
     expect(getCosmeticPrefabDef("trail-does-not-exist")).toBeNull();
   });
 
+  it("returns null for nameplate presets (not Kenney prefabs)", () => {
+    expect(getCosmeticPrefabDef("nameplate-frame-simple")).toBeNull();
+    expect(getCosmeticPrefabDef("nameplate-frame-neon")).toBeNull();
+  });
+
   it("resolves Kenney sprite URLs for trail and aura swatches", () => {
     expect(cosmeticPresetPreviewSpriteFile(TRAIL_REF_SPARK_CYAN.presetId)).toBe("spark_01.png");
     expect(cosmeticPresetPreviewSpriteUrl(TRAIL_REF_SPARK_CYAN.presetId)).toBe(
@@ -49,6 +55,27 @@ describe("cosmetic prefab registry", () => {
     expect(cosmeticPresetPreviewSpriteUrl("aura-ref-sigil-twirl-02")).toBe(
       "/assets/particles/kenney/twirl_02.png"
     );
+  });
+});
+
+describe("nameplateColorForPreset", () => {
+  it("resolves v1 frame border colors", () => {
+    expect(nameplateColorForPreset("nameplate-frame-simple")).toBe("#c8d4e4");
+    expect(nameplateColorForPreset("nameplate-frame-neon")).toBe("#00ffcc");
+    expect(nameplateColorForPreset(null)).toBeNull();
+    expect(nameplateColorForPreset("unknown")).toBeNull();
+  });
+});
+
+describe("chatBubbleClassForPreset", () => {
+  it("maps v1 bubble presets to CSS classes", () => {
+    expect(chatBubbleClassForPreset("bubble-rounded-pastel")).toBe(
+      "chat-bubble--cosmetic-pastel"
+    );
+    expect(chatBubbleClassForPreset("bubble-sharp-dark")).toBe(
+      "chat-bubble--cosmetic-dark"
+    );
+    expect(chatBubbleClassForPreset(null)).toBeNull();
   });
 });
 

@@ -6382,7 +6382,8 @@ button.hud-brand:focus-visible {
 #app .hud-teleporter-set.nq-button-pill,
 #app .hud-mode-feedback.nq-button-pill,
 #app .hud-disconnect-modal__reconnect.nq-button-pill,
-#app .hud-disconnect-modal__exit.nq-button-pill {
+#app .hud-disconnect-modal__exit.nq-button-pill,
+#app .loading-overlay__return-hub.nq-button-pill {
   box-sizing: border-box;
   min-height: 0;
   height: auto;
@@ -6402,7 +6403,8 @@ button.hud-brand:focus-visible {
 }
 
 #app .hud-disconnect-modal__reconnect.nq-button-pill,
-#app .hud-disconnect-modal__exit.nq-button-pill {
+#app .hud-disconnect-modal__exit.nq-button-pill,
+#app .loading-overlay__return-hub.nq-button-pill {
   padding: 4px 12px;
   font-size: 13px;
 }
@@ -8993,6 +8995,12 @@ html.nspace-mobile-play-host .other-player-profile__wardrobe {
   font-size: 14px;
   font-weight: 600;
   color: #e2e8f0;
+}
+
+.wardrobe-shop__preview {
+  display: flex;
+  justify-content: center;
+  margin: 0.35rem 0 0.75rem;
 }
 
 .wardrobe-shop__coming-soon {
@@ -15912,6 +15920,8 @@ a.main-menu__version:focus-visible {
   flex-direction: column;
   align-items: center;
   gap: 16px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .loading-overlay__spinner {
@@ -16152,6 +16162,19 @@ a.main-menu__version:focus-visible {
   100% {
     transform: translateX(320%);
   }
+}
+
+.loading-overlay__return-hub {
+  margin-top: 4px;
+  pointer-events: auto;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.loading-overlay__return-hub[hidden] {
+  display: none !important;
 }
 
 /* Unlock Pad property editor (object panel) */
@@ -18846,6 +18869,14 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   color: #4ade80;
 }
 
+.achievement-panel__status--unavailable {
+  color: #fbbf24;
+}
+
+.achievement-panel__row--unavailable {
+  opacity: 0.85;
+}
+
 .achievement-panel__overview-total {
   margin-bottom: 0.85rem;
 }
@@ -19014,6 +19045,33 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   font-size: 13px;
   font-weight: 600;
   color: #fbbf24;
+}
+
+.other-player-profile__earn-allowance {
+  margin: 0.4rem 0 0;
+}
+
+.other-player-profile__earn-allowance-label {
+  margin: 0 0 0.28rem;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(203, 213, 225, 0.88);
+  line-height: 1.3;
+}
+
+.other-player-profile__earn-allowance-track {
+  width: 100%;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(51, 65, 85, 0.85);
+  overflow: hidden;
+}
+
+.other-player-profile__earn-allowance-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #38bdf8, #818cf8);
+  transition: width 0.2s ease;
 }
 
 .other-player-profile__achievements-list {
@@ -19379,12 +19437,49 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   opacity: 0.82;
   line-height: 1.35;
 }
+.sale-display-overlay__preview {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 0.85rem;
+}
+.sale-display-overlay__preview[hidden] {
+  display: none !important;
+}
+.sale-display-overlay__doll {
+  margin: 0 auto;
+}
 .sale-display-overlay__field {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
   margin-bottom: 0.85rem;
   font-size: 0.85rem;
+}
+.sale-display-overlay__walk {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.22);
+}
+.sale-display-overlay__walk[hidden] {
+  display: none !important;
+}
+.sale-display-overlay__check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.sale-display-overlay__walk-meta {
+  margin: 0.45rem 0 0.55rem;
+  font-size: 0.8rem;
+  opacity: 0.8;
+  line-height: 1.35;
+}
+.sale-display-overlay__actions--walk {
+  margin-top: 0.15rem;
 }
 .sale-display-overlay__select {
   width: 100%;
@@ -19429,4 +19524,45 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 .sale-display-overlay__btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.sale-display-path-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(
+    12px + env(safe-area-inset-bottom, 0px) + var(--hud-build-dock-height, 0px)
+  );
+  transform: translateX(-50%);
+  z-index: 10001;
+  width: min(28rem, calc(100vw - 1.5rem));
+  pointer-events: auto;
+}
+.sale-display-path-bar[hidden] {
+  display: none !important;
+}
+.sale-display-path-bar__inner {
+  box-sizing: border-box;
+  padding: 0.85rem 1rem 0.95rem;
+  border-radius: 12px;
+  background: #1a222c;
+  color: #eef3f7;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+}
+.sale-display-path-bar__title {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+.sale-display-path-bar__meta {
+  margin: 0 0 0.75rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  opacity: 0.85;
+}
+.sale-display-path-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
 }

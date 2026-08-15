@@ -18,4 +18,6 @@ export type SaleDisplayWire = {
   kind?: "mannequin" | "floor";
   /** Admin-only: sku set but not player-visible. */
   bindInactive?: boolean;
+  walkEnabled?: boolean;
+  walkTiles?: { x: number; z: number }[];
 };

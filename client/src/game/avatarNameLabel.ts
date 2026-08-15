@@ -1,23 +1,33 @@
 /**
- * Pure nameplate label text (username + Player Level + admin Invisible cue).
+ * Pure nameplate label text (username + admin Invisible / Frozen cues).
+ * Player Level is drawn as a circle badge by the nameplate renderer, not in this string.
  */
 
 export function formatAvatarNameLabel(args: {
   displayName: string;
-  /** Omit for guests. */
-  playerLevel?: number | null;
   adminInvisible?: boolean;
+  frozen?: boolean;
 }): string {
-  const name = args.displayName.trim() || "Player";
-  const level =
-    typeof args.playerLevel === "number" &&
-    Number.isFinite(args.playerLevel) &&
-    args.playerLevel >= 1
-      ? Math.floor(args.playerLevel)
-      : null;
-  let label = level !== null ? `${name} · Lv ${level}` : name;
+  let label = args.displayName.trim() || "Player";
   if (args.adminInvisible) {
     label = `${label} · Invisible`;
   }
+  if (args.frozen) {
+    label = `${label} · Frozen`;
+  }
   return label;
+}
+
+/** Normalized Player Level for the nameplate badge, or null when none. */
+export function nameplatePlayerLevel(
+  playerLevel?: number | null
+): number | null {
+  if (
+    typeof playerLevel !== "number" ||
+    !Number.isFinite(playerLevel) ||
+    playerLevel < 1
+  ) {
+    return null;
+  }
+  return Math.floor(playerLevel);
 }

@@ -44,4 +44,27 @@ describe("mergeStateDeltaPlayer", () => {
     };
     expect(mergeStateDeltaPlayer(prev, delta).adminInvisible).toBe(true);
   });
+
+  it("clears frozen when the delta omits the flag (Unfreeze)", () => {
+    const prev = {
+      address: "NQPLAYER",
+      displayName: "Bob",
+      x: 1,
+      y: 0,
+      z: 2,
+      vx: 0,
+      vz: 0,
+      frozen: true,
+    };
+    const delta = {
+      address: "NQPLAYER",
+      displayName: "Bob",
+      x: 1,
+      y: 0,
+      z: 2,
+      vx: 0,
+      vz: 0,
+    };
+    expect(mergeStateDeltaPlayer(prev, delta).frozen).toBeUndefined();
+  });
 });

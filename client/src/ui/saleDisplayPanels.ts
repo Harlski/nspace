@@ -3,15 +3,20 @@
  * Binder source: GET /api/cosmetics/shop (Published, shop-listable).
  */
 import {
-  createUnlockIntent,
   fetchPublishedShop,
   fetchWardrobe,
-  syncUnlockPayment,
   updateLoadoutSlot,
   type ShopEntry,
+  type WardrobeResponse,
 } from "../cosmetics/api.js";
+import { runCosmeticUnlockCheckout } from "../cosmetics/unlockCheckout.js";
 import type { SaleDisplayWire } from "../cosmetics/saleDisplayTypes.js";
 import { isShopPubliclyOpen } from "../cosmetics/shopAccess.js";
+import {
+  PASSIVE_SLOTS,
+  loadoutSkuKey,
+  type PassiveSlotId,
+} from "../cosmetics/presetSwatch.js";
 import { loadCachedSession } from "../auth/session.js";
 
 function nimPriceLabel(priceLuna: string): string {
@@ -22,7 +27,7 @@ function nimPriceLabel(priceLuna: string): string {
   return `${nim.toFixed(2)} NIM`;
 }
 
-function isPassiveSlot(slot: string | undefined): boolean {
+function isPassiveSlot(slot: string | undefined): slot is PassiveSlotId {
   return (
     slot === "aura" ||
     slot === "nameplate" ||
@@ -31,21 +36,65 @@ function isPassiveSlot(slot: string | undefined): boolean {
   );
 }
 
+/** Self loadout presets with one Slot overridden by the item being bought. */
+export function purchasePreviewPresets(
+  wardrobe: WardrobeResponse,
+  purchase: { slot: string; presetId: string }
+): Partial<Record<PassiveSlotId, string | null>> {
+  const bySku = new Map(wardrobe.shop.map((s) => [s.cosmeticSku, s]));
+  const out: Partial<Record<PassiveSlotId, string | null>> = {};
+  for (const slot of PASSIVE_SLOTS) {
+    const sku = wardrobe.loadout[loadoutSkuKey(slot)];
+    out[slot] = sku ? bySku.get(sku)?.presetId ?? null : null;
+  }
+  if (isPassiveSlot(purchase.slot) && purchase.presetId) {
+    out[purchase.slot] = purchase.presetId;
+  }
+  return out;
+}
+
 export type SaleDisplayEditHandlers = {
   onBind: (id: string, cosmeticSku: string) => void;
   onClear: (id: string) => void;
   onDelete: (id: string) => void;
   onBeginMove: (id: string, x: number, z: number) => void;
+  onSetWalk?: (
+    id: string,
+    walk: { enabled: boolean; tiles: { x: number; z: number }[] }
+  ) => void;
+  onBeginSetPath?: (
+    id: string,
+    draft: {
+      enabled: boolean;
+      tiles: { x: number; z: number }[];
+      x: number;
+      z: number;
+    }
+  ) => void;
 };
 
 export type SaleDisplayBuyHandlers = {
   onPreview: (slot: string, presetId: string) => void;
+  onPreviewCanvas?: (canvas: HTMLCanvasElement | null, wallet: string) => void;
+  onPreviewCosmeticsChange?: (
+    presets: Partial<Record<PassiveSlotId, string | null>>
+  ) => void;
   onEquipped?: () => void;
+};
+
+export type SaleDisplayPathPickBarHandlers = {
+  onConfirm: () => void;
+  onCancel: () => void;
 };
 
 export function createSaleDisplayPanels(host: HTMLElement): {
   promptEdit: (wire: SaleDisplayWire, handlers: SaleDisplayEditHandlers) => void;
   promptBuy: (wire: SaleDisplayWire, handlers: SaleDisplayBuyHandlers) => void;
+  showPathPickBar: (
+    opts: { tileCount: number; handlers: SaleDisplayPathPickBarHandlers }
+  ) => void;
+  updatePathPickBar: (tileCount: number) => void;
+  hidePathPickBar: () => void;
   closeAll: () => void;
   destroy: () => void;
 } {
@@ -60,6 +109,18 @@ export function createSaleDisplayPanels(host: HTMLElement): {
         <span>Published Catalog Entry</span>
         <select id="sale-display-edit-sku" class="sale-display-overlay__select" size="8"></select>
       </label>
+      <div class="sale-display-overlay__walk" id="sale-display-edit-walk" hidden>
+        <label class="sale-display-overlay__check">
+          <input type="checkbox" id="sale-display-edit-walk-enabled" />
+          <span>Mannequin walks</span>
+        </label>
+        <p class="sale-display-overlay__walk-meta" id="sale-display-edit-walk-meta"></p>
+        <div class="sale-display-overlay__actions sale-display-overlay__actions--walk">
+          <button type="button" class="sale-display-overlay__btn sale-display-overlay__btn--ghost" data-act="set-path">Set path</button>
+          <button type="button" class="sale-display-overlay__btn sale-display-overlay__btn--ghost" data-act="clear-path">Clear path</button>
+          <button type="button" class="sale-display-overlay__btn" data-act="save-walk">Save walk</button>
+        </div>
+      </div>
       <p class="sale-display-overlay__status" id="sale-display-edit-status" hidden></p>
       <div class="sale-display-overlay__actions">
         <button type="button" class="sale-display-overlay__btn" data-act="bind">Bind</button>
@@ -78,12 +139,73 @@ export function createSaleDisplayPanels(host: HTMLElement): {
     <div class="sale-display-overlay__panel" role="dialog" aria-modal="true" aria-labelledby="sale-display-buy-title">
       <h2 id="sale-display-buy-title" class="sale-display-overlay__title">For sale</h2>
       <p class="sale-display-overlay__hint" id="sale-display-buy-meta"></p>
+      <div class="sale-display-overlay__preview" id="sale-display-buy-preview" hidden>
+        <div class="wardrobe-doll wardrobe-doll--mini sale-display-overlay__doll">
+          <canvas class="wardrobe-doll__canvas" width="112" height="112" aria-label="You with this cosmetic — click to cycle background"></canvas>
+        </div>
+      </div>
       <p class="sale-display-overlay__status" id="sale-display-buy-status" hidden></p>
       <div class="sale-display-overlay__actions" id="sale-display-buy-actions"></div>
     </div>
   `;
 
   host.append(editOverlay, buyOverlay);
+
+  const pathBar = document.createElement("div");
+  pathBar.className = "sale-display-path-bar";
+  pathBar.hidden = true;
+  pathBar.innerHTML = `
+    <div class="sale-display-path-bar__inner" role="region" aria-label="Mannequin walk path">
+      <p class="sale-display-path-bar__title">Sale Display walk path</p>
+      <p class="sale-display-path-bar__meta" id="sale-display-path-bar-meta"></p>
+      <div class="sale-display-path-bar__actions">
+        <button type="button" class="sale-display-overlay__btn sale-display-overlay__btn--ghost" data-path-act="cancel">Cancel</button>
+        <button type="button" class="sale-display-overlay__btn" data-path-act="confirm">Confirm path</button>
+      </div>
+    </div>
+  `;
+  host.appendChild(pathBar);
+
+  const pathBarMeta = pathBar.querySelector(
+    "#sale-display-path-bar-meta"
+  ) as HTMLElement;
+  let pathBarHandlers: SaleDisplayPathPickBarHandlers | null = null;
+
+  function setPathBarMeta(tileCount: number): void {
+    pathBarMeta.textContent =
+      tileCount === 0
+        ? "Click tiles to add. Click a selected tile to undo from there. Needs ≥2 tiles to walk."
+        : tileCount === 1
+          ? "1 tile selected — add another, or Cancel. Needs ≥2 to walk."
+          : `${tileCount} tiles selected — Confirm to save, or Cancel to discard.`;
+  }
+
+  function hidePathPickBar(): void {
+    pathBar.hidden = true;
+    pathBarHandlers = null;
+  }
+
+  function updatePathPickBar(tileCount: number): void {
+    if (pathBar.hidden) return;
+    setPathBarMeta(tileCount);
+  }
+
+  function showPathPickBar(opts: {
+    tileCount: number;
+    handlers: SaleDisplayPathPickBarHandlers;
+  }): void {
+    pathBarHandlers = opts.handlers;
+    setPathBarMeta(opts.tileCount);
+    pathBar.hidden = false;
+  }
+
+  pathBar.querySelectorAll("[data-path-act]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const act = (btn as HTMLElement).dataset.pathAct;
+      if (act === "confirm") pathBarHandlers?.onConfirm();
+      if (act === "cancel") pathBarHandlers?.onCancel();
+    });
+  });
 
   const skuSelect = editOverlay.querySelector(
     "#sale-display-edit-sku"
@@ -94,8 +216,20 @@ export function createSaleDisplayPanels(host: HTMLElement): {
   const editStatus = editOverlay.querySelector(
     "#sale-display-edit-status"
   ) as HTMLElement;
+  const walkSection = editOverlay.querySelector(
+    "#sale-display-edit-walk"
+  ) as HTMLElement;
+  const walkEnabledInput = editOverlay.querySelector(
+    "#sale-display-edit-walk-enabled"
+  ) as HTMLInputElement;
+  const walkMeta = editOverlay.querySelector(
+    "#sale-display-edit-walk-meta"
+  ) as HTMLElement;
   const buyMeta = buyOverlay.querySelector(
     "#sale-display-buy-meta"
+  ) as HTMLElement;
+  const buyPreviewHost = buyOverlay.querySelector(
+    "#sale-display-buy-preview"
   ) as HTMLElement;
   const buyStatus = buyOverlay.querySelector(
     "#sale-display-buy-status"
@@ -107,6 +241,36 @@ export function createSaleDisplayPanels(host: HTMLElement): {
   let editHandlers: SaleDisplayEditHandlers | null = null;
   let editWire: SaleDisplayWire | null = null;
   let shopEntries: ShopEntry[] = [];
+  let buyHandlers: SaleDisplayBuyHandlers | null = null;
+  let buyPreviewBound = false;
+  let editWalkTiles: { x: number; z: number }[] = [];
+
+  /** Live canvas only — dispose recycles WebGL surfaces after forceContextLoss. */
+  function buyPreviewCanvasEl(): HTMLCanvasElement {
+    let canvas = buyPreviewHost.querySelector("canvas");
+    if (canvas instanceof HTMLCanvasElement) return canvas;
+    const doll = buyPreviewHost.querySelector(".sale-display-overlay__doll");
+    canvas = document.createElement("canvas");
+    canvas.className = "wardrobe-doll__canvas";
+    canvas.width = 112;
+    canvas.height = 112;
+    canvas.setAttribute(
+      "aria-label",
+      "You with this cosmetic — click to cycle background"
+    );
+    (doll ?? buyPreviewHost).appendChild(canvas);
+    return canvas;
+  }
+
+  function refreshWalkMeta(): void {
+    const n = editWalkTiles.length;
+    walkMeta.textContent =
+      n === 0
+        ? "No path set. Need at least 2 tiles to walk."
+        : n === 1
+          ? "1 tile selected — add one more for walking."
+          : `${n} path tiles (walk when enabled).`;
+  }
 
   function setEditStatus(text: string | null): void {
     if (!text) {
@@ -136,14 +300,55 @@ export function createSaleDisplayPanels(host: HTMLElement): {
     editWire = null;
   }
 
-  function closeBuy(): void {
-    buyOverlay.hidden = true;
-    buyActions.replaceChildren();
+  function releaseBuyPreview(): void {
+    if (!buyPreviewBound) return;
+    const wallet = loadCachedSession()?.address ?? "";
+    buyHandlers?.onPreviewCanvas?.(null, wallet);
+    buyPreviewBound = false;
+    buyPreviewHost.hidden = true;
   }
 
-  function closeAll(): void {
-    closeEdit();
-    closeBuy();
+  function closeBuy(): void {
+    releaseBuyPreview();
+    buyOverlay.hidden = true;
+    buyActions.replaceChildren();
+    buyHandlers = null;
+  }
+
+  async function bindBuyPreview(
+    handlers: SaleDisplayBuyHandlers,
+    entry: ShopEntry
+  ): Promise<void> {
+    if (!isPassiveSlot(entry.slot) || !entry.presetId) {
+      releaseBuyPreview();
+      return;
+    }
+    const session = loadCachedSession();
+    if (!session?.token || !session.address) {
+      releaseBuyPreview();
+      return;
+    }
+    try {
+      const wardrobe = await fetchWardrobe();
+      const presets = purchasePreviewPresets(wardrobe, {
+        slot: entry.slot,
+        presetId: entry.presetId,
+      });
+      buyPreviewHost.hidden = false;
+      if (!buyPreviewBound) {
+        const canvas = buyPreviewCanvasEl();
+        handlers.onPreviewCanvas?.(canvas, session.address);
+        buyPreviewBound = true;
+      }
+      handlers.onPreviewCosmeticsChange?.(presets);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          handlers.onPreviewCosmeticsChange?.(presets);
+        });
+      });
+    } catch {
+      releaseBuyPreview();
+    }
   }
 
   async function populateShopList(selectedSku: string | null): Promise<void> {
@@ -213,6 +418,33 @@ export function createSaleDisplayPanels(host: HTMLElement): {
       if (act === "delete") {
         editHandlers.onDelete(editWire.id);
         closeEdit();
+        return;
+      }
+      if (act === "set-path") {
+        editHandlers.onBeginSetPath?.(editWire.id, {
+          enabled: walkEnabledInput.checked,
+          tiles: editWalkTiles.map((t) => ({ x: t.x, z: t.z })),
+          x: editWire.x,
+          z: editWire.z,
+        });
+        closeEdit();
+        return;
+      }
+      if (act === "clear-path") {
+        editWalkTiles = [];
+        refreshWalkMeta();
+        return;
+      }
+      if (act === "save-walk") {
+        editHandlers.onSetWalk?.(editWire.id, {
+          enabled: walkEnabledInput.checked,
+          tiles: editWalkTiles,
+        });
+        setEditStatus(
+          walkEnabledInput.checked && editWalkTiles.length < 2
+            ? "Saved — walking needs ≥2 tiles (stays put until then)."
+            : "Walk settings saved."
+        );
       }
     });
   });
@@ -224,6 +456,13 @@ export function createSaleDisplayPanels(host: HTMLElement): {
     closeBuy();
     editWire = wire;
     editHandlers = handlers;
+    editWalkTiles = (wire.walkTiles ?? []).map((t) => ({ x: t.x, z: t.z }));
+    walkEnabledInput.checked = wire.walkEnabled === true;
+    const showWalk =
+      wire.kind === "mannequin" ||
+      (Boolean(wire.cosmeticSku) && !wire.bindInactive && wire.kind !== "floor");
+    walkSection.hidden = !showWalk;
+    refreshWalkMeta();
     const bound = wire.cosmeticSku
       ? wire.bindInactive
         ? `Bound SKU inactive for players: ${wire.cosmeticSku}`
@@ -239,6 +478,8 @@ export function createSaleDisplayPanels(host: HTMLElement): {
     handlers: SaleDisplayBuyHandlers
   ): Promise<void> {
     closeEdit();
+    releaseBuyPreview();
+    buyHandlers = handlers;
     buyActions.replaceChildren();
     setBuyStatus(null);
     const title = buyOverlay.querySelector(
@@ -310,6 +551,8 @@ export function createSaleDisplayPanels(host: HTMLElement): {
       ? `${entry.slot} · Owned`
       : `${entry.slot} · ${nimPriceLabel(entry.priceLuna)}`;
 
+    void bindBuyPreview(handlers, entry);
+
     if (isPassiveSlot(entry.slot) && entry.presetId) {
       const previewBtn = document.createElement("button");
       previewBtn.type = "button";
@@ -334,29 +577,17 @@ export function createSaleDisplayPanels(host: HTMLElement): {
           const original = buyBtn.textContent;
           try {
             buyBtn.disabled = true;
-            const { intent } = await createUnlockIntent(entry!.cosmeticSku);
-            setBuyStatus(
-              `Send ${intent.amountNimLabel} NIM. Memo: ${intent.memo}. Waiting…`
+            const result = await runCosmeticUnlockCheckout(
+              entry!.cosmeticSku,
+              (msg) => setBuyStatus(msg)
             );
-            try {
-              await navigator.clipboard.writeText(intent.memo);
-            } catch {
-              /* optional */
+            if (result.ok) {
+              setBuyStatus(`Unlocked ${entry!.displayName}!`);
+              closeBuy();
+              void promptBuy(wire, handlers);
+              return;
             }
-            for (let attempt = 0; attempt < 40; attempt++) {
-              await new Promise((r) => setTimeout(r, 3000));
-              const synced = await syncUnlockPayment(
-                intent.intentId,
-                entry!.cosmeticSku
-              );
-              if (synced.granted) {
-                setBuyStatus(`Unlocked ${entry!.displayName}!`);
-                closeBuy();
-                void promptBuy(wire, handlers);
-                return;
-              }
-            }
-            setBuyStatus("Still waiting for payment.", true);
+            setBuyStatus(result.message, true);
           } catch (e) {
             setBuyStatus(String(e), true);
           } finally {
@@ -376,6 +607,7 @@ export function createSaleDisplayPanels(host: HTMLElement): {
           .then(() => {
             setBuyStatus("Equipped.");
             handlers.onEquipped?.();
+            void bindBuyPreview(handlers, entry!);
           })
           .catch((e) => setBuyStatus(String(e), true));
       };
@@ -388,16 +620,26 @@ export function createSaleDisplayPanels(host: HTMLElement): {
     buyOverlay.hidden = false;
   }
 
+  function closeAll(): void {
+    closeEdit();
+    closeBuy();
+    hidePathPickBar();
+  }
+
   return {
     promptEdit,
     promptBuy: (wire, handlers) => {
       void promptBuy(wire, handlers);
     },
+    showPathPickBar,
+    updatePathPickBar,
+    hidePathPickBar,
     closeAll,
     destroy: () => {
       closeAll();
       editOverlay.remove();
       buyOverlay.remove();
+      pathBar.remove();
     },
   };
 }

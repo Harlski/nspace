@@ -10,8 +10,8 @@ describe("buildOtherPlayerMenuModel", () => {
       targetIsGameAdmin: false,
       targetFrozen: false,
     });
-    expect(closed.panels.root.rows.map((r) => r.id)).toEqual(["view"]);
-    expect(closed.panels.root.rows[0]!.label).toBe("View Ada");
+    expect(closed.panels.root!.rows.map((r) => r.id)).toEqual(["view"]);
+    expect(closed.panels.root!.rows[0]!.label).toBe("View Ada");
 
     const open = buildOtherPlayerMenuModel({
       username: "Ada",
@@ -20,7 +20,7 @@ describe("buildOtherPlayerMenuModel", () => {
       targetIsGameAdmin: false,
       targetFrozen: false,
     });
-    expect(open.panels.root.rows.map((r) => r.id)).toEqual([
+    expect(open.panels.root!.rows.map((r) => r.id)).toEqual([
       "view",
       "accept1v1",
     ]);

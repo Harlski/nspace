@@ -334,3 +334,67 @@ test("clear bind returns display to unbound for players", async () => {
     });
   });
 });
+
+test("normalizeWalkTiles floors, drops non-finite, dedupes consecutive, caps length", async () => {
+  await withSaleDisplays(async ({ normalizeWalkTiles }) => {
+    assert.deepEqual(normalizeWalkTiles(undefined), []);
+    assert.deepEqual(normalizeWalkTiles("nope"), []);
+    assert.deepEqual(
+      normalizeWalkTiles([
+        { x: 1.9, z: 2.1 },
+        { x: 1, z: 2 },
+        { x: Infinity, z: 0 },
+        { x: 3, z: 4 },
+        { x: 3, z: 4 },
+        { x: 5, z: 6 },
+      ]),
+      [
+        { x: 1, z: 2 },
+        { x: 3, z: 4 },
+        { x: 5, z: 6 },
+      ]
+    );
+    const many = Array.from({ length: 20 }, (_, i) => ({ x: i, z: 0 }));
+    assert.equal(normalizeWalkTiles(many).length, 16);
+  });
+});
+
+test("setSaleDisplayWalk persists enabled + tiles across load", async () => {
+  await withSaleDisplays(async (mod, dataPath) => {
+    const created = mod.createSaleDisplay({
+      roomId: "hub",
+      x: 0,
+      z: 0,
+      createdBy: ACTOR,
+    });
+    assert.equal(created.walkEnabled, false);
+    assert.deepEqual(created.walkTiles, []);
+    const updated = mod.setSaleDisplayWalk(created.id, {
+      enabled: true,
+      tiles: [
+        { x: 0, z: 0 },
+        { x: 0, z: 0 },
+        { x: 1, z: 0 },
+        { x: 2, z: 1 },
+      ],
+    });
+    assert.ok(updated);
+    assert.equal(updated.walkEnabled, true);
+    assert.deepEqual(updated.walkTiles, [
+      { x: 0, z: 0 },
+      { x: 1, z: 0 },
+      { x: 2, z: 1 },
+    ]);
+    mod.flushSaleDisplaysSync();
+    mod._resetSaleDisplaysForTests({ dataPath });
+    mod.loadSaleDisplays();
+    const got = mod.getSaleDisplayById(created.id);
+    assert.ok(got);
+    assert.equal(got.walkEnabled, true);
+    assert.deepEqual(got.walkTiles, [
+      { x: 0, z: 0 },
+      { x: 1, z: 0 },
+      { x: 2, z: 1 },
+    ]);
+  });
+});

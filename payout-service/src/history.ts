@@ -2,12 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AppConfig } from "./config.js";
 import { LUNA_PER_NIM } from "./config.js";
+import { isMiningPayoutHeldForBannedWallet } from "./miningBanGate.js";
+
 type SnapshotJob = {
   claimId: string;
   recipientAddress: string;
   amountLuna: bigint;
   createdAt: number;
   status: string;
+  tileKey?: string;
 };
 
 export const MANUAL_BULK_PAYOUT_TX_MESSAGE =
@@ -93,6 +96,9 @@ export type PublicPendingPayoutSnapshot = {
   rows: PublicPendingPayoutRow[];
   historyRows: PublicPayoutHistoryRow[];
   pendingByRecipient?: PendingByRecipientSummaryRow[];
+  /** Block-claim jobs held because the recipient has Mining Restriction (admin panel). */
+  pendingByRecipientMiningHeld?: PendingByRecipientSummaryRow[];
+  miningHeldPendingTotal?: number;
   manualBulkHistory?: ManualBulkPayoutHistoryRow[];
 };
 
@@ -402,12 +408,40 @@ function buildManualBulkHistoryForAdmin(limit: number): ManualBulkPayoutHistoryR
   return readManualBulkRowsFromJsonl(limit).slice(0, MANUAL_BULK_HISTORY_API_CAP);
 }
 
+function isActivePendingStatus(status: string): boolean {
+  return status === "pending" || status === "processing";
+}
+
+/** Block-claim mining job held from send due to Mining Restriction. */
+export function isMiningHeldPendingJob(job: SnapshotJob): boolean {
+  return isMiningPayoutHeldForBannedWallet(
+    job.recipientAddress,
+    typeof job.tileKey === "string" ? job.tileKey : ""
+  );
+}
+
+/** Pending/processing jobs that may still be paid (excludes mining-held). */
+export function filterPayablePendingJobs(pendingJobs: SnapshotJob[]): SnapshotJob[] {
+  return pendingJobs.filter(
+    (j) => isActivePendingStatus(j.status) && !isMiningHeldPendingJob(j)
+  );
+}
+
+/** Pending/processing block-claim jobs held under Mining Restriction. */
+export function filterMiningHeldPendingJobs(
+  pendingJobs: SnapshotJob[]
+): SnapshotJob[] {
+  return pendingJobs.filter(
+    (j) => isActivePendingStatus(j.status) && isMiningHeldPendingJob(j)
+  );
+}
+
 function buildPendingByRecipientSummary(
   pendingJobs: SnapshotJob[]
 ): PendingByRecipientSummaryRow[] {
   const map = new Map<string, { sum: bigint; count: number; userFriendly: string }>();
   for (const j of pendingJobs) {
-    if (j.status !== "pending" && j.status !== "processing") continue;
+    if (!isActivePendingStatus(j.status)) continue;
     const k = normalizeNimWalletId(j.recipientAddress);
     if (!k) continue;
     const prev = map.get(k);
@@ -454,9 +488,7 @@ export function getPublicPendingPayoutSummary(
   const historyForCount = mergeSentHistoryRecords(4000);
   const processedToday = countSendsOnUtcDay(historyForCount, day0);
 
-  const pending = pendingJobs.filter(
-    (j) => j.status === "pending" || j.status === "processing"
-  );
+  const pending = filterPayablePendingJobs(pendingJobs);
   if (pending.length === 0) {
     return {
       mode: "summary",
@@ -482,27 +514,49 @@ export function getPublicPendingPayoutAdminPanelSnapshot(
   const historyRows = historyRowsFromMerged(historySource);
   const manualBulkHistory = buildManualBulkHistoryForAdmin(MANUAL_BULK_HISTORY_API_CAP);
 
-  const pending = pendingJobs.filter(
-    (j) => j.status === "pending" || j.status === "processing"
-  );
-  if (pending.length === 0) {
+  const payable = filterPayablePendingJobs(pendingJobs);
+  const held = filterMiningHeldPendingJobs(pendingJobs);
+  const pendingByRecipient = buildPendingByRecipientSummary(payable);
+  const pendingByRecipientMiningHeld = buildPendingByRecipientSummary(held);
+
+  if (payable.length === 0 && held.length === 0) {
     return {
       allSent: true,
       pendingTotal: 0,
+      miningHeldPendingTotal: 0,
       message: "All pending transactions have been sent.",
       rows: [],
       historyRows,
       pendingByRecipient: [],
+      pendingByRecipientMiningHeld: [],
+      manualBulkHistory,
+    };
+  }
+  if (payable.length === 0) {
+    return {
+      allSent: true,
+      pendingTotal: 0,
+      miningHeldPendingTotal: held.length,
+      message:
+        held.length === 1
+          ? "No payable pending jobs. 1 job held under Mining Restriction."
+          : `No payable pending jobs. ${held.length} jobs held under Mining Restriction.`,
+      rows: [],
+      historyRows,
+      pendingByRecipient: [],
+      pendingByRecipientMiningHeld,
       manualBulkHistory,
     };
   }
   return {
     allSent: false,
-    pendingTotal: pending.length,
+    pendingTotal: payable.length,
+    miningHeldPendingTotal: held.length,
     message: null,
     rows: [],
     historyRows,
-    pendingByRecipient: buildPendingByRecipientSummary(pendingJobs),
+    pendingByRecipient,
+    pendingByRecipientMiningHeld,
     manualBulkHistory,
   };
 }
@@ -513,9 +567,7 @@ export function getPublicPendingPayoutSnapshot(
   const historySource = mergeSentHistoryRecords(PENDING_PAYOUT_API_HISTORY_ROW_CAP);
   const historyRows = historyRowsFromMerged(historySource);
 
-  const pending = pendingJobs.filter(
-    (j) => j.status === "pending" || j.status === "processing"
-  );
+  const pending = filterPayablePendingJobs(pendingJobs);
   pending.sort((a, b) => a.createdAt - b.createdAt);
   if (pending.length === 0) {
     return {
@@ -547,12 +599,8 @@ export function getPendingPayoutSnapshotForWallet(
   const historySlice = historyMerged.slice(0, PENDING_PAYOUT_API_HISTORY_ROW_CAP);
   const historyRows = historyRowsFromMerged(historySlice);
 
-  const pendingAll = pendingJobs
-    .filter(
-      (j) =>
-        (j.status === "pending" || j.status === "processing") &&
-        normalizeNimWalletId(j.recipientAddress) === target
-    )
+  const pendingAll = filterPayablePendingJobs(pendingJobs)
+    .filter((j) => normalizeNimWalletId(j.recipientAddress) === target)
     .sort((a, b) => a.createdAt - b.createdAt);
   const pending = pendingAll.slice(0, PENDING_PAYOUT_API_PENDING_ROW_CAP);
   const rows = pending.map((j) => ({

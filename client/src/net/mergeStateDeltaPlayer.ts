@@ -18,6 +18,7 @@ export function mergeStateDeltaPlayer<
     challengeOpen?: boolean;
     worldcupCountry?: string | null;
     adminInvisible?: boolean;
+    frozen?: boolean;
     playerLevel?: number;
   },
 >(prev: T | undefined, delta: T): T {
@@ -41,6 +42,7 @@ export function mergeStateDeltaPlayer<
     challengeOpen: delta.challengeOpen,
     worldcupCountry: delta.worldcupCountry,
     adminInvisible: delta.adminInvisible,
+    frozen: delta.frozen,
     playerLevel: delta.playerLevel,
   };
 }

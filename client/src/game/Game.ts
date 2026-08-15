@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { PlayerState } from "../types.js";
-import { formatAvatarNameLabel } from "./avatarNameLabel.js";
+import { formatAvatarNameLabel, nameplatePlayerLevel } from "./avatarNameLabel.js";
 import {
   syncCosmeticLoadoutVfx,
   spawnDeployableVfx,
@@ -21,6 +21,10 @@ import type {
   CosmeticGalleryShowcaseWire,
   CosmeticGalleryWire,
 } from "../cosmetics/galleryTypes.js";
+import {
+  SALE_DISPLAY_BUY_PAD_OFFSET,
+  isStandingOnSaleDisplayBuyPad,
+} from "../cosmetics/saleDisplayBuyPad.js";
 import type { SaleDisplayWire } from "../cosmetics/saleDisplayTypes.js";
 import type {
   BillboardState,
@@ -496,6 +500,9 @@ type WardrobeAvatarPreviewPort = {
   rafId: number | null;
   previewPhaseStart: number;
   deployableFx: PersistentDeployableFx | null;
+  /** Index into {@link WARDROBE_PREVIEW_STOCK_BG_RGBS}. */
+  stockBgIndex: number;
+  onCanvasPointerDown: ((ev: PointerEvent) => void) | null;
   cosmetics: {
     aura: string | null;
     nameplate: string | null;
@@ -511,8 +518,9 @@ const INSPECTOR_PREVIEW_HALF_V = 1.02;
 const INSPECTOR_TILE_PREVIEW_BG = 0xd6dbe5;
 /** Slightly shrink the tile + block together vs full-size preview. */
 const INSPECTOR_PREVIEW_SCENE_SCALE = 0.72;
-/** Profile Wardrobe - isometric avatar on a floor tile (matches `/advertise` preview). */
-const WARDROBE_PREVIEW_BG = 0x0f1419;
+/** Profile Wardrobe - isometric avatar on a solid stock backdrop (click canvas to cycle). */
+/** Black → White → Dark green (press canvas to cycle). */
+const WARDROBE_PREVIEW_STOCK_BG_RGBS = [0x000000, 0xffffff, 0x0b3d2e] as const;
 const WARDROBE_PREVIEW_FRUSTUM_HALF_V = 1.05;
 const WARDROBE_PREVIEW_CAMERA_OFFSET = 18;
 const WARDROBE_PREVIEW_LOOK_AT_Y = 0.55;
@@ -610,6 +618,9 @@ const NAME_LABEL_SCREEN_HEIGHT_PX = 24;
 /** Smaller name pills in stream cinema (top-down overview). */
 const STREAM_NAME_LABEL_SCREEN_HEIGHT_PX = 14;
 const STREAM_NAME_LABEL_MAX_PX = 168;
+/** Sale Display product titles - smaller than avatar nameplates (24px). */
+const SALE_DISPLAY_NAME_LABEL_SCREEN_HEIGHT_PX = 18;
+const SALE_DISPLAY_NAME_LABEL_MAX_PX = 200;
 /** Target screen height for chat bubbles (similar to name labels for consistent readability). */
 const CHAT_BUBBLE_MIN_HEIGHT_PX = 30;
 const CHAT_MAX_PX = 260;
@@ -711,18 +722,25 @@ function drawTypingDotsToCanvas(
 
 function createNameLabelSprite(
   displayName: string,
-  opts?: { away?: boolean; borderColor?: string }
+  opts?: {
+    away?: boolean;
+    borderColor?: string;
+    /** When set, draw a circle badge with this Level to the left of the nameplate pill. */
+    playerLevel?: number | null;
+  }
 ): {
   sprite: THREE.Sprite;
   texture: THREE.CanvasTexture;
 } {
   const away = Boolean(opts?.away);
+  const level = nameplatePlayerLevel(opts?.playerLevel ?? null);
   const padX = 10;
   const radius = 9;
-  const h = 32;
+  const pillH = 32;
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
   const labelFont = away ? NAME_LABEL_FONT_AWAY : NAME_LABEL_FONT;
+  const levelFont = "700 15px system-ui, Segoe UI, sans-serif";
   ctx.font = labelFont;
   let text =
     displayName.length > 36 ? `${displayName.slice(0, 34)}…` : displayName;
@@ -732,25 +750,62 @@ function createNameLabelSprite(
     text = `${text.slice(0, -2)}…`;
     tw = ctx.measureText(text).width;
   }
-  const w = Math.ceil(Math.max(36, padX + tw + padX));
+  const pillW = Math.ceil(Math.max(36, padX + tw + padX));
+
+  const levelText = level !== null ? String(level) : "";
+  ctx.font = levelFont;
+  const levelTw = level !== null ? ctx.measureText(levelText).width : 0;
+  // Outside the nameplate; slightly overlaps the pill's left edge.
+  const badgeR =
+    level !== null ? Math.max(15, Math.ceil(levelTw / 2) + 7) : 0;
+  const badgeGap = level !== null ? -8 : 0;
+  const badgeSpan = level !== null ? badgeR * 2 + badgeGap : 0;
+
+  const w = pillW + badgeSpan;
+  const h = Math.max(pillH, level !== null ? badgeR * 2 : pillH);
   const r = NAME_LABEL_RASTER;
   canvas.width = Math.ceil(w * r);
   canvas.height = Math.ceil(h * r);
   ctx.setTransform(r, 0, 0, r, 0, 0);
+
+  const pillX = badgeSpan;
+  const pillY = (h - pillH) / 2;
   ctx.font = labelFont;
   ctx.textBaseline = "middle";
   ctx.fillStyle = away ? NAME_LABEL_PILL_AWAY : NAME_LABEL_PILL_ACTIVE;
   ctx.beginPath();
-  ctx.roundRect(0, 0, w, h, radius);
+  ctx.roundRect(pillX, pillY, pillW, pillH, radius);
   ctx.fill();
   if (opts?.borderColor) {
     ctx.strokeStyle = opts.borderColor;
     ctx.lineWidth = 2;
     ctx.stroke();
   }
+
+  if (level !== null) {
+    const cx = badgeR;
+    const cy = h / 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, badgeR - 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = away ? "rgba(30, 41, 59, 0.92)" : "rgba(15, 23, 42, 0.92)";
+    ctx.fill();
+    ctx.strokeStyle = away
+      ? "rgba(226, 232, 240, 0.65)"
+      : "rgba(248, 250, 252, 0.9)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.font = levelFont;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = away ? NAME_LABEL_TEXT_AWAY : NAME_LABEL_TEXT_ACTIVE;
+    ctx.fillText(levelText, cx, cy + 0.5);
+  }
+
+  ctx.font = labelFont;
   ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
   ctx.fillStyle = away ? NAME_LABEL_TEXT_AWAY : NAME_LABEL_TEXT_ACTIVE;
-  ctx.fillText(text, padX, h / 2 + 0.5);
+  ctx.fillText(text, pillX + padX, pillY + pillH / 2 + 0.5);
   const tex = new THREE.CanvasTexture(canvas);
   tex.minFilter = THREE.LinearFilter;
   tex.generateMipmaps = false;
@@ -1482,7 +1537,14 @@ export class Game {
   /** Admin-visible Sale Display silhouettes / bound fixtures (viewer-filtered wire). */
   private readonly saleDisplayEntries = new Map<
     string,
-    { wire: SaleDisplayWire; group: THREE.Group }
+    {
+      wire: SaleDisplayWire;
+      group: THREE.Group;
+      /** Local mannequin body that paces; root stays on anchor. */
+      walkBody: THREE.Group | null;
+      walkTargetIndex?: number;
+      walkDir?: 1 | -1;
+    }
   >();
   private saleDisplayClickHandler: ((wire: SaleDisplayWire) => void) | null =
     null;
@@ -1614,6 +1676,11 @@ export class Game {
   /** When set, next empty floor click in build mode sets teleporter destination X/Z. */
   private teleporterDestPickHandler: ((x: number, z: number) => void) | null =
     null;
+  /**
+   * When set, floor clicks in build mode call this instead of placing blocks (multi-click;
+   * caller clears). Used for Sale Display walk path / move-by-tile.
+   */
+  private buildFloorPickHandler: ((x: number, z: number) => void) | null = null;
   /** Readonly room layout preview (catalog / teleporter picker) - centered symmetric frustum. */
   private roomLayoutPreviewActive = false;
   /** Rooms catalog modal only: Hub-scale crop, baked tune, no pointer interaction. */
@@ -2297,6 +2364,12 @@ export class Game {
   private readonly floorBrushPreviewValidMat: THREE.MeshBasicMaterial;
   private readonly floorBrushPreviewInvalidMat: THREE.MeshBasicMaterial;
   private readonly floorBrushPreviewMeshes: THREE.Mesh[] = [];
+  /** Sale Display walk-path authoring highlights (ordered waypoints). */
+  private readonly saleDisplayWalkPathPreviewGeom: THREE.PlaneGeometry;
+  private readonly saleDisplayWalkPathPreviewStartMat: THREE.MeshBasicMaterial;
+  private readonly saleDisplayWalkPathPreviewMidMat: THREE.MeshBasicMaterial;
+  private readonly saleDisplayWalkPathPreviewEndMat: THREE.MeshBasicMaterial;
+  private readonly saleDisplayWalkPathPreviewMeshes: THREE.Mesh[] = [];
   /** Object prefab capture: drag rectangle on floor (wallet room, build mode). */
   private objectPrefabSaveActive = false;
   private prefabBboxDrag: {
@@ -2576,6 +2649,25 @@ export class Game {
       color: 0xef4444,
       transparent: true,
       opacity: 0.32,
+      depthWrite: false,
+    });
+    this.saleDisplayWalkPathPreviewGeom = new THREE.PlaneGeometry(0.88, 0.88);
+    this.saleDisplayWalkPathPreviewStartMat = new THREE.MeshBasicMaterial({
+      color: 0xfbbf24,
+      transparent: true,
+      opacity: 0.48,
+      depthWrite: false,
+    });
+    this.saleDisplayWalkPathPreviewMidMat = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+    });
+    this.saleDisplayWalkPathPreviewEndMat = new THREE.MeshBasicMaterial({
+      color: 0xa78bfa,
+      transparent: true,
+      opacity: 0.48,
       depthWrite: false,
     });
     this.prefabSaveFootprintValidMat = new THREE.MeshBasicMaterial({
@@ -5291,6 +5383,62 @@ export class Game {
   }
 
   /**
+   * Build-mode floor clicks (instead of placing). Does not auto-clear — caller manages lifecycle.
+   */
+  setBuildFloorPickHandler(
+    handler: ((x: number, z: number) => void) | null
+  ): void {
+    this.buildFloorPickHandler = handler;
+    if (handler) {
+      this.clearPendingBuildPlace();
+      this.clearPlacementPreview();
+    }
+  }
+
+  isBuildFloorPickActive(): boolean {
+    return this.buildFloorPickHandler !== null;
+  }
+
+  /**
+   * Highlight ordered walk-path tiles while authoring (amber start, cyan mid, violet end).
+   * Pass null/empty to clear.
+   */
+  setSaleDisplayWalkPathPreview(
+    tiles: readonly { x: number; z: number }[] | null | undefined
+  ): void {
+    const list = tiles ?? [];
+    while (this.saleDisplayWalkPathPreviewMeshes.length < list.length) {
+      const m = new THREE.Mesh(
+        this.saleDisplayWalkPathPreviewGeom,
+        this.saleDisplayWalkPathPreviewMidMat
+      );
+      m.rotation.x = -Math.PI / 2;
+      m.renderOrder = 4;
+      m.userData[SKIP_BLOCK_PICK_AND_BOUNDS] = true;
+      m.raycast = () => {};
+      this.scene.add(m);
+      this.saleDisplayWalkPathPreviewMeshes.push(m);
+    }
+    for (let i = 0; i < list.length; i++) {
+      const m = this.saleDisplayWalkPathPreviewMeshes[i]!;
+      const t = list[i]!;
+      const isStart = i === 0;
+      const isEnd = i === list.length - 1 && list.length > 1;
+      m.material = isStart
+        ? this.saleDisplayWalkPathPreviewStartMat
+        : isEnd
+          ? this.saleDisplayWalkPathPreviewEndMat
+          : this.saleDisplayWalkPathPreviewMidMat;
+      m.position.set(t.x, 0.04, t.z);
+      m.visible = true;
+    }
+    for (let i = list.length; i < this.saleDisplayWalkPathPreviewMeshes.length; i++) {
+      this.saleDisplayWalkPathPreviewMeshes[i]!.visible = false;
+    }
+    this.requestRender(80);
+  }
+
+  /**
    * Floor tint for an unsaved in-room teleporter exit tile (build dock). Pass `null` to clear.
    */
   setTeleporterDestinationDraftHighlight(
@@ -5700,6 +5848,29 @@ export class Game {
 
   getSaleDisplayWire(id: string): SaleDisplayWire | null {
     return this.saleDisplayEntries.get(id)?.wire ?? null;
+  }
+
+  /** True when self stands on the Sale Display's buy pad (+Z of the fixture). */
+  isSelfOnSaleDisplayBuyPad(wire: SaleDisplayWire): boolean {
+    if (!this.selfMesh) return false;
+    const stand = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    return isStandingOnSaleDisplayBuyPad(stand.x, stand.y, wire.x, wire.z);
+  }
+
+  /**
+   * Bound Sale Display whose buy pad the local player is standing on (teleporter-style Buy
+   * intent). Skips unbound / inactive binds.
+   */
+  getStandingSaleDisplayBuyOffer(): SaleDisplayWire | null {
+    if (!this.selfMesh) return null;
+    const stand = snapFloorTile(this.selfMesh.position.x, this.selfMesh.position.z);
+    for (const { wire } of this.saleDisplayEntries.values()) {
+      if (!wire.cosmeticSku || wire.bindInactive || !wire.presetId) continue;
+      if (isStandingOnSaleDisplayBuyPad(stand.x, stand.y, wire.x, wire.z)) {
+        return wire;
+      }
+    }
+    return null;
   }
 
   /** `null` clears any in-progress long-press; non-null replaces the opener. */
@@ -7290,7 +7461,7 @@ export class Game {
       this.removeBillboardInteractGhost();
       return;
     }
-    if (this.teleporterDestPickHandler || this.repositionFrom) {
+    if (this.teleporterDestPickHandler || this.buildFloorPickHandler || this.repositionFrom) {
       this.clearBillboardFootprintPreviewTiles();
       this.removeBillboardInteractGhost();
       return;
@@ -7861,6 +8032,7 @@ export class Game {
     }
     this.syncAttentionMarkerPickCues();
     this.syncNoWalkFloorCues();
+    this.syncSaleDisplayFootVisibility();
     this.syncHighlightColor();
     this.refreshSelectionOutline();
     this.syncPlacementRangeHints();
@@ -10145,6 +10317,7 @@ export class Game {
   ): { x: number; z: number } | null {
     if (!this.selfMesh || !this.placeBlockHandler) return null;
     if (this.teleporterDestPickHandler) return null;
+    if (this.buildFloorPickHandler) return null;
     if (this.repositionFrom) return null;
     if (this.billboardPlacementPreview) return null;
     if (this.pickBlockKey(clientX, clientY)) return null;
@@ -10177,7 +10350,12 @@ export class Game {
   ): { x: number; z: number } | null {
     if (!this.selfMesh || !this.placeBlockHandler) return null;
     if (!this.billboardPlacementPreview) return null;
-    if (this.teleporterDestPickHandler || this.repositionFrom) return null;
+    if (
+      this.teleporterDestPickHandler ||
+      this.buildFloorPickHandler ||
+      this.repositionFrom
+    )
+      return null;
     if (this.pickBlockKey(clientX, clientY)) return null;
     const dest = this.pickFloor(clientX, clientY);
     if (!dest || !this.tileWalkable(dest)) return null;
@@ -12498,6 +12676,12 @@ export class Game {
         fn(dest.x, dest.y);
         return;
       }
+      if (this.buildFloorPickHandler) {
+        const dest = this.pickFloor(e.clientX, e.clientY);
+        if (!dest) return;
+        this.buildFloorPickHandler(dest.x, dest.y);
+        return;
+      }
       if (this.repositionFrom) {
         if (!this.moveBlockHandler) {
           this.cancelReposition();
@@ -13106,6 +13290,14 @@ export class Game {
     this.floorBrushPreviewGeom.dispose();
     this.floorBrushPreviewValidMat.dispose();
     this.floorBrushPreviewInvalidMat.dispose();
+    for (const m of this.saleDisplayWalkPathPreviewMeshes) {
+      this.scene.remove(m);
+    }
+    this.saleDisplayWalkPathPreviewMeshes.length = 0;
+    this.saleDisplayWalkPathPreviewGeom.dispose();
+    this.saleDisplayWalkPathPreviewStartMat.dispose();
+    this.saleDisplayWalkPathPreviewMidMat.dispose();
+    this.saleDisplayWalkPathPreviewEndMat.dispose();
     for (const m of this.prefabSaveFootprintMeshes) {
       this.scene.remove(m);
     }
@@ -14596,10 +14788,24 @@ export class Game {
       this.blockMeshes.set(k, g);
     }
     this.syncPlainCubeInstancedMeshes(keys);
+    this.syncSaleDisplayFootVisibility();
     if (!this.streamPresentationActive) {
       this.refreshSelectionOutline();
     }
     this.syncTeleporterMarkers();
+  }
+
+  /**
+   * Sale Display feet are passable plates for Build select/move. Hide them outside Build
+   * so the pedestal / mannequin is not wrapped in a translucent cube for players.
+   */
+  private syncSaleDisplayFootVisibility(): void {
+    const show = this.buildMode;
+    for (const g of this.blockMeshes.values()) {
+      const meta = g.userData["blockMeta"] as BlockStyleProps | undefined;
+      if (!meta?.saleDisplayId) continue;
+      if (g.visible !== show) g.visible = show;
+    }
   }
 
   private syncBlockMeshes(): void {
@@ -16041,6 +16247,7 @@ export class Game {
       visualActive = true;
     }
     if (this.updateCosmeticGallery(dt)) visualActive = true;
+    if (this.updateSaleDisplays(dt)) visualActive = true;
     if (this.updateAvatarCosmeticTrails(renderNow)) visualActive = true;
 
     const orbitWasActive = this.cameraOrbitEase !== null;
@@ -17192,7 +17399,8 @@ export class Game {
     g: THREE.Group,
     displayName: string,
     away: boolean,
-    nameplatePreset?: string | null
+    nameplatePreset?: string | null,
+    playerLevel?: number | null
   ): void {
     const oldSprite = g.userData.nameSprite as THREE.Sprite | undefined;
     const oldTex = g.userData.nameTexture as THREE.CanvasTexture | undefined;
@@ -17207,7 +17415,11 @@ export class Game {
     }
     const { sprite: nameSprite, texture: nameTex } = createNameLabelSprite(
       displayName,
-      { away, borderColor: nameplateColorForPreset(nameplatePreset) ?? undefined }
+      {
+        away,
+        borderColor: nameplateColorForPreset(nameplatePreset) ?? undefined,
+        playerLevel,
+      }
     );
     g.userData.nameSprite = nameSprite;
     g.userData.nameTexture = nameTex;
@@ -17220,19 +17432,26 @@ export class Game {
       (p.displayName && String(p.displayName).trim()) ||
       walletDisplayName(p.address);
     const invisible = Boolean(p.adminInvisible);
+    const frozen = Boolean(p.frozen);
     const labelName = formatAvatarNameLabel({
       displayName: name,
-      playerLevel: p.playerLevel,
       adminInvisible: invisible,
+      frozen,
     });
-    const state = `${away ? 1 : 0}\0${labelName}\0${p.cosmeticNameplate ?? ""}\0${invisible ? 1 : 0}\0${p.playerLevel ?? ""}`;
+    const state = `${away ? 1 : 0}\0${labelName}\0${p.cosmeticNameplate ?? ""}\0${invisible ? 1 : 0}\0${frozen ? 1 : 0}\0${p.playerLevel ?? ""}`;
     if (g.userData.nameLabelSyncState === state) {
       this.syncAdminInvisibleAvatarOpacity(g, invisible);
       return;
     }
     g.userData.nameLabelSyncState = state;
     g.userData.displayName = name;
-    this.replaceAvatarNameLabel(g, labelName, away, p.cosmeticNameplate);
+    this.replaceAvatarNameLabel(
+      g,
+      labelName,
+      away,
+      p.cosmeticNameplate,
+      p.playerLevel
+    );
     this.syncNameLabelScaleAndPosition(g);
     this.syncAdminInvisibleAvatarOpacity(g, invisible);
   }
@@ -17383,6 +17602,8 @@ export class Game {
     fresh.height = canvas.height;
     const ariaHidden = canvas.getAttribute("aria-hidden");
     if (ariaHidden != null) fresh.setAttribute("aria-hidden", ariaHidden);
+    const ariaLabel = canvas.getAttribute("aria-label");
+    if (ariaLabel != null) fresh.setAttribute("aria-label", ariaLabel);
     canvas.replaceWith(fresh);
     return fresh;
   }
@@ -18825,6 +19046,10 @@ export class Game {
       cancelAnimationFrame(port.rafId);
       port.rafId = null;
     }
+    if (port.onCanvasPointerDown) {
+      port.canvas.removeEventListener("pointerdown", port.onCanvasPointerDown);
+      port.onCanvasPointerDown = null;
+    }
     port.deployableFx?.dispose();
     port.deployableFx = null;
     port.resizeObserver.disconnect();
@@ -18841,9 +19066,13 @@ export class Game {
       disposePlacedBlockGroupContents(g);
     }
     port.renderer.dispose();
+    // Release the WebGL context so short-lived previews do not leak toward the
+    // browser per-page limit. forceContextLoss leaves the canvas unusable until
+    // replaced - same pattern as inspector tile previews.
     if (typeof port.renderer.forceContextLoss === "function") {
       port.renderer.forceContextLoss();
     }
+    this.recycleInspectorPreviewCanvas(port.canvas);
     this.wardrobeAvatarPreviewPort = null;
   }
 
@@ -19060,8 +19289,9 @@ export class Game {
   }
 
   /**
-   * Isolated WebGL view for profile Wardrobe - avatar on a snapshot of the viewer's current
-   * room (sky tint + 4×4 floor patch). Pass `null` to release GPU resources.
+   * Isolated WebGL view for profile Wardrobe / shop buy - avatar on a solid stock
+   * backdrop (Black / White / Dark green). Click the canvas to cycle backgrounds.
+   * Pass `null` to release GPU resources.
    */
   bindWardrobeAvatarPreviewCanvas(
     canvas: HTMLCanvasElement | null,
@@ -19086,8 +19316,9 @@ export class Game {
     // screens (e.g. the Nimiq Pay webview); without this the backing store is 1x and upscaled.
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 
+    const stockBgIndex = 0;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(this.snapshotWardrobePreviewSkyRgb());
+    scene.background = new THREE.Color(WARDROBE_PREVIEW_STOCK_BG_RGBS[stockBgIndex]!);
 
     const amb = new THREE.AmbientLight(0xffffff, 0.62);
     scene.add(amb);
@@ -19098,19 +19329,8 @@ export class Game {
     const rootGroup = new THREE.Group();
     scene.add(rootGroup);
 
-    const previewAnchor = this.resolveWardrobePreviewAnchor();
     const cameraOrbitYawRad = snapWardrobePreviewCameraOrbitYaw(
       this.cameraOrbitYawRad
-    );
-    const floorTiles = this.buildWardrobePreviewFloorTiles(
-      rootGroup,
-      previewAnchor,
-      cameraOrbitYawRad
-    );
-    const blockGroups = this.buildWardrobePreviewBlockGroups(
-      rootGroup,
-      previewAnchor,
-      cameraOrbitYawRad
     );
 
     const avatarGroup = w ? this.makeAvatar(w, label) : new THREE.Group();
@@ -19129,6 +19349,15 @@ export class Game {
     );
     camera.lookAt(lookAt);
 
+    const onCanvasPointerDown = (ev: PointerEvent): void => {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      this.cycleWardrobeAvatarPreviewStockBackground();
+    };
+    canvas.addEventListener("pointerdown", onCanvasPointerDown);
+    canvas.title = "Click to cycle background (Black / White / Dark green)";
+    canvas.style.cursor = "pointer";
+
     const port: WardrobeAvatarPreviewPort = {
       canvas,
       renderer,
@@ -19136,8 +19365,8 @@ export class Game {
       camera,
       rootGroup,
       avatarGroup,
-      floorTiles,
-      blockGroups,
+      floorTiles: [],
+      blockGroups: [],
       resizeObserver: new ResizeObserver(() => this.renderWardrobeAvatarPreview()),
       wallet: w,
       displayName: label,
@@ -19145,6 +19374,8 @@ export class Game {
       rafId: null,
       previewPhaseStart: performance.now(),
       deployableFx: null,
+      stockBgIndex,
+      onCanvasPointerDown,
       cosmetics: {
         aura: null,
         nameplate: null,
@@ -19169,6 +19400,18 @@ export class Game {
         requestAnimationFrame(() => this.renderWardrobeAvatarPreview());
       });
     }
+  }
+
+  /** Cycle wardrobe / buy preview solid backdrop: Black → White → Dark green. */
+  cycleWardrobeAvatarPreviewStockBackground(): void {
+    const port = this.wardrobeAvatarPreviewPort;
+    if (!port) return;
+    port.stockBgIndex =
+      (port.stockBgIndex + 1) % WARDROBE_PREVIEW_STOCK_BG_RGBS.length;
+    port.scene.background = new THREE.Color(
+      WARDROBE_PREVIEW_STOCK_BG_RGBS[port.stockBgIndex]!
+    );
+    this.renderWardrobeAvatarPreview();
   }
 
   /** Updates passive cosmetic presets on the profile Wardrobe preview canvas. */
@@ -19207,7 +19450,7 @@ export class Game {
     if (!port) return;
     const k = ((Math.floor(cornerIndex) % 4) + 4) % 4;
     port.cameraOrbitYawRad = k * (Math.PI / 2);
-    this.rebuildWardrobePreviewBackdrop(port);
+    this.applyWardrobePreviewCameraPose(port);
     this.renderWardrobeAvatarPreview();
   }
 
@@ -19245,25 +19488,35 @@ export class Game {
         existing.wire = wire;
         if (prevKey !== presentationKey) {
           this.disposeSaleDisplayGroup(existing.group);
-          const group = this.makeSaleDisplayGroup(wire);
-          group.position.set(wire.x, 0, wire.z);
-          this.scene.add(group);
-          existing.group = group;
+          const built = this.makeSaleDisplayGroup(wire);
+          built.root.position.set(wire.x, 0, wire.z);
+          this.scene.add(built.root);
+          existing.group = built.root;
+          existing.walkBody = built.walkBody;
+          existing.walkTargetIndex = undefined;
+          existing.walkDir = undefined;
         } else {
           existing.group.position.set(wire.x, 0, wire.z);
         }
         continue;
       }
-      const group = this.makeSaleDisplayGroup(wire);
-      group.position.set(wire.x, 0, wire.z);
-      this.scene.add(group);
-      this.saleDisplayEntries.set(wire.id, { wire, group });
+      const built = this.makeSaleDisplayGroup(wire);
+      built.root.position.set(wire.x, 0, wire.z);
+      this.scene.add(built.root);
+      this.saleDisplayEntries.set(wire.id, {
+        wire,
+        group: built.root,
+        walkBody: built.walkBody,
+      });
     }
     this.markSceneMutation("saleDisplays:set");
     this.requestRender();
   }
 
   private saleDisplayPresentationKey(wire: SaleDisplayWire): string {
+    const walkKey = (wire.walkTiles ?? [])
+      .map((t) => `${t.x},${t.z}`)
+      .join(";");
     return [
       wire.x,
       wire.z,
@@ -19273,10 +19526,22 @@ export class Game {
       wire.slot ?? "",
       wire.bindInactive ? "1" : "0",
       wire.label ?? "",
+      wire.walkEnabled ? "1" : "0",
+      walkKey,
     ].join("|");
   }
 
   private disposeSaleDisplayGroup(group: THREE.Group): void {
+    const padLabel = group.userData.saleDisplayBuyPadLabel as
+      | THREE.Sprite
+      | undefined;
+    if (padLabel) {
+      group.remove(padLabel);
+      const sm = padLabel.material as THREE.SpriteMaterial;
+      sm.map?.dispose();
+      sm.dispose();
+      delete group.userData.saleDisplayBuyPadLabel;
+    }
     this.scene.remove(group);
     group.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
@@ -19302,19 +19567,195 @@ export class Game {
     this.markSceneMutation("saleDisplays:clear");
   }
 
-  private makeSaleDisplayGroup(wire: SaleDisplayWire): THREE.Group {
+  private makeSaleDisplayGroup(wire: SaleDisplayWire): {
+    root: THREE.Group;
+    walkBody: THREE.Group | null;
+  } {
     const activeBound =
       Boolean(wire.presetId) &&
       Boolean(wire.kind) &&
       !wire.bindInactive &&
       Boolean(wire.cosmeticSku);
+    let root: THREE.Group;
+    let walkBody: THREE.Group | null = null;
     if (!activeBound) {
-      return this.makeSaleDisplaySilhouette(wire);
+      root = this.makeSaleDisplaySilhouette(wire);
+    } else if (wire.kind === "floor") {
+      root = this.makeSaleDisplayFloor(wire);
+    } else {
+      const built = this.makeSaleDisplayMannequin(wire);
+      root = built.root;
+      walkBody = built.body;
     }
-    if (wire.kind === "floor") {
-      return this.makeSaleDisplayFloor(wire);
+    if (activeBound) {
+      this.attachSaleDisplayBuyPad(root, wire.label ?? wire.cosmeticSku ?? "");
     }
-    return this.makeSaleDisplayMannequin(wire);
+    return { root, walkBody };
+  }
+
+  /** Green stand-here plate one tile in front of the display (client-only; buy gate). */
+  private attachSaleDisplayBuyPad(group: THREE.Group, productLabel: string): void {
+    const size = BLOCK_SIZE * 0.92;
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x4ade80,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const pad = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(
+      SALE_DISPLAY_BUY_PAD_OFFSET.dx,
+      0.035,
+      SALE_DISPLAY_BUY_PAD_OFFSET.dz
+    );
+    pad.userData[SKIP_BLOCK_PICK_AND_BOUNDS] = true;
+    pad.raycast = () => {};
+    group.add(pad);
+
+    const title = productLabel.trim();
+    if (!title) return;
+    const plaque = this.makeGalleryFloorPlaque(title);
+    plaque.position.set(
+      SALE_DISPLAY_BUY_PAD_OFFSET.dx,
+      0.42,
+      SALE_DISPLAY_BUY_PAD_OFFSET.dz
+    );
+    plaque.userData[SKIP_BLOCK_PICK_AND_BOUNDS] = true;
+    plaque.raycast = () => {};
+    group.userData.saleDisplayBuyPadLabel = plaque;
+    group.add(plaque);
+  }
+
+  private clearSaleDisplayMannequinNameLabel(body: THREE.Group): void {
+    const nameSprite = body.userData.nameSprite as THREE.Sprite | undefined;
+    const nameTex = body.userData.nameTexture as THREE.CanvasTexture | undefined;
+    if (nameSprite) {
+      body.remove(nameSprite);
+      const sm = nameSprite.material as THREE.SpriteMaterial;
+      sm.map = null;
+      sm.dispose();
+    }
+    if (nameTex) nameTex.dispose();
+    delete body.userData.nameSprite;
+    delete body.userData.nameTexture;
+    delete body.userData.nameLabelSyncState;
+  }
+
+  private updateSaleDisplays(dt: number): boolean {
+    if (this.saleDisplayEntries.size === 0) return false;
+    const now = performance.now();
+    let any = false;
+    for (const entry of this.saleDisplayEntries.values()) {
+      const { wire, walkBody } = entry;
+      // Nameplate demos keep a sample head label; product title lives on the buy pad.
+      if (
+        walkBody?.userData.saleDisplayMannequin &&
+        walkBody.userData.nameSprite &&
+        wire.slot === "nameplate"
+      ) {
+        this.layoutSaleDisplayHeadLabel(walkBody);
+        any = true;
+      }
+      if (walkBody && updateCosmeticAuraForGroup(walkBody, now)) any = true;
+
+      const tiles = wire.walkTiles;
+      const canWalk =
+        Boolean(walkBody) &&
+        wire.kind === "mannequin" &&
+        wire.walkEnabled === true &&
+        Array.isArray(tiles) &&
+        tiles.length >= 2;
+      if (!canWalk || !walkBody || !tiles) {
+        if (walkBody && !canWalk) {
+          walkBody.position.set(0, 0, 0);
+        }
+        continue;
+      }
+
+      if (entry.walkTargetIndex === undefined || entry.walkDir === undefined) {
+        entry.walkDir = 1;
+        entry.walkTargetIndex = 1;
+        const t0 = tiles[0]!;
+        walkBody.position.set(t0.x - wire.x, 0, t0.z - wire.z);
+      }
+
+      let targetIndex = entry.walkTargetIndex;
+      if (targetIndex < 0 || targetIndex >= tiles.length) {
+        targetIndex = 1;
+        entry.walkTargetIndex = targetIndex;
+        entry.walkDir = 1;
+      }
+      const target = tiles[targetIndex]!;
+      const tx = target.x - wire.x;
+      const tz = target.z - wire.z;
+      const dx = tx - walkBody.position.x;
+      const dz = tz - walkBody.position.z;
+      const dist = Math.hypot(dx, dz);
+      const step = SERVER_PLAYER_MOVE_SPEED * dt;
+      if (dist <= step || dist < 1e-6) {
+        walkBody.position.x = tx;
+        walkBody.position.z = tz;
+        let next = targetIndex + (entry.walkDir ?? 1);
+        if (next < 0 || next >= tiles.length) {
+          entry.walkDir = entry.walkDir === 1 ? -1 : 1;
+          next = targetIndex + entry.walkDir;
+        }
+        entry.walkTargetIndex = Math.max(0, Math.min(tiles.length - 1, next));
+      } else {
+        walkBody.position.x += (dx / dist) * step;
+        walkBody.position.z += (dz / dist) * step;
+      }
+      any = true;
+
+      if (wire.slot === "trail" && wire.presetId) {
+        const worldX = wire.x + walkBody.position.x;
+        const worldZ = wire.z + walkBody.position.z;
+        const player: PlayerState = {
+          address: `sale-display:${wire.id}`,
+          displayName: "",
+          x: worldX,
+          y: 0,
+          z: worldZ,
+          vx: 0,
+          vz: 0,
+          cosmeticTrail: wire.presetId,
+        };
+        syncCosmeticLoadoutVfx(walkBody, player, true);
+        tickCosmeticTrailForAvatar(
+          this.scene,
+          walkBody,
+          worldX,
+          0,
+          worldZ,
+          now
+        );
+        if (updateCosmeticTrailPuffsForGroup(walkBody, now)) any = true;
+      }
+    }
+    return any;
+  }
+
+  /** Smaller product-title label; camera-synced like avatar nameplates. */
+  private layoutSaleDisplayHeadLabel(g: THREE.Group): void {
+    const nameSprite = g.userData.nameSprite as THREE.Sprite | undefined;
+    if (!nameSprite) return;
+    const tw = nameSprite.userData.nameLabelTexW as number | undefined;
+    const th = nameSprite.userData.nameLabelTexH as number | undefined;
+    if (!tw || !th) return;
+    nameSprite.visible = true;
+    let worldH = this.pixelToWorldY(SALE_DISPLAY_NAME_LABEL_SCREEN_HEIGHT_PX);
+    let worldW = worldH * (tw / th);
+    const maxW = this.pixelToWorldX(SALE_DISPLAY_NAME_LABEL_MAX_PX);
+    if (worldW > maxW) {
+      const s = maxW / worldW;
+      worldW *= s;
+      worldH *= s;
+    }
+    nameSprite.scale.set(worldW, worldH, 1);
+    const gapWorld = this.pixelToWorldY(NAME_GAP_BELOW_IDENTICON_PX);
+    nameSprite.position.y = -gapWorld - worldH / 2;
   }
 
   private makeSaleDisplaySilhouette(wire: SaleDisplayWire): THREE.Group {
@@ -19354,11 +19795,16 @@ export class Game {
     return group;
   }
 
-  private makeSaleDisplayMannequin(wire: SaleDisplayWire): THREE.Group {
+  private makeSaleDisplayMannequin(wire: SaleDisplayWire): {
+    root: THREE.Group;
+    body: THREE.Group;
+  } {
+    const root = new THREE.Group();
+    root.userData.saleDisplayId = wire.id;
     const fakeAddress = `sale-display:${wire.id}`;
-    const g = this.makeAvatar(fakeAddress, "");
-    g.userData.saleDisplayId = wire.id;
-    g.userData.saleDisplayMannequin = true;
+    const body = this.makeAvatar(fakeAddress, "");
+    body.userData.saleDisplayId = wire.id;
+    body.userData.saleDisplayMannequin = true;
     const player: PlayerState = {
       address: fakeAddress,
       displayName: "",
@@ -19374,23 +19820,12 @@ export class Game {
       cosmeticTrail: wire.slot === "trail" ? wire.presetId ?? null : null,
     };
     if (wire.slot === "chatBubble" && wire.presetId) {
-      const nameSprite = g.userData.nameSprite as THREE.Sprite | undefined;
-      const nameTex = g.userData.nameTexture as THREE.CanvasTexture | undefined;
-      if (nameSprite) {
-        g.remove(nameSprite);
-        const sm = nameSprite.material as THREE.SpriteMaterial;
-        sm.map = null;
-        sm.dispose();
-      }
-      if (nameTex) nameTex.dispose();
-      delete g.userData.nameSprite;
-      delete g.userData.nameTexture;
-      delete g.userData.nameLabelSyncState;
+      this.clearSaleDisplayMannequinNameLabel(body);
       const { sprite, texture, width, height } = createChatBubbleSprite("Hello!", {
         bubblePreset: wire.presetId,
       });
-      g.add(sprite);
-      this.layoutGalleryChatBubble(g, {
+      body.add(sprite);
+      this.layoutGalleryChatBubble(body, {
         sprite,
         mat: sprite.material as THREE.SpriteMaterial,
         tex: texture,
@@ -19398,14 +19833,24 @@ export class Game {
         height,
       });
     } else if (wire.slot === "nameplate" && wire.presetId) {
-      this.replaceAvatarNameLabel(g, wire.label ?? "Sale", false, wire.presetId);
-      this.layoutGalleryHeadLabel(g);
+      // Demo sample name for the nameplate Slot; catalog title sits on the buy pad.
+      this.replaceAvatarNameLabel(body, "Player", false, wire.presetId);
+      this.layoutSaleDisplayHeadLabel(body);
     } else {
-      this.replaceAvatarNameLabel(g, wire.label ?? "Sale", false, null);
-      this.layoutGalleryHeadLabel(g);
+      this.clearSaleDisplayMannequinNameLabel(body);
     }
-    syncCosmeticLoadoutVfx(g, player, wire.slot === "trail");
-    return g;
+    syncCosmeticLoadoutVfx(body, player, wire.slot === "trail");
+    const tiles = wire.walkTiles;
+    if (
+      wire.walkEnabled &&
+      Array.isArray(tiles) &&
+      tiles.length >= 2
+    ) {
+      const t0 = tiles[0]!;
+      body.position.set(t0.x - wire.x, 0, t0.z - wire.z);
+    }
+    root.add(body);
+    return { root, body };
   }
 
   /** Dev-only Preset Gallery (`cosmetic-gallery` / join code SPACER). */

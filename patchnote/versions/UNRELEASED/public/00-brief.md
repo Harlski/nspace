@@ -6,6 +6,3 @@
 ---
 
 _(Draft — not published.)_
-
-- Walking in ordinary rooms should feel smoother — less jitter between tiles.
-- Opening the analytics dashboard no longer freezes everyone else in the world.

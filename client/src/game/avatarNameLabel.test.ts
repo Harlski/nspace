@@ -1,27 +1,41 @@
 import { describe, expect, it } from "vitest";
 
-import { formatAvatarNameLabel } from "./avatarNameLabel";
+import {
+  formatAvatarNameLabel,
+  nameplatePlayerLevel,
+} from "./avatarNameLabel";
 
 describe("formatAvatarNameLabel", () => {
-  it("includes Player Level for wallets", () => {
-    expect(
-      formatAvatarNameLabel({ displayName: "Ada", playerLevel: 3 })
-    ).toBe("Ada · Lv 3");
+  it("is username only (Level badge is drawn separately)", () => {
+    expect(formatAvatarNameLabel({ displayName: "Ada" })).toBe("Ada");
   });
 
-  it("omits Level for guests", () => {
-    expect(formatAvatarNameLabel({ displayName: "Guest Fox" })).toBe(
-      "Guest Fox"
-    );
-  });
-
-  it("composes Invisible after Level", () => {
+  it("composes Invisible after the name", () => {
     expect(
       formatAvatarNameLabel({
         displayName: "Ada",
-        playerLevel: 1,
         adminInvisible: true,
       })
-    ).toBe("Ada · Lv 1 · Invisible");
+    ).toBe("Ada · Invisible");
+  });
+
+  it("composes Frozen for admin viewers", () => {
+    expect(
+      formatAvatarNameLabel({
+        displayName: "Bob",
+        frozen: true,
+      })
+    ).toBe("Bob · Frozen");
+  });
+});
+
+describe("nameplatePlayerLevel", () => {
+  it("keeps valid Levels", () => {
+    expect(nameplatePlayerLevel(3)).toBe(3);
+  });
+
+  it("rejects guests / missing Level", () => {
+    expect(nameplatePlayerLevel(undefined)).toBe(null);
+    expect(nameplatePlayerLevel(0)).toBe(null);
   });
 });

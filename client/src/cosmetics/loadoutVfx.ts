@@ -43,8 +43,16 @@ export type PersistentDeployableFx = {
 
 const SKIP = "skipBlockPickAndBounds";
 
+/** Border colors for nameplate Slot presets (not Kenney prefab tints). */
+const NAMEPLATE_COLORS: Record<string, string> = {
+  "nameplate-frame-simple": "#c8d4e4",
+  "nameplate-frame-neon": "#00ffcc",
+};
+
 export function nameplateColorForPreset(presetId: string | null | undefined): string | null {
   if (!presetId) return null;
+  const fromTable = NAMEPLATE_COLORS[presetId];
+  if (fromTable) return fromTable;
   const tint = cosmeticPrefabTint(presetId);
   if (tint === null) return null;
   return `#${tint.toString(16).padStart(6, "0")}`;
@@ -54,6 +62,8 @@ export function chatBubbleClassForPreset(
   presetId: string | null | undefined
 ): string | null {
   if (!presetId) return null;
+  if (presetId === "bubble-rounded-pastel") return "chat-bubble--cosmetic-pastel";
+  if (presetId === "bubble-sharp-dark") return "chat-bubble--cosmetic-dark";
   return null;
 }
 
