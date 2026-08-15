@@ -8,7 +8,7 @@
 
 ## Summary
 
-_Add a one-line roll-up here when the buffer gets long._
+Dense Commons stays smoother: signpost occlusion no longer scans the whole room each frame, and terrain/floor meshes follow the camera view.
 
 ---
 
@@ -16,11 +16,12 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Repo / docs
 
-- _(none yet)_
+- [.scratch/mesh-residency/PRD.md](../../../.scratch/mesh-residency/PRD.md) — mesh residency grill → ready/done ticket.
 
 ### Client
 
-- _(none in this change set)_
+- [PERF] Signpost-hint foreground occlusion uses a tile-bucket narrowphase along the camera→hint segment (`signpostHintOcclusion.ts`, `Game.updateSignpostHintSprites`); bench `client/scripts/signpost-hint-occl-bench.mjs` (`MODE=naive` vs `narrow`).
+- [PERF] **Client mesh residency** — full obstacle/floor data stays in memory; Three meshes only for chunks in a client residency rect (frustum + padding, every room including Commons); unload +1 chunk hysteresis; budgeted mesh fill; floors included (`meshResidency.ts`, `Game.ts`). Debug HUD: resident chunks, live blocks, build queue.
 
 ### Server
 

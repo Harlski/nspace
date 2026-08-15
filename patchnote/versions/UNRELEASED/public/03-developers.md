@@ -5,4 +5,6 @@
 
 ---
 
-_(Draft — not published.)_
+- [PERF] `nextResidentChunks` planner (`meshResidency.ts`) + Game mesh-only residency (client rect always; server `setViewInterest` still spatial-gated).
+- [PERF] Signpost occlusion narrowphase (`signpostHintOcclusion.ts`); optional bench `MODE=naive|narrow`.
+- Debug HUD: `meshResidentChunkCount`, `liveBlockMeshCount`, `meshBuildPendingCount`.

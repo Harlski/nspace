@@ -57,4 +57,19 @@ describe("nextResidentChunks", () => {
     expect(next.has("50,50")).toBe(false);
     expect(next.has("-50,-50")).toBe(false);
   });
+
+  it("covers every chunk under a room-spanning rect", () => {
+    const roomWide: ViewInterestRect = {
+      centerX: 0,
+      centerZ: 0,
+      halfW: 200,
+      halfH: 200,
+    };
+    const load = interestChunksFromRect(roomWide, 0);
+    const next = nextResidentChunks(new Set(), roomWide);
+    expect(next.size).toBe(load.size);
+    for (const c of load) {
+      expect(next.has(c)).toBe(true);
+    }
+  });
 });

@@ -38,13 +38,3 @@ export function nextResidentChunks(
   for (const c of load) next.add(c);
   return next;
 }
-
-/** True when tile (tx, tz) lies in a resident chunk. */
-export function tileInResidentChunks(
-  tx: number,
-  tz: number,
-  resident: ReadonlySet<string>,
-  chunkKeyOf: (tx: number, tz: number) => string
-): boolean {
-  return resident.has(chunkKeyOf(tx, tz));
-}

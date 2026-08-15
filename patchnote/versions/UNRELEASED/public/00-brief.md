@@ -5,4 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
+- [PERF] Dense Commons should feel closer to a small room when you’re looking at a similar area of the map.

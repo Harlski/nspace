@@ -14909,22 +14909,10 @@ export class Game {
 
   private syncBlockMeshes(): void {
     this.refreshMeshResidency();
-    const keys = new Set<string>();
-    for (const k of this.placedObjects.keys()) {
-      if (this.blockKeyInResidentChunks(k)) keys.add(k);
-    }
-    for (const k of this.blockMeshes.keys()) {
-      if (!this.blockKeyInResidentChunks(k)) keys.add(k);
-    }
-    if (keys.size > Game.MESH_BUILD_KEYS_PER_TICK * 3) {
-      this.disposeMeshesOutsideResidentChunks();
-      this.enqueueMissingResidentBlockMeshes();
-      this.syncResidentWalkableFloors();
-      this.processMeshBuildBudget();
-      return;
-    }
-    this.syncBlockMeshesForKeys(keys);
+    this.disposeMeshesOutsideResidentChunks();
+    this.enqueueMissingResidentBlockMeshes();
     this.syncResidentWalkableFloors();
+    this.processMeshBuildBudget();
   }
 
   private blockKeyInResidentChunks(blockKeyStr: string): boolean {
