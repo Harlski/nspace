@@ -516,11 +516,17 @@ export function createHud(
   setResetTutorialVisible: (visible: boolean) => void;
   /** Non-blocking top toast with optional wallet identicon (tutorial sign-in, Hub welcome). */
   showBriefToast: (text: string, opts?: { address?: string }) => void;
+  /** Short pulse after a successful allowance-bound mine: remaining / ceiling. */
+  showDailyEarnRemainingPulse: (remainingNim: string, ceilingNim: string) => void;
   /**
    * Full-letterbox cinematic title (tutorial step beats).
    * Queues if one is already playing; pointer-events none.
    */
   showTutorialCinematic: (title: string) => void;
+  /**
+   * Daily Earn exhausted: cinematic + Open Achievements CTA.
+   */
+  showDailyEarnLimitCinematic: () => void;
   /** Lesson-mode Tutorial Step Coach under the top HUD strip. */
   setTutorialStepCoach: (state: TutorialCoachState | null) => void;
   pulseTutorialStepCoach: (step: TutorialCoachStep) => void;
@@ -1806,6 +1812,7 @@ export function createHud(
 
   function showBriefToast(text: string, opts?: { address?: string }): void {
     briefToastText.textContent = text;
+    briefToast.classList.remove("hud-player-join-toast--earn-pulse");
     const addr = opts?.address?.replace(/\s+/g, "").trim();
     if (addr) {
       briefToastIdenticon.hidden = false;
@@ -1818,9 +1825,32 @@ export function createHud(
     if (briefToastTimer) clearTimeout(briefToastTimer);
     briefToastTimer = setTimeout(() => {
       briefToast.classList.remove("hud-player-join-toast--visible");
+      briefToast.classList.remove("hud-player-join-toast--earn-pulse");
       briefToast.hidden = true;
       briefToastTimer = null;
     }, 4200);
+  }
+
+  function showDailyEarnRemainingPulse(
+    remainingNim: string,
+    ceilingNim: string
+  ): void {
+    const rem = String(remainingNim ?? "").trim() || "0";
+    const ceil = String(ceilingNim ?? "").trim() || "0";
+    briefToastText.textContent = `${rem} / ${ceil} NIM remaining`;
+    briefToastIdenticon.hidden = true;
+    briefToast.hidden = false;
+    briefToast.classList.add(
+      "hud-player-join-toast--visible",
+      "hud-player-join-toast--earn-pulse"
+    );
+    if (briefToastTimer) clearTimeout(briefToastTimer);
+    briefToastTimer = setTimeout(() => {
+      briefToast.classList.remove("hud-player-join-toast--visible");
+      briefToast.classList.remove("hud-player-join-toast--earn-pulse");
+      briefToast.hidden = true;
+      briefToastTimer = null;
+    }, 3600);
   }
 
   function prefersTranslateClipboardAssist(): boolean {
@@ -2553,14 +2583,28 @@ export function createHud(
   tutorialCinematic.setAttribute("role", "status");
   tutorialCinematic.innerHTML = `
     <div class="tutorial-cinematic__veil" aria-hidden="true"></div>
-    <p class="tutorial-cinematic__title"></p>
+    <div class="tutorial-cinematic__stack">
+      <p class="tutorial-cinematic__title"></p>
+      <p class="tutorial-cinematic__subtitle" hidden></p>
+      <button type="button" class="tutorial-cinematic__cta nq-button-pill" hidden></button>
+    </div>
   `;
   const tutorialCinematicTitle = tutorialCinematic.querySelector(
     ".tutorial-cinematic__title"
   ) as HTMLElement;
+  const tutorialCinematicSubtitle = tutorialCinematic.querySelector(
+    ".tutorial-cinematic__subtitle"
+  ) as HTMLElement;
+  const tutorialCinematicCta = tutorialCinematic.querySelector(
+    ".tutorial-cinematic__cta"
+  ) as HTMLButtonElement;
   letter.appendChild(tutorialCinematic);
 
-  const tutorialCinematicQueue: string[] = [];
+  type TutorialCinematicItem =
+    | { kind: "title"; title: string }
+    | { kind: "daily_earn_limit" };
+
+  const tutorialCinematicQueue: TutorialCinematicItem[] = [];
   let tutorialCinematicPlaying = false;
   let tutorialCinematicHideTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -2583,12 +2627,73 @@ export function createHud(
     );
   }
 
+  function clearTutorialCinematicChrome(): void {
+    tutorialCinematicTitle.innerHTML = "";
+    tutorialCinematicSubtitle.textContent = "";
+    tutorialCinematicSubtitle.hidden = true;
+    tutorialCinematicCta.hidden = true;
+    tutorialCinematicCta.textContent = "";
+    tutorialCinematicCta.onclick = null;
+    tutorialCinematic.classList.remove("tutorial-cinematic--interactive");
+    tutorialCinematic.setAttribute("role", "status");
+    tutorialCinematic.removeAttribute("aria-modal");
+    window.removeEventListener("keydown", onDailyEarnLimitCinematicKeydown, true);
+  }
+
+  function hideTutorialCinematicOverlay(): void {
+    tutorialCinematic.classList.remove("tutorial-cinematic--visible");
+    if (tutorialCinematicHideTimer !== null) {
+      clearTimeout(tutorialCinematicHideTimer);
+    }
+    tutorialCinematicHideTimer = setTimeout(() => {
+      tutorialCinematic.hidden = true;
+      clearTutorialCinematicChrome();
+      tutorialCinematicPlaying = false;
+      tutorialCinematicHideTimer = null;
+      playNextTutorialCinematic();
+    }, 700);
+  }
+
+  function onDailyEarnLimitCinematicKeydown(ev: KeyboardEvent): void {
+    if (ev.key !== "Escape") return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    window.removeEventListener("keydown", onDailyEarnLimitCinematicKeydown, true);
+    hideTutorialCinematicOverlay();
+  }
+
   function playNextTutorialCinematic(): void {
     if (tutorialCinematicPlaying) return;
     const next = tutorialCinematicQueue.shift();
     if (!next) return;
     tutorialCinematicPlaying = true;
-    tutorialCinematicTitle.innerHTML = formatTutorialCinematicTitle(next);
+    clearTutorialCinematicChrome();
+    window.removeEventListener("keydown", onDailyEarnLimitCinematicKeydown, true);
+    if (next.kind === "daily_earn_limit") {
+      tutorialCinematicTitle.innerHTML = formatTutorialCinematicTitle(
+        "Daily NIM limit reached"
+      );
+      tutorialCinematicSubtitle.textContent =
+        "Level up via Achievements to increase your cap";
+      tutorialCinematicSubtitle.hidden = false;
+      tutorialCinematicCta.textContent = "Open Achievements";
+      tutorialCinematicCta.hidden = false;
+      tutorialCinematic.classList.add("tutorial-cinematic--interactive");
+      tutorialCinematic.setAttribute("role", "dialog");
+      tutorialCinematic.setAttribute("aria-modal", "true");
+      tutorialCinematicCta.onclick = () => {
+        window.removeEventListener(
+          "keydown",
+          onDailyEarnLimitCinematicKeydown,
+          true
+        );
+        hideTutorialCinematicOverlay();
+        achievementPanel.open();
+      };
+      window.addEventListener("keydown", onDailyEarnLimitCinematicKeydown, true);
+    } else {
+      tutorialCinematicTitle.innerHTML = formatTutorialCinematicTitle(next.title);
+    }
     tutorialCinematic.hidden = false;
     // Force reflow so the enter class animates even on back-to-back shows.
     void tutorialCinematic.offsetWidth;
@@ -2596,22 +2701,29 @@ export function createHud(
     if (tutorialCinematicHideTimer !== null) {
       clearTimeout(tutorialCinematicHideTimer);
     }
+    const dwellMs = next.kind === "daily_earn_limit" ? 5200 : 2800;
     tutorialCinematicHideTimer = setTimeout(() => {
-      tutorialCinematic.classList.remove("tutorial-cinematic--visible");
-      tutorialCinematicHideTimer = setTimeout(() => {
-        tutorialCinematic.hidden = true;
-        tutorialCinematicTitle.innerHTML = "";
-        tutorialCinematicPlaying = false;
-        tutorialCinematicHideTimer = null;
-        playNextTutorialCinematic();
-      }, 700);
-    }, 2800);
+      window.removeEventListener(
+        "keydown",
+        onDailyEarnLimitCinematicKeydown,
+        true
+      );
+      hideTutorialCinematicOverlay();
+    }, dwellMs);
+    if (next.kind === "daily_earn_limit") {
+      requestAnimationFrame(() => tutorialCinematicCta.focus());
+    }
   }
 
   function showTutorialCinematic(title: string): void {
     const text = String(title ?? "").trim();
     if (!text) return;
-    tutorialCinematicQueue.push(text);
+    tutorialCinematicQueue.push({ kind: "title", title: text });
+    playNextTutorialCinematic();
+  }
+
+  function showDailyEarnLimitCinematic(): void {
+    tutorialCinematicQueue.push({ kind: "daily_earn_limit" });
     playNextTutorialCinematic();
   }
 
@@ -3335,6 +3447,14 @@ export function createHud(
     "🤔",
     "😎",
     "🙏",
+    "🤓",
+    "😍",
+    "😭",
+    "💀",
+    "👀",
+    "💯",
+    "✨",
+    "💪",
   ] as const;
   /**
    * The hexagon has six fixed Sectors: the bottom is the Nav Sector and one upper edge is
@@ -16099,7 +16219,9 @@ export function createHud(
       playerMenu.setResetTutorialVisible(visible);
     },
     showBriefToast,
+    showDailyEarnRemainingPulse,
     showTutorialCinematic,
+    showDailyEarnLimitCinematic,
     setTutorialStepCoach(state: TutorialCoachState | null) {
       if (!state?.visible) {
         tutorialStepCoach.hidden = true;

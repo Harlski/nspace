@@ -1943,9 +1943,62 @@ html.nspace-mobile-landscape .player-menu {
   -webkit-user-select: none;
 }
 
+.tutorial-cinematic__stack {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.85rem;
+  max-width: min(92vw, 34rem);
+}
+
+.tutorial-cinematic__subtitle {
+  margin: 0;
+  text-align: center;
+  font-size: clamp(0.95rem, 2.8vw, 1.2rem);
+  font-weight: 500;
+  line-height: 1.35;
+  color: rgba(248, 250, 252, 0.88);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  transform: translateY(10px);
+  opacity: 0;
+  transition:
+    transform 0.85s cubic-bezier(0.16, 1, 0.3, 1) 0.08s,
+    opacity 0.7s ease 0.08s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tutorial-cinematic__subtitle[hidden],
+.tutorial-cinematic__cta[hidden] {
+  display: none !important;
+}
+
+.tutorial-cinematic__cta {
+  margin-top: 0.35rem;
+  pointer-events: auto;
+  cursor: pointer;
+  transform: translateY(10px);
+  opacity: 0;
+  transition:
+    transform 0.85s cubic-bezier(0.16, 1, 0.3, 1) 0.12s,
+    opacity 0.7s ease 0.12s;
+}
+
+.tutorial-cinematic--interactive {
+  pointer-events: auto;
+}
+
 .tutorial-cinematic--visible .tutorial-cinematic__title {
   transform: translateY(0) scale(1);
   filter: blur(0);
+  opacity: 1;
+}
+
+.tutorial-cinematic--visible .tutorial-cinematic__subtitle,
+.tutorial-cinematic--visible .tutorial-cinematic__cta {
+  transform: translateY(0);
   opacity: 1;
 }
 
@@ -4714,6 +4767,25 @@ button.hud-brand:focus-visible {
 .hud-player-join-toast--visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+.hud-player-join-toast--earn-pulse {
+  animation: hud-daily-earn-remaining-pulse 0.85s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes hud-daily-earn-remaining-pulse {
+  0% {
+    transform: translateY(6px) scale(0.92);
+    opacity: 0;
+  }
+  35% {
+    transform: translateY(0) scale(1.06);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
 }
 
 .hud-player-join-toast__identicon {

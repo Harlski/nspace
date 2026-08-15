@@ -12,3 +12,11 @@ same day's ceiling immediately. Per-activity emergency env brakes (e.g. Free Pla
 apply on top. We rejected playtime/XP Level and separate vanity vs earn tiers so status and
 treasury pressure stay the same number, and so farmers must unlock achievements rather than
 farm a single uncapped loop.
+
+## Claimable-block mines when remaining is 0
+
+When remaining Daily Earn Allowance is 0, claimable-block claims are refused on begin (with a
+complete-time safety net) so capped wallets cannot cool down / remove gold blocks other players
+could still earn from. Partial-fill when remaining is positive but below the proposed reward is
+unchanged. Tutorial faucet mines stay outside this gate.
+

@@ -701,16 +701,17 @@ _Avoid_: report, player report, moderation ticket.
 **Login Streak** (achievement progress):
 The player's **current** count of consecutive UTC calendar days with at least one sign-in,
 as tracked by the login-streak ledger. Drives progress display and unlock evaluation for the
-three Social login-streak achievements (**Week Warrior**, **Monthly Devotee**, **Time of
-Kaan**). All three rows show the same live streak numerator capped at each row's target
-denominator (e.g. day 3 → `3 / 7`, `3 / 30`, `3 / 60`). Resets when the streak breaks.
-Criteria use a dedicated **`login_streak`** type (threshold per achievement), not a binary
-**event** type. Unlock evaluation walks those definitions (retired: `login_streak_7` /
-`login_streak_30` / `login_streak_top` event keys). Evaluation runs **on login** (after the
-streak ledger updates) and **on achievements fetch** (self-healing when the panel loads).
-Fetch-time unlocks are **silent** — they update **Complete** state only; **Achievement Unlock
-Banners** fire on login evaluation, not when the panel refetches. Once earned, a login-streak
-tier stays **Complete** permanently even if the live streak later breaks.
+four Social login-streak achievements (**Week Warrior**, **Monthly Devotee**, **Time of
+Kaan**, **You Kaan Do It**). All four rows show the same live streak numerator capped at each
+row's target denominator (e.g. day 3 → `3 / 7`, `3 / 30`, `3 / 54`, `3 / 100`). Resets when
+the streak breaks. Criteria use a dedicated **`login_streak`** type (threshold per
+achievement), not a binary **event** type. Unlock evaluation walks those definitions
+(retired: `login_streak_7` / `login_streak_30` / `login_streak_top` event keys). Evaluation
+runs **on login** (after the streak ledger updates) and **on achievements fetch**
+(self-healing when the panel loads). Fetch-time unlocks are **silent** — they update
+**Complete** state only; **Achievement Unlock Banners** fire on login evaluation, not when
+the panel refetches. Once earned, a login-streak tier stays **Complete** permanently even if
+the live streak later breaks.
 _Avoid_: lifetime best streak, binary 0/1 progress, legacy login-streak event keys.
 
 **Week Warrior** (achievement):
@@ -722,11 +723,18 @@ Social achievement for logging in on **30** consecutive UTC calendar days.
 _Avoid_: login streak 30, daily login silver.
 
 **Time of Kaan** (achievement):
-Top-tier Social login-streak achievement at an operator-configured threshold (default **60**
+Social login-streak achievement at an operator-configured threshold (default **54**
 consecutive UTC calendar days). Description copy names that threshold explicitly (same pattern
 as **Week Warrior** and **Monthly Devotee**); the server supplies **N** so description and
-progress denominator stay aligned when operators change `ACHIEVEMENT_LOGIN_STREAK_TOP`.
+progress denominator stay aligned when operators change `ACHIEVEMENT_LOGIN_STREAK_TOP`. Not
+the top of the ladder — **You Kaan Do It** sits above it.
 _Avoid_: Time of Khan, login streak top, daily login gold, vague "milestone" copy without **N**.
+
+**You Kaan Do It** (achievement):
+Social login-streak achievement for logging in on **100** consecutive UTC calendar days.
+Fixed threshold (not env-tuned). Points-only reward (**150** Achievement Points); no cosmetic
+SKU. Sits above **Time of Kaan** on the Social streak ladder.
+_Avoid_: login streak 100, Kaan 100, Time of Kaan 100.
 
 **Achievement Points**:
 The lifetime sum of points from a player's completed achievements. The sole input to **Player

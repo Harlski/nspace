@@ -6622,6 +6622,13 @@ function enterGame(
       return;
     }
     if (msg.type === "blockClaimResult") {
+      if (!msg.ok && msg.dailyEarnAllowanceExhausted === true) {
+        cancelActiveNimClaim?.();
+        nimClaimUiRef = null;
+        hud.setNimClaimProgress(null);
+        hud.showDailyEarnLimitCinematic();
+        return;
+      }
       if (!msg.ok && msg.reason === TUTORIAL_WRONG_SLOT_REASON) {
         cancelActiveNimClaim?.();
         nimClaimUiRef = null;
@@ -6669,13 +6676,15 @@ function enterGame(
           ? msg.amountNim
           : "1.0000";
         cancelActiveNimClaim?.();
-        if (msg.dailyEarnAllowanceBound && Number(reward) <= 0) {
-          hud.showBriefToast("Daily earn allowance reached");
-        } else {
-          game.showSelfPlayerMiningReward(reward);
-          if (msg.dailyEarnAllowanceBound) {
-            hud.showBriefToast("Daily earn allowance reached");
-          }
+        game.showSelfPlayerMiningReward(reward);
+        if (
+          typeof msg.dailyEarnRemainingNim === "string" &&
+          typeof msg.dailyEarnCeilingNim === "string"
+        ) {
+          hud.showDailyEarnRemainingPulse(
+            msg.dailyEarnRemainingNim,
+            msg.dailyEarnCeilingNim
+          );
         }
         const inTutorial =
           normalizeRoomId(game.getRoomId()) === TUTORIAL_ROOM_ID;

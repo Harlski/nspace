@@ -352,12 +352,42 @@ test("login streak achievements show live streak progress on all tiers", async (
     const week = rows.find((a) => a.achievementId === "social-login-7");
     const month = rows.find((a) => a.achievementId === "social-login-30");
     const top = rows.find((a) => a.achievementId === "social-login-top");
+    const kaan100 = rows.find((a) => a.achievementId === "social-login-100");
     assert.equal(week?.progress, 3);
     assert.equal(week?.threshold, 7);
     assert.equal(month?.progress, 3);
     assert.equal(month?.threshold, 30);
     assert.equal(top?.progress, 3);
     assert.equal(top?.threshold, 54);
+    assert.equal(kaan100?.title, "You Kaan Do It");
+    assert.equal(kaan100?.points, 150);
+    assert.equal(kaan100?.progress, 3);
+    assert.equal(kaan100?.threshold, 100);
+  });
+});
+
+test("You Kaan Do It unlocks at 100 consecutive UTC login days", async () => {
+  const wallet = "NQ07 TEST000000000000000000000000000017";
+  await withAchievementStore(async ({
+    evaluateLoginStreakAchievements,
+    getAchievementsForWallet,
+  }) => {
+    seedLoginStreak(wallet, 99);
+    evaluateLoginStreakAchievements(wallet);
+    const at99 = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "social-login-100"
+    );
+    assert.equal(at99?.completed, false);
+
+    const unlocks: Array<{ achievementId: string }> = [];
+    seedLoginStreak(wallet, 100);
+    evaluateLoginStreakAchievements(wallet, (u) => unlocks.push(...u));
+    assert.ok(unlocks.some((u) => u.achievementId === "social-login-100"));
+    const at100 = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "social-login-100"
+    );
+    assert.equal(at100?.completed, true);
+    assert.equal(at100?.points, 150);
   });
 });
 

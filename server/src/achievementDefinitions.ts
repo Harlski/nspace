@@ -171,6 +171,7 @@ export type AchievementCriteria =
 
 /** Top-tier login-streak achievement - threshold resolved from env at runtime. */
 export const SOCIAL_LOGIN_TOP_ACHIEVEMENT_ID = "social-login-top";
+export const YOU_KAAN_DO_IT_ACHIEVEMENT_ID = "social-login-100";
 
 /** Sunny Side Up build milestone - threshold resolved from env at runtime (placeholder v1). */
 export const SUNNY_SIDE_UP_ACHIEVEMENT_ID = "build-sunny-side-up";
@@ -1194,6 +1195,15 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     points: 100,
     sortOrder: 3020,
     criteria: { type: "login_streak", threshold: 54 },
+  },
+  {
+    id: YOU_KAAN_DO_IT_ACHIEVEMENT_ID,
+    title: "You Kaan Do It",
+    description: "Log in on 100 consecutive UTC calendar days.",
+    category: "social",
+    points: 150,
+    sortOrder: 3022,
+    criteria: { type: "login_streak", threshold: 100 },
   },
   {
     id: "social-chatter-first",

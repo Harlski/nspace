@@ -382,7 +382,7 @@ import {
   peekDailyEarnRemaining,
   decideAndCommitGameplayEarn,
 } from "./dailyEarnAllowance.js";
-import { playerLevelFromPoints } from "./playerLevel.js";
+import { playerLevelFromPoints, canBeginClaimableBlockEarn } from "./playerLevel.js";
 import {
   goalieCollider as worldcupGoalieCollider,
   goalieLineX as worldcupGoalieLineX,
@@ -1706,6 +1706,12 @@ type OutMsg =
       amountNim?: string;
       /** True when Daily Earn Allowance partial-filled or zeroed this claim. */
       dailyEarnAllowanceBound?: boolean;
+      /** True when claim refused because Daily Earn remaining is 0 (hostage gate). */
+      dailyEarnAllowanceExhausted?: boolean;
+      /** After a successful capped earn: remaining NIM toward today's ceiling. */
+      dailyEarnRemainingNim?: string;
+      /** After a successful capped earn: today's ceiling NIM. */
+      dailyEarnCeilingNim?: string;
       /** Tutorial Room: mine completed Step 1 - client advances Step Coach to Pay. */
       tutorialMineComplete?: boolean;
     }
@@ -3051,7 +3057,12 @@ function finalizeClaimableBlockReward(
   now: number,
   sessionId: string,
   claimId: string
-): { rewardLuna: bigint; allowanceBound: boolean } {
+): {
+  rewardLuna: bigint;
+  allowanceBound: boolean;
+  remainingAfterLuna: bigint | null;
+  ceilingLuna: bigint | null;
+} {
   const proposedLuna = randomClaimRewardLuna();
   const cooldown = claimableCooldownMs(props);
   props.active = false;
@@ -3074,6 +3085,12 @@ function finalizeClaimableBlockReward(
     parts.length >= 3 && Number.isFinite(parts[2])
       ? Math.max(0, Math.min(STACK_MAX_LEVEL, Math.floor(parts[2]!)))
       : 0;
+  const points = totalPointsForWallet(address);
+  const peekBefore = peekDailyEarnRemaining({
+    wallet: address,
+    achievementPoints: points,
+    nowMs: now,
+  });
   const earn = enqueueGameplayPayIntent(
     {
       claimId,
@@ -3082,7 +3099,7 @@ function finalizeClaimableBlockReward(
       roomId,
       tileKey: tileKeyStr,
     },
-    totalPointsForWallet(address),
+    points,
     now
   );
   logGameplayEvent(sessionId, address, roomId, "claim_block", {
@@ -3094,7 +3111,38 @@ function finalizeClaimableBlockReward(
     proposedAmountLuna: proposedLuna.toString(),
     allowanceBound: earn.allowanceBound,
   });
-  return { rewardLuna: earn.payLuna, allowanceBound: earn.allowanceBound };
+  return {
+    rewardLuna: earn.payLuna,
+    allowanceBound: earn.allowanceBound,
+    remainingAfterLuna: earn.remainingAfterLuna,
+    ceilingLuna: peekBefore.ceilingLuna,
+  };
+}
+
+function formatDailyEarnNimLabel(luna: bigint): string {
+  const nim = Number(luna) / Number(LUNA_PER_NIM);
+  return nim.toFixed(2).replace(/\.?0+$/, "") || "0";
+}
+
+/** True when this room's claimable mines are gated by Daily Earn Allowance. */
+function isDailyEarnGatedBlockClaimRoom(roomId: string): boolean {
+  return !(
+    isTutorialRuntimeRoomId(roomId) || isTutorialStagingRoomId(roomId)
+  );
+}
+
+function sendDailyEarnAllowanceExhausted(
+  ws: WebSocket,
+  coords?: { x: number; z: number }
+): void {
+  wsSafeSend(ws, {
+    type: "blockClaimResult",
+    ok: false,
+    recoverable: false,
+    reason: "Daily NIM limit reached",
+    dailyEarnAllowanceExhausted: true,
+    ...(coords ? { x: coords.x, z: coords.z } : {}),
+  } satisfies OutMsg);
 }
 
 /** Tile keys that block floor movement (solid blocks; ramps are walkable). */
@@ -13636,6 +13684,18 @@ export function addClient(
         return;
       }
 
+      if (isDailyEarnGatedBlockClaimRoom(currentRoomId)) {
+        const earnPeek = peekDailyEarnRemaining({
+          wallet: address,
+          achievementPoints: totalPointsForWallet(address),
+          nowMs: now,
+        });
+        if (!canBeginClaimableBlockEarn(earnPeek.remainingLuna)) {
+          sendDailyEarnAllowanceExhausted(ws, { x: tile.x, z: tile.z });
+          return;
+        }
+      }
+
       const rk = blockClaimResKey(currentRoomId, tile.x, tile.z, tileY);
       const res = blockClaimReservation.get(rk);
       if (res && res.until > now && res.address !== address) {
@@ -14005,6 +14065,19 @@ export function addClient(
         return;
       }
 
+      if (isDailyEarnGatedBlockClaimRoom(currentRoomId)) {
+        const earnPeek = peekDailyEarnRemaining({
+          wallet: address,
+          achievementPoints: totalPointsForWallet(address),
+          nowMs: now,
+        });
+        if (!canBeginClaimableBlockEarn(earnPeek.remainingLuna)) {
+          releaseBlockClaimSession(claimId);
+          sendDailyEarnAllowanceExhausted(ws, { x: s.tileX, z: s.tileZ });
+          return;
+        }
+      }
+
       noteSpentBlockClaimId(claimId, now);
       releaseBlockClaimSession(claimId);
 
@@ -14017,13 +14090,32 @@ export function addClient(
         conn.sessionId,
         claimId
       );
+      const earnExtras: {
+        dailyEarnAllowanceBound?: boolean;
+        dailyEarnRemainingNim?: string;
+        dailyEarnCeilingNim?: string;
+      } = {};
+      if (claim.allowanceBound) {
+        earnExtras.dailyEarnAllowanceBound = true;
+      }
+      if (
+        claim.ceilingLuna !== null &&
+        claim.remainingAfterLuna !== null
+      ) {
+        earnExtras.dailyEarnRemainingNim = formatDailyEarnNimLabel(
+          claim.remainingAfterLuna
+        );
+        earnExtras.dailyEarnCeilingNim = formatDailyEarnNimLabel(
+          claim.ceilingLuna
+        );
+      }
       wsSafeSend(ws, {
           type: "blockClaimResult",
           ok: true,
           x: s.tileX,
           z: s.tileZ,
           amountNim: (Number(claim.rewardLuna) / 100_000).toFixed(4),
-          dailyEarnAllowanceBound: claim.allowanceBound || undefined,
+          ...earnExtras,
         } satisfies OutMsg);
       recordBlockMined(address, achievementUnlockHandler(ws));
       if (s.claimIntent === "direct_adjacent_click") {

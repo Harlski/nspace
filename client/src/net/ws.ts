@@ -586,6 +586,12 @@ export type ServerMessage =
       amountNim?: string;
       /** True when Daily Earn Allowance partial-filled or zeroed this claim. */
       dailyEarnAllowanceBound?: boolean;
+      /** True when claim refused because Daily Earn remaining is 0. */
+      dailyEarnAllowanceExhausted?: boolean;
+      /** After a successful capped earn: remaining NIM toward today's ceiling. */
+      dailyEarnRemainingNim?: string;
+      /** After a successful capped earn: today's ceiling NIM. */
+      dailyEarnCeilingNim?: string;
       /** Tutorial Room: mine completed Step 1 - advance Step Coach to Pay. */
       tutorialMineComplete?: boolean;
     }

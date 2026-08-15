@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   applyDailyEarnAllowance,
+  canBeginClaimableBlockEarn,
   dailyEarnAllowanceLuna,
   playerLevelFromPoints,
 } from "../src/playerLevel.js";
@@ -57,4 +58,14 @@ test("exhausted allowance pays zero", () => {
   });
   assert.equal(d.payLuna, 0n);
   assert.equal(d.allowanceBound, true);
+});
+
+test("claimable-block earn may begin when uncapped or remaining > 0", () => {
+  assert.equal(canBeginClaimableBlockEarn(null), true);
+  assert.equal(canBeginClaimableBlockEarn(1n), true);
+  assert.equal(canBeginClaimableBlockEarn(20_000n), true);
+});
+
+test("claimable-block earn refuses when Daily Earn remaining is 0", () => {
+  assert.equal(canBeginClaimableBlockEarn(0n), false);
 });

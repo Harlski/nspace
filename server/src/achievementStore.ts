@@ -154,7 +154,7 @@ function envInt(name: string, dflt: number): number {
   return Number.isFinite(n) && n >= 0 ? n : dflt;
 }
 
-/** Operator-configured top login-streak tier (Time of Kaan). Default 54 UTC days. */
+/** Operator-configured Time of Kaan login-streak tier (default 54 UTC days). */
 export function getAchievementLoginStreakTopThreshold(): number {
   return Math.max(1, envInt("ACHIEVEMENT_LOGIN_STREAK_TOP", 54));
 }

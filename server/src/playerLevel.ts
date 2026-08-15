@@ -64,3 +64,14 @@ export function applyDailyEarnAllowance(args: {
     remainingAfterLuna: remaining - payLuna,
   };
 }
+
+/**
+ * Whether a claimable-block earn may begin given peeked Daily Earn remaining.
+ * `null` remaining means uncapped (Level 11+).
+ */
+export function canBeginClaimableBlockEarn(
+  remainingLuna: bigint | null
+): boolean {
+  if (remainingLuna === null) return true;
+  return remainingLuna > 0n;
+}
