@@ -8026,6 +8026,7 @@ function enterGame(
           `room: ${d.roomId}`,
           `bounds: x [${b.minX}…${b.maxX}]  z [${b.minZ}…${b.maxZ}]`,
           `doors: ${d.doorCount}   obstacles: ${d.obstacleCount}   extra floor: ${d.extraFloorCount}`,
+          `mesh residency: ${d.meshResidentChunkCount} chunks · live blocks ${d.liveBlockMeshCount}/${d.obstacleCount} · floor ${d.walkableFloorMeshCount} · Q ${d.meshBuildPendingCount}`,
           `avatars: ${d.avatarCount} (${d.remotePlayerCount} remote)`,
           `pos: ${posStr}`,
           `zoom: ${d.zoomFrustum.toFixed(2)}   fog: ${d.fogEnabled ? "on" : "off"} (${d.fogInner.toFixed(1)} / ${d.fogOuter.toFixed(1)})`,

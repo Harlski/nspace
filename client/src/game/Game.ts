@@ -75,6 +75,7 @@ import {
   type NoWalkFloorCueResources,
 } from "./noWalkFloorCue.js";
 import { FogOfWarPass } from "./fogOfWar.js";
+import { forEachPaddedTileOnSegment } from "./signpostHintOcclusion.js";
 // worldcup: seasonal soccer rendering (feature-flagged, deletable)
 import type { BallWire, WorldcupPortalWire } from "../net/ws.js";
 import {
@@ -249,6 +250,7 @@ import {
   VIEW_INTEREST_PADDING_TILES,
   type ViewInterestRect,
 } from "./interestChunks.js";
+import { nextResidentChunks } from "./meshResidency.js";
 import {
   type BlockStyleProps,
   blockColorRgbToHueDeg,
@@ -1482,7 +1484,25 @@ export class Game {
   private readonly signpostHintOcclCamW = new THREE.Vector3();
   private readonly signpostHintOcclHintW = new THREE.Vector3();
   private readonly signpostHintOcclDirW = new THREE.Vector3();
-  private readonly signpostHintOcclBlkRoots: THREE.Object3D[] = [];
+  /** Floor-tile → block groups for signpost occlusion narrowphase (lazy; dirty on mesh sync). */
+  private readonly signpostHintOcclByTile = new Map<string, THREE.Object3D[]>();
+  private readonly signpostHintOcclCandBuf: THREE.Object3D[] = [];
+  private readonly signpostHintOcclCandSet = new Set<THREE.Object3D>();
+  private readonly signpostHintGroupsBuf: THREE.Group[] = [];
+  /** When true, `signpostHintOcclByTile` must be rebuilt before the next walk-mode occl pass. */
+  private signpostHintOcclIndexDirty = true;
+  /** Chebyshev pad (tiles) around camera→hint XZ segment for occlusion candidates. */
+  private static readonly SIGNPOST_HINT_OCCL_TILE_PAD = 1;
+  /**
+   * Chunks with live terrain/floor meshes (mesh-only residency). Data stays in
+   * placedObjects / floor key sets. See `.scratch/mesh-residency/PRD.md`.
+   */
+  private meshResidentChunks = new Set<string>();
+  private lastMeshResidencySig = "";
+  private readonly meshBuildQueue: string[] = [];
+  private readonly meshBuildQueueSet = new Set<string>();
+  /** Max obstacle keys to mesh per tick while filling newly resident chunks. */
+  private static readonly MESH_BUILD_KEYS_PER_TICK = 48;
   private readonly ndc = new THREE.Vector2();
   private readonly hit = new THREE.Vector3();
   private selfAddress = "";
@@ -3020,6 +3040,12 @@ export class Game {
     buildMode: boolean;
     floorExpandMode: boolean;
     walkableFloorMeshCount: number;
+    /** Chunks with live terrain/floor meshes (mesh residency). */
+    meshResidentChunkCount: number;
+    /** Live fancy + counted toward scene (excludes pure data). */
+    liveBlockMeshCount: number;
+    /** Obstacle keys waiting for budgeted mesh build. */
+    meshBuildPendingCount: number;
     lastSceneMutation: { reason: string; msAgo: number } | null;
   } {
     const self = this.selfMesh;
@@ -3046,6 +3072,10 @@ export class Game {
       buildMode: this.buildMode,
       floorExpandMode: this.floorExpandMode,
       walkableFloorMeshCount: this.walkableFloorMeshes.size,
+      meshResidentChunkCount: this.meshResidentChunks.size,
+      liveBlockMeshCount:
+        this.blockMeshes.size + this.plainCubeInstancedTileKeys.size,
+      meshBuildPendingCount: this.meshBuildQueue.length,
       lastSceneMutation: this.lastSceneMutation
         ? {
             reason: this.lastSceneMutation.reason,
@@ -3114,6 +3144,11 @@ export class Game {
       disposePlacedBlockGroupContents(mesh);
     }
     this.blockMeshes.clear();
+    this.invalidateSignpostHintOcclIndex();
+    this.meshResidentChunks.clear();
+    this.lastMeshResidencySig = "";
+    this.meshBuildQueue.length = 0;
+    this.meshBuildQueueSet.clear();
     this.disposePlainCubeInstancedMeshes();
     this.clearTeleporterMarkers();
 
@@ -3619,6 +3654,14 @@ export class Game {
 
   getViewInterestRect(): ViewInterestRect | null {
     if (!roomUsesSpatialInterest(this.roomBounds)) return null;
+    return this.getClientResidencyRect();
+  }
+
+  /**
+   * Frustum + padding rect used for **mesh residency** in every room (including
+   * Commons). Same math as server view interest; not gated on spatial room size.
+   */
+  getClientResidencyRect(): ViewInterestRect {
     const cx = this.streamInterestCenterOverride?.x ?? this.cameraLookAt.x;
     const cz = this.streamInterestCenterOverride?.z ?? this.cameraLookAt.z;
     const pad = VIEW_INTEREST_PADDING_TILES;
@@ -4220,11 +4263,68 @@ export class Game {
    * True when some other placed block lies between the camera and `hintWorld`
    * (same logic as `pickBlockKey` root walk, but skips hits on `ownGroup`).
    */
+  /** Bucket non-instanced block groups by floor tile for occlusion narrowphase. */
+  private invalidateSignpostHintOcclIndex(): void {
+    this.signpostHintOcclIndexDirty = true;
+  }
+
+  private rebuildSignpostHintOcclTileIndex(): void {
+    if (!this.signpostHintOcclIndexDirty) return;
+    const byTile = this.signpostHintOcclByTile;
+    byTile.clear();
+    for (const rg of this.blockMeshes.values()) {
+      const meshKey = rg.userData.tileKey as string | undefined;
+      if (!meshKey) continue;
+      const parts = meshKey.split(",");
+      if (parts.length < 2) continue;
+      const floorK = `${parts[0]},${parts[1]}`;
+      let arr = byTile.get(floorK);
+      if (!arr) {
+        arr = [];
+        byTile.set(floorK, arr);
+      }
+      arr.push(rg);
+    }
+    this.signpostHintOcclIndexDirty = false;
+  }
+
+  /**
+   * Blocks that might sit on the camera→hint ray: plain-cube batches (few meshes)
+   * plus groups on floor tiles along the XZ segment (padded).
+   */
+  private collectSignpostHintOcclCandidates(
+    hintWorld: THREE.Vector3
+  ): THREE.Object3D[] {
+    const set = this.signpostHintOcclCandSet;
+    set.clear();
+    for (const im of this.plainCubeInstancedMeshes) {
+      set.add(im);
+    }
+    const cam = this.signpostHintOcclCamW;
+    forEachPaddedTileOnSegment(
+      cam.x,
+      cam.z,
+      hintWorld.x,
+      hintWorld.z,
+      Game.SIGNPOST_HINT_OCCL_TILE_PAD,
+      (tx, tz) => {
+        const arr = this.signpostHintOcclByTile.get(`${tx},${tz}`);
+        if (!arr) return;
+        for (const o of arr) set.add(o);
+      }
+    );
+    const buf = this.signpostHintOcclCandBuf;
+    buf.length = 0;
+    for (const o of set) buf.push(o);
+    return buf;
+  }
+
   private isSignpostHintOccludedByForeground(
     ownGroup: THREE.Group,
     hintWorld: THREE.Vector3,
     roots: THREE.Object3D[]
   ): boolean {
+    if (roots.length === 0) return false;
     this.camera.updateMatrixWorld();
     this.camera.getWorldPosition(this.signpostHintOcclCamW);
     this.signpostHintOcclDirW.copy(hintWorld).sub(this.signpostHintOcclCamW);
@@ -13220,6 +13320,11 @@ export class Game {
       disposePlacedBlockGroupContents(mesh);
     }
     this.blockMeshes.clear();
+    this.invalidateSignpostHintOcclIndex();
+    this.meshResidentChunks.clear();
+    this.lastMeshResidencySig = "";
+    this.meshBuildQueue.length = 0;
+    this.meshBuildQueueSet.clear();
     this.disposePlainCubeInstancedMeshes();
     for (const [, mesh] of this.walkableFloorMeshes) {
       this.scene.remove(mesh);
@@ -13944,40 +14049,8 @@ export class Game {
   }
 
   private syncWalkableFloorMeshes(): void {
-    const b = this.roomBounds;
-    const seen = new Set<string>();
-    for (let x = b.minX; x <= b.maxX; x++) {
-      for (let z = b.minZ; z <= b.maxZ; z++) {
-        const bk = tileKey(x, z);
-        if (this.removedBaseFloorKeys.has(bk)) continue;
-        seen.add(bk);
-      }
-    }
-    for (const k of this.extraFloorKeys) {
-      seen.add(k);
-    }
-
-    for (const k of seen) {
-      this.upsertWalkableFloorMeshAtKey(k);
-    }
-    for (const [k, mesh] of [...this.walkableFloorMeshes]) {
-      if (!seen.has(k)) {
-        this.scene.remove(mesh);
-        disposeWalkableFloorMeshMaterials(mesh);
-        this.walkableFloorMeshes.delete(k);
-      }
-    }
-    for (const [k, marker] of [...this.doorMarkerMeshes]) {
-      if (!seen.has(k)) {
-        this.scene.remove(marker);
-        marker.geometry.dispose();
-        (marker.material as THREE.Material).dispose();
-        this.doorMarkerMeshes.delete(k);
-      }
-    }
-    this.applyFloorTileQuadScale();
-    /** Obstacles often sync before extra-floor quads on welcome; re-append so depth ties favor blocks over coplanar floor tops. */
-    this.bringPlacedBlockGroupsToSceneTail();
+    this.refreshMeshResidency();
+    this.syncResidentWalkableFloors();
   }
 
   /** Re-add block groups after floor sync so they render after new/updated floor meshes (same renderOrder, equal-depth ties). */
@@ -14041,6 +14114,12 @@ export class Game {
       const wyLevel = Number.isFinite(parts[2]) ? Math.floor(parts[2]!) : 0;
       const meta = this.gateRepositionPlacedRenderMeta(wx, wz, wyLevel, metaRaw);
       if (!canUsePlainCubeInstancing(meta)) continue;
+      if (
+        this.meshResidentChunks.size > 0 &&
+        !this.meshResidentChunks.has(tileChunkKey(wx, wz))
+      ) {
+        continue;
+      }
       if (
         wyLevel === 0 &&
         this.billboardFootprintFloorKeys.has(`${wx},${wz}`)
@@ -14657,6 +14736,7 @@ export class Game {
   }
 
   private syncBlockMeshesForKeys(keys: ReadonlySet<string>): void {
+    let occlIndexTouched = false;
     for (const k of keys) {
       const metaRaw = this.placedObjects.get(k);
       if (!metaRaw) {
@@ -14665,6 +14745,17 @@ export class Game {
           this.scene.remove(mesh);
           disposePlacedBlockGroupContents(mesh);
           this.blockMeshes.delete(k);
+          occlIndexTouched = true;
+        }
+        continue;
+      }
+      if (!this.blockKeyInResidentChunks(k)) {
+        const mesh = this.blockMeshes.get(k);
+        if (mesh) {
+          this.scene.remove(mesh);
+          disposePlacedBlockGroupContents(mesh);
+          this.blockMeshes.delete(k);
+          occlIndexTouched = true;
         }
         continue;
       }
@@ -14682,6 +14773,7 @@ export class Game {
           this.scene.remove(g);
           disposePlacedBlockGroupContents(g);
           this.blockMeshes.delete(k);
+          occlIndexTouched = true;
         }
         continue;
       }
@@ -14690,6 +14782,7 @@ export class Game {
           this.scene.remove(g);
           disposePlacedBlockGroupContents(g);
           this.blockMeshes.delete(k);
+          occlIndexTouched = true;
         }
         continue;
       }
@@ -14698,6 +14791,7 @@ export class Game {
           this.scene.remove(g);
           disposePlacedBlockGroupContents(g);
           this.blockMeshes.delete(k);
+          occlIndexTouched = true;
         }
         continue;
       }
@@ -14706,6 +14800,7 @@ export class Game {
           this.scene.remove(g);
           disposePlacedBlockGroupContents(g);
           this.blockMeshes.delete(k);
+          occlIndexTouched = true;
         }
         continue;
       }
@@ -14786,6 +14881,10 @@ export class Game {
       g.position.set(wx, wyLevel * BLOCK_SIZE + (h * vis) / 2, wz);
       this.scene.add(g);
       this.blockMeshes.set(k, g);
+      occlIndexTouched = true;
+    }
+    if (occlIndexTouched) {
+      this.invalidateSignpostHintOcclIndex();
     }
     this.syncPlainCubeInstancedMeshes(keys);
     this.syncSaleDisplayFootVisibility();
@@ -14809,9 +14908,191 @@ export class Game {
   }
 
   private syncBlockMeshes(): void {
-    const keys = new Set(this.placedObjects.keys());
-    for (const k of this.blockMeshes.keys()) keys.add(k);
+    this.refreshMeshResidency();
+    const keys = new Set<string>();
+    for (const k of this.placedObjects.keys()) {
+      if (this.blockKeyInResidentChunks(k)) keys.add(k);
+    }
+    for (const k of this.blockMeshes.keys()) {
+      if (!this.blockKeyInResidentChunks(k)) keys.add(k);
+    }
+    if (keys.size > Game.MESH_BUILD_KEYS_PER_TICK * 3) {
+      this.disposeMeshesOutsideResidentChunks();
+      this.enqueueMissingResidentBlockMeshes();
+      this.syncResidentWalkableFloors();
+      this.processMeshBuildBudget();
+      return;
+    }
     this.syncBlockMeshesForKeys(keys);
+    this.syncResidentWalkableFloors();
+  }
+
+  private blockKeyInResidentChunks(blockKeyStr: string): boolean {
+    const parts = blockKeyStr.split(",").map(Number);
+    const x = parts[0];
+    const z = parts[1];
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+    return this.meshResidentChunks.has(tileChunkKey(x!, z!));
+  }
+
+  private sameChunkSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+    if (a.size !== b.size) return false;
+    for (const c of a) {
+      if (!b.has(c)) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Recompute which chunks keep live meshes from the client residency rect.
+   * Disposes off-keep meshes; enqueues missing resident obstacle meshes.
+   */
+  private refreshMeshResidency(): void {
+    const rect = this.getClientResidencyRect();
+    const rectSig = `${rect.centerX.toFixed(2)},${rect.centerZ.toFixed(2)},${rect.halfW.toFixed(2)},${rect.halfH.toFixed(2)}`;
+    const next = nextResidentChunks(this.meshResidentChunks, rect);
+    if (
+      rectSig === this.lastMeshResidencySig &&
+      this.sameChunkSet(next, this.meshResidentChunks)
+    ) {
+      return;
+    }
+    this.lastMeshResidencySig = rectSig;
+    const changed = !this.sameChunkSet(next, this.meshResidentChunks);
+    this.meshResidentChunks = next;
+    if (!changed && this.meshBuildQueue.length === 0) return;
+    this.disposeMeshesOutsideResidentChunks();
+    this.enqueueMissingResidentBlockMeshes();
+    this.syncResidentWalkableFloors();
+  }
+
+  private disposeMeshesOutsideResidentChunks(): void {
+    let touched = false;
+    for (const [k, g] of [...this.blockMeshes]) {
+      if (this.blockKeyInResidentChunks(k)) continue;
+      this.scene.remove(g);
+      disposePlacedBlockGroupContents(g);
+      this.blockMeshes.delete(k);
+      touched = true;
+    }
+    if (touched) this.invalidateSignpostHintOcclIndex();
+
+    const kept: THREE.InstancedMesh[] = [];
+    for (const mesh of this.plainCubeInstancedMeshes) {
+      const batchKey = mesh.userData["plainCubeBatchKey"] as string | undefined;
+      const chunk = batchKey?.split("|")[0];
+      if (chunk && !this.meshResidentChunks.has(chunk)) {
+        this.scene.remove(mesh);
+        const tileKeys = mesh.userData["plainCubeTileKeys"] as
+          | string[]
+          | undefined;
+        if (tileKeys) {
+          for (const tk of tileKeys) this.plainCubeInstancedTileKeys.delete(tk);
+        }
+      } else {
+        kept.push(mesh);
+      }
+    }
+    if (kept.length !== this.plainCubeInstancedMeshes.length) {
+      this.plainCubeInstancedMeshes.length = 0;
+      this.plainCubeInstancedMeshes.push(...kept);
+      this.plainCubeInstanceRenderSig = "";
+    }
+
+    for (const k of [...this.meshBuildQueueSet]) {
+      if (this.blockKeyInResidentChunks(k)) continue;
+      this.meshBuildQueueSet.delete(k);
+    }
+    if (this.meshBuildQueueSet.size !== this.meshBuildQueue.length) {
+      const filtered = this.meshBuildQueue.filter((k) =>
+        this.meshBuildQueueSet.has(k)
+      );
+      this.meshBuildQueue.length = 0;
+      this.meshBuildQueue.push(...filtered);
+    }
+  }
+
+  private enqueueMissingResidentBlockMeshes(): void {
+    for (const k of this.placedObjects.keys()) {
+      if (!this.blockKeyInResidentChunks(k)) continue;
+      if (this.hasRenderedBlockAtKey(k)) continue;
+      if (this.meshBuildQueueSet.has(k)) continue;
+      this.meshBuildQueueSet.add(k);
+      this.meshBuildQueue.push(k);
+    }
+  }
+
+  /** @returns true if more work remains. */
+  private processMeshBuildBudget(): boolean {
+    if (this.meshBuildQueue.length === 0) return false;
+    const batch = new Set<string>();
+    const n = Math.min(
+      Game.MESH_BUILD_KEYS_PER_TICK,
+      this.meshBuildQueue.length
+    );
+    for (let i = 0; i < n; i++) {
+      const k = this.meshBuildQueue.shift();
+      if (k === undefined) break;
+      this.meshBuildQueueSet.delete(k);
+      if (!this.placedObjects.has(k)) continue;
+      if (!this.blockKeyInResidentChunks(k)) continue;
+      if (this.hasRenderedBlockAtKey(k)) continue;
+      batch.add(k);
+    }
+    if (batch.size > 0) {
+      this.syncBlockMeshesForKeys(batch);
+      this.markSceneMutation(`meshBuildBudget:${batch.size}`);
+    }
+    return this.meshBuildQueue.length > 0;
+  }
+
+  private syncResidentWalkableFloors(): void {
+    if (this.meshResidentChunks.size === 0) return;
+    const seen = new Set<string>();
+    const b = this.roomBounds;
+    for (const ck of this.meshResidentChunks) {
+      for (const { x, z } of this.tilesInFloorChunk(ck, b)) {
+        const k = tileKey(x, z);
+        if (this.removedBaseFloorKeys.has(k)) continue;
+        seen.add(k);
+      }
+    }
+    for (const k of this.extraFloorKeys) {
+      const parts = k.split(",").map(Number);
+      if (
+        Number.isFinite(parts[0]) &&
+        Number.isFinite(parts[1]) &&
+        this.meshResidentChunks.has(tileChunkKey(parts[0]!, parts[1]!))
+      ) {
+        seen.add(k);
+      }
+    }
+
+    for (const k of seen) {
+      this.upsertWalkableFloorMeshAtKey(k);
+    }
+    for (const [k, mesh] of [...this.walkableFloorMeshes]) {
+      if (!seen.has(k)) {
+        this.scene.remove(mesh);
+        disposeWalkableFloorMeshMaterials(mesh);
+        this.walkableFloorMeshes.delete(k);
+      }
+    }
+    for (const [k, marker] of [...this.doorMarkerMeshes]) {
+      if (!seen.has(k)) {
+        this.scene.remove(marker);
+        marker.geometry.dispose();
+        (marker.material as THREE.Material).dispose();
+        this.doorMarkerMeshes.delete(k);
+      }
+    }
+    this.applyFloorTileQuadScale();
+    if (this.floorVisualUseSingleBatch()) {
+      this.rebuildWalkableFloorVisualMeshes();
+    } else {
+      this.rebuildWalkableFloorVisualMeshes(this.meshResidentChunks);
+    }
+    this.bringPlacedBlockGroupsToSceneTail();
   }
 
   private obstacleHeight(meta: BlockStyleProps): number {
@@ -16060,24 +16341,28 @@ export class Game {
 
   private updateSignpostHintSprites(): boolean {
     const t = this.mineableSparkleAnimTime;
-    let any = false;
     const px = this.selfMesh?.position.x ?? this.cameraLookAt.x;
     const pz = this.selfMesh?.position.z ?? this.cameraLookAt.z;
     const build = this.buildMode;
     const docLoaded = this.signpostHintDocTexture !== null;
     const hoverFloor = this.signboardHoverFloorKey;
-    const occlRootsBuf = this.signpostHintOcclBlkRoots;
-    let occlRoots: THREE.Object3D[] | null = null;
-    if (docLoaded && !build) {
-      occlRootsBuf.length = 0;
-      for (const rg of this.blockMeshes.values()) occlRootsBuf.push(rg);
-      for (const im of this.plainCubeInstancedMeshes) occlRootsBuf.push(im);
-      occlRoots = occlRootsBuf;
-    }
+
+    const hintGroups = this.signpostHintGroupsBuf;
+    hintGroups.length = 0;
     for (const g of this.blockMeshes.values()) {
-      const sp = g.userData.signpostHintSprite as THREE.Sprite | undefined;
-      if (!sp) continue;
-      any = true;
+      if (g.userData.signpostHintSprite) hintGroups.push(g);
+    }
+    if (hintGroups.length === 0) return false;
+
+    const needOccl = docLoaded && !build;
+    if (needOccl) {
+      this.rebuildSignpostHintOcclTileIndex();
+      this.camera.updateMatrixWorld();
+      this.camera.getWorldPosition(this.signpostHintOcclCamW);
+    }
+
+    for (const g of hintGroups) {
+      const sp = g.userData.signpostHintSprite as THREE.Sprite;
       const mat = sp.material as THREE.SpriteMaterial;
       const baseY = g.userData.signpostHintBaseY as number;
       sp.position.y =
@@ -16098,13 +16383,16 @@ export class Game {
         let geoHidden = false;
         if (meshKey && this.isSignpostHintOccludedByStack(meshKey)) {
           geoHidden = true;
-        } else if (occlRoots) {
+        } else if (needOccl) {
           g.updateMatrixWorld(true);
           sp.getWorldPosition(this.signpostHintOcclHintW);
+          const candidates = this.collectSignpostHintOcclCandidates(
+            this.signpostHintOcclHintW
+          );
           geoHidden = this.isSignpostHintOccludedByForeground(
             g,
             this.signpostHintOcclHintW,
-            occlRoots
+            candidates
           );
         }
         if (geoHidden) {
@@ -16122,7 +16410,7 @@ export class Game {
         }
       }
     }
-    return any;
+    return true;
   }
 
   tick(dt: number): void {
@@ -16290,12 +16578,14 @@ export class Game {
     const hasSignpostHintMotion = this.updateSignpostHintSprites();
     const hasTutorialMineHighlight = this.tutorialMineHighlightTile !== null;
     const hasTutorialAttentionCue = this.tutorialAttentionCueGroups.size > 0;
+    const meshBuildPending = this.processMeshBuildBudget();
     if (
       visualActive ||
       hasMineableSparkles ||
       hasSignpostHintMotion ||
       hasTutorialMineHighlight ||
-      hasTutorialAttentionCue
+      hasTutorialAttentionCue ||
+      meshBuildPending
     ) {
       this.requestRender(250);
     }
@@ -16372,70 +16662,74 @@ export class Game {
   }
 
   private applyCameraPose(): void {
-    const targetX = this.cameraLookAt.x + this.cameraLookAhead.x;
-    const targetY = this.cameraLookAt.y + this.cameraLookAhead.y;
-    const targetZ = this.cameraLookAt.z + this.cameraLookAhead.z;
+    try {
+      const targetX = this.cameraLookAt.x + this.cameraLookAhead.x;
+      const targetY = this.cameraLookAt.y + this.cameraLookAhead.y;
+      const targetZ = this.cameraLookAt.z + this.cameraLookAhead.z;
 
-    if (this.streamPresentationActive) {
-      const blend = this.streamCameraPoseBlend;
+      if (this.streamPresentationActive) {
+        const blend = this.streamCameraPoseBlend;
 
-      if (blend <= 0) {
+        if (blend <= 0) {
+          this.camera.position.set(
+            targetX,
+            targetY + STREAM_CAMERA_HEIGHT,
+            targetZ
+          );
+          this.camera.up.set(0, 0, -1);
+          this.camera.lookAt(targetX, targetY, targetZ);
+          return;
+        }
+
+        const topX = targetX;
+        const topY = targetY + STREAM_CAMERA_HEIGHT;
+        const topZ = targetZ;
+
+        const v = this.cameraOrbitOffsetScratch
+          .copy(this.cameraOffsetBase)
+          .applyAxisAngle(this.worldUp, this.cameraOrbitYawRad);
+        const isoX = this.cameraLookAt.x + v.x + this.cameraLookAhead.x;
+        const isoY = this.cameraLookAt.y + v.y + this.cameraLookAhead.y;
+        const isoZ = this.cameraLookAt.z + v.z + this.cameraLookAhead.z;
+
+        if (blend >= 1) {
+          this.camera.up.copy(this.worldUp);
+          this.camera.position.set(isoX, isoY, isoZ);
+          this.camera.lookAt(targetX, targetY, targetZ);
+          return;
+        }
+
         this.camera.position.set(
-          targetX,
-          targetY + STREAM_CAMERA_HEIGHT,
-          targetZ
+          topX + (isoX - topX) * blend,
+          topY + (isoY - topY) * blend,
+          topZ + (isoZ - topZ) * blend
         );
-        this.camera.up.set(0, 0, -1);
+        this.streamTopDownUpScratch.set(0, 0, -1);
+        this.camera.up
+          .copy(this.streamTopDownUpScratch)
+          .lerp(this.worldUp, blend)
+          .normalize();
         this.camera.lookAt(targetX, targetY, targetZ);
         return;
       }
 
-      const topX = targetX;
-      const topY = targetY + STREAM_CAMERA_HEIGHT;
-      const topZ = targetZ;
-
+      this.camera.up.copy(this.worldUp);
       const v = this.cameraOrbitOffsetScratch
         .copy(this.cameraOffsetBase)
         .applyAxisAngle(this.worldUp, this.cameraOrbitYawRad);
-      const isoX = this.cameraLookAt.x + v.x + this.cameraLookAhead.x;
-      const isoY = this.cameraLookAt.y + v.y + this.cameraLookAhead.y;
-      const isoZ = this.cameraLookAt.z + v.z + this.cameraLookAhead.z;
-
-      if (blend >= 1) {
-        this.camera.up.copy(this.worldUp);
-        this.camera.position.set(isoX, isoY, isoZ);
-        this.camera.lookAt(targetX, targetY, targetZ);
-        return;
-      }
-
       this.camera.position.set(
-        topX + (isoX - topX) * blend,
-        topY + (isoY - topY) * blend,
-        topZ + (isoZ - topZ) * blend
+        this.cameraLookAt.x + v.x + this.cameraLookAhead.x,
+        this.cameraLookAt.y + v.y + this.cameraLookAhead.y,
+        this.cameraLookAt.z + v.z + this.cameraLookAhead.z
       );
-      this.streamTopDownUpScratch.set(0, 0, -1);
-      this.camera.up
-        .copy(this.streamTopDownUpScratch)
-        .lerp(this.worldUp, blend)
-        .normalize();
-      this.camera.lookAt(targetX, targetY, targetZ);
-      return;
+      this.camera.lookAt(
+        this.cameraLookAt.x + this.cameraLookAhead.x,
+        this.cameraLookAt.y + this.cameraLookAhead.y,
+        this.cameraLookAt.z + this.cameraLookAhead.z
+      );
+    } finally {
+      this.refreshMeshResidency();
     }
-
-    this.camera.up.copy(this.worldUp);
-    const v = this.cameraOrbitOffsetScratch
-      .copy(this.cameraOffsetBase)
-      .applyAxisAngle(this.worldUp, this.cameraOrbitYawRad);
-    this.camera.position.set(
-      this.cameraLookAt.x + v.x + this.cameraLookAhead.x,
-      this.cameraLookAt.y + v.y + this.cameraLookAhead.y,
-      this.cameraLookAt.z + v.z + this.cameraLookAhead.z
-    );
-    this.camera.lookAt(
-      this.cameraLookAt.x + this.cameraLookAhead.x,
-      this.cameraLookAt.y + this.cameraLookAhead.y,
-      this.cameraLookAt.z + this.cameraLookAhead.z
-    );
   }
 
   private updateStreamCameraAnims(): void {
