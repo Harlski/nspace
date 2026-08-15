@@ -1498,11 +1498,15 @@ export class Game {
    * placedObjects / floor key sets. See `.scratch/mesh-residency/PRD.md`.
    */
   private meshResidentChunks = new Set<string>();
-  private lastMeshResidencySig = "";
+  /** Sorted chunk-set signature; residency side-effects only when this changes. */
+  private lastMeshResidencyChunkSig = "";
   private readonly meshBuildQueue: string[] = [];
   private readonly meshBuildQueueSet = new Set<string>();
   /** Max obstacle keys to mesh per tick while filling newly resident chunks. */
   private static readonly MESH_BUILD_KEYS_PER_TICK = 48;
+  /** Extra-floor tile keys grouped by chunk for incremental residency (avoids O(all) scans). */
+  private readonly extraFloorKeysByChunk = new Map<string, string[]>();
+  private readonly placedObjectKeysByChunk = new Map<string, string[]>();
   private readonly ndc = new THREE.Vector2();
   private readonly hit = new THREE.Vector3();
   private selfAddress = "";
@@ -3146,9 +3150,11 @@ export class Game {
     this.blockMeshes.clear();
     this.invalidateSignpostHintOcclIndex();
     this.meshResidentChunks.clear();
-    this.lastMeshResidencySig = "";
+    this.lastMeshResidencyChunkSig = "";
     this.meshBuildQueue.length = 0;
     this.meshBuildQueueSet.clear();
+    this.extraFloorKeysByChunk.clear();
+    this.placedObjectKeysByChunk.clear();
     this.disposePlainCubeInstancedMeshes();
     this.clearTeleporterMarkers();
 
@@ -8405,6 +8411,7 @@ export class Game {
           : TERRAIN_TILE_EXTRA_COLOR
       );
     }
+    this.rebuildExtraFloorChunkIndex();
     this.baseFloorColorByKey.clear();
     for (const t of opts.baseFloorColorTiles ?? []) {
       if (t.colorRgb === undefined) continue;
@@ -8452,6 +8459,7 @@ export class Game {
           : TERRAIN_TILE_EXTRA_COLOR
       );
     }
+    this.rebuildExtraFloorChunkIndex();
     if (roomUsesSpatialInterest(this.roomBounds)) {
       const chunkKeys = interestChunksForTileKeys([
         ...this.extraFloorKeys,
@@ -8489,6 +8497,7 @@ export class Game {
           : TERRAIN_TILE_EXTRA_COLOR
       );
     }
+    this.rebuildExtraFloorChunkIndex();
     this.syncWalkableFloorTiles([
       ...remove,
       ...add.map((t) => tileKey(t.x, t.z)),
@@ -9774,6 +9783,7 @@ export class Game {
         this.blockingTileKeys.add(tileKey(t.x, t.z));
       }
     }
+    this.rebuildPlacedObjectChunkIndex();
     this.syncBlockMeshes();
     this.refreshPathLine();
     this.refreshSelectionOutline();
@@ -9941,6 +9951,7 @@ export class Game {
       changedKeys.add(blockKey(t.x, t.z, y));
     }
     this.syncBlockMeshesForKeys(changedKeys);
+    this.rebuildPlacedObjectChunkIndex();
     if (!this.streamPresentationActive) {
       this.refreshPathLine();
       this.syncPlacementRangeHints();
@@ -13322,9 +13333,11 @@ export class Game {
     this.blockMeshes.clear();
     this.invalidateSignpostHintOcclIndex();
     this.meshResidentChunks.clear();
-    this.lastMeshResidencySig = "";
+    this.lastMeshResidencyChunkSig = "";
     this.meshBuildQueue.length = 0;
     this.meshBuildQueueSet.clear();
+    this.extraFloorKeysByChunk.clear();
+    this.placedObjectKeysByChunk.clear();
     this.disposePlainCubeInstancedMeshes();
     for (const [, mesh] of this.walkableFloorMeshes) {
       this.scene.remove(mesh);
@@ -14909,9 +14922,9 @@ export class Game {
 
   private syncBlockMeshes(): void {
     this.refreshMeshResidency();
-    this.disposeMeshesOutsideResidentChunks();
+    // Obstacles may arrive into chunks that are already resident (welcome / full
+    // replace) — always enqueue gaps; do not rely on chunk-set changes alone.
     this.enqueueMissingResidentBlockMeshes();
-    this.syncResidentWalkableFloors();
     this.processMeshBuildBudget();
   }
 
@@ -14923,35 +14936,73 @@ export class Game {
     return this.meshResidentChunks.has(tileChunkKey(x!, z!));
   }
 
-  private sameChunkSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
-    if (a.size !== b.size) return false;
-    for (const c of a) {
-      if (!b.has(c)) return false;
+  private chunkSetSignature(chunks: ReadonlySet<string>): string {
+    return [...chunks].sort().join(";");
+  }
+
+  private rebuildExtraFloorChunkIndex(): void {
+    this.extraFloorKeysByChunk.clear();
+    for (const k of this.extraFloorKeys) {
+      const parts = k.split(",").map(Number);
+      if (!Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) continue;
+      const ck = tileChunkKey(parts[0]!, parts[1]!);
+      let arr = this.extraFloorKeysByChunk.get(ck);
+      if (!arr) {
+        arr = [];
+        this.extraFloorKeysByChunk.set(ck, arr);
+      }
+      arr.push(k);
     }
-    return true;
+  }
+
+  private rebuildPlacedObjectChunkIndex(): void {
+    this.placedObjectKeysByChunk.clear();
+    for (const k of this.placedObjects.keys()) {
+      const parts = k.split(",").map(Number);
+      if (!Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) continue;
+      const ck = tileChunkKey(parts[0]!, parts[1]!);
+      let arr = this.placedObjectKeysByChunk.get(ck);
+      if (!arr) {
+        arr = [];
+        this.placedObjectKeysByChunk.set(ck, arr);
+      }
+      arr.push(k);
+    }
   }
 
   /**
    * Recompute which chunks keep live meshes from the client residency rect.
-   * Disposes off-keep meshes; enqueues missing resident obstacle meshes.
+   * Side-effects (dispose / enqueue / floor sync) run only when the chunk set
+   * changes — not on every camera pan within the same chunks.
    */
   private refreshMeshResidency(): void {
     const rect = this.getClientResidencyRect();
-    const rectSig = `${rect.centerX.toFixed(2)},${rect.centerZ.toFixed(2)},${rect.halfW.toFixed(2)},${rect.halfH.toFixed(2)}`;
     const next = nextResidentChunks(this.meshResidentChunks, rect);
-    if (
-      rectSig === this.lastMeshResidencySig &&
-      this.sameChunkSet(next, this.meshResidentChunks)
-    ) {
+    const nextSig = this.chunkSetSignature(next);
+    if (nextSig === this.lastMeshResidencyChunkSig) {
       return;
     }
-    this.lastMeshResidencySig = rectSig;
-    const changed = !this.sameChunkSet(next, this.meshResidentChunks);
+    const prev = this.meshResidentChunks;
+    const entered = new Set<string>();
+    const left = new Set<string>();
+    for (const c of next) {
+      if (!prev.has(c)) entered.add(c);
+    }
+    for (const c of prev) {
+      if (!next.has(c)) left.add(c);
+    }
     this.meshResidentChunks = next;
-    if (!changed && this.meshBuildQueue.length === 0) return;
-    this.disposeMeshesOutsideResidentChunks();
-    this.enqueueMissingResidentBlockMeshes();
-    this.syncResidentWalkableFloors();
+    this.lastMeshResidencyChunkSig = nextSig;
+
+    if (left.size > 0) {
+      this.disposeMeshesOutsideResidentChunks();
+    }
+    if (entered.size > 0) {
+      this.enqueueMissingResidentBlockMeshesForChunks(entered);
+    }
+    if (entered.size > 0 || left.size > 0) {
+      this.syncResidentWalkableFloorsIncremental(entered, left);
+    }
   }
 
   private disposeMeshesOutsideResidentChunks(): void {
@@ -15000,14 +15051,27 @@ export class Game {
     }
   }
 
-  private enqueueMissingResidentBlockMeshes(): void {
-    for (const k of this.placedObjects.keys()) {
-      if (!this.blockKeyInResidentChunks(k)) continue;
-      if (this.hasRenderedBlockAtKey(k)) continue;
-      if (this.meshBuildQueueSet.has(k)) continue;
-      this.meshBuildQueueSet.add(k);
-      this.meshBuildQueue.push(k);
+  private enqueueMissingResidentBlockMeshesForChunks(
+    chunks: ReadonlySet<string>
+  ): void {
+    for (const ck of chunks) {
+      const keys = this.placedObjectKeysByChunk.get(ck);
+      if (!keys) continue;
+      for (const k of keys) {
+        if (this.hasRenderedBlockAtKey(k)) continue;
+        if (this.meshBuildQueueSet.has(k)) continue;
+        this.meshBuildQueueSet.add(k);
+        this.meshBuildQueue.push(k);
+      }
     }
+  }
+
+  /** Full enqueue used on cold start when chunk index may be empty. */
+  private enqueueMissingResidentBlockMeshes(): void {
+    if (this.placedObjectKeysByChunk.size === 0) {
+      this.rebuildPlacedObjectChunkIndex();
+    }
+    this.enqueueMissingResidentBlockMeshesForChunks(this.meshResidentChunks);
   }
 
   /** @returns true if more work remains. */
@@ -15029,56 +15093,84 @@ export class Game {
     }
     if (batch.size > 0) {
       this.syncBlockMeshesForKeys(batch);
-      this.markSceneMutation(`meshBuildBudget:${batch.size}`);
+      this.requestRender(120);
     }
     return this.meshBuildQueue.length > 0;
   }
 
   private syncResidentWalkableFloors(): void {
     if (this.meshResidentChunks.size === 0) return;
-    const seen = new Set<string>();
+    if (this.extraFloorKeysByChunk.size === 0 && this.extraFloorKeys.size > 0) {
+      this.rebuildExtraFloorChunkIndex();
+    }
+    this.syncResidentWalkableFloorsIncremental(
+      this.meshResidentChunks,
+      new Set()
+    );
+  }
+
+  /**
+   * Add floor tiles for `entered` chunks and drop tiles/visuals for `left`.
+   * Avoids rebuilding every resident floor batch on each camera step.
+   */
+  private syncResidentWalkableFloorsIncremental(
+    entered: ReadonlySet<string>,
+    left: ReadonlySet<string>
+  ): void {
     const b = this.roomBounds;
-    for (const ck of this.meshResidentChunks) {
+
+    for (const [k, mesh] of [...this.walkableFloorMeshes]) {
+      const parts = k.split(",").map(Number);
+      if (!Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) continue;
+      const ck = tileChunkKey(parts[0]!, parts[1]!);
+      if (!left.has(ck)) continue;
+      this.scene.remove(mesh);
+      disposeWalkableFloorMeshMaterials(mesh);
+      this.walkableFloorMeshes.delete(k);
+    }
+    for (const [k, marker] of [...this.doorMarkerMeshes]) {
+      const parts = k.split(",").map(Number);
+      if (!Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) continue;
+      const ck = tileChunkKey(parts[0]!, parts[1]!);
+      if (!left.has(ck)) continue;
+      this.scene.remove(marker);
+      marker.geometry.dispose();
+      (marker.material as THREE.Material).dispose();
+      this.doorMarkerMeshes.delete(k);
+    }
+
+    for (const ck of entered) {
       for (const { x, z } of this.tilesInFloorChunk(ck, b)) {
         const k = tileKey(x, z);
         if (this.removedBaseFloorKeys.has(k)) continue;
-        seen.add(k);
+        this.upsertWalkableFloorMeshAtKey(k);
       }
-    }
-    for (const k of this.extraFloorKeys) {
-      const parts = k.split(",").map(Number);
-      if (
-        Number.isFinite(parts[0]) &&
-        Number.isFinite(parts[1]) &&
-        this.meshResidentChunks.has(tileChunkKey(parts[0]!, parts[1]!))
-      ) {
-        seen.add(k);
+      const extras = this.extraFloorKeysByChunk.get(ck);
+      if (extras) {
+        for (const k of extras) this.upsertWalkableFloorMeshAtKey(k);
       }
     }
 
-    for (const k of seen) {
-      this.upsertWalkableFloorMeshAtKey(k);
-    }
-    for (const [k, mesh] of [...this.walkableFloorMeshes]) {
-      if (!seen.has(k)) {
-        this.scene.remove(mesh);
-        disposeWalkableFloorMeshMaterials(mesh);
-        this.walkableFloorMeshes.delete(k);
-      }
-    }
-    for (const [k, marker] of [...this.doorMarkerMeshes]) {
-      if (!seen.has(k)) {
-        this.scene.remove(marker);
-        marker.geometry.dispose();
-        (marker.material as THREE.Material).dispose();
-        this.doorMarkerMeshes.delete(k);
-      }
-    }
     this.applyFloorTileQuadScale();
     if (this.floorVisualUseSingleBatch()) {
       this.rebuildWalkableFloorVisualMeshes();
-    } else {
-      this.rebuildWalkableFloorVisualMeshes(this.meshResidentChunks);
+    } else if (entered.size > 0 || left.size > 0) {
+      if (left.size > 0) {
+        this.walkableFloorVisualMeshes = this.walkableFloorVisualMeshes.filter(
+          (mesh) => {
+            const ck = mesh.userData["walkableFloorChunkKey"] as
+              | string
+              | undefined;
+            if (!ck || !left.has(ck)) return true;
+            this.scene.remove(mesh);
+            if (mesh.material instanceof THREE.Material) mesh.material.dispose();
+            return false;
+          }
+        );
+      }
+      if (entered.size > 0) {
+        this.rebuildWalkableFloorVisualMeshes(new Set(entered));
+      }
     }
     this.bringPlacedBlockGroupsToSceneTail();
   }

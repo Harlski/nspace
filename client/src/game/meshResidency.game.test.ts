@@ -39,6 +39,8 @@ describe("mesh residency in commons", () => {
   it("meshes obstacles in the residency window but not far off-screen chunks", () => {
     const mounted = mountGame();
     host = mounted.host;
+    Object.defineProperty(host, "clientWidth", { configurable: true, get: () => 1280 });
+    Object.defineProperty(host, "clientHeight", { configurable: true, get: () => 720 });
     const { game } = mounted;
 
     game.applyRoomFromWelcome({
