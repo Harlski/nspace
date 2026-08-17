@@ -44,8 +44,8 @@ test("shouldSuppressChatBubble only when invisible", () => {
   assert.equal(shouldSuppressChatBubble(false), false);
 });
 
-test("worldMutationsBlockedByInvisibility only when invisible", () => {
-  assert.equal(worldMutationsBlockedByInvisibility(true), true);
+test("worldMutationsBlockedByInvisibility never blocks (presence is not an edit lock)", () => {
+  assert.equal(worldMutationsBlockedByInvisibility(true), false);
   assert.equal(worldMutationsBlockedByInvisibility(false), false);
 });
 

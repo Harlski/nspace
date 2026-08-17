@@ -1,5 +1,5 @@
 /**
- * Cached mining-ban list from the game server. Holds block-claim payouts only.
+ * Cached Mining Restriction list from the game server. Holds block-claim payouts only.
  */
 import type { AppConfig } from "./config.js";
 
@@ -10,6 +10,8 @@ let callbackBaseUrl: string | null = null;
 let callbackSecret: string | null = null;
 let bannedWallets = new Set<string>();
 let lastRefreshMs = 0;
+/** True only after a successful fetch (or a test that injects a confirmed list). */
+let restrictionListConfirmed = false;
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 /** Block-claim mining payouts use grid coordinates; other rewards use sentinel tile keys. */
@@ -43,11 +45,24 @@ export function stopMiningBanGateForTests(): void {
   }
   bannedWallets = new Set();
   lastRefreshMs = 0;
+  restrictionListConfirmed = false;
+  callbackBaseUrl = null;
+  callbackSecret = null;
+}
+
+/** Gate is configured but the restriction list has never been fetched successfully. */
+export function setMiningRestrictionListUnconfirmedForTests(): void {
+  callbackBaseUrl = "http://mining-restriction-unconfirmed.test";
+  callbackSecret = "test";
+  bannedWallets = new Set();
+  lastRefreshMs = 0;
+  restrictionListConfirmed = false;
 }
 
 export function setMiningBannedWalletsForTests(wallets: string[]): void {
   bannedWallets = new Set(wallets.map(normalizeWallet).filter(Boolean));
   lastRefreshMs = Date.now();
+  restrictionListConfirmed = true;
 }
 
 export async function refreshMiningBannedWallets(
@@ -65,9 +80,10 @@ export async function refreshMiningBannedWallets(
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) {
+      restrictionListConfirmed = false;
       const text = await res.text().catch(() => "");
       console.warn(
-        `[payout-service] Mining ban list HTTP ${res.status}: ${text.slice(0, 200)}`
+        `[payout-service] Mining restriction list HTTP ${res.status}: ${text.slice(0, 200)}`
       );
       return;
     }
@@ -80,9 +96,11 @@ export async function refreshMiningBannedWallets(
         .filter(Boolean)
     );
     lastRefreshMs = now;
+    restrictionListConfirmed = true;
   } catch (e) {
+    restrictionListConfirmed = false;
     const msg = e instanceof Error ? e.message : String(e);
-    console.warn(`[payout-service] Mining ban list fetch failed: ${msg}`);
+    console.warn(`[payout-service] Mining restriction list fetch failed: ${msg}`);
   }
 }
 
@@ -94,5 +112,7 @@ export function isMiningPayoutHeldForBannedWallet(
   if (!isBlockClaimMiningPayoutTileKey(tileKey)) return false;
   const key = normalizeWallet(recipientAddress);
   if (!key) return false;
+  // Prefer not sending mining jobs over sending them when the list is unknown.
+  if (callbackBaseUrl && !restrictionListConfirmed) return true;
   return bannedWallets.has(key);
 }

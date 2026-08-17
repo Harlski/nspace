@@ -21,8 +21,9 @@ import {
   ROOM_BG_NEUTRAL_RGB,
   type RoomBgNeutralId,
 } from "../game/blockStyle.js";
-// worldcup: seasonal soccer build-dock "Ball" prop (feature-flagged, deletable)
+// worldcup: seasonal soccer (feature-flagged, deletable). Country names also label the year-round profile flag chip.
 import { WORLDCUP_ENABLED as WORLDCUP_ENABLED_CLIENT } from "../worldcup/config.js";
+import { countryName } from "../worldcup/countries.js";
 import type { Game } from "../game/Game.js";
 import type {
   TutorialCoachState,
@@ -38,7 +39,11 @@ import {
   codeFromFlagEmoji,
   createFlagImg,
   flagAssetUrl,
+  mosquitoAssetUrl,
+  MOSQUITO_EMOJI,
 } from "./flags.js";
+import { ACTION_WHEEL_EMOTES } from "./emoteWheelEmotes.js";
+import { profileFlagChipLabels } from "./profileFlagChip.js";
 import { GATE_AUTH_MAX } from "../game/gateAuth.js";
 import { normalizeWalletKey, type FloorTile } from "../game/grid.js";
 import {
@@ -3441,28 +3446,6 @@ export function createHud(
    * actionWheelGeometry.ts. Replaces the old flat quick-emoji strip.
    */
   const SVG_NS = "http://www.w3.org/2000/svg";
-  const ACTION_WHEEL_EMOTES = [
-    "👍",
-    "❤️",
-    "😂",
-    "🎉",
-    "😮",
-    "😢",
-    "🔥",
-    "👏",
-    "🙌",
-    "🤔",
-    "😎",
-    "🙏",
-    "🤓",
-    "😍",
-    "😭",
-    "💀",
-    "👀",
-    "💯",
-    "✨",
-    "💪",
-  ] as const;
   /**
    * The hexagon has six fixed Sectors: the bottom is the Nav Sector and one upper edge is
    * the wrap-around More Sector, so the Emote Wheel shows at most four emotes per page.
@@ -4094,20 +4077,23 @@ export function createHud(
       if (!slice.reserved) {
         // Sectors are glyph-only now - the name is surfaced as the Sector Title on focus.
         const center = polarToXy(0, 0, ACTION_WHEEL_R_LABEL, sector.midDeg);
-        // A flag glyph (e.g. the Flag Emote) renders as a Twemoji image since Windows has no
-        // flag font glyphs; everything else stays as an SVG text emoji.
+        // Flag and mosquito glyphs render as Twemoji images (Windows has no / incomplete
+        // glyphs); everything else stays as an SVG text emoji.
         const flagCode = codeFromFlagEmoji(slice.glyph);
         const flagUrl = flagCode ? flagAssetUrl(flagCode) : null;
-        if (flagUrl) {
+        const glyphUrl =
+          flagUrl ??
+          (slice.glyph === MOSQUITO_EMOJI ? mosquitoAssetUrl() : null);
+        if (glyphUrl) {
           const size = 32;
           const flagImg = document.createElementNS(SVG_NS, "image");
           flagImg.setAttribute("class", "action-wheel__glyph-img");
           flagImg.setAttributeNS(
             "http://www.w3.org/1999/xlink",
             "href",
-            flagUrl
+            glyphUrl
           );
-          flagImg.setAttribute("href", flagUrl);
+          flagImg.setAttribute("href", glyphUrl);
           flagImg.setAttribute("x", (center.x - size / 2).toFixed(1));
           flagImg.setAttribute("y", (center.y - size / 2).toFixed(1));
           flagImg.setAttribute("width", String(size));
@@ -5781,21 +5767,24 @@ export function createHud(
       return;
     }
     const img = code ? createFlagImg(code) : null;
+    const labels = profileFlagChipLabels(kind, code ? countryName(code) : null);
     if (kind === "self") {
       oppFlagBtn.hidden = false;
       oppFlagBtn.disabled = false;
       oppFlagBtn.replaceChildren(img ?? document.createTextNode("🏳️"));
-      const title = code ? "Change your country" : "Pick your country";
-      oppFlagBtn.title = title;
-      oppFlagBtn.setAttribute("aria-label", title);
       oppFlagBtn.classList.toggle("other-player-profile__flag--empty", !img);
     } else {
       oppFlagBtn.hidden = !img;
       oppFlagBtn.disabled = true;
       oppFlagBtn.replaceChildren(...(img ? [img] : []));
+      oppFlagBtn.classList.remove("other-player-profile__flag--empty");
+    }
+    if (labels) {
+      oppFlagBtn.title = labels.title;
+      oppFlagBtn.setAttribute("aria-label", labels.ariaLabel);
+    } else {
       oppFlagBtn.removeAttribute("title");
       oppFlagBtn.removeAttribute("aria-label");
-      oppFlagBtn.classList.remove("other-player-profile__flag--empty");
     }
   }
 

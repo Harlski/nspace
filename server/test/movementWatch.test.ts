@@ -14,6 +14,9 @@ import {
   noteMovementWatchMarkerShown,
   parseMovementWatchClientIntentReason,
   shouldShowMovementWatchMarker,
+  takeMovementWatchClickInterval,
+  clearMovementWatchClickInterval,
+  resetMovementWatchClickInterval,
   type MovementWatchClickThrottleState,
 } from "../src/movementWatch.js";
 
@@ -122,6 +125,7 @@ test("accepted click copies path; rejected carries reason", () => {
   assert.equal(ok.type, "movementWatchClick");
   assert.equal(ok.accepted, true);
   assert.equal(ok.showMarker, true);
+  assert.equal(ok.clickIntervalSec, undefined);
   assert.deepEqual(ok.path, [{ x: 5, z: 3, layer: 0 }]);
 
   const bad = buildMovementWatchRejectedClick({
@@ -136,6 +140,36 @@ test("accepted click copies path; rejected carries reason", () => {
   assert.equal(bad.accepted, false);
   assert.equal(bad.reason, "rate_limited");
   assert.equal(bad.path, undefined);
+  assert.equal(bad.clickIntervalSec, undefined);
+});
+
+test("Click Marker messages carry Click Interval when provided", () => {
+  const ok = buildMovementWatchAcceptedClick({
+    address: "NQ01",
+    displayName: "Ada",
+    x: 5,
+    z: 3,
+    layer: 0,
+    showMarker: true,
+    pathQueue: [{ x: 5, z: 3, layer: 0 }],
+    startX: 1,
+    startZ: 3,
+    startAtMs: 10,
+    clickIntervalSec: 2.43,
+  });
+  assert.equal(ok.clickIntervalSec, 2.43);
+
+  const bad = buildMovementWatchRejectedClick({
+    address: "NQ01",
+    displayName: "Ada",
+    x: 9,
+    z: 9,
+    layer: 0,
+    reason: "mine",
+    showMarker: true,
+    clickIntervalSec: 8,
+  });
+  assert.equal(bad.clickIntervalSec, 8);
 });
 
 test("snapshot deep-copies walks; clear is address-only", () => {
@@ -206,4 +240,40 @@ test("buildMovementWatchActive toggles room peer reporting", () => {
     type: "movementWatchActive",
     active: false,
   });
+});
+
+test("first shown Click Marker has no Click Interval", () => {
+  const state = new Map<string, number>();
+  assert.equal(takeMovementWatchClickInterval(state, "NQ01", 1000), undefined);
+});
+
+test("second shown Click Marker carries Click Interval in seconds", () => {
+  const state = new Map<string, number>();
+  takeMovementWatchClickInterval(state, "NQ01", 1000);
+  assert.equal(takeMovementWatchClickInterval(state, "NQ01", 3430), 2.43);
+});
+
+test("Click Interval is per player address", () => {
+  const state = new Map<string, number>();
+  takeMovementWatchClickInterval(state, "NQ01", 1000);
+  takeMovementWatchClickInterval(state, "NQ02", 2000);
+  assert.equal(takeMovementWatchClickInterval(state, "NQ01", 3430), 2.43);
+  assert.equal(takeMovementWatchClickInterval(state, "NQ02", 10000), 8);
+});
+
+test("clearing an address blanks the next Click Interval", () => {
+  const state = new Map<string, number>();
+  takeMovementWatchClickInterval(state, "NQ01", 1000);
+  takeMovementWatchClickInterval(state, "NQ01", 3430);
+  clearMovementWatchClickInterval(state, "NQ01");
+  assert.equal(takeMovementWatchClickInterval(state, "NQ01", 5000), undefined);
+});
+
+test("reset blanks every player's Click Interval", () => {
+  const state = new Map<string, number>();
+  takeMovementWatchClickInterval(state, "NQ01", 1000);
+  takeMovementWatchClickInterval(state, "NQ02", 2000);
+  resetMovementWatchClickInterval(state);
+  assert.equal(takeMovementWatchClickInterval(state, "NQ01", 5000), undefined);
+  assert.equal(takeMovementWatchClickInterval(state, "NQ02", 5000), undefined);
 });

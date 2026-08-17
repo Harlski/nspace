@@ -54,6 +54,8 @@ export type MovementWatchClickOutMsg = {
   startZ?: number;
   startAtMs?: number;
   speed?: number;
+  /** Seconds since this player's previous shown Click Marker; omitted on the first. */
+  clickIntervalSec?: number;
 };
 
 export type MovementWatchClearOutMsg = {
@@ -112,6 +114,37 @@ export function noteMovementWatchMarkerShown(
   throttle.lastMarkerAtMs = nowMs;
 }
 
+/** Last shown Click Marker time per player address (room-scoped by the caller). */
+export type MovementWatchClickIntervalState = Map<string, number>;
+
+/**
+ * Record a shown Click Marker and return that player's Click Interval in seconds
+ * (hundredths), or undefined when there is no prior marker on this stream.
+ */
+export function takeMovementWatchClickInterval(
+  state: MovementWatchClickIntervalState,
+  address: string,
+  nowMs: number
+): number | undefined {
+  const prev = state.get(address);
+  state.set(address, nowMs);
+  if (prev === undefined) return undefined;
+  return Math.round((nowMs - prev) / 10) / 100;
+}
+
+export function clearMovementWatchClickInterval(
+  state: MovementWatchClickIntervalState,
+  address: string
+): void {
+  state.delete(address);
+}
+
+export function resetMovementWatchClickInterval(
+  state: MovementWatchClickIntervalState
+): void {
+  state.clear();
+}
+
 export function buildMovementWatchSnapshot(args: {
   walks: MovementWatchWalkWire[];
 }): MovementWatchSnapshotOutMsg {
@@ -161,6 +194,7 @@ export function buildMovementWatchAcceptedClick(args: {
   startZ: number;
   startAtMs: number;
   speed?: number;
+  clickIntervalSec?: number;
 }): MovementWatchClickOutMsg {
   return {
     type: "movementWatchClick",
@@ -176,6 +210,7 @@ export function buildMovementWatchAcceptedClick(args: {
     startZ: args.startZ,
     startAtMs: args.startAtMs,
     speed: args.speed ?? DEFAULT_PATH_MOVE_SPEED,
+    clickIntervalSec: args.clickIntervalSec,
   };
 }
 
@@ -187,6 +222,7 @@ export function buildMovementWatchRejectedClick(args: {
   layer: 0 | 1;
   reason: MovementWatchRejectReason;
   showMarker: boolean;
+  clickIntervalSec?: number;
 }): MovementWatchClickOutMsg {
   return {
     type: "movementWatchClick",
@@ -198,6 +234,7 @@ export function buildMovementWatchRejectedClick(args: {
     accepted: false,
     showMarker: args.showMarker,
     reason: args.reason,
+    clickIntervalSec: args.clickIntervalSec,
   };
 }
 

@@ -5,6 +5,7 @@
 
 ---
 
-_(Draft — not published.)_
-
-- _Deploy / config deltas vs previous patch-notes version._
+- [SEC] `POST /api/admin/random-layout` is removed (it had no admin auth). Extra floor is edited in-world only.
+- [OPS] Admin Invisibility no longer blocks world edits; presence omission is unchanged.
+- [OPS] Mining Restriction still holds queued block-claim payouts until lifted. The Payout Service now refreshes the restriction list before send and will not send mining jobs if the list cannot be confirmed.
+- [NEW] Movement Watch Click Markers show Click Interval (seconds since that player's previous marker, e.g. `2.43`) so operators can spot tightly timed clicks. Always on with Watch; no extra toggle.

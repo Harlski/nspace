@@ -490,7 +490,7 @@ async function tick(now: number = Date.now()): Promise<void> {
   if (processing) return;
   processing = true;
   try {
-    await refreshMiningBannedWallets();
+    await refreshMiningBannedWallets(true);
     const next = findNextReadyJob(now);
     if (next) await processOne(next, now);
   } finally {
@@ -752,6 +752,7 @@ export async function manualBulkPayoutPendingForRecipient(
   if (!client?.isSignerConfigured()) {
     throw new Error("nim_payout_not_configured");
   }
+  await refreshMiningBannedWallets(true);
   const target = normalizeNimWalletId(walletRaw);
   if (!target) throw new Error("invalid_recipient");
 
@@ -882,6 +883,8 @@ export async function flushAllPendingPayoutsNow(): Promise<FlushAllPendingPayout
     return result;
   }
 
+  await refreshMiningBannedWallets(true);
+
   const recipients: string[] = [];
   const seen = new Set<string>();
   for (const j of jobs) {
@@ -959,6 +962,7 @@ export async function maybeAutoBulkStalePending(
   if (autoBulkAfterMs <= 0 || autoBulkRunning || processing) return result;
   if (!chainClient?.isSignerConfigured()) return result;
 
+  await refreshMiningBannedWallets(true);
   const recipients = recipientsWithStalePending(now);
   if (recipients.length === 0) return result;
 

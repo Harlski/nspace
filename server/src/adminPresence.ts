@@ -37,11 +37,11 @@ export function shouldSuppressChatBubble(adminInvisible: boolean): boolean {
   return adminInvisible;
 }
 
-/** While invisible, world mutations are blocked (observation-only). */
+/** Admin Invisibility is a presence state, not an edit lock. Stream cinema still uses connBlocksWorldEdit. */
 export function worldMutationsBlockedByInvisibility(
-  adminInvisible: boolean
+  _adminInvisible: boolean
 ): boolean {
-  return adminInvisible;
+  return false;
 }
 
 /**

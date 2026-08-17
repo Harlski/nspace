@@ -519,6 +519,9 @@ import {
   noteMovementWatchMarkerShown,
   parseMovementWatchClientIntentReason,
   shouldShowMovementWatchMarker,
+  takeMovementWatchClickInterval,
+  clearMovementWatchClickInterval,
+  type MovementWatchClickIntervalState,
   type MovementWatchClickThrottleState,
   type MovementWatchOutMsg,
   type MovementWatchRejectReason,
@@ -552,7 +555,6 @@ import {
   BLOCK_COLOR_SIGNPOST_RGB,
   clampColorRgb,
   DEFAULT_BLOCK_COLOR_RGB,
-  DEFAULT_EXTRA_FLOOR_COLOR_RGB,
   DEFAULT_GATE_BLOCK_COLOR_RGB,
   DEFAULT_PIXEL_CENTRAL_DARK_COLOR_RGB,
   TELEPORTER_DEFAULT_PILLAR_COLOR_RGB,
@@ -2104,6 +2106,12 @@ function spatialFilteredOutMsgType(type: OutMsg["type"]): boolean {
 }
 
 const rooms = new Map<string, Map<string, ClientConn>>();
+
+/** Per-room last shown Click Marker time, keyed by player address. */
+const movementWatchClickIntervalByRoom = new Map<
+  string,
+  MovementWatchClickIntervalState
+>();
 
 /** Server-authoritative Shaper return origin (room + tile when they entered The Shaper). */
 const SHAPER_RETURN_TTL_MS = 30 * 60 * 1000;
@@ -3713,83 +3721,6 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-function buildInitialFrontier(
-  roomId: string,
-  ex: ReadonlyMap<string, number>
-): Set<string> {
-  const b = getRoomBaseBounds(roomId);
-  const frontier = new Set<string>();
-  for (let x = b.minX - 1; x <= b.maxX + 1; x++) {
-    for (let z = b.minZ - 1; z <= b.maxZ + 1; z++) {
-      if (!inTileBounds(x, z)) continue;
-      if (isBaseTile(x, z, roomId)) continue;
-      if (ex.has(tileKey(x, z))) continue;
-      if (canPlaceExtraFloor(roomId, x, z)) frontier.add(tileKey(x, z));
-    }
-  }
-  return frontier;
-}
-
-function addNeighborsToFrontier(
-  roomId: string,
-  x: number,
-  z: number,
-  frontier: Set<string>,
-  ex: ReadonlyMap<string, number>
-): void {
-  for (const [dx, dz] of ADJ_DIRS) {
-    const nx = x + dx;
-    const nz = z + dz;
-    if (!inTileBounds(nx, nz)) continue;
-    if (isBaseTile(nx, nz, roomId)) continue;
-    if (ex.has(tileKey(nx, nz))) continue;
-    if (canPlaceExtraFloor(roomId, nx, nz)) frontier.add(tileKey(nx, nz));
-  }
-}
-
-const ADMIN_RANDOM_MAX_TILES = 5000;
-
-/**
- * Grows extra walkable tiles by random frontier expansion (orthogonal connectivity to base).
- * Used by HTTP admin API; broadcasts `extraFloor` to connected clients.
- */
-export function adminRandomExtraFloorLayout(
-  roomId: string,
-  opts: { targetCount: number; seed: number; clearExisting: boolean }
-):
-  | { ok: true; placed: number; totalExtra: number }
-  | { ok: false; error: string } {
-  const tc = Math.floor(Number(opts.targetCount));
-  if (!Number.isFinite(tc) || tc < 1 || tc > ADMIN_RANDOM_MAX_TILES) {
-    return { ok: false, error: "invalid_target_count" };
-  }
-  const seed = Math.floor(Number(opts.seed)) | 0;
-  const ex = extraFloorMap(roomId);
-  if (opts.clearExisting) {
-    ex.clear();
-  }
-  const rng = mulberry32(seed);
-  const frontier = buildInitialFrontier(roomId, ex);
-  let placed = 0;
-  while (placed < tc && frontier.size > 0) {
-    const keys = [...frontier];
-    const pick = keys[Math.floor(rng() * keys.length)]!;
-    frontier.delete(pick);
-    const [x, z] = pick.split(",").map(Number);
-    ex.set(pick, DEFAULT_EXTRA_FLOOR_COLOR_RGB);
-    addNeighborsToFrontier(roomId, x!, z!, frontier, ex);
-    placed++;
-  }
-  const totalExtra = ex.size;
-  broadcast(roomId, {
-    type: "extraFloor",
-    roomId,
-    tiles: extraFloorToList(roomId),
-  });
-  schedulePersistWorldState();
-  return { ok: true, placed, totalExtra };
-}
-
 function isWalkableForRoom(roomId: string, x: number, z: number): boolean {
   return isWalkableTile(
     x,
@@ -5209,8 +5140,40 @@ function roomHasMovementWatchSubscribers(roomId: string): boolean {
   return countMovementWatchSubscribers(roomOf(roomId).values()) > 0;
 }
 
+function movementWatchClickIntervalState(
+  roomId: string
+): MovementWatchClickIntervalState {
+  let state = movementWatchClickIntervalByRoom.get(roomId);
+  if (!state) {
+    state = new Map();
+    movementWatchClickIntervalByRoom.set(roomId, state);
+  }
+  return state;
+}
+
+function takeRoomClickInterval(
+  roomId: string,
+  address: string,
+  nowMs: number,
+  showMarker: boolean
+): number | undefined {
+  if (!showMarker) return undefined;
+  return takeMovementWatchClickInterval(
+    movementWatchClickIntervalState(roomId),
+    address,
+    nowMs
+  );
+}
+
+function clearRoomClickInterval(roomId: string, address: string): void {
+  const state = movementWatchClickIntervalByRoom.get(roomId);
+  if (!state) return;
+  clearMovementWatchClickInterval(state, address);
+}
+
 function broadcastMovementWatchActive(roomId: string): void {
   const active = roomHasMovementWatchSubscribers(roomId);
+  if (!active) movementWatchClickIntervalByRoom.delete(roomId);
   broadcast(roomId, buildMovementWatchActive(active));
 }
 
@@ -5229,8 +5192,8 @@ function setConnMovementWatch(
   if (enabled) sendMovementWatchSnapshotToConn(roomId, conn);
 }
 
-/** Message types denied while Admin Invisible (or stream observer). */
-const ADMIN_INVISIBLE_BLOCKED_MSG_TYPES: ReadonlySet<string> = new Set([
+/** Message types denied for stream cinema (observation-only). Admin Invisibility does not use this set. */
+const WORLD_MUTATION_BLOCKED_MSG_TYPES: ReadonlySet<string> = new Set([
   "setChallenge",
   "acceptChallenge",
   "cancelDirectInvite",
@@ -5281,7 +5244,7 @@ const ADMIN_INVISIBLE_BLOCKED_MSG_TYPES: ReadonlySet<string> = new Set([
   "setRoomBackgroundHue",
 ]);
 
-/** World edits blocked for stream cinema and Admin Invisibility (observation-only). */
+/** World edits blocked for stream cinema. Admin Invisibility does not lock edits. */
 function connBlocksWorldEdit(conn: ClientConn): boolean {
   if (conn.streamObserver) return true;
   return worldMutationsBlockedByInvisibility(Boolean(conn.adminInvisible));
@@ -5352,7 +5315,7 @@ function broadcastFrozenStateDelta(roomId: string, subject: ClientConn): void {
 
 /**
  * Apply or clear Admin Freeze on a target in this room. Returns false when policy denies.
- * Does not use observation-only / world-edit deny (usable while actor is Admin Invisible).
+ * Usable while the actor is Admin Invisible; stream cinema cannot Freeze.
  */
 function setConnFrozen(
   roomId: string,
@@ -5453,6 +5416,12 @@ function emitMovementWatchAccepted(
       startX: conn.player.x,
       startZ: conn.player.z,
       startAtMs: args.startAtMs,
+      clickIntervalSec: takeRoomClickInterval(
+        roomId,
+        address,
+        args.startAtMs,
+        showMarker
+      ),
     })
   );
 }
@@ -5497,6 +5466,12 @@ function emitMovementWatchRejected(
       layer: args.layer,
       reason: args.reason,
       showMarker: true,
+      clickIntervalSec: takeRoomClickInterval(
+        roomId,
+        address,
+        args.nowMs,
+        true
+      ),
     })
   );
 }
@@ -6924,6 +6899,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       });
       // Clear Watch Path / markers for this wallet in the old room.
       emitMovementWatchClear(currentRoomId, address);
+      clearRoomClickInterval(currentRoomId, address);
       const wasWatching = Boolean(conn.movementWatch);
       clearConnFrozenOnLeave(currentRoomId, conn);
       room.delete(address);
@@ -9524,11 +9500,10 @@ export function addClient(
       console.log(`[rooms] Player ${address} not in any room, ignoring message`);
       return;
     }
-    // Admin Invisibility is observation-only: block world-mutating intents (stream
-    // observers already share this gate via connBlocksWorldEdit).
+    // Stream cinema is observation-only. Admin Invisibility does not block world-mutating intents.
     if (
       connBlocksWorldEdit(conn) &&
-      ADMIN_INVISIBLE_BLOCKED_MSG_TYPES.has(String(msg.type))
+      WORLD_MUTATION_BLOCKED_MSG_TYPES.has(String(msg.type))
     ) {
       return;
     }
@@ -14975,6 +14950,7 @@ export function addClient(
       conn.movementWatch = false;
       clearConnFrozenOnLeave(playerCurrentRoom, conn);
       room.delete(address);
+      clearRoomClickInterval(playerCurrentRoom, address);
       console.log(
         `[rooms] disconnect ${address.slice(0, 12)}… room=${playerCurrentRoom}${conn.streamObserver ? " streamObserver" : ""}`
       );

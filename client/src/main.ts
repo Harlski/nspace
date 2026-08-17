@@ -2605,7 +2605,6 @@ function enterGame(
     sendJoinRoom(ws, roomId);
   });
   const adminOverlay = installAdminOverlay(hudRoot, game, {
-    roomId: ROOM_ID,
     enabled: isAdmin(address),
     allowMovementWatch: isAdmin(address),
     adminInvisibleInitial: adminInvisibleWanted,

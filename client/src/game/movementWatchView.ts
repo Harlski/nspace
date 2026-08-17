@@ -5,6 +5,12 @@ export const MOVEMENT_WATCH_MARKER_LINGER_MS = 5000;
 const PATH_Y = 0.07;
 const ACCEPT_COLOR = 0x38bdf8;
 const REJECT_COLOR = 0xf87171;
+const INTERVAL_LABEL_LIFT = 0.38;
+
+/** Frozen Click Interval label: hundredths of a second, no unit. */
+export function formatClickIntervalSec(sec: number): string {
+  return sec.toFixed(2);
+}
 
 export type MovementWatchWaypoint = { x: number; z: number; layer: 0 | 1 };
 
@@ -20,6 +26,8 @@ export type MovementWatchClickEvent = {
   path?: MovementWatchWaypoint[];
   startX?: number;
   startZ?: number;
+  /** Seconds since this player's previous shown Click Marker; omitted on the first. */
+  clickIntervalSec?: number;
 };
 
 export type MovementWatchWalkEvent = {
@@ -36,6 +44,7 @@ export type MovementWatchWalkEvent = {
 type MarkerEntry = {
   mesh: THREE.Mesh;
   label: THREE.Sprite;
+  intervalLabel: THREE.Sprite | null;
   expiresAtMs: number;
   reason?: string;
 };
@@ -49,13 +58,18 @@ function truncateLabel(name: string, max = 14): string {
   return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
 }
 
-function makeLabelSprite(text: string, color: string): THREE.Sprite {
+function makeLabelSprite(
+  text: string,
+  color: string,
+  opts?: { fontPx?: number; scaleX?: number; scaleY?: number }
+): THREE.Sprite {
   const canvas = document.createElement("canvas");
   canvas.width = 256;
   canvas.height = 64;
   const ctx = canvas.getContext("2d")!;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.font = '600 22px system-ui, "Segoe UI", sans-serif';
+  const fontPx = opts?.fontPx ?? 22;
+  ctx.font = `600 ${fontPx}px system-ui, "Segoe UI", sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "rgba(0,0,0,0.45)";
@@ -70,7 +84,7 @@ function makeLabelSprite(text: string, color: string): THREE.Sprite {
     depthTest: false,
   });
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(1.8, 0.45, 1);
+  sprite.scale.set(opts?.scaleX ?? 1.8, opts?.scaleY ?? 0.45, 1);
   sprite.renderOrder = 10;
   return sprite;
 }
@@ -157,6 +171,7 @@ export class MovementWatchView {
         layer: ev.layer,
         accepted: ev.accepted,
         reason: ev.reason,
+        clickIntervalSec: ev.clickIntervalSec,
       });
     }
   }
@@ -174,10 +189,7 @@ export class MovementWatchView {
         if (m.expiresAtMs > nowMs) {
           keep.push(m);
         } else {
-          this.root.remove(m.mesh);
-          this.root.remove(m.label);
-          disposeObject3D(m.mesh);
-          disposeObject3D(m.label);
+          this.disposeMarker(m);
         }
       }
       if (keep.length === 0) this.markers.delete(addr);
@@ -189,10 +201,7 @@ export class MovementWatchView {
     for (const addr of [...this.paths.keys()]) this.clearPath(addr);
     for (const [addr, list] of this.markers) {
       for (const m of list) {
-        this.root.remove(m.mesh);
-        this.root.remove(m.label);
-        disposeObject3D(m.mesh);
-        disposeObject3D(m.label);
+        this.disposeMarker(m);
       }
       this.markers.delete(addr);
     }
@@ -203,6 +212,17 @@ export class MovementWatchView {
     this.scene.remove(this.root);
   }
 
+  private disposeMarker(m: MarkerEntry): void {
+    this.root.remove(m.mesh);
+    this.root.remove(m.label);
+    disposeObject3D(m.mesh);
+    disposeObject3D(m.label);
+    if (m.intervalLabel) {
+      this.root.remove(m.intervalLabel);
+      disposeObject3D(m.intervalLabel);
+    }
+  }
+
   private addMarker(args: {
     address: string;
     displayName: string;
@@ -211,6 +231,7 @@ export class MovementWatchView {
     layer: 0 | 1;
     accepted: boolean;
     reason?: string;
+    clickIntervalSec?: number;
   }): void {
     const placed = this.getPlaced();
     const y = waypointWorldY(args.layer, args.x, args.z, placed) + 0.04;
@@ -228,21 +249,34 @@ export class MovementWatchView {
     mesh.position.set(args.x, y, args.z);
     mesh.name = `mw-marker-${++this.markerSeq}`;
 
+    const labelColor = args.accepted ? "#e0f2fe" : "#fecaca";
     const labelText = args.accepted
       ? truncateLabel(args.displayName)
       : `${truncateLabel(args.displayName)} · ${args.reason ?? "reject"}`;
-    const label = makeLabelSprite(
-      labelText,
-      args.accepted ? "#e0f2fe" : "#fecaca"
-    );
+    const label = makeLabelSprite(labelText, labelColor);
     label.position.set(args.x, y + 0.55, args.z);
+
+    let intervalLabel: THREE.Sprite | null = null;
+    if (
+      typeof args.clickIntervalSec === "number" &&
+      Number.isFinite(args.clickIntervalSec)
+    ) {
+      intervalLabel = makeLabelSprite(
+        formatClickIntervalSec(args.clickIntervalSec),
+        labelColor,
+        { fontPx: 16, scaleX: 1.15, scaleY: 0.32 }
+      );
+      intervalLabel.position.set(args.x, y + 0.55 + INTERVAL_LABEL_LIFT, args.z);
+    }
 
     this.root.add(mesh);
     this.root.add(label);
+    if (intervalLabel) this.root.add(intervalLabel);
     const list = this.markers.get(args.address) ?? [];
     list.push({
       mesh,
       label,
+      intervalLabel,
       expiresAtMs: performance.now() + MOVEMENT_WATCH_MARKER_LINGER_MS,
       reason: args.reason,
     });

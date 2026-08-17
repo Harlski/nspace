@@ -414,17 +414,28 @@ rooms (self and others); not the soccer pitch's free-move motion.
 _Avoid_: prediction, client prediction, extrapolation, lerp (too vague), move order (wire name).
 
 **Movement Watch**:
-An admin-only overlay that shows players' click destinations and authoritative movement paths
-so operators can debug pathfinding and visually spot bot-like click patterns. Toggled from the
-Admin overlay Watch tab; not a player-facing feature. While active in a room, peers also report
-client-only clicks that never become walk intents (unwalkable goals and mine-block clicks).
+An admin-only overlay that shows players' click destinations, **Click Intervals**, and
+authoritative movement paths so operators can debug pathfinding and visually spot bot-like
+click patterns. Toggled from the Admin overlay Watch tab; not a player-facing feature.
+Click Interval is on whenever this overlay is on — not a second toggle. While active in a
+room, peers also report client-only clicks that never become walk intents (unwalkable goals
+and mine-block clicks).
 _Avoid_: move debug, path debug, admin path overlay, botting overlay.
 
 **Click Marker**:
 A short-lived marker on the tile a player targeted (accepted or rejected) while Movement Watch
 is on. Carries a light identity label (username or truncated wallet) and lingers briefly after
-the click so recent patterns stay visible.
+the click so recent patterns stay visible. From the second click onward, also carries that
+player's **Click Interval**.
 _Avoid_: destination pin, click indicator, goal marker.
+
+**Click Interval**:
+The elapsed time between one player's consecutive Click Markers, accepted or rejected, on
+that player's click stream — the same value for every watching admin. Present as small text
+on the later marker, stacked above the identity label; absent on the first and after a stream
+break (leave, disconnect, or Movement Watch idle). A displayed duration, not an automatic
+bot verdict.
+_Avoid_: second counter, click timer, click delta, interclick gap, cadence, cadence flag.
 
 **Watch Path**:
 The polyline of a player's current remaining authoritative path, drawn for admins while
@@ -763,11 +774,12 @@ _Avoid_: daily cap (alone), farm limit, payout throttle, earn tier.
 **Admin Invisibility**:
 A self-applied, session-scoped admin presence state in which the admin is omitted from
 non-admin room presence: no join announce, no avatar, no movement broadcasts, and no speech
-bubble. Observation-only while on: world-mutating actions (build, mine, gates, edits, etc.)
-are blocked until the admin toggles visible again. Toggling on or off mid-room is silent for
-non-admins (no join/leave announce). Room chat still appears in the shared chat log with the
-admin's normal name. Stays on across room changes and short reconnect resume; clears on
-logout / new auth session or explicit toggle-off. Other allowlisted admins still see them as a translucent avatar with a small
+bubble. World-mutating actions (build, mine, gates, edits, and so on) stay available while
+invisible, the same as when visible. Stream cinema remains observation-only for those
+connections. Toggling on or off mid-room is silent for non-admins (no join/leave announce).
+Room chat still appears in the shared chat log with the admin's normal name. Stays on across
+room changes and short reconnect resume; clears on logout / new auth session or explicit
+toggle-off. Other allowlisted admins still see them as a translucent avatar with a small
 Invisible nameplate tag. Stream cinema observers get the public (non-admin) view —
 invisible admins are omitted from the broadcast — unless that connection is also a game
 admin. No player-facing history or Telegram notice for toggles in v1. Distinct from
@@ -793,10 +805,12 @@ _Avoid_: stun, root, immobilize, movement ban, lockdown (too broad).
 
 **Mining Restriction**:
 An admin-imposed sanction on a wallet that blocks claimable-block mining (starting and
-completing a NIM block claim). Distinct from channel mute and username-set ban; toggled from
-another player's profile by a game admin or from `/admin/user/{profile}` (and the
-`/admin/moderation` lists that link there). May carry an optional operator note (not shown to
-the player).
+completing a NIM block claim). Queued block-claim payouts stay in the Payout Service backlog
+and are not sent on-chain until the restriction is lifted; they must not appear as payable
+or processing while held. Maze, World Cup, and admin feedback payouts are unaffected. Distinct
+from channel mute and username-set ban; toggled from another player's profile by a game admin
+or from `/admin/user/{profile}` (and the `/admin/moderation` lists that link there). May carry
+an optional operator note (not shown to the player).
 _Avoid_: mining ban (use Restriction for the canonical sanction name), claim ban, payout block.
 
 **Username-set ban**:

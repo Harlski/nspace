@@ -28,7 +28,6 @@ import {
 } from "./directInvite/config.js";
 import {
   addClient,
-  adminRandomExtraFloorLayout,
   broadcastRestartPendingNotice,
   broadcastRoomCatalogRefresh,
   broadcastShopAccessState,
@@ -2530,25 +2529,6 @@ app.get("/api/replay/session/:sessionId/events", requireJwt, (req, res) => {
   res.json({ events });
 });
 
-app.post("/api/admin/random-layout", (req, res) => {
-  const body = req.body as Record<string, unknown>;
-  const roomId = String(body.roomId ?? "hub");
-  const targetCount = Number(body.targetCount);
-  const seed = Number(body.seed ?? 0);
-  const clearExisting = Boolean(body.clearExisting);
-  const out = adminRandomExtraFloorLayout(roomId, {
-    targetCount,
-    seed,
-    clearExisting,
-  });
-  if (!out.ok) {
-    res.status(400).json({ error: out.error });
-    return;
-  }
-  res.json({ placed: out.placed, totalExtra: out.totalExtra });
-});
-
-/** Admin room manager: full catalog with category + builder allowlists. */
 /**
  * Known users for the builder-allowlist picker: recent players, anyone with a
  * custom username, room owners, and existing builders. Labels reuse the in-game

@@ -80,7 +80,12 @@ import { forEachPaddedTileOnSegment } from "./signpostHintOcclusion.js";
 import type { BallWire, WorldcupPortalWire } from "../net/ws.js";
 import {
   getFlagImageIfReady,
+  getMosquitoImageIfReady,
+  isSoleMosquitoEmoji,
+  layoutLineWithMosquitoGlyphs,
   loadFlagImage,
+  loadMosquitoImage,
+  MOSQUITO_EMOJI,
   soleFlagCode,
 } from "../ui/flags.js";
 import {
@@ -879,6 +884,7 @@ function createChatBubbleSprite(
   opts?: {
     emojiOnly?: boolean;
     flagCode?: string | null;
+    mosquito?: boolean;
     bubblePreset?: string | null;
   }
 ): {
@@ -895,8 +901,10 @@ function createChatBubbleSprite(
       : bubblePreset === "bubble-sharp-dark"
         ? "dark"
         : "default";
-  // A sole flag (the Flag Emote) renders as a Twemoji image - Windows has no flag glyphs.
+  // A sole flag or mosquito renders as a Twemoji image - Windows has no / incomplete glyphs.
   const flagCode = opts?.flagCode ?? null;
+  const mosquito = opts?.mosquito === true;
+  const glyphImage = Boolean(flagCode) || mosquito;
   const raster = emojiOnly
     ? CHAT_BUBBLE_RASTER_EMOJI
     : CHAT_BUBBLE_RASTER_NORMAL;
@@ -906,11 +914,11 @@ function createChatBubbleSprite(
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { alpha: true })!;
   ctx.font = CHAT_BUBBLE_FONT;
-  const lines = flagCode
+  const lines = glyphImage
     ? [" "]
     : wrapChatLines(ctx, text.trim() || " ", CHAT_MAX_PX);
   const lineWidths = lines.map((ln) => Math.ceil(ctx.measureText(ln).width));
-  const maxLineW = flagCode
+  const maxLineW = glyphImage
     ? CHAT_LINE_HEIGHT_PX
     : Math.max(1, ...lineWidths);
   const innerW = Math.min(CHAT_MAX_PX, maxLineW);
@@ -967,8 +975,10 @@ function createChatBubbleSprite(
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = 1 / raster;
   ctx.fillStyle = bubbleStyle === "dark" ? "#e2e8f0" : "#1e293b";
-  if (!flagCode) {
+  const mixedMosquito = !glyphImage && text.includes(MOSQUITO_EMOJI);
+  if (!glyphImage) {
     lines.forEach((ln, i) => {
+      if (ln.includes(MOSQUITO_EMOJI)) return;
       const cy = padY + i * lineH + lineH / 2;
       ctx.fillText(ln, w / 2, cy);
     });
@@ -993,6 +1003,48 @@ function createChatBubbleSprite(
     const ready = getFlagImageIfReady(flagCode);
     if (ready) drawFlag(ready);
     else void loadFlagImage(flagCode).then((img) => img && drawFlag(img));
+  } else if (mosquito) {
+    const fs = lineH;
+    const fx = (w - fs) / 2;
+    const fy = (h - fs) / 2;
+    const drawMosquito = (img: HTMLImageElement): void => {
+      ctx.drawImage(img, fx, fy, fs, fs);
+      tex.needsUpdate = true;
+    };
+    const ready = getMosquitoImageIfReady();
+    if (ready) drawMosquito(ready);
+    else void loadMosquitoImage().then((img) => img && drawMosquito(img));
+  } else if (mixedMosquito) {
+    const paintMixed = (img: HTMLImageElement | null): void => {
+      lines.forEach((ln, i) => {
+        if (!ln.includes(MOSQUITO_EMOJI)) return;
+        const cy = padY + i * lineH + lineH / 2;
+        if (!img) {
+          ctx.fillText(ln, w / 2, cy);
+          return;
+        }
+        const layout = layoutLineWithMosquitoGlyphs(
+          ln,
+          (s) => ctx.measureText(s).width,
+          lineH
+        );
+        let x = w / 2 - layout.totalWidth / 2;
+        ctx.textAlign = "left";
+        for (const seg of layout.segs) {
+          if (seg.kind === "text") {
+            ctx.fillText(seg.text, x, cy);
+          } else {
+            ctx.drawImage(img, x, cy - lineH / 2, lineH, lineH);
+          }
+          x += seg.width;
+        }
+        ctx.textAlign = "center";
+      });
+      tex.needsUpdate = true;
+    };
+    const ready = getMosquitoImageIfReady();
+    if (ready) paintMixed(ready);
+    else void loadMosquitoImage().then((img) => paintMixed(img));
   }
 
   const sprite = new THREE.Sprite(
@@ -17150,12 +17202,14 @@ export class Game {
     // A sole country flag (the Flag Emote) gets the larger emoji-bubble treatment and renders
     // as a Twemoji image; otherwise fall back to the usual emoji-only heuristic.
     const flagCode = soleFlagCode(text);
-    const emojiOnly = flagCode ? true : isEmojiOnlyBubbleText(text);
+    const mosquito = isSoleMosquitoEmoji(text);
+    const emojiOnly = flagCode || mosquito ? true : isEmojiOnlyBubbleText(text);
     const bubblePreset =
       (g.userData.cosmeticChatBubble as string | null | undefined) ?? null;
     const { sprite, texture, width, height } = createChatBubbleSprite(text, {
       emojiOnly,
       flagCode,
+      mosquito,
       bubblePreset,
     });
     const mat = sprite.material as THREE.SpriteMaterial;

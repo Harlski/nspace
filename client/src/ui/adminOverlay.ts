@@ -3,7 +3,6 @@ import type {
   InspectorPreviewLayoutProfileId,
   VoxelTextSpec,
 } from "../game/Game.js";
-import { apiUrl } from "../net/apiBase.js";
 
 const DEV_ENABLED = import.meta.env.VITE_ADMIN_ENABLED === "true";
 
@@ -13,7 +12,6 @@ export function installAdminOverlay(
   hudRoot: HTMLElement,
   game: Game,
   opts: {
-    roomId: string;
     enabled?: boolean;
     /** Real allowlist admin (not merely VITE_ADMIN_ENABLED). Gates Movement Watch. */
     allowMovementWatch?: boolean;
@@ -62,20 +60,6 @@ export function installAdminOverlay(
       <button type="button" class="admin-overlay-tab" data-tab="watch" role="tab" aria-selected="false" id="admin-tab-watch" hidden>Watch</button>
     </div>
     <div class="admin-overlay-tab-panel" data-panel="layout">
-      <p class="admin-overlay-hint">Random extra floor tiles (500×500 world). No auth required.</p>
-      <label class="admin-overlay-field"><span>Room ID</span>
-        <input type="text" class="admin-overlay-input" id="admin-room" />
-      </label>
-      <label class="admin-overlay-field"><span>Extra tiles to add</span>
-        <input type="number" class="admin-overlay-input" id="admin-count" min="1" max="5000" value="400" />
-      </label>
-      <label class="admin-overlay-field"><span>Seed</span>
-        <input type="number" class="admin-overlay-input" id="admin-seed" value="0" />
-      </label>
-      <label class="admin-overlay-field admin-overlay-check"><input type="checkbox" id="admin-clear" />
-        <span>Clear existing extra floor first</span>
-      </label>
-      <button type="button" class="admin-overlay-btn" id="admin-random">Random layout</button>
       <p class="admin-overlay-hint">Floor tile overlap - scale on shared 1×1 quads to hide subpixel blue seams. Persists locally.</p>
       <label class="admin-overlay-field"><span>Tile quad scale</span>
         <input type="range" class="admin-overlay-range" id="floor-tile-quad" min="1" max="1.12" step="0.001" value="1.01" />
@@ -197,11 +181,11 @@ export function installAdminOverlay(
       <button type="button" class="admin-overlay-btn" id="voxel-apply">Apply voxel text</button>
     </div>
     <div class="admin-overlay-tab-panel" data-panel="watch" hidden>
-      <p class="admin-overlay-hint">Movement Watch shows players' click destinations and authoritative paths (admin-only side channel). Rejected clicks linger ~5s with a reason.</p>
+      <p class="admin-overlay-hint">Movement Watch shows players' click destinations, Click Intervals, and authoritative paths (admin-only side channel). Rejected clicks linger ~5s with a reason. Click Interval is the seconds since that player's previous marker.</p>
       <label class="admin-overlay-field admin-overlay-check"><input type="checkbox" id="movement-watch-enabled" />
         <span>Enable Movement Watch</span>
       </label>
-      <p class="admin-overlay-hint">Admin Invisibility omits you from non-admin presence (no join announce, avatar, or movement). Other admins still see you translucent. Observation-only while on — world edits are blocked. Chat still appears in the log without a speech bubble.</p>
+      <p class="admin-overlay-hint">Admin Invisibility omits you from non-admin presence (no join announce, avatar, or movement). Other admins still see you translucent. World edits stay available. Chat still appears in the log without a speech bubble.</p>
       <label class="admin-overlay-field admin-overlay-check"><input type="checkbox" id="admin-invisible-enabled" />
         <span>Admin Invisibility</span>
       </label>
@@ -214,9 +198,6 @@ export function installAdminOverlay(
   frame.appendChild(wrap);
 
   const $ = <T extends HTMLElement>(id: string): T => panel.querySelector(`#${id}`) as T;
-
-  const roomInput = $("admin-room") as HTMLInputElement;
-  roomInput.value = opts.roomId;
 
   const zmin = $("admin-zmin") as HTMLInputElement;
   const zmax = $("admin-zmax") as HTMLInputElement;
@@ -596,38 +577,6 @@ export function installAdminOverlay(
   inspectorPreviewPanZ.addEventListener("input", onInspectorPreviewPanInput);
   inspectorPreviewProfile.addEventListener("change", () => {
     syncInspectorPreviewFields();
-  });
-
-  $("admin-random").addEventListener("click", async () => {
-    const roomId = roomInput.value.trim() || opts.roomId;
-    const targetCount = Number(($("admin-count") as HTMLInputElement).value);
-    const seed = Number(($("admin-seed") as HTMLInputElement).value);
-    const clearExisting = ($("admin-clear") as HTMLInputElement).checked;
-    setStatus("Requesting…");
-    try {
-      const r = await fetch(apiUrl("/api/admin/random-layout"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          roomId,
-          targetCount,
-          seed,
-          clearExisting,
-        }),
-      });
-      const data = (await r.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!r.ok) {
-        setStatus(String(data.error ?? r.statusText), true);
-        return;
-      }
-      setStatus(
-        `Placed ${String(data.placed)} tiles (${String(data.totalExtra)} extra total).`
-      );
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "request_failed", true);
-    }
   });
 
   voxelId.addEventListener("change", () => {

@@ -24,3 +24,6 @@ wrong for authority and cannot show server rejects.
 
 Future readers should not fold Movement Watch into `MOVE_ORDER_BROADCAST` or welcome/state
 snapshots.
+
+**See also:** [0017](0017-movement-watch-click-interval.md) — Click Interval stamped on
+`movementWatchClick`.

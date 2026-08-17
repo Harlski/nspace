@@ -5,4 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
+Mosquito is on the Emote Wheel and shows up in chat on Windows. Invisible admins can still build. Mining Restriction no longer lets queued mining payouts slip through.

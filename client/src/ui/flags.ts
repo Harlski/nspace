@@ -3,8 +3,9 @@
  *
  * Windows ships no country-flag glyphs, so flag emoji fall back to the two regional-indicator
  * letters (e.g. "AT") in Chromium/Brave. We render flags as self-hosted Twemoji SVGs instead.
- * Assets live in `client/public/flags/<cc>.svg` (see `scripts/fetch-flag-svgs.mjs`) and are
- * served same-origin so `drawImage` onto canvases (3D crowd banners) stays untainted.
+ * Assets live in `client/public/flags/<cc>.svg` (see `scripts/fetch-flag-svgs.mjs`).
+ * Mosquito (🦟) uses the same pattern (`client/public/emoji/1f99f.svg`) because Windows
+ * Segoe UI Emoji often has no glyph. Same-origin assets keep canvas `drawImage` untainted.
  *
  * This module is intentionally free of any World Cup dependency so chat / profile code can use
  * it even when the seasonal feature is removed.
@@ -14,8 +15,13 @@ const VALID = /^[A-Z]{2}$/;
 const REGIONAL_BASE = 0x1f1e6;
 const REGIONAL_LAST = 0x1f1ff;
 
-/** A regional-indicator flag emoji sequence (two letters), for locating flags in free text. */
-const FLAG_RE = /[\u{1F1E6}-\u{1F1FF}]{2}/gu;
+/** Mosquito (U+1F99F) - Windows Segoe UI Emoji often has no glyph; render as Twemoji. */
+export const MOSQUITO_EMOJI = "\u{1F99F}";
+
+/** Same-origin Twemoji SVG for the mosquito glyph. */
+export function mosquitoAssetUrl(): string {
+  return "/emoji/1f99f.svg";
+}
 
 /** URL of the self-hosted flag SVG for an ISO alpha-2 code, or null if the code is invalid. */
 export function flagAssetUrl(code: string): string | null {
@@ -37,6 +43,22 @@ export function codeFromFlagEmoji(emoji: string): string | null {
 }
 
 type FlagImgOpts = { className?: string; size?: string; title?: string };
+
+function createMosquitoImg(opts?: FlagImgOpts): HTMLImageElement {
+  const img = document.createElement("img");
+  img.className = opts?.className ?? "flag-emoji";
+  img.src = mosquitoAssetUrl();
+  img.alt = MOSQUITO_EMOJI;
+  img.draggable = false;
+  img.decoding = "async";
+  img.loading = "lazy";
+  if (opts?.size) {
+    img.style.width = opts.size;
+    img.style.height = opts.size;
+  }
+  if (opts?.title) img.title = opts.title;
+  return img;
+}
 
 /** Create an `<img>` element for a flag, or null if the code is invalid. */
 export function createFlagImg(
@@ -61,25 +83,31 @@ export function createFlagImg(
 }
 
 /**
- * Append `text` to `parent`, replacing any flag emoji with `<img>` flags and keeping the rest as
- * plain text nodes (XSS-safe - never uses innerHTML). Non-flag emoji are left as text (they
- * render fine on Windows). Use for chat lines / labels that may contain a flag.
+ * Append `text` to `parent`, replacing flag emoji and mosquito with `<img>` glyphs and
+ * keeping the rest as plain text nodes (XSS-safe - never uses innerHTML). Other emoji stay
+ * as text. Use for chat lines / labels that may contain a flag or mosquito.
  */
 export function appendTextWithFlags(
   parent: Node,
   text: string,
   opts?: FlagImgOpts
 ): void {
+  const glyphRe = /(?:[\u{1F1E6}-\u{1F1FF}]{2}|\u{1F99F})/gu;
   let last = 0;
-  for (const m of text.matchAll(FLAG_RE)) {
+  for (const m of text.matchAll(glyphRe)) {
     const idx = m.index ?? 0;
     if (idx > last) {
       parent.appendChild(document.createTextNode(text.slice(last, idx)));
     }
-    const code = codeFromFlagEmoji(m[0]);
-    const img = code ? createFlagImg(code, opts) : null;
-    parent.appendChild(img ?? document.createTextNode(m[0]));
-    last = idx + m[0].length;
+    const token = m[0];
+    if (token === MOSQUITO_EMOJI) {
+      parent.appendChild(createMosquitoImg(opts));
+    } else {
+      const code = codeFromFlagEmoji(token);
+      const img = code ? createFlagImg(code, opts) : null;
+      parent.appendChild(img ?? document.createTextNode(token));
+    }
+    last = idx + token.length;
   }
   if (last < text.length) {
     parent.appendChild(document.createTextNode(text.slice(last)));
@@ -91,10 +119,88 @@ export function soleFlagCode(text: string): string | null {
   return codeFromFlagEmoji(text.trim());
 }
 
+/** True when `text` is exactly the mosquito emoji (paste or Emote Wheel). */
+export function isSoleMosquitoEmoji(text: string): boolean {
+  return text.trim() === MOSQUITO_EMOJI;
+}
+
+export type MosquitoLineSeg =
+  | { kind: "text"; text: string; width: number }
+  | { kind: "mosquito"; width: number };
+
+/** Split a canvas bubble line so mosquito glyphs can be drawn as Twemoji images. */
+export function layoutLineWithMosquitoGlyphs(
+  line: string,
+  measure: (s: string) => number,
+  mosquitoSize: number
+): { segs: MosquitoLineSeg[]; totalWidth: number } {
+  const segs: MosquitoLineSeg[] = [];
+  let last = 0;
+  let totalWidth = 0;
+  const re = /\u{1F99F}/gu;
+  for (const m of line.matchAll(re)) {
+    const idx = m.index ?? 0;
+    if (idx > last) {
+      const text = line.slice(last, idx);
+      const width = measure(text);
+      segs.push({ kind: "text", text, width });
+      totalWidth += width;
+    }
+    segs.push({ kind: "mosquito", width: mosquitoSize });
+    totalWidth += mosquitoSize;
+    last = idx + m[0].length;
+  }
+  if (last < line.length) {
+    const text = line.slice(last);
+    const width = measure(text);
+    segs.push({ kind: "text", text, width });
+    totalWidth += width;
+  }
+  return { segs, totalWidth };
+}
+
 // --- Canvas / texture image loading (3D crowd banners, billboards, chat bubbles) -----------
 
 const imgCache = new Map<string, HTMLImageElement>();
 const pending = new Map<string, Promise<HTMLImageElement | null>>();
+
+function loadCachedImage(
+  cacheKey: string,
+  url: string
+): Promise<HTMLImageElement | null> {
+  const ready = imgCache.get(cacheKey);
+  if (ready) return Promise.resolve(ready);
+  const inFlight = pending.get(cacheKey);
+  if (inFlight) return inFlight;
+  const p = new Promise<HTMLImageElement | null>((resolvePromise) => {
+    const img = new Image();
+    img.decoding = "async";
+    img.onload = () => {
+      imgCache.set(cacheKey, img);
+      pending.delete(cacheKey);
+      resolvePromise(img);
+    };
+    img.onerror = () => {
+      pending.delete(cacheKey);
+      resolvePromise(null);
+    };
+    img.src = url;
+  });
+  pending.set(cacheKey, p);
+  return p;
+}
+
+const MOSQUITO_CACHE_KEY = "MOSQUITO";
+
+/** A decoded mosquito image if it is already loaded, else null. */
+export function getMosquitoImageIfReady(): HTMLImageElement | null {
+  return imgCache.get(MOSQUITO_CACHE_KEY) ?? null;
+}
+
+/** Load (and cache) the mosquito Twemoji for canvas drawing. */
+export function loadMosquitoImage(): Promise<HTMLImageElement | null> {
+  return loadCachedImage(MOSQUITO_CACHE_KEY, mosquitoAssetUrl());
+}
 
 /** A decoded flag image if it is already loaded (for synchronous canvas draws), else null. */
 export function getFlagImageIfReady(code: string): HTMLImageElement | null {
@@ -104,26 +210,7 @@ export function getFlagImageIfReady(code: string): HTMLImageElement | null {
 /** Load (and cache) the flag image for canvas drawing. Resolves null on invalid/failed load. */
 export function loadFlagImage(code: string): Promise<HTMLImageElement | null> {
   const cc = code.trim().toUpperCase();
-  const ready = imgCache.get(cc);
-  if (ready) return Promise.resolve(ready);
-  const inFlight = pending.get(cc);
-  if (inFlight) return inFlight;
   const url = flagAssetUrl(cc);
   if (!url) return Promise.resolve(null);
-  const p = new Promise<HTMLImageElement | null>((resolvePromise) => {
-    const img = new Image();
-    img.decoding = "async";
-    img.onload = () => {
-      imgCache.set(cc, img);
-      pending.delete(cc);
-      resolvePromise(img);
-    };
-    img.onerror = () => {
-      pending.delete(cc);
-      resolvePromise(null);
-    };
-    img.src = url;
-  });
-  pending.set(cc, p);
-  return p;
+  return loadCachedImage(cc, url);
 }

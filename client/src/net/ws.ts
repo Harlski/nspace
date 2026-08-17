@@ -435,6 +435,7 @@ export type ServerMessage =
       startZ?: number;
       startAtMs?: number;
       speed?: number;
+      clickIntervalSec?: number;
     }
   | { type: "movementWatchClear"; address: string }
   | { type: "movementWatchActive"; active: boolean }
