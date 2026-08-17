@@ -67,4 +67,29 @@ describe("mergeStateDeltaPlayer", () => {
     };
     expect(mergeStateDeltaPlayer(prev, delta).frozen).toBeUndefined();
   });
+
+  it("keeps previous pose when a presence delta omits x/y/z/vx/vz", () => {
+    const prev = {
+      address: "NQWALKER",
+      displayName: "Ada",
+      x: 12.5,
+      y: 1,
+      z: 4,
+      vx: 5,
+      vz: 0,
+      chatTyping: false as boolean | undefined,
+    };
+    const delta = {
+      address: "NQWALKER",
+      displayName: "Ada",
+      chatTyping: true,
+    };
+    const merged = mergeStateDeltaPlayer(prev, delta);
+    expect(merged.x).toBe(12.5);
+    expect(merged.y).toBe(1);
+    expect(merged.z).toBe(4);
+    expect(merged.vx).toBe(5);
+    expect(merged.vz).toBe(0);
+    expect(merged.chatTyping).toBe(true);
+  });
 });

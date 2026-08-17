@@ -110,6 +110,25 @@ export function gameplayPoseFromConn(args: {
   }).pose;
 }
 
+export function applyPoseToPlayer(
+  player: { x: number; y: number; z: number; vx: number; vz: number },
+  pose: PathMovePose
+): void {
+  player.x = pose.x;
+  player.y = pose.y;
+  player.z = pose.z;
+  player.vx = pose.vx;
+  player.vz = pose.vz;
+}
+
+/** Wire `moveOrder` start xz from analytic pose, never lagged `conn.player`. */
+export function moveOrderStartFromGameplay(
+  args: Parameters<typeof gameplayPoseFromConn>[0]
+): { startX: number; startZ: number } {
+  const pose = gameplayPoseFromConn(args);
+  return { startX: pose.x, startZ: pose.z };
+}
+
 /**
  * Apply analytic path pose to live player state; returns tile crossings not yet emitted.
  * Used when {@link ANALYTIC_PATH_SKIP_STEPPING} replaces stepped simulation.

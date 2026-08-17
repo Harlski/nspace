@@ -395,6 +395,7 @@ export type ServerMessage =
       startZ: number;
       startAtMs: number;
       speed: number;
+      serverNowMs?: number;
     }
   | {
       type: "moveAbort";

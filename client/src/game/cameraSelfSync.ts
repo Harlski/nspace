@@ -14,7 +14,8 @@ export function shouldSnapCameraOnSelfSync(args: {
   jumped: boolean;
 }): boolean {
   if (args.establishingSelfTarget) return true;
-  // Stale move-order from the previous room must not suppress a pending snap.
-  if (!args.cameraFollowReady || args.jumped) return true;
+  if (args.jumped) return true;
+  // Lock follow onto the avatar once, but do not snap (and drop Path Playback) mid-walk.
+  if (!args.cameraFollowReady && !args.hasSelfMoveOrder) return true;
   return false;
 }

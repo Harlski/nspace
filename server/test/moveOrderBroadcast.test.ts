@@ -66,5 +66,6 @@ test("buildMoveOrderOutMsg copies path and uses server-owned timing fields", () 
   assert.equal(msg.startX, 2.1);
   assert.equal(msg.startZ, 4);
   assert.equal(msg.startAtMs, 1_720_000_000_000);
+  assert.equal(msg.serverNowMs, 1_720_000_000_000);
   assert.equal(msg.speed, 5);
 });

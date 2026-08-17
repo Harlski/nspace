@@ -99,3 +99,56 @@ export function shouldIncludeInTickStateDelta(args: {
 
   return { include: true, suppressedMovementOnly: false };
 }
+
+/** Presence events omit pose while Path Playback already owns the walk. */
+export function shouldOmitPoseFromPresenceDelta(args: {
+  enabled: boolean;
+  pathQueueLength: number;
+  isFieldFreeMove: boolean;
+}): boolean {
+  return cutMovementStreamEligible(args);
+}
+
+export type PresenceDeltaPlayer = Omit<
+  TickPlayerSnapshot,
+  "x" | "y" | "z" | "vx" | "vz"
+> &
+  Partial<Pick<TickPlayerSnapshot, "x" | "y" | "z" | "vx" | "vz">>;
+
+export function playerStateForPresenceDelta(
+  player: TickPlayerSnapshot,
+  omitPose: boolean
+): PresenceDeltaPlayer {
+  const next: PresenceDeltaPlayer = { ...player };
+  if (!omitPose) return next;
+  delete next.x;
+  delete next.y;
+  delete next.z;
+  delete next.vx;
+  delete next.vz;
+  return next;
+}
+
+/**
+ * One-player (or few-player) presence payload. Never a full room roster.
+ * Pose is stripped for CUT-eligible grid walkers so typing/pay/challenge cannot rewind Path Playback.
+ */
+export function presenceDeltaPlayers(args: {
+  enabled: boolean;
+  subjects: Array<{
+    player: TickPlayerSnapshot;
+    pathQueueLength: number;
+    isFieldFreeMove: boolean;
+  }>;
+}): PresenceDeltaPlayer[] {
+  return args.subjects.map((s) =>
+    playerStateForPresenceDelta(
+      s.player,
+      shouldOmitPoseFromPresenceDelta({
+        enabled: args.enabled,
+        pathQueueLength: s.pathQueueLength,
+        isFieldFreeMove: s.isFieldFreeMove,
+      })
+    )
+  );
+}

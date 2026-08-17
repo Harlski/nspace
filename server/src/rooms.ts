@@ -498,6 +498,7 @@ import {
 } from "./moveAbortBroadcast.js";
 import {
   CUT_MOVEMENT_STREAM,
+  presenceDeltaPlayers,
   shouldIncludeInTickStateDelta,
 } from "./cutMovementStream.js";
 import {
@@ -543,7 +544,9 @@ import { stepHumanAlongPath } from "./pathPosition.js";
 import { haltPathVelocity } from "./pathHalt.js";
 import {
   ANALYTIC_PATH_SKIP_STEPPING,
+  applyPoseToPlayer,
   gameplayPoseFromConn,
+  moveOrderStartFromGameplay,
   snapshotPathMoveBegin,
   tickAnalyticPathHuman,
   type ConnPathMoveState,
@@ -678,6 +681,39 @@ function broadcastRoomStateFull(roomId: string): void {
     players: snapshotPlayers(roomId),
   });
   replaceTickBroadcastBaseline(roomId);
+}
+
+/**
+ * Presence / flag change for one or more players: `stateDelta` of those players only.
+ * Pose is omitted for CUT-eligible grid walkers. Tick baseline keeps the full (posed) record.
+ */
+function broadcastPresenceStateDelta(
+  roomId: string,
+  subjects: ClientConn[]
+): void {
+  if (subjects.length === 0) return;
+  const isFieldFreeMove = worldcupIsFieldLikeRoom(roomId);
+  const fullByAddr = new Map<string, PlayerState>();
+  const subjectsForDelta = subjects.map((conn) => {
+    const full = playerToOutState(conn);
+    fullByAddr.set(conn.address, full);
+    return {
+      player: full,
+      pathQueueLength: conn.pathQueue.length,
+      isFieldFreeMove,
+    };
+  });
+  const players = presenceDeltaPlayers({
+    enabled: CUT_MOVEMENT_STREAM,
+    subjects: subjectsForDelta,
+  }) as PlayerState[];
+  broadcast(roomId, { type: "stateDelta", players });
+  for (const conn of subjects) {
+    const full = fullByAddr.get(conn.address);
+    if (!full) continue;
+    pruneTickBaselinePlayer(roomId, conn.address);
+    mergeTickBaselinePlayer(roomId, full);
+  }
 }
 
 function broadcastTickStateIfAllowed(
@@ -1145,6 +1181,15 @@ function playerPoseNow(
   });
 }
 
+function copyAnalyticPoseOntoConn(
+  conn: ClientConn,
+  nowMs: number,
+  roomId: string,
+  placed: ReadonlyMap<string, PlacedProps>
+): void {
+  applyPoseToPlayer(conn.player, playerPoseNow(conn, nowMs, roomId, placed));
+}
+
 function withinBlockActionRangeNow(
   conn: ClientConn,
   roomId: string,
@@ -1534,7 +1579,7 @@ type OutMsg =
       adminInvisible?: boolean;
     }
   | { type: "state"; players: PlayerState[] }
-  /** Tick path only: subset of players that changed since last tick snapshot. */
+  /** Changed players only (tick diffs, presence flags, freeze / level / invis). */
   | { type: "stateDelta"; players: PlayerState[] }
   | {
       type: "moveOrder";
@@ -1544,6 +1589,7 @@ type OutMsg =
       startZ: number;
       startAtMs: number;
       speed: number;
+      serverNowMs: number;
     }
   | {
       type: "moveAbort";
@@ -1974,10 +2020,7 @@ function deliverAchievementUnlocksWithCelebration(
       const prevLevel = conn.player.playerLevel;
       refreshPlayerLevelOnPlayer(conn.player);
       if (conn.player.playerLevel !== prevLevel) {
-        broadcast(ctx.roomId, {
-          type: "stateDelta",
-          players: [playerToOutState(conn)],
-        });
+        broadcastPresenceStateDelta(ctx.roomId, [conn]);
       }
     }
   }
@@ -5103,14 +5146,24 @@ function maybeBroadcastMoveOrder(
   ) {
     return;
   }
+  const placed = placedMap(roomId);
+  const start = moveOrderStartFromGameplay({
+    player: conn.player,
+    pathQueue: conn.pathQueue,
+    pathMove: conn.pathMove,
+    nowMs: startAtMs,
+    bounds: worldcupMoveClampBounds(roomId),
+    waypointY: (layer, gx, gz) => waypointY(layer, gx, gz, placed),
+  });
   broadcast(
     roomId,
     buildMoveOrderOutMsg({
       address,
       pathQueue: conn.pathQueue,
-      startX: conn.player.x,
-      startZ: conn.player.z,
+      startX: start.startX,
+      startZ: start.startZ,
       startAtMs,
+      serverNowMs: Date.now(),
     })
   );
 }
@@ -5130,6 +5183,11 @@ function maybeBroadcastMoveAbort(
   ) {
     return;
   }
+  const placed = placedMap(roomId);
+  applyPoseToPlayer(
+    conn.player,
+    playerPoseNow(conn, Date.now(), roomId, placed)
+  );
   broadcast(
     roomId,
     buildMoveAbortFromPlayer({ address, player: conn.player })
@@ -5502,8 +5560,8 @@ function clearConnPathQueue(
   conn: ClientConn
 ): void {
   const hadPathQueue = conn.pathQueue.length > 0;
-  haltConnPath(conn);
   maybeBroadcastMoveAbort(roomId, address, conn, { hadPathQueue });
+  haltConnPath(conn);
   if (hadPathQueue) emitMovementWatchClear(roomId, address);
 }
 
@@ -8194,16 +8252,16 @@ function worldcupSweepStaleChallenges(now: number): void {
   const timeout = WORLDCUP_MATCH.challengeTimeoutMs;
   if (timeout <= 0) return;
   for (const [roomId, room] of rooms) {
-    let changed = false;
+    const expired: ClientConn[] = [];
     for (const conn of room.values()) {
       if (!conn.challengeOpen) continue;
       if (now - conn.challengeRaisedAtMs >= timeout) {
         conn.challengeOpen = false;
         conn.challengeRaisedAtMs = 0;
-        changed = true;
+        expired.push(conn);
       }
     }
-    if (changed) broadcastRoomStateFull(roomId);
+    if (expired.length > 0) broadcastPresenceStateDelta(roomId, expired);
   }
 }
 
@@ -9558,8 +9616,10 @@ export function addClient(
     }
 
     if (msg.type === "nimSendIntent") {
-      conn.nimSendIntent = Boolean(msg.active);
-      broadcastRoomStateFull(currentRoomId);
+      const next = Boolean(msg.active);
+      if (conn.nimSendIntent === next) return;
+      conn.nimSendIntent = next;
+      broadcastPresenceStateDelta(currentRoomId, [conn]);
       return;
     }
 
@@ -9567,7 +9627,7 @@ export function addClient(
       const next = Boolean((msg as { active?: boolean }).active);
       if (conn.chatTyping === next) return;
       conn.chatTyping = next;
-      broadcastRoomStateFull(currentRoomId);
+      broadcastPresenceStateDelta(currentRoomId, [conn]);
       return;
     }
 
@@ -9594,7 +9654,7 @@ export function addClient(
         conn.challengeOpen = false;
         conn.challengeRaisedAtMs = 0;
       }
-      broadcastRoomStateFull(currentRoomId);
+      broadcastPresenceStateDelta(currentRoomId, [conn]);
       return;
     }
 
@@ -9720,7 +9780,7 @@ export function addClient(
       } satisfies OutMsg);
       // Re-broadcast so others (and the field crowd) pick up this player's new flag.
       if (WORLDCUP_ENABLED && worldcupIsFieldLikeRoom(currentRoomId))
-        broadcastRoomStateFull(currentRoomId);
+        broadcastPresenceStateDelta(currentRoomId, [conn]);
       return;
     }
 
@@ -10699,6 +10759,12 @@ export function addClient(
         return;
       }
       conn.lastMoveToAt = now;
+      copyAnalyticPoseOntoConn(
+        conn,
+        now,
+        currentRoomId,
+        placedMap(currentRoomId)
+      );
       // worldcup: the soccer pitch uses free (any-direction) movement - go in a straight
       // line to the exact clicked float point (no tile snap, no grid pathfinding) so the
       // ball can be kicked at any angle. The pitch is an open rectangle with no obstacles,
@@ -11869,6 +11935,7 @@ export function addClient(
 
       const p = conn.player;
       const gatePose = playerPoseNow(conn, now, currentRoomId, placed);
+      applyPoseToPlayer(p, gatePose);
       const moverCtx: PathfindMoverContext = { address: who, nowMs: now };
       const startNode = resolvePathfindStartNode(
         currentRoomId,
@@ -13418,7 +13485,7 @@ export function addClient(
         ...(suppressBubble ? { suppressBubble: true } : {}),
       });
       if (hadTyping) {
-        broadcastRoomStateFull(currentRoomId);
+        broadcastPresenceStateDelta(currentRoomId, [conn]);
       }
       logGameplayEvent(conn.sessionId, address, currentRoomId, ANALYTICS_EVENT_KINDS.chat, {
         text,
@@ -14985,7 +15052,7 @@ export function syncPlayerProfileDisplayNameForWallet(walletRaw: string): void {
       conn.displayName = name;
       conn.player.displayName = name;
       conn.player.recentAliases = aliases;
-      broadcastRoomStateFull(roomId);
+      broadcastPresenceStateDelta(roomId, [conn]);
       return;
     }
   }

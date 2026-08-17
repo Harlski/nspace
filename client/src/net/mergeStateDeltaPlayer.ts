@@ -8,9 +8,9 @@ export function mergeStateDeltaPlayer<
   T extends {
     address: string;
     displayName: string;
-    x: number;
+    x?: number;
     y?: number;
-    z: number;
+    z?: number;
     vx?: number;
     vz?: number;
     nimSendAway?: boolean;
@@ -21,21 +21,43 @@ export function mergeStateDeltaPlayer<
     frozen?: boolean;
     playerLevel?: number;
   },
->(prev: T | undefined, delta: T): T {
-  const py = Number.isFinite(delta.y) ? (delta.y as number) : 0;
+>(prev: T | undefined, delta: Partial<T> & { address: string; displayName: string }): T {
+  const poseOmitted =
+    !Number.isFinite(delta.x) || !Number.isFinite(delta.z);
+  const x = poseOmitted ? (prev?.x ?? 0) : (delta.x as number);
+  const z = poseOmitted ? (prev?.z ?? 0) : (delta.z as number);
+  const y = Number.isFinite(delta.y)
+    ? (delta.y as number)
+    : poseOmitted
+      ? (prev?.y ?? 0)
+      : 0;
+  const vx = poseOmitted
+    ? (prev?.vx ?? 0)
+    : Number.isFinite(delta.vx)
+      ? (delta.vx as number)
+      : 0;
+  const vz = poseOmitted
+    ? (prev?.vz ?? 0)
+    : Number.isFinite(delta.vz)
+      ? (delta.vz as number)
+      : 0;
   return {
     ...(prev ??
       ({
         address: delta.address,
         displayName: delta.displayName,
-        x: delta.x,
-        y: py,
-        z: delta.z,
+        x,
+        y,
+        z,
         vx: 0,
         vz: 0,
       } as T)),
     ...delta,
-    y: py,
+    x,
+    y,
+    z,
+    vx,
+    vz,
     // Derive presence/ephemeral flags from the delta only (not stale `prev`).
     nimSendAway: delta.nimSendAway,
     chatTyping: delta.chatTyping,

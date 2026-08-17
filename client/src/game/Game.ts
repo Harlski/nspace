@@ -204,10 +204,19 @@ import {
   waypointWorldY,
   isOrthogonallyAdjacentToFloorTile,
 } from "./grid.js";
+import { PATH_ARRIVE_EPS } from "./pathPosition.js";
 import {
   moveOrderPlaybackActive,
+  moveOrderPlaybackFinished,
+  playbackNowMs,
+  playbackSameWalk,
+  poseIsBehindAlongPath,
   remotePoseFromMoveOrder,
+  shouldAdvancePlaybackSample,
+  shouldAdoptReplacementMoveOrder,
+  shouldAdoptSnapshotPose,
   type MoveOrderWire,
+  type PlaybackHold,
 } from "./moveOrderPlayback.js";
 import { shouldSnapCameraOnSelfSync } from "./cameraSelfSync.js";
 import { shouldAdoptServerVelocityOnSelfSync } from "./selfServerVelocity.js";
@@ -1660,10 +1669,14 @@ export class Game {
   /** Remote avatar path playback from server `moveOrder` (dual-send tracer). */
   private readonly remoteMoveOrders = new Map<
     string,
-    MoveOrderWire & { startY: number }
+    MoveOrderWire & { startY: number; recvLocalMs: number }
   >();
+  /** Last Path Playback pose; after drain, snapshots behind this are ignored. */
+  private readonly lastRemotePlayback = new Map<string, PlaybackHold>();
   /** Local grid-path walk while tick stateDelta omits pose (move-order rollout). */
-  private selfMoveOrder: (MoveOrderWire & { startY: number }) | null = null;
+  private selfMoveOrder: (MoveOrderWire & { startY: number; recvLocalMs: number }) | null =
+    null;
+  private lastSelfPlayback: PlaybackHold | null = null;
   /** Admin Movement Watch overlay (Click Markers + Watch Paths). */
   private movementWatchView: MovementWatchView | null = null;
   // worldcup: seasonal soccer ball meshes + interpolation targets + goal frames
@@ -3274,10 +3287,12 @@ export class Game {
     this.clearSaleDisplays();
     // Drop prior-room path playback so hub sync can re-snap the camera look-at.
     this.selfMoveOrder = null;
+    this.lastSelfPlayback = null;
     this.selfServerVx = 0;
     this.selfServerVz = 0;
     this.selfLastServerRecvMs = performance.now();
     this.remoteMoveOrders.clear();
+    this.lastRemotePlayback.clear();
     if (!roomUsesSpatialInterest(msg.roomBounds)) {
       this.syncWalkableFloorMeshes();
     }
@@ -13246,6 +13261,7 @@ export class Game {
     this.cameraLookAhead.set(0, 0, 0);
     this.selfTargetPos = null;
     this.selfMoveOrder = null;
+    this.lastSelfPlayback = null;
     this.selfServerVx = 0;
     this.selfServerVz = 0;
     this.selfLastServerRecvMs = performance.now();
@@ -13411,7 +13427,9 @@ export class Game {
     this.others.clear();
     this.targetPos.clear();
     this.remoteMoveOrders.clear();
+    this.lastRemotePlayback.clear();
     this.selfMoveOrder = null;
+    this.lastSelfPlayback = null;
     for (const [, mesh] of this.canvasIdenticonMeshes) {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
@@ -15595,14 +15613,41 @@ export class Game {
 
   /** Server-authoritative path intent for a remote avatar (`moveOrder` dual-send tracer). */
   applyMoveOrder(msg: MoveOrderWire): void {
+    const recvLocalMs = Date.now();
+    const nowMs = playbackNowMs({
+      localNowMs: recvLocalMs,
+      serverNowMs: msg.serverNowMs,
+      recvLocalMs,
+    });
+    const bounds = this.pathMoveBoundsForPlayback();
     if (msg.address === this.selfAddress) {
       // Pitch free-move still receives movement stateDelta; grid walks rely on moveOrder.
       if (this.isWorldcupFreeMoveRoom()) return;
       const startY =
         this.selfTargetPos?.y ?? this.selfMesh?.position.y ?? 0;
+      const { pose } = remotePoseFromMoveOrder({
+        order: msg,
+        startY,
+        nowMs,
+        bounds,
+        placed: this.placedObjects,
+      });
+      if (
+        !shouldAdoptReplacementMoveOrder({
+          last: this.lastSelfPlayback,
+          candidatePose: { x: pose.x, z: pose.z },
+          order: msg,
+        })
+      ) {
+        return;
+      }
+      if (!playbackSameWalk(this.lastSelfPlayback, msg)) {
+        this.lastSelfPlayback = null;
+      }
       this.selfMoveOrder = {
         ...msg,
         startY,
+        recvLocalMs,
         path: msg.path.map((w) => ({ ...w })),
       };
       this.refreshSelfMoveOrderTarget();
@@ -15612,9 +15657,30 @@ export class Game {
     const t = this.targetPos.get(msg.address);
     const g = this.others.get(msg.address);
     const startY = t?.y ?? g?.position.y ?? 0;
+    const { pose } = remotePoseFromMoveOrder({
+      order: msg,
+      startY,
+      nowMs,
+      bounds,
+      placed: this.placedObjects,
+    });
+    if (
+      !shouldAdoptReplacementMoveOrder({
+        last: this.lastRemotePlayback.get(msg.address),
+        candidatePose: { x: pose.x, z: pose.z },
+        order: msg,
+      })
+    ) {
+      return;
+    }
+    const remoteLast = this.lastRemotePlayback.get(msg.address);
+    if (!playbackSameWalk(remoteLast, msg)) {
+      this.lastRemotePlayback.delete(msg.address);
+    }
     this.remoteMoveOrders.set(msg.address, {
       ...msg,
       startY,
+      recvLocalMs,
       path: msg.path.map((w) => ({ ...w })),
     });
     this.refreshRemoteMoveOrderTarget(msg.address);
@@ -15626,6 +15692,7 @@ export class Game {
     if (msg.address === this.selfAddress) {
       if (!this.isWorldcupFreeMoveRoom()) {
         this.selfMoveOrder = null;
+        this.lastSelfPlayback = null;
         const py = Number.isFinite(msg.y) ? msg.y : 0;
         if (this.selfTargetPos) {
           this.selfTargetPos.set(msg.x, py, msg.z);
@@ -15645,6 +15712,7 @@ export class Game {
       targetPos: this.targetPos.get(msg.address),
       avatarGroup: this.others.get(msg.address),
     });
+    this.lastRemotePlayback.delete(msg.address);
     this.requestRender(400);
   }
 
@@ -15688,12 +15756,35 @@ export class Game {
     return walkBoundsForRoom(this.roomBounds, this.extraFloorKeys);
   }
 
+  /** Grid Path Playback owns self pose until the walk reaches its final waypoint. */
+  private selfPathPlaybackActive(): boolean {
+    if (this.selfMoveOrder) return true;
+    const hold = this.lastSelfPlayback;
+    if (!hold || !this.pathGoal) return false;
+    return moveOrderPlaybackActive({
+      pathRemaining: 0,
+      pose: hold.pose,
+      path: hold.path,
+    }) ||
+      (this.pathGoal
+        ? Math.hypot(
+            hold.pose.x - this.pathGoal.ft.x,
+            hold.pose.z - this.pathGoal.ft.y
+          ) > PATH_ARRIVE_EPS
+        : false);
+  }
+
   private refreshRemoteMoveOrderTarget(
     address: string,
-    nowMs = Date.now()
+    localNowMs = Date.now()
   ): void {
     const order = this.remoteMoveOrders.get(address);
     if (!order) return;
+    const nowMs = playbackNowMs({
+      localNowMs,
+      serverNowMs: order.serverNowMs,
+      recvLocalMs: order.recvLocalMs,
+    });
     const bounds = this.pathMoveBoundsForPlayback();
     const { pose, pathRemaining } = remotePoseFromMoveOrder({
       order,
@@ -15702,18 +15793,46 @@ export class Game {
       bounds,
       placed: this.placedObjects,
     });
-    if (!moveOrderPlaybackActive(pathRemaining)) {
+    const candidate = { x: pose.x, z: pose.z };
+    const last = this.lastRemotePlayback.get(address);
+    if (
+      !shouldAdvancePlaybackSample({
+        last,
+        candidatePose: candidate,
+        order,
+      })
+    ) {
+      return;
+    }
+    if (
+      moveOrderPlaybackFinished({
+        pathRemaining,
+        pose: candidate,
+        path: order.path,
+      })
+    ) {
       this.remoteMoveOrders.delete(address);
     }
     const t = this.targetPos.get(address);
     if (t) {
       t.set(pose.x, pose.y, pose.z);
     }
+    this.lastRemotePlayback.set(address, {
+      pose: candidate,
+      path: order.path,
+      startX: order.startX,
+      startZ: order.startZ,
+    });
   }
 
-  private refreshSelfMoveOrderTarget(nowMs = Date.now()): void {
+  private refreshSelfMoveOrderTarget(localNowMs = Date.now()): void {
     const order = this.selfMoveOrder;
     if (!order) return;
+    const nowMs = playbackNowMs({
+      localNowMs,
+      serverNowMs: order.serverNowMs,
+      recvLocalMs: order.recvLocalMs,
+    });
     const bounds = this.pathMoveBoundsForPlayback();
     const { pose, pathRemaining } = remotePoseFromMoveOrder({
       order,
@@ -15722,7 +15841,26 @@ export class Game {
       bounds,
       placed: this.placedObjects,
     });
-    if (!moveOrderPlaybackActive(pathRemaining)) {
+    const candidate = { x: pose.x, z: pose.z };
+    if (
+      !shouldAdvancePlaybackSample({
+        last: this.lastSelfPlayback,
+        candidatePose: candidate,
+        order,
+      })
+    ) {
+      return;
+    }
+    if (
+      moveOrderPlaybackFinished({
+        pathRemaining,
+        pose: candidate,
+        path: order.path,
+        clickGoal: this.pathGoal
+          ? { x: this.pathGoal.ft.x, z: this.pathGoal.ft.y }
+          : null,
+      })
+    ) {
       this.selfMoveOrder = null;
     }
     if (!this.selfTargetPos) {
@@ -15733,6 +15871,12 @@ export class Game {
     this.selfServerVx = pose.vx;
     this.selfServerVz = pose.vz;
     this.selfLastServerRecvMs = performance.now();
+    this.lastSelfPlayback = {
+      pose: candidate,
+      path: order.path,
+      startX: order.startX,
+      startZ: order.startZ,
+    };
   }
 
   syncState(players: PlayerState[]): void {
@@ -15746,32 +15890,48 @@ export class Game {
         if (this.selfMesh) {
           const establishingSelfTarget = !this.selfTargetPos;
           let jumped = false;
-          if (establishingSelfTarget) {
+          const posePresent = Number.isFinite(p.x) && Number.isFinite(p.z);
+          if (establishingSelfTarget && posePresent) {
             this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
             this.selfMesh.position.set(p.x, py, p.z);
             visualChanged = true;
-          } else if (!this.selfMoveOrder) {
-            visualChanged =
-              visualChanged ||
-              Math.hypot(this.selfTargetPos!.x - p.x, this.selfTargetPos!.z - p.z) >
-                0.001 ||
-              Math.abs(this.selfTargetPos!.y - py) > 0.001 ||
-              Math.abs(this.selfServerVx - p.vx) > 0.001 ||
-              Math.abs(this.selfServerVz - p.vz) > 0.001;
-            this.selfTargetPos!.set(p.x, py, p.z);
+          } else if (posePresent) {
+            const last = this.lastSelfPlayback;
+            const behind = last
+              ? poseIsBehindAlongPath(last.pose, { x: p.x, z: p.z }, last.path)
+              : false;
             const ox = this.selfMesh.position.x;
             const oy = this.selfMesh.position.y;
             const oz = this.selfMesh.position.z;
-            jumped =
+            const rawJump =
               Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5;
-            if (jumped) {
-              this.selfMesh.position.set(p.x, py, p.z);
-              visualChanged = true;
+            if (
+              shouldAdoptSnapshotPose({
+                playbackActive: this.selfPathPlaybackActive(),
+                behind,
+                intentionalSnap: rawJump && !behind,
+              })
+            ) {
+              visualChanged =
+                visualChanged ||
+                Math.hypot(this.selfTargetPos!.x - p.x, this.selfTargetPos!.z - p.z) >
+                  0.001 ||
+                Math.abs(this.selfTargetPos!.y - py) > 0.001 ||
+                Math.abs(this.selfServerVx - p.vx) > 0.001 ||
+                Math.abs(this.selfServerVz - p.vz) > 0.001;
+              this.selfTargetPos!.set(p.x, py, p.z);
+              jumped = rawJump;
+              if (jumped) {
+                this.selfMesh.position.set(p.x, py, p.z);
+                this.lastSelfPlayback = null;
+                visualChanged = true;
+              }
             }
           }
           if (
+            posePresent &&
             shouldAdoptServerVelocityOnSelfSync({
-              hasSelfMoveOrder: Boolean(this.selfMoveOrder),
+              hasSelfMoveOrder: this.selfPathPlaybackActive(),
             })
           ) {
             this.selfLastServerRecvMs = performance.now();
@@ -15779,6 +15939,7 @@ export class Game {
             this.selfServerVz = p.vz;
           }
           if (
+            posePresent &&
             shouldSnapCameraOnSelfSync({
               establishingSelfTarget,
               hasSelfMoveOrder: Boolean(this.selfMoveOrder),
@@ -15786,13 +15947,29 @@ export class Game {
               jumped,
             })
           ) {
-            // Authoritative welcome / jump wins over stale prior-room path playback.
-            if (this.selfMoveOrder) {
+            // Authoritative welcome snap wins over stale prior-room path playback.
+            if (this.selfMoveOrder && establishingSelfTarget) {
               this.selfMoveOrder = null;
+              this.lastSelfPlayback = null;
               this.selfTargetPos?.set(p.x, py, p.z);
               this.selfMesh.position.set(p.x, py, p.z);
             }
             this.cameraLookAt.set(p.x, py, p.z);
+            this.applyCameraPose();
+            this.cameraFollowReady = true;
+            visualChanged = true;
+          } else if (
+            posePresent &&
+            !this.cameraFollowReady &&
+            this.selfMoveOrder &&
+            this.selfTargetPos
+          ) {
+            // Path Playback already owns pose; lock camera without dropping the walk.
+            this.cameraLookAt.set(
+              this.selfTargetPos.x,
+              this.selfTargetPos.y,
+              this.selfTargetPos.z
+            );
             this.applyCameraPose();
             this.cameraFollowReady = true;
             visualChanged = true;
@@ -15805,8 +15982,12 @@ export class Game {
             this.withSelfCosmeticPreview(p),
             this.playerMovedRecently(
               p.address,
-              this.selfMoveOrder ? this.selfTargetPos!.x : p.x,
-              this.selfMoveOrder ? this.selfTargetPos!.z : p.z
+              this.selfMoveOrder || this.lastSelfPlayback
+                ? this.selfTargetPos!.x
+                : p.x,
+              this.selfMoveOrder || this.lastSelfPlayback
+                ? this.selfTargetPos!.z
+                : p.z
             )
           );
         }
@@ -15823,19 +16004,34 @@ export class Game {
         visualChanged = true;
       }
       const t = this.targetPos.get(p.address);
-      if (t) {
-        if (!this.remoteMoveOrders.has(p.address)) {
+      if (t && Number.isFinite(p.x) && Number.isFinite(p.z)) {
+        const last = this.lastRemotePlayback.get(p.address);
+        const behind = last
+          ? poseIsBehindAlongPath(last.pose, { x: p.x, z: p.z }, last.path)
+          : false;
+        const rawJump =
+          Math.hypot(p.x - t.x, p.z - t.z) > 6 || Math.abs(py - t.y) > 1.5;
+        if (
+          shouldAdoptSnapshotPose({
+            playbackActive: this.remoteMoveOrders.has(p.address),
+            behind,
+            intentionalSnap: rawJump && !behind,
+          })
+        ) {
           visualChanged =
             visualChanged ||
             Math.hypot(t.x - p.x, t.z - p.z) > 0.001 ||
             Math.abs(t.y - py) > 0.001;
           t.set(p.x, py, p.z);
+          if (rawJump) this.lastRemotePlayback.delete(p.address);
         }
       }
       this.syncAvatarNameLabelFromState(g, p);
       this.syncTypingIndicatorForGroup(g, p);
       this.syncWorldcupChallengeBubble(g, p);
-      syncCosmeticLoadoutVfx(g, p, this.playerMovedRecently(p.address, p.x, p.z));
+      const moveX = Number.isFinite(p.x) ? p.x : t?.x ?? 0;
+      const moveZ = Number.isFinite(p.z) ? p.z : t?.z ?? 0;
+      syncCosmeticLoadoutVfx(g, p, this.playerMovedRecently(p.address, moveX, moveZ));
     }
     for (const addr of this.others.keys()) {
       if (!seen.has(addr)) {
@@ -15847,6 +16043,7 @@ export class Game {
         this.others.delete(addr);
         this.targetPos.delete(addr);
         this.remoteMoveOrders.delete(addr);
+        this.lastRemotePlayback.delete(addr);
         visualChanged = true;
       }
     }

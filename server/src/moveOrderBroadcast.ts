@@ -23,6 +23,7 @@ export type MoveOrderOutMsg = {
   startZ: number;
   startAtMs: number;
   speed: number;
+  serverNowMs: number;
 };
 
 export function shouldEmitMoveOrder(args: {
@@ -39,6 +40,7 @@ export function buildMoveOrderOutMsg(args: {
   startZ: number;
   startAtMs: number;
   speed?: number;
+  serverNowMs?: number;
 }): MoveOrderOutMsg {
   return {
     type: "moveOrder",
@@ -48,5 +50,6 @@ export function buildMoveOrderOutMsg(args: {
     startZ: args.startZ,
     startAtMs: args.startAtMs,
     speed: args.speed ?? DEFAULT_PATH_MOVE_SPEED,
+    serverNowMs: args.serverNowMs ?? args.startAtMs,
   };
 }

@@ -56,4 +56,15 @@ describe("shouldSnapCameraOnSelfSync", () => {
       })
     ).toBe(false);
   });
+
+  it("does not snap (and drop Path Playback) when follow is not ready but a walk is active", () => {
+    expect(
+      shouldSnapCameraOnSelfSync({
+        establishingSelfTarget: false,
+        hasSelfMoveOrder: true,
+        cameraFollowReady: false,
+        jumped: false,
+      })
+    ).toBe(false);
+  });
 });

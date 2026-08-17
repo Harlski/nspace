@@ -268,6 +268,25 @@ game process to “make `/analytics` work without the sidecar.”
 Update this subsection if the Analytics Service gains a derived store or if additional Event Log
 scans (replay, connect notice) move off the game.
 
+### Occupied-room presence is not a full roster pose snapshot
+
+**Today:** Click-to-walk **Path Playback** owns in-flight motion (`moveOrder` / `moveAbort`). Social
+presence (chat typing, NIM-send away, Challenge flags, field country, profile rename, and similar
+one-player cues) is a **`stateDelta` of the subject player(s) only**. While a grid path is in
+flight, those deltas **omit pose**. `moveOrder` start is **analytic pose** at accept time, not a
+lagged tick cache, and carries **`serverNowMs`** so clients play on server time. After a path
+drains, the client **holds last playback pose** and ignores snapshot pose that is behind along that
+path. Intentional snaps still win: welcome / room change, `moveAbort`, Freeze, teleporter, first
+pose for a new avatar, and off-path jumps (`> 6` xz or `|dy| > 1.5`). World Cup field-like
+free-move keeps velocity snapshots.
+
+**Direction:** New presence features must not call room-wide full `state`. Do not restore 8 Hz tick
+pose streaming to paper over lag; poor connections may look slightly late. Snap-back along a walk
+is the bug. Optional low-rate pose heartbeat is a later slice and must also obey never-rewind.
+
+Update this subsection if presence grows field-level patches, if welcome embeds in-flight
+`moveOrder`s, or if a heartbeat ships.
+
 ### Tutorial Unlock is a free message sign, not a spend
 
 **Today:** After the tutorial mine, **Unlock** on the Tutorial Path pad asks the learner to
@@ -324,3 +343,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-07-25** — Recorded decision: tutorial faucet Pay-Intents use `priority: true` so first-contact NIM jumps the Outbox + Payout Service queue ahead of the normal FIFO backlog. See [reasons/reason_981786.md](reasons/reason_981786.md).
 - **2026-07-28** — Recorded decision: tutorial Unlock is a free wallet **message sign** (not a NIM send) so faucet settlement / zero balance cannot block the lesson; real pads stay Payment Intent. See [reasons/reason_452918.md](reasons/reason_452918.md).
 - **2026-08-12** — Recorded decision: Event Log scans for `/analytics` overview and daily-stats run in the Analytics Service sidecar, not on the game event loop; no in-process fallback. See [reasons/reason_194837.md](reasons/reason_194837.md).
+- **2026-08-18** — Recorded decision: occupied-room presence is one-player `stateDelta` (pose omitted for grid Path Playback walkers); `moveOrder` stamps analytic pose + `serverNowMs`; clients never rewind after drain except intentional snaps. See [reasons/reason_847293.md](reasons/reason_847293.md).
