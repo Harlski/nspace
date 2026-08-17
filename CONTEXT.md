@@ -431,8 +431,7 @@ _Avoid_: destination pin, click indicator, goal marker.
 
 **Click Interval**:
 The elapsed time between one player's consecutive Click Markers, accepted or rejected, on
-that player's click stream — the same value for every watching admin. Present as small text
-on the later marker, stacked above the identity label; absent on the first and after a stream
+that player's click stream — the same value for every watching admin. Present on the later marker, stacked above the identity label; absent on the first and after a stream
 break (leave, disconnect, or Movement Watch idle). A displayed duration, not an automatic
 bot verdict.
 _Avoid_: second counter, click timer, click delta, interclick gap, cadence, cadence flag.

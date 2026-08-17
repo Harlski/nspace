@@ -5,4 +5,4 @@
 
 ---
 
-- [NEW] The mosquito emoji is on the Emote Wheel, and pasted 🦟 shows up in chat and speech bubbles on Windows.
+_(Draft — not published.)_

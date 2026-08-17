@@ -164,8 +164,28 @@ function patchnotesSpaFallbackPlugin(): Plugin {
   };
 }
 
+/**
+ * `define` is evaluated when this config loads. `readFileSync` is not a Vite
+ * config import, so `prepare-merge` bumping root `package.json` would otherwise
+ * leave the lobby version stale until a manual restart. Watch the file and
+ * restart so `/` and `/patchnotes` pick up the new `vX.Y.Z`.
+ */
+function nspaceAppVersionPlugin(): Plugin {
+  return {
+    name: "nspace-app-version",
+    configureServer(server) {
+      server.watcher.add(rootPackageJsonPath);
+      server.watcher.on("change", (file) => {
+        if (resolve(file) === rootPackageJsonPath) {
+          void server.restart();
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [patchnotesSpaFallbackPlugin()],
+  plugins: [nspaceAppVersionPlugin(), patchnotesSpaFallbackPlugin()],
   /** Shown on the wallet login / main menu - matches monorepo root `package.json` `version`. */
   define: {
     __NSPACE_APP_VERSION__: JSON.stringify(appDisplayVersion),

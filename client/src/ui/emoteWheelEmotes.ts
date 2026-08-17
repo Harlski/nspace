@@ -1,8 +1,10 @@
 /**
- * Emote Wheel reaction glyphs. Mosquito is included so it is one click away and
- * so Windows players (who cannot see a pasted 🦟 as system text) can still send it.
+ * Emote Wheel reaction glyphs. Mosquito is native system text when the font has
+ * the glyph, and Twemoji when it does not.
  */
 import { MOSQUITO_EMOJI } from "./flags.js";
+
+export { MOSQUITO_EMOJI };
 
 export const ACTION_WHEEL_EMOTES = [
   "👍",

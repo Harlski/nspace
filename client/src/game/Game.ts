@@ -86,6 +86,7 @@ import {
   loadFlagImage,
   loadMosquitoImage,
   MOSQUITO_EMOJI,
+  mosquitoNeedsTwemoji,
   soleFlagCode,
 } from "../ui/flags.js";
 import {
@@ -901,7 +902,7 @@ function createChatBubbleSprite(
       : bubblePreset === "bubble-sharp-dark"
         ? "dark"
         : "default";
-  // A sole flag or mosquito renders as a Twemoji image - Windows has no / incomplete glyphs.
+  // Sole flag, or mosquito when this client has no glyph, render as Twemoji.
   const flagCode = opts?.flagCode ?? null;
   const mosquito = opts?.mosquito === true;
   const glyphImage = Boolean(flagCode) || mosquito;
@@ -975,10 +976,11 @@ function createChatBubbleSprite(
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = 1 / raster;
   ctx.fillStyle = bubbleStyle === "dark" ? "#e2e8f0" : "#1e293b";
-  const mixedMosquito = !glyphImage && text.includes(MOSQUITO_EMOJI);
+  const mixedMosquito =
+    !glyphImage && mosquitoNeedsTwemoji() && text.includes(MOSQUITO_EMOJI);
   if (!glyphImage) {
     lines.forEach((ln, i) => {
-      if (ln.includes(MOSQUITO_EMOJI)) return;
+      if (mixedMosquito && ln.includes(MOSQUITO_EMOJI)) return;
       const cy = padY + i * lineH + lineH / 2;
       ctx.fillText(ln, w / 2, cy);
     });
@@ -17200,9 +17202,9 @@ export class Game {
     const addr = (g.userData.address as string) || fromAddress;
     this.removeChatBubbleEntry(addr);
     // A sole country flag (the Flag Emote) gets the larger emoji-bubble treatment and renders
-    // as a Twemoji image; otherwise fall back to the usual emoji-only heuristic.
+    // as a Twemoji image. A sole mosquito does the same only when this client has no glyph.
     const flagCode = soleFlagCode(text);
-    const mosquito = isSoleMosquitoEmoji(text);
+    const mosquito = mosquitoNeedsTwemoji() && isSoleMosquitoEmoji(text);
     const emojiOnly = flagCode || mosquito ? true : isEmojiOnlyBubbleText(text);
     const bubblePreset =
       (g.userData.cosmeticChatBubble as string | null | undefined) ?? null;

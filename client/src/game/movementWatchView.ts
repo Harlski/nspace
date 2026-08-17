@@ -5,7 +5,9 @@ export const MOVEMENT_WATCH_MARKER_LINGER_MS = 5000;
 const PATH_Y = 0.07;
 const ACCEPT_COLOR = 0x38bdf8;
 const REJECT_COLOR = 0xf87171;
-const INTERVAL_LABEL_LIFT = 0.38;
+const INTERVAL_LABEL_LIFT = 0.36;
+/** World height of the Click Interval plate; width follows the number. */
+const INTERVAL_LABEL_WORLD_H = 0.16;
 
 /** Frozen Click Interval label: hundredths of a second, no unit. */
 export function formatClickIntervalSec(sec: number): string {
@@ -58,18 +60,13 @@ function truncateLabel(name: string, max = 14): string {
   return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
 }
 
-function makeLabelSprite(
-  text: string,
-  color: string,
-  opts?: { fontPx?: number; scaleX?: number; scaleY?: number }
-): THREE.Sprite {
+function makeLabelSprite(text: string, color: string): THREE.Sprite {
   const canvas = document.createElement("canvas");
   canvas.width = 256;
   canvas.height = 64;
   const ctx = canvas.getContext("2d")!;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const fontPx = opts?.fontPx ?? 22;
-  ctx.font = `600 ${fontPx}px system-ui, "Segoe UI", sans-serif`;
+  ctx.font = '600 22px system-ui, "Segoe UI", sans-serif';
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "rgba(0,0,0,0.45)";
@@ -84,8 +81,45 @@ function makeLabelSprite(
     depthTest: false,
   });
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(opts?.scaleX ?? 1.8, opts?.scaleY ?? 0.45, 1);
+  sprite.scale.set(1.8, 0.45, 1);
   sprite.renderOrder = 10;
+  return sprite;
+}
+
+/** Click Interval plate: glyphs fill the box; box width follows the number. */
+function makeIntervalLabelSprite(text: string, color: string): THREE.Sprite {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  const fontPx = 72;
+  const font = `700 ${fontPx}px system-ui, "Segoe UI", sans-serif`;
+  ctx.font = font;
+  const metrics = ctx.measureText(text);
+  const ascent = metrics.actualBoundingBoxAscent || fontPx * 0.8;
+  const descent = metrics.actualBoundingBoxDescent || fontPx * 0.2;
+  const glyphH = Math.max(1, ascent + descent);
+  const padX = Math.ceil(fontPx * 0.1);
+  const padY = Math.max(1, Math.ceil(fontPx * 0.04));
+  const w = Math.max(1, Math.ceil(metrics.width + padX * 2));
+  const h = Math.max(1, Math.ceil(glyphH + padY * 2));
+  canvas.width = w;
+  canvas.height = h;
+  ctx.font = font;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = color;
+  ctx.fillText(text, w / 2, padY + ascent);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  const mat = new THREE.SpriteMaterial({
+    map: tex,
+    transparent: true,
+    depthTest: false,
+  });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(INTERVAL_LABEL_WORLD_H * (w / h), INTERVAL_LABEL_WORLD_H, 1);
+  sprite.renderOrder = 11;
   return sprite;
 }
 
@@ -261,10 +295,9 @@ export class MovementWatchView {
       typeof args.clickIntervalSec === "number" &&
       Number.isFinite(args.clickIntervalSec)
     ) {
-      intervalLabel = makeLabelSprite(
+      intervalLabel = makeIntervalLabelSprite(
         formatClickIntervalSec(args.clickIntervalSec),
-        labelColor,
-        { fontPx: 16, scaleX: 1.15, scaleY: 0.32 }
+        labelColor
       );
       intervalLabel.position.set(args.x, y + 0.55 + INTERVAL_LABEL_LIFT, args.z);
     }

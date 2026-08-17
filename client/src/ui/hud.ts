@@ -39,8 +39,9 @@ import {
   codeFromFlagEmoji,
   createFlagImg,
   flagAssetUrl,
-  mosquitoAssetUrl,
   MOSQUITO_EMOJI,
+  mosquitoAssetUrl,
+  mosquitoNeedsTwemoji,
 } from "./flags.js";
 import { ACTION_WHEEL_EMOTES } from "./emoteWheelEmotes.js";
 import { profileFlagChipLabels } from "./profileFlagChip.js";
@@ -4077,13 +4078,14 @@ export function createHud(
       if (!slice.reserved) {
         // Sectors are glyph-only now - the name is surfaced as the Sector Title on focus.
         const center = polarToXy(0, 0, ACTION_WHEEL_R_LABEL, sector.midDeg);
-        // Flag and mosquito glyphs render as Twemoji images (Windows has no / incomplete
-        // glyphs); everything else stays as an SVG text emoji.
+        // Flag glyphs (and mosquito when this client has no glyph) render as Twemoji.
         const flagCode = codeFromFlagEmoji(slice.glyph);
         const flagUrl = flagCode ? flagAssetUrl(flagCode) : null;
         const glyphUrl =
           flagUrl ??
-          (slice.glyph === MOSQUITO_EMOJI ? mosquitoAssetUrl() : null);
+          (slice.glyph === MOSQUITO_EMOJI && mosquitoNeedsTwemoji()
+            ? mosquitoAssetUrl()
+            : null);
         if (glyphUrl) {
           const size = 32;
           const flagImg = document.createElementNS(SVG_NS, "image");
