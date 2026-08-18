@@ -768,6 +768,16 @@ Mining, Free Play goal rewards, and other gameplay earns share this allowance; t
 and admin grants sit outside it. From Level 11 upward there is no Level-based daily ceiling.
 _Avoid_: daily cap (alone), farm limit, payout throttle, earn tier.
 
+## Chat
+
+**Chat substitution**:
+An operator-owned rule that replaces an exact public chat line with different text before
+the room hears it. The speaker and everyone else in the room see only the replacement.
+Does not apply to whispers. Distinct from Channel mute (which blocks sending) and from
+the profanity censor (which stars out words).
+_Avoid_: replacement filter, chat alias, rewrite rule, chat filter (ambiguous with the
+admin log search filters).
+
 ## Moderation
 
 **Admin Invisibility**:

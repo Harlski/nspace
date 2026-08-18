@@ -14,6 +14,12 @@ import {
   getAdminChatMessageDetail,
   queryAdminChatMessages,
 } from "./adminChatLog.js";
+import {
+  addChatSubstitution,
+  listChatSubstitutions,
+  patchChatSubstitution,
+  removeChatSubstitution,
+} from "./chatSubstitutionStore.js";
 import { registerDirectInviteRoutes } from "./directInvite/httpHandlers.js";
 import { registerPlaySpaceTemplateAdminRoutes } from "./playSpaceTemplate/routes.js";
 import { registerTutorialTemplateAdminRoutes } from "./tutorialTemplate/routes.js";
@@ -1321,6 +1327,47 @@ app.get("/api/admin/chat", requireSystemAdminWallet, (req, res) => {
     console.error("[api/admin/chat]", e);
     res.status(500).json({ error: "internal" });
   }
+});
+
+app.get("/api/admin/chat/substitutions", requireSystemAdminWallet, (_req, res) => {
+  res.json({ substitutions: listChatSubstitutions() });
+});
+
+app.post("/api/admin/chat/substitutions", requireSystemAdminWallet, (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const result = addChatSubstitution({
+    trigger: String(body.trigger ?? ""),
+    replacement: String(body.replacement ?? ""),
+    enabled: body.enabled === undefined ? undefined : Boolean(body.enabled),
+  });
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.status(201).json({ substitution: result.value });
+});
+
+app.put("/api/admin/chat/substitutions/:id", requireSystemAdminWallet, (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const patch: { trigger?: string; replacement?: string; enabled?: boolean } = {};
+  if (body.trigger !== undefined) patch.trigger = String(body.trigger);
+  if (body.replacement !== undefined) patch.replacement = String(body.replacement);
+  if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
+  const result = patchChatSubstitution(String(req.params.id ?? ""), patch);
+  if (!result.ok) {
+    res.status(result.error === "not_found" ? 404 : 400).json({ error: result.error });
+    return;
+  }
+  res.json({ substitution: result.value });
+});
+
+app.delete("/api/admin/chat/substitutions/:id", requireSystemAdminWallet, (req, res) => {
+  const result = removeChatSubstitution(String(req.params.id ?? ""));
+  if (!result.ok) {
+    res.status(result.error === "not_found" ? 404 : 400).json({ error: result.error });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 app.get("/api/admin/chat/message", requireSystemAdminWallet, (req, res) => {

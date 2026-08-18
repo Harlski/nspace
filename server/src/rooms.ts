@@ -212,6 +212,7 @@ import {
   logGameplayEvent,
 } from "./eventLog.js";
 import { censorChat, isEmptyAfterCensor } from "./profanityFilter.js";
+import { applyStoredChatSubstitution } from "./chatSubstitutionStore.js";
 import {
   getPlayerLastSession,
   PLAYER_RECONNECT_GRACE_MS,
@@ -13464,6 +13465,9 @@ export function addClient(
       let text = String(msg.text ?? "").slice(0, CHAT_MAX);
       text = text.replace(/[\u0000-\u001F\u007F]/g, "").trim();
       if (!text) return;
+      const substituted = applyStoredChatSubstitution(text);
+      const typedOriginal = substituted.substitutedFrom;
+      text = substituted.text;
       const censored = censorChat(text);
       if (isEmptyAfterCensor(censored.censored)) {
         wsSafeSend(ws, { type: "error", code: "chat_blocked_profanity" } satisfies OutMsg);
@@ -13492,9 +13496,11 @@ export function addClient(
         at: now,
         displayName: conn.displayName,
         audienceLive,
-        ...(censored.wasFiltered && censored.original
-          ? { textOriginal: censored.original }
-          : {}),
+        ...(typedOriginal
+          ? { textOriginal: typedOriginal }
+          : censored.wasFiltered && censored.original
+            ? { textOriginal: censored.original }
+            : {}),
       });
       recordChatMessageSent(address, achievementUnlockHandler(ws));
       return;

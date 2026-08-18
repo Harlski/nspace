@@ -5,9 +5,11 @@ import {
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
+import { CHAT_SUBSTITUTION_MAX_LEN } from "./chatSubstitutionStore.js";
 
 /** HTML shell for `/admin/chat` (data via admin chat APIs). */
 export function adminChatPageHtml(): string {
+  const lineMax = CHAT_SUBSTITUTION_MAX_LEN;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -55,11 +57,31 @@ export function adminChatPageHtml(): string {
     .chat-flag { color: #fcd34d; font-size: 0.7rem; margin-left: 0.25rem; }
     .err { color: #f87171; }
     .hint { color: #9fb0c7; font-size: 0.82rem; }
+    .sub-panel { border: 1px solid #263348; border-radius: 10px; background: #0f1622; padding: 0.75rem 0.85rem; margin-bottom: 0.85rem; }
+    .sub-panel h2 { margin: 0 0 0.35rem; font-size: 0.92rem; color: #eef6ff; }
+    .sub-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin: 0.45rem 0; }
+    .sub-table th, .sub-table td { text-align: left; padding: 0.35rem 0.4rem; border-bottom: 1px solid #1c2838; vertical-align: middle; }
+    .sub-table input[type="text"] {
+      width: 100%; box-sizing: border-box; background: #0a1018; color: #d8e2f0;
+      border: 1px solid #263348; border-radius: 6px; padding: 0.3rem 0.45rem; font: inherit;
+    }
+    .sub-add { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; margin-top: 0.35rem; }
+    .sub-add input[type="text"] {
+      flex: 1 1 10rem; min-width: 8rem; background: #0a1018; color: #d8e2f0;
+      border: 1px solid #263348; border-radius: 6px; padding: 0.35rem 0.5rem; font: inherit; font-size: 0.8rem;
+    }
+    .sub-add button, .sub-table button {
+      background: var(--ms-accent); color: #eef6ff; border: 1px solid var(--ms-accent-hover-border);
+      border-radius: 6px; padding: 0.3rem 0.6rem; cursor: pointer; font: inherit; font-size: 0.78rem;
+    }
+    .sub-table button.danger { background: #1a2738; color: #f87171; border-color: #5a2a2a; }
+    .sub-status { min-height: 1rem; font-size: 0.76rem; color: #9fb0c7; margin: 0.25rem 0 0; }
   </style>
 </head>
 <body class="ms-site">
   ${analyticsTopbarHtml("chat")}
-  <h1 id="chatDocTitle" class="ms-doc-title">Chat log</h1>
+  <h1 id="chatDocTitle" class="ms-doc-title">Chat</h1>
+  <div id="subPanel" class="ms-panel ms-mono" hidden></div>
   <div id="panel" class="ms-panel ms-mono">Loading…</div>
   <script>
 (function () {
@@ -311,6 +333,151 @@ export function adminChatPageHtml(): string {
     return { status: 200 };
   }
 
+  function setSubStatus(msg, isErr) {
+    var el = document.getElementById("subStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.className = "sub-status" + (isErr ? " err" : "");
+  }
+
+  function hideSubPanel() {
+    var sub = document.getElementById("subPanel");
+    if (sub) {
+      sub.hidden = true;
+      sub.innerHTML = "";
+    }
+  }
+
+  function renderSubstitutions(list) {
+    var sub = document.getElementById("subPanel");
+    if (!sub) return;
+    sub.hidden = false;
+    var rows = "";
+    (list || []).forEach(function (s) {
+      rows += "<tr data-id=\"" + escHtml(s.id) + "\">" +
+        "<td><input type=\"text\" data-field=\"trigger\" maxlength=\"" + ${lineMax} + "\" value=\"" + escHtml(s.trigger) + "\"></td>" +
+        "<td><input type=\"text\" data-field=\"replacement\" maxlength=\"" + ${lineMax} + "\" value=\"" + escHtml(s.replacement) + "\"></td>" +
+        "<td><input type=\"checkbox\" data-field=\"enabled\"" + (s.enabled ? " checked" : "") + "></td>" +
+        "<td><button type=\"button\" data-action=\"save\">Save</button> " +
+        "<button type=\"button\" class=\"danger\" data-action=\"remove\">Remove</button></td>" +
+        "</tr>";
+    });
+    if (!rows) {
+      rows = "<tr><td colspan='4' class='hint'>No substitutions. Public chat is broadcast as typed.</td></tr>";
+    }
+    sub.innerHTML =
+      "<div class='sub-panel'>" +
+      "<h2>Chat substitutions</h2>" +
+      "<p class='hint'>If a public chat line equals the trigger exactly, the room (including the speaker) sees the replacement instead. Whispers are not rewritten. Changes apply on the next message.</p>" +
+      "<table class='sub-table'><thead><tr><th>Trigger</th><th>Replacement</th><th>On</th><th></th></tr></thead>" +
+      "<tbody id='subRows'>" + rows + "</tbody></table>" +
+      "<div class='sub-add'>" +
+      "<input type='text' id='subTrigger' maxlength='${lineMax}' placeholder='Trigger (exact line)'>" +
+      "<input type='text' id='subReplacement' maxlength='${lineMax}' placeholder='Replacement'>" +
+      "<button type='button' id='subAdd'>Add</button>" +
+      "</div>" +
+      "<div id='subStatus' class='sub-status'></div>" +
+      "</div>";
+
+    var addBtn = document.getElementById("subAdd");
+    if (addBtn) {
+      addBtn.addEventListener("click", function () {
+        var triggerEl = document.getElementById("subTrigger");
+        var replacementEl = document.getElementById("subReplacement");
+        var trigger = triggerEl ? String(triggerEl.value || "") : "";
+        var replacement = replacementEl ? String(replacementEl.value || "") : "";
+        api("/api/admin/chat/substitutions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ trigger: trigger, replacement: replacement })
+        }).then(function (out) {
+          if (out.status !== 201) {
+            setSubStatus((out.body && out.body.error) || "Add failed.", true);
+            return;
+          }
+          if (triggerEl) triggerEl.value = "";
+          if (replacementEl) replacementEl.value = "";
+          return loadSubstitutions();
+        }).catch(function () { setSubStatus("Add failed.", true); });
+      });
+    }
+
+    var tbody = document.getElementById("subRows");
+    if (!tbody) return;
+    tbody.addEventListener("click", function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest("button[data-action]") : null;
+      if (!btn) return;
+      var tr = btn.closest("tr[data-id]");
+      if (!tr) return;
+      var id = tr.getAttribute("data-id");
+      if (btn.getAttribute("data-action") === "remove") {
+        if (!confirm("Remove this chat substitution?")) return;
+        api("/api/admin/chat/substitutions/" + encodeURIComponent(id), { method: "DELETE" })
+          .then(function (out) {
+            if (out.status !== 200) {
+              setSubStatus((out.body && out.body.error) || "Remove failed.", true);
+              return;
+            }
+            return loadSubstitutions();
+          })
+          .catch(function () { setSubStatus("Remove failed.", true); });
+        return;
+      }
+      if (btn.getAttribute("data-action") === "save") {
+        var triggerInput = tr.querySelector("input[data-field='trigger']");
+        var replacementInput = tr.querySelector("input[data-field='replacement']");
+        api("/api/admin/chat/substitutions/" + encodeURIComponent(id), {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            trigger: triggerInput ? triggerInput.value : "",
+            replacement: replacementInput ? replacementInput.value : ""
+          })
+        }).then(function (out) {
+          if (out.status !== 200) {
+            setSubStatus((out.body && out.body.error) || "Save failed.", true);
+            return;
+          }
+          setSubStatus("Saved.");
+        }).catch(function () { setSubStatus("Save failed.", true); });
+      }
+    });
+    tbody.addEventListener("change", function (ev) {
+      var box = ev.target && ev.target.getAttribute && ev.target.getAttribute("data-field") === "enabled"
+        ? ev.target
+        : null;
+      if (!box) return;
+      var tr = box.closest("tr[data-id]");
+      if (!tr) return;
+      var id = tr.getAttribute("data-id");
+      api("/api/admin/chat/substitutions/" + encodeURIComponent(id), {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled: !!box.checked })
+      }).then(function (out) {
+        if (out.status !== 200) {
+          setSubStatus((out.body && out.body.error) || "Update failed.", true);
+          box.checked = !box.checked;
+          return;
+        }
+        setSubStatus(box.checked ? "Enabled." : "Disabled.");
+      }).catch(function () {
+        box.checked = !box.checked;
+        setSubStatus("Update failed.", true);
+      });
+    });
+  }
+
+  function loadSubstitutions() {
+    return api("/api/admin/chat/substitutions").then(function (out) {
+      if (out.status !== 200) {
+        hideSubPanel();
+        return;
+      }
+      renderSubstitutions(out.body.substitutions || []);
+    });
+  }
+
   async function load() {
     var panel = document.getElementById("panel");
     var docTitle = document.getElementById("chatDocTitle");
@@ -318,22 +485,26 @@ export function adminChatPageHtml(): string {
     token = readAuthToken();
     if (!token) {
       if (docTitle) docTitle.hidden = true;
+      hideSubPanel();
       panel.innerHTML = authGateHtml("You must be signed in.");
       return;
     }
     var meta = await loadMeta();
     if (meta.status === 401) {
       if (docTitle) docTitle.hidden = true;
+      hideSubPanel();
       panel.innerHTML = authGateHtml("You must be signed in.");
       return;
     }
     if (meta.status === 403) {
       if (docTitle) docTitle.hidden = false;
+      hideSubPanel();
       panel.innerHTML = "<p class='err'>Forbidden</p><p class='hint'>Server admin wallet only.</p>";
       return;
     }
     if (meta.status !== 200) {
       if (docTitle) docTitle.hidden = false;
+      hideSubPanel();
       panel.innerHTML = "<p class='err'>Could not load admin data (" + meta.status + ").</p>";
       return;
     }
@@ -341,6 +512,7 @@ export function adminChatPageHtml(): string {
     var prefill = queryPrefill();
     renderShell(prefill);
     try {
+      await loadSubstitutions();
       await loadMutes();
       await search(false);
     } catch (e) {
