@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildMoveOrderOutMsg,
   isMoveOrderBroadcastEnabled,
+  shouldDuplicateInFlightMoveOrder,
   shouldEmitMoveOrder,
 } from "../src/moveOrderBroadcast.js";
 
@@ -57,6 +58,7 @@ test("buildMoveOrderOutMsg copies path and uses server-owned timing fields", () 
     startZ: 4,
     startAtMs: 1_720_000_000_000,
     speed: 5,
+    walkId: 1,
   });
 
   assert.equal(msg.type, "moveOrder");
@@ -68,4 +70,40 @@ test("buildMoveOrderOutMsg copies path and uses server-owned timing fields", () 
   assert.equal(msg.startAtMs, 1_720_000_000_000);
   assert.equal(msg.serverNowMs, 1_720_000_000_000);
   assert.equal(msg.speed, 5);
+  assert.equal(msg.walkId, 1);
+});
+
+test("shouldDuplicateInFlightMoveOrder fires once while the path is still in flight", () => {
+  assert.equal(
+    shouldDuplicateInFlightMoveOrder({
+      enabled: true,
+      dupPending: true,
+      pathQueueLength: 2,
+    }),
+    true
+  );
+  assert.equal(
+    shouldDuplicateInFlightMoveOrder({
+      enabled: true,
+      dupPending: true,
+      pathQueueLength: 0,
+    }),
+    false
+  );
+  assert.equal(
+    shouldDuplicateInFlightMoveOrder({
+      enabled: true,
+      dupPending: false,
+      pathQueueLength: 2,
+    }),
+    false
+  );
+  assert.equal(
+    shouldDuplicateInFlightMoveOrder({
+      enabled: false,
+      dupPending: true,
+      pathQueueLength: 2,
+    }),
+    false
+  );
 });

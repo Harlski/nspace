@@ -496,6 +496,7 @@ import {
 import {
   buildMoveAbortFromPlayer,
   shouldEmitMoveAbort,
+  type MoveAbortOutMsg,
 } from "./moveAbortBroadcast.js";
 import {
   CUT_MOVEMENT_STREAM,
@@ -504,9 +505,17 @@ import {
 } from "./cutMovementStream.js";
 import {
   MOVE_ORDER_BROADCAST,
-  buildMoveOrderOutMsg,
+  shouldDuplicateInFlightMoveOrder,
   shouldEmitMoveOrder,
 } from "./moveOrderBroadcast.js";
+import { buildInFlightMoveOrder, nextWalkId } from "./inFlightMoveOrder.js";
+import {
+  buildPoseHeartbeatOutMsg,
+  buildPoseHeartbeatPlayer,
+  heartbeatDue,
+  heartbeatWalkingState,
+  type PoseHeartbeatOutMsg,
+} from "./pathPoseHeartbeat.js";
 import {
   buildMovementWatchAcceptedClick,
   buildMovementWatchActive,
@@ -547,7 +556,7 @@ import {
   ANALYTIC_PATH_SKIP_STEPPING,
   applyPoseToPlayer,
   gameplayPoseFromConn,
-  moveOrderStartFromGameplay,
+  overlayGameplayPose,
   snapshotPathMoveBegin,
   tickAnalyticPathHuman,
   type ConnPathMoveState,
@@ -696,7 +705,7 @@ function broadcastPresenceStateDelta(
   const isFieldFreeMove = worldcupIsFieldLikeRoom(roomId);
   const fullByAddr = new Map<string, PlayerState>();
   const subjectsForDelta = subjects.map((conn) => {
-    const full = playerToOutState(conn);
+    const full = playerToOutState(conn, roomId);
     fullByAddr.set(conn.address, full);
     return {
       player: full,
@@ -1111,6 +1120,15 @@ interface ClientConn {
   pathQueue: { x: number; z: number; layer: 0 | 1 }[];
   /** Immutable path start for analytic pose (move-order rollout). */
   pathMove: ConnPathMoveState | null;
+  /** Monotonic walk session id; incremented on each accepted path. */
+  walkId: number;
+  /** When the last in-flight path drained or aborted (heartbeat after-drain window). */
+  pathDrainedAtMs: number | null;
+  /** Duplicate the last `moveOrder` once on the next tick. */
+  moveOrderDupPending: boolean;
+  /** Duplicate the last `moveAbort` once on the next tick. */
+  moveAbortDup: MoveAbortOutMsg | null;
+  lastPoseHeartbeatAtMs: number | null;
   /** Single active claim session id for this connection (enforces one claim at a time). */
   pendingBlockClaimId: string | null;
   lastBlockClaimBeginAt: number;
@@ -1206,6 +1224,8 @@ function withinBlockActionRangeNow(
 }
 
 function beginConnPathMove(conn: ClientConn, startAtMs: number): void {
+  conn.walkId = nextWalkId(conn.walkId);
+  conn.pathDrainedAtMs = null;
   conn.pathMove = snapshotPathMoveBegin({
     player: conn.player,
     pathQueue: conn.pathQueue,
@@ -1217,8 +1237,12 @@ function clearConnPathMove(conn: ClientConn): void {
   conn.pathMove = null;
 }
 
-function haltConnPath(conn: ClientConn): void {
+function haltConnPath(conn: ClientConn, nowMs: number = Date.now()): void {
+  if (conn.pathQueue.length > 0 || conn.pathMove) {
+    conn.pathDrainedAtMs = nowMs;
+  }
   conn.pathQueue = [];
+  conn.moveOrderDupPending = false;
   clearConnPathMove(conn);
   haltPathVelocity(conn.player);
 }
@@ -1439,6 +1463,18 @@ type OutMsg =
       type: "welcome";
       self: PlayerState;
       others: PlayerState[];
+      /** In-flight Path Playback orders so a joiner starts mid-path. */
+      moveOrders?: Array<{
+        type: "moveOrder";
+        address: string;
+        path: { x: number; z: number; layer: 0 | 1 }[];
+        startX: number;
+        startZ: number;
+        startAtMs: number;
+        speed: number;
+        serverNowMs: number;
+        walkId: number;
+      }>;
       roomId: string;
       roomBounds: RoomBounds;
       doors: {
@@ -1591,6 +1627,7 @@ type OutMsg =
       startAtMs: number;
       speed: number;
       serverNowMs: number;
+      walkId: number;
     }
   | {
       type: "moveAbort";
@@ -1600,7 +1637,9 @@ type OutMsg =
       y: number;
       vx: number;
       vz: number;
+      walkId?: number;
     }
+  | PoseHeartbeatOutMsg
   | MovementWatchOutMsg
   | { type: "onlineCount"; count: number }
   | { type: "obstacles"; roomId: string; tiles: ObstacleTile[] }
@@ -4483,7 +4522,19 @@ function filterPresenceOutMsgForViewer(
     return msg;
   }
 
-  if (msg.type === "moveOrder" || msg.type === "moveAbort") {
+  if (msg.type === "moveOrder" || msg.type === "moveAbort" || msg.type === "poseHeartbeat") {
+    if (msg.type === "poseHeartbeat") {
+      const filtered = msg.players.filter((p) => {
+        const subjectConn = roomOf(roomId).get(p.address);
+        if (!subjectConn) return true;
+        return playerVisibleToViewer(viewerOpts, {
+          adminInvisible: Boolean(subjectConn.adminInvisible),
+        });
+      });
+      if (filtered.length === 0) return null;
+      if (filtered.length === msg.players.length) return msg;
+      return { ...msg, players: filtered };
+    }
     const subjectConn = roomOf(roomId).get(msg.address);
     if (
       subjectConn &&
@@ -5137,7 +5188,7 @@ function maybeBroadcastMoveOrder(
   roomId: string,
   address: string,
   conn: ClientConn,
-  startAtMs: number
+  _startAtMs: number
 ): void {
   if (
     !shouldEmitMoveOrder({
@@ -5147,26 +5198,124 @@ function maybeBroadcastMoveOrder(
   ) {
     return;
   }
-  const placed = placedMap(roomId);
-  const start = moveOrderStartFromGameplay({
-    player: conn.player,
-    pathQueue: conn.pathQueue,
+  const msg = buildInFlightMoveOrder({
+    address,
     pathMove: conn.pathMove,
-    nowMs: startAtMs,
-    bounds: worldcupMoveClampBounds(roomId),
-    waypointY: (layer, gx, gz) => waypointY(layer, gx, gz, placed),
+    pathQueueLength: conn.pathQueue.length,
+    walkId: conn.walkId,
+    serverNowMs: Date.now(),
   });
-  broadcast(
-    roomId,
-    buildMoveOrderOutMsg({
-      address,
-      pathQueue: conn.pathQueue,
-      startX: start.startX,
-      startZ: start.startZ,
-      startAtMs,
-      serverNowMs: Date.now(),
-    })
-  );
+  if (!msg) return;
+  broadcast(roomId, msg);
+  conn.moveOrderDupPending = true;
+  conn.moveAbortDup = null;
+  conn.lastPoseHeartbeatAtMs = Date.now();
+}
+
+function collectInFlightMoveOrders(
+  roomId: string,
+  viewerAddress: string
+): NonNullable<Extract<OutMsg, { type: "welcome" }>["moveOrders"]> {
+  if (!MOVE_ORDER_BROADCAST) return [];
+  const viewerIsAdmin = isAdmin(viewerAddress);
+  const now = Date.now();
+  const out: NonNullable<Extract<OutMsg, { type: "welcome" }>["moveOrders"]> =
+    [];
+  for (const c of roomOf(roomId).values()) {
+    if (c.streamObserver) continue;
+    if (
+      !playerVisibleToViewer(
+        { isGameAdmin: viewerIsAdmin },
+        { adminInvisible: Boolean(c.adminInvisible) }
+      )
+    ) {
+      continue;
+    }
+    const msg = buildInFlightMoveOrder({
+      address: c.address,
+      pathMove: c.pathMove,
+      pathQueueLength: c.pathQueue.length,
+      walkId: c.walkId,
+      serverNowMs: now,
+    });
+    if (msg) out.push(msg);
+  }
+  return out;
+}
+
+function maybeDuplicatePendingMoveOrders(
+  roomId: string,
+  room: Map<string, ClientConn>,
+  nowMs: number
+): void {
+  if (!MOVE_ORDER_BROADCAST) return;
+  for (const c of room.values()) {
+    if (c.moveAbortDup) {
+      broadcast(roomId, c.moveAbortDup);
+      c.moveAbortDup = null;
+    }
+    if (
+      !shouldDuplicateInFlightMoveOrder({
+        enabled: MOVE_ORDER_BROADCAST,
+        dupPending: c.moveOrderDupPending,
+        pathQueueLength: c.pathQueue.length,
+      })
+    ) {
+      c.moveOrderDupPending = false;
+      continue;
+    }
+    const msg = buildInFlightMoveOrder({
+      address: c.address,
+      pathMove: c.pathMove,
+      pathQueueLength: c.pathQueue.length,
+      walkId: c.walkId,
+      serverNowMs: nowMs,
+    });
+    if (msg) broadcast(roomId, msg);
+    c.moveOrderDupPending = false;
+  }
+}
+
+function maybeBroadcastPoseHeartbeat(
+  roomId: string,
+  room: Map<string, ClientConn>,
+  nowMs: number,
+  placed: ReadonlyMap<string, PlacedProps>
+): void {
+  if (!MOVE_ORDER_BROADCAST) return;
+  const isFieldFreeMove = worldcupIsFieldLikeRoom(roomId);
+  const players = [];
+  for (const c of room.values()) {
+    if (c.streamObserver) continue;
+    const state = heartbeatWalkingState({
+      pathQueueLength: c.pathQueue.length,
+      pathDrainedAtMs: c.pathDrainedAtMs,
+      nowMs,
+      isFieldFreeMove,
+    });
+    if (!state.include) continue;
+    if (
+      !heartbeatDue({
+        nowMs,
+        lastHeartbeatAtMs: c.lastPoseHeartbeatAtMs,
+      })
+    ) {
+      continue;
+    }
+    const pose = playerPoseNow(c, nowMs, roomId, placed);
+    players.push(
+      buildPoseHeartbeatPlayer({
+        address: c.address,
+        pose,
+        walkId: c.walkId,
+        walking: state.walking,
+        serverNowMs: nowMs,
+      })
+    );
+    c.lastPoseHeartbeatAtMs = nowMs;
+  }
+  const msg = buildPoseHeartbeatOutMsg(players);
+  if (msg) broadcast(roomId, msg);
 }
 
 function maybeBroadcastMoveAbort(
@@ -5189,10 +5338,14 @@ function maybeBroadcastMoveAbort(
     conn.player,
     playerPoseNow(conn, Date.now(), roomId, placed)
   );
-  broadcast(
-    roomId,
-    buildMoveAbortFromPlayer({ address, player: conn.player })
-  );
+  const abortMsg = buildMoveAbortFromPlayer({
+    address,
+    player: conn.player,
+    walkId: conn.walkId,
+  });
+  broadcast(roomId, abortMsg);
+  conn.moveAbortDup = abortMsg;
+  conn.moveOrderDupPending = false;
 }
 
 function roomHasMovementWatchSubscribers(roomId: string): boolean {
@@ -5320,7 +5473,7 @@ function setConnAdminInvisible(
   console.log(
     `[rooms] adminInvisible ${enabled ? "on" : "off"} ${conn.address.slice(0, 12)}… room=${roomId}`
   );
-  const player = playerToOutState(conn);
+  const player = playerToOutState(conn, roomId);
   const room = roomOf(roomId);
   for (const [addr, c] of room) {
     if (c.ws.readyState !== 1) continue;
@@ -5356,7 +5509,7 @@ function setConnAdminInvisible(
 }
 
 function broadcastFrozenStateDelta(roomId: string, subject: ClientConn): void {
-  const player = playerToOutState(subject);
+  const player = playerToOutState(subject, roomId);
   const room = roomOf(roomId);
   for (const c of room.values()) {
     if (c.ws.readyState !== 1) continue;
@@ -5602,7 +5755,7 @@ function refreshPlayerLevelOnPlayer(player: PlayerState): void {
   );
 }
 
-function playerToOutState(conn: ClientConn): PlayerState {
+function playerToOutState(conn: ClientConn, roomId: string): PlayerState {
   const base = conn.nimSendIntent
     ? { ...conn.player, nimSendAway: true }
     : { ...conn.player };
@@ -5616,13 +5769,16 @@ function playerToOutState(conn: ClientConn): PlayerState {
     const country = worldcupGetPlayerCountry(conn.address);
     if (country) base.worldcupCountry = country;
   }
-  return base;
+  return overlayGameplayPose(
+    base,
+    playerPoseNow(conn, Date.now(), roomId, placedMap(roomId))
+  );
 }
 
 function snapshotPlayers(roomId: string): PlayerState[] {
   const humans = [...roomOf(roomId).values()]
     .filter((c) => !c.streamObserver)
-    .map(playerToOutState);
+    .map((c) => playerToOutState(c, roomId));
   const fakes = roomFakePlayers.get(roomId);
   if (!fakes?.size) return humans;
   for (const { player } of fakes.values()) {
@@ -7002,7 +7158,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
     { isGameAdmin: isAdmin(address) },
     [...targetRoomConns.values()]
       .filter((c) => c.address !== address)
-      .map(playerToOutState)
+      .map((c) => playerToOutState(c, targetRoomId))
   ).map((p) => (isAdmin(address) ? p : stripAdminOnlyPresenceCues(p)));
   const rb = getRoomBaseBounds(targetRoomId);
   const doors = welcomeDoorsForRoom(targetRoomId, address);
@@ -7059,8 +7215,9 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
 
   wsSafeSend(conn.ws, {
       type: "welcome",
-      self: playerToOutState(conn),
+      self: playerToOutState(conn, targetRoomId),
       others,
+      moveOrders: collectInFlightMoveOrders(targetRoomId, address),
       roomId: targetRoomId,
       roomBounds: rb,
       doors,
@@ -7138,7 +7295,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
   });
 
   // Notify others in new room
-  broadcast(targetRoomId, { type: "playerJoined", player: playerToOutState(conn) }, address);
+  broadcast(targetRoomId, { type: "playerJoined", player: playerToOutState(conn, targetRoomId) }, address);
 
   if (isInviteLobbyRoomId(nTarget)) {
     directInviteOnLobbyConnect(conn, nTarget, address);
@@ -8666,6 +8823,8 @@ export function startRoomTick(): void {
           }
         }
         if (hadPathBeforeTick && c.pathQueue.length === 0) {
+          c.pathDrainedAtMs = now;
+          c.moveOrderDupPending = false;
           emitMovementWatchClear(roomId, c.address);
         }
         if (result.changed) changed = true;
@@ -8842,6 +9001,8 @@ export function startRoomTick(): void {
           }
         }
       }
+      maybeDuplicatePendingMoveOrders(roomId, room, now);
+      maybeBroadcastPoseHeartbeat(roomId, room, now, placed);
       broadcastTickStateIfAllowed(roomId, room, now, changed);
 
       // worldcup: simulate any balls in this room (single isolated hook)
@@ -9194,6 +9355,11 @@ export function addClient(
     player,
     pathQueue: [],
     pathMove: null,
+    walkId: 0,
+    pathDrainedAtMs: null,
+    moveOrderDupPending: false,
+    moveAbortDup: null,
+    lastPoseHeartbeatAtMs: null,
     pendingBlockClaimId: null,
     lastBlockClaimBeginAt: 0,
     lastBlockClaimTickAt: 0,
@@ -9231,7 +9397,7 @@ export function addClient(
     { isGameAdmin: isAdmin(address) },
     snapshotPlayers(roomId).filter((p) => p.address !== address)
   ).map((p) => (isAdmin(address) ? p : stripAdminOnlyPresenceCues(p)));
-  const selfOut = playerToOutState(conn);
+  const selfOut = playerToOutState(conn, roomId);
 
   const rb = getRoomBaseBounds(roomId);
   const doors = welcomeDoorsForRoom(roomId, address);
@@ -9313,6 +9479,7 @@ export function addClient(
       type: "welcome",
       self: selfOut,
       others,
+      moveOrders: collectInFlightMoveOrders(roomId, address),
       roomId,
       roomBounds: rb,
       doors,
@@ -9385,7 +9552,7 @@ export function addClient(
   if (!streamObserver) {
     broadcast(
       roomId,
-      { type: "playerJoined", player: playerToOutState(conn) },
+      { type: "playerJoined", player: playerToOutState(conn, roomId) },
       address
     );
     broadcastOnlineCount();

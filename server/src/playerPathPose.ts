@@ -121,6 +121,20 @@ export function applyPoseToPlayer(
   player.vz = pose.vz;
 }
 
+/** Copy analytic pose onto an outgoing player snapshot without mutating `conn.player`. */
+export function overlayGameplayPose<
+  T extends { x: number; y: number; z: number; vx: number; vz: number },
+>(player: T, pose: PathMovePose): T {
+  return {
+    ...player,
+    x: pose.x,
+    y: pose.y,
+    z: pose.z,
+    vx: pose.vx,
+    vz: pose.vz,
+  };
+}
+
 /** Wire `moveOrder` start xz from analytic pose, never lagged `conn.player`. */
 export function moveOrderStartFromGameplay(
   args: Parameters<typeof gameplayPoseFromConn>[0]

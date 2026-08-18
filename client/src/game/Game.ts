@@ -215,8 +215,10 @@ import {
   shouldAdvancePlaybackSample,
   shouldAdoptReplacementMoveOrder,
   shouldAdoptSnapshotPose,
+  walkIdIncreased,
   type MoveOrderWire,
   type PlaybackHold,
+  type PoseHeartbeatPlayerWire,
 } from "./moveOrderPlayback.js";
 import { shouldSnapCameraOnSelfSync } from "./cameraSelfSync.js";
 import { shouldAdoptServerVelocityOnSelfSync } from "./selfServerVelocity.js";
@@ -1677,6 +1679,9 @@ export class Game {
   private selfMoveOrder: (MoveOrderWire & { startY: number; recvLocalMs: number }) | null =
     null;
   private lastSelfPlayback: PlaybackHold | null = null;
+  /** Latest serverNowMs offset for Path Playback (refreshed on stamped messages). */
+  private playbackServerNowMs: number | undefined;
+  private playbackRecvLocalMs: number | undefined;
   /** Admin Movement Watch overlay (Click Markers + Watch Paths). */
   private movementWatchView: MovementWatchView | null = null;
   // worldcup: seasonal soccer ball meshes + interpolation targets + goal frames
@@ -3293,6 +3298,8 @@ export class Game {
     this.selfLastServerRecvMs = performance.now();
     this.remoteMoveOrders.clear();
     this.lastRemotePlayback.clear();
+    this.playbackServerNowMs = undefined;
+    this.playbackRecvLocalMs = undefined;
     if (!roomUsesSpatialInterest(msg.roomBounds)) {
       this.syncWalkableFloorMeshes();
     }
@@ -15614,11 +15621,8 @@ export class Game {
   /** Server-authoritative path intent for a remote avatar (`moveOrder` dual-send tracer). */
   applyMoveOrder(msg: MoveOrderWire): void {
     const recvLocalMs = Date.now();
-    const nowMs = playbackNowMs({
-      localNowMs: recvLocalMs,
-      serverNowMs: msg.serverNowMs,
-      recvLocalMs,
-    });
+    this.notePlaybackServerNow(msg.serverNowMs, recvLocalMs);
+    const nowMs = this.playbackClockNow(recvLocalMs);
     const bounds = this.pathMoveBoundsForPlayback();
     if (msg.address === this.selfAddress) {
       // Pitch free-move still receives movement stateDelta; grid walks rely on moveOrder.
@@ -15716,6 +15720,89 @@ export class Game {
     this.requestRender(400);
   }
 
+  /** ~1 Hz analytic pose; never-rewind except implicit abort (`walking=false` / new walkId). */
+  applyPoseHeartbeat(players: PoseHeartbeatPlayerWire[]): void {
+    const recvLocalMs = Date.now();
+    for (const p of players) {
+      this.notePlaybackServerNow(p.serverNowMs, recvLocalMs);
+      const py = Number.isFinite(p.y) ? p.y : 0;
+      if (p.address === this.selfAddress) {
+        if (this.isWorldcupFreeMoveRoom()) continue;
+        const last = this.lastSelfPlayback;
+        const behind = last
+          ? poseIsBehindAlongPath(last.pose, { x: p.x, z: p.z }, last.path)
+          : false;
+        const walkIdChanged = walkIdIncreased(last?.walkId, p.walkId);
+        const implicitAbort = p.walking === false || walkIdChanged;
+        if (
+          !shouldAdoptSnapshotPose({
+            playbackActive: this.selfPathPlaybackActive(),
+            behind,
+            intentionalSnap: implicitAbort,
+            walkIdChanged,
+            walkingFlag: p.walking,
+          })
+        ) {
+          continue;
+        }
+        if (implicitAbort) {
+          this.selfMoveOrder = null;
+          this.lastSelfPlayback = null;
+        }
+        if (this.selfTargetPos) this.selfTargetPos.set(p.x, py, p.z);
+        else this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
+        this.selfMesh?.position.set(p.x, py, p.z);
+        this.selfServerVx = p.vx;
+        this.selfServerVz = p.vz;
+        this.selfLastServerRecvMs = performance.now();
+        if (!implicitAbort) {
+          this.lastSelfPlayback = {
+            pose: { x: p.x, z: p.z },
+            path: last?.path ?? [],
+            startX: last?.startX ?? p.x,
+            startZ: last?.startZ ?? p.z,
+            walkId: p.walkId,
+          };
+        }
+        continue;
+      }
+      const last = this.lastRemotePlayback.get(p.address);
+      const t = this.targetPos.get(p.address);
+      const behind = last
+        ? poseIsBehindAlongPath(last.pose, { x: p.x, z: p.z }, last.path)
+        : false;
+      const walkIdChanged = walkIdIncreased(last?.walkId, p.walkId);
+      const implicitAbort = p.walking === false || walkIdChanged;
+      if (
+        !shouldAdoptSnapshotPose({
+          playbackActive: this.remoteMoveOrders.has(p.address),
+          behind,
+          intentionalSnap: implicitAbort,
+          walkIdChanged,
+          walkingFlag: p.walking,
+        })
+      ) {
+        continue;
+      }
+      if (implicitAbort) {
+        this.remoteMoveOrders.delete(p.address);
+        this.lastRemotePlayback.delete(p.address);
+      }
+      t?.set(p.x, py, p.z);
+      this.others.get(p.address)?.position.set(p.x, py, p.z);
+      if (!implicitAbort) {
+        this.lastRemotePlayback.set(p.address, {
+          pose: { x: p.x, z: p.z },
+          path: last?.path ?? [],
+          startX: last?.startX ?? p.x,
+          startZ: last?.startZ ?? p.z,
+          walkId: p.walkId,
+        });
+      }
+    }
+    this.requestRender(400);
+  }
+
   setMovementWatchEnabled(on: boolean): void {
     this.movementWatchView?.setEnabled(on);
     this.requestRender(200);
@@ -15756,6 +15843,20 @@ export class Game {
     return walkBoundsForRoom(this.roomBounds, this.extraFloorKeys);
   }
 
+  private notePlaybackServerNow(serverNowMs: number | undefined, recvLocalMs = Date.now()): void {
+    if (serverNowMs == null || !Number.isFinite(serverNowMs)) return;
+    this.playbackServerNowMs = serverNowMs;
+    this.playbackRecvLocalMs = recvLocalMs;
+  }
+
+  private playbackClockNow(localNowMs = Date.now()): number {
+    return playbackNowMs({
+      localNowMs,
+      serverNowMs: this.playbackServerNowMs,
+      recvLocalMs: this.playbackRecvLocalMs,
+    });
+  }
+
   /** Grid Path Playback owns self pose until the walk reaches its final waypoint. */
   private selfPathPlaybackActive(): boolean {
     if (this.selfMoveOrder) return true;
@@ -15780,11 +15881,7 @@ export class Game {
   ): void {
     const order = this.remoteMoveOrders.get(address);
     if (!order) return;
-    const nowMs = playbackNowMs({
-      localNowMs,
-      serverNowMs: order.serverNowMs,
-      recvLocalMs: order.recvLocalMs,
-    });
+    const nowMs = this.playbackClockNow(localNowMs);
     const bounds = this.pathMoveBoundsForPlayback();
     const { pose, pathRemaining } = remotePoseFromMoveOrder({
       order,
@@ -15822,17 +15919,14 @@ export class Game {
       path: order.path,
       startX: order.startX,
       startZ: order.startZ,
+      walkId: order.walkId,
     });
   }
 
   private refreshSelfMoveOrderTarget(localNowMs = Date.now()): void {
     const order = this.selfMoveOrder;
     if (!order) return;
-    const nowMs = playbackNowMs({
-      localNowMs,
-      serverNowMs: order.serverNowMs,
-      recvLocalMs: order.recvLocalMs,
-    });
+    const nowMs = this.playbackClockNow(localNowMs);
     const bounds = this.pathMoveBoundsForPlayback();
     const { pose, pathRemaining } = remotePoseFromMoveOrder({
       order,
@@ -15876,6 +15970,7 @@ export class Game {
       path: order.path,
       startX: order.startX,
       startZ: order.startZ,
+      walkId: order.walkId,
     };
   }
 

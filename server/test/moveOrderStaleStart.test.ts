@@ -73,6 +73,7 @@ test("replacement moveOrder stamps start from analytic pose, not unticked conn.p
     startZ: start.startZ,
     startAtMs: nowMs,
     serverNowMs: nowMs,
+    walkId: 2,
   });
 
   const observer = poseAlongPathAtTime({

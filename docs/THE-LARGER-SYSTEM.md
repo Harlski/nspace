@@ -274,18 +274,21 @@ scans (replay, connect notice) move off the game.
 presence (chat typing, NIM-send away, Challenge flags, field country, profile rename, and similar
 one-player cues) is a **`stateDelta` of the subject player(s) only**. While a grid path is in
 flight, those deltas **omit pose**. `moveOrder` start is **analytic pose** at accept time, not a
-lagged tick cache, and carries **`serverNowMs`** so clients play on server time. After a path
-drains, the client **holds last playback pose** and ignores snapshot pose that is behind along that
-path. Intentional snaps still win: welcome / room change, `moveAbort`, Freeze, teleporter, first
-pose for a new avatar, and off-path jumps (`> 6` xz or `|dy| > 1.5`). World Cup field-like
-free-move keeps velocity snapshots.
+lagged tick cache, and carries **`walkId`** plus **`serverNowMs`** so clients play on server time.
+After a path drains, the client **holds last playback pose** and ignores snapshot pose that is
+behind along that path. Join / room change **`welcome` embeds in-flight `moveOrder`s** so late
+joiners start mid-path. A **~1 Hz analytic `poseHeartbeat`** (`walkId` + `walking`) covers missed
+orders and implicit abort; it is subject to never-rewind. Intentional snaps still win: welcome /
+room change, `moveAbort`, Freeze, teleporter, first pose for a new avatar, heartbeat
+`walking=false` / increased `walkId`, and off-path jumps (`> 6` xz or `|dy| > 1.5`). World Cup
+field-like free-move keeps velocity snapshots.
 
 **Direction:** New presence features must not call room-wide full `state`. Do not restore 8 Hz tick
 pose streaming to paper over lag; poor connections may look slightly late. Snap-back along a walk
-is the bug. Optional low-rate pose heartbeat is a later slice and must also obey never-rewind.
+is the bug. Compact paths and spatial interest remain later slices.
 
-Update this subsection if presence grows field-level patches, if welcome embeds in-flight
-`moveOrder`s, or if a heartbeat ships.
+Update this subsection if presence grows field-level patches, if heartbeat rate or `walkId` rules
+change, or if tick pose streaming is re-enabled.
 
 ### Tutorial Unlock is a free message sign, not a spend
 
@@ -344,3 +347,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-07-28** — Recorded decision: tutorial Unlock is a free wallet **message sign** (not a NIM send) so faucet settlement / zero balance cannot block the lesson; real pads stay Payment Intent. See [reasons/reason_452918.md](reasons/reason_452918.md).
 - **2026-08-12** — Recorded decision: Event Log scans for `/analytics` overview and daily-stats run in the Analytics Service sidecar, not on the game event loop; no in-process fallback. See [reasons/reason_194837.md](reasons/reason_194837.md).
 - **2026-08-18** — Recorded decision: occupied-room presence is one-player `stateDelta` (pose omitted for grid Path Playback walkers); `moveOrder` stamps analytic pose + `serverNowMs`; clients never rewind after drain except intentional snaps. See [reasons/reason_847293.md](reasons/reason_847293.md).
+- **2026-08-18** - Path Playback poor-connection slice: `walkId`, welcome in-flight `moveOrder`s, ~1 Hz analytic `poseHeartbeat` (never-rewind / implicit abort), one-shot order/abort duplicate. Tick pose rate stays cut. See [reasons/reason_192847.md](reasons/reason_192847.md).

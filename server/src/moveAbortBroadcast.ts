@@ -6,6 +6,7 @@ export type MoveAbortOutMsg = {
   y: number;
   vx: number;
   vz: number;
+  walkId?: number;
 };
 
 export function shouldEmitMoveAbort(args: {
@@ -24,6 +25,7 @@ export function buildMoveAbortOutMsg(args: {
   y: number;
   vx: number;
   vz: number;
+  walkId?: number;
 }): MoveAbortOutMsg {
   return {
     type: "moveAbort",
@@ -33,12 +35,14 @@ export function buildMoveAbortOutMsg(args: {
     y: args.y,
     vx: args.vx,
     vz: args.vz,
+    ...(args.walkId != null ? { walkId: args.walkId } : {}),
   };
 }
 
 export function buildMoveAbortFromPlayer(args: {
   address: string;
   player: { x: number; y: number; z: number; vx?: number; vz?: number };
+  walkId?: number;
 }): MoveAbortOutMsg {
   return buildMoveAbortOutMsg({
     address: args.address,
@@ -47,5 +51,6 @@ export function buildMoveAbortFromPlayer(args: {
     y: args.player.y,
     vx: args.player.vx ?? 0,
     vz: args.player.vz ?? 0,
+    walkId: args.walkId,
   });
 }

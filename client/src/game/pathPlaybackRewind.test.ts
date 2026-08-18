@@ -41,7 +41,7 @@ type Observer = {
   hold: PlaybackHold | null;
 };
 
-function straightOrder(startAtMs: number): MoveOrderWire {
+function straightOrder(startAtMs: number, walkId = 1): MoveOrderWire {
   return {
     address: "NQ97 TEST",
     path: [{ x: PATH_END, z: 0, layer: 0 }],
@@ -49,6 +49,7 @@ function straightOrder(startAtMs: number): MoveOrderWire {
     startZ: 0,
     startAtMs,
     speed: SPEED,
+    walkId,
   };
 }
 
@@ -116,6 +117,7 @@ function stepObserver(
       path: obs.order.path,
       startX: obs.order.startX,
       startZ: obs.order.startZ,
+      walkId: obs.order.walkId,
     };
     if (
       moveOrderPlaybackFinished({
@@ -213,7 +215,7 @@ describe("observer Path Playback rewind (production teleport-back)", () => {
     expect(mid.x).toBeGreaterThan(4);
 
     // Server re-issues the walk from conn.player (still at start if ticks lagged).
-    applyObserverMoveOrder(obs, straightOrder(startAtMs + 1000), startAtMs + 1000);
+    applyObserverMoveOrder(obs, straightOrder(startAtMs + 1000, 1), startAtMs + 1000);
     const afterReissue = stepObserver(obs, startAtMs + 1000);
     assert.ok(
       afterReissue.x + 0.05 >= mid.x,

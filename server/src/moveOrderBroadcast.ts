@@ -24,6 +24,7 @@ export type MoveOrderOutMsg = {
   startAtMs: number;
   speed: number;
   serverNowMs: number;
+  walkId: number;
 };
 
 export function shouldEmitMoveOrder(args: {
@@ -41,6 +42,7 @@ export function buildMoveOrderOutMsg(args: {
   startAtMs: number;
   speed?: number;
   serverNowMs?: number;
+  walkId: number;
 }): MoveOrderOutMsg {
   return {
     type: "moveOrder",
@@ -51,5 +53,15 @@ export function buildMoveOrderOutMsg(args: {
     startAtMs: args.startAtMs,
     speed: args.speed ?? DEFAULT_PATH_MOVE_SPEED,
     serverNowMs: args.serverNowMs ?? args.startAtMs,
+    walkId: args.walkId,
   };
+}
+
+/** Re-send the current in-flight order once if the first packet may have dropped. */
+export function shouldDuplicateInFlightMoveOrder(args: {
+  enabled: boolean;
+  dupPending: boolean;
+  pathQueueLength: number;
+}): boolean {
+  return args.enabled && args.dupPending && args.pathQueueLength > 0;
 }

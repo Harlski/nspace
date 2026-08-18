@@ -154,6 +154,28 @@ describe("shouldAdoptSnapshotPose", () => {
       })
     ).toBe(false);
   });
+
+  it("treats walking=false as an implicit abort even when behind", () => {
+    expect(
+      shouldAdoptSnapshotPose({
+        playbackActive: true,
+        behind: true,
+        intentionalSnap: false,
+        walkingFlag: false,
+      })
+    ).toBe(true);
+  });
+
+  it("treats an increased walkId as forward catch-up", () => {
+    expect(
+      shouldAdoptSnapshotPose({
+        playbackActive: true,
+        behind: true,
+        intentionalSnap: false,
+        walkIdChanged: true,
+      })
+    ).toBe(true);
+  });
 });
 
 describe("Path Playback walk identity", () => {
@@ -162,6 +184,7 @@ describe("Path Playback walk identity", () => {
     path: [{ x: 15, z: 0, layer: 0 }],
     startX: 0,
     startZ: 0,
+    walkId: 1,
   };
   const sameOrder: MoveOrderWire = {
     address: "NQ97 TEST",
@@ -170,6 +193,7 @@ describe("Path Playback walk identity", () => {
     startZ: 0,
     startAtMs: 1,
     speed: 5,
+    walkId: 1,
   };
   const newOrder: MoveOrderWire = {
     address: "NQ97 TEST",
@@ -178,6 +202,7 @@ describe("Path Playback walk identity", () => {
     startZ: 0,
     startAtMs: 2,
     speed: 5,
+    walkId: 2,
   };
 
   it("recognizes same walk vs a new redirect", () => {
@@ -213,6 +238,16 @@ describe("Path Playback walk identity", () => {
         order: sameOrder,
       })
     ).toBe(false);
+  });
+
+  it("adopts a reverse click when walkId increases even if the pose is behind on the old path", () => {
+    expect(
+      shouldAdoptReplacementMoveOrder({
+        last: hold,
+        candidatePose: { x: 0, z: 0 },
+        order: { ...newOrder, startX: 0, startZ: 0, walkId: 2 },
+      })
+    ).toBe(true);
   });
 });
 

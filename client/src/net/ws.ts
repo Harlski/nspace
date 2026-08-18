@@ -255,6 +255,17 @@ export type ServerMessage =
       type: "welcome";
       self: PlayerState;
       others: PlayerState[];
+      moveOrders?: Array<{
+        type: "moveOrder";
+        address: string;
+        path: Array<{ x: number; z: number; layer: 0 | 1 }>;
+        startX: number;
+        startZ: number;
+        startAtMs: number;
+        speed: number;
+        serverNowMs?: number;
+        walkId?: number;
+      }>;
       roomId: string;
       roomBounds: RoomBounds;
       doors: RoomDoor[];
@@ -396,6 +407,7 @@ export type ServerMessage =
       startAtMs: number;
       speed: number;
       serverNowMs?: number;
+      walkId?: number;
     }
   | {
       type: "moveAbort";
@@ -405,6 +417,21 @@ export type ServerMessage =
       y: number;
       vx: number;
       vz: number;
+      walkId?: number;
+    }
+  | {
+      type: "poseHeartbeat";
+      players: Array<{
+        address: string;
+        x: number;
+        y: number;
+        z: number;
+        vx: number;
+        vz: number;
+        walkId: number;
+        walking: boolean;
+        serverNowMs: number;
+      }>;
     }
   | {
       type: "movementWatchSnapshot";

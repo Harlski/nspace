@@ -15,15 +15,29 @@ export type MoveOrderWire = {
   startAtMs: number;
   speed: number;
   serverNowMs?: number;
+  walkId?: number;
 };
 
 export type PlaybackPose = { x: number; z: number };
+
+export type PoseHeartbeatPlayerWire = {
+  address: string;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vz: number;
+  walkId: number;
+  walking: boolean;
+  serverNowMs: number;
+};
 
 export type PlaybackHold = {
   pose: PlaybackPose;
   path: PathWaypoint[];
   startX: number;
   startZ: number;
+  walkId?: number;
 };
 
 export function remotePoseFromMoveOrder(args: {
@@ -144,8 +158,12 @@ export function shouldAdoptSnapshotPose(args: {
   playbackActive: boolean;
   behind: boolean;
   intentionalSnap: boolean;
+  walkIdChanged?: boolean;
+  walkingFlag?: boolean;
 }): boolean {
   if (args.intentionalSnap) return true;
+  if (args.walkingFlag === false) return true;
+  if (args.walkIdChanged) return true;
   if (args.playbackActive) return false;
   if (args.behind) return false;
   return true;
@@ -153,8 +171,16 @@ export function shouldAdoptSnapshotPose(args: {
 
 export type PlaybackWalkIdentity = Pick<
   MoveOrderWire,
-  "path" | "startX" | "startZ"
+  "path" | "startX" | "startZ" | "walkId"
 >;
+
+export function walkIdIncreased(
+  lastWalkId: number | undefined,
+  nextWalkId: number | undefined
+): boolean {
+  if (nextWalkId == null || lastWalkId == null) return false;
+  return nextWalkId > lastWalkId;
+}
 
 /** Same walk session (redirect/reissue), not a new click-to-walk. */
 export function playbackSameWalk(
@@ -162,6 +188,9 @@ export function playbackSameWalk(
   order: PlaybackWalkIdentity
 ): boolean {
   if (!last) return false;
+  if (last.walkId != null && order.walkId != null) {
+    return last.walkId === order.walkId;
+  }
   if (last.startX !== order.startX || last.startZ !== order.startZ) return false;
   if (last.path.length !== order.path.length) return false;
   for (let i = 0; i < last.path.length; i++) {
@@ -192,10 +221,10 @@ export function shouldAdoptReplacementMoveOrder(args: {
   order: PlaybackWalkIdentity;
 }): boolean {
   if (!args.last) return true;
-  if (!playbackSameWalk(args.last, args.order)) return true;
+  if (walkIdIncreased(args.last.walkId, args.order.walkId)) return true;
   return !poseIsBehindAlongPath(
     args.last.pose,
     args.candidatePose,
-    args.order.path
+    args.last.path
   );
 }

@@ -6062,6 +6062,9 @@ function enterGame(
         ? [...msg.others]
         : [msg.self, ...msg.others];
       game.syncState(lastPlayers);
+      for (const order of msg.moveOrders ?? []) {
+        game.applyMoveOrder(order);
+      }
       refreshWorldcupCrowdRoster();
       bumpRoomLoadProgress(0.88);
       syncReturnHomeButton();
@@ -6304,6 +6307,10 @@ function enterGame(
     }
     if (msg.type === "moveAbort") {
       game.applyMoveAbort(msg);
+      return;
+    }
+    if (msg.type === "poseHeartbeat") {
+      game.applyPoseHeartbeat(msg.players);
       return;
     }
     if (msg.type === "movementWatchSnapshot") {
