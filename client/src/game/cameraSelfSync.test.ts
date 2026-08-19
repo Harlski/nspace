@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { shouldSnapCameraOnSelfSync } from "./cameraSelfSync.js";
+import {
+  shouldHardSnapSelfMeshOnSync,
+  shouldSnapCameraOnSelfSync,
+} from "./cameraSelfSync.js";
 
 describe("shouldSnapCameraOnSelfSync", () => {
   it("snaps when establishing self target after room entry (setSelf cleared target)", () => {
@@ -64,6 +67,50 @@ describe("shouldSnapCameraOnSelfSync", () => {
         hasSelfMoveOrder: true,
         cameraFollowReady: false,
         jumped: false,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("shouldHardSnapSelfMeshOnSync", () => {
+  it("hard-snaps on room welcome even when Hub-to-dest displacement is under 6 tiles", () => {
+    const jumped = Math.hypot(0 - -5, 0 - 0) > 6;
+    expect(jumped).toBe(false);
+    expect(
+      shouldHardSnapSelfMeshOnSync({
+        establishingSelfTarget: false,
+        jumped,
+        pendingRoomWelcomeSnap: true,
+      })
+    ).toBe(true);
+  });
+
+  it("hard-snaps when establishing self target after setSelf", () => {
+    expect(
+      shouldHardSnapSelfMeshOnSync({
+        establishingSelfTarget: true,
+        jumped: false,
+        pendingRoomWelcomeSnap: false,
+      })
+    ).toBe(true);
+  });
+
+  it("hard-snaps on a large pose jump", () => {
+    expect(
+      shouldHardSnapSelfMeshOnSync({
+        establishingSelfTarget: false,
+        jumped: true,
+        pendingRoomWelcomeSnap: false,
+      })
+    ).toBe(true);
+  });
+
+  it("does not hard-snap ordinary in-room follow ticks", () => {
+    expect(
+      shouldHardSnapSelfMeshOnSync({
+        establishingSelfTarget: false,
+        jumped: false,
+        pendingRoomWelcomeSnap: false,
       })
     ).toBe(false);
   });

@@ -45,6 +45,7 @@ import {
 } from "./flags.js";
 import { ACTION_WHEEL_EMOTES } from "./emoteWheelEmotes.js";
 import { profileFlagChipLabels } from "./profileFlagChip.js";
+import { USERNAME_MAX_LEN } from "../auth/usernameConstants.js";
 import { GATE_AUTH_MAX } from "../game/gateAuth.js";
 import { normalizeWalletKey, type FloorTile } from "../game/grid.js";
 import {
@@ -4367,7 +4368,12 @@ export function createHud(
   oppUsernameInput.type = "text";
   oppUsernameInput.className =
     "other-player-profile__username-input other-player-profile__username-input--inline";
-  oppUsernameInput.maxLength = 12;
+  oppUsernameInput.maxLength = USERNAME_MAX_LEN;
+  oppUsernameInput.size = USERNAME_MAX_LEN;
+  oppUsernameInput.style.setProperty(
+    "--profile-username-max-ch",
+    String(USERNAME_MAX_LEN)
+  );
   oppUsernameInput.autocomplete = "off";
   oppUsernameInput.setAttribute("aria-label", "Username");
   oppUsernameInput.hidden = true;

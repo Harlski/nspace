@@ -7249,12 +7249,30 @@ button.hud-brand:focus-visible {
   flex: 0 1 auto;
 }
 
+/* While the username field is open, take the rest of the identity row so the input can show a
+   full 12-character name instead of collapsing beside the wallet chip. Keep `min-width` at
+   content size so the field cannot be squeezed back to padding-only. */
+.other-player-profile__name-block:has(
+  .other-player-profile__username-input--inline:not([hidden])
+) {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
+  min-width: min-content;
+}
+
 .other-player-profile__name-primary-wrap {
   display: flex;
   align-items: center;
   min-width: 0;
   width: 100%;
   gap: 0.35rem;
+}
+
+.other-player-profile__name-primary-wrap:has(
+  .other-player-profile__username-input--inline:not([hidden])
+) {
+  min-width: min-content;
 }
 
 .other-player-profile__display-name {
@@ -7393,7 +7411,11 @@ button.hud-brand:focus-visible {
 
 .other-player-profile__username-input--inline {
   flex: 1 1 auto;
-  min-width: 0;
+  /* `width: 0` lets the field grow with the name row; do not pair it with `min-width: 0` or the
+     box collapses to padding when the name-block is sized to content (display name is hidden).
+     `--profile-username-max-ch` matches `USERNAME_MAX_LEN` (default 12). Border-box width includes
+     this rule's 8px padding and 1px border on each side. */
+  min-width: calc(var(--profile-username-max-ch, 12) * 1ch + 18px);
   max-width: 100%;
   width: 0;
   font-size: 15px;

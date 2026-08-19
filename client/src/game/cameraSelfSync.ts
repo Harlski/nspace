@@ -19,3 +19,22 @@ export function shouldSnapCameraOnSelfSync(args: {
   if (!args.cameraFollowReady && !args.hasSelfMoveOrder) return true;
   return false;
 }
+
+/**
+ * Whether `syncState` should teleport `selfMesh` onto the welcome / snapshot pose
+ * instead of only updating the lerp target.
+ *
+ * Same-WS `joinRoom` can keep the old mesh. Hub spawn (-5, 0) to lounge center
+ * (0, 0) is a 5-tile hop, under the ordinary jump threshold of 6, so without a
+ * room-welcome flag the avatar (and debug overlay) stays in the previous room's
+ * coordinates.
+ */
+export function shouldHardSnapSelfMeshOnSync(args: {
+  establishingSelfTarget: boolean;
+  jumped: boolean;
+  pendingRoomWelcomeSnap: boolean;
+}): boolean {
+  if (args.pendingRoomWelcomeSnap) return true;
+  if (args.establishingSelfTarget) return true;
+  return args.jumped;
+}

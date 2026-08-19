@@ -1050,6 +1050,42 @@ test("Pixel collaborator fires when adjacent foreign paint and co-presence", asy
   });
 });
 
+test("Pixel collaborator 10x10 interior paint unlocks only with current-room co-presence", async () => {
+  await withAchievementStore(async ({
+    recordPixelPaintAchievements,
+    getAchievementsForWallet,
+  }) => {
+    const author = "NQ07 OTHER000000000000000000000000002";
+    const painters = new Map<string, string>();
+    for (let x = 0; x < 10; x++) {
+      for (let z = 0; z < 10; z++) {
+        painters.set(`${x},${z}`, author);
+      }
+    }
+    recordPixelPaintAchievements(WALLET, 5, 6, 0x00ff00, painters, new Set());
+    assert.equal(
+      getAchievementsForWallet(WALLET).achievements.find(
+        (a) => a.achievementId === "pixel-collaborator"
+      )?.completed,
+      false
+    );
+    recordPixelPaintAchievements(
+      WALLET,
+      5,
+      6,
+      0x0000ff,
+      painters,
+      new Set([author])
+    );
+    assert.equal(
+      getAchievementsForWallet(WALLET).achievements.find(
+        (a) => a.achievementId === "pixel-collaborator"
+      )?.completed,
+      true
+    );
+  });
+});
+
 test("recordMatchEnd unlocks v3 match extension achievements", async () => {
   const winner = "NQ07 WINNER000000000000000000000000001";
   const loser = "NQ07 LOSER000000000000000000000000002";

@@ -478,7 +478,10 @@ import {
 } from "./billboardAdvertsCatalog.js";
 import { compileRotationSet } from "./rotationSetCompile.js";
 import { getRotationSetById } from "./rotationSetStore.js";
-import { isWithinBillboardProximity } from "./miningPixelAchievementEvaluator.js";
+import {
+  isWithinBillboardProximity,
+  otherPresentWalletsFromOccupants,
+} from "./miningPixelAchievementEvaluator.js";
 import {
   getVoxelTextsForRoom,
   loadVoxelTexts,
@@ -2973,15 +2976,7 @@ function otherPresentWalletsInRoom(
   room: Map<string, ClientConn>,
   excludeAddress: string
 ): Set<string> {
-  const exclude = compactAddress(excludeAddress);
-  const out = new Set<string>();
-  for (const c of room.values()) {
-    if (c.streamObserver) continue;
-    const w = compactAddress(c.address);
-    if (!w || w === exclude) continue;
-    out.add(w);
-  }
-  return out;
+  return otherPresentWalletsFromOccupants(room.values(), excludeAddress);
 }
 
 function tickBillboardAudienceDwell(
@@ -9726,6 +9721,10 @@ export function addClient(
       console.log(`[rooms] Player ${address} not in any room, ignoring message`);
       return;
     }
+    // Occupants of the room they are in *now*. The connect-time `room` map stays
+    // Hub/Chamber after a later join, which made Pixel Collaborator (and tile
+    // occupancy) miss everyone standing in Pixel.
+    const room = roomOf(currentRoomId);
     // Stream cinema is observation-only. Admin Invisibility does not block world-mutating intents.
     if (
       connBlocksWorldEdit(conn) &&
@@ -9837,7 +9836,6 @@ export function addClient(
       if (!targetAddress) return;
       const targetCompact = compactAddress(targetAddress);
       if (targetCompact === compactAddress(address)) return;
-      const room = roomOf(currentRoomId);
       let challenger: ClientConn | null = null;
       for (const c of room.values()) {
         if (compactAddress(c.address) === targetCompact) {
@@ -10811,6 +10809,12 @@ export function addClient(
             reason: "not_found",
           } satisfies OutMsg);
         return;
+      }
+      // Seed Play Space geometry before Join Spawn resolution. teleportPlayer also
+      // calls this; doing it first avoids landing at lounge center (0,0) while the
+      // template teleporter / Join Spawn is still unregistered.
+      if (inviteLobby) {
+        ensurePlaySpaceLayout(targetRoomId);
       }
       const b = getRoomBaseBounds(targetRoomId);
       let spawnX = Math.floor((b.minX + b.maxX) / 2);

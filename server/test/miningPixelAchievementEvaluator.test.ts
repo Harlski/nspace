@@ -5,6 +5,7 @@ import {
   isPixelCollaboratorPaint,
   isWithinBillboardProximity,
   monochromeHueKey,
+  otherPresentWalletsFromOccupants,
   parseMonochromeHueKey,
   pixelCornerIdForTile,
   pixelCornerSeenKey,
@@ -55,6 +56,39 @@ test("isPixelCollaboratorPaint requires co-presence and adjacent foreign paint",
     false
   );
   assert.equal(isPixelCollaboratorPaint(wallet, 0, 0, painters, new Set()), false);
+});
+
+test("painting inside a foreign 10x10 counts only when the author is in the current room", () => {
+  const author = "NQ07 OTHER000000000000000000000000002";
+  const painter = "NQ07 TEST000000000000000000000000000001";
+  const painters = new Map<string, string>();
+  for (let x = 0; x < 10; x++) {
+    for (let z = 0; z < 10; z++) {
+      painters.set(`${x},${z}`, author);
+    }
+  }
+  const connectRoomOccupants = [{ address: painter }];
+  const pixelOccupants = [{ address: painter }, { address: author }];
+  assert.equal(
+    isPixelCollaboratorPaint(
+      painter,
+      5,
+      6,
+      painters,
+      otherPresentWalletsFromOccupants(connectRoomOccupants, painter)
+    ),
+    false
+  );
+  assert.equal(
+    isPixelCollaboratorPaint(
+      painter,
+      5,
+      6,
+      painters,
+      otherPresentWalletsFromOccupants(pixelOccupants, painter)
+    ),
+    true
+  );
 });
 
 test("monochromeHueKey round-trips through parseMonochromeHueKey", () => {

@@ -88,6 +88,26 @@ export function adjacentPaintedTileKeys(x: number, z: number): string[] {
   ];
 }
 
+function compactWallet(address: string): string {
+  return String(address || "").replace(/\s+/g, "").toUpperCase();
+}
+
+/** Occupant wallets in the room being painted, excluding the painter and stream observers. */
+export function otherPresentWalletsFromOccupants(
+  occupants: Iterable<{ address: string; streamObserver?: boolean }>,
+  excludeAddress: string
+): Set<string> {
+  const exclude = compactWallet(excludeAddress);
+  const out = new Set<string>();
+  for (const c of occupants) {
+    if (c.streamObserver) continue;
+    const w = compactWallet(c.address);
+    if (!w || w === exclude) continue;
+    out.add(w);
+  }
+  return out;
+}
+
 export function isPixelCollaboratorPaint(
   painterWallet: string,
   x: number,
@@ -95,13 +115,19 @@ export function isPixelCollaboratorPaint(
   tilePainters: ReadonlyMap<string, string>,
   otherPresentWallets: ReadonlySet<string>
 ): boolean {
-  const painter = painterWallet.replace(/\s+/g, "").toUpperCase();
+  const painter = compactWallet(painterWallet);
   if (!painter || otherPresentWallets.size === 0) return false;
+  const present = new Set<string>();
+  for (const w of otherPresentWallets) {
+    const compact = compactWallet(w);
+    if (compact) present.add(compact);
+  }
+  if (present.size === 0) return false;
   for (const key of adjacentPaintedTileKeys(x, z)) {
-    const author = tilePainters.get(key);
+    const author = compactWallet(tilePainters.get(key) ?? "");
     if (!author) continue;
     if (author === painter) continue;
-    if (otherPresentWallets.has(author)) return true;
+    if (present.has(author)) return true;
   }
   return false;
 }

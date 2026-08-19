@@ -220,7 +220,10 @@ import {
   type PlaybackHold,
   type PoseHeartbeatPlayerWire,
 } from "./moveOrderPlayback.js";
-import { shouldSnapCameraOnSelfSync } from "./cameraSelfSync.js";
+import {
+  shouldHardSnapSelfMeshOnSync,
+  shouldSnapCameraOnSelfSync,
+} from "./cameraSelfSync.js";
 import { shouldAdoptServerVelocityOnSelfSync } from "./selfServerVelocity.js";
 import {
   applyRemoteMoveAbort,
@@ -1599,6 +1602,8 @@ export class Game {
   private selfMesh: THREE.Group | null = null;
   /** Authoritative position from server; selfMesh lerps toward extrapolated goal each frame. */
   private selfTargetPos: THREE.Vector3 | null = null;
+  /** Next `syncState` must teleport the local mesh (same-WS room welcome). */
+  private pendingRoomWelcomeSnap = false;
   /** Monotonic clock (ms) when the last self snapshot arrived from the server. */
   private selfLastServerRecvMs = 0;
   /** Last server horizontal velocity (world units/s) for local dead reckoning. */
@@ -3293,6 +3298,8 @@ export class Game {
     // Drop prior-room path playback so hub sync can re-snap the camera look-at.
     this.selfMoveOrder = null;
     this.lastSelfPlayback = null;
+    this.selfTargetPos = null;
+    this.pendingRoomWelcomeSnap = true;
     this.selfServerVx = 0;
     this.selfServerVz = 0;
     this.selfLastServerRecvMs = performance.now();
@@ -15986,20 +15993,31 @@ export class Game {
           const establishingSelfTarget = !this.selfTargetPos;
           let jumped = false;
           const posePresent = Number.isFinite(p.x) && Number.isFinite(p.z);
-          if (establishingSelfTarget && posePresent) {
+          const ox = this.selfMesh.position.x;
+          const oy = this.selfMesh.position.y;
+          const oz = this.selfMesh.position.z;
+          const rawJump =
+            posePresent &&
+            (Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5);
+          const hardSnap =
+            posePresent &&
+            shouldHardSnapSelfMeshOnSync({
+              establishingSelfTarget,
+              jumped: rawJump,
+              pendingRoomWelcomeSnap: this.pendingRoomWelcomeSnap,
+            });
+          if (hardSnap) {
             this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
             this.selfMesh.position.set(p.x, py, p.z);
+            this.lastSelfPlayback = null;
+            this.pendingRoomWelcomeSnap = false;
+            jumped = true;
             visualChanged = true;
           } else if (posePresent) {
             const last = this.lastSelfPlayback;
             const behind = last
               ? poseIsBehindAlongPath(last.pose, { x: p.x, z: p.z }, last.path)
               : false;
-            const ox = this.selfMesh.position.x;
-            const oy = this.selfMesh.position.y;
-            const oz = this.selfMesh.position.z;
-            const rawJump =
-              Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5;
             if (
               shouldAdoptSnapshotPose({
                 playbackActive: this.selfPathPlaybackActive(),
