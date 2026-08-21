@@ -191,7 +191,7 @@ every five minutes. Decoration only; quiet days stay sparse; no opt-out.
 
 - Exact faces on a public marketing shell are an intentional recognition risk; Face Tokens only
   remove the easy roster scrape and keep the wire lean (~bytes per face vs ~4–9 KB data URLs).
-- Preimage search for Face Tokens is CPU-heavy cold (~minutes per new wallet at current rates);
-  a durable cache is part of making the feature production-safe.
-- Tutorial Room counts as public/shared for eligibility unless a later decision excludes it;
-  Play Space exclusion is the hard privacy line from the grill.
+- Face Tokens encode identicon feature indices (`ac1_…`) rather than collide-preimage strings so
+  generation stays O(1) while pixels still match via `Identicons._svgTemplate`.
+- Tutorial Room counts as public/shared for eligibility; Play Space exclusion is the hard privacy
+  line from the grill.
