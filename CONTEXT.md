@@ -404,9 +404,9 @@ a room. Distinct from in-world HUD and from the **Player Menu**.
 _Avoid_: login screen, title screen, landing page, home screen (when meaning this shell).
 
 **Ambient Cast**:
-The decorative background on the **Main Menu**: isometric-flavored walkers on a flat abstract
-plane, each showing an exact public identicon of someone who joined a public/shared room during
-the current UTC day. Not a live room, not interactive, not a roster.
+The decorative background on the **Main Menu**: today’s public/shared visitors as exact
+public identicons hovering outside the login card (not a live room, not interactive, not a
+roster). Soft Density keeps the cloud readable.
 _Avoid_: lobby world, ghost players, home screen NPCs, visitor ticker.
 
 **Face Token**:

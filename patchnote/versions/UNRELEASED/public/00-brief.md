@@ -5,4 +5,4 @@
 
 ---
 
-The home screen now feels more alive: today’s players walk around behind the connect menu as familiar Nimiq faces.
+_(Draft — not published.)_

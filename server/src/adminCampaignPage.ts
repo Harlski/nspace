@@ -4,6 +4,10 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
+import {
+  adminPlayerLinkClientJs,
+  adminPlayerLinkCss,
+} from "./adminPlayerLinkSnippet.js";
 import { advertiseBillboardPreviewModuleScript } from "./advertiseBillboardPreviewScript.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 
@@ -22,6 +26,7 @@ export function adminCampaignPageHtml(): string {
     ${analyticsPageRootCss()}
     ${mainSiteShellCss()}
     ${analyticsTopbarCss()}
+    ${adminPlayerLinkCss()}
     .mono { font-family: "Fira Mono", ui-monospace, monospace; font-size: 0.84rem; }
     .cp-panel { border: 1px solid #263348; border-radius: 10px; background: #0f1622; padding: 0.75rem 0.85rem; margin-bottom: 0.85rem; }
     .cp-panel h2 { margin: 0 0 0.55rem; font-size: 0.92rem; color: #c8d4e4; font-weight: 600; }
@@ -180,6 +185,7 @@ export function adminCampaignPageHtml(): string {
     function esc(s) {
       return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
     }
+    ${adminPlayerLinkClientJs()}
     function authGateHtml(msg) {
       return (
         "<div class='ms-auth-gate ms-auth-gate--standalone'>" +
@@ -257,7 +263,11 @@ export function adminCampaignPageHtml(): string {
         esc(w) +
         '" alt="" width="22" height="22" />' +
         '<span class="cp-owner__text">' +
-        esc(ownerLabel(campaign)) +
+        adminPlayerLinkHtml({
+          wallet: w,
+          username: campaign.ownerUsername,
+          displayName: ownerLabel(campaign),
+        }) +
         "</span></span>"
       );
     }

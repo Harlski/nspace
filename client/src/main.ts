@@ -648,6 +648,7 @@ function enterGame(
   selfAddress = address;
   const query = new URLSearchParams(location.search);
   const showDebugHud = query.has("debug");
+  const camJitCapture = query.has("camjit");
   const streamMode = query.has("stream");
   const streamFollow = query.has("streamFollow");
   const streamChat = query.has("streamChat");
@@ -1029,6 +1030,39 @@ function enterGame(
   hud.setBrandLinksPlayerAddress(address);
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
   const game = new Game(canvasHost);
+
+  if (camJitCapture) {
+    game.enableCameraJitterCapture(true);
+    const downloadDump = (): void => {
+      const dump = game.dumpCameraJitterCapture();
+      if (!dump) return;
+      const blob = new Blob([JSON.stringify(dump, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `nspace-camjit-${dump.capturedAt.replace(/[:.]/g, "-")}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    window.__nspaceCamJitDump = () => {
+      const dump = game.dumpCameraJitterCapture();
+      if (dump) downloadDump();
+      return dump ?? { capturedAt: "", sampleCount: 0, eventCount: 0, summary: {}, events: [], tail: [] };
+    };
+    window.__nspaceCamJitClear = () => game.clearCameraJitterCapture();
+    window.addEventListener("keydown", (ev) => {
+      if (ev.key === "J" && ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        ev.preventDefault();
+        downloadDump();
+      }
+    });
+    // eslint-disable-next-line no-console
+    console.info(
+      "[DEBUG-camjit] enabled — walk a straight line, then Shift+J (or __nspaceCamJitDump()) to save JSON"
+    );
+  }
 
   payTouchDebugHooks = {
     getSnapshot: () => ({
@@ -8039,6 +8073,9 @@ function enterGame(
           `zoom: ${d.zoomFrustum.toFixed(2)}   fog: ${d.fogEnabled ? "on" : "off"} (${d.fogInner.toFixed(1)} / ${d.fogOuter.toFixed(1)})`,
           `mode: ${d.buildMode ? "build" : d.floorExpandMode ? "floor+" : "walk"}`,
           `ws: ${wsLabel}   ${debugDispHzSmoothed.toFixed(0)}Hz disp · ${debugLoopMsSmoothed.toFixed(1)}ms loop`,
+          ...(game.getCameraJitterHudLine()
+            ? [game.getCameraJitterHudLine()!]
+            : []),
         ].join("\n")
       );
     }

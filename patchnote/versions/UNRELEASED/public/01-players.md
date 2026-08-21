@@ -5,6 +5,4 @@
 
 ---
 
-- **[NEW]** The connect screen background shows today’s visitors as walking identicons (same faces as in-game), with light motion and occasional emotes.
-- Quiet days stay quiet — only real joins from shared spaces that day appear (private invite rooms do not).
-- The cast is decoration only; tap the usual sign-in controls to enter.
+_(Draft — not published.)_

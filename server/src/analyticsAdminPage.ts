@@ -4,6 +4,10 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
+import {
+  adminPlayerLinkClientJs,
+  adminPlayerLinkCss,
+} from "./adminPlayerLinkSnippet.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
 
@@ -21,6 +25,7 @@ export function analyticsAdminPageHtml(): string {
     ${analyticsPageRootCss()}
     ${mainSiteShellCss()}
     ${analyticsTopbarCss()}
+    ${adminPlayerLinkCss()}
     .mono { font-size: 0.84rem; }
     .row { display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center; margin-top: 0.6rem; }
     input { flex: 1 1 420px; min-width: 220px; background: #0f1622; color: #dbe6f4; border: 1px solid #2c3b52; border-radius: 6px; padding: 0.45rem 0.55rem; }
@@ -238,6 +243,7 @@ export function analyticsAdminPageHtml(): string {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
     }
+    ${adminPlayerLinkClientJs()}
     function normalizeWallet(v) {
       return String(v || "").replace(/\\s+/g, " ").trim();
     }
@@ -259,7 +265,7 @@ export function analyticsAdminPageHtml(): string {
       if (name) return name;
       return walletConnectAs(walletId);
     }
-    function playerCell(walletId, displayName, identicon) {
+    function playerCell(walletId, displayName, identicon, username) {
       var w = String(walletId || "");
       var label = playerLabel(w, displayName);
       var sub = label !== walletConnectAs(w) ? walletConnectAs(w) : "";
@@ -269,7 +275,15 @@ export function analyticsAdminPageHtml(): string {
       var subHtml = sub
         ? " <span class='mono admin-payout-wallet-sub' title='" + esc(w) + "'>" + esc(sub) + "</span>"
         : "";
-      return img + "<span title='" + esc(w) + "'>" + esc(label) + "</span>" + subHtml;
+      return (
+        img +
+        adminPlayerLinkHtml({
+          wallet: w,
+          username: username,
+          displayName: label,
+        }) +
+        subHtml
+      );
     }
     function adminPvAnonHint(anonReason) {
       var a = String(anonReason || "legacy");
@@ -692,7 +706,7 @@ export function analyticsAdminPageHtml(): string {
                 "<tr><td></td><td class='mono'>" +
                 esc(t) +
                 "</td><td>" +
-                playerCell(w, r.displayName, ident) +
+                playerCell(w, r.displayName, ident, r.username) +
                 "</td><td class='mono'>" +
                 esc(String(r.amountNim != null ? r.amountNim : "-")) +
                 "</td><td>" +
@@ -721,7 +735,7 @@ export function analyticsAdminPageHtml(): string {
                 : "<span class='admin-payout-note' style='margin:0'>Won't pay while restricted</span>";
               return (
                 "<tr><td>" +
-                playerCell(w, row.displayName, "") +
+                playerCell(w, row.displayName, "", row.username) +
                 "</td><td class='mono'>" +
                 esc(jc) +
                 "</td><td class='mono'>" +
@@ -824,7 +838,7 @@ export function analyticsAdminPageHtml(): string {
                   "<tr><td class='mono'>" +
                   esc(t) +
                   "</td><td>" +
-                  playerCell(w, row.displayName, "") +
+                  playerCell(w, row.displayName, "", row.username) +
                   "</td><td class='mono'>" +
                   esc(nim) +
                   "</td><td class='mono'>" +
@@ -891,7 +905,7 @@ export function analyticsAdminPageHtml(): string {
           );
         }
         var thead =
-          "<thead><tr><th>Time</th><th>Wallet</th></tr></thead>";
+          "<thead><tr><th>Time</th><th>Player</th></tr></thead>";
         var body = rows
           .map(function (r) {
             var w = r.wallet != null && String(r.wallet) !== "" ? String(r.wallet) : "";
@@ -902,9 +916,12 @@ export function analyticsAdminPageHtml(): string {
                 (ident !== ""
                   ? "<img class='ident' src='" + esc(ident) + "' alt='' width='22' height='22'/>"
                   : "") +
-                "<span class='mono'>" +
-                esc(walletConnectAs(w)) +
-                "</span><span class='admin-pv-copy' role='button' tabindex='0' data-copy='" +
+                adminPlayerLinkHtml({
+                  wallet: w,
+                  username: r.username,
+                  displayName: r.displayName,
+                }) +
+                "<span class='admin-pv-copy' role='button' tabindex='0' data-copy='" +
                 esc(w) +
                 "' title='Copy full wallet address' aria-label='Copy full wallet address'>Copy</span>" +
                 "</div></div>"

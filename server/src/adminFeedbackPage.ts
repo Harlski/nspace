@@ -4,6 +4,10 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
+import {
+  adminPlayerLinkClientJs,
+  adminPlayerLinkCss,
+} from "./adminPlayerLinkSnippet.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 
 /** HTML shell for `/admin/feedback` (data via admin feedback APIs). */
@@ -20,6 +24,7 @@ export function adminFeedbackPageHtml(): string {
     ${analyticsPageRootCss()}
     ${mainSiteShellCss()}
     ${analyticsTopbarCss()}
+    ${adminPlayerLinkCss()}
     .mono { font-size: 0.84rem; }
     .fb-panel { border: 1px solid #263348; border-radius: 10px; background: #0f1622; padding: 0.75rem 0.85rem; width: 100%; box-sizing: border-box; }
     .fb-back {
@@ -51,6 +56,7 @@ export function adminFeedbackPageHtml(): string {
     }
     .fb-submitter__ident { width: 40px; height: 40px; border-radius: 6px; object-fit: contain; flex-shrink: 0; }
     .fb-submitter__wallet { font-size: 0.8rem; color: #d8e2f0; word-break: break-all; }
+    .fb-submitter__name { font-size: 0.88rem; color: #eef6ff; font-weight: 600; }
     .fb-report {
       margin: 0.65rem 0 0.85rem; padding: 0.55rem 0.65rem;
       border: 1px solid #3d2a14; border-radius: 8px; background: #141008;
@@ -140,14 +146,6 @@ export function adminFeedbackPageHtml(): string {
         '" height="' + px + '" />'
       );
     }
-    function walletCell(wallet) {
-      var w = String(wallet || "").trim();
-      if (!w) return "-";
-      return (
-        '<span class="fb-wallet">' + identImg(w, 22) +
-        '<span class="fb-wallet__text">' + escHtml(walletShort(w)) + "</span></span>"
-      );
-    }
     async function fetchIdenticon(wallet) {
       var w = String(wallet || "").trim();
       if (!w) return "";
@@ -191,6 +189,26 @@ export function adminFeedbackPageHtml(): string {
         .replace(/</g, "&lt;")
         .replace(/"/g, "&quot;");
     }
+    ${adminPlayerLinkClientJs()}
+    function walletCell(ticketOrWallet) {
+      var w = "";
+      var username = null;
+      var displayName = "";
+      if (ticketOrWallet && typeof ticketOrWallet === "object") {
+        w = String(ticketOrWallet.wallet || "").trim();
+        username = ticketOrWallet.username || null;
+        displayName = String(ticketOrWallet.displayName || "").trim();
+      } else {
+        w = String(ticketOrWallet || "").trim();
+      }
+      if (!w) return "-";
+      return (
+        '<span class="fb-wallet">' + identImg(w, 22) +
+        '<span class="fb-wallet__text">' +
+        adminPlayerLinkHtml({ wallet: w, username: username, displayName: displayName }) +
+        "</span></span>"
+      );
+    }
     function fmtTime(ms) {
       if (!ms) return "-";
       try { return new Date(ms).toISOString().replace("T", " ").slice(0, 19) + " UTC"; }
@@ -224,6 +242,7 @@ export function adminFeedbackPageHtml(): string {
       if (!ctx || typeof ctx !== "object") return "";
       var wallet = String(ctx.reportedWallet || "").trim();
       var name = String(ctx.reportedDisplayName || "").trim() || "Unknown";
+      var username = ctx.reportedUsername || null;
       var quoted = String(ctx.reportedMessage || "").trim();
       var history = Array.isArray(ctx.reportedUserChatHistory)
         ? ctx.reportedUserChatHistory.slice()
@@ -264,10 +283,12 @@ export function adminFeedbackPageHtml(): string {
         (wallet
           ? '<div class="fb-report__player">' +
             identImg(wallet, 36) +
-            '<div><div class="fb-submitter__wallet">' +
-            escHtml(name) +
-            "</div><div class='hint mono'>" +
+            '<div><div class="fb-submitter__name">' +
+            adminPlayerLinkHtml({ wallet: wallet, username: username, displayName: name }) +
+            "</div><div class='hint mono' title='" +
             escHtml(wallet) +
+            "'>" +
+            escHtml(walletShort(wallet)) +
             "</div></div></div>"
           : "") +
         (quoted
@@ -284,10 +305,16 @@ export function adminFeedbackPageHtml(): string {
       var msgs = (ticket.messages || []).slice().sort(function (a, b) {
         return (b.createdAtMs || 0) - (a.createdAtMs || 0);
       }).map(function (m) {
-        var who = m.isAdmin ? "Admin" : (m.authorWallet || "Player");
+        var who = m.isAdmin
+          ? "Admin"
+          : adminPlayerLinkHtml({
+              wallet: m.authorWallet,
+              username: m.authorUsername,
+              displayName: m.authorDisplayName,
+            });
         return (
           '<div class="fb-msg' + (m.isAdmin ? " fb-msg--admin" : "") + '">' +
-          '<div class="fb-msg__meta">' + escHtml(who) + " · " + fmtTime(m.createdAtMs) + "</div>" +
+          '<div class="fb-msg__meta">' + who + " · " + fmtTime(m.createdAtMs) + "</div>" +
           '<div class="fb-msg__body">' + escHtml(m.body) + "</div></div>"
         );
       }).join("");
@@ -311,7 +338,17 @@ export function adminFeedbackPageHtml(): string {
         " · updated " + fmtTime(ticket.updatedAtMs) + "</p>" +
         (submitter
           ? '<div class="fb-submitter">' + identImg(submitter, 40) +
-            '<span class="fb-submitter__wallet">Reporter: ' + escHtml(submitter) + "</span></div>"
+            '<div><div class="fb-submitter__name">Reporter: ' +
+            adminPlayerLinkHtml({
+              wallet: submitter,
+              username: ticket.username,
+              displayName: ticket.displayName,
+            }) +
+            "</div><div class='hint mono' title='" +
+            escHtml(submitter) +
+            "'>" +
+            escHtml(walletShort(submitter)) +
+            "</div></div></div>"
           : "") +
         renderReportContext(ticket) +
         '<div class="fb-thread">' + msgs + "</div>" +
@@ -338,14 +375,14 @@ export function adminFeedbackPageHtml(): string {
           "<tr data-id=\\"" + escHtml(t.id) + "\\">" +
           "<td>" + badge(t.status) + "</td>" +
           "<td>" + escHtml(t.kind) + "</td>" +
-          "<td>" + walletCell(t.wallet) + "</td>" +
+          "<td>" + walletCell(t) + "</td>" +
           "<td>" + escHtml((t.preview || "").slice(0, 48)) + "</td>" +
           "<td>" + fmtTime(t.updatedAtMs) + "</td></tr>"
         );
       }).join("");
       return (
         '<p class="hint">' + total + " ticket(s)</p>" +
-        '<table class="fb-table"><thead><tr><th>Status</th><th>Kind</th><th>Wallet</th><th>Preview</th><th>Updated</th></tr></thead>' +
+        '<table class="fb-table"><thead><tr><th>Status</th><th>Kind</th><th>Player</th><th>Preview</th><th>Updated</th></tr></thead>' +
         "<tbody>" + rows + "</tbody></table>"
       );
     }

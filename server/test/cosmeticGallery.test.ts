@@ -45,31 +45,34 @@ describe("cosmeticGallery", () => {
     fs.rmSync(adminDir, { recursive: true, force: true });
   });
 
-  it("is enabled by default when shop is open", () => {
-    assert.equal(isCosmeticGalleryEnabled(), true);
+  it("is off by default until SHAPER_ENABLED=1", () => {
+    assert.equal(isCosmeticGalleryEnabled(), false);
     process.env.NODE_ENV = "production";
+    assert.equal(isCosmeticGalleryEnabled(), false);
+    assert.equal(resolveCosmeticGalleryJoinCode(COSMETIC_GALLERY_JOIN_CODE), null);
+    assert.equal(isShaperReachable(), false);
+  });
+
+  it("becomes reachable when operators opt in and Shop is open", () => {
+    process.env.SHAPER_ENABLED = "1";
     assert.equal(isCosmeticGalleryEnabled(), true);
     assert.equal(
       resolveCosmeticGalleryJoinCode(COSMETIC_GALLERY_JOIN_CODE),
       COSMETIC_GALLERY_ROOM_ID
     );
-  });
-
-  it("can be disabled by operators while unfinished", () => {
-    process.env.SHAPER_ENABLED = "0";
-    assert.equal(isCosmeticGalleryEnabled(), false);
-    assert.equal(resolveCosmeticGalleryJoinCode(COSMETIC_GALLERY_JOIN_CODE), null);
-    assert.equal(isShaperReachable(), false);
+    assert.equal(isShaperReachable(), true);
     assert.equal(isShopPubliclyOpen(), true);
   });
 
-  it("blocks SPACER joins while the shop is closed", () => {
+  it("blocks SPACER joins while the shop is closed even when Shaper is opted in", () => {
+    process.env.SHAPER_ENABLED = "1";
     process.env.SHOP_ENABLED = "0";
     assert.equal(resolveCosmeticGalleryJoinCode(COSMETIC_GALLERY_JOIN_CODE), null);
     assert.equal(isShaperReachable(), false);
   });
 
-  it("maps SPACER to cosmetic-gallery", () => {
+  it("maps SPACER to cosmetic-gallery when opted in", () => {
+    process.env.SHAPER_ENABLED = "1";
     assert.equal(resolveCosmeticGalleryJoinCode("spacer"), COSMETIC_GALLERY_ROOM_ID);
     assert.equal(resolveCosmeticGalleryJoinCode("SPACER"), COSMETIC_GALLERY_ROOM_ID);
     assert.equal(resolveCosmeticGalleryJoinCode("hub"), null);
@@ -85,7 +88,9 @@ describe("cosmeticGallery", () => {
     assert.equal(showcases.length, listCosmeticPresets().length);
   });
 
-  it("recognizes gallery room id", () => {
+  it("recognizes gallery room id only when opted in", () => {
+    assert.equal(isCosmeticGalleryRoom(COSMETIC_GALLERY_ROOM_ID), false);
+    process.env.SHAPER_ENABLED = "1";
     assert.equal(isCosmeticGalleryRoom(COSMETIC_GALLERY_ROOM_ID), true);
     assert.equal(isCosmeticGalleryRoom("hub"), false);
   });

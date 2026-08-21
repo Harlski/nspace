@@ -12,8 +12,16 @@ async function withAchievementStore(
 ): Promise<void> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nspace-ach-"));
   const sqlitePath = path.join(dir, "campaigns.sqlite");
+  const prevCampaign = process.env.CAMPAIGN_STORE_SQLITE_PATH;
+  const prevLogin = process.env.LOGIN_STREAK_STORE_FILE;
+  const prevAdmin = process.env.ADMIN_RUNTIME_SETTINGS_FILE;
   process.env.CAMPAIGN_STORE_SQLITE_PATH = sqlitePath;
   process.env.LOGIN_STREAK_STORE_FILE = path.join(dir, "login-streaks.json");
+  process.env.ADMIN_RUNTIME_SETTINGS_FILE = path.join(dir, "admin-runtime-settings.json");
+  const { patchAdminRuntimeSettings } = await import(
+    "../src/adminRuntimeSettingsStore.js"
+  );
+  patchAdminRuntimeSettings({ shopEnabled: true });
   const mod = await import("../src/achievementStore.js");
   mod.initAchievementStore();
   try {
@@ -21,8 +29,12 @@ async function withAchievementStore(
   } finally {
     mod._resetAchievementStoreForTests();
     fs.rmSync(dir, { recursive: true, force: true });
-    delete process.env.CAMPAIGN_STORE_SQLITE_PATH;
-    delete process.env.LOGIN_STREAK_STORE_FILE;
+    if (prevCampaign === undefined) delete process.env.CAMPAIGN_STORE_SQLITE_PATH;
+    else process.env.CAMPAIGN_STORE_SQLITE_PATH = prevCampaign;
+    if (prevLogin === undefined) delete process.env.LOGIN_STREAK_STORE_FILE;
+    else process.env.LOGIN_STREAK_STORE_FILE = prevLogin;
+    if (prevAdmin === undefined) delete process.env.ADMIN_RUNTIME_SETTINGS_FILE;
+    else process.env.ADMIN_RUNTIME_SETTINGS_FILE = prevAdmin;
   }
 }
 
@@ -714,40 +726,81 @@ test("Room Tourist dedupes Play Space slugs and counts unique rooms", async () =
 });
 
 test("Grand Tour completes within one UTC day without revoking on rollover", async () => {
-  await withAchievementStore(async ({
-    recordExplorationRoomEntry,
-    getAchievementsForWallet,
-    tickExplorationDailyRollover,
-  }) => {
-    const utcDay = "2026-07-01";
-    const stops = ["chamber", "hub", "pixel", "field", "cosmetic-gallery"];
-    const unlocks: Array<{ achievementId: string }> = [];
-    for (const room of stops) {
-      recordExplorationRoomEntry(
-        WALLET,
-        room,
-        (u) => {
-          unlocks.push(...u);
-        },
-        utcDay
+  const prevShaper = process.env.SHAPER_ENABLED;
+  process.env.SHAPER_ENABLED = "1";
+  try {
+    await withAchievementStore(async ({
+      recordExplorationRoomEntry,
+      getAchievementsForWallet,
+      tickExplorationDailyRollover,
+    }) => {
+      const utcDay = "2026-07-01";
+      const stops = ["chamber", "hub", "pixel", "field", "cosmetic-gallery"];
+      const unlocks: Array<{ achievementId: string }> = [];
+      for (const room of stops) {
+        recordExplorationRoomEntry(
+          WALLET,
+          room,
+          (u) => {
+            unlocks.push(...u);
+          },
+          utcDay
+        );
+      }
+      assert.ok(unlocks.some((u) => u.achievementId === "exploration-grand-tour"));
+      const grand = getAchievementsForWallet(WALLET).achievements.find(
+        (a) => a.achievementId === "exploration-grand-tour"
       );
-    }
-    assert.ok(unlocks.some((u) => u.achievementId === "exploration-grand-tour"));
-    const grand = getAchievementsForWallet(WALLET).achievements.find(
-      (a) => a.achievementId === "exploration-grand-tour"
-    );
-    assert.equal(grand?.completed, true);
+      assert.equal(grand?.completed, true);
 
-    tickExplorationDailyRollover(
-      Date.UTC(2026, 6, 2, 0, 0, 1),
-      () => [{ wallet: WALLET, roomId: "chamber" }]
-    );
-    const afterRollover = getAchievementsForWallet(WALLET).achievements.find(
-      (a) => a.achievementId === "exploration-grand-tour"
-    );
-    assert.equal(afterRollover?.completed, true);
-    assert.equal(afterRollover?.progress, 5);
-  });
+      tickExplorationDailyRollover(
+        Date.UTC(2026, 6, 2, 0, 0, 1),
+        () => [{ wallet: WALLET, roomId: "chamber" }]
+      );
+      const afterRollover = getAchievementsForWallet(WALLET).achievements.find(
+        (a) => a.achievementId === "exploration-grand-tour"
+      );
+      assert.equal(afterRollover?.completed, true);
+      assert.equal(afterRollover?.progress, 5);
+    });
+  } finally {
+    if (prevShaper === undefined) delete process.env.SHAPER_ENABLED;
+    else process.env.SHAPER_ENABLED = prevShaper;
+  }
+});
+
+test("Grand Tour stays Temporarily unavailable while The Shaper is hidden", async () => {
+  const prevShaper = process.env.SHAPER_ENABLED;
+  delete process.env.SHAPER_ENABLED;
+  try {
+    await withAchievementStore(async ({
+      recordExplorationRoomEntry,
+      getAchievementsForWallet,
+    }) => {
+      const utcDay = "2026-07-01";
+      const stops = ["chamber", "hub", "pixel", "field", "cosmetic-gallery"];
+      const unlocks: Array<{ achievementId: string }> = [];
+      for (const room of stops) {
+        recordExplorationRoomEntry(
+          WALLET,
+          room,
+          (u) => {
+            unlocks.push(...u);
+          },
+          utcDay
+        );
+      }
+      assert.ok(!unlocks.some((u) => u.achievementId === "exploration-grand-tour"));
+      const grand = getAchievementsForWallet(WALLET).achievements.find(
+        (a) => a.achievementId === "exploration-grand-tour"
+      );
+      assert.equal(grand?.completed, false);
+      assert.equal(grand?.availability, "temporarily_unavailable");
+    });
+  } finally {
+    if (prevShaper === undefined) delete process.env.SHAPER_ENABLED;
+    else process.env.SHAPER_ENABLED = prevShaper;
+  }
 });
 
 test("Door Crasher and Teleporter Tourist dedupe stable keys", async () => {

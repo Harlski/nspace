@@ -199,7 +199,7 @@ export function adminSettingsPageHtml(): string {
           "<label for='shop-enabled'>Open Shop (featured shelf, Cosmetic Unlock, The Shaper joins).</label>" +
           "</div>" +
           (shopEnvOn
-            ? "<p class='set-hint'>When off, the Shop tab shows COMING SOON and purchases / The Shaper joins are blocked. Set deploy env <code>SHOP_ENABLED=0</code> to hard-close regardless of this checkbox. <code>SHAPER_ENABLED=0</code> hides The Shaper while Shop can stay open.</p>"
+            ? "<p class='set-hint'>When off, the Shop tab shows COMING SOON and purchases / The Shaper joins are blocked. Set deploy env <code>SHOP_ENABLED=0</code> to hard-close regardless of this checkbox. <code>SHAPER_ENABLED=1</code> is required to make The Shaper joinable while Shop is open.</p>"
             : "<p class='set-hint'>Hard-closed by deploy env <code>SHOP_ENABLED=0</code>. Unset that (or set to anything but <code>0</code>) to allow this toggle.</p>") +
           "<p class='set-hint'>" +
           (shopActive

@@ -155,7 +155,7 @@ describe("shouldAdoptSnapshotPose", () => {
     ).toBe(false);
   });
 
-  it("treats walking=false as an implicit abort even when behind", () => {
+  it("treats mid-walk walking=false as an implicit abort even when behind", () => {
     expect(
       shouldAdoptSnapshotPose({
         playbackActive: true,
@@ -164,6 +164,17 @@ describe("shouldAdoptSnapshotPose", () => {
         walkingFlag: false,
       })
     ).toBe(true);
+  });
+
+  it("does not rewind after drain on a lagged walking=false that is behind", () => {
+    expect(
+      shouldAdoptSnapshotPose({
+        playbackActive: false,
+        behind: true,
+        intentionalSnap: false,
+        walkingFlag: false,
+      })
+    ).toBe(false);
   });
 
   it("treats an increased walkId as forward catch-up", () => {

@@ -224,6 +224,10 @@ import {
   shouldHardSnapSelfMeshOnSync,
   shouldSnapCameraOnSelfSync,
 } from "./cameraSelfSync.js";
+import {
+  CameraJitterCapture,
+  type CamJitDump,
+} from "./cameraJitterCapture.js";
 import { shouldAdoptServerVelocityOnSelfSync } from "./selfServerVelocity.js";
 import {
   applyRemoteMoveAbort,
@@ -2175,6 +2179,8 @@ export class Game {
   private readonly cameraLookAheadSmoothing = 8;
   /** Previous position for velocity calculation. */
   private selfPrevPos = new THREE.Vector3(0, 0, 0);
+  /** Opt-in `?camjit=1` hitch recorder (`[DEBUG-camjit]`). */
+  private cameraJitterCapture: CameraJitterCapture | null = null;
   
   /** Orthographic vertical half-extent (world units); smaller = zoomed in. */
   private frustumSize: number;
@@ -3120,6 +3126,52 @@ export class Game {
 
   getPlaceRadiusBlocks(): number {
     return this.placeRadiusBlocks;
+  }
+
+  /** Opt-in camera hitch capture (`?camjit=1`). See `cameraJitterCapture.ts`. */
+  enableCameraJitterCapture(on = true): void {
+    if (on) {
+      if (!this.cameraJitterCapture) {
+        this.cameraJitterCapture = new CameraJitterCapture();
+      }
+      this.cameraJitterCapture.setEnabled(true);
+      this.cameraJitterCapture.clear();
+    } else if (this.cameraJitterCapture) {
+      this.cameraJitterCapture.setEnabled(false);
+    }
+  }
+
+  dumpCameraJitterCapture(): CamJitDump | null {
+    return this.cameraJitterCapture?.dump() ?? null;
+  }
+
+  clearCameraJitterCapture(): void {
+    this.cameraJitterCapture?.clear();
+  }
+
+  getCameraJitterHudLine(): string | null {
+    if (!this.cameraJitterCapture?.isEnabled()) return null;
+    return this.cameraJitterCapture.hudLine();
+  }
+
+  private sampleCameraJitterIfEnabled(dt: number): void {
+    const cap = this.cameraJitterCapture;
+    if (!cap?.isEnabled() || !this.selfMesh || !this.selfTargetPos) return;
+    cap.sample({
+      t: performance.now(),
+      dt,
+      meshX: this.selfMesh.position.x,
+      meshZ: this.selfMesh.position.z,
+      targetX: this.selfTargetPos.x,
+      targetZ: this.selfTargetPos.z,
+      lookX: this.cameraLookAt.x,
+      lookZ: this.cameraLookAt.z,
+      aheadX: this.cameraLookAhead.x,
+      aheadZ: this.cameraLookAhead.z,
+      svx: this.selfServerVx,
+      svz: this.selfServerVz,
+      playback: Boolean(this.selfMoveOrder),
+    });
   }
 
   /** Snapshot for debug HUD (room layout, counts, local pose). */
@@ -9165,6 +9217,30 @@ export class Game {
     }
   }
 
+  /**
+   * Server keeps passable purple half-slabs under billboards for occupancy only.
+   * They must never be meshed (including in build mode). Welcome applies obstacles
+   * before billboards, so already-built slab meshes need an explicit remesh pass
+   * when the footprint set changes.
+   */
+  private syncBillboardFootprintSlabMeshes(
+    previousFloorKeys: ReadonlySet<string>
+  ): void {
+    const floorKeys = new Set<string>(previousFloorKeys);
+    for (const k of this.billboardFootprintFloorKeys) floorKeys.add(k);
+    if (floorKeys.size === 0) return;
+    const remeshKeys = new Set<string>();
+    for (const floor of floorKeys) {
+      const comma = floor.indexOf(",");
+      if (comma < 0) continue;
+      const x = Number(floor.slice(0, comma));
+      const z = Number(floor.slice(comma + 1));
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+      remeshKeys.add(blockKey(x, z, 0));
+    }
+    if (remeshKeys.size > 0) this.syncBlockMeshesForKeys(remeshKeys);
+  }
+
   setBillboards(
     billboards: readonly BillboardState[],
     opts?: { refreshRotationContent?: boolean }
@@ -9173,6 +9249,7 @@ export class Game {
     this.billboardSyncGen++;
     const gen = this.billboardSyncGen;
     const prevSelectedBb = this.selectedBillboardId;
+    const prevFootprintFloorKeys = new Set(this.billboardFootprintFloorKeys);
     const prevSpecs = refreshRotation
       ? null
       : new Map(this.billboardSpecs);
@@ -9291,6 +9368,7 @@ export class Game {
       void this.mountOneBillboard(b, gen);
     }
     this.rebuildBillboardFootprintFloorKeys();
+    this.syncBillboardFootprintSlabMeshes(prevFootprintFloorKeys);
     this.syncBlockMeshes();
     if (
       prevSelectedBb &&
@@ -15727,7 +15805,7 @@ export class Game {
     this.requestRender(400);
   }
 
-  /** ~1 Hz analytic pose; never-rewind except implicit abort (`walking=false` / new walkId). */
+  /** ~1 Hz analytic pose; never-rewind after drain; mid-walk stop still snaps. */
   applyPoseHeartbeat(players: PoseHeartbeatPlayerWire[]): void {
     const recvLocalMs = Date.now();
     for (const p of players) {
@@ -15740,21 +15818,23 @@ export class Game {
           ? poseIsBehindAlongPath(last.pose, { x: p.x, z: p.z }, last.path)
           : false;
         const walkIdChanged = walkIdIncreased(last?.walkId, p.walkId);
-        const implicitAbort = p.walking === false || walkIdChanged;
+        const stopWalking = p.walking === false;
         if (
           !shouldAdoptSnapshotPose({
             playbackActive: this.selfPathPlaybackActive(),
             behind,
-            intentionalSnap: implicitAbort,
+            intentionalSnap: walkIdChanged,
             walkIdChanged,
             walkingFlag: p.walking,
           })
         ) {
           continue;
         }
-        if (implicitAbort) {
+        if (stopWalking || walkIdChanged) {
           this.selfMoveOrder = null;
-          this.lastSelfPlayback = null;
+          if (walkIdChanged) {
+            this.lastSelfPlayback = null;
+          }
         }
         if (this.selfTargetPos) this.selfTargetPos.set(p.x, py, p.z);
         else this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
@@ -15762,7 +15842,9 @@ export class Game {
         this.selfServerVx = p.vx;
         this.selfServerVz = p.vz;
         this.selfLastServerRecvMs = performance.now();
-        if (!implicitAbort) {
+        // Keep path identity after walking=false so a late duplicate moveOrder
+        // for the same walk cannot restart from the origin (camera hitch).
+        if (!walkIdChanged) {
           this.lastSelfPlayback = {
             pose: { x: p.x, z: p.z },
             path: last?.path ?? [],
@@ -15779,25 +15861,27 @@ export class Game {
         ? poseIsBehindAlongPath(last.pose, { x: p.x, z: p.z }, last.path)
         : false;
       const walkIdChanged = walkIdIncreased(last?.walkId, p.walkId);
-      const implicitAbort = p.walking === false || walkIdChanged;
+      const stopWalking = p.walking === false;
       if (
         !shouldAdoptSnapshotPose({
           playbackActive: this.remoteMoveOrders.has(p.address),
           behind,
-          intentionalSnap: implicitAbort,
+          intentionalSnap: walkIdChanged,
           walkIdChanged,
           walkingFlag: p.walking,
         })
       ) {
         continue;
       }
-      if (implicitAbort) {
+      if (stopWalking || walkIdChanged) {
         this.remoteMoveOrders.delete(p.address);
-        this.lastRemotePlayback.delete(p.address);
+        if (walkIdChanged) {
+          this.lastRemotePlayback.delete(p.address);
+        }
       }
       t?.set(p.x, py, p.z);
       this.others.get(p.address)?.position.set(p.x, py, p.z);
-      if (!implicitAbort) {
+      if (!walkIdChanged) {
         this.lastRemotePlayback.set(p.address, {
           pose: { x: p.x, z: p.z },
           path: last?.path ?? [],
@@ -16005,6 +16089,7 @@ export class Game {
               establishingSelfTarget,
               jumped: rawJump,
               pendingRoomWelcomeSnap: this.pendingRoomWelcomeSnap,
+              hasSelfMoveOrder: Boolean(this.selfMoveOrder),
             });
           if (hardSnap) {
             this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
@@ -17084,6 +17169,7 @@ export class Game {
     visualActive = visualActive || orbitWasActive || this.cameraOrbitEase !== null;
     this.updateStreamCameraAnims();
     this.updateStreamCameraFollow(dt);
+    this.sampleCameraJitterIfEnabled(dt);
     this.updateStreamPan(dt);
     this.maybeReportViewInterest();
     this.refreshPathLine();

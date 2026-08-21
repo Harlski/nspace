@@ -4,6 +4,10 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
+import {
+  adminPlayerLinkClientJs,
+  adminPlayerLinkCss,
+} from "./adminPlayerLinkSnippet.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 import { CHAT_SUBSTITUTION_MAX_LEN } from "./chatSubstitutionStore.js";
 
@@ -22,6 +26,7 @@ export function adminChatPageHtml(): string {
     ${analyticsPageRootCss()}
     ${mainSiteShellCss()}
     ${analyticsTopbarCss()}
+    ${adminPlayerLinkCss()}
     .mono { font-size: 0.84rem; }
     .chat-panel { border: 1px solid #263348; border-radius: 10px; background: #0f1622; padding: 0.75rem 0.85rem; }
     .chat-filters { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.65rem; align-items: center; }
@@ -91,6 +96,7 @@ export function adminChatPageHtml(): string {
   var mutes = {};
   var roomsData = [];
   var usersData = [];
+  var userByWallet = {};
 
   function readAuthToken() {
     if (typeof window.__nsHydrateMainSiteAuth === "function") {
@@ -108,6 +114,17 @@ export function adminChatPageHtml(): string {
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/"/g, "&quot;");
+  }
+  ${adminPlayerLinkClientJs()}
+
+  function playerFromWallet(wallet) {
+    var w = adminNormWallet(wallet);
+    var u = userByWallet[w];
+    return adminPlayerLinkHtml({
+      wallet: w,
+      username: u && u.username ? u.username : null,
+      displayName: (u && (u.username || u.label)) || undefined,
+    });
   }
 
   function authGateHtml(msg) {
@@ -235,17 +252,17 @@ export function adminChatPageHtml(): string {
       detailEl.hidden = false;
       var muted = !!mutes[msg.fromAddress];
       var html = "<h3>" + fmtTime(msg.at) + " · " + escHtml(msg.roomId) + "</h3>";
-      html += "<div><strong>" + escHtml(msg.displayName || msg.fromAddress) + "</strong> <span class=mono>" + escHtml(msg.fromAddress) + "</span></div>";
+      html += "<div><strong>" + playerFromWallet(msg.fromAddress) + "</strong></div>";
       html += "<div style=margin-top:0.35rem>" + escHtml(msg.text) + "</div>";
       if (msg.textOriginal) {
         html += "<div class=chat-original><strong>Original:</strong> " + escHtml(msg.textOriginal) + "</div>";
       }
       html += "<div class=chat-audience><strong>Live audience</strong><ul>";
-      (msg.audienceLive || []).forEach(function (w) { html += "<li class=mono>" + escHtml(w) + "</li>"; });
+      (msg.audienceLive || []).forEach(function (w) { html += "<li>" + playerFromWallet(w) + "</li>"; });
       if (!(msg.audienceLive || []).length) html += "<li>(none recorded)</li>";
       html += "</ul></div>";
       html += "<div class=chat-audience><strong>Backlog on join</strong><ul>";
-      (msg.audienceBacklog || []).forEach(function (w) { html += "<li class=mono>" + escHtml(w) + "</li>"; });
+      (msg.audienceBacklog || []).forEach(function (w) { html += "<li>" + playerFromWallet(w) + "</li>"; });
       if (!(msg.audienceBacklog || []).length) html += "<li>(none)</li>";
       html += "</ul></div>";
       html += "<div class=chat-actions>";
@@ -278,7 +295,7 @@ export function adminChatPageHtml(): string {
     messages.forEach(function (m) {
       var tr = document.createElement("tr");
       tr.setAttribute("data-key", rowKey(m));
-      var sender = (m.displayName ? escHtml(m.displayName) + " " : "") + "<span class=mono>" + escHtml(m.fromAddress.slice(0, 8)) + "…</span>";
+      var sender = playerFromWallet(m.fromAddress);
       var text = escHtml(m.text) + (m.hasOriginal ? "<span class=chat-flag>filtered</span>" : "");
       tr.innerHTML = "<td>" + fmtTime(m.at) + "</td><td>" + escHtml(m.roomId) + "</td><td>" + sender + "</td><td>" + text + "</td>";
       tr.addEventListener("click", function () {
@@ -330,6 +347,11 @@ export function adminChatPageHtml(): string {
     if (usersOut.status === 403) return { status: 403 };
     if (usersOut.status !== 200) return { status: usersOut.status };
     usersData = usersOut.body.users || [];
+    userByWallet = {};
+    usersData.forEach(function (u) {
+      var w = adminNormWallet(u.wallet);
+      if (w) userByWallet[w] = u;
+    });
     return { status: 200 };
   }
 

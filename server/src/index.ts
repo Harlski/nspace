@@ -366,6 +366,7 @@ import {
   setUsernameSetBanned,
 } from "./moderationStore.js";
 import {
+  adminPlayerIdentity,
   adminResetPlayerTutorial,
   lookupAdminPlayer,
   resolveAdminPlayerTarget,
@@ -1219,12 +1220,22 @@ app.get("/api/analytics/page-views", requireAnalyticsWalletAdmin, async (req, re
         iconCache.set(row.wallet, "");
       }
     }
-    const recent = rawRecent.map((row) => ({
-      t: row.t,
-      wallet: row.wallet,
-      identicon: row.wallet ? (iconCache.get(row.wallet) ?? "") : "",
-      anonReason: row.wallet ? null : row.anonReason,
-    }));
+    const recent = rawRecent.map((row) => {
+      const identity = row.wallet ? adminPlayerIdentity(row.wallet) : null;
+      return {
+        t: row.t,
+        wallet: row.wallet,
+        identicon: row.wallet ? (iconCache.get(row.wallet) ?? "") : "",
+        anonReason: row.wallet ? null : row.anonReason,
+        ...(identity
+          ? {
+              username: identity.username,
+              displayName: identity.displayName,
+              profilePath: identity.profilePath,
+            }
+          : {}),
+      };
+    });
     res.json({ byDay, recent });
   } catch (err) {
     console.error("[analytics/page-views]", err);
@@ -2288,9 +2299,12 @@ app.get("/api/admin/campaign/overview", requireSystemAdminWallet, (_req, res) =>
     }
     const usedLuna =
       totalFundedLuna > remainingLuna ? totalFundedLuna - remainingLuna : 0n;
+    const ownerId = adminPlayerIdentity(c.ownerWallet);
     return {
       ...c,
-      ownerDisplayName: getEffectivePlayerDisplayName(c.ownerWallet),
+      ownerDisplayName: ownerId.displayName,
+      ownerUsername: ownerId.username,
+      ownerProfilePath: ownerId.profilePath,
       inRotationSet: liveIds.has(c.id),
       totalFundedLuna: totalFundedLuna.toString(),
       usedLuna: usedLuna.toString(),
@@ -2622,13 +2636,12 @@ app.get("/api/admin/users", requireSystemAdminWallet, (_req, res) => {
   }
   const users = [...wallets]
     .map((wallet) => {
-      const username = playerHasCustomUsername(wallet)
-        ? getEffectivePlayerDisplayName(wallet)
-        : null;
+      const id = adminPlayerIdentity(wallet);
       return {
         wallet,
-        username,
-        label: username || walletDisplayName(wallet),
+        username: id.username,
+        label: id.displayName,
+        profilePath: id.profilePath,
       };
     })
     .sort((a, b) => a.label.localeCompare(b.label))
@@ -3071,7 +3084,16 @@ app.get("/api/admin/feedback", requireSystemAdminWallet, (req, res) => {
   });
   res.json({
     total: out.total,
-    tickets: out.tickets.map(ticketToPlayerSummary),
+    tickets: out.tickets.map((t) => {
+      const summary = ticketToPlayerSummary(t);
+      const id = adminPlayerIdentity(summary.wallet);
+      return {
+        ...summary,
+        username: id.username,
+        displayName: id.displayName,
+        profilePath: id.profilePath,
+      };
+    }),
     _filterStatus: status ?? "",
     _filterKind: kind ?? "",
     _filterWallet: wallet ?? "",
@@ -3084,7 +3106,41 @@ app.get("/api/admin/feedback/:id", requireSystemAdminWallet, (req, res) => {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  res.json({ ticket: ticketToAdminDetail(ticket) });
+  const detail = ticketToAdminDetail(ticket);
+  const reporter = adminPlayerIdentity(detail.wallet);
+  const reportCtx = detail.reportContext
+    ? (() => {
+        const reported = adminPlayerIdentity(
+          String(detail.reportContext?.reportedWallet ?? "")
+        );
+        return {
+          ...detail.reportContext,
+          reportedUsername: reported.username,
+          reportedDisplayName:
+            detail.reportContext?.reportedDisplayName || reported.displayName,
+          reportedProfilePath: reported.profilePath,
+        };
+      })()
+    : undefined;
+  res.json({
+    ticket: {
+      ...detail,
+      username: reporter.username,
+      displayName: reporter.displayName,
+      profilePath: reporter.profilePath,
+      ...(reportCtx ? { reportContext: reportCtx } : {}),
+      messages: detail.messages.map((m) => {
+        if (m.isAdmin || !m.authorWallet) return m;
+        const author = adminPlayerIdentity(m.authorWallet);
+        return {
+          ...m,
+          authorUsername: author.username,
+          authorDisplayName: author.displayName,
+          authorProfilePath: author.profilePath,
+        };
+      }),
+    },
+  });
 });
 
 app.post("/api/admin/feedback/:id/messages", requireSystemAdminWallet, (req, res) => {
@@ -3339,28 +3395,34 @@ app.post("/api/admin/moderation", requireSystemAdminWallet, (req, res) => {
 
 function enrichModerationSnapshotWithUsernames() {
   const snap = listModerationSnapshot();
-  const label = (wallet: string): { username: string | null; displayName: string } => {
-    const username = playerHasCustomUsername(wallet)
-      ? getEffectivePlayerDisplayName(wallet)
-      : null;
-    return {
-      username,
-      displayName: username || walletDisplayName(wallet) || wallet,
-    };
-  };
   return {
-    usernameBans: snap.usernameBans.map((r) => ({
-      ...r,
-      ...label(r.address),
-    })),
-    channelMutes: snap.channelMutes.map((r) => ({
-      ...r,
-      ...label(r.address),
-    })),
-    miningRestrictions: snap.miningRestrictions.map((r) => ({
-      ...r,
-      ...label(r.address),
-    })),
+    usernameBans: snap.usernameBans.map((r) => {
+      const id = adminPlayerIdentity(r.address);
+      return {
+        ...r,
+        username: id.username,
+        displayName: id.displayName,
+        profilePath: id.profilePath,
+      };
+    }),
+    channelMutes: snap.channelMutes.map((r) => {
+      const id = adminPlayerIdentity(r.address);
+      return {
+        ...r,
+        username: id.username,
+        displayName: id.displayName,
+        profilePath: id.profilePath,
+      };
+    }),
+    miningRestrictions: snap.miningRestrictions.map((r) => {
+      const id = adminPlayerIdentity(r.address);
+      return {
+        ...r,
+        username: id.username,
+        displayName: id.displayName,
+        profilePath: id.profilePath,
+      };
+    }),
   };
 }
 

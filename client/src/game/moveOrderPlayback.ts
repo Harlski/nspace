@@ -161,9 +161,14 @@ export function shouldAdoptSnapshotPose(args: {
   walkIdChanged?: boolean;
   walkingFlag?: boolean;
 }): boolean {
-  if (args.intentionalSnap) return true;
-  if (args.walkingFlag === false) return true;
   if (args.walkIdChanged) return true;
+  // Lagged walking=false after Path Playback has already drained must not rewind
+  // the visual (camera follows selfMesh). Mid-walk abort still snaps when behind.
+  if (args.walkingFlag === false) {
+    if (args.behind && !args.playbackActive) return false;
+    return true;
+  }
+  if (args.intentionalSnap) return true;
   if (args.playbackActive) return false;
   if (args.behind) return false;
   return true;

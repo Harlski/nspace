@@ -4,6 +4,10 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
+import {
+  adminPlayerLinkClientJs,
+  adminPlayerLinkCss,
+} from "./adminPlayerLinkSnippet.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
 
@@ -26,6 +30,7 @@ export function adminRoomsPageHtml(): string {
     ${analyticsPageRootCss()}
     ${mainSiteShellCss()}
     ${analyticsTopbarCss()}
+    ${adminPlayerLinkCss()}
     .mono { font-size: 0.84rem; }
     .status { margin-top: 0.55rem; color: #9fb0c7; }
     .err { color: #f87171; }
@@ -118,6 +123,7 @@ export function adminRoomsPageHtml(): string {
     function esc(s) {
       return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
     }
+    ${adminPlayerLinkClientJs()}
     function walletCompact(v) { return String(v || "").replace(/\\s+/g, "").toUpperCase(); }
     function walletGrouped(v) { return walletCompact(v).replace(/(.{4})(?=.)/g, "$1 "); }
     function walletShort(v) { var c = walletCompact(v); return c.length <= 12 ? c : c.slice(0, 8) + "…" + c.slice(-4); }
@@ -215,6 +221,16 @@ export function adminRoomsPageHtml(): string {
       if (u && u.username) return u.username;
       return walletLabelShort(wallet);
     }
+    function builderLinkHtml(wallet) {
+      var w = walletCompact(wallet);
+      if (!w) return "-";
+      var u = userByWallet[w];
+      return adminPlayerLinkHtml({
+        wallet: w,
+        username: u && u.username ? u.username : null,
+        displayName: builderLabel(w),
+      });
+    }
 
     function thumbSrc(id) { return "/api/admin/rooms/" + encodeURIComponent(id) + "/thumbnail.png?token=" + encodeURIComponent(token); }
 
@@ -235,7 +251,7 @@ export function adminRoomsPageHtml(): string {
       var items = (room.builderAddresses || []).map(function (w) {
         var label = builderLabel(w);
         var sub = label === walletShort(w) ? "" : "<span class='mono'>" + esc(walletShort(w)) + "</span>";
-        return "<div class='room-builder-item'><span class='builder-label' title='" + esc(w) + "'>" + esc(label) + sub +
+        return "<div class='room-builder-item'><span class='builder-label' title='" + esc(w) + "'>" + builderLinkHtml(w) + sub +
           "</span><button class='btn btn--danger' data-builder-remove='" + esc(w) + "'>Remove</button></div>";
       }).join("");
       return "<div class='room-builders'><label>Builders (can build/edit)</label>" +
@@ -250,13 +266,13 @@ export function adminRoomsPageHtml(): string {
     function ownerTransferHtml(room) {
       if (room.isBuiltin || room.isOfficial) return "";
       var current = room.ownerAddress
-        ? "<span class='builder-label' title='" + esc(room.ownerAddress) + "'>" + esc(builderLabel(room.ownerAddress)) +
+        ? "<span class='builder-label' title='" + esc(room.ownerAddress) + "'>" + builderLinkHtml(room.ownerAddress) +
           "<span class='mono'>" + esc(walletShort(room.ownerAddress)) + "</span></span>"
         : "<span class='builder-label'>No owner</span>";
       var pending = "";
       if (room.pendingOwnerAddress) {
         pending = "<div class='room-builder-item'><span class='builder-label' title='" + esc(room.pendingOwnerAddress) + "'>New owner: " +
-          esc(builderLabel(room.pendingOwnerAddress)) + "<span class='mono'>" + esc(walletShort(room.pendingOwnerAddress)) + "</span></span>" +
+          builderLinkHtml(room.pendingOwnerAddress) + "<span class='mono'>" + esc(walletShort(room.pendingOwnerAddress)) + "</span></span>" +
           "<button class='btn btn--ghost' data-owner-clear>Undo</button></div>";
       }
       return "<div class='room-builders'><label>Owner (transfer)</label>" +
@@ -270,7 +286,9 @@ export function adminRoomsPageHtml(): string {
       var tags = categoryTag(room) +
         (room.isPublic ? "" : "<span class='room-tag room-tag--hidden'>Hidden</span>") +
         (room.isDeleted ? "<span class='room-tag room-tag--deleted'>Deleted</span>" : "");
-      var owner = room.ownerAddress ? "Owner " + walletShort(room.ownerAddress) : (room.isOfficial ? "Official (no owner)" : "No owner");
+      var owner = room.ownerAddress
+        ? "Owner " + builderLinkHtml(room.ownerAddress)
+        : (room.isOfficial ? "Official (no owner)" : "No owner");
       var neutralSel = room.backgroundNeutral || "";
       var editor =
         "<div class='room-editor'>" +

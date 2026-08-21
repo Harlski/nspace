@@ -273,7 +273,11 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   const ambientHost = root.querySelector(
     ".main-menu__ambient-host"
   ) as HTMLElement;
-  const disposeAmbientCast = mountAmbientCast(ambientHost);
+  const loginCard = root.querySelector(".main-menu__card") as HTMLElement;
+  const disposeAmbientCast = mountAmbientCast({
+    host: ambientHost,
+    around: loginCard,
+  });
 
   termsPrivacyRow.className = "main-menu__terms-privacy";
   termsPrivacyRow.id = "main-menu-terms-privacy-row";

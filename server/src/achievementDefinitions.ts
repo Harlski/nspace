@@ -1381,6 +1381,8 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
       requiredKeys: ["chamber", "hub", "pixel", "field", "cosmetic-gallery"],
       utcDayScope: true,
     },
+    /** Requires The Shaper stop; unavailable while SHAPER_ENABLED is not 1. */
+    featureDependency: "shaper",
   },
   {
     id: "exploration-door-crasher",

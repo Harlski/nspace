@@ -59,12 +59,12 @@ export type CosmeticGalleryWire = {
 
 /**
  * The Shaper (room id `cosmetic-gallery`, join code `SPACER`) is the player-facing in-world
- * cosmetic showroom and is reachable in every environment by default. It is still not listed
- * in the public room browser. Operators can hide it while it is unfinished by setting
- * `SHAPER_ENABLED=0`.
+ * cosmetic showroom. Opt-in: set `SHAPER_ENABLED=1` to make it joinable (still requires Shop
+ * open). It is not listed in the public room browser. While off, shaper-dependent achievements
+ * show Temporarily unavailable.
  */
 export function isCosmeticGalleryEnabled(): boolean {
-  return process.env.SHAPER_ENABLED !== "0";
+  return process.env.SHAPER_ENABLED === "1";
 }
 
 /** The Shaper join is reachable only when the room is not env-hidden and Shop is open. */

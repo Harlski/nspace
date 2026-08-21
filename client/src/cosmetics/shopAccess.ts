@@ -38,7 +38,8 @@ export function isShopPubliclyOpen(): boolean {
 export function isShaperReachable(): boolean {
   if (!isShopPubliclyOpen()) return false;
   if (sessionShaperReachable !== null) return sessionShaperReachable;
-  return true;
+  // Opt-in on the server (`SHAPER_ENABLED=1`); stay hidden until welcome / shopAccess.
+  return false;
 }
 
 export const SHOP_COMING_SOON_HEADING = "COMING SOON";

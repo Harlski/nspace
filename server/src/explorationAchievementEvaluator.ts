@@ -1,4 +1,4 @@
-import { isCosmeticGalleryRoom } from "./cosmeticGallery.js";
+import { COSMETIC_GALLERY_ROOM_ID } from "./cosmeticGallery.js";
 import {
   CANVAS_ROOM_ID,
   CHAMBER_ROOM_ID,
@@ -24,7 +24,8 @@ import {
 export function isMarathonTileEligibleRoom(roomId: string): boolean {
   const id = normalizeRoomId(roomId).trim().toLowerCase();
   if (id === CANVAS_ROOM_ID) return false;
-  if (isCosmeticGalleryRoom(id)) return false;
+  // Exclude by id even when The Shaper is env-hidden (isCosmeticGalleryRoom is false then).
+  if (id === COSMETIC_GALLERY_ROOM_ID) return false;
   if (id === FIELD_ROOM_ID) return false;
   if (isMatchPitchRoomId(id)) return false;
   return true;

@@ -92,6 +92,35 @@ export function adminUserProfilePath(
   return `/admin/user/${encodeURIComponent(compactWallet(wallet))}`;
 }
 
+export type AdminPlayerIdentity = {
+  wallet: string;
+  /** Custom in-game username when set; otherwise null. */
+  username: string | null;
+  /** Username or wallet shorthand — safe for human-facing labels. */
+  displayName: string;
+  /** `/admin/user/{username|wallet}` dossier path. */
+  profilePath: string;
+};
+
+/** Resolve display + moderation-profile path for an admin UI player cell. */
+export function adminPlayerIdentity(wallet: string): AdminPlayerIdentity {
+  const w = compactWallet(wallet);
+  if (!w) {
+    return { wallet: "", username: null, displayName: "", profilePath: "/admin/user/" };
+  }
+  const username = playerHasCustomUsername(w)
+    ? getEffectivePlayerDisplayName(w)
+    : null;
+  const displayName =
+    username || walletDisplayName(w) || w;
+  return {
+    wallet: w,
+    username,
+    displayName,
+    profilePath: adminUserProfilePath(w, username),
+  };
+}
+
 export type AdminPlayerTutorialView = {
   completedAt?: number;
   abandonedAt?: number;

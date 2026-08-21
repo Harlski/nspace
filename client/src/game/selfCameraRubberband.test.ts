@@ -134,30 +134,32 @@ function applySelfHeartbeat(
     ? poseIsBehindAlongPath(last.pose, { x: p.x, z: p.z }, last.path)
     : false;
   const walkIdChanged = walkIdIncreased(last?.walkId, p.walkId);
-  const implicitAbort = p.walking === false || walkIdChanged;
+  const stopWalking = p.walking === false;
   if (
     !shouldAdoptSnapshotPose({
       playbackActive: playbackActive(self),
       behind,
-      intentionalSnap: implicitAbort,
+      intentionalSnap: walkIdChanged,
       walkIdChanged,
       walkingFlag: p.walking,
     })
   ) {
     return;
   }
-  if (implicitAbort) {
+  if (stopWalking || walkIdChanged) {
     self.order = null;
-    self.hold = null;
+    if (walkIdChanged) {
+      self.hold = null;
+    }
   }
   self.target = { x: p.x, z: p.z };
   self.mesh = { x: p.x, z: p.z };
-  if (!implicitAbort && last) {
+  if (!walkIdChanged) {
     self.hold = {
       pose: { x: p.x, z: p.z },
-      path: last.path,
-      startX: last.startX,
-      startZ: last.startZ,
+      path: last?.path ?? [],
+      startX: last?.startX ?? p.x,
+      startZ: last?.startZ ?? p.z,
       walkId: p.walkId,
     };
   }
@@ -283,6 +285,58 @@ describe("local camera pose must not rewind after Path Playback drain", () => {
     assert.ok(
       self.mesh.x + 1e-6 >= arrived - 0.05,
       `late duplicate after implicit abort moved camera from dest ${arrived.toFixed(2)} to ${self.mesh.x.toFixed(2)}`
+    );
+  });
+
+  it("193ms lag on a 10-tile straight walk does not leave the camera at path start", () => {
+    const PING_MS = 193;
+    const startAtMs = 3_000_000;
+    const order = straightOrder(startAtMs);
+    const self: SelfView = {
+      order: { ...order, startY: 0, recvLocalMs: startAtMs + PING_MS },
+      target: { x: 0, z: 0 },
+      mesh: { x: 0, z: 0 },
+      hold: null,
+      playbackServerNowMs: startAtMs,
+      playbackRecvLocalMs: startAtMs + PING_MS,
+    };
+
+    // Client playback drains while the stop heartbeat is still in flight.
+    refreshSelf(self, startAtMs + PING_MS + 3100);
+    const arrived = self.mesh.x;
+    expect(arrived).toBeGreaterThan(14);
+    expect(self.order).toBeNull();
+
+    applySelfHeartbeat(
+      self,
+      {
+        address: "self",
+        x: PATH_END - 1,
+        y: 0,
+        z: 0,
+        vx: 0,
+        vz: 0,
+        walkId: 1,
+        walking: false,
+        serverNowMs: startAtMs + 3000,
+      },
+      startAtMs + PING_MS + 3200
+    );
+    assert.ok(
+      self.mesh.x + 1e-6 >= arrived,
+      `193ms stop heartbeat rewound camera from ${arrived.toFixed(2)} to ${self.mesh.x.toFixed(2)}`
+    );
+
+    // Reordered/duplicate moveOrder after the stop (same walkId, origin start).
+    applySelfMoveOrder(
+      self,
+      { ...order, serverNowMs: startAtMs + 40 },
+      startAtMs + PING_MS + 3250
+    );
+    refreshSelf(self, startAtMs + PING_MS + 3250);
+    assert.ok(
+      Math.abs(self.mesh.x - arrived) < 0.5,
+      `expected HUD/camera near destination ${arrived.toFixed(2)}, got ${self.mesh.x.toFixed(2)} (path-start restart)`
     );
   });
 });

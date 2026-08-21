@@ -103,6 +103,26 @@ test("lookup + tutorial reset clears steps so Pay needs lesson again", async () 
   }
 });
 
+test("adminPlayerIdentity prefers username for label and profile path", async () => {
+  const { trySetPlayerUsername } = await import("../src/playerProfileStore.js");
+  const { adminPlayerIdentity, adminUserProfilePath } = await import(
+    "../src/adminPlayerOps.js"
+  );
+  const w = "NQ07ADMINPLAYER000000000000000000099";
+
+  assert.equal(trySetPlayerUsername(w, "LinkMe").ok, true);
+  const withName = adminPlayerIdentity(w);
+  assert.equal(withName.username, "LinkMe");
+  assert.equal(withName.displayName, "LinkMe");
+  assert.equal(withName.profilePath, "/admin/user/LinkMe");
+  assert.equal(adminUserProfilePath(w, "LinkMe"), "/admin/user/LinkMe");
+
+  const bare = adminPlayerIdentity(W2);
+  assert.equal(bare.username, null);
+  assert.ok(bare.displayName.length > 0);
+  assert.equal(bare.profilePath, `/admin/user/${W2}`);
+});
+
 test("adminResetPlayerTutorial resolves by username", async () => {
   const { trySetPlayerUsername } = await import("../src/playerProfileStore.js");
   const { completeTutorial } = await import("../src/tutorialSessionService.js");

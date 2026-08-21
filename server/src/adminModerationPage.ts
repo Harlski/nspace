@@ -4,6 +4,10 @@ import {
   analyticsTopbarCss,
   analyticsTopbarHtml,
 } from "./analyticsTopbar.js";
+import {
+  adminPlayerLinkClientJs,
+  adminPlayerLinkCss,
+} from "./adminPlayerLinkSnippet.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 
 /** HTML shell for `/admin/moderation` (sanction lists; player dossier is `/admin/user/:profile`). */
@@ -20,6 +24,7 @@ export function adminModerationPageHtml(): string {
     ${analyticsPageRootCss()}
     ${mainSiteShellCss()}
     ${analyticsTopbarCss()}
+    ${adminPlayerLinkCss()}
     .mono { font-size: 0.84rem; }
     .mod-panel { border: 1px solid #263348; border-radius: 10px; background: #0f1622; padding: 0.75rem 0.85rem; margin-bottom: 0.75rem; }
     .mod-panel h2 { margin: 0 0 0.55rem; font-size: 0.92rem; color: #c8d4e4; font-weight: 600; }
@@ -82,6 +87,7 @@ export function adminModerationPageHtml(): string {
       .replace(/</g, "&lt;")
       .replace(/"/g, "&quot;");
   }
+  ${adminPlayerLinkClientJs()}
 
   function authGateHtml(msg) {
     return (
@@ -128,17 +134,16 @@ export function adminModerationPageHtml(): string {
   }
 
   function profileHref(row) {
-    if (row.username) return "/admin/user/" + encodeURIComponent(row.username);
-    return "/admin/user/" + encodeURIComponent(normWallet(row.address));
+    if (row.profilePath) return String(row.profilePath);
+    return adminProfileHref(row.address, row.username);
   }
 
   function rowLabel(row) {
-    var name = row.displayName || row.username || row.address;
-    return (
-      "<span class='mod-name' title='" + escHtml(row.address) + "'>" +
-      escHtml(name) +
-      "</span>"
-    );
+    return adminPlayerLinkHtml({
+      wallet: row.address,
+      username: row.username,
+      displayName: row.displayName || row.username || row.address,
+    });
   }
 
   function rowHtml(kind, row) {

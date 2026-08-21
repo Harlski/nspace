@@ -70,6 +70,20 @@ describe("shouldSnapCameraOnSelfSync", () => {
       })
     ).toBe(false);
   });
+
+  it("does not snap on a stale snapshot jump while Path Playback owns the walk (camjit ~150ms hitch)", () => {
+    // Walk-start tile still in lastPlayers; mesh has moved >6 tiles along the path.
+    const staleJump = Math.hypot(3.2 - -4, -19.5 - -1.3) > 6;
+    expect(staleJump).toBe(true);
+    expect(
+      shouldSnapCameraOnSelfSync({
+        establishingSelfTarget: false,
+        hasSelfMoveOrder: true,
+        cameraFollowReady: true,
+        jumped: true,
+      })
+    ).toBe(false);
+  });
 });
 
 describe("shouldHardSnapSelfMeshOnSync", () => {
@@ -111,6 +125,17 @@ describe("shouldHardSnapSelfMeshOnSync", () => {
         establishingSelfTarget: false,
         jumped: false,
         pendingRoomWelcomeSnap: false,
+      })
+    ).toBe(false);
+  });
+
+  it("does not hard-snap a stale omitted-pose jump while Path Playback is active", () => {
+    expect(
+      shouldHardSnapSelfMeshOnSync({
+        establishingSelfTarget: false,
+        jumped: true,
+        pendingRoomWelcomeSnap: false,
+        hasSelfMoveOrder: true,
       })
     ).toBe(false);
   });

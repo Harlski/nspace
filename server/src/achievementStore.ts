@@ -884,9 +884,19 @@ function evaluateDailySetAchievements(
   visited: ReadonlySet<string>,
   unlocks: AchievementUnlockWire[]
 ): void {
+  const flags = liveFeatureFlags();
   for (const def of listDailySetAchievements()) {
     if (def.criteria.type !== "daily_set") continue;
     if (hasCompletion(wallet, def.id)) continue;
+    if (
+      shouldIgnoreAchievementProgress({
+        completed: false,
+        featureDependency: def.featureDependency,
+        ...flags,
+      })
+    ) {
+      continue;
+    }
     const required = def.criteria.requiredKeys;
     if (required.every((key) => visited.has(key))) {
       completeAchievement(wallet, def, unlocks);

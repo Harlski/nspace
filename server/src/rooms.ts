@@ -1560,7 +1560,7 @@ type OutMsg =
       tutorialEnabled?: boolean;
       /** Shop open for this session (env kill switch and admin checkbox). */
       shopOpen?: boolean;
-      /** The Shaper joinable (Shop open and SHAPER_ENABLED not 0). */
+      /** The Shaper joinable (Shop open and SHAPER_ENABLED=1). */
       shaperReachable?: boolean;
       /** Unlock Pad instance ids this wallet has already unlocked in this room. */
       unlockedPadInstanceIds?: string[];

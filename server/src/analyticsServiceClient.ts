@@ -1,3 +1,4 @@
+import { adminPlayerIdentity } from "./adminPlayerOps.js";
 import { aggregateChosenFlags } from "./analyticsChosenFlags.js";
 import { playerWalletLabel } from "./playerWalletLabel.js";
 import { getPlayerCountry } from "./worldcup/scoreStore.js";
@@ -101,8 +102,13 @@ function enrichOverviewSnapshot(raw: unknown): unknown {
     }
     if (!v || typeof v !== "object") return;
     const o = v as Record<string, unknown>;
-    const id = String(o.walletId ?? o.address ?? o.recipient ?? "");
-    if (id && "displayName" in o) o.displayName = playerWalletLabel(id);
+    const id = String(o.walletId ?? o.address ?? o.recipient ?? o.wallet ?? "");
+    if (id && "displayName" in o) {
+      const identity = adminPlayerIdentity(id);
+      o.displayName = identity.displayName || playerWalletLabel(id);
+      o.username = identity.username;
+      o.profilePath = identity.profilePath;
+    }
     for (const child of Object.values(o)) walk(child);
   };
   walk(raw);

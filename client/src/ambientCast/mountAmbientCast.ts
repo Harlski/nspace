@@ -14,17 +14,18 @@ type AmbientCastSnapshot = {
   faces: { token: string }[];
 };
 
-type Walker = {
+type Floater = {
   token: string;
   img: HTMLImageElement | null;
-  /** Isometric plane coords (u along NE, v along NW). */
-  u: number;
-  v: number;
-  speed: number;
+  /** Radians around the login card. */
+  angle: number;
+  /** Extra px beyond the card ellipse. */
+  orbitPad: number;
+  spin: number;
   bobPhase: number;
+  size: number;
   emoteUntil: number;
   emoteGlyph: string;
-  facing: 1 | -1;
 };
 
 const EMOTE_GLYPHS = ["👋", "❤️", "✨", "😊"];
@@ -36,13 +37,6 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-function isoProject(u: number, v: number): { x: number; y: number } {
-  return {
-    x: (u - v) * 0.86,
-    y: (u + v) * 0.42,
-  };
-}
-
 function hashSeed(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -52,11 +46,19 @@ function hashSeed(s: string): number {
   return h >>> 0;
 }
 
+export type MountAmbientCastOptions = {
+  /** Full-viewport ambient host (pointer-events none). */
+  host: HTMLElement;
+  /** Login card to hover around (outside). */
+  around: HTMLElement;
+};
+
 /**
- * Decorative Ambient Cast behind Main Menu chrome. Pointer-events none.
- * Returns a dispose function.
+ * Decorative Ambient Cast: identicons hover outside the Main Menu login card.
+ * Pointer-events none. Returns a dispose function.
  */
-export function mountAmbientCast(host: HTMLElement): () => void {
+export function mountAmbientCast(opts: MountAmbientCastOptions): () => void {
+  const { host, around } = opts;
   const layer = document.createElement("div");
   layer.className = "main-menu__ambient-cast";
   layer.setAttribute("aria-hidden", "true");
@@ -68,7 +70,7 @@ export function mountAmbientCast(host: HTMLElement): () => void {
 
   const ctx = canvas.getContext("2d");
   let tokens: string[] = [];
-  let walkers: Walker[] = [];
+  let floaters: Floater[] = [];
   let raf = 0;
   let disposed = false;
   let resizeObs: ResizeObserver | null = null;
@@ -88,35 +90,36 @@ export function mountAmbientCast(host: HTMLElement): () => void {
     if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   };
 
-  const rebuildWalkers = (): void => {
+  const rebuildFloaters = (): void => {
     const staged = selectSoftDensityTokens(tokens, {
       visibleCap: AMBIENT_CAST_VISIBLE_CAP,
       cycleIndex,
     });
-    const prev = new Map(walkers.map((w) => [w.token, w]));
-    walkers = staged.map((token, i) => {
+    const prev = new Map(floaters.map((f) => [f.token, f]));
+    const n = Math.max(1, staged.length);
+    floaters = staged.map((token, i) => {
       const existing = prev.get(token);
       if (existing) return existing;
       const seed = hashSeed(token + String(i));
-      const w: Walker = {
+      const f: Floater = {
         token,
         img: null,
-        u: ((seed % 1000) / 1000) * 14 - 2,
-        v: (((seed >> 10) % 1000) / 1000) * 10 - 1,
-        speed: 0.35 + ((seed >> 20) % 100) / 200,
+        angle: (i / n) * Math.PI * 2 + ((seed % 100) / 100) * 0.35,
+        orbitPad: 28 + (seed % 40),
+        spin: (0.08 + ((seed >> 8) % 100) / 800) * (seed & 1 ? 1 : -1),
         bobPhase: (seed % 628) / 100,
+        size: 40 + (seed % 14),
         emoteUntil: 0,
         emoteGlyph: EMOTE_GLYPHS[seed % EMOTE_GLYPHS.length]!,
-        facing: seed & 1 ? 1 : -1,
       };
       void dataUrlFromFaceToken(token).then((url) => {
         if (disposed || !url) return;
         const img = new Image();
         img.decoding = "async";
         img.src = url;
-        w.img = img;
+        f.img = img;
       });
-      return w;
+      return f;
     });
   };
 
@@ -131,10 +134,27 @@ export function mountAmbientCast(host: HTMLElement): () => void {
         .map((f) => String(f?.token || "").trim())
         .filter(Boolean);
       tokens = next;
-      rebuildWalkers();
+      rebuildFloaters();
     } catch {
       /* decorative — ignore */
     }
+  };
+
+  const cardFrameInHost = (): {
+    cx: number;
+    cy: number;
+    rx: number;
+    ry: number;
+  } | null => {
+    const hostRect = host.getBoundingClientRect();
+    const cardRect = around.getBoundingClientRect();
+    if (cardRect.width < 8 || cardRect.height < 8) return null;
+    return {
+      cx: cardRect.left - hostRect.left + cardRect.width / 2,
+      cy: cardRect.top - hostRect.top + cardRect.height / 2,
+      rx: cardRect.width / 2,
+      ry: cardRect.height / 2,
+    };
   };
 
   const draw = (now: number): void => {
@@ -143,66 +163,50 @@ export function mountAmbientCast(host: HTMLElement): () => void {
     const h = host.clientHeight;
     ctx.clearRect(0, 0, w, h);
 
-    const originX = w * 0.5;
-    const originY = h * 0.62;
-    const scale = Math.min(w, h) * 0.055;
-
-    // Soft isometric ground wash
-    ctx.save();
-    ctx.translate(originX, originY);
-    ctx.fillStyle = "rgba(43, 94, 167, 0.07)";
-    ctx.beginPath();
-    const g0 = isoProject(-1, -1);
-    const g1 = isoProject(16, -1);
-    const g2 = isoProject(16, 12);
-    const g3 = isoProject(-1, 12);
-    ctx.moveTo(g0.x * scale, g0.y * scale);
-    ctx.lineTo(g1.x * scale, g1.y * scale);
-    ctx.lineTo(g2.x * scale, g2.y * scale);
-    ctx.lineTo(g3.x * scale, g3.y * scale);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
+    const frame = cardFrameInHost();
+    if (!frame) {
+      raf = requestAnimationFrame(draw);
+      return;
+    }
 
     const dt = reduced ? 0 : 0.016;
-    for (const walker of walkers) {
+    for (const floater of floaters) {
       if (!reduced) {
-        walker.u += walker.speed * walker.facing * dt;
-        if (walker.u > 15) {
-          walker.u = 15;
-          walker.facing = -1;
-        } else if (walker.u < -1) {
-          walker.u = -1;
-          walker.facing = 1;
-        }
-        if (now > walker.emoteUntil && Math.random() < 0.0015) {
-          walker.emoteUntil = now + 1800;
-          walker.emoteGlyph =
+        floater.angle += floater.spin * dt;
+        if (now > floater.emoteUntil && Math.random() < 0.0012) {
+          floater.emoteUntil = now + 1800;
+          floater.emoteGlyph =
             EMOTE_GLYPHS[Math.floor(Math.random() * EMOTE_GLYPHS.length)]!;
         }
       }
     }
 
-    const sorted = [...walkers].sort((a, b) => a.u + a.v - (b.u + b.v));
-    for (const walker of sorted) {
-      const p = isoProject(walker.u, walker.v);
+    // Draw back-to-front by vertical position so lower faces sit in front.
+    const placed = floaters.map((floater) => {
+      const pad = floater.orbitPad;
+      const rx = frame.rx + pad;
+      const ry = frame.ry + pad * 0.85;
       const bob = reduced
         ? 0
-        : Math.sin(now / 220 + walker.bobPhase) * 3;
-      const size = 36 + (walker.v % 3) * 2;
-      const x = originX + p.x * scale;
-      const y = originY + p.y * scale - size * 0.55 + bob;
+        : Math.sin(now / 240 + floater.bobPhase) * 5;
+      const x = frame.cx + Math.cos(floater.angle) * rx;
+      const y = frame.cy + Math.sin(floater.angle) * ry + bob;
+      return { floater, x, y };
+    });
+    placed.sort((a, b) => a.y - b.y);
 
+    for (const { floater, x, y } of placed) {
+      const size = floater.size;
       ctx.save();
-      ctx.globalAlpha = 0.88;
-      // Soft shadow on the plane
-      ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
+      ctx.globalAlpha = 0.9;
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
       ctx.beginPath();
-      ctx.ellipse(x, originY + p.y * scale + 4, size * 0.28, size * 0.1, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, y + size * 0.42, size * 0.28, size * 0.1, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      if (walker.img && walker.img.complete && walker.img.naturalWidth > 0) {
-        ctx.drawImage(walker.img, x - size / 2, y - size / 2, size, size);
+      if (floater.img && floater.img.complete && floater.img.naturalWidth > 0) {
+        ctx.drawImage(floater.img, x - size / 2, y - size / 2, size, size);
       } else {
         ctx.fillStyle = "rgba(121, 184, 255, 0.35)";
         ctx.beginPath();
@@ -210,11 +214,11 @@ export function mountAmbientCast(host: HTMLElement): () => void {
         ctx.fill();
       }
 
-      if (now < walker.emoteUntil) {
+      if (now < floater.emoteUntil) {
         ctx.globalAlpha = 0.95;
-        ctx.font = `${Math.round(size * 0.45)}px sans-serif`;
+        ctx.font = `${Math.round(size * 0.42)}px sans-serif`;
         ctx.textAlign = "center";
-        ctx.fillText(walker.emoteGlyph, x, y - size * 0.65);
+        ctx.fillText(floater.emoteGlyph, x, y - size * 0.62);
       }
       ctx.restore();
     }
@@ -225,6 +229,7 @@ export function mountAmbientCast(host: HTMLElement): () => void {
   syncSize();
   resizeObs = new ResizeObserver(() => syncSize());
   resizeObs.observe(host);
+  resizeObs.observe(around);
 
   void fetchSnapshot();
   refreshTimer = setInterval(() => {
@@ -233,7 +238,7 @@ export function mountAmbientCast(host: HTMLElement): () => void {
 
   cycleTimer = setInterval(() => {
     cycleIndex += 1;
-    rebuildWalkers();
+    rebuildFloaters();
   }, AMBIENT_CAST_CYCLE_MS);
 
   raf = requestAnimationFrame(draw);

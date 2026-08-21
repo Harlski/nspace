@@ -26,6 +26,11 @@ describe("shopAccess", () => {
     );
   });
 
+  it("keeps The Shaper hidden until the server session flag says otherwise", () => {
+    if (!shopEnabledFromEnvFlag(import.meta.env.VITE_SHOP_ENABLED)) return;
+    expect(isShaperReachable()).toBe(false);
+  });
+
   it("follows the server Shop-open flag in a live session", () => {
     applySessionShopAccess({ shopOpen: false, shaperReachable: false });
     if (shopEnabledFromEnvFlag(import.meta.env.VITE_SHOP_ENABLED)) {
