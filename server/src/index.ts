@@ -60,9 +60,14 @@ import { verifySignedMessageDeriveAddress } from "./verifyNimiq.js";
 import {
   flushEventLogSync,
   getEventsForSession,
+  listEventRecordsForUtcDay,
   listRecentPlayerAddresses,
   listSessionsForPlayer,
 } from "./eventLog.js";
+import {
+  buildAmbientCastSnapshot,
+  utcDayKey,
+} from "./ambientCast/snapshot.js";
 import {
   fetchEventLogAnalyticsSnapshot,
   isAnalyticsServiceClientConfigured,
@@ -545,6 +550,19 @@ function maskSecret(v: string, head = 4, tail = 3): string {
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get("/api/ambient-cast", (_req, res) => {
+  try {
+    const day = utcDayKey();
+    const records = listEventRecordsForUtcDay(day);
+    const snapshot = buildAmbientCastSnapshot({ day, records });
+    res.setHeader("Cache-Control", "public, max-age=60");
+    res.json(snapshot);
+  } catch (err) {
+    console.error("[ambient-cast]", err);
+    res.status(500).json({ error: "internal" });
+  }
 });
 
 app.get("/api/identicon/:wallet", async (req, res) => {

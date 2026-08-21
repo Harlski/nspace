@@ -162,6 +162,20 @@ function parseLines(filePath: string): EventRecord[] {
   return out;
 }
 
+/** Event log path for a UTC calendar day (`YYYY-MM-DD`). */
+export function eventLogFileForUtcDay(day: string): string {
+  const safe = String(day || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(safe)) {
+    throw new Error("invalid_utc_day");
+  }
+  return path.join(getLogDir(), `events-${safe}.jsonl`);
+}
+
+/** Parse all records from a single UTC day file (empty if missing). */
+export function listEventRecordsForUtcDay(day: string): EventRecord[] {
+  return parseLines(eventLogFileForUtcDay(day));
+}
+
 
 function formatLunaToNim(amountLuna: string): string | null {
   if (!/^\d+$/.test(amountLuna)) return null;

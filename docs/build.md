@@ -6,11 +6,11 @@ Concise description of how nspace is put together today.
 
 - **Monorepo**: npm workspaces — `client` (Vite, TypeScript, Three.js), `server` (Express, `ws`, TypeScript).
 - **Auth**: Nimiq wallet message signing + JWT session; optional dev bypass for local work ([server/src/auth.ts](../server/src/auth.ts), [server/src/verifyNimiq.ts](../server/src/verifyNimiq.ts)).
-- **Identity visuals**: `@nimiq/identicons` on the client for avatar spheres ([client/src/game/identiconTexture.ts](../client/src/game/identiconTexture.ts)).
+- **Identity visuals**: `@nimiq/identicons` on the client for avatar spheres ([client/src/game/identiconTexture.ts](../client/src/game/identiconTexture.ts)). The **Main Menu Ambient Cast** uses Face Tokens from `GET /api/ambient-cast` (exact public faces, no wallet IDs in the payload).
 
 ## Runtime shape
 
-- **HTTP**: Express on `PORT` (default `3001`) — e.g. `/api/health`, `/api/auth/nonce`, `/api/auth/verify`, `/api/header-marquee` (public in-game banner: streak leaderboard + `newsMessages[]` rotation, dwell/fallback seconds from JSON settings; **scroll layout and loop detection are client-side** in [client/src/ui/headerMarquee.ts](../client/src/ui/headerMarquee.ts)), `/api/admin/header-marquee` (admin), `/admin/header` (HTML) ([server/src/index.ts](../server/src/index.ts)).
+- **HTTP**: Express on `PORT` (default `3001`) — e.g. `/api/health`, **`GET /api/ambient-cast`** (public UTC-day Face Token snapshot for the Main Menu), `/api/auth/nonce`, `/api/auth/verify`, `/api/header-marquee` (public in-game banner: streak leaderboard + `newsMessages[]` rotation, dwell/fallback seconds from JSON settings; **scroll layout and loop detection are client-side** in [client/src/ui/headerMarquee.ts](../client/src/ui/headerMarquee.ts)), `/api/admin/header-marquee` (admin), `/admin/header` (HTML) ([server/src/index.ts](../server/src/index.ts)).
 - **WebSocket**: Path `/ws`; query params include `token` (JWT), `room`, optional `sx`/`sz` spawn hints, and **`resume=1`** to restore the last room/tile when disconnect was within **10 minutes** (otherwise chamber default). **`resume=1` is ignored** when `room` is an explicit **Play Space** lobby (`invite-lobby-*`) or when the session is a **guest** confined to their Play Space — those connections always land in the bound space. Unauthorized connections close with code `4001`.
 - **Static UI**: If `client/dist` exists, the server serves it and falls back to `index.html` for SPA routes.
 

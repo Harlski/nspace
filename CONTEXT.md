@@ -398,6 +398,28 @@ returns to the prior view. On desktop letterbox, **Shift** or the magnifying-gla
 **Player Menu**; on mobile-play layouts, hold the magnifying-glass control only.
 _Avoid_: zoom mode, map overview toggle, binoculars.
 
+**Main Menu**:
+The pre-world connect shell (wallet sign-in and related chrome) shown before the player enters
+a room. Distinct from in-world HUD and from the **Player Menu**.
+_Avoid_: login screen, title screen, landing page, home screen (when meaning this shell).
+
+**Ambient Cast**:
+The decorative background on the **Main Menu**: isometric-flavored walkers on a flat abstract
+plane, each showing an exact public identicon of someone who joined a public/shared room during
+the current UTC day. Not a live room, not interactive, not a roster.
+_Avoid_: lobby world, ghost players, home screen NPCs, visitor ticker.
+
+**Face Token**:
+An opaque short string in the Ambient Cast snapshot that is not a wallet address. It encodes
+the same `@nimiq/identicons` feature indices as that day's eligible wallet so the client can
+render the exact public face without shipping addresses or SVG payloads.
+_Avoid_: anonymized identicon, ghost token, salted avatar (those imply a different face).
+
+**Soft Density**:
+Ambient Cast staging rule: only a modest number of walkers are on screen at once (~8–12), while
+a larger unique Face Token set for the UTC day can cycle through over time.
+_Avoid_: hard cap only, show everyone, crowd limit.
+
 ## Movement
 
 **Touch Joystick**:

@@ -8,7 +8,7 @@
 
 ## Summary
 
-_Add a one-line roll-up here when the buffer gets long._
+Ambient Cast on the Main Menu: lean Face Token snapshot API + Soft Density walkers.
 
 ---
 
@@ -16,15 +16,19 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Repo / docs
 
-- _(none yet)_
+- Glossary: **Main Menu**, **Ambient Cast**, **Face Token**, **Soft Density** in [CONTEXT.md](../../../CONTEXT.md)
+- Spec: [.scratch/ambient-main-menu-cast/PRD.md](../../../.scratch/ambient-main-menu-cast/PRD.md)
 
 ### Client
 
-- _(none in this change set)_
+- [client/src/ambientCast/](../../../client/src/ambientCast/) — Face Token decode/render, Soft Density, canvas Ambient Cast mounted from [mainMenu.ts](../../../client/src/ui/mainMenu.ts)
+- ~5 min snapshot refresh; ~8–12 Soft Density; pointer-events none
 
 ### Server
 
-- _(none in this change set)_
+- [server/src/ambientCast/](../../../server/src/ambientCast/) — Face Token encode from identicon features; eligibility from Event Log `session_start` (exclude Play Spaces)
+- Public **`GET /api/ambient-cast`** → `{ day, refreshedAt, faces: [{ token }] }` (no wallet IDs)
+- [eventLog.ts](../../../server/src/eventLog.ts) `listEventRecordsForUtcDay`
 
 ### payment-intent-service
 

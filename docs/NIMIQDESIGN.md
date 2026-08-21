@@ -57,6 +57,16 @@ Both set `globalThis.IdenticonsAssets` once, then call `Identicons.toDataUrl(toN
 
 `Identicons.toDataUrl` returns **`data:image/svg+xml;base64,...`** (SVG, not raster PNG) — fine for `<img>` and JSON APIs.
 
+## Ambient Cast Face Tokens
+
+The Main Menu **Ambient Cast** must not publish wallet addresses. Instead:
+
+1. Server derives the same feature indices `@nimiq/identicons` would use for the spaced wallet address (`makeHash` + part `% 21`).
+2. Encodes them as an opaque **`ac1_…` Face Token** ([server/src/ambientCast/faceToken.ts](../server/src/ambientCast/faceToken.ts)).
+3. Client renders via `Identicons._svgTemplate` from those features ([client/src/ambientCast/faceToken.ts](../client/src/ambientCast/faceToken.ts)) — **do not** run Face Tokens through `toNimiqUserFriendlyForIdenticon` (chunk formatting would corrupt the token).
+
+Public API: **`GET /api/ambient-cast`** → `{ day, refreshedAt, faces: [{ token }] }`.
+
 ## Quick checklist when adding a new identicon call site
 
 1. Set **`globalThis.IdenticonsAssets`** once before the first render.

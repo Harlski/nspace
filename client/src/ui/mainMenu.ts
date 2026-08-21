@@ -13,6 +13,7 @@ import { APP_DISPLAY_VERSION } from "../appVersion.js";
 import { apiUrl } from "../net/apiBase.js";
 import { TELEGRAM_URL, X_URL } from "../socialLinks.js";
 import { nimiqLogosHexOutlineMonoPlusMarkup } from "./nimiqIcons.js";
+import { mountAmbientCast } from "../ambientCast/mountAmbientCast.js";
 
 /** Session replay UI only on loopback - not on public deployments (e.g. Vercel). */
 function isReplayMenuHost(): boolean {
@@ -168,6 +169,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   root.className = "main-menu";
   root.innerHTML = `
     <div class="main-menu__backdrop" aria-hidden="true"></div>
+    <div class="main-menu__ambient-host" aria-hidden="true"></div>
     <div class="main-menu__content">
       <div class="main-menu__card" role="presentation">
         <div class="main-menu__card-rim" aria-hidden="true"></div>
@@ -268,6 +270,11 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   app.appendChild(root);
 
   const termsPrivacyRow = document.createElement("div");
+  const ambientHost = root.querySelector(
+    ".main-menu__ambient-host"
+  ) as HTMLElement;
+  const disposeAmbientCast = mountAmbientCast(ambientHost);
+
   termsPrivacyRow.className = "main-menu__terms-privacy";
   termsPrivacyRow.id = "main-menu-terms-privacy-row";
   termsPrivacyRow.hidden = true;
@@ -939,6 +946,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   });
 
   return () => {
+    disposeAmbientCast();
     clearTermsRequiredIndication();
     clearCachedAccountSelection();
     for (const d of disposeCachedMenuListeners) d();

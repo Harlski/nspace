@@ -5,4 +5,6 @@
 
 ---
 
-_(Draft — not published.)_
+- **[NEW]** `GET /api/ambient-cast` — unauthenticated snapshot `{ day, refreshedAt, faces: [{ token }] }`. Tokens are `ac1_` + base64url feature packs matching `@nimiq/identicons` faces; no wallet fields.
+- **[NEW]** Client `ambientCast/` — Soft Density staging, Face Token → SVG, Main Menu canvas layer (dispose with the menu).
+- Glossary: **Ambient Cast**, **Face Token**, **Soft Density**, **Main Menu** in `CONTEXT.md`.
