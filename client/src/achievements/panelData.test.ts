@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
+import { createTranslator, setSharedTranslator } from "@nspace/i18n";
 import type { AchievementProgress } from "./api.js";
 import {
   SUMMARY_VIEW_ID,
@@ -14,6 +15,10 @@ import {
   isAchievementVisibleInView,
   syncDerivedAchievementProgress,
 } from "./panelData.js";
+
+beforeEach(() => {
+  setSharedTranslator(createTranslator("en"));
+});
 
 function ach(
   partial: Partial<AchievementProgress> & Pick<AchievementProgress, "achievementId">

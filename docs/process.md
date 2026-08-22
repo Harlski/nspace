@@ -13,6 +13,15 @@ Obstacles are the reference case ([server/src/rooms.ts](../server/src/rooms.ts),
 
 Keep server validation strict (clamp enums, reject impossible combos).
 
+## Player-visible strings (i18n checklist)
+
+When adding or changing **player-visible product** copy (not `/admin/*`, not user-authored, not third-party):
+
+1. Add or update the **`en`** Message Catalog key in [`packages/i18n`](../packages/i18n/) in the **same change** as the UI.
+2. Call `t(…)` / the shared translator rather than hard-coding English in the client (or server HTML when that surface is migrated).
+3. **`tr` / `pt-BR` may lag**; missing alternate-locale strings fall back to English. Do not leave missing **`en`** keys.
+4. See [localization.md](localization.md) and the principle in [THE-LARGER-SYSTEM.md](THE-LARGER-SYSTEM.md).
+
 ## Rate limits and cooldowns
 
 Defined near the top of [server/src/rooms.ts](../server/src/rooms.ts), for example:

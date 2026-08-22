@@ -1,7 +1,9 @@
 import "../style.css";
+import { bootstrapClientI18n } from "../i18n/bootstrap.js";
 import body from "./content/tacs-body.html?raw";
 import { mountTermsPrivacyPage } from "./mountTermsPrivacyPage.js";
 
+bootstrapClientI18n();
 mountTermsPrivacyPage({
   documentTitle: "Terms & Conditions · Nimiq Space",
   titleLine1: "TERMS",

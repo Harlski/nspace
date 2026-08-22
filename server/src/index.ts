@@ -151,6 +151,7 @@ import {
   startPayoutAnalyticsBackfillSync,
 } from "./payoutAnalyticsBridge.js";
 import { pendingPayoutsPublicPageHtml } from "./pendingPayoutsPublicPage.js";
+import { requestTranslator } from "./i18n/requestLocale.js";
 import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
 import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
 import { adminSystemPageHtml } from "./adminSystemPage.js";
@@ -1054,8 +1055,8 @@ app.post(
 );
 
 /** Human-readable table; data from `GET /api/nim/payouts`. */
-app.get("/payouts", (_req, res) => {
-  res.type("html").send(pendingPayoutsPublicPageHtml());
+app.get("/payouts", (req, res) => {
+  res.type("html").send(pendingPayoutsPublicPageHtml(requestTranslator(req)));
 });
 
 /** @deprecated Use `GET /payouts`. */

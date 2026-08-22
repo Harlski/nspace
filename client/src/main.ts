@@ -1,5 +1,7 @@
 import "./nimiqStyleShell.js";
 import "./style.css";
+import { bootstrapClientI18n } from "./i18n/bootstrap.js";
+import { t } from "@nspace/i18n";
 import {
   clearCachedSession,
   getTokenExpiryMs,
@@ -6566,17 +6568,14 @@ function enterGame(
       // Only the scorer receives this; show a small personal note under the GOAL banner.
       if (worldcupScoreboard) {
         if (msg.reason === "ok" && msg.amountNim) {
-          worldcupScoreboard.flashReward("earned", `+${msg.amountNim} NIM earned!`);
+          worldcupScoreboard.flashReward(
+            "earned",
+            t("worldcup.rewardEarned", { amount: msg.amountNim })
+          );
         } else if (msg.reason === "wallet_cap") {
-          worldcupScoreboard.flashReward(
-            "capped",
-            "Daily NIM cap reached - keep scoring for fun!"
-          );
+          worldcupScoreboard.flashReward("capped", t("worldcup.rewardCap"));
         } else if (msg.reason === "budget_exhausted") {
-          worldcupScoreboard.flashReward(
-            "capped",
-            "Today's NIM rewards are all claimed - back tomorrow!"
-          );
+          worldcupScoreboard.flashReward("capped", t("worldcup.rewardBudget"));
         }
       }
       return;
@@ -8158,6 +8157,7 @@ async function bootstrapJoinInvite(): Promise<boolean> {
 }
 
 function main(): void {
+  bootstrapClientI18n();
   initNimiqPayDevEmulation();
   enableNimiqPayViewportLayout();
   enableMobileBrowserPlayLayout();

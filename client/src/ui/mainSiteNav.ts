@@ -1,3 +1,5 @@
+import { t } from "@nspace/i18n";
+
 export type MainSiteNavPage =
   | "analytics"
   | "admin"
@@ -21,13 +23,19 @@ export type MainSiteNavAuthStatus = {
 type MainSiteNavItem = {
   page: MainSiteNavPage;
   href: string;
+  /** Hard-coded English when no catalog key exists yet. */
   label: string;
+  /** Message Catalog key; preferred over `label` when set. */
+  labelKey?: string;
   authKey?: string;
 };
 
 type MainSiteNavGroup = {
   id: string;
+  /** Hard-coded English when no catalog key (e.g. Admin stays English-only). */
   label: string;
+  /** Message Catalog key; preferred over `label` when set. */
+  labelKey?: string;
   items: MainSiteNavItem[];
 };
 
@@ -35,9 +43,16 @@ const MAIN_SITE_NAV_GROUPS: MainSiteNavGroup[] = [
   {
     id: "site",
     label: "Site",
+    labelKey: "nav.site",
     items: [
-      { page: "payouts", href: "/payouts", label: "Payouts" },
-      { page: "advertise", href: "/advertise", label: "Advertise", authKey: "advertise" },
+      { page: "payouts", href: "/payouts", label: "Payouts", labelKey: "nav.payouts" },
+      {
+        page: "advertise",
+        href: "/advertise",
+        label: "Advertise",
+        labelKey: "nav.advertise",
+        authKey: "advertise",
+      },
     ],
   },
   {
@@ -45,7 +60,13 @@ const MAIN_SITE_NAV_GROUPS: MainSiteNavGroup[] = [
     label: "Admin",
     items: [
       { page: "admin", href: "/admin", label: "Admin", authKey: "admin" },
-      { page: "analytics", href: "/analytics", label: "Analytics", authKey: "analytics" },
+      {
+        page: "analytics",
+        href: "/analytics",
+        label: "Analytics",
+        labelKey: "nav.analytics",
+        authKey: "analytics",
+      },
       { page: "system", href: "/admin/system", label: "System", authKey: "system" },
       { page: "settings", href: "/admin/settings", label: "Settings", authKey: "settings" },
       { page: "header", href: "/admin/header", label: "Header", authKey: "header" },
@@ -56,6 +77,14 @@ const MAIN_SITE_NAV_GROUPS: MainSiteNavGroup[] = [
     ],
   },
 ];
+
+function navGroupLabel(group: MainSiteNavGroup): string {
+  return group.labelKey ? t(group.labelKey) : group.label;
+}
+
+function navItemLabel(item: MainSiteNavItem): string {
+  return item.labelKey ? t(item.labelKey) : item.label;
+}
 
 function esc(s: string): string {
   return s
@@ -68,10 +97,10 @@ function esc(s: string): string {
 export function mainSiteNavLabelForPage(page: MainSiteNavPage): string {
   for (const group of MAIN_SITE_NAV_GROUPS) {
     for (const item of group.items) {
-      if (item.page === page) return item.label;
+      if (item.page === page) return navItemLabel(item);
     }
   }
-  return "Navigate";
+  return t("nav.navigate");
 }
 
 export function isMainSiteNavItemVisible(
@@ -91,7 +120,7 @@ export function isMainSiteNavItemVisible(
 function navItemHtml(item: MainSiteNavItem, currentPage: MainSiteNavPage): string {
   const current = item.page === currentPage ? ` aria-current="page"` : "";
   const authAttrs = item.authKey ? ` data-auth-nav="${item.authKey}" hidden` : "";
-  return `<a class="main-site-nav-dropdown__link" role="menuitem" href="${esc(item.href)}"${current}${authAttrs}>${esc(item.label)}</a>`;
+  return `<a class="main-site-nav-dropdown__link" role="menuitem" href="${esc(item.href)}"${current}${authAttrs}>${esc(navItemLabel(item))}</a>`;
 }
 
 export function mainSiteNavDropdownHtml(currentPage: MainSiteNavPage): string {
@@ -102,7 +131,7 @@ export function mainSiteNavDropdownHtml(currentPage: MainSiteNavPage): string {
         ? `<a class="main-site-nav-dropdown__link" role="menuitem" href="#admin-quick-payout" data-auth-nav="admin" hidden>Quick payout</a>`
         : "";
     return `<details class="main-site-nav-dropdown__group" data-nav-group="${group.id}" open>
-      <summary class="main-site-nav-dropdown__group-label">${esc(group.label)}</summary>
+      <summary class="main-site-nav-dropdown__group-label">${esc(navGroupLabel(group))}</summary>
       <div class="main-site-nav-dropdown__group-links">${links}${extra}</div>
     </details>`;
   }).join("");

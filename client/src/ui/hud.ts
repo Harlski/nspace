@@ -164,6 +164,8 @@ import { mountHeaderMarquee } from "./headerMarquee.js";
 import { createPlayerMenu, type PlayerMenuItemId } from "./playerMenu.js";
 import { createTelescopeControl } from "./telescopeControl.js";
 import { createAchievementPanel } from "../achievements/panel.js";
+import { localizedAchievementTitle } from "../achievements/localized.js";
+import { t } from "@nspace/i18n";
 import type { WardrobeResponse } from "../cosmetics/api.js";
 import { bindCopyToClipboardControl } from "../util/copyText.js";
 
@@ -1422,7 +1424,10 @@ export function createHud(
 
   function renderAchievementUnlock(payload: AchievementUnlockPayload): void {
     triggerAchievementUnlockFlash();
-    achievementUnlockTitleEl.textContent = payload.title;
+    achievementUnlockTitleEl.textContent = localizedAchievementTitle(
+      payload.achievementId,
+      payload.title
+    );
     achievementUnlockMetaEl.textContent = `+${payload.points} AP · ${payload.totalPoints} total`;
     const selfAddress = brandLinksPlayerAddress.replace(/\s+/g, "").trim();
     if (selfAddress) {
@@ -1844,7 +1849,10 @@ export function createHud(
   ): void {
     const rem = String(remainingNim ?? "").trim() || "0";
     const ceil = String(ceilingNim ?? "").trim() || "0";
-    briefToastText.textContent = `${rem} / ${ceil} NIM remaining`;
+    briefToastText.textContent = t("dailyEarn.remainingPulse", {
+      remaining: rem,
+      ceiling: ceil,
+    });
     briefToastIdenticon.hidden = true;
     briefToast.hidden = false;
     briefToast.classList.add(
@@ -2678,12 +2686,11 @@ export function createHud(
     window.removeEventListener("keydown", onDailyEarnLimitCinematicKeydown, true);
     if (next.kind === "daily_earn_limit") {
       tutorialCinematicTitle.innerHTML = formatTutorialCinematicTitle(
-        "Daily NIM limit reached"
+        t("dailyEarn.limitTitle")
       );
-      tutorialCinematicSubtitle.textContent =
-        "Level up via Achievements to increase your cap";
+      tutorialCinematicSubtitle.textContent = t("dailyEarn.limitSubtitle");
       tutorialCinematicSubtitle.hidden = false;
-      tutorialCinematicCta.textContent = "Open Achievements";
+      tutorialCinematicCta.textContent = t("dailyEarn.openAchievements");
       tutorialCinematicCta.hidden = false;
       tutorialCinematic.classList.add("tutorial-cinematic--interactive");
       tutorialCinematic.setAttribute("role", "dialog");
@@ -5812,7 +5819,10 @@ export function createHud(
       typeof level === "number" && Number.isFinite(level) && level >= 1
         ? Math.floor(level)
         : Math.floor(Math.max(0, points) / 100) + 1;
-    head.textContent = `Level ${lv} · ${points} achievement point${points === 1 ? "" : "s"}`;
+    head.textContent =
+      points === 1
+        ? t("dailyEarn.profileLevel", { level: lv, points })
+        : t("dailyEarn.profileLevelPlural", { level: lv, points });
     oppAchievements.appendChild(head);
     if (kind === "self" && dailyEarn) {
       const wrap = document.createElement("div");
@@ -5820,12 +5830,15 @@ export function createHud(
       const label = document.createElement("p");
       label.className = "other-player-profile__earn-allowance-label";
       if (dailyEarn.uncapped) {
-        label.textContent = "Daily earn allowance: uncapped";
+        label.textContent = t("dailyEarn.uncapped");
         wrap.appendChild(label);
       } else {
         const remaining = String(dailyEarn.remainingNim ?? "0");
         const ceiling = String(dailyEarn.ceilingNim ?? "0");
-        label.textContent = `${remaining} / ${ceiling} NIM remaining today`;
+        label.textContent = t("dailyEarn.remainingToday", {
+          remaining,
+          ceiling,
+        });
         wrap.appendChild(label);
         const track = document.createElement("div");
         track.className = "other-player-profile__earn-allowance-track";
@@ -5841,7 +5854,7 @@ export function createHud(
         track.setAttribute("aria-valuemax", "100");
         track.setAttribute(
           "aria-label",
-          `Daily earn allowance remaining ${remaining} of ${ceiling} NIM`
+          t("dailyEarn.ariaRemaining", { remaining, ceiling })
         );
         const fill = document.createElement("div");
         fill.className = "other-player-profile__earn-allowance-fill";
@@ -6509,18 +6522,34 @@ export function createHud(
   nimClaimBar.setAttribute("aria-live", "polite");
   let nimClaimFadeTimer: ReturnType<typeof setTimeout> | null = null;
   nimClaimBar.innerHTML = `
-    <div class="nim-claim-bar__label">NIM reward</div>
+    <div class="nim-claim-bar__label"></div>
     <div class="nim-claim-bar__track">
       <div class="nim-claim-bar__fill"></div>
     </div>
     <div class="nim-claim-bar__hint"></div>
   `;
+  const nimClaimLabel = nimClaimBar.querySelector(
+    ".nim-claim-bar__label"
+  ) as HTMLElement | null;
+  if (nimClaimLabel) nimClaimLabel.textContent = t("mining.claimLabel");
   const nimClaimFill = nimClaimBar.querySelector(
     ".nim-claim-bar__fill"
   ) as HTMLElement | null;
   const nimClaimHint = nimClaimBar.querySelector(
     ".nim-claim-bar__hint"
   ) as HTMLElement | null;
+
+  /** Server/client denial reasons stay English on the wire; map known ones at display. */
+  function localizeMiningClaimHint(hint: string): string {
+    if (hint === "Mining is restricted on this account.") {
+      return t("mining.restricted");
+    }
+    if (hint === "Connect a wallet to earn NIM from mining.") {
+      return t("mining.guestWallet");
+    }
+    return hint;
+  }
+
   ui.appendChild(nimClaimBar);
   const canvasCountdown = document.createElement("div");
   canvasCountdown.className = "canvas-countdown";
@@ -11973,10 +12002,10 @@ export function createHud(
       confirmDialogDetailEl.hidden = detail.length === 0;
     }
     if (confirmDialogConfirmBtn) {
-      confirmDialogConfirmBtn.textContent = p.confirmLabel ?? "Confirm";
+      confirmDialogConfirmBtn.textContent = p.confirmLabel ?? t("common.confirm");
     }
     if (confirmDialogCancelBtn) {
-      confirmDialogCancelBtn.textContent = p.cancelLabel ?? "Cancel";
+      confirmDialogCancelBtn.textContent = p.cancelLabel ?? t("common.cancel");
     }
     confirmDialogOverlay.hidden = false;
     confirmDialogOverlay.setAttribute("aria-hidden", "false");
@@ -18391,11 +18420,11 @@ export function createHud(
       }
       if (nimClaimHint) {
         const customHint = state.hint?.trim();
-        nimClaimHint.textContent =
-          customHint ??
-          (state.adjacent
-            ? "Hold position beside the block…"
-            : "Move to a tile directly beside the block (edge, not corner).");
+        nimClaimHint.textContent = customHint
+          ? localizeMiningClaimHint(customHint)
+          : state.adjacent
+            ? t("mining.hintAdjacent")
+            : t("mining.hintApproach");
       }
       nimClaimBar.classList.toggle("nim-claim-bar--adjacent", state.adjacent);
     },

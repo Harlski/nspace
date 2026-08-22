@@ -1,8 +1,9 @@
 {
   "name": "nspace",
-  "version": "0.7.7",
+  "version": "0.8.0",
   "private": true,
   "workspaces": [
+    "packages/i18n",
     "client",
     "server",
     "payment-intent-service",
@@ -17,12 +18,12 @@
     "check-vercel-rewrites": "node scripts/check-vercel-rewrites.cjs",
     "dev": "node scripts/ensure-payout-dev-env.cjs && concurrently -n client,server,payout,analytics -c blue,green,magenta,cyan \"npm run dev -w client\" \"npm run dev -w server\" \"npm run dev -w payout-service\" \"npm run dev -w analytics-service\"",
     "dev:game": "concurrently -n client,server -c blue,green \"npm run dev -w client\" \"npm run dev -w server\"",
-    "build": "npm run build -w client && npm run build -w server",
+    "build": "npm run build -w @nspace/i18n && npm run build -w client && npm run build -w server",
     "start": "npm run start -w server",
     "dev:payment-intent": "npm run dev -w payment-intent-service",
     "dev:payout": "npm run dev -w payout-service",
     "dev:analytics": "npm run dev -w analytics-service",
-    "test": "npm test -w payment-intent-service && npm test -w payout-service && npm test -w analytics-service && npm test -w server",
+    "test": "npm test -w @nspace/i18n && npm test -w payment-intent-service && npm test -w payout-service && npm test -w analytics-service && npm test -w server",
     "tutorial:reseed-bootstrap": "node scripts/reseed-tutorial-bootstrap.cjs",
     "tutorial:reseed-bootstrap:local": "node scripts/reseed-tutorial-bootstrap-local.cjs",
     "postinstall": "node scripts/postinstall.cjs"

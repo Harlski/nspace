@@ -5,8 +5,8 @@ export type ConfirmRequest = {
   message: string;
   /** Optional secondary line rendered in a monospace style (e.g. an address). */
   detail?: string;
-  /** Confirm button label (default "Confirm"). */
+  /** Confirm button label (default `t("common.confirm")`). */
   confirmLabel?: string;
-  /** Cancel button label (default "Cancel"). */
+  /** Cancel button label (default `t("common.cancel")`). */
   cancelLabel?: string;
 };

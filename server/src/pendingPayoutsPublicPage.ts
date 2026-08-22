@@ -1,3 +1,4 @@
+import type { Translator } from "@nspace/i18n";
 import {
   analyticsFontLinkTags,
   analyticsPageRootCss,
@@ -7,18 +8,29 @@ import {
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
 
+function escHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 /**
  * `GET /payouts` - queue overview (main-site shell).
  * Data from `GET /api/nim/payouts` (summary without auth; wallet-scoped with JWT).
  */
-export function pendingPayoutsPublicPageHtml(): string {
+export function pendingPayoutsPublicPageHtml(translator: Translator): string {
+  const locale = translator.getLocale();
+  const title = translator.t("payouts.title");
+  const titleEsc = escHtml(title);
   const msSigningHexSpinner = JSON.stringify(nimiqHexLoaderSvg("ms-spinner"));
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${escHtml(locale)}">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Payout queue - Nimiq Space</title>
+  <title>${titleEsc} - Nimiq Space</title>
   ${mainSiteFaviconLinkTag()}
   ${analyticsFontLinkTags()}
   <style>
@@ -29,7 +41,7 @@ export function pendingPayoutsPublicPageHtml(): string {
 </head>
 <body class="ms-site">
   ${analyticsTopbarHtml("payouts")}
-  <h1 class="ms-doc-title">Payout queue <i class="ms-doc-title__updated ms-mono" id="payoutTitleUpdated" aria-live="polite"></i></h1>
+  <h1 class="ms-doc-title">${titleEsc} <i class="ms-doc-title__updated ms-mono" id="payoutTitleUpdated" aria-live="polite"></i></h1>
   <p class="ms-status ms-mono ms-payout-queue-status" id="statusLine"></p>
   <div id="wrap"></div>
   <script>

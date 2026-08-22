@@ -1,5 +1,10 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { createTranslator, setSharedTranslator } from "@nspace/i18n";
 import { createPlayerMenu, playerMenuItemLabelsForMode } from "./playerMenu.js";
+
+beforeEach(() => {
+  setSharedTranslator(createTranslator("en"));
+});
 
 describe("playerMenuItemLabelsForMode", () => {
   it("lists full-player navigation items (Shop replaces Profile)", () => {
@@ -9,6 +14,7 @@ describe("playerMenuItemLabelsForMode", () => {
       "Achievements",
       "Rooms",
       "Feedback",
+      "Language",
       "Return to Hub",
       "Logout",
     ]);
@@ -18,6 +24,7 @@ describe("playerMenuItemLabelsForMode", () => {
     expect(playerMenuItemLabelsForMode(true)).toEqual([
       "Profile",
       "Get a Wallet",
+      "Language",
       "Return to Hub",
       "Leave",
     ]);
@@ -30,6 +37,7 @@ describe("playerMenuItemLabelsForMode", () => {
       "Achievements",
       "Rooms",
       "Feedback",
+      "Language",
       "Logout",
     ]);
   });
@@ -42,6 +50,7 @@ describe("playerMenuItemLabelsForMode", () => {
       "Achievements",
       "Rooms",
       "Feedback",
+      "Language",
       "Return to Hub",
       "Logout",
     ]);
@@ -51,6 +60,7 @@ describe("playerMenuItemLabelsForMode", () => {
     expect(playerMenuItemLabelsForMode(true, true, true)).toEqual([
       "Profile",
       "Get a Wallet",
+      "Language",
       "Return to Hub",
       "Leave",
     ]);

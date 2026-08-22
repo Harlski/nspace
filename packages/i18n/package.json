@@ -1,0 +1,25 @@
+{
+  "name": "@nspace/i18n",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsx --test test/**/*.test.ts"
+  },
+  "dependencies": {
+    "@formatjs/intl": "^3.1.6"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3",
+    "typescript": "~5.7.2"
+  }
+}

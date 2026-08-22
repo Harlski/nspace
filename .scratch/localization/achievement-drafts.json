@@ -1,0 +1,764 @@
+{
+  "enter-commons": {
+    "trTitle": "Commons'a Hoş Geldin",
+    "trDesc": "Commons'a ilk kez gir.",
+    "ptTitle": "Bem-vindo ao Commons",
+    "ptDesc": "Entre no Commons pela primeira vez."
+  },
+  "open-profile": {
+    "trTitle": "Kendini Bil",
+    "trDesc": "Oyuncu profilini aç.",
+    "ptTitle": "Conhece a Ti Mesmo",
+    "ptDesc": "Abra seu perfil de jogador."
+  },
+  "open-wardrobe": {
+    "trTitle": "Role Göre Giyin",
+    "trDesc": "Gardırobunu aç.",
+    "ptTitle": "Vista-se a Caráter",
+    "ptDesc": "Abra seu Guarda-roupa."
+  },
+  "equip-cosmetic": {
+    "trTitle": "Hazır ve Donanımlı",
+    "trDesc": "Yüklemenize bir kozmetik ekipman koyun.",
+    "ptTitle": "Pronto e Estiloso",
+    "ptDesc": "Equipe um cosmético no seu loadout."
+  },
+  "first-block": {
+    "trTitle": "İlk Blok",
+    "trDesc": "İlk bloğunu yerleştir.",
+    "ptTitle": "Primeiro Bloco",
+    "ptDesc": "Coloque seu primeiro bloco."
+  },
+  "first-mine": {
+    "trTitle": "İlk Talep",
+    "trDesc": "İlk talep edilebilir bloğu madencile.",
+    "ptTitle": "Primeira Reivindicação",
+    "ptDesc": "Mine seu primeiro bloco reivindicável."
+  },
+  "first-emote": {
+    "trTitle": "Kendini İfade Et",
+    "trDesc": "Aksiyon Çarkı'ndan bir emoji gönder.",
+    "ptTitle": "Expresse-se",
+    "ptDesc": "Envie um emote pela Roda de Ações."
+  },
+  "visit-room": {
+    "trTitle": "Kaşif",
+    "trDesc": "Başka bir odayı ziyaret et.",
+    "ptTitle": "Explorador",
+    "ptDesc": "Visite outra sala."
+  },
+  "create-room": {
+    "trTitle": "Oda Yapımcısı",
+    "trDesc": "Kendi odanı oluştur.",
+    "ptTitle": "Criador de Sala",
+    "ptDesc": "Crie sua própria sala."
+  },
+  "first-nim": {
+    "trTitle": "İlk NIM",
+    "trDesc": "Nimiq Pay ilk temas eğitimini tamamla.",
+    "ptTitle": "Primeiro NIM",
+    "ptDesc": "Conclua o tutorial de primeiro contato do Nimiq Pay."
+  },
+  "telescope": {
+    "trTitle": "Teleskop",
+    "trDesc": "Teleskopu açmak için tüm Başlarken başarımlarını tamamla.",
+    "ptTitle": "Telescópio",
+    "ptDesc": "Conclua todas as conquistas de Primeiros passos para desbloquear o Telescópio."
+  },
+  "commons-first-block": {
+    "trTitle": "Commons Katkıcısı",
+    "trDesc": "Commons'a ilk bloğunu yerleştir.",
+    "ptTitle": "Contribuidor do Commons",
+    "ptDesc": "Coloque seu primeiro bloco no Commons."
+  },
+  "commons-place-10": {
+    "trTitle": "Commons İnşaatçısı I",
+    "trDesc": "Commons'a 10 blok yerleştir.",
+    "ptTitle": "Construtor do Commons I",
+    "ptDesc": "Coloque 10 blocos no Commons."
+  },
+  "commons-place-100": {
+    "trTitle": "Commons İnşaatçısı II",
+    "trDesc": "Commons'a 100 blok yerleştir.",
+    "ptTitle": "Construtor do Commons II",
+    "ptDesc": "Coloque 100 blocos no Commons."
+  },
+  "commons-place-250": {
+    "trTitle": "Commons İnşaatçısı III",
+    "trDesc": "Commons'a 250 blok yerleştir.",
+    "ptTitle": "Construtor do Commons III",
+    "ptDesc": "Coloque 250 blocos no Commons."
+  },
+  "commons-place-500": {
+    "trTitle": "Commons İnşaatçısı IV",
+    "trDesc": "Commons'a 500 blok yerleştir.",
+    "ptTitle": "Construtor do Commons IV",
+    "ptDesc": "Coloque 500 blocos no Commons."
+  },
+  "mine-10": {
+    "trTitle": "Madenci I",
+    "trDesc": "10 talep edilebilir blok madencile.",
+    "ptTitle": "Mineiro I",
+    "ptDesc": "Mine 10 blocos reivindicáveis."
+  },
+  "mine-100": {
+    "trTitle": "Madenci II",
+    "trDesc": "100 talep edilebilir blok madencile.",
+    "ptTitle": "Mineiro II",
+    "ptDesc": "Mine 100 blocos reivindicáveis."
+  },
+  "mine-250": {
+    "trTitle": "Madenci III",
+    "trDesc": "250 talep edilebilir blok madencile.",
+    "ptTitle": "Mineiro III",
+    "ptDesc": "Mine 250 blocos reivindicáveis."
+  },
+  "mine-500": {
+    "trTitle": "Madenci IV",
+    "trDesc": "500 talep edilebilir blok madencile.",
+    "ptTitle": "Mineiro IV",
+    "ptDesc": "Mine 500 blocos reivindicáveis."
+  },
+  "mining-impatient-miner": {
+    "trTitle": "Sabırsız Madenci",
+    "trDesc": "Yanındaki talep edilebilir bloğa doğrudan tıklayarak madencile.",
+    "ptTitle": "Mineiro Impaciente",
+    "ptDesc": "Clique diretamente em um bloco reivindicável adjacente para minerá-lo."
+  },
+  "mining-dry-spell": {
+    "trTitle": "Kurak Dönem",
+    "trDesc": "Bekleme süresindeki bir bloğu madencilemeye çalışıp “Burada NIM kalmadı :(” mesajını 10 kez gör.",
+    "ptTitle": "Seca",
+    "ptDesc": "Tente minerar um bloco em recarga e ve “Não sobrou NIM aqui :(” 10 vezes."
+  },
+  "build-sunny-side-up": {
+    "trTitle": "Güneşli Taraf Üstte",
+    "trDesc": "7119 blok yerleştir.",
+    "ptTitle": "Ovo Frito",
+    "ptDesc": "Coloque 7119 blocos."
+  },
+  "pixel-we-made-this": {
+    "trTitle": "Bunu birlikte yaptık",
+    "trDesc": "Pixel odası tahtasına ilk pikseli boya.",
+    "ptTitle": "Nós fizemos isto",
+    "ptDesc": "Pinte seu primeiro pixel no quadro da sala Pixel."
+  },
+  "pixel-64bit": {
+    "trTitle": "64bit",
+    "trDesc": "Pixel odası tahtasında 64 piksel boya.",
+    "ptTitle": "64bit",
+    "ptDesc": "Pinte 64 pixels no quadro da sala Pixel."
+  },
+  "pixel-500": {
+    "trTitle": "Piksel Ressamı",
+    "trDesc": "Pixel odası tahtasında 500 piksel boya.",
+    "ptTitle": "Pintor de Pixels",
+    "ptDesc": "Pinte 500 pixels no quadro da sala Pixel."
+  },
+  "pixel-i-made-this": {
+    "trTitle": "Bunu ben yaptım",
+    "trDesc": "Pixel odası tahtasında 1000 piksel boya.",
+    "ptTitle": "Eu fiz isto",
+    "ptDesc": "Pinte 1000 pixels no quadro da sala Pixel."
+  },
+  "pixel-corner-to-corner": {
+    "trTitle": "Köşeden Köşeye",
+    "trDesc": "Pixel odası tahtasının dört köşesindeki karoları boya.",
+    "ptTitle": "Canto a Canto",
+    "ptDesc": "Pinte azulejos nos quatro cantos do quadro da sala Pixel."
+  },
+  "pixel-collaborator": {
+    "trTitle": "İşbirlikçi",
+    "trDesc": "Pixel odasındayken başka bir oyuncunun pikselinin yanındaki karoyu boya.",
+    "ptTitle": "Colaborador",
+    "ptDesc": "Pinte um azulejo ao lado do pixel de outro jogador enquanto ele está na sala Pixel."
+  },
+  "pixel-monochrome-discipline": {
+    "trTitle": "Monokrom Disiplin",
+    "trDesc": "Renk değiştirmeden aynı tonla üst üste 64 piksel boya.",
+    "ptTitle": "Disciplina Monocromática",
+    "ptDesc": "Pinte 64 pixels seguidos com a mesma matiz sem mudar de cor no meio."
+  },
+  "match-first-win": {
+    "trTitle": "İlk Zafer",
+    "trDesc": "İlk Dünya Kupası Maçını kazan.",
+    "ptTitle": "Primeira Vitória",
+    "ptDesc": "Vença sua primeira Partida da Copa do Mundo."
+  },
+  "match-first-loss": {
+    "trTitle": "Fair Play",
+    "trDesc": "İlk Dünya Kupası Maçını kaybet.",
+    "ptTitle": "Bom Esporte",
+    "ptDesc": "Perca sua primeira Partida da Copa do Mundo."
+  },
+  "match-first-draw": {
+    "trTitle": "Çetin Mücadele",
+    "trDesc": "İlk Dünya Kupası Maçını berabere bitir.",
+    "ptTitle": "Luta Dura",
+    "ptDesc": "Empate sua primeira Partida da Copa do Mundo."
+  },
+  "match-challenge-raised": {
+    "trTitle": "Meydan Okuma",
+    "trDesc": "İlk Meydan Okumanı başlat.",
+    "ptTitle": "Desafio Lançado",
+    "ptDesc": "Faça seu primeiro Desafio."
+  },
+  "match-challenge-accepted": {
+    "trTitle": "Oyun Başlasın",
+    "trDesc": "Başka birinin Meydan Okumasını kabul et.",
+    "ptTitle": "Jogo Ligado",
+    "ptDesc": "Aceite o Desafio de outra pessoa."
+  },
+  "match-golden-goal": {
+    "trTitle": "Altın An",
+    "trDesc": "Altın Gol ile bir Maç kazan.",
+    "ptTitle": "Momento Dourado",
+    "ptDesc": "Vença uma Partida via Gol de Ouro."
+  },
+  "match-walkover": {
+    "trTitle": "Hükmen Galibiyet",
+    "trDesc": "Rakibin Maçı terk etmesi sayesinde kazan.",
+    "ptTitle": "W.O.",
+    "ptDesc": "Vença porque seu oponente saiu da Partida."
+  },
+  "match-goals-headshot": {
+    "trTitle": "Kafa Golü",
+    "trDesc": "Tek bir Maçta bir gol at.",
+    "ptTitle": "Headshot",
+    "ptDesc": "Marque um gol em uma única Partida."
+  },
+  "match-goals-double": {
+    "trTitle": "Çifte Vuruş",
+    "trDesc": "Tek bir Maçta iki gol at.",
+    "ptTitle": "Double Kill",
+    "ptDesc": "Marque dois gols em uma única Partida."
+  },
+  "match-goals-hattrick": {
+    "trTitle": "Hat-trick",
+    "trDesc": "Tek bir Maçta üç gol at.",
+    "ptTitle": "Três de um Tipo",
+    "ptDesc": "Marque três gols em uma única Partida."
+  },
+  "match-goals-five": {
+    "trTitle": "Neden Altı Olmasın?",
+    "trDesc": "Tek bir Maçta beş gol at.",
+    "ptTitle": "Por Que Não Seis?",
+    "ptDesc": "Marque cinco gols em uma única Partida."
+  },
+  "match-goals-ten": {
+    "trTitle": "Muhtemelen Hile ya da Lag",
+    "trDesc": "Tek bir Maçta on veya daha fazla gol at.",
+    "ptTitle": "Provavelmente Trapaça ou Lag",
+    "ptDesc": "Marque dez ou mais gols em uma única Partida."
+  },
+  "match-wins-1": {
+    "trTitle": "Maç Kazananı",
+    "trDesc": "1 1v1 maç kazan.",
+    "ptTitle": "Vencedor de Partida",
+    "ptDesc": "Vença 1 partida 1v1."
+  },
+  "match-wins-10": {
+    "trTitle": "Maç Kazananı X",
+    "trDesc": "10 1v1 maç kazan.",
+    "ptTitle": "Vencedor de Partida X",
+    "ptDesc": "Vença 10 partidas 1v1."
+  },
+  "match-wins-50": {
+    "trTitle": "Maç Kazananı L",
+    "trDesc": "50 1v1 maç kazan.",
+    "ptTitle": "Vencedor de Partida L",
+    "ptDesc": "Vença 50 partidas 1v1."
+  },
+  "match-wins-100": {
+    "trTitle": "Maç Kazananı C",
+    "trDesc": "100 1v1 maç kazan.",
+    "ptTitle": "Vencedor de Partida C",
+    "ptDesc": "Vença 100 partidas 1v1."
+  },
+  "match-wins-1000": {
+    "trTitle": "Maç Kazananı M",
+    "trDesc": "1000 1v1 maç kazan.",
+    "ptTitle": "Vencedor de Partida M",
+    "ptDesc": "Vença 1000 partidas 1v1."
+  },
+  "match-played-10": {
+    "trTitle": "Düzenli Oyuncu",
+    "trDesc": "10 1v1 maç tamamla.",
+    "ptTitle": "Regular",
+    "ptDesc": "Complete 10 partidas 1v1."
+  },
+  "match-streak-3": {
+    "trTitle": "Formda",
+    "trDesc": "Üst üste 3 1v1 maç kazan.",
+    "ptTitle": "Em Sequência",
+    "ptDesc": "Vença 3 partidas 1v1 seguidas."
+  },
+  "match-streak-5": {
+    "trTitle": "Durdurulamaz",
+    "trDesc": "Üst üste 5 1v1 maç kazan.",
+    "ptTitle": "Imparável",
+    "ptDesc": "Vença 5 partidas 1v1 seguidas."
+  },
+  "match-streak-10": {
+    "trTitle": "Muhtemelen Hile ya da Lag",
+    "trDesc": "Üst üste 10 1v1 maç kazan.",
+    "ptTitle": "Provavelmente Trapaça ou Lag",
+    "ptDesc": "Vença 10 partidas 1v1 seguidas."
+  },
+  "match-clean-sheet": {
+    "trTitle": "Gol Yemeden",
+    "trDesc": "Gol yemeden bir Dünya Kupası Maçı kazan.",
+    "ptTitle": "Clean Sheet",
+    "ptDesc": "Vença uma Partida da Copa do Mundo sem sofrer gol."
+  },
+  "match-comeback-kid": {
+    "trTitle": "Geri Dönüş Çocuğu",
+    "trDesc": "En az iki gol gerideyken bir Maç kazan.",
+    "ptTitle": "Menino do Comeback",
+    "ptDesc": "Vença uma Partida após estar perdendo por pelo menos dois gols."
+  },
+  "match-golden-patience": {
+    "trTitle": "Altın Sabır",
+    "trDesc": "Normal süre berabere bittikten sonra Altın Gol ile kazan - ilk altın dakikada değil.",
+    "ptTitle": "Paciência Dourada",
+    "ptDesc": "Vença via Gol de Ouro após o tempo regulamentar empatado - não no primeiro minuto dourado."
+  },
+  "match-handshake-rival": {
+    "trTitle": "El Sıkışan Rakip",
+    "trDesc": "Aynı UTC gününde daha önce meydan okuduğun birinin Meydan Okumasını kabul et.",
+    "ptTitle": "Rival de Aperto de Mão",
+    "ptDesc": "Aceite um Desafio de alguém que você já desafiou no mesmo dia UTC."
+  },
+  "match-full-time": {
+    "trTitle": "Tam Süre",
+    "trDesc": "Hükmen galibiyet olmadan normal süre ve altın süreyi tamamla.",
+    "ptTitle": "Tempo Integral",
+    "ptDesc": "Complete uma Partida pelo tempo regulamentar e ouro sem W.O."
+  },
+  "match-own-goal-hero": {
+    "trTitle": "Kendi Kalesine Kahraman",
+    "trDesc": "Yine de kazandığın bir Maçta kendi kalesine gol at.",
+    "ptTitle": "Herói do Gol Contra",
+    "ptDesc": "Marque um gol contra em uma Partida que ainda assim você vence."
+  },
+  "field-first-goal": {
+    "trTitle": "Saha Golü",
+    "trDesc": "Serbest Oyun Sahasında ilk kredili golünü at.",
+    "ptTitle": "Gol de Campo",
+    "ptDesc": "Marque seu primeiro gol creditado no Campo de Jogo Livre."
+  },
+  "field-goals-10": {
+    "trTitle": "Saha Forveti I",
+    "trDesc": "Serbest Oyun Sahasında 10 kredili gol at.",
+    "ptTitle": "Atacante de Campo I",
+    "ptDesc": "Marque 10 gols creditados no Campo de Jogo Livre."
+  },
+  "field-goals-50": {
+    "trTitle": "Saha Forveti II",
+    "trDesc": "Serbest Oyun Sahasında 50 kredili gol at.",
+    "ptTitle": "Atacante de Campo II",
+    "ptDesc": "Marque 50 gols creditados no Campo de Jogo Livre."
+  },
+  "field-goals-100": {
+    "trTitle": "Saha Forveti III",
+    "trDesc": "Serbest Oyun Sahasında 100 kredili gol at.",
+    "ptTitle": "Atacante de Campo III",
+    "ptDesc": "Marque 100 gols creditados no Campo de Jogo Livre."
+  },
+  "field-contested": {
+    "trTitle": "Kalabalığın Favorisi",
+    "trDesc": "Serbest Oyun Sahasında ilk Çekişmeli golünü at.",
+    "ptTitle": "Favorito da Torcida",
+    "ptDesc": "Marque seu primeiro gol Contestado no Campo de Jogo Livre."
+  },
+  "field-solo": {
+    "trTitle": "Pratik Mükemmelleştirir",
+    "trDesc": "Serbest Oyun Sahasında ilk Solo Golünü at.",
+    "ptTitle": "A Prática Leva à Perfeição",
+    "ptDesc": "Marque seu primeiro Gol Solo no Campo de Jogo Livre."
+  },
+  "field-country": {
+    "trTitle": "Bayrağı Dalgalandır",
+    "trDesc": "Ülke Seçicide bir ülke seç.",
+    "ptTitle": "Hasteie a Bandeira",
+    "ptDesc": "Escolha um país no Seletor de País."
+  },
+  "field-flag-emote": {
+    "trTitle": "Temsil Et",
+    "trDesc": "Bayrak Emotenı gönder.",
+    "ptTitle": "Represente",
+    "ptDesc": "Envie seu Emote de Bandeira."
+  },
+  "field-rush-hour": {
+    "trTitle": "Yoğun Saat",
+    "trDesc": "Sahada en az dört oyuncu varken Çekişmeli bir Serbest Oyun Saha golü at.",
+    "ptTitle": "Horário de Pico",
+    "ptDesc": "Marque um gol Contestado no Campo de Jogo Livre com pelo menos quatro jogadores em campo."
+  },
+  "field-daily-streak": {
+    "trTitle": "Günlük Seri",
+    "trDesc": "Serbest Oyun Sahasında üç ardışık UTC takvim gününde gol at.",
+    "ptTitle": "Sequência Diária",
+    "ptDesc": "Marque em três dias consecutivos UTC no Campo de Jogo Livre."
+  },
+  "field-underdog-country": {
+    "trTitle": "Ezilen Ülke",
+    "trDesc": "Bugünün sıralamasındaki ilk üç dışında bir ülke için gol at.",
+    "ptTitle": "País Azarão",
+    "ptDesc": "Marque por um país fora do top três do placar de hoje."
+  },
+  "mining-paid-in-full": {
+    "trTitle": "%98 yeterince iyi",
+    "trDesc": "Serbest Oyun Saha gol ödemesinden en az 0,98 NIM al.",
+    "ptTitle": "98% já é bom",
+    "ptDesc": "Receba pelo menos 0,98 NIM de um pagamento de gol no Campo de Jogo Livre."
+  },
+  "social-feedback-first": {
+    "trTitle": "Sesin Duyuldu",
+    "trDesc": "İlk geri bildirim talebini gönder.",
+    "ptTitle": "Voz Ouvida",
+    "ptDesc": "Envie seu primeiro ticket de feedback."
+  },
+  "social-login-7": {
+    "trTitle": "Hafta Savaşçısı",
+    "trDesc": "7 ardışık UTC takvim gününde giriş yap.",
+    "ptTitle": "Guerreiro da Semana",
+    "ptDesc": "Entre em 7 dias consecutivos UTC."
+  },
+  "social-login-30": {
+    "trTitle": "Aylık Sadık",
+    "trDesc": "30 ardışık UTC takvim gününde giriş yap.",
+    "ptTitle": "Devoto Mensal",
+    "ptDesc": "Entre em 30 dias consecutivos UTC."
+  },
+  "social-login-top": {
+    "trTitle": "Kaan Zamanı",
+    "trDesc": "54 ardışık UTC takvim gününde giriş yap.",
+    "ptTitle": "Tempo de Kaan",
+    "ptDesc": "Entre em 54 dias consecutivos UTC."
+  },
+  "social-login-100": {
+    "trTitle": "You Kaan Do It",
+    "trDesc": "100 ardışık UTC takvim gününde giriş yap.",
+    "ptTitle": "You Kaan Do It",
+    "ptDesc": "Entre em 100 dias consecutivos UTC."
+  },
+  "social-chatter-first": {
+    "trTitle": "Merhaba Dünya",
+    "trDesc": "İlk oyun içi sohbet mesajını gönder.",
+    "ptTitle": "Olá Mundo",
+    "ptDesc": "Envie sua primeira mensagem de chat no jogo."
+  },
+  "social-between-us": {
+    "trTitle": "Aramızda",
+    "trDesc": "İlk Fısıltını gönder.",
+    "ptTitle": "Entre Nós",
+    "ptDesc": "Envie seu primeiro Sussurro."
+  },
+  "social-take-a-look": {
+    "trTitle": "Bir Bak",
+    "trDesc": "Diğer Oyuncu Menüsünden başka bir oyuncunun profiline bak.",
+    "ptTitle": "Dê uma Olhada",
+    "ptDesc": "Veja o perfil de outro jogador no Menu de Outro Jogador."
+  },
+  "social-chatter-100": {
+    "trTitle": "Geveze I",
+    "trDesc": "100 oyun içi sohbet mesajı gönder.",
+    "ptTitle": "Falador I",
+    "ptDesc": "Envie 100 mensagens de chat no jogo."
+  },
+  "social-chatter-500": {
+    "trTitle": "Geveze II",
+    "trDesc": "500 oyun içi sohbet mesajı gönder.",
+    "ptTitle": "Falador II",
+    "ptDesc": "Envie 500 mensagens de chat no jogo."
+  },
+  "social-chatter-1000": {
+    "trTitle": "Geveze III",
+    "trDesc": "1000 oyun içi sohbet mesajı gönder.",
+    "ptTitle": "Falador III",
+    "ptDesc": "Envie 1000 mensagens de chat no jogo."
+  },
+  "mining-billboard-audience": {
+    "trTitle": "Tabela İzleyicisi",
+    "trDesc": "Odada en az iki oyuncu varken canlı bir kampanya tabelasının yanında 60 saniye geçir.",
+    "ptTitle": "Público do Outdoor",
+    "ptDesc": "Passe 60 segundos perto de um outdoor de campanha ao vivo com pelo menos dois jogadores na sala."
+  },
+  "exploration-marathon-1": {
+    "trTitle": "Maraton I",
+    "trDesc": "Izgara odalarında 1.000 farklı karoda yürü.",
+    "ptTitle": "Maratona I",
+    "ptDesc": "Ande em 1.000 azulejos distintos em salas de grade."
+  },
+  "exploration-marathon-2": {
+    "trTitle": "Maraton II",
+    "trDesc": "Izgara odalarında 10.000 farklı karoda yürü.",
+    "ptTitle": "Maratona II",
+    "ptDesc": "Ande em 10.000 azulejos distintos em salas de grade."
+  },
+  "exploration-marathon-3": {
+    "trTitle": "Maraton III",
+    "trDesc": "Izgara odalarında 100.000 farklı karoda yürü.",
+    "ptTitle": "Maratona III",
+    "ptDesc": "Ande em 100.000 azulejos distintos em salas de grade."
+  },
+  "exploration-room-tourist-1": {
+    "trTitle": "Oda Turisti I",
+    "trDesc": "5 farklı odaya gir.",
+    "ptTitle": "Turista de Sala I",
+    "ptDesc": "Entre em 5 salas únicas."
+  },
+  "exploration-room-tourist-2": {
+    "trTitle": "Oda Turisti II",
+    "trDesc": "15 farklı odaya gir.",
+    "ptTitle": "Turista de Sala II",
+    "ptDesc": "Entre em 15 salas únicas."
+  },
+  "exploration-room-tourist-3": {
+    "trTitle": "Oda Turisti III",
+    "trDesc": "30 farklı odaya gir.",
+    "ptTitle": "Turista de Sala III",
+    "ptDesc": "Entre em 30 salas únicas."
+  },
+  "exploration-grand-tour": {
+    "trTitle": "Büyük Tur",
+    "trDesc": "Bir UTC gününde Hub, Commons, Pixel, Serbest Oyun Sahası ve The Shaper'ı ziyaret et.",
+    "ptTitle": "Grande Tour",
+    "ptDesc": "Visite o Hub, Commons, Pixel, Campo de Jogo Livre e The Shaper em um dia UTC."
+  },
+  "exploration-door-crasher": {
+    "trTitle": "Kapı Çarpan",
+    "trDesc": "10 farklı kapı ve ışınlanma portalı kullan.",
+    "ptTitle": "Invasor de Portas",
+    "ptDesc": "Use 10 portas e portais teleporte diferentes."
+  },
+  "exploration-teleporter-tourist": {
+    "trTitle": "Işınlanma Turisti",
+    "trDesc": "Işınlayıcıyla 3 farklı hedef odaya git.",
+    "ptTitle": "Turista do Teleporte",
+    "ptDesc": "Viaje por um teleporte para 3 salas de destino diferentes."
+  },
+  "exploration-outfield-explorer": {
+    "trTitle": "Saha Dışı Kaşif",
+    "trDesc": "Serbest Oyun Sahasında 50 farklı kenar karosunda dur.",
+    "ptTitle": "Explorador da Lateral",
+    "ptDesc": "Fique em 50 azulejos distintos da margem no Campo de Jogo Livre."
+  },
+  "exploration-knock-knock": {
+    "trTitle": "Tak Tak",
+    "trDesc": "Sana ait olmayan herkese açık bir oyuncu odasını ziyaret et.",
+    "ptTitle": "Toc Toc",
+    "ptDesc": "Visite uma sala pública de outro jogador que não seja sua."
+  },
+  "exploration-toll-crossed": {
+    "trTitle": "Geçiş Ücreti Ödendi",
+    "trDesc": "Eğitim Odası dışındaki bir Kilit Pedini aç.",
+    "ptTitle": "Pedágio Cruzado",
+    "ptDesc": "Desbloqueie um Unlock Pad fora da Sala de Tutorial."
+  },
+  "worldcraft-palette-painter-1": {
+    "trTitle": "Palet Ressamı I",
+    "trDesc": "Pixel odası dışında 50 farklı zemin karosunu yeniden renklendir.",
+    "ptTitle": "Pintor de Paleta I",
+    "ptDesc": "Recolora 50 azulejos de chão distintos fora da sala Pixel."
+  },
+  "worldcraft-palette-painter-2": {
+    "trTitle": "Palet Ressamı II",
+    "trDesc": "Pixel odası dışında 200 farklı zemin karosunu yeniden renklendir.",
+    "ptTitle": "Pintor de Paleta II",
+    "ptDesc": "Recolora 200 azulejos de chão distintos fora da sala Pixel."
+  },
+  "worldcraft-rainbow-floor": {
+    "trTitle": "Gökkuşağı Zemin",
+    "trDesc": "Düzenlenebilir bir odada zemin karolarında 12 farklı ton kullan.",
+    "ptTitle": "Chão Arco-íris",
+    "ptDesc": "Use 12 matizes distintas em azulejos de chão em uma sala editável."
+  },
+  "worldcraft-architect-toolkit": {
+    "trTitle": "Mimarın Araç Seti",
+    "trDesc": "En az bir küp, altıgen, piramit, küre ve rampa bloğu yerleştir.",
+    "ptTitle": "Kit do Arquiteto",
+    "ptDesc": "Coloque pelo menos um bloco cubo, hexágono, pirâmide, esfera e rampa."
+  },
+  "worldcraft-prefab-author": {
+    "trTitle": "Prefab Yazarı",
+    "trDesc": "İlk herkese açık nesne prefabını yayınla.",
+    "ptTitle": "Autor de Prefab",
+    "ptDesc": "Publique seu primeiro prefab de objeto público."
+  },
+  "worldcraft-prefab-curator": {
+    "trTitle": "Prefab Küratörü",
+    "trDesc": "Başka bir oyuncu tarafından en az bir kez yerleştirilmiş 5 herkese açık prefabın olsun.",
+    "ptTitle": "Curador de Prefab",
+    "ptDesc": "Tenha 5 prefabs públicos colocados pelo menos uma vez por outro jogador."
+  },
+  "worldcraft-signpost-scribe": {
+    "trTitle": "Tabela Yazmanı",
+    "trDesc": "En az 40 karakterlik mesajı olan bir tabela yerleştir.",
+    "ptTitle": "Escriba de Placa",
+    "ptDesc": "Coloque uma placa com uma mensagem de pelo menos 40 caracteres."
+  },
+  "worldcraft-signpost-reader": {
+    "trTitle": "Tabela Okuyucusu",
+    "trDesc": "Başka oyuncuların yazdığı 10 farklı tabelayı aç.",
+    "ptTitle": "Leitor de Placa",
+    "ptDesc": "Abra 10 placas distintas escritas por outros jogadores."
+  },
+  "worldcraft-gatekeeper": {
+    "trTitle": "Kapı Bekçisi",
+    "trDesc": "Hub'da sahip olmadığın bir kapıyı aç.",
+    "ptTitle": "Porteiro",
+    "ptDesc": "Abra um portão que você não possui no Hub."
+  },
+  "worldcraft-trust-circle": {
+    "trTitle": "Güven Çemberi",
+    "trDesc": "Erişim listesindeyken başka birinin kapısından geç.",
+    "ptTitle": "Círculo de Confiança",
+    "ptDesc": "Passe pelo portão de outra pessoa estando na lista de acesso dela."
+  },
+  "worldcraft-room-maker-deluxe": {
+    "trTitle": "Oda Yapımcısı Deluxe",
+    "trDesc": "Bir oda oluştur; 25 blok, bir giriş noktası ve 5 yeniden renklendirilmiş zemin karosuyla döşe.",
+    "ptTitle": "Criador de Sala Deluxe",
+    "ptDesc": "Crie uma sala e mobilize com 25 blocos, um spawn de entrada e 5 azulejos de chão recoloridos."
+  },
+  "worldcraft-teleporter-engineer": {
+    "trTitle": "Işınlanma Mühendisi",
+    "trDesc": "Bir ışınlayıcı yerleştir ve kullanıma hazır hedef ayarla.",
+    "ptTitle": "Engenheiro de Teleporte",
+    "ptDesc": "Coloque um teleporte e defina o destino para ficar pronto para uso."
+  },
+  "worldcraft-room-furnisher": {
+    "trTitle": "Oda Döşeyicisi",
+    "trDesc": "Sahi olduğun bir odada en az 10 farklı renkle 150 blok yerleştir.",
+    "ptTitle": "Mobiliador de Sala",
+    "ptDesc": "Coloque 150 blocos em uma sala sua usando pelo menos 10 cores diferentes."
+  },
+  "worldcraft-open-house": {
+    "trTitle": "Açık Ev",
+    "trDesc": "Sahi olduğun bir odayı ilk kez herkese açık yap.",
+    "ptTitle": "Casa Aberta",
+    "ptDesc": "Torne pública pela primeira vez uma sala que você possui."
+  },
+  "worldcraft-room-to-room": {
+    "trTitle": "Odadan Odaya",
+    "trDesc": "Sahi olduğun bir odadaki Işınlayıcıyı yine sana ait başka bir odaya ayarla.",
+    "ptTitle": "Sala a Sala",
+    "ptDesc": "Defina um Teleporte em uma sala sua para outra sala que você também possui."
+  },
+  "worldcraft-two-keys": {
+    "trTitle": "İki Anahtar",
+    "trDesc": "İki kalıcı odaya sahip ol.",
+    "ptTitle": "Duas Chaves",
+    "ptDesc": "Possua duas salas persistentes."
+  },
+  "worldcraft-extra-hands": {
+    "trTitle": "Ekstra Eller",
+    "trDesc": "Sahi olduğun bir odaya başka bir cüzdanı inşaatçı olarak ekle.",
+    "ptTitle": "Mãos Extras",
+    "ptDesc": "Adicione outra carteira como construtor em uma sala sua."
+  },
+  "worldcraft-company": {
+    "trTitle": "Şirket",
+    "trDesc": "Herkese açık odana benzersiz bir ziyaretçi girsin.",
+    "ptTitle": "Companhia",
+    "ptDesc": "Tenha um visitante único entrando em uma sala pública sua."
+  },
+  "worldcraft-housewarming": {
+    "trTitle": "Yeni Ev Partisi",
+    "trDesc": "Herkese açık odana üç benzersiz ziyaretçi girsin.",
+    "ptTitle": "Chá de Casa Nova",
+    "ptDesc": "Tenha três visitantes únicos entrando em uma sala pública sua."
+  },
+  "match-beat-the-creator": {
+    "trTitle": "Yaratıcıyı Yen",
+    "trDesc": "Yaratıcıya karşı bir Dünya Kupası Maçı kazan.",
+    "ptTitle": "Vença o Criador",
+    "ptDesc": "Vença uma Partida da Copa do Mundo contra o criador."
+  },
+  "social-they-heard-you": {
+    "trTitle": "Seni Duydular",
+    "trDesc": "Geri bildirim taleplerinden birinde bir yönetici yanıtını oku.",
+    "ptTitle": "Eles Te Ouviram",
+    "ptDesc": "Leia uma resposta de admin em um dos seus tickets de feedback."
+  },
+  "play-space-private-room": {
+    "trTitle": "Özel Oda",
+    "trDesc": "Play Space'ini aç.",
+    "ptTitle": "Sala Privada",
+    "ptDesc": "Abra seu Play Space."
+  },
+  "play-space-come-on-in": {
+    "trTitle": "Buyur İçeri",
+    "trDesc": "Bir Misafir Doğrudan Davetini kullansın ve Play Space'ine gelsin.",
+    "ptTitle": "Pode Entrar",
+    "ptDesc": "Tenha um Convidado resgatar seu Convite Direto e chegar no seu Play Space."
+  },
+  "cosmetics-window-shopper": {
+    "trTitle": "Vitrin Gezgini",
+    "trDesc": "Mağazayı aç.",
+    "ptTitle": "Vitrineiro",
+    "ptDesc": "Abra a Loja."
+  },
+  "cosmetics-enter-the-shaper": {
+    "trTitle": "The Shaper'a Gir",
+    "trDesc": "The Shaper'ı ziyaret et.",
+    "ptTitle": "Entre no The Shaper",
+    "ptDesc": "Visite The Shaper."
+  },
+  "cosmetics-try-before-you-buy": {
+    "trTitle": "Almadan Dene",
+    "trDesc": "Bağlı bir Satış Vitrinini dene.",
+    "ptTitle": "Experimente Antes de Comprar",
+    "ptDesc": "Experimente um Display de Venda vinculado."
+  },
+  "cosmetics-paid-in-style": {
+    "trTitle": "Tarzla Ödendi",
+    "trDesc": "Bir Kozmetik Açma satın alımını tamamla.",
+    "ptTitle": "Pago com Estilo",
+    "ptDesc": "Conclua uma compra de Desbloqueio Cosmético."
+  },
+  "cosmetics-framed": {
+    "trTitle": "Çerçeveli",
+    "trDesc": "Loadout'una bir isim plakası ekipman koy.",
+    "ptTitle": "Emoldurado",
+    "ptDesc": "Equipe uma placa de nome no seu Loadout."
+  },
+  "cosmetics-caption": {
+    "trTitle": "Altyazı",
+    "trDesc": "Loadout'una bir sohbet balonu ekipman koy.",
+    "ptTitle": "Legenda",
+    "ptDesc": "Equipe um balão de chat no seu Loadout."
+  },
+  "meta-on-the-board": {
+    "trTitle": "Tabloda",
+    "trDesc": "Oyuncu Seviyesi 5'e ulaş.",
+    "ptTitle": "No Placar",
+    "ptDesc": "Alcance o Nível de Jogador 5."
+  },
+  "meta-double-digits": {
+    "trTitle": "Çift Haneli",
+    "trDesc": "Oyuncu Seviyesi 10'a ulaş.",
+    "ptTitle": "Dois Dígitos",
+    "ptDesc": "Alcance o Nível de Jogador 10."
+  },
+  "meta-established": {
+    "trTitle": "Yerleşik",
+    "trDesc": "Oyuncu Seviyesi 15'e ulaş.",
+    "ptTitle": "Estabelecido",
+    "ptDesc": "Alcance o Nível de Jogador 15."
+  },
+  "meta-point-hunter-1": {
+    "trTitle": "Puan Avcısı I",
+    "trDesc": "500 başarı puanı kazan.",
+    "ptTitle": "Caçador de Pontos I",
+    "ptDesc": "Ganhe 500 pontos de conquista."
+  },
+  "meta-point-hunter-2": {
+    "trTitle": "Puan Avcısı II",
+    "trDesc": "1000 başarı puanı kazan.",
+    "ptTitle": "Caçador de Pontos II",
+    "ptDesc": "Ganhe 1000 pontos de conquista."
+  }
+}

@@ -1,11 +1,14 @@
 import "./mainSiteClient.css";
 import { isTokenExpired } from "./auth/session.js";
+import { bootstrapClientI18n } from "./i18n/bootstrap.js";
 import { apiUrl } from "./net/apiBase.js";
 import { renderMainSiteTopbar } from "./ui/analyticsTopbar.js";
 import {
   MAIN_SITE_AUTH_ADDR_KEY,
   readMainSiteAuthToken,
 } from "./ui/mainSiteAuthKeys.js";
+
+bootstrapClientI18n();
 
 function esc(s: unknown): string {
   return String(s)

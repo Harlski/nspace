@@ -10,6 +10,7 @@
     "bench:world-state": "tsx scripts/benchmark-world-state.ts"
   },
   "dependencies": {
+    "@nspace/i18n": "*",
     "@nimiq/core": "2.20.0",
     "@nimiq/identicons": "^1.6.2",
     "bad-words": "^4.0.0",

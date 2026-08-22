@@ -1,3 +1,4 @@
+import { t } from "@nspace/i18n";
 import type { AchievementProgress } from "./api.js";
 import { TELESCOPE_ACHIEVEMENT_ID } from "../telescope/constants.js";
 
@@ -5,23 +6,31 @@ export const SUMMARY_VIEW_ID = "__summary__" as const;
 
 export type AchievementViewId = typeof SUMMARY_VIEW_ID | string;
 
-export const CATEGORY_LABELS: Record<string, string> = {
-  onboarding: "Getting started",
-  commons_build: "Commons",
-  mining: "Mining",
-  pixel: "Pixel",
-  football_match: "Football Match",
-  football_free_play: "Football Free Play",
-  social: "Social",
-  exploration: "Exploration",
-  worldcraft: "Worldcraft",
-  play_space: "Play Space",
-  cosmetics: "Cosmetics",
-  meta: "Meta",
-  misc: "Misc",
+/** Category id → Message Catalog key (`achievements.category.*`). */
+const CATEGORY_LABEL_KEYS: Record<string, string> = {
+  onboarding: "achievements.category.onboarding",
+  commons_build: "achievements.category.commons_build",
+  mining: "achievements.category.mining",
+  pixel: "achievements.category.pixel",
+  football_match: "achievements.category.football_match",
+  football_free_play: "achievements.category.football_free_play",
+  social: "achievements.category.social",
+  exploration: "achievements.category.exploration",
+  worldcraft: "achievements.category.worldcraft",
+  play_space: "achievements.category.play_space",
+  cosmetics: "achievements.category.cosmetics",
+  meta: "achievements.category.meta",
+  misc: "achievements.category.misc",
 };
 
-export const TEMPORARILY_UNAVAILABLE_LABEL = "Temporarily unavailable";
+const CATEGORY_GROUP_LABEL_KEYS: Record<string, string> = {
+  building: "achievements.categoryGroup.building",
+  minigames: "achievements.categoryGroup.minigames",
+};
+
+export function temporarilyUnavailableLabel(): string {
+  return t("achievements.temporarilyUnavailable");
+}
 
 function countsTowardProgressOverview(a: AchievementProgress): boolean {
   if (a.completed) return true;
@@ -39,13 +48,14 @@ export function overallProgress(achievements: AchievementProgress[]): {
   };
 }
 
-export const CATEGORY_GROUP_LABELS: Record<string, string> = {
-  building: "Building",
-  minigames: "Minigames",
-};
+export function categoryGroupLabel(groupId: string): string {
+  const key = CATEGORY_GROUP_LABEL_KEYS[groupId];
+  return key ? t(key) : groupId;
+}
 
 export function categoryLabel(category: string): string {
-  return CATEGORY_LABELS[category] ?? category;
+  const key = CATEGORY_LABEL_KEYS[category];
+  return key ? t(key) : category;
 }
 
 /** Player Level and progress within the current 100-AP band (vanity climb continues past L11). */
@@ -169,7 +179,7 @@ export function navRows(achievements: AchievementProgress[]): AchievementNavRow[
   rows.push({
     kind: "entry",
     id: SUMMARY_VIEW_ID,
-    label: "Summary",
+    label: t("achievements.summary"),
     earned: summary.earned,
     total: summary.total,
   });
@@ -190,7 +200,7 @@ export function navRows(achievements: AchievementProgress[]): AchievementNavRow[
     rows.push({
       kind: "group-header",
       groupId: block.groupId,
-      label: CATEGORY_GROUP_LABELS[block.groupId] ?? block.groupId,
+      label: categoryGroupLabel(block.groupId),
     });
     for (const category of block.categories) {
       const progress = categoryProgress(achievements, category);
@@ -238,7 +248,7 @@ export function achievementsForCategory(
 }
 
 export function viewTitle(viewId: AchievementViewId): string {
-  if (viewId === SUMMARY_VIEW_ID) return "Summary";
+  if (viewId === SUMMARY_VIEW_ID) return t("achievements.summary");
   return categoryLabel(viewId);
 }
 

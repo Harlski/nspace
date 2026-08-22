@@ -1,5 +1,6 @@
 import { signLoginChallenge } from "./auth/nimiq.js";
 import { completeWalletPayloadAuthWithTermsPrivacyRetry } from "./auth/authTermsPrivacyVerify.js";
+import { bootstrapClientI18n } from "./i18n/bootstrap.js";
 import { apiUrl } from "./net/apiBase.js";
 import { refreshMainSiteNavFromSession, renderMainSiteTopbar } from "./ui/analyticsTopbar.js";
 import { readMainSiteAuthToken, writeMainSiteAuthToken } from "./ui/mainSiteAuthKeys.js";
@@ -9,6 +10,8 @@ import {
   walletSigningMarkup,
 } from "./ui/walletSigningUi.js";
 import "./mainSiteClient.css";
+
+bootstrapClientI18n();
 
 type PendingRow = {
   time?: string;

@@ -1590,6 +1590,34 @@ html.nspace-pseudo-fs #app {
   font-family: inherit;
 }
 
+.player-menu__item--with-flag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.player-menu__item-flag {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.player-menu__item-flag--fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #cbd5e1;
+}
+
+.player-menu__item-label {
+  min-width: 0;
+}
+
 .player-menu__item:hover {
   background: rgba(45, 53, 72, 0.95);
 }
@@ -1631,6 +1659,94 @@ html.nspace-pseudo-fs #app {
   gap: 8px;
   justify-content: flex-end;
   padding: 0 4px 2px;
+}
+
+.player-menu__language-actions {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.player-menu__language-actions .player-menu__confirm-btn--confirm {
+  background: rgba(30, 36, 51, 0.95);
+  border-color: #3d465a;
+  color: #e8eaef;
+  text-align: left;
+}
+
+.player-menu__language-actions .player-menu__item--current {
+  border-color: #38bdf8;
+  color: #e0f2fe;
+}
+
+.language-modal__recovery {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.language-modal__lead {
+  margin-bottom: 14px;
+}
+
+.language-modal__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.language-modal__option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #3d465a;
+  background: rgba(30, 36, 51, 0.95);
+  color: #e8eaef;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.language-modal__option:hover {
+  background: rgba(45, 53, 72, 0.98);
+}
+
+.language-modal__option--current {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+}
+
+.language-modal__flag {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.language-modal__flag--fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #cbd5e1;
+  background: rgba(15, 17, 23, 0.8);
+}
+
+.language-modal__name {
+  min-width: 0;
 }
 
 .player-menu__confirm-btn {

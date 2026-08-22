@@ -1,3 +1,12 @@
+import {
+  getSharedTranslator,
+  LOCALE_FLAG_CODE,
+  t,
+  type SupportedLocale,
+} from "@nspace/i18n";
+import { createFlagImg } from "./flags.js";
+import { createLanguageModal } from "./languageModal.js";
+
 export type PlayerMenuItemId =
   | "profile"
   | "wardrobe"
@@ -11,7 +20,8 @@ export type PlayerMenuItemId =
   | "return-to-hub"
   | "logout"
   | "get-wallet"
-  | "leave";
+  | "leave"
+  | "language";
 
 export type PlayerMenuConfirmKind = "logout" | "leave";
 
@@ -20,7 +30,7 @@ const PLAYER_MENU_LONG_PRESS_MOVE_PX = 14;
 
 type ItemDef = {
   id: PlayerMenuItemId;
-  label: string;
+  labelKey: string;
   guestOnly?: boolean;
   fullOnly?: boolean;
   destructive?: boolean;
@@ -35,25 +45,26 @@ type ItemDef = {
 };
 
 const FULL_PLAYER_ITEMS: ItemDef[] = [
-  { id: "finish-tutorial", label: "Finish tutorial", finishTutorial: true },
-  { id: "reset-tutorial", label: "Reset tutorial", resetTutorial: true },
-  { id: "return-from-shaper", label: "Leave the Shaper", shaperOnly: true },
-  { id: "wardrobe", label: "Wardrobe" },
-  { id: "shop", label: "Shop" },
-  { id: "achievements", label: "Achievements" },
-  { id: "rooms", label: "Rooms" },
-  { id: "feedback", label: "Feedback" },
-  { id: "return-to-hub", label: "Return to Hub", returnToHub: true },
-  { id: "logout", label: "Logout", destructive: true },
+  { id: "finish-tutorial", labelKey: "playerMenu.finishTutorial", finishTutorial: true },
+  { id: "reset-tutorial", labelKey: "playerMenu.resetTutorial", resetTutorial: true },
+  { id: "return-from-shaper", labelKey: "playerMenu.leaveShaper", shaperOnly: true },
+  { id: "wardrobe", labelKey: "playerMenu.wardrobe" },
+  { id: "shop", labelKey: "playerMenu.shop" },
+  { id: "achievements", labelKey: "playerMenu.achievements" },
+  { id: "rooms", labelKey: "playerMenu.rooms" },
+  { id: "feedback", labelKey: "playerMenu.feedback" },
+  { id: "language", labelKey: "playerMenu.language" },
+  { id: "return-to-hub", labelKey: "playerMenu.returnToHub", returnToHub: true },
+  { id: "logout", labelKey: "playerMenu.logout", destructive: true },
 ];
 
 const GUEST_ITEMS: ItemDef[] = [
-  { id: "profile", label: "Profile" },
-  { id: "get-wallet", label: "Get a Wallet", guestOnly: true },
-  { id: "return-to-hub", label: "Return to Hub", returnToHub: true },
-  { id: "leave", label: "Leave", destructive: true, guestOnly: true },
+  { id: "profile", labelKey: "playerMenu.profile" },
+  { id: "get-wallet", labelKey: "playerMenu.getWallet", guestOnly: true },
+  { id: "language", labelKey: "playerMenu.language" },
+  { id: "return-to-hub", labelKey: "playerMenu.returnToHub", returnToHub: true },
+  { id: "leave", labelKey: "playerMenu.leave", destructive: true, guestOnly: true },
 ];
-
 export type PlayerMenu = {
   root: HTMLElement;
   trigger: HTMLButtonElement;
@@ -78,6 +89,8 @@ export type PlayerMenu = {
   onConfirm: (fn: (kind: PlayerMenuConfirmKind) => void) => void;
   /** Long-press on the identicon/name pill; used to open the avatar-centred Action Wheel. */
   onLongPress: (fn: () => void) => void;
+  /** Drop an in-flight long-press gesture (e.g. before opening the Action Wheel). */
+  abortLongPressGesture: () => void;
 };
 
 export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
@@ -108,13 +121,13 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
   confirmCancel.type = "button";
   confirmCancel.className =
     "player-menu__confirm-btn player-menu__confirm-btn--cancel";
-  confirmCancel.textContent = "Cancel";
+  confirmCancel.textContent = t("common.cancel");
 
   const confirmOk = document.createElement("button");
   confirmOk.type = "button";
   confirmOk.className =
     "player-menu__confirm-btn player-menu__confirm-btn--confirm";
-  confirmOk.textContent = "Return";
+  confirmOk.textContent = t("playerMenu.confirm.return");
 
   confirmActions.append(confirmCancel, confirmOk);
   confirm.append(confirmMsg, confirmActions);
@@ -137,7 +150,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
   trigger.setAttribute("aria-haspopup", "menu");
   trigger.setAttribute("aria-expanded", "false");
   trigger.setAttribute("aria-controls", "playerMenuPanel");
-  trigger.setAttribute("aria-label", "Player menu");
+  trigger.setAttribute("aria-label", t("playerMenu.ariaLabel"));
 
   const triggerIdent = document.createElement("img");
   triggerIdent.className = "player-menu__identicon";
@@ -151,6 +164,8 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
   triggerRow.append(namePill, trigger);
   root.append(panel, triggerRow);
   parent.appendChild(root);
+
+  const languageModal = createLanguageModal(parent);
 
   let guestMode = false;
   let returnToHubVisible = true;
@@ -187,6 +202,29 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     });
   }
 
+  function applyChromeCopy(): void {
+    trigger.setAttribute("aria-label", t("playerMenu.ariaLabel"));
+    confirmCancel.textContent = t("common.cancel");
+  }
+
+  function appendLanguageFlag(btn: HTMLButtonElement): void {
+    const locale = getSharedTranslator().getLocale() as SupportedLocale;
+    const flag =
+      createFlagImg(LOCALE_FLAG_CODE[locale], {
+        className: "player-menu__item-flag",
+        size: "16px",
+        title: t("playerMenu.language"),
+      }) ?? document.createElement("span");
+    if (!(flag instanceof HTMLImageElement)) {
+      flag.className = "player-menu__item-flag player-menu__item-flag--fallback";
+      flag.textContent = LOCALE_FLAG_CODE[locale];
+    }
+    const label = document.createElement("span");
+    label.className = "player-menu__item-label";
+    label.textContent = t("playerMenu.language");
+    btn.replaceChildren(flag, label);
+  }
+
   function renderList(): void {
     list.replaceChildren();
     for (const item of visibleItems()) {
@@ -195,19 +233,29 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
       btn.className = "player-menu__item";
       btn.setAttribute("role", "menuitem");
       btn.dataset.playerMenuItem = item.id;
-      btn.textContent = item.label;
+      if (item.id === "language") {
+        btn.classList.add("player-menu__item--with-flag");
+        appendLanguageFlag(btn);
+      } else {
+        btn.textContent = t(item.labelKey);
+      }
       if (item.destructive) {
         btn.classList.add("player-menu__item--destructive");
       }
       if (item.id === "feedback" && feedbackUnread) {
         btn.classList.add("player-menu__item--unread");
-        btn.setAttribute("aria-label", "Feedback - new reply");
-        btn.title = "Feedback - new reply";
+        btn.setAttribute("aria-label", t("playerMenu.feedbackUnread"));
+        btn.title = t("playerMenu.feedbackUnread");
       }
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         if (item.id === "logout" || item.id === "leave") {
           showConfirm(item.id === "leave" ? "leave" : "logout");
+          return;
+        }
+        if (item.id === "language") {
+          closeMenu();
+          languageModal.open();
           return;
         }
         closeMenu();
@@ -221,9 +269,12 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     confirmKind = kind;
     confirmMsg.textContent =
       kind === "leave"
-        ? "Leave this guest session?"
-        : "Return to the lobby?";
-    confirmOk.textContent = kind === "leave" ? "Leave" : "Return";
+        ? t("playerMenu.confirm.leave")
+        : t("playerMenu.confirm.logout");
+    confirmOk.textContent =
+      kind === "leave"
+        ? t("playerMenu.confirm.leaveBtn")
+        : t("playerMenu.confirm.return");
     list.hidden = true;
     confirm.hidden = false;
   }
@@ -240,7 +291,9 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     namePill.setAttribute("aria-expanded", next ? "true" : "false");
     panel.hidden = !next;
     root.classList.toggle("player-menu--open", next);
-    if (!next) hideConfirm();
+    if (!next) {
+      hideConfirm();
+    }
     if (next) {
       bindOutside();
     } else {
@@ -296,6 +349,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
       return;
     }
     hideConfirm();
+    applyChromeCopy();
     renderList();
     setOpen(true);
   }
@@ -439,13 +493,21 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     if (kind) confirmHandler(kind);
   });
 
+  applyChromeCopy();
   renderList();
+
+  getSharedTranslator().subscribe(() => {
+    applyChromeCopy();
+    if (open && !confirmKind) renderList();
+    if (confirmKind) showConfirm(confirmKind);
+  });
 
   return {
     root,
     trigger,
     open: () => {
       hideConfirm();
+      applyChromeCopy();
       renderList();
       setOpen(true);
     },
@@ -521,5 +583,5 @@ export function playerMenuItemLabelsForMode(
       if (item.resetTutorial && !resetTutorialVisible) return false;
       return true;
     })
-    .map((item) => item.label);
+    .map((item) => t(item.labelKey));
 }

@@ -885,6 +885,23 @@ by the Payout Service. A delivery loop drains it with retries so no payout is lo
 service outage or a game-server restart. Priority intents are delivered before normal ones.
 _Avoid_: queue (the durable queue lives in the Payout Service), buffer, spool.
 
+## Localization
+
+**Locale Preference**:
+The player's explicit UI language choice among the Supported Locales. Distinct from browser
+language hints and from Country (flag / World Cup). When unset, the product may still pick a
+locale from browser hints; once set, Locale Preference wins.
+_Avoid_: language setting (too vague), country, locale cookie (storage detail).
+
+**Supported Locale**:
+A BCP 47 language tag the product ships catalogs for. v1 intent: `en`, `tr`, `pt-BR`.
+_Avoid_: language pack, translation file (implementation).
+
+**Message Catalog**:
+The keyed set of product-owned UI strings for one Supported Locale. English is the source of
+truth; other locales may omit keys and fall back to English. Does not hold user-authored text.
+_Avoid_: translations dump, i18n file (implementation), copy deck.
+
 ## Analytics
 
 **Event Log**:

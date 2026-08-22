@@ -25,7 +25,7 @@ You are working on **Nimiq Space**, an open multiplayer isometric social space f
 | [docs/live-service-implementation.md](docs/live-service-implementation.md) | Split SPA + API deploy, Docker, persistence, replay **as implemented today** |
 | [docs/deploy-github-docker.md](docs/deploy-github-docker.md) | GitHub Actions → VPS Docker |
 | [docs/docker-deployment.md](docs/docker-deployment.md) | Compose-focused deployment |
-| [docs/localization.md](docs/localization.md) | i18n status (not yet implemented end-to-end) |
+| [docs/localization.md](docs/localization.md) | i18n status (`@nspace/i18n`; Player Menu Language; broader UI migration ongoing) |
 | [docs/nim-payout-tracing.md](docs/nim-payout-tracing.md) | On-chain payout trace logging (`NIM_PAYOUT_TX_TRACE`) |
 | [docs/brainstorm/README.md](docs/brainstorm/README.md) | **Non-normative** ideas, future phases, archived plans — do not treat as current behavior |
 | [docs/toremove/README.md](docs/toremove/README.md) | **Local-only** folder (gitignored): incident log template; not shipped with the repo |

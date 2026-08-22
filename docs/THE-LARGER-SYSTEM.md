@@ -36,6 +36,8 @@ _Add sections here as the system matures. Keep each bullet concrete enough that 
 
 - **New routed surfaces ship with split-host routing** — Production serves the **client SPA** from a static host (Vercel) and the **game/API server** separately, and the SPA host has **no catch-all fallback**. So any **new server-rendered HTML route** (e.g. another `/admin/*` page) or **new clean-path client route** must add its rewrite to **both** [`vercel.json`](../vercel.json) and [`client/vercel.json`](../client/vercel.json) **in the same change** — otherwise it works on the all-in-one server but **404s on Vercel**. JSON under `/api/*` is already covered by the `/api/:path*` rewrite; static build artifacts referenced with their extension (e.g. `roomPreview.html`) are served directly and need none. See **Split SPA hosting: route parity for new pages** under *Recorded decisions*.
 
+- **Player-visible product strings use Message Catalog keys** — New player-facing **product** chrome (labels, buttons, system UI) must go through Message Catalog keys in [`packages/i18n`](../packages/i18n/) (`@nspace/i18n`) in the **same change** as the UI. **`en` is required** (complete for keys the code references); **`tr` / `pt-BR` may lag** and fall back to English. Exempt: **`/admin/*`** and admin-only overlays; **user-authored** content (chat, usernames, signboards, voxels, player campaign fields); **third-party** chrome (Nimiq Hub, Pay SDK); legal **page bodies** (English in v1 — chrome may still use catalogs). See [localization.md](localization.md) and `docs/reasons/reason_746291.md`.
+
 ---
 
 ## Recorded decisions & forward constraints

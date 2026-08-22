@@ -2,6 +2,10 @@ import { fetchMyAchievements, type AchievementProgress, type AchievementUnlockMe
 import { hydratePresetSwatches, presetSwatchMarkup } from "../cosmetics/presetSwatch.js";
 import type { OverlayBackStack } from "../ui/overlayBackStack.js";
 import {
+  localizedAchievementDescription,
+  localizedAchievementTitle,
+} from "./localized.js";
+import {
   SUMMARY_VIEW_ID,
   achievementsForCategory,
   orderedCategories,
@@ -16,7 +20,7 @@ import {
   syncDerivedAchievementProgress,
   navRows,
   type AchievementNavRow,
-  TEMPORARILY_UNAVAILABLE_LABEL,
+  temporarilyUnavailableLabel,
 } from "./panelData.js";
 
 function esc(s: string): string {
@@ -75,7 +79,7 @@ function renderAchievementRow(
   const status = a.completed
     ? `<span class="achievement-panel__status achievement-panel__status--done">Complete</span>`
     : a.availability === "temporarily_unavailable"
-      ? `<span class="achievement-panel__status achievement-panel__status--unavailable">${TEMPORARILY_UNAVAILABLE_LABEL}</span>`
+      ? `<span class="achievement-panel__status achievement-panel__status--unavailable">${temporarilyUnavailableLabel()}</span>`
       : `<span class="achievement-panel__status">${a.progress} / ${a.threshold}</span>`;
   const date =
     opts?.showDate && a.completedAt
@@ -95,10 +99,10 @@ function renderAchievementRow(
     ${renderIconHtml(a)}
     <div class="achievement-panel__row-body">
       <div class="achievement-panel__row-head">
-        <span class="achievement-panel__title">${esc(a.title)}</span>
+        <span class="achievement-panel__title">${esc(localizedAchievementTitle(a.achievementId, a.title))}</span>
         ${date}
       </div>
-      <p class="achievement-panel__desc">${esc(a.description)}</p>
+      <p class="achievement-panel__desc">${esc(localizedAchievementDescription(a.achievementId, a.description))}</p>
       ${reward}
       <div class="achievement-panel__progress" aria-hidden="true"><div class="achievement-panel__progress-fill" style="width:${pct}%"></div></div>
       ${status}

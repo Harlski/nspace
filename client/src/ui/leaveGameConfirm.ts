@@ -1,3 +1,5 @@
+import { t } from "@nspace/i18n";
+
 /** Nimiq Pay: confirm before hardware back exits the mini-app. */
 export function showLeaveGameConfirm(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -7,12 +9,12 @@ export function showLeaveGameConfirm(): Promise<boolean> {
     overlay.innerHTML = `
       <div class="external-visit-confirm__backdrop" aria-hidden="true"></div>
       <div class="external-visit-confirm__dialog" role="dialog" aria-modal="true" aria-labelledby="leave-game-title">
-        <h2 id="leave-game-title" class="external-visit-confirm__title">Leave Nimiq Space?</h2>
+        <h2 id="leave-game-title" class="external-visit-confirm__title">${t("confirm.leaveGame")}</h2>
         <p class="external-visit-confirm__lead">You'll return to Nimiq Pay. You can open Nimiq Space again anytime from Discover.</p>
         <p class="external-visit-confirm__disclaimer"><em>Your session will disconnect from the current room.</em></p>
         <div class="external-visit-confirm__actions">
           <button type="button" class="external-visit-confirm__btn external-visit-confirm__btn--cancel">Stay</button>
-          <button type="button" class="external-visit-confirm__btn external-visit-confirm__btn--confirm">Leave</button>
+          <button type="button" class="external-visit-confirm__btn external-visit-confirm__btn--confirm">${t("playerMenu.leave")}</button>
         </div>
       </div>
     `;

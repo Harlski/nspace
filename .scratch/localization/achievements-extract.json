@@ -1,0 +1,637 @@
+[
+  {
+    "id": "enter-commons",
+    "title": "Welcome to the Commons",
+    "description": "Enter the Commons for the first time."
+  },
+  {
+    "id": "open-profile",
+    "title": "Know Thyself",
+    "description": "Open your player profile."
+  },
+  {
+    "id": "open-wardrobe",
+    "title": "Dress the Part",
+    "description": "Open your Wardrobe."
+  },
+  {
+    "id": "equip-cosmetic",
+    "title": "Suited Up",
+    "description": "Equip a cosmetic in your loadout."
+  },
+  {
+    "id": "first-block",
+    "title": "First Block",
+    "description": "Place your first block."
+  },
+  {
+    "id": "first-mine",
+    "title": "First Claim",
+    "description": "Mine your first claimable block."
+  },
+  {
+    "id": "first-emote",
+    "title": "Express Yourself",
+    "description": "Send an emote from the Action Wheel."
+  },
+  {
+    "id": "visit-room",
+    "title": "Explorer",
+    "description": "Visit another room."
+  },
+  {
+    "id": "create-room",
+    "title": "Room Maker",
+    "description": "Create your own room."
+  },
+  {
+    "id": "first-nim",
+    "title": "First NIM",
+    "description": "Complete the Nimiq Pay first-contact tutorial."
+  },
+  {
+    "id": "telescope",
+    "title": "Telescope",
+    "description": "Complete every Getting started achievement to unlock the Telescope."
+  },
+  {
+    "id": "commons-first-block",
+    "title": "Commons Contributor",
+    "description": "Place your first block in the Commons."
+  },
+  {
+    "id": "commons-place-10",
+    "title": "Commons Builder I",
+    "description": "Place 10 blocks in the Commons."
+  },
+  {
+    "id": "commons-place-100",
+    "title": "Commons Builder II",
+    "description": "Place 100 blocks in the Commons."
+  },
+  {
+    "id": "commons-place-250",
+    "title": "Commons Builder III",
+    "description": "Place 250 blocks in the Commons."
+  },
+  {
+    "id": "commons-place-500",
+    "title": "Commons Builder IV",
+    "description": "Place 500 blocks in the Commons."
+  },
+  {
+    "id": "mine-10",
+    "title": "Miner I",
+    "description": "Mine 10 claimable blocks."
+  },
+  {
+    "id": "mine-100",
+    "title": "Miner II",
+    "description": "Mine 100 claimable blocks."
+  },
+  {
+    "id": "mine-250",
+    "title": "Miner III",
+    "description": "Mine 250 claimable blocks."
+  },
+  {
+    "id": "mine-500",
+    "title": "Miner IV",
+    "description": "Mine 500 claimable blocks."
+  },
+  {
+    "id": "mining-impatient-miner",
+    "title": "Impatient Miner",
+    "description": "Direct-click an adjacent claimable block to mine it."
+  },
+  {
+    "id": "mining-dry-spell",
+    "title": "Dry Spell",
+    "description": "Try to mine a block on cooldown and see “There's no NIM left here :(” 10 times."
+  },
+  {
+    "id": "build-sunny-side-up",
+    "title": "Sunny Side Up",
+    "description": "Place 7119 blocks."
+  },
+  {
+    "id": "pixel-we-made-this",
+    "title": "We made this",
+    "description": "Paint your first pixel on the Pixel room board."
+  },
+  {
+    "id": "pixel-64bit",
+    "title": "64bit",
+    "description": "Paint 64 pixels on the Pixel room board."
+  },
+  {
+    "id": "pixel-500",
+    "title": "Pixel Painter",
+    "description": "Paint 500 pixels on the Pixel room board."
+  },
+  {
+    "id": "pixel-i-made-this",
+    "title": "I made this",
+    "description": "Paint 1000 pixels on the Pixel room board."
+  },
+  {
+    "id": "pixel-corner-to-corner",
+    "title": "Corner to Corner",
+    "description": "Paint tiles in all four corners of the Pixel room board."
+  },
+  {
+    "id": "pixel-collaborator",
+    "title": "Collaborator",
+    "description": "Paint a tile next to another player's pixel while they are in the Pixel room."
+  },
+  {
+    "id": "pixel-monochrome-discipline",
+    "title": "Monochrome Discipline",
+    "description": "Paint 64 pixels in a row using the same hue without changing color mid-run."
+  },
+  {
+    "id": "match-first-win",
+    "title": "First Victory",
+    "description": "Win your first World Cup Match."
+  },
+  {
+    "id": "match-first-loss",
+    "title": "Good Sport",
+    "description": "Lose your first World Cup Match."
+  },
+  {
+    "id": "match-first-draw",
+    "title": "Hard Fought",
+    "description": "Draw your first World Cup Match."
+  },
+  {
+    "id": "match-challenge-raised",
+    "title": "Throw Down",
+    "description": "Raise your first Challenge."
+  },
+  {
+    "id": "match-challenge-accepted",
+    "title": "Game On",
+    "description": "Accept someone else's Challenge."
+  },
+  {
+    "id": "match-golden-goal",
+    "title": "Golden Moment",
+    "description": "Win a Match via Golden Goal."
+  },
+  {
+    "id": "match-walkover",
+    "title": "Walkover",
+    "description": "Win because your opponent left the Match."
+  },
+  {
+    "id": "match-goals-headshot",
+    "title": "Headshot",
+    "description": "Score one goal in a single Match."
+  },
+  {
+    "id": "match-goals-double",
+    "title": "Double Kill",
+    "description": "Score two goals in a single Match."
+  },
+  {
+    "id": "match-goals-hattrick",
+    "title": "Three of a Kind",
+    "description": "Score three goals in a single Match."
+  },
+  {
+    "id": "match-goals-five",
+    "title": "Why Not Make It Six?",
+    "description": "Score five goals in a single Match."
+  },
+  {
+    "id": "match-goals-ten",
+    "title": "Probably Cheating or Lag",
+    "description": "Score ten or more goals in a single Match."
+  },
+  {
+    "id": "match-wins-1",
+    "title": "Match Winner",
+    "description": "Win 1 1v1 match."
+  },
+  {
+    "id": "match-wins-10",
+    "title": "Match Winner X",
+    "description": "Win 10 1v1 matches."
+  },
+  {
+    "id": "match-wins-50",
+    "title": "Match Winner L",
+    "description": "Win 50 1v1 matches."
+  },
+  {
+    "id": "match-wins-100",
+    "title": "Match Winner C",
+    "description": "Win 100 1v1 matches."
+  },
+  {
+    "id": "match-wins-1000",
+    "title": "Match Winner M",
+    "description": "Win 1000 1v1 matches."
+  },
+  {
+    "id": "match-played-10",
+    "title": "Regular",
+    "description": "Complete 10 1v1 matches."
+  },
+  {
+    "id": "match-streak-3",
+    "title": "On a Roll",
+    "description": "Win 3 1v1 matches in a row."
+  },
+  {
+    "id": "match-streak-5",
+    "title": "Unstoppaball",
+    "description": "Win 5 1v1 matches in a row."
+  },
+  {
+    "id": "match-streak-10",
+    "title": "Probably Cheating or Lag",
+    "description": "Win 10 1v1 matches in a row."
+  },
+  {
+    "id": "match-clean-sheet",
+    "title": "Clean Sheet",
+    "description": "Win a World Cup Match without conceding a goal."
+  },
+  {
+    "id": "match-comeback-kid",
+    "title": "Comeback Kid",
+    "description": "Win a Match after trailing by at least two goals."
+  },
+  {
+    "id": "match-golden-patience",
+    "title": "Golden Patience",
+    "description": "Win via Golden Goal after regulation ended tied - not in the first golden minute."
+  },
+  {
+    "id": "match-handshake-rival",
+    "title": "Handshake Rival",
+    "description": "Accept a Challenge from someone you already challenged earlier the same UTC day."
+  },
+  {
+    "id": "match-full-time",
+    "title": "Full Time",
+    "description": "Complete a Match through regulation and golden time without a walkover."
+  },
+  {
+    "id": "match-own-goal-hero",
+    "title": "Own Goal Hero",
+    "description": "Score an own goal in a Match you still win."
+  },
+  {
+    "id": "field-first-goal",
+    "title": "Field Goal",
+    "description": "Score your first credited goal on the Free Play Field."
+  },
+  {
+    "id": "field-goals-10",
+    "title": "Field Striker I",
+    "description": "Score 10 credited goals on the Free Play Field."
+  },
+  {
+    "id": "field-goals-50",
+    "title": "Field Striker II",
+    "description": "Score 50 credited goals on the Free Play Field."
+  },
+  {
+    "id": "field-goals-100",
+    "title": "Field Striker III",
+    "description": "Score 100 credited goals on the Free Play Field."
+  },
+  {
+    "id": "field-contested",
+    "title": "Crowd Pleaser",
+    "description": "Score your first Contested goal on the Free Play Field."
+  },
+  {
+    "id": "field-solo",
+    "title": "Practice Makes Perfect",
+    "description": "Score your first Solo Goal on the Free Play Field."
+  },
+  {
+    "id": "field-country",
+    "title": "Fly the Flag",
+    "description": "Pick a country in the Country Picker."
+  },
+  {
+    "id": "field-flag-emote",
+    "title": "Represent",
+    "description": "Send your Flag Emote."
+  },
+  {
+    "id": "field-rush-hour",
+    "title": "Rush Hour",
+    "description": "Score a Contested Free Play Field goal with at least four players on the pitch."
+  },
+  {
+    "id": "field-daily-streak",
+    "title": "Daily Streak",
+    "description": "Score on three consecutive UTC calendar days on the Free Play Field."
+  },
+  {
+    "id": "field-underdog-country",
+    "title": "Underdog Country",
+    "description": "Score for a country outside today's top three on the leaderboard."
+  },
+  {
+    "id": "mining-paid-in-full",
+    "title": "98% is good enough",
+    "description": "Receive at least 0.98 NIM from a Free Play Field goal payout."
+  },
+  {
+    "id": "social-feedback-first",
+    "title": "Voice Heard",
+    "description": "Submit your first feedback ticket."
+  },
+  {
+    "id": "social-login-7",
+    "title": "Week Warrior",
+    "description": "Log in on 7 consecutive UTC calendar days."
+  },
+  {
+    "id": "social-login-30",
+    "title": "Monthly Devotee",
+    "description": "Log in on 30 consecutive UTC calendar days."
+  },
+  {
+    "id": "social-login-top",
+    "title": "Time of Kaan",
+    "description": "Log in on 54 consecutive UTC calendar days."
+  },
+  {
+    "id": "social-login-100",
+    "title": "You Kaan Do It",
+    "description": "Log in on 100 consecutive UTC calendar days."
+  },
+  {
+    "id": "social-chatter-first",
+    "title": "Hello World",
+    "description": "Send your first in-game chat message."
+  },
+  {
+    "id": "social-between-us",
+    "title": "Between Us",
+    "description": "Send your first Whisper."
+  },
+  {
+    "id": "social-take-a-look",
+    "title": "Take a Look",
+    "description": "View another player's profile from the Other Player Menu."
+  },
+  {
+    "id": "social-chatter-100",
+    "title": "Chatterbox I",
+    "description": "Send 100 in-game chat messages."
+  },
+  {
+    "id": "social-chatter-500",
+    "title": "Chatterbox II",
+    "description": "Send 500 in-game chat messages."
+  },
+  {
+    "id": "social-chatter-1000",
+    "title": "Chatterbox III",
+    "description": "Send 1000 in-game chat messages."
+  },
+  {
+    "id": "mining-billboard-audience",
+    "title": "Billboard Audience",
+    "description": "Spend 60 seconds near a live campaign billboard while at least two players are in the room."
+  },
+  {
+    "id": "exploration-marathon-1",
+    "title": "Marathon I",
+    "description": "Walk 1,000 distinct tiles in grid rooms."
+  },
+  {
+    "id": "exploration-marathon-2",
+    "title": "Marathon II",
+    "description": "Walk 10,000 distinct tiles in grid rooms."
+  },
+  {
+    "id": "exploration-marathon-3",
+    "title": "Marathon III",
+    "description": "Walk 100,000 distinct tiles in grid rooms."
+  },
+  {
+    "id": "exploration-room-tourist-1",
+    "title": "Room Tourist I",
+    "description": "Enter 5 unique rooms."
+  },
+  {
+    "id": "exploration-room-tourist-2",
+    "title": "Room Tourist II",
+    "description": "Enter 15 unique rooms."
+  },
+  {
+    "id": "exploration-room-tourist-3",
+    "title": "Room Tourist III",
+    "description": "Enter 30 unique rooms."
+  },
+  {
+    "id": "exploration-grand-tour",
+    "title": "Grand Tour",
+    "description": "Visit the Hub, Commons, Pixel, Free Play Field, and The Shaper in one UTC day."
+  },
+  {
+    "id": "exploration-door-crasher",
+    "title": "Door Crasher",
+    "description": "Use 10 different doors and teleporter portals."
+  },
+  {
+    "id": "exploration-teleporter-tourist",
+    "title": "Teleporter Tourist",
+    "description": "Ride a teleporter to 3 different destination rooms."
+  },
+  {
+    "id": "exploration-outfield-explorer",
+    "title": "Outfield Explorer",
+    "description": "Stand on 50 distinct outfield margin tiles on the Free Play Field."
+  },
+  {
+    "id": "exploration-knock-knock",
+    "title": "Knock Knock",
+    "description": "Visit a public player-owned room that is not yours."
+  },
+  {
+    "id": "exploration-toll-crossed",
+    "title": "Toll Crossed",
+    "description": "Unlock an Unlock Pad outside the Tutorial Room."
+  },
+  {
+    "id": "worldcraft-palette-painter-1",
+    "title": "Palette Painter I",
+    "description": "Recolor 50 distinct floor tiles outside the Pixel room."
+  },
+  {
+    "id": "worldcraft-palette-painter-2",
+    "title": "Palette Painter II",
+    "description": "Recolor 200 distinct floor tiles outside the Pixel room."
+  },
+  {
+    "id": "worldcraft-rainbow-floor",
+    "title": "Rainbow Floor",
+    "description": "Use 12 distinct hues on floor tiles in one editable room."
+  },
+  {
+    "id": "worldcraft-architect-toolkit",
+    "title": "Architect's Toolkit",
+    "description": "Place at least one cube, hex, pyramid, sphere, and ramp block."
+  },
+  {
+    "id": "worldcraft-prefab-author",
+    "title": "Prefab Author",
+    "description": "Publish your first public object prefab."
+  },
+  {
+    "id": "worldcraft-prefab-curator",
+    "title": "Prefab Curator",
+    "description": "Have 5 public prefabs each placed at least once by another player."
+  },
+  {
+    "id": "worldcraft-signpost-scribe",
+    "title": "Signpost Scribe",
+    "description": "Place a signpost with a message of at least 40 characters."
+  },
+  {
+    "id": "worldcraft-signpost-reader",
+    "title": "Signpost Reader",
+    "description": "Open 10 distinct signposts authored by other players."
+  },
+  {
+    "id": "worldcraft-gatekeeper",
+    "title": "Gatekeeper",
+    "description": "Open a gate you do not own in the Hub."
+  },
+  {
+    "id": "worldcraft-trust-circle",
+    "title": "Trust Circle",
+    "description": "Walk through someone else's gate while you are on their access list."
+  },
+  {
+    "id": "worldcraft-room-maker-deluxe",
+    "title": "Room Maker Deluxe",
+    "description": "Create a room and furnish it with 25 blocks, a join spawn, and 5 recolored floor tiles."
+  },
+  {
+    "id": "worldcraft-teleporter-engineer",
+    "title": "Teleporter Engineer",
+    "description": "Place a teleporter and set its destination so it is ready to use."
+  },
+  {
+    "id": "worldcraft-room-furnisher",
+    "title": "Room Furnisher",
+    "description": "Place 150 blocks in a room you own using at least 10 different colors."
+  },
+  {
+    "id": "worldcraft-open-house",
+    "title": "Open House",
+    "description": "Make a room you own public for the first time."
+  },
+  {
+    "id": "worldcraft-room-to-room",
+    "title": "Room to Room",
+    "description": "Set a Teleporter in a room you own to a different room you also own."
+  },
+  {
+    "id": "worldcraft-two-keys",
+    "title": "Two Keys",
+    "description": "Own two persisted rooms."
+  },
+  {
+    "id": "worldcraft-extra-hands",
+    "title": "Extra Hands",
+    "description": "Add another wallet as a builder on a room you own."
+  },
+  {
+    "id": "worldcraft-company",
+    "title": "Company",
+    "description": "Have a unique visitor enter a public room you own."
+  },
+  {
+    "id": "worldcraft-housewarming",
+    "title": "Housewarming",
+    "description": "Have three unique visitors enter a public room you own."
+  },
+  {
+    "id": "match-beat-the-creator",
+    "title": "Beat the Creator",
+    "description": "Win a World Cup Match against the creator."
+  },
+  {
+    "id": "social-they-heard-you",
+    "title": "They Heard You",
+    "description": "Read an admin reply on one of your feedback tickets."
+  },
+  {
+    "id": "play-space-private-room",
+    "title": "Private Room",
+    "description": "Open your Play Space."
+  },
+  {
+    "id": "play-space-come-on-in",
+    "title": "Come On In",
+    "description": "Have a Guest claim your Direct Invite and land in your Play Space."
+  },
+  {
+    "id": "cosmetics-window-shopper",
+    "title": "Window Shopper",
+    "description": "Open the Shop."
+  },
+  {
+    "id": "cosmetics-enter-the-shaper",
+    "title": "Enter The Shaper",
+    "description": "Visit The Shaper."
+  },
+  {
+    "id": "cosmetics-try-before-you-buy",
+    "title": "Try Before You Buy",
+    "description": "Try a bound Sale Display."
+  },
+  {
+    "id": "cosmetics-paid-in-style",
+    "title": "Paid in Style",
+    "description": "Complete a Cosmetic Unlock purchase."
+  },
+  {
+    "id": "cosmetics-framed",
+    "title": "Framed",
+    "description": "Equip a nameplate on your Loadout."
+  },
+  {
+    "id": "cosmetics-caption",
+    "title": "Caption",
+    "description": "Equip a chat bubble on your Loadout."
+  },
+  {
+    "id": "meta-on-the-board",
+    "title": "On the Board",
+    "description": "Reach Player Level 5."
+  },
+  {
+    "id": "meta-double-digits",
+    "title": "Double Digits",
+    "description": "Reach Player Level 10."
+  },
+  {
+    "id": "meta-established",
+    "title": "Established",
+    "description": "Reach Player Level 15."
+  },
+  {
+    "id": "meta-point-hunter-1",
+    "title": "Point Hunter I",
+    "description": "Earn 500 achievement points."
+  },
+  {
+    "id": "meta-point-hunter-2",
+    "title": "Point Hunter II",
+    "description": "Earn 1000 achievement points."
+  }
+]

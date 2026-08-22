@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@nspace/i18n": "*",
     "@nimiq/hub-api": "^1.13.0",
     "@nimiq/identicons": "^1.6.2",
     "@nimiq/mini-app-sdk": "^0.0.2",
