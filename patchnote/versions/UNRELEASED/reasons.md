@@ -32,4 +32,4 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Deploy / ops
 
-- _(none in this change set)_
+- Vercel / Docker: build `@nspace/i18n` before client/server; copy `packages/i18n` into the game image ([docs/reasons/reason_123497.md](../../../docs/reasons/reason_123497.md)).

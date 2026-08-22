@@ -32,4 +32,4 @@ Ship user-facing localization infra (`@nspace/i18n`, Player Menu Language modal 
 
 ### Deploy / ops
 
-- _(none in this change set)_
+- Vercel `buildCommand` builds `@nspace/i18n` before client; client/server `prebuild` scripts do the same; Dockerfile copies `packages/i18n` into the game image (see [docs/reasons/reason_123497.md](../../../docs/reasons/reason_123497.md)).

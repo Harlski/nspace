@@ -1,7 +1,7 @@
 {
   "framework": null,
   "installCommand": "npm ci",
-  "buildCommand": "npm run build -w client",
+  "buildCommand": "npm run build -w @nspace/i18n && npm run build -w client",
   "outputDirectory": "client/dist",
   "rewrites": [
     {

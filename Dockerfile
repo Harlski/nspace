@@ -5,6 +5,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY client/package.json client/
 COPY server/package.json server/
+COPY packages/i18n/package.json packages/i18n/
 COPY payment-intent-service/package.json payment-intent-service/
 COPY payout-service/package.json payout-service/
 COPY analytics-service/package.json analytics-service/
@@ -14,6 +15,7 @@ COPY patches/ patches/
 
 RUN npm ci
 
+COPY packages/i18n/ packages/i18n/
 COPY client/ client/
 COPY server/ server/
 
@@ -33,7 +35,9 @@ RUN apt-get update \
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/client/package.json ./client/
 COPY --from=build /app/server/package.json ./server/
+COPY --from=build /app/packages/i18n/package.json ./packages/i18n/
 COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/packages/i18n/dist ./packages/i18n/dist
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/client/dist ./client/dist
 

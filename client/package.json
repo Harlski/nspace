@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "npm run build -w @nspace/i18n",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
