@@ -17,6 +17,10 @@ export function matchSupportedLocale(tag: string): SupportedLocale | null {
   if (lower === "en" || lower.startsWith("en-")) return "en";
   if (lower === "tr" || lower.startsWith("tr-")) return "tr";
   if (lower === "pt" || lower.startsWith("pt-")) return "pt-BR";
+  if (lower === "vi" || lower.startsWith("vi-")) return "vi";
+  if (lower === "es" || lower.startsWith("es-")) return "es";
+  if (lower === "fil" || lower.startsWith("fil-")) return "fil";
+  if (lower === "tl" || lower.startsWith("tl-")) return "fil";
   return null;
 }
 

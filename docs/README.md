@@ -56,7 +56,7 @@ Start with **[getting-started.md](getting-started.md)** to install, run, and exp
 
 | Document | Contents |
 |----------|----------|
-| [localization.md](localization.md) | **Current:** `@nspace/i18n` + `@formatjs/intl`; Supported Locales `en` / `tr` / `pt-BR`; Player Menu Language; broader UI migration ongoing |
+| [localization.md](localization.md) | **Current:** `@nspace/i18n` + `@formatjs/intl`; Supported Locales `en` / `tr` / `pt-BR` / `vi` / `es` / `fil`; Player Menu Language; broader UI migration ongoing |
 | [localization-implementation-plan.md](localization-implementation-plan.md) | Redirect stub → `localization.md` + [brainstorm/localization-implementation-plan.md](brainstorm/localization-implementation-plan.md) |
 
 ## Contributing

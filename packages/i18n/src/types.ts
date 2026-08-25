@@ -1,4 +1,4 @@
-export const SUPPORTED_LOCALES = ["en", "tr", "pt-BR"] as const;
+export const SUPPORTED_LOCALES = ["en", "tr", "pt-BR", "vi", "es", "fil"] as const;
 
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
@@ -16,6 +16,9 @@ export const LOCALE_DISPLAY_NAME: Record<SupportedLocale, string> = {
   en: "English",
   tr: "Türkçe",
   "pt-BR": "Português (Brasil)",
+  vi: "Tiếng Việt",
+  es: "Español",
+  fil: "Filipino",
 };
 
 /**
@@ -26,4 +29,7 @@ export const LOCALE_FLAG_CODE: Record<SupportedLocale, string> = {
   en: "GB",
   tr: "TR",
   "pt-BR": "BR",
+  vi: "VN",
+  es: "CR",
+  fil: "PH",
 };

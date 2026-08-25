@@ -20,6 +20,15 @@ describe("resolveLocale", () => {
     assert.equal(resolveLocale({ hints: ["pt-PT", "en"] }), "pt-BR");
   });
 
+  it("maps vi, es, fil, and tl hints", () => {
+    assert.equal(matchSupportedLocale("vi-VN"), "vi");
+    assert.equal(matchSupportedLocale("es-CR"), "es");
+    assert.equal(matchSupportedLocale("es-MX"), "es");
+    assert.equal(matchSupportedLocale("fil-PH"), "fil");
+    assert.equal(matchSupportedLocale("tl"), "fil");
+    assert.equal(resolveLocale({ hints: ["vi-VN", "en"] }), "vi");
+  });
+
   it("falls back to en", () => {
     assert.equal(resolveLocale({ hints: ["de-DE"] }), "en");
   });
@@ -44,6 +53,12 @@ describe("createTranslator", () => {
   it("never returns empty for known en keys", () => {
     const i18n = createTranslator("pt-BR");
     assert.ok(i18n.t("playerMenu.language").length > 0);
+  });
+
+  it("translates vi, es, and fil player menu labels", () => {
+    assert.equal(createTranslator("vi").t("playerMenu.language"), "Ngôn ngữ");
+    assert.equal(createTranslator("es").t("playerMenu.language"), "Idioma");
+    assert.equal(createTranslator("fil").t("playerMenu.language"), "Wika");
   });
 
   it("notifies subscribers on setLocale", () => {

@@ -1,7 +1,10 @@
 import { createIntl, createIntlCache, type IntlShape } from "@formatjs/intl";
 import en from "./locales/en.json" with { type: "json" };
+import es from "./locales/es.json" with { type: "json" };
+import fil from "./locales/fil.json" with { type: "json" };
 import ptBR from "./locales/pt-BR.json" with { type: "json" };
 import tr from "./locales/tr.json" with { type: "json" };
+import vi from "./locales/vi.json" with { type: "json" };
 import {
   DEFAULT_LOCALE,
   type SupportedLocale,
@@ -18,6 +21,9 @@ const CATALOGS: Record<SupportedLocale, Catalog> = {
   en: en as Catalog,
   tr: tr as Catalog,
   "pt-BR": ptBR as Catalog,
+  vi: vi as Catalog,
+  es: es as Catalog,
+  fil: fil as Catalog,
 };
 
 const intlCache = createIntlCache();

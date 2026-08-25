@@ -19,7 +19,7 @@ When adding or changing **player-visible product** copy (not `/admin/*`, not use
 
 1. Add or update the **`en`** Message Catalog key in [`packages/i18n`](../packages/i18n/) in the **same change** as the UI.
 2. Call `t(…)` / the shared translator rather than hard-coding English in the client (or server HTML when that surface is migrated).
-3. **`tr` / `pt-BR` may lag**; missing alternate-locale strings fall back to English. Do not leave missing **`en`** keys.
+3. **Alternate locales may lag**; missing alternate-locale strings fall back to English. Do not leave missing **`en`** keys.
 4. See [localization.md](localization.md) and the principle in [THE-LARGER-SYSTEM.md](THE-LARGER-SYSTEM.md).
 
 ## Rate limits and cooldowns

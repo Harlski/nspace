@@ -894,7 +894,7 @@ locale from browser hints; once set, Locale Preference wins.
 _Avoid_: language setting (too vague), country, locale cookie (storage detail).
 
 **Supported Locale**:
-A BCP 47 language tag the product ships catalogs for. v1 intent: `en`, `tr`, `pt-BR`.
+A BCP 47 language tag the product ships catalogs for. Supported: `en`, `tr`, `pt-BR`, `vi`, `es`, `fil`.
 _Avoid_: language pack, translation file (implementation).
 
 **Message Catalog**:

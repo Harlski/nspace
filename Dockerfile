@@ -5,6 +5,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY client/package.json client/
 COPY server/package.json server/
+# Shared Message Catalogs — must exist before npm ci so the workspace is linked.
 COPY packages/i18n/package.json packages/i18n/
 COPY payment-intent-service/package.json payment-intent-service/
 COPY payout-service/package.json payout-service/
@@ -15,6 +16,7 @@ COPY patches/ patches/
 
 RUN npm ci
 
+# i18n sources before client/server so `npm run build` can compile catalogs first.
 COPY packages/i18n/ packages/i18n/
 COPY client/ client/
 COPY server/ server/
