@@ -58,6 +58,7 @@ import {
 import { MOSQUITO_TAG_ENABLED as MOSQUITO_TAG_ENABLED_CLIENT } from "./mosquitoTag/config.js";
 import { mosquitoTagAllowedInRoom } from "./mosquitoTag/policy.js";
 import { listHasTagAddress, sameTagAddress } from "./mosquitoTag/ids.js";
+import { tagScreenFlash } from "./mosquitoTag/tagFlash.js";
 import { MosquitoTagHud } from "./mosquitoTag/tagHud.js";
 import { WorldcupScoreboard } from "./worldcup/scoreboard.js";
 import { WorldcupMatchHud } from "./worldcup/matchHud.js";
@@ -1198,6 +1199,7 @@ function enterGame(
   let lastMosquitoTag: MosquitoTagWire | null = null;
   function applyMosquitoTag(snap: MosquitoTagWire | null): void {
     const prevHolder = lastMosquitoTag?.holder ?? null;
+    const prevPlaying = lastMosquitoTag?.phase === "playing";
     lastMosquitoTag = snap;
     if (!MOSQUITO_TAG_ENABLED_CLIENT) {
       game.setMosquitoTag(null);
@@ -1207,14 +1209,15 @@ function enterGame(
     game.setMosquitoTag(snap);
     const self = selfAddress || address;
     mosquitoTagHud?.sync(snap, self);
-    if (
-      snap?.phase === "playing" &&
-      snap.holder &&
-      sameTagAddress(snap.holder, self) &&
-      (!prevHolder || !sameTagAddress(prevHolder, self))
-    ) {
-      mosquitoTagHud?.announceYouAreHolder();
-    }
+    const flash = tagScreenFlash({
+      prevHolder,
+      nextHolder: snap?.holder ?? null,
+      selfAddress: self,
+      prevPlaying,
+      nextPlaying: snap?.phase === "playing",
+    });
+    if (flash === "obtain") mosquitoTagHud?.announceYouAreHolder();
+    if (flash === "pass") mosquitoTagHud?.announceYouPassed();
   }
   function sendMosquitoTagAction(
     socket: WebSocket,

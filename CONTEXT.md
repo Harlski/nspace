@@ -786,7 +786,7 @@ _Avoid_: section, group, type.
 
 **Category Group** (achievement):
 An optional display-only label that clusters related Categories in the Category Navigator (e.g.
-**Minigames** groups Football Match and Football Free Play). Not stored on player progress;
+**Minigames** groups Football Match, Football Free Play, and Mosquito Tag). Not stored on player progress;
 achievements still declare a single leaf Category.
 _Avoid_: parent category, section header (alone), nested category.
 
@@ -796,6 +796,13 @@ Navigator** (under **Minigames**). Leaf categories use plain labels such as **Fo
 and **Football Free Play** (no em dash). In-world feature copy may still say **World Cup**
 where that is the established feature name.
 _Avoid_: World Cup (as navigator group label), Soccer.
+
+**Mosquito Tag** (achievement Category):
+The Category Navigator leaf (under **Minigames**) for Mosquito Tag milestones
+(Tag Call, Join, Pass, Saved by the Bell, Stung, Boost Pad). Distinct from Football.
+Progress pauses when Mosquito Tag is switched off (same idea as Football seasonal pause,
+not Temporarily unavailable).
+_Avoid_: Tag (as Category), Hunt.
 
 **Cosmetics** (achievement Category):
 The Category Navigator group for Shop, The Shaper, Sale Display, Cosmetic Unlock, and
@@ -811,10 +818,11 @@ entry).
 _Avoid_: report, player report, moderation ticket.
 
 **Login Streak** (achievement progress):
-The player's **current** count of consecutive UTC calendar days with at least one sign-in,
-as tracked by the login-streak ledger. Drives progress display and unlock evaluation for the
-four Social login-streak achievements (**Week Warrior**, **Monthly Devotee**, **Time of
-Kaan**, **You Kaan Do It**). All four rows show the same live streak numerator capped at each
+The player's **current** count of consecutive UTC calendar days with at least one
+**wallet presence** in the world (WebSocket room enter, including a cached JWT
+reconnect) **or** a Hub/Pay `/api/auth/verify`. Drives progress display and unlock
+evaluation for the four Social login-streak achievements (**Week Warrior**, **Monthly Devotee**,
+**Time of Kaan**, **You Kaan Do It**). All four rows show the same live streak numerator capped at each
 row's target denominator (e.g. day 3 → `3 / 7`, `3 / 30`, `3 / 54`, `3 / 100`). Resets when
 the streak breaks. Criteria use a dedicated **`login_streak`** type (threshold per
 achievement), not a binary **event** type. Unlock evaluation walks those definitions
@@ -824,7 +832,7 @@ runs **on login** (after the streak ledger updates) and **on achievements fetch*
 **Complete** state only; **Achievement Unlock Banners** fire on login evaluation, not when
 the panel refetches. Once earned, a login-streak tier stays **Complete** permanently even if
 the live streak later breaks.
-_Avoid_: lifetime best streak, binary 0/1 progress, legacy login-streak event keys.
+_Avoid_: lifetime best streak, binary 0/1 progress, legacy login-streak event keys, Hub-only verify as the sole credit.
 
 **Week Warrior** (achievement):
 Social achievement for logging in on **7** consecutive UTC calendar days.

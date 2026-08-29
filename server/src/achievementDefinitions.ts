@@ -14,6 +14,7 @@ export type AchievementCategory =
   | "pixel"
   | "football_match"
   | "football_free_play"
+  | "mosquito_tag"
   | "social"
   | "exploration"
   | "worldcraft"
@@ -99,7 +100,13 @@ export type AchievementEventKey =
   | "try_before_you_buy"
   | "paid_in_style"
   | "framed"
-  | "caption";
+  | "caption"
+  | "tag_call_raised"
+  | "tag_joined"
+  | "mosquito_passed"
+  | "mosquito_passed_clutch"
+  | "tag_stung"
+  | "tag_boost_pad";
 
 /** World Cup seasonal counters - progress pauses when WORLDCUP_ENABLED is off. */
 export const WORLDCUP_ACHIEVEMENT_COUNTERS: ReadonlySet<AchievementCounterKey> =
@@ -140,6 +147,17 @@ export const WORLDCUP_ACHIEVEMENT_EVENTS: ReadonlySet<AchievementEventKey> =
     "country_picked",
     "flag_emote_sent",
     "beat_the_creator",
+  ]);
+
+/** Mosquito Tag one-time events - not fired when MOSQUITO_TAG_ENABLED is off. */
+export const MOSQUITO_TAG_ACHIEVEMENT_EVENTS: ReadonlySet<AchievementEventKey> =
+  new Set([
+    "tag_call_raised",
+    "tag_joined",
+    "mosquito_passed",
+    "mosquito_passed_clutch",
+    "tag_stung",
+    "tag_boost_pad",
   ]);
 
 export type AchievementCriteria =
@@ -215,6 +233,12 @@ export const TRY_BEFORE_YOU_BUY_ACHIEVEMENT_ID = "cosmetics-try-before-you-buy";
 export const PAID_IN_STYLE_ACHIEVEMENT_ID = "cosmetics-paid-in-style";
 export const FRAMED_ACHIEVEMENT_ID = "cosmetics-framed";
 export const CAPTION_ACHIEVEMENT_ID = "cosmetics-caption";
+export const TAG_RINGLEADER_ACHIEVEMENT_ID = "tag-ringleader";
+export const TAG_COUNT_ME_IN_ACHIEVEMENT_ID = "tag-count-me-in";
+export const TAG_HOT_POTATO_ACHIEVEMENT_ID = "tag-hot-potato";
+export const TAG_SAVED_BY_THE_BELL_ACHIEVEMENT_ID = "tag-saved-by-the-bell";
+export const TAG_GOT_BIT_ACHIEVEMENT_ID = "tag-got-bit";
+export const TAG_NECTAR_ACHIEVEMENT_ID = "tag-nectar";
 
 /** Wallet address for Beat the Creator (win a Match against this player). */
 export const BEAT_THE_CREATOR_WALLET =
@@ -1681,6 +1705,66 @@ export const ACHIEVEMENT_DEFINITIONS: ReadonlyArray<AchievementDefinition> = [
     criteria: { type: "event", event: "beat_the_creator" },
   },
   {
+    id: TAG_RINGLEADER_ACHIEVEMENT_ID,
+    title: "Ringleader",
+    description: "Raise your first Tag Call.",
+    category: "mosquito_tag",
+    categoryGroup: "minigames",
+    points: 5,
+    sortOrder: 1280,
+    criteria: { type: "event", event: "tag_call_raised" },
+  },
+  {
+    id: TAG_COUNT_ME_IN_ACHIEVEMENT_ID,
+    title: "Count Me In",
+    description: "Join someone else's Tag Call.",
+    category: "mosquito_tag",
+    categoryGroup: "minigames",
+    points: 5,
+    sortOrder: 1290,
+    criteria: { type: "event", event: "tag_joined" },
+  },
+  {
+    id: TAG_HOT_POTATO_ACHIEVEMENT_ID,
+    title: "Hot Potato",
+    description: "Pass the Mosquito to another Participant.",
+    category: "mosquito_tag",
+    categoryGroup: "minigames",
+    points: 10,
+    sortOrder: 1300,
+    criteria: { type: "event", event: "mosquito_passed" },
+  },
+  {
+    id: TAG_SAVED_BY_THE_BELL_ACHIEVEMENT_ID,
+    title: "Saved by the Bell",
+    description: "Pass the Mosquito with 3 seconds or less left in the Tag Round.",
+    category: "mosquito_tag",
+    categoryGroup: "minigames",
+    points: 20,
+    sortOrder: 1310,
+    criteria: { type: "event", event: "mosquito_passed_clutch" },
+  },
+  {
+    id: TAG_GOT_BIT_ACHIEVEMENT_ID,
+    title: "Got Bit",
+    description: "Be Stung when the Tag Round timer ends.",
+    category: "mosquito_tag",
+    categoryGroup: "minigames",
+    points: 10,
+    sortOrder: 1320,
+    criteria: { type: "event", event: "tag_stung" },
+  },
+  {
+    id: TAG_NECTAR_ACHIEVEMENT_ID,
+    title: "Nectar",
+    description: "Pick up a Boost Pad as Holder.",
+    category: "mosquito_tag",
+    categoryGroup: "minigames",
+    points: 10,
+    sortOrder: 1330,
+    criteria: { type: "event", event: "tag_boost_pad" },
+  },
+  {
     id: THEY_HEARD_YOU_ACHIEVEMENT_ID,
     title: "They Heard You",
     description: "Read an admin reply on one of your feedback tickets.",
@@ -1921,4 +2005,10 @@ export function isWorldCupAchievementCounter(
 
 export function isWorldCupAchievementEvent(event: AchievementEventKey): boolean {
   return WORLDCUP_ACHIEVEMENT_EVENTS.has(event);
+}
+
+export function isMosquitoTagAchievementEvent(
+  event: AchievementEventKey
+): boolean {
+  return MOSQUITO_TAG_ACHIEVEMENT_EVENTS.has(event);
 }

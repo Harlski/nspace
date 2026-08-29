@@ -19,6 +19,10 @@ export {
   type TagVec,
 } from "./engine.js";
 export {
+  evaluateMosquitoTagAchievementEvents,
+  SAVED_BY_THE_BELL_REMAINING_MS,
+} from "./achievements.js";
+export {
   mosquitoTagAllowedInRoom,
   mosquitoTagOccupiedTileKeys,
 } from "./policy.js";

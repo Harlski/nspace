@@ -78,6 +78,14 @@ Update this subsection when the first consolidated store is chosen and named in 
 
 Update this subsection if the API shape, authority split, or rotation contract changes.
 
+### Login streak credits a UTC day of wallet presence
+
+**Today:** A login-streak day is a UTC calendar day with at least one **wallet session in a room** (WebSocket enter, including reconnect on a still-valid JWT) **or** a successful Hub/Pay **`/api/auth/verify`**. The 12-hour JWT must not skip the day: being in-world is what players mean by signing in. Guests and stream observers do not credit. Same UTC day never increments twice. A gap of one UTC day resets the count to 1.
+
+**Direction:** Keep the credit rule aligned with presence, not with cryptographic re-sign. Do not require a fresh Hub/Pay signature each UTC day. Do not credit guests.
+
+Update this subsection if credit moves off `onPlayerEnteredRoom` / verify, or if the day key leaves UTC.
+
 ### Authoring UX: reposition ghost previews
 
 **Norm:** See the principle **Reposition ghost previews (authoring)** above: valid-hover **ghost** before commit; **server** remains source of truth for placed obstacles until a move succeeds.
@@ -365,3 +373,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-08-22** — Split SPA hosting: Vercel (and client/server `prebuild`) must build `@nspace/i18n` before the SPA/API; Docker copies `packages/i18n`. See [reasons/reason_123497.md](reasons/reason_123497.md).
 - **2026-08-28** — Principle + recorded decision: in-room mini-games (first: Mosquito Tag) stay in the current room and out of World Cup / Match Pitch; Games Wheel must not stay soccer-flag-gated once a non-soccer game exists. See [reasons/reason_274859.md](reasons/reason_274859.md).
 - **2026-08-29** — Mosquito Tag: Participants walk during Tag Countdown; Stung is a Path Playback slow, not a freeze. See [reasons/reason_496281.md](reasons/reason_496281.md).
+- **2026-08-29** — Login streak credits a UTC calendar day of wallet world presence (WS enter / cached JWT), not only Hub/Pay verify. See [reasons/reason_264819.md](reasons/reason_264819.md).

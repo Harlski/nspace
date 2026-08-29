@@ -18,6 +18,24 @@ type Row = {
 
 type StoreFile = { streaks: Record<string, Row> };
 
+/** Avoid rewriting the whole ledger on every same-UTC-day room enter. */
+const creditedToday = new Map<string, { day: string; streakDays: number }>();
+
+export function _resetLoginStreakMemoryForTests(): void {
+  creditedToday.clear();
+}
+
+function normalizeStreakWallet(raw: string): string {
+  return String(raw || "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function isGuestWallet(addr: string): boolean {
+  return addr.startsWith("GUEST:");
+}
+
 function ensureDir(): void {
   const dir = path.dirname(storeFilePath());
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -64,30 +82,37 @@ export function prevUtcCalendarDay(day: string): string {
 }
 
 /**
- * Call after successful wallet login (`/api/auth/verify`).
- * Streak counts distinct UTC calendar days; multiple logins the same day do not increment.
+ * Credit a UTC calendar day of wallet presence.
+ * Call after `/api/auth/verify` and on wallet WebSocket room enter (cached JWT reconnects).
+ * Multiple credits the same UTC day do not increment. Guests are ignored.
  */
-export function recordLoginStreakForWallet(normalizedAddress: string): {
+export function recordLoginStreakForWallet(
+  normalizedAddress: string,
+  at: Date = new Date()
+): {
   streakDays: number;
 } {
-  const addr = String(normalizedAddress || "")
-    .replace(/\s+/g, "")
-    .trim()
-    .toUpperCase();
-  if (!addr || addr.length < 4) return { streakDays: 0 };
+  const addr = normalizeStreakWallet(normalizedAddress);
+  if (!addr || addr.length < 4 || isGuestWallet(addr)) return { streakDays: 0 };
 
-  const today = utcCalendarDay();
+  const today = utcCalendarDay(at);
+  const mem = creditedToday.get(addr);
+  if (mem && mem.day === today) return { streakDays: mem.streakDays };
+
   const data = readStore();
   const cur = data.streaks[addr];
-  let streakDays = 1;
+  if (cur && cur.lastLoginDayUtc === today) {
+    const days =
+      typeof cur.streakDays === "number" && cur.streakDays >= 1
+        ? cur.streakDays
+        : 1;
+    creditedToday.set(addr, { day: today, streakDays: days });
+    return { streakDays: days };
+  }
 
+  let streakDays = 1;
   if (cur && typeof cur.lastLoginDayUtc === "string") {
-    if (cur.lastLoginDayUtc === today) {
-      streakDays =
-        typeof cur.streakDays === "number" && cur.streakDays >= 1
-          ? cur.streakDays
-          : 1;
-    } else if (cur.lastLoginDayUtc === prevUtcCalendarDay(today)) {
+    if (cur.lastLoginDayUtc === prevUtcCalendarDay(today)) {
       const prev =
         typeof cur.streakDays === "number" && cur.streakDays >= 1
           ? cur.streakDays
@@ -101,9 +126,10 @@ export function recordLoginStreakForWallet(normalizedAddress: string): {
   data.streaks[addr] = {
     lastLoginDayUtc: today,
     streakDays,
-    updatedAt: Date.now(),
+    updatedAt: at.getTime(),
   };
   writeStore(data);
+  creditedToday.set(addr, { day: today, streakDays });
   return { streakDays };
 }
 
@@ -147,11 +173,8 @@ export function getTopLoginStreaks(limit: number): LoginStreakRow[] {
 
 /** Current login streak length for a wallet (0 when unknown or never logged in). */
 export function getLoginStreakDaysForWallet(normalizedAddress: string): number {
-  const addr = String(normalizedAddress || "")
-    .replace(/\s+/g, "")
-    .trim()
-    .toUpperCase();
-  if (!addr || addr.length < 4) return 0;
+  const addr = normalizeStreakWallet(normalizedAddress);
+  if (!addr || addr.length < 4 || isGuestWallet(addr)) return 0;
   const { streaks } = readStore();
   const cur = streaks[addr];
   if (!cur || typeof cur.streakDays !== "number" || cur.streakDays < 1) return 0;

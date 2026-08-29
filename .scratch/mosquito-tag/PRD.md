@@ -127,7 +127,7 @@ Do not add tests that mock `rooms.ts` internals, assert Boost Pad mesh construct
 
 ## Out of Scope
 
-- Invite / Play Space leaf, Spectate Portal, NIM, achievements, elimination rounds, hold-too-long fuse, shrinking area, moving or trap pads, participant-only free-move, putting Mosquito Tag on the 1v1 Wheel, generalizing Challenge into a multi-game lobby.
+- Invite / Play Space leaf, Spectate Portal, NIM, elimination rounds, hold-too-long fuse, shrinking area, moving or trap pads, participant-only free-move, putting Mosquito Tag on the 1v1 Wheel, generalizing Challenge into a multi-game lobby.
 
 ## Further Notes
 

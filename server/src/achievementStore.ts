@@ -11,6 +11,7 @@ import {
   getAchievementDefinition,
   isWorldCupAchievementCounter,
   isWorldCupAchievementEvent,
+  isMosquitoTagAchievementEvent,
   listAchievementsForCounter,
   listAchievementsForDedupePrefix,
   listAchievementsForEvent,
@@ -167,6 +168,13 @@ export function getAchievementSunnyBuildThreshold(): number {
 /** Reads env at call time so tests and operators can gate World Cup achievement progress. */
 function isWorldCupAchievementProgressEnabled(): boolean {
   const raw = process.env.WORLDCUP_ENABLED;
+  if (raw === undefined || raw === null || raw.trim() === "") return true;
+  const v = raw.trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "off" || v === "no");
+}
+
+function isMosquitoTagAchievementProgressEnabled(): boolean {
+  const raw = process.env.MOSQUITO_TAG_ENABLED;
   if (raw === undefined || raw === null || raw.trim() === "") return true;
   const v = raw.trim().toLowerCase();
   return !(v === "0" || v === "false" || v === "off" || v === "no");
@@ -918,6 +926,12 @@ function fireEventCollecting(
 ): void {
   if (!isAchievementEligibleWallet(wallet)) return;
   if (!isWorldCupAchievementProgressEnabled() && isWorldCupAchievementEvent(event)) return;
+  if (
+    !isMosquitoTagAchievementProgressEnabled() &&
+    isMosquitoTagAchievementEvent(event)
+  ) {
+    return;
+  }
   const w = normalizeWallet(wallet);
   const flags = liveFeatureFlags();
   for (const def of listAchievementsForEvent(event)) {

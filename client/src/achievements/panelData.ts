@@ -14,6 +14,7 @@ const CATEGORY_LABEL_KEYS: Record<string, string> = {
   pixel: "achievements.category.pixel",
   football_match: "achievements.category.football_match",
   football_free_play: "achievements.category.football_free_play",
+  mosquito_tag: "achievements.category.mosquito_tag",
   social: "achievements.category.social",
   exploration: "achievements.category.exploration",
   worldcraft: "achievements.category.worldcraft",

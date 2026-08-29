@@ -331,6 +331,34 @@ test("football achievements expose minigames category group", async () => {
   });
 });
 
+test("Mosquito Tag achievements expose minigames category group and Completing", async () => {
+  const wallet = "NQ07 TEST000000000000000000000000000041";
+  await withAchievementStore(async ({
+    fireAchievementEvent,
+    getAchievementsForWallet,
+  }) => {
+    const listed = getAchievementsForWallet(wallet).achievements.find(
+      (a) => a.achievementId === "tag-ringleader"
+    );
+    assert.equal(listed?.category, "mosquito_tag");
+    assert.equal(listed?.categoryGroup, "minigames");
+    const unlocks: Array<{ achievementId: string }> = [];
+    fireAchievementEvent(wallet, "tag_call_raised", (u) => unlocks.push(...u));
+    assert.ok(unlocks.some((u) => u.achievementId === "tag-ringleader"));
+    fireAchievementEvent(wallet, "tag_joined", (u) => unlocks.push(...u));
+    fireAchievementEvent(wallet, "mosquito_passed", (u) => unlocks.push(...u));
+    fireAchievementEvent(wallet, "mosquito_passed_clutch", (u) => unlocks.push(...u));
+    fireAchievementEvent(wallet, "tag_stung", (u) => unlocks.push(...u));
+    fireAchievementEvent(wallet, "tag_boost_pad", (u) => unlocks.push(...u));
+    const ids = new Set(unlocks.map((u) => u.achievementId));
+    assert.ok(ids.has("tag-count-me-in"));
+    assert.ok(ids.has("tag-hot-potato"));
+    assert.ok(ids.has("tag-saved-by-the-bell"));
+    assert.ok(ids.has("tag-got-bit"));
+    assert.ok(ids.has("tag-nectar"));
+  });
+});
+
 test("login streak top tier respects ACHIEVEMENT_LOGIN_STREAK_TOP", async () => {
   process.env.ACHIEVEMENT_LOGIN_STREAK_TOP = "12";
   const wallet = "NQ07 TEST000000000000000000000000000012";

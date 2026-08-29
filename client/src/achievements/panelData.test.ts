@@ -268,13 +268,19 @@ describe("achievement panel data", () => {
         sortOrder: 2000,
       }),
       ach({
+        achievementId: "tag",
+        category: "mosquito_tag",
+        categoryGroup: "minigames",
+        sortOrder: 1280,
+      }),
+      ach({
         achievementId: "social",
         category: "social",
         sortOrder: 3000,
       }),
     ];
     expect(navRows(rows)).toEqual([
-      { kind: "entry", id: SUMMARY_VIEW_ID, label: "Summary", earned: 0, total: 3 },
+      { kind: "entry", id: SUMMARY_VIEW_ID, label: "Summary", earned: 0, total: 4 },
       {
         kind: "group-header",
         groupId: "minigames",
@@ -284,6 +290,14 @@ describe("achievement panel data", () => {
         kind: "entry",
         id: "football_match",
         label: "Football Match",
+        earned: 0,
+        total: 1,
+        nested: true,
+      },
+      {
+        kind: "entry",
+        id: "mosquito_tag",
+        label: "Mosquito Tag",
         earned: 0,
         total: 1,
         nested: true,

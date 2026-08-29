@@ -154,6 +154,7 @@ import {
   type AchievementUnlockWire,
   type MatchEndParticipantInput,
 } from "./achievementStore.js";
+import { recordLoginStreakForWallet } from "./loginStreakStore.js";
 import {
   isRushHourFieldGoal,
   isUnderdogCountryAtGoalTime,
@@ -274,6 +275,7 @@ import {
   MOSQUITO_TAG_ENABLED,
   TAG_DEFAULTS,
   applyMosquitoTagEvent,
+  evaluateMosquitoTagAchievementEvents,
   getMosquitoTag,
   isPlayerInTag,
   mosquitoTagAllowedInRoom,
@@ -2147,6 +2149,11 @@ function onPlayerEnteredRoom(
   if (conn.streamObserver) return;
   ensureAchievementRewardEntitlements(conn.player.address);
   const onUnlock = achievementUnlockHandler(conn.ws);
+  try {
+    recordLoginStreakForWallet(conn.player.address);
+  } catch (e) {
+    console.error("[login-streak]", e);
+  }
   evaluateLoginStreakAchievements(conn.player.address, onUnlock);
   if (normalizeRoomId(roomId) === HUB_ROOM_ID) {
     fireAchievementEvent(conn.player.address, "enter_commons", onUnlock);
@@ -4104,6 +4111,21 @@ function applyMosquitoTagMovementEffects(
   }
 }
 
+function applyMosquitoTagProgress(
+  prev: ReturnType<typeof getMosquitoTag>,
+  next: ReturnType<typeof getMosquitoTag>,
+  nowMs: number
+): void {
+  if (prev === next) return;
+  for (const fire of evaluateMosquitoTagAchievementEvents(prev, next, nowMs)) {
+    fireAchievementEvent(
+      fire.playerId,
+      fire.event,
+      achievementUnlockHandlerForAddress(fire.playerId)
+    );
+  }
+}
+
 function commitMosquitoTag(
   roomId: string,
   event: TagEvent
@@ -4111,6 +4133,7 @@ function commitMosquitoTag(
   const nowMs = Date.now();
   const result = applyMosquitoTagEvent(roomId, event);
   applyMosquitoTagMovementEffects(roomId, result.prev, result.next, nowMs);
+  applyMosquitoTagProgress(result.prev, result.next, nowMs);
   if (result.prev !== result.next) broadcastMosquitoTag(roomId);
   return result;
 }
@@ -4139,6 +4162,7 @@ function tickMosquitoTagRooms(nowMs: number): void {
       rng: Math.random,
     });
     applyMosquitoTagMovementEffects(roomId, result.prev, result.next, nowMs);
+    applyMosquitoTagProgress(result.prev, result.next, nowMs);
     if (result.prev !== result.next) broadcastMosquitoTag(roomId);
   }
 }

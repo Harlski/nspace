@@ -8,7 +8,7 @@
 
 ## Summary
 
-Mosquito Tag: in-room mini-game (Tag Call / Tag Round) on the Games Wheel, not World Cup. Tag Countdown is 7s (Participants walk, rules overlay). Tag Round 60s. Stung is a 30s Path Playback slow with a pulsing red avatar cue. Caller Start/Cancel and Join count live on the Tag Call.
+Mosquito Tag: in-room mini-game (Tag Call / Tag Round) on the Games Wheel, not World Cup. Tag Countdown is 7s (Participants walk, rules overlay). Tag Round 60s. Stung is a 30s Path Playback slow with a pulsing red avatar cue. Caller Start/Cancel and Join count live on the Tag Call. Hotfix tier: Holder obtain flash is red; Boost Pads skip tiles with a placed block.
 
 Free Play Field scoreboard: on narrow/touch layouts the in-room country ranking is a compact Scoreboard Chip (`1. {flag} {goals}`, no country picker). Tap opens the Leaderboard Modal (full ranking, UTC reset note, yesterday's champion). Desktop panel still expands/collapses in place.
 

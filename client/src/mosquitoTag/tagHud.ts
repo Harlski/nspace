@@ -1,10 +1,13 @@
 import { t } from "@nspace/i18n";
 import type { MosquitoTagWire } from "../net/ws.js";
+import { identiconDataUrl } from "../game/identiconTexture.js";
 import { listHasTagAddress, sameTagAddress } from "./ids.js";
+import { tagHudResultView } from "./tagHudResult.js";
 
 /**
  * Participant HUD for Mosquito Tag: Tag Countdown with rules, round timer,
- * Stung / last-remaining result, and a Holder flash when the Mosquito lands on you.
+ * Stung identicon / last-remaining result, and screen flash when the Mosquito
+ * lands on you or when you Pass it.
  * Bystanders do not see the timer overlay.
  */
 export class MosquitoTagHud {
@@ -12,6 +15,7 @@ export class MosquitoTagHud {
   private readonly root: HTMLDivElement;
   private readonly titleEl: HTMLDivElement;
   private readonly countEl: HTMLDivElement;
+  private readonly identiconEl: HTMLImageElement;
   private readonly rulesEl: HTMLDivElement;
   private readonly flashEl: HTMLDivElement;
   private readonly holderPopup: HTMLDivElement;
@@ -22,6 +26,7 @@ export class MosquitoTagHud {
   private holderPopupUntil = 0;
   private flashClear: number | null = null;
   private popupClear: number | null = null;
+  private identiconFor = "";
 
   constructor() {
     const stack = document.createElement("div");
@@ -33,9 +38,13 @@ export class MosquitoTagHud {
     title.className = "hud-tag-timer__title";
     const count = document.createElement("div");
     count.className = "hud-tag-timer__count";
+    const ident = document.createElement("img");
+    ident.className = "hud-tag-timer__identicon";
+    ident.alt = t("mosquitoTag.stungIdenticonAlt");
+    ident.hidden = true;
     const rules = document.createElement("div");
     rules.className = "hud-tag-timer__rules";
-    root.append(title, count, rules);
+    root.append(title, count, ident, rules);
 
     const popup = document.createElement("div");
     popup.className = "hud-tag-holder-popup";
@@ -52,6 +61,7 @@ export class MosquitoTagHud {
     this.root = root;
     this.titleEl = title;
     this.countEl = count;
+    this.identiconEl = ident;
     this.rulesEl = rules;
     this.holderPopup = popup;
 
@@ -74,17 +84,7 @@ export class MosquitoTagHud {
 
   /** Screen flash + copy when this client becomes the Holder. */
   announceYouAreHolder(): void {
-    this.flashEl.hidden = false;
-    this.flashEl.classList.remove("hud-tag-holder-flash--active");
-    void this.flashEl.offsetWidth;
-    this.flashEl.classList.add("hud-tag-holder-flash--active");
-    if (this.flashClear != null) window.clearTimeout(this.flashClear);
-    this.flashClear = window.setTimeout(() => {
-      this.flashEl.classList.remove("hud-tag-holder-flash--active");
-      this.flashEl.hidden = true;
-      this.flashClear = null;
-    }, 700);
-
+    this.playFlash("obtain");
     this.holderPopup.textContent = t("mosquitoTag.holderPopup");
     this.holderPopup.hidden = false;
     this.syncStackVisibility();
@@ -97,13 +97,52 @@ export class MosquitoTagHud {
     }, 3_200);
   }
 
+  /** Green flash when this client Passes the Mosquito. */
+  announceYouPassed(): void {
+    this.playFlash("pass");
+  }
+
   hide(): void {
     this.root.style.display = "none";
+    this.hideIdenticon();
     if (this.timer != null) {
       window.clearInterval(this.timer);
       this.timer = null;
     }
     this.syncStackVisibility();
+  }
+
+  private playFlash(kind: "obtain" | "pass"): void {
+    this.flashEl.hidden = false;
+    this.flashEl.classList.toggle("hud-tag-holder-flash--good", kind === "pass");
+    this.flashEl.classList.remove("hud-tag-holder-flash--active");
+    void this.flashEl.offsetWidth;
+    this.flashEl.classList.add("hud-tag-holder-flash--active");
+    if (this.flashClear != null) window.clearTimeout(this.flashClear);
+    this.flashClear = window.setTimeout(() => {
+      this.flashEl.classList.remove("hud-tag-holder-flash--active");
+      this.flashEl.classList.remove("hud-tag-holder-flash--good");
+      this.flashEl.hidden = true;
+      this.flashClear = null;
+    }, 700);
+  }
+
+  private hideIdenticon(): void {
+    this.identiconEl.hidden = true;
+    this.identiconEl.removeAttribute("src");
+    this.identiconFor = "";
+  }
+
+  private showStungIdenticon(playerId: string): void {
+    this.identiconEl.hidden = false;
+    if (this.identiconFor === playerId && this.identiconEl.getAttribute("src")) {
+      return;
+    }
+    this.identiconFor = playerId;
+    void identiconDataUrl(playerId).then((url) => {
+      if (this.identiconFor !== playerId) return;
+      if (url) this.identiconEl.src = url;
+    });
   }
 
   private syncStackVisibility(): void {
@@ -139,8 +178,10 @@ export class MosquitoTagHud {
     this.root.style.display = "flex";
     this.syncStackVisibility();
     if (snap.phase === "countdown") {
+      this.hideIdenticon();
       this.titleEl.textContent = t("mosquitoTag.countdownTitle");
       const n = Math.max(1, Math.ceil(this.remainingMs(snap.countdownRemainingMs) / 1000));
+      this.countEl.hidden = false;
       this.countEl.textContent = String(n);
       this.rulesEl.textContent = t("mosquitoTag.countdownRules");
       this.rulesEl.hidden = false;
@@ -149,21 +190,30 @@ export class MosquitoTagHud {
     this.rulesEl.hidden = true;
     this.rulesEl.textContent = "";
     if (snap.phase === "playing") {
+      this.hideIdenticon();
       const holding =
         snap.holder != null && sameTagAddress(snap.holder, this.selfAddress);
       this.titleEl.textContent = holding
         ? t("mosquitoTag.roundTitleHolder")
         : t("mosquitoTag.roundTitleRunner");
       const s = Math.max(0, Math.ceil(this.remainingMs(snap.roundRemainingMs) / 1000));
+      this.countEl.hidden = false;
       this.countEl.textContent = `${s}s`;
       return;
     }
     this.titleEl.textContent = t("mosquitoTag.resultTitle");
-    if (snap.outcome?.type === "stung") {
-      this.countEl.textContent = t("mosquitoTag.stung");
-    } else if (snap.outcome?.type === "last_remaining") {
+    const result = tagHudResultView(snap.outcome);
+    if (result.kind === "stung_identicon") {
+      this.countEl.hidden = true;
+      this.countEl.textContent = "";
+      this.showStungIdenticon(result.playerId);
+    } else if (result.kind === "last_remaining") {
+      this.hideIdenticon();
+      this.countEl.hidden = false;
       this.countEl.textContent = t("mosquitoTag.lastRemaining");
     } else {
+      this.hideIdenticon();
+      this.countEl.hidden = false;
       this.countEl.textContent = "";
     }
   }
