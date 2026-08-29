@@ -271,6 +271,20 @@ import {
   type GoalZone as WorldcupGoalZone,
 } from "./worldcup/config.js";
 import {
+  MOSQUITO_TAG_ENABLED,
+  TAG_DEFAULTS,
+  applyMosquitoTagEvent,
+  getMosquitoTag,
+  isPlayerInTag,
+  mosquitoTagAllowedInRoom,
+  mosquitoTagOccupiedTileKeys,
+  roomsWithMosquitoTag,
+  tagWireSnapshot,
+  walkSpeedMul,
+  type MosquitoTagWire,
+  type TagEvent,
+} from "./mosquitoTag/index.js";
+import {
   DIRECT_INVITE_ENABLED,
   buildInviteStateWire,
   closeInvite,
@@ -562,6 +576,7 @@ import {
   overlayGameplayPose,
   snapshotPathMoveBegin,
   tickAnalyticPathHuman,
+  resolveConnPathMoveAt,
   type ConnPathMoveState,
 } from "./playerPathPose.js";
 import {
@@ -1173,6 +1188,8 @@ interface ClientConn {
   adminInvisible?: boolean;
   /** Admin Freeze: locomotion lock until Unfreeze / leave / disconnect. */
   frozen?: boolean;
+  /** Mosquito Tag: Stung slow until this epoch ms (follows the player across rooms). */
+  mosquitoTagStungUntilMs: number;
 }
 
 function withinBlockActionRange(
@@ -1226,13 +1243,18 @@ function withinBlockActionRangeNow(
   );
 }
 
-function beginConnPathMove(conn: ClientConn, startAtMs: number): void {
+function beginConnPathMove(
+  conn: ClientConn,
+  startAtMs: number,
+  speed: number = MOVE_SPEED
+): void {
   conn.walkId = nextWalkId(conn.walkId);
   conn.pathDrainedAtMs = null;
   conn.pathMove = snapshotPathMoveBegin({
     player: conn.player,
     pathQueue: conn.pathQueue,
     startAtMs,
+    speed,
   });
 }
 
@@ -1582,6 +1604,8 @@ type OutMsg =
       cosmeticGallery?: import("./cosmeticGallery.js").CosmeticGalleryWire;
       /** Sale Displays in this room (viewer-filtered: players omit unbound). */
       saleDisplays?: SaleDisplayWire[];
+      /** Mosquito Tag Tag Call / Tag Round snapshot (omitted when idle). */
+      mosquitoTag?: MosquitoTagWire;
     }
   | {
       type: "roomBackgroundHue";
@@ -1945,6 +1969,7 @@ type OutMsg =
        */
       kickoffMs: number;
     }
+  | ({ type: "mosquitoTag"; roomId: string } & MosquitoTagWire)
   | {
       type: "worldcupLeaderboard";
       roomId: string;
@@ -3945,6 +3970,179 @@ function worldcupMoveClampBounds(roomId: string): {
   };
 }
 
+const MOSQUITO_TAG_ACTIONS = new Set([
+  "raise",
+  "cancel",
+  "join",
+  "leave",
+  "start",
+]);
+
+function mosquitoTagWalkableTiles(roomId: string, max = 220): Array<{ x: number; z: number }> {
+  const wb = walkBounds(roomId);
+  const occupied = mosquitoTagOccupiedTileKeys(placedMap(roomId).keys());
+  const out: Array<{ x: number; z: number }> = [];
+  for (let x = wb.minX; x <= wb.maxX; x++) {
+    for (let z = wb.minZ; z <= wb.maxZ; z++) {
+      if (!isWalkableForRoom(roomId, x, z)) continue;
+      if (occupied.has(tileKey(x, z))) continue;
+      out.push({ x, z });
+      if (out.length >= max) return out;
+    }
+  }
+  return out;
+}
+
+function mosquitoTagPoses(
+  roomId: string,
+  nowMs: number
+): Record<string, { x: number; z: number }> {
+  const placed = placedMap(roomId);
+  const out: Record<string, { x: number; z: number }> = {};
+  for (const c of roomOf(roomId).values()) {
+    if (c.streamObserver) continue;
+    const p = playerPoseNow(c, nowMs, roomId, placed);
+    out[c.address] = { x: p.x, z: p.z };
+  }
+  return out;
+}
+
+function connPathSpeedForRoom(
+  roomId: string,
+  address: string,
+  nowMs: number
+): number {
+  if (!MOSQUITO_TAG_ENABLED) return MOVE_SPEED;
+  let mul = walkSpeedMul(getMosquitoTag(roomId), address, nowMs);
+  const conn = rooms.get(normalizeRoomId(roomId))?.get(address);
+  const stungUntil = conn?.mosquitoTagStungUntilMs ?? 0;
+  if (stungUntil > nowMs && mul === 1) {
+    mul = TAG_DEFAULTS.stungSlowMul;
+  }
+  return MOVE_SPEED * mul;
+}
+
+function mosquitoTagWelcomeExtras(
+  roomId: string
+): { mosquitoTag?: MosquitoTagWire } {
+  if (!MOSQUITO_TAG_ENABLED) return {};
+  const s = getMosquitoTag(roomId);
+  const now = Date.now();
+  if (s.phase === "idle" && !(s.stungPlayerId && now < s.stungUntilMs)) {
+    return {};
+  }
+  return { mosquitoTag: tagWireSnapshot(s, now) };
+}
+
+function broadcastMosquitoTag(roomId: string): void {
+  const n = normalizeRoomId(roomId);
+  const wire = tagWireSnapshot(getMosquitoTag(n), Date.now());
+  broadcast(n, { type: "mosquitoTag", roomId: n, ...wire });
+}
+
+function restampConnWalkSpeed(
+  roomId: string,
+  conn: ClientConn,
+  nowMs: number
+): void {
+  const placed = placedMap(roomId);
+  copyAnalyticPoseOntoConn(conn, nowMs, roomId, placed);
+  if (conn.pathMove) {
+    const resolved = resolveConnPathMoveAt({
+      state: conn.pathMove,
+      nowMs,
+      bounds: worldcupMoveClampBounds(roomId),
+      waypointY: (layer, gx, gz) => waypointY(layer, gx, gz, placed),
+    });
+    conn.pathQueue = resolved.pathQueue;
+  }
+  if (conn.pathQueue.length === 0) {
+    haltConnPath(conn, nowMs);
+    return;
+  }
+  beginConnPathMove(conn, nowMs, connPathSpeedForRoom(roomId, conn.address, nowMs));
+  maybeBroadcastMoveOrder(roomId, conn.address, conn, nowMs);
+}
+
+function applyMosquitoTagMovementEffects(
+  roomId: string,
+  prev: ReturnType<typeof getMosquitoTag>,
+  next: ReturnType<typeof getMosquitoTag>,
+  nowMs: number
+): void {
+  if (prev === next) return;
+  const room = rooms.get(normalizeRoomId(roomId));
+  if (!room) return;
+
+  const ids = new Set([...prev.participantIds, ...next.participantIds]);
+  if (prev.callerId) ids.add(prev.callerId);
+  if (next.callerId) ids.add(next.callerId);
+  if (prev.stungPlayerId) ids.add(prev.stungPlayerId);
+  if (next.stungPlayerId) ids.add(next.stungPlayerId);
+  if (
+    next.stungPlayerId &&
+    next.stungUntilMs > (prev.stungUntilMs ?? 0)
+  ) {
+    const stung =
+      room.get(next.stungPlayerId) ?? findConnByWallet(next.stungPlayerId);
+    if (stung) stung.mosquitoTagStungUntilMs = next.stungUntilMs;
+  }
+  if (prev.stungPlayerId && !next.stungPlayerId) {
+    const stung = findConnByWallet(prev.stungPlayerId);
+    if (stung) {
+      stung.mosquitoTagStungUntilMs = 0;
+      const rid = findPlayerRoom(stung.address);
+      if (rid) restampConnWalkSpeed(rid, stung, nowMs);
+    }
+  }
+  for (const id of ids) {
+    const c = room.get(id);
+    if (!c) continue;
+    const was = walkSpeedMul(prev, id, nowMs);
+    const nowMul = walkSpeedMul(next, id, nowMs);
+    if (was !== nowMul) restampConnWalkSpeed(roomId, c, nowMs);
+  }
+}
+
+function commitMosquitoTag(
+  roomId: string,
+  event: TagEvent
+): ReturnType<typeof applyMosquitoTagEvent> {
+  const nowMs = Date.now();
+  const result = applyMosquitoTagEvent(roomId, event);
+  applyMosquitoTagMovementEffects(roomId, result.prev, result.next, nowMs);
+  if (result.prev !== result.next) broadcastMosquitoTag(roomId);
+  return result;
+}
+
+function mosquitoTagOnPlayerLeave(roomId: string, address: string): void {
+  if (!MOSQUITO_TAG_ENABLED) return;
+  const prev = getMosquitoTag(roomId);
+  if (prev.phase === "idle") return;
+  if (!isPlayerInTag(prev, address)) return;
+  commitMosquitoTag(roomId, {
+    type: "leave",
+    playerId: address,
+    nowMs: Date.now(),
+    rng: Math.random,
+  });
+}
+
+function tickMosquitoTagRooms(nowMs: number): void {
+  if (!MOSQUITO_TAG_ENABLED) return;
+  for (const roomId of roomsWithMosquitoTag()) {
+    const result = applyMosquitoTagEvent(roomId, {
+      type: "tick",
+      nowMs,
+      poses: mosquitoTagPoses(roomId, nowMs),
+      walkable: mosquitoTagWalkableTiles(roomId),
+      rng: Math.random,
+    });
+    applyMosquitoTagMovementEffects(roomId, result.prev, result.next, nowMs);
+    if (result.prev !== result.next) broadcastMosquitoTag(roomId);
+  }
+}
+
 function spawnMap(roomId: string): Map<string, { x: number; z: number; y?: number }> {
   let m = lastSpawnByRoom.get(roomId);
   if (!m) {
@@ -5403,6 +5601,7 @@ function setConnMovementWatch(
 const WORLD_MUTATION_BLOCKED_MSG_TYPES: ReadonlySet<string> = new Set([
   "setChallenge",
   "acceptChallenge",
+  "mosquitoTag",
   "cancelDirectInvite",
   "requestSpectate",
   "placeBall",
@@ -7112,6 +7311,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       clearRoomClickInterval(currentRoomId, address);
       const wasWatching = Boolean(conn.movementWatch);
       clearConnFrozenOnLeave(currentRoomId, conn);
+      mosquitoTagOnPlayerLeave(currentRoomId, address);
       room.delete(address);
       if (wasWatching) broadcastMovementWatchActive(currentRoomId);
       broadcast(
@@ -7259,6 +7459,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
           ? worldcupBallsToWire(targetRoomId)
           : undefined,
       ...worldcupWelcomeExtras(targetRoomId, address),
+      ...mosquitoTagWelcomeExtras(targetRoomId),
       worldcupPortals: WORLDCUP_ENABLED
         ? worldcupPortalsForRoom(targetRoomId)
         : undefined,
@@ -9075,6 +9276,7 @@ export function startRoomTick(): void {
       worldcupTickMatches(now);
       worldcupSweepStaleChallenges(now);
     }
+    tickMosquitoTagRooms(now);
     if (DIRECT_INVITE_ENABLED) {
       directInviteSweepExpired(now);
     }
@@ -9375,6 +9577,7 @@ export function addClient(
     },
     subscribedChunks: new Set<string>(),
     movementWatchThrottle: { lastMarkerKey: null, lastMarkerAtMs: 0 },
+    mosquitoTagStungUntilMs: 0,
     ...(streamObserver ? { streamObserver: true } : {}),
     ...(sessionFlags?.nimiqPay ? { sessionNimiqPay: true } : {}),
     ...(sessionFlags?.adminInvisible && isAdmin(address)
@@ -9522,6 +9725,7 @@ export function addClient(
           ? worldcupBallsToWire(roomId)
           : undefined,
       ...worldcupWelcomeExtras(roomId, address),
+      ...mosquitoTagWelcomeExtras(roomId),
       worldcupPortals: WORLDCUP_ENABLED
         ? worldcupPortalsForRoom(roomId)
         : undefined,
@@ -9808,6 +10012,9 @@ export function addClient(
         // inside a Play Space (members start their own 1v1s there).
         if (worldcupIsMatchPitch(currentRoomId)) return;
         if (conn.matchId || conn.pendingMatchId) return;
+        if (MOSQUITO_TAG_ENABLED && isPlayerInTag(getMosquitoTag(currentRoomId), address)) {
+          return;
+        }
         if (conn.challengeOpen) return;
         conn.challengeOpen = true;
         conn.challengeRaisedAtMs = Date.now();
@@ -9830,6 +10037,9 @@ export function addClient(
       if (!WORLDCUP_ENABLED) return;
       if (connBlocksWorldEdit(conn)) return;
       if (conn.matchId || conn.pendingMatchId) return;
+      if (MOSQUITO_TAG_ENABLED && isPlayerInTag(getMosquitoTag(currentRoomId), address)) {
+        return;
+      }
       const targetAddress = String(
         (msg as { targetAddress?: unknown }).targetAddress ?? ""
       ).trim();
@@ -9853,6 +10063,34 @@ export function addClient(
         "challenge_accepted",
         achievementUnlockHandler(ws)
       );
+      return;
+    }
+
+    if (msg.type === "mosquitoTag") {
+      if (!MOSQUITO_TAG_ENABLED) return;
+      if (connBlocksWorldEdit(conn)) return;
+      if (conn.adminInvisible) return;
+      if (conn.matchId || conn.pendingMatchId || conn.challengeOpen) return;
+      if (!mosquitoTagAllowedInRoom(currentRoomId)) return;
+      const action = String(
+        (msg as { action?: unknown }).action ?? ""
+      ).trim();
+      if (!MOSQUITO_TAG_ACTIONS.has(action)) return;
+      const nowMs = Date.now();
+      let event: TagEvent | null = null;
+      if (action === "raise") {
+        event = { type: "raise", playerId: address };
+      } else if (action === "cancel") {
+        event = { type: "cancel", playerId: address };
+      } else if (action === "join") {
+        event = { type: "join", playerId: address };
+      } else if (action === "leave") {
+        event = { type: "leave", playerId: address, nowMs, rng: Math.random };
+      } else if (action === "start") {
+        event = { type: "start", playerId: address, nowMs };
+      }
+      if (!event) return;
+      commitMosquitoTag(currentRoomId, event);
       return;
     }
 
@@ -10948,7 +11186,7 @@ export function addClient(
         const from = { x: conn.player.x, z: conn.player.z };
         conn.player.y = 0;
         conn.pathQueue = [{ x: fx, z: fz, layer: 0 }];
-        beginConnPathMove(conn, now);
+        beginConnPathMove(conn, now, connPathSpeedForRoom(currentRoomId, address, now));
         logGameplayEvent(conn.sessionId, address, currentRoomId, "move_to", {
           fromX: from.x,
           fromZ: from.z,
@@ -11085,7 +11323,7 @@ export function addClient(
         });
         conn.pathQueue = full.slice(1);
       }
-      beginConnPathMove(conn, now);
+      beginConnPathMove(conn, now, connPathSpeedForRoom(currentRoomId, address, now));
       logGameplayEvent(conn.sessionId, address, currentRoomId, "move_to", {
         fromX: startNode.x,
         fromZ: startNode.z,
@@ -12168,7 +12406,7 @@ export function addClient(
         clearConnPathQueue(currentRoomId, address, conn);
       } else {
         conn.pathQueue = full.slice(1);
-        beginConnPathMove(conn, now);
+        beginConnPathMove(conn, now, connPathSpeedForRoom(currentRoomId, address, now));
         const onAcl = gNorm.authorizedAddresses.some(
           (a) => compactAddress(a) === whoC
         );
@@ -15193,6 +15431,7 @@ export function addClient(
       const wasInvisible = Boolean(conn.adminInvisible);
       conn.movementWatch = false;
       clearConnFrozenOnLeave(playerCurrentRoom, conn);
+      mosquitoTagOnPlayerLeave(playerCurrentRoom, address);
       room.delete(address);
       clearRoomClickInterval(playerCurrentRoom, address);
       console.log(

@@ -158,16 +158,18 @@ describe("WorldcupScoreboard chip layout", () => {
     expect(document.body.textContent).toContain("Japan");
   });
 
-  it("does not open the leaderboard when the country picker button is pressed", () => {
+  it("keeps the country picker off the chip and on the desktop panel", () => {
     const sb = mountChip();
     sb.setLeaderboard(COUNTRIES);
+    expect(
+      document.querySelector('[title="Pick your country"]')
+    ).toBeNull();
 
-    const picker = document.querySelector(
-      '[title="Pick your country"]'
-    ) as HTMLElement | null;
-    expect(picker).toBeInstanceOf(HTMLElement);
-    picker?.click();
-
-    expect(modal()).toBeNull();
+    board?.destroy();
+    const panel = mountPanel();
+    panel.setLeaderboard(COUNTRIES);
+    expect(
+      document.querySelector('[title="Pick your country"]')
+    ).toBeInstanceOf(HTMLElement);
   });
 });

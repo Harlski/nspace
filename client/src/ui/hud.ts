@@ -422,6 +422,23 @@ export function createHud(
   setPortalEnterScreenPosition: (x: number, y: number) => void;
   /** Same pill as portal Enter; use for “Visit …” on billboard tiles. */
   setPortalEnterLabel: (text: string) => void;
+  /**
+   * Join Tag Call check, stacked inside `.hud` so the top strip paints above it.
+   */
+  setTagJoinHitRect: (
+    rect: { x: number; y: number; w: number; h: number } | null
+  ) => void;
+  onTagJoinHitClick: (fn: (() => void) | null) => void;
+  setTagCallerControlRects: (
+    start: { x: number; y: number; w: number; h: number } | null,
+    cancel: { x: number; y: number; w: number; h: number } | null
+  ) => void;
+  onTagCallerStartClick: (fn: (() => void) | null) => void;
+  onTagCallerCancelClick: (fn: (() => void) | null) => void;
+  setTagCallParty: (
+    rect: { x: number; y: number; w: number; h: number } | null,
+    addresses: string[]
+  ) => void;
   /** Build-mode configure pill anchored on the selected teleporter tile. */
   setTeleporterSetVisible: (visible: boolean) => void;
   setTeleporterSetScreenPosition: (x: number, y: number) => void;
@@ -450,8 +467,21 @@ export function createHud(
       directInviteActive?: boolean;
       /** Guest session - trim the wheel (confined to the Play Space). */
       isGuest?: boolean;
-      /** worldcup enabled - show game / 1v1 entries. */
+      /** Show the Games Sector (Soccer and/or Mosquito Tag). */
       gamesAvailable?: boolean;
+      /** Show Soccer entries and the 1v1 shortcut (World Cup flag). */
+      soccerAvailable?: boolean;
+      /** Mosquito Tag on the Games Wheel (not the 1v1 Wheel). */
+      mosquitoTag?: {
+        available: boolean;
+        phase: "idle" | "calling" | "countdown" | "playing" | "result";
+        isCaller: boolean;
+        isJoiner: boolean;
+        canStart: boolean;
+        onAction: (
+          action: "raise" | "cancel" | "join" | "leave" | "start"
+        ) => void;
+      };
     },
     /** Snapped floor tile when opened; wheel closes after the player walks to another tile. */
     openedAtFloor?: FloorTile | null
@@ -473,6 +503,8 @@ export function createHud(
       displayName: string;
       /** worldcup: this player has an open 1v1 Challenge (enables the Accept row). */
       challengeOpen?: boolean;
+      /** Mosquito Tag: this player has an open Tag Call (enables Join). */
+      tagCallOpen?: boolean;
       /** Allowlisted game admin (disables Freeze in Administrative). */
       targetIsGameAdmin?: boolean;
       /** Session Freeze cue for game-admin viewers. */
@@ -483,6 +515,8 @@ export function createHud(
       onEmote?: () => void;
       /** worldcup: accept the picked player's open Challenge (starts a 1v1 Match). */
       onAcceptChallenge?: (address: string) => void;
+      /** Join the room's open Tag Call. */
+      onJoinMosquitoTag?: () => void;
       /** Admin Freeze / Unfreeze (`freeze` true = apply). */
       onFreeze?: (address: string, freeze: boolean) => void;
     }
@@ -2993,6 +3027,29 @@ export function createHud(
   teleporterSetBtn.className = "hud-teleporter-set nq-button-pill light-blue";
   teleporterSetBtn.textContent = "Set";
   teleporterSetBtn.hidden = true;
+  const tagJoinHitBtn = document.createElement("button");
+  tagJoinHitBtn.type = "button";
+  tagJoinHitBtn.className = "hud-tag-join-hit";
+  tagJoinHitBtn.hidden = true;
+  tagJoinHitBtn.textContent = "\u2713";
+  const tagCallStartBtn = document.createElement("button");
+  tagCallStartBtn.type = "button";
+  tagCallStartBtn.className = "hud-tag-call-start";
+  tagCallStartBtn.hidden = true;
+  tagCallStartBtn.textContent = "\u25B6";
+  const tagCallCancelBtn = document.createElement("button");
+  tagCallCancelBtn.type = "button";
+  tagCallCancelBtn.className = "hud-tag-call-cancel";
+  tagCallCancelBtn.hidden = true;
+  tagCallCancelBtn.textContent = "\u25A0";
+  const tagCallParty = document.createElement("div");
+  tagCallParty.className = "hud-tag-call-party";
+  tagCallParty.hidden = true;
+  const tagCallPartyCount = document.createElement("span");
+  tagCallPartyCount.className = "hud-tag-call-party__count";
+  const tagCallPartyIcons = document.createElement("span");
+  tagCallPartyIcons.className = "hud-tag-call-party__icons";
+  tagCallParty.append(tagCallPartyCount, tagCallPartyIcons);
   teleporterSetBtn.setAttribute("aria-label", "Set teleporter destination");
   const topActions = document.createElement("div");
   topActions.className = "hud-top-actions";
@@ -3443,6 +3500,10 @@ export function createHud(
   }
   letter.appendChild(portalEnterBtn);
   letter.appendChild(teleporterSetBtn);
+  ui.appendChild(tagJoinHitBtn);
+  ui.appendChild(tagCallStartBtn);
+  ui.appendChild(tagCallCancelBtn);
+  ui.appendChild(tagCallParty);
 
   /*
    * Action Wheel - the hexagonal self-menu (see CONTEXT.md). Right-click / long-press
@@ -3481,6 +3542,7 @@ export function createHud(
     | "soccer"
     | "soccer1v1"
     | "oneVone"
+    | "mosquitoTag"
     | "items";
   /** Wheel Title shown below the Nav Sector while inside a sub-wheel (root = none). */
   const ACTION_WHEEL_LEVEL_TITLES: Record<ActionWheelLevel, string> = {
@@ -3491,6 +3553,7 @@ export function createHud(
     soccer: "Soccer",
     soccer1v1: "1v1",
     oneVone: "1v1",
+    mosquitoTag: t("mosquitoTag.name"),
     items: "Items",
   };
   type ActionWheelSlice = {
@@ -3692,8 +3755,20 @@ export function createHud(
   let actionWheelDirectInviteActive = false;
   // Guests are confined to their Play Space - their wheel is trimmed accordingly.
   let actionWheelIsGuest = false;
-  // Whether game/1v1 entries should appear at all (worldcup enabled).
+  // Games Sector: Soccer and/or Mosquito Tag.
   let actionWheelGamesAvailable = false;
+  // Soccer 1v1 shortcut + Soccer Games entries (World Cup).
+  let actionWheelSoccerAvailable = false;
+  let actionWheelMosquitoTag: {
+    available: boolean;
+    phase: "idle" | "calling" | "countdown" | "playing" | "result";
+    isCaller: boolean;
+    isJoiner: boolean;
+    canStart: boolean;
+    onAction: (
+      action: "raise" | "cancel" | "join" | "leave" | "start"
+    ) => void;
+  } | null = null;
   let actionWheelDeployables: Array<{ sku: string; label: string }> = [];
   let actionWheelArmDeployHandler: ((sku: string) => void) | null = null;
   let deployableArmSku: string | null = null;
@@ -3760,6 +3835,8 @@ export function createHud(
     actionWheelDirectInviteActive = false;
     actionWheelIsGuest = false;
     actionWheelGamesAvailable = false;
+    actionWheelSoccerAvailable = false;
+    actionWheelMosquitoTag = null;
     actionWheelOpenedFloor = null;
     unbindActionWheelOutside();
   }
@@ -3774,6 +3851,68 @@ export function createHud(
   function popActionWheelLevel(): void {
     actionWheelLevel = actionWheelNav.pop() ?? "root";
     renderActionWheel();
+  }
+  function mosquitoTagGamesSlice(tag: {
+    available: boolean;
+    phase: "idle" | "calling" | "countdown" | "playing" | "result";
+    isCaller: boolean;
+    isJoiner: boolean;
+    canStart: boolean;
+    onAction: (
+      action: "raise" | "cancel" | "join" | "leave" | "start"
+    ) => void;
+  }): ActionWheelSlice {
+    const inPlay =
+      tag.phase === "countdown" ||
+      tag.phase === "playing" ||
+      tag.phase === "result";
+    if (inPlay) {
+      return {
+        glyph: "🦟",
+        label: t("mosquitoTag.name"),
+        ariaLabel: t("mosquitoTag.ariaInPlay"),
+        disabled: true,
+      };
+    }
+    if (tag.phase === "calling" && tag.isCaller) {
+      return {
+        glyph: "🦟",
+        label: t("mosquitoTag.name"),
+        ariaLabel: t("mosquitoTag.ariaStart"),
+        activate: () => pushActionWheelLevel("mosquitoTag"),
+      };
+    }
+    if (tag.phase === "calling" && tag.isJoiner) {
+      return {
+        glyph: "🦟",
+        label: t("mosquitoTag.leave"),
+        ariaLabel: t("mosquitoTag.ariaLeave"),
+        activate: () => {
+          tag.onAction("leave");
+          closeActionWheel();
+        },
+      };
+    }
+    if (tag.phase === "calling") {
+      return {
+        glyph: "🦟",
+        label: t("mosquitoTag.join"),
+        ariaLabel: t("mosquitoTag.ariaJoin"),
+        activate: () => {
+          tag.onAction("join");
+          closeActionWheel();
+        },
+      };
+    }
+    return {
+      glyph: "🦟",
+      label: t("mosquitoTag.name"),
+      ariaLabel: t("mosquitoTag.ariaRaise"),
+      activate: () => {
+        tag.onAction("raise");
+        closeActionWheel();
+      },
+    };
   }
   function buildActionWheelSlices(): ActionWheelSlice[] {
     // Six fixed Sectors. Slot 0 is the bottom Nav Sector (Close at root, Back in a
@@ -3893,7 +4032,7 @@ export function createHud(
         glyph: "🔒",
         label: "Private Room",
         ariaLabel: "Open your private play space",
-        disabled: !actionWheelGamesAvailable,
+        disabled: !actionWheelSoccerAvailable,
         activate: () => {
           actionWheelOpenPlaySpaceHandler?.();
           closeActionWheel();
@@ -3901,15 +4040,45 @@ export function createHud(
       };
       return fillHexSlots(back, placeSlices([myRooms, privateRoom]));
     }
-    // Games → Soccer (extensible: more games become more entries here).
+    // Games → Soccer and/or Mosquito Tag (extensible: more games become more entries here).
     if (actionWheelLevel === "games") {
-      const soccer: ActionWheelSlice = {
-        glyph: "⚽",
-        label: "Soccer",
-        ariaLabel: "Soccer",
-        activate: () => pushActionWheelLevel("soccer"),
+      const items: ActionWheelSlice[] = [];
+      if (actionWheelSoccerAvailable) {
+        items.push({
+          glyph: "⚽",
+          label: "Soccer",
+          ariaLabel: "Soccer",
+          activate: () => pushActionWheelLevel("soccer"),
+        });
+      }
+      const tag = actionWheelMosquitoTag;
+      if (tag?.available) {
+        items.push(mosquitoTagGamesSlice(tag));
+      }
+      return fillHexSlots(back, placeSlices(items));
+    }
+    if (actionWheelLevel === "mosquitoTag") {
+      const tag = actionWheelMosquitoTag;
+      const start: ActionWheelSlice = {
+        glyph: "▶",
+        label: t("mosquitoTag.start"),
+        ariaLabel: t("mosquitoTag.ariaStart"),
+        disabled: !tag || !tag.canStart,
+        activate: () => {
+          tag?.onAction("start");
+          closeActionWheel();
+        },
       };
-      return fillHexSlots(back, placeSlices([soccer]));
+      const cancel: ActionWheelSlice = {
+        glyph: "🛑",
+        label: t("mosquitoTag.cancel"),
+        ariaLabel: t("mosquitoTag.ariaCancel"),
+        activate: () => {
+          tag?.onAction("cancel");
+          closeActionWheel();
+        },
+      };
+      return fillHexSlots(back, placeSlices([start, cancel]));
     }
     // Games → Soccer → Free Play / 1v1.
     if (actionWheelLevel === "soccer") {
@@ -4023,15 +4192,23 @@ export function createHud(
       ariaLabel: "Quick 1v1",
       activate: () => pushActionWheelLevel("oneVone"),
     };
-    // Guests are confined to their Play Space: only Emoji + the 1v1 shortcut (This room /
-    // Invite). Everyone else gets the full root; game entries require worldcup enabled.
+    const showGames = actionWheelGamesAvailable;
+    const show1v1 = actionWheelSoccerAvailable;
+    // Guests: Emoji, Games (when Mosquito Tag is on), and the soccer 1v1 shortcut.
+    // Everyone else gets Home / Items; Games and 1v1 depend on their flags.
     const rootItems = actionWheelIsGuest
-      ? actionWheelGamesAvailable
-        ? [emoji, oneVone]
-        : [emoji]
-      : actionWheelGamesAvailable
-        ? [emoji, items, home, games, oneVone]
-        : [emoji, items, home];
+      ? [
+          emoji,
+          ...(showGames ? [games] : []),
+          ...(show1v1 ? [oneVone] : []),
+        ]
+      : [
+          emoji,
+          items,
+          home,
+          ...(showGames ? [games] : []),
+          ...(show1v1 ? [oneVone] : []),
+        ];
     return fillHexSlots(close, placeSlices(rootItems));
   }
   function renderActionWheel(): void {
@@ -4254,6 +4431,7 @@ export function createHud(
     address: string;
     displayName: string;
     challengeOpen: boolean;
+    tagCallOpen: boolean;
     targetIsGameAdmin: boolean;
     targetFrozen: boolean;
   };
@@ -4262,6 +4440,7 @@ export function createHud(
   let otherPlayerCtxPanelId: OtherPlayerMenuPanelId = "root";
   let otherPlayerAcceptChallengeHandler: ((address: string) => void) | null =
     null;
+  let otherPlayerJoinTagHandler: (() => void) | null = null;
   let otherPlayerFreezeHandler:
     | ((address: string, freeze: boolean) => void)
     | null = null;
@@ -5541,6 +5720,7 @@ export function createHud(
     otherPlayerCtxModel = buildOtherPlayerMenuModel({
       username,
       challengeOpen: t.challengeOpen,
+      tagCallOpen: t.tagCallOpen,
       viewerIsGameAdmin,
       targetIsGameAdmin: t.targetIsGameAdmin,
       targetFrozen: t.targetFrozen,
@@ -5576,6 +5756,10 @@ export function createHud(
         closeOtherPlayerContextMenu();
         if (addr) otherPlayerAcceptChallengeHandler?.(addr);
         break;
+      case "joinMosquitoTag":
+        closeOtherPlayerContextMenu();
+        otherPlayerJoinTagHandler?.();
+        break;
       case "freeze": {
         const freeze = !t.targetFrozen;
         closeOtherPlayerContextMenu();
@@ -5608,6 +5792,9 @@ export function createHud(
       }
       if (row.id === "accept1v1") {
         btn.classList.add("other-player-ctx__item--accept-1v1");
+      }
+      if (row.id === "joinMosquitoTag") {
+        btn.classList.add("other-player-ctx__item--join-tag");
       }
       if (row.showIdenticon && otherPlayerCtxTarget) {
         btn.classList.add("other-player-ctx__item--row");
@@ -5642,13 +5829,18 @@ export function createHud(
     address: string,
     displayName: string,
     challengeOpen = false,
-    extras?: { targetIsGameAdmin?: boolean; targetFrozen?: boolean }
+    extras?: {
+      targetIsGameAdmin?: boolean;
+      targetFrozen?: boolean;
+      tagCallOpen?: boolean;
+    }
   ): void {
     const compact = address.replace(/\s+/g, "").trim();
     otherPlayerCtxTarget = {
       address: compact,
       displayName,
       challengeOpen,
+      tagCallOpen: extras?.tagCallOpen === true,
       targetIsGameAdmin: extras?.targetIsGameAdmin === true,
       targetFrozen: extras?.targetFrozen === true,
     };
@@ -5662,6 +5854,7 @@ export function createHud(
       address: string;
       displayName: string;
       challengeOpen?: boolean;
+      tagCallOpen?: boolean;
       targetIsGameAdmin?: boolean;
       targetFrozen?: boolean;
     }>,
@@ -5710,6 +5903,7 @@ export function createHud(
         setSingleCtxTarget(t.address, t.displayName, t.challengeOpen ?? false, {
           targetIsGameAdmin: t.targetIsGameAdmin,
           targetFrozen: t.targetFrozen,
+          tagCallOpen: t.tagCallOpen,
         });
       });
       otherPlayerCtxMulti.appendChild(row);
@@ -14037,6 +14231,75 @@ export function createHud(
     e.preventDefault();
     triggerTeleporterDestinationOpen();
   });
+  tagJoinHitBtn.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    tagJoinHitClickHandler?.();
+  });
+  tagJoinHitBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+  });
+  tagCallStartBtn.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    tagCallerStartClickHandler?.();
+  });
+  tagCallStartBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+  });
+  tagCallCancelBtn.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    tagCallerCancelClickHandler?.();
+  });
+  tagCallCancelBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+  });
+
+  function placeTagCallHudRect(
+    el: HTMLElement,
+    rect: { x: number; y: number; w: number; h: number } | null,
+    ariaLabel: string
+  ): void {
+    if (!rect || rect.w < 8 || rect.h < 8) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    el.setAttribute("aria-label", ariaLabel);
+    el.style.left = `${rect.x}px`;
+    el.style.top = `${rect.y}px`;
+    el.style.width = `${rect.w}px`;
+    el.style.height = `${rect.h}px`;
+  }
+
+  let tagCallPartySig = "";
+  function syncTagCallPartyIcons(addresses: string[]): void {
+    const sig = addresses.join("|");
+    if (sig === tagCallPartySig) return;
+    tagCallPartySig = sig;
+    tagCallPartyIcons.replaceChildren();
+    for (const addr of addresses) {
+      const img = document.createElement("img");
+      img.width = 20;
+      img.height = 20;
+      img.alt = "";
+      img.dataset.address = addr;
+      tagCallPartyIcons.appendChild(img);
+      void import("../game/identiconTexture.js").then(({ identiconDataUrl }) => {
+        void identiconDataUrl(addr).then((url) => {
+          if (img.dataset.address === addr && url) img.src = url;
+        });
+      });
+    }
+  }
+
   lobbyBtn.addEventListener("click", () => openLobbyConfirm());
   buildToggleBtn.addEventListener("click", () => onBuildToolbarToggle());
   buildQuickBtn.addEventListener("click", (e) => {
@@ -14394,6 +14657,9 @@ export function createHud(
   let panelTeleporterCommittedZ = 0;
   let teleporterOpenDestinationPicker: (() => void) | null = null;
   let teleporterSetClickHandler: (() => void) | null = null;
+  let tagJoinHitClickHandler: (() => void) | null = null;
+  let tagCallerStartClickHandler: (() => void) | null = null;
+  let tagCallerCancelClickHandler: (() => void) | null = null;
   let teleporterSetLastOpenAt = 0;
 
   function triggerTeleporterDestinationOpen(): void {
@@ -16035,6 +16301,42 @@ export function createHud(
     setPortalEnterLabel(text: string) {
       portalEnterBtn.textContent = text;
     },
+    setTagJoinHitRect(
+      rect: { x: number; y: number; w: number; h: number } | null
+    ) {
+      placeTagCallHudRect(tagJoinHitBtn, rect, t("mosquitoTag.ariaJoin"));
+    },
+    onTagJoinHitClick(fn: (() => void) | null) {
+      tagJoinHitClickHandler = fn;
+    },
+    setTagCallerControlRects(
+      start: { x: number; y: number; w: number; h: number } | null,
+      cancel: { x: number; y: number; w: number; h: number } | null
+    ) {
+      placeTagCallHudRect(tagCallStartBtn, start, t("mosquitoTag.ariaStart"));
+      placeTagCallHudRect(tagCallCancelBtn, cancel, t("mosquitoTag.ariaCancel"));
+    },
+    onTagCallerStartClick(fn: (() => void) | null) {
+      tagCallerStartClickHandler = fn;
+    },
+    onTagCallerCancelClick(fn: (() => void) | null) {
+      tagCallerCancelClickHandler = fn;
+    },
+    setTagCallParty(
+      rect: { x: number; y: number; w: number; h: number } | null,
+      addresses: string[]
+    ) {
+      if (!rect || rect.w < 8 || rect.h < 8 || addresses.length === 0) {
+        tagCallParty.hidden = true;
+        return;
+      }
+      tagCallParty.hidden = false;
+      tagCallParty.style.left = `${rect.x}px`;
+      tagCallParty.style.top = `${rect.y}px`;
+      tagCallParty.style.height = `${rect.h}px`;
+      tagCallPartyCount.textContent = String(addresses.length);
+      syncTagCallPartyIcons(addresses);
+    },
     setTeleporterSetVisible(visible: boolean) {
       teleporterSetBtn.hidden = !visible;
     },
@@ -16073,6 +16375,17 @@ export function createHud(
         directInviteActive?: boolean;
         isGuest?: boolean;
         gamesAvailable?: boolean;
+        soccerAvailable?: boolean;
+        mosquitoTag?: {
+          available: boolean;
+          phase: "idle" | "calling" | "countdown" | "playing" | "result";
+          isCaller: boolean;
+          isJoiner: boolean;
+          canStart: boolean;
+          onAction: (
+            action: "raise" | "cancel" | "join" | "leave" | "start"
+          ) => void;
+        };
         onArmDeployable?: (cosmeticSku: string) => void;
       },
       openedAtFloor: FloorTile | null = null
@@ -16092,7 +16405,15 @@ export function createHud(
       actionWheelChallengeAvailable = handlers.challengeAvailable ?? false;
       actionWheelDirectInviteActive = handlers.directInviteActive ?? false;
       actionWheelIsGuest = handlers.isGuest ?? false;
-      actionWheelGamesAvailable = handlers.gamesAvailable ?? false;
+      actionWheelSoccerAvailable = handlers.soccerAvailable ?? false;
+      actionWheelMosquitoTag = handlers.mosquitoTag ?? null;
+      if (handlers.gamesAvailable !== undefined) {
+        actionWheelGamesAvailable = handlers.gamesAvailable;
+      } else {
+        actionWheelGamesAvailable =
+          actionWheelSoccerAvailable ||
+          actionWheelMosquitoTag?.available === true;
+      }
       actionWheelLevel = "root";
       actionWheelNav = [];
       actionWheelEmotePage = 0;
@@ -16145,6 +16466,7 @@ export function createHud(
         address: string;
         displayName: string;
         challengeOpen?: boolean;
+        tagCallOpen?: boolean;
         targetIsGameAdmin?: boolean;
         targetFrozen?: boolean;
       }>,
@@ -16152,6 +16474,7 @@ export function createHud(
         emoteRowFirst?: boolean;
         onEmote?: () => void;
         onAcceptChallenge?: (address: string) => void;
+        onJoinMosquitoTag?: () => void;
         onFreeze?: (address: string, freeze: boolean) => void;
       }
     ) {
@@ -16160,6 +16483,7 @@ export function createHud(
       closeOtherPlayerProfile();
       if (targets.length === 0) return;
       otherPlayerAcceptChallengeHandler = menuOpts?.onAcceptChallenge ?? null;
+      otherPlayerJoinTagHandler = menuOpts?.onJoinMosquitoTag ?? null;
       otherPlayerFreezeHandler = menuOpts?.onFreeze ?? null;
       const emoteBlock =
         menuOpts?.emoteRowFirst && typeof menuOpts.onEmote === "function"
@@ -16175,6 +16499,7 @@ export function createHud(
         setSingleCtxTarget(t.address, t.displayName, t.challengeOpen ?? false, {
           targetIsGameAdmin: t.targetIsGameAdmin,
           targetFrozen: t.targetFrozen,
+          tagCallOpen: t.tagCallOpen,
         });
       } else {
         openOtherPlayerMultiPicker(targets);

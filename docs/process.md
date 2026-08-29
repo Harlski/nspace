@@ -122,6 +122,8 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 | `SHOP_ENABLED` | server | Shop + Shaper navigation kill switch. **Open unless `0`**. Combined with `/admin/settings` **Shop** checkbox (`shopEnabled`, default on); both must allow for Shop to be publicly open. |
 | `VITE_SHOP_ENABLED` | client | Build-time Shop force-close. **Open unless `0`**; `=0` forces COMING SOON for that SPA build even if the server Shop is open. |
 | `SHAPER_ENABLED` | server | The Shaper room. **Off unless `1`** (also requires Shop publicly open). |
+| `MOSQUITO_TAG_ENABLED` | server | Mosquito Tag in-room mini-game. **On unless `0`/`false`/`off`/`no`**. Distinct from `WORLDCUP_ENABLED`. |
+| `VITE_MOSQUITO_TAG_ENABLED` | client | Build-time Games Wheel Tag + in-world cues. **On unless `0`**. Rebuild the SPA after toggling. |
 
 **Game admin** (`ADMIN_ADDRESSES` JWT, `Authorization: Bearer`): `POST /api/admin/announce-restart` in [server/src/index.ts](../server/src/index.ts) — JSON `{ "etaSeconds": number, "message"?: string }` with **`etaSeconds` in 5…7200**; broadcasts **`serverNotice`** / **`restart_pending`** to every connected game WebSocket ([server/src/rooms.ts](../server/src/rooms.ts) `broadcastRestartPendingNotice`), then calls the normal **`shutdown`** flush path when the countdown ends. Posting again replaces the previous scheduled exit.
 

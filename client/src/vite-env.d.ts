@@ -34,6 +34,8 @@ interface ImportMetaEnv {
   readonly VITE_MOBILE_BROWSER_PLAY?: string;
   /** Set to "1" to show the player Shop tab, featured shelf, and The Shaper navigation. */
   readonly VITE_SHOP_ENABLED?: string;
+  /** Set to "0" to hide Mosquito Tag on the Games Wheel (default on). */
+  readonly VITE_MOSQUITO_TAG_ENABLED?: string;
 }
 
 interface ImportMeta {

@@ -1,5 +1,7 @@
 /** Pure shape of the Other Player Menu (viewer + target → panels/rows). */
 
+import { t } from "@nspace/i18n";
+
 export type OtherPlayerMenuPanelId =
   | "root"
   | "actions"
@@ -9,6 +11,7 @@ export type OtherPlayerMenuPanelId =
 export type OtherPlayerMenuRowId =
   | "view"
   | "accept1v1"
+  | "joinMosquitoTag"
   | "viewProfile"
   | "whisper"
   | "more"
@@ -38,6 +41,7 @@ export type OtherPlayerMenuModel = {
 export type OtherPlayerMenuModelInput = {
   username: string;
   challengeOpen: boolean;
+  tagCallOpen: boolean;
   viewerIsGameAdmin: boolean;
   targetIsGameAdmin: boolean;
   targetFrozen: boolean;
@@ -94,6 +98,13 @@ export function buildOtherPlayerMenuModel(
     rootRows.push({
       id: "accept1v1",
       label: "⚽ Accept 1v1 challenge",
+      kind: "action",
+    });
+  }
+  if (input.tagCallOpen) {
+    rootRows.push({
+      id: "joinMosquitoTag",
+      label: `\uD83E\uDD9F ${t("mosquitoTag.join")}`,
       kind: "action",
     });
   }

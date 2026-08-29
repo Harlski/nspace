@@ -22,6 +22,8 @@ _Add sections here as the system matures. Keep each bullet concrete enough that 
 
 - Prefer designs that **scale from simple to rich** without rewriting core contracts (e.g. identifiers, message shapes, room authority) unless there is a deliberate migration story.
 
+- **In-room mini-games vs isolated Matches** — A mini-game whose sport *is* the shared social space stays in the current room: no teleport, no Match Pitch, no pitch free-move. Isolation onto an ephemeral Match Pitch is for sports that need a private pitch, ball, or stands (soccer 1v1). Do not fold new mini-games into the seasonal World Cup module just because they share a Games Wheel; do not extend pitch free-move into rooms with placed obstacles (see **Per-room movement variant (pitch)** under *Recorded decisions*).
+
 - **Player-adjacent durable state** — For account-scoped data that will **grow**, be **queried**, or need **consistent updates**, default to a **bounded persistence layer** (shared DB or equivalent) with explicit migrations — not a new whole-file JSON store for every feature. JSON-on-disk remains acceptable for small, cold, or transitional data; see **Player-adjacent persistence** under *Recorded decisions*.
 
 - **Client-only visuals on authoritative world objects** — Sparkles, auras, and similar **non-gameplay** overlays on server-owned geometry (e.g. placed obstacles) stay **client render only**: they do not change server state. They must **not** participate in block ray picks or build-mode selection **bounds** unless they are intentionally part of the solid body. Mark decorative children explicitly (e.g. `userData.skipBlockPickAndBounds` in [client/src/game/Game.ts](../client/src/game/Game.ts)) and derive selection outlines from solid `THREE.Mesh` descendants only (`blockGroupWorldBoundsForSelectionOutline`).
@@ -311,6 +313,16 @@ wallet UI.
 Update this subsection if Unlock ack gains signature verification on the server, or if faucet
 settlement becomes reliable enough that a real micro-send is worth teaching instead.
 
+### In-room mini-games stay in the room
+
+**Today:** Soccer **Challenge** → accept starts a **Match** on an ephemeral **Match Pitch** (teleport, private ball/goals/stands, return on end). That isolation is required for the sport. **Mosquito Tag** is a separate in-room mini-game: Tag Call gathers in place, Tag Round plays in that same room, Bystanders keep walking. The Games Sector appears if Soccer **or** Mosquito Tag is on (`MOSQUITO_TAG_ENABLED` / `VITE_MOSQUITO_TAG_ENABLED`, default on, distinct from `WORLDCUP_ENABLED`). Soccer leaves still hide when World Cup is off. Mosquito Tag is not on the 1v1 Wheel.
+
+**First in-room mini-game:** **Mosquito Tag** is a chase among whoever is already in the room. A **Tag Call** gathers players in place; a **Tag Round** plays in that same room. Bystanders keep walking. **Participants keep walking during Tag Countdown** (7s rules overlay; not a Kickoff freeze). The **Stung** loser gets a 30s Path Playback slow after the round. Movement stays click-to-walk **Path Playback** (Hub/Commons have obstacles; pitch free-move stays pitch-only). **Boost Pads** are Round-ephemeral green portal pillars, not Attention Markers or Build Shell content. At most one Tag Call or Tag Round per room.
+
+**Direction:** Keep in-room mini-games out of `*/worldcup/` and off `WORLDCUP_ENABLED`. Once a non-soccer game exists, the Games Wheel cannot stay soccer-flag-gated — Soccer entries may still hide when World Cup is off. Do not reuse **Challenge** / **Match** / **Kickoff Countdown** / **Match Result Overlay** names or the Match Pitch machine for in-room games. A later generic “open activity” under both is allowed only if it does not rewrite those soccer contracts.
+
+Update this subsection when a second in-room mini-game ships, if Tag Call is generalized under soccer Challenge, or if participant-only free-move is ever proposed for obstacle rooms.
+
 ---
 
 ## Changelog (optional)
@@ -351,3 +363,5 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-08-18** — Recorded decision: occupied-room presence is one-player `stateDelta` (pose omitted for grid Path Playback walkers); `moveOrder` stamps analytic pose + `serverNowMs`; clients never rewind after drain except intentional snaps. See [reasons/reason_847293.md](reasons/reason_847293.md).
 - **2026-08-18** - Path Playback poor-connection slice: `walkId`, welcome in-flight `moveOrder`s, ~1 Hz analytic `poseHeartbeat` (never-rewind / implicit abort), one-shot order/abort duplicate. Tick pose rate stays cut. See [reasons/reason_192847.md](reasons/reason_192847.md).
 - **2026-08-22** — Split SPA hosting: Vercel (and client/server `prebuild`) must build `@nspace/i18n` before the SPA/API; Docker copies `packages/i18n`. See [reasons/reason_123497.md](reasons/reason_123497.md).
+- **2026-08-28** — Principle + recorded decision: in-room mini-games (first: Mosquito Tag) stay in the current room and out of World Cup / Match Pitch; Games Wheel must not stay soccer-flag-gated once a non-soccer game exists. See [reasons/reason_274859.md](reasons/reason_274859.md).
+- **2026-08-29** — Mosquito Tag: Participants walk during Tag Countdown; Stung is a Path Playback slow, not a freeze. See [reasons/reason_496281.md](reasons/reason_496281.md).

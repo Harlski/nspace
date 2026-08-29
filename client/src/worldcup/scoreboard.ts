@@ -3,8 +3,8 @@
  *
  * Desktop: a small fixed panel listing the leading countries, plus a flag button that opens
  * the country picker. Mobile / coarse pointer: a compact Scoreboard Chip showing only the
- * day's leader; tapping it opens the Leaderboard Modal. Shown only in the field room.
- * Fully self-contained (inline styles).
+ * day's high score (`1. {flag} {goals}`); tapping it opens the Leaderboard Modal. The picker
+ * is not on the chip. Shown only in the field room. Fully self-contained (inline styles).
  */
 import { countryName } from "./countries.js";
 import { showCountryPickerModal } from "./countryPickerModal.js";
@@ -38,6 +38,7 @@ const LEADERBOARD_OVERLAY_ID = "worldcup-leaderboard";
 
 export class WorldcupScoreboard {
   private readonly root: HTMLDivElement;
+  private readonly header: HTMLElement;
   private readonly toggle: HTMLElement;
   private readonly subtitleEl: HTMLDivElement;
   private readonly listEl: HTMLDivElement;
@@ -104,6 +105,7 @@ export class WorldcupScoreboard {
       }
     });
     header.appendChild(toggle);
+    this.header = header;
     this.toggle = toggle;
     this.titleEl = title;
     this.chevronEl = chevron;
@@ -192,6 +194,7 @@ export class WorldcupScoreboard {
       this.toggle.tabIndex = 0;
       this.toggle.setAttribute("aria-label", t("worldcup.scoreboardChipAria"));
       this.toggle.title = t("worldcup.scoreboardChipTitle");
+      this.flagBtn.remove();
     } else {
       this.root.style.width = "min(220px,46vw)";
       this.root.style.maxWidth = "220px";
@@ -201,6 +204,7 @@ export class WorldcupScoreboard {
       this.toggle.removeAttribute("tabindex");
       this.toggle.removeAttribute("aria-label");
       this.toggle.title = "Tap to expand/collapse";
+      if (!this.flagBtn.isConnected) this.header.appendChild(this.flagBtn);
     }
   }
 

@@ -2,7 +2,8 @@
 
 Glossary for the seasonal soccer feature (feature-flagged under `*/worldcup/`). Terms here
 are the canonical names to use in code, UI copy, and discussion. This file is a glossary
-only — no implementation details.
+only — no implementation details. **Mosquito Tag** is not part of this context; see
+[CONTEXT.md](../CONTEXT.md) Mini-games.
 
 ## Language
 
@@ -12,7 +13,7 @@ Goals here count toward the daily country/player leaderboard and (new) earn NIM.
 _Avoid_: arena, stadium, the field room.
 
 **Scoreboard Chip**:
-The compact Free Play Field scoreboard on narrow or touch layouts: only today's leading country as `1. {flag} {goals}`. Tapping it opens the Leaderboard Modal.
+The compact Free Play Field scoreboard on narrow or touch layouts: only today's high score as `1. {flag} {goals}`. Tapping it opens the Leaderboard Modal. It does not include the country picker.
 _Avoid_: collapsed scoreboard, mini scoreboard, top-scorer pill.
 
 **Leaderboard Modal**:
@@ -32,7 +33,8 @@ _Avoid_: arena room, private field.
 **Challenge**:
 An open "looking for a Match" intent a player raises while in a social room. Shown above
 their avatar; another player accepts it to start a Match.
-_Avoid_: invite, request, intent (reserve "intent" for the existing ephemeral-flag pattern).
+_Avoid_: invite, request, intent (reserve "intent" for the existing ephemeral-flag pattern),
+Tag Call (that is Mosquito Tag).
 
 **Play Space**:
 A private, invite-only, ephemeral room opened from a shareable `nimiq.space/join/{slug}`

@@ -6,6 +6,7 @@ describe("buildOtherPlayerMenuModel", () => {
     const closed = buildOtherPlayerMenuModel({
       username: "Ada",
       challengeOpen: false,
+      tagCallOpen: false,
       viewerIsGameAdmin: false,
       targetIsGameAdmin: false,
       targetFrozen: false,
@@ -16,6 +17,7 @@ describe("buildOtherPlayerMenuModel", () => {
     const open = buildOtherPlayerMenuModel({
       username: "Ada",
       challengeOpen: true,
+      tagCallOpen: false,
       viewerIsGameAdmin: false,
       targetIsGameAdmin: false,
       targetFrozen: false,
@@ -30,6 +32,7 @@ describe("buildOtherPlayerMenuModel", () => {
     const nonAdmin = buildOtherPlayerMenuModel({
       username: "Ada",
       challengeOpen: false,
+      tagCallOpen: false,
       viewerIsGameAdmin: false,
       targetIsGameAdmin: false,
       targetFrozen: false,
@@ -50,6 +53,7 @@ describe("buildOtherPlayerMenuModel", () => {
     const adminVsPlayer = buildOtherPlayerMenuModel({
       username: "Bob",
       challengeOpen: false,
+      tagCallOpen: false,
       viewerIsGameAdmin: true,
       targetIsGameAdmin: false,
       targetFrozen: false,
@@ -72,6 +76,7 @@ describe("buildOtherPlayerMenuModel", () => {
     const frozen = buildOtherPlayerMenuModel({
       username: "Bob",
       challengeOpen: false,
+      tagCallOpen: false,
       viewerIsGameAdmin: true,
       targetIsGameAdmin: false,
       targetFrozen: true,
@@ -83,6 +88,7 @@ describe("buildOtherPlayerMenuModel", () => {
     const adminVsAdmin = buildOtherPlayerMenuModel({
       username: "Ops",
       challengeOpen: false,
+      tagCallOpen: false,
       viewerIsGameAdmin: true,
       targetIsGameAdmin: true,
       targetFrozen: false,
@@ -91,5 +97,20 @@ describe("buildOtherPlayerMenuModel", () => {
       id: "freeze",
       disabled: true,
     });
+  });
+
+  it("root shows Join Mosquito Tag when the target has a Tag Call", () => {
+    const open = buildOtherPlayerMenuModel({
+      username: "Ada",
+      challengeOpen: false,
+      tagCallOpen: true,
+      viewerIsGameAdmin: false,
+      targetIsGameAdmin: false,
+      targetFrozen: false,
+    });
+    expect(open.panels.root!.rows.map((r) => r.id)).toEqual([
+      "view",
+      "joinMosquitoTag",
+    ]);
   });
 });

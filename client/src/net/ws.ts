@@ -250,6 +250,26 @@ export type RoomCatalogEntry = {
   viewerThumbedUp: boolean;
 };
 
+/** Mosquito Tag room snapshot (Tag Call / Tag Round). */
+export type MosquitoTagWire = {
+  phase: "idle" | "calling" | "countdown" | "playing" | "result";
+  caller: string | null;
+  joiners: string[];
+  participants: string[];
+  holder: string | null;
+  outcome:
+    | null
+    | { type: "stung"; playerId: string }
+    | { type: "last_remaining"; playerId: string };
+  countdownRemainingMs: number;
+  roundRemainingMs: number;
+  resultRemainingMs: number;
+  boostPads: Array<{ x: number; z: number; cooling: boolean }>;
+  holderBoostUntilMs: number;
+  stungPlayerId?: string | null;
+  stungRemainingMs?: number;
+};
+
 export type ServerMessage =
   | {
       type: "welcome";
@@ -336,6 +356,7 @@ export type ServerMessage =
       cosmeticGallery?: CosmeticGalleryWire;
       /** Sale Displays in this room (viewer-filtered). */
       saleDisplays?: SaleDisplayWire[];
+      mosquitoTag?: MosquitoTagWire;
       /** When set, this wallet cannot earn NIM from block claims (guest or mining restriction). */
       blockClaimDeniedReason?: string;
       /** Unlock Pad instance ids already unlocked for this wallet in this room. */
@@ -699,6 +720,7 @@ export type ServerMessage =
       /** ms before entrants are returned home (Match Result Overlay countdown). */
       resultLingerMs: number;
     }
+  | ({ type: "mosquitoTag"; roomId: string } & MosquitoTagWire)
   // worldcup: a goal in a 1v1 Match - flash "GOAL!" + (optionally) run the kickoff countdown
   | {
       type: "matchGoal";
@@ -1842,6 +1864,14 @@ export function sendSetChallenge(ws: WebSocket, active: boolean): void {
 export function sendAcceptChallenge(ws: WebSocket, targetAddress: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "acceptChallenge", targetAddress }));
+}
+
+export function sendMosquitoTag(
+  ws: WebSocket,
+  action: "raise" | "cancel" | "join" | "leave" | "start"
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "mosquitoTag", action }));
 }
 
 /** worldcup: leave the current 1v1 Match (forfeits to the opponent). */

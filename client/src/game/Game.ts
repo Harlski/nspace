@@ -28,6 +28,7 @@ import {
 import type { SaleDisplayWire } from "../cosmetics/saleDisplayTypes.js";
 import type {
   BillboardState,
+  MosquitoTagWire,
   ObstacleProps,
   RoomBackgroundNeutral,
 } from "../net/ws.js";
@@ -108,6 +109,18 @@ import {
 } from "../worldcup/fieldVisuals.js";
 import { WorldcupGoalArrow } from "../worldcup/goalArrow.js";
 import type { WorldcupJoystickView } from "../worldcup/joystick.js";
+import { MOSQUITO_TAG_ENABLED as MOSQUITO_TAG_ENABLED_CLIENT } from "../mosquitoTag/config.js";
+import { listHasTagAddress, sameTagAddress } from "../mosquitoTag/ids.js";
+import { stungPulseActive } from "../mosquitoTag/stungPulse.js";
+import {
+  callerStartCancelRects,
+  cameraFacingSpriteCanvasAabb,
+  controlRectCenteredAbove,
+  pickCameraFacingSpriteAtClient,
+  tagCallPartyRowRect,
+  type CanvasAabb,
+} from "./tagCallBubblePick.js";
+import { t } from "@nspace/i18n";
 
 const LS_ZOOM_MIN = "nspace_zoom_min";
 const LS_ZOOM_MAX = "nspace_zoom_max";
@@ -470,6 +483,11 @@ const TERRAIN_TILE_DOOR_MARKER_SIZE = 1;
 const TERRAIN_TILE_DOOR_MARKER_HEIGHT = 2.72;
 const TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM = 0.9;
 const TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP = 0;
+const TAG_PARTICIPANT_MARKER_COLOR = 0x4ade80;
+const TAG_PARTICIPANT_MARKER_SCALE = 0.78;
+const TAG_BOOST_PAD_COLOR = 0x22c55e;
+const TAG_HOLDER_MOSQUITO_SCREEN_PX = 56;
+const TAG_STUNG_HALO_COLOR = 0xff2a2a;
 export type VoxelTextSpec = {
   id: string;
   text: string;
@@ -1715,6 +1733,26 @@ export class Game {
   private worldcupChallengeBubbleAcceptTex: THREE.CanvasTexture | null = null;
   /** Left-click / tap the accept tick to start a 1v1 without opening the player menu. */
   private challengeAcceptHandler: ((targetAddress: string) => void) | null = null;
+  // Mosquito Tag: Tag Call bubble, Participant Markers, Holder mosquito, Boost Pads.
+  private mosquitoTagSnap: MosquitoTagWire | null = null;
+  private readonly mosquitoTagCallBubbles = new Map<string, THREE.Sprite>();
+  private readonly mosquitoTagParticipantMarkers = new Map<string, THREE.Group>();
+  private mosquitoTagHolderSprite: THREE.Sprite | null = null;
+  private mosquitoTagHolderAddr: string | null = null;
+  private readonly mosquitoTagBoostPads = new Map<string, THREE.Mesh>();
+  private mosquitoTagCallBubbleTex: THREE.CanvasTexture | null = null;
+  private mosquitoTagCallBubbleMetrics: {
+    w: number;
+    h: number;
+    textX: number;
+    textY: number;
+  } | null = null;
+  private mosquitoTagHolderTex: THREE.CanvasTexture | null = null;
+  private mosquitoTagStungSprite: THREE.Sprite | null = null;
+  private mosquitoTagStungAddr: string | null = null;
+  private mosquitoTagStungTex: THREE.CanvasTexture | null = null;
+  private mosquitoTagSnapRecvAt = 0;
+  private tagJoinHandler: (() => void) | null = null;
   /** Achievement Unlock Celebration: active trophy pops above avatars. */
   private readonly achievementCelebrationSprites: AchievementCelebrationSprite[] =
     [];
@@ -2346,6 +2384,7 @@ export class Game {
           address: string;
           displayName: string;
           challengeOpen?: boolean;
+          tagCallOpen?: boolean;
         }>;
         clientX: number;
         clientY: number;
@@ -2362,6 +2401,7 @@ export class Game {
       address: string;
       displayName: string;
       challengeOpen?: boolean;
+      tagCallOpen?: boolean;
     }>;
     emoteRowFirst: boolean;
   } | null = null;
@@ -3289,6 +3329,7 @@ export class Game {
     this.removedBaseFloorKeys.clear();
     this.noWalkFloorKeys.clear();
     this.clearNoWalkFloorCues();
+    this.clearMosquitoTagVisuals();
 
     // Clear block meshes from scene
     for (const [, mesh] of this.blockMeshes) {
@@ -4059,6 +4100,7 @@ export class Game {
       this.applyIdenticonTransformToAllAvatars();
       this.refreshChatBubbleVerticalPositions();
       this.refreshWorldcupChallengeBubbleLayouts();
+      this.refreshMosquitoTagOverheadLayouts();
       this.refreshAllTypingIndicatorLayouts();
       this.requestRender();
       return;
@@ -4084,6 +4126,7 @@ export class Game {
       this.refreshAllNameLabelScales();
       this.refreshChatBubbleVerticalPositions();
       this.refreshWorldcupChallengeBubbleLayouts();
+      this.refreshMosquitoTagOverheadLayouts();
       this.refreshAllTypingIndicatorLayouts();
       this.finishTelescopeReturnZoomAnim();
       this.requestRender();
@@ -4650,6 +4693,7 @@ export class Game {
     }
     this.refreshAchievementCelebrationLayouts();
     this.refreshWorldcupChallengeBubbleLayouts();
+    this.refreshMosquitoTagOverheadLayouts();
   }
 
   /** Keeps chat bubbles near constant on-screen size at any orthographic zoom (like name labels). */
@@ -6167,6 +6211,7 @@ export class Game {
             address: string;
             displayName: string;
             challengeOpen?: boolean;
+            tagCallOpen?: boolean;
           }>;
           clientX: number;
           clientY: number;
@@ -6181,6 +6226,64 @@ export class Game {
   /** Left-click the green tick on another player's open 1v1 Challenge badge. */
   setChallengeAcceptHandler(handler: ((targetAddress: string) => void) | null): void {
     this.challengeAcceptHandler = handler;
+  }
+
+  /** Left-click the Join tick on a Tag Call bubble. */
+  setTagJoinHandler(handler: (() => void) | null): void {
+    this.tagJoinHandler = handler;
+  }
+
+  /**
+   * HUD anchors for a visible Tag Call: party count row, Join, Caller Start/Cancel.
+   */
+  getTagCallHudLayout(): {
+    party: CanvasAabb;
+    partyAddresses: string[];
+    join: CanvasAabb | null;
+    start: CanvasAabb | null;
+    cancel: CanvasAabb | null;
+  } | null {
+    if (!MOSQUITO_TAG_ENABLED_CLIENT || this.mosquitoTagCallBubbles.size === 0) {
+      return null;
+    }
+    const snap = this.mosquitoTagSnap;
+    if (!snap || snap.phase !== "calling" || !snap.caller) return null;
+    this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    for (const [, bubble] of this.mosquitoTagCallBubbles) {
+      const pill = cameraFacingSpriteCanvasAabb(this.camera, bubble, rect, 0);
+      if (!pill) continue;
+      const partyAddresses = [snap.caller, ...snap.joiners];
+      const party = tagCallPartyRowRect(pill, partyAddresses.length);
+      const isSelfCaller = sameTagAddress(snap.caller, this.selfAddress);
+      const alreadyJoined = listHasTagAddress(snap.joiners, this.selfAddress);
+      let join: CanvasAabb | null = null;
+      let start: CanvasAabb | null = null;
+      let cancel: CanvasAabb | null = null;
+      if (isSelfCaller) {
+        const pair = callerStartCancelRects(party);
+        cancel = pair.cancel;
+        if (snap.joiners.length >= 1) start = pair.start;
+        else cancel = controlRectCenteredAbove(party);
+      } else if (!alreadyJoined) {
+        join = controlRectCenteredAbove(party);
+      }
+      return { party, partyAddresses, join, start, cancel };
+    }
+    return null;
+  }
+
+  /** Apply the room Mosquito Tag snapshot (Tag Call / Tag Round cues). */
+  setMosquitoTag(snap: MosquitoTagWire | null): void {
+    this.mosquitoTagSnap = snap;
+    this.mosquitoTagSnapRecvAt = performance.now();
+    this.syncMosquitoTagVisuals();
+    const stungMs = snap?.stungRemainingMs ?? 0;
+    this.requestRender(
+      snap && (snap.phase !== "idle" || stungMs > 0) ? 400 : 0
+    );
   }
 
   setGateContextOpener(
@@ -12221,7 +12324,12 @@ export class Game {
   private pickAllOtherHumanAvatarsAt(
     clientX: number,
     clientY: number
-  ): Array<{ address: string; displayName: string; challengeOpen?: boolean }> {
+  ): Array<{
+    address: string;
+    displayName: string;
+    challengeOpen?: boolean;
+    tagCallOpen?: boolean;
+  }> {
     if (!this.updateNdc(clientX, clientY)) return [];
     this.camera.updateMatrixWorld();
     this.camera.updateProjectionMatrix();
@@ -12235,6 +12343,7 @@ export class Game {
       address: string;
       displayName: string;
       challengeOpen?: boolean;
+      tagCallOpen?: boolean;
     }> = [];
     const norm = (a: string) => a.replace(/\s+/g, "").toUpperCase();
     for (const h of hits) {
@@ -12250,6 +12359,7 @@ export class Game {
         address,
         displayName,
         challengeOpen: group.userData.challengeOpen === true,
+        tagCallOpen: group.userData.tagCallOpen === true,
       });
     }
     return out;
@@ -12736,6 +12846,19 @@ export class Game {
         e.preventDefault();
         e.stopPropagation();
         this.challengeAcceptHandler(acceptAddr);
+        return;
+      }
+    }
+
+    if (
+      e.button === 0 &&
+      this.tagJoinHandler &&
+      MOSQUITO_TAG_ENABLED_CLIENT
+    ) {
+      if (this.pickTagJoinAt(e.clientX, e.clientY)) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.tagJoinHandler();
         return;
       }
     }
@@ -13504,6 +13627,8 @@ export class Game {
     this.selfQuickEmojiOpener = null;
     this.otherPlayerContextOpener = null;
     this.challengeAcceptHandler = null;
+    this.tagJoinHandler = null;
+    this.clearMosquitoTagVisuals();
     this.worldTileContextOpener = null;
     this.gateDoubleOpenHandler = null;
     if (this.selfMesh) {
@@ -16175,6 +16300,7 @@ export class Game {
           this.syncAvatarNameLabelFromState(this.selfMesh, this.withSelfCosmeticPreview(p));
           this.syncTypingIndicatorForGroup(this.selfMesh, p);
           this.syncWorldcupChallengeBubble(this.selfMesh, p);
+          this.stampMosquitoTagOnAvatar(this.selfMesh, p.address);
           syncCosmeticLoadoutVfx(
             this.selfMesh,
             this.withSelfCosmeticPreview(p),
@@ -16227,6 +16353,7 @@ export class Game {
       this.syncAvatarNameLabelFromState(g, p);
       this.syncTypingIndicatorForGroup(g, p);
       this.syncWorldcupChallengeBubble(g, p);
+      this.stampMosquitoTagOnAvatar(g, p.address);
       const moveX = Number.isFinite(p.x) ? p.x : t?.x ?? 0;
       const moveZ = Number.isFinite(p.z) ? p.z : t?.z ?? 0;
       syncCosmeticLoadoutVfx(g, p, this.playerMovedRecently(p.address, moveX, moveZ));
@@ -17047,6 +17174,14 @@ export class Game {
     this.mineableSparkleAnimTime += dt;
     this.updateVoxelTextTween();
     this.updateAttentionMarkerMotion();
+    this.pulseMosquitoBoostPads();
+    this.pulseMosquitoStungHalo();
+    if (
+      this.mosquitoTagParticipantMarkers.size > 0 ||
+      this.mosquitoTagHolderSprite != null
+    ) {
+      this.refreshMosquitoTagOverheadLayouts();
+    }
 
     if (this.selfMesh && this.selfTargetPos) {
       if (this.selfMoveOrder) {
@@ -17205,6 +17340,12 @@ export class Game {
     const hasSignpostHintMotion = this.updateSignpostHintSprites();
     const hasTutorialMineHighlight = this.tutorialMineHighlightTile !== null;
     const hasTutorialAttentionCue = this.tutorialAttentionCueGroups.size > 0;
+    const hasMosquitoTagCues =
+      this.mosquitoTagBoostPads.size > 0 ||
+      this.mosquitoTagParticipantMarkers.size > 0 ||
+      this.mosquitoTagCallBubbles.size > 0 ||
+      this.mosquitoTagHolderSprite != null ||
+      this.mosquitoTagStungSprite != null;
     const meshBuildPending = this.processMeshBuildBudget();
     if (
       visualActive ||
@@ -17212,6 +17353,7 @@ export class Game {
       hasSignpostHintMotion ||
       hasTutorialMineHighlight ||
       hasTutorialAttentionCue ||
+      hasMosquitoTagCues ||
       meshBuildPending
     ) {
       this.requestRender(250);
@@ -17370,6 +17512,7 @@ export class Game {
       this.refreshAllNameLabelScales();
       this.refreshChatBubbleVerticalPositions();
       this.refreshWorldcupChallengeBubbleLayouts();
+      this.refreshMosquitoTagOverheadLayouts();
       this.refreshAllTypingIndicatorLayouts();
       if (t >= 1) {
         this.zoomFrustumAnim = null;
@@ -17403,6 +17546,7 @@ export class Game {
       this.applyIdenticonTransformToAllAvatars();
       this.refreshChatBubbleVerticalPositions();
       this.refreshWorldcupChallengeBubbleLayouts();
+      this.refreshMosquitoTagOverheadLayouts();
       this.refreshAllTypingIndicatorLayouts();
       if (t >= 1) this.streamCameraPoseAnim = null;
       this.requestRender();
@@ -18288,6 +18432,642 @@ export class Game {
     this.layoutWorldcupChallengeBubbleSprites(sprite, withAccept);
   }
 
+  private static readonly TAG_CALL_BUBBLE_H = 96;
+  private static readonly TAG_CALL_BUBBLE_SCREEN_HEIGHT_PX = 34;
+  /** Inner inset so the mosquito emoji and "Tag" do not kiss the pill stroke. */
+  private static readonly TAG_CALL_BUBBLE_PAD_LEFT = 40;
+  private static readonly TAG_CALL_BUBBLE_PAD_RIGHT = 36;
+  private static readonly TAG_CALL_FONT =
+    "bold 36px system-ui, 'Segoe UI Emoji', sans-serif";
+
+  private mosquitoTagCanvasTexture(
+    w: number,
+    h: number,
+    draw: (ctx: CanvasRenderingContext2D) => void
+  ): THREE.CanvasTexture {
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+    draw(ctx);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  private tagCallBubbleLabel(): string {
+    return `\uD83E\uDD9F ${t("mosquitoTag.bubble")}`;
+  }
+
+  private measureTagCallBubbleLayout(): {
+    w: number;
+    h: number;
+    textX: number;
+    textY: number;
+  } {
+    const h = Game.TAG_CALL_BUBBLE_H;
+    const padL = Game.TAG_CALL_BUBBLE_PAD_LEFT;
+    const padR = Game.TAG_CALL_BUBBLE_PAD_RIGHT;
+    const measure = document.createElement("canvas").getContext("2d")!;
+    measure.font = Game.TAG_CALL_FONT;
+    const metrics = measure.measureText(this.tagCallBubbleLabel());
+    const leftHang = Math.max(0, metrics.actualBoundingBoxLeft ?? 0);
+    const rightHang = Math.max(
+      0,
+      (metrics.actualBoundingBoxRight ?? metrics.width) - metrics.width
+    );
+    const textW = Math.ceil(metrics.width + leftHang + rightHang + 8);
+    return {
+      w: padL + textW + padR,
+      h,
+      textX: padL + leftHang,
+      textY: (h - 14) / 2 + 4,
+    };
+  }
+
+  private drawTagCallBubbleChrome(
+    ctx: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    withPointer: boolean
+  ): void {
+    const r = 22;
+    ctx.fillStyle = "rgba(20,22,30,0.92)";
+    ctx.strokeStyle = "#7cff4a";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(r + 3, 6);
+    ctx.arcTo(w - 3, 6, w - 3, h - 16, r);
+    ctx.arcTo(w - 3, h - 16, 3, h - 16, r);
+    ctx.arcTo(3, h - 16, 3, 6, r);
+    ctx.arcTo(3, 6, w - 3, 6, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    if (withPointer) {
+      ctx.fillStyle = "rgba(20,22,30,0.92)";
+      ctx.beginPath();
+      ctx.moveTo(w / 2 - 12, h - 17);
+      ctx.lineTo(w / 2 + 12, h - 17);
+      ctx.lineTo(w / 2, h - 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  private mosquitoTagCallBubbleTexture(): THREE.CanvasTexture {
+    if (!this.mosquitoTagCallBubbleTex) {
+      const layout = this.measureTagCallBubbleLayout();
+      this.mosquitoTagCallBubbleMetrics = layout;
+      const { w, h, textX, textY } = layout;
+      this.mosquitoTagCallBubbleTex = this.mosquitoTagCanvasTexture(w, h, (ctx) => {
+        this.drawTagCallBubbleChrome(ctx, w, h, false);
+        ctx.fillStyle = "#eaf6ff";
+        ctx.font = Game.TAG_CALL_FONT;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.tagCallBubbleLabel(), textX, textY);
+      });
+    }
+    return this.mosquitoTagCallBubbleTex;
+  }
+
+  private mosquitoTagHolderTexture(): THREE.CanvasTexture {
+    if (this.mosquitoTagHolderTex) return this.mosquitoTagHolderTex;
+    const size = 192;
+    const paint = (ctx: CanvasRenderingContext2D, img: HTMLImageElement | null) => {
+      ctx.clearRect(0, 0, size, size);
+      const glow = ctx.createRadialGradient(
+        size / 2,
+        size / 2,
+        16,
+        size / 2,
+        size / 2,
+        size / 2
+      );
+      glow.addColorStop(0, "rgba(255, 56, 56, 0.82)");
+      glow.addColorStop(0.45, "rgba(220, 38, 38, 0.34)");
+      glow.addColorStop(1, "rgba(185, 28, 28, 0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, size, size);
+      if (img) {
+        ctx.drawImage(img, 28, 22, 136, 136);
+      } else {
+        ctx.font = "128px system-ui, 'Segoe UI Emoji', sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("\uD83E\uDD9F", size / 2, size / 2 + 10);
+      }
+    };
+    this.mosquitoTagHolderTex = this.mosquitoTagCanvasTexture(size, size, (ctx) => {
+      paint(ctx, getMosquitoImageIfReady());
+    });
+    if (mosquitoNeedsTwemoji() && !getMosquitoImageIfReady()) {
+      void loadMosquitoImage().then((img) => {
+        const tex = this.mosquitoTagHolderTex;
+        if (!img || !tex) return;
+        const canvas = tex.image as HTMLCanvasElement | undefined;
+        const ctx = canvas?.getContext("2d");
+        if (!ctx) return;
+        paint(ctx, img);
+        tex.needsUpdate = true;
+        this.requestRender(80);
+      });
+    }
+    return this.mosquitoTagHolderTex;
+  }
+
+  private attachMosquitoTagSprite(
+    g: THREE.Group,
+    map: THREE.CanvasTexture,
+    renderOrder: number
+  ): THREE.Sprite {
+    const mat = new THREE.SpriteMaterial({
+      map,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.renderOrder = renderOrder;
+    sprite.raycast = () => {};
+    sprite.userData["skipBlockPickAndBounds"] = true;
+    g.add(sprite);
+    return sprite;
+  }
+
+  private layoutTagCallBubble(bubble: THREE.Sprite): void {
+    const canvas =
+      this.mosquitoTagCallBubbleMetrics ?? this.measureTagCallBubbleLayout();
+    const worldH = this.pixelToWorldY(Game.TAG_CALL_BUBBLE_SCREEN_HEIGHT_PX);
+    const mainW = worldH * (canvas.w / canvas.h);
+    bubble.scale.set(mainW, worldH, 1);
+    const avatarTop = this.avatarIdenticonWorldDiameter();
+    bubble.position.set(0, avatarTop + this.pixelToWorldY(30) + worldH * 0.5, 0);
+  }
+
+  private layoutParticipantMarker(group: THREE.Group): void {
+    const bounce = attentionMarkerBounceOffset(this.doorPulseTime);
+    group.scale.setScalar(TAG_PARTICIPANT_MARKER_SCALE);
+    const avatarTop = this.avatarIdenticonWorldDiameter();
+    group.position.set(0, avatarTop + 0.22 + bounce, 0);
+  }
+
+  private layoutHolderMosquito(sprite: THREE.Sprite): void {
+    const worldH = this.pixelToWorldY(TAG_HOLDER_MOSQUITO_SCREEN_PX);
+    sprite.scale.set(worldH, worldH, 1);
+    const avatarTop = this.avatarIdenticonWorldDiameter();
+    const t = this.doorPulseTime;
+    const hoverX = this.pixelToWorldY(14) * Math.sin(t * 1.85);
+    const hoverY = this.pixelToWorldY(10) * Math.sin(t * 2.55 + 0.6);
+    sprite.position.set(
+      hoverX,
+      avatarTop + this.pixelToWorldY(56) + worldH * 0.5 + hoverY,
+      0
+    );
+  }
+
+  private refreshMosquitoTagOverheadLayouts(): void {
+    for (const [addr, bubble] of this.mosquitoTagCallBubbles) {
+      const g = this.avatarGroupForAddress(addr);
+      if (!g || bubble.parent !== g) continue;
+      this.layoutTagCallBubble(bubble);
+    }
+    for (const [, marker] of this.mosquitoTagParticipantMarkers) {
+      this.layoutParticipantMarker(marker);
+    }
+    if (this.mosquitoTagHolderSprite) {
+      this.layoutHolderMosquito(this.mosquitoTagHolderSprite);
+    }
+    if (this.mosquitoTagStungSprite) {
+      this.layoutStungHalo(this.mosquitoTagStungSprite);
+    }
+  }
+
+  private removeTagCallBubble(addr: string): void {
+    const sprite = this.mosquitoTagCallBubbles.get(addr);
+    if (!sprite) return;
+    sprite.removeFromParent();
+    const sm = sprite.material as THREE.SpriteMaterial;
+    sm.map = null;
+    sm.dispose();
+    delete sprite.userData["tagJoinAddress"];
+    this.mosquitoTagCallBubbles.delete(addr);
+  }
+
+  private removeParticipantMarker(addr: string): void {
+    const group = this.mosquitoTagParticipantMarkers.get(addr);
+    if (!group) return;
+    group.removeFromParent();
+    group.traverse((obj: THREE.Object3D) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.geometry.dispose();
+        const mat = obj.material;
+        if (Array.isArray(mat)) mat.forEach((m: THREE.Material) => m.dispose());
+        else mat.dispose();
+      }
+    });
+    this.mosquitoTagParticipantMarkers.delete(addr);
+  }
+
+  private clearHolderMosquito(): void {
+    const sprite = this.mosquitoTagHolderSprite;
+    if (!sprite) return;
+    sprite.removeFromParent();
+    const sm = sprite.material as THREE.SpriteMaterial;
+    sm.map = null;
+    sm.dispose();
+    this.mosquitoTagHolderSprite = null;
+    this.mosquitoTagHolderAddr = null;
+  }
+
+  private clearBoostPads(): void {
+    for (const [, mesh] of this.mosquitoTagBoostPads) {
+      mesh.removeFromParent();
+      mesh.geometry.dispose();
+      if (mesh.material instanceof THREE.Material) mesh.material.dispose();
+    }
+    this.mosquitoTagBoostPads.clear();
+  }
+
+  private removeMosquitoTagAvatarCues(addr: string): void {
+    this.removeTagCallBubble(addr);
+    this.removeParticipantMarker(addr);
+    if (
+      this.mosquitoTagHolderAddr &&
+      sameTagAddress(this.mosquitoTagHolderAddr, addr)
+    ) {
+      this.clearHolderMosquito();
+    }
+    if (
+      this.mosquitoTagStungAddr &&
+      sameTagAddress(this.mosquitoTagStungAddr, addr)
+    ) {
+      this.clearStungHalo();
+    }
+  }
+
+  private clearMosquitoTagVisuals(): void {
+    for (const addr of [...this.mosquitoTagCallBubbles.keys()]) {
+      this.removeTagCallBubble(addr);
+    }
+    for (const addr of [...this.mosquitoTagParticipantMarkers.keys()]) {
+      this.removeParticipantMarker(addr);
+    }
+    this.clearHolderMosquito();
+    this.clearStungHalo();
+    this.clearBoostPads();
+    this.mosquitoTagCallBubbleTex?.dispose();
+    this.mosquitoTagCallBubbleTex = null;
+    this.mosquitoTagCallBubbleMetrics = null;
+    this.mosquitoTagHolderTex?.dispose();
+    this.mosquitoTagHolderTex = null;
+    this.mosquitoTagStungTex?.dispose();
+    this.mosquitoTagStungTex = null;
+    this.mosquitoTagSnap = null;
+  }
+
+  private stampMosquitoTagOnAvatar(g: THREE.Group, address: string): void {
+    const snap = this.mosquitoTagSnap;
+    const calling =
+      MOSQUITO_TAG_ENABLED_CLIENT &&
+      snap?.phase === "calling" &&
+      snap.caller != null &&
+      sameTagAddress(snap.caller, address);
+    g.userData["tagCallOpen"] = calling;
+    this.syncMosquitoTagOverheadFor(g, address);
+    this.syncStungHaloFor(g, address);
+  }
+
+  private syncMosquitoTagOverheadFor(g: THREE.Group, address: string): void {
+    const snap = this.mosquitoTagSnap;
+    const hideBubbles = this.streamBubblesHidden || !MOSQUITO_TAG_ENABLED_CLIENT;
+    const isCaller =
+      !!snap?.caller && sameTagAddress(snap.caller, address);
+    const showCall =
+      !hideBubbles && snap?.phase === "calling" && isCaller;
+    if (!showCall) {
+      this.removeTagCallBubble(address);
+    } else {
+      const isSelf = sameTagAddress(address, this.selfAddress);
+      const withAccept = !isSelf;
+      const map = this.mosquitoTagCallBubbleTexture();
+      let sprite = this.mosquitoTagCallBubbles.get(address);
+      if (!sprite) {
+        sprite = this.attachMosquitoTagSprite(g, map, 6);
+        this.mosquitoTagCallBubbles.set(address, sprite);
+      } else {
+        const mat = sprite.material as THREE.SpriteMaterial;
+        if (mat.map !== map) {
+          mat.map = map;
+          mat.needsUpdate = true;
+        }
+      }
+      if (withAccept) sprite.userData["tagJoinAddress"] = address;
+      else delete sprite.userData["tagJoinAddress"];
+      this.layoutTagCallBubble(sprite);
+    }
+
+    const inRound =
+      snap?.phase === "countdown" || snap?.phase === "playing";
+    const isParticipant =
+      !!snap && listHasTagAddress(snap.participants, address);
+    if (hideBubbles || !inRound || !isParticipant) {
+      this.removeParticipantMarker(address);
+    } else {
+      let marker = this.mosquitoTagParticipantMarkers.get(address);
+      if (!marker) {
+        marker = makeAttentionMarkerGroup(TAG_PARTICIPANT_MARKER_COLOR);
+        marker.name = "tagParticipantMarker";
+        marker.userData["skipBlockPickAndBounds"] = true;
+        marker.userData["tagParticipantMarker"] = true;
+        marker.traverse((obj: THREE.Object3D) => {
+          obj.userData["skipBlockPickAndBounds"] = true;
+          if (obj instanceof THREE.Mesh) obj.raycast = () => {};
+        });
+        g.add(marker);
+        this.mosquitoTagParticipantMarkers.set(address, marker);
+      } else if (marker.parent !== g) {
+        marker.removeFromParent();
+        g.add(marker);
+      }
+      this.layoutParticipantMarker(marker);
+    }
+
+    const isHolder =
+      snap?.phase === "playing" &&
+      snap.holder != null &&
+      sameTagAddress(snap.holder, address);
+    if (hideBubbles || !isHolder) {
+      if (
+        this.mosquitoTagHolderAddr &&
+        sameTagAddress(this.mosquitoTagHolderAddr, address)
+      ) {
+        this.clearHolderMosquito();
+      }
+    } else {
+      if (
+        this.mosquitoTagHolderSprite &&
+        this.mosquitoTagHolderAddr &&
+        !sameTagAddress(this.mosquitoTagHolderAddr, address)
+      ) {
+        this.clearHolderMosquito();
+      }
+      if (!this.mosquitoTagHolderSprite) {
+        this.mosquitoTagHolderSprite = this.attachMosquitoTagSprite(
+          g,
+          this.mosquitoTagHolderTexture(),
+          7
+        );
+        this.mosquitoTagHolderAddr = address;
+      } else if (this.mosquitoTagHolderSprite.parent !== g) {
+        this.mosquitoTagHolderSprite.removeFromParent();
+        g.add(this.mosquitoTagHolderSprite);
+        this.mosquitoTagHolderAddr = address;
+      }
+      this.layoutHolderMosquito(this.mosquitoTagHolderSprite);
+    }
+  }
+
+  private syncMosquitoTagBoostPads(): void {
+    const snap = this.mosquitoTagSnap;
+    const show =
+      MOSQUITO_TAG_ENABLED_CLIENT &&
+      !this.streamBubblesHidden &&
+      snap?.phase === "playing";
+    if (!show) {
+      this.clearBoostPads();
+      return;
+    }
+    const wanted = new Set<string>();
+    for (const pad of snap.boostPads) {
+      const key = `${pad.x},${pad.z}`;
+      wanted.add(key);
+      let mesh = this.mosquitoTagBoostPads.get(key);
+      if (!mesh) {
+        mesh = this.createPortalPillarMesh(pad.x, pad.z, {
+          dim: pad.cooling,
+          pillarColorRgb: TAG_BOOST_PAD_COLOR,
+        });
+        mesh.userData["skipBlockPickAndBounds"] = true;
+        mesh.raycast = () => {};
+        this.scene.add(mesh);
+        this.mosquitoTagBoostPads.set(key, mesh);
+      }
+      mesh.userData["tagPadCooling"] = pad.cooling;
+      const mat = mesh.material as THREE.ShaderMaterial;
+      if (mat.uniforms?.uColor?.value instanceof THREE.Color) {
+        mat.uniforms.uColor.value.setHex(TAG_BOOST_PAD_COLOR);
+      }
+      const dimMul = pad.cooling ? 0.35 : 1;
+      if (mat.uniforms?.uAlphaBottom) {
+        mat.uniforms.uAlphaBottom.value =
+          TERRAIN_TILE_DOOR_MARKER_ALPHA_BOTTOM * dimMul;
+      }
+      if (mat.uniforms?.uAlphaTop) {
+        mat.uniforms.uAlphaTop.value =
+          TERRAIN_TILE_DOOR_MARKER_ALPHA_TOP * (pad.cooling ? 0.45 : 1);
+      }
+    }
+    for (const [key, mesh] of [...this.mosquitoTagBoostPads]) {
+      if (wanted.has(key)) continue;
+      mesh.removeFromParent();
+      mesh.geometry.dispose();
+      if (mesh.material instanceof THREE.Material) mesh.material.dispose();
+      this.mosquitoTagBoostPads.delete(key);
+    }
+  }
+
+  private pulseMosquitoBoostPads(): void {
+    if (this.mosquitoTagBoostPads.size === 0) return;
+    const pulse = Math.sin(this.doorPulseTime * 3.2) * 0.5 + 0.5;
+    for (const [, mesh] of this.mosquitoTagBoostPads) {
+      const mat = mesh.material as THREE.ShaderMaterial;
+      const cooling = mesh.userData["tagPadCooling"] === true;
+      const base = cooling ? 0.28 : 0.9;
+      const amp = cooling ? 0.08 : 0.22;
+      if (mat.uniforms?.uAlphaBottom) {
+        mat.uniforms.uAlphaBottom.value = base + pulse * amp;
+      }
+    }
+  }
+
+  private isStungPulseActive(address: string): boolean {
+    return stungPulseActive(
+      this.mosquitoTagSnap,
+      address,
+      performance.now() - this.mosquitoTagSnapRecvAt
+    );
+  }
+
+  private mosquitoTagStungHaloTexture(): THREE.CanvasTexture {
+    if (this.mosquitoTagStungTex) return this.mosquitoTagStungTex;
+    const size = 128;
+    this.mosquitoTagStungTex = this.mosquitoTagCanvasTexture(size, size, (ctx) => {
+      const g = ctx.createRadialGradient(
+        size / 2,
+        size / 2,
+        10,
+        size / 2,
+        size / 2,
+        size / 2
+      );
+      g.addColorStop(0, "rgba(255, 48, 48, 0.95)");
+      g.addColorStop(0.38, "rgba(255, 42, 42, 0.55)");
+      g.addColorStop(0.72, "rgba(180, 0, 0, 0.18)");
+      g.addColorStop(1, "rgba(180, 0, 0, 0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, size, size);
+    });
+    return this.mosquitoTagStungTex;
+  }
+
+  private layoutStungHalo(sprite: THREE.Sprite, pulse = 0.5): void {
+    const d = this.avatarIdenticonWorldDiameter();
+    const mul = 1.28 + pulse * 0.28;
+    sprite.scale.set(d * mul, d * mul, 1);
+    sprite.position.set(0, d / 2, 0);
+  }
+
+  private clearIdenticonStungTint(g: THREE.Group): void {
+    const identicon = g.userData.identiconMesh as THREE.Sprite | undefined;
+    if (!identicon) return;
+    const mat = identicon.material as THREE.SpriteMaterial;
+    mat.color.setHex(mat.map ? 0xffffff : 0x8899aa);
+  }
+
+  private clearStungHalo(): void {
+    const sprite = this.mosquitoTagStungSprite;
+    const addr = this.mosquitoTagStungAddr;
+    if (sprite) {
+      const parent = sprite.parent;
+      if (parent instanceof THREE.Group) this.clearIdenticonStungTint(parent);
+      sprite.removeFromParent();
+      const sm = sprite.material as THREE.SpriteMaterial;
+      sm.map = null;
+      sm.dispose();
+    }
+    this.mosquitoTagStungSprite = null;
+    this.mosquitoTagStungAddr = null;
+    if (addr) {
+      const g = this.avatarGroupForAddress(addr);
+      if (g) this.clearIdenticonStungTint(g);
+    }
+  }
+
+  private syncStungHaloFor(g: THREE.Group, address: string): void {
+    if (!MOSQUITO_TAG_ENABLED_CLIENT || !this.isStungPulseActive(address)) {
+      if (
+        this.mosquitoTagStungAddr &&
+        sameTagAddress(this.mosquitoTagStungAddr, address)
+      ) {
+        this.clearStungHalo();
+      }
+      return;
+    }
+    if (
+      this.mosquitoTagStungSprite &&
+      this.mosquitoTagStungAddr &&
+      !sameTagAddress(this.mosquitoTagStungAddr, address)
+    ) {
+      this.clearStungHalo();
+    }
+    if (!this.mosquitoTagStungSprite) {
+      this.mosquitoTagStungSprite = this.attachMosquitoTagSprite(
+        g,
+        this.mosquitoTagStungHaloTexture(),
+        1
+      );
+      this.mosquitoTagStungSprite.userData["tagStungHalo"] = true;
+      const haloMat = this.mosquitoTagStungSprite.material as THREE.SpriteMaterial;
+      haloMat.blending = THREE.AdditiveBlending;
+      this.mosquitoTagStungAddr = address;
+    } else if (this.mosquitoTagStungSprite.parent !== g) {
+      this.mosquitoTagStungSprite.removeFromParent();
+      g.add(this.mosquitoTagStungSprite);
+      this.mosquitoTagStungAddr = address;
+    }
+    this.pulseMosquitoStungHalo();
+  }
+
+  private pulseMosquitoStungHalo(): void {
+    const sprite = this.mosquitoTagStungSprite;
+    const addr = this.mosquitoTagStungAddr;
+    if (!sprite || !addr) return;
+    if (!this.isStungPulseActive(addr)) {
+      this.clearStungHalo();
+      return;
+    }
+    const pulse = Math.sin(this.doorPulseTime * 4.4) * 0.5 + 0.5;
+    this.layoutStungHalo(sprite, pulse);
+    const sm = sprite.material as THREE.SpriteMaterial;
+    sm.color.setHex(TAG_STUNG_HALO_COLOR);
+    sm.opacity = 0.38 + pulse * 0.52;
+    sm.transparent = true;
+    const g =
+      sprite.parent instanceof THREE.Group
+        ? sprite.parent
+        : this.avatarGroupForAddress(addr);
+    const identicon = g?.userData.identiconMesh as THREE.Sprite | undefined;
+    if (identicon) {
+      const mat = identicon.material as THREE.SpriteMaterial;
+      const cool = 0.22 + (1 - pulse) * 0.45;
+      mat.color.setRGB(1, cool, cool);
+    }
+  }
+
+  private syncMosquitoTagVisuals(): void {
+    if (this.selfMesh) {
+      const addr = String(this.selfMesh.userData.address ?? this.selfAddress);
+      this.stampMosquitoTagOnAvatar(this.selfMesh, addr);
+    }
+    for (const [addr, g] of this.others) {
+      this.stampMosquitoTagOnAvatar(g, addr);
+    }
+    const live = new Set<string>();
+    if (this.selfMesh) live.add(this.compactWalletKey(this.selfAddress));
+    for (const addr of this.others.keys()) live.add(this.compactWalletKey(addr));
+    for (const addr of [...this.mosquitoTagCallBubbles.keys()]) {
+      if (!live.has(this.compactWalletKey(addr))) this.removeTagCallBubble(addr);
+    }
+    for (const addr of [...this.mosquitoTagParticipantMarkers.keys()]) {
+      if (!live.has(this.compactWalletKey(addr))) this.removeParticipantMarker(addr);
+    }
+    if (
+      this.mosquitoTagStungAddr &&
+      !live.has(this.compactWalletKey(this.mosquitoTagStungAddr))
+    ) {
+      this.clearStungHalo();
+    }
+    this.syncMosquitoTagBoostPads();
+  }
+
+  private pickTagJoinAt(clientX: number, clientY: number): boolean {
+    if (this.mosquitoTagCallBubbles.size === 0) return false;
+    this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return false;
+    for (const [, bubble] of this.mosquitoTagCallBubbles) {
+      const joinAddr = bubble.userData["tagJoinAddress"];
+      if (typeof joinAddr !== "string" || !joinAddr.trim()) continue;
+      if (
+        pickCameraFacingSpriteAtClient(
+          this.raycaster,
+          this.camera,
+          bubble,
+          clientX,
+          clientY,
+          rect
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private refreshAllTypingIndicatorLayouts(): void {
     for (const [addr, entry] of this.typingIndicatorByAddress) {
       const g =
@@ -18388,6 +19168,7 @@ export class Game {
     if (g.userData.adminInvisibleOpacity === opacity) return;
     g.userData.adminInvisibleOpacity = opacity;
     g.traverse((child) => {
+      if (child.userData["tagStungHalo"]) return;
       if (child instanceof THREE.Sprite) {
         const sm = child.material as THREE.SpriteMaterial;
         sm.opacity = opacity;
@@ -18408,6 +19189,7 @@ export class Game {
     if (addr) this.removeChatBubbleEntry(addr);
     if (addr) this.removeTypingIndicator(addr);
     if (addr) this.removeWorldcupChallengeBubble(addr);
+    if (addr) this.removeMosquitoTagAvatarCues(addr);
     disposeCosmeticTrailPuffs(g);
     g.traverse((child: THREE.Object3D) => {
       if (child instanceof THREE.Mesh) {

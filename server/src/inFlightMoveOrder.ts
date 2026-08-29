@@ -27,7 +27,7 @@ export function buildInFlightMoveOrder(args: {
     startAtMs: args.pathMove.startAtMs,
     serverNowMs: args.serverNowMs,
     walkId: args.walkId,
-    speed: args.speed,
+    speed: args.speed ?? args.pathMove.speed,
   });
 }
 

@@ -31,6 +31,8 @@ export type ConnPathMoveState = {
   pathQueue: PathWaypoint[];
   /** Count of {@link PathTileCrossing} already emitted to achievements / canvas. */
   tilesEmitted: number;
+  /** Path Playback speed for this walk (defaults to {@link DEFAULT_PATH_MOVE_SPEED}). */
+  speed?: number;
 };
 
 /**
@@ -44,6 +46,7 @@ export function snapshotPathMoveBegin(args: {
   player: { x: number; y: number; z: number; vx: number; vz: number };
   pathQueue: PathWaypoint[];
   startAtMs: number;
+  speed?: number;
 }): ConnPathMoveState | null {
   if (args.pathQueue.length === 0) return null;
   return {
@@ -57,6 +60,7 @@ export function snapshotPathMoveBegin(args: {
     },
     pathQueue: args.pathQueue.map((w) => ({ ...w })),
     tilesEmitted: 0,
+    speed: args.speed,
   };
 }
 
@@ -79,7 +83,7 @@ export function resolveConnPathMoveAt(args: {
     nowMs: args.nowMs,
     bounds: args.bounds,
     waypointY: args.waypointY,
-    speed: args.speed ?? DEFAULT_PATH_MOVE_SPEED,
+    speed: args.speed ?? args.state.speed ?? DEFAULT_PATH_MOVE_SPEED,
     tickMs: args.tickMs ?? DEFAULT_PATH_TICK_MS,
   });
 }

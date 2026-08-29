@@ -3,6 +3,8 @@ import { gateApproachTile } from "../game/gateAuth.js";
 /** Client-side Nimiq Pay first-contact tutorial helpers. */
 
 export const TUTORIAL_ROOM_ID = "tutorial";
+/** Admin authoring room; must match server `TUTORIAL_STAGING_ROOM_ID`. */
+export const TUTORIAL_STAGING_ROOM_ID = "tutorial-staging";
 
 export const TUTORIAL_ESCAPE_MS =
   Number(import.meta.env.VITE_TUTORIAL_ESCAPE_MS) || 120_000;

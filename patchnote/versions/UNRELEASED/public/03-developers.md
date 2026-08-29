@@ -5,4 +5,4 @@
 
 ---
 
-- [CHANGE] Free Play Field scoreboard: `scoreboardView.ts` ranks countries and chooses Scoreboard Chip vs panel (`max-width: 720px` or coarse pointer). Chip tap opens a Leaderboard Modal; `overlayBack` closes it on Android back. New catalog keys `worldcup.scoreboardChipAria` / `scoreboardChipTitle` / `leaderboardTitle` / `leaderboardClose`. No WS or API change.
+_(Draft — not published.)_

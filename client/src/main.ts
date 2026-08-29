@@ -55,6 +55,10 @@ import {
   isFieldLikeRoomId as worldcupIsFieldLikeRoomId,
   isMatchPitchRoomId as worldcupIsMatchPitchRoomId,
 } from "./worldcup/config.js";
+import { MOSQUITO_TAG_ENABLED as MOSQUITO_TAG_ENABLED_CLIENT } from "./mosquitoTag/config.js";
+import { mosquitoTagAllowedInRoom } from "./mosquitoTag/policy.js";
+import { listHasTagAddress, sameTagAddress } from "./mosquitoTag/ids.js";
+import { MosquitoTagHud } from "./mosquitoTag/tagHud.js";
 import { WorldcupScoreboard } from "./worldcup/scoreboard.js";
 import { WorldcupMatchHud } from "./worldcup/matchHud.js";
 import { WorldcupMatchCountdown } from "./worldcup/matchCountdown.js";
@@ -175,12 +179,14 @@ import {
   sendCampaignLinkClick,
   sendSetChallenge,
   sendAcceptChallenge,
+  sendMosquitoTag,
   sendLeaveMatch,
   sendRequestSpectate,
   sendCancelDirectInvite,
   type ObstacleProps,
   type RoomBackgroundNeutral,
   type ServerMessage,
+  type MosquitoTagWire,
 } from "./net/ws.js";
 import { mergeStateDeltaPlayer } from "./net/mergeStateDeltaPlayer.js";
 import { installAdminOverlay } from "./ui/adminOverlay.js";
@@ -1124,6 +1130,9 @@ function enterGame(
       if (ws) sendLeaveMatch(ws);
     };
   }
+  const mosquitoTagHud = MOSQUITO_TAG_ENABLED_CLIENT
+    ? new MosquitoTagHud()
+    : null;
   /** End post-goal kickoff freeze when HUD countdown or server matchState says play resumes. */
   const finishWorldcupKickoffFreeze = (): void => {
     if (game.isWorldcupMoveLocked()) {
@@ -1186,6 +1195,35 @@ function enterGame(
   };
   // worldcup: local mirror of the open-Challenge toggle + current room (for the donut label).
   let worldcupSelfChallengeOpen = false;
+  let lastMosquitoTag: MosquitoTagWire | null = null;
+  function applyMosquitoTag(snap: MosquitoTagWire | null): void {
+    const prevHolder = lastMosquitoTag?.holder ?? null;
+    lastMosquitoTag = snap;
+    if (!MOSQUITO_TAG_ENABLED_CLIENT) {
+      game.setMosquitoTag(null);
+      mosquitoTagHud?.hide();
+      return;
+    }
+    game.setMosquitoTag(snap);
+    const self = selfAddress || address;
+    mosquitoTagHud?.sync(snap, self);
+    if (
+      snap?.phase === "playing" &&
+      snap.holder &&
+      sameTagAddress(snap.holder, self) &&
+      (!prevHolder || !sameTagAddress(prevHolder, self))
+    ) {
+      mosquitoTagHud?.announceYouAreHolder();
+    }
+  }
+  function sendMosquitoTagAction(
+    socket: WebSocket,
+    action: "raise" | "cancel" | "join" | "leave" | "start"
+  ): void {
+    if (streamMode) return;
+    if (socket.readyState !== WebSocket.OPEN) return;
+    sendMosquitoTag(socket, action);
+  }
   let directInviteActive = false;
   // Latest Play Space state, kept so the persistent share button can re-open the panel with
   // the current room code / QR after it's been dismissed.
@@ -4399,7 +4437,30 @@ function enterGame(
         !worldcupIsMatchPitchRoomId(worldcupCurrentRoomId),
       directInviteActive,
       isGuest: selfAddress.startsWith("guest:"),
-      gamesAvailable: WORLDCUP_ENABLED_CLIENT,
+      soccerAvailable: WORLDCUP_ENABLED_CLIENT,
+      gamesAvailable:
+        WORLDCUP_ENABLED_CLIENT ||
+        (MOSQUITO_TAG_ENABLED_CLIENT &&
+          mosquitoTagAllowedInRoom(worldcupCurrentRoomId || game.getRoomId())),
+      mosquitoTag:
+        MOSQUITO_TAG_ENABLED_CLIENT &&
+        mosquitoTagAllowedInRoom(worldcupCurrentRoomId || game.getRoomId())
+          ? {
+              available: true,
+              phase: lastMosquitoTag?.phase ?? "idle",
+              isCaller:
+                !!lastMosquitoTag?.caller &&
+                sameTagAddress(lastMosquitoTag.caller, selfAddress || address),
+              isJoiner: listHasTagAddress(
+                lastMosquitoTag?.joiners ?? [],
+                selfAddress || address
+              ),
+              canStart: (lastMosquitoTag?.joiners.length ?? 0) >= 1,
+              onAction: (
+                action: "raise" | "cancel" | "join" | "leave" | "start"
+              ) => sendMosquitoTagAction(socket, action),
+            }
+          : undefined,
       onArmDeployable: () => {
         hud.setStatus("Tap a walkable tile to deploy your item.");
       },
@@ -4436,6 +4497,7 @@ function enterGame(
           if (socket.readyState === WebSocket.OPEN)
             sendAcceptChallenge(socket, addr);
         },
+        onJoinMosquitoTag: () => sendMosquitoTagAction(socket, "join"),
         onFreeze: (addr: string, freeze: boolean) => {
           if (socket.readyState === WebSocket.OPEN)
             sendAdminFreeze(socket, addr, freeze);
@@ -4457,6 +4519,10 @@ function enterGame(
     game.setChallengeAcceptHandler((addr: string) => {
       if (socket.readyState === WebSocket.OPEN) sendAcceptChallenge(socket, addr);
     });
+    game.setTagJoinHandler(() => sendMosquitoTagAction(socket, "join"));
+    hud.onTagJoinHitClick(() => sendMosquitoTagAction(socket, "join"));
+    hud.onTagCallerStartClick(() => sendMosquitoTagAction(socket, "start"));
+    hud.onTagCallerCancelClick(() => sendMosquitoTagAction(socket, "cancel"));
 
     game.setGateContextOpener((pick) => {
       const parts = pick.blockKey.split(",").map(Number);
@@ -6088,6 +6154,7 @@ function enterGame(
       // worldcup: live 1v1 spectate portals in this room.
       game.setWorldcupPortals(msg.worldcupPortals ?? []);
       game.setCosmeticGallery(msg.cosmeticGallery ?? null);
+      applyMosquitoTag(msg.mosquitoTag ?? null);
       
       // Load canvas claims if present and wait for them to finish
       if (msg.canvasClaims) {
@@ -6368,6 +6435,30 @@ function enterGame(
     if (msg.type === "onlineCount") {
       totalOnlinePlayers = Math.max(0, Math.floor(msg.count));
       syncPlayerCountHud();
+      return;
+    }
+    if (msg.type === "mosquitoTag") {
+      if (
+        normalizeRoomId(msg.roomId) !==
+        normalizeRoomId(worldcupCurrentRoomId || game.getRoomId())
+      ) {
+        return;
+      }
+      applyMosquitoTag({
+        phase: msg.phase,
+        caller: msg.caller,
+        joiners: msg.joiners,
+        participants: msg.participants,
+        holder: msg.holder,
+        outcome: msg.outcome,
+        countdownRemainingMs: msg.countdownRemainingMs,
+        roundRemainingMs: msg.roundRemainingMs,
+        resultRemainingMs: msg.resultRemainingMs,
+        boostPads: msg.boostPads,
+        holderBoostUntilMs: msg.holderBoostUntilMs,
+        stungPlayerId: msg.stungPlayerId ?? null,
+        stungRemainingMs: msg.stungRemainingMs ?? 0,
+      });
       return;
     }
     // worldcup: dynamic soccer ball positions
@@ -8014,6 +8105,10 @@ function enterGame(
     game.tick(dt);
     syncPortalEnterButton();
     syncTeleporterSetButton();
+    const tagHud = hud.isActionWheelOpen() ? null : game.getTagCallHudLayout();
+    hud.setTagJoinHitRect(tagHud?.join ?? null);
+    hud.setTagCallerControlRects(tagHud?.start ?? null, tagHud?.cancel ?? null);
+    hud.setTagCallParty(tagHud?.party ?? null, tagHud?.partyAddresses ?? []);
     if (worldcupBallEdgeMarker) {
       if (
         worldcupIsFieldLikeRoomId(worldcupCurrentRoomId) &&

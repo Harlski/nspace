@@ -50,15 +50,18 @@ the player's own profile.
 _Avoid_: nationality emote, country emoji.
 
 **Games Wheel**:
-The sub-wheel reached by selecting the Games Sector — a list of games (today: Soccer).
-Selecting a game drills further: Soccer → Free Play (join the Free Play Field) or 1v1 →
-**This room** (raise a Challenge where you stand) / **Invite** (open your Play Space).
+The sub-wheel reached by selecting the Games Sector — a list of games (today: Soccer as a
+soccer-ball emoji, Mosquito Tag as a mosquito emoji). Selecting Soccer drills further:
+Free Play (join the Free Play Field) or 1v1 → **This room** (raise a Challenge where you
+stand) / **Invite** (open your Play Space). Selecting Mosquito Tag raises, joins, starts, or
+cancels a Tag Call in this room; there is no Invite / Play Space leaf.
 _Avoid_: games menu, play menu.
 
 **1v1 Wheel**:
-The root-level shortcut Sector that skips straight to 1v1: it lists games and jumps to that
-game's 1v1 options (Soccer → This room / Invite), the same leaf the Games Wheel reaches the
-long way. A fast path, not a separate flow.
+The root-level shortcut Sector that skips straight to 1v1: it lists games that have a 1v1
+and jumps to that game's 1v1 options (today: Soccer → This room / Invite), the same leaf
+the Games Wheel reaches the long way. A fast path, not a separate flow. Mosquito Tag is
+not listed here.
 _Avoid_: match menu, versus menu.
 
 **Home Wheel**:
@@ -79,7 +82,8 @@ _Avoid_: close button, back button, hub button.
 **Other Player Menu**:
 The nested drill-in menu opened by right-click (desktop) or long-press (touch) on another
 player's avatar — not yourself. The root shows their identicon and **View {username}**,
-and may add a second root row to Accept 1v1 when that player has a Challenge raised.
+and may add a second root row to Accept 1v1 when that player has a Challenge raised, or
+to Join Mosquito Tag when that player has a Tag Call raised.
 Choosing View opens a header+Back panel of available actions (today: View Profile, Whisper,
 and More only when More has children). More drills to Administrative for allowlisted
 admins; Administrative drills to Freeze / Unfreeze. Empty branches are omitted (no placeholder
@@ -104,6 +108,80 @@ _Avoid_: tooltip, sector label, caption.
 The name of the sub-wheel you are currently inside (Emote Wheel, Items Wheel, Home Wheel, Games
 Wheel, 1v1…), shown below the Nav Sector. Present only inside a sub-wheel; absent at the root.
 _Avoid_: breadcrumb, context label, menu heading.
+
+## Mini-games
+
+**Mosquito Tag**:
+An in-room mini-game, distinct from a soccer Match and from a Challenge. Listed on the
+Games Wheel as a mosquito emoji; not listed on the 1v1 Wheel. Not part of the World Cup
+soccer feature.
+_Avoid_: mosquito game, tag, hot potato (as the feature name), Challenge (that is soccer),
+Match.
+
+**Tag Call**:
+An open looking-for-players intent a Caller raises in the current room. Shown above their
+avatar as a Join count (Caller plus Joiners, starting at 1 with the Caller's identicon) and
+the Mosquito Tag label; others Join and wait until the Caller starts the Tag Round. The
+Caller also has in-world Start and Cancel. At most one Tag Call or Tag Round per room.
+_Avoid_: Challenge, invite, request, gather.
+
+**Caller**:
+The player who raised the Tag Call. They are a Participant; only they can Start or Cancel
+before the Tag Round begins.
+_Avoid_: host (that is a Play Space), initiator, challenger.
+
+**Join**:
+Entering a waiting Tag Call as a future Participant.
+_Avoid_: accept (that is a Challenge), approve.
+
+**Start**:
+The Caller's action that locks Joiners in and begins the Tag Countdown, then the Tag Round.
+Requires the Caller plus at least one Joiner.
+_Avoid_: accept, kickoff.
+
+**Tag Countdown**:
+The 7 second count after Start before the Mosquito is assigned. Participants can still walk;
+Bystanders are unaffected. The overlay shows the rules: don't get the Mosquito; last Holder loses.
+_Avoid_: Kickoff Countdown, warmup, pre-game.
+
+**Tag Round**:
+A live Mosquito Tag game after Start. The party locks at Start; no late Join. Play stays
+in the current room — no teleport, no Match Pitch. Default duration 60 seconds.
+_Avoid_: Match, game, hunt, Round (alone).
+
+**Mosquito**:
+The single hot-potato token in a Tag Round. Shown as a mosquito emoji above the Holder.
+Passed by walking onto or beside another Participant.
+_Avoid_: tag, potato, infection.
+
+**Holder**:
+The Participant currently carrying the Mosquito.
+_Avoid_: it, tagged player, infected.
+
+**Stung**:
+The Holder at the moment the Tag Round timer ends — the loser of that Tag Round.
+They receive a 30 second Path Playback slow after the round, shown as a pulsing red on their avatar.
+_Avoid_: last standing, eliminated.
+
+**Participant**:
+A player locked into a Tag Round (joined the Tag Call and present at Start).
+_Avoid_: player (too broad), hunter.
+
+**Participant Marker**:
+An overhead cue on every Participant so they can spot each other among Bystanders.
+It uses the same V glyph look as an Attention Marker (green, bouncing) but is attached
+to the avatar, not placed on a tile. Distinct from an Attention Marker.
+_Avoid_: Attention Marker, waypoint, beacon, V (as the feature name).
+
+**Bystander**:
+Anyone in the room who is not a Participant of the current Tag Call or Tag Round.
+_Avoid_: Spectator (that is a Match stand), onlooker.
+
+**Boost Pad**:
+An ephemeral glowing floor tile spawned for a Tag Round on walkable floor with no placed
+block on that tile. Looks like a green teleporter portal pillar. The Holder standing on
+it receives a temporary walk-speed boost. Not room layout; not an Attention Marker.
+_Avoid_: glowing tile, speed tile, haste pad.
 
 ## Rooms
 
