@@ -11,6 +11,14 @@ The single shared open pitch (room id `field`) anyone can join to kick the ball 
 Goals here count toward the daily country/player leaderboard and (new) earn NIM.
 _Avoid_: arena, stadium, the field room.
 
+**Scoreboard Chip**:
+The compact Free Play Field scoreboard on narrow or touch layouts: only today's leading country as `1. {flag} {goals}`. Tapping it opens the Leaderboard Modal.
+_Avoid_: collapsed scoreboard, mini scoreboard, top-scorer pill.
+
+**Leaderboard Modal**:
+The popup opened from the Scoreboard Chip that lists today's country ranking, the UTC reset note, and yesterday's champion.
+_Avoid_: scoreboard popup, ranking overlay.
+
 **Match**:
 A 1v1 just-for-fun game between two players on a private pitch. No NIM rewards, no
 leaderboard credit.

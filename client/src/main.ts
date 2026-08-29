@@ -1101,7 +1101,7 @@ function enterGame(
     (canvasHost.parentElement as HTMLElement | null) ?? hudRoot;
   // worldcup: seasonal soccer scoreboard (only meaningful in the field room)
   const worldcupScoreboard = WORLDCUP_ENABLED_CLIENT
-    ? new WorldcupScoreboard(worldcupHudParent)
+    ? new WorldcupScoreboard(worldcupHudParent, { overlayBack })
     : null;
   if (worldcupScoreboard) {
     worldcupScoreboard.onChangeCountry = (code) => {

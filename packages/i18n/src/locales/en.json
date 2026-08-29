@@ -353,5 +353,9 @@
   "dailyEarn.profileLevelPlural": "Level {level} · {points} achievement points",
   "worldcup.rewardEarned": "+{amount} NIM earned!",
   "worldcup.rewardCap": "Daily NIM cap reached - keep scoring for fun!",
-  "worldcup.rewardBudget": "Today's NIM rewards are all claimed - back tomorrow!"
+  "worldcup.rewardBudget": "Today's NIM rewards are all claimed - back tomorrow!",
+  "worldcup.scoreboardChipAria": "Today's leader. Open leaderboard.",
+  "worldcup.scoreboardChipTitle": "Today's scores",
+  "worldcup.leaderboardTitle": "Today's scores",
+  "worldcup.leaderboardClose": "Close leaderboard"
 }

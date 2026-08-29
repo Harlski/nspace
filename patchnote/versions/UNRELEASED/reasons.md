@@ -8,7 +8,7 @@
 
 ## Summary
 
-_Add a one-line roll-up here when the buffer gets long._
+Free Play Field scoreboard: on narrow/touch layouts the in-room country ranking is a compact Scoreboard Chip (`1. {flag} {goals}`). Tap opens the Leaderboard Modal (full ranking, UTC reset note, yesterday's champion). Desktop panel still expands/collapses in place.
 
 ---
 
@@ -16,11 +16,11 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Repo / docs
 
-- _(none yet)_
+- `worldcup/CONTEXT.md` Scoreboard Chip / Leaderboard Modal. `docs/features-checklist.md` live field scoreboard HUD.
 
 ### Client
 
-- _(none in this change set)_
+- Free Play Field **Scoreboard Chip** + **Leaderboard Modal** (`client/src/worldcup/scoreboard.ts`, `scoreboardView.ts`). Chip layout via `(max-width: 720px), (pointer: coarse)`. Android back closes the modal through `overlayBack`. Catalog keys `worldcup.scoreboardChipAria` / `scoreboardChipTitle` / `leaderboardTitle` / `leaderboardClose`.
 
 ### Server
 
