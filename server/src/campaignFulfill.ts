@@ -1,4 +1,5 @@
 import { validateBillboardHttpsTarget } from "./billboardAdvertsCatalog.js";
+import { isCampaignCreativeUploadUrl } from "./campaignImageUpload.js";
 import {
   approveCampaign,
   applyCampaignTopUpPayment,
@@ -361,7 +362,7 @@ export function rebuildRotationSetsAndBillboards(setIds: string[]): number {
 
 export async function adminUpdateCampaignDetailsForInGame(
   campaignId: string,
-  patch: { projectName?: string; miniappTargetUrl?: string }
+  patch: { projectName?: string; miniappTargetUrl?: string; imageUrl?: string }
 ): Promise<
   | { ok: true; campaign: CampaignPublic }
   | { ok: false; error: string }
@@ -370,7 +371,11 @@ export async function adminUpdateCampaignDetailsForInGame(
   if (!id) return { ok: false, error: "campaign_not_found" };
   const existing = getCampaignById(id);
   if (!existing) return { ok: false, error: "campaign_not_found" };
-  if (patch.projectName === undefined && patch.miniappTargetUrl === undefined) {
+  if (
+    patch.projectName === undefined &&
+    patch.miniappTargetUrl === undefined &&
+    patch.imageUrl === undefined
+  ) {
     return { ok: false, error: "no_fields" };
   }
   if (patch.projectName !== undefined) {
@@ -382,6 +387,11 @@ export async function adminUpdateCampaignDetailsForInGame(
   if (patch.miniappTargetUrl !== undefined) {
     if (!validateBillboardHttpsTarget(String(patch.miniappTargetUrl).trim())) {
       return { ok: false, error: "invalid_miniapp_target_url" };
+    }
+  }
+  if (patch.imageUrl !== undefined) {
+    if (!isCampaignCreativeUploadUrl(String(patch.imageUrl).trim())) {
+      return { ok: false, error: "invalid_image_url" };
     }
   }
 

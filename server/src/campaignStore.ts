@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { validateBillboardHttpsTarget } from "./billboardAdvertsCatalog.js";
-import { isAllowedBillboardImageUrl } from "./billboards.js";
+import { isCampaignCreativeUploadUrl } from "./campaignImageUpload.js";
 import {
   CAMPAIGN_PLACEMENT_ACTIVE_CAROUSEL,
   campaignSqlitePath,
@@ -433,7 +433,7 @@ export function validateCampaignInput(input: {
     return { ok: false, error: "invalid_miniapp_target_url" };
   }
   const image = String(input.imageUrl ?? "").trim();
-  if (!isAllowedBillboardImageUrl(image)) {
+  if (!isCampaignCreativeUploadUrl(image)) {
     return { ok: false, error: "invalid_image_url" };
   }
   return { ok: true };
@@ -576,13 +576,20 @@ export function updateCampaignDraft(
 ): CampaignPublic | null {
   const existing = getCampaignForOwner(id, ownerWallet);
   if (!existing || existing.status !== "draft") return null;
-  const next = {
-    projectName: patch.projectName ?? existing.projectName,
-    miniappTargetUrl: patch.miniappTargetUrl ?? existing.miniappTargetUrl,
-    imageUrl: patch.imageUrl ?? existing.imageUrl,
-  };
-  const v = validateCampaignInput(next);
-  if (!v.ok) return null;
+  const nextName = String(patch.projectName ?? existing.projectName).trim();
+  const nextUrl = String(
+    patch.miniappTargetUrl ?? existing.miniappTargetUrl
+  ).trim();
+  let nextImage = existing.imageUrl;
+  if (patch.imageUrl !== undefined) {
+    const img = String(patch.imageUrl).trim();
+    if (img !== existing.imageUrl && !isCampaignCreativeUploadUrl(img)) {
+      return null;
+    }
+    nextImage = img;
+  }
+  if (!nextName || nextName.length > 80) return null;
+  if (!validateBillboardHttpsTarget(nextUrl)) return null;
   let displayIntervalSec = existing.displayIntervalSec;
   if (
     patch.displayIntervalSec !== undefined &&
@@ -599,9 +606,9 @@ export function updateCampaignDraft(
        WHERE id = ? AND owner_wallet = ? AND status = 'draft'`
     )
     .run(
-      next.projectName.trim(),
-      next.miniappTargetUrl.trim(),
-      next.imageUrl.trim(),
+      nextName,
+      nextUrl,
+      nextImage,
       displayIntervalSec,
       now,
       id.trim(),
@@ -826,10 +833,10 @@ const ADMIN_EDITABLE_CAMPAIGN_STATUSES: CampaignStatus[] = [
   "expired",
 ];
 
-/** Admin may change display name and target URL (not rejected campaigns). */
+/** Admin may change display name, Project URL, and Campaign Creative (not rejected campaigns). */
 export function adminUpdateCampaignFields(
   id: string,
-  patch: { projectName?: string; miniappTargetUrl?: string }
+  patch: { projectName?: string; miniappTargetUrl?: string; imageUrl?: string }
 ): CampaignPublic | null {
   const campaignId = String(id ?? "").trim();
   if (!campaignId) return null;
@@ -845,18 +852,26 @@ export function adminUpdateCampaignFields(
     patch.miniappTargetUrl !== undefined
       ? String(patch.miniappTargetUrl).trim()
       : existing.miniappTargetUrl;
+  const nextImage =
+    patch.imageUrl !== undefined
+      ? String(patch.imageUrl).trim()
+      : existing.imageUrl;
   if (!nextName || nextName.length > 80) return null;
   if (!validateBillboardHttpsTarget(nextUrl)) return null;
+  if (patch.imageUrl !== undefined && !isCampaignCreativeUploadUrl(nextImage)) {
+    return null;
+  }
   const now = Date.now();
   const info = requireDb()
     .prepare(
       `UPDATE campaigns SET
         project_name = ?,
         miniapp_target_url = ?,
+        image_url = ?,
         updated_at_ms = ?
        WHERE id = ? AND status IN ('draft', 'pending_payment', 'pending_approval', 'approved', 'expired')`
     )
-    .run(nextName, nextUrl, now, campaignId);
+    .run(nextName, nextUrl, nextImage, now, campaignId);
   if (info.changes === 0) return null;
   return getCampaignById(campaignId);
 }

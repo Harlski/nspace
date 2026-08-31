@@ -130,6 +130,20 @@ export function adminCampaignPageHtml(): string {
       margin-top: 0.65rem; padding-top: 0.55rem; border-top: 1px dashed #263348;
     }
     .cp-admin-tools__actions { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.35rem; }
+    .cp-image-upload { display: flex; flex-direction: column; gap: 0.3rem; }
+    .cp-image-upload-row { display: flex; align-items: center; gap: 0.45rem; }
+    .cp-image-file-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+    .cp-image-file {
+      position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 0;
+    }
+    .cp-image-file-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 2.1rem; padding: 0.3rem 0.7rem;
+      border: 1px solid #334155; border-radius: 6px; background: #1e293b; color: #c8d4e4;
+      font: inherit; font-size: 0.76rem; font-weight: 600; white-space: nowrap; cursor: pointer; user-select: none;
+    }
+    .cp-image-file-wrap:hover .cp-image-file-btn { border-color: #4d83d0; color: #e6edf3; }
+    .cp-image-upload-hint { margin: 0; font-size: 0.74rem; color: #7b8da8; }
     .cp-tx-date { color: #9fb0c7; }
     .cp-tx-amount { font-variant-numeric: tabular-nums; color: #c8d4e4; }
     .cp-table tr.cp-row-selectable { cursor: pointer; }
@@ -635,6 +649,22 @@ export function adminCampaignPageHtml(): string {
         '<input id="cpAdminUrl" type="url" value="' +
         esc(campaign.miniappTargetUrl || "") +
         '"/></div>' +
+        '<div class="cp-field"><label>Billboard image</label>' +
+        '<div class="cp-image-upload">' +
+        '<div class="cp-image-upload-row">' +
+        '<label class="cp-image-file-wrap">' +
+        '<input type="file" id="cpAdminImageFile" class="cp-image-file" accept="image/png,image/jpeg,image/webp"/>' +
+        '<span class="cp-image-file-btn">' +
+        (campaign.imageUrl ? "Replace image" : "Upload image") +
+        "</span></label>" +
+        '<p class="cp-image-upload-hint" id="cpAdminImageHint">' +
+        (campaign.imageUrl ? "Current image kept until you upload a replacement." : "PNG, JPEG, or WebP") +
+        "</p></div>" +
+        '<input type="hidden" id="cpAdminImageUrl" value="' +
+        esc(campaign.imageUrl || "") +
+        '"/>' +
+        '<p class="cp-msg" id="cpAdminImageStatus" hidden></p>' +
+        "</div></div>" +
         '<div class="cp-admin-tools__actions">' +
         '<button type="button" class="cp-btn cp-btn--accent" id="cpAdminSaveBtn">Save details</button>' +
         "</div>" +
@@ -680,6 +710,21 @@ export function adminCampaignPageHtml(): string {
       if (code === "invalid_miniapp_target_url") {
         return "Project URL must be a valid HTTPS URL.";
       }
+      if (code === "invalid_image_url") {
+        return "Upload a PNG, JPEG, or WebP image.";
+      }
+      if (code === "image_too_large") {
+        return "Image is too large (max 2.5 MB).";
+      }
+      if (code === "invalid_image_format") {
+        return "Use PNG, JPEG, or WebP.";
+      }
+      if (code === "invalid_image_data") {
+        return "Could not read that image file.";
+      }
+      if (code === "upload_failed") {
+        return "Upload failed. Try again.";
+      }
       if (code === "campaign_not_editable") {
         return "This campaign cannot be edited.";
       }
@@ -695,10 +740,81 @@ export function adminCampaignPageHtml(): string {
     function bindCampaignAdminTools(campaignId) {
       var saveBtn = document.getElementById("cpAdminSaveBtn");
       var creditBtn = document.getElementById("cpAdminCreditBtn");
+      var fileInput = document.getElementById("cpAdminImageFile");
+      if (fileInput && fileInput.dataset.uploadBound !== "1") {
+        fileInput.dataset.uploadBound = "1";
+        fileInput.addEventListener("change", function () {
+          var file = fileInput.files && fileInput.files[0];
+          var statusEl = document.getElementById("cpAdminImageStatus");
+          var hintEl = document.getElementById("cpAdminImageHint");
+          var urlEl = document.getElementById("cpAdminImageUrl");
+          var btnEl = fileInput.parentNode && fileInput.parentNode.querySelector
+            ? fileInput.parentNode.querySelector(".cp-image-file-btn")
+            : null;
+          if (!file) return;
+          var token = readAuthToken();
+          if (!token) {
+            if (statusEl) {
+              statusEl.className = "cp-err";
+              statusEl.textContent = "You must be signed in to perform this action.";
+              statusEl.hidden = false;
+            }
+            return;
+          }
+          if (statusEl) {
+            statusEl.className = "cp-msg";
+            statusEl.textContent = "Uploading…";
+            statusEl.hidden = false;
+          }
+          fetch("/api/advertise/campaigns/upload-image", {
+            method: "POST",
+            headers: {
+              authorization: "Bearer " + token,
+              "content-type": String(file.type || "application/octet-stream"),
+            },
+            body: file,
+          })
+            .then(function (r) {
+              return r.json().then(function (body) {
+                return { ok: r.ok, status: r.status, body: body };
+              });
+            })
+            .then(function (r) {
+              if (r.ok && r.body && r.body.imageUrl) {
+                if (urlEl) urlEl.value = r.body.imageUrl;
+                if (hintEl) hintEl.textContent = "New image ready. Save details to apply.";
+                if (btnEl) btnEl.textContent = "Replace image";
+                if (statusEl) {
+                  statusEl.className = "cp-msg";
+                  statusEl.textContent = "Uploaded. Save details to apply.";
+                  statusEl.hidden = false;
+                }
+                fileInput.value = "";
+                return;
+              }
+              if (statusEl) {
+                statusEl.className = "cp-err";
+                statusEl.textContent =
+                  r.status === 401
+                    ? "You must be signed in to perform this action."
+                    : mapAdminCampaignError(r.body && r.body.error);
+                statusEl.hidden = false;
+              }
+            })
+            .catch(function () {
+              if (statusEl) {
+                statusEl.className = "cp-err";
+                statusEl.textContent = "Upload failed. Try again.";
+                statusEl.hidden = false;
+              }
+            });
+        });
+      }
       if (saveBtn) {
         saveBtn.addEventListener("click", function () {
           var nameEl = document.getElementById("cpAdminName");
           var urlEl = document.getElementById("cpAdminUrl");
+          var imageEl = document.getElementById("cpAdminImageUrl");
           var msgEl = document.getElementById("cpAdminSaveMsg");
           if (!nameEl || !urlEl) return;
           saveBtn.disabled = true;
@@ -706,12 +822,17 @@ export function adminCampaignPageHtml(): string {
             msgEl.hidden = true;
             msgEl.textContent = "";
           }
+          var patch = {
+            projectName: String(nameEl.value || "").trim(),
+            miniappTargetUrl: String(urlEl.value || "").trim(),
+          };
+          var imageUrl = imageEl ? String(imageEl.value || "").trim() : "";
+          if (imageUrl.indexOf("/advertise/uploads/") === 0) {
+            patch.imageUrl = imageUrl;
+          }
           api("/api/admin/advertise/campaigns/" + encodeURIComponent(campaignId), {
             method: "PATCH",
-            body: JSON.stringify({
-              projectName: String(nameEl.value || "").trim(),
-              miniappTargetUrl: String(urlEl.value || "").trim(),
-            }),
+            body: JSON.stringify(patch),
           })
             .then(function (r) {
               if (!r.ok) {

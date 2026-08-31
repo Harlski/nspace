@@ -11,7 +11,7 @@ This guide explains how a paid campaign becomes an in-game billboard advert. For
 ## Quick path (7 steps)
 
 1. **Sign in** at `/advertise` with your Nimiq wallet.
-2. **Create** a campaign: project name, HTTPS project URL, billboard image (upload or URL), on-screen duration (10 / 30 / 45 s).
+2. **Create** a campaign: project name, HTTPS project URL, **upload** a billboard image (PNG, JPEG, or WebP - not a remote URL), on-screen duration (10 / 30 / 45 s).
 3. **Fund** with NIM via **Pay with wallet** (any amount; default **400 NIM ≈ 24 h** on-screen at full audience).
 4. **Wait for approval** — status **Pending approval** until operators review.
 5. **Go live on billboards** — after approval, your advert is placed on billboards around the game. Until then: **Approved · Not Live**.
@@ -39,7 +39,7 @@ Dwell (10 / 30 / 45 s) is free to choose; longer slides consume more balance eac
 
 ### New
 
-Create a draft campaign. Edit name, URL, image, and dwell until you fund.
+Create a draft campaign. Edit name, URL, and dwell until you fund. The billboard image is attached by **upload** (PNG, JPEG, or WebP), not by pasting a URL.
 
 ### Existing
 
@@ -57,7 +57,7 @@ Create a draft campaign. Edit name, URL, image, and dwell until you fund.
 Operators use **`/admin/campaign`**:
 
 1. **Pending approvals** — approve or reject funded campaigns
-2. **Approved campaigns** — view balance, audience stats, Live / Not live
+2. **Approved campaigns** — view balance, audience stats, Live / Not live; edit project name, **Project URL**, and **Campaign Creative** (upload a replacement image and Save)
 3. **Rotations** — build carousel sets and assign approved campaigns to slides
 4. In-game **Campaign** build tab — place rotation billboards in rooms
 

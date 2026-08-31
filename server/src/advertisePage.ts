@@ -11,6 +11,7 @@ import {
 import { advertiseBillboardPreviewModuleScript } from "./advertiseBillboardPreviewScript.js";
 import { mainSiteFaviconLinkTag, mainSiteShellCss } from "./mainSiteShell.js";
 import { nimiqHexLoaderSvg } from "./nimiqHexLoaderMarkup.js";
+import { SIGNED_IN_REQUIRED_MESSAGE } from "./signedInRequired.js";
 
 /** HTML shell for `/advertise` - mini-app billboard campaign dashboard. */
 export function advertisePageHtml(): string {
@@ -282,9 +283,14 @@ export function advertisePageHtml(): string {
       border-color: #4d83d0;
       color: #e6edf3;
     }
-    .adv-image-input {
+    .adv-image-input { display: none; }
+    .adv-image-upload-hint {
       flex: 1;
       min-width: 0;
+      align-self: center;
+      margin: 0;
+      font-size: 0.8125rem;
+      color: #7b8da8;
     }
     .adv-upload-status { margin: 0; }
     .adv-audience-stats {
@@ -471,7 +477,27 @@ export function advertisePageHtml(): string {
   <script>
     var AUTH_KEYS = ["nspace_analytics_auth_token", "nspace_pending_payouts_token"];
     var NIMIQ_HEX_SPINNER = ${nimiqHexSpinner};
+    var SIGNED_IN_REQUIRED_MESSAGE = ${JSON.stringify(SIGNED_IN_REQUIRED_MESSAGE)};
     var ADV_TELEGRAM_URL = "https://t.me/nimiqspace";
+    function isUnauthenticatedApiFailure(status, error) {
+      if (status === 401) return true;
+      var code = String(error || "").trim();
+      return code === "unauthorized" || code === "not_signed_in";
+    }
+    function signedInRequiredGateHtml() {
+      return (
+        '<div class="ms-auth-gate ms-auth-gate--standalone"><div class="ms-auth-gate-msg">' +
+        escHtml(SIGNED_IN_REQUIRED_MESSAGE) +
+        "</div></div>"
+      );
+    }
+    function mapCampaignSaveError(code) {
+      if (code === "invalid_image_url") return "Upload a PNG, JPEG, or WebP image.";
+      if (code === "invalid_project_name") return "Project name must be 1–80 characters.";
+      if (code === "invalid_miniapp_target_url") return "Project URL must be a valid HTTPS URL.";
+      if (code === "invalid_campaign") return "Check name, project URL, and image.";
+      return code || "Save failed";
+    }
     function advertiseSupportMessageText() {
       return "Something went wrong. Reach out on Telegram if it is not fixed soon.";
     }
@@ -882,18 +908,34 @@ export function advertisePageHtml(): string {
       var dataId = opts.dataId ? ' data-id="' + escHtml(opts.dataId) + '"' : "";
       var extraClass = opts.urlInputClass ? " " + escHtml(opts.urlInputClass) : "";
       var statusId = opts.statusId || "advImageUploadStatus";
+      var hasImage = String(opts.value || "").trim();
+      var btnLabel = hasImage ? "Replace image" : "Upload image";
+      var hint = hasImage ? "Image ready" : "PNG, JPEG, or WebP";
       return (
         '<div class="adv-image-upload">' +
         '<div class="adv-image-upload-row">' +
         '<label class="adv-image-file-wrap">' +
         '<input type="file" class="adv-image-file" accept="image/png,image/jpeg,image/webp" />' +
-        '<span class="adv-image-file-btn">Choose file</span>' +
-        '</label>' +
-        '<input class="adv-input adv-image-input' + extraClass + '"' + urlId + dataId +
-        ' value="' + escHtml(opts.value || "") + '" placeholder="https://…"/>' +
-        '</div>' +
-        '<p class="adv-upload-status adv-hint" id="' + escHtml(statusId) + '" hidden></p>' +
-        '</div>'
+        '<span class="adv-image-file-btn">' +
+        escHtml(btnLabel) +
+        "</span>" +
+        "</label>" +
+        '<p class="adv-image-upload-hint">' +
+        escHtml(hint) +
+        "</p>" +
+        '<input type="hidden" class="adv-image-input' +
+        extraClass +
+        '"' +
+        urlId +
+        dataId +
+        ' value="' +
+        escHtml(opts.value || "") +
+        '"/>' +
+        "</div>" +
+        '<p class="adv-upload-status adv-hint" id="' +
+        escHtml(statusId) +
+        '" hidden></p>' +
+        "</div>"
       );
     }
     function mapImageUploadError(code) {
@@ -941,6 +983,8 @@ export function advertisePageHtml(): string {
           var fileInput = block.querySelector(".adv-image-file");
           var urlInput = block.querySelector(".adv-image-input");
           var statusEl = block.querySelector(".adv-upload-status");
+          var hintEl = block.querySelector(".adv-image-upload-hint");
+          var btnEl = block.querySelector(".adv-image-file-btn");
           if (!fileInput || !urlInput || fileInput.dataset.uploadBound === "1") return;
           fileInput.dataset.uploadBound = "1";
           fileInput.addEventListener("change", function () {
@@ -956,6 +1000,8 @@ export function advertisePageHtml(): string {
                 if (r.ok && r.body && r.body.imageUrl) {
                   urlInput.value = r.body.imageUrl;
                   urlInput.dispatchEvent(new Event("input", { bubbles: true }));
+                  if (hintEl) hintEl.textContent = "Image ready";
+                  if (btnEl) btnEl.textContent = "Replace image";
                   if (statusEl) {
                     statusEl.textContent = "Uploaded.";
                     statusEl.className = "adv-upload-status adv-hint";
@@ -966,7 +1012,9 @@ export function advertisePageHtml(): string {
                 }
                 if (statusEl) {
                   var errCode = r.body && r.body.error;
-                  if (r.status === 503 || errCode === "backend_unavailable") {
+                  if (isUnauthenticatedApiFailure(r.status, errCode)) {
+                    statusEl.textContent = SIGNED_IN_REQUIRED_MESSAGE;
+                  } else if (r.status === 503 || errCode === "backend_unavailable") {
                     statusEl.textContent = "Game server is not running. Start it on port 3001 and try again.";
                   } else {
                     statusEl.textContent = mapImageUploadError(errCode);
@@ -980,7 +1028,7 @@ export function advertisePageHtml(): string {
                   if (err && err.name === "AbortError") {
                     statusEl.textContent = "Upload timed out. Try again.";
                   } else if (String((err && err.message) || err) === "not_signed_in") {
-                    statusEl.textContent = "Sign in to upload images.";
+                    statusEl.textContent = SIGNED_IN_REQUIRED_MESSAGE;
                   } else {
                     statusEl.textContent = "Upload failed. Check that the game server is running.";
                   }
@@ -1005,7 +1053,7 @@ export function advertisePageHtml(): string {
         '<input class="adv-input" id="advName" maxlength="80" placeholder="My project"/></div>' +
         '<div class="adv-row"><label for="advTarget">Project URL</label>' +
         '<input class="adv-input" id="advTarget" placeholder="https://…"/></div>' +
-        '<div class="adv-row"><label for="advImage">Image</label>' +
+        '<div class="adv-row"><label>Image</label>' +
         renderCampaignImageField({ urlInputId: "advImage", statusId: "advImageUploadStatus" }) +
         '</div>' +
         renderSlideDwellOptions(meta, referenceDwellSec(meta), "advDisplayInterval") +
@@ -1316,11 +1364,21 @@ export function advertisePageHtml(): string {
           { method: "GET" }
         );
         if (!r.ok) {
+          if (isUnauthenticatedApiFailure(r.status, r.body && r.body.error)) {
+            el.innerHTML =
+              '<p class="adv-small">' + escHtml(SIGNED_IN_REQUIRED_MESSAGE) + "</p>";
+            return;
+          }
           el.innerHTML = '<p class="adv-small">Could not load transactions.</p>';
           return;
         }
         renderCampaignTxHistory((r.body && r.body.transactions) || []);
       } catch (e) {
+        if (String((e && e.message) || e) === "not_signed_in") {
+          el.innerHTML =
+            '<p class="adv-small">' + escHtml(SIGNED_IN_REQUIRED_MESSAGE) + "</p>";
+          return;
+        }
         el.innerHTML = '<p class="adv-small">Could not load transactions.</p>';
       }
     }
@@ -2228,8 +2286,7 @@ export function advertisePageHtml(): string {
       var panel = document.getElementById("panel");
       var token = readAuthToken();
       if (!token) {
-        panel.innerHTML =
-          '<div class="ms-auth-gate ms-auth-gate--standalone"><div class="ms-auth-gate-msg">Sign in to continue.</div></div>';
+        panel.innerHTML = signedInRequiredGateHtml();
         return;
       }
       try {
@@ -2237,6 +2294,13 @@ export function advertisePageHtml(): string {
         var listR = await api("/api/advertise/campaigns", { method: "GET" });
         if (!metaR.ok || !listR.ok) {
           var errCode = (metaR.body && metaR.body.error) || (listR.body && listR.body.error);
+          if (
+            isUnauthenticatedApiFailure(metaR.status, metaR.body && metaR.body.error) ||
+            isUnauthenticatedApiFailure(listR.status, listR.body && listR.body.error)
+          ) {
+            panel.innerHTML = signedInRequiredGateHtml();
+            return;
+          }
           var errMsg = "Could not load campaigns.";
           if (metaR.status === 503 || listR.status === 503 || errCode === "backend_unavailable") {
             errMsg = "Game server is not running on port 3001. Restart npm run dev and hard-refresh.";
@@ -2294,6 +2358,10 @@ export function advertisePageHtml(): string {
       }
       } catch (e) {
         var loadErr = String((e && e.message) || e || "");
+        if (loadErr === "not_signed_in") {
+          panel.innerHTML = signedInRequiredGateHtml();
+          return;
+        }
         var loadFailMsg = "Could not load campaigns.";
         if (loadErr === "backend_timeout") {
           loadFailMsg =
@@ -2320,7 +2388,11 @@ export function advertisePageHtml(): string {
       });
       if (!r.ok) {
         if (msg) {
-          msg.textContent = (r.body && r.body.error) || "Save failed";
+          if (isUnauthenticatedApiFailure(r.status, r.body && r.body.error)) {
+            msg.textContent = SIGNED_IN_REQUIRED_MESSAGE;
+          } else {
+            msg.textContent = (r.body && r.body.error) || "Save failed";
+          }
           msg.className = "err";
           msg.hidden = false;
         }
@@ -2339,21 +2411,29 @@ export function advertisePageHtml(): string {
     async function onSaveCampaign(ev) {
       var id = ev.currentTarget.getAttribute("data-id");
       var msg = document.querySelector('.adv-edit-msg[data-id="' + id + '"]');
+      var imageEl = document.querySelector('.adv-edit-image[data-id="' + id + '"]');
+      var imageUrl = imageEl ? String(imageEl.value || "").trim() : "";
       var body = {
         projectName: (document.querySelector('.adv-edit-name[data-id="' + id + '"]') || {}).value,
         miniappTargetUrl: (document.querySelector('.adv-edit-target[data-id="' + id + '"]') || {}).value,
-        imageUrl: (document.querySelector('.adv-edit-image[data-id="' + id + '"]') || {}).value,
         displayIntervalSec: Number(
           (document.getElementById("advEditDisplayInterval-" + id) || {}).value || 10
         ),
       };
+      if (imageUrl.indexOf("/advertise/uploads/") === 0) {
+        body.imageUrl = imageUrl;
+      }
       var r = await api("/api/advertise/campaigns/" + encodeURIComponent(id), {
         method: "PUT",
         body: JSON.stringify(body),
       });
       if (!r.ok) {
         if (msg) {
-          msg.textContent = (r.body && r.body.error) || "Save failed";
+          if (isUnauthenticatedApiFailure(r.status, r.body && r.body.error)) {
+            msg.textContent = SIGNED_IN_REQUIRED_MESSAGE;
+          } else {
+            msg.textContent = mapCampaignSaveError((r.body && r.body.error) || "Save failed");
+          }
           msg.className = "err";
           msg.hidden = false;
         }
@@ -2374,7 +2454,11 @@ export function advertisePageHtml(): string {
       };
       var r = await api("/api/advertise/campaigns", { method: "POST", body: JSON.stringify(body) });
       if (!r.ok) {
-        msg.textContent = (r.body && r.body.error) || "Create failed";
+        if (isUnauthenticatedApiFailure(r.status, r.body && r.body.error)) {
+          msg.textContent = SIGNED_IN_REQUIRED_MESSAGE;
+        } else {
+          msg.textContent = mapCampaignSaveError((r.body && r.body.error) || "Create failed");
+        }
         msg.className = "err";
         msg.hidden = false;
         return;

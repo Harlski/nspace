@@ -40,6 +40,8 @@ _Add sections here as the system matures. Keep each bullet concrete enough that 
 
 - **Player-visible product strings use Message Catalog keys** — New player-facing **product** chrome (labels, buttons, system UI) must go through Message Catalog keys in [`packages/i18n`](../packages/i18n/) (`@nspace/i18n`) in the **same change** as the UI. **`en` is required** (complete for keys the code references); **alternate locales may lag** and fall back to English. Exempt: **`/admin/*`** and admin-only overlays; **user-authored** content (chat, usernames, signboards, voxels, player campaign fields); **third-party** chrome (Nimiq Hub, Pay SDK); legal **page bodies** (English in v1 — chrome may still use catalogs). See [localization.md](localization.md) and `docs/reasons/reason_746291.md`.
 
+- **Login-gated HTML pages name the missing session** - When a standalone `/*` page needs a signed-in wallet and the session is missing or expired, show a **Sign-in Gate**: the viewer must be signed in to perform that action. Do not report it as a generic load failure (e.g. "Could not load campaigns"). Real load failures (backend down, forbidden, not found) keep their own copy.
+
 ---
 
 ## Recorded decisions & forward constraints
@@ -325,11 +327,19 @@ settlement becomes reliable enough that a real micro-send is worth teaching inst
 
 **Today:** Soccer **Challenge** → accept starts a **Match** on an ephemeral **Match Pitch** (teleport, private ball/goals/stands, return on end). That isolation is required for the sport. **Mosquito Tag** is a separate in-room mini-game: Tag Call gathers in place, Tag Round plays in that same room, Bystanders keep walking. The Games Sector appears if Soccer **or** Mosquito Tag is on (`MOSQUITO_TAG_ENABLED` / `VITE_MOSQUITO_TAG_ENABLED`, default on, distinct from `WORLDCUP_ENABLED`). Soccer leaves still hide when World Cup is off. Mosquito Tag is not on the 1v1 Wheel.
 
-**First in-room mini-game:** **Mosquito Tag** is a chase among whoever is already in the room. A **Tag Call** gathers players in place; a **Tag Round** plays in that same room. Bystanders keep walking. **Participants keep walking during Tag Countdown** (7s rules overlay; not a Kickoff freeze). The **Stung** loser gets a 30s Path Playback slow after the round. Movement stays click-to-walk **Path Playback** (Hub/Commons have obstacles; pitch free-move stays pitch-only). **Boost Pads** are Round-ephemeral green portal pillars, not Attention Markers or Build Shell content. At most one Tag Call or Tag Round per room.
+**First in-room mini-game:** **Mosquito Tag** is a chase among whoever is already in the room. A **Tag Call** gathers players in place; a **Tag Round** plays in that same room. Bystanders keep walking. **Participants keep walking during Tag Countdown** (7s rules overlay; not a Kickoff freeze). **Tag Room Lock:** from Start through the live Tag Round, a Participant cannot Enter a Teleporter or change Room (Rooms, Return to Hub, doors, Play Space); disconnect still drops them. The **Stung** loser gets a 30s Path Playback slow after the round. Movement stays click-to-walk **Path Playback** (Hub/Commons have obstacles; pitch free-move stays pitch-only). **Boost Pads** are Round-ephemeral green portal pillars, not Attention Markers or Build Shell content. At most one Tag Call or Tag Round per room. Off-screen **Participant Edge Markers** (Ball Edge Marker placement) point Participants at each other. **Tag Round Pay Zoom:** Nimiq Pay Participants are zoomed to Telescope range for that same countdown/round window (no hold, no Telescope achievement); restored after.
 
 **Direction:** Keep in-room mini-games out of `*/worldcup/` and off `WORLDCUP_ENABLED`. Once a non-soccer game exists, the Games Wheel cannot stay soccer-flag-gated — Soccer entries may still hide when World Cup is off. Do not reuse **Challenge** / **Match** / **Kickoff Countdown** / **Match Result Overlay** names or the Match Pitch machine for in-room games. A later generic “open activity” under both is allowed only if it does not rewrite those soccer contracts.
 
 Update this subsection when a second in-room mini-game ships, if Tag Call is generalized under soccer Challenge, or if participant-only free-move is ever proposed for obstacle rooms.
+
+### Campaign creatives are hosted uploads
+
+**Today:** A **Campaign Creative** (the billboard image on an advertise Campaign) is an uploaded PNG/JPEG/WebP stored as a same-origin `/advertise/uploads/{uuid}.{ext}` path. Advertisers cannot paste a remote image URL. Admins may replace the creative (and still edit **Project URL**) when viewing a user's campaign; live rotation billboards rebuild after that save. Legacy remote HTTPS creatives keep displaying until replaced. See [adr/0023-campaign-creatives-are-uploads.md](adr/0023-campaign-creatives-are-uploads.md).
+
+**Direction:** Keep campaign pixels on hosts we control. Do not re-open paste-URL for owner create/update. In-world billboard *placement* may still use `http(s)` URLs for non-campaign slides (operator-authored).
+
+Update this subsection if campaign image storage moves (CDN, signed URLs) or if owner post-draft creative edits are opened.
 
 ---
 
@@ -374,3 +384,6 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-08-28** — Principle + recorded decision: in-room mini-games (first: Mosquito Tag) stay in the current room and out of World Cup / Match Pitch; Games Wheel must not stay soccer-flag-gated once a non-soccer game exists. See [reasons/reason_274859.md](reasons/reason_274859.md).
 - **2026-08-29** — Mosquito Tag: Participants walk during Tag Countdown; Stung is a Path Playback slow, not a freeze. See [reasons/reason_496281.md](reasons/reason_496281.md).
 - **2026-08-29** — Login streak credits a UTC calendar day of wallet world presence (WS enter / cached JWT), not only Hub/Pay verify. See [reasons/reason_264819.md](reasons/reason_264819.md).
+- **2026-08-29** — Mosquito Tag: Tag Room Lock (no Teleporter / room change for Participants during Countdown and Tag Round) and Participant Edge Markers. See [reasons/reason_518473.md](reasons/reason_518473.md).
+- **2026-08-30** — Mosquito Tag: Tag Round Pay Zoom (Nimiq Pay Participants get Telescope range during Countdown and Tag Round). See [reasons/reason_739261.md](reasons/reason_739261.md).
+- **2026-08-31** - Login-gated standalone pages use a Sign-in Gate (not generic load errors); Campaign Creatives are hosted uploads, not remote URLs. See [reasons/reason_847615.md](reasons/reason_847615.md).

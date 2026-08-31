@@ -157,7 +157,8 @@ export function advertiseGuidePageHtml(): string {
         <p>
           Open <a href="/advertise">Advertise</a>, connect your Nimiq wallet, and use the
           <strong>New</strong> tab. Add your <strong>project name</strong>, <strong>project URL</strong>
-          (where players go when they tap Visit), a <strong>billboard image</strong>, and how long each
+          (where players go when they tap Visit), <strong>upload a billboard image</strong>
+          (PNG, JPEG, or WebP - not a remote URL), and how long each
           on-screen slide lasts (10, 30, or 45 seconds).
         </p>
       </li>
@@ -236,8 +237,9 @@ export function advertiseGuidePageHtml(): string {
       <li>
         <h3>Can I change my image after funding?</h3>
         <p>
-          Draft fields lock after you leave draft status. Contact operators if you need a correction
-          before approval; after approval, use support for exceptional changes.
+          Draft fields lock after you leave draft status. Operators can replace the billboard image
+          (and the project URL) from campaign admin. After approval, contact support for exceptional
+          owner-side changes.
         </p>
       </li>
       <li>

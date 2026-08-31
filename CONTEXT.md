@@ -146,7 +146,7 @@ _Avoid_: Kickoff Countdown, warmup, pre-game.
 
 **Tag Round**:
 A live Mosquito Tag game after Start. The party locks at Start; no late Join. Play stays
-in the current room — no teleport, no Match Pitch. Default duration 60 seconds.
+in the current room — no Match Pitch. Default duration 60 seconds.
 _Avoid_: Match, game, hunt, Round (alone).
 
 **Mosquito**:
@@ -167,11 +167,29 @@ _Avoid_: last standing, eliminated.
 A player locked into a Tag Round (joined the Tag Call and present at Start).
 _Avoid_: player (too broad), hunter.
 
+**Tag Room Lock**:
+The rule that a Participant cannot Enter a Teleporter or change Room during Tag Countdown
+and Tag Round. Disconnect still drops them from the party. Lifted for Bystanders, during a
+waiting Tag Call, and during the result linger.
+_Avoid_: teleport ban, match lock, freeze (that is admin), hunt lock.
+
 **Participant Marker**:
 An overhead cue on every Participant so they can spot each other among Bystanders.
 It uses the same V glyph look as an Attention Marker (green, bouncing) but is attached
 to the avatar, not placed on a tile. Distinct from an Attention Marker.
 _Avoid_: Attention Marker, waypoint, beacon, V (as the feature name).
+
+**Participant Edge Marker**:
+A screen-edge HUD chevron pointing toward another off-screen Participant during Tag
+Countdown and Tag Round. Placement matches the soccer Ball Edge Marker (hide when that
+avatar is on-screen; opacity grows with how far past the edge they sit). Shown only to
+Participants. The Holder's chevron is tinted apart from the others.
+_Avoid_: player compass, off-screen arrow, hunt pointer, Ball Edge Marker (soccer).
+
+**Tag Round Pay Zoom**:
+On Nimiq Pay, Participants are zoomed to Telescope range for Tag Countdown and Tag Round,
+then restored. It does not require holding the Telescope control or the Telescope achievement.
+_Avoid_: auto telescope, force zoom, map overview.
 
 **Bystander**:
 Anyone in the room who is not a Participant of the current Tag Call or Tag Round.
@@ -473,7 +491,9 @@ _Avoid_: portrait controls, landscape controls.
 **Telescope**:
 The achievement-gated temporary zoom-out the player holds to see more of the room; releasing
 returns to the prior view. On desktop letterbox, **Shift** or the magnifying-glass control beside
-**Player Menu**; on mobile-play layouts, hold the magnifying-glass control only.
+**Player Menu**; on mobile-play layouts, hold the magnifying-glass control only. **Tag Round Pay
+Zoom** uses the same range for Nimiq Pay Participants during Tag Countdown and Tag Round
+without a hold or that achievement.
 _Avoid_: zoom mode, map overview toggle, binoculars.
 
 **Main Menu**:
@@ -970,6 +990,24 @@ The game server's minimal local, durable, append-only store of Pay-Intents not y
 by the Payout Service. A delivery loop drains it with retries so no payout is lost across a
 service outage or a game-server restart. Priority intents are delivered before normal ones.
 _Avoid_: queue (the durable queue lives in the Payout Service), buffer, spool.
+
+## Advertise
+
+**Campaign** (advertise):
+A paid billboard advert owned by a wallet: display name, **Project URL**, **Campaign Creative**, and prepaid visibility. Distinct from in-world billboard placement.
+_Avoid_: advert slot (that is in-world placement), billboard (the placed object).
+
+**Project URL**:
+The HTTPS destination a billboard Visit opens for that Campaign.
+_Avoid_: campaign URL (ambiguous with the Campaign Creative), mini-app URL (wire name).
+
+**Campaign Creative**:
+The billboard image that belongs to a Campaign. Advertisers attach it by uploading a file; they do not paste a remote URL. Admins may replace it when reviewing a campaign.
+_Avoid_: image URL, campaign URL, hotlink.
+
+**Sign-in Gate**:
+The message on a login-gated standalone page when the viewer has no valid session. It states that they must be signed in to perform the action; it is not a load-failure error.
+_Avoid_: auth error (too generic), could not load (a different failure).
 
 ## Localization
 

@@ -101,9 +101,17 @@ export function fileExtensionForFormat(format: CampaignImageFormat): string {
   return format;
 }
 
+const CAMPAIGN_CREATIVE_UPLOAD_PATH_RE =
+  /^\/advertise\/uploads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|webp)$/i;
+
+/** Same-origin path written by {@link saveCampaignImageUpload}. */
+export function isCampaignCreativeUploadUrl(url: string): boolean {
+  return CAMPAIGN_CREATIVE_UPLOAD_PATH_RE.test(String(url ?? "").trim());
+}
+
 /**
  * Persist an uploaded campaign image and return a same-origin URL path
- * accepted by {@link isAllowedBillboardImageUrl}.
+ * accepted by {@link isCampaignCreativeUploadUrl}.
  */
 export function saveCampaignImageUpload(
   buffer: Buffer,

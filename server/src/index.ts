@@ -169,6 +169,7 @@ import {
   campaignUploadsDir,
   CAMPAIGN_IMAGE_UPLOAD_MAX_BYTES,
   ensureCampaignUploadsDir,
+  isCampaignCreativeUploadUrl,
   isCampaignImageUploadContentType,
   parseCampaignImageBuffer,
   saveCampaignImageUpload,
@@ -205,6 +206,7 @@ import {
   getCampaignById,
   repairInflatedCampaignBalances,
   sumCampaignFundingLuna,
+  validateCampaignInput,
   type CampaignPublic,
 } from "./campaignStore.js";
 import {
@@ -1592,12 +1594,18 @@ app.post("/api/advertise/campaigns", requireJwt, (req, res) => {
     return;
   }
   const body = req.body as Record<string, unknown> | null;
-  const created = createCampaign(signer, {
+  const input = {
     projectName: String(body?.projectName ?? ""),
     miniappTargetUrl: String(body?.miniappTargetUrl ?? ""),
     imageUrl: String(body?.imageUrl ?? ""),
     displayIntervalSec: Number(body?.displayIntervalSec ?? 10),
-  });
+  };
+  const valid = validateCampaignInput(input);
+  if (!valid.ok) {
+    res.status(400).json({ error: valid.error });
+    return;
+  }
+  const created = createCampaign(signer, input);
   if (!created) {
     res.status(400).json({ error: "invalid_campaign" });
     return;
@@ -1645,6 +1653,12 @@ app.put("/api/advertise/campaigns/:id", requireJwt, (req, res) => {
   }
   const body = req.body as Record<string, unknown> | null;
   const campaignId = String(req.params.id ?? "");
+  if (body && Object.prototype.hasOwnProperty.call(body, "imageUrl")) {
+    if (!isCampaignCreativeUploadUrl(String(body.imageUrl ?? ""))) {
+      res.status(400).json({ error: "invalid_image_url" });
+      return;
+    }
+  }
   const displayIntervalSec =
     body && body.displayIntervalSec !== undefined
       ? Number(body.displayIntervalSec)
@@ -1868,12 +1882,18 @@ app.patch(
       const body = (req.body ?? {}) as {
         projectName?: string;
         miniappTargetUrl?: string;
+        imageUrl?: string;
       };
-      const patch: { projectName?: string; miniappTargetUrl?: string } = {};
+      const patch: {
+        projectName?: string;
+        miniappTargetUrl?: string;
+        imageUrl?: string;
+      } = {};
       if (typeof body.projectName === "string") patch.projectName = body.projectName;
       if (typeof body.miniappTargetUrl === "string") {
         patch.miniappTargetUrl = body.miniappTargetUrl;
       }
+      if (typeof body.imageUrl === "string") patch.imageUrl = body.imageUrl;
       const result = await adminUpdateCampaignDetailsForInGame(
         String(req.params.id ?? ""),
         patch

@@ -27,7 +27,7 @@ const WALLET = "NQ07 TEST000000000000000000000000000001";
 const CAMPAIGN_INPUT = {
   projectName: "Test Advert",
   miniappTargetUrl: "https://example.com",
-  imageUrl: "https://example.com/ad.png",
+  imageUrl: "/advertise/uploads/11111111-1111-1111-1111-111111111111.png",
   displayIntervalSec: 30,
 };
 

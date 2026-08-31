@@ -472,7 +472,7 @@ AdvertBillboardPreview.prototype.setImageUrl = function (url) {
     undefined,
     function () {
       if (gen !== self._imageLoadGen) return;
-      self._setWarn("Could not load image - check the URL is public HTTPS");
+      self._setWarn("Could not load image. Upload a PNG, JPEG, or WebP and try again.");
       self._render();
     }
   );
