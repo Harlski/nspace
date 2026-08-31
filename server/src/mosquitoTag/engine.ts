@@ -161,6 +161,15 @@ export function isPlayerInTag(state: TagState, playerId: string): boolean {
   return state.participantIds.includes(playerId);
 }
 
+/** True while this player cannot Enter a Teleporter or change Room. */
+export function participantRoomLocked(
+  state: TagState,
+  playerId: string
+): boolean {
+  if (state.phase !== "countdown" && state.phase !== "playing") return false;
+  return state.participantIds.includes(playerId);
+}
+
 function pickIndex(length: number, rng: () => number): number {
   if (length <= 0) return 0;
   const r = rng();

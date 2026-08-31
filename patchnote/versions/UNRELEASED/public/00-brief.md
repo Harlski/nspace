@@ -5,6 +5,4 @@
 
 ---
 
-- [NEW] Mosquito Tag has achievements, a green flash when you pass the mosquito, and shows who got bitten.
-- [FIX] Being in the world that UTC day now counts for your login streak, even when you did not sign in again.
-
+_(Draft — not published.)_

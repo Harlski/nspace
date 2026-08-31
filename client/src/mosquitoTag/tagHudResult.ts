@@ -1,3 +1,5 @@
+import { t } from "@nspace/i18n";
+
 export type TagHudResultView =
   | { kind: "stung_identicon"; playerId: string }
   | { kind: "last_remaining" }
@@ -15,3 +17,9 @@ export function tagHudResultView(
   }
   return { kind: "empty" };
 }
+
+/** Caption shown beside the Stung identicon. */
+export function tagHudStungCaption(displayName: string): string {
+  return t("mosquitoTag.stungCaption", { name: displayName.trim() });
+}
+

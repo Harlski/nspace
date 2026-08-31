@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { tagHudResultView } from "./tagHudResult.js";
+import { describe, expect, it, beforeEach } from "vitest";
+import { createTranslator, setSharedTranslator } from "@nspace/i18n";
+import { tagHudResultView, tagHudStungCaption } from "./tagHudResult.js";
+
+beforeEach(() => {
+  setSharedTranslator(createTranslator("en"));
+});
 
 describe("tagHudResultView", () => {
   it("shows the Stung player's identicon instead of a Stung label", () => {
@@ -7,6 +12,10 @@ describe("tagHudResultView", () => {
       kind: "stung_identicon",
       playerId: "NQ07 BITTEN",
     });
+  });
+
+  it("names the Stung player next to the identicon", () => {
+    expect(tagHudStungCaption("Ada")).toBe("Ada got bit by the mosquito");
   });
 
   it("keeps last-remaining as text", () => {

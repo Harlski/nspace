@@ -2,7 +2,7 @@ import { t } from "@nspace/i18n";
 import type { MosquitoTagWire } from "../net/ws.js";
 import { identiconDataUrl } from "../game/identiconTexture.js";
 import { listHasTagAddress, sameTagAddress } from "./ids.js";
-import { tagHudResultView } from "./tagHudResult.js";
+import { tagHudResultView, tagHudStungCaption } from "./tagHudResult.js";
 
 /**
  * Participant HUD for Mosquito Tag: Tag Countdown with rules, round timer,
@@ -15,7 +15,9 @@ export class MosquitoTagHud {
   private readonly root: HTMLDivElement;
   private readonly titleEl: HTMLDivElement;
   private readonly countEl: HTMLDivElement;
+  private readonly stungRow: HTMLDivElement;
   private readonly identiconEl: HTMLImageElement;
+  private readonly stungCaptionEl: HTMLDivElement;
   private readonly rulesEl: HTMLDivElement;
   private readonly flashEl: HTMLDivElement;
   private readonly holderPopup: HTMLDivElement;
@@ -23,6 +25,7 @@ export class MosquitoTagHud {
   private snap: MosquitoTagWire | null = null;
   private recvAt = 0;
   private selfAddress = "";
+  private displayNameFor: ((address: string) => string) | null = null;
   private holderPopupUntil = 0;
   private flashClear: number | null = null;
   private popupClear: number | null = null;
@@ -38,13 +41,18 @@ export class MosquitoTagHud {
     title.className = "hud-tag-timer__title";
     const count = document.createElement("div");
     count.className = "hud-tag-timer__count";
+    const stungRow = document.createElement("div");
+    stungRow.className = "hud-tag-timer__stung";
+    stungRow.hidden = true;
     const ident = document.createElement("img");
     ident.className = "hud-tag-timer__identicon";
     ident.alt = t("mosquitoTag.stungIdenticonAlt");
-    ident.hidden = true;
+    const caption = document.createElement("div");
+    caption.className = "hud-tag-timer__stung-caption";
+    stungRow.append(ident, caption);
     const rules = document.createElement("div");
     rules.className = "hud-tag-timer__rules";
-    root.append(title, count, ident, rules);
+    root.append(title, count, stungRow, rules);
 
     const popup = document.createElement("div");
     popup.className = "hud-tag-holder-popup";
@@ -61,7 +69,9 @@ export class MosquitoTagHud {
     this.root = root;
     this.titleEl = title;
     this.countEl = count;
+    this.stungRow = stungRow;
     this.identiconEl = ident;
+    this.stungCaptionEl = caption;
     this.rulesEl = rules;
     this.holderPopup = popup;
 
@@ -72,9 +82,14 @@ export class MosquitoTagHud {
     this.flashEl = flash;
   }
 
-  sync(snap: MosquitoTagWire | null, selfAddress: string): void {
+  sync(
+    snap: MosquitoTagWire | null,
+    selfAddress: string,
+    displayNameFor?: (address: string) => string
+  ): void {
     this.snap = snap;
     this.selfAddress = selfAddress;
+    this.displayNameFor = displayNameFor ?? null;
     this.recvAt = performance.now();
     this.render();
     if (this.shouldShow() && this.timer == null) {
@@ -128,13 +143,18 @@ export class MosquitoTagHud {
   }
 
   private hideIdenticon(): void {
-    this.identiconEl.hidden = true;
+    this.stungRow.hidden = true;
+    this.stungCaptionEl.textContent = "";
     this.identiconEl.removeAttribute("src");
     this.identiconFor = "";
   }
 
   private showStungIdenticon(playerId: string): void {
-    this.identiconEl.hidden = false;
+    const name = this.displayNameFor?.(playerId)?.trim() || playerId;
+    const caption = tagHudStungCaption(name);
+    this.stungCaptionEl.textContent = caption;
+    this.identiconEl.alt = caption;
+    this.stungRow.hidden = false;
     if (this.identiconFor === playerId && this.identiconEl.getAttribute("src")) {
       return;
     }

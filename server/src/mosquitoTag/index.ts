@@ -6,6 +6,7 @@ export {
   chebyshev,
   initTagState,
   isPlayerInTag,
+  participantRoomLocked,
   reduceTag,
   snapTile,
   tagWireSnapshot,

@@ -58,6 +58,9 @@ import {
 import { MOSQUITO_TAG_ENABLED as MOSQUITO_TAG_ENABLED_CLIENT } from "./mosquitoTag/config.js";
 import { mosquitoTagAllowedInRoom } from "./mosquitoTag/policy.js";
 import { listHasTagAddress, sameTagAddress } from "./mosquitoTag/ids.js";
+import { participantRoomLocked, payTagTelescopeZoomActive } from "./mosquitoTag/roomLock.js";
+import { participantEdgeTargets } from "./mosquitoTag/edgeTargets.js";
+import { TagParticipantEdgeMarkers } from "./mosquitoTag/edgeMarkers.js";
 import { tagScreenFlash } from "./mosquitoTag/tagFlash.js";
 import { MosquitoTagHud } from "./mosquitoTag/tagHud.js";
 import { WorldcupScoreboard } from "./worldcup/scoreboard.js";
@@ -231,6 +234,7 @@ import {
 import { showLeaveGameConfirm } from "./ui/leaveGameConfirm.js";
 import { createOverlayBackStack } from "./ui/overlayBackStack.js";
 import { formatWalletAddressConnectAs } from "./formatWalletAddress.js";
+import { walletDisplayName } from "./walletDisplayName.js";
 import { mountPatchnotesPage } from "./patchnotes/mountPatchnotesPage.js";
 import { runUsernamePromptGate } from "./auth/usernamePromptGate.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
@@ -1134,6 +1138,9 @@ function enterGame(
   const mosquitoTagHud = MOSQUITO_TAG_ENABLED_CLIENT
     ? new MosquitoTagHud()
     : null;
+  const mosquitoTagEdgeMarkers = MOSQUITO_TAG_ENABLED_CLIENT
+    ? new TagParticipantEdgeMarkers(worldcupHudParent)
+    : null;
   /** End post-goal kickoff freeze when HUD countdown or server matchState says play resumes. */
   const finishWorldcupKickoffFreeze = (): void => {
     if (game.isWorldcupMoveLocked()) {
@@ -1197,6 +1204,34 @@ function enterGame(
   // worldcup: local mirror of the open-Challenge toggle + current room (for the donut label).
   let worldcupSelfChallengeOpen = false;
   let lastMosquitoTag: MosquitoTagWire | null = null;
+  function tagRoomLocked(): boolean {
+    return participantRoomLocked(lastMosquitoTag, selfAddress || address);
+  }
+  function noticeTagRoomLocked(): void {
+    hud.setStatus(t("mosquitoTag.roomLocked"));
+  }
+  function tagBlocksRoomChange(targetRoomId?: string): boolean {
+    if (!tagRoomLocked()) return false;
+    if (
+      targetRoomId &&
+      normalizeRoomId(targetRoomId) === normalizeRoomId(game.getRoomId())
+    ) {
+      return false;
+    }
+    noticeTagRoomLocked();
+    return true;
+  }
+  function sendJoinRoomGuarded(socket: WebSocket, roomId: string): void {
+    if (tagBlocksRoomChange(roomId)) return;
+    sendJoinRoom(socket, roomId);
+  }
+  const syncReturnHomeButton = (): void => {
+    const inHub = normalizeRoomId(game.getRoomId()) === CHAMBER_ROOM_ID;
+    const locked = tagRoomLocked();
+    hud.setReturnHomeVisible(!inHub && !locked);
+    hud.setRoomNavLocked(locked);
+    if (locked) closeRoomsModal();
+  };
   function applyMosquitoTag(snap: MosquitoTagWire | null): void {
     const prevHolder = lastMosquitoTag?.holder ?? null;
     const prevPlaying = lastMosquitoTag?.phase === "playing";
@@ -1204,11 +1239,18 @@ function enterGame(
     if (!MOSQUITO_TAG_ENABLED_CLIENT) {
       game.setMosquitoTag(null);
       mosquitoTagHud?.hide();
+      mosquitoTagEdgeMarkers?.hide();
+      game.setPayTagTelescopeZoom(false);
+      syncReturnHomeButton();
       return;
     }
     game.setMosquitoTag(snap);
     const self = selfAddress || address;
-    mosquitoTagHud?.sync(snap, self);
+    mosquitoTagHud?.sync(snap, self, (id) => {
+      const p = lastPlayers.find((pl) => sameTagAddress(pl.address, id));
+      const named = p?.displayName?.trim() ?? "";
+      return named || walletDisplayName(id);
+    });
     const flash = tagScreenFlash({
       prevHolder,
       nextHolder: snap?.holder ?? null,
@@ -1218,6 +1260,10 @@ function enterGame(
     });
     if (flash === "obtain") mosquitoTagHud?.announceYouAreHolder();
     if (flash === "pass") mosquitoTagHud?.announceYouPassed();
+    game.setPayTagTelescopeZoom(
+      payTagTelescopeZoomActive(snap, self, isNimiqPayWebViewHost())
+    );
+    syncReturnHomeButton();
   }
   function sendMosquitoTagAction(
     socket: WebSocket,
@@ -2379,7 +2425,7 @@ function enterGame(
     if (!room || room.isDeleted) return;
     if (normalizeRoomId(game.getRoomId()) === normalizeRoomId(room.id)) return;
     beginRoomTransition(room.id);
-    sendJoinRoom(ws, room.id);
+    sendJoinRoomGuarded(ws, room.id);
     closeRoomsModal();
   });
 
@@ -2435,7 +2481,7 @@ function enterGame(
     roomsJoinStatus.textContent = "Looking up room…";
     roomsJoinStatus.classList.remove("rooms-modal__join-status--error");
     roomsJoinStatus.classList.add("rooms-modal__join-status--loading");
-    sendJoinRoom(ws, roomIdToJoin);
+    sendJoinRoomGuarded(ws, roomIdToJoin);
   });
 
   roomsOpenJoinBtn.addEventListener("click", () => {
@@ -2679,7 +2725,7 @@ function enterGame(
     if (normalizeRoomId(game.getRoomId()) === normalizeRoomId(roomId)) return;
     pendingProfileJoinRoomId = roomId;
     beginRoomTransition(roomId);
-    sendJoinRoom(ws, roomId);
+    sendJoinRoomGuarded(ws, roomId);
   });
   const adminOverlay = installAdminOverlay(hudRoot, game, {
     enabled: isAdmin(address),
@@ -3129,7 +3175,7 @@ function enterGame(
       }
       pendingProfileJoinRoomId = COSMETIC_SHOP_JOIN_CODE;
       beginRoomTransition(COSMETIC_SHOP_JOIN_CODE, "The Shaper");
-      sendJoinRoom(ws, COSMETIC_SHOP_JOIN_CODE);
+      sendJoinRoomGuarded(ws, COSMETIC_SHOP_JOIN_CODE);
     },
   });
   function roomRealPlayerCount(players: import("./types.js").PlayerState[]): number {
@@ -3501,12 +3547,6 @@ function enterGame(
       onWebWallet: () => openMainMenu(),
     });
   }
-
-  const syncReturnHomeButton = (): void => {
-    hud.setReturnHomeVisible(
-      normalizeRoomId(game.getRoomId()) !== CHAMBER_ROOM_ID
-    );
-  };
 
   async function updateCanvasLeaderboard(): Promise<void> {
     const isCanvas = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
@@ -4378,7 +4418,7 @@ function enterGame(
         }
       },
       onJoinFreePlayField: () => {
-        sendJoinRoom(socket, WORLDCUP_FIELD_ROOM_ID);
+        sendJoinRoomGuarded(socket, WORLDCUP_FIELD_ROOM_ID);
       },
       onToggleChallenge: () => {
         const next = !worldcupSelfChallengeOpen;
@@ -4386,6 +4426,7 @@ function enterGame(
         if (socket.readyState === WebSocket.OPEN) sendSetChallenge(socket, next);
       },
       onOpenRooms: () => openRoomsModal(),
+      roomNavLocked: tagRoomLocked(),
       // "Invite" / "Private Room": if we're already in a Play Space just re-open its share
       // panel; otherwise create (or return to, server-side idempotent) the space and join it.
       onOpenPlaySpace: () => {
@@ -4396,7 +4437,7 @@ function enterGame(
             openDirectInviteSharePanel();
           } else if (socket.readyState === WebSocket.OPEN) {
             // State wire missed - same-room join re-registers with the server.
-            sendJoinRoom(socket, worldcupCurrentRoomId);
+            sendJoinRoomGuarded(socket, worldcupCurrentRoomId);
           }
           return;
         }
@@ -4420,7 +4461,7 @@ function enterGame(
               ) {
                 beginRoomTransition(target);
               }
-              sendJoinRoom(socket, target);
+              sendJoinRoomGuarded(socket, target);
             } else {
               connectToRoom(target);
             }
@@ -5545,7 +5586,8 @@ function enterGame(
   function syncPortalEnterButton(): void {
     const unlockPad = game.getAdjacentLockedUnlockPad();
     const standingDoor = game.getStandingDoor();
-    if (standingDoor) {
+    const lockPortals = tagRoomLocked();
+    if (standingDoor && !lockPortals) {
       const anchor = game.getSelfScreenPosition(1.15);
       if (anchor) {
         hud.setPortalEnterScreenPosition(anchor.x, anchor.y);
@@ -5605,7 +5647,7 @@ function enterGame(
       hud.setPortalEnterScreenPosition(anchor.x, anchor.y);
     }
     const standingTp = game.getStandingTeleporter();
-    if (standingTp) {
+    if (standingTp && !lockPortals) {
       portalAction = { kind: "teleporter" };
       const hereRoom = normalizeRoomId(game.getRoomId());
       const destRoom = normalizeRoomId(standingTp.targetRoomId);
@@ -5635,7 +5677,7 @@ function enterGame(
         return;
       }
     }
-    if (WORLDCUP_ENABLED_CLIENT) {
+    if (WORLDCUP_ENABLED_CLIENT && !lockPortals) {
       const standingPortal = game.getStandingSpectatePortal();
       if (standingPortal) {
         portalAction = {
@@ -5689,7 +5731,8 @@ function enterGame(
       return;
     }
     const tile = snapFloorTile(pos.x, pos.z);
-    const show = isExitPortalTile(game.getPlacedAt(tile.x, tile.y));
+    const show =
+      !lockPortals && isExitPortalTile(game.getPlacedAt(tile.x, tile.y));
     portalAction = show ? { kind: "canvas-exit" } : null;
     hud.setPortalEnterLabel("Enter");
     if (show !== portalEnterVisible) {
@@ -5752,6 +5795,13 @@ function enterGame(
       clearRoomTransitionProgressTimer();
       hud.setLoadingProgress(null);
       hideLoadingOverlay({ skipMinWait: true });
+      if (msg.reason === "tag_round") {
+        noticeTagRoomLocked();
+        pendingProfileJoinRoomId = null;
+        pendingModalJoinRoomId = null;
+        roomsJoinSubmitBtn.disabled = false;
+        return;
+      }
       if (
         pendingProfileJoinRoomId &&
         joinCodeMatchesRoom(pendingProfileJoinRoomId, msg.roomId)
@@ -6157,6 +6207,9 @@ function enterGame(
       // worldcup: live 1v1 spectate portals in this room.
       game.setWorldcupPortals(msg.worldcupPortals ?? []);
       game.setCosmeticGallery(msg.cosmeticGallery ?? null);
+      lastPlayers = streamMode || msg.streamObserver
+        ? [...msg.others]
+        : [msg.self, ...msg.others];
       applyMosquitoTag(msg.mosquitoTag ?? null);
       
       // Load canvas claims if present and wait for them to finish
@@ -6164,9 +6217,6 @@ function enterGame(
         await game.setCanvasClaims(msg.canvasClaims);
       }
       
-      lastPlayers = streamMode || msg.streamObserver
-        ? [...msg.others]
-        : [msg.self, ...msg.others];
       game.syncState(lastPlayers);
       for (const order of msg.moveOrders ?? []) {
         game.applyMoveOrder(order);
@@ -7218,6 +7268,7 @@ function enterGame(
     spawn?: { x: number; z: number },
     connectOpts?: { resume?: boolean; blackout?: boolean; silent?: boolean }
   ): void => {
+    if (!connectOpts?.resume && tagBlocksRoomChange(room)) return;
     const signIn = freshSignInWsPending;
     if (freshSignInWsPending) freshSignInWsPending = false;
     connectGen += 1;
@@ -7569,6 +7620,14 @@ function enterGame(
   }
 
   hud.onPortalEnter(() => {
+    if (
+      portalAction?.kind === "door" ||
+      portalAction?.kind === "teleporter" ||
+      portalAction?.kind === "spectate" ||
+      portalAction?.kind === "canvas-exit"
+    ) {
+      if (tagBlocksRoomChange()) return;
+    }
     if (portalAction?.kind === "door") {
       const d = game.getStandingDoor();
       if (d) beginRoomTransition(d.targetRoomId);
@@ -8125,6 +8184,24 @@ function enterGame(
         );
       } else {
         worldcupBallEdgeMarker.hide();
+      }
+    }
+    if (mosquitoTagEdgeMarkers) {
+      const self = selfAddress || address;
+      const targets = participantEdgeTargets(lastMosquitoTag, self);
+      if (targets.length === 0) {
+        mosquitoTagEdgeMarkers.hide();
+      } else {
+        const screens = [];
+        for (const target of targets) {
+          const pos = game.getPlayerScreenPosition(target.address);
+          if (!pos) continue;
+          screens.push({ ...pos, isHolder: target.isHolder });
+        }
+        mosquitoTagEdgeMarkers.update(screens, {
+          width: canvasHost.clientWidth,
+          height: canvasHost.clientHeight,
+        });
       }
     }
     sampleCampaignImpressions(now);

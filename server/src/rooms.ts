@@ -280,6 +280,7 @@ import {
   isPlayerInTag,
   mosquitoTagAllowedInRoom,
   mosquitoTagOccupiedTileKeys,
+  participantRoomLocked,
   roomsWithMosquitoTag,
   tagWireSnapshot,
   walkSpeedMul,
@@ -1835,7 +1836,7 @@ type OutMsg =
   | {
       type: "joinRoomFailed";
       roomId: string;
-      reason: "not_found" | "forbidden";
+      reason: "not_found" | "forbidden" | "tag_round";
     }
   | {
       type: "shaperReturnFailed";
@@ -4149,6 +4150,21 @@ function mosquitoTagOnPlayerLeave(roomId: string, address: string): void {
     nowMs: Date.now(),
     rng: Math.random,
   });
+}
+
+function mosquitoTagBlocksRoomChange(roomId: string, address: string): boolean {
+  if (!MOSQUITO_TAG_ENABLED) return false;
+  return participantRoomLocked(getMosquitoTag(roomId), address);
+}
+
+function sendTagRoomLockedNotice(ws: WebSocket): void {
+  wsSafeSend(ws, {
+    type: "chat",
+    from: "System",
+    fromAddress: "",
+    text: "Stay in this room until Mosquito Tag ends.",
+    at: Date.now(),
+  } satisfies OutMsg);
 }
 
 function tickMosquitoTagRooms(nowMs: number): void {
@@ -10109,6 +10125,9 @@ export function addClient(
       } else if (action === "join") {
         event = { type: "join", playerId: address };
       } else if (action === "leave") {
+        if (participantRoomLocked(getMosquitoTag(currentRoomId), address)) {
+          return;
+        }
         event = { type: "leave", playerId: address, nowMs, rng: Math.random };
       } else if (action === "start") {
         event = { type: "start", playerId: address, nowMs };
@@ -11002,6 +11021,19 @@ export function addClient(
         return;
       }
       const targetRoomId = resolveJoinRoomTarget(String(msg.roomId ?? ""));
+      if (
+        currentRoomId &&
+        mosquitoTagBlocksRoomChange(currentRoomId, address) &&
+        normalizeRoomId(targetRoomId) !== normalizeRoomId(currentRoomId)
+      ) {
+        sendTagRoomLockedNotice(ws);
+        wsSafeSend(ws, {
+          type: "joinRoomFailed",
+          roomId: targetRoomId,
+          reason: "tag_round",
+        } satisfies OutMsg);
+        return;
+      }
       ensureTutorialRoomLayout(targetRoomId);
       {
         const tutorialJoin = tutorialJoinRoomAllowed({
@@ -11105,17 +11137,14 @@ export function addClient(
     if (msg.type === "returnFromShaper") {
       if (conn.streamObserver) return;
       if (address.startsWith("guest:")) return;
+      if (mosquitoTagBlocksRoomChange(currentRoomId, address)) {
+        sendTagRoomLockedNotice(ws);
+        return;
+      }
       // Constrained leave path: only while inside The Shaper, and only to the room/tile the
       // server recorded when they entered (not client-supplied coordinates - those would be a
       // generic teleport API). Hub fallback when origin is missing, expired, or no longer valid.
-      let currentRoomId: string | null = null;
-      for (const [rid, room] of rooms) {
-        if (room.has(address)) {
-          currentRoomId = rid;
-          break;
-        }
-      }
-      if (currentRoomId === null || !isCosmeticGalleryRoom(currentRoomId)) {
+      if (!isCosmeticGalleryRoom(currentRoomId)) {
         wsSafeSend(conn.ws, { type: "shaperReturnFailed", reason: "not_in_shaper" });
         return;
       }
@@ -11368,6 +11397,10 @@ export function addClient(
     if (msg.type === "enterPortal") {
       // Guests are confined to their Play Space; teleporters are off-limits to them.
       if (address.startsWith("guest:")) return;
+      if (mosquitoTagBlocksRoomChange(currentRoomId, address)) {
+        sendTagRoomLockedNotice(ws);
+        return;
+      }
       const portalNow = Date.now();
       const portalPlaced = placedMap(currentRoomId);
       const portalPose = playerPoseNow(conn, portalNow, currentRoomId, portalPlaced);

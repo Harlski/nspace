@@ -598,7 +598,7 @@ export type ServerMessage =
       code?: string;
       obstacleCount?: number;
     }
-  | { type: "joinRoomFailed"; roomId: string; reason: "not_found" }
+  | { type: "joinRoomFailed"; roomId: string; reason: "not_found" | "forbidden" | "tag_round" }
   | { type: "shaperReturnFailed"; reason: "not_in_shaper" }
   | {
       type: "roomActionResult";

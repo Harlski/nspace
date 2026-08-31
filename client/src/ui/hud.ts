@@ -418,6 +418,8 @@ export function createHud(
   isChatHiddenForTutorial: () => boolean;
   onFullscreenToggle: (fn: () => void) => void;
   setReturnHomeVisible: (visible: boolean) => void;
+  /** Hide Player Menu room-change rows (Tag Room Lock). */
+  setRoomNavLocked: (locked: boolean) => void;
   setPortalEnterVisible: (visible: boolean) => void;
   setPortalEnterScreenPosition: (x: number, y: number) => void;
   /** Same pill as portal Enter; use for “Visit …” on billboard tiles. */
@@ -459,6 +461,8 @@ export function createHud(
       onOpenPlaySpace?: () => void;
       /** Open the Rooms modal ("Home → My Rooms"). */
       onOpenRooms?: () => void;
+      /** Tag Room Lock: disable room-changing Action Wheel leaves. */
+      roomNavLocked?: boolean;
       /** worldcup: is a Challenge currently raised (toggle shows Cancel)? */
       challengeActive?: boolean;
       /** worldcup: may a Challenge be raised here (false on the pitch / mid-Match)? */
@@ -3755,6 +3759,7 @@ export function createHud(
   let actionWheelDirectInviteActive = false;
   // Guests are confined to their Play Space - their wheel is trimmed accordingly.
   let actionWheelIsGuest = false;
+  let actionWheelRoomNavLocked = false;
   // Games Sector: Soccer and/or Mosquito Tag.
   let actionWheelGamesAvailable = false;
   // Soccer 1v1 shortcut + Soccer Games entries (World Cup).
@@ -4023,6 +4028,7 @@ export function createHud(
         glyph: "🚪",
         label: "My Rooms",
         ariaLabel: "Browse and join rooms",
+        disabled: actionWheelRoomNavLocked,
         activate: () => {
           actionWheelOpenRoomsHandler?.();
           closeActionWheel();
@@ -4032,7 +4038,7 @@ export function createHud(
         glyph: "🔒",
         label: "Private Room",
         ariaLabel: "Open your private play space",
-        disabled: !actionWheelSoccerAvailable,
+        disabled: !actionWheelSoccerAvailable || actionWheelRoomNavLocked,
         activate: () => {
           actionWheelOpenPlaySpaceHandler?.();
           closeActionWheel();
@@ -4086,6 +4092,7 @@ export function createHud(
         glyph: "⚽",
         label: "Free Play",
         ariaLabel: "Join the Free Play Field",
+        disabled: actionWheelRoomNavLocked,
         activate: () => {
           actionWheelJoinFieldHandler?.();
           closeActionWheel();
@@ -4119,7 +4126,7 @@ export function createHud(
         ariaLabel: actionWheelChallengeActive
           ? "Cancel your open 1v1 Challenge"
           : "Find an opponent in this room",
-        disabled: !actionWheelChallengeAvailable,
+        disabled: !actionWheelChallengeAvailable || actionWheelRoomNavLocked,
         activate: () => {
           actionWheelChallengeHandler?.();
           closeActionWheel();
@@ -4131,7 +4138,9 @@ export function createHud(
         ariaLabel: "Open your private play space to invite friends",
         // Can't spin up a new space while a public Challenge is open; but if already in a
         // space this just re-opens the share panel, so don't block that case.
-        disabled: actionWheelChallengeActive && !actionWheelDirectInviteActive,
+        disabled:
+          actionWheelRoomNavLocked ||
+          (actionWheelChallengeActive && !actionWheelDirectInviteActive),
         activate: () => {
           actionWheelOpenPlaySpaceHandler?.();
           closeActionWheel();
@@ -16291,6 +16300,11 @@ export function createHud(
       returnHomeBtn.hidden = !visible;
       playerMenu.setReturnToHubVisible(visible);
     },
+    setRoomNavLocked(locked: boolean) {
+      playerMenu.setRoomNavLocked(locked);
+      actionWheelRoomNavLocked = locked;
+      if (!actionWheel.hidden) renderActionWheel();
+    },
     setPortalEnterVisible(visible: boolean) {
       portalEnterBtn.hidden = !visible;
     },
@@ -16370,6 +16384,7 @@ export function createHud(
         onToggleChallenge?: () => void;
         onOpenPlaySpace?: () => void;
         onOpenRooms?: () => void;
+        roomNavLocked?: boolean;
         challengeActive?: boolean;
         challengeAvailable?: boolean;
         directInviteActive?: boolean;
@@ -16400,6 +16415,7 @@ export function createHud(
       actionWheelChallengeHandler = handlers.onToggleChallenge ?? null;
       actionWheelOpenPlaySpaceHandler = handlers.onOpenPlaySpace ?? null;
       actionWheelOpenRoomsHandler = handlers.onOpenRooms ?? null;
+      actionWheelRoomNavLocked = handlers.roomNavLocked === true;
       actionWheelArmDeployHandler = handlers.onArmDeployable ?? null;
       actionWheelChallengeActive = handlers.challengeActive ?? false;
       actionWheelChallengeAvailable = handlers.challengeAvailable ?? false;

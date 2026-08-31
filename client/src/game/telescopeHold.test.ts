@@ -259,4 +259,47 @@ describe("telescope hold in commons", () => {
 
     menuHost.remove();
   });
+
+  it("setPayTagTelescopeZoom widens without the Telescope achievement", () => {
+    const mounted = mountGame();
+    host = mounted.host;
+    const { game } = mounted;
+
+    enterCommons(game);
+    startVirtualClock();
+    expect(game.getZoomFrustumSize()).toBeCloseTo(HUB_MAX_ZOOM_FRUSTUM, 2);
+
+    game.beginTelescopeHold();
+    advanceMs(TELESCOPE_HOLD_ZOOM_MS, game);
+    expect(game.getZoomFrustumSize()).toBeCloseTo(HUB_MAX_ZOOM_FRUSTUM, 2);
+
+    game.setPayTagTelescopeZoom(true);
+    advanceMs(TELESCOPE_HOLD_ZOOM_MS, game);
+    expect(game.getZoomFrustumSize()).toBeCloseTo(HUB_TELESCOPE_ZOOM_FRUSTUM, 1);
+
+    game.setPayTagTelescopeZoom(false);
+    advanceMs(TELESCOPE_HOLD_ZOOM_MS, game);
+    expect(game.getZoomFrustumSize()).toBeCloseTo(HUB_MAX_ZOOM_FRUSTUM, 1);
+  });
+
+  it("keeps Pay Tag zoom if the Telescope hold is released first", () => {
+    const mounted = mountGame();
+    host = mounted.host;
+    const { game } = mounted;
+
+    enterCommons(game);
+    game.setTelescopeUnlocked(true);
+    startVirtualClock();
+
+    game.setPayTagTelescopeZoom(true);
+    advanceMs(TELESCOPE_HOLD_ZOOM_MS, game);
+    game.beginTelescopeHold();
+    game.endTelescopeHold();
+    advanceMs(TELESCOPE_HOLD_ZOOM_MS, game);
+    expect(game.getZoomFrustumSize()).toBeCloseTo(HUB_TELESCOPE_ZOOM_FRUSTUM, 1);
+
+    game.setPayTagTelescopeZoom(false);
+    advanceMs(TELESCOPE_HOLD_ZOOM_MS, game);
+    expect(game.getZoomFrustumSize()).toBeCloseTo(HUB_MAX_ZOOM_FRUSTUM, 1);
+  });
 });

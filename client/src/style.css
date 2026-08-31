@@ -6806,10 +6806,30 @@ button.hud-brand:focus-visible {
   height: 52px;
   border-radius: 50%;
   display: block;
+  flex-shrink: 0;
   box-shadow: 0 0 0 2px rgba(255, 48, 48, 0.85);
 }
 .hud-tag-timer__identicon[hidden] {
   display: none !important;
+}
+.hud-tag-timer__stung {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+.hud-tag-timer__stung[hidden] {
+  display: none !important;
+}
+.hud-tag-timer__stung-caption {
+  font-size: 0.95rem;
+  font-weight: 650;
+  line-height: 1.25;
+  text-align: left;
+  max-width: 12.5rem;
 }
 .hud-tag-holder-flash--active {
   animation: hud-tag-holder-screen-flash 0.65s ease-out forwards;
@@ -6872,6 +6892,13 @@ button.hud-brand:focus-visible {
   .hud-tag-timer__identicon {
     width: 44px;
     height: 44px;
+  }
+  .hud-tag-timer__stung {
+    gap: 0.5rem;
+  }
+  .hud-tag-timer__stung-caption {
+    font-size: 0.8rem;
+    max-width: 10rem;
   }
   .hud-tag-holder-popup {
     padding: 0.35rem 0.65rem;

@@ -65,6 +65,17 @@ describe("playerMenuItemLabelsForMode", () => {
       "Leave",
     ]);
   });
+
+  it("hides Rooms and Return to Hub while Tag Room Lock is on", () => {
+    expect(playerMenuItemLabelsForMode(false, true, false, false, false, true)).toEqual([
+      "Wardrobe",
+      "Shop",
+      "Achievements",
+      "Feedback",
+      "Language",
+      "Logout",
+    ]);
+  });
 });
 
 describe("createPlayerMenu long press", () => {

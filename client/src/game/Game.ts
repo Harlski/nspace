@@ -2234,6 +2234,10 @@ export class Game {
   private telescopeHoldRestoreFrustum: number | null = null;
   private telescopeHoldSavedMapOverview = false;
   private telescopeHoldActive = false;
+  /** HUD / Shift Telescope hold (achievement-gated). */
+  private telescopeHoldFromHud = false;
+  /** Tag Round Pay Zoom: Nimiq Pay Participants during countdown/playing. */
+  private telescopeHoldFromPayTag = false;
   private telescopeReturnAnimPending = false;
   private readonly fogOfWar: FogOfWarPass;
   /** Extra highlight on solid block tops when hovering in walk mode. */
@@ -3164,6 +3168,38 @@ export class Game {
     return { x: center.x, y: center.y, radius };
   }
 
+  /**
+   * Canvas-local screen position of a player's avatar (self or other), plus a
+   * projected body radius for Participant Edge Marker on-screen tests.
+   */
+  getPlayerScreenPosition(
+    address: string
+  ): { x: number; y: number; radius: number } | null {
+    const g = this.avatarGroupForAddress(address);
+    if (!g) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const project = (wx: number, wy: number, wz: number) => {
+      const world = new THREE.Vector3(wx, wy, wz);
+      world.project(this.camera);
+      const sx = ((world.x + 1) * 0.5) * rect.width;
+      const sy = ((1 - world.y) * 0.5) * rect.height;
+      if (!Number.isFinite(sx) || !Number.isFinite(sy)) return null;
+      return { x: sx, y: sy };
+    };
+    const bodyR = 0.45;
+    const center = project(g.position.x, g.position.y + 0.7, g.position.z);
+    if (!center) return null;
+    const edge = project(
+      g.position.x + bodyR,
+      g.position.y + 0.7,
+      g.position.z
+    );
+    const radius = edge
+      ? Math.max(8, Math.hypot(edge.x - center.x, edge.y - center.y))
+      : 16;
+    return { x: center.x, y: center.y, radius };
+  }
+
   getPlaceRadiusBlocks(): number {
     return this.placeRadiusBlocks;
   }
@@ -3623,10 +3659,35 @@ export class Game {
 
   /** Hold-to-zoom-out (Telescope): temporarily widen map overview while held. */
   beginTelescopeHold(): void {
+    if (!this.telescopeCapabilityUnlocked) return;
+    this.telescopeHoldFromHud = true;
+    this.syncTelescopeHoldView();
+  }
+
+  endTelescopeHold(): void {
+    this.telescopeHoldFromHud = false;
+    this.syncTelescopeHoldView();
+  }
+
+  /**
+   * Tag Round Pay Zoom: force Telescope-range frustum for Nimiq Pay Participants
+   * during Tag Countdown and Tag Round. Does not require the Telescope achievement.
+   */
+  setPayTagTelescopeZoom(active: boolean): void {
+    this.telescopeHoldFromPayTag = active;
+    this.syncTelescopeHoldView();
+  }
+
+  private syncTelescopeHoldView(): void {
+    const want = this.telescopeHoldFromHud || this.telescopeHoldFromPayTag;
+    if (want) this.applyTelescopeHoldStart();
+    else this.applyTelescopeHoldEnd();
+  }
+
+  private applyTelescopeHoldStart(): void {
     if (
       this.zoomLocked ||
       this.streamPresentationActive ||
-      !this.telescopeCapabilityUnlocked ||
       this.telescopeHoldActive
     ) {
       return;
@@ -3650,7 +3711,7 @@ export class Game {
     this.animateZoomFrustumTo(target, TELESCOPE_HOLD_ZOOM_MS);
   }
 
-  endTelescopeHold(): void {
+  private applyTelescopeHoldEnd(): void {
     if (!this.telescopeHoldActive) return;
     this.telescopeHoldActive = false;
     const restore = this.telescopeHoldRestoreFrustum;

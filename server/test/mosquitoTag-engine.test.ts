@@ -5,6 +5,7 @@ import {
   chebyshev,
   initTagState,
   isPlayerInTag,
+  participantRoomLocked,
   reduceTag,
   snapTile,
   TAG_DEFAULTS,
@@ -444,4 +445,48 @@ test("wire snapshot reports remaining timers and cooling pads", () => {
   assert.equal(wire.roundRemainingMs, CFG.roundMs);
   assert.equal(wire.countdownRemainingMs, 0);
   assert.equal(wire.boostPads.length, 6);
+});
+
+test("Tag Room Lock is off during a waiting Tag Call", () => {
+  const s = drive([
+    { type: "raise", playerId: "a" },
+    { type: "join", playerId: "b" },
+  ]);
+  assert.equal(participantRoomLocked(s, "a"), false);
+  assert.equal(participantRoomLocked(s, "b"), false);
+});
+
+test("Tag Room Lock holds Participants from Start through the Tag Round", () => {
+  const counting = drive([
+    { type: "raise", playerId: "a" },
+    { type: "join", playerId: "b" },
+    { type: "start", playerId: "a", nowMs: 1_000 },
+  ]);
+  assert.equal(counting.phase, "countdown");
+  assert.equal(participantRoomLocked(counting, "a"), true);
+  assert.equal(participantRoomLocked(counting, "b"), true);
+  assert.equal(participantRoomLocked(counting, "c"), false);
+
+  const playing = startRound();
+  assert.equal(playing.phase, "playing");
+  assert.equal(participantRoomLocked(playing, "a"), true);
+  assert.equal(participantRoomLocked(playing, "c"), true);
+});
+
+test("Tag Room Lock lifts on the result linger", () => {
+  const playing = startRound();
+  const ended = reduceTag(
+    playing,
+    {
+      type: "tick",
+      nowMs: playing.roundEndsAtMs,
+      poses: {},
+      walkable: WALKABLE,
+      rng: () => 0,
+    },
+    CFG
+  );
+  assert.equal(ended.phase, "result");
+  assert.equal(participantRoomLocked(ended, "a"), false);
+  assert.equal(participantRoomLocked(ended, "b"), false);
 });

@@ -42,19 +42,21 @@ type ItemDef = {
   finishTutorial?: boolean;
   /** Reset tutorial progress to Mine (Player Menu / testing). */
   resetTutorial?: boolean;
+  /** Hidden while Tag Room Lock is on (cannot change Room). */
+  roomNav?: boolean;
 };
 
 const FULL_PLAYER_ITEMS: ItemDef[] = [
   { id: "finish-tutorial", labelKey: "playerMenu.finishTutorial", finishTutorial: true },
   { id: "reset-tutorial", labelKey: "playerMenu.resetTutorial", resetTutorial: true },
-  { id: "return-from-shaper", labelKey: "playerMenu.leaveShaper", shaperOnly: true },
+  { id: "return-from-shaper", labelKey: "playerMenu.leaveShaper", shaperOnly: true, roomNav: true },
   { id: "wardrobe", labelKey: "playerMenu.wardrobe" },
   { id: "shop", labelKey: "playerMenu.shop" },
   { id: "achievements", labelKey: "playerMenu.achievements" },
-  { id: "rooms", labelKey: "playerMenu.rooms" },
+  { id: "rooms", labelKey: "playerMenu.rooms", roomNav: true },
   { id: "feedback", labelKey: "playerMenu.feedback" },
   { id: "language", labelKey: "playerMenu.language" },
-  { id: "return-to-hub", labelKey: "playerMenu.returnToHub", returnToHub: true },
+  { id: "return-to-hub", labelKey: "playerMenu.returnToHub", returnToHub: true, roomNav: true },
   { id: "logout", labelKey: "playerMenu.logout", destructive: true },
 ];
 
@@ -62,7 +64,7 @@ const GUEST_ITEMS: ItemDef[] = [
   { id: "profile", labelKey: "playerMenu.profile" },
   { id: "get-wallet", labelKey: "playerMenu.getWallet", guestOnly: true },
   { id: "language", labelKey: "playerMenu.language" },
-  { id: "return-to-hub", labelKey: "playerMenu.returnToHub", returnToHub: true },
+  { id: "return-to-hub", labelKey: "playerMenu.returnToHub", returnToHub: true, roomNav: true },
   { id: "leave", labelKey: "playerMenu.leave", destructive: true, guestOnly: true },
 ];
 export type PlayerMenu = {
@@ -73,6 +75,8 @@ export type PlayerMenu = {
   isOpen: () => boolean;
   setGuestMode: (guest: boolean) => void;
   setReturnToHubVisible: (visible: boolean) => void;
+  /** Hide Rooms / Return to Hub / Leave the Shaper (Tag Room Lock). */
+  setRoomNavLocked: (locked: boolean) => void;
   /** Toggle the in-Shaper "Leave the Shaper" entry (full players only). */
   setInShaper: (inShaper: boolean) => void;
   /** Toggle Finish tutorial (Nimiq Pay incomplete lesson). */
@@ -169,6 +173,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
 
   let guestMode = false;
   let returnToHubVisible = true;
+  let roomNavLocked = false;
   let inShaper = false;
   let finishTutorialVisible = false;
   let resetTutorialVisible = false;
@@ -195,6 +200,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
     const base = guestMode ? GUEST_ITEMS : FULL_PLAYER_ITEMS;
     return base.filter((item) => {
       if (item.returnToHub && !returnToHubVisible) return false;
+      if (item.roomNav && roomNavLocked) return false;
       if (item.shaperOnly && !inShaper) return false;
       if (item.finishTutorial && !finishTutorialVisible) return false;
       if (item.resetTutorial && !resetTutorialVisible) return false;
@@ -523,6 +529,10 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
       returnToHubVisible = visible;
       renderList();
     },
+    setRoomNavLocked(locked: boolean) {
+      roomNavLocked = locked;
+      renderList();
+    },
     setInShaper(next: boolean) {
       inShaper = next;
       renderList();
@@ -572,12 +582,14 @@ export function playerMenuItemLabelsForMode(
   returnToHubVisible = true,
   inShaper = false,
   finishTutorialVisible = false,
-  resetTutorialVisible = false
+  resetTutorialVisible = false,
+  roomNavLocked = false
 ): string[] {
   const base = guest ? GUEST_ITEMS : FULL_PLAYER_ITEMS;
   return base
     .filter((item) => {
       if (item.returnToHub && !returnToHubVisible) return false;
+      if (item.roomNav && roomNavLocked) return false;
       if (item.shaperOnly && !inShaper) return false;
       if (item.finishTutorial && !finishTutorialVisible) return false;
       if (item.resetTutorial && !resetTutorialVisible) return false;

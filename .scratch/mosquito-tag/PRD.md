@@ -7,6 +7,7 @@ adrs:
   - docs/adr/0019-one-mosquito-tag-per-room.md
   - docs/adr/0020-boost-pads-are-round-ephemeral.md
   - docs/adr/0021-tag-countdown-participants-walk.md
+  - docs/adr/0022-tag-room-lock.md
 ---
 
 # Mosquito Tag
@@ -14,7 +15,7 @@ adrs:
 > Vocabulary follows [CONTEXT.md](../../CONTEXT.md): **Mosquito Tag**, **Tag Call**, **Caller**,
 > **Join**, **Start**, **Tag Countdown**, **Tag Round**, **Mosquito**, **Holder**, **Stung**,
 > **Participant**, **Participant Marker**, **Bystander**, **Boost Pad**, **Games Wheel**,
-> **Challenge**, **Match**, **Attention Marker**.
+> **Challenge**, **Match**, **Attention Marker**, **Tag Round Pay Zoom**.
 > ADRs: [0018](../../docs/adr/0018-mosquito-tag-in-room-not-worldcup.md),
 > [0019](../../docs/adr/0019-one-mosquito-tag-per-room.md),
 > [0020](../../docs/adr/0020-boost-pads-are-round-ephemeral.md),
@@ -88,8 +89,8 @@ Nobody teleports. Soccer **Challenge** / **Match** / **1v1 Wheel** stay unchange
 40. As a Participant, I want the Holder at timer end to be Stung (the loser), so that the objective is not to be last holding the Mosquito.
 40b. As the Stung player, I want a 30 second walk slow after the round, so that losing is felt in the room.
 41. As a Participant who is not Stung, I want to survive that Tag Round, so that N-player games have one loser and many survivors.
-42. As a Holder who leaves or disconnects during the Tag Round, I want the Mosquito reassigned at random among those remaining, so that the Round continues.
-43. As a Participant who leaves during the Tag Round, I want to become a Bystander, so that I can quit without ending the room's gather for everyone else.
+42. As a Holder who disconnects during the Tag Round, I want the Mosquito reassigned at random among those remaining, so that the Round continues.
+43. As a Participant, I want to be unable to Enter a Teleporter or change Room during Tag Countdown and Tag Round, so that I cannot warp away mid-chase. Disconnect still drops me.
 44. As the last remaining Participant, I want to win if everyone else left, so that the Round always ends.
 45. As a player arriving after Start, I want to be unable to Join this Tag Round, so that the party is locked.
 46. As a player in the room after the Tag Round, I want a short result (who was Stung) then a clear floor, so that Boost Pads and markers do not linger.
@@ -100,6 +101,8 @@ Nobody teleports. Soccer **Challenge** / **Match** / **1v1 Wheel** stay unchange
 48. As a player, I want movement to stay click-to-walk Path Playback, so that Hub obstacles are not given soccer free-move.
 49. As a player, I want no NIM and no leaderboard from Mosquito Tag, so that it stays just for fun like a soccer Match.
 50. As an operator, I want a dedicated kill switch that does not share WORLDCUP_ENABLED, so that I can disable Tag without hiding Soccer.
+51. As a Participant on a narrow viewport, I want a screen-edge chevron toward each off-screen Participant, so that Portrait Play can still find the chase.
+52. As a Participant in Nimiq Pay, I want Telescope-range zoom for Tag Countdown and Tag Round, so that portrait play can see more of the floor.
 
 ## Implementation Decisions
 
@@ -110,7 +113,10 @@ Nobody teleports. Soccer **Challenge** / **Match** / **1v1 Wheel** stay unchange
 - **Pass:** Chebyshev distance ≤ 1 on snapped floor tiles; 1s cooldown after a pass; previous Holder immune 2s. Bystanders ignored.
 - **Boost Pads:** engine picks up to 6 distinct walkable tiles from candidates the adapter supplies at countdown end; 3s boost at 1.5× `MOVE_SPEED`; 8s pad cooldown; no stacking. Speed change mid-walk restamps the in-flight `moveOrder` from the current pose so analytic Path Playback does not skip.
 - **Exclusive with Challenge:** adapter refuses Tag intents when the player has `challengeOpen` / `matchId` / `pendingMatchId`, and refuses `setChallenge` when the player is in a Tag Call or Tag Round.
+- **Tag Room Lock:** adapter refuses `joinRoom`, `enterPortal`, and client `leave` during countdown/playing for Participants. Disconnect still applies engine `leave`. Result linger is unlocked.
 - **Result linger:** 5s `result` phase then idle; no teleport.
+- **Participant Edge Marker:** client-only; Ball Edge Marker placement; Participants only; Holder tint distinct.
+- **Tag Round Pay Zoom:** client-only; Nimiq Pay Participants; same window as Tag Room Lock; Telescope frustum without hold or achievement; restore after.
 - **i18n:** new player-facing copy uses Message Catalog `en` keys in the same change.
 
 ## Testing Decisions
@@ -122,6 +128,9 @@ Good tests assert observable Tag rules through `reduceTag` (and small pure helpe
 1. **`reduceTag`** — Tag Call, Start, countdown, pass, immunity, Boost Pads, Stung, leave/reassign, last-Participant win. Prior art: `reduceMatch` / `server/test/worldcup-match.test.ts`.
 2. **`mosquitoTagAllowedInRoom`** — which rooms may host a Tag Call. Prior art: room-id helpers tested beside World Cup / tutorial policy.
 3. **`buildOtherPlayerMenuModel`** — Join Mosquito Tag row when the target has a Tag Call. Prior art: `otherPlayerMenuModel.test.ts`.
+4. **`participantRoomLocked`** — Tag Room Lock window (countdown + playing, Participants only).
+5. **`participantEdgeTargets`** — which other Participants get a Participant Edge Marker.
+6. **`payTagTelescopeZoomActive`** — Tag Round Pay Zoom window (Nimiq Pay + Tag Room Lock).
 
 Do not add tests that mock `rooms.ts` internals, assert Boost Pad mesh construction, or recompute expected pass distance the way the engine does.
 
