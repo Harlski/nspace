@@ -23,3 +23,23 @@ describe("getRoomBaseBounds for Play Spaces", () => {
     expect(getRoomBaseBounds(id)).toEqual(templateBounds);
   });
 });
+
+describe("getRoomBaseBounds for wallet rooms", () => {
+  it("falls back to Hub bounds when no welcome bounds are registered", () => {
+    const id = "walletroom30";
+    expect(getRoomBaseBounds(id)).toEqual({
+      minX: -12,
+      maxX: 12,
+      minZ: -12,
+      maxZ: 12,
+    });
+  });
+
+  it("uses registered welcome bounds so 30x30 edge tiles stay on-map", () => {
+    const id = "walletroom30b";
+    const bounds = { minX: -15, maxX: 14, minZ: -15, maxZ: 14 };
+    registerClientRoomBounds(id, bounds);
+    expect(getRoomBaseBounds(id)).toEqual(bounds);
+  });
+});
+

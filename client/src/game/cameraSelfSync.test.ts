@@ -139,4 +139,16 @@ describe("shouldHardSnapSelfMeshOnSync", () => {
       })
     ).toBe(false);
   });
+
+  it("does not hard-snap a behind-along-path jump after Path Playback has drained", () => {
+    expect(
+      shouldHardSnapSelfMeshOnSync({
+        establishingSelfTarget: false,
+        jumped: true,
+        pendingRoomWelcomeSnap: false,
+        hasSelfMoveOrder: false,
+        behindAlongPath: true,
+      })
+    ).toBe(false);
+  });
 });

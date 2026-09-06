@@ -1,6 +1,6 @@
 # Reasons — UNRELEASED (patch-notes version)
 
-**Patch-notes version:** `UNRELEASED` (working bucket). Before merging to `main`, run `npm run prepare-merge` so this folder is frozen under the next semver that matches [package.json](../../../package.json) (see [patchnote/README.md](../../README.md)).
+**Patch-notes version:** `UNRELEASED` (working bucket). Before merging to `main`, run `npm run prepare-merge` so this folder is frozen under a semver that matches [package.json](../../../package.json) (see [patchnote/README.md](../../README.md)).
 
 **Role:** Technical **reasons** attached to **this** patch-notes version — file-level and behavior-level inventory. Public-facing copy at other depths lives only under [public/](public/).
 

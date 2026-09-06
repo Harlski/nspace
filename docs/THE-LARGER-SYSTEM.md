@@ -341,6 +341,14 @@ Update this subsection when a second in-room mini-game ships, if Tag Call is gen
 
 Update this subsection if campaign image storage moves (CDN, signed URLs) or if owner post-draft creative edits are opened.
 
+### Nimiq Pay Payment Intent sends must attach the memo under every host name
+
+**Today:** Incoming Payment Intent verify matches on-chain recipient data to the intent memo (`NSPACE:pi:` + uuid). Hub checkout already sends that memo as UTF-8 **`extraData`**. Nimiq Pay `sendBasicTransactionWithData` is a different API: RPC **`data` / `recipientData` are hex-encoded UTF-8**, and some Pay hosts bind the confirmation message to Hub's **`extraData`**. A first send that only sets plaintext `data` can succeed with an empty message; hex retry never runs. Builder: [client/src/pay/nimiqPayTxParams.ts](../client/src/pay/nimiqPayTxParams.ts); `/advertise` `buildNimiqPayTx` uses the same fields.
+
+**Direction:** Do not send a Payment Intent via Pay without hex `data`/`recipientData` and UTF-8 `extraData` on the *first* attempt. Do not treat “memo string was in our JS object” as “it landed on-chain.”
+
+Update this subsection if the mini-app SDK documents a single canonical field, or if verify learns additional encodings.
+
 ---
 
 ## Changelog (optional)
@@ -387,3 +395,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-08-29** — Mosquito Tag: Tag Room Lock (no Teleporter / room change for Participants during Countdown and Tag Round) and Participant Edge Markers. See [reasons/reason_518473.md](reasons/reason_518473.md).
 - **2026-08-30** — Mosquito Tag: Tag Round Pay Zoom (Nimiq Pay Participants get Telescope range during Countdown and Tag Round). See [reasons/reason_739261.md](reasons/reason_739261.md).
 - **2026-08-31** - Login-gated standalone pages use a Sign-in Gate (not generic load errors); Campaign Creatives are hosted uploads, not remote URLs. See [reasons/reason_847615.md](reasons/reason_847615.md).
+- **2026-08-31** - Nimiq Pay Payment Intent sends attach the memo as hex `data`/`recipientData` and UTF-8 `extraData` on the first attempt. See [reasons/reason_364829.md](reasons/reason_364829.md).

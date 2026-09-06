@@ -10,6 +10,11 @@
  */
 import assert from "node:assert/strict";
 import { describe, expect, it } from "vitest";
+import { mergeStateDeltaPlayer } from "../net/mergeStateDeltaPlayer.js";
+import {
+  shouldHardSnapSelfMeshOnSync,
+  shouldSnapCameraOnSelfSync,
+} from "./cameraSelfSync.js";
 import {
   moveOrderPlaybackFinished,
   playbackNowMs,
@@ -187,6 +192,98 @@ function applySelfMoveOrder(
   refreshSelf(self, recvLocalMs);
 }
 
+type LastPlayerPose = {
+  address: string;
+  displayName: string;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vz: number;
+};
+
+/**
+ * Same order of operations as Game.ts `syncState` for the local player:
+ * hard-snap (welcome / >6 tile jump) first, then never-rewind snapshot adopt.
+ * `stateDelta` with omitted pose still feeds this path via lastPlayers.
+ */
+function applySelfSyncState(
+  self: SelfView,
+  p: LastPlayerPose,
+  args: { cameraFollowReady?: boolean; pendingRoomWelcomeSnap?: boolean } = {}
+): void {
+  const establishingSelfTarget = false;
+  const posePresent = Number.isFinite(p.x) && Number.isFinite(p.z);
+  const ox = self.mesh.x;
+  const oy = 0;
+  const oz = self.mesh.z;
+  const py = p.y;
+  const rawJump =
+    posePresent &&
+    (Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5);
+  const last = self.hold;
+  const behind =
+    posePresent && last
+      ? poseIsBehindAlongPath(last.pose, { x: p.x, z: p.z }, last.path)
+      : false;
+  let jumped = false;
+  const hardSnap =
+    posePresent &&
+    shouldHardSnapSelfMeshOnSync({
+      establishingSelfTarget,
+      jumped: rawJump,
+      pendingRoomWelcomeSnap: args.pendingRoomWelcomeSnap ?? false,
+      hasSelfMoveOrder: Boolean(self.order),
+      behindAlongPath: behind,
+    });
+  if (hardSnap) {
+    self.target = { x: p.x, z: p.z };
+    self.mesh = { x: p.x, z: p.z };
+    self.hold = null;
+    jumped = true;
+  } else if (posePresent) {
+    if (
+      shouldAdoptSnapshotPose({
+        playbackActive: playbackActive(self),
+        behind,
+        intentionalSnap: rawJump && !behind,
+      })
+    ) {
+      self.target = { x: p.x, z: p.z };
+      jumped = rawJump;
+      if (jumped) {
+        self.mesh = { x: p.x, z: p.z };
+        self.hold = null;
+      }
+    }
+  }
+  if (
+    posePresent &&
+    shouldSnapCameraOnSelfSync({
+      establishingSelfTarget,
+      hasSelfMoveOrder: Boolean(self.order),
+      cameraFollowReady: args.cameraFollowReady ?? true,
+      jumped,
+    })
+  ) {
+    self.mesh = { x: p.x, z: p.z };
+    self.target = { x: p.x, z: p.z };
+  }
+}
+
+function walkSelfToDestination(startAtMs: number): { self: SelfView; arrived: number } {
+  const self: SelfView = {
+    order: { ...straightOrder(startAtMs), startY: 0, recvLocalMs: startAtMs },
+    target: { x: 0, z: 0 },
+    mesh: { x: 0, z: 0 },
+    hold: null,
+    playbackServerNowMs: startAtMs,
+    playbackRecvLocalMs: startAtMs,
+  };
+  refreshSelf(self, startAtMs + 3100);
+  return { self, arrived: self.mesh.x };
+}
+
 describe("local camera pose must not rewind after Path Playback drain", () => {
   it("walks to the destination without going backward", () => {
     const startAtMs = 1_000_000;
@@ -340,3 +437,93 @@ describe("local camera pose must not rewind after Path Playback drain", () => {
     );
   });
 });
+
+describe("local mesh must not teleport back after arrival without moveOrder/moveAbort", () => {
+  it("pose-omitted presence stateDelta keeps lastPlayers at walk-start; syncState after drain must not rewind", () => {
+    const startAtMs = 4_000_000;
+    const { self, arrived } = walkSelfToDestination(startAtMs);
+    expect(arrived).toBeGreaterThan(14);
+    expect(self.order).toBeNull();
+
+    // lastPlayers still has the click-start pose because in-flight stateDelta omitted x/z.
+    const lastPlayers: LastPlayerPose = {
+      address: "self",
+      displayName: "self",
+      x: 0,
+      y: 0,
+      z: 0,
+      vx: 0,
+      vz: 0,
+    };
+    const merged = mergeStateDeltaPlayer(lastPlayers, {
+      address: "self",
+      displayName: "self",
+      chatTyping: true,
+    });
+    expect(merged.x).toBe(0);
+    expect(merged.z).toBe(0);
+
+    applySelfSyncState(self, merged);
+    assert.ok(
+      self.mesh.x + 1e-6 >= arrived,
+      `presence stateDelta after drain teleported mesh from dest ${arrived.toFixed(2)} back to ${self.mesh.x.toFixed(2)} with no moveOrder/moveAbort`
+    );
+  });
+
+  it("stale lastPlayers pose a few seconds after drain still must not rewind", () => {
+    const startAtMs = 5_000_000;
+    const { self, arrived } = walkSelfToDestination(startAtMs);
+    expect(arrived).toBeGreaterThan(14);
+    expect(self.order).toBeNull();
+
+    refreshSelf(self, startAtMs + 6100);
+    applySelfSyncState(self, {
+      address: "self",
+      displayName: "self",
+      x: 0,
+      y: 0,
+      z: 0,
+      vx: 0,
+      vz: 0,
+    });
+    assert.ok(
+      self.mesh.x + 1e-6 >= arrived,
+      `delayed stale state after drain teleported mesh from dest ${arrived.toFixed(2)} back to ${self.mesh.x.toFixed(2)}`
+    );
+  });
+
+  it("next walk's moveOrder from the true destination starts at dest, not the stale lastPlayers tile", () => {
+    const startAtMs = 6_000_000;
+    const { self, arrived } = walkSelfToDestination(startAtMs);
+    applySelfSyncState(self, {
+      address: "self",
+      displayName: "self",
+      x: 0,
+      y: 0,
+      z: 0,
+      vx: 0,
+      vz: 0,
+    });
+    expect(self.mesh.x).toBeGreaterThan(arrived - 0.05);
+
+    applySelfMoveOrder(
+      self,
+      {
+        address: "self",
+        path: [{ x: PATH_END + 3, z: 0, layer: 0 }],
+        startX: PATH_END,
+        startZ: 0,
+        startAtMs: startAtMs + 4000,
+        speed: SPEED,
+        walkId: 2,
+        serverNowMs: startAtMs + 4000,
+      },
+      startAtMs + 4000
+    );
+    assert.ok(
+      self.mesh.x + 0.05 >= PATH_END - 0.5,
+      `new moveOrder should resume near true dest ${PATH_END}, got ${self.mesh.x.toFixed(2)}`
+    );
+  });
+});
+

@@ -16269,6 +16269,11 @@ export class Game {
           const rawJump =
             posePresent &&
             (Math.hypot(p.x - ox, p.z - oz) > 6 || Math.abs(py - oy) > 1.5);
+          const last = this.lastSelfPlayback;
+          const behind =
+            posePresent && last
+              ? poseIsBehindAlongPath(last.pose, { x: p.x, z: p.z }, last.path)
+              : false;
           const hardSnap =
             posePresent &&
             shouldHardSnapSelfMeshOnSync({
@@ -16276,6 +16281,7 @@ export class Game {
               jumped: rawJump,
               pendingRoomWelcomeSnap: this.pendingRoomWelcomeSnap,
               hasSelfMoveOrder: Boolean(this.selfMoveOrder),
+              behindAlongPath: behind,
             });
           if (hardSnap) {
             this.selfTargetPos = new THREE.Vector3(p.x, py, p.z);
@@ -16285,10 +16291,6 @@ export class Game {
             jumped = true;
             visualChanged = true;
           } else if (posePresent) {
-            const last = this.lastSelfPlayback;
-            const behind = last
-              ? poseIsBehindAlongPath(last.pose, { x: p.x, z: p.z }, last.path)
-              : false;
             if (
               shouldAdoptSnapshotPose({
                 playbackActive: this.selfPathPlaybackActive(),

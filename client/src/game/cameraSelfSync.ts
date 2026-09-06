@@ -40,15 +40,23 @@ export function shouldSnapCameraOnSelfSync(args: {
  *
  * Mid-walk: same stale-pose issue as {@link shouldSnapCameraOnSelfSync} — do not
  * hard-snap the mesh onto the omitted-pose walk-start tile.
+ *
+ * After Path Playback drains, `selfMoveOrder` is already null but `lastPlayers`
+ * often still holds the walk-start tile (pose-omitted `stateDelta`). That gap is
+ * also >6 tiles — treating it as `jumped` teleports the avatar back. Real
+ * teleports still snap via welcome / `moveAbort` / Freeze (they clear the hold).
  */
 export function shouldHardSnapSelfMeshOnSync(args: {
   establishingSelfTarget: boolean;
   jumped: boolean;
   pendingRoomWelcomeSnap: boolean;
   hasSelfMoveOrder?: boolean;
+  /** Snapshot is behind last Path Playback pose along that walk. */
+  behindAlongPath?: boolean;
 }): boolean {
   if (args.pendingRoomWelcomeSnap) return true;
   if (args.establishingSelfTarget) return true;
   if (args.hasSelfMoveOrder) return false;
+  if (args.behindAlongPath) return false;
   return args.jumped;
 }

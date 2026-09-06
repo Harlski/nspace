@@ -14,6 +14,8 @@ interface NimiqPayHostContext {
     recipient: string;
     value: bigint;
     data: string;
+    extraData?: string;
+    recipientData?: string;
   }) => Promise<unknown>;
 }
 

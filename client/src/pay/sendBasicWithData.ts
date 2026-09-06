@@ -1,4 +1,5 @@
 import { isNimiqPayMiniApp } from "../auth/nimiq.js";
+import { buildNimiqPaySendParams } from "./nimiqPayTxParams.js";
 
 export type BasicTxWithDataRequest = {
   recipient: string;
@@ -22,15 +23,6 @@ function extractThrownMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (isProviderErrorResponse(err)) return providerErrorText(err.error);
   return String(err ?? "nimiq_pay_payment_failed");
-}
-
-function utf8ToHex(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  let hex = "";
-  for (let i = 0; i < bytes.length; i++) {
-    hex += ("0" + bytes[i]!.toString(16)).slice(-2);
-  }
-  return hex;
 }
 
 function recipientGrouped(raw: string): string {
@@ -86,10 +78,17 @@ export async function sendBasicTransactionWithDataViaPay(
   // Local payEmulate stub hung off the host marker object.
   const hostStub = window.nimiqPay?.sendBasicTransactionWithData;
   if (typeof hostStub === "function") {
-    await hostStub({
+    const stubTx = buildNimiqPaySendParams({
       recipient: grouped || compact,
-      value: BigInt(luna),
-      data: memo,
+      value: luna,
+      memo,
+    });
+    await hostStub({
+      recipient: stubTx.recipient,
+      value: BigInt(stubTx.value),
+      data: stubTx.data,
+      extraData: stubTx.extraData,
+      recipientData: stubTx.recipientData,
     });
     return;
   }
@@ -97,31 +96,18 @@ export async function sendBasicTransactionWithDataViaPay(
   const { init } = await import("@nimiq/mini-app-sdk");
   const nimiq = await init({ timeout: 10_000 });
 
-  // Match /advertise: try grouped address + utf8 memo, then compact, then hex memo.
-  const attempts: Array<{ recipient: string; data: string }> = [
-    { recipient: grouped || compact, data: memo },
-    { recipient: compact || grouped, data: memo },
-    { recipient: grouped || compact, data: utf8ToHex(memo) },
-  ];
+  // Grouped address first (Pay UI), then compact. Memo is hex `data` + UTF-8
+  // `extraData` on every attempt so a successful first send still verifies.
+  const attempts = [grouped || compact, compact || grouped];
 
   let lastMsg = "nimiq_pay_payment_failed";
   for (let i = 0; i < attempts.length; i++) {
-    const attempt = attempts[i]!;
-    // Skip duplicate recipient/data pairs.
-    if (
-      i > 0 &&
-      attempt.recipient === attempts[0]!.recipient &&
-      attempt.data === attempts[0]!.data
-    ) {
-      continue;
-    }
+    const recipient = attempts[i]!;
+    if (i > 0 && recipient === attempts[0]) continue;
     try {
-      const result = await nimiq.sendBasicTransactionWithData({
-        recipient: attempt.recipient,
-        value: luna,
-        data: attempt.data,
-        // Intentionally omit validityStartHeight — wallet sets current height.
-      });
+      const result = await nimiq.sendBasicTransactionWithData(
+        buildNimiqPaySendParams({ recipient, value: luna, memo })
+      );
       if (typeof result === "string" && result.trim()) return;
       if (isProviderErrorResponse(result)) {
         lastMsg = providerErrorText(result.error);

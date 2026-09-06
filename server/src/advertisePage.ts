@@ -2199,7 +2199,12 @@ export function advertisePageHtml(): string {
       // without it - a memo-less payment cannot be auto-verified.
       var memo = String(intent.memo || "").trim();
       if (!memo) throw new Error("missing_memo");
-      tx.data = opts.dataHex ? utf8ToHex(memo) : memo;
+      // RPC data / recipientData are hex; Hub uses UTF-8 extraData.
+      // Sending plaintext as data lets Pay drop the message (not valid hex).
+      var hex = utf8ToHex(memo);
+      tx.data = hex;
+      tx.extraData = memo;
+      tx.recipientData = hex;
       return tx;
     }
     function extractThrownMessage(err) {
@@ -2224,23 +2229,12 @@ export function advertisePageHtml(): string {
     async function fundViaNimiqPay(intent, amountLuna, meta) {
       var nimiq = window.nimiq;
       if (!nimiq) nimiq = await waitForNimiqProvider(5000);
-      var validityStartHeight;
-      try {
-        validityStartHeight = await nimiq.getBlockNumber();
-      } catch (heightErr) {
-        validityStartHeight = undefined;
-      }
-      var attempts = [
-        { grouped: true, dataHex: false },
-        { grouped: false, dataHex: false },
-        { grouped: true, dataHex: true },
-      ];
+      // Do not pass validityStartHeight - a stale getBlockNumber() from an
+      // unsynced Pay instance causes "wallet validity end reached".
+      var attempts = [{ grouped: true }, { grouped: false }];
       var lastMsg = "nimiq_pay_payment_failed";
       for (var ai = 0; ai < attempts.length; ai++) {
         var tx = buildNimiqPayTx(intent, amountLuna, meta, attempts[ai]);
-        if (validityStartHeight != null && Number.isFinite(validityStartHeight)) {
-          tx.validityStartHeight = validityStartHeight;
-        }
         var result = await invokeNimiqPaySend(nimiq, tx);
         if (typeof result === "string" && result.trim()) return result;
         if (isProviderErrorResponse(result)) {
@@ -2248,8 +2242,8 @@ export function advertisePageHtml(): string {
           var lower = lastMsg.toLowerCase();
           // An error response means nothing was sent, so it is safe to fall
           // through to the next attempt. Retry on recipient-format ("invalid
-          // amount") and data/memo-format complaints so the hex-encoded memo
-          // variant is reachable; but never re-prompt after a user abort.
+          // amount") so the compact-address variant is reachable; but never
+          // re-prompt after a user abort. Memo hex is already on every attempt.
           var isUserAbort =
             lower.indexOf("cancel") !== -1 ||
             lower.indexOf("abort") !== -1 ||
