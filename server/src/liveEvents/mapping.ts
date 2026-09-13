@@ -3,6 +3,8 @@ import {
   type LiveEventId,
   type WorldEffect,
 } from "./types.js";
+import { isAvailableLiveEventInteraction } from "./interactions.js";
+import { findEnabledOperatorMapping } from "./store.js";
 
 export { LIVE_EVENT_TYPE_TEST };
 
@@ -21,22 +23,43 @@ export function liveEventTestBoostMs(): number {
   );
 }
 
+function liveBoostEffect(liveEventId: LiveEventId, nowMs: number): WorldEffect {
+  return {
+    kind: "live_boost",
+    earnMultiplier: 2,
+    untilMs: nowMs + liveEventTestBoostMs(),
+    liveEventId,
+  };
+}
+
+function builtinWorldEffect(
+  type: string,
+  liveEventId: LiveEventId,
+  nowMs: number
+): WorldEffect | null {
+  if (type === LIVE_EVENT_TYPE_TEST) {
+    return liveBoostEffect(liveEventId, nowMs);
+  }
+  return null;
+}
+
 /**
- * Map a Live Event type to a World Effect. Unknown types return null (accept,
- * no-op) so retries stop and future types can land on the same route.
+ * Map a Live Event type to a World Effect.
+ * Enabled operator mappings on `/admin/live-events` override the built-in table.
+ * Unavailable interactions accept the Live Event and apply nothing.
  */
 export function mapLiveEventToWorldEffect(
   type: string,
   liveEventId: LiveEventId,
   nowMs: number
 ): WorldEffect | null {
-  if (type === LIVE_EVENT_TYPE_TEST) {
-    return {
-      kind: "live_boost",
-      earnMultiplier: 2,
-      untilMs: nowMs + liveEventTestBoostMs(),
-      liveEventId,
-    };
+  const rule = findEnabledOperatorMapping(type);
+  if (rule) {
+    if (!isAvailableLiveEventInteraction(rule.interactionKind)) return null;
+    if (rule.interactionKind === "live_boost") {
+      return liveBoostEffect(liveEventId, nowMs);
+    }
+    return null;
   }
-  return null;
+  return builtinWorldEffect(type, liveEventId, nowMs);
 }

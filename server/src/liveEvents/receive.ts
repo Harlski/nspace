@@ -1,10 +1,9 @@
-import { LIVE_EVENT_SOURCE, type LiveEventEnvelope, type WorldEffect } from "./types.js";
+import { LIVE_EVENT_SOURCE, LIVE_EVENT_TYPE_RE, type LiveEventEnvelope, type WorldEffect } from "./types.js";
 import { mapLiveEventToWorldEffect } from "./mapping.js";
 import { persistAcceptedLiveEvent } from "./store.js";
 
 const LIVE_EVENT_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const LIVE_EVENT_TYPE_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 
 export type AcceptLiveEventSuccess = {
   ok: true;

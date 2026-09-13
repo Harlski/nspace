@@ -8715,6 +8715,16 @@ export function getWalletCurrentRoomId(wallet: string): string | null {
   return findPlayerRoom(wallet);
 }
 
+/** Room a Live Event "current" target resolves to: cinema stream room, else Hub. */
+export function liveEventCurrentRoomId(): string {
+  for (const [roomId, room] of rooms) {
+    for (const c of room.values()) {
+      if (c.streamObserver) return roomId;
+    }
+  }
+  return HUB_ROOM_ID;
+}
+
 function findConnByWallet(wallet: string): ClientConn | null {
   // Fast path: callers that pass the stored connection key (the user-friendly JWT `sub`,
   // spaces included) match a room key directly.

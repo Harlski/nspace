@@ -7,6 +7,10 @@
 export const LIVE_EVENT_SOURCE = "nimiqlive" as const;
 export const LIVE_EVENT_TYPE_TEST = "nimiqlive.test" as const;
 
+/** Live Event `type` from NimiqLIVE (and operator mapping keys). */
+export const LIVE_EVENT_TYPE_RE =
+  /^[a-z0-9][a-z0-9._-]{0,127}$/i;
+
 /** Stable identity of one Live Event. Retries reuse it. */
 export type LiveEventId = string;
 

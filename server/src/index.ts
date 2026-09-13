@@ -27,6 +27,7 @@ import { registerTutorialRoutes } from "./tutorial/routes.js";
 import {
   initLiveEventStore,
   liveEventAllowlistConfigured,
+  registerLiveEventAdminRoutes,
   registerLiveEventRoutes,
 } from "./liveEvents/index.js";
 import { isTutorialEnvEnabled, TUTORIAL_ROOM_ID } from "./tutorial/config.js";
@@ -52,6 +53,7 @@ import {
   getRoomFloorColorMapForThumbnail,
   getRoomLayoutSnapshot,
   getWalletCurrentRoomId,
+  liveEventCurrentRoomId,
   canPreviewRoomLayout,
   resolveResumeLogin,
   setDirectInvitePublicBaseUrl,
@@ -162,6 +164,7 @@ import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
 import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
 import { adminSystemPageHtml } from "./adminSystemPage.js";
 import { adminSettingsPageHtml } from "./adminSettingsPage.js";
+import { adminLiveEventsPageHtml } from "./adminLiveEventsPage.js";
 import { adminHeaderPageHtml } from "./adminHeaderPage.js";
 import { adminFeedbackPageHtml } from "./adminFeedbackPage.js";
 import { adminChatPageHtml } from "./adminChatPage.js";
@@ -1309,6 +1312,10 @@ app.get("/admin/system", (_req, res) => {
 
 app.get("/admin/settings", (_req, res) => {
   res.type("html").send(adminSettingsPageHtml());
+});
+
+app.get("/admin/live-events", (_req, res) => {
+  res.type("html").send(adminLiveEventsPageHtml());
 });
 
 app.get("/admin/header", (_req, res) => {
@@ -3806,6 +3813,15 @@ registerLiveEventRoutes(app, {
   requireJwt,
   jwtSessionFromReq,
   onWorldEffect: applyAcceptedLiveWorldEffect,
+});
+registerLiveEventAdminRoutes(app, {
+  requireSystemAdminWallet,
+  listRooms: () =>
+    listRoomDefinitions().map((d) => ({
+      id: d.id,
+      displayName: d.displayName,
+    })),
+  currentRoomId: liveEventCurrentRoomId,
 });
 
 const server = createServer(app);

@@ -11,6 +11,7 @@ export {
 } from "./allowlist.js";
 export { acceptLiveEvent, parseLiveEventEnvelope } from "./receive.js";
 export { registerLiveEventRoutes } from "./http.js";
+export { registerLiveEventAdminRoutes } from "./adminHttp.js";
 export {
   initLiveEventStore,
   latestLiveBoostUntilMs,

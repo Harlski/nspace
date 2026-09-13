@@ -8,7 +8,7 @@
 
 ## Summary
 
-Nimiq Space now receives **Live Events** from NimiqLIVE (`POST /api/live-events`) and maps `nimiqlive.test` to a reversible **Live Boost** World Effect (2× gameplay NIM + gold banner). Duplicate Live Event Ids do not stack.
+Nimiq Space now receives **Live Events** from NimiqLIVE (`POST /api/live-events`) and maps them to World Effects. Built-in `nimiqlive.test` is **Live Boost**. Operators override type → interaction and room (current / hub / other) on `/admin/live-events`. Duplicate Live Event Ids do not stack.
 
 ---
 
@@ -16,7 +16,7 @@ Nimiq Space now receives **Live Events** from NimiqLIVE (`POST /api/live-events`
 
 ### Repo / docs
 
-- Recorded Live Event / World Effect split in `docs/THE-LARGER-SYSTEM.md` (`docs/reasons/reason_619473.md`). Env + route in `docs/process.md`, `docs/features-checklist.md`, `docs/live-service-implementation.md`.
+- Recorded Live Event / World Effect split in `docs/THE-LARGER-SYSTEM.md` (`docs/reasons/reason_619473.md`, operator mapping `docs/reasons/reason_482736.md`). Env + route in `docs/process.md`, `docs/features-checklist.md`, `docs/live-service-implementation.md`.
 
 ### Client
 
@@ -24,7 +24,7 @@ Nimiq Space now receives **Live Events** from NimiqLIVE (`POST /api/live-events`
 
 ### Server
 
-- `POST /api/live-events`: wallet JWT allowlist (`LIVE_EVENT_ADDRESSES`), guest reject, SQLite idempotency, unknown types accepted no-op. `nimiqlive.test` → Live Boost via room authority (`applyLiveEarnMultiplier` on mining, Maze first place, Free Play goals).
+- `POST /api/live-events`: wallet JWT allowlist (`LIVE_EVENT_ADDRESSES`), guest reject, SQLite idempotency, unknown types accepted no-op. `nimiqlive.test` → Live Boost via room authority (`applyLiveEarnMultiplier` on mining, Maze first place, Free Play goals). Operator mapping table + `/admin/live-events` (current / hub / other room; reserved interactions save without applying).
 
 ### payment-intent-service
 
@@ -32,4 +32,4 @@ Nimiq Space now receives **Live Events** from NimiqLIVE (`POST /api/live-events`
 
 ### Deploy / ops
 
-- Operators set **`LIVE_EVENT_ADDRESSES`** to the NimiqLIVE Wallet (must already have accepted Space terms). Optional `LIVE_EVENT_STORE_FILE`, `LIVE_EVENT_TEST_BOOST_MS`.
+- Operators set **`LIVE_EVENT_ADDRESSES`** to the NimiqLIVE Wallet (must already have accepted Space terms). Optional `LIVE_EVENT_STORE_FILE`, `LIVE_EVENT_TEST_BOOST_MS`. Map incoming types on **`/admin/live-events`**.
