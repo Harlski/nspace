@@ -8,6 +8,7 @@ export function mainSiteHubAppNameForPage(page: MainSiteHeaderPage): string {
   if (page === "header") return "nspace admin header";
   if (page === "feedback") return "nspace admin feedback";
   if (page === "campaign") return "nspace admin campaigns";
+  if (page === "live-events") return "nspace admin live events";
   return "nspace analytics";
 }
 

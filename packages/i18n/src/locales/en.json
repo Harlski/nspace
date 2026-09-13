@@ -393,5 +393,6 @@
   "worldcup.scoreboardChipAria": "Today's leader. Open leaderboard.",
   "worldcup.scoreboardChipTitle": "Today's scores",
   "worldcup.leaderboardTitle": "Today's scores",
-  "worldcup.leaderboardClose": "Close leaderboard"
+  "worldcup.leaderboardClose": "Close leaderboard",
+  "liveBoost.banner": "NimiqLIVE boost · {multiplier}× NIM · {seconds}s"
 }

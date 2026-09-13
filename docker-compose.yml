@@ -55,7 +55,7 @@ services:
     depends_on:
       - payout
     volumes:
-      # world-state.json and events-*.jsonl live under server/data in the app
+      # world-state.json, live-events.sqlite, and events-*.jsonl live under server/data in the app
       - ./data:/app/server/data
 
   # Event Log scans for /analytics overview + daily-stats (ADR-0016). Default in production.

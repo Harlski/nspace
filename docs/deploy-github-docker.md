@@ -155,6 +155,8 @@ NODE_ENV=production
 # Analytics Service (compose service `analytics` on 127.0.0.1:3092; same secret on analytics-service/.env):
 # ANALYTICS_SERVICE_URL=http://analytics:3092
 # ANALYTICS_SERVICE_API_SECRET=use-a-long-random-secret
+# NimiqLIVE Live Events (wallet JWT allowlist; fail closed when empty):
+# LIVE_EVENT_ADDRESSES=NQXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX
 ```
 
 Do **not** commit `.env`. The compose file binds `127.0.0.1:3001:3001`; put **Caddy or Nginx** in front for TLS and proxy `/`, `/api`, and **`/ws`** (WebSockets).

@@ -63,6 +63,7 @@ World state is persisted to `./data/` on your host machine (mapped to `/app/serv
 - `world-state.json` - Placed blocks, extra floors, spawn positions
 - `signboards.json` - Player-created signposts
 - `canvas-claims.json` - Canvas room tile claims
+- `live-events.sqlite` - Accepted NimiqLIVE Live Event Ids (idempotency)
 - `events/` - Gameplay event logs
 
 This volume ensures your data survives container restarts.

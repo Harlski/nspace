@@ -400,6 +400,15 @@ import {
   peekDailyEarnRemaining,
   decideAndCommitGameplayEarn,
 } from "./dailyEarnAllowance.js";
+import {
+  applyLiveEarnMultiplier,
+  applyWorldEffect,
+  consumeLiveBoostExpiry,
+  liveWorldEffectWire,
+  restoreLiveBoostUntilMs,
+} from "./liveEvents/worldEffect.js";
+import { latestLiveBoostUntilMs } from "./liveEvents/store.js";
+import type { WorldEffect } from "./liveEvents/types.js";
 import { playerLevelFromPoints, canBeginClaimableBlockEarn } from "./playerLevel.js";
 import {
   goalieCollider as worldcupGoalieCollider,
@@ -1609,6 +1618,8 @@ type OutMsg =
       saleDisplays?: SaleDisplayWire[];
       /** Mosquito Tag Tag Call / Tag Round snapshot (omitted when idle). */
       mosquitoTag?: MosquitoTagWire;
+      /** Active Live Boost from a Live Event; omitted when idle. */
+      liveWorldEffect?: import("./liveEvents/types.js").LiveWorldEffectWire;
     }
   | {
       type: "roomBackgroundHue";
@@ -1973,6 +1984,9 @@ type OutMsg =
       kickoffMs: number;
     }
   | ({ type: "mosquitoTag"; roomId: string } & MosquitoTagWire)
+  | ({
+      type: "liveWorldEffect";
+    } & import("./liveEvents/types.js").LiveWorldEffectWire)
   | {
       type: "worldcupLeaderboard";
       roomId: string;
@@ -3119,7 +3133,7 @@ export function clearSpentTutorialMineClaimsForWallet(wallet: string): void {
 
 function randomClaimRewardLuna(): bigint {
   const luna = randomInt(CLAIM_REWARD_MIN_LUNA, CLAIM_REWARD_MAX_LUNA + 1);
-  return BigInt(luna);
+  return applyLiveEarnMultiplier(BigInt(luna));
 }
 
 function claimableCooldownMs(props: PlacedProps): number {
@@ -4028,6 +4042,32 @@ function connPathSpeedForRoom(
     mul = TAG_DEFAULTS.stungSlowMul;
   }
   return MOVE_SPEED * mul;
+}
+
+function liveWorldEffectWelcomeExtras(): {
+  liveWorldEffect?: import("./liveEvents/types.js").LiveWorldEffectWire;
+} {
+  const wire = liveWorldEffectWire();
+  return wire.active ? { liveWorldEffect: wire } : {};
+}
+
+function broadcastLiveWorldEffect(): void {
+  broadcastAll({
+    type: "liveWorldEffect",
+    ...liveWorldEffectWire(),
+  } satisfies OutMsg);
+}
+
+/** Apply a mapped World Effect from an accepted Live Event (HTTP path). */
+export function applyAcceptedLiveWorldEffect(effect: WorldEffect): void {
+  applyWorldEffect(effect);
+  broadcastLiveWorldEffect();
+}
+
+/** Restore in-memory Live Boost from persisted Live Event rows after restart. */
+export function restoreLiveWorldEffects(): void {
+  const now = Date.now();
+  restoreLiveBoostUntilMs(latestLiveBoostUntilMs(now), now);
 }
 
 function mosquitoTagWelcomeExtras(
@@ -6993,7 +7033,7 @@ function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>
       {
         claimId: mazeRewardClaimId,
         recipientAddress: conn.address,
-        amountLuna: LUNA_PER_NIM,
+        amountLuna: applyLiveEarnMultiplier(LUNA_PER_NIM),
         roomId: CANVAS_ROOM_ID,
         tileKey: "maze-first-place",
         txMessage: "You won The Maze on Nimiq.Space!",
@@ -7500,6 +7540,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
           : undefined,
       ...worldcupWelcomeExtras(targetRoomId, address),
       ...mosquitoTagWelcomeExtras(targetRoomId),
+      ...liveWorldEffectWelcomeExtras(),
       worldcupPortals: WORLDCUP_ENABLED
         ? worldcupPortalsForRoom(targetRoomId)
         : undefined,
@@ -7778,9 +7819,10 @@ function maybeQueueGoalReward(
   }
   // Precedence: treasury balance peek runs before claim finalize; Daily Earn Allowance
   // clamps before WC commit (maxPayLuna) and is recorded here before enqueue.
+  const proposedLuna = applyLiveEarnMultiplier(decision.amountLuna);
   const earn = decideAndCommitGameplayEarn({
     wallet: decision.recipientWallet,
-    proposedLuna: decision.amountLuna,
+    proposedLuna,
     achievementPoints: totalPointsForWallet(decision.recipientWallet),
   });
   if (earn.payLuna <= 0n) {
@@ -8673,6 +8715,16 @@ export function getWalletCurrentRoomId(wallet: string): string | null {
   return findPlayerRoom(wallet);
 }
 
+/** Room a Live Event "current" target resolves to: cinema stream room, else Hub. */
+export function liveEventCurrentRoomId(): string {
+  for (const [roomId, room] of rooms) {
+    for (const c of room.values()) {
+      if (c.streamObserver) return roomId;
+    }
+  }
+  return HUB_ROOM_ID;
+}
+
 function findConnByWallet(wallet: string): ClientConn | null {
   // Fast path: callers that pass the stored connection key (the user-friendly JWT `sub`,
   // spaces included) match a room key directly.
@@ -8977,11 +9029,16 @@ export function startRoomTick(): void {
     loadWorldcupGoalRewards();
   }
   loadDailyEarnAllowance();
+  restoreLiveWorldEffects();
   tickClaimableBlockReactivations(Date.now());
   setInterval(() => {
     const now = Date.now();
 
     tickClaimableBlockReactivations(now);
+
+    if (consumeLiveBoostExpiry(now)) {
+      broadcastLiveWorldEffect();
+    }
 
     // worldcup: daily UTC scoreboard reset (broadcasts cleared tally + new champion flag)
     worldcupCheckDailyReset(now);
@@ -9766,6 +9823,7 @@ export function addClient(
           : undefined,
       ...worldcupWelcomeExtras(roomId, address),
       ...mosquitoTagWelcomeExtras(roomId),
+      ...liveWorldEffectWelcomeExtras(),
       worldcupPortals: WORLDCUP_ENABLED
         ? worldcupPortalsForRoom(roomId)
         : undefined,
@@ -14554,11 +14612,12 @@ export function addClient(
       if (isPayoutSenderConfigured()) {
         try {
           const peek = peekPayoutBalanceCacheLuna();
+          const minClaimLuna = applyLiveEarnMultiplier(BigInt(CLAIM_REWARD_MIN_LUNA));
           if (NIM_CLAIM_BALANCE_PEEK_MAX_MS > 0 && peek !== null) {
-            payoutHasFunds = peek.luna >= CLAIM_REWARD_MIN_LUNA;
+            payoutHasFunds = peek.luna >= minClaimLuna;
           } else {
             const payoutBalanceLuna = await getPayoutWalletBalanceLuna();
-            payoutHasFunds = payoutBalanceLuna >= CLAIM_REWARD_MIN_LUNA;
+            payoutHasFunds = payoutBalanceLuna >= minClaimLuna;
           }
         } catch (err) {
           console.error("[claimBlock] Failed to check payout wallet balance:", err);

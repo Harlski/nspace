@@ -11,6 +11,7 @@ export type MainSiteHeaderPage =
   | "rooms"
   | "chat"
   | "moderation"
+  | "live-events"
   | "advertise";
 
 export type MainSiteNavAuthStatus = {
@@ -57,6 +58,7 @@ const MAIN_SITE_NAV_GROUPS: MainSiteNavGroup[] = [
       { page: "rooms", href: "/admin/rooms", label: "Rooms", authKey: "rooms" },
       { page: "chat", href: "/admin/chat", label: "Chat", authKey: "chat" },
       { page: "moderation", href: "/admin/moderation", label: "Moderation", authKey: "moderation" },
+      { page: "live-events", href: "/admin/live-events", label: "Live Events", authKey: "live-events" },
     ],
   },
 ];
@@ -79,7 +81,7 @@ export function isMainSiteNavItemVisible(
   if (authKey === "advertise") return status.signedIn;
   if (authKey === "analytics") return status.analyticsAuthorized;
   if (authKey === "admin") return status.analyticsManager;
-  if (authKey === "system" || authKey === "settings" || authKey === "header" || authKey === "feedback" || authKey === "campaign" || authKey === "cosmetics" || authKey === "rooms" || authKey === "chat" || authKey === "moderation") {
+  if (authKey === "system" || authKey === "settings" || authKey === "header" || authKey === "feedback" || authKey === "campaign" || authKey === "cosmetics" || authKey === "rooms" || authKey === "chat" || authKey === "moderation" || authKey === "live-events") {
     return status.systemAdmin;
   }
   return false;
@@ -299,7 +301,8 @@ export function mainSiteNavRuntimeScript(): string {
           (nav === "cosmetics" && status.systemAdmin) ||
           (nav === "rooms" && status.systemAdmin) ||
           (nav === "chat" && status.systemAdmin) ||
-          (nav === "moderation" && status.systemAdmin)
+          (nav === "moderation" && status.systemAdmin) ||
+          (nav === "live-events" && status.systemAdmin)
         );
       }
       function applyNav(status) {

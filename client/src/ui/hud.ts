@@ -1128,6 +1128,15 @@ export function createHud(
     message?: string;
     seq: number;
   }) => void;
+  /** Live Boost (and later World Effects) from a NimiqLIVE Live Event. */
+  setLiveWorldEffect: (
+    p: {
+      active: boolean;
+      earnMultiplier?: number;
+      untilMs?: number;
+      serverNowMs?: number;
+    } | null
+  ) => void;
   /** If a restart notice was shown, next disconnect status line uses maintenance wording once. */
   consumeRestartDisconnectForStatus: () => boolean;
   onReconnect: (fn: () => void) => void;
@@ -1302,6 +1311,15 @@ export function createHud(
     </div>
   `;
   letter.appendChild(streamFollowBar);
+  const liveBoostBanner = document.createElement("div");
+  liveBoostBanner.className = "live-boost-banner";
+  liveBoostBanner.hidden = true;
+  liveBoostBanner.setAttribute("role", "status");
+  liveBoostBanner.setAttribute("aria-live", "polite");
+  const liveBoostLine = document.createElement("div");
+  liveBoostLine.className = "live-boost-banner__line";
+  liveBoostBanner.appendChild(liveBoostLine);
+  letter.appendChild(liveBoostBanner);
   const streamFollowBarLabel = streamFollowBar.querySelector(
     ".stream-follow-bar__label"
   ) as HTMLParagraphElement | null;
@@ -15910,6 +15928,10 @@ export function createHud(
   let restartPendingLastSeq = 0;
   let restartDisconnectExpectActive = false;
 
+  let liveBoostBannerTick: ReturnType<typeof setInterval> | null = null;
+  let liveBoostEndMono = 0;
+  let liveBoostMultiplier = 2;
+
   function stopRestartBannerTick(): void {
     if (restartBannerTick) {
       clearInterval(restartBannerTick);
@@ -15927,6 +15949,28 @@ export function createHud(
       stopRestartBannerTick();
       restartBanner.hidden = true;
       syncHudLayoutInsets();
+    }
+  }
+
+  function stopLiveBoostBannerTick(): void {
+    if (liveBoostBannerTick) {
+      clearInterval(liveBoostBannerTick);
+      liveBoostBannerTick = null;
+    }
+  }
+
+  function syncLiveBoostBannerVisual(): void {
+    const remainSec = Math.max(
+      0,
+      Math.ceil((liveBoostEndMono - performance.now()) / 1000)
+    );
+    liveBoostLine.textContent = t("liveBoost.banner", {
+      multiplier: liveBoostMultiplier,
+      seconds: remainSec,
+    });
+    if (performance.now() >= liveBoostEndMono) {
+      stopLiveBoostBannerTick();
+      liveBoostBanner.hidden = true;
     }
   }
 
@@ -18698,6 +18742,34 @@ export function createHud(
       syncRestartBannerVisual();
       restartBannerTick = setInterval(syncRestartBannerVisual, 400);
       syncHudLayoutInsets();
+    },
+    setLiveWorldEffect(
+      p: {
+        active: boolean;
+        earnMultiplier?: number;
+        untilMs?: number;
+        serverNowMs?: number;
+      } | null
+    ) {
+      if (!p || !p.active || typeof p.untilMs !== "number") {
+        stopLiveBoostBannerTick();
+        liveBoostBanner.hidden = true;
+        return;
+      }
+      const serverNow =
+        typeof p.serverNowMs === "number" && Number.isFinite(p.serverNowMs)
+          ? p.serverNowMs
+          : Date.now();
+      const remainMs = Math.max(0, p.untilMs - serverNow);
+      liveBoostMultiplier =
+        typeof p.earnMultiplier === "number" && p.earnMultiplier > 0
+          ? p.earnMultiplier
+          : 2;
+      liveBoostEndMono = performance.now() + remainMs;
+      liveBoostBanner.hidden = false;
+      stopLiveBoostBannerTick();
+      syncLiveBoostBannerVisual();
+      liveBoostBannerTick = setInterval(syncLiveBoostBannerVisual, 400);
     },
     consumeRestartDisconnectForStatus() {
       if (!restartDisconnectExpectActive) return false;

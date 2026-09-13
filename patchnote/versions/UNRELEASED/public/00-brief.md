@@ -6,3 +6,6 @@
 ---
 
 _(Draft — not published.)_
+
+NimiqLIVE can light up a short **2× NIM boost** in the world (gold banner). Same event is not applied twice.
+
