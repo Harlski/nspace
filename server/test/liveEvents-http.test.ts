@@ -116,6 +116,15 @@ test.after(() => {
   delete process.env.LIVE_EVENT_ADDRESSES;
 });
 
+test("POST /api/live-events is fail-closed when LIVE_EVENT_ADDRESSES is empty", async (t) => {
+  const applied: WorldEffect[] = [];
+  const base = await listenApp(t, "", applied);
+  const token = signSession(WALLET, SECRET);
+  const res = await postLiveEvent(base, token, TEST_BODY);
+  assert.equal(res.status, 403);
+  assert.equal(applied.length, 0);
+});
+
 test("POST /api/live-events requires a NimiqLIVE Wallet JWT", async (t) => {
   const applied: WorldEffect[] = [];
   const base = await listenApp(t, WALLET, applied);

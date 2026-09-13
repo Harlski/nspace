@@ -14602,7 +14602,7 @@ export function addClient(
       if (isPayoutSenderConfigured()) {
         try {
           const peek = peekPayoutBalanceCacheLuna();
-          const minClaimLuna = applyLiveEarnMultiplier(CLAIM_REWARD_MIN_LUNA);
+          const minClaimLuna = applyLiveEarnMultiplier(BigInt(CLAIM_REWARD_MIN_LUNA));
           if (NIM_CLAIM_BALANCE_PEEK_MAX_MS > 0 && peek !== null) {
             payoutHasFunds = peek.luna >= minClaimLuna;
           } else {

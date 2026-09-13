@@ -1128,6 +1128,15 @@ export function createHud(
     message?: string;
     seq: number;
   }) => void;
+  /** Live Boost (and later World Effects) from a NimiqLIVE Live Event. */
+  setLiveWorldEffect: (
+    p: {
+      active: boolean;
+      earnMultiplier?: number;
+      untilMs?: number;
+      serverNowMs?: number;
+    } | null
+  ) => void;
   /** If a restart notice was shown, next disconnect status line uses maintenance wording once. */
   consumeRestartDisconnectForStatus: () => boolean;
   onReconnect: (fn: () => void) => void;
