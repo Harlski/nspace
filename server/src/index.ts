@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import dotenv from "dotenv";
 import { timingSafeEqual } from "node:crypto";
-import { createNonce, consumeNonce, signSession, verifySession, isGuestSession } from "./auth.js";
+import { createNonce, consumeNonce, signSession, verifySession, isGuestSession, type SessionPayload } from "./auth.js";
 import { resolvePublicBaseUrl } from "./publicBaseUrl.js";
 import {
   getAdminChatMessageDetail,
@@ -24,6 +24,11 @@ import { registerDirectInviteRoutes } from "./directInvite/httpHandlers.js";
 import { registerPlaySpaceTemplateAdminRoutes } from "./playSpaceTemplate/routes.js";
 import { registerTutorialTemplateAdminRoutes } from "./tutorialTemplate/routes.js";
 import { registerTutorialRoutes } from "./tutorial/routes.js";
+import {
+  initLiveEventStore,
+  liveEventAllowlistConfigured,
+  registerLiveEventRoutes,
+} from "./liveEvents/index.js";
 import { isTutorialEnvEnabled, TUTORIAL_ROOM_ID } from "./tutorial/config.js";
 import { initTutorialTemplateStore } from "./tutorialTemplate/store.js";
 import { computeNeedsTutorial } from "./tutorialSessionService.js";
@@ -34,6 +39,7 @@ import {
 } from "./directInvite/config.js";
 import {
   addClient,
+  applyAcceptedLiveWorldEffect,
   broadcastRestartPendingNotice,
   broadcastRoomCatalogRefresh,
   broadcastShopAccessState,
@@ -610,6 +616,16 @@ function jwtAddressFromReq(req: Request): string | null {
   if (!t) return null;
   try {
     return verifySession(t, jwtSecret).sub;
+  } catch {
+    return null;
+  }
+}
+
+function jwtSessionFromReq(req: Request): SessionPayload | null {
+  const t = bearerToken(req);
+  if (!t) return null;
+  try {
+    return verifySession(t, jwtSecret);
   } catch {
     return null;
   }
@@ -3786,6 +3802,11 @@ registerDirectInviteRoutes(app, {
 registerPlaySpaceTemplateAdminRoutes(app, requireSystemAdminWallet);
 registerTutorialTemplateAdminRoutes(app, requireSystemAdminWallet);
 registerTutorialRoutes(app, requireJwt, jwtAddressFromReq);
+registerLiveEventRoutes(app, {
+  requireJwt,
+  jwtSessionFromReq,
+  onWorldEffect: applyAcceptedLiveWorldEffect,
+});
 
 const server = createServer(app);
 
@@ -3794,6 +3815,7 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 initCampaignStore();
 initCosmeticStore();
 initAchievementStore();
+initLiveEventStore();
 initTutorialTemplateStore();
 initCampaignAnalyticsStore();
 const repairedCampaignBalances = repairInflatedCampaignBalances();
@@ -4012,6 +4034,11 @@ server.listen(PORT, HOST, () => {
   if (!streamObserverAllowlistConfigured()) {
     console.warn(
       "[stream] No stream observer wallets configured - set `/admin/settings` or STREAM_OBSERVER_ADDRESSES; ?stream=1 is disabled"
+    );
+  }
+  if (!liveEventAllowlistConfigured()) {
+    console.warn(
+      "[live-events] LIVE_EVENT_ADDRESSES is empty - POST /api/live-events is disabled"
     );
   }
 });

@@ -349,6 +349,20 @@ Update this subsection if campaign image storage moves (CDN, signed URLs) or if 
 
 Update this subsection if the mini-app SDK documents a single canonical field, or if verify learns additional encodings.
 
+### Live Events from NimiqLIVE map to World Effects here
+
+**Today:** NimiqLIVE (Twitch faucet, separate repo) POSTs **Live Events** to **`POST /api/live-events`** on this game API. A Live Event is a notification that something happened off-world (`id`, `type`, `occurredAt`, `source: "nimiqlive"`, `payload`). NimiqLIVE does not choose in-game consequences, rooms, durations, or gold counts.
+
+**Trust:** the **NimiqLIVE Wallet** (stream identity, not the faucet funding key) signs in through the same Hub Keyguard path as players and sends `Authorization: Bearer <jwt>`. Only addresses in **`LIVE_EVENT_ADDRESSES`** may post. Guests are rejected. This is not a shared API secret and is not `/api/admin/*`.
+
+**Idempotency:** **Live Event Id** is the stable identity. Retries reuse it. Accepted ids persist in SQLite (`live-events.sqlite`) so a process restart cannot restack **World Effects**. Duplicate POSTs return **409** (NimiqLIVE treats 2xx and 409 as delivered).
+
+**World Effects:** this process maps Live Event `type` to an in-game activity. `nimiqlive.test` (operator plumbing, not a Twitch subscribe) starts **Live Boost**: 2× gameplay NIM (claimable-block mining, Maze first place, Free Play goals) for a server-owned duration, plus a gold presentation banner (including stream cinema). Unknown types are **accepted with no World Effect** so retries stop and future types can share the route. Apply through room authority and broadcast snapshots; do not block the tick/WS loop on slow work.
+
+**Direction:** Keep the envelope stable as new types arrive (payload fields grow; mapping stays here). Prefer extending the mapping table over letting NimiqLIVE specify world parameters. Do not stack multipliers on overlapping boosts; extend the window at most.
+
+Update this subsection when a second Live Event type maps to a World Effect, or if ingest moves off the game process.
+
 ---
 
 ## Changelog (optional)
@@ -396,3 +410,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-08-30** — Mosquito Tag: Tag Round Pay Zoom (Nimiq Pay Participants get Telescope range during Countdown and Tag Round). See [reasons/reason_739261.md](reasons/reason_739261.md).
 - **2026-08-31** - Login-gated standalone pages use a Sign-in Gate (not generic load errors); Campaign Creatives are hosted uploads, not remote URLs. See [reasons/reason_847615.md](reasons/reason_847615.md).
 - **2026-08-31** - Nimiq Pay Payment Intent sends attach the memo as hex `data`/`recipientData` and UTF-8 `extraData` on the first attempt. See [reasons/reason_364829.md](reasons/reason_364829.md).
+- **2026-09-13** - Live Events from NimiqLIVE are notifications only; this process maps them to World Effects (Live Boost for `nimiqlive.test`). Trust is the NimiqLIVE Wallet JWT allowlist; Live Event Id is the idempotency key. See [reasons/reason_619473.md](reasons/reason_619473.md).

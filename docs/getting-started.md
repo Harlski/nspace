@@ -182,6 +182,7 @@ See [docker-deployment.md](docker-deployment.md) for detailed Docker deployment 
 |----------|----------|---------|-------------|
 | `JWT_SECRET` | **Yes** | - | Secret for signing JWT session tokens |
 | `DEV_AUTH_BYPASS` | No | `0` | Set to `1` to allow dev login (NEVER in production!) |
+| `LIVE_EVENT_ADDRESSES` | No | (empty) | NimiqLIVE Wallet allowlist for `POST /api/live-events` (fail closed) |
 | `PORT` | No | `3001` | HTTP server port |
 | `FAKE_PLAYER_COUNT` | No | `2` | Number of NPC bots per room (0-32) |
 

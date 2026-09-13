@@ -8,7 +8,7 @@
 
 ## Summary
 
-_Add a one-line roll-up here when the buffer gets long._
+Nimiq Space now receives **Live Events** from NimiqLIVE (`POST /api/live-events`) and maps `nimiqlive.test` to a reversible **Live Boost** World Effect (2× gameplay NIM + gold banner). Duplicate Live Event Ids do not stack.
 
 ---
 
@@ -16,15 +16,15 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Repo / docs
 
-- _(none yet)_
+- Recorded Live Event / World Effect split in `docs/THE-LARGER-SYSTEM.md` (`docs/reasons/reason_619473.md`). Env + route in `docs/process.md`, `docs/features-checklist.md`, `docs/live-service-implementation.md`.
 
 ### Client
 
-- _(none in this change set)_
+- Gold **Live Boost** banner on the letterbox (visible in stream cinema) from `liveWorldEffect` / `welcome.liveWorldEffect`.
 
 ### Server
 
-- _(none in this change set)_
+- `POST /api/live-events`: wallet JWT allowlist (`LIVE_EVENT_ADDRESSES`), guest reject, SQLite idempotency, unknown types accepted no-op. `nimiqlive.test` → Live Boost via room authority (`applyLiveEarnMultiplier` on mining, Maze first place, Free Play goals).
 
 ### payment-intent-service
 
@@ -32,4 +32,4 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Deploy / ops
 
-- _(none in this change set)_
+- Operators set **`LIVE_EVENT_ADDRESSES`** to the NimiqLIVE Wallet (must already have accepted Space terms). Optional `LIVE_EVENT_STORE_FILE`, `LIVE_EVENT_TEST_BOOST_MS`.

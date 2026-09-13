@@ -6,3 +6,6 @@
 ---
 
 _(Draft — not published.)_
+
+- [NEW] When NimiqLIVE fires a test Live Event, a gold **Live Boost** banner appears and mining / Maze / Free Play goals pay **2× NIM** for a couple of minutes.
+

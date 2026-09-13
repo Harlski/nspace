@@ -5773,6 +5773,10 @@ function enterGame(
       }
       return;
     }
+    if (msg.type === "liveWorldEffect") {
+      hud.setLiveWorldEffect(msg);
+      return;
+    }
     if (msg.type === "shopAccess") {
       applySessionShopAccess({
         shopOpen: msg.shopOpen,
@@ -6211,6 +6215,7 @@ function enterGame(
         ? [...msg.others]
         : [msg.self, ...msg.others];
       applyMosquitoTag(msg.mosquitoTag ?? null);
+      hud.setLiveWorldEffect(msg.liveWorldEffect ?? { active: false, serverNowMs: Date.now() });
       
       // Load canvas claims if present and wait for them to finish
       if (msg.canvasClaims) {

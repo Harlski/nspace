@@ -23,6 +23,7 @@ This document describes how **Nimiq Space** is structured for production-style h
 - **JWT:** In production, [`server/src/index.ts`](../server/src/index.ts) requires `JWT_SECRET` and rejects the dev placeholder. Development may use `JWT_SECRET=dev-insecure-change-me` with `npm run dev -w server` (see [server/.env.example](../server/.env.example)).
 - **CORS:** Express uses `cors({ origin: true, credentials: true })` — permissive. Tightening with an allowlist is still recommended for hardened public deployments (tracked in [brainstorm/live-service-future.md](brainstorm/live-service-future.md)).
 - **Admin HTTP:** `/api/admin/*` JSON routes require `requireSystemAdminWallet`. The former unauthenticated `POST /api/admin/random-layout` route was removed.
+- **Live Events:** `POST /api/live-events` on the game API (`https://api.nimiq.space` in production). Auth is a **NimiqLIVE Wallet** JWT (`LIVE_EVENT_ADDRESSES`), same Hub/Pay sign-in as players. Accepted Live Event Ids persist in `server/data/live-events.sqlite` on the `data/` volume.
 
 ## Replay and telemetry
 

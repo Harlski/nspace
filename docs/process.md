@@ -77,6 +77,9 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 | `LEGAL_CONSENT_STORE_FILE` | server | Deprecated alias — same override as **`TERMS_PRIVACY_ACCEPTANCE_STORE_FILE`** |
 | `DEV_AUTH_BYPASS` | server | `1` = skip signature verification (development only) |
 | `STREAM_OBSERVER_ADDRESSES` | server | Comma-separated Nimiq wallets allowed for cinema `?stream=1` observer sessions (full-board tile sync). **Merged** with wallets saved in **`/admin/settings`** (runtime JSON). **Unset everywhere = stream observer disabled for everyone.** Spaces inside an address are optional. |
+| `LIVE_EVENT_ADDRESSES` | server | Comma-separated **NimiqLIVE Wallet** addresses allowed to `POST /api/live-events`. Fail closed when empty. Spaces inside an address are optional. This is the stream identity wallet, not the faucet funding key. |
+| `LIVE_EVENT_STORE_FILE` | server | Optional SQLite path for accepted Live Event Ids (default `server/data/live-events.sqlite`). Survives process restart; retries reuse the same id. |
+| `LIVE_EVENT_TEST_BOOST_MS` | server | Duration of the `nimiqlive.test` Live Boost World Effect (default **120000** = 2 min; clamped 15s–15min). NimiqLIVE does not send duration. |
 | `NODE_ENV` | server | `development` enables bypass flag pairing in some setups |
 | `PORT` | server | HTTP + WebSocket listen port (default `3001`) |
 | `FAKE_PLAYER_COUNT` | server | `0`–`32` NPC wanderers per room (default **2**; display names prefixed with `[NPC]`; set `0` to disable) |
@@ -128,6 +131,8 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 **Game admin** (`ADMIN_ADDRESSES` JWT, `Authorization: Bearer`): `POST /api/admin/announce-restart` in [server/src/index.ts](../server/src/index.ts) — JSON `{ "etaSeconds": number, "message"?: string }` with **`etaSeconds` in 5…7200**; broadcasts **`serverNotice`** / **`restart_pending`** to every connected game WebSocket ([server/src/rooms.ts](../server/src/rooms.ts) `broadcastRestartPendingNotice`), then calls the normal **`shutdown`** flush path when the countdown ends. Posting again replaces the previous scheduled exit.
 
 **Deploy hook** (optional, no JWT): `POST /api/hooks/pre-deploy-restart` with **`Authorization: Bearer <DEPLOY_RESTART_HOOK_SECRET>`** — same JSON body and broadcast behavior as **`announce-restart`**, but enabled only when **`DEPLOY_RESTART_HOOK_SECRET`** is set in the server environment (≥16 characters). Returns **404** with `{ "error": "not_configured" }` when unset so the route does not advertise itself. Intended for the VPS host / [`.github/workflows/deploy-docker.yml`](../.github/workflows/deploy-docker.yml) to warn players before `docker compose stop`.
+
+**Live Events** (`POST /api/live-events`): NimiqLIVE posts a **Live Event** envelope (wallet JWT of an address in **`LIVE_EVENT_ADDRESSES`**, never a shared API secret, never `/api/admin/*`). The game maps it to a **World Effect**. `nimiqlive.test` starts a **Live Boost** (2× gameplay NIM for `LIVE_EVENT_TEST_BOOST_MS`, gold HUD/stream banner). Duplicate **Live Event Id** returns **409** `{ ok: true, duplicate: true }` and does not restack. Unknown types are accepted with no World Effect so retries stop. The NimiqLIVE Wallet must already have accepted Space terms (JWT via `/api/auth/verify`). See [THE-LARGER-SYSTEM.md](THE-LARGER-SYSTEM.md).
 
 **Admin HTTP API**: remaining `/api/admin/*` JSON routes use `requireSystemAdminWallet` (`ADMIN_ADDRESSES` JWT). The former unauthenticated `POST /api/admin/random-layout` route was removed.
 

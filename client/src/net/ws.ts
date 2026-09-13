@@ -270,6 +270,15 @@ export type MosquitoTagWire = {
   stungRemainingMs?: number;
 };
 
+/** Server-authoritative Live Event World Effect (Live Boost). */
+export type LiveWorldEffectWire = {
+  active: boolean;
+  kind?: "live_boost";
+  earnMultiplier?: number;
+  untilMs?: number;
+  serverNowMs: number;
+};
+
 export type ServerMessage =
   | {
       type: "welcome";
@@ -357,6 +366,7 @@ export type ServerMessage =
       /** Sale Displays in this room (viewer-filtered). */
       saleDisplays?: SaleDisplayWire[];
       mosquitoTag?: MosquitoTagWire;
+      liveWorldEffect?: LiveWorldEffectWire;
       /** When set, this wallet cannot earn NIM from block claims (guest or mining restriction). */
       blockClaimDeniedReason?: string;
       /** Unlock Pad instance ids already unlocked for this wallet in this room. */
@@ -781,6 +791,7 @@ export type ServerMessage =
       message?: string;
       seq: number;
     }
+  | ({ type: "liveWorldEffect" } & LiveWorldEffectWire)
   | {
       type: "shopAccess";
       shopOpen: boolean;

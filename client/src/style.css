@@ -2576,6 +2576,43 @@ html.nspace-mobile-landscape .player-menu {
   display: none !important;
 }
 
+.live-boost-banner {
+  position: absolute;
+  left: 50%;
+  top: max(0.45rem, env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  z-index: 45;
+  pointer-events: none;
+  max-width: min(28rem, calc(100% - 2rem));
+  padding: 0.38rem 0.85rem 0.42rem;
+  border-radius: 999px;
+  box-sizing: border-box;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  text-align: center;
+  color: #3a2208;
+  background: linear-gradient(
+    92deg,
+    rgba(250, 204, 21, 0.94),
+    rgba(253, 224, 71, 0.96) 48%,
+    rgba(245, 158, 11, 0.94)
+  );
+  border: 1px solid rgba(120, 53, 15, 0.35);
+  box-shadow:
+    0 0 24px rgba(250, 204, 21, 0.45),
+    0 8px 20px rgba(0, 0, 0, 0.28);
+}
+
+.live-boost-banner[hidden] {
+  display: none !important;
+}
+
+.live-boost-banner__line {
+  white-space: nowrap;
+}
+
 .stream-broadcast-overlay__brand {
   display: flex;
   align-items: baseline;
