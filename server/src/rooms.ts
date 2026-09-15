@@ -202,6 +202,23 @@ import {
   LUNA_PER_NIM,
 } from "./payoutGateway.js";
 import {
+  applyReturnGoldUpgrade,
+  cancelPendingUpgradeWindows,
+  classifyPublicRoomKind,
+  directoryGoldKind,
+  enqueueReturnGoldPayIntent,
+  isOrdinarySolidEligibleForUpgrade,
+  isResidentWallet,
+  isReturnGold,
+  isReturnWalkOpen,
+  ORTHOGONAL_NEIGHBOR_DELTAS,
+  registerReturnWalkWorld,
+  revertReturnGoldToOrdinarySolid,
+  spendReturnGoldReservation,
+  startUpgradeWindow,
+} from "./returnWalk/index.js";
+import type { ReturnWalkPublicRoom } from "./returnWalk/world.js";
+import {
   CAMPAIGN_IMPRESSION_BATCH_MAX,
   recordCampaignImpressions,
   recordCampaignLinkClick,
@@ -1067,6 +1084,9 @@ export type ObstacleTile = {
   locked?: boolean;
   // Experimental: Claimable/minable blocks
   claimable?: boolean;
+  /** Return Gold. Gold Blocks omit `kind` (Resident treats them as goldBlock). */
+  kind?: "returnGold";
+  returnGold?: boolean;
   tutorialMineSlot?: boolean;
   active?: boolean;
   cooldownMs?: number;
@@ -3533,6 +3553,7 @@ function obstacleTileFromPlaced(roomId: string, tileKeyStr: string): ObstacleTil
     locked: v.locked ?? false,
     // Experimental: claimable blocks
     claimable: v.claimable,
+    ...(isReturnGold(v) ? { kind: "returnGold" as const, returnGold: true } : {}),
     tutorialMineSlot: v.tutorialMineSlot,
     active: v.active,
     cooldownMs: v.cooldownMs,
@@ -3599,6 +3620,7 @@ function obstaclesToList(roomId: string): ObstacleTile[] {
       locked: v.locked ?? false,
       // Experimental: claimable blocks
       claimable: v.claimable,
+      ...(isReturnGold(v) ? { kind: "returnGold" as const, returnGold: true } : {}),
     tutorialMineSlot: v.tutorialMineSlot,
       active: v.active,
       cooldownMs: v.cooldownMs,
@@ -4911,6 +4933,164 @@ function countRealPlayersInRoom(roomId: string): number {
 export function getLiveRealPlayerCountInRoom(roomIdRaw: string): number {
   return countRealPlayersInRoom(normalizeRoomId(roomIdRaw));
 }
+
+function goldDirectoryTilesForRoom(roomId: string): ReturnWalkPublicRoom["gold"] {
+  const placed = roomPlaced.get(roomId);
+  if (!placed) return [];
+  const gold: ReturnWalkPublicRoom["gold"] = [];
+  for (const [k, v] of placed) {
+    if (!v.claimable) continue;
+    const [x, z, yRaw] = k.split(",").map(Number);
+    const y = Number.isFinite(yRaw) ? Math.floor(yRaw) : 0;
+    if (y !== 0) continue;
+    gold.push({
+      x: x!,
+      z: z!,
+      claimable: true,
+      kind: directoryGoldKind(v),
+      active: v.active !== false,
+      cooldownMs: isReturnGold(v) ? 0 : (v.cooldownMs ?? 60000),
+      lastClaimedAt: v.lastClaimedAt ?? 0,
+    });
+  }
+  return gold;
+}
+
+function classifyReturnWalkRoomKind(
+  roomId: string
+): ReturnWalkPublicRoom["kind"] | null {
+  return classifyPublicRoomKind(roomId);
+}
+
+function listReturnWalkPublicRooms(): ReturnWalkPublicRoom[] {
+  const seen = new Set<string>();
+  const out: ReturnWalkPublicRoom[] = [];
+  const push = (roomId: string, kind: ReturnWalkPublicRoom["kind"]) => {
+    const id = normalizeRoomId(roomId);
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({
+      roomId: id,
+      kind,
+      realPresenceCount: countRealPlayersInRoom(id),
+      gold: goldDirectoryTilesForRoom(id),
+    });
+  };
+  for (const d of listRoomDefinitions()) {
+    if (d.isDeleted) continue;
+    const kind = classifyReturnWalkRoomKind(d.id);
+    if (!kind) continue;
+    if (kind === "public" && !d.isPublic && !d.isBuiltin) continue;
+    if (kind === "tutorial") {
+      push(d.id, kind);
+      continue;
+    }
+    push(d.id, kind);
+  }
+  for (const roomId of rooms.keys()) {
+    const kind = classifyReturnWalkRoomKind(roomId);
+    if (kind === "playSpace" || kind === "matchPitch") push(roomId, kind);
+  }
+  return out;
+}
+
+function getResidentPoseForReturnWalk(): {
+  roomId: string;
+  x: number;
+  z: number;
+} | null {
+  for (const [roomId, room] of rooms) {
+    for (const conn of room.values()) {
+      if (conn.streamObserver) continue;
+      if (!isResidentWallet(conn.address)) continue;
+      const pose = playerPoseNow(
+        conn,
+        Date.now(),
+        roomId,
+        placedMap(roomId)
+      );
+      const tile = snapToTile(pose.x, pose.z);
+      return { roomId, x: tile.x, z: tile.z };
+    }
+  }
+  return null;
+}
+
+function listEligibleReturnWalkUpgradeTiles(
+  roomId: string,
+  x: number,
+  z: number
+): Array<{ x: number; z: number }> {
+  const placed = placedMap(roomId);
+  const out: Array<{ x: number; z: number }> = [];
+  for (const { dx, dz } of ORTHOGONAL_NEIGHBOR_DELTAS) {
+    const nx = x + dx;
+    const nz = z + dz;
+    const at = getPlacedAtLevel(placed, nx, nz, 0);
+    if (!at) continue;
+    if (!isOrdinarySolidEligibleForUpgrade(at.props)) continue;
+    out.push({ x: nx, z: nz });
+  }
+  return out;
+}
+
+function convertTileToReturnGoldInRoom(
+  roomId: string,
+  x: number,
+  z: number
+): boolean {
+  const placed = placedMap(roomId);
+  const at = getPlacedAtLevel(placed, x, z, 0);
+  if (!at) return false;
+  if (!isOrdinarySolidEligibleForUpgrade(at.props)) return false;
+  applyReturnGoldUpgrade(at.props);
+  const tile = obstacleTileFromPlaced(roomId, at.key);
+  if (tile) {
+    broadcast(roomId, {
+      type: "obstaclesDelta",
+      roomId,
+      add: [tile],
+      remove: [],
+    });
+  }
+  schedulePersistWorldState();
+  return true;
+}
+
+function afterSuccessfulBlockClaimForReturnWalk(opts: {
+  wallet: string;
+  roomId: string;
+  tileKey: string;
+  wasReturnGold: boolean;
+  remainingAfterLuna: bigint | null;
+}): void {
+  if (opts.wasReturnGold) {
+    const [x, z] = opts.tileKey.split(",").map(Number);
+    spendReturnGoldReservation({
+      roomId: opts.roomId,
+      tileKey: `${x},${z}`,
+    });
+  }
+  const exhausted =
+    opts.remainingAfterLuna !== null && opts.remainingAfterLuna === 0n;
+  if (exhausted) {
+    cancelPendingUpgradeWindows();
+    return;
+  }
+  if (
+    isResidentWallet(opts.wallet) &&
+    isReturnWalkOpen({ residentWallet: opts.wallet })
+  ) {
+    startUpgradeWindow();
+  }
+}
+
+registerReturnWalkWorld({
+  listPublicRooms: listReturnWalkPublicRooms,
+  getResidentPose: getResidentPoseForReturnWalk,
+  listEligibleUpgradeTiles: listEligibleReturnWalkUpgradeTiles,
+  convertTileToReturnGold: convertTileToReturnGoldInRoom,
+});
 
 /** Unified 6-char join codes (wallet rooms + Play Spaces) are case-insensitive. */
 function normalizeJoinRoomId(raw: string): string {
@@ -14206,6 +14386,7 @@ export function addClient(
         });
         if (!canBeginClaimableBlockEarn(earnPeek.remainingLuna)) {
           sendDailyEarnAllowanceExhausted(ws, { x: tile.x, z: tile.z });
+          if (isResidentWallet(address)) cancelPendingUpgradeWindows();
           return;
         }
       }
@@ -14567,7 +14748,8 @@ export function addClient(
       if (!payoutHasFunds && tutorialBypassBalancePeek(currentRoomId, address)) {
         payoutHasFunds = true;
       }
-      if (!payoutHasFunds) {
+      const claimingReturnGold = isReturnGold(props);
+      if (!payoutHasFunds && !claimingReturnGold) {
         releaseBlockClaimSession(claimId);
         wsSafeSend(ws, {
             type: "blockClaimResult",
@@ -14588,12 +14770,88 @@ export function addClient(
         if (!canBeginClaimableBlockEarn(earnPeek.remainingLuna)) {
           releaseBlockClaimSession(claimId);
           sendDailyEarnAllowanceExhausted(ws, { x: s.tileX, z: s.tileZ });
+          if (isResidentWallet(address)) cancelPendingUpgradeWindows();
           return;
         }
       }
 
       noteSpentBlockClaimId(claimId, now);
       releaseBlockClaimSession(claimId);
+
+      if (claimingReturnGold) {
+        revertReturnGoldToOrdinarySolid(props);
+        const tile = obstacleTileFromPlaced(currentRoomId, k);
+        if (tile) {
+          broadcast(currentRoomId, {
+            type: "obstaclesDelta",
+            roomId: currentRoomId,
+            add: [tile],
+            remove: [],
+          });
+        }
+        const points = totalPointsForWallet(address);
+        const peekBefore = peekDailyEarnRemaining({
+          wallet: address,
+          achievementPoints: points,
+          nowMs: now,
+        });
+        const earn = decideAndCommitGameplayEarn({
+          wallet: address,
+          proposedLuna: LUNA_PER_NIM,
+          achievementPoints: points,
+          nowMs: now,
+        });
+        enqueueReturnGoldPayIntent({
+          claimId,
+          recipientAddress: address,
+          roomId: currentRoomId,
+          tileKey: k,
+        });
+        logGameplayEvent(conn.sessionId, address, currentRoomId, "claim_block", {
+          x: s.tileX,
+          z: s.tileZ,
+          y: s.tileY,
+          claimId,
+          amountLuna: LUNA_PER_NIM.toString(),
+          returnGold: true,
+          allowanceBound: earn.allowanceBound,
+        });
+        const earnExtras: {
+          dailyEarnAllowanceBound?: boolean;
+          dailyEarnRemainingNim?: string;
+          dailyEarnCeilingNim?: string;
+        } = {};
+        if (earn.allowanceBound) earnExtras.dailyEarnAllowanceBound = true;
+        if (
+          peekBefore.ceilingLuna !== null &&
+          earn.remainingAfterLuna !== null
+        ) {
+          earnExtras.dailyEarnRemainingNim = formatDailyEarnNimLabel(
+            earn.remainingAfterLuna
+          );
+          earnExtras.dailyEarnCeilingNim = formatDailyEarnNimLabel(
+            peekBefore.ceilingLuna
+          );
+        }
+        wsSafeSend(ws, {
+          type: "blockClaimResult",
+          ok: true,
+          x: s.tileX,
+          z: s.tileZ,
+          amountNim: "1.0000",
+          ...earnExtras,
+        } satisfies OutMsg);
+        recordBlockMined(address, achievementUnlockHandler(ws));
+        afterSuccessfulBlockClaimForReturnWalk({
+          wallet: address,
+          roomId: currentRoomId,
+          tileKey: k,
+          wasReturnGold: true,
+          remainingAfterLuna: earn.remainingAfterLuna,
+        });
+        schedulePersistWorldState();
+        return;
+      }
 
       const claim = finalizeClaimableBlockReward(
         currentRoomId,
@@ -14635,6 +14893,13 @@ export function addClient(
       if (s.claimIntent === "direct_adjacent_click") {
         recordImpatientMiner(address, achievementUnlockHandler(ws));
       }
+      afterSuccessfulBlockClaimForReturnWalk({
+        wallet: address,
+        roomId: currentRoomId,
+        tileKey: k,
+        wasReturnGold: false,
+        remainingAfterLuna: claim.remainingAfterLuna,
+      });
       schedulePersistWorldState();
       return;
     }

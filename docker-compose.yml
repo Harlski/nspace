@@ -47,8 +47,9 @@ services:
       PAYOUT_SERVICE_API_SECRET: ${PAYOUT_SERVICE_API_SECRET:-}
       ANALYTICS_SERVICE_URL: ${ANALYTICS_SERVICE_URL:-http://analytics:3092}
       ANALYTICS_SERVICE_API_SECRET: ${ANALYTICS_SERVICE_API_SECRET:-}
-      # Strip hot-wallet key if still present in shared env_file (signer lives on payout only).
+      # Strip hot-wallet keys if still present in shared env_file (signers live on payout only).
       NIM_PAYOUT_PRIVATE_KEY: ""
+      RETURN_WALK_PRIVATE_KEY: ""
       # JWT_SECRET should be set in ./.env and/or ./server/.env (not dev-insecure-change-me in prod)
       # Optional: DEPLOY_RESTART_HOOK_SECRET (≥16 chars) — enables POST /api/hooks/pre-deploy-restart for CI (see docs/deploy-github-docker.md)
       # DEV_AUTH_BYPASS should NOT be set in production
@@ -134,6 +135,7 @@ services:
       PAYOUT_SERVICE_API_SECRET: ${PAYOUT_SERVICE_API_SECRET:-}
       GAME_SERVER_INTERNAL_URL: ${GAME_SERVER_INTERNAL_URL:-http://nspace:3001}
       NIM_PAYOUT_PRIVATE_KEY: ${NIM_PAYOUT_PRIVATE_KEY:-}
+      RETURN_WALK_PRIVATE_KEY: ${RETURN_WALK_PRIVATE_KEY:-}
       NIM_NETWORK: ${NIM_NETWORK:-testalbatross}
     volumes:
       - ./data/payout-service:/data
