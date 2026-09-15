@@ -24,15 +24,14 @@ const {
   remainingReturnBudgetLuna,
   __resetReturnWalkStoreForTests,
 } = await import("../src/returnWalk/store.js");
-const { RETURN_WALK_DEPOSIT_LUNA } = await import(
-  "../src/returnWalk/constants.js"
-);
+const { RETURN_WALK_DEPOSIT_LUNA, UPGRADES_PER_WINDOW, RETURN_GOLD_LUNA } =
+  await import("../src/returnWalk/constants.js");
 const { getServerWalletAddress } = await import("../src/returnWalk/config.js");
 
 const RESIDENT = "NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y";
 
 describe("returnWalk upgrade windows", { concurrency: false }, () => {
-test("Upgrade Window fires two Upgrades and reserves 1 NIM each", () => {
+test("Upgrade Window fires vicinity Upgrades and reserves 1 NIM each", () => {
   __resetReturnWalkStoreForTests();
   const created = createUnpaidInvoice({
     residentWallet: RESIDENT,
@@ -42,13 +41,22 @@ test("Upgrade Window fires two Upgrades and reserves 1 NIM each", () => {
   creditInvoice({ invoiceId: created.invoiceId, txHash: "tx-win" });
 
   const converted: Array<{ x: number; z: number }> = [];
+  const eligible = [
+    { x: 1, z: 0 },
+    { x: -1, z: 0 },
+    { x: 4, z: 5 },
+    { x: -6, z: 3 },
+    { x: 7, z: -2 },
+    { x: 2, z: 8 },
+    { x: -3, z: -7 },
+    { x: 8, z: 1 },
+    { x: 0, z: 6 },
+    { x: 5, z: -5 },
+  ];
   registerReturnWalkWorld({
     listPublicRooms: () => [],
     getResidentPose: () => ({ roomId: "hub", x: 0, z: 0 }),
-    listEligibleUpgradeTiles: () => [
-      { x: 1, z: 0 },
-      { x: -1, z: 0 },
-    ],
+    listEligibleUpgradeTiles: () => eligible,
     convertTileToReturnGold: (_room, x, z) => {
       converted.push({ x, z });
       return true;
@@ -66,12 +74,12 @@ test("Upgrade Window fires two Upgrades and reserves 1 NIM each", () => {
     random: () => 0,
   });
   startUpgradeWindow();
-  assert.equal(queued.length, 2);
+  assert.equal(queued.length, UPGRADES_PER_WINDOW);
   for (const fn of queued) fn();
-  assert.equal(converted.length, 2);
+  assert.equal(converted.length, UPGRADES_PER_WINDOW);
   assert.equal(
     remainingReturnBudgetLuna(),
-    RETURN_WALK_DEPOSIT_LUNA - 200_000n
+    RETURN_WALK_DEPOSIT_LUNA - RETURN_GOLD_LUNA * BigInt(UPGRADES_PER_WINDOW)
   );
   cancelPendingUpgradeWindows();
   setUpgradeWindowSchedulerForTests(null);
@@ -91,7 +99,7 @@ test("cancelPendingUpgradeWindows drops unfired Upgrades", () => {
     random: () => 0,
   });
   startUpgradeWindow();
-  assert.equal(pendingUpgradeWindowCountForTests(), 2);
+  assert.equal(pendingUpgradeWindowCountForTests(), UPGRADES_PER_WINDOW);
   cancelPendingUpgradeWindows();
   assert.equal(pendingUpgradeWindowCountForTests(), 0);
   setUpgradeWindowSchedulerForTests(null);

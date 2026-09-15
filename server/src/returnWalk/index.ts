@@ -7,6 +7,8 @@ export {
   RETURN_WALK_DEPOSIT_NIM,
   RETURN_GOLD_LUNA,
   UPGRADE_WINDOW_MS,
+  UPGRADE_VICINITY_RADIUS,
+  UPGRADES_PER_WINDOW,
 } from "./constants.js";
 export {
   isResidentWallet,
@@ -27,6 +29,9 @@ export {
   applyReturnGoldUpgrade,
   revertReturnGoldToOrdinarySolid,
   directoryGoldKind,
+  isInUpgradeVicinity,
+  filterTilesInUpgradeVicinity,
+  pickUpgradeTiles,
   ORTHOGONAL_NEIGHBOR_DELTAS,
 } from "./tiles.js";
 export {

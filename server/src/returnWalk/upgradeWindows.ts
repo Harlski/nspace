@@ -2,7 +2,10 @@
  * Server-owned Upgrade Windows. Resident does not POST Upgrade or send coordinates.
  */
 
-import { UPGRADE_WINDOW_MS, UPGRADES_PER_WINDOW } from "./constants.js";
+import {
+  UPGRADE_WINDOW_MS,
+  UPGRADES_PER_WINDOW,
+} from "./constants.js";
 import { pickUpgradeTiles } from "./tiles.js";
 import {
   hasOpenReturnWalkBudget,
@@ -77,8 +80,10 @@ function fireOneUpgrade(used: Set<string>): void {
 }
 
 /**
- * Start an Upgrade Window: 5 seconds, two Upgrades at random delays in [0, 5000] ms.
- * Windows stack. Uses Resident's pose at fire time, not claim time.
+ * Start an Upgrade Window: UPGRADES_PER_WINDOW Upgrades at independent random
+ * delays in [0, UPGRADE_WINDOW_MS]. Each fire picks uniformly from eligible
+ * ordinary solids in the vicinity of Resident pose at that instant.
+ * Windows stack. Uses pose at fire time, not claim time.
  */
 export function startUpgradeWindow(): void {
   const used = new Set<string>();

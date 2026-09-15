@@ -25,10 +25,18 @@ export const RETURN_GOLD_LUNA = BigInt(RETURN_GOLD_NIM) * LUNA_PER_NIM;
 /** Unpaid Invoice lifetime. */
 export const INVOICE_TTL_MS = 30 * 60 * 1000;
 
-/** Upgrade Window length. Two Upgrades fire at random delays in this span. */
-export const UPGRADE_WINDOW_MS = 5000;
+/** Upgrade Window length. Upgrades fire at independent random delays in this span. */
+export const UPGRADE_WINDOW_MS = 20_000;
 
-export const UPGRADES_PER_WINDOW = 2;
+/** How many Upgrades one window schedules. */
+export const UPGRADES_PER_WINDOW = 8;
+
+/**
+ * Chebyshev radius (max(|dx|, |dz|)) around Resident pose at fire time.
+ * Eligible ordinary solids in this square are drawn uniformly at random,
+ * including tiles that are not orthogonally adjacent.
+ */
+export const UPGRADE_VICINITY_RADIUS = 8;
 
 export const INVOICE_ID_PREFIX = "inv-";
 

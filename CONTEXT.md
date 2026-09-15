@@ -923,15 +923,17 @@ The open state while Resident has credited Return Budget and Daily Earn is not e
 _Avoid_: gold tour, errand run (that is Resident's Gold Errand), mining session.
 
 **Upgrade Window**:
-A server-owned 5 second window that fires two Upgrades at random delays in that span. Started
-from Resident's pose at fire time after a successful Resident claim (Gold Block or Return Gold)
-while a Return Walk is open. Windows stack. Other players' claims do not start a window.
+A server-owned 20 second window that fires eight Upgrades at independent random delays in that
+span. Started from Resident's pose at fire time after a successful Resident claim (Gold Block or
+Return Gold) while a Return Walk is open. Windows stack. Other players' claims do not start a
+window.
 _Avoid_: spawn window, gold wave, drop timer.
 
 **Upgrade**:
-Converting an eligible ordinary solid (same room, orthogonally adjacent to Resident, y = 0, not
-ramp, not passable, not already claimable) into Return Gold and reserving 1 NIM of Return Budget.
-Does not spawn a new floor cube.
+Converting an eligible ordinary solid (same room, within Chebyshev vicinity of Resident at fire
+time, y = 0, not ramp, not passable, not already claimable) into Return Gold and reserving 1 NIM
+of Return Budget. The tile is drawn uniformly at random from that vicinity, including blocks that
+are not orthogonally adjacent. Does not spawn a new floor cube.
 _Avoid_: gold drop, convert, paint gold.
 
 **Return Gold**:

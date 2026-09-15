@@ -5,4 +5,4 @@
 
 ---
 
-Return Walk is live: a prepaid Deposit can leave Return Gold in the Commons and other rooms. Claiming it pays 1 NIM and turns the cube back into an ordinary block.
+Return Walk is live: a prepaid Deposit can leave Return Gold around the Commons and other rooms, including cubes that are not right next to the Resident. Claiming it pays 1 NIM and turns the cube back into an ordinary block.

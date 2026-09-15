@@ -44,9 +44,15 @@ const {
   revertReturnGoldToOrdinarySolid,
   pickUpgradeTiles,
   directoryGoldKind,
+  isInUpgradeVicinity,
+  filterTilesInUpgradeVicinity,
 } = await import("../src/returnWalk/tiles.js");
-const { INVOICE_TTL_MS, RETURN_WALK_DEPOSIT_LUNA, STREAM_FAUCET_ADDRESS } =
-  await import("../src/returnWalk/constants.js");
+const {
+  INVOICE_TTL_MS,
+  RETURN_WALK_DEPOSIT_LUNA,
+  STREAM_FAUCET_ADDRESS,
+  UPGRADE_VICINITY_RADIUS,
+} = await import("../src/returnWalk/constants.js");
 
 invalidateReturnWalkConfigCache();
 
@@ -284,6 +290,36 @@ test("pickUpgradeTiles prefers two different tiles", () => {
   });
   assert.equal(picked.length, 2);
   assert.notEqual(`${picked[0]!.x},${picked[0]!.z}`, `${picked[1]!.x},${picked[1]!.z}`);
+});
+
+test("Upgrade vicinity includes diagonal and distant tiles, not only orthogonal", () => {
+  assert.equal(isInUpgradeVicinity(0, 0, 1, 0), true);
+  assert.equal(isInUpgradeVicinity(0, 0, 3, 5), true);
+  assert.equal(isInUpgradeVicinity(0, 0, 8, 8), true);
+  assert.equal(isInUpgradeVicinity(0, 0, 0, 0), false);
+  assert.equal(isInUpgradeVicinity(0, 0, 9, 0), false);
+  assert.equal(UPGRADE_VICINITY_RADIUS, 8);
+  const pool = [
+    { x: 1, z: 0 },
+    { x: 4, z: 3 },
+    { x: 9, z: 0 },
+    { x: 0, z: 0 },
+  ];
+  const inVicinity = filterTilesInUpgradeVicinity(0, 0, pool);
+  assert.deepEqual(inVicinity, [
+    { x: 1, z: 0 },
+    { x: 4, z: 3 },
+  ]);
+});
+
+test("pickUpgradeTiles can select a non-adjacent vicinity tile", () => {
+  const tiles = [
+    { x: 1, z: 0 },
+    { x: 6, z: 4 },
+    { x: -5, z: 7 },
+  ];
+  const picked = pickUpgradeTiles(tiles, 1, () => 0.5);
+  assert.deepEqual(picked, [{ x: 6, z: 4 }]);
 });
 
 test("Stream Faucet cannot be the Server Wallet", () => {

@@ -208,10 +208,10 @@ import {
   directoryGoldKind,
   enqueueReturnGoldPayIntent,
   isOrdinarySolidEligibleForUpgrade,
+  isInUpgradeVicinity,
   isResidentWallet,
   isReturnGold,
   isReturnWalkOpen,
-  ORTHOGONAL_NEIGHBOR_DELTAS,
   registerReturnWalkWorld,
   revertReturnGoldToOrdinarySolid,
   spendReturnGoldReservation,
@@ -5023,12 +5023,16 @@ function listEligibleReturnWalkUpgradeTiles(
 ): Array<{ x: number; z: number }> {
   const placed = placedMap(roomId);
   const out: Array<{ x: number; z: number }> = [];
-  for (const { dx, dz } of ORTHOGONAL_NEIGHBOR_DELTAS) {
-    const nx = x + dx;
-    const nz = z + dz;
-    const at = getPlacedAtLevel(placed, nx, nz, 0);
-    if (!at) continue;
-    if (!isOrdinarySolidEligibleForUpgrade(at.props)) continue;
+  for (const [key, props] of placed) {
+    const parts = key.split(",").map(Number);
+    if (parts.length < 2 || parts.length > 3) continue;
+    const nx = parts[0]!;
+    const nz = parts[1]!;
+    const ny = parts.length === 3 ? parts[2]! : 0;
+    if (ny !== 0) continue;
+    if (!Number.isFinite(nx) || !Number.isFinite(nz)) continue;
+    if (!isInUpgradeVicinity(x, z, nx, nz)) continue;
+    if (!isOrdinarySolidEligibleForUpgrade(props)) continue;
     out.push({ x: nx, z: nz });
   }
   return out;

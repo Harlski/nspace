@@ -2,7 +2,7 @@
  * Return Gold / ordinary-solid helpers (pure).
  */
 
-import type { GoldKind } from "./constants.js";
+import { UPGRADE_VICINITY_RADIUS, type GoldKind } from "./constants.js";
 
 export type ClaimableProps = {
   passable?: boolean;
@@ -59,6 +59,39 @@ export const ORTHOGONAL_NEIGHBOR_DELTAS: ReadonlyArray<{ dx: number; dz: number 
     { dx: 0, dz: -1 },
   ];
 
+export function chebyshevDistance(
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number
+): number {
+  return Math.max(Math.abs(ax - bx), Math.abs(az - bz));
+}
+
+/** True when a tile is in the Upgrade vicinity and is not the pose tile itself. */
+export function isInUpgradeVicinity(
+  originX: number,
+  originZ: number,
+  tileX: number,
+  tileZ: number,
+  radius: number = UPGRADE_VICINITY_RADIUS
+): boolean {
+  if (tileX === originX && tileZ === originZ) return false;
+  return chebyshevDistance(originX, originZ, tileX, tileZ) <= radius;
+}
+
+export function filterTilesInUpgradeVicinity(
+  originX: number,
+  originZ: number,
+  tiles: ReadonlyArray<{ x: number; z: number }>,
+  radius: number = UPGRADE_VICINITY_RADIUS
+): Array<{ x: number; z: number }> {
+  return tiles.filter((t) =>
+    isInUpgradeVicinity(originX, originZ, t.x, t.z, radius)
+  );
+}
+
+/** Uniform random sample without replacement. */
 export function pickUpgradeTiles(
   eligible: ReadonlyArray<{ x: number; z: number }>,
   count: number,
