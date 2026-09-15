@@ -274,6 +274,9 @@ export type TerrainProps = {
       };
   // Experimental: Claimable/minable blocks
   claimable?: boolean;
+  /** Return Gold (Return Walk Upgrade). Distinct from a Gold Block. */
+  kind?: "returnGold";
+  returnGold?: boolean;
   /** Tutorial layout marker for per-wallet assigned faucet slots. */
   tutorialMineSlot?: boolean;
   active?: boolean;

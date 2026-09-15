@@ -77,6 +77,11 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 | `LEGAL_CONSENT_STORE_FILE` | server | Deprecated alias — same override as **`TERMS_PRIVACY_ACCEPTANCE_STORE_FILE`** |
 | `DEV_AUTH_BYPASS` | server | `1` = skip signature verification (development only) |
 | `STREAM_OBSERVER_ADDRESSES` | server | Comma-separated Nimiq wallets allowed for cinema `?stream=1` observer sessions (full-board tile sync). **Merged** with wallets saved in **`/admin/settings`** (runtime JSON). **Unset everywhere = stream observer disabled for everyone.** Spaces inside an address are optional. |
+| `RESIDENT_ADDRESSES` | server | Comma-separated NimiqLIVE Resident wallet(s). Only these JWTs may call `/api/resident/return-walk/*` and `GET /api/resident/public-rooms`. Empty = no Invoice access. |
+| `RETURN_WALK_SERVER_WALLET_ADDRESS` | server | On-chain Server Wallet that receives 1000 NIM Deposits (Invoice `to`). Must not be the Stream Faucet `NQ21 F410 VXJB UK02 6TLG 8YHT 4M4B L664 NPM7`. |
+| `NIM_RPC_URL` | server | JSON-RPC URL for Deposit verification and Server Wallet watch (tx POST is a hint). |
+| `RETURN_WALK_STORE_FILE` | server | Optional SQLite path for Invoices / Return Budget (default `server/data/return-walk.sqlite`) |
+| `RETURN_WALK_PRIVATE_KEY` | payout only | Server Wallet send key for Return Gold Pay-Intents (`source: "returnWalk"`). Never on the game server; never the Stream Faucet key. |
 | `NODE_ENV` | server | `development` enables bypass flag pairing in some setups |
 | `PORT` | server | HTTP + WebSocket listen port (default `3001`) |
 | `FAKE_PLAYER_COUNT` | server | `0`–`32` NPC wanderers per room (default **2**; display names prefixed with `[NPC]`; set `0` to disable) |
@@ -150,6 +155,8 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 **Builder allowlist**: per-room `builderAddresses` (compact NQ keys, max 50) is stored in `rooms.json` **v7** for dynamic rooms ([server/src/roomRegistry.ts](../server/src/roomRegistry.ts)) and in `builtin-room-names.json` **v4** for built-in rooms ([server/src/builtinRoomNames.ts](../server/src/builtinRoomNames.ts)), including **Tutorial Room** / **Tutorial Staging**. `canEditRoomContent()` ([server/src/rooms.ts](../server/src/rooms.ts)) grants build/edit to wallets on that list. For built-ins the allowlist matches admin capability per room: it unlocks restricted rooms (e.g. Chamber) for listed wallets, while Hub stays open to everyone and Canvas/Pixel remain locked for all. Tutorial rooms also honor `TUTORIAL_BUILDER_ALLOWLIST` (env) as an additional shared allowlist. The flag takes effect immediately server-side; an in-room player's build toolbar appears the next time they (re)enter the room (capability flags ship in `welcome`).
 
 **Replay HTTP API** (requires `Authorization: Bearer <JWT>`): `GET /api/replay/players`, `GET /api/replay/sessions?address=…`, `GET /api/replay/session/:id/events`. The main menu “Session replay” panel is shown **only when the page is opened on localhost** (`127.0.0.1`, `::1`, etc.); production builds on public hosts do not expose that UI (APIs remain callable with a valid JWT for tooling).
+
+**Return Walk** (same player JWT as `/ws?token=`, not `/api/admin/*`): Resident-only `POST /api/resident/return-walk/invoices` (`{ "amountNim": 1000 }`), `GET /api/resident/return-walk/invoices/:invoiceId`, `POST /api/resident/return-walk/invoices/:invoiceId/tx` (`{ "txHash" }`), `GET /api/resident/public-rooms`. Non-Resident JWTs get **403**. Unpaid Invoices expire after 30 minutes. A successful Resident claim starts a 20s Upgrade Window (eight Upgrades, uniform random among ordinary solids in Chebyshev radius 8 of pose at fire time). Return Gold uses the existing Gold Block claim protocol; the Payout Service sends 1 NIM from the Server Wallet (`source: "returnWalk"`). See [server/src/returnWalk/](../server/src/returnWalk/).
 
 **Today:** `remove_obstacle` JSONL rows store tile coordinates; see [brainstorm/features-future.md](brainstorm/features-future.md) for optional richer logging ideas.
 

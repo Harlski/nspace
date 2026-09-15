@@ -40,6 +40,8 @@ export type PayIntentBody = {
   txMessage?: string;
   /** When true, this job is selected before any normal pending job. */
   priority?: boolean;
+  /** Return Gold: send from Server Wallet, never the Stream Faucet. */
+  source?: "returnWalk";
 };
 
 export type PayoutJobStatus =
@@ -69,6 +71,8 @@ export type PayoutJob = {
   txMessage?: string;
   /** Strict high lane: oldest ready priority job beats every normal job. */
   priority?: boolean;
+  /** Return Gold jobs use the Server Wallet signer. */
+  source?: "returnWalk";
   /** Set when the job is broadcast as part of a combined bulk transaction, so the
    *  reconciliation pass can record it with bulk metadata on confirmation. */
   manualBulk?: boolean;
@@ -86,6 +90,7 @@ let autoBulkRunning = false;
 let reconcileRunning = false;
 let processorEnabled = false;
 let chainClient: ChainClient | null = null;
+let returnWalkChainClient: ChainClient | null = null;
 let queueFile = "";
 let acceptedClaimIdsFile = "";
 /** Append-only companion; legacy full-array JSON is migrated once at load. */
@@ -268,7 +273,11 @@ export function saveQueue(): void {
   }
 }
 
-export function initPayoutQueue(cfg: AppConfig, client: ChainClient): void {
+export function initPayoutQueue(
+  cfg: AppConfig,
+  client: ChainClient,
+  returnWalkClient?: ChainClient | null
+): void {
   queueFile = path.join(cfg.dataDir, "nim-payout-pending.json");
   acceptedClaimIdsFile = path.join(cfg.dataDir, "accepted-claim-ids.json");
   acceptedClaimIdsJsonlFile = path.join(cfg.dataDir, "accepted-claim-ids.jsonl");
@@ -281,6 +290,7 @@ export function initPayoutQueue(cfg: AppConfig, client: ChainClient): void {
   reconcileIntervalMs = cfg.reconcileIntervalMs;
   unconfirmedReviewMs = cfg.unconfirmedReviewMs;
   chainClient = client;
+  returnWalkChainClient = returnWalkClient ?? null;
   initHistoryPaths(cfg);
   loadAcceptedClaimIds();
   loadQueueFromDisk();
@@ -365,8 +375,28 @@ function findNextReadyJob(now: number = Date.now()): PayoutJob | undefined {
   return pickOldestReadyJob(ready);
 }
 
+function isReturnWalkJob(job: PayoutJob): boolean {
+  return job.source === "returnWalk";
+}
+
+function signerForJob(job: PayoutJob): ChainClient | null {
+  if (isReturnWalkJob(job)) return returnWalkChainClient;
+  return chainClient;
+}
+
 async function processOne(job: PayoutJob, now: number = Date.now()): Promise<void> {
-  const client = chainClient;
+  const client = signerForJob(job);
+  if (!client && isReturnWalkJob(job)) {
+    job.lastError = "RETURN_WALK_PRIVATE_KEY is not set";
+    job.nextRetryAt = now + backoffMs(job.attempts);
+    job.attempts += 1;
+    saveQueue();
+    console.warn(
+      "[payout-service] Return Gold signer not configured - will retry later (not using Stream Faucet)"
+    );
+    maybeDeadLetter(job, job.lastError);
+    return;
+  }
   if (!client) return;
 
   if (job.nextRetryAt > now) return;
@@ -378,11 +408,17 @@ async function processOne(job: PayoutJob, now: number = Date.now()): Promise<voi
   }
 
   if (!client.isSignerConfigured()) {
-    job.lastError = "signer not configured";
+    job.lastError = isReturnWalkJob(job)
+      ? "RETURN_WALK_PRIVATE_KEY is not set"
+      : "signer not configured";
     job.nextRetryAt = now + backoffMs(job.attempts);
     job.attempts += 1;
     saveQueue();
-    console.warn("[payout-service] Signer not configured - will retry later");
+    console.warn(
+      isReturnWalkJob(job)
+        ? "[payout-service] Return Gold signer not configured - will retry later (not using Stream Faucet)"
+        : "[payout-service] Signer not configured - will retry later"
+    );
     maybeDeadLetter(job, job.lastError);
     return;
   }
@@ -636,6 +672,7 @@ export function enqueuePayIntent(body: PayIntentBody): {
 
   const now = Date.now();
   const priority = body.priority === true;
+  const source = body.source === "returnWalk" ? "returnWalk" : undefined;
   const job: PayoutJob = {
     id: randomUUID(),
     claimId,
@@ -649,6 +686,7 @@ export function enqueuePayIntent(body: PayIntentBody): {
     tileKey,
     txMessage: body.txMessage?.trim() || undefined,
     ...(priority ? { priority: true } : {}),
+    ...(source ? { source } : {}),
   };
   jobs.push(job);
   rememberAcceptedClaimId(claimId);
@@ -761,7 +799,8 @@ export async function manualBulkPayoutPendingForRecipient(
       j.status === "pending" &&
       normalizeNimWalletId(j.recipientAddress) === target &&
       !isMiningPayoutHeldForBannedWallet(j.recipientAddress, j.tileKey) &&
-      !(opts?.excludePriority && isPriorityJob(j))
+      !(opts?.excludePriority && isPriorityJob(j)) &&
+      !isReturnWalkJob(j)
   );
   if (pendingFor.length === 0) {
     throw new Error("no_pending_jobs");
@@ -935,6 +974,7 @@ function recipientsWithStalePending(now: number): string[] {
     if (j.status !== "pending") continue;
     // Priority jobs stay on the individual fast path; never trigger auto-bulk.
     if (isPriorityJob(j)) continue;
+    if (isReturnWalkJob(j)) continue;
     if (isMiningPayoutHeldForBannedWallet(j.recipientAddress, j.tileKey)) {
       continue;
     }

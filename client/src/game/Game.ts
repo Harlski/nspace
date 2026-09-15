@@ -10046,6 +10046,8 @@ export class Game {
       colorRgb?: number;
       locked?: boolean;
       claimable?: boolean;
+      kind?: "returnGold";
+      returnGold?: boolean;
       active?: boolean;
       cooldownMs?: number;
       lastClaimedAt?: number;
@@ -10131,6 +10133,9 @@ export class Game {
         locked,
         signboardId,
         claimable: t.claimable,
+        kind: t.kind === "returnGold" || t.returnGold ? "returnGold" : undefined,
+        returnGold:
+          t.kind === "returnGold" || t.returnGold ? true : undefined,
         active: t.active,
         cooldownMs: t.cooldownMs,
         lastClaimedAt: t.lastClaimedAt,
@@ -10183,6 +10188,8 @@ export class Game {
       colorRgb?: number;
       locked?: boolean;
       claimable?: boolean;
+      kind?: "returnGold";
+      returnGold?: boolean;
       active?: boolean;
       cooldownMs?: number;
       lastClaimedAt?: number;
@@ -10291,6 +10298,9 @@ export class Game {
         locked,
         signboardId,
         claimable: t.claimable,
+        kind: t.kind === "returnGold" || t.returnGold ? "returnGold" : undefined,
+        returnGold:
+          t.kind === "returnGold" || t.returnGold ? true : undefined,
         active: t.active,
         cooldownMs: t.cooldownMs,
         lastClaimedAt: t.lastClaimedAt,

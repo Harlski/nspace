@@ -11,6 +11,11 @@ export type PayIntent = {
   txMessage?: string;
   /** When true, Outbox and Payout Service process this intent before normal jobs. */
   priority?: boolean;
+  /**
+   * Return Gold claims settle from the Server Wallet signer
+   * (`RETURN_WALK_PRIVATE_KEY`), never the Stream Faucet.
+   */
+  source?: "returnWalk";
 };
 
 export type PayIntentPayload = PayIntent;
@@ -105,6 +110,9 @@ export async function deliverPayIntentToService(
   }
   if (intent.priority === true) {
     body.priority = true;
+  }
+  if (intent.source === "returnWalk") {
+    body.source = "returnWalk";
   }
 
   const r = await payoutFetch("/v1/pay-intents", {

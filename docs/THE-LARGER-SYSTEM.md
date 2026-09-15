@@ -250,6 +250,27 @@ Do not overload it as a general fairness scheduler; abuse controls belong at cla
 
 Update this subsection if additional producers set `priority` or if a second priority class is needed.
 
+### Prepaid Return Budget is not the Stream Faucet
+
+**Today:** Return Walk Deposits credit a **Return Budget** on the game server (SQLite Invoice
+ledger). Return Gold claims enqueue a Pay-Intent with `source: "returnWalk"`. The Payout Service
+sends those jobs from a **Server Wallet** signer (`RETURN_WALK_PRIVATE_KEY`), never from the
+Stream Faucet (`NIM_PAYOUT_PRIVATE_KEY`). Bulk / auto-bulk / end-of-day flush skip Return Walk
+jobs so they cannot be mixed into a Stream Faucet transfer. Upgrade Windows are **server-owned**:
+Resident does not POST coordinates; the play socket already has pose. Each window lasts 20s and
+schedules eight Upgrades at independent random delays. At fire time the server draws uniformly
+from eligible ordinary solids (y === 0) in a Chebyshev vicinity of radius 8 around Resident pose,
+so Return Gold can jump onto blocks that are not orthogonally adjacent. The HTTP seam is the same
+player JWT as `/ws?token=` (`/api/resident/*`), not `/api/admin/*` and not `?stream=1`.
+
+**Direction:** Keep prepaid Return Budget and Stream Faucet gameplay rewards as **separate
+ledgers and signers**. Do not add Resident Upgrade HTTP. Do not spawn new floor cubes for
+Upgrades; convert existing ordinary solids only. Leftover Return Budget stays credited when
+Daily Earn exhausts so a later UTC day can reopen the walk without a new Deposit.
+
+Update this subsection if Return Gold settlement moves off the Payout Service or if a second
+privileged player JWT seam is added.
+
 ### Admin-only WebSocket side channels stay off the room stream
 
 **Today:** Room sync (`state` / `stateDelta`, optional public `moveOrder`) is shared with every
@@ -384,6 +405,8 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-07-16** — Floor tile color: rectangular SV + hue-strip picker (full spectrum light/dark); hue ring remains for objects/sky. See [reasons/reason_581734.md](reasons/reason_581734.md).
 - **2026-07-16** — Build dock: context controls must not exceed tool-card height; Floor spawn no longer shows Use room center in the dock. See [reasons/reason_628401.md](reasons/reason_628401.md).
 - **2026-07-25** — Recorded decision: tutorial faucet Pay-Intents use `priority: true` so first-contact NIM jumps the Outbox + Payout Service queue ahead of the normal FIFO backlog. See [reasons/reason_981786.md](reasons/reason_981786.md).
+- **2026-09-15** - Recorded decision: prepaid Return Budget / Return Gold settle from a Server Wallet signer, never the Stream Faucet; Upgrade Windows are server-owned; Resident Invoice HTTP uses the player JWT, not admin or stream observer. See [reasons/reason_647281.md](reasons/reason_647281.md).
+- **2026-09-15** - Upgrade Windows pick uniformly at random among eligible ordinary solids in a Chebyshev vicinity of Resident pose (20s, eight Upgrades, radius 8), not only orthogonal neighbors. See [reasons/reason_583019.md](reasons/reason_583019.md).
 - **2026-07-28** — Recorded decision: tutorial Unlock is a free wallet **message sign** (not a NIM send) so faucet settlement / zero balance cannot block the lesson; real pads stay Payment Intent. See [reasons/reason_452918.md](reasons/reason_452918.md).
 - **2026-08-12** — Recorded decision: Event Log scans for `/analytics` overview and daily-stats run in the Analytics Service sidecar, not on the game event loop; no in-process fallback. See [reasons/reason_194837.md](reasons/reason_194837.md).
 - **2026-08-18** — Recorded decision: occupied-room presence is one-player `stateDelta` (pose omitted for grid Path Playback walkers); `moveOrder` stamps analytic pose + `serverNowMs`; clients never rewind after drain except intentional snaps. See [reasons/reason_847293.md](reasons/reason_847293.md).

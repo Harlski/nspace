@@ -24,6 +24,7 @@ import { registerDirectInviteRoutes } from "./directInvite/httpHandlers.js";
 import { registerPlaySpaceTemplateAdminRoutes } from "./playSpaceTemplate/routes.js";
 import { registerTutorialTemplateAdminRoutes } from "./tutorialTemplate/routes.js";
 import { registerTutorialRoutes } from "./tutorial/routes.js";
+import { registerReturnWalkRoutes, startReturnWalkCreditWatch } from "./returnWalk/index.js";
 import { isTutorialEnvEnabled, TUTORIAL_ROOM_ID } from "./tutorial/config.js";
 import { initTutorialTemplateStore } from "./tutorialTemplate/store.js";
 import { computeNeedsTutorial } from "./tutorialSessionService.js";
@@ -3786,6 +3787,7 @@ registerDirectInviteRoutes(app, {
 registerPlaySpaceTemplateAdminRoutes(app, requireSystemAdminWallet);
 registerTutorialTemplateAdminRoutes(app, requireSystemAdminWallet);
 registerTutorialRoutes(app, requireJwt, jwtAddressFromReq);
+registerReturnWalkRoutes(app, requireJwt, jwtAddressFromReq, jwtSecret);
 
 const server = createServer(app);
 
@@ -3804,6 +3806,7 @@ if (repairedCampaignBalances > 0) {
 }
 initRotationSetStore();
 startRoomTick();
+startReturnWalkCreditWatch();
 setInterval(() => {
   try {
     tickExpiredCampaignBillboards(Date.now());

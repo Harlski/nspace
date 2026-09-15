@@ -66,6 +66,8 @@ export type ObstacleTile = {
   /** Sale Display foot — exclusive tile claim. */
   saleDisplayId?: string;
   claimable?: boolean;
+  kind?: "returnGold";
+  returnGold?: boolean;
   tutorialMineSlot?: boolean;
   active?: boolean;
   cooldownMs?: number;

@@ -29,6 +29,7 @@ import { listSentHistorySince } from "./history.js";
 export type CreatePayoutAppOptions = {
   cfg?: AppConfig;
   chainClient?: ChainClient;
+  returnWalkChainClient?: ChainClient;
   startProcessor?: boolean;
 };
 
@@ -36,7 +37,12 @@ export function createPayoutApp(opts: CreatePayoutAppOptions = {}) {
   const cfg = opts.cfg ?? loadConfig();
   const chainClient =
     opts.chainClient ?? createNimiqChainClient(cfg.defaultTxMessage);
-  initPayoutQueue(cfg, chainClient);
+  const returnWalkClient =
+    opts.returnWalkChainClient ??
+    createNimiqChainClient("Return Gold", {
+      privateKeyEnv: "RETURN_WALK_PRIVATE_KEY",
+    });
+  initPayoutQueue(cfg, chainClient, returnWalkClient);
   initBalanceCache(chainClient, cfg.balanceCacheMs);
   initAnalyticsCallback(cfg);
   initMiningBanGate(cfg);
