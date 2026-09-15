@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { describe, test } from "node:test";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "return-walk-win-"));
 process.env.RETURN_WALK_STORE_FILE = path.join(tmp, "return-walk.sqlite");
@@ -31,6 +31,7 @@ const { getServerWalletAddress } = await import("../src/returnWalk/config.js");
 
 const RESIDENT = "NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y";
 
+describe("returnWalk upgrade windows", { concurrency: false }, () => {
 test("Upgrade Window fires two Upgrades and reserves 1 NIM each", () => {
   __resetReturnWalkStoreForTests();
   const created = createUnpaidInvoice({
@@ -94,4 +95,5 @@ test("cancelPendingUpgradeWindows drops unfired Upgrades", () => {
   cancelPendingUpgradeWindows();
   assert.equal(pendingUpgradeWindowCountForTests(), 0);
   setUpgradeWindowSchedulerForTests(null);
+});
 });

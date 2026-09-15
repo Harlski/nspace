@@ -38,15 +38,16 @@ export type InvoiceRow = {
   creditedAtMs: number | null;
 };
 
-let db: Database.Database | null = null;
+let dbs = new Map<string, Database.Database>();
 
 function ensureDb(): Database.Database {
-  if (db) return db;
   const file = storePath();
+  const existing = dbs.get(file);
+  if (existing) return existing;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  db = new Database(file);
-  db.pragma("journal_mode = WAL");
-  db.exec(`
+  const opened = new Database(file);
+  opened.pragma("journal_mode = WAL");
+  opened.exec(`
     CREATE TABLE IF NOT EXISTS invoices (
       invoice_id TEXT PRIMARY KEY,
       resident_wallet TEXT NOT NULL,
@@ -73,7 +74,8 @@ function ensureDb(): Database.Database {
     CREATE UNIQUE INDEX IF NOT EXISTS reservations_tile
       ON reservations (room_id, tile_key);
   `);
-  return db;
+  dbs.set(file, opened);
+  return opened;
 }
 
 function newInvoiceId(): string {
@@ -377,11 +379,24 @@ export function spendReturnGoldReservation(opts: {
 }
 
 export function closeReturnWalkStore(): void {
-  db?.close();
-  db = null;
+  for (const opened of dbs.values()) opened.close();
+  dbs = new Map();
 }
 
-/** Test-only: close and drop the in-memory handle so the next call reopens. */
+/** Test-only: close so the next call reopens (honors RETURN_WALK_STORE_FILE). */
 export function __resetReturnWalkStoreForTests(): void {
-  closeReturnWalkStore();
+  const file = storePath();
+  const opened = dbs.get(file);
+  if (opened) {
+    opened.close();
+    dbs.delete(file);
+  }
+  try {
+    for (const suffix of ["", "-wal", "-shm"]) {
+      const p = `${file}${suffix}`;
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    }
+  } catch {
+    /* ignore */
+  }
 }
