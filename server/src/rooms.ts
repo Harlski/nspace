@@ -209,6 +209,7 @@ import {
   enqueueReturnGoldPayIntent,
   isOrdinarySolidEligibleForUpgrade,
   isInUpgradeVicinity,
+  hasOrthogonalClaimStand,
   isResidentWallet,
   isReturnGold,
   isReturnWalkOpen,
@@ -5016,6 +5017,21 @@ function getResidentPoseForReturnWalk(): {
   return null;
 }
 
+/** Floor tile a player can stand on to start a Gold Block / Return Gold claim (edge, not diagonal). */
+function isReturnWalkClaimStandTile(roomId: string, x: number, z: number): boolean {
+  if (!isWalkableForRoom(roomId, x, z)) return false;
+  const placed = placedMap(roomId);
+  const at = getPlacedAtLevel(placed, x, z, 0);
+  if (at && !at.props.passable && !at.props.ramp) return false;
+  return true;
+}
+
+function hasReturnWalkClaimSide(roomId: string, x: number, z: number): boolean {
+  return hasOrthogonalClaimStand(x, z, (sx, sz) =>
+    isReturnWalkClaimStandTile(roomId, sx, sz)
+  );
+}
+
 function listEligibleReturnWalkUpgradeTiles(
   roomId: string,
   x: number,
@@ -5033,6 +5049,7 @@ function listEligibleReturnWalkUpgradeTiles(
     if (!Number.isFinite(nx) || !Number.isFinite(nz)) continue;
     if (!isInUpgradeVicinity(x, z, nx, nz)) continue;
     if (!isOrdinarySolidEligibleForUpgrade(props)) continue;
+    if (!hasReturnWalkClaimSide(roomId, nx, nz)) continue;
     out.push({ x: nx, z: nz });
   }
   return out;
@@ -5047,6 +5064,7 @@ function convertTileToReturnGoldInRoom(
   const at = getPlacedAtLevel(placed, x, z, 0);
   if (!at) return false;
   if (!isOrdinarySolidEligibleForUpgrade(at.props)) return false;
+  if (!hasReturnWalkClaimSide(roomId, x, z)) return false;
   applyReturnGoldUpgrade(at.props);
   const tile = obstacleTileFromPlaced(roomId, at.key);
   if (tile) {

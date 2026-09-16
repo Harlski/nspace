@@ -931,9 +931,11 @@ _Avoid_: spawn window, gold wave, drop timer.
 
 **Upgrade**:
 Converting an eligible ordinary solid (same room, within Chebyshev vicinity of Resident at fire
-time, y = 0, not ramp, not passable, not already claimable) into Return Gold and reserving 1 NIM
-of Return Budget. The tile is drawn uniformly at random from that vicinity, including blocks that
-are not orthogonally adjacent. Does not spawn a new floor cube.
+time, y = 0, not ramp, not passable, not already claimable, and with at least one orthogonal
+walkable stand tile so a player can reach an edge and click to claim) into Return Gold and
+reserving 1 NIM of Return Budget. The tile is drawn uniformly at random from that pool, including
+blocks that are not orthogonally adjacent to Resident. Boxed-in cubes with no physical side do
+not convert. Does not spawn a new floor cube.
 _Avoid_: gold drop, convert, paint gold.
 
 **Return Gold**:

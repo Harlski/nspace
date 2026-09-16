@@ -46,6 +46,7 @@ const {
   directoryGoldKind,
   isInUpgradeVicinity,
   filterTilesInUpgradeVicinity,
+  hasOrthogonalClaimStand,
 } = await import("../src/returnWalk/tiles.js");
 const {
   INVOICE_TTL_MS,
@@ -320,6 +321,18 @@ test("pickUpgradeTiles can select a non-adjacent vicinity tile", () => {
   ];
   const picked = pickUpgradeTiles(tiles, 1, () => 0.5);
   assert.deepEqual(picked, [{ x: 6, z: 4 }]);
+});
+
+test("boxed-in solids have no orthogonal claim stand", () => {
+  const blocked = new Set(["1,0", "-1,0", "0,1", "0,-1"]);
+  const stand = (x: number, z: number) => !blocked.has(`${x},${z}`);
+  assert.equal(hasOrthogonalClaimStand(0, 0, stand), false);
+});
+
+test("one open orthogonal edge is enough to claim", () => {
+  const blocked = new Set(["1,0", "-1,0", "0,1"]);
+  const stand = (x: number, z: number) => !blocked.has(`${x},${z}`);
+  assert.equal(hasOrthogonalClaimStand(0, 0, stand), true);
 });
 
 test("Stream Faucet cannot be the Server Wallet", () => {

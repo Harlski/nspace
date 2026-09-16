@@ -260,7 +260,9 @@ jobs so they cannot be mixed into a Stream Faucet transfer. Upgrade Windows are 
 Resident does not POST coordinates; the play socket already has pose. Each window lasts 20s and
 schedules eight Upgrades at independent random delays. At fire time the server draws uniformly
 from eligible ordinary solids (y === 0) in a Chebyshev vicinity of radius 8 around Resident pose,
-so Return Gold can jump onto blocks that are not orthogonally adjacent. The HTTP seam is the same
+so Return Gold can jump onto blocks that are not orthogonally adjacent. A solid converts only when
+it has at least one orthogonal walkable stand tile (the same edge a player uses to start a claim);
+boxed-in cubes with no physical side stay ordinary. The HTTP seam is the same
 player JWT as `/ws?token=` (`/api/resident/*`), not `/api/admin/*` and not `?stream=1`.
 
 **Direction:** Keep prepaid Return Budget and Stream Faucet gameplay rewards as **separate
@@ -407,6 +409,7 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-07-25** — Recorded decision: tutorial faucet Pay-Intents use `priority: true` so first-contact NIM jumps the Outbox + Payout Service queue ahead of the normal FIFO backlog. See [reasons/reason_981786.md](reasons/reason_981786.md).
 - **2026-09-15** - Recorded decision: prepaid Return Budget / Return Gold settle from a Server Wallet signer, never the Stream Faucet; Upgrade Windows are server-owned; Resident Invoice HTTP uses the player JWT, not admin or stream observer. See [reasons/reason_647281.md](reasons/reason_647281.md).
 - **2026-09-15** - Upgrade Windows pick uniformly at random among eligible ordinary solids in a Chebyshev vicinity of Resident pose (20s, eight Upgrades, radius 8), not only orthogonal neighbors. See [reasons/reason_583019.md](reasons/reason_583019.md).
+- **2026-09-16** - Return Gold Upgrades skip solids with no orthogonal walkable stand tile (boxed-in cubes a player cannot stand beside to claim). See [reasons/reason_619472.md](reasons/reason_619472.md).
 - **2026-07-28** — Recorded decision: tutorial Unlock is a free wallet **message sign** (not a NIM send) so faucet settlement / zero balance cannot block the lesson; real pads stay Payment Intent. See [reasons/reason_452918.md](reasons/reason_452918.md).
 - **2026-08-12** — Recorded decision: Event Log scans for `/analytics` overview and daily-stats run in the Analytics Service sidecar, not on the game event loop; no in-process fallback. See [reasons/reason_194837.md](reasons/reason_194837.md).
 - **2026-08-18** — Recorded decision: occupied-room presence is one-player `stateDelta` (pose omitted for grid Path Playback walkers); `moveOrder` stamps analytic pose + `serverNowMs`; clients never rewind after drain except intentional snaps. See [reasons/reason_847293.md](reasons/reason_847293.md).

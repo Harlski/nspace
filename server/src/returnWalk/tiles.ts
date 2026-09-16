@@ -91,6 +91,21 @@ export function filterTilesInUpgradeVicinity(
   );
 }
 
+/**
+ * True when a player can stand on an orthogonal edge (not a diagonal) to begin a claim.
+ * Matches Gold Block / Return Gold: no physical side means the cube is boxed in.
+ */
+export function hasOrthogonalClaimStand(
+  tileX: number,
+  tileZ: number,
+  isClaimStandTile: (x: number, z: number) => boolean
+): boolean {
+  for (const { dx, dz } of ORTHOGONAL_NEIGHBOR_DELTAS) {
+    if (isClaimStandTile(tileX + dx, tileZ + dz)) return true;
+  }
+  return false;
+}
+
 /** Uniform random sample without replacement. */
 export function pickUpgradeTiles(
   eligible: ReadonlyArray<{ x: number; z: number }>,

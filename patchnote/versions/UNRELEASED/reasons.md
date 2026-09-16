@@ -32,7 +32,7 @@ Return Walk: Resident Invoice HTTP, credited 1000 NIM Deposit, server-owned Upgr
   - `GET /api/resident/return-walk/invoices/:invoiceId`
   - `POST /api/resident/return-walk/invoices/:invoiceId/tx` `{ txHash }`
   - `GET /api/resident/public-rooms`
-- Play authority in [server/src/rooms.ts](../../../server/src/rooms.ts): snapshot `kind`/`returnGold`, convert ordinary solids in Chebyshev vicinity (radius 8, uniform random, eight Upgrades / 20s window), revert after claim, start/cancel Upgrade Windows, directory gold + `realPresenceCount`.
+- Play authority in [server/src/rooms.ts](../../../server/src/rooms.ts): snapshot `kind`/`returnGold`, convert ordinary solids in Chebyshev vicinity (radius 8, uniform random, eight Upgrades / 20s window, skip cubes with no orthogonal walkable stand tile), revert after claim, start/cancel Upgrade Windows, directory gold + `realPresenceCount`.
 - Pay-Intent `source: "returnWalk"` ([server/src/payoutServiceClient.ts](../../../server/src/payoutServiceClient.ts), [server/src/payoutOutbox.ts](../../../server/src/payoutOutbox.ts)).
 
 ### payout-service

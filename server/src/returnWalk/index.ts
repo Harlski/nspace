@@ -31,6 +31,7 @@ export {
   directoryGoldKind,
   isInUpgradeVicinity,
   filterTilesInUpgradeVicinity,
+  hasOrthogonalClaimStand,
   pickUpgradeTiles,
   ORTHOGONAL_NEIGHBOR_DELTAS,
 } from "./tiles.js";
