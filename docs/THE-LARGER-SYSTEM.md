@@ -158,7 +158,7 @@ After that, the author **reviews diffs**, then **`git add`**, **`git commit`**, 
 
 ### Split SPA hosting: route parity for new pages
 
-**Today:** Production hosts the **client SPA** on a static host (Vercel) and the **game/API server** separately (`api.nimiq.space`). Both [`vercel.json`](../vercel.json) (repo root — the active build config: `npm run build --prefix packages/i18n && npm run build --prefix client`, `outputDirectory: client/dist`) and [`client/vercel.json`](../client/vercel.json) (used if the Vercel **Root Directory** is `client`) enumerate **explicit rewrites**; there is **no SPA catch-all**. `/api/:path*` and `/nim-chart-api/:path*` proxy all JSON to the API host. Each **server-rendered HTML page** has a 1:1 rewrite to the API host (`/admin`, `/admin/system`, `/admin/header`, `/admin/settings`, `/admin/feedback`, `/admin/campaign`, `/admin/bans`, `/admin/rooms`, `/analytics`, `/payouts`, `/advertise`, …). **Clean-path client routes** rewrite to their built HTML (`/patchnotes` → `/index.html`, `/tacs` → `/tacs.html`, `/privacy` → `/privacy.html`). Static MPA build artifacts referenced **with their extension** (e.g. `roomPreview.html`) are served directly with no rewrite.
+**Today:** Production hosts the **client SPA** on a static host (Vercel) and the **game/API server** separately (`api.nimiq.space`). Both [`vercel.json`](../vercel.json) (repo root — the active build config: `npm run build --prefix packages/i18n && npm run build --prefix client`, `outputDirectory: client/dist`) and [`client/vercel.json`](../client/vercel.json) (used if the Vercel **Root Directory** is `client`) enumerate **explicit rewrites**; there is **no SPA catch-all**. `/api/:path*` and `/nim-chart-api/:path*` proxy all JSON to the API host. Each **server-rendered HTML page** has a 1:1 rewrite to the API host (`/admin`, `/admin/system`, `/admin/header`, `/admin/settings`, `/admin/connections`, `/admin/feedback`, `/admin/campaign`, `/admin/bans`, `/admin/rooms`, `/analytics`, `/payouts`, `/advertise`, …). **Clean-path client routes** rewrite to their built HTML (`/patchnotes` → `/index.html`, `/tacs` → `/tacs.html`, `/privacy` → `/privacy.html`). Static MPA build artifacts referenced **with their extension** (e.g. `roomPreview.html`) are served directly with no rewrite.
 
 **Norm / forward constraint:** Adding a **new server-rendered page** or **new clean-path client route** must include the matching rewrite in **both** `vercel.json` files **in the same change**, and keep the route list in [live-service-implementation.md](live-service-implementation.md) current. New endpoints under `/api/*` need no new rewrite (the catch-all covers them). After editing, verify both files still parse as JSON.
 
@@ -263,12 +263,16 @@ from eligible ordinary solids (y === 0) in a Chebyshev vicinity of radius 8 arou
 so Return Gold can jump onto blocks that are not orthogonally adjacent. A solid converts only when
 it has at least one orthogonal walkable stand tile (the same edge a player uses to start a claim);
 boxed-in cubes with no physical side stay ordinary. The HTTP seam is the same
-player JWT as `/ws?token=` (`/api/resident/*`), not `/api/admin/*` and not `?stream=1`.
+player JWT as `/ws?token=` (`/api/resident/*`), not Invoice/Upgrade `/api/admin/*` and not `?stream=1`.
+The Resident allowlist is env `RESIDENT_ADDRESSES` **merged** with wallets saved at
+`/admin/connections` (runtime JSON, same pattern as stream observers). Empty everywhere fails closed.
 
 **Direction:** Keep prepaid Return Budget and Stream Faucet gameplay rewards as **separate
 ledgers and signers**. Do not add Resident Upgrade HTTP. Do not spawn new floor cubes for
 Upgrades; convert existing ordinary solids only. Leftover Return Budget stays credited when
 Daily Earn exhausts so a later UTC day can reopen the walk without a new Deposit.
+Ops may edit who is Resident from `/admin/connections`; do not move Invoice, Deposit credit, or
+Upgrade control onto `/api/admin/*`.
 
 Update this subsection if Return Gold settlement moves off the Payout Service or if a second
 privileged player JWT seam is added.
@@ -410,6 +414,7 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-09-15** - Recorded decision: prepaid Return Budget / Return Gold settle from a Server Wallet signer, never the Stream Faucet; Upgrade Windows are server-owned; Resident Invoice HTTP uses the player JWT, not admin or stream observer. See [reasons/reason_647281.md](reasons/reason_647281.md).
 - **2026-09-15** - Upgrade Windows pick uniformly at random among eligible ordinary solids in a Chebyshev vicinity of Resident pose (20s, eight Upgrades, radius 8), not only orthogonal neighbors. See [reasons/reason_583019.md](reasons/reason_583019.md).
 - **2026-09-16** - Return Gold Upgrades skip solids with no orthogonal walkable stand tile (boxed-in cubes a player cannot stand beside to claim). See [reasons/reason_619472.md](reasons/reason_619472.md).
+- **2026-09-16** - Resident allowlist is editable at `/admin/connections` (runtime JSON merged with `RESIDENT_ADDRESSES`); Invoice/Upgrade stay on `/api/resident/*`. See [reasons/reason_361849.md](reasons/reason_361849.md).
 - **2026-07-28** — Recorded decision: tutorial Unlock is a free wallet **message sign** (not a NIM send) so faucet settlement / zero balance cannot block the lesson; real pads stay Payment Intent. See [reasons/reason_452918.md](reasons/reason_452918.md).
 - **2026-08-12** — Recorded decision: Event Log scans for `/analytics` overview and daily-stats run in the Analytics Service sidecar, not on the game event loop; no in-process fallback. See [reasons/reason_194837.md](reasons/reason_194837.md).
 - **2026-08-18** — Recorded decision: occupied-room presence is one-player `stateDelta` (pose omitted for grid Path Playback walkers); `moveOrder` stamps analytic pose + `serverNowMs`; clients never rewind after drain except intentional snaps. See [reasons/reason_847293.md](reasons/reason_847293.md).

@@ -103,7 +103,7 @@ Outgoing NIM rewards run in a dedicated **`payout`** container (not in the game-
 - **Port:** `127.0.0.1:3091` → `3091` in the container (localhost-bound on the host).
 - **Persistence:** host directory `./data/payout-service` → `/data` (`NIM_PAYOUT_DATA_DIR`).
 - **Required env:** `PAYOUT_SERVICE_API_SECRET`, `NIM_PAYOUT_PRIVATE_KEY`, and `NIM_NETWORK` (root `.env` or `server/.env`). See [`payout-service/.env.example`](../payout-service/.env.example).
-- **Return Walk:** set `RESIDENT_ADDRESSES`, `RETURN_WALK_SERVER_WALLET_ADDRESS`, and `NIM_RPC_URL` on the game server; set `RETURN_WALK_PRIVATE_KEY` on **payout only** (Compose strips it from `nspace`). Return Gold must not use `NIM_PAYOUT_PRIVATE_KEY`.
+- **Return Walk:** set Resident wallets via **`/admin/connections`** and/or `RESIDENT_ADDRESSES`, plus `RETURN_WALK_SERVER_WALLET_ADDRESS` and `NIM_RPC_URL` on the game server; set `RETURN_WALK_PRIVATE_KEY` on **payout only** (Compose strips it from `nspace`). Return Gold must not use `NIM_PAYOUT_PRIVATE_KEY`.
 - **Game server wiring:** `PAYOUT_SERVICE_URL=http://payout:3091` (default in compose) and the same `PAYOUT_SERVICE_API_SECRET`. **`NIM_PAYOUT_PRIVATE_KEY` must not be set on `nspace`.**
 
 **HTTP API** (all `/v1/*` routes require `Authorization: Bearer <PAYOUT_SERVICE_API_SECRET>`):

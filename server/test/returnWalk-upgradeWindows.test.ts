@@ -6,6 +6,7 @@ import { describe, test } from "node:test";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "return-walk-win-"));
 process.env.RETURN_WALK_STORE_FILE = path.join(tmp, "return-walk.sqlite");
+process.env.ADMIN_RUNTIME_SETTINGS_FILE = path.join(tmp, "admin-runtime-settings.json");
 process.env.RETURN_WALK_SERVER_WALLET_ADDRESS =
   "NQ11 22AA 33BB 44CC 55DD 66EE 77FF 00AA 11BB";
 process.env.RESIDENT_ADDRESSES =

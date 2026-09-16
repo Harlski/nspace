@@ -78,7 +78,7 @@ A multiplayer isometric social space built with **Nimiq wallet** authentication,
    
    First run auto-creates `payout-service/.env` and `analytics-service/.env` from `.env.example` if missing. Restart `npm run dev` after editing env files. `/analytics` needs the Analytics Service on port `3092` (`ANALYTICS_SERVICE_URL` + matching `ANALYTICS_SERVICE_API_SECRET`).
 
-   **Return Walk (Resident):** set `RESIDENT_ADDRESSES` and `RETURN_WALK_SERVER_WALLET_ADDRESS` in `server/.env`, `NIM_RPC_URL` for Deposit verify, and `RETURN_WALK_PRIVATE_KEY` in `payout-service/.env` (a different testnet key from `NIM_PAYOUT_PRIVATE_KEY`).
+   **Return Walk (Resident):** set Resident wallets in **`/admin/connections`** and/or `RESIDENT_ADDRESSES` in `server/.env` (merged; admin save is live). Set `RETURN_WALK_SERVER_WALLET_ADDRESS` in `server/.env`, `NIM_RPC_URL` for Deposit verify, and `RETURN_WALK_PRIVATE_KEY` in `payout-service/.env` (a different testnet key from `NIM_PAYOUT_PRIVATE_KEY`).
 
 6. **Login**
    

@@ -6,6 +6,7 @@ export type MainSiteNavPage =
   | "payouts"
   | "system"
   | "settings"
+  | "connections"
   | "header"
   | "feedback"
   | "campaign"
@@ -69,6 +70,7 @@ const MAIN_SITE_NAV_GROUPS: MainSiteNavGroup[] = [
       },
       { page: "system", href: "/admin/system", label: "System", authKey: "system" },
       { page: "settings", href: "/admin/settings", label: "Settings", authKey: "settings" },
+      { page: "connections", href: "/admin/connections", label: "Connections", authKey: "connections" },
       { page: "header", href: "/admin/header", label: "Header", authKey: "header" },
       { page: "feedback", href: "/admin/feedback", label: "Feedback", authKey: "feedback" },
       { page: "campaign", href: "/admin/campaign", label: "Campaigns", authKey: "campaign" },
@@ -111,7 +113,7 @@ export function isMainSiteNavItemVisible(
   if (authKey === "advertise") return status.signedIn;
   if (authKey === "analytics") return status.analyticsAuthorized;
   if (authKey === "admin") return status.analyticsManager;
-  if (authKey === "system" || authKey === "settings" || authKey === "header" || authKey === "feedback" || authKey === "campaign" || authKey === "cosmetics" || authKey === "rooms") {
+  if (authKey === "system" || authKey === "settings" || authKey === "connections" || authKey === "header" || authKey === "feedback" || authKey === "campaign" || authKey === "cosmetics" || authKey === "rooms") {
     return status.systemAdmin;
   }
   return false;

@@ -8,6 +8,7 @@ import jwt from "jsonwebtoken";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "return-walk-"));
 process.env.RETURN_WALK_STORE_FILE = path.join(tmp, "return-walk.sqlite");
+process.env.ADMIN_RUNTIME_SETTINGS_FILE = path.join(tmp, "admin-runtime-settings.json");
 process.env.RESIDENT_ADDRESSES =
   "NQ97 4M1T 4TGD VC7F LHLQ Y2DY 425N 5CVH M02Y";
 process.env.RETURN_WALK_SERVER_WALLET_ADDRESS =

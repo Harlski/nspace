@@ -17,7 +17,8 @@ Return Walk: Resident Invoice HTTP, credited 1000 NIM Deposit, server-owned Upgr
 ### Repo / docs
 
 - Glossary: [CONTEXT.md](../../../CONTEXT.md) Return Walk terms (Invoice, Deposit, Return Budget, Upgrade Window, Return Gold, Server Wallet, Resident, Public Room, Quiet-Claim).
-- [docs/THE-LARGER-SYSTEM.md](../../../docs/THE-LARGER-SYSTEM.md) + [docs/reasons/reason_647281.md](../../../docs/reasons/reason_647281.md): prepaid Return Budget is not the Stream Faucet; Upgrade Windows are server-owned; player JWT seam (not admin / not `?stream=1`).
+- [docs/THE-LARGER-SYSTEM.md](../../../docs/THE-LARGER-SYSTEM.md) + [docs/reasons/reason_647281.md](../../../docs/reasons/reason_647281.md): prepaid Return Budget is not the Stream Faucet; Upgrade Windows are server-owned; player JWT seam (not Invoice admin / not `?stream=1`).
+- [docs/reasons/reason_361849.md](../../../docs/reasons/reason_361849.md): Resident allowlist editor at `/admin/connections` (runtime JSON merged with env).
 - Env / ops: [docs/process.md](../../../docs/process.md), [docs/features-checklist.md](../../../docs/features-checklist.md), [docs/getting-started.md](../../../docs/getting-started.md), [docs/docker-deployment.md](../../../docs/docker-deployment.md), [docs/live-service-implementation.md](../../../docs/live-service-implementation.md), [docs/build.md](../../../docs/build.md), [AGENTS.md](../../../AGENTS.md).
 
 ### Client
@@ -26,12 +27,13 @@ Return Walk: Resident Invoice HTTP, credited 1000 NIM Deposit, server-owned Upgr
 
 ### Server
 
-- Module [server/src/returnWalk/](../../../server/src/returnWalk/): allowlist `RESIDENT_ADDRESSES`, Server Wallet `RETURN_WALK_SERVER_WALLET_ADDRESS` (rejected if Stream Faucet), SQLite Invoices (`RETURN_WALK_STORE_FILE`), HTTP Invoice + directory, credit watch (`NIM_RPC_URL`), Upgrade Windows, Return Gold payout enqueue.
-- Routes (player JWT, not `/api/admin/*`):
+- Module [server/src/returnWalk/](../../../server/src/returnWalk/): allowlist `RESIDENT_ADDRESSES` merged with `/admin/connections` runtime JSON, Server Wallet `RETURN_WALK_SERVER_WALLET_ADDRESS` (rejected if Stream Faucet), SQLite Invoices (`RETURN_WALK_STORE_FILE`), HTTP Invoice + directory, credit watch (`NIM_RPC_URL`), Upgrade Windows, Return Gold payout enqueue.
+- Routes (player JWT for Invoice/directory; admin JWT only for the allowlist):
   - `POST /api/resident/return-walk/invoices` `{ amountNim: 1000 }`
   - `GET /api/resident/return-walk/invoices/:invoiceId`
   - `POST /api/resident/return-walk/invoices/:invoiceId/tx` `{ txHash }`
   - `GET /api/resident/public-rooms`
+  - `GET`/`PUT /api/admin/connections` `{ residentAddresses }` (system admin; HTML `/admin/connections`)
 - Play authority in [server/src/rooms.ts](../../../server/src/rooms.ts): snapshot `kind`/`returnGold`, convert ordinary solids in Chebyshev vicinity (radius 8, uniform random, eight Upgrades / 20s window, skip cubes with no orthogonal walkable stand tile), revert after claim, start/cancel Upgrade Windows, directory gold + `realPresenceCount`.
 - Pay-Intent `source: "returnWalk"` ([server/src/payoutServiceClient.ts](../../../server/src/payoutServiceClient.ts), [server/src/payoutOutbox.ts](../../../server/src/payoutOutbox.ts)).
 

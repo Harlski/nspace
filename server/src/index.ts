@@ -24,7 +24,7 @@ import { registerDirectInviteRoutes } from "./directInvite/httpHandlers.js";
 import { registerPlaySpaceTemplateAdminRoutes } from "./playSpaceTemplate/routes.js";
 import { registerTutorialTemplateAdminRoutes } from "./tutorialTemplate/routes.js";
 import { registerTutorialRoutes } from "./tutorial/routes.js";
-import { registerReturnWalkRoutes, startReturnWalkCreditWatch } from "./returnWalk/index.js";
+import { registerReturnWalkRoutes, startReturnWalkCreditWatch, getReturnWalkConnectionsAdminJson } from "./returnWalk/index.js";
 import { isTutorialEnvEnabled, TUTORIAL_ROOM_ID } from "./tutorial/config.js";
 import { initTutorialTemplateStore } from "./tutorialTemplate/store.js";
 import { computeNeedsTutorial } from "./tutorialSessionService.js";
@@ -157,6 +157,7 @@ import { analyticsPublicPageHtml } from "./analyticsPublicPage.js";
 import { analyticsAdminPageHtml } from "./analyticsAdminPage.js";
 import { adminSystemPageHtml } from "./adminSystemPage.js";
 import { adminSettingsPageHtml } from "./adminSettingsPage.js";
+import { adminConnectionsPageHtml } from "./adminConnectionsPage.js";
 import { adminHeaderPageHtml } from "./adminHeaderPage.js";
 import { adminFeedbackPageHtml } from "./adminFeedbackPage.js";
 import { adminChatPageHtml } from "./adminChatPage.js";
@@ -321,6 +322,7 @@ import {
 import {
   getAdminRuntimeSettings,
   patchAdminRuntimeSettings,
+  patchResidentAddresses,
 } from "./adminRuntimeSettingsStore.js";
 import {
   getHeaderMarqueeSettings,
@@ -1294,6 +1296,10 @@ app.get("/admin/system", (_req, res) => {
 
 app.get("/admin/settings", (_req, res) => {
   res.type("html").send(adminSettingsPageHtml());
+});
+
+app.get("/admin/connections", (_req, res) => {
+  res.type("html").send(adminConnectionsPageHtml());
 });
 
 app.get("/admin/header", (_req, res) => {
@@ -2504,6 +2510,23 @@ app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
     tutorialEnvEnabled: isTutorialEnvEnabled(),
     shopEnvEnabled: isShopEnvEnabled(),
   });
+});
+
+app.get("/api/admin/connections", requireSystemAdminWallet, (_req, res) => {
+  res.json(getReturnWalkConnectionsAdminJson());
+});
+
+app.put("/api/admin/connections", requireSystemAdminWallet, (req, res) => {
+  const body = req.body as Record<string, unknown> | null;
+  if (body && Object.prototype.hasOwnProperty.call(body, "residentAddresses")) {
+    try {
+      patchResidentAddresses(String(body.residentAddresses ?? ""));
+    } catch {
+      res.status(400).json({ error: "invalid_resident_address" });
+      return;
+    }
+  }
+  res.json(getReturnWalkConnectionsAdminJson());
 });
 
 app.get("/api/admin/header-marquee", requireSystemAdminWallet, (_req, res) => {
