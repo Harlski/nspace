@@ -13,6 +13,7 @@ export {
 export {
   isResidentWallet,
   getServerWalletAddress,
+  getReturnWalkConnectionsAdminJson,
   invalidateReturnWalkConfigCache,
 } from "./config.js";
 export { registerReturnWalkRoutes } from "./http.js";

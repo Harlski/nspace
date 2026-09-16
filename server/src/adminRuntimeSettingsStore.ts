@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 import {
   invalidateStreamObserverAllowlistCache,
 } from "./streamObserverAllowlist.js";
-import { normalizeStreamObserverAddressesField } from "./walletAddresses.js";
+import { invalidateReturnWalkConfigCache } from "./returnWalk/config.js";
+import {
+  normalizeStreamObserverAddressesField,
+  normalizeWalletAddressListField,
+} from "./walletAddresses.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,6 +23,8 @@ export type AdminRuntimeSettings = {
   playerUsernameSelfServiceEnabled: boolean;
   /** Comma-separated Nimiq wallets allowed for cinema `?stream=1` (merged with `STREAM_OBSERVER_ADDRESSES` env). */
   streamObserverAddresses: string;
+  /** Comma-separated NimiqLIVE Resident wallets (merged with `RESIDENT_ADDRESSES` env). */
+  residentAddresses: string;
   /**
    * Nimiq Pay first-contact tutorial. Off by default; also requires env
    * `TUTORIAL_ENABLED=1` (env unset/0 hard-disables regardless of this flag).
@@ -33,6 +39,7 @@ export type AdminRuntimeSettings = {
 const DEFAULTS: AdminRuntimeSettings = {
   playerUsernameSelfServiceEnabled: true,
   streamObserverAddresses: "",
+  residentAddresses: "",
   tutorialEnabled: false,
   shopEnabled: true,
 };
@@ -63,6 +70,10 @@ function readStore(): StoreFile {
       typeof (s as AdminRuntimeSettings).streamObserverAddresses === "string"
         ? (s as AdminRuntimeSettings).streamObserverAddresses
         : DEFAULTS.streamObserverAddresses;
+    merged.residentAddresses =
+      typeof (s as AdminRuntimeSettings).residentAddresses === "string"
+        ? (s as AdminRuntimeSettings).residentAddresses
+        : DEFAULTS.residentAddresses;
     merged.tutorialEnabled = Boolean(
       (s as AdminRuntimeSettings).tutorialEnabled ?? DEFAULTS.tutorialEnabled
     );
@@ -101,6 +112,9 @@ export function patchAdminRuntimeSettings(
   if (patch.streamObserverAddresses !== undefined) {
     next.streamObserverAddresses = patch.streamObserverAddresses;
   }
+  if (patch.residentAddresses !== undefined) {
+    next.residentAddresses = patch.residentAddresses;
+  }
   if (patch.tutorialEnabled !== undefined) {
     next.tutorialEnabled = Boolean(patch.tutorialEnabled);
   }
@@ -111,10 +125,18 @@ export function patchAdminRuntimeSettings(
   if (patch.streamObserverAddresses !== undefined) {
     invalidateStreamObserverAllowlistCache();
   }
+  if (patch.residentAddresses !== undefined) {
+    invalidateReturnWalkConfigCache();
+  }
   return next;
 }
 
 export function patchStreamObserverAddresses(raw: string): AdminRuntimeSettings {
   const normalized = normalizeStreamObserverAddressesField(raw);
   return patchAdminRuntimeSettings({ streamObserverAddresses: normalized });
+}
+
+export function patchResidentAddresses(raw: string): AdminRuntimeSettings {
+  const normalized = normalizeWalletAddressListField(raw);
+  return patchAdminRuntimeSettings({ residentAddresses: normalized });
 }

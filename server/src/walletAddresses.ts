@@ -34,8 +34,8 @@ function isPlausibleNimiqAddress(compact: string): boolean {
   }
 }
 
-/** Normalize admin-entered stream wallet field (comma-separated; spaces optional). */
-export function normalizeStreamObserverAddressesField(raw: string): string {
+/** Normalize an admin-entered comma-separated wallet field (spaces optional). */
+export function normalizeWalletAddressListField(raw: string): string {
   const keys = parseWalletAddressList(raw);
   for (const k of keys) {
     if (!isPlausibleNimiqAddress(k)) {
@@ -43,4 +43,9 @@ export function normalizeStreamObserverAddressesField(raw: string): string {
     }
   }
   return keys.map(formatWalletAddressGrouped).join(", ");
+}
+
+/** Normalize admin-entered stream wallet field (comma-separated; spaces optional). */
+export function normalizeStreamObserverAddressesField(raw: string): string {
+  return normalizeWalletAddressListField(raw);
 }

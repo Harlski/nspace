@@ -3,6 +3,7 @@
  * Fail closed: empty allowlist means no wallet may create Invoices.
  */
 
+import { getAdminRuntimeSettings } from "../adminRuntimeSettingsStore.js";
 import {
   compactWalletKey,
   formatWalletAddressGrouped,
@@ -18,9 +19,16 @@ export function invalidateReturnWalkConfigCache(): void {
 
 function residentCompactKeys(): Set<string> {
   if (residentKeysCache === null) {
-    residentKeysCache = new Set(
-      parseWalletAddressList(process.env.RESIDENT_ADDRESSES)
-    );
+    const merged = new Set<string>();
+    for (const k of parseWalletAddressList(process.env.RESIDENT_ADDRESSES)) {
+      merged.add(k);
+    }
+    for (const k of parseWalletAddressList(
+      getAdminRuntimeSettings().residentAddresses
+    )) {
+      merged.add(k);
+    }
+    residentKeysCache = merged;
   }
   return residentKeysCache;
 }
@@ -34,6 +42,26 @@ export function isResidentWallet(address: string): boolean {
 
 export function residentAllowlistConfigured(): boolean {
   return residentCompactKeys().size > 0;
+}
+
+export function residentEnvConfigured(): boolean {
+  return parseWalletAddressList(process.env.RESIDENT_ADDRESSES).length > 0;
+}
+
+export type ReturnWalkConnectionsAdminJson = {
+  residentAddresses: string;
+  residentEnvConfigured: boolean;
+  residentAllowlistConfigured: boolean;
+  serverWalletAddress: string | null;
+};
+
+export function getReturnWalkConnectionsAdminJson(): ReturnWalkConnectionsAdminJson {
+  return {
+    residentAddresses: getAdminRuntimeSettings().residentAddresses,
+    residentEnvConfigured: residentEnvConfigured(),
+    residentAllowlistConfigured: residentAllowlistConfigured(),
+    serverWalletAddress: getServerWalletAddress(),
+  };
 }
 
 /**
