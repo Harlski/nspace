@@ -41,6 +41,7 @@ You are working on **Nimiq Space**, an open multiplayer isometric social space f
 - **Event / replay logging:** [server/src/eventLog.ts](server/src/eventLog.ts) (writes + replay); overview/daily-stats scans: [analytics-service/src/eventLogAnalytics.ts](analytics-service/src/eventLogAnalytics.ts)
 - **Analytics sidecar:** [analytics-service/src/index.ts](analytics-service/src/index.ts) — compose service `analytics` ([docker-compose.yml](docker-compose.yml)); game is a thin HTTP proxy ([server/src/analyticsServiceClient.ts](server/src/analyticsServiceClient.ts))
 - **Payment intents (optional sidecar):** [payment-intent-service/src/index.ts](payment-intent-service/src/index.ts) — quotes, SQLite ledger, Nimiq `getTransaction` verification; compose profile `payment` ([docker-compose.yml](docker-compose.yml)).
+- **Return Walk (Resident Invoice / Return Gold):** [server/src/returnWalk/](server/src/returnWalk/) — Invoice HTTP, Public Room directory, Upgrade Windows; play snapshot + claims in [server/src/rooms.ts](server/src/rooms.ts).
 
 ## Maintenance expectations
 

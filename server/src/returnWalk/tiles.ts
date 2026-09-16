@@ -1,0 +1,141 @@
+/**
+ * Return Gold / ordinary-solid helpers (pure).
+ */
+
+import { UPGRADE_VICINITY_RADIUS, type GoldKind } from "./constants.js";
+
+export type ClaimableProps = {
+  passable?: boolean;
+  ramp?: boolean;
+  claimable?: boolean;
+  kind?: string;
+  returnGold?: boolean;
+  teleporter?: unknown;
+  gate?: unknown;
+  unlockPad?: unknown;
+  saleDisplayId?: string;
+  signboardId?: string;
+  active?: boolean;
+  cooldownMs?: number;
+  lastClaimedAt?: number;
+};
+
+export function isReturnGold(props: ClaimableProps | null | undefined): boolean {
+  if (!props) return false;
+  if (props.kind === "returnGold") return true;
+  return props.returnGold === true;
+}
+
+export function isGoldBlock(props: ClaimableProps | null | undefined): boolean {
+  if (!props?.claimable) return false;
+  return !isReturnGold(props);
+}
+
+export function directoryGoldKind(props: ClaimableProps): GoldKind {
+  return isReturnGold(props) ? "returnGold" : "goldBlock";
+}
+
+/** Ordinary solid at y === 0: eligible for an Upgrade. */
+export function isOrdinarySolidEligibleForUpgrade(
+  props: ClaimableProps | null | undefined
+): boolean {
+  if (!props) return false;
+  if (props.passable) return false;
+  if (props.ramp) return false;
+  if (props.claimable) return false;
+  if (isReturnGold(props)) return false;
+  if (props.teleporter) return false;
+  if (props.gate) return false;
+  if (props.unlockPad) return false;
+  if (props.saleDisplayId) return false;
+  return true;
+}
+
+export const ORTHOGONAL_NEIGHBOR_DELTAS: ReadonlyArray<{ dx: number; dz: number }> =
+  [
+    { dx: 1, dz: 0 },
+    { dx: -1, dz: 0 },
+    { dx: 0, dz: 1 },
+    { dx: 0, dz: -1 },
+  ];
+
+export function chebyshevDistance(
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number
+): number {
+  return Math.max(Math.abs(ax - bx), Math.abs(az - bz));
+}
+
+/** True when a tile is in the Upgrade vicinity and is not the pose tile itself. */
+export function isInUpgradeVicinity(
+  originX: number,
+  originZ: number,
+  tileX: number,
+  tileZ: number,
+  radius: number = UPGRADE_VICINITY_RADIUS
+): boolean {
+  if (tileX === originX && tileZ === originZ) return false;
+  return chebyshevDistance(originX, originZ, tileX, tileZ) <= radius;
+}
+
+export function filterTilesInUpgradeVicinity(
+  originX: number,
+  originZ: number,
+  tiles: ReadonlyArray<{ x: number; z: number }>,
+  radius: number = UPGRADE_VICINITY_RADIUS
+): Array<{ x: number; z: number }> {
+  return tiles.filter((t) =>
+    isInUpgradeVicinity(originX, originZ, t.x, t.z, radius)
+  );
+}
+
+/**
+ * True when a player can stand on an orthogonal edge (not a diagonal) to begin a claim.
+ * Matches Gold Block / Return Gold: no physical side means the cube is boxed in.
+ */
+export function hasOrthogonalClaimStand(
+  tileX: number,
+  tileZ: number,
+  isClaimStandTile: (x: number, z: number) => boolean
+): boolean {
+  for (const { dx, dz } of ORTHOGONAL_NEIGHBOR_DELTAS) {
+    if (isClaimStandTile(tileX + dx, tileZ + dz)) return true;
+  }
+  return false;
+}
+
+/** Uniform random sample without replacement. */
+export function pickUpgradeTiles(
+  eligible: ReadonlyArray<{ x: number; z: number }>,
+  count: number,
+  random: () => number
+): Array<{ x: number; z: number }> {
+  if (count <= 0 || eligible.length === 0) return [];
+  const pool = eligible.slice();
+  const out: Array<{ x: number; z: number }> = [];
+  const n = Math.min(count, pool.length);
+  for (let i = 0; i < n; i++) {
+    const idx = Math.min(pool.length - 1, Math.floor(random() * pool.length));
+    out.push(pool.splice(idx, 1)[0]!);
+  }
+  return out;
+}
+
+export function applyReturnGoldUpgrade(props: ClaimableProps): void {
+  props.claimable = true;
+  props.active = true;
+  props.kind = "returnGold";
+  props.returnGold = true;
+  props.cooldownMs = 0;
+}
+
+export function revertReturnGoldToOrdinarySolid(props: ClaimableProps): void {
+  props.claimable = false;
+  props.returnGold = undefined;
+  props.kind = undefined;
+  props.active = undefined;
+  props.cooldownMs = undefined;
+  props.lastClaimedAt = undefined;
+}
