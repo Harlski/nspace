@@ -8,7 +8,7 @@
 
 ## Summary
 
-_Add a one-line roll-up here when the buffer gets long._
+QR Pay login for desktop cafe / untrusted-PC sign-in via Nimiq Pay on phone.
 
 ---
 
@@ -16,15 +16,23 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Repo / docs
 
-- _(none yet)_
+- [docs/features-checklist.md](../../../docs/features-checklist.md) — Auth bullet for QR Pay login.
+- [docs/build.md](../../../docs/build.md) — auth HTTP routes list.
+- [docs/live-service-implementation.md](../../../docs/live-service-implementation.md) — Vercel `/auth/qr/:ticket` rewrite note.
 
 ### Client
 
-- _(none in this change set)_
+- Main Menu **Sign in with Nimiq Pay QR** (hidden inside Pay mini-app).
+- Desktop overlay: QR of HTTPS `/auth/qr/{ticket}`, poll claim with secret.
+- Phone landing `mountQrPayLoginPhonePage`: Open-in-Pay CTA or Pay `signLoginChallenge` → complete.
+- i18n keys `qrPayLogin.*` in all locale catalogs.
+- Vercel rewrites in root + `client/vercel.json`.
 
 ### Server
 
-- _(none in this change set)_
+- In-memory ticket store [server/src/qrPayLogin.ts](../../../server/src/qrPayLogin.ts) (5 min TTL, claim secret, one-shot JWT claim).
+- Routes [server/src/qrPayLoginRoutes.ts](../../../server/src/qrPayLoginRoutes.ts).
+- Shared session issuance [server/src/walletLoginSession.ts](../../../server/src/walletLoginSession.ts) used by `/api/auth/verify` and QR complete.
 
 ### payment-intent-service
 
@@ -32,4 +40,4 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Deploy / ops
 
-- _(none in this change set)_
+- SPA rewrite `/auth/qr/:ticket` → `index.html` (both vercel.json files). No new env vars.

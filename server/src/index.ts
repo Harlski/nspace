@@ -8,8 +8,10 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import dotenv from "dotenv";
 import { timingSafeEqual } from "node:crypto";
-import { createNonce, consumeNonce, signSession, verifySession, isGuestSession } from "./auth.js";
+import { createNonce, consumeNonce, verifySession, isGuestSession } from "./auth.js";
+import { registerQrPayLoginRoutes } from "./qrPayLoginRoutes.js";
 import { resolvePublicBaseUrl } from "./publicBaseUrl.js";
+import { issueWalletSessionFromSignedLogin } from "./walletLoginSession.js";
 import {
   getAdminChatMessageDetail,
   queryAdminChatMessages,
@@ -26,7 +28,6 @@ import { registerTutorialTemplateAdminRoutes } from "./tutorialTemplate/routes.j
 import { registerTutorialRoutes } from "./tutorial/routes.js";
 import { isTutorialEnvEnabled, TUTORIAL_ROOM_ID } from "./tutorial/config.js";
 import { initTutorialTemplateStore } from "./tutorialTemplate/store.js";
-import { computeNeedsTutorial } from "./tutorialSessionService.js";
 import { resolveInitialRoomForPaySession } from "./tutorial/roomsIntegration.js";
 import {
   isInviteLobbyRoomId,
@@ -56,7 +57,6 @@ import {
 } from "./rooms.js";
 import { startGameWsMetricsFlushTimer } from "./gameWsMetrics.js";
 import { flushPersistWorldStateSync } from "./worldPersistence.js";
-import { verifySignedMessageDeriveAddress } from "./verifyNimiq.js";
 import {
   flushEventLogSync,
   getEventsForSession,
@@ -127,11 +127,6 @@ import {
 } from "./builtinRoomNames.js";
 import { renderRoomThumbnailPng } from "./roomThumbnailImage.js";
 import { adminRoomsPageHtml } from "./adminRoomsPage.js";
-import {
-  hasAcceptedCurrentTermsPrivacyDocs,
-  recordTermsPrivacyAcceptance,
-} from "./termsPrivacyAcceptanceStore.js";
-import { TERMS_PRIVACY_DOCS_VERSION } from "./termsPrivacyVersion.js";
 import {
   getPendingSnapshotForWallet,
   getPublicPendingAdminPanelSnapshot,
@@ -271,10 +266,7 @@ import {
 } from "./unlockPad/fulfill.js";
 import {
   ensureAchievementRewardEntitlements,
-  evaluateLoginStreakAchievements,
-  evaluatePlayerLevelAchievements,
   evaluateOwnedRoomStateAchievements,
-  evaluateCosmeticsCatchUpAchievements,
   fireAchievementEvent,
   getAchievementsForWallet,
   getPublicAchievementSummary,
@@ -286,10 +278,7 @@ import {
 import { playerLevelFromPoints } from "./playerLevel.js";
 import { peekDailyEarnRemaining } from "./dailyEarnAllowance.js";
 import { BILLBOARD_ADVERTS_CATALOG } from "./billboardAdvertsCatalog.js";
-import {
-  maybeSendConnectNotice,
-  markWalletConnectNoticePending,
-} from "./connectNotice.js";
+import { maybeSendConnectNotice } from "./connectNotice.js";
 import { sendTelegramPlainText } from "./telegramNotify.js";
 import {
   addAdminFeedbackMessage,
@@ -328,7 +317,7 @@ import {
   sanitizeNewsMessagesList,
   type HeaderMarqueeSettings,
 } from "./headerMarqueeSettingsStore.js";
-import { getTopLoginStreaks, recordLoginStreakForWallet } from "./loginStreakStore.js";
+import { getTopLoginStreaks } from "./loginStreakStore.js";
 import { getAdminSystemSnapshot, startAdminSystemMonitor } from "./adminSystemMonitor.js";
 import { probePaymentIntentService } from "./paymentIntentProbe.js";
 import { probePayoutService } from "./payoutServiceProbe.js";
@@ -3650,7 +3639,6 @@ app.post("/api/auth/verify", async (req, res) => {
   const body = req.body as Record<string, unknown>;
   const nonce = String(body.nonce ?? "");
   const message = String(body.message ?? "");
-  const signer = String(body.signer ?? "");
   const signerPublicKey = String(body.signerPublicKey ?? "");
   const signature = String(body.signature ?? "");
 
@@ -3664,108 +3652,30 @@ app.post("/api/auth/verify", async (req, res) => {
     return;
   }
 
-  const expected = `Login:v1:${nonce}`;
-  if (message !== expected) {
-    res.status(401).json({ error: "message_mismatch" });
+  const issued = await issueWalletSessionFromSignedLogin({
+    expectedMessage: `Login:v1:${nonce}`,
+    body: body as {
+      message: string;
+      signer?: unknown;
+      signerPublicKey: string;
+      signature: string;
+      nimiqPayClient?: unknown;
+      acceptedTermsPrivacyVersion?: unknown;
+      acceptedLegalVersion?: unknown;
+    },
+    jwtSecret,
+    devAuthBypass: DEV_AUTH_BYPASS,
+  });
+  if (!issued.ok) {
+    res.status(issued.status).json(issued.body);
     return;
   }
-
-  let sessionAddress: string | null = null;
-
-  if (DEV_AUTH_BYPASS) {
-    /** Dev wallet button sends `signer`; Nimiq Pay mini-app login sends empty `signer` + real key material. */
-    if (normalizeWalletId(signer)) {
-      sessionAddress = signer;
-    } else if (signerPublicKey && signature) {
-      try {
-        const derived = await verifySignedMessageDeriveAddress(message, signerPublicKey, signature);
-        if (!derived) {
-          res.status(401).json({ error: "invalid_signature" });
-          return;
-        }
-        sessionAddress = derived;
-      } catch (e) {
-        console.error("verifySignedMessageDeriveAddress (dev bypass)", e);
-        res.status(401).json({ error: "invalid_signature" });
-        return;
-      }
-    } else {
-      res.status(400).json({ error: "missing_fields" });
-      return;
-    }
-  } else {
-    try {
-      const derived = await verifySignedMessageDeriveAddress(message, signerPublicKey, signature);
-      if (!derived) {
-        res.status(401).json({ error: "invalid_signature" });
-        return;
-      }
-      const claimed = normalizeWalletId(signer);
-      if (claimed && claimed !== normalizeWalletId(derived)) {
-        res.status(401).json({ error: "signer_mismatch" });
-        return;
-      }
-      sessionAddress = derived;
-    } catch (e) {
-      console.error("verifySignedMessageDeriveAddress", e);
-      res.status(401).json({ error: "invalid_signature" });
-      return;
-    }
-  }
-
-  if (!sessionAddress) {
-    res.status(500).json({ error: "internal" });
-    return;
-  }
-  /**
-   * Mini-app sets `nimiqPayClient: true` plus `signer: ""` (see `client/src/auth/nimiq.ts`).
-   * Require both so a random `nimiqPayClient` flag alone cannot label a Hub login.
-   */
-  const claimsPayClient = body.nimiqPayClient === true;
-  const signerKeyPresent = Object.prototype.hasOwnProperty.call(body, "signer");
-  const signerEmpty = signerKeyPresent && normalizeWalletId(signer) === "";
-  const nimiqPay = claimsPayClient && signerEmpty;
-
-  const normAddr = normalizeWalletId(sessionAddress);
-  const rawTp =
-    typeof body.acceptedTermsPrivacyVersion === "string"
-      ? String(body.acceptedTermsPrivacyVersion).trim()
-      : "";
-  const rawLegacy =
-    typeof body.acceptedLegalVersion === "string" ? String(body.acceptedLegalVersion).trim() : "";
-  const acceptedTermsPrivacy = rawTp || rawLegacy;
-  if (!hasAcceptedCurrentTermsPrivacyDocs(normAddr)) {
-    if (acceptedTermsPrivacy !== TERMS_PRIVACY_DOCS_VERSION) {
-      res.status(403).json({
-        error: "terms_privacy_ack_required",
-        requiredVersion: TERMS_PRIVACY_DOCS_VERSION,
-      });
-      return;
-    }
-    recordTermsPrivacyAcceptance(normAddr, TERMS_PRIVACY_DOCS_VERSION);
-  }
-
-  const token = signSession(sessionAddress, jwtSecret, { nimiqPay });
-  try {
-    recordLoginStreakForWallet(normalizeWalletId(sessionAddress));
-    evaluateLoginStreakAchievements(normAddr);
-    evaluatePlayerLevelAchievements(normAddr);
-    evaluateOwnedRoomStateAchievements(normAddr);
-    evaluateCosmeticsCatchUpAchievements(normAddr);
-  } catch (e) {
-    console.error("[login-streak]", e);
-  }
-  ensureDevWalletAllCosmeticEntitlements(sessionAddress);
-  const usernamePrompt = getUsernamePromptStatus(normAddr);
-  markWalletConnectNoticePending(normAddr, { nimiqPay });
   res.json({
-    token,
-    address: sessionAddress,
-    nimiqPay,
-    usernamePrompt,
-    tutorial: nimiqPay
-      ? { needsTutorial: computeNeedsTutorial(true, normAddr) }
-      : undefined,
+    token: issued.token,
+    address: issued.address,
+    nimiqPay: issued.nimiqPay,
+    usernamePrompt: issued.usernamePrompt,
+    tutorial: issued.tutorial,
   });
 });
 
@@ -3773,7 +3683,14 @@ const PUBLIC_BASE_URL = resolvePublicBaseUrl(NODE_ENV);
 setDirectInvitePublicBaseUrl(PUBLIC_BASE_URL);
 if (NODE_ENV !== "production") {
   console.log(`Play Space share links: ${PUBLIC_BASE_URL}/join/{slug}`);
+  console.log(`QR Pay login links: ${PUBLIC_BASE_URL}/auth/qr/{ticket}`);
 }
+
+registerQrPayLoginRoutes(app, {
+  jwtSecret,
+  publicBaseUrl: PUBLIC_BASE_URL,
+  devAuthBypass: DEV_AUTH_BYPASS,
+});
 
 registerDirectInviteRoutes(app, {
   jwtSecret,

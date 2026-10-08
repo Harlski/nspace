@@ -49,6 +49,14 @@
       "destination": "/index.html"
     },
     {
+      "source": "/auth/qr/:ticket",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/auth/qr/:ticket/",
+      "destination": "/index.html"
+    },
+    {
       "source": "/patchnotes",
       "destination": "/index.html"
     },

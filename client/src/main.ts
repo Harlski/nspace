@@ -238,6 +238,8 @@ import { walletDisplayName } from "./walletDisplayName.js";
 import { mountPatchnotesPage } from "./patchnotes/mountPatchnotesPage.js";
 import { runUsernamePromptGate } from "./auth/usernamePromptGate.js";
 import { mountMainMenu } from "./ui/mainMenu.js";
+import { parseAuthQrTicketFromPath } from "./auth/qrPayLoginApi.js";
+import { mountQrPayLoginPhonePage } from "./auth/qrPayLoginPhone.js";
 import { nimiqIconUseMarkup, nimiqIconifyMarkup } from "./ui/nimiqIcons.js";
 import {
   createDirectInvite,
@@ -8289,6 +8291,21 @@ function isJoinInvitePath(): boolean {
   return parseJoinSlugFromPath(location.pathname) !== null;
 }
 
+function isAuthQrLoginPath(): boolean {
+  return parseAuthQrTicketFromPath(location.pathname) !== null;
+}
+
+function bootstrapAuthQrLogin(): void {
+  const ticketId = parseAuthQrTicketFromPath(location.pathname);
+  const app = document.getElementById("app");
+  if (!ticketId || !app) {
+    openMainMenu();
+    return;
+  }
+  document.title = "Sign in - Nimiq Space";
+  mountQrPayLoginPhonePage(app, ticketId);
+}
+
 async function bootstrapJoinInvite(): Promise<boolean> {
   const slug = parseJoinSlugFromPath(location.pathname);
   if (!slug || !WORLDCUP_ENABLED_CLIENT) return false;
@@ -8344,6 +8361,10 @@ function main(): void {
     return;
   }
   document.title = "Nimiq Space";
+  if (isAuthQrLoginPath()) {
+    bootstrapAuthQrLogin();
+    return;
+  }
   if (isJoinInvitePath()) {
     void bootstrapJoinInvite();
     return;

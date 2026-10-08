@@ -20104,3 +20104,131 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   gap: 0.45rem;
   justify-content: flex-end;
 }
+
+/* --- QR Pay login (desktop dialog + phone landing) --- */
+.qr-pay-login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  box-sizing: border-box;
+  background: rgba(8, 12, 20, 0.72);
+}
+
+.qr-pay-login-dialog {
+  width: min(22rem, 100%);
+  padding: 1.15rem 1.2rem 1.05rem;
+  border-radius: 14px;
+  background: #121820;
+  color: #eef3f7;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  text-align: center;
+}
+
+.qr-pay-login-dialog__title {
+  margin: 0 0 0.45rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.qr-pay-login-dialog__hint {
+  margin: 0 0 0.85rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: rgba(238, 243, 247, 0.78);
+}
+
+.qr-pay-login-dialog__qr {
+  display: flex;
+  justify-content: center;
+  margin: 0 auto 0.75rem;
+  padding: 0.55rem;
+  width: fit-content;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.qr-pay-login-dialog__qr-fallback {
+  margin: 0;
+  max-width: 14rem;
+  font-size: 0.65rem;
+  word-break: break-all;
+  color: #111;
+}
+
+.qr-pay-login-dialog__status {
+  margin: 0 0 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgba(125, 211, 252, 0.95);
+}
+
+.qr-pay-login-dialog__err {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  color: #fda4af;
+}
+
+.qr-pay-login-dialog__actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.55rem;
+}
+
+.main-menu__qr-pay-login {
+  margin: 0.15rem 0 0.35rem;
+}
+
+.qr-pay-login-phone {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  box-sizing: border-box;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(56, 189, 248, 0.12), transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(52, 211, 153, 0.1), transparent 45%),
+    #0b1018;
+  color: #eef3f7;
+}
+
+.qr-pay-login-phone__card {
+  width: min(22rem, 100%);
+  padding: 1.35rem 1.2rem 1.2rem;
+  border-radius: 14px;
+  background: rgba(18, 24, 32, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  text-align: center;
+}
+
+.qr-pay-login-phone__title {
+  margin: 0 0 0.5rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.qr-pay-login-phone__hint,
+.qr-pay-login-phone__status {
+  margin: 0 0 0.55rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: rgba(238, 243, 247, 0.82);
+}
+
+.qr-pay-login-phone__err {
+  margin: 0 0 0.65rem;
+  font-size: 0.8rem;
+  color: #fda4af;
+}
+
+.qr-pay-login-phone__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}

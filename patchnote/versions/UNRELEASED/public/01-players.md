@@ -5,4 +5,6 @@
 
 ---
 
-_(Draft — not published.)_
+- On the Main Menu (browser / desktop), choose **Sign in with Nimiq Pay QR**.
+- Scan the code with your phone camera or Nimiq Pay, confirm the sign-in in the app, then return to the computer — it should enter the space automatically.
+- Useful on shared or untrusted PCs (for example an internet cafe): the computer never asks for your wallet password.
