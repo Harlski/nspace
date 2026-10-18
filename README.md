@@ -73,7 +73,7 @@ Nimiq here is the common connection. Any active users silently share this connec
 
 ## Run locally
 
-**Needs:** [Node.js 20+](https://nodejs.org/) (LTS) and npm.
+**Needs:** [Node.js 20–26](https://nodejs.org/) (**22 LTS recommended**) and npm. Node 26 needs `better-sqlite3` ≥12.11 (already in this repo). Avoid odd/current majors until native addons catch up if install fails.
 
 ```bash
 git clone https://github.com/Harlski/nspace.git

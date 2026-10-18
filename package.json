@@ -10,8 +10,12 @@
     "payout-service",
     "analytics-service"
   ],
+  "engines": {
+    "node": ">=20 <27"
+  },
   "overrides": {
-    "@nimiq/core": "2.20.0"
+    "@nimiq/core": "2.20.0",
+    "better-sqlite3": "^12.11.1"
   },
   "scripts": {
     "prepare-merge": "node scripts/prepare-merge.cjs",
@@ -53,7 +57,7 @@
     "badwords-list": "^2.0.1-4",
     "base-x": "^3.0.11",
     "base64-js": "^1.5.1",
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^12.11.1",
     "big-integer": "^1.6.52",
     "bindings": "^1.5.0",
     "bl": "^4.1.0",

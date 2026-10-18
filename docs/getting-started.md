@@ -27,7 +27,7 @@ A multiplayer isometric social space built with **Nimiq wallet** authentication,
 
 ### Prerequisites
 
-- **Node.js 20+** (LTS recommended)
+- **Node.js 20–26** (**22 LTS recommended**; see `.nvmrc`). If `npm install` fails building `better-sqlite3` (common on very new Node), switch with `mise use node@22` or `nvm use`, then reinstall.
 - **npm** (comes with Node.js)
 
 ### Installation
