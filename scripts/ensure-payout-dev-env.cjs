@@ -10,6 +10,8 @@ const analyticsExample = path.join(root, "analytics-service", ".env.example");
 const analyticsEnv = path.join(root, "analytics-service", ".env");
 const serverExample = path.join(root, "server", ".env.example");
 const serverEnv = path.join(root, "server", ".env");
+const clientExample = path.join(root, "client", ".env.example");
+const clientEnvDev = path.join(root, "client", ".env.development");
 
 const DEV_PAYOUT_SECRET = "dev-insecure-local-payout-secret";
 const DEV_ANALYTICS_SECRET = "dev-insecure-local-analytics-secret";
@@ -84,6 +86,11 @@ if (!fs.existsSync(serverEnv) && fs.existsSync(serverExample)) {
   console.log("[dev] Created server/.env from .env.example");
 }
 
+if (!fs.existsSync(clientEnvDev) && fs.existsSync(clientExample)) {
+  fs.copyFileSync(clientExample, clientEnvDev);
+  console.log("[dev] Created client/.env.development from .env.example");
+}
+
 // Repair incomplete server/.env (e.g. only payout keys written earlier)
 const serverMapEarly = readEnvMap(serverEnv);
 if (
@@ -151,5 +158,17 @@ if (
 if (!legacyKey && !readEnvMap(payoutEnv).get("NIM_PAYOUT_PRIVATE_KEY")) {
   console.log(
     "[dev] NIM_PAYOUT_PRIVATE_KEY unset in payout-service/.env — HUD balance stays empty until a funded wallet is configured."
+  );
+}
+
+/** Hint QR Pay / Play Space share origin for phone LAN testing. */
+const publicBaseExplicit = readEnvMap(serverEnv).get("PUBLIC_BASE_URL");
+if (publicBaseExplicit) {
+  console.log(
+    `[dev] PUBLIC_BASE_URL=${publicBaseExplicit} (QR Pay + Play Space share links)`
+  );
+} else {
+  console.log(
+    "[dev] PUBLIC_BASE_URL unset — QR Pay / Play Space links use LAN IP + DEV_CLIENT_PORT (5173). Override in server/.env if the wrong NIC is picked."
   );
 }

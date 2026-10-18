@@ -80,16 +80,12 @@ git clone https://github.com/Harlski/nspace.git
 cd nspace
 npm install
 cp server/.env.example server/.env
+cp client/.env.example client/.env.development
 ```
 
-Enable **Dev login** on the client:
+(`npm run dev` also creates those files from the examples if they are missing.)
 
-```bash
-# client/.env.development
-VITE_DEV_AUTH_BYPASS=1
-```
-
-(`server/.env` from the example already sets `DEV_AUTH_BYPASS=1` and a local `JWT_SECRET` - do not use those in production.)
+Local placeholders already include `DEV_AUTH_BYPASS=1` / `VITE_DEV_AUTH_BYPASS=1` and a local `JWT_SECRET` - do not use those in production.
 
 ```bash
 npm run dev
@@ -99,6 +95,8 @@ Open [http://localhost:5173](http://localhost:5173) → **Dev login**. Client **
 
 Wallet sign-in: turn bypass off and use **Connect wallet** via [Nimiq Hub](https://hub.nimiq.com).
 
+**QR Pay login on LAN:** leave `PUBLIC_BASE_URL` unset so the server embeds your LAN IP + Vite port in the QR, or set e.g. `PUBLIC_BASE_URL=http://192.168.1.10:5173` in `server/.env`. Phone and desktop must reach that origin (Vite already listens on the LAN). Open desktop on that same Network URL (not only localhost) if the QR points at the LAN host.
+
 ### Troubleshooting
 
 | Symptom | Check |
@@ -106,7 +104,7 @@ Wallet sign-in: turn bypass off and use **Connect wallet** via [Nimiq Hub](https
 | Server exits on start | `server/.env` exists with `JWT_SECRET` |
 | No Dev login button | `DEV_AUTH_BYPASS=1` + `VITE_DEV_AUTH_BYPASS=1`; restart `npm run dev` |
 | Page loads, no connect | Server listening on **3001**; ports free |
-| Phone / LAN | Vite **Network** URL; firewall **5173** + **3001** |
+| Phone / LAN / QR | Vite **Network** URL; firewall **5173** + **3001**; `PUBLIC_BASE_URL` matches a host the phone can open |
 
 Full setup, controls, Docker: **[docs/getting-started.md](docs/getting-started.md)**.
 

@@ -55,7 +55,9 @@ A multiplayer isometric social space built with **Nimiq wallet** authentication,
    cp server/.env.example server/.env
    ```
    
-   The default values are already configured for local development.
+   The default values are already configured for local development. `npm run dev` also creates these files (and payout/analytics sidecars) from `.env.example` when missing.
+
+   **QR Pay login on a phone / LAN:** keep `PUBLIC_BASE_URL` unset so share/QR links use the auto-detected LAN IP + `DEV_CLIENT_PORT` (default `5173`), or set an explicit origin in `server/.env` (for example `PUBLIC_BASE_URL=http://192.168.1.10:5173` or a tunnel URL). The phone must be able to open that origin; use Vite’s **Network** URL on the desktop when testing QR.
 
 4. **Start the development server**
    ```bash
