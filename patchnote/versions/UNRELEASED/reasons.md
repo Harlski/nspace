@@ -16,6 +16,7 @@ QR Pay login for desktop cafe / untrusted-PC sign-in via Nimiq Pay on phone.
 
 ### Repo / docs
 
+- `better-sqlite3` ^12.11.1 (Node 20–26 including current Node 26); root `engines` + `.nvmrc` (22 LTS).
 - [docs/features-checklist.md](../../../docs/features-checklist.md) — Auth bullet for QR Pay login.
 - [docs/build.md](../../../docs/build.md) — auth HTTP routes list.
 - [docs/live-service-implementation.md](../../../docs/live-service-implementation.md) — Vercel `/auth/qr/:ticket` rewrite note.
