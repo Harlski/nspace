@@ -73,7 +73,7 @@ Nimiq here is the common connection. Any active users silently share this connec
 
 ## Run locally
 
-**Needs:** [Node.js 20+](https://nodejs.org/) (LTS) and npm.
+**Needs:** [Node.js 20–26](https://nodejs.org/) (**22 LTS recommended**) and npm. Node 26 needs `better-sqlite3` ≥12.11 (already in this repo). Avoid odd/current majors until native addons catch up if install fails.
 
 ```bash
 git clone https://github.com/Harlski/nspace.git
@@ -94,6 +94,8 @@ VITE_DEV_AUTH_BYPASS=1
 ```bash
 npm run dev
 ```
+
+(`npm run dev` / `postinstall` build `@nspace/i18n` into `packages/i18n/dist`. If Vite says it cannot resolve `@nspace/i18n`, run `npm run build:i18n` once.)
 
 Open [http://localhost:5173](http://localhost:5173) → **Dev login**. Client **5173**, server **3001**.
 
