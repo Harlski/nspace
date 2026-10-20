@@ -15,8 +15,7 @@ test("createQrPayLoginTicket returns spa URL, deeplink, and claim secret", () =>
   assert.match(created.ticketId, /^[0-9a-f]{32}$/);
   assert.match(created.claimSecret, /^[0-9a-f]{64}$/);
   assert.equal(created.spaUrl, `https://nimiq.space/auth/qr/${created.ticketId}`);
-  assert.ok(created.payDeepLink.startsWith("nimiqpay://miniapp?url="));
-  assert.ok(created.payDeepLink.includes(encodeURIComponent(created.spaUrl)));
+  assert.equal(created.payDeepLink, `nimiqpay://miniapp?url=${created.spaUrl}`);
   assert.ok(created.expiresAt > Date.now());
 });
 

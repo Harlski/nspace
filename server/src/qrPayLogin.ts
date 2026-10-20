@@ -3,9 +3,13 @@ import crypto from "node:crypto";
 /** Match login nonce TTL so cafe QR sessions stay short-lived. */
 export const QR_PAY_LOGIN_TTL_MS = 5 * 60 * 1000;
 
-/** Same scheme as client `buildNimiqPayMiniappDeepLink` (external Pay entry). */
+/**
+ * External Pay entry for the QR payload.
+ * Leave `url=` unencoded so phone cameras / Pay scanners see a readable spa address
+ * (`nimiqpay://miniapp?url=https://…/auth/qr/…`). No extra `&` query params are appended.
+ */
 export function buildQrPayLoginDeepLink(spaUrl: string): string {
-  return `nimiqpay://miniapp?url=${encodeURIComponent(spaUrl.trim())}`;
+  return `nimiqpay://miniapp?url=${spaUrl.trim()}`;
 }
 
 export type QrPayLoginTicketPending = {
