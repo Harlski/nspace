@@ -17,8 +17,9 @@ export type QrPayLoginDesktopResult = {
 const POLL_MS = 1500;
 
 /**
- * Desktop Main Menu: show a Nimiq Pay deeplink QR and poll until the phone fulfills the ticket.
- * Camera scan opens Pay; user signs there; this PC claims the JWT (keys never leave the phone).
+ * Desktop Main Menu: show a plain spa URL QR and poll until the phone fulfills the ticket.
+ * QR is the readable `http(s)://…/auth/qr/{ticket}` address (never percent-encoded).
+ * On the phone, open that page in Nimiq Pay and sign; this PC claims the JWT.
  */
 export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
   const created = await createQrPayLoginTicket();
@@ -43,6 +44,7 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
         <p class="qr-pay-login-dialog__subtitle" id="qr-pay-login-subtitle"></p>
         <div class="qr-pay-login-dialog__help" id="qr-pay-login-help" hidden></div>
         <div class="qr-pay-login-dialog__qr" id="qr-pay-login-qr" aria-hidden="true"></div>
+        <p class="qr-pay-login-dialog__url" id="qr-pay-login-url"></p>
         <p class="qr-pay-login-dialog__status" id="qr-pay-login-status"></p>
         <p class="qr-pay-login-dialog__err" id="qr-pay-login-err" hidden></p>
         <button type="button" class="qr-pay-login-dialog__cancel" id="qr-pay-login-cancel"></button>
@@ -57,6 +59,7 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
       "#qr-pay-login-help-btn"
     ) as HTMLButtonElement;
     const helpEl = overlay.querySelector("#qr-pay-login-help") as HTMLElement;
+    const urlEl = overlay.querySelector("#qr-pay-login-url") as HTMLElement;
     const statusEl = overlay.querySelector("#qr-pay-login-status") as HTMLElement;
     const errEl = overlay.querySelector("#qr-pay-login-err") as HTMLElement;
     const qrHost = overlay.querySelector("#qr-pay-login-qr") as HTMLElement;
@@ -64,18 +67,20 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
       "#qr-pay-login-cancel"
     ) as HTMLButtonElement;
 
+    const qrText = buildQrSpaUrlPayload(created);
+
     titleEl.textContent = t("qrPayLogin.title");
     subtitleEl.textContent = t("qrPayLogin.desktopSubtitle");
     helpBtn.textContent = "?";
     helpBtn.setAttribute("aria-label", t("qrPayLogin.helpAria"));
     helpBtn.title = t("qrPayLogin.helpAria");
     helpEl.textContent = t("qrPayLogin.desktopHelp");
+    urlEl.textContent = qrText;
     statusEl.textContent = t("qrPayLogin.waiting");
     cancelBtn.textContent = t("common.cancel");
 
     document.body.appendChild(overlay);
-    /** Pay deeplink with a plain (not percent-encoded) spa URL after `url=`. */
-    void renderQr(qrHost, buildUnencodedPayQrPayload(created));
+    void renderQr(qrHost, qrText);
 
     const setHelpOpen = (open: boolean): void => {
       helpOpen = open;
@@ -173,26 +178,32 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
 }
 
 /**
- * QR text must be `nimiqpay://miniapp?url=http(s)://…/auth/qr/…` with the spa
- * address left readable (no encodeURIComponent). Prefer `spaUrl` from the API so
- * an older server that still percent-encodes `payDeepLink` cannot poison the QR.
+ * QR payload is the plain spa sign-in URL only — never a percent-encoded
+ * `nimiqpay://…?url=` wrapper (cameras / scanners were showing `http%3A…`).
  */
-export function buildUnencodedPayQrPayload(created: {
+export function buildQrSpaUrlPayload(created: {
   spaUrl?: string;
   payDeepLink?: string;
 }): string {
   const spa = String(created.spaUrl ?? "").trim();
-  if (spa) return `nimiqpay://miniapp?url=${spa}`;
+  if (spa) return spa;
 
   const raw = String(created.payDeepLink ?? "").trim();
   const m = /^nimiqpay:\/\/miniapp\?url=(.+)$/i.exec(raw);
   if (!m?.[1]) return raw;
-  const value = m[1];
   try {
-    return `nimiqpay://miniapp?url=${decodeURIComponent(value)}`;
+    return decodeURIComponent(m[1]);
   } catch {
-    return `nimiqpay://miniapp?url=${value}`;
+    return m[1];
   }
+}
+
+/** @deprecated Use {@link buildQrSpaUrlPayload}. */
+export function buildUnencodedPayQrPayload(created: {
+  spaUrl?: string;
+  payDeepLink?: string;
+}): string {
+  return buildQrSpaUrlPayload(created);
 }
 
 async function renderQr(host: HTMLElement, url: string): Promise<void> {

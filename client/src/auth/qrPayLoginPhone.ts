@@ -1,7 +1,6 @@
 import { t } from "@nspace/i18n";
 import { TERMS_PRIVACY_DOCS_VERSION } from "../termsPrivacyVersion.js";
 import { showTermsPrivacyAckModal } from "../ui/termsPrivacyAckModal.js";
-import { buildNimiqPayMiniappDeepLink } from "../net/miniappDeepLink.js";
 import {
   TermsPrivacyAcknowledgementRequiredError,
   isNimiqPayMiniApp,
@@ -132,9 +131,10 @@ export function mountQrPayLoginPhonePage(
     statusEl.textContent = "";
     openPayBtn.hidden = false;
     signBtn.hidden = true;
-    const spaUrl = `${location.origin}/auth/qr/${encodeURIComponent(ticketId)}`;
+    const spaUrl = `${location.origin}/auth/qr/${ticketId}`;
     openPayBtn.addEventListener("click", () => {
-      location.assign(buildNimiqPayMiniappDeepLink(spaUrl));
+      /** Plain spa URL after url= (match desktop QR; no percent-encoding). */
+      location.assign(`nimiqpay://miniapp?url=${spaUrl}`);
     });
   }
 

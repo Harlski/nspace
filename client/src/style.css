@@ -20227,6 +20227,17 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   color: #111;
 }
 
+.qr-pay-login-dialog__url {
+  margin: 0;
+  max-width: 100%;
+  padding: 0 0.15rem;
+  font-size: 0.62rem;
+  line-height: 1.35;
+  word-break: break-all;
+  color: rgba(238, 243, 247, 0.55);
+  user-select: all;
+}
+
 .qr-pay-login-dialog__status {
   margin: 0;
   font-size: 0.78rem;

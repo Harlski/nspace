@@ -1,30 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { buildUnencodedPayQrPayload } from "./qrPayLoginDesktop.js";
+import { buildQrSpaUrlPayload } from "./qrPayLoginDesktop.js";
 
-describe("buildUnencodedPayQrPayload", () => {
-  it("builds an unencoded deeplink from spaUrl", () => {
+describe("buildQrSpaUrlPayload", () => {
+  it("uses the plain spaUrl with no deeplink wrapper or encoding", () => {
     const spa = "http://192.168.88.176:5173/auth/qr/abc123";
-    expect(buildUnencodedPayQrPayload({ spaUrl: spa })).toBe(
-      `nimiqpay://miniapp?url=${spa}`
-    );
+    expect(buildQrSpaUrlPayload({ spaUrl: spa })).toBe(spa);
+    expect(buildQrSpaUrlPayload({ spaUrl: spa })).not.toContain("%");
+    expect(buildQrSpaUrlPayload({ spaUrl: spa })).not.toContain("nimiqpay://");
   });
 
-  it("decodes a legacy percent-encoded payDeepLink when spaUrl is missing", () => {
+  it("unwraps and decodes a legacy percent-encoded payDeepLink", () => {
     const spa = "http://192.168.88.176:5173/auth/qr/abc123";
     expect(
-      buildUnencodedPayQrPayload({
+      buildQrSpaUrlPayload({
         payDeepLink: `nimiqpay://miniapp?url=${encodeURIComponent(spa)}`,
       })
-    ).toBe(`nimiqpay://miniapp?url=${spa}`);
+    ).toBe(spa);
   });
 
-  it("prefers spaUrl over an encoded payDeepLink", () => {
+  it("prefers spaUrl over payDeepLink", () => {
     const spa = "http://192.168.1.10:5173/auth/qr/xyz";
     expect(
-      buildUnencodedPayQrPayload({
+      buildQrSpaUrlPayload({
         spaUrl: spa,
         payDeepLink: `nimiqpay://miniapp?url=${encodeURIComponent("https://other.example/auth/qr/old")}`,
       })
-    ).toBe(`nimiqpay://miniapp?url=${spa}`);
+    ).toBe(spa);
   });
 });
