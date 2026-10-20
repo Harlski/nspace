@@ -95,6 +95,8 @@ VITE_DEV_AUTH_BYPASS=1
 npm run dev
 ```
 
+(`npm run dev` / `postinstall` build `@nspace/i18n` into `packages/i18n/dist`. If Vite says it cannot resolve `@nspace/i18n`, run `npm run build:i18n` once.)
+
 Open [http://localhost:5173](http://localhost:5173) → **Dev login**. Client **5173**, server **3001**.
 
 Wallet sign-in: turn bypass off and use **Connect wallet** via [Nimiq Hub](https://hub.nimiq.com).

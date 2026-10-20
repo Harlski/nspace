@@ -62,9 +62,11 @@ A multiplayer isometric social space built with **Nimiq wallet** authentication,
    npm run dev
    ```
    
-   This runs the **client** (Vite), **game server**, and **payout service** together. Open [http://localhost:5173](http://localhost:5173) in your browser.
+   This builds `@nspace/i18n`, then runs the **client** (Vite), **game server**, and **payout service** together. Open [http://localhost:5173](http://localhost:5173) in your browser.
    
    For client + server only (no payout sidecar): `npm run dev:game`.
+
+   If Vite / the server report that `@nspace/i18n` cannot resolve `dist/index.js`, run `npm run build:i18n` and retry.
 
 5. **Payout wallet (mining balance in the HUD)**
    
