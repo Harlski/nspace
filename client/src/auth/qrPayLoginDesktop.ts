@@ -17,7 +17,8 @@ export type QrPayLoginDesktopResult = {
 const POLL_MS = 1500;
 
 /**
- * Desktop Main Menu: show QR (HTTPS SPA URL) and poll until the phone fulfills the ticket.
+ * Desktop Main Menu: show a Nimiq Pay deeplink QR and poll until the phone fulfills the ticket.
+ * Camera scan opens Pay; user signs there; this PC claims the JWT (keys never leave the phone).
  */
 export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
   const created = await createQrPayLoginTicket();
@@ -25,6 +26,7 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
     let settled = false;
     let pollTimer: number | null = null;
     let cancelled = false;
+    let helpOpen = false;
 
     const overlay = document.createElement("div");
     overlay.className = "qr-pay-login-overlay";
@@ -34,19 +36,27 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
 
     overlay.innerHTML = `
       <div class="qr-pay-login-dialog">
-        <h2 class="qr-pay-login-dialog__title" id="qr-pay-login-title"></h2>
-        <p class="qr-pay-login-dialog__hint" id="qr-pay-login-hint"></p>
+        <div class="qr-pay-login-dialog__header">
+          <h2 class="qr-pay-login-dialog__title" id="qr-pay-login-title"></h2>
+          <button type="button" class="qr-pay-login-dialog__help-btn" id="qr-pay-login-help-btn" aria-expanded="false" aria-controls="qr-pay-login-help"></button>
+        </div>
+        <p class="qr-pay-login-dialog__subtitle" id="qr-pay-login-subtitle"></p>
+        <div class="qr-pay-login-dialog__help" id="qr-pay-login-help" hidden></div>
         <div class="qr-pay-login-dialog__qr" id="qr-pay-login-qr" aria-hidden="true"></div>
         <p class="qr-pay-login-dialog__status" id="qr-pay-login-status"></p>
         <p class="qr-pay-login-dialog__err" id="qr-pay-login-err" hidden></p>
-        <div class="qr-pay-login-dialog__actions">
-          <button type="button" class="nq-button light-blue qr-pay-login-dialog__cancel" id="qr-pay-login-cancel"></button>
-        </div>
+        <button type="button" class="qr-pay-login-dialog__cancel" id="qr-pay-login-cancel"></button>
       </div>
     `;
 
     const titleEl = overlay.querySelector("#qr-pay-login-title") as HTMLElement;
-    const hintEl = overlay.querySelector("#qr-pay-login-hint") as HTMLElement;
+    const subtitleEl = overlay.querySelector(
+      "#qr-pay-login-subtitle"
+    ) as HTMLElement;
+    const helpBtn = overlay.querySelector(
+      "#qr-pay-login-help-btn"
+    ) as HTMLButtonElement;
+    const helpEl = overlay.querySelector("#qr-pay-login-help") as HTMLElement;
     const statusEl = overlay.querySelector("#qr-pay-login-status") as HTMLElement;
     const errEl = overlay.querySelector("#qr-pay-login-err") as HTMLElement;
     const qrHost = overlay.querySelector("#qr-pay-login-qr") as HTMLElement;
@@ -55,12 +65,29 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
     ) as HTMLButtonElement;
 
     titleEl.textContent = t("qrPayLogin.title");
-    hintEl.textContent = t("qrPayLogin.desktopHint");
+    subtitleEl.textContent = t("qrPayLogin.desktopSubtitle");
+    helpBtn.textContent = "?";
+    helpBtn.setAttribute("aria-label", t("qrPayLogin.helpAria"));
+    helpBtn.title = t("qrPayLogin.helpAria");
+    helpEl.textContent = t("qrPayLogin.desktopHelp");
     statusEl.textContent = t("qrPayLogin.waiting");
     cancelBtn.textContent = t("common.cancel");
 
     document.body.appendChild(overlay);
-    void renderQr(qrHost, created.spaUrl);
+    /** Prefer Pay deeplink so the phone camera opens Nimiq Pay, not a bare browser tab. */
+    void renderQr(qrHost, created.payDeepLink || created.spaUrl);
+
+    const setHelpOpen = (open: boolean): void => {
+      helpOpen = open;
+      helpEl.hidden = !open;
+      helpBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      helpBtn.classList.toggle("qr-pay-login-dialog__help-btn--open", open);
+    };
+
+    helpBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      setHelpOpen(!helpOpen);
+    });
 
     const cleanup = (): void => {
       cancelled = true;
@@ -91,6 +118,10 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
     const onKeyDown = (ev: KeyboardEvent): void => {
       if (ev.key === "Escape") {
         ev.preventDefault();
+        if (helpOpen) {
+          setHelpOpen(false);
+          return;
+        }
         fail(new Error("qr_login_cancelled"));
       }
     };
@@ -149,11 +180,11 @@ async function renderQr(host: HTMLElement, url: string): Promise<void> {
     QrCreator.render(
       {
         text: url,
-        radius: 0.4,
+        radius: 0.35,
         ecLevel: "M",
         fill: "#111",
         background: "#fff",
-        size: 180,
+        size: 200,
       },
       host
     );

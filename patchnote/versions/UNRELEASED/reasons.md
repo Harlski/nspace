@@ -24,7 +24,7 @@ QR Pay login for desktop cafe / untrusted-PC sign-in via Nimiq Pay on phone.
 ### Client
 
 - Main Menu **Sign in with Nimiq Pay QR** (hidden inside Pay mini-app).
-- Desktop overlay: QR of HTTPS `/auth/qr/{ticket}`, poll claim with secret.
+- Desktop overlay: compact QR dialog (short subtitle + `(?)` help); QR encodes Nimiq Pay deeplink (`payDeepLink`); poll claim with secret.
 - Phone landing `mountQrPayLoginPhonePage`: Open-in-Pay CTA or Pay `signLoginChallenge` → complete.
 - i18n keys `qrPayLogin.*` in all locale catalogs.
 - Vercel rewrites in root + `client/vercel.json`.
