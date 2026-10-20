@@ -74,8 +74,8 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
     cancelBtn.textContent = t("common.cancel");
 
     document.body.appendChild(overlay);
-    /** Prefer Pay deeplink so the phone camera opens Nimiq Pay, not a bare browser tab. */
-    void renderQr(qrHost, created.payDeepLink || created.spaUrl);
+    /** Pay deeplink with a plain (not percent-encoded) spa URL after `url=`. */
+    void renderQr(qrHost, buildUnencodedPayQrPayload(created));
 
     const setHelpOpen = (open: boolean): void => {
       helpOpen = open;
@@ -170,6 +170,29 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
 
     schedulePoll();
   });
+}
+
+/**
+ * QR text must be `nimiqpay://miniapp?url=http(s)://…/auth/qr/…` with the spa
+ * address left readable (no encodeURIComponent). Prefer `spaUrl` from the API so
+ * an older server that still percent-encodes `payDeepLink` cannot poison the QR.
+ */
+export function buildUnencodedPayQrPayload(created: {
+  spaUrl?: string;
+  payDeepLink?: string;
+}): string {
+  const spa = String(created.spaUrl ?? "").trim();
+  if (spa) return `nimiqpay://miniapp?url=${spa}`;
+
+  const raw = String(created.payDeepLink ?? "").trim();
+  const m = /^nimiqpay:\/\/miniapp\?url=(.+)$/i.exec(raw);
+  if (!m?.[1]) return raw;
+  const value = m[1];
+  try {
+    return `nimiqpay://miniapp?url=${decodeURIComponent(value)}`;
+  } catch {
+    return `nimiqpay://miniapp?url=${value}`;
+  }
 }
 
 async function renderQr(host: HTMLElement, url: string): Promise<void> {
