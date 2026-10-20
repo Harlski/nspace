@@ -67,7 +67,13 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
       "#qr-pay-login-cancel"
     ) as HTMLButtonElement;
 
-    const qrText = buildQrSpaUrlPayload(created);
+    // Always build from this browser origin + ticket id. Never put payDeepLink
+    // (or any `url=http%3A…` deeplink) in the QR — scanners were showing percent-encoding.
+    const qrText = buildQrSpaUrlPayload({
+      ticketId: created.ticketId,
+      origin: typeof location !== "undefined" ? location.origin : "",
+      spaUrl: created.spaUrl,
+    });
 
     titleEl.textContent = t("qrPayLogin.title");
     subtitleEl.textContent = t("qrPayLogin.desktopSubtitle");
@@ -178,28 +184,56 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
 }
 
 /**
- * QR payload is the plain spa sign-in URL only — never a percent-encoded
- * `nimiqpay://…?url=` wrapper (cameras / scanners were showing `http%3A…`).
+ * QR payload is always a plain `http(s)://…/auth/qr/{ticket}` string.
+ * Prefer this page's origin + ticket id so a stale API `payDeepLink` that still
+ * percent-encodes `url=http%3A…` can never reach the QR or the text under it.
  */
 export function buildQrSpaUrlPayload(created: {
+  ticketId?: string;
+  origin?: string;
   spaUrl?: string;
+  /** Ignored — kept so older call sites type-check; never encoded into the QR. */
   payDeepLink?: string;
 }): string {
-  const spa = String(created.spaUrl ?? "").trim();
+  const ticketId = String(created.ticketId ?? "").trim();
+  const origin = String(created.origin ?? "").trim().replace(/\/$/, "");
+  if (ticketId && origin && /^https?:\/\//i.test(origin)) {
+    return `${origin}/auth/qr/${ticketId}`;
+  }
+
+  const spa = unwrapPlainSpaUrl(String(created.spaUrl ?? "").trim());
   if (spa) return spa;
 
-  const raw = String(created.payDeepLink ?? "").trim();
-  const m = /^nimiqpay:\/\/miniapp\?url=(.+)$/i.exec(raw);
-  if (!m?.[1]) return raw;
+  return unwrapPlainSpaUrl(String(created.payDeepLink ?? "").trim());
+}
+
+/** Strip `nimiqpay://miniapp?url=` and decode any percent-encoding to a bare spa URL. */
+export function unwrapPlainSpaUrl(raw: string): string {
+  const s = raw.trim();
+  if (!s) return "";
+  const m = /^nimiqpay:\/\/miniapp\?url=(.+)$/i.exec(s);
+  const value = m?.[1] ?? s;
   try {
-    return decodeURIComponent(m[1]);
+    const decoded = decodeURIComponent(value);
+    // If decode produced another deeplink wrapper, peel once more.
+    const m2 = /^nimiqpay:\/\/miniapp\?url=(.+)$/i.exec(decoded);
+    if (m2?.[1]) {
+      try {
+        return decodeURIComponent(m2[1]);
+      } catch {
+        return m2[1];
+      }
+    }
+    return decoded;
   } catch {
-    return m[1];
+    return value;
   }
 }
 
 /** @deprecated Use {@link buildQrSpaUrlPayload}. */
 export function buildUnencodedPayQrPayload(created: {
+  ticketId?: string;
+  origin?: string;
   spaUrl?: string;
   payDeepLink?: string;
 }): string {
