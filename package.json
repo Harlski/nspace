@@ -20,9 +20,10 @@
   "scripts": {
     "prepare-merge": "node scripts/prepare-merge.cjs",
     "check-vercel-rewrites": "node scripts/check-vercel-rewrites.cjs",
-    "dev": "node scripts/ensure-payout-dev-env.cjs && concurrently -n client,server,payout,analytics -c blue,green,magenta,cyan \"npm run dev -w client\" \"npm run dev -w server\" \"npm run dev -w payout-service\" \"npm run dev -w analytics-service\"",
-    "dev:game": "concurrently -n client,server -c blue,green \"npm run dev -w client\" \"npm run dev -w server\"",
-    "build": "npm run build --prefix packages/i18n && npm run build --prefix client && npm run build --prefix server",
+    "build:i18n": "npm run build --prefix packages/i18n",
+    "dev": "node scripts/ensure-payout-dev-env.cjs && npm run build:i18n && concurrently -n client,server,payout,analytics -c blue,green,magenta,cyan \"npm run dev -w client\" \"npm run dev -w server\" \"npm run dev -w payout-service\" \"npm run dev -w analytics-service\"",
+    "dev:game": "npm run build:i18n && concurrently -n client,server -c blue,green \"npm run dev -w client\" \"npm run dev -w server\"",
+    "build": "npm run build:i18n && npm run build --prefix client && npm run build --prefix server",
     "start": "npm run start -w server",
     "dev:payment-intent": "npm run dev -w payment-intent-service",
     "dev:payout": "npm run dev -w payout-service",
