@@ -95,7 +95,7 @@ Open [http://localhost:5173](http://localhost:5173) → **Dev login**. Client **
 
 Wallet sign-in: turn bypass off and use **Connect wallet** via [Nimiq Hub](https://hub.nimiq.com).
 
-**QR Pay login on LAN:** leave `PUBLIC_BASE_URL` unset so the server embeds your LAN IP + Vite port in the QR, or set e.g. `PUBLIC_BASE_URL=http://192.168.1.10:5173` in `server/.env`. Phone and desktop must reach that origin (Vite already listens on the LAN). Open desktop on that same Network URL (not only localhost) if the QR points at the LAN host.
+**QR Pay login on LAN:** leave `PUBLIC_BASE_URL` unset so the server embeds your LAN IP + Vite port in the QR, or set e.g. `PUBLIC_BASE_URL=http://192.168.1.10:5173` in `server/.env`. Phone must reach that origin (Vite already listens on the LAN). Desktop may stay on `localhost` - the QR still uses the LAN IP from the create-ticket response when available.
 
 ### Troubleshooting
 

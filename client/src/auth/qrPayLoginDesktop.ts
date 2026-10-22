@@ -229,8 +229,46 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
   });
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  const h = hostname.trim().toLowerCase();
+  return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
+}
+
 /**
- * Plain spa sign-in URL for this browser origin + ticket (no deeplink wrapper).
+ * Prefer the page origin when it is already a LAN/public host. On localhost /
+ * loopback in dev, use the server `spaUrl` origin (LAN IP + Vite port) so a
+ * phone can open the QR. Matches Play Space share-link behavior.
+ */
+export function resolveQrSpaOrigin(created: {
+  origin?: string;
+  spaUrl?: string;
+}): string {
+  const pageOrigin = String(created.origin ?? "").trim().replace(/\/$/, "");
+  let serverOrigin = "";
+  const spa = String(created.spaUrl ?? "").trim();
+  if (spa) {
+    try {
+      serverOrigin = new URL(spa).origin;
+    } catch {
+      /* ignore invalid spaUrl */
+    }
+  }
+
+  if (pageOrigin && /^https?:\/\//i.test(pageOrigin)) {
+    try {
+      const host = new URL(pageOrigin).hostname;
+      if (isLoopbackHostname(host) && serverOrigin) return serverOrigin;
+      return pageOrigin;
+    } catch {
+      return pageOrigin;
+    }
+  }
+  return serverOrigin || pageOrigin;
+}
+
+/**
+ * Plain spa sign-in URL (no deeplink wrapper). Uses LAN IP in local dev when
+ * the desktop page is opened via localhost.
  */
 export function buildQrSpaUrlPayload(created: {
   ticketId?: string;
@@ -239,7 +277,7 @@ export function buildQrSpaUrlPayload(created: {
   payDeepLink?: string;
 }): string {
   const ticketId = String(created.ticketId ?? "").trim();
-  const origin = String(created.origin ?? "").trim().replace(/\/$/, "");
+  const origin = resolveQrSpaOrigin(created);
   if (ticketId && origin && /^https?:\/\//i.test(origin)) {
     return `${origin}/auth/qr/${ticketId}`;
   }
