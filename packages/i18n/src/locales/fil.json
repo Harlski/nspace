@@ -1,6 +1,6 @@
 {
-  "qrPayLogin.menuButton": "Sign in with Nimiq Pay QR",
-  "qrPayLogin.title": "Scan with Nimiq Pay",
+  "qrPayLogin.menuButton": "Sign in with QR",
+  "qrPayLogin.title": "Scan to sign in",
   "qrPayLogin.desktopSubtitle": "Scan with your phone to sign in.",
   "qrPayLogin.desktopSubtitlePay": "Scan to open Nimiq Pay and confirm sign-in.",
   "qrPayLogin.desktopSubtitleWallet": "Scan to open the sign-in page, then confirm with Nimiq Wallet.",
