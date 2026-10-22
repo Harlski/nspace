@@ -20176,10 +20176,58 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 
 .qr-pay-login-dialog__subtitle {
   margin: 0;
-  max-width: 16rem;
+  max-width: 18rem;
   font-size: 0.78rem;
   line-height: 1.35;
   color: rgba(238, 243, 247, 0.72);
+}
+
+.qr-pay-login-dialog__mode {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.18rem;
+  gap: 0.18rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.qr-pay-login-dialog__mode-btn {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0.42rem 0.55rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(238, 243, 247, 0.72);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.qr-pay-login-dialog__mode-btn:hover {
+  color: rgba(238, 243, 247, 0.95);
+}
+
+.qr-pay-login-dialog__mode-btn--active,
+.qr-pay-login-dialog__mode-btn[aria-selected="true"] {
+  background: rgba(125, 211, 252, 0.22);
+  color: #e0f2fe;
 }
 
 .qr-pay-login-dialog__help {
@@ -20478,6 +20526,20 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 
 .qr-pay-login-phone__btn--primary:active:not(:disabled) {
   transform: translateY(1px);
+}
+
+.qr-pay-login-phone__btn--secondary {
+  color: rgba(238, 243, 247, 0.92);
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.22);
+  text-transform: none;
+  letter-spacing: 0.01em;
+  font-weight: 600;
+}
+
+.qr-pay-login-phone__btn--secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.35);
 }
 
 .qr-pay-login-phone__btn:disabled,

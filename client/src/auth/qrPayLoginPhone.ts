@@ -33,8 +33,8 @@ export function mountQrPayLoginPhonePage(
       <p class="qr-pay-login-phone__status" id="qr-pay-phone-status"></p>
       <p class="qr-pay-login-phone__err" id="qr-pay-phone-err" hidden></p>
       <div class="qr-pay-login-phone__actions" id="qr-pay-phone-actions">
-        <button type="button" class="qr-pay-login-phone__btn qr-pay-login-phone__btn--primary" id="qr-pay-phone-open-pay" hidden></button>
         <button type="button" class="qr-pay-login-phone__btn qr-pay-login-phone__btn--primary" id="qr-pay-phone-sign" hidden></button>
+        <button type="button" class="qr-pay-login-phone__btn qr-pay-login-phone__btn--secondary" id="qr-pay-phone-open-pay" hidden></button>
       </div>
     </div>
   `;
@@ -54,7 +54,7 @@ export function mountQrPayLoginPhonePage(
 
   titleEl.textContent = t("qrPayLogin.phoneTitle");
   openPayBtn.textContent = t("qrPayLogin.openInPay");
-  signBtn.textContent = t("qrPayLogin.confirmSign");
+  signBtn.textContent = t("qrPayLogin.confirmSignWallet");
 
   const showErr = (msg: string): void => {
     errEl.hidden = !msg;
@@ -142,17 +142,20 @@ export function mountQrPayLoginPhonePage(
   if (inPay) {
     hintEl.textContent = t("qrPayLogin.phoneHintInPay");
     statusEl.textContent = t("qrPayLogin.phoneReady");
+    signBtn.textContent = t("qrPayLogin.confirmSign");
     signBtn.hidden = false;
+    openPayBtn.hidden = true;
     void runSign();
   } else {
-    hintEl.textContent = t("qrPayLogin.phoneHintOpenPay");
+    /** Wallet QR opens this page in the phone browser; Hub / Wallet signs here. */
+    hintEl.textContent = t("qrPayLogin.phoneHintWallet");
     statusEl.textContent = "";
     statusEl.hidden = true;
+    signBtn.hidden = false;
     openPayBtn.hidden = false;
-    signBtn.hidden = true;
     const spaUrl = `${location.origin}/auth/qr/${ticketId}`;
     openPayBtn.addEventListener("click", () => {
-      /** Plain spa URL after url= (match desktop QR; no percent-encoding). */
+      /** Plain spa URL after url= (no percent-encoding). */
       location.assign(`nimiqpay://miniapp?url=${spaUrl}`);
     });
   }

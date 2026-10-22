@@ -14,12 +14,15 @@ export type QrPayLoginDesktopResult = {
   needsTutorial?: boolean;
 };
 
+/** Which wallet app the desktop QR should open on the phone. */
+export type QrLoginClientMode = "pay" | "wallet";
+
 const POLL_MS = 1500;
 
 /**
- * Desktop Main Menu: show a plain spa URL QR and poll until the phone fulfills the ticket.
- * QR is the readable `http(s)://…/auth/qr/{ticket}` address (never percent-encoded).
- * On the phone, open that page in Nimiq Pay and sign; this PC claims the JWT.
+ * Desktop Main Menu: QR login with Pay vs Wallet mode, poll until phone fulfills.
+ * Pay QR uses an unencoded `nimiqpay://miniapp?url=…` deeplink. Wallet QR is the
+ * plain spa URL so the phone browser can sign via Nimiq Hub / Wallet.
  */
 export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
   const created = await createQrPayLoginTicket();
@@ -28,6 +31,7 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
     let pollTimer: number | null = null;
     let cancelled = false;
     let helpOpen = false;
+    let mode: QrLoginClientMode = "pay";
 
     const overlay = document.createElement("div");
     overlay.className = "qr-pay-login-overlay";
@@ -43,6 +47,7 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
         </div>
         <p class="qr-pay-login-dialog__subtitle" id="qr-pay-login-subtitle"></p>
         <div class="qr-pay-login-dialog__help" id="qr-pay-login-help" hidden></div>
+        <div class="qr-pay-login-dialog__mode" id="qr-pay-login-mode" role="tablist" aria-label=""></div>
         <div class="qr-pay-login-dialog__qr" id="qr-pay-login-qr" aria-hidden="true"></div>
         <p class="qr-pay-login-dialog__url" id="qr-pay-login-url"></p>
         <p class="qr-pay-login-dialog__status" id="qr-pay-login-status"></p>
@@ -59,6 +64,7 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
       "#qr-pay-login-help-btn"
     ) as HTMLButtonElement;
     const helpEl = overlay.querySelector("#qr-pay-login-help") as HTMLElement;
+    const modeEl = overlay.querySelector("#qr-pay-login-mode") as HTMLElement;
     const urlEl = overlay.querySelector("#qr-pay-login-url") as HTMLElement;
     const statusEl = overlay.querySelector("#qr-pay-login-status") as HTMLElement;
     const errEl = overlay.querySelector("#qr-pay-login-err") as HTMLElement;
@@ -67,26 +73,66 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
       "#qr-pay-login-cancel"
     ) as HTMLButtonElement;
 
-    // Always build from this browser origin + ticket id. Never put payDeepLink
-    // (or any `url=http%3A…` deeplink) in the QR — scanners were showing percent-encoding.
-    const qrText = buildQrSpaUrlPayload({
+    const spaBase = {
       ticketId: created.ticketId,
       origin: typeof location !== "undefined" ? location.origin : "",
       spaUrl: created.spaUrl,
-    });
+    };
+
+    modeEl.setAttribute("aria-label", t("qrPayLogin.modeAria"));
+    modeEl.innerHTML = `
+      <button type="button" class="qr-pay-login-dialog__mode-btn" role="tab" id="qr-pay-mode-pay" data-mode="pay" aria-selected="true"></button>
+      <button type="button" class="qr-pay-login-dialog__mode-btn" role="tab" id="qr-pay-mode-wallet" data-mode="wallet" aria-selected="false"></button>
+    `;
+    const payTab = modeEl.querySelector("#qr-pay-mode-pay") as HTMLButtonElement;
+    const walletTab = modeEl.querySelector(
+      "#qr-pay-mode-wallet"
+    ) as HTMLButtonElement;
+    payTab.textContent = t("qrPayLogin.modePay");
+    walletTab.textContent = t("qrPayLogin.modeWallet");
+
+    const applyModeUi = (): void => {
+      const qrText = buildQrLoginPayload(mode, spaBase);
+      payTab.setAttribute("aria-selected", mode === "pay" ? "true" : "false");
+      walletTab.setAttribute(
+        "aria-selected",
+        mode === "wallet" ? "true" : "false"
+      );
+      payTab.classList.toggle("qr-pay-login-dialog__mode-btn--active", mode === "pay");
+      walletTab.classList.toggle(
+        "qr-pay-login-dialog__mode-btn--active",
+        mode === "wallet"
+      );
+      subtitleEl.textContent =
+        mode === "pay"
+          ? t("qrPayLogin.desktopSubtitlePay")
+          : t("qrPayLogin.desktopSubtitleWallet");
+      helpEl.textContent =
+        mode === "pay"
+          ? t("qrPayLogin.desktopHelpPay")
+          : t("qrPayLogin.desktopHelpWallet");
+      urlEl.textContent = qrText;
+      void renderQr(qrHost, qrText);
+    };
 
     titleEl.textContent = t("qrPayLogin.title");
-    subtitleEl.textContent = t("qrPayLogin.desktopSubtitle");
     helpBtn.textContent = "?";
     helpBtn.setAttribute("aria-label", t("qrPayLogin.helpAria"));
     helpBtn.title = t("qrPayLogin.helpAria");
-    helpEl.textContent = t("qrPayLogin.desktopHelp");
-    urlEl.textContent = qrText;
     statusEl.textContent = t("qrPayLogin.waiting");
     cancelBtn.textContent = t("common.cancel");
+    applyModeUi();
 
     document.body.appendChild(overlay);
-    void renderQr(qrHost, qrText);
+
+    const setMode = (next: QrLoginClientMode): void => {
+      if (mode === next) return;
+      mode = next;
+      applyModeUi();
+    };
+
+    payTab.addEventListener("click", () => setMode("pay"));
+    walletTab.addEventListener("click", () => setMode("wallet"));
 
     const setHelpOpen = (open: boolean): void => {
       helpOpen = open;
@@ -184,15 +230,12 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
 }
 
 /**
- * QR payload is always a plain `http(s)://…/auth/qr/{ticket}` string.
- * Prefer this page's origin + ticket id so a stale API `payDeepLink` that still
- * percent-encodes `url=http%3A…` can never reach the QR or the text under it.
+ * Plain spa sign-in URL for this browser origin + ticket (no deeplink wrapper).
  */
 export function buildQrSpaUrlPayload(created: {
   ticketId?: string;
   origin?: string;
   spaUrl?: string;
-  /** Ignored — kept so older call sites type-check; never encoded into the QR. */
   payDeepLink?: string;
 }): string {
   const ticketId = String(created.ticketId ?? "").trim();
@@ -207,6 +250,27 @@ export function buildQrSpaUrlPayload(created: {
   return unwrapPlainSpaUrl(String(created.payDeepLink ?? "").trim());
 }
 
+/**
+ * QR text for the selected client mode.
+ * Pay: unencoded `nimiqpay://miniapp?url=http(s)://…/auth/qr/…` (opens Nimiq Pay).
+ * Wallet: plain spa URL (phone browser → Nimiq Hub / Wallet sign). There is no
+ * official Wallet custom-scheme for remote login QR.
+ */
+export function buildQrLoginPayload(
+  mode: QrLoginClientMode,
+  created: {
+    ticketId?: string;
+    origin?: string;
+    spaUrl?: string;
+    payDeepLink?: string;
+  }
+): string {
+  const spa = buildQrSpaUrlPayload(created);
+  if (!spa) return "";
+  if (mode === "pay") return `nimiqpay://miniapp?url=${spa}`;
+  return spa;
+}
+
 /** Strip `nimiqpay://miniapp?url=` and decode any percent-encoding to a bare spa URL. */
 export function unwrapPlainSpaUrl(raw: string): string {
   const s = raw.trim();
@@ -215,7 +279,6 @@ export function unwrapPlainSpaUrl(raw: string): string {
   const value = m?.[1] ?? s;
   try {
     const decoded = decodeURIComponent(value);
-    // If decode produced another deeplink wrapper, peel once more.
     const m2 = /^nimiqpay:\/\/miniapp\?url=(.+)$/i.exec(decoded);
     if (m2?.[1]) {
       try {
@@ -230,14 +293,14 @@ export function unwrapPlainSpaUrl(raw: string): string {
   }
 }
 
-/** @deprecated Use {@link buildQrSpaUrlPayload}. */
+/** @deprecated Use {@link buildQrSpaUrlPayload} or {@link buildQrLoginPayload}. */
 export function buildUnencodedPayQrPayload(created: {
   ticketId?: string;
   origin?: string;
   spaUrl?: string;
   payDeepLink?: string;
 }): string {
-  return buildQrSpaUrlPayload(created);
+  return buildQrLoginPayload("pay", created);
 }
 
 async function renderQr(host: HTMLElement, url: string): Promise<void> {
