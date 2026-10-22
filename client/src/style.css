@@ -20284,50 +20284,208 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 
 .qr-pay-login-phone {
   min-height: 100%;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 1.25rem;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
   box-sizing: border-box;
   background:
-    radial-gradient(ellipse at 30% 20%, rgba(56, 189, 248, 0.12), transparent 50%),
-    radial-gradient(ellipse at 70% 80%, rgba(52, 211, 153, 0.1), transparent 45%),
+    radial-gradient(ellipse at 28% 18%, rgba(56, 189, 248, 0.14), transparent 52%),
+    radial-gradient(ellipse at 78% 88%, rgba(52, 211, 153, 0.12), transparent 48%),
     #0b1018;
   color: #eef3f7;
+  font-family: "Mulish", system-ui, sans-serif;
 }
 
 .qr-pay-login-phone__card {
-  width: min(22rem, 100%);
-  padding: 1.35rem 1.2rem 1.2rem;
-  border-radius: 14px;
+  box-sizing: border-box;
+  width: min(21.5rem, 100%);
+  max-width: 100%;
+  min-width: 0;
+  padding: 1.6rem 1.25rem 1.35rem;
+  border-radius: 16px;
   background: rgba(18, 24, 32, 0.96);
   border: 1px solid rgba(255, 255, 255, 0.12);
   text-align: center;
+  overflow: hidden;
+  transition:
+    border-color 0.35s ease,
+    box-shadow 0.35s ease,
+    background 0.35s ease;
+}
+
+.qr-pay-login-phone__card--done {
+  border-color: rgba(52, 211, 153, 0.45);
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(52, 211, 153, 0.14), transparent 55%),
+    rgba(18, 24, 32, 0.98);
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.08);
+}
+
+.qr-pay-login-phone__mark {
+  width: 3.25rem;
+  height: 3.25rem;
+  margin: 0 auto 1rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(52, 211, 153, 0.16);
+  border: 1.5px solid rgba(52, 211, 153, 0.55);
+  animation: qr-pay-phone-mark-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.qr-pay-login-phone__mark[hidden] {
+  display: none !important;
+}
+
+.qr-pay-login-phone__mark-check {
+  width: 0.72rem;
+  height: 1.2rem;
+  margin-top: -0.15rem;
+  border-right: 2.5px solid #6ee7b7;
+  border-bottom: 2.5px solid #6ee7b7;
+  transform: rotate(45deg);
+  animation: qr-pay-phone-check-in 0.35s 0.12s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes qr-pay-phone-mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes qr-pay-phone-check-in {
+  from {
+    opacity: 0;
+    transform: rotate(45deg) scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(45deg) scale(1);
+  }
 }
 
 .qr-pay-login-phone__title {
-  margin: 0 0 0.5rem;
-  font-size: 1.2rem;
+  margin: 0 0 0.55rem;
+  font-size: 1.28rem;
   font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.qr-pay-login-phone__card--done .qr-pay-login-phone__title {
+  color: #ecfdf5;
 }
 
 .qr-pay-login-phone__hint,
 .qr-pay-login-phone__status {
-  margin: 0 0 0.55rem;
-  font-size: 0.85rem;
-  line-height: 1.4;
-  color: rgba(238, 243, 247, 0.82);
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: rgba(238, 243, 247, 0.78);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.qr-pay-login-phone__card--done .qr-pay-login-phone__hint {
+  color: rgba(236, 253, 245, 0.88);
+  margin-bottom: 0.35rem;
+}
+
+.qr-pay-login-phone__status {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.qr-pay-login-phone__card--done .qr-pay-login-phone__status {
+  color: rgba(110, 231, 183, 0.95);
+  margin-bottom: 0;
+}
+
+.qr-pay-login-phone__status[hidden],
+.qr-pay-login-phone__err[hidden],
+.qr-pay-login-phone__actions[hidden] {
+  display: none !important;
 }
 
 .qr-pay-login-phone__err {
-  margin: 0 0 0.65rem;
-  font-size: 0.8rem;
+  margin: 0.15rem 0 0.65rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
   color: #fda4af;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .qr-pay-login-phone__actions {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 0.55rem;
-  margin-top: 0.75rem;
+  margin-top: 1rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.qr-pay-login-phone__btn {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0.72rem 1rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  text-align: center;
+  cursor: pointer;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+
+.qr-pay-login-phone__btn--primary {
+  color: #0b1018;
+  background: linear-gradient(180deg, #7dd3fc 0%, #38bdf8 100%);
+  border-color: rgba(125, 211, 252, 0.55);
+}
+
+.qr-pay-login-phone__btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #bae6fd 0%, #7dd3fc 100%);
+}
+
+.qr-pay-login-phone__btn--primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.qr-pay-login-phone__btn:disabled,
+.qr-pay-login-phone__btn--busy {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.qr-pay-login-phone__btn[hidden] {
+  display: none !important;
 }
