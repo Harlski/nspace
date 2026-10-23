@@ -25,8 +25,10 @@ export function mountQrPayLoginPhonePage(
   root.className = "qr-pay-login-phone";
   root.innerHTML = `
     <div class="qr-pay-login-phone__card" id="qr-pay-phone-card">
+      <p class="qr-pay-login-phone__eyebrow" id="qr-pay-phone-eyebrow" hidden></p>
       <div class="qr-pay-login-phone__mark" id="qr-pay-phone-mark" hidden aria-hidden="true">
-        <span class="qr-pay-login-phone__mark-check"></span>
+        <span class="qr-pay-login-phone__mark-ring" aria-hidden="true"></span>
+        <span class="qr-pay-login-phone__mark-check" aria-hidden="true"></span>
       </div>
       <h1 class="qr-pay-login-phone__title" id="qr-pay-phone-title"></h1>
       <p class="qr-pay-login-phone__hint" id="qr-pay-phone-hint"></p>
@@ -41,6 +43,7 @@ export function mountQrPayLoginPhonePage(
   app.appendChild(root);
 
   const cardEl = root.querySelector("#qr-pay-phone-card") as HTMLElement;
+  const eyebrowEl = root.querySelector("#qr-pay-phone-eyebrow") as HTMLElement;
   const markEl = root.querySelector("#qr-pay-phone-mark") as HTMLElement;
   const titleEl = root.querySelector("#qr-pay-phone-title") as HTMLElement;
   const hintEl = root.querySelector("#qr-pay-phone-hint") as HTMLElement;
@@ -69,27 +72,34 @@ export function mountQrPayLoginPhonePage(
   };
 
   const showSignedIn = (): void => {
+    root.classList.add("qr-pay-login-phone--done");
     cardEl.classList.add("qr-pay-login-phone__card--done");
+    eyebrowEl.hidden = false;
+    eyebrowEl.textContent = t("qrPayLogin.phoneDoneEyebrow");
     markEl.hidden = false;
     markEl.setAttribute("aria-hidden", "false");
     titleEl.textContent = t("qrPayLogin.phoneDone");
     hintEl.textContent = t("qrPayLogin.phoneDoneHint");
-    statusEl.textContent = t("qrPayLogin.phoneDoneStatus");
     statusEl.hidden = false;
+    statusEl.classList.add("qr-pay-login-phone__status--done");
+    statusEl.textContent = t("qrPayLogin.phoneDoneStatus");
     showErr("");
     actionsEl.hidden = true;
+    actionsEl.replaceChildren();
     signBtn.hidden = true;
     openPayBtn.hidden = true;
   };
 
   let disposed = false;
   let acceptedTermsPrivacyVersion: string | undefined;
+  const inPay = isNimiqPayMiniApp();
 
   const runSign = async (): Promise<void> => {
     if (disposed) return;
     showErr("");
     setBusy(true);
     statusEl.hidden = false;
+    statusEl.classList.remove("qr-pay-login-phone__status--done");
     statusEl.textContent = t("qrPayLogin.signing");
     try {
       for (;;) {
@@ -131,14 +141,17 @@ export function mountQrPayLoginPhonePage(
       } else {
         showErr(t("qrPayLogin.signFailed"));
       }
+      if (actionsEl.childElementCount === 0) {
+        actionsEl.append(signBtn, openPayBtn);
+      }
       actionsEl.hidden = false;
       signBtn.hidden = false;
+      openPayBtn.hidden = inPay;
     } finally {
       if (!disposed) setBusy(false);
     }
   };
 
-  const inPay = isNimiqPayMiniApp();
   if (inPay) {
     hintEl.textContent = t("qrPayLogin.phoneHintInPay");
     statusEl.textContent = t("qrPayLogin.phoneReady");
