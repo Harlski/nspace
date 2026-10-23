@@ -1,10 +1,16 @@
+import { t } from "@nspace/i18n";
 import telegramIconUrl from "../assets/social/telegram.svg?url";
 import xIconUrl from "../assets/social/x.svg?url";
-import { signInWithWallet, type UsernamePromptStatus } from "../auth/nimiq.js";
+import {
+  isNimiqPayMiniApp,
+  signInWithWallet,
+  type UsernamePromptStatus,
+} from "../auth/nimiq.js";
 import {
   completeAuthVerifyWithTermsPrivacyRetry,
   completeWalletPayloadAuthWithTermsPrivacyRetry,
 } from "../auth/authTermsPrivacyVerify.js";
+import { runQrPayLoginDesktop } from "../auth/qrPayLoginDesktop.js";
 import { hasTermsPrivacyAckCachedLocally } from "../auth/termsPrivacyAckLocal.js";
 import { TERMS_PRIVACY_DOCS_VERSION } from "../termsPrivacyVersion.js";
 import { formatWalletAddressGap4 } from "../formatWalletAddress.js";
@@ -192,6 +198,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
               <div class="main-menu__wallet-signin-hex-wrap" id="main-menu-wallet-signin-wrap">
                 <button type="button" class="main-menu__cached-add-hex main-menu__wallet-signin-hex" id="main-menu-wallet-signin" aria-label="Sign in with your Nimiq wallet"></button>
               </div>
+              <button type="button" class="nq-button-s light-blue main-menu__nq-btn main-menu__nq-btn--pill main-menu__qr-pay-login" id="main-menu-qr-pay-login" hidden></button>
               <div class="main-menu__terms-privacy-host" id="main-menu-terms-privacy-host-default"></div>
               ${
                 devBypass
@@ -314,6 +321,15 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
   ) as HTMLButtonElement | null;
   if (walletSigninHexBtn) {
     walletSigninHexBtn.innerHTML = nimiqLogosHexOutlineMonoPlusMarkup();
+  }
+  const qrPayLoginBtn = root.querySelector(
+    "#main-menu-qr-pay-login"
+  ) as HTMLButtonElement | null;
+  if (qrPayLoginBtn) {
+    qrPayLoginBtn.textContent = t("qrPayLogin.menuButton");
+    qrPayLoginBtn.setAttribute("aria-label", t("qrPayLogin.menuButton"));
+    /** Desktop cafe flow only - inside Pay use the normal wallet hex sign-in. */
+    qrPayLoginBtn.hidden = isNimiqPayMiniApp();
   }
   const walletHintEl = root.querySelector("#main-menu-wallet-hint") as HTMLElement;
 
@@ -710,6 +726,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
 
   const setBusy = (busy: boolean): void => {
     if (walletSigninHexBtn) walletSigninHexBtn.disabled = busy;
+    if (qrPayLoginBtn) qrPayLoginBtn.disabled = busy;
     perAccountButtons.forEach((b) => {
       b.disabled = busy;
     });
@@ -719,6 +736,26 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     if (devBtn) devBtn.disabled = busy;
     actionsForgetBtn.disabled = busy;
     actionsEnterBtn.disabled = busy;
+  };
+
+  const runQrPayLogin = async (): Promise<void> => {
+    if (!requireTermsChecked()) {
+      setBusy(false);
+      return;
+    }
+    try {
+      const verified = await runQrPayLoginDesktop();
+      syncTermsPrivacyRowAfterAckState();
+      await onLoggedIn(
+        verified.token,
+        verified.address,
+        verified.nimiqPay,
+        verified.usernamePrompt,
+        verified.needsTutorial
+      );
+    } finally {
+      if (root.isConnected) setBusy(false);
+    }
   };
 
   const invokePrimaryWalletLogin = async (): Promise<void> => {
@@ -740,7 +777,31 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
     });
   }
 
-  cachedAddWalletBtn?.addEventListener("click", () => {
+  qrPayLoginBtn?.addEventListener("click", () => {
+    primeTermsConsentUiForWalletAttempt();
+    if (!requireTermsChecked()) return;
+    showErr("");
+    setBusy(true);
+    void (async () => {
+      try {
+        await runQrPayLogin();
+      } catch (e) {
+        const code = e instanceof Error ? e.message : "login_failed";
+        if (code !== "qr_login_cancelled") {
+          showErr(
+            code === "qr_login_expired"
+              ? t("qrPayLogin.expired")
+              : e instanceof Error
+                ? e.message
+                : t("qrPayLogin.signFailed")
+          );
+        }
+        setBusy(false);
+      }
+    })();
+  });
+
+  root.querySelector("#main-menu-cached-add-wallet")?.addEventListener("click", () => {
     primeTermsConsentUiForWalletAttempt();
     if (
       cachedSessions.length > 0 &&

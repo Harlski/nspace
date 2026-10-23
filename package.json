@@ -10,15 +10,20 @@
     "payout-service",
     "analytics-service"
   ],
+  "engines": {
+    "node": ">=20 <27"
+  },
   "overrides": {
-    "@nimiq/core": "2.20.0"
+    "@nimiq/core": "2.20.0",
+    "better-sqlite3": "^12.11.1"
   },
   "scripts": {
     "prepare-merge": "node scripts/prepare-merge.cjs",
     "check-vercel-rewrites": "node scripts/check-vercel-rewrites.cjs",
-    "dev": "node scripts/ensure-payout-dev-env.cjs && concurrently -n client,server,payout,analytics -c blue,green,magenta,cyan \"npm run dev -w client\" \"npm run dev -w server\" \"npm run dev -w payout-service\" \"npm run dev -w analytics-service\"",
-    "dev:game": "concurrently -n client,server -c blue,green \"npm run dev -w client\" \"npm run dev -w server\"",
-    "build": "npm run build --prefix packages/i18n && npm run build --prefix client && npm run build --prefix server",
+    "build:i18n": "npm run build --prefix packages/i18n",
+    "dev": "node scripts/ensure-payout-dev-env.cjs && npm run build:i18n && concurrently -n client,server,payout,analytics -c blue,green,magenta,cyan \"npm run dev -w client\" \"npm run dev -w server\" \"npm run dev -w payout-service\" \"npm run dev -w analytics-service\"",
+    "dev:game": "npm run build:i18n && concurrently -n client,server -c blue,green \"npm run dev -w client\" \"npm run dev -w server\"",
+    "build": "npm run build:i18n && npm run build --prefix client && npm run build --prefix server",
     "start": "npm run start -w server",
     "dev:payment-intent": "npm run dev -w payment-intent-service",
     "dev:payout": "npm run dev -w payout-service",
@@ -53,7 +58,7 @@
     "badwords-list": "^2.0.1-4",
     "base-x": "^3.0.11",
     "base64-js": "^1.5.1",
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^12.11.1",
     "big-integer": "^1.6.52",
     "bindings": "^1.5.0",
     "bl": "^4.1.0",

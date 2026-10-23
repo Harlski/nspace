@@ -85,6 +85,8 @@ Clients sample every **~1s** while the game tab is visible, the player is not AF
 | `VITE_HUB_URL` | client | Nimiq Hub base URL (optional override) |
 | `VITE_API_BASE_URL` | client | API origin when SPA and API differ. Prefer full URL (`https://api.example.com`). Host-only (`api.example.com`) is normalized to `https://…` so it is not treated as a path on the SPA host. |
 | `VITE_WS_BASE_URL` | client | Optional WebSocket origin (`wss://…` or host-only); otherwise derived from resolved API base or page |
+| `PUBLIC_BASE_URL` | server | Origin for Play Space `/join/{slug}` and **QR Pay login** `/auth/qr/{ticket}` links. Prod default `https://nimiq.space`. Dev unset → LAN IPv4 + `DEV_CLIENT_PORT`. |
+| `DEV_CLIENT_PORT` | server | Vite port used when auto-building share/QR URLs in development (default `5173`) |
 | `EVENT_LOG_DIR` | server | Directory for append-only JSONL replay logs (`events-*.jsonl`); default `server/data/events` |
 | `ANALYTICS_OVERVIEW_CACHE_TTL_MS` | analytics-service | In-memory TTL for overview snapshots (default **120000** = 2 min). Set **`0`** to disable. Concurrent identical requests share one in-flight build. |
 | `ANALYTICS_FIRST_TIME_LOOKBACK_DAYS` | analytics-service | Extra calendar days of Event Logs scanned **before** the selected `/analytics` window so **first-time** / **Pay returning** can see prior `session_start`s. Default: `DAILY_STATS_LOOKBACK_DAYS` if set, else **400**. |

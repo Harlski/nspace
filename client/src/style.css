@@ -20104,3 +20104,540 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   gap: 0.45rem;
   justify-content: flex-end;
 }
+
+/* --- QR Pay login (desktop dialog + phone landing) --- */
+.qr-pay-login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  box-sizing: border-box;
+  background: rgba(8, 12, 20, 0.72);
+}
+
+.qr-pay-login-dialog {
+  box-sizing: border-box;
+  width: min(20.5rem, calc(100vw - 2rem));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 1.25rem 1.25rem 1.1rem;
+  border-radius: 14px;
+  background: #121820;
+  color: #eef3f7;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  overflow: hidden;
+}
+
+.qr-pay-login-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+}
+
+.qr-pay-login-dialog__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.qr-pay-login-dialog__help-btn {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 1.35rem;
+  height: 1.35rem;
+  margin: 0;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(238, 243, 247, 0.9);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.qr-pay-login-dialog__help-btn:hover,
+.qr-pay-login-dialog__help-btn--open {
+  background: rgba(125, 211, 252, 0.16);
+  border-color: rgba(125, 211, 252, 0.55);
+  color: #e0f2fe;
+}
+
+.qr-pay-login-dialog__subtitle {
+  margin: 0;
+  max-width: 18rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: rgba(238, 243, 247, 0.72);
+}
+
+.qr-pay-login-dialog__mode {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.18rem;
+  gap: 0.18rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.qr-pay-login-dialog__mode-btn {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0.42rem 0.55rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(238, 243, 247, 0.72);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.qr-pay-login-dialog__mode-btn:hover {
+  color: rgba(238, 243, 247, 0.95);
+}
+
+.qr-pay-login-dialog__mode-btn--active,
+.qr-pay-login-dialog__mode-btn[aria-selected="true"] {
+  background: rgba(125, 211, 252, 0.22);
+  color: #e0f2fe;
+}
+
+.qr-pay-login-dialog__help {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: rgba(238, 243, 247, 0.82);
+  text-align: left;
+}
+
+.qr-pay-login-dialog__help[hidden] {
+  display: none !important;
+}
+
+.qr-pay-login-dialog__qr {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 0.15rem 0 0;
+  padding: 0.6rem;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.qr-pay-login-dialog__qr canvas,
+.qr-pay-login-dialog__qr img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.qr-pay-login-dialog__qr-fallback {
+  margin: 0;
+  max-width: 14rem;
+  font-size: 0.65rem;
+  word-break: break-all;
+  color: #111;
+}
+
+.qr-pay-login-dialog__url {
+  margin: 0;
+  max-width: 100%;
+  padding: 0 0.15rem;
+  font-size: 0.62rem;
+  line-height: 1.35;
+  word-break: break-all;
+  color: rgba(238, 243, 247, 0.55);
+  user-select: all;
+}
+
+.qr-pay-login-dialog__status {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: rgba(125, 211, 252, 0.95);
+}
+
+.qr-pay-login-dialog__err {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #fda4af;
+}
+
+.qr-pay-login-dialog__err[hidden] {
+  display: none !important;
+}
+
+.qr-pay-login-dialog__cancel {
+  box-sizing: border-box;
+  width: auto;
+  min-width: 6.5rem;
+  max-width: 100%;
+  margin: 0.15rem 0 0;
+  padding: 0.42rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: rgba(238, 243, 247, 0.88);
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.qr-pay-login-dialog__cancel:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.main-menu__qr-pay-login {
+  margin: 0.15rem 0 0.35rem;
+}
+
+.qr-pay-login-phone {
+  --qr-phone-pad-x: 1.35rem;
+  min-height: 100%;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  box-sizing: border-box;
+  background:
+    radial-gradient(ellipse at 28% 18%, rgba(56, 189, 248, 0.16), transparent 52%),
+    radial-gradient(ellipse at 78% 88%, rgba(52, 211, 153, 0.14), transparent 48%),
+    #0b1018;
+  color: #eef3f7;
+  font-family: "Mulish", system-ui, sans-serif;
+  overflow-x: hidden;
+}
+
+.qr-pay-login-phone--done {
+  background:
+    radial-gradient(ellipse at 50% 12%, rgba(52, 211, 153, 0.22), transparent 55%),
+    radial-gradient(ellipse at 20% 85%, rgba(56, 189, 248, 0.1), transparent 45%),
+    #0b1018;
+}
+
+.qr-pay-login-phone__card {
+  box-sizing: border-box;
+  width: min(20.5rem, 100%);
+  max-width: 100%;
+  min-width: 0;
+  padding: 1.85rem var(--qr-phone-pad-x) 1.65rem;
+  border-radius: 18px;
+  background: rgba(18, 24, 32, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  text-align: center;
+  overflow: hidden;
+  transition:
+    border-color 0.4s ease,
+    box-shadow 0.4s ease,
+    background 0.4s ease,
+    transform 0.4s ease;
+}
+
+.qr-pay-login-phone__card--done {
+  border-color: rgba(52, 211, 153, 0.5);
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(52, 211, 153, 0.18), transparent 58%),
+    rgba(14, 22, 20, 0.98);
+  box-shadow:
+    0 0 0 1px rgba(52, 211, 153, 0.1),
+    0 18px 40px rgba(0, 0, 0, 0.35);
+  animation: qr-pay-phone-card-done 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.qr-pay-login-phone__eyebrow {
+  margin: 0 0 0.65rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(110, 231, 183, 0.95);
+}
+
+.qr-pay-login-phone__eyebrow[hidden] {
+  display: none !important;
+}
+
+.qr-pay-login-phone__mark {
+  position: relative;
+  width: 3.6rem;
+  height: 3.6rem;
+  margin: 0 auto 1.1rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(52, 211, 153, 0.16);
+  border: 1.5px solid rgba(52, 211, 153, 0.55);
+  animation: qr-pay-phone-mark-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.qr-pay-login-phone__mark[hidden] {
+  display: none !important;
+}
+
+.qr-pay-login-phone__mark-ring {
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 1px solid rgba(110, 231, 183, 0.35);
+  animation: qr-pay-phone-ring 0.7s 0.1s cubic-bezier(0.22, 1, 0.36, 1) both;
+  pointer-events: none;
+}
+
+.qr-pay-login-phone__mark-check {
+  width: 0.78rem;
+  height: 1.28rem;
+  margin-top: -0.18rem;
+  border-right: 2.5px solid #6ee7b7;
+  border-bottom: 2.5px solid #6ee7b7;
+  transform: rotate(45deg);
+  animation: qr-pay-phone-check-in 0.38s 0.14s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes qr-pay-phone-card-done {
+  from {
+    opacity: 0.88;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes qr-pay-phone-mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes qr-pay-phone-ring {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes qr-pay-phone-check-in {
+  from {
+    opacity: 0;
+    transform: rotate(45deg) scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(45deg) scale(1);
+  }
+}
+
+.qr-pay-login-phone__title {
+  margin: 0 0 0.55rem;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.22;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.qr-pay-login-phone__card--done .qr-pay-login-phone__title {
+  color: #ecfdf5;
+  font-size: 1.45rem;
+  margin-bottom: 0.65rem;
+}
+
+.qr-pay-login-phone__hint,
+.qr-pay-login-phone__status {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: rgba(238, 243, 247, 0.78);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.qr-pay-login-phone__card--done .qr-pay-login-phone__hint {
+  color: rgba(236, 253, 245, 0.9);
+  margin: 0 auto 0.9rem;
+  max-width: 17.5rem;
+}
+
+.qr-pay-login-phone__status {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.qr-pay-login-phone__status--done,
+.qr-pay-login-phone__card--done .qr-pay-login-phone__status {
+  display: inline-block;
+  width: auto;
+  max-width: 100%;
+  margin: 0.15rem auto 0;
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #bbf7d0;
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid rgba(52, 211, 153, 0.28);
+}
+
+.qr-pay-login-phone__status[hidden],
+.qr-pay-login-phone__err[hidden],
+.qr-pay-login-phone__actions[hidden] {
+  display: none !important;
+}
+
+.qr-pay-login-phone__err {
+  margin: 0.15rem 0 0.65rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: #fda4af;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.qr-pay-login-phone__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.55rem;
+  margin-top: 1.05rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/**
+ * Contained phone controls. Never use @nimiq/style `.nq-button` here:
+ * it sets min-width: 25rem and overflows the card. Keep a defensive override.
+ */
+.qr-pay-login-phone__btn,
+.qr-pay-login-phone .nq-button {
+  position: relative;
+  box-sizing: border-box !important;
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 2.75rem;
+  margin: 0 !important;
+  padding: 0.7rem 0.9rem !important;
+  border-radius: 999px !important;
+  border: 1px solid transparent;
+  box-shadow: none !important;
+  font-family: inherit !important;
+  font-size: 0.82rem !important;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  line-height: 1.25 !important;
+  text-align: center;
+  cursor: pointer;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+
+.qr-pay-login-phone__btn::before,
+.qr-pay-login-phone__btn::after,
+.qr-pay-login-phone .nq-button::before,
+.qr-pay-login-phone .nq-button::after {
+  content: none !important;
+  display: none !important;
+}
+
+.qr-pay-login-phone__btn--primary {
+  color: #0b1018 !important;
+  background: linear-gradient(180deg, #7dd3fc 0%, #38bdf8 100%) !important;
+  border-color: rgba(125, 211, 252, 0.55) !important;
+}
+
+.qr-pay-login-phone__btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #bae6fd 0%, #7dd3fc 100%) !important;
+}
+
+.qr-pay-login-phone__btn--primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.qr-pay-login-phone__btn--secondary {
+  color: rgba(238, 243, 247, 0.92) !important;
+  background: transparent !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  font-weight: 600;
+}
+
+.qr-pay-login-phone__btn--secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+}
+
+.qr-pay-login-phone__btn:disabled,
+.qr-pay-login-phone__btn--busy {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.qr-pay-login-phone__btn[hidden] {
+  display: none !important;
+}

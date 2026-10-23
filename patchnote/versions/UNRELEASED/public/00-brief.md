@@ -5,4 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
+- Sign in on a shared computer by scanning a QR code with Nimiq Pay or Nimiq Wallet on your phone - your wallet password stays on your phone.
