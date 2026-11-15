@@ -23,7 +23,7 @@ QR Pay login for desktop cafe / untrusted-PC sign-in via Nimiq Pay on phone.
 
 ### Client
 
-- Main Menu **Sign in with Nimiq Pay QR** (hidden inside Pay mini-app).
+- Main Menu **Sign in with QR** (hidden inside Pay mini-app; author `display` must not override `[hidden]`).
 - Desktop overlay: compact QR dialog (short subtitle + `(?)` help) with **Nimiq Pay | Nimiq Wallet** mode slider; Pay QR = unencoded `nimiqpay://miniapp?url={spa}`; Wallet QR = plain `/auth/qr/{ticket}` (Hub sign on phone; no Wallet custom-scheme for remote login); on localhost/dev, QR origin prefers server LAN `spaUrl` over `location.origin`; URL shown under code; poll claim with secret.
 - Phone landing `mountQrPayLoginPhonePage`: in Pay auto-sign; in browser primary Hub/Wallet sign + secondary Open-in-Pay; contained full-width buttons (never `@nimiq/style` `.nq-button`, which overflows the card); signed-in success state (eyebrow + check mark + status chip, actions removed) + `phoneDone*` copy.
 - i18n keys `qrPayLogin.*` in all locale catalogs.
@@ -34,6 +34,7 @@ QR Pay login for desktop cafe / untrusted-PC sign-in via Nimiq Pay on phone.
 - In-memory ticket store [server/src/qrPayLogin.ts](../../../server/src/qrPayLogin.ts) (5 min TTL, claim secret, one-shot JWT claim).
 - Routes [server/src/qrPayLoginRoutes.ts](../../../server/src/qrPayLoginRoutes.ts).
 - Shared session issuance [server/src/walletLoginSession.ts](../../../server/src/walletLoginSession.ts) used by `/api/auth/verify` and QR complete.
+- HTTP contract tests in [server/test/qrPayLoginRoutes.test.ts](../../../server/test/qrPayLoginRoutes.test.ts): claim secrecy, one-shot session, terms gate, real `Login:v1` signatures, and the Pay flag (empty `signer` plus `nimiqPayClient`).
 
 ### payment-intent-service
 

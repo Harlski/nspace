@@ -55,6 +55,7 @@ export function mountQrPayLoginPhonePage(
   ) as HTMLButtonElement;
   const signBtn = root.querySelector("#qr-pay-phone-sign") as HTMLButtonElement;
 
+  document.title = t("qrPayLogin.phoneDocumentTitle");
   titleEl.textContent = t("qrPayLogin.phoneTitle");
   openPayBtn.textContent = t("qrPayLogin.openInPay");
   signBtn.textContent = t("qrPayLogin.confirmSignWallet");

@@ -789,11 +789,7 @@ export function mountMainMenu(opts: MainMenuOptions): () => void {
         const code = e instanceof Error ? e.message : "login_failed";
         if (code !== "qr_login_cancelled") {
           showErr(
-            code === "qr_login_expired"
-              ? t("qrPayLogin.expired")
-              : e instanceof Error
-                ? e.message
-                : t("qrPayLogin.signFailed")
+            code === "qr_login_expired" ? t("qrPayLogin.expired") : t("qrPayLogin.signFailed")
           );
         }
         setBusy(false);

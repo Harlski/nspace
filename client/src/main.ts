@@ -8302,7 +8302,6 @@ function bootstrapAuthQrLogin(): void {
     openMainMenu();
     return;
   }
-  document.title = "Sign in - Nimiq Space";
   mountQrPayLoginPhonePage(app, ticketId);
 }
 

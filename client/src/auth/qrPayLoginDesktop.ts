@@ -220,7 +220,10 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
           needsTutorial: result.tutorial?.needsTutorial,
         });
       } catch (e) {
-        showErr(e instanceof Error ? e.message : t("common.error"));
+        const code = e instanceof Error ? e.message : "";
+        showErr(
+          code === "qr_login_expired" ? t("qrPayLogin.expired") : t("qrPayLogin.signFailed")
+        );
         schedulePoll();
       }
     };
@@ -329,16 +332,6 @@ export function unwrapPlainSpaUrl(raw: string): string {
   } catch {
     return value;
   }
-}
-
-/** @deprecated Use {@link buildQrSpaUrlPayload} or {@link buildQrLoginPayload}. */
-export function buildUnencodedPayQrPayload(created: {
-  ticketId?: string;
-  origin?: string;
-  spaUrl?: string;
-  payDeepLink?: string;
-}): string {
-  return buildQrLoginPayload("pay", created);
 }
 
 async function renderQr(host: HTMLElement, url: string): Promise<void> {

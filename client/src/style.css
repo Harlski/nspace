@@ -15443,6 +15443,11 @@ a.main-menu__version:focus-visible {
   letter-spacing: normal;
 }
 
+/* Author `display: block` above beats the UA `[hidden]` rule. */
+.main-menu .main-menu__qr-pay-login[hidden] {
+  display: none;
+}
+
 /* Primary / dev login - match social pill size (not full Nimiq demo height). */
 .main-menu__actions .nq-button.main-menu__nq-btn.main-menu__nq-btn--pill {
   width: auto;

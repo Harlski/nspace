@@ -17,6 +17,7 @@
   "qrPayLogin.cancelled": "Sign-in cancelled.",
   "qrPayLogin.signFailed": "Could not complete sign-in. Try again.",
   "qrPayLogin.phoneTitle": "Sign in on this device",
+  "qrPayLogin.phoneDocumentTitle": "Sign in - Nimiq Space",
   "qrPayLogin.phoneHintInPay": "Confirm in Nimiq Pay to sign in on the other computer.",
   "qrPayLogin.phoneHintOpenPay": "Open this page in Nimiq Pay to sign in safely on your phone.",
   "qrPayLogin.phoneHintWallet": "Confirm with Nimiq Wallet to sign in on the other computer. Or open this page in Nimiq Pay instead.",
