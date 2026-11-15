@@ -24,7 +24,7 @@ QR Pay login for desktop cafe / untrusted-PC sign-in via Nimiq Pay on phone.
 ### Client
 
 - Main Menu **Sign in with QR** (hidden inside Pay mini-app; author `display` must not override `[hidden]`).
-- Desktop overlay: compact QR dialog (short subtitle + `(?)` help) with **Nimiq Pay | Nimiq Wallet** mode slider; Pay QR = unencoded `nimiqpay://miniapp?url={spa}`; Wallet QR = plain `/auth/qr/{ticket}` (Hub sign on phone; no Wallet custom-scheme for remote login); on localhost/dev, QR origin prefers server LAN `spaUrl` over `location.origin`; URL shown under code; poll claim with secret.
+- Desktop overlay: compact QR dialog (short subtitle + `(?)` help) with **Nimiq Pay | Nimiq Wallet** mode slider; Pay QR = unencoded `nimiqpay://miniapp?url={spa}`; Wallet QR = plain `/auth/qr/{ticket}` (Hub sign on phone; no Wallet custom-scheme for remote login); on localhost/dev, QR origin prefers server LAN `spaUrl` over `location.origin`; the line under the code is that plain spa URL plus a copy icon (phone browser paste when Pay blocks a `:5173` URL); poll claim with secret.
 - Phone landing `mountQrPayLoginPhonePage`: in Pay auto-sign; in browser primary Hub/Wallet sign + secondary Open-in-Pay; contained full-width buttons (never `@nimiq/style` `.nq-button`, which overflows the card); signed-in success state (eyebrow + check mark + status chip, actions removed) + `phoneDone*` copy.
 - i18n keys `qrPayLogin.*` in all locale catalogs.
 - Vercel rewrites in root + `client/vercel.json`.

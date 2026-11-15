@@ -20280,15 +20280,60 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   color: #111;
 }
 
+.qr-pay-login-dialog__url-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  max-width: 18rem;
+  min-width: 0;
+}
+
 .qr-pay-login-dialog__url {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
-  max-width: 100%;
   padding: 0 0.15rem;
   font-size: 0.62rem;
   line-height: 1.35;
   word-break: break-all;
   color: rgba(238, 243, 247, 0.55);
   user-select: all;
+}
+
+.qr-pay-login-dialog__copy {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin: 0;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e0f2fe;
+  cursor: pointer;
+}
+
+.qr-pay-login-dialog__copy:hover,
+.qr-pay-login-dialog__copy--done {
+  border-color: rgba(125, 211, 252, 0.55);
+  background: rgba(125, 211, 252, 0.16);
+  color: #e0f2fe;
+}
+
+.qr-pay-login-dialog__copy--done {
+  border-color: rgba(134, 239, 172, 0.5);
+  color: #86efac;
+}
+
+.qr-pay-login-dialog__copy-icon,
+.qr-pay-login-dialog__copy-check {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 
 .qr-pay-login-dialog__status {

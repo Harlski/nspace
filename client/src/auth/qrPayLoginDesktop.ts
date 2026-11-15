@@ -1,4 +1,6 @@
 import { t } from "@nspace/i18n";
+import { nimiqIconUseMarkup } from "../ui/nimiqIcons.js";
+import { bindCopyToClipboardControl } from "../util/copyText.js";
 import type { UsernamePromptStatus } from "./nimiq.js";
 import {
   createQrPayLoginTicket,
@@ -19,6 +21,12 @@ export type QrLoginClientMode = "pay" | "wallet";
 
 const POLL_MS = 1500;
 
+const COPY_ICON = nimiqIconUseMarkup("nq-copy", {
+  width: 16,
+  height: 16,
+  class: "qr-pay-login-dialog__copy-icon",
+});
+
 /**
  * Desktop Main Menu: QR login with Pay vs Wallet mode, poll until phone fulfills.
  * Pay QR uses an unencoded `nimiqpay://miniapp?url=…` deeplink. Wallet QR is the
@@ -32,6 +40,7 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
     let cancelled = false;
     let helpOpen = false;
     let mode: QrLoginClientMode = "pay";
+    let copyReset: number | null = null;
 
     const overlay = document.createElement("div");
     overlay.className = "qr-pay-login-overlay";
@@ -49,7 +58,10 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
         <div class="qr-pay-login-dialog__help" id="qr-pay-login-help" hidden></div>
         <div class="qr-pay-login-dialog__mode" id="qr-pay-login-mode" role="tablist" aria-label=""></div>
         <div class="qr-pay-login-dialog__qr" id="qr-pay-login-qr" aria-hidden="true"></div>
-        <p class="qr-pay-login-dialog__url" id="qr-pay-login-url"></p>
+        <div class="qr-pay-login-dialog__url-row">
+          <p class="qr-pay-login-dialog__url" id="qr-pay-login-url"></p>
+          <button type="button" class="qr-pay-login-dialog__copy" id="qr-pay-login-copy"></button>
+        </div>
         <p class="qr-pay-login-dialog__status" id="qr-pay-login-status"></p>
         <p class="qr-pay-login-dialog__err" id="qr-pay-login-err" hidden></p>
         <button type="button" class="qr-pay-login-dialog__cancel" id="qr-pay-login-cancel"></button>
@@ -66,6 +78,7 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
     const helpEl = overlay.querySelector("#qr-pay-login-help") as HTMLElement;
     const modeEl = overlay.querySelector("#qr-pay-login-mode") as HTMLElement;
     const urlEl = overlay.querySelector("#qr-pay-login-url") as HTMLElement;
+    const copyBtn = overlay.querySelector("#qr-pay-login-copy") as HTMLButtonElement;
     const statusEl = overlay.querySelector("#qr-pay-login-status") as HTMLElement;
     const errEl = overlay.querySelector("#qr-pay-login-err") as HTMLElement;
     const qrHost = overlay.querySelector("#qr-pay-login-qr") as HTMLElement;
@@ -111,7 +124,7 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
         mode === "pay"
           ? t("qrPayLogin.desktopHelpPay")
           : t("qrPayLogin.desktopHelpWallet");
-      urlEl.textContent = qrText;
+      urlEl.textContent = buildQrSpaUrlPayload(spaBase);
       void renderQr(qrHost, qrText);
     };
 
@@ -121,6 +134,26 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
     helpBtn.title = t("qrPayLogin.helpAria");
     statusEl.textContent = t("qrPayLogin.waiting");
     cancelBtn.textContent = t("common.cancel");
+    copyBtn.innerHTML = COPY_ICON;
+    copyBtn.setAttribute("aria-label", t("qrPayLogin.copyUrlAria"));
+    copyBtn.title = t("qrPayLogin.copyUrlAria");
+    bindCopyToClipboardControl(copyBtn, () => buildQrSpaUrlPayload(spaBase), {
+      onCopied: () => {
+        copyBtn.classList.add("qr-pay-login-dialog__copy--done");
+        copyBtn.setAttribute("aria-label", t("qrPayLogin.copied"));
+        copyBtn.title = t("qrPayLogin.copied");
+        if (copyReset != null) window.clearTimeout(copyReset);
+        copyReset = window.setTimeout(() => {
+          copyReset = null;
+          if (!copyBtn.isConnected) return;
+          copyBtn.classList.remove("qr-pay-login-dialog__copy--done");
+          copyBtn.innerHTML = COPY_ICON;
+          copyBtn.setAttribute("aria-label", t("qrPayLogin.copyUrlAria"));
+          copyBtn.title = t("qrPayLogin.copyUrlAria");
+        }, 1600);
+        copyBtn.innerHTML = `<span class="qr-pay-login-dialog__copy-check" aria-hidden="true">✓</span>`;
+      },
+    });
     applyModeUi();
 
     document.body.appendChild(overlay);
@@ -149,6 +182,7 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
     const cleanup = (): void => {
       cancelled = true;
       if (pollTimer != null) window.clearTimeout(pollTimer);
+      if (copyReset != null) window.clearTimeout(copyReset);
       overlay.remove();
       document.removeEventListener("keydown", onKeyDown, true);
     };
