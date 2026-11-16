@@ -20541,7 +20541,67 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 .qr-pay-login-phone__card--done .qr-pay-login-phone__title {
   color: #ecfdf5;
   font-size: 1.45rem;
-  margin-bottom: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.qr-pay-login-phone__account {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 auto 0.9rem;
+  padding: 0.85rem 0.7rem 0.8rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(110, 231, 183, 0.28);
+}
+
+.qr-pay-login-phone__account[hidden] {
+  display: none !important;
+}
+
+.qr-pay-login-phone__ident {
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  object-fit: cover;
+}
+
+.qr-pay-login-phone__ident[hidden] {
+  display: none !important;
+}
+
+.qr-pay-login-phone__account-label {
+  margin: 0.15rem 0 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(187, 247, 208, 0.85);
+}
+
+.qr-pay-login-phone__address {
+  margin: 0;
+  max-width: 16.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: 0.03em;
+  color: #f8fafc;
+  word-break: break-word;
+}
+
+.qr-pay-login-phone__method {
+  margin: 0.15rem 0 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(186, 230, 253, 0.95);
 }
 
 .qr-pay-login-phone__hint,

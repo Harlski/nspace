@@ -74,7 +74,7 @@ export function registerQrPayLoginRoutes(app: Express, deps: QrPayLoginRouteDeps
       res.status(410).json({ error: "expired" });
       return;
     }
-    if (ticket.status === "fulfilled") {
+    if (ticket.status !== "pending") {
       res.status(409).json({ error: "already_fulfilled" });
       return;
     }

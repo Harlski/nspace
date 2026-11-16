@@ -305,6 +305,22 @@ test("a signed Login:v1 fulfills once, and only the claim secret receives the se
       `${srv.base}/api/auth/qr-login/${created.ticketId}?claimSecret=${created.claimSecret}`
     );
     assert.equal(second.status, 410);
+
+    const phoneAfterClaim = await fetch(
+      `${srv.base}/api/auth/qr-login/${created.ticketId}/challenge`
+    );
+    const phoneBody = (await phoneAfterClaim.json()) as Challenge & {
+      address?: string;
+      token?: string;
+      nimiqPay?: boolean;
+    };
+    assert.equal(phoneBody.status, "fulfilled");
+    assert.equal(phoneBody.address, signed.address);
+    assert.equal(phoneBody.nimiqPay, false);
+    assert.equal(phoneBody.token, undefined);
+    assert.equal(phoneBody.nonce, undefined);
+    assert.equal(JSON.stringify(phoneBody).includes(created.claimSecret), false);
+    assert.equal(JSON.stringify(phoneBody).includes(session.token), false);
   } finally {
     await srv.close();
   }

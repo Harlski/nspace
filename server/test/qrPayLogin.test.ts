@@ -51,7 +51,12 @@ test("poll requires claim secret; fulfill is one-shot for desktop", () => {
     usernamePrompt: { needsPrompt: false },
   };
   assert.deepEqual(fulfillQrPayLoginTicket(created.ticketId, session), { ok: true });
-  assert.equal(getQrPayLoginChallenge(created.ticketId).status, "fulfilled");
+  const fulfilledChallenge = getQrPayLoginChallenge(created.ticketId);
+  assert.equal(fulfilledChallenge.status, "fulfilled");
+  assert.equal(fulfilledChallenge.address, "NQTEST");
+  assert.equal(fulfilledChallenge.nimiqPay, true);
+  assert.equal(fulfilledChallenge.nonce, undefined);
+  assert.equal(JSON.stringify(fulfilledChallenge).includes("jwt-test"), false);
 
   const first = pollQrPayLoginTicket(created.ticketId, created.claimSecret);
   assert.equal(first.status, "fulfilled");
@@ -62,6 +67,12 @@ test("poll requires claim secret; fulfill is one-shot for desktop", () => {
 
   const second = pollQrPayLoginTicket(created.ticketId, created.claimSecret);
   assert.equal(second.status, "expired");
+  const receipt = getQrPayLoginChallenge(created.ticketId);
+  assert.equal(receipt.status, "fulfilled");
+  assert.equal(receipt.address, "NQTEST");
+  assert.equal(receipt.nimiqPay, true);
+  assert.equal(JSON.stringify(receipt).includes(created.claimSecret), false);
+  assert.equal(JSON.stringify(receipt).includes("jwt-test"), false);
 });
 
 test("unknown ticket is expired", () => {

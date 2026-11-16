@@ -12,7 +12,13 @@ export type QrPayLoginCreated = {
 
 export type QrPayLoginChallenge =
   | { status: "pending"; nonce: string; message: string; expiresAt: number }
-  | { status: "fulfilled"; expiresAt?: number }
+  | {
+      status: "fulfilled";
+      expiresAt?: number;
+      /** Authorizing wallet. Present after complete, including after the desktop claims the JWT. */
+      address?: string;
+      nimiqPay?: boolean;
+    }
   | { status: "expired" };
 
 export type QrPayLoginPollResult =

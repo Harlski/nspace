@@ -39,7 +39,23 @@ export type QrPayLoginTicketFulfilled = {
   session: QrPayLoginSessionResult;
 };
 
-export type QrPayLoginTicket = QrPayLoginTicketPending | QrPayLoginTicketFulfilled;
+/**
+ * JWT already handed to the desktop. The phone can still read which account authorized
+ * the sign-in until TTL. No claim secret and no token.
+ */
+export type QrPayLoginAuthorizationReceipt = {
+  status: "authorized";
+  ticketId: string;
+  createdAt: number;
+  expiresAt: number;
+  address: string;
+  nimiqPay: boolean;
+};
+
+export type QrPayLoginTicket =
+  | QrPayLoginTicketPending
+  | QrPayLoginTicketFulfilled
+  | QrPayLoginAuthorizationReceipt;
 
 const tickets = new Map<string, QrPayLoginTicket>();
 
@@ -108,6 +124,9 @@ export function getQrPayLoginChallenge(ticketId: string): {
   nonce?: string;
   message?: string;
   expiresAt?: number;
+  /** Set once the phone has authorized. Safe to show on the phone; not a session. */
+  address?: string;
+  nimiqPay?: boolean;
 } {
   const t = getQrPayLoginTicket(ticketId);
   if (!t) return { status: "expired" };
@@ -116,7 +135,20 @@ export function getQrPayLoginChallenge(ticketId: string): {
     return { status: "expired" };
   }
   if (t.status === "fulfilled") {
-    return { status: "fulfilled", expiresAt: t.expiresAt };
+    return {
+      status: "fulfilled",
+      expiresAt: t.expiresAt,
+      address: t.session.address,
+      nimiqPay: t.session.nimiqPay,
+    };
+  }
+  if (t.status === "authorized") {
+    return {
+      status: "fulfilled",
+      expiresAt: t.expiresAt,
+      address: t.address,
+      nimiqPay: t.nimiqPay,
+    };
   }
   return {
     status: "pending",
@@ -136,7 +168,7 @@ export function fulfillQrPayLoginTicket(
     tickets.delete(t.ticketId);
     return { ok: false, error: "expired" };
   }
-  if (t.status === "fulfilled") return { ok: false, error: "already_fulfilled" };
+  if (t.status !== "pending") return { ok: false, error: "already_fulfilled" };
   tickets.set(t.ticketId, {
     status: "fulfilled",
     ticketId: t.ticketId,
@@ -150,8 +182,9 @@ export function fulfillQrPayLoginTicket(
 }
 
 /**
- * Desktop poll/claim. With a valid claim secret, a fulfilled ticket returns the session once
- * and is deleted (one-shot). Wrong secret never reveals the JWT.
+ * Desktop poll/claim. With a valid claim secret, a fulfilled ticket returns the session once.
+ * The JWT is dropped; an address receipt remains until TTL so the phone can show which
+ * account authorized. Wrong secret never reveals the JWT.
  */
 export function pollQrPayLoginTicket(
   ticketId: string,
@@ -163,6 +196,7 @@ export function pollQrPayLoginTicket(
   | { status: "forbidden" } {
   const t = getQrPayLoginTicket(ticketId);
   if (!t) return { status: "expired" };
+  if (t.status === "authorized") return { status: "expired" };
   if (!timingSafeEqualHex(t.claimSecret, String(claimSecret || ""))) {
     return { status: "forbidden" };
   }
@@ -173,10 +207,19 @@ export function pollQrPayLoginTicket(
   if (t.status === "pending") {
     return { status: "pending", expiresAt: t.expiresAt };
   }
-  tickets.delete(t.ticketId);
+  tickets.set(t.ticketId, {
+    status: "authorized",
+    ticketId: t.ticketId,
+    createdAt: t.createdAt,
+    expiresAt: t.expiresAt,
+    address: t.session.address,
+    nimiqPay: t.session.nimiqPay,
+  });
   return { status: "fulfilled", session: t.session };
 }
 
-export function expectedLoginMessageForTicket(ticket: QrPayLoginTicket): string {
+export function expectedLoginMessageForTicket(
+  ticket: QrPayLoginTicketPending | QrPayLoginTicketFulfilled
+): string {
   return `Login:v1:${ticket.nonce}`;
 }

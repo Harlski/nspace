@@ -25,13 +25,13 @@ QR Pay login for desktop cafe / untrusted-PC sign-in via Nimiq Pay on phone.
 
 - Main Menu **Sign in with QR** (hidden inside Pay mini-app; author `display` must not override `[hidden]`).
 - Desktop overlay: compact QR dialog (short subtitle + `(?)` help) with **Nimiq Pay | Nimiq Wallet** mode slider; Pay QR = unencoded `nimiqpay://miniapp?url={spa}`; Wallet QR = plain `/auth/qr/{ticket}` (Hub sign on phone; no Wallet custom-scheme for remote login); on localhost/dev, QR origin prefers server LAN `spaUrl` over `location.origin`; the line under the code is that plain spa URL plus a copy icon (phone browser paste when Pay blocks a `:5173` URL); poll claim with secret.
-- Phone landing `mountQrPayLoginPhonePage`: in Pay auto-sign; in browser primary Hub/Wallet sign + secondary Open-in-Pay; contained full-width buttons (never `@nimiq/style` `.nq-button`, which overflows the card); signed-in success state (eyebrow + check mark + status chip, actions removed) + `phoneDone*` copy.
+- Phone landing `mountQrPayLoginPhonePage`: in Pay auto-sign; in browser primary Hub/Wallet sign + secondary Open-in-Pay; contained full-width buttons (never `@nimiq/style` `.nq-button`, which overflows the card). After sign-in the phone shows the authorizing account (identicon, spaced address, Pay or Wallet) and keeps that screen across a reload via `sessionStorage` plus the public challenge receipt (`qrPayLoginPhoneState.ts`). Sign-in form is shown only while the ticket is still pending.
 - i18n keys `qrPayLogin.*` in all locale catalogs.
 - Vercel rewrites in root + `client/vercel.json`.
 
 ### Server
 
-- In-memory ticket store [server/src/qrPayLogin.ts](../../../server/src/qrPayLogin.ts) (5 min TTL, claim secret, one-shot JWT claim).
+- In-memory ticket store [server/src/qrPayLogin.ts](../../../server/src/qrPayLogin.ts) (5 min TTL, claim secret, one-shot JWT claim). After the desktop takes the JWT, the ticket becomes an address receipt (no secret, no token) so `GET …/challenge` can still name the account until TTL.
 - Routes [server/src/qrPayLoginRoutes.ts](../../../server/src/qrPayLoginRoutes.ts).
 - Shared session issuance [server/src/walletLoginSession.ts](../../../server/src/walletLoginSession.ts) used by `/api/auth/verify` and QR complete.
 - HTTP contract tests in [server/test/qrPayLoginRoutes.test.ts](../../../server/test/qrPayLoginRoutes.test.ts): claim secrecy, one-shot session, terms gate, real `Login:v1` signatures, and the Pay flag (empty `signer` plus `nimiqPayClient`).
