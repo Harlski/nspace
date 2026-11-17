@@ -20403,6 +20403,10 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   background: var(--menu-bg);
   color: var(--menu-text);
   font-family: "Mulish", "Muli", system-ui, sans-serif;
+  font-weight: 600;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   overflow-x: hidden;
 }
 
@@ -20445,7 +20449,10 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 
 .qr-pay-login-phone__brand-title {
   margin: 0;
-  font-size: clamp(1.55rem, 7vw, 2rem);
+  font-size: clamp(1.65rem, 6.5vw, 2.65rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.02;
 }
 
 .qr-pay-login-phone .main-menu__title-nimiq {
@@ -20704,7 +20711,7 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 .qr-pay-login-phone__address {
   margin: 0;
   max-width: 16.5rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: "Fira Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.78rem;
   font-weight: 600;
   line-height: 1.55;
@@ -20857,7 +20864,7 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   border-radius: 999px !important;
   border: 1px solid transparent;
   box-shadow: none !important;
-  font-family: inherit !important;
+  font-family: "Mulish", "Muli", system-ui, sans-serif !important;
   font-size: 0.82rem !important;
   font-weight: 700;
   letter-spacing: 0.03em;
