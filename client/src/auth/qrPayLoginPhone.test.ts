@@ -130,6 +130,8 @@ describe("mountQrPayLoginPhonePage", () => {
     expect((app.querySelector("#qr-pay-phone-sign") as HTMLButtonElement).hidden).toBe(
       false
     );
+    expect(app.querySelector(".main-menu__title-nimiq")?.textContent).toBe("NIMIQ");
+    expect(app.querySelector(".main-menu__title-space")?.textContent).toBe("SPACE");
     cleanup();
   });
 

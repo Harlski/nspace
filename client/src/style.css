@@ -20382,6 +20382,16 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 
 .qr-pay-login-phone {
   --qr-phone-pad-x: 1.35rem;
+  --menu-bg: #0f1419;
+  --menu-bg-mid: #121a26;
+  --menu-surface: #131b27;
+  --menu-border-soft: #2a394f;
+  --menu-text: #e6edf3;
+  --menu-orange: #fc8702;
+  --menu-tint-orange: rgba(252, 135, 2, 0.1);
+  --menu-tint-blue: rgba(43, 94, 167, 0.08);
+  position: relative;
+  isolation: isolate;
   min-height: 100%;
   min-height: 100dvh;
   display: flex;
@@ -20390,29 +20400,89 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
     max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
   box-sizing: border-box;
-  background:
-    radial-gradient(ellipse at 28% 18%, rgba(56, 189, 248, 0.16), transparent 52%),
-    radial-gradient(ellipse at 78% 88%, rgba(52, 211, 153, 0.14), transparent 48%),
-    #0b1018;
-  color: #eef3f7;
-  font-family: "Mulish", system-ui, sans-serif;
+  background: var(--menu-bg);
+  color: var(--menu-text);
+  font-family: "Mulish", "Muli", system-ui, sans-serif;
   overflow-x: hidden;
 }
 
-.qr-pay-login-phone--done,
-.qr-pay-login-phone--confirm {
-  background: #0b1018;
+.qr-pay-login-phone__backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 120% 85% at 50% -8%, rgba(252, 135, 2, 0.16), transparent 52%),
+    radial-gradient(ellipse 90% 55% at 50% 108%, rgba(43, 94, 167, 0.14), transparent 45%),
+    linear-gradient(180deg, var(--menu-bg-mid) 0%, var(--menu-bg) 42%, #0a0e14 100%);
+}
+
+.qr-pay-login-phone__backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.22;
+  background-image:
+    linear-gradient(rgba(159, 176, 199, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(159, 176, 199, 0.07) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 65% at 50% 45%, transparent 0%, black 88%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 65% at 50% 45%, transparent 0%, black 88%);
+}
+
+.qr-pay-login-phone__content {
+  position: relative;
+  z-index: 1;
+  width: min(20.5rem, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.qr-pay-login-phone__brand {
+  margin: 0 0 0.9rem;
+}
+
+.qr-pay-login-phone__brand-title {
+  margin: 0;
+  font-size: clamp(1.55rem, 7vw, 2rem);
+}
+
+.qr-pay-login-phone .main-menu__title-nimiq {
+  color: #f0f4f8;
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.45),
+    0 0 24px rgba(255, 255, 255, 0.08);
+}
+
+.qr-pay-login-phone .main-menu__title-space {
+  color: #fc8702;
+  text-shadow:
+    0 0 20px rgba(252, 135, 2, 0.35),
+    0 1px 0 rgba(0, 0, 0, 0.4);
 }
 
 .qr-pay-login-phone__card {
+  position: relative;
   box-sizing: border-box;
-  width: min(20.5rem, 100%);
+  width: 100%;
   max-width: 100%;
   min-width: 0;
   padding: 1.85rem var(--qr-phone-pad-x) 1.65rem;
-  border-radius: 18px;
-  background: rgba(18, 24, 32, 0.97);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  border: 1px solid var(--menu-border-soft);
+  background:
+    linear-gradient(
+      145deg,
+      var(--menu-tint-orange) 0%,
+      var(--menu-tint-blue) 38%,
+      rgba(18, 25, 38, 0.97) 72%
+    ),
+    var(--menu-surface);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 28px 72px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
   text-align: center;
   overflow: hidden;
   transition:
@@ -20420,6 +20490,26 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
     box-shadow 0.4s ease,
     background 0.4s ease,
     transform 0.4s ease;
+}
+
+.qr-pay-login-phone__card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  border-radius: 20px 20px 0 0;
+  background: linear-gradient(
+    90deg,
+    rgba(43, 94, 167, 0.95) 0%,
+    rgba(121, 184, 255, 0.35) 22%,
+    rgba(200, 214, 232, 0.2) 38%,
+    rgba(252, 135, 2, 0.55) 68%,
+    var(--menu-orange) 88%,
+    #ff9a3c 100%
+  );
+  pointer-events: none;
 }
 
 .qr-pay-login-phone__card--paper {
@@ -20430,9 +20520,13 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   border-radius: 22px;
   background: #f6f1ea;
   color: #1c1915;
-  box-shadow: none;
+  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.45);
   padding: 1.6rem 1.25rem 1.35rem;
   animation: qr-pay-phone-card-done 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.qr-pay-login-phone__card--paper::before {
+  content: none;
 }
 
 .qr-pay-login-phone__eyebrow {

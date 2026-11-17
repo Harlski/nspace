@@ -34,6 +34,14 @@ export function mountQrPayLoginPhonePage(
   const root = document.createElement("div");
   root.className = "qr-pay-login-phone";
   root.innerHTML = `
+    <div class="qr-pay-login-phone__backdrop" aria-hidden="true"></div>
+    <div class="qr-pay-login-phone__content">
+    <header class="qr-pay-login-phone__brand">
+      <p class="main-menu__title qr-pay-login-phone__brand-title">
+        <span class="main-menu__title-nimiq">NIMIQ</span>
+        <span class="main-menu__title-space">SPACE</span>
+      </p>
+    </header>
     <div class="qr-pay-login-phone__card" id="qr-pay-phone-card">
       <p class="qr-pay-login-phone__eyebrow" id="qr-pay-phone-eyebrow" hidden></p>
       <div class="qr-pay-login-phone__mark" id="qr-pay-phone-mark" hidden aria-hidden="true">
@@ -57,6 +65,7 @@ export function mountQrPayLoginPhonePage(
         <button type="button" class="qr-pay-login-phone__btn qr-pay-login-phone__btn--secondary" id="qr-pay-phone-cancel" hidden></button>
         <button type="button" class="qr-pay-login-phone__btn qr-pay-login-phone__btn--secondary" id="qr-pay-phone-open-pay" hidden></button>
       </div>
+    </div>
     </div>
   `;
   app.appendChild(root);
