@@ -57,6 +57,10 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
         <p class="qr-pay-login-dialog__subtitle" id="qr-pay-login-subtitle"></p>
         <div class="qr-pay-login-dialog__help" id="qr-pay-login-help" hidden></div>
         <div class="qr-pay-login-dialog__mode" id="qr-pay-login-mode" role="tablist" aria-label=""></div>
+        <p class="qr-pay-login-dialog__place" id="qr-pay-login-place" hidden>
+          <span class="qr-pay-login-dialog__place-label" id="qr-pay-login-place-label"></span>
+          <span class="qr-pay-login-dialog__place-code" id="qr-pay-login-place-code"></span>
+        </p>
         <div class="qr-pay-login-dialog__qr" id="qr-pay-login-qr" aria-hidden="true"></div>
         <div class="qr-pay-login-dialog__url-row">
           <p class="qr-pay-login-dialog__url" id="qr-pay-login-url"></p>
@@ -129,6 +133,15 @@ export async function runQrPayLoginDesktop(): Promise<QrPayLoginDesktopResult> {
     };
 
     titleEl.textContent = t("qrPayLogin.title");
+    const placeEl = overlay.querySelector("#qr-pay-login-place") as HTMLElement;
+    const placeCode = created.placeCode?.trim() || "";
+    if (placeCode) {
+      placeEl.hidden = false;
+      (overlay.querySelector("#qr-pay-login-place-label") as HTMLElement).textContent =
+        t("qrPayLogin.desktopPlace");
+      (overlay.querySelector("#qr-pay-login-place-code") as HTMLElement).textContent =
+        placeCode;
+    }
     helpBtn.textContent = "?";
     helpBtn.setAttribute("aria-label", t("qrPayLogin.helpAria"));
     helpBtn.title = t("qrPayLogin.helpAria");

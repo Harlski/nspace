@@ -12,10 +12,24 @@ export function buildQrPayLoginDeepLink(spaUrl: string): string {
   return `nimiqpay://miniapp?url=${spaUrl.trim()}`;
 }
 
+/** Crockford-style alphabet: no 0/O or 1/I, so the two screens are easy to compare. */
+const PLACE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function randomPlaceCode(): string {
+  const bytes = crypto.randomBytes(4);
+  let code = "";
+  for (let i = 0; i < 4; i++) {
+    code += PLACE_CODE_ALPHABET[bytes[i]! % PLACE_CODE_ALPHABET.length];
+  }
+  return code;
+}
+
 export type QrPayLoginTicketPending = {
   status: "pending";
   ticketId: string;
   claimSecret: string;
+  /** Short code shown on both screens so the phone can name this computer. */
+  placeCode: string;
   nonce: string;
   createdAt: number;
   expiresAt: number;
@@ -33,6 +47,7 @@ export type QrPayLoginTicketFulfilled = {
   status: "fulfilled";
   ticketId: string;
   claimSecret: string;
+  placeCode: string;
   nonce: string;
   createdAt: number;
   expiresAt: number;
@@ -46,6 +61,7 @@ export type QrPayLoginTicketFulfilled = {
 export type QrPayLoginAuthorizationReceipt = {
   status: "authorized";
   ticketId: string;
+  placeCode: string;
   createdAt: number;
   expiresAt: number;
   address: string;
@@ -83,6 +99,7 @@ export function resetQrPayLoginTicketsForTests(): void {
 export function createQrPayLoginTicket(publicBaseUrl: string): {
   ticketId: string;
   claimSecret: string;
+  placeCode: string;
   expiresAt: number;
   spaUrl: string;
   payDeepLink: string;
@@ -90,12 +107,14 @@ export function createQrPayLoginTicket(publicBaseUrl: string): {
   pruneTickets();
   const ticketId = crypto.randomBytes(16).toString("hex");
   const claimSecret = crypto.randomBytes(32).toString("hex");
+  const placeCode = randomPlaceCode();
   const nonce = crypto.randomBytes(32).toString("hex");
   const expiresAt = Date.now() + QR_PAY_LOGIN_TTL_MS;
   const ticket: QrPayLoginTicketPending = {
     status: "pending",
     ticketId,
     claimSecret,
+    placeCode,
     nonce,
     createdAt: Date.now(),
     expiresAt,
@@ -105,6 +124,7 @@ export function createQrPayLoginTicket(publicBaseUrl: string): {
   return {
     ticketId,
     claimSecret,
+    placeCode,
     expiresAt,
     spaUrl,
     payDeepLink: buildQrPayLoginDeepLink(spaUrl),
@@ -127,6 +147,8 @@ export function getQrPayLoginChallenge(ticketId: string): {
   /** Set once the phone has authorized. Safe to show on the phone; not a session. */
   address?: string;
   nimiqPay?: boolean;
+  /** Same code the desktop shows, so the phone can name that screen. */
+  placeCode?: string;
 } {
   const t = getQrPayLoginTicket(ticketId);
   if (!t) return { status: "expired" };
@@ -140,6 +162,7 @@ export function getQrPayLoginChallenge(ticketId: string): {
       expiresAt: t.expiresAt,
       address: t.session.address,
       nimiqPay: t.session.nimiqPay,
+      placeCode: t.placeCode,
     };
   }
   if (t.status === "authorized") {
@@ -148,6 +171,7 @@ export function getQrPayLoginChallenge(ticketId: string): {
       expiresAt: t.expiresAt,
       address: t.address,
       nimiqPay: t.nimiqPay,
+      placeCode: t.placeCode,
     };
   }
   return {
@@ -155,6 +179,7 @@ export function getQrPayLoginChallenge(ticketId: string): {
     nonce: t.nonce,
     message: `Login:v1:${t.nonce}`,
     expiresAt: t.expiresAt,
+    placeCode: t.placeCode,
   };
 }
 
@@ -173,6 +198,7 @@ export function fulfillQrPayLoginTicket(
     status: "fulfilled",
     ticketId: t.ticketId,
     claimSecret: t.claimSecret,
+    placeCode: t.placeCode,
     nonce: t.nonce,
     createdAt: t.createdAt,
     expiresAt: t.expiresAt,
@@ -210,6 +236,7 @@ export function pollQrPayLoginTicket(
   tickets.set(t.ticketId, {
     status: "authorized",
     ticketId: t.ticketId,
+    placeCode: t.placeCode,
     createdAt: t.createdAt,
     expiresAt: t.expiresAt,
     address: t.session.address,

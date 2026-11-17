@@ -154,6 +154,7 @@ describe("mountQrPayLoginPhonePage", () => {
         nonce: "abc",
         message: "Login:v1:abc",
         expiresAt: Date.now() + 60_000,
+        placeCode: "T3XR",
       });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -170,11 +171,16 @@ describe("mountQrPayLoginPhonePage", () => {
 
     (app.querySelector("#qr-pay-phone-sign") as HTMLButtonElement).click();
     await vi.waitFor(() => {
-      expect(app.querySelector("#qr-pay-phone-title")?.textContent).toBe("Are you sure?");
+      expect(app.querySelector("#qr-pay-phone-title")?.textContent).toBe("Sign in on T3XR?");
     });
     expect(app.querySelector(".qr-pay-login-phone__card")?.classList.contains(
       "qr-pay-login-phone__card--paper"
     )).toBe(true);
+    expect((app.querySelector("#qr-pay-phone-hint") as HTMLElement).hidden).toBe(true);
+    expect((app.querySelector("#qr-pay-phone-method") as HTMLElement).hidden).toBe(true);
+    expect(app.querySelector("#qr-pay-phone-sign")?.classList.contains("nq-button")).toBe(true);
+    expect(app.querySelector("#qr-pay-phone-sign")?.classList.contains("light-blue")).toBe(true);
+    expect(app.querySelector("#qr-pay-phone-cancel")?.classList.contains("nq-button-s")).toBe(true);
     expect(app.querySelector("#qr-pay-phone-username")?.textContent).toBe("CafeGuest");
     expect(app.querySelector("#qr-pay-phone-address")?.textContent).toContain("NQ07");
     await vi.waitFor(() => {
@@ -197,7 +203,7 @@ describe("mountQrPayLoginPhonePage", () => {
 
     (app.querySelector("#qr-pay-phone-sign") as HTMLButtonElement).click();
     await vi.waitFor(() => {
-      expect(app.querySelector("#qr-pay-phone-title")?.textContent).toBe("Are you sure?");
+      expect(app.querySelector("#qr-pay-phone-title")?.textContent).toBe("Sign in on T3XR?");
     });
     (app.querySelector("#qr-pay-phone-sign") as HTMLButtonElement).click();
     await vi.waitFor(() => {
@@ -224,6 +230,7 @@ describe("mountQrPayLoginPhonePage", () => {
           nonce: "abc",
           message: "Login:v1:abc",
           expiresAt: Date.now() + 60_000,
+          placeCode: "T3XR",
         });
       })
     );
@@ -241,7 +248,8 @@ describe("mountQrPayLoginPhonePage", () => {
       expect(app.querySelector("#qr-pay-phone-address")?.textContent).toContain("NQ07");
     });
     expect((app.querySelector("#qr-pay-phone-username") as HTMLElement).hidden).toBe(true);
-    expect(app.querySelector("#qr-pay-phone-method")?.textContent).toBe("Nimiq Pay");
+    expect((app.querySelector("#qr-pay-phone-method") as HTMLElement).hidden).toBe(true);
+    expect(app.querySelector("#qr-pay-phone-title")?.textContent).toBe("Sign in on T3XR?");
     cleanup();
   });
 

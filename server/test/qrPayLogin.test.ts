@@ -14,6 +14,7 @@ test("createQrPayLoginTicket returns spa URL, deeplink, and claim secret", () =>
   const created = createQrPayLoginTicket("https://nimiq.space");
   assert.match(created.ticketId, /^[0-9a-f]{32}$/);
   assert.match(created.claimSecret, /^[0-9a-f]{64}$/);
+  assert.match(created.placeCode, /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/);
   assert.equal(created.spaUrl, `https://nimiq.space/auth/qr/${created.ticketId}`);
   assert.equal(created.payDeepLink, `nimiqpay://miniapp?url=${created.spaUrl}`);
   assert.ok(created.expiresAt > Date.now());
@@ -26,6 +27,7 @@ test("challenge exposes nonce while pending and never returns claim secret", () 
   assert.equal(challenge.status, "pending");
   assert.ok(challenge.nonce);
   assert.equal(challenge.message, `Login:v1:${challenge.nonce}`);
+  assert.equal(challenge.placeCode, created.placeCode);
   assert.equal(
     JSON.stringify(challenge).includes(created.claimSecret),
     false
@@ -71,6 +73,7 @@ test("poll requires claim secret; fulfill is one-shot for desktop", () => {
   assert.equal(receipt.status, "fulfilled");
   assert.equal(receipt.address, "NQTEST");
   assert.equal(receipt.nimiqPay, true);
+  assert.equal(receipt.placeCode, created.placeCode);
   assert.equal(JSON.stringify(receipt).includes(created.claimSecret), false);
   assert.equal(JSON.stringify(receipt).includes("jwt-test"), false);
 });

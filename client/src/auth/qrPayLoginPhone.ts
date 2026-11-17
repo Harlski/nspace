@@ -123,6 +123,7 @@ export function mountQrPayLoginPhonePage(
   let staged: (LoginSignPayload & { acceptedTermsPrivacyVersion?: string }) | null =
     null;
   let stagedReceipt: QrPhoneReceipt | null = null;
+  let placeCode = "";
   const inPay = isNimiqPayMiniApp();
 
   const storage = (): Storage => sessionStorage;
@@ -140,6 +141,7 @@ export function mountQrPayLoginPhonePage(
     const username = receipt.username?.trim() || "";
     usernameEl.hidden = !username;
     usernameEl.textContent = username;
+    methodEl.hidden = false;
     methodEl.textContent = receipt.nimiqPay
       ? t("qrPayLogin.phoneAccountPay")
       : t("qrPayLogin.phoneAccountWallet");
@@ -232,6 +234,8 @@ export function mountQrPayLoginPhonePage(
     eyebrowEl.hidden = true;
     markEl.hidden = true;
     actionsEl.hidden = false;
+    signBtn.className = "qr-pay-login-phone__btn qr-pay-login-phone__btn--primary";
+    cancelBtn.className = "qr-pay-login-phone__btn qr-pay-login-phone__btn--secondary";
     signBtn.hidden = false;
     cancelBtn.hidden = true;
     if (inPay) {
@@ -250,23 +254,36 @@ export function mountQrPayLoginPhonePage(
     }
   };
 
+  const rememberPlaceCode = (code: unknown): void => {
+    if (typeof code !== "string") return;
+    const next = code.trim().toUpperCase();
+    if (next) placeCode = next;
+  };
+
   /** White card after the wallet has signed, before the other computer receives the session. */
   const showConfirm = (receipt: QrPhoneReceipt): void => {
     if (disposed || phase === "authorized" || phase === "expired") return;
     phase = "confirm";
     root.classList.add("qr-pay-login-phone--confirm");
     usePaperCard();
-    document.title = t("qrPayLogin.confirmTitle");
-    titleEl.textContent = t("qrPayLogin.confirmTitle");
-    hintEl.hidden = false;
-    hintEl.textContent = t("qrPayLogin.confirmHint");
+    const title = placeCode
+      ? t("qrPayLogin.confirmTitleOn", { code: placeCode })
+      : t("qrPayLogin.confirmTitle");
+    document.title = title;
+    titleEl.textContent = title;
+    hintEl.hidden = true;
+    hintEl.textContent = "";
     showErr("");
     actionsEl.hidden = false;
     signBtn.hidden = false;
+    signBtn.className = "nq-button light-blue qr-pay-login-phone__nq";
     signBtn.textContent = t("qrPayLogin.confirmApprove");
     cancelBtn.hidden = false;
+    cancelBtn.className = "nq-button-s qr-pay-login-phone__nq";
+    cancelBtn.textContent = t("qrPayLogin.confirmCancel");
     openPayBtn.hidden = true;
     paintAccount(receipt);
+    methodEl.hidden = true;
   };
 
   const applyChallengeView = async (): Promise<void> => {
@@ -274,6 +291,7 @@ export function mountQrPayLoginPhonePage(
     if (stored && phase === "boot") showAuthorized(stored);
     const challenge = await fetchQrPayLoginChallenge(ticketId);
     if (disposed) return;
+    rememberPlaceCode("placeCode" in challenge ? challenge.placeCode : "");
     const decision = phoneViewFromChallenge(
       challenge,
       readQrPhoneReceipt(storage(), ticketId)
@@ -342,6 +360,7 @@ export function mountQrPayLoginPhonePage(
     try {
       const challenge = await fetchQrPayLoginChallenge(ticketId);
       if (disposed) return;
+      rememberPlaceCode("placeCode" in challenge ? challenge.placeCode : "");
       const decision = phoneViewFromChallenge(
         challenge,
         readQrPhoneReceipt(storage(), ticketId)

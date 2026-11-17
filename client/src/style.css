@@ -20155,6 +20155,33 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   line-height: 1.25;
 }
 
+.qr-pay-login-dialog__place {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  margin: 0;
+}
+
+.qr-pay-login-dialog__place[hidden] {
+  display: none !important;
+}
+
+.qr-pay-login-dialog__place-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: rgba(238, 243, 247, 0.72);
+}
+
+.qr-pay-login-dialog__place-code {
+  font-size: 1.7rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  line-height: 1.1;
+  color: #fc8702;
+}
+
 .qr-pay-login-dialog__help-btn {
   flex: 0 0 auto;
   box-sizing: border-box;
@@ -20725,6 +20752,18 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   color: #3a332c;
 }
 
+.qr-pay-login-phone--confirm .qr-pay-login-phone__card--paper .qr-pay-login-phone__address {
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: #8a8178;
+}
+
+.qr-pay-login-phone--confirm .qr-pay-login-phone__method,
+.qr-pay-login-phone--confirm .qr-pay-login-phone__hint {
+  display: none !important;
+}
+
 .qr-pay-login-phone__method {
   margin: 0.15rem 0 0;
   font-size: 0.72rem;
@@ -20923,5 +20962,47 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 }
 
 .qr-pay-login-phone__btn[hidden] {
+  display: none !important;
+}
+
+/**
+ * Nimiq buttons on the confirm card. `@nimiq/style` sizes `.nq-button` in rem
+ * against an 8px root (min-width 25rem), which overflows this card once the app
+ * root is 18px. Keep the light-blue pill and the small gray button, at card width.
+ */
+.qr-pay-login-phone .nq-button.qr-pay-login-phone__nq,
+.qr-pay-login-phone .nq-button-s.qr-pay-login-phone__nq {
+  box-sizing: border-box !important;
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 2.75rem;
+  margin: 0 !important;
+  padding: 0.72rem 0.9rem !important;
+  border-radius: 999px !important;
+  font-family: "Mulish", "Muli", system-ui, sans-serif !important;
+  font-size: 0.82rem !important;
+  font-weight: 700 !important;
+  line-height: 1.25 !important;
+  letter-spacing: 0.08em;
+  text-align: center;
+  white-space: normal !important;
+}
+
+.qr-pay-login-phone .nq-button.qr-pay-login-phone__nq {
+  text-transform: uppercase;
+}
+
+.qr-pay-login-phone .nq-button.qr-pay-login-phone__nq::before,
+.qr-pay-login-phone .nq-button.qr-pay-login-phone__nq::after,
+.qr-pay-login-phone .nq-button-s.qr-pay-login-phone__nq::before,
+.qr-pay-login-phone .nq-button-s.qr-pay-login-phone__nq::after {
+  content: none !important;
+  display: none !important;
+}
+
+.qr-pay-login-phone .qr-pay-login-phone__nq[hidden] {
   display: none !important;
 }

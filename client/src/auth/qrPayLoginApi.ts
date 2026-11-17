@@ -5,13 +5,21 @@ import { TermsPrivacyAcknowledgementRequiredError } from "./nimiq.js";
 export type QrPayLoginCreated = {
   ticketId: string;
   claimSecret: string;
+  /** Four-character code shown on this computer and on the phone confirm card. */
+  placeCode: string;
   expiresAt: number;
   spaUrl: string;
   payDeepLink: string;
 };
 
 export type QrPayLoginChallenge =
-  | { status: "pending"; nonce: string; message: string; expiresAt: number }
+  | {
+      status: "pending";
+      nonce: string;
+      message: string;
+      expiresAt: number;
+      placeCode?: string;
+    }
   | {
       status: "fulfilled";
       expiresAt?: number;
@@ -20,6 +28,7 @@ export type QrPayLoginChallenge =
       nimiqPay?: boolean;
       /** Custom username, when this wallet has one. */
       username?: string | null;
+      placeCode?: string;
     }
   | { status: "expired" };
 
