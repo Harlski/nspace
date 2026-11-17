@@ -47,16 +47,17 @@ export type WalletLoginSessionErr = {
 };
 
 /**
- * Shared Hub/Pay signed-message → JWT path used by `POST /api/auth/verify` and QR Pay complete.
- * Caller must already have validated / consumed the nonce (or ticket nonce).
+ * Verify a Hub/Pay login signature and return the account. No session, streak, or terms writes.
  */
-export async function issueWalletSessionFromSignedLogin(opts: {
+export async function resolveSignedLoginAddress(opts: {
   expectedMessage: string;
   body: WalletLoginVerifyBody;
-  jwtSecret: string;
   devAuthBypass: boolean;
-}): Promise<WalletLoginSessionOk | WalletLoginSessionErr> {
-  const { expectedMessage, body, jwtSecret, devAuthBypass } = opts;
+}): Promise<
+  | { ok: true; address: string; nimiqPay: boolean }
+  | WalletLoginSessionErr
+> {
+  const { expectedMessage, body, devAuthBypass } = opts;
   const message = String(body.message ?? "");
   const signer = String(body.signer ?? "");
   const signerPublicKey = String(body.signerPublicKey ?? "");
@@ -122,6 +123,25 @@ export async function issueWalletSessionFromSignedLogin(opts: {
   const signerEmpty = signerKeyPresent && normalizeWalletId(signer) === "";
   const nimiqPay = claimsPayClient && signerEmpty;
 
+  return { ok: true, address: sessionAddress, nimiqPay };
+}
+
+/**
+ * Shared Hub/Pay signed-message → JWT path used by `POST /api/auth/verify` and QR Pay complete.
+ * Caller must already have validated / consumed the nonce (or ticket nonce).
+ */
+export async function issueWalletSessionFromSignedLogin(opts: {
+  expectedMessage: string;
+  body: WalletLoginVerifyBody;
+  jwtSecret: string;
+  devAuthBypass: boolean;
+}): Promise<WalletLoginSessionOk | WalletLoginSessionErr> {
+  const { body, jwtSecret } = opts;
+  const resolved = await resolveSignedLoginAddress(opts);
+  if (!resolved.ok) return resolved;
+
+  const sessionAddress = resolved.address;
+  const nimiqPay = resolved.nimiqPay;
   const normAddr = normalizeWalletId(sessionAddress);
   const rawTp =
     typeof body.acceptedTermsPrivacyVersion === "string"

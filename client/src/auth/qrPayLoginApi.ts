@@ -18,6 +18,8 @@ export type QrPayLoginChallenge =
       /** Authorizing wallet. Present after complete, including after the desktop claims the JWT. */
       address?: string;
       nimiqPay?: boolean;
+      /** Custom username, when this wallet has one. */
+      username?: string | null;
     }
   | { status: "expired" };
 
@@ -62,6 +64,30 @@ export async function pollQrPayLoginTicket(
   if (r.status === 403) throw new Error("qr_login_forbidden");
   if (!r.ok) throw new Error("qr_login_poll_failed");
   return r.json() as Promise<QrPayLoginPollResult>;
+}
+
+export async function previewQrPayLoginTicket(
+  ticketId: string,
+  body: LoginSignPayload
+): Promise<{ address: string; nimiqPay?: boolean; username: string | null }> {
+  const r = await fetch(
+    apiUrl(`/api/auth/qr-login/${encodeURIComponent(ticketId)}/preview`),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    const code = String((err as { error?: string }).error || "");
+    throw new Error(code || "qr_login_preview_failed");
+  }
+  return r.json() as Promise<{
+    address: string;
+    nimiqPay?: boolean;
+    username: string | null;
+  }>;
 }
 
 export async function completeQrPayLoginTicket(

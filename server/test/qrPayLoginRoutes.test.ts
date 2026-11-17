@@ -50,6 +50,7 @@ type Challenge = {
 };
 
 const { registerQrPayLoginRoutes } = await import("../src/qrPayLoginRoutes.js");
+const { adminSetUsernameOnTarget } = await import("../src/playerProfileStore.js");
 const { TERMS_PRIVACY_DOCS_VERSION } = await import("../src/termsPrivacyVersion.js");
 const { verifySession } = await import("../src/auth.js");
 const { resetQrPayLoginTicketsForTests } = await import("../src/qrPayLogin.js");
@@ -405,6 +406,92 @@ test("a Pay flag alone does not label a wallet signature as Nimiq Pay", async ()
     const session = (await claimed.json()) as { nimiqPay: boolean; tutorial?: unknown };
     assert.equal(session.nimiqPay, false);
     assert.equal(session.tutorial, undefined);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("preview returns the account and username without signing the computer in", async () => {
+  resetQrPayLoginTicketsForTests();
+  const srv = await listen(appFor(false));
+  try {
+    const created = (await (
+      await fetch(`${srv.base}/api/auth/qr-login`, { method: "POST" })
+    ).json()) as Created;
+    const challenge = (await (
+      await fetch(`${srv.base}/api/auth/qr-login/${created.ticketId}/challenge`)
+    ).json()) as Challenge;
+    const signed = await signLoginV1(String(challenge.message));
+    const compact = signed.address.replace(/\s+/g, "").toUpperCase();
+    const named = adminSetUsernameOnTarget(compact, "CafeGuest");
+    assert.equal(named.ok, true);
+
+    const preview = await fetch(`${srv.base}/api/auth/qr-login/${created.ticketId}/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: challenge.message,
+        signer: "",
+        signerPublicKey: signed.signerPublicKey,
+        signature: signed.signature,
+        nimiqPayClient: true,
+      }),
+    });
+    assert.equal(preview.status, 200);
+    const account = (await preview.json()) as {
+      address: string;
+      nimiqPay: boolean;
+      username: string | null;
+      token?: string;
+    };
+    assert.equal(account.address, signed.address);
+    assert.equal(account.nimiqPay, true);
+    assert.equal(account.username, "CafeGuest");
+    assert.equal(account.token, undefined);
+
+    const still = (await (
+      await fetch(`${srv.base}/api/auth/qr-login/${created.ticketId}/challenge`)
+    ).json()) as Challenge;
+    assert.equal(still.status, "pending");
+    assert.equal(still.nonce, challenge.nonce);
+
+    const poll = await fetch(
+      `${srv.base}/api/auth/qr-login/${created.ticketId}?claimSecret=${created.claimSecret}`
+    );
+    assert.equal(((await poll.json()) as { status: string }).status, "pending");
+
+    const done = await fetch(`${srv.base}/api/auth/qr-login/${created.ticketId}/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: challenge.message,
+        signer: "",
+        signerPublicKey: signed.signerPublicKey,
+        signature: signed.signature,
+        nimiqPayClient: true,
+        acceptedTermsPrivacyVersion: TERMS_PRIVACY_DOCS_VERSION,
+      }),
+    });
+    assert.equal(done.status, 200);
+    const after = (await (
+      await fetch(`${srv.base}/api/auth/qr-login/${created.ticketId}/challenge`)
+    ).json()) as Challenge & { username?: string | null; token?: string };
+    assert.equal(after.status, "fulfilled");
+    assert.equal(after.username, "CafeGuest");
+    assert.equal(after.token, undefined);
+
+    const again = await fetch(`${srv.base}/api/auth/qr-login/${created.ticketId}/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: challenge.message,
+        signer: "",
+        signerPublicKey: signed.signerPublicKey,
+        signature: signed.signature,
+        nimiqPayClient: true,
+      }),
+    });
+    assert.equal(again.status, 409);
   } finally {
     await srv.close();
   }

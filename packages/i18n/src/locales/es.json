@@ -33,7 +33,7 @@
   "qrPayLogin.phoneDoneHint": "This account authorized the other computer. Head back there. You can close this page.",
   "qrPayLogin.phoneDoneStatus": "You can close this page",
   "qrPayLogin.confirmTitle": "Are you sure?",
-  "qrPayLogin.confirmHint": "This signs your account in on the other computer. Your wallet password stays on this phone.",
+  "qrPayLogin.confirmHint": "This account will be signed in on the other computer. Your wallet password stays on this phone.",
   "qrPayLogin.confirmApprove": "Yes, sign in",
   "qrPayLogin.confirmCancel": "Cancel",
   "qrPayLogin.phoneAccountLabel": "Account",

@@ -4,6 +4,8 @@ import type { QrPayLoginChallenge } from "./qrPayLoginApi.js";
 export type QrPhoneReceipt = {
   address: string;
   nimiqPay: boolean;
+  /** Set only when the wallet has a custom username. */
+  username?: string;
 };
 
 export type QrPhoneBootView =
@@ -16,6 +18,12 @@ const STORAGE_KEY = "nspace.qrPayLogin.phoneReceipt";
 const MAX_AGE_MS = 15 * 60 * 1000;
 
 type StoredReceipt = QrPhoneReceipt & { at: number };
+
+function usernameFromUnknown(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const name = value.trim();
+  return name || undefined;
+}
 
 function readAll(storage: Storage): Record<string, StoredReceipt> {
   try {
@@ -36,7 +44,12 @@ export function readQrPhoneReceipt(
   const row = readAll(storage)[ticketId];
   if (!row || typeof row.address !== "string" || !row.address.trim()) return null;
   if (typeof row.at === "number" && Date.now() - row.at > MAX_AGE_MS) return null;
-  return { address: row.address.trim(), nimiqPay: row.nimiqPay === true };
+  const username = usernameFromUnknown(row.username);
+  return {
+    address: row.address.trim(),
+    nimiqPay: row.nimiqPay === true,
+    ...(username ? { username } : {}),
+  };
 }
 
 export function writeQrPhoneReceipt(
@@ -53,7 +66,13 @@ export function writeQrPhoneReceipt(
       delete all[id];
     }
   }
-  all[ticketId] = { address, nimiqPay: receipt.nimiqPay === true, at: now };
+  const username = usernameFromUnknown(receipt.username);
+  all[ticketId] = {
+    address,
+    nimiqPay: receipt.nimiqPay === true,
+    ...(username ? { username } : {}),
+    at: now,
+  };
   try {
     storage.setItem(STORAGE_KEY, JSON.stringify(all));
   } catch {
@@ -87,7 +106,16 @@ export function phoneViewFromChallenge(
       typeof challenge.nimiqPay === "boolean"
         ? challenge.nimiqPay
         : stored?.nimiqPay === true;
-    return { view: "authorized", receipt: { address, nimiqPay } };
+    const username =
+      usernameFromUnknown(challenge.username) ?? stored?.username;
+    return {
+      view: "authorized",
+      receipt: {
+        address,
+        nimiqPay,
+        ...(username ? { username } : {}),
+      },
+    };
   }
   if (challenge.status === "expired" && stored?.address) {
     return { view: "authorized", receipt: stored };

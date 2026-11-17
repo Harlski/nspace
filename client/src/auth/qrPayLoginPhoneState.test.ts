@@ -50,6 +50,39 @@ describe("phoneViewFromChallenge", () => {
     });
   });
 
+  it("keeps a custom username and drops a blank one", () => {
+    const named = phoneViewFromChallenge(
+      {
+        status: "fulfilled",
+        address: "NQ07 AAAA BBBB",
+        nimiqPay: false,
+        username: " CafeGuest ",
+      },
+      null
+    );
+    expect(named).toEqual({
+      view: "authorized",
+      receipt: {
+        address: "NQ07 AAAA BBBB",
+        nimiqPay: false,
+        username: "CafeGuest",
+      },
+    });
+    const blank = phoneViewFromChallenge(
+      {
+        status: "fulfilled",
+        address: "NQ07 AAAA BBBB",
+        nimiqPay: false,
+        username: "  ",
+      },
+      null
+    );
+    expect(blank).toEqual({
+      view: "authorized",
+      receipt: { address: "NQ07 AAAA BBBB", nimiqPay: false },
+    });
+  });
+
   it("keeps a remembered account when the ticket is already gone", () => {
     const view = phoneViewFromChallenge(
       { status: "expired" },

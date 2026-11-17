@@ -8,8 +8,10 @@ import {
   getQrPayLoginTicket,
   pollQrPayLoginTicket,
 } from "./qrPayLogin.js";
+import { getPlayerProfilePublicJson } from "./playerProfileStore.js";
 import {
   issueWalletSessionFromSignedLogin,
+  resolveSignedLoginAddress,
   type WalletLoginVerifyBody,
 } from "./walletLoginSession.js";
 
@@ -18,6 +20,13 @@ export type QrPayLoginRouteDeps = {
   publicBaseUrl: string;
   devAuthBypass: boolean;
 };
+
+function customUsernameForAddress(address: string): string | null {
+  const compact = String(address || "").replace(/\s+/g, "").toUpperCase();
+  if (!compact) return null;
+  const name = getPlayerProfilePublicJson(compact).customUsername?.trim() || "";
+  return name || null;
+}
 
 export function registerQrPayLoginRoutes(app: Express, deps: QrPayLoginRouteDeps): void {
   /** Desktop: create a short-lived QR login ticket (claim secret stays on this device). */
@@ -29,7 +38,48 @@ export function registerQrPayLoginRoutes(app: Express, deps: QrPayLoginRouteDeps
   /** Phone: public challenge (nonce + message). Never returns JWT or claim secret. */
   app.get("/api/auth/qr-login/:ticketId/challenge", (req: Request, res: Response) => {
     const ticketId = String(req.params.ticketId ?? "");
-    res.json(getQrPayLoginChallenge(ticketId));
+    const challenge = getQrPayLoginChallenge(ticketId);
+    if (challenge.status === "fulfilled" && challenge.address) {
+      res.json({
+        ...challenge,
+        username: customUsernameForAddress(challenge.address),
+      });
+      return;
+    }
+    res.json(challenge);
+  });
+
+  /**
+   * Phone: verify the wallet signature and return the account for the confirm card.
+   * Does not fulfill the ticket or issue a session.
+   */
+  app.post("/api/auth/qr-login/:ticketId/preview", async (req: Request, res: Response) => {
+    const ticketId = String(req.params.ticketId ?? "");
+    const ticket = getQrPayLoginTicket(ticketId);
+    if (!ticket || ticket.expiresAt < Date.now()) {
+      res.status(410).json({ error: "expired" });
+      return;
+    }
+    if (ticket.status !== "pending") {
+      res.status(409).json({ error: "already_fulfilled" });
+      return;
+    }
+
+    const resolved = await resolveSignedLoginAddress({
+      expectedMessage: expectedLoginMessageForTicket(ticket),
+      body: req.body as WalletLoginVerifyBody,
+      devAuthBypass: deps.devAuthBypass,
+    });
+    if (!resolved.ok) {
+      res.status(resolved.status).json(resolved.body);
+      return;
+    }
+
+    res.json({
+      address: resolved.address,
+      nimiqPay: resolved.nimiqPay,
+      username: customUsernameForAddress(resolved.address),
+    });
   });
 
   /**
