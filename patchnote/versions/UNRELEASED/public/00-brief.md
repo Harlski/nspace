@@ -5,4 +5,4 @@
 
 ---
 
-- Sign in on a shared computer by scanning a QR code with Nimiq Pay or Nimiq Wallet on your phone. Your phone then shows the account that authorized that computer, and your wallet password stays on your phone.
+- Sign in on a shared computer by scanning a QR code with Nimiq Pay or Nimiq Wallet on your phone. The phone asks you to confirm before it signs the other computer in, then shows the account that authorized it. Your wallet password stays on your phone.

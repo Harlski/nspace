@@ -40,7 +40,8 @@ export function mountQrPayLoginPhonePage(
       </div>
       <h1 class="qr-pay-login-phone__title" id="qr-pay-phone-title"></h1>
       <div class="qr-pay-login-phone__account" id="qr-pay-phone-account" hidden>
-        <img class="qr-pay-login-phone__ident" id="qr-pay-phone-ident" alt="" width="72" height="72" hidden />
+        <img class="qr-pay-login-phone__ident" id="qr-pay-phone-ident" alt="" width="96" height="96" hidden />
+        <div class="qr-pay-login-phone__accent" id="qr-pay-phone-accent" hidden></div>
         <p class="qr-pay-login-phone__account-label" id="qr-pay-phone-account-label"></p>
         <p class="qr-pay-login-phone__address" id="qr-pay-phone-address"></p>
         <p class="qr-pay-login-phone__method" id="qr-pay-phone-method"></p>
@@ -50,6 +51,7 @@ export function mountQrPayLoginPhonePage(
       <p class="qr-pay-login-phone__err" id="qr-pay-phone-err" hidden></p>
       <div class="qr-pay-login-phone__actions" id="qr-pay-phone-actions" hidden>
         <button type="button" class="qr-pay-login-phone__btn qr-pay-login-phone__btn--primary" id="qr-pay-phone-sign" hidden></button>
+        <button type="button" class="qr-pay-login-phone__btn qr-pay-login-phone__btn--secondary" id="qr-pay-phone-cancel" hidden></button>
         <button type="button" class="qr-pay-login-phone__btn qr-pay-login-phone__btn--secondary" id="qr-pay-phone-open-pay" hidden></button>
       </div>
     </div>
@@ -61,6 +63,7 @@ export function mountQrPayLoginPhonePage(
   const markEl = root.querySelector("#qr-pay-phone-mark") as HTMLElement;
   const titleEl = root.querySelector("#qr-pay-phone-title") as HTMLElement;
   const accountEl = root.querySelector("#qr-pay-phone-account") as HTMLElement;
+  const accentEl = root.querySelector("#qr-pay-phone-accent") as HTMLElement;
   const identEl = root.querySelector("#qr-pay-phone-ident") as HTMLImageElement;
   const accountLabelEl = root.querySelector(
     "#qr-pay-phone-account-label"
@@ -75,12 +78,14 @@ export function mountQrPayLoginPhonePage(
     "#qr-pay-phone-open-pay"
   ) as HTMLButtonElement;
   const signBtn = root.querySelector("#qr-pay-phone-sign") as HTMLButtonElement;
+  const cancelBtn = root.querySelector("#qr-pay-phone-cancel") as HTMLButtonElement;
 
   document.title = t("qrPayLogin.phoneDocumentTitle");
   titleEl.textContent = t("common.loading");
   hintEl.textContent = "";
   statusEl.hidden = true;
   openPayBtn.textContent = t("qrPayLogin.openInPay");
+  cancelBtn.textContent = t("qrPayLogin.confirmCancel");
   signBtn.textContent = t("qrPayLogin.confirmSignWallet");
   accountLabelEl.textContent = t("qrPayLogin.phoneAccountLabel");
 
@@ -92,12 +97,14 @@ export function mountQrPayLoginPhonePage(
   const setBusy = (busy: boolean): void => {
     openPayBtn.disabled = busy;
     signBtn.disabled = busy;
+    cancelBtn.disabled = busy;
     openPayBtn.classList.toggle("qr-pay-login-phone__btn--busy", busy);
     signBtn.classList.toggle("qr-pay-login-phone__btn--busy", busy);
+    cancelBtn.classList.toggle("qr-pay-login-phone__btn--busy", busy);
   };
 
   let disposed = false;
-  let phase: "boot" | "authorized" | "signin" | "expired" = "boot";
+  let phase: "boot" | "authorized" | "signin" | "confirm" | "expired" = "boot";
   let acceptedTermsPrivacyVersion: string | undefined;
   const inPay = isNimiqPayMiniApp();
 
@@ -106,26 +113,28 @@ export function mountQrPayLoginPhonePage(
   const showAuthorized = (receipt: QrPhoneReceipt): void => {
     phase = "authorized";
     if (receipt.address) writeQrPhoneReceipt(storage(), ticketId, receipt);
+    root.classList.remove("qr-pay-login-phone--confirm");
     root.classList.add("qr-pay-login-phone--done");
     cardEl.classList.add("qr-pay-login-phone__card--done");
     document.title = t("qrPayLogin.phoneDocumentTitleDone");
-    eyebrowEl.hidden = false;
-    eyebrowEl.textContent = t("qrPayLogin.phoneDoneEyebrow");
-    markEl.hidden = false;
-    markEl.setAttribute("aria-hidden", "false");
+    eyebrowEl.hidden = true;
+    markEl.hidden = true;
+    markEl.setAttribute("aria-hidden", "true");
     titleEl.textContent = t("qrPayLogin.phoneDone");
     hintEl.hidden = false;
     hintEl.textContent = t("qrPayLogin.phoneDoneHint");
-    statusEl.hidden = false;
-    statusEl.classList.add("qr-pay-login-phone__status--done");
-    statusEl.textContent = t("qrPayLogin.phoneDoneStatus");
+    statusEl.hidden = true;
+    statusEl.textContent = "";
     showErr("");
     actionsEl.hidden = true;
     signBtn.hidden = true;
+    cancelBtn.hidden = true;
     openPayBtn.hidden = true;
     const formatted = formatQrLoginAccountAddress(receipt.address);
     if (formatted) {
       accountEl.hidden = false;
+      accentEl.hidden = false;
+      accountLabelEl.hidden = true;
       addressEl.textContent = formatted;
       methodEl.textContent = receipt.nimiqPay
         ? t("qrPayLogin.phoneAccountPay")
@@ -150,10 +159,11 @@ export function mountQrPayLoginPhonePage(
   const showExpired = (): void => {
     if (phase === "authorized") return;
     phase = "expired";
-    root.classList.remove("qr-pay-login-phone--done");
+    root.classList.remove("qr-pay-login-phone--done", "qr-pay-login-phone--confirm");
     cardEl.classList.remove("qr-pay-login-phone__card--done");
     eyebrowEl.hidden = true;
     markEl.hidden = true;
+    accentEl.hidden = true;
     titleEl.textContent = t("qrPayLogin.expired");
     hintEl.textContent = "";
     statusEl.textContent = "";
@@ -161,6 +171,7 @@ export function mountQrPayLoginPhonePage(
     accountEl.hidden = true;
     actionsEl.hidden = true;
     signBtn.hidden = true;
+    cancelBtn.hidden = true;
     openPayBtn.hidden = true;
     showErr("");
   };
@@ -168,13 +179,16 @@ export function mountQrPayLoginPhonePage(
   const presentSignIn = (): void => {
     if (disposed || phase === "authorized" || phase === "expired") return;
     phase = "signin";
+    root.classList.remove("qr-pay-login-phone--confirm");
     document.title = t("qrPayLogin.phoneDocumentTitle");
     titleEl.textContent = t("qrPayLogin.phoneTitle");
     accountEl.hidden = true;
+    accentEl.hidden = true;
     eyebrowEl.hidden = true;
     markEl.hidden = true;
     actionsEl.hidden = false;
     signBtn.hidden = false;
+    cancelBtn.hidden = true;
     if (inPay) {
       hintEl.textContent = t("qrPayLogin.phoneHintInPay");
       statusEl.hidden = false;
@@ -189,6 +203,26 @@ export function mountQrPayLoginPhonePage(
       signBtn.textContent = t("qrPayLogin.confirmSignWallet");
       openPayBtn.hidden = false;
     }
+  };
+
+  /** Last step before the wallet signature is requested or the other computer is signed in. */
+  const showConfirm = (): void => {
+    if (disposed || phase === "authorized" || phase === "expired") return;
+    phase = "confirm";
+    root.classList.add("qr-pay-login-phone--confirm");
+    document.title = t("qrPayLogin.confirmTitle");
+    titleEl.textContent = t("qrPayLogin.confirmTitle");
+    hintEl.hidden = false;
+    hintEl.textContent = t("qrPayLogin.confirmHint");
+    statusEl.textContent = "";
+    statusEl.hidden = true;
+    showErr("");
+    accountEl.hidden = true;
+    actionsEl.hidden = false;
+    signBtn.hidden = false;
+    signBtn.textContent = t("qrPayLogin.confirmApprove");
+    cancelBtn.hidden = false;
+    openPayBtn.hidden = true;
   };
 
   const applyChallengeView = async (): Promise<void> => {
@@ -210,7 +244,7 @@ export function mountQrPayLoginPhonePage(
       return;
     }
     phase = "boot";
-    root.classList.remove("qr-pay-login-phone--done");
+    root.classList.remove("qr-pay-login-phone--done", "qr-pay-login-phone--confirm");
     cardEl.classList.remove("qr-pay-login-phone__card--done");
     presentSignIn();
   };
@@ -308,19 +342,20 @@ export function mountQrPayLoginPhonePage(
   }
 
   signBtn.addEventListener("click", () => {
-    void runSign();
+    if (phase === "confirm") {
+      void runSign();
+      return;
+    }
+    showConfirm();
+  });
+  cancelBtn.addEventListener("click", () => {
+    presentSignIn();
   });
 
-  void applyChallengeView()
-    .then(() => {
-      if (disposed || phase !== "signin" || !inPay) return;
-      void runSign();
-    })
-    .catch(() => {
-      if (disposed || phase === "authorized") return;
-      presentSignIn();
-      if (inPay) void runSign();
-    });
+  void applyChallengeView().catch(() => {
+    if (disposed || phase === "authorized") return;
+    presentSignIn();
+  });
 
   return () => {
     disposed = true;

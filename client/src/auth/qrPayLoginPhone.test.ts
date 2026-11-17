@@ -119,4 +119,68 @@ describe("mountQrPayLoginPhonePage", () => {
     );
     cleanup();
   });
+
+  it("asks for a final yes before requesting the wallet signature", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        status: "pending",
+        nonce: "abc",
+        message: "Login:v1:abc",
+        expiresAt: Date.now() + 60_000,
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = document.createElement("div");
+    document.body.appendChild(app);
+    const cleanup = mountQrPayLoginPhonePage(app, "ticket-1");
+
+    await vi.waitFor(() => {
+      expect(app.querySelector("#qr-pay-phone-title")?.textContent).toBe(
+        "Sign in on this device"
+      );
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    (app.querySelector("#qr-pay-phone-sign") as HTMLButtonElement).click();
+    expect(app.querySelector("#qr-pay-phone-title")?.textContent).toBe("Are you sure?");
+    expect(app.querySelector("#qr-pay-phone-sign")?.textContent).toBe("Yes, sign in");
+    expect((app.querySelector("#qr-pay-phone-cancel") as HTMLButtonElement).hidden).toBe(
+      false
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    (app.querySelector("#qr-pay-phone-cancel") as HTMLButtonElement).click();
+    expect(app.querySelector("#qr-pay-phone-title")?.textContent).toBe(
+      "Sign in on this device"
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it("does not sign automatically inside Nimiq Pay", async () => {
+    (window as { nimiqPay?: unknown }).nimiqPay = {};
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        status: "pending",
+        nonce: "abc",
+        message: "Login:v1:abc",
+        expiresAt: Date.now() + 60_000,
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = document.createElement("div");
+    document.body.appendChild(app);
+    const cleanup = mountQrPayLoginPhonePage(app, "ticket-1");
+
+    await vi.waitFor(() => {
+      expect(app.querySelector("#qr-pay-phone-title")?.textContent).toBe(
+        "Sign in on this device"
+      );
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(app.textContent).not.toContain("Are you sure?");
+    cleanup();
+  });
 });

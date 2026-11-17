@@ -20400,10 +20400,7 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 }
 
 .qr-pay-login-phone--done {
-  background:
-    radial-gradient(ellipse at 50% 12%, rgba(52, 211, 153, 0.22), transparent 55%),
-    radial-gradient(ellipse at 20% 85%, rgba(56, 189, 248, 0.1), transparent 45%),
-    #0b1018;
+  background: #0b1018;
 }
 
 .qr-pay-login-phone__card {
@@ -20425,13 +20422,15 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 }
 
 .qr-pay-login-phone__card--done {
-  border-color: rgba(52, 211, 153, 0.5);
-  background:
-    radial-gradient(ellipse at 50% 0%, rgba(52, 211, 153, 0.18), transparent 58%),
-    rgba(14, 22, 20, 0.98);
-  box-shadow:
-    0 0 0 1px rgba(52, 211, 153, 0.1),
-    0 18px 40px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: none;
+  border-radius: 22px;
+  background: #f6f1ea;
+  color: #1c1915;
+  box-shadow: none;
+  padding: 1.6rem 1.25rem 1.35rem;
   animation: qr-pay-phone-card-done 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -20539,9 +20538,12 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 }
 
 .qr-pay-login-phone__card--done .qr-pay-login-phone__title {
-  color: #ecfdf5;
-  font-size: 1.45rem;
-  margin-bottom: 0.75rem;
+  order: 3;
+  color: #1c1915;
+  font-size: 1.55rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin: 0 0 0.75rem;
 }
 
 .qr-pay-login-phone__account {
@@ -20552,10 +20554,11 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   box-sizing: border-box;
   width: 100%;
   margin: 0 auto 0.9rem;
-  padding: 0.85rem 0.7rem 0.8rem;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(110, 231, 183, 0.28);
+  padding: 0;
+}
+
+.qr-pay-login-phone__card--done .qr-pay-login-phone__account:not([hidden]) {
+  display: contents;
 }
 
 .qr-pay-login-phone__account[hidden] {
@@ -20563,14 +20566,34 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 }
 
 .qr-pay-login-phone__ident {
-  width: 4.5rem;
-  height: 4.5rem;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.06);
-  object-fit: cover;
+  width: 6rem;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  object-fit: contain;
 }
 
-.qr-pay-login-phone__ident[hidden] {
+.qr-pay-login-phone__card--done .qr-pay-login-phone__ident {
+  order: 1;
+  width: 96px;
+  margin: 0 auto 0.35rem;
+}
+
+.qr-pay-login-phone__accent {
+  width: 2rem;
+  height: 3px;
+  margin: 0.15rem auto 0.7rem;
+  border-radius: 99px;
+  background: #fc8702;
+}
+
+.qr-pay-login-phone__card--done .qr-pay-login-phone__accent {
+  order: 2;
+}
+
+.qr-pay-login-phone__ident[hidden],
+.qr-pay-login-phone__accent[hidden],
+.qr-pay-login-phone__account-label[hidden] {
   display: none !important;
 }
 
@@ -20589,10 +20612,15 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.78rem;
   font-weight: 600;
-  line-height: 1.45;
+  line-height: 1.55;
   letter-spacing: 0.03em;
   color: #f8fafc;
   word-break: break-word;
+}
+
+.qr-pay-login-phone__card--done .qr-pay-login-phone__address {
+  order: 4;
+  color: #3a332c;
 }
 
 .qr-pay-login-phone__method {
@@ -20602,6 +20630,16 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: rgba(186, 230, 253, 0.95);
+}
+
+.qr-pay-login-phone__card--done .qr-pay-login-phone__method {
+  order: 5;
+  margin-top: 0.7rem;
+  font-size: 0.92rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #c45c00;
 }
 
 .qr-pay-login-phone__hint,
@@ -20615,8 +20653,9 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
 }
 
 .qr-pay-login-phone__card--done .qr-pay-login-phone__hint {
-  color: rgba(236, 253, 245, 0.9);
-  margin: 0 auto 0.9rem;
+  order: 6;
+  color: #5c564e;
+  margin: 0.95rem auto 0;
   max-width: 17.5rem;
 }
 
