@@ -92,15 +92,31 @@ async function awaitConfirmation(
   }
 }
 
-export function createNimiqChainClient(defaultTxMessage: string): ChainClient {
+export function createNimiqChainClient(
+  defaultTxMessage: string,
+  opts?: { privateKeyEnv?: string }
+): ChainClient {
+  const keyEnv = opts?.privateKeyEnv ?? "NIM_PAYOUT_PRIVATE_KEY";
+  const signerConfigured = (): boolean => {
+    const k = process.env[keyEnv]?.trim();
+    return !!k && k.length >= 64;
+  };
+  const loadKeyPair = async (): Promise<import("@nimiq/core").KeyPair> => {
+    const Nimiq = await import("@nimiq/core");
+    const hex = process.env[keyEnv]?.trim();
+    if (!hex) {
+      throw new Error(`${keyEnv} is not set`);
+    }
+    return Nimiq.KeyPair.derive(Nimiq.PrivateKey.fromHex(hex));
+  };
   return {
-    isSignerConfigured,
+    isSignerConfigured: signerConfigured,
     async getWalletBalanceLuna() {
       return withNimiqMutex(async () => {
         const client = await getClient();
         await client.waitForConsensusEstablished();
-        const keyPair = await getKeyPair();
-        const senderAddr = keyPair.toAddress();
+        const pair = await loadKeyPair();
+        const senderAddr = pair.toAddress();
         const account = await client.getAccount(senderAddr);
         return BigInt(account.balance);
       });
@@ -117,8 +133,8 @@ export function createNimiqChainClient(defaultTxMessage: string): ChainClient {
 
         const client = await getClient();
         await client.waitForConsensusEstablished();
-        const keyPair = await getKeyPair();
-        const senderAddr = keyPair.toAddress();
+        const pair = await loadKeyPair();
+        const senderAddr = pair.toAddress();
         const recipient = Address.fromUserFriendlyAddress(opts.recipientAddress);
         const head = await client.getHeadBlock();
         const height = head.height;
@@ -133,7 +149,7 @@ export function createNimiqChainClient(defaultTxMessage: string): ChainClient {
           height,
           networkId
         );
-        tx.sign(keyPair, undefined);
+        tx.sign(pair, undefined);
         const details = await client.sendTransaction(tx);
         return { hash: details.transactionHash, initialDetails: details };
       });

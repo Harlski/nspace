@@ -896,6 +896,80 @@ Mining, Free Play goal rewards, and other gameplay earns share this allowance; t
 and admin grants sit outside it. From Level 11 upward there is no Level-based daily ceiling.
 _Avoid_: daily cap (alone), farm limit, payout throttle, earn tier.
 
+## Return Walk
+
+**Resident**:
+The allowlisted NimiqLIVE wallet that may create Invoices and receive Upgrade Windows.
+Not an admin role and not a stream observer.
+_Avoid_: bot wallet, stream wallet, operator wallet.
+
+**Invoice**:
+A prepaid Deposit request Resident creates over the player JWT HTTP seam. Unpaid Invoices expire
+after 30 minutes. Only one unpaid Invoice may exist at a time.
+_Avoid_: quote, payment request, checkout.
+
+**Deposit**:
+The on-chain 1000 NIM transfer from Resident to the Invoice `to` address (the Server Wallet)
+that credits the Invoice and opens a Return Walk.
+_Avoid_: top-up, fund, refill.
+
+**Return Budget**:
+Remaining unreserved NIM on a credited Invoice. Each Upgrade reserves 1 NIM. Leftover Return
+Budget stays credited when Daily Earn exhausts so a later day can reopen without a new Deposit.
+_Avoid_: prepaid pool, faucet balance, credit.
+
+**Return Walk**:
+The open state while Resident has credited Return Budget and Daily Earn is not exhausted.
+_Avoid_: gold tour, errand run (that is Resident's Gold Errand), mining session.
+
+**Upgrade Window**:
+A server-owned 20 second window that fires eight Upgrades at independent random delays in that
+span. Started from Resident's pose at fire time after a successful Resident claim (Gold Block or
+Return Gold) while a Return Walk is open. Windows stack. Other players' claims do not start a
+window.
+_Avoid_: spawn window, gold wave, drop timer.
+
+**Upgrade**:
+Converting an eligible ordinary solid (same room, within Chebyshev vicinity of Resident at fire
+time, y = 0, not ramp, not passable, not already claimable, and with at least one orthogonal
+walkable stand tile so a player can reach an edge and click to claim) into Return Gold and
+reserving 1 NIM of Return Budget. The tile is drawn uniformly at random from that pool, including
+blocks that are not orthogonally adjacent to Resident. Boxed-in cubes with no physical side do
+not convert. Does not spawn a new floor cube.
+_Avoid_: gold drop, convert, paint gold.
+
+**Return Gold**:
+A claimable floor obstacle (`kind: "returnGold"`) created by an Upgrade. A successful claim pays
+1 NIM from the Server Wallet, consumes Daily Earn, and reverts the tile to an ordinary solid.
+_Avoid_: special gold, walk gold, bonus cube.
+
+**Gold Block**:
+A normal claimable mineable block. Resident treats `claimable: true` without `kind` as a Gold
+Block. Distinct from Return Gold.
+_Avoid_: gold tile (ambiguous), mineable (implementation).
+
+**Server Wallet**:
+The on-chain wallet that receives Deposits and from which Return Gold claims settle. Distinct
+from the Stream Faucet and from the Resident key.
+_Avoid_: hot wallet (ambiguous with the Stream Faucet), payout wallet (ambiguous).
+
+**Stream Faucet**:
+The existing outgoing NIM signer for gameplay mining and related rewards
+(`NQ21 F410 VXJB UK02 6TLG 8YHT 4M4B L664 NPM7`). Return Gold must not pay from it.
+_Avoid_: treasury, payout hot wallet (when distinguishing Return Walk).
+
+**Public Room** (directory):
+A room listed for Resident Gold Errand travel. `kind` is one of commons, public, playSpace,
+tutorial, matchPitch. Commons room id is `hub`. Hub home (`chamber`) is not a Public Room.
+Resident drops playSpace, tutorial, and matchPitch.
+_Avoid_: joinable room (too broad), catalog room.
+
+**Quiet-Claim**:
+Resident's Gold-first claim of a Gold Block or Return Gold without a cinema stream or pointer
+OS surface. Space uses the same `beginBlockClaim` / `completeBlockClaim` protocol as other
+players.
+_Avoid_: silent mine, auto-claim.
+
 ## Chat
 
 **Chat substitution**:
@@ -975,7 +1049,8 @@ _Avoid_: payment service (ambiguous), payout service.
 **Pay-Intent**:
 A single "pay this claim N luna to this address" request produced by gameplay and handed from
 the game server to the Payout Service. Idempotent by its `claimId`. Optional `priority: true`
-puts it in the high lane (tutorial faucet today).
+puts it in the high lane (tutorial faucet today). Optional `source: "returnWalk"` settles
+Return Gold from the Server Wallet signer, never the Stream Faucet.
 _Avoid_: payout job (that is the Payout Service's internal queue entry), payment intent (incoming).
 
 **Priority Pay-Intent**:

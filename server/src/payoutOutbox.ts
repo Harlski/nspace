@@ -148,6 +148,7 @@ function parseOutboxLine(line: string): OutboxRecord | null {
       tileKey: o.tileKey,
       txMessage: o.txMessage,
       ...(o.priority === true ? { priority: true as const } : {}),
+      ...(o.source === "returnWalk" ? { source: "returnWalk" as const } : {}),
       enqueuedAt: typeof o.enqueuedAt === "number" ? o.enqueuedAt : 0,
     };
   } catch {
@@ -276,6 +277,7 @@ export async function drainOutboxOnce(
         tileKey: record.tileKey,
         txMessage: record.txMessage,
         ...(record.priority === true ? { priority: true } : {}),
+        ...(record.source === "returnWalk" ? { source: "returnWalk" as const } : {}),
       };
       const result = await send(payload);
       if (!result.ok) {

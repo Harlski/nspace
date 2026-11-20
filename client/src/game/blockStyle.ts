@@ -330,6 +330,8 @@ export type BlockStyleProps = {
   /** Sale Display foot (exclusive tile; bind state in saleDisplays store). */
   saleDisplayId?: string;
   claimable?: boolean;
+  kind?: "returnGold";
+  returnGold?: boolean;
   active?: boolean;
   cooldownMs?: number;
   lastClaimedAt?: number;

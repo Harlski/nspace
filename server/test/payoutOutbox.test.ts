@@ -196,6 +196,31 @@ test("compacts delivered history out of outbox.jsonl so idle drains stay cheap",
   );
 });
 
+test("Return Walk source is delivered and survives reload", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-outbox-rw-"));
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  process.env.PAYOUT_OUTBOX_DIR = dir;
+
+  const seen: PayIntentPayload[] = [];
+  initOutboxForTests({
+    deliverer: async (intent) => {
+      seen.push(intent);
+      return { ok: true };
+    },
+  });
+
+  appendPayIntentToOutbox({
+    ...testIntent,
+    claimId: "return-gold-1",
+    source: "returnWalk",
+  });
+  reloadOutboxFromDiskForTests();
+  await drainOutboxOnce();
+  assert.equal(seen[0]?.source, "returnWalk");
+});
+
 test("delivered claim ids append one line each (no full-array rewrite)", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "payout-outbox-append-ids-"));
   t.after(() => {

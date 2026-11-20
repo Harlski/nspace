@@ -103,6 +103,7 @@ Outgoing NIM rewards run in a dedicated **`payout`** container (not in the game-
 - **Port:** `127.0.0.1:3091` → `3091` in the container (localhost-bound on the host).
 - **Persistence:** host directory `./data/payout-service` → `/data` (`NIM_PAYOUT_DATA_DIR`).
 - **Required env:** `PAYOUT_SERVICE_API_SECRET`, `NIM_PAYOUT_PRIVATE_KEY`, and `NIM_NETWORK` (root `.env` or `server/.env`). See [`payout-service/.env.example`](../payout-service/.env.example).
+- **Return Walk:** set `RESIDENT_ADDRESSES`, `RETURN_WALK_SERVER_WALLET_ADDRESS`, and `NIM_RPC_URL` on the game server; set `RETURN_WALK_PRIVATE_KEY` on **payout only** (Compose strips it from `nspace`). Return Gold must not use `NIM_PAYOUT_PRIVATE_KEY`.
 - **Game server wiring:** `PAYOUT_SERVICE_URL=http://payout:3091` (default in compose) and the same `PAYOUT_SERVICE_API_SECRET`. **`NIM_PAYOUT_PRIVATE_KEY` must not be set on `nspace`.**
 
 **HTTP API** (all `/v1/*` routes require `Authorization: Bearer <PAYOUT_SERVICE_API_SECRET>`):
@@ -110,7 +111,7 @@ Outgoing NIM rewards run in a dedicated **`payout`** container (not in the game-
 | Method | Path | Purpose |
 |--------|------|--------|
 | `GET` | `/health` | Liveness (no auth) |
-| `POST` | `/v1/pay-intents` | Enqueue Pay-Intent (idempotent by `claimId`; optional `priority: true` for strict high lane) |
+| `POST` | `/v1/pay-intents` | Enqueue Pay-Intent (idempotent by `claimId`; optional `priority: true` for strict high lane; optional `source: "returnWalk"` for Server Wallet Return Gold) |
 | `GET` | `/v1/balance` | Hot-wallet balance |
 | `GET` | `/v1/pending/totals` | Pending queue totals (reporting) |
 | `GET` | `/v1/pending/summary` | Public pending summary |
