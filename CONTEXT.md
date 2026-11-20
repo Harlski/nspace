@@ -941,11 +941,13 @@ duration is however long the admin leaves it on.
 _Avoid_: stun, root, immobilize, movement ban, lockdown (too broad).
 
 **Mining Challenge**:
-A hold on one wallet, with a limited window, during which claimable-block mining is disabled,
-queued block-claim payouts are held, and the wallet may pass a captcha to restore mining and
-release those payouts. The window starts when the hold begins and keeps running while the
-wallet is signed out. A mine attempt during the window shows that mining is disabled and
-offers the captcha. When the window ends without a pass, the hold becomes a Mining Restriction.
+A 15-minute hold on one wallet during which claimable-block mining is disabled, queued
+block-claim payouts are held, and the wallet may pass a captcha to restore mining and release
+those payouts. The window starts when the hold begins and keeps running while the wallet is
+signed out. A mine attempt during the window shows that mining is disabled and offers the
+captcha. When the window ends without a pass, the hold becomes a Mining Restriction. It can
+be opened from the client IP shared by mining wallets, or by an admin on one wallet. A Click
+Interval does not open one.
 _Avoid_: capture, captcha ban, mining popup, bot check.
 
 **Mining Restriction**:
