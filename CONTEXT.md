@@ -940,9 +940,18 @@ Channel mute, Mining Restriction, and Admin Invisibility. Not a timed auto-unloc
 duration is however long the admin leaves it on.
 _Avoid_: stun, root, immobilize, movement ban, lockdown (too broad).
 
+**Mining Challenge**:
+A hold on one wallet, with a limited window, during which claimable-block mining is disabled,
+queued block-claim payouts are held, and the wallet may pass a captcha to restore mining and
+release those payouts. The window starts when the hold begins and keeps running while the
+wallet is signed out. A mine attempt during the window shows that mining is disabled and
+offers the captcha. When the window ends without a pass, the hold becomes a Mining Restriction.
+_Avoid_: capture, captcha ban, mining popup, bot check.
+
 **Mining Restriction**:
-An admin-imposed sanction on a wallet that blocks claimable-block mining (starting and
-completing a NIM block claim). Queued block-claim payouts stay in the Payout Service backlog
+A sanction on a wallet that blocks claimable-block mining (starting and completing a NIM
+block claim) until an admin lifts it. An admin can impose it directly, and an unanswered
+Mining Challenge becomes one. Queued block-claim payouts stay in the Payout Service backlog
 and are not sent on-chain until the restriction is lifted; they must not appear as payable
 or processing while held. Maze, World Cup, and admin feedback payouts are unaffected. Distinct
 from channel mute and username-set ban; toggled from another player's profile by a game admin
