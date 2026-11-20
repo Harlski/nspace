@@ -12,4 +12,4 @@ Challenge every wallet on its first claim. Rejected: that interrupts every new p
 
 ## Consequences
 
-A carrier, cafe, or household can share one address, so strangers can be grouped. The number of wallets that trips a challenge is what limits that, and it is chosen separately from this decision. The game has not stored client addresses before. Storing them is for this hold, and a proxy that is not the trusted edge must not become the source of the address.
+A carrier, cafe, or household can share one address, so strangers can be grouped. The trip count that limits that is recorded in [0026](0026-mining-challenge-trip-and-grant.md). The game has not stored client addresses before. Storing them is for this hold, and a proxy that is not the trusted edge must not become the source of the address.

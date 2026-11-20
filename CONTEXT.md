@@ -942,13 +942,26 @@ _Avoid_: stun, root, immobilize, movement ban, lockdown (too broad).
 
 **Mining Challenge**:
 A 15-minute hold on one wallet during which claimable-block mining is disabled, queued
-block-claim payouts are held, and the wallet may pass a captcha to restore mining and release
-those payouts. The window starts when the hold begins and keeps running while the wallet is
-signed out. A mine attempt during the window shows that mining is disabled and offers the
-captcha. When the window ends without a pass, the hold becomes a Mining Restriction. It can
-be opened from the client IP shared by mining wallets, or by an admin on one wallet. A Click
-Interval does not open one.
+block-claim payouts are held, and the wallet may pass a visible captcha to restore mining
+and release those payouts. The server decides whether the captcha passed. The window starts
+when the hold begins and keeps running while the wallet is signed out. A mine attempt during
+the window shows that mining is disabled and offers the captcha. When the window ends without
+a pass, the hold becomes a Mining Restriction. Passing it keeps that wallet out of another
+Mining Challenge for 30 minutes. Other wallets on the same client IP can still be challenged,
+and an admin can still apply a Mining Restriction during those 30 minutes. It opens when
+three distinct wallets each have an accepted claimable-block begin from the same client IP
+inside a rolling 24 hours. Wallets from that IP that began a claim in the last 15 minutes
+are included, and so is every later accepted begin from that IP. Older sessions are left as
+they are. An admin, or a wallet with a Challenge Grant, can also open one on a single other
+wallet. A Click Interval does not open one. A wallet already in a Mining Challenge or under
+Mining Restriction is not given another.
 _Avoid_: capture, captcha ban, mining popup, bot check.
+
+**Challenge Grant**:
+A wallet allowed to open a Mining Challenge on another wallet. Game admins can open one
+without a Challenge Grant. The list is edited from `/admin` and starts empty. Player Level
+does not confer one.
+_Avoid_: level unlock, moderator rank, trusted player.
 
 **Mining Restriction**:
 A sanction on a wallet that blocks claimable-block mining (starting and completing a NIM
