@@ -8,7 +8,7 @@
 
 ## Summary
 
-_Add a one-line roll-up here when the buffer gets long._
+Show the QR place code on the phone as soon as the sign-in page opens, so it matches the computer before the wallet signs.
 
 ---
 
@@ -16,11 +16,11 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Repo / docs
 
-- _(none yet)_
+- [docs/features-checklist.md](../../../docs/features-checklist.md) notes the phone shows `placeCode` as soon as the QR page opens.
 
 ### Client
 
-- _(none in this change set)_
+- Phone QR sign-in screen (`client/src/auth/qrPayLoginPhone.ts`) shows `placeCode` with the same **This screen is** label as the desktop dialog while the ticket is still waiting for a signature. The confirm card keeps **Sign in on {code}?** and hides the larger code.
 
 ### Server
 

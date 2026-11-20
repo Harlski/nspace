@@ -49,6 +49,10 @@ export function mountQrPayLoginPhonePage(
         <span class="qr-pay-login-phone__mark-check" aria-hidden="true"></span>
       </div>
       <h1 class="qr-pay-login-phone__title" id="qr-pay-phone-title"></h1>
+      <p class="qr-pay-login-phone__place" id="qr-pay-phone-place" hidden>
+        <span class="qr-pay-login-phone__place-label" id="qr-pay-phone-place-label"></span>
+        <span class="qr-pay-login-phone__place-code" id="qr-pay-phone-place-code"></span>
+      </p>
       <div class="qr-pay-login-phone__account" id="qr-pay-phone-account" hidden>
         <img class="qr-pay-login-phone__ident" id="qr-pay-phone-ident" alt="" width="96" height="96" hidden />
         <div class="qr-pay-login-phone__accent" id="qr-pay-phone-accent" hidden></div>
@@ -74,6 +78,8 @@ export function mountQrPayLoginPhonePage(
   const eyebrowEl = root.querySelector("#qr-pay-phone-eyebrow") as HTMLElement;
   const markEl = root.querySelector("#qr-pay-phone-mark") as HTMLElement;
   const titleEl = root.querySelector("#qr-pay-phone-title") as HTMLElement;
+  const placeEl = root.querySelector("#qr-pay-phone-place") as HTMLElement;
+  const placeCodeEl = root.querySelector("#qr-pay-phone-place-code") as HTMLElement;
   const accountEl = root.querySelector("#qr-pay-phone-account") as HTMLElement;
   const accentEl = root.querySelector("#qr-pay-phone-accent") as HTMLElement;
   const identEl = root.querySelector("#qr-pay-phone-ident") as HTMLImageElement;
@@ -101,6 +107,9 @@ export function mountQrPayLoginPhonePage(
   cancelBtn.textContent = t("qrPayLogin.confirmCancel");
   signBtn.textContent = t("qrPayLogin.confirmSignWallet");
   accountLabelEl.textContent = t("qrPayLogin.phoneAccountLabel");
+  (root.querySelector("#qr-pay-phone-place-label") as HTMLElement).textContent = t(
+    "qrPayLogin.desktopPlace"
+  );
 
   const showErr = (msg: string): void => {
     errEl.hidden = !msg;
@@ -127,6 +136,13 @@ export function mountQrPayLoginPhonePage(
   const inPay = isNimiqPayMiniApp();
 
   const storage = (): Storage => sessionStorage;
+
+  /** Large code on the scan screen, matching the computer, before the wallet signs. */
+  const paintPlace = (): void => {
+    const show = phase === "signin" && placeCode.length > 0;
+    placeEl.hidden = !show;
+    placeCodeEl.textContent = show ? placeCode : "";
+  };
 
   const paintAccount = (receipt: QrPhoneReceipt): void => {
     const formatted = formatQrLoginAccountAddress(receipt.address);
@@ -200,6 +216,7 @@ export function mountQrPayLoginPhonePage(
     cancelBtn.hidden = true;
     openPayBtn.hidden = true;
     paintAccount(receipt);
+    paintPlace();
   };
 
   const showExpired = (): void => {
@@ -219,6 +236,7 @@ export function mountQrPayLoginPhonePage(
     cancelBtn.hidden = true;
     openPayBtn.hidden = true;
     showErr("");
+    paintPlace();
   };
 
   const presentSignIn = (): void => {
@@ -252,12 +270,15 @@ export function mountQrPayLoginPhonePage(
       signBtn.textContent = t("qrPayLogin.confirmSignWallet");
       openPayBtn.hidden = false;
     }
+    paintPlace();
   };
 
   const rememberPlaceCode = (code: unknown): void => {
     if (typeof code !== "string") return;
     const next = code.trim().toUpperCase();
-    if (next) placeCode = next;
+    if (!next) return;
+    placeCode = next;
+    paintPlace();
   };
 
   /** White card after the wallet has signed, before the other computer receives the session. */
@@ -284,6 +305,7 @@ export function mountQrPayLoginPhonePage(
     openPayBtn.hidden = true;
     paintAccount(receipt);
     methodEl.hidden = true;
+    paintPlace();
   };
 
   const applyChallengeView = async (): Promise<void> => {
