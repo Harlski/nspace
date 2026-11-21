@@ -114,6 +114,7 @@ describe("mountQrPayLoginPhonePage", () => {
           nonce: "abc",
           message: "Login:v1:abc",
           expiresAt: Date.now() + 60_000,
+          placeCode: "T3XR",
         })
       )
     );
@@ -132,6 +133,10 @@ describe("mountQrPayLoginPhonePage", () => {
     );
     expect(app.querySelector(".main-menu__title-nimiq")?.textContent).toBe("NIMIQ");
     expect(app.querySelector(".main-menu__title-space")?.textContent).toBe("SPACE");
+    const place = app.querySelector("#qr-pay-phone-place") as HTMLElement;
+    expect(place.hidden).toBe(false);
+    expect(place.textContent).toContain("This screen is");
+    expect(app.querySelector("#qr-pay-phone-place-code")?.textContent).toBe("T3XR");
     cleanup();
   });
 
@@ -168,11 +173,14 @@ describe("mountQrPayLoginPhonePage", () => {
         "Sign in on this device"
       );
     });
+    expect((app.querySelector("#qr-pay-phone-place") as HTMLElement).hidden).toBe(false);
+    expect(app.querySelector("#qr-pay-phone-place-code")?.textContent).toBe("T3XR");
 
     (app.querySelector("#qr-pay-phone-sign") as HTMLButtonElement).click();
     await vi.waitFor(() => {
       expect(app.querySelector("#qr-pay-phone-title")?.textContent).toBe("Sign in on T3XR?");
     });
+    expect((app.querySelector("#qr-pay-phone-place") as HTMLElement).hidden).toBe(true);
     expect(app.querySelector(".qr-pay-login-phone__card")?.classList.contains(
       "qr-pay-login-phone__card--paper"
     )).toBe(true);
@@ -197,6 +205,8 @@ describe("mountQrPayLoginPhonePage", () => {
     expect(app.querySelector("#qr-pay-phone-title")?.textContent).toBe(
       "Sign in on this device"
     );
+    expect((app.querySelector("#qr-pay-phone-place") as HTMLElement).hidden).toBe(false);
+    expect(app.querySelector("#qr-pay-phone-place-code")?.textContent).toBe("T3XR");
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/complete"))).toBe(
       false
     );

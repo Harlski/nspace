@@ -5,4 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
+- [CHANGE] After you scan a sign-in QR code, the phone shows the same four-character code as the computer, labeled **This screen is**, before you sign.

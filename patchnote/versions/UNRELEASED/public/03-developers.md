@@ -5,4 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
+- [CHANGE] The phone QR page renders `placeCode` from `GET /api/auth/qr-login/:ticketId/challenge` on the sign-in screen, before `preview` or `complete`. The confirm card still titles itself **Sign in on {code}?** and hides that larger code.

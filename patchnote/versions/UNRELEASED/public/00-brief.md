@@ -5,4 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
+When you scan a sign-in QR code, the phone shows the same four-character code as the computer right away, before you approve.
