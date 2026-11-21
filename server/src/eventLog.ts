@@ -39,6 +39,8 @@ export const ANALYTICS_EVENT_KINDS = {
   /** Fired when a client successfully starts a NIM block claim (adjacent to target). */
   beginBlockClaim: "begin_block_claim",
   claimBlock: "claim_block",
+  /** Gameplay NIM credited outside `claim_block` (goal, maze). Same `claimId` counts once. */
+  gameplayNimEarned: "gameplay_nim_earned",
   nimPayoutSent: "nim_payout_sent",
   nimPayoutDeadLetter: "nim_payout_dead_letter",
   placeBlock: "place_block",

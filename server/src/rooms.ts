@@ -5260,6 +5260,32 @@ export function getRoomFloorColorMapForThumbnail(roomIdRaw: string): {
   };
 }
 
+export type OnlineRealPlayer = {
+  address: string;
+  displayName: string;
+  roomId: string;
+  nimiqPay: boolean;
+};
+
+/** Real players currently in a room (no stream observers, hidden admins, or NPCs). */
+export function listOnlineRealPlayers(): OnlineRealPlayer[] {
+  const out: OnlineRealPlayer[] = [];
+  for (const [roomId, room] of rooms) {
+    for (const c of room.values()) {
+      if (c.streamObserver) continue;
+      if (c.adminInvisible) continue;
+      if (c.displayName.startsWith("[NPC] ")) continue;
+      out.push({
+        address: c.address,
+        displayName: c.displayName,
+        roomId,
+        nimiqPay: c.sessionNimiqPay === true || c.player.nimiqPay === true,
+      });
+    }
+  }
+  return out;
+}
+
 export function countOnlineRealPlayers(): number {
   let total = 0;
   for (const room of rooms.values()) {
@@ -7037,6 +7063,11 @@ function handleCanvasPortalEntry(conn: ClientConn, room: Map<string, ClientConn>
     );
     mazePaidLuna = earn.payLuna;
     if (earn.payLuna > 0n) {
+      logGameplayEvent(conn.sessionId, conn.address, CANVAS_ROOM_ID, "gameplay_nim_earned", {
+        claimId: mazeRewardClaimId,
+        amountLuna: earn.payLuna.toString(),
+        source: "maze",
+      });
       const nim = (Number(earn.payLuna) / Number(LUNA_PER_NIM)).toFixed(4);
       wsSafeSend(conn.ws, {
         type: "chat",
@@ -7826,6 +7857,17 @@ function maybeQueueGoalReward(
     tileKey: `wc-goal-${goalId}`,
     txMessage: "Scored a goal on Nimiq Space!",
   });
+  logGameplayEvent(
+    "gameplay-earn",
+    decision.recipientWallet,
+    roomId,
+    "gameplay_nim_earned",
+    {
+      claimId: decision.claimId,
+      amountLuna: earn.payLuna.toString(),
+      source: "goal",
+    }
+  );
   return {
     ...decision,
     amountLuna: earn.payLuna,

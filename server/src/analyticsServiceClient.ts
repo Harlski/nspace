@@ -156,6 +156,72 @@ export async function fetchEventLogAnalyticsSnapshot(
   return { ok: true, value: enrichOverviewSnapshot(r.json) };
 }
 
+export type ActivityDigestPlayer = {
+  address: string;
+  activeMs: number;
+  sessionStarts: number;
+  nimEarnedLuna: string;
+  chatCount: number;
+  blocksPlaced: number;
+  blocksClaimed: number;
+  nimiqPay: boolean;
+  isNew: boolean;
+  isGuest: boolean;
+  lastRoomId: string;
+  joinedLastHour: boolean;
+};
+
+export type ActivityDigestRoom = {
+  roomId: string;
+  activeMs: number;
+  uniquePlayers: number;
+};
+
+export type ActivityDigest = {
+  windowStartMs: number;
+  windowEndMs: number;
+  lookbackDays: number;
+  uniquePlayers: number;
+  newPlayers: number;
+  guestPlayers: number;
+  nimiqPayPlayers: number;
+  activePlayMsTotal: number;
+  nimEarnedLuna: string;
+  sessionStarts: number;
+  sessionStartsLastHour: number;
+  chatLines: number;
+  blocksPlaced: number;
+  blocksClaimed: number;
+  topRooms: ActivityDigestRoom[];
+  players: ActivityDigestPlayer[];
+  playerCount: number;
+  joinedLastHourAddresses: string[];
+};
+
+export async function fetchActivityDigest(
+  windowStartMs: number,
+  windowEndMs: number,
+  lookbackDays: number
+): Promise<AnalyticsServiceReadResult<ActivityDigest>> {
+  const qs = new URLSearchParams({
+    fromMs: String(windowStartMs),
+    toMs: String(windowEndMs),
+    lookbackDays: String(lookbackDays),
+  });
+  const r = await analyticsFetch(`/v1/activity-digest?${qs}`, { method: "GET" });
+  if (!r.ok) {
+    return {
+      ok: false,
+      error: r.text || `HTTP ${r.status}`,
+      status: r.status || undefined,
+    };
+  }
+  if (!r.json || typeof r.json !== "object") {
+    return { ok: false, error: "invalid_response", status: r.status };
+  }
+  return { ok: true, value: r.json as ActivityDigest };
+}
+
 export async function fetchDailyStatsAggregate(
   dayStartMs: number,
   dayEndMs: number,

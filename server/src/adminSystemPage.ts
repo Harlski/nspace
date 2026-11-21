@@ -304,11 +304,52 @@ export function adminSystemPageHtml(): string {
         if (prevBtn) prevBtn.disabled = false;
       }
     }
+    async function runHourlyDigest(preview) {
+      var status = document.getElementById("sys-hourly-status");
+      var out = document.getElementById("sys-hourly-out");
+      var sendBtn = document.getElementById("sys-hourly-send");
+      var prevBtn = document.getElementById("sys-hourly-preview");
+      var token = readAuthToken();
+      if (!token) {
+        if (status) status.textContent = "Not signed in.";
+        return;
+      }
+      if (sendBtn) sendBtn.disabled = true;
+      if (prevBtn) prevBtn.disabled = true;
+      if (status) status.textContent = preview ? "Building preview…" : "Sending…";
+      try {
+        var url = "/api/admin/system/hourly-activity/send" + (preview ? "?preview=1" : "");
+        var r = await fetch(url, {
+          method: "POST",
+          headers: { authorization: "Bearer " + token },
+          cache: "no-store",
+        });
+        if (!r.ok) {
+          if (status) status.textContent = "Failed (" + r.status + ").";
+          return;
+        }
+        var j = await r.json();
+        if (status) status.textContent = j.sent ? "Sent to Telegram." : "Preview built (not sent).";
+        if (out) {
+          out.style.display = "block";
+          out.textContent = String(j.message || "");
+        }
+      } catch (e) {
+        if (status) status.textContent = "Network error.";
+      } finally {
+        if (sendBtn) sendBtn.disabled = false;
+        if (prevBtn) prevBtn.disabled = false;
+      }
+    }
     function wireStatsButtons() {
       var sendBtn = document.getElementById("sys-stats-send");
       if (sendBtn) sendBtn.addEventListener("click", function () { runStatsReport(false); });
       var prevBtn = document.getElementById("sys-stats-preview");
       if (prevBtn) prevBtn.addEventListener("click", function () { runStatsReport(true); });
+      var hourlySend = document.getElementById("sys-hourly-send");
+      if (hourlySend) hourlySend.addEventListener("click", function () { runHourlyDigest(false); });
+      var hourlyPrev = document.getElementById("sys-hourly-preview");
+      if (hourlyPrev) hourlyPrev.addEventListener("click", function () { runHourlyDigest(true); });
     }
     var pollTimer = null;
     function setPolling(on) {
@@ -409,6 +450,14 @@ export function adminSystemPageHtml(): string {
           "<div class='sys-section'><h2>Resident set (RSS), MiB</h2>" +
           "<p class='sys-hint'>Memory trend from the same sampling interval.</p>" +
           barChartHtml(j.memSeries, "rssMiB", "chart-cols--mem") +
+          "</div>" +
+          "<div class='sys-section'><h2>Hourly activity digest</h2>" +
+          "<p class='sys-hint'>One Telegram message per UTC hour: most active players over the <strong>last 24 hours</strong> (played time, NIM earned, online room, sessions, chat) plus who joined this hour. Replaces per-connect notices. Requires <code class='mono'>TELEGRAM_BOT_TOKEN</code> / <code class='mono'>TELEGRAM_CHAT_ID</code> and the Analytics Service; otherwise use Preview.</p>" +
+          "<div class='sys-actions'>" +
+          "<button type='button' id='sys-hourly-send'>Send hourly digest to Telegram</button>" +
+          "<button type='button' id='sys-hourly-preview'>Preview digest (no send)</button>" +
+          "<span id='sys-hourly-status' class='sys-hint' style='margin:0'></span></div>" +
+          "<pre id='sys-hourly-out' class='mono' style='white-space:pre-wrap;margin:0;display:none;background:#0a0f18;border:1px solid #263348;border-radius:6px;padding:0.5rem 0.6rem;color:#b8c5d9'></pre>" +
           "</div>" +
           "<div class='sys-section'><h2>End-of-day stats report</h2>" +
           "<p class='sys-hint'>Send the stats summary for the <strong>rolling last 24 hours</strong> to Telegram now (unique sign-ins, new users, Nimiq Pay vs other, NIM paid out, active in-game time). Requires <code class='mono'>TELEGRAM_BOT_TOKEN</code> / <code class='mono'>TELEGRAM_CHAT_ID</code>; otherwise use Preview.</p>" +

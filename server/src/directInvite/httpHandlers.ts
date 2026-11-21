@@ -20,8 +20,6 @@ import {
   upgradeInviteGuestWallet,
 } from "./store.js";
 import { generateGuestId } from "./store.js";
-import { markGuestConnectNoticePending } from "../connectNotice.js";
-
 export type DirectInviteHttpDeps = {
   jwtSecret: string;
   publicBaseUrl: string;
@@ -241,11 +239,6 @@ export function registerDirectInviteRoutes(
       ttlSec: GUEST_SESSION_TTL_SEC,
     });
     setGuestIdCookie(res, guestId);
-    markGuestConnectNoticePending({
-      guestAddress: `guest:${guestId}`,
-      hostWallet: invite.hostWallet,
-      inviteSlug: slug,
-    });
     res.json({
       token,
       guestId,
@@ -288,14 +281,6 @@ export function registerDirectInviteRoutes(
       inviteSlug: slug,
       ttlSec: GUEST_SESSION_TTL_SEC,
     });
-    const invite = getInviteBySlug(slug);
-    if (invite) {
-      markGuestConnectNoticePending({
-        guestAddress: `guest:${payload.guestId}`,
-        hostWallet: invite.hostWallet,
-        inviteSlug: slug,
-      });
-    }
     res.json({ token, nickname });
   });
 
