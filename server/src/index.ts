@@ -73,6 +73,7 @@ import {
   isAnalyticsServiceClientConfigured,
   type AnalyticsTimeWindow,
 } from "./analyticsServiceClient.js";
+import { startHourlyActivityScheduler, buildHourlyActivityReport, sendHourlyActivityReport } from "./hourlyActivityReport.js";
 import {
   startDailyStatsScheduler,
   buildDailyStatsReport,
@@ -278,7 +279,6 @@ import {
 import { playerLevelFromPoints } from "./playerLevel.js";
 import { peekDailyEarnRemaining } from "./dailyEarnAllowance.js";
 import { BILLBOARD_ADVERTS_CATALOG } from "./billboardAdvertsCatalog.js";
-import { maybeSendConnectNotice } from "./connectNotice.js";
 import { sendTelegramPlainText } from "./telegramNotify.js";
 import {
   addAdminFeedbackMessage,
@@ -2435,6 +2435,26 @@ app.get("/api/admin/system/snapshot", requireSystemAdminWallet, async (_req, res
  * Send the stats report for the rolling last 24 hours to Telegram, on demand from `/admin/system`.
  * `preview=1` returns the built report without sending.
  */
+/**
+ * Send the hourly activity digest (rolling last 24h leaderboard) to Telegram.
+ * `preview=1` returns the message without sending.
+ */
+app.post("/api/admin/system/hourly-activity/send", requireSystemAdminWallet, async (req, res) => {
+  const preview = req.query.preview === "1" || req.query.preview === "true";
+  try {
+    if (preview) {
+      const report = await buildHourlyActivityReport();
+      res.json({ sent: false, message: report.message });
+      return;
+    }
+    const report = await sendHourlyActivityReport();
+    res.json({ sent: report.sent, message: report.message });
+  } catch (e) {
+    console.error("[api/admin/system/hourly-activity/send]", e);
+    res.status(503).json({ error: "digest_unavailable" });
+  }
+});
+
 app.post("/api/admin/system/daily-stats/send", requireSystemAdminWallet, async (req, res) => {
   const preview = req.query.preview === "1" || req.query.preview === "true";
   try {
@@ -3820,7 +3840,8 @@ startPayoutOutboxDeliveryLoop();
 startPayoutBalancePullLoop();
 initPayoutAnalyticsBridgeForRuntime();
 startPayoutAnalyticsBackfillSync();
-startDailyStatsScheduler();
+  startDailyStatsScheduler();
+  startHourlyActivityScheduler();
 
 function headerValue(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];
@@ -3929,21 +3950,6 @@ wss.on("connection", (ws, req) => {
       xForwardedFor: headerValue(req.headers["x-forwarded-for"]),
     }),
   });
-  const normAddr = normalizeWalletId(address);
-  const connectDisplayName =
-    guestDisplayName?.trim() || getEffectivePlayerDisplayName(normAddr);
-  void maybeSendConnectNotice(
-    {
-      address,
-      roomId,
-      guestDisplayName,
-      guestInviteSlug,
-      displayName: connectDisplayName || undefined,
-      streamObserver: streamRequested,
-      nimiqPay: sessionNimiqPay,
-    },
-    PUBLIC_BASE_URL
-  );
 });
 
 const clientDist = path.join(__dirname, "../../client/dist");

@@ -5,7 +5,6 @@ import {
   evaluatePlayerLevelAchievements,
 } from "./achievementStore.js";
 import { signSession } from "./auth.js";
-import { markWalletConnectNoticePending } from "./connectNotice.js";
 import { ensureDevWalletAllCosmeticEntitlements } from "./cosmeticStore.js";
 import { recordLoginStreakForWallet } from "./loginStreakStore.js";
 import { getUsernamePromptStatus } from "./playerProfileStore.js";
@@ -178,7 +177,6 @@ export async function issueWalletSessionFromSignedLogin(opts: {
   }
   ensureDevWalletAllCosmeticEntitlements(sessionAddress);
   const usernamePrompt = getUsernamePromptStatus(normAddr);
-  markWalletConnectNoticePending(normAddr, { nimiqPay });
 
   return {
     ok: true,

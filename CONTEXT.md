@@ -383,11 +383,11 @@ _Avoid_: dest preview modal, teleport menu, coords dialog.
 
 ## Sessions
 
-**Connect Notice**:
-An optional operator Telegram ping when a player **signs in** (fresh wallet auth or guest
-invite claim) and enters the world. Not sent on mid-session reconnects, tab returns, door
-crossings, or idle hub returns.
-_Avoid_: door alarm, connect ping, login webhook.
+**Hourly Activity Digest**:
+The operator Telegram message sent once per UTC hour. It ranks players by active play over
+the rolling last 24 hours (NIM earned, time played, who is online, who joined in the last
+hour). It replaces a ping on every world entry.
+_Avoid_: door alarm, connect notice, connect ping, login webhook.
 
 **Guest**:
 A player holding an ephemeral session without a connected Nimiq wallet. They receive a
