@@ -14288,6 +14288,16 @@ html.nspace-mobile-portrait .hud.hud--build-bottom-dock-visible .hud-build-botto
   color: rgba(252, 211, 77, 0.92);
 }
 
+.nim-claim-bar__challenge {
+  margin-top: 8px;
+  pointer-events: auto;
+  min-height: 65px;
+}
+
+.nim-claim-bar--denied:has(.nim-claim-bar__challenge:not([hidden])) {
+  pointer-events: auto;
+}
+
 .canvas-countdown {
   position: absolute;
   left: 50%;

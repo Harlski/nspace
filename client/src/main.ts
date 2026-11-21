@@ -124,6 +124,8 @@ import {
   sendClientPing,
   sendNimSendIntent,
   sendBeginBlockClaim,
+  sendMiningChallengeVerify,
+  sendMiningChallengeSelf,
   sendCreateOfficialRoom,
   sendCreateRoom,
   sendAchievementSignal,
@@ -1044,6 +1046,12 @@ function enterGame(
   }
   hud.setBrandLinksPlayerAddress(address);
   const canvasHost = hudRoot.querySelector(".canvas-host") as HTMLElement;
+  hud.setMiningChallengeTokenHandler((captchaToken) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      sendMiningChallengeVerify(ws, captchaToken);
+    }
+  });
+
   const game = new Game(canvasHost);
 
   if (camJitCapture) {
@@ -2749,6 +2757,12 @@ function enterGame(
         sendAdminInvisible(ws, enabled);
       }
     },
+    getAuthToken: () => token,
+    onMiningChallengeSelf: (action) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        sendMiningChallengeSelf(ws, action);
+      }
+    },
     onSetVoxelText: (spec) => {
       if (!ws) return;
       sendSetVoxelText(ws, spec);
@@ -3337,6 +3351,8 @@ function enterGame(
   const NIM_CLAIM_AWAY_DISMISS_MS = 4500;
   const NIM_CLAIM_MSG_MINING_RESTRICTED =
     "Mining is restricted on this account.";
+  const NIM_CLAIM_MSG_MINING_DISABLED =
+    "Mining is disabled on this account.";
   const NIM_CLAIM_MSG_GUEST = "Connect a wallet to earn NIM from mining.";
   /** From welcome / profile / server claim denial; blocks beginBlockClaim on client. */
   let selfBlockClaimDeniedReason: string | null = null;
@@ -3344,6 +3360,7 @@ function enterGame(
   function isBlockClaimDenialReason(reason: string | null | undefined): boolean {
     return (
       reason === NIM_CLAIM_MSG_MINING_RESTRICTED ||
+      reason === NIM_CLAIM_MSG_MINING_DISABLED ||
       reason === NIM_CLAIM_MSG_GUEST
     );
   }
@@ -5953,6 +5970,9 @@ function enterGame(
         welcomeDenied && isBlockClaimDenialReason(welcomeDenied)
           ? welcomeDenied
           : null;
+      if (typeof msg.turnstileSiteKey === "string" && msg.turnstileSiteKey.trim()) {
+        hud.setMiningChallengeSiteKey(msg.turnstileSiteKey.trim());
+      }
       // worldcup: any room change clears a stale post-goal movement freeze.
       game.setWorldcupMoveLocked(false);
       if (movementWatchWanted && ws && ws.readyState === WebSocket.OPEN) {
@@ -6804,6 +6824,46 @@ function enterGame(
         nimClaimUiRef.holdMs = Math.max(500, msg.holdMs);
         nimClaimUiRef.rewardHoldSince = null;
         nimClaimUiRef.completeSent = false;
+      }
+      return;
+    }
+    if (msg.type === "miningChallengeResult") {
+      if (msg.ok) {
+        selfBlockClaimDeniedReason = null;
+        hud.setNimClaimProgress(null);
+      } else {
+        hud.resetMiningChallengeWidget();
+      }
+      return;
+    }
+    if (msg.type === "miningChallengeSelfResult") {
+      const reasonText: Record<string, string> = {
+        self_check_disabled: "Admin self-check is off.",
+        captcha_unavailable: "Captcha is unavailable. Set the Turnstile keys first.",
+        mining_restricted: "Mining is already restricted on this account.",
+        already_challenged: "A player challenge is already open on this account.",
+        forbidden: "Not allowed.",
+        not_in_challenge: "No self-check is open.",
+      };
+      if (msg.ok && msg.action === "open") {
+        selfBlockClaimDeniedReason = NIM_CLAIM_MSG_MINING_DISABLED;
+        hud.setNimClaimProgress({
+          progress: 0,
+          adjacent: true,
+          hint: NIM_CLAIM_MSG_MINING_DISABLED,
+          denied: true,
+        });
+        adminOverlay.setMiningChallengeNotice(
+          "Mining check is open on this account. Complete it on the claim bar."
+        );
+      } else if (msg.ok && msg.action === "clear") {
+        selfBlockClaimDeniedReason = null;
+        hud.setNimClaimProgress(null);
+        adminOverlay.setMiningChallengeNotice("Self-check cleared.");
+      } else {
+        adminOverlay.setMiningChallengeNotice(
+          reasonText[msg.reason ?? ""] ?? "Could not update the mining check."
+        );
       }
       return;
     }

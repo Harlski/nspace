@@ -1,3 +1,4 @@
+import { miningClaimDenialReason } from "./miningChallenge.js";
 import { isMiningBanned } from "./moderationStore.js";
 import { isGuestWallet } from "./worldcup/goalReward.js";
 
@@ -22,5 +23,5 @@ export function blockClaimAccessDeniedReason(
   if (isMiningBanned(normalizeWallet(address))) {
     return BLOCK_CLAIM_MSG_MINING_RESTRICTED;
   }
-  return null;
+  return miningClaimDenialReason(address);
 }

@@ -20,20 +20,36 @@ export function installAdminOverlay(
     onAdminInvisibleChange?: (enabled: boolean) => void;
     /** Initial Admin Invisibility checkbox (localStorage / session). */
     adminInvisibleInitial?: boolean;
+    /** Game session token for `/api/admin/settings`. */
+    getAuthToken?: () => string | null;
+    /** Open or clear a Mining Challenge on this admin's own wallet. */
+    onMiningChallengeSelf?: (action: "open" | "clear") => void;
     onSetVoxelText?: (spec: VoxelTextSpec) => void;
     onRemoveVoxelText?: (roomId: string, id: string) => void;
     /** Re-run build-dock thumbnail strip after inspector preview layout tweaks. */
     onInspectorPreviewLayoutChange?: () => void;
   }
-): { destroy: () => void; isVoxelEditorOpen: () => boolean } {
+): {
+  destroy: () => void;
+  isVoxelEditorOpen: () => boolean;
+  setMiningChallengeNotice: (text: string) => void;
+} {
   const enabled = Boolean(opts.enabled) || DEV_ENABLED;
   if (!enabled) {
-    return { destroy: () => {}, isVoxelEditorOpen: () => false };
+    return {
+      destroy: () => {},
+      isVoxelEditorOpen: () => false,
+      setMiningChallengeNotice: () => {},
+    };
   }
 
   const frame = hudRoot.querySelector(".game-frame");
   if (!frame) {
-    return { destroy: () => {}, isVoxelEditorOpen: () => false };
+    return {
+      destroy: () => {},
+      isVoxelEditorOpen: () => false,
+      setMiningChallengeNotice: () => {},
+    };
   }
 
   const wrap = document.createElement("div");
@@ -189,6 +205,18 @@ export function installAdminOverlay(
       <label class="admin-overlay-field admin-overlay-check"><input type="checkbox" id="admin-invisible-enabled" />
         <span>Admin Invisibility</span>
       </label>
+      <p class="admin-overlay-hint">Mining Challenge is off for players until enabled. Self-check opens the captcha on this account only and does not become a mining restriction if you leave it.</p>
+      <label class="admin-overlay-field admin-overlay-check"><input type="checkbox" id="mining-challenge-enabled" />
+        <span>Enable Mining Challenge for players</span>
+      </label>
+      <label class="admin-overlay-field admin-overlay-check"><input type="checkbox" id="mining-self-check" />
+        <span>Allow admin self-check</span>
+      </label>
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <button type="button" class="admin-overlay-btn" id="mining-self-open">Run mining check on me</button>
+        <button type="button" class="admin-overlay-btn admin-overlay-btn-secondary" id="mining-self-clear">Clear my check</button>
+      </div>
+      <p class="admin-overlay-hint" id="mining-self-status"></p>
     </div>
     <div class="admin-overlay-status" id="admin-status"></div>
   `;
@@ -214,6 +242,7 @@ export function installAdminOverlay(
   const adminInvisibleEnabled = $("admin-invisible-enabled") as HTMLInputElement;
   const allowMovementWatch = opts.allowMovementWatch === true;
   watchTabBtn.hidden = !allowMovementWatch;
+  let reportMiningChallengeNotice = (_text: string): void => {};
   if (allowMovementWatch) {
     let pref = false;
     try {
@@ -254,6 +283,72 @@ export function installAdminOverlay(
       }
       opts.onAdminInvisibleChange?.(on);
     });
+
+    const miningEnabled = $("mining-challenge-enabled") as HTMLInputElement;
+    const miningSelf = $("mining-self-check") as HTMLInputElement;
+    const miningStatus = $("mining-self-status") as HTMLElement;
+    const setMiningNotice = (text: string): void => {
+      miningStatus.textContent = text;
+    };
+    const loadMiningSettings = async (): Promise<void> => {
+      const token = opts.getAuthToken?.() ?? null;
+      if (!token) return;
+      try {
+        const r = await fetch("/api/admin/settings", {
+          headers: { authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        if (!r.ok) return;
+        const j = (await r.json()) as {
+          miningChallengeEnabled?: boolean;
+          miningChallengeAdminSelfCheck?: boolean;
+        };
+        miningEnabled.checked = j.miningChallengeEnabled === true;
+        miningSelf.checked = j.miningChallengeAdminSelfCheck !== false;
+      } catch {
+        /* leave the checkboxes as they are */
+      }
+    };
+    const saveMiningSettings = async (): Promise<void> => {
+      const token = opts.getAuthToken?.() ?? null;
+      if (!token) {
+        setMiningNotice("Sign in again to change this.");
+        return;
+      }
+      setMiningNotice("Saving…");
+      try {
+        const r = await fetch("/api/admin/settings", {
+          method: "PUT",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            miningChallengeEnabled: miningEnabled.checked,
+            miningChallengeAdminSelfCheck: miningSelf.checked,
+          }),
+        });
+        setMiningNotice(r.ok ? "Saved." : "Could not save.");
+      } catch {
+        setMiningNotice("Could not save.");
+      }
+    };
+    miningEnabled.addEventListener("change", () => {
+      void saveMiningSettings();
+    });
+    miningSelf.addEventListener("change", () => {
+      void saveMiningSettings();
+    });
+    $("mining-self-open").addEventListener("click", () => {
+      setMiningNotice("Opening a check on this account…");
+      opts.onMiningChallengeSelf?.("open");
+    });
+    $("mining-self-clear").addEventListener("click", () => {
+      setMiningNotice("Clearing…");
+      opts.onMiningChallengeSelf?.("clear");
+    });
+    void loadMiningSettings();
+    reportMiningChallengeNotice = setMiningNotice;
   }
 
   const syncZoomFields = (): void => {
@@ -700,6 +795,9 @@ export function installAdminOverlay(
   window.addEventListener("keydown", onKey);
 
   return {
+    setMiningChallengeNotice(text: string) {
+      reportMiningChallengeNotice(text);
+    },
     isVoxelEditorOpen() {
       if (panel.hidden) return false;
       const active = panel.querySelector<HTMLButtonElement>(

@@ -188,7 +188,31 @@ export function adminModerationPageHtml(): string {
       "</div>" +
       tableSection("Mining restrictions", "mining", snapshot.miningRestrictions || []) +
       tableSection("Username-set bans", "username", snapshot.usernameBans || []) +
-      tableSection("Channel mutes", "channel", snapshot.channelMutes || []);
+      tableSection("Channel mutes", "channel", snapshot.channelMutes || []) +
+      tableSection("Challenge grants", "username", (snapshot.challengeGrants || []).map(function (r) {
+        return {
+          address: r.wallet,
+          username: r.username,
+          displayName: r.displayName,
+          profilePath: r.profilePath,
+          at: r.grantedAt,
+          by: ""
+        };
+      })) +
+      "<section class='mod-panel'>" +
+      "<h2>Mining Challenge</h2>" +
+      "<p class='hint'>Grant lets that wallet open a Mining Challenge from another player's profile. Opening a challenge disables claimable-block mining on the target for 15 minutes unless they pass the captcha.</p>" +
+      "<div class='mod-lookup'>" +
+      "<input id='grantTarget' type='search' placeholder='Grant or revoke: username or full NQ wallet…' autocomplete='off' />" +
+      "<button type='button' id='grantBtn'>Grant</button>" +
+      "<button type='button' id='revokeBtn'>Revoke</button>" +
+      "</div>" +
+      "<div class='mod-lookup'>" +
+      "<input id='challengeTarget' type='search' placeholder='Open challenge: username or full NQ wallet…' autocomplete='off' />" +
+      "<button type='button' id='challengeBtn'>Open challenge</button>" +
+      "</div>" +
+      "<div id='challengeStatus' class='mod-status'></div>" +
+      "</section>";
 
     document.getElementById("walletFilter")?.addEventListener("input", function (e) {
       filterText = String(e.target && e.target.value != null ? e.target.value : "");
@@ -214,6 +238,35 @@ export function adminModerationPageHtml(): string {
         var href = tr.getAttribute("data-href");
         if (href) location.href = href;
       });
+    });
+    async function postChallenge(action, inputId, extra) {
+      var el = document.getElementById(inputId);
+      var target = el ? String(el.value || "").trim() : "";
+      var status = document.getElementById("challengeStatus");
+      if (!target) {
+        if (status) status.textContent = "Enter a player.";
+        return;
+      }
+      var res = await api("/api/admin/moderation", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(Object.assign({ action: action, target: target }, extra || {}))
+      });
+      if (status) {
+        status.textContent = res.status === 200
+          ? "Saved."
+          : String((res.body && res.body.error) || "Error.");
+      }
+      if (res.status === 200) void loadSnapshot();
+    }
+    document.getElementById("grantBtn")?.addEventListener("click", function () {
+      void postChallenge("challenge_grant", "grantTarget", { granted: true });
+    });
+    document.getElementById("revokeBtn")?.addEventListener("click", function () {
+      void postChallenge("challenge_grant", "grantTarget", { granted: false });
+    });
+    document.getElementById("challengeBtn")?.addEventListener("click", function () {
+      void postChallenge("mining_challenge", "challengeTarget");
     });
   }
 

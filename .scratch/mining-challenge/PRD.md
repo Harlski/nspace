@@ -1,6 +1,6 @@
 ---
 title: Mining Challenge
-status: ready-for-agent
+status: done
 glossary: CONTEXT.md
 adrs:
   - docs/adr/0024-unanswered-mining-challenge-becomes-restriction.md

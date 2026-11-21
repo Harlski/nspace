@@ -1120,6 +1120,12 @@ export function createHud(
     },
     opts?: { fadeOutMs?: number }
   ) => void;
+  /** Public Turnstile site key from welcome, used when a Mining Challenge is open. */
+  setMiningChallengeSiteKey: (siteKey: string) => void;
+  /** Called with the captcha token when the player passes the widget. */
+  setMiningChallengeTokenHandler: (handler: (token: string) => void) => void;
+  /** Drop the widget so a failed token can be tried again. */
+  resetMiningChallengeWidget: () => void;
   /** Show or hide the centered disconnect modal (e.g. after WebSocket loss). */
   setReconnectOffer: (visible: boolean, opts?: { label?: string }) => void;
   /** Operator-scheduled maintenance: orange countdown strip + friendlier disconnect copy. */
@@ -1186,6 +1192,7 @@ export function createHud(
     subjectUsernameBanned?: boolean;
     subjectChannelMuted?: boolean;
     subjectMiningBanned?: boolean;
+    viewerCanOpenMiningChallenge?: boolean;
     usernameSelfServiceEnabled?: boolean;
     country?: string | null;
     rooms?: Array<{
@@ -4675,6 +4682,12 @@ export function createHud(
   oppAdminActions.className = "other-player-profile__admin-actions";
   oppAdminActions.setAttribute("aria-label", "Admin actions");
   oppAdminRow.append(oppAdminActions);
+  const oppChallengeBtn = document.createElement("button");
+  oppChallengeBtn.type = "button";
+  oppChallengeBtn.className = "other-player-profile__challenge";
+  oppChallengeBtn.textContent = "Mining challenge";
+  oppChallengeBtn.hidden = true;
+  oppAdminRow.append(oppChallengeBtn);
   async function adminModerationPost(
     action: string,
     extra?: Record<string, unknown>
@@ -4734,6 +4747,7 @@ export function createHud(
         miningBanned ? "allow_mining" : "ban_mining",
         miningBanned ? "Allow mining" : "Ban mining",
       ],
+      ["mining_challenge", "Mining challenge"],
     ] as const;
     for (const [value, label] of actions) {
       const opt = document.createElement("option");
@@ -4759,7 +4773,41 @@ export function createHud(
       void adminModerationPost("mining_ban", extra);
     } else if (v === "allow_mining") {
       void adminModerationPost("mining_ban", { banned: false });
+    } else if (v === "mining_challenge") {
+      void postMiningChallenge();
     }
+  });
+  async function postMiningChallenge(): Promise<void> {
+    const tok = opts?.getGameAuthToken?.() ?? null;
+    const target = profileOpenCompact;
+    if (!tok || !target) return;
+    const r = await fetch("/api/mining-challenge/open", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${tok}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ target }),
+    });
+    const errBody = (await r.json().catch(() => ({}))) as { error?: string };
+    const map: Record<string, string> = {
+      captcha_unavailable: "Captcha is unavailable.",
+      mining_restricted: "Mining is already restricted.",
+      already_challenged: "A challenge is already open.",
+      challenge_immune: "This account just passed a challenge.",
+      cannot_target_self: "You cannot challenge yourself.",
+      cannot_target_admin: "You cannot challenge an admin.",
+      forbidden: "Not allowed.",
+      invalid_address: "Invalid address.",
+      challenge_disabled: "Mining Challenge is off.",
+    };
+    oppProfileNote.textContent = r.ok
+      ? "Mining challenge opened."
+      : (map[errBody.error ?? ""] ?? "Could not open a challenge.");
+    oppProfileNote.hidden = false;
+  }
+  oppChallengeBtn.addEventListener("click", () => {
+    void postMiningChallenge();
   });
   const oppProfileMessage = document.createElement("div");
   oppProfileMessage.className = "other-player-profile__message-wrap";
@@ -5658,6 +5706,7 @@ export function createHud(
     oppUsernameInput.readOnly = false;
     oppAdminRow.hidden = true;
     oppAdminActions.replaceChildren();
+    oppChallengeBtn.hidden = true;
     otherPlayerProfile.hidden = true;
     otherPlayerProfile.setAttribute("aria-hidden", "true");
     oppIdent.hidden = true;
@@ -6220,12 +6269,18 @@ export function createHud(
     if (kind === "self") selfCountryCode = profileCountry;
     renderProfileFlag(kind, profileCountry);
     const adminOther = kind === "other" && opts?.isGameAdmin?.() === true;
-    oppAdminRow.hidden = !adminOther;
+    const canChallenge =
+      kind === "other" && j.viewerCanOpenMiningChallenge === true;
+    oppAdminRow.hidden = !adminOther && !canChallenge;
+    oppAdminActions.hidden = !adminOther;
+    oppChallengeBtn.hidden = adminOther || !canChallenge;
     if (adminOther) {
       const banned = j.subjectUsernameBanned === true;
       const muted = j.subjectChannelMuted === true;
       const miningBanned = j.subjectMiningBanned === true;
       syncAdminActions(banned, muted, miningBanned);
+    } else {
+      oppAdminActions.replaceChildren();
     }
     profileUsernameSavedCustom = j.customUsername?.trim() ?? "";
     const hasCustom = Boolean(profileUsernameSavedCustom);
@@ -6747,10 +6802,82 @@ export function createHud(
     if (hint === "Mining is restricted on this account.") {
       return t("mining.restricted");
     }
+    if (hint === "Mining is disabled on this account.") {
+      return t("mining.disabled");
+    }
     if (hint === "Connect a wallet to earn NIM from mining.") {
       return t("mining.guestWallet");
     }
     return hint;
+  }
+
+  const MINING_CHALLENGE_HINT = "Mining is disabled on this account.";
+  const nimClaimChallenge = document.createElement("div");
+  nimClaimChallenge.className = "nim-claim-bar__challenge";
+  nimClaimChallenge.hidden = true;
+  nimClaimBar.appendChild(nimClaimChallenge);
+  let miningChallengeSiteKey = "";
+  let miningChallengeTokenHandler: ((token: string) => void) | null = null;
+  let miningChallengeWidgetId: string | null = null;
+  let miningChallengeScript: Promise<void> | null = null;
+
+  type TurnstileApi = {
+    render: (
+      el: HTMLElement,
+      opts: { sitekey: string; callback: (token: string) => void }
+    ) => string;
+    remove: (id: string) => void;
+  };
+
+  function turnstileApi(): TurnstileApi | null {
+    return (window as Window & { turnstile?: TurnstileApi }).turnstile ?? null;
+  }
+
+  function loadTurnstile(): Promise<void> {
+    if (turnstileApi()) return Promise.resolve();
+    if (miningChallengeScript) return miningChallengeScript;
+    miningChallengeScript = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("turnstile"));
+      document.head.appendChild(script);
+    });
+    return miningChallengeScript;
+  }
+
+  function clearMiningChallengeWidget(): void {
+    const api = turnstileApi();
+    if (miningChallengeWidgetId && api) api.remove(miningChallengeWidgetId);
+    miningChallengeWidgetId = null;
+    nimClaimChallenge.replaceChildren();
+    nimClaimChallenge.hidden = true;
+  }
+
+  function syncMiningChallengeWidget(hint: string | undefined): void {
+    if (hint !== MINING_CHALLENGE_HINT || !miningChallengeSiteKey) {
+      clearMiningChallengeWidget();
+      return;
+    }
+    if (miningChallengeWidgetId) {
+      nimClaimChallenge.hidden = false;
+      return;
+    }
+    nimClaimChallenge.hidden = false;
+    void loadTurnstile()
+      .then(() => {
+        const api = turnstileApi();
+        if (!api || miningChallengeWidgetId) return;
+        if (!nimClaimBar.classList.contains("nim-claim-bar--denied")) return;
+        miningChallengeWidgetId = api.render(nimClaimChallenge, {
+          sitekey: miningChallengeSiteKey,
+          callback: (token) => miningChallengeTokenHandler?.(token),
+        });
+      })
+      .catch(() => {
+        /* The 15-minute clock keeps running when the widget cannot load. */
+      });
   }
 
   ui.appendChild(nimClaimBar);
@@ -18740,6 +18867,7 @@ export function createHud(
               "nim-claim-bar--denied"
             );
             nimClaimBar.hidden = true;
+            clearMiningChallengeWidget();
           }, fadeMs);
           return;
         }
@@ -18749,6 +18877,7 @@ export function createHud(
           "nim-claim-bar--denied"
         );
         nimClaimBar.hidden = true;
+        clearMiningChallengeWidget();
         return;
       }
       nimClaimBar.classList.remove("nim-claim-bar--fading");
@@ -18768,6 +18897,17 @@ export function createHud(
             : t("mining.hintApproach");
       }
       nimClaimBar.classList.toggle("nim-claim-bar--adjacent", state.adjacent);
+      syncMiningChallengeWidget(state.hint?.trim());
+    },
+    setMiningChallengeSiteKey(siteKey: string) {
+      miningChallengeSiteKey = siteKey.trim();
+    },
+    setMiningChallengeTokenHandler(handler: (token: string) => void) {
+      miningChallengeTokenHandler = handler;
+    },
+    resetMiningChallengeWidget() {
+      clearMiningChallengeWidget();
+      syncMiningChallengeWidget(MINING_CHALLENGE_HINT);
     },
     setCanvasTimer(timeRemaining: number) {
       const timerEl = canvasLeaderboard.querySelector(".canvas-leaderboard__timer") as HTMLElement | null;

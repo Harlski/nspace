@@ -241,6 +241,14 @@ import {
   BLOCK_CLAIM_MSG_GUEST,
 } from "./blockClaimAccess.js";
 import {
+  BLOCK_CLAIM_MSG_MINING_CHALLENGE,
+  clearMiningChallengeForSelf,
+  considerGameplayBegin,
+  openMiningChallengeForSelf,
+  passMiningChallenge,
+  turnstileSiteKeyForClient,
+} from "./miningChallenge.js";
+import {
   claimTile,
   getClaimsInBounds,
   loadCanvasClaims,
@@ -1129,6 +1137,8 @@ interface ClientConn {
   address: string;
   displayName: string;
   sessionId: string;
+  /** Address reported by the trusted reverse proxy, when the peer is loopback. */
+  clientIp?: string | null;
   sessionStartedAt: number;
   lastMoveToAt: number;
   lastChatAt: number;
@@ -1577,8 +1587,10 @@ type OutMsg =
       allowRoomJoinSpawnEdit?: boolean;
       /** Dynamic rooms: deployable cosmetics allowed (default true). */
       roomDeployablesAllowed?: boolean;
-      /** When set, this wallet cannot earn NIM from block claims (guest or mining restriction). */
+      /** When set, this wallet cannot earn NIM from block claims. */
       blockClaimDeniedReason?: string;
+      /** Public Turnstile site key. Present when a Mining Challenge captcha can be shown. */
+      turnstileSiteKey?: string;
       /** Nimiq Pay first-contact tutorial state (lesson or sandbox). */
       tutorial?: TutorialWelcome;
       /** Learner tutorial flow live (env + admin toggle). */
@@ -1812,6 +1824,17 @@ type OutMsg =
       y?: number;
       holdMs: number;
       completeBy: number;
+    }
+  | {
+      type: "miningChallengeResult";
+      ok: boolean;
+      reason?: string;
+    }
+  | {
+      type: "miningChallengeSelfResult";
+      ok: boolean;
+      action: "open" | "clear";
+      reason?: string;
     }
   | {
       type: "blockClaimResult";
@@ -3248,6 +3271,18 @@ function isDailyEarnGatedBlockClaimRoom(roomId: string): boolean {
   return !(
     isTutorialRuntimeRoomId(roomId) || isTutorialStagingRoomId(roomId)
   );
+}
+
+function miningClaimWelcomeExtras(address: string): {
+  blockClaimDeniedReason?: string;
+  turnstileSiteKey?: string;
+} {
+  const denied = blockClaimAccessDeniedReason(address);
+  const siteKey = turnstileSiteKeyForClient();
+  return {
+    ...(denied ? { blockClaimDeniedReason: denied } : {}),
+    ...(siteKey ? { turnstileSiteKey: siteKey } : {}),
+  };
 }
 
 function sendDailyEarnAllowanceExhausted(
@@ -7488,10 +7523,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       saleDisplays: listSaleDisplaysWire(targetRoomId, {
         isAdmin: isAdmin(address),
       }),
-      ...( (): { blockClaimDeniedReason?: string } => {
-        const r = blockClaimAccessDeniedReason(address);
-        return r ? { blockClaimDeniedReason: r } : {};
-      })(),
+      ...miningClaimWelcomeExtras(address),
       chatBacklog,
       // worldcup: include any balls in this room
       balls:
@@ -9375,6 +9407,8 @@ export function addClient(
     guestId?: string;
     /** Credit Door Crasher when spawn came from explicit door URL params. */
     explorationDoorSpawn?: boolean;
+    /** Address reported by the trusted reverse proxy. */
+    clientIp?: string | null;
     /** Admin Invisibility requested at connect (admin + query only). */
     adminInvisible?: boolean;
   }
@@ -9598,6 +9632,7 @@ export function addClient(
     moveAbortDup: null,
     lastPoseHeartbeatAtMs: null,
     pendingBlockClaimId: null,
+    clientIp: sessionFlags?.clientIp ?? null,
     lastBlockClaimBeginAt: 0,
     lastBlockClaimTickAt: 0,
     lastBlockClaimCompleteAttemptAt: 0,
@@ -9754,10 +9789,7 @@ export function addClient(
       saleDisplays: listSaleDisplaysWire(roomId, {
         isAdmin: isAdmin(address),
       }),
-      ...( (): { blockClaimDeniedReason?: string } => {
-        const r = blockClaimAccessDeniedReason(address);
-        return r ? { blockClaimDeniedReason: r } : {};
-      })(),
+      ...miningClaimWelcomeExtras(address),
       chatBacklog,
       // worldcup: include any balls in this room
       balls:
@@ -14100,6 +14132,39 @@ export function addClient(
       return;
     }
 
+    if (
+      msg.type === "miningChallengeSelfOpen" ||
+      msg.type === "miningChallengeSelfClear"
+    ) {
+      const action = msg.type === "miningChallengeSelfOpen" ? "open" : "clear";
+      const result =
+        action === "open"
+          ? openMiningChallengeForSelf({ actor: address })
+          : clearMiningChallengeForSelf({ actor: address });
+      wsSafeSend(ws, {
+        type: "miningChallengeSelfResult",
+        ok: result.ok,
+        action,
+        ...(!result.ok ? { reason: result.error } : {}),
+      } satisfies OutMsg);
+      return;
+    }
+
+    if (msg.type === "miningChallengeVerify") {
+      const token = String((msg as { token?: unknown }).token ?? "");
+      const result = await passMiningChallenge({
+        wallet: address,
+        token,
+        ip: conn.clientIp ?? null,
+      });
+      wsSafeSend(ws, {
+        type: "miningChallengeResult",
+        ok: result.ok,
+        ...(!result.ok ? { reason: result.error } : {}),
+      } satisfies OutMsg);
+      return;
+    }
+
     if (msg.type === "claimBlock") {
       wsSafeSend(ws, {
           type: "blockClaimResult",
@@ -14225,6 +14290,25 @@ export function addClient(
         releaseBlockClaimSession(conn.pendingBlockClaimId);
       }
 
+      const tutorialMine =
+        isTutorialRuntimeRoomId(currentRoomId) ||
+        isTutorialStagingRoomId(currentRoomId);
+      const beginGate = considerGameplayBegin({
+        wallet: address,
+        ip: conn.clientIp ?? null,
+        now,
+        tutorial: tutorialMine,
+      });
+      if (!beginGate.accepted) {
+        wsSafeSend(ws, {
+          type: "blockClaimResult",
+          ok: false,
+          recoverable: true,
+          reason: beginGate.denial,
+        } satisfies OutMsg);
+        return;
+      }
+
       conn.lastBlockClaimBeginAt = now;
 
       const claimId = newBlockClaimId();
@@ -14347,6 +14431,13 @@ export function addClient(
 
       const claimDenied = blockClaimAccessDeniedReason(address);
       if (claimDenied) {
+        if (
+          claimDenied === BLOCK_CLAIM_MSG_MINING_CHALLENGE &&
+          conn.pendingBlockClaimId
+        ) {
+          releaseBlockClaimSession(conn.pendingBlockClaimId);
+          conn.pendingBlockClaimId = null;
+        }
         wsSafeSend(ws, {
             type: "blockClaimResult",
             ok: false,

@@ -28,6 +28,16 @@ export type AdminRuntimeSettings = {
    * Player-facing Shop. On by default; still hard-closed when `SHOP_ENABLED=0`.
    */
   shopEnabled: boolean;
+  /**
+   * Automatic and person-opened Mining Challenges. Off until an admin enables it,
+   * so a deploy does not pause mining.
+   */
+  miningChallengeEnabled: boolean;
+  /**
+   * When true, a game admin can open a Mining Challenge on their own wallet from
+   * the in-game Admin menu. Does not challenge other players.
+   */
+  miningChallengeAdminSelfCheck: boolean;
 };
 
 const DEFAULTS: AdminRuntimeSettings = {
@@ -35,6 +45,8 @@ const DEFAULTS: AdminRuntimeSettings = {
   streamObserverAddresses: "",
   tutorialEnabled: false,
   shopEnabled: true,
+  miningChallengeEnabled: false,
+  miningChallengeAdminSelfCheck: true,
 };
 
 type StoreFile = { settings: AdminRuntimeSettings };
@@ -68,6 +80,14 @@ function readStore(): StoreFile {
     );
     merged.shopEnabled = Boolean(
       (s as AdminRuntimeSettings).shopEnabled ?? DEFAULTS.shopEnabled
+    );
+    merged.miningChallengeEnabled = Boolean(
+      (s as AdminRuntimeSettings).miningChallengeEnabled ??
+        DEFAULTS.miningChallengeEnabled
+    );
+    merged.miningChallengeAdminSelfCheck = Boolean(
+      (s as AdminRuntimeSettings).miningChallengeAdminSelfCheck ??
+        DEFAULTS.miningChallengeAdminSelfCheck
     );
     return { settings: merged };
   } catch {
@@ -106,6 +126,12 @@ export function patchAdminRuntimeSettings(
   }
   if (patch.shopEnabled !== undefined) {
     next.shopEnabled = Boolean(patch.shopEnabled);
+  }
+  if (patch.miningChallengeEnabled !== undefined) {
+    next.miningChallengeEnabled = Boolean(patch.miningChallengeEnabled);
+  }
+  if (patch.miningChallengeAdminSelfCheck !== undefined) {
+    next.miningChallengeAdminSelfCheck = Boolean(patch.miningChallengeAdminSelfCheck);
   }
   writeStore({ settings: next });
   if (patch.streamObserverAddresses !== undefined) {

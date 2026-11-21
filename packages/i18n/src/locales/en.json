@@ -397,6 +397,7 @@
   "mining.hintAdjacent": "Hold position beside the block…",
   "mining.hintApproach": "Move to a tile directly beside the block (edge, not corner).",
   "mining.restricted": "Mining is restricted on this account.",
+  "mining.disabled": "Mining is disabled on this account.",
   "mining.guestWallet": "Connect a wallet to earn NIM from mining.",
   "dailyEarn.limitTitle": "Daily NIM limit reached",
   "dailyEarn.limitSubtitle": "Level up via Achievements to increase your cap",

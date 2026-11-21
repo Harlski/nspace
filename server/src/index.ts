@@ -351,12 +351,20 @@ import {
   isChannelMuted,
   isMiningBanned,
   isUsernameSetBanned,
-  listMiningBannedWalletKeys,
   listModerationSnapshot,
   setChannelMuted,
   setMiningBanned,
   setUsernameSetBanned,
 } from "./moderationStore.js";
+import { listMiningPayoutHeldWalletKeys } from "./payoutMiningGate.js";
+import { clientIpFromProxyRequest } from "./miningChallenge.js";
+import {
+  listChallengeGrants,
+  listOpenMiningChallengeWallets,
+  openMiningChallengeByPerson,
+  setChallengeGrant,
+  viewerMayOfferMiningChallenge,
+} from "./miningChallenge.js";
 import {
   adminPlayerIdentity,
   adminResetPlayerTutorial,
@@ -663,11 +671,14 @@ app.get("/api/player-profile/:address", (req, res) => {
           pub.channelMuted = isChannelMuted(addr);
           pub.miningBanned = isMiningBanned(addr);
           canSeePrivateRooms = true;
-        } else if (isAdmin(sub)) {
-          pub.subjectUsernameBanned = isUsernameSetBanned(addr);
-          pub.subjectChannelMuted = isChannelMuted(addr);
-          pub.subjectMiningBanned = isMiningBanned(addr);
-          canSeePrivateRooms = true;
+        } else if (isAdmin(sub) || viewerMayOfferMiningChallenge(sub, addr)) {
+          if (isAdmin(sub)) {
+            pub.subjectUsernameBanned = isUsernameSetBanned(addr);
+            pub.subjectChannelMuted = isChannelMuted(addr);
+            pub.subjectMiningBanned = isMiningBanned(addr);
+            canSeePrivateRooms = true;
+          }
+          pub.viewerCanOpenMiningChallenge = viewerMayOfferMiningChallenge(sub, addr);
         }
       } catch {
         /* ignore invalid bearer on public read */
@@ -954,7 +965,7 @@ app.get(
   "/internal/v1/mining-banned-wallets",
   requirePayoutServiceBearer,
   (_req, res) => {
-    res.json({ wallets: listMiningBannedWalletKeys() });
+    res.json({ wallets: listMiningPayoutHeldWalletKeys() });
   }
 );
 
@@ -2454,6 +2465,8 @@ app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
     streamObserverAddresses?: string;
     tutorialEnabled?: boolean;
     shopEnabled?: boolean;
+    miningChallengeEnabled?: boolean;
+    miningChallengeAdminSelfCheck?: boolean;
   } = {};
   if (
     body &&
@@ -2477,6 +2490,15 @@ app.put("/api/admin/settings", requireSystemAdminWallet, (req, res) => {
   }
   if (body && Object.prototype.hasOwnProperty.call(body, "shopEnabled")) {
     patch.shopEnabled = body.shopEnabled === true;
+  }
+  if (body && Object.prototype.hasOwnProperty.call(body, "miningChallengeEnabled")) {
+    patch.miningChallengeEnabled = body.miningChallengeEnabled === true;
+  }
+  if (
+    body &&
+    Object.prototype.hasOwnProperty.call(body, "miningChallengeAdminSelfCheck")
+  ) {
+    patch.miningChallengeAdminSelfCheck = body.miningChallengeAdminSelfCheck === true;
   }
   const next =
     Object.keys(patch).length > 0
@@ -3347,6 +3369,41 @@ app.post("/api/admin/moderation", requireSystemAdminWallet, (req, res) => {
       });
       return;
     }
+    if (action === "challenge_grant") {
+      const granted = body?.granted === true;
+      if (!setChallengeGrant(target, granted, actor)) {
+        res.status(400).json({ error: "Invalid wallet address" });
+        return;
+      }
+      res.json({
+        ok: true,
+        wallet: target,
+        matchedBy: resolved.matchedBy,
+        username: resolved.username,
+        granted,
+      });
+      return;
+    }
+    if (action === "mining_challenge") {
+      const opened = openMiningChallengeByPerson({ actor, target });
+      if (!opened.ok) {
+        const status =
+          opened.error === "forbidden" ||
+          opened.error === "cannot_target_self" ||
+          opened.error === "cannot_target_admin"
+            ? 403
+            : 409;
+        res.status(status).json({ error: opened.error });
+        return;
+      }
+      res.json({
+        ok: true,
+        wallet: target,
+        matchedBy: resolved.matchedBy,
+        username: resolved.username,
+      });
+      return;
+    }
     if (action === "set_username") {
       const uname = String(body?.username ?? "");
       const result = adminSetUsernameOnTarget(target, uname);
@@ -3433,6 +3490,16 @@ function enrichModerationSnapshotWithUsernames() {
         profilePath: id.profilePath,
       };
     }),
+    challengeGrants: listChallengeGrants().map((row) => {
+      const id = adminPlayerIdentity(row.address);
+      return {
+        wallet: row.address,
+        grantedAt: row.at,
+        username: id.username,
+        displayName: id.displayName,
+        profilePath: id.profilePath,
+      };
+    }),
   };
 }
 
@@ -3442,6 +3509,25 @@ app.get("/api/admin/bans", requireSystemAdminWallet, (_req, res) => {
 
 app.get("/api/admin/moderation", requireSystemAdminWallet, (_req, res) => {
   res.json(enrichModerationSnapshotWithUsernames());
+});
+
+app.post("/api/mining-challenge/open", requireJwt, (req, res) => {
+  const actor = normalizeWalletId(jwtAddressFromReq(req) ?? "");
+  const target = normalizeWalletId(String((req.body as { target?: unknown } | null)?.target ?? ""));
+  const opened = openMiningChallengeByPerson({ actor, target });
+  if (!opened.ok) {
+    const status =
+      opened.error === "forbidden" ||
+      opened.error === "cannot_target_self" ||
+      opened.error === "cannot_target_admin"
+        ? 403
+        : opened.error === "invalid_address"
+          ? 400
+          : 409;
+    res.status(status).json({ error: opened.error });
+    return;
+  }
+  res.json({ ok: true, wallet: target });
 });
 
 /**
@@ -3736,6 +3822,11 @@ initPayoutAnalyticsBridgeForRuntime();
 startPayoutAnalyticsBackfillSync();
 startDailyStatsScheduler();
 
+function headerValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url || "", "http://localhost");
   const token = url.searchParams.get("token") || "";
@@ -3832,6 +3923,11 @@ wss.on("connection", (ws, req) => {
     explorationDoorSpawn,
     adminInvisible:
       url.searchParams.get("adminInvisible") === "1" && isAdmin(address),
+    clientIp: clientIpFromProxyRequest({
+      peer: req.socket.remoteAddress,
+      xRealIp: headerValue(req.headers["x-real-ip"]),
+      xForwardedFor: headerValue(req.headers["x-forwarded-for"]),
+    }),
   });
   const normAddr = normalizeWalletId(address);
   const connectDisplayName =
@@ -3915,6 +4011,7 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 server.listen(PORT, HOST, () => {
+  listOpenMiningChallengeWallets();
   logListenUrls(PORT, HOST);
   console.log(
     "[feedback] Telegram config:",

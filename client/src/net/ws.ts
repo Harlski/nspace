@@ -357,8 +357,10 @@ export type ServerMessage =
       /** Sale Displays in this room (viewer-filtered). */
       saleDisplays?: SaleDisplayWire[];
       mosquitoTag?: MosquitoTagWire;
-      /** When set, this wallet cannot earn NIM from block claims (guest or mining restriction). */
+      /** When set, this wallet cannot earn NIM from block claims (guest, restriction, or challenge). */
       blockClaimDeniedReason?: string;
+      /** Public Turnstile site key for a Mining Challenge captcha. */
+      turnstileSiteKey?: string;
       /** Unlock Pad instance ids already unlocked for this wallet in this room. */
       unlockedPadInstanceIds?: string[];
       /** Nimiq Pay first-contact tutorial (lesson or sandbox). */
@@ -625,6 +627,17 @@ export type ServerMessage =
       y?: number;
       holdMs: number;
       completeBy: number;
+    }
+  | {
+      type: "miningChallengeResult";
+      ok: boolean;
+      reason?: string;
+    }
+  | {
+      type: "miningChallengeSelfResult";
+      ok: boolean;
+      action: "open" | "clear";
+      reason?: string;
     }
   | {
       type: "blockClaimResult";
@@ -1650,6 +1663,23 @@ export function sendBlockClaimTick(ws: WebSocket, claimId: string): void {
 export function sendCompleteBlockClaim(ws: WebSocket, claimId: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "completeBlockClaim", claimId }));
+}
+
+export function sendMiningChallengeVerify(ws: WebSocket, token: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "miningChallengeVerify", token }));
+}
+
+export function sendMiningChallengeSelf(
+  ws: WebSocket,
+  action: "open" | "clear"
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: action === "open" ? "miningChallengeSelfOpen" : "miningChallengeSelfClear",
+    })
+  );
 }
 
 export function sendPlaceExtraFloor(

@@ -132,6 +132,8 @@ export function adminSettingsPageHtml(): string {
         var shopOn = j.shopEnabled !== false;
         var shopEnvOn = j.shopEnvEnabled !== false;
         var shopActive = shopOn && shopEnvOn;
+        var miningOn = j.miningChallengeEnabled === true;
+        var selfCheckOn = j.miningChallengeAdminSelfCheck !== false;
         panel.innerHTML =
           "<div class='set-panel'>" +
           "<h2>Usernames</h2>" +
@@ -213,6 +215,26 @@ export function adminSettingsPageHtml(): string {
           (shopEnvOn ? "" : " disabled") +
           ">Save</button>" +
           "<span id='save-shop-msg' class='ok' hidden></span>" +
+          "</div></div>" +
+          "<div class='set-panel'>" +
+          "<h2>Mining Challenge</h2>" +
+          "<div class='set-row'>" +
+          "<input type='checkbox' id='mining-challenge-enabled' " +
+          (miningOn ? "checked " : "") +
+          "/>" +
+          "<label for='mining-challenge-enabled'>Enable Mining Challenge for players (shared-address detection and challenging another wallet).</label>" +
+          "</div>" +
+          "<p class='set-hint'>Off by default. While off, mining continues and no new player challenge opens. Turnstile keys are still required before a challenge can open.</p>" +
+          "<div class='set-row'>" +
+          "<input type='checkbox' id='mining-self-check' " +
+          (selfCheckOn ? "checked " : "") +
+          "/>" +
+          "<label for='mining-self-check'>Allow an admin to run a mining check on their own account from the in-game Admin menu.</label>" +
+          "</div>" +
+          "<p class='set-hint'>This does not challenge other players. An unanswered self-check closes on its own and does not become a Mining Restriction. Use it to try the captcha before enabling the player-facing check.</p>" +
+          "<div class='set-actions'>" +
+          "<button type='button' id='save-mining-btn'>Save</button>" +
+          "<span id='save-mining-msg' class='ok' hidden></span>" +
           "</div></div>";
         var saveUsernameBtn = document.getElementById("save-username-btn");
         var cb = document.getElementById("self-username");
@@ -269,6 +291,22 @@ export function adminSettingsPageHtml(): string {
               token,
               { shopEnabled: shopCb.checked },
               shopMsg
+            );
+          });
+        }
+        var saveMiningBtn = document.getElementById("save-mining-btn");
+        var miningCb = document.getElementById("mining-challenge-enabled");
+        var selfCheckCb = document.getElementById("mining-self-check");
+        var miningMsg = document.getElementById("save-mining-msg");
+        if (saveMiningBtn && miningCb && selfCheckCb && miningMsg) {
+          saveMiningBtn.addEventListener("click", function () {
+            saveSettings(
+              token,
+              {
+                miningChallengeEnabled: miningCb.checked,
+                miningChallengeAdminSelfCheck: selfCheckCb.checked,
+              },
+              miningMsg
             );
           });
         }
