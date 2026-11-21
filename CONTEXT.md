@@ -954,13 +954,18 @@ inside a rolling 24 hours. Wallets from that IP that began a claim in the last 1
 are included, and so is every later accepted begin from that IP. Older sessions are left as
 they are. An admin, or a wallet with a Challenge Grant, can also open one on a single other
 wallet. A Click Interval does not open one. A wallet already in a Mining Challenge or under
-Mining Restriction is not given another.
+Mining Restriction is not given another. A tutorial faucet mine does not count toward the
+three wallets, does not open a Mining Challenge, and does not pass one. While a hold is
+open, that faucet mine is disabled with other claimable-block mining. When the captcha
+provider cannot be reached, no new Mining Challenge opens. An open one keeps its clock, and
+an unanswered clock still becomes a Mining Restriction.
 _Avoid_: capture, captcha ban, mining popup, bot check.
 
 **Challenge Grant**:
 A wallet allowed to open a Mining Challenge on another wallet. Game admins can open one
 without a Challenge Grant. The list is edited from `/admin` and starts empty. Player Level
-does not confer one.
+does not confer one. The holder opens it from the other player's profile, and does not gain
+Ban mining, Freeze, or `/admin`. The holder cannot target themselves or a game admin.
 _Avoid_: level unlock, moderator rank, trusted player.
 
 **Mining Restriction**:
