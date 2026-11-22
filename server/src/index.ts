@@ -70,9 +70,11 @@ import {
 } from "./ambientCast/snapshot.js";
 import {
   fetchEventLogAnalyticsSnapshot,
+  fetchPlayerActivity,
   isAnalyticsServiceClientConfigured,
   type AnalyticsTimeWindow,
 } from "./analyticsServiceClient.js";
+import { startHourlyActivityScheduler, buildHourlyActivityReport, sendHourlyActivityReport } from "./hourlyActivityReport.js";
 import {
   startDailyStatsScheduler,
   buildDailyStatsReport,
@@ -278,7 +280,6 @@ import {
 import { playerLevelFromPoints } from "./playerLevel.js";
 import { peekDailyEarnRemaining } from "./dailyEarnAllowance.js";
 import { BILLBOARD_ADVERTS_CATALOG } from "./billboardAdvertsCatalog.js";
-import { maybeSendConnectNotice } from "./connectNotice.js";
 import { sendTelegramPlainText } from "./telegramNotify.js";
 import {
   addAdminFeedbackMessage,
@@ -344,6 +345,7 @@ import {
   listKnownPlayerUsernames,
   playerHasCustomUsername,
   recordUsernamePromptDeferral,
+  walletRequiresUsername,
   setPlayerProfileMessage,
   trySetPlayerUsername,
 } from "./playerProfileStore.js";
@@ -2435,6 +2437,26 @@ app.get("/api/admin/system/snapshot", requireSystemAdminWallet, async (_req, res
  * Send the stats report for the rolling last 24 hours to Telegram, on demand from `/admin/system`.
  * `preview=1` returns the built report without sending.
  */
+/**
+ * Send the hourly activity digest (rolling last 24h leaderboard) to Telegram.
+ * `preview=1` returns the message without sending.
+ */
+app.post("/api/admin/system/hourly-activity/send", requireSystemAdminWallet, async (req, res) => {
+  const preview = req.query.preview === "1" || req.query.preview === "true";
+  try {
+    if (preview) {
+      const report = await buildHourlyActivityReport();
+      res.json({ sent: false, message: report.message });
+      return;
+    }
+    const report = await sendHourlyActivityReport();
+    res.json({ sent: report.sent, message: report.message });
+  } catch (e) {
+    console.error("[api/admin/system/hourly-activity/send]", e);
+    res.status(503).json({ error: "digest_unavailable" });
+  }
+});
+
 app.post("/api/admin/system/daily-stats/send", requireSystemAdminWallet, async (req, res) => {
   const preview = req.query.preview === "1" || req.query.preview === "true";
   try {
@@ -3553,6 +3575,46 @@ app.get("/api/admin/player", requireSystemAdminWallet, (req, res) => {
 });
 
 /**
+ * Login history for one player: connected vs active spans.
+ * Default window is the rolling last 24 hours. `hours=168` is the last 7 days.
+ * The scan runs on the Analytics Service.
+ */
+app.get("/api/admin/player/activity", requireSystemAdminWallet, async (req, res) => {
+  const q = String(req.query.q ?? req.query.target ?? "").trim();
+  const resolved = resolveAdminPlayerTarget(q);
+  if (!resolved.ok) {
+    res.status(resolved.error === "not_found" ? 404 : 400).json({ error: resolved.error });
+    return;
+  }
+  const hoursRaw = req.query.hours;
+  const hours =
+    hoursRaw == null || hoursRaw === "" || String(hoursRaw) === "24"
+      ? 24
+      : String(hoursRaw) === "168"
+        ? 168
+        : null;
+  if (hours == null) {
+    res.status(400).json({ error: "invalid_hours" });
+    return;
+  }
+  const windowEndMs = Date.now();
+  const windowStartMs = windowEndMs - hours * 60 * 60 * 1000;
+  const online = getWalletCurrentRoomId(resolved.wallet) != null;
+  const out = await fetchPlayerActivity({
+    address: resolved.wallet,
+    windowStartMs,
+    windowEndMs,
+    online,
+  });
+  if (!out.ok) {
+    console.error("[admin/player/activity]", out.error);
+    res.status(503).json({ error: "analytics_unavailable" });
+    return;
+  }
+  res.json({ ok: true, hours, online, activity: out.value });
+});
+
+/**
  * Reset another player's tutorial (Mine → Pay → Exit + completion wipe)
  * so the next Nimiq Pay session needs the lesson again.
  * Body: `{ "target": "<NQ wallet or username>" }`.
@@ -3820,7 +3882,8 @@ startPayoutOutboxDeliveryLoop();
 startPayoutBalancePullLoop();
 initPayoutAnalyticsBridgeForRuntime();
 startPayoutAnalyticsBackfillSync();
-startDailyStatsScheduler();
+  startDailyStatsScheduler();
+  startHourlyActivityScheduler();
 
 function headerValue(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];
@@ -3915,6 +3978,10 @@ wss.on("connection", (ws, req) => {
       explorationDoorSpawn = false;
     }
   }
+  if (guestId === undefined && !streamRequested && walletRequiresUsername(address)) {
+    ws.close(4009, "username_required");
+    return;
+  }
   addClient(roomId, ws, address, spawnHint, {
     nimiqPay: sessionNimiqPay,
     streamObserver: streamRequested,
@@ -3929,21 +3996,6 @@ wss.on("connection", (ws, req) => {
       xForwardedFor: headerValue(req.headers["x-forwarded-for"]),
     }),
   });
-  const normAddr = normalizeWalletId(address);
-  const connectDisplayName =
-    guestDisplayName?.trim() || getEffectivePlayerDisplayName(normAddr);
-  void maybeSendConnectNotice(
-    {
-      address,
-      roomId,
-      guestDisplayName,
-      guestInviteSlug,
-      displayName: connectDisplayName || undefined,
-      streamObserver: streamRequested,
-      nimiqPay: sessionNimiqPay,
-    },
-    PUBLIC_BASE_URL
-  );
 });
 
 const clientDist = path.join(__dirname, "../../client/dist");

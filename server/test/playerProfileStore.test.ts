@@ -14,32 +14,46 @@ test("admin clear resets login prompt deferrals and allows immediate re-set", as
     getUsernamePromptStatus,
     recordUsernamePromptDeferral,
     trySetPlayerUsername,
+    walletRequiresUsername,
   } = await import("../src/playerProfileStore.js");
 
   const wallet = "NQ07 TEST000000000000000000000000000001";
 
-  for (let i = 0; i < 5; i++) {
-    const d = recordUsernamePromptDeferral(wallet);
-    assert.equal(d.ok, true);
-  }
   let prompt = getUsernamePromptStatus(wallet);
+  assert.equal(prompt.needsPrompt, true);
   assert.equal(prompt.mustSetUsername, true);
+  assert.equal(prompt.deferralsRemaining, 0);
+  assert.equal(walletRequiresUsername(wallet), true);
+  const deferred = recordUsernamePromptDeferral(wallet);
+  assert.equal(deferred.ok, false);
+  if (!deferred.ok) assert.equal(deferred.error, "username_prompt_required");
 
   const set1 = trySetPlayerUsername(wallet, "PlayerOne");
   assert.equal(set1.ok, true);
   prompt = getUsernamePromptStatus(wallet);
   assert.equal(prompt.needsPrompt, false);
+  assert.equal(walletRequiresUsername(wallet), false);
 
   adminClearPlayerUsername(wallet);
   prompt = getUsernamePromptStatus(wallet);
   assert.equal(prompt.needsPrompt, true);
   assert.equal(prompt.deferCount, 0);
-  assert.equal(prompt.deferralsRemaining, 5);
-  assert.equal(prompt.mustSetUsername, false);
+  assert.equal(prompt.deferralsRemaining, 0);
+  assert.equal(prompt.mustSetUsername, true);
+  assert.equal(walletRequiresUsername(wallet), true);
 
   const set2 = trySetPlayerUsername(wallet, "PlayerTwo");
   assert.equal(set2.ok, true);
   if (set2.ok) assert.equal(set2.customUsername, "PlayerTwo");
+
+  const compact = "NQ07TEST0000000000000000000000000999";
+  const spaced = compact.replace(/(.{4})/g, "$1 ").trim();
+  assert.notEqual(spaced, compact);
+  const setSpaced = trySetPlayerUsername(compact, "Creator");
+  assert.equal(setSpaced.ok, true);
+  assert.equal(getUsernamePromptStatus(spaced).needsPrompt, false);
+  assert.equal(walletRequiresUsername(spaced), false);
+  assert.equal(walletRequiresUsername(compact), false);
 
   fs.rmSync(dir, { recursive: true, force: true });
   delete process.env.PLAYER_PROFILE_STORE_FILE;

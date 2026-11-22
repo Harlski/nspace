@@ -383,11 +383,19 @@ _Avoid_: dest preview modal, teleport menu, coords dialog.
 
 ## Sessions
 
-**Connect Notice**:
-An optional operator Telegram ping when a player **signs in** (fresh wallet auth or guest
-invite claim) and enters the world. Not sent on mid-session reconnects, tab returns, door
-crossings, or idle hub returns.
-_Avoid_: door alarm, connect ping, login webhook.
+**Hourly Activity Digest**:
+The operator Telegram message sent once per UTC hour. It ranks players by active play over
+the rolling last 24 hours (NIM earned, time played, who is online, who joined in the last
+hour). It replaces a ping on every world entry.
+_Avoid_: door alarm, connect notice, connect ping, login webhook.
+
+**Login history**:
+The per-wallet chart on `/admin/user/:profile` for the rolling last 24 hours (or the last 7
+days). **Connected** is sign-in to sign-out. **Active** is play inside that, using the same
+5-minute idle cap as the Hourly Activity Digest. Gameplay NIM on the chart is the credited
+earn, the same figure as that digest. A gap is time signed out, or time still connected with
+no action. The scan runs on the Analytics Service.
+_Avoid_: play time (ambiguous with the digest total), session log, presence chart.
 
 **Guest**:
 A player holding an ephemeral session without a connected Nimiq wallet. They receive a
@@ -979,9 +987,16 @@ or from `/admin/user/{profile}` (and the `/admin/moderation` lists that link the
 an optional operator note (not shown to the player).
 _Avoid_: mining ban (use Restriction for the canonical sanction name), claim ban, payout block.
 
+**Username**:
+The custom name a wallet chooses before entering the world. Required for wallet play,
+including the Nimiq Pay tutorial. Guests keep their invite nickname. The hourly activity
+digest shows this name; a wallet that has not set one yet appears as the shortened address.
+_Avoid_: display name (the rendered label, which falls back to the shortened address), nickname.
+
 **Username-set ban**:
-An admin-imposed sanction that prevents a wallet from setting or changing its custom username
-and skips the login username prompt.
+An admin-imposed sanction that prevents a wallet from setting or changing its custom username.
+It skips the login username prompt and may still enter, because that wallet cannot choose a
+name. An admin can set the name or clear the ban.
 _Avoid_: name ban (ambiguous with profanity filter).
 
 **Channel mute**:
@@ -1063,7 +1078,8 @@ the game does not scan it to serve `/analytics` or daily-stats.
 _Avoid_: analytics log, replay log, event file.
 
 **Analytics Service**:
-The dedicated sidecar that scans the Event Log and returns overview snapshots and daily-stats
-aggregates. It does not serve player HTTP, send Telegram, or flush payouts. The game stays the
-public face of `/analytics` and fails those reads if this service is down; play continues.
+The dedicated sidecar that scans the Event Log and returns overview snapshots, daily-stats
+aggregates, the hourly activity digest, and one wallet's login history. It does not serve
+player HTTP, send Telegram, or flush payouts. The game stays the public face of `/analytics`
+and the admin dossier, and fails those reads if this service is down; play continues.
 _Avoid_: analytics worker, stats service, log service, event log service.

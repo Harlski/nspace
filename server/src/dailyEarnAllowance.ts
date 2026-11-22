@@ -153,6 +153,9 @@ export function decideAndCommitGameplayEarn(args: {
 /**
  * Apply Daily Earn Allowance then enqueue a gameplay Pay-Intent (if any luna remains).
  * Tutorial faucet and admin grants must call {@link enqueuePayIntent} directly instead.
+ * Paid gameplay must also be written to the Event Log: mines and the tutorial faucet use
+ * `claim_block.amountLuna`; goals and maze wins use `gameplay_nim_earned`. The hourly
+ * activity digest sums those and counts a `claimId` only once.
  */
 export function enqueueGameplayPayIntent(
   opts: PayIntent,

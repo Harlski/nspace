@@ -5,4 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
+- [FIX] If you already have a username, sign-in opens the Hub. It no longer reloads the loading screen over and over.

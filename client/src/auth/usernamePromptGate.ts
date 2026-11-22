@@ -73,22 +73,25 @@ async function loadUsernamePromptStatus(
   }
 }
 
+/** `ready` already has a name. `saved` just stored one. `blocked` must not enter. */
+export type UsernameGateResult = "ready" | "saved" | "blocked";
+
 /**
  * After wallet login or cached re-entry, prompt for a username when needed.
  * Always loads fresh status from the server (cached sessions do not skip the gate).
- * Returns true when the player may enter the game (saved, deferred, or no prompt).
+ * A required prompt stays open until the name is saved.
  */
 export async function runUsernamePromptGate(
   token: string,
   walletAddress?: string,
   initialStatus?: UsernamePromptStatus | null
-): Promise<boolean> {
+): Promise<UsernameGateResult> {
   const address =
     walletAddress?.replace(/\s+/g, "").trim() || parseJwtSub(token);
 
   const status = await loadUsernamePromptStatus(token, initialStatus);
-  if (!status) return false;
-  if (!status.needsPrompt) return true;
+  if (!status) return "blocked";
+  if (!status.needsPrompt) return "ready";
 
   for (;;) {
     const result = await showUsernamePromptModal({
@@ -101,17 +104,19 @@ export async function runUsernamePromptGate(
         : () => deferUsernamePrompt(token),
     });
 
-    if (result === "saved") return true;
+    if (result === "saved") return "saved";
 
     if (result === "deferred") {
+      if (status.mustSetUsername) continue;
       const afterDefer = await loadUsernamePromptStatus(token);
-      if (!afterDefer) return false;
-      return true;
+      if (!afterDefer) return "blocked";
+      if (afterDefer.mustSetUsername) continue;
+      return "ready";
     }
 
     if (result === "cancelled") {
       if (status.mustSetUsername) continue;
-      return false;
+      return "blocked";
     }
   }
 }

@@ -40,6 +40,11 @@ export const ANALYTICS_EVENT_KINDS = {
   /** Fired when a client successfully starts a NIM block claim (adjacent to target). */
   beginBlockClaim: "begin_block_claim",
   claimBlock: "claim_block",
+  /**
+   * Gameplay NIM credited for a source other than `claim_block` (goal, maze).
+   * Mines stay on `claim_block.amountLuna`. Same `claimId` is counted once.
+   */
+  gameplayNimEarned: "gameplay_nim_earned",
   nimPayoutSent: "nim_payout_sent",
   nimPayoutDeadLetter: "nim_payout_dead_letter",
   placeBlock: "place_block",
@@ -54,9 +59,9 @@ export const ANALYTICS_EVENT_KINDS = {
  * When inferring active play time from gameplay events, wall time between events is credited only
  * up to this cap so long AFK stretches do not inflate totals.
  */
-const ANALYTICS_ACTIVE_PLAY_IDLE_CAP_MS = 5 * 60 * 1000;
+export const ANALYTICS_ACTIVE_PLAY_IDLE_CAP_MS = 5 * 60 * 1000;
 
-function kindContributesToActivePlay(kind: string): boolean {
+export function kindContributesToActivePlay(kind: string): boolean {
   if (kind === ANALYTICS_EVENT_KINDS.sessionStart) return false;
   if (kind === ANALYTICS_EVENT_KINDS.sessionEnd) return false;
   if (kind === ANALYTICS_EVENT_KINDS.nimPayoutSent) return false;
@@ -316,7 +321,7 @@ function computeAnalyticsFileDays(
   return Math.max(1, Math.min(hardCap, Math.max(windowDays, spanDays)));
 }
 
-async function forEachRecentEvent(
+export async function forEachRecentEvent(
   maxDays: number,
   visitor: (rec: EventRecord) => void
 ): Promise<void> {

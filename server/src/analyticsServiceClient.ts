@@ -156,6 +156,140 @@ export async function fetchEventLogAnalyticsSnapshot(
   return { ok: true, value: enrichOverviewSnapshot(r.json) };
 }
 
+export type ActivityDigestPlayer = {
+  address: string;
+  activeMs: number;
+  sessionStarts: number;
+  nimEarnedLuna: string;
+  chatCount: number;
+  blocksPlaced: number;
+  blocksClaimed: number;
+  nimiqPay: boolean;
+  isNew: boolean;
+  isGuest: boolean;
+  lastRoomId: string;
+  joinedLastHour: boolean;
+};
+
+export type ActivityDigestRoom = {
+  roomId: string;
+  activeMs: number;
+  uniquePlayers: number;
+};
+
+export type ActivityDigest = {
+  windowStartMs: number;
+  windowEndMs: number;
+  lookbackDays: number;
+  uniquePlayers: number;
+  newPlayers: number;
+  guestPlayers: number;
+  nimiqPayPlayers: number;
+  activePlayMsTotal: number;
+  nimEarnedLuna: string;
+  sessionStarts: number;
+  sessionStartsLastHour: number;
+  chatLines: number;
+  blocksPlaced: number;
+  blocksClaimed: number;
+  topRooms: ActivityDigestRoom[];
+  players: ActivityDigestPlayer[];
+  playerCount: number;
+  joinedLastHourAddresses: string[];
+};
+
+export async function fetchActivityDigest(
+  windowStartMs: number,
+  windowEndMs: number,
+  lookbackDays: number
+): Promise<AnalyticsServiceReadResult<ActivityDigest>> {
+  const qs = new URLSearchParams({
+    fromMs: String(windowStartMs),
+    toMs: String(windowEndMs),
+    lookbackDays: String(lookbackDays),
+  });
+  const r = await analyticsFetch(`/v1/activity-digest?${qs}`, { method: "GET" });
+  if (!r.ok) {
+    return {
+      ok: false,
+      error: r.text || `HTTP ${r.status}`,
+      status: r.status || undefined,
+    };
+  }
+  if (!r.json || typeof r.json !== "object") {
+    return { ok: false, error: "invalid_response", status: r.status };
+  }
+  return { ok: true, value: r.json as ActivityDigest };
+}
+
+export type PlayerActivitySpan = {
+  startMs: number;
+  endMs: number;
+};
+
+export type PlayerActivityEarn = {
+  atMs: number;
+  amountLuna: string;
+};
+
+export type PlayerActivitySession = {
+  sessionId: string;
+  roomId: string;
+  startedAt: number;
+  endedAt: number | null;
+  connectedMs: number;
+  activeMs: number;
+  nimEarnedLuna: string;
+  open: boolean;
+  closedWithoutSignOut: boolean;
+};
+
+export type PlayerActivity = {
+  address: string;
+  windowStartMs: number;
+  windowEndMs: number;
+  lookbackDays: number;
+  idleCapMs: number;
+  treatLatestOpenAsConnected: boolean;
+  connectedMs: number;
+  activeMs: number;
+  sessionCount: number;
+  nimEarnedLuna: string;
+  longestConnectedMs: number;
+  connected: PlayerActivitySpan[];
+  active: PlayerActivitySpan[];
+  earns: PlayerActivityEarn[];
+  earnsTruncated: boolean;
+  sessions: PlayerActivitySession[];
+  sessionsTruncated: boolean;
+};
+
+export async function fetchPlayerActivity(input: {
+  address: string;
+  windowStartMs: number;
+  windowEndMs: number;
+  online: boolean;
+}): Promise<AnalyticsServiceReadResult<PlayerActivity>> {
+  const qs = new URLSearchParams({
+    address: input.address,
+    fromMs: String(input.windowStartMs),
+    toMs: String(input.windowEndMs),
+    online: input.online ? "1" : "0",
+  });
+  const r = await analyticsFetch(`/v1/player-activity?${qs}`, { method: "GET" });
+  if (!r.ok) {
+    return {
+      ok: false,
+      error: r.text || `HTTP ${r.status}`,
+      status: r.status || undefined,
+    };
+  }
+  if (!r.json || typeof r.json !== "object") {
+    return { ok: false, error: "invalid_response", status: r.status };
+  }
+  return { ok: true, value: r.json as PlayerActivity };
+}
+
 export async function fetchDailyStatsAggregate(
   dayStartMs: number,
   dayEndMs: number,

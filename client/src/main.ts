@@ -613,20 +613,16 @@ function openMainMenu(): void {
       if (!c || isTokenExpired(c.token)) return;
       const np = c.nimiqPay === true;
       saveCachedSession(c.token, c.address, np);
-      const ok = await runUsernamePromptGate(c.token, c.address);
-      if (!ok) return;
+      const gate = await runUsernamePromptGate(c.token, c.address);
+      if (gate === "blocked") return;
       enterGame(c.token, c.address, np);
     },
     onLoggedIn: async (token, address, nimiqPay, usernamePrompt, needsTutorial) => {
       saveCachedSession(token, address, nimiqPay);
-      const deferUsernameForTutorial = nimiqPay === true;
-      if (!deferUsernameForTutorial) {
-        const ok = await runUsernamePromptGate(token, address, usernamePrompt);
-        if (!ok) return;
-      }
+      const gate = await runUsernamePromptGate(token, address, usernamePrompt);
+      if (gate === "blocked") return;
       enterGame(token, address, nimiqPay, {
         freshSignIn: true,
-        deferUsernameForTutorial,
         needsTutorial: needsTutorial === true,
       });
     },
@@ -646,7 +642,6 @@ function enterGame(
     initialRoomId?: string;
     inviteLinkSlug?: string;
     freshSignIn?: boolean;
-    deferUsernameForTutorial?: boolean;
     needsTutorial?: boolean;
   }
 ): void {
@@ -1342,7 +1337,6 @@ function enterGame(
   let tutorialWelcome: TutorialWelcome | undefined;
   let tutorialSocialSuppressed = false;
   let pendingTutorialHubWelcome = false;
-  let deferUsernameForTutorial = opts?.deferUsernameForTutorial === true;
 
   /** Mark Hub arrival for the Exit cinematic (door or Exit Teleporter). */
   function maybeArmTutorialHubWelcome(targetRoomId: string): boolean {
@@ -5952,16 +5946,6 @@ function enterGame(
         syncTutorialStepCoach(msg.roomId);
         syncTutorialResetMenu(msg.roomId);
       }
-      if (
-        deferUsernameForTutorial &&
-        normalizeRoomId(msg.roomId) === CHAMBER_ROOM_ID &&
-        tutorialWelcome?.needsTutorial === false
-      ) {
-        deferUsernameForTutorial = false;
-        void runUsernamePromptGate(token, address).then((ok) => {
-          if (!ok) return;
-        });
-      }
       if (autoReconnectActive) {
         stopAutoReconnect();
         hud.setStatus("");
@@ -7394,6 +7378,22 @@ function enterGame(
             location.reload();
             return;
           }
+          if (ev.code === 4009) {
+            hideLoadingOverlay({ skipMinWait: true });
+            hud.setReconnectOffer(false);
+            hud.setStatus("");
+            void runUsernamePromptGate(token, address).then((gate) => {
+              if (myGen !== connectGen) return;
+              // Reconnect only after a name was just saved. "ready" means the
+              // account already has one; connecting again repeats this close.
+              if (gate !== "saved") {
+                hud.setReconnectOffer(true, { label: "Disconnected" });
+                return;
+              }
+              connectToRoom(room, spawn);
+            });
+            return;
+          }
           const guestActor = selfAddress.startsWith("guest:") ? selfAddress : address;
           if (
             guestActor.startsWith("guest:") &&
@@ -8443,8 +8443,8 @@ async function bootstrapMainMenuOrResume(): Promise<void> {
     await waitForNimiqPayWebViewHost();
     const cached = loadCachedSession();
     if (cached && !isTokenExpired(cached.token)) {
-      const ok = await runUsernamePromptGate(cached.token, cached.address);
-      if (ok) {
+      const gate = await runUsernamePromptGate(cached.token, cached.address);
+      if (gate !== "blocked") {
         enterGame(cached.token, cached.address, cached.nimiqPay);
         return;
       }
