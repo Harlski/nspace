@@ -132,11 +132,16 @@ function sanitizeTutorialSession(raw: unknown): TutorialSession | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function tutorialWalletKey(normalizedAddress: string): string {
+/** Profile rows are keyed by the compact wallet (no spaces), matching login `normalizeWalletId`. */
+function profileWalletKey(normalizedAddress: string): string {
   return String(normalizedAddress ?? "")
     .replace(/\s+/g, "")
     .trim()
     .toUpperCase();
+}
+
+function tutorialWalletKey(normalizedAddress: string): string {
+  return profileWalletKey(normalizedAddress);
 }
 
 export function getTutorialProfileRow(normalizedAddress: string): TutorialProfileRow {
@@ -209,7 +214,7 @@ export function listKnownPlayerUsernames(): Array<{
   const store = readStore();
   for (const [addr, row] of Object.entries(store.profiles)) {
     const c = row?.customUsername?.trim();
-    if (c) out.push({ wallet: addr.trim().toUpperCase(), username: c });
+    if (c) out.push({ wallet: profileWalletKey(addr), username: c });
   }
   return out;
 }
@@ -226,13 +231,13 @@ export function findWalletByCustomUsername(name: string): string | null {
   const store = readStore();
   for (const [addr, row] of Object.entries(store.profiles)) {
     const c = row?.customUsername?.trim();
-    if (c && c.toLowerCase() === wanted) return addr.trim().toUpperCase();
+    if (c && c.toLowerCase() === wanted) return profileWalletKey(addr);
   }
   return null;
 }
 
 export function getPlayerProfileMessage(normalizedAddress: string): string {
-  const key = normalizedAddress.trim().toUpperCase();
+  const key = profileWalletKey(normalizedAddress);
   if (!key) return "";
   const row = readStore().profiles[key];
   return row?.message ? String(row.message) : "";
@@ -247,7 +252,7 @@ function getRow(key: string): Row {
 export function getEffectivePlayerDisplayName(
   normalizedAddress: string
 ): string {
-  const key = normalizedAddress.trim().toUpperCase();
+  const key = profileWalletKey(normalizedAddress);
   if (!key) return "";
   const r = getRow(key);
   const c = r.customUsername?.trim();
@@ -256,7 +261,7 @@ export function getEffectivePlayerDisplayName(
 }
 
 export function playerHasCustomUsername(normalizedAddress: string): boolean {
-  const key = normalizedAddress.trim().toUpperCase();
+  const key = profileWalletKey(normalizedAddress);
   if (!key) return false;
   return Boolean(getRow(key).customUsername?.trim());
 }
@@ -273,7 +278,7 @@ export type UsernamePromptStatus = {
  * Stored defer counts no longer grant entry. A username-set ban cannot choose a name, so it skips the prompt.
  */
 export function getUsernamePromptStatus(normalizedAddress: string): UsernamePromptStatus {
-  const key = normalizedAddress.trim().toUpperCase();
+  const key = profileWalletKey(normalizedAddress);
   if (!key || playerHasCustomUsername(key) || isUsernameSetBanned(key)) {
     return {
       needsPrompt: false,
@@ -293,7 +298,7 @@ export function getUsernamePromptStatus(normalizedAddress: string): UsernameProm
 
 /** True when this wallet must not enter the world until it has a custom username. */
 export function walletRequiresUsername(normalizedAddress: string): boolean {
-  const key = normalizedAddress.trim().toUpperCase();
+  const key = profileWalletKey(normalizedAddress);
   if (!key || key.startsWith("GUEST:")) return false;
   if (isUsernameSetBanned(key)) return false;
   return !playerHasCustomUsername(key);
@@ -302,14 +307,14 @@ export function walletRequiresUsername(normalizedAddress: string): boolean {
 export function recordUsernamePromptDeferral(
   normalizedAddress: string
 ): { ok: true; deferralsRemaining: number } | { ok: false; error: string } {
-  const key = normalizedAddress.trim().toUpperCase();
+  const key = profileWalletKey(normalizedAddress);
   if (!key) return { ok: false, error: "invalid_address" };
   if (playerHasCustomUsername(key)) return { ok: false, error: "username_already_set" };
   return { ok: false, error: "username_prompt_required" };
 }
 
 export function getRecentAliases(normalizedAddress: string): string[] {
-  const key = normalizedAddress.trim().toUpperCase();
+  const key = profileWalletKey(normalizedAddress);
   if (!key) return [];
   const raw = getRow(key).recentAliases ?? [];
   return raw.slice(0, 3);
@@ -322,7 +327,7 @@ export function getPlayerProfilePublicJson(normalizedAddress: string): {
   customUsername: string | null;
   usernameLockedUntil: number | null;
 } {
-  const key = normalizedAddress.trim().toUpperCase();
+  const key = profileWalletKey(normalizedAddress);
   const r = getRow(key);
   const custom = r.customUsername?.trim() || null;
   const changedAt = r.usernameChangedAt ?? 0;
@@ -362,7 +367,7 @@ export function setPlayerProfileMessage(
   normalizedAddress: string,
   message: string
 ): { message: string; updatedAt: number } {
-  const key = normalizedAddress.trim().toUpperCase();
+  const key = profileWalletKey(normalizedAddress);
   if (!key) throw new Error("missing_address");
   const data = readStore();
   const prev = rowEnsure(data.profiles[key]);
@@ -386,7 +391,7 @@ function applyUsernameChange(
   rawUsername: string,
   options: { skipCooldown: boolean }
 ): SetUsernameResult {
-  const key = normalizedKey.trim().toUpperCase();
+  const key = profileWalletKey(normalizedKey);
   if (!key) return { ok: false, error: "invalid_address" };
   if (isUsernameSetBanned(key)) return { ok: false, error: "username_set_banned" };
   const next = String(rawUsername ?? "").trim();
@@ -444,7 +449,7 @@ export function trySetPlayerUsername(
   rawUsername: string,
   opts?: { skipCooldown?: boolean }
 ): SetUsernameResult {
-  const key = normalizedSigner.trim().toUpperCase();
+  const key = profileWalletKey(normalizedSigner);
   if (!key) return { ok: false, error: "invalid_address" };
   return applyUsernameChange(key, rawUsername, {
     skipCooldown: Boolean(opts?.skipCooldown),
@@ -456,7 +461,7 @@ export function adminSetUsernameOnTarget(
   normalizedTarget: string,
   rawUsername: string
 ): SetUsernameResult {
-  const key = normalizedTarget.trim().toUpperCase();
+  const key = profileWalletKey(normalizedTarget);
   if (!key) return { ok: false, error: "invalid_address" };
   return applyUsernameChange(key, rawUsername, { skipCooldown: true });
 }
@@ -466,7 +471,7 @@ export function adminClearPlayerUsername(normalizedTarget: string): {
   effectiveDisplayName: string;
   recentAliases: string[];
 } {
-  const key = normalizedTarget.trim().toUpperCase();
+  const key = profileWalletKey(normalizedTarget);
   if (!key) throw new Error("missing_address");
   const data = readStore();
   const prevRow = rowEnsure(data.profiles[key]);

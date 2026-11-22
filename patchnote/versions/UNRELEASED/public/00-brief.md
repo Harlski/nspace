@@ -5,4 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
+Signing in with a username no longer gets stuck reloading Loading the Hub.

@@ -46,6 +46,15 @@ test("admin clear resets login prompt deferrals and allows immediate re-set", as
   assert.equal(set2.ok, true);
   if (set2.ok) assert.equal(set2.customUsername, "PlayerTwo");
 
+  const compact = "NQ07TEST0000000000000000000000000999";
+  const spaced = compact.replace(/(.{4})/g, "$1 ").trim();
+  assert.notEqual(spaced, compact);
+  const setSpaced = trySetPlayerUsername(compact, "Creator");
+  assert.equal(setSpaced.ok, true);
+  assert.equal(getUsernamePromptStatus(spaced).needsPrompt, false);
+  assert.equal(walletRequiresUsername(spaced), false);
+  assert.equal(walletRequiresUsername(compact), false);
+
   fs.rmSync(dir, { recursive: true, force: true });
   delete process.env.PLAYER_PROFILE_STORE_FILE;
 });

@@ -612,14 +612,14 @@ function openMainMenu(): void {
       if (!c || isTokenExpired(c.token)) return;
       const np = c.nimiqPay === true;
       saveCachedSession(c.token, c.address, np);
-      const ok = await runUsernamePromptGate(c.token, c.address);
-      if (!ok) return;
+      const gate = await runUsernamePromptGate(c.token, c.address);
+      if (gate === "blocked") return;
       enterGame(c.token, c.address, np);
     },
     onLoggedIn: async (token, address, nimiqPay, usernamePrompt, needsTutorial) => {
       saveCachedSession(token, address, nimiqPay);
-      const ok = await runUsernamePromptGate(token, address, usernamePrompt);
-      if (!ok) return;
+      const gate = await runUsernamePromptGate(token, address, usernamePrompt);
+      if (gate === "blocked") return;
       enterGame(token, address, nimiqPay, {
         freshSignIn: true,
         needsTutorial: needsTutorial === true,
@@ -7376,9 +7376,11 @@ function enterGame(
             hideLoadingOverlay({ skipMinWait: true });
             hud.setReconnectOffer(false);
             hud.setStatus("");
-            void runUsernamePromptGate(token, address).then((ok) => {
+            void runUsernamePromptGate(token, address).then((gate) => {
               if (myGen !== connectGen) return;
-              if (!ok) {
+              // Reconnect only after a name was just saved. "ready" means the
+              // account already has one; connecting again repeats this close.
+              if (gate !== "saved") {
                 hud.setReconnectOffer(true, { label: "Disconnected" });
                 return;
               }
@@ -8435,8 +8437,8 @@ async function bootstrapMainMenuOrResume(): Promise<void> {
     await waitForNimiqPayWebViewHost();
     const cached = loadCachedSession();
     if (cached && !isTokenExpired(cached.token)) {
-      const ok = await runUsernamePromptGate(cached.token, cached.address);
-      if (ok) {
+      const gate = await runUsernamePromptGate(cached.token, cached.address);
+      if (gate !== "blocked") {
         enterGame(cached.token, cached.address, cached.nimiqPay);
         return;
       }

@@ -8,7 +8,7 @@
 
 ## Summary
 
-_Add a one-line roll-up here when the buffer gets long._
+Wallet sign-in no longer loops Loading the Hub for accounts that already have a username. Profile lookup ignores spaces in the session address, and a username-required socket close does not reconnect when a name is already set. The admin player dossier shows a 24-hour login history of connected time, active play, and gameplay NIM.
 
 ---
 
@@ -20,10 +20,13 @@ _Add a one-line roll-up here when the buffer gets long._
 
 ### Client
 
-- _(none in this change set)_
+- [client/src/auth/usernamePromptGate.ts](../../../client/src/auth/usernamePromptGate.ts): gate result is `ready`, `saved`, or `blocked`.
+- [client/src/main.ts](../../../client/src/main.ts): close `4009` reconnects only after `saved`.
 
 ### Server
 
+- [server/src/playerProfileStore.ts](../../../server/src/playerProfileStore.ts): `profileWalletKey` strips spaces before every profile read and write.
+- [server/src/moderationStore.ts](../../../server/src/moderationStore.ts): username-set ban lookup uses the same compact key as the write path.
 - `GET /api/admin/player/activity` (system admin) proxies one wallet's login history from the Analytics Service. `hours` is `24` (default) or `168`.
 - `/admin/user/:profile` draws connected vs active spans, an hourly (or daily) column chart, gameplay NIM marks, and a session table. The Activity block's older NIM lines are labeled as payouts sent.
 
