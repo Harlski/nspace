@@ -939,6 +939,74 @@ function paintNameLabelIdenticon(
   texture.needsUpdate = true;
 }
 
+/** person-1 from nimiq-icons, viewBox 0 0 11 12. */
+const DIRECTORY_PERSON_ICON_W = 11;
+const DIRECTORY_PERSON_ICON_H = 12;
+const DIRECTORY_PERSON_ICON_PATHS = [
+  "M3.288 7.86A6.8 6.8 0 00.462 9.048 1.18 1.18 0 000 9.993v1.485a.24.24 0 00.239.24H10.76a.24.24 0 00.239-.24V9.993a1.18 1.18 0 00-.462-.946 6.8 6.8 0 00-2.826-1.186.24.24 0 00-.23.083c-.054.066-.581 1.381-1.982 1.381-1.358 0-1.94-1.332-1.982-1.381a.24.24 0 00-.23-.083",
+  "M6.736 7.413A3.35 3.35 0 008.85 4.304v-.956a3.348 3.348 0 10-6.696 0v.956a3.342 3.342 0 004.583 3.11M3.11 4.304v-.838a.12.12 0 01.12-.12h.358c.615 0 1.86.152 2.783-.855a.12.12 0 01.176 0c.34.372.781.635 1.27.754a.104.104 0 01.078.1v.96a2.392 2.392 0 11-4.784 0z",
+] as const;
+const DIRECTORY_OCCUPANCY_SCREEN_HEIGHT_PX = 16;
+
+/** Person icon then occupant count, stacked above a directory room name. */
+function createOccupancyLabelSprite(count: number): {
+  sprite: THREE.Sprite;
+  texture: THREE.CanvasTexture;
+} {
+  const text = String(Math.max(0, Math.floor(count)));
+  const padX = 7;
+  const iconH = 13;
+  const iconGap = 4;
+  const pillH = 24;
+  const font = '700 15px system-ui, "Segoe UI", sans-serif';
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  ctx.font = font;
+  const tw = ctx.measureText(text).width;
+  const iconW = iconH * (DIRECTORY_PERSON_ICON_W / DIRECTORY_PERSON_ICON_H);
+  const pillW = Math.ceil(padX + iconW + iconGap + tw + padX);
+  const r = NAME_LABEL_RASTER;
+  canvas.width = Math.ceil(pillW * r);
+  canvas.height = Math.ceil(pillH * r);
+  ctx.setTransform(r, 0, 0, r, 0, 0);
+  ctx.beginPath();
+  ctx.roundRect(0, 0, pillW, pillH, 8);
+  ctx.fillStyle = NAME_LABEL_PILL_ACTIVE;
+  ctx.fill();
+  const scale = iconH / DIRECTORY_PERSON_ICON_H;
+  ctx.save();
+  ctx.translate(padX, (pillH - iconH) / 2);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = NAME_LABEL_TEXT_ACTIVE;
+  for (const d of DIRECTORY_PERSON_ICON_PATHS) {
+    ctx.fill(new Path2D(d));
+  }
+  ctx.restore();
+  ctx.font = font;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = NAME_LABEL_TEXT_ACTIVE;
+  ctx.fillText(text, padX + iconW + iconGap, pillH / 2 + 0.5);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      depthTest: false,
+    })
+  );
+  sprite.renderOrder = 999;
+  sprite.userData.nameLabelTexW = pillW;
+  sprite.userData.nameLabelTexH = pillH;
+  sprite.userData[SKIP_BLOCK_PICK_AND_BOUNDS] = true;
+  sprite.raycast = () => {};
+  sprite.scale.set(1, 1, 1);
+  return { sprite, texture: tex };
+}
+
 function wrapChatLines(
   ctx: CanvasRenderingContext2D,
   raw: string,
@@ -14258,16 +14326,30 @@ export class Game {
 
   private disposeDirectoryNameSprite(marker: THREE.Object3D): void {
     const sprite = marker.userData.directoryNameSprite as THREE.Sprite | undefined;
-    if (!sprite) return;
-    marker.remove(sprite);
-    const mat = sprite.material;
-    if (mat instanceof THREE.SpriteMaterial) {
-      mat.map?.dispose();
-      mat.dispose();
+    if (sprite) {
+      marker.remove(sprite);
+      const mat = sprite.material;
+      if (mat instanceof THREE.SpriteMaterial) {
+        mat.map?.dispose();
+        mat.dispose();
+      }
     }
     delete marker.userData.directoryNameSprite;
     delete marker.userData.directoryNameText;
     delete marker.userData.directoryNameOwner;
+    const occupancy = marker.userData.directoryOccupancySprite as
+      | THREE.Sprite
+      | undefined;
+    if (occupancy) {
+      marker.remove(occupancy);
+      const occMat = occupancy.material;
+      if (occMat instanceof THREE.SpriteMaterial) {
+        occMat.map?.dispose();
+        occMat.dispose();
+      }
+    }
+    delete marker.userData.directoryOccupancySprite;
+    delete marker.userData.directoryOccupancyCount;
   }
 
   /** Name pill above each Public Directory teleporter, with the owner's identicon. */
@@ -14283,8 +14365,15 @@ export class Game {
         linked && "targetRoomOwnerAddress" in linked
           ? linked.targetRoomOwnerAddress?.trim() || ""
           : "";
+      const playerCount =
+        linked && typeof linked.targetRoomPlayerCount === "number"
+          ? Math.max(0, Math.floor(linked.targetRoomPlayerCount))
+          : 0;
       const existingName = marker.userData.directoryNameText as string | undefined;
       const existingOwner = marker.userData.directoryNameOwner as string | undefined;
+      const existingCount = marker.userData.directoryOccupancyCount as
+        | number
+        | undefined;
       if (!name) {
         this.disposeDirectoryNameSprite(marker);
         continue;
@@ -14292,6 +14381,7 @@ export class Game {
       if (
         existingName === name &&
         existingOwner === owner &&
+        existingCount === playerCount &&
         marker.userData.directoryNameSprite
       ) {
         continue;
@@ -14305,6 +14395,12 @@ export class Game {
       marker.userData.directoryNameSprite = sprite;
       marker.userData.directoryNameText = name;
       marker.userData.directoryNameOwner = owner;
+      marker.userData.directoryOccupancyCount = playerCount;
+      if (playerCount > 0) {
+        const { sprite: occupancy } = createOccupancyLabelSprite(playerCount);
+        marker.add(occupancy);
+        marker.userData.directoryOccupancySprite = occupancy;
+      }
       if (owner && identiconDisc) {
         void identiconDataUrl(owner).then(
           (url) => {
@@ -14346,6 +14442,27 @@ export class Game {
       sprite.position.set(
         0,
         TERRAIN_TILE_DOOR_MARKER_HEIGHT / 2 + gap + worldH / 2,
+        0
+      );
+      const occupancy = marker.userData.directoryOccupancySprite as
+        | THREE.Sprite
+        | undefined;
+      if (!occupancy) continue;
+      const ow = occupancy.userData.nameLabelTexW as number | undefined;
+      const oh = occupancy.userData.nameLabelTexH as number | undefined;
+      if (!ow || !oh) continue;
+      let occH = this.pixelToWorldY(DIRECTORY_OCCUPANCY_SCREEN_HEIGHT_PX);
+      let occW = occH * (ow / oh);
+      const occMax = this.pixelToWorldX(120);
+      if (occW > occMax) {
+        const s = occMax / occW;
+        occW *= s;
+        occH *= s;
+      }
+      occupancy.scale.set(occW, occH, 1);
+      occupancy.position.set(
+        0,
+        sprite.position.y + worldH / 2 + this.pixelToWorldY(3) + occH / 2,
         0
       );
     }

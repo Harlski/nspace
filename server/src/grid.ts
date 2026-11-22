@@ -271,6 +271,8 @@ export type TerrainProps = {
         targetRoomDisplayName?: string;
         /** Directory hall: owner wallet for the inline identicon beside the room name. */
         targetRoomOwnerAddress?: string;
+        /** Directory hall: people currently in the destination room. */
+        targetRoomPlayerCount?: number;
         /** Same-room bidirectional pair: `blockKey` of the other teleporter; deleting either removes both. */
         pairedPeerKey?: string;
       };

@@ -49,6 +49,8 @@ export type DirectoryTeleporterSlot = {
   targetRoomDisplayName: string;
   /** Owner wallet, so the hall label can show their identicon. */
   targetRoomOwnerAddress?: string;
+  /** Live occupants of the destination room (0 when empty). */
+  playerCount: number;
 };
 
 export type RoomBounds = {
@@ -82,6 +84,26 @@ function compareDirectoryListings(a: DirectoryListing, b: DirectoryListing): num
 }
 
 /**
+ * Count drawn on a directory teleporter. Outside production, an empty room
+ * gets a stable preview count from its id so the badge can be seen with no crowd.
+ * A real occupant count always wins.
+ */
+export function directoryShownPlayerCount(
+  roomId: string,
+  realCount: number,
+  devPreview: boolean
+): number {
+  const real = Math.max(0, Math.floor(realCount));
+  if (!devPreview || real > 0) return real;
+  let hash = 2166136261;
+  for (let i = 0; i < roomId.length; i++) {
+    hash ^= roomId.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return 1 + ((hash >>> 0) % 12);
+}
+
+/**
  * Most popular listings fill the row nearest the door, left to right, then the
  * next row north. Updates the bounds returned by {@link getPublicDirectoryBounds}.
  */
@@ -102,6 +124,7 @@ export function layoutPublicDirectory(entries: readonly DirectoryListing[]): {
       targetZ: entry.spawnZ,
       targetRoomDisplayName: label,
       ...(entry.ownerAddress ? { targetRoomOwnerAddress: entry.ownerAddress } : {}),
+      playerCount: Math.max(0, Math.floor(entry.playerCount)),
     };
   });
   const lastZ =
@@ -199,6 +222,7 @@ export function reconcilePublicDirectory(
       targetZ: entry.spawnZ,
       targetRoomDisplayName: label,
       ...(entry.ownerAddress ? { targetRoomOwnerAddress: entry.ownerAddress } : {}),
+      playerCount: Math.max(0, Math.floor(entry.playerCount)),
     };
   });
   currentBounds = boundsForSlots(teleporters);

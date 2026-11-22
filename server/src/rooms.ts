@@ -92,6 +92,7 @@ import {
 import {
   PUBLIC_DIRECTORY_ROOM_ID,
   PUBLIC_DIRECTORY_SPAWN,
+  directoryShownPlayerCount,
   reconcilePublicDirectory,
 } from "./publicDirectory.js";
 import {
@@ -1097,6 +1098,8 @@ export type ObstacleTile = {
         targetRoomDisplayName?: string;
         /** Directory hall: owner wallet drawn beside the room name. */
         targetRoomOwnerAddress?: string;
+        /** Directory hall: people currently in the destination room. */
+        targetRoomPlayerCount?: number;
       };
   gate?: {
     adminAddress: string;
@@ -7383,7 +7386,11 @@ function syncPublicDirectoryRoom(): void {
   const sig = `${b.minX},${b.maxX},${b.minZ},${b.maxZ}|${layout.teleporters
     .map(
       (t) =>
-        `${t.x},${t.z},${t.targetRoomId},${t.targetRoomDisplayName},${t.targetRoomOwnerAddress ?? ""},${t.targetX},${t.targetZ}`
+        `${t.x},${t.z},${t.targetRoomId},${t.targetRoomDisplayName},${t.targetRoomOwnerAddress ?? ""},${directoryShownPlayerCount(
+          t.targetRoomId,
+          t.playerCount,
+          process.env.NODE_ENV !== "production"
+        )},${t.targetX},${t.targetZ}`
     )
     .join(";")}`;
   if (sig === publicDirectoryLayoutSig) return;
@@ -7412,6 +7419,11 @@ function syncPublicDirectoryRoom(): void {
           ...(slot.targetRoomOwnerAddress
             ? { targetRoomOwnerAddress: slot.targetRoomOwnerAddress }
             : {}),
+          targetRoomPlayerCount: directoryShownPlayerCount(
+            slot.targetRoomId,
+            slot.playerCount,
+            process.env.NODE_ENV !== "production"
+          ),
         },
         prev ? resolveBlockColorRgb(prev) : undefined
       )

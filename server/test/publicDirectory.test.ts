@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   PUBLIC_DIRECTORY_DOOR,
   PUBLIC_DIRECTORY_SPAWN,
+  directoryShownPlayerCount,
   getPublicDirectoryBounds,
   layoutPublicDirectory,
   reconcilePublicDirectory,
@@ -135,6 +136,18 @@ describe("public directory slot rebinding", () => {
     );
     assert.equal(hotter?.targetX, 2);
     assert.equal(hotter?.targetZ, 2);
+  });
+
+  it("shows a preview count only for empty rooms outside production", () => {
+    assert.equal(directoryShownPlayerCount("quiet", 0, false), 0);
+    assert.equal(directoryShownPlayerCount("quiet", 4, true), 4);
+    const preview = directoryShownPlayerCount("quiet", 0, true);
+    assert.ok(preview >= 1 && preview <= 12);
+    assert.equal(directoryShownPlayerCount("quiet", 0, true), preview);
+    assert.equal(reconcilePublicDirectory(
+      [listing({ id: "quiet", playerCount: 3 })],
+      []
+    ).teleporters[0]?.playerCount, 3);
   });
 
   it("carries the owner wallet onto the teleporter slot", () => {
