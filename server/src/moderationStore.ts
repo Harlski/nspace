@@ -71,7 +71,7 @@ export function sanitizeMiningBanNote(raw: unknown): string | undefined {
 }
 
 export function isUsernameSetBanned(normalizedAddress: string): boolean {
-  const k = normalizedAddress.trim().toUpperCase();
+  const k = normalizeKey(normalizedAddress);
   if (!k) return false;
   return Boolean(readStore().usernameSetBanned[k]);
 }
