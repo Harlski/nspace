@@ -946,7 +946,8 @@ const DIRECTORY_PERSON_ICON_PATHS = [
   "M3.288 7.86A6.8 6.8 0 00.462 9.048 1.18 1.18 0 000 9.993v1.485a.24.24 0 00.239.24H10.76a.24.24 0 00.239-.24V9.993a1.18 1.18 0 00-.462-.946 6.8 6.8 0 00-2.826-1.186.24.24 0 00-.23.083c-.054.066-.581 1.381-1.982 1.381-1.358 0-1.94-1.332-1.982-1.381a.24.24 0 00-.23-.083",
   "M6.736 7.413A3.35 3.35 0 008.85 4.304v-.956a3.348 3.348 0 10-6.696 0v.956a3.342 3.342 0 004.583 3.11M3.11 4.304v-.838a.12.12 0 01.12-.12h.358c.615 0 1.86.152 2.783-.855a.12.12 0 01.176 0c.34.372.781.635 1.27.754a.104.104 0 01.078.1v.96a2.392 2.392 0 11-4.784 0z",
 ] as const;
-const DIRECTORY_OCCUPANCY_SCREEN_HEIGHT_PX = 16;
+/** On-screen height of the person-count chip. Glyphs land near the room-name size. */
+const DIRECTORY_OCCUPANCY_SCREEN_HEIGHT_PX = 22;
 
 /** Same preview as the server: a stable 1-12 count from the room id. */
 function directoryPreviewPlayerCount(roomId: string): number {
@@ -964,11 +965,11 @@ function createOccupancyLabelSprite(count: number): {
   texture: THREE.CanvasTexture;
 } {
   const text = String(Math.max(0, Math.floor(count)));
-  const padX = 7;
-  const iconH = 13;
-  const iconGap = 4;
-  const pillH = 24;
-  const font = '700 15px system-ui, "Segoe UI", sans-serif';
+  const padX = 8;
+  const iconH = 18;
+  const iconGap = 5;
+  const pillH = 28;
+  const font = '700 20px system-ui, "Segoe UI", sans-serif';
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
   ctx.font = font;
@@ -14478,7 +14479,7 @@ export class Game {
       occupancy.scale.set(occW, occH, 1);
       occupancy.position.set(
         0,
-        sprite.position.y + worldH / 2 + this.pixelToWorldY(3) + occH / 2,
+        sprite.position.y + worldH / 2 + this.pixelToWorldY(4) + occH / 2,
         0
       );
     }
