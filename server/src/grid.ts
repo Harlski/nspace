@@ -273,6 +273,8 @@ export type TerrainProps = {
         targetRoomOwnerAddress?: string;
         /** Directory hall: people currently in the destination room. */
         targetRoomPlayerCount?: number;
+        /** Directory hall: true when at least one real player is in the destination. */
+        targetRoomOccupied?: boolean;
         /** Same-room bidirectional pair: `blockKey` of the other teleporter; deleting either removes both. */
         pairedPeerKey?: string;
       };

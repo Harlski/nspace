@@ -47,6 +47,7 @@ export type ObstacleTile = {
         targetRoomDisplayName?: string;
         targetRoomOwnerAddress?: string;
         targetRoomPlayerCount?: number;
+        targetRoomOccupied?: boolean;
       };
   gate?: {
     adminAddress: string;

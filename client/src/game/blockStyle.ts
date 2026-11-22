@@ -24,6 +24,8 @@ export const DEFAULT_GATE_BLOCK_COLOR_RGB = 0x795548;
 export const BLOCK_COLOR_EXIT_PORTAL_RGB = 0xffc107;
 /** Default player teleporter pillar tint (near-white). */
 export const TELEPORTER_DEFAULT_PILLAR_COLOR_RGB = 0xf8fafc;
+/** Public Rooms pillar when the destination has people in it. */
+export const DIRECTORY_OCCUPIED_PILLAR_COLOR_RGB = 0xf5a524;
 
 export function clampColorRgb(v: number): number {
   const n = Math.floor(Number(v));
@@ -309,6 +311,7 @@ export type BlockStyleProps = {
         targetRoomDisplayName?: string;
         targetRoomOwnerAddress?: string;
         targetRoomPlayerCount?: number;
+        targetRoomOccupied?: boolean;
         pairedPeerKey?: string;
       };
   gate?: {

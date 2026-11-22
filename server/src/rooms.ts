@@ -93,6 +93,7 @@ import {
   PUBLIC_DIRECTORY_ROOM_ID,
   PUBLIC_DIRECTORY_SPAWN,
   directoryShownPlayerCount,
+  nextDirectoryPodium,
   reconcilePublicDirectory,
 } from "./publicDirectory.js";
 import {
@@ -1100,6 +1101,8 @@ export type ObstacleTile = {
         targetRoomOwnerAddress?: string;
         /** Directory hall: people currently in the destination room. */
         targetRoomPlayerCount?: number;
+        /** Directory hall: true when at least one real player is in the destination. */
+        targetRoomOccupied?: boolean;
       };
   gate?: {
     adminAddress: string;
@@ -7425,9 +7428,14 @@ function teleportAllInRoomToHub(roomIdRaw: string): void {
 }
 
 let publicDirectoryLayoutSig = "";
-/** Room tick is 50ms; rebind hot rooms about once every 5 seconds. */
+/** Room tick is 50ms; refresh occupancy about once every 5 seconds. */
 let directoryHotSyncTicks = 0;
 const DIRECTORY_HOT_SYNC_EVERY_TICKS = 100;
+/** Which rooms stand on the podium, and when likes were last re-ranked. */
+let directoryPodiumHold: {
+  assignedAtMs: number;
+  roomIds: string[];
+} | null = null;
 
 /**
  * Rebind Public Directory teleporters onto the tiles already in the hall.
@@ -7462,16 +7470,23 @@ function syncPublicDirectoryRoom(): void {
     if (props.teleporter) existing.push({ x: coords.x, z: coords.z });
     else occupied.add(`${coords.x},${coords.z}`);
   }
-  const layout = reconcilePublicDirectory(listings, existing, occupied);
+  const podium = nextDirectoryPodium(listings, directoryPodiumHold, Date.now());
+  directoryPodiumHold = podium.hold;
+  const layout = reconcilePublicDirectory(
+    listings,
+    existing,
+    occupied,
+    podium.podium
+  );
   const b = layout.bounds;
-  const sig = `${b.minX},${b.maxX},${b.minZ},${b.maxZ}|${layout.teleporters
+  const sig = `${b.minX},${b.maxX},${b.minZ},${b.maxZ}|${podium.hold.roomIds.join(",")}|${layout.teleporters
     .map(
       (t) =>
         `${t.x},${t.z},${t.targetRoomId},${t.targetRoomDisplayName},${t.targetRoomOwnerAddress ?? ""},${directoryShownPlayerCount(
           t.targetRoomId,
           t.playerCount,
           process.env.NODE_ENV !== "production"
-        )},${t.targetX},${t.targetZ}`
+        )},${t.playerCount > 0 ? 1 : 0},${t.targetX},${t.targetZ}`
     )
     .join(";")}`;
   if (sig === publicDirectoryLayoutSig) return;
@@ -7505,6 +7520,7 @@ function syncPublicDirectoryRoom(): void {
             slot.playerCount,
             process.env.NODE_ENV !== "production"
           ),
+          targetRoomOccupied: slot.playerCount > 0,
         },
         prev ? resolveBlockColorRgb(prev) : undefined
       )
