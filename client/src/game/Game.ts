@@ -3329,6 +3329,26 @@ export class Game {
     }
   }
 
+  /** Hall grew while this client was already inside (Public Directory slots). */
+  applyLiveRoomBounds(bounds: RoomBounds): void {
+    const prev = this.roomBounds;
+    if (
+      prev.minX === bounds.minX &&
+      prev.maxX === bounds.maxX &&
+      prev.minZ === bounds.minZ &&
+      prev.maxZ === bounds.maxZ
+    ) {
+      return;
+    }
+    this.roomBounds = { ...bounds };
+    registerClientRoomBounds(this.roomId, this.roomBounds);
+    this.syncRoomZoomMaxFromBounds(this.roomBounds);
+    if (!roomUsesSpatialInterest(this.roomBounds)) {
+      this.syncWalkableFloorMeshes();
+    }
+    this.markSceneMutation("applyLiveRoomBounds");
+  }
+
   applyRoomFromWelcome(msg: {
     roomId: string;
     roomBounds: RoomBounds;

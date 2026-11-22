@@ -1,7 +1,8 @@
 /**
  * Public Directory: one hallway of teleporters to every public player room.
- * Generated in memory (not saved with world geometry). The hall grows with the
- * list. Higher thumbs-up, then more people present, sit closer to the door.
+ * Slot tiles are whatever an admin has placed or moved (saved with the room).
+ * Popularity only chooses which public room a slot opens: closer to the door
+ * is hotter. New rooms grow the default row-of-three grid when no slot is free.
  */
 
 export const PUBLIC_DIRECTORY_ROOM_ID = "directory";
@@ -34,6 +35,8 @@ export type DirectoryListing = {
   spawnX: number;
   spawnZ: number;
 };
+
+export type DirectorySlot = { x: number; z: number };
 
 export type DirectoryTeleporterSlot = {
   x: number;
@@ -106,5 +109,92 @@ export function layoutPublicDirectory(entries: readonly DirectoryListing[]): {
     minZ: PUBLIC_DIRECTORY_DOOR.z,
     maxZ: lastZ,
   };
+  return { bounds: { ...currentBounds }, teleporters };
+}
+
+function entranceDistanceSq(x: number, z: number): number {
+  const dx = x - PUBLIC_DIRECTORY_DOOR.x;
+  const dz = z - PUBLIC_DIRECTORY_DOOR.z;
+  return dx * dx + dz * dz;
+}
+
+/** Closer to the door first. Equal distance prefers the southern tile, then the left. */
+export function compareDirectorySlots(a: DirectorySlot, b: DirectorySlot): number {
+  const da = entranceDistanceSq(a.x, a.z);
+  const db = entranceDistanceSq(b.x, b.z);
+  if (da !== db) return da - db;
+  if (a.z !== b.z) return a.z - b.z;
+  return a.x - b.x;
+}
+
+function boundsForSlots(slots: readonly DirectorySlot[]): RoomBounds {
+  let minX = -HALL_HALF_WIDTH;
+  let maxX = HALL_HALF_WIDTH;
+  let maxZ = FIRST_SLOT_Z;
+  for (const slot of slots) {
+    minX = Math.min(minX, slot.x - 2);
+    maxX = Math.max(maxX, slot.x + 2);
+    maxZ = Math.max(maxZ, slot.z + END_PAD);
+  }
+  return {
+    minX: Math.min(currentBounds.minX, minX),
+    maxX: Math.max(currentBounds.maxX, maxX),
+    minZ: PUBLIC_DIRECTORY_DOOR.z,
+    maxZ: Math.max(currentBounds.maxZ, maxZ),
+  };
+}
+
+/**
+ * Keep admin-placed slot tiles. Bind the hottest listing to the slot closest
+ * to the door. Extra listings append on the default row-of-three grid, skipping
+ * tiles already occupied. Surplus slots (farthest from the door) are dropped.
+ */
+export function reconcilePublicDirectory(
+  entries: readonly DirectoryListing[],
+  existingSlots: readonly DirectorySlot[],
+  occupiedTiles?: ReadonlySet<string>
+): { bounds: RoomBounds; teleporters: DirectoryTeleporterSlot[] } {
+  const sorted = [...entries].sort(compareDirectoryListings);
+  const seen = new Set<string>();
+  const slots: DirectorySlot[] = [];
+  for (const slot of existingSlots) {
+    if (!Number.isInteger(slot.x) || !Number.isInteger(slot.z)) continue;
+    const key = `${slot.x},${slot.z}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    slots.push({ x: slot.x, z: slot.z });
+  }
+  slots.sort(compareDirectorySlots);
+  if (slots.length > sorted.length) slots.length = sorted.length;
+
+  const blocked = new Set<string>(occupiedTiles ?? []);
+  for (const slot of slots) blocked.add(`${slot.x},${slot.z}`);
+  let index = 0;
+  while (slots.length < sorted.length && index < 10000) {
+    const row = Math.floor(index / ROW_SIZE);
+    const col = index % ROW_SIZE;
+    const x = COLUMN_X[col]!;
+    const z = FIRST_SLOT_Z + row * ROW_STRIDE;
+    index += 1;
+    const key = `${x},${z}`;
+    if (blocked.has(key)) continue;
+    blocked.add(key);
+    slots.push({ x, z });
+  }
+  slots.sort(compareDirectorySlots);
+
+  const teleporters: DirectoryTeleporterSlot[] = slots.map((slot, i) => {
+    const entry = sorted[i]!;
+    const label = entry.displayName.trim() || entry.id;
+    return {
+      x: slot.x,
+      z: slot.z,
+      targetRoomId: entry.id,
+      targetX: entry.spawnX,
+      targetZ: entry.spawnZ,
+      targetRoomDisplayName: label,
+    };
+  });
+  currentBounds = boundsForSlots(teleporters);
   return { bounds: { ...currentBounds }, teleporters };
 }

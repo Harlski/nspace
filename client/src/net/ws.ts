@@ -498,6 +498,13 @@ export type ServerMessage =
       add: ObstacleTile[];
       /** Block keys ("x,z,y") that should be removed from the room. */
       remove: string[];
+      /** Public Directory: updated hall bounds when slots grow while people are inside. */
+      roomBounds?: {
+        minX: number;
+        maxX: number;
+        minZ: number;
+        maxZ: number;
+      };
     }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
   | {

@@ -7035,6 +7035,7 @@ function enterGame(
         return;
       }
       game.applyObstaclesDelta(msg.add, msg.remove);
+      if (msg.roomBounds) game.applyLiveRoomBounds(msg.roomBounds);
       syncTutorialAttentionCue();
       if (pendingTeleporterAutoSelect && msg.add?.length) {
         const want = pendingTeleporterAutoSelect;

@@ -5,6 +5,7 @@ import {
   PUBLIC_DIRECTORY_SPAWN,
   getPublicDirectoryBounds,
   layoutPublicDirectory,
+  reconcilePublicDirectory,
   type DirectoryListing,
 } from "../src/publicDirectory.js";
 
@@ -80,5 +81,74 @@ describe("public directory layout", () => {
     assert.equal(teleporters.length, 0);
     assert.equal(bounds.minZ, PUBLIC_DIRECTORY_DOOR.z);
     assert.ok(bounds.maxZ > PUBLIC_DIRECTORY_SPAWN.z);
+  });
+});
+
+describe("public directory slot rebinding", () => {
+  it("puts the hottest room on the slot closest to the door", () => {
+    layoutPublicDirectory([]);
+    const { teleporters } = reconcilePublicDirectory(
+      [
+        listing({ id: "quiet", thumbsUpCount: 0, spawnX: 1, spawnZ: 1 }),
+        listing({ id: "hot", thumbsUpCount: 5, spawnX: 4, spawnZ: 5 }),
+      ],
+      [
+        { x: 0, z: 20 },
+        { x: 3, z: 2 },
+      ]
+    );
+    const hot = teleporters.find((slot) => slot.targetRoomId === "hot");
+    const quiet = teleporters.find((slot) => slot.targetRoomId === "quiet");
+    assert.equal(hot?.x, 3);
+    assert.equal(hot?.z, 2);
+    assert.equal(hot?.targetX, 4);
+    assert.equal(hot?.targetZ, 5);
+    assert.equal(quiet?.x, 0);
+    assert.equal(quiet?.z, 20);
+  });
+
+  it("keeps moved tiles and only adds a slot for a new public room", () => {
+    layoutPublicDirectory([]);
+    const moved = reconcilePublicDirectory(
+      [listing({ id: "only", thumbsUpCount: 1 })],
+      [{ x: 4, z: 3 }]
+    );
+    assert.equal(moved.teleporters.length, 1);
+    assert.equal(moved.teleporters[0]?.x, 4);
+    assert.equal(moved.teleporters[0]?.z, 3);
+
+    const grown = reconcilePublicDirectory(
+      [
+        listing({ id: "only", thumbsUpCount: 1 }),
+        listing({ id: "hotter", thumbsUpCount: 9, spawnX: 2, spawnZ: 2 }),
+      ],
+      moved.teleporters.map((slot) => ({ x: slot.x, z: slot.z }))
+    );
+    assert.equal(grown.teleporters.length, 2);
+    const kept = grown.teleporters.find((slot) => slot.x === 4 && slot.z === 3);
+    assert.ok(kept);
+    const hotter = grown.teleporters.find((slot) => slot.targetRoomId === "hotter");
+    assert.ok(hotter);
+    assert.ok(
+      hotter!.x !== 4 || hotter!.z !== 3,
+      "the new room takes the closer default slot"
+    );
+    assert.equal(hotter?.targetX, 2);
+    assert.equal(hotter?.targetZ, 2);
+  });
+
+  it("drops the farthest slot when a room is no longer listed", () => {
+    layoutPublicDirectory([]);
+    const shrunk = reconcilePublicDirectory(
+      [listing({ id: "keep" })],
+      [
+        { x: 0, z: 2 },
+        { x: 0, z: 30 },
+      ]
+    );
+    assert.equal(shrunk.teleporters.length, 1);
+    assert.equal(shrunk.teleporters[0]?.x, 0);
+    assert.equal(shrunk.teleporters[0]?.z, 2);
+    assert.equal(shrunk.teleporters[0]?.targetRoomId, "keep");
   });
 });

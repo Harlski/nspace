@@ -91,7 +91,8 @@ import {
 } from "./roomRegistry.js";
 import {
   PUBLIC_DIRECTORY_ROOM_ID,
-  layoutPublicDirectory,
+  PUBLIC_DIRECTORY_SPAWN,
+  reconcilePublicDirectory,
 } from "./publicDirectory.js";
 import {
   canEnablePublicVisibility,
@@ -1359,13 +1360,13 @@ function canPlaceMineableBlocks(address: string): boolean {
  * - Wallet-created rooms: owner, admin, or a wallet on the room's builder allowlist.
  * - Official rooms (no owner): admin or a wallet on the builder allowlist.
  * - Hub and other built-ins: anyone may edit (subject to hub safe zone, etc.).
- * - Public Directory: nobody edits; teleporters are generated.
+ * - Public Directory: admins only. Teleporter tiles persist; popularity rebinds destinations.
  * - Tutorial Room / Tutorial Staging: admins, `TUTORIAL_BUILDER_ALLOWLIST`, and
  *   per-room builders from `/admin/rooms` (`builtin-room-names.json`).
  */
 function canEditRoomContent(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
-  if (id === PUBLIC_DIRECTORY_ROOM_ID) return false;
+  if (id === PUBLIC_DIRECTORY_ROOM_ID) return isAdmin(address);
   if (isInviteLobbyRoomId(id)) return true;
   if (id === CANVAS_ROOM_ID) return false;
   if (isTutorialRuntimeRoomId(id) || isTutorialStagingRoomId(id)) {
@@ -1698,6 +1699,8 @@ type OutMsg =
       add: ObstacleTile[];
       /** Tile keys ("x,z") that should be removed from the room. */
       remove: string[];
+      /** Public Directory: hall bounds when slots grow while people are inside. */
+      roomBounds?: RoomBounds;
     }
   | { type: "extraFloor"; roomId: string; tiles: ExtraFloorTile[] }
   | {
@@ -7319,11 +7322,14 @@ function teleportAllInRoomToHub(roomIdRaw: string): void {
 }
 
 let publicDirectoryLayoutSig = "";
+/** Room tick is 50ms; rebind hot rooms about once every 5 seconds. */
+let directoryHotSyncTicks = 0;
+const DIRECTORY_HOT_SYNC_EVERY_TICKS = 100;
 
 /**
- * Rebuild the Public Directory teleporters from the live public-room list.
- * People already in the hall get an obstacle delta when the grid changes,
- * so a running server does not keep a stale single column.
+ * Rebind Public Directory teleporters onto the tiles already in the hall.
+ * Admin moves and other built blocks stay. People in the hall get an obstacle
+ * delta (and the grown bounds) when the binding or the slot set changes.
  */
 function syncPublicDirectoryRoom(): void {
   const listings = [];
@@ -7343,40 +7349,63 @@ function syncPublicDirectoryRoom(): void {
       spawnZ: cz,
     });
   }
-  const layout = layoutPublicDirectory(listings);
-  const placed = new Map<string, PlacedProps>();
-  for (const slot of layout.teleporters) {
-    placed.set(
-      blockKey(slot.x, slot.z, 0),
-      teleporterPlacedProps({
-        targetRoomId: slot.targetRoomId,
-        targetX: slot.targetX,
-        targetZ: slot.targetZ,
-        targetRoomDisplayName: slot.targetRoomDisplayName,
-      })
-    );
+  const placed = placedMap(PUBLIC_DIRECTORY_ROOM_ID);
+  const existing: { x: number; z: number }[] = [];
+  const occupied = new Set<string>();
+  for (const [key, props] of placed) {
+    const coords = parsePlacedKey(key);
+    if (!coords || coords.y !== 0) continue;
+    if (props.teleporter) existing.push({ x: coords.x, z: coords.z });
+    else occupied.add(`${coords.x},${coords.z}`);
   }
+  const layout = reconcilePublicDirectory(listings, existing, occupied);
   const b = layout.bounds;
   const sig = `${b.minX},${b.maxX},${b.minZ},${b.maxZ}|${layout.teleporters
-    .map((t) => `${t.x},${t.z},${t.targetRoomId},${t.targetRoomDisplayName}`)
+    .map(
+      (t) =>
+        `${t.x},${t.z},${t.targetRoomId},${t.targetRoomDisplayName},${t.targetX},${t.targetZ}`
+    )
     .join(";")}`;
   if (sig === publicDirectoryLayoutSig) return;
-  const prev = roomPlaced.get(PUBLIC_DIRECTORY_ROOM_ID);
-  publicDirectoryLayoutSig = sig;
-  roomPlaced.set(PUBLIC_DIRECTORY_ROOM_ID, placed);
-  const occupants = rooms.get(PUBLIC_DIRECTORY_ROOM_ID);
-  if (!occupants || occupants.size === 0) return;
-  const remove = prev ? [...prev.keys()] : [];
+
+  const desired = new Set(
+    layout.teleporters.map((slot) => blockKey(slot.x, slot.z, 0))
+  );
+  const remove: string[] = [];
+  for (const [key, props] of placed) {
+    if (!props.teleporter || desired.has(key)) continue;
+    placed.delete(key);
+    remove.push(...obstacleRemovalKeysForPlacedKey(key));
+  }
   const add = [];
-  for (const key of placed.keys()) {
+  for (const slot of layout.teleporters) {
+    const key = blockKey(slot.x, slot.z, 0);
+    const prev = placed.get(key);
+    placed.set(
+      key,
+      teleporterPlacedProps(
+        {
+          targetRoomId: slot.targetRoomId,
+          targetX: slot.targetX,
+          targetZ: slot.targetZ,
+          targetRoomDisplayName: slot.targetRoomDisplayName,
+        },
+        prev ? resolveBlockColorRgb(prev) : undefined
+      )
+    );
     const tile = obstacleTileFromPlaced(PUBLIC_DIRECTORY_ROOM_ID, key);
     if (tile) add.push(tile);
   }
+  publicDirectoryLayoutSig = sig;
+  schedulePersistWorldState();
+  const occupants = rooms.get(PUBLIC_DIRECTORY_ROOM_ID);
+  if (!occupants || occupants.size === 0) return;
   broadcast(PUBLIC_DIRECTORY_ROOM_ID, {
     type: "obstaclesDelta",
     roomId: PUBLIC_DIRECTORY_ROOM_ID,
     add,
     remove,
+    roomBounds: b,
   });
 }
 
@@ -9116,7 +9145,13 @@ export function startRoomTick(): void {
     // Check canvas cooldown
     checkCanvasCooldown();
     checkCanvasCountdown();
-    
+
+    directoryHotSyncTicks += 1;
+    if (directoryHotSyncTicks >= DIRECTORY_HOT_SYNC_EVERY_TICKS) {
+      directoryHotSyncTicks = 0;
+      syncPublicDirectoryRoom();
+    }
+
     for (const [roomId, room] of rooms) {
       const dt = TICK_MS / 1000;
       let changed = false;
@@ -9655,6 +9690,15 @@ export function addClient(
           resolvedSpawnTile = true;
         }
       }
+    }
+  } else if (normalizeRoomId(roomId) === PUBLIC_DIRECTORY_ROOM_ID) {
+    if (!applySpawnHint()) {
+      const t = snapToTile(PUBLIC_DIRECTORY_SPAWN.x, PUBLIC_DIRECTORY_SPAWN.z);
+      player.x = t.x;
+      player.z = t.z;
+      player.y = 0;
+      placedSpawn = true;
+      resolvedSpawnTile = true;
     }
   } else if (applySpawnHint()) {
     /* explicit spawn hint for this room */
@@ -11238,6 +11282,9 @@ export function addClient(
           spawnX = t.x;
           spawnZ = t.z;
         }
+      } else if (normalizeRoomId(targetRoomId) === PUBLIC_DIRECTORY_ROOM_ID) {
+        spawnX = PUBLIC_DIRECTORY_SPAWN.x;
+        spawnZ = PUBLIC_DIRECTORY_SPAWN.z;
       }
       teleportPlayer(conn, targetRoomId, spawnX, spawnZ);
       return;
@@ -13709,6 +13756,12 @@ export function addClient(
         toZ: to.z,
         toY: ty,
       });
+      if (
+        normalizeRoomId(currentRoomId) === PUBLIC_DIRECTORY_ROOM_ID &&
+        movedProps.teleporter
+      ) {
+        syncPublicDirectoryRoom();
+      }
       return;
     }
 
