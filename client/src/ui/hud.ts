@@ -417,7 +417,7 @@ export function createHud(
   setChatHiddenForTutorial: (hidden: boolean) => void;
   isChatHiddenForTutorial: () => boolean;
   onFullscreenToggle: (fn: () => void) => void;
-  setReturnHomeVisible: (visible: boolean) => void;
+  setReturnHomeVisible: (visible: boolean, lastRoom?: boolean) => void;
   /** Hide Player Menu room-change rows (Tag Room Lock). */
   setRoomNavLocked: (locked: boolean) => void;
   setPortalEnterVisible: (visible: boolean) => void;
@@ -3019,7 +3019,8 @@ export function createHud(
   const returnHomeBtn = document.createElement("button");
   returnHomeBtn.type = "button";
   returnHomeBtn.className = "hud-return-home";
-  returnHomeBtn.textContent = "Return to Hub";
+  returnHomeBtn.textContent = t("playerMenu.returnToHub");
+  returnHomeBtn.setAttribute("aria-label", t("playerMenu.returnToHub"));
   returnHomeBtn.hidden = true;
   // In-world affordance for leaving The Shaper (shown only while inside it); pairs with the
   // Player Menu "Leave the Shaper" entry so players always have a way back to where they were.
@@ -16423,9 +16424,15 @@ export function createHud(
     onFullscreenToggle(fn: () => void) {
       fsHandler = fn;
     },
-    setReturnHomeVisible(visible: boolean) {
+    setReturnHomeVisible(visible: boolean, lastRoom = false) {
       returnHomeBtn.hidden = !visible;
+      const label = t(
+        lastRoom ? "playerMenu.returnToLastRoom" : "playerMenu.returnToHub"
+      );
+      returnHomeBtn.textContent = label;
+      returnHomeBtn.setAttribute("aria-label", label);
       playerMenu.setReturnToHubVisible(visible);
+      playerMenu.setReturnToLastRoom(lastRoom);
     },
     setRoomNavLocked(locked: boolean) {
       playerMenu.setRoomNavLocked(locked);

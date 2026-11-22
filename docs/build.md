@@ -24,7 +24,7 @@ Concise description of how nspace is put together today.
 ## Authority
 
 - The **server** owns: player positions along paths, velocity samples for clients, obstacle map, extra-floor sets, and who is in which room.
-- **Clients** send **intents** (`moveTo`, block placement, obstacle edits, chat, **`mosquitoTag`**, etc.); the server validates, updates state, and **broadcasts** snapshots (`state`, `obstacles`, `extraFloor`, `chat`, `mosquitoTag`, join/leave).
+- **Clients** send **intents** (`moveTo`, block placement, obstacle edits, chat, **`enterPortal`**, **`returnToLastRoom`**, **`mosquitoTag`**, etc.); the server validates, updates state, and **broadcasts** snapshots (`state`, `obstacles`, `extraFloor`, `chat`, `mosquitoTag`, join/leave). `welcome.canReturnToLastRoom` tells the client the open socket still remembers the teleporter it arrived through.
 
 ## Rendering (client)
 
@@ -59,4 +59,4 @@ flowchart LR
 
 Typical server → client messages include: `welcome` (includes **`chatBacklog`**: recent non-bubble room chat for reconnect / room changes, and **`moveOrders`**: in-flight Path Playback walks), `state` / `stateDelta` (presence cues are one-player `stateDelta`; grid Path Playback walkers omit pose on those deltas), `moveOrder` (analytic start + `walkId` + `serverNowMs`) / `moveAbort` / **`poseHeartbeat`** (~1 Hz analytic pose + `walkId` + `walking` for grid walkers), `obstacles` / `obstaclesDelta` (tiles may include **`signboardId`** when a signpost sits on that cell; the Public Directory may include **`roomBounds`** when the hall grows around people already inside, and its teleporters may include **`targetRoomDisplayName`**, **`targetRoomOwnerAddress`**, and **`targetRoomPlayerCount`** for the name, owner face, and occupant count), `extraFloor` / `extraFloorDelta` (tiles may include **`colorRgb`**), **`baseFloorColorDelta`** (core-grid floor tints), `playerJoined` / `playerLeft`, `chat`, `signboards`, `billboards`, `roomBackgroundHue`, `roomJoinSpawn` (dynamic room entry tile), **`gateWalkBlocked`** (opener-only after `openGate` when the hinge opens but walking across is blocked), **`mosquitoTag`** (Tag Call / Tag Round snapshot; also on `welcome.mosquitoTag`), **`joinRoomFailed`** (`not_found` | `forbidden` | **`tag_round`** when a Participant is under Tag Room Lock), and room-specific payloads — see [client/src/main.ts](../client/src/main.ts) dispatch and [docs/features-checklist.md](features-checklist.md).
 
-Clients send **intents** (`moveTo`, block placement, obstacle edits, chat, **`mosquitoTag`** with `action` `raise` | `cancel` | `join` | `leave` | `start`, etc.).
+Clients send **intents** (`moveTo`, block placement, obstacle edits, chat, **`enterPortal`**, **`returnToLastRoom`**, **`mosquitoTag`** with `action` `raise` | `cancel` | `join` | `leave` | `start`, etc.).

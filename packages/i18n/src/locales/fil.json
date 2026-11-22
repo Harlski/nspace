@@ -62,6 +62,7 @@
   "playerMenu.resetTutorial": "I-reset ang tutorial",
   "playerMenu.leaveShaper": "Umalis sa Shaper",
   "playerMenu.returnToHub": "Bumalik sa Hub",
+  "playerMenu.returnToLastRoom": "Bumalik sa huling silid",
   "playerMenu.logout": "Mag-log out",
   "playerMenu.getWallet": "Kumuha ng Wallet",
   "playerMenu.leave": "Umalis",

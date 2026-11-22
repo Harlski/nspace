@@ -30,6 +30,12 @@ describe("playerMenuItemLabelsForMode", () => {
     ]);
   });
 
+  it("renames Return to Hub after a teleporter hop", () => {
+    expect(
+      playerMenuItemLabelsForMode(false, true, false, false, false, false, true)
+    ).toContain("Return to last room");
+  });
+
   it("hides Return to Hub while already in the Hub", () => {
     expect(playerMenuItemLabelsForMode(false, false)).toEqual([
       "Wardrobe",

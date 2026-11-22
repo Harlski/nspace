@@ -5,4 +5,4 @@
 
 ---
 
-No deploy or environment changes in this update.
+No deploy, environment, or migration changes.

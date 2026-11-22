@@ -6,6 +6,7 @@ import {
   FIELD_BOUNDS as WORLDCUP_FIELD_BOUNDS,
   HUB_FIELD_DOOR as WORLDCUP_HUB_FIELD_DOOR,
   FIELD_HUB_DOOR as WORLDCUP_FIELD_HUB_DOOR,
+  isMatchPitchRoomId,
 } from "../worldcup/config.js";
 import { isPlaySpaceRoomId, PLAY_SPACE_BOUNDS } from "../invite/playSpaceLayout.js";
 
@@ -59,6 +60,11 @@ const CHAMBER_BOUNDS: RoomBounds = {
 
 /** Max orthographic half-height when zoomed out in the chamber (world units). */
 export const CHAMBER_MAX_ZOOM_FRUSTUM = 18.9;
+/**
+ * Player rooms use this fixed zoom-out instead of scaling with the floor.
+ * A wide expanded room used to reach a frustum around 67.
+ */
+export const PLAYER_ROOM_MAX_ZOOM_FRUSTUM = 18.7;
 export const CHAMBER_TELESCOPE_ZOOM_FRUSTUM_PORTRAIT =
   CHAMBER_MAX_ZOOM_FRUSTUM * TELESCOPE_PORTRAIT_ZOOM_MULTIPLIER;
 
@@ -169,6 +175,18 @@ export function isBuiltinRoomId(roomId: string): boolean {
   const id = normalizeRoomId(roomId);
   if (WORLDCUP_ENABLED_CLIENT && id === WORLDCUP_FIELD_ROOM_ID) return true;
   return id === HUB_ROOM_ID || id === CHAMBER_ROOM_ID || id === CANVAS_ROOM_ID || id === PIXEL_ROOM_ID;
+}
+
+/** Player-created and other custom rooms share one zoom-out cap. */
+export function usesPlayerRoomZoomCap(roomId: string): boolean {
+  const id = normalizeRoomId(roomId);
+  if (!id || isBuiltinRoomId(id)) return false;
+  if (id === PUBLIC_DIRECTORY_ROOM_ID) return false;
+  if (isPlaySpaceRoomId(id)) return false;
+  if (id === "tutorial" || id === "tutorial-staging") return false;
+  if (id === "cosmetic-gallery") return false;
+  if (isMatchPitchRoomId(id)) return false;
+  return true;
 }
 
 export function getRoomBaseBounds(roomId: string): RoomBounds {

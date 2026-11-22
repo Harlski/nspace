@@ -289,6 +289,8 @@ export type ServerMessage =
         walkId?: number;
       }>;
       roomId: string;
+      /** Set when this session arrived through a teleporter and can step back onto it. */
+      canReturnToLastRoom?: boolean;
       roomBounds: RoomBounds;
       doors: RoomDoor[];
       /** Max horizontal distance from player to tile for place/move; 0 = unlimited. */
@@ -1265,6 +1267,11 @@ export function sendJoinRoom(ws: WebSocket, roomId: string): void {
 export function sendReturnFromShaper(ws: WebSocket): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "returnFromShaper" }));
+}
+
+export function sendReturnToLastRoom(ws: WebSocket): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "returnToLastRoom" }));
 }
 
 export function sendCreateRoom(

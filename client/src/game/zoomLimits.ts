@@ -7,8 +7,10 @@ import {
   HUB_ROOM_ID,
   HUB_TELESCOPE_ZOOM_FRUSTUM,
   HUB_TELESCOPE_ZOOM_FRUSTUM_PORTRAIT,
+  PLAYER_ROOM_MAX_ZOOM_FRUSTUM,
   TELESCOPE_PORTRAIT_ZOOM_MULTIPLIER,
   normalizeRoomId,
+  usesPlayerRoomZoomCap,
   type RoomBounds,
 } from "./roomLayouts.js";
 import {
@@ -20,6 +22,7 @@ export function roomFrustumCap(roomId: string): number | null {
   const id = normalizeRoomId(roomId);
   if (id === HUB_ROOM_ID) return HUB_MAX_ZOOM_FRUSTUM;
   if (id === CHAMBER_ROOM_ID) return CHAMBER_MAX_ZOOM_FRUSTUM;
+  if (usesPlayerRoomZoomCap(id)) return PLAYER_ROOM_MAX_ZOOM_FRUSTUM;
   return null;
 }
 
@@ -56,7 +59,7 @@ export type ZoomLimitContext = {
 /** Max zoom-out without Telescope (room caps beat persisted zoomMax). */
 export function normalZoomMax(ctx: ZoomLimitContext): number {
   let max = Math.max(ctx.zoomMax, ctx.roomZoomMax);
-  // Hub/chamber hard caps apply to players; admins (map overview unlocked) keep their
+  // Room hard caps apply to players; admins (map overview unlocked) keep their
   // custom Max frustum from the admin camera panel.
   if (!ctx.mapOverviewUnlocked) {
     const cap = roomFrustumCap(ctx.roomId);
