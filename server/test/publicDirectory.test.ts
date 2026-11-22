@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import {
   PUBLIC_DIRECTORY_DOOR,
   PUBLIC_DIRECTORY_SPAWN,
+  DIRECTORY_PODIUM_FLOOR_RGB,
   DIRECTORY_PODIUM_REFRESH_MS,
   DIRECTORY_PODIUM_SLOTS,
+  directoryPodiumFloorTiles,
   directoryShownPlayerCount,
   getPublicDirectoryBounds,
   layoutPublicDirectory,
@@ -111,6 +113,59 @@ describe("public directory slot rebinding", () => {
     assert.equal(hot?.targetZ, 5);
     assert.equal(quiet?.x, DIRECTORY_PODIUM_SLOTS[1]!.x);
     assert.equal(quiet?.z, DIRECTORY_PODIUM_SLOTS[1]!.z);
+  });
+
+  it("leaves the old front grid empty around the podium", () => {
+    layoutPublicDirectory([]);
+    const entries = Array.from({ length: 8 }, (_, i) =>
+      listing({ id: `r${i}`, thumbsUpCount: 20 - i })
+    );
+    const oldGrid = [
+      { x: -3, z: 2 },
+      { x: 0, z: 2 },
+      { x: 3, z: 2 },
+      { x: -3, z: 6 },
+      { x: 0, z: 6 },
+      { x: 3, z: 6 },
+      { x: -3, z: 10 },
+      { x: 0, z: 10 },
+      { x: 3, z: 10 },
+    ];
+    const { teleporters } = reconcilePublicDirectory(entries, oldGrid);
+    const byId = new Map(teleporters.map((slot) => [slot.targetRoomId, slot]));
+    for (let i = 0; i < DIRECTORY_PODIUM_SLOTS.length; i++) {
+      assert.equal(byId.get(`r${i}`)?.x, DIRECTORY_PODIUM_SLOTS[i]!.x);
+      assert.equal(byId.get(`r${i}`)?.z, DIRECTORY_PODIUM_SLOTS[i]!.z);
+    }
+    for (let i = DIRECTORY_PODIUM_SLOTS.length; i < entries.length; i++) {
+      assert.ok((byId.get(`r${i}`)?.z ?? 0) >= 10);
+    }
+    const used = new Set(teleporters.map((slot) => `${slot.x},${slot.z}`));
+    assert.equal(used.has("-3,2"), false);
+    assert.equal(used.has("3,2"), false);
+    assert.equal(used.has("0,6"), false);
+  });
+
+  it("paints a floor pad under the podium and keeps the door clear", () => {
+    const tiles = directoryPodiumFloorTiles();
+    const keys = new Set(tiles.map((tile) => `${tile.x},${tile.z}`));
+    for (const slot of DIRECTORY_PODIUM_SLOTS) {
+      assert.equal(keys.has(`${slot.x},${slot.z}`), true);
+    }
+    assert.equal(
+      keys.has(`${PUBLIC_DIRECTORY_DOOR.x},${PUBLIC_DIRECTORY_DOOR.z}`),
+      false
+    );
+    assert.equal(
+      keys.has(`${PUBLIC_DIRECTORY_SPAWN.x},${PUBLIC_DIRECTORY_SPAWN.z}`),
+      false
+    );
+    assert.equal(DIRECTORY_PODIUM_FLOOR_RGB, 0xb8893a);
+    const { bounds } = layoutPublicDirectory([listing({ id: "a" })]);
+    for (const tile of tiles) {
+      assert.ok(tile.x >= bounds.minX && tile.x <= bounds.maxX);
+      assert.ok(tile.z >= bounds.minZ && tile.z <= bounds.maxZ);
+    }
   });
 
   it("keeps a moved tile behind the podium", () => {

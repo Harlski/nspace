@@ -5,4 +5,4 @@
 
 ---
 
-No deploy, environment, or migration changes.
+No deploy or environment changes. Restarting the game server applies the Public Rooms podium to a hall that was saved before it: teleporters in the front area move onto the podium or back behind it, and the podium floor is painted gold.

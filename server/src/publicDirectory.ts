@@ -1,8 +1,10 @@
 /**
  * Public Directory: one hallway of teleporters to every public player room.
- * Slot tiles are whatever an admin has placed or moved (saved with the room).
- * Popularity only chooses which public room a slot opens: closer to the door
- * is hotter. New rooms grow the default row-of-three grid when no slot is free.
+ * The five most-liked rooms stand on a podium by the door. Saved tiles behind
+ * that podium stay where an admin placed or moved them. Tiles in the podium
+ * precinct are not reused, so an older grid cannot fill the gap in front.
+ * New rooms grow the default row-of-three grid behind the podium when no
+ * slot back there is free.
  */
 
 export const PUBLIC_DIRECTORY_ROOM_ID = "directory";
@@ -42,6 +44,10 @@ export const DIRECTORY_PODIUM_SLOTS = [
   { x: 3, z: 6 },
 ] as const;
 const BACK_FIRST_Z = 10;
+/** One tile of floor around the five podium pillars. */
+const PODIUM_FLOOR_PAD = 1;
+/** Warm gold pad so the podium reads against the blue-gray hall floor. */
+export const DIRECTORY_PODIUM_FLOOR_RGB = 0xb8893a;
 
 export type DirectoryListing = {
   id: string;
@@ -187,6 +193,49 @@ function isPodiumTile(x: number, z: number): boolean {
   return DIRECTORY_PODIUM_SLOTS.some((slot) => slot.x === x && slot.z === z);
 }
 
+/** Saved teleporters in front of the back hall belong to the old grid. */
+function isBackHallSlot(slot: DirectorySlot): boolean {
+  return slot.z >= BACK_FIRST_Z;
+}
+
+export type DirectoryFloorExtent = {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+};
+
+/** Floor rectangle under the podium, including one tile of pad around the pillars. */
+export function directoryPodiumFloorExtent(): DirectoryFloorExtent {
+  let minX: number = DIRECTORY_PODIUM_SLOTS[0]!.x;
+  let maxX: number = minX;
+  let minZ: number = DIRECTORY_PODIUM_SLOTS[0]!.z;
+  let maxZ: number = minZ;
+  for (const slot of DIRECTORY_PODIUM_SLOTS) {
+    minX = Math.min(minX, slot.x);
+    maxX = Math.max(maxX, slot.x);
+    minZ = Math.min(minZ, slot.z);
+    maxZ = Math.max(maxZ, slot.z);
+  }
+  return {
+    minX: minX - PODIUM_FLOOR_PAD,
+    maxX: maxX + PODIUM_FLOOR_PAD,
+    minZ: minZ - PODIUM_FLOOR_PAD,
+    maxZ: maxZ + PODIUM_FLOOR_PAD,
+  };
+}
+
+export function directoryPodiumFloorTiles(): DirectorySlot[] {
+  const extent = directoryPodiumFloorExtent();
+  const tiles: DirectorySlot[] = [];
+  for (let z = extent.minZ; z <= extent.maxZ; z++) {
+    for (let x = extent.minX; x <= extent.maxX; x++) {
+      tiles.push({ x, z });
+    }
+  }
+  return tiles;
+}
+
 function backSlotAt(index: number): DirectorySlot {
   const row = Math.floor(index / ROW_SIZE);
   const col = index % ROW_SIZE;
@@ -219,7 +268,7 @@ function buildDirectoryLayout(
   const seen = new Set<string>();
   for (const slot of existingSlots) {
     if (!Number.isInteger(slot.x) || !Number.isInteger(slot.z)) continue;
-    if (isPodiumTile(slot.x, slot.z)) continue;
+    if (!isBackHallSlot(slot) || isPodiumTile(slot.x, slot.z)) continue;
     const key = `${slot.x},${slot.z}`;
     if (seen.has(key) || used.has(key)) continue;
     seen.add(key);
@@ -279,9 +328,10 @@ export function compareDirectorySlots(a: DirectorySlot, b: DirectorySlot): numbe
 }
 
 function boundsForSlots(slots: readonly DirectorySlot[]): RoomBounds {
-  let minX = -HALL_HALF_WIDTH;
-  let maxX = HALL_HALF_WIDTH;
-  let maxZ = FIRST_SLOT_Z;
+  const pad = directoryPodiumFloorExtent();
+  let minX = Math.min(-HALL_HALF_WIDTH, pad.minX);
+  let maxX = Math.max(HALL_HALF_WIDTH, pad.maxX);
+  let maxZ = Math.max(FIRST_SLOT_Z, pad.maxZ);
   for (const slot of slots) {
     minX = Math.min(minX, slot.x - 2);
     maxX = Math.max(maxX, slot.x + 2);
@@ -297,8 +347,9 @@ function boundsForSlots(slots: readonly DirectorySlot[]): RoomBounds {
 
 /**
  * Put `podium` on the front slots, in the given order. The rest keep
- * admin-moved tiles behind the podium, closest to the door first. New rooms
- * grow the back hall when no free tile is left. Surplus back slots are dropped.
+ * admin-moved tiles behind the podium, closest to the door first. Saved tiles
+ * in the podium precinct are ignored. New rooms grow the back hall when no
+ * free tile is left. Surplus back slots are dropped.
  */
 export function reconcilePublicDirectory(
   entries: readonly DirectoryListing[],

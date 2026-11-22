@@ -27,7 +27,7 @@ Show the QR place code on the phone as soon as the sign-in page opens. After a t
 ### Server
 
 - A successful `enterPortal` into a different room stores the departure room and tile on the connection. `returnToLastRoom` lands on that tile when a configured teleporter is still the top block and the tile is walkable; otherwise that room's normal join spawn. A missing room falls back to the Hub spawn. `joinRoom` clears the remembered tile. Both welcome payloads include `canReturnToLastRoom`.
-- Public Directory podium: `nextDirectoryPodium` keeps the top five room ids for 30 minutes (`DIRECTORY_PODIUM_REFRESH_MS`) and refills a seat immediately when a room leaves the public list. `reconcilePublicDirectory` places that order on `DIRECTORY_PODIUM_SLOTS` and keeps admin-moved tiles for everyone else, behind the podium. `targetRoomOccupied` is true only for a real occupant, so the client can glow that pillar gold without treating the dev preview count as a crowd.
+- Public Directory podium: `nextDirectoryPodium` keeps the top five room ids for 30 minutes (`DIRECTORY_PODIUM_REFRESH_MS`) and refills a seat immediately when a room leaves the public list. `reconcilePublicDirectory` places that order on `DIRECTORY_PODIUM_SLOTS` and keeps admin-moved tiles behind the podium. Saved tiles with `z` in front of the back hall are ignored, so a previously saved row grid cannot sit in the gaps around the five. The hall bounds always cover `directoryPodiumFloorTiles`, and `syncDirectoryPodiumFloor` paints those tiles `DIRECTORY_PODIUM_FLOOR_RGB` (removed base tiles stay removed). `targetRoomOccupied` is true only for a real occupant, so the client can glow that pillar gold without treating the dev preview count as a crowd.
 
 ### payment-intent-service
 
