@@ -257,6 +257,7 @@ import {
   CHAMBER_ROOM_ID,
   HUB_MAX_ZOOM_FRUSTUM,
   HUB_ROOM_ID,
+  PUBLIC_DIRECTORY_ROOM_ID,
   CANVAS_ROOM_ID,
   PIXEL_ROOM_ID,
   getDoorsForRoom,
@@ -4707,6 +4708,7 @@ export class Game {
   private refreshAllNameLabelScales(): void {
     if (this.selfMesh) this.syncNameLabelScaleAndPosition(this.selfMesh);
     for (const [, g] of this.others) this.syncNameLabelScaleAndPosition(g);
+    this.layoutDirectoryTeleporterLabels();
     this.refreshFloatingTextScales();
   }
 
@@ -14178,12 +14180,76 @@ export class Game {
 
   private clearTeleporterMarkers(): void {
     for (const [, marker] of this.teleporterMarkerMeshes) {
+      this.disposeDirectoryNameSprite(marker);
       this.scene.remove(marker);
       marker.geometry.dispose();
       (marker.material as THREE.Material).dispose();
     }
     this.teleporterMarkerMeshes.clear();
     this.teleporterPortalFloorSig = null;
+  }
+
+  private disposeDirectoryNameSprite(marker: THREE.Object3D): void {
+    const sprite = marker.userData.directoryNameSprite as THREE.Sprite | undefined;
+    if (!sprite) return;
+    marker.remove(sprite);
+    const mat = sprite.material;
+    if (mat instanceof THREE.SpriteMaterial) {
+      mat.map?.dispose();
+      mat.dispose();
+    }
+    delete marker.userData.directoryNameSprite;
+    delete marker.userData.directoryNameText;
+  }
+
+  /** Name pill above each Public Directory teleporter. */
+  private syncDirectoryTeleporterLabels(): void {
+    const show = normalizeRoomId(this.roomId) === PUBLIC_DIRECTORY_ROOM_ID;
+    for (const [k, marker] of this.teleporterMarkerMeshes) {
+      const tp = this.placedObjects.get(k)?.teleporter;
+      const name =
+        show && tp && "targetRoomId" in tp
+          ? (tp.targetRoomDisplayName?.trim() || tp.targetRoomId)
+          : "";
+      const existingName = marker.userData.directoryNameText as string | undefined;
+      if (!name) {
+        this.disposeDirectoryNameSprite(marker);
+        continue;
+      }
+      if (existingName === name && marker.userData.directoryNameSprite) continue;
+      this.disposeDirectoryNameSprite(marker);
+      const { sprite } = createNameLabelSprite(name);
+      marker.add(sprite);
+      marker.userData.directoryNameSprite = sprite;
+      marker.userData.directoryNameText = name;
+    }
+    this.layoutDirectoryTeleporterLabels();
+  }
+
+  private layoutDirectoryTeleporterLabels(): void {
+    if (normalizeRoomId(this.roomId) !== PUBLIC_DIRECTORY_ROOM_ID) return;
+    for (const marker of this.teleporterMarkerMeshes.values()) {
+      const sprite = marker.userData.directoryNameSprite as THREE.Sprite | undefined;
+      if (!sprite) continue;
+      const tw = sprite.userData.nameLabelTexW as number | undefined;
+      const th = sprite.userData.nameLabelTexH as number | undefined;
+      if (!tw || !th) continue;
+      let worldH = this.pixelToWorldY(NAME_LABEL_SCREEN_HEIGHT_PX);
+      let worldW = worldH * (tw / th);
+      const maxW = this.pixelToWorldX(NAME_LABEL_MAX_PX);
+      if (worldW > maxW) {
+        const s = maxW / worldW;
+        worldW *= s;
+        worldH *= s;
+      }
+      sprite.scale.set(worldW, worldH, 1);
+      const gap = this.pixelToWorldY(8);
+      sprite.position.set(
+        0,
+        TERRAIN_TILE_DOOR_MARKER_HEIGHT / 2 + gap + worldH / 2,
+        0
+      );
+    }
   }
 
   /** Configured one-way teleporter (not pending). */
@@ -14225,6 +14291,7 @@ export class Game {
         continue;
       }
       if (existing) {
+        this.disposeDirectoryNameSprite(existing);
         this.scene.remove(existing);
         existing.geometry.dispose();
         (existing.material as THREE.Material).dispose();
@@ -14242,12 +14309,14 @@ export class Game {
     }
     for (const [k, marker] of [...this.teleporterMarkerMeshes]) {
       if (!want.has(k)) {
+        this.disposeDirectoryNameSprite(marker);
         this.scene.remove(marker);
         marker.geometry.dispose();
         (marker.material as THREE.Material).dispose();
         this.teleporterMarkerMeshes.delete(k);
       }
     }
+    this.syncDirectoryTeleporterLabels();
     const sig = [...want.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([k, spec]) => `${k}:${spec.dim ? "p" : "a"}:${spec.colorRgb}`)

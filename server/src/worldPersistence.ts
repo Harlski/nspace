@@ -6,6 +6,7 @@ import {
   type TerrainProps,
 } from "./grid.js";
 import { isInviteLobbyRoomId } from "./directInvite/config.js";
+import { PUBLIC_DIRECTORY_ROOM_ID } from "./publicDirectory.js";
 import {
   clampColorRgb,
   DEFAULT_EXTRA_FLOOR_COLOR_RGB,
@@ -520,6 +521,7 @@ function persistWorldStateNow(): void {
   for (const roomId of roomIds) {
     const normalizedRoomId = normalizeRoomId(roomId);
     if (isInviteLobbyRoomId(normalizedRoomId)) continue;
+    if (normalizedRoomId === PUBLIC_DIRECTORY_ROOM_ID) continue;
     const placed = roomPlaced.get(roomId);
     const ex = roomExtraFloor.get(roomId);
     const baseColors = roomBaseFloorColors.get(roomId);

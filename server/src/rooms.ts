@@ -86,8 +86,13 @@ import {
   getDynamicRoomDeployablesAllowed,
   forceDynamicRoomPrivate,
   getDynamicRoomListingMeta,
+  listDynamicRooms,
   type RoomBackgroundNeutral,
 } from "./roomRegistry.js";
+import {
+  PUBLIC_DIRECTORY_ROOM_ID,
+  layoutPublicDirectory,
+} from "./publicDirectory.js";
 import {
   canEnablePublicVisibility,
   MIN_BUILDS_FOR_PUBLIC,
@@ -1354,11 +1359,13 @@ function canPlaceMineableBlocks(address: string): boolean {
  * - Wallet-created rooms: owner, admin, or a wallet on the room's builder allowlist.
  * - Official rooms (no owner): admin or a wallet on the builder allowlist.
  * - Hub and other built-ins: anyone may edit (subject to hub safe zone, etc.).
+ * - Public Directory: nobody edits; teleporters are generated.
  * - Tutorial Room / Tutorial Staging: admins, `TUTORIAL_BUILDER_ALLOWLIST`, and
  *   per-room builders from `/admin/rooms` (`builtin-room-names.json`).
  */
 function canEditRoomContent(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
+  if (id === PUBLIC_DIRECTORY_ROOM_ID) return false;
   if (isInviteLobbyRoomId(id)) return true;
   if (id === CANVAS_ROOM_ID) return false;
   if (isTutorialRuntimeRoomId(id) || isTutorialStagingRoomId(id)) {
@@ -5171,6 +5178,7 @@ export type RoomLayoutSnapshot = {
  */
 export function getRoomLayoutSnapshot(roomIdRaw: string): RoomLayoutSnapshot | null {
   const roomId = normalizeRoomId(roomIdRaw);
+  if (roomId === PUBLIC_DIRECTORY_ROOM_ID) syncPublicDirectoryRoom();
   if (isTutorialRuntimeRoomId(roomId) || isTutorialStagingRoomId(roomId)) {
     ensureTutorialRoomLayout(roomId);
   }
@@ -7310,8 +7318,53 @@ function teleportAllInRoomToHub(roomIdRaw: string): void {
   }
 }
 
+/**
+ * Rebuild the Public Directory teleporters from the live public-room list.
+ * Skipped while anyone is standing in the hall so an entry does not move
+ * portals under the people already there. The next empty entry picks up
+ * thumbs, occupancy, and new rooms.
+ */
+function syncPublicDirectoryRoom(): void {
+  const occupants = rooms.get(PUBLIC_DIRECTORY_ROOM_ID);
+  if (occupants && occupants.size > 0) return;
+  const listings = [];
+  for (const room of listDynamicRooms()) {
+    if (!room.isPublic) continue;
+    const custom = getDynamicRoomJoinSpawn(room.id);
+    const cx =
+      custom?.x ?? Math.floor((room.bounds.minX + room.bounds.maxX) / 2);
+    const cz =
+      custom?.z ?? Math.floor((room.bounds.minZ + room.bounds.maxZ) / 2);
+    listings.push({
+      id: room.id,
+      displayName: room.displayName.trim() || room.id,
+      thumbsUpCount: getRoomThumbsUpCount(room.id),
+      playerCount: countRealPlayersInRoom(room.id),
+      spawnX: cx,
+      spawnZ: cz,
+    });
+  }
+  const layout = layoutPublicDirectory(listings);
+  const placed = new Map<string, PlacedProps>();
+  for (const slot of layout.teleporters) {
+    placed.set(
+      blockKey(slot.x, slot.z, 0),
+      teleporterPlacedProps({
+        targetRoomId: slot.targetRoomId,
+        targetX: slot.targetX,
+        targetZ: slot.targetZ,
+        targetRoomDisplayName: slot.targetRoomDisplayName,
+      })
+    );
+  }
+  roomPlaced.set(PUBLIC_DIRECTORY_ROOM_ID, placed);
+}
+
 function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: number): void {
   const address = conn.player.address;
+  if (normalizeRoomId(targetRoomId) === PUBLIC_DIRECTORY_ROOM_ID) {
+    syncPublicDirectoryRoom();
+  }
 
   let currentRoomId: string | null = null;
   for (const [roomId, room] of rooms) {
@@ -9002,6 +9055,7 @@ export function startRoomTick(): void {
   if (demoted > 0) {
     broadcastRoomCatalogRefresh();
   }
+  syncPublicDirectoryRoom();
   // worldcup: restore player-placed balls + the season tally + goal-reward counters
   if (WORLDCUP_ENABLED) {
     loadWorldcupBalls();
@@ -9463,6 +9517,9 @@ export function addClient(
   }
   if (isTutorialRuntimeRoomId(roomId) || isTutorialStagingRoomId(roomId)) {
     ensureTutorialRoomLayout(roomId);
+  }
+  if (normalizeRoomId(roomId) === PUBLIC_DIRECTORY_ROOM_ID) {
+    syncPublicDirectoryRoom();
   }
   const room = roomOf(roomId);
   const compactSelf = compactAddress(address);

@@ -14,6 +14,14 @@ import {
   type RoomBackgroundNeutral,
 } from "./roomRegistry.js";
 import { walletDisplayName } from "./walletDisplayName.js";
+import {
+  DIRECTORY_HUB_RETURN,
+  HUB_TO_DIRECTORY_DOOR,
+  PUBLIC_DIRECTORY_DOOR,
+  PUBLIC_DIRECTORY_ROOM_ID,
+  PUBLIC_DIRECTORY_SPAWN,
+  getPublicDirectoryBounds,
+} from "./publicDirectory.js";
 // worldcup: seasonal soccer field room (feature-flagged, deletable)
 import {
   WORLDCUP_ENABLED,
@@ -235,6 +243,7 @@ const BUILTIN_ROOM_IDS = new Set([
   CHAMBER_ROOM_ID,
   CANVAS_ROOM_ID,
   PIXEL_ROOM_ID,
+  PUBLIC_DIRECTORY_ROOM_ID,
   TUTORIAL_ROOM_ID,
   TUTORIAL_STAGING_ROOM_ID,
 ]);
@@ -257,6 +266,8 @@ export function getRoomBaseBounds(roomId: string): RoomBounds {
       return CANVAS_BOUNDS;
     case PIXEL_ROOM_ID:
       return PIXEL_BOUNDS;
+    case PUBLIC_DIRECTORY_ROOM_ID:
+      return getPublicDirectoryBounds();
     case TUTORIAL_ROOM_ID:
     case TUTORIAL_STAGING_ROOM_ID:
       return { ...TUTORIAL_DEFAULT_BOUNDS };
@@ -284,7 +295,28 @@ export function getDoorsForRoom(roomId: string): DoorDef[] {
   const id = normalizeRoomId(roomId);
   if (id === HUB_ROOM_ID) {
     // worldcup: add the field door to the hub when enabled
-    return WORLDCUP_ENABLED ? [...HUB_DOORS, WORLDCUP_HUB_FIELD_DOOR] : HUB_DOORS;
+    const doors = WORLDCUP_ENABLED
+      ? [...HUB_DOORS, WORLDCUP_HUB_FIELD_DOOR]
+      : [...HUB_DOORS];
+    doors.push({
+      x: HUB_TO_DIRECTORY_DOOR.x,
+      z: HUB_TO_DIRECTORY_DOOR.z,
+      targetRoomId: PUBLIC_DIRECTORY_ROOM_ID,
+      spawnX: PUBLIC_DIRECTORY_SPAWN.x,
+      spawnZ: PUBLIC_DIRECTORY_SPAWN.z,
+    });
+    return doors;
+  }
+  if (id === PUBLIC_DIRECTORY_ROOM_ID) {
+    return [
+      {
+        x: PUBLIC_DIRECTORY_DOOR.x,
+        z: PUBLIC_DIRECTORY_DOOR.z,
+        targetRoomId: HUB_ROOM_ID,
+        spawnX: DIRECTORY_HUB_RETURN.x,
+        spawnZ: DIRECTORY_HUB_RETURN.z,
+      },
+    ];
   }
   if (id === CHAMBER_ROOM_ID) return CHAMBER_DOORS;
   if (id === CANVAS_ROOM_ID) return CANVAS_DOORS;
@@ -380,6 +412,17 @@ export function listRoomDefinitions(): RoomDefinition[] {
       ownerAddress: null,
       displayName: getBuiltinRoomDisplayName(PIXEL_ROOM_ID, "Pixel"),
       isPublic: getBuiltinRoomIsPublic(PIXEL_ROOM_ID),
+      isBuiltin: true,
+    },
+    {
+      id: PUBLIC_DIRECTORY_ROOM_ID,
+      bounds: getPublicDirectoryBounds(),
+      ownerAddress: null,
+      displayName: getBuiltinRoomDisplayName(
+        PUBLIC_DIRECTORY_ROOM_ID,
+        "Public Rooms"
+      ),
+      isPublic: getBuiltinRoomIsPublic(PUBLIC_DIRECTORY_ROOM_ID),
       isBuiltin: true,
     },
     // worldcup: list the soccer field as a built-in room when enabled

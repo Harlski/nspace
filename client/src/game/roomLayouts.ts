@@ -20,6 +20,8 @@ export const HUB_ROOM_ID = "hub";
 export const CHAMBER_ROOM_ID = "chamber";
 export const CANVAS_ROOM_ID = "canvas";
 export const PIXEL_ROOM_ID = "pixel";
+/** Hall of teleporters to public player rooms. Bounds arrive on `welcome`. */
+export const PUBLIC_DIRECTORY_ROOM_ID = "directory";
 
 /**
  * Hub center 4×4 tiles (inclusive) - no blocks (must match server `roomLayouts`).
@@ -97,6 +99,13 @@ const HUB_DOORS: DoorDef[] = [
     targetRoomId: CHAMBER_ROOM_ID,
     spawnX: CHAMBER_DEFAULT_SPAWN.x,
     spawnZ: CHAMBER_DEFAULT_SPAWN.z,
+  },
+  {
+    x: -12,
+    z: 0,
+    targetRoomId: PUBLIC_DIRECTORY_ROOM_ID,
+    spawnX: 0,
+    spawnZ: -1,
   },
   {
     x: -1,
@@ -202,6 +211,17 @@ export function getDoorsForRoom(roomId: string): DoorDef[] {
   if (id === CHAMBER_ROOM_ID) return CHAMBER_DOORS;
   if (id === CANVAS_ROOM_ID) return CANVAS_DOORS;
   if (id === PIXEL_ROOM_ID) return PIXEL_DOORS;
+  if (id === PUBLIC_DIRECTORY_ROOM_ID) {
+    return [
+      {
+        x: 0,
+        z: -2,
+        targetRoomId: HUB_ROOM_ID,
+        spawnX: -11,
+        spawnZ: 0,
+      },
+    ];
+  }
   // worldcup: field room door back to the hub
   if (WORLDCUP_ENABLED_CLIENT && id === WORLDCUP_FIELD_ROOM_ID) {
     return [{ ...WORLDCUP_FIELD_HUB_DOOR }];
