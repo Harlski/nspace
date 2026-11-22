@@ -371,6 +371,7 @@ export function createHud(
   }
 ): {
   setStatus: (s: string) => void;
+  getStatus: () => string;
   appendChat: (
     from: string,
     text: string,
@@ -16284,10 +16285,27 @@ export function createHud(
   return {
     setStatus(s: string) {
       const t = s.trim();
+      const visible = !!t;
+      if (
+        statusSub.textContent === t &&
+        statusSub.classList.contains("hud-status-sub--empty") === !visible &&
+        ui.classList.contains("hud--has-status-sub") === visible
+      ) {
+        return;
+      }
       statusSub.textContent = t;
-      statusSub.classList.toggle("hud-status-sub--empty", !t);
-      ui.classList.toggle("hud--has-status-sub", !!t);
+      statusSub.classList.toggle("hud-status-sub--empty", !visible);
+      ui.classList.toggle("hud--has-status-sub", visible);
+      // The Public Directory countdown rewrites this strip every second.
+      // Leave it out of the live region so a screen reader does not speak each tick.
+      statusSub.setAttribute(
+        "aria-live",
+        t.startsWith("Room rankings update in ") ? "off" : "polite"
+      );
       syncHudLayoutInsets();
+    },
+    getStatus(): string {
+      return statusSub.textContent ?? "";
     },
     resetRoomChatDom() {
       // Whispers are private, cross-room conversations - let them linger through a room

@@ -321,6 +321,15 @@ export type ServerMessage =
       voxelTexts?: VoxelTextSpec[];
       /** Real players online across all rooms (NPCs excluded). */
       onlinePlayerCount?: number;
+      /**
+       * Public Directory only. Next popularity rebind so the hint strip can
+       * count down with the server.
+       */
+      directoryRanking?: {
+        nextAtMs: number;
+        serverNowMs: number;
+        intervalMs: number;
+      };
       /** Omitted on older servers; client defaults to true. */
       allowPlaceBlocks?: boolean;
       allowPublishDesign?: boolean;
@@ -543,6 +552,12 @@ export type ServerMessage =
   | { type: "canvasClaim"; x: number; z: number; address: string }
   | { type: "canvasTimer"; timeRemaining: number }
   | { type: "canvasCountdown"; text: string; msRemaining: number }
+  | {
+      type: "directoryRanking";
+      nextAtMs: number;
+      serverNowMs: number;
+      intervalMs: number;
+    }
   | {
       type: "signboards";
       roomId: string;

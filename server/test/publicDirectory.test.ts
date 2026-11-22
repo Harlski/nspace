@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   PUBLIC_DIRECTORY_DOOR,
   PUBLIC_DIRECTORY_SPAWN,
+  directoryRankingSchedule,
   directoryShownPlayerCount,
   getPublicDirectoryBounds,
   layoutPublicDirectory,
@@ -172,5 +173,21 @@ describe("public directory slot rebinding", () => {
     assert.equal(shrunk.teleporters[0]?.x, 0);
     assert.equal(shrunk.teleporters[0]?.z, 2);
     assert.equal(shrunk.teleporters[0]?.targetRoomId, "keep");
+  });
+});
+
+describe("directory ranking schedule", () => {
+  it("counts a full interval after a rebind", () => {
+    const schedule = directoryRankingSchedule(1_000, 0, 50, 100);
+    assert.equal(schedule.serverNowMs, 1_000);
+    assert.equal(schedule.intervalMs, 5_000);
+    assert.equal(schedule.nextAtMs, 6_000);
+  });
+
+  it("shortens the wait by the ticks already elapsed", () => {
+    const mid = directoryRankingSchedule(1_000, 40, 50, 100);
+    assert.equal(mid.nextAtMs, 1_000 + 60 * 50);
+    const last = directoryRankingSchedule(1_000, 99, 50, 100);
+    assert.equal(last.nextAtMs, 1_050);
   });
 });

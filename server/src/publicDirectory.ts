@@ -103,6 +103,41 @@ export function directoryShownPlayerCount(
   return 1 + ((hash >>> 0) % 12);
 }
 
+export type DirectoryRankingSchedule = {
+  /** Server epoch ms when the next popularity rebind runs. */
+  nextAtMs: number;
+  /** Server epoch ms when this schedule was computed. */
+  serverNowMs: number;
+  /** Milliseconds between rebinds. */
+  intervalMs: number;
+};
+
+/**
+ * When the next Public Directory popularity rebind happens.
+ * `ticksSinceSync` is how many room ticks have elapsed since the last rebind
+ * (0 means a rebind just happened, so the next one is a full interval away).
+ */
+export function directoryRankingSchedule(
+  nowMs: number,
+  ticksSinceSync: number,
+  tickMs: number,
+  intervalTicks: number
+): DirectoryRankingSchedule {
+  const safeTickMs = Math.max(1, Math.floor(tickMs));
+  const safeIntervalTicks = Math.max(1, Math.floor(intervalTicks));
+  const elapsedTicks = Math.max(
+    0,
+    Math.min(safeIntervalTicks, Math.floor(ticksSinceSync))
+  );
+  const ticksLeft = Math.max(1, safeIntervalTicks - elapsedTicks);
+  const intervalMs = safeIntervalTicks * safeTickMs;
+  return {
+    nextAtMs: nowMs + ticksLeft * safeTickMs,
+    serverNowMs: nowMs,
+    intervalMs,
+  };
+}
+
 /**
  * Most popular listings fill the row nearest the door, left to right, then the
  * next row north. Updates the bounds returned by {@link getPublicDirectoryBounds}.

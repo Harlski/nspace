@@ -81,6 +81,12 @@ import { showCountryPickerModal } from "./worldcup/countryPickerModal.js";
 import { isOrthogonallyAdjacentToFloorTile, snapFloorTile, blockKey } from "./game/grid.js";
 import { remotePlayerIsNpc } from "./remotePlayerNpc.js";
 import {
+  applyDirectoryRankingClock,
+  directoryRankingSecondsRemaining,
+  formatDirectoryRankingHint,
+  type DirectoryRankingClock,
+} from "./ui/directoryRankingHint.js";
+import {
   HUB_ROOM_ID,
   CHAMBER_ROOM_ID,
   CANVAS_ROOM_ID,
@@ -3477,9 +3483,16 @@ function enterGame(
     { signal }
   );
 
+  let directoryRankingClock: DirectoryRankingClock | null = null;
+  let directoryRankingTimer: ReturnType<typeof setInterval> | null = null;
+
   function cleanupResources(): void {
     stopAutoReconnect();
     clearWelcomeDeadlineTimer();
+    if (directoryRankingTimer !== null) {
+      clearInterval(directoryRankingTimer);
+      directoryRankingTimer = null;
+    }
     setPseudoFullscreen(false);
     notifyChatNotTyping();
     if (nimWalletPollTimer !== null) {
@@ -3876,6 +3889,45 @@ function enterGame(
     syncRoomSidePanels();
   });
 
+  function acceptDirectoryRanking(
+    payload:
+      | {
+          nextAtMs?: number;
+          serverNowMs?: number;
+          intervalMs?: number;
+        }
+      | null
+      | undefined
+  ): void {
+    if (
+      !payload ||
+      typeof payload.nextAtMs !== "number" ||
+      typeof payload.serverNowMs !== "number" ||
+      typeof payload.intervalMs !== "number" ||
+      !Number.isFinite(payload.nextAtMs) ||
+      !Number.isFinite(payload.serverNowMs) ||
+      !Number.isFinite(payload.intervalMs) ||
+      payload.intervalMs <= 0
+    ) {
+      directoryRankingClock = null;
+      return;
+    }
+    directoryRankingClock = {
+      nextAtMs: payload.nextAtMs,
+      serverNowMs: payload.serverNowMs,
+      intervalMs: payload.intervalMs,
+      receivedAtMs: Date.now(),
+    };
+  }
+
+  function directoryRankingPhrase(): string | null {
+    if (!directoryRankingClock) return null;
+    if (normalizeRoomId(game.getRoomId()) !== PUBLIC_DIRECTORY_ROOM_ID) return null;
+    return formatDirectoryRankingHint(
+      directoryRankingSecondsRemaining(directoryRankingClock, Date.now())
+    );
+  }
+
   function syncBuildHud(): void {
     try {
     const barStyle = game.getPlacementBlockStyle();
@@ -3906,10 +3958,11 @@ function enterGame(
       game.clearSelectedBlock();
     }
 
+    const rankingPhrase = directoryRankingPhrase();
     if (!canBuild && !canFloor) {
       const readOnlyHint = isCanvas
         ? "Find the exit the quickest to win NIM"
-        : "this room is view-only for building";
+        : rankingPhrase ?? "this room is view-only for building";
       hud.setBuildBlockBarState({
         visible: false,
         ...barStyle,
@@ -4030,7 +4083,10 @@ function enterGame(
             ? "Build: toggle at top-right · palette along bottom"
             : "Build: edge toggle + palette along the bottom"
           : desktopHint;
-    hud.setStatus(touchUi ? touchIdleHint : desktopHint);
+    const idleHint = touchUi ? touchIdleHint : desktopHint;
+    hud.setStatus(
+      rankingPhrase ? `${rankingPhrase} · ${idleHint}` : idleHint
+    );
     hud.setPlayModeState(playModeFromGame());
     } finally {
       const isCanvasRoom = normalizeRoomId(game.getRoomId()) === CANVAS_ROOM_ID;
@@ -6262,6 +6318,11 @@ function enterGame(
       if (normalizeRoomId(msg.roomId) === CHAMBER_ROOM_ID) {
         flushTutorialHubWelcomeCinematic();
       }
+      if (normalizeRoomId(msg.roomId) === PUBLIC_DIRECTORY_ROOM_ID) {
+        acceptDirectoryRanking(msg.directoryRanking);
+      } else {
+        directoryRankingClock = null;
+      }
       syncBuildHud();
       applyStreamPresentation();
       ensureNimWalletPollStarted();
@@ -7119,6 +7180,16 @@ function enterGame(
       hud.setCanvasCountdown(msg.text, msg.msRemaining);
       return;
     }
+    if (msg.type === "directoryRanking") {
+      if (normalizeRoomId(game.getRoomId()) !== PUBLIC_DIRECTORY_ROOM_ID) return;
+      acceptDirectoryRanking(msg);
+      const phrase = directoryRankingPhrase();
+      if (phrase) {
+        const next = applyDirectoryRankingClock(hud.getStatus(), phrase);
+        if (next) hud.setStatus(next);
+      }
+      return;
+    }
     if (msg.type === "designPublished") {
       prefabUi.setPublishBusy(false);
       prefabUi.closePublishModal();
@@ -7829,6 +7900,14 @@ function enterGame(
   hud.onDisconnectExit(() => {
     disposeToMenu();
   });
+
+  directoryRankingTimer = setInterval(() => {
+    if (disposed) return;
+    const phrase = directoryRankingPhrase();
+    if (!phrase) return;
+    const next = applyDirectoryRankingClock(hud.getStatus(), phrase);
+    if (next) hud.setStatus(next);
+  }, 250);
 
   if (streamMode) {
     connectToRoom(PIXEL_ROOM_ID, {

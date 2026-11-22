@@ -92,6 +92,7 @@ import {
 import {
   PUBLIC_DIRECTORY_ROOM_ID,
   PUBLIC_DIRECTORY_SPAWN,
+  directoryRankingSchedule,
   directoryShownPlayerCount,
   reconcilePublicDirectory,
 } from "./publicDirectory.js";
@@ -1599,6 +1600,15 @@ type OutMsg =
       voxelTexts: VoxelTextSpec[];
       /** Real players online across all rooms (NPCs excluded). */
       onlinePlayerCount: number;
+      /**
+       * Public Directory only. Next popularity rebind, so the hint strip can
+       * count down in step with the server.
+       */
+      directoryRanking?: {
+        nextAtMs: number;
+        serverNowMs: number;
+        intervalMs: number;
+      };
       /** Client may show build mode only when true; server still enforces. */
       allowPlaceBlocks: boolean;
       /** Wallet-room owner may capture object/room prefabs from this room. */
@@ -1942,6 +1952,12 @@ type OutMsg =
       reason?: string;
     }
   | { type: "canvasCountdown"; text: string; msRemaining: number }
+  | {
+      type: "directoryRanking";
+      nextAtMs: number;
+      serverNowMs: number;
+      intervalMs: number;
+    }
   // worldcup: dynamic ball positions (throttled) + goal celebration
   | { type: "ballState"; roomId: string; balls: WorldcupBallWire[] }
   | { type: "goalieState"; roomId: string; goalies: WorldcupGoalieWire[] }
@@ -7429,6 +7445,28 @@ let publicDirectoryLayoutSig = "";
 let directoryHotSyncTicks = 0;
 const DIRECTORY_HOT_SYNC_EVERY_TICKS = 100;
 
+function directoryRankingWire(now = Date.now()) {
+  return directoryRankingSchedule(
+    now,
+    directoryHotSyncTicks,
+    TICK_MS,
+    DIRECTORY_HOT_SYNC_EVERY_TICKS
+  );
+}
+
+/** Tell people in the hall when the next popularity rebind is. */
+function broadcastDirectoryRanking(now = Date.now()): void {
+  const occupants = rooms.get(PUBLIC_DIRECTORY_ROOM_ID);
+  if (!occupants || occupants.size === 0) return;
+  const schedule = directoryRankingWire(now);
+  broadcast(PUBLIC_DIRECTORY_ROOM_ID, {
+    type: "directoryRanking",
+    nextAtMs: schedule.nextAtMs,
+    serverNowMs: schedule.serverNowMs,
+    intervalMs: schedule.intervalMs,
+  });
+}
+
 /**
  * Rebind Public Directory teleporters onto the tiles already in the hall.
  * Admin moves and other built blocks stay. People in the hall get an obstacle
@@ -7725,6 +7763,9 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       billboards: billboardsWire,
       voxelTexts: getVoxelTextsForRoom(targetRoomId),
       onlinePlayerCount: countOnlineRealPlayers(),
+      ...(normalizeRoomId(targetRoomId) === PUBLIC_DIRECTORY_ROOM_ID
+        ? { directoryRanking: directoryRankingWire() }
+        : {}),
       allowPlaceBlocks,
       allowPublishDesign,
       allowExtraFloor: allowFloorRecolor,
@@ -9271,6 +9312,7 @@ export function startRoomTick(): void {
     if (directoryHotSyncTicks >= DIRECTORY_HOT_SYNC_EVERY_TICKS) {
       directoryHotSyncTicks = 0;
       syncPublicDirectoryRoom();
+      broadcastDirectoryRanking(now);
     }
 
     for (const [roomId, room] of rooms) {
@@ -10015,6 +10057,9 @@ export function addClient(
       billboards: joinBillboardsWire,
       voxelTexts: getVoxelTextsForRoom(roomId),
       onlinePlayerCount: countOnlineRealPlayers(),
+      ...(normalizeRoomId(roomId) === PUBLIC_DIRECTORY_ROOM_ID
+        ? { directoryRanking: directoryRankingWire() }
+        : {}),
       allowPlaceBlocks,
       allowPublishDesign: canPublishDesign(roomId, address),
       allowExtraFloor: allowFloorRecolor,
