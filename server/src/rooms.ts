@@ -92,7 +92,10 @@ import {
 import {
   PUBLIC_DIRECTORY_ROOM_ID,
   PUBLIC_DIRECTORY_SPAWN,
+  DIRECTORY_PODIUM_FLOOR_RGB,
+  directoryPodiumFloorTiles,
   directoryShownPlayerCount,
+  nextDirectoryPodium,
   reconcilePublicDirectory,
 } from "./publicDirectory.js";
 import {
@@ -1100,6 +1103,8 @@ export type ObstacleTile = {
         targetRoomOwnerAddress?: string;
         /** Directory hall: people currently in the destination room. */
         targetRoomPlayerCount?: number;
+        /** Directory hall: true when at least one real player is in the destination. */
+        targetRoomOccupied?: boolean;
       };
   gate?: {
     adminAddress: string;
@@ -7425,14 +7430,39 @@ function teleportAllInRoomToHub(roomIdRaw: string): void {
 }
 
 let publicDirectoryLayoutSig = "";
-/** Room tick is 50ms; rebind hot rooms about once every 5 seconds. */
+/** Room tick is 50ms; refresh occupancy about once every 5 seconds. */
 let directoryHotSyncTicks = 0;
 const DIRECTORY_HOT_SYNC_EVERY_TICKS = 100;
+/** Which rooms stand on the podium, and when likes were last re-ranked. */
+let directoryPodiumHold: {
+  assignedAtMs: number;
+  roomIds: string[];
+} | null = null;
+
+/**
+ * Paint the podium pad. Tiles an admin has removed stay removed. Returns the
+ * tiles whose color changed so the hall can be told without a full floor sync.
+ */
+function syncDirectoryPodiumFloor(): { x: number; z: number; colorRgb: number }[] {
+  const colors = baseFloorColorMap(PUBLIC_DIRECTORY_ROOM_ID);
+  const removed = baseRemovedReadonly(PUBLIC_DIRECTORY_ROOM_ID);
+  const add: { x: number; z: number; colorRgb: number }[] = [];
+  for (const tile of directoryPodiumFloorTiles()) {
+    if (!isBaseTile(tile.x, tile.z, PUBLIC_DIRECTORY_ROOM_ID)) continue;
+    const key = tileKey(tile.x, tile.z);
+    if (removed?.has(key)) continue;
+    if (colors.get(key) === DIRECTORY_PODIUM_FLOOR_RGB) continue;
+    colors.set(key, DIRECTORY_PODIUM_FLOOR_RGB);
+    add.push({ x: tile.x, z: tile.z, colorRgb: DIRECTORY_PODIUM_FLOOR_RGB });
+  }
+  return add;
+}
 
 /**
  * Rebind Public Directory teleporters onto the tiles already in the hall.
- * Admin moves and other built blocks stay. People in the hall get an obstacle
- * delta (and the grown bounds) when the binding or the slot set changes.
+ * Admin moves behind the podium stay. Tiles in the podium precinct are cleared
+ * so the top five stand alone. People in the hall get an obstacle delta (and
+ * the grown bounds) when the binding or the slot set changes.
  */
 function syncPublicDirectoryRoom(): void {
   const listings = [];
@@ -7462,18 +7492,38 @@ function syncPublicDirectoryRoom(): void {
     if (props.teleporter) existing.push({ x: coords.x, z: coords.z });
     else occupied.add(`${coords.x},${coords.z}`);
   }
-  const layout = reconcilePublicDirectory(listings, existing, occupied);
+  const podium = nextDirectoryPodium(listings, directoryPodiumHold, Date.now());
+  directoryPodiumHold = podium.hold;
+  const layout = reconcilePublicDirectory(
+    listings,
+    existing,
+    occupied,
+    podium.podium
+  );
+  const podiumFloor = syncDirectoryPodiumFloor();
   const b = layout.bounds;
-  const sig = `${b.minX},${b.maxX},${b.minZ},${b.maxZ}|${layout.teleporters
+  const sig = `${b.minX},${b.maxX},${b.minZ},${b.maxZ}|${podium.hold.roomIds.join(",")}|${layout.teleporters
     .map(
       (t) =>
         `${t.x},${t.z},${t.targetRoomId},${t.targetRoomDisplayName},${t.targetRoomOwnerAddress ?? ""},${directoryShownPlayerCount(
           t.targetRoomId,
           t.playerCount,
           process.env.NODE_ENV !== "production"
-        )},${t.targetX},${t.targetZ}`
+        )},${t.playerCount > 0 ? 1 : 0},${t.targetX},${t.targetZ}`
     )
     .join(";")}`;
+  if (podiumFloor.length > 0) {
+    schedulePersistWorldState();
+    const occupants = rooms.get(PUBLIC_DIRECTORY_ROOM_ID);
+    if (occupants && occupants.size > 0) {
+      broadcast(PUBLIC_DIRECTORY_ROOM_ID, {
+        type: "baseFloorColorDelta",
+        roomId: PUBLIC_DIRECTORY_ROOM_ID,
+        add: podiumFloor,
+        remove: [],
+      });
+    }
+  }
   if (sig === publicDirectoryLayoutSig) return;
 
   const desired = new Set(
@@ -7505,6 +7555,7 @@ function syncPublicDirectoryRoom(): void {
             slot.playerCount,
             process.env.NODE_ENV !== "production"
           ),
+          targetRoomOccupied: slot.playerCount > 0,
         },
         prev ? resolveBlockColorRgb(prev) : undefined
       )

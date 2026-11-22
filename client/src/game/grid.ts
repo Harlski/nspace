@@ -301,6 +301,7 @@ export type TerrainProps = {
         targetRoomDisplayName?: string;
         targetRoomOwnerAddress?: string;
         targetRoomPlayerCount?: number;
+        targetRoomOccupied?: boolean;
       };
   gate?: {
     adminAddress?: string;

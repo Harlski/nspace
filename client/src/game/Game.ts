@@ -308,6 +308,7 @@ import {
   normalizeBlockPrismParts,
   resolveBlockColorRgb,
   resolveTeleporterPillarColorRgb,
+  DIRECTORY_OCCUPIED_PILLAR_COLOR_RGB,
   TELEPORTER_DEFAULT_PILLAR_COLOR_RGB,
 } from "./blockStyle.js";
 import {
@@ -14507,7 +14508,12 @@ export class Game {
     const want = new Map<string, { dim: boolean; colorRgb: number }>();
     for (const [k, meta] of this.placedObjects) {
       const tp = meta.teleporter;
-      const colorRgb = resolveTeleporterPillarColorRgb(meta);
+      const occupied =
+        normalizeRoomId(this.roomId) === PUBLIC_DIRECTORY_ROOM_ID &&
+        Boolean(tp && "targetRoomOccupied" in tp && tp.targetRoomOccupied);
+      const colorRgb = occupied
+        ? DIRECTORY_OCCUPIED_PILLAR_COLOR_RGB
+        : resolveTeleporterPillarColorRgb(meta);
       if (this.isActiveTeleporterPortal(tp)) {
         want.set(k, { dim: false, colorRgb });
       } else if (this.isPendingTeleporterPortal(tp)) {

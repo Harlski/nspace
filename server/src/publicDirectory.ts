@@ -1,8 +1,10 @@
 /**
  * Public Directory: one hallway of teleporters to every public player room.
- * Slot tiles are whatever an admin has placed or moved (saved with the room).
- * Popularity only chooses which public room a slot opens: closer to the door
- * is hotter. New rooms grow the default row-of-three grid when no slot is free.
+ * The five most-liked rooms stand on a podium by the door. Saved tiles behind
+ * that podium stay where an admin placed or moved them. Tiles in the podium
+ * precinct are not reused, so an older grid cannot fill the gap in front.
+ * New rooms grow the default row-of-three grid behind the podium when no
+ * slot back there is free.
  */
 
 export const PUBLIC_DIRECTORY_ROOM_ID = "directory";
@@ -26,6 +28,26 @@ const HALL_HALF_WIDTH = 6;
 const FIRST_SLOT_Z = 2;
 const ROW_STRIDE = 4;
 const END_PAD = 3;
+/** How many listings stand on the podium in front of the hall. */
+export const DIRECTORY_PODIUM_COUNT = 5;
+/** Likes are re-read on this interval. Occupancy still updates in between. */
+export const DIRECTORY_PODIUM_REFRESH_MS = 30 * 60 * 1000;
+/**
+ * Rank 1 stands alone closest to the door. Ranks 2 and 3 flank one step back,
+ * ranks 4 and 5 one step further. The rest of the hall starts behind a gap.
+ */
+export const DIRECTORY_PODIUM_SLOTS = [
+  { x: 0, z: 2 },
+  { x: -3, z: 4 },
+  { x: 3, z: 4 },
+  { x: -3, z: 6 },
+  { x: 3, z: 6 },
+] as const;
+const BACK_FIRST_Z = 10;
+/** One tile of floor around the five podium pillars. */
+const PODIUM_FLOOR_PAD = 1;
+/** Warm gold pad so the podium reads against the blue-gray hall floor. */
+export const DIRECTORY_PODIUM_FLOOR_RGB = 0xb8893a;
 
 export type DirectoryListing = {
   id: string;
@@ -103,41 +125,191 @@ export function directoryShownPlayerCount(
   return 1 + ((hash >>> 0) % 12);
 }
 
+export type DirectoryPodiumHold = {
+  assignedAtMs: number;
+  /** Room ids on the podium, rank 1 first. */
+  roomIds: string[];
+};
+
 /**
- * Most popular listings fill the row nearest the door, left to right, then the
- * next row north. Updates the bounds returned by {@link getPublicDirectoryBounds}.
+ * Top listings stay on the podium until the refresh interval. A room that
+ * leaves the public list is replaced immediately. Likes are only re-ranked
+ * when the interval has elapsed.
+ */
+export function nextDirectoryPodium(
+  entries: readonly DirectoryListing[],
+  hold: DirectoryPodiumHold | null,
+  nowMs: number
+): { hold: DirectoryPodiumHold; podium: DirectoryListing[]; rest: DirectoryListing[] } {
+  const ranked = [...entries].sort(compareDirectoryListings);
+  const byId = new Map(ranked.map((entry) => [entry.id, entry]));
+  const refreshDue =
+    hold === null || nowMs - hold.assignedAtMs >= DIRECTORY_PODIUM_REFRESH_MS;
+  let roomIds: string[];
+  let assignedAtMs: number;
+  if (refreshDue) {
+    roomIds = ranked.slice(0, DIRECTORY_PODIUM_COUNT).map((entry) => entry.id);
+    assignedAtMs = nowMs;
+  } else {
+    roomIds = hold.roomIds.filter((id) => byId.has(id));
+    if (roomIds.length < Math.min(DIRECTORY_PODIUM_COUNT, ranked.length)) {
+      const seated = new Set(roomIds);
+      for (const entry of ranked) {
+        if (roomIds.length >= DIRECTORY_PODIUM_COUNT) break;
+        if (seated.has(entry.id)) continue;
+        roomIds.push(entry.id);
+        seated.add(entry.id);
+      }
+    }
+    assignedAtMs = hold.assignedAtMs;
+  }
+  const seated = new Set(roomIds);
+  const podium = roomIds
+    .map((id) => byId.get(id))
+    .filter((entry): entry is DirectoryListing => entry !== undefined);
+  const rest = ranked.filter((entry) => !seated.has(entry.id));
+  return { hold: { assignedAtMs, roomIds }, podium, rest };
+}
+
+function listingSlot(
+  entry: DirectoryListing,
+  x: number,
+  z: number
+): DirectoryTeleporterSlot {
+  const label = entry.displayName.trim() || entry.id;
+  return {
+    x,
+    z,
+    targetRoomId: entry.id,
+    targetX: entry.spawnX,
+    targetZ: entry.spawnZ,
+    targetRoomDisplayName: label,
+    ...(entry.ownerAddress ? { targetRoomOwnerAddress: entry.ownerAddress } : {}),
+    playerCount: Math.max(0, Math.floor(entry.playerCount)),
+  };
+}
+
+function isPodiumTile(x: number, z: number): boolean {
+  return DIRECTORY_PODIUM_SLOTS.some((slot) => slot.x === x && slot.z === z);
+}
+
+/** Saved teleporters in front of the back hall belong to the old grid. */
+function isBackHallSlot(slot: DirectorySlot): boolean {
+  return slot.z >= BACK_FIRST_Z;
+}
+
+export type DirectoryFloorExtent = {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+};
+
+/** Floor rectangle under the podium, including one tile of pad around the pillars. */
+export function directoryPodiumFloorExtent(): DirectoryFloorExtent {
+  let minX: number = DIRECTORY_PODIUM_SLOTS[0]!.x;
+  let maxX: number = minX;
+  let minZ: number = DIRECTORY_PODIUM_SLOTS[0]!.z;
+  let maxZ: number = minZ;
+  for (const slot of DIRECTORY_PODIUM_SLOTS) {
+    minX = Math.min(minX, slot.x);
+    maxX = Math.max(maxX, slot.x);
+    minZ = Math.min(minZ, slot.z);
+    maxZ = Math.max(maxZ, slot.z);
+  }
+  return {
+    minX: minX - PODIUM_FLOOR_PAD,
+    maxX: maxX + PODIUM_FLOOR_PAD,
+    minZ: minZ - PODIUM_FLOOR_PAD,
+    maxZ: maxZ + PODIUM_FLOOR_PAD,
+  };
+}
+
+export function directoryPodiumFloorTiles(): DirectorySlot[] {
+  const extent = directoryPodiumFloorExtent();
+  const tiles: DirectorySlot[] = [];
+  for (let z = extent.minZ; z <= extent.maxZ; z++) {
+    for (let x = extent.minX; x <= extent.maxX; x++) {
+      tiles.push({ x, z });
+    }
+  }
+  return tiles;
+}
+
+function backSlotAt(index: number): DirectorySlot {
+  const row = Math.floor(index / ROW_SIZE);
+  const col = index % ROW_SIZE;
+  return { x: COLUMN_X[col]!, z: BACK_FIRST_Z + row * ROW_STRIDE };
+}
+
+function buildDirectoryLayout(
+  podium: readonly DirectoryListing[],
+  rest: readonly DirectoryListing[],
+  existingSlots: readonly DirectorySlot[],
+  occupiedTiles?: ReadonlySet<string>
+): { bounds: RoomBounds; teleporters: DirectoryTeleporterSlot[] } {
+  const teleporters: DirectoryTeleporterSlot[] = [];
+  const used = new Set<string>();
+  const deferred: DirectoryListing[] = [];
+  for (let i = 0; i < podium.length && i < DIRECTORY_PODIUM_SLOTS.length; i++) {
+    const entry = podium[i]!;
+    const slot = DIRECTORY_PODIUM_SLOTS[i]!;
+    const key = `${slot.x},${slot.z}`;
+    if (occupiedTiles?.has(key)) {
+      deferred.push(entry);
+      continue;
+    }
+    used.add(key);
+    teleporters.push(listingSlot(entry, slot.x, slot.z));
+  }
+
+  const backEntries = [...deferred, ...rest];
+  const backSlots: DirectorySlot[] = [];
+  const seen = new Set<string>();
+  for (const slot of existingSlots) {
+    if (!Number.isInteger(slot.x) || !Number.isInteger(slot.z)) continue;
+    if (!isBackHallSlot(slot) || isPodiumTile(slot.x, slot.z)) continue;
+    const key = `${slot.x},${slot.z}`;
+    if (seen.has(key) || used.has(key)) continue;
+    seen.add(key);
+    backSlots.push({ x: slot.x, z: slot.z });
+  }
+  backSlots.sort(compareDirectorySlots);
+  if (backSlots.length > backEntries.length) backSlots.length = backEntries.length;
+
+  const blocked = new Set<string>(occupiedTiles ?? []);
+  for (const key of used) blocked.add(key);
+  for (const slot of backSlots) blocked.add(`${slot.x},${slot.z}`);
+  let index = 0;
+  while (backSlots.length < backEntries.length && index < 10000) {
+    const slot = backSlotAt(index);
+    index += 1;
+    const key = `${slot.x},${slot.z}`;
+    if (blocked.has(key)) continue;
+    blocked.add(key);
+    backSlots.push({ x: slot.x, z: slot.z });
+  }
+  backSlots.sort(compareDirectorySlots);
+  for (let i = 0; i < backEntries.length; i++) {
+    const slot = backSlots[i];
+    const entry = backEntries[i];
+    if (!slot || !entry) break;
+    teleporters.push(listingSlot(entry, slot.x, slot.z));
+  }
+  currentBounds = boundsForSlots(teleporters);
+  return { bounds: { ...currentBounds }, teleporters };
+}
+
+/**
+ * Top five stand on the podium. Everyone else fills the hall behind it.
+ * Updates the bounds returned by {@link getPublicDirectoryBounds}.
  */
 export function layoutPublicDirectory(entries: readonly DirectoryListing[]): {
   bounds: RoomBounds;
   teleporters: DirectoryTeleporterSlot[];
 } {
-  const sorted = [...entries].sort(compareDirectoryListings);
-  const teleporters: DirectoryTeleporterSlot[] = sorted.map((entry, index) => {
-    const label = entry.displayName.trim() || entry.id;
-    const row = Math.floor(index / ROW_SIZE);
-    const col = index % ROW_SIZE;
-    return {
-      x: COLUMN_X[col]!,
-      z: FIRST_SLOT_Z + row * ROW_STRIDE,
-      targetRoomId: entry.id,
-      targetX: entry.spawnX,
-      targetZ: entry.spawnZ,
-      targetRoomDisplayName: label,
-      ...(entry.ownerAddress ? { targetRoomOwnerAddress: entry.ownerAddress } : {}),
-      playerCount: Math.max(0, Math.floor(entry.playerCount)),
-    };
-  });
-  const lastZ =
-    teleporters.length > 0
-      ? teleporters[teleporters.length - 1]!.z + END_PAD
-      : FIRST_SLOT_Z;
-  currentBounds = {
-    minX: -HALL_HALF_WIDTH,
-    maxX: HALL_HALF_WIDTH,
-    minZ: PUBLIC_DIRECTORY_DOOR.z,
-    maxZ: lastZ,
-  };
-  return { bounds: { ...currentBounds }, teleporters };
+  const { podium, rest } = nextDirectoryPodium(entries, null, 0);
+  return buildDirectoryLayout(podium, rest, []);
 }
 
 function entranceDistanceSq(x: number, z: number): number {
@@ -156,9 +328,10 @@ export function compareDirectorySlots(a: DirectorySlot, b: DirectorySlot): numbe
 }
 
 function boundsForSlots(slots: readonly DirectorySlot[]): RoomBounds {
-  let minX = -HALL_HALF_WIDTH;
-  let maxX = HALL_HALF_WIDTH;
-  let maxZ = FIRST_SLOT_Z;
+  const pad = directoryPodiumFloorExtent();
+  let minX = Math.min(-HALL_HALF_WIDTH, pad.minX);
+  let maxX = Math.max(HALL_HALF_WIDTH, pad.maxX);
+  let maxZ = Math.max(FIRST_SLOT_Z, pad.maxZ);
   for (const slot of slots) {
     minX = Math.min(minX, slot.x - 2);
     maxX = Math.max(maxX, slot.x + 2);
@@ -173,58 +346,22 @@ function boundsForSlots(slots: readonly DirectorySlot[]): RoomBounds {
 }
 
 /**
- * Keep admin-placed slot tiles. Bind the hottest listing to the slot closest
- * to the door. Extra listings append on the default row-of-three grid, skipping
- * tiles already occupied. Surplus slots (farthest from the door) are dropped.
+ * Put `podium` on the front slots, in the given order. The rest keep
+ * admin-moved tiles behind the podium, closest to the door first. Saved tiles
+ * in the podium precinct are ignored. New rooms grow the back hall when no
+ * free tile is left. Surplus back slots are dropped.
  */
 export function reconcilePublicDirectory(
   entries: readonly DirectoryListing[],
   existingSlots: readonly DirectorySlot[],
-  occupiedTiles?: ReadonlySet<string>
+  occupiedTiles?: ReadonlySet<string>,
+  podium?: readonly DirectoryListing[]
 ): { bounds: RoomBounds; teleporters: DirectoryTeleporterSlot[] } {
-  const sorted = [...entries].sort(compareDirectoryListings);
-  const seen = new Set<string>();
-  const slots: DirectorySlot[] = [];
-  for (const slot of existingSlots) {
-    if (!Number.isInteger(slot.x) || !Number.isInteger(slot.z)) continue;
-    const key = `${slot.x},${slot.z}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    slots.push({ x: slot.x, z: slot.z });
-  }
-  slots.sort(compareDirectorySlots);
-  if (slots.length > sorted.length) slots.length = sorted.length;
-
-  const blocked = new Set<string>(occupiedTiles ?? []);
-  for (const slot of slots) blocked.add(`${slot.x},${slot.z}`);
-  let index = 0;
-  while (slots.length < sorted.length && index < 10000) {
-    const row = Math.floor(index / ROW_SIZE);
-    const col = index % ROW_SIZE;
-    const x = COLUMN_X[col]!;
-    const z = FIRST_SLOT_Z + row * ROW_STRIDE;
-    index += 1;
-    const key = `${x},${z}`;
-    if (blocked.has(key)) continue;
-    blocked.add(key);
-    slots.push({ x, z });
-  }
-  slots.sort(compareDirectorySlots);
-
-  const teleporters: DirectoryTeleporterSlot[] = slots.map((slot, i) => {
-    const entry = sorted[i]!;
-    const label = entry.displayName.trim() || entry.id;
-    return {
-      x: slot.x,
-      z: slot.z,
-      targetRoomId: entry.id,
-      targetX: entry.spawnX,
-      targetZ: entry.spawnZ,
-      targetRoomDisplayName: label,
-      ...(entry.ownerAddress ? { targetRoomOwnerAddress: entry.ownerAddress } : {}),
-      playerCount: Math.max(0, Math.floor(entry.playerCount)),
-    };
-  });
-  currentBounds = boundsForSlots(teleporters);
-  return { bounds: { ...currentBounds }, teleporters };
+  const ranked = [...entries].sort(compareDirectoryListings);
+  const front = podium
+    ? podium.filter((entry) => ranked.some((item) => item.id === entry.id))
+    : ranked.slice(0, DIRECTORY_PODIUM_COUNT);
+  const seated = new Set(front.map((entry) => entry.id));
+  const rest = ranked.filter((entry) => !seated.has(entry.id));
+  return buildDirectoryLayout(front, rest, existingSlots, occupiedTiles);
 }
