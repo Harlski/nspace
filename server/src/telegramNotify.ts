@@ -22,8 +22,14 @@ export function isTelegramConfigured(): boolean {
   return Boolean(telegramBotToken() && telegramDefaultChatId());
 }
 
+function escapeTelegramHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+type TelegramPostResult = "ok" | "missing" | "rejected" | "failed";
+
 /**
- * Optional Telegram ping (same env as feedback / connect notices).
+ * Optional Telegram ping (same env as feedback / the hourly activity digest).
  *
  * `chatIdOverride` lets callers (e.g. the daily stats report) target a different chat than the
  * default `TELEGRAM_CHAT_ID`; when omitted the default chat is used.
@@ -31,8 +37,35 @@ export function isTelegramConfigured(): boolean {
 export async function sendTelegramPlainText(
   text: string,
   logTag: string,
+  chatIdOverride?: string,
+  parseMode?: "HTML"
+): Promise<boolean> {
+  const result = await postTelegram(text, logTag, chatIdOverride, parseMode);
+  return result === "ok";
+}
+
+/**
+ * Send a monospace table. Telegram HTML `<pre>` keeps column alignment; a rejected parse
+ * falls back to the same text without markup.
+ */
+export async function sendTelegramPreformatted(
+  text: string,
+  logTag: string,
   chatIdOverride?: string
 ): Promise<boolean> {
+  const html = `<pre>${escapeTelegramHtml(text)}</pre>`;
+  const result = await postTelegram(html, logTag, chatIdOverride, "HTML");
+  if (result === "ok") return true;
+  if (result !== "rejected") return false;
+  return (await postTelegram(text, logTag, chatIdOverride)) === "ok";
+}
+
+async function postTelegram(
+  text: string,
+  logTag: string,
+  chatIdOverride?: string,
+  parseMode?: "HTML"
+): Promise<TelegramPostResult> {
   const token = telegramBotToken();
   const chatId = (chatIdOverride ?? "").trim() || telegramDefaultChatId();
   if (!token || !chatId) {
@@ -40,7 +73,7 @@ export async function sendTelegramPlainText(
       `[${logTag}] Telegram env missing:`,
       JSON.stringify({ hasToken: Boolean(token), hasChatId: Boolean(chatId) })
     );
-    return false;
+    return "missing";
   }
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
   try {
@@ -52,6 +85,7 @@ export async function sendTelegramPlainText(
         chat_id: chatIdPayload,
         text,
         disable_web_page_preview: true,
+        ...(parseMode ? { parse_mode: parseMode } : {}),
       }),
     });
     const bodyText = await resp.text();
@@ -64,11 +98,11 @@ export async function sendTelegramPlainText(
           body: bodyText.slice(0, 400),
         })
       );
-      return false;
+      return resp.status === 400 ? "rejected" : "failed";
     }
-    return true;
+    return "ok";
   } catch (err) {
     console.error(`[${logTag}] Telegram notify failed:`, err);
-    return false;
+    return "failed";
   }
 }

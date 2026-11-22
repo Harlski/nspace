@@ -268,19 +268,37 @@ into another transport.
 
 ### Event Log scans stay off the game event loop
 
-**Today:** The game **writes** the append-only Event Log. Overview snapshots and the daily-stats
-aggregate are **read scans** of those files (including a long first-time lookback). Those scans
-run in the **Analytics Service** sidecar, not on the game Node event loop. The game remains the
-public HTTP face of `/analytics` and thin-proxies the two reads. There is **no in-process
-fallback**. Play continues if the sidecar is down. A derived database is a later plan owned by
-that service, not a reason to put storage back on the play path. See
-[adr/0016-analytics-service-sidecar.md](adr/0016-analytics-service-sidecar.md).
+**Today:** The game **writes** the append-only Event Log. Overview snapshots, the daily-stats
+aggregate, and the **hourly activity digest** are **read scans** of those files (including a
+long first-time lookback). Those scans run in the **Analytics Service** sidecar, not on the
+game Node event loop. The game remains the public HTTP face of `/analytics`, thin-proxies
+those reads, and sends Telegram. There is **no in-process fallback**. Play continues if the
+sidecar is down (that hour's digest is skipped and retried once). A derived database is a
+later plan owned by that service, not a reason to put storage back on the play path. See
+[adr/0016-analytics-service-sidecar.md](adr/0016-analytics-service-sidecar.md) and
+[adr/0028-hourly-activity-digest.md](adr/0028-hourly-activity-digest.md).
 
 **Direction:** Keep Event Log CPU/IO off the tick. Do not reintroduce JSONL aggregation in the
-game process to “make `/analytics` work without the sidecar.”
+game process to “make `/analytics` work without the sidecar.” Do not put the hourly digest
+scan back on the game.
 
-Update this subsection if the Analytics Service gains a derived store or if additional Event Log
-scans (replay, connect notice) move off the game.
+Update this subsection if the Analytics Service gains a derived store or if further Event Log
+scans (replay, the admin dossier last-visit read) move off the game.
+
+### Operator Telegram presence is an hourly digest
+
+**Today:** Operators get **one** Telegram message per UTC hour about who played in the last
+24 hours (active time, gameplay NIM earned, online room, joins in the last hour). A world
+entry does not send its own ping. Username changes, feedback, campaign approval, and the
+end-of-day stats report still send on their own schedule. Gameplay NIM in the digest is the
+credited earn (`claim_block` / `gameplay_nim_earned`), not the later on-chain send. See
+[adr/0028-hourly-activity-digest.md](adr/0028-hourly-activity-digest.md).
+
+**Direction:** Do not bring back a per-connect or per-door operator ping. Add a column to the
+digest instead of a new message. Keep the scan on the Analytics Service.
+
+Update this subsection if operators need a second cadence (for example a quiet-hours suppress)
+or if "NIM earned" should follow chain settlement instead of gameplay credit.
 
 ### Occupied-room presence is not a full roster pose snapshot
 
@@ -396,3 +414,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-08-30** — Mosquito Tag: Tag Round Pay Zoom (Nimiq Pay Participants get Telescope range during Countdown and Tag Round). See [reasons/reason_739261.md](reasons/reason_739261.md).
 - **2026-08-31** - Login-gated standalone pages use a Sign-in Gate (not generic load errors); Campaign Creatives are hosted uploads, not remote URLs. See [reasons/reason_847615.md](reasons/reason_847615.md).
 - **2026-08-31** - Nimiq Pay Payment Intent sends attach the memo as hex `data`/`recipientData` and UTF-8 `extraData` on the first attempt. See [reasons/reason_364829.md](reasons/reason_364829.md).
+- **2026-11-21** - Operator presence Telegram is one hourly digest of the last 24 hours, not a ping per world entry. The scan stays on the Analytics Service. NIM in that digest is gameplay credit, not the later chain send. See [reasons/reason_582914.md](reasons/reason_582914.md).
