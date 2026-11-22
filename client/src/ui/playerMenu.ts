@@ -75,6 +75,7 @@ export type PlayerMenu = {
   isOpen: () => boolean;
   setGuestMode: (guest: boolean) => void;
   setReturnToHubVisible: (visible: boolean) => void;
+  setReturnToLastRoom: (lastRoom: boolean) => void;
   /** Hide Rooms / Return to Hub / Leave the Shaper (Tag Room Lock). */
   setRoomNavLocked: (locked: boolean) => void;
   /** Toggle the in-Shaper "Leave the Shaper" entry (full players only). */
@@ -173,6 +174,7 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
 
   let guestMode = false;
   let returnToHubVisible = true;
+  let returnToLastRoom = false;
   let roomNavLocked = false;
   let inShaper = false;
   let finishTutorialVisible = false;
@@ -243,7 +245,11 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
         btn.classList.add("player-menu__item--with-flag");
         appendLanguageFlag(btn);
       } else {
-        btn.textContent = t(item.labelKey);
+        btn.textContent = t(
+          item.returnToHub && returnToLastRoom
+            ? "playerMenu.returnToLastRoom"
+            : item.labelKey
+        );
       }
       if (item.destructive) {
         btn.classList.add("player-menu__item--destructive");
@@ -529,6 +535,10 @@ export function createPlayerMenu(parent: HTMLElement): PlayerMenu {
       returnToHubVisible = visible;
       renderList();
     },
+    setReturnToLastRoom(lastRoom: boolean) {
+      returnToLastRoom = lastRoom;
+      renderList();
+    },
     setRoomNavLocked(locked: boolean) {
       roomNavLocked = locked;
       renderList();
@@ -583,7 +593,8 @@ export function playerMenuItemLabelsForMode(
   inShaper = false,
   finishTutorialVisible = false,
   resetTutorialVisible = false,
-  roomNavLocked = false
+  roomNavLocked = false,
+  returnToLastRoom = false
 ): string[] {
   const base = guest ? GUEST_ITEMS : FULL_PLAYER_ITEMS;
   return base
@@ -595,5 +606,11 @@ export function playerMenuItemLabelsForMode(
       if (item.resetTutorial && !resetTutorialVisible) return false;
       return true;
     })
-    .map((item) => t(item.labelKey));
+    .map((item) =>
+      t(
+        item.returnToHub && returnToLastRoom
+          ? "playerMenu.returnToLastRoom"
+          : item.labelKey
+      )
+    );
 }

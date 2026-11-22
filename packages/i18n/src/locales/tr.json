@@ -62,6 +62,7 @@
   "playerMenu.resetTutorial": "Eğitimi sıfırla",
   "playerMenu.leaveShaper": "Shaper'dan ayrıl",
   "playerMenu.returnToHub": "Hub'a dön",
+  "playerMenu.returnToLastRoom": "Son odaya dön",
   "playerMenu.logout": "Çıkış",
   "playerMenu.getWallet": "Cüzdan al",
   "playerMenu.leave": "Ayrıl",

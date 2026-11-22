@@ -62,6 +62,7 @@
   "playerMenu.resetTutorial": "Reiniciar tutorial",
   "playerMenu.leaveShaper": "Salir del Shaper",
   "playerMenu.returnToHub": "Volver al Hub",
+  "playerMenu.returnToLastRoom": "Volver a la sala anterior",
   "playerMenu.logout": "Cerrar sesión",
   "playerMenu.getWallet": "Obtener una billetera",
   "playerMenu.leave": "Salir",

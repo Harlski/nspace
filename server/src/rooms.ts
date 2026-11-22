@@ -1214,6 +1214,8 @@ interface ClientConn {
   frozen?: boolean;
   /** Mosquito Tag: Stung slow until this epoch ms (follows the player across rooms). */
   mosquitoTagStungUntilMs: number;
+  /** Tile the player was standing on when they last took a teleporter. */
+  lastTeleporterOrigin?: { roomId: string; x: number; z: number };
 }
 
 function withinBlockActionRange(
@@ -1613,6 +1615,8 @@ type OutMsg =
       roomBackgroundNeutral?: RoomBackgroundNeutral | null;
       /** Dynamic rooms: tile used for default visitor spawn (custom or room center). */
       roomJoinSpawn?: { x: number; z: number; customized: boolean };
+      /** True when this connection arrived through a teleporter and can step back onto it. */
+      canReturnToLastRoom?: boolean;
       /** Dynamic rooms: this client may PATCH `joinSpawn` via `updateRoom`. */
       allowRoomJoinSpawnEdit?: boolean;
       /** Dynamic rooms: deployable cosmetics allowed (default true). */
@@ -4329,6 +4333,52 @@ function resolveReturnSpawn(
     Math.floor((b.minZ + b.maxZ) / 2)
   );
   return { x: c.x, z: c.z };
+}
+
+/** Spawn used by room select / `joinRoom`, before any client hint. */
+function resolveStandardJoinSpawn(targetRoomId: string): { x: number; z: number } {
+  const b = getRoomBaseBounds(targetRoomId);
+  let spawnX = Math.floor((b.minX + b.maxX) / 2);
+  let spawnZ = Math.floor((b.minZ + b.maxZ) / 2);
+  if (normalizeRoomId(targetRoomId) === PIXEL_ROOM_ID) {
+    spawnX = PIXEL_DEFAULT_SPAWN.x;
+    spawnZ = PIXEL_DEFAULT_SPAWN.z;
+  } else if (isCosmeticGalleryRoom(targetRoomId)) {
+    spawnX = COSMETIC_GALLERY_DEFAULT_SPAWN.x;
+    spawnZ = COSMETIC_GALLERY_DEFAULT_SPAWN.z;
+  } else if (isInviteLobbyRoomId(targetRoomId)) {
+    const ps = playSpaceJoinSpawn(targetRoomId);
+    spawnX = ps.x;
+    spawnZ = ps.z;
+  } else if (isPlayerCreatedRoom(targetRoomId)) {
+    const t = resolveDefaultSpawnForPlayerRoom(targetRoomId);
+    if (t) {
+      spawnX = t.x;
+      spawnZ = t.z;
+    }
+  } else if (normalizeRoomId(targetRoomId) === PUBLIC_DIRECTORY_ROOM_ID) {
+    spawnX = PUBLIC_DIRECTORY_SPAWN.x;
+    spawnZ = PUBLIC_DIRECTORY_SPAWN.z;
+  }
+  return { x: spawnX, z: spawnZ };
+}
+
+function teleporterStillOnTile(roomId: string, x: number, z: number): boolean {
+  const top = getTopPlacedAtTile(placedMap(roomId), x, z);
+  const tp = top?.props.teleporter;
+  if (!tp || ("pending" in tp && tp.pending)) return false;
+  return "targetRoomId" in tp;
+}
+
+function canReturnToLastTeleporterRoom(
+  conn: ClientConn,
+  currentRoomId: string
+): boolean {
+  const origin = conn.lastTeleporterOrigin;
+  if (!origin) return false;
+  const from = normalizeRoomId(origin.roomId);
+  if (!from || from === normalizeRoomId(currentRoomId)) return false;
+  return hasRoom(from);
 }
 
 function teleporterLandingContext(): TeleporterLandingContext {
@@ -7650,6 +7700,7 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       others,
       moveOrders: collectInFlightMoveOrders(targetRoomId, address),
       roomId: targetRoomId,
+      canReturnToLastRoom: canReturnToLastTeleporterRoom(conn, targetRoomId),
       roomBounds: rb,
       doors,
       placeRadiusBlocks: PLACE_RADIUS_BLOCKS,
@@ -9939,6 +9990,7 @@ export function addClient(
       others,
       moveOrders: collectInFlightMoveOrders(roomId, address),
       roomId,
+      canReturnToLastRoom: canReturnToLastTeleporterRoom(conn, roomId),
       roomBounds: rb,
       doors,
       placeRadiusBlocks: PLACE_RADIUS_BLOCKS,
@@ -11327,30 +11379,11 @@ export function addClient(
       if (inviteLobby) {
         ensurePlaySpaceLayout(targetRoomId);
       }
-      const b = getRoomBaseBounds(targetRoomId);
-      let spawnX = Math.floor((b.minX + b.maxX) / 2);
-      let spawnZ = Math.floor((b.minZ + b.maxZ) / 2);
-      if (normalizeRoomId(targetRoomId) === PIXEL_ROOM_ID) {
-        spawnX = PIXEL_DEFAULT_SPAWN.x;
-        spawnZ = PIXEL_DEFAULT_SPAWN.z;
-      } else if (isCosmeticGalleryRoom(targetRoomId)) {
-        spawnX = COSMETIC_GALLERY_DEFAULT_SPAWN.x;
-        spawnZ = COSMETIC_GALLERY_DEFAULT_SPAWN.z;
-      } else if (isInviteLobbyRoomId(targetRoomId)) {
-        const ps = playSpaceJoinSpawn(targetRoomId);
-        spawnX = ps.x;
-        spawnZ = ps.z;
-      } else if (isPlayerCreatedRoom(targetRoomId)) {
-        const t = resolveDefaultSpawnForPlayerRoom(targetRoomId);
-        if (t) {
-          spawnX = t.x;
-          spawnZ = t.z;
-        }
-      } else if (normalizeRoomId(targetRoomId) === PUBLIC_DIRECTORY_ROOM_ID) {
-        spawnX = PUBLIC_DIRECTORY_SPAWN.x;
-        spawnZ = PUBLIC_DIRECTORY_SPAWN.z;
+      const spawn = resolveStandardJoinSpawn(targetRoomId);
+      if (normalizeRoomId(targetRoomId) !== normalizeRoomId(currentRoomId)) {
+        conn.lastTeleporterOrigin = undefined;
       }
-      teleportPlayer(conn, targetRoomId, spawnX, spawnZ);
+      teleportPlayer(conn, targetRoomId, spawn.x, spawn.z);
       return;
     }
 
@@ -11385,6 +11418,46 @@ export function addClient(
       }
       const spawn = resolveReturnSpawn(returnRoomId, address, hintX, hintZ);
       teleportPlayer(conn, returnRoomId, spawn.x, spawn.z);
+      return;
+    }
+
+    if (msg.type === "returnToLastRoom") {
+      if (conn.streamObserver) return;
+      if (address.startsWith("guest:")) return;
+      if (mosquitoTagBlocksRoomChange(currentRoomId, address)) {
+        sendTagRoomLockedNotice(ws);
+        return;
+      }
+      const origin = conn.lastTeleporterOrigin;
+      conn.lastTeleporterOrigin = undefined;
+      if (
+        !origin ||
+        normalizeRoomId(origin.roomId) === normalizeRoomId(currentRoomId)
+      ) {
+        return;
+      }
+      if (!hasRoom(origin.roomId)) {
+        if (normalizeRoomId(currentRoomId) !== CHAMBER_ROOM_ID) {
+          teleportPlayer(
+            conn,
+            CHAMBER_ROOM_ID,
+            CHAMBER_DEFAULT_SPAWN.x,
+            CHAMBER_DEFAULT_SPAWN.z
+          );
+        }
+        return;
+      }
+      const originId = normalizeRoomId(origin.roomId);
+      const tile = snapToTile(origin.x, origin.z);
+      const backOnTeleporter =
+        teleporterStillOnTile(originId, tile.x, tile.z) &&
+        isWalkableForRoom(originId, tile.x, tile.z);
+      const spawn = backOnTeleporter
+        ? { x: tile.x, z: tile.z }
+        : originId === CHAMBER_ROOM_ID
+          ? { x: CHAMBER_DEFAULT_SPAWN.x, z: CHAMBER_DEFAULT_SPAWN.z }
+          : resolveStandardJoinSpawn(originId);
+      teleportPlayer(conn, originId, spawn.x, spawn.z);
       return;
     }
 
@@ -11639,12 +11712,20 @@ export function addClient(
           return;
         }
         if ("targetRoomId" in t) {
+          const destinationRoomId = normalizeRoomId(t.targetRoomId);
+          if (destinationRoomId !== normalizeRoomId(currentRoomId)) {
+            conn.lastTeleporterOrigin = {
+              roomId: normalizeRoomId(currentRoomId),
+              x: here.x,
+              z: here.z,
+            };
+          }
           recordTeleporterWarp(
             address,
             currentRoomId,
             here.x,
             here.z,
-            normalizeRoomId(t.targetRoomId),
+            destinationRoomId,
             achievementUnlockHandler(ws)
           );
           const landing = resolveTeleporterLandingInRoom(

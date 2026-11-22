@@ -62,6 +62,7 @@
   "playerMenu.resetTutorial": "Đặt lại hướng dẫn",
   "playerMenu.leaveShaper": "Rời Shaper",
   "playerMenu.returnToHub": "Về Hub",
+  "playerMenu.returnToLastRoom": "Về phòng trước",
   "playerMenu.logout": "Đăng xuất",
   "playerMenu.getWallet": "Tạo ví",
   "playerMenu.leave": "Rời",

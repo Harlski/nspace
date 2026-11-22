@@ -12,6 +12,7 @@ import {
   HUB_ROOM_ID,
   HUB_TELESCOPE_ZOOM_FRUSTUM,
   HUB_TELESCOPE_ZOOM_FRUSTUM_PORTRAIT,
+  PLAYER_ROOM_MAX_ZOOM_FRUSTUM,
   getRoomBaseBounds,
 } from "./roomLayouts.js";
 
@@ -82,6 +83,21 @@ describe("hub zoom limits", () => {
     expect(telescopeHoldWouldWiden(base, HUB_TELESCOPE_ZOOM_FRUSTUM)).toBe(
       false
     );
+  });
+
+  it("caps player rooms at 18.7 even when the floor is wide", () => {
+    expect(
+      normalZoomMax({
+        zoomMax: 80,
+        roomZoomMax: 67,
+        roomId: "ab12cd",
+        roomBounds: { minX: -33, maxX: 33, minZ: -33, maxZ: 33 },
+        mapOverviewUnlocked: false,
+        streamPresentationActive: false,
+        mobilePortrait: false,
+        telescopeHoldActive: false,
+      })
+    ).toBe(PLAYER_ROOM_MAX_ZOOM_FRUSTUM);
   });
 
   it("does not offer boost when normal max already equals telescope target", () => {

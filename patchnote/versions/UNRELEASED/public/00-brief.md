@@ -5,4 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
+Step back through the teleporter you just used, and player rooms no longer zoom out to the far edge of a huge floor.

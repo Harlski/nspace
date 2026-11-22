@@ -136,6 +136,7 @@ import {
   sendDeleteRoom,
   sendJoinRoom,
   sendReturnFromShaper,
+  sendReturnToLastRoom,
   sendListRooms,
   sendRestoreRoom,
   sendThumbRoom,
@@ -1231,10 +1232,12 @@ function enterGame(
     if (tagBlocksRoomChange(roomId)) return;
     sendJoinRoom(socket, roomId);
   }
+  let canReturnToLastRoom = false;
   const syncReturnHomeButton = (): void => {
     const inHub = normalizeRoomId(game.getRoomId()) === CHAMBER_ROOM_ID;
     const locked = tagRoomLocked();
-    hud.setReturnHomeVisible(!inHub && !locked);
+    const lastRoom = canReturnToLastRoom && !locked;
+    hud.setReturnHomeVisible((lastRoom || !inHub) && !locked, lastRoom);
     hud.setRoomNavLocked(locked);
     if (locked) closeRoomsModal();
   };
@@ -5898,6 +5901,7 @@ function enterGame(
     }
     if (msg.type === "welcome") {
       clearWelcomeDeadlineTimer();
+      canReturnToLastRoom = msg.canReturnToLastRoom === true;
       rememberLastSessionRoomId(msg.roomId);
       tutorialFeatureEnabled = msg.tutorialEnabled === true;
       if (msg.shopOpen !== undefined || msg.shaperReachable !== undefined) {
@@ -7321,6 +7325,8 @@ function enterGame(
     connectOpts?: { resume?: boolean; blackout?: boolean; silent?: boolean }
   ): void => {
     if (!connectOpts?.resume && tagBlocksRoomChange(room)) return;
+    canReturnToLastRoom = false;
+    syncReturnHomeButton();
     const signIn = freshSignInWsPending;
     if (freshSignInWsPending) freshSignInWsPending = false;
     connectGen += 1;
@@ -7508,6 +7514,18 @@ function enterGame(
   });
 
   hud.onReturnHome(() => {
+    if (
+      canReturnToLastRoom &&
+      ws &&
+      ws.readyState === WebSocket.OPEN &&
+      !tagBlocksRoomChange()
+    ) {
+      canReturnToLastRoom = false;
+      syncReturnHomeButton();
+      beginRoomTransition(game.getRoomId(), "Returning…");
+      sendReturnToLastRoom(ws);
+      return;
+    }
     connectToRoom(CHAMBER_ROOM_ID, {
       x: CHAMBER_DEFAULT_SPAWN.x,
       z: CHAMBER_DEFAULT_SPAWN.z,

@@ -257,6 +257,8 @@ import {
   CHAMBER_ROOM_ID,
   HUB_MAX_ZOOM_FRUSTUM,
   HUB_ROOM_ID,
+  PLAYER_ROOM_MAX_ZOOM_FRUSTUM,
+  usesPlayerRoomZoomCap,
   PUBLIC_DIRECTORY_ROOM_ID,
   CANVAS_ROOM_ID,
   PIXEL_ROOM_ID,
@@ -3742,6 +3744,9 @@ export class Game {
     }
     if (id === HUB_ROOM_ID) {
       return HUB_MAX_ZOOM_FRUSTUM;
+    }
+    if (usesPlayerRoomZoomCap(id)) {
+      return PLAYER_ROOM_MAX_ZOOM_FRUSTUM;
     }
     const w = bounds.maxX - bounds.minX + 1;
     const h = bounds.maxZ - bounds.minZ + 1;
