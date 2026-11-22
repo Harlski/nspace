@@ -307,6 +307,7 @@ export type BlockStyleProps = {
         targetX: number;
         targetZ: number;
         targetRoomDisplayName?: string;
+        targetRoomOwnerAddress?: string;
         pairedPeerKey?: string;
       };
   gate?: {

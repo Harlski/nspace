@@ -269,6 +269,8 @@ export type TerrainProps = {
         targetZ: number;
         /** Denormalized label for clients that do not have the room in their catalog (e.g. private). */
         targetRoomDisplayName?: string;
+        /** Directory hall: owner wallet for the inline identicon beside the room name. */
+        targetRoomOwnerAddress?: string;
         /** Same-room bidirectional pair: `blockKey` of the other teleporter; deleting either removes both. */
         pairedPeerKey?: string;
       };

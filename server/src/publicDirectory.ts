@@ -34,6 +34,8 @@ export type DirectoryListing = {
   playerCount: number;
   spawnX: number;
   spawnZ: number;
+  /** Wallet that created the room, when one is recorded. */
+  ownerAddress?: string | null;
 };
 
 export type DirectorySlot = { x: number; z: number };
@@ -45,6 +47,8 @@ export type DirectoryTeleporterSlot = {
   targetX: number;
   targetZ: number;
   targetRoomDisplayName: string;
+  /** Owner wallet, so the hall label can show their identicon. */
+  targetRoomOwnerAddress?: string;
 };
 
 export type RoomBounds = {
@@ -97,6 +101,7 @@ export function layoutPublicDirectory(entries: readonly DirectoryListing[]): {
       targetX: entry.spawnX,
       targetZ: entry.spawnZ,
       targetRoomDisplayName: label,
+      ...(entry.ownerAddress ? { targetRoomOwnerAddress: entry.ownerAddress } : {}),
     };
   });
   const lastZ =
@@ -193,6 +198,7 @@ export function reconcilePublicDirectory(
       targetX: entry.spawnX,
       targetZ: entry.spawnZ,
       targetRoomDisplayName: label,
+      ...(entry.ownerAddress ? { targetRoomOwnerAddress: entry.ownerAddress } : {}),
     };
   });
   currentBounds = boundsForSlots(teleporters);

@@ -780,10 +780,15 @@ function createNameLabelSprite(
     borderColor?: string;
     /** When set, draw a circle badge with this Level to the left of the nameplate pill. */
     playerLevel?: number | null;
+    /** Reserve a circle inside the pill, left of the name, for an owner identicon. */
+    identiconSlot?: boolean;
   }
 ): {
   sprite: THREE.Sprite;
   texture: THREE.CanvasTexture;
+  canvas: HTMLCanvasElement;
+  /** Logical pixels (pre-raster) of the reserved identicon disc. */
+  identiconDisc: { cx: number; cy: number; d: number } | null;
 } {
   const away = Boolean(opts?.away);
   const level = nameplatePlayerLevel(opts?.playerLevel ?? null);
@@ -794,16 +799,21 @@ function createNameLabelSprite(
   const ctx = canvas.getContext("2d")!;
   const labelFont = away ? NAME_LABEL_FONT_AWAY : NAME_LABEL_FONT;
   const levelFont = "700 15px system-ui, Segoe UI, sans-serif";
+  const identiconSlot = Boolean(opts?.identiconSlot);
+  const iconD = identiconSlot ? 22 : 0;
+  const iconGap = identiconSlot ? 6 : 0;
+  const iconPad = identiconSlot ? 5 : 0;
+  const leading = identiconSlot ? iconPad + iconD + iconGap : padX;
   ctx.font = labelFont;
   let text =
     displayName.length > 36 ? `${displayName.slice(0, 34)}…` : displayName;
   let tw = ctx.measureText(text).width;
-  const maxTextW = NAME_LABEL_MAX_PX - padX * 2;
+  const maxTextW = NAME_LABEL_MAX_PX - leading - padX;
   while (tw > maxTextW && text.length > 3) {
     text = `${text.slice(0, -2)}…`;
     tw = ctx.measureText(text).width;
   }
-  const pillW = Math.ceil(Math.max(36, padX + tw + padX));
+  const pillW = Math.ceil(Math.max(36, leading + tw + padX));
 
   const levelText = level !== null ? String(level) : "";
   ctx.font = levelFont;
@@ -854,11 +864,28 @@ function createNameLabelSprite(
     ctx.fillText(levelText, cx, cy + 0.5);
   }
 
+  const identiconDisc = identiconSlot
+    ? {
+        cx: pillX + iconPad + iconD / 2,
+        cy: pillY + pillH / 2,
+        d: iconD,
+      }
+    : null;
+  if (identiconDisc) {
+    ctx.beginPath();
+    ctx.arc(identiconDisc.cx, identiconDisc.cy, iconD / 2, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(15, 23, 42, 0.55)";
+    ctx.fill();
+  }
+
   ctx.font = labelFont;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   ctx.fillStyle = away ? NAME_LABEL_TEXT_AWAY : NAME_LABEL_TEXT_ACTIVE;
-  ctx.fillText(text, pillX + padX, pillY + pillH / 2 + 0.5);
+  const textX = identiconDisc
+    ? pillX + iconPad + iconD + iconGap
+    : pillX + padX;
+  ctx.fillText(text, textX, pillY + pillH / 2 + 0.5);
   const tex = new THREE.CanvasTexture(canvas);
   tex.minFilter = THREE.LinearFilter;
   tex.generateMipmaps = false;
@@ -889,7 +916,27 @@ function createNameLabelSprite(
   /* World scale set in Game.syncNameLabelScaleAndPosition from screen px + frustum. */
   sprite.scale.set(1, 1, 1);
   sprite.position.y = 0;
-  return { sprite, texture: tex };
+  return { sprite, texture: tex, canvas, identiconDisc };
+}
+
+/** Clip the reserved name-pill disc and draw the owner identicon into it. */
+function paintNameLabelIdenticon(
+  canvas: HTMLCanvasElement,
+  texture: THREE.CanvasTexture,
+  disc: { cx: number; cy: number; d: number },
+  img: CanvasImageSource
+): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const r = NAME_LABEL_RASTER;
+  ctx.setTransform(r, 0, 0, r, 0, 0);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(disc.cx, disc.cy, disc.d / 2 - 0.25, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.drawImage(img, disc.cx - disc.d / 2, disc.cy - disc.d / 2, disc.d, disc.d);
+  ctx.restore();
+  texture.needsUpdate = true;
 }
 
 function wrapChatLines(
@@ -14220,28 +14267,60 @@ export class Game {
     }
     delete marker.userData.directoryNameSprite;
     delete marker.userData.directoryNameText;
+    delete marker.userData.directoryNameOwner;
   }
 
-  /** Name pill above each Public Directory teleporter. */
+  /** Name pill above each Public Directory teleporter, with the owner's identicon. */
   private syncDirectoryTeleporterLabels(): void {
     const show = normalizeRoomId(this.roomId) === PUBLIC_DIRECTORY_ROOM_ID;
     for (const [k, marker] of this.teleporterMarkerMeshes) {
       const tp = this.placedObjects.get(k)?.teleporter;
-      const name =
-        show && tp && "targetRoomId" in tp
-          ? (tp.targetRoomDisplayName?.trim() || tp.targetRoomId)
+      const linked = show && tp && "targetRoomId" in tp ? tp : null;
+      const name = linked
+        ? linked.targetRoomDisplayName?.trim() || linked.targetRoomId
+        : "";
+      const owner =
+        linked && "targetRoomOwnerAddress" in linked
+          ? linked.targetRoomOwnerAddress?.trim() || ""
           : "";
       const existingName = marker.userData.directoryNameText as string | undefined;
+      const existingOwner = marker.userData.directoryNameOwner as string | undefined;
       if (!name) {
         this.disposeDirectoryNameSprite(marker);
         continue;
       }
-      if (existingName === name && marker.userData.directoryNameSprite) continue;
+      if (
+        existingName === name &&
+        existingOwner === owner &&
+        marker.userData.directoryNameSprite
+      ) {
+        continue;
+      }
       this.disposeDirectoryNameSprite(marker);
-      const { sprite } = createNameLabelSprite(name);
+      const { sprite, texture, canvas, identiconDisc } = createNameLabelSprite(
+        name,
+        { identiconSlot: Boolean(owner) }
+      );
       marker.add(sprite);
       marker.userData.directoryNameSprite = sprite;
       marker.userData.directoryNameText = name;
+      marker.userData.directoryNameOwner = owner;
+      if (owner && identiconDisc) {
+        void identiconDataUrl(owner).then(
+          (url) => {
+            if (!url || marker.userData.directoryNameSprite !== sprite) return;
+            const img = new Image();
+            img.onload = () => {
+              if (marker.userData.directoryNameSprite !== sprite) return;
+              paintNameLabelIdenticon(canvas, texture, identiconDisc, img);
+            };
+            img.src = url;
+          },
+          () => {
+            /* keep the empty disc if the face cannot be drawn */
+          }
+        );
+      }
     }
     this.layoutDirectoryTeleporterLabels();
   }

@@ -1095,6 +1095,8 @@ export type ObstacleTile = {
         targetZ: number;
         /** Snapshot of destination room name when configured (private rooms may be absent from catalog). */
         targetRoomDisplayName?: string;
+        /** Directory hall: owner wallet drawn beside the room name. */
+        targetRoomOwnerAddress?: string;
       };
   gate?: {
     adminAddress: string;
@@ -7364,6 +7366,7 @@ function syncPublicDirectoryRoom(): void {
       playerCount: countRealPlayersInRoom(room.id),
       spawnX: cx,
       spawnZ: cz,
+      ownerAddress: room.ownerAddress,
     });
   }
   const placed = placedMap(PUBLIC_DIRECTORY_ROOM_ID);
@@ -7380,7 +7383,7 @@ function syncPublicDirectoryRoom(): void {
   const sig = `${b.minX},${b.maxX},${b.minZ},${b.maxZ}|${layout.teleporters
     .map(
       (t) =>
-        `${t.x},${t.z},${t.targetRoomId},${t.targetRoomDisplayName},${t.targetX},${t.targetZ}`
+        `${t.x},${t.z},${t.targetRoomId},${t.targetRoomDisplayName},${t.targetRoomOwnerAddress ?? ""},${t.targetX},${t.targetZ}`
     )
     .join(";")}`;
   if (sig === publicDirectoryLayoutSig) return;
@@ -7406,6 +7409,9 @@ function syncPublicDirectoryRoom(): void {
           targetX: slot.targetX,
           targetZ: slot.targetZ,
           targetRoomDisplayName: slot.targetRoomDisplayName,
+          ...(slot.targetRoomOwnerAddress
+            ? { targetRoomOwnerAddress: slot.targetRoomOwnerAddress }
+            : {}),
         },
         prev ? resolveBlockColorRgb(prev) : undefined
       )

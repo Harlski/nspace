@@ -299,6 +299,7 @@ export type TerrainProps = {
         targetX: number;
         targetZ: number;
         targetRoomDisplayName?: string;
+        targetRoomOwnerAddress?: string;
       };
   gate?: {
     adminAddress?: string;

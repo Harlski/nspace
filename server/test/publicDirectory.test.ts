@@ -137,6 +137,15 @@ describe("public directory slot rebinding", () => {
     assert.equal(hotter?.targetZ, 2);
   });
 
+  it("carries the owner wallet onto the teleporter slot", () => {
+    layoutPublicDirectory([]);
+    const { teleporters } = reconcilePublicDirectory(
+      [listing({ id: "owned", ownerAddress: "NQ07 OWNER" })],
+      []
+    );
+    assert.equal(teleporters[0]?.targetRoomOwnerAddress, "NQ07 OWNER");
+  });
+
   it("drops the farthest slot when a room is no longer listed", () => {
     layoutPublicDirectory([]);
     const shrunk = reconcilePublicDirectory(
