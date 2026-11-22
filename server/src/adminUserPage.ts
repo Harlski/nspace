@@ -46,6 +46,20 @@ export function adminUserPageHtml(): string {
     .ok { color: #86efac; }
     .back { margin: 0 0 0.75rem; font-size: 0.8rem; }
     .back a { color: #93c5fd; }
+    .u-stats { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0.55rem 0; }
+    .u-stat { background: #121a27; border: 1px solid #263348; border-radius: 8px; padding: 0.35rem 0.55rem; min-width: 5.6rem; }
+    .u-stat b { display: block; color: #e8eef7; font-size: 0.9rem; font-weight: 600; }
+    .u-stat span { color: #6b7d95; font-size: 0.68rem; }
+    .u-legend { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.15rem 0 0.45rem; font-size: 0.72rem; color: #9fb0c7; }
+    .u-swatch { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 2px; margin-right: 0.28rem; vertical-align: -1px; }
+    .u-timeline svg { width: 100%; height: auto; display: block; }
+    .u-bars { display: grid; height: 88px; gap: 2px; align-items: end; margin-top: 0.7rem; }
+    .u-bar { position: relative; height: 100%; background: #121a27; border-radius: 2px; }
+    .u-bar-conn, .u-bar-act { position: absolute; left: 0; right: 0; bottom: 0; }
+    .u-bar-conn { background: #1d4ed8; }
+    .u-bar-act { background: #34d399; }
+    .u-bar-ticks { display: grid; gap: 2px; margin-top: 0.2rem; color: #6b7d95; font-size: 0.62rem; }
+    .u-bar-ticks span { text-align: center; overflow: hidden; white-space: nowrap; }
   </style>
 </head>
 <body class="ms-site">
@@ -59,6 +73,7 @@ export function adminUserPageHtml(): string {
   var player = null;
   var chatCursor = null;
   var chatRows = [];
+  var activityHours = 24;
 
   function profileKeyFromPath() {
     var parts = location.pathname.split("/").filter(Boolean);
@@ -203,6 +218,189 @@ export function adminUserPageHtml(): string {
     renderChatOnly();
   }
 
+  function fmtNimLuna(luna) {
+    var raw = String(luna == null ? "0" : luna);
+    if (!/^\\d+$/.test(raw)) return "0 NIM";
+    var n = BigInt(raw);
+    var whole = n / 100000n;
+    var frac = (n % 100000n).toString().padStart(5, "0").replace(/0+$/, "");
+    return (frac ? whole.toString() + "." + frac : whole.toString()) + " NIM";
+  }
+
+  function overlapMs(spans, a, b) {
+    var total = 0;
+    var list = spans || [];
+    for (var i = 0; i < list.length; i++) {
+      var s = Math.max(list[i].startMs, a);
+      var e = Math.min(list[i].endMs, b);
+      if (e > s) total += e - s;
+    }
+    return total;
+  }
+
+  function renderActivityViz(data, hours) {
+    var w0 = Number(data.windowStartMs);
+    var w1 = Number(data.windowEndMs);
+    var span = Math.max(1, w1 - w0);
+    var plotL = 78;
+    var plotR = 948;
+    var plotW = plotR - plotL;
+    function xOf(ts) {
+      return plotL + ((Number(ts) - w0) / span) * plotW;
+    }
+    function num(v) {
+      return (Math.round(v * 100) / 100).toString();
+    }
+    function spanTitle(kind, startMs, endMs) {
+      return kind + " " + fmtTime(startMs) + " - " + fmtTime(endMs) + " UTC (" + fmtActive(endMs - startMs) + ")";
+    }
+
+    var svg = "";
+    svg += "<svg class='u-timeline' viewBox='0 0 960 150' role='img' aria-label='Connected and active time'>";
+    svg += "<text x='4' y='33' fill='#9fb0c7' font-size='11'>Connected</text>";
+    svg += "<text x='4' y='63' fill='#9fb0c7' font-size='11'>Active</text>";
+    svg += "<text x='4' y='90' fill='#9fb0c7' font-size='11'>NIM</text>";
+    var steps = hours === 168 ? 7 : 8;
+    for (var t = 0; t <= steps; t++) {
+      var ts = w0 + (span * t) / steps;
+      var x = xOf(ts);
+      svg += "<line x1='" + num(x) + "' y1='14' x2='" + num(x) + "' y2='108' stroke='#1c2838' stroke-width='1'/>";
+      var d = new Date(ts);
+      var label = hours === 168
+        ? (d.getUTCMonth() + 1) + "/" + d.getUTCDate()
+        : String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0");
+      svg += "<text x='" + num(x) + "' y='126' fill='#6b7d95' font-size='11' text-anchor='middle'>" + escHtml(label) + "</text>";
+    }
+    svg += "<text x='" + plotR + "' y='142' fill='#6b7d95' font-size='11' text-anchor='end'>UTC</text>";
+    var connected = data.connected || [];
+    for (var c = 0; c < connected.length; c++) {
+      var cs = connected[c];
+      var cx = xOf(cs.startMs);
+      var cw = Math.max(1.5, xOf(cs.endMs) - cx);
+      svg += "<rect x='" + num(cx) + "' y='18' width='" + num(cw) + "' height='22' rx='2' fill='#1d4ed8'><title>" + escHtml(spanTitle("Connected", cs.startMs, cs.endMs)) + "</title></rect>";
+    }
+    var active = data.active || [];
+    for (var a = 0; a < active.length; a++) {
+      var aspan = active[a];
+      var ax = xOf(aspan.startMs);
+      var aw = Math.max(1.5, xOf(aspan.endMs) - ax);
+      svg += "<rect x='" + num(ax) + "' y='48' width='" + num(aw) + "' height='22' rx='2' fill='#34d399'><title>" + escHtml(spanTitle("Active", aspan.startMs, aspan.endMs)) + "</title></rect>";
+    }
+    var earns = data.earns || [];
+    for (var e = 0; e < earns.length; e++) {
+      var earn = earns[e];
+      var ex = xOf(earn.atMs);
+      svg += "<circle cx='" + num(ex) + "' cy='86' r='3.5' fill='#fbbf24'><title>" + escHtml(fmtTime(earn.atMs) + " UTC - " + fmtNimLuna(earn.amountLuna) + " gameplay") + "</title></circle>";
+    }
+    svg += "<line x1='" + plotL + "' y1='108' x2='" + plotR + "' y2='108' stroke='#334155' stroke-width='1'/>";
+    svg += "</svg>";
+
+    var buckets = hours === 168 ? 7 : 24;
+    var bucketMs = span / buckets;
+    var scale = hours === 168 ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
+    var bars = "";
+    var ticks = "";
+    for (var b = 0; b < buckets; b++) {
+      var b0 = w0 + b * bucketMs;
+      var b1 = b0 + bucketMs;
+      var conn = overlapMs(connected, b0, b1);
+      var act = overlapMs(active, b0, b1);
+      var connPct = Math.max(0, Math.min(100, (conn / scale) * 100));
+      var actPct = Math.max(0, Math.min(100, (act / scale) * 100));
+      var bd = new Date(b0);
+      var blabel = hours === 168
+        ? (bd.getUTCMonth() + 1) + "/" + bd.getUTCDate()
+        : (b % 3 === 0 ? String(bd.getUTCHours()).padStart(2, "0") : "");
+      var btitle = fmtTime(b0) + " - " + fmtTime(b1) + " UTC. Connected " + fmtActive(conn) + ", active " + fmtActive(act);
+      bars += "<div class='u-bar' title='" + escHtml(btitle) + "'><div class='u-bar-conn' style='height:" + connPct.toFixed(2) + "%'></div><div class='u-bar-act' style='height:" + actPct.toFixed(2) + "%'></div></div>";
+      ticks += "<span>" + escHtml(blabel) + "</span>";
+    }
+    var grid = "grid-template-columns:repeat(" + buckets + ",minmax(0,1fr))";
+    var scaleNote = hours === 168
+      ? "Each column is one day. A full column is 24 hours."
+      : "Each column is one hour. A full column is 60 minutes.";
+
+    var share = data.connectedMs > 0 ? Math.round((Number(data.activeMs) * 100) / Number(data.connectedMs)) : 0;
+    var idleMin = Math.max(1, Math.round(Number(data.idleCapMs || 300000) / 60000));
+    var stats =
+      stat("Connected", fmtActive(data.connectedMs)) +
+      stat("Active", fmtActive(data.activeMs)) +
+      stat("Active share", share + "%") +
+      stat("Sessions", String(data.sessionCount || 0)) +
+      stat("Longest", fmtActive(data.longestConnectedMs)) +
+      stat("Gameplay NIM", fmtNimLuna(data.nimEarnedLuna));
+
+    var sessionRows = data.sessions || [];
+    var table;
+    if (!sessionRows.length) {
+      table = "<p class='hint'>No sessions in this window.</p>";
+    } else {
+      table = "<table class='u-table'><thead><tr><th>Started (UTC)</th><th>Ended (UTC)</th><th>Connected</th><th>Active</th><th>Gameplay NIM</th><th>Room</th></tr></thead><tbody>";
+      for (var s = 0; s < sessionRows.length; s++) {
+        var row = sessionRows[s];
+        var started = fmtTime(row.startedAt);
+        if (row.startedAt < w0) started += " (before window)";
+        var ended = row.endedAt
+          ? fmtTime(row.endedAt)
+          : (row.closedWithoutSignOut ? "sign-out not recorded" : "still connected");
+        table += "<tr><td>" + escHtml(started) + "</td><td>" + escHtml(ended) + "</td><td>" +
+          escHtml(fmtActive(row.connectedMs)) + "</td><td>" + escHtml(fmtActive(row.activeMs)) + "</td><td>" +
+          escHtml(fmtNimLuna(row.nimEarnedLuna)) + "</td><td>" + escHtml(row.roomId || "-") + "</td></tr>";
+      }
+      table += "</tbody></table>";
+      if (data.sessionsTruncated) {
+        table += "<p class='hint'>Showing the 40 most recent sessions. Totals include every session in the window.</p>";
+      }
+    }
+
+    return (
+      "<div class='u-stats'>" + stats + "</div>" +
+      "<div class='u-legend'>" +
+      "<span><i class='u-swatch' style='background:#1d4ed8'></i>Connected</span>" +
+      "<span><i class='u-swatch' style='background:#34d399'></i>Active</span>" +
+      "<span><i class='u-swatch' style='background:#fbbf24'></i>Gameplay NIM</span>" +
+      "</div>" +
+      svg +
+      "<div class='u-bars' style='" + grid + "'>" + bars + "</div>" +
+      "<div class='u-bar-ticks' style='" + grid + "'>" + ticks + "</div>" +
+      "<p class='hint'>" + escHtml(scaleNote) + " Active fills while actions arrive, and pauses after " +
+      idleMin + " minutes with no action. That is the same rule as the hourly Telegram digest. Gameplay NIM is the credited earn, not the later chain send.</p>" +
+      table
+    );
+  }
+
+  function stat(label, value) {
+    return "<div class='u-stat'><b>" + escHtml(value) + "</b><span>" + escHtml(label) + "</span></div>";
+  }
+
+  function setActivityHours(hours) {
+    activityHours = hours;
+    var b24 = document.getElementById("activity24");
+    var b7 = document.getElementById("activity7");
+    if (b24) b24.className = hours === 24 ? "primary" : "";
+    if (b7) b7.className = hours === 168 ? "primary" : "";
+    void loadActivity();
+  }
+
+  async function loadActivity() {
+    var viz = document.getElementById("activityViz");
+    if (!viz || !player) return;
+    viz.innerHTML = "<p class='hint'>Loading activity…</p>";
+    var out = await api(
+      "/api/admin/player/activity?q=" + encodeURIComponent(player.wallet) + "&hours=" + activityHours
+    );
+    viz = document.getElementById("activityViz");
+    if (!viz) return;
+    if (out.status !== 200 || !out.body || !out.body.activity) {
+      var msg = out.status === 503
+        ? "Activity history needs the Analytics Service. The rest of this page is unaffected."
+        : "Could not load activity history.";
+      viz.innerHTML = "<p class='err'>" + escHtml(msg) + "</p>";
+      return;
+    }
+    viz.innerHTML = renderActivityViz(out.body.activity, activityHours);
+  }
+
   function renderChatOnly() {
     var el = document.getElementById("chatBody");
     var more = document.getElementById("chatMore");
@@ -241,7 +439,7 @@ export function adminUserPageHtml(): string {
       : "<span>Offline</span>";
 
     var lastVisitLine = act.lastVisit
-      ? act.lastVisit.nimEarnedLabel + ", " + fmtActive(act.lastVisit.activeMs) + " active" +
+      ? act.lastVisit.nimEarnedLabel + " payouts sent, " + fmtActive(act.lastVisit.activeMs) + " active" +
         (act.lastVisit.endedAt ? " (ended " + fmtTime(act.lastVisit.endedAt) + " UTC)" : "")
       : "none";
 
@@ -278,8 +476,18 @@ export function adminUserPageHtml(): string {
       "<h2>Activity</h2>" +
       "<p class='u-meta'>Presence: " + presenceLine + "</p>" +
       "<p class='u-meta'>Last visit: " + escHtml(lastVisitLine) + "</p>" +
-      "<p class='u-meta'>Today: " + escHtml((act.today && act.today.nimEarnedLabel) || "0 NIM") +
-      ", " + fmtActive(act.today && act.today.activeMs) + " active</p>" +
+      "<p class='u-meta'>Today (UTC): " + escHtml((act.today && act.today.nimEarnedLabel) || "0 NIM") +
+      " payouts sent, " + fmtActive(act.today && act.today.activeMs) + " active</p>" +
+      "</section>" +
+
+      "<section class='u-panel'>" +
+      "<h2>Login history</h2>" +
+      "<p class='hint'>Last 24 hours by default, same window as the hourly Telegram digest. Connected runs from sign-in to sign-out. Active is the play inside that. Empty stretches are signed out, or still connected and idle.</p>" +
+      "<div class='u-actions u-range' style='margin-top:0'>" +
+      "<button type='button' id='activity24' class='" + (activityHours === 24 ? "primary" : "") + "'>Last 24 hours</button>" +
+      "<button type='button' id='activity7' class='" + (activityHours === 168 ? "primary" : "") + "'>Last 7 days</button>" +
+      "</div>" +
+      "<div id='activityViz'><p class='hint'>Loading activity…</p></div>" +
       "</section>" +
 
       "<section class='u-panel'>" +
@@ -344,6 +552,13 @@ export function adminUserPageHtml(): string {
     document.getElementById("chatMore")?.addEventListener("click", function () {
       void loadChat(false);
     });
+    document.getElementById("activity24")?.addEventListener("click", function () {
+      setActivityHours(24);
+    });
+    document.getElementById("activity7")?.addEventListener("click", function () {
+      setActivityHours(168);
+    });
+    void loadActivity();
   }
 
   async function loadPlayer(q) {
