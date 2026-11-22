@@ -14,28 +14,33 @@ test("admin clear resets login prompt deferrals and allows immediate re-set", as
     getUsernamePromptStatus,
     recordUsernamePromptDeferral,
     trySetPlayerUsername,
+    walletRequiresUsername,
   } = await import("../src/playerProfileStore.js");
 
   const wallet = "NQ07 TEST000000000000000000000000000001";
 
-  for (let i = 0; i < 5; i++) {
-    const d = recordUsernamePromptDeferral(wallet);
-    assert.equal(d.ok, true);
-  }
   let prompt = getUsernamePromptStatus(wallet);
+  assert.equal(prompt.needsPrompt, true);
   assert.equal(prompt.mustSetUsername, true);
+  assert.equal(prompt.deferralsRemaining, 0);
+  assert.equal(walletRequiresUsername(wallet), true);
+  const deferred = recordUsernamePromptDeferral(wallet);
+  assert.equal(deferred.ok, false);
+  if (!deferred.ok) assert.equal(deferred.error, "username_prompt_required");
 
   const set1 = trySetPlayerUsername(wallet, "PlayerOne");
   assert.equal(set1.ok, true);
   prompt = getUsernamePromptStatus(wallet);
   assert.equal(prompt.needsPrompt, false);
+  assert.equal(walletRequiresUsername(wallet), false);
 
   adminClearPlayerUsername(wallet);
   prompt = getUsernamePromptStatus(wallet);
   assert.equal(prompt.needsPrompt, true);
   assert.equal(prompt.deferCount, 0);
-  assert.equal(prompt.deferralsRemaining, 5);
-  assert.equal(prompt.mustSetUsername, false);
+  assert.equal(prompt.deferralsRemaining, 0);
+  assert.equal(prompt.mustSetUsername, true);
+  assert.equal(walletRequiresUsername(wallet), true);
 
   const set2 = trySetPlayerUsername(wallet, "PlayerTwo");
   assert.equal(set2.ok, true);

@@ -979,9 +979,16 @@ or from `/admin/user/{profile}` (and the `/admin/moderation` lists that link the
 an optional operator note (not shown to the player).
 _Avoid_: mining ban (use Restriction for the canonical sanction name), claim ban, payout block.
 
+**Username**:
+The custom name a wallet chooses before entering the world. Required for wallet play,
+including the Nimiq Pay tutorial. Guests keep their invite nickname. The hourly activity
+digest shows this name; a wallet that has not set one yet appears as the shortened address.
+_Avoid_: display name (the rendered label, which falls back to the shortened address), nickname.
+
 **Username-set ban**:
-An admin-imposed sanction that prevents a wallet from setting or changing its custom username
-and skips the login username prompt.
+An admin-imposed sanction that prevents a wallet from setting or changing its custom username.
+It skips the login username prompt and may still enter, because that wallet cannot choose a
+name. An admin can set the name or clear the ban.
 _Avoid_: name ban (ambiguous with profanity filter).
 
 **Channel mute**:

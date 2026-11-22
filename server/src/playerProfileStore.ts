@@ -36,7 +36,7 @@ type Row = {
   updatedAt: number;
   customUsername?: string | null;
   usernameChangedAt?: number;
-  /** Times the player chose "Not now" on the login username prompt (max {@link USERNAME_PROMPT_MAX_DEFERRALS}). */
+  /** Older "Not now" count. Kept on disk. It no longer grants entry. */
   usernamePromptDeferCount?: number;
   recentAliases?: string[];
   tutorialCompletedAt?: number;
@@ -268,25 +268,35 @@ export type UsernamePromptStatus = {
   mustSetUsername: boolean;
 };
 
-/** Login prompt: players without a custom username are nudged until they set one or exhaust deferrals. */
+/**
+ * Login prompt: a wallet without a custom username must set one before play.
+ * Stored defer counts no longer grant entry. A username-set ban cannot choose a name, so it skips the prompt.
+ */
 export function getUsernamePromptStatus(normalizedAddress: string): UsernamePromptStatus {
   const key = normalizedAddress.trim().toUpperCase();
   if (!key || playerHasCustomUsername(key) || isUsernameSetBanned(key)) {
     return {
       needsPrompt: false,
       deferCount: 0,
-      deferralsRemaining: USERNAME_PROMPT_MAX_DEFERRALS,
+      deferralsRemaining: 0,
       mustSetUsername: false,
     };
   }
   const deferCount = getRow(key).usernamePromptDeferCount ?? 0;
-  const deferralsRemaining = Math.max(0, USERNAME_PROMPT_MAX_DEFERRALS - deferCount);
   return {
     needsPrompt: true,
     deferCount,
-    deferralsRemaining,
-    mustSetUsername: deferCount >= USERNAME_PROMPT_MAX_DEFERRALS,
+    deferralsRemaining: 0,
+    mustSetUsername: true,
   };
+}
+
+/** True when this wallet must not enter the world until it has a custom username. */
+export function walletRequiresUsername(normalizedAddress: string): boolean {
+  const key = normalizedAddress.trim().toUpperCase();
+  if (!key || key.startsWith("GUEST:")) return false;
+  if (isUsernameSetBanned(key)) return false;
+  return !playerHasCustomUsername(key);
 }
 
 export function recordUsernamePromptDeferral(
@@ -295,19 +305,7 @@ export function recordUsernamePromptDeferral(
   const key = normalizedAddress.trim().toUpperCase();
   if (!key) return { ok: false, error: "invalid_address" };
   if (playerHasCustomUsername(key)) return { ok: false, error: "username_already_set" };
-  const data = readStore();
-  const prev = rowEnsure(data.profiles[key]);
-  const deferCount = prev.usernamePromptDeferCount ?? 0;
-  if (deferCount >= USERNAME_PROMPT_MAX_DEFERRALS) {
-    return { ok: false, error: "username_prompt_required" };
-  }
-  const nextCount = deferCount + 1;
-  data.profiles[key] = { ...prev, usernamePromptDeferCount: nextCount };
-  writeStore(data);
-  return {
-    ok: true,
-    deferralsRemaining: Math.max(0, USERNAME_PROMPT_MAX_DEFERRALS - nextCount),
-  };
+  return { ok: false, error: "username_prompt_required" };
 }
 
 export function getRecentAliases(normalizedAddress: string): string[] {

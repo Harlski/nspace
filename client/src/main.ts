@@ -618,14 +618,10 @@ function openMainMenu(): void {
     },
     onLoggedIn: async (token, address, nimiqPay, usernamePrompt, needsTutorial) => {
       saveCachedSession(token, address, nimiqPay);
-      const deferUsernameForTutorial = nimiqPay === true;
-      if (!deferUsernameForTutorial) {
-        const ok = await runUsernamePromptGate(token, address, usernamePrompt);
-        if (!ok) return;
-      }
+      const ok = await runUsernamePromptGate(token, address, usernamePrompt);
+      if (!ok) return;
       enterGame(token, address, nimiqPay, {
         freshSignIn: true,
-        deferUsernameForTutorial,
         needsTutorial: needsTutorial === true,
       });
     },
@@ -645,7 +641,6 @@ function enterGame(
     initialRoomId?: string;
     inviteLinkSlug?: string;
     freshSignIn?: boolean;
-    deferUsernameForTutorial?: boolean;
     needsTutorial?: boolean;
   }
 ): void {
@@ -1341,7 +1336,6 @@ function enterGame(
   let tutorialWelcome: TutorialWelcome | undefined;
   let tutorialSocialSuppressed = false;
   let pendingTutorialHubWelcome = false;
-  let deferUsernameForTutorial = opts?.deferUsernameForTutorial === true;
 
   /** Mark Hub arrival for the Exit cinematic (door or Exit Teleporter). */
   function maybeArmTutorialHubWelcome(targetRoomId: string): boolean {
@@ -5947,16 +5941,6 @@ function enterGame(
         syncTutorialStepCoach(msg.roomId);
         syncTutorialResetMenu(msg.roomId);
       }
-      if (
-        deferUsernameForTutorial &&
-        normalizeRoomId(msg.roomId) === CHAMBER_ROOM_ID &&
-        tutorialWelcome?.needsTutorial === false
-      ) {
-        deferUsernameForTutorial = false;
-        void runUsernamePromptGate(token, address).then((ok) => {
-          if (!ok) return;
-        });
-      }
       if (autoReconnectActive) {
         stopAutoReconnect();
         hud.setStatus("");
@@ -7386,6 +7370,20 @@ function enterGame(
           if (ev.code === 4001) {
             clearCachedSession();
             location.reload();
+            return;
+          }
+          if (ev.code === 4009) {
+            hideLoadingOverlay({ skipMinWait: true });
+            hud.setReconnectOffer(false);
+            hud.setStatus("");
+            void runUsernamePromptGate(token, address).then((ok) => {
+              if (myGen !== connectGen) return;
+              if (!ok) {
+                hud.setReconnectOffer(true, { label: "Disconnected" });
+                return;
+              }
+              connectToRoom(room, spawn);
+            });
             return;
           }
           const guestActor = selfAddress.startsWith("guest:") ? selfAddress : address;

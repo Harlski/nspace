@@ -5,7 +5,10 @@ import {
 } from "./analyticsServiceClient.js";
 import { isChannelMuted, isMiningBanned, isUsernameSetBanned } from "./moderationStore.js";
 import { getPendingQueueTotals } from "./payoutGateway.js";
-import { getEffectivePlayerDisplayName } from "./playerProfileStore.js";
+import {
+  getEffectivePlayerDisplayName,
+  playerHasCustomUsername,
+} from "./playerProfileStore.js";
 import { listOnlineRealPlayers, type OnlineRealPlayer } from "./rooms.js";
 import { isTelegramConfigured, sendTelegramPreformatted } from "./telegramNotify.js";
 import { walletDisplayName } from "./walletDisplayName.js";
@@ -133,9 +136,9 @@ function clipCell(value: string, width: number): string {
   return clean.join("").padEnd(width, " ");
 }
 
-function tableRow(cols: [string, string, string, string, string, string, string]): string {
-  const widths = [2, 16, 7, 7, 8, 2, 4] as const;
-  return cols.map((col, i) => clipCell(col, widths[i]!)).join(" ");
+function tableRow(cols: string[]): string {
+  const widths = [2, 16, 7, 7, 8, 2, 4, 3, 3];
+  return cols.map((col, i) => clipCell(col, widths[i] ?? 8)).join(" ");
 }
 
 export type HourlyActivityView = {
@@ -147,13 +150,18 @@ export type HourlyActivityView = {
 };
 
 function playerLabel(address: string, onlineName: string | undefined): string {
-  const live = onlineName?.trim();
-  if (live) return live;
   if (address.startsWith("guest:")) {
+    const live = onlineName?.trim();
+    if (live) return live;
     const nick = getEffectivePlayerDisplayName(address);
     if (nick && nick !== address) return nick;
     return `Guest ${address.slice("guest:".length, "guest:".length + 4)}`;
   }
+  if (playerHasCustomUsername(address)) {
+    return getEffectivePlayerDisplayName(address);
+  }
+  const live = onlineName?.trim();
+  if (live) return live;
   return getEffectivePlayerDisplayName(address) || walletDisplayName(address) || address;
 }
 
@@ -204,11 +212,6 @@ function pickTableRows(rows: RenderRow[], topN: number): { shown: RenderRow[]; e
   return { shown: byActive, extraEarners };
 }
 
-function nameWithMarks(row: RenderRow): string {
-  const marks = `${row.player.isNew ? "*" : ""}${row.player.nimiqPay ? "+" : ""}`;
-  return `${row.name}${marks}`;
-}
-
 /**
  * Plain-text hourly digest. The sender wraps it in a Telegram `<pre>` block so the
  * columns stay aligned.
@@ -252,18 +255,20 @@ export function formatHourlyActivityMessage(view: HourlyActivityView): string {
   if (shown.length === 0) {
     lines.push("No players in the last 24 hours.");
   } else {
-    lines.push("* new   + Nimiq Pay   Now is the room if they are online");
-    lines.push(tableRow(["#", "Player", "Played", "NIM", "Now", "S", "Chat"]));
+    lines.push("Player is the username. New *    Pay +    Now is the room if they are online");
+    lines.push(tableRow(["#", "Player", "Played", "NIM", "Now", "S", "Chat", "New", "Pay"]));
     shown.forEach((row, index) => {
       lines.push(
         tableRow([
           String(index + 1),
-          nameWithMarks(row),
+          row.name,
           formatPlayedDuration(row.player.activeMs),
           formatNimCompact(row.nim),
           row.roomNow ?? "-",
           String(row.player.sessionStarts),
           String(row.player.chatCount),
+          row.player.isNew ? "*" : "-",
+          row.player.nimiqPay ? "+" : "-",
         ])
       );
     });

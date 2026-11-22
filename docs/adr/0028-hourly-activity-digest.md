@@ -6,7 +6,7 @@ Operators were getting a Telegram message on every world entry. The useful quest
 
 Send **one** Telegram message per UTC hour, about a minute past the hour, to `TELEGRAM_CHAT_ID` (override `HOURLY_ACTIVITY_TELEGRAM_CHAT_ID`). The window is the **rolling last 24 hours**, not just the last hour. A short "joined this hour" line keeps arrivals visible.
 
-The table is ranked by capped-gap active play time. Each row shows display name, play time, gameplay NIM earned, current room if they are online, session count, and chat lines. The header adds online count, new / guest / Nimiq Pay counts, mines, blocks placed, the busiest rooms, and the pending payout queue.
+The table is ranked by capped-gap active play time. Each row shows the custom username (a shortened wallet only when none is stored), play time, gameplay NIM earned, current room if they are online, session count, and chat lines. New and Nimiq Pay are separate columns, not marks glued onto the name. A stored username wins over a live shortened label. The header adds online count, new / guest / Nimiq Pay counts, mines, blocks placed, the busiest rooms, and the pending payout queue.
 
 NIM earned is gameplay credit (`claim_block.amountLuna` and `gameplay_nim_earned`), deduped by `claimId`. On-chain `nim_payout_sent` stays out of this table because those sends batch later (often at the UTC end-of-day flush) and would show near zero for most hours.
 

@@ -103,7 +103,9 @@ test("hourly message is a 24h leaderboard with online room and join line", () =>
   assert.match(text, /Players: 2 \(1 new, 0 guests, 1 Nimiq Pay\)/);
   assert.match(text, /NIM earned: 1\.5/);
   assert.match(text, /Pending payout: 3\.1 NIM across 2 players/);
-  assert.match(text, /The Creator\+/);
+  assert.match(text, /The Creator/);
+  assert.doesNotMatch(text, /The Creator\+/);
+  assert.match(text, /New\s+Pay/);
   assert.match(text, /hub/);
   assert.match(text, /Joined this hour:/);
   assert.match(text, /Rooms: hub 14m/);

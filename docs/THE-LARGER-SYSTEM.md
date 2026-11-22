@@ -288,7 +288,8 @@ scans (replay, the admin dossier last-visit read) move off the game.
 ### Operator Telegram presence is an hourly digest
 
 **Today:** Operators get **one** Telegram message per UTC hour about who played in the last
-24 hours (active time, gameplay NIM earned, online room, joins in the last hour). A world
+24 hours (active time, gameplay NIM earned, online room, joins in the last hour). The Player
+column is the custom username. New and Nimiq Pay are separate columns. A world
 entry does not send its own ping. Username changes, feedback, campaign approval, and the
 end-of-day stats report still send on their own schedule. Gameplay NIM in the digest is the
 credited earn (`claim_block` / `gameplay_nim_earned`), not the later on-chain send. See
@@ -367,6 +368,14 @@ Update this subsection if campaign image storage moves (CDN, signed URLs) or if 
 
 Update this subsection if the mini-app SDK documents a single canonical field, or if verify learns additional encodings.
 
+### A wallet enters the world only with a custom username
+
+**Today:** After sign-in, a wallet with no custom username must set one before any world session, including the Nimiq Pay tutorial. The login picker has no skip into play. The game WebSocket refuses that wallet (`4009 username_required`) so a modified client cannot walk in nameless. Guests keep their invite nickname. Stream observers are not players and are not asked. A username-set ban cannot choose a name, so that wallet may still connect; an admin can set the name or clear the ban. Clearing a username forces the picker on the next connection. The first set stays allowed when self-service is off, and the 24h cooldown still applies only when changing an existing name.
+
+**Direction:** Do not add a "play first, name later" path for wallet sessions. If a future first-contact lesson needs to start before a name, it still cannot admit the wallet to a shared room without one.
+
+Update this subsection if guests gain wallet-like profiles, or if a username-set ban should also block entry.
+
 ---
 
 ## Changelog (optional)
@@ -415,3 +424,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-08-31** - Login-gated standalone pages use a Sign-in Gate (not generic load errors); Campaign Creatives are hosted uploads, not remote URLs. See [reasons/reason_847615.md](reasons/reason_847615.md).
 - **2026-08-31** - Nimiq Pay Payment Intent sends attach the memo as hex `data`/`recipientData` and UTF-8 `extraData` on the first attempt. See [reasons/reason_364829.md](reasons/reason_364829.md).
 - **2026-11-21** - Operator presence Telegram is one hourly digest of the last 24 hours, not a ping per world entry. The scan stays on the Analytics Service. NIM in that digest is gameplay credit, not the later chain send. See [reasons/reason_582914.md](reasons/reason_582914.md).
+- **2026-11-22** - A wallet cannot enter the world without a custom username. The login picker has no skip, the Pay tutorial no longer postpones it, and the hourly digest shows that name in its own column. See [reasons/reason_418276.md](reasons/reason_418276.md).

@@ -76,7 +76,8 @@ async function loadUsernamePromptStatus(
 /**
  * After wallet login or cached re-entry, prompt for a username when needed.
  * Always loads fresh status from the server (cached sessions do not skip the gate).
- * Returns true when the player may enter the game (saved, deferred, or no prompt).
+ * Returns true when the player may enter the game (saved, or no prompt).
+ * A required prompt stays open until the name is saved.
  */
 export async function runUsernamePromptGate(
   token: string,
@@ -104,8 +105,10 @@ export async function runUsernamePromptGate(
     if (result === "saved") return true;
 
     if (result === "deferred") {
+      if (status.mustSetUsername) continue;
       const afterDefer = await loadUsernamePromptStatus(token);
       if (!afterDefer) return false;
+      if (afterDefer.mustSetUsername) continue;
       return true;
     }
 
