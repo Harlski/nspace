@@ -8,7 +8,7 @@
 
 ## Summary
 
-Wallet sign-in no longer loops Loading the Hub for accounts that already have a username. Profile lookup ignores spaces in the session address, and a username-required socket close does not reconnect when a name is already set. The admin player dossier shows a 24-hour login history of connected time, active play, and gameplay NIM. Event Log scans use that same compact wallet key, so a spaced session address is the player the digest already named.
+_Add a one-line roll-up here when the buffer gets long._
 
 ---
 
@@ -20,21 +20,11 @@ Wallet sign-in no longer loops Loading the Hub for accounts that already have a 
 
 ### Client
 
-- [client/src/auth/usernamePromptGate.ts](../../../client/src/auth/usernamePromptGate.ts): gate result is `ready`, `saved`, or `blocked`.
-- [client/src/main.ts](../../../client/src/main.ts): close `4009` reconnects only after `saved`.
+- _(none in this change set)_
 
 ### Server
 
-- [server/src/playerProfileStore.ts](../../../server/src/playerProfileStore.ts): `profileWalletKey` strips spaces before every profile read and write.
-- [server/src/moderationStore.ts](../../../server/src/moderationStore.ts): username-set ban lookup uses the same compact key as the write path.
-- `GET /api/admin/player/activity` (system admin) proxies one wallet's login history from the Analytics Service. `hours` is `24` (default) or `168`.
-- `/admin/user/:profile` draws connected vs active spans, an hourly (or daily) column chart, gameplay NIM marks, and a session table. The Activity block's older NIM lines are labeled as payouts sent.
-
-### Analytics service
-
-- `GET /v1/player-activity` scans the Event Log for one address. Connected is `session_start` to `session_end`. Active uses the 5-minute idle cap shared with the hourly digest. Headline totals are unions. Gameplay NIM is `claim_block` / `gameplay_nim_earned`, deduped by `claimId`. An open session extends to the window end only when the game reports the wallet online.
-- Wallet match on that scan, on the hourly digest, and on dossier last-visit/today stats strips spaces and uppercases the event-log address before comparing it to the profile key.
-- `/admin/user/:profile` shows a small spinner in Login history while that scan is in flight.
+- _(none in this change set)_
 
 ### payment-intent-service
 
