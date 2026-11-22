@@ -8,7 +8,7 @@
 
 ## Summary
 
-Wallet sign-in no longer loops Loading the Hub for accounts that already have a username. Profile lookup ignores spaces in the session address, and a username-required socket close does not reconnect when a name is already set. The admin player dossier shows a 24-hour login history of connected time, active play, and gameplay NIM.
+Wallet sign-in no longer loops Loading the Hub for accounts that already have a username. Profile lookup ignores spaces in the session address, and a username-required socket close does not reconnect when a name is already set. The admin player dossier shows a 24-hour login history of connected time, active play, and gameplay NIM. Event Log scans use that same compact wallet key, so a spaced session address is the player the digest already named.
 
 ---
 
@@ -33,6 +33,8 @@ Wallet sign-in no longer loops Loading the Hub for accounts that already have a 
 ### Analytics service
 
 - `GET /v1/player-activity` scans the Event Log for one address. Connected is `session_start` to `session_end`. Active uses the 5-minute idle cap shared with the hourly digest. Headline totals are unions. Gameplay NIM is `claim_block` / `gameplay_nim_earned`, deduped by `claimId`. An open session extends to the window end only when the game reports the wallet online.
+- Wallet match on that scan, on the hourly digest, and on dossier last-visit/today stats strips spaces and uppercases the event-log address before comparing it to the profile key.
+- `/admin/user/:profile` shows a small spinner in Login history while that scan is in flight.
 
 ### payment-intent-service
 

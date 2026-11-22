@@ -60,12 +60,19 @@ export function adminUserPageHtml(): string {
     .u-bar-act { background: #34d399; }
     .u-bar-ticks { display: grid; gap: 2px; margin-top: 0.2rem; color: #6b7d95; font-size: 0.62rem; }
     .u-bar-ticks span { text-align: center; overflow: hidden; white-space: nowrap; }
+    .u-spin {
+      display: inline-block; width: 0.7rem; height: 0.7rem; margin-right: 0.35rem;
+      border: 2px solid #334155; border-top-color: #93c5fd; border-radius: 50%;
+      vertical-align: -2px; animation: u-spin 0.8s linear infinite;
+    }
+    @keyframes u-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .u-spin { animation: none; } }
   </style>
 </head>
 <body class="ms-site">
   ${analyticsTopbarHtml("moderation")}
   <h1 id="userDocTitle" class="ms-doc-title">Player</h1>
-  <div id="panel" class="ms-panel mono">Loading…</div>
+  <div id="panel" class="ms-panel mono"><p class="hint"><span class="u-spin" aria-hidden="true"></span>Loading…</p></div>
   <script>
 (function () {
   var AUTH_KEYS = ["nspace_analytics_auth_token", "nspace_pending_payouts_token"];
@@ -385,7 +392,7 @@ export function adminUserPageHtml(): string {
   async function loadActivity() {
     var viz = document.getElementById("activityViz");
     if (!viz || !player) return;
-    viz.innerHTML = "<p class='hint'>Loading activity…</p>";
+    viz.innerHTML = "<p class='hint'><span class='u-spin' aria-hidden='true'></span>Loading activity…</p>";
     var out = await api(
       "/api/admin/player/activity?q=" + encodeURIComponent(player.wallet) + "&hours=" + activityHours
     );
@@ -487,7 +494,7 @@ export function adminUserPageHtml(): string {
       "<button type='button' id='activity24' class='" + (activityHours === 24 ? "primary" : "") + "'>Last 24 hours</button>" +
       "<button type='button' id='activity7' class='" + (activityHours === 168 ? "primary" : "") + "'>Last 7 days</button>" +
       "</div>" +
-      "<div id='activityViz'><p class='hint'>Loading activity…</p></div>" +
+      "<div id='activityViz'><p class='hint'><span class='u-spin' aria-hidden='true'></span>Loading activity…</p></div>" +
       "</section>" +
 
       "<section class='u-panel'>" +

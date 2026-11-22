@@ -182,16 +182,20 @@ type RenderRow = {
   nim: bigint;
 };
 
+function walletKey(address: string): string {
+  const t = address.trim();
+  if (!t) return "";
+  if (t.startsWith("guest:")) return t;
+  return t.replace(/\s+/g, "").toUpperCase();
+}
+
 function renderRows(view: HourlyActivityView): RenderRow[] {
   const onlineByAddress = new Map<string, OnlineRealPlayer>();
   for (const player of view.online) {
-    const key = player.address.startsWith("guest:")
-      ? player.address
-      : player.address.trim().toUpperCase();
-    onlineByAddress.set(key, player);
+    onlineByAddress.set(walletKey(player.address), player);
   }
   return view.digest.players.map((player) => {
-    const online = onlineByAddress.get(player.address);
+    const online = onlineByAddress.get(walletKey(player.address));
     return {
       player,
       name: playerLabel(player.address, online?.displayName),
@@ -285,16 +289,11 @@ export function formatHourlyActivityMessage(view: HourlyActivityView): string {
   const joinedAddresses = digest.joinedLastHourAddresses ?? [];
   if (joinedAddresses.length > 0) {
     const onlineByAddress = new Map(
-      view.online.map((player) => [
-        player.address.startsWith("guest:")
-          ? player.address
-          : player.address.trim().toUpperCase(),
-        player.displayName,
-      ])
+      view.online.map((player) => [walletKey(player.address), player.displayName])
     );
     const names = joinedAddresses
       .slice(0, JOINED_NAME_LIMIT)
-      .map((address) => playerLabel(address, onlineByAddress.get(address)));
+      .map((address) => playerLabel(address, onlineByAddress.get(walletKey(address))));
     const more = joinedAddresses.length - names.length;
     lines.push(
       `Joined this hour: ${names.join(", ")}${more > 0 ? ` +${more}` : ""}`

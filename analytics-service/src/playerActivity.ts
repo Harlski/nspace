@@ -91,11 +91,12 @@ export function playerActivityLookbackDays(
   return Math.min(21, Math.max(3, days + 2));
 }
 
+/** Same compact wallet key as profiles: spaces removed, uppercase. Guest ids stay as logged. */
 function addressKey(address: string): string {
   const t = address.trim();
   if (!t) return "";
   if (t.startsWith("guest:")) return t;
-  return t.toUpperCase();
+  return t.replace(/\s+/g, "").toUpperCase();
 }
 
 function inWindow(ts: number, winStart: number, winEnd: number): boolean {
