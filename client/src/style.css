@@ -20676,6 +20676,37 @@ html.nspace-nimiq-pay-host .achievement-unlock-stack--visible {
   overflow-wrap: anywhere;
 }
 
+.qr-pay-login-phone__place {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  margin: 0.15rem 0 0.9rem;
+}
+
+.qr-pay-login-phone__place[hidden] {
+  display: none !important;
+}
+
+.qr-pay-login-phone__place-label {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(238, 243, 247, 0.72);
+}
+
+.qr-pay-login-phone__place-code {
+  margin: 0;
+  padding-left: 0.22em;
+  font-size: 2.35rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  line-height: 1.05;
+  color: #fc8702;
+}
+
 .qr-pay-login-phone__card--paper .qr-pay-login-phone__title {
   order: 3;
   color: #1c1915;

@@ -5,5 +5,6 @@
 
 ---
 
+- [CHANGE] After you scan a sign-in QR code, the phone shows the same four-character code as the computer, labeled **This screen is**, before you sign.
 - After you walk through a teleporter, **Return to Hub** becomes **Return to last room**. It puts you back on the teleporter you took. If that teleporter has moved, you arrive at the room's spawn instead. If that room is gone, you arrive in the Hub.
 - Player rooms zoom out to the same distance as a normal room, so a very wide floor no longer pulls the camera up to a tiny overview.

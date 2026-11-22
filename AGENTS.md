@@ -51,6 +51,8 @@ When you change **any** of the following, update the matching **`docs/*.md`** (a
 - Deploy topology, Docker compose services, or CI deploy steps  
 - Security-sensitive defaults (JWT, CORS, admin HTTP routes)
 
+**Player privacy in commits and pull requests:** Do not put a real user's username, display name, wallet address, NIM amount, or activity figures (play time, session counts, earnings) in a commit message, pull request title, or pull request description. Say "a user" and describe the behavior. The same rule applies to patch notes and other durable write-ups. See [MEMORY.md](MEMORY.md).
+
 **Do not** record the new truth only under `docs/brainstorm/` — that folder is for exploration and archived write-ups.
 
 If you remove or rename a doc, grep the repo for old links and fix them.

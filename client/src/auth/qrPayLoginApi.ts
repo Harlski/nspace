@@ -5,7 +5,7 @@ import { TermsPrivacyAcknowledgementRequiredError } from "./nimiq.js";
 export type QrPayLoginCreated = {
   ticketId: string;
   claimSecret: string;
-  /** Four-character code shown on this computer and on the phone confirm card. */
+  /** Four-character code shown on this computer and on the phone as soon as the QR page opens. */
   placeCode: string;
   expiresAt: number;
   spaUrl: string;
