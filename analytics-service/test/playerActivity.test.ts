@@ -256,6 +256,35 @@ test("other wallets are ignored", async () => {
   );
 });
 
+test("a spaced event-log address matches the compact profile wallet", async () => {
+  const windowEnd = Date.UTC(2026, 10, 22, 12, 0, 0);
+  const windowStart = windowEnd - 24 * HOUR;
+  const start = windowStart + HOUR;
+  const compact = "NQ87NFXKJ255506AUST3ETXK4VUXFU2Q2HKY";
+  const spaced = compact.replace(/(.{4})(?=.)/g, "$1 ");
+  await withLog(
+    [
+      { ts: start, kind: "session_start", sessionId: "s1", address: spaced, roomId: "hub" },
+      {
+        ts: start + 10 * MIN,
+        kind: "gameplay_nim_earned",
+        sessionId: "s1",
+        address: spaced.toLowerCase(),
+        roomId: "hub",
+        payload: { claimId: "c1", amountLuna: "79821000" },
+      },
+      { ts: start + 2 * HOUR, kind: "session_end", sessionId: "s1", address: spaced, roomId: "hub" },
+    ],
+    async () => {
+      const activity = await getPlayerActivity(compact, windowStart, windowEnd, false);
+      assert.equal(activity.address, compact);
+      assert.equal(activity.sessionCount, 1);
+      assert.equal(activity.connectedMs, 2 * HOUR);
+      assert.equal(activity.nimEarnedLuna, "79821000");
+    }
+  );
+});
+
 test("GET /v1/player-activity rejects a window wider than 8 days", async () => {
   await withEnvLock(async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "player-activity-route-"));

@@ -419,12 +419,17 @@ function utcDayStartMs(nowMs: number): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
+/** Event-log wallets match profile keys: spaces removed, then uppercase. */
+function compactEventAddress(address: string): string {
+  return String(address || "").replace(/\s+/g, "").trim().toUpperCase();
+}
+
 /** Previous ended session + today (UTC) NIM/active totals for Connect Notice copy. */
 export function getConnectNoticeStatsForAddress(
   address: string,
   nowMs: number = Date.now()
 ): ConnectNoticePlayerStats {
-  const addr = address.trim();
+  const addr = compactEventAddress(address);
   const emptyToday: ConnectNoticeVisitStats = {
     nimEarnedLabel: "0 NIM",
     activeMs: 0,
@@ -460,7 +465,7 @@ export function getConnectNoticeStatsForAddress(
         }
       }
 
-      if (rec.address !== addr) continue;
+      if (compactEventAddress(rec.address) !== addr) continue;
 
       if (rec.kind === ANALYTICS_EVENT_KINDS.sessionStart) {
         sessions.set(rec.sessionId, {

@@ -275,7 +275,9 @@ long first-time lookback). Those scans run in the **Analytics Service** sidecar,
 game Node event loop. The game remains the public HTTP face of `/analytics` and the dossier,
 thin-proxies those reads, and sends Telegram. There is **no in-process fallback**. Play continues if the
 sidecar is down (that hour's digest is skipped and retried once; the dossier chart says the
-history is unavailable and the rest of the page still loads). A derived database is a
+history is unavailable and the rest of the page still loads). Wallet identity in these scans
+is the **compact NQ key** (spaces removed, uppercase), the same key as player profiles, so a
+session address that still carries the spaced user-friendly form is the same wallet. A derived database is a
 later plan owned by that service, not a reason to put storage back on the play path. See
 [adr/0016-analytics-service-sidecar.md](adr/0016-analytics-service-sidecar.md) and
 [adr/0028-hourly-activity-digest.md](adr/0028-hourly-activity-digest.md).
@@ -428,3 +430,4 @@ _Use brief dated entries if you want a paper trail without bloating the sections
 - **2026-11-21** - Operator presence Telegram is one hourly digest of the last 24 hours, not a ping per world entry. The scan stays on the Analytics Service. NIM in that digest is gameplay credit, not the later chain send. See [reasons/reason_582914.md](reasons/reason_582914.md).
 - **2026-11-22** - A wallet cannot enter the world without a custom username. The login picker has no skip, the Pay tutorial no longer postpones it, and the hourly digest shows that name in its own column. See [reasons/reason_418276.md](reasons/reason_418276.md).
 - **2026-11-22** - Admin dossier login history is an Analytics Service scan of one wallet: connected time, capped-gap active play, and gameplay NIM for the last 24 hours (or 7 days). See [reasons/reason_739284.md](reasons/reason_739284.md).
+- **2026-11-22** - Event Log scans match a wallet by the compact NQ key (spaces removed, uppercase), the same key as profiles. See [reasons/reason_582731.md](reasons/reason_582731.md).
