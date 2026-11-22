@@ -8,7 +8,7 @@
 
 ## Summary
 
-Wallet sign-in no longer loops Loading the Hub for accounts that already have a username. Profile lookup ignores spaces in the session address, and a username-required socket close does not reconnect when a name is already set.
+Wallet sign-in no longer loops Loading the Hub for accounts that already have a username. Profile lookup ignores spaces in the session address, and a username-required socket close does not reconnect when a name is already set. The admin player dossier shows a 24-hour login history of connected time, active play, and gameplay NIM.
 
 ---
 
@@ -27,6 +27,12 @@ Wallet sign-in no longer loops Loading the Hub for accounts that already have a 
 
 - [server/src/playerProfileStore.ts](../../../server/src/playerProfileStore.ts): `profileWalletKey` strips spaces before every profile read and write.
 - [server/src/moderationStore.ts](../../../server/src/moderationStore.ts): username-set ban lookup uses the same compact key as the write path.
+- `GET /api/admin/player/activity` (system admin) proxies one wallet's login history from the Analytics Service. `hours` is `24` (default) or `168`.
+- `/admin/user/:profile` draws connected vs active spans, an hourly (or daily) column chart, gameplay NIM marks, and a session table. The Activity block's older NIM lines are labeled as payouts sent.
+
+### Analytics service
+
+- `GET /v1/player-activity` scans the Event Log for one address. Connected is `session_start` to `session_end`. Active uses the 5-minute idle cap shared with the hourly digest. Headline totals are unions. Gameplay NIM is `claim_block` / `gameplay_nim_earned`, deduped by `claimId`. An open session extends to the window end only when the game reports the wallet online.
 
 ### payment-intent-service
 

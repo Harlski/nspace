@@ -389,6 +389,14 @@ the rolling last 24 hours (NIM earned, time played, who is online, who joined in
 hour). It replaces a ping on every world entry.
 _Avoid_: door alarm, connect notice, connect ping, login webhook.
 
+**Login history**:
+The per-wallet chart on `/admin/user/:profile` for the rolling last 24 hours (or the last 7
+days). **Connected** is sign-in to sign-out. **Active** is play inside that, using the same
+5-minute idle cap as the Hourly Activity Digest. Gameplay NIM on the chart is the credited
+earn, the same figure as that digest. A gap is time signed out, or time still connected with
+no action. The scan runs on the Analytics Service.
+_Avoid_: play time (ambiguous with the digest total), session log, presence chart.
+
 **Guest**:
 A player holding an ephemeral session without a connected Nimiq wallet. They receive a
 server-assigned display name (a fun nickname, editable at entry) and can participate in
@@ -1070,7 +1078,8 @@ the game does not scan it to serve `/analytics` or daily-stats.
 _Avoid_: analytics log, replay log, event file.
 
 **Analytics Service**:
-The dedicated sidecar that scans the Event Log and returns overview snapshots and daily-stats
-aggregates. It does not serve player HTTP, send Telegram, or flush payouts. The game stays the
-public face of `/analytics` and fails those reads if this service is down; play continues.
+The dedicated sidecar that scans the Event Log and returns overview snapshots, daily-stats
+aggregates, the hourly activity digest, and one wallet's login history. It does not serve
+player HTTP, send Telegram, or flush payouts. The game stays the public face of `/analytics`
+and the admin dossier, and fails those reads if this service is down; play continues.
 _Avoid_: analytics worker, stats service, log service, event log service.

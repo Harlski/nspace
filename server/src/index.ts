@@ -70,6 +70,7 @@ import {
 } from "./ambientCast/snapshot.js";
 import {
   fetchEventLogAnalyticsSnapshot,
+  fetchPlayerActivity,
   isAnalyticsServiceClientConfigured,
   type AnalyticsTimeWindow,
 } from "./analyticsServiceClient.js";
@@ -3571,6 +3572,46 @@ app.get("/api/admin/player", requireSystemAdminWallet, (req, res) => {
     return;
   }
   res.json({ ok: true, player: out.player });
+});
+
+/**
+ * Login history for one player: connected vs active spans.
+ * Default window is the rolling last 24 hours. `hours=168` is the last 7 days.
+ * The scan runs on the Analytics Service.
+ */
+app.get("/api/admin/player/activity", requireSystemAdminWallet, async (req, res) => {
+  const q = String(req.query.q ?? req.query.target ?? "").trim();
+  const resolved = resolveAdminPlayerTarget(q);
+  if (!resolved.ok) {
+    res.status(resolved.error === "not_found" ? 404 : 400).json({ error: resolved.error });
+    return;
+  }
+  const hoursRaw = req.query.hours;
+  const hours =
+    hoursRaw == null || hoursRaw === "" || String(hoursRaw) === "24"
+      ? 24
+      : String(hoursRaw) === "168"
+        ? 168
+        : null;
+  if (hours == null) {
+    res.status(400).json({ error: "invalid_hours" });
+    return;
+  }
+  const windowEndMs = Date.now();
+  const windowStartMs = windowEndMs - hours * 60 * 60 * 1000;
+  const online = getWalletCurrentRoomId(resolved.wallet) != null;
+  const out = await fetchPlayerActivity({
+    address: resolved.wallet,
+    windowStartMs,
+    windowEndMs,
+    online,
+  });
+  if (!out.ok) {
+    console.error("[admin/player/activity]", out.error);
+    res.status(503).json({ error: "analytics_unavailable" });
+    return;
+  }
+  res.json({ ok: true, hours, online, activity: out.value });
 });
 
 /**

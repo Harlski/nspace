@@ -4,6 +4,7 @@ import type { Server } from "node:http";
 import { bearerApiAuth } from "./auth.js";
 import { loadConfig, type AnalyticsServiceConfig } from "./config.js";
 import { getActivityDigest } from "./activityDigest.js";
+import { getPlayerActivity } from "./playerActivity.js";
 import {
   getDailyStatsAggregate,
   getEventLogAnalyticsSnapshot,
@@ -80,6 +81,38 @@ export function createAnalyticsApp(opts: CreateAnalyticsAppOptions = {}) {
       res.json(digest);
     } catch (err) {
       console.error("[analytics-service] activity-digest", err);
+      res.status(500).json({ error: "internal" });
+    }
+  });
+
+  app.get("/v1/player-activity", auth, async (req, res) => {
+    const address = String(req.query.address ?? "").trim();
+    const windowStartMs = Number(req.query.fromMs);
+    const windowEndMs = Number(req.query.toMs);
+    const treatLatestOpenAsConnected = req.query.online === "1";
+    if (!address || address.length > 120) {
+      res.status(400).json({ error: "address required" });
+      return;
+    }
+    if (!Number.isFinite(windowStartMs) || !Number.isFinite(windowEndMs)) {
+      res.status(400).json({ error: "fromMs and toMs required" });
+      return;
+    }
+    const span = windowEndMs - windowStartMs;
+    if (!(span > 0) || span > 8 * 24 * 60 * 60 * 1000) {
+      res.status(400).json({ error: "window must be within 8 days" });
+      return;
+    }
+    try {
+      const activity = await getPlayerActivity(
+        address,
+        windowStartMs,
+        windowEndMs,
+        treatLatestOpenAsConnected
+      );
+      res.json(activity);
+    } catch (err) {
+      console.error("[analytics-service] player-activity", err);
       res.status(500).json({ error: "internal" });
     }
   });
