@@ -31,26 +31,48 @@ describe("public directory layout", () => {
     assert.equal(teleporters[0]?.targetRoomId, "crowded");
     assert.equal(teleporters[1]?.targetRoomId, "busy");
     assert.equal(teleporters[2]?.targetRoomId, "quiet");
+    assert.equal(teleporters[0]?.z, teleporters[1]?.z);
+    assert.equal(teleporters[1]?.z, teleporters[2]?.z);
     assert.ok(teleporters[0]!.z > PUBLIC_DIRECTORY_SPAWN.z);
-    assert.ok(teleporters[0]!.z < teleporters[1]!.z);
-    assert.ok(teleporters[1]!.z < teleporters[2]!.z);
+    assert.ok(teleporters[0]!.x < teleporters[1]!.x);
+    assert.ok(teleporters[1]!.x < teleporters[2]!.x);
     assert.equal(teleporters[0]?.targetRoomDisplayName, "Crowded");
     assert.equal(teleporters[0]?.targetX, -1);
     assert.equal(teleporters[0]?.targetZ, 0);
   });
 
-  it("lengthens the hall as more rooms are listed", () => {
+  it("fills rows of three and lengthens the hall on the next row", () => {
     const one = layoutPublicDirectory([listing({ id: "a" })]);
-    const many = layoutPublicDirectory([
+    const row = layoutPublicDirectory([
       listing({ id: "a" }),
       listing({ id: "b" }),
       listing({ id: "c" }),
     ]);
+    const next = layoutPublicDirectory([
+      listing({ id: "a" }),
+      listing({ id: "b" }),
+      listing({ id: "c" }),
+      listing({ id: "d" }),
+    ]);
+    assert.equal(row.teleporters[0]?.z, row.teleporters[2]?.z);
+    assert.deepEqual(
+      row.teleporters.map((slot) => slot.x),
+      [-5, 0, 5]
+    );
+    assert.equal(one.bounds.maxZ, row.bounds.maxZ);
     assert.equal(one.bounds.minZ, PUBLIC_DIRECTORY_DOOR.z);
-    assert.equal(many.bounds.minZ, PUBLIC_DIRECTORY_DOOR.z);
-    assert.ok(many.bounds.maxZ > one.bounds.maxZ);
-    assert.equal(getPublicDirectoryBounds().maxZ, many.bounds.maxZ);
-    assert.ok(many.teleporters.every((slot) => slot.z <= many.bounds.maxZ));
+    assert.ok(next.bounds.maxZ > row.bounds.maxZ);
+    assert.ok(next.teleporters[3]!.z > next.teleporters[0]!.z);
+    assert.equal(next.teleporters[3]?.x, -5);
+    assert.equal(getPublicDirectoryBounds().maxZ, next.bounds.maxZ);
+    assert.ok(
+      next.teleporters.every(
+        (slot) =>
+          slot.x >= next.bounds.minX &&
+          slot.x <= next.bounds.maxX &&
+          slot.z <= next.bounds.maxZ
+      )
+    );
   });
 
   it("keeps a short hall when nothing is public", () => {

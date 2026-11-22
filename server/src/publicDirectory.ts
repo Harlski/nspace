@@ -14,9 +14,12 @@ export const PUBLIC_DIRECTORY_SPAWN = { x: 0, z: -1 } as const;
 export const HUB_TO_DIRECTORY_DOOR = { x: -12, z: 0 } as const;
 export const DIRECTORY_HUB_RETURN = { x: -11, z: 0 } as const;
 
-const HALL_HALF_WIDTH = 4;
+const ROW_SIZE = 3;
+/** Left, center, right. The door on x = 0 lines up with the middle column. */
+const COLUMN_X = [-5, 0, 5] as const;
+const HALL_HALF_WIDTH = 8;
 const FIRST_SLOT_Z = 2;
-const SLOT_STRIDE = 4;
+const ROW_STRIDE = 4;
 const END_PAD = 3;
 
 export type DirectoryListing = {
@@ -68,8 +71,8 @@ function compareDirectoryListings(a: DirectoryListing, b: DirectoryListing): num
 }
 
 /**
- * Most popular listing lands on the slot nearest the door (`z` just north of spawn).
- * Updates the bounds returned by {@link getPublicDirectoryBounds}.
+ * Most popular listings fill the row nearest the door, left to right, then the
+ * next row north. Updates the bounds returned by {@link getPublicDirectoryBounds}.
  */
 export function layoutPublicDirectory(entries: readonly DirectoryListing[]): {
   bounds: RoomBounds;
@@ -78,9 +81,11 @@ export function layoutPublicDirectory(entries: readonly DirectoryListing[]): {
   const sorted = [...entries].sort(compareDirectoryListings);
   const teleporters: DirectoryTeleporterSlot[] = sorted.map((entry, index) => {
     const label = entry.displayName.trim() || entry.id;
+    const row = Math.floor(index / ROW_SIZE);
+    const col = index % ROW_SIZE;
     return {
-      x: 0,
-      z: FIRST_SLOT_Z + index * SLOT_STRIDE,
+      x: COLUMN_X[col]!,
+      z: FIRST_SLOT_Z + row * ROW_STRIDE,
       targetRoomId: entry.id,
       targetX: entry.spawnX,
       targetZ: entry.spawnZ,
