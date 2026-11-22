@@ -13,6 +13,7 @@ const CANVAS_ROOM_ID = "canvas";
 const PIXEL_ROOM_ID = "pixel";
 const TUTORIAL_ROOM_ID = "tutorial";
 const TUTORIAL_STAGING_ROOM_ID = "tutorial-staging";
+const PUBLIC_DIRECTORY_ROOM_ID = "directory";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -43,6 +44,7 @@ const DEFAULTS: Record<string, string> = {
   [CHAMBER_ROOM_ID]: "Hub",
   [CANVAS_ROOM_ID]: "Canvas",
   [PIXEL_ROOM_ID]: "Pixel",
+  [PUBLIC_DIRECTORY_ROOM_ID]: "Public Rooms",
   // Pay tutorial rooms (hidden from catalog; still admin-editable like other built-ins).
   [TUTORIAL_ROOM_ID]: "Tutorial Room",
   [TUTORIAL_STAGING_ROOM_ID]: "Tutorial Staging",

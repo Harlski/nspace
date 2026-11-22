@@ -1462,6 +1462,23 @@ export function canTeleporterDestinationRoom(
   return canPlaceBlocksInRoom(roomId, address);
 }
 
+/** In-world room background control. Directory follows the same admin rule as other official rooms. */
+function allowWelcomeRoomBackgroundHueEdit(roomId: string, address: string): boolean {
+  const n = normalizeRoomId(roomId);
+  if (isTutorialRuntimeRoomId(n) || isTutorialStagingRoomId(n)) {
+    return canEditTutorialRoomContent(address, n);
+  }
+  if (isPlayerCreatedRoom(n)) {
+    return allowActorRoomBackgroundHueEdit(
+      n,
+      compactAddress(address),
+      isAdmin(address)
+    );
+  }
+  if (n === PUBLIC_DIRECTORY_ROOM_ID) return isAdmin(address);
+  return false;
+}
+
 function canRecolorFloorInRoom(roomId: string, address: string): boolean {
   const id = normalizeRoomId(roomId);
   // The Shaper: same admin Build unlock as canPlaceBlocksInRoom.
@@ -7557,17 +7574,10 @@ function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: nu
       : isPlayerCreatedRoom(nWelcomeRoom)
         ? getDynamicRoomBackgroundState(nWelcomeRoom)
         : getBuiltinRoomBackgroundState(nWelcomeRoom);
-  const allowRoomBackgroundHueEdit =
-    isTutorialRuntimeRoomId(nWelcomeRoom) ||
-    isTutorialStagingRoomId(nWelcomeRoom)
-      ? canEditTutorialRoomContent(conn.address, nWelcomeRoom)
-      : isPlayerCreatedRoom(nWelcomeRoom)
-        ? allowActorRoomBackgroundHueEdit(
-            nWelcomeRoom,
-            compactAddress(conn.address),
-            isAdmin(conn.address)
-          )
-        : false;
+  const allowRoomBackgroundHueEdit = allowWelcomeRoomBackgroundHueEdit(
+    nWelcomeRoom,
+    conn.address
+  );
 
   const allowPublishDesign = canPublishDesign(targetRoomId, address);
   const teleportSpatialWelcome = roomUsesSpatialInterest(rb)
@@ -9810,16 +9820,10 @@ export function addClient(
       : isPlayerCreatedRoom(nJoinRoom)
         ? getDynamicRoomBackgroundState(nJoinRoom)
         : getBuiltinRoomBackgroundState(nJoinRoom);
-  const joinAllowRoomBackgroundHueEdit =
-    isTutorialRuntimeRoomId(nJoinRoom) || isTutorialStagingRoomId(nJoinRoom)
-      ? canEditTutorialRoomContent(address, nJoinRoom)
-      : isPlayerCreatedRoom(nJoinRoom)
-        ? allowActorRoomBackgroundHueEdit(
-            nJoinRoom,
-            compactAddress(address),
-            isAdmin(address)
-          )
-        : false;
+  const joinAllowRoomBackgroundHueEdit = allowWelcomeRoomBackgroundHueEdit(
+    nJoinRoom,
+    address
+  );
 
   // Always send a canvas timer snapshot on join:
   // - active round: real remaining time

@@ -85,6 +85,7 @@ import {
   CHAMBER_ROOM_ID,
   CANVAS_ROOM_ID,
   PIXEL_ROOM_ID,
+  PUBLIC_DIRECTORY_ROOM_ID,
   PIXEL_DEFAULT_SPAWN,
   normalizeRoomId,
 } from "./game/roomLayouts.js";
@@ -3696,7 +3697,8 @@ function enterGame(
       rid === HUB_ROOM_ID ||
       rid === CHAMBER_ROOM_ID ||
       rid === CANVAS_ROOM_ID ||
-      rid === PIXEL_ROOM_ID
+      rid === PIXEL_ROOM_ID ||
+      rid === PUBLIC_DIRECTORY_ROOM_ID
     ) {
       return isAdmin(actor);
     }
@@ -3767,7 +3769,10 @@ function enterGame(
           roomAllowExtraFloor &&
           !isCanvas &&
           !isPixel &&
-          (dynamicRoom || rid === HUB_ROOM_ID || rid === CHAMBER_ROOM_ID)));
+          (dynamicRoom ||
+            rid === HUB_ROOM_ID ||
+            rid === CHAMBER_ROOM_ID ||
+            rid === PUBLIC_DIRECTORY_ROOM_ID)));
     hud.setRoomBackgroundHuePanelVisible(show);
     if (!show) return;
     let ringHue: number | null = null;
