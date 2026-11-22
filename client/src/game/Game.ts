@@ -3742,7 +3742,7 @@ export class Game {
     if (id === CHAMBER_ROOM_ID) {
       return CHAMBER_MAX_ZOOM_FRUSTUM;
     }
-    if (id === HUB_ROOM_ID) {
+    if (id === HUB_ROOM_ID || id === PUBLIC_DIRECTORY_ROOM_ID) {
       return HUB_MAX_ZOOM_FRUSTUM;
     }
     if (usesPlayerRoomZoomCap(id)) {
@@ -5072,6 +5072,8 @@ export class Game {
 
   /** Large rooms need an asymmetric ortho frustum when zoomed out - symmetric half-extent clips the south diamond tip. */
   private roomNeedsFrustumFit(): boolean {
+    // Public Rooms keeps a centered window, same as the Hub. Hall length does not resize the projection.
+    if (normalizeRoomId(this.roomId) === PUBLIC_DIRECTORY_ROOM_ID) return false;
     const b = this.roomBounds;
     const w = b.maxX - b.minX + 1;
     const h = b.maxZ - b.minZ + 1;

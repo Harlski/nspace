@@ -5,6 +5,7 @@ import {
   CHAMBER_TELESCOPE_ZOOM_FRUSTUM_PORTRAIT,
   HUB_MAX_ZOOM_FRUSTUM,
   HUB_ROOM_ID,
+  PUBLIC_DIRECTORY_ROOM_ID,
   HUB_TELESCOPE_ZOOM_FRUSTUM,
   HUB_TELESCOPE_ZOOM_FRUSTUM_PORTRAIT,
   PLAYER_ROOM_MAX_ZOOM_FRUSTUM,
@@ -20,7 +21,7 @@ import {
 
 export function roomFrustumCap(roomId: string): number | null {
   const id = normalizeRoomId(roomId);
-  if (id === HUB_ROOM_ID) return HUB_MAX_ZOOM_FRUSTUM;
+  if (id === HUB_ROOM_ID || id === PUBLIC_DIRECTORY_ROOM_ID) return HUB_MAX_ZOOM_FRUSTUM;
   if (id === CHAMBER_ROOM_ID) return CHAMBER_MAX_ZOOM_FRUSTUM;
   if (usesPlayerRoomZoomCap(id)) return PLAYER_ROOM_MAX_ZOOM_FRUSTUM;
   return null;

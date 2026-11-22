@@ -8,7 +8,7 @@
 
 ## Summary
 
-Show the QR place code on the phone as soon as the sign-in page opens. After a teleporter hop, return to that tile, and cap player-room zoom-out at 18.7.
+Show the QR place code on the phone as soon as the sign-in page opens. After a teleporter hop, return to that tile, and cap player-room zoom-out at 18.7. Public Rooms uses the Hub zoom cap and a centered camera.
 
 ---
 
@@ -23,6 +23,7 @@ Show the QR place code on the phone as soon as the sign-in page opens. After a t
 - Phone QR sign-in screen (`client/src/auth/qrPayLoginPhone.ts`) shows `placeCode` with the same **This screen is** label as the desktop dialog while the ticket is still waiting for a signature. The confirm card keeps **Sign in on {code}?** and hides the larger code.
 - Top bar and Player Menu rename to **Return to last room** when `welcome.canReturnToLastRoom` is set. The click sends `returnToLastRoom` on the open socket. Catalog joins clear the label until the next welcome. Loading-overlay and idle Hub returns are unchanged.
 - Player rooms and other custom rooms use a fixed zoom-out frustum of **18.7** (`PLAYER_ROOM_MAX_ZOOM_FRUSTUM`), both as the room zoom and as the frustum cap. Commons, Hub, Canvas, Pixel, Public Rooms, Tutorial, The Shaper, Play Spaces, and Match Pitches are excluded.
+- Public Rooms (`directory`) uses `HUB_MAX_ZOOM_FRUSTUM` (22.9) for both the room zoom and the frustum cap. `roomNeedsFrustumFit` stays off there, so a long hall does not shift the orthographic window to include every corner.
 
 ### Server
 

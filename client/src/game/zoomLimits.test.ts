@@ -9,6 +9,7 @@ import {
   CHAMBER_MAX_ZOOM_FRUSTUM,
   CHAMBER_ROOM_ID,
   HUB_MAX_ZOOM_FRUSTUM,
+  PUBLIC_DIRECTORY_ROOM_ID,
   HUB_ROOM_ID,
   HUB_TELESCOPE_ZOOM_FRUSTUM,
   HUB_TELESCOPE_ZOOM_FRUSTUM_PORTRAIT,
@@ -83,6 +84,21 @@ describe("hub zoom limits", () => {
     expect(telescopeHoldWouldWiden(base, HUB_TELESCOPE_ZOOM_FRUSTUM)).toBe(
       false
     );
+  });
+
+  it("keeps Public Rooms on the Hub frustum when the hall is long", () => {
+    expect(
+      normalZoomMax({
+        zoomMax: 80,
+        roomZoomMax: 67.63,
+        roomId: PUBLIC_DIRECTORY_ROOM_ID,
+        roomBounds: { minX: -6, maxX: 6, minZ: -2, maxZ: 63 },
+        mapOverviewUnlocked: false,
+        streamPresentationActive: false,
+        mobilePortrait: false,
+        telescopeHoldActive: false,
+      })
+    ).toBe(HUB_MAX_ZOOM_FRUSTUM);
   });
 
   it("caps player rooms at 18.7 even when the floor is wide", () => {
