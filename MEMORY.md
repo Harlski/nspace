@@ -8,3 +8,7 @@ This file is a **lightweight anchor** for humans and automation: where to look f
 - **[docs/patchnotes-release.md](docs/patchnotes-release.md)** — **how to write** public release copy (brief → developers, optional hotfix tier), recommended scan order, optional **`[NEW]` / `[FIX]` / …** tags for `/patchnotes` badges; use this when drafting or reviewing `public/*.md`.
 
 Normative “what ships today” detail still lives in **`docs/*.md`**, [docs/features-checklist.md](docs/features-checklist.md), and code. `THE-LARGER-SYSTEM` is complementary: it optimizes for the **best long-term system**, even when it is incomplete.
+
+## Player privacy in commits and pull requests
+
+Commit messages, pull request titles, and pull request descriptions must not identify a real user or quote their balances. Say **a user**. Leave out usernames, display names, wallet addresses, NIM amounts, and that user's activity figures (play time, session counts, earnings). Describe the behavior (the dossier missed events the digest already counted) without their stats. The same rule applies to patch notes and other durable write-ups. See [AGENTS.md](AGENTS.md) and [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).

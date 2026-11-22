@@ -68,6 +68,8 @@ Examples:
 - `fix: prevent portal tile from being claimed in canvas room`
 - `docs: update setup instructions in README`
 
+Do not identify a real user in a commit message or pull request. Say "a user". Leave out usernames, display names, wallet addresses, NIM amounts, and that user's activity figures (play time, session counts, earnings). Describe the behavior without their stats. See [MEMORY.md](../MEMORY.md).
+
 ### 4. Push and Create Pull Request
 
 ```bash
