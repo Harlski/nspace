@@ -5,6 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
-
-- _Deploy / config deltas vs previous patch-notes version._
+- [FIX] No new env var and no migration. Restart the game server so wallet sign-in stops closing the socket for players who already have a username.
