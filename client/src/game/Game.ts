@@ -948,6 +948,16 @@ const DIRECTORY_PERSON_ICON_PATHS = [
 ] as const;
 const DIRECTORY_OCCUPANCY_SCREEN_HEIGHT_PX = 16;
 
+/** Same preview as the server: a stable 1-12 count from the room id. */
+function directoryPreviewPlayerCount(roomId: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < roomId.length; i++) {
+    hash ^= roomId.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return 1 + ((hash >>> 0) % 12);
+}
+
 /** Person icon then occupant count, stacked above a directory room name. */
 function createOccupancyLabelSprite(count: number): {
   sprite: THREE.Sprite;
@@ -14365,10 +14375,16 @@ export class Game {
         linked && "targetRoomOwnerAddress" in linked
           ? linked.targetRoomOwnerAddress?.trim() || ""
           : "";
-      const playerCount =
+      const reportedCount =
         linked && typeof linked.targetRoomPlayerCount === "number"
           ? Math.max(0, Math.floor(linked.targetRoomPlayerCount))
           : 0;
+      const playerCount =
+        reportedCount > 0
+          ? reportedCount
+          : import.meta.env.DEV && linked
+            ? directoryPreviewPlayerCount(linked.targetRoomId)
+            : 0;
       const existingName = marker.userData.directoryNameText as string | undefined;
       const existingOwner = marker.userData.directoryNameOwner as string | undefined;
       const existingCount = marker.userData.directoryOccupancyCount as
