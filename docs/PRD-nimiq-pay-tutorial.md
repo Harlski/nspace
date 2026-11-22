@@ -37,8 +37,8 @@ Add a **mandatory-once** first-contact flow for **Nimiq Pay mini-app** sessions 
    faucet payout (via the existing **Payout Service**).
 3. Send **0.01 NIM** back through Nimiq Pay to unlock an exit gate (**Tutorial Pay Ack** —
    optimistic unlock on Pay send success, no on-chain verify for v1).
-4. Walk through the exit into the **Hub** with a short welcome transition, deferred username
-   prompt, and a **First NIM** onboarding achievement.
+4. Walk through the exit into the **Hub** with a short welcome transition and a **First NIM**
+   onboarding achievement. The username is chosen at login, before the lesson.
 
 The room layout is built in **Tutorial Staging** by admins and allowlisted builders, then
 **published** as a **Tutorial Template** that seeds the live Tutorial Room (mirroring Play
@@ -64,8 +64,8 @@ After completion, the Tutorial Room is reachable only via an **admin-placed Tele
 2. As a first-time Pay player, I want a brief non-blocking toast ("Signed in with your Nimiq
    wallet" plus identicon and truncated address) on tutorial entry, so that I feel my identity
    is confirmed without an extra blocking screen.
-3. As a first-time Pay player, I want the **username prompt deferred** until I reach the Hub
-   after completing or abandoning the tutorial, so that nothing slows the ~60-second lesson.
+3. As a first-time Pay player, I want to set a **username before the Tutorial Room**, so that
+   I am a named player from the first step and cannot play without one.
 4. As a **web or Hub wallet** player (non-Pay), I want to skip the tutorial and enter the Hub
    as today, so that v1 scope stays focused on the mini-app path.
 5. As a returning Pay player who already completed the tutorial, I want to go straight to the
@@ -115,8 +115,8 @@ After completion, the Tutorial Room is reachable only via an **admin-placed Tele
 22. As a tutorial learner who completes the tutorial, I want the **First NIM** onboarding
     achievement and **Achievement Unlock Banner** on Hub arrival, so that completion feels
     rewarding.
-23. As a tutorial learner who completes the tutorial, I want the deferred **username prompt**
-    after Hub arrival, so that I can set my display name before exploring.
+23. As a tutorial learner who completes the tutorial, I already chose a **username at login**,
+    so Hub arrival does not ask again.
 
 ### Nimiq Pay first-time player — stuck and retry
 
@@ -282,12 +282,12 @@ Mirror Play Space Template pattern:
 
 ### Client routing and UX
 
-- Pay + `needsTutorial`: skip username gate until Hub; connect Tutorial Room with resume off
+- Pay + `needsTutorial`: username gate runs before enter, same as other wallets; then connect Tutorial Room with resume off
 - **Lesson mode**: guided highlights; hide chat HUD and suppress chat send / emote wheel (room-scoped; restored outside Tutorial Room)
 - **Tutorial Escape** timer: armed only while Pay send promise pending; 10s total, countdown
   visible last 5s; on fire → unstick + abandon + join Hub + cheeky message
 - **Player Menu**: **Finish tutorial** only when Pay + incomplete
-- Hub transition: fade + welcome banner; then username prompt; achievement banner
+- Hub transition: fade + welcome banner; achievement banner (username was already set at login)
 
 ### Achievement
 
@@ -308,7 +308,7 @@ Mirror Play Space Template pattern:
 ### ADR
 
 - Document: shared room + per-wallet state, optimistic **Tutorial Pay Ack**, teleporter-only
-  post-complete access, deferred username prompt — include matching `docs/reasons/reason_*.md`
+  post-complete access — username is required before the world, including the tutorial; include matching `docs/reasons/reason_*.md`
 
 ## Testing Decisions
 

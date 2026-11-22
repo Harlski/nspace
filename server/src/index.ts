@@ -344,6 +344,7 @@ import {
   listKnownPlayerUsernames,
   playerHasCustomUsername,
   recordUsernamePromptDeferral,
+  walletRequiresUsername,
   setPlayerProfileMessage,
   trySetPlayerUsername,
 } from "./playerProfileStore.js";
@@ -3935,6 +3936,10 @@ wss.on("connection", (ws, req) => {
       spawnHint = undefined;
       explorationDoorSpawn = false;
     }
+  }
+  if (guestId === undefined && !streamRequested && walletRequiresUsername(address)) {
+    ws.close(4009, "username_required");
+    return;
   }
   addClient(roomId, ws, address, spawnHint, {
     nimiqPay: sessionNimiqPay,

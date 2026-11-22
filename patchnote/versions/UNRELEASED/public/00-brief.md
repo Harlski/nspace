@@ -5,4 +5,4 @@
 
 ---
 
-_(Draft — not published.)_
+Choose a username before you play. The hourly activity table shows that name on its own.
