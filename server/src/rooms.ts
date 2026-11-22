@@ -7318,15 +7318,14 @@ function teleportAllInRoomToHub(roomIdRaw: string): void {
   }
 }
 
+let publicDirectoryLayoutSig = "";
+
 /**
  * Rebuild the Public Directory teleporters from the live public-room list.
- * Skipped while anyone is standing in the hall so an entry does not move
- * portals under the people already there. The next empty entry picks up
- * thumbs, occupancy, and new rooms.
+ * People already in the hall get an obstacle delta when the grid changes,
+ * so a running server does not keep a stale single column.
  */
 function syncPublicDirectoryRoom(): void {
-  const occupants = rooms.get(PUBLIC_DIRECTORY_ROOM_ID);
-  if (occupants && occupants.size > 0) return;
   const listings = [];
   for (const room of listDynamicRooms()) {
     if (!room.isPublic) continue;
@@ -7357,7 +7356,28 @@ function syncPublicDirectoryRoom(): void {
       })
     );
   }
+  const b = layout.bounds;
+  const sig = `${b.minX},${b.maxX},${b.minZ},${b.maxZ}|${layout.teleporters
+    .map((t) => `${t.x},${t.z},${t.targetRoomId},${t.targetRoomDisplayName}`)
+    .join(";")}`;
+  if (sig === publicDirectoryLayoutSig) return;
+  const prev = roomPlaced.get(PUBLIC_DIRECTORY_ROOM_ID);
+  publicDirectoryLayoutSig = sig;
   roomPlaced.set(PUBLIC_DIRECTORY_ROOM_ID, placed);
+  const occupants = rooms.get(PUBLIC_DIRECTORY_ROOM_ID);
+  if (!occupants || occupants.size === 0) return;
+  const remove = prev ? [...prev.keys()] : [];
+  const add = [];
+  for (const key of placed.keys()) {
+    const tile = obstacleTileFromPlaced(PUBLIC_DIRECTORY_ROOM_ID, key);
+    if (tile) add.push(tile);
+  }
+  broadcast(PUBLIC_DIRECTORY_ROOM_ID, {
+    type: "obstaclesDelta",
+    roomId: PUBLIC_DIRECTORY_ROOM_ID,
+    add,
+    remove,
+  });
 }
 
 function teleportPlayer(conn: ClientConn, targetRoomId: string, x: number, z: number): void {

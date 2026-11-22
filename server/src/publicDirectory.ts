@@ -15,9 +15,13 @@ export const HUB_TO_DIRECTORY_DOOR = { x: -12, z: 0 } as const;
 export const DIRECTORY_HUB_RETURN = { x: -11, z: 0 } as const;
 
 const ROW_SIZE = 3;
-/** Left, center, right. The door on x = 0 lines up with the middle column. */
-const COLUMN_X = [-5, 0, 5] as const;
-const HALL_HALF_WIDTH = 8;
+/**
+ * Left, center, right. Two tiles of floor between pillars so all three sit
+ * inside the default camera from the door (a wider spread left only the
+ * center column on screen).
+ */
+const COLUMN_X = [-3, 0, 3] as const;
+const HALL_HALF_WIDTH = 6;
 const FIRST_SLOT_Z = 2;
 const ROW_STRIDE = 4;
 const END_PAD = 3;

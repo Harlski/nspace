@@ -57,13 +57,13 @@ describe("public directory layout", () => {
     assert.equal(row.teleporters[0]?.z, row.teleporters[2]?.z);
     assert.deepEqual(
       row.teleporters.map((slot) => slot.x),
-      [-5, 0, 5]
+      [-3, 0, 3]
     );
     assert.equal(one.bounds.maxZ, row.bounds.maxZ);
     assert.equal(one.bounds.minZ, PUBLIC_DIRECTORY_DOOR.z);
     assert.ok(next.bounds.maxZ > row.bounds.maxZ);
     assert.ok(next.teleporters[3]!.z > next.teleporters[0]!.z);
-    assert.equal(next.teleporters[3]?.x, -5);
+    assert.equal(next.teleporters[3]?.x, -3);
     assert.equal(getPublicDirectoryBounds().maxZ, next.bounds.maxZ);
     assert.ok(
       next.teleporters.every(
