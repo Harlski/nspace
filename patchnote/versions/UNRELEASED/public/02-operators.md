@@ -5,4 +5,6 @@
 
 ---
 
-No deploy, environment, or migration changes.
+_(Draft — not published.)_
+
+- _Deploy / config deltas vs previous patch-notes version._
